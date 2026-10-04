@@ -200,14 +200,14 @@ func TestKeepStagedChangeover_CancelCountsAReturnAlreadyFlying(t *testing.T) {
 	}
 }
 
-// A produce changeover cancelled before the outgoing empty left the spot: no
-// incoming refill has landed, so the empty standing there is the staying
-// style's own. The cancel keeps it; judged by the claims' config, it was sent to
-// the incoming style's source.
+// A produce changeover between parts on different carriers, cancelled before
+// the outgoing empty left the spot: the empty standing there is of the staying
+// part's carrier. The start sends it back; the cancel keeps it.
 func TestKeepStagedChangeover_CancelKeepsTheStayingStylesEmpty(t *testing.T) {
 	t.Parallel()
 	fx := seedLanding(t, protocol.ClaimRoleProduce,
-		map[string]NodeBinInfo{"L1": {Occupied: true}, "SPOT": {Occupied: true}})
+		map[string]NodeBinInfo{"L1": {Occupied: true}, "SPOT": {Occupied: true, BinTypeCode: "TYPE-A"}})
+	fx.eng.SetPayloadBinTypes(ksCatalog(map[string]string{"PART-OLD": "TYPE-A", "PART-NEW": "TYPE-B"}))
 	startKSChangeover(t, fx)
 	if _, returns := liveSpot(t, fx, "SPOT"); len(returns) != 1 {
 		t.Fatalf("fixture: the start made %d returns of the outgoing empty, want 1", len(returns))

@@ -41,6 +41,41 @@ func (e *Engine) BinTypeForPayload(payloadCode string) string {
 	return ""
 }
 
+// partPermitsCarrier is Core's carrier rule for a part, asked over the catalog
+// Core sends with the node list: may a carrier of this type hold the part. It is
+// the question Core's pickup asks (domain.BinTypeRule.Permits), asked the same
+// way:
+//
+//   - a part with carriers listed may ride only those, and a part may list
+//     several (payload_bin_types is many to many);
+//   - a part with none listed may ride anything. That is Core's reading, not
+//     the Edge's: the table is sparsely filled, and an unlisted part is not
+//     refused anywhere.
+//
+// No catalog, and a carrier the read did not name, answer true: no judgement.
+// The first is an Edge that has not heard from Core since it started, or a
+// node list Core sent without the catalog because its own read failed; the
+// second is a bin Core did not name the type of. Either way Core still judges
+// the pickup. The direction is the safe one: an empty kept that Core will not
+// lift waits at the pickup, where a person sees it; an empty sent back that
+// Core would have taken is a robot trip the Edge invented.
+func partPermitsCarrier(catalog []protocol.PayloadBinTypeInfo, part, carrier string) bool {
+	if carrier == "" {
+		return true
+	}
+	listed := false
+	for _, row := range catalog {
+		if row.PayloadCode != part {
+			continue
+		}
+		if row.BinTypeCode == carrier {
+			return true
+		}
+		listed = true
+	}
+	return !listed
+}
+
 // payloadDunnageCodes returns the distinct bin_type_codes that appear in
 // catalog for the given payloadCodes. If payloadCodes is empty, all distinct
 // bin_type_codes from the catalog are returned (no-restriction fallback).

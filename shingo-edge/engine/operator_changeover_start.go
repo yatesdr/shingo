@@ -438,7 +438,7 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	for _, id := range cancelled {
 		gone[id] = true
 	}
-	flows := spotFlows(live, spots, gone, nil)
+	flows := spotFlows(live, spots, gone)
 	e.openChangeoverEpisode(changeover, orderPlan.OrderCount()+spotOrderCount(spots, spotReads, flows))
 	e.applyChangeoverPlan(changeover, orderPlan)
 	e.applyChangeoverSpots(spots, spotReads, flows, e.changeoverOrigin(changeover.ID))

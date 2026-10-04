@@ -54,6 +54,20 @@ type spotRead struct {
 	// payload is what the bin standing there carries; blank for an empty.
 	payload string
 	bare    bool
+	// binType is the carrier type of the bin standing there, as Core names it.
+	binType string
+	// catalog is the part-to-carrier list Core sent with the node list, in
+	// force when the spot was read; nil before the first one arrives. An empty
+	// is judged against it (spareIsRight).
+	catalog []protocol.PayloadBinTypeInfo
+}
+
+// readOfRow is a spot's read from its row in a node-bins answer, with the
+// catalog an empty is judged against. Every decision point reads the spot
+// through it.
+func readOfRow(b NodeBinInfo, catalog []protocol.PayloadBinTypeInfo) spotRead {
+	return spotRead{known: true, occupied: b.Occupied, payload: b.PayloadCode, bare: b.Bare,
+		binType: b.BinTypeCode, catalog: catalog}
 }
 
 // spotPlan is the orders one decision point makes for the spot.
@@ -80,9 +94,8 @@ func (p spotPlan) orders() int {
 // cell's prime lock:
 //
 //   - present: a bin stands on the spot (spotRead.occupied, known);
-//   - right:   that bin suits this claim by what Edge can see — empty for a
-//     produce claim, the claim's part for a consume claim. Edge holds no carrier
-//     rule; Core judges bin type at the pickup;
+//   - right:   that bin suits this claim (spareIsRight): a full by its part,
+//     an empty by its carrier, asked as Core asks it at the pickup;
 //   - coming:  this line's non-terminal plain orders bound for the spot, for the
 //     claim's part and role (spotComing);
 //   - consumes: 1 when the plan being applied lifts the spare;
@@ -105,12 +118,19 @@ func reconcileSpot(c *processes.NodeClaim, present, right bool, coming, consumes
 	return plan
 }
 
-// spareIsRight reports whether the bin on the spot suits the claim as far as
-// Edge can tell: a carrier that is there and carries what the claim's spare
-// carries (spareCarries). Edge holds no carrier rule; Core judges bin type at
-// the pickup.
+// spareIsRight reports whether the bin on the spot suits the claim: a carrier
+// that is there and carries what the claim's spare carries (spareCarries). A
+// full is judged by its part. An empty is judged by its carrier as well: one
+// the claim's part may ride, by Core's own rule over the catalog Core sent
+// (partPermitsCarrier), so the Edge sends back exactly the empties Core's
+// pickup would refuse. The one judgement for every decision point: the
+// request, the level keeper's sweep, a changeover's start and its cancel.
+// Nothing about who left the bin there, or when, is asked.
 func spareIsRight(c *processes.NodeClaim, read spotRead) bool {
-	return read.occupied && !read.bare && read.payload == spareCarries(c)
+	if !read.occupied || read.bare || read.payload != spareCarries(c) {
+		return false
+	}
+	return !carriesEmpty(c) || partPermitsCarrier(read.catalog, c.PayloadCode, read.binType)
 }
 
 // isSpotRefill reports whether a line's order is a keep-staged refill: a plain
@@ -270,15 +290,16 @@ func (e *Engine) refillSpot(node *processes.Node, c *processes.NodeClaim, n int,
 	}
 }
 
-// spotOf reads the spot's row out of a node-bins answer.
-func spotOf(c *processes.NodeClaim, rows []NodeBinInfo, nodeKnown func(string) bool) spotRead {
+// spotOf reads the spot's row out of a node-bins answer, with the catalog its
+// empty is judged against.
+func spotOf(c *processes.NodeClaim, rows []NodeBinInfo, nodeKnown func(string) bool, catalog []protocol.PayloadBinTypeInfo) spotRead {
 	spot := spotNode(c)
 	if spot == "" || !nodeKnown(spot) {
 		return spotRead{}
 	}
 	for _, b := range rows {
 		if b.NodeName == spot {
-			return spotRead{known: true, occupied: b.Occupied, payload: b.PayloadCode, bare: b.Bare}
+			return readOfRow(b, catalog)
 		}
 	}
 	return spotRead{}

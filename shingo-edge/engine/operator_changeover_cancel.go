@@ -49,7 +49,7 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 		}
 	}
 	defer release()
-	flows := e.abortSpotOrdersNotFlown(spots, changeover.StartedAt)
+	flows := e.abortSpotOrdersNotFlown(spots)
 
 	nodeTasks, _ := e.db.ListChangeoverNodeTasks(changeover.ID)
 	// The line's bin an aborted leg left parked on its way out, and the incoming

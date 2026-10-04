@@ -356,6 +356,15 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 		mustNil(t, edge.DB.UpsertPayloadCatalog(&catalog.CatalogEntry{ID: int64(i + 1), Name: code, Code: code, UOPCapacity: 40}),
 			"catalog "+code)
 	}
+	// And the part-to-carrier list Core sends with the node list, read from
+	// Core's own rows: an empty on the spot is judged against it.
+	pairs, err := coreDB.ListPayloadBinTypeMappings()
+	mustNil(t, err, "carrier list")
+	var carriers []protocol.PayloadBinTypeInfo
+	for _, p := range pairs {
+		carriers = append(carriers, protocol.PayloadBinTypeInfo{PayloadCode: p[0], BinTypeCode: p[1]})
+	}
+	edge.Engine.SetPayloadBinTypes(carriers)
 	c.processID, err = edge.DB.CreateProcess("KSR-PROC", "keep-staged recovery", "active_production", "", "", false)
 	mustNil(t, err, "process")
 	c.nodeID, err = edge.DB.CreateProcessNode(processes.NodeInput{

@@ -3,7 +3,6 @@ package engine
 import (
 	"sort"
 	"sync"
-	"time"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -100,18 +99,11 @@ func planLiftsSpot(plan changeover.Plan, coreNode, spot string) bool {
 // decide is the reconcile for one spot through a changeover, from Core's read.
 //
 // A spare is unwanted when no incoming claim keeps the spot, or it does not suit
-// the incoming claim. A full spare names its part, so the read decides
-// (spareIsRight). An empty does not, and Edge holds no carrier rule: for a
-// produce keeper, an empty is judged by config, kept only when the outgoing
-// claim was produce for the same part. That clause sends an empty back even
-// when its carrier would have served; Core judges type at the pickup, and a
-// wrong one would hold the supply. It must not judge a full spare: after a
-// cancel, the spare standing is often the staying style's own, which never
-// left, and the config would read it as the incoming style's. Nor an empty the
-// staying style is known to own (flow.keeperOwns): at a cancel, unless one of
-// the incoming style's refills has landed since the start, the empty standing
-// is the staying style's, and judged by config it went back to the incoming
-// style's source.
+// the incoming claim (spareIsRight): a full by its part, an empty by whether
+// the incoming part may ride its carrier. The bin is judged by what it is, not
+// by who left it there or when: an empty one style left serves the other when
+// both parts ride its carrier, and at a cancel the empty standing is judged
+// the same whichever style it came from.
 //
 // What is already with the fleet is counted (flow): start and cancel abort
 // every spot order not yet with it, but one that has flown lands. A refill on
@@ -130,10 +122,6 @@ func (ch spotChange) decide(read spotRead, flow spotFlow) spotPlan {
 		judge, target = ch.leaver, 0
 	}
 	right := ch.keeper != nil && spareIsRight(ch.keeper, read)
-	if right && carriesEmpty(ch.keeper) && ch.leaver != nil && !flow.keeperOwns &&
-		(ch.leaver.Role != ch.keeper.Role || ch.leaver.PayloadCode != ch.keeper.PayloadCode) {
-		right = false
-	}
 	return reconcileSpot(judge, read.occupied, right, flow.coming, ch.consumes, target)
 }
 
@@ -149,19 +137,13 @@ func (ch spotChange) returnTo() (*processes.NodeClaim, *processes.Node) {
 
 // spotFlow is what is already moving at a spot when a changeover decides it:
 // refills on their way for the keeper's part and role, and live returns off it.
-// keeperOwns says the bin standing there is known to be the keeper's own: at a
-// cancel, when none of the leaving style's refills has landed since the
-// changeover started, whatever stands there was never the leaver's.
 type spotFlow struct {
 	coming, leaving int
-	keeperOwns      bool
 }
 
 // spotFlows counts each spot's flow from the live rows the decision point has
-// already read, leaving out the orders it has just aborted. landedSince is set
-// at a cancel: the changeover's start, after which a confirmed refill of the
-// leaving claim's part and role is that style's bin on the spot.
-func spotFlows(live []domain.Order, changes []spotChange, aborted map[int64]bool, landedSince *time.Time) map[string]spotFlow {
+// already read, leaving out the orders it has just aborted.
+func spotFlows(live []domain.Order, changes []spotChange, aborted map[int64]bool) map[string]spotFlow {
 	flows := make(map[string]spotFlow, len(changes))
 	for _, ch := range changes {
 		lines := map[string]bool{}
@@ -171,14 +153,8 @@ func spotFlows(live []domain.Order, changes []spotChange, aborted map[int64]bool
 			}
 		}
 		var f spotFlow
-		leaverLanded := false
 		for i := range live {
 			o := &live[i]
-			if landedSince != nil && ch.leaver != nil && o.Status == ordermgr.StatusConfirmed &&
-				isRetrieve(o.OrderType) && o.DeliveryNode == ch.spot && o.PayloadCode == ch.leaver.PayloadCode &&
-				o.RetrieveEmpty == carriesEmpty(ch.leaver) && !o.CreatedAt.Before(*landedSince) {
-				leaverLanded = true
-			}
 			if aborted[o.ID] || ordermgr.IsTerminal(o.Status) {
 				continue
 			}
@@ -190,7 +166,6 @@ func spotFlows(live []domain.Order, changes []spotChange, aborted map[int64]bool
 				f.coming++
 			}
 		}
-		f.keeperOwns = landedSince != nil && !leaverLanded
 		flows[ch.spot] = f
 	}
 	return flows
@@ -296,9 +271,10 @@ func (e *Engine) readSpotsAnd(changes []spotChange, also []string) (map[string]s
 		e.logFn("keep-staged: read %d node(s) at changeover: %v — no spot orders this time", len(names), err)
 		return reads, extra
 	}
+	catalog := e.PayloadBinTypes()
 	for _, b := range rows {
 		if isSpot[b.NodeName] && e.spotNodeKnown(b.NodeName) {
-			reads[b.NodeName] = spotRead{known: true, occupied: b.Occupied, payload: b.PayloadCode, bare: b.Bare}
+			reads[b.NodeName] = readOfRow(b, catalog)
 		}
 		if isAlso[b.NodeName] {
 			extra[b.NodeName] = b
@@ -370,7 +346,7 @@ func (e *Engine) cancelledChangeoverSpots(processID int64, co *processes.Changeo
 // made for the changeover being cancelled, and left alive they would land the
 // incoming style's spare or carry away the outgoing style's. An order already
 // flown lands; the reconcile after it, or the next one, sends back what is wrong.
-func (e *Engine) abortSpotOrdersNotFlown(spots []spotChange, startedAt time.Time) map[string]spotFlow {
+func (e *Engine) abortSpotOrdersNotFlown(spots []spotChange) map[string]spotFlow {
 	if len(spots) == 0 {
 		return nil
 	}
@@ -400,7 +376,7 @@ func (e *Engine) abortSpotOrdersNotFlown(spots []spotChange, startedAt time.Time
 		}
 		aborted[o.ID] = true
 	}
-	return spotFlows(live, spots, aborted, &startedAt)
+	return spotFlows(live, spots, aborted)
 }
 
 // spotsCleared is the save that clears a keep-staged flag, moves a spot or
@@ -470,7 +446,7 @@ func (e *Engine) spotsCleared(moved []processes.KeptSpot) {
 		read := spotRead{}
 		for _, b := range rows {
 			if b.NodeName == g.k.Spot && e.spotNodeKnown(b.NodeName) {
-				read = spotRead{known: true, occupied: b.Occupied, payload: b.PayloadCode, bare: b.Bare}
+				read = readOfRow(b, nil) // target zero: whatever stands there goes, so nothing is judged
 			}
 		}
 		if !read.known || !read.occupied {

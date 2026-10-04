@@ -149,7 +149,7 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, sp
 			occ[n] = true
 		}
 	}
-	return occ, spotOf(claim, bins, e.spotNodeKnown), park
+	return occ, spotOf(claim, bins, e.spotNodeKnown, e.PayloadBinTypes()), park
 }
 
 // spotNodeKnown reports whether Core has a keep-staged spot's node. Core answers

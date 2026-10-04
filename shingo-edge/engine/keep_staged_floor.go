@@ -78,7 +78,7 @@ func (e *Engine) keepStagedFloor(node *processes.Node, runtime *processes.Runtim
 		e.logFn("keep-staged floor: node %s: read the spot %s: %v — the next pass re-asks", node.Name, spot, ferr)
 		return
 	}
-	read := spotOf(claim, bins, e.spotNodeKnown).lessLeaving(spotLeaving(rows, spot, claim.CoreNodeName))
+	read := spotOf(claim, bins, e.spotNodeKnown, e.PayloadBinTypes()).lessLeaving(spotLeaving(rows, spot, claim.CoreNodeName))
 	if !read.known {
 		return
 	}
@@ -152,9 +152,10 @@ func (e *Engine) kickKeepStagedFloor(ctx *orderCompletionCtx) {
 // A refill already with the fleet cannot be cancelled, so it lands, possibly
 // after the last decision about its spot: a changeover cancelled while the
 // incoming style's refill was flying leaves that style's bin on a spot the
-// staying style keeps. On a produce spot nothing else can see it: Edge reads any
-// unstamped empty as right, and Core refuses it for the staying swap, which
-// waits behind it for good. Edge does know, with no read, what it ordered.
+// staying style keeps. A decision point reads the spot only when one runs, and
+// a swap waiting at Core for its spare does not run one; Edge does know, with
+// no read, what it ordered. It judges the landing by the refill's part and
+// role, not by the carrier: it has no read of the bin to judge a carrier by.
 //
 // "Wanted" is judged against the claim the spot is kept for now: the armed
 // changeover's incoming claim if one is armed, else the active claim. The bin
