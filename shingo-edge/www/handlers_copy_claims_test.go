@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -25,7 +26,7 @@ func TestApiCopyStyleClaims_HappyPath(t *testing.T) {
 	tgtB, err := testDB.CreateStyle("TGT-B", "", pid)
 	testutil.MustNoErr(t, err, "create TGT-B")
 
-	_, err = processes.UpsertClaim(testDB.DB, processes.NodeClaimInput{
+	_, err = processes.UpsertClaim(testDB.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: srcID, CoreNodeName: "N-1", Role: "produce",
 		SwapMode: "sequential", PayloadCode: "P-SRC", UOPCapacity: 10,
 	})
@@ -117,7 +118,7 @@ func TestApiCopyStyleClaims_WithOverrides(t *testing.T) {
 	pid, srcID := seedStyleProcess(t, h, "CopyApiOvProc", "SRC")
 	tgtID, err := testDB.CreateStyle("TGT-OV", "", pid)
 	testutil.MustNoErr(t, err, "create TGT-OV")
-	_, err = processes.UpsertClaim(testDB.DB, processes.NodeClaimInput{
+	_, err = processes.UpsertClaim(testDB.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: srcID, CoreNodeName: "N-1", Role: "produce",
 		SwapMode: "sequential", PayloadCode: "P-SRC", UOPCapacity: 10,
 	})

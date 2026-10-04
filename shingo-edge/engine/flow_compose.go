@@ -765,7 +765,7 @@ func (e *Engine) SaveFlow(processID int64, req FlowSaveRequest) (*FlowSaveResult
 			return &FlowValidationError{Findings: sortFindings(findings)}
 		}
 		for _, c := range draft.cells {
-			if _, err := processes.UpsertClaim(tx, c.input); err != nil {
+			if _, err := processes.UpsertClaim(tx, claimCtx.Kinds(), c.input); err != nil {
 				return fmt.Errorf("%s: %w", c.cell.CoreNodeName, err)
 			}
 			result.Written++

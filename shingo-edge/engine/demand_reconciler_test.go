@@ -168,7 +168,7 @@ func TestReconciler_KeepsEpisodeOpenWhileAnyClaimBelow(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create paired node: %v", err)
 	}
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: claimA.StyleID, CoreNodeName: "ALN_024", Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PANEL-B",
 		UOPCapacity: 300, ReorderPoint: 50, AutoReorder: domain.Ptr(true),

@@ -149,7 +149,7 @@ func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
 		style int64
 		part  string
 	}{{styleA, kscPartA}, {styleB, kscPartB}} {
-		id, err := edge.DB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		id, err := edge.DB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 			StyleID: s.style, CoreNodeName: kscLine, Role: protocol.ClaimRoleConsume,
 			SwapMode: protocol.SwapModeTwoRobot, PayloadCode: s.part, UOPCapacity: 40,
 			InboundSource: kscMarket, InboundStaging: kscSpot, OutboundDestination: kscDest,

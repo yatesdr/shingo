@@ -7,6 +7,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/config"
+	"shingoedge/domain"
 	"shingoedge/plc"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -31,7 +32,7 @@ func TestOperatorStationView_CarriesCurtainState(t *testing.T) {
 	claim := func(in processes.NodeClaimInput) {
 		t.Helper()
 		in.StyleID, in.Role, in.PayloadCode, in.OutboundDestination = styleID, protocol.ClaimRoleProduce, "PART-X", "SYN-FG-OUT"
-		_, err := processes.UpsertClaim(testDB.DB, in)
+		_, err := processes.UpsertClaim(testDB.DB, domain.CoreNodeKinds{}, in)
 		testutil.MustNoErr(t, err, "seed claim "+in.CoreNodeName)
 	}
 	// A press-index front whose back position has its own curtain and no

@@ -118,7 +118,7 @@ func legValue(c processes.NodeClaim, leg string) string {
 // with no node list to check it against.
 func seedLegacyLaneClaim(t *testing.T, sid int64, leg string) {
 	t.Helper()
-	_, err := testDB.UpsertStyleNodeClaim(withLaneOn(cleanLegClaim(sid), leg))
+	_, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, withLaneOn(cleanLegClaim(sid), leg))
 	testutil.MustNoErr(t, err, "seed a stored claim naming a lane on "+leg)
 }
 
@@ -154,49 +154,51 @@ type legCensusRow struct {
 }
 
 // claimWriterCensus is every claim-leg writer reachable from the admin API and
-// the store, per leg, as it stands.
+// the store, per leg. Every one refuses a lane on every leg: the store's claim
+// write and the copy paths ask domain.CoreNodeKinds.LaneLegs, and the editor's
+// validator asks the same function first.
 var claimWriterCensus = []legCensusRow{
 	{"editor", "inbound_source", legRefused},
 	{"editor", "outbound_destination", legRefused},
-	{"editor", "changeover_evac_destination", legSaved},
-	{"editor", "containment_destination", legSaved},
-	{"editor", "inbound_staging", legSaved},
-	{"editor", "outbound_staging", legSaved},
+	{"editor", "changeover_evac_destination", legRefused},
+	{"editor", "containment_destination", legRefused},
+	{"editor", "inbound_staging", legRefused},
+	{"editor", "outbound_staging", legRefused},
 
-	{"containment stamp", "containment_destination", legSaved},
+	{"containment stamp", "containment_destination", legRefused},
 	// The stamp echoes every other leg of the claim it writes. A claim that
 	// already names a lane on staging, stamped with a plain destination.
-	{"containment stamp, echo", "inbound_staging", legSaved},
+	{"containment stamp, echo", "inbound_staging", legRefused},
 	// Two styles, the first clean and the second naming a lane: the stamp
 	// lands on both, or on neither. Never on the first alone.
-	{"containment stamp, two styles", "inbound_staging", legSaved},
+	{"containment stamp, two styles", "inbound_staging", legRefused},
 
-	{"clone", "inbound_source", legSaved},
-	{"clone", "outbound_destination", legSaved},
-	{"clone", "changeover_evac_destination", legSaved},
-	{"clone", "containment_destination", legSaved},
-	{"clone", "inbound_staging", legSaved},
-	{"clone", "outbound_staging", legSaved},
+	{"clone", "inbound_source", legRefused},
+	{"clone", "outbound_destination", legRefused},
+	{"clone", "changeover_evac_destination", legRefused},
+	{"clone", "containment_destination", legRefused},
+	{"clone", "inbound_staging", legRefused},
+	{"clone", "outbound_staging", legRefused},
 
-	{"generate", "inbound_source", legSaved},
-	{"generate", "outbound_destination", legSaved},
-	{"generate", "changeover_evac_destination", legSaved},
-	{"generate", "containment_destination", legSaved},
-	{"generate", "inbound_staging", legSaved},
-	{"generate", "outbound_staging", legSaved},
+	{"generate", "inbound_source", legRefused},
+	{"generate", "outbound_destination", legRefused},
+	{"generate", "changeover_evac_destination", legRefused},
+	{"generate", "containment_destination", legRefused},
+	{"generate", "inbound_staging", legRefused},
+	{"generate", "outbound_staging", legRefused},
 
-	{"copy", "inbound_source", legSaved},
-	{"copy", "outbound_destination", legSaved},
-	{"copy", "changeover_evac_destination", legSaved},
-	{"copy", "containment_destination", legSaved},
-	{"copy", "inbound_staging", legSaved},
-	{"copy", "outbound_staging", legSaved},
+	{"copy", "inbound_source", legRefused},
+	{"copy", "outbound_destination", legRefused},
+	{"copy", "changeover_evac_destination", legRefused},
+	{"copy", "containment_destination", legRefused},
+	{"copy", "inbound_staging", legRefused},
+	{"copy", "outbound_staging", legRefused},
 
 	// The overrides carry four of the six legs.
-	{"copy with overrides", "inbound_source", legSaved},
-	{"copy with overrides", "outbound_destination", legSaved},
-	{"copy with overrides", "inbound_staging", legSaved},
-	{"copy with overrides", "outbound_staging", legSaved},
+	{"copy with overrides", "inbound_source", legRefused},
+	{"copy with overrides", "outbound_destination", legRefused},
+	{"copy with overrides", "inbound_staging", legRefused},
+	{"copy with overrides", "outbound_staging", legRefused},
 }
 
 // TestClaimLegWriters_ALaneOnEachLeg is the census of claim writers.
@@ -253,7 +255,7 @@ func editorOutcome(t *testing.T, router *chi.Mux, cookie *http.Cookie, sid int64
 
 func containmentOutcome(t *testing.T, router *chi.Mux, cookie *http.Cookie, pid, sid int64) string {
 	t.Helper()
-	_, err := testDB.UpsertStyleNodeClaim(cleanLegClaim(sid))
+	_, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, cleanLegClaim(sid))
 	testutil.MustNoErr(t, err, "seed a clean claim")
 	resp := doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/containment-setting",
 		map[string]any{"enabled": true, "destination": "LL-LANE"}, cookie)
@@ -300,7 +302,7 @@ func containmentEchoOutcome(t *testing.T, router *chi.Mux, cookie *http.Cookie, 
 // style sorted after it names the lane.
 func containmentTwoStylesOutcome(t *testing.T, router *chi.Mux, cookie *http.Cookie, pid, sid int64, leg string) string {
 	t.Helper()
-	_, err := testDB.UpsertStyleNodeClaim(cleanLegClaim(sid))
+	_, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, cleanLegClaim(sid))
 	testutil.MustNoErr(t, err, "seed the clean style")
 	second := seedStyle(t, fmt.Sprintf("CW-zz-%d", sid), pid)
 	seedLegacyLaneClaim(t, second, leg)
@@ -358,7 +360,7 @@ func copyOutcome(t *testing.T, router *chi.Mux, cookie *http.Cookie, pid, sid in
 	tgt := seedStyle(t, fmt.Sprintf("CW-tgt-%d", sid), pid)
 	body := map[string]any{"target_style_ids": []int64{tgt}, "include_payloads": true}
 	if override {
-		_, err := testDB.UpsertStyleNodeClaim(cleanLegClaim(sid))
+		_, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, cleanLegClaim(sid))
 		testutil.MustNoErr(t, err, "seed a clean claim")
 		body["overrides"] = []map[string]string{{"node": "LL-PRESS", leg: "LL-LANE",
 			"payload_code": fmt.Sprintf("PART-LL-%d", tgt)}}
@@ -391,10 +393,10 @@ func copyOutcome(t *testing.T, router *chi.Mux, cookie *http.Cookie, pid, sid in
 var routingWriterCensus = []legCensusRow{
 	{"routing POST", "source", legRefused},
 	{"routing POST", "destination", legRefused},
-	{"routing POST", "staging", legSaved},
+	{"routing POST", "staging", legRefused},
 	{"routing PUT", "source", legRefused},
 	{"routing PUT", "destination", legRefused},
-	{"routing PUT", "staging", legSaved},
+	{"routing PUT", "staging", legRefused},
 	{"routing PATCH enable", "source", legSaved},
 	{"routing PATCH enable", "destination", legSaved},
 	{"routing PATCH enable", "staging", legSaved},
@@ -490,7 +492,7 @@ func TestRoutingDerive_ALaneOnEachLeg(t *testing.T) {
 				testutil.MustNoErr(t, err, "create process")
 				sid, err := db.CreateStyle("DW-Style", "", pid)
 				testutil.MustNoErr(t, err, "create style")
-				_, err = db.UpsertStyleNodeClaim(withLaneOn(cleanLegClaim(sid), row.leg))
+				_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, withLaneOn(cleanLegClaim(sid), row.leg))
 				testutil.MustNoErr(t, err, "seed a stored lane claim")
 				_, err = db.DeriveRoutingNodes(nil)
 				testutil.MustNoErr(t, err, "boot derive")
@@ -511,5 +513,66 @@ func TestRoutingDerive_ALaneOnEachLeg(t *testing.T) {
 				t.Errorf("%s with a lane on %s: %s, want %s", row.writer, row.leg, got, row.want)
 			}
 		})
+	}
+}
+
+// TestLaneLegRefusals_NameTheStyleNodeAndLeg pins the sentences a person reads
+// when a lane is refused: on the editor's field, and in the clone, generate,
+// copy and containment answers, which name the style, the claim's node and
+// the leg so the one claim to fix can be found.
+func TestLaneLegRefusals_NameTheStyleNodeAndLeg(t *testing.T) {
+	h, router := newAdminRouter(t)
+	h.engine.(*stubEngine).core = writersCore()
+	cookie := authCookie(t, h)
+	staging := protocol.MsgLaneIsNotAStagingNode + `: "LL-LANE"`
+
+	pid := seedProcess(t, "LT-Line")
+	sid := seedStyle(t, "LT-Src", pid)
+	seedLegacyLaneClaim(t, sid, "inbound_staging")
+
+	resp := doRequest(t, router, "POST", "/api/styles/"+itoa(sid)+"/clone", map[string]any{"name": "LT-Clone"}, cookie)
+	assertStatus(t, resp, http.StatusBadRequest)
+	if got, want := decodeBody(t, resp)["error"], `style "LT-Src", claim at LL-PRESS: inbound_staging: `+staging; got != want {
+		t.Errorf("clone:\n got  %q\n want %q", got, want)
+	}
+
+	resp = doRequest(t, router, "POST", "/api/styles/"+itoa(sid)+"/generate",
+		map[string]any{"variants": []map[string]any{{"name": "LT-Gen"}}}, cookie)
+	assertStatus(t, resp, http.StatusBadRequest)
+	if got, want := decodeBody(t, resp)["error"], `clone variant "LT-Gen": style "LT-Src", claim at LL-PRESS: inbound_staging: `+staging; got != want {
+		t.Errorf("generate:\n got  %q\n want %q", got, want)
+	}
+
+	tgt := seedStyle(t, "LT-Tgt", pid)
+	resp = doRequest(t, router, "POST", "/api/styles/"+itoa(sid)+"/claims/copy-to",
+		map[string]any{"target_style_ids": []int64{tgt}, "include_payloads": true}, cookie)
+	assertStatus(t, resp, http.StatusOK)
+	results, _ := decodeBody(t, resp)["results"].([]any)
+	if len(results) != 1 {
+		t.Fatalf("copy: %d results", len(results))
+	}
+	if got, want := results[0].(map[string]any)["reason"], `copying style "LT-Src" onto "LT-Tgt", claim at LL-PRESS: inbound_staging: `+staging; got != want {
+		t.Errorf("copy:\n got  %q\n want %q", got, want)
+	}
+
+	resp = doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/containment-setting",
+		map[string]any{"enabled": true, "destination": "LL-SUP"}, cookie)
+	assertStatus(t, resp, http.StatusBadRequest)
+	if got, want := decodeBody(t, resp)["error"], `stamp containment on LL-PRESS (style LT-Src): inbound_staging: `+staging; got != want {
+		t.Errorf("containment stamp:\n got  %q\n want %q", got, want)
+	}
+
+	resp = doRequest(t, router, "POST", "/api/style-node-claims", withLaneOn(cleanLegClaim(tgt), "outbound_staging"), cookie)
+	assertStatus(t, resp, http.StatusBadRequest)
+	raw, _ := decodeBody(t, resp)["field_errors"].([]any)
+	found := false
+	for _, r := range raw {
+		m := r.(map[string]any)
+		if m["field"] == "outbound_staging" && m["message"] == staging {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("editor: no error on outbound_staging reading %q: %+v", staging, raw)
 	}
 }

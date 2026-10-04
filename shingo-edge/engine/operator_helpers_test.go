@@ -5,6 +5,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -54,7 +55,7 @@ func TestFindActiveClaim_AddNodeChangeoverFallback(t *testing.T) {
 	}
 	// Claim exists ONLY on to-style — mirrors the add-node topology
 	// where the new node didn't exist under from-style.
-	toClaimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	toClaimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID:             toStyleID,
 		CoreNodeName:        "ADD-NEW-NODE",
 		Role:                protocol.ClaimRoleConsume,
@@ -106,11 +107,11 @@ func TestFindActiveClaim_PrefersActiveOverTarget(t *testing.T) {
 		Sequence:     1,
 		Enabled:      true,
 	})
-	fromClaimID, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	fromClaimID, _ := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "PREF-NODE", Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART-OLD", UOPCapacity: 100, InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 	})
-	toClaimID, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	toClaimID, _ := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "PREF-NODE", Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART-NEW", UOPCapacity: 200, InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 	})

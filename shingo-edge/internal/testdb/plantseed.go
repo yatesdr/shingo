@@ -109,7 +109,7 @@ func SeedPlant(t *testing.T, db *store.DB, fx scenefixtures.Plant, processName s
 		if !ok {
 			continue // orphan: its style row is gone at the plant
 		}
-		if _, err := processes.UpsertClaim(db.DB, domain.NodeClaimInput{
+		if _, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, domain.NodeClaimInput{
 			StyleID: sid, CoreNodeName: c.CoreNodeName, Role: protocol.ClaimRole(c.Role), SwapMode: protocol.SwapMode(c.SwapMode),
 			PayloadCode:    c.PayloadCode,
 			InboundStaging: c.InboundStaging, OutboundStaging: c.OutboundStaging,

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -80,7 +81,7 @@ func seedHoldNode(t *testing.T, db interface {
 	CreateStyle(string, string, int64) (int64, error)
 	SetActiveStyle(int64, *int64) error
 	CreateProcessNode(processes.NodeInput) (int64, error)
-	UpsertStyleNodeClaim(processes.NodeClaimInput) (int64, error)
+	UpsertStyleNodeClaim(domain.CoreNodeKinds, processes.NodeClaimInput) (int64, error)
 	EnsureProcessNodeRuntime(int64) (*processes.RuntimeState, error)
 }, coreNode string) int64 {
 	t.Helper()
@@ -102,7 +103,7 @@ func seedHoldNode(t *testing.T, db interface {
 	if err := db.SetActiveStyle(processID, &active); err != nil {
 		t.Fatalf("set active: %v", err)
 	}
-	_, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: coreNode, Role: "produce",
 		SwapMode: "two_robot_press_index", PayloadCode: "PART-HOLD", UOPCapacity: 30,
 		PairedCoreNode: coreNode + "-B", OutboundDestination: "FG-1",
@@ -173,7 +174,7 @@ func TestSendBinToQualityHold_RefusesWithoutRouteOrBin(t *testing.T) {
 	testutil.MustNoErr(t, err, "create style")
 	var active = styleID
 	_ = eng.db.SetActiveStyle(processID, &active)
-	_, err = eng.db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	_, err = eng.db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "PLN-NOROUTE", Role: "produce",
 		SwapMode: "two_robot_press_index", PayloadCode: "PART-X", UOPCapacity: 10,
 		PairedCoreNode: "PLN-NOROUTE-B", OutboundDestination: "FG-9",
@@ -244,7 +245,7 @@ func TestReleaseFromContainment_AmbiguityAndHappyPath(t *testing.T) {
 	testutil.MustNoErr(t, err, "create second process")
 	otherStyle, err := eng.db.CreateStyle("HOLD-STYLE-B", "", otherProc)
 	testutil.MustNoErr(t, err, "create second style")
-	_, err = eng.db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	_, err = eng.db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: otherStyle, CoreNodeName: "PLN-OTHER", Role: "produce",
 		SwapMode: "two_robot_press_index", PayloadCode: "PART-OTHER", UOPCapacity: 5,
 		PairedCoreNode: "PLN-OTHER-B", OutboundDestination: "FG-2",

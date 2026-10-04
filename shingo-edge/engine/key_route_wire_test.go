@@ -5,6 +5,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	ordermgr "shingoedge/orders"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -29,7 +30,7 @@ func setClaimRouting(t *testing.T, db *store.DB, claim *processes.NodeClaim, rou
 		KeyRoute:            &route,
 		KeyTask:             &task,
 	}
-	_, err := db.UpsertStyleNodeClaim(in)
+	_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	testutil.MustNoErr(t, err, "set claim routing")
 }
 

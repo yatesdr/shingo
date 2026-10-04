@@ -79,7 +79,7 @@ func seedKeepStagedChangeover(t *testing.T, from, to []coClaim, rows map[string]
 		if c.mode == protocol.SwapModeSingleRobot {
 			in.OutboundStaging = "KSCO-OUT-" + c.line
 		}
-		id, err := db.UpsertStyleNodeClaim(in)
+		id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 		testutil.MustNoErr(t, err, "claim "+c.line)
 		if c.keepStaged {
 			_, err = db.DB.Exec(`UPDATE style_node_claims SET keep_staged=1 WHERE id=?`, id)
@@ -370,7 +370,7 @@ func TestKeepStagedSave_LeavingTheSpotSendsTheSpareBack(t *testing.T) {
 	}{
 		{"clear the flag on the running style", true, func(t *testing.T, fx *coFixture, _ int64, in processes.NodeClaimInput) {
 			in.KeepStaged = domainPtr(false)
-			_, err := fx.eng.StyleService().UpsertClaim(in)
+			_, err := fx.eng.StyleService().UpsertClaim(domain.CoreNodeKinds{}, in)
 			testutil.MustNoErr(t, err, "clear keep_staged")
 		}, 1},
 		{"drop the claim on the running style", true, func(t *testing.T, fx *coFixture, claimID int64, _ processes.NodeClaimInput) {
@@ -378,7 +378,7 @@ func TestKeepStagedSave_LeavingTheSpotSendsTheSpareBack(t *testing.T) {
 		}, 1},
 		{"clear the flag on a style that is not running", false, func(t *testing.T, fx *coFixture, _ int64, in processes.NodeClaimInput) {
 			in.KeepStaged = domainPtr(false)
-			_, err := fx.eng.StyleService().UpsertClaim(in)
+			_, err := fx.eng.StyleService().UpsertClaim(domain.CoreNodeKinds{}, in)
 			testutil.MustNoErr(t, err, "clear keep_staged")
 		}, 0},
 	} {

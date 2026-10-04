@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/internal/testdb"
 	"shingoedge/store/processes"
 )
@@ -31,13 +32,13 @@ func TestStyleCopyClaims_RulesAndResults(t *testing.T) {
 	testutil.MustNoErr(t, db.SetActiveStyle(pid, &aID), "set active")
 
 	// Give the source one claim so a successful copy has something to move.
-	_, err = processes.UpsertClaim(db.DB, processes.NodeClaimInput{
+	_, err = processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: srcID, CoreNodeName: "N-1", Role: "produce",
 		SwapMode: protocol.SwapModeSequential, PayloadCode: "P-SRC", UOPCapacity: 10,
 	})
 	testutil.MustNoErr(t, err, "seed source claim")
 
-	results := svc.CopyClaims(srcID, []int64{
+	results := svc.CopyClaims(domain.CoreNodeKinds{}, srcID, []int64{
 		tgtID,          // legal target
 		activeID,       // refused: active style
 		srcID,          // skipped: is the source
@@ -92,13 +93,13 @@ func TestStyleCopyClaims_OverrideNotes(t *testing.T) {
 	pid, srcID := seedProcessStyle(t, db, "CopyNotesProc", "SRC")
 	tgtID, err := db.CreateStyle("TGT-NOTES", "", pid)
 	testutil.MustNoErr(t, err, "create TGT-NOTES")
-	_, err = processes.UpsertClaim(db.DB, processes.NodeClaimInput{
+	_, err = processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: srcID, CoreNodeName: "N-1", Role: "produce",
 		SwapMode: protocol.SwapModeSequential, PayloadCode: "P-SRC", UOPCapacity: 10,
 	})
 	testutil.MustNoErr(t, err, "seed source claim")
 
-	results := svc.CopyClaims(srcID, []int64{tgtID}, true, []processes.ClaimOverride{
+	results := svc.CopyClaims(domain.CoreNodeKinds{}, srcID, []int64{tgtID}, true, []processes.ClaimOverride{
 		{Node: "N-1", PayloadCode: "P-TGT"}, // applies
 		{Node: "N-GHOST", Role: "produce"},  // matches nothing — a note, not an error
 	})

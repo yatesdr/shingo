@@ -475,7 +475,7 @@ func TestComposerShots(t *testing.T) {
 		}
 		in := domain.InputFromClaim(c)
 		in.KeyRoute = &route
-		if _, err := db.UpsertStyleNodeClaim(in); err != nil {
+		if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in); err != nil {
 			t.Fatalf("write the key route on %s: %v", c.CoreNodeName, err)
 		}
 		t.Logf("key route %v on %s", route, c.CoreNodeName)
@@ -2030,7 +2030,7 @@ func TestComposerShots(t *testing.T) {
 		// reads `drifted · PLN_0x · outbound destination` in the table's own
 		// words — which are the CLAIM's words on both now (F3).
 		in.OutboundDestination = "Supermarket Empty Totes"
-		if _, err := db.UpsertStyleNodeClaim(in); err != nil {
+		if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in); err != nil {
 			t.Fatalf("drift the victim: %v", err)
 		}
 		after, err := presetSvc.PresetsFor(seeded.ProcessID)

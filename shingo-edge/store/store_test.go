@@ -1365,14 +1365,14 @@ func TestStyleNodeClaims_InsertUpdateGetList(t *testing.T) {
 
 	// swap_mode is required — a blank now fails loud (the retired "simple"
 	// default was dropped with the ingress lockdown).
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N1", PayloadCode: "PL-1",
 	}); !errors.Is(err, protocol.ErrInvalidSwapMode) {
 		t.Fatalf("blank swap_mode: want ErrInvalidSwapMode, got %v", err)
 	}
 
 	// Insert with an explicit configurable mode (role blank → "consume").
-	id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N1", SwapMode: "single_robot", PayloadCode: "PL-1", InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 	})
 	if err != nil {
@@ -1387,7 +1387,7 @@ func TestStyleNodeClaims_InsertUpdateGetList(t *testing.T) {
 	}
 
 	// Second insert on a different node — sequence auto-increments.
-	id2, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	id2, _ := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N2", Role: "produce", SwapMode: "single_robot", PayloadCode: "PL-2", InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 	})
 	got2, _ := db.GetStyleNodeClaim(id2)
@@ -1396,7 +1396,7 @@ func TestStyleNodeClaims_InsertUpdateGetList(t *testing.T) {
 	}
 
 	// Upsert on existing (styleID + coreNodeName match) — returns same id, updates fields.
-	id3, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	id3, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N1", Role: "produce", SwapMode: "single_robot", PayloadCode: "PL-1-v2", InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 		AllowedPayloadCodes: []string{"PL-1-v2", "PL-FALLBACK"},
 	})
@@ -1436,7 +1436,7 @@ func TestUpsertClaim_RejectsPressPositionSwapMode(t *testing.T) {
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
 
-	_, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N", SwapMode: "press_position", PayloadCode: "PL",
 	})
 	if err == nil {
@@ -1455,7 +1455,7 @@ func TestUpsertClaim_RejectsUnknownSwapMode(t *testing.T) {
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "PU", "SU")
 
-	_, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N", SwapMode: "does_not_exist", PayloadCode: "PL",
 	})
 	if err == nil {
@@ -1496,7 +1496,7 @@ func TestStyleNodeClaims_ManualSwapCannotBePersisted(t *testing.T) {
 			OutboundDestination: "DEST", AutoConfirm: false,
 		}},
 	} {
-		_, err := db.UpsertStyleNodeClaim(tc.in)
+		_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, tc.in)
 		if err == nil {
 			t.Fatalf("%s: manual_swap must not persist — a stored loader claim is a second "+
 				"authority for config Core owns", tc.name)
@@ -1545,7 +1545,7 @@ func TestStyleNodeClaims_LinesideSoftThreshold_Roundtrip(t *testing.T) {
 	_, sid := seedProcessStyle(t, db, "P", "S")
 
 	// Default (unset) persists as 0.
-	id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N1", SwapMode: "single_robot", PayloadCode: "PL", InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 	})
 	if err != nil {
@@ -1557,7 +1557,7 @@ func TestStyleNodeClaims_LinesideSoftThreshold_Roundtrip(t *testing.T) {
 	}
 
 	// Explicit value on update survives.
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N1", SwapMode: "single_robot", PayloadCode: "PL", InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 		LinesideSoftThreshold: 12,
 	}); err != nil {
@@ -1575,7 +1575,7 @@ func TestStyleNodeClaims_LinesideSoftThreshold_Roundtrip(t *testing.T) {
 	}
 
 	// Explicit value on fresh insert (different node) also survives.
-	id2, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	id2, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N2", SwapMode: "single_robot", PayloadCode: "PL2", InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 		LinesideSoftThreshold: 5,
 	})
@@ -1592,7 +1592,7 @@ func TestStyleNodeClaims_Delete(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
-	id, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	id, _ := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N", SwapMode: "single_robot", PayloadCode: "PL", InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 	})
 	testutil.MustNoErr(t, db.DeleteStyleNodeClaim(id), "delete")
@@ -1680,7 +1680,7 @@ func TestUpsertClaim_EnforcesFlowspec(t *testing.T) {
 	}
 	for _, tc := range refused {
 		t.Run("refuses_"+tc.name, func(t *testing.T) {
-			_, err := db.UpsertStyleNodeClaim(tc.in)
+			_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, tc.in)
 			if err == nil {
 				t.Fatalf("stored a %s claim the table refuses on %s", tc.in.SwapMode, tc.field)
 			}
@@ -1698,7 +1698,7 @@ func TestUpsertClaim_EnforcesFlowspec(t *testing.T) {
 			InboundStaging: "IN", OutboundDestination: "OD"},
 	}
 	for _, in := range accepted {
-		if _, err := db.UpsertStyleNodeClaim(in); err != nil {
+		if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in); err != nil {
 			t.Errorf("complete %s claim refused: %v", in.SwapMode, err)
 		}
 	}
@@ -1730,7 +1730,7 @@ func TestStoreStillAcceptsWhatFlowspecRefuses(t *testing.T) {
 		{StyleID: sid, CoreNodeName: "SQ-STAGE", SwapMode: protocol.SwapModeSequential, PayloadCode: "PL",
 			PairedCoreNode: "B", OutboundDestination: "OD", InboundSource: "SRC", InboundStaging: "IN"},
 	} {
-		if _, err := db.UpsertStyleNodeClaim(in); err != nil {
+		if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in); err != nil {
 			t.Errorf("D4 (sequential) resolved at the store: %s refused (%v) — flip this case in the commit that did it", in.CoreNodeName, err)
 		}
 	}
@@ -1745,7 +1745,7 @@ func TestCloneStyle_CopiesClaimsVerbatim(t *testing.T) {
 	db := coverageDB(t)
 	pid, baseID := seedProcessStyle(t, db, "PRESS", "BASE")
 
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: baseID, CoreNodeName: "IN", Role: "consume", SwapMode: "single_robot", PayloadCode: "RAW-1", UOPCapacity: 100, InboundStaging: "STG-IN", OutboundStaging: "STG-OUT", OutboundDestination: "STG-DEST",
 	}); err != nil {
 		t.Fatalf("seed consume claim: %v", err)
@@ -1755,7 +1755,7 @@ func TestCloneStyle_CopiesClaimsVerbatim(t *testing.T) {
 	// carry-over answer — the column the clone list silently dropped until
 	// U0, so every clone of a keep_lineside press came back as replace.
 	keep := domain.CarryoverKeepLineside
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: baseID, CoreNodeName: "OUT_L", Role: "produce", SwapMode: "two_robot_press_index",
 		PayloadCode: "FIN-1L", UOPCapacity: 40, PairedCoreNode: "OUT_L_B", OutboundDestination: "SMN",
 		ChangeoverCarryoverDisposition: &keep,
@@ -1763,7 +1763,7 @@ func TestCloneStyle_CopiesClaimsVerbatim(t *testing.T) {
 		t.Fatalf("seed produce claim: %v", err)
 	}
 
-	newID, err := db.CloneStyle(baseID, "CLONE", "cloned", "tester")
+	newID, err := db.CloneStyle(domain.CoreNodeKinds{}, baseID, "CLONE", "cloned", "tester")
 	if err != nil {
 		t.Fatalf("clone: %v", err)
 	}
@@ -1817,7 +1817,7 @@ func TestCloneStyle_LeavesWithheldConfigurationBehind(t *testing.T) {
 	db := coverageDB(t)
 	_, baseID := seedProcessStyle(t, db, "PRESS", "BASE")
 
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: baseID, CoreNodeName: "LINE", Role: "consume", SwapMode: "single_robot", PayloadCode: "RAW-1", UOPCapacity: 100,
 		// Required at save since flowspec D1/D2 — the seed satisfies the mode
 		// so the copy is the only thing under test.
@@ -1834,7 +1834,7 @@ func TestCloneStyle_LeavesWithheldConfigurationBehind(t *testing.T) {
 		t.Fatalf("seed loader claim: %v", err)
 	}
 
-	newID, err := db.CloneStyle(baseID, "CLONE", "cloned", "tester")
+	newID, err := db.CloneStyle(domain.CoreNodeKinds{}, baseID, "CLONE", "cloned", "tester")
 	if err != nil {
 		t.Fatalf("clone: %v", err)
 	}
@@ -1869,7 +1869,7 @@ func TestGenerateStyles_BatchAppliesPerNodeOverrides(t *testing.T) {
 	// store since flowspec D4).
 	keep := domain.CarryoverKeepLineside
 	for _, n := range []string{"OUT_L", "OUT_R"} {
-		if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 			StyleID: baseID, CoreNodeName: n, Role: "produce", SwapMode: "two_robot_press_index", PayloadCode: "BASE-" + n, UOPCapacity: 1,
 			PairedCoreNode: n + "_B", OutboundDestination: "SMN",
 			ChangeoverCarryoverDisposition: &keep,
@@ -1888,7 +1888,7 @@ func TestGenerateStyles_BatchAppliesPerNodeOverrides(t *testing.T) {
 			{CoreNodeName: "OUT_R", PayloadCode: "2002", UOPCapacity: 60},
 		}},
 	}
-	ids, err := db.GenerateStyles(baseID, variants, "tester")
+	ids, err := db.GenerateStyles(domain.CoreNodeKinds{}, baseID, variants, "tester")
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -1935,7 +1935,7 @@ func TestGenerateStyles_DuplicateNameRollsBackBatch(t *testing.T) {
 		{Name: "OK-1"},
 		{Name: "BASE"},
 	}
-	if _, err := db.GenerateStyles(baseID, variants, "tester"); err == nil {
+	if _, err := db.GenerateStyles(domain.CoreNodeKinds{}, baseID, variants, "tester"); err == nil {
 		t.Fatal("expected duplicate-name error, got nil")
 	}
 	styles, _ := db.ListStylesByProcess(pid)

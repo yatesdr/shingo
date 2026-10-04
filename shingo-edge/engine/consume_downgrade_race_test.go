@@ -65,7 +65,7 @@ func spokenForFixture(t *testing.T, occupied bool) (*Engine, *store.DB, int64) {
 	testutil.MustNoErr(t, err, "create style")
 	testutil.MustNoErr(t, db.SetActiveStyle(procID, &styleID), "set active style")
 
-	claimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "ALN_004", Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "BRKT",
 		UOPCapacity: 40, ReorderPoint: 25, AutoReorder: domain.Ptr(true),

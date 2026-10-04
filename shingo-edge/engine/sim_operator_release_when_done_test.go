@@ -49,7 +49,7 @@ func newMachineFixture(t *testing.T) *machineFixture {
 	testutil.MustNoErr(t, err, "create style")
 	testutil.MustNoErr(t, db.SetActiveStyle(procID, &styleID), "set active style")
 
-	consumeClaim, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	consumeClaim, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "ALN_003", Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PANEL-B",
 		UOPCapacity: 30, ReorderPoint: 15, AutoReorder: domain.Ptr(true),
@@ -57,7 +57,7 @@ func newMachineFixture(t *testing.T) *machineFixture {
 		InboundStaging: "SLN_003", OutboundStaging: "SLN_004",
 	})
 	testutil.MustNoErr(t, err, "upsert consume claim")
-	produceClaim, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	produceClaim, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "ALN_005", Role: protocol.ClaimRoleProduce,
 		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "ASSY",
 		UOPCapacity:   20,

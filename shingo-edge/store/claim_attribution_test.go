@@ -72,7 +72,7 @@ func TestClaim_UpsertStampsSourceCalledByAndUpdatedAt(t *testing.T) {
 		PayloadCode: "RAW", InboundStaging: "STG", OutboundDestination: "DST", Source: domain.ClaimSourceAdmin, CalledBy: "alice",
 		SourcePresetID: domain.Ptr(int64(7)), SourcePresetVersion: domain.Ptr(2),
 	}
-	id, err := db.UpsertStyleNodeClaim(in)
+	id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestClaim_UpsertStampsSourceCalledByAndUpdatedAt(t *testing.T) {
 	// writer that says nothing about it leaves it alone.
 	in.Source, in.CalledBy = domain.ClaimSourceHMI, "station-press-400"
 	in.SourcePresetID, in.SourcePresetVersion = nil, nil
-	if _, err := db.UpsertStyleNodeClaim(in); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in); err != nil {
 		t.Fatalf("second upsert: %v", err)
 	}
 	c, err = db.GetStyleNodeClaim(id)
@@ -109,7 +109,7 @@ func TestClaim_UpsertStampsSourceCalledByAndUpdatedAt(t *testing.T) {
 	}
 	// An unknown source is refused rather than stored.
 	in.Source = "browser"
-	if _, err := db.UpsertStyleNodeClaim(in); err == nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in); err == nil {
 		t.Fatal("source=browser was accepted; the vocabulary is admin/hmi/generated/cloned")
 	}
 }
@@ -122,7 +122,7 @@ func TestClaim_CloneAndGenerateStampTheirOwnSource(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_, base := seedClaimProcess(t, db, "P-Clone")
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: base, CoreNodeName: "PLN_01", Role: "consume", SwapMode: "two_robot",
 		PayloadCode: "RAW", InboundStaging: "STG", OutboundDestination: "DST", Source: domain.ClaimSourceHMI, CalledBy: "station",
 		SourcePresetID: domain.Ptr(int64(7)), SourcePresetVersion: domain.Ptr(2),
@@ -130,7 +130,7 @@ func TestClaim_CloneAndGenerateStampTheirOwnSource(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	cloneID, err := db.CloneStyle(base, "CLONE", "", "alice")
+	cloneID, err := db.CloneStyle(domain.CoreNodeKinds{}, base, "CLONE", "", "alice")
 	if err != nil {
 		t.Fatalf("clone: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestClaim_CloneAndGenerateStampTheirOwnSource(t *testing.T) {
 		t.Fatalf("clone did not carry preset provenance: %v/%v", cl.SourcePresetID, cl.SourcePresetVersion)
 	}
 
-	ids, err := db.GenerateStyles(base, []domain.StyleVariant{{Name: "GEN-A"}, {Name: "GEN-B"}}, "bob")
+	ids, err := db.GenerateStyles(domain.CoreNodeKinds{}, base, []domain.StyleVariant{{Name: "GEN-A"}, {Name: "GEN-B"}}, "bob")
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestClaim_DeleteRetiresWhenHistoryReferencesIt(t *testing.T) {
 		t.Fatalf("CreateProcessNode: %v", err)
 	}
 	mk := func(node, payload, source string) int64 {
-		id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 			StyleID: sid, CoreNodeName: node, Role: "consume", SwapMode: "two_robot",
 			PayloadCode: payload, InboundStaging: "STG", InboundSource: source, OutboundDestination: "SMN_DST",
 			Source: domain.ClaimSourceAdmin, CalledBy: "alice",

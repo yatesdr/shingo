@@ -92,7 +92,7 @@ func loadDirectiveScenario(t *testing.T, loaderFlag bool) (*store.DB, int64) {
 	// The press-index parent, ALSO carrying the flag — the case A8 is about.
 	// Its position inherits the whole struct, so if nothing clears the flag the
 	// position renders an instruction meant for a loader's card.
-	pressClaimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	pressClaimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "PLN_1", Role: protocol.ClaimRoleProduce,
 		SwapMode: protocol.SwapModeTwoRobotPressIndex, PairedCoreNode: "PLN_2",
 		PayloadCode: "PART-OLD", UOPCapacity: 100,
@@ -109,7 +109,7 @@ func loadDirectiveScenario(t *testing.T, loaderFlag bool) (*store.DB, int64) {
 
 	// The incoming style wants a different payload at the press — that is what
 	// the loader is being told to go and fetch carriers for.
-	_, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "PLN_1", Role: protocol.ClaimRoleProduce,
 		SwapMode: protocol.SwapModeTwoRobotPressIndex, PairedCoreNode: "PLN_2",
 		PayloadCode: "PART-NEW", UOPCapacity: 100,

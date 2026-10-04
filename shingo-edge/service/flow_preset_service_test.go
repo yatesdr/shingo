@@ -205,7 +205,7 @@ func TestPresets_DriftIsComputedFromTruth(t *testing.T) {
 	testutil.MustNoErr(t, err, "db.ListStyleNodeClaims")
 	in := domain.InputFromClaim(claims[0])
 	in.OutboundDestination = "Empty Tote Return"
-	if _, err := db.UpsertStyleNodeClaim(in); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in); err != nil {
 		t.Fatalf("edit the member: %v", err)
 	}
 

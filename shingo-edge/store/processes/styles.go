@@ -244,7 +244,11 @@ const cloneClaimColumns = `core_node_name, role, swap_mode, payload_code,
 // source ('cloned' / 'generated') and caller. Returns the new style id. Used by
 // both CloneStyle (single) and GenerateStyles (batch) so the copy logic lives in
 // exactly one place.
-func cloneStyleTx(tx *sql.Tx, src *Style, name, description, source, calledBy string) (int64, error) {
+//
+// A copied claim that names a lane on any leg refuses the clone, naming the
+// source style, the claim's node and the leg (refuseStoredLaneLegs). The
+// source is fixed first; nothing is cleared on the way through.
+func cloneStyleTx(tx *sql.Tx, kinds domain.CoreNodeKinds, src *Style, name, description, source, calledBy string) (int64, error) {
 	res, err := tx.Exec(
 		`INSERT INTO styles (name, description, process_id) VALUES (?, ?, ?)`,
 		name, description, src.ProcessID)
@@ -285,6 +289,9 @@ func cloneStyleTx(tx *sql.Tx, src *Style, name, description, source, calledBy st
 	if err != nil {
 		return 0, err
 	}
+	if err := refuseStoredLaneLegs(tx, kinds, newID, fmt.Sprintf("style %q", src.Name)); err != nil {
+		return 0, err
+	}
 	return newID, nil
 }
 
@@ -295,7 +302,7 @@ func cloneStyleTx(tx *sql.Tx, src *Style, name, description, source, calledBy st
 // trigger. Operators use this to add a style whose robot choreography matches
 // an existing one, then edit only the per-payload fields on the result. The
 // copies are attributed source='cloned', called_by=calledBy.
-func CloneStyle(db *sql.DB, srcID int64, name, description, calledBy string) (int64, error) {
+func CloneStyle(db *sql.DB, kinds domain.CoreNodeKinds, srcID int64, name, description, calledBy string) (int64, error) {
 	src, err := GetStyle(db, srcID)
 	if err != nil {
 		return 0, err
@@ -308,7 +315,7 @@ func CloneStyle(db *sql.DB, srcID int64, name, description, calledBy string) (in
 		return 0, err
 	}
 	defer tx.Rollback()
-	newID, err := cloneStyleTx(tx, src, name, description, domain.ClaimSourceCloned, calledBy)
+	newID, err := cloneStyleTx(tx, kinds, src, name, description, domain.ClaimSourceCloned, calledBy)
 	if err != nil {
 		return 0, err
 	}
@@ -338,7 +345,7 @@ func CloneStyle(db *sql.DB, srcID int64, name, description, calledBy string) (in
 // existing claims, not for adding new nodes.
 //
 // The copies are attributed source='generated', called_by=calledBy.
-func GenerateStyles(db *sql.DB, baseID int64, variants []domain.StyleVariant, calledBy string) ([]int64, error) {
+func GenerateStyles(db *sql.DB, kinds domain.CoreNodeKinds, baseID int64, variants []domain.StyleVariant, calledBy string) ([]int64, error) {
 	base, err := GetStyle(db, baseID)
 	if err != nil {
 		return nil, err
@@ -358,7 +365,7 @@ func GenerateStyles(db *sql.DB, baseID int64, variants []domain.StyleVariant, ca
 		if name == "" {
 			return nil, fmt.Errorf("variant name is required")
 		}
-		newID, err := cloneStyleTx(tx, base, name, strings.TrimSpace(v.Description), domain.ClaimSourceGenerated, calledBy)
+		newID, err := cloneStyleTx(tx, kinds, base, name, strings.TrimSpace(v.Description), domain.ClaimSourceGenerated, calledBy)
 		if err != nil {
 			return nil, fmt.Errorf("clone variant %q: %w", name, err)
 		}
@@ -403,7 +410,47 @@ type copiedClaim struct {
 	allowed                            []string
 	inboundSource, outboundDestination string
 	inboundStaging, outboundStaging    string
+	evacDestination, containment       string
 	paired, second                     string
+}
+
+// legs is the copied row's six legs as a claim input, for the lane refusal.
+func (c *copiedClaim) legs() NodeClaimInput {
+	return NodeClaimInput{
+		InboundSource: c.inboundSource, OutboundDestination: c.outboundDestination,
+		ChangeoverEvacDestination: &c.evacDestination, ContainmentDestination: c.containment,
+		InboundStaging: c.inboundStaging, OutboundStaging: c.outboundStaging,
+	}
+}
+
+// refuseStoredLaneLegs reads one style's live claims as this transaction has
+// written them and refuses the first leg that names a lane. One SELECT, and
+// none when no lane is known (empty kinds refuse nothing).
+func refuseStoredLaneLegs(tx *sql.Tx, kinds domain.CoreNodeKinds, styleID int64, from string) error {
+	if len(kinds.Lanes) == 0 {
+		return nil
+	}
+	rows, err := readCopiedClaims(tx, styleID)
+	if err != nil {
+		return fmt.Errorf("read copied claims for the lane check: %w", err)
+	}
+	return refuseCopiedLaneLegs(kinds, rows, from)
+}
+
+// refuseCopiedLaneLegs refuses the first copied claim, by node name, with a
+// leg naming a lane: "<from>, claim at <node>: <leg>: <sentence>".
+func refuseCopiedLaneLegs(kinds domain.CoreNodeKinds, rows map[string]*copiedClaim, from string) error {
+	nodes := make([]string, 0, len(rows))
+	for node := range rows {
+		nodes = append(nodes, node)
+	}
+	slices.Sort(nodes)
+	for _, node := range nodes {
+		if err := kinds.RefuseLaneLegs(rows[node].legs()); err != nil {
+			return fmt.Errorf("%s, claim at %s: %w", from, node, err)
+		}
+	}
+	return nil
 }
 
 // readCopiedClaims loads the just-inserted copies for the override layer.
@@ -413,6 +460,7 @@ type copiedClaim struct {
 func readCopiedClaims(tx *sql.Tx, targetID int64) (map[string]*copiedClaim, error) {
 	gr, err := tx.Query(`SELECT core_node_name, swap_mode, payload_code, allowed_payload_codes,
 		inbound_source, outbound_destination, inbound_staging, outbound_staging,
+		changeover_evac_destination, containment_destination,
 		paired_core_node, second_paired_core_node FROM style_node_claims WHERE style_id = ? AND`+liveClaims, targetID)
 	if err != nil {
 		return nil, err
@@ -423,7 +471,8 @@ func readCopiedClaims(tx *sql.Tx, targetID int64) (map[string]*copiedClaim, erro
 		var c copiedClaim
 		var allowed string
 		if err := gr.Scan(&c.node, &c.swapMode, &c.payload, &allowed, &c.inboundSource,
-			&c.outboundDestination, &c.inboundStaging, &c.outboundStaging, &c.paired, &c.second); err != nil {
+			&c.outboundDestination, &c.inboundStaging, &c.outboundStaging,
+			&c.evacDestination, &c.containment, &c.paired, &c.second); err != nil {
 			return nil, err
 		}
 		var allowedList []string
@@ -517,14 +566,14 @@ func claimSwapModeRequirement(mode protocol.SwapMode, c copiedClaim) string {
 // referencing a node that no longer has a claim.
 //
 // Notes are returned to the caller for the operator's results toast.
-func applyClaimOverrides(tx *sql.Tx, targetID int64, overrides []ClaimOverride) ([]string, error) {
+//
+// rows is the target's copied claims, read once by the caller
+// (readCopiedClaims) and kept current here, so the lane check after the
+// overrides reads the values they left.
+func applyClaimOverrides(tx *sql.Tx, targetID int64, rows map[string]*copiedClaim, overrides []ClaimOverride) ([]string, error) {
 	notes := make([]string, 0, len(overrides))
 	if len(overrides) == 0 {
 		return notes, nil
-	}
-	rows, err := readCopiedClaims(tx, targetID)
-	if err != nil {
-		return nil, fmt.Errorf("read copied claims for overrides: %w", err)
 	}
 
 	for _, ov := range overrides {
@@ -716,12 +765,20 @@ func renameClaimReferences(tx *sql.Tx, targetID int64, oldName, newName string) 
 // overrides it could not match, renames it refused, pair references it
 // auto-fixed, role changes it withheld — because a batch that silently
 // drops part of what was asked for is how the next incident starts.
-func CopyStyleClaims(db *sql.DB, srcID, targetID int64, includePayloads bool, overrides []ClaimOverride) ([]string, []KeptSpot, error) {
+//
+// A copied claim naming a lane on any leg, from the source or from an
+// override, refuses this target, naming both styles, the node and the leg.
+func CopyStyleClaims(db *sql.DB, kinds domain.CoreNodeKinds, srcID, targetID int64, includePayloads bool, overrides []ClaimOverride) ([]string, []KeptSpot, error) {
 	if srcID == targetID {
 		return nil, nil, fmt.Errorf("source and target are the same style")
 	}
-	if _, err := GetStyle(db, srcID); err != nil {
+	src, err := GetStyle(db, srcID)
+	if err != nil {
 		return nil, nil, fmt.Errorf("source style: %w", err)
+	}
+	srcName := ""
+	if src != nil {
+		srcName = src.Name
 	}
 	tgt, err := GetStyle(db, targetID)
 	if err != nil {
@@ -775,8 +832,20 @@ func CopyStyleClaims(db *sql.DB, srcID, targetID int64, includePayloads bool, ov
 			}
 		}
 	}
-	notes, err := applyClaimOverrides(tx, targetID, overrides)
+	// The copied rows, read once: the overrides rewrite them and the lane
+	// check reads what the overrides left. Not read at all for a plain copy
+	// with no lane known.
+	var rows map[string]*copiedClaim
+	if len(overrides) > 0 || len(kinds.Lanes) > 0 {
+		if rows, err = readCopiedClaims(tx, targetID); err != nil {
+			return nil, nil, fmt.Errorf("read copied claims: %w", err)
+		}
+	}
+	notes, err := applyClaimOverrides(tx, targetID, rows, overrides)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := refuseCopiedLaneLegs(kinds, rows, fmt.Sprintf("copying style %q onto %q", srcName, tgt.Name)); err != nil {
 		return nil, nil, err
 	}
 	moved, err := CheckKeepStagedSpots(tx, before)

@@ -32,6 +32,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -74,7 +75,7 @@ func seedTwoRobotPair(t *testing.T, db *store.DB, nodeID int64, prefix string, s
 	if swapMode == "two_robot_press_index" {
 		in.PairedCoreNode = node.CoreNodeName + "-PAIR"
 	}
-	if _, err := db.UpsertStyleNodeClaim(in); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in); err != nil {
 		t.Fatalf("promote claim to %s: %v", swapMode, err)
 	}
 
@@ -230,7 +231,7 @@ func TestRegression_SupplyGuardSkipsForOrderWithoutSibling(t *testing.T) {
 		InboundStaging:      "TR-STAGING",
 		OutboundDestination: "TR-DEST",
 	}
-	if _, err := db.UpsertStyleNodeClaim(in); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in); err != nil {
 		t.Fatalf("promote claim: %v", err)
 	}
 

@@ -30,7 +30,7 @@ type routingSetResponse struct {
 func seedRoutingClaim(t *testing.T, pid int64, styleName string) int64 {
 	t.Helper()
 	sid := seedStyle(t, styleName, pid)
-	if _, err := testDB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "RT-PRESS", Role: "consume", SwapMode: "two_robot",
 		PayloadCode: "RAW", InboundStaging: "RT_STG_01", InboundSource: "SMN_BUF_100",
 		OutboundDestination: "Supermarket Area",

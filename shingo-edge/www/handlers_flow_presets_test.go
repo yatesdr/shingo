@@ -34,7 +34,7 @@ func presetProcess(t *testing.T, name string) (int64, int64) {
 		t.Fatalf("routing destination: %v", err)
 	}
 	sid := seedStyle(t, name+"-style", pid)
-	if _, err := testDB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "PP_01", Role: "consume", SwapMode: "two_robot",
 		PayloadCode: "PP-PART", InboundStaging: "PP_01",
 		InboundSource: "PP-SRC", OutboundDestination: "PP-DST",
@@ -66,7 +66,7 @@ func TestFlowPresets_ARepeatedNameIsAVersionOnlyOfTheSameShape(t *testing.T) {
 		t.Fatalf("create the second position: %v", err)
 	}
 	otherShape := seedStyle(t, "PRESET-NAME-other", pid)
-	if _, err := testDB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: otherShape, CoreNodeName: "PP_02", Role: "consume", SwapMode: "two_robot",
 		PayloadCode: "PP-PART-2", InboundStaging: "PP_02",
 		InboundSource: "PP-SRC", OutboundDestination: "PP-DST",

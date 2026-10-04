@@ -93,7 +93,7 @@ func TestCellVersion_MovesOnEveryDoorThroughTheRealPath(t *testing.T) {
 	// writes back what was there is not a change, and a test that asserted the
 	// version moved for one would be asserting the wrong thing.
 	in.OutboundDestination = in.OutboundDestination + " Annex"
-	if _, err := db.UpsertStyleNodeClaim(in); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in); err != nil {
 		t.Fatalf("flow save (claim upsert): %v", err)
 	}
 	moved("a flow save moved a claim's outbound destination")

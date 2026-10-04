@@ -103,7 +103,7 @@ func TestResidentEvacDest_AmbiguousPayloadDeclines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create third style: %v", err)
 	}
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: thirdStyle, CoreNodeName: "TEST-NODE", Role: "consume",
 		SwapMode: "two_robot", PayloadCode: "PART-OLD", UOPCapacity: 100,
 		InboundSource: "HOME-THIRD", InboundStaging: "STAGE-IN",

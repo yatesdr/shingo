@@ -87,7 +87,7 @@ func (h *Handlers) apiProcessContainmentSetting(w http.ResponseWriter, r *http.R
 	if by == "" {
 		by = "admin"
 	}
-	if err := h.engine.ProcessService().SetContainment(processID, req.Enabled, req.Destination, by); err != nil {
+	if err := h.engine.ProcessService().SetContainment(h.coreNodeKinds(), processID, req.Enabled, req.Destination, by); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingoedge/domain"
 	"shingoedge/store/catalog"
 	"shingoedge/store/processes"
 )
@@ -113,7 +114,7 @@ func TestClaimCapacity_FreshCellResolvesWithoutAPriorClaim(t *testing.T) {
 		t.Fatalf("seed catalog: %v", err)
 	}
 
-	id, err := processes.UpsertClaim(db.DB, processes.NodeClaimInput{
+	id, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID:             1,
 		CoreNodeName:        "PLN_01",
 		Role:                "produce",
@@ -146,7 +147,7 @@ func TestClaimCapacity_UnknownPayloadResolvesToZero(t *testing.T) {
 	db := testDB(t)
 	seedCapacityProcess(t, db)
 
-	id, err := processes.UpsertClaim(db.DB, processes.NodeClaimInput{
+	id, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID:             1,
 		CoreNodeName:        "PLN_01",
 		Role:                "produce",
@@ -204,14 +205,14 @@ func TestClaimCapacity_StoredColumnIsNoLongerWritten(t *testing.T) {
 		PairedCoreNode:      "PLN_02",
 		Source:              "hmi",
 	}
-	id, err := processes.UpsertClaim(db.DB, in)
+	id, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, in)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
 	assertStoredCapacityZero(t, db, id, "after INSERT")
 
 	// And on the UPDATE arm, which is a different column list.
-	if _, err := processes.UpsertClaim(db.DB, in); err != nil {
+	if _, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, in); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	assertStoredCapacityZero(t, db, id, "after UPDATE")

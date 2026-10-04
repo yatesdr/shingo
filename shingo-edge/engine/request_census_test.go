@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -100,7 +101,7 @@ func seedCensusCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMod
 	case protocol.SwapModeTwoRobotPressIndex:
 		in.PairedCoreNode = censusDeck
 	}
-	claimID, err := db.UpsertStyleNodeClaim(in)
+	claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	testutil.MustNoErr(t, err, "claim")
 	_, err = db.EnsureProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "runtime")

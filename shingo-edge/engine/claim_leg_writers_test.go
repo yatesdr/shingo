@@ -26,12 +26,12 @@ var engLaneCore = []protocol.NodeInfo{
 }
 
 // composerLegCensus is the flow composer's save, per leg a two_robot cell
-// carries, as it stands.
+// carries. The validator refuses each, and the store's write behind it would.
 var composerLegCensus = []struct{ leg, want string }{
 	{"inbound_source", engLegRefused},
 	{"outbound_destination", engLegRefused},
-	{"changeover_evac_destination", engLegSaved},
-	{"inbound_staging", engLegSaved},
+	{"changeover_evac_destination", engLegRefused},
+	{"inbound_staging", engLegRefused},
 }
 
 func TestSaveFlow_ALaneOnEachLeg(t *testing.T) {
@@ -84,15 +84,18 @@ func TestSaveFlow_ALaneOnEachLeg(t *testing.T) {
 }
 
 // reorderLegCensus is the replenishment page's reorder edit on a claim that
-// already names a lane, as it stands. The edit is about the reorder point; the
-// write echoes every leg.
+// already names a lane. The edit is about the reorder point, but the write
+// echoes the claim's legs, so it is refused until the leg is fixed. The evac
+// destination is the exception: it is absent-means-untouched and the echo
+// leaves it out (domain.InputFromClaimUngated), so this write neither stores
+// it nor asks about it.
 var reorderLegCensus = []struct{ leg, want string }{
-	{"inbound_source", engLegSaved},
-	{"outbound_destination", engLegSaved},
+	{"inbound_source", engLegRefused},
+	{"outbound_destination", engLegRefused},
 	{"changeover_evac_destination", engLegSaved},
-	{"containment_destination", engLegSaved},
-	{"inbound_staging", engLegSaved},
-	{"outbound_staging", engLegSaved},
+	{"containment_destination", engLegRefused},
+	{"inbound_staging", engLegRefused},
+	{"outbound_staging", engLegRefused},
 }
 
 func TestUpdateCellReorder_AClaimNamingALane(t *testing.T) {
@@ -129,7 +132,7 @@ func TestUpdateCellReorder_AClaimNamingALane(t *testing.T) {
 				in.OutboundStaging = lane
 			}
 			// Stored before the refusal existed: no node list to check it.
-			claimID, err := db.UpsertStyleNodeClaim(in)
+			claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 			testutil.MustNoErr(t, err, "seed a stored lane claim")
 			eng := testEngine(t, db)
 			eng.SetCoreNodes(engLaneCore)

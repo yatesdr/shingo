@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -85,7 +86,7 @@ func seedCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, kee
 	if mode == protocol.SwapModeSingleRobot {
 		in.OutboundStaging = "KS-OUT"
 	}
-	claimID, err := db.UpsertStyleNodeClaim(in)
+	claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	testutil.MustNoErr(t, err, "claim")
 	// The flag is written straight to the row: these tests are about the request
 	// path, not the config door that admits it.

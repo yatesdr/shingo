@@ -205,7 +205,7 @@ func buildBudgetTemplate(t *testing.T, fx scenefixtures.Plant) {
 			in.StyleID = sid
 			in.CoreNodeName = node
 			in.PayloadCode = fmt.Sprintf("BUDGET-PART-%04d", (int(sid)*budgetPositions+p)%budgetParts)
-			if _, err := db.UpsertStyleNodeClaim(in); err != nil {
+			if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in); err != nil {
 				t.Fatalf("claim %s on style %d: %v", node, sid, err)
 			}
 		}

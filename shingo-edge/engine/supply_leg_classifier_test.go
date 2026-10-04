@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/store"
 	storeorders "shingoedge/store/orders"
@@ -33,7 +34,7 @@ func seedSwapClaim(t *testing.T, db *store.DB, swapMode protocol.SwapMode, secon
 	if swapMode == protocol.SwapModeSingleRobot {
 		paired = ""
 	}
-	_, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID:              styleID,
 		CoreNodeName:         "PRESS",
 		Role:                 "produce",

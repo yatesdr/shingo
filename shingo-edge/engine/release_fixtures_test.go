@@ -101,7 +101,7 @@ func (h *relHarness) seedNode(s pairSpec) *processes.NodeClaim {
 	styleID, err := db.CreateStyle("SYN-STYLE", "", pid)
 	testutil.MustNoErr(h.t, err, "create style")
 	testutil.MustNoErr(h.t, db.SetActiveStyle(pid, &styleID), "set active style")
-	claimID, err := db.UpsertStyleNodeClaim(s.claimInput(styleID, fxPart))
+	claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, s.claimInput(styleID, fxPart))
 	testutil.MustNoErr(h.t, err, "upsert claim")
 	_, err = db.EnsureProcessNodeRuntime(nid)
 	testutil.MustNoErr(h.t, err, "ensure runtime")
@@ -242,10 +242,10 @@ func (h *relHarness) changeover(s coSpec) int64 {
 		positions := append([]string(nil), s.markedOnly...)
 		from.ChangeoverEvacNodes = &positions
 	}
-	fromClaimID, err := db.UpsertStyleNodeClaim(from)
+	fromClaimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, from)
 	testutil.MustNoErr(h.t, err, "from claim")
 	if !s.drop {
-		_, err = db.UpsertStyleNodeClaim(to)
+		_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, to)
 		testutil.MustNoErr(h.t, err, "to claim")
 	}
 	_, err = db.EnsureProcessNodeRuntime(nid)
@@ -269,7 +269,7 @@ func (h *relHarness) changeover(s coSpec) int64 {
 			}
 			in := ps.claimInput(sid, payload)
 			in.CoreNodeName, in.PairedCoreNode = fxPressB, fxPress
-			id, err := db.UpsertStyleNodeClaim(in)
+			id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 			testutil.MustNoErr(h.t, err, "back claim")
 			if sid == fromID {
 				backFrom = id
@@ -293,7 +293,7 @@ func (h *relHarness) changeover(s coSpec) int64 {
 			in := pairSpec{mode: protocol.SwapModeTwoRobot}.claimInput(sid, fxPart)
 			in.CoreNodeName = "SYN-NEIGHBOUR"
 			in.PairedCoreNode = ""
-			id, err := db.UpsertStyleNodeClaim(in)
+			id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 			testutil.MustNoErr(h.t, err, "neighbour claim")
 			if sid == fromID {
 				nbFromClaim = id
@@ -364,7 +364,7 @@ func (h *relHarness) sequentialPair(role protocol.ClaimRole, partnerReady bool) 
 		in := pairSpec{mode: protocol.SwapModeSequential, role: role}.claimInput(styleID, fxPart)
 		in.CoreNodeName = pos
 		in.PairedCoreNode = map[string]string{fxPress: fxPressB, fxPressB: fxPress}[pos]
-		claimID, err := db.UpsertStyleNodeClaim(in)
+		claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 		testutil.MustNoErr(h.t, err, "claim "+pos)
 		_, err = db.EnsureProcessNodeRuntime(nid)
 		testutil.MustNoErr(h.t, err, "runtime "+pos)

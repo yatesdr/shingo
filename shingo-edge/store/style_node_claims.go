@@ -9,6 +9,7 @@ package store
 import (
 	"database/sql"
 
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -44,12 +45,13 @@ func (db *DB) IsPairedOnDeckNode(processID int64, coreNodeName string) (bool, er
 
 // UpsertStyleNodeClaim inserts or updates a claim and returns the row id. The
 // write and the dedicated-spot check share one transaction, so a claim that
-// would touch another's kept spot is never stored.
-func (db *DB) UpsertStyleNodeClaim(in processes.NodeClaimInput) (int64, error) {
+// would touch another's kept spot is never stored. kinds is Core's lane set;
+// a leg naming a lane is refused (processes.UpsertClaim).
+func (db *DB) UpsertStyleNodeClaim(kinds domain.CoreNodeKinds, in processes.NodeClaimInput) (int64, error) {
 	var id int64
 	err := db.Transaction(func(tx *sql.Tx) error {
 		var err error
-		id, _, err = processes.UpsertClaimChecked(tx, in)
+		id, _, err = processes.UpsertClaimChecked(tx, kinds, in)
 		return err
 	})
 	return id, err

@@ -135,7 +135,7 @@ func TestScenario_V2_SameBinTypePressIndex_EndToEnd(t *testing.T) {
 			OutboundDestination: "V2-DST",
 		},
 	} {
-		if _, err := edge.DB.UpsertStyleNodeClaim(c); err != nil {
+		if _, err := edge.DB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, c); err != nil {
 			t.Fatalf("upsert claim style=%d: %v", c.StyleID, err)
 		}
 	}

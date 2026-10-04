@@ -53,7 +53,7 @@ func seedRunningCell(t *testing.T, db *DB) (processID, styleID, nodeID int64) {
 
 func claimOn(t *testing.T, db *DB, styleID int64, payload string) int64 {
 	t.Helper()
-	id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "PLN_01", Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: payload,
 		InboundStaging: "PLN_02", InboundSource: "SMN", OutboundDestination: "SMN_OUT",

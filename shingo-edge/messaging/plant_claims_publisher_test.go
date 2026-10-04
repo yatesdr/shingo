@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/catalog"
 	"shingoedge/store/processes"
@@ -43,7 +44,7 @@ func seedClaimsProcess(t *testing.T, db *store.DB, name string, styles, claims i
 		}
 		ids = append(ids, sid)
 		for j := 0; j < claims; j++ {
-			if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+			if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 				StyleID:      sid,
 				CoreNodeName: fmt.Sprintf("N-%d", j),
 				Role:         protocol.ClaimRoleProduce,
@@ -111,7 +112,7 @@ func TestPlantClaimsPublisher_BuildProcessQueryCountIsConstant(t *testing.T) {
 			t.Fatalf("create style: %v", err)
 		}
 		for j := 0; j < 2; j++ {
-			if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+			if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 				StyleID: sid, CoreNodeName: fmt.Sprintf("N-%d", j),
 				Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeSequential,
 				PayloadCode: fmt.Sprintf("SMALL-P-%03d-%d", i, j), UOPCapacity: 100,
@@ -159,7 +160,7 @@ func TestPlantClaimsPublisher_BuildProcessReportShape(t *testing.T) {
 	// (engine/legacy_claim_seed_test.go's upsertClaimRetiredMode): a
 	// configurable placeholder past the allowlist, then the real mode written
 	// directly.
-	loaderID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	loaderID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: ids[0], CoreNodeName: "LOADER-1", Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeSequential, PayloadCode: "LOADER-PART",
 		PairedCoreNode: "LOADER-B", InboundSource: "IN", OutboundDestination: "OUT",
@@ -182,7 +183,7 @@ func TestPlantClaimsPublisher_BuildProcessReportShape(t *testing.T) {
 	if err := db.UpsertPayloadCatalog(&catalog.CatalogEntry{ID: 1, Name: "First", Code: "FIRST", UOPCapacity: 10}); err != nil {
 		t.Fatalf("catalog: %v", err)
 	}
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: ids[1], CoreNodeName: "A-FIRST", Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeSequential, PayloadCode: "FIRST",
 		// Required at save for sequential since flowspec D4; this test is about
@@ -192,7 +193,7 @@ func TestPlantClaimsPublisher_BuildProcessReportShape(t *testing.T) {
 		t.Fatalf("late claim: %v", err)
 	}
 	nine := 9
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: ids[1], CoreNodeName: "N-1", Role: protocol.ClaimRoleProduce,
 		SwapMode: protocol.SwapModeSequential, PayloadCode: "SHAPE-P-001-1", UOPCapacity: 100,
 		Sequence: &nine,
@@ -330,7 +331,7 @@ func TestPlantClaimsPublisher_ChangedPublishesOnlyThatProcess(t *testing.T) {
 	maxBefore := beforeIDs[len(beforeIDs)-1]
 
 	// The edit: a new claim on A's first style.
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: idsA[0], CoreNodeName: "N-NEW", Role: protocol.ClaimRoleProduce,
 		SwapMode: protocol.SwapModeSequential, PayloadCode: "NEW-PAYLOAD", UOPCapacity: 5,
 	}); err != nil {
@@ -449,7 +450,7 @@ func TestPlantClaimsPublisher_ClaimLegsOnTheWire(t *testing.T) {
 	p := NewPlantClaimsPublisher(db, "plant-a.line-1", 0)
 
 	pid, ids := seedClaimsProcess(t, db, "LEGS", 1, 0)
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: ids[0], CoreNodeName: "PLN_002", Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeTwoRobotPressIndex, PayloadCode: "SYN-PART-A",
 		UOPCapacity: 120, ReorderPoint: 30,

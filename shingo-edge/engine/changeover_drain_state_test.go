@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -39,7 +40,7 @@ func seedDrainStateProcess(t *testing.T, db *store.DB, plcName, tagName string, 
 	if err := db.SetActiveStyle(processID, &styleID); err != nil {
 		t.Fatalf("set active style: %v", err)
 	}
-	claimID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	claimID, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "PLN_01", Role: "produce", SwapMode: "two_robot_press_index",
 		PayloadCode: "PART-A", InboundSource: "SMN", OutboundDestination: "SMN", PairedCoreNode: "PLN_02",
 	})

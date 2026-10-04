@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -29,7 +30,7 @@ func TestIsPairedOnDeckNode(t *testing.T) {
 	// 3-position press-index: front = PRESS-FRONT (core), back = PRESS-BACK
 	// (paired), and PRESS-BACK2 (second paired). Only the two back positions are
 	// on-deck.
-	_, err = d.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	_, err = d.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID:              styleID,
 		CoreNodeName:         "PRESS-FRONT",
 		Role:                 "produce",

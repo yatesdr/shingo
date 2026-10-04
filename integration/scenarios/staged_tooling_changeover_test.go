@@ -122,7 +122,7 @@ func seedStagedPress(t *testing.T, markedNodes []string, toStaging string) stage
 		InboundStaging: toStaging,
 	}
 	for _, c := range []processes.NodeClaimInput{from, to} {
-		if _, err := edge.DB.UpsertStyleNodeClaim(c); err != nil {
+		if _, err := edge.DB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, c); err != nil {
 			t.Fatalf("upsert claim style=%d: %v", c.StyleID, err)
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -47,11 +48,11 @@ func upsertClaimRetiredMode(db *store.DB, in processes.NodeClaimInput) (int64, e
 	}
 	retired := in.SwapMode == protocol.SwapModeSimple || in.SwapMode == protocol.SwapModeManualSwap
 	if !retired {
-		return db.UpsertStyleNodeClaim(in)
+		return db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	}
 	want := in.SwapMode
 	in.SwapMode = protocol.SwapModeSequential // placeholder to pass the allowlist
-	id, err := db.UpsertStyleNodeClaim(in)
+	id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	if err != nil {
 		return id, err
 	}

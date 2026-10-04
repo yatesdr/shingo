@@ -8,6 +8,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -139,7 +140,7 @@ func TestMigration_CurtainMovesToNodes(t *testing.T) {
 			testutil.MustNoErr(t, err, "create style")
 			nodeIDs = map[string]int64{}
 			for i, c := range claims {
-				_, err := processes.UpsertClaim(db.DB, processes.NodeClaimInput{
+				_, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
 					StyleID: styleID, CoreNodeName: c.node, Role: c.role,
 					SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PART-X",
 					OutboundDestination: "SYN-FG-OUT", InboundStaging: "SYN-STG-1",

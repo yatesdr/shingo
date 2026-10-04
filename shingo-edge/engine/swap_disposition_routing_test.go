@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -202,7 +203,7 @@ func seedConsumeSwapPair(t *testing.T, db *store.DB, mode protocol.SwapMode, sec
 	// claim from the database — sees the same claim the dispatch was built
 	// from. Mutating the in-memory copy alone is how a test ends up asserting
 	// about a configuration the code never saw.
-	_, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID:              claim.StyleID,
 		CoreNodeName:         claim.CoreNodeName,
 		Role:                 protocol.ClaimRoleConsume,

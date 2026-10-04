@@ -118,7 +118,7 @@ func seedRoutingClaims(t *testing.T, db *DB, processID int64, node string, seeds
 			PayloadCode: "RAW-" + sd.style, InboundSource: sd.source, OutboundDestination: sd.dest,
 			InboundStaging: sd.staging,
 		}
-		if _, err := db.UpsertStyleNodeClaim(in); err != nil {
+		if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in); err != nil {
 			t.Fatalf("seed claim for %s: %v", sd.style, err)
 		}
 	}
@@ -388,7 +388,7 @@ func TestRoutingNodes_DeleteRefusesWhileALiveClaimReferencesTheName(t *testing.T
 	t.Parallel()
 	db := testDB(t)
 	pid, sid := seedRoutingProcess(t, db, "P400")
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "PLN_01", Role: "consume", SwapMode: "two_robot",
 		PayloadCode: "RAW", InboundStaging: "STG_01", InboundSource: "SMN_BUF_100",
 		OutboundDestination: "Supermarket Area",
@@ -447,7 +447,7 @@ func TestRoutingNodes_DeriveFromClaims(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	pid, sid := seedRoutingProcess(t, db, "P400")
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "PLN_01", Role: "consume", SwapMode: "two_robot_press_index",
 		PayloadCode: "RAW", PairedCoreNode: "PLN_04",
 		InboundStaging: "PLN_02", OutboundStaging: "PLN_05",
@@ -463,7 +463,7 @@ func TestRoutingNodes_DeriveFromClaims(t *testing.T) {
 	// A retired style's claim contributes nothing.
 	dead, err := db.CreateStyle("DEAD", "", pid)
 	testutil.MustNoErr(t, err, "db.CreateStyle")
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: dead, CoreNodeName: "PLN_01", Role: "consume", SwapMode: "two_robot",
 		PayloadCode: "OLD", InboundStaging: "OLD_STG", InboundSource: "OLD_SRC", OutboundDestination: "OLD_DST",
 	}); err != nil {
@@ -541,7 +541,7 @@ func TestRoutingNodes_DeriveFromClaims(t *testing.T) {
 	if err := db.SetFlowComposerEnabled(pid, true); err != nil {
 		t.Fatalf("enable gate: %v", err)
 	}
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "PLN_01", Role: "consume", SwapMode: "two_robot",
 		PayloadCode: "RAW", InboundStaging: "NEW_STG", InboundSource: "NEW_SRC", OutboundDestination: "NEW_DST",
 	}); err != nil {

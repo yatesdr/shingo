@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/internal/testdb"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -51,7 +52,7 @@ func seedPreflightStyle(t *testing.T, db *store.DB) int64 {
 		{StyleID: styleID, CoreNodeName: "NODE-2", PayloadCode: "PART-Z", Role: protocol.ClaimRoleConsume, SwapMode: "single_robot", InboundStaging: "ISTG-2", OutboundStaging: "OSTG-2", OutboundDestination: "DEST-2"},
 		{StyleID: styleID, CoreNodeName: "NODE-3", PayloadCode: "__empty__", Role: protocol.ClaimRoleProduce, SwapMode: "single_robot", InboundStaging: "ISTG-3", OutboundStaging: "OSTG-3", OutboundDestination: "DEST-3"},
 	} {
-		if _, err := db.UpsertStyleNodeClaim(c); err != nil {
+		if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, c); err != nil {
 			t.Fatalf("upsert claim %s: %v", c.CoreNodeName, err)
 		}
 	}

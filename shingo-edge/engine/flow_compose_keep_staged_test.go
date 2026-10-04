@@ -23,7 +23,7 @@ func TestSaveFlow_KeptSpotMovedBetweenCellsInOneSave(t *testing.T) {
 	testutil.MustNoErr(t, err, "get FLOW-SWAP")
 	in := domain.InputFromClaim(*swap)
 	in.InboundStaging, in.KeepStaged = "KEEP-SPOT", domain.Ptr(true)
-	_, err = db.UpsertStyleNodeClaim(in)
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	testutil.MustNoErr(t, err, "keep a spare at FLOW-SWAP")
 
 	fp, err := eng.FlowFingerprint(processID, toStyleID)

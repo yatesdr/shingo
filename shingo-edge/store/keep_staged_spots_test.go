@@ -46,23 +46,23 @@ func TestKeepStagedSpot_RefusedInBothSaveOrders(t *testing.T) {
 	_, sid := seedProcessStyle(t, db, "KS-PROC", "KS-STYLE")
 
 	// (a) The spot exists first; a second claim names it as its destination.
-	if _, err := db.UpsertStyleNodeClaim(spotClaim(sid, "LINE-A", "SPOT-A", true)); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, spotClaim(sid, "LINE-A", "SPOT-A", true)); err != nil {
 		t.Fatalf("keep-staged claim: %v", err)
 	}
 	later := spotClaim(sid, "LINE-B", "STG-B", false)
 	later.OutboundDestination = "SPOT-A"
-	_, err := db.UpsertStyleNodeClaim(later)
+	_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, later)
 	wantSpotRefusal(t, err, "SPOT-A", "LINE-A", "LINE-B", "outbound_destination", "this Edge's claims")
 
 	// (b) Two claims share plain staging, which is allowed; turning keep_staged
 	// on for one of them makes the other's staging a touch on its spot.
-	if _, err := db.UpsertStyleNodeClaim(spotClaim(sid, "LINE-C", "SHARED", false)); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, spotClaim(sid, "LINE-C", "SHARED", false)); err != nil {
 		t.Fatalf("first sharer: %v", err)
 	}
-	if _, err := db.UpsertStyleNodeClaim(spotClaim(sid, "LINE-D", "SHARED", false)); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, spotClaim(sid, "LINE-D", "SHARED", false)); err != nil {
 		t.Fatalf("shared staging without a kept spare is refused: %v", err)
 	}
-	_, err = db.UpsertStyleNodeClaim(spotClaim(sid, "LINE-D", "SHARED", true))
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, spotClaim(sid, "LINE-D", "SHARED", true))
 	wantSpotRefusal(t, err, "SHARED", "LINE-C", "LINE-D", "inbound_staging")
 	c, err := db.GetStyleNodeClaimByNode(sid, "LINE-D")
 	if c = testutil.Must(t, c, err, "read LINE-D"); c == nil || c.KeepStaged {
@@ -81,10 +81,10 @@ func TestKeepStagedSpot_LinePositionAcrossStylesIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second style: %v", err)
 	}
-	if _, err := db.UpsertStyleNodeClaim(spotClaim(s1, "LINE-1", "SPOT-L", true)); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, spotClaim(s1, "LINE-1", "SPOT-L", true)); err != nil {
 		t.Fatalf("keep-staged claim: %v", err)
 	}
-	_, err = db.UpsertStyleNodeClaim(spotClaim(s2, "SPOT-L", "STG-2", false))
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, spotClaim(s2, "SPOT-L", "STG-2", false))
 	wantSpotRefusal(t, err, "SPOT-L", "core_node_name", "same process")
 }
 
@@ -96,13 +96,13 @@ func TestKeepStagedSpot_CopyIntoAnotherProcessIsRefused(t *testing.T) {
 	db := coverageDB(t)
 	_, src := seedProcessStyle(t, db, "KS-P1", "KS-SRC")
 	_, dst := seedProcessStyle(t, db, "KS-P2", "KS-DST")
-	if _, err := db.UpsertStyleNodeClaim(spotClaim(src, "LINE-1", "SPOT-C", true)); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, spotClaim(src, "LINE-1", "SPOT-C", true)); err != nil {
 		t.Fatalf("keep-staged claim: %v", err)
 	}
-	if _, err := db.UpsertStyleNodeClaim(spotClaim(dst, "LINE-9", "STG-9", false)); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, spotClaim(dst, "LINE-9", "STG-9", false)); err != nil {
 		t.Fatalf("target claim: %v", err)
 	}
-	_, err := db.CopyStyleClaims(src, dst, true, nil)
+	_, err := db.CopyStyleClaims(domain.CoreNodeKinds{}, src, dst, true, nil)
 	wantSpotRefusal(t, err, "SPOT-C", "another process")
 	claims, err := db.ListStyleNodeClaims(dst)
 	if err != nil {
@@ -119,7 +119,7 @@ func TestKeepStagedSpot_MovingABusySpotIsRefused(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "KS-PROC", "KS-STYLE")
-	if _, err := db.UpsertStyleNodeClaim(spotClaim(sid, "LINE-M", "SPOT-OLD", true)); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, spotClaim(sid, "LINE-M", "SPOT-OLD", true)); err != nil {
 		t.Fatalf("keep-staged claim: %v", err)
 	}
 	orderID, err := db.CreateOrder("ks-refill", protocol.OrderTypeRetrieve, nil, false, 1,
@@ -128,13 +128,13 @@ func TestKeepStagedSpot_MovingABusySpotIsRefused(t *testing.T) {
 		t.Fatalf("refill order: %v", err)
 	}
 
-	_, err = db.UpsertStyleNodeClaim(spotClaim(sid, "LINE-M", "SPOT-NEW", true))
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, spotClaim(sid, "LINE-M", "SPOT-NEW", true))
 	wantSpotRefusal(t, err, "SPOT-OLD", "1 open order")
 
 	if _, err := db.Exec(`UPDATE orders SET status = ? WHERE id = ?`, string(protocol.StatusCancelled), orderID); err != nil {
 		t.Fatalf("finish order: %v", err)
 	}
-	if _, err := db.UpsertStyleNodeClaim(spotClaim(sid, "LINE-M", "SPOT-NEW", true)); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, spotClaim(sid, "LINE-M", "SPOT-NEW", true)); err != nil {
 		t.Fatalf("move with no open order refused: %v", err)
 	}
 }

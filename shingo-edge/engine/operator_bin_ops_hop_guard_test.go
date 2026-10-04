@@ -8,6 +8,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -30,7 +31,7 @@ func TestLoadBin_RejectsStampOnPairedNode(t *testing.T) {
 	testutil.MustNoErr(t, err, "create front node")
 	backNodeID, err := db.CreateProcessNode(processes.NodeInput{ProcessID: processID, CoreNodeName: "A1-BACK", Code: "B", Name: "Back", Sequence: 2, Enabled: true})
 	testutil.MustNoErr(t, err, "create back node")
-	_, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "A1-FRONT", Role: "produce",
 		SwapMode: protocol.SwapModeTwoRobotPressIndex, PayloadCode: "WIDGET", UOPCapacity: 100,
 		PairedCoreNode: "A1-BACK", InboundSource: "EMPTY", OutboundDestination: "OUT",

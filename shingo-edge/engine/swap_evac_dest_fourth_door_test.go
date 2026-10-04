@@ -112,7 +112,7 @@ func TestResidentEvacDest_IgnoresTheToolingDestination(t *testing.T) {
 		OutboundStaging: old.OutboundStaging, OutboundDestination: old.OutboundDestination,
 		ChangeoverEvacDestination: domain.Ptr("TOOLING-CLEARANCE"),
 	}
-	if _, err := db.UpsertStyleNodeClaim(in); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in); err != nil {
 		t.Fatalf("set the tooling destination: %v", err)
 	}
 

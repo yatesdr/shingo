@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -82,7 +83,7 @@ func residentClaimFixture(t *testing.T, db *store.DB) (nodeID, oldClaimID, newCl
 	}
 
 	// Claim 44's shape: SYN-PART09A.06 → SMN_031.
-	oldClaimID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	oldClaimID, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: oldStyle, CoreNodeName: "TEST-NODE", Role: "consume",
 		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PART-OLD", UOPCapacity: 100,
 		InboundSource: "HOME-OLD", InboundStaging: "STAGE-IN", OutboundStaging: "STAGE-OUT",
@@ -92,7 +93,7 @@ func residentClaimFixture(t *testing.T, db *store.DB) (nodeID, oldClaimID, newCl
 		t.Fatalf("upsert outgoing claim: %v", err)
 	}
 	// Claim 52's shape: SYN-PART03H.10 → SMN_029.
-	newClaimID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	newClaimID, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: newStyle, CoreNodeName: "TEST-NODE", Role: "consume",
 		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PART-NEW", UOPCapacity: 100,
 		InboundSource: "HOME-NEW", InboundStaging: "STAGE-IN", OutboundStaging: "STAGE-OUT",

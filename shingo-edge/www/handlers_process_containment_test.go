@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -20,7 +21,7 @@ func TestApiProcessContainmentSetting(t *testing.T) {
 	testutil.MustNoErr(t, err, "create process")
 	styleID, err := testDB.CreateStyle("HOLD-STYLE", "", pid)
 	testutil.MustNoErr(t, err, "create style")
-	_, err = processes.UpsertClaim(testDB.DB, processes.NodeClaimInput{
+	_, err = processes.UpsertClaim(testDB.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "PLN-1", Role: "produce",
 		SwapMode: "two_robot", PayloadCode: "PART-H",
 		InboundStaging: "STG-1", OutboundDestination: "FG-9",

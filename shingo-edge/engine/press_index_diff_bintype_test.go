@@ -86,7 +86,7 @@ func seedDiffBinTypePressIndex(t *testing.T, db *store.DB) (processID, frontID, 
 	testutil.MustNoErr(t, err, "create to style")
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
-	fromClaimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	fromClaimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "PI-FRONT", Role: "produce",
 		SwapMode:       protocol.SwapModeTwoRobotPressIndex,
 		PairedCoreNode: "PI-BACK",
@@ -95,7 +95,7 @@ func seedDiffBinTypePressIndex(t *testing.T, db *store.DB) (processID, frontID, 
 	})
 	testutil.MustNoErr(t, err, "upsert from claim")
 
-	_, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "PI-FRONT", Role: "produce",
 		SwapMode:       protocol.SwapModeTwoRobotPressIndex,
 		PairedCoreNode: "PI-BACK",

@@ -4,6 +4,7 @@ package scenarios
 
 import (
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -25,10 +26,10 @@ import (
 // legacy-simple accommodation.
 func upsertClaimLegacySimple(db *store.DB, in processes.NodeClaimInput) (int64, error) {
 	if in.SwapMode != protocol.SwapModeSimple {
-		return db.UpsertStyleNodeClaim(in)
+		return db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	}
 	in.SwapMode = protocol.SwapModeSequential // placeholder to pass the allowlist
-	id, err := db.UpsertStyleNodeClaim(in)
+	id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	if err != nil {
 		return id, err
 	}

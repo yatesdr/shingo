@@ -100,18 +100,20 @@ func (s *StyleService) DeleteImpact(id int64) (*processes.StyleImpact, error) {
 // active separately. Operators use this to scaffold a per-payload variant of
 // a style that shares robot choreography.
 //
-// calledBy is stamped on every copied claim (source='cloned').
-func (s *StyleService) Clone(srcID int64, name, description, calledBy string) (int64, error) {
-	return s.db.CloneStyle(srcID, name, description, calledBy)
+// calledBy is stamped on every copied claim (source='cloned'). kinds is
+// Core's lane set: a copied claim naming a lane refuses the clone.
+func (s *StyleService) Clone(kinds domain.CoreNodeKinds, srcID int64, name, description, calledBy string) (int64, error) {
+	return s.db.CloneStyle(kinds, srcID, name, description, calledBy)
 }
 
 // GenerateVariants scaffolds a family of styles from one base style, each a
 // clone of the base with its per-claim payload overrides applied, in a single
 // atomic batch. Returns the new style ids in variant order.
 //
-// calledBy is stamped on every generated claim (source='generated').
-func (s *StyleService) GenerateVariants(baseID int64, variants []domain.StyleVariant, calledBy string) ([]int64, error) {
-	return s.db.GenerateStyles(baseID, variants, calledBy)
+// calledBy is stamped on every generated claim (source='generated'). kinds
+// is Core's lane set: a base claim naming a lane refuses the batch.
+func (s *StyleService) GenerateVariants(kinds domain.CoreNodeKinds, baseID int64, variants []domain.StyleVariant, calledBy string) ([]int64, error) {
+	return s.db.GenerateStyles(kinds, baseID, variants, calledBy)
 }
 
 // CopyClaimsResult is one target style's outcome in a CopyClaims batch.
@@ -149,7 +151,10 @@ type CopyClaimsResult struct {
 // the copy. They are cleaned up once here so the store layer sees one
 // well-formed row per node: blank match keys dropped, duplicates collapsed
 // last-wins, all-blank rows dropped as the no-ops the modal never sends.
-func (s *StyleService) CopyClaims(srcID int64, targets []int64, includePayloads bool, overrides []domain.CopiedClaimOverride) []CopyClaimsResult {
+//
+// kinds is Core's lane set: a target whose copy would name a lane on any leg
+// fails, with the reason naming both styles, the node and the leg.
+func (s *StyleService) CopyClaims(kinds domain.CoreNodeKinds, srcID int64, targets []int64, includePayloads bool, overrides []domain.CopiedClaimOverride) []CopyClaimsResult {
 	results := make([]CopyClaimsResult, 0, len(targets))
 	if len(targets) == 0 {
 		return results
@@ -185,7 +190,7 @@ func (s *StyleService) CopyClaims(srcID int64, targets []int64, includePayloads 
 			case tgt.ID == activeStyleID:
 				res.Status, res.Reason = "failed", "active style cannot be a copy target"
 			default:
-				notes, moved, err := processes.CopyStyleClaims(s.db.DB, srcID, targetID, includePayloads, overrides)
+				notes, moved, err := processes.CopyStyleClaims(s.db.DB, kinds, srcID, targetID, includePayloads, overrides)
 				if err != nil {
 					res.Status, res.Reason = "failed", err.Error()
 				} else {
@@ -283,13 +288,14 @@ func (s *StyleService) GetClaim(id int64) (*processes.NodeClaim, error) {
 
 // UpsertClaim inserts or updates a claim and returns the row id.
 // Validates manual_swap invariants (auto_confirm and outbound
-// destination) inside the underlying sub-package.
-func (s *StyleService) UpsertClaim(in processes.NodeClaimInput) (int64, error) {
+// destination) and refuses a lane on any leg (kinds, Core's lane set) inside
+// the underlying sub-package.
+func (s *StyleService) UpsertClaim(kinds domain.CoreNodeKinds, in processes.NodeClaimInput) (int64, error) {
 	var id int64
 	var moved []processes.KeptSpot
 	err := s.db.Transaction(func(tx *sql.Tx) error {
 		var err error
-		id, moved, err = processes.UpsertClaimChecked(tx, in)
+		id, moved, err = processes.UpsertClaimChecked(tx, kinds, in)
 		return err
 	})
 	if err == nil {

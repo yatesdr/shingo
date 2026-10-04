@@ -238,7 +238,7 @@ func fanOutScenario(t *testing.T) (db *store.DB, stationID, pressNodeID, positio
 	if err := db.SetActiveStyle(processID, &styleID); err != nil {
 		t.Fatalf("set active style: %v", err)
 	}
-	claimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "PLN_B1", Role: protocol.ClaimRoleProduce,
 		SwapMode: protocol.SwapModeTwoRobotPressIndex, PayloadCode: "TOTE-A",
 		UOPCapacity: 120, PairedCoreNode: "PLN_B2",

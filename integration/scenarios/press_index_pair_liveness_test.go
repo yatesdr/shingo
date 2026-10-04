@@ -25,6 +25,7 @@ import (
 
 	"shingo/protocol"
 
+	"shingoedge/domain"
 	edgeengine "shingoedge/engine"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
@@ -63,7 +64,7 @@ func seedPressIndexCell(t *testing.T, edge *edgeharness.Edge, prefix string, rol
 	if err := edge.DB.SetActiveStyle(processID, &styleID); err != nil {
 		t.Fatalf("set active style: %v", err)
 	}
-	claimID, err := edge.DB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	claimID, err := edge.DB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        prefix + "-PRESS",
 		Role:                role,

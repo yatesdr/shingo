@@ -1,6 +1,7 @@
 package service
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -73,7 +74,13 @@ func (s *ProcessService) ContainmentStates() (map[int64]string, error) {
 //
 // Each claim is echoed through InputFromClaim so the stamp touches ONLY the
 // containment route, and called_by records the actor.
-func (s *ProcessService) SetContainment(processID int64, enabled bool, destination, by string) error {
+//
+// ONE TRANSACTION FOR THE WHOLE STAMP. Every claim is written through the
+// store's claim write, which refuses a lane on any leg (kinds, Core's lane
+// set) — the destination asked for, or a leg the claim already names. A
+// refusal on the fifth claim used to leave the first four stamped; now it
+// leaves the process as it was.
+func (s *ProcessService) SetContainment(kinds domain.CoreNodeKinds, processID int64, enabled bool, destination, by string) error {
 	dest := strings.TrimSpace(destination)
 	if enabled && dest == "" {
 		return fmt.Errorf("a containment destination is required when the hold is enabled")
@@ -82,6 +89,12 @@ func (s *ProcessService) SetContainment(processID int64, enabled bool, destinati
 	if err != nil {
 		return err
 	}
+	type stamp struct {
+		in    domain.NodeClaimInput
+		node  string
+		style string
+	}
+	var stamps []stamp
 	for _, st := range styles {
 		claims, err := s.db.ListStyleNodeClaims(st.ID)
 		if err != nil {
@@ -97,12 +110,17 @@ func (s *ProcessService) SetContainment(processID int64, enabled bool, destinati
 			in := domain.InputFromClaim(c)
 			in.ContainmentDestination = dest
 			in.CalledBy = by
-			if _, err := s.db.UpsertStyleNodeClaim(in); err != nil {
-				return fmt.Errorf("stamp containment on %s (style %s): %w", c.CoreNodeName, st.Name, err)
-			}
+			stamps = append(stamps, stamp{in: in, node: c.CoreNodeName, style: st.Name})
 		}
 	}
-	return nil
+	return s.db.Transaction(func(tx *sql.Tx) error {
+		for _, st := range stamps {
+			if _, _, err := processes.UpsertClaimChecked(tx, kinds, st.in); err != nil {
+				return fmt.Errorf("stamp containment on %s (style %s): %w", st.node, st.style, err)
+			}
+		}
+		return nil
+	})
 }
 
 // Create inserts a new process and returns the new row id.

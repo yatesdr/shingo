@@ -370,7 +370,7 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 		if o.mode == protocol.SwapModeTwoRobotPressIndex {
 			in.PairedCoreNode = ksrDeck
 		}
-		id, err := edge.DB.UpsertStyleNodeClaim(in)
+		id, err := edge.DB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 		mustNil(t, err, "claim "+s.part)
 		if s.claimIDOut != nil {
 			*s.claimIDOut = id

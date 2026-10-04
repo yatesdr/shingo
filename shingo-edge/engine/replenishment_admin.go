@@ -72,7 +72,7 @@ func (e *Engine) UpdateCellReorder(in CellReorderInput) error {
 	// This IS a claim write from the desktop, so it says so — with the person
 	// who made it, like the other two doors.
 	upd.Source, upd.CalledBy = domain.ClaimSourceAdmin, in.CalledBy
-	if _, err := e.db.UpsertStyleNodeClaim(upd); err != nil {
+	if _, err := e.db.UpsertStyleNodeClaim(domain.CoreNodeKindsOf(e.CoreNodes()), upd); err != nil {
 		return fmt.Errorf("cell reorder: upsert: %w", err)
 	}
 	return nil

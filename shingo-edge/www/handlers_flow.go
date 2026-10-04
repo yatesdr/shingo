@@ -192,7 +192,8 @@ func (h *Handlers) apiSaveFlow(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			json.NewEncoder(w).Encode(map[string]any{"error": err.Error(), "findings": invalid.Findings})
 		case writeFlowRefusal(w, err):
-		case errors.Is(err, protocol.ErrInvalidSwapMode), errors.Is(err, domain.ErrKeepStagedSpot):
+		case errors.Is(err, protocol.ErrInvalidSwapMode), errors.Is(err, domain.ErrKeepStagedSpot),
+			errors.Is(err, domain.ErrLaneLeg):
 			writeError(w, http.StatusBadRequest, err.Error())
 		default:
 			writeError(w, http.StatusInternalServerError, err.Error())

@@ -238,9 +238,9 @@ func (h *Handlers) apiCloneStyle(w http.ResponseWriter, r *http.Request) {
 	}
 	// The clone's claims are attributed to the session user, source 'cloned'.
 	calledBy, _ := h.sessions.getUser(r)
-	newID, err := h.engine.StyleService().Clone(id, strings.TrimSpace(req.Name), strings.TrimSpace(req.Description), calledBy)
+	newID, err := h.engine.StyleService().Clone(h.coreNodeKinds(), id, strings.TrimSpace(req.Name), strings.TrimSpace(req.Description), calledBy)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, styleWriteStatus(err), err.Error())
 		return
 	}
 	h.requestBackup("style-cloned")
@@ -292,7 +292,7 @@ func (h *Handlers) apiCopyStyleClaims(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "source style not found")
 		return
 	}
-	results := h.engine.StyleService().CopyClaims(srcID, req.TargetStyleIDs, req.IncludePayloads, req.Overrides)
+	results := h.engine.StyleService().CopyClaims(h.coreNodeKinds(), srcID, req.TargetStyleIDs, req.IncludePayloads, req.Overrides)
 	copied := 0
 	for _, res := range results {
 		if res.Status == "copied" {
@@ -332,9 +332,9 @@ func (h *Handlers) apiGenerateStyles(w http.ResponseWriter, r *http.Request) {
 	}
 	// Generated claims are attributed to the session user, source 'generated'.
 	calledBy, _ := h.sessions.getUser(r)
-	ids, err := h.engine.StyleService().GenerateVariants(baseID, req.Variants, calledBy)
+	ids, err := h.engine.StyleService().GenerateVariants(h.coreNodeKinds(), baseID, req.Variants, calledBy)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, styleWriteStatus(err), err.Error())
 		return
 	}
 	h.requestBackup("styles-generated")
@@ -495,13 +495,14 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 			}
 		}
 	}
-	id, err := h.engine.StyleService().UpsertClaim(in)
+	id, err := h.engine.StyleService().UpsertClaim(h.coreNodeKinds(), in)
 	if err != nil {
 		// A swap_mode rejection (blank, the retired "simple", a typo, a stale
 		// import value) is a client input problem — surface it as 400 with the
 		// store's message. Genuine DB faults stay 500.
 		status := http.StatusInternalServerError
-		if errors.Is(err, protocol.ErrInvalidSwapMode) || errors.Is(err, domain.ErrKeepStagedSpot) {
+		if errors.Is(err, protocol.ErrInvalidSwapMode) || errors.Is(err, domain.ErrKeepStagedSpot) ||
+			errors.Is(err, domain.ErrLaneLeg) {
 			status = http.StatusBadRequest
 		}
 		writeError(w, status, err.Error())
@@ -520,6 +521,22 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 		resp["warnings"] = findings
 	}
 	writeJSON(w, resp)
+}
+
+// coreNodeKinds is Core's lane and maintained-group sets as the engine holds
+// them, for a store write that refuses a lane on a leg. Empty before the first
+// node list, which refuses nothing.
+func (h *Handlers) coreNodeKinds() domain.CoreNodeKinds {
+	return domain.CoreNodeKindsOf(h.engine.CoreNodes())
+}
+
+// styleWriteStatus is 400 for a clone or generate refused because a copied
+// claim names a lane, and 500 for anything else.
+func styleWriteStatus(err error) int {
+	if errors.Is(err, domain.ErrLaneLeg) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }
 
 // claimNodeContext resolves what ValidateNodeClaim's membership warning needs:

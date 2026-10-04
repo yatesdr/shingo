@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -47,7 +48,7 @@ func newStampFixture(t *testing.T, mode protocol.SwapMode, secondPaired string, 
 		// through requestedClaimAtNode, so an in-memory flip would build flipped
 		// steps and stamp them against an unflipped claim.
 		yes := true
-		_, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 			StyleID: claim.StyleID, CoreNodeName: claim.CoreNodeName,
 			Role: claim.Role, SwapMode: claim.SwapMode, PayloadCode: claim.PayloadCode,
 			UOPCapacity:          claim.UOPCapacity,

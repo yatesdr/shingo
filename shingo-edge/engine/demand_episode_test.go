@@ -42,7 +42,7 @@ func episodeFixture(t *testing.T, procName, node string, reorderPoint int) (*Eng
 		t.Fatalf("create style: %v", err)
 	}
 	testutil.MustNoErr(t, db.SetActiveStyle(procID, &styleID), "set active style")
-	claimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: node, Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PANEL-B",
 		UOPCapacity: 300, ReorderPoint: reorderPoint, AutoReorder: domain.Ptr(true),
@@ -253,7 +253,7 @@ func TestOpenCellEpisode_SecondFireJoinsRatherThanMints(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create the produce node: %v", err)
 	}
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: claim.StyleID, CoreNodeName: produceNode, Role: protocol.ClaimRoleProduce,
 		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PANEL-B",
 		UOPCapacity: 300, ReorderPoint: 50, AutoReorder: domain.Ptr(true),
@@ -584,7 +584,7 @@ func TestBackfillCellOrigin_JoinsAnOpenEpisodeAndNeverMintsOne(t *testing.T) {
 func produceClaimFixture(t *testing.T, procName, node string) (*Engine, *store.DB, int64, *processes.NodeClaim) {
 	t.Helper()
 	eng, db, procID, _, claim := episodeFixture(t, procName, node, 50)
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: claim.StyleID, CoreNodeName: node, Role: protocol.ClaimRoleProduce,
 		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PANEL-B",
 		UOPCapacity: 300, ReorderPoint: 50, AutoReorder: domain.Ptr(true),

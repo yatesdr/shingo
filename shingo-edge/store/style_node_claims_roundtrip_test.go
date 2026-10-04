@@ -116,7 +116,7 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		ReorderPointSource: domain.Ptr("calculated"),
 		AutoReorder:        domain.Ptr(true),
 	}
-	claimID, err := db.UpsertStyleNodeClaim(seed)
+	claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, seed)
 	testutil.MustNoErr(t, err, "seed claim")
 	setLegacyKeepStaged(t, db, claimID)
 
@@ -124,7 +124,7 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 	testutil.MustNoErr(t, err, "fetch before")
 
 	// The editor round-trip: fetch, map to the body it sends, save.
-	if _, err := db.UpsertStyleNodeClaim(claimEditorBody(before)); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, claimEditorBody(before)); err != nil {
 		t.Fatalf("editor save: %v", err)
 	}
 
@@ -239,7 +239,7 @@ func TestUpsertStyleNodeClaim_ExplicitOptionalFieldsStillWrite(t *testing.T) {
 		ReorderPointSource:  domain.Ptr("calculated"),
 		AutoReorder:         domain.Ptr(true),
 	}
-	claimID, err := db.UpsertStyleNodeClaim(base)
+	claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, base)
 	testutil.MustNoErr(t, err, "seed claim")
 	setLegacyKeepStaged(t, db, claimID)
 
@@ -249,7 +249,7 @@ func TestUpsertStyleNodeClaim_ExplicitOptionalFieldsStillWrite(t *testing.T) {
 	upd.AutoReorder = domain.Ptr(false)
 	upd.KeepStaged = domain.Ptr(false)
 	upd.IndexRobotSupplies = domain.Ptr(true)
-	if _, err := db.UpsertStyleNodeClaim(upd); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, upd); err != nil {
 		t.Fatalf("explicit update: %v", err)
 	}
 
@@ -301,13 +301,13 @@ func TestUpsertStyleNodeClaim_EvacFieldsAreEditable(t *testing.T) {
 		ChangeoverEvacNodes:       domain.Ptr([]string{"EV-PRESS"}),
 		ChangeoverEvacDestination: domain.Ptr("EV-BAY-1"),
 	}
-	claimID, err := db.UpsertStyleNodeClaim(base)
+	claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, base)
 	testutil.MustNoErr(t, err, "seed claim")
 
 	upd := base
 	upd.ChangeoverEvacNodes = domain.Ptr([]string{"EV-PRESS-B", "EV-PRESS-C"})
 	upd.ChangeoverEvacDestination = domain.Ptr("EV-BAY-2")
-	if _, err := db.UpsertStyleNodeClaim(upd); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, upd); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 
@@ -328,7 +328,7 @@ func TestUpsertStyleNodeClaim_EvacFieldsAreEditable(t *testing.T) {
 	clr := base
 	clr.ChangeoverEvacNodes = domain.Ptr([]string{})
 	clr.ChangeoverEvacDestination = domain.Ptr("")
-	if _, err := db.UpsertStyleNodeClaim(clr); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, clr); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
 	cleared, err := db.GetStyleNodeClaim(claimID)
@@ -353,7 +353,7 @@ func TestUpsertStyleNodeClaim_InsertDefaultsForAbsentOptionals(t *testing.T) {
 	testutil.MustNoErr(t, err, "create style")
 
 	mk := func(node string) int64 {
-		id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 			StyleID:             styleID,
 			CoreNodeName:        node,
 			Role:                protocol.ClaimRoleConsume,

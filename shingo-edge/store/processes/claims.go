@@ -495,15 +495,20 @@ func IsPairedOnDeckNode(db *sql.DB, processID int64, coreNodeName string) (bool,
 // (CheckKeepStagedSpots). A door that writes one claim uses
 // UpsertClaimChecked; the composer, which writes several, calls the check
 // itself after its last write.
-func UpsertClaim(db DBTX, in NodeClaimInput) (int64, error) {
-	id, _, err := upsertClaim(db, in)
+//
+// kinds is Core's lane set as the engine holds it, and it is not optional: a
+// leg that names a lane is refused here, whichever door the write came
+// through (domain.CoreNodeKinds.RefuseLaneLegs). A caller with no node list
+// passes the zero value, which refuses nothing, and says so by passing it.
+func UpsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64, error) {
+	id, _, err := upsertClaim(db, kinds, in)
 	return id, err
 }
 
 // UpsertClaimChecked is UpsertClaim followed by the dedicated-spot check, for
 // a transaction that writes this one claim and nothing else.
-func UpsertClaimChecked(tx DBTX, in NodeClaimInput) (int64, []KeptSpot, error) {
-	id, prior, err := upsertClaim(tx, in)
+func UpsertClaimChecked(tx DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64, []KeptSpot, error) {
+	id, prior, err := upsertClaim(tx, kinds, in)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -518,7 +523,7 @@ func UpsertClaimChecked(tx DBTX, in NodeClaimInput) (int64, []KeptSpot, error) {
 // upsertClaim is UpsertClaim, also returning the spot the row kept before
 // this write when it was a keep-staged claim (nil otherwise), read by the
 // same statement that finds the row: the check needs it to see a spot move.
-func upsertClaim(db DBTX, in NodeClaimInput) (int64, *KeptSpot, error) {
+func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64, *KeptSpot, error) {
 	// Defense-in-depth: API ingress (apiUpsertStyleNodeClaim) trims
 	// these. Trim again here so a non-API caller can't bypass it.
 	// Internal write path; silent trim, no warning log.
@@ -595,6 +600,12 @@ func upsertClaim(db DBTX, in NodeClaimInput) (int64, *KeptSpot, error) {
 	}
 	// The per-mode arms, one refusal, naming one field — see modeArmViolation.
 	if err := modeArmViolation(in); err != nil {
+		return 0, nil, err
+	}
+	// No leg names a lane. Asked of the input, before any statement: a claim
+	// that already names one is refused on its next write of any kind, until
+	// the leg is fixed.
+	if err := kinds.RefuseLaneLegs(in); err != nil {
 		return 0, nil, err
 	}
 	// IndexRobotSupplies describes the CELL'S HARDWARE — which robot can reach

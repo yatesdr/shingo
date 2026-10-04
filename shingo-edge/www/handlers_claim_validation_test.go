@@ -234,7 +234,7 @@ func TestChangeoverView_ResolvesRetiredFromClaim(t *testing.T) {
 	pid := seedProcess(t, "RetireLabelLine")
 	sid := seedStyle(t, "RetireLabelStyle", pid)
 	nodeID := seedProcessNode(t, pid, 0, "RETIRE-NODE")
-	claimID, err := testDB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	claimID, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "RETIRE-NODE", Role: "consume", SwapMode: "two_robot",
 		PayloadCode: "PART-OLD", InboundStaging: "RETIRE-STG", OutboundDestination: "RETIRE-DST",
 	})

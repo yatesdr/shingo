@@ -25,6 +25,7 @@ import (
 	corepayloads "shingocore/store/payloads"
 	coreharness "shingocore/testharness"
 
+	"shingoedge/domain"
 	edgeengine "shingoedge/engine"
 	edgemessaging "shingoedge/messaging"
 	"shingoedge/store/processes"
@@ -232,7 +233,7 @@ func TestScenario_ChangeoverSwapCancelledMidCarry_BothBinsGoHome(t *testing.T) {
 	if err := edge.DB.SetActiveStyle(processID, &fromStyleID); err != nil {
 		t.Fatalf("set active style: %v", err)
 	}
-	fromClaimID, err := edge.DB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	fromClaimID, err := edge.DB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: lineName, Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: oldPart, UOPCapacity: 100,
 		InboundSource: oldGrp.Name, InboundStaging: staging, OutboundDestination: outDest,
@@ -240,7 +241,7 @@ func TestScenario_ChangeoverSwapCancelledMidCarry_BothBinsGoHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert from claim: %v", err)
 	}
-	if _, err := edge.DB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := edge.DB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: lineName, Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: newPart, UOPCapacity: 100,
 		InboundSource: newGrp.Name, InboundStaging: staging, OutboundDestination: outDest,

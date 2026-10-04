@@ -125,8 +125,9 @@ func TestUpsertClaim_OlderCoreRefusesNothing(t *testing.T) {
 
 // TestRoutingNodes_RefusesALaneAsASourceOrDestination: the routing set is what
 // the composer offers on those legs, so a lane is refused there too, on both
-// the single-row POST and the whole-list PUT. A lane as a STAGING row is the
-// ordinary case and saves.
+// the single-row POST and the whole-list PUT. A lane as a STAGING row is
+// refused too (owner, 2026-10-04): a staging node is the spot a robot waits
+// at, and a lane has no bin of its own to answer for it.
 func TestRoutingNodes_RefusesALaneAsASourceOrDestination(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
@@ -136,6 +137,7 @@ func TestRoutingNodes_RefusesALaneAsASourceOrDestination(t *testing.T) {
 
 	for role, sentence := range map[string]string{
 		"source": protocol.MsgLaneIsNotASource, "destination": protocol.MsgLaneIsNotADestination,
+		"staging": protocol.MsgLaneIsNotAStagingNode,
 	} {
 		resp := doRequest(t, router, "POST", url, map[string]any{"core_node_name": "LL-LANE", "role": role}, cookie)
 		assertStatus(t, resp, http.StatusBadRequest)
@@ -155,17 +157,14 @@ func TestRoutingNodes_RefusesALaneAsASourceOrDestination(t *testing.T) {
 	if len(rows) != 0 {
 		t.Fatalf("a refused body landed: %+v", rows)
 	}
-
-	resp := doRequest(t, router, "POST", url, map[string]any{"core_node_name": "LL-LANE", "role": "staging"}, cookie)
-	assertStatus(t, resp, http.StatusOK)
 }
 
 // TestComposer_OffersNoLaneChipOnASourceOrDestination: the composer's source
 // and destination chips are the enabled routing rows of those roles, and a
 // lane row already in the set (put there before the save refused one, or
-// derived from a stored claim) is not offered. The staging lane stays, as do
-// the group rows. Both composer reads, the desktop's and the station's, go
-// through the same filter.
+// derived from a stored claim) is not offered. Nor is a staging lane, since
+// a staging leg refuses a lane too; the group rows stay. Both composer reads,
+// the desktop's and the station's, go through the same filter.
 func TestComposer_OffersNoLaneChipOnASourceOrDestination(t *testing.T) {
 	h, _ := newAdminRouter(t)
 	pid := seedProcess(t, "LL-Composer")
@@ -205,7 +204,10 @@ func TestComposer_OffersNoLaneChipOnASourceOrDestination(t *testing.T) {
 	if got["source/LL-LANE"] || got["destination/LL-LANE"] {
 		t.Errorf("a lane is offered on a source or destination leg: %v", got)
 	}
-	for _, k := range []string{"source/LL-SUP", "destination/LL-SUP", "staging/LL-LANE"} {
+	if got["staging/LL-LANE"] {
+		t.Errorf("a lane is offered as a staging node: %v", got)
+	}
+	for _, k := range []string{"source/LL-SUP", "destination/LL-SUP"} {
 		if !got[k] {
 			t.Errorf("%s is missing from the offers: %v", k, got)
 		}

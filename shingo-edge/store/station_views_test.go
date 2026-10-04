@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -43,7 +44,7 @@ func seedSwapReadyFixture(t *testing.T) (db *DB, claim *processes.NodeClaim, run
 		t.Fatalf("create style: %v", err)
 	}
 	testutil.MustNoErr(t, d.SetActiveStyle(processID, &styleID), "set active style")
-	claimID, err := d.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	claimID, err := d.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        "SWAP-NODE",
 		Role:                "produce",

@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/internal/testdb"
 	"shingoedge/store/processes"
 )
@@ -28,7 +29,7 @@ func TestProcessContainment_SetAndClear(t *testing.T) {
 
 	seed := func(styleID int64, node string, role protocol.ClaimRole) {
 		t.Helper()
-		_, err := processes.UpsertClaim(db.DB, processes.NodeClaimInput{
+		_, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
 			StyleID: styleID, CoreNodeName: node, Role: role,
 			SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "PART-H",
 			OutboundDestination: "FG-9", InboundStaging: "STG-1",
@@ -40,12 +41,12 @@ func TestProcessContainment_SetAndClear(t *testing.T) {
 	seed(styleB, "PLN-2", protocol.ClaimRoleProduce)
 
 	// Enabled without a destination is refused before any claim is touched.
-	if err := svc.SetContainment(pid, true, "", "tester"); err == nil ||
+	if err := svc.SetContainment(domain.CoreNodeKinds{}, pid, true, "", "tester"); err == nil ||
 		!strings.Contains(err.Error(), "destination is required") {
 		t.Fatalf("err = %v, want the destination-required refusal", err)
 	}
 
-	testutil.MustNoErr(t, svc.SetContainment(pid, true, "HOLD-1", "tester"), "enable")
+	testutil.MustNoErr(t, svc.SetContainment(domain.CoreNodeKinds{}, pid, true, "HOLD-1", "tester"), "enable")
 
 	// Produce claims across BOTH styles carry the route; the consume claim
 	// (a swap return's outbound) is untouched — stamping one would be inert
@@ -72,10 +73,10 @@ func TestProcessContainment_SetAndClear(t *testing.T) {
 	}
 
 	// Replay is a no-op (already there).
-	testutil.MustNoErr(t, svc.SetContainment(pid, true, "HOLD-1", "tester"), "replay")
+	testutil.MustNoErr(t, svc.SetContainment(domain.CoreNodeKinds{}, pid, true, "HOLD-1", "tester"), "replay")
 
 	// Clear: the route goes from every produce claim; the read flips off.
-	testutil.MustNoErr(t, svc.SetContainment(pid, false, "", "tester"), "clear")
+	testutil.MustNoErr(t, svc.SetContainment(domain.CoreNodeKinds{}, pid, false, "", "tester"), "clear")
 	enabled, dest, err = svc.ContainmentState(pid)
 	testutil.MustNoErr(t, err, "containment state after clear")
 	if enabled || dest != "" {

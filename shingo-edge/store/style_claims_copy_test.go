@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -24,7 +25,7 @@ import (
 // test wanting capacity N puts N in the catalog.
 func seedClaimRow(t *testing.T, db *DB, styleID int64, coreNode string, role protocol.ClaimRole, payload string, uop int) {
 	t.Helper()
-	_, err := processes.UpsertClaim(db.DB, processes.NodeClaimInput{
+	_, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID:      styleID,
 		CoreNodeName: coreNode,
 		Role:         role,
@@ -64,7 +65,7 @@ func TestCopyStyleClaims_VerbatimReplace(t *testing.T) {
 	seedClaimRow(t, db, tgtID, "N-PRESS", "consume", "PART-TGT", 99)
 	seedClaimRow(t, db, tgtID, "N-ONLY-TGT", "produce", "PART-TGT", 5)
 
-	_, err = db.CopyStyleClaims(srcID, tgtID, true, nil)
+	_, err = db.CopyStyleClaims(domain.CoreNodeKinds{}, srcID, tgtID, true, nil)
 	testutil.MustNoErr(t, err, "copy verbatim")
 
 	// The target now mirrors the source exactly: role, payload, capacity.
@@ -97,7 +98,7 @@ func TestCopyStyleClaims_KeepsTargetPayloads(t *testing.T) {
 	// includePayloads=false: choreography comes from the source, payloads
 	// stay the TARGET's on the node it shares; a source node the target
 	// never had arrives with the source's payload (nothing to preserve).
-	_, err = db.CopyStyleClaims(srcID, tgtID, false, nil)
+	_, err = db.CopyStyleClaims(domain.CoreNodeKinds{}, srcID, tgtID, false, nil)
 	testutil.MustNoErr(t, err, "copy keep-payloads")
 
 	press := claimByNode(t, db, tgtID, "N-PRESS")
@@ -117,10 +118,10 @@ func TestCopyStyleClaims_SameStyleAndMissingSource(t *testing.T) {
 	testutil.MustNoErr(t, err, "list styles")
 	srcID := src[0].ID
 
-	if _, err := db.CopyStyleClaims(srcID, srcID, true, nil); err == nil {
+	if _, err := db.CopyStyleClaims(domain.CoreNodeKinds{}, srcID, srcID, true, nil); err == nil {
 		t.Errorf("copy onto self must error")
 	}
-	if _, err := db.CopyStyleClaims(srcID, 999999, true, nil); err == nil {
+	if _, err := db.CopyStyleClaims(domain.CoreNodeKinds{}, srcID, 999999, true, nil); err == nil {
 		t.Errorf("missing target must error")
 	}
 }
@@ -138,7 +139,7 @@ func TestCopyStyleClaims_OverridesApply(t *testing.T) {
 
 	// Blank = inherit: N-STAGE's row carries no overrides and must arrive
 	// exactly as copied. N-PRESS carries the whole field set.
-	notes, err := db.CopyStyleClaims(srcID, tgtID, true, []processes.ClaimOverride{
+	notes, err := db.CopyStyleClaims(domain.CoreNodeKinds{}, srcID, tgtID, true, []processes.ClaimOverride{
 		{
 			Node:                "N-PRESS",
 			Role:                "consume",
@@ -186,7 +187,7 @@ func TestCopyStyleClaims_RenameCascadeAndCollision(t *testing.T) {
 	testutil.MustNoErr(t, err, "create target")
 	seedClaimRow(t, db, srcID, "N-A", "produce", "PART-A", 10)
 	// N-B pairs with N-A the way a press-index cell does: valid upsert.
-	_, err = processes.UpsertClaim(db.DB, processes.NodeClaimInput{
+	_, err = processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: srcID, CoreNodeName: "N-B", Role: protocol.ClaimRoleProduce,
 		SwapMode:       protocol.SwapModeTwoRobotPressIndex,
 		PairedCoreNode: "N-A", OutboundDestination: "LINE-OUT",
@@ -194,7 +195,7 @@ func TestCopyStyleClaims_RenameCascadeAndCollision(t *testing.T) {
 	testutil.MustNoErr(t, err, "seed press-index claim")
 	seedClaimRow(t, db, srcID, "N-C", "consume", "PART-C", 7)
 
-	notes, err := db.CopyStyleClaims(srcID, tgtID, true, []processes.ClaimOverride{
+	notes, err := db.CopyStyleClaims(domain.CoreNodeKinds{}, srcID, tgtID, true, []processes.ClaimOverride{
 		{Node: "N-A", CoreNodeName: "N-REN"},
 		{Node: "N-C", CoreNodeName: "N-REN"},
 	})
@@ -233,7 +234,7 @@ func TestCopyStyleClaims_PressIndexDistinctnessAndRoleWithhold(t *testing.T) {
 	srcID := src[0].ID
 	tgtID, err := db.CreateStyle("ValidityTarget", "", processID)
 	testutil.MustNoErr(t, err, "create target")
-	_, err = processes.UpsertClaim(db.DB, processes.NodeClaimInput{
+	_, err = processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: srcID, CoreNodeName: "N-X", Role: protocol.ClaimRoleProduce,
 		SwapMode:       protocol.SwapModeTwoRobotPressIndex,
 		PairedCoreNode: "N-P1", OutboundDestination: "LINE-OUT",
@@ -246,7 +247,7 @@ func TestCopyStyleClaims_PressIndexDistinctnessAndRoleWithhold(t *testing.T) {
 		VALUES (?, 'N-RAW', 'consume', 'two_robot')`, srcID)
 	testutil.MustNoErr(t, err, "seed raw two_robot claim")
 
-	notes, err := db.CopyStyleClaims(srcID, tgtID, true, []processes.ClaimOverride{
+	notes, err := db.CopyStyleClaims(domain.CoreNodeKinds{}, srcID, tgtID, true, []processes.ClaimOverride{
 		{Node: "N-X", CoreNodeName: "N-P1"},                    // would collapse front onto back
 		{Node: "N-RAW", Role: "produce", PayloadCode: "P-RAW"}, // role invalid, payload fine
 	})
@@ -289,7 +290,7 @@ func TestCopyStyleClaims_PairedOverrideDistinctness(t *testing.T) {
 	tgtID, err := db.CreateStyle("PairedGateTarget", "", processID)
 	testutil.MustNoErr(t, err, "create target")
 	for _, c := range []struct{ node, paired string }{{"N-X", "N-P1"}, {"N-Y", "N-Q1"}, {"N-Z", "N-R1"}} {
-		_, err = processes.UpsertClaim(db.DB, processes.NodeClaimInput{
+		_, err = processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
 			StyleID: srcID, CoreNodeName: c.node, Role: protocol.ClaimRoleProduce,
 			SwapMode:       protocol.SwapModeTwoRobotPressIndex,
 			PairedCoreNode: c.paired, OutboundDestination: "LINE-OUT",
@@ -298,7 +299,7 @@ func TestCopyStyleClaims_PairedOverrideDistinctness(t *testing.T) {
 	}
 	seedClaimRow(t, db, srcID, "N-SEQ", "consume", "PART-SEQ", 0)
 
-	notes, err := db.CopyStyleClaims(srcID, tgtID, true, []processes.ClaimOverride{
+	notes, err := db.CopyStyleClaims(domain.CoreNodeKinds{}, srcID, tgtID, true, []processes.ClaimOverride{
 		// Both positions refused: paired names the front itself, and second
 		// names the (unchanged) back. The sibling field still applies.
 		{Node: "N-X", PairedCoreNode: "N-X", SecondPairedCoreNode: "N-P1", InboundSource: "SRC-IN"},
@@ -357,7 +358,7 @@ func TestCopyStyleClaims_PayloadOverrideAllowedList(t *testing.T) {
 		node    string
 		allowed []string
 	}{{"N-WILD", []string{"*"}}, {"N-HAS", []string{"PART-A", "P-OVR"}}} {
-		_, err = processes.UpsertClaim(db.DB, processes.NodeClaimInput{
+		_, err = processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, processes.NodeClaimInput{
 			StyleID: srcID, CoreNodeName: c.node, Role: protocol.ClaimRoleConsume,
 			SwapMode: protocol.SwapModeSequential, PayloadCode: "PART-A",
 			AllowedPayloadCodes: c.allowed,
@@ -365,7 +366,7 @@ func TestCopyStyleClaims_PayloadOverrideAllowedList(t *testing.T) {
 		testutil.MustNoErr(t, err, "seed claim "+c.node)
 	}
 
-	notes, err := db.CopyStyleClaims(srcID, tgtID, true, []processes.ClaimOverride{
+	notes, err := db.CopyStyleClaims(domain.CoreNodeKinds{}, srcID, tgtID, true, []processes.ClaimOverride{
 		{Node: "N-WILD", PayloadCode: "P-OVR"},
 		{Node: "N-HAS", PayloadCode: "P-OVR"},
 	})

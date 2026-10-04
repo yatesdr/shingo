@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
 )
@@ -55,7 +56,7 @@ func TestBuildView_DedicatedHomeGetsTheLoadDirective(t *testing.T) {
 		t.Fatalf("set active style: %v", err)
 	}
 	// The incoming style's press wants PART-NEW — the home's pinned payload.
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: toStyleID, CoreNodeName: "DHD-PRESS", Role: protocol.ClaimRoleProduce,
 		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART-NEW", UOPCapacity: 100,
 		InboundSource: "MARKET", OutboundDestination: "MARKET", InboundStaging: "DHD-STAGE", OutboundStaging: "DHD-OUT",

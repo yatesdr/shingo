@@ -49,7 +49,7 @@ func keeperFixture(t *testing.T) (*Engine, *store.DB, int64, int64) {
 	testutil.MustNoErr(t, err, "create style")
 	testutil.MustNoErr(t, db.SetActiveStyle(procID, &styleID), "set active style")
 
-	claimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "ALN_003", Role: protocol.ClaimRoleConsume,
 		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PANEL-B",
 		UOPCapacity: 40, ReorderPoint: 25, AutoReorder: domain.Ptr(true),

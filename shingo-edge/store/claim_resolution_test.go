@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -40,7 +41,7 @@ func TestResolveNodeClaim_Precedence(t *testing.T) {
 		t.Fatalf("create target style: %v", err)
 	}
 	mkClaim := func(styleID int64, payload string) {
-		if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 			StyleID: styleID, CoreNodeName: "PREC-NODE", Role: "consume",
 			SwapMode: protocol.SwapModeSingleRobot, PayloadCode: payload, UOPCapacity: 100,
 			// Required at save since flowspec D1/D2; this test is about which
@@ -90,7 +91,7 @@ func TestResolveNodeClaim_FallbackOnlyWhenTheFirstChoiceIsSilent(t *testing.T) {
 	activeStyle, _ := db.CreateStyle("PREC2-ACTIVE", "outgoing", processID)
 	targetStyle, _ := db.CreateStyle("PREC2-TARGET", "incoming", processID)
 	// ONLY the target style claims this node — the freshly-added-node case.
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: targetStyle, CoreNodeName: "PREC2-NODE", Role: "consume",
 		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART-ONLY-TARGET", UOPCapacity: 100,
 		InboundStaging: "PREC2-IN", OutboundStaging: "PREC2-OUT", OutboundDestination: "PREC2-DEST",

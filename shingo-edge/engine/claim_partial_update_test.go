@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -42,7 +43,7 @@ func fullyConfiguredClaim(t *testing.T, db *store.DB) (claimID int64, styleID in
 	testutil.MustNoErr(t, err, "create style")
 
 	yes := true
-	claimID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	claimID, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "PU-FRONT", Role: protocol.ClaimRoleProduce,
 		SwapMode:       protocol.SwapModeTwoRobotPressIndex,
 		PairedCoreNode: "PU-BACK",
@@ -121,7 +122,7 @@ func TestPartialClaimUpdate_LeavesUnmentionedColumnsAlone(t *testing.T) {
 	claimID, styleID := fullyConfiguredClaim(t, db)
 
 	// The same claim, re-sent by a writer with no opinion about the six.
-	_, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "PU-FRONT", Role: protocol.ClaimRoleProduce,
 		SwapMode:       protocol.SwapModeTwoRobotPressIndex,
 		PairedCoreNode: "PU-BACK",
@@ -143,7 +144,7 @@ func TestClaimUpdate_ExplicitEmptyStillClears(t *testing.T) {
 	claimID, styleID := fullyConfiguredClaim(t, db)
 
 	no := false
-	_, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "PU-FRONT", Role: protocol.ClaimRoleProduce,
 		SwapMode:       protocol.SwapModeTwoRobotPressIndex,
 		PairedCoreNode: "PU-BACK",

@@ -31,7 +31,7 @@ func TestRetiredClaim_IsInvisibleToTheOneQueryReads(t *testing.T) {
 		t.Fatalf("CreateProcessNode: %v", err)
 	}
 	mk := func(node, payload string) int64 {
-		id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 			StyleID: sid, CoreNodeName: node, Role: "produce", SwapMode: "two_robot",
 			PayloadCode: payload, InboundStaging: "STG", InboundSource: "SMN", OutboundDestination: "SMN_DST",
 			Source: domain.ClaimSourceAdmin, CalledBy: "alice",

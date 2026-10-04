@@ -27,6 +27,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
 )
@@ -397,7 +398,7 @@ func TestRuntimeBinding_ManualSwapNodesSkipPLCTicks(t *testing.T) {
 	}
 	styleID, _ := db.CreateStyle("MS-SKIP-STYLE", "", processID)
 	db.SetActiveStyle(processID, &styleID)
-	claimID, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	claimID, _ := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "MS-SKIP-NODE", Role: "consume",
 		SwapMode: "manual_swap", PayloadCode: "PART-MS", UOPCapacity: 100,
 		OutboundDestination: "STORAGE",

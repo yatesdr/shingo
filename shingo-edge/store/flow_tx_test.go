@@ -48,14 +48,14 @@ func TestFlowTx_ClaimWritesRollBackWithTheTransaction(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	processID, styleID := seedTxStyle(t, db)
-	keptID, err := db.UpsertStyleNodeClaim(txClaim(styleID, "KEPT"))
+	keptID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, txClaim(styleID, "KEPT"))
 	if err != nil {
 		t.Fatalf("seed claim: %v", err)
 	}
 
 	sentinel := errors.New("roll it back")
 	err = db.Transaction(func(tx *sql.Tx) error {
-		if _, err := processes.UpsertClaim(tx, txClaim(styleID, "NEW")); err != nil {
+		if _, err := processes.UpsertClaim(tx, domain.CoreNodeKinds{}, txClaim(styleID, "NEW")); err != nil {
 			return err
 		}
 		if err := processes.DeleteClaim(tx, keptID); err != nil {
@@ -103,7 +103,7 @@ func TestFlowTx_ClaimWritesCommitWithTheTransaction(t *testing.T) {
 	err := db.Transaction(func(tx *sql.Tx) error {
 		in := txClaim(styleID, "NEW")
 		in.Source, in.CalledBy = domain.ClaimSourceHMI, "Press 400"
-		_, err := processes.UpsertClaim(tx, in)
+		_, err := processes.UpsertClaim(tx, domain.CoreNodeKinds{}, in)
 		return err
 	})
 	if err != nil {

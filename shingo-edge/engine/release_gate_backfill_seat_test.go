@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"shingoedge/domain"
 	"shingoedge/release"
 	"testing"
 
@@ -38,7 +39,7 @@ func seedUnflippedPressIndexPair(t *testing.T, flipped bool) (*Engine, *store.DB
 	nodeID, _, claim := seedSwapClaim(t, db, protocol.SwapModeTwoRobotPressIndex, "")
 	if flipped {
 		yes := true
-		_, err := db.UpsertStyleNodeClaim(claimInputFrom(claim, &yes))
+		_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, claimInputFrom(claim, &yes))
 		testutil.MustNoErr(t, err, "flip index_robot_supplies")
 		node, err := db.GetProcessNode(nodeID)
 		testutil.MustNoErr(t, err, "re-read node")

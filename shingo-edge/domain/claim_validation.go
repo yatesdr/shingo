@@ -127,39 +127,107 @@ func kindsHas(set map[string]bool, name string) bool {
 // IsMaintained reports whether name is a group Core keeps a level of empties in.
 func (k CoreNodeKinds) IsMaintained(name string) bool { return kindsHas(k.Maintained, name) }
 
-// LegRefusal is the refusal for a lane named on a source or destination leg
-// (a routing role), in Core's sentence, or "" when the leg is fine. A staging
-// leg is never refused: staging lanes are the ordinary case.
+// LegRefusal is the refusal for a lane named in a routing role, in the
+// sentence Core and the claim editor both use, or "" when the name is fine.
+// Every role refuses a lane, staging included (owner ruling, 2026-10-04): a
+// staging node is a spot a robot waits at, and the keep-staged spare is read
+// by that spot's name, while a lane has no bin of its own to answer with.
 func (k CoreNodeKinds) LegRefusal(role, name string) string {
+	name = strings.TrimSpace(name)
 	if name == "" || !kindsHas(k.Lanes, name) {
 		return ""
 	}
 	switch role {
 	case RoutingRoleSource:
 		return fmt.Sprintf("%s: %q", protocol.MsgLaneIsNotASource, name)
-	case RoutingRoleDestination:
+	case RoutingRoleStaging:
+		return fmt.Sprintf("%s: %q", protocol.MsgLaneIsNotAStagingNode, name)
+	default:
 		return fmt.Sprintf("%s: %q", protocol.MsgLaneIsNotADestination, name)
 	}
-	return ""
 }
 
-// validateLegKinds refuses a lane on the source or destination leg, and a
-// maintained group as a consume claim's source. The source leg is where a
-// consume line's fulls and a produce line's empties come from; the destination
-// is where the other half goes, so these two fields carry every leg Core
-// checks for a loader. A field already refused for another reason is not
-// refused twice.
-func validateLegKinds(in NodeClaimInput, kinds CoreNodeKinds, reported map[string]bool, add func(field, msg string)) {
-	legs := []struct{ field, role, name string }{
+// ClaimLeg is one leg of a claim: the wire field, the routing role a node on
+// it is offered in, and the node it names.
+type ClaimLeg struct {
+	Field, Role, Name string
+}
+
+// ClaimLegs lists the six legs of a claim, in a fixed order. Every writer of a
+// claim row asks about these six through LaneLegs, so a seventh leg added to
+// the claim is added here or it is not checked anywhere.
+func ClaimLegs(in NodeClaimInput) []ClaimLeg {
+	return []ClaimLeg{
 		{"inbound_source", RoutingRoleSource, in.InboundSource},
 		{"outbound_destination", RoutingRoleDestination, in.OutboundDestination},
+		{"changeover_evac_destination", RoutingRoleDestination, OptValue(in.ChangeoverEvacDestination)},
+		{"containment_destination", RoutingRoleDestination, in.ContainmentDestination},
+		{"inbound_staging", RoutingRoleStaging, in.InboundStaging},
+		{"outbound_staging", RoutingRoleStaging, in.OutboundStaging},
 	}
-	for _, leg := range legs {
-		if reported[leg.field] {
-			continue
+}
+
+// LaneLegs is every leg of the claim that names a lane, each with its
+// sentence, in ClaimLegs order. The claim editor shows one per field; the
+// store refuses on the first (RefuseLaneLegs). Empty kinds find nothing.
+func (k CoreNodeKinds) LaneLegs(in NodeClaimInput) []FieldError {
+	if len(k.Lanes) == 0 {
+		return nil
+	}
+	var out []FieldError
+	for _, leg := range ClaimLegs(in) {
+		if msg := k.LegRefusal(leg.Role, leg.Name); msg != "" {
+			out = append(out, FieldError{Field: leg.Field, Message: msg, Severity: SeverityError})
 		}
-		if msg := kinds.LegRefusal(leg.role, leg.name); msg != "" {
-			add(leg.field, msg)
+	}
+	return out
+}
+
+// ErrLaneLeg matches every LaneLegError, so a door can answer 400 rather than
+// 500 without knowing which leg it was.
+var ErrLaneLeg = errors.New("a leg names a lane")
+
+// LaneLegError is a claim or routing write refused because it names a lane.
+// Field is the claim's wire field, or "" for a routing row, whose role is
+// already in the sentence.
+type LaneLegError struct {
+	Field, Message string
+}
+
+func (e *LaneLegError) Error() string {
+	if e.Field == "" {
+		return e.Message
+	}
+	return e.Field + ": " + e.Message
+}
+
+// Is makes errors.Is(err, ErrLaneLeg) true for every LaneLegError.
+func (e *LaneLegError) Is(target error) bool { return target == ErrLaneLeg }
+
+// RefuseLaneLegs is the store's form of LaneLegs: the first leg naming a lane
+// as a *LaneLegError, or nil.
+func (k CoreNodeKinds) RefuseLaneLegs(in NodeClaimInput) error {
+	if legs := k.LaneLegs(in); len(legs) > 0 {
+		return &LaneLegError{Field: legs[0].Field, Message: legs[0].Message}
+	}
+	return nil
+}
+
+// RefuseLaneRow is the routing set's form: a row naming a lane in any role.
+func (k CoreNodeKinds) RefuseLaneRow(role, name string) error {
+	if msg := k.LegRefusal(role, name); msg != "" {
+		return &LaneLegError{Message: msg}
+	}
+	return nil
+}
+
+// validateLegKinds refuses a lane on any of the claim's legs (LaneLegs, the
+// same answer the store gives), and a maintained group as a consume claim's
+// source. A field already refused for another reason is not refused twice.
+func validateLegKinds(in NodeClaimInput, kinds CoreNodeKinds, reported map[string]bool, add func(field, msg string)) {
+	for _, f := range kinds.LaneLegs(in) {
+		if !reported[f.Field] {
+			add(f.Field, f.Message)
 		}
 	}
 	if in.Role == protocol.ClaimRoleConsume && in.InboundSource != "" && !reported["inbound_source"] &&
@@ -255,6 +323,10 @@ func NewClaimContextSet(in ClaimContextInput) ClaimContextSet {
 		kinds:          in.Kinds,
 	}
 }
+
+// Kinds is the lane and maintained-group sets the set was built with, for the
+// store writes that follow the validation.
+func (s ClaimContextSet) Kinds() CoreNodeKinds { return s.kinds }
 
 // Checked reports whether the set resolved. Callers log the empty-plant-map
 // case off this plus KnownScenePoints.

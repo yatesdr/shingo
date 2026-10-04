@@ -45,12 +45,14 @@ const (
 // The refusals a line's legs meet when they name the wrong kind of node. Lines
 // name node groups, never lanes: a need that names a lane searches that lane
 // only, so a bin put in a sibling lane of the same group is invisible to it.
-// And a maintained group holds empties, so a full of a part can be taken from
-// it but never put back. Core's loader save and the Edge's claim save both say
-// these, so they are spelled once here.
+// A staging leg names the one spot a robot waits at, and a lane has no bin of
+// its own to answer for that spot. And a maintained group holds empties, so a
+// full of a part can be taken from it but never put back. Core's loader save
+// and the Edge's claim save both say these, so they are spelled once here.
 const (
 	MsgLaneIsNotASource       = "a lane is not a source; name its group"
 	MsgLaneIsNotADestination  = "a lane is not a destination; name its group"
+	MsgLaneIsNotAStagingNode  = "a lane is not a staging node; name the spot a robot waits at"
 	MsgFullsFromAnEmptiesBank = "an unloader's fulls cannot come from a maintained (empties) group"
 )
 

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/internal/testdb"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -146,7 +147,7 @@ func upsertClaimRetiredMode(t *testing.T, db *store.DB, in processes.NodeClaimIn
 	t.Helper()
 	want := in.SwapMode
 	in.SwapMode = protocol.SwapModeSequential // placeholder to pass the allowlist
-	id, err := db.UpsertStyleNodeClaim(in)
+	id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	if err != nil {
 		return id, err
 	}

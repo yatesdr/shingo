@@ -178,7 +178,7 @@ func TestFlowCarryThrough_SaveLeavesEveryUnspokenColumnAlone(t *testing.T) {
 
 				cell := domain.Collapse(c)
 				in := domain.Expand(cell, &c, domain.ClaimSourceHMI, "Press 400")
-				id, err := processes.UpsertClaim(db.DB, in)
+				id, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, in)
 				if err != nil {
 					t.Errorf("%s: the store refused the claim's own cell: %v", label, err)
 					continue

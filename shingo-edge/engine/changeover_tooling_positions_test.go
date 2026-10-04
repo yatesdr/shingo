@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -55,7 +56,7 @@ func seedMarkedPressScenario(t *testing.T, db *store.DB) (processID, fromStyleID
 	}
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID:             fromStyleID,
 		CoreNodeName:        "PRESS-A",
 		Role:                protocol.ClaimRoleProduce,
@@ -69,7 +70,7 @@ func seedMarkedPressScenario(t *testing.T, db *store.DB) (processID, fromStyleID
 	}); err != nil {
 		t.Fatalf("upsert from claim: %v", err)
 	}
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID:             toStyleID,
 		CoreNodeName:        "PRESS-A",
 		Role:                protocol.ClaimRoleProduce,
@@ -310,13 +311,13 @@ func seedDisjointPressScenario(t *testing.T, db *store.DB) (processID, toStyleID
 	from := base
 	from.StyleID, from.CoreNodeName, from.PairedCoreNode = fromStyleID, "OLD-A", "OLD-B"
 	from.ChangeoverEvacNodes = &[]string{"OLD-A", "OLD-B"}
-	if _, err := db.UpsertStyleNodeClaim(from); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, from); err != nil {
 		t.Fatalf("upsert from claim: %v", err)
 	}
 	to := base
 	to.StyleID, to.CoreNodeName, to.PairedCoreNode = toStyleID, "NEW-A", "NEW-B"
 	to.InboundStaging = "IN-STAGE"
-	if _, err := db.UpsertStyleNodeClaim(to); err != nil {
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, to); err != nil {
 		t.Fatalf("upsert to claim: %v", err)
 	}
 	return processID, toStyleID

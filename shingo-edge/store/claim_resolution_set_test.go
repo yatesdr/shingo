@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -44,7 +45,7 @@ func TestNodeClaimSet_MatchesThePerNodeResolver(t *testing.T) {
 		}
 	}
 	mkClaim := func(styleID int64, name, payload string) int64 {
-		id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 			StyleID: styleID, CoreNodeName: name, Role: "consume",
 			SwapMode: protocol.SwapModeSingleRobot, PayloadCode: payload, UOPCapacity: 100,
 			InboundStaging: "SET-IN", OutboundStaging: "SET-OUT", OutboundDestination: "SET-DEST",
@@ -137,7 +138,7 @@ func TestNodeClaimSet_SharesOneClaimPerRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create style: %v", err)
 	}
-	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "ALIAS_WINDOW", Role: "consume",
 		SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "PART-SHARED", UOPCapacity: 100,
 		InboundStaging: "ALIAS-IN", OutboundStaging: "ALIAS-OUT", OutboundDestination: "ALIAS-DEST",

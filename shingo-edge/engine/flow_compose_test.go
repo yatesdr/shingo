@@ -99,7 +99,7 @@ func seedFlowScenario(t *testing.T, db *store.DB) (processID, fromStyleID, toSty
 	testutil.MustNoErr(t, err, "create to style")
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 	claim := func(styleID int64, node, payload string) {
-		_, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 			StyleID: styleID, CoreNodeName: node, Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeTwoRobot,
 			PayloadCode: payload, InboundStaging: "FLOW-STG", InboundSource: "FLOW-SRC", OutboundDestination: "FLOW-DST",
 		})
@@ -671,7 +671,7 @@ func TestSaveFlow_WritesTheFlowStampedHMI(t *testing.T) {
 	testutil.MustNoErr(t, err, "get claim")
 	in := domain.InputFromClaim(*same)
 	in.ReorderPoint = 500
-	_, err = db.UpsertStyleNodeClaim(in)
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	testutil.MustNoErr(t, err, "lock claim")
 
 	fp, err := eng.FlowFingerprint(processID, toStyleID)
@@ -747,7 +747,7 @@ func TestFlowFingerprint_TracksTheStoredRows(t *testing.T) {
 	testutil.MustNoErr(t, err, "from claim")
 	in := domain.InputFromClaim(*from)
 	in.Source, in.CalledBy = domain.ClaimSourceHMI, "Press 400"
-	_, err = db.UpsertStyleNodeClaim(in)
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	testutil.MustNoErr(t, err, "restamp")
 	got, err := eng.FlowFingerprint(processID, toStyleID)
 	testutil.MustNoErr(t, err, "eng.FlowFingerprint")
@@ -759,7 +759,7 @@ func TestFlowFingerprint_TracksTheStoredRows(t *testing.T) {
 	// fact: the catalog moving is not the flow moving, and a Core sync must not
 	// invalidate a preview somebody is looking at.
 	in.ReorderPoint++
-	_, err = db.UpsertStyleNodeClaim(in)
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	testutil.MustNoErr(t, err, "edit from")
 	fromEdited, err := eng.FlowFingerprint(processID, toStyleID)
 	testutil.MustNoErr(t, err, "eng.FlowFingerprint")
@@ -912,7 +912,7 @@ func TestSaveFlow_WritesACellTheEngineerHasConfigured(t *testing.T) {
 	// The kept spare needs a staging node of its own: the scenario's other
 	// claims share FLOW-STG, and a kept spot is dedicated to its line.
 	in.InboundStaging, in.KeepStaged = "FLOW-SAME-SPOT", domain.Ptr(true)
-	_, err = db.UpsertStyleNodeClaim(in)
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	testutil.MustNoErr(t, err, "configure the cell")
 
 	fp, err := eng.FlowFingerprint(processID, toStyleID)

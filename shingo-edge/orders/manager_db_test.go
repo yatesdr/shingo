@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/catalog"
 	"shingoedge/store/messaging"
@@ -108,7 +109,7 @@ func seedProcessStyleNode(t *testing.T, db *store.DB, procName, styleName, coreN
 // seedClaim upserts a style_node_claim for a (style, coreNode) pair.
 func seedClaim(t *testing.T, db *store.DB, styleID int64, coreNode, payloadCode string) int64 {
 	t.Helper()
-	id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        coreNode,
 		Role:                "consume",

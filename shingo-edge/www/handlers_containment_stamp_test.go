@@ -30,7 +30,7 @@ func TestEnrichViewContainmentTargets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create style: %v", err)
 	}
-	if _, err := testDB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "PLN-STAMP", Role: "produce",
 		SwapMode: "two_robot_press_index", PayloadCode: "PART-S", UOPCapacity: 20,
 		PairedCoreNode: "PLN-STAMP-B", OutboundDestination: "ULN-1",
@@ -72,7 +72,7 @@ func TestEnrichViewContainmentTargets(t *testing.T) {
 	testutil.MustNoErr(t, err, "create second process")
 	otherStyle, err := testDB.CreateStyle("STAMP-STYLE-B", "", otherProc)
 	testutil.MustNoErr(t, err, "create second style")
-	if _, err := testDB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	if _, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: otherStyle, CoreNodeName: "PLN-STAMP-B2", Role: "produce",
 		SwapMode: "two_robot_press_index", PayloadCode: "PART-B", UOPCapacity: 5,
 		PairedCoreNode: "PLN-STAMP-B3", OutboundDestination: "ULN-2",

@@ -5,6 +5,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -39,7 +40,7 @@ func seedLineSwapClaim(t *testing.T, db *store.DB, prefix string, mode protocol.
 	styleID, err := db.CreateStyle(prefix+"-STYLE", "", processID)
 	testutil.MustNoErr(t, err, "create style")
 	testutil.MustNoErr(t, db.SetActiveStyle(processID, &styleID), "set active style")
-	_, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        prefix + "-LINE",
 		Role:                protocol.ClaimRoleConsume,

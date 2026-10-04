@@ -93,7 +93,7 @@ func TestFlowRoundTrip_StoreAgreesWithTheModel(t *testing.T) {
 				// UPDATE path.
 				in := domain.Expand(domain.Collapse(c), &c, domain.ClaimSourceHMI, "Press 400")
 				model := domain.MaterializeClaim(in, &c)
-				id, err := processes.UpsertClaim(db.DB, in)
+				id, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, in)
 				if err != nil {
 					t.Errorf("%s: the store refused the claim's own cell written back: %v", label, err)
 					continue
@@ -132,7 +132,7 @@ func TestFlowRoundTrip_StoreAgreesWithTheModel(t *testing.T) {
 				fresh := domain.Expand(cell, nil, domain.ClaimSourceHMI, "Press 400")
 				fresh.StyleID = sid
 				freshModel := domain.MaterializeClaim(fresh, nil)
-				newID, err := processes.UpsertClaim(db.DB, fresh)
+				newID, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, fresh)
 				if err != nil {
 					t.Errorf("%s: the store refused the cell as a new claim: %v", label, err)
 					continue
