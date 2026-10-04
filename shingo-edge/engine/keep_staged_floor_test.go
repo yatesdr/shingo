@@ -2,7 +2,6 @@ package engine
 
 import (
 	"testing"
-	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -157,17 +156,14 @@ func TestKeepStagedFloor_StartAbortingTheCellDoesNotWaitOnItself(t *testing.T) {
 	testutil.MustNoErr(t, err, "refill coming")
 	holdingSwap(t, fx.db, nodeID)
 
-	done := make(chan error, 1)
-	go func() {
-		_, err := fx.eng.StartProcessChangeover(fx.processID, fx.toStyleID, "test", "keep-staged")
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		testutil.MustNoErr(t, err, "start")
-	case <-time.After(10 * time.Second):
-		t.Fatal("the changeover start did not return: the floor waited on the cell lock the start holds")
-	}
+	// The start runs on the test's own goroutine, with no clock of its own. Its
+	// return is the answer; how long it takes says nothing. Under -race with
+	// the package's parallel tests sharing the SQLite driver's one allocator
+	// lock, a start that waits on nothing has taken 32 s. A start that waits on
+	// its own lock never returns, and go test -timeout fails it with every
+	// goroutine's stack, the floor's among them.
+	_, err = fx.eng.StartProcessChangeover(fx.processID, fx.toStyleID, "test", "keep-staged")
+	testutil.MustNoErr(t, err, "start")
 }
 
 // A produce refill is an empty-in. Edge writes it as retrieve with
