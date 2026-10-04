@@ -42,6 +42,18 @@ const (
 	NodeClassSTOR = "STOR" // standalone storage node (store-order destination type)
 )
 
+// The refusals a line's legs meet when they name the wrong kind of node. Lines
+// name node groups, never lanes: a need that names a lane searches that lane
+// only, so a bin put in a sibling lane of the same group is invisible to it.
+// And a maintained group holds empties, so a full of a part can be taken from
+// it but never put back. Core's loader save and the Edge's claim save both say
+// these, so they are spelled once here.
+const (
+	MsgLaneIsNotASource       = "a lane is not a source; name its group"
+	MsgLaneIsNotADestination  = "a lane is not a destination; name its group"
+	MsgFullsFromAnEmptiesBank = "an unloader's fulls cannot come from a maintained (empties) group"
+)
+
 // AuditActorUI is the audit-trail actor recorded for web-UI-initiated actions
 // (the "ui" source in AuditService.Append / audit rows).
 const AuditActorUI = "ui"

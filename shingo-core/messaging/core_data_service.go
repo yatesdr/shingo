@@ -549,6 +549,15 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope, req *pro
 		return
 	}
 
+	// Which groups keep a level of empties: one read for the whole list. A
+	// failed read sends the list unmarked, which the Edge reads exactly as it
+	// reads an older Core — it refuses nothing on this account — so the read
+	// does not hold the topology back.
+	maintained, merr := s.db.MaintainedGroupIDs()
+	if merr != nil {
+		log.Printf("core_handler: list maintained groups for %s: %v", stationID, merr)
+	}
+
 	var infos []protocol.NodeInfo
 	if stationScoped {
 		for _, n := range nodeList {
@@ -557,8 +566,9 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope, req *pro
 				name = n.ParentName + "." + n.Name
 			}
 			infos = append(infos, protocol.NodeInfo{
-				Name:     name,
-				NodeType: n.NodeTypeCode,
+				Name:       name,
+				NodeType:   n.NodeTypeCode,
+				Maintained: maintained[n.ID],
 			})
 		}
 	} else {
@@ -569,14 +579,16 @@ func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope, req *pro
 		for _, n := range nodeList {
 			if n.ParentID == nil {
 				infos = append(infos, protocol.NodeInfo{
-					Name:     n.Name,
-					NodeType: n.NodeTypeCode,
+					Name:       n.Name,
+					NodeType:   n.NodeTypeCode,
+					Maintained: maintained[n.ID],
 				})
 			} else if !n.IsSynthetic {
 				if parent, ok := nodeMap[*n.ParentID]; ok && parent.NodeTypeCode == protocol.NodeClassNGRP {
 					infos = append(infos, protocol.NodeInfo{
-						Name:     parent.Name + "." + n.Name,
-						NodeType: n.NodeTypeCode,
+						Name:       parent.Name + "." + n.Name,
+						NodeType:   n.NodeTypeCode,
+						Maintained: maintained[n.ID],
 					})
 				}
 			}

@@ -158,6 +158,31 @@ func ListMaintainLevels(db *sql.DB, groupNodeID int64) ([]MaintainLevel, error) 
 	return out, rows.Err()
 }
 
+// MaintainedGroupIDs is the set of groups that declare a level — the groups
+// for which ListMaintainLevels answers non-empty, read for every group in one
+// statement. The node list marks them for the Edge (protocol.NodeInfo's
+// Maintained), which is why this is one read per list and not one per node.
+// The join is ListMaintainLevels' own, so the two cannot disagree about a row.
+func MaintainedGroupIDs(db *sql.DB) (map[int64]bool, error) {
+	rows, err := db.Query(`
+		SELECT DISTINCT l.group_node_id
+		FROM node_maintain_levels l
+		JOIN bin_types bt ON bt.id = l.bin_type_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list maintained groups: %w", err)
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan maintained group: %w", err)
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 // SetMaintainSupports replaces the whole supported-process-node set for a group,
 // in one transaction.
 //

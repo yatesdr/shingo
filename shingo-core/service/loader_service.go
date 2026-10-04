@@ -547,13 +547,13 @@ var ErrInboundSourceUnresolved = errors.New("inbound source does not resolve to 
 // destination names a LANE. Lines name node groups or loader positions, never
 // lanes (owner, 2026-10-03): a need that names a lane searches that lane only,
 // so anything placed in a sibling lane of the same group is invisible to it.
-var ErrSourceIsALane = errors.New("a lane is not a source; name its group")
+var ErrSourceIsALane = errors.New(protocol.MsgLaneIsNotASource)
 
 // ErrFullsFromAnEmptiesBank is returned when a CONSUME loader's inbound source
 // (where its fulls come from) names a maintained group. A maintained group is an
 // empties bank: the store resolver refuses a carrier holding a part there, so
 // fulls could be pulled from it but never put back into it.
-var ErrFullsFromAnEmptiesBank = errors.New("an unloader's fulls cannot come from a maintained (empties) group")
+var ErrFullsFromAnEmptiesBank = errors.New(protocol.MsgFullsFromAnEmptiesBank)
 
 // checkInboundSource resolve-checks a claim's inbound source at SAVE TIME.
 // MG3-3.

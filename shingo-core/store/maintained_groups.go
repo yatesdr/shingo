@@ -29,6 +29,11 @@ func (db *DB) ListMaintainLevels(groupNodeID int64) ([]MaintainLevel, error) {
 	return nodes.ListMaintainLevels(db.DB, groupNodeID)
 }
 
+// MaintainedGroupIDs is every group that declares a level, in one read.
+func (db *DB) MaintainedGroupIDs() (map[int64]bool, error) {
+	return nodes.MaintainedGroupIDs(db.DB)
+}
+
 // SetMaintainSupports replaces the set of process nodes a group serves.
 func (db *DB) SetMaintainSupports(groupNodeID int64, processNodeIDs []int64) error {
 	return nodes.SetMaintainSupports(db.DB, groupNodeID, processNodeIDs)
