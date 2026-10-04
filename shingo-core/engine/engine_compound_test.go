@@ -36,10 +36,20 @@ import (
 // sealed and never parks, and driving a wait state for it would be a fixture
 // telling a lie about the fleet. IsGateStaged is the same predicate the evaluator
 // and the floor use, so the fixture and production agree on who dwells.
+//
+// The pickup block finishes before the robot parks on the Wait block, as it
+// does at the plant: the blocker is lifted into transit first, and a dig leg is
+// released only once it has lifted.
 func driveLegRunToFinish(t *testing.T, db *store.DB, sim *simulator.SimulatorBackend, childID int64, vendorID string) {
 	t.Helper()
 	sim.DriveState(vendorID, "RUNNING")
 	if fresh, err := db.GetOrder(childID); err == nil && fresh != nil && dispatch.IsGateStaged(fresh) {
+		for _, b := range sim.BlocksForOrder(vendorID) {
+			if IsPickupBlock(b.BinTask) {
+				sim.CompleteBlock(vendorID, b.BlockID, b.Location, b.BinTask, 0, 0)
+				break
+			}
+		}
 		sim.DriveState(vendorID, "WAITING")
 	}
 	sim.DriveState(vendorID, "FINISHED")

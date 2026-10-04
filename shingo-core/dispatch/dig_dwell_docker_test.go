@@ -274,7 +274,7 @@ func TestDwell_OpenDestinationReleasesOnArrival(t *testing.T) {
 	}
 
 	// THE ARRIVAL. This is the production trigger, and the release is its effect.
-	d.EvaluateWaitLaneForStagedOrder(legs[0].ID)
+	arriveAtDwell(t, db, d, legs[0])
 
 	released, err := db.GetOrder(legs[0].ID)
 	testutil.MustNoErr(t, err, "reload the leg after arrival")
@@ -704,7 +704,7 @@ func TestDwell_WaitsWhenEveryCandidateIsRefused(t *testing.T) {
 		t.Fatal("the foreign dig could not take the sibling lane")
 	}
 
-	d.EvaluateWaitLaneForStagedOrder(legs[0].ID)
+	arriveAtDwell(t, db, d, legs[0])
 	held, err := db.GetOrder(legs[0].ID)
 	testutil.MustNoErr(t, err, "reload the dwelling leg")
 	if held.DeliveryNode != "" {
@@ -777,7 +777,7 @@ func TestDwell_FullGroupIsNotBlamedOnADig(t *testing.T) {
 		t.Fatal("the foreign dig could not take the sibling lane")
 	}
 
-	d.EvaluateWaitLaneForStagedOrder(legs[0].ID)
+	arriveAtDwell(t, db, d, legs[0])
 	held, err := db.GetOrder(legs[0].ID)
 	testutil.MustNoErr(t, err, "reload the dwelling leg")
 	if held.DeliveryNode != "" {
@@ -830,7 +830,7 @@ func TestDwell_WaitsWhenTheWalkIsExhausted(t *testing.T) {
 	_, aErr := reservations.AcquireOccupancy(db.DB, inside.ID, sib.ID)
 	testutil.MustNoErr(t, aErr, "occupy the sibling lane")
 
-	d.EvaluateWaitLaneForStagedOrder(legs[0].ID)
+	arriveAtDwell(t, db, d, legs[0])
 	held, err := db.GetOrder(legs[0].ID)
 	testutil.MustNoErr(t, err, "reload the dwelling leg")
 	if held.DeliveryNode != "" {
@@ -1194,7 +1194,7 @@ func TestDwell_TheChosenSlotCannotBeBuriedBeforeTheRobotArrives(t *testing.T) {
 	createTestBinAtNode(t, db, bp.Code, sibSlots[0].ID, "DWBURY-WALL")
 
 	// The robot arrives and Core chooses NOW, against the lane as it stands.
-	d.EvaluateWaitLaneForStagedOrder(legs[0].ID)
+	arriveAtDwell(t, db, d, legs[0])
 	released, err := db.GetOrder(legs[0].ID)
 	testutil.MustNoErr(t, err, "reload after the release")
 	if released.DeliveryNode == "" {
@@ -1408,7 +1408,7 @@ func TestDwell_TheDigReleaseWakesTheDwellerItWasBlocking(t *testing.T) {
 	}
 
 	// PARK IT, and confirm the premise before testing the release.
-	d.EvaluateWaitLaneForStagedOrder(legs[0].ID)
+	arriveAtDwell(t, db, d, legs[0])
 	parked, err := db.GetOrder(legs[0].ID)
 	testutil.MustNoErr(t, err, "reload the parked leg")
 	if QueueCause(parked.QueueCause) != CauseDigHoldsParking {

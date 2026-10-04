@@ -125,7 +125,7 @@ func reserveHoldingSwap(t *testing.T, db *store.DB, uuid string, slot *nodes.Nod
 // askOnce runs ONE release pass for a dweller and returns it reloaded.
 func askOnce(t *testing.T, d *Dispatcher, db *store.DB, leg *orders.Order) *orders.Order {
 	t.Helper()
-	d.EvaluateWaitLaneForStagedOrder(leg.ID)
+	arriveAtDwell(t, db, d, leg)
 	fresh, err := db.GetOrder(leg.ID)
 	return testutil.Must(t, fresh, err, "reload the dweller")
 }

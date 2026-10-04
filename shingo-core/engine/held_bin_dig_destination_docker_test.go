@@ -34,7 +34,8 @@ import (
 // will deliver to.
 //
 // Driven through the real engine: the scanner's held-bin path is what reaches
-// digForBuriedHeldBin, and the release goes through EvaluateWaitLaneForStagedOrder.
+// digForBuriedHeldBin, and the release goes through the lift and then
+// EvaluateWaitLaneForStagedOrder.
 //
 // RED before the fix: the first scan planned the dig (two legs, the lane locked)
 // with the destination as its only parking. MUTATION: pass no destination to
@@ -100,7 +101,11 @@ func TestHeldBinDig_NeverParksOnTheOrdersOwnDestination(t *testing.T) {
 	}
 
 	// ── And the blocker goes to the slot that freed ────────────────────────
+	// The robot lifts the blocker and then parks on its wait, as at the plant.
 	unbury := legs[0]
+	eng.handlePickupBlockCompleted(BlockCompletedEvent{
+		OrderID: unbury.ID, BlockID: "hbd-lift", Location: unbury.SourceNode, BinTask: "JackLoad",
+	})
 	eng.Dispatcher().EvaluateWaitLaneForStagedOrder(unbury.ID)
 	unbury, err = db.GetOrder(unbury.ID)
 	testutil.MustNoErr(t, err, "reload the dig's first leg")

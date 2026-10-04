@@ -438,7 +438,15 @@ func TestStaleDig_Window2Dig_DissolvesReplansAndCompletes(t *testing.T) {
 		t.Fatalf("the dig's unbury never went out (queue_cause %q) — the lane was clear at plan time",
 			legs[0].QueueCause)
 	}
-	landLeg(t, d, db, legs[0])
+	// Leg 1 does its job the way planStaleDigFixture models it: the blocker
+	// lands in parking and the leg terminalizes. It is not driven through its
+	// release, because the release comes at the lift, when the corridor in front
+	// of the held bin is already clear, and the retrieve would enter then; the
+	// stale case is the retrieve still waiting when the mouth is packed.
+	testutil.MustNoErr(t, db.MoveBinClearingStaging(*legs[0].BinID, parkingNodeID(t, db, "SD-W2-PARK-1"), false),
+		"leg 1 parks its blocker")
+	_, err = db.TerminalizeOrder(legs[0].ID, protocol.StatusConfirmed, "delivered")
+	testutil.MustNoErr(t, err, "leg 1 completes")
 
 	// ── AND THEN IT GOES STALE ────────────────────────────────────────────────
 	// Another flow packs the mouth. Nothing in this compound will ever move it: the

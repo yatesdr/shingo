@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
@@ -157,7 +158,7 @@ func releaseDwell(t *testing.T, d *Dispatcher, db *store.DB, leg *orders.Order) 
 	if leg.DeliveryNode != "" {
 		return leg
 	}
-	d.EvaluateWaitLaneForStagedOrder(leg.ID)
+	arriveAtDwell(t, db, d, leg)
 	fresh, err := db.GetOrder(leg.ID)
 	testutil.MustNoErr(t, err, "reload the dwelling leg")
 	if fresh.DeliveryNode == "" {
@@ -166,6 +167,25 @@ func releaseDwell(t *testing.T, d *Dispatcher, db *store.DB, leg *orders.Order) 
 			"declined — read the cause before changing the fixture", leg.ID, fresh.QueueCause)
 	}
 	return fresh
+}
+
+// arriveAtDwell is a dig leg's robot reporting its arrival at the dwell wait.
+// The wait follows the pickup, so a robot standing at it has the blocker up:
+// the bin is lifted into transit first (its durable half only, as
+// MoveBinToTransit writes it) unless it already left its slot.
+func arriveAtDwell(t *testing.T, db *store.DB, d *Dispatcher, leg *orders.Order) {
+	t.Helper()
+	if leg.BinID != nil {
+		bin, err := db.GetBin(*leg.BinID)
+		testutil.MustNoErr(t, err, "read the leg's bin")
+		if bin.NodeName == leg.SourceNode {
+			transit, tErr := db.GetNodeByName(domain.TransitNodeName)
+			testutil.MustNoErr(t, tErr, "find the transit node")
+			testutil.MustNoErr(t, db.MoveBinToTransit(bin.ID, transit.ID), "lift the blocker")
+			d.HandleTransitForLaneGate(leg.ID, *bin.NodeID)
+		}
+	}
+	d.EvaluateWaitLaneForStagedOrder(leg.ID)
 }
 
 // landLeg runs a dig leg the way the floor does: the bin arrives at the leg's
@@ -270,7 +290,8 @@ func legsOf(t *testing.T, db *store.DB, parentID int64) []*orders.Order {
 func TestCrossFlow_TwoDigsOneLane_ANeverStarts(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	backend := testdb.NewSuccessBackend()
+	d, _ := newTestDispatcher(t, db, backend)
 	_, laneA, laneB, park, slotsA, slotsB, bp := twoDigsOneGroup(t, db, "XF")
 
 	blockerA := testdb.CreateBinAtNode(t, db, bp.Code, slotsA[0].ID, "XF-A-BLK")
@@ -327,7 +348,19 @@ func TestCrossFlow_TwoDigsOneLane_ANeverStarts(t *testing.T) {
 	// rather than off the plan because that is when the destination is chosen now;
 	// the premise it establishes — B has the group's one direct-child spot, leaving
 	// A nothing but lane B — is unchanged, and so is what it costs A.
+	//
+	// B's retrieve must still be waiting when A asks. The robot lifts before it
+	// is released, so the corridor in front of B's target is clear at the
+	// release and the retrieve would go out during the drive-out; the slots in
+	// front of a bin being collected are no parking for anybody, and A would be
+	// refused for a full group instead. So the fleet refuses that one dispatch,
+	// as a busy fleet does, and B is still mid-dig when A asks.
+	backend.SetOnRelease(func() { backend.SetFail(true) })
 	releasedB0 := releaseDwell(t, d, db, legsB[0])
+	backend.SetOnRelease(nil)
+	if r, rErr := db.GetOrder(legsB[1].ID); rErr != nil || r.VendorOrderID != "" {
+		t.Fatalf("fixture: dig B's retrieve went out (err %v) while the fleet was refusing", rErr)
+	}
 	if releasedB0.DeliveryNode != park.Name {
 		t.Fatalf("dig B's unbury was released onto %s, want the group's parking %s — the fixture's "+
 			"premise is that B takes the only direct-child spot, leaving A nothing but lane B",
@@ -403,6 +436,7 @@ func TestCrossFlow_TwoDigsOneLane_ANeverStarts(t *testing.T) {
 	}
 
 	// ── 4. DIG B RUNS OUT ─────────────────────────────────────────────────────
+	backend.SetFail(false)
 	landLeg(t, d, db, legsB[0]) // the blocker reaches parking
 	inv.holds("after dig B's unbury landed")
 	testutil.MustNoErr(t, d.AdvanceCompoundOrder(demandB.ID), "re-drive dig B onto its retrieve")
