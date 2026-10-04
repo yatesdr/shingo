@@ -334,6 +334,29 @@ function flowPresetApplySave(styleID, cells, fingerprint, stationID, preset) {
     return body;
 }
 
+// ── the lane rule every leg picker shares ────────────────────────────────────
+//
+// NOT A BODY, AND HERE ANYWAY, for the apply loop's reason below: the pickers
+// need a DOM, the rule does not, and the page calls this rather than spelling
+// it again.
+//
+// A LEG NAMES A NODE OR A GROUP, NEVER A LANE. The claim and routing saves
+// refuse a lane on every leg, staging included (domain.CoreNodeKinds), so no
+// list that feeds a leg offers one. One predicate, the node's type as Core
+// sent it.
+const LANE_ON_A_LEG = 'a lane — a flow names its group, or the spot itself, never a lane';
+
+function isLane(node) {
+    return !!node && node.node_type === 'LANE';
+}
+
+// laneExclusion is a picker's `exclude` answer for a name: the reason when
+// Core's list says it is a lane, else ''. A name not in the list is not
+// refused here; the save answers for it.
+function laneExclusion(coreNodes, name) {
+    return isLane((coreNodes || []).find(n => n.name === name)) ? LANE_ON_A_LEG : '';
+}
+
 // ── the apply loop's two decisions ───────────────────────────────────────────
 //
 // NOT A BODY, AND HERE ANYWAY. runPresetApply is the page's only unguarded
@@ -431,6 +454,7 @@ function saveOutcome(status, body) {
         routingSet, processPayloads,
         flowPresetCreate, flowPresetApplySave,
         applyOrder, applyOutcome, saveOutcome,
+        isLane, laneExclusion,
     };
 
     if (typeof module !== 'undefined' && module.exports) module.exports = api;

@@ -2228,7 +2228,7 @@ function routingPickersReady() {
             onDrop: name => setRoutingNode(g[0], name, false),
             exclude: n => (isPositionRow(n)
                 ? 'a position of this process — available to every flow on it already'
-                : ''),
+                : B().laneExclusion(S.coreNodes, n)),
             // WHERE A NAME CAME FROM, AT THE MOMENT OF PICKING. A row the
             // backfill found says so and how many live styles route through
             // it, which is the whole of Q5's evidence line in the one place it
@@ -4255,7 +4255,7 @@ function openAddProcess() {
             // so the three do not exclude each other.
             exclude: n => (positions().indexOf(n) >= 0
                 ? 'a position of this process — available to every flow on it already'
-                : ''),
+                : B().laneExclusion(S.coreNodes, n)),
             onChange: redrawSheetMap,
         });
     }
@@ -4361,7 +4361,7 @@ async function openEditProcessFor(p) {
             selected: mine,
             exclude: n => (pickerValue('positions').indexOf(n) >= 0
                 ? 'a position of this process — available to every flow on it already'
-                : ''),
+                : B().laneExclusion(S.coreNodes, n)),
             onChange: redrawSheetMap,
         });
     }
@@ -4704,7 +4704,8 @@ async function openScreenSheet(stationID) {
 // somewhere else" is the kind of near-duplicate this page keeps collapsing.
 // openContainmentPicker — the Quality Hold destination picker: the Group
 // picker's mechanics over the CORE NODE list instead of the group list. Every
-// node is offered (groups labeled, the claim pickers' convention); "-- None --"
+// node but a lane is offered (groups labeled, the claim pickers' convention;
+// the stamp writes a claim leg, and no leg names a lane); "-- None --"
 // is the blank that means "no route yet" — the save refuses an enabled toggle
 // with none picked. The core node list loads lazily (the shared read all four
 // pickers use), so this is async where its sibling is not.
@@ -4719,7 +4720,7 @@ async function openContainmentPicker(btn) {
     const pop = $('pd-stpop');
     if (!pop) return;
     const current = S.settings.quality_hold_destination || '';
-    const opts = [{ name: '', label: '-- None --' }].concat((S.coreNodes || []).map(n => ({
+    const opts = [{ name: '', label: '-- None --' }].concat((S.coreNodes || []).filter(n => !B().isLane(n)).map(n => ({
         name: n.name,
         label: n.name + (n.node_type === 'NGRP' ? ' (group)' : ''),
     })));
