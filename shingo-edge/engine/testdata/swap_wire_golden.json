@@ -203,8 +203,7 @@
       "DeliveryNodeA": "DST",
       "AutoConfirmA": true,
       "StepsB": null,
-      "AutoConfirmB": false,
-      "RequiresActiveSwapGuard": false
+      "AutoConfirmB": false
     }
   },
   "consume/single_robot/base": {
@@ -681,8 +680,7 @@
       "DeliveryNodeA": "DST",
       "AutoConfirmA": false,
       "StepsB": null,
-      "AutoConfirmB": false,
-      "RequiresActiveSwapGuard": true
+      "AutoConfirmB": false
     }
   },
   "consume/two_robot/base": {
@@ -1180,8 +1178,7 @@
           "node": "DST"
         }
       ],
-      "AutoConfirmB": true,
-      "RequiresActiveSwapGuard": true
+      "AutoConfirmB": true
     }
   },
   "consume/two_robot_press_index/2pos": {
@@ -1687,8 +1684,7 @@
           "node": "LINE"
         }
       ],
-      "AutoConfirmB": false,
-      "RequiresActiveSwapGuard": true
+      "AutoConfirmB": false
     }
   },
   "consume/two_robot_press_index/2pos-flip": {
@@ -2194,8 +2190,7 @@
           "node": "PAIR-1"
         }
       ],
-      "AutoConfirmB": false,
-      "RequiresActiveSwapGuard": true
+      "AutoConfirmB": false
     }
   },
   "consume/two_robot_press_index/3pos": {
@@ -2757,8 +2752,7 @@
           "node": "PAIR-1"
         }
       ],
-      "AutoConfirmB": false,
-      "RequiresActiveSwapGuard": true
+      "AutoConfirmB": false
     }
   },
   "consume/two_robot_press_index/3pos-flip": {
@@ -3320,8 +3314,7 @@
           "node": "PAIR-2"
         }
       ],
-      "AutoConfirmB": false,
-      "RequiresActiveSwapGuard": true
+      "AutoConfirmB": false
     }
   },
   "produce/sequential/base": {
@@ -3532,8 +3525,7 @@
       "DeliveryNodeA": "DST",
       "AutoConfirmA": true,
       "StepsB": null,
-      "AutoConfirmB": false,
-      "RequiresActiveSwapGuard": false
+      "AutoConfirmB": false
     }
   },
   "produce/single_robot/base": {
@@ -4019,8 +4011,7 @@
       "DeliveryNodeA": "DST",
       "AutoConfirmA": false,
       "StepsB": null,
-      "AutoConfirmB": false,
-      "RequiresActiveSwapGuard": true
+      "AutoConfirmB": false
     }
   },
   "produce/two_robot/base": {
@@ -4525,8 +4516,7 @@
           "node": "DST"
         }
       ],
-      "AutoConfirmB": true,
-      "RequiresActiveSwapGuard": true
+      "AutoConfirmB": true
     }
   },
   "produce/two_robot_press_index/2pos": {
@@ -5040,8 +5030,7 @@
           "node": "LINE"
         }
       ],
-      "AutoConfirmB": false,
-      "RequiresActiveSwapGuard": true
+      "AutoConfirmB": false
     }
   },
   "produce/two_robot_press_index/2pos-flip": {
@@ -5555,8 +5544,7 @@
           "node": "PAIR-1"
         }
       ],
-      "AutoConfirmB": false,
-      "RequiresActiveSwapGuard": true
+      "AutoConfirmB": false
     }
   },
   "produce/two_robot_press_index/3pos": {
@@ -6127,8 +6115,7 @@
           "node": "PAIR-1"
         }
       ],
-      "AutoConfirmB": false,
-      "RequiresActiveSwapGuard": true
+      "AutoConfirmB": false
     }
   },
   "produce/two_robot_press_index/3pos-flip": {
@@ -6699,8 +6686,7 @@
           "node": "PAIR-2"
         }
       ],
-      "AutoConfirmB": false,
-      "RequiresActiveSwapGuard": true
+      "AutoConfirmB": false
     }
   }
 }

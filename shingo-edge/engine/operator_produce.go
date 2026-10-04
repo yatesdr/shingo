@@ -89,6 +89,9 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 			return nil, err
 		}
 	}
+	if err := e.guardLineRequest(node, runtime, claim); err != nil {
+		return nil, err
+	}
 
 	occ, spot, park := e.claimOccupancy(claim)
 	occupancy := e.occupancyKnownNodesOnly(occ, node.Name)
@@ -129,14 +132,6 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	}
 	if plan.SuppressSwap {
 		if err := e.guardPairedPrimes(node, runtime, claim, plan.PrimePairedPositions); err != nil {
-			return nil, err
-		}
-	}
-
-	// Bug 3 guard: refuse to start a second swap on top of an in-flight one.
-	// Edge-runtime-only — Core anomalies don't shut down the line.
-	if plan.Dispatch != nil && plan.Dispatch.RequiresActiveSwapGuard {
-		if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
 			return nil, err
 		}
 	}

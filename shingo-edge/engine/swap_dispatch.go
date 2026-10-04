@@ -41,16 +41,10 @@ type SwapDispatch struct {
 	// node; the leg that placed one there is the leg the operator signs for.
 	AutoConfirmA bool
 
+	// StepsB is the second leg of a pair, nil for a mode whose swap is one
+	// order. Only a pair is checked against a dry source (guardSourceKnownDry).
 	StepsB       []protocol.ComplexOrderStep
 	AutoConfirmB bool
-
-	// RequiresActiveSwapGuard true when the apply caller must run
-	// guardNoActiveSwap before dispatching. Set by modes that don't tolerate
-	// overlapping swaps (single_robot, two_robot, two_robot_press_index): one
-	// line, one live swap. Sequential tolerates it (its backfill is created on
-	// transit). A dispatch that also has StepsB arms a pair, and only a pair is
-	// checked against a dry source (guardSourceKnownDry).
-	RequiresActiveSwapGuard bool
 }
 
 // BuildSwapDispatch validates per-mode required fields and returns the
@@ -220,11 +214,10 @@ func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 		}
 		stepsA := build(claim)
 		return &SwapDispatch{
-			CycleMode:               protocol.SwapModeSingleRobot,
-			ProcessNode:             claim.CoreNodeName,
-			StepsA:                  stepsA,
-			AutoConfirmA:            confirmPolicy(claim, stepsA),
-			RequiresActiveSwapGuard: true,
+			CycleMode:    protocol.SwapModeSingleRobot,
+			ProcessNode:  claim.CoreNodeName,
+			StepsA:       stepsA,
+			AutoConfirmA: confirmPolicy(claim, stepsA),
 		}, nil
 
 	case protocol.SwapModeTwoRobot:
@@ -260,13 +253,12 @@ func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 		}
 		stepsA, stepsB := build(claim)
 		return &SwapDispatch{
-			CycleMode:               protocol.SwapModeTwoRobot,
-			ProcessNode:             claim.CoreNodeName,
-			StepsA:                  stepsA,
-			StepsB:                  stepsB,
-			AutoConfirmA:            confirmPolicy(claim, stepsA),
-			AutoConfirmB:            confirmPolicy(claim, stepsB),
-			RequiresActiveSwapGuard: true,
+			CycleMode:    protocol.SwapModeTwoRobot,
+			ProcessNode:  claim.CoreNodeName,
+			StepsA:       stepsA,
+			StepsB:       stepsB,
+			AutoConfirmA: confirmPolicy(claim, stepsA),
+			AutoConfirmB: confirmPolicy(claim, stepsB),
 		}, nil
 
 	case protocol.SwapModeTwoRobotPressIndex:
@@ -278,13 +270,12 @@ func buildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 		}
 		stepsR1, stepsR2 := BuildTwoRobotPressIndexSwapSteps(claim)
 		return &SwapDispatch{
-			CycleMode:               protocol.SwapModeTwoRobotPressIndex,
-			ProcessNode:             claim.CoreNodeName,
-			StepsA:                  stepsR1,
-			StepsB:                  stepsR2,
-			AutoConfirmA:            confirmPolicy(claim, stepsR1),
-			AutoConfirmB:            confirmPolicy(claim, stepsR2),
-			RequiresActiveSwapGuard: true,
+			CycleMode:    protocol.SwapModeTwoRobotPressIndex,
+			ProcessNode:  claim.CoreNodeName,
+			StepsA:       stepsR1,
+			StepsB:       stepsR2,
+			AutoConfirmA: confirmPolicy(claim, stepsR1),
+			AutoConfirmB: confirmPolicy(claim, stepsR2),
 		}, nil
 	}
 	return nil, nil

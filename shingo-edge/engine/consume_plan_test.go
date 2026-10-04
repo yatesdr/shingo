@@ -169,9 +169,6 @@ func TestBuildConsumePlan_TwoRobot_Occupied(t *testing.T) {
 	if plan.Dispatch == nil {
 		t.Fatalf("two_robot must have a Dispatch")
 	}
-	if !plan.Dispatch.RequiresActiveSwapGuard {
-		t.Errorf("two_robot must require swap guard")
-	}
 }
 
 func TestBuildConsumePlan_Sequential(t *testing.T) {

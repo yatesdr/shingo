@@ -147,3 +147,46 @@ func TestScenario_SequentialLine_CyclesBackToBack(t *testing.T) {
 		})
 	}
 }
+
+// seqRefused presses the button while the line's swap is in flight: it is
+// refused, and nothing is made.
+func (c *ksrCell) seqRefused(label string, press func(c *ksrCell) error) {
+	c.t.Helper()
+	before := c.lastID()
+	err := press(c)
+	c.tick()
+	if made := c.newRows(before); len(made) != 0 || err == nil {
+		c.dump(label)
+		c.t.Fatalf("%s made %d orders while the line's swap is in flight (err=%v), want a refusal and none",
+			label, len(made), err)
+	}
+	c.t.Logf("%s: refused: %v", label, err)
+}
+
+// One line, one live swap, as in the other swap modes: a second request while
+// the removal waits at the line with its backfill on its way, or while the
+// backfill is delivered and not yet confirmed, is refused and makes nothing.
+// Once the operator confirms the backfill, the next request starts the next
+// cycle.
+func TestScenario_SequentialLine_SecondRequestWaitsForTheSwap(t *testing.T) {
+	for _, d := range seqDoors {
+		t.Run(d.name, func(t *testing.T) {
+			c := newKsrCell(t, ksrOpts{role: d.role, mode: protocol.SwapModeSequential, plain: true})
+			mustNil(t, c.edge.DB.SetProcessNodeRuntime(c.nodeID, &c.claimA, 30), "count")
+			c.settle()
+			removal := c.seqRemoval("the request", d.press)
+			backfill := c.seqAtTheLine("the request", removal)
+			c.seqRefused("a second request, the removal at the line", d.press)
+			c.seqLand("the request", removal, backfill)
+			c.seqRefused("a second request, the backfill delivered", d.press)
+			c.seqConfirm("the request", removal, backfill)
+
+			mustNil(t, c.edge.DB.SetProcessNodeRuntime(c.nodeID, &c.claimA, 30), "count")
+			c.settle()
+			next := c.seqRemoval("the next request", d.press)
+			backfill = c.seqAtTheLine("the next request", next)
+			c.seqLand("the next request", next, backfill)
+			c.seqConfirm("the next request", next, backfill)
+		})
+	}
+}

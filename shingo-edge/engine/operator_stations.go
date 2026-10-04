@@ -204,6 +204,9 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 			return nil, err
 		}
 	}
+	if err := e.guardLineRequest(node, runtime, claim); err != nil {
+		return nil, err
+	}
 
 	// Read through occupancyKnownNodesOnly, as the produce request reads it: Core
 	// answers a node it does not have as present and empty, and a head or paired
@@ -262,24 +265,16 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 		}
 	}
 
-	// Bug 3 guard: refuse to start a second swap on top of an in-flight one.
-	// Edge-runtime-only — Core anomalies don't shut down the line. See
-	// operator_guards.go.
-	if plan.Dispatch != nil && plan.Dispatch.RequiresActiveSwapGuard {
-		if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
+	// Do not ARM A PAIR INTO A SOURCE ALREADY KNOWN TO BE DRY. This is the
+	// Springfield 2026-07-21 churn's fix at its cause: two legs that cannot
+	// source were created hundreds of times per changeover, and every mechanism
+	// downstream — including the spare that is now deleted — was coping with
+	// orders that should never have existed. Refusing here creates nothing, so
+	// nothing churns; the level keeper re-asks. A pair only: a single-robot swap
+	// is one order and waits for stock.
+	if plan.Dispatch != nil && plan.Dispatch.StepsB != nil {
+		if err := e.guardSourceKnownDry(node, claim); err != nil {
 			return nil, err
-		}
-		// And do not ARM A PAIR INTO A SOURCE ALREADY KNOWN TO BE DRY. This is
-		// the Springfield 2026-07-21 churn's fix at its cause: two legs that
-		// cannot source were created hundreds of times per changeover, and every
-		// mechanism downstream — including the spare that is now deleted — was
-		// coping with orders that should never have existed. Refusing here
-		// creates nothing, so nothing churns; the level keeper re-asks. A pair
-		// only: a single-robot swap is one order and waits for stock.
-		if plan.Dispatch.StepsB != nil {
-			if err := e.guardSourceKnownDry(node, claim); err != nil {
-				return nil, err
-			}
 		}
 	}
 

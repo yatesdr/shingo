@@ -54,9 +54,6 @@ func TestBuildProducePlan_Sequential(t *testing.T) {
 	if plan.Dispatch.StepsB != nil {
 		t.Errorf("sequential is single-order; StepsB should be nil")
 	}
-	if plan.Dispatch.RequiresActiveSwapGuard {
-		t.Errorf("sequential should not require swap guard (backfill is auto-created on transit)")
-	}
 }
 
 func TestBuildProducePlan_TwoRobotPressIndex_OK(t *testing.T) {
@@ -69,9 +66,6 @@ func TestBuildProducePlan_TwoRobotPressIndex_OK(t *testing.T) {
 	}
 	if plan.Dispatch == nil || plan.Dispatch.StepsA == nil || plan.Dispatch.StepsB == nil {
 		t.Errorf("two_robot_press_index must produce both R1 and R2 steps via Dispatch")
-	}
-	if plan.Dispatch != nil && !plan.Dispatch.RequiresActiveSwapGuard {
-		t.Errorf("two_robot_press_index must require swap guard")
 	}
 }
 

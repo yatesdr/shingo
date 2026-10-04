@@ -70,7 +70,7 @@ Core fetches an empty carrier (not a full bin).
 **`two_robot`** — 2 robots (`BuildTwoRobotSwapSteps`), needs inbound staging:
 - Order A (resupply): pickup(InboundSource)→dropoff(InboundStaging)→wait(InboundStaging)→pickup(InboundStaging)→dropoff(node)
 - Order B (removal): wait(node)→pickup(node)→dropoff(OutboundDestination)
-- Edge releases B (remove old) then A (deliver new). `RequiresActiveSwapGuard`.
+- Edge releases B (remove old) then A (deliver new).
 
 **`two_robot_press_index`** — 2 robots, paired positions, **no staging** (`BuildTwoRobotPressIndexSwapSteps`):
 - 2-position (front=CoreNode, back=`PairedCoreNode`):
@@ -87,6 +87,8 @@ Core fetches an empty carrier (not a full bin).
   it out:
 - Order A (removal): wait(node)→pickup(node)→dropoff(OutboundDestination)
 - Order B (backfill, auto-created when A goes in_transit): pickup(InboundSource)→dropoff(node)
+- One position, one live swap, as in every mode: a request on a side whose removal or
+  backfill is still working it is refused; the partner side is its own position.
 - This is the realistic press/line model — a press is never a single bin filling alone; it's
   A/B (or the in-line `two_robot_press_index`). The cutover is the operator's release of the
   finished side (see §4), and the sim operator releases, so an A/B cell rotates headlessly.

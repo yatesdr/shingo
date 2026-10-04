@@ -41,6 +41,31 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 	return nil
 }
 
+// guardLineRequest is what every request button of both roles asks of its line
+// before anything else is decided: the material request, the produce request
+// and the empty-bin request, from the operator or from the level keeper. It runs
+// under the cell's lock and before Core is asked anything, so a refusal costs no
+// round trip and makes no order.
+//
+// ONE LINE, ONE LIVE SWAP, IN EVERY SWAP MODE. A swap still working the cell
+// refuses the next request, whatever plan that request would have built. A
+// sequential line used to be let through, because its backfill is made when the
+// removal goes on its way. That backfill is made by the removal's status change
+// (handleSequentialBackfill), not by a request, so refusing requests does not
+// touch it. What a second request did make there was a second removal: Core
+// skipped it on a consume line, and on a produce line it lifted the backfill
+// that had just landed, and a RELEASE of it would finalize a fresh empty as a
+// filled bin.
+//
+// LOADERS ARE EXEMPT. A loader window runs a multi-order queue on purpose, so a
+// live order there is its normal state and not a reason to refuse the next tap.
+func (e *Engine) guardLineRequest(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) error {
+	if claim == nil || claim.IsLoaderNode() {
+		return nil
+	}
+	return e.guardNoActiveSwap(node, runtime, claim)
+}
+
 // guardSourceKnownDry refuses to ARM a coordinated swap pair whose supply leg
 // would be created against a payload Core reports no stock for.
 //
@@ -83,9 +108,9 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 // and this guard does not pretend it can. Produce-direction pairs are not
 // covered; the consume direction, which is where 07-21 happened, is.
 //
-// NO MODE NAME. The caller gates on the dispatch shape — the swap guard's flag
-// AND a second leg (StepsB) — so this reads "is a pair about to be armed",
-// never "is this two_robot". A single-robot swap is one order: refused, it
+// NO MODE NAME. The caller gates on the dispatch shape — a second leg (StepsB)
+// — so this reads "is a pair about to be armed", never "is this two_robot". A
+// single-robot swap is one order: refused, it
 // would not arm, and it is not churned by a dry source, so it is created and
 // waits for stock.
 func (e *Engine) guardSourceKnownDry(node *processes.Node, claim *processes.NodeClaim) error {
@@ -154,10 +179,9 @@ func (e *Engine) guardSourceKnownDry(node *processes.Node, claim *processes.Node
 // TWO ARMS, BECAUSE THE POINTER ALONE IS NOT ENOUGH:
 //
 //  1. guardNoActiveSwap — the Bug 3 guard, "refuse to start a second swap on
-//     top of an in-flight one", written for exactly this failure and until now
-//     unreachable from the one path that causes it. The downgrade returns from
-//     BuildConsumePlan before plan.Dispatch exists, and requestNodeFromClaim
-//     runs the guard only when it does.
+//     top of an in-flight one", written for exactly this failure. Every
+//     request now runs it first (guardLineRequest); it is asked again here for
+//     the callers that reach this guard directly.
 //  2. THE ORDER ROW, NOT THE POINTER. The pointer is slot-scoped, not
 //     lifecycle-scoped, so at the moments that matter most it says nothing (a
 //     changeover-cancel nils both refs mid-swap; pre-departure cleanup paths

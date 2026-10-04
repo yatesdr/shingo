@@ -114,9 +114,6 @@ func TestBuildSwapDispatch_Sequential(t *testing.T) {
 	if d.StepsB != nil {
 		t.Errorf("sequential is single-order; StepsB should be nil")
 	}
-	if d.RequiresActiveSwapGuard {
-		t.Errorf("sequential should not require swap guard")
-	}
 	// Sequential's A-leg is the REMOVAL: it ends at the outbound destination, not
 	// at the process node. DeliveryNodeA is derived from the steps, so it names
 	// where the leg actually ends. (The order row still stores "" — AutoConfirmA
@@ -145,11 +142,6 @@ func TestBuildSwapDispatch_SingleRobot_OK(t *testing.T) {
 	}
 	if d.StepsB != nil {
 		t.Errorf("single_robot is single-order; StepsB should be nil")
-	}
-	// One line, one live swap: a second REQUEST while this one works the cell is
-	// refused. StepsB is nil, so no dry-source check: it is not a pair.
-	if !d.RequiresActiveSwapGuard {
-		t.Errorf("single_robot must require swap guard")
 	}
 }
 
@@ -184,9 +176,6 @@ func TestBuildSwapDispatch_TwoRobot_OK(t *testing.T) {
 	}
 	if !d.AutoConfirmB {
 		t.Errorf("two_robot's removal (B) order is auto-confirmed; AutoConfirmB = false, want true")
-	}
-	if !d.RequiresActiveSwapGuard {
-		t.Errorf("two_robot must require swap guard")
 	}
 }
 
@@ -231,9 +220,6 @@ func TestBuildSwapDispatch_TwoRobotPressIndex_OK(t *testing.T) {
 	// belongs to. See confirmPolicy.
 	if d.AutoConfirmB {
 		t.Errorf("press-index R2 PLACES the fresh carrier on the press, so it needs the operator's receipt; AutoConfirmB = true, want false")
-	}
-	if !d.RequiresActiveSwapGuard {
-		t.Errorf("press-index must require swap guard")
 	}
 }
 
