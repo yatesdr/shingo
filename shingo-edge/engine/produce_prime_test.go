@@ -180,6 +180,40 @@ func TestBuildProducePlan_ColdPressWithFullCellStillRefuses(t *testing.T) {
 	}
 }
 
+// The same cold press with a full cell, asked through the two buttons: the
+// produce request finalizes a filled bin and refuses with nothing counted; the
+// empty-bin request asks for an empty whatever the count and still swaps.
+func TestRequest_ColdPressWithFullCell(t *testing.T) {
+	t.Parallel()
+	t.Run("produce request refuses", func(t *testing.T) {
+		t.Parallel()
+		db := testEngineDB(t)
+		eng := testEngine(t, db)
+		nodeID := seedPressIndexProduce(t, db)
+		eng.coreClient = NewCoreClient(pressIndexBinsStub(t, "PRESS-HEAD", "PRESS-DECK").URL)
+		_, err := eng.RequestProduceSwap(nodeID)
+		if err == nil || !strings.Contains(err.Error(), "has no parts to finalize") {
+			t.Fatalf("produce request = %v, want the no-parts refusal", err)
+		}
+		if n := countOrdersByType(t, db, string(protocol.OrderTypeComplex)); n != 0 {
+			t.Errorf("complex orders = %d after the refusal, want 0", n)
+		}
+	})
+	t.Run("empty-bin request swaps", func(t *testing.T) {
+		t.Parallel()
+		db := testEngineDB(t)
+		eng := testEngine(t, db)
+		nodeID := seedPressIndexProduce(t, db)
+		eng.coreClient = NewCoreClient(pressIndexBinsStub(t, "PRESS-HEAD", "PRESS-DECK").URL)
+		if _, err := eng.RequestEmptyBin(nodeID, "WIDGET-A"); err != nil {
+			t.Fatalf("empty-bin request: %v", err)
+		}
+		if n := countOrdersByType(t, db, string(protocol.OrderTypeComplex)); n != 2 {
+			t.Errorf("complex orders = %d, want the two-leg swap", n)
+		}
+	})
+}
+
 func TestBuildProducePlan_PartialEmpty_UnknownOccupancyPrimesNothing(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
