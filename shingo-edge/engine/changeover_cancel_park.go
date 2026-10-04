@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"log"
+	"slices"
+
 	"shingo/protocol"
 	"shingoedge/domain"
 	ordermgr "shingoedge/orders"
@@ -16,9 +19,16 @@ import (
 // and every later single-robot swap at the line drops there: each one waits
 // behind it for good. So the cancel finishes that bin's trip, with one plain
 // move to where the aborted leg was taking it.
+//
+// On a claim that keeps no spare, the changeover stages the incoming bin on
+// inbound staging first, by an order of its own, for the leg to collect. A
+// cancel after the stage landed leaves that bin where every later swap sets its
+// own incoming bin down, so it goes back to where the stage fetched it from, by
+// the same plain move and in the same read.
 
-// parkedBin is one aborted leg's park: the bin it lifted off the line and set
-// down on park, bound for dest later in the same leg.
+// parkedBin is one bin a changeover order left standing: the line's bin a leg
+// parked, bound for dest later in the same leg, or the incoming bin a stage set
+// down, with dest the place it was fetched from.
 type parkedBin struct {
 	nodeID     int64
 	line       string
@@ -65,29 +75,92 @@ func parkDestination(rest []protocol.ComplexOrderStep, node string) (park, dest 
 	return "", "", false
 }
 
-// parkOf is parkedTrip for an aborted changeover order: one steps read, and
-// one node read when the steps park something.
-func (e *Engine) parkOf(order *domain.Order, processNodeID int64) (parkedBin, bool) {
-	if order.OrderType != ordermgr.TypeComplex {
-		return parkedBin{}, false
+// stagedTrip reads a stage order's steps for the bin it set down to wait: a
+// pickup somewhere other than the line, an exclusive dropoff on a staging node
+// straight after it, and no later pickup there in the same order. The bin waits
+// for another order to collect it, and dest is where it was fetched from. A
+// two-robot supply collects its own staged bin, so it is not a stage.
+func stagedTrip(steps []protocol.ComplexOrderStep, line string) (stage, dest string, ok bool) {
+	for i := 1; i < len(steps); i++ {
+		s, prev := steps[i], steps[i-1]
+		if s.Action != protocol.ActionDropoff || !s.ExclusiveSlot || s.Node == "" ||
+			prev.Action != protocol.ActionPickup || prev.Node == "" || prev.Node == line {
+			continue
+		}
+		for _, later := range steps[i+1:] {
+			if later.Action == protocol.ActionPickup && later.Node == s.Node {
+				return "", "", false
+			}
+		}
+		return s.Node, prev.Node, true
+	}
+	return "", "", false
+}
+
+// leftOnStaging is parkedTrip and stagedTrip for one changeover order: one
+// steps read, and one node read when the steps leave a bin anywhere. A park
+// counts only for a leg aborted now (aborted); a stage only once its order has
+// reached a robot (flown), since before that it has set nothing down.
+func (e *Engine) leftOnStaging(order *domain.Order, processNodeID int64, aborted, flown bool) (park, stage parkedBin, parked, staged bool) {
+	if order.OrderType != ordermgr.TypeComplex || (!aborted && !flown) {
+		return
 	}
 	raw, err := e.db.GetOrderStepsJSON(order.ID)
 	if err != nil {
-		return parkedBin{}, false
+		return
 	}
 	steps, err := decodeSteps(raw)
 	if err != nil {
-		return parkedBin{}, false
+		return
 	}
 	node, err := e.db.GetProcessNode(processNodeID)
 	if err != nil || node == nil {
-		return parkedBin{}, false
+		return
 	}
-	park, dest, ok := parkedTrip(steps, node.CoreNodeName)
-	if !ok {
-		return parkedBin{}, false
+	if p, dest, ok := parkedTrip(steps, node.CoreNodeName); ok && aborted {
+		park, parked = parkedBin{nodeID: node.ID, line: node.CoreNodeName, park: p, dest: dest}, true
 	}
-	return parkedBin{nodeID: node.ID, line: node.CoreNodeName, park: park, dest: dest}, true
+	if s, dest, ok := stagedTrip(steps, node.CoreNodeName); ok && flown {
+		stage, staged = parkedBin{nodeID: node.ID, line: node.CoreNodeName, park: s, dest: dest}, true
+	}
+	return
+}
+
+// taskLeftOnStaging collects what one changeover task's orders left standing,
+// aborting the live ones as it goes. A stage counts only beside a park: the
+// leg that would have collected the staged bin was aborted now, so the bin is
+// still waiting, and the read that answers for the park answers for it too.
+// Without a live leg the stage was collected, or its leg ended earlier.
+func (e *Engine) taskLeftOnStaging(task processes.NodeTask) []parkedBin {
+	var parks, stages []parkedBin
+	for _, orderID := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
+		if orderID == nil {
+			continue
+		}
+		order, err := e.db.GetOrder(*orderID)
+		if err != nil {
+			continue
+		}
+		flown := protocol.ChangeoverStartActionFor(order.Status) != protocol.ChangeoverStartCancel &&
+			order.Status != protocol.StatusCancelled && order.Status != protocol.StatusFailed
+		aborted := !ordermgr.IsTerminal(order.Status)
+		if aborted {
+			if err := e.orderMgr.AbortOrder(order.ID); err != nil {
+				log.Printf("changeover cancel: abort order %s: %v", order.UUID, err)
+			}
+		}
+		park, stage, parked, staged := e.leftOnStaging(order, task.ProcessNodeID, aborted, flown)
+		if parked {
+			parks = append(parks, park)
+		}
+		if staged {
+			stages = append(stages, stage)
+		}
+	}
+	if len(parks) == 0 {
+		return nil
+	}
+	return append(parks, stages...)
 }
 
 // parkNames is every park node, once each.
@@ -104,7 +177,7 @@ func parkNames(parks []parkedBin) []string {
 }
 
 // finishParkedTrips orders, for each park Core reports a bin on, one plain move
-// carrying that bin's own payload to where the aborted leg was taking it.
+// carrying that bin's own payload to its dest.
 // Attributed to the line, never in its runtime slots, and created under the
 // line's prime lock, as every other order the line's cell decides. One move per
 // park node: one node holds one bin.
@@ -127,4 +200,67 @@ func (e *Engine) finishParkedTrips(parks []parkedBin, rows map[string]NodeBinInf
 		}
 		e.logFn("changeover cancel: %s: the bin left on %s goes on to %s", p.line, p.park, p.dest)
 	}
+}
+
+// withoutSpots drops what stands on a keep-staged spot: the spots' own
+// decision at the cancel covers whatever stands there.
+func withoutSpots(parks []parkedBin, spots []spotChange) []parkedBin {
+	if len(spots) == 0 {
+		return parks
+	}
+	out := parks[:0]
+	for _, p := range parks {
+		if !slices.ContainsFunc(spots, func(ch spotChange) bool { return ch.spot == p.park }) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// parkAsked reports whether a request on this claim asks Core about its
+// outbound staging: single-robot only, the one swap that parks the line's bin
+// there on its way out.
+func parkAsked(claim *processes.NodeClaim) bool {
+	return claim != nil && claim.SwapMode == protocol.SwapModeSingleRobot && claim.OutboundStaging != ""
+}
+
+// clearStrandedPark is the request's half of the cancel's park: a bin standing on
+// a single-robot claim's outbound staging, read in the request's own node-bins
+// call, goes on to the outbound destination by the same plain move.
+//
+// A PARK CAN BE SET DOWN AFTER THE CANCEL'S READ. The cancel queues its abort to
+// Core and reads node-bins at once; a robot still carrying the line's bin when
+// that read answers sets it down on outbound staging afterwards, and the cancel
+// has already decided there was nothing to move. Every later single-robot swap
+// at the line parks there, so it would wait behind that bin for good.
+//
+// Called after the request's guards, so no live swap holds the line's slots. It
+// still leaves the bin when any live complex order of the line remains (a leg
+// that has left the line but will still collect its parked bin) or a live move
+// already takes it off (the cancel's own, or an earlier request's). The line's
+// rows are read only when Core reports a bin there. The move names no demand:
+// it is the cell's own clean-up, not what the request asked for.
+func (e *Engine) clearStrandedPark(node *processes.Node, claim *processes.NodeClaim, park NodeBinInfo) {
+	if !park.Occupied || !parkAsked(claim) || claim.OutboundDestination == "" {
+		return
+	}
+	rows, err := e.db.ListActiveOrdersByProcessNode(node.ID)
+	if err != nil {
+		e.logFn("request: %s: cannot read the line's orders (%v) — the bin on %s is left for the next request",
+			node.Name, err, claim.OutboundStaging)
+		return
+	}
+	for _, o := range rows {
+		if o.OrderType == ordermgr.TypeComplex || (o.OrderType == ordermgr.TypeMove && o.SourceNode == claim.OutboundStaging) {
+			return
+		}
+	}
+	nodeID := node.ID
+	if _, err := e.orderMgr.CreateMoveOrderCarrying(&nodeID, claim.OutboundStaging, claim.OutboundDestination,
+		park.PayloadCode, ordermgr.NoDemand()); err != nil {
+		e.logFn("request: %s: send the bin left on %s on to %s: %v", node.Name, claim.OutboundStaging,
+			claim.OutboundDestination, err)
+		return
+	}
+	e.logFn("request: %s: the bin left on %s goes on to %s", node.Name, claim.OutboundStaging, claim.OutboundDestination)
 }

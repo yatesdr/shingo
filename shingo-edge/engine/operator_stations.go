@@ -63,10 +63,10 @@ func (e *Engine) requestNodeMaterialFor(nodeID int64, quantity int64, trigger st
 // treated as occupied by isOccupied — safe default that suppresses both
 // the downgrade and any paired-prime emission so a Core blip can't
 // dispatch phantom deliveries.
-func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, spotRead) {
+func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, spotRead, NodeBinInfo) {
 	occ := map[string]bool{}
 	if claim == nil {
-		return occ, spotRead{}
+		return occ, spotRead{}, NodeBinInfo{}
 	}
 	// The head node unconditionally, EVEN IF BLANK: the map is keyed by the
 	// names asked about and isOccupied treats a missing key as occupied, so
@@ -86,12 +86,18 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, sp
 	if claim.KeepStaged && claim.InboundStaging != "" {
 		asked = append(append([]string(nil), names...), claim.InboundStaging)
 	}
+	// A SINGLE-ROBOT CLAIM ASKS ABOUT ITS OUTBOUND STAGING TOO, in the same call,
+	// for a bin a cancelled changeover's leg left parked there (parkAsked). Its
+	// row stays out of the map as well.
+	if parkAsked(claim) {
+		asked = append(append([]string(nil), asked...), claim.OutboundStaging)
+	}
 	if !e.coreClient.Available() {
 		log.Printf("[occupied-check] core API not configured, assuming occupied for %v", names)
 		for _, n := range names {
 			occ[n] = true
 		}
-		return occ, spotRead{}
+		return occ, spotRead{}, NodeBinInfo{}
 	}
 	// THE DECISION HERE IS ALREADY RIGHT AND IS NOT CHANGING. The map is filled
 	// from the REQUESTED names rather than the returned rows, so a name Core
@@ -108,9 +114,14 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, sp
 	// ever returned partial rows alongside an error, this site would silently
 	// start trusting a partial read.
 	bins, reachable, ferr := e.coreClient.FetchNodeBins(asked)
+	var park NodeBinInfo
 	for _, b := range bins {
 		if b.NodeName == claim.InboundStaging && claim.KeepStaged && b.NodeName != claim.CoreNodeName {
 			continue // the spot: read below, not a line position
+		}
+		if parkAsked(claim) && b.NodeName == claim.OutboundStaging && b.NodeName != claim.CoreNodeName {
+			park = b
+			continue
 		}
 		occ[b.NodeName] = b.Occupied
 	}
@@ -121,7 +132,7 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, sp
 			occ[n] = true
 		}
 	}
-	return occ, spotOf(claim, bins, e.spotNodeKnown)
+	return occ, spotOf(claim, bins, e.spotNodeKnown), park
 }
 
 // spotNodeKnown reports whether Core has a keep-staged spot's node. Core answers
@@ -178,7 +189,7 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 		}
 	}
 
-	occupancy, spot := e.claimOccupancy(claim)
+	occupancy, spot, park := e.claimOccupancy(claim)
 
 	// The evac leg lifts whatever is ON the cell, which is not always the style
 	// being requested — see swap_evac_dest.go. Blank override = today's behaviour.
@@ -241,6 +252,8 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 			}
 		}
 	}
+
+	e.clearStrandedPark(node, claim, park)
 
 	// The demand episode is opened HERE — after the plan exists and before any
 	// order does. That ordering is the whole reason expected_orders can be the

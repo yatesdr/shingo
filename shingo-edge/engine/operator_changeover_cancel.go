@@ -8,7 +8,6 @@ import (
 	"shingo/protocol"
 
 	"shingoedge/domain"
-	"shingoedge/orders"
 )
 
 func (e *Engine) CancelProcessChangeover(processID int64) error {
@@ -53,27 +52,12 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	flows := e.abortSpotOrdersNotFlown(spots, changeover.StartedAt)
 
 	nodeTasks, _ := e.db.ListChangeoverNodeTasks(changeover.ID)
-	// The line's bin an aborted leg left parked on its way out (changeover_cancel_park.go).
+	// The line's bin an aborted leg left parked on its way out, and the incoming
+	// bin its stage left waiting for it (changeover_cancel_park.go). A keep-staged
+	// spot is the spots' own business, decided below.
 	var parks []parkedBin
 	for _, task := range nodeTasks {
-		for _, orderID := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
-			if orderID == nil {
-				continue
-			}
-			order, err := e.db.GetOrder(*orderID)
-			if err != nil {
-				continue
-			}
-			if orders.IsTerminal(order.Status) {
-				continue
-			}
-			if err := e.orderMgr.AbortOrder(order.ID); err != nil {
-				log.Printf("changeover cancel: abort order %s: %v", order.UUID, err)
-			}
-			if p, ok := e.parkOf(order, task.ProcessNodeID); ok {
-				parks = append(parks, p)
-			}
-		}
+		parks = append(parks, withoutSpots(e.taskLeftOnStaging(task), spots)...)
 		if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskCancelled); err != nil {
 			log.Printf("changeover: update node task %d state to cancelled: %v", task.ID, err)
 		}

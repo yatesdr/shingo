@@ -67,7 +67,7 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 		}
 	}
 
-	occ, spot := e.claimOccupancy(claim)
+	occ, spot, park := e.claimOccupancy(claim)
 	occupancy := e.occupancyKnownNodesOnly(occ, node.Name)
 	primedPositions, err := e.pairedPositionsAlreadyPrimed(node, claim)
 	if err != nil {
@@ -112,6 +112,8 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 			return nil, err
 		}
 	}
+
+	e.clearStrandedPark(node, claim, park)
 
 	// The evacuate-direction episode, opened after the plan exists and before
 	// any order does — same ordering and same reasoning as the consume side.
@@ -252,7 +254,7 @@ func (e *Engine) primeBarePressIndexPositions(
 	mu.Lock()
 	defer mu.Unlock()
 
-	occ, _ := e.claimOccupancy(claim) // a press is never keep-staged
+	occ, _, _ := e.claimOccupancy(claim) // a press is never keep-staged or single-robot
 	occupancy := e.occupancyKnownNodesOnly(occ, node.Name)
 	// A BARE HEAD IS A DIFFERENT SHAPE and not this function's to answer: with
 	// nothing on the press there is nothing to index forward, and the consume

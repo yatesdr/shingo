@@ -121,3 +121,91 @@ func TestTwoRobotCancel_MovesNothingOffStaging(t *testing.T) {
 		t.Fatalf("moves off inbound staging = %+v, want none", moves)
 	}
 }
+
+// THE INCOMING BIN LEFT ON INBOUND STAGING. A single-robot changeover onto a
+// claim that keeps no spare stages the incoming bin first, by an order of its
+// own, and its leg collects it from there after parking the line's bin.
+// Cancelled after the stage landed and before the leg collected it, the bin
+// stands on inbound staging, where every later swap at the line sets its own
+// incoming bin down. The cancel sends it back to the incoming claim's inbound
+// source, by the same plain move as the park, carrying its own payload.
+func TestSingleRobotCancel_SendsTheStagedBinBack(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name   string
+		role   protocol.ClaimRole
+		status protocol.Status
+	}{
+		{"consume, stage delivered", protocol.ClaimRoleConsume, protocol.StatusDelivered},
+		{"consume, stage confirmed", protocol.ClaimRoleConsume, protocol.StatusConfirmed},
+		{"produce, stage delivered", protocol.ClaimRoleProduce, protocol.StatusDelivered},
+		{"produce, stage confirmed", protocol.ClaimRoleProduce, protocol.StatusConfirmed},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			incoming := NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW"}
+			if c.role == protocol.ClaimRoleProduce {
+				incoming = NodeBinInfo{Occupied: true}
+			}
+			rows := map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"}, "SPOT": incoming}
+			fx := seedKeepStagedChangeover(t,
+				[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", c.role, protocol.SwapModeSingleRobot, false, false}},
+				[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", c.role, protocol.SwapModeSingleRobot, false, false}},
+				rows)
+			coID := startKSChangeover(t, fx)
+			stage := stageOrderOf(t, fx, coID)
+			testutil.MustNoErr(t, fx.db.UpdateOrderStatus(stage, string(c.status)), "the stage landed")
+
+			testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
+
+			moves := parkMoves(t, fx, "SPOT")
+			if len(moves) != 1 {
+				t.Fatalf("moves off inbound staging = %d, want 1: the staged bin sent back", len(moves))
+			}
+			m := moves[0]
+			if m.DeliveryNode != "SRC-NEW" || m.PayloadCode != incoming.PayloadCode || !m.AutoConfirm {
+				t.Errorf("the move goes %s->%s carrying %q autoConfirm=%v, want ->SRC-NEW carrying %q, auto-confirmed",
+					m.SourceNode, m.DeliveryNode, m.PayloadCode, m.AutoConfirm, incoming.PayloadCode)
+			}
+			if m.ProcessNodeID == nil || *m.ProcessNodeID != fx.nodeIDs["L1"] {
+				t.Errorf("the move is attributed to %v, want the line L1 (%d)", m.ProcessNodeID, fx.nodeIDs["L1"])
+			}
+		})
+	}
+}
+
+// A stage that never reached a robot staged nothing: a bin Core reports on
+// inbound staging then is not the changeover's, and the cancel leaves it.
+func TestSingleRobotCancel_StageNotYetFlownMovesNothing(t *testing.T) {
+	t.Parallel()
+	rows := map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
+		"SPOT": {Occupied: true, PayloadCode: "PART-OTHER"}}
+	fx := seedKeepStagedChangeover(t,
+		[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot, false, false}},
+		[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot, false, false}},
+		rows)
+	startKSChangeover(t, fx)
+	testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
+	if moves := parkMoves(t, fx, "SPOT"); len(moves) != 0 {
+		t.Fatalf("moves off inbound staging = %+v, want none", moves)
+	}
+}
+
+// stageOrderOf is the changeover's stage order: its one task's supply.
+func stageOrderOf(t *testing.T, fx *coFixture, coID int64) int64 {
+	t.Helper()
+	tasks, err := fx.db.ListChangeoverNodeTasks(coID)
+	testutil.MustNoErr(t, err, "tasks")
+	for _, task := range tasks {
+		if task.NextMaterialOrderID != nil {
+			o, err := fx.db.GetOrder(*task.NextMaterialOrderID)
+			testutil.MustNoErr(t, err, "stage order")
+			if o.DeliveryNode != "SPOT" {
+				t.Fatalf("the supply order %d goes to %q, want the stage to SPOT", o.ID, o.DeliveryNode)
+			}
+			return o.ID
+		}
+	}
+	t.Fatalf("no stage order on the changeover's tasks")
+	return 0
+}
