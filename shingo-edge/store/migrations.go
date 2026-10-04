@@ -1412,6 +1412,31 @@ func edgeMigrations() []migrate.Migration {
 				return nil
 			},
 		},
+		{
+			// Every line request, level-keeper ask and loader or unloader count
+			// reads the live orders bound for a set of nodes. No index covered
+			// delivery_node, and NOT IN (terminal) cannot use idx_orders_status,
+			// so each read scanned the whole orders table, history included,
+			// and the Edge never deletes an order. This index holds only the
+			// live rows, a few dozen, so the read is one probe per node.
+			//
+			// The WHERE is spelled exactly as protocol.TerminalStatusSQLList
+			// renders it: SQLite uses a partial index only when the query has
+			// the same term. It is a literal because a migration is history;
+			// TestLiveDeliveryNodeIndex_ServesTheBoundForLineRead fails if the
+			// list ever changes, and that change then needs a new migration.
+			Version: 14,
+			Name:    "orders_live_delivery_node_index",
+			Fn: func(tx *sql.Tx) error {
+				_, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_orders_live_delivery_node ON orders(delivery_node) WHERE status NOT IN ('cancelled','confirmed','failed','skipped')`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_orders_live_delivery_node'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 
