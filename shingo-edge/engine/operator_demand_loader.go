@@ -80,8 +80,8 @@ func (e *Engine) loaderBudgetLock(loaderID string) *sync.Mutex {
 // not a cleared one.
 //
 // The press-index partial-empty prime creates outside this seam DELIBERATELY,
-// from one site: applyProducePlan, which REQUEST SWAP and REQUEST EMPTY BIN both
-// reach through produceRequest. Its delivery node is a press's bare paired
+// from one site: createProducePrimes, which REQUEST SWAP and REQUEST EMPTY BIN
+// both reach through produceRequest. Its delivery node is a press's bare paired
 // POSITION, never a loader window, so this seam's budget — one bin per delivery
 // node across a loader's window set — has nothing to say about it. It carries
 // its own count->decide->create lock for the same never-2N reason at its own

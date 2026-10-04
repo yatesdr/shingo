@@ -81,9 +81,13 @@ func IsTerminal(status protocol.Status) bool {
 // nothing looked at it again.
 //
 // Confirmed is the only member. Skipped is deliberately excluded even though it
-// is not a failure: a skipped leg is one Core found MOOT, so its partner is in
-// HandleSwapPeerTerminal's territory (it cancels, correctly) rather than waiting
-// for a release. Delivered is not here because it is not terminal at all.
+// is not a failure: a skipped leg is one Core found MOOT, and its partner is
+// Core's to decide in HandleSwapPeerTerminal, not a survivor this unwind
+// releases. Core SPARES the partner of a skipped removal (the line's bin was
+// already gone, so the supply runs alone) and cancels the partner of a skipped
+// supply. A bare line no longer makes such a pair from the Edge's own requests:
+// it gets a plain delivery instead. Delivered is not here because it is not
+// terminal at all.
 func IsTerminalSuccess(status protocol.Status) bool {
 	return status == StatusConfirmed
 }

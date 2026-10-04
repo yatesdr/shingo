@@ -231,7 +231,36 @@ func (e *Engine) applyProduceEmptyLine(node *processes.Node, claim *processes.No
 	if err := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &order.ID); err != nil {
 		log.Printf("produce: update runtime orders for node %d: %v", nodeID, err)
 	}
-	return &NodeOrderResult{Order: order, ProcessNodeID: nodeID}, nil
+	// A press's bare paired positions get their empties alongside, outside the
+	// runtime slots, as the consume side's downgrade primes do. The line's
+	// empty is already on its way; a failed prime is returned, not rolled back.
+	primes, err := e.createProducePrimes(node, claim, plan.PrimePairedPositions, origin)
+	if err != nil {
+		return nil, err
+	}
+	return &NodeOrderResult{Order: order, PrimeOrders: primes, ProcessNodeID: nodeID}, nil
+}
+
+// createProducePrimes creates one retrieve-empty per bare paired position. A
+// retrieve, not a move: a move is a full-intent local relocation of the bin AT a
+// concrete source node, so it would hunt a FULL bin in what is an empties pool.
+// The merged auto-confirm signal: one policy for both directions of the cell.
+func (e *Engine) createProducePrimes(node *processes.Node, claim *processes.NodeClaim, primes []SimplePrime, origin ordermgr.Origin) ([]*orders.Order, error) {
+	nodeID := node.ID
+	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
+	var out []*orders.Order
+	for _, p := range primes {
+		// No re-read: CreateRetrieveOrder already returns the stored row and
+		// nothing below rewrites it.
+		po, err := e.orderMgr.CreateRetrieveOrder(&nodeID, true, 1,
+			p.Dest, p.Source, "", "standard", claim.PayloadCode,
+			autoConfirm, false, origin)
+		if err != nil {
+			return nil, fmt.Errorf("prime %s: %w", p.Dest, err)
+		}
+		out = append(out, po)
+	}
+	return out, nil
 }
 
 // PrimeInFlightError says a press-index swap was refused because the empty it
@@ -317,7 +346,7 @@ func (e *Engine) pairedPositionsAlreadyPrimed(node *processes.Node, claim *proce
 func (e *Engine) occupancyKnownNodesOnly(occ map[string]bool, nodeName string) map[string]bool {
 	known := e.CoreNodes()
 	if len(known) == 0 {
-		log.Printf("[produce-swap] node %s: core node list is EMPTY, so paired positions could not be "+
+		log.Printf("[occupied-check] node %s: core node list is EMPTY, so the line's positions could not be "+
 			"checked against Core's plant — reading telemetry as-is. This is not a pass: Core has "+
 			"not been heard from.", nodeName)
 		return occ
@@ -328,8 +357,8 @@ func (e *Engine) occupancyKnownNodesOnly(occ map[string]bool, nodeName string) m
 		if occupied || coreNodeKnown(known, name) {
 			continue
 		}
-		log.Printf("[produce-swap] node %s: position %q is not a node Core knows (%d known) — reading it "+
-			"as occupied, no prime. Check the spelling against the node picker, or sync nodes if Core "+
+		log.Printf("[occupied-check] node %s: position %q is not a node Core knows (%d known) — reading it "+
+			"as occupied, no delivery or prime. Check the spelling against the node picker, or sync nodes if Core "+
 			"has just been reconfigured.", nodeName, name, len(known))
 		out[name] = true
 	}
@@ -411,20 +440,9 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 	// bin AT a concrete source node, so it would hunt a FULL bin in what is an
 	// empties pool. RetrieveEmpty is the intent that matches.
 	if plan.SuppressSwap {
-		// The merged signal, not a hard-coded true: one auto-confirm policy for
-		// both directions of this cell.
-		autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
-		var primes []*orders.Order
-		for _, p := range plan.PrimePairedPositions {
-			// No re-read: CreateRetrieveOrder already returns the stored row and
-			// nothing below rewrites it.
-			po, err := e.orderMgr.CreateRetrieveOrder(&nodeID, true, 1,
-				p.Dest, p.Source, "", "standard", claim.PayloadCode,
-				autoConfirm, false, origin)
-			if err != nil {
-				return nil, fmt.Errorf("prime %s: %w", p.Dest, err)
-			}
-			primes = append(primes, po)
+		primes, err := e.createProducePrimes(node, claim, plan.PrimePairedPositions, origin)
+		if err != nil {
+			return nil, err
 		}
 		return &NodeOrderResult{PrimeOrders: primes, ProcessNodeID: nodeID}, nil
 	}

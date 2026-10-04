@@ -159,9 +159,10 @@ func runCensusRow(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode,
 	return got
 }
 
-// TestRequestCensus pins, row by row, what each button makes today. A row
-// marked wrong is what a bare line gets that it should not, and names the
-// ruling or the fault.
+// TestRequestCensus pins, row by row, what each button makes. A bare line gets
+// the same row for both roles: one plain delivery to the line, one more to a
+// press's bare paired position, one Core call. Only what the bin carries
+// differs, a full for consume and an empty for produce.
 func TestRequestCensus(t *testing.T) {
 	t.Parallel()
 	const (
@@ -173,61 +174,51 @@ func TestRequestCensus(t *testing.T) {
 	consume, produce := protocol.ClaimRoleConsume, protocol.ClaimRoleProduce
 	noParts := "has no parts to finalize"
 	rows := []struct {
-		role  protocol.ClaimRole
-		mode  protocol.SwapMode
-		door  string
-		line  string
-		uop   int
-		want  censusResult
-		wrong string
+		role protocol.ClaimRole
+		mode protocol.SwapMode
+		door string
+		line string
+		uop  int
+		want censusResult
 	}{
 		// The material request: one plain full to a bare line in every mode,
 		// and a full for each bare position of a press.
-		{consume, sr, doorMaterial, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}, ""},
-		{consume, sr, doorMaterial, lineOccupied, 30, censusResult{legs: 1, trips: 1, expected: 1}, ""},
-		{consume, tr, doorMaterial, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}, ""},
-		{consume, tr, doorMaterial, lineOccupied, 30, censusResult{legs: 2, trips: 2, expected: 2}, ""},
-		{consume, seq, doorMaterial, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}, ""},
-		{consume, seq, doorMaterial, lineOccupied, 30, censusResult{legs: 1, trips: 1, expected: 1}, ""},
-		{consume, pi, doorMaterial, lineBare, 30, censusResult{toHead: 1, toDeck: 1, trips: 1, expected: 2}, ""},
-		{consume, pi, doorMaterial, lineOccupied, 30, censusResult{legs: 2, trips: 2, expected: 2}, ""},
-		{consume, pi, doorMaterial, lineDeckBare, 30, censusResult{legs: 2, trips: 2, expected: 2}, ""},
+		{consume, sr, doorMaterial, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}},
+		{consume, sr, doorMaterial, lineOccupied, 30, censusResult{legs: 1, trips: 1, expected: 1}},
+		{consume, tr, doorMaterial, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}},
+		{consume, tr, doorMaterial, lineOccupied, 30, censusResult{legs: 2, trips: 2, expected: 2}},
+		{consume, seq, doorMaterial, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}},
+		{consume, seq, doorMaterial, lineOccupied, 30, censusResult{legs: 1, trips: 1, expected: 1}},
+		{consume, pi, doorMaterial, lineBare, 30, censusResult{toHead: 1, toDeck: 1, trips: 1, expected: 2}},
+		{consume, pi, doorMaterial, lineOccupied, 30, censusResult{legs: 2, trips: 2, expected: 2}},
+		{consume, pi, doorMaterial, lineDeckBare, 30, censusResult{legs: 2, trips: 2, expected: 2}},
 
 		// The produce request.
-		{produce, sr, doorProduce, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}, ""},
-		{produce, sr, doorProduce, lineBare, 0, censusResult{toHead: 1, trips: 1, expected: 1}, ""},
-		{produce, sr, doorProduce, lineOccupied, 30, censusResult{legs: 1, trips: 1, expected: 1}, ""},
-		{produce, sr, doorProduce, lineOccupied, 0, censusResult{trips: 1, refused: noParts}, ""},
-		{produce, tr, doorProduce, lineBare, 30, censusResult{legs: 2, trips: 1, expected: 2},
-			"a swap whose removal Core skips; a bare line gets one plain empty"},
-		{produce, tr, doorProduce, lineBare, 0, censusResult{trips: 1, refused: noParts},
-			"refused; a bare line at a count of 0 gets the empty"},
-		{produce, tr, doorProduce, lineOccupied, 30, censusResult{legs: 2, trips: 1, expected: 2}, ""},
-		{produce, seq, doorProduce, lineBare, 30, censusResult{legs: 1, trips: 1, expected: 1},
-			"a removal Core skips and no backfill: nothing is delivered"},
-		{produce, seq, doorProduce, lineBare, 0, censusResult{trips: 1, refused: noParts},
-			"refused; a bare line at a count of 0 gets the empty"},
-		{produce, seq, doorProduce, lineOccupied, 30, censusResult{legs: 1, trips: 1, expected: 1}, ""},
-		{produce, pi, doorProduce, lineBare, 30, censusResult{legs: 2, trips: 1, expected: 2},
-			"a swap whose index leg holds for good at the bare paired position"},
-		{produce, pi, doorProduce, lineBare, 0, censusResult{trips: 1, refused: noParts},
-			"refused; a bare line at a count of 0 gets the empty"},
-		{produce, pi, doorProduce, lineOccupied, 30, censusResult{legs: 2, trips: 1, expected: 2}, ""},
-		{produce, pi, doorProduce, lineDeckBare, 0, censusResult{toDeck: 1, trips: 1, expected: 1}, ""},
+		{produce, sr, doorProduce, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}},
+		{produce, sr, doorProduce, lineBare, 0, censusResult{toHead: 1, trips: 1, expected: 1}},
+		{produce, sr, doorProduce, lineOccupied, 30, censusResult{legs: 1, trips: 1, expected: 1}},
+		{produce, sr, doorProduce, lineOccupied, 0, censusResult{trips: 1, refused: noParts}},
+		{produce, tr, doorProduce, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}},
+		{produce, tr, doorProduce, lineBare, 0, censusResult{toHead: 1, trips: 1, expected: 1}},
+		{produce, tr, doorProduce, lineOccupied, 30, censusResult{legs: 2, trips: 1, expected: 2}},
+		{produce, seq, doorProduce, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}},
+		{produce, seq, doorProduce, lineBare, 0, censusResult{toHead: 1, trips: 1, expected: 1}},
+		{produce, seq, doorProduce, lineOccupied, 30, censusResult{legs: 1, trips: 1, expected: 1}},
+		{produce, pi, doorProduce, lineBare, 30, censusResult{toHead: 1, toDeck: 1, trips: 1, expected: 2}},
+		{produce, pi, doorProduce, lineBare, 0, censusResult{toHead: 1, toDeck: 1, trips: 1, expected: 2}},
+		{produce, pi, doorProduce, lineOccupied, 30, censusResult{legs: 2, trips: 1, expected: 2}},
+		{produce, pi, doorProduce, lineDeckBare, 0, censusResult{toDeck: 1, trips: 1, expected: 1}},
 
 		// The empty-bin request, pressed at a count of 0 as the station offers it.
-		{produce, sr, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, trips: 1, expected: 1}, ""},
-		{produce, sr, doorEmptyBin, lineOccupied, 0, censusResult{legs: 1, trips: 1, expected: 1}, ""},
-		{produce, tr, doorEmptyBin, lineBare, 0, censusResult{legs: 2, trips: 1, expected: 2},
-			"a swap whose removal Core skips; a bare line gets one plain empty"},
-		{produce, tr, doorEmptyBin, lineOccupied, 0, censusResult{legs: 2, trips: 1, expected: 2}, ""},
-		{produce, seq, doorEmptyBin, lineBare, 0, censusResult{legs: 1, trips: 1, expected: 1},
-			"a removal Core skips and no backfill: nothing is delivered"},
-		{produce, seq, doorEmptyBin, lineOccupied, 0, censusResult{legs: 1, trips: 1, expected: 1}, ""},
-		{produce, pi, doorEmptyBin, lineBare, 0, censusResult{legs: 2, trips: 1, expected: 2},
-			"a swap whose index leg holds for good at the bare paired position"},
-		{produce, pi, doorEmptyBin, lineOccupied, 0, censusResult{legs: 2, trips: 1, expected: 2}, ""},
-		{produce, pi, doorEmptyBin, lineDeckBare, 0, censusResult{toDeck: 1, trips: 1, expected: 1}, ""},
+		{produce, sr, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, trips: 1, expected: 1}},
+		{produce, sr, doorEmptyBin, lineOccupied, 0, censusResult{legs: 1, trips: 1, expected: 1}},
+		{produce, tr, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, trips: 1, expected: 1}},
+		{produce, tr, doorEmptyBin, lineOccupied, 0, censusResult{legs: 2, trips: 1, expected: 2}},
+		{produce, seq, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, trips: 1, expected: 1}},
+		{produce, seq, doorEmptyBin, lineOccupied, 0, censusResult{legs: 1, trips: 1, expected: 1}},
+		{produce, pi, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, toDeck: 1, trips: 1, expected: 2}},
+		{produce, pi, doorEmptyBin, lineOccupied, 0, censusResult{legs: 2, trips: 1, expected: 2}},
+		{produce, pi, doorEmptyBin, lineDeckBare, 0, censusResult{toDeck: 1, trips: 1, expected: 1}},
 	}
 	for _, r := range rows {
 		name := strings.Join([]string{string(r.role), string(r.mode), r.door, r.line}, "/")
@@ -244,9 +235,44 @@ func TestRequestCensus(t *testing.T) {
 			if g != w || !refusedOK {
 				t.Errorf("got %+v refused %q, want %+v refused %q", g, got.refused, w, r.want.refused)
 			}
-			if r.wrong != "" {
-				t.Logf("WRONG TODAY: %s", r.wrong)
+		})
+	}
+}
+
+// A bare line is handled the same for both roles in every mode: the material
+// request, the produce request and the empty-bin request make the same row.
+func TestRequestCensus_BareLineIsTheSameForBothRoles(t *testing.T) {
+	t.Parallel()
+	for _, mode := range protocol.ConfigurableSwapModes() {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			consume := runCensusRow(t, protocol.ClaimRoleConsume, mode, doorMaterial, lineBare, 30)
+			produce := runCensusRow(t, protocol.ClaimRoleProduce, mode, doorProduce, lineBare, 30)
+			emptyBin := runCensusRow(t, protocol.ClaimRoleProduce, mode, doorEmptyBin, lineBare, 0)
+			if produce != consume || emptyBin != consume {
+				t.Errorf("material %+v, produce %+v, empty-bin %+v: want one row", consume, produce, emptyBin)
 			}
 		})
+	}
+}
+
+// A consume line whose head Core does not know reads occupied, as a produce
+// line's does: Core answers a node it does not have as present and empty, and
+// read as bare that would send a delivery on every request.
+func TestRequestCensus_ConsumeHeadCoreDoesNotKnowReadsOccupied(t *testing.T) {
+	t.Parallel()
+	eng, db, nodeID := seedCensusCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, 30)
+	var calls atomic.Int32
+	eng.coreClient = NewCoreClient(censusStub(t, &calls).URL) // every node reads empty
+	eng.SetCoreNodes([]protocol.NodeInfo{{Name: ksMarket}, {Name: ksSpot}, {Name: ksDest}})
+
+	_, err := eng.RequestNodeMaterial(nodeID, 1)
+	testutil.MustNoErr(t, err, "material request")
+	rows, err := db.ListActiveOrdersByProcessNode(nodeID)
+	testutil.MustNoErr(t, err, "rows")
+	for _, o := range rows {
+		if o.OrderType != orders.TypeComplex {
+			t.Errorf("a %s %s->%s to a head Core does not know, want the swap", o.OrderType, o.SourceNode, o.DeliveryNode)
+		}
 	}
 }

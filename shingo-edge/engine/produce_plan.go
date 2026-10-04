@@ -22,8 +22,9 @@ type ProducePlan struct {
 
 	// PrimePairedPositions are the fire-and-forget empty deliveries that fill
 	// a two_robot_press_index cell's bare paired position(s) before any swap
-	// is minted. Same type and same shape as the consume side's downgrade
-	// primes (consume_plan.go) — one CreateRetrieveOrder each.
+	// is minted, or alongside the empty to a bare line (SimpleMove). Same type
+	// and shape as the consume side's downgrade primes (consume_plan.go) — one
+	// CreateRetrieveOrder each.
 	PrimePairedPositions []SimplePrime
 
 	// SuppressSwap says this round mints the primes and NOTHING else: no
@@ -59,7 +60,7 @@ func (p *ProducePlan) OrderCount() int {
 		return len(p.PrimePairedPositions)
 	}
 	if p.SimpleMove {
-		return 1 + p.Spot.orders()
+		return 1 + len(p.PrimePairedPositions) + p.Spot.orders()
 	}
 	if p.Dispatch == nil {
 		return 0
@@ -153,21 +154,20 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 		}
 	}
 
-	// AN EMPTY SINGLE-ROBOT LINE GETS AN EMPTY: the bare line's plain delivery
-	// (planBareLine), as the consume side's node-empty downgrade gives a full. The
-	// swap opens by lifting the line's bin, and with none there its lift holds at
-	// Core for good. The caller gates this plan with positionWorkedBy.
-	//
-	// SINGLE-ROBOT ONLY. A request on an empty line in another mode is left as it
-	// is.
-	if claim.SwapMode == protocol.SwapModeSingleRobot {
-		bare, err := planBareLine(node, claim, occupancy)
-		if err != nil {
-			return nil, err
-		}
-		if bare != nil {
-			return &ProducePlan{SimpleMove: true, SimpleSource: bare.source}, nil
-		}
+	// AN EMPTY LINE GETS AN EMPTY, in every mode: the bare line's plain delivery
+	// (planBareLine), as the consume side's node-empty downgrade gives a full, and
+	// an empty for each bare paired position of a press. Every swap opens by
+	// lifting the line's bin, and with none there it does nothing useful: a
+	// single-robot lift holds at Core for good, a two-robot or sequential removal
+	// is skipped by Core and a sequential backfill is never made, and a press's
+	// index leg holds at a bare paired position. The caller gates this plan with
+	// positionWorkedBy.
+	bare, err := planBareLine(node, claim, occupancy)
+	if err != nil {
+		return nil, err
+	}
+	if bare != nil {
+		return &ProducePlan{SimpleMove: true, SimpleSource: bare.source, PrimePairedPositions: bare.primes}, nil
 	}
 
 	// NO COUNT HERE. Whether a request may ask with nothing counted is the

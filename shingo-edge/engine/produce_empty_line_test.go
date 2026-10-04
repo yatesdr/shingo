@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"shingo/protocol"
@@ -12,10 +14,11 @@ import (
 
 // A PRODUCE LINE WITH NO BIN ON IT.
 //
-// A single-robot swap starts by lifting the line's bin, so on an empty line it
-// holds at Core for ever. The request answers an empty line the way the consume
-// side does: a plain order brings an empty to the line, from the spot when a
-// right spare stands there, else from the claim's inbound source. The empty
+// Every swap starts by lifting the line's bin, so on an empty line it does
+// nothing useful (a single-robot lift holds at Core for ever). The request
+// answers an empty line the way the consume side does, in every mode: a plain
+// order brings an empty to the line, from the spot when a right spare stands
+// there, else from the claim's inbound source. The empty
 // reading is Core's answer to the occupancy read the request already makes.
 
 // liveLineRows is the line's live rows, by type.
@@ -120,33 +123,52 @@ func TestProduceEmptyLine_PositionStillWorkedRefuses(t *testing.T) {
 	}
 }
 
-// TWO-ROBOT IS NOT CHANGED, and this is what it does today on an empty line: with
-// parts counted it builds the two-leg swap (whose removal leg then lifts at an
-// empty line), and with none counted it refuses.
-func TestProduceEmptyLine_TwoRobotIsUnchanged(t *testing.T) {
+// EVERY MODE: a two-robot, sequential or press line with no bin gets the plain
+// empty too, with parts counted or none, and a press gets one for its bare
+// paired position. Before, two-robot built a swap whose removal Core skips,
+// sequential a removal Core skips with no backfill behind it, and a press a
+// swap whose index leg holds at the bare paired position; with none counted,
+// all three were refused.
+func TestProduceEmptyLine_EveryModeDeliversAnEmpty(t *testing.T) {
 	t.Parallel()
-	t.Run("parts counted: the swap", func(t *testing.T) {
-		t.Parallel()
-		eng, _, nodeID, _ := seedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot, false,
-			map[string]NodeBinInfo{ksLine: {}})
-		_, err := eng.RequestProduceSwap(nodeID)
-		testutil.MustNoErr(t, err, "request")
-		legs, plain := liveLineRows(t, eng, nodeID)
-		if len(legs) != 2 || len(plain) != 0 {
-			t.Fatalf("legs=%d plain=%d, want the two-leg swap and no plain order", len(legs), len(plain))
+	for _, mode := range []protocol.SwapMode{
+		protocol.SwapModeTwoRobot, protocol.SwapModeSequential, protocol.SwapModeTwoRobotPressIndex,
+	} {
+		for _, uop := range []int{30, 0} {
+			t.Run(fmt.Sprintf("%s/count %d", mode, uop), func(t *testing.T) {
+				t.Parallel()
+				eng, db, nodeID := seedCensusCell(t, protocol.ClaimRoleProduce, mode, uop)
+				var calls atomic.Int32
+				eng.coreClient = NewCoreClient(censusStub(t, &calls).URL) // the line and the deck read bare
+				res, err := eng.RequestProduceSwap(nodeID)
+				testutil.MustNoErr(t, err, "request on an empty line")
+
+				legs, plain := liveLineRows(t, eng, nodeID)
+				if len(legs) != 0 {
+					t.Fatalf("%d swap legs on an empty line, want none", len(legs))
+				}
+				wantPlain := 1
+				if mode == protocol.SwapModeTwoRobotPressIndex {
+					wantPlain = 2
+				}
+				if len(plain) != wantPlain {
+					t.Fatalf("plain orders = %d, want %d (%+v)", len(plain), wantPlain, plain)
+				}
+				for _, o := range plain {
+					if !o.RetrieveEmpty || o.SourceNode != ksMarket {
+						t.Errorf("order %d %s %s->%s, want an empty from %s", o.ID, o.OrderType, o.SourceNode, o.DeliveryNode, ksMarket)
+					}
+				}
+				rt, err := db.GetProcessNodeRuntime(nodeID)
+				testutil.MustNoErr(t, err, "runtime")
+				if res == nil || res.Order == nil || rt.ActiveOrderID == nil || *rt.ActiveOrderID != res.Order.ID ||
+					res.Order.DeliveryNode != ksLine {
+					t.Errorf("the line's active order is %v, want the empty to the line (%+v)", rt.ActiveOrderID, res)
+				}
+				if mode == protocol.SwapModeTwoRobotPressIndex && (len(res.PrimeOrders) != 1 || res.PrimeOrders[0].DeliveryNode != censusDeck) {
+					t.Errorf("primes %+v, want one empty to %s", res.PrimeOrders, censusDeck)
+				}
+			})
 		}
-	})
-	t.Run("none counted: refused", func(t *testing.T) {
-		t.Parallel()
-		eng, db, nodeID, claim := seedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot, false,
-			map[string]NodeBinInfo{ksLine: {}})
-		testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claim.ID, 0), "count")
-		_, err := eng.RequestProduceSwap(nodeID)
-		if err == nil || !strings.Contains(err.Error(), "has no parts to finalize") {
-			t.Fatalf("request = %v, want the no-parts refusal", err)
-		}
-		if legs, plain := liveLineRows(t, eng, nodeID); len(legs)+len(plain) != 0 {
-			t.Fatalf("legs=%d plain=%d, want nothing", len(legs), len(plain))
-		}
-	})
+	}
 }

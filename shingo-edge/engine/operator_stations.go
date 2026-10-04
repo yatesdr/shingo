@@ -205,7 +205,11 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 		}
 	}
 
-	occupancy, spot, park := e.claimOccupancy(claim)
+	// Read through occupancyKnownNodesOnly, as the produce request reads it: Core
+	// answers a node it does not have as present and empty, and a head or paired
+	// position named wrong would read bare on every request.
+	occ, spot, park := e.claimOccupancy(claim)
+	occupancy := e.occupancyKnownNodesOnly(occ, node.Name)
 
 	// The evac leg lifts whatever is ON the cell, which is not always the style
 	// being requested — see swap_evac_dest.go. Blank override = today's behaviour.

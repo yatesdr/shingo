@@ -132,7 +132,8 @@ const (
 	ksrMktB   = "KSR-MKT-B"
 	ksrPartA  = "KSR-PA"
 	ksrPartB  = "KSR-PB"
-	ksrPartC  = "KSR-PC" // the blocker in B's lane (case e)
+	ksrPartC  = "KSR-PC"   // the blocker in B's lane (case e)
+	ksrDeck   = "KSR-DECK" // a press's paired position (plain press cells)
 )
 
 // ksrCell is one keep-staged cell, Core and Edge, on style A with an A spare
@@ -210,6 +211,9 @@ type ksrOpts struct {
 	// claimC: some line's consume claim sources the blocker's part (C) from
 	// B's market, so a carried blocker has a declared place to go back to.
 	claimC bool
+	// plain: the claims do not keep a staged spare, so any swap mode may be
+	// asked for (keep-staged admits single and two robot only).
+	plain bool
 }
 
 func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
@@ -244,6 +248,9 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	line := node(&corenodes.Node{Name: ksrLine})
 	spot := node(&corenodes.Node{Name: ksrSpot})
 	node(&corenodes.Node{Name: ksrOutStg})
+	if o.mode == protocol.SwapModeTwoRobotPressIndex {
+		node(&corenodes.Node{Name: ksrDeck})
+	}
 	// The outbound destination is a group of slots: each swap's evac leaves a
 	// bin there.
 	dest := node(&corenodes.Node{Name: ksrDest, IsSynthetic: true, NodeTypeID: &ngrp.ID})
@@ -354,12 +361,16 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 		part, mkt  string
 		claimIDOut *int64
 	}{{c.styleA, ksrPartA, ksrMktA, &c.claimA}, {c.styleB, ksrPartB, ksrMktB, nil}} {
-		id, err := edge.DB.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		in := processes.NodeClaimInput{
 			StyleID: s.style, CoreNodeName: ksrLine, Role: o.role, SwapMode: o.mode,
 			PayloadCode: s.part, UOPCapacity: 40, ReorderPoint: 10,
 			InboundSource: s.mkt, InboundStaging: ksrSpot, OutboundStaging: ksrOutStg,
-			OutboundDestination: ksrDest, KeepStaged: domain.Ptr(true), AutoReorder: domain.Ptr(true),
-		})
+			OutboundDestination: ksrDest, KeepStaged: domain.Ptr(!o.plain), AutoReorder: domain.Ptr(true),
+		}
+		if o.mode == protocol.SwapModeTwoRobotPressIndex {
+			in.PairedCoreNode = ksrDeck
+		}
+		id, err := edge.DB.UpsertStyleNodeClaim(in)
 		mustNil(t, err, "claim "+s.part)
 		if s.claimIDOut != nil {
 			*s.claimIDOut = id
@@ -1023,6 +1034,8 @@ type ksrMoment struct {
 	// REQUEST is answered by a plain delivery to the line, not a swap: a full on
 	// a consume cell, an empty on a produce cell.
 	lineEmpty bool
+	// afterCancel runs once the cancel is in, before the cell is left alone.
+	afterCancel func(c *ksrCell)
 }
 
 var ksrMoments = []ksrMoment{
@@ -1108,6 +1121,29 @@ var ksrMoments = []ksrMoment{
 	}},
 	{name: "g", what: "with the line's bin parked on outbound staging", singleRobot: true, lineEmpty: true,
 		at: ksrParkedMoment},
+	{name: "h", what: "before A's spare has left the spot, then the line's bin taken off by hand", lineEmpty: true,
+		at: func(c *ksrCell, co ksrCO) {
+			if c.spareOnSpot() == nil {
+				c.notReached("A's spare is not on the spot")
+			}
+		},
+		afterCancel: func(c *ksrCell) { c.takeLineBinOff() }},
+}
+
+// takeLineBinOff is a person lifting the line's bin off by hand and setting it
+// down in the outbound destination: Core then reports the line bare.
+func (c *ksrCell) takeLineBinOff() {
+	c.t.Helper()
+	coreDB := c.core.eng.DB()
+	bins, err := coreDB.ListBins()
+	mustNil(c.t, err, "bins")
+	slot, err := coreDB.GetNodeByName(ksrDest + "-1")
+	mustNil(c.t, err, "a slot of the outbound destination")
+	for _, b := range bins {
+		if c.nodeName(b.NodeID) == ksrLine {
+			mustNil(c.t, coreDB.MoveBinClearingStaging(b.ID, slot.ID, true), "take "+b.Label+" off the line")
+		}
+	}
 }
 
 // ksrParkedMoment runs the single-robot changeover leg past its park: the
@@ -1362,6 +1398,9 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 				mustNil(t, c.edge.Engine.CancelProcessChangeover(c.processID), "cancel")
 				if m.buriedB {
 					c.caseEReturn()
+				}
+				if m.afterCancel != nil {
+					m.afterCancel(c)
 				}
 
 				// Nobody touches anything.
