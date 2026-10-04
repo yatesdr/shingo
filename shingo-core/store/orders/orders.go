@@ -961,9 +961,17 @@ func ActiveByDeliveryNodes(db *sql.DB, names []string) ([]*Order, error) {
 // names, which structurally missed any order whose lane entry is INTERIOR to its
 // plan — neither its first actionable step nor its last. A spliced plan has
 // exactly that shape whenever the lane is not an endpoint.
-func ActiveGateCandidates(db *sql.DB) ([]*Order, error) {
+//
+// EACH ROW CARRIES THE NODE ITS BIN READS AT, in the same statement. A dig leg
+// is waiting at its lane only once it has lifted its blocker, and the lift is
+// the bin leaving its slot; every reader of these rows asks that, so the answer
+// rides on the read they already make instead of a bin read per order.
+func ActiveGateCandidates(db *sql.DB) ([]*GateCandidate, error) {
 	rows, err := db.Query(fmt.Sprintf(
-		`SELECT %s FROM orders
+		`SELECT %s,
+		        COALESCE((SELECT n.name FROM bins b JOIN nodes n ON n.id = b.node_id
+		                   WHERE b.id = orders.bin_id), '')
+		   FROM orders
 		  WHERE vendor_order_id <> '' AND steps_json <> ''
 		    AND status NOT IN (%s)
 		  ORDER BY id`,
@@ -972,7 +980,34 @@ func ActiveGateCandidates(db *sql.DB) ([]*Order, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	return ScanOrders(rows)
+	var out []*GateCandidate
+	for rows.Next() {
+		c := &GateCandidate{}
+		o, err := ScanOrder(withTrailing{rows, []any{&c.BinNode}})
+		if err != nil {
+			return nil, err
+		}
+		c.Order = o
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// GateCandidate is one ActiveGateCandidates row: the order, and the name of the
+// node its bin reads at ("" when it has no bin or the bin is on no node).
+type GateCandidate struct {
+	*Order
+	BinNode string
+}
+
+// withTrailing scans a row whose columns are an order's followed by extras.
+type withTrailing struct {
+	row   interface{ Scan(...any) error }
+	extra []any
+}
+
+func (w withTrailing) Scan(dest ...any) error {
+	return w.row.Scan(append(dest, w.extra...)...)
 }
 
 // ActiveBySourceNodes WAS HERE AND IS DELETED, with its only caller.

@@ -392,14 +392,11 @@ func (d *Dispatcher) releaseDwellingDigLeg(order *orders.Order, lane *nodes.Node
 		return GateVerdict{}, err
 	}
 
-	// AND NOW IT CAN LEAVE. The tail is on the waybill, so once the robot has the
-	// blocker up it drives out of the dug lane without stopping — which is the
-	// exit the lift used to stand for. Released at the lift (the ordinary case),
-	// it is driving out now; released on the arrival report or a lane event
-	// before it lifted, it is still on its way in, and the row goes before it has
-	// entered. Releasing here rather than at the lift is the whole of the
-	// occupancy hold: the next leg still enters during the drive-out, and only
-	// the dwell's own overlap is given up.
+	// AND NOW IT IS LEAVING. A dig leg is released only once it has lifted its
+	// blocker (waitingAtLane), and the tail is on the waybill, so the robot is
+	// driving out of the dug lane. Releasing here rather than at the lift is the
+	// whole of the occupancy hold: the next leg still enters during the
+	// drive-out, and only the dwell's own overlap is given up.
 	//
 	// ── THE ROW DROPS HERE; THE WAKE HAPPENS AFTER THE PASS ───────────────
 	//
@@ -762,12 +759,9 @@ func (d *Dispatcher) DwellerLanesSharingGroupWith(nodeID int64) []int64 {
 	}
 	seen := map[int64]bool{}
 	var out []int64
-	for _, o := range candidates {
-		if !IsGateStaged(o) || o.Status == StatusFaulted {
-			continue
-		}
-		var steps []resolvedStep
-		if json.Unmarshal([]byte(o.StepsJSON), &steps) != nil {
+	for _, c := range candidates {
+		_, w, ok := waitingAtLane(c)
+		if !ok || seen[w.WaitLane] {
 			continue
 		}
 		// EVERY DWELLER, NOT ONLY THE OUTBOUND ONES. This used to skip any wait
@@ -786,10 +780,6 @@ func (d *Dispatcher) DwellerLanesSharingGroupWith(nodeID int64) []int64 {
 		// the question and every refusal still applies. The cost is one extra
 		// pass over a lane that may have nothing to release, which is the same
 		// cost the floor already pays once a minute.
-		w, ok := waitAt(steps, o.WaitIndex)
-		if !ok || w.WaitKind != WaitKindLane || w.WaitLane == 0 || seen[w.WaitLane] {
-			continue
-		}
 		lane, lErr := d.db.GetNode(w.WaitLane)
 		if lErr != nil || lane == nil || lane.ParentID == nil || *lane.ParentID != groupID {
 			continue

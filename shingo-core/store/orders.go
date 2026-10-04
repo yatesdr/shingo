@@ -833,7 +833,7 @@ func (db *DB) ActiveLaneStores(slotNames []string) ([]*orders.Order, error) {
 // It replaced ActiveLaneRetrieves (and the evaluator's use of ActiveLaneStores),
 // which found candidates by matching an ENDPOINT column against lane slot names
 // and therefore could not see an order whose lane entry is interior to its plan.
-func (db *DB) ActiveGateCandidates() ([]*orders.Order, error) {
+func (db *DB) ActiveGateCandidates() ([]*orders.GateCandidate, error) {
 	return orders.ActiveGateCandidates(db.DB)
 }
 

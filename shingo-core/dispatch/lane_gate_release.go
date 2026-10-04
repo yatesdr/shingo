@@ -551,6 +551,62 @@ type gateCandidate struct {
 	entryIndex int
 }
 
+// waitingAtLane is the one answer to "is this order waiting at a lane wait
+// now", read by everything that releases or counts lane waiters: the evaluator
+// (gateStagedForLane), the periodic lane check (laneWaiters) and the group
+// fan-out (DwellerLanesSharingGroupWith). It returns the order's plan and the
+// wait it is parked at.
+//
+// Gate-staged and not faulted, as before, and one thing more: a dig leg is not
+// waiting until it has lifted its blocker (digLegNotYetLifted). Two readers
+// with two answers found two different sets, and the event path released a dig
+// leg before its lift that the periodic check had learned to leave alone.
+func waitingAtLane(c *orders.GateCandidate) ([]resolvedStep, resolvedStep, bool) {
+	o := c.Order
+	if !IsGateStaged(o) || o.Status == StatusFaulted {
+		return nil, resolvedStep{}, false
+	}
+	var steps []resolvedStep
+	if json.Unmarshal([]byte(o.StepsJSON), &steps) != nil {
+		// IsGateStaged already parsed this and logged; it cannot be true here
+		// on an unparseable plan. Defensive only.
+		return nil, resolvedStep{}, false
+	}
+	w, ok := waitAt(steps, o.WaitIndex)
+	if !ok || w.WaitKind != WaitKindLane || w.WaitLane == 0 {
+		return nil, resolvedStep{}, false
+	}
+	if digLegNotYetLifted(c, steps) {
+		return nil, resolvedStep{}, false
+	}
+	return steps, w, true
+}
+
+// digLegNotYetLifted reports whether c is a dig leg whose blocker is still in
+// the slot it is to be lifted from.
+//
+// A dig leg's plan is parked at its lane wait from dispatch (IsGateStaged reads
+// the plan, not the robot), but until the lift its robot is driving to the
+// blocker, and the lift is that leg's releaser: the bin goes to the transit
+// node, the lane is woken, and Core chooses where the blocker goes and appends
+// the tail. Released before the lift, the leg had its destination bound and its
+// tail appended while the robot did not yet have the bin.
+//
+// The lift's own durable fact answers it, no new column: a lifted blocker has
+// left its slot (handlePickupBlockCompleted). The bin's node rides on the
+// candidate row, so this reads nothing. A leg with no bin, or a bin on no node,
+// answers false and is kept, as it always has been.
+func digLegNotYetLifted(c *orders.GateCandidate, steps []resolvedStep) bool {
+	o := c.Order
+	if o.ParentOrderID == nil || o.BinID == nil || o.SourceNode == "" {
+		return false
+	}
+	if !waitGatesAnAppend(steps, o.WaitIndex) {
+		return false
+	}
+	return c.BinNode == o.SourceNode
+}
+
 // gateStagedForLane returns every order dwelling at THIS lane's gate.
 //
 // ── IT KEYS ON THE WAIT STEP, NOT ON AN ENDPOINT COLUMN ───────────────────
@@ -674,7 +730,8 @@ func stagedAtMarkByLane(db *store.DB, laneIDs ...int64) reservations.StagedOutsi
 		return nil
 	}
 	out := reservations.StagedOutsideByLane{}
-	for _, o := range active {
+	for _, c := range active {
+		o := c.Order
 		if !IsGateStaged(o) || o.Status == StatusFaulted {
 			continue
 		}
@@ -707,20 +764,12 @@ func (d *Dispatcher) gateStagedForLane(lane *nodes.Node) ([]gateCandidate, error
 		return nil, err
 	}
 	var out []gateCandidate
-	for _, o := range active {
-		if !IsGateStaged(o) || o.Status == StatusFaulted {
-			continue
-		}
-		var steps []resolvedStep
-		if uErr := json.Unmarshal([]byte(o.StepsJSON), &steps); uErr != nil {
-			// IsGateStaged already parsed this and logged; it cannot be true here
-			// on an unparseable plan. Defensive only.
-			continue
-		}
-		w, ok := waitAt(steps, o.WaitIndex)
+	for _, c := range active {
+		steps, w, ok := waitingAtLane(c)
 		if !ok || w.WaitLane != lane.ID {
-			continue // parked at somebody else's wait, or at none
+			continue // not waiting at a lane yet, or at somebody else's
 		}
+		o := c.Order
 		entry, entryIdx, isRetrieve, ok := laneEntryAfterWait(steps, o.WaitIndex)
 		if !ok {
 			// THE OUTBOUND ARM. A lane wait with nothing actionable after it is not
