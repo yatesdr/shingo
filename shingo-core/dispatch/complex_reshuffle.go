@@ -37,9 +37,9 @@ import (
 //
 // ITS HEADER SAID THE OPPOSITE: "It never re-plans, re-parents or moves the
 // demand; see the service-dig note on proposeLaneClearDig for why." The cause is
-// still written first and still stands on the row — an operator reading the
-// board while the dig runs needs it — but the demand is re-parented, wears
-// `reshuffling`, and comes back through `queued`.
+// still written before the demand moves and still stands on the row — an
+// operator reading the board while the dig runs needs it — but the demand is
+// re-parented, wears `reshuffling`, and comes back through `queued`.
 //
 // announce may be nil.
 func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string, buried *BuriedError, announce func()) {
@@ -64,17 +64,20 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 		return
 	}
 
-	// The demand is queued because its bin is buried, so say so BEFORE any of the
-	// dispositions below. It used to be recorded only when a contention arm fired,
-	// so the ORDINARY burial — lane free, dig dispatches — was the one case that
-	// recorded nothing.
-	// NOT ANNOUNCED, and the distinction is the one the collapse nearly lost: this
-	// WRITES the cause, the arms below decide the OUTCOME, and the station is told
-	// once per outcome rather than once per write. Announcing here as well made
-	// intake emit twice for one refusal, which the intake site's own event-count
-	// assertion caught.
-	d.setQueueReason(order, protocol.QueueStorageRearranging, CauseIntakeBuried,
-		QueueParams{Lane: lane.Name, Payload: payloadCode})
+	// The demand is queued because its bin is buried. That is written only where
+	// no outcome records a cause of its own: when the dig is written (after its
+	// legs exist and before the demand moves into `reshuffling`, so the wait is
+	// on the row, and told, while the demand is still acquiring), and when
+	// nothing was left in the way. Every other arm writes its own cause, and the
+	// scanner brings a parked demand back here on every pass. Writing it before
+	// the dispositions, as this did, flipped a parked demand's row between two
+	// causes twice a pass (two writes, updated_at bumped each time, and a message
+	// to the station whenever the outcome's sentence names a dig) while nothing
+	// about the wait had changed.
+	buriedHere := func() {
+		d.setQueueReason(order, protocol.QueueStorageRearranging, CauseIntakeBuried,
+			QueueParams{Lane: lane.Name, Payload: payloadCode})
+	}
 
 	// ── THE DEMAND BECOMES THE DIG (§R.91) ────────────────────────────────
 	//
@@ -97,7 +100,7 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 	// it. A folder's requester can cancel and leave it digging towards a bin
 	// nobody wants, which is the whole of the dig_target_abandoned population;
 	// a demand that IS its dig takes the dig with it when it goes.
-	res := d.proposeLaneClearDig(lane, buried.Slot, order)
+	res := d.proposeLaneClearDigThen(lane, buried.Slot, order, buriedHere)
 	switch res.outcome {
 	case laneClearStarted:
 		d.dbg("complex: service dig %d proposed for demand %d — %d step(s) clearing %s to reach %s",
@@ -181,7 +184,8 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 		d.dbg("complex: demand %d ended while its dig at %s was planned — no dig", order.ID, buried.Slot.Name)
 	case laneClearNothingInTheWay:
 		// The lane moved between the resolve and the plan, which is the outcome we
-		// wanted. Keep CauseIntakeBuried; the next scan finds the bin reachable.
+		// wanted. The wait is the burial; the next scan finds the bin reachable.
+		buriedHere()
 		d.dbg("complex: nothing left in the way of %s for demand %d — re-asking on the next scan",
 			buried.Slot.Name, order.ID)
 

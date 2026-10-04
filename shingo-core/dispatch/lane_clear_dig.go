@@ -332,6 +332,14 @@ type laneClearResult struct {
 // PlanLaneMouthClear. Same ruling, two planners (pinned by
 // TestPlainBuriedRetrieve_KeepsDemandAsItsOwnDigParent).
 func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *orders.Order) laneClearResult {
+	return d.proposeLaneClearDigThen(lane, target, requester, nil)
+}
+
+// proposeLaneClearDigThen is proposeLaneClearDig with legsWritten passed to the
+// compound write: it runs only when the dig is written, before the requester
+// moves into `reshuffling` (createCompoundOrder).
+func (d *Dispatcher) proposeLaneClearDigThen(lane, target *nodes.Node, requester *orders.Order,
+	legsWritten func()) laneClearResult {
 	if lane.ParentID == nil {
 		// A lane with no group has nowhere to park a blocker. Same terminal-shaped
 		// geometry planBuriedReshuffle names, and equally not worth an order.
@@ -573,7 +581,7 @@ func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *or
 	if !d.laneLock.TryLockFor(lane.ID, requester.ID, digFor, stagedAtMarkOnLane(d.db, lane.ID)) {
 		return laneClearResult{outcome: laneClearLaneBusy}
 	}
-	if err := d.CreateCompoundOrder(requester, plan); err != nil {
+	if err := d.createCompoundOrder(requester, plan, legsWritten); err != nil {
 		// A REQUESTER THAT HAS ENDED HOLDS NOTHING, gate-staged or not: the lock
 		// was taken in the name of an order that no longer exists, and a dead
 		// order holding a lane is every later dig behind that lane starving.

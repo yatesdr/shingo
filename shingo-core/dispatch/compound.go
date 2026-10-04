@@ -379,11 +379,23 @@ func chapterEndedInFailure(children []*orders.Order) bool {
 // leg of a terminal parent. "Live" is non-terminal, so a gate-staged parent
 // still takes its dig as it stands.
 func (d *Dispatcher) CreateCompoundOrder(parentOrder *orders.Order, plan *ReshufflePlan) error {
+	return d.createCompoundOrder(parentOrder, plan, nil)
+}
+
+// createCompoundOrder is CreateCompoundOrder with one more step: legsWritten,
+// when not nil, runs once the legs exist and before the parent's status moves.
+// A demand that records why it waits for its own dig records it there, so the
+// wait is on the row while the order is still acquiring, and only once the dig
+// is real: a refusal of the legs writes nothing.
+func (d *Dispatcher) createCompoundOrder(parentOrder *orders.Order, plan *ReshufflePlan, legsWritten func()) error {
 	if err := d.writeCompoundChildren(parentOrder, plan); err != nil {
 		return err
 	}
 	if d.compoundWrittenHook != nil {
 		d.compoundWrittenHook(parentOrder.ID)
+	}
+	if legsWritten != nil {
+		legsWritten()
 	}
 	// ── A GATE-STAGED PARENT KEEPS ITS STATUS (§R.104) ────────────────────
 	//
