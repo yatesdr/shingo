@@ -74,3 +74,30 @@ func TestQueueReason_AChangedCauseIsPushedOnce(t *testing.T) {
 		t.Errorf("updates after three passes with the same wait = %d, want still 1", n)
 	}
 }
+
+// ONE MESSAGE PER CHANGE, WHICHEVER DOOR SENDS IT. A cause that changes as the
+// order is announced queued (a buried pickup parked at intake) used to reach the
+// station twice: once from the changed wait, once from the queued event, with
+// the same status and the same sentence. The second is the same message.
+func TestQueueReason_AChangeAnnouncedAsQueuedIsSentOnce(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
+
+	o := &orders.Order{EdgeUUID: "qrc-intake", StationID: "edge.test", OrderType: "complex",
+		Status: protocol.StatusQueued, Quantity: 1, PayloadCode: "QRC-P"}
+	testutil.MustNoErr(t, db.CreateOrder(o), "a queued order")
+	d := eng.dispatcher
+	d.SetQueueReason(o, protocol.QueueWaitingForMaterial, dispatch.CauseReserveHolding,
+		dispatch.QueueParams{Payload: "QRC-P"})
+	before := len(queueUpdates(t, db, o.EdgeUUID))
+
+	// The intake parks it under a new cause, then announces it queued.
+	d.SetQueueReason(o, protocol.QueueStorageRearranging, dispatch.CauseLaneOccupied,
+		dispatch.QueueParams{Lane: "QRC-LANE", Payload: "QRC-P"})
+	eng.pushQueueReason(o.ID, o.EdgeUUID, o.StationID) // the queued event's push
+
+	if got := queueUpdates(t, db, o.EdgeUUID)[before:]; len(got) != 1 {
+		t.Errorf("updates for one change announced as queued = %q, want exactly one", got)
+	}
+}
