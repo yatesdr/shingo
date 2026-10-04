@@ -752,7 +752,11 @@ CREATE TABLE style_node_claims (
     containment_destination TEXT NOT NULL DEFAULT '',
     allowed_payload_codes   TEXT NOT NULL DEFAULT '',
     auto_request_payload    TEXT NOT NULL DEFAULT '',
-    keep_staged             INTEGER NOT NULL DEFAULT 0,
+    -- The keep-staged node: one more node this line's full or empty comes
+    -- from instead of inbound_source, with a spare kept standing on it.
+    -- Blank is off. Replaced the keep_staged flag, which armed a spot on
+    -- inbound_staging and so gave that column a second meaning.
+    keep_staged_node        TEXT NOT NULL DEFAULT '',
     evacuate_on_changeover  INTEGER NOT NULL DEFAULT 0,
     paired_core_node        TEXT NOT NULL DEFAULT '',
     auto_confirm            INTEGER NOT NULL DEFAULT 0,
@@ -870,7 +874,7 @@ CREATE TABLE style_node_claims_quarantine(
   containment_destination TEXT,
   allowed_payload_codes TEXT,
   auto_request_payload TEXT,
-  keep_staged INT,
+  keep_staged_node TEXT,
   evacuate_on_changeover INT,
   paired_core_node TEXT,
   auto_confirm INT,

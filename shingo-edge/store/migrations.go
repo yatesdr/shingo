@@ -333,7 +333,10 @@ func (db *DB) migrate() error {
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN swap_mode TEXT NOT NULL DEFAULT 'simple'")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN staging_node TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN release_node TEXT NOT NULL DEFAULT ''")
-	db.Exec("ALTER TABLE style_node_claims ADD COLUMN keep_staged INTEGER NOT NULL DEFAULT 0")
+	// The keep-staged node, named on the claim. It replaced the keep_staged
+	// flag, which the rebuild below drops; added here, before it, because the
+	// rebuild's INSERT ... SELECT names it.
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN keep_staged_node TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN evacuate_on_changeover INTEGER NOT NULL DEFAULT 0")
 
 	// Processes page group taxonomy (UI-only). New column on processes +
@@ -1384,9 +1387,22 @@ func edgeMigrations() []migrate.Migration {
 			// see whether it had any. A flag set after the upgrade comes through
 			// a checked save and is left alone: no Verify, because "no flag
 			// set" is not this migration's post-condition after day one.
+			//
+			// The flag is gone now: the claims rebuild drops the column, before
+			// this runs, and the keep-staged node is named on the claim instead.
+			// A database that reaches this without the column has no flag to
+			// clear, and the migration records itself and does nothing.
 			Version: 13,
 			Name:    "clear_keep_staged_stored_before_the_design",
 			Fn: func(tx *sql.Tx) error {
+				var has int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('style_node_claims')
+					WHERE name = 'keep_staged'`).Scan(&has); err != nil {
+					return err
+				}
+				if has == 0 {
+					return nil
+				}
 				res, err := tx.Exec(`UPDATE style_node_claims SET keep_staged = 0 WHERE keep_staged <> 0`)
 				if err != nil {
 					return err

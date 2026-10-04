@@ -19,9 +19,9 @@ import (
 // claim_leg_writers_test.go — every writer of a claim leg or a routing row,
 // handed a lane, and what it does with it.
 //
-// A claim has six legs: inbound_source, outbound_destination,
-// changeover_evac_destination, containment_destination, inbound_staging and
-// outbound_staging. A routing row is what the composer offers on one of them.
+// A claim has seven legs: inbound_source, outbound_destination,
+// changeover_evac_destination, containment_destination, inbound_staging,
+// outbound_staging and keep_staged_node. A routing row is what the composer offers on one of them.
 // Lines name node groups, never lanes, so a lane on any leg is a claim that
 // searches or stores into that one lane only.
 //
@@ -88,6 +88,9 @@ func withLaneOn(in processes.NodeClaimInput, leg string) processes.NodeClaimInpu
 		in.InboundStaging = lane
 	case "outbound_staging":
 		in.OutboundStaging = lane
+	case "keep_staged_node":
+		v := lane
+		in.KeepStagedNode = &v
 	default:
 		panic("unknown leg " + leg)
 	}
@@ -109,6 +112,8 @@ func legValue(c processes.NodeClaim, leg string) string {
 		return c.InboundStaging
 	case "outbound_staging":
 		return c.OutboundStaging
+	case "keep_staged_node":
+		return c.KeepStagedNode
 	}
 	panic("unknown leg " + leg)
 }
@@ -116,10 +121,30 @@ func legValue(c processes.NodeClaim, leg string) string {
 // seedLegacyLaneClaim stores a claim naming the lane on leg the way a row
 // written before the refusal sits in a plant's database: through the store,
 // with no node list to check it against.
+//
+// A keep-staged node is written behind the store's back: other rows in this
+// package's shared database name the lane on their staging, so the store's
+// dedicated-spot check would refuse the seed for a reason that is not the
+// lane.
 func seedLegacyLaneClaim(t *testing.T, sid int64, leg string) {
 	t.Helper()
-	_, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, withLaneOn(cleanLegClaim(sid), leg))
+	in := withLaneOn(cleanLegClaim(sid), leg)
+	if leg == "keep_staged_node" {
+		in = cleanLegClaim(sid)
+	}
+	_, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	testutil.MustNoErr(t, err, "seed a stored claim naming a lane on "+leg)
+	if leg == "keep_staged_node" {
+		_, err := testDB.Exec(`UPDATE style_node_claims SET keep_staged_node = 'LL-LANE' WHERE style_id = ?`, sid)
+		testutil.MustNoErr(t, err, "name the lane as the keep-staged node")
+		// Taken back after the row: left standing, it is a kept spot every
+		// later write in the shared database meets.
+		t.Cleanup(func() {
+			if _, err := testDB.Exec(`UPDATE style_node_claims SET keep_staged_node = '' WHERE keep_staged_node = 'LL-LANE'`); err != nil {
+				t.Errorf("take the lane back off the keep-staged node: %v", err)
+			}
+		})
+	}
 }
 
 // storedLane reports whether any live claim of the style names the lane on leg.
@@ -164,6 +189,7 @@ var claimWriterCensus = []legCensusRow{
 	{"editor", "containment_destination", legRefused},
 	{"editor", "inbound_staging", legRefused},
 	{"editor", "outbound_staging", legRefused},
+	{"editor", "keep_staged_node", legRefused},
 
 	{"containment stamp", "containment_destination", legRefused},
 	// The stamp echoes every other leg of the claim it writes. A claim that
@@ -179,6 +205,7 @@ var claimWriterCensus = []legCensusRow{
 	{"clone", "containment_destination", legRefused},
 	{"clone", "inbound_staging", legRefused},
 	{"clone", "outbound_staging", legRefused},
+	{"clone", "keep_staged_node", legRefused},
 
 	{"generate", "inbound_source", legRefused},
 	{"generate", "outbound_destination", legRefused},
@@ -186,6 +213,7 @@ var claimWriterCensus = []legCensusRow{
 	{"generate", "containment_destination", legRefused},
 	{"generate", "inbound_staging", legRefused},
 	{"generate", "outbound_staging", legRefused},
+	{"generate", "keep_staged_node", legRefused},
 
 	{"copy", "inbound_source", legRefused},
 	{"copy", "outbound_destination", legRefused},
@@ -193,6 +221,7 @@ var claimWriterCensus = []legCensusRow{
 	{"copy", "containment_destination", legRefused},
 	{"copy", "inbound_staging", legRefused},
 	{"copy", "outbound_staging", legRefused},
+	{"copy", "keep_staged_node", legRefused},
 
 	// The overrides carry four of the six legs.
 	{"copy with overrides", "inbound_source", legRefused},

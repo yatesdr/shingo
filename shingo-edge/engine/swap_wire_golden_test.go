@@ -17,7 +17,7 @@ import (
 // Keep-staged recomposes the full builders as BuildStageSteps ++ tail. That
 // refactor must not move a byte of what an ordinary claim sends Core, so the
 // output of every builder that reaches the wire is captured here for every role
-// and every configurable mode, with KeepStaged false, and compared exactly.
+// and every configurable mode, with no keep-staged node, and compared exactly.
 //
 // Regenerate only on a deliberate wire change:
 //

@@ -428,9 +428,9 @@ func TestSingleRobotCollector_NamesTheIncomingPart(t *testing.T) {
 // from and to are the walk's changeover pair, to being the keep-staged one.
 func keepStagedLegs(base, from, to *processes.NodeClaim) map[string][]protocol.ComplexOrderStep {
 	ks := *base
-	ks.KeepStaged = true
+	ks.KeepStagedNode = ks.InboundStaging
 	ksTo := *to
-	ksTo.KeepStaged = true
+	ksTo.KeepStagedNode = ksTo.InboundStaging
 	a, b := BuildTwoRobotSwapSteps(&ks)
 	two := buildTwoRobotChangeoverSwap(from, &ksTo)
 	single := buildSingleRobotChangeoverSwap(from, &ksTo, true)

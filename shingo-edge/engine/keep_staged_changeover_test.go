@@ -79,11 +79,16 @@ func seedKeepStagedChangeover(t *testing.T, from, to []coClaim, rows map[string]
 		if c.mode == protocol.SwapModeSingleRobot {
 			in.OutboundStaging = "KSCO-OUT-" + c.line
 		}
+		// The two modes with no staging hop: the spot is a node of its own,
+		// and each needs its partner or back position.
+		if c.mode == protocol.SwapModeSequential || c.mode == protocol.SwapModeTwoRobotPressIndex {
+			in.InboundStaging, in.PairedCoreNode = "", "KSCO-PAIR-"+c.line
+		}
 		id, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 		testutil.MustNoErr(t, err, "claim "+c.line)
 		if c.keepStaged {
-			_, err = db.DB.Exec(`UPDATE style_node_claims SET keep_staged=1 WHERE id=?`, id)
-			testutil.MustNoErr(t, err, "keep_staged")
+			_, err = db.DB.Exec(`UPDATE style_node_claims SET keep_staged_node=? WHERE id=?`, c.spot, id)
+			testutil.MustNoErr(t, err, "keep_staged_node")
 		}
 		return id
 	}
@@ -142,7 +147,8 @@ func startKSChangeover(t *testing.T, fx *coFixture) int64 {
 // supply lifts, one to stand after it.
 func TestKeepStagedChangeover_PartChangeSendsTheSpareBack(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []protocol.SwapMode{protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot} {
+	for _, mode := range []protocol.SwapMode{protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot,
+		protocol.SwapModeSequential, protocol.SwapModeTwoRobotPressIndex} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			fx := seedKeepStagedChangeover(t,
@@ -256,46 +262,52 @@ func TestKeepStagedChangeover_TwoLinesHandOneSpot(t *testing.T) {
 // style, which stays, gets a refill of its own part.
 func TestKeepStagedChangeover_CancelPutsTheSpotBack(t *testing.T) {
 	t.Parallel()
-	rows := map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
-		"SPOT": {Occupied: true, PayloadCode: "PART-OLD"}}
-	fx := seedKeepStagedChangeover(t,
-		[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
-		[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
-		rows)
-	startKSChangeover(t, fx)
-	if got := readSpotTraffic(t, fx, "SPOT"); got.refills["L1"] != 2 || len(got.returns) != 1 {
-		t.Fatalf("fixture: start made refills=%v returns=%d, want 2 and 1", got.refills, len(got.returns))
-	}
-	// The return went, and a spare of the incoming part landed.
-	rows["SPOT"] = NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW"}
-	fx.eng.coreClient = NewCoreClient(ksNodeBinsStub(t, rows).URL)
-	markSpotOrdersFlown(t, fx, "SPOT", 1)
+	for _, mode := range []protocol.SwapMode{protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot,
+		protocol.SwapModeSequential, protocol.SwapModeTwoRobotPressIndex} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			rows := map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
+				"SPOT": {Occupied: true, PayloadCode: "PART-OLD"}}
+			fx := seedKeepStagedChangeover(t,
+				[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleConsume, mode, true, false}},
+				[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleConsume, mode, true, false}},
+				rows)
+			startKSChangeover(t, fx)
+			if got := readSpotTraffic(t, fx, "SPOT"); got.refills["L1"] != 2 || len(got.returns) != 1 {
+				t.Fatalf("fixture: start made refills=%v returns=%d, want 2 and 1", got.refills, len(got.returns))
+			}
+			// The return went, and a spare of the incoming part landed.
+			rows["SPOT"] = NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW"}
+			fx.eng.coreClient = NewCoreClient(ksNodeBinsStub(t, rows).URL)
+			markSpotOrdersFlown(t, fx, "SPOT", 1)
 
-	testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
+			testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
 
-	got := readSpotTraffic(t, fx, "SPOT")
-	var back *domain.Order
-	for i := range got.returns {
-		if got.returns[i].PayloadCode == "PART-NEW" {
-			back = &got.returns[i]
-		}
-	}
-	if back == nil || back.DeliveryNode != "SRC-NEW" {
-		t.Fatalf("returns = %+v, want the incoming part's spare sent back to SRC-NEW", got.returns)
-	}
-	// One refill was with the fleet when the cancel came and lands; the other
-	// was cancelled. The outgoing style gets one of its own part.
-	oldRefills := 0
-	live, err := fx.db.ListActiveOrders()
-	testutil.MustNoErr(t, err, "orders")
-	for _, o := range live {
-		if o.OrderType == orders.TypeRetrieve && o.DeliveryNode == "SPOT" && o.PayloadCode == "PART-OLD" {
-			oldRefills++
-		}
-	}
-	if oldRefills != 1 || got.refills["L1"] != 2 {
-		t.Fatalf("after cancel: PART-OLD refills=%d, all refills=%v; want 1 of the outgoing part plus the one "+
-			"already flown", oldRefills, got.refills)
+			got := readSpotTraffic(t, fx, "SPOT")
+			var back *domain.Order
+			for i := range got.returns {
+				if got.returns[i].PayloadCode == "PART-NEW" {
+					back = &got.returns[i]
+				}
+			}
+			if back == nil || back.DeliveryNode != "SRC-NEW" {
+				t.Fatalf("returns = %+v, want the incoming part's spare sent back to SRC-NEW", got.returns)
+			}
+			// One refill was with the fleet when the cancel came and lands; the other
+			// was cancelled. The outgoing style gets one of its own part.
+			oldRefills := 0
+			live, err := fx.db.ListActiveOrders()
+			testutil.MustNoErr(t, err, "orders")
+			for _, o := range live {
+				if o.OrderType == orders.TypeRetrieve && o.DeliveryNode == "SPOT" && o.PayloadCode == "PART-OLD" {
+					oldRefills++
+				}
+			}
+			if oldRefills != 1 || got.refills["L1"] != 2 {
+				t.Fatalf("after cancel: PART-OLD refills=%d, all refills=%v; want 1 of the outgoing part plus the one "+
+					"already flown", oldRefills, got.refills)
+			}
+		})
 	}
 }
 
@@ -368,18 +380,18 @@ func TestKeepStagedSave_LeavingTheSpotSendsTheSpareBack(t *testing.T) {
 		act     func(t *testing.T, fx *coFixture, claimID int64, in processes.NodeClaimInput)
 		want    int
 	}{
-		{"clear the flag on the running style", true, func(t *testing.T, fx *coFixture, _ int64, in processes.NodeClaimInput) {
-			in.KeepStaged = domainPtr(false)
+		{"clear the name on the running style", true, func(t *testing.T, fx *coFixture, _ int64, in processes.NodeClaimInput) {
+			in.KeepStagedNode = domain.Ptr("")
 			_, err := fx.eng.StyleService().UpsertClaim(domain.CoreNodeKinds{}, in)
-			testutil.MustNoErr(t, err, "clear keep_staged")
+			testutil.MustNoErr(t, err, "clear keep_staged_node")
 		}, 1},
 		{"drop the claim on the running style", true, func(t *testing.T, fx *coFixture, claimID int64, _ processes.NodeClaimInput) {
 			testutil.MustNoErr(t, fx.eng.StyleService().DeleteClaim(claimID), "delete claim")
 		}, 1},
-		{"clear the flag on a style that is not running", false, func(t *testing.T, fx *coFixture, _ int64, in processes.NodeClaimInput) {
-			in.KeepStaged = domainPtr(false)
+		{"clear the name on a style that is not running", false, func(t *testing.T, fx *coFixture, _ int64, in processes.NodeClaimInput) {
+			in.KeepStagedNode = domain.Ptr("")
 			_, err := fx.eng.StyleService().UpsertClaim(domain.CoreNodeKinds{}, in)
-			testutil.MustNoErr(t, err, "clear keep_staged")
+			testutil.MustNoErr(t, err, "clear keep_staged_node")
 		}, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -416,8 +428,6 @@ func TestKeepStagedSave_LeavingTheSpotSendsTheSpareBack(t *testing.T) {
 		})
 	}
 }
-
-func domainPtr(b bool) *bool { return &b }
 
 // A REQUEST LET IN AFTER A CHANGEOVER ARMED IS REFUSED (sim F4). The level
 // keeper's request passed the changeover guard, then waited on the cell lock the

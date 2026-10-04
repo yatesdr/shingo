@@ -40,10 +40,10 @@ func TestEverySwapLegDepartsProvablyAndConfirmsOnPlacement(t *testing.T) {
 		for _, flipped := range []bool{false, true} {
 			for _, second := range []string{"", "STANDARD-C"} {
 				for _, keep := range []bool{false, true} {
-					// Keep-staged is a dimension for the two modes that offer it: its
-					// swap is the same cell's choreography without the fetch, and it
-					// is held to the same standard.
-					if keep && mode != protocol.SwapModeTwoRobot && mode != protocol.SwapModeSingleRobot {
+					// Keep-staged is a dimension of every swap mode: its swap is the
+					// same cell's choreography fetching from the spot, and it is held
+					// to the same standard. A loader card has no swap to fetch for.
+					if keep && mode == protocol.SwapModeManualSwap {
 						continue
 					}
 					name := string(mode)
@@ -59,7 +59,9 @@ func TestEverySwapLegDepartsProvablyAndConfirmsOnPlacement(t *testing.T) {
 					t.Run(name, func(t *testing.T) {
 						t.Parallel()
 						claim := standardClaim(mode, second, flipped)
-						claim.KeepStaged = keep
+						if keep {
+							claim.KeepStagedNode = "STANDARD-SPOT"
+						}
 						disp, err := BuildSwapDispatch(&processes.Node{ID: 1, Name: claim.CoreNodeName}, claim)
 						if err != nil {
 							t.Fatalf("BuildSwapDispatch: %v", err)

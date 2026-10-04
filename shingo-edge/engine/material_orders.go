@@ -663,8 +663,9 @@ type changeoverLeg struct {
 
 // rejected reports whether a builder produced no dispatch (its "I rejected
 // this claim" signal). Empty StepsA and StepsB cover the positional builders
-// (a keep-staged single-robot changeover has StepsB alone: its spare needs no
-// stage order); a nil Roles covers the role-declared two-leg builders.
+// (a single-robot changeover onto a spare standing on inbound staging has
+// StepsB alone: the spare needs no stage order); a nil Roles covers the
+// role-declared two-leg builders.
 func (d ChangeoverDispatch) rejected() bool {
 	return d.StepsA == nil && d.StepsB == nil && d.Roles == nil
 }

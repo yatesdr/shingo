@@ -376,8 +376,14 @@ type NodeClaim struct {
 	ContainmentDestination string   `json:"containment_destination"`
 	AllowedPayloadCodes    []string `json:"allowed_payload_codes"`
 	AutoRequestPayload     string   `json:"auto_request_payload"`
-	KeepStaged             bool     `json:"keep_staged"`
-	EvacuateOnChangeover   bool     `json:"evacuate_on_changeover"`
+	// KeepStagedNode is the claim's keep-staged node (the spot): one more node
+	// the full or the empty for this line comes from, instead of the inbound
+	// source, with one spare kept standing on it. Naming one is what turns
+	// keep-staged on, in every swap mode; blank is off. It may be the same node
+	// as InboundStaging (the robot waits under the spare) and is otherwise a
+	// node no other claim names (processes.CheckKeepStagedSpots).
+	KeepStagedNode       string `json:"keep_staged_node"`
+	EvacuateOnChangeover bool   `json:"evacuate_on_changeover"`
 	// PairedCoreNode is ONE FIELD CARRYING TWO MEANINGS, and which one you are
 	// reading depends entirely on the swap mode:
 	//
@@ -614,8 +620,9 @@ func SynthesizePositionClaim(parent *NodeClaim, coreNodeName string) *NodeClaim 
 	// ReuseCompatibleBins is press-index-only; clear it so the
 	// reuse-compatible-bins shortcut doesn't try to apply per-position.
 	c.ReuseCompatibleBins = false
-	// KeepStaged shouldn't trigger inside per-position routing.
-	c.KeepStaged = false
+	// One position of a press keeps no spare of its own: the spot is the
+	// press claim's, and the press's changeover decides it from that claim.
+	c.KeepStagedNode = ""
 	return &c
 }
 
@@ -1207,7 +1214,7 @@ type NodeClaimInput struct {
 	// "legacy", flags off).
 	ReorderPointSource *string `json:"reorder_point_source,omitempty"`
 	AutoReorder        *bool   `json:"auto_reorder,omitempty"`
-	KeepStaged         *bool   `json:"keep_staged,omitempty"`
+	KeepStagedNode     *string `json:"keep_staged_node,omitempty"`
 	Sequence           *int    `json:"sequence,omitempty"`
 
 	// ── ATTRIBUTION: SERVER-STAMPED, NEVER DECODED FROM A BODY ─────────

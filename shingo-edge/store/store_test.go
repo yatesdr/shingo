@@ -1663,20 +1663,9 @@ func TestUpsertClaim_EnforcesFlowspec(t *testing.T) {
 				InboundStaging: "IN"},
 			field: flowspec.OutboundDestination,
 		},
-		// keep_staged is Forbidden outside single_robot and two_robot, and the
-		// store refuses it by that row for every mode, strict or not.
-		{
-			name: "sequential_keep_staged",
-			in: processes.NodeClaimInput{StyleID: sid, CoreNodeName: "SQ-KEEP", SwapMode: protocol.SwapModeSequential, PayloadCode: "PL",
-				PairedCoreNode: "SQ-B", InboundSource: "SRC", OutboundDestination: "OD", KeepStaged: &flip},
-			field: flowspec.KeepStaged,
-		},
-		{
-			name: "press_index_keep_staged",
-			in: processes.NodeClaimInput{StyleID: sid, CoreNodeName: "PI-KEEP", SwapMode: protocol.SwapModeTwoRobotPressIndex, PayloadCode: "PL",
-				PairedCoreNode: "PI-B", InboundStaging: "PI-IN", OutboundDestination: "OD", KeepStaged: &flip},
-			field: flowspec.KeepStaged,
-		},
+		// keep_staged_node is Used by every configurable swap mode, so no row
+		// here: the store's refusal by the table answers only for the modes it
+		// refuses before asking (simple, manual_swap).
 	}
 	for _, tc := range refused {
 		t.Run("refuses_"+tc.name, func(t *testing.T) {
@@ -1808,7 +1797,7 @@ func TestCloneStyle_CopiesClaimsVerbatim(t *testing.T) {
 // a persisted mode: loaders are Core's, and the first loader sync quarantines the
 // row) must not reach a brand-new style.
 //
-// keep_staged is the other half, and it flipped: the option is configurable, so
+// keep_staged_node is the other half, and it flipped: the option is configurable, so
 // a clone CARRIES the kept spare. The clone is in the same process, where a
 // second style may reuse a kept spot, so the dedicated-spot check at the end of
 // the clone's transaction accepts it.
@@ -1822,7 +1811,7 @@ func TestCloneStyle_LeavesWithheldConfigurationBehind(t *testing.T) {
 		// Required at save since flowspec D1/D2 — the seed satisfies the mode
 		// so the copy is the only thing under test.
 		InboundStaging: "LINE-IN", OutboundStaging: "LINE-OUT", OutboundDestination: "LINE-DEST",
-		KeepStaged: domain.Ptr(true),
+		KeepStagedNode: domain.Ptr("LINE-IN"),
 	}); err != nil {
 		t.Fatalf("seed line claim: %v", err)
 	}
@@ -1847,8 +1836,8 @@ func TestCloneStyle_LeavesWithheldConfigurationBehind(t *testing.T) {
 		switch c.CoreNodeName {
 		case "LINE":
 			foundLine = true
-			if !c.KeepStaged || c.InboundStaging != "LINE-IN" {
-				t.Errorf("the clone's LINE claim lost its kept spare: keep_staged %v at %q", c.KeepStaged, c.InboundStaging)
+			if c.KeepStagedNode != "LINE-IN" {
+				t.Errorf("the clone's LINE claim lost its kept spare: keep_staged_node %q", c.KeepStagedNode)
 			}
 		case "LOADER":
 			t.Errorf("the clone carries the stored loader claim (swap_mode %q) — a second authority for "+

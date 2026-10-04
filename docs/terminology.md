@@ -266,6 +266,14 @@ A periodic pass that re-evaluates a wait an event should have released. A floor 
 
 A node whose destination gates deliberately stand down — reserved by nothing, capacity-checked by nothing. A staging node is a station with **no parent**, declared in the Edge's cell config; Core cannot infer it.
 
+### Inbound Staging
+
+The node named by a claim's `inbound_staging`: where a single-robot or two-robot swap parks the incoming bin on its way to the line, and where a press's tooling changeover holds the incoming style's bins until tooling is done. It means only that. A spare kept for the line is the **keep-staged node**, a field of its own.
+
+### Keep-Staged Node (the spot)
+
+The node named by a claim's `keep_staged_node`: one more node the line's full or empty comes from, instead of the inbound source, with one spare kept standing on it. Naming one is what turns keep-staged on, in every swap mode (sequential, single-robot, two-robot, press-index); blank is off. A swap fetches its carrier from the spot, and the spot is then refilled from the inbound source by plain retrieves. It may be the same node as the claim's inbound staging (the robot waits under the spare); no other claim may name it, and a lane is refused on it as on every other leg of a claim. The flag it replaced (`keep_staged`) armed a spot on `inbound_staging`, which gave that field a second meaning.
+
 ### Changeover
 
 The workflow for switching a production line from one job style to another. The changeover **row** has three states — `active`, `completed`, `cancelled` — and moves once, to one of the two terminal ones. The sequencing is per **node task**, not per changeover: `swap_required → staging_requested → staged → empty_requested → line_cleared → release_requested → released`, plus `unchanged`, `switched` and the dispositions `error` / `capacity_blocked` / `awaiting_material` / `abandoned` / `cancelled`. Cutover is gated on all of them being terminal.

@@ -29,6 +29,7 @@ const (
 	ksMarket = "KS-MARKET"
 	ksDest   = "KS-DEST"
 	ksPart   = "PART-KS"
+	ksPair   = "KS-PAIR" // a press's back position
 )
 
 // ksNodeBinsStub answers node-bins from a table; a name not in it is answered
@@ -86,13 +87,21 @@ func seedCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, kee
 	if mode == protocol.SwapModeSingleRobot {
 		in.OutboundStaging = "KS-OUT"
 	}
+	// The two modes with no staging hop: the spot is a node of its own, and a
+	// press has its back position.
+	if mode == protocol.SwapModeSequential || mode == protocol.SwapModeTwoRobotPressIndex {
+		in.InboundStaging = ""
+	}
+	if mode == protocol.SwapModeTwoRobotPressIndex {
+		in.PairedCoreNode = ksPair
+	}
 	claimID, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	testutil.MustNoErr(t, err, "claim")
 	// The flag is written straight to the row: these tests are about the request
 	// path, not the config door that admits it.
 	if keepStaged {
-		_, err = db.DB.Exec(`UPDATE style_node_claims SET keep_staged=1 WHERE id=?`, claimID)
-		testutil.MustNoErr(t, err, "keep_staged")
+		_, err = db.DB.Exec(`UPDATE style_node_claims SET keep_staged_node=? WHERE id=?`, ksSpot, claimID)
+		testutil.MustNoErr(t, err, "keep_staged_node")
 	}
 	_, err = db.EnsureProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "runtime")
@@ -102,7 +111,7 @@ func seedCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, kee
 	node, err := db.GetProcessNode(nodeID)
 	testutil.MustNoErr(t, err, "re-read node")
 	claim := requestedClaimAtNode(db, node)
-	if claim == nil || claim.KeepStaged != keepStaged {
+	if claim == nil || (claim.KeepStagedNode != "") != keepStaged {
 		t.Fatalf("fixture: no claim with keep-staged %v at %s (%+v)", keepStaged, ksLine, claim)
 	}
 	return eng, db, nodeID, claim
@@ -161,11 +170,22 @@ func TestKeepStagedRequest_TheSpotGetsWhatTheRuleSays(t *testing.T) {
 			NodeBinInfo{Occupied: true}, 1, 0, ""},
 		{"produce two_robot, a full on the spot: it goes back carrying its part", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot,
 			NodeBinInfo{Occupied: true, PayloadCode: ksPart}, 2, 1, ksPart},
+		// The same decisions on the two modes with no staging hop: the
+		// sequential backfill and the press's refill leg lift the spare.
+		{"consume sequential, spare right: the backfill eats it, one comes", protocol.ClaimRoleConsume, protocol.SwapModeSequential,
+			NodeBinInfo{Occupied: true, PayloadCode: ksPart}, 1, 0, ""},
+		{"produce sequential, spot bare: one for the backfill, one to stand", protocol.ClaimRoleProduce, protocol.SwapModeSequential,
+			NodeBinInfo{}, 2, 0, ""},
+		{"consume press, spare of another part: it goes back, two come", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobotPressIndex,
+			NodeBinInfo{Occupied: true, PayloadCode: "PART-OTHER"}, 2, 1, "PART-OTHER"},
+		{"produce press, empty spare: the refill leg eats it, one comes", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobotPressIndex,
+			NodeBinInfo{Occupied: true}, 1, 0, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			eng, db, nodeID, _ := keepStagedCell(t, c.role, c.mode, map[string]NodeBinInfo{ksLine: occupiedLine, ksSpot: c.spot})
+			eng, db, nodeID, _ := keepStagedCell(t, c.role, c.mode,
+				map[string]NodeBinInfo{ksLine: occupiedLine, ksPair: occupiedLine, ksSpot: c.spot})
 			var err error
 			if c.role == protocol.ClaimRoleProduce {
 				_, err = eng.RequestProduceSwap(nodeID)

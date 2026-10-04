@@ -87,7 +87,7 @@ const ADVANCED_FIELDS = {
     lineside_soft_threshold: 'lineside_soft_threshold',
     auto_request_payload: 'auto_request_payload',
     auto_push: 'auto_push',
-    keep_staged: 'keep_staged',
+    keep_staged_node: 'keep_staged_node',
     evacuate_on_changeover: 'evacuate_on_changeover',
     changeover_carryover_disposition: 'changeover_carryover_disposition',
     index_robot_supplies: 'index_robot_supplies',
@@ -179,7 +179,7 @@ function runForbiddenClearing() {
     const filled = {
         allowed_payload_codes: ['PIA26'], reorder_point: 40, reorder_point_source: 'manual',
         auto_reorder: true, lineside_soft_threshold: 7, auto_request_payload: 'PIA26',
-        auto_push: true, keep_staged: true, evacuate_on_changeover: true,
+        auto_push: true, keep_staged_node: 'PLN_SPOT', evacuate_on_changeover: true,
         changeover_carryover_disposition: 'keep_lineside',
         index_robot_supplies: true, auto_confirm: true,
     };

@@ -40,7 +40,7 @@ func advancedPrior() NodeClaim {
 	c.AutoPush = true
 	c.EvacuateOnChangeover = true
 	c.ChangeoverCarryoverDisposition = CarryoverKeepLineside
-	c.KeepStaged = true
+	c.KeepStagedNode = "SPOT-1"
 	c.IndexRobotSupplies = true
 	c.AutoConfirm = true
 	return c
@@ -77,7 +77,7 @@ func TestFlowAdvanced_UntouchedIsExpandUnchanged(t *testing.T) {
 		row.ReorderPoint != 60 || row.ReorderPointSource != "manual" || !row.AutoReorder ||
 		row.LinesideSoftThreshold != 7 || row.AutoRequestPayload != "SYN-A-P002" || !row.AutoPush ||
 		!row.EvacuateOnChangeover || row.ChangeoverCarryoverDisposition != CarryoverKeepLineside ||
-		!row.KeepStaged || !row.IndexRobotSupplies || !row.AutoConfirm {
+		row.KeepStagedNode != "SPOT-1" || !row.IndexRobotSupplies || !row.AutoConfirm {
 		t.Errorf("a column the modal owns was flattened by a save that never opened it: %+v", row)
 	}
 }
@@ -116,10 +116,10 @@ func TestFlowAdvanced_SetWritesExactlyThoseColumns(t *testing.T) {
 	if row.EvacuateOnChangeover || row.ChangeoverCarryoverDisposition != CarryoverOutboundStaging {
 		t.Errorf("changeover specials did not land: %v / %q", row.EvacuateOnChangeover, row.ChangeoverCarryoverDisposition)
 	}
-	// keep_staged is the modal's: an Apply that leaves it off clears the
-	// prior's true.
-	if row.KeepStaged {
-		t.Error("keep_staged survived an Apply that cleared it")
+	// keep_staged_node is the modal's: an Apply that leaves it blank clears the
+	// prior's node.
+	if row.KeepStagedNode != "" {
+		t.Error("keep_staged_node survived an Apply that cleared it")
 	}
 	if row.IndexRobotSupplies || row.AutoConfirm {
 		t.Errorf("hardware/policy did not land: %v / %v", row.IndexRobotSupplies, row.AutoConfirm)

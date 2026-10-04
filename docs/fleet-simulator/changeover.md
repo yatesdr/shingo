@@ -2,7 +2,7 @@
 
 ## Overview
 
-Changeover automation handles production line tooling changes (style A → style B). Edge wiring advances node task states on order completion: `staging_requested → staged → line_cleared → released`. Auto-staging (Phase 2) fires at changeover start for all swap/add positions. Keep-staged modes handle pre-staged bins with either a single robot (combined) or two robots (split). A/B cycling manages paired consume nodes with `active_pull` switching — only the active node decrements UOP, the inactive holds staged material as buffer.
+Changeover automation handles production line tooling changes (style A → style B). Edge wiring advances node task states on order completion: `staging_requested → staged → line_cleared → released`. Auto-staging (Phase 2) fires at changeover start for all swap/add positions. A claim that names a keep-staged node keeps one spare standing there, and its swap and its changeover legs fetch the incoming carrier from it instead of the market, in every swap mode. A/B cycling manages paired consume nodes with `active_pull` switching — only the active node decrements UOP, the inactive holds staged material as buffer.
 
 Edge tests use SQLite in a temp directory — no Docker required.
 

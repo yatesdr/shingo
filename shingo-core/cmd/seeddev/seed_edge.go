@@ -213,7 +213,7 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 		// reject blank / retired "simple" / typos before the write rather than
 		// persist a mode the runtime can't dispatch.
 		//
-		// It bypasses the Edge's dedicated-spot check for keep_staged too
+		// It bypasses the Edge's dedicated-spot check for keep_staged_node too
 		// (processes.CheckKeepStagedSpots). That one is not repeated per row: it
 		// is a rule over the whole table, and plantspec.Validate carries its
 		// twin over the whole spec, which main runs before anything is seeded.
@@ -229,7 +229,7 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 			   changeover_evac_nodes, changeover_evac_destination,
 			   changeover_carryover_disposition,
 			   key_route, key_task,
-			   auto_push, auto_confirm, keep_staged)
+			   auto_push, auto_confirm, keep_staged_node)
 			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			sid, c.CoreNode, c.Role, c.SwapMode, c.Payload, c.UOPCapacity,
 			c.ReorderPoint, b2i(c.AutoReorder), c.InboundStaging, c.OutboundStaging,
@@ -238,7 +238,7 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 			jsonList(c.ChangeoverEvacNodes), c.ChangeoverEvacDestination,
 			carryoverOrReplace(c.ChangeoverCarryoverDisposition),
 			jsonList(c.KeyRoute), c.KeyTask,
-			b2i(c.AutoPush), b2i(c.AutoConfirm), b2i(c.KeepStaged)); err != nil {
+			b2i(c.AutoPush), b2i(c.AutoConfirm), c.KeepStagedNode); err != nil {
 			return fmt.Errorf("claim %s/%s: %w", c.CoreNode, c.Style, err)
 		}
 		var claimID int64

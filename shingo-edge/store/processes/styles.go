@@ -215,7 +215,7 @@ func RestoreStyle(db *sql.DB, id int64) error {
 // style_id (set to the new style) and created_at (defaults to now). Kept as a
 // single const so the SELECT and INSERT lists can't drift apart from each other.
 //
-// keep_staged IS copied: a clone or copy carries the kept spare and then meets
+// keep_staged_node IS copied: a clone or copy carries the kept spare and then meets
 // the dedicated-spot check at the end of its transaction
 // (CheckKeepStagedSpots), which allows the spot across the styles of one
 // process and refuses it across processes.
@@ -232,7 +232,7 @@ func RestoreStyle(db *sql.DB, id int64) error {
 const cloneClaimColumns = `core_node_name, role, swap_mode, payload_code,
 	reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
 	inbound_source, outbound_destination, containment_destination, allowed_payload_codes, auto_request_payload,
-	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
+	keep_staged_node, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
 	changeover_evac_nodes, changeover_evac_destination,
 	index_robot_supplies, key_route, key_task, changeover_carryover_disposition,
@@ -412,14 +412,16 @@ type copiedClaim struct {
 	inboundStaging, outboundStaging    string
 	evacDestination, containment       string
 	paired, second                     string
+	keepStagedNode                     string
 }
 
-// legs is the copied row's six legs as a claim input, for the lane refusal.
+// legs is the copied row's seven legs as a claim input, for the lane refusal.
 func (c *copiedClaim) legs() NodeClaimInput {
 	return NodeClaimInput{
 		InboundSource: c.inboundSource, OutboundDestination: c.outboundDestination,
 		ChangeoverEvacDestination: &c.evacDestination, ContainmentDestination: c.containment,
 		InboundStaging: c.inboundStaging, OutboundStaging: c.outboundStaging,
+		KeepStagedNode: &c.keepStagedNode,
 	}
 }
 
@@ -461,7 +463,7 @@ func readCopiedClaims(tx *sql.Tx, targetID int64) (map[string]*copiedClaim, erro
 	gr, err := tx.Query(`SELECT core_node_name, swap_mode, payload_code, allowed_payload_codes,
 		inbound_source, outbound_destination, inbound_staging, outbound_staging,
 		changeover_evac_destination, containment_destination,
-		paired_core_node, second_paired_core_node FROM style_node_claims WHERE style_id = ? AND`+liveClaims, targetID)
+		paired_core_node, second_paired_core_node, keep_staged_node FROM style_node_claims WHERE style_id = ? AND`+liveClaims, targetID)
 	if err != nil {
 		return nil, err
 	}
@@ -472,7 +474,7 @@ func readCopiedClaims(tx *sql.Tx, targetID int64) (map[string]*copiedClaim, erro
 		var allowed string
 		if err := gr.Scan(&c.node, &c.swapMode, &c.payload, &allowed, &c.inboundSource,
 			&c.outboundDestination, &c.inboundStaging, &c.outboundStaging,
-			&c.evacDestination, &c.containment, &c.paired, &c.second); err != nil {
+			&c.evacDestination, &c.containment, &c.paired, &c.second, &c.keepStagedNode); err != nil {
 			return nil, err
 		}
 		var allowedList []string
@@ -862,7 +864,7 @@ func CopyStyleClaims(db *sql.DB, kinds domain.CoreNodeKinds, srcID, targetID int
 // keep-staged claims kept.
 func deleteStyleClaims(tx *sql.Tx, styleID int64) ([]KeptSpot, error) {
 	rs, err := tx.Query(`DELETE FROM style_node_claims WHERE style_id = ?
-		RETURNING core_node_name, keep_staged, inbound_staging, inbound_source`, styleID)
+		RETURNING core_node_name, keep_staged_node, inbound_source`, styleID)
 	if err != nil {
 		return nil, err
 	}
@@ -870,11 +872,10 @@ func deleteStyleClaims(tx *sql.Tx, styleID int64) ([]KeptSpot, error) {
 	var kept []KeptSpot
 	for rs.Next() {
 		var k KeptSpot
-		var keep bool
-		if err := rs.Scan(&k.Line, &keep, &k.Spot, &k.Source); err != nil {
+		if err := rs.Scan(&k.Line, &k.Spot, &k.Source); err != nil {
 			return nil, err
 		}
-		if keep && k.Spot != "" {
+		if k.Spot != "" {
 			k.StyleID = styleID
 			kept = append(kept, k)
 		}

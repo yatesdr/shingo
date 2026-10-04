@@ -114,7 +114,7 @@ const (
 	AutoReorder                    Field = "auto_reorder"
 	LinesideSoftThreshold          Field = "lineside_soft_threshold"
 	Sequence                       Field = "sequence"
-	KeepStaged                     Field = "keep_staged"
+	KeepStagedNode                 Field = "keep_staged_node"
 	EvacuateOnChangeover           Field = "evacuate_on_changeover"
 	ChangeoverEvacNodes            Field = "changeover_evac_nodes"
 	ChangeoverEvacDestination      Field = "changeover_evac_destination"
@@ -161,7 +161,7 @@ var fieldLabels = map[Field]string{
 	AutoReorder:                    "Auto Reorder",
 	LinesideSoftThreshold:          "Lineside Soft Threshold",
 	Sequence:                       "Board Order",
-	KeepStaged:                     "Keep Staged",
+	KeepStagedNode:                 "Keep Staged Node",
 	EvacuateOnChangeover:           "Evacuate On Changeover",
 	ChangeoverEvacNodes:            "Changeover Evac Nodes",
 	ChangeoverEvacDestination:      "Changeover Evac Destination",
@@ -184,7 +184,7 @@ var fieldOrder = []Field{
 	InboundStaging, OutboundStaging, PairedCoreNode, OutboundDestination, InboundSource,
 	SecondPairedCoreNode,
 	PayloadCode, AllowedPayloadCodes, UOPCapacity, ReorderPoint, AutoReorder,
-	LinesideSoftThreshold, Sequence, KeepStaged, EvacuateOnChangeover,
+	LinesideSoftThreshold, Sequence, KeepStagedNode, EvacuateOnChangeover,
 	ChangeoverEvacNodes, ChangeoverEvacDestination, ChangeoverCarryoverDisposition,
 	ReuseCompatibleBins, IndexRobotSupplies, AutoConfirm, AutoRequestPayload, AutoPush,
 	KeyRoute, KeyTask, ReorderPointSource,
@@ -261,15 +261,15 @@ func steadyBase() map[Field]Need {
 	// Forbidden because the stored value is left alone rather than cleared —
 	// the old numbers are the only record of how far the copies had drifted.
 	out[UOPCapacity] = Unused
-	// KeepStaged is Forbidden by default; single_robot and two_robot override
-	// it to Used below. A kept spare stands on the claim's inbound staging and
-	// the swap starts by lifting it, and only those two modes have a swap that
-	// begins with a pickup at inbound staging. sequential has no staging hop,
-	// and press-index's swap moves bins between its own positions. Forbidden
-	// rather than Unused because the server refuses it in those modes
-	// (ValidateNodeClaim and the store's modeArmViolation), so the editor must
-	// clear it on a mode change rather than carry a value that will not save.
-	out[KeepStaged] = Forbidden
+	// KeepStagedNode is the node the full or the empty comes from instead of
+	// the inbound source, with a spare kept standing on it. Every swap fetches
+	// a fresh carrier, so the four swap modes override this to Used below; it
+	// is Forbidden by default for the rows with no swap to fetch for (the
+	// loader card, the retired simple). Forbidden rather than Unused because
+	// the server refuses it there (ValidateNodeClaim and the store's
+	// modeArmViolation), so the editor must clear it on a mode change rather
+	// than carry a value that will not save.
+	out[KeepStagedNode] = Forbidden
 	// ReorderPointSource is Unused in EVERY mode. It is a STAMP, not a
 	// setting: the calculator writes "calculated" when it sets a point and a
 	// hand edit writes "manual", so it says how the number beside it was
@@ -335,7 +335,7 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	sr[InboundStaging] = Required
 	sr[OutboundStaging] = Required
 	sr[OutboundDestination] = Required
-	sr[KeepStaged] = Used
+	sr[KeepStagedNode] = Used
 	rows[protocol.SwapModeSingleRobot] = sr
 
 	// two_robot: robot A waits at inbound staging until robot B clears the
@@ -352,7 +352,7 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	tr[InboundStaging] = Required
 	tr[OutboundStaging] = Forbidden
 	tr[OutboundDestination] = Required
-	tr[KeepStaged] = Used
+	tr[KeepStagedNode] = Used
 	rows[protocol.SwapModeTwoRobot] = tr
 
 	// two_robot_press_index: the cell with positions. Everything the
@@ -381,6 +381,7 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	// Hopkinsville rows that carry it keep their value, because clearing a
 	// column at save is a data change and this is a UI one.
 	pi[ReuseCompatibleBins] = Unused
+	pi[KeepStagedNode] = Used
 	rows[protocol.SwapModeTwoRobotPressIndex] = pi
 
 	// sequential: A/B cycling by direct trips. A partner position, where the
@@ -393,6 +394,7 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	sq[InboundSource] = Required
 	sq[InboundStaging] = Forbidden
 	sq[OutboundStaging] = Forbidden
+	sq[KeepStagedNode] = Used
 	rows[protocol.SwapModeSequential] = sq
 
 	// manual_swap: a loader or unloader card. Core owns the loader's payload

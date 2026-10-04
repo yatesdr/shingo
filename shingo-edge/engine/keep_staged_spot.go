@@ -18,12 +18,13 @@ import (
 // wrong spare leaves by a plain move back to that source. Those are the only
 // orders this file makes, and reconcileSpot is the only thing that decides them.
 
-// spotNode is the claim's keep-staged spot, blank when it keeps no spare.
+// spotNode is the claim's keep-staged node (its spot), blank when it keeps no
+// spare. Nil-safe, for the callers that hold an optional claim.
 func spotNode(c *processes.NodeClaim) string {
-	if c == nil || !c.KeepStaged {
+	if c == nil {
 		return ""
 	}
-	return c.InboundStaging
+	return c.KeepStagedNode
 }
 
 // carriesEmpty reports whether the claim's carrier travels empty: a produce

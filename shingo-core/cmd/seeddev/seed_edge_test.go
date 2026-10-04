@@ -56,7 +56,7 @@ CREATE TABLE style_node_claims (
   inbound_source TEXT NOT NULL DEFAULT '', outbound_destination TEXT NOT NULL DEFAULT '',
   containment_destination TEXT NOT NULL DEFAULT '',
   allowed_payload_codes TEXT NOT NULL DEFAULT '', auto_request_payload TEXT NOT NULL DEFAULT '',
-  keep_staged INTEGER NOT NULL DEFAULT 0, evacuate_on_changeover INTEGER NOT NULL DEFAULT 0,
+  keep_staged_node TEXT NOT NULL DEFAULT '', evacuate_on_changeover INTEGER NOT NULL DEFAULT 0,
   paired_core_node TEXT NOT NULL DEFAULT '', auto_confirm INTEGER NOT NULL DEFAULT 0,
   second_paired_core_node TEXT NOT NULL DEFAULT '', index_robot_supplies INTEGER NOT NULL DEFAULT 0,
   sequence INTEGER NOT NULL DEFAULT 0, lineside_soft_threshold INTEGER NOT NULL DEFAULT 0,

@@ -132,10 +132,11 @@ type FlowAdvanced struct {
 	//
 	EvacuateOnChangeover bool                 `json:"evacuate_on_changeover,omitempty"`
 	CarryoverDisposition CarryoverDisposition `json:"changeover_carryover_disposition"`
-	// KeepStaged keeps a spare bin on this position's inbound staging, so the
-	// swap starts from it. The modal draws it only where flowspec says the
-	// mode uses it (single_robot, two_robot).
-	KeepStaged bool `json:"keep_staged,omitempty"`
+	// KeepStagedNode is the node this position's full or empty comes from
+	// instead of the inbound source, with a spare kept standing on it. Blank is
+	// off. The modal draws it where flowspec says the mode uses it: every swap
+	// mode.
+	KeepStagedNode string `json:"keep_staged_node,omitempty"`
 	// IndexRobotSupplies describes the cell's hardware, so the modal's note
 	// says it is the same for every part on this press.
 	IndexRobotSupplies bool `json:"index_robot_supplies,omitempty"`
@@ -170,7 +171,7 @@ func AdvancedOf(c *NodeClaim) *FlowAdvanced {
 		AutoPush:              c.AutoPush,
 		EvacuateOnChangeover:  c.EvacuateOnChangeover,
 		CarryoverDisposition:  CarryoverFor(c),
-		KeepStaged:            c.KeepStaged,
+		KeepStagedNode:        c.KeepStagedNode,
 		IndexRobotSupplies:    c.IndexRobotSupplies,
 		AutoConfirm:           c.AutoConfirm,
 		Sequence:              c.Sequence,
@@ -297,7 +298,7 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 		in.AutoConfirm = a.AutoConfirm
 		in.ReorderPointSource = Ptr(a.ReorderPointSource)
 		in.AutoReorder = Ptr(a.AutoReorder)
-		in.KeepStaged = Ptr(a.KeepStaged)
+		in.KeepStagedNode = Ptr(a.KeepStagedNode)
 		in.IndexRobotSupplies = Ptr(a.IndexRobotSupplies)
 		in.ChangeoverCarryoverDisposition = Ptr(a.CarryoverDisposition)
 		in.Sequence = Ptr(a.Sequence)
@@ -343,7 +344,7 @@ func InputFromClaim(c NodeClaim) NodeClaimInput {
 		AutoPush:                       c.AutoPush,
 		ReorderPointSource:             Ptr(c.ReorderPointSource),
 		AutoReorder:                    Ptr(c.AutoReorder),
-		KeepStaged:                     Ptr(c.KeepStaged),
+		KeepStagedNode:                 Ptr(c.KeepStagedNode),
 		Sequence:                       Ptr(c.Sequence),
 		Source:                         c.Source,
 		CalledBy:                       c.CalledBy,
@@ -380,7 +381,7 @@ func InputFromClaimUngated(c NodeClaim) NodeClaimInput {
 	in.IndexRobotSupplies = nil
 	in.KeyRoute = nil
 	in.KeyTask = nil
-	in.KeepStaged = nil
+	in.KeepStagedNode = nil
 	in.ReorderPointSource = nil
 	in.AutoReorder = nil
 	in.Sequence = nil
@@ -450,8 +451,8 @@ func MaterializeClaim(in NodeClaimInput, prior *NodeClaim) NodeClaim {
 	if in.AutoReorder != nil {
 		c.AutoReorder = *in.AutoReorder
 	}
-	if in.KeepStaged != nil {
-		c.KeepStaged = *in.KeepStaged
+	if in.KeepStagedNode != nil {
+		c.KeepStagedNode = *in.KeepStagedNode
 	}
 	if in.Sequence != nil && (prior != nil || *in.Sequence > 0) {
 		c.Sequence = *in.Sequence

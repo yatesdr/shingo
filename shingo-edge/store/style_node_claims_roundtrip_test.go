@@ -21,7 +21,7 @@ import (
 // round-trip below is about the door, not about a page.
 //
 // The four columns it does NOT carry — sequence, reorder_point_source,
-// keep_staged, auto_reorder — are the point. The editor has no control for any
+// keep_staged_node, auto_reorder — are the point. The editor has no control for any
 // of them, so it must not be able to change them.
 func claimEditorBody(c *processes.NodeClaim) processes.NodeClaimInput {
 	return processes.NodeClaimInput{
@@ -148,7 +148,7 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 		{"inbound_source", before.InboundSource, after.InboundSource},
 		{"outbound_destination", before.OutboundDestination, after.OutboundDestination},
 		{"auto_request_payload", before.AutoRequestPayload, after.AutoRequestPayload},
-		{"keep_staged", before.KeepStaged, after.KeepStaged},
+		{"keep_staged_node", before.KeepStagedNode, after.KeepStagedNode},
 		{"evacuate_on_changeover", before.EvacuateOnChangeover, after.EvacuateOnChangeover},
 		{"paired_core_node", before.PairedCoreNode, after.PairedCoreNode},
 		{"second_paired_core_node", before.SecondPairedCoreNode, after.SecondPairedCoreNode},
@@ -194,20 +194,18 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 	if after.KeyTask != before.KeyTask {
 		t.Errorf("key_task changed across an editor save: %q -> %q", before.KeyTask, after.KeyTask)
 	}
-	if before.Sequence != 7 || before.ReorderPointSource != "calculated" || !before.AutoReorder || !before.KeepStaged {
-		t.Fatalf("seed did not take, so this test proves nothing: seq=%d source=%q autoReorder=%v keepStaged=%v",
-			before.Sequence, before.ReorderPointSource, before.AutoReorder, before.KeepStaged)
+	if before.Sequence != 7 || before.ReorderPointSource != "calculated" || !before.AutoReorder || before.KeepStagedNode == "" {
+		t.Fatalf("seed did not take, so this test proves nothing: seq=%d source=%q autoReorder=%v keepStagedNode=%q",
+			before.Sequence, before.ReorderPointSource, before.AutoReorder, before.KeepStagedNode)
 	}
 }
 
-// setLegacyKeepStaged writes keep_staged=1 behind the store's back. The claims
-// it is used on are press-index, whose flowspec row refuses the flag at every
-// door, but a row stored before that rule may carry it, and "absent means
-// untouched" has to hold for it.
+// setLegacyKeepStaged names a keep-staged node behind the store's back, so
+// "absent means untouched" is tested on a stored name whichever door wrote it.
 func setLegacyKeepStaged(t *testing.T, db *DB, claimID int64) {
 	t.Helper()
-	_, err := db.DB.Exec(`UPDATE style_node_claims SET keep_staged=1 WHERE id=?`, claimID)
-	testutil.MustNoErr(t, err, "set legacy keep_staged")
+	_, err := db.DB.Exec(`UPDATE style_node_claims SET keep_staged_node='RT-SPOT' WHERE id=?`, claimID)
+	testutil.MustNoErr(t, err, "set keep_staged_node")
 }
 
 // A writer that DOES speak about the four still changes them. "Absent means
@@ -247,7 +245,7 @@ func TestUpsertStyleNodeClaim_ExplicitOptionalFieldsStillWrite(t *testing.T) {
 	upd.Sequence = domain.Ptr(9)
 	upd.ReorderPointSource = domain.Ptr("manual")
 	upd.AutoReorder = domain.Ptr(false)
-	upd.KeepStaged = domain.Ptr(false)
+	upd.KeepStagedNode = domain.Ptr("")
 	upd.IndexRobotSupplies = domain.Ptr(true)
 	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, upd); err != nil {
 		t.Fatalf("explicit update: %v", err)
@@ -264,8 +262,8 @@ func TestUpsertStyleNodeClaim_ExplicitOptionalFieldsStillWrite(t *testing.T) {
 	if after.AutoReorder {
 		t.Error("auto_reorder = true, want false — an explicit false must write")
 	}
-	if after.KeepStaged {
-		t.Error("keep_staged = true, want false — an explicit false must write")
+	if after.KeepStagedNode != "" {
+		t.Errorf("keep_staged_node = %q, want blank — an explicit blank must write", after.KeepStagedNode)
 	}
 	if !after.IndexRobotSupplies {
 		t.Error("index_robot_supplies = false, want true — an explicit value must write")
@@ -380,8 +378,8 @@ func TestUpsertStyleNodeClaim_InsertDefaultsForAbsentOptionals(t *testing.T) {
 	if first.ReorderPointSource != "legacy" {
 		t.Errorf("reorder_point_source = %q, want legacy", first.ReorderPointSource)
 	}
-	if first.AutoReorder || first.KeepStaged {
-		t.Errorf("new claim flags = autoReorder:%v keepStaged:%v, want both false",
-			first.AutoReorder, first.KeepStaged)
+	if first.AutoReorder || first.KeepStagedNode != "" {
+		t.Errorf("new claim = autoReorder:%v keepStagedNode:%q, want false and blank",
+			first.AutoReorder, first.KeepStagedNode)
 	}
 }

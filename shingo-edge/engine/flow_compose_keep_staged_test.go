@@ -22,7 +22,7 @@ func TestSaveFlow_KeptSpotMovedBetweenCellsInOneSave(t *testing.T) {
 	swap, err := db.GetStyleNodeClaimByNode(toStyleID, "FLOW-SWAP")
 	testutil.MustNoErr(t, err, "get FLOW-SWAP")
 	in := domain.InputFromClaim(*swap)
-	in.InboundStaging, in.KeepStaged = "KEEP-SPOT", domain.Ptr(true)
+	in.InboundStaging, in.KeepStagedNode = "KEEP-SPOT", domain.Ptr("KEEP-SPOT")
 	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	testutil.MustNoErr(t, err, "keep a spare at FLOW-SWAP")
 
@@ -38,7 +38,7 @@ func TestSaveFlow_KeptSpotMovedBetweenCellsInOneSave(t *testing.T) {
 		case "FLOW-SAME":
 			c.InboundStaging = "KEEP-SPOT"
 			c.Advanced = domain.AdvancedOf(same)
-			c.Advanced.KeepStaged = true
+			c.Advanced.KeepStagedNode = "KEEP-SPOT"
 		}
 		cells = append(cells, c)
 	}
@@ -51,7 +51,7 @@ func TestSaveFlow_KeptSpotMovedBetweenCellsInOneSave(t *testing.T) {
 	}
 	got, err := db.GetStyleNodeClaimByNode(toStyleID, "FLOW-SAME")
 	testutil.MustNoErr(t, err, "get FLOW-SAME after")
-	if !got.KeepStaged || got.InboundStaging != "KEEP-SPOT" {
-		t.Errorf("FLOW-SAME = keep %v at %q, want the spare kept at KEEP-SPOT", got.KeepStaged, got.InboundStaging)
+	if got.KeepStagedNode != "KEEP-SPOT" {
+		t.Errorf("FLOW-SAME keeps its spare at %q, want KEEP-SPOT", got.KeepStagedNode)
 	}
 }

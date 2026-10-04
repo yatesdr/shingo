@@ -537,8 +537,8 @@ func flowRowsAndFingerprint(db processes.DBTX, processID, toStyleID int64) (from
 func keptSpots(stored []processes.NodeClaim) []processes.KeptSpot {
 	var out []processes.KeptSpot
 	for _, c := range stored {
-		if c.KeepStaged && c.InboundStaging != "" {
-			out = append(out, processes.KeptSpot{StyleID: c.StyleID, Line: c.CoreNodeName, Spot: c.InboundStaging,
+		if c.KeepStagedNode != "" {
+			out = append(out, processes.KeptSpot{StyleID: c.StyleID, Line: c.CoreNodeName, Spot: c.KeepStagedNode,
 				Source: c.InboundSource})
 		}
 	}

@@ -185,10 +185,11 @@ func TestSpotBoundRetrieve_LeavesAKeepStagedCellOpen(t *testing.T) {
 	}
 }
 
-// markKeepStaged sets the flag straight on the row: these tests are about the
-// two readers of orderWorksTheCell, not the config door that admits the flag.
+// markKeepStaged names the claim's inbound staging as its keep-staged node
+// straight on the row: these tests are about the two readers of
+// orderWorksTheCell, not the config door that admits the name.
 func markKeepStaged(t *testing.T, db *store.DB, claimID int64) {
 	t.Helper()
-	_, err := db.DB.Exec(`UPDATE style_node_claims SET keep_staged=1 WHERE id=?`, claimID)
-	testutil.MustNoErr(t, err, "keep_staged")
+	_, err := db.DB.Exec(`UPDATE style_node_claims SET keep_staged_node=inbound_staging WHERE id=?`, claimID)
+	testutil.MustNoErr(t, err, "keep_staged_node")
 }

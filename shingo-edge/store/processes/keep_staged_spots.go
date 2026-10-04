@@ -34,16 +34,18 @@ type KeptSpot struct {
 // check per upsert would refuse that save; a check over the finished table
 // sees what the transaction actually leaves.
 //
-// THE RULE. A keep-staged claim's spot is its inbound_staging. The spare on it
-// is the swap's first pickup and the refills deliver to it, so nothing else may
-// put a bin on that node or take one off it:
+// THE RULE. A keep-staged claim's spot is its keep_staged_node. The spare on
+// it is what the swap fetches and the refills deliver to it, so nothing else
+// may put a bin on that node or take one off it:
 //   - another claim in the same style, or in a style of another process, may
 //     not name it in any routing column (spotColumns);
-//   - another style of the SAME process may name it as staging only (inbound
-//     or outbound): styles of one process never run at once, so the spot can
-//     serve each in turn, but a line position has a process-node row whose
-//     runtime an admin move can bind, and that would put a line's bin on it;
-//   - the claim's own destinations may not name it.
+//   - another style of the SAME process may name it as staging or as its own
+//     spot only (inbound_staging, outbound_staging, keep_staged_node): styles
+//     of one process never run at once, so the spot can serve each in turn,
+//     but a line position has a process-node row whose runtime an admin move
+//     can bind, and that would put a line's bin on it;
+//   - the claim's own routes may not name it, except its inbound_staging: the
+//     same node as both is a robot waiting under the spare it is about to lift.
 //
 // MOVING OR CLEARING A SPOT is refused while orders still deliver to the old
 // one: before lists the spots the transaction may have changed, each is
@@ -54,8 +56,8 @@ type KeptSpot struct {
 // what a store pinned to one connection can afford on a save.
 //
 // PER EDGE. An Edge reads only its own claims, and Core's mirror carries
-// neither keep_staged nor every routing column, so two Edges naming one node
-// are not caught here; the error text says so.
+// neither keep_staged_node nor every routing column, so two Edges naming one
+// node are not caught here; the error text says so.
 //
 // It returns the spots of before that the write moved or cleared, so the door
 // can hand them on once the transaction commits: a spare left standing on a
@@ -64,7 +66,7 @@ type KeptSpot struct {
 func CheckKeepStagedSpots(tx DBTX, before []KeptSpot) ([]KeptSpot, error) {
 	rows, err := readSpotClaims(tx)
 	if err != nil {
-		return nil, fmt.Errorf("keep_staged spot check: %w", err)
+		return nil, fmt.Errorf("keep_staged_node spot check: %w", err)
 	}
 	if err := spotConflict(rows); err != nil {
 		return nil, err
@@ -77,7 +79,7 @@ func CheckKeepStagedSpots(tx DBTX, before []KeptSpot) ([]KeptSpot, error) {
 var spotColumns = []string{
 	"core_node_name", "inbound_staging", "outbound_staging", "paired_core_node",
 	"second_paired_core_node", "inbound_source", "outbound_destination",
-	"containment_destination", "changeover_evac_destination", "changeover_evac_nodes",
+	"containment_destination", "changeover_evac_destination", "changeover_evac_nodes", "keep_staged_node",
 }
 
 // spotClaim is one live claim as the check reads it: who it is and every node
@@ -87,17 +89,13 @@ type spotClaim struct {
 	styleID    int64
 	style      string
 	line       string
-	keep       bool
 	names      map[string][]string // spot column -> nodes it names
 }
 
 func (c spotClaim) label() string { return fmt.Sprintf("style %q line %s", c.style, c.line) }
 
 func (c spotClaim) spot() string {
-	if !c.keep {
-		return ""
-	}
-	return firstOf(c.names["inbound_staging"])
+	return firstOf(c.names["keep_staged_node"])
 }
 
 func firstOf(s []string) string {
@@ -110,10 +108,10 @@ func firstOf(s []string) string {
 // The one SELECT. Retired claims are left out: nothing revives one. Retired
 // STYLES are kept in: RestoreStyle brings a style back without touching its
 // claims, so its spots must stay counted while it is away.
-const spotClaimsSQL = `SELECT s.process_id, c.style_id, s.name, c.core_node_name, c.keep_staged,
+const spotClaimsSQL = `SELECT s.process_id, c.style_id, s.name, c.core_node_name,
 	c.inbound_staging, c.outbound_staging, c.paired_core_node, c.second_paired_core_node,
 	c.inbound_source, c.outbound_destination, c.containment_destination,
-	c.changeover_evac_destination, c.changeover_evac_nodes
+	c.changeover_evac_destination, c.changeover_evac_nodes, c.keep_staged_node
 	FROM style_node_claims c JOIN styles s ON s.id = c.style_id
 	WHERE c.retired_at IS NULL
 	ORDER BY c.id`
@@ -129,8 +127,8 @@ func readSpotClaims(db DBTX) ([]spotClaim, error) {
 		var c spotClaim
 		var process sql.NullInt64
 		vals := make([]string, len(spotColumns))
-		if err := rs.Scan(&process, &c.styleID, &c.style, &vals[0], &c.keep,
-			&vals[1], &vals[2], &vals[3], &vals[4], &vals[5], &vals[6], &vals[7], &vals[8], &vals[9]); err != nil {
+		if err := rs.Scan(&process, &c.styleID, &c.style, &vals[0],
+			&vals[1], &vals[2], &vals[3], &vals[4], &vals[5], &vals[6], &vals[7], &vals[8], &vals[9], &vals[10]); err != nil {
 			return nil, err
 		}
 		c.processKey = process.Int64
@@ -166,13 +164,13 @@ func spotConflict(rows []spotClaim) error {
 			continue
 		}
 		for _, col := range spotColumns {
-			if col == "inbound_staging" {
+			if col == "inbound_staging" || col == "keep_staged_node" {
 				continue
 			}
 			for _, n := range k.names[col] {
 				if n == spot {
 					errs = append(errs, fmt.Errorf("%w: %s keeps its spare at %s and also names it as %s; "+
-						"a kept spare's spot cannot be one of its own line's routes",
+						"a kept spare's spot cannot be one of its own line's routes other than its inbound staging",
 						domain.ErrKeepStagedSpot, k.label(), spot, col))
 				}
 			}
@@ -183,11 +181,11 @@ func spotConflict(rows []spotClaim) error {
 			}
 			sameProcessOtherStyle := c.processKey == k.processKey && c.styleID != k.styleID
 			for _, col := range spotColumns {
-				if sameProcessOtherStyle && (col == "inbound_staging" || col == "outbound_staging") {
+				if sameProcessOtherStyle && (col == "inbound_staging" || col == "outbound_staging" || col == "keep_staged_node") {
 					continue
 				}
 				// Two kept spots on one node are one conflict, reported once.
-				if col == "inbound_staging" && j < i && c.spot() == spot {
+				if col == "keep_staged_node" && j < i && c.spot() == spot {
 					continue
 				}
 				for _, n := range c.names[col] {
@@ -201,7 +199,7 @@ func spotConflict(rows []spotClaim) error {
 					case c.processKey != k.processKey:
 						where = "in another process"
 					}
-					errs = append(errs, fmt.Errorf("%w: node %s is the kept spot (inbound_staging) of %s, "+
+					errs = append(errs, fmt.Errorf("%w: node %s is the kept spot (keep_staged_node) of %s, "+
 						"and %s names it as %s, %s. Checked across this Edge's claims only",
 						domain.ErrKeepStagedSpot, spot, k.label(), c.label(), col, where))
 				}
@@ -212,7 +210,7 @@ func spotConflict(rows []spotClaim) error {
 }
 
 // refuseMovingABusySpot refuses a transaction that moved or cleared a spot
-// (inbound_staging changed, keep_staged turned off, or the claim removed)
+// (keep_staged_node changed or cleared, or the claim removed)
 // while a non-terminal order still delivers to the old spot: that order is a
 // refill for a spare the line no longer keeps there. The orders read runs only
 // when a spot did move.
@@ -252,7 +250,7 @@ func refuseMovingABusySpot(db DBTX, rows []spotClaim, before []KeptSpot) ([]Kept
 		WHERE delivery_node IN (%s) AND status NOT IN (%s) GROUP BY delivery_node`,
 		strings.TrimSuffix(strings.Repeat("?,", len(moved)), ","), protocol.TerminalStatusSQLList()), args...)
 	if err != nil {
-		return nil, fmt.Errorf("keep_staged spot check: open orders: %w", err)
+		return nil, fmt.Errorf("keep_staged_node spot check: open orders: %w", err)
 	}
 	defer rs.Close()
 	open := map[string]int{}

@@ -68,7 +68,7 @@ type (
 var claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
 	` + capacity.SQL("style_node_claims") + `, reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
 	inbound_source, outbound_destination, containment_destination, allowed_payload_codes, auto_request_payload,
-	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
+	keep_staged_node, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
 	reuse_compatible_bins, auto_push, below_reorder_since, created_at,
 	changeover_evac_nodes, changeover_evac_destination,
@@ -91,7 +91,7 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
 		&resolvedCapacity, &c.ReorderPoint, &c.ReorderPointSource, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
 		&c.InboundSource, &c.OutboundDestination, &c.ContainmentDestination, &allowedJSON, &c.AutoRequestPayload,
-		&c.KeepStaged, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
+		&c.KeepStagedNode, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
 		&c.ReuseCompatibleBins, &c.AutoPush, &belowSince, &createdAt,
 		&evacNodesJSON, &c.ChangeoverEvacDestination,
@@ -620,23 +620,22 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	warnIndexRobotSuppliesDrift(db, in)
 
 	var existingID int64
-	var priorKeep bool
 	var priorSpot, priorSource string
 	var priorMode protocol.SwapMode
-	err := db.QueryRow(`SELECT id, keep_staged, inbound_staging, inbound_source, swap_mode FROM style_node_claims WHERE style_id=? AND core_node_name=?`,
-		in.StyleID, in.CoreNodeName).Scan(&existingID, &priorKeep, &priorSpot, &priorSource, &priorMode)
+	err := db.QueryRow(`SELECT id, keep_staged_node, inbound_source, swap_mode FROM style_node_claims WHERE style_id=? AND core_node_name=?`,
+		in.StyleID, in.CoreNodeName).Scan(&existingID, &priorSpot, &priorSource, &priorMode)
 	if err == nil {
-		// An absent flag leaves a stored one in place, so a mode change that
-		// says nothing about keep_staged would carry a spare into a mode that
-		// refuses one. The input check above cannot see the stored flag. A save
-		// that keeps the mode is left alone: absent means untouched.
-		if priorKeep && in.KeepStaged == nil && priorMode != in.SwapMode &&
-			flowspec.Steady(in.Role, in.SwapMode)[flowspec.KeepStaged] == flowspec.Forbidden {
-			return 0, nil, fmt.Errorf("keep_staged: %s keeps a spare at %s; clear keep_staged before changing it to %s",
+		// An absent name leaves a stored one in place, so a mode change that
+		// says nothing about keep_staged_node would carry a spare into a mode
+		// that refuses one. The input check above cannot see the stored name. A
+		// save that keeps the mode is left alone: absent means untouched.
+		if priorSpot != "" && in.KeepStagedNode == nil && priorMode != in.SwapMode &&
+			flowspec.Steady(in.Role, in.SwapMode)[flowspec.KeepStagedNode] == flowspec.Forbidden {
+			return 0, nil, fmt.Errorf("keep_staged_node: %s keeps a spare at %s; clear keep_staged_node before changing it to %s",
 				in.CoreNodeName, priorSpot, in.SwapMode)
 		}
 		var prior *KeptSpot
-		if priorKeep && priorSpot != "" {
+		if priorSpot != "" {
 			prior = &KeptSpot{StyleID: in.StyleID, Line: in.CoreNodeName, Spot: priorSpot, Source: priorSource}
 		}
 		return existingID, prior, updateClaim(db, existingID, in)
@@ -657,7 +656,7 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	}
 	autoReorder := in.AutoReorder != nil && *in.AutoReorder
 	indexRobotSupplies := in.IndexRobotSupplies != nil && *in.IndexRobotSupplies
-	keepStaged := in.KeepStaged != nil && *in.KeepStaged
+	keepStagedNode := domain.OptValue(in.KeepStagedNode)
 	allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
 	// INSERT OR IGNORE: if a concurrent writer inserted the same
 	// (style_id, core_node_name) between our SELECT above and this
@@ -671,7 +670,7 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 	res, err := db.Exec(`INSERT OR IGNORE INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
 		reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
 		inbound_source, outbound_destination, containment_destination, allowed_payload_codes, auto_request_payload,
-		keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
+		keep_staged_node, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push,
 		changeover_evac_nodes, changeover_evac_destination,
 		index_robot_supplies, key_route, key_task, changeover_carryover_disposition,
@@ -681,7 +680,7 @@ func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.ReorderPoint, source, autoReorder, in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, in.ContainmentDestination, allowedJSON, in.AutoRequestPayload,
-		keepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, sequence,
+		keepStagedNode, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush,
 		marshalEvacNodes(domain.OptValue(in.ChangeoverEvacNodes)),
 		domain.OptValue(in.ChangeoverEvacDestination),
@@ -766,12 +765,12 @@ func modeArmViolation(in NodeClaimInput) error {
 			}
 		}
 	}
-	// keep_staged in a mode whose row forbids it: refused here as at ingress
-	// (ValidateNodeClaim), by the same table, so an import cannot store a flag
-	// no swap of that mode reads.
-	if domain.ClaimInputHas(in, flowspec.KeepStaged) &&
-		flowspec.Steady(in.Role, in.SwapMode)[flowspec.KeepStaged] == flowspec.Forbidden {
-		return fmt.Errorf("keep_staged: %s", domain.KeepStagedModesMessage)
+	// A keep-staged node in a mode whose row forbids it: refused here as at
+	// ingress (ValidateNodeClaim), by the same table, so an import cannot store
+	// a spot no swap of that mode fetches from.
+	if domain.ClaimInputHas(in, flowspec.KeepStagedNode) &&
+		flowspec.Steady(in.Role, in.SwapMode)[flowspec.KeepStagedNode] == flowspec.Forbidden {
+		return fmt.Errorf("keep_staged_node: %s", domain.KeepStagedModesMessage)
 	}
 	// THE STRICT MODES READ ONE TABLE (D4). single_robot had no arm here at
 	// all; it now takes its whole row from flowspec.Steady through
@@ -888,8 +887,8 @@ func updateClaim(db DBTX, id int64, in NodeClaimInput) error {
 	if in.AutoReorder != nil {
 		sets, args = append(sets, `auto_reorder=?`), append(args, *in.AutoReorder)
 	}
-	if in.KeepStaged != nil {
-		sets, args = append(sets, `keep_staged=?`), append(args, *in.KeepStaged)
+	if in.KeepStagedNode != nil {
+		sets, args = append(sets, `keep_staged_node=?`), append(args, *in.KeepStagedNode)
 	}
 	if in.Sequence != nil {
 		sets, args = append(sets, `sequence=?`), append(args, *in.Sequence)
@@ -998,7 +997,7 @@ func deleteClaim(db DBTX, id int64) (*KeptSpot, error) {
 		WHERE from_claim_id = ?1 OR to_claim_id = ?1`, id).Scan(&refs); err != nil {
 		return nil, fmt.Errorf("claim %d: count history references: %w", id, err)
 	}
-	const returning = ` RETURNING style_id, core_node_name, keep_staged, inbound_staging, inbound_source`
+	const returning = ` RETURNING style_id, core_node_name, keep_staged_node, inbound_source`
 	stmt := `DELETE FROM style_node_claims WHERE id=?` + returning
 	if refs > 0 {
 		stmt = `UPDATE style_node_claims
@@ -1006,12 +1005,11 @@ func deleteClaim(db DBTX, id int64) (*KeptSpot, error) {
 			WHERE id = ? AND retired_at IS NULL` + returning
 	}
 	var prior KeptSpot
-	var keep bool
-	err := db.QueryRow(stmt, id).Scan(&prior.StyleID, &prior.Line, &keep, &prior.Spot, &prior.Source)
+	err := db.QueryRow(stmt, id).Scan(&prior.StyleID, &prior.Line, &prior.Spot, &prior.Source)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil // no live row by that id: nothing removed, as before
 	}
-	if err != nil || !keep || prior.Spot == "" {
+	if err != nil || prior.Spot == "" {
 		return nil, err
 	}
 	return &prior, nil

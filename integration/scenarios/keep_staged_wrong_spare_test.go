@@ -93,7 +93,7 @@ func TestScenario_KeepStagedWrongSpare_CancelAndRequestIsTheExit(t *testing.T) {
 	claimID, err := edge.DB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: line, Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeTwoRobot,
 		PayloadCode: partA, UOPCapacity: 40, InboundSource: market, InboundStaging: spot, OutboundDestination: dest,
-		KeepStaged: domain.Ptr(true),
+		KeepStagedNode: domain.Ptr(spot),
 	})
 	mustNil(t, err, "claim")
 	mustNil(t, edge.DB.SetProcessNodeRuntime(nodeID, &claimID, 30), "runtime claim")

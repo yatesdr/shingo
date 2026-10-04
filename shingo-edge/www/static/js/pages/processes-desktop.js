@@ -2471,7 +2471,7 @@ async function openSettings() {
 // take it away mid-edit.
 const ADV_SECTIONS = [
     ['Part identity', ['allowed_payload_codes']],
-    ['Replenishment', ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_request_payload', 'auto_push', 'keep_staged']],
+    ['Replenishment', ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_request_payload', 'auto_push', 'keep_staged_node']],
     ['Changeover specials', ['evacuate_on_changeover', 'evac_nodes', 'evac_dest', 'changeover_carryover_disposition']],
     ['Press hardware', ['index_robot_supplies']],
     ['Station policy', ['auto_confirm']],
@@ -2502,7 +2502,7 @@ const ADV_COPY = {
     lineside_soft_threshold: ['lineside_soft_threshold', 'warn the operator above twice this on a release'],
     auto_request_payload: ['auto_request_payload', 'which part a vacated position asks for on its own'],
     auto_push: ['auto_push', 'drain the source whenever the window is free'],
-    keep_staged: ['keep_staged', 'a spare waits on inbound staging; the swap starts from it'],
+    keep_staged_node: ['keep_staged_node', 'the node the full or empty comes from instead of the market; a spare is kept on it'],
     evacuate_on_changeover: ['evacuate_on_changeover', 'clear this position before the new style'],
     evac_nodes: ['changeover_evac_nodes', 'tooling change — which positions get cleared'],
     evac_dest: ['changeover_evac_destination', ''],
@@ -2593,6 +2593,11 @@ function advField(key) {
         case 'auto_request_payload': {
             const v = S.adv.a.auto_request_payload;
             control = advPick(key, esc(v ? M().shortPart(v) : 'off'), v ? '' : 'dflt');
+            break;
+        }
+        case 'keep_staged_node': {
+            const v = S.adv.a.keep_staged_node;
+            control = advPick(key, esc(v || 'off'), v ? '' : 'dflt');
             break;
         }
         case 'evac_nodes': {
@@ -2695,6 +2700,16 @@ function advOptions(key) {
                 .concat(S.model.parts.map(p => ({
                     label: M().shortPart(p), on: S.adv.a.auto_request_payload === p,
                     run: () => { S.adv.a.auto_request_payload = p; },
+                })));
+        // The staging nodes of the routing set: a spot is a node a robot sets
+        // one bin down on and lifts it from, which is what a staging node is.
+        // It may be this position's own inbound staging (the robot waits under
+        // the spare); the save refuses one another position already names.
+        case 'keep_staged_node':
+            return [{ label: 'off', on: !S.adv.a.keep_staged_node, run: () => { S.adv.a.keep_staged_node = ''; } }]
+                .concat(routing.filter(r => r.role === 'staging').map(r => ({
+                    label: r.label || r.core_node_name, on: S.adv.a.keep_staged_node === r.core_node_name,
+                    run: () => { S.adv.a.keep_staged_node = r.core_node_name; },
                 })));
         case 'changeover_carryover_disposition':
             return Object.keys(CARRYOVER).map(k => ({

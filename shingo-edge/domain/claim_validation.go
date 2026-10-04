@@ -153,9 +153,11 @@ type ClaimLeg struct {
 	Field, Role, Name string
 }
 
-// ClaimLegs lists the six legs of a claim, in a fixed order. Every writer of a
-// claim row asks about these six through LaneLegs, so a seventh leg added to
-// the claim is added here or it is not checked anywhere.
+// ClaimLegs lists the seven legs of a claim, in a fixed order. Every writer of
+// a claim row asks about these seven through LaneLegs, so an eighth leg added
+// to the claim is added here or it is not checked anywhere. The keep-staged
+// node is a leg: a robot sets a spare down there and lifts it from there, so
+// it is offered as a staging node, and a lane is no more one than any other.
 func ClaimLegs(in NodeClaimInput) []ClaimLeg {
 	return []ClaimLeg{
 		{"inbound_source", RoutingRoleSource, in.InboundSource},
@@ -164,6 +166,7 @@ func ClaimLegs(in NodeClaimInput) []ClaimLeg {
 		{"containment_destination", RoutingRoleDestination, in.ContainmentDestination},
 		{"inbound_staging", RoutingRoleStaging, in.InboundStaging},
 		{"outbound_staging", RoutingRoleStaging, in.OutboundStaging},
+		{"keep_staged_node", RoutingRoleStaging, OptValue(in.KeepStagedNode)},
 	}
 }
 
@@ -442,11 +445,12 @@ func validateKeyRoute(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError 
 
 // ErrKeepStagedSpot marks a write refused by the dedicated-spot check
 // (processes.CheckKeepStagedSpots): a configuration error, not a fault.
-var ErrKeepStagedSpot = errors.New("keep_staged")
+var ErrKeepStagedSpot = errors.New("keep_staged_node")
 
 // KeepStagedModesMessage is the refusal both write paths give a claim that
-// asks for keep_staged in a mode whose flowspec row forbids it.
-const KeepStagedModesMessage = "Keep staged applies to Single Robot and Two Robot claims only"
+// names a keep-staged node in a mode whose flowspec row forbids it.
+const KeepStagedModesMessage = "A keep-staged node applies to swap claims only: Sequential A/B, " +
+	"Single-robot swap, Two-robot swap and 2-Robot Press Index"
 
 // ValidateNodeClaim is the one server-side statement of what a claim must look
 // like. Pure: no database, no HTTP, no logging.
@@ -578,11 +582,11 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 			"Index robot fetches the replacement applies to 2-Robot Press Index only")
 	}
 
-	// A kept spare is lifted by the first step of the swap, and only the
-	// single_robot and two_robot swaps start with a pickup at inbound staging.
-	// The store refuses the same claim (modeArmViolation) by the same table.
-	if ClaimInputHas(in, flowspec.KeepStaged) && spec[flowspec.KeepStaged] == flowspec.Forbidden {
-		add("keep_staged", KeepStagedModesMessage)
+	// A kept spare is what a swap fetches its carrier from, and only the four
+	// swap modes fetch one. The store refuses the same claim (modeArmViolation)
+	// by the same table.
+	if ClaimInputHas(in, flowspec.KeepStagedNode) && spec[flowspec.KeepStagedNode] == flowspec.Forbidden {
+		add("keep_staged_node", KeepStagedModesMessage)
 	}
 
 	// STRICT MODES REFUSE EVERY FIELD THEY DO NOT USE (D4). The four rules

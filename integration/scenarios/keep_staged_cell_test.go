@@ -153,7 +153,7 @@ func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
 			StyleID: s.style, CoreNodeName: kscLine, Role: protocol.ClaimRoleConsume,
 			SwapMode: protocol.SwapModeTwoRobot, PayloadCode: s.part, UOPCapacity: 40,
 			InboundSource: kscMarket, InboundStaging: kscSpot, OutboundDestination: kscDest,
-			KeepStaged: domain.Ptr(true),
+			KeepStagedNode: domain.Ptr(kscSpot),
 		})
 		mustNil(t, err, "claim "+s.part)
 		if s.style == styleA {

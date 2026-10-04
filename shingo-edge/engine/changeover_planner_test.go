@@ -1280,8 +1280,8 @@ func setClaimFieldForTest(c *processes.NodeClaim, f flowspec.Field) {
 		c.LinesideSoftThreshold = 7
 	case flowspec.Sequence:
 		c.Sequence = 7
-	case flowspec.KeepStaged:
-		c.KeepStaged = true
+	case flowspec.KeepStagedNode:
+		c.KeepStagedNode = v
 	case flowspec.EvacuateOnChangeover:
 		c.EvacuateOnChangeover = true
 	case flowspec.ChangeoverEvacNodes:

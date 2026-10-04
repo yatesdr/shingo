@@ -430,22 +430,23 @@ func findingOnField(findings []FieldError, field string) bool {
 	return false
 }
 
-// TestValidateNodeClaim_KeepStagedFollowsTheMatrix: keep_staged is accepted
-// on single_robot and two_robot and refused at ingress on sequential and
-// two_robot_press_index, the modes whose flowspec row forbids it.
+// TestValidateNodeClaim_KeepStagedFollowsTheMatrix: a keep-staged node is
+// accepted in all four swap modes and refused at ingress on a loader card,
+// whose flowspec row forbids it.
 func TestValidateNodeClaim_KeepStagedFollowsTheMatrix(t *testing.T) {
 	t.Parallel()
 	for _, role := range flowspec.Roles() {
 		for mode, want := range map[protocol.SwapMode]bool{
 			protocol.SwapModeSingleRobot:        false,
 			protocol.SwapModeTwoRobot:           false,
-			protocol.SwapModeSequential:         true,
-			protocol.SwapModeTwoRobotPressIndex: true,
+			protocol.SwapModeSequential:         false,
+			protocol.SwapModeTwoRobotPressIndex: false,
+			protocol.SwapModeManualSwap:         true,
 		} {
 			c := completeClaimFor(role, mode)
-			c.KeepStaged = Ptr(true)
-			if got := hasField(ValidateNodeClaim(c, ClaimNodeContext{}), "keep_staged"); got != want {
-				t.Errorf("%s/%s keep_staged refused = %v, want %v", role, mode, got, want)
+			c.KeepStagedNode = Ptr("KS-SPOT")
+			if got := hasField(ValidateNodeClaim(c, ClaimNodeContext{}), "keep_staged_node"); got != want {
+				t.Errorf("%s/%s keep_staged_node refused = %v, want %v", role, mode, got, want)
 			}
 		}
 	}
@@ -493,7 +494,7 @@ var serverEnforcedForbids = map[flowspec.Field]bool{
 	flowspec.IndexRobotSupplies:             true,
 	flowspec.KeyRoute:                       true,
 	flowspec.ChangeoverCarryoverDisposition: true,
-	flowspec.KeepStaged:                     true,
+	flowspec.KeepStagedNode:                 true,
 }
 
 func serverEnforcesForbid(mode protocol.SwapMode, f flowspec.Field) bool {

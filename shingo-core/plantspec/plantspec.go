@@ -350,10 +350,11 @@ type Claim struct {
 	// plant either has it or does not, and a scenario that cannot express it
 	// can only test the shape half the presses run.
 	IndexRobotSupplies bool `yaml:"index_robot_supplies,omitempty"`
-	// KeepStaged keeps a spare bin on InboundStaging, and the swap starts
-	// from it. single_robot and two_robot only, and the spot is dedicated to
-	// this line (Validate's keep-staged check).
-	KeepStaged      bool     `yaml:"keep_staged"`
+	// KeepStagedNode is the keep-staged node: the node this line's full or
+	// empty comes from instead of InboundSource, with a spare kept standing on
+	// it. Blank is off. Any swap mode; it may be the claim's InboundStaging,
+	// and is otherwise dedicated to this line (Validate's keep-staged check).
+	KeepStagedNode  string   `yaml:"keep_staged_node,omitempty"`
 	AllowedPayloads []string `yaml:"allowed_payloads,omitempty"`
 	// ── THE ROUND-3/4 CLAIM CONFIG, SEEDABLE FOR THE SAME REASON THE FLIP IS ──
 	//

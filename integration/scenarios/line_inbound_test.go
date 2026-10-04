@@ -34,7 +34,7 @@ func (c *ksrCell) sibling() int64 {
 		StyleID: style, CoreNodeName: ksrLine, Role: c.role, SwapMode: c.mode,
 		PayloadCode: ksrPartA, UOPCapacity: 40, ReorderPoint: 10,
 		InboundSource: ksrMktA, InboundStaging: ksrSpot, OutboundStaging: ksrOutStg,
-		OutboundDestination: ksrDest, KeepStaged: domain.Ptr(false),
+		OutboundDestination: ksrDest, KeepStagedNode: domain.Ptr(""),
 	})
 	mustNil(c.t, err, "sibling claim")
 	_, err = db.EnsureProcessNodeRuntime(id)

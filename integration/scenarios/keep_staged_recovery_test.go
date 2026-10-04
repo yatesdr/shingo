@@ -211,8 +211,7 @@ type ksrOpts struct {
 	// claimC: some line's consume claim sources the blocker's part (C) from
 	// B's market, so a carried blocker has a declared place to go back to.
 	claimC bool
-	// plain: the claims do not keep a staged spare, so any swap mode may be
-	// asked for (keep-staged admits single and two robot only).
+	// plain: the claims do not keep a staged spare.
 	plain bool
 }
 
@@ -248,8 +247,9 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	line := node(&corenodes.Node{Name: ksrLine})
 	spot := node(&corenodes.Node{Name: ksrSpot})
 	node(&corenodes.Node{Name: ksrOutStg})
+	var deck *corenodes.Node
 	if o.mode == protocol.SwapModeTwoRobotPressIndex {
-		node(&corenodes.Node{Name: ksrDeck})
+		deck = node(&corenodes.Node{Name: ksrDeck})
 	}
 	// The outbound destination is a group of slots: each swap's evac leaves a
 	// bin there.
@@ -299,6 +299,11 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	mustNil(t, coreDB.ConfirmBinManifest(lb.ID, ""), "line confirm")
 
 	stock("KSR-A-SPARE", ksrPartA, c.typeA, spot)
+	if o.mode == protocol.SwapModeTwoRobotPressIndex && !o.plain {
+		// A running press holds its next bin on deck, as the line holds its
+		// own: the swap indexes it forward and refills the deck behind it.
+		stock("KSR-A-DECK", ksrPartA, c.typeA, deck)
+	}
 	for i := 0; i < 4; i++ {
 		stock(fmt.Sprintf("KSR-A%d", i+1), ksrPartA, c.typeA, slotsA[i])
 	}
@@ -319,6 +324,14 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 		node(&corenodes.Node{Name: ksrMktB + "-SHUF", ParentID: &c.mktB.ID})
 		stock("KSR-C-BLOCKER", ksrPartC, c.typeB, deep[0])
 		stock("KSR-B1", ksrPartB, c.typeB, deep[1])
+		if o.mode == protocol.SwapModeTwoRobotPressIndex {
+			// A press changing over carrier type sends each of its positions
+			// its own B bin from B's market, ahead of the spot's refill. Two
+			// reachable ones for them, so the spot's refill is the dig.
+			for i, slot := range slotsOf(c.mktB, 2) {
+				stock(fmt.Sprintf("KSR-B-POS%d", i+1), ksrPartB, c.typeB, slot)
+			}
+		}
 	} else {
 		slotsB := slotsOf(c.mktB, 6)
 		for i := 0; i < 3; i++ {
@@ -365,7 +378,22 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 			StyleID: s.style, CoreNodeName: ksrLine, Role: o.role, SwapMode: o.mode,
 			PayloadCode: s.part, UOPCapacity: 40, ReorderPoint: 10,
 			InboundSource: s.mkt, InboundStaging: ksrSpot, OutboundStaging: ksrOutStg,
-			OutboundDestination: ksrDest, KeepStaged: domain.Ptr(!o.plain), AutoReorder: domain.Ptr(true),
+			OutboundDestination: ksrDest, KeepStagedNode: domain.Ptr(""), AutoReorder: domain.Ptr(true),
+		}
+		if !o.plain {
+			// The spot is the keep-staged node. On the two staging modes it is
+			// also the inbound staging, the robot waiting under the spare; the
+			// other two have no staging hop, so it is a node of its own.
+			in.KeepStagedNode = domain.Ptr(ksrSpot)
+			if o.mode == protocol.SwapModeSequential || o.mode == protocol.SwapModeTwoRobotPressIndex {
+				in.InboundStaging = ""
+			}
+			// A sequential cell here is one position with no partner, as the
+			// sequential line scenarios run it. Its changeover leg is not
+			// planned (the planner asks for the partner and leaves the line to
+			// the operator), so its rows prove the spot's own decisions at the
+			// start and the cancel, and the recovery after; the leg fetching
+			// from the spot is pinned in the Edge's changeover tests.
 		}
 		if o.mode == protocol.SwapModeTwoRobotPressIndex {
 			in.PairedCoreNode = ksrDeck
@@ -835,7 +863,7 @@ func (c *ksrCell) swap(label string, trigger func()) (legs []domain.Order, fast 
 		}
 	}
 	want := 2
-	if c.mode == protocol.SwapModeSingleRobot {
+	if c.mode == protocol.SwapModeSingleRobot || c.mode == protocol.SwapModeSequential {
 		want = 1
 	}
 	if len(legs) != want {
@@ -861,6 +889,10 @@ func (c *ksrCell) swap(label string, trigger func()) (legs []domain.Order, fast 
 		}
 		return true
 	})
+	if c.mode == protocol.SwapModeSequential {
+		c.seqCycle(label, legs[0])
+		return legs, fast
+	}
 	for _, l := range legs {
 		c.drive(c.coreOf(l), "RUNNING", "WAITING")
 	}
@@ -900,6 +932,44 @@ func (c *ksrCell) swap(label string, trigger func()) (legs []domain.Order, fast 
 		}
 	}
 	return legs, fast
+}
+
+// seqCycle runs a sequential line's swap to the end: the removal waits at the
+// line and, on its way, makes the backfill; the operator releases; the removal
+// and then the backfill finish, the fleet carrying the plain orders meanwhile
+// (the backfill fetches its carrier from the spot, and waits there for one when
+// the spot is bare); the operator confirms.
+func (c *ksrCell) seqCycle(label string, removal domain.Order) {
+	c.t.Helper()
+	backfill := c.seqAtTheLine(label, removal)
+	mustNil(c.t, c.edge.Engine.ReleaseOrderWithLineside(removal.ID,
+		edgeengine.ReleaseDisposition{CalledBy: "ksr-operator"}), label+": release")
+	c.settle()
+	c.drive(c.coreOf(removal), "RUNNING", "FINISHED")
+	c.eventually(label+": the removal and the backfill delivered and confirmed", func() bool {
+		c.fleetStep()
+		if co := c.coreOf(backfill); co.VendorOrderID != "" {
+			switch c.vendorState(co.VendorOrderID) {
+			case "CREATED", "RUNNING":
+				c.drive(co, "RUNNING", "FINISHED")
+			}
+		}
+		done := true
+		for _, o := range []domain.Order{removal, backfill} {
+			if c.edgeRow(o.ID).Status == protocol.StatusDelivered {
+				mustNil(c.t, c.edge.Engine.OrderManager().ConfirmDelivery(o.ID, 1), "confirm")
+			}
+			if !protocol.IsTerminal(c.edgeRow(o.ID).Status) || !protocol.IsTerminal(c.coreOf(o).Status) {
+				done = false
+			}
+		}
+		return done
+	})
+	for _, o := range []domain.Order{removal, backfill} {
+		if s := c.coreOf(o).Status; s != protocol.StatusConfirmed {
+			c.t.Errorf("%s: order %d ended %s at Core, want confirmed", label, o.ID, s)
+		}
+	}
 }
 
 // fill runs the delivery the trigger asks for on an empty line to the end: one
@@ -1382,6 +1452,12 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 		{protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot},
 		{protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot},
 		{protocol.ClaimRoleProduce, protocol.SwapModeSingleRobot},
+		// The two modes with no staging hop keep a spare as well: the
+		// sequential backfill and the press's refill leg fetch from the spot.
+		{protocol.ClaimRoleConsume, protocol.SwapModeSequential},
+		{protocol.ClaimRoleProduce, protocol.SwapModeSequential},
+		{protocol.ClaimRoleConsume, protocol.SwapModeTwoRobotPressIndex},
+		{protocol.ClaimRoleProduce, protocol.SwapModeTwoRobotPressIndex},
 	}
 	for _, cl := range cells {
 		for _, m := range ksrMoments {
@@ -1389,6 +1465,19 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 				continue
 			}
 			t.Run(fmt.Sprintf("%s/%s/%s", cl.role, cl.mode, m.name), func(t *testing.T) {
+				if m.buriedB && cl.mode == protocol.SwapModeTwoRobotPressIndex && cl.role == protocol.ClaimRoleConsume {
+					// NOT REACHED, and not for the spot. A consume press
+					// changing carrier type sends each position its own leg
+					// from B's market, and Core's intake judges the line
+					// position's leg by the order's payload (the outgoing
+					// part, which it lifts off the line) rather than its
+					// refill step's: it finds no reachable A full in B's
+					// market and digs B's lane for one, while the spot's
+					// refill takes a reachable B bin. So the spot's refill is
+					// never the dig this moment cancels at. The produce press,
+					// whose refill steps are empties, reaches it.
+					t.Skip("the consume press's own changeover leg digs B's lane (Core judges it by the order's payload)")
+				}
 				started := time.Now()
 				defer func() { t.Logf("case %s ran %s", m.name, time.Since(started).Round(time.Second)) }()
 				c := newKsrCell(t, ksrOpts{role: cl.role, mode: cl.mode, buriedB: m.buriedB, claimC: m.claimC})
@@ -1425,8 +1514,14 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 				if !fast {
 					t.Errorf("the level keeper's swap did not go to the fleet at once: not the fast swap")
 				}
-				if b, err := c.core.eng.DB().GetBin(spare.ID); err != nil || c.nodeName(b.NodeID) != ksrLine {
-					t.Errorf("the spare %s that stood on the spot is not at the line after the fast swap", spare.Label)
+				// Where the swap's fetch sets its carrier down: the line, or on a
+				// press the deck behind it, the index unchanged.
+				wantAt := ksrLine
+				if cl.mode == protocol.SwapModeTwoRobotPressIndex {
+					wantAt = ksrDeck
+				}
+				if b, err := c.core.eng.DB().GetBin(spare.ID); err != nil || c.nodeName(b.NodeID) != wantAt {
+					t.Errorf("the spare %s that stood on the spot is not at %s after the fast swap", spare.Label, wantAt)
 				}
 				c.quiet()
 				c.dump("the end")

@@ -54,8 +54,8 @@ func ClaimHas(c *NodeClaim, f flowspec.Field) bool {
 		return c.LinesideSoftThreshold != 0
 	case flowspec.Sequence:
 		return c.Sequence != 0
-	case flowspec.KeepStaged:
-		return c.KeepStaged
+	case flowspec.KeepStagedNode:
+		return c.KeepStagedNode != ""
 	case flowspec.EvacuateOnChangeover:
 		return c.EvacuateOnChangeover
 	case flowspec.ChangeoverEvacNodes:
@@ -114,8 +114,8 @@ func ClaimInputHas(in NodeClaimInput, f flowspec.Field) bool {
 		return in.LinesideSoftThreshold != 0
 	case flowspec.Sequence:
 		return in.Sequence != nil && *in.Sequence != 0
-	case flowspec.KeepStaged:
-		return in.KeepStaged != nil && *in.KeepStaged
+	case flowspec.KeepStagedNode:
+		return OptValue(in.KeepStagedNode) != ""
 	case flowspec.EvacuateOnChangeover:
 		return in.EvacuateOnChangeover
 	case flowspec.ChangeoverEvacNodes:

@@ -907,11 +907,11 @@ func TestSaveFlow_WritesACellTheEngineerHasConfigured(t *testing.T) {
 	in := domain.InputFromClaim(*same)
 	in.ReorderPoint = 42
 	in.LinesideSoftThreshold = 7
-	// The third, keep_staged, is pointer-gated and not on the cell, so a save
+	// The third, keep_staged_node, is pointer-gated and not on the cell, so a save
 	// that does not open the Advanced sheet can only preserve or destroy it.
 	// The kept spare needs a staging node of its own: the scenario's other
 	// claims share FLOW-STG, and a kept spot is dedicated to its line.
-	in.InboundStaging, in.KeepStaged = "FLOW-SAME-SPOT", domain.Ptr(true)
+	in.InboundStaging, in.KeepStagedNode = "FLOW-SAME-SPOT", domain.Ptr("FLOW-SAME-SPOT")
 	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
 	testutil.MustNoErr(t, err, "configure the cell")
 
@@ -946,8 +946,8 @@ func TestSaveFlow_WritesACellTheEngineerHasConfigured(t *testing.T) {
 	if after.ReorderPoint != 42 {
 		t.Errorf("reorder_point = %d, want 42 — a composer save flattened a replenishment policy", after.ReorderPoint)
 	}
-	if !after.KeepStaged {
-		t.Error("keep_staged was cleared by a composer save that never opened the Advanced sheet")
+	if after.KeepStagedNode != "FLOW-SAME-SPOT" {
+		t.Errorf("keep_staged_node = %q: cleared by a composer save that never opened the Advanced sheet", after.KeepStagedNode)
 	}
 	if after.LinesideSoftThreshold != 7 {
 		t.Errorf("lineside_soft_threshold = %d, want 7", after.LinesideSoftThreshold)

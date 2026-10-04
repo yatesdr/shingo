@@ -87,7 +87,7 @@ func TestScenario_KeepStagedWrongTypeEmpty_CoreMoveIsTheExit(t *testing.T) {
 	claimID, err := edge.DB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: line, Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeTwoRobot,
 		PayloadCode: part, UOPCapacity: 40, InboundSource: market, InboundStaging: spot, OutboundDestination: dest,
-		KeepStaged: domain.Ptr(true),
+		KeepStagedNode: domain.Ptr(spot),
 	})
 	mustNil(t, err, "claim")
 	mustNil(t, edge.DB.SetProcessNodeRuntime(nodeID, &claimID, 30), "runtime claim")

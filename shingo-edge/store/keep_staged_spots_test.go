@@ -16,12 +16,16 @@ import (
 // between cells in one save, is pinned in engine/.
 
 // spotClaim is a two_robot claim at line, staging at staging, keeping a spare
-// there when keep is set.
+// there when keep is set (the same node as both).
 func spotClaim(styleID int64, line, staging string, keep bool) processes.NodeClaimInput {
+	spot := ""
+	if keep {
+		spot = staging
+	}
 	return processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: line, Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeTwoRobot,
 		PayloadCode: "PART", InboundStaging: staging, InboundSource: "MARKET", OutboundDestination: "DEST",
-		KeepStaged: domain.Ptr(keep),
+		KeepStagedNode: domain.Ptr(spot),
 	}
 }
 
@@ -39,7 +43,7 @@ func wantSpotRefusal(t *testing.T, err error, mustName ...string) {
 
 // TestKeepStagedSpot_RefusedInBothSaveOrders: whichever claim is saved second
 // meets the check — a claim naming a node that is already a kept spot, and a
-// claim turning keep_staged on at a node another claim already names.
+// claim naming as its keep-staged node a node another claim already names.
 func TestKeepStagedSpot_RefusedInBothSaveOrders(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
@@ -54,8 +58,8 @@ func TestKeepStagedSpot_RefusedInBothSaveOrders(t *testing.T) {
 	_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, later)
 	wantSpotRefusal(t, err, "SPOT-A", "LINE-A", "LINE-B", "outbound_destination", "this Edge's claims")
 
-	// (b) Two claims share plain staging, which is allowed; turning keep_staged
-	// on for one of them makes the other's staging a touch on its spot.
+	// (b) Two claims share plain staging, which is allowed; naming it as one's
+	// keep-staged node makes the other's staging a touch on its spot.
 	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, spotClaim(sid, "LINE-C", "SHARED", false)); err != nil {
 		t.Fatalf("first sharer: %v", err)
 	}
@@ -65,7 +69,7 @@ func TestKeepStagedSpot_RefusedInBothSaveOrders(t *testing.T) {
 	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, spotClaim(sid, "LINE-D", "SHARED", true))
 	wantSpotRefusal(t, err, "SHARED", "LINE-C", "LINE-D", "inbound_staging")
 	c, err := db.GetStyleNodeClaimByNode(sid, "LINE-D")
-	if c = testutil.Must(t, c, err, "read LINE-D"); c == nil || c.KeepStaged {
+	if c = testutil.Must(t, c, err, "read LINE-D"); c == nil || c.KeepStagedNode != "" {
 		t.Errorf("the refused write landed: %+v", c)
 	}
 }
@@ -89,7 +93,7 @@ func TestKeepStagedSpot_LinePositionAcrossStylesIsRefused(t *testing.T) {
 }
 
 // TestKeepStagedSpot_CopyIntoAnotherProcessIsRefused: a copy carries
-// keep_staged, so copying a kept spare into a style of another process would
+// keep_staged_node, so copying a kept spare into a style of another process would
 // put one spot on two processes' lines. The whole copy rolls back.
 func TestKeepStagedSpot_CopyIntoAnotherProcessIsRefused(t *testing.T) {
 	t.Parallel()
@@ -136,5 +140,45 @@ func TestKeepStagedSpot_MovingABusySpotIsRefused(t *testing.T) {
 	}
 	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, spotClaim(sid, "LINE-M", "SPOT-NEW", true)); err != nil {
 		t.Fatalf("move with no open order refused: %v", err)
+	}
+}
+
+// TestKeepStagedSpot_ANodeOfItsOwn: the keep-staged node need not be the
+// claim's inbound staging. A spot of its own saves; the claim's own routes may
+// not name it, other than its inbound staging; and a second claim in the style
+// may not keep a spare on it too.
+func TestKeepStagedSpot_ANodeOfItsOwn(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	_, sid := seedProcessStyle(t, db, "KS-PROC", "KS-STYLE")
+
+	own := spotClaim(sid, "LINE-O", "STG-O", false)
+	own.KeepStagedNode = domain.Ptr("SPOT-O")
+	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, own); err != nil {
+		t.Fatalf("a spot of its own beside the inbound staging: %v", err)
+	}
+
+	selfTouch := spotClaim(sid, "LINE-S", "STG-S", false)
+	selfTouch.KeepStagedNode, selfTouch.OutboundDestination = domain.Ptr("SPOT-S"), "SPOT-S"
+	_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, selfTouch)
+	wantSpotRefusal(t, err, "SPOT-S", "LINE-S", "outbound_destination")
+
+	second := spotClaim(sid, "LINE-T", "STG-T", false)
+	second.KeepStagedNode = domain.Ptr("SPOT-O")
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, second)
+	wantSpotRefusal(t, err, "SPOT-O", "LINE-O", "LINE-T", "keep_staged_node")
+}
+
+// TestKeepStagedSpot_ALaneIsRefused: the keep-staged node is a claim leg, so a
+// lane on it is refused at the store's door like a lane on any other leg.
+func TestKeepStagedSpot_ALaneIsRefused(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	_, sid := seedProcessStyle(t, db, "KS-PROC", "KS-STYLE")
+	in := spotClaim(sid, "LINE-L", "STG-L", false)
+	in.KeepStagedNode = domain.Ptr("KS-LANE")
+	_, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{Lanes: map[string]bool{"KS-LANE": true}}, in)
+	if !errors.Is(err, domain.ErrLaneLeg) || !strings.Contains(err.Error(), "keep_staged_node") {
+		t.Fatalf("err = %v, want the lane refusal on keep_staged_node", err)
 	}
 }

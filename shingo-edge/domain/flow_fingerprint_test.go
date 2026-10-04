@@ -97,7 +97,7 @@ func TestFlowFingerprint_ChangesOnEveryListedColumn(t *testing.T) {
 		"containment_destination":          func(c *NodeClaim) { c.ContainmentDestination += "X" },
 		"allowed_payload_codes":            func(c *NodeClaim) { c.AllowedPayloadCodes = []string{"A"} },
 		"auto_request_payload":             func(c *NodeClaim) { c.AutoRequestPayload = "A" },
-		"keep_staged":                      func(c *NodeClaim) { c.KeepStaged = true },
+		"keep_staged_node":                 func(c *NodeClaim) { c.KeepStagedNode = "SPOT-1" },
 		"evacuate_on_changeover":           func(c *NodeClaim) { c.EvacuateOnChangeover = true },
 		"paired_core_node":                 func(c *NodeClaim) { c.PairedCoreNode += "X" },
 		"auto_confirm":                     func(c *NodeClaim) { c.AutoConfirm = true },

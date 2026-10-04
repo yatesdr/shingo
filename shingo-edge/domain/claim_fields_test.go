@@ -40,8 +40,8 @@ func populateClaimField(c *NodeClaim, f flowspec.Field) {
 		c.LinesideSoftThreshold = 7
 	case flowspec.Sequence:
 		c.Sequence = 7
-	case flowspec.KeepStaged:
-		c.KeepStaged = true
+	case flowspec.KeepStagedNode:
+		c.KeepStagedNode = v
 	case flowspec.EvacuateOnChangeover:
 		c.EvacuateOnChangeover = true
 	case flowspec.ChangeoverEvacNodes:
@@ -101,8 +101,8 @@ func populateClaimInputField(in *NodeClaimInput, f flowspec.Field) {
 		in.LinesideSoftThreshold = 7
 	case flowspec.Sequence:
 		in.Sequence = &seven
-	case flowspec.KeepStaged:
-		in.KeepStaged = &t
+	case flowspec.KeepStagedNode:
+		in.KeepStagedNode = &v
 	case flowspec.EvacuateOnChangeover:
 		in.EvacuateOnChangeover = true
 	case flowspec.ChangeoverEvacNodes:

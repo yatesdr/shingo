@@ -383,8 +383,9 @@ func planSwapAction(action changeover.NodeAction, diff ChangeoverNodeDiff, node 
 	// two_robot still stages its supply leg's new bin, so it requires
 	// InboundStaging (but not OutboundStaging — its evac goes straight to
 	// OutboundDestination); single_robot (and the default fallthrough)
-	// require both. A keep-staged to-claim needs its InboundStaging too: it
-	// is where the spare stands (changeoverDispatch).
+	// require both. A keep-staged to-claim needs its InboundStaging too: its
+	// swap still collects the incoming carrier there, whether it fetched it
+	// from the spot or the spot is the staging node itself.
 	if !directTripChangeoverMode(diff.FromClaim.SwapMode) {
 		switch diff.FromClaim.SwapMode {
 		case protocol.SwapModeTwoRobot:

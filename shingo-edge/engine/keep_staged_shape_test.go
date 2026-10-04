@@ -9,9 +9,10 @@ import (
 
 // THE KEEP-STAGED SWAP, AS IT GOES OUT ON THE WIRE.
 //
-// A keep-staged claim keeps a spare on its inbound staging node and its swap
-// starts from it. Four things hold for every leg it sends, steady state and
-// changeover, both roles, both modes that offer it:
+// A keep-staged claim keeps a spare on its spot and its swap fetches from it.
+// Where the spot is also the claim's inbound staging (the robot waits under the
+// spare), four things hold for every leg it sends, steady state and changeover,
+// both roles, both modes that stage:
 //
 //   - there is no fetch: nothing picks up at the inbound source;
 //   - the spare is lifted once, by a pickup that names the claim's part and is
@@ -27,7 +28,7 @@ import (
 func keepStagedClaim(role protocol.ClaimRole, mode protocol.SwapMode, payload string) *processes.NodeClaim {
 	c := goldenClaim(role, mode, payload, "", false)
 	c.PairedCoreNode = "" // single_robot forbids pairing; two_robot does not read it
-	c.KeepStaged = true
+	c.KeepStagedNode = c.InboundStaging
 	return c
 }
 
@@ -84,7 +85,7 @@ func TestKeepStagedSwap_LiftsTheSpareOnceAfterTheWait(t *testing.T) {
 
 			for _, situation := range []ChangeoverSituation{SituationSwap, SituationEvacuate} {
 				from := keepStagedClaim(role, mode, "P-FROM")
-				from.KeepStaged = false
+				from.KeepStagedNode = ""
 				to := keepStagedClaim(role, mode, "P-TO")
 				action := planNodeAction(ChangeoverNodeDiff{CoreNodeName: "LINE", Situation: situation,
 					FromClaim: from, ToClaim: to}, node, false, nil)
@@ -122,7 +123,7 @@ func TestPlanNodeAction_KeepStagedFromClaimIsPlanned(t *testing.T) {
 	for _, mode := range []protocol.SwapMode{protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot} {
 		from := keepStagedClaim(protocol.ClaimRoleConsume, mode, "P-FROM")
 		to := keepStagedClaim(protocol.ClaimRoleConsume, mode, "P-TO")
-		to.KeepStaged = false
+		to.KeepStagedNode = ""
 		action := planNodeAction(ChangeoverNodeDiff{CoreNodeName: "LINE", Situation: SituationSwap,
 			FromClaim: from, ToClaim: to}, &processes.Node{ID: 1, Name: "LINE"}, false, nil)
 		if action.Err != nil {

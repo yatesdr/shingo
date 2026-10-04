@@ -2664,21 +2664,23 @@ separate deprecations file, and a link to one would be a link to nothing.
   legacy row still renders when opened in edit mode. The allowlist, the
   dropdown, and its drift test all key on `protocol.ConfigurableSwapModes()`.
 
-### `claim.keep_staged` column — configurable; changeover planning not built yet
+### `claim.keep_staged` column — REPLACED by `claim.keep_staged_node`
 - **Withheld:** 2026-09-10 to 2026-10-03.
-- **Configurable again:** flowspec marks it Used for `single_robot` and
-  `two_robot` and Forbidden elsewhere; `domain.ValidateNodeClaim` and
-  `processes.UpsertClaim` refuse it on any other mode. The composer's Advanced
-  sheet carries it, and clone and copy carry it.
+- **Replaced:** 2026-10-04. The keep-staged node is named on the claim
+  (`keep_staged_node`, blank is off) instead of a flag that armed a spot on
+  `inbound_staging`. The claims table's rebuild drops the old column; nothing
+  is carried into the name (no plant ever ran keep-staged).
+- **Configurable:** flowspec marks it Used for all four swap modes and
+  Forbidden elsewhere; `domain.ValidateNodeClaim` and `processes.UpsertClaim`
+  refuse it on any other mode. The composer's Advanced sheet picks it from the
+  routing set's staging nodes, and clone and copy carry it.
 - **Dedicated spot:** every write transaction that touches claims ends with
   `processes.CheckKeepStagedSpots`, which refuses another claim naming a kept
-  spot (any routing column within a style or across processes; staging only
-  across the styles of one process) and refuses moving or clearing a spot
-  while open orders deliver to it. Per Edge only. `plantspec.Validate` carries
-  the twin for the seeder.
-- **Still refused:** the changeover planner errors a node whose claim keeps a
-  spare (`keepStagedWithheld` in `shingo-edge/engine/changeover_planner.go`)
-  until the keep-staged swap shapes replace it.
+  spot (any routing column within a style or across processes; staging or its
+  own spot only across the styles of one process) and refuses moving or
+  clearing a spot while open orders deliver to it. The claim's own inbound
+  staging may be the spot. A lane is refused on it, as on every claim leg.
+  Per Edge only. `plantspec.Validate` carries the twin for the seeder.
 
 ### `ClaimRole = "changeover"` — REMOVED (UI consistency refactor)
 - **Status:** removed. Surviving evacuate-during-changeover mechanic is

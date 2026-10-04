@@ -686,13 +686,14 @@ func TestChangeoverFlow_CutoverCompletion(t *testing.T) {
 // Section 4: Keep-staged edge cases
 // ===========================================================================
 
-// setLegacyKeepStagedClaim writes keep_staged=1 behind the store's back, on a
-// claim whose retired mode the field matrix would refuse it on. Rows written
-// before the matrix carry it, and the planner has to answer for them.
+// setLegacyKeepStagedClaim names the claim's inbound staging as its keep-staged
+// node behind the store's back, on a claim whose retired mode the field matrix
+// would refuse it on. A row written before the matrix may carry one, and the
+// planner has to answer for it.
 func setLegacyKeepStagedClaim(t *testing.T, db *store.DB, claimID int64) {
 	t.Helper()
-	if _, err := db.DB.Exec(`UPDATE style_node_claims SET keep_staged=1 WHERE id=?`, claimID); err != nil {
-		t.Fatalf("set legacy keep_staged on claim %d: %v", claimID, err)
+	if _, err := db.DB.Exec(`UPDATE style_node_claims SET keep_staged_node=inbound_staging WHERE id=?`, claimID); err != nil {
+		t.Fatalf("set legacy keep_staged_node on claim %d: %v", claimID, err)
 	}
 }
 

@@ -11,7 +11,7 @@ import (
 // rebuildStyleNodeClaims normalises style_node_claims on databases that predate
 // the current column defaults.
 //
-// THREE CHANGES, ONE REBUILD. SQLite has no ALTER COLUMN DROP DEFAULT, so each
+// FOUR CHANGES, ONE REBUILD. SQLite has no ALTER COLUMN DROP DEFAULT, so each
 // of these needs the table recreated â€” and rebuilding the same table twice in a
 // week is how a plant deploy goes wrong:
 //
@@ -24,6 +24,15 @@ import (
 //	swap_mode     DEFAULT 'simple' -> none. Same shape, older.
 //	below_reorder_since  added by the ALTER in migrate(); the rebuild carries it
 //	              so the fresh and upgraded paths land on ONE shape.
+//	keep_staged   dropped. The keep-staged node is named on the claim
+//	              (keep_staged_node, added by the ALTER in migrate()), and the
+//	              flag that armed a spot on inbound_staging goes. Its value is
+//	              NOT carried into the name: the flags stored before keeping a
+//	              staged spare was built were cleared (migration 13), and
+//	              nothing with keep-staged was ever deployed, so there is no
+//	              plant's spot to carry. A database with the column is
+//	              rebuilt once; after that the column is gone and the guard
+//	              below does not fire again.
 //
 // Both defaults are INERT today â€” every writer (UpsertStyleNodeClaim,
 // cloneClaimColumns, seed_edge) names its column â€” so nothing behaves
@@ -99,7 +108,11 @@ func (db *DB) rebuildStyleNodeClaims() error {
 	if err != nil {
 		return err
 	}
-	if autoDflt != "1" && !swapHasDflt {
+	hasKeepStagedFlag, err := schema.TableHasColumn(db.DB, "style_node_claims", "keep_staged")
+	if err != nil {
+		return err
+	}
+	if autoDflt != "1" && !swapHasDflt && !hasKeepStagedFlag {
 		return nil // already the current shape: a fresh install, or already run
 	}
 
@@ -237,7 +250,7 @@ CREATE TABLE style_node_claims (
     containment_destination TEXT NOT NULL DEFAULT '',
     allowed_payload_codes   TEXT NOT NULL DEFAULT '',
     auto_request_payload    TEXT NOT NULL DEFAULT '',
-    keep_staged             INTEGER NOT NULL DEFAULT 0,
+    keep_staged_node        TEXT NOT NULL DEFAULT '',
     evacuate_on_changeover  INTEGER NOT NULL DEFAULT 0,
     paired_core_node        TEXT NOT NULL DEFAULT '',
     auto_confirm            INTEGER NOT NULL DEFAULT 0,
@@ -274,7 +287,7 @@ CREATE TABLE style_node_claims (
 INSERT INTO style_node_claims (
     id, style_id, core_node_name, role, swap_mode, payload_code, uop_capacity,
     reorder_point, auto_reorder, inbound_staging, outbound_staging, inbound_source,
-    outbound_destination, containment_destination, allowed_payload_codes, auto_request_payload, keep_staged,
+    outbound_destination, containment_destination, allowed_payload_codes, auto_request_payload, keep_staged_node,
     evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
     lineside_soft_threshold, reuse_compatible_bins, auto_push, reorder_point_source,
     below_reorder_since, created_at, staging_node, release_node, inbound_source_node,
@@ -287,7 +300,7 @@ INSERT INTO style_node_claims (
 SELECT
     id, style_id, core_node_name, role, swap_mode, payload_code, uop_capacity,
     reorder_point, auto_reorder, inbound_staging, outbound_staging, inbound_source,
-    outbound_destination, containment_destination, allowed_payload_codes, auto_request_payload, keep_staged,
+    outbound_destination, containment_destination, allowed_payload_codes, auto_request_payload, keep_staged_node,
     evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
     lineside_soft_threshold, reuse_compatible_bins, auto_push, reorder_point_source,
     below_reorder_since, created_at, staging_node, release_node, inbound_source_node,

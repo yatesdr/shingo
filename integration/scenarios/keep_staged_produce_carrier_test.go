@@ -80,7 +80,7 @@ func TestScenario_KeepStagedProduceSupplyNeverTakesTheOldCarrier(t *testing.T) {
 			to := &processes.NodeClaim{
 				CoreNodeName: line.Name, Role: protocol.ClaimRoleProduce, SwapMode: mode, PayloadCode: pNew.Code,
 				InboundStaging: spot.Name, OutboundStaging: outStage.Name, InboundSource: p + "-SRC",
-				OutboundDestination: dest.Name, KeepStaged: true,
+				OutboundDestination: dest.Name, KeepStagedNode: spot.Name,
 			}
 			d := dispatch.NewDispatcher(coreDB, coreharness.NewTrackingBackend(), &noopEmitter{}, "core", "shingo.dispatch", nil)
 			env := &protocol.Envelope{Src: protocol.Address{Station: "edge.test"}}
