@@ -389,7 +389,7 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 // holder holds it. A holder that is reserve-holding (waiting for material, no
 // claimed bin) can hold it indefinitely.
 func SlotTakeableSQL(alias, ownerExpr string) string {
-	return fmt.Sprintf(`(%[1]s.claimed_by IS NULL OR %[1]s.claimed_by = %[2]s)
+	return fmt.Sprintf(`%[5]s
 		  AND NOT EXISTS (SELECT 1 FROM bins tk_bin WHERE tk_bin.node_id = %[1]s.id)
 		  AND NOT %[3]s
 		  AND NOT EXISTS (
@@ -399,7 +399,43 @@ func SlotTakeableSQL(alias, ownerExpr string) string {
 			  AND tk_ord.id <> %[2]s
 		  )`, alias, ownerExpr,
 		reservations.SlotSpokenForByStrangerSQL("tk_res", alias+".id", ownerExpr),
-		protocol.TerminalStatusSQLList())
+		protocol.TerminalStatusSQLList(),
+		slotNotHardClaimedSQL(alias, ownerExpr))
+}
+
+// slotNotHardClaimedSQL is SlotTakeableSQL's hard-claim clause: nobody holds the
+// slot's hard claim, or the owner does.
+func slotNotHardClaimedSQL(alias, ownerExpr string) string {
+	return fmt.Sprintf(`(%[1]s.claimed_by IS NULL OR %[1]s.claimed_by = %[2]s)`, alias, ownerExpr)
+}
+
+// SlotHeldByStrangerSQL is the part of SlotTakeableSQL that says another order
+// holds the slot: a stranger's hard claim on it, or a stranger's active slot
+// reservation on it. It is built from the same two clauses, so the two cannot
+// disagree.
+//
+// It leaves out SlotTakeableSQL's other two clauses on purpose. A chooser that
+// asks this instead has its own answer to them: loader placement judges a bin on
+// the node by who is lifting it, and for a loader a live order that only names
+// the node does not hold it (the first to claim goes, CheckDropoffCapacity).
+//
+// alias and ownerExpr are as SlotTakeableSQL's; an owner of 0 exempts nobody.
+func SlotHeldByStrangerSQL(alias, ownerExpr string) string {
+	return fmt.Sprintf(`(NOT %s OR %s)`,
+		slotNotHardClaimedSQL(alias, ownerExpr),
+		reservations.SlotSpokenForByStrangerSQL("hs_res", alias+".id", ownerExpr))
+}
+
+// SlotHeldByStranger asks SlotHeldByStrangerSQL of one node: whether an order
+// other than owner holds a hard claim or an active slot reservation on it.
+func SlotHeldByStranger(db *sql.DB, nodeID, owner int64) (bool, error) {
+	var held bool
+	err := db.QueryRow(`SELECT `+SlotHeldByStrangerSQL("n", "$2")+` FROM nodes n WHERE n.id = $1`,
+		nodeID, owner).Scan(&held)
+	if err != nil {
+		return false, fmt.Errorf("slot held on node %d: %w", nodeID, err)
+	}
+	return held, nil
 }
 
 // SlotSpokenForByStranger reports whether another order (anyone but owner) holds

@@ -40,9 +40,9 @@ import (
 //
 // Choosers in the engine package (the carried-bin return's chooser and the
 // stage-2 pull's windows) cannot be called from here and carry the same table
-// in engine/slot_chooser_drift_docker_test.go. The loader placement
-// (loader_place.go) is not in either table: it is a census finding left open,
-// because closing it needs more than the one clause.
+// in engine/slot_chooser_drift_docker_test.go. Loader placement (loader_place.go)
+// is here, as two rows: the home a leg is pointed at, and the buffer it falls
+// back to.
 
 type driftHold struct {
 	name string
@@ -247,6 +247,67 @@ var driftChoosers = []driftChooser{
 			return fx.candidate
 		},
 	},
+	// Loader placement. The live-delivery-node row passes because the door
+	// accepts, on purpose: a loader does not take the clause about a live order
+	// merely naming the slot. For a loader the first to claim goes
+	// (CheckDropoffCapacity), because two returns waiting on one empty home each
+	// name it and counting the name keeps both off it, and a return that gives
+	// its home up to a refill merely naming it is link 2 of the 2026-08-26 chain
+	// (loader_place_picks_docker_test.go pins both).
+	{name: "loader-place-home", flat: true, setup: loaderDriftHome(false), choose: loaderDriftChoice},
+	{name: "loader-place-buffer", flat: true, setup: loaderDriftHome(true), choose: loaderDriftChoice},
+}
+
+// loaderDriftHome makes the candidate a member of a dedicated loader: its home,
+// or, with asBuffer, its only buffer behind a home a bin stands on. The
+// candidate is a STOR-typed node standing alone, as a loader member does.
+func loaderDriftHome(asBuffer bool) func(t *testing.T, db *store.DB, fx *driftFixture) {
+	return func(t *testing.T, db *store.DB, fx *driftFixture) {
+		storType := &nodes.NodeType{Code: protocol.NodeClassSTOR, Name: "Storage Slot"}
+		if nt, err := db.GetNodeTypeByCode(protocol.NodeClassSTOR); err == nil && nt != nil {
+			storType = nt
+		} else {
+			testutil.MustNoErr(t, db.CreateNodeType(storType), "create STOR type")
+		}
+		fx.candidate = &nodes.Node{Name: fx.prefix + "-M", Enabled: true, NodeTypeID: &storType.ID}
+		testutil.MustNoErr(t, db.CreateNode(fx.candidate), "loader member")
+		loaderID, err := db.CreateLoader(store.Loader{Name: fx.prefix + "-LD", Role: "consume",
+			Layout: loaders.LayoutDedicatedPositions, Replenishment: "operator"})
+		testutil.MustNoErr(t, err, "create loader")
+		home := fx.candidate
+		if asBuffer {
+			home = &nodes.Node{Name: fx.prefix + "-H", Enabled: true, NodeTypeID: &storType.ID}
+			testutil.MustNoErr(t, db.CreateNode(home), "loader home")
+			createTestBinAtNode(t, db, fx.bp.Code, home.ID, fx.prefix+"-HOME-BIN")
+			testutil.MustNoErr(t, db.UpsertLoaderHome(store.LoaderHome{LoaderID: loaderID,
+				PositionNodeID: fx.candidate.ID, Kind: loaders.HomeKindBuffer}), "buffer")
+		}
+		testutil.MustNoErr(t, db.UpsertLoaderHome(store.LoaderHome{LoaderID: loaderID,
+			PositionNodeID: home.ID, PayloadCode: fx.bp.Code, Kind: loaders.HomeKindHome}), "home")
+	}
+}
+
+// loaderDriftChoice places a supply leg bound for the loader's home. The leg is
+// the claimant; a wait offers nothing.
+func loaderDriftChoice(t *testing.T, db *store.DB, d *Dispatcher, fx *driftFixture) *nodes.Node {
+	home := fx.candidate
+	if h, err := db.GetNodeByDotName(fx.prefix + "-H"); err == nil && h != nil {
+		home = h
+	}
+	staging := &nodes.Node{Name: fx.prefix + "-STG", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(staging), "staging")
+	leg := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID, o.StationID, o.OrderType, o.Status = fx.prefix+"-LEG", "test", OrderTypeComplex, protocol.StatusSourcing
+		o.SourceNode, o.DeliveryNode, o.PayloadCode = staging.Name, home.Name, fx.bp.Code
+	})
+	steps := []resolvedStep{vsWait(staging.Name), vsPick(staging.Name), vsDrop(home.Name)}
+	if wait := d.placeForDedicatedLoader(leg, steps, nil); wait != "" {
+		return nil
+	}
+	fx.claimant = leg
+	n, err := db.GetNodeByDotName(leg.DeliveryNode)
+	testutil.MustNoErr(t, err, "read the pick")
+	return n
 }
 
 func shuffleChoice(dwell bool) func(t *testing.T, db *store.DB, d *Dispatcher, fx *driftFixture) *nodes.Node {

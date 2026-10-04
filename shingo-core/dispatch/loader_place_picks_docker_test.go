@@ -16,7 +16,7 @@ import (
 )
 
 // loader_place_picks_docker_test.go — what each of loader placement's choose
-// points picks today, with nothing held and under each hold it already respects.
+// points picks, with nothing held and under each hold it respects.
 //
 // Loader placement (loader_place.go) chooses a landing node at several points:
 //
@@ -32,7 +32,15 @@ import (
 // Each row puts one hold on the node the choose point would otherwise take, and
 // names where the leg lands. The holds here are the ones placement reads: a bin
 // standing on the node, another order on its way there holding a claimed bin,
-// the order's own plan delivering there first, a carrier that does not belong.
+// the order's own plan delivering there first, a carrier that does not belong,
+// and another order's slot reservation or hard claim on it.
+//
+// A LIVE ORDER THAT ONLY NAMES THE NODE IS NOT A HOLD for a loader, and the
+// rows marked "named by a live order" pin that it is not. For a loader the
+// first to claim goes (CheckDropoffCapacity's doc): two returns waiting on one
+// empty home each name it, and counting the name would keep both off it, and a
+// return that gave its home up to a refill merely naming it is link 2 of the
+// 2026-08-26 chain (TestSpringfieldIncident_ReturnHoldsHome_ReplenishYields).
 
 // pickFixture is parkFixture with a second buffer after the first in member
 // order, so a refused first buffer shows which way the walk goes.
@@ -196,6 +204,38 @@ func both(a, b func(t *testing.T, db *store.DB, fx *pickFixture)) func(t *testin
 	}
 }
 
+// reservedBy puts another order's slot reservation on the node: pending, or
+// confirmed when confirm is set.
+func reservedBy(n func(fx *pickFixture) *nodes.Node, confirm bool) func(t *testing.T, db *store.DB, fx *pickFixture) {
+	return func(t *testing.T, db *store.DB, fx *pickFixture) {
+		h := strangerOrder(t, db, "pick-res-"+n(fx).Name)
+		testutil.MustNoErr(t, db.ReserveSlot(n(fx).ID, h.ID), "reserve "+n(fx).Name)
+		if confirm {
+			testutil.MustNoErr(t, db.ConfirmSlotReservation(n(fx).ID, h.ID), "confirm the reservation")
+		}
+	}
+}
+
+// hardClaimedBy puts another order's hard claim on the node.
+func hardClaimedBy(n func(fx *pickFixture) *nodes.Node) func(t *testing.T, db *store.DB, fx *pickFixture) {
+	return func(t *testing.T, db *store.DB, fx *pickFixture) {
+		h := strangerOrder(t, db, "pick-claim-"+n(fx).Name)
+		testutil.MustNoErr(t, db.ReserveSlot(n(fx).ID, h.ID), "reserve "+n(fx).Name)
+		testutil.MustNoErr(t, db.ConfirmSlotClaim(n(fx).ID, h.ID, nil), "hard-claim "+n(fx).Name)
+	}
+}
+
+// namedBy points a live order at the node that holds no claim and no
+// reservation: it names the node and nothing more.
+func namedBy(n func(fx *pickFixture) *nodes.Node) func(t *testing.T, db *store.DB, fx *pickFixture) {
+	return func(t *testing.T, db *store.DB, fx *pickFixture) {
+		testdb.CreateOrder(t, db, func(o *orders.Order) {
+			o.EdgeUUID, o.StationID, o.OrderType, o.Status = "pick-named-"+n(fx).Name, "test", OrderTypeComplex, StatusQueued
+			o.DeliveryNode = n(fx).Name
+		})
+	}
+}
+
 func homeOf(fx *pickFixture) *nodes.Node    { return fx.home }
 func bufferOf(fx *pickFixture) *nodes.Node  { return fx.buffer }
 func buffer2Of(fx *pickFixture) *nodes.Node { return fx.buffer2 }
@@ -261,6 +301,61 @@ var loaderPickCases = []pickCase{
 		place: placeVacatedPair(nil)},
 	{point: "vacated", hold: "in-flight to the vacated buffer", want: "wait:home",
 		place: placeVacatedPair(inFlightTo(bufferOf))},
+
+	// ── Another order's slot reservation or hard claim (owner ruling 2026-10-03:
+	// a loader takes the same check as every other chooser). Each of these
+	// picked the held node before, and the claim door refused it on every pass.
+
+	// A: a held home sends the bin to a buffer.
+	{point: "home-source", hold: "pending reservation on home", want: "buffer",
+		place: placeHomeSource(evacSteps, reservedBy(homeOf, false))},
+	{point: "home-source", hold: "confirmed reservation on home", want: "buffer",
+		place: placeHomeSource(evacSteps, reservedBy(homeOf, true))},
+	{point: "return-home-clear", hold: "pending reservation on home", want: "buffer",
+		place: placeReturn(true, reservedBy(homeOf, false))},
+	{point: "return-home-clear", hold: "hard claim on home", want: "buffer",
+		place: placeReturn(true, hardClaimedBy(homeOf))},
+	{point: "home-capacity-gate", hold: "pending reservation on home", want: "buffer",
+		place: placeSupplyWithWait(reservedBy(homeOf, false))},
+	{point: "home-capacity-gate", hold: "hard claim on home", want: "buffer",
+		place: placeSupplyWithWait(hardClaimedBy(homeOf))},
+	{point: "own-home", hold: "pending reservation on own home", want: "buffer",
+		place: placeMismatch(func(t *testing.T, db *store.DB, fx *pickFixture, own *nodes.Node) {
+			reservedBy(func(*pickFixture) *nodes.Node { return own }, false)(t, db, fx)
+		})},
+
+	// H: a held first buffer picks the second.
+	{point: "buffer-walk", hold: "pending reservation on first buffer", want: "buffer2",
+		place: placeHomeSource(evacSteps, both(inFlightTo(homeOf), reservedBy(bufferOf, false)))},
+	{point: "buffer-walk", hold: "hard claim on first buffer", want: "buffer2",
+		place: placeHomeSource(evacSteps, both(inFlightTo(homeOf), hardClaimedBy(bufferOf)))},
+
+	// B: the only free buffer held, the order pointing at the drain: it drains.
+	{point: "buffer-walk", hold: "only free buffer reserved, order points at drain", want: "outbound",
+		place: placeHomeSource(evacSteps, both(inFlightTo(homeOf), both(binOn(buffer2Of), reservedBy(bufferOf, false))))},
+
+	// C: the only free buffer held, the order pointing at the home: it waits.
+	// So does a vacated buffer another order holds.
+	{point: "buffer-walk", hold: "only free buffer reserved, order points at home", want: "wait:home",
+		place: placeReturn(false, both(binOn(homeOf), both(binOn(buffer2Of), reservedBy(bufferOf, false))))},
+	{point: "vacated", hold: "pending reservation on the vacated buffer", want: "wait:home",
+		place: placeVacatedPair(reservedBy(bufferOf, false))},
+
+	// ── Named by a live order that holds nothing: NOT a hold for a loader. These
+	// land exactly where they did before the ruling (cases D, E and F of the
+	// polish-loader report).
+	{point: "home-source", hold: "home named by a live order", want: "home",
+		place: placeHomeSource(evacSteps, namedBy(homeOf))},
+	{point: "return-home-clear", hold: "home named by a live order", want: "home",
+		place: placeReturn(true, namedBy(homeOf))},
+	{point: "home-capacity-gate", hold: "home named by a live order", want: "home",
+		place: placeSupplyWithWait(namedBy(homeOf))},
+	{point: "buffer-walk", hold: "only free buffer named by a live order, order points at home", want: "buffer",
+		place: placeReturn(false, both(binOn(homeOf), both(binOn(buffer2Of), namedBy(bufferOf))))},
+	{point: "buffer-walk", hold: "only free buffer named by a live order, order points at drain", want: "buffer",
+		place: placeHomeSource(evacSteps, both(inFlightTo(homeOf), both(binOn(buffer2Of), namedBy(bufferOf))))},
+	{point: "vacated", hold: "vacated buffer named by a live order", want: "buffer",
+		place: placeVacatedPair(namedBy(bufferOf))},
 }
 
 // TestLoaderPlacementPicks pins every loader-placement pick as it stands, so a
@@ -298,6 +393,24 @@ func TestContainmentPlacementPicks(t *testing.T) {
 		{hold: "in-flight to containment node", want: "parked", set: func(t *testing.T, db *store.DB, hold *nodes.Node) {
 			makeInFlightTo(t, db, "qc-inbound", hold.Name)
 		}},
+		// G: another order's reservation or hard claim parks instead of diverting.
+		{hold: "pending reservation on containment node", want: "parked", set: func(t *testing.T, db *store.DB, hold *nodes.Node) {
+			h := strangerOrder(t, db, "qc-reserver")
+			testutil.MustNoErr(t, db.ReserveSlot(hold.ID, h.ID), "reserve the containment node")
+		}},
+		{hold: "hard claim on containment node", want: "parked", set: func(t *testing.T, db *store.DB, hold *nodes.Node) {
+			h := strangerOrder(t, db, "qc-claimer")
+			testutil.MustNoErr(t, db.ReserveSlot(hold.ID, h.ID), "reserve the containment node")
+			testutil.MustNoErr(t, db.ConfirmSlotClaim(hold.ID, h.ID, nil), "hard-claim the containment node")
+		}},
+		// Reservation and hard claim only: a live order merely naming the node
+		// still diverts.
+		{hold: "containment node named by a live order", want: "diverted", set: func(t *testing.T, db *store.DB, hold *nodes.Node) {
+			testdb.CreateOrder(t, db, func(o *orders.Order) {
+				o.EdgeUUID, o.StationID, o.OrderType, o.Status = "qc-named", "test", OrderTypeComplex, StatusQueued
+				o.DeliveryNode = hold.Name
+			})
+		}},
 	} {
 		c := c
 		t.Run(c.hold, func(t *testing.T) {
@@ -319,5 +432,115 @@ func TestContainmentPlacementPicks(t *testing.T) {
 				t.Fatalf("containment under %q: %s, want %s", c.hold, got, c.want)
 			}
 		})
+	}
+}
+
+// A LOST CLAIM NEVER RE-PICKS THE SLOT IT LOST. Placement takes the free home;
+// another order then reserves it first, and the claim door refuses this one.
+// The next pass must choose somewhere the door accepts. Before placement read
+// reservations it chose the home again on every pass, for as long as the other
+// order held it.
+func TestLoaderPlacement_ALostClaimDoesNotRePickTheSlot(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	fx := newPickFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	fx.fill(t, db, fx.home, "lost-claim-lifted")
+	o := makeEvacOrder(t, db, "lost-claim", fx.home.Name, fx.outbound.Name)
+	steps := evacSteps(fx)
+	if wait := d.placeForDedicatedLoader(o, steps, nil); wait != "" || o.DeliveryNode != fx.home.Name {
+		t.Fatalf("precondition: the free home was not picked (landed %s, wait %q)", o.DeliveryNode, wait)
+	}
+	winner := strangerOrder(t, db, "lost-claim-winner")
+	testutil.MustNoErr(t, db.ReserveSlot(fx.home.ID, winner.ID), "the other order reserves the home first")
+	if err := db.ReserveSlot(fx.home.ID, o.ID); err == nil {
+		t.Fatal("precondition: the claim door accepted a slot another order holds")
+	}
+
+	wait := d.placeForDedicatedLoader(o, steps, nil)
+	if wait != "" {
+		t.Fatalf("the next pass waits on %s; a buffer is free", wait)
+	}
+	if o.DeliveryNode == fx.home.Name {
+		t.Fatalf("the next pass picked %s again, the slot this order just lost to order %d", fx.home.Name, winner.ID)
+	}
+	n, err := db.GetNodeByDotName(o.DeliveryNode)
+	testutil.MustNoErr(t, err, "read the new pick")
+	if err := db.ReserveSlot(n.ID, o.ID); err != nil {
+		t.Fatalf("the next pass picked %s and the claim door refused it too: %v", n.Name, err)
+	}
+}
+
+// A NODE WITH NO CLAIM DOOR is not dispatched onto when another order has it
+// reserved. The fixture's home is neither storage-classed nor declared
+// exclusive, so the complex slot reserve never asks the door about it: before
+// placement read reservations, a return was dispatched onto it with the other
+// order's reservation standing.
+func TestLoaderPlacement_NoClaimDoor_ReservedHomeIsNotTaken(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	fx := newPickFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	if needs := d.allocator.slotNeeds([]resolvedStep{vsDrop(fx.home.Name)}); len(needs) != 0 {
+		t.Fatalf("precondition: %s has a claim door (%d slot need(s)); this pin is about a node without one",
+			fx.home.Name, len(needs))
+	}
+	fx.fill(t, db, fx.home, "no-door-lifted")
+	holder := strangerOrder(t, db, "no-door-holder")
+	testutil.MustNoErr(t, db.ReserveSlot(fx.home.ID, holder.ID), "another order reserves the home")
+
+	o := makeEvacOrder(t, db, "no-door", fx.home.Name, fx.outbound.Name)
+	if wait := d.placeForDedicatedLoader(o, evacSteps(fx), nil); wait != "" {
+		t.Fatalf("waits on %s; a buffer is free", wait)
+	}
+	if o.DeliveryNode == fx.home.Name {
+		t.Fatalf("placed onto %s, which order %d has reserved; nothing after placement would stop the robot",
+			fx.home.Name, holder.ID)
+	}
+}
+
+// THE SPRINGFIELD 2026-08-05 SPECIMEN (SMN_030, 8h57m). An evac waited on its
+// partner naming the empty home as its delivery node and holding nothing, and
+// the refill counted it as an ask and was refused all shift. A loader still
+// counts a name as nothing, on both sides: the refill is created, and another
+// return placed while the evac waits still takes the home.
+func TestSpringfieldIncident_20260805_AWaitingReturnNamingTheHomeHoldsNothing(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	home, _, _, loaderID := springfieldLoaderFixture(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+
+	testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID, o.StationID, o.OrderType, o.Status = "spr-0805-evac", "test", OrderTypeComplex, StatusSourcing
+		o.DeliveryNode, o.ProcessNode, o.PayloadCode = home.Name, "SPR-0805-LINE", "PART-X"
+	})
+
+	cfg, ok, err := d.LoadReplenishConfig(loaderID)
+	if err != nil || !ok {
+		t.Fatalf("load replenish config for loader %d: ok=%v err=%v", loaderID, ok, err)
+	}
+	res, err := d.ReplenishLoader(ReplenishRequest{
+		StationID: "test", LoaderID: loaderID, PayloadCode: "PART-X", MemberNode: home.Name,
+		Threshold: 100, CurrentUOP: 0, PerBinCapacity: 10,
+	}, cfg)
+	testutil.MustNoErr(t, err, "replenish")
+	refilled := false
+	for _, o := range res.Created {
+		if o != nil && o.DeliveryNode == home.Name {
+			refilled = true
+		}
+	}
+	if !refilled {
+		t.Fatalf("no refill to %s (held=%v): the waiting evac names it and holds nothing, which is the "+
+			"8h57m deadlock", home.Name, res.HeldBy)
+	}
+
+	line := prNode(t, db, "SPR-0805-LINE2")
+	ret, steps := parkSwapPair(t, db, home.Name, line.Name, true)
+	if wait := d.placeForDedicatedLoader(ret, steps, nil); wait != "" || ret.DeliveryNode != home.Name {
+		t.Fatalf("a return placed while the evac and the refill name %s landed at %s (wait %q); "+
+			"for a loader the first to claim goes", home.Name, ret.DeliveryNode, wait)
 	}
 }

@@ -71,6 +71,15 @@ import (
 // The buffer read is always full CheckDropoffCapacity — a buffer legitimately holds
 // a parked partial, so its physical occupancy is real and must block.
 //
+// ANOTHER ORDER'S RESERVATION OR HARD CLAIM takes a member out at every choose
+// point, as it does for every other chooser: the claim door refuses it, so
+// picking it held the order at the door on every pass, and on a member with no
+// door (neither storage-classed nor exclusive) the order was dispatched onto it.
+// It is read once per placement, for the whole loader (LoaderMembersForPlacement,
+// from nodes.SlotHeldByStrangerSQL). A live order that only NAMES a member is
+// not a hold here: for a loader the first to claim goes (CheckDropoffCapacity),
+// see the 2026-08-26 chain at legReturnsToHome.
+//
 // AND BEFORE ANY OF THAT, THE PAYLOAD QUESTION. Everything above answers "is there
 // room?"; a pinned home also asks "room for WHAT?". Both patterns check the carrier
 // against bin_loader_homes.payload_code first (homeAcceptsCarrier), because a home
@@ -142,7 +151,8 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 		if err != nil || destNode == nil {
 			return ""
 		}
-		home, err := d.db.GetLoaderHomeByPositionNode(destNode.ID)
+		members, err := d.db.LoaderMembersForPlacement(destNode.ID, order.ID)
+		home := memberAt(members, destNode.ID)
 		if err != nil || home == nil {
 			return ""
 		}
@@ -171,7 +181,7 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 		// terms. This is the backstop: it is the only place that holds both facts
 		// — what the carrier is, and what the home is for — so it is the only
 		// place that can answer the question at all.
-		pl := placement{steps: steps, pc: pc, anchored: anchored}
+		pl := placement{steps: steps, pc: pc, anchored: anchored, members: members}
 		if carrier, known := d.carrierPayloadFor(order, steps); !homeAcceptsCarrier(home.PayloadCode, carrier, known) {
 			return d.placeMismatchedCarrier(order, home.LoaderID, homeName, carrier, pl)
 		}
@@ -186,6 +196,18 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 		// home, so "held the home" wrote NOTHING while "yielded to buffer" wrote a line.
 		// Reading the outcome therefore only ever showed the yields, which is how a sim
 		// A/B of this decision came out unreadable: both arms looked like buffer.
+		//
+		// ANOTHER ORDER'S RESERVATION OR HARD CLAIM ON THE HOME is asked first, in
+		// both arms, and sends the leg on to the buffers. The claim door refuses a
+		// slot another order holds, so picking it would hold this order at the
+		// door on every pass for as long as the other order holds it; and on a
+		// node with no door (neither storage-classed nor exclusive) nothing would
+		// refuse it at all.
+		if home.HeldByStranger {
+			d.dbg("place: order %d home %s is held by another order's reservation or hard claim",
+				order.ID, homeName)
+			return d.placeForLoader(order, home.LoaderID, homeName, pl)
+		}
 		isReturn := d.legReturnsToHome(order, steps)
 		clear := isReturn && d.homeClearForReturn(order, homeName, pc)
 		if isReturn && clear {
@@ -224,15 +246,16 @@ func (d *Dispatcher) placeForDedicatedLoader(order *orders.Order, steps []resolv
 // no free buffer, Pattern A still owned and answered the question; waitHome
 // carries placeForLoader's answer through.
 func (d *Dispatcher) tryPlaceFromHomeSource(order *orders.Order, steps []resolvedStep, pc *pairPass) (owned bool, waitHome string) {
-	pl := placement{steps: steps, pc: pc}
 	srcNode, err := d.db.GetNodeByDotName(order.SourceNode)
 	if err != nil || srcNode == nil {
 		return false, ""
 	}
-	home, err := d.db.GetLoaderHomeByPositionNode(srcNode.ID)
+	members, err := d.db.LoaderMembersForPlacement(srcNode.ID, order.ID)
+	home := memberAt(members, srcNode.ID)
 	if err != nil || home == nil {
 		return false, "" // source is not a loader home — Pattern B may still apply
 	}
+	pl := placement{steps: steps, pc: pc, members: members}
 	loader, err := d.db.GetLoader(home.LoaderID)
 	if err != nil || loader == nil || loader.Layout != loaders.LayoutDedicatedPositions {
 		return false, ""
@@ -246,7 +269,9 @@ func (d *Dispatcher) tryPlaceFromHomeSource(order *orders.Order, steps []resolve
 	if carrier, known := d.carrierPayloadFor(order, steps); !homeAcceptsCarrier(home.PayloadCode, carrier, known) {
 		return true, d.placeMismatchedCarrier(order, home.LoaderID, homeName, carrier, pl)
 	}
-	if !orderDeliversTo(steps, homeName) {
+	// The bin standing on the home is the one this leg lifts, so it is not a
+	// hold; another order's reservation or hard claim on the home is.
+	if !orderDeliversTo(steps, homeName) && !home.HeldByStranger {
 		inFlight, ierr := d.db.CountInFlightOrdersByDeliveryNodeExcluding(homeName, order.ID)
 		if ierr == nil && inFlight == 0 {
 			d.setParkDestination(order, homeName, "home")
@@ -343,28 +368,33 @@ func homeAcceptsCarrier(homePin, carrierPayload string, known bool) bool {
 // blank comparison and the first buffer in sort order would masquerade as "the
 // carrier's own home" in the log line. A buffer is the FALLBACK, and
 // placeMismatchedCarrier says so in different words.
-func (d *Dispatcher) homeForPayload(loaderID int64, payload string, orderID int64) string {
+//
+// A home another order holds by reservation or hard claim is not able to take
+// it, the same as for every other member.
+func (d *Dispatcher) homeForPayload(members []store.LoaderPlacementMember, payload string, orderID int64) string {
 	if payload == "" {
 		return ""
 	}
-	members, err := d.db.ListLoaderHomes(loaderID)
-	if err != nil {
-		return ""
-	}
 	for _, m := range members {
-		if m.Kind == loaders.HomeKindBuffer || m.PayloadCode != payload {
+		if m.Kind == loaders.HomeKindBuffer || m.PayloadCode != payload || m.HeldByStranger {
 			continue
 		}
-		node, nerr := d.db.GetNode(m.PositionNodeID)
-		if nerr != nil || node == nil {
+		if blocked, _ := CheckDropoffCapacity(d.db, m.NodeName, orderID); blocked {
 			continue
 		}
-		if blocked, _ := CheckDropoffCapacity(d.db, node.Name, orderID); blocked {
-			continue
-		}
-		return node.Name
+		return m.NodeName
 	}
 	return ""
+}
+
+// memberAt returns the member standing on nodeID, or nil.
+func memberAt(members []store.LoaderPlacementMember, nodeID int64) *store.LoaderPlacementMember {
+	for i := range members {
+		if members[i].PositionNodeID == nodeID {
+			return &members[i]
+		}
+	}
+	return nil
 }
 
 // placeMismatchedCarrier routes a carrier that does not belong on the home it
@@ -383,7 +413,7 @@ func (d *Dispatcher) homeForPayload(loaderID int64, payload string, orderID int6
 // clean — the recovery hides the disagreement, which is how this one survived a
 // full shift.
 func (d *Dispatcher) placeMismatchedCarrier(order *orders.Order, loaderID int64, homeName, carrierPayload string, pl placement) (waitHome string) {
-	if own := d.homeForPayload(loaderID, carrierPayload, order.ID); own != "" {
+	if own := d.homeForPayload(pl.members, carrierPayload, order.ID); own != "" {
 		log.Printf("WARN: order %d carries %s, which does not belong on home %s — routing to %s, "+
 			"the carrier's own home. Something upstream picked this destination from the style being "+
 			"requested rather than the carrier being lifted; the park is corrected but the disagreement is not.",
@@ -404,24 +434,19 @@ func (d *Dispatcher) placeMismatchedCarrier(order *orders.Order, loaderID int64,
 // destination left is the home the caller just found unable to take the bin.
 // Returns "" when the order has somewhere to go — a buffer, or a drain to a
 // different node it was already pointed at.
+//
+// The members come from the placement's one read of the loader
+// (LoaderMembersForPlacement), which also says whether another order holds each
+// one by reservation or hard claim. A held buffer is skipped like a full one.
 func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeName string, pl placement) (waitHome string) {
-	members, merr := d.db.ListLoaderHomes(loaderID)
-	if merr != nil {
-		log.Printf("dispatch: place loader %d members: %v — order %d waits", loaderID, merr, order.ID)
-		return homeName
-	}
-	for _, m := range members {
-		if m.Kind != loaders.HomeKindBuffer {
+	for _, m := range pl.members {
+		if m.Kind != loaders.HomeKindBuffer || m.HeldByStranger {
 			continue
 		}
-		bn, nerr := d.db.GetNode(m.PositionNodeID)
-		if nerr != nil || bn == nil {
+		if blocked, _ := CheckDropoffCapacity(d.db, m.NodeName, order.ID); blocked {
 			continue
 		}
-		if blocked, _ := CheckDropoffCapacity(d.db, bn.Name, order.ID); blocked {
-			continue
-		}
-		d.setParkDestination(order, bn.Name, "buffer")
+		d.setParkDestination(order, m.NodeName, "buffer")
 		return ""
 	}
 	// NO BUFFER IS FREE. Two cases, told apart by where the order already points.
@@ -463,19 +488,21 @@ func (d *Dispatcher) placeForLoader(order *orders.Order, loaderID int64, homeNam
 	// 2026-09-28, pairs 7060/7061 and 7062/7063: the supply was widened onto a
 	// buffer partial, every buffer was full, and the return parked on its home
 	// every pass while the buffer it needed was the one being emptied.
-	if d.placeVacated(order, homeName, members, pl) {
+	if d.placeVacated(order, homeName, pl) {
 		return ""
 	}
 	return homeName
 }
 
-// placement is what the loader park carries down to its WAIT arm for the
-// vacated-slot rule: the plan, the partner that acquired earlier in this pass,
+// placement is what the loader park carries down from its one read of the
+// loader: the members (with whether another order holds each), and for the
+// vacated-slot rule the plan, the partner that acquired earlier in this pass,
 // and whether the order's destination was re-derived from its anchor.
 type placement struct {
 	steps    []resolvedStep
 	pc       *pairPass
 	anchored bool
+	members  []store.LoaderPlacementMember
 }
 
 // placeVacated is the loader's vacated arm. It tries each member the rule clears
@@ -483,27 +510,24 @@ type placement struct {
 // commits the first: DeliveryNode, the stamp the release fence reads, and the
 // anchor the next pass re-derives from. The in-memory plan follows too, so the
 // destination gate and the slot claim later in this pass read the slot that was
-// chosen. Reports whether it placed.
-func (d *Dispatcher) placeVacated(order *orders.Order, homeName string, members []loaders.Home, pl placement) bool {
+// chosen. Reports whether it placed. A member another order holds by
+// reservation or hard claim is not a destination, whoever is emptying it.
+func (d *Dispatcher) placeVacated(order *orders.Order, homeName string, pl placement) bool {
 	f := lastDropIndex(pl.steps)
 	if f < 0 {
 		return false
 	}
 	carrier, known := d.carrierPayloadFor(order, pl.steps)
-	for _, m := range members {
-		if m.Kind != loaders.HomeKindBuffer && !homeAcceptsCarrier(m.PayloadCode, carrier, known) {
+	for _, m := range pl.members {
+		if m.HeldByStranger || (m.Kind != loaders.HomeKindBuffer && !homeAcceptsCarrier(m.PayloadCode, carrier, known)) {
 			continue
 		}
-		n, err := d.db.GetNode(m.PositionNodeID)
-		if err != nil || n == nil {
+		st := d.vacatedFor(order, pl.steps, f, m.NodeName, pl.pc)
+		if st == nil || !d.noOtherInFlight(m.NodeName, order) {
 			continue
 		}
-		st := d.vacatedFor(order, pl.steps, f, n.Name, pl.pc)
-		if st == nil || !d.noOtherInFlight(n.Name, order) {
-			continue
-		}
-		d.setParkDestination(order, n.Name, "vacated")
-		pl.steps[f].Node = n.Name
+		d.setParkDestination(order, m.NodeName, "vacated")
+		pl.steps[f].Node = m.NodeName
 		pl.steps[f].Vacate = st
 		pl.steps[f].Anchor = homeName
 		d.persistStepStamp(order, f, st, homeName)
@@ -617,13 +641,23 @@ func (d *Dispatcher) placeForContainment(order *orders.Order, steps []resolvedSt
 			"order %d continues to its authored destination", containment, order.ProcessNode, order.ID)
 		return nil
 	}
+	//
+	// Another order's reservation or hard claim on the concrete node parks it
+	// too, asked first: the claim door refuses a slot another order holds. An
+	// unreadable answer parks, as an unreadable capacity read does.
 	if destNode.NodeTypeCode != protocol.NodeClassNGRP {
-		if blocked, _ := CheckDropoffCapacity(d.db, containment, order.ID); blocked {
-			log.Printf("dispatch: order %d parked — containment node %s is full (payload %s is contained; "+
-				"FG delivery refuses to run while containment has no room)", order.ID, containment, payload)
+		held, herr := d.db.SlotHeldByStranger(destNode.ID, order.ID)
+		blocked := herr != nil || held
+		if !blocked {
+			blocked, _ = CheckDropoffCapacity(d.db, containment, order.ID)
+		}
+		if blocked {
+			log.Printf("dispatch: order %d parked — containment node %s has no room (full, or held by another "+
+				"order; payload %s is contained; FG delivery refuses to run while containment has no room)",
+				order.ID, containment, payload)
 			d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseContainmentCapacity,
 				QueueParams{Destination: containment, Payload: payload})
-			return &dispatchStep{done: true, err: fmt.Errorf("containment node %s is full", containment)}
+			return &dispatchStep{done: true, err: fmt.Errorf("containment node %s has no room", containment)}
 		}
 	}
 	// MULTI-BIN CONSISTENCY: the junction rows are the per-bin placement

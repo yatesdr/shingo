@@ -447,6 +447,12 @@ func (db *DB) SlotSpokenForByStranger(nodeID, owner int64) (bool, error) {
 	return nodes.SlotSpokenForByStranger(db.DB, nodeID, owner)
 }
 
+// SlotHeldByStranger reports whether an order other than owner holds a hard
+// claim or an active slot reservation on nodeID. See nodes.SlotHeldByStranger.
+func (db *DB) SlotHeldByStranger(nodeID, owner int64) (bool, error) {
+	return nodes.SlotHeldByStranger(db.DB, nodeID, owner)
+}
+
 // CountBinsInLane counts total bins across all slots in a lane.
 func (db *DB) CountBinsInLane(laneID int64) (int, error) {
 	return nodes.CountBinsInLane(db.DB, laneID)
