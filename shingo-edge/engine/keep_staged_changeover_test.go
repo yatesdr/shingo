@@ -2,8 +2,9 @@ package engine
 
 import (
 	"errors"
+	"runtime"
+	"strings"
 	"testing"
-	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -435,6 +436,12 @@ func TestKeepStagedSave_LeavingTheSpotSendsTheSpareBack(t *testing.T) {
 // outgoing-style swap that no changeover leg owns, which the cancel then left
 // standing and the sweep kept pointing at. Here the test holds the lock the way
 // a start does and arms the changeover while the request waits.
+//
+// The changeover is armed only once the request is parked on that lock, read
+// from the request goroutine's own stack, so the request has always passed its
+// first guard with nothing armed and only the check under the lock can refuse
+// it. Arming after a fixed sleep let a slow request meet the armed changeover
+// at the first guard instead, and the test passed without reaching that check.
 func TestKeepStagedRequest_ARequestLetInAfterAStartIsRefused(t *testing.T) {
 	t.Parallel()
 	rows := map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
@@ -449,11 +456,13 @@ func TestKeepStagedRequest_ARequestLetInAfterAStartIsRefused(t *testing.T) {
 	mu := fx.eng.primeNodeLock(&processes.NodeClaim{CoreNodeName: "L1"})
 	mu.Lock()
 	done := make(chan error, 1)
+	gid := make(chan string, 1)
 	go func() {
+		gid <- goroutineID()
 		_, err := fx.eng.RequestNodeMaterial(fx.nodeIDs["L1"], 1)
 		done <- err
 	}()
-	time.Sleep(200 * time.Millisecond) // the request is past its first guard, waiting on the cell
+	waitParkedOnCellLock(t, <-gid, done)
 	_, err = fx.eng.changeoverService.Create(fx.processID, proc.ActiveStyleID, fx.toStyleID, "test", "", nil, nil, nil, nil)
 	testutil.MustNoErr(t, err, "arm the changeover")
 	mu.Unlock()
@@ -466,6 +475,51 @@ func TestKeepStagedRequest_ARequestLetInAfterAStartIsRefused(t *testing.T) {
 	testutil.MustNoErr(t, err, "orders")
 	if len(live) != 0 {
 		t.Fatalf("%d order(s) created by a request refused under the lock", len(live))
+	}
+}
+
+// goroutineID is the calling goroutine's number, from its stack header
+// ("goroutine 37 [running]:").
+func goroutineID() string {
+	buf := make([]byte, 64)
+	buf = buf[:runtime.Stack(buf, false)]
+	return strings.Fields(string(buf))[1]
+}
+
+// waitParkedOnCellLock returns once goroutine gid is blocked in the mutex Lock
+// that requestNodeFromClaim takes, the cell's prime lock: the scheduler has
+// parked it there (state "sync.Mutex.Lock") and the frame that called Lock is
+// requestNodeFromClaim. It reads every goroutine's stack and yields between
+// reads; no clock decides anything. A request that returns before it gets there
+// fails the test with what it returned.
+func waitParkedOnCellLock(t *testing.T, gid string, done <-chan error) {
+	t.Helper()
+	header := "goroutine " + gid + " [sync.Mutex.Lock"
+	buf := make([]byte, 1<<20)
+	for {
+		n := runtime.Stack(buf, true)
+		if n == len(buf) {
+			buf = make([]byte, 2*len(buf))
+			continue
+		}
+		for _, g := range strings.Split(string(buf[:n]), "\n\n") {
+			if !strings.HasPrefix(g, header) {
+				continue
+			}
+			lines := strings.Split(g, "\n")
+			for i := 0; i+2 < len(lines); i++ {
+				if strings.HasPrefix(lines[i], "sync.(*Mutex).Lock(") &&
+					strings.HasPrefix(lines[i+2], "shingoedge/engine.(*Engine).requestNodeFromClaim(") {
+					return
+				}
+			}
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("the request returned %v before it waited on the cell lock", err)
+		default:
+		}
+		runtime.Gosched()
 	}
 }
 
