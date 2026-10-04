@@ -777,7 +777,7 @@ func TestComposerShots(t *testing.T) {
 			if r.Role != domain.RoutingRoleSource || !r.Enabled {
 				continue
 			}
-			if err := db.SetRoutingNodeEnabled(seeded.ProcessID, r.ID, false, "shots"); err != nil {
+			if err := db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, seeded.ProcessID, r.ID, false, "shots"); err != nil {
 				t.Fatalf("switch off %s: %v", r.CoreNodeName, err)
 			}
 			turnedOff = append(turnedOff, r.ID)
@@ -806,7 +806,7 @@ func TestComposerShots(t *testing.T) {
 				flowspec.Label(flowspec.InboundSource))
 		}
 		for _, id := range turnedOff {
-			if err := db.SetRoutingNodeEnabled(seeded.ProcessID, id, true, "shots"); err != nil {
+			if err := db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, seeded.ProcessID, id, true, "shots"); err != nil {
 				t.Fatalf("switch %d back on: %v", id, err)
 			}
 		}
@@ -908,7 +908,7 @@ func TestComposerShots(t *testing.T) {
 		if target == nil {
 			t.Fatal("no derived destination with live styles behind it — D3 cannot show a name awaiting a decision")
 		}
-		if _, err := db.UpsertRoutingNode(domain.RoutingNodeInput{
+		if _, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 			ProcessID: seeded.ProcessID, CoreNodeName: target.CoreNodeName, Role: target.Role,
 			Label: target.Label, Sequence: target.Sequence,
 			Origin: domain.RoutingOriginBackfill, Enabled: false,
@@ -1661,7 +1661,7 @@ func TestComposerShots(t *testing.T) {
 	// has a point for, added, read, and taken away again.
 	{
 		const plain = "SMN_011"
-		rowID, err := db.UpsertRoutingNode(domain.RoutingNodeInput{
+		rowID, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 			ProcessID: seeded.ProcessID, CoreNodeName: plain, Role: domain.RoutingRoleStaging,
 			Origin: domain.RoutingOriginEngineer, Enabled: true, CalledBy: "shots",
 		})

@@ -93,18 +93,18 @@ func TestProcessRoutingNodes_PutAddsAndAdoptsAndNeverDeletes(t *testing.T) {
 
 	// A row that already exists and is switched OFF: the array write adopts it
 	// rather than minting a second one.
-	offID, err := testDB.UpsertRoutingNode(domain.RoutingNodeInput{
+	offID, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 		ProcessID: pid, CoreNodeName: "RS-OFF", Role: domain.RoutingRoleSource,
 		Origin: domain.RoutingOriginBackfill,
 	})
 	if err != nil {
 		t.Fatalf("seed the disabled row: %v", err)
 	}
-	if err := testDB.SetRoutingNodeEnabled(pid, offID, false, "seed"); err != nil {
+	if err := testDB.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, pid, offID, false, "seed"); err != nil {
 		t.Fatalf("switch it off: %v", err)
 	}
 	// And a row the body does NOT name, which must survive.
-	if _, err := testDB.UpsertRoutingNode(domain.RoutingNodeInput{
+	if _, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 		ProcessID: pid, CoreNodeName: "RS-KEEP", Role: domain.RoutingRoleDestination, Enabled: true,
 	}); err != nil {
 		t.Fatalf("seed the untouched row: %v", err)

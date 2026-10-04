@@ -162,7 +162,7 @@ func TestRoutingNodes_UpsertListAndEnable(t *testing.T) {
 		{ProcessID: pid, CoreNodeName: "STG_01", Role: domain.RoutingRoleStaging, Sequence: 1, Enabled: true, CalledBy: "eng"},
 		{ProcessID: pid, CoreNodeName: "Supermarket Empty Totes", Role: domain.RoutingRoleSource, Enabled: true, CalledBy: "eng"},
 	} {
-		if _, err := db.UpsertRoutingNode(in); err != nil {
+		if _, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, in); err != nil {
 			t.Fatalf("UpsertRoutingNode(%s %s): %v", in.CoreNodeName, in.Role, err)
 		}
 	}
@@ -189,13 +189,13 @@ func TestRoutingNodes_UpsertListAndEnable(t *testing.T) {
 
 	// Same (node, role) again: an UPDATE, not a duplicate. A different role for
 	// the same node is a second, legitimate row.
-	id2, err := db.UpsertRoutingNode(domain.RoutingNodeInput{
+	id2, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 		ProcessID: pid, CoreNodeName: "Supermarket Area", Role: domain.RoutingRoleDestination, Label: "Finished goods", Enabled: true, CalledBy: "eng2",
 	})
 	if err != nil {
 		t.Fatalf("re-upsert: %v", err)
 	}
-	if _, err := db.UpsertRoutingNode(domain.RoutingNodeInput{
+	if _, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 		ProcessID: pid, CoreNodeName: "Supermarket Area", Role: domain.RoutingRoleSource, Enabled: true, CalledBy: "eng",
 	}); err != nil {
 		t.Fatalf("upsert second role: %v", err)
@@ -216,7 +216,7 @@ func TestRoutingNodes_UpsertListAndEnable(t *testing.T) {
 	}
 
 	// Enable toggle reads back.
-	if err := db.SetRoutingNodeEnabled(pid, id2, false, "eng3"); err != nil {
+	if err := db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, pid, id2, false, "eng3"); err != nil {
 		t.Fatalf("SetRoutingNodeEnabled: %v", err)
 	}
 	rows, err = db.ListRoutingNodes(pid)
@@ -228,7 +228,7 @@ func TestRoutingNodes_UpsertListAndEnable(t *testing.T) {
 	}
 	// A row id from another process is not reachable through this process.
 	other, _ := seedRoutingProcess(t, db, "OTHER")
-	if err := db.SetRoutingNodeEnabled(other, id2, true, "x"); !errors.Is(err, processes.ErrRoutingNodeNotFound) {
+	if err := db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, other, id2, true, "x"); !errors.Is(err, processes.ErrRoutingNodeNotFound) {
 		t.Fatalf("toggling another process's row: err = %v, want ErrRoutingNodeNotFound", err)
 	}
 }
@@ -255,7 +255,7 @@ func TestRoutingNodes_EnablingABackfillIsTheApproval(t *testing.T) {
 	db := testDB(t)
 	pid, _ := seedRoutingProcess(t, db, "P400")
 
-	id, err := db.UpsertRoutingNode(domain.RoutingNodeInput{
+	id, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 		ProcessID: pid, CoreNodeName: "Supermarket Empty Totes", Role: domain.RoutingRoleSource,
 		Origin: domain.RoutingOriginBackfill, Enabled: false,
 	})
@@ -263,7 +263,7 @@ func TestRoutingNodes_EnablingABackfillIsTheApproval(t *testing.T) {
 		t.Fatalf("seed a backfill row: %v", err)
 	}
 
-	if err := db.SetRoutingNodeEnabled(pid, id, true, "eng"); err != nil {
+	if err := db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, pid, id, true, "eng"); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	row := findRoutingRow(t, db, pid, id)
@@ -278,7 +278,7 @@ func TestRoutingNodes_EnablingABackfillIsTheApproval(t *testing.T) {
 	}
 
 	// Off again: the flag moves, the authorship does not.
-	if err := db.SetRoutingNodeEnabled(pid, id, false, "eng2"); err != nil {
+	if err := db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, pid, id, false, "eng2"); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	row = findRoutingRow(t, db, pid, id)
@@ -311,7 +311,7 @@ func TestRoutingNodes_ListCountsTheStylesBehindEachName(t *testing.T) {
 		{style: "B", source: "Supermarket Empty Totes", dest: "Supermarket Area", staging: "STG_01"},
 		{style: "C", source: "Line Buffer", dest: "Supermarket Area", staging: "STG_02"},
 	})
-	if _, err := db.DeriveRoutingNodesForProcess(pid, nil); err != nil {
+	if _, err := db.DeriveRoutingNodesForProcess(domain.CoreNodeKinds{}, pid, nil); err != nil {
 		t.Fatalf("derive: %v", err)
 	}
 	rows, err := db.ListRoutingNodesWithCounts(pid)
@@ -364,13 +364,13 @@ func TestRoutingNodes_UpsertRefusals(t *testing.T) {
 	db := testDB(t)
 	pid, _ := seedRoutingProcess(t, db, "P400")
 
-	if _, err := db.UpsertRoutingNode(domain.RoutingNodeInput{ProcessID: pid, CoreNodeName: "X", Role: "waypoint"}); !errors.Is(err, processes.ErrInvalidRoutingRole) {
+	if _, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{ProcessID: pid, CoreNodeName: "X", Role: "waypoint"}); !errors.Is(err, processes.ErrInvalidRoutingRole) {
 		t.Fatalf("role=waypoint: err = %v, want ErrInvalidRoutingRole (waypoint is not a role)", err)
 	}
-	if _, err := db.UpsertRoutingNode(domain.RoutingNodeInput{ProcessID: pid, CoreNodeName: "  ", Role: domain.RoutingRoleSource}); err == nil {
+	if _, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{ProcessID: pid, CoreNodeName: "  ", Role: domain.RoutingRoleSource}); err == nil {
 		t.Fatal("blank name was accepted")
 	}
-	_, err := db.UpsertRoutingNode(domain.RoutingNodeInput{ProcessID: pid, CoreNodeName: "PLN_01", Role: domain.RoutingRoleStaging})
+	_, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{ProcessID: pid, CoreNodeName: "PLN_01", Role: domain.RoutingRoleStaging})
 	if !errors.Is(err, processes.ErrRoutingNodeIsPosition) {
 		t.Fatalf("position as routing node: err = %v, want ErrRoutingNodeIsPosition", err)
 	}
@@ -402,7 +402,7 @@ func TestRoutingNodes_DeleteRefusesWhileALiveClaimReferencesTheName(t *testing.T
 		{ProcessID: pid, CoreNodeName: "STG_01", Role: domain.RoutingRoleStaging, Enabled: true},
 		{ProcessID: pid, CoreNodeName: "Supermarket Area", Role: domain.RoutingRoleDestination, Enabled: true},
 	} {
-		id, err := db.UpsertRoutingNode(in)
+		id, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, in)
 		if err != nil {
 			t.Fatalf("upsert %s: %v", in.CoreNodeName, err)
 		}
@@ -473,7 +473,7 @@ func TestRoutingNodes_DeriveFromClaims(t *testing.T) {
 		t.Fatalf("retire dead style: %v", err)
 	}
 
-	reports, err := db.DeriveRoutingNodes(nil)
+	reports, err := db.DeriveRoutingNodes(domain.CoreNodeKinds{}, nil)
 	if err != nil {
 		t.Fatalf("DeriveRoutingNodes: %v", err)
 	}
@@ -513,10 +513,10 @@ func TestRoutingNodes_DeriveFromClaims(t *testing.T) {
 	}
 
 	// Idempotent: a second run changes nothing, and an adopted row stays adopted.
-	if err := db.SetRoutingNodeEnabled(pid, rows[0].ID, true, "eng"); err != nil {
+	if err := db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, pid, rows[0].ID, true, "eng"); err != nil {
 		t.Fatalf("adopt: %v", err)
 	}
-	if _, err := db.DeriveRoutingNodes(nil); err != nil {
+	if _, err := db.DeriveRoutingNodes(domain.CoreNodeKinds{}, nil); err != nil {
 		t.Fatalf("second derive: %v", err)
 	}
 	again, err := db.ListRoutingNodes(pid)
@@ -529,7 +529,7 @@ func TestRoutingNodes_DeriveFromClaims(t *testing.T) {
 	}
 
 	// Unknown-name count: only when the caller could check.
-	rep, err = db.DeriveRoutingNodesForProcess(pid, func(name string) bool { return name == "PLN_05" })
+	rep, err = db.DeriveRoutingNodesForProcess(domain.CoreNodeKinds{}, pid, func(name string) bool { return name == "PLN_05" })
 	if err != nil {
 		t.Fatalf("derive with checker: %v", err)
 	}
@@ -547,7 +547,7 @@ func TestRoutingNodes_DeriveFromClaims(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("edit claim: %v", err)
 	}
-	rep, err = db.DeriveRoutingNodesForProcess(pid, nil)
+	rep, err = db.DeriveRoutingNodesForProcess(domain.CoreNodeKinds{}, pid, nil)
 	if err != nil {
 		t.Fatalf("derive with gate on: %v", err)
 	}

@@ -101,7 +101,7 @@ func (h *Handlers) apiDeriveRoutingNodes(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid process id")
 		return
 	}
-	report, err := h.engine.ProcessService().DeriveRoutingNodes(id, h.routingNameChecker())
+	report, err := h.engine.ProcessService().DeriveRoutingNodes(h.coreNodeKinds(), id, h.routingNameChecker())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -139,18 +139,14 @@ func (h *Handlers) apiUpsertRoutingNode(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
-	// A lane on a source or destination row is refused here as at the claim
-	// save: the composer offers these rows on exactly those legs.
-	if msg := domain.CoreNodeKindsOf(h.engine.CoreNodes()).LegRefusal(in.Role, in.CoreNodeName); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
-		return
-	}
-	rowID, err := h.engine.ProcessService().UpsertRoutingNode(in)
+	// A lane is refused in every role by the store, as at the claim save: the
+	// composer offers these rows on a claim's legs.
+	rowID, err := h.engine.ProcessService().UpsertRoutingNode(h.coreNodeKinds(), in)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrRoutingNodeIsPosition):
 			writeError(w, http.StatusConflict, err.Error())
-		case errors.Is(err, service.ErrInvalidRoutingRole):
+		case errors.Is(err, service.ErrInvalidRoutingRole), errors.Is(err, domain.ErrLaneLeg):
 			writeError(w, http.StatusBadRequest, err.Error())
 		default:
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -193,9 +189,13 @@ func (h *Handlers) apiPatchRoutingNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := h.sessions.getUser(r)
-	if err := h.engine.ProcessService().SetRoutingNodeEnabled(id, rowID, *req.Enabled, user); err != nil {
+	if err := h.engine.ProcessService().SetRoutingNodeEnabled(h.coreNodeKinds(), id, rowID, *req.Enabled, user); err != nil {
 		if errors.Is(err, service.ErrRoutingNodeNotFound) {
 			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		if errors.Is(err, domain.ErrLaneLeg) {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -285,7 +285,7 @@ func (h *Handlers) apiProcessComposer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such process")
 		return
 	}
-	data.DropLaneLegs(domain.CoreNodeKindsOf(h.engine.CoreNodes()))
+	data.DropLaneLegs(h.coreNodeKinds())
 	writeJSON(w, data)
 }
 
@@ -317,6 +317,6 @@ func (h *Handlers) apiStationComposer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such process")
 		return
 	}
-	data.DropLaneLegs(domain.CoreNodeKindsOf(h.engine.CoreNodes()))
+	data.DropLaneLegs(h.coreNodeKinds())
 	writeJSON(w, data)
 }

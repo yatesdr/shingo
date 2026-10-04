@@ -23,12 +23,12 @@ func presetProcess(t *testing.T, name string) (int64, int64) {
 	}); err != nil {
 		t.Fatalf("create position: %v", err)
 	}
-	if _, err := testDB.UpsertRoutingNode(domain.RoutingNodeInput{
+	if _, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 		ProcessID: pid, CoreNodeName: "PP-SRC", Role: domain.RoutingRoleSource, Enabled: true,
 	}); err != nil {
 		t.Fatalf("routing source: %v", err)
 	}
-	if _, err := testDB.UpsertRoutingNode(domain.RoutingNodeInput{
+	if _, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 		ProcessID: pid, CoreNodeName: "PP-DST", Role: domain.RoutingRoleDestination, Enabled: true,
 	}); err != nil {
 		t.Fatalf("routing destination: %v", err)

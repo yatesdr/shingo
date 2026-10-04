@@ -231,7 +231,7 @@ func TestComposerDataCarriesWhatThePickerDraws(t *testing.T) {
 	// plant's claims into the source/staging/destination options, and it runs
 	// at migration on a real edge. SeedPlant stops at the claims, so deriving
 	// here is what makes this the same set the position panel would offer.
-	if _, err := db.DeriveRoutingNodesForProcess(seeded.ProcessID, func(string) bool { return false }); err != nil {
+	if _, err := db.DeriveRoutingNodesForProcess(domain.CoreNodeKinds{}, seeded.ProcessID, func(string) bool { return false }); err != nil {
 		t.Fatalf("derive routing set: %v", err)
 	}
 	// AND THEN ADOPTED. The backfill inserts every derived name DISABLED — it
@@ -247,7 +247,7 @@ func TestComposerDataCarriesWhatThePickerDraws(t *testing.T) {
 		t.Fatalf("list routing set: %v", err)
 	}
 	for _, r := range derived {
-		if err := db.SetRoutingNodeEnabled(seeded.ProcessID, r.ID, true, "test"); err != nil {
+		if err := db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, seeded.ProcessID, r.ID, true, "test"); err != nil {
 			t.Fatalf("adopt %s: %v", r.CoreNodeName, err)
 		}
 	}

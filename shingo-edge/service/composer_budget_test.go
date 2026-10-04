@@ -230,7 +230,7 @@ func buildBudgetTemplate(t *testing.T, fx scenefixtures.Plant) {
 	// production is in.
 	roles := []string{domain.RoutingRoleSource, domain.RoutingRoleStaging, domain.RoutingRoleDestination}
 	for i := 0; i < budgetRouting; i++ {
-		id, err := db.UpsertRoutingNode(domain.RoutingNodeInput{
+		id, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 			ProcessID:    seeded.ProcessID,
 			CoreNodeName: fmt.Sprintf("SMN_%02d", 10+i),
 			Role:         roles[i%len(roles)],
@@ -242,7 +242,7 @@ func buildBudgetTemplate(t *testing.T, fx scenefixtures.Plant) {
 		if err != nil {
 			t.Fatalf("routing %d: %v", i, err)
 		}
-		if err := db.SetRoutingNodeEnabled(seeded.ProcessID, id, true, "budget"); err != nil {
+		if err := db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, seeded.ProcessID, id, true, "budget"); err != nil {
 			t.Fatalf("enable routing %d: %v", i, err)
 		}
 	}

@@ -42,7 +42,7 @@ func TestComposerForStation_CarriesItsOwnPictureWithTheStagingItMayUse(t *testin
 
 	// A staging lane in the routing set that NO flow uses: the composer must
 	// offer it, and the board must not draw it.
-	if _, err := svc.db.UpsertRoutingNode(domain.RoutingNodeInput{
+	if _, err := svc.db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 		ProcessID: seeded.ProcessID, CoreNodeName: "SLN_OFFERED",
 		Role: domain.RoutingRoleStaging, Enabled: true, Origin: domain.RoutingOriginEngineer,
 	}); err != nil {

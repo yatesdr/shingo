@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"sort"
 	"strings"
 
@@ -160,13 +161,20 @@ func isLivePosition(db *sql.DB, processID int64, name string) (bool, error) {
 //
 // Origin defaults to engineer: the backfill is the only writer that says
 // otherwise, and it does not come through here.
-func UpsertRoutingNode(db *sql.DB, in RoutingNodeInput) (int64, error) {
+//
+// kinds is Core's lane set, and a row naming a lane is refused in every role
+// (domain.CoreNodeKinds.RefuseLaneRow): the composer offers these rows on a
+// claim's legs, and no leg may name a lane.
+func UpsertRoutingNode(db *sql.DB, kinds domain.CoreNodeKinds, in RoutingNodeInput) (int64, error) {
 	in.CoreNodeName = strings.TrimSpace(in.CoreNodeName)
 	if in.CoreNodeName == "" {
 		return 0, fmt.Errorf("routing node name is required")
 	}
 	if !domain.IsRoutingRole(in.Role) {
 		return 0, fmt.Errorf("%w: %q", ErrInvalidRoutingRole, in.Role)
+	}
+	if err := kinds.RefuseLaneRow(in.Role, in.CoreNodeName); err != nil {
+		return 0, err
 	}
 	if in.Origin == "" {
 		in.Origin = domain.RoutingOriginEngineer
@@ -227,7 +235,25 @@ func UpsertRoutingNode(db *sql.DB, in RoutingNodeInput) (int64, error) {
 // it should know it is the last door.
 //
 // The row must belong to processID.
-func SetRoutingNodeEnabled(db *sql.DB, processID, id int64, enabled bool, calledBy string) error {
+//
+// SWITCHING A LANE ON IS REFUSED. A row naming a lane can be in the table from
+// before the saves refused one, or derived from a claim stored before; it stays
+// off. The check reads the row first (one SELECT), only when switching on with
+// a lane known; switching off is never refused.
+func SetRoutingNodeEnabled(db *sql.DB, kinds domain.CoreNodeKinds, processID, id int64, enabled bool, calledBy string) error {
+	if enabled && len(kinds.Lanes) > 0 {
+		var name, role string
+		switch err := db.QueryRow(`SELECT core_node_name, role FROM process_routing_nodes
+			WHERE id = ? AND process_id = ?`, id, processID).Scan(&name, &role); {
+		case errors.Is(err, sql.ErrNoRows):
+			return ErrRoutingNodeNotFound
+		case err != nil:
+			return err
+		}
+		if err := kinds.RefuseLaneRow(role, name); err != nil {
+			return err
+		}
+	}
 	res, err := db.Exec(`UPDATE process_routing_nodes
 		SET enabled = ?, called_by = ?,
 		    origin = CASE WHEN ? = 1 THEN ? ELSE origin END
@@ -314,14 +340,18 @@ var routingDeriveStatements = []struct{ field, role string }{
 // isUnknown answers whether Core does not know a name. Nil means the caller
 // could not check — at boot, before Core has been heard from — and every
 // name then counts as known: absence of data is never a finding.
-func DeriveRoutingNodes(db *sql.DB, isUnknown func(name string) bool) ([]RoutingDeriveReport, error) {
+//
+// kinds is Core's lane set: a claim leg naming a lane is not derived into a
+// row, and the skip is logged (deriveRoutingNodes). At boot it is empty, for
+// the same reason isUnknown is nil, and nothing is skipped.
+func DeriveRoutingNodes(db *sql.DB, kinds domain.CoreNodeKinds, isUnknown func(name string) bool) ([]RoutingDeriveReport, error) {
 	procs, err := List(db)
 	if err != nil {
 		return nil, fmt.Errorf("routing set backfill: list processes: %w", err)
 	}
 	out := make([]RoutingDeriveReport, 0, len(procs))
 	for _, p := range procs {
-		rep, err := deriveRoutingNodes(db, p, isUnknown)
+		rep, err := deriveRoutingNodes(db, p, kinds, isUnknown)
 		if err != nil {
 			return out, err
 		}
@@ -333,17 +363,77 @@ func DeriveRoutingNodes(db *sql.DB, isUnknown func(name string) bool) ([]Routing
 // DeriveRoutingNodesForProcess is the backfill for one process — the
 // desktop's "re-derive". A no-op, reported as Skipped, once the flow composer
 // is enabled for the process.
-func DeriveRoutingNodesForProcess(db *sql.DB, processID int64, isUnknown func(name string) bool) (RoutingDeriveReport, error) {
+func DeriveRoutingNodesForProcess(db *sql.DB, kinds domain.CoreNodeKinds, processID int64, isUnknown func(name string) bool) (RoutingDeriveReport, error) {
 	p, err := Get(db, processID)
 	if err != nil {
 		return RoutingDeriveReport{}, err
 	}
-	return deriveRoutingNodes(db, *p, isUnknown)
+	return deriveRoutingNodes(db, *p, kinds, isUnknown)
 }
 
-func deriveRoutingNodes(db *sql.DB, p Process, isUnknown func(name string) bool) (RoutingDeriveReport, error) {
+// laneLegsOnClaims is the names the process's live claims put on a derived
+// leg that are lanes, each logged once with its sentence. One SELECT, and
+// none when no lane is known. A backfill that refused would abort the boot
+// it runs in, so the row is skipped instead and the claim is left for its
+// next save to refuse.
+func laneLegsOnClaims(db *sql.DB, p Process, kinds domain.CoreNodeKinds) ([]string, error) {
+	if len(kinds.Lanes) == 0 {
+		return nil, nil
+	}
+	rows, err := db.Query(`SELECT c.inbound_source, c.outbound_destination, c.changeover_evac_destination,
+			c.inbound_staging, c.outbound_staging
+		FROM style_node_claims c JOIN styles s ON s.id = c.style_id
+		WHERE s.process_id = ? AND s.deleted_at IS NULL AND c.retired_at IS NULL`, p.ID)
+	if err != nil {
+		return nil, fmt.Errorf("routing set backfill: process %d lane check: %w", p.ID, err)
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	var lanes []string
+	for rows.Next() {
+		vals := make([]string, len(routingDeriveStatements))
+		ptrs := make([]any, len(vals))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, err
+		}
+		for i, st := range routingDeriveStatements {
+			name := strings.TrimSpace(vals[i])
+			msg := kinds.LegRefusal(st.role, name)
+			if msg == "" || seen[st.field+"\x00"+name] {
+				continue
+			}
+			seen[st.field+"\x00"+name] = true
+			log.Printf("routing set backfill: %s — not derived from %s: %s", p.Name, st.field, msg)
+			if !slices.Contains(lanes, name) {
+				lanes = append(lanes, name)
+			}
+		}
+	}
+	return lanes, rows.Err()
+}
+
+func deriveRoutingNodes(db *sql.DB, p Process, kinds domain.CoreNodeKinds, isUnknown func(name string) bool) (RoutingDeriveReport, error) {
 	if !p.FlowComposerEnabled {
+		lanes, err := laneLegsOnClaims(db, p, kinds)
+		if err != nil {
+			return RoutingDeriveReport{}, err
+		}
+		notLane := ""
+		if len(lanes) > 0 {
+			notLane = " NOT IN (" + strings.TrimSuffix(strings.Repeat("?, ", len(lanes)), ", ") + ")"
+		}
 		for _, st := range routingDeriveStatements {
+			args := []any{st.role, domain.RoutingOriginBackfill, p.ID}
+			skip := ""
+			if notLane != "" {
+				skip = ` AND TRIM(c.` + st.field + `)` + notLane
+				for _, l := range lanes {
+					args = append(args, l)
+				}
+			}
 			// ENABLED, NOT DISABLED (owner ruling 2026-09-16, reversing Q5).
 			//
 			// These names are read off LIVE claims: the press is already
@@ -363,8 +453,8 @@ func deriveRoutingNodes(db *sql.DB, p Process, isUnknown func(name string) bool)
 				(process_id, core_node_name, role, origin, enabled)
 				SELECT DISTINCT s.process_id, TRIM(c.`+st.field+`), ?, ?, 1
 				FROM style_node_claims c JOIN styles s ON s.id = c.style_id
-				WHERE s.process_id = ? AND s.deleted_at IS NULL AND c.retired_at IS NULL AND TRIM(c.`+st.field+`) != ''`,
-				st.role, domain.RoutingOriginBackfill, p.ID); err != nil {
+				WHERE s.process_id = ? AND s.deleted_at IS NULL AND c.retired_at IS NULL AND TRIM(c.`+st.field+`) != ''`+skip,
+				args...); err != nil {
 				return RoutingDeriveReport{}, fmt.Errorf("routing set backfill: process %d %s: %w", p.ID, st.field, err)
 			}
 		}

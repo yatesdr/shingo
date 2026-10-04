@@ -181,7 +181,7 @@ func BinTypeOf(fx scenefixtures.Plant) func(string) string {
 // of them meant to test. `by` is the adopter's name, as the row records it.
 func SeedRoutingSet(t *testing.T, db *store.DB, processID int64, by string) {
 	t.Helper()
-	if _, err := db.DeriveRoutingNodesForProcess(processID, func(string) bool { return false }); err != nil {
+	if _, err := db.DeriveRoutingNodesForProcess(domain.CoreNodeKinds{}, processID, func(string) bool { return false }); err != nil {
 		t.Fatalf("SeedRoutingSet: derive: %v", err)
 	}
 	rows, err := db.ListRoutingNodes(processID)
@@ -189,7 +189,7 @@ func SeedRoutingSet(t *testing.T, db *store.DB, processID int64, by string) {
 		t.Fatalf("SeedRoutingSet: list: %v", err)
 	}
 	for _, r := range rows {
-		if err := db.SetRoutingNodeEnabled(processID, r.ID, true, by); err != nil {
+		if err := db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, processID, r.ID, true, by); err != nil {
 			t.Fatalf("SeedRoutingSet: adopt %s: %v", r.CoreNodeName, err)
 		}
 	}

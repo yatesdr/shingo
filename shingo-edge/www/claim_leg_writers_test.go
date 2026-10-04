@@ -389,7 +389,8 @@ func copyOutcome(t *testing.T, router *chi.Mux, cookie *http.Cookie, pid, sid in
 	return ""
 }
 
-// routingWriterCensus is every routing-row writer, per role, as it stands.
+// routingWriterCensus is every routing-row writer, per role. The store's row
+// write and the switch-on refuse a lane in every role.
 var routingWriterCensus = []legCensusRow{
 	{"routing POST", "source", legRefused},
 	{"routing POST", "destination", legRefused},
@@ -397,9 +398,9 @@ var routingWriterCensus = []legCensusRow{
 	{"routing PUT", "source", legRefused},
 	{"routing PUT", "destination", legRefused},
 	{"routing PUT", "staging", legRefused},
-	{"routing PATCH enable", "source", legSaved},
-	{"routing PATCH enable", "destination", legSaved},
-	{"routing PATCH enable", "staging", legSaved},
+	{"routing PATCH enable", "source", legRefused},
+	{"routing PATCH enable", "destination", legRefused},
+	{"routing PATCH enable", "staging", legRefused},
 }
 
 // TestRoutingWriters_ALaneInEachRole is the census of routing-row writers
@@ -422,7 +423,7 @@ func TestRoutingWriters_ALaneInEachRole(t *testing.T) {
 				status = doRequest(t, router, "PUT", url, map[string]any{"nodes": []map[string]string{
 					{"core_node_name": "LL-LANE", "role": row.leg}}}, cookie).StatusCode
 			case "routing PATCH enable":
-				id, err := testDB.UpsertRoutingNode(processes.RoutingNodeInput{
+				id, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, processes.RoutingNodeInput{
 					ProcessID: pid, CoreNodeName: "LL-LANE", Role: row.leg,
 					Origin: domain.RoutingOriginBackfill,
 				})
@@ -456,19 +457,20 @@ func TestRoutingWriters_ALaneInEachRole(t *testing.T) {
 }
 
 // deriveWriterCensus is the routing backfill, per claim leg it reads. "boot"
-// is the call cmd/shingoedge makes before Core has been heard from; "HTTP" is
-// the Processes page's re-derive, with Core's node list in hand.
+// is the call cmd/shingoedge makes before Core has been heard from, so no lane
+// is known and the lane is derived as before; "HTTP" is the Processes page's
+// re-derive, with Core's node list in hand, which skips the lane and logs it.
 var deriveWriterCensus = []legCensusRow{
 	{"derive at boot", "inbound_source", legSaved},
 	{"derive at boot", "outbound_destination", legSaved},
 	{"derive at boot", "changeover_evac_destination", legSaved},
 	{"derive at boot", "inbound_staging", legSaved},
 	{"derive at boot", "outbound_staging", legSaved},
-	{"derive over HTTP", "inbound_source", legSaved},
-	{"derive over HTTP", "outbound_destination", legSaved},
-	{"derive over HTTP", "changeover_evac_destination", legSaved},
-	{"derive over HTTP", "inbound_staging", legSaved},
-	{"derive over HTTP", "outbound_staging", legSaved},
+	{"derive over HTTP", "inbound_source", legSkipped},
+	{"derive over HTTP", "outbound_destination", legSkipped},
+	{"derive over HTTP", "changeover_evac_destination", legSkipped},
+	{"derive over HTTP", "inbound_staging", legSkipped},
+	{"derive over HTTP", "outbound_staging", legSkipped},
 }
 
 // TestRoutingDerive_ALaneOnEachLeg is the census of the two derives. The boot
@@ -494,7 +496,7 @@ func TestRoutingDerive_ALaneOnEachLeg(t *testing.T) {
 				testutil.MustNoErr(t, err, "create style")
 				_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, withLaneOn(cleanLegClaim(sid), row.leg))
 				testutil.MustNoErr(t, err, "seed a stored lane claim")
-				_, err = db.DeriveRoutingNodes(nil)
+				_, err = db.DeriveRoutingNodes(domain.CoreNodeKinds{}, nil)
 				testutil.MustNoErr(t, err, "boot derive")
 			case "derive over HTTP":
 				db = testDB

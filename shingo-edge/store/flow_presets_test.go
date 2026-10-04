@@ -36,7 +36,7 @@ func seedPresetProcess(t *testing.T, db *DB) int64 {
 		{ProcessID: pid, CoreNodeName: "Supermarket Area", Role: domain.RoutingRoleDestination, Enabled: true},
 		{ProcessID: pid, CoreNodeName: "STG_UNREVIEWED", Role: domain.RoutingRoleStaging, Enabled: false, Origin: domain.RoutingOriginBackfill},
 	} {
-		if _, err := db.UpsertRoutingNode(in); err != nil {
+		if _, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, in); err != nil {
 			t.Fatalf("UpsertRoutingNode %s: %v", in.CoreNodeName, err)
 		}
 	}
@@ -200,7 +200,7 @@ func TestFlowPreset_RefusesANodeOutsidePositionsAndRoutingSet(t *testing.T) {
 			if r.Enabled {
 				t.Fatal("STG_UNREVIEWED is already adopted; this pin needs it switched off to mean anything")
 			}
-			if err := db.SetRoutingNodeEnabled(pid, r.ID, true, "eng"); err != nil {
+			if err := db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, pid, r.ID, true, "eng"); err != nil {
 				t.Fatalf("adopt: %v", err)
 			}
 		}

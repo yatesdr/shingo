@@ -119,12 +119,12 @@ func TestSaveFlow_TransactionHoldsNoRoutingRead(t *testing.T) {
 
 	// AND ADOPTING A ROUTING ROW DOES NOT STALE IT. The routing set is an
 	// offer list; a save that follows this still matches.
-	rowID, err := db.UpsertRoutingNode(domain.RoutingNodeInput{
+	rowID, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 		ProcessID: processID, CoreNodeName: "BUF-BUDGET", Role: domain.RoutingRoleSource,
 		Origin: domain.RoutingOriginEngineer,
 	})
 	testutil.MustNoErr(t, err, "routing row")
-	testutil.MustNoErr(t, db.SetRoutingNodeEnabled(processID, rowID, true, "test"), "adopt")
+	testutil.MustNoErr(t, db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, processID, rowID, true, "test"), "adopt")
 	after, err := eng.FlowFingerprint(processID, toStyleID)
 	testutil.MustNoErr(t, err, "fingerprint after adopting")
 	if after != fresh {

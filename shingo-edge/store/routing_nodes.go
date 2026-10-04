@@ -3,7 +3,10 @@ package store
 // Delegate file: the process routing set lives in store/processes/. This
 // preserves the *store.DB method surface the services and tests use.
 
-import "shingoedge/store/processes"
+import (
+	"shingoedge/domain"
+	"shingoedge/store/processes"
+)
 
 // ListRoutingNodes returns a process's routing set in source / staging /
 // destination order, without style counts.
@@ -17,14 +20,16 @@ func (db *DB) ListRoutingNodesWithCounts(processID int64) ([]processes.RoutingNo
 	return processes.ListRoutingNodesWithCounts(db.DB, processID)
 }
 
-// UpsertRoutingNode inserts or updates one (process, node, role) row.
-func (db *DB) UpsertRoutingNode(in processes.RoutingNodeInput) (int64, error) {
-	return processes.UpsertRoutingNode(db.DB, in)
+// UpsertRoutingNode inserts or updates one (process, node, role) row,
+// refusing a lane (kinds, Core's lane set).
+func (db *DB) UpsertRoutingNode(kinds domain.CoreNodeKinds, in processes.RoutingNodeInput) (int64, error) {
+	return processes.UpsertRoutingNode(db.DB, kinds, in)
 }
 
-// SetRoutingNodeEnabled flips one row's enabled flag (adopt = true).
-func (db *DB) SetRoutingNodeEnabled(processID, id int64, enabled bool, calledBy string) error {
-	return processes.SetRoutingNodeEnabled(db.DB, processID, id, enabled, calledBy)
+// SetRoutingNodeEnabled flips one row's enabled flag (adopt = true),
+// refusing to switch a lane on.
+func (db *DB) SetRoutingNodeEnabled(kinds domain.CoreNodeKinds, processID, id int64, enabled bool, calledBy string) error {
+	return processes.SetRoutingNodeEnabled(db.DB, kinds, processID, id, enabled, calledBy)
 }
 
 // DeleteRoutingNode removes one row, refusing while a live claim names it.
@@ -33,15 +38,16 @@ func (db *DB) DeleteRoutingNode(processID, id int64) error {
 }
 
 // DeriveRoutingNodes runs the routing-set backfill for every process whose
-// flow composer is still off. Called once at boot, after migrate.
-func (db *DB) DeriveRoutingNodes(isUnknown func(name string) bool) ([]processes.RoutingDeriveReport, error) {
-	return processes.DeriveRoutingNodes(db.DB, isUnknown)
+// flow composer is still off. Called once at boot, after migrate. A claim
+// leg naming a lane in kinds is skipped and logged.
+func (db *DB) DeriveRoutingNodes(kinds domain.CoreNodeKinds, isUnknown func(name string) bool) ([]processes.RoutingDeriveReport, error) {
+	return processes.DeriveRoutingNodes(db.DB, kinds, isUnknown)
 }
 
 // DeriveRoutingNodesForProcess re-derives one process's routing set (a no-op
-// once its flow composer is enabled).
-func (db *DB) DeriveRoutingNodesForProcess(processID int64, isUnknown func(name string) bool) (processes.RoutingDeriveReport, error) {
-	return processes.DeriveRoutingNodesForProcess(db.DB, processID, isUnknown)
+// once its flow composer is enabled), skipping a lane in kinds.
+func (db *DB) DeriveRoutingNodesForProcess(kinds domain.CoreNodeKinds, processID int64, isUnknown func(name string) bool) (processes.RoutingDeriveReport, error) {
+	return processes.DeriveRoutingNodesForProcess(db.DB, kinds, processID, isUnknown)
 }
 
 // RoutingSetReport counts a process's routing set without deriving.

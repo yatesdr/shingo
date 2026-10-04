@@ -39,6 +39,7 @@ import (
 	"shingo/protocol/router"
 	"shingoedge/backup"
 	"shingoedge/config"
+	"shingoedge/domain"
 	"shingoedge/engine"
 	"shingoedge/messaging"
 	"shingoedge/store"
@@ -676,8 +677,10 @@ func main() {
 	// yet, so no name can be checked against the plant here — the log line's
 	// "need a decision" count reads 0, which is the absence of a check and not
 	// a clean bill; the Processes page re-derives against the live Core list.
+	// For the same reason no lane is known yet, so none is skipped here; the
+	// re-derive skips them.
 	// A failure is logged, not fatal: this is a derivation, not a migration.
-	if _, err := db.DeriveRoutingNodes(nil); err != nil {
+	if _, err := db.DeriveRoutingNodes(domain.CoreNodeKinds{}, nil); err != nil {
 		log.Printf("routing set backfill: %v", err)
 	}
 

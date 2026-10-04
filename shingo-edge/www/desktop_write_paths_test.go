@@ -166,7 +166,7 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	}
 
 	// A backfilled routing row for the adopt case.
-	rowID, err := testDB.UpsertRoutingNode(domain.RoutingNodeInput{
+	rowID, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
 		ProcessID: pid, CoreNodeName: "WP-SOURCE", Role: domain.RoutingRoleSource,
 		Origin: domain.RoutingOriginBackfill, Enabled: false,
 	})

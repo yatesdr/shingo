@@ -193,15 +193,16 @@ func (s *ProcessService) ListRoutingNodes(processID int64) ([]domain.RoutingNode
 	return s.db.ListRoutingNodesWithCounts(processID)
 }
 
-// UpsertRoutingNode inserts or updates one (process, node, role) row.
-func (s *ProcessService) UpsertRoutingNode(in domain.RoutingNodeInput) (int64, error) {
-	return s.db.UpsertRoutingNode(in)
+// UpsertRoutingNode inserts or updates one (process, node, role) row. kinds is
+// Core's lane set; a lane is refused in every role.
+func (s *ProcessService) UpsertRoutingNode(kinds domain.CoreNodeKinds, in domain.RoutingNodeInput) (int64, error) {
+	return s.db.UpsertRoutingNode(kinds, in)
 }
 
 // SetRoutingNodeEnabled flips one row's enabled flag; adopting a backfilled
-// name is enabled=true.
-func (s *ProcessService) SetRoutingNodeEnabled(processID, id int64, enabled bool, calledBy string) error {
-	return s.db.SetRoutingNodeEnabled(processID, id, enabled, calledBy)
+// name is enabled=true, and switching a lane on is refused.
+func (s *ProcessService) SetRoutingNodeEnabled(kinds domain.CoreNodeKinds, processID, id int64, enabled bool, calledBy string) error {
+	return s.db.SetRoutingNodeEnabled(kinds, processID, id, enabled, calledBy)
 }
 
 // DeleteRoutingNode removes one row, refusing with ErrRoutingNodeInUse while
@@ -212,9 +213,10 @@ func (s *ProcessService) DeleteRoutingNode(processID, id int64) error {
 
 // DeriveRoutingNodes re-derives one process's routing set from its live
 // claims — a no-op, reported as Skipped, once the flow composer is enabled.
-// isUnknown may be nil when Core's node list is not available.
-func (s *ProcessService) DeriveRoutingNodes(processID int64, isUnknown func(name string) bool) (domain.RoutingDeriveReport, error) {
-	return s.db.DeriveRoutingNodesForProcess(processID, isUnknown)
+// isUnknown may be nil when Core's node list is not available. A claim leg
+// naming a lane in kinds is not derived, and the skip is logged.
+func (s *ProcessService) DeriveRoutingNodes(kinds domain.CoreNodeKinds, processID int64, isUnknown func(name string) bool) (domain.RoutingDeriveReport, error) {
+	return s.db.DeriveRoutingNodesForProcess(kinds, processID, isUnknown)
 }
 
 // RoutingSetReport counts the set as it stands, without deriving.
@@ -241,7 +243,9 @@ func (s *ProcessService) RoutingSet(processID int64, isUnknown func(name string)
 // THE INDEX IS THE SEQUENCE. composer-model's defaultRouting opens a new
 // position on the LOWEST sequence of each role, so the order the engineer
 // picked names in is the order that decides their defaults.
-func (s *ProcessService) PutRoutingNodes(processID int64, rows []domain.RoutingNodeInput, calledBy string) error {
+//
+// kinds is Core's lane set; a row naming a lane is refused by the store.
+func (s *ProcessService) PutRoutingNodes(kinds domain.CoreNodeKinds, processID int64, rows []domain.RoutingNodeInput, calledBy string) error {
 	seq := map[string]int{}
 	for i := range rows {
 		rows[i].ProcessID = processID
@@ -259,7 +263,7 @@ func (s *ProcessService) PutRoutingNodes(processID int64, rows []domain.RoutingN
 	// per row would be a second statement on the one SQLite connection for a
 	// value the first one just set.
 	for _, in := range rows {
-		if _, err := s.db.UpsertRoutingNode(in); err != nil {
+		if _, err := s.db.UpsertRoutingNode(kinds, in); err != nil {
 			return err
 		}
 	}

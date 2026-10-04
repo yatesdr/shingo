@@ -106,7 +106,7 @@ func (h *Handlers) apiPutRoutingNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows := make([]domain.RoutingNodeInput, 0, len(req.Nodes))
-	kinds := domain.CoreNodeKindsOf(h.engine.CoreNodes())
+	kinds := h.coreNodeKinds()
 	for _, n := range req.Nodes {
 		name := strings.TrimSpace(n.CoreNodeName)
 		if name == "" {
@@ -125,6 +125,8 @@ func (h *Handlers) apiPutRoutingNodes(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, msg)
 			return
 		}
+		// Refused here as well as by the store: the list is written row by
+		// row, and a lane found halfway would leave the rows before it.
 		if msg := kinds.LegRefusal(n.Role, name); msg != "" {
 			writeError(w, http.StatusBadRequest, msg)
 			return
@@ -132,7 +134,7 @@ func (h *Handlers) apiPutRoutingNodes(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, domain.RoutingNodeInput{CoreNodeName: name, Role: n.Role})
 	}
 	user, _ := h.sessions.getUser(r)
-	if err := h.engine.ProcessService().PutRoutingNodes(id, rows, user); err != nil {
+	if err := h.engine.ProcessService().PutRoutingNodes(kinds, id, rows, user); err != nil {
 		switch {
 		case errors.Is(err, service.ErrRoutingNodeIsPosition):
 			writeError(w, http.StatusConflict, err.Error())

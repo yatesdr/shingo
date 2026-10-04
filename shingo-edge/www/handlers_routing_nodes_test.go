@@ -167,7 +167,7 @@ func TestRoutingNodes_AdoptAndDelete(t *testing.T) {
 	cookie := authCookie(t, h)
 	pid := seedProcess(t, "RT-Adopt")
 	sid := seedRoutingClaim(t, pid, "RT-Adopt-Style")
-	if _, err := testDB.DeriveRoutingNodesForProcess(pid, nil); err != nil {
+	if _, err := testDB.DeriveRoutingNodesForProcess(domain.CoreNodeKinds{}, pid, nil); err != nil {
 		t.Fatalf("derive: %v", err)
 	}
 	rows, err := testDB.ListRoutingNodes(pid)

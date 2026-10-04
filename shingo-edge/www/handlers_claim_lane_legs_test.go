@@ -173,7 +173,7 @@ func TestComposer_OffersNoLaneChipOnASourceOrDestination(t *testing.T) {
 		{"LL-LANE", "destination"}, {"LL-SUP", "destination"},
 		{"LL-LANE", "staging"},
 	} {
-		_, err := testDB.UpsertRoutingNode(processes.RoutingNodeInput{
+		_, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, processes.RoutingNodeInput{
 			ProcessID: pid, CoreNodeName: row.name, Role: row.role, Enabled: true,
 			Origin: domain.RoutingOriginEngineer,
 		})

@@ -772,14 +772,14 @@ func TestFlowFingerprint_TracksTheStoredRows(t *testing.T) {
 	// a lane changes no stored flow and cannot change what a plan would do, so
 	// invalidating every open preview on the press for one was a refusal
 	// nobody could act on.
-	rowID, err := db.UpsertRoutingNode(processes.RoutingNodeInput{ProcessID: processID, CoreNodeName: "BUF-1", Role: domain.RoutingRoleSource, Origin: domain.RoutingOriginEngineer})
+	rowID, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, processes.RoutingNodeInput{ProcessID: processID, CoreNodeName: "BUF-1", Role: domain.RoutingRoleSource, Origin: domain.RoutingOriginEngineer})
 	testutil.MustNoErr(t, err, "routing row")
 	withRow, err := eng.FlowFingerprint(processID, toStyleID)
 	testutil.MustNoErr(t, err, "eng.FlowFingerprint")
 	if withRow != fromEdited {
 		t.Error("a new routing row moved the fingerprint; the routing set is an offer list, not a flow")
 	}
-	testutil.MustNoErr(t, db.SetRoutingNodeEnabled(processID, rowID, true, "eng"), "enable")
+	testutil.MustNoErr(t, db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, processID, rowID, true, "eng"), "enable")
 	got, err = eng.FlowFingerprint(processID, toStyleID)
 	testutil.MustNoErr(t, err, "eng.FlowFingerprint")
 	if got != withRow {

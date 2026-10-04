@@ -304,7 +304,7 @@ func TestRoutingBackfill_PlantA(t *testing.T) {
 		t.Fatalf("plant A: %d orphan claims loaded, want 4 — the test does not have its dirty input", dirty.orphanClaims)
 	}
 
-	reports, err := db.DeriveRoutingNodes(coreNameChecker(f))
+	reports, err := db.DeriveRoutingNodes(domain.CoreNodeKinds{}, coreNameChecker(f))
 	if err != nil {
 		t.Fatalf("DeriveRoutingNodes threw on plant A's rows: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestRoutingBackfill_PlantA(t *testing.T) {
 		SELECT c.id FROM style_node_claims c JOIN styles s ON s.id = c.style_id WHERE s.process_id = 1 AND s.deleted_at IS NULL LIMIT 1)`); err != nil {
 		t.Fatalf("edit a live P400 claim: %v", err)
 	}
-	rep, err := db.DeriveRoutingNodesForProcess(1, nil)
+	rep, err := db.DeriveRoutingNodesForProcess(domain.CoreNodeKinds{}, 1, nil)
 	if err != nil {
 		t.Fatalf("re-derive with gate on: %v", err)
 	}
@@ -394,7 +394,7 @@ func TestRoutingBackfill_PlantB(t *testing.T) {
 		t.Fatalf("plant B dirty rows = %+v, want 8 orphan / 2 deleted-style / 1 missing-process — the test does not have its dirty input", dirty)
 	}
 
-	reports, err := db.DeriveRoutingNodes(coreNameChecker(f))
+	reports, err := db.DeriveRoutingNodes(domain.CoreNodeKinds{}, coreNameChecker(f))
 	if err != nil {
 		t.Fatalf("DeriveRoutingNodes threw on plant B's rows: %v", err)
 	}

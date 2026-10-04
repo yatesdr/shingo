@@ -192,7 +192,7 @@ func TestStation_SetNodes_LeavesRoutingRowsUntouched(t *testing.T) {
 		{ProcessID: pid, CoreNodeName: "STG_01", Role: domain.RoutingRoleStaging, Sequence: 2, Enabled: false, Origin: domain.RoutingOriginBackfill},
 		{ProcessID: pid, CoreNodeName: "Supermarket Area", Role: domain.RoutingRoleDestination, Sequence: 3, Enabled: true, Origin: domain.RoutingOriginEngineer, CalledBy: "eng"},
 	} {
-		if _, err := db.UpsertRoutingNode(in); err != nil {
+		if _, err := db.UpsertRoutingNode(domain.CoreNodeKinds{}, in); err != nil {
 			t.Fatalf("seed routing row %s: %v", in.CoreNodeName, err)
 		}
 	}
