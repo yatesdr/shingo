@@ -5,6 +5,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/eventbus"
+	"shingocore/dispatch"
 	"shingocore/fleet"
 	"shingocore/store/cms"
 )
@@ -169,6 +170,9 @@ type OrderQueuedEvent struct {
 	EdgeUUID    string
 	StationID   string
 	PayloadCode string
+	// Announced is the wait the order carried when it was announced; the push
+	// after the scan compares the row against it (dispatch.WaitTold).
+	Announced dispatch.QueueWait
 }
 
 // BinAction is the closed vocabulary of BinUpdatedEvent.Action. String-valued

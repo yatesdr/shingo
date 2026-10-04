@@ -137,6 +137,59 @@ func TestPairRule_BlockedEvacParksThePairHoldingNothing(t *testing.T) {
 	}
 }
 
+// TestPairRule_APartnerWhoseWaitChangesIsToldOnce: the pair park copies the
+// blocked leg's wait onto its partner. When that changes what the partner's
+// station reads, the station is told, once; the next pass parks the pair on the
+// same answer and tells nobody. The copy used to be a bare store write, so the
+// partner's station kept reading its older sentence.
+func TestPairRule_APartnerWhoseWaitChangesIsToldOnce(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+	stage := prNode(t, db, "PR4T-STAGE")
+	full := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "PR4T", NumSlots: 1})
+	testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "PR4T-FRESH")
+	prResident(t, db, sd.LineNode, sd.BinType.ID, sd.Payload.Code, "PR4T-RESIDENT")
+
+	prSubmitLeg(d, "pr4t-supply", "pr4t-evac", sd.Payload.Code, sd.LineNode.Name,
+		prPick(sd.StorageNode.Name), prDropExcl(stage.Name), prWait(stage.Name), prPick(stage.Name),
+		prDrop(sd.LineNode.Name))
+	prSubmitLeg(d, "pr4t-evac", "pr4t-supply", sd.Payload.Code, sd.LineNode.Name,
+		prWait(sd.LineNode.Name), prPick(sd.LineNode.Name), prDrop(full.Slots[0].Name))
+
+	// The supply's station already reads a wait of its own.
+	supply := prReloadUUID(t, db, "pr4t-supply")
+	d.SetQueueReason(supply, protocol.QueueWaitingForMaterial, CauseReserveHolding,
+		QueueParams{Payload: sd.Payload.Code})
+	told := func() int {
+		n := 0
+		for _, id := range emitter.waitChanged {
+			if id == supply.ID {
+				n++
+			}
+		}
+		return n
+	}
+	before := told()
+
+	prScanPass(t, d, db, "pr4t-evac", "pr4t-supply")
+	supply, evac := prReloadUUID(t, db, "pr4t-supply"), prReloadUUID(t, db, "pr4t-evac")
+	if supply.QueueCause != string(CauseDropoffOccupied) || supply.QueueReason != evac.QueueReason {
+		t.Fatalf("the supply carries %q (%q), want the evac's %q (%q) — the pair did not park on the "+
+			"evac's refusal", supply.QueueCause, supply.QueueReason, evac.QueueCause, evac.QueueReason)
+	}
+	if n := told() - before; n != 1 {
+		t.Errorf("the supply's station was told %d time(s) that its wait changed, want 1", n)
+	}
+
+	prScanPass(t, d, db, "pr4t-evac", "pr4t-supply")
+	if n := told() - before; n != 1 {
+		t.Errorf("after a second pass on the same answer the supply's station was told %d time(s), "+
+			"want still 1", n)
+	}
+}
+
 // ── census 5: press-index, both creation orders ─────────────────────────────
 
 // TestPairRule_PressIndexBothOrNeitherInEitherCreationOrder runs the happy and

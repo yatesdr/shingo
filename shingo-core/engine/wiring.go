@@ -75,7 +75,6 @@ func (e *Engine) sendToEdge(msgType string, stationID string, payload any) error
 
 func (e *Engine) wireEventHandlers() {
 	e.wireCancelReturnNotices()
-	e.wireWaitPushCleanup()
 	// ── Dispatch tracking ───────────────────────────────────────────
 	// When an order is dispatched, track it in the tracker
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderDispatchedEvent]) {
@@ -557,9 +556,11 @@ func (e *Engine) wireEventHandlers() {
 	// the scanner dispatched transition out of the acquiring set, suppressing
 	// the push. Widened from queued-only to the acquiring set so a `sourcing`
 	// order's block reason still reaches Edge (its actual status rides along).
+	// The event carries the wait the order was announced with, so a change the
+	// scan already told the station is not sent again (pushQueueReason).
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderQueuedEvent]) {
 		ev := evt.Payload
-		e.pushQueueReason(ev.OrderID, ev.EdgeUUID, ev.StationID)
+		e.pushQueueReason(ev.OrderID, ev.EdgeUUID, ev.StationID, &ev.Announced)
 	}, EventOrderQueued)
 
 	// ── Resume push: the parent left `reshuffling` ────────────────────────
@@ -820,11 +821,19 @@ func (e *Engine) wireEventHandlers() {
 }
 
 // pushQueueReason sends the order's current wait to its station: the queued
-// event's push, and a wait that changed cause while the order stayed queued or
+// event's push, and a wait that changed while the order stayed queued or
 // sourcing (dispatch.WriteQueueDetail). One order read and one outbox message.
 // Only while the order is acquiring and has a sentence; the Edge keeps a reason
 // only while acquiring, on the same predicate.
-func (e *Engine) pushQueueReason(orderID int64, edgeUUID, stationID string) {
+//
+// EACH CHANGE IS SENT ONCE, AND NOTHING IS REMEMBERED. announced is the wait the
+// order carried when it was announced queued, nil for a changed wait. The scan
+// that the announcement ran sits between the two: when the row now differs from
+// the announced wait in a way dispatch.WaitTold tells, the write that made the
+// change already told the station, and this push would repeat it. A change the
+// predicate does not tell (a cause alone, or nothing at all) is sent here, once,
+// as the order's announced wait.
+func (e *Engine) pushQueueReason(orderID int64, edgeUUID, stationID string, announced *dispatch.QueueWait) {
 	if edgeUUID == "" || stationID == "" {
 		return
 	}
@@ -836,13 +845,7 @@ func (e *Engine) pushQueueReason(orderID int64, edgeUUID, stationID string) {
 	if !protocol.IsAcquiring(order.Status) || order.QueueReason == "" {
 		return
 	}
-	// THE SAME WAIT IS SENT ONCE. A wait that changes as the order is announced
-	// queued reaches here twice, from the changed wait and from the queued
-	// event, with the same status and sentence; the second is the same message.
-	wait := string(order.Status) + "\x00" + order.QueueReason + "\x00" + order.QueueCode
-	e.lastWaitPushMu.Lock()
-	defer e.lastWaitPushMu.Unlock()
-	if e.lastWaitPush[orderID] == wait {
+	if announced != nil && dispatch.WaitTold(*announced, dispatch.WaitOf(order)) {
 		return
 	}
 	if err := e.sendToEdge(protocol.TypeOrderUpdate, stationID, &protocol.OrderUpdate{
@@ -852,34 +855,5 @@ func (e *Engine) pushQueueReason(orderID int64, edgeUUID, stationID string) {
 		QueueCode:   order.QueueCode,
 	}); err != nil {
 		e.logFn("engine: queue_reason update to edge: %v", err)
-		return
 	}
-	if e.lastWaitPush == nil {
-		e.lastWaitPush = map[int64]string{}
-	}
-	e.lastWaitPush[orderID] = wait
-}
-
-// forgetWaitPush drops an ended order's last sent wait (pushQueueReason).
-func (e *Engine) forgetWaitPush(orderID int64) {
-	e.lastWaitPushMu.Lock()
-	delete(e.lastWaitPush, orderID)
-	e.lastWaitPushMu.Unlock()
-}
-
-// wireWaitPushCleanup forgets each order's last sent wait when it ends, so the
-// record holds live orders only.
-func (e *Engine) wireWaitPushCleanup() {
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
-		e.forgetWaitPush(evt.Payload.OrderID)
-	}, EventOrderCompleted)
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFailedEvent]) {
-		e.forgetWaitPush(evt.Payload.OrderID)
-	}, EventOrderFailed)
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCancelledEvent]) {
-		e.forgetWaitPush(evt.Payload.OrderID)
-	}, EventOrderCancelled)
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderSkippedEvent]) {
-		e.forgetWaitPush(evt.Payload.OrderID)
-	}, EventOrderSkipped)
 }

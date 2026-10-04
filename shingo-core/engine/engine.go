@@ -94,13 +94,8 @@ type Engine struct {
 	// onDeckMu serializes the on-deck door (orderCarriedBinDown) across the
 	// button and both hosts of the watch, so one caller's chosen slot is
 	// reserved before the next caller chooses. See the door.
-	onDeckMu  sync.Mutex
-	dropObsMu sync.Mutex
-	// lastWaitPush is the last wait each order's station was sent (status,
-	// sentence, code), so the same wait is sent once whichever door sends it
-	// (pushQueueReason). Dropped when the order ends.
-	lastWaitPush          map[int64]string
-	lastWaitPushMu        sync.Mutex
+	onDeckMu              sync.Mutex
+	dropObsMu             sync.Mutex
 	reconciliation        *ReconciliationService
 	recovery              *RecoveryService
 	fulfillment           *fulfillment.Scanner

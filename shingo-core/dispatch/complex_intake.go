@@ -60,7 +60,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	// (complex_dispatch.go), where the parent may own a lock.
 	resolvedSteps, err := d.resolveComplexSteps(p.Steps, payloadCode, reservations.Anyone)
 	var (
-		queueReason string
+		queueParams QueueParams
 		queueCode   protocol.QueueCode
 		queueCause  QueueCause
 		// buried non-nil selects the reshuffle tail below. The parent row
@@ -100,8 +100,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 			queueCause = causeForCapacity(capDetail.kindOf(), CauseIntakeResolve)
 			queueCode = queueCodeForCapacity(capDetail.kindOf())
 			_, intakeDelivery := extractEndpoints(resolvedSteps)
-			queueReason = FormatQueueSentence(queueCode,
-				queueParamsForCapacity(capDetail, payloadCode, intakeDelivery))
+			queueParams = queueParamsForCapacity(capDetail, payloadCode, intakeDelivery)
 		default:
 			// Structural / transient / fatal — terminal at intake.
 			d.refuseComplexIntake(env, p, "resolution_failed", err.Error())
@@ -204,18 +203,16 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		d.refuseComplexIntake(env, p, "internal_error", err.Error())
 		return
 	}
-	if queueReason != "" {
-		// Queue detail is written by the transition that queues an order, never
-		// at creation — SetOrderQueueDetail is the one way in, and its other
-		// callers are all transitions (the planner, complex dispatch, the
-		// fulfillment scanner). The order struct has QueueReason/QueueCode/
-		// QueueCause fields, but the writer does not persist them and is not
-		// meant to; assigning them above would look like it worked and do
-		// nothing.
-		if err := d.db.SetOrderQueueDetail(order.ID, queueReason, queueCode, string(queueCause)); err != nil {
-			log.Printf("dispatch: set initial queue_reason for complex order %d: %v", order.ID, err)
-		}
-		log.Printf("dispatch: complex order %d parked at intake — %s", order.ID, queueReason)
+	if queueCode != "" {
+		// Queue detail is written after creation, never by it: CreateOrder does
+		// not persist the QueueReason/QueueCode/QueueCause fields, so assigning
+		// them above would look like it worked and do nothing. It goes through
+		// the one door rather than the bare store call so the struct carries the
+		// wait too: the announcement below reads it, and the push after the scan
+		// compares against it (WaitTold). This is the order's first wait, so the
+		// door tells nobody; the announcement does.
+		d.setQueueReason(order, queueCode, queueCause, queueParams)
+		log.Printf("dispatch: complex order %d parked at intake — %s", order.ID, order.QueueReason)
 	}
 
 	// Two-robot swap pairing, back-link reconcile: the forward pointer
@@ -265,7 +262,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	// EventBus; if capacity is green and bins claimable, dispatch happens
 	// before this function returns. Otherwise the order sits queued with
 	// queue_reason set to the blocking signal.
-	d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
+	d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode, WaitOf(order))
 }
 
 // refuseComplexIntake answers a complex request Core will not ingest.

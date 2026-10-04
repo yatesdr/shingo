@@ -396,7 +396,7 @@ func (d *Dispatcher) queueOrderInternal(order *orders.Order, stationID, payloadC
 		}
 	}
 	d.dbg("queued: order=%d uuid=%s payload=%s delivery=%s", order.ID, order.EdgeUUID, payloadCode, order.DeliveryNode)
-	d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
+	d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode, WaitOf(order))
 }
 
 // dispatchToFleet sends the order and acks the station that asked. IT RETURNS

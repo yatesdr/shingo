@@ -49,24 +49,53 @@ import (
 //
 // The comparison includes the cause. Two causes can share one code and render
 // one sentence — the two blocker refusals do — so comparing without it leaves
-// the stale cause on the row forever. The buried path sets "storage is being
-// rearranged" on arrival and then NARROWS the cause to lane-locked or lock-race;
-// without the cause in this comparison the narrower tag never lands.
+// the stale cause on the row forever: a buried demand moving from "nowhere to
+// put the blocker" to "a robot is in the lane" keeps one code and one sentence,
+// and without the cause in this comparison the second tag never lands. Telling
+// the station is a different question with a different answer (WaitTold): the
+// wire carries no cause.
 //
-// ── TWO SITES STILL WRITE THE COLUMNS DIRECTLY, AND BOTH ARE CORRECT ──────
+// ── ONE SITE STILL WRITES THE COLUMNS DIRECTLY, AND IT IS CORRECT ─────────
 //
-// complex_intake.go writes the detail immediately after CreateOrder, before the
-// order has ever been read back: there is no prior value to short-circuit
-// against and no live struct anybody is about to transition. lifecycle.go's
-// ResumeCompound CLEARS all three columns, and clearing is not a wait — there is
-// no code and no params, so there is no sentence to format. Neither is a fourth
-// spelling of this decision; they are different decisions.
+// lifecycle.go's ResumeCompound CLEARS all three columns, and clearing is not a
+// wait — there is no code and no params, so there is no sentence to format. It
+// is not another spelling of this decision; it is a different decision. Complex
+// intake and the pair park used to write directly too, which left the order's
+// struct (complex intake) or the station (the pair park's partner) behind the
+// row; both write through here now.
 
 // QueueDetailStore is the single store method the door needs. Narrow on purpose:
 // the fulfillment Scanner holds an interface, not the concrete *store.DB, and a
 // wider dependency here would drag that whole surface into the door.
 type QueueDetailStore interface {
 	SetOrderQueueDetail(id int64, reason string, code protocol.QueueCode, cause string) error
+}
+
+// QueueWait is what an order is waiting on, as its row carries it: the code
+// and the sentence the station reads, and the cause, which stays in Core.
+type QueueWait struct {
+	Code, Cause, Reason string
+}
+
+// WaitOf reads the wait an order struct carries.
+func WaitOf(o *orders.Order) QueueWait {
+	return QueueWait{Code: o.QueueCode, Cause: o.QueueCause, Reason: o.QueueReason}
+}
+
+// WaitTold reports whether a station that holds prev is told next. It is told a
+// new code, or a new cause that reads as a new sentence. The wire carries the
+// status, the sentence and the code, never the cause, so a cause alone is not
+// news; and a sentence whose code and cause are unchanged (a count in it moved)
+// is not a new wait. The first wait (prev has no code) is never told here: it
+// reaches the station with the order's announcement, the queued event's push.
+// Clearing (next has no code) is not a wait.
+//
+// One predicate for both doors that tell a station: WriteQueueDetail asks it of
+// each write, and the push after a queued announcement asks it of the wait the
+// order was announced with, to skip a change the write already told.
+func WaitTold(prev, next QueueWait) bool {
+	return prev.Code != "" && next.Code != "" &&
+		(prev.Code != next.Code || (prev.Cause != next.Cause && prev.Reason != next.Reason))
 }
 
 // WriteQueueDetail formats the operator sentence from code+params and writes
@@ -80,32 +109,33 @@ type QueueDetailStore interface {
 // who names the subsystem in the log line, so a failure is still attributable
 // after the three copies became one.
 //
-// A CHANGED WAIT IS TOLD TO THE STATION, ONCE. The station learns an order's
-// sentence when the order enters the queue (the queued event's push, wired in
-// the engine). A wait that changes cause later, while the order stays queued or
-// sourcing, used to stay in Core: a refill that waited for material and then
-// for its slot went on reading "waiting for material" at the station. notify is
-// called when the code or the cause changes on an order that already had a wait
-// and is still acquiring; the first wait is the queued push's, and a sentence
-// whose code and cause are unchanged (a count in it moved) is not a new wait.
-// One message per change of cause, never one per pass. nil notifies nobody.
+// A CHANGED WAIT IS TOLD TO THE STATION, ONCE. notify is called when the write
+// is one WaitTold tells and the order is still acquiring (queued or sourcing).
+// A wait that changed later used to stay in Core: a refill that waited for
+// material and then for its slot went on reading "waiting for material" at the
+// station. Writes that repeat the row write nothing, so a wait re-asserted on
+// every scanner pass costs no statement and no message. nil notifies nobody.
 func WriteQueueDetail(db QueueDetailStore, logf func(string, ...any), who string,
 	order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams,
 	notify func(*orders.Order)) bool {
-	reason := FormatQueueSentence(code, params)
-	if order.QueueReason == reason && order.QueueCode == string(code) && order.QueueCause == string(cause) {
+	return writeQueueWait(db, logf, who, order,
+		QueueWait{Code: string(code), Cause: string(cause), Reason: FormatQueueSentence(code, params)}, notify)
+}
+
+// writeQueueWait is WriteQueueDetail for a sentence that is already formatted:
+// the pair park copies the blocked leg's wait onto its partner as it stands.
+func writeQueueWait(db QueueDetailStore, logf func(string, ...any), who string,
+	order *orders.Order, next QueueWait, notify func(*orders.Order)) bool {
+	prev := WaitOf(order)
+	if prev == next {
 		return false
 	}
-	if err := db.SetOrderQueueDetail(order.ID, reason, code, string(cause)); err != nil {
-		logf("%s: set queue_reason (%s) for order %d: %v", who, cause, order.ID, err)
+	if err := db.SetOrderQueueDetail(order.ID, next.Reason, protocol.QueueCode(next.Code), next.Cause); err != nil {
+		logf("%s: set queue_reason (%s) for order %d: %v", who, next.Cause, order.ID, err)
 		return false
 	}
-	changed := order.QueueCode != "" && code != "" &&
-		(order.QueueCode != string(code) || order.QueueCause != string(cause))
-	order.QueueReason = reason
-	order.QueueCode = string(code)
-	order.QueueCause = string(cause)
-	if changed && notify != nil && protocol.IsAcquiring(order.Status) {
+	order.QueueReason, order.QueueCode, order.QueueCause = next.Reason, next.Code, next.Cause
+	if notify != nil && WaitTold(prev, next) && protocol.IsAcquiring(order.Status) {
 		notify(order)
 	}
 	return true

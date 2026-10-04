@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingocore/dispatch"
 	"shingocore/fleet"
 	"shingocore/store/orders"
 )
@@ -149,7 +150,8 @@ func TestDispatchEmitter_EmitOrderQueued(t *testing.T) {
 	t.Parallel()
 	bus, mu, got := captureBus()
 	em := &dispatchEmitter{bus: bus}
-	em.EmitOrderQueued(14, "euid-q", "st-q", "PART-A")
+	announced := dispatch.QueueWait{Code: "waiting_for_material", Cause: "intake-resolve", Reason: "Waiting for material"}
+	em.EmitOrderQueued(14, "euid-q", "st-q", "PART-A", announced)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -158,7 +160,7 @@ func TestDispatchEmitter_EmitOrderQueued(t *testing.T) {
 		t.Fatal("EventOrderQueued not emitted")
 	}
 	p := evt.Payload.(OrderQueuedEvent)
-	if p.OrderID != 14 || p.EdgeUUID != "euid-q" || p.PayloadCode != "PART-A" {
+	if p.OrderID != 14 || p.EdgeUUID != "euid-q" || p.PayloadCode != "PART-A" || p.Announced != announced {
 		t.Errorf("OrderQueuedEvent fields = %+v", p)
 	}
 }
@@ -175,7 +177,7 @@ func TestDispatchEmitter_AllMethodsCovered(t *testing.T) {
 	em.EmitOrderFailed(1, "", "", "", "", nil)
 	em.EmitOrderCancelled(1, "", "", "", "", nil)
 	em.EmitOrderCompleted(1, "", "", nil)
-	em.EmitOrderQueued(1, "", "", "")
+	em.EmitOrderQueued(1, "", "", "", dispatch.QueueWait{})
 
 	mu.Lock()
 	defer mu.Unlock()

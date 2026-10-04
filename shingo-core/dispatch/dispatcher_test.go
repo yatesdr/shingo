@@ -92,7 +92,7 @@ func (m *mockEmitter) EmitOrderCancelled(orderID int64, _, _, reason, _ string, 
 func (m *mockEmitter) EmitOrderCompleted(orderID int64, _, _ string, _ *int64) {
 	m.completed = append(m.completed, emitCompleted{orderID})
 }
-func (m *mockEmitter) EmitOrderQueued(orderID int64, _, _, _ string) {
+func (m *mockEmitter) EmitOrderQueued(orderID int64, _, _, _ string, _ QueueWait) {
 	m.queued = append(m.queued, emitQueued{orderID})
 }
 func (m *mockEmitter) EmitOrderResumed(orderID int64, _, _ string) {

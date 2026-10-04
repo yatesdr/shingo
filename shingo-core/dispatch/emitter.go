@@ -13,7 +13,10 @@ type Emitter interface {
 	EmitOrderSkipped(orderID int64, edgeUUID, stationID, errorCode, detail string)
 	EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason, previousStatus string, recovers *int64)
 	EmitOrderCompleted(orderID int64, edgeUUID, stationID string, recovers *int64)
-	EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string)
+	// announced is the wait the order carries as it is announced (WaitOf), or
+	// the zero value for none. The push that follows the scan reads it to skip a
+	// change of wait the scan already told the station (WaitTold).
+	EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string, announced QueueWait)
 	// EmitOrderResumed announces Reshuffling → Queued — a compound finished and
 	// its complex parent is live again.
 	//

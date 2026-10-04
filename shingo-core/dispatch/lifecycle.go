@@ -712,7 +712,7 @@ func fireCancelled(s *LifecycleService, ord *orders.Order, ev Event) error {
 // because the requeued parent's payload context is already on the
 // order row; the scanner reads it from there.
 func fireRequeued(s *LifecycleService, ord *orders.Order, ev Event) error {
-	s.emitter.EmitOrderQueued(ord.ID, ord.EdgeUUID, ev.StationID, "")
+	s.emitter.EmitOrderQueued(ord.ID, ord.EdgeUUID, ev.StationID, "", WaitOf(ord))
 	return nil
 }
 

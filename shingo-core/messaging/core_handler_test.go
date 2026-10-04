@@ -53,10 +53,11 @@ func (noopEmitter) EmitOrderSkipped(orderID int64, edgeUUID, stationID, errorCod
 func (noopEmitter) EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason, previousStatus string, recovers *int64) {
 }
 func (noopEmitter) EmitOrderCompleted(orderID int64, edgeUUID, stationID string, recovers *int64) {}
-func (noopEmitter) EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string)        {}
-func (noopEmitter) EmitOrderResumed(orderID int64, edgeUUID, stationID string)                    {}
-func (noopEmitter) EmitOrderWaitChanged(orderID int64, edgeUUID, stationID string)                {}
-func (noopEmitter) ProjectOrder(stationID string, projection protocol.OrderProjection)            {}
+func (noopEmitter) EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string, _ dispatch.QueueWait) {
+}
+func (noopEmitter) EmitOrderResumed(orderID int64, edgeUUID, stationID string)         {}
+func (noopEmitter) EmitOrderWaitChanged(orderID int64, edgeUUID, stationID string)     {}
+func (noopEmitter) ProjectOrder(stationID string, projection protocol.OrderProjection) {}
 
 func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
 	t.Parallel()

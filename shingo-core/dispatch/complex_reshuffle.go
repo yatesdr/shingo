@@ -211,7 +211,7 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 // answer to the request it just made, so every park is announced.
 func (d *Dispatcher) planBuriedReshuffleAtIntake(order *orders.Order, payloadCode, stationID string, buried *BuriedError) {
 	d.handleComplexBurial(order, payloadCode, buried, func() {
-		d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
+		d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode, WaitOf(order))
 	})
 }
 

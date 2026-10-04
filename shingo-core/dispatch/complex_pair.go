@@ -435,19 +435,15 @@ func (d *Dispatcher) parkPair(legs []*orders.Order, blocked *orders.Order) {
 		log.Printf("dispatch: pair park — order %d parked with no queue reason; leaving its partner's row alone", blocked.ID)
 		return
 	}
+	// The partner takes the blocked leg's wait as it stands, through the one
+	// door: an unchanged row writes nothing, and a partner whose wait changed is
+	// told at its station like any other changed wait. A bare store write here
+	// left the partner's station reading its older sentence.
 	for _, leg := range legs {
 		if leg.ID == blocked.ID {
 			continue
 		}
-		if leg.QueueReason == src.QueueReason && leg.QueueCode == src.QueueCode && leg.QueueCause == src.QueueCause {
-			continue // the short-circuit WriteQueueDetail's own note explains: do not bump updated_at for nothing
-		}
-		if err := d.db.SetOrderQueueDetail(leg.ID, src.QueueReason,
-			protocol.QueueCode(src.QueueCode), src.QueueCause); err != nil {
-			log.Printf("dispatch: pair park — mirror cause onto order %d: %v", leg.ID, err)
-			continue
-		}
-		leg.QueueReason, leg.QueueCode, leg.QueueCause = src.QueueReason, src.QueueCode, src.QueueCause
+		writeQueueWait(d.db, log.Printf, "dispatch: pair park", leg, WaitOf(src), d.NotifyWaitChanged)
 	}
 	d.dbg("complex: pair parked on order %d's cause (%s); %d leg(s) holding nothing",
 		blocked.ID, src.QueueCause, len(legs))

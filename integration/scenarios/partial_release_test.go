@@ -280,16 +280,16 @@ type noopEmitter struct{}
 
 func (noopEmitter) EmitOrderReceived(_ int64, _, _ string, _ protocol.OrderType, _, _ string) {
 }
-func (noopEmitter) EmitOrderDispatched(_ int64, _, _, _ string)             {}
-func (noopEmitter) EmitOrderFailed(_ int64, _, _, _, _ string, _ *int64)    {}
-func (noopEmitter) EmitOrderSkipped(_ int64, _, _, _, _ string)             {}
-func (noopEmitter) EmitOrderCancelled(_ int64, _, _, _, _ string, _ *int64) {}
-func (noopEmitter) EmitOrderCompleted(_ int64, _, _ string, _ *int64)       {}
-func (noopEmitter) EmitOrderQueued(_ int64, _, _, _ string)                 {}
-func (noopEmitter) EmitOrderResumed(_ int64, _, _ string)                   {}
-func (noopEmitter) EmitOrderWaitChanged(_ int64, _, _ string)               {}
-func (noopEmitter) EmitOrderFaulted(_ int64, _, _, _ string)                {}
-func (noopEmitter) EmitOrderFaultedRecovered(_ int64, _, _, _ string)       {}
+func (noopEmitter) EmitOrderDispatched(_ int64, _, _, _ string)                   {}
+func (noopEmitter) EmitOrderFailed(_ int64, _, _, _, _ string, _ *int64)          {}
+func (noopEmitter) EmitOrderSkipped(_ int64, _, _, _, _ string)                   {}
+func (noopEmitter) EmitOrderCancelled(_ int64, _, _, _, _ string, _ *int64)       {}
+func (noopEmitter) EmitOrderCompleted(_ int64, _, _ string, _ *int64)             {}
+func (noopEmitter) EmitOrderQueued(_ int64, _, _, _ string, _ dispatch.QueueWait) {}
+func (noopEmitter) EmitOrderResumed(_ int64, _, _ string)                         {}
+func (noopEmitter) EmitOrderWaitChanged(_ int64, _, _ string)                     {}
+func (noopEmitter) EmitOrderFaulted(_ int64, _, _, _ string)                      {}
+func (noopEmitter) EmitOrderFaultedRecovered(_ int64, _, _, _ string)             {}
 
 // ProjectOrder is a no-op here for the same reason as the rest: these scenarios
 // assert on database state, not on what went out to an Edge.
