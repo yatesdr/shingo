@@ -1,0 +1,1106 @@
+{
+  "consume/single_robot": {
+    "BuildChangeoverPlan/evacuate/newPayload": [
+      {
+        "Err": "",
+        "EvacOrder": {
+          "Complex": {
+            "DeliveryNode": "",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "LINE",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "LINE"
+              },
+              {
+                "action": "dropoff",
+                "node": "STG-OUT",
+                "exclusive_slot": true
+              },
+              {
+                "action": "wait",
+                "wait_kind": "station",
+                "purpose": "tooling_done"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-IN",
+                "payload_code": "P-TO"
+              },
+              {
+                "action": "dropoff",
+                "node": "LINE"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-OUT"
+              },
+              {
+                "action": "dropoff",
+                "node": "DST"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "P-FROM",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        },
+        "LogTag": "evacuate",
+        "NextState": "staging_requested",
+        "Situation": "evacuate",
+        "SupplyOrder": null
+      }
+    ],
+    "BuildChangeoverPlan/evacuate/samePayload": [
+      {
+        "Err": "",
+        "EvacOrder": {
+          "Complex": {
+            "DeliveryNode": "",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "LINE",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "LINE"
+              },
+              {
+                "action": "dropoff",
+                "node": "STG-OUT",
+                "exclusive_slot": true
+              },
+              {
+                "action": "wait",
+                "wait_kind": "station",
+                "purpose": "tooling_done"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-IN",
+                "payload_code": "P-FROM"
+              },
+              {
+                "action": "dropoff",
+                "node": "LINE"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-OUT"
+              },
+              {
+                "action": "dropoff",
+                "node": "DST"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "P-FROM",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        },
+        "LogTag": "evacuate",
+        "NextState": "staging_requested",
+        "Situation": "evacuate",
+        "SupplyOrder": null
+      }
+    ],
+    "BuildChangeoverPlan/swap/newPayload": [
+      {
+        "Err": "",
+        "EvacOrder": {
+          "Complex": {
+            "DeliveryNode": "",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "LINE",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "LINE"
+              },
+              {
+                "action": "dropoff",
+                "node": "STG-OUT",
+                "exclusive_slot": true
+              },
+              {
+                "action": "pickup",
+                "node": "STG-IN",
+                "payload_code": "P-TO"
+              },
+              {
+                "action": "dropoff",
+                "node": "LINE"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-OUT"
+              },
+              {
+                "action": "dropoff",
+                "node": "DST"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "P-FROM",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        },
+        "LogTag": "swap",
+        "NextState": "staging_requested",
+        "Situation": "swap",
+        "SupplyOrder": null
+      }
+    ],
+    "BuildChangeoverPlan/swap/samePayload": [
+      {
+        "Err": "",
+        "EvacOrder": {
+          "Complex": {
+            "DeliveryNode": "",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "LINE",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "LINE"
+              },
+              {
+                "action": "dropoff",
+                "node": "STG-OUT",
+                "exclusive_slot": true
+              },
+              {
+                "action": "pickup",
+                "node": "STG-IN",
+                "payload_code": "P-FROM"
+              },
+              {
+                "action": "dropoff",
+                "node": "LINE"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-OUT"
+              },
+              {
+                "action": "dropoff",
+                "node": "DST"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "P-FROM",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        },
+        "LogTag": "swap",
+        "NextState": "staging_requested",
+        "Situation": "swap",
+        "SupplyOrder": null
+      }
+    ],
+    "BuildSwapDispatch": {
+      "CycleMode": "single_robot",
+      "ProcessNode": "LINE",
+      "StepsA": [
+        {
+          "action": "wait",
+          "node": "LINE",
+          "wait_kind": "station",
+          "purpose": "swap"
+        },
+        {
+          "action": "pickup",
+          "node": "LINE"
+        },
+        {
+          "action": "dropoff",
+          "node": "STG-OUT",
+          "exclusive_slot": true
+        },
+        {
+          "action": "pickup",
+          "node": "STG-IN",
+          "payload_code": "P-FROM"
+        },
+        {
+          "action": "dropoff",
+          "node": "LINE"
+        },
+        {
+          "action": "pickup",
+          "node": "STG-OUT"
+        },
+        {
+          "action": "dropoff",
+          "node": "DST"
+        }
+      ],
+      "DeliveryNodeA": "DST",
+      "AutoConfirmA": false,
+      "StepsB": null,
+      "AutoConfirmB": false
+    }
+  },
+  "consume/two_robot": {
+    "BuildChangeoverPlan/evacuate/newPayload": [
+      {
+        "Err": "",
+        "EvacOrder": {
+          "Complex": {
+            "DeliveryNode": "",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "LINE",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "LINE"
+              },
+              {
+                "action": "dropoff",
+                "node": "DST"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "P-FROM",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        },
+        "LogTag": "evacuate",
+        "NextState": "staging_requested",
+        "Situation": "evacuate",
+        "SupplyOrder": {
+          "Complex": {
+            "DeliveryNode": "LINE",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "STG-IN",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-IN",
+                "payload_code": "P-TO"
+              },
+              {
+                "action": "dropoff",
+                "node": "LINE"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        }
+      }
+    ],
+    "BuildChangeoverPlan/evacuate/samePayload": [
+      {
+        "Err": "",
+        "EvacOrder": {
+          "Complex": {
+            "DeliveryNode": "",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "LINE",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "LINE"
+              },
+              {
+                "action": "dropoff",
+                "node": "DST"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "P-FROM",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        },
+        "LogTag": "evacuate",
+        "NextState": "staging_requested",
+        "Situation": "evacuate",
+        "SupplyOrder": {
+          "Complex": {
+            "DeliveryNode": "LINE",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "STG-IN",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-IN",
+                "payload_code": "P-FROM"
+              },
+              {
+                "action": "dropoff",
+                "node": "LINE"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        }
+      }
+    ],
+    "BuildChangeoverPlan/swap/newPayload": [
+      {
+        "Err": "",
+        "EvacOrder": {
+          "Complex": {
+            "DeliveryNode": "",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "LINE",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "LINE"
+              },
+              {
+                "action": "dropoff",
+                "node": "DST"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "P-FROM",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        },
+        "LogTag": "swap",
+        "NextState": "staging_requested",
+        "Situation": "swap",
+        "SupplyOrder": {
+          "Complex": {
+            "DeliveryNode": "LINE",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "STG-IN",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-IN",
+                "payload_code": "P-TO"
+              },
+              {
+                "action": "dropoff",
+                "node": "LINE"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        }
+      }
+    ],
+    "BuildChangeoverPlan/swap/samePayload": [
+      {
+        "Err": "",
+        "EvacOrder": {
+          "Complex": {
+            "DeliveryNode": "",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "LINE",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "LINE"
+              },
+              {
+                "action": "dropoff",
+                "node": "DST"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "P-FROM",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        },
+        "LogTag": "swap",
+        "NextState": "staging_requested",
+        "Situation": "swap",
+        "SupplyOrder": {
+          "Complex": {
+            "DeliveryNode": "LINE",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "STG-IN",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-IN",
+                "payload_code": "P-FROM"
+              },
+              {
+                "action": "dropoff",
+                "node": "LINE"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        }
+      }
+    ],
+    "BuildSwapDispatch": {
+      "CycleMode": "two_robot",
+      "ProcessNode": "LINE",
+      "StepsA": [
+        {
+          "action": "wait",
+          "node": "STG-IN",
+          "wait_kind": "station",
+          "purpose": "swap"
+        },
+        {
+          "action": "pickup",
+          "node": "STG-IN",
+          "payload_code": "P-FROM"
+        },
+        {
+          "action": "dropoff",
+          "node": "LINE"
+        }
+      ],
+      "DeliveryNodeA": "LINE",
+      "AutoConfirmA": false,
+      "StepsB": [
+        {
+          "action": "wait",
+          "node": "LINE",
+          "wait_kind": "station",
+          "purpose": "swap"
+        },
+        {
+          "action": "pickup",
+          "node": "LINE"
+        },
+        {
+          "action": "dropoff",
+          "node": "DST"
+        }
+      ],
+      "AutoConfirmB": true
+    }
+  },
+  "produce/single_robot": {
+    "BuildChangeoverPlan/evacuate/newPayload": [
+      {
+        "Err": "",
+        "EvacOrder": {
+          "Complex": {
+            "DeliveryNode": "",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "LINE",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "LINE"
+              },
+              {
+                "action": "dropoff",
+                "node": "STG-OUT",
+                "exclusive_slot": true
+              },
+              {
+                "action": "wait",
+                "wait_kind": "station",
+                "purpose": "tooling_done"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-IN",
+                "payload_code": "P-TO"
+              },
+              {
+                "action": "dropoff",
+                "node": "LINE"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-OUT"
+              },
+              {
+                "action": "dropoff",
+                "node": "DST"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "P-FROM",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        },
+        "LogTag": "evacuate",
+        "NextState": "staging_requested",
+        "Situation": "evacuate",
+        "SupplyOrder": null
+      }
+    ],
+    "BuildChangeoverPlan/evacuate/samePayload": [
+      {
+        "Err": "",
+        "EvacOrder": {
+          "Complex": {
+            "DeliveryNode": "",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "LINE",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "LINE"
+              },
+              {
+                "action": "dropoff",
+                "node": "STG-OUT",
+                "exclusive_slot": true
+              },
+              {
+                "action": "wait",
+                "wait_kind": "station",
+                "purpose": "tooling_done"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-IN",
+                "payload_code": "P-FROM"
+              },
+              {
+                "action": "dropoff",
+                "node": "LINE"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-OUT"
+              },
+              {
+                "action": "dropoff",
+                "node": "DST"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "P-FROM",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        },
+        "LogTag": "evacuate",
+        "NextState": "staging_requested",
+        "Situation": "evacuate",
+        "SupplyOrder": null
+      }
+    ],
+    "BuildChangeoverPlan/swap/newPayload": [
+      {
+        "Err": "",
+        "EvacOrder": {
+          "Complex": {
+            "DeliveryNode": "",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "LINE",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "LINE"
+              },
+              {
+                "action": "dropoff",
+                "node": "STG-OUT",
+                "exclusive_slot": true
+              },
+              {
+                "action": "pickup",
+                "node": "STG-IN",
+                "payload_code": "P-TO"
+              },
+              {
+                "action": "dropoff",
+                "node": "LINE"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-OUT"
+              },
+              {
+                "action": "dropoff",
+                "node": "DST"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "P-FROM",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        },
+        "LogTag": "swap",
+        "NextState": "staging_requested",
+        "Situation": "swap",
+        "SupplyOrder": null
+      }
+    ],
+    "BuildChangeoverPlan/swap/samePayload": [
+      {
+        "Err": "",
+        "EvacOrder": {
+          "Complex": {
+            "DeliveryNode": "",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "LINE",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "LINE"
+              },
+              {
+                "action": "dropoff",
+                "node": "STG-OUT",
+                "exclusive_slot": true
+              },
+              {
+                "action": "pickup",
+                "node": "STG-IN",
+                "payload_code": "P-FROM"
+              },
+              {
+                "action": "dropoff",
+                "node": "LINE"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-OUT"
+              },
+              {
+                "action": "dropoff",
+                "node": "DST"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "P-FROM",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        },
+        "LogTag": "swap",
+        "NextState": "staging_requested",
+        "Situation": "swap",
+        "SupplyOrder": null
+      }
+    ],
+    "BuildSwapDispatch": {
+      "CycleMode": "single_robot",
+      "ProcessNode": "LINE",
+      "StepsA": [
+        {
+          "action": "wait",
+          "node": "LINE",
+          "wait_kind": "station",
+          "purpose": "swap"
+        },
+        {
+          "action": "pickup",
+          "node": "LINE"
+        },
+        {
+          "action": "dropoff",
+          "node": "STG-OUT",
+          "exclusive_slot": true
+        },
+        {
+          "action": "pickup",
+          "node": "STG-IN",
+          "payload_code": "P-FROM"
+        },
+        {
+          "action": "dropoff",
+          "node": "LINE"
+        },
+        {
+          "action": "pickup",
+          "node": "STG-OUT"
+        },
+        {
+          "action": "dropoff",
+          "node": "DST"
+        }
+      ],
+      "DeliveryNodeA": "DST",
+      "AutoConfirmA": false,
+      "StepsB": null,
+      "AutoConfirmB": false
+    }
+  },
+  "produce/two_robot": {
+    "BuildChangeoverPlan/evacuate/newPayload": [
+      {
+        "Err": "",
+        "EvacOrder": {
+          "Complex": {
+            "DeliveryNode": "",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "LINE",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "LINE"
+              },
+              {
+                "action": "dropoff",
+                "node": "DST"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "P-FROM",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        },
+        "LogTag": "evacuate",
+        "NextState": "staging_requested",
+        "Situation": "evacuate",
+        "SupplyOrder": {
+          "Complex": {
+            "DeliveryNode": "LINE",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "STG-IN",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-IN",
+                "payload_code": "P-TO"
+              },
+              {
+                "action": "dropoff",
+                "node": "LINE"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        }
+      }
+    ],
+    "BuildChangeoverPlan/evacuate/samePayload": [
+      {
+        "Err": "",
+        "EvacOrder": {
+          "Complex": {
+            "DeliveryNode": "",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "LINE",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "LINE"
+              },
+              {
+                "action": "dropoff",
+                "node": "DST"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "P-FROM",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        },
+        "LogTag": "evacuate",
+        "NextState": "staging_requested",
+        "Situation": "evacuate",
+        "SupplyOrder": {
+          "Complex": {
+            "DeliveryNode": "LINE",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "STG-IN",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-IN",
+                "payload_code": "P-FROM"
+              },
+              {
+                "action": "dropoff",
+                "node": "LINE"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        }
+      }
+    ],
+    "BuildChangeoverPlan/swap/newPayload": [
+      {
+        "Err": "",
+        "EvacOrder": {
+          "Complex": {
+            "DeliveryNode": "",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "LINE",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "LINE"
+              },
+              {
+                "action": "dropoff",
+                "node": "DST"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "P-FROM",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        },
+        "LogTag": "swap",
+        "NextState": "staging_requested",
+        "Situation": "swap",
+        "SupplyOrder": {
+          "Complex": {
+            "DeliveryNode": "LINE",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "STG-IN",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-IN",
+                "payload_code": "P-TO"
+              },
+              {
+                "action": "dropoff",
+                "node": "LINE"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        }
+      }
+    ],
+    "BuildChangeoverPlan/swap/samePayload": [
+      {
+        "Err": "",
+        "EvacOrder": {
+          "Complex": {
+            "DeliveryNode": "",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "LINE",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "LINE"
+              },
+              {
+                "action": "dropoff",
+                "node": "DST"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "P-FROM",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        },
+        "LogTag": "swap",
+        "NextState": "staging_requested",
+        "Situation": "swap",
+        "SupplyOrder": {
+          "Complex": {
+            "DeliveryNode": "LINE",
+            "ProcessNode": "LINE",
+            "Steps": [
+              {
+                "action": "wait",
+                "node": "STG-IN",
+                "wait_kind": "station",
+                "purpose": "ready"
+              },
+              {
+                "action": "pickup",
+                "node": "STG-IN",
+                "payload_code": "P-FROM"
+              },
+              {
+                "action": "dropoff",
+                "node": "LINE"
+              }
+            ],
+            "AutoConfirm": true,
+            "PayloadCode": "",
+            "CurtainWaits": false
+          },
+          "Retrieve": null
+        }
+      }
+    ],
+    "BuildSwapDispatch": {
+      "CycleMode": "two_robot",
+      "ProcessNode": "LINE",
+      "StepsA": [
+        {
+          "action": "wait",
+          "node": "STG-IN",
+          "wait_kind": "station",
+          "purpose": "swap"
+        },
+        {
+          "action": "pickup",
+          "node": "STG-IN",
+          "payload_code": "P-FROM"
+        },
+        {
+          "action": "dropoff",
+          "node": "LINE"
+        }
+      ],
+      "DeliveryNodeA": "LINE",
+      "AutoConfirmA": false,
+      "StepsB": [
+        {
+          "action": "wait",
+          "node": "LINE",
+          "wait_kind": "station",
+          "purpose": "swap"
+        },
+        {
+          "action": "pickup",
+          "node": "LINE"
+        },
+        {
+          "action": "dropoff",
+          "node": "DST"
+        }
+      ],
+      "AutoConfirmB": true
+    }
+  }
+}
