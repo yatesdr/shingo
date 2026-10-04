@@ -3,6 +3,58 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-04 — One answer per button, keep-staged in every mode
+
+No new migration; the claims rebuild adds `keep_staged_node`. Not pushed.
+
+- A buried demand's wait is no longer rewritten on every scan pass
+- Each change of wait is told once; the per-order wait map is gone
+- A dig leg is released only after its lift, on events and the periodic check
+- A resumed parent keeps the wait its scan writes
+- One bare-line decision for both roles; a bare produce line gets an empty
+- The empty-bin button goes through the produce request's plan and guards
+- A press's bare paired position is primed for both roles
+- A lane is refused on every claim leg and routing row; pickers offer none
+- Every button refuses while a swap runs or a bin is on its way to the line
+- A sequential line refuses a second request while its swap runs
+- Keep-staged spot named on the claim (`keep_staged_node`), every swap mode
+- Station view no longer 500s when two holds disagree
+- Engine tests use Core stubs with no deadline and no wall-clock waits
+
+## 2026-10-03 — Keep-staged spare, slot reservations, single-robot recovery
+
+Core first, then Edge (Edge v13). Not pushed or deployed.
+
+- The Return button uses the declared-place chooser
+- Nothing is dug, appended or held for an order that has ended
+- Every slot chooser, the shuffle walk included, skips reserved slots
+- Keep-staged: a line keeps a staged spare on its own spot
+- The single-robot changeover collect names the incoming part
+- A supply pickup asks for the part its step names
+- A dig leg's bin notice goes to the order the Edge placed
+- A changeover start cancels a digging order
+- An ended order clears its queue text with its status
+- Stored `keep_staged` flags from before the feature are cleared (Edge v13)
+- The station is told when a waiting order's cause changes
+- A store that loses its slot aims back at the group
+- A cancelled changeover finishes the parked bin's trip
+- One live swap per single-robot line
+- Staged bins no longer expire; `staging.ttl` is ignored
+- Node list marks maintained groups; Edge refuses fulls from an empties group
+- A bare single-robot produce line gets an empty
+- A cancelled single-robot changeover clears the staging it left
+- Loader placement skips slots other orders hold
+
+## 2026-10-02 — A cancelled order's bin goes home
+
+Core first, then Edge (Core 140, Edge v12). Not pushed or deployed.
+
+- Carried-bin set-down has one door
+- A cancelled order's carried bin returns to its source (140)
+- The station is told what became of a cancelled order's bin (Edge v12)
+- Sim robots carry a deck, honour the vehicle pin and inject faults
+- A buried source at intake is left to the scanner
+
 ## 2026-10-01 — Release layer, fact owners, stage 2 pulled directly
 
 Core first, then Edge (Core 137–139, Edge v1–v11). Deployed SPR and HK at 6378a6c6.
