@@ -57,7 +57,7 @@ A physical container that can be tracked, moved, and stored. The bin is the prim
 | `manifest_confirmed` | Whether the operator has verified the contents |
 | `loaded_at` | When the manifest was confirmed (used for FIFO ordering) |
 | `staged_at` | When the bin entered staged status |
-| `staged_expires_at` | When staged status auto-expires back to available |
+| `staged_expires_at` | Unused: staged bins no longer expire, so nothing sets it. The column is kept for when the clear returns |
 
 **Relationships:**
 - Belongs to one **BinType**
