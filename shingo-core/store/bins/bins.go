@@ -1463,17 +1463,6 @@ func ReleaseStaged(db *sql.DB, binID int64) (released bool, err error) {
 	return n > 0, nil
 }
 
-// ReleaseExpiredStaged releases staged bins whose expiry has passed.
-// Returns the number of bins released.
-func ReleaseExpiredStaged(db *sql.DB) (int, error) {
-	result, err := db.Exec(`UPDATE bins SET `+helpers.AvailableSetSQL+` WHERE `+helpers.StagedOnlySQL+` AND claimed_by IS NULL AND staged_expires_at IS NOT NULL AND staged_expires_at < $1`, clock.Now().UTC())
-	if err != nil {
-		return 0, err
-	}
-	n, _ := result.RowsAffected()
-	return int(n), nil
-}
-
 // Lock prevents automated claiming/movement of a bin.
 func Lock(db *sql.DB, binID int64, actor string) error {
 	res, err := db.Exec(`UPDATE bins SET locked=true, locked_by=$1, locked_at=$3, updated_at=$3 WHERE id=$2 AND locked=false`,

@@ -3,8 +3,8 @@ package helpers
 // staging.go — THE STAGING STATE, one spelling.
 //
 // A bin's staging state is three columns written together: status,
-// staged_at and staged_expires_at. Four writers set it — bins.Stage,
-// bins.ReleaseStaged, bins.ReleaseExpiredStaged and PlaceBinTx — plus the
+// staged_at and staged_expires_at. Three writers set it — bins.Stage,
+// bins.ReleaseStaged and PlaceBinTx — plus the
 // by-hand move's clearStaging arm, and each used to spell the triple in its own
 // statement. They compose these fragments instead.
 //

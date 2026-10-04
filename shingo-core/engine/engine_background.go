@@ -16,9 +16,9 @@ import (
 // robotRefreshLoop keeps the in-memory robot status cache warm and
 // only emits EventRobotsUpdated when the serialized state actually
 // changes (SHA-256 compare), so UI subscribers don't re-render on
-// every poll. stagedBinSweepLoop runs the two bin-hygiene passes —
-// expired staged bins and orphaned claims — on the configured staging
-// sweep interval.
+// every poll. claimSweepLoop runs the orphaned-claim passes on the configured
+// staging sweep interval. (It also released staged bins whose staging had
+// expired; staging no longer expires, resolveNodeStaging.)
 
 // robotRefreshLoop polls robot status every 2 seconds and emits EventRobotsUpdated
 // only when the robot state has actually changed.
@@ -169,17 +169,22 @@ func (e *Engine) laneLivenessFloorLoop() {
 	}
 }
 
-// stagedBinSweepLoop periodically releases staged bins whose expiry has passed.
-func (e *Engine) stagedBinSweepLoop() {
+// claimSweepLoop periodically releases claims an order no longer owns.
+func (e *Engine) claimSweepLoop() {
+	// staging.ttl is retired: staging no longer expires (resolveNodeStaging).
+	// This loop is where staged bins used to expire, so it is where a value
+	// still set is reported: the key is accepted so no plant's file stops Core
+	// from starting, and a value set there is ignored, and said so once.
+	if e.cfg.Staging.TTL > 0 {
+		e.logFn("engine: staging.ttl is set (%s) and ignored: staged bins no longer expire", e.cfg.Staging.TTL)
+	}
 	interval := e.cfg.Staging.SweepInterval
 	if interval <= 0 {
 		interval = config.DefaultStagingSweepInterval
 	}
-	// clock.Default(), not time.NewTicker: THIS IS THE SHARPEST CASE OF THE
-	// MISMATCH. store/bins releases a staged bin when staged_expires_at <
-	// clock.Now() — simulated time — while this sweep, the thing that clears
-	// them, ran at wall rate. At Nx the world produced expiries N times faster
-	// than the loop draining them. The rule is in docs/dev-env/sim.md.
+	// clock.Default(), not time.NewTicker: the sweep runs on the injected clock
+	// so a simulated plant sweeps at its own rate. The rule is in
+	// docs/dev-env/sim.md.
 	ticker := clock.Default().NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -187,12 +192,6 @@ func (e *Engine) stagedBinSweepLoop() {
 		case <-e.stopChan:
 			return
 		case <-ticker.C():
-			count, err := e.db.ReleaseExpiredStagedBins()
-			if err != nil {
-				e.logFn("engine: staged bin sweep error: %v", err)
-			} else if count > 0 {
-				e.logFn("engine: released %d expired staged bins", count)
-			}
 			orphaned, err := e.db.ReleaseOrphanedClaims()
 			if err != nil {
 				e.logFn("engine: orphan claim sweep error: %v", err)

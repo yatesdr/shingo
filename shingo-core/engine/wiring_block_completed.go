@@ -448,7 +448,7 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 		return
 	}
 
-	staged, expiresAt := e.resolveNodeStaging(destNode)
+	staged := e.resolveNodeStaging(destNode)
 	// The bin physically leaves _TRANSIT — a real, addressable node — so the
 	// event says so. This used to emit FromNodeID 0 to keep kanban's
 	// produce-on-storage-exit check from firing, but that subscriber was
@@ -468,7 +468,7 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 	// at the delivery node down the whole-order FINISHED path. So the order is
 	// coming back for this bin and keeps its claim; handing it off here is what
 	// stranded these bins at _TRANSIT (see ApplyIntermediateStore).
-	evicted, err := e.binService.ApplyIntermediateStore(binID, destNode.ID, staged, expiresAt, order.ID)
+	evicted, err := e.binService.ApplyIntermediateStore(binID, destNode.ID, staged, nil, order.ID)
 	if err != nil {
 		e.logFn("transit: order %d intermediate store arrival bin %d -> %s: %v", order.ID, binID, ev.Location, err)
 		return

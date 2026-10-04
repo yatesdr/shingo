@@ -318,34 +318,6 @@ func TestStage_Release_And_ReleaseExpired(t *testing.T) {
 			t.Errorf("StagedAt after release = %v, want nil", got.StagedAt)
 		}
 	})
-
-	t.Run("ReleaseExpiredStaged_releases_only_expired", func(t *testing.T) {
-		// One bin staged with expiry in the past, one with expiry in the future.
-		expired := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-STAGE-EXP", NodeID: &std.StorageNode.ID, Status: "available"}
-		future := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-STAGE-FUT", NodeID: &std.StorageNode.ID, Status: "available"}
-		testutil.MustNoErr(t, bins.Create(db.DB, expired), "bins.Create expired")
-		testutil.MustNoErr(t, bins.Create(db.DB, future), "bins.Create future")
-		past := time.Now().Add(-1 * time.Hour)
-		soon := time.Now().Add(1 * time.Hour)
-		testutil.MustNoErr(t, bins.Stage(db.DB, expired.ID, &past), "bins.Stage expired")
-		testutil.MustNoErr(t, bins.Stage(db.DB, future.ID, &soon), "bins.Stage future")
-
-		n, err := bins.ReleaseExpiredStaged(db.DB)
-		if err != nil {
-			t.Fatalf("bins.ReleaseExpiredStaged: %v", err)
-		}
-		if n != 1 {
-			t.Errorf("bins.ReleaseExpiredStaged released = %d, want 1", n)
-		}
-		gExp, _ := bins.Get(db.DB, expired.ID)
-		gFut, _ := bins.Get(db.DB, future.ID)
-		if gExp.Status != "available" {
-			t.Errorf("expired bin Status = %q, want %q", gExp.Status, "available")
-		}
-		if gFut.Status != "staged" {
-			t.Errorf("future bin Status = %q, want %q", gFut.Status, "staged")
-		}
-	})
 }
 
 func TestRecordCount_And_UnconfirmManifest(t *testing.T) {

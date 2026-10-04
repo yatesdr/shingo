@@ -12,8 +12,8 @@ import (
 // RecoveryStore is the narrow DB surface RecoveryService depends on.
 //
 // RecoveryService is engine-orchestration-heavy (it reaches into
-// e.Events, e.dispatcher, e.fleet, e.TerminateOrder, e.isStorageSlot,
-// e.resolveStagingExpiry as well as e.db). Extracting RecoveryStore
+// e.Events, e.dispatcher, e.fleet, e.TerminateOrder, e.isStorageSlot
+// as well as e.db). Extracting RecoveryStore
 // makes the DB dependency explicit without forcing a structural split
 // of the engine-coupling. RecoveryService gains a `db RecoveryStore`
 // field alongside its existing `engine *Engine`; the wiring stays

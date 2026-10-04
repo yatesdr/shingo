@@ -2,7 +2,6 @@ package engine
 
 import (
 	"fmt"
-	"time"
 
 	"shingo/protocol"
 	"shingocore/domain"
@@ -54,12 +53,8 @@ func (s *RecoveryService) ReapplyOrderCompletion(orderID int64, actor string) er
 
 	isStorage := e.isStorageSlot(destNode.ID)
 
-	var expiresAt *time.Time
-	if !isStorage {
-		expiresAt = e.resolveStagingExpiry(destNode)
-	}
-
-	if err := s.db.RepairConfirmedOrderCompletion(order.ID, *order.BinID, destNode.ID, !isStorage, expiresAt); err != nil {
+	// No expiry: staging does not expire (resolveNodeStaging).
+	if err := s.db.RepairConfirmedOrderCompletion(order.ID, *order.BinID, destNode.ID, !isStorage, nil); err != nil {
 		return err
 	}
 

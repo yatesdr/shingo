@@ -291,11 +291,11 @@ type SourceabilityConfig struct {
 }
 
 type StagingConfig struct {
-	// TTL is the global default staging expiry. 0 (the default) means permanent:
-	// staged bins never auto-unstage — they're released only by the next claim
-	// or by operator action. It applies to every staged node; there is no
-	// per-node override.
-	TTL                  time.Duration `yaml:"ttl"`                    // default 0 (permanent)
+	// TTL is RETIRED. Staged bins never expire; they are released only by the
+	// next claim or by a person (engine resolveNodeStaging). The key is still
+	// read so an existing config file loads; a non-zero value is ignored, and
+	// Core logs that once at startup.
+	TTL                  time.Duration `yaml:"ttl"`                    // retired: ignored
 	SweepInterval        time.Duration `yaml:"sweep_interval"`         // default 5m
 	AutoConfirmDelivered time.Duration `yaml:"auto_confirm_delivered"` // 0 = disabled
 	// AbandonStuck cancels orders stuck past this age. It covers exactly TWO
@@ -591,7 +591,7 @@ func Defaults() *Config {
 			SessionSecret: "change-me-in-production",
 		},
 		Staging: StagingConfig{
-			TTL:                  0, // 0 = never auto-unstage
+			TTL:                  0, // retired: staging never expires
 			SweepInterval:        DefaultStagingSweepInterval,
 			AutoConfirmDelivered: 5 * time.Minute, // auto-confirm delivered orders after 5 minutes if no receipt from Edge
 			AbandonStuck:         time.Hour,       // cancel orders stuck queued/staged for 1h (ties up robots, clutters the board)

@@ -10,7 +10,7 @@
 //   engine_connection.go  checkConnectionStatus, connectionHealthLoop
 //   engine_reconfigure.go ReconfigureDatabase/Fleet/Messaging
 //   engine_scene_sync.go  SyncScenePoints, SyncFleetNodes, UpdateNodeZones, SceneSync
-//   engine_background.go  robotRefreshLoop, stagedBinSweepLoop
+//   engine_background.go  robotRefreshLoop, claimSweepLoop
 //
 // The fulfillment scanner lives in the shingocore/fulfillment
 // sub-package (Stage 7 extraction); the engine holds a pointer to

@@ -10,8 +10,7 @@
 //                                waybill/staged/terminal dispatch
 //   wiring_completion.go      — delivery arrival, completion cleanup,
 //                                multi-bin junction-table paths
-//   wiring_staging.go         — resolveNodeStaging / resolveStagingExpiry /
-//                                isStorageSlot
+//   wiring_staging.go         — resolveNodeStaging / isStorageSlot
 //   wiring_block_completed.go — per-block completion fan-out
 //   wiring_lane_gate.go       — lane-mouth gate hold/release
 //   wiring_telemetry.go       — per-transition mission events + summary

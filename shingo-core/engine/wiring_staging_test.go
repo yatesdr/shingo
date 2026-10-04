@@ -11,12 +11,13 @@ import (
 	"shingocore/store/nodes"
 )
 
-// --- Characterization tests for resolveNodeStaging (wiring.go:569-582) ---
+// --- Characterization tests for resolveNodeStaging (wiring_staging.go) ---
 //
 // resolveNodeStaging determines if bins arriving at a node should be "staged"
 // (lineside) or "available" (storage slot under a LANE). The key distinction:
-// - Storage slot (parent is LANE type) → staged=false, expiresAt=nil
-// - Lineside node (anything else) → staged=true, expiresAt from config/TTL
+// - Storage slot (parent is LANE type) → staged=false
+// - Lineside node (anything else) → staged=true (never expiring; see
+//   TestStaging_ABinDeliveredToALinesideNodeNeverExpires)
 //
 // These tests call resolveNodeStaging directly on a real Engine to characterize
 // the branching behavior with real DB state.
@@ -33,7 +34,7 @@ func TestResolveNodeStaging_LinesideNode(t *testing.T) {
 	// LINE1-IN from standard data has no parent — it's a lineside node.
 	lineNode, _ := db.GetNode(sd.LineNode.ID)
 
-	staged, _ := eng.resolveNodeStaging(lineNode)
+	staged := eng.resolveNodeStaging(lineNode)
 	if !staged {
 		t.Error("lineside node should resolve to staged=true")
 	}
@@ -64,12 +65,9 @@ func TestResolveNodeStaging_StorageSlotUnderLane(t *testing.T) {
 	// Re-fetch to populate joined fields (NodeTypeCode on parent).
 	slotNode, _ = db.GetNode(slotNode.ID)
 
-	staged, expiresAt := eng.resolveNodeStaging(slotNode)
+	staged := eng.resolveNodeStaging(slotNode)
 	if staged {
 		t.Error("storage slot under LANE should resolve to staged=false")
-	}
-	if expiresAt != nil {
-		t.Error("storage slot should have nil expiresAt (no staging)")
 	}
 }
 
@@ -90,7 +88,7 @@ func TestResolveNodeStaging_NonLaneParent(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(childNode), "create child")
 	childNode, _ = db.GetNode(childNode.ID)
 
-	staged, _ := eng.resolveNodeStaging(childNode)
+	staged := eng.resolveNodeStaging(childNode)
 	if !staged {
 		t.Error("child of non-LANE parent should resolve to staged=true")
 	}
@@ -119,7 +117,7 @@ func TestResolveNodeStaging_NGRPRoot(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(grpNode), "create NGRP")
 	grpNode, _ = db.GetNode(grpNode.ID)
 
-	staged, _ := eng.resolveNodeStaging(grpNode)
+	staged := eng.resolveNodeStaging(grpNode)
 	if staged {
 		t.Error("NGRP root should resolve to staged=false (storage container)")
 	}
@@ -148,12 +146,9 @@ func TestResolveNodeStaging_NGRPDirectChild(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(slotNode), "create direct-child slot")
 	slotNode, _ = db.GetNode(slotNode.ID)
 
-	staged, expiresAt := eng.resolveNodeStaging(slotNode)
+	staged := eng.resolveNodeStaging(slotNode)
 	if staged {
 		t.Error("direct child of NGRP should resolve to staged=false (storage slot)")
-	}
-	if expiresAt != nil {
-		t.Error("NGRP direct child should have nil expiresAt (no staging)")
 	}
 }
 
@@ -170,7 +165,7 @@ func TestResolveNodeStaging_NoParent(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(orphanNode), "create orphan")
 	orphanNode, _ = db.GetNode(orphanNode.ID)
 
-	staged, _ := eng.resolveNodeStaging(orphanNode)
+	staged := eng.resolveNodeStaging(orphanNode)
 	if !staged {
 		t.Error("orphan node (no parent) should resolve to staged=true")
 	}

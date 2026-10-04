@@ -152,8 +152,8 @@ func (e *Engine) Start() {
 	// Start robot status refresh loop (2s)
 	go e.robotRefreshLoop()
 
-	// Start staged bin expiry sweep
-	go e.stagedBinSweepLoop()
+	// Start the orphaned-claim sweep.
+	go e.claimSweepLoop()
 
 	// Map + scene sync gates. Deliberately NO boot pass, unlike the confidence
 	// roll-up: both gates read the robot cache, which robotRefreshLoop above

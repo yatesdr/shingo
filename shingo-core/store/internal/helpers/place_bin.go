@@ -190,18 +190,18 @@ func PlaceBinTx(tx *sql.Tx, p BinPlacement) ([]int64, error) {
 	// This wrote `staged_at=NOW()` — the database's clock — beside
 	// `staged_expires_at=$1`, a value computed in Go from the injected clock, on
 	// ONE ROW, in ONE STATEMENT. The two are the start and the end of the same
-	// interval. Under any divergence between the domains the expiry can precede
-	// the stamp, and the sweep that reads the pair (`ReleaseExpiredStaged`, one
-	// file away, on the Go clock) then frees a bin that was staged a moment ago.
+	// interval. Under any divergence between the domains the expiry could
+	// precede the stamp, and the expiry sweep (since retired: staging no longer
+	// expires) then freed a bin that was staged a moment ago.
 	//
 	// It was harmless on the rig only because the sim clock is wall-clamped, which
 	// is itself a defect being fixed in this same stage — so this corner was one
 	// config flag from live, and it was introduced by THIS campaign's own
 	// placement primitive, into a column it did not audit for a clock.
 	//
-	// The triple is spelled once, in staging.go, and bins.Stage, ReleaseStaged
-	// and ReleaseExpiredStaged compose the same fragments: several writers of one
-	// fact, one spelling.
+	// The triple is spelled once, in staging.go, and bins.Stage and
+	// ReleaseStaged compose the same fragments: several writers of one fact, one
+	// spelling.
 	//
 	// The `updated_at=NOW()` on the statements above is left alone deliberately —
 	// bins.updated_at genuinely carries both domains across the tree, which is a

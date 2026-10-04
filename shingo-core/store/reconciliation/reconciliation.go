@@ -532,17 +532,14 @@ func listAnomaliesWith(db *sql.DB, completion []*CompletionAnomaly) ([]*Anomaly,
 		return nil, err
 	}
 
-	// Same column, same CLOCK: `staged_expires_at` is written from a Go value on
-	// the injected clock (bins.Stage, and the placement primitive since §R.98
-	// stage D), and the sweep that ACTS on it — bins.ReleaseExpiredStaged —
-	// compares it against clock.Now(). One column, two readers, and they used to
-	// be on two clocks.
+	// `staged_expires_at` is compared against the injected clock, the clock it
+	// was written from (bins.Stage, and the placement primitive since §R.98
+	// stage D).
 	//
-	// NOT the same rule, and it never was: the sweep only releases an expired
-	// bin with `claimed_by IS NULL`; this query has no claim arm. So a CLAIMED
-	// expired bin is listed here with "release_staged_bin" while the sweep will
-	// never release it — the page and the sweep can still disagree about the
-	// same bin. (An earlier version of this comment said "same rule".)
+	// STAGING NO LONGER EXPIRES (engine resolveNodeStaging): no arrival stamps
+	// an expiry and nothing releases a staged bin on a clock. The only rows this
+	// can list are bins stamped before that change, until their next move clears
+	// the stamp. It reports them; it releases nothing.
 	rows, err = db.Query(`
 		SELECT id, status, staged_expires_at
 		FROM bins

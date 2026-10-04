@@ -106,9 +106,6 @@ func (db *DB) UpdateBin(binID int64, label, description *string, binTypeID *int6
 	return bins.Update(db.DB, binID, label, description, binTypeID)
 }
 
-// ReleaseExpiredStagedBins releases staged bins whose expiry has passed.
-func (db *DB) ReleaseExpiredStagedBins() (int, error) { return bins.ReleaseExpiredStaged(db.DB) }
-
 // LockBin prevents automated claiming/movement of a bin.
 func (db *DB) LockBin(binID int64, actor string) error { return bins.Lock(db.DB, binID, actor) }
 

@@ -798,9 +798,8 @@ func (s *InventoryDeltaService) AnomalySummary() (AnomalyDeltaSummary, error) {
 	}
 	// staged_expires_at is written from a Go value on the injected clock, so it is
 	// compared against that clock and not the database's NOW() (§R.98 stage D).
-	// The sweep that acts on this column (bins.ReleaseExpiredStaged) already does;
-	// this page did not, so the two could tell an operator opposite things about
-	// the same bin the moment the domains diverge.
+	// (Staging no longer expires, so only bins stamped before that change can
+	// count here, until their next move clears the stamp.)
 	//
 	// The undeclared-carrier count is a THIRD SUBQUERY IN THE SAME ROUND TRIP,
 	// not a second call: this endpoint is polled by the inventory page and a

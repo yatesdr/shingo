@@ -11,7 +11,6 @@ package engine
 
 import (
 	"fmt"
-	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
@@ -24,19 +23,6 @@ import (
 // and moves the bin to its destination immediately so subsequent orders
 // see accurate occupancy.
 func (e *Engine) handleOrderDelivered(order *orders.Order) {
-	// Resolve staged expiry for the delivered message. Only ship a countdown
-	// when the bin will actually arrive `staged` — for storage destinations
-	// (LANE/NGRP roots and their children) the bin lands `available`
-	// and an expiry on the order envelope is misleading to the operator UI.
-	var stagedExpireAt *time.Time
-	if order.DeliveryNode != "" {
-		if destNode, err := e.db.GetNodeByDotName(order.DeliveryNode); err == nil {
-			if staged, ea := e.resolveNodeStaging(destNode); staged && ea != nil {
-				stagedExpireAt = ea
-			}
-		}
-	}
-
 	// Apply bin arrival FIRST so telemetry is accurate immediately. The
 	// previous order — sendToEdge then applyBinArrivalForOrder — let
 	// AutoConfirm Edge orders auto-confirm before the bin-arrival
@@ -166,9 +152,10 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 		stationID = protocol.StationBroadcast
 	}
 	if err := e.sendToEdge(protocol.TypeOrderDelivered, stationID, &protocol.OrderDelivered{
-		OrderUUID:      order.EdgeUUID,
-		DeliveredAt:    clock.Now().UTC(),
-		StagedExpireAt: stagedExpireAt,
+		OrderUUID:   order.EdgeUUID,
+		DeliveredAt: clock.Now().UTC(),
+		// StagedExpireAt stays unset: staging no longer expires
+		// (resolveNodeStaging). The field stays on the wire for older Edges.
 		BinID:          binID,
 		UOPRemaining:   uopRemaining,
 		DeltaEpoch:     deltaEpoch,
@@ -314,7 +301,7 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) *ArrivalRefusal {
 		return r
 	}
 
-	staged, expiresAt := e.resolveNodeStaging(destNode)
+	staged := e.resolveNodeStaging(destNode)
 
 	// Note: previously this path forced staged=false for complex orders with
 	// WaitIndex > 0 and for retrieve_empty deliveries. Both overrides removed
@@ -325,7 +312,7 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) *ArrivalRefusal {
 
 	e.logFn("delivery: order=%d type=%s bin=%d arriving %s -> %s (staged=%v)",
 		order.ID, order.OrderType, *order.BinID, order.SourceNode, order.DeliveryNode, staged)
-	evicted, err := e.binService.ApplyArrival(*order.BinID, destNode.ID, staged, expiresAt, order.ID)
+	evicted, err := e.binService.ApplyArrival(*order.BinID, destNode.ID, staged, nil, order.ID)
 	if err != nil {
 		e.logFn("engine: apply bin arrival on delivery for order %d bin %d: %v", order.ID, *order.BinID, err)
 		return nil
@@ -485,12 +472,11 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *orders.Order, orderBins []*
 			refusals = append(refusals, r)
 			continue
 		}
-		staged, expiresAt := e.resolveNodeStaging(destNode)
+		staged := e.resolveNodeStaging(destNode)
 		instructions = append(instructions, orders.BinArrivalInstruction{
-			BinID:     ob.BinID,
-			ToNodeID:  destNode.ID,
-			Staged:    staged,
-			ExpiresAt: expiresAt,
+			BinID:    ob.BinID,
+			ToNodeID: destNode.ID,
+			Staged:   staged,
 		})
 
 		// Resolve the per-bin source node (the OrderBin.NodeName is the dot-path
@@ -653,13 +639,13 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 
 	// Bin still at source — apply arrival as recovery from a missed FINISH
 
-	staged, expiresAt := e.resolveNodeStaging(destNode)
+	staged := e.resolveNodeStaging(destNode)
 
 	// Note: see applyBinArrivalForOrder for the override-removal context.
 	// Same overrides existed here in the safety-net path and were removed
 	// for the same reason.
 
-	evicted, err := e.binService.ApplyArrival(*order.BinID, destNode.ID, staged, expiresAt, order.ID)
+	evicted, err := e.binService.ApplyArrival(*order.BinID, destNode.ID, staged, nil, order.ID)
 	if err != nil {
 		e.logFn("engine: apply bin arrival for order %d bin %d: %v", order.ID, *order.BinID, err)
 		return
@@ -735,12 +721,11 @@ func (e *Engine) handleMultiBinCompleted(order *orders.Order, orderBins []*order
 			continue
 		}
 
-		staged, expiresAt := e.resolveNodeStaging(destNode)
+		staged := e.resolveNodeStaging(destNode)
 		instructions = append(instructions, orders.BinArrivalInstruction{
-			BinID:     ob.BinID,
-			ToNodeID:  destNode.ID,
-			Staged:    staged,
-			ExpiresAt: expiresAt,
+			BinID:    ob.BinID,
+			ToNodeID: destNode.ID,
+			Staged:   staged,
 		})
 
 		// Capture the per-bin source node before we move it so the post-arrival

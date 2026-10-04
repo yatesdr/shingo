@@ -2,27 +2,27 @@
 //
 // resolveNodeStaging decides whether a destination node receives bins
 // as "staged" (lineside) or "available" (storage under a LANE).
-// resolveStagingExpiry computes the expiry time for staged bins from the
-// global config default (staging.ttl).
 
 package engine
 
 import (
-	"time"
-
-	"shingo/protocol/clock"
 	"shingocore/service"
 	"shingocore/store/nodes"
 )
 
 // resolveNodeStaging determines if a destination node should receive bins
 // as "staged" (lineside nodes) or "available" (storage slots under LANEs).
-func (e *Engine) resolveNodeStaging(destNode *nodes.Node) (staged bool, expiresAt *time.Time) {
-	isStorage := e.isStorageSlot(destNode.ID)
-	if !isStorage {
-		expiresAt = e.resolveStagingExpiry(destNode)
-	}
-	return !isStorage, expiresAt
+//
+// STAGING DOES NOT EXPIRE. A staged bin is not sourceable, and that is the
+// point of staging it: it was delivered for the node it stands on. There was a
+// timer (staging.ttl) after which a staged bin became available, and any
+// line's plant-wide pull could then take it off the node it was delivered to;
+// for a line that keeps a staged spare, that was the spare leaving. The timer
+// is retired: no arrival stamps an expiry, whatever staging.ttl says, and
+// nothing releases a staged bin on a clock. A staged bin is released by the
+// next claim on it or by a person.
+func (e *Engine) resolveNodeStaging(destNode *nodes.Node) (staged bool) {
+	return !e.isStorageSlot(destNode.ID)
 }
 
 // isStorageSlot is service.IsStorageSlot by node id — the one storage rule,
@@ -34,21 +34,4 @@ func (e *Engine) isStorageSlot(nodeID int64) bool {
 		return false
 	}
 	return service.IsStorageSlot(e.db, node)
-}
-
-// resolveStagingExpiry computes the staging expiry time for a node from the
-// global staging.ttl. Returns nil if staging is permanent (ttl <= 0).
-//
-// There was a per-node `staging_ttl` property, with a parent fallback, that
-// could override the default. No node at either plant ever carried it, so
-// both reads always came back empty and fell through to the default; the
-// reads were dropped 2026-09-27. The node argument stays because callers
-// pass the destination; the expiry no longer depends on it.
-func (e *Engine) resolveStagingExpiry(_ *nodes.Node) *time.Time {
-	ttl := e.cfg.Staging.TTL
-	if ttl <= 0 {
-		return nil
-	}
-	t := clock.Now().Add(ttl)
-	return &t
 }
