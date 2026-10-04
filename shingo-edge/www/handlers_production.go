@@ -133,42 +133,7 @@ func enrichViewContainmentTargets(eng ServiceAccess, views []domain.OperatorStat
 	if err != nil {
 		return
 	}
-	// COVERAGE, PER PAYLOAD. A shared hold group is legitimate — several
-	// producers route their contained bins to one spot with different FG
-	// drops — and the BIN'S PAYLOAD is what disambiguates (the release verb
-	// resolves the same way). So the stamp is not per destination: it is
-	// per (destination, payload), and the tile's own bin's payload picks the
-	// outbound shown. Two claims agreeing on payload but not outbound = a
-	// real config error: that payload's entry is killed, not the whole
-	// destination.
-	coverage := map[string]map[string]string{}
-	conflict := map[string]map[string]bool{}
-	for _, c := range claims {
-		dest, out := c.ContainmentDestination, c.OutboundDestination
-		if dest == "" || out == "" {
-			continue
-		}
-		payloads := c.AllowedPayloads() // empty = the wildcard: any payload
-		if len(payloads) == 0 {
-			payloads = []string{""}
-		}
-		for _, p := range payloads {
-			if conflict[dest][p] {
-				continue
-			}
-			if coverage[dest] == nil {
-				coverage[dest] = map[string]string{}
-			}
-			if have, ok := coverage[dest][p]; ok {
-				if have != out {
-					conflict[dest][p] = true
-					delete(coverage[dest], p)
-				}
-				continue
-			}
-			coverage[dest][p] = out
-		}
-	}
+	coverage := containmentCoverage(claims)
 	// GROUP-AWARE MATCHING: a destination may be a node GROUP, whose bins sit
 	// on the group's children (Core mints their names group-prefixed, so the
 	// suffix matches too). One children read per distinct destination,
@@ -246,6 +211,52 @@ func enrichViewContainmentTargets(eng ServiceAccess, views []domain.OperatorStat
 			}
 		}
 	}
+}
+
+// containmentCoverage maps each containment destination and payload to the
+// outbound destination its producing claims name, leaving out a payload whose
+// claims disagree.
+func containmentCoverage(claims []domain.NodeClaim) map[string]map[string]string {
+	// COVERAGE, PER PAYLOAD. A shared hold group is legitimate — several
+	// producers route their contained bins to one spot with different FG
+	// drops — and the BIN'S PAYLOAD is what disambiguates (the release verb
+	// resolves the same way). So the stamp is not per destination: it is
+	// per (destination, payload), and the tile's own bin's payload picks the
+	// outbound shown. Two claims agreeing on payload but not outbound = a
+	// real config error: that payload's entry is killed, not the whole
+	// destination.
+	coverage := map[string]map[string]string{}
+	conflict := map[string]map[string]bool{}
+	for _, c := range claims {
+		dest, out := c.ContainmentDestination, c.OutboundDestination
+		if dest == "" || out == "" {
+			continue
+		}
+		payloads := c.AllowedPayloads() // empty = the wildcard: any payload
+		if len(payloads) == 0 {
+			payloads = []string{""}
+		}
+		for _, p := range payloads {
+			if conflict[dest][p] {
+				continue
+			}
+			if coverage[dest] == nil {
+				coverage[dest] = map[string]string{}
+			}
+			if have, ok := coverage[dest][p]; ok {
+				if have != out {
+					if conflict[dest] == nil {
+						conflict[dest] = map[string]bool{}
+					}
+					conflict[dest][p] = true
+					delete(coverage[dest], p)
+				}
+				continue
+			}
+			coverage[dest][p] = out
+		}
+	}
+	return coverage
 }
 
 func buildStationViews(ctx context.Context, eng ServiceAccess, activeProcess *domain.Process) []domain.OperatorStationView {

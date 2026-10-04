@@ -99,3 +99,36 @@ func TestEnrichViewContainmentTargets(t *testing.T) {
 		t.Errorf("unrouted payload stamped %q, want no stamp", got)
 	}
 }
+
+// Two producers that share a containment destination AND a payload but name
+// different outbounds are a config error: that payload's stamp is dropped and
+// the station view still renders. Before, the conflict was written into a map
+// that was never made, and every station view on the Edge answered 500.
+func TestEnrichViewContainmentTargets_ConflictingOutboundsStampNothing(t *testing.T) {
+	h, _ := newTestHandlers(t)
+
+	for i, out := range []string{"ULN-C1", "ULN-C2", "ULN-C3"} {
+		pid, err := testDB.CreateProcess("ConflictProc"+out, "", "active_production", "", "", false)
+		testutil.MustNoErr(t, err, "create process")
+		styleID, err := testDB.CreateStyle("CONFLICT-STYLE-"+out, "", pid)
+		testutil.MustNoErr(t, err, "create style")
+		if _, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
+			StyleID: styleID, CoreNodeName: "PLN-CONFLICT-" + out, Role: "produce",
+			SwapMode: "two_robot_press_index", PayloadCode: "PART-CONFLICT", UOPCapacity: 10 + i,
+			PairedCoreNode:      "PLN-CONFLICT-B-" + out,
+			OutboundDestination: out, ContainmentDestination: "CONT-CONFLICT",
+		}); err != nil {
+			t.Fatalf("upsert claim %s: %v", out, err)
+		}
+	}
+
+	views := []domain.OperatorStationView{{
+		Nodes: []domain.StationNodeView{
+			{Node: domain.Node{CoreNodeName: "CONT-CONFLICT"}, BinState: &domain.NodeBinState{Occupied: true, PayloadCode: "PART-CONFLICT"}},
+		},
+	}}
+	enrichViewContainmentTargets(h.engine, views)
+	if got := views[0].Nodes[0].ContainmentReleaseTarget; got != "" {
+		t.Errorf("a payload whose producers disagree about the outbound stamped %q, want no stamp", got)
+	}
+}
