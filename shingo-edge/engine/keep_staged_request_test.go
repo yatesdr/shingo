@@ -107,7 +107,7 @@ func seedCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, kee
 	testutil.MustNoErr(t, err, "runtime")
 	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 30), "runtime claim")
 
-	eng.coreClient = NewCoreClient(ksNodeBinsStub(t, rows).URL)
+	eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
 	node, err := db.GetProcessNode(nodeID)
 	testutil.MustNoErr(t, err, "re-read node")
 	claim := requestedClaimAtNode(db, node)
@@ -248,7 +248,7 @@ func TestKeepStagedRequest_UnknownSpotOrdersNothing(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
 		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}})
-	eng.coreClient = NewCoreClient(headOccupancyStub(t, true).URL) // answers every name
+	eng.coreClient = stubCoreClient(headOccupancyStub(t, true).URL) // answers every name
 	eng.coreNodesMu.Lock()
 	eng.coreNodes = map[string]protocol.NodeInfo{ksLine: {Name: ksLine}}
 	eng.coreNodesMu.Unlock()

@@ -37,7 +37,7 @@ func unreachableCore(t *testing.T, eng *Engine) {
 		w.WriteHeader(http.StatusBadGateway)
 	}))
 	t.Cleanup(srv.Close)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 }
 
 func seedManualSwapConsume(t *testing.T, db *store.DB, coreNode string) int64 {

@@ -45,7 +45,7 @@ func TestRecordBinCount_DeclaresToCoreAndTakesTheAnswerBack(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	rt, err := db.EnsureProcessNodeRuntime(nodeID)
 	if err != nil || rt == nil {
@@ -110,7 +110,7 @@ func TestRecordBinCount_WritesNothingLocallyWhenCoreRefuses(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	rt, err := db.EnsureProcessNodeRuntime(nodeID)
 	if err != nil || rt == nil {

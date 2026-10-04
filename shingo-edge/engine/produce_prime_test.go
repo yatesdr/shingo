@@ -176,7 +176,7 @@ func TestRequest_ColdPressWithFullCell(t *testing.T) {
 		db := testEngineDB(t)
 		eng := testEngine(t, db)
 		nodeID := seedPressIndexProduce(t, db)
-		eng.coreClient = NewCoreClient(pressIndexBinsStub(t, "PRESS-HEAD", "PRESS-DECK").URL)
+		eng.coreClient = stubCoreClient(pressIndexBinsStub(t, "PRESS-HEAD", "PRESS-DECK").URL)
 		_, err := eng.RequestProduceSwap(nodeID)
 		if err == nil || !strings.Contains(err.Error(), "has no parts to finalize") {
 			t.Fatalf("produce request = %v, want the no-parts refusal", err)
@@ -190,7 +190,7 @@ func TestRequest_ColdPressWithFullCell(t *testing.T) {
 		db := testEngineDB(t)
 		eng := testEngine(t, db)
 		nodeID := seedPressIndexProduce(t, db)
-		eng.coreClient = NewCoreClient(pressIndexBinsStub(t, "PRESS-HEAD", "PRESS-DECK").URL)
+		eng.coreClient = stubCoreClient(pressIndexBinsStub(t, "PRESS-HEAD", "PRESS-DECK").URL)
 		if _, err := eng.RequestEmptyBin(nodeID, "WIDGET-A"); err != nil {
 			t.Fatalf("empty-bin request: %v", err)
 		}
@@ -394,7 +394,7 @@ func TestRequestProduceSwap_PrimesOnceThenHolds(t *testing.T) {
 	eng := testEngine(t, db)
 	// Core reports the head occupied and INDEX-B bare — the incident's shape.
 	srv := nodeBinsStub(t, "PRESS")
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}})
 
 	res, err := eng.RequestProduceSwap(nodeID)
@@ -450,7 +450,7 @@ func TestRequestProduceSwap_UnknownPairedNodeIsNotPrimed(t *testing.T) {
 
 	eng := testEngine(t, db)
 	srv := nodeBinsStub(t, "PRESS")
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 	// A non-empty node set that does NOT contain INDEX-B: that is evidence.
 	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "MARKET-EMPTIES"}})
 	// Parts on the press, so the cold-press guard cannot be what stops the
@@ -482,7 +482,7 @@ func TestRequestProduceSwap_EmptyCoreNodeSetStillPrimes(t *testing.T) {
 
 	eng := testEngine(t, db)
 	srv := nodeBinsStub(t, "PRESS")
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 	// No SetCoreNodes call at all — Core has not been heard from.
 
 	res, err := eng.RequestProduceSwap(nodeID)

@@ -61,7 +61,7 @@ func TestSingleRobotCancel_FinishesTheParkedBinsTrip(t *testing.T) {
 			// The leg lifted the line's bin and parked it on outbound staging.
 			rows["L1"] = NodeBinInfo{}
 			rows[out] = NodeBinInfo{Occupied: true, PayloadCode: "PART-OLD"}
-			fx.eng.coreClient = NewCoreClient(ksNodeBinsStub(t, rows).URL)
+			fx.eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
 
 			testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
 

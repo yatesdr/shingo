@@ -289,7 +289,7 @@ func TestPreviewFlow_PreflightStates(t *testing.T) {
 		t.Errorf("without Core: %+v, want unchecked", p.Preflight)
 	}
 
-	eng.coreClient = NewCoreClient(testCoreURL)
+	eng.coreClient = stubCoreClient(testCoreURL)
 	poster := &fakeFlowPoster{}
 	eng.preflightChecker = service.NewPreflightChecker(db, poster, "test.station")
 	p, err = eng.PreviewFlow(context.Background(), processID, req)
@@ -824,7 +824,7 @@ func TestFlowPreview_DraftEqualsSavedPreview(t *testing.T) {
 				}
 				enableComposer(t, db, plant.ProcessID)
 				eng := testEngine(t, db)
-				eng.coreClient = NewCoreClient(testCoreURL)
+				eng.coreClient = stubCoreClient(testCoreURL)
 
 				cells := cellsOf(t, db, styleID)
 				if len(cells) != 2 {

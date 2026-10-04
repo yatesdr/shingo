@@ -97,7 +97,7 @@ func TestCarrierLeft_EveryDoorClearsTheIdentity(t *testing.T) {
 		}))
 		defer srv.Close()
 		eng := testEngine(t, db)
-		eng.coreClient = NewCoreClient(srv.URL)
+		eng.coreClient = stubCoreClient(srv.URL)
 		eng.reconcileActiveBinAfterCancel(nodeID, &claimID)
 		assertCarrierLeft(t, db, nodeID, "cancel reconcile")
 	})
@@ -190,7 +190,7 @@ func TestClearLoaderHome_TheCarrierStaysKnownEmpty(t *testing.T) {
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeLinesidePayload(nodeID, "CLH-PART", true, "delivery"),
 		"resident identity")
 	eng := newIntentEngine(t, db)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 	eng.SetCoreLoaders([]protocol.LoaderInfo{consolidationLoader()})
 
 	testutil.MustNoErr(t, eng.ClearLoaderHome(nodeID), "ClearLoaderHome")

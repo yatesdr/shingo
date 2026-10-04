@@ -30,7 +30,7 @@ type seamScenario struct {
 }
 
 func seamScenarios() []seamScenario {
-	withCore := func(eng *Engine) { eng.coreClient = NewCoreClient(testCoreURL) }
+	withCore := func(eng *Engine) { eng.coreClient = stubCoreClient(testCoreURL) }
 	return []seamScenario{
 		{"simple swap with staging", func(t *testing.T, db *store.DB, _ *Engine) (int64, int64) {
 			p, _, _, to, _, _ := seedChangeoverScenario(t, db)

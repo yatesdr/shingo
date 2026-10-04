@@ -148,7 +148,7 @@ func scLoaderEngine(t *testing.T, window string) (*Engine, *store.DB, *scCore, *
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 	eng.wireEventHandlers()
 	core := newSCCore(t)
-	eng.coreClient = NewCoreClient(core.srv.URL)
+	eng.coreClient = stubCoreClient(core.srv.URL)
 	logs := &scLog{}
 	eng.logFn = logs.fn
 
@@ -419,7 +419,7 @@ func TestLanding_RePushesOnlyItsOwnLoader(t *testing.T) {
 			eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 			eng.wireEventHandlers()
 			core := newSCCore(t)
-			eng.coreClient = NewCoreClient(core.srv.URL)
+			eng.coreClient = stubCoreClient(core.srv.URL)
 
 			prefix := "RP-" + name
 			own := prefix + "-MSWAP-NODE"
@@ -585,7 +585,7 @@ func TestPinDoubleTapGuard_KeysOnAnyMoveAtTheProcessNode(t *testing.T) {
 	testutil.MustNoErr(t, err, "create arriving move")
 
 	eng := testEngine(t, db)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 	err = eng.PushEmptyOut(nodeID)
 	if err == nil || !strings.Contains(err.Error(), "already has an empty-out in flight") {
 		t.Errorf("PushEmptyOut with an arriving move tracked here = %v, want the in-flight refusal", err)
@@ -607,7 +607,7 @@ func TestPinDoubleTapGuard_ClearAfterPushEmptySkips(t *testing.T) {
 	nodeID, _ := seedManualSwapClaim(t, db, "DT-PEC", "consume", "PART-DP", "EMPTY-TOTES")
 
 	eng := testEngine(t, db)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 	testutil.MustNoErr(t, eng.PushEmptyOut(nodeID), "PushEmptyOut")
 	testutil.MustNoErr(t, eng.ClearBin(nodeID, ""), "ClearBin after PUSH EMPTY")
 	if n, _ := countMovesTo(t, db, nodeID, "EMPTY-TOTES"); n != 1 {
@@ -658,7 +658,7 @@ func TestPinOutbound_CoreOverridesTheClaim_AtAllThreeSites(t *testing.T) {
 		eng, db, nodeID, core := scStoredWithCore(t, "OBF", protocol.ClaimRoleProduce, "OLD-DEST", "NEW-DEST")
 		c := newSCCore(t)
 		c.set(core, true, "")
-		eng.coreClient = NewCoreClient(c.srv.URL)
+		eng.coreClient = stubCoreClient(c.srv.URL)
 		testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
 		if got := scDestsFrom(t, db, core); len(got) != 1 || got[0] != "NEW-DEST" {
 			t.Errorf("L2 destinations = %v, want [NEW-DEST]", got)
@@ -670,7 +670,7 @@ func TestPinOutbound_CoreOverridesTheClaim_AtAllThreeSites(t *testing.T) {
 		eng, db, nodeID, core := scStoredWithCore(t, "OBU", protocol.ClaimRoleConsume, "OLD-DEST", "NEW-DEST")
 		c := newSCCore(t)
 		c.set(core, true, "")
-		eng.coreClient = NewCoreClient(c.srv.URL)
+		eng.coreClient = stubCoreClient(c.srv.URL)
 		testutil.MustNoErr(t, eng.PushEmptyOut(nodeID), "PushEmptyOut")
 		if got := scDestsFrom(t, db, core); len(got) != 1 || got[0] != "NEW-DEST" {
 			t.Errorf("U2 destinations = %v, want [NEW-DEST]", got)
@@ -684,7 +684,7 @@ func TestPinOutbound_CoreOverridesTheClaim_AtAllThreeSites(t *testing.T) {
 		eng.wireEventHandlers()
 		c := newSCCore(t)
 		c.set(core, true, "")
-		eng.coreClient = NewCoreClient(c.srv.URL)
+		eng.coreClient = stubCoreClient(c.srv.URL)
 		scDeliveredRetrieve(t, db, "obc-l1", orders.TypeRetrieve, nodeID, true, core)
 		testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
 		if got := scDestsFrom(t, db, core); len(got) != 1 || got[0] != "NEW-DEST" {
@@ -704,7 +704,7 @@ func TestPinOutbound_BlankFilesNothing_AtAllThreeSites(t *testing.T) {
 		eng, db, nodeID, core := scStoredWithCore(t, "OBBF", protocol.ClaimRoleProduce, "", "")
 		c := newSCCore(t)
 		c.set(core, true, "")
-		eng.coreClient = NewCoreClient(c.srv.URL)
+		eng.coreClient = stubCoreClient(c.srv.URL)
 		testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
 		if got := scDestsFrom(t, db, core); len(got) != 0 {
 			t.Errorf("L2 destinations = %v, want none", got)
@@ -716,7 +716,7 @@ func TestPinOutbound_BlankFilesNothing_AtAllThreeSites(t *testing.T) {
 		eng, db, nodeID, core := scStoredWithCore(t, "OBBU", protocol.ClaimRoleConsume, "", "")
 		c := newSCCore(t)
 		c.set(core, true, "")
-		eng.coreClient = NewCoreClient(c.srv.URL)
+		eng.coreClient = stubCoreClient(c.srv.URL)
 		// PUSH EMPTY with nowhere to push is refused, not reported done: the
 		// empty-out IS the operation, and nothing was committed.
 		if err := eng.PushEmptyOut(nodeID); err == nil {
@@ -734,7 +734,7 @@ func TestPinOutbound_BlankFilesNothing_AtAllThreeSites(t *testing.T) {
 		eng.wireEventHandlers()
 		c := newSCCore(t)
 		c.set(core, true, "")
-		eng.coreClient = NewCoreClient(c.srv.URL)
+		eng.coreClient = stubCoreClient(c.srv.URL)
 		scDeliveredRetrieve(t, db, "obbc-l1", orders.TypeRetrieve, nodeID, true, core)
 		testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
 		if got := scDestsFrom(t, db, core); len(got) != 0 {
@@ -755,7 +755,7 @@ func TestPinOutbound_SameNodeFilesNothing_AtTheTwoGuardedSites(t *testing.T) {
 		eng, db, nodeID, core := scStoredWithCore(t, "OBSU", protocol.ClaimRoleConsume, "OBSU-MSWAP-NODE", "")
 		c := newSCCore(t)
 		c.set(core, true, "")
-		eng.coreClient = NewCoreClient(c.srv.URL)
+		eng.coreClient = stubCoreClient(c.srv.URL)
 		if err := eng.PushEmptyOut(nodeID); err == nil {
 			t.Error("PushEmptyOut with a same-node outbound returned nil, want a refusal")
 		}
@@ -771,7 +771,7 @@ func TestPinOutbound_SameNodeFilesNothing_AtTheTwoGuardedSites(t *testing.T) {
 		eng.wireEventHandlers()
 		c := newSCCore(t)
 		c.set(core, true, "")
-		eng.coreClient = NewCoreClient(c.srv.URL)
+		eng.coreClient = stubCoreClient(c.srv.URL)
 		scDeliveredRetrieve(t, db, "obsc-l1", orders.TypeRetrieve, nodeID, true, core)
 		testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
 		if got := scDestsFrom(t, db, core); len(got) != 0 {
@@ -788,7 +788,7 @@ func TestLoadFallback_RefusesASameNodeL2(t *testing.T) {
 	eng, db, nodeID, core := scStoredWithCore(t, "OBSF", protocol.ClaimRoleProduce, "OBSF-MSWAP-NODE", "")
 	c := newSCCore(t)
 	c.set(core, true, "")
-	eng.coreClient = NewCoreClient(c.srv.URL)
+	eng.coreClient = stubCoreClient(c.srv.URL)
 	testutil.MustNoErr(t, eng.LoadBin(nodeID, "PART-OB", nil, scManifest), "LoadBin")
 	if got := scDestsFrom(t, db, core); len(got) != 0 {
 		t.Errorf("L2 destinations = %v, want none — a same-node move is refused at every creator", got)

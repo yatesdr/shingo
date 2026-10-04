@@ -141,7 +141,7 @@ func TestUnloaderSweep_NoInboundSource_ZeroReads(t *testing.T) {
 	info.InboundSource = ""
 	seedCoreLoader(t, eng, info)
 	stub := newSweepBinsStub(t, nil, "", false)
-	eng.coreClient = NewCoreClient(stub.srv.URL)
+	eng.coreClient = stubCoreClient(stub.srv.URL)
 
 	counter.Reset()
 	eng.pushUnloadersViaSeam()
@@ -186,7 +186,7 @@ func TestUnloaderSweep_ZeroPayloads_ZeroReads(t *testing.T) {
 		t.Fatalf("fixture premise: dedicated loader PayloadSet has %d entries, want 0", n)
 	}
 	stub := newSweepBinsStub(t, nil, "", false)
-	eng.coreClient = NewCoreClient(stub.srv.URL)
+	eng.coreClient = stubCoreClient(stub.srv.URL)
 
 	counter.Reset()
 	eng.pushUnloadersViaSeam()
@@ -243,7 +243,7 @@ func TestUnloaderSweep_PayloadSpecificGuard(t *testing.T) {
 			eng := testEngine(t, db)
 			seedWindowNodes(t, db, "PSG-PROC", tc.windows)
 			seedCoreLoader(t, eng, unloaderInfo("PSG", tc.windows, []string{"PART-A", "PART-B"}))
-			eng.coreClient = NewCoreClient(newSweepBinsStub(t, map[string]string{"W1": "PART-A"}, "", false).srv.URL)
+			eng.coreClient = stubCoreClient(newSweepBinsStub(t, map[string]string{"W1": "PART-A"}, "", false).srv.URL)
 
 			tc.entry(eng)
 
@@ -268,7 +268,7 @@ func TestUnloaderSweep_UnreachableFiresNothing(t *testing.T) {
 	seedWindowNodes(t, db, "UR-PROC", windows)
 	seedCoreLoader(t, eng, unloaderInfo("UR", windows, []string{"PART-A", "PART-B"}))
 	stub := newSweepBinsStub(t, nil, "status", false)
-	eng.coreClient = NewCoreClient(stub.srv.URL)
+	eng.coreClient = stubCoreClient(stub.srv.URL)
 	lines := captureBudgetLines(eng)
 	var guardBlind atomic.Int64
 	eng.debugFn = func(f string, a ...any) {
@@ -309,7 +309,7 @@ func TestUnloaderSweep_NotConfiguredStillFires(t *testing.T) {
 	windows := []string{"NC-W1", "NC-W2"}
 	seedWindowNodes(t, db, "NC-PROC", windows)
 	seedCoreLoader(t, eng, unloaderInfo("NC", windows, []string{"PART-A", "PART-B"}))
-	eng.coreClient = NewCoreClient("")
+	eng.coreClient = stubCoreClient("")
 	lines := captureBudgetLines(eng)
 
 	eng.pushUnloadersViaSeam()
@@ -341,7 +341,7 @@ func TestUnloaderSweep_LockHeldAtDecisionPerLoader(t *testing.T) {
 	seedCoreLoader(t, eng,
 		unloaderInfo("LKX", []string{"LKX-W1"}, []string{"PART-A"}),
 		unloaderInfo("LKY", []string{"LKY-W1"}, []string{"PART-B"}))
-	eng.coreClient = NewCoreClient(newSweepBinsStub(t, nil, "", false).srv.URL)
+	eng.coreClient = stubCoreClient(newSweepBinsStub(t, nil, "", false).srv.URL)
 
 	var checked, bad atomic.Int64
 	eng.logFn = func(f string, a ...any) {
@@ -390,7 +390,7 @@ func TestUnloaderSweep_FirstFreeWindowAndSeesEarlierPayload(t *testing.T) {
 	windows := []string{"FF-W1", "FF-W2", "FF-W3"}
 	seedWindowNodes(t, db, "FF-PROC", windows)
 	seedCoreLoader(t, eng, unloaderInfo("FF", windows, []string{"PART-A", "PART-B"}))
-	eng.coreClient = NewCoreClient(newSweepBinsStub(t, map[string]string{"FF-W1": "PART-Z"}, "", false).srv.URL)
+	eng.coreClient = stubCoreClient(newSweepBinsStub(t, map[string]string{"FF-W1": "PART-Z"}, "", false).srv.URL)
 	lines := captureBudgetLines(eng)
 
 	eng.pushUnloadersViaSeam()
@@ -417,7 +417,7 @@ func TestUnloaderSweep_OneBudgetLinePerPayloadThatReachesTheSeam(t *testing.T) {
 	windows := []string{"OL-W1", "OL-W2", "OL-W3"}
 	seedWindowNodes(t, db, "OL-PROC", windows)
 	seedCoreLoader(t, eng, unloaderInfo("OL", windows, []string{"PART-A", "PART-B", "PART-C"}))
-	eng.coreClient = NewCoreClient(newSweepBinsStub(t, map[string]string{"OL-W1": "PART-A"}, "", false).srv.URL)
+	eng.coreClient = stubCoreClient(newSweepBinsStub(t, map[string]string{"OL-W1": "PART-A"}, "", false).srv.URL)
 	lines := captureBudgetLines(eng)
 
 	eng.pushUnloadersViaSeam()
@@ -449,7 +449,7 @@ func TestUnloaderSweep_SeamMatchesOccupancyByNodeName(t *testing.T) {
 	windows := []string{"NN-W1", "NN-W2"}
 	seedWindowNodes(t, db, "NN-PROC", windows)
 	seedCoreLoader(t, eng, unloaderInfo("NN", windows, []string{"PART-A"}))
-	eng.coreClient = NewCoreClient(newSweepBinsStub(t, map[string]string{"NN-W2": "PART-Z"}, "", true).srv.URL)
+	eng.coreClient = stubCoreClient(newSweepBinsStub(t, map[string]string{"NN-W2": "PART-Z"}, "", true).srv.URL)
 
 	eng.pushUnloadersViaSeam()
 
@@ -479,7 +479,7 @@ func TestUnloaderSweep_GuardMatchesRowsByNodeName(t *testing.T) {
 		_ = json.NewEncoder(w).Encode([]map[string]any{{"occupied": true, "payload_code": "PART-A"}})
 	}))
 	t.Cleanup(srv.Close)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	eng.MaybeCreateUnloaderFullIn("PART-A")
 
@@ -518,7 +518,7 @@ func TestUnloaderSweep_NodeBinsCallCount(t *testing.T) {
 		unloaderInfo("SP", []string{"SP-W1", "SP-W2"}, []string{"PART-A", "PART-B"}),
 		funnel, threshold, noInbound)
 	stub := newSweepBinsStub(t, nil, "", false)
-	eng.coreClient = NewCoreClient(stub.srv.URL)
+	eng.coreClient = stubCoreClient(stub.srv.URL)
 
 	eng.pushUnloadersViaSeam()
 
@@ -547,7 +547,7 @@ func TestUnloaderSweep_NodeBinsCallCount(t *testing.T) {
 	seedWindowNodes(t, db2, "CC2-PROC", []string{"SP-W1", "SP-W2"})
 	seedCoreLoader(t, eng2, unloaderInfo("SP", []string{"SP-W1", "SP-W2"}, []string{"PART-A", "PART-B"}))
 	stub2 := newSweepBinsStub(t, nil, "", false)
-	eng2.coreClient = NewCoreClient(stub2.srv.URL)
+	eng2.coreClient = stubCoreClient(stub2.srv.URL)
 	eng2.MaybeCreateUnloaderFullIn("PART-A")
 	if got := stub2.hits.Load(); got > 1 {
 		t.Errorf("MaybeCreateUnloaderFullIn node-bins calls = %d, exceeds the bound of 1", got)
@@ -578,7 +578,7 @@ func TestUnloaderSweep_FunnelCountsOnlyItsTargetWindow(t *testing.T) {
 		"standard", "PART-A", false, true, orders.NoDemand()); err != nil {
 		t.Fatalf("seed U1 at FN-W2: %v", err)
 	}
-	eng.coreClient = NewCoreClient(newSweepBinsStub(t, map[string]string{"FN-W2": "PART-Z"}, "", false).srv.URL)
+	eng.coreClient = stubCoreClient(newSweepBinsStub(t, map[string]string{"FN-W2": "PART-Z"}, "", false).srv.URL)
 
 	eng.pushUnloadersViaSeam()
 

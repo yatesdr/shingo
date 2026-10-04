@@ -23,7 +23,7 @@ func TestEmptyOut_EnvelopeNamesNoPart(t *testing.T) {
 	srv := fakeCoreBinServer(t, true, "PART-U")
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	procID, err := db.CreateProcess("D2-PROC", "", "active_production", "", "", false)
 	testutil.MustNoErr(t, err, "create process")

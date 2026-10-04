@@ -105,7 +105,7 @@ func TestClearBin_BinTypeCodeAtACoreOwnedUnloader(t *testing.T) {
 			t.Parallel()
 			eng := testEngine(t, testEngineDB(t))
 			core := newClearCaptureCore(t)
-			eng.coreClient = NewCoreClient(core.srv.URL)
+			eng.coreClient = stubCoreClient(core.srv.URL)
 			info := sharedLoaderInfo(tc.window, tc.role, "operator", "PART-HL", 0, 0)
 			info.InboundSource = ""
 			info.OutboundDest = "EMPTY-TOTES"
@@ -152,7 +152,7 @@ func TestClearBin_LogsClearedBinTypeCode(t *testing.T) {
 	var buf bytes.Buffer
 	prevW, prevFlags := log.Writer(), log.Flags()
 	t.Cleanup(srv.Close)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 	info := sharedLoaderInfo("HLC-T", "consume", "operator", "PART-HL", 0, 0)
 	info.InboundSource = ""
 	info.OutboundDest = "EMPTY-TOTES"

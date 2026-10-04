@@ -25,7 +25,7 @@ func newSynthUGFixture(t *testing.T, prefix string, lAuto bool) *ugFixture {
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 	eng.wireEventHandlers()
 	core := newSCCore(t)
-	eng.coreClient = NewCoreClient(core.srv.URL)
+	eng.coreClient = stubCoreClient(core.srv.URL)
 
 	f := &ugFixture{eng: eng, db: db, core: core,
 		nCore: prefix + "-N", n2Core: prefix + "-N2", w3Core: prefix + "-W3"}

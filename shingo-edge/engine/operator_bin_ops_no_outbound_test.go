@@ -26,7 +26,7 @@ func TestClearBin_NoOutboundTellsTheOperator(t *testing.T) {
 	t.Parallel()
 	eng := testEngine(t, testEngineDB(t))
 	core := newClearCaptureCore(t)
-	eng.coreClient = NewCoreClient(core.srv.URL)
+	eng.coreClient = stubCoreClient(core.srv.URL)
 	info := sharedLoaderInfo("NOB-W1", "consume", "operator", "PART-HL", 0, 0)
 	info.InboundSource = ""
 	info.OutboundDest = ""
@@ -66,7 +66,7 @@ func TestClearBin_CoreRefusalReachesTheOperator(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
 	t.Cleanup(srv.Close)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 	info := sharedLoaderInfo("NOB-R1", "consume", "operator", "PART-HL", 0, 0)
 	info.InboundSource = ""
 	info.OutboundDest = "EMPTY-TOTES"

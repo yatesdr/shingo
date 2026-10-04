@@ -124,7 +124,7 @@ func TestSendBinToQualityHold_HoldsThePresentBin(t *testing.T) {
 	stub := &holdStubCore{}
 	srv := stub.server()
 	t.Cleanup(srv.Close)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	nodeID := seedHoldNode(t, eng.db, "PLN-HOLD")
 	stub.setBin(NodeBinInfo{NodeName: "PLN-HOLD", BinID: 42, PayloadCode: "PART-HOLD", Occupied: true})
@@ -151,7 +151,7 @@ func TestSendBinToQualityHold_RefusesWithoutRouteOrBin(t *testing.T) {
 	stub := &holdStubCore{}
 	srv := stub.server()
 	t.Cleanup(srv.Close)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	nodeID := seedHoldNode(t, eng.db, "PLN-HOLD2")
 
@@ -197,7 +197,7 @@ func TestReleaseFromContainment_AmbiguityAndHappyPath(t *testing.T) {
 	stub := &holdStubCore{}
 	srv := stub.server()
 	t.Cleanup(srv.Close)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	nodeID := seedHoldNode(t, eng.db, "PLN-REL")
 	// The containment node is a registered process node too (the floor

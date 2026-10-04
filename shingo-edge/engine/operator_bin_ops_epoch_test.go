@@ -44,7 +44,7 @@ func TestRegression_LoadBin_SeedsActiveBinEpochFromCoreResponse(t *testing.T) {
 	eng := testEngine(t, db)
 	sink := &fakeDeltaSink{db: db}
 	eng.SetInventoryDeltaSink(sink)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	manifest := []protocol.IngestManifestItem{{PartNumber: "PN-1", Quantity: 100, Description: "x"}}
 	err := eng.LoadBin(nodeID, "PART-A", declaredUOP(100), manifest)
@@ -87,7 +87,7 @@ func TestClearBin_TakesTheEpochCoreReturns(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	rt, err := db.EnsureProcessNodeRuntime(nodeID)
 	if err != nil || rt == nil {
@@ -140,7 +140,7 @@ func TestClearBin_IgnoresTheEpochWhenADifferentCarrierIsBound(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	rt, err := db.EnsureProcessNodeRuntime(nodeID)
 	if err != nil || rt == nil {
@@ -211,7 +211,7 @@ func loadBinTestEngine(t *testing.T, srv *httptest.Server) (*Engine, *store.DB, 
 	_, nodeID, _ := seedActiveManualSwapLoader(t, db, "SNF2", "LOADER", "PART-A")
 	eng := testEngine(t, db)
 	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 	return eng, db, nodeID
 }
 

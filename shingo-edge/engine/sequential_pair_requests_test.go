@@ -32,7 +32,7 @@ func seedSequentialPair(t *testing.T, role protocol.ClaimRole) (eng *Engine, db 
 	eng.logFn = func(string, ...any) {}
 	eng.wireEventHandlers()
 	var calls atomic.Int32
-	eng.coreClient = NewCoreClient(censusStub(t, &calls, pairA, pairB).URL)
+	eng.coreClient = stubCoreClient(censusStub(t, &calls, pairA, pairB).URL)
 
 	procID, err := db.CreateProcess("PAIR-PROC", "", "active_production", "", "", false)
 	testutil.MustNoErr(t, err, "process")

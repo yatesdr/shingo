@@ -142,7 +142,7 @@ func runCensusPress(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMod
 	t.Helper()
 	eng, db, nodeID := seedCensusPress(t, role, mode, uop, threePos)
 	var calls atomic.Int32
-	eng.coreClient = NewCoreClient(censusStub(t, &calls, occupied...).URL)
+	eng.coreClient = stubCoreClient(censusStub(t, &calls, occupied...).URL)
 
 	var err error
 	switch door {
@@ -352,7 +352,7 @@ func TestRequestCensus_ConsumeHeadCoreDoesNotKnowReadsOccupied(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID := seedCensusCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, 30)
 	var calls atomic.Int32
-	eng.coreClient = NewCoreClient(censusStub(t, &calls).URL) // every node reads empty
+	eng.coreClient = stubCoreClient(censusStub(t, &calls).URL) // every node reads empty
 	eng.SetCoreNodes([]protocol.NodeInfo{{Name: ksMarket}, {Name: ksSpot}, {Name: ksDest}})
 
 	_, err := eng.RequestNodeMaterial(nodeID, 1)

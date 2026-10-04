@@ -84,7 +84,7 @@ func TestDrySourceGuard_RefusesOnlyTrueAbsence(t *testing.T) {
 			db := testEngineDB(t)
 			nodeID := seedLineSwapClaim(t, db, tc.prefix, protocol.SwapModeTwoRobot)
 			eng := testEngine(t, db)
-			eng.coreClient = NewCoreClient(preflightStub(t, tc.body).URL)
+			eng.coreClient = stubCoreClient(preflightStub(t, tc.body).URL)
 
 			res, err := eng.RequestNodeMaterial(nodeID, 1)
 			reqs := complexRequestsOnTheWire(t, db)

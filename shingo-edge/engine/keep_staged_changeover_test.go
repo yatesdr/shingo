@@ -100,7 +100,7 @@ func seedKeepStagedChangeover(t *testing.T, from, to []coClaim, rows map[string]
 		upsert(styleB, c)
 	}
 	testutil.MustNoErr(t, db.SetActiveStyle(procID, &styleA), "active style")
-	eng.coreClient = NewCoreClient(ksNodeBinsStub(t, rows).URL)
+	eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
 	return fx
 }
 
@@ -278,7 +278,7 @@ func TestKeepStagedChangeover_CancelPutsTheSpotBack(t *testing.T) {
 			}
 			// The return went, and a spare of the incoming part landed.
 			rows["SPOT"] = NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW"}
-			fx.eng.coreClient = NewCoreClient(ksNodeBinsStub(t, rows).URL)
+			fx.eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
 			markSpotOrdersFlown(t, fx, "SPOT", 1)
 
 			testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")

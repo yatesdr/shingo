@@ -140,7 +140,7 @@ func TestProduceEmptyLine_EveryModeDeliversAnEmpty(t *testing.T) {
 				t.Parallel()
 				eng, db, nodeID := seedCensusCell(t, protocol.ClaimRoleProduce, mode, uop)
 				var calls atomic.Int32
-				eng.coreClient = NewCoreClient(censusStub(t, &calls).URL) // the line and the deck read bare
+				eng.coreClient = stubCoreClient(censusStub(t, &calls).URL) // the line and the deck read bare
 				res, err := eng.RequestProduceSwap(nodeID)
 				testutil.MustNoErr(t, err, "request on an empty line")
 

@@ -112,7 +112,7 @@ func armPullback(t *testing.T) *pullbackFixture {
 	f.db = openIntentDB(t, f.path)
 	f.nodeID = seedIntentNode(t, f.db, "PB-PROC", "PB-WIN")
 	f.eng = newIntentEngine(t, f.db)
-	f.eng.coreClient = NewCoreClient(f.srv.URL)
+	f.eng.coreClient = stubCoreClient(f.srv.URL)
 	f.eng.SetCoreLoaders([]protocol.LoaderInfo{pullbackLoader("PB-WIN")})
 
 	testutil.MustNoErr(t, f.eng.PullFromMarket(f.nodeID, "PB-MKT-1"), "PullFromMarket")
@@ -157,7 +157,7 @@ func TestPullbackIntentSurvivesRestart(t *testing.T) {
 	db := openIntentDB(t, f.path)
 	defer db.Close()
 	eng := newIntentEngine(t, db)
-	eng.coreClient = NewCoreClient(f.srv.URL)
+	eng.coreClient = stubCoreClient(f.srv.URL)
 	eng.SetCoreLoaders([]protocol.LoaderInfo{pullbackLoader("PB-WIN")})
 
 	deliverTo(eng, f.order, f.nodeID)
@@ -207,7 +207,7 @@ func TestConsolidationIntentSurvivesRestart(t *testing.T) {
 	db := openIntentDB(t, path)
 	nodeID := seedIntentNode(t, db, "CLH-PROC", "CLH-HOME")
 	eng := newIntentEngine(t, db)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 	eng.SetCoreLoaders([]protocol.LoaderInfo{consolidationLoader()})
 
 	testutil.MustNoErr(t, eng.ClearLoaderHome(nodeID), "ClearLoaderHome")
@@ -228,7 +228,7 @@ func TestConsolidationIntentSurvivesRestart(t *testing.T) {
 	db2 := openIntentDB(t, path)
 	defer db2.Close()
 	eng2 := newIntentEngine(t, db2)
-	eng2.coreClient = NewCoreClient(srv.URL)
+	eng2.coreClient = stubCoreClient(srv.URL)
 	eng2.SetCoreLoaders([]protocol.LoaderInfo{consolidationLoader()})
 
 	eng2.HandleBinPickedUp(orderA.UUID, 11, "CLH-HOME")
@@ -257,7 +257,7 @@ func TestConsolidationIntentFiresOnceWithoutRestart(t *testing.T) {
 	defer db.Close()
 	nodeID := seedIntentNode(t, db, "CLH-PROC", "CLH-HOME")
 	eng := newIntentEngine(t, db)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 	eng.SetCoreLoaders([]protocol.LoaderInfo{consolidationLoader()})
 
 	testutil.MustNoErr(t, eng.ClearLoaderHome(nodeID), "ClearLoaderHome")

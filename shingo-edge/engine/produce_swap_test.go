@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"net/http"
 	"testing"
 
 	"shingo/protocol"
@@ -94,6 +95,26 @@ func seedProduceNode(t *testing.T, db *store.DB, swapMode protocol.SwapMode) (pr
 // unreachable. ".invalid" would also work on most stacks but still goes
 // through name resolution, and some of them answer it slowly.
 const testCoreURL = "http://127.0.0.1:1"
+
+// stubCoreClient is the Core client an engine test gets for its stub Core: an
+// httptest server, testCoreURL, a closed server's URL, or "" for none. It is
+// NewCoreClient without the three-second deadline.
+//
+// A stub answers in microseconds on an idle machine, but under -race on a
+// starved CPU one round trip has taken 5.9 s. The production client then
+// reports Core unreachable, the engine takes its Core-down path, and the test
+// answers differently under load from the same code. With no deadline the
+// engine waits for the stub's real answer. A refused or closed address still
+// fails at once, and a stub that never answers is caught by go test -timeout,
+// which prints every goroutine.
+//
+// The CoreClient's own tests keep NewCoreClient: the client they build is what
+// they test.
+func stubCoreClient(baseURL string) *CoreClient {
+	c := NewCoreClient(baseURL)
+	c.http = &http.Client{}
+	return c
+}
 
 // testEngine creates a minimal Engine with a real order manager backed by the
 // given SQLite DB. The engine is suitable for testing RequestProduceSwap and

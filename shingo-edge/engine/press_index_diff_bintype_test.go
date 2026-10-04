@@ -121,7 +121,7 @@ func startDiffBinTypeChangeover(t *testing.T, db *store.DB) (eng *Engine, proces
 	processID, frontID, backID, _, toStyleID := seedDiffBinTypePressIndex(t, db)
 	eng = testEngine(t, db)
 	eng.wireEventHandlers()
-	eng.coreClient = NewCoreClient(binTypeCoreServer(t, map[string]string{
+	eng.coreClient = stubCoreClient(binTypeCoreServer(t, map[string]string{
 		"PART-OLD": "TOTE",
 		"PART-NEW": "BIN",
 	}).URL)

@@ -112,7 +112,7 @@ func TestRequestEmptyBin_PrimesBarePosition(t *testing.T) {
 	eng := testEngine(t, db)
 	nodeID := seedPressIndexProduce(t, db)
 	// Press holds a bin; the deck is bare — the exact Springfield shape.
-	eng.coreClient = NewCoreClient(pressIndexBinsStub(t, "PRESS-HEAD").URL)
+	eng.coreClient = stubCoreClient(pressIndexBinsStub(t, "PRESS-HEAD").URL)
 
 	got, err := eng.RequestEmptyBin(nodeID, "WIDGET-A")
 	if err != nil {
@@ -146,7 +146,7 @@ func TestRequestEmptyBin_SecondPressHoldsRatherThanSwaps(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	nodeID := seedPressIndexProduce(t, db)
-	eng.coreClient = NewCoreClient(pressIndexBinsStub(t, "PRESS-HEAD").URL)
+	eng.coreClient = stubCoreClient(pressIndexBinsStub(t, "PRESS-HEAD").URL)
 
 	if _, err := eng.RequestEmptyBin(nodeID, "WIDGET-A"); err != nil {
 		t.Fatalf("first press: %v", err)
@@ -182,7 +182,7 @@ func TestRequestEmptyBin_WholeCellStillSwaps(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	nodeID := seedPressIndexProduce(t, db)
-	eng.coreClient = NewCoreClient(pressIndexBinsStub(t, "PRESS-HEAD", "PRESS-DECK").URL)
+	eng.coreClient = stubCoreClient(pressIndexBinsStub(t, "PRESS-HEAD", "PRESS-DECK").URL)
 
 	if _, err := eng.RequestEmptyBin(nodeID, "WIDGET-A"); err != nil {
 		t.Fatalf("RequestEmptyBin on a full cell: %v", err)
@@ -205,7 +205,7 @@ func TestRequestEmptyBin_UnreachableCoreDoesNotPrime(t *testing.T) {
 	nodeID := seedPressIndexProduce(t, db)
 	srv := pressIndexBinsStub(t, "PRESS-HEAD")
 	srv.Close() // Core is down for this one
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	_, _ = eng.RequestEmptyBin(nodeID, "WIDGET-A")
 

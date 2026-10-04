@@ -12,7 +12,7 @@ func TestClearBin_PulledDirectlyLeavesTheCartQuietly(t *testing.T) {
 	t.Parallel()
 	eng := testEngine(t, testEngineDB(t))
 	core := newClearCaptureCore(t)
-	eng.coreClient = NewCoreClient(core.srv.URL)
+	eng.coreClient = stubCoreClient(core.srv.URL)
 	info := sharedLoaderInfo("PD-W1", "consume", "operator", "PART-HL", 0, 0)
 	info.InboundSource = ""
 	info.OutboundDest = ""

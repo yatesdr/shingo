@@ -82,7 +82,7 @@ func spokenForFixture(t *testing.T, occupied bool) (*Engine, *store.DB, int64) {
 	bin := int64(24)
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bin, 13), "seed runtime")
 
-	eng.coreClient = NewCoreClient(headOccupancyStub(t, occupied).URL)
+	eng.coreClient = stubCoreClient(headOccupancyStub(t, occupied).URL)
 	return eng, db, nodeID
 }
 

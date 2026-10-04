@@ -58,7 +58,7 @@ func TestReleaseCaptureLineside_NilBinID_ResolvesFromCore(t *testing.T) {
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID)
 
 	eng := testEngine(t, db)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 	eng.wireEventHandlers()
 	sink := &fakeDeltaSink{db: db}
 	eng.SetInventoryDeltaSink(sink)
@@ -129,7 +129,7 @@ func TestReleaseCaptureLineside_NilBinID_Unresolvable_FallsBackToZero(t *testing
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID)
 
 	eng := testEngine(t, db)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	pending, _ := db.ListPendingOutbox(100)
 	for _, m := range pending {
@@ -182,7 +182,7 @@ func TestReleaseCaptureLineside_NilBinID_EmitsErrorLog(t *testing.T) {
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID)
 
 	eng := testEngine(t, db)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	pending, _ := db.ListPendingOutbox(100)
 	for _, m := range pending {

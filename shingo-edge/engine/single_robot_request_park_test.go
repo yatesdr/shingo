@@ -101,7 +101,7 @@ func TestSingleRobotRequest_MovesABinLeftOnOutboundStaging(t *testing.T) {
 			eng, _, nodeID, _ := seedCell(t, c.role, protocol.SwapModeSingleRobot, false, nil)
 			srv, calls := countingNodeBinsStub(t, map[string]NodeBinInfo{
 				ksLine: c.line, ksOut: {Occupied: true, PayloadCode: "PART-PARKED"}})
-			eng.coreClient = NewCoreClient(srv.URL)
+			eng.coreClient = stubCoreClient(srv.URL)
 
 			testutil.MustNoErr(t, requestFor(eng, c.role, nodeID), "request")
 
@@ -160,7 +160,7 @@ func TestTwoRobotRequest_LeavesOutboundStagingAlone(t *testing.T) {
 			testutil.MustNoErr(t, err, "outbound staging on a two-robot claim")
 			srv, calls := countingNodeBinsStub(t, map[string]NodeBinInfo{
 				ksLine: {Occupied: true, PayloadCode: ksPart}, ksOut: {Occupied: true, PayloadCode: "PART-PARKED"}})
-			eng.coreClient = NewCoreClient(srv.URL)
+			eng.coreClient = stubCoreClient(srv.URL)
 
 			testutil.MustNoErr(t, requestFor(eng, role, nodeID), "request")
 

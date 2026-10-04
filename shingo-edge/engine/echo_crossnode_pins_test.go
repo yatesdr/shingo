@@ -231,7 +231,7 @@ func TestPinEcho_CrossNodeMoves(t *testing.T) {
 			name: "u2_clear", role: protocol.ClaimRoleConsume,
 			create: func(t *testing.T, n *echoNodes) *storeorders.Order {
 				srv := fakeCoreBinServer(t, true, "PART-EC")
-				n.eng.coreClient = NewCoreClient(srv.URL)
+				n.eng.coreClient = stubCoreClient(srv.URL)
 				testutil.MustNoErr(t, n.eng.ClearBin(n.aID, ""), "ClearBin")
 				return echoOnlyMoveFrom(t, n)
 			},
@@ -243,7 +243,7 @@ func TestPinEcho_CrossNodeMoves(t *testing.T) {
 			create: func(t *testing.T, n *echoNodes) *storeorders.Order {
 				c := newSCCore(t)
 				c.set(n.aCore, true, "")
-				n.eng.coreClient = NewCoreClient(c.srv.URL)
+				n.eng.coreClient = stubCoreClient(c.srv.URL)
 				testutil.MustNoErr(t, n.eng.LoadBin(n.aID, "PART-EC", nil, scManifest), "LoadBin")
 				return echoOnlyMoveFrom(t, n)
 			},
@@ -281,7 +281,7 @@ func TestPinEcho_SharedWindowL1ToASiblingWindow(t *testing.T) {
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 	eng.wireEventHandlers()
 	core := newSCCore(t)
-	eng.coreClient = NewCoreClient(core.srv.URL)
+	eng.coreClient = stubCoreClient(core.srv.URL)
 
 	const x, w = "ECHO-SW-X", "ECHO-SW-W"
 	procID, err := db.CreateProcess("ECHO-SW-PROC", "", "active_production", "", "", false)
@@ -318,7 +318,7 @@ func TestPinEcho_Stage1DoubleTapSeesItsOwnU2AfterTheEcho(t *testing.T) {
 	t.Parallel()
 	n := newEchoNodes(t, "EDT1", protocol.ClaimRoleConsume, "BDT2")
 	srv := fakeCoreBinServer(t, true, "")
-	n.eng.coreClient = NewCoreClient(srv.URL)
+	n.eng.coreClient = stubCoreClient(srv.URL)
 
 	testutil.MustNoErr(t, n.eng.ClearBin(n.aID, ""), "first CLEAR")
 	u2 := echoOnlyMoveFrom(t, n)

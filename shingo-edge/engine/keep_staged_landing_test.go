@@ -149,7 +149,7 @@ func TestKeepStagedLanding_OneReturnPerBin_AndAReturnOrdersNothing(t *testing.T)
 		}
 	}
 	rows["SPOT"] = NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW"}
-	fx.eng.coreClient = NewCoreClient(ksNodeBinsStub(t, rows).URL)
+	fx.eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
 
 	_, err := fx.eng.RequestNodeMaterial(fx.nodeIDs["L1"], 1)
 	testutil.MustNoErr(t, err, "REQUEST")

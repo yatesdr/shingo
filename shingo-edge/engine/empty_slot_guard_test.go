@@ -36,7 +36,7 @@ func newCountingCoverageEngine(t *testing.T) (*Engine, *store.QueryCounter) {
 		logFn:    func(string, ...any) {},
 		debugFn:  func(string, ...any) {},
 	}
-	eng.coreClient = NewCoreClient("")
+	eng.coreClient = stubCoreClient("")
 	eng.reconciliation = newReconciliationService(eng.db)
 	eng.coreSync = newCoreSyncService(eng)
 	eng.orderMgr = orders.NewManager(db, ordertestutil.NoOpOrderEmitter{}, cfg.StationID())

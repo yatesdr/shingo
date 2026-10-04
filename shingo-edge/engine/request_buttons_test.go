@@ -83,7 +83,7 @@ func (w *buttonWorld) serveCore() {
 		_ = json.NewEncoder(rw).Encode(out)
 	}))
 	w.t.Cleanup(srv.Close)
-	w.eng.coreClient = NewCoreClient(srv.URL)
+	w.eng.coreClient = stubCoreClient(srv.URL)
 }
 
 // newButtonWorld is a census line of the role and mode, its line and a press's

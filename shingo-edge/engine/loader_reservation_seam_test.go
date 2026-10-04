@@ -246,7 +246,7 @@ func TestWithLoaderBudget_PropOccupancyLive(t *testing.T) {
 	loader := mustMultiWindowLoader(t, "OCC-LDR", windows, "P1", "P2")
 
 	stub := newOccupancyStub(t)
-	eng.coreClient = NewCoreClient(stub.srv.URL)
+	eng.coreClient = stubCoreClient(stub.srv.URL)
 
 	// Fixture guard: this test earns its keep only at budget > 1. If the loader
 	// shape or the multi-window default changes so it funnels to one anchor, the
@@ -402,7 +402,7 @@ func TestCreateUnloaderFullIn_PayloadSpecificGuard(t *testing.T) {
 			seedWindowNodes(t, db, "ULD-PROC", tc.windows)
 
 			// Core reports a resident FULL of PART-A on the first window only.
-			eng.coreClient = NewCoreClient(nodeBinsPayloadStub(t, map[string]string{"ULD-W1": "PART-A"}).URL)
+			eng.coreClient = stubCoreClient(nodeBinsPayloadStub(t, map[string]string{"ULD-W1": "PART-A"}).URL)
 
 			ws := make([]domain.Window, len(tc.windows))
 			for i, w := range tc.windows {
@@ -448,14 +448,14 @@ func TestCreateUnloaderFullIn_HoldsWhenOccupancyReadFails(t *testing.T) {
 	}{
 		{
 			name:  "transport_error",
-			setup: func(t *testing.T) *CoreClient { return NewCoreClient(deadCoreURL(t)) },
+			setup: func(t *testing.T) *CoreClient { return stubCoreClient(deadCoreURL(t)) },
 			why:   "Core process gone",
 		},
 		{
 			name: "non_200",
 			setup: func(t *testing.T) *CoreClient {
 				var hits atomic.Int64
-				return NewCoreClient(nodeBinsBrokenStub(t, "status", &hits).URL)
+				return stubCoreClient(nodeBinsBrokenStub(t, "status", &hits).URL)
 			},
 			why: "Core up but erroring",
 		},
@@ -463,7 +463,7 @@ func TestCreateUnloaderFullIn_HoldsWhenOccupancyReadFails(t *testing.T) {
 			name: "undecodable_body",
 			setup: func(t *testing.T) *CoreClient {
 				var hits atomic.Int64
-				return NewCoreClient(nodeBinsBrokenStub(t, "garbage", &hits).URL)
+				return stubCoreClient(nodeBinsBrokenStub(t, "garbage", &hits).URL)
 			},
 			why: "200 with a truncated body",
 		},
@@ -510,7 +510,7 @@ func TestCreateUnloaderFullIn_FiresWhenCoreNotConfigured(t *testing.T) {
 	eng.cfg.LoadersMultiWindow = &mw
 	windows := []string{"ULD-NC-W1"}
 	seedWindowNodes(t, db, "ULD-NC-PROC", windows)
-	eng.coreClient = NewCoreClient("")
+	eng.coreClient = stubCoreClient("")
 
 	unloader, err := domain.NewSharedWindowLoader("ULD-NC", "ULD-NC", domain.RoleConsume, domain.ReplenishmentOperator,
 		[]domain.Window{{Node: domain.NodeID("ULD-NC-W1")}}, []domain.PayloadCode{"PART-A"},
@@ -630,7 +630,7 @@ func TestWithLoaderBudget_SuppressesWhenWindowHasResidentEmpty(t *testing.T) {
 	eng := testEngine(t, db)
 	nodeID := seedCapManualSwap(t, db, "RESIDENT", "LOADER-1", protocol.ClaimRoleProduce, []string{"P1"}, 0, false)
 	loader := mustSharedLoader(t, "LOADER-1", "P1")
-	eng.coreClient = NewCoreClient(nodeBinsStub(t, "LOADER-1").URL)
+	eng.coreClient = stubCoreClient(nodeBinsStub(t, "LOADER-1").URL)
 
 	created, err := eng.withLoaderBudget(loader, "P1", 1, "", true, fireOneEmptyPerWindow(eng, nodeID))
 	if err != nil {
@@ -652,7 +652,7 @@ func TestWithLoaderBudget_FiresWhenWindowEmpty(t *testing.T) {
 	eng := testEngine(t, db)
 	nodeID := seedCapManualSwap(t, db, "EMPTYWIN", "LOADER-1", protocol.ClaimRoleProduce, []string{"P1"}, 0, false)
 	loader := mustSharedLoader(t, "LOADER-1", "P1")
-	eng.coreClient = NewCoreClient(nodeBinsStub(t, "OTHER-NODE").URL) // LOADER-1 reported empty
+	eng.coreClient = stubCoreClient(nodeBinsStub(t, "OTHER-NODE").URL) // LOADER-1 reported empty
 
 	created, err := eng.withLoaderBudget(loader, "P1", 1, "", true, fireOneEmptyPerWindow(eng, nodeID))
 	if err != nil {
@@ -680,7 +680,7 @@ func TestWithLoaderBudget_FiresWhenCoreNotConfigured(t *testing.T) {
 	eng := testEngine(t, db)
 	nodeID := seedCapManualSwap(t, db, "NOCORE", "LOADER-1", protocol.ClaimRoleProduce, []string{"P1"}, 0, false)
 	loader := mustSharedLoader(t, "LOADER-1", "P1")
-	eng.coreClient = NewCoreClient("") // Core telemetry unavailable
+	eng.coreClient = stubCoreClient("") // Core telemetry unavailable
 
 	created, err := eng.withLoaderBudget(loader, "P1", 1, "", true, fireOneEmptyPerWindow(eng, nodeID))
 	if err != nil {
@@ -768,7 +768,7 @@ func TestWithLoaderBudget_HoldsWhenOccupancyReadFails(t *testing.T) {
 		{
 			name: "transport_error",
 			setup: func(t *testing.T) (*CoreClient, func(*testing.T)) {
-				c := NewCoreClient(deadCoreURL(t))
+				c := stubCoreClient(deadCoreURL(t))
 				// The server is gone, so hits cannot be counted. Assert instead
 				// that the client is configured — that is what distinguishes
 				// this from the not-configured arm, where the seam never dials.
@@ -784,7 +784,7 @@ func TestWithLoaderBudget_HoldsWhenOccupancyReadFails(t *testing.T) {
 			name: "non_200",
 			setup: func(t *testing.T) (*CoreClient, func(*testing.T)) {
 				var hits atomic.Int64
-				c := NewCoreClient(nodeBinsBrokenStub(t, "status", &hits).URL)
+				c := stubCoreClient(nodeBinsBrokenStub(t, "status", &hits).URL)
 				return c, func(t *testing.T) {
 					if hits.Load() == 0 {
 						t.Fatal("stub was never called; the seam did not ask Core, so this test proves nothing about a failed read")
@@ -797,7 +797,7 @@ func TestWithLoaderBudget_HoldsWhenOccupancyReadFails(t *testing.T) {
 			name: "undecodable_body",
 			setup: func(t *testing.T) (*CoreClient, func(*testing.T)) {
 				var hits atomic.Int64
-				c := NewCoreClient(nodeBinsBrokenStub(t, "garbage", &hits).URL)
+				c := stubCoreClient(nodeBinsBrokenStub(t, "garbage", &hits).URL)
 				return c, func(t *testing.T) {
 					if hits.Load() == 0 {
 						t.Fatal("stub was never called; the seam did not ask Core, so this test proves nothing about a failed read")

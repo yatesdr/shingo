@@ -188,7 +188,7 @@ func TestClearBin_FiresEmptyOut_AMRFed(t *testing.T) {
 	// retrieve now falls through to normal_replenishment (the unloader_full_in
 	// case is gone). This proves that fall-through creates no second empty-out.
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 	eng.wireEventHandlers()
 
 	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID, ""), "ClearBin")
@@ -222,7 +222,7 @@ func TestClearBin_FiresEmptyOut_PressFed(t *testing.T) {
 	unloaderNodeID, _ := seedManualSwapClaim(t, db, "U2-PRESS", "consume", "PRESS-PART", "EMPTY-TOTES")
 
 	eng := testEngine(t, db)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	// No U1 order exists — the press fed the window directly.
 	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID, ""), "ClearBin")
@@ -249,7 +249,7 @@ func TestClearBin_NoEmptyOut_WhenWindowEmpty(t *testing.T) {
 	unloaderNodeID, _ := seedManualSwapClaim(t, db, "U2-EMPTY", "consume", "PART-X", "EMPTY-TOTES")
 
 	eng := testEngine(t, db)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	if err := eng.ClearBin(unloaderNodeID, ""); err == nil || !strings.Contains(err.Error(), "no bin at node") {
 		t.Errorf("ClearBin on an empty window = %v, want Core's no-bin refusal", err)
@@ -362,7 +362,7 @@ func TestPushEmptyOut_EmptyWindow_CreatesExactlyOneMove(t *testing.T) {
 	nodeID, _ := seedManualSwapClaim(t, db, "PE-OK", "consume", "PART-PE", "EMPTY-STORE")
 
 	eng := testEngine(t, db)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	if err := eng.PushEmptyOut(nodeID); err != nil {
 		t.Fatalf("PushEmptyOut: %v", err)
@@ -384,7 +384,7 @@ func TestPushEmptyOut_FullWindow_ReturnsError(t *testing.T) {
 	nodeID, _ := seedManualSwapClaim(t, db, "PE-FULL", "consume", "PART-FULL", "EMPTY-STORE")
 
 	eng := testEngine(t, db)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	if err := eng.PushEmptyOut(nodeID); err == nil {
 		t.Fatal("PushEmptyOut on a full window: want error, got nil")
@@ -406,7 +406,7 @@ func TestPushEmptyOut_NonManualSwapNode_ReturnsError(t *testing.T) {
 	nodeID := seedLegacySimpleClaim(t, db, "SMP", "consume")
 
 	eng := testEngine(t, db)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	if err := eng.PushEmptyOut(nodeID); err == nil {
 		t.Fatal("PushEmptyOut on non-manual_swap node: want error, got nil")
@@ -429,7 +429,7 @@ func TestPushEmptyOut_DoubleTap_StillExactlyOneMove(t *testing.T) {
 	nodeID, _ := seedManualSwapClaim(t, db, "PE-DUP", "consume", "PART-DUP", "EMPTY-STORE")
 
 	eng := testEngine(t, db)
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	if err := eng.PushEmptyOut(nodeID); err != nil {
 		t.Fatalf("first PushEmptyOut: %v", err)

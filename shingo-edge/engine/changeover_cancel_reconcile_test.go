@@ -58,7 +58,7 @@ func TestRegression_ChangeoverCancelReconcilesActiveBinFromPhysical(t *testing.T
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	_, _ = startChangeover(t, eng, db, processID, toStyleID)
 
@@ -100,7 +100,7 @@ func TestRegression_PlainAbortReconcilesActiveBinFromPhysical(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	changeover, _ := startChangeover(t, eng, db, processID, toStyleID)
 	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
@@ -162,7 +162,7 @@ func TestRegression_TerminalOrderReleasesRuntimeOrderSlot(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	changeover, _ := startChangeover(t, eng, db, processID, toStyleID)
 	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
@@ -212,7 +212,7 @@ func TestRegression_ConfirmedCompletionDoesNotReconcile(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	changeover, _ := startChangeover(t, eng, db, processID, toStyleID)
 	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)

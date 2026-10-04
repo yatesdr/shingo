@@ -64,7 +64,7 @@ func TestRequestEmptyBin_MovesABinLeftOnOutboundStaging(t *testing.T) {
 	eng, _, nodeID, _ := seedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeSingleRobot, false, nil)
 	srv, _ := countingNodeBinsStub(t, map[string]NodeBinInfo{
 		ksLine: {Occupied: true, PayloadCode: ksPart}, ksOut: {Occupied: true, PayloadCode: "PART-PARKED"}})
-	eng.coreClient = NewCoreClient(srv.URL)
+	eng.coreClient = stubCoreClient(srv.URL)
 
 	_, err := eng.RequestEmptyBin(nodeID, ksPart)
 	testutil.MustNoErr(t, err, "empty-bin request")

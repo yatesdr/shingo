@@ -29,7 +29,7 @@ func newCycleUnloader(t *testing.T, prefix string) *ugFixture {
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 	eng.wireEventHandlers()
 	core := newSCCore(t)
-	eng.coreClient = NewCoreClient(core.srv.URL)
+	eng.coreClient = stubCoreClient(core.srv.URL)
 	f := &ugFixture{eng: eng, db: db, core: core, nCore: prefix + "-N"}
 	seedCoreLoader(t, eng, protocol.LoaderInfo{
 		Name: prefix, LoaderKey: "loader:" + prefix, Role: "consume", Layout: "shared_window",
@@ -128,7 +128,7 @@ func TestAutoPushLanding_PullsWhenNoPickupWasReported(t *testing.T) {
 		testutil.MustNoErr(t, f.eng.ClearBin(f.n, ""), "ClearBin")
 		u2 := f.onlyU2(t)
 		live := f.eng.coreClient
-		f.eng.coreClient = NewCoreClient(testCoreURL) // Core unreachable for the pickup's read
+		f.eng.coreClient = stubCoreClient(testCoreURL) // Core unreachable for the pickup's read
 		f.pickUp(t, u2)
 		f.eng.coreClient = live
 		if got := f.fulls(t, f.nCore); got != 0 {

@@ -167,7 +167,7 @@ func TestPinFold_ClearAgainstTodaysCoreResponse(t *testing.T) {
 	nodeID, _ := seedManualSwapClaim(t, db, "FMX", "consume", "PART-MX", "EMPTY-TOTES")
 	c := newClearShapeCore(t, false, map[string]any{"status": "ok", "bin_id": 5, "bin_label": "B5", "delta_epoch": 2})
 	eng := testEngine(t, db)
-	eng.coreClient = NewCoreClient(c.srv.URL)
+	eng.coreClient = stubCoreClient(c.srv.URL)
 	testutil.MustNoErr(t, eng.ClearBin(nodeID, ""), "ClearBin")
 	if n, _ := countMovesTo(t, db, nodeID, "EMPTY-TOTES"); n != 1 {
 		t.Errorf("U2s after a CLEAR against today's Core answer = %d, want 1", n)
@@ -187,7 +187,7 @@ func TestPinFold_ClearWhenThePreReadFails(t *testing.T) {
 	nodeID, _ := seedManualSwapClaim(t, db, "FPF", "consume", "PART-MX", "EMPTY-TOTES")
 	c := newClearShapeCore(t, true, map[string]any{"status": "ok", "bin_id": 5, "bin_label": "B5", "delta_epoch": 2})
 	eng := testEngine(t, db)
-	eng.coreClient = NewCoreClient(c.srv.URL)
+	eng.coreClient = stubCoreClient(c.srv.URL)
 	testutil.MustNoErr(t, eng.ClearBin(nodeID, ""), "ClearBin")
 	if n, _ := countMovesTo(t, db, nodeID, "EMPTY-TOTES"); n != 1 {
 		t.Errorf("U2s after a CLEAR with node-bins failing = %d, want 1", n)

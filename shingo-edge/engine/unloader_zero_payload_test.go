@@ -29,7 +29,7 @@ func TestUnloaderSweep_ZeroPayloadSharedWindow_ZeroReads(t *testing.T) {
 		t.Fatalf("fixture: want one zero-payload consume loader, got %d (err %v)", len(ls), err)
 	}
 	stub := newSweepBinsStub(t, nil, "", false)
-	eng.coreClient = NewCoreClient(stub.srv.URL)
+	eng.coreClient = stubCoreClient(stub.srv.URL)
 
 	counter.Reset()
 	eng.pushUnloadersViaSeam()

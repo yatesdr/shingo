@@ -93,7 +93,7 @@ func TestProduceEarlyAsk_SweepPlacesTheOrderAtTheReorderPoint(t *testing.T) {
 			Remaining: 79},
 	})
 	eng := testEngine(t, db)
-	eng.coreClient = NewCoreClient(headOccupancyStub(t, false).URL)
+	eng.coreClient = stubCoreClient(headOccupancyStub(t, false).URL)
 
 	proc, err := db.GetProcess(f.ProcessID)
 	testutil.MustNoErr(t, err, "get process")

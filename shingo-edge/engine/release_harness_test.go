@@ -255,13 +255,10 @@ func newRelHarness(t *testing.T) *relHarness {
 	eng.SetInventoryDeltaSink(mut)
 
 	fc := newFakeCore(t)
-	eng.coreClient = NewCoreClient(fc.srv.URL)
-	// The fake Core always answers, so the act waits for its answer. The
-	// production client's three-second deadline would turn a fake slowed by a
-	// loaded machine into "no point from Core", and the cell would print
-	// hold:core where it pins another verdict. A cell that wants G3 sets
-	// pointsDown, which answers 503 at once.
-	eng.coreClient.http = fc.srv.Client()
+	// The fake Core always answers, so the act waits for its answer: a fake
+	// slowed by a loaded machine must not read as "no point from Core" (G3). A
+	// cell that wants G3 sets pointsDown, which answers 503 at once.
+	eng.coreClient = stubCoreClient(fc.srv.URL)
 	eng.points = nil // Core's points over HTTP, from the fake Core (counted)
 
 	wl := &scriptedWarLink{value: curtainSafe}
