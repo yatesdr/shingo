@@ -216,7 +216,14 @@ CREATE TABLE IF NOT EXISTS orders (
     -- index over it -- the index is NOT declared here, because this constant
     -- runs before migrations and the column is absent on an existing database
     -- at that point.
-    recovers_order_id BIGINT REFERENCES orders(id)
+    recovers_order_id BIGINT REFERENCES orders(id),
+    -- The one bin a move is for, named by the station that sent it (a
+    -- keep-staged spare's return). The bin hold and claim statements take that
+    -- bin and no other, and only while it stands on the source node. NULL on
+    -- every other order. No foreign key: a bin row deleted under a waiting
+    -- move must read as "the bin has left", not turn the move into one that
+    -- names nothing. Added by migration 141.
+    named_bin_id BIGINT
 );
 -- UNIQUE, and partial. Two orders sharing an edge_uuid has no story: GetByUUID
 -- breaks the tie with ORDER BY id DESC, so a duplicate silently redirects every

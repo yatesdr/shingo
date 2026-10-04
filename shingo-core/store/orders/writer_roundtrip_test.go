@@ -70,6 +70,7 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 	// swap rather than passing by coincidence.
 	completedAt := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 	remainingUOP := 37
+	namedBin := int64(424242) // no foreign key: any id round-trips
 	probe := map[string]any{
 		"EdgeUUID":         "roundtrip-edge-uuid",
 		"StationID":        "roundtrip-station",
@@ -101,6 +102,8 @@ func TestWriter_RoundTripsEveryFieldItWrites(t *testing.T) {
 		// A birth fact like ParentOrderID: a return order names the cancelled
 		// order it recovers when it is created, and nothing rewrites it.
 		"RecoversOrderID": &recovered.ID,
+		// A birth fact: a move names the bin it is for when it is created.
+		"NamedBinID": &namedBin,
 		// A birth fact, so unlike OpenForChildren it round-trips through Create.
 		// That is the property worth pinning: if this ever stops surviving the
 		// INSERT, a service dig's lane releases on the last blocker and the bin

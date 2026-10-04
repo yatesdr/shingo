@@ -845,7 +845,8 @@ CREATE TABLE public.orders (
     open_for_children boolean DEFAULT false NOT NULL,
     orphan_aged_at timestamp with time zone,
     destination_resolved_at timestamp with time zone,
-    recovers_order_id bigint
+    recovers_order_id bigint,
+    named_bin_id bigint
 );
 
 CREATE SEQUENCE public.orders_id_seq

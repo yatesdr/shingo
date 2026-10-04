@@ -4348,6 +4348,10 @@ func migrationList() []migration {
 				return schema.ColumnExists(q, "orders", "recovers_order_id") &&
 					schema.IndexExists(q, "idx_orders_recovers_order_id")
 			}},
+
+		{141, "orders.named_bin_id — a move names the one bin it is for, and lifts nothing once that bin has left its source",
+			v141OrderNamedBinID,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "named_bin_id") }},
 	}
 }
 
@@ -5095,6 +5099,26 @@ func v140OrderRecoversOrderID(tx *sql.Tx) error {
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("v140 orders.recovers_order_id: %w", err)
 		}
+	}
+	return nil
+}
+
+// v141OrderNamedBinID adds orders.named_bin_id: the one bin a move is for, as
+// the station that sent it read it on the source node. A keep-staged spare's
+// return names the spare, so a return still waiting when another order lifts
+// that spare does not carry away the refill that lands after it.
+//
+// NULLABLE, because every other order names no bin, and the hold and claim
+// statements pass any order whose column is NULL. NO FOREIGN KEY: the column
+// names a bin the order may never touch, and a bin row deleted under a
+// waiting move must read as the bin having left. No index: it is read only by
+// the order's own id, in the statements that hold or claim a bin for it.
+//
+// INERT TO AN OLDER BINARY, which never names the column. ROLLBACK is the
+// previous binary plus DROP COLUMN named_bin_id.
+func v141OrderNamedBinID(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS named_bin_id BIGINT NULL`); err != nil {
+		return fmt.Errorf("v141 orders.named_bin_id: %w", err)
 	}
 	return nil
 }

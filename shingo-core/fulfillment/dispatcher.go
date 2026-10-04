@@ -69,6 +69,11 @@ type Dispatcher interface {
 	// ReleaseLanesForOrder drops all of an order's lane mouth holds.
 	ReleaseLanesForOrder(orderID int64) error
 
+	// SkipOrder ends an order as skipped — the work was never needed — and tells
+	// its station (lifecycle.Skip, EventOrderSkipped). The scanner calls it for
+	// a move whose named bin has left its source (reservations.ErrNotTheNamedBin).
+	SkipOrder(order *orders.Order, code, detail string)
+
 	// DemoteAfterFleetRefusal is the ONE door every fleet refusal goes through —
 	// armor off, paper demoted confirmed→pending, pointer and junction rows kept,
 	// back to `sourcing` under the caller's cause. See dispatch/dispatcher.go for

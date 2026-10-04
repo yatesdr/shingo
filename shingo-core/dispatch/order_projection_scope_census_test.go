@@ -171,7 +171,7 @@ afterwards — the wire type carries no parent marker.`, unnamed)
 func TestCompoundChildren_AreNeverPushed(t *testing.T) {
 	t.Parallel()
 	want := []string{
-		"dispatch/lifecycle_service.go:161", // the Edge wire intake's own echo
+		"dispatch/lifecycle_service.go:169", // the Edge wire intake's own echo
 		"dispatch/loader_replenish.go:478",  // AdmitCoreAsk: both Core timer doors
 	}
 	got := projectOrderSites(scanCoreSources(t))

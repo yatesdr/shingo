@@ -180,6 +180,13 @@ var ErrLaneDugByAnother = fmt.Errorf("reservations: bin stands in a lane held by
 // tick; this is not.
 var ErrOwnerEnded = fmt.Errorf("reservations: the owning order has ended")
 
+// ErrNotTheNamedBin is a hold or claim refused because the order names one bin
+// (orders.named_bin_id) and this is not it, or that bin no longer stands on the
+// order's source node. Like ErrOwnerEnded it is neither a lost race nor a wait:
+// the bin the order was for has gone, and it will not come back to be lifted.
+// The caller ends the order as skipped.
+var ErrNotTheNamedBin = fmt.Errorf("reservations: the order names another bin, or its bin has left the source")
+
 // OwnerLiveSQL is the one liveness test every reservation INSERT makes, inside
 // the insert statement itself: the owning order (bind parameter number param)
 // exists and is not terminal. Every insert into reservations uses it, so the
@@ -242,6 +249,30 @@ var ErrOwnerEnded = fmt.Errorf("reservations: the owning order has ended")
 func OwnerLiveSQL(param int) string {
 	return fmt.Sprintf(`EXISTS (SELECT 1 FROM orders o WHERE o.id = $%d AND o.status NOT IN (%s) FOR SHARE OF o)`,
 		param, protocol.TerminalStatusSQLList())
+}
+
+// NamedBinSQL is the named-bin test a bin hold or claim makes, inside the
+// statement that writes it, the way OwnerLiveSQL is: true unless the order
+// (bind parameter orderParam) names one bin and the bin being taken (binParam)
+// is not that bin, or that bin no longer stands on the order's source node.
+// An order that names no bin passes, which is every order but a station's
+// return of a keep-staged spare (protocol.OrderRequest.BinID).
+//
+// The source node is matched by name, as the dispatcher resolves it: a plain
+// name, or PARENT.CHILD (nodes.GetByDotName). Plain reads with no lock: the
+// only row locks the statement takes are the owner test's share lock and its
+// target's own, so the deadlock rule on OwnerLiveSQL is unchanged.
+func NamedBinSQL(orderParam, binParam int) string {
+	return fmt.Sprintf(`NOT EXISTS (
+	  SELECT 1 FROM orders nb_o
+	   WHERE nb_o.id = $%d AND nb_o.named_bin_id IS NOT NULL
+	     AND (nb_o.named_bin_id <> $%d OR NOT EXISTS (
+	       SELECT 1 FROM bins nb_b
+	         JOIN nodes nb_n ON nb_n.id = nb_b.node_id
+	         LEFT JOIN nodes nb_p ON nb_p.id = nb_n.parent_id
+	        WHERE nb_b.id = nb_o.named_bin_id
+	          AND (nb_n.name = nb_o.source_node OR nb_p.name || '.' || nb_n.name = nb_o.source_node))))`,
+		orderParam, binParam)
 }
 
 // Acquire inserts a bin reservation row for (orderID, binID) in state "pending".
@@ -368,7 +399,7 @@ func AcquireSlot(db RowExecer, orderID, nodeID int64, reservedBy string) error {
 // reading is by definition a mutual miss — which is the only way left to reach
 // the state. One confirmed occurrence is what earns the advisory lock.
 func acquire(db RowExecer, orderID, laneOwner int64, ref Ref, reservedBy string) error {
-	var ownerLive, dugByAnother bool
+	var ownerLive, named, dugByAnother bool
 	var inserted int
 	err := db.QueryRow(
 		// BINS ONLY. `$2 = 'bin'` is the whole scope statement; see AcquireSlot for
@@ -388,25 +419,29 @@ func acquire(db RowExecer, orderID, laneOwner int64, ref Ref, reservedBy string)
 		   ) AS blocked
 		 ),
 		 live AS (SELECT `+OwnerLiveSQL(1)+` AS ok),
+		 named AS (SELECT ($2 <> 'bin' OR `+NamedBinSQL(1, 3)+`) AS ok),
 		 ins AS (
 		   INSERT INTO reservations (order_id, resource_kind, bin_id, node_id, state, reserved_by, created_at)
 		   SELECT $1, $2,
 		     CASE WHEN $2 = 'bin' THEN $3::bigint END,
 		     CASE WHEN $2 <> 'bin' THEN $3::bigint END,
 		     'pending', $4, $5
-		   FROM dug, live WHERE NOT dug.blocked AND live.ok
+		   FROM dug, live, named WHERE NOT dug.blocked AND live.ok AND named.ok
 		   ON CONFLICT DO NOTHING
 		   RETURNING 1
 		 )
-		 SELECT (SELECT ok FROM live), (SELECT blocked FROM dug), (SELECT count(*) FROM ins)`,
+		 SELECT (SELECT ok FROM live), (SELECT ok FROM named), (SELECT blocked FROM dug), (SELECT count(*) FROM ins)`,
 		orderID, string(ref.Kind), ref.ID, reservedBy, clock.Now().UTC(),
 		string(ModeDig), laneOwner,
-	).Scan(&ownerLive, &dugByAnother, &inserted)
+	).Scan(&ownerLive, &named, &dugByAnother, &inserted)
 	if err != nil {
 		return fmt.Errorf("reservations acquire: %w", err)
 	}
 	if !ownerLive {
 		return ErrOwnerEnded
+	}
+	if !named {
+		return ErrNotTheNamedBin
 	}
 	if dugByAnother {
 		return ErrLaneDugByAnother

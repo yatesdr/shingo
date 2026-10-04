@@ -42,7 +42,7 @@ type History = domain.OrderHistory
 // SelectCols is exported so cross-aggregate readers at the outer store/
 // level (e.g. ListOrdersByBin, which joins orders from the bin side) can
 // reuse the column list.
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id`
+const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason, queue_code, queue_cause, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, remaining_uop, origin_id, origin_class, open_for_children, recovers_order_id, named_bin_id`
 
 // Admin-facing list queries (List, ListFiltered, ListActive, ListActiveBoard,
 // CountActive) return EVERY order type. They used to exclude reshuffle_restore —
@@ -57,7 +57,7 @@ const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, sou
 // Exported for cross-aggregate readers at the outer store/ level.
 func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var o Order
-	var parentOrderID, binID, recoversOrderID sql.NullInt64
+	var parentOrderID, binID, recoversOrderID, namedBinID sql.NullInt64
 	var remainingUOP sql.NullInt64
 	var queueCode, queueCause sql.NullString
 	// origin_id is a nullable UUID — NULL is the honest reading for an order
@@ -72,7 +72,7 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode, &o.WaitIndex, &o.QueueReason, &queueCode, &queueCause,
 		&o.SkipAutoConfirm, &o.SiblingOrderUUID, &keyRouteJSON, &o.KeyTask,
 		&o.SourceIntent, &o.Coordinated, &remainingUOP,
-		&originID, &o.OriginClass, &o.OpenForChildren, &recoversOrderID)
+		&originID, &o.OriginClass, &o.OpenForChildren, &recoversOrderID, &namedBinID)
 	if err != nil {
 		return nil, err
 	}
@@ -97,6 +97,9 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	}
 	if recoversOrderID.Valid {
 		o.RecoversOrderID = &recoversOrderID.Int64
+	}
+	if namedBinID.Valid {
+		o.NamedBinID = &namedBinID.Int64
 	}
 	if remainingUOP.Valid {
 		v := int(remainingUOP.Int64)
@@ -174,7 +177,7 @@ func ScanOrders(rows *sql.Rows) ([]*Order, error) {
 // the two inserts are separate autocommits and the invariant is only a hope.
 func Create(db helpers.QueryRower, o *Order) error {
 	now := clock.Now().UTC()
-	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, recovers_order_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $25) RETURNING id`,
+	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code, skip_auto_confirm, sibling_order_uuid, key_route, key_task, source_intent, coordinated, origin_id, origin_class, recovers_order_id, named_bin_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $26) RETURNING id`,
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
 		o.SourceNode, o.DeliveryNode, o.ProcessNode, o.Priority, o.PayloadDesc,
@@ -183,6 +186,7 @@ func Create(db helpers.QueryRower, o *Order) error {
 		marshalKeyRoute(o.KeyRoute), o.KeyTask, o.SourceIntent, o.Coordinated,
 		helpers.NullableText(o.OriginID), o.OriginClass,
 		helpers.NullableInt64(o.RecoversOrderID),
+		helpers.NullableInt64(o.NamedBinID),
 		now)
 	if err != nil {
 		return fmt.Errorf("create order: %w", err)

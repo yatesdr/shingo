@@ -1133,22 +1133,26 @@ func ClaimTx(tx *sql.Tx, binID, orderID int64) error {
 func claimBin(db binExecer, binID, orderID int64) error {
 	// The owner test runs before the bin row is locked: the liveness CTE is
 	// evaluated ahead of the UPDATE's row locks (reservations.OwnerLiveSQL).
-	var live bool
+	var live, named bool
 	var n int
 	err := db.QueryRow(`WITH live AS (SELECT `+reservations.OwnerLiveSQL(1)+` AS ok),
+		named AS (SELECT `+reservations.NamedBinSQL(1, 2)+` AS ok),
 		upd AS (
 		  UPDATE bins SET claimed_by=$1, updated_at=$3
 		  WHERE id=$2 AND locked=false AND (claimed_by IS NULL OR claimed_by=$1)
 		    AND `+reservations.HeldByOwnerSQL(reservations.KindBin, 1, 2)+`
-		    AND (SELECT ok FROM live)
+		    AND (SELECT ok FROM live) AND (SELECT ok FROM named)
 		  RETURNING 1)
-		SELECT (SELECT ok FROM live), (SELECT count(*) FROM upd)`,
-		orderID, binID, clock.Now().UTC()).Scan(&live, &n)
+		SELECT (SELECT ok FROM live), (SELECT ok FROM named), (SELECT count(*) FROM upd)`,
+		orderID, binID, clock.Now().UTC()).Scan(&live, &named, &n)
 	if err != nil {
 		return err
 	}
 	if !live {
 		return reservations.ErrOwnerEnded
+	}
+	if !named {
+		return reservations.ErrNotTheNamedBin
 	}
 	if n == 0 {
 		return fmt.Errorf("bin %d is locked, already claimed, or does not exist", binID)

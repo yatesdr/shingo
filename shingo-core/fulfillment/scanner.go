@@ -2,6 +2,7 @@ package fulfillment
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"shingocore/store/reservations"
 	"sync"
@@ -475,6 +476,10 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// release-correction count, persisted at intake; it is threaded through the
 	// confirm at dispatch (nil for retrieve/retrieve_empty = a plain claim).
 	if err := s.claimer.ReserveForDispatch(bin.ID, order.ID); err != nil {
+		if errors.Is(err, reservations.ErrNotTheNamedBin) {
+			s.skipForNamedBin(order, bin.ID, sourceNode.Name)
+			return false
+		}
 		if s.debugLog != nil {
 			s.debugLog("fulfillment: soft-reserve bin %d for order %d failed: %v", bin.ID, order.ID, err)
 		}
@@ -514,6 +519,10 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		if errors.Is(err, reservations.ErrOwnerEnded) {
 			return false // the order ended after this pass read it: nothing claimed, nothing to requeue
 		}
+		if errors.Is(err, reservations.ErrNotTheNamedBin) {
+			s.skipForNamedBin(order, bin.ID, sourceNode.Name)
+			return false
+		}
 		s.logFn("fulfillment: confirm-at-dispatch for order %d failed: %v", order.ID, err)
 		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseClaimFailed,
 			dispatch.QueueParams{Payload: order.PayloadCode})
@@ -547,6 +556,22 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		order.ID, bin.ID, sourceNode.Name, destNode.Name, vendorOrderID)
 	s.notifyEdgeDispatched(order, sourceNode, vendorOrderID)
 	return true
+}
+
+// skipForNamedBin ends a move whose named bin has left its source. The hold or
+// claim statement refused the bin it found (reservations.NamedBinSQL): it is not
+// the bin the move was for, or that bin no longer stands on the source. Either
+// way the move's work is gone, and waiting would only lift whatever lands there
+// next. The skip releases whatever the order holds (SkipOrderAtomic).
+func (s *Scanner) skipForNamedBin(order *orders.Order, found int64, source string) {
+	named := int64(0)
+	if order.NamedBinID != nil {
+		named = *order.NamedBinID
+	}
+	detail := fmt.Sprintf("move %d was for bin %d, which is no longer on %s (found bin %d there)",
+		order.ID, named, source, found)
+	s.logFn("fulfillment: %s — skipped", detail)
+	s.dispatcher.SkipOrder(order, string(protocol.TermNotNeeded), detail)
 }
 
 // dispatchHeldBin dispatches a plain order that already holds its source bin —
@@ -645,6 +670,10 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 	if err := s.dispatcher.ConfirmForDispatch(order, *order.BinID, sourceNode, destNode); err != nil {
 		if errors.Is(err, reservations.ErrOwnerEnded) {
 			return false // the order ended after this pass read it: its row is not touched
+		}
+		if errors.Is(err, reservations.ErrNotTheNamedBin) {
+			s.skipForNamedBin(order, *order.BinID, sourceNode.Name)
+			return false
 		}
 		// ── "KEEP THE HOLD AND RETRY" NEEDS THERE TO STILL BE A HOLD ──────
 		//

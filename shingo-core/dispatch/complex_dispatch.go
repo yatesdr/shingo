@@ -1154,6 +1154,12 @@ func (d *Dispatcher) skipOrderInternal(order *orders.Order, code, detail string)
 	}
 }
 
+// SkipOrder is skipOrderInternal for the scanner: a plain move whose named bin
+// has left its source ends skipped, the bin it was for having gone.
+func (d *Dispatcher) SkipOrder(order *orders.Order, code, detail string) {
+	d.skipOrderInternal(order, code, detail)
+}
+
 // proposeDigForBuriedPickup asks for a lane-clear dig on behalf of a complex
 // demand whose PICKUP is walled in. Best-effort throughout: every doubt leaves
 // the demand exactly as admission left it — parked with a cause and a releaser —

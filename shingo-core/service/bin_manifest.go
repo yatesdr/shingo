@@ -874,9 +874,10 @@ func (s *BinManifestService) clearAndClaimTx(tx *sql.Tx, binID, orderID int64) e
 	// mirroring bins.Claim / nodes.ClaimSlotTx.
 	// The first row lock in this transaction is this UPDATE's, and its owner
 	// test (the liveness CTE) is taken before it (reservations.OwnerLiveSQL).
-	var live bool
+	var live, named bool
 	var n int
 	err = tx.QueryRow(`WITH live AS (SELECT `+reservations.OwnerLiveSQL(1)+` AS ok),
+		named AS (SELECT `+reservations.NamedBinSQL(1, 2)+` AS ok),
 		upd AS (
 		  UPDATE bins SET
 			payload_code='', manifest=NULL, uop_remaining=0,
@@ -884,15 +885,18 @@ func (s *BinManifestService) clearAndClaimTx(tx *sql.Tx, binID, orderID int64) e
 			claimed_by=$1, updated_at=NOW()
 		  WHERE id=$2 AND locked=false AND (claimed_by IS NULL OR claimed_by=$1)
 		    AND `+reservations.HeldByOwnerSQL(reservations.KindBin, 1, 2)+`
-		    AND (SELECT ok FROM live)
+		    AND (SELECT ok FROM live) AND (SELECT ok FROM named)
 		  RETURNING 1)
-		SELECT (SELECT ok FROM live), (SELECT count(*) FROM upd)`,
-		orderID, binID).Scan(&live, &n)
+		SELECT (SELECT ok FROM live), (SELECT ok FROM named), (SELECT count(*) FROM upd)`,
+		orderID, binID).Scan(&live, &named, &n)
 	if err != nil {
 		return fmt.Errorf("clear+claim bin %d: %w", binID, err)
 	}
 	if !live {
 		return reservations.ErrOwnerEnded
+	}
+	if !named {
+		return reservations.ErrNotTheNamedBin
 	}
 	if n == 0 {
 		return fmt.Errorf("bin %d is locked, already claimed, or does not exist", binID)
@@ -936,23 +940,27 @@ func (s *BinManifestService) syncUOPAndClaimTx(tx *sql.Tx, binID, orderID int64,
 	// Demoted-CAS guard + owner-idempotent: mirrors clearAndClaimTx.
 	// As clearAndClaimTx: the owner test is taken before this UPDATE's row lock,
 	// the transaction's first.
-	var live bool
+	var live, named bool
 	var n int
 	err = tx.QueryRow(`WITH live AS (SELECT `+reservations.OwnerLiveSQL(2)+` AS ok),
+		named AS (SELECT `+reservations.NamedBinSQL(2, 3)+` AS ok),
 		upd AS (
 		  UPDATE bins SET
 			uop_remaining=$1, claimed_by=$2, updated_at=NOW()
 		  WHERE id=$3 AND locked=false AND (claimed_by IS NULL OR claimed_by=$2)
 		    AND `+reservations.HeldByOwnerSQL(reservations.KindBin, 2, 3)+`
-		    AND (SELECT ok FROM live)
+		    AND (SELECT ok FROM live) AND (SELECT ok FROM named)
 		  RETURNING 1)
-		SELECT (SELECT ok FROM live), (SELECT count(*) FROM upd)`,
-		remainingUOP, orderID, binID).Scan(&live, &n)
+		SELECT (SELECT ok FROM live), (SELECT ok FROM named), (SELECT count(*) FROM upd)`,
+		remainingUOP, orderID, binID).Scan(&live, &named, &n)
 	if err != nil {
 		return fmt.Errorf("sync+claim bin %d: %w", binID, err)
 	}
 	if !live {
 		return reservations.ErrOwnerEnded
+	}
+	if !named {
+		return reservations.ErrNotTheNamedBin
 	}
 	if n == 0 {
 		return fmt.Errorf("bin %d is locked, already claimed, or does not exist", binID)

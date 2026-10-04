@@ -137,6 +137,14 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		OriginID:     originID,
 		OriginClass:  originClass,
 	}
+	// A move may name the one bin it is for. Kept on the row and asked inside
+	// the statements that hold and claim a bin (reservations.NamedBinSQL), so
+	// the move lifts that bin or ends skipped. Any other type naming a bin is
+	// not a shape a station sends; the field is ignored there.
+	if orderType == OrderTypeMove && p.BinID > 0 {
+		binID := p.BinID
+		order.NamedBinID = &binID
+	}
 	if lerr := s.admitOrder(order); lerr != nil {
 		return nil, "", lerr
 	}

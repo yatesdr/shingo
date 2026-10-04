@@ -106,6 +106,9 @@ type recordingDispatcher struct {
 
 	// demoteCalls records each trip through the one fleet-refusal door.
 	demoteCalls []demoteCall
+
+	// skipCalls records each order the scanner ended as skipped.
+	skipCalls []int64
 }
 
 // demoteCall records one fleet refusal reaching the door: whose, and under what
@@ -129,6 +132,10 @@ type directCall struct {
 	orderID    int64
 	sourceNode string
 	destNode   string
+}
+
+func (d *recordingDispatcher) SkipOrder(o *orders.Order, code, detail string) {
+	d.skipCalls = append(d.skipCalls, o.ID)
 }
 
 func (d *recordingDispatcher) DispatchDirect(o *orders.Order, src, dst *nodes.Node) (string, error) {

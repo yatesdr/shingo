@@ -165,6 +165,17 @@ type OrderRequest struct {
 	// as an ORPHAN, not an error — see OriginClass.
 	OriginID    string `json:"origin_id,omitempty"`
 	OriginClass string `json:"origin_class,omitempty"`
+	// BinID names the one bin a move is for: Core's bin id, as the Edge read it
+	// on the move's source node. Core lifts that bin and no other, and only
+	// while it still stands on the source node; once it has left, the move ends
+	// skipped instead of carrying whatever lands there next. 0 means no bin is
+	// named, and Core takes whatever stands on the source, as it always has.
+	//
+	// Sent only on a move. The Edge sends it on the return of a keep-staged
+	// spare, whose decision read the bin. Additive and omitempty both ways: an
+	// older Core ignores it and lifts whatever stands there, which is what it
+	// did before; an older Edge never sends it.
+	BinID int64 `json:"bin_id,omitempty"`
 }
 
 // Order origin classes. THREE VALUES, AND AGING DOES NOT ADD A FOURTH.

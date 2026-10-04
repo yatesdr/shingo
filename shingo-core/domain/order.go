@@ -148,4 +148,10 @@ type Order struct {
 	// which this order carries back. nil on every other order. Written once at
 	// creation; the reverse lookup is store.GetOrderRecovering.
 	RecoversOrderID *int64 `json:"recovers_order_id,omitempty"`
+	// NamedBinID is the one bin a move is for, as the station that sent it
+	// read it on the source node (protocol.OrderRequest.BinID). The bin hold
+	// and claim statements take that bin and no other, and only while it
+	// stands on the source node (reservations.NamedBinSQL); once it has left,
+	// the move is skipped. nil on every other order. Written once at creation.
+	NamedBinID *int64 `json:"named_bin_id,omitempty"`
 }
