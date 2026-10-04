@@ -12,7 +12,7 @@ import (
 
 // WHO KEEPS A CELL SHUT, BY THE DURABLE ROW.
 //
-// guardPositionSpokenFor's arm 2 and the level sweep's dedup both read the
+// The bare-line gate's rows and the level sweep's dedup both read the
 // line's non-terminal orders through orderWorksTheCell. Every population below
 // leaves the line's runtime slots EMPTY — the moments arm 2 exists for, when
 // the pointer says nothing — and every one of them must keep the cell shut:
@@ -70,8 +70,8 @@ func assertCellShut(t *testing.T, eng *Engine, db *store.DB, nodeID int64, why s
 	if rt.ActiveOrderID != nil || rt.StagedOrderID != nil {
 		t.Fatalf("fixture drift: runtime slots must be nil to isolate arm 2 (%s)", why)
 	}
-	if gerr := eng.guardPositionSpokenFor(node, rt, keeperClaim(t, db, nodeID)); gerr == nil {
-		t.Errorf("guardPositionSpokenFor admitted a downgrade while %s", why)
+	if gerr := bareLineGate(eng, node, rt, keeperClaim(t, db, nodeID)); gerr == nil {
+		t.Errorf("the bare-line gate admitted a downgrade while %s", why)
 	}
 	before := countOrders(t, db)
 	eng.sweepCellLevels()
@@ -175,7 +175,7 @@ func TestSpotBoundRetrieve_LeavesAKeepStagedCellOpen(t *testing.T) {
 	testutil.MustNoErr(t, err, "node")
 	rt, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "runtime")
-	if gerr := eng.guardPositionSpokenFor(node, rt, claim); gerr != nil {
+	if gerr := bareLineGate(eng, node, rt, claim); gerr != nil {
 		t.Errorf("a refill bound for the spot refused the line's downgrade: %v", gerr)
 	}
 	before := countOrders(t, db)

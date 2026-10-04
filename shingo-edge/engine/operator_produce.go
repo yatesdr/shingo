@@ -127,11 +127,17 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	if ask.finalizes && plan.Dispatch != nil && runtime.RemainingUOPCached <= 0 {
 		return nil, fmt.Errorf("node %s has no parts to finalize", node.Name)
 	}
-	if err := e.planProduceRows(node, runtime, claim, plan, spot); err != nil {
+	if err := e.gateLineRows(node, claim, plan.SimpleMove, spot, func(read spotRead, coming int) {
+		planSpotForProduce(plan, claim, read, coming)
+	}); err != nil {
 		return nil, err
 	}
+	if plan.SimpleMove {
+		log.Printf("[produce-swap] node %s is empty (no bin), sending an empty from %s instead of a %s swap",
+			node.Name, plan.SimpleSource, claim.SwapMode)
+	}
 	if plan.SuppressSwap {
-		if err := e.guardPairedPrimes(node, runtime, claim, plan.PrimePairedPositions); err != nil {
+		if err := guardPairedPrimes(node, claim, plan.PrimePairedPositions); err != nil {
 			return nil, err
 		}
 	}
@@ -170,40 +176,6 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	return result, nil
 }
 
-// planProduceRows reads the line's rows once, for what the keep-staged spot has
-// coming and leaving and for the empty-line plan's guard, and applies both. Only
-// a keep-staged claim with a known spot, or an empty-line plan, pays the read.
-func (e *Engine) planProduceRows(
-	node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, plan *ProducePlan, spot spotRead,
-) error {
-	spotKnown := claim.KeepStaged && spot.known
-	if !spotKnown && !plan.SimpleMove {
-		return nil
-	}
-	if plan.SimpleMove {
-		if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
-			return err
-		}
-	}
-	rows, err := e.db.ListActiveOrdersByProcessNode(node.ID)
-	if err != nil {
-		return fmt.Errorf("node %s: cannot tell what is on its way to it (%w) — the next request will re-ask", node.Name, err)
-	}
-	if spotKnown {
-		leaving := spotLeaving(rows, claim.InboundStaging, claim.CoreNodeName)
-		planSpotForProduce(plan, claim, spot.lessLeaving(leaving), spotComing(rows, claim))
-	}
-	if !plan.SimpleMove {
-		return nil
-	}
-	if err := positionWorkedBy(node, claim, rows); err != nil {
-		return err
-	}
-	log.Printf("[produce-swap] node %s is empty (no bin), sending an empty from %s instead of a %s swap",
-		node.Name, plan.SimpleSource, claim.SwapMode)
-	return nil
-}
-
 // applyProduceEmptyLine creates the empty-line plan's one order: the spare on the
 // spot moved to the line, named as the empty it is, or an empty retrieved from
 // the inbound source. It takes the line's active slot, as the consume side's
@@ -228,27 +200,39 @@ func (e *Engine) applyProduceEmptyLine(node *processes.Node, claim *processes.No
 	// A press's bare paired positions get their empties alongside, outside the
 	// runtime slots, as the consume side's downgrade primes do. The line's
 	// empty is already on its way; a failed prime is returned, not rolled back.
-	primes, err := e.createProducePrimes(node, claim, plan.PrimePairedPositions, origin)
+	primes, err := e.createPrimes(node, claim, plan.PrimePairedPositions, 1, origin)
 	if err != nil {
 		return nil, err
 	}
 	return &NodeOrderResult{Order: order, PrimeOrders: primes, ProcessNodeID: nodeID}, nil
 }
 
-// createProducePrimes creates one retrieve-empty per bare paired position. A
-// retrieve, not a move: a move is a full-intent local relocation of the bin AT a
-// concrete source node, so it would hunt a FULL bin in what is an empties pool.
-// The merged auto-confirm signal: one policy for both directions of the cell.
-func (e *Engine) createProducePrimes(node *processes.Node, claim *processes.NodeClaim, primes []SimplePrime, origin ordermgr.Origin) ([]*orders.Order, error) {
+// createPrimes creates one order per bare paired position of a press, for both
+// roles: a full to a consume press, an empty to a produce press. Attributed to
+// the head node for ownership and audit, NOT tracked in runtime slots (those
+// belong to the head's serial-order machinery for swap cycles). The merged
+// auto-confirm signal: one policy for both directions of the cell.
+//
+// What the bin carries is the only role branch. A produce prime is a retrieve
+// of an empty, not a move: a move is a full-intent local relocation of the bin
+// AT a concrete source node, so it would hunt a FULL bin in what is an empties
+// pool. quantity is the request's for a consume prime; an empty is one.
+//
+// No re-read: both creates return the stored row and nothing below rewrites it.
+func (e *Engine) createPrimes(node *processes.Node, claim *processes.NodeClaim, primes []SimplePrime, quantity int64, origin ordermgr.Origin) ([]*orders.Order, error) {
 	nodeID := node.ID
 	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
 	var out []*orders.Order
 	for _, p := range primes {
-		// No re-read: CreateRetrieveOrder already returns the stored row and
-		// nothing below rewrites it.
-		po, err := e.orderMgr.CreateRetrieveOrder(&nodeID, true, 1,
-			p.Dest, p.Source, "", "standard", claim.PayloadCode,
-			autoConfirm, false, origin)
+		var po *orders.Order
+		var err error
+		if claim.Role == protocol.ClaimRoleProduce {
+			po, err = e.orderMgr.CreateRetrieveOrder(&nodeID, true, 1,
+				p.Dest, p.Source, "", "standard", claim.PayloadCode,
+				autoConfirm, false, origin)
+		} else {
+			po, err = e.orderMgr.CreateMoveOrder(&nodeID, quantity, p.Source, p.Dest, autoConfirm, origin)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("prime %s: %w", p.Dest, err)
 		}
@@ -319,16 +303,13 @@ func pairedPositionsInbound(claim *processes.NodeClaim, rows []orders.Order) map
 }
 
 // guardPairedPrimes gates a plan that primes a press's bare paired positions
-// while its line holds a bin, for both roles. It is the gate the swap it
-// replaces had: no prime while a swap is still working the cell, because that
-// swap's own legs are what is about to fill the position, and a second bin
-// there is one no robot can set down. Then, with no prime left to send, every
-// bare position already has a bin on its way, and the request is held with a
-// notice rather than refused as a fault.
-func (e *Engine) guardPairedPrimes(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, primes []SimplePrime) error {
-	if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
-		return err
-	}
+// while its line holds a bin, for both roles. No prime goes while a swap is
+// still working the cell, because that swap's own legs are what is about to
+// fill the position and a second bin there is one no robot can set down; every
+// request has already asked that (guardLineRequest). With no prime left to
+// send, every bare position already has a bin on its way, and the request is
+// held with a notice rather than refused as a fault.
+func guardPairedPrimes(node *processes.Node, claim *processes.NodeClaim, primes []SimplePrime) error {
 	if len(primes) == 0 {
 		// HOLD. Refuse BEFORE the episode opens: an episode expecting no
 		// orders is noise, and the operator needs a sentence, not a silent
@@ -460,7 +441,7 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 	// bin AT a concrete source node, so it would hunt a FULL bin in what is an
 	// empties pool. RetrieveEmpty is the intent that matches.
 	if plan.SuppressSwap {
-		primes, err := e.createProducePrimes(node, claim, plan.PrimePairedPositions, origin)
+		primes, err := e.createPrimes(node, claim, plan.PrimePairedPositions, 1, origin)
 		if err != nil {
 			return nil, err
 		}

@@ -53,10 +53,9 @@ func (b *bareLine) lineHeld() bool { return b.dest == "" }
 // that is about to be occupied, and its robot can never put it down (sim
 // 2026-08-31, ALN_004: four cells locked in one run). This function is pure and
 // cannot tell the two apart; the witness is the cell's own in-flight orders. So
-// the caller gates a non-nil answer with guardPositionSpokenFor or
-// positionWorkedBy when the line is bare, and with guardPairedPrimes when it is
-// held, before it creates anything, and a caller that skips that gate
-// reintroduces the race.
+// the caller gates a non-nil answer with gateLineRows when the line is bare,
+// and with guardPairedPrimes when it is held, before it creates anything, and a
+// caller that skips that gate reintroduces the race.
 //
 // INBOUND GATES THE ORDER, NOT THE SWAP. A position that is still physically
 // bare cannot be indexed from, whether or not the bin filling it is already on

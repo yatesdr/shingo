@@ -39,7 +39,7 @@ import (
 //     domain/loader_synthclaim_test.go and engine/loader_synthclaim_test.go.
 //   - guardStyleTransition and guardCatidMismatch already have loader-exemption
 //     coverage in guard_style_transition_test.go and guard_catid_mismatch_test.go.
-//     guardPositionSpokenFor did not, and it is added below.
+//     The bare-line gate did not, and it is added below.
 
 // notALoaderMessage is the operator-facing refusal the four entry points share
 // today, verbatim. It is asserted rather than paraphrased because it is what a
@@ -209,7 +209,7 @@ func TestLoaderOnlyOperations_RefuseNodesWithNoClaim(t *testing.T) {
 	}
 }
 
-// TestGuardPositionSpokenFor_ExemptsLoaders nets the third line-cell guard's
+// TestBareLineGate_ExemptsLoaders nets the third line-cell guard's
 // loader exemption. The other two already have one — guardStyleTransition in
 // guard_style_transition_test.go, guardCatidMismatch in
 // guard_catid_mismatch_test.go — and all three carry the same exemption for the
@@ -217,10 +217,10 @@ func TestLoaderOnlyOperations_RefuseNodesWithNoClaim(t *testing.T) {
 // serial-occupancy rules that protect a line cell would read its normal state
 // as a fault and kill the operator's request button.
 //
-// MUTATION: delete the exemption in guardPositionSpokenFor — a loader with a
-// live order in its runtime slot starts refusing the operator's next tap, which
-// is the Springfield regression shape.
-func TestGuardPositionSpokenFor_ExemptsLoaders(t *testing.T) {
+// MUTATION: delete the exemption in guardLineRequest or gateLineRows — a loader
+// with a live order in its runtime slot starts refusing the operator's next
+// tap, which is the Springfield regression shape.
+func TestBareLineGate_ExemptsLoaders(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -232,8 +232,8 @@ func TestGuardPositionSpokenFor_ExemptsLoaders(t *testing.T) {
 	runtime := &processes.RuntimeState{}
 	loaderClaim := &processes.NodeClaim{SwapMode: protocol.SwapModeManualSwap}
 
-	if err := eng.guardPositionSpokenFor(node, runtime, loaderClaim); err != nil {
-		t.Errorf("guardPositionSpokenFor on a loader claim = %v, want nil — a loader's multi-order "+
+	if err := bareLineGate(eng, node, runtime, loaderClaim); err != nil {
+		t.Errorf("bare-line gate on a loader claim = %v, want nil — a loader's multi-order "+
 			"queue is its normal state, not a position already spoken for", err)
 	}
 }

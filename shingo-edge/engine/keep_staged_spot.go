@@ -157,16 +157,6 @@ func (r spotRead) lessLeaving(leaving int) spotRead {
 	return r
 }
 
-// readSpotComing is spotComing and spotLeaving over the line's rows, read once.
-// Only a keep-staged claim pays for the read.
-func (e *Engine) readSpotComing(node *processes.Node, c *processes.NodeClaim) (coming, leaving int, err error) {
-	rows, err := e.db.ListActiveOrdersByProcessNode(node.ID)
-	if err != nil {
-		return 0, 0, err
-	}
-	return spotComing(rows, c), spotLeaving(rows, c.InboundStaging, c.CoreNodeName), nil
-}
-
 // planSpotForConsume adds the spot's orders to a consume plan. The swap from the
 // spare lifts it; the node-empty downgrade lifts it too when it stands there
 // right, by sourcing the simple delivery from the spot instead of the market.

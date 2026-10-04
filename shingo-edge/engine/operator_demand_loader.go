@@ -80,14 +80,13 @@ func (e *Engine) loaderBudgetLock(loaderID string) *sync.Mutex {
 // not a cleared one.
 //
 // The press-index partial-empty prime creates outside this seam DELIBERATELY,
-// from one site per role: createProducePrimes, which REQUEST SWAP and REQUEST
-// EMPTY BIN both reach through produceRequest, and createConsumePrimes, which
-// REQUEST reaches on a consume press. Its delivery node is a press's bare paired
+// from one site for both roles: createPrimes, which every request button
+// reaches on a press. Its delivery node is a press's bare paired
 // POSITION, never a loader window, so this seam's budget — one bin per delivery
 // node across a loader's window set — has nothing to say about it. It carries
 // its own count->decide->create lock for the same never-2N reason at its own
 // grain: Engine.primeResv, keyed by the cell's core node, around
-// pairedPositionsInbound, so a second press of any button while a prime
+// guardLineRequest's read, so a second press of any button while a prime
 // is being decided cannot double-fire. The InboundSource it pulls FROM may well
 // be a loader group; that is Core's resolver's business, not this budget's.
 //

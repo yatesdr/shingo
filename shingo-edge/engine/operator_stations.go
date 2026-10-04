@@ -223,27 +223,20 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	if err != nil {
 		return nil, err
 	}
-	if claim.KeepStaged && spot.known {
-		coming, leaving, cerr := e.readSpotComing(node, claim)
-		if cerr != nil {
-			return nil, fmt.Errorf("node %s: cannot tell what is on its way to %s (%w) — the next request will re-ask",
-				node.Name, claim.InboundStaging, cerr)
-		}
-		planSpotForConsume(plan, claim, spot.lessLeaving(leaving), coming)
+	// THE DOWNGRADE IS THE ONE DECISION THAT IGNORES WHAT THIS CELL ALREADY HAS
+	// IN FLIGHT, and it is the decision that mints a second delivery into a
+	// position a robot is on its way to fill. Gate it here (gateLineRows, as the
+	// produce request does), before the log line below, so "downgrading … to
+	// simple delivery" keeps meaning what it says: the position is bare AND
+	// nothing is coming. Here and not in BuildConsumePlan because the planner is
+	// pure and the witness is a DB read.
+	downgraded := plan.DowngradedFromSwapMode != ""
+	if err := e.gateLineRows(node, claim, downgraded, spot, func(read spotRead, coming int) {
+		planSpotForConsume(plan, claim, read, coming)
+	}); err != nil {
+		return nil, err
 	}
-	if plan.DowngradedFromSwapMode != "" {
-		// THE DOWNGRADE IS THE ONE DECISION THAT IGNORES WHAT THIS CELL ALREADY
-		// HAS IN FLIGHT, and it is the decision that mints a second delivery into
-		// a position a robot is on its way to fill. Gate it here, before the log
-		// line below, so "downgrading … to simple delivery" keeps meaning what it
-		// says: the position is bare AND nothing is coming.
-		//
-		// Here and not in BuildConsumePlan because the planner is pure over
-		// (node, runtime, claim, occupancy) and the witness is a DB read. This
-		// function already holds what the guard needs.
-		if err := e.guardPositionSpokenFor(node, runtime, claim); err != nil {
-			return nil, err
-		}
+	if downgraded {
 		if len(plan.PrimePairedPositions) > 0 {
 			dests := make([]string, 0, len(plan.PrimePairedPositions))
 			for _, p := range plan.PrimePairedPositions {
@@ -257,7 +250,7 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	}
 
 	if plan.SuppressSwap {
-		if err := e.guardPairedPrimes(node, runtime, claim, plan.PrimePairedPositions); err != nil {
+		if err := guardPairedPrimes(node, claim, plan.PrimePairedPositions); err != nil {
 			return nil, err
 		}
 	}
@@ -286,7 +279,7 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	// both swap legs. Choreography is not demand.
 	origin := e.openEpisodeForConsume(node, runtime, claim, plan, trigger)
 
-	result, err := e.applyConsumePlan(node, plan, origin)
+	result, err := e.applyConsumePlan(node, claim, plan, origin)
 	if err != nil {
 		return nil, err
 	}
@@ -337,11 +330,11 @@ func (e *Engine) openEpisodeForConsume(
 // it issues the move order or planned complex order(s), records the
 // runtime-orders linkage, and re-reads the resulting orders. Direction-
 // specific glue around the shared SwapDispatch.
-func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origin orders.Origin) (*NodeOrderResult, error) {
+func (e *Engine) applyConsumePlan(node *processes.Node, claim *processes.NodeClaim, plan *ConsumePlan, origin orders.Origin) (*NodeOrderResult, error) {
 	nodeID := node.ID
 
 	if plan.SuppressSwap {
-		primes, err := e.createConsumePrimes(nodeID, plan, origin)
+		primes, err := e.createPrimes(node, claim, plan.PrimePairedPositions, plan.Quantity, origin)
 		if err != nil {
 			return nil, err
 		}
@@ -362,7 +355,7 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origi
 		// The head order is already created and is not rolled back if a prime
 		// fails; the error is returned so the operator sees that priming was
 		// incomplete.
-		primes, err := e.createConsumePrimes(nodeID, plan, origin)
+		primes, err := e.createPrimes(node, claim, plan.PrimePairedPositions, plan.Quantity, origin)
 		if err != nil {
 			return nil, err
 		}
@@ -432,26 +425,6 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan, origi
 		return &NodeOrderResult{Order: orderA, ProcessNodeID: nodeID}, nil
 	}
 	return &NodeOrderResult{OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
-}
-
-// createConsumePrimes creates one delivery of a full per bare paired position
-// of a press: attributed to the head node for ownership and audit, NOT tracked
-// in runtime slots (those belong to the head's serial-order machinery for swap
-// cycles), as the produce side's primes are.
-func (e *Engine) createConsumePrimes(nodeID int64, plan *ConsumePlan, origin orders.Origin) ([]*storeorders.Order, error) {
-	var primes []*storeorders.Order
-	for _, p := range plan.PrimePairedPositions {
-		po, err := e.orderMgr.CreateMoveOrder(&nodeID, plan.Quantity, p.Source, p.Dest, plan.AutoConfirm, origin)
-		if err != nil {
-			return nil, fmt.Errorf("prime %s: %w", p.Dest, err)
-		}
-		refreshed, err := e.refreshOrderStation(po.ID)
-		if err != nil {
-			return nil, err
-		}
-		primes = append(primes, refreshed)
-	}
-	return primes, nil
 }
 
 // refreshOrderStation re-reads an order after the runtime-orders write

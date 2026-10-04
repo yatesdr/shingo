@@ -103,7 +103,7 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 	// and with none there it does nothing useful: a single-robot lift holds at
 	// Core for good, a two-robot or sequential removal is skipped by Core and a
 	// sequential backfill is never made, and a press's index leg holds at a bare
-	// paired position. The caller gates this plan (positionWorkedBy,
+	// paired position. The caller gates this plan (gateLineRows,
 	// guardPairedPrimes).
 	bare, err := planBareLine(node, claim, occupancy, inbound)
 	if err != nil {

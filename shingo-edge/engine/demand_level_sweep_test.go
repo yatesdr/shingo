@@ -98,8 +98,8 @@ func keeperClaim(t *testing.T, db *store.DB, nodeID int64) *processes.NodeClaim 
 // A sweep that keys its ASK on that flag orders parts for a cell that already
 // has a full bin, once per period, for the whole length of any line stoppage:
 // a break, a shift change, a changeover, a weekend. CanAcceptOrders does not
-// stop it (a terminal order reads as acceptable) and guardPositionSpokenFor
-// does not (it guards the downgrade branch only). That is a spam generator,
+// stop it (a terminal order reads as acceptable) and the bare-line gate does
+// not (it guards the bare-line branch only). That is a spam generator,
 // and it fires when everything is healthy.
 //
 // So the ask must be derived from the COUNT, which the delivery handler writes

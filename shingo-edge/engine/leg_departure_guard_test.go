@@ -12,7 +12,7 @@ import (
 
 // The admission guards, and the one thing they must never do: disagree.
 // CanAcceptOrders and hasActiveSwap read the runtime SLOTS;
-// guardPositionSpokenFor's second arm reads the durable ROWS at the node. All
+// the bare-line gate (bareLineGate) reads the durable ROWS at the node. All
 // three ask orderWorksTheCell.
 
 // seedGuardRuntime creates the node's runtime row and points it at the claim —
@@ -43,14 +43,14 @@ func assertGuards(t *testing.T, eng *Engine, db *store.DB, nodeID int64,
 		t.Errorf("hasActiveSwap says busy=%v, want busy=%v — %s", !gotSwap, !want, why)
 	}
 
-	gerr := eng.guardPositionSpokenFor(node, rt, claim)
+	gerr := bareLineGate(eng, node, rt, claim)
 	gotGuard := gerr == nil
 	if gotGuard != want {
-		t.Errorf("guardPositionSpokenFor = %v, want admit=%v — %s", gerr, want, why)
+		t.Errorf("bare-line gate = %v, want admit=%v — %s", gerr, want, why)
 	}
 
 	if gotAccept != gotSwap || gotAccept != gotGuard {
-		t.Fatalf("THE THREE GUARDS DISAGREE (CanAcceptOrders=%v, notBusy=%v, guardPositionSpokenFor=%v). "+
+		t.Fatalf("THE THREE GUARDS DISAGREE (CanAcceptOrders=%v, notBusy=%v, bare-line gate=%v). "+
 			"The slot check and the durable-row check answer the same question about the same cell and "+
 			"must never differ: %s", gotAccept, gotSwap, gotGuard, why)
 	}

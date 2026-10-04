@@ -141,7 +141,7 @@ func TestCensus_RetrieveOrderCreatorSites(t *testing.T) {
 	//
 	// 12 again since REQUEST EMPTY BIN goes through the produce request's own
 	// plan and apply: primeBarePressIndexPositions, its copy of the prime, is
-	// gone, and its primes are created by createProducePrimes, which took over
+	// gone, and its primes are created by createPrimes, which took over
 	// applyProducePlan's own site when the empty to a bare press line came to
 	// carry primes too.
 	const want = 12

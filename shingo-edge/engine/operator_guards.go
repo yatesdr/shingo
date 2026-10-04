@@ -194,13 +194,17 @@ func (e *Engine) guardSourceKnownDry(node *processes.Node, claim *processes.Node
 	return nil
 }
 
-// guardPositionSpokenFor refuses the node-empty DOWNGRADE while this position is
-// still mid-cycle.
+// gateLineRows is the bare-line gate, the same for both roles, and the
+// keep-staged spot's count, over one read of the line's own rows. Only a plan
+// that brings a bin to a bare line (bare), or a keep-staged claim whose spot
+// Core answered for, pays the read. planSpot is the role's spot planner, given
+// what stands on the spot less what is leaving it and what is coming to it.
 //
-// "Core reports no bin on it" and "this position is bare" are different
-// sentences, and the downgrade in BuildConsumePlan reads the first as the
-// second. They agree whenever a person has pulled a carrier off by hand, which
-// is the case the downgrade was written for. They stop agreeing during a swap:
+// THE GATE REFUSES THE BARE-LINE DELIVERY WHILE THIS POSITION IS STILL
+// MID-CYCLE. "Core reports no bin on it" and "this position is bare" are
+// different sentences, and planBareLine reads the first as the second. They
+// agree whenever a person has pulled a carrier off by hand, which is the case
+// the bare-line delivery was written for. They stop agreeing during a swap:
 // between the robot lifting the old carrier and setting the new one down, the
 // position genuinely holds no bin AND already has one on its way. Core, asked
 // in that window, correctly says empty.
@@ -208,89 +212,76 @@ func (e *Engine) guardSourceKnownDry(node *processes.Node, claim *processes.Node
 // SIM 2026-08-31, ALN_004, four cells dead in one run. The swap's own pickup
 // made the position read empty at 05:51:45 — Core's intermediate-store
 // dropoff then re-bound a bin at 05:51:50, which re-armed the consume tick's
-// evaluator. At 05:51:52 the
-// cell asked for material with both runtime pointers empty and Core reporting
-// the position free, so Edge downgraded to a bare delivery. Two seconds later
-// the in-flight swap set its own bin down, and the second robot arrived at a
-// full position it could not place onto. That second order then sat in the
-// cell's ActiveOrderID, so the removal that would have freed the position could
-// never be raised: machine, robot and carrier locked together until a person
-// intervenes. Same family as the Hopkinsville swap deadlock.
+// evaluator. At 05:51:52 the cell asked for material with both runtime
+// pointers empty and Core reporting the position free, so Edge downgraded to a
+// bare delivery. Two seconds later the in-flight swap set its own bin down, and
+// the second robot arrived at a full position it could not place onto. That
+// second order then sat in the cell's ActiveOrderID, so the removal that would
+// have freed the position could never be raised: machine, robot and carrier
+// locked together until a person intervenes. Same family as the Hopkinsville
+// swap deadlock.
 //
-// TWO ARMS, BECAUSE THE POINTER ALONE IS NOT ENOUGH:
+// THE POINTER ALONE IS NOT ENOUGH. Every request has already asked the runtime
+// slots (guardNoActiveSwap, in guardLineRequest) and every live order bound for
+// the line. This asks THE ORDER ROW of this process node, not the pointer. The
+// pointer is slot-scoped, not lifecycle-scoped, so at the moments that matter
+// most it says nothing (a changeover-cancel nils both refs mid-swap;
+// pre-departure cleanup paths can too), while orders.process_node_id still
+// names this cell. It is also the only witness a single_robot swap leaves here:
+// that swap is ONE complex order whose delivery_node is the supermarket the old
+// carrier ends at, and the new carrier lands at this position as an
+// intermediate dropoff — so a delivery-node lookup finds nothing. Asking the
+// durable row rather than a pointer scoped to a moment is the same reading
+// outboundMoveInFlight takes.
 //
-//  1. guardNoActiveSwap — the Bug 3 guard, "refuse to start a second swap on
-//     top of an in-flight one", written for exactly this failure. Every
-//     request now runs it first (guardLineRequest); it is asked again here for
-//     the callers that reach this guard directly.
-//  2. THE ORDER ROW, NOT THE POINTER. The pointer is slot-scoped, not
-//     lifecycle-scoped, so at the moments that matter most it says nothing (a
-//     changeover-cancel nils both refs mid-swap; pre-departure cleanup paths
-//     can too), while orders.process_node_id still names this cell. It is also
-//     the only
-//     witness a single_robot swap leaves here: that swap is ONE complex order
-//     whose delivery_node is the supermarket the old carrier ends at, and the
-//     new carrier lands at this position as an intermediate dropoff — so a
-//     delivery-node lookup finds nothing. Asking the durable row rather than a
-//     pointer scoped to a moment is the same reading outboundMoveInFlight takes.
-//
-// LOADERS ARE EXEMPT (manual_swap), the same exemption guardStyleTransition and
-// guardCatidMismatch carry. A loader window runs a multi-order queue on purpose
-// — CanAcceptOrders returns true for one while its orders are in flight — and
-// holding it to a one-bin-at-a-time rule would stall the empties it exists to
-// supply.
+// LOADERS ARE EXEMPT, for both roles, as guardLineRequest, guardStyleTransition
+// and guardCatidMismatch exempt them. A loader window runs a multi-order queue
+// on purpose — CanAcceptOrders returns true for one while its orders are in
+// flight — and holding it to a one-bin-at-a-time rule would stall the empties
+// it exists to supply (the Springfield regression shape: a loader with a live
+// order refusing the operator's next tap).
 //
 // FAILS CLOSED on a read error, unlike hasActiveSwap. The two wrong answers do
-// not cost the same: a wrong "wait" delays supply by one tick and the next tick
-// re-asks, while a wrong "go" mints the second delivery this guard exists to
+// not cost the same: a wrong "wait" delays supply by one request and the next
+// re-asks, while a wrong "go" mints the second delivery this gate exists to
 // prevent, and that one never clears itself.
 //
-// THE RELEASER IS THE BLOCKING ORDER GOING TERMINAL, AND "ONE TICK" ASSUMES IT
-// DOES. Arm 2 refuses on ANY non-terminal order at this process node
+// THE RELEASER IS THE BLOCKING ORDER GOING TERMINAL. The gate refuses on ANY
+// order at this process node that still works the cell
 // (ListActiveOrdersByProcessNode — `status NOT IN (terminal)`, which includes
-// `queued`), so the cost is one tick only while the blocker is moving. An order
+// `queued`), so the wait is short only while the blocker is moving. An order
 // that is stuck — a robot HOLDING at an occupied position, a dead robot pinning
 // the runtime slot — refuses supply here for as long as it stays non-terminal,
-// and nothing in this guard will time it out.
-//
-// THAT INCLUDES THE OPERATOR'S OWN REQUEST. This runs on the downgrade path in
-// requestNodeFromClaim regardless of trigger — the call site is the
-// `plan.DowngradedFromSwapMode != ""` arm of requestNodeFromClaim, named rather
-// than cited by line because the line number this carried had already drifted
-// by 28 — so a
-// person pressing REQUEST at the HMI is refused by the same arm, with the same
-// releaser. It is the right refusal — a second carrier into a position a robot
-// is standing at is the failure this exists to stop — but it means the floor's
-// escape from a stuck cell is terminalizing that order (abandon / force-complete
-// / cancel), not re-asking. Say so if this ever reads as "the button is dead".
-//
-// SCOPE IS THE DOWNGRADE. A plan that is SimpleMove because the claim's mode is
-// "simple", and a plan that carries a Dispatch, both reach their own gates and
-// are not this function's business.
-func (e *Engine) guardPositionSpokenFor(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) error {
-	if node == nil || claim == nil {
-		return nil
-	}
+// and nothing in this gate will time it out. THAT INCLUDES THE OPERATOR'S OWN
+// REQUEST: a person pressing a button at the HMI is refused by the same gate,
+// with the same releaser. It is the right refusal — a second carrier into a
+// position a robot is standing at is the failure this exists to stop — but it
+// means the floor's escape from a stuck cell is terminalizing that order
+// (abandon / force-complete / cancel), not re-asking.
+func (e *Engine) gateLineRows(node *processes.Node, claim *processes.NodeClaim, bare bool, spot spotRead, planSpot func(spotRead, int)) error {
 	if claim.IsLoaderNode() {
-		return nil
+		bare = false
 	}
-	if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
-		log.Printf("[request-material] node %s reads empty but its runtime still names an in-flight order — "+
-			"refusing the simple-delivery downgrade", node.Name)
-		return err
+	spotKnown := claim.KeepStaged && spot.known && planSpot != nil
+	if !spotKnown && !bare {
+		return nil
 	}
 	rows, err := e.db.ListActiveOrdersByProcessNode(node.ID)
 	if err != nil {
-		log.Printf("[request-material] node %s: could not read in-flight orders (%v) — "+
-			"refusing the simple-delivery downgrade", node.Name, err)
-		return fmt.Errorf("node %s: cannot tell whether a bin is already on its way (%w) — the next tick will re-ask", node.Name, err)
+		log.Printf("[request] node %s: could not read its in-flight orders (%v) — refusing the request", node.Name, err)
+		return fmt.Errorf("node %s: cannot tell what is on its way to it (%w) — the next request will re-ask", node.Name, err)
+	}
+	if spotKnown {
+		leaving := spotLeaving(rows, claim.InboundStaging, claim.CoreNodeName)
+		planSpot(spot.lessLeaving(leaving), spotComing(rows, claim))
+	}
+	if !bare {
+		return nil
 	}
 	return positionWorkedBy(node, claim, rows)
 }
 
-// positionWorkedBy is guardPositionSpokenFor's second arm over rows the caller
-// has already read: the produce request reads the line's rows once for this
-// and for its spot.
+// positionWorkedBy is gateLineRows' refusal over the line's own rows.
 func positionWorkedBy(node *processes.Node, claim *processes.NodeClaim, rows []domain.Order) error {
 	// THE DURABLE-ROW TWIN OF THE SLOT CHECK, and it must give the same answer.
 	// The query is `status NOT IN (terminal)`; the cell question is
@@ -474,7 +465,7 @@ func (e *Engine) catidResolutionHint(processID int64) string {
 // still working this cell. Pure Edge-DB check — no Core round-trip.
 //
 // It asks orderWorksTheCell, the same predicate CanAcceptOrders and
-// guardPositionSpokenFor's row arm ask, so the three cannot disagree about
+// the bare-line gate's rows (gateLineRows) ask, so the three cannot disagree about
 // whether a cell is busy. A departed leg — a robot driving a bin to the
 // supermarket — is live but is not the cell's.
 func hasActiveSwap(e *Engine, runtime *processes.RuntimeState) bool {

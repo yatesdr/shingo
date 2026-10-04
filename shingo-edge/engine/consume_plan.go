@@ -115,7 +115,7 @@ func (p *ConsumePlan) OrderCount() int {
 // strand the operator behind a swap that has nothing to swap out. That
 // downgrade is a PROPOSAL, not a decision: telemetry alone cannot tell a
 // bare position from one a robot is mid-swap on, so the caller gates it
-// with guardPositionSpokenFor. See the branch comment below.
+// with gateLineRows. See the branch comment below.
 //
 // For two_robot_press_index, the planner also consults occupancy for
 // PairedCoreNode and SecondPairedCoreNode and emits one prime delivery
@@ -148,8 +148,8 @@ func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 
 	// Node-empty downgrade: a line with no bin gets the plain delivery the bare
 	// line needs (planBareLine) instead of a swap with nothing to lift, in every
-	// mode. requestNodeFromClaim gates it with guardPositionSpokenFor before
-	// applying it. A press whose head is full and a paired position is not gets
+	// mode. requestNodeFromClaim gates it with gateLineRows before applying
+	// it. A press whose head is full and a paired position is not gets
 	// that position's bin and no swap, as a produce press does, gated with
 	// guardPairedPrimes.
 	bare, err := planBareLine(node, claim, occupancy, inbound)

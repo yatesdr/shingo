@@ -223,6 +223,16 @@ func TestConsumeDowngrade_StillDowngradesWhenTheNodeIsTrulyBare(t *testing.T) {
 	}
 }
 
+// bareLineGate is everything a request asks of a bare line before it sends
+// the bin: the runtime slots and every live order bound for the line
+// (guardLineRequest), then the line's own rows (gateLineRows).
+func bareLineGate(eng *Engine, node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) error {
+	if _, err := eng.guardLineRequest(node, runtime, claim); err != nil {
+		return err
+	}
+	return eng.gateLineRows(node, claim, true, spotRead{}, nil)
+}
+
 // TestConsumeDowngrade_LoaderWindowIsExempt pins the exemption. A manual_swap
 // window runs a multi-order queue on purpose — CanAcceptOrders returns true for
 // one while its own orders are in flight — so holding it to one bin at a time
@@ -243,7 +253,7 @@ func TestConsumeDowngrade_LoaderWindowIsExempt(t *testing.T) {
 	}
 	claim.SwapMode = protocol.SwapModeManualSwap
 
-	if err := eng.guardPositionSpokenFor(node, runtime, claim); err != nil {
+	if err := bareLineGate(eng, node, runtime, claim); err != nil {
 		t.Errorf("loader window refused: %v — manual_swap must stay exempt", err)
 	}
 }
