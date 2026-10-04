@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"log"
 
+	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/orders"
 	"shingoedge/store/processes"
 )
 
@@ -45,7 +47,8 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 // before anything else is decided: the material request, the produce request
 // and the empty-bin request, from the operator or from the level keeper. It runs
 // under the cell's lock and before Core is asked anything, so a refusal costs no
-// round trip and makes no order.
+// round trip and makes no order. It returns what it read that the plan needs:
+// the paired positions of a press a bin is already on its way to.
 //
 // ONE LINE, ONE LIVE SWAP, IN EVERY SWAP MODE. A swap still working the cell
 // refuses the next request, whatever plan that request would have built. A
@@ -57,13 +60,51 @@ func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.Runt
 // that had just landed, and a RELEASE of it would finalize a fresh empty as a
 // filled bin.
 //
+// ONE BIN COMING TO A LINE AT A TIME, WHOEVER SENT IT. A live order bound for the
+// line's core node, not departed and not delivered, refuses the request, from
+// any process node: two stations can share one physical position, and a bin one
+// of them sent is as much on its way as a bin this one sent. The swap guard
+// above reads only this node's slots, and the bare-line gate only this node's
+// rows, so a sibling station's bin was invisible to both and the request made a
+// second delivery, which Core then held behind the first until the line next
+// emptied. A delivered bin is on the line, not on its way: the line reads
+// occupied and the request builds the swap that lifts it.
+//
+// One read covers the line and a press's paired positions: every live order
+// bound for any of them, in one snapshot.
+//
 // LOADERS ARE EXEMPT. A loader window runs a multi-order queue on purpose, so a
 // live order there is its normal state and not a reason to refuse the next tap.
-func (e *Engine) guardLineRequest(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) error {
+//
+// FAILS CLOSED. A read error means we do not know what is on its way, and a
+// refused request is a tap the operator can repeat.
+func (e *Engine) guardLineRequest(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) (map[string]bool, error) {
 	if claim == nil || claim.IsLoaderNode() {
-		return nil
+		return nil, nil
 	}
-	return e.guardNoActiveSwap(node, runtime, claim)
+	if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
+		return nil, err
+	}
+	var paired []string
+	if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex {
+		paired = claim.ExtensionPositions()
+	}
+	rows, err := e.db.ListActiveOrdersByDeliveryNodeSet(append([]string{claim.CoreNodeName}, paired...))
+	if err != nil {
+		return nil, fmt.Errorf("node %s: cannot tell whether a bin is already on its way (%w) — the next request will re-ask",
+			node.Name, err)
+	}
+	for i := range rows {
+		o := &rows[i]
+		if o.DeliveryNode != claim.CoreNodeName || o.Departed || o.Status == orders.StatusDelivered {
+			continue
+		}
+		log.Printf("[request] node %s: order %d (%s, %s) is already bringing a bin to %s — refusing the request",
+			node.Name, o.ID, o.OrderType, o.Status, claim.CoreNodeName)
+		return nil, fmt.Errorf("node %s: order %d is already bringing a bin to %s — wait for it to land",
+			node.Name, o.ID, claim.CoreNodeName)
+	}
+	return pairedPositionsInbound(claim, rows), nil
 }
 
 // guardSourceKnownDry refuses to ARM a coordinated swap pair whose supply leg

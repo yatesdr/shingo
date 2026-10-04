@@ -794,13 +794,13 @@ func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.N
 	return nil
 }
 
-// RequestEmptyBin delivers an empty bin to a produce node. Manual_swap and
-// simple modes issue a single retrieve order; the swap modes (single_robot,
-// two_robot, two_robot_press_index, sequential) plan and apply exactly what the
-// produce request would, without its guards about the parts, so the robot
-// choreography is the produce request's. Returns the primary order (the plain
-// empty, the first swap leg, or the first prime); a second leg is tracked on
-// the runtime row.
+// RequestEmptyBin delivers an empty bin to a produce node. A loader window and
+// a legacy line with no swap mode issue a single retrieve order; the swap modes
+// (single_robot, two_robot, two_robot_press_index, sequential) plan and apply
+// exactly what the produce request would, without its guards about the parts,
+// so the robot choreography and the checks on the line are the produce
+// request's. Returns the primary order (the plain empty, the first swap leg, or
+// the first prime); a second leg is tracked on the runtime row.
 func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Order, error) {
 	node, runtime, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
@@ -811,6 +811,20 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	}
 	if claim.Role != protocol.ClaimRoleProduce {
 		return nil, fmt.Errorf("node %s: only produce nodes request empty bins", node.Name)
+	}
+	// A SWAP-MODE LINE ASKS WHAT THE PRODUCE REQUEST ASKS, and nothing more: the
+	// same guards on the line (guardLineRequest, under the cell's lock), the
+	// same plan, the same orders. It used to ask CanAcceptOrders and count the
+	// empties already inbound first, and those refused what the produce request
+	// allowed: a line whose own changeover leg had landed, and a line holding a
+	// bin another station had delivered. Both buttons on one line give one
+	// answer.
+	if slices.Contains(protocol.ConfigurableSwapModes(), claim.SwapMode) {
+		res, err := e.produceRequest(node, runtime, claim, produceAsk{})
+		if err != nil {
+			return nil, err
+		}
+		return res.primary(), nil
 	}
 	if ok, reason := e.CanAcceptOrders(nodeID); !ok {
 		return nil, fmt.Errorf("node %s unavailable: %s", node.Name, reason)
@@ -834,10 +848,10 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	//     empty, which on a loader spanning several carrier types can be the
 	//     wrong container.
 	//
-	//   - a swap-mode line: the empty is the claim's, planned and created by the
-	//     produce request's own path, which reads the claim and not this
-	//     argument. The code is neither required nor checked there: a check of
-	//     an argument nothing reads refuses requests for no reason.
+	//   - a swap-mode line (above): the empty is the claim's, planned and
+	//     created by the produce request's own path, which reads the claim and
+	//     not this argument. The code is neither required nor checked there: a
+	//     check of an argument nothing reads refuses requests for no reason.
 	//
 	//   - a legacy line with no swap mode: one retrieve that carries the code,
 	//     so it is required and checked against the loadable set.
@@ -848,7 +862,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		reqOrigin := e.requestEmptyOrigin(node, claim, runtime.RemainingUOPCached, 1)
 		return e.requestEmptyAtManualSwapLoader(nodeID, node, claim, payloadCode, reqOrigin)
 	}
-	return e.requestEmptyForSwapModes(nodeID, node, runtime, claim, payloadCode)
+	return e.requestEmptyAtLegacyLine(nodeID, node, runtime, claim, payloadCode)
 }
 
 // requestEmptyAtManualSwapLoader is RequestEmptyBin's manual_swap arm, lifted out
@@ -930,39 +944,36 @@ func (e *Engine) requestEmptyAtManualSwapLoader(
 	}
 }
 
-// requestEmptyForSwapModes is RequestEmptyBin's non-manual_swap arm: a line with
-// a swap mode, and the legacy line with none.
+// requestEmptyAtLegacyLine is RequestEmptyBin's arm for a legacy line with no
+// swap mode: one retrieve of an empty, no plan.
 //
 // Split from the manual_swap arm above for the funlen ceiling — see that function
 // for why the arm moved rather than being shaved. The two are genuinely different
 // mechanisms that shared only a name: one reserves through the per-loader never-2N
-// seam, the other guards a single physical slot and plans what the line needs.
+// seam, the other guards a single physical slot.
 //
-// A SWAP-MODE LINE GOES THROUGH THE PRODUCE REQUEST'S OWN PATH (produceRequest),
-// with the guards about the parts left out: this button asks for an empty
-// whatever is counted. So the line is read before anything is decided, as the
-// produce request reads it: a bare line gets the plain empty, a press with a bare
-// paired position gets its primes and no swap, a keep-staged spot gets its refill
-// and return, a bin left on single-robot outbound staging is moved first, and a
-// position still being worked refuses. Before, this button built the swap blind,
-// and on a bare line that swap's lift held at Core for good.
-//
-// The press's paired-position prime had a second copy here for that reason, and
-// it is the case this button exists for: an operator reaches for it when LOOKING
-// at an empty position. Springfield PLN_004, 2026-08-26: the full swap minted
-// here with the paired position bare, its index leg parked in sourcing, and the
-// pair was cancelled eight times without one completed cycle.
-func (e *Engine) requestEmptyForSwapModes(
+// A SWAP-MODE LINE DOES NOT COME HERE. It goes through the produce request's own
+// path (produceRequest), with the guards about the parts left out: this button
+// asks for an empty whatever is counted. So the line is read before anything is
+// decided, as the produce request reads it: a bare line gets the plain empty, a
+// press with a bare paired position gets its primes and no swap, a keep-staged
+// spot gets its refill and return, a bin left on single-robot outbound staging is
+// moved first, and a position still being worked refuses. Before, this button
+// built the swap blind, and on a bare line that swap's lift held at Core for
+// good. Springfield PLN_004, 2026-08-26: the full swap minted here with the
+// paired position bare, its index leg parked in sourcing, and the pair was
+// cancelled eight times without one completed cycle.
+func (e *Engine) requestEmptyAtLegacyLine(
 	nodeID int64,
 	node *processes.Node,
 	runtime *processes.RuntimeState,
 	claim *processes.NodeClaim,
 	payloadCode string,
 ) (*orders.Order, error) {
-	// Anti-spam for simple / multi-step modes (manual_swap is handled above via
-	// the reservation seam): one physical slot, so reject a second request while a
-	// retrieve_empty is already non-terminal at this CORE NODE (delivery_node, not
-	// process_node — a shared node has many process_node rows for one slot; see
+	// Anti-spam (manual_swap is handled above via the reservation seam): one
+	// physical slot, so reject a second request while a retrieve_empty is already
+	// non-terminal at this CORE NODE (delivery_node, not process_node — a shared
+	// node has many process_node rows for one slot; see
 	// [[shingo_manual_swap_core_node_scoping]]). The board greys its request button
 	// the instant a request fires; this is belt-and-suspenders for double-tap races
 	// and direct API callers. Fail closed on a read error.
@@ -976,16 +987,7 @@ func (e *Engine) requestEmptyForSwapModes(
 		return nil, fmt.Errorf("node %s: an empty bin is already inbound", node.Name)
 	}
 
-	if slices.Contains(protocol.ConfigurableSwapModes(), claim.SwapMode) {
-		res, err := e.produceRequest(node, runtime, claim, produceAsk{})
-		if err != nil {
-			return nil, err
-		}
-		return res.primary(), nil
-	}
-
-	// A legacy line with no swap mode: a single retrieve. Core queues if no empty
-	// is immediately available.
+	// A single retrieve. Core queues if no empty is immediately available.
 	//
 	// Source group is the loader's claim.InboundSource (the supermarket the
 	// operator is configured to pull empties from). Without this, Core's

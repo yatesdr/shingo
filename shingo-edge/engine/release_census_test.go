@@ -140,7 +140,7 @@ var orderCreationSites = map[string]string{
 	"operator_bin_ops.go:RequestFullBin":                          "operator: full bin to a loader window",
 	"operator_bin_ops.go:createUnloaderEmptyOut":                  "unloader empty-out (no wait)",
 	"operator_bin_ops.go:requestEmptyAtManualSwapLoader":          "operator: empty to a manual-swap loader",
-	"operator_bin_ops.go:requestEmptyForSwapModes":                "operator: empty for a swap-mode node",
+	"operator_bin_ops.go:requestEmptyAtLegacyLine":                "operator: empty for a legacy line with no swap mode",
 	"operator_demand_loader.go:stageOperatorEmpty":                "loader demand: stage an empty",
 	"operator_demand_unloader.go:fireUnloaderFulls":               "unloader demand: fulls",
 	"operator_home_consolidation.go:ClearLoaderHome":              "loader home consolidation, order A",

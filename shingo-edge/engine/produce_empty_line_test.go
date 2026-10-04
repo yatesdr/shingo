@@ -108,10 +108,11 @@ func TestProduceEmptyLine_PositionStillWorkedRefuses(t *testing.T) {
 	t.Parallel()
 	eng, _, nodeID, _ := seedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeSingleRobot, false,
 		map[string]NodeBinInfo{ksLine: {}})
-	// A live order on the line that sits in no runtime slot.
-	_, err := eng.orderMgr.CreateRetrieveOrder(&nodeID, true, 1, ksLine, ksMarket, "", "standard", ksPart, false, false,
+	// A live order of the line that sits in no runtime slot and ends away from
+	// it, as a single-robot swap leg does: only the line's own rows see it.
+	_, err := eng.orderMgr.CreateRetrieveOrder(&nodeID, true, 1, ksDest, ksMarket, "", "standard", ksPart, false, false,
 		orders.Attached("prior"))
-	testutil.MustNoErr(t, err, "prior delivery")
+	testutil.MustNoErr(t, err, "prior order")
 
 	_, err = eng.RequestProduceSwap(nodeID)
 	if err == nil || !strings.Contains(err.Error(), "still working this position") {

@@ -204,7 +204,8 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 			return nil, err
 		}
 	}
-	if err := e.guardLineRequest(node, runtime, claim); err != nil {
+	inbound, err := e.guardLineRequest(node, runtime, claim)
+	if err != nil {
 		return nil, err
 	}
 
@@ -213,10 +214,6 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	// position named wrong would read bare on every request.
 	occ, spot, park := e.claimOccupancy(claim)
 	occupancy := e.occupancyKnownNodesOnly(occ, node.Name)
-	inbound, err := e.pairedPositionsInbound(node, claim)
-	if err != nil {
-		return nil, err
-	}
 
 	// The evac leg lifts whatever is ON the cell, which is not always the style
 	// being requested — see swap_evac_dest.go. Blank override = today's behaviour.

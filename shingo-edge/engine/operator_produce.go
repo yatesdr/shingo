@@ -35,6 +35,9 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 	if err != nil {
 		return nil, err
 	}
+	if claim == nil {
+		return nil, fmt.Errorf("node %s has no active claim", node.Name)
+	}
 	return e.produceRequest(node, runtime, claim, produceAsk{trigger: trigger, finalizes: true})
 }
 
@@ -89,16 +92,13 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 			return nil, err
 		}
 	}
-	if err := e.guardLineRequest(node, runtime, claim); err != nil {
+	inbound, err := e.guardLineRequest(node, runtime, claim)
+	if err != nil {
 		return nil, err
 	}
 
 	occ, spot, park := e.claimOccupancy(claim)
 	occupancy := e.occupancyKnownNodesOnly(occ, node.Name)
-	inbound, err := e.pairedPositionsInbound(node, claim)
-	if err != nil {
-		return nil, err
-	}
 
 	// See swap_evac_dest.go: the outgoing carrier goes to ITS home, not the
 	// requested style's. Blank override = today's behaviour.
@@ -298,28 +298,24 @@ func (e *Engine) primeNodeLock(claim *processes.NodeClaim) *sync.Mutex {
 // have a bin on its way: any non-terminal order bound for the position, an
 // empty to a produce press or a full to a consume press, a prime or a swap leg
 // that backfills it. A second request while the first prime is still travelling
-// adds nothing. Scoped by delivery node, as RequestEmptyBin's in-flight count
-// is, so every process node sharing the position is counted. Press claims only:
-// one Edge read per paired position, no Core call.
-//
-// FAILS CLOSED. A read error means we do not know what is inbound, and
-// priming on that is how a position collects a carrier it has no room for; a
-// refused request is a click the operator can repeat.
-func (e *Engine) pairedPositionsInbound(node *processes.Node, claim *processes.NodeClaim) (map[string]bool, error) {
+// adds nothing. Scoped by delivery node, so every process node sharing the
+// position is counted. Press claims only, over the rows guardLineRequest read
+// for the line and its paired positions in one query; that read fails closed,
+// because priming on a guess is how a position collects a carrier it has no
+// room for.
+func pairedPositionsInbound(claim *processes.NodeClaim, rows []orders.Order) map[string]bool {
 	if claim == nil || claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
-		return nil, nil
+		return nil
 	}
 	inbound := map[string]bool{}
 	for _, pos := range claim.ExtensionPositions() {
-		n, err := e.countActiveOrdersAtNode(pos, func(orders.Order) bool { return true })
-		if err != nil {
-			return nil, fmt.Errorf("node %s: check bins inbound to paired position %s: %w", node.Name, pos, err)
-		}
-		if n > 0 {
-			inbound[pos] = true
+		for i := range rows {
+			if rows[i].DeliveryNode == pos {
+				inbound[pos] = true
+			}
 		}
 	}
-	return inbound, nil
+	return inbound
 }
 
 // guardPairedPrimes gates a plan that primes a press's bare paired positions

@@ -23,9 +23,10 @@ func TestRequestEmptyBin_PositionStillWorkedRefuses(t *testing.T) {
 	t.Parallel()
 	eng, _, nodeID, _ := seedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeSingleRobot, false,
 		map[string]NodeBinInfo{ksLine: {}})
-	// A live order on the line that sits in no runtime slot and is not an empty.
-	_, err := eng.orderMgr.CreateMoveOrder(&nodeID, 1, ksMarket, ksLine, false, orders.Attached("prior"))
-	testutil.MustNoErr(t, err, "prior delivery")
+	// A live order of the line that sits in no runtime slot and ends away from
+	// it, as a single-robot swap leg does: only the line's own rows see it.
+	_, err := eng.orderMgr.CreateMoveOrder(&nodeID, 1, ksMarket, ksDest, false, orders.Attached("prior"))
+	testutil.MustNoErr(t, err, "prior order")
 
 	_, err = eng.RequestEmptyBin(nodeID, ksPart)
 	if err == nil || !strings.Contains(err.Error(), "still working this position") {
