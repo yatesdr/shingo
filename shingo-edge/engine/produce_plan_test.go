@@ -92,12 +92,4 @@ func TestBuildProducePlan_PreconditionErrors(t *testing.T) {
 			t.Fatalf("expected error for non-produce role")
 		}
 	})
-
-	t.Run("zero_uop", func(t *testing.T) {
-		r := *runtime
-		r.RemainingUOPCached = 0
-		if _, err := BuildProducePlan(node, &r, claim, nil, nil); err == nil {
-			t.Fatalf("expected error for zero RemainingUOP")
-		}
-	})
 }

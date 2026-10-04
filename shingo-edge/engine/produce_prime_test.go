@@ -143,14 +143,12 @@ func TestBuildProducePlan_PartialEmpty_ThreePositionPrimesBoth(t *testing.T) {
 	}
 }
 
-// TestBuildProducePlan_PartialEmpty_PrimesOnColdPress is the placement test.
-//
 // A cold press reads RemainingUOPCached == 0 — and at Springfield, where this
 // fix is going, the counter tag is not wired at all, so it reads 0 always. The
-// "no parts to finalize" guard is therefore the WRONG answer for a cell with a
-// bare paired position, and the prime branch must sit above it. Move the branch
-// back below that guard and this is the test that goes red; the other five pass
-// either way.
+// "no parts to finalize" refusal is therefore the WRONG answer for a cell with a
+// bare paired position. The planner asks no count; the produce request refuses
+// only a swap, which TestRequest_ColdPressWithFullCell and the request census's
+// cold press row pin from the request side.
 func TestBuildProducePlan_PartialEmpty_PrimesOnColdPress(t *testing.T) {
 	t.Parallel()
 	node, runtime, claim := pressIndexFixtures("")
@@ -167,22 +165,10 @@ func TestBuildProducePlan_PartialEmpty_PrimesOnColdPress(t *testing.T) {
 	}
 }
 
-// A cold press with NOTHING to prime still refuses — the UOP guard is intact
-// for every case the prime branch does not claim.
-func TestBuildProducePlan_ColdPressWithFullCellStillRefuses(t *testing.T) {
-	t.Parallel()
-	node, runtime, claim := pressIndexFixtures("")
-	runtime.RemainingUOPCached = 0
-
-	occ := map[string]bool{primeHead: true, primePaired: true}
-	if _, err := BuildProducePlan(node, runtime, claim, occ, nil); err == nil {
-		t.Fatal("want the 'no parts to finalize' refusal for a cold press with a full cell")
-	}
-}
-
-// The same cold press with a full cell, asked through the two buttons: the
-// produce request finalizes a filled bin and refuses with nothing counted; the
-// empty-bin request asks for an empty whatever the count and still swaps.
+// A cold press with NOTHING to prime, asked through the two buttons: the produce
+// request finalizes a filled bin and refuses with nothing counted; the empty-bin
+// request asks for an empty whatever the count and still swaps. The refusal is
+// the request's, not the planner's.
 func TestRequest_ColdPressWithFullCell(t *testing.T) {
 	t.Parallel()
 	t.Run("produce request refuses", func(t *testing.T) {

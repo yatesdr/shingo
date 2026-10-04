@@ -32,15 +32,14 @@ type ProducePlan struct {
 	// unconditionally, and a nil there is a panic rather than a branch.
 	SuppressSwap bool
 
-	// SimpleMove is the single-robot empty-line plan: Core reports no bin on the
+	// SimpleMove is the empty-line plan (planBareLine): Core reports no bin on the
 	// line, so there is nothing to lift and the swap collapses to one plain
 	// order bringing an empty from SimpleSource. FromSpot says SimpleSource is
 	// the keep-staged spot, whose standing spare is moved rather than retrieved.
 	// Mutually exclusive with Dispatch and SuppressSwap.
-	SimpleMove             bool
-	SimpleSource           string
-	FromSpot               bool
-	DowngradedFromSwapMode protocol.SwapMode
+	SimpleMove   bool
+	SimpleSource string
+	FromSpot     bool
 
 	// Spot is what a keep-staged claim's spot needs from this request
 	// (planSpotForProduce); zero for every other claim.
@@ -95,7 +94,7 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 		return nil, fmt.Errorf("node %s is not a produce node", node.Name)
 	}
 
-	// PARTIAL-EMPTY PRIME, deliberately ABOVE the UOP guard.
+	// PARTIAL-EMPTY PRIME.
 	//
 	// A press-index cell with the head occupied and a paired position bare
 	// mints a swap whose index leg has nothing to source: R2 is sent to move a
@@ -103,12 +102,11 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 	// instead and mint no swap; the next request runs the swap against a full
 	// cell.
 	//
-	// The guard below it refuses a cell with no parts counted, and that is the
-	// wrong answer HERE: a cold press reads RemainingUOPCached == 0 — at
-	// Springfield the counter tag is not wired at all, so it reads 0 always —
-	// and a cold press with a bare paired position is exactly the cell that
-	// needs priming. Ordering these the other way makes the fix unreachable on
-	// the plant it was written for.
+	// The produce request refuses a SWAP with no parts counted, and only a swap:
+	// a cold press reads RemainingUOPCached == 0 — at Springfield the counter tag
+	// is not wired at all, so it reads 0 always — and a cold press with a bare
+	// paired position is exactly the cell that needs priming. A primes-only plan
+	// has nothing to finalize, so the refusal does not reach it.
 	//
 	// THE UNWIRED COUNTER HAS A SECOND READER, and this is the place a person
 	// looking at RemainingUOPCached will be standing. binDrainedAtCoreNode asks
@@ -155,28 +153,26 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 		}
 	}
 
-	// AN EMPTY SINGLE-ROBOT LINE GETS AN EMPTY, the produce twin of the consume
-	// side's node-empty downgrade. That swap opens by lifting the line's bin, and
-	// with none there its lift holds at Core for good, so a line a cancel or a
-	// person left bare could never be filled by a request. Above the count guard
-	// for the press prime's reason: a bare line has nothing to finalize, and the
-	// count it carries says nothing about what the line needs now.
+	// AN EMPTY SINGLE-ROBOT LINE GETS AN EMPTY: the bare line's plain delivery
+	// (planBareLine), as the consume side's node-empty downgrade gives a full. The
+	// swap opens by lifting the line's bin, and with none there its lift holds at
+	// Core for good. The caller gates this plan with positionWorkedBy.
 	//
-	// SINGLE-ROBOT ONLY. A two-robot request on an empty line is left as it is.
-	// The same caveat as the consume downgrade holds: Core's empty also reads true
-	// mid-swap, so the caller gates this plan with guardPositionSpokenFor.
-	if claim.SwapMode == protocol.SwapModeSingleRobot && !isOccupied(occupancy, claim.CoreNodeName) {
-		if claim.InboundSource == "" {
-			return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)
+	// SINGLE-ROBOT ONLY. A request on an empty line in another mode is left as it
+	// is.
+	if claim.SwapMode == protocol.SwapModeSingleRobot {
+		bare, err := planBareLine(node, claim, occupancy)
+		if err != nil {
+			return nil, err
 		}
-		return &ProducePlan{SimpleMove: true, SimpleSource: claim.InboundSource,
-			DowngradedFromSwapMode: claim.SwapMode}, nil
+		if bare != nil {
+			return &ProducePlan{SimpleMove: true, SimpleSource: bare.source}, nil
+		}
 	}
 
-	if runtime.RemainingUOPCached <= 0 {
-		return nil, fmt.Errorf("node %s has no parts to finalize", node.Name)
-	}
-
+	// NO COUNT HERE. Whether a request may ask with nothing counted is the
+	// question of the request that finalizes a filled bin (requestProduceSwapFor),
+	// not of what the line needs.
 	plan := &ProducePlan{}
 
 	dispatch, err := BuildSwapDispatch(node, claim)

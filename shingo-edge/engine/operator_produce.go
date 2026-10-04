@@ -82,6 +82,12 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 	if err != nil {
 		return nil, err
 	}
+	// THE COUNT IS THIS REQUEST'S QUESTION. It finalizes the filled bin a swap
+	// takes away, so a swap with no parts counted is refused. Only a swap: an
+	// empty to a bare line and a press's primes take nothing away.
+	if plan.Dispatch != nil && runtime.RemainingUOPCached <= 0 {
+		return nil, fmt.Errorf("node %s has no parts to finalize", node.Name)
+	}
 	if err := e.planProduceRows(node, runtime, claim, plan, spot); err != nil {
 		return nil, err
 	}
@@ -172,7 +178,7 @@ func (e *Engine) planProduceRows(
 		return err
 	}
 	log.Printf("[produce-swap] node %s is empty (no bin), sending an empty from %s instead of a %s swap",
-		node.Name, plan.SimpleSource, plan.DowngradedFromSwapMode)
+		node.Name, plan.SimpleSource, claim.SwapMode)
 	return nil
 }
 

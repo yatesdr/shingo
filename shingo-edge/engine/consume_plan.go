@@ -134,50 +134,21 @@ func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 		AutoConfirm: autoConfirm,
 	}
 
-	// Node-empty downgrade: Core reports no bin on the head position, so there
-	// is nothing to swap out and the swap collapses to a plain delivery move
-	// regardless of mode.
-	//
-	// THE MAP ANSWERS A NARROWER QUESTION THAN THIS BRANCH ASKS. It was read for
-	// a long time as "nothing physically present to swap out", and the sentence
-	// was believable because it is true in the case the downgrade was written
-	// for: somebody pulled the carrier off by hand, and the position will still
-	// be bare when a robot gets there. It is false during a swap. Between the
-	// robot lifting the old carrier and setting the new one down, the position
-	// genuinely holds no bin AND already has one on its way, and Core — honest
-	// and instantaneous — correctly answers empty. Downgrading in that window
-	// mints a second delivery into a position that is about to be occupied, and
-	// the robot carrying it can never put it down (sim 2026-08-31, ALN_004:
-	// four cells locked in one run).
-	//
-	// THIS FUNCTION CANNOT TELL THE TWO APART and must not try: the witness is
-	// the cell's own in-flight orders, which live in the DB, and the planner is
-	// pure. requestNodeFromClaim gates this outcome with guardPositionSpokenFor
-	// before applying it. A caller that applies a downgraded plan without that
-	// gate is reintroducing the race.
-	headOccupied := isOccupied(occupancy, claim.CoreNodeName)
-	if !headOccupied {
-		if claim.InboundSource == "" {
-			return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)
-		}
+	// Node-empty downgrade: a line with no bin gets the plain delivery the bare
+	// line needs (planBareLine) instead of a swap with nothing to lift, in every
+	// mode. requestNodeFromClaim gates it with guardPositionSpokenFor before
+	// applying it. A press whose head is full and a paired position is not is
+	// not a bare line, and swaps here.
+	bare, err := planBareLine(node, claim, occupancy)
+	if err != nil {
+		return nil, err
+	}
+	if bare != nil {
 		plan.SimpleMove = true
-		plan.SimpleSource = claim.InboundSource
-		plan.SimpleDest = claim.CoreNodeName
+		plan.SimpleSource = bare.source
+		plan.SimpleDest = bare.dest
 		plan.DowngradedFromSwapMode = claim.SwapMode
-		// Press-index cascade needs B (and C, on 3-position layouts) to
-		// hold bins before the next swap cycle. Prime any empty paired
-		// position from the same InboundSource. Partial-empty cases
-		// where the head is full but a paired position is empty are
-		// intentionally out of scope here — they don't trigger this
-		// downgrade and need a separate decision (refuse vs. auto-prime).
-		if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex {
-			for _, pos := range claim.ExtensionPositions() {
-				if !isOccupied(occupancy, pos) {
-					plan.PrimePairedPositions = append(plan.PrimePairedPositions,
-						SimplePrime{Source: claim.InboundSource, Dest: pos})
-				}
-			}
-		}
+		plan.PrimePairedPositions = bare.primes
 		return plan, nil
 	}
 
