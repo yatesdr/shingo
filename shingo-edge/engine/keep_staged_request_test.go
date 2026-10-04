@@ -59,6 +59,12 @@ func ksNodeBinsStub(t *testing.T, rows map[string]NodeBinInfo) *httptest.Server 
 // node-bins from rows.
 func keepStagedCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, rows map[string]NodeBinInfo) (*Engine, *store.DB, int64, *processes.NodeClaim) {
 	t.Helper()
+	return seedCell(t, role, mode, true, rows)
+}
+
+// seedCell is keepStagedCell with the flag chosen.
+func seedCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, keepStaged bool, rows map[string]NodeBinInfo) (*Engine, *store.DB, int64, *processes.NodeClaim) {
+	t.Helper()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	eng.logFn = func(string, ...any) {}
@@ -83,8 +89,10 @@ func keepStagedCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMod
 	testutil.MustNoErr(t, err, "claim")
 	// The flag is written straight to the row: these tests are about the request
 	// path, not the config door that admits it.
-	_, err = db.DB.Exec(`UPDATE style_node_claims SET keep_staged=1 WHERE id=?`, claimID)
-	testutil.MustNoErr(t, err, "keep_staged")
+	if keepStaged {
+		_, err = db.DB.Exec(`UPDATE style_node_claims SET keep_staged=1 WHERE id=?`, claimID)
+		testutil.MustNoErr(t, err, "keep_staged")
+	}
 	_, err = db.EnsureProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "runtime")
 	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 30), "runtime claim")
@@ -93,8 +101,8 @@ func keepStagedCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMod
 	node, err := db.GetProcessNode(nodeID)
 	testutil.MustNoErr(t, err, "re-read node")
 	claim := requestedClaimAtNode(db, node)
-	if claim == nil || !claim.KeepStaged {
-		t.Fatalf("fixture: no keep-staged claim at %s (%+v)", ksLine, claim)
+	if claim == nil || claim.KeepStaged != keepStaged {
+		t.Fatalf("fixture: no claim with keep-staged %v at %s (%+v)", keepStaged, ksLine, claim)
 	}
 	return eng, db, nodeID, claim
 }

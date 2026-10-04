@@ -134,7 +134,11 @@ func TestCensus_RetrieveOrderCreatorSites(t *testing.T) {
 	// 12 since applySpotPlan (keep_staged_spot.go): a keep-staged refill to a
 	// line's inbound staging. Censused; not a loader window, so outside
 	// withLoaderBudget, under the same primeResv lock.
-	const want = 12
+	//
+	// 13 since applyProduceEmptyLine (operator_produce.go): an empty to a
+	// single-robot produce line Core reports bare. Censused; the line, not a
+	// loader window, so outside withLoaderBudget, under the same primeResv lock.
+	const want = 13
 	sites := retrieveCreatorSites(t)
 	if len(sites) != want {
 		t.Errorf("retrieve-order creator sites = %d, expected %d.\nA creator was added or removed. Re-run the census and update this count WITH the seam's scope comment.\nSites:\n  %s",

@@ -32,6 +32,16 @@ type ProducePlan struct {
 	// unconditionally, and a nil there is a panic rather than a branch.
 	SuppressSwap bool
 
+	// SimpleMove is the single-robot empty-line plan: Core reports no bin on the
+	// line, so there is nothing to lift and the swap collapses to one plain
+	// order bringing an empty from SimpleSource. FromSpot says SimpleSource is
+	// the keep-staged spot, whose standing spare is moved rather than retrieved.
+	// Mutually exclusive with Dispatch and SuppressSwap.
+	SimpleMove             bool
+	SimpleSource           string
+	FromSpot               bool
+	DowngradedFromSwapMode protocol.SwapMode
+
 	// Spot is what a keep-staged claim's spot needs from this request
 	// (planSpotForProduce); zero for every other claim.
 	Spot spotPlan
@@ -48,6 +58,9 @@ func (p *ProducePlan) OrderCount() int {
 	// legs. Same unit discipline as ConsumePlan.OrderCount — see that method.
 	if p.SuppressSwap {
 		return len(p.PrimePairedPositions)
+	}
+	if p.SimpleMove {
+		return 1 + p.Spot.orders()
 	}
 	if p.Dispatch == nil {
 		return 0
@@ -140,6 +153,24 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 			// operator-legible refusal.
 			return plan, nil
 		}
+	}
+
+	// AN EMPTY SINGLE-ROBOT LINE GETS AN EMPTY, the produce twin of the consume
+	// side's node-empty downgrade. That swap opens by lifting the line's bin, and
+	// with none there its lift holds at Core for good, so a line a cancel or a
+	// person left bare could never be filled by a request. Above the count guard
+	// for the press prime's reason: a bare line has nothing to finalize, and the
+	// count it carries says nothing about what the line needs now.
+	//
+	// SINGLE-ROBOT ONLY. A two-robot request on an empty line is left as it is.
+	// The same caveat as the consume downgrade holds: Core's empty also reads true
+	// mid-swap, so the caller gates this plan with guardPositionSpokenFor.
+	if claim.SwapMode == protocol.SwapModeSingleRobot && !isOccupied(occupancy, claim.CoreNodeName) {
+		if claim.InboundSource == "" {
+			return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)
+		}
+		return &ProducePlan{SimpleMove: true, SimpleSource: claim.InboundSource,
+			DowngradedFromSwapMode: claim.SwapMode}, nil
 	}
 
 	if runtime.RemainingUOPCached <= 0 {

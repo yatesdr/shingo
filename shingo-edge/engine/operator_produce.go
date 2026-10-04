@@ -82,13 +82,8 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 	if err != nil {
 		return nil, err
 	}
-	if claim.KeepStaged && spot.known {
-		coming, leaving, cerr := e.readSpotComing(node, claim)
-		if cerr != nil {
-			return nil, fmt.Errorf("node %s: cannot tell what is on its way to %s (%w) — the next request will re-ask",
-				node.Name, claim.InboundStaging, cerr)
-		}
-		planSpotForProduce(plan, claim, spot.lessLeaving(leaving), coming)
+	if err := e.planProduceRows(node, runtime, claim, plan, spot); err != nil {
+		return nil, err
 	}
 	if plan.SuppressSwap {
 		if len(plan.PrimePairedPositions) == 0 {
@@ -143,6 +138,64 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 	}
 	e.applySpotPlan(node, claim, plan.Spot, spot, origin)
 	return result, nil
+}
+
+// planProduceRows reads the line's rows once, for what the keep-staged spot has
+// coming and leaving and for the empty-line plan's guard, and applies both. Only
+// a keep-staged claim with a known spot, or an empty-line plan, pays the read.
+func (e *Engine) planProduceRows(
+	node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, plan *ProducePlan, spot spotRead,
+) error {
+	spotKnown := claim.KeepStaged && spot.known
+	if !spotKnown && !plan.SimpleMove {
+		return nil
+	}
+	if plan.SimpleMove {
+		if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
+			return err
+		}
+	}
+	rows, err := e.db.ListActiveOrdersByProcessNode(node.ID)
+	if err != nil {
+		return fmt.Errorf("node %s: cannot tell what is on its way to it (%w) — the next request will re-ask", node.Name, err)
+	}
+	if spotKnown {
+		leaving := spotLeaving(rows, claim.InboundStaging, claim.CoreNodeName)
+		planSpotForProduce(plan, claim, spot.lessLeaving(leaving), spotComing(rows, claim))
+	}
+	if !plan.SimpleMove {
+		return nil
+	}
+	if err := positionWorkedBy(node, claim, rows); err != nil {
+		return err
+	}
+	log.Printf("[produce-swap] node %s is empty (no bin), sending an empty from %s instead of a %s swap",
+		node.Name, plan.SimpleSource, plan.DowngradedFromSwapMode)
+	return nil
+}
+
+// applyProduceEmptyLine creates the empty-line plan's one order: the spare on the
+// spot moved to the line, named as the empty it is, or an empty retrieved from
+// the inbound source. It takes the line's active slot, as the consume side's
+// delivery does, so a second request waits for it.
+func (e *Engine) applyProduceEmptyLine(node *processes.Node, claim *processes.NodeClaim, plan *ProducePlan, origin ordermgr.Origin) (*NodeOrderResult, error) {
+	nodeID := node.ID
+	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
+	var order *orders.Order
+	var err error
+	if plan.FromSpot {
+		order, err = e.orderMgr.CreateMoveOrderCarryingTo(&nodeID, plan.SimpleSource, claim.CoreNodeName, "", autoConfirm, origin)
+	} else {
+		order, err = e.orderMgr.CreateRetrieveOrder(&nodeID, true, 1, claim.CoreNodeName, plan.SimpleSource, "",
+			"standard", claim.PayloadCode, autoConfirm, false, origin)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &order.ID); err != nil {
+		log.Printf("produce: update runtime orders for node %d: %v", nodeID, err)
+	}
+	return &NodeOrderResult{Order: order, ProcessNodeID: nodeID}, nil
 }
 
 // PrimeInFlightError says a press-index swap was refused because the empty it
@@ -398,6 +451,9 @@ func (e *Engine) openEpisodeForProduce(
 // glue around the shared SwapDispatch.
 func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, plan *ProducePlan, origin ordermgr.Origin) (*NodeOrderResult, error) {
 	nodeID := node.ID
+	if plan.SimpleMove {
+		return e.applyProduceEmptyLine(node, claim, plan, origin)
+	}
 
 	// Primes-only round: fill the bare paired position(s) and mint nothing
 	// else. No manifest (there is no departing bin), no dispatch, and NO

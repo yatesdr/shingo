@@ -188,12 +188,22 @@ func planSpotForConsume(plan *ConsumePlan, c *processes.NodeClaim, read spotRead
 }
 
 // planSpotForProduce adds the spot's orders to a produce plan: the swap from the
-// spare lifts it.
+// spare lifts it, and so does the empty-line delivery when the spare stands
+// there right, as on the consume side.
 func planSpotForProduce(plan *ProducePlan, c *processes.NodeClaim, read spotRead, coming int) {
-	if plan == nil || c == nil || !c.KeepStaged || !read.known || plan.Dispatch == nil {
+	if plan == nil || c == nil || !c.KeepStaged || !read.known || (plan.Dispatch == nil && !plan.SimpleMove) {
 		return
 	}
-	plan.Spot = reconcileSpot(c, read.occupied, spareIsRight(c, read), coming, 1, 1)
+	right := spareIsRight(c, read)
+	consumes := 1
+	if plan.SimpleMove {
+		consumes = 0
+		if right {
+			plan.SimpleSource, plan.FromSpot = c.InboundStaging, true
+			consumes = 1
+		}
+	}
+	plan.Spot = reconcileSpot(c, read.occupied, right, coming, consumes, 1)
 }
 
 // applySpotPlan creates the spot's orders: the return move first, so the spot

@@ -98,6 +98,11 @@ func (e *Engine) loaderBudgetLock(loaderID string) *sync.Mutex {
 // never a loader window. Its count->decide->create runs under the same
 // Engine.primeResv lock, and its count is reconcileSpot's, over the line's rows.
 //
+// The single-robot produce empty-line delivery (applyProduceEmptyLine,
+// operator_produce.go) creates outside this seam too: its delivery node is the
+// produce line, never a loader window. It runs under the same Engine.primeResv
+// lock, behind guardNoActiveSwap and the line's live rows (positionWorkedBy).
+//
 // An earlier version of this comment claimed EVERY empty-firing writer routed
 // through here. It did not, and the claim was load-bearing in two review rounds
 // before a census refuted it. TestCensus_RetrieveOrderCreatorSites now fails when

@@ -1020,9 +1020,8 @@ type ksrMoment struct {
 	// singleRobot: the moment exists only in the single-robot changeover leg.
 	singleRobot bool
 	// lineEmpty: the cancel leaves the line without a bin, so the operator's
-	// REQUEST is answered by a plain delivery to the line, not a swap. Consume
-	// only: a produce line left empty has no request that fills it (every
-	// produce request builds a swap, whose lift at the empty line holds).
+	// REQUEST is answered by a plain delivery to the line, not a swap: a full on
+	// a consume cell, an empty on a produce cell.
 	lineEmpty bool
 }
 
@@ -1351,9 +1350,6 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 	for _, cl := range cells {
 		for _, m := range ksrMoments {
 			if m.singleRobot && cl.mode != protocol.SwapModeSingleRobot {
-				continue
-			}
-			if m.lineEmpty && cl.role != protocol.ClaimRoleConsume {
 				continue
 			}
 			t.Run(fmt.Sprintf("%s/%s/%s", cl.role, cl.mode, m.name), func(t *testing.T) {

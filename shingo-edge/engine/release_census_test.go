@@ -149,6 +149,7 @@ var orderCreationSites = map[string]string{
 	"operator_node_changeover.go:EvacuateNode":                    "changeover node: evacuate (a wait in front of a curtained pickup, S7) — door 4 on its fallback arm",
 	"operator_node_changeover.go:StageNodeChangeoverMaterial":     "changeover node: stage new material",
 	"operator_produce.go:applyProducePlan":                        "produce REQUEST: the swap legs (the builders' waits)",
+	"operator_produce.go:applyProduceEmptyLine":                   "produce REQUEST: an empty to a single-robot line Core reports bare (no wait: a drop finishes)",
 	"operator_produce.go:dispatchPairedLeg":                       "produce REQUEST: a paired leg",
 	"operator_produce.go:primeBarePressIndexPositions":            "produce REQUEST: prime a bare press-index position",
 	"keep_staged_spot.go:refillSpot":                              "keep-staged spot: a plain retrieve from the inbound source (no wait: it lands on staging)",

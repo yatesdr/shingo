@@ -220,6 +220,13 @@ func (e *Engine) guardPositionSpokenFor(node *processes.Node, runtime *processes
 			"refusing the simple-delivery downgrade", node.Name, err)
 		return fmt.Errorf("node %s: cannot tell whether a bin is already on its way (%w) — the next tick will re-ask", node.Name, err)
 	}
+	return positionWorkedBy(node, claim, rows)
+}
+
+// positionWorkedBy is guardPositionSpokenFor's second arm over rows the caller
+// has already read: the produce request reads the line's rows once for this
+// and for its spot.
+func positionWorkedBy(node *processes.Node, claim *processes.NodeClaim, rows []domain.Order) error {
 	// THE DURABLE-ROW TWIN OF THE SLOT CHECK, and it must give the same answer.
 	// The query is `status NOT IN (terminal)`; the cell question is
 	// orderWorksTheCell, which also excludes a leg that has departed. Filtering

@@ -123,6 +123,13 @@ func (m *Manager) CreateMoveOrderCarrying(processNodeID *int64, sourceNode, deli
 	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, carried, nil, true, true, origin)
 }
 
+// CreateMoveOrderCarryingTo is CreateMoveOrderCarrying for a carrier delivered
+// to a line: the line's own confirm policy applies, since an operator may be
+// there to receive it.
+func (m *Manager) CreateMoveOrderCarryingTo(processNodeID *int64, sourceNode, deliveryNode, carried string, autoConfirm bool, origin Origin) (*orders.Order, error) {
+	return m.createMoveOrder(processNodeID, 1, sourceNode, deliveryNode, carried, nil, autoConfirm, true, origin)
+}
+
 // createMoveOrder is the one body behind all four move variants.
 //
 // They were four copies of the same twenty lines differing in one field each,
