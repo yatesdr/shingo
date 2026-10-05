@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -79,12 +80,23 @@ func TestStyleGuideQuotesTheIdentityHues(t *testing.T) {
 // and up two levels to the repo root.
 func readStyleGuide(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join("..", "docs", "ui-style-guide.md")
-	body, err := os.ReadFile(path)
+	parts, err := filepath.Glob(filepath.Join("..", "docs", "ui-style-guide", "*.md"))
 	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
+		t.Fatalf("glob docs/ui-style-guide: %v", err)
 	}
-	return string(body)
+	if len(parts) == 0 {
+		t.Fatal("docs/ui-style-guide/ holds no parts — the guide is split, not gone")
+	}
+	sort.Strings(parts)
+	var b strings.Builder
+	for _, p := range parts {
+		body, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		b.Write(body)
+	}
+	return b.String()
 }
 
 // ── the ink on a fill, and the scrim (U9 fix-up) ─────────────────────────────
