@@ -5,7 +5,7 @@ belongs in the commit message or in `docs/` — this file is the index.
 
 ## 2026-10-04 — One answer per button, keep-staged in every mode
 
-No new migration; the claims rebuild adds `keep_staged_node`. Not pushed.
+Core first, then Edge (Core 141, Edge v14–v15). Not pushed or deployed.
 
 - A buried demand's wait is no longer rewritten on every scan pass
 - Each change of wait is told once; the per-order wait map is gone
@@ -20,6 +20,12 @@ No new migration; the claims rebuild adds `keep_staged_node`. Not pushed.
 - Keep-staged spot named on the claim (`keep_staged_node`), every swap mode
 - Station view no longer 500s when two holds disagree
 - Engine tests use Core stubs with no deadline and no wall-clock waits
+- A spare is judged by its bin: a full by its part, an empty by its carrier
+- No keep-staged decision reads a clock; same-carrier changeovers keep the empty
+- A spare's return names its bin and lifts nothing once it has left (141)
+- The empty scan leaves a press cell's paired positions alone
+- Live orders bound for a line are read through an index (Edge v14)
+- A keep-staged line's orders are read without its history (Edge v15)
 
 ## 2026-10-03 — Keep-staged spare, slot reservations, single-robot recovery
 
