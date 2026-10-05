@@ -10,7 +10,8 @@
   "decision": {
     "events": [
       "received",
-      "dispatched"
+      "dispatched",
+      "queued"
     ],
     "fleet": [
       {
@@ -28,6 +29,8 @@
         "payload": "PANEL-A",
         "source": "SYN_MARKET",
         "delivery": "SLN_002",
+        "queue_code": "storage_rearranging",
+        "queue_cause": "intake-buried",
         "reservations": [
           "mouth:confirmed:Lane_01"
         ]
@@ -89,7 +92,8 @@
     "refusals": null,
     "replies": [
       "data.order.projected status=pending",
-      "order.ack"
+      "order.ack",
+      "order.update status=queued"
     ]
   }
 }

@@ -56,7 +56,6 @@ import (
 	edgeengine "shingoedge/engine"
 	edgemessaging "shingoedge/messaging"
 	"shingoedge/store/catalog"
-	edgeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 	edgeharness "shingoedge/testharness"
 )
@@ -170,9 +169,9 @@ type ksrCell struct {
 	// watch can read the jack of the robot carrying the blocker.
 	deck *deckFleet
 	dig  ksrDig
-	// heldBlocker: case e-held only. No claim names the blocker's part, so the
-	// carried-bin return holds it on its robot, and the end checks expect it
-	// there.
+	// heldBlocker: case e-held only. No claim names the blocker's part; its own
+	// leg stores it (caseEStore) wherever the dwell put it, which the end checks
+	// leave to caseEStore.
 	heldBlocker bool
 }
 
@@ -1460,7 +1459,7 @@ func (c *ksrCell) assertRecovered() {
 	// Every B bin back in B's source, and B's source holding nothing of A's.
 	for _, b := range bins {
 		if c.heldBlocker && b.ID == c.dig.blocker {
-			continue // held on its robot: a person's (assertBlockerHeld)
+			continue // stored by its own leg (caseEStore)
 		}
 		if b.BinTypeID == c.typeB.ID && !c.inB(b.NodeID) {
 			c.t.Errorf("B bin %s is at %s, not back in %s", b.Label, c.nodeName(b.NodeID), ksrMktB)
@@ -1535,7 +1534,7 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 				c.dump("at the cancel: " + m.what)
 				mustNil(t, c.edge.Engine.CancelProcessChangeover(c.processID), "cancel")
 				if m.buriedB {
-					c.caseEReturn()
+					c.caseEStore()
 				}
 				if m.afterCancel != nil {
 					m.afterCancel(c)
@@ -1625,36 +1624,6 @@ func (c *ksrCell) onDeckOrders(binID int64) []*coreorders.Order {
 	return out
 }
 
-// inDeclaredGroup reports whether the node is, or sits under, a place some
-// claim declares as the source for the bin's payload (an empty: a declared
-// empties place for its type), and which.
-func (c *ksrCell) inDeclaredGroup(b *corebins.Bin) (string, []string, bool) {
-	c.t.Helper()
-	db := c.core.eng.DB()
-	var names []string
-	var err error
-	if b.PayloadCode != "" {
-		names, err = db.ReturnSourcesForPayload(b.PayloadCode, nil)
-	} else {
-		names, err = db.EmptiesPlacesForBinType(b.BinTypeID, nil)
-	}
-	mustNil(c.t, err, "declared places")
-	id := b.NodeID
-	for hops := 0; id != nil && hops < 5; hops++ {
-		n, err := db.GetNode(*id)
-		if err != nil {
-			break
-		}
-		for _, name := range names {
-			if n.Name == name {
-				return name, names, true
-			}
-		}
-		id = n.ParentID
-	}
-	return "", names, false
-}
-
 // assertNothingCarried: no bin at _TRANSIT or on any robot's carrier node.
 func (c *ksrCell) assertNothingCarried(when string) {
 	c.t.Helper()
@@ -1662,7 +1631,7 @@ func (c *ksrCell) assertNothingCarried(when string) {
 	mustNil(c.t, err, "bins")
 	for _, b := range bins {
 		if c.heldBlocker && b.ID == c.dig.blocker {
-			continue // held on its robot: a person's (assertBlockerHeld)
+			continue // stored by its own leg (caseEStore)
 		}
 		at := c.nodeName(b.NodeID)
 		if at == "_TRANSIT" || strings.HasPrefix(at, corebins.CarrierNodePrefix) {
@@ -1696,10 +1665,13 @@ func (c *ksrCell) assertNoTerminalReservations(when string) {
 	}
 }
 
-// caseEReturn follows the cancel while B's refill is a dig: the cascade, the
-// blocker parked on its robot, the carried-bin watch's verdict, and the return
-// to the end.
-func (c *ksrCell) caseEReturn() {
+// caseEStore follows the cancel while B's refill is a dig whose first leg is
+// carrying the blocker. Owner, 2026-10-03: "the robot still continues storing
+// the blocker and that's it." The cascade ends the dig parent and every leg that
+// has not lifted; the carrying leg stores the blocker where its dwell puts it;
+// no return is ordered for it, whether or not a claim names its part (e and
+// e-held alike). The cancel-return serves every other lift.
+func (c *ksrCell) caseEStore() {
 	c.t.Helper()
 	d := c.dig
 	if d.child == nil || d.blocker == 0 {
@@ -1707,158 +1679,66 @@ func (c *ksrCell) caseEReturn() {
 	}
 	db := c.core.eng.DB()
 
-	// 1. The cascade cancelled the dig parent and every non-terminal child.
-	c.eventually("the dig and its legs end", func() bool {
-		return protocol.IsTerminal(c.mustOrder(d.parentID).Status) && protocol.IsTerminal(c.mustOrder(d.child.ID).Status)
+	// 1. The cascade ended the dig parent and the legs that had not lifted, and
+	// left the carrying leg alone.
+	c.eventually("the dig parent ends", func() bool {
+		return protocol.IsTerminal(c.mustOrder(d.parentID).Status)
 	})
 	parent := c.mustOrder(d.parentID)
-	c.t.Logf("case e: dig parent %d is %s (cause %q: %s)", parent.ID, parent.Status, parent.QueueCause, parent.QueueReason)
+	c.t.Logf("case e: dig parent %d is %s", parent.ID, parent.Status)
 	if parent.Status != protocol.StatusCancelled {
 		c.t.Errorf("the dig parent %d ended %s, want cancelled", parent.ID, parent.Status)
 	}
 	for _, k := range d.kids {
 		now := c.mustOrder(k.ID)
-		c.t.Logf("case e: dig child %d (%s->%s) was %s at the cancel, now %s (cause %q: %s)", k.ID,
-			k.SourceNode, k.DeliveryNode, k.Status, now.Status, now.QueueCause, now.QueueReason)
+		c.t.Logf("case e: dig child %d (%s->%s) was %s at the cancel, now %s", k.ID,
+			k.SourceNode, k.DeliveryNode, k.Status, now.Status)
+		if k.ID == d.child.ID {
+			if now.Status == protocol.StatusCancelled {
+				c.t.Errorf("the carrying leg %d was cancelled: a robot holds its blocker, and the parent's "+
+					"cancel must let it finish its store", k.ID)
+			}
+			continue
+		}
 		if !protocol.IsTerminal(k.Status) && now.Status != protocol.StatusCancelled {
 			c.t.Errorf("dig child %d was %s at the cancel and ended %s, want cancelled", k.ID, k.Status, now.Status)
 		}
 	}
 
-	// 2. The blocker rides its robot (branch B), not _TRANSIT.
-	want := corebins.CarrierNodePrefix + d.robot
-	var at string
-	c.eventually("the blocker off _TRANSIT", func() bool {
-		b, err := db.GetBin(d.blocker)
-		mustNil(c.t, err, "blocker")
-		at = c.nodeName(b.NodeID)
-		return at != "_TRANSIT"
+	// 2. The carrying leg stores the blocker: Core gives it somewhere to go and
+	// the fleet carries it there.
+	var leg *coreorders.Order
+	c.eventually("the carrying leg stores the blocker", func() bool {
+		c.fleetStep()
+		leg = c.mustOrder(d.child.ID)
+		return protocol.IsTerminal(leg.Status) || leg.Status == protocol.StatusDelivered
 	})
-	if at != want {
-		c.dump("STOP: blocker not on its robot")
-		c.t.Fatalf("STOP: the blocker is at %q after the cancel, want %s: the watch never sees it", at, want)
+	c.deck.set(d.robot, false, false)
+	c.settle()
+	leg = c.mustOrder(d.child.ID)
+	if leg.Status == protocol.StatusCancelled || leg.Status == protocol.StatusFailed {
+		c.t.Errorf("the carrying leg %d ended %s (%s), want its store finished", leg.ID, leg.Status, leg.ErrorDetail)
 	}
-	c.t.Logf("case e: the blocker is parked on %s", at)
+	b, err := db.GetBin(d.blocker)
+	mustNil(c.t, err, "blocker after its store")
+	at := c.nodeName(b.NodeID)
+	c.t.Logf("case e: leg %d ended %s; the blocker is at %s", leg.ID, leg.Status, at)
+	if at == "_TRANSIT" || strings.HasPrefix(at, corebins.CarrierNodePrefix) {
+		c.t.Errorf("the blocker is at %s after its leg stored it, want a slot", at)
+	}
 
-	// 3. The fleet stops the job; the deck stays loaded. The robot poll's watch
-	// decides.
-	c.deck.set(d.robot, false, true)
-	var verdict []string
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		c.settle()
-		verdict = nil
-		for _, r := range c.recoveryRows(d.blocker) {
-			if strings.HasPrefix(r, "carried_bin_return_") {
-				verdict = append(verdict, r)
-			}
-		}
-		if len(verdict) > 0 {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
+	// 3. No return was ordered for it.
+	if rets := c.onDeckOrders(d.blocker); len(rets) != 0 {
+		c.t.Errorf("the stored blocker has %d return order(s), want none", len(rets))
 	}
 	for _, r := range c.recoveryRows(d.blocker) {
-		c.t.Logf("case e: recovery_actions row for the blocker: %s", r)
-	}
-	if len(verdict) == 0 {
-		c.dump("STOP: the watch made no decision")
-		c.t.Fatalf("STOP: the carried-bin watch neither returned nor held the blocker in 20s")
-	}
-	if strings.HasPrefix(verdict[0], "carried_bin_return_held") {
-		if !c.heldBlocker {
-			c.dump("case e: the blocker held on the robot")
-			c.t.Errorf("the carried-bin watch held the blocker instead of returning it: %s", verdict[0])
-			return
+		if strings.HasPrefix(r, "carried_bin_return_") {
+			c.t.Errorf("the carried-bin watch decided on the stored blocker: %s", r)
 		}
-		c.assertBlockerHeld(d, parent, verdict[0])
-		return
-	}
-	if c.heldBlocker {
-		c.t.Errorf("no claim names the blocker's part, yet the watch did not hold it: %v", verdict)
-		return
-	}
-	rets := c.onDeckOrders(d.blocker)
-	if len(rets) != 1 || len(verdict) != 1 {
-		c.t.Errorf("the watch ordered %d returns (%d verdict rows), want exactly one", len(rets), len(verdict))
-	}
-	if len(rets) == 0 {
-		c.t.FailNow()
-	}
-	ret := rets[0]
-	if ret.RecoversOrderID == nil || *ret.RecoversOrderID != d.child.ID {
-		c.t.Errorf("return %d recovers %v, want the cancelled dig leg %d", ret.ID, ret.RecoversOrderID, d.child.ID)
-	}
-	c.eventually("the return with the fleet", func() bool {
-		ret = c.mustOrder(ret.ID)
-		return ret.VendorOrderID != ""
-	})
-	rec := int64(0)
-	if ret.RecoversOrderID != nil {
-		rec = *ret.RecoversOrderID
-	}
-	c.t.Logf("case e: return order %d recovers_order_id=%d %s->%s vendor=%s pinned to %q", ret.ID, rec,
-		ret.SourceNode, ret.DeliveryNode, ret.VendorOrderID, c.deck.pinnedTo(ret.VendorOrderID))
-	if p := c.deck.pinnedTo(ret.VendorOrderID); p != d.robot {
-		c.t.Errorf("the return went to the fleet pinned to %q, want %s", p, d.robot)
 	}
 
-	// 4. The robot sets the blocker down.
-	c.deck.set(d.robot, true, true)
-	c.drive(ret, "RUNNING", "FINISHED")
-	c.deck.set(d.robot, false, false)
-	c.eventually("the return ends", func() bool {
-		return protocol.IsTerminal(c.mustOrder(ret.ID).Status) || c.mustOrder(ret.ID).Status == protocol.StatusDelivered
-	})
-	ret = c.mustOrder(ret.ID)
-	b, err := db.GetBin(d.blocker)
-	mustNil(c.t, err, "blocker after its return")
-	group, names, ok := c.inDeclaredGroup(b)
-	c.t.Logf("case e: return %d ended %s; the blocker is at %s (declared places for it: %v)", ret.ID, ret.Status,
-		c.nodeName(b.NodeID), names)
-	if !ok {
-		c.t.Errorf("STOP: the blocker landed at %s, in no group a claim declares for %q (declared: %v)",
-			c.nodeName(b.NodeID), b.PayloadCode, names)
-	} else {
-		c.t.Logf("case e: the blocker is in %s, a declared source for its payload", group)
-	}
-
-	// 5. End state of the episode.
+	// 4. End state of the episode.
 	c.tick()
-	c.assertNothingCarried("after the return")
-	c.assertNoTerminalReservations("after the return")
-}
-
-// assertBlockerHeld: with no claim naming the blocker's part there is nowhere
-// declared to take it, so the carried-bin return holds it on its robot, and the
-// station that placed the cancelled refill is told so on that refill's row. The
-// dig leg is Core's own order; the Edge has no row for it.
-func (c *ksrCell) assertBlockerHeld(d ksrDig, parent *coreorders.Order, verdict string) {
-	c.t.Helper()
-	c.t.Logf("case e-held: %s", verdict)
-	b, err := c.core.eng.DB().GetBin(d.blocker)
-	mustNil(c.t, err, "the held blocker")
-	if at := c.nodeName(b.NodeID); at != corebins.CarrierNodePrefix+d.robot {
-		c.t.Errorf("the held blocker is at %s, want on %s", at, corebins.CarrierNodePrefix+d.robot)
-	}
-	if rets := c.onDeckOrders(d.blocker); len(rets) != 0 {
-		c.t.Errorf("a held blocker has %d return orders, want none", len(rets))
-	}
-	row, err := c.edge.DB.GetOrderByUUID(parent.EdgeUUID)
-	if err != nil || row == nil {
-		c.t.Fatalf("the dig's parent %d (%s) is not an order the station holds: %v", parent.ID, parent.EdgeUUID, err)
-	}
-	var line string
-	c.eventually("the hold sentence on the cancelled refill's station row", func() bool {
-		c.settle()
-		line = c.edge.Engine.OrderService().BinReturnLines([]edgeorders.Order{*row})[row.ID]
-		return line != ""
-	})
-	c.t.Logf("case e-held: station row %d (%s %s->%s, %s) reads %q", row.ID, row.OrderType, row.SourceNode,
-		row.DeliveryNode, row.Status, line)
-	if !strings.Contains(line, ksrPartC) {
-		c.t.Errorf("the station row reads %q, want the hold naming %s", line, ksrPartC)
-	}
-	c.tick()
-	c.assertNoTerminalReservations("after the hold")
+	c.assertNothingCarried("after the store")
+	c.assertNoTerminalReservations("after the store")
 }

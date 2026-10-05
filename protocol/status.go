@@ -822,9 +822,10 @@ func (a ChangeoverStartAction) String() string {
 //
 //   - the parent is pre-fleet for its own carrier; no robot holds a bin for it
 //     until its dig is done and its own leg is dispatched;
-//   - its dig legs are ended by Core's cancel cascade on the parent;
-//   - a blocker a dig leg already lifted is the carried-bin return's to bring
-//     back, not this classifier's to protect.
+//   - its dig legs that have not lifted are ended by Core's cancel cascade on
+//     the parent;
+//   - a leg that has lifted its blocker finishes storing it (the cascade keeps
+//     it), so it is not this classifier's to protect either.
 func ChangeoverStartActionFor(s Status) ChangeoverStartAction {
 	switch s {
 	case StatusPending, StatusSubmitted, StatusAcknowledged, StatusSourcing, StatusQueued, StatusReshuffling:

@@ -1903,7 +1903,8 @@ func (d *Dispatcher) endDissolve(parentID int64) {
 // chapter closes when it lands.
 //
 // Every door that closes a chapter by cancelling its legs asks here (the
-// dissolve, a leg failing, and the chapter-end arm), so the rule is spelled once.
+// dissolve, a leg failing, the chapter-end arm, and the parent's cancel), so the
+// rule is spelled once.
 // One SELECT, and none when no leg is live. An error means the answer is
 // unknown, and each caller cancels nothing on it.
 func (d *Dispatcher) splitLiftedLegs(parentOrderID int64, live []*orders.Order) (cancel, kept []*orders.Order, err error) {
@@ -2264,11 +2265,34 @@ func (d *Dispatcher) cancelCompoundChildren(parent *orders.Order, stationID, rea
 		return
 	}
 
-	cancelReason := fmt.Sprintf("parent order cancelled: %s", reason)
+	// A LEG CARRYING ITS BIN IS NOT CANCELLED, by the parent's cancel either
+	// (splitLiftedLegs; owner, 2026-10-03: "the robot still continues storing the
+	// blocker and that's it"). It finishes its store, the cascade ends the rest,
+	// and nothing is minted to return its bin: the cancel-return watch serves a
+	// cancelled carrier, and this one is not cancelled. The changeover-start
+	// cancel of a digging order arrives here too (HandleOrderCancel).
+	//
+	// UNREADABLE CANCELS EVERY LIVE LEG, unlike the dissolve, which holds. A
+	// person asked for this cancel, and holding it on a read would leave the legs
+	// running under an ended parent; a lifted leg among them is then a cancelled
+	// carrier, which the cancel-return watch returns to a declared source.
+	var live []*orders.Order
 	for _, child := range children {
-		if protocol.IsTerminal(child.Status) {
-			continue
+		if !protocol.IsTerminal(child.Status) {
+			live = append(live, child)
 		}
+	}
+	cancel, kept, err := d.splitLiftedLegs(parent.ID, live)
+	if err != nil {
+		log.Printf("dispatch: cancel compound children for order %d: %v (cancelling every live leg)", parent.ID, err)
+		cancel, kept = live, nil
+	}
+	for _, leg := range kept {
+		log.Printf("dispatch: compound %d is cancelled; leg %d is carrying its bin, so it finishes "+
+			"its store", parent.ID, leg.ID)
+	}
+	cancelReason := fmt.Sprintf("parent order cancelled: %s", reason)
+	for _, child := range cancel {
 		d.lifecycle.CancelOrder(child, stationID, cancelReason, cause)
 	}
 
