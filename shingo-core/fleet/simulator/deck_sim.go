@@ -53,6 +53,10 @@ type robotState struct {
 	// backend's own lock, and nesting the two locks would be one more ordering
 	// rule to keep.
 	cancelFails atomic.Bool
+	// createFails makes SimulatorBackend.CreateOrder refuse (see createRefused):
+	// the robot system saying no to a job, for the C1 fleet-refusal scenario.
+	// Atomic for the same reason as cancelFails.
+	createFails atomic.Bool
 }
 
 // init readies the maps. In place, not a constructor returning a value: the
@@ -203,6 +207,24 @@ func (s *SimulatorBackend) SetCancelFails(on bool) error {
 	d.robots.cancelFails.Store(on)
 	log.Printf("[sim] INJECT cancel-fails=%v", on)
 	return nil
+}
+
+// SetCreateFails makes every CreateOrder refuse while on: the fleet refuses the
+// job, and Core's caller parks the order under fleet_unavailable.
+func (s *SimulatorBackend) SetCreateFails(on bool) error {
+	d := s.typedDriver()
+	if d == nil {
+		return errNoDriver
+	}
+	d.robots.createFails.Store(on)
+	log.Printf("[sim] INJECT create-fails=%v", on)
+	return nil
+}
+
+// createRefused is CreateOrder's hook. Sim builds only, like cancelRefused.
+func (s *SimulatorBackend) createRefused() bool {
+	d := s.typedDriver()
+	return d != nil && d.robots.createFails.Load()
 }
 
 // CancelFails reports whether cancels are currently being refused.

@@ -171,7 +171,7 @@ func (s *SimulatorBackend) CreateOrder(req fleet.CreateOrderRequest) (fleet.Tran
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.opts.failOnCreate {
+	if s.opts.failOnCreate || s.createRefused() {
 		return fleet.TransportOrderResult{}, fmt.Errorf("simulator: injected create failure")
 	}
 

@@ -30,6 +30,7 @@ func (h *Handlers) registerSimRoutes(r chi.Router) {
 	r.Post("/sim/robot/fault", h.apiSimRobotFault)
 	r.Post("/sim/robot/deck", h.apiSimRobotDeck)
 	r.Post("/sim/cancel-fails", h.apiSimCancelFails)
+	r.Post("/sim/create-fails", h.apiSimCreateFails)
 }
 
 // simFleetControl is the slice of the simulator backend the injection routes
@@ -42,6 +43,7 @@ type simFleetControl interface {
 	SetRobotDeck(id string, loaded bool) error
 	SetCancelFails(on bool) error
 	CancelFails() bool
+	SetCreateFails(on bool) error
 }
 
 // simRobotJSON is one robot as a driver script reads it.
@@ -160,6 +162,25 @@ func (h *Handlers) apiSimCancelFails(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[sim] api: cancel-fails set to %v", on)
 	writeSimJSON(w, map[string]any{"ok": true, "cancel_fails": on})
+}
+
+// apiSimCreateFails turns fleet create refusals on or off (C1's fleet-refusal
+// scenario: a refused create parks the order under fleet_unavailable).
+func (h *Handlers) apiSimCreateFails(w http.ResponseWriter, r *http.Request) {
+	sc, ok := h.simControl(w)
+	if !ok {
+		return
+	}
+	on, ok := simBoolParam(w, r, "on")
+	if !ok {
+		return
+	}
+	if err := sc.SetCreateFails(on); err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	log.Printf("[sim] api: create-fails set to %v", on)
+	writeSimJSON(w, map[string]any{"ok": true, "create_fails": on})
 }
 
 // apiSimStatus reports the current sim-clock speed + simulated time so the dev

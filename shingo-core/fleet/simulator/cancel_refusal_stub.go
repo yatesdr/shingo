@@ -6,3 +6,6 @@ package simulator
 // the sim driver (deck_sim.go) and exists only under -tags sim; every other
 // build answers false, so CancelOrder behaves exactly as it always has.
 func (s *SimulatorBackend) cancelRefused() bool { return false }
+
+// createRefused is the CreateOrder injection hook, false outside -tags sim.
+func (s *SimulatorBackend) createRefused() bool { return false }
