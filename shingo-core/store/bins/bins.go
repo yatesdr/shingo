@@ -383,6 +383,14 @@ func NotFencedArm() string {
 // A plant whose claims have not synced has an empty style_claims table and this
 // arm excludes nothing, which is the pre-existing behaviour.
 //
+// A PRESS-INDEX CELL'S PAIRED POSITIONS ARE ITS OWN TOO. Its claim names the
+// head in core_node_name and the index positions only in paired_core_node and
+// second_paired_core_node, so the arm reads all three. The empty on an index
+// position is what the swap's index leg lifts; a 2026-10-04 sim lost it to the
+// empties group's level keeper while the swap waited for its keep-staged spare,
+// and the pair could never reserve again
+// (TestEmptyScan_SkipsAPressCellsPairedPositions).
+//
 // ── AND THE SAME SENTENCE FOR LOADERS, WHICH style_claims NEVER HOLDS ─────
 //
 // The cell arm reads style_claims, and the Edge publisher skips loader claims,
@@ -503,7 +511,8 @@ func emptyCarrierWhere(destExpr, groupExpr string) string {
 	  AND b.node_id IS NOT NULL
 	  AND ` + BinAtLiveNodeSQL + `
 	  AND COALESCE(b.payload_code, '') = ''
-	  AND NOT EXISTS (SELECT 1 FROM style_claims sc WHERE sc.core_node_name = n.name)
+	  AND NOT EXISTS (SELECT 1 FROM style_claims sc
+	                  WHERE n.name IN (sc.core_node_name, sc.paired_core_node, sc.second_paired_core_node))
 	  AND b.node_id NOT IN (SELECT h.position_node_id FROM bin_loader_homes h
 	                        JOIN bin_loaders l ON l.id = h.loader_id WHERE l.archived_at IS NULL
 	                          AND NOT (h.home_kind = 'buffer' AND h.loader_id IN (

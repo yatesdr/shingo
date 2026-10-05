@@ -40,9 +40,10 @@ import (
 //
 // ── WHAT IS AND IS NOT EXCLUDED ───────────────────────────────────────────
 //
-// This arm keys on style_claims.core_node_name, so it covers exactly the
-// positions a cell has claimed — a press side, a weld consume point — and
-// nothing else. Loader windows and homes are excluded by a separate arm over
+// This arm keys on a claim's core_node_name and its paired positions
+// (paired_core_node, second_paired_core_node), so it covers exactly the
+// positions a cell has claimed — a press side, a press-index position, a weld
+// consume point — and nothing else. Loader windows and homes are excluded by a separate arm over
 // bin_loader_homes, because style_claims never holds a loader (see
 // loader_position_empty_docker_test.go). An ordinary storage slot, a staging
 // node and an empties-bank position are untouched by both, which is what the
@@ -105,5 +106,73 @@ func TestEmptyScan_SkipsACellsOwnPosition(t *testing.T) {
 		t.Errorf("the scan did NOT take the carrier at %s, which carries no claim and is exactly what "+
 			"the empty pool is for. An exclusion this broad starves every producer instead of "+
 			"protecting one press", bank.Name)
+	}
+}
+
+// A press-index cell claims its head by core_node_name and its index positions
+// only by paired_core_node and second_paired_core_node. The empty on an index
+// position is the carrier the swap's index leg lifts to finish the cycle, so it
+// is the cell's working stock exactly as the parked side of a sequential press
+// is.
+//
+// MEASURED, polish-6 sim, 2026-10-04: a press-index swap pair was built while
+// PRESS-1's paired position held its empty. While the pair waited for its
+// keep-staged spare, the empties group's level keeper topped up its pool with
+// that carrier ("order 23 fulfilled — bin 17 (PLN_002 -> PEB_001)"). The index
+// leg could then never reserve, nothing re-plans a parked pair, and the press
+// held until a changeover cancelled the swap.
+func TestEmptyScan_SkipsAPressCellsPairedPositions(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+
+	head := &nodes.Node{Name: "CELLPOS-PI-HEAD", Enabled: true}
+	deck := &nodes.Node{Name: "CELLPOS-PI-DECK", Enabled: true}
+	back := &nodes.Node{Name: "CELLPOS-PI-BACK", Enabled: true}
+	bank := &nodes.Node{Name: "CELLPOS-PI-BANK", Enabled: true}
+	for _, n := range []*nodes.Node{head, deck, back, bank} {
+		if err := db.CreateNode(n); err != nil {
+			t.Fatalf("create %s: %v", n.Name, err)
+		}
+	}
+
+	if _, err := db.Exec(`INSERT INTO style_claims
+		(process_id, style_id, core_node_name, paired_core_node, second_paired_core_node, role, swap_mode,
+		 payload_code, allowed_payload_codes, uop_capacity, reorder_point, seq)
+		VALUES ($1,$2,$3,$4,$5,'produce','two_robot_press_index','', '[]', 0, 0, 0)`,
+		"CELLPOS-PI-PROC", "CELLPOS-PI-STYLE", head.Name, deck.Name, back.Name); err != nil {
+		t.Fatalf("seed the press-index claim: %v", err)
+	}
+
+	onDeck := testdb.CreateBinAtNode(t, db, "", deck.ID, "BIN-CELLPOS-PI-DECK")
+	onBack := testdb.CreateBinAtNode(t, db, "", back.ID, "BIN-CELLPOS-PI-BACK")
+	banked := testdb.CreateBinAtNode(t, db, "", bank.ID, "BIN-CELLPOS-PI-BANK")
+
+	found := map[int64]bool{}
+	for i := 0; i < 5; i++ {
+		b, err := db.FindEmptyCompatibleBin("", "", 0, bins.EmptyFence{}, reservations.DigAsker{})
+		if errors.Is(err, sql.ErrNoRows) || b == nil {
+			break
+		}
+		if err != nil {
+			t.Fatalf("plant-wide empty scan: %v", err)
+		}
+		found[b.ID] = true
+		if _, err := db.Exec(`UPDATE bins SET locked=true WHERE id=$1`, b.ID); err != nil {
+			t.Fatalf("take the carrier out of the pool: %v", err)
+		}
+	}
+
+	for _, p := range []struct {
+		bin  *bins.Bin
+		node string
+	}{{onDeck, deck.Name}, {onBack, back.Name}} {
+		if found[p.bin.ID] {
+			t.Errorf("the plant-wide empty scan took the carrier on %s, a press-index cell's paired "+
+				"position. The swap's index leg lifts that carrier; harvesting it leaves the pair "+
+				"unable to reserve, and a parked pair is never re-planned", p.node)
+		}
+	}
+	if !found[banked.ID] {
+		t.Errorf("the scan did NOT take the carrier at %s, which carries no claim", bank.Name)
 	}
 }

@@ -118,6 +118,7 @@ var sanctionedLegReaders = map[string]string{
 	"store/return_sources.go":          "the cancel-return policy: where a line's bins come from and its empties go",
 	"store/containment.go":             "the containment divert scopes itself to the claim's own outbound flow",
 	"store/migrations.go":              "the schema",
+	"store/bins/bins.go":               "the empty scan leaves a cell's own positions alone, a press-index cell's paired positions included",
 }
 
 // TestLegColumnsHaveOnlySanctionedReaders walks shingo-core for any file that
