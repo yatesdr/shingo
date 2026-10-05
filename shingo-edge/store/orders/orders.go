@@ -865,11 +865,19 @@ func ListActiveByDeliveryNodeSet(db *sql.DB, deliveryNodes []string) ([]Order, e
 // statement. The keep-staged floor needs both: what is live at the line, and
 // how the last refill to the spot ended, so a refill that failed structurally
 // is not re-created every period. One read, where two queries would be two.
+//
+// It is spelled as an id list so it reads no history: the live rows come
+// through idx_orders_live_process_node and the newest refill is one seek on
+// idx_orders_process_node_delivery_id (both Edge v15). The older spelling,
+// process_node_id = ? AND (live OR newest), walked every order the node has
+// ever had, twice.
 func ListActiveByProcessNodeWithLatestTo(db *sql.DB, processNodeID int64, deliveryNode string) ([]Order, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
-		WHERE o.process_node_id = ? AND (o.status NOT IN (%s) OR o.id = (
+		WHERE o.id IN (
+			SELECT l.id FROM orders l WHERE l.process_node_id = ? AND l.status NOT IN (%s)
+			UNION ALL
 			SELECT MAX(r.id) FROM orders r
-			WHERE r.process_node_id = ? AND r.delivery_node = ? AND r.order_type IN (?, ?)))
+			WHERE r.process_node_id = ? AND r.delivery_node = ? AND r.order_type IN (?, ?))
 		ORDER BY o.created_at`, protocol.TerminalStatusSQLList()),
 		processNodeID, processNodeID, deliveryNode, string(protocol.OrderTypeRetrieve), string(protocol.OrderTypeRetrieveEmpty))
 	if err != nil {

@@ -1437,6 +1437,34 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// The level keeper's read of a keep-staged line's orders
+			// (orders.ListActiveByProcessNodeWithLatestTo) walked the node's
+			// whole history twice: once for its live rows, once for the newest
+			// refill to the spot. The Edge never deletes orders, so it grew for
+			// the life of the plant. These two indexes serve it from the live
+			// rows plus one seek: live orders by process node (partial, the same
+			// literal terminal list as v14, guarded by the same test), and every
+			// order by (process node, delivery node, id) for the newest refill.
+			Version: 15,
+			Name:    "orders_process_node_live_and_latest_indexes",
+			Fn: func(tx *sql.Tx) error {
+				for _, ddl := range []string{
+					`CREATE INDEX IF NOT EXISTS idx_orders_live_process_node ON orders(process_node_id) WHERE status NOT IN ('cancelled','confirmed','failed','skipped')`,
+					`CREATE INDEX IF NOT EXISTS idx_orders_process_node_delivery_id ON orders(process_node_id, delivery_node, id)`,
+				} {
+					if _, err := tx.Exec(ddl); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_orders_live_process_node', 'idx_orders_process_node_delivery_id')`).Scan(&n)
+				return err == nil && n == 2
+			},
+		},
 	}
 }
 

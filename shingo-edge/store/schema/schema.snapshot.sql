@@ -15,6 +15,10 @@ CREATE INDEX idx_order_history_order_id ON order_history(order_id);
 
 CREATE INDEX idx_orders_live_delivery_node ON orders(delivery_node) WHERE status NOT IN ('cancelled','confirmed','failed','skipped');
 
+CREATE INDEX idx_orders_live_process_node ON orders(process_node_id) WHERE status NOT IN ('cancelled','confirmed','failed','skipped');
+
+CREATE INDEX idx_orders_process_node_delivery_id ON orders(process_node_id, delivery_node, id);
+
 CREATE INDEX idx_orders_process_node_id ON orders(process_node_id);
 
 CREATE INDEX idx_orders_release_intent ON orders(process_node_id) WHERE release_intent <> '';
