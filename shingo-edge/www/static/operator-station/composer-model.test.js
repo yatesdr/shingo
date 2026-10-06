@@ -524,6 +524,22 @@ test('dockNotes(style 7) reads exactly as the spec S4 sentence', () => {
     assert.strictEqual(d.out.group, 'Supermarket Area');
 });
 
+// EACH CELL'S OWN ROBOT. A flow mixing a two_robot cell with a single_robot
+// one clears the first on Robot 2 and the second on Robot 1; the out note
+// names each robot with its positions, and the flow-level words still say
+// the flow uses both.
+test('dockNotes and cellRobots in a mixed flow name each cell its own robot', () => {
+    const s = initStyle(11);
+    s.cells.PLN_06 = Object.assign({}, s.cells.PLN_06, { mode: 'single_robot' });
+    assert.deepStrictEqual(M.cellRobots(s, 'PLN_03'), { in: 1, out: 2 });
+    assert.deepStrictEqual(M.cellRobots(s, 'PLN_06'), { in: 1, out: 1 });
+    const d = M.dockNotes(s);
+    assert.strictEqual(d.out.note, 'Outbound destination · Robot 1 ← PLN_06 · Robot 2 ← PLN_03');
+    assert.strictEqual(d.out.robot, 0);
+    assert.strictEqual(d.in.robot, 1);
+    assert.strictEqual(M.robotWords(s), 'Robot 1 and Robot 2');
+});
+
 // The third line under the group name is the GROUP'S MEMBER NODES, which is
 // what the read-only picture draws (operator-flow.js dockNotes: inMembers =
 // groups[srcs[0]]). It used to be the positions — the same names the note
@@ -587,6 +603,13 @@ test('cardLines are the reference CARDLINE, verbatim', () => {
     const s11 = initStyle(11);
     assert.deepStrictEqual(M.cardLines(s11, 'PLN_03'),
         ['Robot 1 stages at PLN_02', 'Robot 2 pulls old']);
+    // ONE ROBOT READS ITS TWO MOVES (owner's pick, the module reference): the
+    // staging places' names are on the slots now, so the card says what the
+    // robot does — from this table, the one every mode's card reads.
+    let one = M.reduce(initStyle(7), { type: 'setMode', node: 'PLN_01', mode: 'single_robot' });
+    one = M.reduce(one, { type: 'setStaging', node: 'PLN_01', staging: 'PLN_02' });
+    one = M.reduce(one, { type: 'setParkOld', node: 'PLN_01', staging: 'PLN_05' });
+    assert.deepStrictEqual(M.cardLines(one, 'PLN_01'), ['Robot 1 moves in', 'Robot 1 clears old']);
 });
 
 test('legs(style 7) is one Robot 2 index leg per paired position', () => {

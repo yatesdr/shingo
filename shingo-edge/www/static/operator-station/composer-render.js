@@ -567,8 +567,7 @@ function drawComposer() {
         '<div class="os-comp-strip" id="os-comp-strip"></div>' +
         '<div class="os-comp-stage" id="os-comp-stage">' +
         '<div class="os-comp-hint">Tap a <b>position</b> to set how it swaps, which part, and where bins come from and go · tap the strip below to change the defaults</div>' +
-        '<div class="os-comp-legend"><span><i class="r1"></i>Robot 1</span><span><i class="r2"></i>Robot 2</span></div>' +
-        '<svg id="os-comp-svg" class="os-flow-picture" viewBox="0 0 1280 560"></svg>' +
+        '<div class="os-comp-scroll"><svg id="os-comp-svg" class="os-flow-picture" viewBox="0 0 1280 560"></svg></div>' +
         '<div class="os-comp-pop" id="os-comp-pop" hidden></div></div>' +
         '<div class="os-comp-bar" id="os-comp-bar"></div></div>';
     drawStrip();
@@ -789,20 +788,39 @@ function drawPicture() {
     for (const f of fs) if (f.node && !byNode[f.node]) byNode[f.node] = f.short;
     const cell = cellFromModel();
     pictureRowOf = pictureRows(cell);
+    const o = {
+        selected: model.selected, findings: byNode, editable: true,
+        sentences: sentencesFromModel(model),
+    };
     svg.innerHTML = renderFlowPicture(
-        { cell: cell, station: view && view.station },
-        {
-            selected: model.selected, findings: byNode, editable: true,
-            sentences: sentencesFromModel(model),
-        });
+        { cell: cell, station: view && view.station }, o);
+    // THE PICTURE'S OWN SIZE (see operator-flow.js): the svg is drawn one
+    // unit to one pixel and its box scrolls a taller picture; it never scales
+    // one. The legend is the picture's own, drawn inside it.
+    const h = o.height || 560;
+    svg.setAttribute('viewBox', '0 0 1280 ' + h);
+    svg.setAttribute('width', '1280');
+    svg.setAttribute('height', String(h));
 }
 
 function drawBar() {
     const b = M().bar(model);
     const bar = $('os-comp-bar');
     if (!bar) return;
+    // THE PROBLEM LINE IS THE CONTROL. On a blocked bar, the first finding
+    // that names a position in the cell makes the line a tap target, and the
+    // tap goes through the card-tap door: that position's panel opens. A
+    // finding with no position (an unplaced part) leaves the line plain text,
+    // because there is no panel to open.
+    let target = null;
+    if (b.tone === 'blocked') {
+        for (const f of M().findings(model)) {
+            if (f.node && model.cells[f.node]) { target = f.node; break; }
+        }
+    }
     bar.innerHTML =
-        '<div class="status"><div class="l1' + (b.tone === 'blocked' ? ' bad' : '') + '">' + esc(b.heading) + '</div>' +
+        '<div class="status"' + (target ? ' data-tap="pos" data-pos="' + esc(target) + '"' : '') + '>' +
+        '<div class="l1' + (b.tone === 'blocked' ? ' bad' : '') + '">' + esc(b.heading) + '</div>' +
         '<div class="l2">' + esc(b.detail) + '</div></div><span class="sp"></span>' +
         '<button class="os-btn os-btn-primary" data-act="confirm"' + (b.button.enabled ? '' : ' disabled') + '>' +
         esc(b.button.label) + '</button>';
@@ -989,12 +1007,15 @@ function openPositionPanel(node) {
 // source the desktop's positions table reads (processes-desktop.js's rowWord,
 // via pictureRows).
 //
-// NOT pos.kind, WHICH IS A DIFFERENT QUESTION AND A DIFFERENT ANSWER. Kind is
-// "is this a partner slot for any style this process runs"; at Hopkinsville
-// PLN_01 and PLN_04 are Kind `front` and are DRAWN in the back row. U9 fixed
-// the desktop table and this panel kept the old read, so the station's panel
-// captioned PLN_01 `front` under a picture that said BACK and beside a desktop
-// table that said `back`. One word, one meaning, one source (F2).
+// NOT pos.kind WHERE THE CELL HAS COORDINATES, WHICH IS A DIFFERENT QUESTION
+// AND A DIFFERENT ANSWER. Kind is "is this a partner slot for any style this
+// process runs"; at Hopkinsville PLN_01 and PLN_04 are Kind `front` and are
+// DRAWN in the back row. U9 fixed the desktop table and this panel kept the
+// old read, so the station's panel captioned PLN_01 `front` under a picture
+// that said BACK and beside a desktop table that said `back`. One word, one
+// meaning, one source (F2). Without coordinates there is no world Y to read,
+// and pictureRows reads the rows by kind — the same source still, so the
+// word and the picture agree there too.
 //
 // The station draws its picture in the default frame, so the row lookup uses
 // it too; a middle row and a picture with only one row get no word, which is

@@ -178,7 +178,8 @@ function styleCreate(name, processID, catid) {
 
 // processGroupCreate — POST /api/process-groups, P0's "Add group".
 //
-// A group is pure taxonomy for the list — nothing reads it — so the two fields
+// A group is pure taxonomy: the Processes list groups its rows by it, and
+// nothing else reads it — no dispatch, count or routing — so the two fields
 // the handler decodes are the whole of it. A duplicate name comes back 409 by
 // name, which is why the sheet shows the refusal instead of guarding.
 function processGroupCreate(name, description) {

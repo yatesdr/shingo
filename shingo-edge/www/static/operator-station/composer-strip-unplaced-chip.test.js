@@ -85,6 +85,9 @@ function makeEl(id) {
         querySelector: () => null,
         querySelectorAll: () => [],
         getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0 }),
+        attrs: {},
+        setAttribute(k, v) { this.attrs[k] = String(v); },
+        getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
     };
 }
 

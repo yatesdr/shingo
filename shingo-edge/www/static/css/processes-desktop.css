@@ -250,24 +250,21 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-head .sub { display: flex; align-items: center; gap: 8px; }
 .pd-head .sub .pd-tag { flex: none; }
 .pd-head .act { margin-left: auto; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; flex: 0 1 auto; }
-/* The picture's frame, and the reference's. The page script sets the viewBox
-   to this height and the column's real width, so the drawing is 1:1 and a card
-   is its own size rather than whatever preserveAspectRatio makes of it.
+/* The picture's frame. The page script draws the picture at this frame's
+   width and sets the svg to the height the picture reports, viewBox to match,
+   so the drawing is 1:1 and a card is its own size: nothing here scales it.
 
-   IT IS THE THING THAT GIVES WAY. `flex: 0 1 430px` with a floor: on a short
-   screen the picture loses height before the positions table loses rows and
-   before the bar leaves the viewport, because the bar is where the save lives
-   and a table with no rows answers no question. The script re-measures and
-   re-lays-out at whatever height it ends up with, so the cards stay 1:1. */
-.pd-pic { position: relative; flex: 0 1 430px; min-height: 240px; margin: 0 24px; }
-.pd-pic svg { width: 100%; height: 100%; display: block; }
-.pd-legend {
-    position: absolute; right: 8px; top: 4px; display: flex; gap: 14px;
-    font-size: 12px; color: var(--text-muted);
-}
-.pd-legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
-.pd-legend i.r1 { background: var(--robot-1); }
-.pd-legend i.r2 { background: var(--robot-2); }
+   IT IS THE THING THAT GIVES WAY. `flex: 0 1 auto` takes the picture's own
+   height when there is room and shrinks, to a floor, when there is not: on a
+   short screen the picture loses height before the positions table loses rows
+   and before the bar leaves the viewport, because the bar is where the save
+   lives and a table with no rows answers no question. What it loses it
+   scrolls, as the station's flow panel does. The gutter is reserved so a
+   vertical scrollbar arriving never narrows the width the picture was laid
+   out at; a sideways scroll only happens when one module is wider than the
+   frame. */
+.pd-pic { position: relative; flex: 0 1 auto; min-height: 240px; margin: 0 24px; overflow: auto; scrollbar-gutter: stable; }
+.pd-pic svg { display: block; }
 
 /* ── D1 · positions table ─────────────────────────────────────────────── */
 /* P3 · THE POSITIONS BOX IS THREE PARTS: a label, a scroller, and a footer
@@ -954,15 +951,14 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* ── smaller laptops ──────────────────────────────────────────────────────
    The app shape above is sized for 1440x900: the picture gives way until it
    hits its 240 floor, and below about 790 px of viewport the floor is all it
-   gets — two rows of cards and the dock do not fit in 240, and the drawing
-   falls back to a squeezed schematic. So on a short screen the flow column
-   SCROLLS instead: the picture keeps a height it can be drawn at, the table
-   shows its rows, and the bar sticks to the foot of the column so Save is
-   always on screen. The rail keeps scrolling on its own. */
+   gets — a 240 px window onto a picture that is one row of modules and the
+   dock at the least. So on a short screen the flow column SCROLLS instead:
+   the picture is its own full height, the table shows its rows, and the bar
+   sticks to the foot of the column so Save is always on screen. The rail
+   keeps scrolling on its own. */
 @media (max-height: 790px) {
     .pd-main { overflow-y: auto; }
     .pd-main > .pd-head, .pd-main > .pd-pic, .pd-main > .pd-posbox { flex: none; }
-    .pd-pic { height: 400px; }
     .pd-posbox { min-height: 0; }
     .pd-bar { position: sticky; bottom: 0; z-index: var(--z-sticky); margin-top: auto; }
 }

@@ -31,77 +31,45 @@
  * covers it -- looked right. The fallback is --viz-coral, the shared mark red.
  * shingo-edge/www/css_dead_token_test.go is what finds the next one. */
 
-.os-flow-picture .leg { fill: none; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
-.os-flow-picture .leg.r1 { stroke: var(--robot-1); }
-.os-flow-picture .leg.r2 { stroke: var(--robot-2); }
-.os-flow-picture .leg.thin { stroke-width: 2.5; }
-.os-flow-picture .legdot.r1 { fill: var(--robot-1); }
-.os-flow-picture .legdot.r2 { fill: var(--robot-2); }
-.os-flow-picture .legring { fill: var(--os-bg, var(--surface)); stroke-width: 2; }
-.os-flow-picture .legring.r1 { stroke: var(--robot-1); }
-.os-flow-picture .legring.r2 { stroke: var(--robot-2); }
-.os-flow-picture .leg-lbl { font-size: 11px; font-weight: 600; letter-spacing: .03em; }
-.os-flow-picture .leg-lbl.r1 { fill: var(--robot-1); }
-.os-flow-picture .leg-lbl.r2 { fill: var(--robot-2); }
+/* ── the module grammar (2026-10-05) ──────────────────────────────────────
+ *
+ * The lines between cards are gone. A module's moves are now one pair of
+ * slender chevrons in the gap a trip crosses, in that trip's robot hue, and
+ * every rule below names the shared robot tokens directly: the two-name
+ * --os-* dance never applies to a hue in this file, because no surface
+ * overrides what a robot is.
+ *
+ * .sc IS THE CHEVRON STROKE COLOUR, and r1/r2 pick which robot. The same class
+ * draws the LEGEND's chevron pair, so the legend is the palette the picture
+ * itself uses and not a second vocabulary.
+ *
+ * .press IS THE LINE-SIDE BAR over a module's card(s) — the shared press a
+ * sequential pair both stand at draws ONE bar spanning both, which is what
+ * makes the pair one module and not two. .dim is the bar over a position not
+ * in the flow; it is the only thing in the picture that is ever dimmed.
+ *
+ * .io IS THE CORNER MARK on a card that takes bins in or sends them out, and
+ * colour carries the robot again (currentColor, set by r1/r2). .rw is the
+ * "Robot N" words inside a card line — the sentence stays one <text>, the
+ * names take their hue. .lg/.lgt are the legend group and text. .tagbg/.tag
+ * are the shared-slot's tag: a quiet outline, as on the reference — it says
+ * how a lane is used, which is not a state. */
 
-/* WHICH WAY THE MATERIAL GOES — two marks, doing two different jobs.
- *
- * The legs said which robot and which two positions and nothing whatever about
- * direction. A Robot 1 leg arriving at a front position and a Robot 2 leg
- * leaving one are the same line in two hues, and the only thing distinguishing
- * them was the convention that teal comes in and indigo goes out — which the
- * person who drew the picture knows and the person reading a screenshot of it
- * a month later does not.
- *
- * .legtip IS THE ANSWER ON PAPER, and it has to be, because these pictures are
- * a HANDOFF ARTEFACT: scripts/composer-shots.sh photographs this drawing and
- * the PNGs are what gets read in a review. A cue that only exists while
- * something is moving is a cue that is not in the shot. The chevron is a plain
- * filled path in the leg's own hue — no new colour enters the picture — placed
- * and rotated by operator-flow.js's legsFor, which explains there why it is not
- * an SVG <marker>.
- *
- * .legflow IS THE ANSWER WHILE YOU WATCH IT: short dashes drifting from the dot
- * towards the ring, so a glance at the board says the leg is a flow and not a
- * pipe. It is a SECOND path over the leg, never a dash pattern on the leg
- * itself, so the leg keeps its width, its hue and its z-order and the whole
- * animation switches off by hiding one element.
- *
- * WHY THIS IS CHEAP ENOUGH FOR A KIOSK THAT IS ON ALL SHIFT. It is one
- * declarative CSS animation over two to four short paths, and stroke-dashoffset
- * is the one thing being interpolated — no JS timer, no requestAnimationFrame,
- * nothing that re-serialises the SVG. The browser owns the clock, which is what
- * buys the properties a hand-rolled loop does not have: the animation does not
- * run at all while the flow panel is hidden (the station's normal state — the
- * panel is display:none until the style chip is tapped), it is throttled to
- * nothing when the tab is backgrounded, and it stops for the media query below
- * without any code having to ask. A setInterval keeps ticking through every one
- * of those.
- *
- * -28 IS THE PATTERN, NOT A DISTANCE. The dash period is 5 + 23, so one cycle
- * of the offset is one whole pattern and the loop is seamless whatever length
- * the leg happens to be. The pattern is kept short and the drift slow on
- * purpose: the station rebuilds this markup on every view refresh, a fresh
- * element restarts its animation from zero, and at 28 units per 1.2 s the worst
- * a refresh can do is set the dashes back one pattern — a drift, not a jump. */
-.os-flow-picture .legtip.r1 { fill: var(--robot-1); }
-.os-flow-picture .legtip.r2 { fill: var(--robot-2); }
-.os-flow-picture .legflow {
-    fill: none; stroke-width: 5; stroke-linecap: round;
-    stroke-dasharray: 5 23; animation: os-leg-flow 1.2s linear infinite;
-}
-.os-flow-picture .legflow.r1 { stroke: var(--robot-1); }
-.os-flow-picture .legflow.r2 { stroke: var(--robot-2); }
-@keyframes os-leg-flow { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -28; } }
+.os-flow-picture .sc { fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.os-flow-picture .sc.r1 { stroke: var(--robot-1); }
+.os-flow-picture .sc.r2 { stroke: var(--robot-2); }
+.os-flow-picture .press { fill: none; stroke: var(--sub-4); stroke-width: 5; stroke-linecap: round; }
+.os-flow-picture .press.dim { opacity: .45; }
+.os-flow-picture .io { color: var(--os-text-muted, var(--text-muted)); }
+.os-flow-picture .io.r1 { color: var(--robot-1); }
+.os-flow-picture .io.r2 { color: var(--robot-2); }
+.os-flow-picture .node .iot { font-size: 10px; fill: currentColor; letter-spacing: .04em; }
+.os-flow-picture .rw.r1 { fill: var(--robot-1); }
+.os-flow-picture .rw.r2 { fill: var(--robot-2); }
+.os-flow-picture .lg .lgt { fill: var(--os-text-muted, var(--text-muted)); font-size: 11px; font-weight: 600; }
+.os-flow-picture .stage .tagbg { fill: none; stroke: var(--sub-4); stroke-width: 1; }
+.os-flow-picture .stage .tag { fill: var(--os-text-muted, var(--text-muted)); font-size: 10px; font-weight: 600; letter-spacing: .02em; }
 
-/* Reduced motion means NO motion, not a slower one. The dashes are hidden
- * rather than frozen: a stopped dash train says nothing the chevron is not
- * already saying, and leaving it on screen would be decoration a reader who
- * asked for stillness has to look past. What is left is exactly the picture as
- * it was drawn before, with the direction cue on it. */
-@media (prefers-reduced-motion: reduce) {
-    .os-flow-picture .legflow { display: none; }
-}
 .os-flow-picture .node rect.box { fill: var(--os-surface, var(--surface)); stroke: var(--sub-3); stroke-width: 1.5; }
 .os-flow-picture .node text { fill: var(--text-strong); font-size: 15px; font-weight: 600; }
 .os-flow-picture .node text.ln { fill: var(--os-text-muted, var(--text-muted)); font-size: 12px; font-weight: 500; }
@@ -111,7 +79,6 @@
 .os-flow-picture .node.off rect.box { stroke-dasharray: 5 5; }
 .os-flow-picture .node.off text.nm { fill: var(--os-text-muted, var(--text-muted)); }
 .os-flow-picture .node.on rect.box { stroke: var(--sub-4); stroke-width: 1.5; }
-.os-flow-picture .node .iot { font-size: 10px; fill: currentColor; letter-spacing: .04em; }
 .os-flow-picture .node .partbg { fill: color-mix(in srgb, var(--viz-green) 14%, transparent); stroke: color-mix(in srgb, var(--viz-green) 40%, transparent); }
 .os-flow-picture .node .partlbl { fill: var(--viz-green); font-size: 11px; font-weight: 600; }
 .os-flow-picture .mlbl { fill: var(--os-text-muted, var(--text-muted)); font-size: 10px; }
@@ -119,47 +86,50 @@
 .os-flow-picture .dock text.k { fill: var(--os-text-muted, var(--text-muted)); font-size: 11px; font-weight: 700; letter-spacing: .1em; }
 .os-flow-picture .dock text.v { fill: var(--text-strong); font-size: 15px; font-weight: 600; }
 .os-flow-picture .dock text.s { fill: var(--os-text-muted, var(--text-muted)); font-size: 11px; }
-.os-flow-picture .node.sel rect.box { stroke: var(--os-accent, var(--accent)); stroke-width: 2.5; }
+/* The dock line is its robot's colour, like the chevrons and the in/out
+   marks. A side two robots use carries no robot class and stays muted; its
+   "Robot N" words take their own colours (.rw). */
+.os-flow-picture .dock text.s.r1 { fill: var(--robot-1); }
+.os-flow-picture .dock text.s.r2 { fill: var(--robot-2); }
+/* A SELECTION IS THE MODULE'S, and it fades nothing: its card(s) and every
+   slot it draws take the accent outline, and the rest of the picture stays as
+   it was (the module reference, the hard-cases cell). */
+.os-flow-picture .node.sel rect.box,
+.os-flow-picture .stage.sel rect.box { stroke: var(--os-accent, var(--accent)); stroke-width: 2.5; }
 .os-flow-picture .node.bad rect.box { stroke: var(--os-red, var(--viz-coral)); stroke-width: 2.5; }
-.os-flow-picture .node.dim { opacity: .35; }
 .os-flow-picture .node .needbg { fill: var(--os-red, var(--viz-coral)); fill-opacity: .12; stroke: var(--os-red, var(--viz-coral)); }
 .os-flow-picture .node .needlbl { fill: var(--os-red, var(--viz-coral)); font-size: 11px; font-weight: 600; }
 .os-flow-picture .half { cursor: pointer; }
 
-/* ── the staging band, and the route strip (2026-09-17) ─────────────────────
+/* ── the staging slots, and the route strip ────────────────────────────────
  *
- * A STAGING CARD IS QUIETER AND SHORTER THAN A POSITION, deliberately. It is
+ * A STAGING SLOT IS QUIETER AND SHORTER THAN A POSITION, deliberately. It is
  * not a position — it is where a bin RESTS during the swap — and the picture
  * has to say that before it says anything else. Same surface, same hairline,
- * one weight down on the name and no part chip, in a band above the dock's
- * rule.
+ * one weight down on the name and no part chip, under the card it serves.
  *
- * AN OFFERED LANE IS DASHED, which is the same vocabulary `.node.off` already
- * uses for a position that is not in the flow: on the composer's picture the
- * band carries every lane the cell MAY park at, and an operator has to be able
- * to tell the one this flow uses from the ones it could. No new colour, no new
- * caption — SPEC §0.5 keeps saturation for state, and "could be used" is not a
- * state a bin is in. */
+ * AN UNUSED LANE IS A DASHED CHIP (.stage.off.chip, desktop only), which is
+ * the same vocabulary `.node.off` uses for a position that is not in the
+ * flow. No new colour — SPEC §0.5 keeps saturation for state, and "could be
+ * used" is not a state a bin is in. */
 .os-flow-picture .stage rect.box { fill: var(--os-surface, var(--surface)); stroke: var(--sub-3); stroke-width: 1.5; }
 .os-flow-picture .stage text.nm { fill: var(--text-strong); font-size: 13px; font-weight: 600; }
 .os-flow-picture .stage text.ln { fill: var(--os-text-muted, var(--text-muted)); font-size: 11px; font-weight: 500; }
 .os-flow-picture .stage.off rect.box { stroke-dasharray: 5 5; }
 .os-flow-picture .stage.off text.nm { fill: var(--os-text-muted, var(--text-muted)); }
-.os-flow-picture .stage.off text.ln { fill: var(--os-text-muted, var(--text-muted)); }
 .os-flow-picture .stage[data-tap] { cursor: pointer; }
 
 /* THE ROUTE STRIP DIRECTS FLOW; IT IS NOT GEOGRAPHY (owner, 2026-09-17). It is
  * the trip's robot hue, because it says where THAT robot is sent — a third
  * colour would be a third thing to learn on a picture whose legend is two
- * robots. Dashed and thinner than a leg: a leg is what the robot DOES, the
- * strip is how it gets there, and the picture has to keep saying which is
- * which. */
-/* The route strip hangs under the card its trip arrives at: a dashed line in
-   the trip's robot colour, the chosen waypoints on it as filled dots, each
-   named on its own baseline in the column to the right. The type is .leg-lbl's
-   — 11/600 — because these read as the picture's labels and not as a legend,
-   and because the strip is sized in operator-flow.js against exactly that:
-   shrinking it here would fit more rows than layout reserved room for. */
+ * robots. Dashed and thin: a chevron is what the robot DOES, the strip is how
+ * it gets there, and the picture has to keep saying which is which.
+ *
+ * It hangs under the slot or card its trip arrives at: a dashed line in the
+ * trip's robot colour, the chosen waypoints on it as filled dots, each named
+ * on its own baseline in the column to the right. The type is 11/600, and the
+ * strip is sized in operator-flow.js against exactly that: shrinking it here
+ * would fit more rows than the layout reserved room for. */
 .os-flow-picture .lmroute .lmline { fill: none; stroke-width: 1.4; stroke-dasharray: 4 4; opacity: .75; }
 .os-flow-picture .lmroute.r1 .lmline { stroke: var(--robot-1); }
 .os-flow-picture .lmroute.r2 .lmline { stroke: var(--robot-2); }
@@ -173,8 +143,8 @@
    route too long for the frame is COUNTED in place rather than shortened. */
 .os-flow-picture .lmroute .lmmore { font-size: 11px; font-weight: 600; letter-spacing: .02em;
     fill: var(--os-text-muted, var(--text-muted)); }
-/* Whose trip it is, in the picture's muted token — the same one the row labels
-   and the station caption use. The colour says it too; a colour is not a label. */
+/* Whose trip it is, in the picture's muted token. The colour says it too; a
+   colour is not a label. */
 .os-flow-picture .lmroute .lmvia { font-size: 10px; fill: var(--os-text-dim, var(--text-muted)); }
 .os-flow-picture .lmroute.r1 .lmtip { fill: var(--robot-1); }
 .os-flow-picture .lmroute.r2 .lmtip { fill: var(--robot-2); }

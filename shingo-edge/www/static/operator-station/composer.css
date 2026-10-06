@@ -174,22 +174,25 @@ button.os-chip.part.free { font: inherit; font-size: 14px; background: none; }
  * carry the card's own text colour at the dim tier rather than the muted one. */
 .os-comp-preset .where { color: var(--os-text-dim); }
 
-.os-comp-stage { flex: 1; position: relative; min-height: 0; }
+.os-comp-stage { flex: 1; position: relative; min-height: 0; display: flex; flex-direction: column; }
 /* THE PICTURE ONLY — `> svg`, not `svg`. The popover is a child of the stage, so
  * a descendant selector here stretched every glyph inside it to width:100%: the
  * 26 px swap-mode glyph rendered 171 px wide, took the whole button, and squeezed
  * the name to zero. Four buttons showing a picture and no word, from one rule
  * that was only ever meant for the press. */
-.os-comp-stage > svg { width: 100%; height: 100%; display: block; }
-.os-comp-hint { position: absolute; left: 20px; top: 12px; color: var(--os-text-muted);
+/* THE PICTURE SCROLLS IN ITS OWN BOX, IT NEVER SCALES. drawPicture sizes the
+   svg to the picture's reported height at one unit to one pixel; the box
+   scrolls a taller one. The stage is a column: the hint takes its own band at
+   the top, and the scroll box is the in-flow sibling under it that owns the
+   rest of the height and clips what it scrolls. A box laid over the whole
+   stage (absolute, inset 0) covered the hint's band as well, so a scrolled
+   picture slid up over the hint. The panel stays positioned against the
+   stage. */
+.os-comp-scroll { flex: 1; min-height: 0; overflow: auto; }
+.os-comp-scroll > svg { display: block; }
+.os-comp-hint { flex: 0 0 auto; margin: 12px 20px 4px; color: var(--os-text-muted);
     font-size: 14px; pointer-events: none; max-width: 760px; }
 .os-comp-hint b { color: var(--os-text); font-weight: 500; }
-.os-comp-legend { position: absolute; right: 20px; top: 14px; display: flex; gap: 16px;
-    font-size: 12px; color: var(--os-text-muted); }
-.os-comp-legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px;
-    vertical-align: middle; margin-right: 6px; }
-.os-comp-legend i.r1 { background: var(--robot-1); }
-.os-comp-legend i.r2 { background: var(--robot-2); }
 
 /* ── bottom bar ────────────────────────────────────────────────────────── */
 .os-comp-bar { height: 84px; display: flex; align-items: center; gap: 16px; padding: 0 20px;
@@ -198,6 +201,8 @@ button.os-chip.part.free { font: inherit; font-size: 14px; background: none; }
 .os-comp-bar .l1 { font-size: 16px; font-weight: 600; }
 .os-comp-bar .l1.bad { color: var(--os-red); }
 .os-comp-bar .l2 { font-size: 13px; color: var(--os-text-muted); max-width: 620px; }
+.os-comp-bar .status[data-tap] { cursor: pointer; }
+.os-comp-bar .status[data-tap] .l1 { text-decoration: underline; }
 .os-comp-bar .os-btn-primary { min-width: 300px; min-height: 60px; font-size: 19px; }
 /* ── S5/S6 popover ─────────────────────────────────────────────────────── */
 /* 520, NOT 420 AND NOT 720 (owner, Amendment A 2026-09-16, corrected).

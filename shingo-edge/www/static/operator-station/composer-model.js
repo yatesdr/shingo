@@ -88,13 +88,13 @@ function fieldWord(state, field) {
 // says `Robot 1 supplies PLN_05`. The verb is what the operator needs — which
 // robot does the far trip — and the thing it carries is drawn on the card
 // below it, named by its part.
-// A CARD SAYS WHERE, NOT JUST WHO (owner, 2026-09-16). single_robot named
-// neither of its two parking spots — "One robot, parks and swaps" is the
-// choreography, which the Swaps chip beside it already carries — so the one
-// mode with BOTH an inbound and an outbound staging spot was the one mode that
-// named neither. It names them in the words the desktop's staging cell already
-// uses, `Inbound PLN_02 · Outbound —`, and falls back to the reference
-// sentence when the flow has not set either yet.
+// A ONE-ROBOT CARD SAYS WHAT THE ROBOT DOES (owner's pick, 2026-10-05).
+// single_robot named its two parking spots on the card, `Inbound PLN_02 ·
+// Outbound PLN_05`, while the picture drew no slot for either. The module
+// picture draws each spot as a slot under the card, named once there, so the
+// card carries the two moves — `Robot 1 moves in · Robot 1 clears old` — a
+// line for each spot the flow has set, and the reference sentence when it has
+// set neither.
 //
 // ONLY THE FIELDS THE MODE HAS, which is the correction this went through.
 // The first pass appended the outbound staging to two_robot and to
@@ -113,7 +113,7 @@ const CARDLINE = {
     two_robot_press_index: c => 'Robot 1 supplies ' + (c.paired || '?') + ' · Robot 2 indexes',
     two_robot: c => 'Robot 1 stages at ' + (c.staging || '?') + ' · Robot 2 pulls old',
     single_robot: c => ((c.staging || c.parkOld)
-        ? 'Inbound ' + (c.staging || '—') + ' · Outbound ' + (c.parkOld || '—')
+        ? [c.staging && 'Robot 1 moves in', c.parkOld && 'Robot 1 clears old'].filter(Boolean).join(' · ')
         : 'One robot, parks and swaps'),
     sequential: c => 'One robot, A/B flip' + (c.paired ? ' · with ' + c.paired : ''),
 };
@@ -1200,10 +1200,41 @@ function legFields(mode) {
 // THE BAR NO LONGER SAYS IT AT ALL (owner ruling R1, 2026-09-12) — a preview
 // cannot know how many AMRs the fleet will send. This answers what the
 // CHOREOGRAPHY uses, which is a fact about the flow and not about the fleet.
+// usesTwoRobots is whether any active cell's choreography runs Robot 2 — the
+// fact behind every "Robot 2" the flow says (the robots sentence, the dock's
+// outbound note, the picture's out marks and legend). One predicate, not one
+// per surface: a surface that guessed would eventually disagree with one that
+// derived.
+function usesTwoRobots(state) {
+    return activeCells(state).some(([, c]) => dockRobotsOf(c).out === 2);
+}
+
+// dockRobotsOf is ONE CELL'S answer to "which robot brings its new bin from
+// the dock, and which takes its old one back" — the cell's own choreography,
+// not the flow's. A flow can mix a single_robot cell with a two_robot one, and
+// the single cell still clears with Robot 1: asking the flow (usesTwoRobots)
+// for that cell's out robot drew its move to the dock in Robot 2's colour.
+//
+// The two-robot choreographies are the ones whose old bin leaves on Robot 2:
+// two_robot pulls it while Robot 1 stages the new one, a press index carries
+// it out after indexing (its LEGS row is Robot 2's index). Every other mode,
+// and every inbound trip, is Robot 1's. usesTwoRobots reads this, so the flow's
+// sentence and each cell's colour cannot disagree.
+function dockRobotsOf(c) {
+    const two = c.mode === 'two_robot_press_index' || c.mode === 'two_robot';
+    return { in: 1, out: two ? 2 : 1 };
+}
+
+// cellRobots is dockRobotsOf by position name, for the picture: null for a
+// position that is not in the flow.
+function cellRobots(state, node) {
+    const c = state.cells[node];
+    if (!c || !c.on || !c.mode) return null;
+    return dockRobotsOf(c);
+}
+
 function robotWords(state) {
-    const twoRobot = activeCells(state).some(([, c]) =>
-        c.mode === 'two_robot_press_index' || c.mode === 'two_robot');
-    return twoRobot ? 'Robot 1 and Robot 2' : 'Robot 1';
+    return usesTwoRobots(state) ? 'Robot 1 and Robot 2' : 'Robot 1';
 }
 
 function activeCells(state) {
@@ -1328,25 +1359,45 @@ function dockNotes(state) {
     const act = activeCells(state);
     const srcs = [...new Set(act.map(([, c]) => c.source || '—'))];
     const dsts = [...new Set(act.map(([, c]) => c.dest || '—'))];
-    const inTargets = act.map(([n, c]) =>
+    const inOf = ([n, c]) =>
         c.mode === 'two_robot_press_index' ? (c.paired || '?')
-            : c.mode === 'two_robot' ? (c.staging || '?') : n);
-    const outFrom = act.map(([n]) => n);
+            : c.mode === 'two_robot' ? (c.staging || '?') : n;
+    const outOf = ([n]) => n;
+    // EACH CELL'S ROBOT, not the flow's: a flow that mixes a one-robot cell
+    // with a two-robot one has Robot 1 clearing the first and Robot 2 the
+    // second, and the note names each robot with its own positions —
+    // `Outbound destination · Robot 1 ← PLN_01 · Robot 2 ← PLN_03`. A flow
+    // whose cells agree has one group, and the note reads as it always has.
+    const side = (dir, label, arrow, targetOf) => {
+        const byRobot = new Map();
+        for (const cell of act) {
+            const r = dockRobotsOf(cell[1])[dir];
+            if (!byRobot.has(r)) byRobot.set(r, []);
+            byRobot.get(r).push(targetOf(cell));
+        }
+        const groups = [...byRobot.keys()].sort().map(r => ({
+            robot: r, head: 'Robot ' + r + ' ' + arrow + ' ', targets: byRobot.get(r),
+        }));
+        return {
+            label: label,
+            groups: groups,
+            note: [label, ...groups.map(g => g.head + g.targets.join(', '))].join(' · '),
+            targets: act.map(targetOf),
+            // The side's one robot, or 0 when more than one robot uses it.
+            robot: groups.length > 1 ? 0 : (groups.length ? groups[0].robot : 1),
+        };
+    };
+    const inSide = side('in', 'Inbound source', '→', inOf);
+    const outSide = side('out', 'Outbound destination', '←', outOf);
     return {
-        in: {
+        in: Object.assign(inSide, {
             group: srcs.join(' · ') || '—',
-            note: act.length ? 'Inbound source · Robot 1 → ' + inTargets.join(', ')
-                : 'Inbound source',
             members: srcs.length === 1 ? membersOf(state, srcs[0]) : [],
-            targets: inTargets,
-        },
-        out: {
+        }),
+        out: Object.assign(outSide, {
             group: dsts.join(' · ') || '—',
-            note: act.length ? 'Outbound destination · Robot 2 ← ' + outFrom.join(', ')
-                : 'Outbound destination',
             members: dsts.length === 1 ? membersOf(state, dsts[0]) : [],
-            targets: outFrom,
-        },
+        }),
     };
 }
 
@@ -1968,7 +2019,7 @@ function advancedDefaults() { return clone(ADVANCED_DEFAULTS); }
 (function () {
     const api = {
         init, reduce, toCells, applyPreview,
-        legs, dockNotes, cardLines, pictureCells, bar,
+        legs, dockNotes, cellRobots, cardLines, pictureCells, bar,
         findings, findingShort,
         modeLabels, modeHelp, rowFields, rowColumns, fieldRequired, fieldLabel, shortPart, robotWords,
         partOffers, partAllowed, styleFacts,

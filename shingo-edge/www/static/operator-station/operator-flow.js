@@ -1,32 +1,50 @@
-// operator-flow.js — the read-only picture of the cell: the press positions in
-// their true relative arrangement, the running style's choreography drawn
-// between them, and the dock the bins come from and go to.
+// operator-flow.js — the read-only picture of the cell: one module per
+// position, laid out like that swap mode's glyph, with the dock the bins come
+// from and go to.
 //
-// A PORT OF renderPress from the flow-composer reference
-// (REFERENCE-press400-flow-composer-HK-2026-09-03.html, SPEC-composer-ux §2 S4)
-// minus every control: no taps on positions, no panel, no bar, no strip. The
-// composer (U8) will grow the controls back onto this drawing; this file is
-// what every plant sees first.
+// THE MODULE PICTURE. The drawing used to place position cards on a to-scale
+// projection of the cell (schematic when that failed), hang the staging lanes
+// in a band above the dock, and draw the choreography as lines between cards.
+// It was replaced on 2026-10-05 by the locked module reference
+// (REFERENCE-module-picture-2026-10-05.html; sections 1, 2, 4 and 5 are the
+// builder's spec, and the numbers table at its foot is the sizes this file
+// draws from). One module per position in that swap mode's glyph: the press
+// card on top, its staging slots under it, an index pair as one module with
+// the on-deck position inside it, a sequential A/B pair as one two-card
+// module. One move is one pair of slender chevrons inside the module — no
+// lines cross between modules, and the chevrons carry no label (owner pick 1):
+// the move sentences sit on the position card, and each staging name appears
+// once, on its slot.
+//
+// COLOUR IS THE ROBOT, NOT THE DIRECTION. Teal is Robot 1, indigo is Robot 2 —
+// on the chevrons, the in/out marks, the dock notes and the words "Robot 1" /
+// "Robot 2" on the cards. Which robot makes a move is read from the model's
+// legs and each cell's own dock robots (legRobot, dockRobot), never written into a template,
+// and the legend — drawn inside the picture — lists only the robots the flow
+// uses.
+//
+// NOTHING IS MEASURED TO PLACE A BOX. Every size is a constant from the
+// reference's numbers table, modules sit on a grid that wraps at the frame's
+// width, and a long name is cut in the middle — both ends kept, the full name
+// the tooltip — so nothing can overlap or run off its card at any width. What
+// the frame's width decides is the wrap; what it does NOT decide is the
+// height.
+//
+// THE PICTURE REPORTS ITS OWN HEIGHT. The layout consumes the frame's width
+// and nothing else; the height comes out of the packing (rows of fixed-size
+// modules over the dock band) and is written back to the caller through
+// opts.height. The desktop sizes its frame from it; the station's flow panel
+// scrolls instead of scaling. Nothing in this file reads the frame's height.
 //
 // DATA COMES FROM THE STATION VIEW, and only from there: view.cell (positions
-// with their scene coordinates, roles and the running claim on each — built
-// in Go by domain.BuildCellPicture, where the node→map join rule lives),
-// view.current_style, view.station. Nothing here invents a position, a
-// partner, and no word for what a bin is: that came from view.cell.bin_word
-// until owner ruling R2 (2026-09-12) removed the word and the field with it.
-//
-// ONLY THE PRESS IS DRAWN. Lines exist only between press positions; the
-// supermarket is a name in the dock strip, never a box. Structure is the
-// substrate ramp (--os-sub-*); the two robot hues (--os-r1/--os-r2) colour
-// the legs, the in/out glyphs and the dock notes, and nothing static.
-//
-// THE PICTURE IS NOT ROTATED WITH THE PLANT. The shared projector's
-// rotate90 is decided over the whole scene, and both plants are portrait —
-// which would turn the press's two rows into two columns. This is a
-// schematic of one cell, not a map: world X runs along the screen, the line
-// side faces the operator, exactly as the reference drew it.
+// with their scene coordinates, kinds and the running claim on each — built in
+// Go by domain.BuildCellPicture), view.current_style, view.station. The move
+// sentences and the dock notes come from composer-model.js — this file
+// computes no sentence of its own (see sentencesFromView below). A staging
+// node that is a position of the cell never gets a slot: it is already drawn
+// as its own card, and the slot would say its name twice.
 
-import { makeProjector, isCoord } from '/static/shared/scene-geom.js';
+import { isCoord } from '/static/shared/scene-geom.js';
 import { el } from './operator-util.js';
 // The QUOTE-SAFE escape, not operator-util's. This file builds attributes by
 // concatenation — data-pos, data-tap, transform — and the base's escaper
@@ -34,122 +52,582 @@ import { el } from './operator-util.js';
 import { esc } from '/static/shared/esc.js';
 import { getView } from './operator-state.js';
 
-// Geometry of the drawing, in viewBox units (the reference's numbers).
-export const CARD_W = 188, CARD_H = 92;
-const GAP = 12;                 // the least daylight two cards may have
-const PREFERRED_SCALE = 120;    // px per metre, what the reference used at Press 400
-// ── the frame ─────────────────────────────────────────────────────────────
-//
-// THE PICTURE IS DRAWN 1:1 IN THE FRAME IT IS GIVEN, and the caller sets the
-// viewBox to the same numbers. That is the whole reason the frame is a
-// parameter and not six constants: a card is CARD_W pixels wide on screen only
-// when the viewBox matches the element's real width, and the moment the two
-// disagree preserveAspectRatio silently scales the drawing — text included.
-//
-// The station is 1280x560 and always was; every constant below was measured in
-// that frame and STATION_FRAME keeps it the default, so passing no frame
-// renders exactly what the kiosk rendered before. The desktop composer's main
-// column is 1084 px wide at the spec's 1440 and its picture frame is 430 tall,
-// and it says so rather than letting the browser fit a 1280x560 drawing into
-// it at 0.59 — which is what it was doing, with 9 px card titles to show for it.
+// ── the numbers table (the module reference, 2026-10-05) ───────────────────
+
+export const CARD_W = 188, CARD_H = 92;   // position card: today's, unchanged
+const SLOT_W = 116, SLOT_H = 44;          // staging slot: fixed width, name truncates
+const DECK_H = 56;                        // the on-deck position inside an index module
+const BAR = 12;                           // room for the line-side bar above the card
+const GAP = 38;                           // card → slot row; one move lives here
+const M_W = 2 * SLOT_W + 12;              // 244: two slots and the gap between them
+const INSET = (M_W - CARD_W) / 2;         // 28: the card is centred; stubs live in the inset
+const GX = 20, GY = 28;                   // between modules, between rows
+const FIT = 20;                           // the picture's own margin
+const DOCK_BAND = 74;                     // today's dock, unchanged
+const CHIP_H = 24;                        // an unused-staging chip's height
+
+// STATION_FRAME is the picture's rest width and the frame the station panel
+// is built around. The height is the panel's scroll floor, not a layout input.
 export const STATION_FRAME = { w: 1280, h: 560 };
 
-const GUTTER = 150;     // where the dock strip starts and the row labels sit
-const FIT_INSET = 20;   // the picture's own margins — the cards may reach these
+// ── truncation ─────────────────────────────────────────────────────────────
+//
+// fit cuts by a character budget rather than by measuring: node names are
+// capitals, digits and underscores, which run wide, so they get their own
+// budget. A node name keeps BOTH ends — the tail is what tells
+// …IN_01 from …OUT_1 apart — and the full name goes back as the tooltip.
 
-// DOCK_BAND is what the dock needs BELOW its rule: four text rows whose last
-// baseline is at +64 (the routing group's member line), plus room for its
-// descenders. The dock is placed at whichever is higher up — the station
-// frame's proportion, or the foot of the frame less this — so no frame height
-// can clip it.
-//
-// WHY NOT PURELY FROM THE FOOT. At the station's 560 the proportion and
-// `h - 90` are the same number, 470, and the ruling asked for the second
-// spelling. But the cards are a FIXED 92 tall and do not scale with the frame,
-// and at the desktop's 304 a dock pinned 90 above the foot leaves 97 px for
-// two rows of them — the picture drops out of true spacing into the schematic
-// and says so under itself. The frame gives way to the dock only as far as the
-// dock actually needs, which at 304 is 234 rather than 214, and the cards keep
-// their band. Measured, not reasoned: see the report's V1 note.
-const DOCK_BAND = 74;
-const CAPTION_ROOM = 38;  // the station-name line under the last row of cards
-
-// ── the staging band ────────────────────────────────────────────────────────
-//
-// A STAGING CARD IS SHORTER THAN A POSITION, and that is the whole reason the
-// band fits. At the station's 560 frame the space between the caption under the
-// last row of cards and the dock's rule is about 77 units; a 92-tall position
-// card does not go in it and a 48-tall one does, with room for the rule to stay
-// where it is.
-//
-// It is also the right shape: a position card carries a name, two choreography
-// lines and a part chip, and a staging card carries a name and who it parks
-// for. Drawing it at a position's height would be claiming it is one.
-//
-// LAID IN ITS OWN BAND, NOT PLACED TO SCALE (SYNTH §3 B3). This is the RULE and
-// not a fallback: placeToScale takes the largest scale at which no pair of
-// cards collides, so one staging lane 40 m from the cell drives that scale to
-// nothing, returns null, and flips the whole cell to the schematic — P400's
-// 1.772 m spacing with it. The band is what keeps a far lane from moving a
-// near cell.
-export const STAGING_W = 150, STAGING_H = 48;
-const STAGING_GAP = 14;   // between two cards in the band
-const STAGING_LIFT = 14;  // between the band's floor and the dock's rule
-
-// frameOf derives one frame's geometry. The horizontals are INSETS from the
-// edges, because a gutter is a fixed amount of room for a label and does not
-// want to shrink with the frame; the verticals are PROPORTIONS of the station
-// frame's height, because they divide a fixed budget between two rows of cards
-// and a dock strip. ROW_PITCH keeps a card's worth of daylight whatever the
-// proportion works out to, so the schematic fallback cannot be squeezed into a
-// collision by a short frame.
-function frameOf(f) {
-    const w = (f && f.w) || STATION_FRAME.w;
-    const h = (f && f.h) || STATION_FRAME.h;
-    const k = h / STATION_FRAME.h;
-    return {
-        w: w, h: h,
-        LEFT: GUTTER, RIGHT: w - GUTTER,
-        FIT_LEFT: FIT_INSET, FIT_RIGHT: w - FIT_INSET,
-        CENTER_X: w / 2, CENTER_Y: Math.round(246 * k),
-        ROW_BAND: Math.round(220 * k),
-        ROW_PITCH: Math.max(CARD_H + GAP, Math.round(138 * k)),
-        DOCK_Y: Math.min(Math.round(470 * k), h - DOCK_BAND),
-    };
+function fit(text, px, size, weight, caps) {
+    weight = weight || 600;
+    const per = size * (caps ? 0.64 : weight >= 600 ? 0.58 : 0.52);
+    const n = Math.max(3, Math.floor(px / per));
+    if (text.length <= n) return [String(text), null];
+    if (caps) {
+        const head = Math.floor(n / 2), tail = n - 1 - head;
+        return [text.slice(0, head) + '…' + text.slice(text.length - tail), text];
+    }
+    return [text.slice(0, n - 1) + '…', text];
 }
 
-// THE SENTENCES COME FROM THE MODEL. ALWAYS.
+// txt draws one fitted text element. 'ln' lines name each robot in that
+// robot's colour — a tspan around the words, never a second text element, so
+// the sentence stays one sentence to a screen reader and to the tests that
+// read these cards back as text. Card names and lines carry NO inline
+// tooltip — theirs is the card group's (nameTip), and a reader stripping tags
+// must not see a cut name twice.
+function txt(cls, x, y, text, px, size, weight, anchor) {
+    const shown = fit(text, px, size, weight, cls === 'nm');
+    let body = esc(shown[0]);
+    if (cls === 'ln') {
+        for (let r = 1; r <= 2; r++) {
+            body = body.split('Robot ' + r).join('<tspan class="rw r' + r + '">Robot ' + r + '</tspan>');
+        }
+    }
+    const a = anchor ? ' text-anchor="' + anchor + '"' : '';
+    return '<text class="' + cls + '" x="' + x + '" y="' + y + '"' + a + '>' + body + '</text>';
+}
+
+// ── the glyphs ─────────────────────────────────────────────────────────────
+
+const IN = '<path d="M6 0v9M2 5l4 4 4-4M0 12h12" fill="none" stroke="currentColor" stroke-width="1.6"/>';
+const OUT = '<path d="M6 12V3M2 7l4-4 4 4M0 14h12" fill="none" stroke="currentColor" stroke-width="1.6"/>';
+
+// move is one pair of slender chevrons centred in the gap a→b, rotated to the
+// segment's angle. The pair, not an arrowhead: two open strokes read as "this
+// way" from across a cell, where a filled triangle reads as decoration.
+// Coordinates are rounded to a tenth — the markup is read back as text by the
+// pins, and a float tail is a diff nobody can read for no accuracy anyone can
+// see.
+function move(a, b, robot) {
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const L = Math.hypot(dx, dy);
+    const ux = dx / L, uy = dy / L;
+    const th = Math.atan2(dy, dx) * 180 / Math.PI;
+    const mx = (a[0] + b[0]) / 2 + ux * 2.5, my = (a[1] + b[1]) / 2 + uy * 2.5;
+    let out = '';
+    for (const d of [-3.6, 3.6]) {
+        out += '<path class="sc r' + robot + '" d="M-5 -4.2L0 0L-5 4.2" transform="translate(' +
+            (mx + ux * d).toFixed(1) + ' ' + (my + uy * d).toFixed(1) + ') rotate(' + th.toFixed(1) + ')"/>';
+    }
+    return '<g class="mv">' + out + '</g>';
+}
+
+function bar(x, y, w, dim) {
+    return '<path class="press' + (dim ? ' dim' : '') + '" d="M' + (x + 26) + ' ' + (y + 5) + 'H' + (x + w - 26) + '"/>';
+}
+
+// ── the cards ──────────────────────────────────────────────────────────────
 //
-// This file used to carry its own MODES table and its own cardLine(), a second
-// copy of composer-model.js's MODES and CARDLINE — so the read-only picture
-// (U4, the style chip's panel) and the composer drew the same press with two
-// authors, and the mode-word drift test only regexed one of them. Same story
-// for dockNotes: two implementations of the same two sentences, one reading a
-// CellPicture and one reading model state.
+// All coordinates are ABSOLUTE: the module wrapper carries no transform of its
+// own, and every card, slot and chevron is placed in picture coordinates
+// directly. The pins read these transforms back as boxes, and a card transform
+// that were relative to its module would read three cards on top of each
+// other.
+
+// io draws the in/out corner marks. Which robot each mark belongs to is the
+// class, not an inline style — the rules in flow-picture.css name the shared
+// token, because both surfaces that draw this picture load it.
+function io(kind, robot, x, y) {
+    return '<g class="io r' + robot + '" transform="translate(' + x + ',' + y + ')">' +
+        (kind === 'in' ? IN : OUT) + '<text x="16" y="11" class="iot">' + kind + '</text></g>';
+}
+
+// nameTip is the group-level tooltip for a card whose name was cut: the full
+// name, on the card's own group — hovering anywhere on the card names it. It
+// sits before the rect so a name reader stripping tags sees the name alone.
+function nameTip(name, px, size) {
+    const shown = fit(name, px, size, 600, true);
+    return shown[1] !== null ? '<title>' + esc(shown[1]) + '</title>' : '';
+}
+
+function posCard(x, y, name, lines, part, robots, on, sel, bad, showIo, tap) {
+    const nmPx = CARD_W - 28 - (on && showIo ? 80 : 0);
+    const cls = 'node ' + (on ? 'on' : 'off') + (sel ? ' sel' : '') + (bad ? ' bad' : '');
+    let s = '<g class="' + cls + '" data-pos="' + esc(name) + '"' + (tap || '') +
+        ' transform="translate(' + x + ',' + y + ')">';
+    s += nameTip(name, nmPx, 15);
+    s += '<rect class="box" width="' + CARD_W + '" height="' + CARD_H + '" rx="12"/>';
+    s += txt('nm', 14, 26, name, nmPx, 15);
+    (lines || []).forEach((l, i) => { s += txt('ln', 14, 43 + i * 14, l, CARD_W - 28, 12, 500); });
+    if (on && showIo) {
+        s += io('in', robots.in, CARD_W - 80, 10) + io('out', robots.out, CARD_W - 46, 10);
+    }
+    if (bad) {
+        s += '<rect class="needbg" x="12" y="64" width="' + (CARD_W - 24) + '" height="20" rx="5"/>' +
+            txt('needlbl', CARD_W / 2, 78, bad, CARD_W - 40, 11, 600, 'middle');
+    } else if (part) {
+        s += '<rect class="partbg" x="12" y="64" width="' + (CARD_W - 24) + '" height="20" rx="5"/>' +
+            txt('partlbl', CARD_W / 2, 78, part, CARD_W - 40, 11, 600, 'middle');
+    }
+    return s + '</g>';
+}
+
+function deckCard(x, y, name, line, inRobot, sel, bad, tap) {
+    let s = '<g class="node on deck' + (sel ? ' sel' : '') + (bad ? ' bad' : '') +
+        '" data-pos="' + esc(name) + '"' + (tap || '') +
+        ' transform="translate(' + x + ',' + y + ')">';
+    s += nameTip(name, CARD_W - 28 - 44, 15);
+    s += '<rect class="box" width="' + CARD_W + '" height="' + DECK_H + '" rx="12"/>';
+    s += txt('nm', 14, 24, name, CARD_W - 28 - 44, 15);
+    s += txt('ln', 14, 42, line, CARD_W - 28, 12, 500);
+    s += io('in', inRobot, CARD_W - 46, 10);
+    return s + '</g>';
+}
+
+// slot is a staging place inside its module: fixed width, the lane name cut to
+// fit, and the field it is as the caption. A SHARED slot — one two flows use —
+// keeps its caption to its first word and carries a "shared" tag on the
+// caption row, so two modules can draw the same lane without either lying
+// about who it parks for. A TAP GOES TO THE POSITION THIS LANE SERVES, which
+// is the thing an operator can change — there is no panel for a lane itself.
+function slotCard(x, y, name, caption, shared, sel, tap) {
+    let s = '<g class="stage on' + (sel ? ' sel' : '') +
+        '" data-staging="' + esc(name) + '"' + (tap || '') +
+        ' transform="translate(' + x + ',' + y + ')">';
+    s += nameTip(name, SLOT_W - 24, 13);
+    s += '<rect class="box" width="' + SLOT_W + '" height="' + SLOT_H + '" rx="10"/>';
+    s += txt('nm', 12, 19, name, SLOT_W - 24, 13);
+    if (shared) {
+        s += txt('ln', 12, 35, caption.split(' ')[0], SLOT_W - 22 - 50, 11, 500);
+        s += '<rect class="tagbg" x="' + (SLOT_W - 56) + '" y="24.5" width="46" height="14" rx="7"/>' +
+            '<text class="tag" x="' + (SLOT_W - 33) + '" y="35" text-anchor="middle">shared</text>';
+    } else {
+        s += txt('ln', 12, 35, caption, SLOT_W - 22, 11, 500);
+    }
+    return s + '</g>';
+}
+
+// ── the route strip (owner, 2026-09-17 — kept as it was) ───────────────────
 //
-// sentencesFromView closes it by going the other way: instead of this file
-// re-deriving what the model already knows, the read-only caller builds a
-// model state FROM THE VIEW and asks the model. The composer passes its own
-// live state's sentences through opts. One author either way.
+// "THE POINT OF THE LMs ISN'T TO REPRESENT THEM TO SCALE, IT'S TO DIRECT FLOW."
+// It hangs under the slot or card its trip arrives at, in that trip's robot's
+// colour, rising into the bottom edge with the chevron pointing in: the
+// ordered waypoints an engineer chose, numbered in driving order and read
+// BOTTOM TO TOP — the first waypoint is the furthest out, the last is the one
+// the robot arrives from. Evenly spaced is
+// the whole of "not to scale", and more than fits is COUNTED, not dropped: the
+// top row becomes "+N" rather than the route being silently shortened.
+
+const STRIP_SLOTS = 4;     // waypoint rows the strip draws; the rest are counted
+const STRIP_HEAD = 28;     // the slot's bottom edge down to the top row
+const STRIP_STEP = 21;     // one row to the next
+const STRIP_TAIL = 18;     // the bottom row down to the line's foot
+const STRIP_DX = 11;       // the label column, right of the line
+
+function stripRoom(n) { return STRIP_HEAD + (n - 1) * STRIP_STEP + STRIP_TAIL; }
+
+// oneStrip at x, hanging from top. Names beyond STRIP_SLOTS are COUNTED, not
+// dropped: the top waypoint row gives its place to the count ('+N').
+function oneStrip(route, x, top, robot) {
+    const rows = Math.min(STRIP_SLOTS, route.length);
+    const shown = route.slice(0, rows - (route.length > rows ? 1 : 0));
+    const more = route.length - shown.length;
+    const foot = top + STRIP_HEAD + (rows - 1) * STRIP_STEP + STRIP_TAIL;
+    const lx = x + STRIP_DX;
+    let out = '<g class="lmroute r' + robot + '">' +
+        '<path class="lmline" d="M' + x + ' ' + foot + 'V' + (top + 4) + '"/>' +
+        '<path class="lmtip" d="M-5 -4.4L5.5 0L-5 4.4Z" transform="translate(' + x + ',' + (top + 14) + ') rotate(-90)"/>';
+    shown.forEach((name, k) => {
+        const y = top + STRIP_HEAD + (rows - 1 - k) * STRIP_STEP;   // driving order: first waypoint lowest
+        // The number stays whole; the name is cut in the middle like every
+        // node name, the full name the label's own tooltip.
+        const num = (k + 1) + ' · ';
+        const shown = fit(name, SLOT_W - 34 - num.length * 6.4, 11, 600, true);
+        out += '<circle class="lmdot" cx="' + x + '" cy="' + y + '" r="4"/>' +
+            '<text class="lmlbl" x="' + lx + '" y="' + (y + 4) + '">' +
+            (shown[1] !== null ? '<title>' + esc(shown[1]) + '</title>' : '') + esc(num + shown[0]) + '</text>';
+    });
+    if (more > 0) {
+        out += '<text class="lmmore" x="' + lx + '" y="' + (top + STRIP_HEAD + 4) + '">+' + more + '</text>';
+    }
+    out += '<text class="lmvia" x="' + lx + '" y="' + (foot + 2) + '">Robot ' + robot + ' via</text></g>';
+    return out;
+}
+
+// ── building the modules ───────────────────────────────────────────────────
 //
-// The view's claims are readable by the model as they stand: CellClaim's json
-// tags are the claim's own field names, which is what init() reads.
-// sentencesFromModel is the opts.sentences block, shaped once. Both editing
-// surfaces built this literal themselves — the same six fields, the same
-// joins — which is the copy one layer up from the one this file just lost.
+// modulesOf maps the cell onto module descriptors — which positions group
+// into which module, and what orders them. It reads no sentences, so
+// pictureRows can ask it for the row words without drawing anything.
+//
+// THE PAIR IS ONE MODULE. A press-index position and its unclaimed partner
+// draw as one module, the on-deck card inside it, so layout cannot pull the
+// pair apart. A partner that runs its own claim keeps its own module and the
+// press draws without a deck — the deck slot would print that position twice,
+// and the card's own words ("Robot 1 supplies PLN_01") still say the pairing.
+// A sequential A/B pair is one two-card module built from the first claimed
+// position whose partner is another claimed sequential position.
+
+function modulesOf(cell) {
+    const positions = (cell && cell.positions) || [];
+    const byName = {};
+    positions.forEach(p => { byName[p.core_node_name] = p; });
+    const claimed = positions.filter(p => p.claim && p.claim.swap_mode);
+    const mods = [];
+    const deckOf = {};   // deck position name → the press that draws it
+    for (const p of claimed) {
+        if (p.claim.swap_mode !== 'two_robot_press_index') continue;
+        const d = p.claim.paired_core_node;
+        const dp = d && byName[d];
+        if (dp && !(dp.claim && dp.claim.swap_mode) && !deckOf[d]) deckOf[d] = p.core_node_name;
+    }
+    const seqUsed = new Set();
+    for (const p of claimed) {
+        if (p.claim.swap_mode !== 'sequential') continue;
+        const q = byName[p.claim.paired_core_node];
+        if (q && q.claim && q.claim.swap_mode === 'sequential' &&
+            !seqUsed.has(p.core_node_name) && !seqUsed.has(q.core_node_name)) {
+            seqUsed.add(p.core_node_name);
+            seqUsed.add(q.core_node_name);
+            mods.push({ kind: 'seq', a: p.core_node_name, b: q.core_node_name, names: [p.core_node_name, q.core_node_name] });
+        }
+    }
+    for (const p of claimed) {
+        const n = p.core_node_name, m = p.claim.swap_mode;
+        if (seqUsed.has(n)) continue;
+        if (m === 'two_robot_press_index') mods.push({ kind: 'index', name: n, names: [n] });
+        else if (m === 'two_robot') mods.push({ kind: 'two', name: n, names: [n] });
+        else if (m === 'single_robot') mods.push({ kind: 'single', name: n, names: [n] });
+        else mods.push({ kind: 'free', name: n, names: [n], on: true });   // a legacy mode word: a card, not a crash
+    }
+    for (const p of positions) {
+        const n = p.core_node_name;
+        if (p.claim && p.claim.swap_mode) continue;
+        if (deckOf[n]) continue;   // drawn inside its press's module
+        mods.push({ kind: 'free', name: n, names: [n] });
+    }
+    for (const mod of mods) {
+        if (mod.kind !== 'index') continue;
+        for (const d of Object.keys(deckOf)) {
+            if (deckOf[d] === mod.name) { mod.deck = d; mod.names.push(d); }
+        }
+    }
+    // ORDER: line-side modules left to right by world X when the cell has
+    // coordinates, by sequence when it does not; then the back positions that
+    // are not inside a module, in the same order among themselves. Where the
+    // plant's handedness mirrors the picture's, the row mirrors with it — the
+    // order is what the operator walks, not the distance.
+    //
+    // LINE-SIDE IS WHERE THE FLOW WORKS: every module a claim covers, in
+    // whatever row it stands — a running index press in the back row is
+    // line-side, and drawing it after idle cards would swap front and back.
+    // An unclaimed front-row card is line-side too. What goes after is a
+    // position in pictureRows' back row (world Y with coordinates, Kind
+    // without — never the grid) that no claim covers and no other module
+    // draws: a back-row staging position stands alone at the end, while an
+    // on-deck card or the B of an A/B pair stays inside its module.
+    const coords = positions.length > 0 && positions.every(p => isCoord(p.x));
+    const rows = pictureRows(cell);
+    const back = mod => mod.names.every(n => rows[n] === 'back' &&
+        !(byName[n].claim && byName[n].claim.swap_mode)) ? 1 : 0;
+    const key = mod => {
+        const p = byName[mod.names[0]];
+        if (coords && isCoord(p.x)) return p.x;
+        return p.sequence || 0;
+    };
+    mods.sort((a, b) => back(a) - back(b) || key(a) - key(b) ||
+        String(a.names[0]).localeCompare(String(b.names[0])));
+    return { mods, byName };
+}
+
+// moduleOf names every position drawn in the same module as `name` — the set
+// a selection of `name` outlines (drawModule's `sel`). A caller that has to
+// know whether a position belongs to the selection asks this rather than
+// re-deriving the pairing rules above. [] when no module draws the name.
+export function moduleOf(cell, name) {
+    const m = modulesOf(cell).mods.find(mod => mod.names.indexOf(name) >= 0);
+    return m ? m.names.slice() : [];
+}
+
+// stagingNamed is the staging nodes one claim puts to use: its inbound and
+// outbound staging, whatever the mode — a press index draws no slot for its
+// inbound staging, but the staged tooling changeover reads it. The one field
+// left out is a two-robot claim's outbound staging, which flowspec forbids for
+// that mode: Robot 2 takes the old bin straight to the dock, so the node is
+// named but not used. Both stagingUse and the unused-staging line read this,
+// so "shared" and "not used by this flow" cannot disagree about a node.
+function stagingNamed(c) {
+    if (!c || !c.swap_mode) return [];
+    const out = c.swap_mode === 'two_robot' ? null : c.outbound_staging;
+    return [c.inbound_staging, out].filter(Boolean);
+}
+
+// stagingUse counts how many claimed positions name a staging node — a node
+// two claims name is drawn in both their modules, each marked shared. A
+// two-robot claim's outbound staging is not counted: its module draws no slot
+// for it, so it cannot make another module's slot shared.
+function stagingUse(cell) {
+    const use = {};
+    for (const p of ((cell && cell.positions) || [])) {
+        for (const f of stagingNamed(p.claim)) use[f] = (use[f] || 0) + 1;
+    }
+    return use;
+}
+
+// ── drawing the modules ────────────────────────────────────────────────────
+//
+// drawModule renders one descriptor at its absolute origin and returns its
+// height. The templates are the reference's five, with the data the view
+// carries: which staging places get slots (never one that is a position of
+// the cell — it is already a card), which moves get chevrons, what the card
+// reads.
+
+// The card's lines: the model's own words, from its one card-line table
+// (composer-model.js CARDLINE) for every mode. No move carries a label.
+function cardLinesFor(pos, sentences) {
+    return ((sentences.cardLines && sentences.cardLines[pos.core_node_name]) || []).slice();
+}
+
+// WHICH ROBOT MAKES A MOVE IS THE MODEL'S, never this file's. A move that
+// is a leg — the new bin up out of its staging lane, the index up into the
+// press — takes that leg's robot; a move to or from the dock takes THAT
+// CELL'S robot for that direction (the model's cellRobots), never the
+// flow's: a flow mixing a one-robot cell with a two-robot one clears the
+// first with Robot 1 and the second with Robot 2. A template says where a
+// move sits; it never says who makes it.
+function legRobot(sentences, pos, kind, fallback) {
+    for (const L of (sentences.legs || [])) {
+        if (L.kind !== kind) continue;
+        if (L.from !== pos && L.to !== pos) continue;
+        if (L.robot) return L.robot;
+    }
+    return fallback;
+}
+
+function dockRobot(sentences, pos, dir) {
+    const r = (sentences.robots || {})[pos];
+    if (r && r[dir]) return r[dir];
+    const d = sentences.dock || {};
+    return (dir === 'in' ? d.inRobot : d.outRobot) || 1;
+}
+
+function drawModule(mod, at, ctx) {
+    const mx = at.x, my = at.y;
+    const cx = mx + INSET, cy = my + BAR;
+    const sy = cy + CARD_H + GAP;
+    const findings = ctx.findings;
+    const s = [];
+    // A SELECTION IS THE MODULE'S: selecting any position in it outlines
+    // every card and slot the module draws, and nothing else changes.
+    const sel = !!ctx.sel && mod.names.indexOf(ctx.sel) >= 0;
+    // A card already names its position (data-pos); the tap mark is all an
+    // editable picture adds. EVERY card takes it, a dashed one included: on a
+    // new part every card is dashed, and a tap is how a position joins.
+    const tap = () => ctx.editable ? ' data-tap="pos"' : '';
+    let h;
+
+    if (mod.kind === 'free') {
+        const pos = ctx.byName[mod.name];
+        const on = !!(mod.on || (pos && pos.claim));
+        s.push(bar(cx, my, CARD_W, !on));
+        s.push(posCard(cx, cy, mod.name, cardLinesFor(pos, ctx.sentences),
+            null, null, on, sel, findings[mod.name], false,
+            tap()));
+        // A POSITION THAT IS ANOTHER'S STAGING carries that trip's key route
+        // under its own card: the move leg arriving from here is the trip, and
+        // the leg brings its robot and its waypoints with it.
+        const arrive = (ctx.sentences.legs || []).find(L =>
+            L.kind === 'move' && L.from === mod.name && L.to !== mod.name && (L.keyRoute || []).length);
+        let fh = cy + CARD_H;
+        if (arrive) {
+            s.push(oneStrip(arrive.keyRoute, cx + 22, cy + CARD_H, arrive.robot || dockRobot(ctx.sentences, arrive.to, 'in')));
+            fh += stripRoom(Math.min(arrive.keyRoute.length, STRIP_SLOTS)) + 8;
+        }
+        return { svg: s.join(''), w: M_W, h: fh };
+    }
+
+    if (mod.kind === 'seq') {
+        const a = ctx.byName[mod.a], b = ctx.byName[mod.b];
+        const inR = dockRobot(ctx.sentences, mod.b, 'in'), outR = dockRobot(ctx.sentences, mod.b, 'out');
+        const w = 2 * M_W + GX;
+        const ax = mx + Math.floor((w - (2 * CARD_W + 16)) / 2);
+        const bx = ax + CARD_W + 16;
+        s.push('<path class="press" d="M' + (ax + 26) + ' ' + (my + 5) + 'H' + (bx + CARD_W - 26) + '"/>');
+        s.push(posCard(ax, cy, a.core_node_name, cardLinesFor(a, ctx.sentences),
+            a.claim && a.claim.payload_code, null, true, sel,
+            findings[mod.a], false, tap()));
+        s.push(posCard(bx, cy, b.core_node_name, cardLinesFor(b, ctx.sentences),
+            b.claim && b.claim.payload_code, { in: inR, out: outR }, true, sel,
+            findings[mod.b], true, tap()));
+        s.push(move([bx + CARD_W / 2, cy + CARD_H + GAP], [bx + CARD_W / 2, cy + CARD_H], inR)); // B pulls the finished part up from A
+        s.push(move([bx + CARD_W, cy + 46], [bx + CARD_W + INSET, cy + 46], outR));            // it leaves B for the dock
+        return { svg: s.join(''), w: w, h: cy + CARD_H + GAP };
+    }
+
+    const pos = ctx.byName[mod.name];
+    const c = pos.claim;
+    const part = c.payload_code || null;
+    const lines = cardLinesFor(pos, ctx.sentences);
+
+    if (mod.kind === 'index') {
+        const outRobot = dockRobot(ctx.sentences, mod.name, 'out');
+        const deckIn = dockRobot(ctx.sentences, mod.name, 'in');
+        const indexRobot = legRobot(ctx.sentences, mod.name, 'index', outRobot);
+        s.push(bar(cx, my, CARD_W));
+        s.push(posCard(cx, cy, mod.name, lines, part, { in: indexRobot, out: outRobot }, true, sel,
+            findings[mod.name], true, tap()));
+        let hRun = cy + CARD_H;
+        if (mod.deck) {
+            const deckLines = (ctx.sentences.cardLines && ctx.sentences.cardLines[mod.deck]) || [];
+            s.push(deckCard(cx, sy, mod.deck, deckLines[0] || '', deckIn, sel,
+                findings[mod.deck], tap()));
+            s.push(move([mx, sy + DECK_H / 2], [cx, sy + DECK_H / 2], deckIn));       // next bin in, behind the one on deck
+            s.push(move([mx + M_W / 2, sy], [mx + M_W / 2, cy + CARD_H], indexRobot)); // index up into the press
+            hRun = sy + DECK_H;
+        }
+        s.push(move([cx + CARD_W, cy + 46], [mx + M_W, cy + 46], outRobot)); // old bin out, to the dock
+        return { svg: s.join(''), w: M_W, h: hRun };
+    }
+
+    // single_robot and two_robot: the swap module — press card over its
+    // staging slot row, the moves as chevrons in the gap between them. A slot
+    // is drawn only for a staging place that is NOT itself a position of the
+    // cell; a position parks on its own card, drawn elsewhere, and a slot
+    // here would say its name twice. A TWO-ROBOT SWAP HAS NO OUTBOUND SLOT:
+    // Robot 2 takes the old bin straight to the dock (the out-stub drawn
+    // below), so an outbound staging its claim happens to name is not a place
+    // this choreography parks, and a slot for it would draw a trip it never
+    // makes.
+    const inName = c.inbound_staging && !ctx.positionNames.has(c.inbound_staging) ? c.inbound_staging : null;
+    const outName = mod.kind !== 'two' && c.outbound_staging && !ctx.positionNames.has(c.outbound_staging)
+        ? c.outbound_staging : null;
+    const outRobot = dockRobot(ctx.sentences, mod.name, 'out');
+    const inRobot = legRobot(ctx.sentences, mod.name, 'move', dockRobot(ctx.sentences, mod.name, 'in'));
+    s.push(bar(cx, my, CARD_W));
+    s.push(posCard(cx, cy, mod.name, lines, part, { in: inRobot, out: outRobot }, true, sel,
+        findings[mod.name], true, tap()));
+    if (inName) {
+        s.push(slotCard(mx, sy, inName, 'Inbound staging', (ctx.use[inName] || 0) > 1, sel,
+            ctx.editable ? ' data-tap="staging" data-pos="' + esc(mod.name) + '"' : ''));
+        s.push(move([mx + 52, sy], [mx + 52, cy + CARD_H], inRobot));      // new bin in, from the lane
+    }
+    if (outName) {
+        s.push(slotCard(mx + SLOT_W + 12, sy, outName, 'Outbound staging',
+            (ctx.use[outName] || 0) > 1, sel,
+            ctx.editable ? ' data-tap="staging" data-pos="' + esc(mod.name) + '"' : ''));
+    }
+    s.push(move([cx + CARD_W, cy + 46], [mx + M_W, cy + 46], outRobot));   // old bin out, to the dock
+    h = sy + SLOT_H;
+    if (inName && (c.key_route || []).length) {
+        s.push(oneStrip(c.key_route, mx + 22, sy + SLOT_H, inRobot));
+        h += stripRoom(Math.min(c.key_route.length, STRIP_SLOTS)) + 8;
+    }
+    return { svg: s.join(''), w: M_W, h: h };
+}
+
+// ── packing ────────────────────────────────────────────────────────────────
+//
+// Left to right, wrap when the row is full, each row as tall as its tallest
+// module and centred in the span. Nothing is measured: a module is 244 wide
+// (a sequential pair 508), so the wrap at any width is arithmetic and two
+// modules can never overlap.
+
+function packRows(built, width) {
+    const span = width - 2 * FIT;
+    const rows = [];
+    let cur = [], curW = 0;
+    for (const b of built) {
+        let need = b.w + (cur.length ? GX : 0);
+        if (cur.length && curW + need > span) {
+            rows.push(cur);
+            cur = []; curW = 0;
+            need = b.w;
+        }
+        cur.push(b);
+        curW += need;
+    }
+    if (cur.length) rows.push(cur);
+    return rows;
+}
+
+// truncList joins a note's prefix and its names within a character budget,
+// counting what does not fit rather than dropping it: "…, PLN_05 +2".
+function truncList(prefix, names, budget) {
+    const out = [];
+    let used = prefix.length;
+    for (let i = 0; i < names.length; i++) {
+        const add = names[i].length + (out.length ? 2 : 0);
+        const rest = names.length - i - 1;
+        const tail = rest ? String(' +' + rest).length : 0;
+        if (used + add + tail > budget && out.length) {
+            return prefix + out.join(', ') + ' +' + (names.length - i);
+        }
+        out.push(names[i]);
+        used += add;
+    }
+    return prefix + out.join(', ');
+}
+
+// dockLine is one dock note, cut to the budget: the side's label, then each
+// robot's group — `Robot 2 ← PLN_01, PLN_04` — with its list cut to what is
+// left ("+N"). The words are the model's (dockNotes' groups); this only
+// truncates, escapes, and wraps each robot's name in its colour, the way a
+// card line does. Returns markup.
+function dockLine(label, groups, budget) {
+    let out = label, used = label.length;
+    for (const g of (groups || [])) {
+        const seg = truncList(' · ' + g.head, g.targets, Math.max(budget - used, g.head.length + 3));
+        out += seg;
+        used += seg.length;
+    }
+    let body = esc(out);
+    for (let r = 1; r <= 2; r++) {
+        body = body.split('Robot ' + r).join('<tspan class="rw r' + r + '">Robot ' + r + '</tspan>');
+    }
+    return body;
+}
+
+// ── the model bridge ───────────────────────────────────────────────────────
+//
+// THE SENTENCES COME FROM THE MODEL. ALWAYS. This file computes no sentence:
+// the read-only callers build a model state FROM THE VIEW and ask the model
+// (sentencesFromView); the composer passes its live state's sentences through
+// opts. The dock's robots travel with the notes — dockNotes derives them from
+// the same facts its words come from, and the renderer only colours by them.
+
 export function sentencesFromModel(state) {
     const M = typeof window !== 'undefined' ? window.ComposerModel : null;
     if (!M || !state) return null;
     const cardLines = {};
     for (const p of state.positions) cardLines[p.core_node_name] = M.cardLines(state, p.core_node_name);
+    const robots = {};
+    for (const p of state.positions) {
+        const r = M.cellRobots(state, p.core_node_name);
+        if (r) robots[p.core_node_name] = r;
+    }
     const d = M.dockNotes(state);
     return {
         cardLines: cardLines,
         legs: M.legs(state),
+        robots: robots,
         dock: {
             srcs: [d.in.group], dsts: [d.out.group],
             inNote: d.in.note, outNote: d.out.note,
+            inLabel: d.in.label, outLabel: d.out.label,
+            inGroups: d.in.groups, outGroups: d.out.groups,
             inMembers: d.in.members.join(', '), outMembers: d.out.members.join(', '),
+            inTargets: d.in.targets, outTargets: d.out.targets,
+            inRobot: d.in.robot, outRobot: d.out.robot,
         },
     };
 }
@@ -170,841 +648,212 @@ export function sentencesFromView(view) {
     return sentencesFromModel(state);
 }
 
-// ── layout ──────────────────────────────────────────────────────────────
-//
-// Returns {boxes, rows, toScale}. boxes: name → {x, y, w, h} in viewBox
-// units. rows: [{kind, y, top, bottom}] top to bottom. toScale: false when
-// the cards are evenly spaced instead of placed.
-//
-// TRUE RELATIVE SPACING, at the reference's scale where it fits, spread
-// wider where the closest pair would otherwise touch, and even spacing
-// under a "positions not to scale" caption when no legible scale keeps the
-// cards apart — never a collision. The collision test is a COORDINATE test
-// over every pair (dx AND dy), not a number test on the closest distance.
-export function layoutPositions(cell, frame) {
-    const g = frameOf(frame);
-    const positions = (cell && cell.positions) || [];
-    if (!positions.length) return { boxes: {}, rows: [], toScale: false };
-    const need = floorRoom(cell);
-    if (cell.geometry && positions.every(p => isCoord(p.x) && isCoord(p.y))) {
-        const placed = placeToScale(positions, g);
-        if (placed) return liftAboveDock(placed, g, need);
-    }
-    return liftAboveDock(placeEvenly(positions, g), g, need);
-}
-
-// floorRoom is how much clear space the drawing needs under its lowest row.
-//
-// THE CAPTION USED TO BE ALL OF IT, and it was the only thing that hung there.
-// A route strip hangs under the card its trip arrives at (see routeStrips), so
-// a cell with a key route needs the strip's height instead — otherwise the
-// cards sit where they always did and the strip has 14 units to draw four
-// waypoints in.
-//
-// THE BAND COUNTS WHEN THERE IS ONE. The arriving card can be a staging LANE
-// rather than a position, and then the strip hangs under the band, which itself
-// hangs above the dock's rule: cards, a gap, the band, the strip, the rule. This
-// reserves that whole stack whenever the cell has both a band and a route,
-// without asking WHICH card each trip arrives at — that answer needs the model's
-// legs, which layout does not have and should not grow. Over-reserving lifts the
-// cards a few units further than strictly needed; under-reserving would put a
-// strip through the dock.
-function floorRoom(cell) {
-    const room = routeRoom(cell);
-    if (!room) return CAPTION_ROOM;
-    const band = ((cell && cell.staging) || []).length ? STAGING_H + GAP + room : 0;
-    return Math.max(CAPTION_ROOM, room, band);
-}
-
-// liftAboveDock is the other half of V1: the DOCK is laid out from the frame's
-// foot, and the cards take what is left.
-//
-// Both placements centre their rows on CENTER_Y, which is a proportion of the
-// station frame's height — and a card is a FIXED 92 tall whatever the frame
-// does, so at a short frame the rows reach further down, relative to
-// everything else, than the proportion expected. At the desktop's 304 the
-// second row ends 2 px below the dock's rule.
-//
-// Rather than re-derive CENTER_Y from the dock (which moves the station's own
-// cards, and the u4 shots with them), the whole block SLIDES UP by exactly the
-// overlap, and no further than the picture's top inset. At the station frame
-// the overlap is zero and nothing moves — which is what keeps "the station
-// frame is untouched" true while the short frame stops colliding.
-//
-// `need` is what has to fit under the lowest row: the caption alone on a cell
-// with no key route, and the route strip's height on one that has them. See
-// floorRoom. A cell with no route passes CAPTION_ROOM and nothing about this
-// function's behaviour changes, which is why the u4 shots do not move.
-function liftAboveDock(placed, g, need) {
-    const names = Object.keys(placed.boxes);
-    if (!names.length) return placed;
-    let lowest = -Infinity, highest = Infinity;
-    for (const n of names) {
-        lowest = Math.max(lowest, placed.boxes[n].y + placed.boxes[n].h);
-        highest = Math.min(highest, placed.boxes[n].y);
-    }
-    // CAPTION_ROOM is the station-name line under the last row: one baseline
-    // at +32 with its descenders, so the rule needs to sit below that.
-    const slack = Math.max(highest - FIT_INSET, 0);
-    const liftFor = w => Math.min(Math.max((lowest + w) - g.DOCK_Y, 0), slack);
-    const want = Math.max(need || 0, CAPTION_ROOM);
-    let lift = liftFor(want);
-    // A LIFT THAT DOES NOT BUY A STRIP IS NOT PAID FOR. The slack is bounded by
-    // the picture's top inset, so a frame short enough can take the whole lift
-    // and still leave less than one waypoint row — the desktop composer's
-    // picture box is exactly that. Moving the cards up for a strip that is then
-    // not drawn would change a layout nobody asked to change, so where the
-    // strip cannot be drawn the caption's own rule stands and the drawing is
-    // the one it has always been.
-    if (want > CAPTION_ROOM && (g.DOCK_Y - (lowest - lift)) < stripRoom(1) + STRIP_FLOOR) {
-        lift = liftFor(CAPTION_ROOM);
-    }
-    if (lift <= 0) return placed;
-    for (const n of names) placed.boxes[n].y -= lift;
-    for (const r of placed.rows) { r.top -= lift; r.bottom -= lift; }
-    return placed;
-}
-
-function placeToScale(positions, g) {
-    const proj = makeProjector(false);
-    const pts = positions.map(p => { const s = proj(p.x, p.y); return { name: p.core_node_name, sx: s[0], sy: s[1] }; });
-    const xs = pts.map(p => p.sx), ys = pts.map(p => p.sy);
-    const spanX = Math.max(...xs) - Math.min(...xs), spanY = Math.max(...ys) - Math.min(...ys);
-    const cx = (Math.max(...xs) + Math.min(...xs)) / 2, cy = (Math.max(...ys) + Math.min(...ys)) / 2;
-    // The largest scale at which every card stays inside the picture.
-    const fitX = spanX > 0 ? (g.FIT_RIGHT - g.FIT_LEFT - CARD_W) / spanX : Infinity;
-    const fitY = spanY > 0 ? g.ROW_BAND / spanY : Infinity;
-    const fit = Math.min(fitX, fitY);
-    let scale = Math.min(PREFERRED_SCALE, fit);
-    // The smallest scale at which no pair collides: for each pair, enough
-    // room on EITHER axis.
-    let needed = 0;
-    for (let i = 0; i < pts.length; i++) {
-        for (let j = i + 1; j < pts.length; j++) {
-            const dx = Math.abs(pts[i].sx - pts[j].sx), dy = Math.abs(pts[i].sy - pts[j].sy);
-            const sx = dx > 0 ? (CARD_W + GAP) / dx : Infinity;
-            const sy = dy > 0 ? (CARD_H + GAP) / dy : Infinity;
-            needed = Math.max(needed, Math.min(sx, sy));
-        }
-    }
-    if (needed > scale) scale = needed;
-    if (scale > fit || !isFinite(scale)) return null; // no legible scale keeps them apart
-    const boxes = {};
-    for (const p of pts) {
-        boxes[p.name] = { x: g.CENTER_X + (p.sx - cx) * scale - CARD_W / 2, y: g.CENTER_Y + (p.sy - cy) * scale - CARD_H / 2, w: CARD_W, h: CARD_H };
-    }
-    return { boxes, rows: rowsOf(boxes), toScale: true };
-}
-
-// rowsOf clusters cards on screen y: cards whose centres are within half a
-// card of each other share a row.
-function rowsOf(boxes) {
-    const centres = Object.keys(boxes).map(n => ({ name: n, cy: boxes[n].y + CARD_H / 2 })).sort((a, b) => a.cy - b.cy);
-    const rows = [];
-    for (const c of centres) {
-        const last = rows[rows.length - 1];
-        if (last && Math.abs(c.cy - last.cy) < CARD_H / 2) { last.names.push(c.name); continue; }
-        rows.push({ cy: c.cy, names: [c.name] });
-    }
-    return rows.map(r => ({ names: r.names, top: r.cy - CARD_H / 2, bottom: r.cy + CARD_H / 2 }));
-}
-
-// placeEvenly is the schematic: the press's front slots on one row, its
-// back slots on another when there are any, in sequence order, wrapped at
-// five to a row so nothing overlaps.
-function placeEvenly(positions, g) {
-    const front = positions.filter(p => p.kind !== 'back');
-    const back = positions.filter(p => p.kind === 'back');
-    // AS MANY TO A ROW AS THE WIDTH HOLDS, and never more than five. The pitch
-    // used to be the gutter-to-gutter width over the row's count, which on a
-    // narrow frame came out under a card's width and drew four cards on top
-    // of each other. A row that does not fit between the gutters may use the
-    // picture's own margins, and wraps once even those are full.
-    const room = Math.max(g.RIGHT - g.LEFT, CARD_W);
-    const wide = g.FIT_RIGHT - g.FIT_LEFT;
-    const perRow = Math.max(1, Math.min(5, Math.floor((wide + GAP) / (CARD_W + GAP))));
-    const lines = [];
-    const wrap = list => { for (let i = 0; i < list.length; i += perRow) lines.push(list.slice(i, i + perRow)); };
-    wrap(front); wrap(back);
-    const boxes = {};
-    const pitchY = lines.length > 1 ? g.ROW_PITCH : 0;
-    const firstY = g.CENTER_Y - pitchY * (lines.length - 1) / 2;
-    lines.forEach((line, r) => {
-        const fits = (CARD_W + GAP) * line.length - GAP <= room;
-        const pitch = Math.min(CARD_W + 24, Math.max(CARD_W + GAP, (fits ? room : wide) / line.length));
-        const width = pitch * (line.length - 1);
-        line.forEach((p, i) => {
-            boxes[p.core_node_name] = { x: g.CENTER_X - width / 2 + pitch * i - CARD_W / 2, y: firstY + pitchY * r - CARD_H / 2, w: CARD_W, h: CARD_H };
-        });
-    });
-    return { boxes, rows: rowsOf(boxes), toScale: false };
-}
-
-// layoutStaging places the staging cards in the band above the dock's rule.
-//
-// LEFT TO RIGHT IN THE ORDER THE PLANT HAS THEM when the picture is to scale,
-// and by name when it is not. A band whose order had nothing to do with the
-// floor would be a row of names to read; ordered by true X it is a row an
-// operator can point along.
-//
-// CENTRED ON THE PICTURE, and narrowed to fit rather than allowed to run past
-// the gutters: six lanes at 150 wide do not fit 1280 at full pitch, and a card
-// drawn off the edge is a card nobody can tap.
-export function layoutStaging(cell, frame) {
-    const g = frameOf(frame);
-    const cards = (cell && cell.staging) || [];
-    if (!cards.length) return { boxes: {}, top: 0 };
-    const placed = cards.every(c => isCoord(c.x));
-    const order = cards.slice().sort((a, b) => (placed
-        ? a.x - b.x
-        : String(a.core_node_name).localeCompare(String(b.core_node_name))));
-    const top = g.DOCK_Y - stagingLift(cell, g, frame) - STAGING_H;
-    const span = g.FIT_RIGHT - g.FIT_LEFT;
-    // AS WIDE AS ITS WORDS. `Inbound staging · for ALN_001` is wider than
-    // STAGING_W at the card's type size, and a fixed card let the line run out
-    // across whatever stood beside it — a position card, on a press whose
-    // staging lane sits between two of them.
-    const widths = order.map(c => Math.min(span, Math.max(STAGING_W, stagingTextW(c))));
-    const total = widths.reduce((a, w) => a + w, 0);
-    const gap = order.length > 1
-        ? Math.max(0, Math.min(STAGING_GAP, (span - total) / (order.length - 1)))
-        : 0;
-    let x = g.CENTER_X - (total + gap * (order.length - 1)) / 2;
-    const boxes = {};
-    order.forEach((c, i) => {
-        boxes[c.core_node_name] = { x: x, y: top, w: widths[i], h: STAGING_H };
-        x += widths[i] + gap;
-    });
-    clearOfPositions(boxes, layoutPositions(cell, frame).boxes, g);
-    return { boxes, top };
-}
-
-// stagingLine is the staging card's second line; stagingTextW estimates how
-// wide the card has to be to hold it and the name above it. An estimate from
-// the type sizes in flow-picture.css (.stage .nm 13px, .ln 11px) — the layout
-// runs where there is no DOM to measure, and a few units of slack are cheaper
-// than a card whose words run off it.
-export function stagingLine(st) {
-    const word = st.field === 'outbound_staging' ? 'Outbound staging'
-        : st.field === 'inbound_staging' ? 'Inbound staging' : 'Staging';
-    return word + ' · ' + (st.partner_of ? 'for ' + st.partner_of : 'not in this flow');
-}
-
-function stagingTextW(st) {
-    const ln = stagingLine(st).length * 6.1;
-    const nm = String(st.core_node_name || '').length * 8;
-    return Math.ceil(Math.max(ln, nm) + 24);
-}
-
-// clearOfPositions slides a band card sideways off any position card it
-// would sit on. The band's height is fixed by the dock, so on a short frame
-// a to-scale row can reach down into it; the band then takes the nearest
-// stretch of its own row that no position occupies, and stays where it was
-// when there is none rather than leaving the picture.
-function clearOfPositions(band, positions, g) {
-    const pos = Object.keys(positions).map(n => positions[n]);
-    const names = Object.keys(band).sort((a, b) => band[a].x - band[b].x);
-    const hits = (b, others) => others.some(o =>
-        b.x < o.x + o.w + GAP && o.x < b.x + b.w + GAP && b.y < o.y + o.h + GAP && o.y < b.y + b.h + GAP);
-    const placed = [];
-    for (const n of names) {
-        const b = band[n];
-        const blockers = pos.concat(placed);
-        if (hits(b, blockers)) {
-            // Candidate left edges: just right of each blocker, and just left
-            // of it. The nearest one that is clear and inside the frame wins.
-            const cands = [];
-            for (const o of blockers) {
-                cands.push(o.x + o.w + GAP, o.x - GAP - b.w);
-            }
-            let best = null;
-            for (const cx of cands) {
-                if (cx < g.FIT_LEFT || cx + b.w > g.FIT_RIGHT) continue;
-                if (hits({ x: cx, y: b.y, w: b.w, h: b.h }, blockers)) continue;
-                if (best === null || Math.abs(cx - b.x) < Math.abs(best - b.x)) best = cx;
-            }
-            if (best !== null) b.x = best;
-        }
-        placed.push(b);
-    }
-}
-
-// stagingLift is how far the band's floor sits above the dock's rule.
-//
-// STAGING_LIFT IS A GAP, NOT A BUDGET: fourteen units of daylight so the band
-// does not read as part of the dock. When a trip arrives at a staging LANE its
-// route strip hangs under that lane's card, in exactly this space, so the band
-// has to rise by the strip's height to leave room for it.
-//
-// BOUNDED BY THE CARDS ABOVE, which is the only reason this can read the
-// positions' layout without risking a cycle: layoutPositions never asks about
-// the band. floorRoom has already reserved the whole stack under the cards when
-// there is one, so at the station and desktop frames the bound is slack; at a
-// frame too short for the stack it clamps back to the plain gap and the strip
-// finds no room and draws nothing, which is oneStrip's own rule.
-function stagingLift(cell, g, frame) {
-    const room = routeRoom(cell);
-    if (!room) return STAGING_LIFT;
-    const boxes = layoutPositions(cell, frame).boxes;
-    let lowest = -Infinity;
-    for (const n of Object.keys(boxes)) lowest = Math.max(lowest, boxes[n].y + boxes[n].h);
-    if (!isFinite(lowest)) return Math.max(STAGING_LIFT, room);
-    return Math.max(STAGING_LIFT, Math.min(room, g.DOCK_Y - STAGING_H - (lowest + GAP)));
-}
-
-// pictureRows is which row of the DRAWING each position landed in: 'front' for
-// the line-side row, 'back' for the far one, '' for a middle row or a picture
-// with only one. Every caption beside the picture that says "front" or "back"
+// pictureRows is which row of the PRESS each position stands in: 'front' for
+// the line-side row, 'back' for the far one, '' for a middle row or a cell
+// with one row. Every caption beside the picture that says "front" or "back"
 // has to come from here.
 //
-// IT IS NOT CellPosition.Kind, and the two disagree on a real press. Kind
-// answers "is this a partner slot for any style this process runs" — at
-// Hopkinsville PLN_01 and PLN_04 are Kind "front" and are DRAWN in the back
-// row, with their on-deck partners. The desktop's positions table captioned
-// them from Kind and so told the engineer "front" under a picture that said
-// BACK. One word, one meaning: the sub-label is the geometry, and what a
-// position does for a style is said by the paired-back line instead.
-export function pictureRows(cell, frame) {
-    const { rows } = layoutPositions(cell, frame);
-    const kinds = rowKinds(rows);
+// FROM THE COORDINATES, NEVER FROM THE GRID. The module grid wraps at the
+// frame's width, so a grid row is a fact about the screen, not the press: the
+// same cell is one row at 1280 and three at 640. The rows are the positions'
+// world Y — the line side is the higher Y, the top of the projection
+// (makeProjector draws [x, −y]) — clustered within ROW_TOL metres.
+//
+// WITHOUT COORDINATES, THE KIND. A cell with no geometry, or with a position
+// off the map, has no world Y to read; the schematic has always stood the
+// press in two rows by CellPosition.Kind — every position not Kind "back" in
+// the front row, the Kind "back" ones behind it — and the words keep that
+// meaning. A cell whose positions are all one kind is one row and gets no
+// word.
+//
+// KIND IS NOT THE ROW WHEN THERE ARE COORDINATES, and the two disagree on a
+// real press. Kind answers "is this a partner slot for any style this process
+// runs" — at Hopkinsville PLN_01 and PLN_04 are Kind "front" and stand in the
+// back row with their on-deck partners. It is read only where nothing better
+// exists.
+const ROW_TOL = 0.5;
+
+export function pictureRows(cell) {
+    const positions = (cell && cell.positions) || [];
     const out = {};
-    rows.forEach((r, i) => r.names.forEach(n => { out[n] = kinds[i]; }));
+    positions.forEach(p => { out[p.core_node_name] = ''; });
+    if (!positions.length) return out;
+    if (!(cell.geometry && positions.every(p => isCoord(p.x) && isCoord(p.y)))) {
+        const back = positions.filter(p => p.kind === 'back').length;
+        if (back === 0 || back === positions.length) return out;
+        positions.forEach(p => { out[p.core_node_name] = p.kind === 'back' ? 'back' : 'front'; });
+        return out;
+    }
+    const byY = positions.slice().sort((a, b) => b.y - a.y);
+    const rows = [];
+    for (const p of byY) {
+        const last = rows[rows.length - 1];
+        if (last && last.y - p.y <= ROW_TOL) { last.names.push(p.core_node_name); continue; }
+        rows.push({ y: p.y, names: [p.core_node_name] });
+    }
+    if (rows.length < 2) return out;
+    rows[0].names.forEach(n => { out[n] = 'front'; });
+    rows[rows.length - 1].names.forEach(n => { out[n] = 'back'; });
     return out;
 }
 
-// rowKinds labels the rows the way the reference does: the row nearest the
-// line — the top of the picture, where the projection puts the higher world
-// Y — is FRONT · LINE SIDE and the bottom row is BACK. That is the geometry
-// of the press, not the roles of the running style: at Hopkinsville the
-// index positions PLN_01/PLN_04 sit in the BACK row with their on-deck
-// partners, and the line-side row holds the swap positions. Rows between
-// the two, and a lone row, are not labelled — a guess printed in capitals
-// is still a guess.
-function rowKinds(rows) {
-    if (rows.length < 2) return rows.map(() => '');
-    return rows.map((r, i) => (i === 0 ? 'front' : (i === rows.length - 1 ? 'back' : '')));
-}
+// ── render ─────────────────────────────────────────────────────────────────
 
-// ── legs ───────────────────────────────────────────────────────────────
-
-// ortho spells a rounded orthogonal polyline (the reference's).
-function ortho(pts, r) {
-    r = r || 16;
-    let d = 'M' + pts[0][0] + ' ' + pts[0][1];
-    for (let i = 1; i < pts.length - 1; i++) {
-        const [x0, y0] = pts[i - 1], [x1, y1] = pts[i], [x2, y2] = pts[i + 1];
-        const d1 = Math.hypot(x1 - x0, y1 - y0), d2 = Math.hypot(x2 - x1, y2 - y1);
-        const rr = Math.min(r, d1 / 2, d2 / 2);
-        const ax = x1 - (x1 - x0) / d1 * rr, ay = y1 - (y1 - y0) / d1 * rr, bx = x1 + (x2 - x1) / d2 * rr, by = y1 + (y2 - y1) / d2 * rr;
-        d += ' L' + ax + ' ' + ay + ' Q' + x1 + ' ' + y1 + ' ' + bx + ' ' + by;
-    }
-    const l = pts[pts.length - 1];
-    return d + ' L' + l[0] + ' ' + l[1];
-}
-
-// legsFor DRAWS the choreography the model decided on: an index pair is a
-// straight Robot 2 line between the paired cards, a staging move a rounded
-// Robot 1 path from the staging card into the front card. Dot at the start,
-// ring at the end, and one chevron on the run saying which way the bins go.
-//
-// THE DOT AND THE RING WERE THE DIRECTION, AND NOBODY READ THEM. A leg has
-// always been drawn FROM its source TO its destination — that is what `a` and
-// `z` are, and the path's own point order is the travel order — but the only
-// thing on screen saying so was a filled circle at one end and a hollow one at
-// the other. That is a convention, not a picture: an engineer looking at a
-// still shot of a Robot 1 leg into a front position and a Robot 2 leg out of
-// one saw two lines in two hues and had to already know which hue meant which
-// way. `tip` is the same fact drawn as an arrowhead, which nobody has to be
-// told how to read.
-//
-// THE ANGLE IS COMPUTED HERE, NOT LEFT TO AN SVG <marker orient="auto">, for
-// two reasons and only the second is about taste. A marker is referenced by
-// url(#id) and resolves over the WHOLE DOCUMENT: the composer draws this same
-// function into its own <svg> beside another one, and two <marker id="legtip">
-// in one document is one marker — whichever rendered last — so the hue of one
-// picture's arrowheads would follow the other picture. And a marker sits at a
-// path VERTEX, which on these legs is either the end (under the ring) or a
-// rounded corner. The place a direction cue belongs is the middle of the long
-// straight run, and this function is the only thing that knows where that is.
-//
-// IT TAKES THE LEGS RATHER THAN FINDING THEM. Which legs exist is a fact about
-// the flow — composer-model.js's legs(state) answers it, in one place, and its
-// label is the label — and where they go on screen is a fact about the layout,
-// which is this file's business. This used to decide both, re-reading swap
-// modes and partner fields to reach the same two answers the model had already
-// reached, with the sentences spelled out a second time.
-// A LEG WITH NO CARD AT ONE END IS A DEFECT, NOT A SKIP (SYNTH §3 B4). This
-// was a bare `continue`: the model said a robot drives from A to B, the layout
-// had no card for one of them, and the picture silently drew one line fewer.
-// That is the failure the staging work is fixing — a bin that moves on the
-// floor and not on the screen — so it reports rather than hides. The reporter
-// is injected by the test harness; on a live screen it is a console line and
-// the picture still draws every leg it can.
-let onLegDropped = (leg, missing) => {
-    if (typeof console !== 'undefined' && console.error) {
-        console.error('flow picture: no card for ' + missing + ', so the ' +
-            (leg.label || 'leg') + ' between ' + leg.from + ' and ' + leg.to + ' is not drawn');
-    }
-};
-
-export function setLegDropReporter(fn) { onLegDropped = fn; }
-
-export function legsFor(modelLegs, boxes) {
-    const legs = [];
-    for (const L of modelLegs || []) {
-        const b = boxes[L.to], pb = boxes[L.from];
-        if (!b || !pb) {
-            onLegDropped(L, b ? L.from : L.to);
-            continue;
-        }
-        const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
-        const pcx = pb.x + pb.w / 2, pcy = pb.y + pb.h / 2;
-        const cls = L.robot === 2 ? 'r2' : 'r1';
-        if (L.kind === 'index' && Math.abs(pcy - cy) < CARD_H / 2) {
-            const dir = pcx < cx ? 1 : -1;
-            const a = [pcx + dir * CARD_W / 2, pcy], z = [cx - dir * CARD_W / 2, cy];
-            // An index leg is the daylight between two neighbouring cards and
-            // nothing more — 24.6 units for the Hopkinsville pair the test
-            // measures — so the chevron takes the midpoint and the dot and the
-            // ring keep the ends. That is why it is a SMALL chevron: on the
-            // shortest leg the picture draws there is about 16 units of line
-            // between the two circles, and an arrowhead that needed more than
-            // that would be an arrowhead that only fits on the long legs.
-            legs.push({ cls: cls, d: 'M' + a[0] + ' ' + a[1] + ' L' + z[0] + ' ' + z[1],
-                a: a, z: z, tip: [a[0] + (z[0] - a[0]) * TIP_AT, a[1] + (z[1] - a[1]) * TIP_AT, degOf(a, z)],
-                lbl: L.label, lx: (pcx + cx) / 2, ly: b.y + b.h + 18, keyRoute: L.keyRoute || [] });
-            continue;
-        }
-        const below = L.kind === 'index' ? pcy > cy : pb.y > b.y;
-        const from = below ? [pcx, pb.y] : [pcx, pb.y + pb.h];
-        const to = below ? [cx, b.y + b.h] : [cx, b.y];
-        const mid = (from[1] + to[1]) / 2;
-        // A rounded leg is a vertical, a horizontal run at `mid`, and another
-        // vertical. The chevron goes on the RUN, where the line is straight and
-        // long: ortho() eats 16 units at each end of it for the corner radius,
-        // so a run shorter than 40 has no straight middle left to stand on and
-        // the leg reads as a vertical drop anyway — that is the second branch,
-        // which points the chevron the way the drop goes.
-        const run = to[0] - from[0];
-        const tip = Math.abs(run) >= 40
-            ? [from[0] + run * TIP_AT, mid, run > 0 ? 0 : 180]
-            : [(from[0] + to[0]) / 2, mid, to[1] > from[1] ? 90 : -90];
-        legs.push({ cls: cls, d: ortho([from, [from[0], mid], [to[0], mid], to]), a: from, z: to, tip: tip,
-            lbl: L.label, lx: (pcx + cx) / 2, ly: mid - 8, keyRoute: L.keyRoute || [] });
-    }
-    return legs;
-}
-
-// degOf is the tangent of a straight leg in degrees, rounded so the markup
-// carries 65.2 rather than 65.19999999999999. operator-flow.test.js reads this
-// drawing back as TEXT — every check in it is a regex over the markup — and a
-// float tail is a diff nobody can read for no accuracy anyone can see.
-// WHERE THE CHEVRON SITS ALONG ITS LEG. It was the midpoint, which is the
-// obvious place and the wrong one: on a press-index pair the leg is about 25
-// units long, so a chevron in the middle sits equidistant between the dot and
-// the ring and reads as decoration on a line rather than as the line going
-// somewhere. Two thirds along points AT the card receiving the bin, which is
-// the fact an engineer is looking for — "I was thinking inbound staging would
-// show up on that node flowing into the core node".
-//
-// Not at the very end: that is where the ring is, and an arrowhead under a
-// ring is a smudge.
-const TIP_AT = 0.68;
-
-function degOf(a, z) {
-    return Math.round(Math.atan2(z[1] - a[1], z[0] - a[0]) * 1800 / Math.PI) / 10;
-}
-
-// ── dock ───────────────────────────────────────────────────────────────
-
-// litSet is the focus rule of SPEC §0.9: the tapped position and the positions
-// it works with stay lit; everything else dims. "Works with" is structural —
-// its partner, its staging, and whichever position is using IT as one — so
-// tapping a back position lights the front position it serves rather than
-// leaving the operator looking at one lit card with no context.
-function litSet(cell, sel) {
-    const out = new Set();
-    if (!sel) return out;
-    out.add(sel);
-    for (const pos of cell.positions) {
-        const c = pos.claim;
-        if (!c) continue;
-        const n = pos.core_node_name;
-        const partners = [c.paired_core_node, c.inbound_staging, c.outbound_staging].filter(Boolean);
-        if (n === sel) partners.forEach(p => out.add(p));
-        if (partners.indexOf(sel) >= 0) out.add(n);
-    }
-    return out;
-}
-
-// ── render ─────────────────────────────────────────────────────────────
-
-const IN = '<path d="M6 0v9M2 5l4 4 4-4M0 12h12" fill="none" stroke="currentColor" stroke-width="1.6"/>';
-const OUT = '<path d="M6 12V3M2 7l4-4 4 4M0 14h12" fill="none" stroke="currentColor" stroke-width="1.6"/>';
-// The in/out marks' room on a card, right to left: `out` starts IO_OUT_AT in
-// from the edge (16 of glyph and gap, ~20 of word, 8 of margin), and `in` gets
-// IO_IN_W to the left of it.
-const IO_OUT_AT = 46;
-const IO_IN_W = 34;
-
-// renderFlowPicture returns the SVG inner markup for one station view.
-//
-// EVERY INLINE COLOUR NAMES BOTH SURFACES' TOKEN. The rules in
-// flow-picture.css read `var(--os-x, var(--shared-x))` because the station
-// loads only operator.css and the desktop loads only shared/tokens.css; the
-// inline styles written here are the same drawing and need the same pair.
-// They did not have it, so on the desktop the in/out corner glyphs and the two
-// dock notes resolved to nothing and inherited: the teal and indigo that say
-// WHICH ROBOT went grey on one of the two surfaces. The station was right and
-// the admin page was quietly wrong, which is the hardest version to notice.
-//
-// ONE DRAWING OF THIS PRESS, TWO CALLERS. U4 opens it read-only from the header
-// style chip; the Flow Composer (U8) draws the SAME function over its own model
-// state, passing opts. Extended rather than copied: a second renderer is a
-// second set of card geometry, and the day one of them learns about a new
-// position kind is the day the operator sees two different presses on one
-// station depending on which door they came through.
+// renderFlowPicture returns the SVG inner markup for one station view, and
+// reports the picture's own height by writing opts.height (see the header).
 //
 // opts, all optional:
-//   selected   — the tapped position; it lights and its partners stay lit,
-//                everything else drops to 35% (SPEC §0.9). Absent = nothing dims.
+//   selected   — the selected position; its module (every card and slot
+//                in it) takes the accent outline. Nothing dims.
 //   findings   — {node: shortText}; the card outlines alarm and the red pill
 //                takes the part chip's slot.
-//   sentences  — {cardLines: {node: [line, …]}, legs: […], dock: {…}} from
-//                composer-model. The COMPOSER passes its live state's, so the
-//                copy an operator is editing is the copy they read; every
-//                other caller leaves it out and this derives the same thing
-//                from the view through the same model (sentencesFromView).
-//                There is no third answer: this file computes no sentence.
-//   editable   — marks the cards and dock halves tappable (data-tap).
-//   frame      — {w, h} the picture is drawn 1:1 into, and the viewBox the
-//                caller must set to match. Absent = the station's 1280x560.
+//   sentences  — {cardLines, legs, dock} from composer-model. The COMPOSER
+//                passes its live state's, so the copy an operator is editing
+//                is the copy they read; every other caller leaves it out and
+//                this derives the same thing from the view through the same
+//                model (sentencesFromView).
+//   editable   — marks the cards, slots and dock halves tappable (data-tap)
+//                and draws the unused-staging chips line, which is a desktop
+//                affordance: the station screen leaves it out.
+//   frame      — {w} the picture wraps at. The height is the picture's own
+//                (opts.height); the caller sizes its box from that. Absent =
+//                the station's 1280.
 export function renderFlowPicture(view, opts) {
     opts = opts || {};
-    const cell = (view && view.cell) || { positions: [], geometry: false };
-    // The composer passes its live state's sentences; every other caller gets
-    // them derived from the view through the same model. See sentencesFromView.
-    const sentences = opts.sentences || sentencesFromView(view) || { cardLines: {}, legs: [], dock: {
-        srcs: [], dsts: [], inNote: 'Inbound source', outNote: 'Outbound destination',
-        inMembers: '', outMembers: '' } };
-    const stationName = view && view.station ? view.station.name : '';
-    const byName = {};
-    cell.positions.forEach(p => { byName[p.core_node_name] = p; });
-    const g = frameOf(opts.frame);
-    const { boxes, rows, toScale } = layoutPositions(cell, opts.frame);
-    // THE STAGING BAND IS LAID APART AND THEN MERGED FOR THE LEGS. Apart,
-    // because a staging lane must never reach placeToScale's span, centroid or
-    // collision set — one lane 40 m out drives the scale to nothing and flips
-    // the whole cell to the schematic. Merged, because a leg ends on a card and
-    // does not care which list the card came from.
-    const staged = layoutStaging(cell, opts.frame);
-    const allBoxes = Object.assign({}, boxes, staged.boxes);
-    let s = '';
-    if (!cell.positions.length) {
-        return '<text class="mlbl" x="' + g.CENTER_X + '" y="' + g.CENTER_Y + '" text-anchor="middle">No positions on this station yet</text>';
-    }
-    const kinds = rowKinds(rows);
-    rows.forEach((r, i) => {
-        const label = kinds[i] === 'front' ? 'FRONT · LINE SIDE' : (kinds[i] === 'back' ? 'BACK' : '');
-        if (label) s += '<text class="mlbl" x="' + g.LEFT + '" y="' + (r.top - 12) + '" style="letter-spacing:.08em">' + label + '</text>';
-    });
-    const last = rows[rows.length - 1];
-    const strips = routeStrips(cell, allBoxes, sentences.legs, g);
-    // The caption sits under the last row of cards, and above the dock's rule:
-    // at a short frame the cards reach further down than the proportion
-    // expected and a caption placed from them alone crosses the line it is
-    // supposed to sit above.
-    //
-    // AND IT GOES TO THE RULE WHEN A ROUTE STRIP IS DRAWN, because the band
-    // under the last row is then the strip's. Both are left-anchored things in
-    // the same 30 px: the first shot of the strip had "SCREEN A4 · positions at
-    // true spacing" printed across a route's first two waypoints. The strip's
-    // own floor (STRIP_FLOOR) keeps a baseline clear above the rule for it.
-    const capY = strips ? g.DOCK_Y - 12 : Math.min(last.bottom + 32, g.DOCK_Y - 12);
-    s += '<text class="mlbl" x="' + g.LEFT + '" y="' + capY + '" style="fill:var(--os-text-dim, var(--text-muted))">' + esc(stationName.toUpperCase()) +
-        (toScale ? ' · positions at true spacing' : ' · positions not to scale') + '</text>';
-
-    // THE LEG ITSELF IS UNTOUCHED, AND THAT IS THE POINT. .legflow is a SECOND
-    // path with the same `d` carrying the travelling dashes, rather than a dash
-    // pattern put on .leg — so the line an operator has been looking at for a
-    // year keeps its hue, its width and its place in the stack, and everything
-    // the animation does can be switched off by hiding one element. Under
-    // prefers-reduced-motion flow-picture.css does exactly that, and what is
-    // left on screen is the picture as it was plus the chevron.
-    //
-    // TIP AFTER THE RING, RING AFTER THE DOT: within one leg's group the marks
-    // are drawn in the order they must not be hidden in, and the groups
-    // themselves are still emitted in the model's leg order, so which robot's
-    // leg is over which is unchanged.
-    for (const L of legsFor(sentences.legs, allBoxes)) {
-        s += '<g class="legg"><path class="leg thin ' + L.cls + '" d="' + L.d + '"/>' +
-            '<path class="legflow ' + L.cls + '" d="' + L.d + '"/>' +
-            '<circle class="legdot ' + L.cls + '" cx="' + L.a[0] + '" cy="' + L.a[1] + '" r="4"/>' +
-            '<circle class="legring ' + L.cls + '" cx="' + L.z[0] + '" cy="' + L.z[1] + '" r="4"/>' +
-            '<path class="legtip ' + L.cls + '" d="M-5 -4.4L5.5 0L-5 4.4Z" transform="translate(' + L.tip[0] + ',' + L.tip[1] + ') rotate(' + L.tip[2] + ')"/>' +
-            '<text class="leg-lbl ' + L.cls + '" x="' + L.lx + '" y="' + L.ly + '" text-anchor="middle">' + L.lbl + '</text></g>';
-    }
-
+    const cell = (view && view.cell) || { positions: [] };
+    const sentences = opts.sentences || sentencesFromView(view) || {
+        cardLines: {}, legs: [], dock: {
+            srcs: [], dsts: [], inNote: 'Inbound source', outNote: 'Outbound destination',
+            inLabel: 'Inbound source', outLabel: 'Outbound destination', inGroups: [], outGroups: [],
+            inMembers: '', outMembers: '', inTargets: [], outTargets: [],
+            inRobot: 1, outRobot: 1,
+        },
+    };
     const sel = opts.selected || null;
     const findings = opts.findings || {};
-    const lit = litSet(cell, sel);
-    for (const pos of cell.positions) {
-        const b = boxes[pos.core_node_name];
-        if (!b) continue;
-        const n = pos.core_node_name, c = pos.claim;
-        const bad = findings[n];
-        const dim = sel && !lit.has(n);
-        let glyphs = '', chip = '';
-        if (c) {
-            // MEASURED FROM THE RIGHT EDGE BY WHAT EACH MARK IS: a 12-unit glyph
-            // and a word starting 16 in. `out` at b.w - 30 ended past the card's
-            // border, and `in` ran into the out glyph beside it.
-            glyphs = '<g class="io" transform="translate(' + (b.w - IO_OUT_AT - IO_IN_W) + ',10)" style="color:var(--os-r1, var(--robot-1))"><g>' + IN + '</g><text x="16" y="11" class="iot">in</text></g>' +
-                '<g class="io" transform="translate(' + (b.w - IO_OUT_AT) + ',10)" style="color:var(--os-r2, var(--robot-2))"><g>' + OUT + '</g><text x="16" y="11" class="iot">out</text></g>';
-            if (bad) {
-                // The finding takes the chip's slot rather than sitting beside
-                // it: two things in one row is how a card starts scrolling.
-                chip = '<rect class="needbg" x="12" y="64" width="' + (b.w - 24) + '" height="20" rx="5"/><text class="needlbl" x="' + (b.w / 2) + '" y="78" text-anchor="middle">' + esc(bad) + '</text>';
-            } else if (c.payload_code) {
-                chip = '<rect class="partbg" x="12" y="64" width="' + (b.w - 24) + '" height="20" rx="5"/><text class="partlbl" x="' + (b.w / 2) + '" y="78" text-anchor="middle">' + esc(c.payload_code) + '</text>';
-            }
-        } else if (pos.role === 'back') {
-            glyphs = '<g class="io" transform="translate(' + (b.w - IO_IN_W - 8) + ',10)" style="color:var(--os-r1, var(--robot-1))"><g>' + IN + '</g><text x="16" y="11" class="iot">in</text></g>';
+    const { mods, byName } = modulesOf(cell);
+    if (!mods.length) {
+        const g = { x: ((opts.frame && opts.frame.w) || STATION_FRAME.w) / 2 };
+        return '<text class="mlbl" x="' + g.x + '" y="246" text-anchor="middle">No positions on this station yet</text>';
+    }
+    const width = (opts.frame && opts.frame.w) || STATION_FRAME.w;
+
+    // Which staging places are drawn as slots, so the rest — lanes in the
+    // routing set this flow does not use — can be counted on the chips line.
+    const positionNames = new Set((cell.positions || []).map(p => p.core_node_name));
+    const use = stagingUse(cell);
+    const ctx = { byName, sentences, sel, findings, editable: !!opts.editable, use, positionNames };
+
+    // Measure pass: every module at the origin, for its width and height.
+    // Draw pass: the same module at its packed place. Coordinates are
+    // absolute, so the two passes differ only in the origin they are given.
+    const built = mods.map(m => {
+        const d = drawModule(m, { x: 0, y: 0 }, ctx);
+        return { mod: m, w: d.w, h: d.h, at0: d.svg };
+    });
+    const rows = packRows(built, width);
+    const span = width - 2 * FIT;
+    let s = '';
+    let y = FIT + 22;                                   // the legend's line
+    for (const row of rows) {
+        const rw = row.reduce((a, b) => a + b.w, 0) + GX * (row.length - 1);
+        let x = FIT + Math.floor((span - rw) / 2);
+        for (const b of row) {
+            s += '<g class="module" data-w="' + b.w + '" data-h="' + b.h + '">' +
+                drawModule(b.mod, { x: x, y: y }, ctx).svg + '</g>';
+            x += b.w + GX;
         }
-        const parts = (sentences.cardLines && sentences.cardLines[n]) || [];
-        const lines = parts.map((l, i) => '<text class="ln" x="14" y="' + (43 + i * 14) + '">' + esc(l) + '</text>').join('');
-        s += '<g class="node ' + (c ? 'on' : 'off') + (sel === n ? ' sel' : '') + (bad ? ' bad' : '') + (dim ? ' dim' : '') +
-            '" data-pos="' + esc(n) + '"' + (opts.editable ? ' data-tap="pos"' : '') + ' transform="translate(' + b.x + ',' + b.y + ')"><rect class="box" width="' + b.w + '" height="' + b.h + '" rx="12"/>' +
-            '<text class="nm" x="14" y="26">' + esc(n) + '</text>' + lines + chip + glyphs + '</g>';
+        y += Math.max(...row.map(b => b.h)) + GY;
+    }
+    y -= GY;
+
+    // ── the unused-staging chips line (desktop only, owner pick 3) ──────────
+    //
+    // Staging lanes the running flow does not use: not a position, not a slot
+    // a module drew, and not named by any claim (stagingUse — a press index's
+    // inbound staging has no slot but is used all the same). Dashed chips on
+    // one labelled line under the grid, wrapping to the frame's width like
+    // the modules do.
+    if (opts.editable) {
+        // The slots the modules drew, read off the measure pass's markup.
+        const drawn = new Set();
+        for (const b of built) {
+            for (const mm of b.at0.matchAll(/data-staging="([^"]+)"/g)) drawn.add(mm[1]);
+        }
+        const chips = (cell.staging || [])
+            .map(st => st.core_node_name)
+            .filter(n => !positionNames.has(n) && !drawn.has(n) && !use[n]);
+        if (chips.length) {
+            y += 22;
+            s += '<text class="mlbl" x="' + FIT + '" y="' + (y + 15) + '">In the routing set, not used by this flow</text>';
+            let ux = FIT + 250;
+            for (const n of chips) {
+                if (ux + SLOT_W > width - FIT) { ux = FIT; y += CHIP_H + 6; }
+                s += '<g class="stage off chip" transform="translate(' + ux + ',' + y + ')">' +
+                    nameTip(n, SLOT_W - 24, 12) +
+                    '<rect class="box" width="' + SLOT_W + '" height="' + CHIP_H + '" rx="8"/>' +
+                    txt('nm', 12, 16, n, SLOT_W - 24, 12) + '</g>';
+                ux += SLOT_W + 8;
+            }
+            y += CHIP_H;
+        }
     }
 
-    // ── the staging band ────────────────────────────────────────────────
+    // ── the dock ────────────────────────────────────────────────────────────
     //
-    // A SHORTER CARD, AND IT SAYS WHICH DIRECTION IT IS. The two lines are the
-    // model's own words for a staging slot — `Inbound staging` / `for PLN_03` —
-    // the same pair cardLines already puts on a back position doing the same
-    // job, so the floor reads one sentence about staging and not two.
-    //
-    // AN OFFERED LANE IS DASHED AND SAYS SO. On the composer's picture the band
-    // carries every staging lane the cell MAY park at, and an operator has to be
-    // able to tell the one this flow uses from the ones it could.
-    for (const st of (cell.staging || [])) {
-        const b = staged.boxes[st.core_node_name];
-        if (!b) continue;
-        const inUse = !!st.partner_of;
-        s += '<g class="stage ' + (inUse ? 'on' : 'off') + '" data-staging="' + esc(st.core_node_name) + '"' +
-            // A TAP GOES TO THE POSITION THIS LANE SERVES, which is the thing
-            // an operator can change — there is no panel for a lane itself, and
-            // an OFFERED lane serves nobody yet, so it is not tappable at all
-            // rather than tappable and inert.
-            (opts.editable && inUse
-                ? ' data-tap="staging" data-pos="' + esc(st.partner_of) + '"'
-                : '') +
-            ' transform="translate(' + b.x + ',' + b.y + ')">' +
-            '<rect class="box" width="' + b.w + '" height="' + b.h + '" rx="10"/>' +
-            '<text class="nm" x="12" y="20">' + esc(st.core_node_name) + '</text>' +
-            '<text class="ln" x="12" y="36">' + esc(stagingLine(st)) + '</text></g>';
-    }
-
-    s += strips;
-
-    const d = sentences.dock;
+    // It names a robot only where that robot makes the trip — the notes and
+    // their robots come from the model (dockNotes), which derives both from
+    // the same choreography facts.
+    const dock_y = y + 26;
+    const half = Math.floor(span / 2);
+    const budget = Math.floor((half - 80) / 5.9);
+    const din = dockLine(sentences.dock.inLabel || sentences.dock.inNote, sentences.dock.inGroups, budget);
+    const dout = dockLine(sentences.dock.outLabel || sentences.dock.outNote, sentences.dock.outGroups, budget);
+    // ONE MARK, ONE ROBOT. A side two robots use (a mixed flow's OUT) has no
+    // one robot's colour to take — colour is the robot, and a teal mark would
+    // say Robot 1 makes Robot 2's trips — so its mark stays the muted default
+    // and the note's words carry each robot in its own colour.
+    const rcls = r => r ? ' r' + r : '';
     const tapIn = opts.editable ? ' data-tap="dock" data-dock="in"' : '';
     const tapOut = opts.editable ? ' data-tap="dock" data-dock="out"' : '';
-    s += '<g class="dock"><line x1="' + g.LEFT + '" y1="' + g.DOCK_Y + '" x2="' + g.RIGHT + '" y2="' + g.DOCK_Y + '"/>' +
-        '<g class="half"' + tapIn + ' transform="translate(' + g.LEFT + ',' + g.DOCK_Y + ')"><g transform="translate(16,26)" style="color:var(--os-r1, var(--robot-1))">' + IN + '</g><text class="k" x="36" y="36">IN</text>' +
-        '<text class="v" x="70" y="30">' + esc(d.srcs.join(' · ') || '—') + '</text><text class="s" x="70" y="48" style="fill:var(--os-r1, var(--robot-1))">' + esc(d.inNote) + '</text><text class="s" x="70" y="64">' + esc(d.inMembers) + '</text></g>' +
-        '<g class="half"' + tapOut + ' transform="translate(' + (g.CENTER_X + 10) + ',' + g.DOCK_Y + ')"><g transform="translate(16,26)" style="color:var(--os-r2, var(--robot-2))">' + OUT + '</g><text class="k" x="36" y="36">OUT</text>' +
-        '<text class="v" x="80" y="30">' + esc(d.dsts.join(' · ') || '—') + '</text><text class="s" x="80" y="48" style="fill:var(--os-r2, var(--robot-2))">' + esc(d.outNote) + '</text><text class="s" x="80" y="64">' + esc(d.outMembers) + '</text></g></g>';
-    return s;
-}
+    s += '<g class="dock"><line x1="' + FIT + '" y1="' + dock_y + '" x2="' + (width - FIT) + '" y2="' + dock_y + '"/>' +
+        '<g class="half"' + tapIn + ' transform="translate(' + FIT + ',' + dock_y + ')">' +
+        '<g class="io' + rcls(sentences.dock.inRobot) + '" transform="translate(16,26)">' + IN + '</g>' +
+        '<text class="k" x="36" y="36">IN</text>' +
+        '<text class="v" x="70" y="30">' + esc(sentences.dock.srcs.join(' · ') || '—') + '</text>' +
+        '<text class="s' + rcls(sentences.dock.inRobot) + '" x="70" y="48">' + din + '</text>' +
+        '<text class="s" x="70" y="64">' + esc(truncList('', (sentences.dock.inMembers || '').split(', ').filter(Boolean), budget)) + '</text></g>' +
+        '<g class="half"' + tapOut + ' transform="translate(' + (FIT + half + 10) + ',' + dock_y + ')">' +
+        '<g class="io' + rcls(sentences.dock.outRobot) + '" transform="translate(16,26)">' + OUT + '</g>' +
+        '<text class="k" x="36" y="36">OUT</text>' +
+        '<text class="v" x="80" y="30">' + esc(sentences.dock.dsts.join(' · ') || '—') + '</text>' +
+        '<text class="s' + rcls(sentences.dock.outRobot) + '" x="80" y="48">' + dout + '</text>' +
+        '<text class="s" x="80" y="64">' + esc(truncList('', (sentences.dock.outMembers || '').split(', ').filter(Boolean), budget)) + '</text></g></g>';
+    opts.height = dock_y + DOCK_BAND;
 
-// ── the route strip (owner, 2026-09-17) ────────────────────────────────────
-//
-// "THE POINT OF THE LMs ISN'T TO REPRESENT THEM TO SCALE, IT'S TO DIRECT FLOW."
-//
-// So this draws no LM geography at all. The desktop map is where geography
-// lives — it has the whole plant and draws the aisles — and the HMI says which
-// WAY the robot is sent: the ordered waypoints an engineer chose, hanging under
-// the card that trip arrives at, rising into the card's bottom edge with the
-// chevron pointing in. Order and direction are the content; distance is not,
-// and nothing on the strip pretends to be a coordinate.
-//
-// UNDER THE CARD, which is the second version of this and the one the owner
-// picked from a side-by-side. The first ran one horizontal strip from the dock's
-// IN glyph to the arriving card, and two things were wrong with it. A cell whose
-// staging card sits over the IN glyph — P400 — gave it a 66-unit run, so two
-// nine-pixel names had to alternate above and below the line to be legible at
-// all. And every strip started in the same place, so a second position's route
-// stacked into the first one's corner and the drawing stopped saying whose trip
-// it was. Hanging it under its own card fixes both by construction: the strip is
-// as long as it needs to be, and two positions can never share it.
-//
-// WHAT CAME BEFORE THAT was the same points at their TRUE places along the leg.
-// It was correct and it drew NOTHING on a real cell: the picture frames the cell
-// at 120 px/m, a swap leg is a 1.8 m move between adjacent cards, and the aisle
-// an engineer actually routes through is 3 m out — 384 units below a picture
-// whose floor is the dock's rule. Every mark was computed and then discarded by
-// the frame rule. A drawing that is only ever right off-screen is not a drawing.
-//
-// EVENLY SPACED IS THE WHOLE OF "NOT TO SCALE". The dots sit at equal intervals
-// whatever the map says about the gaps between them, and operator-flow.test.js
-// pins that as an equality on the rendered cy values — so a later "improvement"
-// that reintroduced distance would be red.
-//
-// NO "NOT TO SCALE" CAPTION. The cell's caption still says whether the CARDS
-// are at true spacing, which is a fact about the cards; the strip never claimed
-// to be scale, so it has nothing to disclaim.
-//
-// READ-BACK, NOT AN EDITOR. Nothing on it is tappable: the key route is chosen
-// in the position's panel, and a second way to open that would be a second
-// answer to where a route is edited.
-const STRIP_SLOTS = 4;     // waypoint rows that must fit at the station frame
-const STRIP_HEAD = 28;     // the card's bottom edge down to the TOP row
-const STRIP_STEP = 21;     // one row to the next
-const STRIP_TAIL = 18;     // the bottom row down to the line's foot
-const STRIP_TIP = 16;      // the chevron's centre below the card's edge
-// The muted "Robot N comes in via", far enough under the first waypoint's own
-// baseline that a 10 px line and an 11 px one do not touch — at 13 they did,
-// which the synthetic-band shot showed before this.
-const STRIP_VIA = 17;
-const STRIP_DX = 11;       // the label column, right of the line
-const STRIP_DOT = 4;       // a waypoint, the same radius as a leg's dot
-// STRIP_FLOOR is the band under the strip's foot, and it is the STATION CAPTION
-// that makes it 26 rather than a few pixels of daylight. The caption is one
-// muted line under the last row of cards — and a strip hangs in exactly that
-// band, so the first shot of this drawing had "positions at true spacing"
-// printed across a route. The caption moves to the rule when strips are drawn
-// (see renderFlowPicture), which needs a baseline's worth of room kept clear
-// below every strip's foot rather than beside it.
-const STRIP_FLOOR = 26;
-
-// stripRoom is the ink height of a strip with n rows, and stripFit is the
-// inverse: how many rows a given gap can hold. They are the sizing rule the
-// tokens above were chosen against — four rows inside the station frame's
-// lowest gap once floorRoom has reserved it.
-function stripRoom(n) { return STRIP_HEAD + (n - 1) * STRIP_STEP + STRIP_TAIL; }
-
-function stripFit(room) {
-    for (let n = STRIP_SLOTS; n >= 1; n--) {
-        if (stripRoom(n) + STRIP_FLOOR <= room) return n;
+    // ── the legend ──────────────────────────────────────────────────────────
+    //
+    // Only the robots the flow uses: the dock's robots plus every robot a leg
+    // names. A 1-robot cell lists Robot 1 and nothing else — Robot 2 is not
+    // in this flow, and a legend listing it would be a colour with no referent.
+    // A cell with no flow lists no robot, for the same reason.
+    const robots = new Set();
+    for (const g of [...(sentences.dock.inGroups || []), ...(sentences.dock.outGroups || [])]) {
+        if (g.robot) robots.add(g.robot);
     }
-    return 0;
-}
-
-// routeRoom is what the tallest strip in this cell will want, floor included,
-// or 0 when no position has a chosen route. Layout asks it; see floorRoom.
-function routeRoom(cell) {
-    let most = 0;
-    for (const pos of ((cell && cell.positions) || [])) {
-        const n = ((pos.claim && pos.claim.key_route) || []).length;
-        if (n > most) most = n;
+    for (const L of (sentences.legs || [])) robots.add(L.robot === 2 ? 2 : 1);
+    let lg = '', lx = width - FIT;
+    for (const r of [...robots].sort((a, b) => b - a)) {
+        lx -= 76;
+        lg += '<g class="lg" transform="translate(' + lx + ',' + (FIT + 4) + ')">' +
+            '<path class="sc r' + r + '" d="M2 -4.2L7 0L2 4.2"/>' +
+            '<path class="sc r' + r + '" d="M9.2 -4.2L14.2 0L9.2 4.2"/>' +
+            '<text class="lgt" x="24" y="4">Robot ' + r + '</text></g>';
     }
-    return most ? stripRoom(Math.min(most, STRIP_SLOTS)) + STRIP_FLOOR : 0;
+    return lg + s;
 }
 
-// routeStrips draws one strip per position that has a chosen key route, under
-// the card that position's inbound trip arrives at.
-//
-// WHICH TRIP, AND THE ANSWER IS NOT THE ONE THE MODEL'S COMMENT IMPLIES.
-// composer-model's viaWaypoints computes its OFFER from the supply path, and
-// that is what an operator picks from. What the field GOVERNS at dispatch is
-// wider: orders/manager.go's lookupRouting resolves the claim by PROCESS NODE
-// and returns claim.KeyRoute for every complex order created there — the stage
-// leg, the staged delivery and the release, all three. What it SHOULD steer is
-// an open owner ruling, so the picture draws the arriving trip and the engine is
-// not touched for it.
-function routeStrips(cell, boxes, modelLegs, g) {
-    let out = '';
-    for (const pos of (cell.positions || [])) {
-        const route = (pos.claim && pos.claim.key_route) || [];
-        if (!route.length) continue;
-        // THE CARD THE TRIP ARRIVES AT. When the choreography stages, the new
-        // bin lands on the staging card first and the strip hangs under that;
-        // when it does not, the trip arrives at the position itself.
-        const arrival = arrivalCardOf(pos, boxes, modelLegs);
-        if (!arrival) continue;
-        out += oneStrip(route, arrival, g);
-    }
-    return out;
-}
-
-// arrivalCardOf is the box the inbound trip ends on, and the robot whose colour
-// it is. It reads the legs the model already decided rather than re-deriving
-// them from the claim: which trips exist is the model's answer, and a second one
-// here is the drift operator-flow.js has already lost twice.
-function arrivalCardOf(pos, boxes, modelLegs) {
-    const n = pos.core_node_name;
-    for (const L of (modelLegs || [])) {
-        // The inbound leg of this position: it ENDS here and started somewhere
-        // else. `kind: 'park'` runs the other way and is not an arrival.
-        if (L.to !== n || L.from === n) continue;
-        const b = boxes[L.from];
-        if (b) return { box: b, cls: L.robot === 2 ? 'r2' : 'r1', robot: L.robot === 2 ? 2 : 1 };
-    }
-    // No staging leg — the bin arrives at the position itself, on Robot 1: the
-    // dock's IN side is Robot 1's in every mode (renderFlowPicture's dock).
-    const own = boxes[n];
-    return own ? { box: own, cls: 'r1', robot: 1 } : null;
-}
-
-// oneStrip is the drawing: a dashed line hanging from the card's bottom edge,
-// the waypoints on it numbered in driving order and read BOTTOM TO TOP, and the
-// chevron at the top pointing into the card.
-//
-// BOTTOM TO TOP because that is the order the trip happens in: the first point
-// the robot passes is furthest from the cell, the last is the one it arrives
-// from. Numbering them says it a second way, so an operator reading the strip
-// upside down from the other side of the cell still has the order.
-//
-// MORE THAN FITS IS COUNTED, NOT DROPPED. The top row becomes "+N" and the rows
-// under it are the first waypoints — never smaller type, and never a route
-// silently shortened to whatever the frame allowed. Where the band holds ONE
-// row — the desktop composer's 430 frame, whose cards are already against the
-// picture's top inset and cannot be lifted further — the count rides that row's
-// own label instead of taking the last slot, because a strip whose only row
-// said "+3" would name nothing at all.
-//
-// A BAND WITH NO ROOM FOR A ROW DRAWS NOTHING. That is the short 304 panel,
-// where the cards reach the rule before anything else is placed; a line across
-// the dock's rule would say something false, and the position's own panel still
-// lists the route.
-function oneStrip(route, arrival, g) {
-    const box = arrival.box;
-    const x = box.x + box.w / 2;
-    const top = box.y + box.h;
-    const slots = stripFit(g.DOCK_Y - top);
-    if (slots < 1) return '';
-    const inline = slots === 1 && route.length > 1;
-    const names = route.length <= slots ? route
-        : (inline ? route.slice(0, 1) : route.slice(0, slots - 1));
-    const more = route.length - names.length;
-    const rows = names.length + (more && !inline ? 1 : 0);
-    const rowY = i => top + STRIP_HEAD + i * STRIP_STEP;   // i counted from the top
-    const bottom = rowY(rows - 1);
-    const foot = bottom + STRIP_TAIL;
-    const lx = x + STRIP_DX;
-
-    let out = '<g class="lmroute ' + arrival.cls + '">' +
-        '<path class="lmline" d="M' + x + ' ' + foot + ' V' + top + '"/>' +
-        '<path class="lmtip" d="M-5 -4.4L5.5 0L-5 4.4Z" transform="translate(' +
-        x + ',' + (top + STRIP_TIP) + ') rotate(-90)"/>';
-    names.forEach((name, k) => {
-        const y = rowY(rows - 1 - k);
-        const tail = inline && k === 0 ? ' +' + more : '';
-        out += '<circle class="lmdot" cx="' + x + '" cy="' + y + '" r="' + STRIP_DOT + '"/>' +
-            '<text class="lmlbl" x="' + lx + '" y="' + (y + 4) + '">' +
-            (k + 1) + ' · ' + esc(name) + tail + '</text>';
-    });
-    if (more && !inline) {
-        out += '<text class="lmmore" x="' + lx + '" y="' + (rowY(0) + 4) + '">+' + more + '</text>';
-    }
-    out += '<text class="lmvia" x="' + lx + '" y="' + (bottom + STRIP_VIA) + '">Robot ' +
-        arrival.robot + ' comes in via</text></g>';
-    return out;
-}
-
-// ── panel ──────────────────────────────────────────────────────────────
+// ── panel ──────────────────────────────────────────────────────────────────
 //
 // One panel over the board, opened from the header's style chip (the thing
 // that names the running style is the thing that shows its flow) and closed
@@ -1031,6 +880,11 @@ export function closeFlowPanel() {
 
 // syncFlowPanel re-renders the panel from the view when it is open. Called by
 // the header render on every refresh.
+//
+// THE SVG IS THE PICTURE'S OWN SIZE. The viewBox and the element's width and
+// height are all the picture's, one user unit to one pixel, and the panel's
+// stage scrolls a taller picture (operator.css); it never scales one, so the
+// cards stay their fixed size on the kiosk whatever the cell needs.
 export function syncFlowPanel(view) {
     const p = panel();
     if (!p) return;
@@ -1042,7 +896,14 @@ export function syncFlowPanel(view) {
     const styleName = view.current_style ? view.current_style.name : 'No style running';
     if (title) title.textContent = styleName;
     if (sub) sub.textContent = view.target_style ? 'running · changing over to ' + view.target_style.name : (view.current_style ? 'running' : '');
-    if (svg) svg.innerHTML = renderFlowPicture(view);
+    if (svg) {
+        const o = { frame: { w: STATION_FRAME.w } };
+        svg.innerHTML = renderFlowPicture(view, o);
+        const h = o.height || STATION_FRAME.h;
+        svg.setAttribute('viewBox', '0 0 ' + STATION_FRAME.w + ' ' + h);
+        svg.setAttribute('width', String(STATION_FRAME.w));
+        svg.setAttribute('height', String(h));
+    }
     p.hidden = false;
 }
 
@@ -1060,11 +921,6 @@ export function mountFlowPanel() {
     close.addEventListener('click', closeFlowPanel);
     hdr.appendChild(close);
     section.appendChild(hdr);
-    const legend = el('div', { className: 'os-flow-legend' });
-    const l1 = el('span'); l1.appendChild(el('i', { className: 'r1' })); l1.appendChild(document.createTextNode('Robot 1'));
-    const l2 = el('span'); l2.appendChild(el('i', { className: 'r2' })); l2.appendChild(document.createTextNode('Robot 2'));
-    legend.appendChild(l1); legend.appendChild(l2);
-    section.appendChild(legend);
     const stage = el('div', { className: 'os-flow-stage' });
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '0 0 1280 560');

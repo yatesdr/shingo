@@ -286,10 +286,28 @@ function loadPage(loadOpts) {
     // The picture and the map are stubbed to fail loudly if they ever run: the
     // pin's path draws the bar but never the picture (no #pd-svg exists).
     global.renderFlowPicture = () => { throw new Error('drawPicture must not run in this pin'); };
-    global.pictureRows = () => { throw new Error('pictureRows must not run in this pin'); };
+    // The row words are the table's (front/back under a position), so they
+    // are read whenever the table draws; a stub cell has no rows to name.
+    global.pictureRows = () => ({});
     global.sentencesFromModel = () => { throw new Error('sentencesFromModel must not run in this pin'); };
+    global.moduleOf = () => { throw new Error('moduleOf must not run in this pin'); };
     for (const fn of ['makeProjector', 'rotate90For', 'dist2', 'cubicLength', 'cubicPathD', 'laneKey']) {
         global[fn] = () => { throw new Error(fn + ' must not run in this pin'); };
+    }
+    win.pictureCalls = [];
+    if (loadOpts.realPicture) {
+        // The picture pins draw for real: operator-flow.js's own renderer,
+        // row words, sentences and module membership, so what the page sizes
+        // its frame from is the height the picture itself reported.
+        const flow = loadFlow();
+        global.renderFlowPicture = (view, opts) => {
+            const markup = flow.renderFlowPicture(view, opts);
+            win.pictureCalls.push(opts);
+            return markup;
+        };
+        global.pictureRows = flow.pictureRows;
+        global.sentencesFromModel = flow.sentencesFromModel;
+        global.moduleOf = flow.moduleOf;
     }
     global.showModal = sheetOpener;
     global.hideModal = sheetCloser;
@@ -303,6 +321,75 @@ function loadPage(loadOpts) {
         { filename: 'processes-desktop.js' });
 
     return { root, pop, main, doc, win, scrim };
+}
+
+// operator-flow.js in its own context, the way operator-flow.test.js loads
+// it: scene-geom's exports stripped to declarations, the flow module's imports
+// stripped and its station helpers stubbed, the model beside it on window so
+// sentencesFromModel reads the same api the page does.
+function loadFlow() {
+    const dir = path.join(__dirname, '..', '..', 'operator-station');
+    const ctx = {
+        console, Math, Set, Number, isFinite, JSON, Object, Array,
+        document: { getElementById() { return null; } },
+        window: { location: { hash: '' } },
+        el() { return {}; },
+        esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); },
+        getView() { return null; },
+    };
+    vm.createContext(ctx);
+    vm.runInContext(fs.readFileSync(path.join(dir, 'composer-model.js'), 'utf8'), ctx);
+    const geom = fs.readFileSync(
+        path.join(__dirname, '..', '..', '..', '..', '..', 'shared', 'scene-geom.js'), 'utf8');
+    vm.runInContext(geom.replace(/^export /mg, ''), ctx);
+    const raw = fs.readFileSync(path.join(dir, 'operator-flow.js'), 'utf8');
+    const src = raw.replace(/^import[^;]+;\s*/mg, '').replace(/^export /mg, '');
+    vm.runInContext(src + '\n__out = { renderFlowPicture, pictureRows, sentencesFromModel, ' +
+        'moduleOf: typeof moduleOf === "function" ? moduleOf : undefined };', ctx);
+    return ctx.__out;
+}
+
+// A press tall enough to wrap at a 600 px frame: four single-robot positions
+// and a press index with its on-deck partner — five modules, two to a row.
+const TALL_COMPOSER = {
+    styles: [{
+        id: 1, name: 'Style A',
+        claims: ['PLN_01', 'PLN_02', 'PLN_03', 'PLN_04'].map(n => ({
+            core_node_name: n, swap_mode: 'single_robot', payload_code: 'PART-A',
+            inbound_source: 'SMN_010', outbound_destination: 'DN_001',
+        })).concat([{
+            core_node_name: 'PLN_05', swap_mode: 'two_robot_press_index', payload_code: 'PART-A',
+            paired_core_node: 'PLN_06', inbound_source: 'SMN_010', outbound_destination: 'DN_001',
+        }]),
+        parts: ['PART-A'],
+        advanced: {},
+    }],
+    routing: [
+        { core_node_name: 'SMN_010', role: 'source', label: 'SMN_010', enabled: true, sequence: 1 },
+        { core_node_name: 'DN_001', role: 'destination', label: 'DN_001', enabled: true, sequence: 2 },
+    ],
+    presets: [],
+    palette: ['PART-A'],
+    cell: {
+        positions: ['PLN_01', 'PLN_02', 'PLN_03', 'PLN_04', 'PLN_05', 'PLN_06'].map((n, i) => ({
+            core_node_name: n, kind: n === 'PLN_06' ? 'back' : 'front', sequence: i + 1,
+        })),
+        groups: {},
+    },
+};
+
+// The frame and the svg in it, as drawFlows writes them: .pd-pic laid out
+// `width` px wide, #pd-svg inside it with its attributes recorded.
+function pictureFrame(width) {
+    const pic = makeElement('');
+    pic.classList.add('pd-pic');
+    pic.clientWidth = width;
+    const svg = makeElement('pd-svg');
+    svg.attrs = {};
+    svg.setAttribute = (k, v) => { svg.attrs[k] = String(v); };
+    svg.getAttribute = k => (k in svg.attrs ? svg.attrs[k] : null);
+    pic.appendChild(svg);
+    return { pic, svg };
 }
 
 // drawFlows writes the button as: <button class="pd-btn" data-act="use-preset">
@@ -969,6 +1056,77 @@ async function mainAsync() {
         if (selected()) throw new Error('Escape with nothing else open did not deselect');
         checks++;
         console.log('ok: Escape closes the popover first, then lets go of the selection');
+    }
+
+    // ── the frame takes the picture's own height ────────────────────────────
+    //
+    // The picture lays out at the frame's width and reports how tall that
+    // made it. The svg is that tall and the viewBox says the same, so the
+    // drawing is 1:1 — never a fixed band the picture is squeezed into.
+    {
+        const { pic, svg } = pictureFrame(600);
+        const { root, win } = loadPage({ composer: TALL_COMPOSER, extraIds: { 'pd-svg': svg }, realPicture: true });
+        await drain();
+        await drain();
+        const call = win.pictureCalls[win.pictureCalls.length - 1];
+        if (!call) throw new Error('setup: the page never drew the picture');
+        const h = call.height;
+        if (!(h > 430)) throw new Error('setup: the fixture should wrap past a 430 px band; the picture reported ' + h);
+        if (!call.frame || call.frame.w !== pic.clientWidth) {
+            throw new Error('the picture was laid out at ' + JSON.stringify(call.frame) +
+                ', not the frame\'s ' + pic.clientWidth + ' px width');
+        }
+        if (svg.attrs.viewBox !== '0 0 600 ' + h) {
+            throw new Error('the viewBox is "' + svg.attrs.viewBox + '" — want "0 0 600 ' + h +
+                '", the height the picture reported');
+        }
+        if (svg.attrs.height !== String(h) || svg.attrs.width !== '600') {
+            throw new Error('the svg is ' + svg.attrs.width + 'x' + svg.attrs.height +
+                ' — want 600x' + h + ', the picture\'s own size');
+        }
+        if (/pd-legend/.test(root.innerHTML)) {
+            throw new Error('the page still draws a fixed two-robot legend beside the picture\'s own');
+        }
+        if (!/class="lg"/.test(svg.innerHTML)) throw new Error('the picture drew no legend of its own');
+        checks++;
+        console.log('ok: the svg is the size the picture reported, and the picture carries the only legend');
+    }
+
+    // ── a selection is the module's, and so is the second click ─────────────
+    //
+    // Selecting the press outlines its whole module, the on-deck card
+    // included, so a click on that on-deck card is a click on the selected
+    // thing: it lets go rather than moving the selection inside the module.
+    {
+        const { pic, svg } = pictureFrame(600);
+        const { doc, main, win } = loadPage({ composer: TALL_COMPOSER, extraIds: { 'pd-svg': svg }, realPicture: true });
+        main.appendChild(pic);   // the click bubbles svg → frame → column → #pd-root
+        await drain();
+        await drain();
+        const card = name => {
+            const c = makeElement('');
+            c.dataset.pos = name;
+            svg.appendChild(c);
+            return c;
+        };
+        const press = card('PLN_05'), deck = card('PLN_06'), other = card('PLN_01');
+        // What the picture was last asked to outline. The on-deck position
+        // runs no claim and so has no table row; the picture is where its
+        // selection shows.
+        const selected = () => win.pictureCalls[win.pictureCalls.length - 1].selected || '';
+        bubble(press, 'click', doc);
+        if (selected() !== 'PLN_05') throw new Error('setup: a click on the press card should select it, got "' + selected() + '"');
+        bubble(deck, 'click', doc);
+        if (selected()) {
+            throw new Error('a click on the on-deck card of the selected module moved the selection to "' +
+                selected() + '" instead of letting go');
+        }
+        bubble(deck, 'click', doc);
+        if (selected() !== 'PLN_06') throw new Error('with nothing selected, the on-deck card should select itself');
+        bubble(other, 'click', doc);
+        if (selected() !== 'PLN_01') throw new Error('a click on another module\'s card should move the selection to it');
+        checks++;
+        console.log('ok: a second click anywhere in the selected module lets go; another module takes the selection');
     }
 
     // ── a redraw keeps where the engineer was scrolled ───────────────────────

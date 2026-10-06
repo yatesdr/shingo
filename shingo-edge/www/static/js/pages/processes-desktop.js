@@ -12,7 +12,7 @@
 //
 // THE DESKTOP VERB IS SAVE (SPEC §0.5). This page never calls changeover/start.
 
-import { renderFlowPicture, pictureRows, sentencesFromModel } from '/static/operator-station/operator-flow.js';
+import { renderFlowPicture, pictureRows, sentencesFromModel, moduleOf } from '/static/operator-station/operator-flow.js';
 import { esc } from '/static/shared/esc.js';
 import {
     makeProjector, rotate90For, dist2, cubicLength, cubicPathD, laneKey,
@@ -59,7 +59,7 @@ const S = {
     previewTimer: null,
     previewAbort: null,
     selected: null,      // the selected position, shared by the picture and the table
-    picRows: {},         // node -> 'front' | 'back' | '', from the DRAWING (never claim kind)
+    picRows: {},         // node -> 'front' | 'back' | '', from pictureRows (never claim kind)
     openAs: '',          // the one dim cell currently drawn as a chip, because it was clicked
     adv: null,           // the Advanced sheet's own draft: {node, a, evacNodes, evacDest}
     routing: null,       // D3's rows — every one, the disabled backfills included
@@ -572,6 +572,8 @@ function reportDesktopFit() {
     if (!tbl || !box || !bar || !pic) return;
     const b = bar.getBoundingClientRect(), pb = pic.getBoundingClientRect(), bx = box.getBoundingClientRect();
     const ox = outer ? outer.getBoundingClientRect() : bx;
+    const svgEl = pic.querySelector('#pd-svg');
+    const svgRect = svgEl ? svgEl.getBoundingClientRect() : { width: 0, height: 0 };
     // P3: the add row is the footer and is always visible; the paired-above
     // line is the last SCROLLING row and has to be reachable rather than on
     // screen. Both are rendered geometry, so both are measured — a footer
@@ -596,18 +598,15 @@ function reportDesktopFit() {
         scrollerBottom: Math.round(bx.bottom),
         // THE PICTURE IS DRAWN 1:1, and this is how that is checked now.
         //
-        // It used to be checked by looking for ` 430"` in the DOM — the
-        // viewBox height at the frame's resting size. That worked while the
-        // height never moved, and P3 moved it: the box now has a floor and
-        // the picture gives way to it (T2's rule), so 430 is one of several
-        // right answers and the assertion was reading a constant where the
-        // property is a RELATION. What matters is that the viewBox equals the
-        // frame, whatever the frame is — a picture laid out at 1280x560 and
-        // fitted by preserveAspectRatio is the bug, and it scales cards and
-        // type together at 0.59.
-        picW: Math.round(pic.clientWidth),
-        picH: Math.round(pic.clientHeight),
-        viewBox: (root().querySelector('#pd-svg') || { getAttribute: () => '' }).getAttribute('viewBox') || '',
+        // The property is a RELATION, not a constant: the viewBox equals the
+        // svg's rendered size, whatever the picture's own height made it — a
+        // picture laid out at one size and fitted by preserveAspectRatio into
+        // another is the bug, and it scales cards and type together. The svg
+        // is measured, not the frame: the frame may be shorter than the
+        // picture and scroll it.
+        picW: Math.round(svgRect.width),
+        picH: Math.round(svgRect.height),
+        viewBox: (svgEl || { getAttribute: () => '' }).getAttribute('viewBox') || '',
         hasFooter: !!foot,
         hasPairedLine: !!paired,
     };
@@ -678,9 +677,8 @@ function rail() {
 // adapter the station uses, from the same place.
 function cellFromModel() { return M().pictureCells(S.model, S.composer.cell); }
 
-// PICTURE_H is the frame's height at rest, and the reference's: a 430 px band
-// between the header and the positions table. It is a fallback here only —
-// the real height is measured, because the frame shrinks on a short screen.
+// PICTURE_H is the height of a frame the picture reported nothing for — an
+// empty cell, whose one line of text sits inside it.
 const PICTURE_H = 430;
 const PICTURE_W_FALLBACK = 1084;   // the main column at the spec's 1440, for a frame not laid out yet
 
@@ -688,34 +686,27 @@ const PICTURE_W_FALLBACK = 1084;   // the main column at the spec's 1440, for a 
 function drawPicture(pass) {
     const svg = $('pd-svg');
     if (!svg || !S.model) return;
-    // THE PICTURE IS DRAWN AT THE COLUMN'S OWN SIZE. The renderer lays out in
-    // absolute pixels, so a card is CARD_W wide on screen only when the viewBox
-    // is the element's real width. Handing it the station's 1280x560 and
-    // letting preserveAspectRatio fit that into this frame is what drew the
-    // whole picture at 0.59 with 9 px card titles.
-    // The HEIGHT is measured too, because the frame gives way on a short screen
-    // (.pd-pic is `flex: 0 1 430px`). Laying out at 430 into a box that ended
-    // up 300 tall is the same mistake as laying out at 1280 into a 1084 column
-    // — preserveAspectRatio would scale the whole drawing, cards and type
-    // included, instead of the layout using the room it actually has.
-    const w = Math.round(svg.clientWidth || (svg.parentNode && svg.parentNode.clientWidth) || PICTURE_W_FALLBACK);
-    const h = Math.round(svg.clientHeight || (svg.parentNode && svg.parentNode.clientHeight) || PICTURE_H);
-    const frame = { w: w, h: h };
+    // THE PICTURE IS DRAWN AT THE FRAME'S WIDTH AND ITS OWN HEIGHT. The
+    // renderer lays out in absolute pixels and wraps its modules at the width
+    // it is given, so the width is the frame's (.pd-pic, the svg's parent —
+    // the svg's own width is whatever the last draw set). The height is not
+    // the frame's to choose: the picture reports it through opts.height, and
+    // the svg is set to exactly that size with a viewBox to match, so a card
+    // is CARD_W wide on screen and nothing is ever scaled to fit. A frame too
+    // short for it scrolls (.pd-pic is overflow: auto), as the station's flow
+    // panel does.
+    const frameEl = svg.parentNode;
+    const w = Math.round((frameEl && frameEl.clientWidth) || PICTURE_W_FALLBACK);
     const fs = M().findings(S.model);
     const byNode = {};
     for (const f of fs) if (f.node && !byNode[f.node]) byNode[f.node] = f.short;
     const p = process();
-    const cell = cellFromModel();
-    // The table's front/back sub-label is this, and only this — see pictureRows.
-    const before = JSON.stringify(S.picRows);
-    S.picRows = pictureRows(cell, frame);
-    const rowsMoved = JSON.stringify(S.picRows) !== before;
-    const markup = renderFlowPicture(
-        { cell: cell, station: { name: p ? p.name : '' } },
-        {
-            selected: S.selected, findings: byNode, editable: true, frame: frame,
-            sentences: sentencesFromModel(S.model),
-        });
+    const o = {
+        selected: S.selected, findings: byNode, editable: true, frame: { w: w },
+        sentences: sentencesFromModel(S.model),
+    };
+    const markup = renderFlowPicture({ cell: cellFromModel(), station: { name: p ? p.name : '' } }, o);
+    const h = Math.round(o.height || PICTURE_H);
 
     // AN UNCHANGED PICTURE IS NOT REDRAWN, and that is what stops the pulse.
     //
@@ -744,53 +735,34 @@ function drawPicture(pass) {
     // written; only a redraw of the SAME element with the same bytes is
     // skipped, which is the case this is for.
     const viewBox = '0 0 ' + w + ' ' + h;
-    if (svg.getAttribute('viewBox') !== viewBox) svg.setAttribute('viewBox', viewBox);
+    if (svg.getAttribute('viewBox') !== viewBox) {
+        svg.setAttribute('viewBox', viewBox);
+        svg.setAttribute('width', String(w));
+        svg.setAttribute('height', String(h));
+    }
     if (markup !== svg.pdMarkup) {
         svg.innerHTML = markup;
         svg.pdMarkup = markup;
     }
-    if (rowsMoved) redrawPositionsTable();
 
-    // THE TABLE'S HEIGHT IS THE PICTURE'S HEIGHT, and that is the rest of the
-    // pulse.
+    // THE WIDTH IS CHECKED ONCE MORE, ON THE NEXT FRAME. Setting the svg's
+    // height can change the frame's width: on a short screen the flow column
+    // scrolls (.pd-main is overflow-y: auto there), and a picture that makes
+    // it overflow brings in its scrollbar, which narrows every frame inside
+    // it. The draw above was laid out at the width from before that, so the
+    // picture would sit a scrollbar's width wider than its frame.
     //
-    // `.pd-pic` is `flex: 0 1 430px` and gives way to the positions box (T2's
-    // rule), so the frame this was measured at is only correct while the table
-    // below it stays the height it was. redrawPositionsTable, three lines up,
-    // is exactly what changes it: the front/back sub-label comes from picRows,
-    // which comes from the frame. The draw therefore happened at a frame that
-    // no longer exists, and the NEXT draw — the preview's, 400 ms later —
-    // measured the real one and re-scaled the whole drawing in front of the
-    // engineer. Skipping the redundant WRITE (above) stopped the flicker and
-    // could not stop this, because this one is a genuinely different picture.
-    //
-    // So the second measurement happens HERE, in the same task, before the
-    // browser has painted anything: re-measure, and if the frame moved, draw
-    // once more at the size that is actually there. `pass` bounds it to one —
-    // the table's content is a function of the frame and converges in one step,
-    // and a loop that trusted convergence would be a loop.
+    // requestAnimationFrame runs AFTER layout and BEFORE paint, so the
+    // corrected layout lands in the very frame the engineer first sees: no
+    // snap. `pass` bounds it to one correction — the width cannot move again
+    // once the scrollbar is in.
     if (!pass) {
-        // ON THE NEXT FRAME, NOT IN THIS TASK. Measuring again here reads the
-        // same number, because the number is not wrong-because-stale — it is
-        // the flex BASIS. `.pd-pic` is `flex: 0 1 430px` and gives way to the
-        // positions box, and the shrink to its real height is resolved by the
-        // browser's layout pass, not by the reflow a clientHeight read forces
-        // mid-task. So the first draw laid out at 430 into a box that paints
-        // 391, preserveAspectRatio scaled the whole drawing to 0.91, and the
-        // preview's redraw 400 ms later measured 391 and snapped it back to
-        // 1:1 — "zooms out and then refits", exactly.
-        //
-        // requestAnimationFrame runs AFTER layout and BEFORE paint, so the
-        // corrected viewBox lands in the very frame the engineer first sees:
-        // no zoom, no snap. `pass` bounds it to one correction.
         requestAnimationFrame(() => {
             // The tab may have been redrawn out from under this frame, and
             // writing into a detached element would be drawing on nothing.
             const el = $('pd-svg');
-            if (!el || el !== svg) return;
-            const w2 = Math.round(el.clientWidth || w);
-            const h2 = Math.round(el.clientHeight || h);
-            if (w2 !== w || h2 !== h) drawPicture(1);
+            if (!el || el !== svg || !el.parentNode) return;
+            if (Math.round(el.parentNode.clientWidth || w) !== w) drawPicture(1);
         });
     }
     reportDesktopFit();
@@ -873,8 +845,7 @@ function main() {
         '<button class="pd-btn" data-act="use-preset">Use a preset ▾</button>' +
         '<button class="pd-btn primary" data-act="save" disabled>Save flow</button></div></div>' +
         (S.notice ? '<div class="pd-notice">' + esc(S.notice) + '</div>' : '') +
-        '<div class="pd-pic"><svg id="pd-svg" class="os-flow-picture" viewBox="0 0 1280 560"></svg>' +
-        '<div class="pd-legend"><span><i class="r1"></i>Robot 1</span><span><i class="r2"></i>Robot 2</span></div></div>' +
+        '<div class="pd-pic"><svg id="pd-svg" class="os-flow-picture"></svg></div>' +
         positionsTable() +
         '<div class="pd-bar" id="pd-bar"></div><div class="pd-pop" id="pd-pop" hidden></div></div>';
 }
@@ -905,6 +876,10 @@ function freePositions() {
 }
 
 function positionsTable() {
+    // The front/back word under each position (rowWord). pictureRows reads the
+    // cell's coordinates and nothing about the frame, so the table computes it
+    // here, as it draws, rather than waiting for the picture to.
+    S.picRows = pictureRows(cellFromModel());
     const rows = [];
     const used = usedPositions();
     for (const pos of S.model.positions) {
@@ -2634,8 +2609,16 @@ function gotoFinding(node) {
 }
 
 // A click on the selected position lets go of it; any other click goes to it.
+// THE SELECTION IS THE MODULE'S: the picture outlines every card and slot of
+// the selected position's module, the on-deck card of a press index included,
+// so a click on any of them is a click on what is selected. Membership is the
+// picture's own (moduleOf), not a second reading of the pairing rules.
 function toggleSelected(node) {
-    if (S.selected === node) { clearSelected(); return; }
+    if (S.selected && (S.selected === node ||
+        (S.model && moduleOf(cellFromModel(), S.selected).indexOf(node) >= 0))) {
+        clearSelected();
+        return;
+    }
     gotoFinding(node);
 }
 
