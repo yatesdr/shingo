@@ -175,13 +175,6 @@ func (s *NodeService) ListEdges() ([]registry.Edge, error) {
 	return s.db.ListEdges()
 }
 
-// GetSlotDepth returns the depth of a slot within its containing lane.
-// Absorbed from engine_db_methods.go as part of the nodesPageDataStore
-// dissolution (PR 3a.5.1).
-func (s *NodeService) GetSlotDepth(nodeID int64) (int, error) {
-	return s.db.GetSlotDepth(nodeID)
-}
-
 // ── PR 3a.6 additions: remaining www-reachable queries ───────────────────
 
 // GetByName loads a node by its human-readable name (instance name).

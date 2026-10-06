@@ -1,4 +1,4 @@
-import { apiGet, apiPost, delegateActions, h, toast, uiConfirm } from '/static/app.js';
+import { apiGet, apiPost, delegateActions, h, setText, toast, uiConfirm } from '/static/app.js';
 
 // Core-owned bin loaders ("stations"), drawn as boxes on the Nodes page.
 //
@@ -30,6 +30,7 @@ let nodesByName = {};
 let nodesById = {};
 let nodeInfo = {}; // node id -> {id, name, parentName, synthetic, typeCode}
 let payloadCodes = [];
+let payloadOptionsHtml = ''; // the catalogue as <option>s, built once per refresh
 let loaderData = []; // raw /api/loader/list: [{loader, payloads, homes, quota, window_bin_types}]
 let draggingMemberNode = null;
 
@@ -51,7 +52,6 @@ function setVal(id, v) {
   const e = document.getElementById(id);
   if (e && e.value !== v) e.value = v;
 }
-function setText(id, t) { const e = document.getElementById(id); if (e) e.textContent = t; }
 function setShown(id, show) {
   const e = document.getElementById(id);
   if (e && e.classList) e.classList.toggle('is-hidden', !show);
@@ -703,11 +703,31 @@ function loaderMemberTile(home, dedicated) {
   return h`<div class="node-tile loader-member" data-id="${home.position_node_id}" data-kind="${kind}"${raw(isAuth ? ' draggable="true"' : '')}>${raw(grip)}<span class="tile-loc" title="${nm}">${nm}</span>${raw(badge)}${raw(x)}</div>`;
 }
 
+// payloadSelect draws a position's payload picker AT REST: "+ payload" and the
+// picked payload, nothing else. The whole catalogue used to be copied into
+// every picker — 2,962 <option>s across 29 pickers at Springfield — for lists
+// that are opened one at a time. It is built once per refresh
+// (payloadOptionsHtml) and filled into a picker when the picker is opened
+// (fillPayloadSelect). A picked code no longer in the catalogue renders as
+// "+ payload", as it did when the catalogue was copied in.
 function payloadSelect(sel) {
-  const opts = payloadCodes.map(function (c) {
-    return h`<option value="${c}"${raw(c === sel ? ' selected' : '')}>${c}</option>`;
-  });
-  return h`<select class="loader-pc-sel${sel ? ' has-payload' : ''}" draggable="false"><option value="">+ payload</option>${opts}</select>`;
+  const picked = sel && payloadCodes.indexOf(sel) >= 0
+    ? h`<option value="${sel}" selected>${sel}</option>` : '';
+  return h`<select class="loader-pc-sel${sel ? ' has-payload' : ''}" draggable="false"><option value="">+ payload</option>${raw(picked)}</select>`;
+}
+
+function buildPayloadOptions(codes) {
+  return codes.map(function (c) { return h`<option value="${c}">${c}</option>`; }).join('');
+}
+
+// fillPayloadSelect gives an opened picker the full catalogue, keeping its
+// value. Once per picker per render: the next refresh redraws it at rest.
+function fillPayloadSelect(s) {
+  if (s.dataset.filled) return;
+  const v = s.value;
+  s.innerHTML = h`<option value="">+ payload</option>` + payloadOptionsHtml;
+  s.value = v;
+  s.dataset.filled = '1';
 }
 
 // payloadChipsHtml renders a shared-window loader's part set as chips, with a
@@ -1261,6 +1281,7 @@ async function refresh() {
     payloadCodes = (Array.isArray(ps) ? ps : []).map(function (p) {
       return p.code || p.Code || p.payload_code || p.PayloadCode || p;
     }).filter(Boolean);
+    payloadOptionsHtml = buildPayloadOptions(payloadCodes);
     loaderData = (ld && ld.loaders) || [];
   } catch (e) { /* keep last render */ }
   if (armed && !loaderItem(armed.loaderID)) armed = null;
@@ -1325,6 +1346,10 @@ function wireAll(host) {
       g.addEventListener('dragend', onMemberDragEnd);
     });
     box.querySelectorAll('.loader-pc-sel').forEach(function (s) {
+      // Filled before the list opens: pointerdown precedes the browser's own
+      // open, and focus covers the keyboard.
+      s.addEventListener('pointerdown', function () { fillPayloadSelect(s); });
+      s.addEventListener('focus', function () { fillPayloadSelect(s); });
       s.addEventListener('change', function () {
         s.classList.toggle('has-payload', !!s.value);
         setMemberPayload(lid, s.closest('.loader-member').dataset.id, s.value);
@@ -1479,7 +1504,19 @@ function setMemberPayload(lid, nodeId, pc) {
     uop_threshold: home ? home.uop_threshold : 0,
   }).then(refresh).catch(function (err) { toast('' + err, 'error'); });
 }
-function removeMember(lid, nodeId) {
+// removeMember is the × on a member tile. Edits on this page save on change
+// and ask first only when the change loses data (docs/ui-style-guide.md): a
+// position with a payload or a threshold loses them when it goes, so it asks;
+// an empty position or a buffer slot goes at once.
+async function removeMember(lid, nodeId) {
+  const home = findHome(lid, nodeId);
+  const lost = [];
+  if (home && home.payload_code) lost.push('payload ' + home.payload_code);
+  if (home && home.uop_threshold > 0) lost.push('threshold ' + home.uop_threshold);
+  if (lost.length) {
+    const nm = nodesById[nodeId] || ('node #' + nodeId);
+    if (!await uiConfirm('Remove ' + nm + ' from this station? Its ' + lost.join(' and ') + ' will be cleared.')) return;
+  }
   apiPost('/api/loader/remove-home', { loader_id: Number(lid), position_node_id: Number(nodeId) }).then(refresh).catch(function (err) { toast('' + err, 'error'); });
 }
 

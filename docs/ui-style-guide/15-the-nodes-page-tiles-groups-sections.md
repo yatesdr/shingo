@@ -3,8 +3,8 @@
 ### Node tile
 
 **One node tile is one size everywhere**: 6.5rem x 2.75rem, set on `.node-tile`
-and nowhere else. The ungrouped grid, a group's nodes, a lane, a station box and
-the synthetic `_TRANSIT` tile are all wrapping rows of that fixed box. A
+and nowhere else. The ungrouped grid, a group's nodes, a lane and a station box
+are all wrapping rows of that fixed box. A
 container never sizes the tile: a stretching grid made ungrouped tiles wide and
 a flex row made group tiles as wide as their text, so the same node was two
 shapes a scroll apart. A long name truncates with an ellipsis and the full name
@@ -21,6 +21,14 @@ slot above). Width always holds.
   `--elev-surface` in `--text`. No single ink clears 4.5:1 on both stripes; the
   plate makes the backdrop constant, the same fix as the robot tile's chip.
   `node_tile_contrast_test.go` pins every state.
+- **A robot standing on the node is a marker, not a fill.** The fill is the
+  bins at the node; a robot parked there (its CurrentStation resolves to the
+  node, by name or by a unique scene alias) prints its id bottom-left on the
+  same `--elev-surface` plate, and the title names every robot there and
+  whether it carries a bin. The depth badge keeps bottom-right.
+- **`_TRANSIT` is not drawn.** It is where a bin is booked while it rides a
+  robot, not a place on the floor; the page data leaves it out
+  (`getNodesPageData`) and the Bins page shows what is in transit.
 - Hover lifts the border and shadow. It never scales the tile (Motion means
   motion).
 
@@ -44,4 +52,7 @@ slot above). Width always holds.
   nothing: *No nodes in this group yet.* Signed in, the sentence sits inside the
   drop zone and says how to fill it: *Drag a node here, or add a lane.*
 - A lane is a rail open at its mouth (the left edge), drawn in `--sub-3`.
+- **Lanes sort by name, numbers as numbers** (`byLaneName`): Lane_2 before
+  Lane_10, padded or not. Never node-id order, which puts a lane added later
+  wherever its id fell.
 

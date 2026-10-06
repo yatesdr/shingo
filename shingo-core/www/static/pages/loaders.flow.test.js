@@ -126,6 +126,8 @@ function load(opts) {
         apiPost(url, body) { posts.push({ url: url, body: body }); return Promise.resolve(opts.post ? opts.post(url, body) : {}); },
         delegateActions() {},
         h: h,
+        // app.js's setText: an absent value is the no-data dash.
+        setText(id, v) { const e = els[id]; if (e) e.textContent = (v === null || v === undefined) ? '—' : v; },
         toast(msg, level) { toasts.push({ msg: msg, level: level }); },
         uiConfirm(msg) { confirms.push(msg); return Promise.resolve(opts.confirm === undefined ? true : opts.confirm); },
     };
@@ -568,6 +570,14 @@ await (async function assignThroughTheApi() {
         body('onGroupDragStart').indexOf("'application/x-node-group'") >= 0 && body('onGroupDragStart').indexOf('text/plain') < 0);
     check('onDropGrid ignores a group drag', body('onDropGrid').indexOf('isGroupDrag(e)') >= 0);
     check('the lane slots ignore a group drag', body('onDrop').indexOf('isGroupDrag(e)') >= 0);
+    // Lanes in natural name order. They were collected in node-id order, so a
+    // lane added later sat wherever its id fell.
+    const byLaneName = vm.runInNewContext('(' + body('byLaneName') + '\n})');
+    const tile = function (name) { return { dataset: { name: name } }; };
+    const ordered = ['Lane_15', 'Lane_02', 'Lane_16', 'Lane_01', 'Lane_10', 'Lane_9', 'Lane_03'].map(tile)
+        .sort(byLaneName).map(function (t) { return t.dataset.name; }).join(',');
+    check('lanes sort in natural name order', ordered === 'Lane_01,Lane_02,Lane_03,Lane_9,Lane_10,Lane_15,Lane_16', ordered);
+    check('buildHierarchy sorts the lanes it draws', body('buildHierarchy').indexOf('lanes.sort(byLaneName)') >= 0);
 })();
 
 // --- frame 3: Settings ----------------------------------------------------
@@ -779,7 +789,9 @@ function loadDedicated(opts) {
     const f = dedicatedFixture();
     const h = load(Object.assign({ auth: true }, opts || {}));
     h.set('payloadCodes = ' + JSON.stringify(f.codes));
+    h.set('payloadOptionsHtml = buildPayloadOptions(payloadCodes)');
     h.set('loaderData = ' + JSON.stringify([f.item]));
+    h.set('nodesById = { 100: "POS-00", 101: "POS-01", 102: "POS-02", 103: "POS-03" }');
     return { h: h, item: f.item, codes: f.codes };
 }
 
@@ -789,10 +801,32 @@ function loadDedicated(opts) {
     const selects = html.match(/<select class="loader-pc-sel[\s\S]*?<\/select>/g) || [];
     const options = selects.reduce(function (n, s) { return n + (s.match(/<option/g) || []).length; }, 0);
     check('29 payload pickers on 29 home positions', selects.length === 29, 'selects=' + selects.length);
-    check('payload pickers at rest: the whole catalogue in every picker (pinned as it stands)',
-        options === 29 * (d.codes.length + 1), 'options=' + options);
+    // Was 2,958 (29 x 102): the catalogue copied into every picker. At rest
+    // a picker holds "+ payload" and the picked payload, nothing else.
+    check('payload pickers at rest: "+ payload" each, plus the one picked',
+        options === 29 + 1, 'options=' + options);
     check('the picked payload is the selected option',
         /<option value="PC-001" selected>PC-001<\/option>/.test(selects[0]), selects[0].slice(0, 200));
+    check('a picker with nothing picked holds only "+ payload"',
+        selects[2] === '<select class="loader-pc-sel" draggable="false"><option value="">+ payload</option></select>',
+        selects[2]);
+    // Opening a picker fills it from the one catalogue, keeping its value.
+    const s = makeEl('', 'select');
+    s.value = 'PC-001';
+    d.h.ctx.fillPayloadSelect(s);
+    check('an opened picker gets the whole catalogue once, value kept',
+        (s.innerHTML.match(/<option/g) || []).length === d.codes.length + 1 &&
+        s.innerHTML.indexOf('<option value="">+ payload</option>') === 0 &&
+        s.value === 'PC-001' && s.dataset.filled === '1',
+        s.innerHTML.slice(0, 120));
+    s.innerHTML = 'untouched';
+    d.h.ctx.fillPayloadSelect(s);
+    check('a picker already filled is not filled again', s.innerHTML === 'untouched');
+    // A picked code that has left the catalogue reads "+ payload" at rest, as
+    // it did when the catalogue was copied in and no option matched.
+    const gone = d.h.ctx.payloadSelect('NOT-IN-CATALOGUE');
+    check('a picked code no longer in the catalogue renders no option of its own',
+        gone.indexOf('NOT-IN-CATALOGUE') < 0 && gone.indexOf('has-payload') >= 0, gone);
 })();
 
 await (async function memberRemoveAndPayloadChange() {
@@ -803,23 +837,29 @@ await (async function memberRemoveAndPayloadChange() {
         d.h.confirms.length === 0 && d.h.posts.length === 1 && d.h.posts[0].url === '/api/loader/remove-home' &&
         d.h.posts[0].body.position_node_id === 102, JSON.stringify(d.h.posts));
 
+    // R5: a change that loses data asks first. A position's payload and
+    // threshold go with it.
     d = loadDedicated();
     d.h.ctx.removeMember('30', '100');
     await settle();
-    check('× on a position with a payload: removed at once, nothing asked (pinned as it stands)',
-        d.h.confirms.length === 0 && d.h.posts.length === 1, 'confirms=' + d.h.confirms.length + ' posts=' + d.h.posts.length);
+    check('× on a position with a payload: asks first, naming what is lost, then removes',
+        d.h.confirms.length === 1 && d.h.confirms[0].indexOf('POS-00') >= 0 &&
+        d.h.confirms[0].indexOf('payload PC-001') >= 0 &&
+        d.h.posts.length === 1 && d.h.posts[0].url === '/api/loader/remove-home',
+        JSON.stringify(d.h.confirms) + ' posts=' + d.h.posts.length);
 
     d = loadDedicated();
     d.h.ctx.removeMember('30', '101');
     await settle();
-    check('× on a position with only a threshold: removed at once, nothing asked (pinned as it stands)',
-        d.h.confirms.length === 0 && d.h.posts.length === 1, 'confirms=' + d.h.confirms.length + ' posts=' + d.h.posts.length);
+    check('× on a position with only a threshold: asks first',
+        d.h.confirms.length === 1 && d.h.confirms[0].indexOf('threshold 5') >= 0 && d.h.posts.length === 1,
+        JSON.stringify(d.h.confirms) + ' posts=' + d.h.posts.length);
 
     d = loadDedicated({ confirm: false });
     d.h.ctx.removeMember('30', '100');
     await settle();
-    check('× on a position with a payload: there is no question to decline (pinned as it stands)',
-        d.h.posts.length === 1, 'posts=' + d.h.posts.length);
+    check('× on a position with a payload, declined: nothing posted',
+        d.h.confirms.length === 1 && d.h.posts.length === 0, 'posts=' + d.h.posts.length);
 
     d = loadDedicated();
     d.h.ctx.setMemberPayload('30', '103', 'PC-050');

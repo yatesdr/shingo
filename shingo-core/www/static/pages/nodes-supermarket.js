@@ -381,6 +381,12 @@ function sectionHead(title, count) {
   return head;
 }
 
+// byLaneName orders lane tiles by name in natural order, so Lane_2 sorts
+// before Lane_10 whether or not the names are zero-padded.
+function byLaneName(a, b) {
+  return (a.dataset.name || '').localeCompare(b.dataset.name || '', undefined, { numeric: true, sensitivity: 'base' });
+}
+
 /* --- Build supermarket hierarchy from flat tiles --- */
 function buildHierarchy() {
   var grid = document.getElementById('tile-grid');
@@ -431,6 +437,12 @@ function buildHierarchy() {
       });
       return slots;
     }
+
+    // Lanes in name order, numbers counted as numbers: Lane_01, 02 … 15, 16.
+    // They were collected through Object.keys of an id-keyed map, which is id
+    // order, so a lane added later sat wherever its id fell (01, 02, 03, 15,
+    // 16, 04 …).
+    lanes.sort(byLaneName);
 
     var totalSlots = 0;
     var allLaneSlots = [];

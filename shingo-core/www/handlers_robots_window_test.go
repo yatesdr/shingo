@@ -151,9 +151,29 @@ func TestApiLocalizationBoard_TodayAsEndIsAllowed(t *testing.T) {
 	t.Parallel()
 	h, _ := testHandlers(t)
 
-	today := time.Now().UTC().Format("2006-01-02")
+	today := time.Now().In(plantLocation).Format("2006-01-02")
 	rec, _ := getBoard(t, h, "?from=2026-08-01&to="+today)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("to=today: status %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// A plant east of UTC is a day ahead of UTC for part of every day, and the
+// page sends the PLANT's today. Judged against the UTC date, Tokyo's morning
+// was refused as "in the future".
+func TestApiLocalizationBoard_PlantTodayEastOfUTCIsAllowed(t *testing.T) {
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	orig := plantLocation
+	plantLocation = tokyo
+	defer func() { plantLocation = orig }()
+	h, _ := testHandlers(t)
+
+	today := time.Now().In(tokyo).Format("2006-01-02")
+	rec, _ := getBoard(t, h, "?from=2026-08-01&to="+today)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("to=plant today (Tokyo): status %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 }

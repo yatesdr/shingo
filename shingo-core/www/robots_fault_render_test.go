@@ -90,3 +90,31 @@ func TestRobotOrderLine_CarriesNoAlarms(t *testing.T) {
 		}
 	}
 }
+
+// The pop-up names the order the tile names. It reads the tile's
+// data-order-id, so the server render must write it, and only for a robot on
+// an order — an idle robot's pop-up says "none", never "#0".
+func TestRobotTile_CarriesTheOrderForThePopUp(t *testing.T) {
+	t.Parallel()
+	html := robotTileHTML(t, RobotOrderLine{OrderID: 664, OrderStatus: "in_transit"})
+	if !strings.Contains(html, `data-order-id="664"`) {
+		t.Error("a robot on an order must carry data-order-id for the pop-up's link")
+	}
+	if !strings.Contains(html, `id="rm-order"`) {
+		t.Error("the robot pop-up must have an Order row")
+	}
+	idle := robotTileHTML(t, RobotOrderLine{})
+	if strings.Contains(idle, "data-order-id") {
+		t.Error("an idle robot must not carry an order id")
+	}
+}
+
+// The localization score is labelled on the tile. A bare 0.95 under a battery
+// bar reads as charge.
+func TestRobotTile_ScoreIsLabelled(t *testing.T) {
+	t.Parallel()
+	html := robotTileHTML(t, RobotOrderLine{})
+	if !strings.Contains(html, ">Loc 0.00</span>") {
+		t.Error("the confidence chip must print its label beside the number")
+	}
+}

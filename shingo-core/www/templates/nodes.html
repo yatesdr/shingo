@@ -7,13 +7,6 @@
       <button class="btn btn-primary" data-action="openNgrpModal">Add Node Group</button>
       <button class="btn btn-primary" data-action="openLoaderModal">+ Station</button>
       <button type="button" class="btn" data-action="syncFromFleet">Sync from Fleet</button>
-      <details class="dev-menu disclosure-bare">
-        <summary class="btn" title="Developer / test-data tools">Dev tools <svg class="icon icon-16" aria-hidden="true"><use href="#icon-chevron-down"></use></svg></summary>
-        <div class="dev-menu-items">
-          <button type="button" class="btn btn-sm" data-action="generateTestNodes">Generate test nodes</button>
-          <button type="button" class="btn btn-sm btn-danger" data-action="deleteTestNodes">Delete test nodes</button>
-        </div>
-      </details>
     </div>
     {{end}}
   </div>
@@ -40,7 +33,7 @@
   {{if .Nodes}}
   <div id="nodes-drop-area">
   <div class="tile-grid node-panel" id="tile-grid">
-    {{range .Nodes}}
+    {{range $n := .Nodes}}
     {{$count := index $.Counts .ID}}
     {{$childCount := index $.ChildCounts .ID}}
     {{$ts := index $.TileStates .ID}}
@@ -72,6 +65,10 @@
       </div>
       {{if .IsSynthetic}}<span class="tile-badge">S</span>{{end}}
       {{if not .Enabled}}<span class="tile-off">OFF</span>{{end}}
+      {{/* A robot standing here. The tile's fill is the BINS at the node, so a
+           robot parked on an empty node holding a bin read as "Empty"; the
+           marker says who is there without repainting the bin state. */}}
+      {{with $.RobotsAt}}{{$rb := index . $n.ID}}{{if $rb.Label}}<span class="tile-robot" title="{{$rb.Title}}">{{$rb.Label}}</span>{{end}}{{end}}
     </div>
     {{end}}
   </div>

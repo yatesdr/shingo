@@ -14,7 +14,8 @@
 // so the client never parses the server's lane string back apart.
 
 import { makeProjector, cubicPathD, laneKey } from '/static/shared/scene-geom.js';
-import { formatTime } from '/static/shared/utils.js';
+import { formatTime, serverNow } from '/static/shared/utils.js';
+import { plantDate, addDays } from '/static/components/plantclock.js';
 
 // BAND_STROKE carries the ordering a SECOND time, in weight.
 //
@@ -85,28 +86,31 @@ export function serverLaneKey(from, to) {
 // ── Window control seeds and guards ─────────────────────────────────────────
 //
 // Pure date math, at module scope so the node harness can pin it: these are
-// the values that would be WRONG SILENTLY — an off-by-one that includes a
-// day the roll-up has not closed yet, or a span cap that stopped mirroring
-// the server's.
+// the values that would be WRONG SILENTLY — a seed that moves with the hour
+// the page is opened, or a span cap that stopped mirroring the server's.
+//
+// Every seed takes the PLANT's date as a bare "YYYY-MM-DD" (plantToday) and
+// does calendar arithmetic with plantclock's addDays. It used to take the
+// browser's instant and do UTC date math, so an evening at a plant west of UTC
+// was already "tomorrow" and the opening range shifted by a day.
 
-function iso(d) { return d.toISOString().slice(0, 10); }
+function plantToday() { return plantDate(serverNow()); }
 
-// seedMainRange is the board's opening range: the last seven COMPLETE days,
-// ending yesterday. The roll-up writes a day's rows the night after, so a
-// range ending today silently overstates itself by one empty day.
+// seedMainRange is the board's opening range: the last seven days, ending on
+// the plant's today. Today has no rolled-up rows until the nightly roll-up
+// writes them, and the window note says so ("6 of 7 days hold data") rather
+// than the range leaving out the day the reader is standing in.
 export function seedMainRange(today) {
-    const to = new Date(today); to.setUTCDate(to.getUTCDate() - 1);
-    const from = new Date(to); from.setUTCDate(from.getUTCDate() - 6);
-    return { from: iso(from), to: iso(to) };
+    return { from: addDays(today, -6), to: today };
 }
 
 // seedCompareDays is what compare mode opens with: B yesterday, A seven days
 // before it — the same weekday, the day-grain version of the old "equal
-// stretch immediately before it" seed.
+// stretch immediately before it" seed. B stays yesterday: compare asks one day
+// against one day, and today has no rolled-up rows to compare.
 export function seedCompareDays(today) {
-    const b = new Date(today); b.setUTCDate(b.getUTCDate() - 1);
-    const a = new Date(b); a.setUTCDate(a.getUTCDate() - 7);
-    return { a: iso(a), b: iso(b) };
+    const b = addDays(today, -1);
+    return { a: addDays(b, -7), b: b };
 }
 
 // RANGE_MAX_DAYS mirrors boardMaxSpanDays (handlers_robots.go). The endpoint
@@ -292,9 +296,9 @@ export function createBoard(root, opts) {
     root.innerHTML =
         '<div class="lb-controls">' +
         '  <label class="lb-dt" id="lb-range-wrap">' +
-        '    <input type="date" id="lb-from" title="First complete day">' +
+        '    <input type="date" id="lb-from" title="First day">' +
         '    <span aria-hidden="true">→</span>' +
-        '    <input type="date" id="lb-to" title="Last complete day">' +
+        '    <input type="date" id="lb-to" title="Last day. Today holds no data until the nightly roll-up writes it.">' +
         '  </label>' +
         '  <label class="lb-toggle"><input type="checkbox" id="lb-compare"> Compare</label>' +
         '  <span id="lb-cmp" class="lb-cmp" hidden>' +
@@ -312,7 +316,7 @@ export function createBoard(root, opts) {
         '<div class="lb-main">' +
         '  <section class="lb-rail"><div class="lb-hd">Map changes</div><div id="lb-rail-body"></div></section>' +
         '  <section class="lb-mapwrap">' +
-        '    <div class="lb-zoom"><span id="lb-lvl">1.0×</span>' +
+        '    <div class="lb-zoom" title="Zoom with these buttons, or Ctrl + scroll over the map"><span id="lb-lvl">1.0×</span>' +
         '      <button type="button" data-z="out">−</button>' +
         '      <button type="button" data-z="in">+</button>' +
         '      <button type="button" data-z="fit">Fit</button></div>' +
@@ -332,20 +336,21 @@ export function createBoard(root, opts) {
     // An explicit from→to REPLACED the 7d/30d presets. A preset is a trailing
     // label, not a question: "30d" cannot ask about the week before the map
     // edit, and its only virtue — being one click — is what the two date
-    // fields lose nothing of, since they open on the last seven complete
-    // days. The roll-up closes complete days, so the picker's ends are DAYS
-    // and both open on yesterday as the last closed one; a "today" end is a
-    // day that has no rows yet and reads as a plant-wide dropout.
+    // fields lose nothing of, since they open on the last seven days. The
+    // roll-up closes whole days, so the picker's ends are DAYS, and the range
+    // opens ending on the plant's today: the day the reader is standing in is
+    // in the range, and until tonight's roll-up writes it the window note
+    // says "6 of 7 days hold data" rather than the range leaving it out.
     const fromIn = root.querySelector('#lb-from');
     const toIn = root.querySelector('#lb-to');
     {
-        const seed = seedMainRange(new Date());
+        const seed = seedMainRange(plantToday());
         state.from = seed.from; state.to = seed.to;
         fromIn.value = seed.from; toIn.value = seed.to;
     }
 
     function loadMainIfAskable() {
-        const problem = rangeProblem(state.from, state.to, iso(new Date()));
+        const problem = rangeProblem(state.from, state.to, plantToday());
         note.textContent = problem || '';
         if (!problem) load();
     }
@@ -377,7 +382,7 @@ export function createBoard(root, opts) {
     const dayBIn = root.querySelector('#lb-day-b');
 
     function seedCompareDaysInputs() {
-        const seed = seedCompareDays(new Date());
+        const seed = seedCompareDays(plantToday());
         state.dayA = seed.a; state.dayB = seed.b;
         dayAIn.value = seed.a; dayBIn.value = seed.b;
     }
@@ -386,7 +391,7 @@ export function createBoard(root, opts) {
         if (!state.dayA || !state.dayB) return 'pick both days';
         if (state.dayA === state.dayB) return 'the two days are the same';
         if (state.dayA > state.dayB) return 'day A is after day B';
-        if (state.dayB > iso(new Date())) return 'day B is in the future';
+        if (state.dayB > plantToday()) return 'day B is in the future';
         return null;
     }
     // dayB == today is allowed on the same terms the range picker allows it.
@@ -488,7 +493,16 @@ export function createBoard(root, opts) {
     // feel right: the pan keeps tracking when the cursor leaves the map, and
     // releasing outside still ends it, instead of the map sticking to the
     // pointer until you come back.
+    //
+    // THE WHEEL ZOOMS ONLY WITH CTRL (or ⌘) HELD. A bare wheel is the page's:
+    // the map fills the top of the page, so a reader scrolling down to the
+    // fleet tiles with the cursor over it was zooming an empty map instead.
+    // A modifier rather than "click the map to arm the wheel": a click on the
+    // map already selects or clears a lane, and an armed state is one more
+    // thing to be stuck in. A trackpad pinch arrives as a ctrl+wheel in Chrome,
+    // Edge and Firefox, so pinching still zooms there.
     map.addEventListener('wheel', function (e) {
+        if (!e.ctrlKey && !e.metaKey) return;
         e.preventDefault();
         const r = map.getBoundingClientRect();
         // Gentle per-notch, same 1.12 the kiosk uses -- a full wheel click

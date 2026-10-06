@@ -50,6 +50,7 @@
          data-x="{{f1 .X}}"
          data-y="{{f1 .Y}}"
          data-angle="{{f1 .Angle}}"
+         {{with index $.OrderLines .VehicleID}}{{if .OrderID}}data-order-id="{{.OrderID}}"{{end}}{{end}}
          data-action="openRobotModal">
       <div class="robot-name">
         {{.VehicleID}}
@@ -76,13 +77,14 @@
       </div>
       {{/* Localization confidence. A disconnected robot shows an em-dash, not
            0.00 and not its last-known value: zero is a measurement and absence
-           is not, and the two must not look alike. */}}
+           is not, and the two must not look alike. "Loc" names the number on
+           the tile itself; a bare 0.95 beside a battery bar reads as charge. */}}
       {{if .Connected}}
       <span class="chip {{confidenceBand .Confidence}} tnum robot-confidence"
-            title="Localization confidence (SEER): {{f2 .Confidence}}">{{f2 .Confidence}}</span>
+            title="Localization confidence (SEER): {{f2 .Confidence}}">Loc {{f2 .Confidence}}</span>
       {{else}}
       <span class="robot-confidence robot-confidence-none"
-            title="No localization reading — robot is disconnected. Not a confidence of zero.">&mdash;</span>
+            title="No localization reading — robot is disconnected. Not a confidence of zero.">Loc &mdash;</span>
       {{end}}
     </div>
     {{end}}
@@ -103,6 +105,7 @@
     </div>
     <div class="grid grid-2 text-sm" style="row-gap:0.4rem">
       <div><strong>State:</strong> <span id="rm-state" class="badge"></span></div>
+      <div><strong>Order:</strong> <span id="rm-order"></span></div>
       <div><strong>IP:</strong> <span id="rm-ip"></span></div>
       <div><strong>Model:</strong> <span id="rm-model"></span></div>
       <div><strong>Map:</strong> <span id="rm-map"></span></div>

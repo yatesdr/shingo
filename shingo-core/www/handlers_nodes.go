@@ -136,7 +136,7 @@ func (h *Handlers) apiLaneGatePoints(w http.ResponseWriter, r *http.Request) {
 	})
 }
 func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {
-	pd, err := getNodesPageData(&nodesPageDataAdapter{ns: h.engine.NodeService(), bs: h.engine.BinService()})
+	pd, err := getNodesPageData(&nodesPageDataAdapter{ns: h.engine.NodeService(), bs: h.engine.BinService(), robots: h.engine.GetAllCachedRobots})
 	if err != nil {
 		log.Printf("nodes page: get page data: %v", err)
 	}
@@ -158,6 +158,7 @@ func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {
 		"Edges":         pd.Edges,
 		"ChildCounts":   pd.ChildCounts,
 		"Depths":        pd.Depths,
+		"RobotsAt":      pd.RobotsAt,
 		"BinTypesJSON":  string(binTypesJSON),
 		"EdgesJSON":     string(edgesJSON),
 	}

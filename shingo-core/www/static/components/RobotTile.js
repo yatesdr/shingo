@@ -89,6 +89,9 @@ function setRobotDataset(tile, r) {
     d.emergency = r.emergency;
     d.processing = r.processing;
     d.error = r.error;
+    // The order the order line names; robots.js links it from the pop-up.
+    if (r.order_id) d.orderId = r.order_id;
+    else delete d.orderId;
     if (typeof r.x === 'number') d.x = r.x.toFixed(1);
     if (typeof r.y === 'number') d.y = r.y.toFixed(1);
     if (typeof r.angle === 'number') d.angle = r.angle.toFixed(1);

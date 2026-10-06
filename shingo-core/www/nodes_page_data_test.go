@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingocore/domain"
+	"shingocore/fleet"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/registry"
@@ -14,8 +15,8 @@ import (
 
 // stubNodesPageDataStore is a canned in-memory implementation of
 // nodesPageDataStore used to unit-test getNodesPageData without a DB or
-// the docker build tag. It records the slot-depth IDs it was asked
-// about so tests can also assert the dispatch pattern.
+// the docker build tag. It has no per-node read to offer: the page data is
+// built from list reads and the engine's robot snapshot, nothing else.
 type stubNodesPageDataStore struct {
 	nodes       []*nodes.Node
 	counts      map[int64]int
@@ -23,10 +24,7 @@ type stubNodesPageDataStore struct {
 	scenePoints []*scene.Point
 	binTypes    []*bins.BinType
 	edges       []registry.Edge
-	slotDepths  map[int64]int
-
-	// depthQueries records the IDs getNodesPageData asked for GetSlotDepth.
-	depthQueries []int64
+	robots      []fleet.RobotStatus
 }
 
 func (s *stubNodesPageDataStore) ListNodes() ([]*nodes.Node, error) { return s.nodes, nil }
@@ -43,31 +41,20 @@ func (s *stubNodesPageDataStore) ListBinTypes() ([]*bins.BinType, error) { retur
 func (s *stubNodesPageDataStore) ListEdges() ([]registry.Edge, error) {
 	return s.edges, nil
 }
-func (s *stubNodesPageDataStore) GetSlotDepth(nodeID int64) (int, error) {
-	s.depthQueries = append(s.depthQueries, nodeID)
-	d, ok := s.slotDepths[nodeID]
-	if !ok {
-		return 0, errNotFound{}
-	}
-	return d, nil
-}
-
-type errNotFound struct{}
-
-func (errNotFound) Error() string { return "not found" }
+func (s *stubNodesPageDataStore) CachedRobots() []fleet.RobotStatus { return s.robots }
 
 // TestGetNodesPageData_ComposesOutput drives getNodesPageData with a
 // canned store and asserts on the composition: uniqued zones, child
-// counts driven by ParentID, and depths populated only for children
-// whose GetSlotDepth succeeds.
+// counts driven by ParentID, and depths read off the node rows.
 func TestGetNodesPageData_ComposesOutput(t *testing.T) {
 	t.Parallel()
 	parentID := int64(1)
 	otherParentID := int64(99) // parent that does not exist in the node list
+	depthOne := 1
 	stub := &stubNodesPageDataStore{
 		nodes: []*nodes.Node{
 			{ID: 1, Name: "root-a", Zone: "zone-A"},
-			{ID: 2, Name: "child-a1", Zone: "zone-A", ParentID: &parentID},
+			{ID: 2, Name: "child-a1", Zone: "zone-A", ParentID: &parentID, Depth: &depthOne},
 			{ID: 3, Name: "child-a2", Zone: "zone-B", ParentID: &parentID},
 			{ID: 4, Name: "orphan", Zone: "", ParentID: &otherParentID},
 			{ID: 5, Name: "solo", Zone: "zone-B"},
@@ -79,8 +66,6 @@ func TestGetNodesPageData_ComposesOutput(t *testing.T) {
 			{ID: 11, Code: "BT-B"},
 		},
 		edges: []registry.Edge{{StationID: "edge-a"}},
-		// Node 2 has a depth; node 3 and node 4 do not (GetSlotDepth returns error).
-		slotDepths: map[int64]int{2: 1},
 	}
 
 	pd, err := getNodesPageData(stub)
@@ -126,16 +111,20 @@ func TestGetNodesPageData_ComposesOutput(t *testing.T) {
 		t.Errorf("ChildCounts[5] unexpectedly present (node 5 has no children)")
 	}
 
-	// 4. Depths is populated only for child nodes whose GetSlotDepth returns no error.
-	//    Node 2 has a depth; nodes 3 and 4 do not.
+	// 4. Depths comes off the node row for every child: node 2 carries depth 1;
+	//    nodes 3 and 4 carry NULL, which reads as 0 (GetSlotDepth's reading of
+	//    NULL, and what the template's index of an absent key rendered). It
+	//    used to be one GetSlotDepth query per child node for the same column.
 	if got, ok := pd.Depths[2]; !ok || got != 1 {
 		t.Errorf("Depths[2] = (%d, ok=%v), want (1, true)", got, ok)
 	}
-	if _, ok := pd.Depths[3]; ok {
-		t.Errorf("Depths[3] unexpectedly present (GetSlotDepth returned error)")
+	for _, id := range []int64{3, 4} {
+		if got, ok := pd.Depths[id]; !ok || got != 0 {
+			t.Errorf("Depths[%d] = (%d, ok=%v), want (0, true): a NULL depth reads as 0", id, got, ok)
+		}
 	}
-	if _, ok := pd.Depths[4]; ok {
-		t.Errorf("Depths[4] unexpectedly present (GetSlotDepth returned error)")
+	if _, ok := pd.Depths[5]; ok {
+		t.Errorf("Depths[5] unexpectedly present (node 5 has no parent)")
 	}
 
 	// 5. Counts flows through verbatim.
@@ -149,11 +138,6 @@ func TestGetNodesPageData_ComposesOutput(t *testing.T) {
 		if _, ok := pd.TileStates[n.ID]; !ok {
 			t.Errorf("TileStates missing entry for node %d", n.ID)
 		}
-	}
-
-	// 7. GetSlotDepth was only called for nodes with parents (3 of 5).
-	if len(stub.depthQueries) != 3 {
-		t.Errorf("len(depthQueries) = %d, want 3", len(stub.depthQueries))
 	}
 }
 
@@ -210,7 +194,83 @@ func TestGetNodesPageData_TransitNode(t *testing.T) {
 			present = true
 		}
 	}
-	if !present || len(pd.Nodes) != 3 {
-		t.Errorf("_TRANSIT present=%v, %d nodes; pinned as it stands: present, 3 nodes", present, len(pd.Nodes))
+	if present || len(pd.Nodes) != 2 {
+		t.Errorf("_TRANSIT present=%v, %d nodes; want absent, 2 nodes", present, len(pd.Nodes))
+	}
+	if _, ok := pd.TileStates[2]; ok {
+		t.Error("_TRANSIT must not carry a tile state either")
+	}
+}
+
+// TestGetNodesPageData_RobotAtNode pins which robots a node tile names: a
+// connected robot whose CurrentStation is the node's own name (the
+// simulator's case) or a scene point that aliases exactly one node (the
+// plant's case). Not a robot between points, not a disconnected one, not an
+// ambiguous alias, and never on a synthetic node.
+func TestGetNodesPageData_RobotAtNode(t *testing.T) {
+	t.Parallel()
+	grp := int64(1)
+	stub := &stubNodesPageDataStore{
+		nodes: []*nodes.Node{
+			{ID: 1, Name: "GRP", IsSynthetic: true},
+			{ID: 2, Name: "UTN_013", ParentID: &grp},
+			{ID: 3, Name: "SLOT-B", Enabled: false},
+			{ID: 4, Name: "SLOT-C"},
+			{ID: 5, Name: "SLOT-D"},
+		},
+		scenePoints: []*scene.Point{
+			{ClassName: "GeneralLocation", InstanceName: "SLOT-B", PointName: "AP102"},
+			{ClassName: "GeneralLocation", InstanceName: "SLOT-C", PointName: "AP200"},
+			{ClassName: "GeneralLocation", InstanceName: "SLOT-D", PointName: "AP200"},
+		},
+		robots: []fleet.RobotStatus{
+			{VehicleID: "AMR-17", Connected: true, CurrentStation: "UTN_013", JackState: 1},
+			{VehicleID: "AMR-05", Connected: true, CurrentStation: "UTN_013", JackState: 3},
+			{VehicleID: "AMR-02", Connected: true, CurrentStation: "AP102"},
+			{VehicleID: "AMR-03", Connected: true, CurrentStation: "AP200"},
+			{VehicleID: "AMR-04", Connected: true, CurrentStation: "", LastStation: "SLOT-C"},
+			{VehicleID: "AMR-06", Connected: false, CurrentStation: "SLOT-C"},
+			{VehicleID: "AMR-07", Connected: true, CurrentStation: "GRP"},
+		},
+	}
+	pd, err := getNodesPageData(stub)
+	if err != nil {
+		t.Fatalf("getNodesPageData: %v", err)
+	}
+	want := map[int64]nodeRobots{
+		2: {Label: "AMR-05 +1", Title: "At this node: AMR-05, AMR-17 (carrying a bin)"},
+		3: {Label: "AMR-02", Title: "At this node: AMR-02"},
+	}
+	if len(pd.RobotsAt) != len(want) {
+		t.Errorf("RobotsAt = %+v, want %+v", pd.RobotsAt, want)
+	}
+	for id, w := range want {
+		if got := pd.RobotsAt[id]; got != w {
+			t.Errorf("RobotsAt[%d] = %+v, want %+v", id, got, w)
+		}
+	}
+}
+
+// The tile draws the marker the page data built, and only where a robot is.
+func TestNodesPage_TileShowsTheRobotStandingOnIt(t *testing.T) {
+	t.Parallel()
+	pd, err := getNodesPageData(&stubNodesPageDataStore{
+		nodes: []*nodes.Node{{ID: 2, Name: "UTN_013", Enabled: true}, {ID: 3, Name: "UTN_014", Enabled: true}},
+		robots: []fleet.RobotStatus{
+			{VehicleID: "AMR-17", Connected: true, CurrentStation: "UTN_013", JackState: 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("getNodesPageData: %v", err)
+	}
+	html := renderPageWithNamer(t, "nodes.html", &fakeNamer{byUID: map[string]string{}}, map[string]any{
+		"Page": "nodes", "Nodes": pd.Nodes, "Counts": pd.Counts, "TileStates": pd.TileStates,
+		"Zones": pd.Zones, "NodeLabels": pd.NodeLabels, "NodeInfo": pd.NodeInfo, "MapGroups": pd.MapGroups,
+		"BinTypes": pd.BinTypes, "Edges": pd.Edges, "ChildCounts": pd.ChildCounts, "Depths": pd.Depths,
+		"RobotsAt": pd.RobotsAt,
+	})
+	want := `<span class="tile-robot" title="At this node: AMR-17 (carrying a bin)">AMR-17</span>`
+	if strings.Count(html, `class="tile-robot"`) != 1 || !strings.Contains(html, want) {
+		t.Errorf("want exactly one robot marker, on UTN_013: %s", want)
 	}
 }

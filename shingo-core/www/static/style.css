@@ -211,28 +211,6 @@ textarea { resize: vertical; min-height: 60px; }
 .tile-claimed { border: 2px solid var(--warning); }
 .tile-disabled { border-color: var(--danger); }
 
-/* Nodes toolbar "Dev tools" disclosure — holds the test-node generate/delete
- * actions that used to be hidden behind Ctrl/Shift-click on Sync from Fleet. */
-/* The marker reset is .disclosure-bare (shared/components.css); this carries
-   only what makes it a dropdown rather than a plain disclosure. */
-.dev-menu { position: relative; display: inline-block; }
-.dev-menu > summary { display: inline-flex; align-items: center; gap: 0.3rem; }
-.dev-menu-items {
-  position: absolute;
-  right: 0;
-  top: 100%;
-  margin-top: 0.25rem;
-  z-index: var(--z-dropdown);
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  min-width: 180px;
-  padding: 0.5rem;
-  background: var(--elev-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-md);
-}
 /* Hover lifts the edge, not the size: a tile that scales on hover is the
    decorative wobble "Motion means motion" forbids, and it overlapped its
    neighbours in a tight row. */
@@ -272,6 +250,26 @@ textarea { resize: vertical; min-height: 60px; }
   font-size: 0.55rem;
   font-weight: 700;
   opacity: 0.7;
+}
+/* A robot standing on the node, bottom-left (the depth badge holds the
+   bottom-right). On a plate of --elev-surface in --text, the hatched-tile
+   rule: the tile fill changes with the bins, and the plate keeps the ink's
+   backdrop constant on every state. */
+.tile-robot {
+  position: absolute;
+  bottom: 1px;
+  left: 3px;
+  max-width: 70%;
+  padding: 0 0.2rem;
+  border-radius: 3px;
+  background: var(--elev-surface);
+  color: var(--text);
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Modal */

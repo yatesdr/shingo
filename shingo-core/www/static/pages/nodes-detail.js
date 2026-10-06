@@ -379,7 +379,8 @@ function loadInventory(nodeID) {
       var html = '<table style="font-size:0.8rem"><thead><tr><th>Bin</th><th>Type</th><th>Status</th><th>Contents</th><th>UoP</th></tr></thead><tbody>';
       items.forEach(function(b) {
         var binBadges = '<span class="badge badge-' + escapeHtml(b.status) + '">' + escapeHtml(b.status) + '</span>';
-        if (b.claimed_by) binBadges += ' <span class="badge badge-claimed">claimed</span>';
+        // claimed_by is the order holding the bin; the badge links to it.
+        if (b.claimed_by) binBadges += ' <a class="badge badge-claimed" href="/orders?open=' + encodeURIComponent(b.claimed_by) + '">claimed · #' + escapeHtml(String(b.claimed_by)) + '</a>';
         if (b.locked) binBadges += ' <span class="badge badge-locked">locked</span>';
         var contents = b.payload_code
           ? '<strong>' + escapeHtml(b.payload_code) + '</strong>' + (b.manifest_confirmed ? ' \u2714' : '')

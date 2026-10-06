@@ -427,8 +427,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				r.Post("/edges/rebind", h.apiEdgeRebind)
 
 				// Node management
-				r.Post("/nodes/generate-test", h.apiGenerateTestNodes)
-				r.Post("/nodes/delete-test", h.apiDeleteTestNodes)
 				r.Post("/nodes/bin-types", h.apiSetNodeBinTypes)
 				r.Post("/nodes/properties/set", h.apiNodePropertySet)
 				// Maintained groups: one endpoint per thing an operator edits.

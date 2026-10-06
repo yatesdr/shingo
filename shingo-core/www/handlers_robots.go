@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"shingo/protocol/clock"
+
 	"shingocore/dispatch"
 	"shingocore/fleet"
 )
@@ -256,7 +258,9 @@ func (h *Handlers) apiLocalizationBoard(w http.ResponseWriter, r *http.Request) 
 
 	var days int
 	var to time.Time
-	now := time.Now()
+	// The server's clock, not the wall's: the page resolves its range from
+	// serverNow(), and the two only differ where one of them is wrong.
+	now := clock.Now()
 	switch {
 	case label != "" && (fromStr != "" || toStr != ""):
 		h.jsonError(w, "window and from/to are mutually exclusive; send one or the other",
@@ -310,7 +314,10 @@ func (h *Handlers) apiLocalizationBoard(w http.ResponseWriter, r *http.Request) 
 				fromStr, toStr, days, boardMaxSpanDays), http.StatusBadRequest)
 			return
 		}
-		if toIncl.After(now.UTC().Truncate(24 * time.Hour)) {
+		// "Today" is the plant's: the page sends the plant date, and a plant
+		// east of UTC is a day ahead of UTC for part of every day.
+		py, pm, pd := now.In(plantLocation).Date()
+		if toIncl.After(time.Date(py, pm, pd, 0, 0, 0, 0, time.UTC)) {
 			// A to in the future would silently serve a shorter answer than
 			// the label claims — the window-label failure again, from the
 			// other side. today is allowed: it is a legitimate inclusive end

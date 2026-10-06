@@ -32,7 +32,12 @@ function load() {
             'which this harness strips; update load() in localization-board.test.js');
     }
     const src = stripped.replace(/^export /mg, '');
-    const ctx = { console: console, Math: Math, Number: Number, Map: Map, Set: Set, Date: Date };
+    // The seeds do their calendar arithmetic with plantclock's addDays. It is
+    // evaluated in its own context and handed in, so the board is tested
+    // against the real helper rather than a copy of it.
+    const pc = loadPlantclock();
+    const ctx = { console: console, Math: Math, Number: Number, Map: Map, Set: Set, Date: Date,
+        addDays: pc.addDays, plantDate: pc.plantDate, serverNow: function () { return Date.now(); } };
     vm.createContext(ctx);
     vm.runInContext(src + '\n__out = { histPath: histPath, serverLaneKey: serverLaneKey, ' +
         'deltaVerdict: deltaVerdict, DELTA_SIGNIFICANT: DELTA_SIGNIFICANT, ' +
@@ -45,7 +50,18 @@ function load() {
     return ctx.__out;
 }
 
+function loadPlantclock() {
+    const file = path.join(__dirname, '..', 'components', 'plantclock.js');
+    const src = fs.readFileSync(file, 'utf8').replace(/^import[^;]+;\s*/mg, '').replace(/^export /mg, '');
+    const ctx = { Intl: Intl, Date: Date, Map: Map, JSON: JSON, String: String, Number: Number, isNaN: isNaN,
+        window: { PLANT_TZ: 'America/Chicago' }, serverNow: function () { return Date.now(); } };
+    vm.createContext(ctx);
+    vm.runInContext(src + '\n__out = { addDays: addDays, plantDate: plantDate };', ctx);
+    return ctx.__out;
+}
+
 const m = load();
+const pc = loadPlantclock();
 
 // --- the join key --------------------------------------------------------
 //
@@ -155,31 +171,45 @@ console.log('bands');
 // --- the window seeds and the picker's guards ------------------------------
 console.log('range seeds and guards');
 (function () {
-    // The roll-up closes COMPLETE days — a day's rows are written the night
-    // after — so a seed ending today asks for a day that never exists yet.
-    // Both seeds end yesterday, and the harness pins it with a FIXED date so
-    // the assertion cannot drift with the clock.
+    // The seeds take the PLANT's date as a bare YYYY-MM-DD, pinned here with a
+    // FIXED date so the assertion cannot drift with the clock. The main range
+    // ends on today (the brief: the opening range includes the current plant
+    // day; today's rows arrive with the nightly roll-up and the window note
+    // says so). It used to end yesterday.
     const TODAY = '2026-08-19';
 
-    const main = m.seedMainRange(new Date(TODAY + 'T12:00:00Z'));
-    check('the main seed is the last seven complete days, ending yesterday',
-        main.from === '2026-08-12' && main.to === '2026-08-18',
+    const main = m.seedMainRange(TODAY);
+    check('the main seed is the last seven days, ending on the plant’s today',
+        main.from === '2026-08-13' && main.to === '2026-08-19',
         JSON.stringify(main));
 
-    const cmp = m.seedCompareDays(new Date(TODAY + 'T12:00:00Z'));
+    // Compare stays one closed day against another: B yesterday, A a week
+    // before it. Today has no rolled-up rows, so B = today would compare
+    // against nothing.
+    const cmp = m.seedCompareDays(TODAY);
     check('the compare seed is yesterday vs the same weekday a week before',
         cmp.b === '2026-08-18' && cmp.a === '2026-08-11',
         JSON.stringify(cmp) + ' — seven days apart, not six, or it compares ' +
         'adjacent weekdays');
 
     // An evening at a plant west of UTC: 22:00 CDT on Aug 19 is 03:00 UTC on
-    // Aug 20. The seed is handed the browser's instant and does UTC date math,
-    // so its "yesterday" here is the plant's TODAY — the opening range shifts
-    // by a day with the hour the page is opened.
-    const evening = m.seedMainRange(new Date('2026-08-20T03:00:00Z'));
-    check('an evening seed takes the UTC date, not the plant date',
-        evening.from === '2026-08-13' && evening.to === '2026-08-19',
-        JSON.stringify(evening));
+    // Aug 20. The seed used to take the browser's instant and do UTC date
+    // math, so here its range already ended on the plant's today while at noon
+    // it ended yesterday. Today comes from plantDate in the plant zone, so the
+    // evening and noon seeds are the same range.
+    const eveningDay = pc.plantDate('2026-08-20T03:00:00Z');
+    const noonDay = pc.plantDate('2026-08-19T17:00:00Z');
+    check('the plant date of a late evening is still the plant’s today',
+        eveningDay === '2026-08-19' && noonDay === '2026-08-19',
+        eveningDay + ' / ' + noonDay);
+    check('an evening seed and a noon seed are the same range',
+        JSON.stringify(m.seedMainRange(eveningDay)) === JSON.stringify(m.seedMainRange(noonDay)) &&
+        m.seedMainRange(eveningDay).to === '2026-08-19',
+        JSON.stringify(m.seedMainRange(eveningDay)));
+    check('a seed across a month boundary is calendar arithmetic',
+        m.seedMainRange('2026-03-03').from === '2026-02-25' &&
+        m.seedCompareDays('2026-03-01').b === '2026-02-28',
+        JSON.stringify([m.seedMainRange('2026-03-03'), m.seedCompareDays('2026-03-01')]));
 
     // The endpoint's guards, mirrored client-side. Every rule the server
     // 400s on should be refused before the fetch, or the picker's error

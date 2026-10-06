@@ -29,6 +29,20 @@ function openRobotModal(el) {
   stateEl.textContent = d.state;
   stateEl.className = 'badge badge-robot-' + d.state;
 
+  // The order the tile names ("on #664"), as a link to it. The tile's
+  // data-order-id is written by the server render and by RobotTile on every
+  // SSE frame, so the pop-up and the tile cannot name different orders.
+  var orderEl = document.getElementById('rm-order');
+  orderEl.textContent = '';
+  if (d.orderId) {
+    var a = document.createElement('a');
+    a.href = '/orders?open=' + encodeURIComponent(d.orderId);
+    a.textContent = '#' + d.orderId;
+    orderEl.appendChild(a);
+  } else {
+    orderEl.textContent = 'none';
+  }
+
   document.getElementById('rm-ip').textContent = d.ip || '-';
   document.getElementById('rm-model').textContent = d.model || '-';
   document.getElementById('rm-map').textContent = d.map || '-';
