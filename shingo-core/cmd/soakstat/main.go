@@ -308,12 +308,18 @@ type logStats struct {
 	// order (lane-stress 2026-09-25, bin 59). Counted from the log because the
 	// lift is not audited; the dissolve is the rate of a race, so is this.
 	midLiftDissolves int
+	// lostSlots counts, per dig leg, the slots the dwell chose and then lost to
+	// another order's claim before its own (dig_dwell.go, "lost <slot> between
+	// choosing it and claiming it"): the race the slot book cannot close at
+	// plan time, measured per leg (C2a A.4).
+	lostSlots map[string]int
 }
 
 var (
 	liftRe     = regexp.MustCompile(`transit: bin \d+ entered _TRANSIT \(order (\d+)`)
 	setDownRe  = regexp.MustCompile(`transit: bin \d+ stored at \S+ on dropoff \(order (\d+)`)
 	dissolveRe = regexp.MustCompile(`order (\d+) cancelled: reshuffle dissolved`)
+	lostSlotRe = regexp.MustCompile(`dig dwell: leg (\d+) lost \S+ between choosing it and claiming it`)
 )
 
 func collect(db *store.DB, logSource string) *report {
@@ -978,13 +984,15 @@ func readLog(source string) *logStats {
 		}
 		body = string(b)
 	}
-	s := &logStats{source: source}
+	s := &logStats{source: source, lostSlots: map[string]int{}}
 	lifted, setDown, counted := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, line := range strings.Split(body, "\n") {
 		if m := liftRe.FindStringSubmatch(line); m != nil {
 			lifted[m[1]] = true
 		} else if m := setDownRe.FindStringSubmatch(line); m != nil {
 			setDown[m[1]] = true
+		} else if m := lostSlotRe.FindStringSubmatch(line); m != nil {
+			s.lostSlots[m[1]]++
 		} else if m := dissolveRe.FindStringSubmatch(line); m != nil {
 			if lifted[m[1]] && !setDown[m[1]] && !counted[m[1]] {
 				counted[m[1]] = true
@@ -1135,6 +1143,7 @@ func (r *report) report() {
 		fmt.Printf("        hard burials (TRIPWIRE): %d   <- expected value is ZERO (never-asked)\n", r.logCounts.hardN)
 		fmt.Printf("        approved-then-invalid.:  %d   <- accepted churn, healed\n", r.logCounts.churnN)
 		fmt.Printf("        dig steals:              %d\n", r.logCounts.stealN)
+		fmt.Printf("        slots lost choose->claim: %s\n", lostSlotsText(r.logCounts.lostSlots))
 	}
 
 	if r.unrunMeasures[measureCauses] {
@@ -1195,6 +1204,19 @@ func unrunTag(r *report, measure string) string {
 		return "  FAILED-TO-RUN"
 	}
 	return ""
+}
+
+// lostSlotsText is the dwell's lost-slot race per leg: the total, the legs that
+// lost one, and the most any one leg lost.
+func lostSlotsText(perLeg map[string]int) string {
+	total, most := 0, 0
+	for _, n := range perLeg {
+		total += n
+		if n > most {
+			most = n
+		}
+	}
+	return fmt.Sprintf("%d over %d leg(s), most on one leg %d", total, len(perLeg), most)
 }
 
 // midLiftText is the mid-lift dissolve count, or n/a when no log was read.

@@ -66,6 +66,15 @@ package main
 //                     parent, strictly greater depth), so a bin parked here would
 //                     seal it: store.SlotsThatWouldEntombASpokenForSlot's rule
 //   entombs           the names of those deeper spoken-for slots
+//   out_of_pool       why an EMPTY slot is out of the shuffle pool, the first
+//                     that holds: "claim" (nodes.claimed_by), "reservation" (an
+//                     active slot reservation), "entombing" (parking here would
+//                     seal a spoken-for slot), "bare_dest" (a live order names it
+//                     as its delivery_node and holds nothing on it); "" when the
+//                     slot holds a bin or is in the pool (C2a A.4)
+//   out_of_pool_book  "pool" for claim, reservation or entombing, the books the
+//                     slot book reads; "record" for bare_dest, a row that names
+//                     the slot without holding it; "" with out_of_pool
 //   lane_dig_lock     order ids holding a confirmed dig-lock mouth on the lane
 //   lane_occupancy    order ids with an occupancy row on the lane, any state
 //
@@ -169,6 +178,8 @@ type ledgerSlot struct {
 	Entombs       []string `json:"entombs"`
 	LaneDigLock   []int64  `json:"lane_dig_lock"`
 	LaneOccupancy []int64  `json:"lane_occupancy"`
+	OutOfPool     string   `json:"out_of_pool"`
+	OutOfPoolBook string   `json:"out_of_pool_book"`
 	id, laneID    int64
 }
 
@@ -520,6 +531,29 @@ func (r *ledgerReader) slotRows() {
 		sort.Strings(s.Entombs)
 		s.Entombing = len(s.Entombs) > 0
 	}
+	for i := range r.out.slots {
+		s := &r.out.slots[i]
+		s.OutOfPool, s.OutOfPoolBook = outOfPool(s)
+	}
+}
+
+// outOfPool says why an empty slot is out of the shuffle pool, and in which
+// book: the pool's own (claim, reservation, entombing) or the record's (a bare
+// destination).
+func outOfPool(s *ledgerSlot) (reason, book string) {
+	switch {
+	case s.Bin != "":
+		return "", ""
+	case s.ClaimedBy != nil:
+		return "claim", "pool"
+	case len(s.ResPending)+len(s.ResConfirmed) > 0:
+		return "reservation", "pool"
+	case s.Entombing:
+		return "entombing", "pool"
+	case len(s.BareDest) > 0:
+		return "bare_dest", "record"
+	}
+	return "", ""
 }
 
 // slotHolders reads the reservation rows onto the slots: slot reservations on
