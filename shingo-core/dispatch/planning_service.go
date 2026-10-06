@@ -459,6 +459,41 @@ func (s *PlanningService) decideTransport(order *orders.Order, payloadCode strin
 	return d
 }
 
+// holdFullOnForeignCarrier is the store door judging a full by the thing it is
+// (C2a A.3; the press known issue, keep-staged handoff). A produce press whose
+// carrier changes fills the outgoing part into the incoming carriers left on
+// its positions. The finder used to refuse such a full for its part, so the
+// move out of the press waited "for material" with the full standing on the
+// position it had to leave.
+//
+// It is STORED, not refused, and stored HELD (bins.quality_hold): every finder
+// passes it by (EmptyCarrierWhere, BinSourceableSQL), hold_by names the rule it
+// broke, and a person clears it. The move carrying it is move-shaped, which the
+// hold does not outrank, so it still goes. The finder decides (plan.Plan's
+// ForeignCarrier: a store, nothing lawful at the source, refused by the carrier
+// rule alone); this writes the marker. Role-blind (owner's rule 1): the finder
+// read the bin and its part, never the line. One guarded UPDATE, only for such
+// a full; no read, because the finder's own rule read decided it.
+//
+// A failure logs and stores the bin unheld: the marker is a flag on a move that
+// has to happen either way.
+func (s *PlanningService) holdFullOnForeignCarrier(pick SourceResult) {
+	if !pick.ForeignCarrier || pick.Bin == nil {
+		return
+	}
+	bin := pick.Bin
+	carrier := bin.BinTypeCode
+	if carrier == "" {
+		carrier = fmt.Sprintf("#%d", bin.BinTypeID)
+	}
+	by := fmt.Sprintf("carrier-rule: %s may not ride %s", bin.PayloadCode, carrier)
+	if held, err := s.db.HoldBinForCarrierRule(bin.ID, by); err != nil {
+		log.Printf("dispatch: hold bin %d (%s): %v", bin.ID, by, err)
+	} else if held {
+		log.Printf("dispatch: bin %d stored held — %s", bin.ID, by)
+	}
+}
+
 // applyTransport disposes of a decision on the born row: every write
 // planTransport makes, in the order it made them.
 func (s *PlanningService) applyTransport(order *orders.Order, env *protocol.Envelope, d transportDecision) (*PlanningResult, *planningError) {
@@ -542,6 +577,9 @@ func (s *PlanningService) applyTransport(order *orders.Order, env *protocol.Enve
 		// riding along with it.
 		if isMove && sourceNode.ID == destNode.ID {
 			return nil, &planningError{Code: codeSameNode, Detail: fmt.Sprintf("source and destination are the same node (%s)", sourceNode.Name)}
+		}
+		if isMove {
+			s.holdFullOnForeignCarrier(d.pick)
 		}
 	}
 

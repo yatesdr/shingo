@@ -71,6 +71,10 @@ type SourceResult struct {
 	// structural outcome to its "structural" fail path.
 	TermCode string
 	Err      error
+
+	// ForeignCarrier is plan.Plan's: a full taken into storage on a carrier its
+	// part may not ride. The door stores it held (holdFullOnForeignCarrier).
+	ForeignCarrier bool
 }
 
 // sourceResultOf translates a plan into dispatch's vocabulary. The cause is the
@@ -88,6 +92,8 @@ func sourceResultOf(p plan.Plan) SourceResult {
 		Buried:      p.Buried,
 		TermCode:    p.TermCode,
 		Err:         p.Err,
+
+		ForeignCarrier: p.ForeignCarrier,
 	}
 }
 

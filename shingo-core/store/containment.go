@@ -138,6 +138,28 @@ func (db *DB) SetBinQualityHold(binID int64, hold bool, by string) error {
 	return err
 }
 
+// HoldBinForCarrierRule sets the hold marker on a full that is going into
+// storage on a carrier its part may not ride (C2a A.3, the press known issue).
+// by names the rule it broke, mechanism first, as the divert's stamp does
+// ("containment-divert"); the store path writes no audit row for it to go in.
+//
+// Guarded like StampContainmentArrival: an existing hold, an operator's or a
+// mechanism's, is never overwritten, and a bin held twice is held once. It
+// reports whether this call set it.
+func (db *DB) HoldBinForCarrierRule(binID int64, by string) (bool, error) {
+	res, err := db.DB.Exec(`UPDATE bins
+		SET quality_hold = TRUE, hold_by = $2, hold_at = NOW(), updated_at = NOW()
+		WHERE id = $1 AND NOT COALESCE(quality_hold, false)`, binID, by)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // BinQualityHold reports a bin's hold marker (false for an unknown bin).
 func (db *DB) BinQualityHold(binID int64) (bool, string, error) {
 	var hold bool

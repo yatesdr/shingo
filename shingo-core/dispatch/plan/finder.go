@@ -275,11 +275,14 @@ func (f *Finder) Pick(need Need) Plan {
 	var (
 		excludeID  int64
 		preferZone string
+		storesInto bool // the destination is a group or a lane: a store
 	)
 	if need.DeliveryNode != "" {
 		if dest, err := f.db.GetNodeByDotName(need.DeliveryNode); err == nil && dest != nil {
 			excludeID = dest.ID
 			preferZone = dest.Zone
+			storesInto = dest.IsSynthetic &&
+				(dest.NodeTypeCode == protocol.NodeClassNGRP || dest.NodeTypeCode == protocol.NodeClassLANE)
 		}
 	}
 
@@ -330,6 +333,9 @@ func (f *Finder) Pick(need Need) Plan {
 		// atNamedNode: tier 4 found the carrier standing on the concrete node
 		// a NODE-LOCAL need named. Read only by the drain-window seatbelt below.
 		atNamedNode bool
+		// foreignCarrier: tier 4 took a full on a carrier its part may not ride
+		// into storage (see the node-local arm). Carried on the found plan.
+		foreignCarrier bool
 	)
 
 	// The drain-window question, asked AT MOST ONCE per need. It costs three
@@ -621,6 +627,14 @@ func (f *Finder) Pick(need Need) Plan {
 			}
 		}
 		onlyPartials := false
+		// A FULL ON A CARRIER ITS PART MAY NOT RIDE, ON ITS WAY INTO STORAGE
+		// (C2a A.3; the press known issue). The store door judges a full by the
+		// thing it is: it is stored, held, and offered to no order (the door sets
+		// bins.quality_hold, Plan.ForeignCarrier). Refusing it parked the move
+		// "waiting for material" with the full standing on the position it has
+		// to leave. Taken only when nothing lawful stands on the node, and only
+		// for a store: a move anywhere else is judged as before.
+		var foreign *bins.Bin
 		for _, b := range candidates {
 			if namedFull {
 				if b.PayloadCode != payloadCode {
@@ -654,10 +668,17 @@ func (f *Finder) Pick(need Need) Plan {
 				rule = domain.BinTypeRule{}
 			}
 			if binresolver.BinUnavailableReasonFor(b, claimPayload, rule, need.Asker) != "" {
+				if foreign == nil && moveShaped && storesInto && b.PayloadCode != "" &&
+					binresolver.BinUnavailableReasonFor(b, claimPayload, domain.BinTypeRule{}, need.Asker) == "" {
+					foreign = b // refused by the carrier rule alone
+				}
 				continue
 			}
 			bin, binNode, atNamedNode = b, srcNode, moveShaped
 			break
+		}
+		if bin == nil && foreign != nil {
+			bin, binNode, atNamedNode, foreignCarrier = foreign, srcNode, true, true
 		}
 		if bin == nil {
 			params := Params{Payload: payloadCode, Group: need.SourceNode}
@@ -883,7 +904,7 @@ func (f *Finder) Pick(need Need) Plan {
 	}
 
 	f.auditSourcedOutsideItsGroup(need, binNode)
-	return Plan{Outcome: OutcomeFound, Bin: bin, Node: binNode}
+	return Plan{Outcome: OutcomeFound, Bin: bin, Node: binNode, ForeignCarrier: foreignCarrier}
 }
 
 // sourceFromDedicatedLoader is the dedicated-home-loader source path, moved onto

@@ -179,6 +179,10 @@ type Plan struct {
 	// Refused is the move's "not satisfiable": which rule said no, for a door
 	// with a person waiting. nil when the plan can be carried out.
 	Refused *Refusal
+	// ForeignCarrier: the found bin is a full on a carrier its part may not
+	// ride, taken by a move into storage because nothing lawful stood at the
+	// source (finder.go, the node-local arm). The door stores it held.
+	ForeignCarrier bool
 }
 
 // Given is a fully specified manual move (v4 §2.5): the bin, where it stands
