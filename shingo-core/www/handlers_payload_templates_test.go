@@ -398,3 +398,61 @@ func TestHandlePayloadsPage_RendersHTML(t *testing.T) {
 		t.Errorf("rendered HTML missing 'PART-A'; body len=%d", len(body))
 	}
 }
+
+// TestHandlePayloadsPage_PerRowColumns pins what the Payloads table prints in
+// the three columns read per row: compatible nodes (sorted, "All" when none),
+// bin types (sorted, "-" when none), and the producers without a containment
+// route that the contain-confirmation names (data-unrouted).
+func TestHandlePayloadsPage_PerRowColumns(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlersForPages(t)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.DB.Exec(q, args...); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	exec(`INSERT INTO payloads (code) VALUES ('PIN-PA'), ('PIN-PB')`)
+	exec(`INSERT INTO nodes (name) VALUES ('PIN-Z-NODE'), ('PIN-A-NODE')`)
+	exec(`INSERT INTO node_payloads (node_id, payload_id)
+		SELECT n.id, p.id FROM nodes n, payloads p WHERE n.name LIKE 'PIN-%-NODE' AND p.code = 'PIN-PA'`)
+	exec(`INSERT INTO bin_types (code) VALUES ('PIN-BT-B'), ('PIN-BT-A')`)
+	exec(`INSERT INTO payload_bin_types (payload_id, bin_type_id)
+		SELECT p.id, b.id FROM payloads p, bin_types b WHERE p.code = 'PIN-PA' AND b.code LIKE 'PIN-BT-%'`)
+	// proc-2 produces PA with no route; proc-1 covers PA through its allowed
+	// set and routes it; proc-3 produces PB with no route.
+	exec(`INSERT INTO style_claims (process_id, style_id, core_node_name, role, swap_mode, payload_code, allowed_payload_codes, containment_destination)
+		VALUES ('pin-proc-2', 'S1', 'PIN-A-NODE', 'produce', 'auto', 'PIN-PA', '', ''),
+		       ('pin-proc-1', 'S1', 'PIN-Z-NODE', 'produce', 'auto', 'OTHER', '["PIN-PA"]', 'PIN-Z-NODE'),
+		       ('pin-proc-3', 'S1', 'PIN-A-NODE', 'produce', 'auto', 'PIN-PB', '', '')`)
+
+	// The contain form, which carries data-unrouted, renders for a logged-in
+	// viewer only.
+	req := httptest.NewRequest(http.MethodGet, "/payloads", nil)
+	req.AddCookie(loggedInSession(t, h))
+	rec := httptest.NewRecorder()
+	h.handlePayloadsPage(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	row := func(code string) string {
+		i := strings.Index(body, ">"+code+"<")
+		if i < 0 {
+			t.Fatalf("no row for %s", code)
+		}
+		end := strings.Index(body[i:], "</tr>")
+		return body[i : i+end]
+	}
+	pa, pb := row("PIN-PA"), row("PIN-PB")
+	for _, want := range []string{"PIN-BT-A, PIN-BT-B", "PIN-A-NODE, PIN-Z-NODE", `data-unrouted="pin-proc-2"`} {
+		if !strings.Contains(pa, want) {
+			t.Errorf("PIN-PA row missing %q", want)
+		}
+	}
+	for _, want := range []string{`<span class="text-muted">-</span>`, ">All<", `data-unrouted="pin-proc-3"`} {
+		if !strings.Contains(pb, want) {
+			t.Errorf("PIN-PB row missing %q", want)
+		}
+	}
+}

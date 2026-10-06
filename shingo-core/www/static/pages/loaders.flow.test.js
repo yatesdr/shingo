@@ -88,6 +88,7 @@ function load(opts) {
     const listeners = [];
     const posts = [];
     const toasts = [];
+    const confirms = [];
     // The page builds markup with app.js's h``; this is the same helper, with
     // an escape that does what the browser's text-node escape does.
     const esc = function (v) { return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
@@ -126,14 +127,14 @@ function load(opts) {
         delegateActions() {},
         h: h,
         toast(msg, level) { toasts.push({ msg: msg, level: level }); },
-        uiConfirm() { return Promise.resolve(true); },
+        uiConfirm(msg) { confirms.push(msg); return Promise.resolve(opts.confirm === undefined ? true : opts.confirm); },
     };
     vm.createContext(ctxObj);
     const src = fs.readFileSync(path.join(__dirname, 'loaders.js'), 'utf8')
         .replace(/^import[^;]+;\s*/m, '');   // drop the ES import; deps injected above
     vm.runInContext(src, ctxObj);
     return {
-        ctx: ctxObj, els: els, posts: posts, listeners: listeners, toasts: toasts,
+        ctx: ctxObj, els: els, posts: posts, listeners: listeners, toasts: toasts, confirms: confirms,
         set(expr) { vm.runInContext(expr, ctxObj); },
         get(expr) { return vm.runInContext(expr, ctxObj); },
     };
@@ -752,6 +753,81 @@ console.log('config gap — the refusals the Edge makes that are not an empty sl
         payloads: [{ payload_code: 'X', uop_threshold: 0 }] }]);
     const g = both.indexOf('loader-config-gap'), t = both.indexOf('loader-threshold-gap');
     check('both warnings render when both apply, config gap first', g >= 0 && t >= 0 && g < t, 'gap=' + g + ' thr=' + t);
+})();
+
+// --- frame 4: member tiles on a dedicated station -----------------------------
+//
+// One spot per part draws a payload picker on every HOME member. Springfield's
+// Nodes page carried 2,962 <option>s across 29 of them: the whole catalogue,
+// copied into every picker. The fixture is that shape — 29 homes, 101 payloads.
+
+console.log('member tiles — the payload picker, the ×, the payload change');
+
+function dedicatedFixture() {
+    const codes = [];
+    for (let i = 1; i <= 101; i++) codes.push('PC-' + String(i).padStart(3, '0'));
+    const homes = [];
+    for (let i = 0; i < 29; i++) {
+        homes.push({ position_node_id: 100 + i, home_kind: 'home',
+            payload_code: i === 0 ? 'PC-001' : '', uop_threshold: i === 1 ? 5 : 0 });
+    }
+    const item = { loader: loader({ id: 30, layout: 'dedicated_positions', inbound_source: 'IN-G' }),
+        homes: homes, payloads: [] };
+    return { codes: codes, item: item };
+}
+function loadDedicated(opts) {
+    const f = dedicatedFixture();
+    const h = load(Object.assign({ auth: true }, opts || {}));
+    h.set('payloadCodes = ' + JSON.stringify(f.codes));
+    h.set('loaderData = ' + JSON.stringify([f.item]));
+    return { h: h, item: f.item, codes: f.codes };
+}
+
+(function payloadPickerOptions() {
+    const d = loadDedicated();
+    const html = d.h.ctx.gridHtml([d.item]);
+    const selects = html.match(/<select class="loader-pc-sel[\s\S]*?<\/select>/g) || [];
+    const options = selects.reduce(function (n, s) { return n + (s.match(/<option/g) || []).length; }, 0);
+    check('29 payload pickers on 29 home positions', selects.length === 29, 'selects=' + selects.length);
+    check('payload pickers at rest: the whole catalogue in every picker (pinned as it stands)',
+        options === 29 * (d.codes.length + 1), 'options=' + options);
+    check('the picked payload is the selected option',
+        /<option value="PC-001" selected>PC-001<\/option>/.test(selects[0]), selects[0].slice(0, 200));
+})();
+
+await (async function memberRemoveAndPayloadChange() {
+    let d = loadDedicated();
+    d.h.ctx.removeMember('30', '102');
+    await settle();
+    check('× on an empty position: removed at once, nothing asked',
+        d.h.confirms.length === 0 && d.h.posts.length === 1 && d.h.posts[0].url === '/api/loader/remove-home' &&
+        d.h.posts[0].body.position_node_id === 102, JSON.stringify(d.h.posts));
+
+    d = loadDedicated();
+    d.h.ctx.removeMember('30', '100');
+    await settle();
+    check('× on a position with a payload: removed at once, nothing asked (pinned as it stands)',
+        d.h.confirms.length === 0 && d.h.posts.length === 1, 'confirms=' + d.h.confirms.length + ' posts=' + d.h.posts.length);
+
+    d = loadDedicated();
+    d.h.ctx.removeMember('30', '101');
+    await settle();
+    check('× on a position with only a threshold: removed at once, nothing asked (pinned as it stands)',
+        d.h.confirms.length === 0 && d.h.posts.length === 1, 'confirms=' + d.h.confirms.length + ' posts=' + d.h.posts.length);
+
+    d = loadDedicated({ confirm: false });
+    d.h.ctx.removeMember('30', '100');
+    await settle();
+    check('× on a position with a payload: there is no question to decline (pinned as it stands)',
+        d.h.posts.length === 1, 'posts=' + d.h.posts.length);
+
+    d = loadDedicated();
+    d.h.ctx.setMemberPayload('30', '103', 'PC-050');
+    await settle();
+    check('changing a position\'s payload saves at once, nothing asked',
+        d.h.confirms.length === 0 && d.h.posts.length === 1 && d.h.posts[0].url === '/api/loader/set-home' &&
+        d.h.posts[0].body.payload_code === 'PC-050' && d.h.posts[0].body.position_node_id === 103,
+        JSON.stringify(d.h.posts));
 })();
 
 if (failures > 0) {

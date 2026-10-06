@@ -2,8 +2,10 @@ package www
 
 import (
 	"sort"
+	"strings"
 	"testing"
 
+	"shingocore/domain"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/registry"
@@ -152,5 +154,63 @@ func TestGetNodesPageData_ComposesOutput(t *testing.T) {
 	// 7. GetSlotDepth was only called for nodes with parents (3 of 5).
 	if len(stub.depthQueries) != 3 {
 		t.Errorf("len(depthQueries) = %d, want 3", len(stub.depthQueries))
+	}
+}
+
+// TestGetNodesPageData_KeepsTheStoresOrder pins that the page data hands the
+// nodes over in the order the store read them (ListNodes is ORDER BY name).
+// The lanes-out-of-order defect (Lane_01, 02, 03, 15, 16, 04 …) is therefore
+// not a server ordering: buildHierarchy in nodes-supermarket.js re-collects the
+// tiles through Object.keys of an id-keyed map, which is id order.
+func TestGetNodesPageData_KeepsTheStoresOrder(t *testing.T) {
+	t.Parallel()
+	grp := int64(1)
+	stub := &stubNodesPageDataStore{
+		nodes: []*nodes.Node{
+			{ID: 1, Name: "GRP", IsSynthetic: true, NodeTypeCode: "NGRP"},
+			{ID: 40, Name: "Lane_01", ParentID: &grp, NodeTypeCode: "LANE"},
+			{ID: 41, Name: "Lane_02", ParentID: &grp, NodeTypeCode: "LANE"},
+			{ID: 9, Name: "Lane_15", ParentID: &grp, NodeTypeCode: "LANE"},
+			{ID: 42, Name: "Lane_16", ParentID: &grp, NodeTypeCode: "LANE"},
+		},
+	}
+	pd, err := getNodesPageData(stub)
+	if err != nil {
+		t.Fatalf("getNodesPageData: %v", err)
+	}
+	var got []string
+	for _, n := range pd.Nodes {
+		got = append(got, n.Name)
+	}
+	want := []string{"GRP", "Lane_01", "Lane_02", "Lane_15", "Lane_16"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("page node order = %v, want the store's %v", got, want)
+	}
+}
+
+// TestGetNodesPageData_TransitNode pins whether the synthetic _TRANSIT node
+// reaches the page. It is bookkeeping (where a bin sits while it rides a
+// robot), not a place on the floor.
+func TestGetNodesPageData_TransitNode(t *testing.T) {
+	t.Parallel()
+	stub := &stubNodesPageDataStore{
+		nodes: []*nodes.Node{
+			{ID: 1, Name: "SLOT-A"},
+			{ID: 2, Name: domain.TransitNodeName, IsSynthetic: true},
+			{ID: 3, Name: "SLOT-B"},
+		},
+	}
+	pd, err := getNodesPageData(stub)
+	if err != nil {
+		t.Fatalf("getNodesPageData: %v", err)
+	}
+	present := false
+	for _, n := range pd.Nodes {
+		if n.Name == domain.TransitNodeName {
+			present = true
+		}
+	}
+	if !present || len(pd.Nodes) != 3 {
+		t.Errorf("_TRANSIT present=%v, %d nodes; pinned as it stands: present, 3 nodes", present, len(pd.Nodes))
 	}
 }

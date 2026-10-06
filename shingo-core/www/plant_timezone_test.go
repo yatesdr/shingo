@@ -39,6 +39,28 @@ func TestParseMissionFilterPlantTimezone(t *testing.T) {
 	}
 }
 
+// TestParseMissionFilterFallBackDay: until is the end of the PLANT day, which
+// on 2026-11-01 in America/Chicago is 25 hours after its start. The window
+// must reach 2026-11-02 06:00 UTC (plant midnight, CST), not stop an hour short.
+func TestParseMissionFilterFallBackDay(t *testing.T) {
+	chicago, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	orig := plantLocation
+	plantLocation = chicago
+	defer func() { plantLocation = orig }()
+
+	f := parseMissionFilter(httptest.NewRequest("GET", "/api/missions?since=2026-11-01&until=2026-11-01", nil))
+	if f.Until == nil {
+		t.Fatal("until not set")
+	}
+	want := time.Date(2026, 11, 2, 5, 0, 0, 0, time.UTC).Add(-time.Nanosecond)
+	if !f.Until.Equal(want) {
+		t.Errorf("Until = %v, want %v", f.Until.UTC(), want)
+	}
+}
+
 // TestPlantDayStart pins the Fleet Load day-truncation fix: a UTC-normalized
 // end-of-plant-day time (as parseMissionFilter produces) must truncate to the
 // plant's calendar day, not the next UTC day. Truncating in the raw UTC

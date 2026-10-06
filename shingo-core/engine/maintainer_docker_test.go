@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -277,5 +278,38 @@ func TestMaintainer_RestartMintsNoDuplicate(t *testing.T) {
 	testutil.MustNoErr(t, err, "list open")
 	if len(open) != 1 {
 		t.Errorf("open maintain episodes = %d, want exactly 1 after a restart", len(open))
+	}
+}
+
+// THE PARKED ASK SAYS WHY IN WORDS. The Maintained Groups "Waiting on" cell
+// printed the engineer tag (finder-no-empty-of-type) and a Go duration string
+// (11m3s). The ask is an order and already carries the operator sentence
+// FormatQueueSentence wrote for it; the age is a duration like every other.
+func TestMaintainer_OldestAskSaysWhyInWords(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newTestEngine(t, db, simulator.New())
+	mntFixture(t, db, "MNT-WHY", 2, "MNT-WHY-T", 1)
+
+	m := eng.Maintainer()
+	m.Tick()
+	origin := mntState(t, m, "MNT-WHY", "MNT-WHY-T").OriginID
+	if origin == "" {
+		t.Fatal("setup: the first tick opened no episode")
+	}
+	_, err := db.Exec(`UPDATE orders
+		   SET queue_cause = 'finder-no-empty-of-type',
+		       queue_reason = 'Waiting for an empty MNT-WHY-T carrier',
+		       created_at = NOW() - INTERVAL '3 hours 5 minutes'
+		 WHERE origin_id = $1`, origin)
+	testutil.MustNoErr(t, err, "park the ask")
+
+	m.Tick()
+	st := mntState(t, m, "MNT-WHY", "MNT-WHY-T")
+	if st.OldestAskCause != "finder-no-empty-of-type" {
+		t.Fatalf("oldest ask cause = %q, want finder-no-empty-of-type", st.OldestAskCause)
+	}
+	if !strings.HasPrefix(st.OldestAskAge, "3h5m") {
+		t.Errorf("PIN (before): oldest ask age = %q, want Go's 3h5m…s", st.OldestAskAge)
 	}
 }

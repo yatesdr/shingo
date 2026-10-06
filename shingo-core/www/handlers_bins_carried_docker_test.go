@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingocore/internal/testdb"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
@@ -149,5 +150,161 @@ func TestApiRepairAnomaly_CarriedBinRefusalIsTheReasonVerbatim(t *testing.T) {
 	// operator is looking at already says.
 	if strings.Contains(body, "cannot be recovered by order right now") {
 		t.Errorf("body %q wraps the reason instead of showing it", body)
+	}
+}
+
+// THE BIN-TYPE ALLOW-LIST IS EVERY PAYLOAD'S, SORTED BY CODE. The page's
+// bin editor reads PAGE_PAYLOAD_BIN_TYPES to offer only the types a payload
+// allows; a payload with none is unrestricted and must read [], not null.
+func TestBinsPage_PayloadBinTypesAreOneRead(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	loadTestTemplates(t, h)
+
+	// Created out of code order, so id order and code order differ.
+	z := &bins.BinType{Code: "PIN-BT-Z", Description: "tote"}
+	testutil.MustNoErr(t, db.CreateBinType(z), "create bin type Z")
+	a := &bins.BinType{Code: "PIN-BT-A", Description: "tote"}
+	testutil.MustNoErr(t, db.CreateBinType(a), "create bin type A")
+	_, err := db.Exec(`INSERT INTO payloads (code) VALUES ('PIN-BINS-A'), ('PIN-BINS-B')`)
+	testutil.MustNoErr(t, err, "payloads")
+	_, err = db.Exec(`INSERT INTO payload_bin_types (payload_id, bin_type_id)
+		SELECT p.id, b.id FROM payloads p, bin_types b WHERE p.code = 'PIN-BINS-A' AND b.code LIKE 'PIN-BT-%'`)
+	testutil.MustNoErr(t, err, "payload bin types")
+
+	body := binsPage(t, h, loginCookie(t, h))
+
+	at := strings.Index(body, "var PAGE_PAYLOAD_BIN_TYPES = ")
+	if at < 0 {
+		t.Fatal("the page does not carry PAGE_PAYLOAD_BIN_TYPES")
+	}
+	line := body[at : at+strings.Index(body[at:], "\n")]
+	for _, want := range []string{
+		`"PIN-BINS-A":[` + strconv.FormatInt(a.ID, 10) + `,` + strconv.FormatInt(z.ID, 10) + `]`,
+		`"PIN-BINS-B":[]`,
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("allow-list missing %s:\n%s", want, line)
+		}
+	}
+}
+
+// binRowHTML is one bin's <tr> out of the rendered bins page.
+func binRowHTML(t *testing.T, body string, id int64) string {
+	t.Helper()
+	at := strings.Index(body, `<tr data-id="`+strconv.FormatInt(id, 10)+`"`)
+	if at < 0 {
+		t.Fatalf("bin %d has no row on the page", id)
+	}
+	end := strings.Index(body[at:], "</tr>")
+	if end < 0 {
+		t.Fatalf("bin %d row is not closed", id)
+	}
+	return body[at : at+end]
+}
+
+// uopCell is the text of a bin row's UoP cell, the one sorted by the count.
+func uopCell(t *testing.T, row string, uop int) string {
+	t.Helper()
+	open := `<td data-sort-value="` + strconv.Itoa(uop) + `">`
+	at := strings.Index(row, open)
+	if at < 0 {
+		t.Fatalf("no UoP cell sorted by %d in row:\n%s", uop, row)
+	}
+	rest := row[at+len(open):]
+	return strings.TrimSpace(rest[:strings.Index(rest, "</td>")])
+}
+
+// binsAt makes a bin of the given type on its own fresh node.
+func binsAt(t *testing.T, db interface {
+	CreateNode(*nodes.Node) error
+	CreateBin(*bins.Bin) error
+}, bt *bins.BinType, label string) *bins.Bin {
+	t.Helper()
+	n := &nodes.Node{Name: "NODE-" + label, Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(n), "create node "+label)
+	b := &bins.Bin{BinTypeID: bt.ID, Label: label, NodeID: &n.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(b), "create bin "+label)
+	return b
+}
+
+// THE NOTES FLAG MEANS A PERSON WROTE A NOTE. A note is an audit row whose
+// action is "note:<type>" (the add_note door, store.AddBinNote); every other bin
+// audit row is the system's own record of a move, a count, a status change.
+func TestBinsPage_NotesFlagIsAPersonsNote(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	loadTestTemplates(t, h)
+
+	bt := &bins.BinType{Code: "NOTES-UI", Description: "tote"}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
+	moved := binsAt(t, db, bt, "MOVED-ONLY")
+	testutil.MustNoErr(t, db.AppendAudit("bin", moved.ID, "moved", "A", "B", "system"), "system audit row")
+	noted := binsAt(t, db, bt, "NOTED")
+	testutil.MustNoErr(t, db.AddBinNote(noted.ID, "damage", "cracked corner", "op-1"), "note")
+
+	body := binsPage(t, h, loginCookie(t, h))
+
+	if !strings.Contains(binRowHTML(t, body, moved.ID), `title="Has notes"`) {
+		t.Error("PIN (before): a bin with only a system audit row renders the notes flag")
+	}
+	if !strings.Contains(binRowHTML(t, body, noted.ID), `title="Has notes"`) {
+		t.Error("a bin a person wrote a note on lost its notes flag")
+	}
+}
+
+// THE COUNT IS SHOWN ON EVERY BIN THAT HAS ONE. Inventory's "Count below zero"
+// list reads bins.uop_remaining < 0 whatever the payload; the bins table only
+// printed the count when the bin carried a payload, so a cleared bin left
+// negative showed a dash on one page and -3 on the other.
+func TestBinsPage_CountShownOnEveryBinThatHasOne(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	loadTestTemplates(t, h)
+	testdb.SetupStandardData(t, db) // payload PART-A
+
+	bt := &bins.BinType{Code: "COUNT-UI", Description: "tote"}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
+	negative := binsAt(t, db, bt, "NEG-NO-PAYLOAD")
+	loaded := binsAt(t, db, bt, "LOADED")
+	empty := binsAt(t, db, bt, "EMPTY-ZERO")
+	_, err := db.Exec(`UPDATE bins SET uop_remaining = -3 WHERE id = $1`, negative.ID)
+	testutil.MustNoErr(t, err, "negative count, no payload")
+	_, err = db.Exec(`UPDATE bins SET payload_code = 'PART-A', uop_remaining = 7, manifest_confirmed = true WHERE id = $1`, loaded.ID)
+	testutil.MustNoErr(t, err, "loaded bin")
+
+	body := binsPage(t, h, loginCookie(t, h))
+
+	if got := uopCell(t, binRowHTML(t, body, negative.ID), -3); got != `<span class="text-muted">-</span>` {
+		t.Errorf("PIN (before): a payload-less bin at -3 shows %q, want the dash", got)
+	}
+	if got := uopCell(t, binRowHTML(t, body, loaded.ID), 7); got != "7" {
+		t.Errorf("a loaded bin's count shows %q, want 7", got)
+	}
+	if got := uopCell(t, binRowHTML(t, body, empty.ID), 0); got != `<span class="text-muted">-</span>` {
+		t.Errorf("an empty bin with no count shows %q, want the not-applicable dash", got)
+	}
+}
+
+// THE FLAGS SAY WHAT THEY ARE. Each flag was an emoji with its meaning only in a
+// hover title.
+func TestBinsPage_FlagsAreLabelled(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	loadTestTemplates(t, h)
+	testdb.SetupStandardData(t, db)
+
+	bt := &bins.BinType{Code: "FLAGS-UI", Description: "tote"}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
+	b := binsAt(t, db, bt, "FLAGGED")
+	_, err := db.Exec(`UPDATE bins SET locked = true, locked_by = 'op-2', payload_code = 'PART-A',
+		manifest_confirmed = false, anomaly_at = NOW() WHERE id = $1`, b.ID)
+	testutil.MustNoErr(t, err, "flag the bin")
+
+	row := binRowHTML(t, binsPage(t, h, loginCookie(t, h)), b.ID)
+	for _, want := range []string{"&#128274;", "&#9888;", "&#9940;"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("PIN (before): flag glyph %s missing from the row:\n%s", want, row)
+		}
 	}
 }

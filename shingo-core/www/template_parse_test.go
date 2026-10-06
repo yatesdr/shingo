@@ -68,3 +68,45 @@ func TestTemplatesParse(t *testing.T) {
 		t.Errorf("map output missing baked-in config; got:\n%s", buf.String())
 	}
 }
+
+// kioskTemplatesMissingColorScheme lists the standalone (renderBare) templates
+// that hard-code a dark theme on <html> but do not tell the browser so. Without
+// color-scheme the browser draws its LIGHT scrollbars and form controls on the
+// dark page — the bright white bar down a wall display framed on the Dashboard.
+func kioskTemplatesMissingColorScheme(t *testing.T) []string {
+	t.Helper()
+	pages, err := fs.Glob(templateFS, "templates/*.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var missing []string
+	dark := 0
+	for _, p := range pages {
+		b, err := fs.ReadFile(templateFS, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(b)
+		if !strings.Contains(src, `<html lang="en" data-theme="dark">`) {
+			continue
+		}
+		dark++
+		if !strings.Contains(src, `<meta name="color-scheme" content="dark">`) {
+			missing = append(missing, strings.TrimPrefix(p, "templates/"))
+		}
+	}
+	if dark == 0 {
+		t.Fatal("no dark standalone template found — the scan has drifted from the markup")
+	}
+	return missing
+}
+
+func TestKioskTemplatesDeclareTheirColorScheme(t *testing.T) {
+	got := kioskTemplatesMissingColorScheme(t)
+	want := []string{ // PIN (before)
+		"dashboard-display.html", "dashboard-map.html", "dashboard-node-report.html", "heartbeat.html",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("dark kiosk templates without color-scheme: got %v, want %v", got, want)
+	}
+}

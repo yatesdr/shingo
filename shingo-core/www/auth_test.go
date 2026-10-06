@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -331,5 +334,74 @@ func TestHandleLogout_ClearsAuthenticatedFlag(t *testing.T) {
 	checkReq.AddCookie(postLogoutCookie)
 	if h.isAuthenticated(checkReq) {
 		t.Error("session should NOT be authenticated after logout")
+	}
+}
+
+// --- nav and login page -----------------------------------------------------
+
+// navHrefs is every page link inside the rendered <nav>.
+func navHrefs(t *testing.T, body string) []string {
+	t.Helper()
+	start, end := strings.Index(body, "<nav>"), strings.Index(body, "</nav>")
+	if start < 0 || end < start {
+		t.Fatal("the page rendered no <nav>")
+	}
+	var out []string
+	for _, m := range regexp.MustCompile(`href="(/[^"#]*)"`).FindAllStringSubmatch(body[start:end], -1) {
+		out = append(out, m[1])
+	}
+	if len(out) == 0 {
+		t.Fatal("the nav carries no links — the scan has drifted from the markup")
+	}
+	return out
+}
+
+// loggedOutBouncers renders the logged-out nav through the REAL router and
+// returns the links in it that the router answers with a login redirect. The
+// router's auth middleware is the authority on which pages need a login; the
+// template's {{if .Authenticated}} is checked against it, not trusted.
+func loggedOutBouncers(t *testing.T) []string {
+	t.Helper()
+	h, _ := testHandlersForPages(t)
+	router := realRouterFor(t, h)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/login", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /login: status %d", rec.Code)
+	}
+	var bounced []string
+	for _, href := range navHrefs(t, rec.Body.String()) {
+		if href == "/login" || href == "/logout" {
+			continue
+		}
+		r := httptest.NewRecorder()
+		router.ServeHTTP(r, httptest.NewRequest(http.MethodGet, href, nil))
+		if r.Code == http.StatusSeeOther && strings.HasPrefix(r.Header().Get("Location"), "/login") {
+			bounced = append(bounced, href)
+		}
+	}
+	sort.Strings(bounced)
+	return bounced
+}
+
+// A LOGGED-OUT READER IS NOT SHOWN A LINK THAT BOUNCES TO THE LOGIN PAGE.
+func TestNav_LoggedOutLinksOpenWithoutLogin(t *testing.T) {
+	t.Parallel()
+	got := loggedOutBouncers(t)
+	want := []string{"/bins", "/payloads"} // PIN (before)
+	if !slices.Equal(got, want) {
+		t.Errorf("logged-out nav links that bounce to /login: got %v, want %v", got, want)
+	}
+}
+
+// The login page does not print the default credentials.
+func TestLoginPage_NoDefaultCredentials(t *testing.T) {
+	t.Parallel()
+	h, _ := testHandlersForPages(t)
+	rec := httptest.NewRecorder()
+	realRouterFor(t, h).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/login", nil))
+	if !strings.Contains(rec.Body.String(), "Default: admin / admin") {
+		t.Error("PIN (before): the login page prints the default credentials")
 	}
 }

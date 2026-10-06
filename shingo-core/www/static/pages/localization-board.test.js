@@ -172,6 +172,15 @@ console.log('range seeds and guards');
         JSON.stringify(cmp) + ' — seven days apart, not six, or it compares ' +
         'adjacent weekdays');
 
+    // An evening at a plant west of UTC: 22:00 CDT on Aug 19 is 03:00 UTC on
+    // Aug 20. The seed is handed the browser's instant and does UTC date math,
+    // so its "yesterday" here is the plant's TODAY — the opening range shifts
+    // by a day with the hour the page is opened.
+    const evening = m.seedMainRange(new Date('2026-08-20T03:00:00Z'));
+    check('an evening seed takes the UTC date, not the plant date',
+        evening.from === '2026-08-13' && evening.to === '2026-08-19',
+        JSON.stringify(evening));
+
     // The endpoint's guards, mirrored client-side. Every rule the server
     // 400s on should be refused before the fetch, or the picker's error
     // surface is a network toast instead of the input.

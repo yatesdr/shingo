@@ -14,6 +14,7 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/store/bins"
 )
 
 // Characterization tests for handlers_inventory.go —
@@ -366,5 +367,76 @@ func TestApiInventoryLedgerExceptions_ListsOpenReportDivergences(t *testing.T) {
 	}
 	if d["opened_at"] == nil || d["opened_at"] == "" {
 		t.Error("opened_at is missing")
+	}
+}
+
+// TestHandleInventory_PageShape pins the server-rendered parts of the page this
+// unit changes: the lineside buckets header and the drill modal shell.
+func TestHandleInventory_PageShape(t *testing.T) {
+	t.Parallel()
+	h, _ := testHandlersForPages(t)
+	rec := httptest.NewRecorder()
+	h.handleInventory(rec, httptest.NewRequest(http.MethodGet, "/inventory", nil))
+	body := rec.Body.String()
+
+	for _, before := range []string{
+		"<th>Cell</th>",               // a dash on every row: nothing parents a lineside node
+		`data-action="drillRange:14"`, // the consumption drill's range toggle
+		"Consumption &amp; cover",     // its title
+		"per-payload trend drill",     // the footnote pointing at it
+	} {
+		if !strings.Contains(body, before) {
+			t.Errorf("PIN (before): %q missing from the inventory page", before)
+		}
+	}
+}
+
+// THE BANNER AND THE PANEL COUNT DIFFERENT THINGS. The banner's figure is
+// carriers flagged anomaly_at (live, no window); the panel's is dropped-delta
+// ledger rows since seven days ago. A carrier with three drops and an unflagged
+// carrier with two make 1 against 5 — neither is wrong.
+func TestInventory_RejectedAndDroppedCountDifferentPopulations(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+
+	bt := &bins.BinType{Code: "DROPS-UI", Description: "tote"}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
+	flagged := binsAt(t, db, bt, "FLAGGED-DROPS")
+	quiet := binsAt(t, db, bt, "UNFLAGGED-DROPS")
+	_, err := db.Exec(`UPDATE bins SET anomaly_at = NOW() WHERE id = $1`, flagged.ID)
+	testutil.MustNoErr(t, err, "flag")
+	drop := func(binID int64, n int) {
+		for i := 0; i < n; i++ {
+			_, err := db.Exec(`INSERT INTO bin_uop_ledger
+				(bin_id, before_uop, after_uop, op, source, payload_code, actor, metadata, applied_at)
+				VALUES ($1, 0, 0, 'stale_epoch_dropped', 'test', 'PART-DROP', 'test', '{"delta":-1}'::jsonb, NOW() - INTERVAL '1 hour')`,
+				binID)
+			testutil.MustNoErr(t, err, "seed drop")
+		}
+	}
+	drop(flagged.ID, 3)
+	drop(quiet.ID, 2)
+
+	var sum struct {
+		RejectedDeltaBins int `json:"rejected_delta_bins"`
+	}
+	rec := getPlain(t, h.apiInventoryAnomalySummary, "/api/inventory/anomaly-summary")
+	testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &sum), "decode summary")
+
+	var lx struct {
+		DeltaIntegrity []struct {
+			DropRows int `json:"drop_rows"`
+		} `json:"delta_integrity"`
+	}
+	rec = getPlain(t, h.apiInventoryLedgerExceptions, "/api/inventory/ledger-exceptions")
+	testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &lx), "decode ledger exceptions")
+	drops := 0
+	for _, r := range lx.DeltaIntegrity {
+		drops += r.DropRows
+	}
+
+	if sum.RejectedDeltaBins != 1 || drops != 5 {
+		t.Errorf("banner figure %d (want 1 flagged carrier), panel figure %d (want 5 dropped deltas)",
+			sum.RejectedDeltaBins, drops)
 	}
 }

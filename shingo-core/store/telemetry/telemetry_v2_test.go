@@ -4,6 +4,7 @@ package telemetry_test
 
 import (
 	"testing"
+	"time"
 
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -101,4 +102,95 @@ func TestCoverage_GetStatsV2_EmptyPopulation(t *testing.T) {
 	if s.SuccessRate != 0 {
 		t.Errorf("empty SuccessRate = %v, want 0 (no divide-by-zero)", s.SuccessRate)
 	}
+}
+
+// seedCompletedOrder inserts a terminal order completed at an exact instant —
+// the bucketing timestamp GetTimeseries reads (COALESCE(completed_at, updated_at)).
+func seedCompletedOrder(t *testing.T, db *store.DB, uuid, station, status string, at time.Time) {
+	t.Helper()
+	if _, err := db.DB.Exec(
+		`INSERT INTO orders (edge_uuid, station_id, status, completed_at, updated_at) VALUES ($1, $2, $3, $4, $4)`,
+		uuid, station, status, at.UTC()); err != nil {
+		t.Fatalf("seed order %s: %v", uuid, err)
+	}
+}
+
+type tsBucket struct {
+	start string // RFC3339 UTC
+	total int64
+}
+
+func timeseriesShape(t *testing.T, got []telemetry.Bucket) []tsBucket {
+	t.Helper()
+	out := make([]tsBucket, len(got))
+	for i, b := range got {
+		out[i] = tsBucket{b.BucketStart.UTC().Format(time.RFC3339), b.Total}
+	}
+	return out
+}
+
+func checkTimeseries(t *testing.T, got []telemetry.Bucket, want []tsBucket) {
+	t.Helper()
+	shape := timeseriesShape(t, got)
+	if len(shape) != len(want) {
+		t.Fatalf("buckets = %v, want %v", shape, want)
+	}
+	for i := range want {
+		if shape[i] != want[i] {
+			t.Fatalf("bucket %d = %v, want %v (all: %v)", i, shape[i], want[i], shape)
+		}
+	}
+}
+
+// plantDayWindow is the filter parseMissionFilter builds for bare
+// since/until dates: plant-local midnight to the last nanosecond of until.
+func plantDayWindow(t *testing.T, station string, loc *time.Location, since, until string) telemetry.Filter {
+	t.Helper()
+	s, err := time.ParseInLocation("2006-01-02", since, loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := time.ParseInLocation("2006-01-02", until, loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	su, uu := s.UTC(), u.Add(24*time.Hour-time.Nanosecond).UTC()
+	return telemetry.Filter{StationID: station, Since: &su, Until: &uu}
+}
+
+// TestTimeseries_DayBucketsArePlantDays pins the day series under a non-UTC
+// plant zone, with completions between 00:00 and 05:00 UTC — the hours that are
+// still the PREVIOUS day in America/Chicago. The range total is the same five
+// orders whatever the bucketing; only the per-day split may move.
+func TestTimeseries_DayBucketsArePlantDays(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	chicago, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := func(s string) time.Time {
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	seedCompletedOrder(t, db, "pd-1", "PD", "confirmed", at("2026-10-04T23:30:00Z")) // Oct 4 18:30 CDT
+	seedCompletedOrder(t, db, "pd-2", "PD", "confirmed", at("2026-10-05T02:00:00Z")) // Oct 4 21:00 CDT
+	seedCompletedOrder(t, db, "pd-3", "PD", "cancelled", at("2026-10-05T04:59:00Z")) // Oct 4 23:59 CDT
+	seedCompletedOrder(t, db, "pd-4", "PD", "confirmed", at("2026-10-05T06:00:00Z")) // Oct 5 01:00 CDT
+	seedCompletedOrder(t, db, "pd-5", "PD", "failed", at("2026-10-06T15:00:00Z"))    // Oct 6 10:00 CDT
+
+	// Five plant days, Oct 3 (empty) through Oct 7 (empty).
+	f := plantDayWindow(t, "PD", chicago, "2026-10-03", "2026-10-07")
+	got, err := telemetry.GetTimeseries(db.DB, f, "day")
+	if err != nil {
+		t.Fatalf("GetTimeseries: %v", err)
+	}
+	checkTimeseries(t, got, []tsBucket{
+		{"2026-10-04T00:00:00Z", 1},
+		{"2026-10-05T00:00:00Z", 3},
+		{"2026-10-06T00:00:00Z", 1},
+	})
 }

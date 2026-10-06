@@ -46,3 +46,25 @@ func TestClassifyTickFeed(t *testing.T) {
 		}
 	}
 }
+
+// TestTickFeedOldestUnsentAgeText pins the age text the tick-feed panel prints
+// in its "oldest unsent" column, one row per rung of the duration ladder.
+func TestTickFeedOldestUnsentAgeText(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		ms   *int64
+		want string
+	}{
+		{nil, ""},
+		{i64(0), "0s"},
+		{i64(42_400), "42s"},
+		{i64(663_000), "11m3s"},
+		{i64(5_400_000), "1h30m0s"},
+		{i64(26 * 3_600_000), "26h0m0s"},
+	} {
+		got := domain.TickFeedStation{OldestUnsentAgeMS: c.ms}.OldestUnsentAge()
+		if got != c.want {
+			t.Errorf("OldestUnsentAge(%v) = %q, want %q", c.ms, got, c.want)
+		}
+	}
+}

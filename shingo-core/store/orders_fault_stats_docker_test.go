@@ -3,6 +3,8 @@
 package store_test
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -230,5 +232,87 @@ func TestGetFaultStats_EmptyWindow(t *testing.T) {
 	testutil.MustNoErr(t, err, "GetFaultStats on an empty window")
 	if len(stats.Outcomes) != 0 || len(stats.PerDay) != 0 || len(stats.ByRobot) != 0 {
 		t.Errorf("an empty window must be empty, got %+v", stats)
+	}
+}
+
+// The per-day split is cut on plant days. Two faults, 02:00Z and 06:00Z on
+// 2026-09-05: in America/Chicago the first is still Sep 4 (21:00 CDT) and the
+// second is Sep 5 (01:00 CDT). The fault total is two whatever the cut; only
+// which day each lands on may move.
+func TestGetFaultStats_PerDayIsPlantDays(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	type row = struct {
+		status string
+		at     time.Time
+		code   int
+		desc   string
+	}
+	a := time.Date(2026, 9, 5, 2, 0, 0, 0, time.UTC)
+	b := time.Date(2026, 9, 5, 6, 0, 0, 0, time.UTC)
+	seedFaultOrder(t, db, "fs-pd-a", "AMR-01", []row{
+		{"faulted", a, 60011, "cannot replan"},
+		{"in_transit", a.Add(10 * time.Second), 0, ""},
+	})
+	seedFaultOrder(t, db, "fs-pd-b", "AMR-02", []row{
+		{"faulted", b, 60011, "cannot replan"},
+		{"in_transit", b.Add(10 * time.Second), 0, ""},
+	})
+	stats, err := db.GetFaultStats(
+		orders.LeadTimeRange{Start: a.Add(-24 * time.Hour), End: b.Add(24 * time.Hour)}, 60*time.Second)
+	testutil.MustNoErr(t, err, "GetFaultStats")
+	var days []string
+	var total int64
+	for _, d := range stats.PerDay {
+		days = append(days, d.Day.Format("2006-01-02"))
+		total += d.Replanning + d.Notice
+	}
+	if total != 2 {
+		t.Errorf("fault total = %d, want 2", total)
+	}
+	if got := strings.Join(days, ","); got != "2026-09-05" {
+		t.Errorf("per-day buckets = %s, want 2026-09-05", got)
+	}
+}
+
+// The card's "N / day" is the window's total over len(per_day) (missions.js
+// refreshFaults). Pinned here because the divisor is whatever this slice holds:
+// two faults on one day of a seven-day window.
+func TestGetFaultStats_RateDividesByTheWindowsPlantDays(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	type row = struct {
+		status string
+		at     time.Time
+		code   int
+		desc   string
+	}
+	a := time.Date(2026, 9, 3, 15, 0, 0, 0, time.UTC)
+	seedFaultOrder(t, db, "fs-rate-a", "AMR-01", []row{
+		{"faulted", a, 60011, "cannot replan"},
+		{"in_transit", a.Add(10 * time.Second), 0, ""},
+	})
+	seedFaultOrder(t, db, "fs-rate-b", "AMR-02", []row{
+		{"faulted", a.Add(time.Hour), 60011, "cannot replan"},
+		{"in_transit", a.Add(time.Hour + 10*time.Second), 0, ""},
+	})
+	chicago, lerr := time.LoadLocation("America/Chicago")
+	testutil.MustNoErr(t, lerr, "load zone")
+	since := time.Date(2026, 9, 1, 0, 0, 0, 0, chicago)
+	until := time.Date(2026, 9, 8, 0, 0, 0, 0, chicago).Add(-time.Nanosecond)
+	stats, err := db.GetFaultStats(orders.LeadTimeRange{Start: since, End: until}, 60*time.Second)
+	testutil.MustNoErr(t, err, "GetFaultStats")
+	var days []string
+	var total int64
+	for _, d := range stats.PerDay {
+		days = append(days, d.Day.Format("01-02"))
+		total += d.Replanning + d.Notice
+	}
+	rate := fmt.Sprintf("%.1f", float64(total)/float64(max(len(stats.PerDay), 1)))
+	if got := strings.Join(days, ","); got != "09-03" {
+		t.Errorf("per_day = %s, want 09-03", got)
+	}
+	if rate != "2.0" {
+		t.Errorf("faults / day = %s, want 2.0", rate)
 	}
 }

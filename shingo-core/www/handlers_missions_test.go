@@ -288,3 +288,94 @@ func TestApiMissionStats_AcceptsFilters(t *testing.T) {
 	var stats telemetry.Stats
 	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&stats), "decode")
 }
+
+// --- R6 / U5 characterisation pins (pre-change tree, 2026-10-05) ------------
+
+// TestApiGetMission_LegRowBlockView pins the block view a leg row is served
+// with. The leg row's blocks_json is the engine's blockLeg record (blockId,
+// binTask, startTime…), but the view decodes it as fleet.BlockSnapshot
+// (block_id, state), so the chip arrives with a location and a blank id and
+// state — the "Blocks: UTN_013: -" chip the walkthrough found on every leg.
+func TestApiGetMission_LegRowBlockView(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	o := &orders.Order{EdgeUUID: "mission-leg-1", StationID: "line-x", OrderType: "move",
+		Status: "pending", Quantity: 1, SourceNode: "ALN_002"}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
+	testutil.MustNoErr(t, db.InsertMissionEvent(&telemetry.Event{
+		OrderID: o.ID, NewState: "BLOCK_FINISHED", RobotID: "AMR-01", ErrorsJSON: "[]",
+		BlocksJSON: `[{"blockId":"b1","location":"UTN_013","binTask":"JackUnload","startTime":100,"terminateTime":118,"durationSeconds":18}]`,
+	}), "insert leg event")
+
+	req := chiReq(http.MethodGet, fmt.Sprintf("/api/missions/%d", o.ID),
+		map[string]string{"orderID": fmt.Sprint(o.ID)})
+	rec := httptest.NewRecorder()
+	h.apiGetMission(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Events []map[string]any `json:"events"`
+	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
+	if len(resp.Events) != 1 {
+		t.Fatalf("events: got %d, want 1", len(resp.Events))
+	}
+	ev := resp.Events[0]
+	if ev["is_leg"] != true {
+		t.Errorf("is_leg: got %v, want true", ev["is_leg"])
+	}
+	blocks, _ := ev["blocks"].([]any)
+	if len(blocks) != 1 {
+		t.Fatalf("blocks: got %v, want one chip", ev["blocks"])
+	}
+	b := blocks[0].(map[string]any)
+	if b["location"] != "UTN_013" || b["block_id"] != "" || b["state"] != "" {
+		t.Errorf("leg chip: got %v, want location UTN_013 with blank block_id/state", b)
+	}
+}
+
+// TestApiListMissions_InFlightAndState pins what the Missions list serves for
+// one finished and one in-flight order: only the finished one (the list reads
+// mission_telemetry, which has a row only at a terminal state), and its state
+// as the vendor's terminal word.
+func TestApiListMissions_InFlightAndState(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	done := &orders.Order{EdgeUUID: "mission-list-done", StationID: "line-x", OrderType: "retrieve",
+		Status: "confirmed", Quantity: 1, SourceNode: "ALN_002", DeliveryNode: "UTN_010"}
+	testutil.MustNoErr(t, db.CreateOrder(done), "create finished order")
+	live := &orders.Order{EdgeUUID: "mission-list-live", StationID: "line-x", OrderType: "retrieve",
+		Status: "staged", Quantity: 1, SourceNode: "ALN_008", DeliveryNode: "PLK_H1", RobotID: "AMR-13"}
+	testutil.MustNoErr(t, db.CreateOrder(live), "create in-flight order")
+	created := done.CreatedAt
+	testutil.MustNoErr(t, db.UpsertMissionTelemetry(&telemetry.Mission{
+		OrderID: done.ID, RobotID: "AMR-02", StationID: "line-x", OrderType: "retrieve",
+		SourceNode: "ALN_002", DeliveryNode: "UTN_010", TerminalState: "FINISHED",
+		CoreCreated: &created, CoreCompleted: &created, DurationMS: 1500000,
+		BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]", RobotAlarmsJSON: "[]",
+	}), "upsert telemetry")
+
+	rec := getPlain(t, h.apiListMissions, "/api/missions")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Missions []map[string]any `json:"missions"`
+		Total    int              `json:"total"`
+	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
+	if resp.Total != 1 || len(resp.Missions) != 1 {
+		t.Fatalf("list: got total %d / %d rows, want only the finished mission", resp.Total, len(resp.Missions))
+	}
+	m := resp.Missions[0]
+	if int64(m["order_id"].(float64)) != done.ID {
+		t.Errorf("row order_id: got %v, want %d", m["order_id"], done.ID)
+	}
+	if m["terminal_state"] != "FINISHED" {
+		t.Errorf("terminal_state: got %v, want the vendor word FINISHED", m["terminal_state"])
+	}
+	if _, ok := m["status"]; ok {
+		t.Errorf("row carries a status field before the change: %v", m["status"])
+	}
+}

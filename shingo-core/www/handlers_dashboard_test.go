@@ -3,6 +3,7 @@
 package www
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -121,4 +122,45 @@ func truncate(s string, n int) string {
 		return s[:n] + "…"
 	}
 	return s
+}
+
+// TestHandleDashboard_ActiveOrderRow pins what one row of the Active Orders
+// table says: before the U4 change it names no node, prints the payload twice
+// and stamps Created to the minute.
+func TestHandleDashboard_ActiveOrderRow(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlersForPages(t)
+
+	o := &orders.Order{
+		EdgeUUID: "dash-row-1", StationID: "line-1", OrderType: "complex",
+		Status: "in_transit", Quantity: 1, SourceNode: "UTN_014", ProcessNode: "ALN_003",
+		DeliveryNode: "UTN_013", PayloadCode: "SHIM", PayloadDesc: "SHIM (dev)",
+	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
+	_, err := db.DB.Exec(`UPDATE orders SET created_at='2026-10-05T12:24:13Z' WHERE id=$1`, o.ID)
+	testutil.MustNoErr(t, err, "backdate")
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	h.handleDashboard(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	start := strings.Index(body, fmt.Sprintf(`<a href="/orders?open=%d">`, o.ID))
+	if start < 0 {
+		t.Fatalf("order %d is not in the Active Orders table", o.ID)
+	}
+	row := body[start:]
+	row = row[:strings.Index(row, "</tr>")]
+
+	if strings.Contains(row, "UTN_014") || strings.Contains(row, "ALN_003") || strings.Contains(row, "UTN_013") {
+		t.Error("before: the row names no node at all")
+	}
+	if !strings.Contains(row, "<code>SHIM</code>") || !strings.Contains(row, "SHIM (dev)") {
+		t.Error("before: the payload prints twice, code and description")
+	}
+	if stamp := createdStamp(row); stamp == "" || strings.Contains(stamp, ":24:13") {
+		t.Errorf("before: Created is the full stamp at minute resolution, got %q", stamp)
+	}
 }

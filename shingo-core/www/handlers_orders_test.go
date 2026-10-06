@@ -3,10 +3,13 @@
 package www
 
 import (
+	"fmt"
 	"html/template"
 	"net/http"
+	"strings"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/debuglog"
 	"shingo/protocol/testutil"
 	"shingocore/config"
@@ -424,5 +427,197 @@ func TestSubmitSpotRetrieveSpecific_BinAlreadyClaimed(t *testing.T) {
 	// No new order created for this spot submit (readBackManualOrder never ran).
 	if resp.OrderID != 0 {
 		t.Errorf("expected no new order on 409, got order_id=%d", resp.OrderID)
+	}
+}
+
+// --- the orders board as an operator reads it (U4 pins) ---------------------
+//
+// Pinned at the tree before the table change, then moved to what the change
+// predicts; each moved expectation names its brief item in the U4 notes.
+
+// seedBoardOrder writes one order straight to the database with the fields the
+// board renders, and backdates created_at to a fixed instant when one is given
+// so the Created cell is checkable.
+func seedBoardOrder(t *testing.T, db *store.DB, o *orders.Order, created string) *orders.Order {
+	t.Helper()
+	if o.Quantity == 0 {
+		o.Quantity = 1
+	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create "+o.EdgeUUID)
+	if created != "" {
+		_, err := db.DB.Exec(`UPDATE orders SET created_at=$2 WHERE id=$1`, o.ID, created)
+		testutil.MustNoErr(t, err, "backdate "+o.EdgeUUID)
+	}
+	return o
+}
+
+// boardRow returns the <tr> for one order id, or "" when the board has none.
+func boardRow(body string, id int64) string {
+	start := strings.Index(body, fmt.Sprintf(`<tr data-order-id="%d"`, id))
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(body[start:], "</tr>")
+	if end < 0 {
+		return body[start:]
+	}
+	return body[start : start+end]
+}
+
+// createdStamp is the visible text of the Created cell's <time> for the fixed
+// instant seedBoardOrder backdates to.
+func createdStamp(row string) string {
+	const open = `<time data-utc="2026-10-05T12:24:13Z">`
+	i := strings.Index(row, open)
+	if i < 0 {
+		return ""
+	}
+	rest := row[i+len(open):]
+	return rest[:strings.Index(rest, "</time>")]
+}
+
+func TestOrdersBoard_RowColumns(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlersForRendering(t)
+
+	o := seedBoardOrder(t, db, &orders.Order{
+		EdgeUUID: "pin-uuid-7f3a", StationID: "line-1", OrderType: "complex",
+		Status: protocol.StatusInTransit, SourceNode: "UTN_014", ProcessNode: "ALN_003",
+		DeliveryNode: "UTN_013", PayloadCode: "SHIM", PayloadDesc: "SHIM (dev)", RobotID: "AMR-07",
+	}, "2026-10-05T12:24:13Z")
+
+	body := renderOrdersPage(t, h, "")
+	row := boardRow(body, o.ID)
+	if row == "" {
+		t.Fatalf("order %d is not on the Active board", o.ID)
+	}
+
+	if !strings.Contains(body, "<th data-sort>UUID</th>") {
+		t.Error("before: the board has a UUID column")
+	}
+	if !strings.Contains(row, "pin-uuid-7f3a") {
+		t.Error("before: the row prints the edge UUID")
+	}
+	if strings.Contains(row, "UTN_014") || strings.Contains(row, "ALN_003") || strings.Contains(row, "UTN_013") {
+		t.Error("before: the row names no node at all")
+	}
+	if !strings.Contains(row, "<code>SHIM</code>") || !strings.Contains(row, "SHIM (dev)") {
+		t.Error("before: the payload prints twice, code and description")
+	}
+	if stamp := createdStamp(row); stamp == "" || strings.Contains(stamp, ":24:13") {
+		t.Errorf("before: Created is the full stamp at minute resolution, got %q", stamp)
+	}
+}
+
+func TestOrdersBoard_RouteOmitsARepeatedNode(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlersForRendering(t)
+
+	o := seedBoardOrder(t, db, &orders.Order{
+		EdgeUUID: "pin-route-repeat", StationID: "line-1", OrderType: "retrieve",
+		Status: protocol.StatusInTransit, SourceNode: "SYN_MARKET_01", ProcessNode: "ALN_008",
+		DeliveryNode: "ALN_008",
+	}, "")
+
+	row := boardRow(renderOrdersPage(t, h, ""), o.ID)
+	if strings.Contains(row, "SYN_MARKET_01") || strings.Contains(row, "ALN_008") {
+		t.Error("before: the row names no node at all")
+	}
+}
+
+func TestOrdersBoard_Paging(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlersForRendering(t)
+
+	var ids []int64
+	for i := range 5 {
+		o := seedBoardOrder(t, db, &orders.Order{
+			EdgeUUID: fmt.Sprintf("pin-page-%d", i), StationID: "line-1", OrderType: "move",
+			Status: protocol.StatusConfirmed,
+		}, "")
+		ids = append(ids, o.ID)
+	}
+
+	page1 := renderOrdersPage(t, h, "?status=all&limit=3")
+	page2 := renderOrdersPage(t, h, "?status=all&limit=3&page=2")
+	for _, id := range ids[2:] {
+		if boardRow(page1, id) == "" {
+			t.Errorf("page 1 is missing order %d (newest three)", id)
+		}
+	}
+	if !strings.Contains(page1, "showing 3 of 5 — add ?limit=5 to see them all") {
+		t.Error("before: a held-back page says so with the ?limit= notice")
+	}
+	for _, id := range ids[2:] {
+		if boardRow(page2, id) == "" {
+			t.Errorf("before: page=2 is ignored, so it shows the same three (missing %d)", id)
+		}
+	}
+	for _, id := range ids[:2] {
+		if boardRow(page2, id) != "" {
+			t.Errorf("before: the two oldest (%d) are reachable only with ?limit=", id)
+		}
+	}
+}
+
+func TestOrdersBoard_SearchQueriesTheServer(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlersForRendering(t)
+
+	hit := seedBoardOrder(t, db, &orders.Order{
+		EdgeUUID: "pin-search-hit", StationID: "line-1", OrderType: "move",
+		Status: protocol.StatusConfirmed, RobotID: "AMR-17",
+	}, "")
+	miss := seedBoardOrder(t, db, &orders.Order{
+		EdgeUUID: "pin-search-miss", StationID: "line-1", OrderType: "move",
+		Status: protocol.StatusConfirmed, RobotID: "AMR-03",
+	}, "")
+
+	body := renderOrdersPage(t, h, "?status=all&q=amr-17")
+	if boardRow(body, hit.ID) == "" {
+		t.Error("the matching order is not on the page")
+	}
+	if boardRow(body, miss.ID) == "" {
+		t.Error("before: q is ignored by the server; the filter only hid rendered rows")
+	}
+}
+
+func TestOrdersBoard_IDsFilter(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlersForRendering(t)
+
+	a := seedBoardOrder(t, db, &orders.Order{EdgeUUID: "pin-ids-a", StationID: "line-1",
+		OrderType: "move", Status: protocol.StatusQueued}, "")
+	b := seedBoardOrder(t, db, &orders.Order{EdgeUUID: "pin-ids-b", StationID: "line-1",
+		OrderType: "move", Status: protocol.StatusQueued}, "")
+	gone := seedBoardOrder(t, db, &orders.Order{EdgeUUID: "pin-ids-gone", StationID: "line-1",
+		OrderType: "move", Status: protocol.StatusConfirmed}, "")
+
+	body := renderOrdersPage(t, h, fmt.Sprintf("?ids=%d,%d", a.ID, gone.ID))
+	if boardRow(body, a.ID) == "" {
+		t.Error("a named active order is missing")
+	}
+	if boardRow(body, b.ID) == "" {
+		t.Error("before: ids is ignored, so the Active board shows every active order")
+	}
+	if boardRow(body, gone.ID) != "" {
+		t.Error("before: ids is ignored, so a named order that has since finished is not shown")
+	}
+}
+
+func TestOrdersBoard_StatusChips(t *testing.T) {
+	t.Parallel()
+	h, _ := testHandlersForRendering(t)
+	body := renderOrdersPage(t, h, "")
+	for _, s := range []string{"pending", "sourcing", "queued", "dispatched", "in_transit",
+		"faulted", "delivered", "confirmed", "failed", "reshuffling"} {
+		if !strings.Contains(body, `href="/orders?status=`+s+`"`) {
+			t.Errorf("before: a %s chip exists", s)
+		}
+	}
+	for _, s := range []string{"staged", "cancelled", "skipped"} {
+		if strings.Contains(body, `href="/orders?status=`+s+`"`) {
+			t.Errorf("before: there is no %s chip", s)
+		}
 	}
 }
