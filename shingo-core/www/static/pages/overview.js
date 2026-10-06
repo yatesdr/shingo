@@ -8,7 +8,8 @@
 // to add one. The shared drill modal (components/DrillModal.js) is opened by
 // a delegated data-action="openDrill:<metric>" handler.
 
-import { createStore, onSSE, debounce } from '/static/shared/utils.js';
+import { createStore, onSSE, debounce, serverNow } from '/static/shared/utils.js';
+import { formatClockSeconds } from '/static/components/plantclock.js';
 import { apiGet, delegateActions } from '/static/app.js';
 import { openDrillModal } from '/static/components/DrillModal.js';
 import { createHeroSection } from '/static/pages/overview/hero.js';
@@ -32,10 +33,15 @@ function buildSections() {
     sections.push(createFootprintSection(filters));
 }
 
+// refreshAll re-fetches every section and stamps when. Only the active-order
+// count and the alerts update between refreshes, so the page says how old the
+// rest is rather than letting a frozen "Completed" sit beside a live count.
 function refreshAll(state) {
     for (const s of sections) {
         try { s.refresh(state); } catch (e) { console.error('section refresh', e); }
     }
+    const asOf = document.getElementById('ops-asof');
+    if (asOf) asOf.textContent = 'as of ' + formatClockSeconds(serverNow());
 }
 
 // Debounced so one filter toggle fans out as a single wave of fetches (§6).

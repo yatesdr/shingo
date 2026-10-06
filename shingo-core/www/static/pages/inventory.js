@@ -11,7 +11,7 @@
 //   /api/parts/consumption?since&until — window consumption for the drill.
 
 import {
-  apiGet, apiPost, escapeHtml, delegateActions, toast, uiConfirm, timeAgo, debounce,
+  apiGet, apiPost, escapeHtml, delegateActions, toast, uiConfirm, timeAgo, timeAgoHTML, debounce,
 } from '/static/app.js';
 import { formatClock, formatTime, onSSE, serverNow } from '/static/shared/utils.js';
 
@@ -1068,8 +1068,8 @@ async function showRejectedDeltas() {
       + '<td>' + escapeHtml(b.node_name || '—') + '</td>'
       + '<td>' + escapeHtml(reasonLabel(b.reason)) + '</td>'
       + '<td>' + (b.drop_count || 0) + '</td>'
-      + '<td class="nowrap">' + timeAgo(b.anomaly_at) + '</td>'
-      + '<td class="nowrap">' + (b.last_reject_at ? timeAgo(b.last_reject_at) : '—') + '</td></tr>').join('')
+      + '<td class="nowrap">' + timeAgoHTML(b.anomaly_at) + '</td>'
+      + '<td class="nowrap">' + (b.last_reject_at ? timeAgoHTML(b.last_reject_at) : '—') + '</td></tr>').join('')
     + '</tbody></table></div>';
 }
 

@@ -7,21 +7,30 @@
 // chart.destroy() on dismiss to avoid the Chart.js leak vector (§13).
 
 import { el, h } from '/static/app.js';
-import { makeChart, registerZoom, chartColors } from '/static/components/charts.js';
+import { formatDuration } from '/static/shared/utils.js';
+import { makeChart, registerZoom, chartColors, progressBarColors, progressSegment } from '/static/components/charts.js';
+import { windowFor, bucketLabel, inProgress } from '/static/components/plantclock.js';
 
 // Metric registry: most metrics are mission timeseries fields; duration is a
-// two-series P50/P95; fleet/footprint/live degrade gracefully (their 12-week
-// histories aren't materialized yet — Q-008/Q-011).
+// two-series P50/P95 in minutes. A metric with no history (the live active
+// count, fleet load before Q-008) has no entry and no drill affordance: a
+// modal that opens on a placeholder sentence is a button that does nothing.
+// Rates other than success scale to their data (a sub-1% rate on a 0-100 axis
+// is a line on the floor); counts take integer ticks.
+// RUN_TIME_TITLE says what "run time" is wherever it is shown: the Overview's
+// average tile, the P50/P95 trend and this drill. It measures the work, so
+// fault time is out; it is not the Missions list's Duration (created to the
+// fleet's terminal report), which is why it is not called duration.
+export const RUN_TIME_TITLE = 'Robot assigned to load down; fault time excluded';
+
 const METRICS = {
     success_rate: { title: 'Success rate', kind: 'mission', field: 'success_rate', type: 'line', unit: '%', max: 100 },
-    completed: { title: 'Missions completed', kind: 'mission', field: 'confirmed', type: 'bar' },
-    throughput: { title: 'Throughput', kind: 'mission', field: 'total', type: 'bar' },
-    cancelled: { title: 'Cancelled missions', kind: 'mission', field: 'cancelled', type: 'bar' },
-    cancellation: { title: 'Cancellation rate', kind: 'mission', field: 'cancellation_rate', type: 'line', unit: '%', max: 100 },
-    avg_duration: { title: 'Duration (P50 / P95)', kind: 'duration' },
-    duration: { title: 'Duration (P50 / P95)', kind: 'duration' },
-    in_flight: { title: 'In flight', kind: 'note', note: 'In-flight is a live count — no historical series. Watch the hero tile.' },
-    fleet_load: { title: 'Fleet load', kind: 'note', note: 'Peak-concurrency history needs the materialized typical-day aggregate (Q-008). Today’s curve is on the Robot Fleet section.' },
+    completed: { title: 'Missions completed', kind: 'mission', field: 'confirmed', type: 'bar', count: true },
+    throughput: { title: 'Throughput', kind: 'mission', field: 'total', type: 'bar', count: true },
+    cancelled: { title: 'Cancelled missions', kind: 'mission', field: 'cancelled', type: 'bar', count: true },
+    cancellation: { title: 'Cancellation rate', kind: 'mission', field: 'cancellation_rate', type: 'line', unit: '%' },
+    avg_duration: { title: 'Run time (P50 / P95)', hint: RUN_TIME_TITLE, kind: 'duration' },
+    duration: { title: 'Run time (P50 / P95)', hint: RUN_TIME_TITLE, kind: 'duration' },
     footprint: { title: 'Plant footprint', kind: 'footprint' },
 };
 
@@ -29,13 +38,14 @@ let _active = null;
 
 export function openDrillModal(metric, filterState) {
     closeDrillModal();
-    const cfg = METRICS[metric] || { title: metric, kind: 'note', note: 'No detail view for this metric.' };
+    const cfg = METRICS[metric];
+    if (!cfg) return;
 
     const overlay = el('div', { className: 'modal-overlay drill-modal active' });
     const box = el('div', { className: 'modal' });
     box.innerHTML = h`
         <div class="modal-header flex flex-between">
-          <h2>${cfg.title}</h2>
+          <h2 title="${cfg.hint || ''}">${cfg.title}</h2>
           <button class="modal-close" title="Close">&times;</button>
         </div>
         <div class="range-toggle drill-range">
@@ -47,13 +57,6 @@ export function openDrillModal(metric, filterState) {
         <div class="drill-modal__narrative"></div>`;
     overlay.appendChild(box);
     document.body.appendChild(overlay);
-
-    // Note-kind metrics (e.g. Fleet load) have no timeseries to range over — hide
-    // the 4w/12w/52w toggle so it doesn't imply a control that does nothing.
-    if (cfg.kind === 'note') {
-        const rt = box.querySelector('.drill-range');
-        if (rt) rt.style.display = 'none';
-    }
 
     const state = {
         overlay, box, cfg, metric,
@@ -98,13 +101,7 @@ function load(state) {
     const narrative = state.box.querySelector('.drill-modal__narrative');
     narrative.textContent = '';
 
-    if (cfg.kind === 'note') {
-        if (state.chart) { try { state.chart.destroy(); } catch (_) {} state.chart = null; }
-        chartHolder.innerHTML = '<div class="dash-empty">' + cfg.note + '</div>';
-        return;
-    }
-
-    // Ensure a canvas exists (note kind may have replaced it).
+    // Ensure a canvas exists (an empty state may have replaced it).
     if (!chartHolder.querySelector('canvas')) chartHolder.innerHTML = '<canvas></canvas>';
 
     if (state.controller) { try { state.controller.abort(); } catch (_) {} }
@@ -117,7 +114,7 @@ function load(state) {
 }
 
 function buildURL(state) {
-    const win = rangeWindow(state.range);
+    const win = windowFor(state.range);
     const p = new URLSearchParams({ bucket: 'day', since: win.since, until: win.until });
     if (state.filter.station) p.set('station_id', state.filter.station);
     if (state.filter.robot) p.set('robot_id', state.filter.robot);
@@ -136,43 +133,64 @@ function render(state, data) {
     let labels = [];
     let datasets = [];
     let narrativeSeries = [];
+    let live = [];
+    let hasRows = false;
 
+    // Same palette as the page charts (guide: The palette): loaded teal /
+    // unloaded indigo as on the footprint card, P50 sky / P95 violet as on the
+    // trends card, a single metric in indigo (series-1).
     if (cfg.kind === 'footprint') {
         const series = (data && data.load_series) || [];
-        labels = series.map((b) => fmtDay(b.day));
+        labels = series.map((b) => bucketLabel(b.day, 'day'));
+        live = series.map((b) => inProgress(b.day, 'day'));
         datasets = [
-            { label: 'Loaded', data: series.map((b) => b.loaded), borderColor: c.success, backgroundColor: c.success, tension: 0.3, pointRadius: 0, fill: false },
-            { label: 'Unloaded', data: series.map((b) => b.unloaded), borderColor: c.info, backgroundColor: c.info, tension: 0.3, pointRadius: 0, fill: false },
+            { label: 'Loaded', data: series.map((b) => b.loaded), borderColor: c.vizTeal, backgroundColor: c.vizTeal, fill: false, segment: progressSegment(live) },
+            { label: 'Unloaded', data: series.map((b) => b.unloaded), borderColor: c.vizIndigo, backgroundColor: c.vizIndigo, fill: false, segment: progressSegment(live) },
         ];
         narrativeSeries = series.map((b) => b.loaded);
+        hasRows = series.some((b) => b.loaded > 0 || b.unloaded > 0);
     } else {
         const points = (data && data.points) || [];
-        labels = points.map((p) => fmtDay(p.bucket_start));
+        labels = points.map((p) => bucketLabel(p.bucket_start, 'day'));
+        live = points.map((p) => inProgress(p.bucket_start, 'day'));
+        hasRows = points.some((p) => p.total > 0);
         if (cfg.kind === 'duration') {
+            const p95 = points.map((p) => (p.p95_ms > 0 ? toMin(p.p95_ms) : null));
             datasets = [
-                { label: 'P50 (s)', data: points.map((p) => msToS(p.p50_ms)), borderColor: c.info, backgroundColor: c.info, tension: 0.3, pointRadius: 0, fill: false },
-                { label: 'P95 (s)', data: points.map((p) => msToS(p.p95_ms)), borderColor: c.warning, backgroundColor: c.warning, tension: 0.3, pointRadius: 0, fill: false },
+                { label: 'P50 (min)', data: points.map((p) => (p.p50_ms > 0 ? toMin(p.p50_ms) : null)), borderColor: c.vizSky, backgroundColor: c.vizSky, fill: false, segment: progressSegment(live) },
+                { label: 'P95 (min)', data: p95, borderColor: c.vizViolet, backgroundColor: c.vizViolet, fill: false, segment: progressSegment(live) },
             ];
-            narrativeSeries = points.map((p) => msToS(p.p95_ms));
+            narrativeSeries = p95;
+            hasRows = p95.some((v) => v !== null);
         } else {
             const vals = points.map((p) => fieldValue(p, cfg.field));
-            datasets = [{ label: cfg.title, data: vals, borderColor: c.primary, backgroundColor: c.primary, tension: 0.3, pointRadius: 0, fill: cfg.type === 'bar' }];
+            datasets = [cfg.type === 'bar'
+                ? { label: cfg.title, data: vals, backgroundColor: progressBarColors(c.vizIndigo, live) }
+                : { label: cfg.title, data: vals, borderColor: c.vizIndigo, backgroundColor: c.vizIndigo, fill: false, segment: progressSegment(live) }];
             narrativeSeries = vals;
         }
     }
+    // The in-progress day is drawn, but kept out of the trend sentence: a
+    // partly-elapsed day is not a fall.
+    narrativeSeries = narrativeSeries.filter((_, i) => !live[i]);
 
-    if (!labels.length) {
+    if (!hasRows) {
         box.querySelector('.drill-modal__chart').innerHTML = '<div class="dash-empty">No data in this range.</div>';
         return;
     }
 
-    const yMax = cfg.max;
+    const y = cfg.max ? { min: 0, max: cfg.max } : { beginAtZero: true };
+    if (cfg.count || cfg.kind === 'footprint') y.ticks = { precision: 0 };
+    const tooltip = cfg.kind === 'duration'
+        ? { callbacks: { label: (ctx) => ctx.dataset.label.replace(' (min)', '') + ' ' + formatDuration(ctx.parsed.y * 60000) } }
+        : {};
     state.chart = makeChart(canvas, {
         type: cfg.type === 'bar' ? 'bar' : 'line',
         data: { labels, datasets },
         options: {
-            scales: { y: yMax ? { min: 0, max: yMax } : { min: 0 } },
+            scales: { y },
             plugins: {
+                tooltip,
                 legend: { display: datasets.length > 1, labels: { color: c.text, boxWidth: 12 } },
                 zoom: {
                     zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
@@ -201,23 +219,16 @@ function fetchJSON(url, signal) {
     return fetch(url, { signal }).then((r) => { if (!r.ok) throw new Error('http ' + r.status); return r.json(); });
 }
 
+// fieldValue reads one metric off a bucket. A rate over an empty bucket has no
+// value (null, a gap), not 0%: the series is zero-filled, and a day nothing
+// finished on is not a day everything failed.
 function fieldValue(p, field) {
-    if (field === 'cancellation_rate') return p.total ? Math.round(p.cancelled / p.total * 1000) / 10 : 0;
-    if (field === 'success_rate') return Math.round((p.success_rate || 0) * 10) / 10;
+    if (field === 'cancellation_rate') return p.total ? Math.round(p.cancelled / p.total * 1000) / 10 : null;
+    if (field === 'success_rate') return (p.confirmed + p.failed) > 0 ? Math.round(p.success_rate * 10) / 10 : null;
     return p[field] || 0;
 }
 
-function rangeWindow(range) {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    let days = 84;
-    if (range === '4w') days = 28; else if (range === '52w') days = 364;
-    const since = new Date(today); since.setDate(since.getDate() - (days - 1));
-    return { since: ymd(since), until: ymd(today) };
-}
-
-function ymd(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
-function fmtDay(iso) { const d = new Date(iso); return isNaN(d.getTime()) ? '' : (d.getMonth() + 1) + '/' + d.getDate(); }
-function msToS(ms) { return Math.round((ms || 0) / 100) / 10; }
+function toMin(ms) { return Math.round(ms / 600) / 100; }
 
 // narrate computes a one-sentence trend summary from first→last (§15 auto
 // narrative).

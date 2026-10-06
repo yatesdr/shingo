@@ -11,7 +11,6 @@ import (
 	"shingo/protocol/clock"
 	"shingocore/domain"
 	"shingocore/engine"
-	"shingocore/fleet"
 )
 
 func (h *Handlers) handleMissions(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +47,15 @@ func (h *Handlers) apiListMissions(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	// Every row carries the order's status in the protocol vocabulary. The list
+	// query reads it from orders; a summary whose order row is gone falls back
+	// to what the fleet's terminal word means to Core, through the same mapper
+	// the engine dispatches on — never a page-side copy of it.
+	for _, m := range missions {
+		if m.Status == "" {
+			m.Status = h.coreStatusFor(m.TerminalState)
+		}
 	}
 
 	// station_names is the uid→label dictionary, shipped once per response
@@ -112,18 +120,6 @@ type missionEventView struct {
 	// of the marker string; asking here removes that spelling and keeps the
 	// value in one place (engine.BlockLegState).
 	IsLeg bool `json:"is_leg"`
-	// Blocks is blocks_json decoded and stamped with the same mapping. The
-	// chips under a timeline row are the same vocabulary as the row itself, so
-	// leaving them in vendor words while the badge above them speaks Core's
-	// would be a worse mixture than what this change set out to fix. The raw
-	// blocks_json stays on the row untouched.
-	Blocks []missionBlockView `json:"blocks"`
-}
-
-// missionBlockView is one block snapshot plus the Core status its state means.
-type missionBlockView struct {
-	fleet.BlockSnapshot
-	Status string `json:"status"`
 }
 
 // missionEventViews stamps each event with the Core status its vendor state
@@ -156,7 +152,6 @@ func (h *Handlers) missionEventViews(events []*domain.TelemetryEvent) []missionE
 		view := missionEventView{
 			TelemetryEvent: ev,
 			IsLeg:          ev.NewState == engine.BlockLegState,
-			Blocks:         h.missionBlockViews(ev.BlocksJSON),
 		}
 		// A leg row gets NO status, and that is not an omission. Its new_state
 		// is Core's own per-block marker rather than a vendor state, so there is
@@ -168,28 +163,6 @@ func (h *Handlers) missionEventViews(events []*domain.TelemetryEvent) []missionE
 			view.NewStatus = h.coreStatusFor(ev.NewState)
 		}
 		out = append(out, view)
-	}
-	return out
-}
-
-// missionBlockViews decodes one event's blocks_json and stamps each block with
-// the Core status its vendor state means.
-//
-// Unparseable JSON yields no blocks rather than an error: this is a display
-// detail on a diagnostic page, and a malformed snapshot from one poll must not
-// cost the operator the whole timeline. The raw string is still on the row for
-// anyone who needs to look at it.
-func (h *Handlers) missionBlockViews(blocksJSON string) []missionBlockView {
-	if blocksJSON == "" || blocksJSON == "[]" {
-		return nil
-	}
-	var snaps []fleet.BlockSnapshot
-	if err := json.Unmarshal([]byte(blocksJSON), &snaps); err != nil {
-		return nil
-	}
-	out := make([]missionBlockView, 0, len(snaps))
-	for _, s := range snaps {
-		out = append(out, missionBlockView{BlockSnapshot: s, Status: h.coreStatusFor(s.State)})
 	}
 	return out
 }
@@ -246,7 +219,7 @@ func (h *Handlers) apiMissionTimeseries(w http.ResponseWriter, r *http.Request) 
 	if bucket != "day" {
 		bucket = "hour"
 	}
-	points, err := h.engine.MissionService().Timeseries(f, bucket)
+	points, err := h.engine.MissionService().Timeseries(f, bucket, plantLocation)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -365,7 +338,7 @@ func (h *Handlers) apiMissionFaults(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stats, err := h.engine.MissionService().FaultStats(start, end,
-		h.engine.AppConfig().RDS.FaultNoticeAfter)
+		h.engine.AppConfig().RDS.FaultNoticeAfter, plantLocation)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -101,7 +101,7 @@ func TestGetFaultStats(t *testing.T) {
 
 	stats, err := db.GetFaultStats(
 		orders.LeadTimeRange{Start: base.Add(-time.Hour), End: time.Now().UTC()},
-		60*time.Second)
+		60*time.Second, nil)
 	testutil.MustNoErr(t, err, "GetFaultStats")
 
 	// Four faulted rows across three orders.
@@ -192,7 +192,7 @@ func TestGetFaultStats_AnOpenFaultIsCountedAndNamed(t *testing.T) {
 
 	stats, err := db.GetFaultStats(
 		orders.LeadTimeRange{Start: since.Add(-time.Hour), End: time.Now().UTC()},
-		60*time.Second)
+		60*time.Second, nil)
 	testutil.MustNoErr(t, err, "GetFaultStats")
 
 	var open *orders.FaultOutcome
@@ -228,10 +228,16 @@ func TestGetFaultStats_EmptyWindow(t *testing.T) {
 
 	end := time.Now().UTC().Add(-365 * 24 * time.Hour)
 	stats, err := db.GetFaultStats(
-		orders.LeadTimeRange{Start: end.Add(-time.Hour), End: end}, 60*time.Second)
+		orders.LeadTimeRange{Start: end.Add(-time.Hour), End: end}, 60*time.Second, nil)
 	testutil.MustNoErr(t, err, "GetFaultStats on an empty window")
-	if len(stats.Outcomes) != 0 || len(stats.PerDay) != 0 || len(stats.ByRobot) != 0 {
+	if len(stats.Outcomes) != 0 || len(stats.ByRobot) != 0 {
 		t.Errorf("an empty window must be empty, got %+v", stats)
+	}
+	// per_day still lists the window's days (R8), each a measured zero.
+	for _, d := range stats.PerDay {
+		if d.Replanning+d.Notice != 0 {
+			t.Errorf("empty window day %s counted %d", d.Day.Format("2006-01-02"), d.Replanning+d.Notice)
+		}
 	}
 }
 
@@ -258,20 +264,24 @@ func TestGetFaultStats_PerDayIsPlantDays(t *testing.T) {
 		{"faulted", b, 60011, "cannot replan"},
 		{"in_transit", b.Add(10 * time.Second), 0, ""},
 	})
+	chicago, lerr := time.LoadLocation("America/Chicago")
+	testutil.MustNoErr(t, lerr, "load zone")
 	stats, err := db.GetFaultStats(
-		orders.LeadTimeRange{Start: a.Add(-24 * time.Hour), End: b.Add(24 * time.Hour)}, 60*time.Second)
+		orders.LeadTimeRange{Start: a.Add(-24 * time.Hour), End: b.Add(24 * time.Hour)}, 60*time.Second, chicago)
 	testutil.MustNoErr(t, err, "GetFaultStats")
 	var days []string
 	var total int64
 	for _, d := range stats.PerDay {
-		days = append(days, d.Day.Format("2006-01-02"))
+		if d.Replanning+d.Notice > 0 {
+			days = append(days, d.Day.Format("2006-01-02"))
+		}
 		total += d.Replanning + d.Notice
 	}
 	if total != 2 {
 		t.Errorf("fault total = %d, want 2", total)
 	}
-	if got := strings.Join(days, ","); got != "2026-09-05" {
-		t.Errorf("per-day buckets = %s, want 2026-09-05", got)
+	if got := strings.Join(days, ","); got != "2026-09-04,2026-09-05" {
+		t.Errorf("per-day buckets = %s, want 2026-09-04,2026-09-05 (plant days)", got)
 	}
 }
 
@@ -300,7 +310,7 @@ func TestGetFaultStats_RateDividesByTheWindowsPlantDays(t *testing.T) {
 	testutil.MustNoErr(t, lerr, "load zone")
 	since := time.Date(2026, 9, 1, 0, 0, 0, 0, chicago)
 	until := time.Date(2026, 9, 8, 0, 0, 0, 0, chicago).Add(-time.Nanosecond)
-	stats, err := db.GetFaultStats(orders.LeadTimeRange{Start: since, End: until}, 60*time.Second)
+	stats, err := db.GetFaultStats(orders.LeadTimeRange{Start: since, End: until}, 60*time.Second, chicago)
 	testutil.MustNoErr(t, err, "GetFaultStats")
 	var days []string
 	var total int64
@@ -309,10 +319,30 @@ func TestGetFaultStats_RateDividesByTheWindowsPlantDays(t *testing.T) {
 		total += d.Replanning + d.Notice
 	}
 	rate := fmt.Sprintf("%.1f", float64(total)/float64(max(len(stats.PerDay), 1)))
-	if got := strings.Join(days, ","); got != "09-03" {
-		t.Errorf("per_day = %s, want 09-03", got)
+	// R8: the divisor is the window's plant days, not the days that had a fault.
+	if got := strings.Join(days, ","); got != "09-01,09-02,09-03,09-04,09-05,09-06,09-07" {
+		t.Errorf("per_day = %s, want 09-01 … 09-07", got)
 	}
-	if rate != "2.0" {
-		t.Errorf("faults / day = %s, want 2.0", rate)
+	if rate != "0.3" {
+		t.Errorf("faults / day = %s, want 0.3 (2 faults over 7 days)", rate)
+	}
+}
+
+// A window that runs past now stops at the plant day now falls in: tomorrow
+// has had no chance to fault, so it may not dilute the rate.
+func TestGetFaultStats_PerDayStopsAtToday(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	stats, err := db.GetFaultStats(orders.LeadTimeRange{
+		Start: today.AddDate(0, 0, -2), End: today.AddDate(0, 0, 5),
+	}, 60*time.Second, time.UTC)
+	testutil.MustNoErr(t, err, "GetFaultStats")
+	if len(stats.PerDay) != 3 {
+		t.Fatalf("per_day = %d days, want 3 (two days back through today)", len(stats.PerDay))
+	}
+	if got := stats.PerDay[2].Day.Format("2006-01-02"); got != today.Format("2006-01-02") {
+		t.Errorf("last day = %s, want today %s", got, today.Format("2006-01-02"))
 	}
 }

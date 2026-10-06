@@ -4,9 +4,10 @@
 // per-robot rows with mission-derived utilization bars. Data:
 // /api/robots/fleet. The typical-day overlay is deferred (Q-008).
 
-import { apiGet, h } from '/static/app.js';
+import { apiGet, h, setText } from '/static/app.js';
 import { reconcileList } from '/static/shared/utils.js';
-import { makeChart, installChartThemeHook, chartColors } from '/static/components/charts.js';
+import { makeChart, installChartThemeHook, chartColors, withAlpha, progressSegment } from '/static/components/charts.js';
+import { windowFor, bucketLabel, plantDate, inProgress } from '/static/components/plantclock.js';
 import { createFleetRow, updateFleetRow } from '/static/components/RobotTile.js';
 
 export function createFleetSection(store) {
@@ -17,6 +18,8 @@ export function createFleetSection(store) {
         const body = document.getElementById('ops-fleet-body');
         if (!body) return;
         // P8b: dual hero (utilization + peak), supporting stats demoted, chart kept.
+        // The rows carry three bare numbers, so a header row in the rows' own grid
+        // names them.
         body.innerHTML = h`
             <div class="ov-hero-row">
               <div class="ov-hero">
@@ -38,6 +41,11 @@ export function createFleetSection(store) {
             <div class="fleet-load-box">
               <div class="chart-caption" id="fl-day"></div>
               <div class="chart-box" style="height:200px;margin-top:0.35rem"><canvas id="fl-canvas"></canvas></div>
+            </div>
+            <div class="fleet-row text-muted-sm">
+              <span>Robot</span><span>State</span>
+              <span title="Share of the window this robot spent on orders">Busy</span>
+              <span>Missions</span><span>Battery</span>
             </div>
             <div class="bar-list" id="fl-rows"></div>`;
     }
@@ -86,7 +94,7 @@ export function createFleetSection(store) {
             const dayLabel = document.getElementById('fl-day');
             if (dayLabel) dayLabel.textContent = '';
             const box = canvas.parentElement;
-            if (box) box.innerHTML = '<div class="dash-empty">No fleet activity in this window.</div>';
+            if (box) { box.style.height = 'auto'; box.innerHTML = '<div class="dash-empty">No fleet activity in this window.</div>'; }
             return;
         }
         const c = chartColors();
@@ -96,7 +104,8 @@ export function createFleetSection(store) {
 
         let labels, datasets;
         if (daily) {
-            labels = load.map((d) => fmtDay(d.day));
+            labels = load.map((d) => bucketLabel(d.day, 'day'));
+            const live = load.map((d) => inProgress(d.day, 'day'));
             if (dayLabel) dayLabel.textContent = 'Fleet load — daily peak / avg robots used across range';
             // Fill the AVERAGE (typical usage) and draw peak as a thin envelope
             // line above it — filling under peak overstated usage (it made a big
@@ -105,25 +114,25 @@ export function createFleetSection(store) {
             datasets = [{
                 label: 'Avg robots used', data: load.map((d) => Math.round((d.avg || 0) * 10) / 10),
                 borderColor: c.vizTeal, backgroundColor: withAlpha(c.vizTeal, 0.13), // P19: avg = teal + soft fill
-                fill: true, tension: 0.3, pointRadius: 0,
+                fill: true, segment: progressSegment(live),
             }, {
                 label: 'Peak robots used', data: load.map((d) => d.peak),
-                borderColor: c.vizIndigo, borderWidth: 1.4, pointRadius: 0, fill: false, tension: 0.3, // P19: peak = indigo line
+                borderColor: c.vizIndigo, borderWidth: 1.4, fill: false, segment: progressSegment(live), // P19: peak = indigo line
             }, {
                 label: 'Fleet ceiling', data: labels.map(() => ceiling),
                 borderColor: c.vizAmber, borderDash: [6, 4], borderWidth: 1, pointRadius: 0, fill: false,
             }];
         } else {
-            labels = load.map((h2) => fmtHour(h2.hour));
+            const live = load.map((h2) => inProgress(h2.hour, 'hour'));
+            labels = load.map((h2) => bucketLabel(h2.hour, 'hour'));
             if (dayLabel) {
-                const d0 = load[0] && load[0].hour ? new Date(load[0].hour) : null;
-                const day = d0 && !isNaN(d0.getTime()) ? ymd(d0) : '';
+                const day = load[0] ? plantDate(load[0].hour) : '';
                 dayLabel.textContent = 'Fleet load — ' + (day || 'latest day');
             }
             datasets = [{
                 label: 'Robots used', data: load.map((h2) => h2.concurrency),
                 borderColor: c.vizTeal, backgroundColor: withAlpha(c.vizTeal, 0.13), // P19: teal line + soft fill
-                fill: true, tension: 0.3, pointRadius: 0,
+                fill: true, segment: progressSegment(live),
             }, {
                 label: 'Fleet ceiling', data: labels.map(() => ceiling),
                 borderColor: c.vizAmber, borderDash: [6, 4], borderWidth: 1, pointRadius: 0, fill: false,
@@ -157,30 +166,4 @@ export function createFleetSection(store) {
     }
 
     return { mount, refresh };
-}
-
-// ─── helpers ──────────────────────────────────────────────────────────────
-function setText(id, v) { const e = document.getElementById(id); if (e) e.textContent = v; }
-function fmtHour(iso) { const d = new Date(iso); return isNaN(d.getTime()) ? '' : String(d.getHours()).padStart(2, '0') + ':00'; }
-function fmtDay(iso) { const d = new Date(iso); return isNaN(d.getTime()) ? '' : (d.getMonth() + 1) + '/' + d.getDate(); }
-
-function ymd(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
-function windowFor(range) {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    let days = 1;
-    if (range === '7d') days = 7; else if (range === '30d') days = 30;
-    const since = new Date(today); since.setDate(since.getDate() - (days - 1));
-    return { since: ymd(since), until: ymd(today) };
-}
-
-// withAlpha turns a CSS color into a translucent fill. Handles hex; falls
-// back to color-mix for var()/named colors.
-function withAlpha(color, a) {
-    if (color && color[0] === '#') {
-        let hex = color.slice(1);
-        if (hex.length === 3) hex = hex.split('').map((x) => x + x).join('');
-        const n = parseInt(hex, 16);
-        return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
-    }
-    return 'color-mix(in srgb, ' + color + ' ' + Math.round(a * 100) + '%, transparent)';
 }

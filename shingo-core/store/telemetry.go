@@ -24,7 +24,7 @@ func (db *DB) GetMissionTelemetry(orderID int64) (*telemetry.Mission, error) {
 	return telemetry.GetMission(db.DB, orderID)
 }
 
-func (db *DB) ListMissions(f telemetry.Filter) ([]*telemetry.Mission, int, error) {
+func (db *DB) ListMissions(f telemetry.Filter) ([]*telemetry.ListRow, int, error) {
 	return telemetry.ListMissions(db.DB, f)
 }
 
@@ -36,8 +36,8 @@ func (db *DB) GetMissionStatsV2(f telemetry.Filter) (*telemetry.StatsV2, error) 
 	return telemetry.GetStatsV2(db.DB, f)
 }
 
-func (db *DB) GetMissionTimeseries(f telemetry.Filter, bucket string) ([]telemetry.Bucket, error) {
-	return telemetry.GetTimeseries(db.DB, f, bucket)
+func (db *DB) GetMissionTimeseries(f telemetry.Filter, bucket string, loc *time.Location) ([]telemetry.Bucket, error) {
+	return telemetry.GetTimeseries(db.DB, f, bucket, loc)
 }
 
 func (db *DB) GetRobotMissionAggs(f telemetry.Filter) ([]telemetry.RobotMissionAgg, error) {

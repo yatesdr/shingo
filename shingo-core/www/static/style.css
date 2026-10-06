@@ -857,72 +857,31 @@ textarea { resize: vertical; min-height: 60px; }
 [data-theme="dark"] .uop-bar { background:#30363d; }
 [data-theme="dark"] .cc-bin-card { border-color:var(--border); }
 
-/* Mission telemetry */
-.duration-bar { display:flex; height:24px; border-radius:4px; overflow:hidden; gap:1px; }
-.duration-segment { min-width:2px; cursor:default; transition:opacity .15s; }
-.duration-segment:hover { opacity:.8; }
-
-/* Leg decomposition (mission detail).
-   A leg the fleet did not time is HATCHED, not blank and not zero-width:
-   absent is not instant, and a zero-width segment reads as "took no time".
-   It gets a fixed width in JS so it is visible and countable while claiming
-   no share of a timeline it cannot measure. No hue — "we do not know" is not
-   a lifecycle phase, so it takes none of the status palette. */
-.duration-segment.leg-unknown,
-.leg-swatch.leg-unknown {
-  background: repeating-linear-gradient(
-    45deg,
-    var(--border) 0 4px,
-    transparent 4px 8px
-  );
-  border: 1px dashed var(--text-muted);
-  box-sizing: border-box;
-}
-.leg-swatch {
-  display: inline-block; width: 12px; height: 12px; border-radius: 2px;
-  vertical-align: middle; margin-right: 4px;
-}
-/* A leg that did NOT RUN — the fleet stopped the mission before reaching it,
-   and the equal start/terminate stamps on such a block record the teardown, not
-   the work. Same "claims no timeline" contract as unknown, deliberately NOT the
-   same texture: hatching says "we could not measure this", and here we know
-   exactly what happened. Hollow with a dashed edge — the space a leg would have
-   taken, left empty. */
-.duration-segment.leg-notrun,
-.leg-swatch.leg-notrun {
-  background: transparent;
-  border: 1px dashed var(--text-muted);
-  box-sizing: border-box;
-  opacity: .6;
-}
-.leg-unknown-text { color: var(--text-muted); font-style: italic; }
-/* The arithmetic, stated. The bar should be checkable, not trusted. */
-.leg-total {
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  margin-left: auto;
-}
+/* Mission detail — stages (R6). One bar on a true time scale in four
+   classes. The three where the order is waiting for or using a robot are drawn
+   from the data palette in categorical order (indigo, teal, violet): the
+   classes are categories, not statuses, so they take no status hue. Waiting
+   for confirm has no robot on it and draws neutral (--viz-secondary).
+   Scoped under .mission-stages / .mission-actions. */
+.mission-summary-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:1rem; }
+.mission-summary-fleet { margin-top:1rem; font-size:.85em; color:var(--text-muted); }
+.mission-stages .stage-bar { display:flex; height:24px; border-radius:4px; overflow:hidden; background:var(--sub-1); }
+.mission-stages .stage-seg { min-width:0; }
+.mission-stages .stage-waiting { background:var(--viz-indigo); }
+.mission-stages .stage-moving { background:var(--viz-teal); }
+.mission-stages .stage-held { background:var(--viz-violet); }
+.mission-stages .stage-confirm { background:var(--viz-secondary); }
+.mission-stages .stage-legend { display:flex; flex-wrap:wrap; gap:1rem; margin:.5rem 0 .75rem; }
+.mission-stages .stage-swatch { display:inline-block; width:10px; height:10px; border-radius:2px; vertical-align:middle; margin-right:6px; }
+.mission-stages .stage-detail,
+.mission-stages .stage-faults { font-size:.8em; color:var(--text-muted); margin-top:.15rem; }
+.mission-actions > summary { cursor:pointer; font-weight:600; }
+.mission-actions .actions-group { margin-top:.75rem; }
+.mission-actions .actions-head { margin-bottom:.25rem; }
 
 .stat-value { font-size:1.8rem; font-weight:700; line-height:1.2; }
 .stat-label { font-size:.85em; color:var(--text-muted); }
 
-.mission-timeline { position:relative; padding-left:24px; }
-.timeline-entry { position:relative; padding-bottom:1.25rem; }
-.timeline-entry:not(:last-child)::before {
-  content:''; position:absolute; left:-16px; top:10px; bottom:-2px;
-  width:2px; background:var(--border);
-}
-.timeline-dot {
-  position:absolute; left:-20px; top:4px;
-  width:10px; height:10px; border-radius:50%;
-  border:2px solid var(--bg);
-}
-.timeline-body { padding-left:.5rem; }
-.timeline-header { margin-bottom:.25rem; }
-.timeline-time { font-weight:600; font-size:.9em; }
-.timeline-delta { color:var(--text-muted); font-size:.85em; margin-left:.5rem; }
-.timeline-meta { font-size:.85em; color:var(--text-muted); margin-top:.25rem; }
-.robot-snapshot { font-family:monospace; }
 .badge-sm { font-size:.75em; padding:1px 5px; }
 .mission-row { cursor:pointer; transition:background .1s; }
 .mission-row:hover { background:color-mix(in srgb, var(--primary) 6%, var(--surface)); }

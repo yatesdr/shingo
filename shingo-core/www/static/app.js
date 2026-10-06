@@ -18,7 +18,7 @@
 //   escapeHtml(s)     — last resort for legacy string concatenation.
 //                       Prefer h`` for new code.
 
-import { delegateActions, installBackdropClose, installTableSort, onSSE } from '/static/shared/utils.js';
+import { delegateActions, formatTime, installBackdropClose, installTableSort, onSSE, timeAgo } from '/static/shared/utils.js';
 installBackdropClose();
 document.addEventListener('DOMContentLoaded', function() { installTableSort(); });
 export { delegateActions };
@@ -292,7 +292,9 @@ export function apiPut(url, body)  { return api('PUT',  url, body || {}); }
 export function apiDelete(url)     { return api('DELETE', url); }
 
 // --- Time formatting ---
-// formatDuration: human-readable elapsed duration in ms.
+// formatDuration lives in shared/utils.js only (the twin of protocol.FormatDuration).
+// This file's own ladder printed "21m 3s" and "500ms" beside the shared "21m" and
+// "0 s"; it is deleted, not re-exported, so a page imports the one ladder by name.
 // formatTime moved to shared/utils.js (plant-timezone pinned). Pages import
 // it from '/static/shared/utils.js'; app.js keeps no date formatter of its
 // own — two copies of a clock is how the two-convention display bug happened.
@@ -303,19 +305,21 @@ export function apiDelete(url)     { return api('DELETE', url); }
 // updated_at). Re-exported rather than re-implemented so every existing
 // `import { timeAgo } from '/static/app.js'` keeps working and there is still
 // only one of it.
-export { timeAgo } from '/static/shared/utils.js';
+export { timeAgo };
 
-export function formatDuration(ms) {
-  if (!ms || ms <= 0) return '-';
-  if (ms < 1000) return ms + 'ms';
-  var s = Math.floor(ms / 1000);
-  if (s < 60) return s + 's';
-  var m = Math.floor(s / 60);
-  s = s % 60;
-  if (m < 60) return m + 'm ' + s + 's';
-  var h = Math.floor(m / 60);
-  m = m % 60;
-  return h + 'h ' + m + 'm';
+// timeAgoHTML is a relative stamp ("1h ago") that carries the absolute plant
+// time in its title, so ten rows of "1h ago" can still be told apart. Returns
+// HTML; an absent stamp renders the timeAgo dash with no title.
+export function timeAgoHTML(ts) {
+  if (!ts) return escapeHtml(timeAgo(ts));
+  return '<span title="' + escapeHtml(formatTime(ts)) + '">' + escapeHtml(timeAgo(ts)) + '</span>';
+}
+
+// setText sets an element's text by id; an absent value renders the guide's
+// no-data dash, never an empty cell or the word "null".
+export function setText(id, v) {
+  var e = document.getElementById(id);
+  if (e) e.textContent = (v === null || v === undefined) ? '—' : v;
 }
 
 // Timestamp conversion: the formatTime/convertTimestamps pair that used to

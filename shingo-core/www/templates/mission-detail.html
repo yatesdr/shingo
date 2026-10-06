@@ -11,17 +11,24 @@
   <!-- Summary -->
   <div class="card mb-2" id="mission-summary"></div>
 
-  <!-- Duration breakdown bar -->
-  <div class="card mb-2">
-    <h3 class="mt-0" title="Visual breakdown of time spent in each fleet state during this mission">Duration Breakdown</h3>
-    <div class="duration-bar" id="duration-bar"></div>
-    <div class="duration-legend flex gap-2 flex-wrap text-sm" id="duration-legend" style="margin-top:.5rem"></div>
-  </div>
-
-  <!-- Timeline -->
-  <div class="card mb-2">
-    <h3 class="mt-0" title="Chronological state transitions with robot position snapshots at each step">State Timeline</h3>
-    <div class="mission-timeline" id="mission-timeline"></div>
+  <!-- Stages: one row per order status span, from order_history. The bar is
+       the same spans on a true time scale in four classes. -->
+  <div class="card mb-2 mission-stages">
+    <h3 class="mt-0" title="Every status the order held, how long it held it, and its share of the order's life">Stages</h3>
+    <div class="stage-bar" id="stage-bar"></div>
+    <div class="stage-legend text-sm" id="stage-legend"></div>
+    <table class="table-compact w-full stage-table">
+      <thead>
+        <tr>
+          <th title="Order status held for this span">Stage</th>
+          <th title="Where the robot worked during this span, from the fleet's per-block reports">Where</th>
+          <th title="When the order entered this status (plant time)">Started</th>
+          <th class="col-num" title="How long the order held this status">Took</th>
+          <th class="col-num" title="Share of the order's life">Share</th>
+        </tr>
+      </thead>
+      <tbody id="stage-rows"></tbody>
+    </table>
   </div>
 
   <!-- RDS Messages -->
@@ -30,23 +37,12 @@
     <div id="mission-messages"></div>
   </div>
 
-  <!-- Event Log -->
-  <div class="card">
-    <h3 class="mt-0" title="Raw event log showing every state transition with robot telemetry">Event Log</h3>
-    <table class="table-compact w-full">
-      <thead>
-        <tr>
-          <th title="Timestamp when this state transition was recorded">Time</th>
-          <th title="Fleet state transition (old state to new state)">Transition</th>
-          <th title="Robot vehicle ID at this transition">Robot</th>
-          <th title="Fleet station the robot was at or near">Station</th>
-          <th title="Robot map coordinates (X, Y) at this transition">Position</th>
-          <th title="Robot battery level at this transition">Battery</th>
-        </tr>
-      </thead>
-      <tbody id="event-log"></tbody>
-    </table>
-  </div>
+  <!-- Robot actions: the fleet's per-block legs and vendor transitions,
+       grouped by stage. Closed by default. -->
+  <details class="card mission-actions">
+    <summary title="The fleet's per-block legs and state reports, grouped by the stage they happened in">Robot actions (<span id="mission-actions-count">0</span>)</summary>
+    <div id="mission-actions"></div>
+  </details>
 
 </div>
 

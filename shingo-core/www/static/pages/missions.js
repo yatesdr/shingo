@@ -4,8 +4,8 @@
 // breakdowns, Failure Pareto, and the mission table + CSV. A global filter
 // store (Since/Until + station/robot + state) drives the data sections.
 
-import { apiGet, el, formatDuration, timeAgo, toast } from '/static/app.js';
-import { createStore, formatTime, onSSE, debounce } from '/static/shared/utils.js';
+import { apiGet, el, timeAgo, toast } from '/static/app.js';
+import { createStore, formatDuration, formatTime, installLiveDurations, onSSE, debounce } from '/static/shared/utils.js';
 import { CellTile, updateCellTile, pulseCellDot } from '/static/components/CellTile.js';
 import { openCellDrill } from '/static/components/CellDrill.js';
 // BarList is no longer imported here: U3 replaced both breakdown panels with
@@ -45,16 +45,27 @@ function refreshList(state) {
         tbody.innerHTML = '';
         for (const m of lastMissions) {
             const tr = el('tr', { className: 'mission-row', dataset: { orderId: m.order_id }, title: 'Click to view mission details for order ' + m.order_id });
+            // State is the ORDER's status, in the protocol vocabulary the server
+            // sends (badge-<status> resolves against shared/status-classes.css).
+            // An order still in flight has no completion and no summary
+            // duration yet: its duration ticks from creation, and its Completed
+            // cell is left empty (not applicable), not dashed.
             tr.innerHTML =
                 '<td>' + m.order_id + '</td>' +
-                '<td>' + (m.robot_id || '-') + '</td>' +
-                '<td>' + stationLabel(m.station_id) + '</td>' +
-                '<td>' + (m.source_node || '?') + ' &rarr; ' + (m.delivery_node || '?') + '</td>' +
-                '<td><span class="badge ' + stateBadgeClass(m.terminal_state) + '">' + stateLabel(m.terminal_state) + '</span></td>' +
-                '<td title="' + (m.duration_ms ? m.duration_ms + 'ms' : '') + '">' + formatDuration(m.duration_ms) + '</td>' +
-                '<td title="' + formatAbsTime(m.core_completed) + '">' + timeAgo(m.core_completed) + '</td>';
+                '<td>' + escapeText(m.robot_id || '-') + '</td>' +
+                '<td>' + escapeText(stationLabel(m.station_id)) + '</td>' +
+                '<td>' + escapeText(m.source_node || '—') + ' &rarr; ' + escapeText(m.delivery_node || '—') + '</td>' +
+                '<td><span class="badge badge-' + escapeAttr(m.status) + '"' +
+                    (m.terminal_state ? ' title="fleet reported: ' + escapeAttr(m.terminal_state) + '"' : '') + '>' +
+                    escapeText(m.status) + '</span></td>' +
+                (m.in_flight
+                    ? '<td class="tnum" title="in flight since ' + escapeAttr(formatTime(m.core_created)) + '"><span data-since="' + escapeAttr(m.core_created) + '">' + formatDuration(0) + '</span> so far</td>' +
+                      '<td title="in flight"></td>'
+                    : '<td class="tnum" title="' + (m.duration_ms ? m.duration_ms + 'ms' : '') + '">' + formatDuration(m.duration_ms) + '</td>' +
+                      '<td title="' + escapeAttr(formatAbsTime(m.core_completed)) + '">' + timeAgo(m.core_completed) + '</td>');
             tbody.appendChild(tr);
         }
+        installLiveDurations(tbody);
         if (!lastMissions.length) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted)">No missions found</td></tr>';
         renderPagination((data && data.total) || 0, offset, LIMIT);
     });
@@ -76,7 +87,7 @@ function renderPagination(total, off, limit) {
 
 function exportCSV() {
     if (!lastMissions.length) { toast('No missions to export', 'info'); return; }
-    const cols = ['order_id', 'robot_id', 'station_id', 'source_node', 'delivery_node', 'terminal_state', 'duration_ms', 'core_completed'];
+    const cols = ['order_id', 'robot_id', 'station_id', 'source_node', 'delivery_node', 'status', 'terminal_state', 'duration_ms', 'core_completed'];
     const lines = [cols.join(',')];
     for (const m of lastMissions) lines.push(cols.map((c) => csvCell(m[c])).join(','));
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
@@ -118,14 +129,10 @@ const DWELL_LABELS = {
 // than hidden — hiding it would leave a gap a reader fills with a guess.
 const DWELL_THIN_SAMPLE = 5;
 
-function fmtSeconds(s) {
-    if (s === null || s === undefined) return '-';
-    if (s <= 0) return '0s';
-    if (s < 60) return (s < 10 ? s.toFixed(1) : Math.round(s)) + 's';
-    const m = Math.floor(s / 60);
-    const rem = Math.round(s % 60);
-    if (m < 60) return m + 'm ' + rem + 's';
-    return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+// The dwell and fault endpoints report seconds; the one duration formatter
+// (shared/utils.js formatDuration) takes milliseconds.
+function fromSeconds(s) {
+    return s === null || s === undefined ? s : s * 1000;
 }
 
 function refreshDwell(state) {
@@ -152,8 +159,8 @@ function refreshDwell(state) {
             return '<div class="dwell-cell' + thin + '" title="' + r.from + ' → ' + r.to
                 + (thin ? ' — only ' + r.count + ' samples, read with care' : '') + '">'
                 + '<span class="dwell-label">' + label + '</span>'
-                + '<span class="dwell-val">' + fmtSeconds(r.p50_seconds)
-                + ' <span class="dwell-sep">/</span> ' + fmtSeconds(r.p95_seconds) + '</span>'
+                + '<span class="dwell-val">' + formatDuration(fromSeconds(r.p50_seconds))
+                + ' <span class="dwell-sep">/</span> ' + formatDuration(fromSeconds(r.p95_seconds)) + '</span>'
                 + '<span class="dwell-count">' + r.count + ' sample' + (r.count === 1 ? '' : 's') + '</span>'
                 + '</div>';
         }).join('');
@@ -187,16 +194,24 @@ function refreshFaults(state) {
         const outcomes = s.outcomes || [];
         const perDay = s.per_day || [];
 
+        // The window travels with every per-day figure (guide rule 1: a count is
+        // exact of a stated window). The rate is the total over per_day's
+        // length: every plant day of the window through today, a day without
+        // a fault included (R8). The day count is printed beside it.
         const note = document.getElementById('m-faults-note');
         if (note) {
-            note.textContent = s.notice_after_seconds
-                ? 'a fault under ' + s.notice_after_seconds + 's is a replan'
-                : '';
+            const parts = [];
+            if (s.notice_after_seconds) parts.push('a fault under ' + s.notice_after_seconds + 's is a replan');
+            if (data && data.since && data.until) parts.push('window ' + formatTime(data.since) + ' – ' + formatTime(data.until));
+            note.textContent = parts.join(' · ');
         }
 
+        // An empty window collapses to the one sentence: three tables each
+        // repeating "no missions" under it said the same thing three more times.
+        const tables = document.getElementById('m-faults-tables');
+        if (tables) tables.style.display = outcomes.length ? '' : 'none'; // .grid's display beats [hidden]
         if (!outcomes.length) {
             host.innerHTML = '<span class="text-muted-sm">No faults in this window</span>';
-            renderFaultTables({});
             return;
         }
 
@@ -205,15 +220,16 @@ function refreshFaults(state) {
         let replan = 0, notice = 0;
         perDay.forEach((d) => { replan += d.replanning; notice += d.notice; });
         const days = perDay.length || 1;
+        const over = ' total · ' + days + (days === 1 ? ' day' : ' days');
 
         const cells = [
             faultCell('Replanning', replan ? perDay1(replan, days) + ' / day' : 'no data',
-                replan + ' total', !replan),
+                replan + over, !replan),
             faultCell('Faults', notice ? perDay1(notice, days) + ' / day' : 'no data',
-                notice + ' total', !notice),
+                notice + over, !notice),
         ].concat(outcomes.map((o) => faultCell(
             FAULT_OUTCOME_LABELS[o.status] || o.status,
-            fmtSeconds(o.p50_seconds) + ' / ' + fmtSeconds(o.p95_seconds),
+            formatDuration(fromSeconds(o.p50_seconds)) + ' / ' + formatDuration(fromSeconds(o.p95_seconds)),
             o.count + (o.count === 1 ? ' order' : ' orders'),
             !o.count)));
 
@@ -246,7 +262,7 @@ function renderFaultTables(s) {
         { head: 'Faults', num: true, value: (r) => r.count },
         { head: 'Over threshold', num: true, title: 'Faults that lasted past the notice threshold',
           value: (r) => r.notice_hits },
-        { head: 'p50', num: true, value: (r) => fmtSeconds(r.p50_seconds) },
+        { head: 'p50', num: true, value: (r) => formatDuration(fromSeconds(r.p50_seconds)) },
     ];
     breakdownTable(document.getElementById('m-faults-robot'), s.by_robot, { columns: cols('Robot') });
     breakdownTable(document.getElementById('m-faults-node'), s.by_node, { columns: cols('Node') });
@@ -356,7 +372,10 @@ function renderPareto(reasons) {
     const box = document.querySelector('#m-failures .chart-box');
     if (!box) return;
     if (paretoChart) { try { paretoChart.destroy(); } catch (_) {} paretoChart = null; }
-    if (!reasons.length) { box.innerHTML = '<div class="dash-empty">No failures in this window.</div>'; return; }
+    // The empty state collapses to its sentence rather than holding the
+    // chart's 240px of blank space.
+    if (!reasons.length) { box.style.height = 'auto'; box.innerHTML = '<div class="dash-empty">No failures in this window.</div>'; return; }
+    box.style.height = '240px';
     if (!box.querySelector('canvas')) box.innerHTML = '<canvas></canvas>';
     const canvas = box.querySelector('canvas');
     const c = chartColors();
@@ -377,7 +396,7 @@ function renderPareto(reasons) {
             labels,
             datasets: [
                 { type: 'bar', label: 'Count', data: counts, backgroundColor: barColors, yAxisID: 'y', order: 2 },
-                { type: 'line', label: 'Cumulative %', data: cumPct, borderColor: c.warning, backgroundColor: c.warning, yAxisID: 'y1', tension: 0.2, pointRadius: 2, order: 1 },
+                { type: 'line', label: 'Cumulative %', data: cumPct, borderColor: c.warning, backgroundColor: c.warning, yAxisID: 'y1', pointRadius: 2, order: 1 },
             ],
         },
         options: {
@@ -644,14 +663,3 @@ function filterQS(state, extra) {
 
 function formatAbsTime(ts) { return ts ? formatTime(ts) : ''; }
 function csvCell(v) { if (v === null || v === undefined) return ''; const s = String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
-
-function stateLabel(state) {
-    if (!state) return '-';
-    const map = { FINISHED: 'completed', delivered: 'completed', confirmed: 'completed', FAILED: 'failed', failed: 'failed', STOPPED: 'cancelled', cancelled: 'cancelled' };
-    return map[state] || state;
-}
-function stateBadgeClass(state) {
-    const label = stateLabel(state);
-    const classMap = { completed: 'badge-confirmed', failed: 'badge-failed', cancelled: 'badge-cancelled' };
-    return classMap[label] || ('badge-' + label);
-}

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"shingo/protocol/testutil"
 	"shingocore/store/orders"
@@ -289,14 +290,18 @@ func TestApiMissionStats_AcceptsFilters(t *testing.T) {
 	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&stats), "decode")
 }
 
-// --- R6 / U5 characterisation pins (pre-change tree, 2026-10-05) ------------
+// --- R6 / U5: mission detail stages, missions list in flight -----------------
 
-// TestApiGetMission_LegRowBlockView pins the block view a leg row is served
-// with. The leg row's blocks_json is the engine's blockLeg record (blockId,
-// binTask, startTime…), but the view decodes it as fleet.BlockSnapshot
-// (block_id, state), so the chip arrives with a location and a blank id and
-// state — the "Blocks: UTN_013: -" chip the walkthrough found on every leg.
-func TestApiGetMission_LegRowBlockView(t *testing.T) {
+// TestApiGetMission_LegRowCarriesNoBlockView pins that a leg row is served with
+// its raw blocks_json and no decoded block view.
+//
+// Before R6 every event carried a "blocks" view decoded as fleet.BlockSnapshot
+// (block_id, state). A leg row's blocks_json is the engine's blockLeg record
+// (blockId, binTask, startTime…), so the keys never lined up and the chip
+// arrived with a location and a blank id and state — the "Blocks: UTN_013: -"
+// chip on every leg. The stage view prints no chips, so the mapping is gone
+// rather than fixed; the page reads blocks_json for the leg itself.
+func TestApiGetMission_LegRowCarriesNoBlockView(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 	o := &orders.Order{EdgeUUID: "mission-leg-1", StationID: "line-x", OrderType: "move",
@@ -315,7 +320,8 @@ func TestApiGetMission_LegRowBlockView(t *testing.T) {
 		t.Fatalf("status: got %d; body=%s", rec.Code, rec.Body.String())
 	}
 	var resp struct {
-		Events []map[string]any `json:"events"`
+		Events  []map[string]any `json:"events"`
+		History []map[string]any `json:"history"`
 	}
 	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if len(resp.Events) != 1 {
@@ -325,20 +331,26 @@ func TestApiGetMission_LegRowBlockView(t *testing.T) {
 	if ev["is_leg"] != true {
 		t.Errorf("is_leg: got %v, want true", ev["is_leg"])
 	}
-	blocks, _ := ev["blocks"].([]any)
-	if len(blocks) != 1 {
-		t.Fatalf("blocks: got %v, want one chip", ev["blocks"])
+	if _, ok := ev["blocks"]; ok {
+		t.Errorf("event still carries a decoded block view: %v", ev["blocks"])
 	}
-	b := blocks[0].(map[string]any)
-	if b["location"] != "UTN_013" || b["block_id"] != "" || b["state"] != "" {
-		t.Errorf("leg chip: got %v, want location UTN_013 with blank block_id/state", b)
+	if s, _ := ev["blocks_json"].(string); !strings.Contains(s, "JackUnload") || !strings.Contains(s, "startTime") {
+		t.Errorf("blocks_json: got %v, want the stored leg record", ev["blocks_json"])
+	}
+	// The stage view's source: the order's birth row is in history.
+	if len(resp.History) != 1 || resp.History[0]["status"] != "pending" {
+		t.Errorf("history: got %v, want the pending birth row", resp.History)
 	}
 }
 
-// TestApiListMissions_InFlightAndState pins what the Missions list serves for
-// one finished and one in-flight order: only the finished one (the list reads
-// mission_telemetry, which has a row only at a terminal state), and its state
-// as the vendor's terminal word.
+// TestApiListMissions_InFlightAndState pins that the Missions list carries the
+// orders still in flight, first, and that every row's status is the order's
+// status in the protocol vocabulary.
+//
+// Before: the list read mission_telemetry alone, which has a row only at a
+// terminal state, so the in-flight order was absent (total 1), and the page
+// labelled the finished one from the vendor word FINISHED as "completed" — a
+// word no order status spells.
 func TestApiListMissions_InFlightAndState(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
@@ -348,7 +360,7 @@ func TestApiListMissions_InFlightAndState(t *testing.T) {
 	live := &orders.Order{EdgeUUID: "mission-list-live", StationID: "line-x", OrderType: "retrieve",
 		Status: "staged", Quantity: 1, SourceNode: "ALN_008", DeliveryNode: "PLK_H1", RobotID: "AMR-13"}
 	testutil.MustNoErr(t, db.CreateOrder(live), "create in-flight order")
-	created := done.CreatedAt
+	created := time.Now().UTC()
 	testutil.MustNoErr(t, db.UpsertMissionTelemetry(&telemetry.Mission{
 		OrderID: done.ID, RobotID: "AMR-02", StationID: "line-x", OrderType: "retrieve",
 		SourceNode: "ALN_002", DeliveryNode: "UTN_010", TerminalState: "FINISHED",
@@ -356,26 +368,51 @@ func TestApiListMissions_InFlightAndState(t *testing.T) {
 		BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]", RobotAlarmsJSON: "[]",
 	}), "upsert telemetry")
 
-	rec := getPlain(t, h.apiListMissions, "/api/missions")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: got %d; body=%s", rec.Code, rec.Body.String())
-	}
-	var resp struct {
+	type listResp struct {
 		Missions []map[string]any `json:"missions"`
 		Total    int              `json:"total"`
 	}
-	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
-	if resp.Total != 1 || len(resp.Missions) != 1 {
-		t.Fatalf("list: got total %d / %d rows, want only the finished mission", resp.Total, len(resp.Missions))
+	list := func(url string) listResp {
+		t.Helper()
+		rec := getPlain(t, h.apiListMissions, url)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status %d; body=%s", url, rec.Code, rec.Body.String())
+		}
+		var resp listResp
+		testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
+		return resp
 	}
-	m := resp.Missions[0]
-	if int64(m["order_id"].(float64)) != done.ID {
-		t.Errorf("row order_id: got %v, want %d", m["order_id"], done.ID)
+
+	resp := list("/api/missions")
+	if resp.Total != 2 || len(resp.Missions) != 2 {
+		t.Fatalf("list: got total %d / %d rows, want the in-flight and the finished order", resp.Total, len(resp.Missions))
 	}
-	if m["terminal_state"] != "FINISHED" {
-		t.Errorf("terminal_state: got %v, want the vendor word FINISHED", m["terminal_state"])
+	first, second := resp.Missions[0], resp.Missions[1]
+	if int64(first["order_id"].(float64)) != live.ID || first["status"] != "staged" || first["in_flight"] != true {
+		t.Errorf("first row: got order %v status %v in_flight %v, want the in-flight order %d, staged",
+			first["order_id"], first["status"], first["in_flight"], live.ID)
 	}
-	if _, ok := m["status"]; ok {
-		t.Errorf("row carries a status field before the change: %v", m["status"])
+	if first["source_node"] != "ALN_008" || first["delivery_node"] != "PLK_H1" || first["core_completed"] != nil {
+		t.Errorf("in-flight row: got source %v delivery %v completed %v", first["source_node"], first["delivery_node"], first["core_completed"])
+	}
+	if int64(second["order_id"].(float64)) != done.ID || second["status"] != "confirmed" || second["in_flight"] != false {
+		t.Errorf("second row: got order %v status %v, want the finished order %d, confirmed",
+			second["order_id"], second["status"], done.ID)
+	}
+	if second["terminal_state"] != "FINISHED" {
+		t.Errorf("terminal_state: got %v, want the vendor word kept beside the status", second["terminal_state"])
+	}
+
+	// A state filter is a vendor terminal word: in-flight orders are outside it.
+	if r := list("/api/missions?state=FINISHED"); r.Total != 1 {
+		t.Errorf("state=FINISHED: got total %d, want 1", r.Total)
+	}
+	// A window that ended before now holds no order that is in flight now.
+	if r := list("/api/missions?until=2025-01-01"); r.Total != 0 {
+		t.Errorf("until=2025-01-01: got total %d, want 0", r.Total)
+	}
+	// Station filters both halves.
+	if r := list("/api/missions?station_id=line-y"); r.Total != 0 {
+		t.Errorf("station_id=line-y: got total %d, want 0", r.Total)
 	}
 }

@@ -26,32 +26,70 @@ import (
 
 var missionDetailJS = filepath.Join("static", "pages", "mission-detail.js")
 
-// TestMissionDetailStateColorsAreRealStatuses pins the hue table's keys to the
-// protocol status enum.
+// TestMissionDetailStageClassIsTheStatusSet pins the stage table's class map
+// to the protocol status enum, in both directions, and the four classes to
+// their labels and colours.
 //
-// The table used to be keyed on raw RDS words while the badge rendered beside it
-// was keyed on mapped labels — two vocabularies deciding one row's appearance,
-// which is how the segment and its own badge ended up painted different colours
-// for the same event. One key now, and this asserts it is the Core one: a hue
-// keyed on a word that is not a status can only ever be dead or wrong.
-func TestMissionDetailStateColorsAreRealStatuses(t *testing.T) {
+// Every key must be a real status: the page decides a span's class and its
+// "terminal" end row by looking a status up here, so a key spelled in some
+// other vocabulary is dead or wrong. And the set must be whole: every
+// non-terminal status has a key, and no terminal status does. A status added to
+// protocol/ without a class would otherwise read as terminal and silently end
+// the order's life at the first row that held it.
+//
+// This replaces the pin on the retired stateColors hue table, which was keyed on
+// the same enum for the same reason.
+func TestMissionDetailStageClassIsTheStatusSet(t *testing.T) {
 	src := readMissionDetailJS(t)
 
-	block := captureBetween(t, src, "var stateColors = {", "};")
-	keys := regexp.MustCompile(`'([a-z_]+)'\s*:`).FindAllStringSubmatch(block, -1)
+	block := captureBetween(t, src, "var STAGE_CLASS = {", "};")
+	keys := regexp.MustCompile(`'([a-z_]+)'\s*:\s*'(waiting|moving|held|confirm)'`).FindAllStringSubmatch(block, -1)
 	if len(keys) == 0 {
-		t.Fatalf("%s: found no keys in stateColors — has the table been renamed?", missionDetailJS)
+		t.Fatalf("%s: found no keys in STAGE_CLASS — has the table been renamed?", missionDetailJS)
+	}
+	if n := strings.Count(block, ":"); n != len(keys) {
+		t.Errorf("STAGE_CLASS has %d entries but %d map to waiting|moving|held|confirm — a class outside the bar's four", n, len(keys))
 	}
 
-	known := map[string]bool{}
-	for _, s := range protocol.AllStatuses() {
-		known[string(s)] = true
+	classed := map[string]bool{}
+	for _, m := range keys {
+		classed[m[1]] = true
+	}
+
+	// Delivered is "waiting for confirm" (round-2 ruling 7, 2026-10-05): no
+	// robot is on the order after delivery, so it is not held.
+	if !regexp.MustCompile(`'delivered'\s*:\s*'confirm'`).MatchString(block) {
+		t.Errorf("STAGE_CLASS: delivered must be 'confirm' (waiting for confirm), not held — no robot is on a delivered order")
+	}
+
+	// Every class the map uses has a legend label and a bar colour; a class
+	// without either draws an unlabelled or invisible segment.
+	labels := captureBetween(t, src, "var CLASS_LABEL = {", "};")
+	css, err := os.ReadFile(filepath.Join("static", "style.css"))
+	if err != nil {
+		t.Fatalf("read style.css: %v", err)
 	}
 	for _, m := range keys {
-		if !known[m[1]] {
-			t.Errorf("stateColors key %q is not a protocol status — the hue table has drifted back "+
-				"onto a second vocabulary (protocol.AllStatuses: %v)", m[1], protocol.AllStatuses())
+		cls := m[2]
+		if !strings.Contains(labels, cls+":") {
+			t.Errorf("CLASS_LABEL has no label for class %q", cls)
 		}
+		if !strings.Contains(string(css), ".mission-stages .stage-"+cls+" {") {
+			t.Errorf("style.css has no .mission-stages .stage-%s rule — the segment would not draw", cls)
+		}
+	}
+	for _, s := range protocol.AllStatuses() {
+		switch {
+		case protocol.IsTerminal(s) && classed[string(s)]:
+			t.Errorf("STAGE_CLASS classes terminal status %q — a terminal status ends the order's life, it does not occupy it", s)
+		case !protocol.IsTerminal(s) && !classed[string(s)]:
+			t.Errorf("STAGE_CLASS has no class for non-terminal status %q — the page would read it as terminal "+
+				"and end the order there", s)
+		}
+		delete(classed, string(s))
+	}
+	for k := range classed {
+		t.Errorf("STAGE_CLASS key %q is not a protocol status (protocol.AllStatuses: %v)", k, protocol.AllStatuses())
 	}
 }
 

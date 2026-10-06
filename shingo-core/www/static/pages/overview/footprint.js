@@ -3,9 +3,10 @@
 // sparklines, plus a combined daily loaded/unloaded velocity chart. Data:
 // /api/footprint (plant-wide; ignores the station/robot filters).
 
-import { apiGet, h } from '/static/app.js';
+import { apiGet, h, setText } from '/static/app.js';
 import { Sparkline } from '/static/components/Sparkline.js';
-import { makeChart, installChartThemeHook, chartColors } from '/static/components/charts.js';
+import { makeChart, installChartThemeHook, chartColors, withAlpha } from '/static/components/charts.js';
+import { bucketLabel } from '/static/components/plantclock.js';
 
 export function createFootprintSection(store) {
     let chart = null;
@@ -69,18 +70,18 @@ export function createFootprintSection(store) {
         // log doesn't reach back far enough yet.
         if (!series.length || !series.some((b) => b.total > 0)) {
             const box = canvas.parentElement;
-            if (box) box.innerHTML = '<div class="dash-empty">No bin history in range yet (fills in as the uop log grows).</div>';
+            if (box) { box.style.height = 'auto'; box.innerHTML = '<div class="dash-empty">No bin history in range yet (fills in as the uop log grows).</div>'; }
             return;
         }
         const c = chartColors();
-        const labels = series.map((b) => fmtDay(b.day));
+        const labels = series.map((b) => bucketLabel(b.day, 'day'));
         binsChart = makeChart(canvas, {
             type: 'line',
             data: {
                 labels,
                 datasets: [
-                    { label: 'Full', data: series.map((b) => b.full), borderColor: c.vizTeal, backgroundColor: withAlpha(c.vizTeal, 0.4), fill: true, stack: 'bins', tension: 0.2, pointRadius: 0 }, // P19: teal
-                    { label: 'Empty', data: series.map((b) => b.empty), borderColor: c.vizIndigo, backgroundColor: withAlpha(c.vizIndigo, 0.28), fill: true, stack: 'bins', tension: 0.2, pointRadius: 0 }, // P19: indigo
+                    { label: 'Full', data: series.map((b) => b.full), borderColor: c.vizTeal, backgroundColor: withAlpha(c.vizTeal, 0.4), fill: true, stack: 'bins' }, // P19: teal
+                    { label: 'Empty', data: series.map((b) => b.empty), borderColor: c.vizIndigo, backgroundColor: withAlpha(c.vizIndigo, 0.28), fill: true, stack: 'bins' }, // P19: indigo
                 ],
             },
             options: { scales: { y: { min: 0, stacked: true, ticks: { precision: 0 } } }, plugins: { legend: { display: true, labels: { color: c.text, boxWidth: 12 } } } },
@@ -93,18 +94,18 @@ export function createFootprintSection(store) {
         if (chart) { try { chart.destroy(); } catch (_) {} chart = null; }
         if (!series.length) {
             const box = canvas.parentElement;
-            if (box) box.innerHTML = '<div class="dash-empty">No load/unload activity in the last 30 days.</div>';
+            if (box) { box.style.height = 'auto'; box.innerHTML = '<div class="dash-empty">No load/unload activity in the last 30 days.</div>'; }
             return;
         }
         const c = chartColors();
-        const labels = series.map((b) => fmtDay(b.day));
+        const labels = series.map((b) => bucketLabel(b.day, 'day'));
         chart = makeChart(canvas, {
             type: 'line',
             data: {
                 labels,
                 datasets: [
-                    { label: 'Loaded', data: series.map((b) => b.loaded), borderColor: c.vizTeal, backgroundColor: c.vizTeal, tension: 0.3, pointRadius: 0, fill: false }, // P19: teal
-                    { label: 'Unloaded', data: series.map((b) => b.unloaded), borderColor: c.vizIndigo, backgroundColor: c.vizIndigo, tension: 0.3, pointRadius: 0, fill: false }, // P19: indigo
+                    { label: 'Loaded', data: series.map((b) => b.loaded), borderColor: c.vizTeal, backgroundColor: c.vizTeal, fill: false }, // P19: teal
+                    { label: 'Unloaded', data: series.map((b) => b.unloaded), borderColor: c.vizIndigo, backgroundColor: c.vizIndigo, fill: false }, // P19: indigo
                 ],
             },
             options: { scales: { y: { min: 0, ticks: { precision: 0 } } }, plugins: { legend: { display: true, labels: { color: c.text, boxWidth: 12 } } } },
@@ -114,7 +115,6 @@ export function createFootprintSection(store) {
     return { mount, refresh };
 }
 
-function setText(id, v) { const e = document.getElementById(id); if (e) e.textContent = (v === null || v === undefined) ? '—' : v; }
 function spark(id, data, color) {
     const el = document.getElementById(id);
     if (!el) return;
@@ -126,15 +126,3 @@ function spark(id, data, color) {
 function binSplitText(fp) {
     return (fp.bins_full || 0) + ' full · ' + (fp.bins_empty || 0) + ' empty';
 }
-// withAlpha turns a CSS color into a translucent fill for the stacked area.
-// Handles hex; falls back to color-mix for var()/named colors.
-function withAlpha(color, a) {
-    if (color && color[0] === '#') {
-        let hex = color.slice(1);
-        if (hex.length === 3) hex = hex.split('').map((x) => x + x).join('');
-        const n = parseInt(hex, 16);
-        return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
-    }
-    return 'color-mix(in srgb, ' + color + ' ' + Math.round(a * 100) + '%, transparent)';
-}
-function fmtDay(iso) { const d = new Date(iso); return isNaN(d.getTime()) ? '' : (d.getMonth() + 1) + '/' + d.getDate(); }

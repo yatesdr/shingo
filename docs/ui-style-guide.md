@@ -40,3 +40,4 @@ closed.
 1. [`28-event-handling-delegated-actions.md`](ui-style-guide/28-event-handling-delegated-actions.md) — Event handling — delegated actions
 1. [`29-how-this-document-evolves.md`](ui-style-guide/29-how-this-document-evolves.md) — How this document evolves
 1. [`30-reference-the-synthesis-docs.md`](ui-style-guide/30-reference-the-synthesis-docs.md) — Reference: the synthesis docs
+1. [`31-mission-detail-stages.md`](ui-style-guide/31-mission-detail-stages.md) — Mission detail — stages

@@ -10,7 +10,7 @@
 // plus a 60s idle auto-dismiss, matching DrillModal.
 
 import { el, h } from '/static/app.js';
-import { formatClock, formatTime } from '/static/shared/utils.js';
+import { formatClock, formatDuration, formatTime } from '/static/shared/utils.js';
 
 let _active = null;
 const MAX_DOTS = 400; // cap per strip; a wider window samples down to this
@@ -103,7 +103,7 @@ function procRow(p, since, span) {
     const stats = el('div', { className: 'cell-drill__stats text-muted-sm' }, [
         stat('Parts', m.parts || 0),
         stat('Stops', m.stop_count || 0),
-        stat('Downtime', fmtMin(m.total_downtime_ms)),
+        stat('Downtime', formatDuration(m.total_downtime_ms)),
         stat('MTBF', m.mtbf_minutes ? m.mtbf_minutes.toFixed(0) + 'm' : '—'),
         stat('Eff/hr', m.effective_parts_per_hour ? m.effective_parts_per_hour.toFixed(0) : '—'),
         stat('Lost', m.parts_lost || 0),
@@ -112,7 +112,7 @@ function procRow(p, since, span) {
     // counted above, only their timing is unknown — so neither a stop nor
     // downtime.
     if (m.counter_offline_count) {
-        stats.appendChild(stat('Counter offline', fmtMin(m.counter_offline_ms) + ' (' + m.counter_offline_count + ')'));
+        stats.appendChild(stat('Counter offline', formatDuration(m.counter_offline_ms) + ' (' + m.counter_offline_count + ')'));
     }
 
     return el('div', { className: 'cell-drill__proc' + (p.primary ? ' cell-drill__proc--primary' : '') }, [
@@ -143,11 +143,6 @@ function sampleEvents(events) {
     return out;
 }
 
-function fmtMin(ms) {
-    if (!ms || ms <= 0) return '0m';
-    const m = Math.round(ms / 60000);
-    return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
-}
 function fmtRange(a, b) {
     try { return formatTime(a) + ' → ' + formatClock(b); }
     catch (_) { return ''; }

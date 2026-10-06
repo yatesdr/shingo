@@ -74,7 +74,7 @@
       <span class="text-muted-sm" id="m-faults-note"></span>
     </div>
     <div class="dwell-row" id="m-faults-row"><span class="text-muted-sm">Loading faults&hellip;</span></div>
-    <div class="grid grid-3">
+    <div class="grid grid-3" id="m-faults-tables">
       <div><div class="chart-caption">By robot (top 10)</div><div id="m-faults-robot"></div></div>
       <div><div class="chart-caption">By node (top 10)</div><div id="m-faults-node"></div></div>
       <div><div class="chart-caption">By fleet reason (top 10)</div><div id="m-faults-reason"></div></div>
@@ -118,13 +118,14 @@
     <div class="chart-box" style="height:240px"><canvas id="m-pareto-canvas"></canvas></div>
   </section>
 
-  <!-- H: Mission list (preserved, §3.H). -->
+  <!-- H: Mission list (§3.H). Orders still in flight lead it; every row's
+       State is the order's status. -->
   <section class="card">
     <div class="section-head">
       <h2>Missions</h2>
       <div class="flex gap-1" style="align-items:center">
         <div id="m-state-filters" class="flex gap-05">
-          <button class="btn btn-sm state-btn is-active" data-state="" title="All terminal states">All</button>
+          <button class="btn btn-sm state-btn is-active" data-state="" title="Every mission: orders still in flight first, then finished ones">All</button>
           <button class="btn btn-sm state-btn" data-state="FINISHED" title="Finished successfully">Completed</button>
           <button class="btn btn-sm state-btn" data-state="FAILED" title="Failed">Failed</button>
           <button class="btn btn-sm state-btn" data-state="STOPPED" title="Cancelled / stopped">Cancelled</button>
@@ -139,9 +140,9 @@
           <th title="Robot vehicle ID assigned to this mission">Robot</th>
           <th title="Edge station that requested this order">Station</th>
           <th title="Source node to delivery node">Route</th>
-          <th title="Terminal state of the mission">State</th>
-          <th title="Total mission duration (core created to completed)">Duration</th>
-          <th title="Time since mission completed">Completed</th>
+          <th title="The order's status; hover for the fleet's terminal report">State</th>
+          <th title="Core created to the fleet's terminal report; in flight, time so far">Duration</th>
+          <th title="Time since the mission completed; hover for the time. Empty while in flight">Completed</th>
         </tr>
       </thead>
       <tbody id="mission-list"></tbody>

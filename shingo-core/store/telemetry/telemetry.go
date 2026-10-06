@@ -20,6 +20,7 @@ import (
 	"log"
 	"strings"
 
+	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/domain"
 )
@@ -161,13 +162,50 @@ func scanMission(row interface{ Scan(...any) error }) (*Mission, error) {
 	return t, nil
 }
 
-// ListMissions returns mission telemetry rows matching the filter, plus
-// the unpaginated total count.
-func ListMissions(db *sql.DB, f Filter) ([]*Mission, int, error) {
+// ListRow is one row of the Missions list: a mission_telemetry summary, or an
+// order still in flight that has none yet, with the order's own status.
+//
+// Status is the ORDER's status in the protocol vocabulary (confirmed,
+// delivered, staged, ...), read from orders in the same query. TerminalState
+// stays beside it as the vendor's word: it is what the state filter matches
+// and what the CSV has always exported. Status is "" only when the order row
+// itself is gone; the handler fills it from TerminalState then.
+type ListRow struct {
+	Mission
+	Status   string `json:"status"`
+	InFlight bool   `json:"in_flight"`
+}
+
+// missionListCols is the mission_telemetry column list scanMission reads.
+const missionListCols = `id, order_id, vendor_order_id, robot_id, station_id, order_type,
+		source_node, delivery_node, terminal_state,
+		vendor_created, vendor_completed, core_created, core_completed,
+		duration_ms, vendor_duration_ms,
+		blocks_json, errors_json, warnings_json, notices_json, robot_alarms_json, created_at`
+
+// ListMissions returns the Missions list for the filter, plus the unpaginated
+// total count: every mission_telemetry row matching it, and — first, newest
+// created first — every order still in flight that has no summary yet.
+//
+// In-flight orders are the non-terminal set the rest of Core calls active
+// (protocol.TerminalStatusSQLList, as orders.ListActive). They join the list
+// only when the window reaches now: an order in flight is in any window that
+// ends at the present, and in none that ended before it. A state filter is
+// a vendor terminal word, so it excludes them. Station and robot filter both
+// halves alike.
+//
+// Two queries, as before the in-flight half existed: one count, one page. The
+// order status rides in on a join, never a per-row read.
+func ListMissions(db *sql.DB, f Filter) ([]*ListRow, int, error) {
 	where, args := buildWhere(f)
+	live, liveArgs := buildLiveWhere(f, len(args))
+	args = append(args, liveArgs...)
 
 	var total int
-	countQuery := "SELECT COUNT(*) FROM mission_telemetry" + where
+	countQuery := "SELECT (SELECT COUNT(*) FROM mission_telemetry" + where + ")"
+	if live != "" {
+		countQuery += " + (SELECT COUNT(*) FROM orders o" + live + ")"
+	}
 	if err := db.QueryRow(countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
@@ -177,13 +215,22 @@ func ListMissions(db *sql.DB, f Filter) ([]*Mission, int, error) {
 		limit = 50
 	}
 
-	query := fmt.Sprintf(`SELECT id, order_id, vendor_order_id, robot_id, station_id, order_type,
-		source_node, delivery_node, terminal_state,
-		vendor_created, vendor_completed, core_created, core_completed,
-		duration_ms, vendor_duration_ms,
-		blocks_json, errors_json, warnings_json, notices_json, robot_alarms_json, created_at
-		FROM mission_telemetry%s ORDER BY core_completed DESC NULLS LAST LIMIT $%d OFFSET $%d`,
-		where, len(args)+1, len(args)+2)
+	query := `SELECT m.*, COALESCE(o.status, ''), false
+		FROM (SELECT ` + missionListCols + ` FROM mission_telemetry` + where + `) m
+		LEFT JOIN orders o ON o.id = m.order_id`
+	if live != "" {
+		query += `
+		UNION ALL
+		SELECT 0, o.id, o.vendor_order_id, o.robot_id, o.station_id, o.order_type,
+		       o.source_node, o.delivery_node, '',
+		       NULL::timestamptz, NULL::timestamptz, o.created_at, NULL::timestamptz,
+		       0::bigint, 0::bigint,
+		       '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, o.created_at,
+		       o.status, true
+		  FROM orders o` + live
+	}
+	query += fmt.Sprintf(`
+		ORDER BY 13 DESC NULLS FIRST, 12 DESC LIMIT $%d OFFSET $%d`, len(args)+1, len(args)+2)
 	args = append(args, limit, f.Offset)
 
 	rows, err := db.Query(query, args...)
@@ -192,15 +239,52 @@ func ListMissions(db *sql.DB, f Filter) ([]*Mission, int, error) {
 	}
 	defer rows.Close()
 
-	var missions []*Mission
+	var out []*ListRow
 	for rows.Next() {
-		t, err := scanMission(rows)
-		if err != nil {
+		r := &ListRow{}
+		var robotAlarms sql.NullString
+		t := &r.Mission
+		if err := rows.Scan(&t.ID, &t.OrderID, &t.VendorOrderID, &t.RobotID, &t.StationID, &t.OrderType,
+			&t.SourceNode, &t.DeliveryNode, &t.TerminalState,
+			&t.VendorCreated, &t.VendorCompleted, &t.CoreCreated, &t.CoreCompleted,
+			&t.DurationMS, &t.VendorDurationMS,
+			&t.BlocksJSON, &t.ErrorsJSON, &t.WarningsJSON, &t.NoticesJSON, &robotAlarms, &t.CreatedAt,
+			&r.Status, &r.InFlight); err != nil {
 			return nil, 0, err
 		}
-		missions = append(missions, t)
+		t.RobotAlarmsJSON = robotAlarms.String
+		if t.RobotAlarmsJSON == "" {
+			t.RobotAlarmsJSON = "[]"
+		}
+		out = append(out, r)
 	}
-	return missions, total, rows.Err()
+	return out, total, rows.Err()
+}
+
+// buildLiveWhere is the in-flight half's WHERE: non-terminal orders with no
+// mission_telemetry row, under the filter's station and robot. "" when the
+// filter excludes in-flight orders altogether (a state filter, or a window
+// that ended before now). Placeholders continue from n.
+func buildLiveWhere(f Filter, n int) (string, []any) {
+	if f.State != "" || (f.Until != nil && f.Until.Before(clock.Now())) {
+		return "", nil
+	}
+	conds := []string{
+		"o.status NOT IN (" + protocol.TerminalStatusSQLList() + ")",
+		"NOT EXISTS (SELECT 1 FROM mission_telemetry mt WHERE mt.order_id = o.id)",
+	}
+	var args []any
+	if f.StationID != "" {
+		n++
+		conds = append(conds, fmt.Sprintf("o.station_id=$%d", n))
+		args = append(args, f.StationID)
+	}
+	if f.RobotID != "" {
+		n++
+		conds = append(conds, fmt.Sprintf("o.robot_id=$%d", n))
+		args = append(args, f.RobotID)
+	}
+	return " WHERE " + strings.Join(conds, " AND "), args
 }
 
 // GetStats returns aggregated mission metrics for the filter.

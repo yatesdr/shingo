@@ -2,6 +2,13 @@ package www
 
 import (
 	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
 	"testing"
 
 	"shingo/shared/clockglobals"
@@ -47,5 +54,176 @@ func TestEveryClockPageCarriesGlobals(t *testing.T) {
 	if subject == 0 {
 		t.Fatal("no Core page was found to load a clock function — the script/import walk is " +
 			"broken, not the templates (layout.html and the dashboards both qualify)")
+	}
+}
+
+// pageJS lists Core's own browser modules — every .js under static except the
+// vendored libraries and the node test files — as path → source.
+func pageJS(t *testing.T) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := fs.WalkDir(staticFS, "static", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == "vendor" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".test.js") {
+			return nil
+		}
+		b, err := fs.ReadFile(staticFS, path)
+		if err != nil {
+			return err
+		}
+		out[path] = string(b)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk static: %v", err)
+	}
+	if len(out) < 20 {
+		t.Fatalf("found only %d page modules under static — the walk is broken, not the pages", len(out))
+	}
+	return out
+}
+
+// stripLineComments drops // comments so a guard reads code, not the prose
+// that explains why the code no longer does the thing.
+var lineComment = regexp.MustCompile(`(?m)(^|[^:'"\\])//.*$`)
+
+func stripLineComments(src string) string { return lineComment.ReplaceAllString(src, "$1") }
+
+// TestNoPageModuleReadsTheBrowserCalendar: a page module may not take a date
+// or time of day from the browser's own zone. Overview and its drill charts did
+// (getHours for axis labels, getDate for "today"), so a viewer in another zone
+// saw the plant's day start at 23:00 and captions carrying yesterday's date.
+// Plant-local dates, clocks, windows and bucket labels come from
+// components/plantclock.js; full stamps from shared/utils.js formatTime.
+// The UTC getters stay legal — they are zone-free arithmetic.
+func TestNoPageModuleReadsTheBrowserCalendar(t *testing.T) {
+	// Number(n).toLocaleString() (a thousands separator) is not a clock read;
+	// a Date's toLocaleString is.
+	banned := regexp.MustCompile(`\.(get|set)(FullYear|Month|Date|Day|Hours|Minutes|Seconds)\(|\.toLocale(Date|Time)String\(|new Date\([^)]*\)\.toLocaleString\(`)
+	var bad []string
+	for path, src := range pageJS(t) {
+		for i, line := range strings.Split(stripLineComments(src), "\n") {
+			if banned.MatchString(line) {
+				bad = append(bad, path+":"+strconv.Itoa(i+1)+": "+strings.TrimSpace(line))
+			}
+		}
+	}
+	sort.Strings(bad)
+	for _, b := range bad {
+		t.Errorf("browser-zone calendar read (use components/plantclock.js): %s", b)
+	}
+}
+
+// TestNoPageModuleDefinesADurationFormatter: there is one duration ladder,
+// shared/utils.js formatDuration (the twin of protocol.FormatDuration, guide
+// "Durations are compound"). Core had four more, which between them printed
+// "21m 60s", "500ms", "76h 0m" and "0m" for no data.
+//
+// sourcing.js fmtHeld is out of this cleanup's scope (the Sourcing page). Its
+// stated reason — that the shared ladder renders a measured zero as the dash —
+// no longer holds (it prints "0 s"); it is listed here so it is not copied.
+func TestNoPageModuleDefinesADurationFormatter(t *testing.T) {
+	def := regexp.MustCompile(`function\s+((?:format|fmt)\w*(?:Dur|Duration|Seconds|Secs|Mins?|Held|Elapsed)\w*)\s*\(`)
+	allowed := map[string]bool{"static/pages/sourcing.js fmtHeld": true}
+	var bad []string
+	for path, src := range pageJS(t) {
+		for _, m := range def.FindAllStringSubmatch(stripLineComments(src), -1) {
+			// A clock formatter ("formatClockSeconds") prints a time of day, not a span.
+			if !allowed[path+" "+m[1]] && !strings.Contains(m[1], "Clock") {
+				bad = append(bad, path+": "+m[1])
+			}
+		}
+	}
+	sort.Strings(bad)
+	for _, b := range bad {
+		t.Errorf("page-local duration formatter (import formatDuration from /static/shared/utils.js): %s", b)
+	}
+}
+
+// TestPlantTZReadInTwoFiles: the plant zone is read in exactly two browser
+// files — shared/utils.js (formatTime, formatClock) and Core's
+// components/plantclock.js (plant date, seconds, windows, bucket labels). A
+// third reader is a third clock.
+func TestPlantTZReadInTwoFiles(t *testing.T) {
+	readers := map[string]bool{}
+	for path, src := range pageJS(t) {
+		if strings.Contains(stripLineComments(src), "PLANT_TZ") {
+			readers[path] = true
+		}
+	}
+	sharedDir := filepath.Join("..", "..", "shared")
+	entries, err := os.ReadDir(sharedDir)
+	if err != nil {
+		t.Fatalf("read shared/: %v", err)
+	}
+	for _, e := range entries {
+		n := e.Name()
+		if !strings.HasSuffix(n, ".js") || strings.HasSuffix(n, ".test.js") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(sharedDir, n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(stripLineComments(string(b)), "PLANT_TZ") {
+			readers["shared/"+n] = true
+		}
+	}
+	want := []string{"shared/utils.js", "static/components/plantclock.js"}
+	var got []string
+	for r := range readers {
+		got = append(got, r)
+	}
+	sort.Strings(got)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("PLANT_TZ readers = %v, want exactly %v", got, want)
+	}
+}
+
+// TestPlantClockJS runs plantclock.test.js: plantclock.js agrees with the
+// shared formatClock / formatTime on a vector table (UTC, America/Chicago,
+// Asia/Tokyo, both DST edges, midnights), and resolves windows from the
+// server's now on the plant calendar. Skipped without node, like the other JS
+// wrappers; scripts/gate.sh refuses to run without node.
+func TestPlantClockJS(t *testing.T) {
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skipf("node not on PATH; skipping JS unit tests")
+	}
+	script := filepath.Join("static", "components", "plantclock.test.js")
+	out, err := exec.Command(nodePath, script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("plantclock JS tests failed:\n%s\nerror: %v", out, err)
+	}
+}
+
+// TestNoChartSetsItsOwnSmoothing: lines are straight (guide "Time series").
+// components/charts.js sets tension 0 as the default; a dataset or chart that
+// sets its own tension is drawing values nobody measured. charts.js itself is
+// the one place the word may appear.
+func TestNoChartSetsItsOwnSmoothing(t *testing.T) {
+	tension := regexp.MustCompile(`\btension\s*:`)
+	var bad []string
+	for path, src := range pageJS(t) {
+		if path == "static/components/charts.js" {
+			continue
+		}
+		for i, line := range strings.Split(stripLineComments(src), "\n") {
+			if tension.MatchString(line) {
+				bad = append(bad, path+":"+strconv.Itoa(i+1))
+			}
+		}
+	}
+	sort.Strings(bad)
+	for _, b := range bad {
+		t.Errorf("chart sets its own line tension (the default in charts.js is 0): %s", b)
 	}
 }

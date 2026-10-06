@@ -36,6 +36,27 @@ The convention, one rule each layer:
   disambiguated by the zone abbreviation in the label, which is why the
   label is not optional decoration.
 
+**Core's plant-clock module.** What `shared/utils.js` does not carry, and Core
+alone computes, lives in one Core module, `static/components/plantclock.js`:
+the plant date (`plantDate`), the clock with seconds (`formatClockSeconds`),
+the range window (`windowFor`, from `serverNow()` on the plant calendar), the
+chart bucket label (`bucketLabel`) and the in-progress test (`inProgress`). It
+reads `PLANT_TZ` with the same fallback as `utils.js` and has no "now" of its
+own. It stays in Core until Edge computes any of it
+(`shared-layer-promotion.md`, clause 2). It is pinned against `formatClock` and
+`formatTime` by `plantclock.test.js`, and `clock_globals_drift_test.go` holds
+three rules: no page module reads the browser's calendar, none defines a
+duration formatter, and `PLANT_TZ` is read in exactly `shared/utils.js` and
+`plantclock.js`.
+
+**Rows that share a minute show seconds.** In a list where several rows can
+carry the same minute (an order's history, a mission's stages), a time to the
+minute makes order and gaps unreadable. Use the seconds clock there.
+
+**A relative stamp carries the absolute time.** `"1h ago"` gets the full
+plant-local time in its `title` (`app.js timeAgoHTML`), so ten rows of
+"1h ago" can still be told apart.
+
 ### Timestamp anti-patterns
 
 - ❌ A new surface painting UTC and "fixing it later" — that is the

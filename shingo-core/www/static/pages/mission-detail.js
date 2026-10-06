@@ -1,281 +1,148 @@
-import { api, debounce, el, h } from '/static/app.js';
-import { formatTime, onSSE } from '/static/shared/utils.js';
+import { debounce, escapeHtml, formatDuration, formatTime, installLiveDurations, onSSE, serverNow } from '/static/shared/utils.js';
+import { formatClockSeconds } from '/static/components/plantclock.js';
 import { relevantNotices } from '/static/pages/fleet-notices.js';
 
+// Mission detail: the order's life as STAGES, one row per status span.
+//
+// The source of truth is order_history (served as `history`): every status the
+// order held, with the instant it entered it. One row per span — stage, where,
+// started, took, share — and one bar on a true time scale in four classes.
+// The spans tile the order's life by construction: each ends where the next
+// begins, the last ends at the terminal row (or now, in flight). There is no
+// "unaccounted" remainder because nothing is reconciled against a second clock.
+//
+// Robot actions (the fleet's per-block legs and vendor transitions, from
+// mission_events) are still recorded — engine/stranded_transit.go reads the
+// BLOCK_FINISHED rows — and render once, inside a closed disclosure, grouped by
+// the stage they happened in.
 (function() {
   var orderID = document.getElementById('mission-order-id').textContent;
 
-  function formatDuration(ms) {
-    if (!ms || ms <= 0) return '-';
-    if (ms < 1000) return ms + 'ms';
-    var s = Math.floor(ms / 1000);
-    if (s < 60) return s + 's';
-    var m = Math.floor(s / 60);
-    s = s % 60;
-    if (m < 60) return m + 'm ' + s + 's';
-    var h = Math.floor(m / 60);
-    m = m % 60;
-    return h + 'h ' + m + 'm';
+  // STAGE_CLASS sorts every non-terminal order status into one of the bar's
+  // four classes. Keyed on protocol statuses (pinned by
+  // mission_state_vocabulary_drift_test.go: every key is a real status and every
+  // non-terminal status has a key). Terminal statuses are absent on purpose:
+  // they end the order's life rather than occupy any of it.
+  //
+  //   waiting — the order exists and no robot has been asked for yet.
+  //   moving  — handed to the fleet: dispatched, acknowledged, in transit.
+  //   held    — a robot is parked on the order: staged at a wait, or a fault
+  //             with no stage before it to fold into.
+  //   confirm — delivered, waiting for the station to confirm. No robot is on
+  //             the order any more, so it is not held; it draws neutral.
+  var STAGE_CLASS = {
+    'pending': 'waiting',
+    'sourcing': 'waiting',
+    'queued': 'waiting',
+    'submitted': 'waiting',
+    'reshuffling': 'waiting',
+    'dispatched': 'moving',
+    'acknowledged': 'moving',
+    'in_transit': 'moving',
+    'staged': 'held',
+    'delivered': 'confirm',
+    'faulted': 'held'
+  };
+
+  var CLASS_LABEL = { waiting: 'waiting to dispatch', moving: 'moving', held: 'held', confirm: 'waiting for confirm' };
+  var CLASS_ORDER = ['waiting', 'moving', 'held', 'confirm'];
+
+  // STOPPED is the fleet's teardown state, read from the vendor event stream on
+  // purpose: whether the fleet tore the mission down is the FLEET's fact, so its
+  // own word is the right one to test. It decides only the `not run` leg form.
+  var STOPPED_STATE = 'STOPPED';
+
+  function ms(ts) { return Date.parse(ts); }
+
+  // A muted em dash with a title saying which absence it is (guide rule 4: no
+  // data, zero and not applicable look different).
+  function noData(why) {
+    return '<span class="text-muted" title="' + escapeHtml(why) + '">—</span>';
   }
 
-  // formatTime comes from shared/utils.js now — this file's local def
-  // (browser-local toLocaleString) was one of the pre-plant-local copies.
-
-  // THERE IS NO stateLabel HERE ANY MORE, AND THAT IS THE CHANGE.
-  //
-  // This file used to carry its own copy of the vendor→Core state mapping, and
-  // it had drifted from fleet.Backend.MapState — the one the engine actually
-  // dispatches on — in three places: RDS CREATED read as "created" where Core
-  // says dispatched, FINISHED as "completed" where Core says delivered, and
-  // FAILED as "failed" where Core says FAULTED. That last one is not cosmetic:
-  // faulted is the non-terminal grace state with a recovery timer running,
-  // failed is terminal, and the page was reporting a mission dead while Core
-  // still expected it back. It also folded Core's delivered and confirmed into
-  // one invented word, losing "the bin arrived" versus "the operator signed".
-  //
-  // The server now stamps every event with old_status / new_status through that
-  // one mapper (handlers_missions.go), so the page renders what Core believes
-  // instead of a second opinion about it. Two spellings of one mapping is the
-  // failure this codebase keeps paying for; there is now one.
-
-  // stateBadge renders a CORE status. The raw vendor state rides along as the
-  // tooltip: this is the fleet view, and when a mission stalls what RDS actually
-  // said is the thing worth knowing — so it is one hover away rather than gone.
-  //
-  // No class map. Every value reaching here is a real protocol status, so
-  // badge-<status> resolves against shared/status-classes.css on its own; the
-  // two-entry fixup that used to sit here existed only to rescue the two
-  // invented labels.
   function stateBadge(status, rawState) {
-    if (!status) return '<span class="badge">-</span>';
-    var title = rawState && rawState !== status ? ' title="fleet reported: ' + rawState + '"' : '';
+    if (!status) return '';
+    var title = rawState && rawState !== status ? ' title="fleet reported: ' + escapeHtml(rawState) + '"' : '';
     return '<span class="badge badge-' + status + '"' + title + '>' + status + '</span>';
   }
 
-  // Duration segments and timeline dots take the hue of the status they are
-  // LABELLED with, not a hue of their own. This table used to be independent
-  // and disagreed with the badges rendered beside it: RUNNING is labelled
-  // "in_transit" but was painted with the dispatched blue, TOBEDISPATCHED is
-  // labelled "dispatched" but was painted --info cyan — the two hues were
-  // swapped relative to their own badges — and WAITING ("staged", a benign
-  // dwell) was painted --warning amber. Same "one palette, three renderers"
-  // defect P13 fixed for the map's STATUS_COLOR; keyed off the shared
-  // --status-*-dot tokens now, so the segment, the dot and the badge can't
-  // drift apart again.
-  //
-  // KEYED ON THE CORE STATUS, NOT THE VENDOR STATE. It used to be keyed on raw
-  // RDS words while the badge beside it was keyed on the mapped label, which is
-  // two vocabularies deciding one row's appearance — the drift above, one level
-  // down. One key now, and it is the one the server sends.
-  //
-  // faulted and cancelled have no --status-*-dot of their own: the palette
-  // covers the progression a healthy order walks, and these two are exits from
-  // it. --warning for faulted says "a timer is running, this may come back",
-  // which is exactly what faulted means and what distinguishes it from failed.
-  var stateColors = {
-    'pending': 'var(--status-pending-dot)',
-    'queued': 'var(--status-queued-dot)',
-    'dispatched': 'var(--status-dispatched-dot)',
-    'in_transit': 'var(--status-in-transit-dot)',
-    'staged': 'var(--status-staged-dot)',
-    'reshuffling': 'var(--status-reshuffling-dot)',
-    'delivered': 'var(--status-delivered-dot)',
-    'confirmed': 'var(--status-delivered-dot)',
-    'faulted': 'var(--warning)',
-    'failed': 'var(--danger)',
-    'cancelled': 'var(--text-muted)'
-  };
+  // ── Stages ─────────────────────────────────────────────────────────────
 
-  function formatRoute(order) {
-    // If steps_json is available, show each node in the route
-    if (order.steps_json) {
-      try {
-        var steps = JSON.parse(order.steps_json);
-        if (steps.length > 0) {
-          var nodes = [];
-          for (var i = 0; i < steps.length; i++) {
-            if (steps[i].node) {
-              var label = steps[i].node;
-              if (steps[i].action === 'wait') label += ' <span style="font-size:.75em;color:var(--text-muted)">(wait)</span>';
-              nodes.push(label);
-            }
-          }
-          if (nodes.length > 0) return nodes.join(' &rarr; ');
-        }
-      } catch(e) { console.error('orderRoute steps parse', e); }
+  // isTerminal is "has no stage class": the table above lists every status that
+  // can hold an order, so anything else ends it.
+  function isTerminal(status) {
+    return !Object.prototype.hasOwnProperty.call(STAGE_CLASS, status);
+  }
+
+  // buildStages folds order_history into status spans.
+  //
+  // Consecutive rows with the same status are one span (a re-queue with a new
+  // reason is still the same wait). A faulted row folds into the span it
+  // interrupted — its time counts there, and is counted as `faults` / `lostMs` —
+  // and when the fleet recovers back into that same status the continuation
+  // folds in too, so nine replans are one row saying so, not eighteen. A fault
+  // with nothing before it stands as its own held span.
+  //
+  // Returns { spans, end, lifeMs }: `end` is the terminal row, or null while in
+  // flight, when the last span is open (ongoing) and runs to nowMs.
+  function buildStages(history, nowMs) {
+    var rows = history || [];
+    var spans = [];
+    var end = null;
+    var cur = null;
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      var at = ms(r.created_at);
+      if (isTerminal(r.status)) {
+        end = { status: r.status, at: r.created_at, detail: r.detail || '' };
+        break;
+      }
+      var next = rows[i + 1];
+      var took = Math.max(0, (next ? ms(next.created_at) : nowMs) - at);
+      if (r.status === 'faulted' && cur) {
+        cur.faults++;
+        cur.lostMs += took;
+        cur.ms += took;
+        continue;
+      }
+      if (cur && r.status === cur.status) {
+        cur.ms += took;
+        continue;
+      }
+      cur = {
+        status: r.status,
+        cls: STAGE_CLASS[r.status],
+        startedAt: r.created_at,
+        startMs: at,
+        detail: r.detail || '',
+        ms: took,
+        faults: 0,
+        lostMs: 0,
+        legs: [],
+        events: []
+      };
+      spans.push(cur);
     }
-    // Fallback: source → delivery
-    return (order.source_node || '?') + ' &rarr; ' + (order.delivery_node || '?');
+    if (!end && spans.length) spans[spans.length - 1].ongoing = true;
+    var lifeMs = 0;
+    for (var s = 0; s < spans.length; s++) lifeMs += spans[s].ms;
+    return { spans: spans, end: end, lifeMs: lifeMs };
   }
 
-  function loadMission() {
-    fetch('/api/missions/' + orderID).then(function(r) { return r.json(); }).then(function(data) {
-      document.getElementById('mission-loading').style.display = 'none';
-      document.getElementById('mission-content').style.display = '';
-      renderSummary(data);
-      renderDurationBar(data.events || [], data.telemetry);
-      renderTimeline(data.events || []);
-      renderMessages(data.telemetry, (data.telemetry && data.telemetry.robot_id) || (data.order && data.order.robot_id) || '');
-      renderEventLog(data.events || []);
-    }).catch(function(err) {
-      document.getElementById('mission-loading').textContent = 'Failed to load mission: ' + err.message;
-    });
-  }
-
-  function renderSummary(data) {
-    var o = data.order || {};
-    var t = data.telemetry || {};
-    var el = document.getElementById('mission-summary');
-
-    var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem">';
-    html += '<div title="Shingo order ID"><strong>Order ID</strong><br><a href="/orders?open=' + o.id + '">' + o.id + '</a></div>';
-    html += '<div title="Transport order type (retrieve, store, move, etc.)"><strong>Type</strong><br>' + (o.order_type || '-') + '</div>';
-    html += '<div title="Edge station that requested this order"><strong>Station</strong><br>' + (o.station_id || '-') + '</div>';
-    html += '<div title="Robot vehicle ID assigned by the fleet"><strong>Robot</strong><br>' + (t.robot_id || o.robot_id || '-') + '</div>';
-    html += '<div title="Source node to delivery node"><strong>Route</strong><br>' + formatRoute(o) + '</div>';
-    html += '<div title="Current order status in Shingo"><strong>Status</strong><br>' + stateBadge(o.status) + '</div>';
-    html += '<div title="Total time from order creation in Shingo to completion"><strong>Total Duration</strong><br>' + formatDuration(t.duration_ms) + '</div>';
-    html += '<div title="Time measured by the fleet backend (RDS create to terminal)"><strong>Fleet Duration</strong><br>' + formatDuration(t.vendor_duration_ms) + '</div>';
-    html += '</div>';
-
-    html += '<div style="margin-top:1rem;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;font-size:.85em;color:var(--text-muted)">';
-    html += '<div title="When Shingo created this order"><strong>Core Created</strong><br>' + formatTime(t.core_created) + '</div>';
-    html += '<div title="When Shingo recorded the terminal state"><strong>Core Completed</strong><br>' + formatTime(t.core_completed) + '</div>';
-    html += '<div title="When the fleet backend (RDS) created the transport order"><strong>Vendor Created</strong><br>' + formatTime(t.vendor_created) + '</div>';
-    html += '<div title="When the fleet backend (RDS) reported the terminal state"><strong>Vendor Completed</strong><br>' + formatTime(t.vendor_completed) + '</div>';
-    html += '</div>';
-
-    el.innerHTML = html;
-  }
-
-  // ── Leg decomposition ─────────────────────────────────────────────────
-  //
-  // The bar used to be one giant in_transit block, because a whole retrieve is
-  // a single VENDOR state — which answered "it took 9 minutes" and nothing
-  // about where the 9 minutes went. That was the question that started this
-  // whole exercise.
-  //
-  // The fleet reports per-block startTime/terminateTime (epoch SECONDS) and
-  // Core now stores them on BLOCK_FINISHED rows in mission_events. A block is
-  // the robot DOING something at a location; the gap between two blocks is it
-  // travelling between them. That gives travel-to-source, load, travel-to-dest,
-  // unload without inventing anything.
-  //
-  // A leg's duration is one of THREE things, and they are not interchangeable.
-  // `no data`, `zero` and `not applicable` are three different answers, and a
-  // bar that renders two of them the same way is asserting something it does
-  // not know:
-  //
-  //   - UNKNOWN. The fleet reported no usable endpoints (no startTime, or a
-  //     terminate before its start). Hatched, fixed width, claims no share of
-  //     the timeline. Absent is not instant, and a zero-width segment would
-  //     read as "took no time".
-  //
-  //   - ZERO. Both endpoints reported, equal, on a block that ran: it finished
-  //     inside the vendor's one-second resolution. That is a MEASUREMENT, so it
-  //     is drawn — at minimum width — and labelled `0s`. Rendering it as "-"
-  //     would demote a real reading to a missing one, which is the same mistake
-  //     pointing the other way.
-  //
-  //   - NOT RUN. Equal endpoints on a mission the fleet STOPPED. Tearing an
-  //     order down stamps its outstanding blocks rather than executing them, so
-  //     the equal timestamps record the teardown and not the work. `0s` here
-  //     would say a leg that never happened happened instantly. Drawn like
-  //     unknown — it occupied none of the timeline, so it may claim none — but
-  //     labelled `not run`, because `unknown` means "we cannot say" and here we
-  //     can.
-  //
-  // The third rule is scoped to the TRAILING run of zero-duration blocks, not
-  // to every zero on a stopped mission. A block before the stop may genuinely
-  // have been sub-second, and demoting that reading is the same error over
-  // again; the teardown can only affect what had not run yet. Walk back from
-  // the end and stop at the first block with duration.
-  //
-  // And the rule that outlives the drawing: legs sum to the mission duration or
-  // the difference is shown as unaccounted. Rescaling to fit would be a lie
-  // that looks tidy.
-  // STOPPED is the fleet's teardown state. Read the mission's disposition from
-  // the EVENT STREAM rather than the ShinGo order status: the teardown is the
-  // fleet's act, the RDS state is where it is recorded, and a ShinGo status can
-  // reach a terminal of its own without the fleet ever having stopped anything.
-  //
-  // This one stays a raw comparison on purpose — it is asking what the FLEET
-  // did, so the vendor's own word is the right thing to test.
-  var STOPPED_STATE = 'STOPPED';
-
-  // The server marks leg rows (engine.BlockLegState, stamped onto the event view
-  // as is_leg). This used to compare new_state against a local copy of that
-  // marker string, which was a second spelling of a constant that only Core
-  // writes — and the kind that goes stale silently, because a leg row that
-  // stopped matching would simply render as a status transition to a state
-  // nothing recognises.
-  function isBlockLegEvent(ev) {
-    return !!(ev && ev.is_leg);
-  }
-
-  // parseBlockLegs pulls the stored block records out of the BLOCK_FINISHED
-  // events, oldest first. Returns [] when the fleet never reported any (older
-  // missions, or a backend that does not send blocks) — the caller falls back
-  // to the state-diff bar.
-  function parseBlockLegs(events) {
-    var out = [];
-    for (var i = 0; i < events.length; i++) {
-      if (!isBlockLegEvent(events[i])) continue;
-      try {
-        var blocks = JSON.parse(events[i].blocks_json || '[]');
-        for (var b = 0; b < blocks.length; b++) {
-          out.push(blocks[b]);
-        }
-      } catch (e) { console.error('parseBlockLegs', e); }
+  // spanAt returns the span an instant falls in: the last one that started at
+  // or before it. Before the first span it is the first.
+  function spanAt(spans, t) {
+    var found = spans[0];
+    for (var i = 0; i < spans.length; i++) {
+      if (spans[i].startMs <= t) found = spans[i];
     }
-    return out;
+    return found;
   }
 
-  // hasVendorTimes reports whether BOTH endpoints were reported. Checking the
-  // timestamps rather than durationSeconds is deliberate: Core writes 0 for
-  // "not reported" AND for "inverted", so a duration of 0 cannot tell an
-  // unknown leg from a genuinely instant one.
+  // ── Legs (robot actions) ───────────────────────────────────────────────
+
   function hasVendorTimes(blk) {
     return blk && blk.startTime > 0 && blk.terminateTime >= blk.startTime;
-  }
-
-  // formatDuration renders 0 as "-", which is right for a summary field that
-  // may be absent and wrong for a leg: a block whose start and terminate are
-  // the same second genuinely took under a second, and "-" reads as "not
-  // reported". Absent is `unknown` and never-ran is `not run` (both handled in
-  // buildLegs, both arriving here as ms === null); a zero that reaches this
-  // function is a real reading and renders `0s`.
-  function formatLegDuration(ms) {
-    if (ms <= 0) return '0s';
-    return formatDuration(ms);
-  }
-
-  // missionWasStopped reports whether the fleet tore this mission down.
-  function missionWasStopped(events) {
-    for (var i = 0; i < events.length; i++) {
-      if (events[i] && events[i].new_state === STOPPED_STATE) return true;
-    }
-    return false;
-  }
-
-  // trailingNotRunBoundary returns the index from which every remaining block
-  // is a teardown stamp rather than a leg: the start of the unbroken run of
-  // zero-duration blocks at the END of the list. Returns blocks.length when
-  // there is no such run, i.e. nothing is reclassified.
-  //
-  // An UNKNOWN block breaks the run rather than extending it. It already has a
-  // form that claims nothing, and a block with no endpoints reported is not
-  // evidence about what came after it — treating it as part of the teardown
-  // would be inferring a fact from missing data.
-  function trailingNotRunBoundary(blocks) {
-    var i = blocks.length;
-    while (i > 0) {
-      var blk = blocks[i - 1];
-      if (!hasVendorTimes(blk)) break;
-      if (blk.terminateTime !== blk.startTime) break;
-      i--;
-    }
-    return i;
   }
 
   function legLabel(blk) {
@@ -287,241 +154,295 @@ import { relevantNotices } from '/static/pages/fleet-notices.js';
     return verb + (blk.location ? ' @ ' + blk.location : '');
   }
 
-  // buildLegs turns the block records into the segment list the bar draws.
-  // Hues come from the existing per-phase status set — travel is the robot
-  // moving (in_transit), a block is the robot stopped at a node doing work
-  // (staged). Absence gets no hue at all, because "we do not know" is not a
-  // phase.
-  function buildLegs(blocks, totalMs, stopped) {
-    var legs = [];
-    var knownMs = 0;
-    var notRunFrom = stopped ? trailingNotRunBoundary(blocks) : blocks.length;
-
-    for (var i = 0; i < blocks.length; i++) {
-      var blk = blocks[i];
-
-      // A block that never ran, and therefore no travel INTO it either: the
-      // robot did not drive to a leg it did not perform, so the gap before it
-      // is not travel and must not be drawn as any. Handled ahead of the travel
-      // arithmetic for exactly that reason.
-      if (i >= notRunFrom) {
-        legs.push({ label: legLabel(blk), ms: null, notRun: true, color: 'var(--text-muted)' });
-        continue;
-      }
-
-      // Travel INTO this block: the gap since the previous block ended. Both
-      // endpoints are vendor times, so this arithmetic never crosses clocks.
-      if (i > 0 && hasVendorTimes(blocks[i - 1]) && hasVendorTimes(blk)) {
-        var gapMs = (blk.startTime - blocks[i - 1].terminateTime) * 1000;
-        if (gapMs > 0) {
-          legs.push({ label: 'travel → ' + (blk.location || '?'), ms: gapMs, color: 'var(--status-in-transit-dot)' });
-          knownMs += gapMs;
-        }
-      }
-
-      if (hasVendorTimes(blk)) {
-        var ms = (blk.terminateTime - blk.startTime) * 1000;
-        legs.push({ label: legLabel(blk), ms: ms, color: 'var(--status-staged-dot)' });
-        knownMs += ms;
-      } else {
-        legs.push({ label: legLabel(blk), ms: null, color: 'var(--text-muted)' });
+  // A leg's duration is one of three answers and they render three ways:
+  //   - a measurement (both vendor endpoints, terminate >= start), through
+  //     formatDuration, which prints a real zero as "0 s";
+  //   - unknown: the fleet did not report usable endpoints;
+  //   - not run: the trailing run of zero-length blocks on a mission the fleet
+  //     STOPPED. Tearing an order down stamps its outstanding blocks rather than
+  //     executing them, so equal stamps there record the teardown, not work.
+  // The not-run rule is scoped to the TRAILING run: a zero before a block with
+  // real duration was a genuine sub-second reading. An unknown block breaks the
+  // run rather than extending it — missing data is not evidence.
+  function classifyLegs(legs, stopped) {
+    var notRunFrom = legs.length;
+    if (stopped) {
+      while (notRunFrom > 0) {
+        var b = legs[notRunFrom - 1].block;
+        if (!hasVendorTimes(b) || b.terminateTime !== b.startTime) break;
+        notRunFrom--;
       }
     }
-
-    // Whatever the blocks do not account for. This is real time the mission
-    // spent somewhere the fleet did not report a block for — queued before
-    // dispatch, travelling to the first pickup, delivery bookkeeping after the
-    // last drop. Naming it is more honest than stretching the legs to fill.
-    if (totalMs > 0) {
-      var remainder = totalMs - knownMs;
-      if (remainder > 0) {
-        legs.push({ label: 'unaccounted', ms: remainder, color: 'var(--text-muted)', faint: true });
-      }
-    }
-    return legs;
-  }
-
-  function renderLegBar(bar, legend, legs, totalMs) {
-    var html = '';
-    var legendHtml = '';
-    var sumMs = 0;
-
     for (var i = 0; i < legs.length; i++) {
-      var leg = legs[i];
-      var swatch, seg;
-
-      if (leg.ms === null) {
-        // Fixed width, no hue: it occupies space so it is visible and
-        // countable, but claims no share of the timeline. Two reasons a leg
-        // lands here and they get two forms, because "we could not measure it"
-        // and "it did not happen" are different statements and the operator is
-        // entitled to know which one they are looking at.
-        var cls = leg.notRun ? 'leg-notrun' : 'leg-unknown';
-        var why = leg.notRun
-          ? ': not run — the fleet stopped this mission before this leg'
-          : ': duration not reported by the fleet';
-        seg = '<div class="duration-segment ' + cls + '" style="flex:0 0 52px"'
-            + ' title="' + leg.label + why + '"></div>';
-        swatch = '<span class="leg-swatch ' + cls + '"></span>';
-        legendHtml += '<span>' + swatch + leg.label + ': <span class="leg-unknown-text">'
-            + (leg.notRun ? 'not run' : 'unknown') + '</span></span>';
-      } else {
-        sumMs += leg.ms;
-        var pct = totalMs > 0 ? Math.max((leg.ms / totalMs) * 100, 1) : 1;
-        seg = '<div class="duration-segment" style="flex:' + pct + ';background:' + leg.color
-            + (leg.faint ? ';opacity:.35' : '') + '"'
-            + ' title="' + leg.label + ': ' + formatLegDuration(leg.ms) + '"></div>';
-        swatch = '<span class="leg-swatch" style="background:' + leg.color + (leg.faint ? ';opacity:.35' : '') + '"></span>';
-        legendHtml += '<span>' + swatch + leg.label + ': ' + formatLegDuration(leg.ms) + '</span>';
-      }
-      html += seg;
+      var blk = legs[i].block;
+      if (i >= notRunFrom) legs[i].form = 'not run';
+      else if (!hasVendorTimes(blk)) legs[i].form = 'unknown';
+      else legs[i].tookMs = (blk.terminateTime - blk.startTime) * 1000;
     }
-
-    bar.innerHTML = html;
-    // State the arithmetic so the bar can be checked rather than trusted.
-    var unknownCount = legs.filter(function(l) { return l.ms === null && !l.notRun; }).length;
-    var notRunCount = legs.filter(function(l) { return l.notRun; }).length;
-    var footer = '<span class="leg-total">legs ' + formatDuration(sumMs)
-      + ' of ' + formatDuration(totalMs) + ' total';
-    // Counted separately. Folding them into one tally would put a leg that did
-    // not happen and a leg we failed to time under the same number, which is
-    // the conflation the three forms exist to prevent.
-    if (unknownCount > 0) footer += ' · ' + unknownCount + ' leg(s) unknown';
-    if (notRunCount > 0) footer += ' · ' + notRunCount + ' leg(s) not run';
-    footer += '</span>';
-    legend.innerHTML = legendHtml + footer;
   }
 
-  function renderDurationBar(events, telemetry) {
-    var bar = document.getElementById('duration-bar');
-    var legend = document.getElementById('duration-legend');
-
-    // Prefer the real legs when the fleet reported any.
-    var blocks = parseBlockLegs(events);
-    if (blocks.length > 0) {
-      var totalMs = (telemetry && telemetry.duration_ms) || 0;
-      renderLegBar(bar, legend, buildLegs(blocks, totalMs, missionWasStopped(events)), totalMs);
-      return;
-    }
-
-    // Fallback: the old state-diff bar, for missions predating block capture.
-    events = events.filter(function(ev) { return !isBlockLegEvent(ev); });
-    if (events.length < 2) {
-      bar.innerHTML = '<span style="color:var(--text-muted)">Not enough data for duration breakdown</span>';
-      legend.innerHTML = '';
-      return;
-    }
-
-    var segments = [];
-    var totalMs = 0;
-    for (var i = 1; i < events.length; i++) {
-      var prev = new Date(events[i-1].created_at);
-      var curr = new Date(events[i].created_at);
-      var ms = curr - prev;
-      if (ms < 0) ms = 0;
-      totalMs += ms;
-      segments.push({ status: events[i-1].new_status, ms: ms });
-    }
-
-    if (totalMs === 0) {
-      bar.innerHTML = '<span style="color:var(--text-muted)">Zero duration</span>';
-      return;
-    }
-
-    var html = '';
-    var legendHtml = '';
-    for (var j = 0; j < segments.length; j++) {
-      var seg = segments[j];
-      var pct = Math.max((seg.ms / totalMs) * 100, 1);
-      var label = seg.status || '-';
-      var color = stateColors[seg.status] || 'var(--text-muted)';
-      html += '<div class="duration-segment" style="flex:' + pct + ';background:' + color + '" title="' + label + ': ' + formatDuration(seg.ms) + '"></div>';
-      legendHtml += '<span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:' + color + ';vertical-align:middle;margin-right:4px"></span>' + label + ': ' + formatDuration(seg.ms) + '</span>';
-    }
-    bar.innerHTML = html;
-    legend.innerHTML = legendHtml;
-  }
-
-  function renderTimeline(events) {
-    var el = document.getElementById('mission-timeline');
-    if (events.length === 0) {
-      el.innerHTML = '<span style="color:var(--text-muted)">No events recorded</span>';
-      return;
-    }
-
-    var html = '';
+  // attachEvents files every mission event under the stage it happened in and
+  // returns how many it filed. A leg goes by its block's START (vendor time)
+  // when the fleet reported one: a wait block's completion row is written as
+  // the robot is released, which is already the next stage, but the waiting
+  // happened in the staged one. Everything else goes by the row's own Core
+  // timestamp.
+  function attachEvents(groups, events) {
+    var legs = [];
+    var n = 0;
     for (var i = 0; i < events.length; i++) {
       var ev = events[i];
-      var timeSincePrev = '';
-      if (i > 0) {
-        var prev = new Date(events[i-1].created_at);
-        var curr = new Date(ev.created_at);
-        var ms = curr - prev;
-        timeSincePrev = '<span class="timeline-delta">+' + formatDuration(ms) + '</span>';
+      if (!ev.is_leg) {
+        spanAt(groups, ms(ev.created_at)).events.push({ ev: ev });
+        n++;
+        continue;
       }
-
-      var posInfo = '';
-      if (ev.robot_station) {
-        posInfo = ev.robot_station;
-      }
-      if (ev.robot_x != null && ev.robot_y != null) {
-        posInfo += (posInfo ? ' ' : '') + '(' + ev.robot_x.toFixed(1) + ', ' + ev.robot_y.toFixed(1) + ')';
-      }
-
-      var batteryInfo = '';
-      if (ev.robot_battery != null) {
-        batteryInfo = Math.round(ev.robot_battery) + '%';
-      }
-
-      html += '<div class="timeline-entry">';
-      html += '<div class="timeline-dot" style="background:' + (stateColors[ev.new_status] || 'var(--text-muted)') + '"></div>';
-      html += '<div class="timeline-body">';
-      html += '<div class="timeline-header">';
-      html += '<span class="timeline-time">' + formatTime(ev.created_at) + '</span> ';
-      html += timeSincePrev;
-      html += '</div>';
-      // A block completion is a LEG, not a status transition. Rendering it
-      // through stateBadge would print "→ BLOCK_FINISHED" against an unstyled
-      // pill, which is both ugly and wrong — old_state is empty on these rows
-      // because nothing transitioned.
-      if (isBlockLegEvent(ev)) {
-        var legBlocks = [];
-        try { legBlocks = JSON.parse(ev.blocks_json || '[]'); } catch (e) { console.error('timeline leg parse', e); }
-        var b0 = legBlocks[0] || {};
-        html += '<div><span class="badge badge-staged">leg</span> ' + legLabel(b0) + ' &mdash; '
-          + (hasVendorTimes(b0)
-              ? formatDuration((b0.terminateTime - b0.startTime) * 1000)
-              : '<span class="leg-unknown-text">duration unknown</span>')
-          + '</div>';
-      } else {
-        html += '<div>' + stateBadge(ev.old_status, ev.old_state) + ' &rarr; ' + stateBadge(ev.new_status, ev.new_state) + '</div>';
-      }
-      if (ev.robot_id) {
-        html += '<div class="timeline-meta">';
-        html += '<span>Robot: ' + ev.robot_id + '</span>';
-        if (posInfo) html += ' <span class="robot-snapshot">@ ' + posInfo + '</span>';
-        if (batteryInfo) html += ' <span>Battery: ' + batteryInfo + '</span>';
-        html += '</div>';
-      }
-
-      // Block states, decoded and mapped server-side (handlers_missions.go) so
-      // these chips speak the same vocabulary as the badge above them. The raw
-      // vendor state stays on the chip's tooltip, as it does on the badge.
-      var blocks = ev.blocks || [];
-      if (blocks.length > 0) {
-        html += '<div class="timeline-meta">Blocks: ';
-        for (var b = 0; b < blocks.length; b++) {
-          var blkTitle = blocks[b].state && blocks[b].state !== blocks[b].status
-            ? ' title="fleet reported: ' + blocks[b].state + '"' : '';
-          html += '<span class="badge badge-sm"' + blkTitle + '>' + blocks[b].location
-            + ': ' + (blocks[b].status || '-') + '</span> ';
-        }
-        html += '</div>';
-      }
-
-      html += '</div></div>';
+      var blocks = [];
+      try { blocks = JSON.parse(ev.blocks_json || '[]'); } catch (e) { console.error('mission leg parse', e); }
+      for (var b = 0; b < blocks.length; b++) legs.push({ ev: ev, block: blocks[b] });
     }
-    el.innerHTML = html;
+    classifyLegs(legs, events.some(function(e) { return e && e.new_state === STOPPED_STATE; }));
+    for (var k = 0; k < legs.length; k++) {
+      var t = hasVendorTimes(legs[k].block) ? legs[k].block.startTime * 1000 : ms(legs[k].ev.created_at);
+      var span = spanAt(groups, t);
+      span.legs.push(legs[k]);
+      span.events.push(legs[k]);
+      n++;
+    }
+    return n;
+  }
+
+  // where names the places the robot worked during the span, in order, from
+  // the legs filed under it. Empty when the fleet reported none — an order
+  // waiting in the queue has no robot and no place to name.
+  function where(span) {
+    var seen = [];
+    for (var i = 0; i < span.legs.length; i++) {
+      var loc = span.legs[i].block.location;
+      if (loc && seen[seen.length - 1] !== loc) seen.push(loc);
+    }
+    return seen.join(' → ');
+  }
+
+  // ── Rendering ──────────────────────────────────────────────────────────
+
+  function share(partMs, lifeMs) {
+    if (!(lifeMs > 0)) return '';
+    var pct = partMs / lifeMs * 100;
+    if (partMs > 0 && pct < 0.5) return '&lt;1%';
+    return Math.round(pct) + '%';
+  }
+
+  // The stage table's clock shows seconds on every row: spans routinely start
+  // within the same minute (dispatch, acknowledge and depart are seconds apart),
+  // and minute resolution made their order unreadable. The full plant-local
+  // datetime rides on the title.
+  function clockCell(ts) {
+    return '<td class="tnum" title="' + escapeHtml(formatTime(ts)) + '">' + formatClockSeconds(ts) + '</td>';
+  }
+
+  function tookCell(span) {
+    if (span.ongoing) {
+      return '<td class="col-num tnum"><span data-since="' + escapeHtml(span.startedAt) + '">'
+        + formatDuration(span.ms) + '</span> <span class="text-muted">so far</span></td>';
+    }
+    return '<td class="col-num tnum">' + formatDuration(span.ms) + '</td>';
+  }
+
+  function renderStages(st) {
+    var bar = document.getElementById('stage-bar');
+    var legend = document.getElementById('stage-legend');
+    var tbody = document.getElementById('stage-rows');
+
+    if (!st.spans.length && !st.end) {
+      bar.innerHTML = '';
+      legend.innerHTML = '';
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-cell" title="order_history has no rows for this order">No status history recorded</td></tr>';
+      return;
+    }
+
+    // The bar: one segment per span, width proportional to its time — a true
+    // scale, no minimum width, so a five-second stage next to an eleven-minute
+    // one looks like what it is. The hover names it.
+    var segs = '';
+    var byClass = { waiting: 0, moving: 0, held: 0, confirm: 0 };
+    for (var i = 0; i < st.spans.length; i++) {
+      var sp = st.spans[i];
+      byClass[sp.cls] += sp.ms;
+      segs += '<div class="stage-seg stage-' + sp.cls + '" style="flex:' + sp.ms + ' 0 0"'
+        + ' title="' + sp.status + ' · ' + formatDuration(sp.ms) + '"></div>';
+    }
+    bar.innerHTML = segs;
+
+    var keys = '';
+    for (var c = 0; c < CLASS_ORDER.length; c++) {
+      var k = CLASS_ORDER[c];
+      keys += '<span class="stage-key"><span class="stage-swatch stage-' + k + '"></span>'
+        + CLASS_LABEL[k] + ' <span class="tnum">' + formatDuration(byClass[k]) + '</span>'
+        + ' <span class="text-muted tnum">' + share(byClass[k], st.lifeMs) + '</span></span>';
+    }
+    legend.innerHTML = keys;
+
+    var html = '';
+    for (var j = 0; j < st.spans.length; j++) {
+      var s = st.spans[j];
+      var faults = '';
+      if (s.faults > 0) {
+        faults = '<div class="stage-faults">' + s.faults + (s.faults === 1 ? ' fault' : ' faults')
+          + ', ' + formatDuration(s.lostMs) + ' lost</div>';
+      }
+      html += '<tr class="stage-row">'
+        + '<td><span class="stage-swatch stage-' + s.cls + '"></span>' + stateBadge(s.status)
+        + (s.detail ? '<div class="stage-detail">' + escapeHtml(s.detail) + '</div>' : '') + faults + '</td>'
+        + '<td>' + escapeHtml(where(s)) + '</td>'
+        + clockCell(s.startedAt)
+        + tookCell(s)
+        + '<td class="col-num tnum">' + share(s.ms, st.lifeMs) + '</td>'
+        + '</tr>';
+    }
+    if (st.end) {
+      html += '<tr class="stage-row stage-end">'
+        + '<td>' + stateBadge(st.end.status)
+        + (st.end.detail ? '<div class="stage-detail">' + escapeHtml(st.end.detail) + '</div>' : '') + '</td>'
+        + '<td></td>' + clockCell(st.end.at) + '<td></td><td></td></tr>';
+    }
+    tbody.innerHTML = html;
+  }
+
+  function formatRoute(order) {
+    if (order.steps_json) {
+      try {
+        var steps = JSON.parse(order.steps_json);
+        var nodes = [];
+        for (var i = 0; i < steps.length; i++) {
+          if (!steps[i].node) continue;
+          nodes.push(escapeHtml(steps[i].node)
+            + (steps[i].action === 'wait' ? ' <span class="text-muted">(wait)</span>' : ''));
+        }
+        if (nodes.length > 0) return nodes.join(' &rarr; ');
+      } catch (e) { console.error('orderRoute steps parse', e); }
+    }
+    return escapeHtml(order.source_node || '?') + ' &rarr; ' + escapeHtml(order.delivery_node || '?');
+  }
+
+  function field(label, title, value) {
+    return '<div title="' + escapeHtml(title) + '"><strong>' + label + '</strong><br>' + value + '</div>';
+  }
+
+  // The summary reads the live order and its history, so an order still in
+  // flight shows when it was created, that it has not ended, and how long it has
+  // been alive — not a row of dashes waiting for a telemetry summary that is
+  // only written at a terminal state.
+  function renderSummary(data, st) {
+    var o = data.order || {};
+    var t = data.telemetry;
+    var robot = (t && t.robot_id) || o.robot_id;
+    var startedAt = st.spans.length ? st.spans[0].startedAt : o.created_at;
+
+    var html = '<div class="mission-summary-grid">';
+    html += field('Order ID', 'Shingo order ID', '<a href="/orders?open=' + o.id + '">' + o.id + '</a>');
+    html += field('Type', 'Transport order type', escapeHtml(o.order_type || ''));
+    html += field('Station', 'Edge station that requested this order', escapeHtml(o.station_id || ''));
+    html += field('Robot', 'Robot vehicle ID assigned by the fleet',
+      robot ? escapeHtml(robot) : '<span class="text-muted">not assigned</span>');
+    html += field('Route', 'The order\'s planned steps, source to delivery', formatRoute(o));
+    html += field('Status', 'Current order status in Shingo', stateBadge(o.status));
+    html += field('Created', 'When Shingo created this order', formatTime(startedAt));
+    html += field('Ended', 'When the order reached a terminal status',
+      st.end ? formatTime(st.end.at) : '<span class="text-muted">in flight</span>');
+    // Duration is the Missions list's figure under the Missions list's name:
+    // created to the fleet's terminal report (telemetry.duration_ms). Order life
+    // runs on to the terminal history row, so the two differ by the wait for
+    // confirmation; each is named for what it measures. No telemetry row until
+    // a terminal state, so in flight it is the list's in-flight figure too:
+    // ticking from the order's created_at, "so far" (missions.js refreshList).
+    // A finished order the fleet never summarised is a titled absence.
+    var duration;
+    if (t && t.duration_ms > 0) {
+      duration = '<span class="tnum">' + formatDuration(t.duration_ms) + '</span>';
+    } else if (!st.end && o.created_at) {
+      duration = '<span class="tnum" data-since="' + escapeHtml(o.created_at) + '">'
+        + formatDuration(Math.max(0, serverNow() - Date.parse(o.created_at))) + '</span>'
+        + ' <span class="text-muted">so far</span>';
+    } else {
+      duration = noData('not reported by the fleet');
+    }
+    html += field('Duration', 'Core created to the fleet\'s terminal report: the Missions list\'s Duration', duration);
+    html += field('Order life', 'Created to terminal status (to now, in flight): the sum of the stages below',
+      st.end
+        ? '<span class="tnum">' + formatDuration(st.lifeMs) + '</span>'
+        : '<span class="tnum" data-since="' + escapeHtml(startedAt) + '">' + formatDuration(st.lifeMs) + '</span>');
+    html += '</div>';
+
+    // The fleet's own clock, only once there is a fleet summary to read it from
+    // (written at a terminal state). Absent values say so rather than dash out.
+    if (t) {
+      var missing = 'not reported by the fleet';
+      html += '<div class="mission-summary-grid mission-summary-fleet">';
+      html += field('Fleet duration', 'Time measured by the fleet backend (create to terminal)',
+        t.vendor_duration_ms > 0 ? '<span class="tnum">' + formatDuration(t.vendor_duration_ms) + '</span>' : noData(missing));
+      html += field('Fleet created', 'When the fleet backend created the transport order',
+        t.vendor_created ? formatTime(t.vendor_created) : noData(missing));
+      html += field('Fleet completed', 'When the fleet backend reported the terminal state',
+        t.vendor_completed ? formatTime(t.vendor_completed) : noData(missing));
+      html += '</div>';
+    }
+    document.getElementById('mission-summary').innerHTML = html;
+  }
+
+  // position renders the robot's map coordinates, or nothing. The robot-status
+  // cache the event snapshot is taken from holds 0/0 when the fleet supplies no
+  // position (the simulator never does), so the exact origin reads as absence,
+  // not as a place (guide rule 4: no data is not zero).
+  function position(ev) {
+    if (ev.robot_x == null || ev.robot_y == null) return '';
+    if (ev.robot_x === 0 && ev.robot_y === 0) return '';
+    return '(' + ev.robot_x.toFixed(1) + ', ' + ev.robot_y.toFixed(1) + ')';
+  }
+
+  function legWhat(leg) {
+    var took;
+    if (leg.form === 'not run') took = '<span class="text-muted" title="the fleet stopped this mission before this leg">not run</span>';
+    else if (leg.form === 'unknown') took = '<span class="text-muted" title="duration not reported by the fleet">unknown</span>';
+    else took = '<span class="tnum">' + formatDuration(leg.tookMs) + '</span>';
+    return escapeHtml(legLabel(leg.block)) + ' · ' + took;
+  }
+
+  // renderActions fills the closed disclosure: every recorded robot action,
+  // grouped under the stage it happened in. This is the only place mission
+  // events render; the old timeline and event log printed each one twice.
+  function renderActions(groups, total) {
+    document.getElementById('mission-actions-count').textContent = String(total);
+    var host = document.getElementById('mission-actions');
+    if (!total) {
+      host.innerHTML = '<p class="text-muted">The fleet reported no robot actions for this order.</p>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < groups.length; i++) {
+      var g = groups[i];
+      if (!g.events.length) continue;
+      g.events.sort(function(a, b) { return ms(a.ev.created_at) - ms(b.ev.created_at); });
+      html += '<div class="actions-group"><div class="actions-head">' + stateBadge(g.status)
+        + ' <span class="text-muted tnum">' + formatClockSeconds(g.startedAt) + '</span></div>'
+        + '<table class="table-compact w-full"><tbody>';
+      for (var j = 0; j < g.events.length; j++) {
+        var item = g.events[j];
+        var ev = item.ev;
+        var what = item.block ? legWhat(item)
+          : stateBadge(ev.old_status, ev.old_state) + ' &rarr; ' + stateBadge(ev.new_status, ev.new_state);
+        html += '<tr class="action-row">'
+          + clockCell(ev.created_at)
+          + '<td>' + what + '</td>'
+          + '<td>' + escapeHtml(ev.robot_id || '') + '</td>'
+          + '<td>' + escapeHtml(ev.robot_station || '') + '</td>'
+          + '<td class="tnum">' + position(ev) + '</td>'
+          + '<td class="col-num tnum">' + (ev.robot_battery != null ? Math.round(ev.robot_battery) + '%' : '') + '</td>'
+          + '</tr>';
+      }
+      html += '</tbody></table></div>';
+    }
+    host.innerHTML = html;
   }
 
   // Notices go through relevantNotices (fleet-notices.js): only what concerns
@@ -549,7 +470,7 @@ import { relevantNotices } from '/static/pages/fleet-notices.js';
       var badgeClass = item.type === 'error' ? 'badge-failed' : item.type === 'warning' ? 'badge-staged' : 'badge-dispatched';
       html += '<div style="margin-bottom:.5rem;padding:.5rem;border:1px solid var(--border);border-radius:4px">';
       html += '<span class="badge ' + badgeClass + '">' + item.type + '</span> ';
-      html += '<strong>Code ' + item.msg.code + '</strong>: ' + (item.msg.desc || '-');
+      html += '<strong>Code ' + item.msg.code + '</strong>: ' + escapeHtml(item.msg.desc || '');
       if (item.msg.timestamp) html += ' <span style="color:var(--text-muted);font-size:.85em">' + formatTime(new Date(item.msg.timestamp)) + '</span>';
       if (item.msg.times > 1) html += ' <span style="color:var(--text-muted)">(x' + item.msg.times + ')</span>';
       html += '</div>';
@@ -557,57 +478,34 @@ import { relevantNotices } from '/static/pages/fleet-notices.js';
     el.innerHTML = html;
   }
 
-  function renderEventLog(events) {
-    var tbody = document.getElementById('event-log');
-    if (events.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No events</td></tr>';
-      return;
-    }
-
-    var html = '';
-    for (var i = 0; i < events.length; i++) {
-      var ev = events[i];
-      var pos = '';
-      if (ev.robot_x != null && ev.robot_y != null) {
-        pos = ev.robot_x.toFixed(1) + ', ' + ev.robot_y.toFixed(1);
-      }
-      var what;
-      if (isBlockLegEvent(ev)) {
-        var lb = [];
-        try { lb = JSON.parse(ev.blocks_json || '[]'); } catch (e) { console.error('event log leg parse', e); }
-        what = '<span class="badge badge-staged">leg</span> ' + legLabel(lb[0] || {});
-      } else {
-        what = stateBadge(ev.old_status, ev.old_state) + ' &rarr; ' + stateBadge(ev.new_status, ev.new_state);
-      }
-      html += '<tr>';
-      html += '<td style="white-space:nowrap">' + formatTime(ev.created_at) + '</td>';
-      html += '<td>' + what + '</td>';
-      html += '<td>' + (ev.robot_id || '-') + '</td>';
-      html += '<td>' + (ev.robot_station || '-') + '</td>';
-      html += '<td>' + (pos || '-') + '</td>';
-      html += '<td>' + (ev.robot_battery != null ? Math.round(ev.robot_battery) + '%' : '-') + '</td>';
-      html += '</tr>';
-    }
-    tbody.innerHTML = html;
+  function loadMission() {
+    fetch('/api/missions/' + orderID).then(function(r) { return r.json(); }).then(function(data) {
+      document.getElementById('mission-loading').style.display = 'none';
+      document.getElementById('mission-content').style.display = '';
+      var st = buildStages(data.history, serverNow());
+      // Actions file under the stages; an order with no history at all still
+      // gets its actions listed, under one unnamed group.
+      var groups = st.spans.length ? st.spans
+        : [{ status: '', startedAt: null, startMs: -Infinity, legs: [], events: [] }];
+      var total = attachEvents(groups, data.events || []);
+      renderSummary(data, st);
+      renderStages(st);
+      renderMessages(data.telemetry, (data.telemetry && data.telemetry.robot_id) || (data.order && data.order.robot_id) || '');
+      renderActions(groups, total);
+      installLiveDurations(document.getElementById('mission-content'));
+    }).catch(function(err) {
+      document.getElementById('mission-loading').textContent = 'Failed to load mission: ' + err.message;
+    });
   }
 
-  // SSE live updates for active missions — subscribed on the shared onSSE bus
-  // (shared/utils.js); the handler receives the parsed payload. Replaces the
-  // retired app.js IIFE window.onMissionEvent dispatch (Q-002).
+  // Vendor telemetry arrives as 'mission-event'; Core's own status transitions
+  // as 'order-update' (debounced so a burst of transitions coalesces). Either
+  // reloads the whole mission — history, stages and actions are one read.
   onSSE('mission-event', function(data) {
-    if (data && String(data.order_id) === String(orderID)) {
-      loadMission(); // Reload full data on any event for this mission
-    }
+    if (data && String(data.order_id) === String(orderID)) loadMission();
   });
-
-  // Lifecycle status transitions (sourcing→dispatched→in_transit→staged→delivered→
-  // confirmed) are broadcast as 'order-update' (status_changed/dispatched/completed/…),
-  // NOT 'mission-event' (telemetry only) — so the timeline went stale until a hard
-  // refresh. Reload on those too, debounced so a burst of transitions coalesces.
   onSSE('order-update', debounce(function(data) {
-    if (data && String(data.order_id) === String(orderID)) {
-      loadMission();
-    }
+    if (data && String(data.order_id) === String(orderID)) loadMission();
   }, 200));
 
   loadMission();

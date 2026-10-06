@@ -10,6 +10,7 @@
 // spec:
 //   id        stable key (used as data-kpi and for reconcileList)
 //   label     small uppercase caption
+//   title     optional hover text saying what the figure measures
 //   value     big number; null/''/undefined renders as the em-dash cold state (§8 #19)
 //   sub       small muted subtitle (e.g. "P50 4m 02s")
 //   delta     { dir:'up'|'down'|'flat', text:'1.2pt', good:true|false }
@@ -45,6 +46,8 @@ export function updateKpiTile(tile, spec) {
     if (!tile) return;
     const labelEl = tile.querySelector('.kpi-label');
     if (labelEl) labelEl.textContent = spec.label || '';
+    if (spec.title) tile.title = spec.title;
+    else tile.removeAttribute('title');
 
     const valueEl = tile.querySelector('.kpi-value');
     if (valueEl) {

@@ -89,6 +89,51 @@ chart earns its place only where the table cannot answer the question.
 | Orphan reconciliation (5.7) | Line of the count over time | The plan already says it: *the trend is the number that matters* |
 | Cycle time (5.10) | Distribution per `(node, payload)`; median annotated **on** it, never alone | The tail is the material-downtime signal |
 
+### Time series
+
+Four rules for any chart with time on x. `components/charts.js` carries the
+defaults; a page that overrides one is breaking a rule, not tuning a chart.
+
+**Lines are straight.** `tension: 0`, as the default and never overridden per
+dataset. A curve between two hourly points asserts values nobody measured:
+two cancelled orders three hours apart drew a hump across five hours. A point
+with no drawn neighbour gets a marker (`isolatedPointRadius`), because
+otherwise a one-bucket series draws nothing at all.
+
+**The axis is continuous.** Every bucket in the window is present and an empty
+bucket is a measured zero. A throughput axis that skips empty hours reads
+`00, 02, 04, 05`, and the gap between two bars stops meaning anything. The
+fill happens at the source (the server returns a zero bucket) and the series
+runs to the bucket "now" falls in, not to the end of the window, because a
+future hour is not a measured zero. A **rate** over an empty bucket has no
+value (a gap, `null`), never 0%. A day nothing finished on is not a day
+everything failed.
+
+**Buckets are plant hours and plant days.** A day bucket starts at the plant's
+midnight, passed to SQL as a bound zone parameter. The Postgres session is
+pinned to UTC, so a bare `date_trunc('day', ts)` cuts a Central plant's day at
+19:00. Day steps go through calendar arithmetic in the plant zone, so a
+25-hour fall-back day is one bucket. Labels come from `plantclock.js`
+`bucketLabel`, never from the browser's `getHours`.
+
+**The bucket in progress is drawn distinctly.** The bar is washed out and the
+line segment into it is dashed (`progressBarColors`, `progressSegment`, with
+`plantclock.js inProgress`). It is kept out of peak and trend sentences. A
+partly-elapsed hour drawn like a finished one reads as a drop at the right
+edge of every chart.
+
+Two corollaries: **an axis fits its data** (only a success rate keeps the
+0–100 frame; a cancellation rate under 1% on a 0–100 axis is a line on the
+floor), and **counts take integer ticks** (`precision: 0`; a cancel count with
+0.5 on its axis is a count nobody can have). Durations plot in minutes and
+print through `formatDuration` in the tooltip.
+
+The same buckets carry a **per-day rate**: "N / day" divides by the plant days
+of the window through today, the empty ones included, never by the days that
+had an event. Two faults on one day of a week are 0.3 a day, not 2.0. The
+Missions fault card is the case: `per_day` is filled at the source like any
+other series and the card divides by its length.
+
 ### The numbers themselves
 
 Six rules. The first is the one that gets broken.

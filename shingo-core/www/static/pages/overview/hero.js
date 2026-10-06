@@ -1,15 +1,21 @@
 // Overview Section A — Hero KPIs + conditional alerts banner (plan §15.A).
 //
-// Five tiles: success rate, completed, avg duration, cancelled, in flight.
+// Five tiles: success rate, completed, avg duration, cancelled, active orders.
 // Success/completed/avg/cancelled come from /api/missions/stats/v2 (the
 // corrected success-rate math, §8 #5); the delta is the same endpoint over
-// the previous equal-length window. In flight is a live count
-// (/api/missions/active) refreshed on SSE order-update. The alerts banner
-// (/api/missions/alerts) renders only when there are active issues.
+// the previous equal-length window. Active orders is a live count
+// (/api/missions/active) refreshed on SSE order-update — the same number the
+// Dashboard calls "Active orders", so it carries the same name here. The
+// alerts banner (/api/missions/alerts) renders only when there are active
+// issues; its stuck count links to exactly those orders. The window figures
+// refresh with the page (filter change, the refresh button), which says when
+// it last did (overview.js, "as of").
 
-import { apiGet, formatDuration } from '/static/app.js';
-import { onSSE, debounce } from '/static/shared/utils.js';
+import { apiGet, h } from '/static/app.js';
+import { onSSE, debounce, formatDuration } from '/static/shared/utils.js';
+import { windowFor } from '/static/components/plantclock.js';
 import { KpiTile, updateKpiTile } from '/static/components/KpiTile.js';
+import { RUN_TIME_TITLE } from '/static/components/DrillModal.js';
 
 export function createHeroSection(store) {
     const tiles = {}; // id -> tile node
@@ -31,9 +37,10 @@ export function createHeroSection(store) {
         support.className = 'ops-hero-support';
         const supportSpecs = [
             { id: 'completed', label: 'Completed', drill: 'completed' },
-            { id: 'avg', label: 'Avg duration', drill: 'avg_duration' },
+            { id: 'avg', label: 'Avg run time', title: RUN_TIME_TITLE, drill: 'avg_duration' },
             { id: 'cancelled', label: 'Cancelled', drill: 'cancelled' },
-            { id: 'inflight', label: 'In flight', drill: 'in_flight' },
+            // No drill: a live count has no history to open.
+            { id: 'inflight', label: 'Active orders' },
         ];
         for (const s of supportSpecs) {
             const t = KpiTile(s);
@@ -42,7 +49,7 @@ export function createHeroSection(store) {
             support.appendChild(t);
         }
         grid.appendChild(support);
-        // Live: in-flight count + alerts react to order/robot churn.
+        // Live: the active-order count + alerts react to order/robot churn.
         const live = debounce(() => { refreshActive(); refreshAlerts(); }, 1500);
         onSSE('order-update', live);
         onSSE('robot-update', live);
@@ -81,17 +88,21 @@ export function createHeroSection(store) {
                 : null,
         });
 
+        // A delta needs a previous window that had something in it: against an
+        // empty one (a plant's first day) every count reads as a green "▲ 999".
+        const prevHasData = !!(prev && prev.total > 0);
+
         updateKpiTile(tiles.completed, {
             label: 'Completed', drill: 'completed',
             value: cur.confirmed,
-            delta: prev ? signedDelta(cur.confirmed - prev.confirmed, (v) => '' + Math.abs(v), true) : null,
+            delta: prevHasData ? signedDelta(cur.confirmed - prev.confirmed, (v) => '' + Math.abs(v), true) : null,
         });
 
         updateKpiTile(tiles.avg, {
-            // Headline execution time (assignment→terminal, what the robot spent);
-            // lead time (created→terminal) is the sub-stat (Q-031). Lower is
-            // better → a drop is "good". Delta tracks the headline (execution).
-            label: 'Avg duration', drill: 'avg_duration',
+            // Headline run time (execution time: assignment→load down, fault
+            // time out); lead time (created→terminal) is the sub-stat (Q-031).
+            // Lower is better → a drop is "good". Delta tracks the headline.
+            label: 'Avg run time', title: RUN_TIME_TITLE, drill: 'avg_duration',
             value: (cur.total > 0 && cur.avg_execution_ms > 0) ? formatDuration(cur.avg_execution_ms) : '—',
             sub: cur.avg_duration_ms > 0 ? 'Lead ' + formatDuration(cur.avg_duration_ms) : '',
             delta: (prev && prev.avg_execution_ms > 0 && cur.avg_execution_ms > 0)
@@ -104,19 +115,19 @@ export function createHeroSection(store) {
             value: cur.cancelled,
             sub: cancelOriginSub(cur), // Q-030 origin split (RDS / shingo / unclassified)
             // Neutral metric per §15.A — show movement but no good/bad color.
-            delta: prev ? { dir: deltaDir(cur.cancelled - prev.cancelled), text: '' + Math.abs(cur.cancelled - prev.cancelled) } : null,
+            delta: prevHasData ? { dir: deltaDir(cur.cancelled - prev.cancelled), text: '' + Math.abs(cur.cancelled - prev.cancelled) } : null,
         });
     }
 
     function refreshActive() {
-        // Item 10: in-flight respects the global station/robot filter. Read it
+        // Item 10: the active count respects the global station/robot filter. Read it
         // live from the store so the SSE-driven refresh (no args) and the
         // filter-driven refresh both scope correctly. Sub-label stays "live".
         const st = store.get();
         const q = qs({ station_id: st.station, robot_id: st.robot });
         apiGet('/api/missions/active' + (q ? '?' + q : ''))
-            .then((d) => updateKpiTile(tiles.inflight, { label: 'In flight', drill: 'in_flight', value: (d && typeof d.count === 'number') ? d.count : '—', sub: 'live' }))
-            .catch(() => updateKpiTile(tiles.inflight, { label: 'In flight', drill: 'in_flight', value: '—', sub: 'live' }));
+            .then((d) => updateKpiTile(tiles.inflight, { label: 'Active orders', value: (d && typeof d.count === 'number') ? d.count : '—', sub: 'live' }))
+            .catch(() => updateKpiTile(tiles.inflight, { label: 'Active orders', value: '—', sub: 'live' }));
     }
 
     function refreshAlerts() {
@@ -128,11 +139,11 @@ export function createHeroSection(store) {
             if (a.robots_blocked) parts.push(a.robots_blocked + ' robot' + (a.robots_blocked > 1 ? 's' : '') + ' blocked');
             if (a.robots_emergency) parts.push(a.robots_emergency + ' emergency');
             if (a.robots_error) parts.push(a.robots_error + ' in error');
-            if (a.stuck_missions) parts.push(a.stuck_missions + ' mission' + (a.stuck_missions > 1 ? 's' : '') + ' stuck');
-            holder.innerHTML =
-                '<div class="alerts-banner" role="status">' +
-                '<span class="alerts-banner__count">⚠ ' + a.total + ' alert' + (a.total > 1 ? 's' : '') + '</span>' +
-                '<span>' + parts.join(' · ') + '</span></div>';
+            const text = parts.join(' · ');
+            const stuck = a.stuck_missions
+                ? h`<a href="${stuckHref(a.stuck_items)}">${a.stuck_missions + ' active order' + (a.stuck_missions > 1 ? 's' : '') + ' stuck'}</a>`
+                : '';
+            holder.innerHTML = h`<div class="alerts-banner" role="status"><span class="alerts-banner__count">${'⚠ ' + a.total + ' alert' + (a.total > 1 ? 's' : '')}</span><span>${text}${text && stuck ? ' · ' : ''}${{ __html: true, value: stuck }}</span></div>`;
         }).catch(() => { holder.innerHTML = ''; });
     }
 
@@ -156,24 +167,11 @@ function cancelOriginSub(s) {
     return parts.join(' · ');
 }
 
-function ymd(d) {
-    return d.getFullYear() + '-' +
-        String(d.getMonth() + 1).padStart(2, '0') + '-' +
-        String(d.getDate()).padStart(2, '0');
-}
-
-// windowFor maps the range selector to browser-local since/until date strings
-// plus the previous equal-length window for deltas. NOTE: the backend parses
-// these as server-local bare dates (§8 #17 timezone ambiguity, Q-004).
-function windowFor(range) {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    let days = 1;
-    if (range === '7d') days = 7;
-    else if (range === '30d') days = 30;
-    const since = new Date(today); since.setDate(since.getDate() - (days - 1));
-    const prevUntil = new Date(since); prevUntil.setDate(prevUntil.getDate() - 1);
-    const prevSince = new Date(prevUntil); prevSince.setDate(prevSince.getDate() - (days - 1));
-    return { since: ymd(since), until: ymd(today), prevSince: ymd(prevSince), prevUntil: ymd(prevUntil), days };
+// stuckHref links the alert to the Orders list filtered to exactly the stuck
+// orders the payload names.
+function stuckHref(items) {
+    const ids = (items || []).map((it) => it.order_id).filter((id) => id != null);
+    return '/orders?ids=' + ids.join(',');
 }
 
 function qs(params) {
@@ -195,7 +193,7 @@ function signedDelta(diff, fmt, goodWhenUp) {
 
 // durationDelta: a *drop* in duration is good, so colour accordingly.
 function durationDelta(diffMs) {
-    if (!diffMs) return { dir: 'flat', text: '0s' };
+    if (!diffMs) return { dir: 'flat', text: formatDuration(0) };
     const down = diffMs < 0;
     return { dir: down ? 'down' : 'up', text: formatDuration(Math.abs(diffMs)), good: down };
 }

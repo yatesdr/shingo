@@ -765,8 +765,8 @@ func (db *DB) ListOrderHistory(orderID int64) ([]*orders.History, error) {
 }
 
 // GetFaultStats computes the /missions Faults card — see orders.GetFaultStats.
-func (db *DB) GetFaultStats(r orders.LeadTimeRange, noticeAfter time.Duration) (*orders.FaultStats, error) {
-	return orders.GetFaultStats(db.DB, r, noticeAfter)
+func (db *DB) GetFaultStats(r orders.LeadTimeRange, noticeAfter time.Duration, loc *time.Location) (*orders.FaultStats, error) {
+	return orders.GetFaultStats(db.DB, r, noticeAfter, loc)
 }
 
 // LatestOrderHistoryForStatus returns the order's most recent row for a status,

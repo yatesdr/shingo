@@ -161,36 +161,70 @@ func plantDayWindow(t *testing.T, station string, loc *time.Location, since, unt
 // TestTimeseries_DayBucketsArePlantDays pins the day series under a non-UTC
 // plant zone, with completions between 00:00 and 05:00 UTC — the hours that are
 // still the PREVIOUS day in America/Chicago. The range total is the same five
-// orders whatever the bucketing; only the per-day split may move.
+// orders whatever the bucketing; only the per-day split may move. The window is
+// in the past so "now" does not clip it.
 func TestTimeseries_DayBucketsArePlantDays(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	chicago, err := time.LoadLocation("America/Chicago")
-	if err != nil {
-		t.Fatal(err)
-	}
-	at := func(s string) time.Time {
-		v, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return v
-	}
-	seedCompletedOrder(t, db, "pd-1", "PD", "confirmed", at("2026-10-04T23:30:00Z")) // Oct 4 18:30 CDT
-	seedCompletedOrder(t, db, "pd-2", "PD", "confirmed", at("2026-10-05T02:00:00Z")) // Oct 4 21:00 CDT
-	seedCompletedOrder(t, db, "pd-3", "PD", "cancelled", at("2026-10-05T04:59:00Z")) // Oct 4 23:59 CDT
-	seedCompletedOrder(t, db, "pd-4", "PD", "confirmed", at("2026-10-05T06:00:00Z")) // Oct 5 01:00 CDT
-	seedCompletedOrder(t, db, "pd-5", "PD", "failed", at("2026-10-06T15:00:00Z"))    // Oct 6 10:00 CDT
+	chicago := mustLoc(t, "America/Chicago")
+	seedCompletedOrder(t, db, "pd-1", "PD", "confirmed", mustTime(t, "2026-09-04T23:30:00Z")) // Sep 4 18:30 CDT
+	seedCompletedOrder(t, db, "pd-2", "PD", "confirmed", mustTime(t, "2026-09-05T02:00:00Z")) // Sep 4 21:00 CDT
+	seedCompletedOrder(t, db, "pd-3", "PD", "cancelled", mustTime(t, "2026-09-05T04:59:00Z")) // Sep 4 23:59 CDT
+	seedCompletedOrder(t, db, "pd-4", "PD", "confirmed", mustTime(t, "2026-09-05T06:00:00Z")) // Sep 5 01:00 CDT
+	seedCompletedOrder(t, db, "pd-5", "PD", "failed", mustTime(t, "2026-09-06T15:00:00Z"))    // Sep 6 10:00 CDT
 
-	// Five plant days, Oct 3 (empty) through Oct 7 (empty).
-	f := plantDayWindow(t, "PD", chicago, "2026-10-03", "2026-10-07")
-	got, err := telemetry.GetTimeseries(db.DB, f, "day")
+	// Five plant days, Sep 3 (empty) through Sep 7 (empty): exactly five buckets,
+	// each starting on a Chicago midnight (05:00Z under CDT).
+	f := plantDayWindow(t, "PD", chicago, "2026-09-03", "2026-09-07")
+	got, err := telemetry.GetTimeseries(db.DB, f, "day", chicago)
 	if err != nil {
 		t.Fatalf("GetTimeseries: %v", err)
 	}
 	checkTimeseries(t, got, []tsBucket{
-		{"2026-10-04T00:00:00Z", 1},
-		{"2026-10-05T00:00:00Z", 3},
-		{"2026-10-06T00:00:00Z", 1},
+		{"2026-09-03T05:00:00Z", 0},
+		{"2026-09-04T05:00:00Z", 3},
+		{"2026-09-05T05:00:00Z", 1},
+		{"2026-09-06T05:00:00Z", 1},
+		{"2026-09-07T05:00:00Z", 0},
 	})
+}
+
+// TestTimeseries_DayBucketsAcrossFallBack runs the SQL half of the plant-day cut
+// across a 25-hour day (2025-11-02, America/Chicago). 05:30Z on Nov 3 is still
+// Nov 2 (23:30 CST), and Nov 3 starts at 06:00Z, not 05:00Z.
+func TestTimeseries_DayBucketsAcrossFallBack(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	chicago := mustLoc(t, "America/Chicago")
+	seedCompletedOrder(t, db, "fb-1", "FB", "confirmed", mustTime(t, "2025-11-03T05:30:00Z")) // Nov 2 23:30 CST
+	seedCompletedOrder(t, db, "fb-2", "FB", "confirmed", mustTime(t, "2025-11-03T06:30:00Z")) // Nov 3 00:30 CST
+
+	f := plantDayWindow(t, "FB", chicago, "2025-11-01", "2025-11-03")
+	got, err := telemetry.GetTimeseries(db.DB, f, "day", chicago)
+	if err != nil {
+		t.Fatalf("GetTimeseries: %v", err)
+	}
+	checkTimeseries(t, got, []tsBucket{
+		{"2025-11-01T05:00:00Z", 0},
+		{"2025-11-02T05:00:00Z", 1},
+		{"2025-11-03T06:00:00Z", 1},
+	})
+}
+
+func mustLoc(t *testing.T, name string) *time.Location {
+	t.Helper()
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return loc
+}
+
+func mustTime(t *testing.T, s string) time.Time {
+	t.Helper()
+	v, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
 }

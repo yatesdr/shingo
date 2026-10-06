@@ -37,8 +37,8 @@ func (s *MissionService) StatsV2(f telemetry.Filter) (*telemetry.StatsV2, error)
 
 // Timeseries returns mission metrics bucketed by hour or day for the trend
 // charts (plan §3.B / §15.B).
-func (s *MissionService) Timeseries(f telemetry.Filter, bucket string) ([]telemetry.Bucket, error) {
-	return s.db.GetMissionTimeseries(f, bucket)
+func (s *MissionService) Timeseries(f telemetry.Filter, bucket string, loc *time.Location) ([]telemetry.Bucket, error) {
+	return s.db.GetMissionTimeseries(f, bucket, loc)
 }
 
 // RobotMissionAggs returns per-robot mission count + busy time over the
@@ -87,8 +87,8 @@ func (s *MissionService) DwellStats(pairs []domain.DwellPair, payloadCode, order
 //
 // noticeAfter is the config threshold. It is passed in rather than read here so
 // the card's split and every other fault surface use the same number.
-func (s *MissionService) FaultStats(start, end time.Time, noticeAfter time.Duration) (*orders.FaultStats, error) {
-	return s.db.GetFaultStats(orders.LeadTimeRange{Start: start, End: end}, noticeAfter)
+func (s *MissionService) FaultStats(start, end time.Time, noticeAfter time.Duration, loc *time.Location) (*orders.FaultStats, error) {
+	return s.db.GetFaultStats(orders.LeadTimeRange{Start: start, End: end}, noticeAfter, loc)
 }
 
 // Breakdown returns the top-10 mission groups by robot or route (plan §3.F).
@@ -140,8 +140,8 @@ func (s *MissionService) ListEvents(orderID int64) ([]*telemetry.Event, error) {
 	return s.db.ListMissionEvents(orderID)
 }
 
-// List returns telemetry for every mission matching the filter along
-// with a total row count (for pagination).
-func (s *MissionService) List(f telemetry.Filter) ([]*telemetry.Mission, int, error) {
+// List returns the Missions list for the filter — finished missions and the
+// orders still in flight — along with a total row count (for pagination).
+func (s *MissionService) List(f telemetry.Filter) ([]*telemetry.ListRow, int, error) {
 	return s.db.ListMissions(f)
 }

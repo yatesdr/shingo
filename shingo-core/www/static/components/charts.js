@@ -59,10 +59,13 @@ function applyTheme(config, c) {
     if (o.responsive === undefined) o.responsive = true;
     if (o.maintainAspectRatio === undefined) o.maintainAspectRatio = false;
 
-    // Thin lines, gentle smoothing, no dots — datasets can still override.
+    // Thin straight lines, no dots — except a point with no neighbour, which
+    // would otherwise draw nothing at all (a one-bucket window opened blank).
+    // tension stays 0: a curve between two hourly points asserts values that
+    // were never measured (guide §Data visualization, "Lines are straight").
     o.elements = o.elements || {};
-    o.elements.line = Object.assign({ borderWidth: 1.6, tension: 0.3 }, o.elements.line || {});
-    o.elements.point = Object.assign({ radius: 0, hitRadius: 6, hoverRadius: 3 }, o.elements.point || {});
+    o.elements.line = Object.assign({ borderWidth: 1.6, tension: 0 }, o.elements.line || {});
+    o.elements.point = Object.assign({ radius: isolatedPointRadius, hitRadius: 6, hoverRadius: 3 }, o.elements.point || {});
     o.elements.bar = Object.assign({ borderRadius: 3 }, o.elements.bar || {});
 
     o.plugins = o.plugins || {};
@@ -145,12 +148,48 @@ export function installChartThemeHook() {
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 }
 
-// Format a bucket_start ISO string for a category x-axis label.
-export function bucketLabel(iso, bucket) {
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return '';
-    if (bucket === 'day') {
-        return (d.getMonth() + 1) + '/' + d.getDate();
+// isolatedPointRadius draws a marker only where a value has no drawn
+// neighbour on either side — a single-bucket series, or one value between gaps.
+// Everywhere else the line carries the data and dots would be clutter.
+function isolatedPointRadius(ctx) {
+    const data = ctx.dataset && ctx.dataset.data;
+    if (!data || ctx.type !== 'data') return 0;
+    const i = ctx.dataIndex;
+    const here = data[i];
+    if (here === null || here === undefined) return 0;
+    const prev = i > 0 ? data[i - 1] : null;
+    const next = i < data.length - 1 ? data[i + 1] : null;
+    const lone = (prev === null || prev === undefined) && (next === null || next === undefined);
+    return lone ? 3 : 0;
+}
+
+// progressBarColors gives each bar its colour, with the in-progress bucket
+// (inProgress from plantclock.js) washed out so a partly-elapsed hour does
+// not read as a drop. flags[i] is true for the in-progress bucket.
+export function progressBarColors(color, flags) {
+    return flags.map((f) => (f ? withAlpha(color, 0.35) : color));
+}
+
+// progressSegment dashes the line segment that runs into the in-progress
+// bucket, for the same reason. Combine with any other segment rule by
+// passing it as `other`.
+export function progressSegment(flags, other) {
+    return {
+        borderDash: (ctx) => {
+            if (flags[ctx.p1DataIndex]) return [4, 4];
+            return other ? other(ctx) : undefined;
+        },
+    };
+}
+
+// withAlpha turns a resolved colour into a translucent fill (P19 soft fills).
+// Handles hex; falls back to color-mix for var()/named colours.
+export function withAlpha(color, a) {
+    if (color && color[0] === '#') {
+        let hex = color.slice(1);
+        if (hex.length === 3) hex = hex.split('').map((x) => x + x).join('');
+        const n = parseInt(hex, 16);
+        return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
     }
-    return String(d.getHours()).padStart(2, '0') + ':00';
+    return 'color-mix(in srgb, ' + color + ' ' + Math.round(a * 100) + '%, transparent)';
 }

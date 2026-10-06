@@ -11,6 +11,7 @@
     </select>
     <select id="ops-station" title="Station"><option value="">All stations</option></select>
     <select id="ops-robot" title="Robot"><option value="">All robots</option></select>
+    <span class="text-muted tnum" id="ops-asof" title="Window figures last fetched (plant time). Active orders and alerts update live."></span>
     <button class="btn btn-sm" id="ops-refresh" title="Refresh">&#x21bb;</button>
     <span class="live-pill" id="ops-live" title="Live SSE connection">&#9675; offline</span>
     <span class="demo-badge" id="ops-demo-badge" style="display:none">DEMO MODE &mdash; synthetic data</span>
@@ -39,7 +40,6 @@
   <section class="card" id="ops-fleet">
     <div class="section-head">
       <h2>Robot Fleet</h2>
-      <button class="view-detail" id="ops-fleet-detail" data-action="openDrill:fleet_load">View detail &rarr;</button>
     </div>
     <div id="ops-fleet-body">
       <div class="dash-empty">Loading fleet&hellip;</div>

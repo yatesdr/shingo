@@ -1,4 +1,4 @@
-import { api, apiGet, apiPost, debounce, delegateActions, el, escapeHtml, h, hideModal, showModal, timeAgo, toast, uiConfirm, uiPrompt } from '/static/app.js';
+import { api, apiGet, apiPost, debounce, delegateActions, el, escapeHtml, h, hideModal, showModal, timeAgoHTML, toast, uiConfirm, uiPrompt } from '/static/app.js';
 import { onSSE } from '/static/shared/utils.js';
 
 // ===== STATE =====
@@ -135,10 +135,10 @@ function renderOverview(data) {
     html += bdField('Claimed By', 'Order #' + b.claimed_by);
   }
   if (b.last_counted_at) {
-    html += bdField('Last Counted', timeAgo(b.last_counted_at) + ' by ' + esc(b.last_counted_by));
+    html += bdField('Last Counted', timeAgoHTML(b.last_counted_at) + ' by ' + esc(b.last_counted_by));
   }
-  html += bdField('Created', timeAgo(b.created_at));
-  html += bdField('Updated', timeAgo(b.updated_at));
+  html += bdField('Created', timeAgoHTML(b.created_at));
+  html += bdField('Updated', timeAgoHTML(b.updated_at));
   html += '</div>';
 
   if (data.current_order) {
@@ -339,7 +339,7 @@ function renderJournal(data) {
     html += h`<div class="timeline">${
       data.audit.map(function(e) {
         return h`<div class="timeline-item">
-          <div class="time">${{__html:true, value: timeAgo(e.created_at)}} &middot; ${e.actor}</div>
+          <div class="time">${{__html:true, value: timeAgoHTML(e.created_at)}} &middot; ${e.actor}</div>
           <div>${e.action}${(e.old_value || e.new_value) ? {__html:true, value: h`: ${e.old_value} &rarr; ${e.new_value}`} : ''}${e.detail ? {__html:true, value: h` &mdash; ${e.detail}`} : ''}</div>
         </div>`;
       })
@@ -355,7 +355,7 @@ function renderJournal(data) {
       data.recent_orders.map(function(o) {
         return h`<tr><td>${o.id}</td><td>${o.order_type || ''}</td>
           <td><span class="badge badge-${o.status}">${o.status}</span></td>
-          <td>${{__html:true, value: timeAgo(o.created_at)}}</td></tr>`;
+          <td>${{__html:true, value: timeAgoHTML(o.created_at)}}</td></tr>`;
       })
     }</tbody></table>`;
   }

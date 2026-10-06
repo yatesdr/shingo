@@ -3,7 +3,10 @@ package orders
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"time"
+
+	"shingo/protocol/clock"
 )
 
 // FaultStats is the /missions Faults card: what happens to a faulted order, how
@@ -19,6 +22,8 @@ type FaultStats struct {
 	Outcomes []FaultOutcome `json:"outcomes"`
 	// PerDay is the daily count, split replanning vs notice. The split IS the
 	// card: 730 faults a month and 24 that mattered are the same bar otherwise.
+	// One entry per plant day of the window through today, a day with no fault
+	// included as zero: the card's "N / day" divides by len(PerDay).
 	PerDay []FaultDay `json:"per_day"`
 	// ByRobot, ByNode and ByReason are the top 10 of each.
 	ByRobot  []FaultGroup `json:"by_robot"`
@@ -101,13 +106,18 @@ faults AS (
        AND created_at >= $1 AND created_at <= $2
 )`
 
-// GetFaultStats computes the Faults card over [start, end].
+// GetFaultStats computes the Faults card over [start, end]. loc is the plant
+// zone the per-day split is cut in: the session is pinned to UTC, so a bare
+// date_trunc('day') put a Central plant's evening faults on the next day.
 //
 // Five round trips over one CTE rather than one query returning five shapes.
 // Same trade DwellStats makes and for the same reason: the machinery to avoid it
 // costs more than the queries do, and each of these is a grouped aggregate over
 // at most a few thousand rows.
-func GetFaultStats(db *sql.DB, r LeadTimeRange, noticeAfter time.Duration) (*FaultStats, error) {
+func GetFaultStats(db *sql.DB, r LeadTimeRange, noticeAfter time.Duration, loc *time.Location) (*FaultStats, error) {
+	if loc == nil {
+		loc = time.UTC
+	}
 	noticeS := noticeAfter.Seconds()
 	args := []any{r.Start.UTC(), r.End.UTC(), noticeS}
 	out := &FaultStats{NoticeAfterSeconds: int(noticeS)}
@@ -137,10 +147,10 @@ func GetFaultStats(db *sql.DB, r LeadTimeRange, noticeAfter time.Duration) (*Fau
 
 	// Per day, split by the threshold.
 	rows, err = db.Query(faultCTE+`
-		SELECT date_trunc('day', created_at)::date,
+		SELECT (created_at AT TIME ZONE $4)::date,
 		       COUNT(*) FILTER (WHERE dwell_s <  $3),
 		       COUNT(*) FILTER (WHERE dwell_s >= $3)
-		  FROM faults GROUP BY 1 ORDER BY 1`, args...)
+		  FROM faults GROUP BY 1 ORDER BY 1`, append(args, loc.String())...)
 	if err != nil {
 		return nil, fmt.Errorf("faults per day: %w", err)
 	}
@@ -156,6 +166,7 @@ func GetFaultStats(db *sql.DB, r LeadTimeRange, noticeAfter time.Duration) (*Fau
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("faults per day: %w", err)
 	}
+	out.PerDay = fillFaultDays(out.PerDay, r.Start, r.End, clock.Now(), loc)
 
 	// The three top-10s. Each is the same shape over a different key, so one
 	// helper runs all three — a new dimension is a line, not a function.
@@ -198,4 +209,38 @@ func GetFaultStats(db *sql.DB, r LeadTimeRange, noticeAfter time.Duration) (*Fau
 		}
 	}
 	return out, nil
+}
+
+// fillFaultDays lays the counted days onto every plant day from the window's
+// start to the earlier of its end and now (R8). Before this the slice held only
+// the days that had a fault, so a seven-day window with faults on one day
+// printed a rate seven times too high. A day is keyed as the SQL ::date scans:
+// midnight UTC of the plant date. A counted day outside the span is kept, never
+// dropped: the fill may add zeros, it may not lose a count.
+func fillFaultDays(counted []FaultDay, start, end, now time.Time, loc *time.Location) []FaultDay {
+	byDay := make(map[string]FaultDay, len(counted))
+	for _, d := range counted {
+		byDay[d.Day.Format(time.DateOnly)] = d
+	}
+	last := end
+	if now.Before(last) {
+		last = now
+	}
+	s, l := start.In(loc), last.In(loc)
+	lastDay := time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, time.UTC)
+	out := make([]FaultDay, 0, len(counted))
+	for d := time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, time.UTC); !d.After(lastDay); d = d.AddDate(0, 0, 1) {
+		k := d.Format(time.DateOnly)
+		if c, ok := byDay[k]; ok {
+			out = append(out, c)
+			delete(byDay, k)
+			continue
+		}
+		out = append(out, FaultDay{Day: d})
+	}
+	for _, c := range byDay {
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Day.Before(out[j].Day) })
+	return out
 }

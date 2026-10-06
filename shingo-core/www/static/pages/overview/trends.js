@@ -7,7 +7,10 @@
 // /api/missions/timeseries fetch powers all four.
 
 import { apiGet } from '/static/app.js';
-import { makeChart, installChartThemeHook, bucketLabel, chartColors } from '/static/components/charts.js';
+import { formatDuration } from '/static/shared/utils.js';
+import { makeChart, installChartThemeHook, chartColors, withAlpha, progressBarColors, progressSegment } from '/static/components/charts.js';
+import { windowFor, bucketLabel, inProgress } from '/static/components/plantclock.js';
+import { RUN_TIME_TITLE } from '/static/components/DrillModal.js';
 
 // Minimum completed+failed missions for a bucket's success rate to be plotted.
 // Below this, the rate is pure 100/0 noise (a 1-mission bucket is always 0% or
@@ -30,8 +33,8 @@ export function createTrendsSection(store, opts) {
         if (state.station) p.set('station_id', state.station);
         if (state.robot) p.set('robot_id', state.robot);
         apiGet('/api/missions/timeseries?' + p.toString())
-            .then((res) => render((res && res.points) || [], win.bucket))
-            .catch(() => render([], win.bucket));
+            .then((res) => render((res && res.points) || [], win))
+            .catch(() => render([], win));
     }
 
     function destroyCharts() {
@@ -39,71 +42,100 @@ export function createTrendsSection(store, opts) {
         charts = [];
     }
 
-    function render(points, bucket) {
+    // The series is continuous (the server zero-fills every bucket up to now),
+    // so "no rows" means no bucket finished a mission, not an empty array.
+    function render(points, win) {
         destroyCharts();
         const grid = document.getElementById(gridId);
         if (!grid) return;
         grid.innerHTML = '';
-        if (!points.length) {
-            grid.innerHTML = '<div class="dash-empty">No missions in this window.</div>';
+        const bucket = win.bucket;
+        if (!points.some((p) => p.total > 0)) {
+            grid.innerHTML = '<div class="dash-empty">No missions finished ' + windowText(win) + '.</div>';
             return;
         }
         const c = chartColors();
         const labels = points.map((p) => bucketLabel(p.bucket_start, bucket));
+        // The bucket now falls in has not finished: washed-out bar, dashed line.
+        const live = points.map((p) => inProgress(p.bucket_start, bucket));
 
         charts.push(buildChart(grid, 'throughput', 'Throughput (missions per ' + bucket + ')', {
             type: 'bar',
-            data: { labels, datasets: [{ data: points.map((p) => p.total), backgroundColor: c.vizIndigo, borderRadius: 2 }] }, // throughput bars = indigo / series-1 (P19)
+            data: { labels, datasets: [{ data: points.map((p) => p.total), backgroundColor: progressBarColors(c.vizIndigo, live), borderRadius: 2 }] }, // throughput bars = indigo / series-1 (P19)
+            options: { scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
         }));
 
+        // Thin buckets (<MIN_RATE_DENOM finished missions) are plotted as null
+        // so 100/0 noise doesn't read as a real swing. spanGaps bridges them with
+        // a SAME-COLOR DASHED segment: solid where the rate is trustworthy,
+        // dashed where it spans a thin bucket or runs into the bucket in progress.
+        const rates = points.map((p) => ((p.confirmed + p.failed) >= MIN_RATE_DENOM ? round1(p.success_rate) : null));
         charts.push(buildChart(grid, 'success_rate', 'Success rate (%)', {
             type: 'line',
-            // Thin buckets (<MIN_RATE_DENOM finished missions) are plotted as null
-            // so 100/0 noise doesn't read as a real swing. Rather than leave a
-            // blank gap, spanGaps bridges them with a SAME-COLOR DASHED segment:
-            // solid where the rate is trustworthy, dashed where it's spanning a
-            // dropped/thin bucket — via the segment.borderDash callback, which
-            // dashes any segment touching a skipped point.
             data: { labels, datasets: [{
-                data: points.map((p) => ((p.confirmed + p.failed) >= MIN_RATE_DENOM ? round1(p.success_rate) : null)),
-                borderColor: c.vizGreen, backgroundColor: withAlpha(c.vizGreen, 0.13), tension: 0.3, pointRadius: 0, fill: true, // success = green + soft fill (P19)
+                data: rates,
+                borderColor: c.vizGreen, backgroundColor: withAlpha(c.vizGreen, 0.13), fill: true, // success = green + soft fill (P19)
                 spanGaps: true,
-                segment: { borderDash: (ctx) => (ctx.p0.skip || ctx.p1.skip) ? [6, 6] : undefined },
+                segment: progressSegment(live, (ctx) => (ctx.p0.skip || ctx.p1.skip) ? [6, 6] : undefined),
             }] },
             options: { scales: { y: { min: 0, max: 100 } } },
-        }));
+        }, hasValue(rates) ? '' : 'No ' + bucket + ' finished ' + MIN_RATE_DENOM + ' or more missions ' + windowText(win) + ', so no rate is plotted.'));
 
-        charts.push(buildChart(grid, 'duration', 'P50 / P95 duration (s)', {
+        // Durations plot in minutes; the tooltip prints the compound duration.
+        // A bucket with no finished robot mission has no duration (null), not 0.
+        const p50 = points.map((p) => (p.p50_ms > 0 ? toMin(p.p50_ms) : null));
+        const p95 = points.map((p) => (p.p95_ms > 0 ? toMin(p.p95_ms) : null));
+        charts.push(buildChart(grid, 'duration', 'P50 / P95 run time (min)', {
             type: 'line',
             data: {
                 labels,
                 datasets: [
-                    { label: 'P50', data: points.map((p) => msToS(p.p50_ms)), borderColor: c.vizSky, backgroundColor: c.vizSky, tension: 0.3, pointRadius: 0, fill: false }, // P19: P50 sky
-                    { label: 'P95', data: points.map((p) => msToS(p.p95_ms)), borderColor: c.vizViolet, backgroundColor: c.vizViolet, tension: 0.3, pointRadius: 0, fill: false }, // P19: P95 violet
+                    { label: 'P50', data: p50, borderColor: c.vizSky, backgroundColor: c.vizSky, fill: false, segment: progressSegment(live) }, // P19: P50 sky
+                    { label: 'P95', data: p95, borderColor: c.vizViolet, backgroundColor: c.vizViolet, fill: false, segment: progressSegment(live) }, // P19: P95 violet
                 ],
             },
-            options: { plugins: { legend: { display: true, labels: { color: c.text, boxWidth: 12 } } } },
-        }));
+            options: {
+                scales: { y: { beginAtZero: true } },
+                plugins: {
+                    legend: { display: true, labels: { color: c.text, boxWidth: 12 } },
+                    tooltip: { callbacks: { label: (ctx) => ctx.dataset.label + ' ' + formatDuration(ctx.parsed.y * 60000) } },
+                },
+            },
+        }, (hasValue(p50) || hasValue(p95)) ? '' : 'No robot mission finished ' + windowText(win) + '.', RUN_TIME_TITLE));
 
+        // Scales to its data: rates here sit well under 1%, and a pinned 0–100
+        // axis flattened them onto the floor.
         charts.push(buildChart(grid, 'cancellation', 'Cancellation & failure rate (%)', {
             type: 'line',
             data: {
                 labels,
                 datasets: [
-                    { label: 'Cancelled', data: points.map((p) => p.total ? round1(p.cancelled / p.total * 100) : 0), borderColor: c.vizAmber, backgroundColor: c.vizAmber, tension: 0.3, pointRadius: 0, fill: false }, // P19: cancelled amber
-                    { label: 'Failed', data: points.map((p) => p.total ? round1((p.failed || 0) / p.total * 100) : 0), borderColor: c.vizCoral, backgroundColor: c.vizCoral, tension: 0.3, pointRadius: 0, fill: false }, // P19: failure = coral (semantic)
+                    { label: 'Cancelled', data: points.map((p) => p.total ? round1(p.cancelled / p.total * 100) : null), borderColor: c.vizAmber, backgroundColor: c.vizAmber, fill: false, segment: progressSegment(live) }, // P19: cancelled amber
+                    { label: 'Failed', data: points.map((p) => p.total ? round1((p.failed || 0) / p.total * 100) : null), borderColor: c.vizCoral, backgroundColor: c.vizCoral, fill: false, segment: progressSegment(live) }, // P19: failure = coral (semantic)
                 ],
             },
-            options: { scales: { y: { min: 0, max: 100 } }, plugins: { legend: { display: true, labels: { color: c.text, boxWidth: 12 } } } },
+            options: { scales: { y: { beginAtZero: true } }, plugins: { legend: { display: true, labels: { color: c.text, boxWidth: 12 } } } },
         }));
 
         // Initial draw animates; subsequent data sets shouldn't (§4) — handled
         // by rebuilding fresh charts each refresh, so no per-update jitter.
     }
 
-    function buildChart(grid, metric, caption, config) {
+    // buildChart draws one cell. emptyText, when set, replaces the chart with
+    // the guide's empty state: an axis frame with nothing in it reads as "all
+    // zero", which is a different claim.
+    function buildChart(grid, metric, caption, config, emptyText, title) {
         const cell = document.createElement('div');
         cell.innerHTML = '<div class="chart-caption">' + caption + '</div>';
+        if (title) cell.firstChild.title = title;
+        grid.appendChild(cell);
+        if (emptyText) {
+            const empty = document.createElement('div');
+            empty.className = 'dash-empty';
+            empty.textContent = emptyText;
+            cell.appendChild(empty);
+            return null;
+        }
         const box = document.createElement('div');
         box.className = 'chart-box';
         box.style.height = '200px';
@@ -111,7 +143,6 @@ export function createTrendsSection(store, opts) {
         const canvas = document.createElement('canvas');
         box.appendChild(canvas);
         cell.appendChild(box);
-        grid.appendChild(cell);
         return makeChart(canvas, config);
     }
 
@@ -119,37 +150,9 @@ export function createTrendsSection(store, opts) {
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────
-function ymd(d) {
-    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+function windowText(win) {
+    return win.days === 1 ? 'today' : 'in the last ' + win.days + ' days';
 }
-
-// windowFor maps the global ops range (today/7d/30d) to a date window + bucket
-// granularity. 7d/30d bucket by DAY (readable axis); Today buckets hourly.
-function windowFor(range) {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    if (range === '30d') {
-        const since = new Date(today); since.setDate(since.getDate() - 29);
-        return { since: ymd(since), until: ymd(today), bucket: 'day' };
-    }
-    if (range === '7d') {
-        const since = new Date(today); since.setDate(since.getDate() - 6);
-        return { since: ymd(since), until: ymd(today), bucket: 'day' };
-    }
-    // 'today' — hourly across the current day.
-    return { since: ymd(today), until: ymd(today), bucket: 'hour' };
-}
-
+function hasValue(series) { return series.some((v) => v !== null && v !== undefined); }
 function round1(v) { return Math.round((v || 0) * 10) / 10; }
-function msToS(ms) { return Math.round((ms || 0) / 100) / 10; }
-
-// withAlpha turns a resolved color into a translucent area fill (P19 soft fills).
-// Handles hex; falls back to color-mix for var()/named colors.
-function withAlpha(color, a) {
-    if (color && color[0] === '#') {
-        let hex = color.slice(1);
-        if (hex.length === 3) hex = hex.split('').map((x) => x + x).join('');
-        const n = parseInt(hex, 16);
-        return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
-    }
-    return 'color-mix(in srgb, ' + color + ' ' + Math.round(a * 100) + '%, transparent)';
-}
+function toMin(ms) { return Math.round(ms / 600) / 100; }
