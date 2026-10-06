@@ -3,6 +3,37 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-06 — Edge process setup: fixes, plain words, a cleaner cell picture
+
+Edge only (Edge v16), plus a gate lock. Not pushed or deployed.
+
+- A removed position leaves its screen's list
+- Name lookups prefer the live position over a retired one
+- A screen cannot claim another process's position
+- Changeover state words derived; two unused columns dropped (Edge v16)
+- Setup screens use one set of words: part, 1-robot swap
+- One editor per fact; one dialog size and Escape rule
+- Fix button gone; the problem line takes you to the position
+- Cell picture redrawn as fixed modules on a grid
+- The picture draws every move and place its claim names
+- "Core is unreachable" only when it is
+- A part taken off a saved flow now saves
+- One gate per machine, with a lock that names its holder
+
+## 2026-10-05 — Core UI: one plant clock, Overview numbers that add up
+
+Core 142. Pushed; not deployed.
+
+- Charts read the plant clock and plant days
+- Overview fleet, stuck and cancel numbers corrected
+- Fleet vendor times read as seconds; stored ones fixed (142)
+- Orders board pages and searches on the server
+- Inventory, Bins, Nodes, Robots and wall-display cleanups
+- Test-node generator and unused parts endpoints removed
+- Login page no longer shows default credentials
+- HTML escaping covers quotes
+- UI style guide split into per-section files
+
 ## 2026-10-04 — One answer per button, keep-staged in every mode
 
 Core first, then Edge (Core 141, Edge v14–v15). Not pushed or deployed.
