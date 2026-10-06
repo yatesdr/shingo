@@ -40,16 +40,16 @@ func (db *DB) GetMissionTimeseries(f telemetry.Filter, bucket string, loc *time.
 	return telemetry.GetTimeseries(db.DB, f, bucket, loc)
 }
 
-func (db *DB) GetRobotMissionAggs(f telemetry.Filter) ([]telemetry.RobotMissionAgg, error) {
-	return telemetry.GetRobotMissionAggs(db.DB, f)
+func (db *DB) GetRobotMissionAggs(f telemetry.Filter, now time.Time) ([]telemetry.RobotMissionAgg, error) {
+	return telemetry.GetRobotMissionAggs(db.DB, f, now)
 }
 
-func (db *DB) GetHourlyConcurrency(dayStart time.Time, stationID string) ([]telemetry.HourConcurrency, error) {
-	return telemetry.GetHourlyConcurrency(db.DB, dayStart, stationID)
+func (db *DB) GetHourlyConcurrency(dayStart, dayEnd, now time.Time, stationID string) ([]telemetry.HourConcurrency, error) {
+	return telemetry.GetHourlyConcurrency(db.DB, dayStart, dayEnd, now, stationID)
 }
 
-func (db *DB) GetDailyConcurrency(since, until time.Time, stationID string) ([]telemetry.DayConcurrency, error) {
-	return telemetry.GetDailyConcurrency(db.DB, since, until, stationID)
+func (db *DB) GetDailyConcurrency(since, until, now time.Time, tz, stationID string) ([]telemetry.DayConcurrency, error) {
+	return telemetry.GetDailyConcurrency(db.DB, since, until, now, tz, stationID)
 }
 
 func (db *DB) GetMissionBreakdown(f telemetry.Filter, by string) ([]telemetry.BreakdownRow, error) {

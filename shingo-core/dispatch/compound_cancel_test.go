@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
 )
@@ -266,4 +267,17 @@ func idsOf(os []*orders.Order) []int64 {
 		out = append(out, o.ID)
 	}
 	return out
+}
+
+// TestReshuffleCancelDetailsClassifyAsShingo guards the Overview cancel-origin
+// split against a reworded constant: every detail a reshuffle teardown cancels
+// a leg with must classify as a shingo cancel, not unclassified. The classifier
+// keys on prefixes (domain.ClassifyCancelOrigin), so this is where a new
+// spelling is caught — in the package that owns the strings.
+func TestReshuffleCancelDetailsClassifyAsShingo(t *testing.T) {
+	for _, detail := range []string{ReshuffleDissolveDetail, ReshuffleLegFailedDetail, reshuffleWithdrawnDetail} {
+		if got := domain.ClassifyCancelOrigin("", detail); got != domain.CancelOriginShingo {
+			t.Errorf("ClassifyCancelOrigin(%q) = %q, want %q", detail, got, domain.CancelOriginShingo)
+		}
+	}
 }

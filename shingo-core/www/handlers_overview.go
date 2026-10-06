@@ -33,13 +33,23 @@ func (h *Handlers) apiFootprint(w http.ResponseWriter, r *http.Request) {
 }
 
 // apiRobotsFleet powers the Robot Fleet section (plan §15.C): per-robot
-// utilization rows (mission-derived, v1) and the Fleet Load chart's hourly
-// concurrency curve, plus headline fleet KPIs. The typical-day overlay is
-// deferred (returns an empty typical_series) — see Q-008.
+// utilization rows and the Fleet Load chart's concurrency curve, plus headline
+// fleet KPIs. The typical-day overlay is deferred (returns an empty
+// typical_series) — see Q-008.
+//
+// ONE DEFINITION OF "USED". Busy time is a robot's time on an order —
+// finished missions and open orders alike, so a robot held on an order is busy
+// for every minute of the hold. Fleet utilization is the robots' busy time over
+// robots × the elapsed window, which is the per-robot bars averaged: the card
+// and the bars under it can no longer disagree. avg_load is the same quantity
+// in robots (util × size). Peak concurrency is the most robots on an order at
+// one instant; a robot that touched an hour for 75 seconds is not "used" for
+// that hour.
 func (h *Handlers) apiRobotsFleet(w http.ResponseWriter, r *http.Request) {
 	f := parseMissionFilter(r)
+	now := clock.Now()
 
-	aggs, _ := h.engine.MissionService().RobotMissionAggs(f)
+	aggs, _ := h.engine.MissionService().RobotMissionAggs(f, now)
 	type agg struct{ missions, busy int64 }
 	byID := make(map[string]agg, len(aggs))
 	for _, a := range aggs {
@@ -55,7 +65,7 @@ func (h *Handlers) apiRobotsFleet(w http.ResponseWriter, r *http.Request) {
 	windowMS := int64(24 * 60 * 60 * 1000)
 	if f.Since != nil && f.Until != nil {
 		end := *f.Until
-		if now := clock.Now(); now.Before(end) {
+		if now.Before(end) {
 			end = now
 		}
 		if d := end.Sub(*f.Since).Milliseconds(); d > 0 {
@@ -65,7 +75,7 @@ func (h *Handlers) apiRobotsFleet(w http.ResponseWriter, r *http.Request) {
 
 	robots := h.engine.GetAllCachedRobots()
 	rows := make([]map[string]any, 0, len(robots))
-	var online, missionsTotal, size int64
+	var online, missionsTotal, size, fleetBusyMS int64
 	for _, rb := range robots {
 		// Skip ghost cache entries with no vehicle_id: they render as a nameless
 		// offline row and inflate the fleet size (Springfield showed 8 for 7 real
@@ -79,17 +89,15 @@ func (h *Handlers) apiRobotsFleet(w http.ResponseWriter, r *http.Request) {
 		if rb.Connected {
 			online++
 		}
-		util := 0.0
-		if windowMS > 0 {
-			util = float64(a.busy) / float64(windowMS) * 100
-			if util > 100 {
-				util = 100
-			}
-		}
+		// A robot cannot be busy for longer than the window; a finished mission
+		// that began before it is counted whole, so cap here, once, and let the
+		// fleet sum use the same capped figure the bar shows.
+		busy := min(a.busy, windowMS)
+		fleetBusyMS += busy
 		rows = append(rows, map[string]any{
 			"vehicle_id": rb.VehicleID,
 			"state":      rb.State(),
-			"util_pct":   util,
+			"util_pct":   float64(busy) / float64(windowMS) * 100,
 			"missions":   a.missions,
 			"busy_ms":    a.busy,
 			"battery":    rb.BatteryLevel,
@@ -106,30 +114,24 @@ func (h *Handlers) apiRobotsFleet(w http.ResponseWriter, r *http.Request) {
 	// Fleet Load: on a Today-width window keep the hourly intraday concurrency
 	// curve; on a multi-day range (7d/30d) switch to a per-day peak/avg rollup
 	// so the chart honors the range selector — the curve used to always show a
-	// single day regardless of range. avg_load/peak/util are computed from
-	// whichever series is in play; load_granularity tells the frontend which
-	// shape load_series carries.
+	// single day regardless of range. load_granularity tells the frontend which
+	// shape load_series carries. Only the peak is read from the series; the
+	// averages come from busy time above.
 	var (
 		loadSeries      any
 		loadGranularity string
 		peak            int64
 		peakHour        string
-		avgLoad         float64
 	)
 	if f.Since != nil && f.Until != nil && f.Until.Sub(*f.Since) > 36*time.Hour {
 		loadGranularity = "day"
-		days, _ := h.engine.MissionService().DailyConcurrency(*f.Since, *f.Until, f.StationID)
+		days, _ := h.engine.MissionService().DailyConcurrency(*f.Since, *f.Until, now, plantLocation.String(), f.StationID)
 		loadSeries = days
-		var sum float64
 		for _, d := range days {
-			sum += d.Avg
 			if d.Peak > peak {
 				peak = d.Peak
 				peakHour = d.Day.In(plantLocation).Format("Jan 2") // plant-local day
 			}
-		}
-		if len(days) > 0 {
-			avgLoad = sum / float64(len(days)) // mean of daily-average concurrency
 		}
 	} else {
 		loadGranularity = "hour"
@@ -137,16 +139,18 @@ func (h *Handlers) apiRobotsFleet(w http.ResponseWriter, r *http.Request) {
 		// plant timezone: parseMissionFilter normalizes Until to UTC, so
 		// truncating in its own (UTC) location rolled "today 23:59 plant-local"
 		// into tomorrow's UTC day — charting an all-future, all-zero series.
-		day := clock.Now()
+		day := now
 		if f.Until != nil {
 			day = *f.Until
 		}
-		conc, _ := h.engine.MissionService().HourlyConcurrency(plantDayStart(day), f.StationID)
+		// The day ends at the next plant midnight, not 24 hours on: a DST day is 23
+		// or 25 hours long.
+		dayStart := plantDayStart(day)
+		conc, _ := h.engine.MissionService().HourlyConcurrency(dayStart, dayStart.AddDate(0, 0, 1), now, f.StationID)
 
-		// Clamp to elapsed hours (min(now, until)): a "today" view at 9am
-		// otherwise averages in ~15 future zero-hours (deflating avg load / fleet
-		// util) and a stray future bucket could read as the peak.
-		cutoff := clock.Now()
+		// Clamp to elapsed hours (min(now, until)): a stray future bucket must
+		// not read as the peak or draw as a measured zero.
+		cutoff := now
 		if f.Until != nil && f.Until.Before(cutoff) {
 			cutoff = *f.Until
 		}
@@ -159,20 +163,16 @@ func (h *Handlers) apiRobotsFleet(w http.ResponseWriter, r *http.Request) {
 		conc = kept
 		loadSeries = conc
 
-		var sum int64
 		for _, c := range conc {
-			sum += c.Concurrency
 			if c.Concurrency > peak {
 				peak = c.Concurrency
 				peakHour = c.Hour.In(plantLocation).Format("15:04") // plant-local, not UTC
 			}
 		}
-		if len(conc) > 0 {
-			avgLoad = float64(sum) / float64(len(conc))
-		}
 	}
 
 	// size is the count of real (non-blank) robots, accumulated above.
+	avgLoad := float64(fleetBusyMS) / float64(windowMS)
 	utilPct := 0.0
 	if size > 0 {
 		utilPct = avgLoad / float64(size) * 100

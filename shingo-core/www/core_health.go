@@ -349,7 +349,7 @@ func deriveReasons(c CoreHealth, depsDown []string) []string {
 	// derived from never goes down, so testing that against zero latched the
 	// verdict degraded for the life of the process.
 	if c.DBWaitsRecent > 0 {
-		reasons = append(reasons, fmt.Sprintf("DB pool waits: %d in %s", c.DBWaitsRecent, dbWaitWindow))
+		reasons = append(reasons, fmt.Sprintf("DB pool waits: %d in %s", c.DBWaitsRecent, FormatDuration(dbWaitWindow)))
 	}
 	// Strictly greater: a box at exactly its core count is fully used, not
 	// overloaded, and flagging that would cry wolf on every busy plant.

@@ -661,17 +661,62 @@ func SystemStopReason(detail string) string {
 // Cancel-origin buckets for the v2 stats split (Q-030). Only meaningful for
 // rows ClassifyTermination placed in the cancelled bucket.
 const (
-	CancelOriginShingo       = "shingo"       // deliberate cancel via shingo: "cancelled by …" / "aborted by …"
+	CancelOriginShingo       = "shingo"       // a person via shingo ("cancelled by …" / "aborted by …"), or Core tearing down its own work
 	CancelOriginRDS          = "rds"          // vendor-side stop, unattributed: "fleet order stopped"
 	CancelOriginUnclassified = "unclassified" // detail matched no known pattern — surfaced so unknowns don't hide
 )
 
-// ClassifyCancelOrigin splits a cancelled mission's terminal detail by origin
-// (Q-030). The decision was to keep these as cancels (not reclassify the RDS
-// stops as failures) but show shingo-origin vs RDS-origin separately, with an
+// coreCancelPrefixes are the details Core writes when IT cancels an order
+// without setting a code — no person and no fleet involved. Each is the start
+// of a reason string handed to dispatch.LifecycleService.CancelOrder (or, once,
+// store.TerminalizeOrder); the writer is named beside it. A coded writer does
+// not belong here: its code decides (cancelCodeOrigin). "coordinated swap "
+// stays for the rows written before swap_peer.go set peer_terminal
+// (2026-09-02). A new uncoded Core-side cancel reason that starts with none of
+// these lands in unclassified, which is the visible failure the unclassified
+// bucket exists for: code it, or add its prefix here.
+var coreCancelPrefixes = []string{
+	"reshuffle dissolved:",                // dispatch.ReshuffleDissolveDetail / ReshuffleLegFailedDetail (compound.go)
+	"reshuffle withdrawn:",                // reshuffleWithdrawnDetail (compound.go)
+	"abandoned:",                          // reconciliation stuck-order sweep (engine/reconciliation_service.go)
+	"coordinated swap ",                   // a swap leg unwound with its dead peer (dispatch/swap_peer.go), pre-code rows
+	"retired: restore-blockers subsystem", // one-off retirement sweep (store/orders.go)
+}
+
+// cancelCodeOrigin is the origin of a coded cancel. Every cancel writer that
+// sets a code sets one of these two: operator_cancelled (the Edge door
+// Dispatcher.HandleOrderCancel, the UI door engine.TerminateOrder, carried-bin
+// recovery's supersede, and the compound children each cascades to) and
+// peer_terminal (dispatch/swap_peer.go). Any other code on a cancelled row has
+// no writer today and stays unclassified, so a new coded writer is seen rather
+// than guessed at.
+func cancelCodeOrigin(code protocol.TermCode) string {
+	switch code {
+	case protocol.TermOperatorCancelled, protocol.TermPeerTerminal:
+		return CancelOriginShingo
+	}
+	return CancelOriginUnclassified
+}
+
+// ClassifyCancelOrigin splits a cancelled mission by origin (Q-030). The
+// decision was to keep these as cancels (not reclassify the RDS stops as
+// failures) but show shingo-origin vs RDS-origin separately, with an
 // unclassified count so unknown detail strings stay visible rather than
 // silently defaulting.
-func ClassifyCancelOrigin(detail string) string {
+//
+// A row with an order_history.code is classified by the code (R4 extended):
+// an Edge changeover cancel carries operator_cancelled and is shingo whatever
+// its prose says. The prose below is only for rows with no code — the uncoded
+// writers and every row written before the code column.
+//
+// Shingo-origin includes Core's own teardowns (coreCancelPrefixes): a
+// reshuffle Core dissolved is as much shingo's decision as an operator's
+// Terminate, and filing it unclassified made the tile say "we don't know" about
+// cancels shingo wrote itself.
+func ClassifyCancelOrigin(code protocol.TermCode, detail string) string {
+	if code != "" {
+		return cancelCodeOrigin(code)
+	}
 	d := strings.ToLower(detail)
 	switch {
 	case strings.Contains(d, "cancelled by") || strings.Contains(d, "canceled by") ||
@@ -679,7 +724,11 @@ func ClassifyCancelOrigin(detail string) string {
 		return CancelOriginShingo
 	case strings.Contains(d, "fleet order stopped"):
 		return CancelOriginRDS
-	default:
-		return CancelOriginUnclassified
 	}
+	for _, p := range coreCancelPrefixes {
+		if strings.HasPrefix(d, p) {
+			return CancelOriginShingo
+		}
+	}
+	return CancelOriginUnclassified
 }

@@ -48,7 +48,8 @@ func TestClassifyTickFeed(t *testing.T) {
 }
 
 // TestTickFeedOldestUnsentAgeText pins the age text the tick-feed panel prints
-// in its "oldest unsent" column, one row per rung of the duration ladder.
+// in its "oldest unsent" column, one row per rung of the duration ladder. It
+// was Go's Duration.String ("11m3s"); it is protocol.FormatDuration now.
 func TestTickFeedOldestUnsentAgeText(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -56,11 +57,11 @@ func TestTickFeedOldestUnsentAgeText(t *testing.T) {
 		want string
 	}{
 		{nil, ""},
-		{i64(0), "0s"},
-		{i64(42_400), "42s"},
-		{i64(663_000), "11m3s"},
-		{i64(5_400_000), "1h30m0s"},
-		{i64(26 * 3_600_000), "26h0m0s"},
+		{i64(0), "0 s"},
+		{i64(42_400), "42 s"},
+		{i64(663_000), "11m"},
+		{i64(5_400_000), "1h 30m"},
+		{i64(26 * 3_600_000), "1d 02h"},
 	} {
 		got := domain.TickFeedStation{OldestUnsentAgeMS: c.ms}.OldestUnsentAge()
 		if got != c.want {

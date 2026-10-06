@@ -133,12 +133,15 @@ func (e *Engine) finalizeMissionTelemetry(ev OrderStatusChangedEvent) {
 	}
 
 	if ev.Snapshot != nil {
+		// SEER RDS reports createTime/terminalTime in epoch SECONDS (the vendor
+		// HTTP API's examples are ten digits). Read as milliseconds they landed
+		// in January 1970 and made every fleet duration a thousandth of itself.
 		if ev.Snapshot.CreateTime > 0 {
-			t := time.UnixMilli(ev.Snapshot.CreateTime)
+			t := time.Unix(ev.Snapshot.CreateTime, 0)
 			mt.VendorCreated = &t
 		}
 		if ev.Snapshot.TerminalTime > 0 {
-			t := time.UnixMilli(ev.Snapshot.TerminalTime)
+			t := time.Unix(ev.Snapshot.TerminalTime, 0)
 			mt.VendorCompleted = &t
 		}
 		if mt.VendorCreated != nil && mt.VendorCompleted != nil {

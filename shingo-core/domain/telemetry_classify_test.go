@@ -1,6 +1,10 @@
 package domain
 
-import "testing"
+import (
+	"testing"
+
+	"shingo/protocol"
+)
 
 // TestClassifyTermination pins the v2 success-rate classifier (plan §8 #5):
 // confirmed states, hard failures, skipped, and the ambiguous
@@ -101,13 +105,54 @@ func TestClassifyCancelOrigin(t *testing.T) {
 		{"Cancelled By Operator", CancelOriginShingo}, // case-insensitive
 		{"fleet order stopped", CancelOriginRDS},
 		{"FLEET ORDER STOPPED", CancelOriginRDS},
+		// Core tearing down its own work (R4) — one per writer in coreCancelPrefixes.
+		{"reshuffle dissolved: the dig's plan went stale; re-planning", CancelOriginShingo},
+		{"reshuffle dissolved: a dig leg failed; the demand re-plans", CancelOriginShingo},
+		{"reshuffle withdrawn: the parent ended as its dig was written", CancelOriginShingo},
+		{"abandoned: stuck in staged past 30m0s", CancelOriginShingo},
+		{"coordinated swap supply (order 42) failed; cancelling evac so it cannot strand the line", CancelOriginShingo},
+		{"retired: restore-blockers subsystem removed", CancelOriginShingo},
+		{"parent order cancelled: cancelled by admin", CancelOriginShingo},
+		// Edge-authored reasons other than "aborted by operator" are not Core's and
+		// stay visible as unclassified.
+		{"changeover cancelled: the keep-staged spot goes back to the outgoing style", CancelOriginUnclassified},
 		{"", CancelOriginUnclassified},
 		{"some reason we've never seen", CancelOriginUnclassified},
 	}
 	for _, c := range cases {
-		if got := ClassifyCancelOrigin(c.detail); got != c.want {
+		if got := ClassifyCancelOrigin("", c.detail); got != c.want {
 			t.Errorf("ClassifyCancelOrigin(%q) = %q, want %q", c.detail, got, c.want)
 		}
+	}
+}
+
+// TestClassifyCancelOrigin_CodeDecides walks every terminal code through the
+// cancel-origin split (R4 extended): a coded row is classified by its code and
+// its prose is not read. The two codes a cancel writer sets are shingo; a code
+// no cancel writer sets is unclassified, so a new coded writer is seen. An
+// Edge changeover cancel arrives coded operator_cancelled, which is why its
+// prose stops deciding.
+func TestClassifyCancelOrigin_CodeDecides(t *testing.T) {
+	shingo := map[protocol.TermCode]bool{
+		protocol.TermOperatorCancelled: true,
+		protocol.TermPeerTerminal:      true,
+	}
+	for _, code := range protocol.AllTermCodes() {
+		want := CancelOriginUnclassified
+		if shingo[code] {
+			want = CancelOriginShingo
+		}
+		// "fleet order stopped" would be RDS by prose; the code wins.
+		if got := ClassifyCancelOrigin(code, "fleet order stopped"); got != want {
+			t.Errorf("ClassifyCancelOrigin(%q, …) = %q, want %q", code, got, want)
+		}
+	}
+	edge := "changeover cancelled: the keep-staged spot goes back to the outgoing style"
+	if got := ClassifyCancelOrigin(protocol.TermOperatorCancelled, edge); got != CancelOriginShingo {
+		t.Errorf("coded Edge changeover cancel = %q, want shingo", got)
+	}
+	if got := ClassifyCancelOrigin("", edge); got != CancelOriginUnclassified {
+		t.Errorf("uncoded Edge changeover cancel = %q, want unclassified (pre-code row)", got)
 	}
 }
 

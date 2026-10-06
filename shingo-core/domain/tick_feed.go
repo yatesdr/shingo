@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"shingo/protocol"
+)
 
 // TickFeedStation is one station's row in the Inventory page's production
 // tick feed panel: the lag its edge last reported on a heartbeat, and the two
@@ -23,11 +27,11 @@ type TickFeedStation struct {
 	ReportStale bool `json:"report_stale"`
 }
 
-// OldestUnsentAge renders OldestUnsentAgeMS for the page, to the second; ""
-// when nothing was reported.
+// OldestUnsentAge renders OldestUnsentAgeMS for the page on the shared duration
+// ladder (protocol.FormatDuration), "" when nothing was reported.
 func (t TickFeedStation) OldestUnsentAge() string {
 	if t.OldestUnsentAgeMS == nil {
 		return ""
 	}
-	return (time.Duration(*t.OldestUnsentAgeMS) * time.Millisecond).Round(time.Second).String()
+	return protocol.FormatDuration(time.Duration(*t.OldestUnsentAgeMS) * time.Millisecond)
 }

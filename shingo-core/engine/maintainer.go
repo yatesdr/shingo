@@ -82,7 +82,7 @@ type MaintainerGroupState struct {
 	// OldestAskCause is the queue cause of this intent's longest-waiting ask,
 	// blank when nothing is parked. This IS the parked-ness signal.
 	OldestAskCause string `json:"oldest_ask_cause,omitempty"`
-	OldestAskAge   string `json:"oldest_ask_age,omitempty"`
+	OldestAskAge   string `json:"oldest_ask_age,omitempty"` // display text, protocol.FormatDuration
 }
 
 // Maintainer holds every maintained group's declared level.
@@ -302,7 +302,7 @@ func (m *Maintainer) tickOne(g *nodes.Node, lv store.MaintainLevel, station, key
 	if episode.OriginID != "" {
 		if cause, age, ok := m.oldestAskCause(episode.OriginID); ok {
 			st.OldestAskCause = cause
-			st.OldestAskAge = age.Round(time.Second).String()
+			st.OldestAskAge = protocol.FormatDuration(age)
 		}
 	}
 

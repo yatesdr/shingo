@@ -151,8 +151,9 @@ type BlockDetail struct {
 	ScriptArgs    map[string]any `json:"script_args"`
 	ScriptName    string         `json:"script_name"`
 
-	// Per-block timing, epoch SECONDS (not millis — the order-level
-	// createTime/terminalTime on OrderDetail are millis; these are not).
+	// Per-block timing, epoch SECONDS, the same unit as the order-level
+	// createTime/terminalTime on OrderDetail (the vendor's RDSCore HTTP API
+	// examples are ten-digit seconds, e.g. "createTime": 1648553468).
 	// 0 means the vendor did not report it.
 	//
 	// These are what makes leg decomposition possible: without them a nine-

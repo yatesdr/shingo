@@ -228,3 +228,28 @@ func mustTime(t *testing.T, s string) time.Time {
 	}
 	return v
 }
+
+// TestHourlyConcurrency_FallBackDayHasTwentyFiveHours pins that the Today
+// curve's buckets run to the caller's next plant midnight rather than a fixed
+// 24 hours: 2026-11-01 in America/Chicago is 25 hours long, and its last hour
+// (23:00 CST) is a bucket of its own.
+func TestHourlyConcurrency_FallBackDayHasTwentyFiveHours(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	chicago, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Fatalf("load zone: %v", err)
+	}
+	start := time.Date(2026, 11, 1, 0, 0, 0, 0, chicago)
+	end := start.AddDate(0, 0, 1)
+	got, err := telemetry.GetHourlyConcurrency(db.DB, start, end, end, "")
+	if err != nil {
+		t.Fatalf("hourly: %v", err)
+	}
+	if len(got) != 25 {
+		t.Fatalf("buckets = %d, want 25", len(got))
+	}
+	if last := got[24].Hour.In(chicago); last.Hour() != 23 || last.Day() != 1 {
+		t.Errorf("last bucket = %v, want Nov 1 23:00 CST", last)
+	}
+}

@@ -61,13 +61,14 @@ func completionExpr(alias string) string {
 // in milliseconds — the sum over each faulted transition of the gap to
 // whatever status came next.
 //
-// Subtracted from execution time because a faulted robot is not working. The
-// grace period is 'faulted' precisely so a transient fleet failure can recover
-// (faulted→in_transit) or be finished by hand (faulted→delivered), and a
-// mission that sat faulted for 45 minutes and then recovered has assignment
-// long before completion — so without this, that 45 minutes reads as robot
-// busy time. Utilization then inflates exactly on the days robots are stuck,
-// which is precisely backwards.
+// Subtracted from execution time, which the Overview shows as run time (the
+// average tile, the P50/P95 trend and their drill). Run time measures the
+// work, not the robot's availability: the grace period is 'faulted' precisely
+// so a transient fleet failure can recover (faulted→in_transit) or be finished
+// by hand (faulted→delivered), and a mission that sat faulted for 45 minutes
+// and then recovered has assignment long before completion. Fleet busy time
+// (fleet.go) keeps faulted time in, because a faulted robot is still on its
+// order and cannot take other work.
 //
 // LEAD over the order's own history gives each faulted interval its end; a
 // mission still faulted at its terminal gets the gap up to that terminal row,

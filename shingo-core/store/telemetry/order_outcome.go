@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"shingo/protocol"
 	"shingocore/domain"
 )
 
@@ -98,10 +99,10 @@ type cancelOrigins struct {
 func getCancelOrigins(db *sql.DB, f Filter) (cancelOrigins, error) {
 	where, args := orderOutcomeWhere("o", f)
 	where += " AND o.status IN ('cancelled','canceled')"
-	q := `SELECT COALESCE(oh.detail, '')
+	q := `SELECT COALESCE(oh.code, ''), COALESCE(oh.detail, '')
 		FROM orders o
 		LEFT JOIN LATERAL (
-			SELECT detail FROM order_history h
+			SELECT code, detail FROM order_history h
 			WHERE h.order_id = o.id
 			ORDER BY h.created_at DESC, h.id DESC
 			LIMIT 1
@@ -113,11 +114,11 @@ func getCancelOrigins(db *sql.DB, f Filter) (cancelOrigins, error) {
 	defer rows.Close()
 	var o cancelOrigins
 	for rows.Next() {
-		var detail string
-		if err := rows.Scan(&detail); err != nil {
+		var code, detail string
+		if err := rows.Scan(&code, &detail); err != nil {
 			return cancelOrigins{}, err
 		}
-		switch domain.ClassifyCancelOrigin(detail) {
+		switch domain.ClassifyCancelOrigin(protocol.TermCode(code), detail) {
 		case domain.CancelOriginShingo:
 			o.shingo++
 		case domain.CancelOriginRDS:

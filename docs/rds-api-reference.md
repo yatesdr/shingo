@@ -153,7 +153,7 @@ Returns full order detail. Note: RDS returns order fields at the top level (not 
   "state": "RUNNING",
   "complete": true,
   "priority": 5,
-  "createTime": 1700000000000,
+  "createTime": 1700000000,
   "terminalTime": 0,
   "blocks": [
     {

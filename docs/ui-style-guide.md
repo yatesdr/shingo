@@ -41,3 +41,4 @@ closed.
 1. [`29-how-this-document-evolves.md`](ui-style-guide/29-how-this-document-evolves.md) — How this document evolves
 1. [`30-reference-the-synthesis-docs.md`](ui-style-guide/30-reference-the-synthesis-docs.md) — Reference: the synthesis docs
 1. [`31-mission-detail-stages.md`](ui-style-guide/31-mission-detail-stages.md) — Mission detail — stages
+1. [`32-fleet-figures-busy.md`](ui-style-guide/32-fleet-figures-busy.md) — Fleet figures — busy

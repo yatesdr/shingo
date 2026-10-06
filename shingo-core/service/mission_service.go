@@ -42,21 +42,24 @@ func (s *MissionService) Timeseries(f telemetry.Filter, bucket string, loc *time
 }
 
 // RobotMissionAggs returns per-robot mission count + busy time over the
-// window for the Robot Fleet section's utilization bars (plan §15.C).
-func (s *MissionService) RobotMissionAggs(f telemetry.Filter) ([]telemetry.RobotMissionAgg, error) {
-	return s.db.GetRobotMissionAggs(f)
+// window for the Robot Fleet section's utilization bars (plan §15.C). Busy
+// time includes open orders a robot is on, up to now.
+func (s *MissionService) RobotMissionAggs(f telemetry.Filter, now time.Time) ([]telemetry.RobotMissionAgg, error) {
+	return s.db.GetRobotMissionAggs(f, now)
 }
 
-// HourlyConcurrency returns 24 hourly fleet-concurrency points for the Fleet
-// Load chart's single-day (Today) view (plan §15.C).
-func (s *MissionService) HourlyConcurrency(dayStart time.Time, stationID string) ([]telemetry.HourConcurrency, error) {
-	return s.db.GetHourlyConcurrency(dayStart, stationID)
+// HourlyConcurrency returns one fleet-concurrency point per hour of the plant
+// day [dayStart, dayEnd) for the Fleet Load chart's single-day (Today) view
+// (plan §15.C).
+func (s *MissionService) HourlyConcurrency(dayStart, dayEnd, now time.Time, stationID string) ([]telemetry.HourConcurrency, error) {
+	return s.db.GetHourlyConcurrency(dayStart, dayEnd, now, stationID)
 }
 
 // DailyConcurrency returns per-day peak/avg fleet concurrency over [since,
-// until] for the Fleet Load chart's multi-day (7d/30d) view (plan §15.C).
-func (s *MissionService) DailyConcurrency(since, until time.Time, stationID string) ([]telemetry.DayConcurrency, error) {
-	return s.db.GetDailyConcurrency(since, until, stationID)
+// until] for the Fleet Load chart's multi-day (7d/30d) view (plan §15.C), in
+// plant days of the IANA zone tz.
+func (s *MissionService) DailyConcurrency(since, until, now time.Time, tz, stationID string) ([]telemetry.DayConcurrency, error) {
+	return s.db.GetDailyConcurrency(since, until, now, tz, stationID)
 }
 
 // DwellStats returns p50/p95/count for each requested order_history

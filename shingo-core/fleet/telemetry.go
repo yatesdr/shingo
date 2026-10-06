@@ -7,8 +7,8 @@ type OrderSnapshot struct {
 	VendorOrderID string          `json:"vendor_order_id"`
 	State         string          `json:"state"`
 	Vehicle       string          `json:"vehicle"`
-	CreateTime    int64           `json:"create_time"`   // ms epoch from vendor
-	TerminalTime  int64           `json:"terminal_time"` // ms epoch, 0 if not terminal
+	CreateTime    int64           `json:"create_time"`   // epoch SECONDS from vendor (SEER RDS createTime)
+	TerminalTime  int64           `json:"terminal_time"` // epoch seconds, 0 if not terminal
 	Blocks        []BlockSnapshot `json:"blocks,omitempty"`
 	Errors        []OrderMessage  `json:"errors,omitempty"`
 	Warnings      []OrderMessage  `json:"warnings,omitempty"`

@@ -175,6 +175,15 @@ func (s *OrderService) LatestOrderHistoryTimesForStatus(orderIDs []int64, status
 	return s.db.LatestOrderHistoryTimesForStatus(orderIDs, status)
 }
 
+// LatestOrderHistoryTimes is the status-less batch form: order id -> when that
+// order last changed status, one round trip for the set. The Overview alert
+// line reads it for "how long has this order sat where it is" — a fresh row is
+// written only by a real transition, so a re-stamped wait cause does not reset
+// the clock (see orders.LatestHistoryTimes).
+func (s *OrderService) LatestOrderHistoryTimes(orderIDs []int64) (map[int64]time.Time, error) {
+	return s.db.LatestOrderHistoryTimes(orderIDs)
+}
+
 // ListChildOrders returns the sequenced child orders for a compound
 // parent order. Absorbed from engine_db_methods.go as part of the
 // www-handler service migration (PR 3a.3a).

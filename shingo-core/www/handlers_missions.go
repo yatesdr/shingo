@@ -411,8 +411,17 @@ func (h *Handlers) apiMissionsActive(w http.ResponseWriter, r *http.Request) {
 
 // apiMissionsAlerts powers the conditional hero alerts banner (plan §3.A /
 // §15.A): robots blocked/emergency/error from the fleet cache, plus active
-// missions stuck beyond 2× the recent P95 duration. Quiet days return
-// total:0 and the banner stays hidden.
+// orders stuck where they are. Quiet days return total:0 and the banner stays
+// hidden.
+//
+// STUCK IS TIME IN THE CURRENT STATUS, NOT AGE. An order is stuck when it has
+// sat in its current status with no transition for more than twice that
+// status's usual dwell — the p95 the Missions page's dwell card already
+// computes (orders.DwellStats over the last 7 days). Measuring from creation
+// instead flagged an order legitimately queued for ten minutes and cleared one
+// that had been moving all morning and then stopped. stuck_items lists every
+// stuck order (the alert line links to exactly that set), each with when it
+// entered its status and the threshold it passed.
 func (h *Handlers) apiMissionsAlerts(w http.ResponseWriter, r *http.Request) {
 	var blocked, emergency, errored int
 	for _, rb := range h.engine.GetAllCachedRobots() {
@@ -427,31 +436,48 @@ func (h *Handlers) apiMissionsAlerts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Stuck threshold = 2× the recent (7-day) P95 mission duration, with a
-	// 30-minute fallback before any window has data (cold start, §8 #19).
-	thresholdMS := int64(30 * 60 * 1000)
-	since := clock.Now().AddDate(0, 0, -7)
-	if st, err := h.engine.MissionService().StatsV2(domain.TelemetryFilter{Since: &since}); err == nil && st.P95DurationMS > 0 {
-		thresholdMS = 2 * st.P95DurationMS
-	}
-	cutoff := clock.Now().Add(-time.Duration(thresholdMS) * time.Millisecond)
+	stuckItems := make([]map[string]any, 0)
+	if active, err := h.engine.OrderService().ListActiveOrders(); err == nil && len(active) > 0 {
+		now := clock.Now()
+		// Only the dwell pairs that start at a status some active order is in:
+		// one query per pair, and most plants hold orders in two or three
+		// statuses at a time.
+		var usual map[string]time.Duration
+		if pairs := dwellPairsFor(active); len(pairs) > 0 {
+			dwell, _ := h.engine.MissionService().DwellStats(pairs, "", "", now.AddDate(0, 0, -7).UTC(), now.UTC())
+			usual = usualDwellByStatus(dwell)
+		}
 
-	var stuck int
-	stuckItems := make([]map[string]any, 0, 10)
-	if active, err := h.engine.OrderService().ListActiveOrders(); err == nil {
+		ids := make([]int64, len(active))
+		for i, o := range active {
+			ids[i] = o.ID
+		}
+		entered, _ := h.engine.OrderService().LatestOrderHistoryTimes(ids)
+
 		for _, o := range active {
-			if o.CreatedAt.Before(cutoff) {
-				stuck++
-				if len(stuckItems) < 10 {
-					stuckItems = append(stuckItems, map[string]any{
-						"order_id":   o.ID,
-						"status":     o.Status,
-						"created_at": o.CreatedAt,
-					})
-				}
+			since, ok := entered[o.ID]
+			if !ok {
+				since = o.CreatedAt // no history row: it has not moved since birth
 			}
+			threshold := stuckFallback
+			if d, ok := usual[string(o.Status)]; ok {
+				threshold = 2 * d
+			}
+			in := now.Sub(since)
+			if in <= threshold {
+				continue
+			}
+			stuckItems = append(stuckItems, map[string]any{
+				"order_id":     o.ID,
+				"status":       o.Status,
+				"created_at":   o.CreatedAt,
+				"status_since": since,
+				"in_status_ms": in.Milliseconds(),
+				"threshold_ms": threshold.Milliseconds(),
+			})
 		}
 	}
+	stuck := len(stuckItems)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
@@ -462,6 +488,52 @@ func (h *Handlers) apiMissionsAlerts(w http.ResponseWriter, r *http.Request) {
 		"stuck_missions":   stuck,
 		"stuck_items":      stuckItems,
 	})
+}
+
+// stuckFallback is the stuck threshold for a status with no dwell measurement:
+// one no dwell pair starts from (dispatched, faulted, …), or one with no
+// samples in the window (a cold plant, §8 #19). It is the threshold the alert
+// used before any window had data.
+const stuckFallback = 30 * time.Minute
+
+// dwellPairsFor returns the standard dwell pairs that start at a status one of
+// the active orders is in. Empty when none does — DwellStats reads an empty
+// list as "all pairs", so the caller skips the call instead.
+func dwellPairsFor(active []*domain.Order) []domain.DwellPair {
+	held := make(map[string]bool, len(active))
+	for _, o := range active {
+		held[string(o.Status)] = true
+	}
+	var out []domain.DwellPair
+	for _, p := range domain.FlowDwellPairs() {
+		for _, s := range p.From {
+			if held[s] {
+				out = append(out, p)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// usualDwellByStatus maps each status to its usual dwell: the p95 of the dwell
+// pair that starts there. staged starts two pairs (released, or delivered from
+// the stage) and takes the longer, since either is a normal way to leave it.
+// Pairs with no samples are left out, so the caller falls back.
+func usualDwellByStatus(rows []domain.DwellStat) map[string]time.Duration {
+	out := make(map[string]time.Duration)
+	for _, row := range rows {
+		if row.Count == 0 {
+			continue
+		}
+		d := time.Duration(row.P95Seconds * float64(time.Second))
+		for _, s := range row.From {
+			if d > out[s] {
+				out[s] = d
+			}
+		}
+	}
+	return out
 }
 
 func parseMissionFilter(r *http.Request) domain.TelemetryFilter {

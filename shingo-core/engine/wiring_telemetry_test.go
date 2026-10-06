@@ -159,9 +159,10 @@ func TestRecordMissionEvent_TerminalStateWritesTelemetrySummary(t *testing.T) {
 
 	order := makeTelemetryOrder(t, db, "tel-term", "station-term")
 
-	// Vendor times in ms epoch → should land as VendorCreated/Completed.
-	vendorCreate := time.Now().Add(-2 * time.Minute).UnixMilli()
-	vendorEnd := time.Now().UnixMilli()
+	// Vendor times in epoch SECONDS, the unit SEER RDS reports, → should land
+	// as VendorCreated/Completed exactly, two minutes apart.
+	vendorEnd := time.Now().Unix()
+	vendorCreate := vendorEnd - 120
 	snap := &fleet.OrderSnapshot{
 		VendorOrderID: order.VendorOrderID,
 		State:         "FINISHED",
@@ -210,11 +211,13 @@ func TestRecordMissionEvent_TerminalStateWritesTelemetrySummary(t *testing.T) {
 	if mt.DurationMS <= 0 {
 		t.Errorf("DurationMS = %d, want > 0", mt.DurationMS)
 	}
-	if mt.VendorDurationMS <= 0 {
-		t.Errorf("VendorDurationMS = %d, want > 0", mt.VendorDurationMS)
+	if mt.VendorDurationMS != 120_000 {
+		t.Errorf("VendorDurationMS = %d, want 120000", mt.VendorDurationMS)
 	}
-	if mt.VendorCreated == nil || mt.VendorCompleted == nil {
-		t.Errorf("vendor created/completed = %v/%v", mt.VendorCreated, mt.VendorCompleted)
+	if mt.VendorCreated == nil || mt.VendorCompleted == nil ||
+		!mt.VendorCreated.Equal(time.Unix(vendorCreate, 0)) || !mt.VendorCompleted.Equal(time.Unix(vendorEnd, 0)) {
+		t.Errorf("vendor created/completed = %v/%v, want %v/%v",
+			mt.VendorCreated, mt.VendorCompleted, time.Unix(vendorCreate, 0), time.Unix(vendorEnd, 0))
 	}
 	if mt.CoreCreated == nil || mt.CoreCompleted == nil {
 		t.Errorf("core created/completed = %v/%v", mt.CoreCreated, mt.CoreCompleted)
