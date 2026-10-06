@@ -662,6 +662,31 @@ func (r *GroupResolver) ResolveStoreVacated(group, child *nodes.Node, vacating [
 // is the same convention nodes.FindStoreSlotInLaneExcluding documents for its own
 // exclude parameter.
 
+// ResolveStoreInLane resolves a store aimed at a LANE by name: the slot the
+// lane arms below would choose for it, through the same selector.
+//
+// It used to go through DefaultResolver.resolveStore, the flat-children ranker,
+// which asks each slot for bins, inbound and the slot book and nothing about
+// depth: into an empty lane it chose the mouth and sealed the two slots behind
+// it, and with a bin in the middle it could choose the slot behind that bin
+// (C2a A.3, TestC2aPin_ANamedLaneStoreTakesTheReachableDeepestSlot).
+// FindStoreSlotInLaneExcluding is the deepest empty slot reachable from the
+// mouth, refusing one that would bury a claimed bin, owner-aware (see the note
+// above). The bin-type gate is kept on the lane and on the slot chosen.
+func (r *GroupResolver) ResolveStoreInLane(lane *nodes.Node, binTypeID *int64, asker domain.DigAsker) (*ResolveResult, error) {
+	if !r.binTypeAllowed(lane.ID, binTypeID) {
+		return nil, fmt.Errorf("lane %s does not take this carrier", lane.Name)
+	}
+	slot, err := r.DB.FindStoreSlotInLaneExcluding(lane.ID, asker.OrderID)
+	if err != nil {
+		return nil, fmt.Errorf("no store slot in lane %s: %w", lane.Name, err)
+	}
+	if !r.binTypeAllowed(slot.ID, binTypeID) {
+		return nil, fmt.Errorf("lane %s's store slot %s does not take this carrier", lane.Name, slot.Name)
+	}
+	return &ResolveResult{Node: slot}, nil
+}
+
 // resolveStoreLKND consolidates matching payload codes first, then picks the emptiest slot.
 func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, binTypeID *int64, asker domain.DigAsker) (*ResolveResult, error) {
 	// Lanes that had a usable slot and were refused by the burial guard. Kept so

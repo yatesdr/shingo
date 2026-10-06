@@ -156,7 +156,15 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, p
 		// declared a carrier type had those declarations honoured through the
 		// group resolver and ignored through this one, which is the same
 		// lane/flat asymmetry payloadAllowedAt was written to end.
+		//
+		// AND A LANE GETS THE LANE ARM'S SELECTOR (C2a A.3). The gate alone left
+		// resolveStore ranking a lane's slots as flat children, blind to depth:
+		// a store aimed at a lane by name is now filled the way a lane reached
+		// through its group is, back to front and never behind a bin.
 		stated = gr.settleBinType(stated, asker, syntheticNode)
+		if syntheticNode.NodeTypeCode == protocol.NodeClassLANE {
+			return gr.ResolveStoreInLane(syntheticNode, stated.TypeID(), asker)
+		}
 		node, err := r.resolveStore(children, payloadCode, stated.TypeID(), gr, asker.OrderID)
 		if err != nil {
 			return nil, err
@@ -194,7 +202,9 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, mode ResolveMode, p
 // entry points gate themselves (source_finder's tier 1 on NGRP or LANE,
 // complex_steps' group branch on NGRP), so no caller reaches this arm with a retrieve.
 // Store mode is a different matter -- resolveStore IS reachable, because
-// lifecycle_service gates on IsSynthetic alone.
+// lifecycle_service gates on IsSynthetic alone; a LANE now leaves for
+// GroupResolver.ResolveStoreInLane first, so what reaches it is a synthetic
+// node that is neither.
 //
 // Consequence worth stating: because this never runs, its ordering is not a live
 // FIFO defect. The one caller generalised past the NGRP gate so far (a LANE
