@@ -26,6 +26,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const assert = require('assert');
 
 // The page under test declares `function process()` at module scope (its row
 // lookup). Stripping the imports makes that a global, and node's own `process`
@@ -281,6 +282,10 @@ function loadPage(loadOpts) {
     // landing mid-test would redraw the tab under it.
     global.setTimeout = () => 0;
     global.clearTimeout = () => {};
+    // A pin that drives the preview keeps the timers instead: the page's own
+    // schedulePreview hands runPreview here, and the pin runs it when it wants
+    // the request on the wire.
+    if (loadOpts.timers) global.setTimeout = fn => loadOpts.timers.push(fn);
     global.requestAnimationFrame = () => {};
     global.CSS = { escape: s => String(s).replace(/[^a-zA-Z0-9_-]/g, c => '\\' + c) };
     // The picture and the map are stubbed to fail loudly if they ever run: the
@@ -1703,6 +1708,103 @@ async function mainAsync() {
         const { root, scrim } = await applyPreset(400);
         if (!scrim.classList.contains('active')) throw new Error('the apply dialog closed over a refused part');
         if (root.innerHTML.indexOf('pd-notice') >= 0) throw new Error('a refused apply drew a success notice');
+    });
+
+    // ── a part taken off a saved flow is named to the preview and the save ──
+    //
+    // The saved flow runs PART-A on PLN_01. The engineer puts PART-B there from
+    // the position's part picker, which moves PART-A off it: PART-A is on no
+    // position, the bar says so and offers "Take PART-A off this flow". The
+    // server compares the draft with the STORED flow, so until the request says
+    // the part was taken off on purpose it reads the part as lost and the bar
+    // stays shut. The stubbed server here answers exactly that rule.
+    async function takeOffSavedPart() {
+        const timers = [];
+        const previews = [];
+        const saves = [];
+        const lost = {
+            core_node_name: '', side: 'to', field: 'payload_code', severity: 'error',
+            message: '1 part needs a position: PART-A',
+        };
+        const composer = savedComposer();
+        composer.palette = ['PART-A', 'PART-B'];
+        const page = loadPage({
+            composer, timers,
+            fetch: (url, init) => {
+                if (/\/flow\/preview$/.test(url)) {
+                    const body = JSON.parse(init.body);
+                    previews.push(body);
+                    const off = body.taken_off || [];
+                    return okJSON({
+                        fingerprint: 'fp-1', order_count: 1, actions: [], unresolved: [],
+                        preflight: { state: 'unchecked', missing: [] },
+                        findings: off.indexOf('PART-A') >= 0 ? [] : [lost],
+                    });
+                }
+                if (/\/flow\/save$/.test(url)) {
+                    saves.push(JSON.parse(init.body));
+                    return okJSON({ fingerprint: 'fp-2', written: 1, deleted: 0 });
+                }
+                if (url === '/api/payload-catalog' || /\/payloads$/.test(url)) return okJSON([]);
+                return null;
+            },
+        });
+        const { root, main, pop, bar, doc } = page;
+        const saveBtn = makeElement('');
+        saveBtn.disabled = true;
+        root.querySelector = sel => (sel === '[data-act="save"]' ? saveBtn : null);
+        // The part picker's search box, and the popover's onclick as the
+        // listener a browser makes of it.
+        const q = makeElement('');
+        q.focus = () => {};
+        pop.querySelector = sel => (sel === '.pd-partq' ? q : null);
+        pop.addEventListener('click', ev => pop.onclick && pop.onclick(ev));
+        // runPreview, as the page's own schedulePreview queued it.
+        const preview = async () => {
+            const run = timers.filter(fn => fn.name === 'runPreview').pop();
+            timers.length = 0;
+            if (!run) throw new Error('setup: no preview was scheduled');
+            await run();
+            await settle();
+        };
+        await settle();
+        click(main, doc, { act: 'pick', node: 'PLN_01', kind: 'part' });
+        await settle();
+        click(pop, doc, { pp: 'place', code: 'PART-B' });
+        await preview();
+        if (!/data-act="rmpart" data-part="PART-A"[^>]*>Take PART-A off this flow</.test(bar.innerHTML)) {
+            throw new Error('setup: PART-A is not offered a door off the flow; bar: ' + bar.innerHTML.slice(0, 400));
+        }
+        if (!saveBtn.disabled) throw new Error('setup: Save is open over a part with no position');
+        click(main, doc, { act: 'rmpart', part: 'PART-A' });
+        await preview();
+        return Object.assign(page, { previews, saves, saveBtn, preview });
+    }
+
+    await pin('a part taken off a saved flow: the preview names it, Save opens, the save names it', async () => {
+        const { main, doc, bar, previews, saves, saveBtn } = await takeOffSavedPart();
+        const body = previews[previews.length - 1];
+        assert.deepStrictEqual(Object.keys(body), ['to_style_id', 'cells', 'taken_off'],
+            'the preview body gains taken_off and nothing else');
+        assert.deepStrictEqual(body.taken_off, ['PART-A'], 'the preview does not name the part taken off');
+        if (/to fix|needs a position|PART-A/.test(bar.innerHTML)) {
+            throw new Error('the finding outlived the take-off; bar: ' + bar.innerHTML.slice(0, 400));
+        }
+        if (saveBtn.disabled) throw new Error('Save is still shut after the part was taken off');
+        click(main, doc, { act: 'save' });
+        await settle();
+        if (saves.length !== 1) throw new Error('the save was not posted once: ' + saves.length);
+        assert.deepStrictEqual(Object.keys(saves[0]), ['to_style_id', 'cells', 'fingerprint', 'station_id', 'taken_off'],
+            'the save body gains taken_off and nothing else');
+        assert.deepStrictEqual(saves[0].taken_off, ['PART-A'], 'the save does not name the part taken off');
+    });
+
+    await pin('discarding the draft forgets the part taken off', async () => {
+        const { main, doc, previews, preview } = await takeOffSavedPart();
+        click(main, doc, { act: 'discard' });
+        await preview();
+        assert.deepStrictEqual(previews[previews.length - 1].taken_off, [],
+            'the discarded draft\'s take-off rode into the next preview');
     });
 
     // ── the Advanced sheet, Presets and Generate say what they do ───────────

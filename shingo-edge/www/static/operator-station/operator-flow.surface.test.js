@@ -690,13 +690,15 @@ const pending = [];
     const real = modelMod.exports;
     const run = async opts => {
         const urls = [];
+        const bodies = [];
         const ctx = {
             JSON: JSON, AbortController: AbortController,
-            model: { styleId: 7 }, previewAbort: null, screen: 'S9',
+            model: { styleId: 7, takenOff: ['PART-B'] }, previewAbort: null, screen: 'S9',
             processID() { return 5; },
-            M() { return { toCells() { return []; }, applyPreview: real.applyPreview }; },
-            async fetch(url) {
+            M() { return { toCells() { return []; }, takenOff: real.takenOff, applyPreview: real.applyPreview }; },
+            async fetch(url, init) {
                 urls.push(url);
+                bodies.push(JSON.parse(init.body));
                 return { status: 200, async json() {
                     return { order_count: 4, findings: [], fingerprint: 'f', actions: [],
                         preflight: { state: 'unchecked', missing: [] } };
@@ -707,12 +709,15 @@ const pending = [];
         vm.runInContext(src.slice(at, end) +
             '\n__r = async o => { await runPreview(o); return model; };', ctx);
         const m = await ctx.__r(opts);
-        return { urls: urls, preflight: m.preview && m.preview.preflight };
+        return { urls: urls, bodies: bodies, preflight: m.preview && m.preview.preflight };
     };
     pending.push(run(undefined).then(r => {
         check('preview: the edit loop does not ask Core', r.urls[0] === '/api/processes/5/flow/preview', r.urls.join());
         check('preview: an unasked "unchecked" is not kept, so the sheet says nothing about inventory',
             r.preflight === null, JSON.stringify(r.preflight));
+        check('preview: the body names the parts taken off this draft',
+            JSON.stringify(r.bodies[0]) === '{"to_style_id":7,"cells":[],"taken_off":["PART-B"]}',
+            JSON.stringify(r.bodies[0]));
     }));
     pending.push(run({ preflight: true }).then(r => {
         check('preview: the confirm sheet asks Core', r.urls[0] === '/api/processes/5/flow/preview?preflight=1', r.urls.join());

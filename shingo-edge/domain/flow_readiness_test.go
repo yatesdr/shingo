@@ -142,3 +142,42 @@ func TestFlowReadiness_PairsByNodeNameInOrder(t *testing.T) {
 		t.Errorf("reversed input: got %+v, want %+v", rev, want)
 	}
 }
+
+// TestFlowPartsPlaced_TakenOffIsNotLost: a part the engineer took off the flow
+// in this draft is not a part that lost its position, so it raises nothing; a
+// part dropped WITHOUT being taken off raises exactly the finding it always
+// has. A taken-off code the stored flow never ran is ignored.
+func TestFlowPartsPlaced_TakenOffIsNotLost(t *testing.T) {
+	t.Parallel()
+	stored := []NodeClaim{
+		{CoreNodeName: "PLN_01", PayloadCode: "PART-A"},
+		{CoreNodeName: "PLN_02", PayloadCode: "PART-B"},
+	}
+	draft := []NodeClaim{{CoreNodeName: "PLN_01", PayloadCode: "PART-A"}}
+
+	if got := ValidateFlowPartsPlaced(stored, draft, []string{"PART-B"}); got != nil {
+		t.Errorf("PART-B was taken off this flow and still reads as lost: %+v", got)
+	}
+	if got := ValidateFlowPartsPlaced(stored, draft, []string{"PART-B", "PART-NEVER"}); got != nil {
+		t.Errorf("a taken-off code the flow never ran made a finding: %+v", got)
+	}
+
+	want := []NodeFinding{{
+		Side:     flowspec.SideTo,
+		Field:    flowspec.PayloadCode,
+		Severity: SeverityError,
+		Message:  "1 part needs a position: PART-B",
+	}}
+	for _, takenOff := range [][]string{nil, {}, {"PART-NEVER"}, {"PART-A"}} {
+		if got := ValidateFlowPartsPlaced(stored, draft, takenOff); !reflect.DeepEqual(got, want) {
+			t.Errorf("taken off %q: got %+v, want the finding unchanged %+v", takenOff, got, want)
+		}
+	}
+
+	// Two dropped, one taken off: the other is still named, alone.
+	stored = append(stored, NodeClaim{CoreNodeName: "PLN_03", PayloadCode: "PART-C"})
+	got := ValidateFlowPartsPlaced(stored, draft, []string{"PART-C"})
+	if len(got) != 1 || got[0].Message != "1 part needs a position: PART-B" {
+		t.Errorf("one of two dropped parts taken off: got %+v, want only PART-B named", got)
+	}
+}

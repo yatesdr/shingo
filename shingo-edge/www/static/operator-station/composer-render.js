@@ -846,6 +846,7 @@ async function runPreview(opts) {
     const body = {
         to_style_id: model.styleId,
         cells: M().toCells(model),
+        taken_off: M().takenOff(model),
     };
     const q = (opts && opts.preflight) ? '?preflight=1' : '';
     try {
@@ -1328,6 +1329,7 @@ async function start(runAsIs) {
                 to_style_id: model.styleId, cells: M().toCells(model),
                 fingerprint: fingerprint,
                 station_id: stationID(),
+                taken_off: M().takenOff(model),
             }),
         });
         const json = await res.json().catch(() => ({}));

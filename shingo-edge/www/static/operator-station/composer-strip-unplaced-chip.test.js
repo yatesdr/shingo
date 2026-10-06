@@ -120,6 +120,8 @@ const doc = {
 };
 
 let pictureDraws = 0;
+const timers = [];
+const previews = [];
 const win = {
     location: { search: '', hash: '', pathname: '/operator/station/5' },
     addEventListener() {},
@@ -133,7 +135,9 @@ Object.assign(global, {
     renderFlowPicture: () => { pictureDraws++; return ''; },
     pictureRows: () => ({}),
     sentencesFromModel: () => [],
-    setTimeout: () => 0,
+    // The page's timers are kept, not run: schedulePreview hands runPreview
+    // here, and the take-off pin runs it to read the request it sends.
+    setTimeout: fn => timers.push(fn),
     clearTimeout: () => {},
     // placePop's settle-then-place; synchronous here is fine — the stub has
     // no layout to wait for.
@@ -162,7 +166,13 @@ const VIEW = {
 // openFromHash. No tap, no manual setView — the real path, end to end.
 win.ComposerModel = ComposerModel;
 win.location.hash = '#compose=7';
-global.fetch = url => {
+global.fetch = (url, init) => {
+    if (/\/flow\/preview$/.test(url)) {
+        previews.push(JSON.parse(init.body));
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({
+            fingerprint: 'fp', order_count: 1, actions: [], unresolved: [], findings: [],
+        }) });
+    }
     if (/\/api\/operator-stations\/5\/view$/.test(url)) {
         return Promise.resolve({ ok: true, json: async () => VIEW });
     }
@@ -248,6 +258,29 @@ async function mainAsync() {
                 (pictureDraws - before));
         }
     });
+
+    // ── the take-off is named to the next preview ────────────────────────────
+    // The server reads a part the stored flow runs and the draft does not
+    // place as LOST; the request is how it learns this one was taken off.
+    {
+        const run = timers.filter(fn => fn.name === 'runPreview').pop();
+        if (!run) {
+            failures++;
+            console.error('FAIL  the strip tap scheduled no preview');
+        } else {
+            await run();
+            const body = previews[previews.length - 1] || {};
+            test('the preview after a strip take-off names the part taken off', () => {
+                const keys = Object.keys(body).join(',');
+                if (keys !== 'to_style_id,cells,taken_off') {
+                    throw new Error('the preview body is {' + keys + '}; want to_style_id, cells, taken_off');
+                }
+                if (JSON.stringify(body.taken_off) !== '["PART-B"]') {
+                    throw new Error('taken_off is ' + JSON.stringify(body.taken_off) + ', want ["PART-B"]');
+                }
+            });
+        }
+    }
 
     // ── the Escape rule, innermost first ─────────────────────────────────────
     // The module registered its keydown listener on the document stub at load;

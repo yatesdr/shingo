@@ -24,9 +24,14 @@ import (
 // producers on this tree already sent. See engine.FlowPreviewRequest for why
 // the option was worse than useless: it was the one path on which a preview
 // and the save that followed it validated different sets.
+//
+// taken_off names the parts the engineer took off this flow in the draft, so
+// the unplaced-part finding does not read them as lost. Request-only: it is
+// not stored and not on the station poll. See engine.FlowPreviewRequest.
 type flowPreviewBody struct {
 	ToStyleID int64             `json:"to_style_id"`
 	Cells     []domain.FlowCell `json:"cells"`
+	TakenOff  []string          `json:"taken_off"`
 }
 
 // flowSaveBody is POST /api/processes/{id}/flow/save. station_id names the
@@ -37,6 +42,11 @@ type flowSaveBody struct {
 	Cells       []domain.FlowCell `json:"cells"`
 	Fingerprint string            `json:"fingerprint"`
 	StationID   int64             `json:"station_id"`
+	// TakenOff is the same list the preview carried. The save never refused
+	// an unplaced part — the finding blocks the start, not the save — so it
+	// is accepted and not read: the cells are the whole flow, and a part on
+	// none of them leaves the style with the claim that carried it.
+	TakenOff []string `json:"taken_off"`
 	// SourcePresetID / SourcePresetVersion mark this save as an APPLY of a
 	// preset (U10). Both or neither. The SHAPE still arrives as cells like any
 	// other save — there is no apply endpoint, and this is the only way a
@@ -95,7 +105,7 @@ func (h *Handlers) apiPreviewFlow(w http.ResponseWriter, r *http.Request) {
 	// stops at the next phase boundary instead of finishing a plan and a Core
 	// call for nobody.
 	preview, err := h.orchestration.PreviewFlow(r.Context(), processID, engine.FlowPreviewRequest{
-		ToStyleID: body.ToStyleID, Cells: body.Cells,
+		ToStyleID: body.ToStyleID, Cells: body.Cells, TakenOff: body.TakenOff,
 		Preflight: r.URL.Query().Get("preflight") == "1",
 	})
 	if err != nil {

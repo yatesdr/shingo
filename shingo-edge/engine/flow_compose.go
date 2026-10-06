@@ -42,6 +42,13 @@ type FlowPreviewRequest struct {
 	// this is a network call, the edit loop makes a preview every 400 ms, and
 	// only the HMI's confirm sheet reads the answer. See flowPreflight.
 	Preflight bool
+	// TakenOff is the payload codes the engineer took off this flow in the
+	// draft. Request intent, not flow content: it is never stored and is not
+	// in the fingerprint, which is over the stored rows. It only tells the
+	// unplaced-part finding which of the parts the stored flow ran and the
+	// draft does not place were taken off on purpose — see
+	// domain.ValidateFlowPartsPlaced.
+	TakenOff []string
 }
 
 // FlowPreflight is Core's answer about the draft's parts.
@@ -419,7 +426,7 @@ func (e *Engine) PreviewFlow(ctx context.Context, processID int64, req FlowPrevi
 		return nil, err
 	}
 	findings := validateFlowInputs(claimCtx, draft.inputs())
-	findings = append(findings, domain.ValidateFlowPartsPlaced(stored, toClaims)...)
+	findings = append(findings, domain.ValidateFlowPartsPlaced(stored, toClaims, req.TakenOff)...)
 
 	// THE RUNNING STYLE IS NOT PLANNED (owner ruling R3, 2026-09-12).
 	//

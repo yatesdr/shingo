@@ -561,6 +561,14 @@ function init(opts) {
         // otherwise read "11 parts need a position" and refuse to change over.
         parts: (opts.parts || []).slice(),
         palette: (opts.palette || []).slice(),
+        // THE PARTS TAKEN OFF IN THIS DRAFT, by removePart. The server reads
+        // a part the STORED flow runs and the draft places nowhere as lost
+        // (domain.ValidateFlowPartsPlaced), and a part the engineer took off
+        // is not lost — so the preview and save requests name these
+        // (takenOff) and the server leaves them out. Draft-scoped: never
+        // stored, gone with the draft (a discard or a save re-inits), and a
+        // part put back on the flow leaves the list.
+        takenOff: [],
         // The style's expected CATID, for the part picker's order alone. Not a
         // rule: see partOffers.
         catid: opts.catid || '',
@@ -680,6 +688,8 @@ function reduce(state, action) {
                 }
             }
             cell.part = action.payloadCode || null;
+            // Placed again, it is on the flow again: no longer taken off.
+            s.takenOff = s.takenOff.filter(p => p !== action.payloadCode);
             break;
         }
 
@@ -697,6 +707,7 @@ function reduce(state, action) {
             if (action.payloadCode && s.parts.indexOf(action.payloadCode) < 0) {
                 s.parts.push(action.payloadCode);
             }
+            s.takenOff = s.takenOff.filter(p => p !== action.payloadCode);
             break;
         }
 
@@ -706,6 +717,7 @@ function reduce(state, action) {
         case 'removePart': {
             if (!action.payloadCode) break;
             s.parts = s.parts.filter(p => p !== action.payloadCode);
+            if (s.takenOff.indexOf(action.payloadCode) < 0) s.takenOff.push(action.payloadCode);
             for (const n of Object.keys(s.cells)) {
                 if (s.cells[n].part === action.payloadCode) s.cells[n].part = null;
             }
@@ -896,6 +908,12 @@ function partnerOnly(state) {
         }
     }
     return out;
+}
+
+// takenOff is the request's taken_off: the parts removePart took off this
+// draft, sorted so two requests over one draft read the same. See init.
+function takenOff(state) {
+    return (state.takenOff || []).slice().sort();
 }
 
 function toCells(state) {
@@ -2047,7 +2065,7 @@ function advancedDefaults() { return clone(ADVANCED_DEFAULTS); }
 // again.
 (function () {
     const api = {
-        init, reduce, toCells, applyPreview,
+        init, reduce, toCells, takenOff, applyPreview,
         legs, dockNotes, cellRobots, cardLines, pictureCells, bar,
         findings, findingShort,
         modeLabels, modeHelp, rowFields, rowColumns, fieldRequired, fieldLabel, shortPart, robotWords,

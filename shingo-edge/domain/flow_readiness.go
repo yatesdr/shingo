@@ -143,12 +143,20 @@ func changeoverBuildsOrders(from, to *NodeClaim) bool {
 // runs — so the only honest "this part lost its position" is the comparison
 // with what the style had a moment ago.
 //
+// TAKEN OFF IS NOT LOST (owner ruling, 2026-10-06). takenOff is the payload
+// codes the engineer took off this flow in the draft — the composer's "take
+// it off this flow" — named by the request, never stored. A part the
+// engineer took off did not lose its position; the finding exists for the
+// one that went missing without anyone saying so. So lost = stored - placed
+// - takenOff, and a code in takenOff the stored flow never ran changes
+// nothing.
+//
 // __empty__ is not a part. It is how a flow says a position is deliberately
 // clear, and a finding about it would be a finding about nothing.
 //
 // One finding for all of them, with no node: the answer to "which position?"
 // is the whole point of the finding, so naming one would be inventing it.
-func ValidateFlowPartsPlaced(stored, draft []NodeClaim) []NodeFinding {
+func ValidateFlowPartsPlaced(stored, draft []NodeClaim, takenOff []string) []NodeFinding {
 	const empty = "__empty__"
 	// A FLOW WITH NO CELLS LEAVES NOTHING UNPLACED. An empty draft is a flow
 	// being torn down or not yet built, and the preview already answers that
@@ -163,11 +171,15 @@ func ValidateFlowPartsPlaced(stored, draft []NodeClaim) []NodeFinding {
 			placed[c.PayloadCode] = true
 		}
 	}
+	off := make(map[string]bool, len(takenOff))
+	for _, code := range takenOff {
+		off[code] = true
+	}
 	var lost []string
 	seen := map[string]bool{}
 	for _, c := range stored {
 		code := c.PayloadCode
-		if code == "" || code == empty || placed[code] || seen[code] {
+		if code == "" || code == empty || placed[code] || off[code] || seen[code] {
 			continue
 		}
 		seen[code] = true

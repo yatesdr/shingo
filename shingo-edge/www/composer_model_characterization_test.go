@@ -136,7 +136,7 @@ func TestComposerModelCharacterization(t *testing.T) {
 		}
 		f.Actions = pv.Actions
 		// Drop the first cell and ask the server which parts that leaves loose.
-		for _, nf := range domain.ValidateFlowPartsPlaced(claims, dropFirstClaim(claims)) {
+		for _, nf := range domain.ValidateFlowPartsPlaced(claims, dropFirstClaim(claims), nil) {
 			f.UnplacedDroppingFirst = append(f.UnplacedDroppingFirst, nf.Message)
 		}
 		out.Styles[key] = f

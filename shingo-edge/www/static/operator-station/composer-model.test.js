@@ -1794,6 +1794,24 @@ test('pictureCells carries the chosen key route onto the drawn claim', () => {
     assert.deepStrictEqual(bare.positions[0].claim.key_route, []);
 });
 
+// ── a part taken off is named until it is put back ──────────────────────────
+// The request's taken_off: what removePart took off this draft, and nothing a
+// later addPart or setPart put back. A fresh init is a fresh draft.
+test('takenOff names the parts taken off this draft until they are put back', () => {
+    const s0 = initStyle(7);
+    const part = s0.cells.PLN_01.part;
+    assert.ok(part, 'setup: PLN_01 runs no part in style 7');
+    assert.deepStrictEqual(M.takenOff(s0), [], 'a fresh draft names nothing taken off');
+    const off = M.reduce(s0, { type: 'removePart', payloadCode: part });
+    assert.deepStrictEqual(M.takenOff(off), [part]);
+    assert.deepStrictEqual(M.takenOff(M.reduce(off, { type: 'removePart', payloadCode: part })), [part],
+        'taken off twice is named once');
+    assert.deepStrictEqual(M.takenOff(M.reduce(off, { type: 'setPart', node: 'PLN_01', payloadCode: part })), [],
+        'placed again, it is on the flow again');
+    assert.deepStrictEqual(M.takenOff(M.reduce(off, { type: 'addPart', payloadCode: part })), [],
+        'added back, it is on the flow again');
+});
+
 // ── report ───────────────────────────────────────────────────────────────────
 if (failures) {
     console.error('\n' + failures + ' failed, ' + checks + ' passed');

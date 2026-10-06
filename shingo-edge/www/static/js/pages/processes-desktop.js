@@ -1317,6 +1317,7 @@ async function runPreview() {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 to_style_id: S.model.styleId, cells: M().toCells(S.model),
+                taken_off: M().takenOff(S.model),
             }),
             signal: S.previewAbort.signal,
         });
@@ -1341,6 +1342,7 @@ async function saveFlow() {
             to_style_id: S.model.styleId, cells: M().toCells(S.model),
             fingerprint: pv.fingerprint || '',
             station_id: stationIDForSave(),
+            taken_off: M().takenOff(S.model),
         }),
     });
     const json = await res.json().catch(() => ({}));
