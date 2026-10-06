@@ -412,7 +412,7 @@ function buildManifest(data, opts) {
   if (o.payload_code) {
     // escapeHtml leaves quotes alone, and this one lands in an attribute.
     var pdesc = o.payload_desc
-      ? ' title="' + escapeHtml(bySameBinPlain(o.payload_desc, data.bin)).replace(/"/g, '&quot;') + '"' : '';
+      ? ' title="' + escapeHtml(bySameBinPlain(o.payload_desc, data.bin)) + '"' : '';
     facts.push(field('Payload', '<code' + pdesc + '>' + escapeHtml(o.payload_code) + '</code>'));
   }
   if (o.vendor_order_id) {

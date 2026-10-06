@@ -1,11 +1,13 @@
-// Pins what the HTML escapers return, on one input table, for every copy that
-// exists. Run under plain Node via TestUtilsEscapeJS. Exit 0 on pass, 1 on
-// any assertion failure.
+// Pins what escapeHtml and h return, on one input table. Run under plain Node
+// via TestUtilsEscapeJS. Exit 0 on pass, 1 on any assertion failure.
 //
-// The DOM-based copies (a text node in, innerHTML out) run against a fake
-// document whose innerHTML follows the HTML serializer's text rule: `&`, NBSP,
-// `<` and `>` are escaped and nothing else is. That rule is the whole of what
-// those copies did, so this pins the copies, not the fake.
+// History: until 2026-10-05 there were two copies of escapeHtml (this file's
+// and Core app.js's) plus five page-local escapers in Core, all DOM-based
+// (text node in, innerHTML out), so `"` and `'` came through unescaped and
+// h`` let an attribute built from a name or note be broken out of. The pin
+// commit before the fix held the old outputs for every copy; the table below
+// is the one helper that is left. That only one is left is
+// shingo-core/www/clock_globals_drift_test.go TestEscapeHtmlDefinedOnce.
 
 'use strict';
 
@@ -20,122 +22,87 @@ function assert(cond, label) {
     else { failed++; console.error('FAIL: ' + label); }
 }
 
-const ROOT = path.join(__dirname, '..');
-
-// The body of `function name(...) {...}` in a file, braces matched.
-function extract(file, name) {
-    const src = fs.readFileSync(path.join(ROOT, file), 'utf8');
-    const at = src.search(new RegExp('function ' + name + '\\s*\\('));
+// The body of `function name(...) {...}` in utils.js, braces matched.
+const SRC = fs.readFileSync(path.join(__dirname, 'utils.js'), 'utf8');
+function extract(name) {
+    const at = SRC.search(new RegExp('function ' + name + '\\s*\\('));
     if (at < 0) return null;
     let depth = 0;
-    for (let i = src.indexOf('{', at); i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(at, i + 1);
+    for (let i = SRC.indexOf('{', at); i < SRC.length; i++) {
+        if (SRC[i] === '{') depth++;
+        else if (SRC[i] === '}' && --depth === 0) return SRC.slice(at, i + 1);
     }
     return null;
 }
+const escTable = SRC.match(/const HTML_ESCAPES = [^\n]*\n/);
+assert(escTable, 'utils.js defines HTML_ESCAPES');
 
-function serializeText(s) {
-    return s.replace(/&/g, '&amp;').replace(/ /g, '&nbsp;')
-        .replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-const fakeDocument = {
-    createElement: () => ({
-        _text: '',
-        appendChild(t) { this._text += t.data; },
-        set textContent(v) { this._text = String(v); },
-        get innerHTML() { return serializeText(this._text); },
-    }),
-    createTextNode: (s) => ({ data: String(s) }),
-};
+// No document in the sandbox: the helper must not need one.
+const ctx = vm.createContext({ String });
+vm.runInContext((escTable ? escTable[0] : '') + extract('escapeHtml') + '\n' + extract('h'), ctx);
+const escapeHtml = vm.runInContext('escapeHtml', ctx);
+const h = vm.runInContext('h', ctx);
 
-// Load the named functions from a file into one context, so h finds the
-// escapeHtml beside it.
-function load(file, names) {
-    const ctx = vm.createContext({ document: fakeDocument, String });
-    const src = names.map((n) => extract(file, n)).filter(Boolean).join('\n');
-    vm.runInContext(src, ctx);
-    const out = {};
-    names.forEach((n) => { out[n] = vm.runInContext('typeof ' + n + ' === "function" ? ' + n + ' : null', ctx); });
-    return out;
-}
-
-// input → what every copy returns today.
+// input → output. "was" is what the DOM copies returned (the pin before the
+// fix); a row where they differ is the change.
 const TABLE = [
-    { in: '& < > " \'', want: '&amp; &lt; &gt; " \'' },
+    { in: '& < > " \'', want: '&amp; &lt; &gt; &quot; &#39;', was: '&amp; &lt; &gt; " \'' },
     { in: null, want: '' },
     { in: undefined, want: '' },
     { in: '', want: '' },
     { in: 0, want: '0' },
     { in: 42, want: '42' },
     { in: '&amp;', want: '&amp;amp;' },
-    { in: 'O\'Neil "B" <x>', want: 'O\'Neil "B" &lt;x&gt;' },
-    { in: 'a b', want: 'a&nbsp;b' },
+    { in: 'O\'Neil "B" <x>', want: 'O&#39;Neil &quot;B&quot; &lt;x&gt;', was: 'O\'Neil "B" &lt;x&gt;' },
+    // The serializer wrote NBSP as &nbsp;; raw NBSP renders the same.
+    { in: 'a b', want: 'a b', was: 'a&nbsp;b' },
 ];
-
-const COPIES = [
-    ['shared/utils.js', 'escapeHtml'],
-    ['shingo-core/www/static/app.js', 'escapeHtml'],
-];
-
-COPIES.forEach(([file, name]) => {
-    const fn = load(file, [name])[name];
-    assert(fn, file + ' defines ' + name);
-    if (!fn) return;
-    TABLE.forEach((row) => {
-        const got = fn(row.in);
-        assert(got === row.want, file + ' ' + name + '(' + JSON.stringify(row.in) + ') = '
-            + JSON.stringify(got) + ', want ' + JSON.stringify(row.want));
-    });
+TABLE.forEach((row) => {
+    const got = escapeHtml(row.in);
+    assert(got === row.want, 'escapeHtml(' + JSON.stringify(row.in) + ') = '
+        + JSON.stringify(got) + ', want ' + JSON.stringify(row.want));
 });
-
-// Core's page-local escapers. The three DOM ones set textContent, so they
-// agree with the table above; missions.js's pair is regex and stringifies a
-// missing value.
-const DOM_LOCAL = [
-    ['shingo-core/www/static/pages/dashboard.js', 'esc'],
-    ['shingo-core/www/static/pages/dashboard-node-report.js', 'esc'],
-    ['shingo-core/www/static/pages/dashboard-map.js', 'escapeText'],
-];
-DOM_LOCAL.forEach(([file, name]) => {
-    const fn = load(file, [name])[name];
-    if (!fn) { assert(false, file + ' defines ' + name); return; }
-    TABLE.forEach((row) => {
-        const got = fn(row.in);
-        assert(got === row.want, file + ' ' + name + '(' + JSON.stringify(row.in) + ') = '
-            + JSON.stringify(got) + ', want ' + JSON.stringify(row.want));
-    });
-});
-const MISSIONS = 'shingo-core/www/static/pages/missions.js';
-const MISSIONS_TABLE = [
-    // input, escapeText, escapeAttr
-    ['& < > " \'', '&amp; &lt; &gt; " \'', '&amp; &lt; &gt; &quot; &#39;'],
-    [null, 'null', 'null'],
-    [undefined, 'undefined', 'undefined'],
-    ['', '', ''],
-    [0, '0', '0'],
-    ['&amp;', '&amp;amp;', '&amp;amp;'],
-    ['a b', 'a b', 'a b'],
-];
-(function () {
-    const fns = load(MISSIONS, ['escapeText', 'escapeAttr']);
-    if (!fns.escapeText || !fns.escapeAttr) { assert(false, MISSIONS + ' defines escapeText/escapeAttr'); return; }
-    MISSIONS_TABLE.forEach(([input, text, attr]) => {
-        const gt = fns.escapeText(input), ga = fns.escapeAttr(input);
-        assert(gt === text, 'missions escapeText(' + JSON.stringify(input) + ') = ' + JSON.stringify(gt) + ', want ' + JSON.stringify(text));
-        assert(ga === attr, 'missions escapeAttr(' + JSON.stringify(input) + ') = ' + JSON.stringify(ga) + ', want ' + JSON.stringify(attr));
-    });
-})();
 
 // h runs every interpolation through escapeHtml, so an attribute built from a
 // value carrying a quote is the case that matters.
-['shared/utils.js', 'shingo-core/www/static/app.js'].forEach((file) => {
-    const fns = load(file, ['escapeHtml', 'h']);
-    if (!fns.h) { assert(false, file + ' defines h'); return; }
-    const got = fns.h(['<a title="', '">', '</a>'], 'x" onmouseover="y', '<b>');
-    const want = '<a title="x" onmouseover="y">&lt;b&gt;</a>';
-    assert(got === want, file + ' h attribute: got ' + JSON.stringify(got) + ', want ' + JSON.stringify(want));
-});
+const got = h(['<a title="', '">', '</a>'], 'x" onmouseover="y', '<b>');
+const want = '<a title="x&quot; onmouseover=&quot;y">&lt;b&gt;</a>';
+assert(got === want, 'h attribute: got ' + JSON.stringify(got) + ', want ' + JSON.stringify(want));
+assert(h(['<p>', '</p>'], ['<i>a</i>', '<i>b</i>']) === '<p><i>a</i><i>b</i></p>', 'h joins arrays unescaped');
+assert(h(['<p>', '</p>'], { __html: true, value: '<b>x</b>' }) === '<p><b>x</b></p>', 'h __html opt-out');
+assert(h(['<p>', '</p>'], false) === '<p></p>', 'h drops false');
+
+// Inventory's search highlight (shingo-core/www/static/pages/inventory.js hl)
+// is the caller the quote fix would have made worse. It used to escape first
+// and highlight the escaped string, so a search for "amp" or "lt" put the mark
+// inside an entity ("R&<mark>amp</mark>;D"), and with quotes escaped "quot"
+// would have joined them. It now splits the RAW text and escapes each piece.
+(function () {
+    const inv = fs.readFileSync(path.join(__dirname, '..', 'shingo-core', 'www', 'static', 'pages', 'inventory.js'), 'utf8');
+    const at = inv.search(/function hl\s*\(/);
+    let body = null;
+    for (let i = inv.indexOf('{', at), depth = 0; at >= 0 && i < inv.length; i++) {
+        if (inv[i] === '{') depth++;
+        else if (inv[i] === '}' && --depth === 0) { body = inv.slice(at, i + 1); break; }
+    }
+    assert(body, 'inventory.js defines hl');
+    if (!body) return;
+    vm.runInContext(body + '\nvar searchTerm = "";', ctx);
+    const MARK = (s) => '<mark class="inv-hit">' + s + '</mark>';
+    [
+        ['', 'R&D "x"', 'R&amp;D &quot;x&quot;'],
+        ['amp', 'R&D amp', 'R&amp;D ' + MARK('amp')],
+        ['quot', 'say "quot"', 'say &quot;' + MARK('quot') + '&quot;'],
+        ['lt', 'a<b lt', 'a&lt;b ' + MARK('lt')],
+        ['AMP', 'Amp', MARK('Amp')],
+        ['a.b', 'axb a.b', 'axb ' + MARK('a.b')],
+    ].forEach(([term, text, want]) => {
+        vm.runInContext('searchTerm = ' + JSON.stringify(term), ctx);
+        const got = vm.runInContext('hl(' + JSON.stringify(text) + ')', ctx);
+        assert(got === want, 'inventory hl(' + JSON.stringify(text) + ') searching ' + JSON.stringify(term)
+            + ' = ' + JSON.stringify(got) + ', want ' + JSON.stringify(want));
+    });
+})();
 
 console.log('escape: ' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed ? 1 : 0);

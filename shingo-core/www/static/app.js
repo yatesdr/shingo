@@ -18,10 +18,12 @@
 //   escapeHtml(s)     — last resort for legacy string concatenation.
 //                       Prefer h`` for new code.
 
-import { delegateActions, formatTime, installBackdropClose, installTableSort, onSSE, timeAgo } from '/static/shared/utils.js';
+import { delegateActions, escapeHtml, formatTime, h, installBackdropClose, installTableSort, onSSE, timeAgo } from '/static/shared/utils.js';
 installBackdropClose();
 document.addEventListener('DOMContentLoaded', function() { installTableSort(); });
-export { delegateActions };
+// escapeHtml and h are the shared ones (one helper per job); pages keep
+// importing them from here.
+export { delegateActions, escapeHtml, h };
 
 // Debounce: delays execution until `ms` milliseconds after the last call.
 // Used to prevent SSE event bursts from saturating the browser main thread.
@@ -33,41 +35,6 @@ export function debounce(fn, ms) {
     clearTimeout(timer);
     timer = setTimeout(function() { fn.apply(self, args); }, ms);
   };
-}
-
-// HTML escape (replaces per-page esc/escapeHtml)
-export function escapeHtml(s) {
-  if (s === null || s === undefined || s === '') return '';
-  var d = document.createElement('div');
-  d.appendChild(document.createTextNode(s));
-  return d.innerHTML;
-}
-
-// Tagged-template HTML builder. Static parts pass through; interpolations
-// are escaped, arrays joined. Returns a string suitable for innerHTML.
-//
-//   container.innerHTML = h`<div class="x">${name}</div>${rows.map(r => h`<p>${r}</p>`)}`;
-//
-// Nested h`` *outside* an array (e.g. `${cond ? h`...` : ''}`) returns a
-// string that the outer h`` will re-escape — wrap with the __html opt-out:
-// `${cond ? {__html:true, value: h`...`} : ''}`. Arrays of h`` results
-// are joined unescaped and need no wrap.
-export function h(strings) {
-  var out = strings[0];
-  for (var i = 1; i < arguments.length; i++) {
-    var v = arguments[i];
-    if (Array.isArray(v)) {
-      out += v.join('');
-    } else if (v === null || v === undefined || v === false) {
-      // skip — lets `${cond && h`...`}` work
-    } else if (typeof v === 'object' && v.__html === true) {
-      out += v.value; // pre-built safe HTML opt-out
-    } else {
-      out += escapeHtml(String(v));
-    }
-    out += strings[i];
-  }
-  return out;
 }
 
 // Element builder. props: attributes (className, dataset, id, ...) and

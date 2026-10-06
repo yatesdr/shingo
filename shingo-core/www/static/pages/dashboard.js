@@ -15,7 +15,7 @@
 // Adding a new dashboard kind: branch on `kind` in init() and render into
 // #dash-main; register the kind's renderer template in handlers_dashboards.go.
 
-import { formatClock, formatDuration, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { escapeHtml, formatClock, formatDuration, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shared/utils.js';
 
 (function () {
   var body = document.body;
@@ -36,11 +36,6 @@ import { formatClock, formatDuration, onSSE, serverNow, setSSEReloadOnBuild } fr
   }
 
   // ── Formatting helpers ─────────────────────────────────────────────
-  function esc(s) {
-    var d = document.createElement('span');
-    d.textContent = (s === null || s === undefined) ? '' : s;
-    return d.innerHTML;
-  }
 
   function formatETA(str) {
     if (!str) return '-';
@@ -64,13 +59,13 @@ import { formatClock, formatDuration, onSSE, serverNow, setSSEReloadOnBuild } fr
   var seen = {}; // order_id -> true, to flash only genuinely new rows
 
   function rowHTML(o) {
-    return '<td class="r-robot">' + esc(o.robot_id || '-') + '</td>' +
-      '<td>' + esc(o.source_node || '-') + '</td>' +
-      '<td class="r-payload">' + esc(o.payload_code || '-') + '</td>' +
-      '<td>' + esc(o.current_station || '-') + '</td>' +
-      '<td>' + esc(o.delivery_node || '-') + '</td>' +
-      '<td class="r-status ' + statusClass(o.status) + '">' + esc(statusLabel(o.status)) + '</td>' +
-      '<td class="r-eta">' + esc(formatETA(o.eta)) + '</td>';
+    return '<td class="r-robot">' + escapeHtml(o.robot_id || '-') + '</td>' +
+      '<td>' + escapeHtml(o.source_node || '-') + '</td>' +
+      '<td class="r-payload">' + escapeHtml(o.payload_code || '-') + '</td>' +
+      '<td>' + escapeHtml(o.current_station || '-') + '</td>' +
+      '<td>' + escapeHtml(o.delivery_node || '-') + '</td>' +
+      '<td class="r-status ' + statusClass(o.status) + '">' + escapeHtml(statusLabel(o.status)) + '</td>' +
+      '<td class="r-eta">' + escapeHtml(formatETA(o.eta)) + '</td>';
   }
 
   // A DELIVERED ROW IS DONE BEING A TASK. The feed is the non-terminal orders

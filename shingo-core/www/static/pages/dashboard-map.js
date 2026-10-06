@@ -44,7 +44,7 @@
 // Every class name in the scene therefore covers both shapes, and only the
 // geometry says which one a given lane is.
 
-import { formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { escapeHtml, formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shared/utils.js';
 // The scene-drawing substrate — projection, orientation, cubic arithmetic,
 // lane identity — lives in shared/scene-geom.js so a second scene page, on
 // either surface, draws the same network without inheriting this file's
@@ -1642,12 +1642,6 @@ import {
     }
   }
 
-  function escapeText(s) {
-    var d = document.createElement('span');
-    d.textContent = (s === null || s === undefined) ? '' : s;
-    return d.innerHTML;
-  }
-
   // Class legend mirrors the actual node encoding: travel dots recede, typed
   // waypoints are outlined shapes. Unknown classes fall back to palette dots.
   function legendSwatch(color, shape, label) {
@@ -1655,7 +1649,7 @@ import {
     if (shape === 'ring') style = 'background:transparent;border:2px solid ' + color;
     if (shape === 'square') style = 'background:transparent;border:2px solid ' + color + ';border-radius:3px';
     return '<span class="map-legend-item"><span class="map-legend-dot" style="' + style + '"></span>' +
-      escapeText(label) + '</span>';
+      escapeHtml(label) + '</span>';
   }
 
   function renderClassLegend() {
@@ -1754,13 +1748,13 @@ import {
         var color = STATUS_COLOR[o.status] || '#888';
         var label = statusLabel[o.status] || o.status;
         return '<li class="rail-row" style="border-left-color:' + color + '">' +
-          '<span class="rail-row-id">' + escapeText(o.robot_id || '—') + '</span>' +
+          '<span class="rail-row-id">' + escapeHtml(o.robot_id || '—') + '</span>' +
           '<span class="rail-row-arrow">→</span>' +
           // No destination yet is no data, not a question mark (guide rule 4).
           (o.delivery_node
-            ? '<span class="rail-row-node">' + escapeText(o.delivery_node) + '</span>'
+            ? '<span class="rail-row-node">' + escapeHtml(o.delivery_node) + '</span>'
             : '<span class="rail-row-node text-muted" title="no destination yet">—</span>') +
-          '<span class="rail-row-status" style="color:' + color + '">' + escapeText(label) + '</span>' +
+          '<span class="rail-row-status" style="color:' + color + '">' + escapeHtml(label) + '</span>' +
           '</li>';
       }).join('') + (overflow ? '<li class="rail-empty">+' + overflow + ' more</li>' : '');
     }
@@ -1776,7 +1770,7 @@ import {
         var ageFrac = (now - e.ts) / FEED_MAX_AGE_MS;
         var opacity = Math.max(0.25, 1 - ageFrac * 0.75).toFixed(2);
         var cls = 'rail-event' + (e.level === 'alert' ? ' rail-event-alert' : '');
-        return '<li class="' + cls + '" style="opacity:' + opacity + '">' + escapeText(e.text) + '</li>';
+        return '<li class="' + cls + '" style="opacity:' + opacity + '">' + escapeHtml(e.text) + '</li>';
       }).join('');
     }
   }

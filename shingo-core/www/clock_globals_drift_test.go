@@ -148,6 +148,56 @@ func TestNoPageModuleDefinesADurationFormatter(t *testing.T) {
 	}
 }
 
+// TestEscapeHtmlDefinedOnce: the HTML escape is defined in one file across
+// shared/ and Core's static tree — shared/utils.js, the copy that escapes
+// quotes (pin: shared/utils.escape.test.js). Core had app.js's copy and five
+// page-local ones (dashboard, dashboard-node-report, dashboard-map, missions'
+// escapeText/escapeAttr), all but one leaving `"` and `'` alone, so the h template could
+// be broken out of from inside an attribute. A page-local escaper under
+// another name is caught by its shape: `&` replaced by hand, or a text node
+// read back through innerHTML. Edge's own copies (shingoedge.js,
+// operator-util.js) and shared/esc.js are outside this tree's say and listed
+// in the round-2 report, not here.
+func TestEscapeHtmlDefinedOnce(t *testing.T) {
+	def := regexp.MustCompile(`function\s+escapeHtml\s*\(|\bescapeHtml\s*=\s*(?:function|\()`)
+	shape := regexp.MustCompile(`replace\(/&/g|textContent\s*=[^;]*;\s*return\s+\w+\.innerHTML|createTextNode\([^)]*\)\);\s*return\s+\w+\.innerHTML`)
+	files := pageJS(t)
+	sharedDir := filepath.Join("..", "..", "shared")
+	entries, err := os.ReadDir(sharedDir)
+	if err != nil {
+		t.Fatalf("read shared/: %v", err)
+	}
+	for _, e := range entries {
+		n := e.Name()
+		if !strings.HasSuffix(n, ".js") || strings.HasSuffix(n, ".test.js") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(sharedDir, n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files["shared/"+n] = string(b)
+	}
+	var defs, shapes []string
+	for path, src := range files {
+		code := stripLineComments(src)
+		if def.MatchString(code) {
+			defs = append(defs, path)
+		}
+		if strings.HasPrefix(path, "static/") && shape.MatchString(code) {
+			shapes = append(shapes, path)
+		}
+	}
+	sort.Strings(defs)
+	if strings.Join(defs, ",") != "shared/utils.js" {
+		t.Errorf("escapeHtml defined in %v, want only shared/utils.js (import it from there or from /static/app.js)", defs)
+	}
+	sort.Strings(shapes)
+	for _, p := range shapes {
+		t.Errorf("page-local HTML escaper in %s: use escapeHtml or h from /static/app.js", p)
+	}
+}
+
 // TestPlantTZReadInTwoFiles: the plant zone is read in exactly two browser
 // files — shared/utils.js (formatTime, formatClock) and Core's
 // components/plantclock.js (plant date, seconds, windows, bucket labels). A

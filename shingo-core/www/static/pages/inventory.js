@@ -127,14 +127,16 @@ function passesFilters(r) {
   if (groupFilter && !groupsForPayload(r.payload_code)[groupFilter]) return false;
   return true;
 }
-// Escape, then wrap the current search term in a highlight mark.
+// Wrap the current search term in a highlight mark, escaping each piece. The
+// match runs on the RAW text: run on the escaped string, a search for "amp" or
+// "quot" put the mark inside an entity and broke it.
 function hl(text) {
-  const s = escapeHtml(text == null ? '' : String(text));
-  if (!searchTerm) return s;
+  const raw = text == null ? '' : String(text);
+  if (!searchTerm) return escapeHtml(raw);
   const t = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  try {
-    return s.replace(new RegExp('(' + t + ')', 'ig'), '<mark class="inv-hit">$1</mark>');
-  } catch (e) { return s; }
+  return raw.split(new RegExp('(' + t + ')', 'ig'))
+    .map((part, i) => i % 2 ? '<mark class="inv-hit">' + escapeHtml(part) + '</mark>' : escapeHtml(part))
+    .join('');
 }
 
 // ── rendering ─────────────────────────────────────────────────────────────

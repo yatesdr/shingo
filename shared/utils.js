@@ -26,17 +26,18 @@
 
 // Last-resort escape for legacy innerHTML concatenation. Prefer h``.
 //
-// TEXT ONLY. This is DOM-based — text node in, innerHTML out — so it escapes
-// `&`, `<` and `>` and leaves `"` alone, which is wrong for a value going
-// inside a double-quoted ATTRIBUTE. Callers that build attributes by
-// concatenation want esc.js. Left as it is on purpose: every caller here is
-// escaping text between tags, and changing what this returns would move bytes
-// on pages that are not what the composer work is about.
+// Safe for text between tags AND inside a quoted attribute, either quote.
+// It used to be DOM-based (text node in, innerHTML out), which escapes `&`,
+// `<` and `>` and leaves `"` and `'` alone; h`` runs every interpolation
+// through this, so `title="${note}"` could be broken out of by a quote in the
+// note. Pin: utils.escape.test.js. Core imports this one; its own copy and
+// the page-local ones are gone, and www/clock_globals_drift_test.go's
+// TestEscapeHtmlDefinedOnce keeps it that way. Edge's shingoedge.js and
+// operator-util.js carry their own text-only copies (another stream's pages).
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 export function escapeHtml(s) {
     if (s === null || s === undefined || s === '') return '';
-    const d = document.createElement('div');
-    d.appendChild(document.createTextNode(s));
-    return d.innerHTML;
+    return String(s).replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]);
 }
 
 // Tagged-template HTML builder. Static parts pass through; interpolations

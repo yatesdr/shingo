@@ -62,7 +62,7 @@ function render(payload, now) {
             querySelector: function() { return null; },
             querySelectorAll: function() { return []; },
             addEventListener: function() {},
-            // escapeHtml builds a text node and reads it back as HTML.
+            // el() and the page create elements; escapeHtml no longer does.
             createElement: function() {
                 return { appendChild: function(t) {
                     this.innerHTML = String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

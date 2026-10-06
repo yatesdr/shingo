@@ -1,4 +1,4 @@
-import { formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { escapeHtml, formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shared/utils.js';
 
 (function () {
   var body = document.body;
@@ -17,12 +17,6 @@ import { formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shar
     if (el) el.className = 'dash-conn ' + (ok ? 'dash-conn-ok' : 'dash-conn-down');
   }
 
-  function esc(s) {
-    var d = document.createElement('span');
-    d.textContent = (s === null || s === undefined) ? '' : s;
-    return d.innerHTML;
-  }
-
   function headerHTML(layout) {
     if (layout === 'shared_window') {
       return '<th>Payload</th><th>Status</th><th>Node</th><th>UoP</th>';
@@ -39,23 +33,23 @@ import { formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shar
     var activeClass = r.is_active_style ? ' nr-row-active' : '';
 
     if (isShared) {
-      var payloadHTML = esc(r.payload_code);
+      var payloadHTML = escapeHtml(r.payload_code);
       var nodeHTML = r.node_name
-        ? esc(r.node_name) + (r.group_name ? ' <span class="nr-group">(' + esc(r.group_name) + ')</span>' : '')
+        ? escapeHtml(r.node_name) + (r.group_name ? ' <span class="nr-group">(' + escapeHtml(r.group_name) + ')</span>' : '')
         : '<span class="nr-empty-payload">&mdash;</span>';
       return '<td class="nr-payload">' + payloadHTML + '</td>' +
         '<td class="nr-status">' + statusHTML + '</td>' +
         '<td class="nr-node">' + nodeHTML + '</td>' +
-        '<td class="nr-uop">' + esc(uopText) + '</td>';
+        '<td class="nr-uop">' + escapeHtml(uopText) + '</td>';
     }
     var payloadHTML = r.payload_code
-      ? esc(r.payload_code)
+      ? escapeHtml(r.payload_code)
       : '<span class="nr-empty-payload">&mdash;</span>';
-    return '<td class="nr-node">' + esc(r.node_name) + '</td>' +
-      '<td class="nr-group">' + esc(r.group_name || '') + '</td>' +
+    return '<td class="nr-node">' + escapeHtml(r.node_name) + '</td>' +
+      '<td class="nr-group">' + escapeHtml(r.group_name || '') + '</td>' +
       '<td class="nr-status">' + statusHTML + '</td>' +
       '<td class="nr-payload">' + payloadHTML + '</td>' +
-      '<td class="nr-uop">' + esc(uopText) + '</td>';
+      '<td class="nr-uop">' + escapeHtml(uopText) + '</td>';
   }
 
   function render(layout, rows) {
@@ -129,15 +123,15 @@ import { formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shar
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i];
       if (r.is_empty) {
-        var src = r.source_node ? esc(r.source_node) + ' \u2192 ' : '';
+        var src = r.source_node ? escapeHtml(r.source_node) + ' \u2192 ' : '';
         parts.push('\u25c6 EMPTY ' + src + 'returning');
       } else if (r.is_partial) {
-        var src2 = r.source_node ? esc(r.source_node) + ' \u2192 ' : '';
+        var src2 = r.source_node ? escapeHtml(r.source_node) + ' \u2192 ' : '';
         parts.push('\u25c6 PARTIAL (' + r.uop_remaining + ' UoP) ' + src2 + 'returning');
       } else {
-        var arrow = '\u2192 ' + esc(r.payload_code);
+        var arrow = '\u2192 ' + escapeHtml(r.payload_code);
         if (r.dest_node) {
-          arrow += ' \u2192 ' + esc(r.dest_node);
+          arrow += ' \u2192 ' + escapeHtml(r.dest_node);
         } else {
           arrow += ' in transit';
         }

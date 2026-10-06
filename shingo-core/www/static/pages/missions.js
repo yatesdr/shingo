@@ -4,7 +4,7 @@
 // breakdowns, Failure Pareto, and the mission table + CSV. A global filter
 // store (Since/Until + station/robot + state) drives the data sections.
 
-import { apiGet, el, timeAgo, toast } from '/static/app.js';
+import { apiGet, el, escapeHtml, timeAgo, toast } from '/static/app.js';
 import { createStore, formatDuration, formatTime, installLiveDurations, onSSE, debounce } from '/static/shared/utils.js';
 import { CellTile, updateCellTile, pulseCellDot } from '/static/components/CellTile.js';
 import { openCellDrill } from '/static/components/CellDrill.js';
@@ -52,17 +52,17 @@ function refreshList(state) {
             // cell is left empty (not applicable), not dashed.
             tr.innerHTML =
                 '<td>' + m.order_id + '</td>' +
-                '<td>' + escapeText(m.robot_id || '-') + '</td>' +
-                '<td>' + escapeText(stationLabel(m.station_id)) + '</td>' +
-                '<td>' + escapeText(m.source_node || '—') + ' &rarr; ' + escapeText(m.delivery_node || '—') + '</td>' +
-                '<td><span class="badge badge-' + escapeAttr(m.status) + '"' +
-                    (m.terminal_state ? ' title="fleet reported: ' + escapeAttr(m.terminal_state) + '"' : '') + '>' +
-                    escapeText(m.status) + '</span></td>' +
+                '<td>' + escapeHtml(m.robot_id || '-') + '</td>' +
+                '<td>' + escapeHtml(stationLabel(m.station_id)) + '</td>' +
+                '<td>' + escapeHtml(m.source_node || '—') + ' &rarr; ' + escapeHtml(m.delivery_node || '—') + '</td>' +
+                '<td><span class="badge badge-' + escapeHtml(m.status) + '"' +
+                    (m.terminal_state ? ' title="fleet reported: ' + escapeHtml(m.terminal_state) + '"' : '') + '>' +
+                    escapeHtml(m.status) + '</span></td>' +
                 (m.in_flight
-                    ? '<td class="tnum" title="in flight since ' + escapeAttr(formatTime(m.core_created)) + '"><span data-since="' + escapeAttr(m.core_created) + '">' + formatDuration(0) + '</span> so far</td>' +
+                    ? '<td class="tnum" title="in flight since ' + escapeHtml(formatTime(m.core_created)) + '"><span data-since="' + escapeHtml(m.core_created) + '">' + formatDuration(0) + '</span> so far</td>' +
                       '<td title="in flight"></td>'
                     : '<td class="tnum" title="' + (m.duration_ms ? m.duration_ms + 'ms' : '') + '">' + formatDuration(m.duration_ms) + '</td>' +
-                      '<td title="' + escapeAttr(formatAbsTime(m.core_completed)) + '">' + timeAgo(m.core_completed) + '</td>');
+                      '<td title="' + escapeHtml(formatAbsTime(m.core_completed)) + '">' + timeAgo(m.core_completed) + '</td>');
             tbody.appendChild(tr);
         }
         installLiveDurations(tbody);
@@ -250,9 +250,9 @@ function perDay1(total, days) {
 // not printed as a zero.
 function faultCell(label, value, count, empty) {
     return '<div class="dwell-cell' + (empty ? ' dwell-empty' : '') + '">'
-        + '<span class="dwell-label">' + escapeText(label) + '</span>'
-        + '<span class="dwell-val">' + escapeText(empty ? '—' : value) + '</span>'
-        + '<span class="dwell-count">' + escapeText(count) + '</span>'
+        + '<span class="dwell-label">' + escapeHtml(label) + '</span>'
+        + '<span class="dwell-val">' + escapeHtml(empty ? '—' : value) + '</span>'
+        + '<span class="dwell-count">' + escapeHtml(count) + '</span>'
         + '</div>';
 }
 
@@ -466,14 +466,14 @@ function breakdownTable(container, rows, opts) {
     // apply, unchanged.
     if (opts.columns) {
         const cHead = '<thead><tr>' + opts.columns.map((c) =>
-            '<th' + (c.num ? ' class="col-num"' : '') + (c.title ? ' title="' + escapeAttr(c.title) + '"' : '')
-            + '>' + escapeText(c.head) + '</th>').join('') + '</tr></thead>';
+            '<th' + (c.num ? ' class="col-num"' : '') + (c.title ? ' title="' + escapeHtml(c.title) + '"' : '')
+            + '>' + escapeHtml(c.head) + '</th>').join('') + '</tr></thead>';
         const cBody = rows.map((r) => '<tr>' + opts.columns.map((c) => {
             const v = c.value(r);
-            return '<td class="' + (c.num ? 'col-num tnum' : '') + '" title="' + escapeAttr(String(v)) + '">'
-                + escapeText(v) + '</td>';
+            return '<td class="' + (c.num ? 'col-num tnum' : '') + '" title="' + escapeHtml(String(v)) + '">'
+                + escapeHtml(v) + '</td>';
         }).join('') + '</tr>').join('');
-        container.innerHTML = (opts.note ? '<p class="u3-note">' + escapeText(opts.note) + '</p>' : '')
+        container.innerHTML = (opts.note ? '<p class="u3-note">' + escapeHtml(opts.note) + '</p>' : '')
             + '<table class="u3-tbl">' + cHead + '<tbody>' + cBody + '</tbody></table>';
         return;
     }
@@ -503,15 +503,15 @@ function breakdownTable(container, rows, opts) {
                     + '</td>';
             }
         }
-        return '<tr' + (opts.onClick ? ' class="u3-row" data-label="' + escapeAttr(label) + '"' : '') + '>'
-            + '<td title="' + escapeAttr(label) + '">' + escapeText(label) + '</td>'
+        return '<tr' + (opts.onClick ? ' class="u3-row" data-label="' + escapeHtml(label) + '"' : '') + '>'
+            + '<td title="' + escapeHtml(label) + '">' + escapeHtml(label) + '</td>'
             + '<td class="col-num tnum">' + r.count + '</td>'
-            + '<td class="col-num tnum">' + escapeText(formatDuration(r.avg_duration_ms)) + '</td>'
+            + '<td class="col-num tnum">' + escapeHtml(formatDuration(r.avg_duration_ms)) + '</td>'
             + idxCell
             + '</tr>';
     }).join('');
 
-    container.innerHTML = (opts.note ? '<p class="u3-note">' + escapeText(opts.note) + '</p>' : '')
+    container.innerHTML = (opts.note ? '<p class="u3-note">' + escapeHtml(opts.note) + '</p>' : '')
         + '<table class="u3-tbl">' + head + '<tbody>' + body + '</tbody></table>';
 
     if (opts.onClick) {
@@ -521,12 +521,6 @@ function breakdownTable(container, rows, opts) {
     }
 }
 
-function escapeText(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-function escapeAttr(s) {
-    return escapeText(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
 
 // §3.F breakdowns: top robots and routes. Robot rows are clickable → add the
 // robot to the global filter; route isn't a filter facet so route rows are
