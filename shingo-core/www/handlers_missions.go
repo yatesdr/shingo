@@ -565,7 +565,9 @@ func parseMissionFilter(r *http.Request) domain.TelemetryFilter {
 	}
 	if u := r.URL.Query().Get("until"); u != "" {
 		if t, err := time.ParseInLocation("2006-01-02", u, plantLocation); err == nil {
-			end := t.Add(24*time.Hour - time.Nanosecond).UTC()
+			// AddDate, not 24h: a fall-back day is 25 hours and a spring-forward
+			// day 23, and a fixed 24 hours drops or borrows the last plant hour.
+			end := t.AddDate(0, 0, 1).Add(-time.Nanosecond).UTC()
 			f.Until = &end
 		}
 	}

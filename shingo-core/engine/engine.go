@@ -118,7 +118,6 @@ type Engine struct {
 	inventoryDeltaService *service.InventoryDeltaService
 	dashboardService      *service.DashboardService
 	footprintService      *service.FootprintService
-	partsService          *service.PartsService
 	heartbeatService      *service.HeartbeatService
 	thresholdMonitor      *ThresholdMonitor
 	sourceabilityMonitor  *SourceabilityMonitor
@@ -316,7 +315,6 @@ func New(c Config) *Engine {
 	e.inventoryDeltaService = service.NewInventoryDeltaService(e.db, e.binManifest, epochAnnounce)
 	e.dashboardService = service.NewDashboardService(e.db)
 	e.footprintService = service.NewFootprintService(e.db)
-	e.partsService = service.NewPartsService(e.db)
 	e.heartbeatService = service.NewHeartbeatService(e.db)
 	e.thresholdMonitor = NewThresholdMonitor(e)
 	e.sourceabilityMonitor = NewSourceabilityMonitor(e)

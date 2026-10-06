@@ -23,7 +23,9 @@ import (
 // out of bin_uop_ledger. Unit: one part crossing one station. Same word, two
 // grains, two tables, no shared key — and the misnamed one was the pre-existing
 // endpoint, not the new page. So the page kept the word and the endpoint became
-// /api/parts/mission-duration.
+// /api/parts/mission-duration. That endpoint was later removed (2026-10-05,
+// no caller in any module), and with it handlers_parts.go and the symbol-level
+// test that read it; the route rule below is what still has something to bite.
 //
 // ── WHY THIS TEST AND NOT JUST A COMMENT ─────────────────────────────────────
 //
@@ -59,48 +61,20 @@ func TestCycleNamesOneMeasurement(t *testing.T) {
 			"consecutive units at a station, from consecutive PLC ticks in bin_uop_ledger. "+
 			"It does not mean a mission duration, an order's end-to-end time, or a takt — "+
 			"/api/parts/cycle-time used to mean the first of those and was renamed to "+
-			"/api/parts/mission-duration for exactly this reason.\n\n"+
+			"/api/parts/mission-duration (since removed) for exactly this reason.\n\n"+
 			"If the new route measures the same thing at a different grain, put the grain "+
 			"in the path (/cycle-time/{station}). If it measures something else, name it "+
 			"after what it measures and update this test with the reason.",
 			cycleRoutes, theOne)
 	}
 
-	// The old spelling must not come back, in a route or as a Go symbol on the
-	// parts path. A reinstated alias is the same defect wearing a compatibility
+	// The old spelling must not come back as a route. A reinstated alias is the same defect wearing a compatibility
 	// argument: two live names for one endpoint is what makes the word ambiguous
 	// again, and it would be permanent.
 	if strings.Contains(string(src), "/parts/cycle-time") {
 		t.Error("router.go registers /parts/cycle-time again. That endpoint averages " +
 			"mission_telemetry.duration_ms — a carrying mission's duration, not a cycle " +
-			"time. It is /parts/mission-duration now, and an alias would restore the " +
-			"ambiguity rather than ease a migration.")
+			"time; it was renamed /parts/mission-duration and then removed for want of a " +
+			"caller. Bringing the old name back would restore the ambiguity.")
 	}
-}
-
-// TestPartsDurationSymbolsDoNotSayCycle holds the same rule one layer down.
-//
-// The route could be right while the handler, service method and store type all
-// still said Cycle — which is how the name would leak back the next time
-// somebody reads the code to find out what the endpoint measures and names their
-// new route after what they found.
-func TestPartsDurationSymbolsDoNotSayCycle(t *testing.T) {
-	src, err := os.ReadFile("handlers_parts.go")
-	if err != nil {
-		t.Fatalf("read handlers_parts.go: %v", err)
-	}
-	// stripGoComments so the explanation of the rename does not fail the rule it
-	// explains — the same trap TestPhase6PagesUseNoChips documents for templates.
-	if code := stripGoComments(string(src)); strings.Contains(code, "CycleTime") {
-		t.Error("handlers_parts.go still names a CycleTime symbol. The parts endpoints " +
-			"measure carrying-mission durations (mission_telemetry.duration_ms); cycle " +
-			"time is /cycle-time, off bin_uop_ledger. Two names for two things, not one " +
-			"name for both.")
-	}
-}
-
-// stripGoComments removes // line comments and /* */ blocks.
-func stripGoComments(s string) string {
-	s = regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(s, "")
-	return regexp.MustCompile(`(?m)//.*$`).ReplaceAllString(s, "")
 }

@@ -20,8 +20,11 @@
     {{if .Dashboard}}<a class="btn btn-sm btn-primary" href="/wall-display/{{.Dashboard.ID}}?kiosk=1" target="_blank" rel="noopener" title="Open chromeless for a wall monitor">&#x26F6; Fullscreen</a>{{end}}
   </div>
 </div>
+{{/* .wall-frame fills the viewport below Core's chrome (style.css). It was
+     calc(100vh - 170px), which overran whenever the chrome was taller — the sim
+     strip alone does it — and cut the display off at the bottom behind a
+     second, page-level scrollbar. */}}
 {{if .Dashboard}}
-<iframe src="/wall-display/{{.Dashboard.ID}}?kiosk=1" title="{{.Dashboard.Name}}"
-        style="width:100%;height:calc(100vh - 170px);border:1px solid var(--border);border-radius:0.5rem;background:var(--surface);"></iframe>
+<iframe class="wall-frame" src="/wall-display/{{.Dashboard.ID}}?kiosk=1" title="{{.Dashboard.Name}}"></iframe>
 {{end}}
 {{end}}

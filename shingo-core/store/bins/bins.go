@@ -1653,7 +1653,13 @@ func UnconfirmManifest(db *sql.DB, binID int64) error {
 	return err
 }
 
-// HasNotes returns a map indicating which bins have audit log entries.
+// HasNotes returns a map indicating which bins carry a note a person wrote.
+//
+// A NOTE IS AN AUDIT ROW WHOSE ACTION IS "note:<type>" — the add_note door
+// (store.AddBinNote) is its only writer. Every other bin audit row is the
+// system's own record of a move, a count or a status change; counting those
+// lit the bins page's notes flag on every bin that had ever moved (pinned by
+// www TestBinsPage_NotesFlagIsAPersonsNote).
 func HasNotes(db *sql.DB, binIDs []int64) (map[int64]bool, error) {
 	result := make(map[int64]bool)
 	if len(binIDs) == 0 {
@@ -1665,7 +1671,7 @@ func HasNotes(db *sql.DB, binIDs []int64) (map[int64]bool, error) {
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = id
 	}
-	query := fmt.Sprintf(`SELECT DISTINCT entity_id FROM audit_log WHERE entity_type='bin' AND entity_id IN (%s)`,
+	query := fmt.Sprintf(`SELECT DISTINCT entity_id FROM audit_log WHERE entity_type='bin' AND action LIKE 'note:%%' AND entity_id IN (%s)`,
 		strings.Join(placeholders, ","))
 	rows, err := db.Query(query, args...)
 	if err != nil {

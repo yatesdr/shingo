@@ -143,7 +143,8 @@ func (db *DB) RecoverBinToNode(binID, toNodeID int64) error {
 // UnconfirmBinManifest resets the manifest confirmation flag.
 func (db *DB) UnconfirmBinManifest(binID int64) error { return bins.UnconfirmManifest(db.DB, binID) }
 
-// BinHasNotes returns a map indicating which bins have audit log entries.
+// BinHasNotes returns a map indicating which bins carry a note a person wrote
+// (an audit row from AddBinNote); see bins.HasNotes.
 func (db *DB) BinHasNotes(binIDs []int64) (map[int64]bool, error) {
 	return bins.HasNotes(db.DB, binIDs)
 }

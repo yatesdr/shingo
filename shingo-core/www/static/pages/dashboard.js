@@ -15,7 +15,7 @@
 // Adding a new dashboard kind: branch on `kind` in init() and render into
 // #dash-main; register the kind's renderer template in handlers_dashboards.go.
 
-import { formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shared/utils.js';
+import { formatClock, formatDuration, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shared/utils.js';
 
 (function () {
   var body = document.body;
@@ -50,17 +50,12 @@ import { formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shar
     // server's frame. See serverNow in shared/utils.js.
     var diff = d - serverNow();
     if (diff <= 0) return 'arriving';
-    var mins = Math.floor(diff / 60000);
-    if (mins < 1) return '<1m';
-    if (mins < 60) return mins + 'm';
-    var hrs = Math.floor(mins / 60);
-    return hrs + 'h' + (mins % 60) + 'm';
+    return formatDuration(diff);
   }
 
   var STATUS_LABELS = {
     pending: 'Pending', queued: 'Queued', acknowledged: 'ACK', staged: 'Staged',
-    dispatched: 'Dispatched', in_transit: 'In Transit', blocked: 'Blocked',
-    delivered: 'Delivered', completed: 'Done'
+    dispatched: 'Dispatched', in_transit: 'In Transit', blocked: 'Blocked'
   };
   function statusLabel(s) { return STATUS_LABELS[s] || s || '-'; }
   function statusClass(s) { return 'st-' + (s || 'unknown'); }
@@ -78,9 +73,18 @@ import { formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '/static/shar
       '<td class="r-eta">' + esc(formatETA(o.eta)) + '</td>';
   }
 
-  function render(list) {
+  // A DELIVERED ROW IS DONE BEING A TASK. The feed is the non-terminal orders
+  // with a robot (ListActiveBoard), and `delivered` is non-terminal only because
+  // it waits for a confirm — which at Springfield is mostly the auto-confirm
+  // timeout — so the robot's work was over while the row sat on the board.
+  // The robot map reads the same feed and keeps it (its activity rail announces
+  // the delivery), so the board drops it here, not at the server.
+  function stillWorking(o) { return o.status !== 'delivered'; }
+
+  function render(all) {
     var tbody = document.getElementById('board-body');
     if (!tbody) return;
+    var list = all.filter(stillWorking);
     var nextSeen = {};
     tbody.innerHTML = '';
     for (var i = 0; i < list.length; i++) {

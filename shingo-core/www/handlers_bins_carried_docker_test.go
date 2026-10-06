@@ -245,11 +245,13 @@ func TestBinsPage_NotesFlagIsAPersonsNote(t *testing.T) {
 
 	body := binsPage(t, h, loginCookie(t, h))
 
-	if !strings.Contains(binRowHTML(t, body, moved.ID), `title="Has notes"`) {
-		t.Error("PIN (before): a bin with only a system audit row renders the notes flag")
+	// Was: the system-only bin rendered the flag too (the query read every
+	// audit row), which put it on every bin at Springfield.
+	if strings.Contains(binRowHTML(t, body, moved.ID), `title="Has notes"`) {
+		t.Error("a bin with only a system audit row renders the notes flag")
 	}
-	if !strings.Contains(binRowHTML(t, body, noted.ID), `title="Has notes"`) {
-		t.Error("a bin a person wrote a note on lost its notes flag")
+	if !strings.Contains(binRowHTML(t, body, noted.ID), `title="Has notes">notes</span>`) {
+		t.Error("a bin a person wrote a note on lost its labelled notes flag")
 	}
 }
 
@@ -275,8 +277,9 @@ func TestBinsPage_CountShownOnEveryBinThatHasOne(t *testing.T) {
 
 	body := binsPage(t, h, loginCookie(t, h))
 
-	if got := uopCell(t, binRowHTML(t, body, negative.ID), -3); got != `<span class="text-muted">-</span>` {
-		t.Errorf("PIN (before): a payload-less bin at -3 shows %q, want the dash", got)
+	// Was: the dash — the count printed only beside a payload.
+	if got := uopCell(t, binRowHTML(t, body, negative.ID), -3); got != "-3" {
+		t.Errorf("a payload-less bin at -3 shows %q, want -3", got)
 	}
 	if got := uopCell(t, binRowHTML(t, body, loaded.ID), 7); got != "7" {
 		t.Errorf("a loaded bin's count shows %q, want 7", got)
@@ -302,9 +305,17 @@ func TestBinsPage_FlagsAreLabelled(t *testing.T) {
 	testutil.MustNoErr(t, err, "flag the bin")
 
 	row := binRowHTML(t, binsPage(t, h, loginCookie(t, h)), b.ID)
-	for _, want := range []string{"&#128274;", "&#9888;", "&#9940;"} {
+	// Was: &#128274; &#9888; &#9940;, meaning in the title only.
+	for _, want := range []string{
+		`title="Locked by op-2">locked</span>`,
+		`title="Manifest unconfirmed">unconfirmed</span>`,
+		`>counts refused</span>`,
+	} {
 		if !strings.Contains(row, want) {
-			t.Errorf("PIN (before): flag glyph %s missing from the row:\n%s", want, row)
+			t.Errorf("labelled flag %s missing from the row:\n%s", want, row)
 		}
+	}
+	if strings.Contains(row, "&#") {
+		t.Errorf("a flag is still a glyph entity:\n%s", row)
 	}
 }

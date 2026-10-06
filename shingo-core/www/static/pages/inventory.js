@@ -8,12 +8,11 @@
 //   /api/inventory — bin rows, for the payload's holding bins + bin lifecycle.
 //   /api/buckets — lineside buckets, now carrying updated_at for staleness.
 //   /api/nodes — node id -> name, for home-loader node labels.
-//   /api/parts/consumption?since&until — window consumption for the drill.
 
 import {
   apiGet, apiPost, escapeHtml, delegateActions, toast, uiConfirm, timeAgo, timeAgoHTML, debounce,
 } from '/static/app.js';
-import { formatClock, formatTime, onSSE, serverNow } from '/static/shared/utils.js';
+import { formatClock, formatDuration, formatTime, onSSE, serverNow } from '/static/shared/utils.js';
 
 // ── state ──────────────────────────────────────────────────────────────
 let health = [];        // /api/inventory/monitor-totals rows
@@ -31,8 +30,6 @@ let searchTerm = '';
 let zoneFilter = '';
 let groupFilter = '';
 let expanded = null;    // payload_code of the currently-open RH row
-let drillPayload = null;
-let drillDays = 14;
 
 const STALE_WARN_MS = 7 * 24 * 3600 * 1000;
 const STALE_BAD_MS = 30 * 24 * 3600 * 1000;
@@ -70,7 +67,7 @@ async function loadAll(quiet) {
     if (!quiet) toast('Failed to load inventory: ' + (e.message || e), 'error', { sticky: true });
     const body = document.getElementById('rh-body');
     if (body && !health.length) {
-      body.innerHTML = '<tr><td colspan="9" class="dash-empty">Could not load — '
+      body.innerHTML = '<tr><td colspan="8" class="dash-empty">Could not load — '
         + escapeHtml(String(e.message || e))
         + ' <button class="btn btn-sm" data-action="refresh">Retry</button></td></tr>';
     }
@@ -248,8 +245,15 @@ function renderAlerts() {
     if (st === 'err') err++;
   });
   buckets.forEach((b) => { if (bucketAgeMs(b) > STALE_BAD_MS) stale++; });
-  // Rejected-delta bins (deltas being refused: payload mismatch or stale epoch)
-  // and bins parked staged past their own TTL — the SNF3 stranding signals.
+  // Carriers flagged anomaly_at (a refused delta — payload mismatch or stale
+  // epoch — or a rebind that left mixed contents) and bins parked staged past
+  // their own TTL — the SNF3 stranding signals.
+  //
+  // CARRIERS, NOT DELTAS. This figure is a live count of flagged bins with no
+  // window; it used to read "N rejected deltas" beside the panel's "M deltas
+  // dropped", and the two never agreed because they are different populations
+  // (pinned by TestInventory_RejectedAndDroppedCountDifferentPopulations). The
+  // dropped-delta count is shown once, in the panel, with its window.
   const rejected = anomalySummary.rejected_delta_bins || 0;
   const staleStaged = anomalySummary.stale_staged_bins || 0;
   // Carriers holding a payload their bin type is not declared to carry. These
@@ -263,9 +267,9 @@ function renderAlerts() {
   const parts = [];
   if (below) parts.push('<b>' + below + '</b> payload' + (below > 1 ? 's' : '') + ' below threshold');
   if (err) parts.push('<b>' + err + '</b> ledger error' + (err > 1 ? 's' : ''));
-  // The rejected-delta count is its own click target — it opens the drill listing
-  // WHICH carriers are flagged (part, node, reason), not just a scroll.
-  if (rejected) parts.push('<span data-action="showRejectedDeltas" style="text-decoration:underline;cursor:pointer"><b>' + rejected + '</b> rejected delta' + (rejected > 1 ? 's' : '') + '</span>');
+  // The flagged-carrier count is its own click target — it opens the drill
+  // listing WHICH carriers are flagged (part, node, reason), not just a scroll.
+  if (rejected) parts.push('<span data-action="showRejectedDeltas" style="text-decoration:underline;cursor:pointer"><b>' + rejected + '</b> carrier' + (rejected > 1 ? 's' : '') + ' flagged for a recount</span>');
   if (staleStaged) parts.push('<b>' + staleStaged + '</b> stale staged bin' + (staleStaged > 1 ? 's' : ''));
   // A LINK, NOT A SCROLL TARGET: the carriers are listed on another page, and
   // the fix (move the parts, or declare the bin type on the payload) is not
@@ -292,7 +296,7 @@ function renderHealth() {
     return headroom(a) - headroom(b); // within a band, least headroom first
   });
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="9" class="dash-empty">'
+    body.innerHTML = '<tr><td colspan="8" class="dash-empty">'
       + (health.length ? 'No payloads match the filter.' : 'No monitored or stocked payloads.') + '</td></tr>';
     return;
   }
@@ -304,11 +308,13 @@ function renderHealth() {
 // or Core has not ticked yet. Both are the ordinary state on most plants, and a
 // permanent card reading "0 groups" is a card that gets scrolled past forever.
 //
-// THE CAUSE STRING IS PRINTED RAW, deliberately. The queue-cause vocabulary is
-// thirty-odd values and lives in exactly one place (dispatch/queue_cause.go); a
-// friendly-label map here would be a second copy of it, free to drift the first
-// time a cause is added. The value is greppable as-is, and the orders page is
-// where a cause gets explained.
+// "WAITING ON" PRINTS THE ASK'S OWN QUEUE SENTENCE — the words the dispatcher
+// wrote for an operator (FormatQueueSentence, from the order's queue code) — and
+// keeps the engineer's queue cause in the title. No label map here: the
+// cause vocabulary is thirty-odd values in dispatch/queue_cause.go and a second
+// copy would drift the first time one is added. An ask with no sentence prints
+// its cause as itself (guide rule 4 rider: an unrecognised value is not an
+// absent one).
 function renderMaintained() {
   const sec = document.getElementById('mg');
   const body = document.getElementById('mg-body');
@@ -332,7 +338,8 @@ function renderMaintained() {
       : '<td class="rh-num text-muted" title="the level is covered">0</td>';
     const waiting = r.oldest_ask_cause
       ? '<span class="tnum" title="the longest-waiting ask against this level has been parked '
-        + escapeHtml(r.oldest_ask_age || '') + '">' + escapeHtml(r.oldest_ask_cause)
+        + escapeHtml(r.oldest_ask_age || '') + ' (' + escapeHtml(r.oldest_ask_cause) + ')">'
+        + escapeHtml(r.oldest_ask_reason || r.oldest_ask_cause)
         + ' &middot; ' + escapeHtml(r.oldest_ask_age || '') + '</span>'
       : '<span class="text-muted" title="nothing parked — every ask this level made is moving">&mdash;</span>';
     return '<tr>'
@@ -521,12 +528,16 @@ function renderDeltaIntegrity() {
       + '</div>';
   }).join('');
 
+  // A COUNT IS EXACT OF A STATED WINDOW (guide, "The numbers themselves"): the
+  // rows are drops since ledgerExceptions.since, so the head says since when.
   const totalDrops = shown.reduce((n, r) => n + r.drop_rows, 0);
+  const since = ledgerExceptions && ledgerExceptions.since;
   host.innerHTML = '<div class="delta-integrity">'
     + '<div class="delta-integrity__head">'
     + '<span class="chip chip-warn">Counts not landing</span> '
     + totalDrops + ' delta' + (totalDrops === 1 ? '' : 's')
     + ' dropped across ' + shown.length + ' payload' + (shown.length === 1 ? '' : 's')
+    + (since ? ' since ' + escapeHtml(formatTime(since)) : '')
     + '</div>'
     // THE LEGEND CARRIES WHAT THE PROSE USED TO, AND IT IS NOT OPTIONAL.
     //
@@ -579,13 +590,11 @@ const DIVERGENCE_CLASS = {
   bucket: 'lineside bucket differs',
 };
 
-// openFor prints how long an episode has been open in its two largest units,
-// the same wording the homepage uses: "12m", "1h 30m", "3d 4h".
+// openFor is how long an episode has been open. opened_at is a SERVER stamp, so
+// it is differenced against serverNow(), never the browser's Date.now(); the
+// duration is the shared ladder's.
 function openFor(iso) {
-  const m = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
-  if (m < 60) return m + 'm';
-  if (m < 24 * 60) return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
-  return Math.floor(m / (24 * 60)) + 'd ' + Math.floor((m % (24 * 60)) / 60) + 'h';
+  return formatDuration(serverNow() - new Date(iso).getTime());
 }
 
 function renderReportDivergence() {
@@ -717,7 +726,6 @@ function rhRowHtml(r) {
     + '<td class="rh-num">' + (r.threshold > 0 ? num(r.threshold) : '<span class="text-muted">—</span>') + '</td>'
     + '<td class="rh-num' + (hr < 0 ? ' rh-neg' : '') + '">' + (r.threshold > 0 ? (hr >= 0 ? '+' : '') + num(hr) : '—') + '</td>'
     + '<td>' + chipsHtml(r) + '</td>'
-    + '<td><button class="view-detail" data-action="openDrill:' + escapeHtml(r.payload_code) + '">detail <svg class="icon" aria-hidden="true"><use href="#icon-chevron-right"></use></svg></button></td>'
     + '</tr>';
   if (open) out += editorRowHtml(r);
   return out;
@@ -742,7 +750,7 @@ function editorRowHtml(r) {
       + cfg.map(thrRowHtml).join('') + '</tbody></table>';
   }
   editor += holdingBinsHtml(r.payload_code);
-  return '<tr class="rh-editor"><td colspan="9">' + editor + '</td></tr>';
+  return '<tr class="rh-editor"><td colspan="8">' + editor + '</td></tr>';
 }
 function loaderRowsFor(pc) {
   const rows = [];
@@ -810,7 +818,7 @@ function renderBuckets() {
       || (b.node_name || '').toLowerCase().includes(t);
   });
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="7" class="dash-empty">'
+    body.innerHTML = '<tr><td colspan="6" class="dash-empty">'
       + (buckets.length ? 'No buckets match the filter.' : 'No lineside buckets.') + '</td></tr>';
     return;
   }
@@ -826,7 +834,6 @@ function renderBuckets() {
       ? '<span class="badge badge-flagged" title="What was left of the pile when the style changed. Not counted.">count anomaly at cutover</span>'
       : '<span class="badge badge-available">active</span>';
     return '<tr' + (stale ? ' class="row-stale"' : '') + '>'
-      + '<td>' + hl(b.group_name || '—') + '</td>'
       + '<td>' + hl(b.station || '') + '</td>'
       + '<td><code>' + hl(b.node_name || '') + '</code></td>'
       + '<td><code>' + hl(b.payload_code || '') + '</code></td>'
@@ -938,95 +945,10 @@ function applyCalc(value, el) {
 }
 function dismissCalc(el) { closeCalcPop(el.closest('tr')); }
 
-// ── consumption / cover drill ──────────────────────────────────────────────
-function openDrill(pc) {
-  drillPayload = pc;
-  drillDays = 14;
-  // The rejected-delta view hides the range toggle; restore it for the
-  // consumption drill (the two views share the #inv-drill modal).
-  const range = document.getElementById('drill-range');
-  if (range) range.style.display = '';
-  document.querySelectorAll('#drill-range button').forEach((b) => b.classList.toggle('is-active', b.dataset.action === 'drillRange:14'));
-  const title = document.getElementById('drill-title');
-  if (title) title.textContent = pc + ' — consumption & cover';
-  document.getElementById('inv-drill').classList.add('active');
-  renderDrill();
-}
-function drillRange(days, el) {
-  drillDays = Number(days) || 14;
-  document.querySelectorAll('#drill-range button').forEach((b) => b.classList.remove('is-active'));
-  if (el) el.classList.add('is-active');
-  renderDrill();
-}
-async function renderDrill() {
-  const detail = document.getElementById('drill-detail');
-  const narr = document.getElementById('drill-narrative');
-  const r = health.find((x) => x.payload_code === drillPayload);
-  if (!r || !detail) return;
-  detail.innerHTML = '<div class="dash-empty">Loading…</div>';
-  // Both bounds in the SERVER's frame: they are sent back as query
-  // parameters and compared against rows the server stamped. A browser-wall
-  // window against simulated rows selects the wrong days, or none.
-  const now = serverNow();
-  const since = new Date(now - drillDays * 24 * 3600 * 1000).toISOString();
-  const until = new Date(now).toISOString();
-  let consumed = null, perDay = null, cover = null;
-  try {
-    const resp = await apiGet('/api/parts/consumption?top=500&since=' + encodeURIComponent(since) + '&until=' + encodeURIComponent(until));
-    const rows = (resp && resp.rows) || [];
-    // payload_code and part_number are different keys; match by code where a
-    // part happens to share it, else leave consumption unknown. A real trend
-    // needs a per-payload daily series endpoint (see the TODO below).
-    const hit = rows.find((x) => x.part_number === drillPayload);
-    if (hit) {
-      consumed = hit.uop;
-      perDay = consumed / drillDays;
-      cover = perDay > 0 ? (r.on_hand / perDay) : null;
-    }
-  } catch (e) { /* consumption is best-effort */ }
-
-  detail.innerHTML =
-    '<div class="ov-support">'
-    + supp('On-hand', num(r.on_hand) + ' UoP') + supp('Threshold', r.threshold > 0 ? num(r.threshold) : '—')
-    + supp('Headroom', r.threshold > 0 ? num(headroom(r)) : '—')
-    + supp('Consumed (' + drillDays + 'd)', consumed == null ? 'n/a' : num(consumed) + ' UoP')
-    + supp('Per day', perDay == null ? 'n/a' : perDay.toFixed(1))
-    + supp('Days of cover', cover == null ? 'n/a' : cover.toFixed(1))
-    + '</div>'
-    + '<div class="mt-3">' + meterHtml(r) + '</div>'
-    + '<button class="btn btn-sm mt-3" data-action="showOnMap:' + escapeHtml(drillPayload) + '">show on map <svg class="icon icon-16" aria-hidden="true"><use href="#icon-arrow-up-right"></use></svg></button>';
-
-  if (narr) {
-    narr.innerHTML = consumed == null
-      ? 'No consumption match for this payload over the last ' + drillDays + ' days. '
-        + 'Consumption is recorded per part number, which does not map 1:1 to a payload code — a per-payload daily '
-        + 'series would give a real trend line here.'
-      : 'Consuming about <b>' + perDay.toFixed(1) + ' UoP/day</b> over ' + drillDays + ' days. '
-        + 'At that rate, on-hand (' + num(r.on_hand) + ') covers <b>' + cover.toFixed(1) + ' days</b>'
-        + (r.threshold > 0 ? '; the threshold is ' + num(r.threshold) + ' UoP.' : '.');
-  }
-}
-function supp(label, value) {
-  return '<div class="ov-support__item"><div class="ov-support__value">' + value + '</div>'
-    + '<div class="ov-support__label">' + label + '</div></div>';
-}
-// TODO (inventory v2): the drill wants a per-payload daily consumption series to
-// draw a real trend line with the threshold overlaid. /api/parts/consumption
-// returns only per-part window totals today, and part_number does not map 1:1 to
-// payload_code, so this shows window totals + days-of-cover instead of a chart.
-function showOnMap() {
-  // Deep-link stub for the map material layer (a later map task). The map does
-  // not consume a payload highlight yet, so this just opens the map hub.
-  // "/" is the hub, and this opened /dashboards — a route that has redirected
-  // there since refactor #3 AND sits behind auth, so the promised "opening the
-  // map" landed a signed-out reader on the login page. Go to the hub directly.
-  toast('Map material-layer highlight is not wired yet — opening the hub.', 'info');
-  window.open('/', '_blank');
-}
 function closeDrill() { document.getElementById('inv-drill').classList.remove('active'); }
 
-// ── rejected-delta drill ───────────────────────────────────────────────────
-// The "N rejected deltas" banner count was a dead scroll — it never told the
+// ── flagged-carrier drill ──────────────────────────────────────────────────
+// The banner's flagged-carrier count was a dead scroll — it never told the
 // operator WHICH carrier was flagged. This lists them: carrier, part, node, why
 // (stale epoch / payload mismatch), how many drops, and when — so they know
 // exactly what to cycle-count. Reuses the #inv-drill modal shell.
@@ -1039,11 +961,9 @@ async function showRejectedDeltas() {
   const modal = document.getElementById('inv-drill');
   const detail = document.getElementById('drill-detail');
   const title = document.getElementById('drill-title');
-  const range = document.getElementById('drill-range');
   const narr = document.getElementById('drill-narrative');
   if (!modal || !detail) return;
-  if (title) title.textContent = 'Rejected deltas — carriers whose counts are being refused';
-  if (range) range.style.display = 'none';
+  if (title) title.textContent = 'Carriers flagged for a recount';
   if (narr) narr.innerHTML = 'These carriers have live counter deltas the system is dropping, so their on-hand '
     + 'can drift from what is physically in the bin. Cycle-count the carrier at its node to clear the flag and realign the count.';
   detail.innerHTML = '<div class="dash-empty">Loading…</div>';
@@ -1077,7 +997,7 @@ async function showRejectedDeltas() {
 delegateActions(document.body, {
   onSearch, onSearchKey, onFilter, refresh, exportInventory, scrollTo,
   toggleRow, onThrInput, saveThr, discardThr, calcThr, applyCalc, dismissCalc,
-  openDrill, drillRange, showOnMap, showRejectedDeltas,
+  showRejectedDeltas,
   'close-modal': closeDrill,
 }, { events: ['click', 'change', 'input', 'keydown'] });
 

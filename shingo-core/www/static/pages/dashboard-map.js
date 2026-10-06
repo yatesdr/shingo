@@ -1726,7 +1726,10 @@ import {
     if (!motionEl || !activityEl) return;
 
     // ── In-motion list ────────────────────────────────────────────────
-    var INACTIVE = { delivered: true, confirmed: true, cancelled: true };
+    // `staged` is HELD, not moving: a robot parked at a wait point holding a
+    // bin (the jammed sim listed two of them here for nine hours). It stays on
+    // the map and in the legend's Staged count; it is not "in motion".
+    var INACTIVE = { delivered: true, confirmed: true, cancelled: true, staged: true };
     var active = orders.filter(function (o) { return !INACTIVE[o.status]; });
     active.sort(function (a, b) {
       function rank(o) {
@@ -1745,7 +1748,7 @@ import {
       queued: 'queued', pending: 'pending', reshuffling: 'reshuffling'
     };
     if (!shown.length) {
-      motionEl.innerHTML = '<li class="rail-empty">No active orders</li>';
+      motionEl.innerHTML = '<li class="rail-empty">Nothing in motion</li>';
     } else {
       motionEl.innerHTML = shown.map(function (o) {
         var color = STATUS_COLOR[o.status] || '#888';
@@ -1753,7 +1756,10 @@ import {
         return '<li class="rail-row" style="border-left-color:' + color + '">' +
           '<span class="rail-row-id">' + escapeText(o.robot_id || '—') + '</span>' +
           '<span class="rail-row-arrow">→</span>' +
-          '<span class="rail-row-node">' + escapeText(o.delivery_node || '?') + '</span>' +
+          // No destination yet is no data, not a question mark (guide rule 4).
+          (o.delivery_node
+            ? '<span class="rail-row-node">' + escapeText(o.delivery_node) + '</span>'
+            : '<span class="rail-row-node text-muted" title="no destination yet">—</span>') +
           '<span class="rail-row-status" style="color:' + color + '">' + escapeText(label) + '</span>' +
           '</li>';
       }).join('') + (overflow ? '<li class="rail-empty">+' + overflow + ' more</li>' : '');

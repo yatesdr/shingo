@@ -21,8 +21,8 @@ import (
 // GET route has a consumer" — was measured while writing it: 17 of Core's 107
 // non-parameterised GET routes have no textual reference under www/static or
 // www/templates, and some of those are false positives (a URL built by
-// concatenation) while others are real. Notably `/api/parts/mission-duration` is
-// among them. That is worth building and worth an owner's attention; it is not
+// concatenation) while others are real. Notably `/api/parts/mission-duration` was
+// among them (removed 2026-10-05, with /parts/produced and /parts/consumption). That is worth building and worth an owner's attention; it is not
 // worth guessing an allowlist for here.
 func TestSourceabilityEventsHasAUIConsumer(t *testing.T) {
 	const endpoint = "/api/sourceability/events"

@@ -298,27 +298,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/cells/{id}/stops", h.apiCellStops)
 			r.Get("/cells/{id}/state", h.apiCellState)
 
-			// Parts (produced / carrying-mission duration / consumption)
-			//
-			// "mission-duration" AND NOT "cycle-time", WHICH IS WHAT IT USED TO
-			// BE CALLED. This endpoint averages mission_telemetry.duration_ms:
-			// how long a robot took to carry a payload, attributed to each part
-			// in that payload's manifest. /cycle-time (5.10) measures the
-			// interval between consecutive PLC ticks for one part at one
-			// station. One order's journey against one part crossing a station
-			// — different table, different grain, different key, and only the
-			// second is a cycle time.
-			//
-			// RENAMED RATHER THAN ALIASED. A second name for one thing is the
-			// disease, not the cure. It is safe to move: nothing in this
-			// repository fetches it — inventory.js consumes its two siblings,
-			// /parts/produced and /parts/consumption, and not this one — and its
-			// only reference anywhere is a planning document. An external client
-			// nobody has told us about would break, and that is the accepted
-			// cost of settling this while /cycle-time is still new.
-			r.Get("/parts/produced", h.apiPartsProduced)
-			r.Get("/parts/mission-duration", h.apiPartsMissionDuration)
-			r.Get("/parts/consumption", h.apiPartsConsumption)
+			// The /parts/produced, /parts/mission-duration and /parts/consumption
+			// reads were removed 2026-10-05: nothing in any module fetched them
+			// (census in the core-ui-cleanup report, round 2). The rename that
+			// TestCycleNamesOneMeasurement guards still holds for any new route.
 
 			// Board
 			r.Get("/board/orders", h.handleBoardOrders)

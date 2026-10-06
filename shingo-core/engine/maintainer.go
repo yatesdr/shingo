@@ -82,7 +82,13 @@ type MaintainerGroupState struct {
 	// OldestAskCause is the queue cause of this intent's longest-waiting ask,
 	// blank when nothing is parked. This IS the parked-ness signal.
 	OldestAskCause string `json:"oldest_ask_cause,omitempty"`
-	OldestAskAge   string `json:"oldest_ask_age,omitempty"` // display text, protocol.FormatDuration
+	// OldestAskReason is that ask's queue_reason: the operator sentence the
+	// dispatcher wrote from its queue code (FormatQueueSentence). The cause is
+	// the engineer's tag; this is what the Inventory page prints.
+	OldestAskReason string `json:"oldest_ask_reason,omitempty"`
+	// OldestAskAge is rendered on the one duration ladder (protocol.FormatDuration),
+	// not Go's "11m3s".
+	OldestAskAge string `json:"oldest_ask_age,omitempty"`
 }
 
 // Maintainer holds every maintained group's declared level.
@@ -300,9 +306,10 @@ func (m *Maintainer) tickOne(g *nodes.Node, lv store.MaintainLevel, station, key
 	// Parked-ness, derived. The oldest live ask's queue cause is the signal —
 	// nothing is stored, and an intent with no parked ask simply has no cause.
 	if episode.OriginID != "" {
-		if cause, age, ok := m.oldestAskCause(episode.OriginID); ok {
-			st.OldestAskCause = cause
-			st.OldestAskAge = protocol.FormatDuration(age)
+		if ask, ok := m.oldestAsk(episode.OriginID); ok {
+			st.OldestAskCause = ask.QueueCause
+			st.OldestAskReason = ask.QueueReason
+			st.OldestAskAge = protocol.FormatDuration(m.now().UTC().Sub(ask.CreatedAt))
 		}
 	}
 
@@ -430,11 +437,13 @@ func (m *Maintainer) closeWithdrawn(open []store.DemandOrigin, configured map[st
 	}
 }
 
-// oldestAskCause reads the parked-ness signal off the live asks.
-func (m *Maintainer) oldestAskCause(originID string) (string, time.Duration, bool) {
+// oldestAsk reads the parked-ness signal off the live asks: the longest-waiting
+// non-terminal ask that carries a queue cause. Same read as before; the caller
+// takes the cause, the operator sentence and the age off the one row.
+func (m *Maintainer) oldestAsk(originID string) (*orders.Order, bool) {
 	live, _, err := m.eng.db.ListOrdersByOrigin(originID, 200)
 	if err != nil || len(live) == 0 {
-		return "", 0, false
+		return nil, false
 	}
 	var oldest *orders.Order
 	for _, o := range live {
@@ -445,10 +454,7 @@ func (m *Maintainer) oldestAskCause(originID string) (string, time.Duration, boo
 			oldest = o
 		}
 	}
-	if oldest == nil {
-		return "", 0, false
-	}
-	return oldest.QueueCause, m.now().UTC().Sub(oldest.CreatedAt), true
+	return oldest, oldest != nil
 }
 
 // maintainerResolver builds the slot chooser.

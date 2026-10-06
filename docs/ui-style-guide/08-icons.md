@@ -52,3 +52,16 @@ and any VS16-qualified symbol are rejected; the monochrome geometric glyphs the
 surfaces use as affordances (arrows, chevrons, bullets, `✓`/`✗`, the bare `⚠`)
 are allowed. First catch: a lock emoji in `bins.js`.
 
+**Known hole: numeric character references.** The scan reads raw bytes, so
+`&#128274;` passes it and still renders as an emoji. The Bins page's five row
+flags were written that way and are now labelled chips (`locked`, `order #N`,
+`unconfirmed`, `counts refused`, `notes` — pinned by
+`TestBinsPage_FlagsAreLabelled`). Decoding entities before the scan is the fix;
+it is not made yet because the Robots page's charging bolt (`&#9889;` in
+`robots.html` and `RobotTile.js`) is the one remaining case and belongs to that
+page's owner.
+
+**A flag carries its meaning in words.** A glyph whose meaning lives only in a
+`title` is unreadable on a touch screen and at a glance; a row flag is a chip
+with a one- or two-word label, and the title keeps the detail.
+

@@ -152,16 +152,23 @@
           {{else if .TransitPayload}}<code>{{.TransitPayload}}</code> <span class="text-muted" style="font-size:0.85em">{{if .Stranded}}(last order){{else}}(in transit){{end}}</span>
           {{else}}<span class="text-muted">-</span>{{end}}
         </td>
+        {{/* A count shows wherever there is one. A payload-less bin still
+             holding a non-zero count (a clear that left it negative) is exactly
+             the bin Inventory lists under "Count below zero"; only a bin with no
+             payload AND no count is not applicable. Twin: bins.js uopText. */}}
         <td data-sort-value="{{.UOPRemaining}}">
-          {{if .PayloadCode}}{{.UOPRemaining}}{{else}}<span class="text-muted">-</span>{{end}}
+          {{if or .PayloadCode (ne .UOPRemaining 0)}}{{.UOPRemaining}}{{else}}<span class="text-muted">-</span>{{end}}
         </td>
         <td data-sort-value="{{.Status}}"><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
         <td class="bin-flags">
-          {{if .Locked}}<span title="Locked by {{.LockedBy}}">&#128274;</span>{{end}}
-          {{if .ClaimedBy}}<span title="Claimed by order #{{deref .ClaimedBy}}">&#128230;</span>{{end}}
-          {{if not .ManifestConfirmed}}{{if .PayloadCode}}<span title="Manifest unconfirmed">&#9888;</span>{{end}}{{end}}
-          {{if .AnomalyAt}}<span title="Counts refused — payload mismatch (anomaly); reconcile this bin" style="color:var(--danger)">&#9940;</span>{{end}}
-          {{if index $.BinHasNotes .ID}}<span title="Has notes">&#128221;</span>{{end}}
+          {{/* Labelled chips, not glyphs: a flag whose meaning lived only in a
+               hover title was unreadable on a touch screen and at a glance.
+               Twin: bins.js flagsHTML (the row refresh after an action). */}}
+          {{if .Locked}}<span class="chip chip-muted" title="Locked by {{.LockedBy}}">locked</span>{{end}}
+          {{if .ClaimedBy}}<span class="chip chip-muted" title="Claimed by order #{{deref .ClaimedBy}}">order #{{deref .ClaimedBy}}</span>{{end}}
+          {{if not .ManifestConfirmed}}{{if .PayloadCode}}<span class="chip chip-warn" title="Manifest unconfirmed">unconfirmed</span>{{end}}{{end}}
+          {{if .AnomalyAt}}<span class="chip chip-err" title="Counts refused — payload mismatch (anomaly); reconcile this bin">counts refused</span>{{end}}
+          {{if index $.BinHasNotes .ID}}<span class="chip chip-muted" title="Has notes">notes</span>{{end}}
           {{/* THE ONLY SURFACE THAT CAN SHOW THIS BUTTON. RecoverCarriedBin
                accepts exactly the bins on a carrier node, and the diagnostics
                anomalies table cannot list one — ListAnomalousTransitBins

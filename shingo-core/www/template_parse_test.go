@@ -102,11 +102,9 @@ func kioskTemplatesMissingColorScheme(t *testing.T) []string {
 }
 
 func TestKioskTemplatesDeclareTheirColorScheme(t *testing.T) {
-	got := kioskTemplatesMissingColorScheme(t)
-	want := []string{ // PIN (before)
-		"dashboard-display.html", "dashboard-map.html", "dashboard-node-report.html", "heartbeat.html",
-	}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("dark kiosk templates without color-scheme: got %v, want %v", got, want)
+	// Was all four: dashboard-display, dashboard-map, dashboard-node-report and
+	// heartbeat drew light scrollbars on a dark page.
+	if got := kioskTemplatesMissingColorScheme(t); len(got) != 0 {
+		t.Errorf(`dark kiosk templates without <meta name="color-scheme" content="dark">: %v`, got)
 	}
 }

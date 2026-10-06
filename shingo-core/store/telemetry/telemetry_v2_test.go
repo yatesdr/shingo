@@ -154,7 +154,7 @@ func plantDayWindow(t *testing.T, station string, loc *time.Location, since, unt
 	if err != nil {
 		t.Fatal(err)
 	}
-	su, uu := s.UTC(), u.Add(24*time.Hour-time.Nanosecond).UTC()
+	su, uu := s.UTC(), u.AddDate(0, 0, 1).Add(-time.Nanosecond).UTC()
 	return telemetry.Filter{StationID: station, Since: &su, Until: &uu}
 }
 

@@ -41,8 +41,15 @@
         <div class="nav-dropdown-menu">
           <a href="/inventory"{{if eq .Page "inventory"}} class="active"{{end}}>Inventory</a>
           <a href="/nodes"{{if eq .Page "nodes"}} class="active"{{end}}>Nodes</a>
+          {{/* Behind requireAuth in router.go. A logged-out reader is not shown a
+               link that only bounces to the login page; auth_test.go's
+               TestNav_LoggedOutLinksOpenWithoutLogin asks the real router about
+               every logged-out nav link, so a page moved behind the login
+               without its link moving in here fails there. */}}
+          {{if .Authenticated}}
           <a href="/bins"{{if eq .Page "bins"}} class="active"{{end}}>Bins</a>
           <a href="/payloads"{{if eq .Page "payloads"}} class="active"{{end}}>Payloads</a>
+          {{end}}
         </div>
       </div>
       {{if .Authenticated}}

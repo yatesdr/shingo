@@ -1,7 +1,7 @@
 // handlers_parts_registry.go — the parts TABLE: a part number and the cat id a
-// PLC declares for it. Distinct from handlers_parts.go next door, which serves
-// the Operations dashboard's per-part METRICS (produced, duration, consumption)
-// and reads no part row at all.
+// PLC declares for it. It used to sit beside handlers_parts.go, the per-part
+// METRICS endpoints (produced, duration, consumption), which read no part row;
+// those were removed 2026-10-05 for want of a caller.
 package www
 
 import (

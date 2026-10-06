@@ -447,7 +447,8 @@ const onFilterChange = debounce(refresh, 150);
 // LABELS. The duration column says "Avg mission" and not "cycle time". These
 // figures average mission_telemetry.duration_ms, which is a TRANSPORT duration —
 // the same distinction that renamed /api/parts/cycle-time to
-// /api/parts/mission-duration. A cycle time is a cell's, not a robot's.
+// /api/parts/mission-duration (since removed, 2026-10-05). A cycle time is a
+// cell's, not a robot's.
 function fmtIndex(x) {
     // One decimal, per the number doctrine's row for a ratio. Two would assert a
     // precision a median of a few dozen heavy-tailed ratios cannot support.

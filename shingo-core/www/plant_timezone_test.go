@@ -55,7 +55,7 @@ func TestParseMissionFilterFallBackDay(t *testing.T) {
 	if f.Until == nil {
 		t.Fatal("until not set")
 	}
-	want := time.Date(2026, 11, 2, 5, 0, 0, 0, time.UTC).Add(-time.Nanosecond)
+	want := time.Date(2026, 11, 2, 6, 0, 0, 0, time.UTC).Add(-time.Nanosecond)
 	if !f.Until.Equal(want) {
 		t.Errorf("Until = %v, want %v", f.Until.UTC(), want)
 	}

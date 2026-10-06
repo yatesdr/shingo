@@ -125,7 +125,7 @@ function renderOverview(data) {
         ? '<code>' + esc(ord.payload_code) + '</code> <span class="text-muted" style="font-size:0.85em">(in transit)</span>'
         : '<span class="text-muted">empty</span>');
   html += bdField('Payload', payloadDisplay);
-  html += bdField('UoP Remaining', b.payload_code ? b.uop_remaining + uopBar(b.uop_remaining, data.template) : '<span class="text-muted">-</span>');
+  html += bdField('UoP Remaining', uopText(b) + (b.payload_code ? uopBar(b.uop_remaining, data.template) : ''));
   html += bdField('Manifest', b.manifest_confirmed ? '<span style="color:var(--success)">Confirmed</span>' :
     (b.payload_code ? '<span style="color:var(--warning)">Unconfirmed</span>' : '<span class="text-muted">-</span>'));
   html += bdField('Locked', b.locked ? '<span style="color:var(--danger)">' + esc(b.locked_by) + '</span>' : 'No');
@@ -522,6 +522,24 @@ async function bulkAction(action) {
     .catch(function(e) { toast('Error: ' + (e.error || e), 'error'); });
 }
 
+// uopText is a bin's count as the table and the detail modal show it: wherever
+// there is one, including a payload-less bin left negative by a clear (the bin
+// Inventory lists under "Count below zero"). Only no payload AND no count is not
+// applicable. Twin of the bins.html UoP cell.
+function uopText(b) {
+  return (b.payload_code || b.uop_remaining) ? String(b.uop_remaining) : '<span class="text-muted">-</span>';
+}
+
+// flagsHTML is the row's labelled flag chips. Twin of the bins.html flags cell.
+function flagsHTML(b) {
+  var flags = '';
+  if (b.locked) flags += '<span class="chip chip-muted" title="Locked by ' + escapeHtml(b.locked_by || '') + '">locked</span>';
+  if (b.claimed_by) flags += '<span class="chip chip-muted" title="Claimed by order #' + b.claimed_by + '">order #' + b.claimed_by + '</span>';
+  if (!b.manifest_confirmed && b.payload_code) flags += '<span class="chip chip-warn" title="Manifest unconfirmed">unconfirmed</span>';
+  if (b.anomaly_at) flags += '<span class="chip chip-err" title="Counts refused — payload mismatch (anomaly); reconcile this bin">counts refused</span>';
+  return flags;
+}
+
 function refreshBinRow(id) {
   apiGet('/api/bins/detail?id=' + id)
     .then(function(resp) {
@@ -550,14 +568,12 @@ function refreshBinRow(id) {
       // Location, Payload, UoP, Status, Flags
       tds[off + 2].innerHTML = b.node_name ? escapeHtml(b.node_name) : '<span class="text-muted">-</span>';
       tds[off + 3].innerHTML = b.payload_code ? '<code>' + escapeHtml(b.payload_code) + '</code>' : '<span class="text-muted">-</span>';
-      tds[off + 4].innerHTML = b.payload_code ? String(b.uop_remaining) : '<span class="text-muted">-</span>';
+      tds[off + 4].innerHTML = uopText(b);
       tds[off + 5].innerHTML = '<span class="badge badge-' + escapeHtml(b.status) + '">' + escapeHtml(b.status) + '</span>';
-      var flags = '';
-      if (b.locked) flags += '<span title="Locked by ' + escapeHtml(b.locked_by || '') + '">&#128274;</span>';
-      if (b.claimed_by) flags += '<span title="Claimed by order #' + b.claimed_by + '">&#128230;</span>';
-      if (!b.manifest_confirmed && b.payload_code) flags += '<span title="Manifest unconfirmed">&#9888;</span>';
-      if (b.anomaly_at) flags += '<span title="Counts refused — payload mismatch (anomaly); reconcile this bin" style="color:var(--danger)">&#9940;</span>';
-      tds[off + 6].innerHTML = flags;
+      // The detail API does not carry the notes flag; keep the one the server
+      // painted rather than dropping it on every refresh.
+      var notes = tds[off + 6].querySelector('[title="Has notes"]');
+      tds[off + 6].innerHTML = flagsHTML(b) + (notes ? notes.outerHTML : '');
     })
     .catch(function(err) { console.error('refreshBinRow', id, err); });
 }

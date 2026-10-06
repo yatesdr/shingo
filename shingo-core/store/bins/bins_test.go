@@ -660,12 +660,21 @@ func TestHasNotes(t *testing.T) {
 	noNote := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-NOTES-2", NodeID: &std.StorageNode.ID, Status: "available"}
 	testutil.MustNoErr(t, bins.Create(db.DB, noNote), "bins.Create noNote")
 
-	// Insert an audit log entry for `bin`.
-	if _, err := db.DB.Exec(
-		`INSERT INTO audit_log (entity_type, entity_id, actor, action, new_value) VALUES ($1, $2, $3, $4, $5)`,
-		"bin", bin.ID, "tester", "noted", "test note",
-	); err != nil {
-		t.Fatalf("insert audit_log: %v", err)
+	// A note in the shape its only writer leaves it (store.AddBinNote:
+	// action "note:<type>") for `bin`, and a system audit row for `noNote`,
+	// which must not count. This fixture used to seed action "noted" — a shape
+	// no writer produces — while the query counted ANY audit row, which is how
+	// every bin that had ever moved came to read "has notes".
+	for _, row := range []struct {
+		id     int64
+		action string
+	}{{bin.ID, "note:general"}, {noNote.ID, "moved"}} {
+		if _, err := db.DB.Exec(
+			`INSERT INTO audit_log (entity_type, entity_id, actor, action, new_value) VALUES ($1, $2, $3, $4, $5)`,
+			"bin", row.id, "tester", row.action, "test",
+		); err != nil {
+			t.Fatalf("insert audit_log: %v", err)
+		}
 	}
 
 	t.Run("empty_input_returns_empty_map", func(t *testing.T) {

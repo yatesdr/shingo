@@ -11,9 +11,10 @@ import (
 // Part is the parts-table entity — see domain.Part for what the two columns
 // are and why they share a row.
 //
-// IT LIVES IN THIS PACKAGE, NOT ONE OF ITS OWN, for a plain reason: store/parts
-// is already the Operations dashboard's per-part METRICS queries, and two
-// packages cannot share a directory name. The parts table is the payload
+// IT LIVES IN THIS PACKAGE, NOT ONE OF ITS OWN. The first reason given was that
+// store/parts already held the per-part METRICS queries and two packages cannot
+// share a directory name; that package was removed 2026-10-05 for want of a
+// caller, so that reason has expired. The second still holds: the parts table is the payload
 // template's identity partner — every read of it joins payload_manifest and
 // every write happens on the payloads page — so it sits beside the manifest it
 // serves rather than taking a name that would have to be qualified everywhere.

@@ -19,6 +19,16 @@ a:hover { text-decoration: underline; }
 .card { background: var(--surface); border-radius: 0.5rem; padding: 1.25rem; margin-bottom: 1rem; box-shadow: var(--shadow-sm); }
 .card h2, .card h3 { margin-bottom: 0.75rem; }
 
+/* A wall display framed inside Core's chrome (dashboard-frame.html). The page
+   becomes a column the height of the viewport and the iframe takes whatever the
+   nav, the sim strip and the button row leave — no magic pixel count, so the
+   display is never cut off below a second page scrollbar. The display scrolls
+   inside its own frame, with its own dark scrollbar (color-scheme on the kiosk
+   templates). */
+body:has(.wall-frame) { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+body:has(.wall-frame) > main { flex: 1 1 auto; min-height: 0; width: 100%; box-sizing: border-box; display: flex; flex-direction: column; } /* width: auto side margins would otherwise shrink a flex item to its content */
+.wall-frame { flex: 1 1 auto; min-height: 0; width: 100%; border: 1px solid var(--border); border-radius: 0.5rem; background: var(--surface); }
+
 /* Dashboard hub cards (refactor #3) */
 .dash-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.75rem; }
 .dash-card { border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.85rem; background: var(--bg); display: flex; flex-direction: column; }
@@ -1887,10 +1897,15 @@ body[data-dashboard-kind="node-report"] #dash-main {
  * Shared pieces (.thr-meter, .chip-*, .kpi-*, .alerts-banner, .ops-filter-bar)
  * live in components.css; page-specific layout lives here. */
 
-/* Sticky search + controls bar. */
+/* Sticky search + controls bar. ONE ROW: .form-input is width:100%, which put
+   the search and both selects on full-width rows of their own and pinned
+   ~215 px over the page. The sections it scrolls to keep their heading clear
+   of it. */
 .inv-bar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; padding: 0.7rem 0; border-bottom: 1px solid var(--border); }
 .inv-bar .inv-title { font-size: var(--font-xl); margin: 0 auto 0 0; font-weight: var(--fw-bold); }
-.inv-search { min-width: 240px; }
+.inv-bar .form-input { width: auto; }
+.inv-bar .inv-search { flex: 0 1 240px; min-width: 160px; }
+.inv-page > section { scroll-margin-top: 4.5rem; }
 .inv-live-stamp { font-size: var(--font-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
 /* KPI bin-lifecycle stacked bar. */

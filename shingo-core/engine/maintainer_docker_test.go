@@ -3,7 +3,6 @@
 package engine
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -309,7 +308,11 @@ func TestMaintainer_OldestAskSaysWhyInWords(t *testing.T) {
 	if st.OldestAskCause != "finder-no-empty-of-type" {
 		t.Fatalf("oldest ask cause = %q, want finder-no-empty-of-type", st.OldestAskCause)
 	}
-	if !strings.HasPrefix(st.OldestAskAge, "3h5m") {
-		t.Errorf("PIN (before): oldest ask age = %q, want Go's 3h5m…s", st.OldestAskAge)
+	if st.OldestAskReason != "Waiting for an empty MNT-WHY-T carrier" {
+		t.Errorf("oldest ask reason = %q, want the ask's own queue sentence", st.OldestAskReason)
+	}
+	// Was: Go's "3h5m0s" (time.Duration.String) — the "11m3s" on the page.
+	if st.OldestAskAge != "3h 05m" {
+		t.Errorf("oldest ask age = %q, want 3h 05m (the one duration ladder)", st.OldestAskAge)
 	}
 }

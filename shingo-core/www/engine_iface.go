@@ -83,7 +83,6 @@ type ServiceAccess interface {
 	HealthService() *service.HealthService
 	DashboardService() *service.DashboardService
 	FootprintService() *service.FootprintService
-	PartsService() *service.PartsService
 	HeartbeatService() *service.HeartbeatService
 
 	// ── Read-only state queries ────────────────────────────────────

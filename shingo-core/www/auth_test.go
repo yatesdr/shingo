@@ -388,10 +388,44 @@ func loggedOutBouncers(t *testing.T) []string {
 // A LOGGED-OUT READER IS NOT SHOWN A LINK THAT BOUNCES TO THE LOGIN PAGE.
 func TestNav_LoggedOutLinksOpenWithoutLogin(t *testing.T) {
 	t.Parallel()
-	got := loggedOutBouncers(t)
-	want := []string{"/bins", "/payloads"} // PIN (before)
-	if !slices.Equal(got, want) {
-		t.Errorf("logged-out nav links that bounce to /login: got %v, want %v", got, want)
+	// Was [/bins /payloads]: the Assets menu showed both to a logged-out
+	// reader and both answered with the login page.
+	if got := loggedOutBouncers(t); len(got) != 0 {
+		t.Errorf("logged-out nav links that bounce to /login: %v — hide them behind "+
+			"{{if .Authenticated}} in layout.html", got)
+	}
+}
+
+// Logged in, the links the logged-out nav hides are still there.
+func TestNav_LoggedInKeepsTheAuthLinks(t *testing.T) {
+	t.Parallel()
+	h, _ := testHandlersForPages(t)
+	router := realRouterFor(t, h) // NewRouter seeds admin/admin
+
+	form := url.Values{"username": {"admin"}, "password": {"admin"}}
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	var cookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionName {
+			cookie = c
+		}
+	}
+	if cookie == nil {
+		t.Fatalf("login through the router set no session cookie (status %d)", rec.Code)
+	}
+
+	page := httptest.NewRequest(http.MethodGet, "/inventory", nil)
+	page.AddCookie(cookie)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, page)
+	links := navHrefs(t, rec.Body.String())
+	for _, want := range []string{"/bins", "/payloads"} {
+		if !slices.Contains(links, want) {
+			t.Errorf("logged-in nav lost %s; it has %v", want, links)
+		}
 	}
 }
 
@@ -401,7 +435,11 @@ func TestLoginPage_NoDefaultCredentials(t *testing.T) {
 	h, _ := testHandlersForPages(t)
 	rec := httptest.NewRecorder()
 	realRouterFor(t, h).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/login", nil))
-	if !strings.Contains(rec.Body.String(), "Default: admin / admin") {
-		t.Error("PIN (before): the login page prints the default credentials")
+	// Was: "Default: admin / admin" under the form, on every Core.
+	if strings.Contains(rec.Body.String(), "admin / admin") {
+		t.Error("the login page prints the default credentials")
+	}
+	if !strings.Contains(rec.Body.String(), `action="/login"`) {
+		t.Fatal("setup: GET /login did not render the login form")
 	}
 }

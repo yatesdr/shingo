@@ -379,15 +379,22 @@ func TestHandleInventory_PageShape(t *testing.T) {
 	h.handleInventory(rec, httptest.NewRequest(http.MethodGet, "/inventory", nil))
 	body := rec.Body.String()
 
-	for _, before := range []string{
-		"<th>Cell</th>",               // a dash on every row: nothing parents a lineside node
-		`data-action="drillRange:14"`, // the consumption drill's range toggle
-		"Consumption &amp; cover",     // its title
-		"per-payload trend drill",     // the footnote pointing at it
+	// Were all present. The Cell column was a dash on every row (a lineside
+	// node has no group parent); the consumption drill read "n/a" for every
+	// payload (it matched a part number against a payload code).
+	for _, gone := range []string{
+		"<th>Cell</th>",
+		`data-action="drillRange:14"`,
+		"Consumption &amp; cover",
+		"per-payload trend drill",
 	} {
-		if !strings.Contains(body, before) {
-			t.Errorf("PIN (before): %q missing from the inventory page", before)
+		if strings.Contains(body, gone) {
+			t.Errorf("%q is still on the inventory page", gone)
 		}
+	}
+	// The modal shell stays: the flagged-carriers list opens in it.
+	if !strings.Contains(body, `id="inv-drill"`) || !strings.Contains(body, "Carriers flagged for a recount") {
+		t.Error("the flagged-carriers modal shell is gone")
 	}
 }
 

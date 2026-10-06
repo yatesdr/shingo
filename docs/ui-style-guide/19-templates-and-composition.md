@@ -42,3 +42,23 @@ client, and it should use JSON-in-attribute, not `window.foo = ...`:
 The Go handler emits `ClaimsJSON` via `json.Marshal`; the page JS reads
 `JSON.parse(document.getElementById('page-data').dataset.claims)`.
 
+### Standalone pages, frames and the nav (Core)
+
+- **A standalone page that fixes its theme says so to the browser.** The wall
+  displays hard-code `data-theme="dark"`; without
+  `<meta name="color-scheme" content="dark">` the browser draws light
+  scrollbars and controls on them — a white bar down a display framed on the
+  Dashboard. Guard: `TestKioskTemplatesDeclareTheirColorScheme`.
+- **A framed page fills what the chrome leaves, by layout.** The wall-display
+  frame is a flex column the height of the viewport (`.wall-frame`), not
+  `calc(100vh - <pixels>)` — a pixel constant is wrong the moment the chrome
+  grows (the sim strip), and the frame is then cut off behind a second
+  scrollbar.
+- **The nav shows a logged-out reader only links it can open.** A link that
+  answers with the login page is wrapped in `{{if .Authenticated}}` in
+  `layout.html`. The router's `requireAuth` group is the authority, and
+  `TestNav_LoggedOutLinksOpenWithoutLogin` asks the real router about every
+  logged-out nav link, so a page moved behind the login without its link fails
+  there.
+- **The login page never prints credentials.**
+

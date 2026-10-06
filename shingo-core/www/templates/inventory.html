@@ -64,10 +64,9 @@
             <th class="rh-num">Threshold</th>
             <th class="rh-num">Headroom</th>
             <th>Status</th>
-            <th></th>
           </tr>
         </thead>
-        <tbody id="rh-body"><tr><td colspan="9" class="dash-empty">Loading…</td></tr></tbody>
+        <tbody id="rh-body"><tr><td colspan="8" class="dash-empty">Loading…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -117,11 +116,11 @@
       <table class="rh-table">
         <thead>
           <tr>
-            <th>Cell</th><th>Station</th><th>Node</th><th>Payload</th><th>State</th>
+            <th>Station</th><th>Node</th><th>Payload</th><th>State</th>
             <th class="rh-num">Qty</th><th>Updated</th>
           </tr>
         </thead>
-        <tbody id="buckets-body"><tr><td colspan="7" class="dash-empty">Loading…</td></tr></tbody>
+        <tbody id="buckets-body"><tr><td colspan="6" class="dash-empty">Loading…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -130,21 +129,18 @@
 
   <p class="text-muted-sm">
     Bin-level detail lives on the <a href="/bins">Bins page</a>.
-    Consumption, produced, and cycle-time now live in the per-payload trend drill and on Missions.
   </p>
 </div>
 
-<!-- Consumption / cover drill modal. -->
+<!-- Flagged-carriers drill (the banner's "carriers flagged for a recount").
+     There is no per-payload consumption drill: the one that sat here matched a
+     part number against a payload code, which almost never agree, so it read
+     "n/a" for every payload. -->
 <div class="modal-overlay drill-modal" id="inv-drill" data-backdrop-close>
   <div class="modal">
     <div class="modal-header">
-      <h2 id="drill-title">Consumption &amp; cover</h2>
+      <h2 id="drill-title">Carriers flagged for a recount</h2>
       <button class="modal-close" data-action="close-modal" aria-label="Close"><svg class="icon icon-20" aria-hidden="true"><use href="#icon-close"></use></svg></button>
-    </div>
-    <div class="range-toggle" id="drill-range">
-      <button type="button" data-action="drillRange:7">7d</button>
-      <button type="button" class="is-active" data-action="drillRange:14">14d</button>
-      <button type="button" data-action="drillRange:30">30d</button>
     </div>
     <div id="drill-detail"></div>
     <div class="drill-narrative" id="drill-narrative"></div>
