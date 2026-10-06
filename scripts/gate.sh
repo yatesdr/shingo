@@ -56,6 +56,15 @@
 #                                         scope so a scoped pass cannot be pasted
 #                                         as a whole-repo one
 #
+#   bash scripts/gate.sh lock-status      who holds the machine gate lock, or "free"
+#
+# ONE GATE PER MACHINE AT A TIME. Every step except fmt, scope and lock-status
+# takes a lock shared by all worktrees of this clone, and a second gate waits
+# for it, printing who holds it. fmt is exempt because the pre-push hook runs it
+# and must never wait. The lock frees itself if the holding gate dies (its
+# heartbeat stops). GATE_NO_LOCK=1 skips it, for emergencies only. See
+# scripts/gate-lock.sh.
+#
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -89,7 +98,7 @@ fi
 
 ALL_MODULES="protocol shared shingo-core shingo-edge integration"
 usage() {
-  echo "usage: bash scripts/gate.sh [fmt|vet|modbuild|lint|scripts|test|race|sim|scope|docker|full] [BASE]" >&2
+  echo "usage: bash scripts/gate.sh [fmt|vet|modbuild|lint|scripts|test|race|sim|scope|docker|full|lock-status] [BASE]" >&2
   echo "       bash scripts/gate.sh lint|test [MODULE...]   MODULE in: $ALL_MODULES" >&2
   exit 2
 }
@@ -726,7 +735,9 @@ start_shared_pg() {
       -c max_connections=500 -c shared_buffers=256MB 2>&1)" || return 1
   case "$id" in *[!0-9a-f]*|"") return 1 ;; esac
   sharedPG="$id"
-  trap stop_shared_pg EXIT INT TERM
+  # Torn down on an interrupted run by gate_on_exit (the script's one EXIT
+  # trap, which also releases the gate lock — a second `trap ... EXIT` here
+  # would replace that one and leave the lock behind).
 
   deadline=$(( $(date +%s) + 60 ))
   until docker exec "$id" pg_isready -U test -q 2>/dev/null; do
@@ -959,6 +970,24 @@ step_race() {
 }
 
 mkdir -p "$ROOT/.gate" 2>/dev/null || true
+
+# ── The machine gate lock ─────────────────────────────────────────────────
+# One trap for everything the script must undo on the way out, however it
+# leaves: the shared Postgres (step_docker) and the gate lock. INT and TERM
+# exit explicitly so the EXIT trap runs for them too.
+. "$ROOT/scripts/gate-lock.sh"
+gate_on_exit() { stop_shared_pg; gate_lock_release; }
+trap gate_on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+case "${1:-all}" in
+  # fmt: the pre-push hook runs it and must never wait. scope: reads git only.
+  fmt|scope) ;;
+  lock-status) gate_lock_status; exit 0 ;;
+  vet|modbuild|lint|scripts|test|race|sim|docker|full|all)
+    gate_lock_acquire "${*:-all}" || { echo "gate: FAILED (gate lock not acquired)"; exit 1; } ;;
+esac
 
 # ── THE GATE SENTENCE ─────────────────────────────────────────────────────
 #
