@@ -317,6 +317,14 @@ func (d *Dispatcher) syncManifestForRelease(env *protocol.Envelope, order *order
 // the order's current DeliveryNode when the order was redirected while staged.
 // Only patches the final segment — intermediate segments have legitimate
 // dropoffs that differ from the final destination.
+//
+// IT TRUSTS delivery_node TO BE THE FINAL DROP, and until C2a's A.5 the gate's
+// re-bind broke that: it wrote a swap's interior lane slot into the column, so a
+// later release of the swap's last segment (the hard release; a station release
+// past the lane) re-aimed the empty's return at the lane slot the same swap had
+// filled. The re-bind now writes the column only for a last drop, so an interior
+// drop is never the target here
+// (TestC2aPin_ARedirectOverlayNeverReAimsTheSwapsReturnAtItsLaneDrop).
 func (d *Dispatcher) patchRedirectSegments(segment []resolvedStep, order *orders.Order, moreWaits bool) {
 	if order.DeliveryNode == "" || moreWaits {
 		return

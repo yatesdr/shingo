@@ -1303,7 +1303,16 @@ func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node, en
 // the instant between is legal: the uniqueness index is per NODE, not per order.
 func (d *Dispatcher) rebindGatedDropoff(order *orders.Order, lane *nodes.Node, c gateCandidate) (*nodes.Node, QueueCause, error) {
 	entryIndex := c.entryIndex
-	current, err := d.db.GetNodeByDotName(order.DeliveryNode)
+	// THE SLOT THIS DROP HOLDS IS THE ENTRY STEP'S, not delivery_node's. They are
+	// one node only when the entry is the plan's last drop. On a swap the entry is
+	// interior and delivery_node is the press at the far end: read from there, every
+	// interior drop re-bound "PLN_002 → LSD_001" when it already held LSD_001, and
+	// the release below let go of the press (C2a A.5; STUDY-floor-and-gate.md §1(c)).
+	at, err := entryDropoffNode(order, entryIndex)
+	if err != nil {
+		return nil, causeForGateRebind(err), err
+	}
+	current, err := d.db.GetNodeByDotName(at)
 	if err != nil {
 		return nil, causeForGateRebind(err), err
 	}
@@ -1377,8 +1386,19 @@ func (d *Dispatcher) rebindGatedDropoff(order *orders.Order, lane *nodes.Node, c
 	// speaks for is the FIRST dropoff. Re-pointing the last one instead sent the
 	// empty into the lane and put both of the order's bins in one slot — see
 	// applyPlanNode for the full failure and PLAN §R.5 for the specimens.
-	if err := applyDeliveryNodeAtStep(d.db, order, best.Name, entryIndex); err != nil {
-		return nil, causeForGateRebind(err), err
+	//
+	// AND delivery_node ONLY WHEN THIS DROP IS THE LAST. The column is the order's
+	// final destination, and handleStoreBlockCompleted reads a drop AT it as the
+	// final one, recorded only when the whole order finishes. Writing an interior
+	// lane slot there left the bin set down in the lane in _TRANSIT for the rest of
+	// the swap, the slot reading empty to every dig plan (order 233, dig 242). The
+	// interior drop moves in the plan alone, as widenDropoffToGroup already knew.
+	if d.entryIsFinalDropoff(order, entryIndex) {
+		if err := applyDeliveryNodeAtStep(d.db, order, best.Name, entryIndex); err != nil {
+			return nil, causeForGateRebind(err), err
+		}
+	} else {
+		applyPlanNode(d.db, order, best.Name, entryIndex, protocol.ActionDropoff)
 	}
 	// AND THE PER-BIN LEDGER FOLLOWS THE PLAN. The two lines above move the two
 	// copies the robot is driven from; order_bins.dest_node is the third, and until
@@ -1472,6 +1492,9 @@ func (d *Dispatcher) LaneIDsForOrder(orderID int64) []int64 {
 			out = append(out, id)
 		}
 	}
+	// delivery_node is the order's FINAL destination: since C2a's A.5 the gate's
+	// re-bind no longer writes a swap's interior lane slot there. An interior lane
+	// is found through its wait step below, which is where it always was.
 	for _, name := range []string{order.DeliveryNode, order.SourceNode} {
 		add(d.LaneIDForNodeName(name))
 	}
@@ -1539,6 +1562,9 @@ func (d *Dispatcher) NodeIDsForOrder(orderID int64) []int64 {
 		seen[id] = true
 		out = append(out, id)
 	}
+	// As in LaneIDsForOrder: the endpoints are the order's first pickup and FINAL
+	// drop (an interior lane drop has not been in delivery_node since C2a's A.5);
+	// the interior lane arrives through its wait step's WaitLane below.
 	for _, name := range []string{order.DeliveryNode, order.SourceNode} {
 		if name == "" {
 			continue
@@ -1846,6 +1872,21 @@ func (d *Dispatcher) entryIsFinalDropoff(order *orders.Order, entryIndex int) bo
 		}
 	}
 	return true
+}
+
+// entryDropoffNode is the node the plan's drop at entryIndex names: the slot the
+// gate's re-bind speaks for. The candidate walk found that index in this same
+// plan, so a plan that does not name a drop there disagrees with its caller, and
+// that is an error, never a guess from delivery_node.
+func entryDropoffNode(order *orders.Order, entryIndex int) (string, error) {
+	var steps []resolvedStep
+	if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err != nil {
+		return "", fmt.Errorf("rebind: parse steps for order %d: %w", order.ID, err)
+	}
+	if entryIndex < 0 || entryIndex >= len(steps) || steps[entryIndex].Action != protocol.ActionDropoff {
+		return "", fmt.Errorf("rebind: order %d's step %d is not the lane drop its gate speaks for", order.ID, entryIndex)
+	}
+	return steps[entryIndex].Node, nil
 }
 
 // rebindWaitLane re-points the lane wait the order is parked AT, so the wait and

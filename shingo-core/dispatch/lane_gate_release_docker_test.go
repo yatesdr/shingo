@@ -904,7 +904,8 @@ func TestGateRelease_SwapBlocksKeepPressAsFinalDropoff(t *testing.T) {
 	tc := swapGateFixture(t, db, "SWAPWIRE")
 	swap, lane, press, emptySrc := tc.order, tc.lane, tc.press, tc.emptySrc
 
-	if err := d.releaseGatedOrder(swap, lane, candidateFor(t, db, swap, gateEntryIndexFor(t, swap))); err != nil {
+	entryIdx := gateEntryIndexFor(t, swap)
+	if err := d.releaseGatedOrder(swap, lane, candidateFor(t, db, swap, entryIdx)); err != nil {
 		t.Fatalf("gated release: %v", err)
 	}
 
@@ -917,17 +918,31 @@ func TestGateRelease_SwapBlocksKeepPressAsFinalDropoff(t *testing.T) {
 		t.Fatalf("blocks = %d, want 3 ([dropoff lane, pickup empty, dropoff press]): %+v", len(blocks), blocks)
 	}
 
-	// The re-bind's OWN record of the slot it chose, read back from the row rather
-	// than recomputed here — so the test cannot agree with a re-bind that picked
-	// one slot and emitted another.
+	// The re-bind's OWN record of the slot it chose, read back from the plan's
+	// entry step rather than recomputed here — so the test cannot agree with a
+	// re-bind that picked one slot and emitted another.
+	//
+	// FROM THE STEP, NOT FROM delivery_node. This read used to take the column,
+	// and so asserted the bug it is named against: the re-bind wrote the interior
+	// lane slot into the order's final destination (C2a A.5, D1). The column is
+	// the press now, and that is asserted below as the title says.
 	reloaded, err := db.GetOrder(swap.ID)
 	if err != nil {
 		t.Fatalf("reload after release: %v", err)
 	}
+	var steps []resolvedStep
+	if err := json.Unmarshal([]byte(reloaded.StepsJSON), &steps); err != nil {
+		t.Fatalf("steps after release: %v", err)
+	}
+	rebound := steps[entryIdx].Node
+	if reloaded.DeliveryNode != press.Name {
+		t.Errorf("delivery_node = %s, want the press %s — the re-bind wrote its interior lane drop into "+
+			"the order's final destination (C2a A.5)", reloaded.DeliveryNode, press.Name)
+	}
 
-	if blocks[0].Location != reloaded.DeliveryNode || blocks[0].BinTask != "JackUnload" {
+	if blocks[0].Location != rebound || blocks[0].BinTask != "JackUnload" {
 		t.Errorf("entry block = %s/%s, want JackUnload at the re-bound slot %s — the lane entry is the "+
-			"one leg the gate speaks for", blocks[0].Location, blocks[0].BinTask, reloaded.DeliveryNode)
+			"one leg the gate speaks for", blocks[0].Location, blocks[0].BinTask, rebound)
 	}
 	if blocks[1].Location != emptySrc.Name || blocks[1].BinTask != "JackLoad" {
 		t.Errorf("middle block = %s/%s, want JackLoad at %s — a step outside the gate's leg moved on the wire",

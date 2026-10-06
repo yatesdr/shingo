@@ -807,7 +807,8 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, p
 //
 // The overlay is a BACKWARD LAST-DROPOFF SCAN keyed on order.DeliveryNode. Before
 // the re-bind those two agreed, so it rewrote a dropoff to itself and was
-// invisible. After the re-bind, order.DeliveryNode IS THE LANE SLOT — so on a swap
+// invisible. After the re-bind, order.DeliveryNode WAS THE LANE SLOT (until C2a's
+// A.5, which stopped the re-bind writing an interior drop into the column) — so on a swap
 // ([dropoff@lane, pickup@empties, dropoff@press]) the scan found the press, saw it
 // differ, and re-aimed the empty's return leg at the lane slot the same order had
 // just filled. Both of the order's bins went to one node on the wire while
@@ -824,6 +825,12 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, p
 // written without its step is a state this path can no longer be reached in — and
 // if one is ever added, the fix is to write the step through applyPlanNode like
 // every other re-point, not to re-derive the target here by scanning.
+//
+// SINCE C2a's A.5 the shape is gone at its source as well: the re-bind writes
+// delivery_node only for the plan's last drop, so the column names the final
+// destination on this path too, and the press drop is never re-aimed at a lane
+// slot by any overlay (TestC2aPin_ARedirectOverlayNeverReAimsTheSwapsReturnAtItsLaneDrop).
+// A reader that needs the interior slot reads the entry step, never the column.
 //
 // ── The durable guard, and why it lives HERE ──────────────────────────────
 // Four sites funnel through this function: the valve's two (at create time, "was

@@ -453,16 +453,19 @@ func (d *Dispatcher) recordFloorRelease(w floorWaiter) {
 	}
 
 	// THE ONE LOUD CASE. A gate-staged order is a robot committed to a lane wait
-	// on an unsealed waybill, so a floor release there means a committed vehicle
-	// waited on Core, at its mark or on its way there, for up to a whole interval.
-	// The plan says the wait is reached; the vendor's arrival report is not read
-	// here, so the line does not claim the robot was standing. (A dig leg is
-	// counted only once its blocker is up, when it is standing in the lane:
+	// on an unsealed waybill, so a floor release there means no event released a
+	// committed vehicle's wait: a plan without its releaser. It does NOT mean the
+	// robot waited. Its wait is the plan's, reached once its earlier steps are
+	// done, and the robot is usually still driving them: in C2a's floor census
+	// (STUDY-floor-and-gate.md §2) 97-98% of these rows came while the robot was
+	// en route, and it paid nothing. It pays only if it reaches the mark first. The
+	// vendor's arrival report is not read here, so the line claims neither. (A dig
+	// leg is counted only once its blocker is up, when it is standing in the lane:
 	// digLegNotYetLifted.) A held leg is a row; this is a robot.
 	if w.pop == PopGateStaged {
 		log.Printf("LANE FLOOR: order %d was waiting at lane %d under %q and only the periodic floor "+
-			"freed it — a committed robot waited on Core, at its mark or on its way there, for up to "+
-			"one interval. %s",
+			"freed it — no event released a committed robot's wait (it may still have been driving; it "+
+			"stands only if it reached the mark first, for up to one interval). %s",
 			w.orderID, w.laneID, cause, should)
 		return
 	}
