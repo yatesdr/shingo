@@ -35,15 +35,22 @@ func hasDecl(decls, prop, val string) bool {
 // the scroller moved to bring a selected row into view, the header row went
 // up with the rows and its bottom few pixels were left showing under the
 // POSITIONS caption, reading as the caption printed over the headings.
+//
+// The rows scroll with the main column now, not inside the table's box, and a
+// box that scrolls sideways is a scroll container in both axes — a heading
+// sticky inside it would stick to a box that never scrolls vertically. So the
+// headings are their own strip (.pd-poshead), outside that box, sticky against
+// the column.
 func TestPositionsHeaderStaysAboveTheRows(t *testing.T) {
-	decls := cssRule(t, desktopCSS(t), ".pd-postbl thead th")
+	decls := cssRule(t, desktopCSS(t), ".pd-poshead")
 	for _, want := range [][2]string{
 		{"position", "sticky"},
 		{"top", "0"},
 		{"background", `var\(--[\w-]+\)`},
+		{"overflow", "hidden"},
 	} {
 		if !hasDecl(decls, want[0], want[1]) {
-			t.Errorf(".pd-postbl thead th: want %s: %s; the header row scrolls away with the rows", want[0], want[1])
+			t.Errorf(".pd-poshead: want %s: %s; the header row scrolls away with the rows", want[0], want[1])
 		}
 	}
 }
@@ -93,8 +100,8 @@ func TestPositionsTableKeepsAReadableWidth(t *testing.T) {
 	if floor < 800 {
 		t.Errorf(".pd-postbl table min-width is %d px; ten columns under that draw their chips as a letter or two", floor)
 	}
-	if !hasDecl(cssRule(t, css, ".pd-postbl"), "overflow", "auto") {
-		t.Errorf(".pd-postbl must scroll (overflow: auto) so a table at its floor scrolls inside the box, not the page")
+	if !hasDecl(cssRule(t, css, ".pd-postbl"), "overflow-x", "auto") {
+		t.Errorf(".pd-postbl must scroll sideways (overflow-x: auto) so a table at its floor scrolls inside the box, not the page")
 	}
 }
 

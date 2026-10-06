@@ -129,6 +129,9 @@ function boot() {
     document.addEventListener('click', e => {
         if (!e.target.closest || !e.target.closest('.pd-pop')) closePop();
     });
+    // Scroll does not bubble, so the headings' sideways sync listens in the
+    // capture phase on the document: it survives every redraw of the table.
+    document.addEventListener('scroll', syncPosHead, true);
     if (S.processID) openProcess(S.processID);
     else drawList();
 }
@@ -174,7 +177,7 @@ function drawList() {
         // (it is neither a success nor an alert). The style name is typed by
         // an engineer, so it is escaped, and it sits in its own no-wrap box:
         // a hyphenated name breaks only after "Running", never inside itself,
-        // and a name wider than the column ellipsises with the whole in title.
+        // and the column is as wide as its longest name (see cols below).
         const changing = !!(p.target_style_id && p.target_style_id !== p.active_style_id);
         const running = !changing && !!run;
         const state = changing ? 'Changing over'
@@ -216,10 +219,26 @@ function drawList() {
             '</td></tr>';
     };
 
+    // EVERY GROUP'S STATE COLUMN IS ONE WIDTH. Each group is its own table,
+    // and a content-sized column would be wider in the group that runs the
+    // long name and narrower in the next, so the columns would not line up
+    // down the page. Each State heading carries every running name, unseen
+    // and zero-high, so every table's column is sized by the longest one.
+    const sizer = '<span class="pd-statesizer" aria-hidden="true">' +
+        [...new Set(S.processes.map(runningStyle).filter(Boolean).map(s => s.name))]
+            .map(n => '<span>' + esc(n) + '</span>').join('') + '</span>';
     const head = '<thead><tr><th>Process</th><th>Group</th><th>Running</th><th class="num">Flows</th>' +
-        '<th>HMI editing</th><th>Counter</th><th>Curtain</th><th class="num">Screens</th><th>State</th><th></th></tr></thead>';
-    const cols = '<colgroup><col style="width:17%"><col style="width:9%"><col style="width:19%"><col style="width:6%">' +
-        '<col style="width:10%"><col style="width:12%"><col style="width:8%"><col style="width:6%"><col style="width:8%">' +
+        '<th>HMI editing</th><th>Counter</th><th>Curtain</th><th class="num">Screens</th><th>State' + sizer + '</th>' +
+        '<th></th></tr></thead>';
+    // THE STATE COLUMN HAS NO WIDTH OF ITS OWN. Its name is whole and on one
+    // line, so the column has to grow to it; under a fixed layout with an 8%
+    // <col> it never did, and a LOADER-*-RUN name ran into the actions column.
+    // The table lays out by content (.pd-proctbl), the other columns keep
+    // their shares as hints and give way, and the state takes the rest (8%,
+    // what "No part running" needs) or its longest name, whichever is more.
+    // The shares sum to 92 so that rest exists; they summed to 106 before.
+    const cols = '<colgroup><col style="width:15%"><col style="width:8%"><col style="width:19%"><col style="width:6%">' +
+        '<col style="width:9%"><col style="width:11%"><col style="width:7%"><col style="width:6%"><col>' +
         '<col style="width:11%"></colgroup>';
     // P0 is a table and gets the page, with the same 24 px gutter every other
     // block on this page has.
@@ -230,7 +249,7 @@ function drawList() {
         const rows = groups.get(n);
         body += '<div class="pd-lgrp"><span class="pd-lbl">' + esc(n) + '</span>' +
             '<span class="pd-dim">' + rows.length + ' process' + (rows.length === 1 ? '' : 'es') + '</span></div>' +
-            '<table class="pd-tbl">' + cols + head + '<tbody>' + rows.map(row).join('') + '</tbody></table>';
+            '<table class="pd-tbl pd-proctbl">' + cols + head + '<tbody>' + rows.map(row).join('') + '</tbody></table>';
     }
 
     root().innerHTML =
@@ -537,13 +556,15 @@ function selectStyle(id) {
 function drawFlows() {
     // WHERE THE ENGINEER WAS SURVIVES THE REDRAW, as on Settings: the write
     // below replaces both scrollers with fresh ones at the top, so a cell
-    // edit far down the table would otherwise throw the page back up.
-    const scrollers = ['.pd-main', '.pd-postbl'];
-    const wasAt = scrollers.map(sel => { const el = root().querySelector(sel); return el ? el.scrollTop : 0; });
+    // edit far down the table would otherwise throw the page back up. The
+    // column scrolls down; the table's box scrolls only sideways, and its
+    // headings strip goes with it.
+    const scrollers = [['.pd-main', 'scrollTop'], ['#pd-postbl', 'scrollLeft'], ['#pd-poshead', 'scrollLeft']];
+    const wasAt = scrollers.map(([sel, axis]) => { const el = root().querySelector(sel); return el ? el[axis] : 0; });
     root().innerHTML = appbar() + '<div class="pd-page">' + rail() + main() + '</div>';
     drawPicture();
     drawBar();
-    scrollers.forEach((sel, i) => { const el = root().querySelector(sel); if (el) el.scrollTop = wasAt[i]; });
+    scrollers.forEach(([sel, axis], i) => { const el = root().querySelector(sel); if (el) el[axis] = wasAt[i]; });
     const q = $('pd-railq');
     if (q) q.addEventListener('input', () => {
         const n = q.value.trim().toLowerCase();
@@ -564,22 +585,26 @@ function drawFlows() {
 //
 // Published on the body, read by composer_shots_test.go's checkDesktopFits.
 function reportDesktopFit() {
-    const tbl = root().querySelector('.pd-postbl table');
+    const tbl = root().querySelector('#pd-postbl table');
     const box = $('pd-postbl');
     const outer = $('pd-posbox');
     const bar = $('pd-bar');
     const pic = root().querySelector('.pd-pic');
-    if (!tbl || !box || !bar || !pic) return;
+    const col = root().querySelector('.pd-main');
+    if (!tbl || !box || !bar || !pic || !col) return;
     const b = bar.getBoundingClientRect(), pb = pic.getBoundingClientRect(), bx = box.getBoundingClientRect();
     const ox = outer ? outer.getBoundingClientRect() : bx;
+    const cb = col.getBoundingClientRect();
     const svgEl = pic.querySelector('#pd-svg');
     const svgRect = svgEl ? svgEl.getBoundingClientRect() : { width: 0, height: 0 };
-    // P3: the add row is the footer and is always visible; the paired-above
-    // line is the last SCROLLING row and has to be reachable rather than on
-    // screen. Both are rendered geometry, so both are measured — a footer
-    // that had slipped under the bar would still be in the DOM.
+    // The add row is the box's footer, under the rows; the paired-above line
+    // is the last row. Both have to be reachable by scrolling the column.
+    // Both are rendered geometry, so both are measured — a footer that had
+    // slipped under the bar would still be in the DOM.
     const foot = $('pd-posfoot');
-    const paired = root().querySelector('.pd-postbl tr.paired');
+    const paired = root().querySelector('#pd-postbl tr.paired');
+    // A point's distance from the top of the column's scrolled content.
+    const inColumn = y => Math.round(y - cb.top + col.scrollTop);
     const fit = {
         viewport: [Math.round(document.documentElement.clientWidth), Math.round(document.documentElement.clientHeight)],
         // T1: the table fits its box. Equal, not "close": one pixel of overflow
@@ -587,25 +612,30 @@ function reportDesktopFit() {
         tableScrollW: Math.round(tbl.scrollWidth),
         tableClientW: Math.round(box.clientWidth),
         pageScrollW: Math.round(document.body.scrollWidth),
-        // T2: the bar pins inside the viewport, and the table sits between the
-        // picture and it.
+        // The bar pins inside the viewport, and the table sits under the
+        // picture.
         barBottom: Math.round(b.bottom),
         barTop: Math.round(b.top),
         picBottom: Math.round(pb.bottom),
         tableTop: Math.round(ox.top),
         tableBottom: Math.round(ox.bottom),
-        // The scroller's own extent, which is what the footer has to sit under.
+        // The rows' box's own extent, which is what the footer has to sit under.
         scrollerBottom: Math.round(bx.bottom),
+        // ONE VERTICAL SCROLL: the column scrolls, the rows' box does not.
+        colScrollH: Math.round(col.scrollHeight),
+        colClientH: Math.round(col.clientHeight),
+        scrollerScrollH: Math.round(box.scrollHeight),
+        scrollerClientH: Math.round(box.clientHeight),
         // THE PICTURE IS DRAWN 1:1, and this is how that is checked now.
         //
         // The property is a RELATION, not a constant: the viewBox equals the
         // svg's rendered size, whatever the picture's own height made it — a
         // picture laid out at one size and fitted by preserveAspectRatio into
-        // another is the bug, and it scales cards and type together. The svg
-        // is measured, not the frame: the frame may be shorter than the
-        // picture and scroll it.
+        // another is the bug, and it scales cards and type together.
         picW: Math.round(svgRect.width),
         picH: Math.round(svgRect.height),
+        // AND IT IS NEVER CLIPPED: the frame is at least the svg's height.
+        picFrameH: Math.round(pic.clientHeight),
         viewBox: (svgEl || { getAttribute: () => '' }).getAttribute('viewBox') || '',
         hasFooter: !!foot,
         hasPairedLine: !!paired,
@@ -614,29 +644,25 @@ function reportDesktopFit() {
         const fb = foot.getBoundingClientRect();
         fit.footerTop = Math.round(fb.top);
         fit.footerBottom = Math.round(fb.bottom);
+        fit.footerInColumn = inColumn(fb.bottom);
     }
-    // HOW MANY POSITION ROWS ARE ACTUALLY ON SCREEN, measured rather than
-    // divided by an assumed row height. `.pd-postbl td` says 32 px and a
-    // rendered row is taller than that — the chips inside it are 26-28 and
-    // carry their own padding — so a floor computed from 32 said two rows fit
-    // while the second one was clipped through the middle of its chips.
-    const head = root().querySelector('.pd-postbl thead');
-    const firstRow = root().querySelector('.pd-postbl tbody tr[data-row]');
-    if (head && firstRow) {
-        const hh = head.getBoundingClientRect().height;
-        const rh = firstRow.getBoundingClientRect().height;
-        fit.headerH = Math.round(hh);
-        fit.rowH = Math.round(rh);
-        fit.rowsVisible = rh > 0 ? Math.floor((box.clientHeight - hh) / rh) : 0;
+    // HOW MANY POSITION ROWS ARE ON SCREEN AS THE PAGE OPENS, measured rather
+    // than divided by an assumed row height: rows wholly between the headings
+    // and the bar. `.pd-postbl td` says 32 px and a rendered row is taller —
+    // the chips inside it are 26-28 and carry their own padding.
+    const head = root().querySelector('#pd-poshead thead');
+    const rows = root().querySelectorAll('#pd-postbl tbody tr[data-row]');
+    if (head && rows.length) {
+        const hr = head.getBoundingClientRect();
+        fit.headerH = Math.round(hr.height);
+        fit.rowH = Math.round(rows[0].getBoundingClientRect().height);
+        const top = Math.max(cb.top, hr.bottom), bottom = Math.min(cb.bottom, b.top);
+        fit.rowsVisible = [...rows].filter(r => {
+            const rr = r.getBoundingClientRect();
+            return rr.top >= top - 1 && rr.bottom <= bottom + 1;
+        }).length;
     }
-    if (paired) {
-        // Reachable by scroll: the line's offset within the scroller is inside
-        // the scrollable range. Visible outright when the box is tall enough,
-        // which is the same test with a scrollTop of zero.
-        fit.pairedOffsetTop = Math.round(paired.offsetTop);
-        fit.scrollerScrollH = Math.round(box.scrollHeight);
-        fit.scrollerClientH = Math.round(box.clientHeight);
-    }
+    if (paired) fit.pairedInColumn = inColumn(paired.getBoundingClientRect().bottom);
     document.body.dataset.desktopFit = JSON.stringify(fit);
 }
 
@@ -692,9 +718,9 @@ function drawPicture(pass) {
     // the svg's own width is whatever the last draw set). The height is not
     // the frame's to choose: the picture reports it through opts.height, and
     // the svg is set to exactly that size with a viewBox to match, so a card
-    // is CARD_W wide on screen and nothing is ever scaled to fit. A frame too
-    // short for it scrolls (.pd-pic is overflow: auto), as the station's flow
-    // panel does.
+    // is CARD_W wide on screen and nothing is ever scaled to fit. The frame
+    // takes that height whole (.pd-pic does not shrink); when it and the
+    // table come to more than the window, the main column scrolls.
     const frameEl = svg.parentNode;
     const w = Math.round((frameEl && frameEl.clientWidth) || PICTURE_W_FALLBACK);
     const fs = M().findings(S.model);
@@ -746,10 +772,10 @@ function drawPicture(pass) {
     }
 
     // THE WIDTH IS CHECKED ONCE MORE, ON THE NEXT FRAME. Setting the svg's
-    // height can change the frame's width: on a short screen the flow column
-    // scrolls (.pd-main is overflow-y: auto there), and a picture that makes
-    // it overflow brings in its scrollbar, which narrows every frame inside
-    // it. The draw above was laid out at the width from before that, so the
+    // height can change the frame's width: the flow column scrolls
+    // (.pd-main is overflow-y: auto), and a picture that makes it overflow
+    // brings in its scrollbar, which narrows every frame inside it where the
+    // browser does not honour the column's reserved gutter. The draw above was laid out at the width from before that, so the
     // picture would sit a scrollbar's width wider than its frame.
     //
     // requestAnimationFrame runs AFTER layout and BEFORE paint, so the
@@ -869,6 +895,37 @@ function usedPositions() {
     return used;
 }
 
+// rowlessRoles says what each position without a row of its own is for, as
+// "PLN_04 is on deck for PLN_03" — one clause per row that sets it, in
+// position order. The foot said "paired above" for all of them, but a
+// position set as another row's inbound staging is staging, not paired. The
+// words are the picture card's own for that position (the model's cardLines:
+// "on deck for", "Inbound staging" over "for", "Outbound staging" over "for"),
+// run into one sentence; the third position of a press index takes its
+// field's name.
+function rowlessRoles(used) {
+    const active = n => !!(S.model.cells[n] && S.model.cells[n].on && S.model.cells[n].mode);
+    const phrase = {
+        paired: 'on deck for',
+        secondPaired: M().fieldLabel(S.model, 'second_paired_core_node').toLowerCase() + ' for',
+        staging: 'inbound staging for',
+        parkOld: 'outbound staging for',
+    };
+    const out = [];
+    for (const pos of S.model.positions) {
+        const n = pos.core_node_name;
+        if (!used.has(n) || active(n)) continue;
+        for (const owner of S.model.positions.map(p => p.core_node_name).filter(active)) {
+            for (const col of ['partner', 'staging']) {
+                for (const chip of M().rowColumns(S.model, owner, col)) {
+                    if (chip.value === n && phrase[chip.key]) out.push(n + ' is ' + phrase[chip.key] + ' ' + owner);
+                }
+            }
+        }
+    }
+    return out;
+}
+
 function freePositions() {
     if (!S.model) return [];
     const used = usedPositions();
@@ -900,13 +957,13 @@ function positionsTable() {
             '<td><button class="pd-adv' + (advSet ? ' set' : '') + '" data-act="advanced" data-node="' + esc(n) + '">' +
             gearSVG() + (advSet ? '<b>' + advSet + ' set</b>' : 'defaults') + '</button></td></tr>');
     }
-    const paired = S.model.positions.map(p => p.core_node_name)
-        .filter(n => used.has(n) && !(S.model.cells[n] && S.model.cells[n].on && S.model.cells[n].mode));
+    const rowless = rowlessRoles(used);
     const free = freePositions();
     let tail = '';
-    if (paired.length) {
-        tail += '<tr class="paired"><td colspan="10">' + esc(paired.join(', ')) +
-            ' — back positions, no row of their own, paired above</td></tr>';
+    if (rowless.length) {
+        tail += '<tr class="paired"><td colspan="10">' + esc(rowless.join(' · ')) +
+            ' — no row of ' + (new Set(rowless.map(r => r.split(' ')[0])).size === 1 ? 'its' : 'their') +
+            ' own</td></tr>';
     }
     // P3 · THE ADD ROW IS THE BOX'S FOOTER, NOT ITS LAST ROW. In the accepted
     // D1 shot neither it nor the paired-above line was on screen: both were
@@ -935,14 +992,18 @@ function positionsTable() {
         : '';
     const cols = '<colgroup><col class="c-pos"><col class="c-role"><col class="c-mode"><col class="c-part"><col class="c-partner">' +
         '<col class="c-staging"><col class="c-src"><col class="c-via"><col class="c-dst"><col class="c-adv"></colgroup>';
-    // THE LABEL AND THE FOOTER ARE OUTSIDE THE SCROLLER. `#pd-postbl` is still
-    // the scrolling element and still the box T1 measures the table against —
-    // its clientWidth is what a column has to fit inside — and the box around
-    // all three is what the picture now gives way to (T2's rule).
+    // THE LABEL, THE HEADINGS AND THE FOOTER ARE OUTSIDE THE ROWS' BOX.
+    // `#pd-postbl` scrolls the rows sideways and is still the box T1 measures
+    // the table against — its clientWidth is what a column has to fit inside.
+    // The headings are a strip of their own, `#pd-poshead`, so they can stick
+    // to the main column as it scrolls down: inside a box that scrolls
+    // sideways they would stick to that box, which never scrolls down. The
+    // strip is a second `.pd-postbl` with the same colgroup, so its columns
+    // are the rows' columns; syncPosHead carries it sideways with the rows.
     return '<div class="pd-posbox" id="pd-posbox">' +
         '<div class="pd-lbl">Positions' +
         '<span class="hint">click a card to find its row · click a cell to change it</span></div>' +
-        '<div class="pd-postbl" id="pd-postbl">' +
+        '<div class="pd-postbl pd-poshead" id="pd-poshead">' +
         // F3: A FIELD IS CALLED WHAT THE CLAIM CALLS IT. These read `New bins
         // from`, `Old bins to`, `Robot drives via` and `Partner` — four names
         // shingo already had, invented a second time for one table. An
@@ -963,8 +1024,9 @@ function positionsTable() {
         '<table>' + cols + '<thead><tr><th>Position</th><th>Role</th><th>' + esc(W('swap_mode')) + '</th><th>Part</th>' +
         '<th>' + esc(W('paired_core_node')) + '</th><th>Staging</th>' +
         '<th>' + esc(W('inbound_source')) + '</th><th>' + esc(W('key_route')) + '</th>' +
-        '<th>' + esc(W('outbound_destination')) + '</th><th>Advanced</th></tr></thead>' +
-        '<tbody>' + rows.join('') + tail + '</tbody></table></div>' +
+        '<th>' + esc(W('outbound_destination')) + '</th><th>Advanced</th></tr></thead></table></div>' +
+        '<div class="pd-postbl" id="pd-postbl">' +
+        '<table>' + cols + '<tbody>' + rows.join('') + tail + '</tbody></table></div>' +
         footer + '</div>';
 }
 
@@ -1126,6 +1188,15 @@ function viaCell(node) {
 function redrawPositionsTable() {
     const el = $('pd-posbox');
     if (el) el.outerHTML = positionsTable();
+}
+
+// syncPosHead carries the headings strip sideways with the rows. The strip
+// sits outside the rows' box so it can stick to the main column; its own
+// overflow is hidden, so the only thing that moves it is this.
+function syncPosHead(e) {
+    if (!e.target || e.target.id !== 'pd-postbl') return;
+    const head = $('pd-poshead');
+    if (head) head.scrollLeft = e.target.scrollLeft;
 }
 
 // The row's `N set` badge. The model counts it, by domain.ClaimHas's rule, so
@@ -1415,15 +1486,19 @@ function optionsFor(node, kind) {
 }
 
 // stagingUsers maps each staging node to the other active positions that
-// stage or park on it, as "PLN_02, PLN_06".
+// stage or park on it, as "PLN_02, PLN_06". A field flowspec forbids for the
+// position's mode does not use its node — the model's stagingFieldUsed, the
+// rule the picture's "not used by this flow" line reads — so a two-robot
+// swap's leftover outbound staging is not a "used by".
 function stagingUsers(node) {
     const by = {};
     for (const p of S.model.positions) {
         const n = p.core_node_name, cell = S.model.cells[n];
         if (n === node || !cell || !cell.on || !cell.mode) continue;
-        for (const v of new Set([cell.staging, cell.parkOld])) {
-            if (v) (by[v] = by[v] || []).push(n);
-        }
+        const used = [[cell.staging, 'inbound_staging'], [cell.parkOld, 'outbound_staging']]
+            .filter(([v, f]) => v && M().stagingFieldUsed(cell.mode, f))
+            .map(([v]) => v);
+        for (const v of new Set(used)) (by[v] = by[v] || []).push(n);
     }
     const out = {};
     for (const k of Object.keys(by)) out[k] = by[k].join(', ');
@@ -2594,16 +2669,22 @@ function flashRoutingRow(name) {
 // picture, the table and the panel all agree — and the table row scrolls
 // into view. Nothing else changes: no model action, no write.
 //
-// The table's header row is sticky, so a row scrolled to the top of the
-// scroller would land under it. The scroller reserves the header's rendered
-// height first — measured, because the headings wrap to two lines at some
-// widths and not at others — and scrollIntoView honours that padding.
+// The row scrolls into view in the MAIN COLUMN, which is the one vertical
+// scroller, and the column has the table's headings stuck to its top and the
+// bar stuck to its foot: a row scrolled to either edge would land under one of
+// them. The column reserves both rendered heights first — measured, because
+// the headings wrap to two lines at some widths and not at others — and
+// scrollIntoView honours that padding.
 function gotoFinding(node) {
     S.selected = node;
     drawFlows();
-    const box = $('pd-postbl');
-    const head = box && box.querySelector('thead');
-    if (head) box.style.scrollPaddingTop = head.offsetHeight + 'px';
+    const col = root().querySelector('.pd-main');
+    const head = $('pd-poshead');
+    const bar = $('pd-bar');
+    if (col) {
+        if (head) col.style.scrollPaddingTop = head.offsetHeight + 'px';
+        if (bar) col.style.scrollPaddingBottom = bar.offsetHeight + 'px';
+    }
     const row = root().querySelector('[data-row="' + CSS.escape(node) + '"]');
     if (row) row.scrollIntoView({ block: 'nearest' });
 }

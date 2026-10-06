@@ -79,8 +79,8 @@ function characterise(label, file, want) {
     // robot colour — a pair reads as "this way" from across a cell. The counts
     // are of paths with the move glyph's own "d": the legend draws chevrons
     // too, with a different one, so a legend entry cannot flunk a move count.
-    check(label + ': move groups drawn', count(svg, /<g class="mv">/g) === (want.moves || 0),
-        String(count(svg, /<g class="mv">/g)));
+    check(label + ': move groups drawn', count(svg, /<g class="mv"[ >]/g) === (want.moves || 0),
+        String(count(svg, /<g class="mv"[ >]/g)));
     check(label + ': robot-1 move chevrons', count(svg, /<path class="sc r1" d="M-5/g) === (want.r1Chevrons || 0),
         String(count(svg, /<path class="sc r1" d="M-5/g)));
     check(label + ': robot-2 move chevrons', count(svg, /<path class="sc r2" d="M-5/g) === (want.r2Chevrons || 0),
@@ -133,9 +133,9 @@ function characterise(label, file, want) {
         (svg.match(/<text class="lgt"[^>]*>[^<]*/g) || []).join(' | '));
 }
 
-const [indexPath, twoRobotPath, singlePath, seqPath, twoLanesPath, mixedPath] = process.argv.slice(2);
-if (!indexPath || !twoRobotPath || !singlePath || !seqPath || !twoLanesPath || !mixedPath) {
-    console.log('usage: node operator-flow.modes.test.js <index-pair.json> <two-robot.json> <single-robot.json> <sequential.json> <two-robot-lanes.json> <mixed.json>');
+const [indexPath, twoRobotPath, singlePath, seqPath, twoLanesPath, mixedPath, indexStagedPath] = process.argv.slice(2);
+if (!indexPath || !twoRobotPath || !singlePath || !seqPath || !twoLanesPath || !mixedPath || !indexStagedPath) {
+    console.log('usage: node operator-flow.modes.test.js <index-pair.json> <two-robot.json> <single-robot.json> <sequential.json> <two-robot-lanes.json> <mixed.json> <index-staged.json>');
     process.exit(2);
 }
 
@@ -161,16 +161,17 @@ characterise('press index — two rows, two pairs', indexPath, {
 
 // ── two_robot — stage beside the line, move the new in, pull the old ────────
 // Each produce position draws a SWAP module whose staging place IS a position
-// of the cell (the Hopkinsville shape) — so no slot is drawn (the position is
-// already a card) and the only move is the old bin out, Robot 2's. The
-// staging positions read "Inbound staging · for <press>" on their own cards.
+// of the cell (the Hopkinsville shape). The staging position is drawn as the
+// module's inbound slot, like any staging, with Robot 1's move up out of it;
+// it has no card of its own, so no card reads "for <press>". The old bin
+// leaves for the dock on Robot 2.
 characterise('two robot — two staging moves', twoRobotPath, {
-    moves: 2, r1Chevrons: 0, r2Chevrons: 4,
+    moves: 4, r1Chevrons: 4, r2Chevrons: 4,
     cardLines: ['Robot 1 stages at PLN_02', 'Robot 1 stages at PLN_05', 'Robot 2 pulls old',
-        'Inbound staging', 'for PLN_03', 'for PLN_06', 'front position'],
-    noCardLines: ['Robot 2 indexes', 'Robot 1 clears old'],
+        'Inbound staging', 'front position'],
+    noCardLines: ['Robot 2 indexes', 'Robot 1 clears old', 'for PLN_03', 'for PLN_06'],
     dock: ['Inbound source · Robot 1 → PLN_02, PLN_05', 'Outbound destination · Robot 2 ← PLN_03, PLN_06'],
-    stagingSlots: 0,
+    stagingSlots: 2, slots: ['PLN_02', 'PLN_05'],
     strips: 0,
     legend: 2, legendRobots: [1, 2],
 });
@@ -194,17 +195,20 @@ characterise('two robot — staging at lanes, outbound named', twoLanesPath, {
 
 // ── single_robot — the mode with two trips on one robot ─────────────────────
 // The card reads the model's two move sentences ("Robot 1 moves in" / "Robot 1
-// clears old") — its staging places ARE positions of the cell (PLN_02/PLN_05),
-// so no slots and no slot captions; the moves are words on the card. ONE
+// clears old"). Its staging places are positions of the cell (PLN_02/PLN_05),
+// drawn as each module's inbound and outbound slots: both claims stage there,
+// so each slot is drawn in both modules and marked shared, and neither
+// position has a card of its own. Each module draws the move up out of its
+// inbound slot and the park down into its outbound slot, and no out-stub. ONE
 // robot: the dock's outbound note and the legend say Robot 1, where the
-// pre-change picture hard-coded Robot 2 (§4.6 ruling).
+// pre-change picture hard-coded Robot 2.
 characterise('single robot — in and out on one robot', singlePath, {
-    moves: 2, r1Chevrons: 4, r2Chevrons: 0,
-    cardLines: ['Robot 1 moves in', 'Robot 1 clears old', 'Inbound staging', 'for PLN_01',
-        'Outbound staging', 'back position'],
-    noCardLines: ['One robot, parks and swaps', 'Inbound PLN_02', 'Outbound PLN_05', 'Robot 2', 'front position'],
+    moves: 4, r1Chevrons: 8, r2Chevrons: 0,
+    cardLines: ['Robot 1 moves in', 'Robot 1 clears old', 'back position'],
+    noCardLines: ['One robot, parks and swaps', 'Inbound PLN_02', 'Outbound PLN_05', 'Robot 2', 'front position',
+        'for PLN_01', 'for PLN_04'],
     dock: ['Inbound source · Robot 1 → PLN_01, PLN_04', 'Outbound destination · Robot 1 ← PLN_01, PLN_04'],
-    stagingSlots: 0,
+    stagingSlots: 4, slots: ['PLN_02', 'PLN_05'], slotCaptions: ['>shared<'],
     strips: 0,
     legend: 1, legendRobots: [1],
 });
@@ -224,9 +228,9 @@ characterise('sequential — the A/B pair', seqPath, {
 });
 
 // ── a mixed flow — one single_robot cell beside one two_robot cell ──────────
-// Each module's move to the dock, and its card's out mark, is its OWN cell's
-// robot: the single cell clears with Robot 1, the two-robot cell's old bin
-// leaves on Robot 2. The dock's OUT note names each robot with its
+// Each module's old-bin move, and its card's out mark, is its OWN cell's
+// robot: the single cell parks its old bin in its outbound slot with Robot 1,
+// the two-robot cell's old bin leaves for the dock on Robot 2. The dock's OUT note names each robot with its
 // positions; its mark takes no one robot's colour (two robots use it), and
 // the legend lists both.
 characterise('mixed — single_robot beside two_robot', mixedPath, {
@@ -242,14 +246,19 @@ characterise('mixed — single_robot beside two_robot', mixedPath, {
     const svg = renderOne(JSON.parse(fs.readFileSync(mixedPath, 'utf8')));
     const modules = svg.split('<g class="module"').slice(1);
     const moduleOf = pos => modules.find(m => m.includes('<g class="node on" data-pos="' + pos + '"')) || '';
-    // The move to the dock is the module's one horizontal move (rotate 0);
-    // every move up out of a slot is vertical.
-    const outChevrons = m => [...m.matchAll(/<path class="sc (r\d)" d="M-5[^"]*" transform="[^"]*rotate\(0\.0\)"/g)].map(x => x[1]);
+    // The old-bin move is the one that leaves the position's card: out to the
+    // dock, or down into the slot a park leg names.
+    const outChevrons = (m, pos) => {
+        const g = (m.match(new RegExp('<g class="mv" data-from="' + pos + '" data-to="[^"]*">((?:(?!<\/g>).)*)<\/g>')) || [])[1] || '';
+        return [...g.matchAll(/<path class="sc (r\d)"/g)].map(x => x[1]);
+    };
+    const outTo = (m, pos) => (m.match(new RegExp('<g class="mv" data-from="' + pos + '" data-to="([^"]*)"')) || [])[1];
     const outMark = m => (m.match(/<g class="io (r\d)"[^>]*>(?:(?!<\/g>).)*class="iot">out</) || [])[1];
-    for (const [pos, r] of [['PLN_01', 'r1'], ['PLN_03', 'r2']]) {
+    for (const [pos, r, to] of [['PLN_01', 'r1', 'SLN_012'], ['PLN_03', 'r2', 'dock']]) {
         const m = moduleOf(pos);
-        const ch = outChevrons(m);
-        check('mixed: ' + pos + ' clears to the dock on ' + r, ch.length === 2 && ch.every(x => x === r), JSON.stringify(ch));
+        const ch = outChevrons(m, pos);
+        check('mixed: ' + pos + ' clears its old bin to ' + to + ' on ' + r,
+            outTo(m, pos) === to && ch.length === 2 && ch.every(x => x === r), JSON.stringify({ to: outTo(m, pos), ch: ch }));
         check('mixed: ' + pos + ' card out mark is ' + r, outMark(m) === r, String(outMark(m)));
     }
     const dockOut = (svg.match(/<g class="io[^"]*" transform="translate\(16,26\)">(?:(?!<\/g>).)*<\/g><text class="k" x="36" y="36">OUT</) || [''])[0];
@@ -298,6 +307,131 @@ characterise('mixed — single_robot beside two_robot', mixedPath, {
             return JSON.stringify(byWorld) === JSON.stringify(byDrawn) &&
                 sorted.length === xs.length;
         })(), JSON.stringify(fronts.map(c => ({ n: c.name, drawn: c.x, world: worldX[c.name] }))));
+    }
+}
+
+
+// ── every leg is drawn once, and every node a claim names is in its module ──
+//
+// The rule the module picture is built on: a module is one position and
+// everything its claim names, and every leg the model gives is drawn once.
+// Checked over EVERY fixture, against the model's own legs — the ones the
+// picture reads (sentencesFromView) — rather than against a count written
+// down per mode, so a leg a template has no place for cannot hide behind a
+// count that was wrong when it was written.
+//
+// A move says which two boxes it joins (data-from, data-to; 'dock' is the
+// dock band). The pin does not take that on trust: the pair of chevrons has
+// to sit in the gap between those two boxes, inside that module, pointing from
+// the first towards the second, in the leg's robot's colour.
+//
+// The nodes a claim names are the ones its choreography uses: the inbound
+// staging, the outbound staging (except a two-robot swap's, which flowspec
+// forbids for that mode — Robot 2 takes the old bin straight to the dock), and
+// the paired position of an index or A/B claim. Each is a card or a slot in
+// the claim's own module. The inbound and outbound source and destination are
+// the dock's, not the module's.
+const BOX = { card: [188, 92], deck: [188, 56], slot: [116, 44] };
+
+function boxesIn(chunk) {
+    const out = [];
+    const re = /<g class="(node|stage)([^"]*)" data-(?:pos|staging)="([^"]+)"[^>]*transform="translate\(([-\d.]+),([-\d.]+)\)"/g;
+    for (const mm of chunk.matchAll(re)) {
+        const kind = mm[1] === 'stage' ? 'slot' : (/\bdeck\b/.test(mm[2]) ? 'deck' : 'card');
+        const [w, h] = BOX[kind];
+        out.push({ name: mm[3], x: +mm[4], y: +mm[5], w: w, h: h });
+    }
+    return out;
+}
+
+function movesIn(chunk) {
+    const out = [];
+    const re = /<g class="mv" data-from="([^"]*)" data-to="([^"]*)">((?:(?!<\/g>).)*)<\/g>/g;
+    for (const mm of chunk.matchAll(re)) {
+        const ch = [...mm[3].matchAll(/<path class="sc (r\d)" d="M-5[^"]*" transform="translate\(([-\d.]+) ([-\d.]+)\) rotate\(([-\d.]+)\)"/g)]
+            .map(c => ({ r: c[1], x: +c[2], y: +c[3], th: +c[4] }));
+        out.push({ from: mm[1], to: mm[2], chevrons: ch });
+    }
+    return out;
+}
+
+const inside = (b, x, y) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+
+// between: the chevrons' centre lies in the span of the two boxes, inside
+// neither, and the pair points from the first box's centre towards the
+// second's.
+function between(mv, a, b) {
+    if (mv.chevrons.length !== 2) return false;
+    const cx = (mv.chevrons[0].x + mv.chevrons[1].x) / 2, cy = (mv.chevrons[0].y + mv.chevrons[1].y) / 2;
+    const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x + a.w, b.x + b.w);
+    const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y + a.h, b.y + b.h);
+    if (!(cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1)) return false;
+    if (inside(a, cx, cy) || inside(b, cx, cy)) return false;
+    const th = mv.chevrons[0].th * Math.PI / 180;
+    const dx = (b.x + b.w / 2) - (a.x + a.w / 2), dy = (b.y + b.h / 2) - (a.y + a.h / 2);
+    return Math.cos(th) * dx + Math.sin(th) * dy > 0;
+}
+
+function namedNodes(claim) {
+    const out = [];
+    if (claim.inbound_staging) out.push(claim.inbound_staging);
+    if (claim.outbound_staging && claim.swap_mode !== 'two_robot') out.push(claim.outbound_staging);
+    if (claim.paired_core_node && (claim.swap_mode === 'two_robot_press_index' || claim.swap_mode === 'sequential')) {
+        out.push(claim.paired_core_node);
+    }
+    return out;
+}
+
+{
+    console.log('legs — every leg drawn once between its boxes; every named node in its module');
+    for (const [name, file] of [['press index', indexPath], ['two robot', twoRobotPath],
+        ['two robot lanes', twoLanesPath], ['single robot', singlePath], ['sequential', seqPath],
+        ['mixed', mixedPath], ['press index staged', indexStagedPath]]) {
+        const view = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const svg = renderOne(view);
+        const sentences = m.sentencesFromView(view);
+        const chunks = svg.split('<g class="module"').slice(1);
+        const all = chunks.map(c => ({ boxes: boxesIn(c), moves: movesIn(c) }));
+        // A claim's own module is the one that draws its position's card.
+        const ownModule = pos => {
+            const i = chunks.findIndex(c => c.includes('" data-pos="' + pos + '"') &&
+                new RegExp('<g class="node[^"]*" data-pos="' + pos + '"').test(c));
+            return i < 0 ? null : all[i];
+        };
+
+        check(name + ': the model gives legs to check', sentences && Array.isArray(sentences.legs), '');
+        for (const L of (sentences.legs || [])) {
+            const tag = name + ': ' + L.kind + ' leg ' + L.from + ' → ' + L.to;
+            const hits = [];
+            for (const md of all) for (const mv of md.moves) if (mv.from === L.from && mv.to === L.to) hits.push({ md, mv });
+            check(tag + ' is drawn exactly once', hits.length === 1, String(hits.length));
+            if (hits.length !== 1) continue;
+            const { md, mv } = hits[0];
+            const want = 'r' + (L.robot === 2 ? 2 : 1);
+            check(tag + ' is in Robot ' + want.slice(1) + "'s colour",
+                mv.chevrons.length === 2 && mv.chevrons.every(c => c.r === want), JSON.stringify(mv.chevrons.map(c => c.r)));
+            const a = md.boxes.find(b => b.name === L.from), b = md.boxes.find(bb => bb.name === L.to);
+            check(tag + ' sits between its two boxes, pointing from the first to the second',
+                !!a && !!b && between(mv, a, b), JSON.stringify({ from: a, to: b, mv: mv.chevrons }));
+        }
+        // An old bin that a park leg clears does not ALSO leave for the dock:
+        // that would draw the one trip twice, to two places.
+        for (const L of (sentences.legs || []).filter(l => l.kind === 'park')) {
+            const stubs = all.reduce((n, md) => n + md.moves.filter(mv => mv.from === L.from && mv.to === 'dock').length, 0);
+            check(name + ': ' + L.from + ' parks its old bin, so draws no move out to the dock', stubs === 0, String(stubs));
+        }
+
+        for (const p of view.cell.positions) {
+            if (!p.claim || !p.claim.swap_mode) continue;
+            const md = ownModule(p.core_node_name);
+            check(name + ': ' + p.core_node_name + ' is drawn in a module', !!md, '');
+            if (!md) continue;
+            const names = new Set(md.boxes.map(b => b.name));
+            for (const n of namedNodes(p.claim)) {
+                check(name + ': ' + p.core_node_name + "'s module draws " + n + ' (named by its claim)',
+                    names.has(n), [...names].join(', '));
+            }
+        }
     }
 }
 

@@ -41,8 +41,9 @@
 // Go by domain.BuildCellPicture), view.current_style, view.station. The move
 // sentences and the dock notes come from composer-model.js — this file
 // computes no sentence of its own (see sentencesFromView below). A staging
-// node that is a position of the cell never gets a slot: it is already drawn
-// as its own card, and the slot would say its name twice.
+// node is a slot in the module that stages there even when it is a position
+// of the cell; a position with no claim of its own is then drawn only as that
+// slot, never as a card as well.
 
 import { isCoord } from '/static/shared/scene-geom.js';
 import { el } from './operator-util.js';
@@ -56,9 +57,11 @@ import { getView } from './operator-state.js';
 
 export const CARD_W = 188, CARD_H = 92;   // position card: today's, unchanged
 const SLOT_W = 116, SLOT_H = 44;          // staging slot: fixed width, name truncates
+const TAG_X = SLOT_W - 56;                // a shared slot's tag: 60, as on the reference
 const DECK_H = 56;                        // the on-deck position inside an index module
 const BAR = 12;                           // room for the line-side bar above the card
 const GAP = 38;                           // card → slot row; one move lives here
+const ROW_GAP = 12;                       // on-deck card → a slot under it with no move between
 const M_W = 2 * SLOT_W + 12;              // 244: two slots and the gap between them
 const INSET = (M_W - CARD_W) / 2;         // 28: the card is centred; stubs live in the inset
 const GX = 20, GY = 28;                   // between modules, between rows
@@ -118,7 +121,12 @@ const OUT = '<path d="M6 12V3M2 7l4-4 4 4M0 14h12" fill="none" stroke="currentCo
 // Coordinates are rounded to a tenth — the markup is read back as text by the
 // pins, and a float tail is a diff nobody can read for no accuracy anyone can
 // see.
-function move(a, b, robot) {
+//
+// data-from and data-to name the two boxes the move joins — a position, a
+// staging slot, or 'dock' for the dock band — so a reader of the markup can
+// tell which trip a pair of chevrons is without working it out from their
+// coordinates.
+function move(a, b, robot, from, to) {
     const dx = b[0] - a[0], dy = b[1] - a[1];
     const L = Math.hypot(dx, dy);
     const ux = dx / L, uy = dy / L;
@@ -129,7 +137,7 @@ function move(a, b, robot) {
         out += '<path class="sc r' + robot + '" d="M-5 -4.2L0 0L-5 4.2" transform="translate(' +
             (mx + ux * d).toFixed(1) + ' ' + (my + uy * d).toFixed(1) + ') rotate(' + th.toFixed(1) + ')"/>';
     }
-    return '<g class="mv">' + out + '</g>';
+    return '<g class="mv" data-from="' + esc(from) + '" data-to="' + esc(to) + '">' + out + '</g>';
 }
 
 function bar(x, y, w, dim) {
@@ -198,19 +206,25 @@ function deckCard(x, y, name, line, inRobot, sel, bad, tap) {
 // fit, and the field it is as the caption. A SHARED slot — one two flows use —
 // keeps its caption to its first word and carries a "shared" tag on the
 // caption row, so two modules can draw the same lane without either lying
-// about who it parks for. A TAP GOES TO THE POSITION THIS LANE SERVES, which
+// about who it parks for. The name keeps the slot's full width; the caption
+// word gets the room from its own x to the tag's left edge (TAG_X), which
+// holds "Outbound" whole — the slot's place under the card already says it
+// is staging, and the reference draws the shared slot the same way. A TAP GOES TO THE POSITION THIS LANE SERVES, which
 // is the thing an operator can change — there is no panel for a lane itself.
-function slotCard(x, y, name, caption, shared, sel, tap) {
+//
+// tip, when given, is the slot's whole tooltip in place of the cut name's: a
+// slot no running leg reaches says what it is for.
+function slotCard(x, y, name, caption, shared, sel, tap, tip) {
     let s = '<g class="stage on' + (sel ? ' sel' : '') +
         '" data-staging="' + esc(name) + '"' + (tap || '') +
         ' transform="translate(' + x + ',' + y + ')">';
-    s += nameTip(name, SLOT_W - 24, 13);
+    s += tip ? '<title>' + esc(tip) + '</title>' : nameTip(name, SLOT_W - 24, 13);
     s += '<rect class="box" width="' + SLOT_W + '" height="' + SLOT_H + '" rx="10"/>';
     s += txt('nm', 12, 19, name, SLOT_W - 24, 13);
     if (shared) {
-        s += txt('ln', 12, 35, caption.split(' ')[0], SLOT_W - 22 - 50, 11, 500);
-        s += '<rect class="tagbg" x="' + (SLOT_W - 56) + '" y="24.5" width="46" height="14" rx="7"/>' +
-            '<text class="tag" x="' + (SLOT_W - 33) + '" y="35" text-anchor="middle">shared</text>';
+        s += txt('ln', 12, 35, caption.split(' ')[0], TAG_X - 12, 11, 500);
+        s += '<rect class="tagbg" x="' + TAG_X + '" y="24.5" width="46" height="14" rx="7"/>' +
+            '<text class="tag" x="' + (TAG_X + 23) + '" y="35" text-anchor="middle">shared</text>';
     } else {
         s += txt('ln', 12, 35, caption, SLOT_W - 22, 11, 500);
     }
@@ -277,6 +291,28 @@ function oneStrip(route, x, top, robot) {
 // and the card's own words ("Robot 1 supplies PLN_01") still say the pairing.
 // A sequential A/B pair is one two-card module built from the first claimed
 // position whose partner is another claimed sequential position.
+//
+// A STAGING PLACE IS THE MODULE'S SLOT, WHETHER OR NOT IT IS A POSITION. At a
+// press a swap usually stages at a back position; that position is drawn as
+// the slot of every module whose claim stages there (each marked shared when
+// two do), and a position with no claim of its own that a module draws this
+// way gets no card of its own. A position that runs its own claim keeps its
+// own module and is drawn as a slot in the other module as well. mod.staged
+// lists the positions a module draws as slots, so a selection of one of them
+// outlines the module that draws it. A press index's inbound staging is a
+// slot of its module as well (see drawModule), under the on-deck card.
+
+// swapSlots is which staging places a swap module draws as slots: the inbound
+// staging, and a one-robot swap's outbound staging. A two-robot swap draws no
+// outbound slot (Robot 2 takes the old bin straight to the dock); the other
+// modes draw no swap slots.
+function swapSlots(c) {
+    if (!c || (c.swap_mode !== 'two_robot' && c.swap_mode !== 'single_robot')) return { in: null, out: null };
+    return {
+        in: c.inbound_staging || null,
+        out: c.swap_mode === 'single_robot' ? (c.outbound_staging || null) : null,
+    };
+}
 
 function modulesOf(cell) {
     const positions = (cell && cell.positions) || [];
@@ -310,11 +346,26 @@ function modulesOf(cell) {
         else if (m === 'single_robot') mods.push({ kind: 'single', name: n, names: [n] });
         else mods.push({ kind: 'free', name: n, names: [n], on: true });   // a legacy mode word: a card, not a crash
     }
+    const slotted = new Set();   // positions some module draws as a slot
+    for (const mod of mods) {
+        mod.staged = [];
+        let names = [];
+        if (mod.kind === 'two' || mod.kind === 'single') {
+            const sl = swapSlots(byName[mod.name].claim);
+            names = [sl.in, sl.out];
+        } else if (mod.kind === 'index') {
+            names = [byName[mod.name].claim.inbound_staging];
+        }
+        for (const n of names) {
+            if (n && n !== mod.name && byName[n] && mod.staged.indexOf(n) < 0) { mod.staged.push(n); slotted.add(n); }
+        }
+    }
     for (const p of positions) {
         const n = p.core_node_name;
         if (p.claim && p.claim.swap_mode) continue;
         if (deckOf[n]) continue;   // drawn inside its press's module
-        mods.push({ kind: 'free', name: n, names: [n] });
+        if (slotted.has(n)) continue;   // drawn as a slot in the module that stages there
+        mods.push({ kind: 'free', name: n, names: [n], staged: [] });
     }
     for (const mod of mods) {
         if (mod.kind !== 'index') continue;
@@ -354,22 +405,30 @@ function modulesOf(cell) {
 // a selection of `name` outlines (drawModule's `sel`). A caller that has to
 // know whether a position belongs to the selection asks this rather than
 // re-deriving the pairing rules above. [] when no module draws the name.
+//
+// A position drawn as a slot belongs to the module that draws it: its own
+// module when it has one, else the first module that stages there.
 export function moduleOf(cell, name) {
-    const m = modulesOf(cell).mods.find(mod => mod.names.indexOf(name) >= 0);
-    return m ? m.names.slice() : [];
+    const mods = modulesOf(cell).mods;
+    const m = mods.find(mod => mod.names.indexOf(name) >= 0) ||
+        mods.find(mod => mod.staged.indexOf(name) >= 0);
+    return m ? m.names.concat(m.staged) : [];
 }
 
 // stagingNamed is the staging nodes one claim puts to use: its inbound and
-// outbound staging, whatever the mode — a press index draws no slot for its
-// inbound staging, but the staged tooling changeover reads it. The one field
-// left out is a two-robot claim's outbound staging, which flowspec forbids for
-// that mode: Robot 2 takes the old bin straight to the dock, so the node is
-// named but not used. Both stagingUse and the unused-staging line read this,
-// so "shared" and "not used by this flow" cannot disagree about a node.
+// outbound staging unless flowspec forbids the field for the claim's mode — a
+// press index's inbound staging has no running leg, but the staged tooling
+// changeover reads it, so it counts; a two-robot claim's outbound staging is
+// named but not used (Robot 2 takes the old bin straight to the dock). The
+// rule is the model's stagingFieldUsed, which the desktop's staging menu asks
+// too. Both stagingUse and the unused-staging line read this, so "shared",
+// "used by" and "not used by this flow" cannot disagree about a node.
 function stagingNamed(c) {
     if (!c || !c.swap_mode) return [];
-    const out = c.swap_mode === 'two_robot' ? null : c.outbound_staging;
-    return [c.inbound_staging, out].filter(Boolean);
+    const M = window.ComposerModel;
+    return ['inbound_staging', 'outbound_staging']
+        .filter(f => c[f] && M.stagingFieldUsed(c.swap_mode, f))
+        .map(f => c[f]);
 }
 
 // stagingUse counts how many claimed positions name a staging node — a node
@@ -429,7 +488,10 @@ function drawModule(mod, at, ctx) {
     const s = [];
     // A SELECTION IS THE MODULE'S: selecting any position in it outlines
     // every card and slot the module draws, and nothing else changes.
-    const sel = !!ctx.sel && mod.names.indexOf(ctx.sel) >= 0;
+    // A position drawn only as a slot is selected with the module(s) that draw
+    // it; one that has its own module is selected with that module alone.
+    const sel = !!ctx.sel && (mod.names.indexOf(ctx.sel) >= 0 ||
+        ((mod.staged || []).indexOf(ctx.sel) >= 0 && !ctx.carded.has(ctx.sel)));
     // A card already names its position (data-pos); the tap mark is all an
     // editable picture adds. EVERY card takes it, a dashed one included: on a
     // new part every card is dashed, and a tap is how a position joins.
@@ -469,8 +531,8 @@ function drawModule(mod, at, ctx) {
         s.push(posCard(bx, cy, b.core_node_name, cardLinesFor(b, ctx.sentences),
             b.claim && b.claim.payload_code, { in: inR, out: outR }, true, sel,
             findings[mod.b], true, tap()));
-        s.push(move([bx + CARD_W / 2, cy + CARD_H + GAP], [bx + CARD_W / 2, cy + CARD_H], inR)); // B pulls the finished part up from A
-        s.push(move([bx + CARD_W, cy + 46], [bx + CARD_W + INSET, cy + 46], outR));            // it leaves B for the dock
+        s.push(move([bx + CARD_W / 2, cy + CARD_H + GAP], [bx + CARD_W / 2, cy + CARD_H], inR, mod.a, mod.b)); // B pulls the finished part up from A
+        s.push(move([bx + CARD_W, cy + 46], [bx + CARD_W + INSET, cy + 46], outR, mod.b, 'dock'));            // it leaves B for the dock
         return { svg: s.join(''), w: w, h: cy + CARD_H + GAP };
     }
 
@@ -491,42 +553,68 @@ function drawModule(mod, at, ctx) {
             const deckLines = (ctx.sentences.cardLines && ctx.sentences.cardLines[mod.deck]) || [];
             s.push(deckCard(cx, sy, mod.deck, deckLines[0] || '', deckIn, sel,
                 findings[mod.deck], tap()));
-            s.push(move([mx, sy + DECK_H / 2], [cx, sy + DECK_H / 2], deckIn));       // next bin in, behind the one on deck
-            s.push(move([mx + M_W / 2, sy], [mx + M_W / 2, cy + CARD_H], indexRobot)); // index up into the press
+            s.push(move([mx, sy + DECK_H / 2], [cx, sy + DECK_H / 2], deckIn, 'dock', mod.deck));       // next bin in, behind the one on deck
+            s.push(move([mx + M_W / 2, sy], [mx + M_W / 2, cy + CARD_H], indexRobot, mod.deck, mod.name)); // index up into the press
             hRun = sy + DECK_H;
         }
-        s.push(move([cx + CARD_W, cy + 46], [mx + M_W, cy + 46], outRobot)); // old bin out, to the dock
+        // THE INBOUND STAGING OF A PRESS INDEX is where a changeover keeps the
+        // next style's tooling staged. The claim names it, so the module draws
+        // it — under the on-deck card (under the press card when there is no
+        // deck), captioned by its field — but the running choreography has no
+        // leg to it, so no chevron joins it to anything.
+        if (c.inbound_staging) {
+            const st = c.inbound_staging;
+            const ty = mod.deck ? hRun + ROW_GAP : sy;
+            s.push(slotCard(mx, ty, st, 'Inbound staging', (ctx.use[st] || 0) > 1, sel,
+                ctx.editable ? ' data-tap="staging" data-pos="' + esc(mod.name) + '"' : '',
+                st + ' — inbound staging, used at changeover'));
+            hRun = ty + SLOT_H;
+        }
+        s.push(move([cx + CARD_W, cy + 46], [mx + M_W, cy + 46], outRobot, mod.name, 'dock')); // old bin out, to the dock
         return { svg: s.join(''), w: M_W, h: hRun };
     }
 
     // single_robot and two_robot: the swap module — press card over its
-    // staging slot row, the moves as chevrons in the gap between them. A slot
-    // is drawn only for a staging place that is NOT itself a position of the
-    // cell; a position parks on its own card, drawn elsewhere, and a slot
-    // here would say its name twice. A TWO-ROBOT SWAP HAS NO OUTBOUND SLOT:
+    // staging slot row, the moves as chevrons in the gap between them. Every
+    // staging place the claim parks at is a slot here, a position of the cell
+    // included (see modulesOf: such a position has no card of its own unless
+    // it runs its own claim). A TWO-ROBOT SWAP HAS NO OUTBOUND SLOT:
     // Robot 2 takes the old bin straight to the dock (the out-stub drawn
     // below), so an outbound staging its claim happens to name is not a place
     // this choreography parks, and a slot for it would draw a trip it never
     // makes.
-    const inName = c.inbound_staging && !ctx.positionNames.has(c.inbound_staging) ? c.inbound_staging : null;
-    const outName = mod.kind !== 'two' && c.outbound_staging && !ctx.positionNames.has(c.outbound_staging)
-        ? c.outbound_staging : null;
+    //
+    // THE OLD BIN LEAVES ONE WAY. A one-robot swap's park leg takes it down
+    // into the outbound slot, in that leg's robot's colour, and that is the
+    // whole of its trip in this module: no out-stub to the dock beside it,
+    // which would draw the one bin leaving twice, to two places. The stub is
+    // for an old bin that leaves the module with no park leg drawn — a
+    // two-robot swap's, or one whose park target has no slot here.
+    const slots = swapSlots(c);
+    const inName = slots.in, outName = slots.out;
     const outRobot = dockRobot(ctx.sentences, mod.name, 'out');
     const inRobot = legRobot(ctx.sentences, mod.name, 'move', dockRobot(ctx.sentences, mod.name, 'in'));
+    const park = outName ? (ctx.sentences.legs || []).find(L =>
+        L.kind === 'park' && L.from === mod.name && L.to === outName) : null;
+    const parkRobot = park ? (park.robot || outRobot) : null;
     s.push(bar(cx, my, CARD_W));
-    s.push(posCard(cx, cy, mod.name, lines, part, { in: inRobot, out: outRobot }, true, sel,
+    s.push(posCard(cx, cy, mod.name, lines, part, { in: inRobot, out: parkRobot || outRobot }, true, sel,
         findings[mod.name], true, tap()));
     if (inName) {
         s.push(slotCard(mx, sy, inName, 'Inbound staging', (ctx.use[inName] || 0) > 1, sel,
             ctx.editable ? ' data-tap="staging" data-pos="' + esc(mod.name) + '"' : ''));
-        s.push(move([mx + 52, sy], [mx + 52, cy + CARD_H], inRobot));      // new bin in, from the lane
+        s.push(move([mx + 52, sy], [mx + 52, cy + CARD_H], inRobot, inName, mod.name));      // new bin in, from the lane
     }
     if (outName) {
         s.push(slotCard(mx + SLOT_W + 12, sy, outName, 'Outbound staging',
             (ctx.use[outName] || 0) > 1, sel,
             ctx.editable ? ' data-tap="staging" data-pos="' + esc(mod.name) + '"' : ''));
     }
-    s.push(move([cx + CARD_W, cy + 46], [mx + M_W, cy + 46], outRobot));   // old bin out, to the dock
+    if (park) {
+        s.push(move([mx + M_W - 52, cy + CARD_H], [mx + M_W - 52, sy], parkRobot, mod.name, outName)); // old bin down, parked
+    } else {
+        s.push(move([cx + CARD_W, cy + 46], [mx + M_W, cy + 46], outRobot, mod.name, 'dock'));     // old bin out, to the dock
+    }
     h = sy + SLOT_H;
     if (inName && (c.key_route || []).length) {
         s.push(oneStrip(c.key_route, mx + 22, sy + SLOT_H, inRobot));
@@ -742,7 +830,9 @@ export function renderFlowPicture(view, opts) {
     // routing set this flow does not use — can be counted on the chips line.
     const positionNames = new Set((cell.positions || []).map(p => p.core_node_name));
     const use = stagingUse(cell);
-    const ctx = { byName, sentences, sel, findings, editable: !!opts.editable, use, positionNames };
+    const carded = new Set();
+    for (const md of mods) for (const n of md.names) carded.add(n);
+    const ctx = { byName, sentences, sel, findings, editable: !!opts.editable, use, carded };
 
     // Measure pass: every module at the origin, for its width and height.
     // Draw pass: the same module at its packed place. Coordinates are
@@ -771,7 +861,7 @@ export function renderFlowPicture(view, opts) {
     //
     // Staging lanes the running flow does not use: not a position, not a slot
     // a module drew, and not named by any claim (stagingUse — a press index's
-    // inbound staging has no slot but is used all the same). Dashed chips on
+    // inbound staging has no running leg but is used all the same). Dashed chips on
     // one labelled line under the grid, wrapping to the frame's width like
     // the modules do.
     if (opts.editable) {

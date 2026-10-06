@@ -196,14 +196,19 @@ console.log('style 11 — PART SYN-A-S007, two staging moves');
     check('no bin word survives on the picture', !/tote|Tote/.test(svg.replace(/Supermarket Empty Totes/g, '')),
         (svg.match(/[^<>]*[Tt]ote[^<>]*/g) || []).join(' | '));
     // THE PRESS DID NOT CHANGE SHAPE when the style did: rows are geometry.
-    // THE FREE BACK POSITION GOES AFTER THE LINE SIDE. PLN_02 and PLN_05 are
-    // the back-row positions PLN_03's and PLN_06's new bins wait in; no claim
-    // covers them and no module draws them, so they stand after the line side
-    // even though PLN_02 has the smallest world X in the cell. The unclaimed
-    // PLN_01 and PLN_04 stand in the back row as well and go with them.
+    // THE FREE BACK POSITIONS GO AFTER THE LINE SIDE. PLN_02 and PLN_05 are
+    // the back-row positions PLN_03's and PLN_06's new bins wait in: each is
+    // drawn as its module's inbound slot and has no card of its own. The
+    // unclaimed PLN_01 and PLN_04, which no claim names, stand in the back row
+    // and go after the line side by world X.
     const leads11 = modulesOf(svg).map(md => md.lead).join(' ');
     check('order: the line side first, the free back positions after it by world X',
-        leads11 === 'PLN_03 PLN_06 PLN_02 PLN_01 PLN_04 PLN_05', leads11);
+        leads11 === 'PLN_03 PLN_06 PLN_01 PLN_04', leads11);
+    for (const [pos, st] of [['PLN_03', 'PLN_02'], ['PLN_06', 'PLN_05']]) {
+        const part = svg.split('<g class="module"').slice(1).find(x => x.includes('data-pos="' + pos + '"')) || '';
+        check('staging at a position: ' + st + ' is ' + pos + "'s inbound slot, and has no card of its own",
+            part.includes('data-staging="' + st + '"') && !cardsOf(svg).some(c => c.name === st));
+    }
     check('rows: the same press rows as style 7',
         JSON.stringify(m.pictureRows(view11.cell)) === JSON.stringify(m.pictureRows(view7.cell)));
 }
@@ -295,9 +300,9 @@ console.log('the frame — the station keeps its own, the desktop asks for the c
 // ── two routes at once, and more LMs than fit ───────────────────────────────
 //
 // SYNTHETIC. A two-row cell where BOTH front positions stage on a back
-// position and BOTH carry a key route. The staging place is a POSITION, so
-// the strip hangs under that position's own card — the card the trip arrives
-// at — in the trip's robot's colour.
+// position and BOTH carry a key route. The staging place is a POSITION, drawn
+// as the module's inbound slot, so the strip hangs under that slot — the box
+// the trip arrives at — in the trip's robot's colour.
 {
     console.log('two routes, each under the card its trip arrives at');
     const two = () => ({
@@ -327,14 +332,15 @@ console.log('the frame — the station keeps its own, the desktop asks for the c
     // model's leg says so, and the strip is that trip.
     check('two routes: in the trip’s robot colour', count(svg, /<g class="lmroute r1"/g) === 2,
         (svg.match(/<g class="lmroute[^>]*/g) || []).join(' | '));
-    const cards = cardsOf(svg);
+    const slots = [...svg.matchAll(/<g class="stage[^"]*" data-staging="([^"]+)"[^>]*transform="translate\(([-\d.]+),([-\d.]+)\)">(?:<title>[^<]*<\/title>)?<rect class="box" width="([\d.]+)" height="([\d.]+)"/g)]
+        .map(mm => ({ name: mm[1], x: +mm[2], y: +mm[3], w: +mm[4], h: +mm[5] }));
     const lines = [...svg.matchAll(/<path class="lmline" d="M([-\d.]+) ([-\d.]+) ?V([-\d.]+)"/g)]
         .map(mm => ({ x: +mm[1], foot: +mm[2], top: +mm[3] }));
     for (const n of ['PLN_02', 'PLN_05']) {
-        const c = cards.find(k => k.name === n);
-        check('two routes: one hangs from ' + n + '’s bottom edge',
+        const c = slots.find(k => k.name === n);
+        check('two routes: one hangs from ' + n + '’s slot’s bottom edge',
             !!c && lines.some(l => l.x > c.x && l.x < c.x + c.w && Math.abs(l.top - 4 - (c.y + c.h)) < 0.5),
-            JSON.stringify({ card: c, lines: lines }));
+            JSON.stringify({ slot: c, lines: lines }));
     }
     check('two routes: each names its own points',
         svg.includes('>1 · LM10<') && svg.includes('>2 · LM11<') &&
@@ -528,8 +534,10 @@ console.log('the frame — the station keeps its own, the desktop asks for the c
 
 // ── the order: line side first, then the back row's own cards ───────────────
 //
-// SYNTHETIC. A two-row cell whose free back position — the lane PLN_03's new
-// bin waits in — stands to the LEFT of every line-side position. Line-side
+// SYNTHETIC. A two-row cell whose free back position PLN_09 — no claim covers
+// it or stages at it — stands to the LEFT of every line-side position. PLN_02,
+// the back position PLN_03's new bin waits in, is drawn as PLN_03's slot and
+// so is no module of its own. Line-side
 // modules come first, left to right; a back position that is not drawn inside
 // another position's module comes after them, whatever its X. A back position
 // that IS inside a module (the on-deck card of an index pair, the B of an A/B
@@ -558,14 +566,16 @@ console.log('the frame — the station keeps its own, the desktop asks for the c
                   claim: { swap_mode: 'sequential', payload_code: 'PA', paired_core_node: 'ALN_A',
                            inbound_source: 'SMN_IN', outbound_destination: 'SMN_OUT' } }, at(-2, -1.8)),
                 Object.assign({ core_node_name: 'PLN_02', sequence: 1, kind: 'back' }, at(0, -1.8)),
+                Object.assign({ core_node_name: 'PLN_09', sequence: 6, kind: 'back' }, at(-3, -1.8)),
             ],
         };
     };
-    const want = [['PLN_03'], ['PLN_10', 'PLN_11'], ['PLN_06'], ['ALN_A', 'ALN_B'], ['PLN_02']];
+    const want = [['PLN_03'], ['PLN_10', 'PLN_11'], ['PLN_06'], ['ALN_A', 'ALN_B'], ['PLN_09']];
     for (const [label, coords] of [['by world X', true], ['by sequence, back from the kind', false]]) {
         const c = cell(coords);
         check('order ' + label + ': the rows are the ones this pin means',
-            m.pictureRows(c).PLN_02 === 'back' && m.pictureRows(c).PLN_03 === 'front', JSON.stringify(m.pictureRows(c)));
+            m.pictureRows(c).PLN_02 === 'back' && m.pictureRows(c).PLN_09 === 'back' && m.pictureRows(c).PLN_03 === 'front',
+            JSON.stringify(m.pictureRows(c)));
         for (const w of [1280, 640]) {
             const got = modulesOf(m.renderFlowPicture({ cell: c, station: { name: 'SCREEN' } }, { frame: { w: w } }))
                 .map(md => md.names);

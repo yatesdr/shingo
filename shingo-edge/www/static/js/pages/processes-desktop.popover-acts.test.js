@@ -320,7 +320,7 @@ function loadPage(loadOpts) {
     vm.runInThisContext('(function(){\n' + src + '\n})();',
         { filename: 'processes-desktop.js' });
 
-    return { root, pop, main, doc, win, scrim };
+    return { root, pop, bar, main, doc, win, scrim };
 }
 
 // operator-flow.js in its own context, the way operator-flow.test.js loads
@@ -977,15 +977,15 @@ async function mainAsync() {
     // tree on every drawFlows; the stub keeps appended elements, so the pin
     // reads the selection back from the markup drawFlows wrote.
     function selectionRig() {
-        // The table's scroller and its header row: a header 43 px tall, the
-        // height it renders at 1280 with its two-line headings.
-        const box = makeElement('pd-postbl');
-        const thead = makeElement('');
-        thead.offsetHeight = 43;
-        box.querySelector = sel => (sel === 'thead' ? thead : null);
-        const ctx = loadPage({ extraIds: { 'pd-postbl': box } });
-        ctx.box = box;
+        // The headings' sticky strip, 43 px tall — the height it renders at
+        // 1280 with its two-line headings — and the bar, 57. The main column
+        // is the scroller both of them sit over.
+        const head = makeElement('pd-poshead');
+        head.offsetHeight = 43;
+        const ctx = loadPage({ extraIds: { 'pd-poshead': head } });
+        ctx.bar.offsetHeight = 57;
         const { root, main } = ctx;
+        ctx.box = main;
         const svg = makeElement('pd-svg');
         main.appendChild(svg);
         const card = makeElement('');
@@ -995,7 +995,9 @@ async function mainAsync() {
         row.dataset.row = 'PLN_01';
         main.appendChild(row);
         const rootQuery = root.querySelector;
-        root.querySelector = sel => (sel === '[data-row="PLN_01"]' ? row : (rootQuery ? rootQuery.call(root, sel) : null));
+        root.querySelector = sel => (sel === '[data-row="PLN_01"]' ? row
+            : sel === '.pd-main' ? main
+                : (rootQuery ? rootQuery.call(root, sel) : null));
         const selected = () => /class="selrow" data-row="PLN_01"/.test(root.innerHTML);
         const escapeKey = () => {
             for (const fn of (ctx.doc.listeners.keydown || [])) fn({ key: 'Escape' });
@@ -1014,12 +1016,14 @@ async function mainAsync() {
             throw new Error('a card click did not scroll its row into view (nearest); got ' +
                 JSON.stringify(row.lastScroll));
         }
-        // The header row is sticky, so a row brought into view at the top of
-        // the scroller would land under it: the scroller reserves the header's
-        // own height before the row is scrolled to.
-        if (box.style.scrollPaddingTop !== '43px') {
-            throw new Error('a card click scrolled its row without reserving the 43 px sticky header; ' +
-                'scroll-padding-top was ' + JSON.stringify(box.style.scrollPaddingTop));
+        // The headings stick to the top of the main column and the bar to its
+        // foot, so a row brought into view at either edge of the column would
+        // land under one of them: the column reserves both heights before the
+        // row is scrolled to.
+        if (box.style.scrollPaddingTop !== '43px' || box.style.scrollPaddingBottom !== '57px') {
+            throw new Error('a card click scrolled its row without reserving the 43 px sticky header ' +
+                'and the 57 px bar on the main column; scroll-padding was ' +
+                JSON.stringify([box.style.scrollPaddingTop, box.style.scrollPaddingBottom]));
         }
         bubble(card, 'click', doc);
         if (selected()) throw new Error('a second click on the selected card did not deselect it');
@@ -1134,13 +1138,16 @@ async function mainAsync() {
         const { root, main, doc } = loadPage();
         await drain();
         await drain();
-        // A real innerHTML write replaces .pd-main and .pd-postbl with fresh
-        // elements scrolled to the top. The stub mints a fresh pair per write.
+        // A real innerHTML write replaces the column, the table's box and its
+        // headings strip with fresh elements scrolled to the origin. The stub
+        // mints a fresh set per write. The column scrolls down; the table's
+        // box scrolls only sideways, and its headings follow it.
         let gen = 0;
         const fresh = {};
+        const scrolled = ['.pd-main', '#pd-postbl', '#pd-poshead'];
         const at = sel => {
             const k = gen + sel;
-            if (!fresh[k]) fresh[k] = Object.assign(makeElement(''), { scrollTop: 0 });
+            if (!fresh[k]) fresh[k] = Object.assign(makeElement(''), { scrollTop: 0, scrollLeft: 0 });
             return fresh[k];
         };
         let html = root.innerHTML;
@@ -1149,22 +1156,71 @@ async function mainAsync() {
             set: v => { html = v; gen++; },
         });
         const rootQuery = root.querySelector;
-        root.querySelector = sel => (sel === '.pd-main' || sel === '.pd-postbl' ? at(sel)
+        root.querySelector = sel => (scrolled.indexOf(sel) >= 0 ? at(sel)
             : (rootQuery ? rootQuery.call(root, sel) : null));
         at('.pd-main').scrollTop = 140;
-        at('.pd-postbl').scrollTop = 60;
+        at('#pd-postbl').scrollLeft = 60;
+        at('#pd-poshead').scrollLeft = 60;
         const row = makeElement('');
         row.dataset.row = 'PLN_01';
         main.appendChild(row);
         const before = gen;
         bubble(row, 'click', doc);
         if (gen === before) throw new Error('setup: the row click did not redraw');
-        if (at('.pd-main').scrollTop !== 140 || at('.pd-postbl').scrollTop !== 60) {
-            throw new Error('drawFlows lost the scroll: .pd-main ' + at('.pd-main').scrollTop +
-                ', .pd-postbl ' + at('.pd-postbl').scrollTop + ' (want 140, 60)');
+        const got = [at('.pd-main').scrollTop, at('#pd-postbl').scrollLeft, at('#pd-poshead').scrollLeft];
+        if (got.join() !== '140,60,60') {
+            throw new Error('drawFlows lost the scroll: column top, table left, headings left = ' +
+                got.join(', ') + ' (want 140, 60, 60)');
         }
         checks++;
-        console.log('ok: a redraw of the flow keeps the page and the table where they were scrolled');
+        console.log('ok: a redraw of the flow keeps the column and the table where they were scrolled');
+    }
+
+    // ── the headings scroll sideways with the rows ───────────────────────────
+    //
+    // The headings are their own strip so they can stick to the main column,
+    // which leaves the table's box scrolling sideways under them alone. A
+    // scroll of the box carries the strip with it, or the headings sit over
+    // the wrong columns.
+    {
+        const head = makeElement('pd-poshead');
+        head.scrollLeft = 0;
+        const { doc } = loadPage({ extraIds: { 'pd-poshead': head } });
+        await drain();
+        await drain();
+        const box = Object.assign(makeElement('pd-postbl'), { scrollLeft: 120 });
+        const other = Object.assign(makeElement('pd-rail-body'), { scrollLeft: 30 });
+        for (const fn of (doc.listeners.scroll || [])) fn({ target: other });
+        if (head.scrollLeft !== 0) throw new Error('a scroll elsewhere moved the headings to ' + head.scrollLeft);
+        for (const fn of (doc.listeners.scroll || [])) fn({ target: box });
+        if (head.scrollLeft !== 120) {
+            throw new Error('the table scrolled sideways to 120 and its headings stayed at ' + head.scrollLeft);
+        }
+        checks++;
+        console.log('ok: the headings strip follows the table\'s sideways scroll');
+    }
+
+    // ── the headings are a strip outside the table's sideways box ────────────
+    {
+        const { root } = loadPage();
+        await drain();
+        await drain();
+        const html = root.innerHTML;
+        const strip = html.indexOf('id="pd-poshead"');
+        const box = html.indexOf('id="pd-postbl"');
+        if (strip < 0 || box < 0 || strip > box) {
+            throw new Error('the positions box has no headings strip ahead of its table box');
+        }
+        const stripHTML = html.slice(strip, box);
+        const boxHTML = html.slice(box, html.indexOf('</table>', box));
+        if (stripHTML.indexOf('<thead>') < 0 || stripHTML.indexOf('<colgroup>') < 0) {
+            throw new Error('the headings strip carries no thead and colgroup of its own');
+        }
+        if (boxHTML.indexOf('<thead>') >= 0) {
+            throw new Error('the table box still draws its own thead; the headings would show twice');
+        }
+        checks++;
+        console.log('ok: the headings are a strip of their own, with the same columns, ahead of the rows');
     }
 
     // ── one phrase for adding: "Add a position" ──────────────────────────────
@@ -1378,6 +1434,62 @@ async function mainAsync() {
         }
         checks++;
         console.log('ok: the staging menu says "required for 1‑robot swap" and marks a node another position uses');
+    }
+
+    // A STAGING FIELD THE MODE FORBIDS DOES NOT USE THE NODE. A two-robot swap
+    // can still carry an outbound staging value, but flowspec forbids that
+    // field for the mode: Robot 2 takes the old bin to the dock. The picture
+    // lists such a node as not used by this flow, so the menu must not call it
+    // "used by" that position. The inbound staging the same claim requires
+    // still counts.
+    {
+        const { pop, main, doc } = loadPage({
+            flowspec: true,
+            composer: tableComposer([claim('PLN_01'), claim('PLN_02', {
+                swap_mode: 'two_robot', inbound_staging: 'SLN_010', outbound_staging: 'SLN_011',
+            })], ['SLN_010', 'SLN_011']),
+        });
+        await drain();
+        await drain();
+        bubble(chip(main, 'PLN_01', 'col:staging:staging'), 'click', doc);
+        if (pop.hidden !== false) throw new Error('a click on the staging chip did not open its menu');
+        const want = '<div class="none">required for 1‑robot swap</div>' +
+            '<button data-opt="1" class="">SLN_010<span class="use"> · used by PLN_02</span></button>' +
+            '<button data-opt="2" class="">SLN_011</button>';
+        if (pop.innerHTML !== want) {
+            throw new Error('the staging menu counts a field the mode forbids as a use:\n      got  ' +
+                pop.innerHTML + '\n      want ' + want);
+        }
+        checks++;
+        console.log('ok: a two-robot claim\'s forbidden outbound staging does not mark its node "used by"');
+    }
+
+    // THE FOOT SAYS WHAT EACH ROWLESS POSITION IS FOR. A position another row
+    // draws has no row of its own, and the foot named them all "paired above"
+    // — but a position set as another module's inbound staging is not paired
+    // with anything. Each is named by its role and the row that sets it.
+    {
+        const c = tableComposer([
+            claim('PLN_01', { swap_mode: 'two_robot_press_index', paired_core_node: 'PLN_02' }),
+            claim('PLN_03', { swap_mode: 'two_robot', inbound_staging: 'PLN_04' }),
+        ], []);
+        c.cell.positions = [
+            { core_node_name: 'PLN_01', kind: 'front', sequence: 1 },
+            { core_node_name: 'PLN_02', kind: 'back', sequence: 2 },
+            { core_node_name: 'PLN_03', kind: 'front', sequence: 3 },
+            { core_node_name: 'PLN_04', kind: 'back', sequence: 4 },
+        ];
+        const { root } = loadPage({ flowspec: true, composer: c });
+        await drain();
+        await drain();
+        const want = '<tr class="paired"><td colspan="10">PLN_02 is on deck for PLN_01 · ' +
+            'PLN_04 is inbound staging for PLN_03 — no row of their own</td></tr>';
+        if (root.innerHTML.indexOf(want) < 0) {
+            throw new Error('the foot does not name each rowless position by its role:\n      got  ' +
+                ((root.innerHTML.match(/<tr class="paired">.*?<\/tr>/) || ['(no foot)'])[0]) + '\n      want ' + want);
+        }
+        checks++;
+        console.log('ok: the foot says which position is on deck and which is staging, for which row');
     }
 
     // ── a save says it saved, and the subtitle reads the draft ──────────────

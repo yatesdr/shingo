@@ -167,7 +167,7 @@ Three tokens, theme-invariant, in `:root`:
 |---|---|---|
 | `--robot-1` | `#22c9ae` | Robot 1 — its chevrons and words on the cell picture, its supply path on the plant map, its chevrons in a swap-mode glyph |
 | `--robot-2` | `#8a7bff` | Robot 2 — the same three things for the second robot |
-| `--station` | `#f2f5f8` | the press itself: slot outlines, the line-side bar, and the NEW bin in a glyph |
+| `--station` | `#f2f5f8` | the press itself: slot outlines, the line-side bar, and the NEW bin in a glyph — on the station; the desktop Processes page, which follows the light theme, draws these through `--os-station` mapped to `--text-strong` |
 
 The operator station keeps its own copies — `--os-r1`, `--os-r2`,
 `--os-station` — for the reason the z-layer and substrate copies exist:

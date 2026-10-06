@@ -68,8 +68,8 @@ main.container { max-width: none; }
    than the viewport, the body stretched to fit, and the bottom bar — the thing
    that is supposed to pin to the foot of the column — ended up below the fold
    with only its heading showing. A fixed height and `overflow: hidden` mean
-   the app cannot grow, so everything inside it has to give way instead, and
-   the picture is what gives (see .pd-pic). */
+   the app cannot grow; what does not fit scrolls inside it, and on the Flows
+   tab that is the main column (see .pd-main). */
 body.pd-body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 /* THE `margin: 0 auto` HAS TO GO, and it is the whole reason the page was
    1850 px wide inside a 1407 px viewport. An AUTO margin on the cross axis of
@@ -179,6 +179,9 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     width: 100%; border-collapse: collapse; background: var(--surface);
     border-radius: 12px; overflow: hidden; table-layout: fixed;
 }
+/* The process list lays out by content: its state column holds a style name
+   whole on one line and has to grow to the longest one. */
+.pd-proctbl { table-layout: auto; }
 .pd-tbl th {
     padding: 10px 14px; background: var(--surface-2, var(--surface));
     border-bottom: 1px solid var(--sub-1); text-align: left;
@@ -209,6 +212,13 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* The style name is one unit: the cell may break after "Running" but never at
    a hyphen inside the name, and never cut — the column sizes to it. */
 .pd-statename { white-space: nowrap; }
+/* Every running name, in the state cell's type, unseen and zero-high in each
+   group's State heading, so every group's column is the longest name wide. */
+.pd-statesizer {
+    display: block; height: 0; overflow: hidden; visibility: hidden;
+    font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: none;
+}
+.pd-statesizer span { display: block; white-space: nowrap; }
 
 /* ── D1 · rail + main ─────────────────────────────────────────────────── */
 /* The app area is whatever the shell hands down, not a guess at the viewport
@@ -236,7 +246,17 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-row:hover .more, .pd-row.on .more { opacity: 1; }
 .pd-railfoot { border-top: 1px solid var(--sub-1); padding: 12px; display: flex; flex-direction: column; gap: 6px; }
 
-.pd-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* THE MAIN COLUMN IS THE ONE VERTICAL SCROLL. Nothing inside it shrinks to
+   make room for anything else: the picture is its own height, the positions
+   table shows every row, and when the two come to more than the window the
+   column scrolls. The bar sticks to the column's foot so Save is always on
+   screen, and the table's headings stick to its top. The gutter is reserved
+   so the scrollbar arriving never narrows the width the picture was laid out
+   at. */
+.pd-main {
+    flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0;
+    overflow-y: auto; scrollbar-gutter: stable;
+}
 /* Title and sub line on the left, the actions right-aligned beside them. One
    row where the column is wide enough; on a narrower laptop the actions drop
    under the title rather than cutting the sub line off mid-word. */
@@ -254,46 +274,41 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    width and sets the svg to the height the picture reports, viewBox to match,
    so the drawing is 1:1 and a card is its own size: nothing here scales it.
 
-   IT IS THE THING THAT GIVES WAY. `flex: 0 1 auto` takes the picture's own
-   height when there is room and shrinks, to a floor, when there is not: on a
-   short screen the picture loses height before the positions table loses rows
-   and before the bar leaves the viewport, because the bar is where the save
-   lives and a table with no rows answers no question. What it loses it
-   scrolls, as the station's flow panel does. The gutter is reserved so a
-   vertical scrollbar arriving never narrows the width the picture was laid
-   out at; a sideways scroll only happens when one module is wider than the
-   frame. */
-.pd-pic { position: relative; flex: 0 1 auto; min-height: 240px; margin: 0 24px; overflow: auto; scrollbar-gutter: stable; }
+   THE FRAME TAKES THE PICTURE'S HEIGHT AND NEVER CLIPS IT. It used to be the
+   thing that gave way — it shrank to a 240 px floor and scrolled inside
+   itself — and on a short window the positions table cut the picture in half,
+   so the engineer scrolled a box inside the page to see the press they were
+   editing. It does not shrink now; the column scrolls instead. A sideways
+   scroll only happens when one module is wider than the frame. */
+.pd-pic { position: relative; flex: none; margin: 0 24px; overflow-x: auto; overflow-y: hidden; }
 .pd-pic svg { display: block; }
 
 /* ── D1 · positions table ─────────────────────────────────────────────── */
-/* P3 · THE POSITIONS BOX IS THREE PARTS: a label, a scroller, and a footer
-   that never scrolls. The box is what grows and shrinks with the window (T2's
-   rule: the picture gives way first); only the middle part scrolls. */
-/* THE BOX HAS A FLOOR, AND THE PICTURE GIVES WAY TO IT (T2's rule). Without
-   one the picture took its resting 430 px and left the box 82: a label, a
-   header row and 30 px of scroller, which is half of one position row.
-
-   The ruling is that the box holds its label, its header, TWO position rows
-   and its footer at 900 high, so the floor is those things ADDED UP FROM WHAT
-   THEY MEASURE, not from what the table's `td` rule says —
-
-     label 18 + header 43 + two rows 98 (49 each) + footer 33 = 192,
-     + 16 so the next row shows as the partial one that says there is more
-
-   = 208. A row is 49 px and not the 32 its `td` declares, because the chips
-   inside it are 26-28 px tall and carry their own padding; a floor computed
-   from 32 left the second row clipped through the middle of its chips while
-   every assertion passed. The numbers come from data-desktop-fit at 1440x900.
-
-   The picture's own min-height (240) is its floor, and 208 + 240 fits the
-   ~568 px this column has at 900 with room over. */
-.pd-posbox { display: flex; flex-direction: column; flex: 1; min-height: 208px; margin: 8px 24px 0; }
-.pd-postbl { overflow: auto; flex: 1; min-height: 0; }
+/* THE POSITIONS BOX IS FOUR PARTS: a label, the headings, the rows and the
+   add-a-position footer. It is its full height — every row is drawn, and the
+   main column scrolls to them — so it sets no overflow of its own: a box that
+   scrolled would be the scroller the sticky headings stick to. */
+.pd-posbox { display: flex; flex-direction: column; flex: none; margin: 8px 24px 0; }
+/* THE ROWS SCROLL SIDEWAYS ONLY. Below the table's 900 px floor the box
+   scrolls it across; it never scrolls down, because the column does. */
+.pd-postbl { overflow-x: auto; overflow-y: hidden; }
+/* THE HEADINGS ARE A STRIP OF THEIR OWN, sticky against the main column.
+   They cannot stay in the rows' table: a box that scrolls sideways is a
+   scroll container in both axes, so a heading sticky inside it sticks to a
+   box that never scrolls down, and goes up with the rows. The strip is a
+   second .pd-postbl — the same table rules, the same colgroup, the same 900
+   floor — so its columns are the rows' columns by construction; its own
+   overflow is hidden and the page script moves it sideways with the rows.
+   Opaque, so rows pass under it. gotoFinding reserves the strip's height as
+   the column's scroll padding, so a selected row lands below it. */
+.pd-poshead {
+    position: sticky; top: 0; z-index: var(--z-sticky); background: var(--bg);
+    overflow: hidden; padding-top: 6px;
+}
 /* The add row, as the box's footer. It reads as the last row of the table —
-   same dim size, same rule above it — and is always on screen, because it is
-   the only control that adds a position and an engineer cannot be expected to
-   discover it by scrolling a box with no visible scrollbar. */
+   same dim size, same rule above it — and sits outside the sideways box, under
+   the rows, because it is the only control that adds a position and an
+   engineer cannot be expected to find it by scrolling a box sideways. */
 /* The footer is a CONTROL and a caption, not one dim line that is secretly
    both. It was 12 px --text-muted with a cursor on it, which is the value of
    the hint above the table and of the free-name list beside it — so the only
@@ -306,22 +321,17 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 }
 .pd-posfoot span { color: var(--text-muted); font-size: 12px; }
 .pd-posbox .hint { color: var(--text-muted); font-size: 12px; margin-left: 10px; text-transform: none; letter-spacing: 0; font-weight: 400; }
-.pd-postbl table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.pd-postbl table { width: 100%; border-collapse: collapse; }
 .pd-postbl th {
     text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--sub-1);
     font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted);
 }
-/* THE HEADINGS STAY PUT WHILE THE ROWS SCROLL. Selecting a position scrolls
-   its row into view, and the header row used to go up with the rows: its last
-   few pixels were left under the POSITIONS caption and read as the caption
-   printed over the headings. Sticky to the scroller's top, opaque so rows pass
-   under it; the rule is a shadow because a collapsed border stays with the
-   table rather than the sticky cell. gotoFinding reserves the header's height
-   as the scroller's scroll padding, so a selected row lands below it. */
-.pd-postbl thead th {
-    position: sticky; top: 0; z-index: var(--z-sticky); background: var(--bg);
-    box-shadow: inset 0 -1px 0 var(--sub-1);
-}
+/* THE HEADINGS STAY PUT WHILE THE ROWS SCROLL — .pd-poshead is what sticks.
+   Selecting a position scrolls its row into view, and the header row used to
+   go up with the rows: its last few pixels were left under the POSITIONS
+   caption and read as the caption printed over the headings. The rule under
+   them is a shadow because a collapsed border stays with the table. */
+.pd-postbl thead th { background: var(--bg); box-shadow: inset 0 -1px 0 var(--sub-1); }
 .pd-postbl td { padding: 5px 4px; border-bottom: 1px solid var(--sub-1); height: 32px; vertical-align: middle; }
 .pd-postbl tr.selrow td { background: var(--accent-wash, transparent); }
 .pd-postbl tr.selrow td:first-child { box-shadow: inset 3px 0 0 var(--accent-solid); }
@@ -366,7 +376,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    the narrowest column the page is laid out for at full width — 932 px just
    above the 1280 breakpoint, where the rail is still 300 — less a vertical
    scrollbar, so a desktop window never scrolls it sideways; below that,
-   .pd-postbl (overflow: auto) scrolls it. The sticky headings scroll with it. */
+   .pd-postbl (overflow-x: auto) scrolls it, and the headings strip follows. */
 /* Position holds the name over its front/back word; Role holds one word,
    `consume` or `produce`, and its caret, so it is the narrowest chip column.
    Part holds a whole part number, which is what an engineer reads the row
@@ -464,9 +474,13 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-adv.set { color: var(--accent); border-color: var(--accent); }
 
 /* ── D1 · bottom bar ──────────────────────────────────────────────────── */
+/* Sticky to the main column's foot, so Save is on screen however far the
+   column is scrolled; `margin-top: auto` keeps it at the foot when the column
+   has room to spare. */
 .pd-bar {
     border-top: 1px solid var(--sub-1); background: var(--elev-header, var(--surface));
     padding: 12px 24px; display: flex; align-items: center; gap: 16px; flex: 0 0 auto;
+    position: sticky; bottom: 0; z-index: var(--z-sticky); margin-top: auto;
 }
 .pd-bar .h { font-size: 14px; font-weight: 600; }
 .pd-bar .h.bad { color: var(--chip-ink-below); }
@@ -949,19 +963,8 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-partlist .pd-partnote { color: var(--chip-ink-near); }
 
 /* ── smaller laptops ──────────────────────────────────────────────────────
-   The app shape above is sized for 1440x900: the picture gives way until it
-   hits its 240 floor, and below about 790 px of viewport the floor is all it
-   gets — a 240 px window onto a picture that is one row of modules and the
-   dock at the least. So on a short screen the flow column SCROLLS instead:
-   the picture is its own full height, the table shows its rows, and the bar
-   sticks to the foot of the column so Save is always on screen. The rail
-   keeps scrolling on its own. */
-@media (max-height: 790px) {
-    .pd-main { overflow-y: auto; }
-    .pd-main > .pd-head, .pd-main > .pd-pic, .pd-main > .pd-posbox { flex: none; }
-    .pd-posbox { min-height: 0; }
-    .pd-bar { position: sticky; bottom: 0; z-index: var(--z-sticky); margin-top: auto; }
-}
+   A short window is the same layout as a tall one: the main column scrolls
+   (see .pd-main). The rail keeps scrolling on its own. */
 /* A narrower laptop gives the rail less of the width; the flow column is the
    one with nine columns to fit. */
 @media (max-width: 1280px) {

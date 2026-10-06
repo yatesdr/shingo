@@ -88,15 +88,22 @@ template names a robot.
 
 | Mode | Module |
 |---|---|
-| 1‑robot swap | position card over a row of two staging slots, inbound left and outbound right; the new bin rises from the inbound slot, the old bin leaves by the card's side for the dock |
+| 1‑robot swap | position card over a row of two staging slots, inbound left and outbound right; the new bin rises from the inbound slot and the old bin parks down into the outbound slot, both Robot 1. No move to the dock beside the park: the out-stub by the card's side is only for an old bin that leaves with no park leg drawn |
 | 2‑robot swap | position card over its inbound staging slot; the old bin leaves by the side (Robot 2's out-stub). **No outbound slot**, even when the claim names one: Robot 2 takes the old bin straight to the dock, and a slot would draw a trip this choreography never makes |
-| 2‑robot index | position card over its on-deck card, one module, so no layout can split the pair; next bin in behind the deck, index up into the press, old bin out by the side. A partner that runs a claim of its own keeps its own module, and the press draws without a deck |
+| 2‑robot index | position card over its on-deck card, one module, so no layout can split the pair; next bin in behind the deck, index up into the press, old bin out by the side. An inbound staging the claim names is a slot under the on-deck card (under the press card when there is no deck), captioned `Inbound staging`, with **no chevron**: the running choreography has no leg to it, and its tooltip says it is used at changeover. A partner that runs a claim of its own keeps its own module, and the press draws without a deck |
 | Sequential A/B | A and B side by side in one double-width module under one line-side bar |
 | no claim | the position card, dashed, its bar dimmed. The bar of a position not in the flow is the only thing in the picture that is ever dimmed |
 
-A staging place that is itself a position of the cell gets no slot — it is
-already drawn as its own card, and a slot would say its name twice. A legacy
-mode word draws a plain card, not a crash.
+**A staging place is the module's slot, whether or not it is a position.** At
+a press a swap usually stages at the back position behind it; that position is
+drawn as the slot of every module whose claim names it — marked `shared` when
+two do — and, with no claim of its own, gets no card of its own, so its name
+appears once per module that uses it and never as a dashed "not in the flow"
+card. A position that runs a claim of its own keeps its own module and is also
+drawn as the slot of the module that stages there. **Every leg the model
+gives is drawn once, between the two boxes it names**; each move's group
+carries `data-from` and `data-to` naming them (`dock` for the dock band). A
+legacy mode word draws a plain card, not a crash.
 
 **Sizes are fixed numbers, never measured text.** The numbers table at the top
 of `operator-flow.js` is the whole of the geometry: position card 188 × 92,
@@ -113,9 +120,9 @@ the plant wrote them: no `PLN_` → `P` shortening anywhere.
 (`modulesOf`). The line side is every module a claim covers, in whatever row
 it stands — a running index press in the back row is still line-side — and
 every unclaimed front-row card. After it come the back-row positions no claim
-covers and no other module draws: a back-row staging position stands alone at
-the end, while an on-deck card or the B of an A/B pair stays inside its
-module, so a pair is never split. Within each group modules run left to right
+covers and no module draws: a back position no claim names stands alone at
+the end, while an on-deck card, the B of an A/B pair, or a staging position
+drawn as a slot stays inside its module, so a pair is never split. Within each group modules run left to right
 by the world X of their lead position when every position has coordinates,
 and by `sequence` when any does not, the node name breaking a tie. They wrap at the frame's width; a row is as tall as its tallest
 module and is centred. **Front and back come from the coordinates, never from
@@ -130,9 +137,12 @@ scales.** The layout consumes the frame's width and nothing else, and writes
 its own height back through `opts.height`. Every host sets the svg's width,
 height and viewBox to the frame's width and that reported height, one to one,
 so a card is always 188 px on screen: the station's 1280 × 560 panel scrolls a
-taller picture, and so does the desktop Flows tab's `.pd-pic` frame
-(`drawPicture` in `processes-desktop.js`). Scaling the drawing to fit is what once put
-9 px titles on the desktop.
+taller picture. The desktop Flows tab's `.pd-pic` frame (`drawPicture` in
+`processes-desktop.js`) takes the picture's full height and never shrinks or
+scrolls vertically; the main column is the one vertical scroll at every window
+height, so the positions table can never cut the picture in half. The frame
+scrolls sideways only when one module is wider than it. Scaling the drawing to
+fit is what once put 9 px titles on the desktop.
 
 **Colour is the robot here too.** The rule above holds at this size: Robot 1's
 teal and Robot 2's indigo go on the chevrons, the in/out corner marks, the
@@ -151,7 +161,11 @@ card reads its move sentences from the model's one card-line table
 (`CARDLINE` in `composer-model.js`; a 1‑robot swap reads "Robot 1 moves in ·
 Robot 1 clears old"). Chevrons are unlabelled, and a staging name appears
 once, on its slot, with the field it is as the caption (`Inbound staging`,
-`Outbound staging`). A **line-side bar** sits above every position card. The
+`Outbound staging`). A **line-side bar** sits above every position card: the
+glyph's bar, the station colour at width 3 with round caps, dimmed only over
+a position not in the flow. It reads `--os-station` with `--station` as the
+fallback, as the glyphs do: the station maps that to `--station`, the desktop
+to `--text-strong`, so the bar shows in the light theme too. The
 **unused-staging line** — dashed chips for routing-set lanes this flow does
 not use — is drawn on the desktop only.
 
@@ -164,8 +178,11 @@ draws through the same functions; this file computes no sentence of its own.
 
 **Shared staging is drawn shared, and it is a warning, never a refusal.** A
 staging place two positions in one flow name is drawn in every module that
-names it, each slot marked `shared` on its caption row (the caption shrinks
-to its first word so the name keeps its full width). One physical spot
+names it, each slot marked `shared` on its caption row. The name keeps the
+slot's full width; the caption shrinks to the field's first word (`Inbound`,
+`Outbound`), drawn whole in the room between its own x and the tag, which
+sits at a fixed x — the slot's place under the card already says it is
+staging. One physical spot
 legitimately serves several positions, so the composer raises a warning
 finding — "staging shared by several positions" — that is shown beside the
 picture and never blocks the save, the same answer the server's claim

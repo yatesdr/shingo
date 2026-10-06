@@ -332,6 +332,28 @@ function deriveRole(claims, processClaims, node) {
     return { role: 'consume', source: 'default' };
 }
 
+// STAGING A MODE FORBIDS DOES NOT USE THE NODE. A claim can carry a staging
+// value its mode forbids — a two-robot swap's outbound staging, which the
+// server accepts and no leg reads (Robot 2 takes the old bin to the dock).
+// The picture's shared/unused marks and the desktop's "used by" menu both ask
+// stagingFieldUsed, so they cannot disagree about a node.
+//
+// These are flowspec's Forbidden cells for the two staging columns, by mode;
+// they are the same for both roles. They are carried here, not read from
+// state.flowspec, because the station draws the picture before it loads
+// flowspec-data.js (it waits for the first composer open), and the read-only
+// panel builds no state at all. operator-flow.surface.test.js holds this
+// table to flowspec-data.js for every role and mode.
+const STAGING_FORBIDDEN = {
+    two_robot: ['outbound_staging'],
+    sequential: ['inbound_staging', 'outbound_staging'],
+    simple: ['inbound_staging', 'outbound_staging'],
+};
+
+function stagingFieldUsed(mode, field) {
+    return (STAGING_FORBIDDEN[mode] || []).indexOf(field) < 0;
+}
+
 function steadyRow(state, role, mode) {
     const fs = state.flowspec;
     if (!fs || !fs.steady || !fs.steady[role]) return null;
@@ -2023,7 +2045,7 @@ function advancedDefaults() { return clone(ADVANCED_DEFAULTS); }
         findings, findingShort,
         modeLabels, modeHelp, rowFields, rowColumns, fieldRequired, fieldLabel, shortPart, robotWords,
         partOffers, partAllowed, styleFacts,
-        routingNote, routingRoleOf,
+        routingNote, routingRoleOf, stagingFieldUsed,
         presetCells, shapeDiff, orderSentences, orderSentence, orderTrip, viaWaypoints,
         advancedFor, advancedShows, advancedSet, advancedDefaults,
     };

@@ -45,8 +45,14 @@
  *
  * .press IS THE LINE-SIDE BAR over a module's card(s) — the shared press a
  * sequential pair both stand at draws ONE bar spanning both, which is what
- * makes the pair one module and not two. .dim is the bar over a position not
- * in the flow; it is the only thing in the picture that is ever dimmed.
+ * makes the pair one module and not two. It is the glyph's bar: the station
+ * colour, as the swap-mode glyphs draw it, at the module reference's width
+ * of 3 -- and read the way the glyphs read it, --os-station first. --station
+ * is near-white in both themes because the station is dark; the station maps
+ * --os-station to it, the desktop maps it to --text-strong, so the bar is the
+ * page's ink in the light theme instead of white on a white card. .dim is the
+ * bar over a position not in the flow; it is the only thing in the picture
+ * that is ever dimmed.
  *
  * .io IS THE CORNER MARK on a card that takes bins in or sends them out, and
  * colour carries the robot again (currentColor, set by r1/r2). .rw is the
@@ -58,7 +64,7 @@
 .os-flow-picture .sc { fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .os-flow-picture .sc.r1 { stroke: var(--robot-1); }
 .os-flow-picture .sc.r2 { stroke: var(--robot-2); }
-.os-flow-picture .press { fill: none; stroke: var(--sub-4); stroke-width: 5; stroke-linecap: round; }
+.os-flow-picture .press { fill: none; stroke: var(--os-station, var(--station)); stroke-width: 3; stroke-linecap: round; opacity: .9; }
 .os-flow-picture .press.dim { opacity: .45; }
 .os-flow-picture .io { color: var(--os-text-muted, var(--text-muted)); }
 .os-flow-picture .io.r1 { color: var(--robot-1); }

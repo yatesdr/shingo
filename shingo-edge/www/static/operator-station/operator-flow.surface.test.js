@@ -129,7 +129,8 @@ function load(document) {
     vm.runInContext(escRaw.replace(/^export /mg, ''), ctx);
     const raw = fs.readFileSync(path.join(__dirname, 'operator-flow.js'), 'utf8');
     const src = raw.replace(/^import[^;]+;\s*/mg, '').replace(/^export /mg, '');
-    vm.runInContext(src + '\n__out = { renderFlowPicture, syncFlowPanel, openFlowPanel, STATION_FRAME };', ctx);
+    vm.runInContext(src + '\n__out = { renderFlowPicture, syncFlowPanel, openFlowPanel, STATION_FRAME, ' +
+        'ComposerModel: window.ComposerModel };', ctx);
     return ctx.__out;
 }
 
@@ -226,6 +227,16 @@ console.log('selection');
     // and no rule that fades a card or a slot.
     check('css: a selected slot takes the accent outline', /stroke:\s*var\(--os-accent, var\(--accent\)\)/.test(ruleFor(css, '.os-flow-picture .stage.sel rect.box')));
     check('css: a selected card takes the accent outline', /stroke:\s*var\(--os-accent, var\(--accent\)\)/.test(ruleFor(css, '.os-flow-picture .node.sel rect.box')));
+    // THE LINE-SIDE BAR IS THE GLYPH'S BAR: the station colour, as the glyphs
+    // and the module reference draw it, at the reference's width of 3. A
+    // position not in the flow keeps its dimmed bar.
+    {
+        const bar = ruleFor(css, '.os-flow-picture .press');
+        check('css: the line-side bar is the station colour, themed on the desktop', /stroke:\s*var\(--os-station,\s*var\(--station\)\)/.test(bar), bar);
+        check('css: the line-side bar is 3 wide', /stroke-width:\s*3\s*;/.test(bar), bar);
+        check('css: a bar not in the flow is still dimmed', ruleFor(css, '.os-flow-picture .press.dim') !== '',
+            ruleFor(css, '.os-flow-picture .press.dim'));
+    }
     check('css: no rule dims a card or slot', !/\.(node|stage)\.dim\b/.test(css), (css.match(/[^\n]*\.(node|stage)\.dim[^\n]*/g) || []).join('\n'));
 }
 
@@ -600,6 +611,114 @@ console.log('module grammar');
     check('dock: a list too long for the frame ends "+N"', /PLN_0\d \+\d$/.test(note), note);
     check('dock: and what it names plus the count is every position',
         note && (note.split('→ ')[1].split(' +')[0].split(', ').length + +note.split(' +')[1]) === 9, note);
+}
+
+// ── a staging field the mode forbids does not use its node ─────────────────
+//
+// One rule for the picture and the desktop's staging menu: a node named only
+// in a field flowspec marks Forbidden for the claim's mode is not used by the
+// flow. The model's stagingFieldUsed is that rule, held here to the generated
+// flowspec table for every role and mode (the station does not load the
+// table at boot, so the model carries the two staging columns of it). The
+// picture then lists such a node on its unused line; a Used field still
+// counts, drawn as a slot or not.
+console.log('staging a mode forbids');
+{
+    const fsSandbox = { window: {} };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'flowspec-data.js'), 'utf8'), fsSandbox);
+    const spec = fsSandbox.window.FLOWSPEC;
+    const M = m.ComposerModel;
+    const drift = [];
+    for (const role of Object.keys(spec.steady)) {
+        for (const mode of Object.keys(spec.steady[role])) {
+            for (const f of ['inbound_staging', 'outbound_staging']) {
+                const want = spec.steady[role][mode][f] !== 'forbidden';
+                const got = !!(M && M.stagingFieldUsed && M.stagingFieldUsed(mode, f));
+                if (got !== want) drift.push(role + '/' + mode + '/' + f + ': model ' + got + ', flowspec ' + want);
+            }
+        }
+    }
+    check('model: stagingFieldUsed agrees with flowspec for every role and mode', drift.length === 0, drift.join('; '));
+
+    const cell = {
+        geometry: false,
+        positions: [
+            { core_node_name: 'PLN_011', sequence: 1, kind: 'front',
+              claim: { swap_mode: 'two_robot', payload_code: 'BRKT', inbound_staging: 'SLN_020',
+                       outbound_staging: 'SLN_021', inbound_source: 'SYN_SM_IN', outbound_destination: 'SYN_SM_OUT' } },
+            { core_node_name: 'PLN_012', sequence: 2, kind: 'front',
+              claim: { swap_mode: 'two_robot_press_index', payload_code: 'PANEL-A', outbound_staging: 'SLN_026',
+                       inbound_source: 'SYN_SM_IN', outbound_destination: 'SYN_SM_OUT' } },
+            { core_node_name: 'PLN_013', sequence: 3, kind: 'front',
+              claim: { swap_mode: 'sequential', payload_code: 'STUD', inbound_staging: 'SLN_024',
+                       inbound_source: 'SYN_SM_IN', outbound_destination: 'SYN_SM_OUT' } },
+        ],
+        staging: ['SLN_020', 'SLN_021', 'SLN_024', 'SLN_025', 'SLN_026'].map(n => ({ core_node_name: n })),
+    };
+    const svg = draw(cell, { editable: true, frame: { w: 1280 } });
+    const line = svg.split('not used by this flow</text>')[1] || '';
+    const listed = n => new RegExp('<g class="stage off chip"[^>]*>[\\s\\S]*?>' + n + '<').test(line);
+    check('picture: a two-robot claim\'s outbound staging (Forbidden) is listed unused', listed('SLN_021'), line.slice(0, 300));
+    check('picture: a sequential claim\'s inbound staging (Forbidden) is listed unused', listed('SLN_024'), line.slice(0, 300));
+    check('picture: a lane no claim names is listed unused', listed('SLN_025'), line.slice(0, 300));
+    check('picture: a press index\'s outbound staging (Used, no slot) is not listed', !listed('SLN_026'), line.slice(0, 300));
+    check('picture: a drawn inbound slot is not listed', !listed('SLN_020'), line.slice(0, 300));
+}
+
+// ── the preview keeps Core's inventory word only when it asked ──────────────
+//
+// The server answers preflight "unchecked" both when Core could not be asked
+// and when the request never asked (no ?preflight=1 — every edit-loop preview).
+// The confirm sheet's foot reads model.preview.preflight: null says nothing,
+// "unchecked" says Core is unreachable. composer-render.js's runPreview is
+// lifted out and run as written against a fetch that always answers
+// "unchecked"; only the preview that asked may keep it.
+console.log('composer preview: inventory asked vs not asked');
+const pending = [];
+{
+    const src = fs.readFileSync(path.join(__dirname, 'composer-render.js'), 'utf8');
+    const at = src.indexOf('async function runPreview(');
+    if (at < 0) throw new Error('composer-render.js has no runPreview; update this pin');
+    let depth = 0, end = -1;
+    for (let i = src.indexOf('{', at); i < src.length; i++) {
+        if (src[i] === '{') depth++;
+        else if (src[i] === '}' && --depth === 0) { end = i + 1; break; }
+    }
+    const modelMod = { exports: {} };
+    vm.runInThisContext('(function(module){' + fs.readFileSync(path.join(__dirname, 'composer-model.js'), 'utf8') + '\n})',
+        { filename: 'composer-model.js' })(modelMod);
+    const real = modelMod.exports;
+    const run = async opts => {
+        const urls = [];
+        const ctx = {
+            JSON: JSON, AbortController: AbortController,
+            model: { styleId: 7 }, previewAbort: null, screen: 'S9',
+            processID() { return 5; },
+            M() { return { toCells() { return []; }, applyPreview: real.applyPreview }; },
+            async fetch(url) {
+                urls.push(url);
+                return { status: 200, async json() {
+                    return { order_count: 4, findings: [], fingerprint: 'f', actions: [],
+                        preflight: { state: 'unchecked', missing: [] } };
+                } };
+            },
+        };
+        vm.createContext(ctx);
+        vm.runInContext(src.slice(at, end) +
+            '\n__r = async o => { await runPreview(o); return model; };', ctx);
+        const m = await ctx.__r(opts);
+        return { urls: urls, preflight: m.preview && m.preview.preflight };
+    };
+    pending.push(run(undefined).then(r => {
+        check('preview: the edit loop does not ask Core', r.urls[0] === '/api/processes/5/flow/preview', r.urls.join());
+        check('preview: an unasked "unchecked" is not kept, so the sheet says nothing about inventory',
+            r.preflight === null, JSON.stringify(r.preflight));
+    }));
+    pending.push(run({ preflight: true }).then(r => {
+        check('preview: the confirm sheet asks Core', r.urls[0] === '/api/processes/5/flow/preview?preflight=1', r.urls.join());
+        check('preview: an asked "unchecked" is kept, so the sheet says Core is unreachable',
+            r.preflight && r.preflight.state === 'unchecked', JSON.stringify(r.preflight));
+    }));
 }
 
 if (failures) { console.log(failures + ' FAILED'); process.exit(1); }

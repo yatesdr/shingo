@@ -133,6 +133,47 @@ function hardCases() {
     };
 }
 
+// A PRESS WHOSE SWAPS STAGE AT ITS BACK POSITIONS — the Hopkinsville shape,
+// on the map. Two-robot swaps stage at the back position behind them; two
+// one-robot swaps share one back position as their inbound staging and
+// another as their outbound staging, while a third (PLN_07) no claim names
+// stands alone as a back card; an index
+// pair keeps its on-deck partner and names a back position as the inbound
+// staging a changeover uses; and one back position runs a claim of its
+// own while also being the staging of the front position before it. Every
+// staging position is drawn as its module's slot, the shared one in both
+// modules; the one with its own claim is its own module as well.
+function pressBackStaging() {
+    const front = (n, x, claim) => ({ core_node_name: n, kind: 'front', sequence: x + 1, x: x, y: 0, claim: claim });
+    const back = (n, x, claim) => Object.assign({ core_node_name: n, kind: 'back', sequence: x + 1, x: x, y: -1.8 },
+        claim ? { claim: claim } : {});
+    const io = { inbound_source: 'SYN_SM_IN', outbound_destination: 'SYN_SM_OUT' };
+    return {
+        geometry: true,
+        positions: [
+            front('PLN_01', 0, Object.assign({ swap_mode: 'two_robot_press_index', payload_code: 'P1', paired_core_node: 'PLN_00',
+                inbound_staging: 'PLN_16' }, io)),
+            back('PLN_00', 0),
+            back('PLN_16', 1),
+            front('PLN_03', 2, Object.assign({ swap_mode: 'two_robot', payload_code: 'P3', inbound_staging: 'PLN_02' }, io)),
+            back('PLN_02', 2),
+            front('PLN_06', 5, Object.assign({ swap_mode: 'two_robot', payload_code: 'P6', inbound_staging: 'PLN_05',
+                key_route: ['LM_1', 'LM_2'] }, io)),
+            back('PLN_05', 5),
+            front('PLN_09', 8, Object.assign({ swap_mode: 'single_robot', payload_code: 'P9',
+                inbound_staging: 'PLN_08', outbound_staging: 'PLN_11' }, io)),
+            back('PLN_07', 7),
+            back('PLN_08', 8),
+            front('PLN_12', 11, Object.assign({ swap_mode: 'single_robot', payload_code: 'P12',
+                inbound_staging: 'PLN_08', outbound_staging: 'PLN_11' }, io)),
+            back('PLN_11', 11),
+            front('PLN_14', 13, Object.assign({ swap_mode: 'two_robot', payload_code: 'P14', inbound_staging: 'PLN_15' }, io)),
+            back('PLN_15', 13, Object.assign({ swap_mode: 'two_robot', payload_code: 'P15', inbound_staging: 'SLN_15' }, io)),
+        ],
+        staging: [{ core_node_name: 'SLN_15', partner_of: 'PLN_15', field: 'inbound_staging' }],
+    };
+}
+
 // NINE POSITIONS in one row: the width at which a row must wrap, with route
 // strips and staging riding along. This is the cell the wrap rule was written
 // for and no seeded plant reaches (plant A's widest row is six).
@@ -176,8 +217,9 @@ function cardsOf(svg) {
         if (!box) continue;
         const nm = /<text class="nm"[^>]*>([\s\S]*?)<\/text>/.exec(body);
         const lns = [...body.matchAll(/<text class="ln"[^>]*>([\s\S]*?)<\/text>/g)].map(x2 => x2[1]);
+        const tag = /<rect class="tagbg" x="([\d.]+)"/.exec(body);
         out.push({
-            cls: cls, x: x, y: y, w: +box[1], h: +box[2],
+            cls: cls, x: x, y: y, w: +box[1], h: +box[2], tagX: tag ? +tag[1] : null,
             name: nm ? nm[1].replace(/<[^>]+>/g, '') : '',
             lines: lns.map(l => l.replace(/<[^>]+>/g, '')),
         });
@@ -197,18 +239,27 @@ function fits(text, card, inset, charW) {
     return text.length * charW + inset <= card.w;
 }
 
-// expectedCards is how many cards the station draws for a cell: one per
-// position, plus one staging slot in every swap module for each staging
-// place its claim names that is not itself a position of the cell.
+// expectedCards is how many cards the station draws for a cell: one staging
+// slot in every swap module for each staging place it parks at (the inbound
+// staging, and a one-robot swap's outbound staging — a position of the cell
+// included), one in every press index module for its inbound staging, plus
+// one card per position, except a position with no claim of its own that
+// some module draws as a slot: that one is the slot alone.
 function expectedCards(cell) {
-    const positionNames = new Set(cell.positions.map(p => p.core_node_name));
-    let n = cell.positions.length;
+    const slotted = new Set();
+    let n = 0;
     for (const p of cell.positions) {
         const c = p.claim;
-        if (!c || (c.swap_mode !== 'single_robot' && c.swap_mode !== 'two_robot')) continue;
-        for (const f of [c.inbound_staging, c.outbound_staging]) {
-            if (f && !positionNames.has(f)) n++;
+        if (!c || (c.swap_mode !== 'single_robot' && c.swap_mode !== 'two_robot' &&
+            c.swap_mode !== 'two_robot_press_index')) continue;
+        const fields = c.swap_mode === 'single_robot' ? [c.inbound_staging, c.outbound_staging] : [c.inbound_staging];
+        for (const f of fields) {
+            if (f) { n++; slotted.add(f); }
         }
+    }
+    for (const p of cell.positions) {
+        if (!(p.claim && p.claim.swap_mode) && slotted.has(p.core_node_name)) continue;
+        n++;
     }
     return n;
 }
@@ -260,6 +311,17 @@ function pinFrame(label, cell, frame) {
             check(label + ': line "' + ln + '" fits its ' + c.w + '-wide card at ' + w,
                 fits(ln, c, inset, 6.1), ln.length + ' chars in ' + c.w);
         }
+        // A SHARED SLOT'S CAPTION shares its row with the "shared" tag, so its
+        // budget is the room between the caption's x and the tag's left edge,
+        // at the caption's 11 px (about 5.6 units a character) — and the word
+        // is drawn whole: a cut caption word is a field nobody can read.
+        if (c.tagX !== null) {
+            for (const ln of c.lines) {
+                check(label + ': shared caption "' + ln + '" is whole and fits before the tag at ' + w,
+                    !ln.includes('…') && ln.length * 5.6 + inset <= c.tagX,
+                    ln.length + ' chars from ' + inset + ' to the tag at ' + c.tagX);
+            }
+        }
     }
     return cards;
 }
@@ -272,6 +334,7 @@ const cells = [
     ['weld-2 schematic', weld2()],
     ['hard cases', hardCases()],
     ['nine positions', ninePositions()],
+    ['press staging at back positions', pressBackStaging()],
 ];
 
 console.log('disjointness, frames and text budgets');
@@ -281,14 +344,51 @@ for (const [name, cell] of cells) {
     }
 }
 
-// ── the row words on cells with no coordinates ──────────────────────────────
+// ── the press whose swaps stage at back positions: what each module holds ──
+console.log('press staging at back positions: slots, not cards');
+{
+    const svg = m.renderFlowPicture({ cell: pressBackStaging(), station: { name: 'PIN' } }, {});
+    const parts = svg.split('<g class="module"').slice(1);
+    const moduleOf = pos => parts.find(x => x.includes('<g class="node on" data-pos="' + pos + '"')) || '';
+    const slotIn = (part, n) => count(part, new RegExp('<g class="stage on[^"]*" data-staging="' + n + '"', 'g'));
+    const card = n => count(svg, new RegExp('<g class="node[^"]*" data-pos="' + n + '"', 'g'));
+    for (const [pos, st] of [['PLN_03', 'PLN_02'], ['PLN_06', 'PLN_05'], ['PLN_09', 'PLN_08'], ['PLN_09', 'PLN_11'],
+        ['PLN_12', 'PLN_08'], ['PLN_12', 'PLN_11'], ['PLN_14', 'PLN_15']]) {
+        check('press: ' + pos + "'s module draws " + st + ' as a slot', slotIn(moduleOf(pos), st) === 1);
+    }
+    // The press index's inbound staging: a slot under the on-deck card, no
+    // chevron to it (no running leg reaches it), its tooltip saying what for.
+    {
+        const idx = moduleOf('PLN_01');
+        const deck = /<g class="node on deck[^"]*" data-pos="PLN_00"[^>]*transform="translate\(([-\d.]+),([-\d.]+)\)"/.exec(idx);
+        const slot = /<g class="stage on[^"]*" data-staging="PLN_16"[^>]*transform="translate\(([-\d.]+),([-\d.]+)\)">(<title>[^<]*<\/title>)?/.exec(idx);
+        check('press: the inbound staging PLN_16 of PLN_01 is a slot under its on-deck card',
+            !!deck && !!slot && +slot[2] >= +deck[2] + 56, JSON.stringify({ deck: deck && deck.slice(1), slot: slot && slot.slice(1) }));
+        check('press: no move joins PLN_16', !/data-(from|to)="PLN_16"/.test(svg));
+        check('press: the tooltip of PLN_16 says it is used at changeover',
+            !!slot && slot[3] === '<title>PLN_16 — inbound staging, used at changeover</title>', slot && slot[3]);
+    }
+    for (const n of ['PLN_02', 'PLN_05', 'PLN_08', 'PLN_11', 'PLN_16']) {
+        check('press: ' + n + ', staging with no claim of its own, has no card', card(n) === 0, String(card(n)));
+    }
+    check('press: PLN_15 runs its own claim, so keeps its own card', card('PLN_15') === 1, String(card('PLN_15')));
+    check('press: PLN_07, named by no claim, is a card of its own', card('PLN_07') === 1, String(card('PLN_07')));
+    check('press: PLN_08, staged at by two modules, is marked shared in both',
+        [moduleOf('PLN_09'), moduleOf('PLN_12')].every(x =>
+            /<g class="stage on[^"]*" data-staging="PLN_08"(?:(?!<\/g>).)*>shared</.test(x)));
+    check('press: PLN_15, staged at by one module, is not marked shared',
+        !/<g class="stage on[^"]*" data-staging="PLN_15"(?:(?!<\/g>).)*>shared</.test(svg));
+    check('press: PLN_00 stays on deck inside the module of PLN_01', /class="node on deck[^"]*" data-pos="PLN_00"/.test(moduleOf('PLN_01')));
+}
+
+// ── the row words ───────────────────────────────────────────────────────────
 //
 // The words the schematic gave these cells before the module picture, written
 // out: every position not Kind "back" is the front row, the Kind "back" ones
 // the back row, and a cell of one kind is one row with no word. Not the grid:
 // the old schematic wrapped five to a row and so called the nine-position
 // cell's last four "back" — a fact about the wrap, not about the press.
-console.log('row words without coordinates');
+console.log('row words');
 {
     const want = {
         'weld-2 schematic': { ALN_003: '', ALN_004: '', ALN_005: '' },
@@ -298,6 +398,12 @@ console.log('row words without coordinates');
         },
         'nine positions': {
             PLN_01: '', PLN_02: '', PLN_03: '', PLN_04: '', PLN_05: '', PLN_06: '', PLN_07: '', PLN_08: '', PLN_09: '',
+        },
+        // ON THE MAP, so the rows are world Y: the same words a staging
+        // position had as a card, now that it is drawn as a slot.
+        'press staging at back positions': {
+            PLN_01: 'front', PLN_00: 'back', PLN_16: 'back', PLN_03: 'front', PLN_02: 'back', PLN_06: 'front', PLN_05: 'back',
+            PLN_09: 'front', PLN_07: 'back', PLN_08: 'back', PLN_12: 'front', PLN_11: 'back', PLN_14: 'front', PLN_15: 'back',
         },
     };
     for (const [name, cell] of cells) {

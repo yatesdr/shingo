@@ -78,6 +78,10 @@ func TestOperatorFlowPerModeCharacterisation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create mixed style: %v", err)
 	}
+	indexStagedStyleID, err := db.CreateStyle("PART SYN-A-INDEX-STAGED", "", seeded.ProcessID)
+	if err != nil {
+		t.Fatalf("create staged press index style: %v", err)
+	}
 	claims := []processes.NodeClaimInput{
 		// single_robot, WELD-2's shape: consume in, produce out, both parking
 		// the new bin and clearing the old to the same two lanes.
@@ -116,6 +120,12 @@ func TestOperatorFlowPerModeCharacterisation(t *testing.T) {
 			PayloadCode:    "SYN-A-P003",
 			InboundStaging: "SLN_010",
 			InboundSource:  "Supermarket Empty Totes", OutboundDestination: "Supermarket Area"},
+		// A press index that also names an inbound staging lane: the tooling
+		// a changeover keeps staged. No running leg reaches it, but the claim
+		// names it, so the module has to draw it.
+		{StyleID: indexStagedStyleID, CoreNodeName: "PLN_01", Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapMode("two_robot_press_index"),
+			PayloadCode: "SYN-A-P002", PairedCoreNode: "PLN_02", InboundStaging: "SLN_013",
+			InboundSource: "Supermarket Empty Totes", OutboundDestination: "Supermarket Area"},
 	}
 	for _, in := range claims {
 		if _, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, in); err != nil {
@@ -129,6 +139,7 @@ func TestOperatorFlowPerModeCharacterisation(t *testing.T) {
 	seeded.Styles["PART SYN-A-SEQ"] = seqStyleID
 	seeded.Styles["PART SYN-A-TWO-LANES"] = twoLanesStyleID
 	seeded.Styles["PART SYN-A-MIXED"] = mixedStyleID
+	seeded.Styles["PART SYN-A-INDEX-STAGED"] = indexStagedStyleID
 
 	dir := t.TempDir()
 	write := func(name, styleName string) string {
@@ -170,6 +181,7 @@ func TestOperatorFlowPerModeCharacterisation(t *testing.T) {
 		write("mode-sequential", "PART SYN-A-SEQ"),
 		write("mode-two-robot-lanes", "PART SYN-A-TWO-LANES"), // two_robot, staging at lanes
 		write("mode-mixed", "PART SYN-A-MIXED"),               // single_robot beside two_robot
+		write("mode-index-staged", "PART SYN-A-INDEX-STAGED"), // two_robot_press_index naming an inbound staging
 	}
 
 	script := filepath.Join("static", "operator-station", "operator-flow.modes.test.js")

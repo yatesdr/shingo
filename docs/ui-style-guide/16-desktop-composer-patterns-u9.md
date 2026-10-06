@@ -54,6 +54,15 @@ own chrome over ours, and it cannot carry a glyph). Every pick applies
 immediately to the draft and redraws the picture; nothing is written until the
 page's one save button. Reference: `D1-flows-selected.png`.
 
+**One vertical scroll: the main column.** The picture above the table takes
+its full height and never scrolls inside itself, and the table draws every
+row, so the main column is the only thing that scrolls up and down. The table
+scrolls sideways in its own box below its 900 px floor; because a box that
+scrolls sideways would trap a sticky header, its headings are a strip of their
+own (`#pd-poshead`, the same colgroup) sticky against the column and carried
+sideways with the rows. The bar sticks to the foot of the column, so Save is
+always on screen.
+
 **The per-row `N set` count.** A row that opens a sheet of settings says how
 many of them carry a value, in the accent, and reads `defaults` when none do.
 The count is computed from the SAME predicate the server uses for "has a

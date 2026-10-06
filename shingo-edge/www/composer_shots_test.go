@@ -1074,11 +1074,15 @@ func TestComposerShots(t *testing.T) {
 			HasPairedLine   bool   `json:"hasPairedLine"`
 			FooterTop       int    `json:"footerTop"`
 			FooterBottom    int    `json:"footerBottom"`
-			PairedOffsetTop int    `json:"pairedOffsetTop"`
+			FooterInColumn  int    `json:"footerInColumn"`
+			PairedInColumn  int    `json:"pairedInColumn"`
 			ScrollerScrollH int    `json:"scrollerScrollH"`
 			ScrollerClientH int    `json:"scrollerClientH"`
+			ColScrollH      int    `json:"colScrollH"`
+			ColClientH      int    `json:"colClientH"`
 			PicW            int    `json:"picW"`
 			PicH            int    `json:"picH"`
+			PicFrameH       int    `json:"picFrameH"`
 			ViewBox         string `json:"viewBox"`
 			HeaderH         int    `json:"headerH"`
 			RowH            int    `json:"rowH"`
@@ -1104,7 +1108,7 @@ func TestComposerShots(t *testing.T) {
 		}
 
 		// T2. The bar pins to the foot of the main column, inside the viewport,
-		// and the table is the thing between the picture and it.
+		// and the table sits under the picture.
 		if fit.BarBottom > vh {
 			t.Errorf("%s: the bottom bar ends at y=%d in a %d px viewport — it is below the fold, and it is where Save lives",
 				label, fit.BarBottom, vh)
@@ -1112,74 +1116,56 @@ func TestComposerShots(t *testing.T) {
 		if fit.TableTop < fit.PicBottom-1 {
 			t.Errorf("%s: the positions table starts at y=%d, above the picture's foot at y=%d", label, fit.TableTop, fit.PicBottom)
 		}
-		if fit.TableBottom > fit.BarTop+1 {
-			t.Errorf("%s: the positions table runs to y=%d, past the bar's top at y=%d", label, fit.TableBottom, fit.BarTop)
+		// ONE VERTICAL SCROLL: THE MAIN COLUMN. The rows' box scrolls only
+		// sideways; a box that also scrolled down would be a second vertical
+		// scroll, and the sticky headings would stick to it instead of the
+		// column.
+		if fit.ScrollerScrollH > fit.ScrollerClientH {
+			t.Errorf("%s: the rows' box is %d px of content in %d px — it scrolls down, and only the column may",
+				label, fit.ScrollerScrollH, fit.ScrollerClientH)
 		}
-		// ── P3. THE ADD ROW IS THE BOX'S FOOTER AND IS ALWAYS VISIBLE ──
-		//
-		// In the accepted D1 shot neither the add row nor the paired-above line
-		// was on screen: both were rows of a tbody that scrolls, and at the
-		// picture's resting height the box showed exactly the two position
-		// rows. The one control that adds a position was below the fold of a
-		// box with no visible scrollbar, so an engineer had no way to learn
-		// that PLN_03 and PLN_06 were free.
+		// THE ADD ROW IS THE BOX'S FOOTER: under the rows, outside the box
+		// that scrolls them sideways, and reachable by scrolling the column.
 		if !fit.HasFooter {
 			t.Errorf("%s: the positions box has no add-a-position footer", label)
 		} else {
-			if fit.FooterBottom > fit.BarTop+1 {
-				t.Errorf("%s: the add row ends at y=%d, past the bar's top at y=%d — it is under the bottom bar",
-					label, fit.FooterBottom, fit.BarTop)
+			if fit.FooterInColumn > fit.ColScrollH+1 {
+				t.Errorf("%s: the add row ends %d px into a %d px column — it cannot be reached",
+					label, fit.FooterInColumn, fit.ColScrollH)
 			}
-			if fit.FooterBottom > vh {
-				t.Errorf("%s: the add row ends at y=%d in a %d px viewport — below the fold",
-					label, fit.FooterBottom, vh)
-			}
-			// It is the FOOTER: under the scroller, not inside it.
 			if fit.FooterTop < fit.ScrollerBottom-1 {
-				t.Errorf("%s: the add row starts at y=%d, above the scroller's foot at y=%d — it is still a scrolling row",
+				t.Errorf("%s: the add row starts at y=%d, above the rows' box foot at y=%d — it is still inside the box",
 					label, fit.FooterTop, fit.ScrollerBottom)
 			}
 		}
-		// THE VIEWBOX IS THE FRAME. Not a constant: the frame shrinks to give
-		// the positions box its floor, and the drawing has to be laid out at
-		// whatever size it ended up with rather than scaled into it.
+		// THE VIEWBOX IS THE FRAME. Not a constant: the drawing is laid out at
+		// the frame's width and its own height rather than scaled into a box.
 		if want := fmt.Sprintf("0 0 %d %d", fit.PicW, fit.PicH); fit.ViewBox != want {
 			t.Errorf("%s: the picture's viewBox is %q for a %dx%d frame — want %q, or the browser is scaling the whole drawing, cards and type included",
 				label, fit.ViewBox, fit.PicW, fit.PicH, want)
 		}
-		if fit.PicH < 240 {
-			t.Errorf("%s: the picture frame is %d px tall, under its 240 px floor", label, fit.PicH)
+		// THE PICTURE IS NEVER CLIPPED. The frame used to shrink to a 240 px
+		// floor and scroll the picture inside itself, and on a short window
+		// the positions table cut it in half.
+		if fit.PicFrameH < fit.PicH {
+			t.Errorf("%s: the picture's frame is %d px tall for a %d px picture — it is clipped",
+				label, fit.PicFrameH, fit.PicH)
 		}
-
-		// TWO POSITION ROWS ARE ON SCREEN, WHOLE. A box that satisfied every
-		// other assertion here while showing 30 px of scroller — half of one
-		// row — is the state this round started in, and every one of those
-		// assertions passed on it.
-		//
-		// Counted from the MEASURED row height: `.pd-postbl td` says 32 px and
-		// a rendered row is taller, because the chips inside it are 26-28 px
-		// and carry their own padding. A count divided by 32 said two rows fit
-		// while the second was clipped through the middle of its chips.
-		if fit.RowsVisible < 2 {
-			t.Errorf("%s: %d whole position rows fit — scroller %d px, header %d, row %d. The picture is supposed to give way first (T2)",
-				label, fit.RowsVisible, fit.ScrollerClientH, fit.HeaderH, fit.RowH)
+		// The paired-above line is the last row: reachable by scrolling the
+		// column.
+		if fit.HasPairedLine && fit.PairedInColumn > fit.ColScrollH+1 {
+			t.Errorf("%s: the paired-above line ends %d px into a %d px column — it cannot be reached",
+				label, fit.PairedInColumn, fit.ColScrollH)
 		}
-		// The paired-above line is the last SCROLLING row: reachable, not
-		// pinned. Visible outright when the box is tall enough, which is the
-		// same test at a scrollTop of zero.
-		if fit.HasPairedLine {
-			if fit.PairedOffsetTop > fit.ScrollerScrollH {
-				t.Errorf("%s: the paired-above line sits at %d px inside a %d px scroll height — it cannot be reached",
-					label, fit.PairedOffsetTop, fit.ScrollerScrollH)
-			}
-			reach := fit.ScrollerScrollH - fit.ScrollerClientH
-			t.Logf("%s paired-above line at %d px; scroller %d in %d (%d px of scroll)",
-				label, fit.PairedOffsetTop, fit.ScrollerScrollH, fit.ScrollerClientH, reach)
-		}
-		t.Logf("%s rows: %d whole (scroller %d px, header %d, row %d)",
-			label, fit.RowsVisible, fit.ScrollerClientH, fit.HeaderH, fit.RowH)
-		t.Logf("%s fits: viewport %dx%d · table %d in %d · picture %dx%d (viewBox %q) foot %d · box %d..%d · footer %d..%d · bar %d..%d",
-			label, vw, vh, fit.TableScrollW, fit.TableClientW, fit.PicW, fit.PicH, fit.ViewBox, fit.PicBottom,
+		// Rows on screen as the page opens are logged, not floored: the picture
+		// takes its own height, so how many rows show above the fold is the
+		// picture's to decide and the column scrolls to the rest. Counted from
+		// the MEASURED row height — `.pd-postbl td` says 32 px and a rendered
+		// row is taller, because the chips inside it carry their own padding.
+		t.Logf("%s rows: %d whole on screen (header %d, row %d) · column %d in %d",
+			label, fit.RowsVisible, fit.HeaderH, fit.RowH, fit.ColScrollH, fit.ColClientH)
+		t.Logf("%s fits: viewport %dx%d · table %d in %d · picture %dx%d in %d (viewBox %q) foot %d · box %d..%d · footer %d..%d · bar %d..%d",
+			label, vw, vh, fit.TableScrollW, fit.TableClientW, fit.PicW, fit.PicH, fit.PicFrameH, fit.ViewBox, fit.PicBottom,
 			fit.TableTop, fit.TableBottom, fit.FooterTop, fit.FooterBottom, fit.BarTop, fit.BarBottom)
 	}
 
