@@ -790,13 +790,6 @@ func (s *BinService) GetByLabel(label string) (*bins.Bin, error) {
 	return s.db.GetBinByLabel(label)
 }
 
-// GetManifest returns the confirmed manifest items currently loaded
-// on a bin. Absorbed from engine_db_methods.go as part of the Phase
-// 3a closeout (PR 3a.6).
-func (s *BinService) GetManifest(binID int64) (*bins.Manifest, error) {
-	return s.db.GetBinManifest(binID)
-}
-
 // ── Phase 6.1 additions ────────────────────────────────────────────
 
 // ApplyArrival moves a claimed bin to its destination, unclaims it,

@@ -10,41 +10,29 @@
     {{/* Status filters are navigation, not CTAs — quiet pills, with only the
          selected one filled. Each dot reuses the status hue the badge in the
          table already carries. "All" and "Active" are the two aggregate views
-         and carry no dot; the separator marks that split. */}}
+         and carry no dot; the separator marks that split. One pill per status
+         an order can hold, from orderStatusFilters (handlers_orders.go). A
+         pick by id (?ids=, the Overview alert line) is neither aggregate. */}}
     <div class="order-filters" role="group" aria-label="Filter orders by status">
       <a href="/orders?status=all" class="ofilter{{if eq .FilterStatus "all"}} is-active{{end}}">All</a>
-      <a href="/orders" class="ofilter{{if not .FilterStatus}} is-active{{end}}">Active</a>
+      <a href="/orders" class="ofilter{{if and (not .FilterStatus) (not .PickedIDs)}} is-active{{end}}">Active</a>
       <span class="ofilter-sep" aria-hidden="true"></span>
-      <a href="/orders?status=pending" class="ofilter{{if eq .FilterStatus "pending"}} is-active{{end}}"><span class="ofilter-dot" data-status="pending"></span>Pending</a>
-      {{/* THE TWO WAITING RUNGS, which this row did not have. An operator asking
-           "what is waiting, and why" had no way to narrow the board to it: both
-           statuses appeared only under Active or All, mixed in with everything
-           the fleet is already carrying. Sourcing is the material hunt — the hand
-           is short — and queued is the line, where the hand is complete and only
-           the turn is missing; they are different questions and different
-           answers, which is why they are two pills and not one. */}}
-      <a href="/orders?status=sourcing" class="ofilter{{if eq .FilterStatus "sourcing"}} is-active{{end}}"><span class="ofilter-dot" data-status="sourcing"></span>Sourcing</a>
-      <a href="/orders?status=queued" class="ofilter{{if eq .FilterStatus "queued"}} is-active{{end}}"><span class="ofilter-dot" data-status="queued"></span>Queued</a>
-      <a href="/orders?status=dispatched" class="ofilter{{if eq .FilterStatus "dispatched"}} is-active{{end}}"><span class="ofilter-dot" data-status="dispatched"></span>Dispatched</a>
-      <a href="/orders?status=in_transit" class="ofilter{{if eq .FilterStatus "in_transit"}} is-active{{end}}"><span class="ofilter-dot" data-status="in_transit"></span>In Transit</a>
-      <a href="/orders?status=faulted" class="ofilter{{if eq .FilterStatus "faulted"}} is-active{{end}}"><span class="ofilter-dot" data-status="faulted"></span>Faulted</a>
-      <a href="/orders?status=delivered" class="ofilter{{if eq .FilterStatus "delivered"}} is-active{{end}}"><span class="ofilter-dot" data-status="delivered"></span>Delivered</a>
-      <a href="/orders?status=confirmed" class="ofilter{{if eq .FilterStatus "confirmed"}} is-active{{end}}"><span class="ofilter-dot" data-status="confirmed"></span>Confirmed</a>
-      <a href="/orders?status=failed" class="ofilter{{if eq .FilterStatus "failed"}} is-active{{end}}"><span class="ofilter-dot" data-status="failed"></span>Failed</a>
-      <a href="/orders?status=reshuffling" class="ofilter{{if eq .FilterStatus "reshuffling"}} is-active{{end}}"><span class="ofilter-dot" data-status="reshuffling"></span>Reshuffling</a>
+      {{range orderStatusFilters}}
+      <a href="/orders?status={{.Status}}" class="ofilter{{if and (eq (printf "%s" .Status) $.FilterStatus) (not $.PickedIDs)}} is-active{{end}}"><span class="ofilter-dot" data-status="{{.Status}}"></span>{{.Label}}</a>
+      {{end}}
     </div>
   </div>
 
   <div class="filter-bar">
-    <input type="text" id="filter-search" class="form-input orders-search" placeholder="Filter by station, type, robot...">
-    <span id="filter-count" class="text-muted-xs tnum"></span>
+    {{/* The search is the server's: a keystroke (debounced) re-reads the rows
+         for the whole view with q on the URL, so it finds an order that is not
+         on this page. */}}
+    <input type="search" id="filter-search" class="form-input orders-search" placeholder="Search route, station, payload, robot..." value="{{.Search}}" aria-label="Search orders">
+    <span id="filter-count" class="text-muted-xs tnum">{{with .Pager}}{{.Summary}}{{end}}</span>
     {{if .Authenticated}}<button class="btn btn-primary btn-sm ml-auto" data-action="openManualOrderModal">Manual Order</button>{{end}}
   </div>
 
-  {{/* WHAT THE BOARD IS NOT SHOWING. status=all is capped, and it used to
-       truncate in silence — the oldest orders simply were not there, with no
-       control and no count to say so. Absent when the page holds everything. */}}
-  {{if .TruncationNotice}}<div class="text-muted-xs orders-truncation">{{.TruncationNotice}}</div>{{end}}
+  {{if .PickedIDs}}<div class="text-muted-xs orders-scope">Showing {{.PickedIDs}} order{{if ne .PickedIDs 1}}s{{end}} picked by id &middot; <a href="/orders">all active orders</a></div>{{end}}
 
   {{$labels := .QueueCodeLabels}}
   {{if or .QueueCodeCounts .FaultedNoticeCount}}
@@ -69,12 +57,14 @@
   {{end}}
 
   <div class="card orders-card">
-    {{if .Orders}}
+    {{/* Always drawn, empty or not: the search re-reads the rows into this
+         table, and a view that started empty has to have one to fill. The
+         empty state is a row of the partial. */}}
     <table class="table-compact orders-table" id="orders-table" data-sortable>
       <thead>
         <tr>
           <th data-sort>ID</th>
-          <th data-sort>UUID</th>
+          <th data-sort title="From &rarr; Line &rarr; To">Route</th>
           <th data-sort>Station</th>
           <th data-sort>Type</th>
           <th data-sort>Payload</th>
@@ -88,9 +78,6 @@
 {{template "orders-rows" .}}
       </tbody>
     </table>
-    {{else}}
-    <p class="dash-empty">No orders found.</p>
-    {{end}}
   </div>
 </div>
 

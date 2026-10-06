@@ -125,8 +125,9 @@ func truncate(s string, n int) string {
 }
 
 // TestHandleDashboard_ActiveOrderRow pins what one row of the Active Orders
-// table says: before the U4 change it names no node, prints the payload twice
-// and stamps Created to the minute.
+// table says. U4: it names the route (From → Line → To), prints the payload
+// once and stamps Created to the second, as the orders board does — one
+// partial for both.
 func TestHandleDashboard_ActiveOrderRow(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlersForPages(t)
@@ -154,13 +155,13 @@ func TestHandleDashboard_ActiveOrderRow(t *testing.T) {
 	row := body[start:]
 	row = row[:strings.Index(row, "</tr>")]
 
-	if strings.Contains(row, "UTN_014") || strings.Contains(row, "ALN_003") || strings.Contains(row, "UTN_013") {
-		t.Error("before: the row names no node at all")
+	if got, want := routeText(row), "UTN_014 → ALN_003 → UTN_013"; got != want {
+		t.Errorf("route = %q, want %q", got, want)
 	}
-	if !strings.Contains(row, "<code>SHIM</code>") || !strings.Contains(row, "SHIM (dev)") {
-		t.Error("before: the payload prints twice, code and description")
+	if strings.Count(visibleText(row), "SHIM") != 1 {
+		t.Errorf("the payload must be printed once, row reads %q", visibleText(row))
 	}
-	if stamp := createdStamp(row); stamp == "" || strings.Contains(stamp, ":24:13") {
-		t.Errorf("before: Created is the full stamp at minute resolution, got %q", stamp)
+	if stamp := createdStamp(row); !strings.Contains(stamp, ":24:13") {
+		t.Errorf("Created must carry seconds, got %q", stamp)
 	}
 }

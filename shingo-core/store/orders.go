@@ -741,10 +741,15 @@ func (db *DB) ListOrders(status string, limit int) ([]*orders.Order, error) {
 	return orders.List(db.DB, status, limit)
 }
 
-// CountOrdersForList is ListOrders' unlimited count — how many rows the same
-// status filter matches — so a truncated board can say how much it is not showing.
-func (db *DB) CountOrdersForList(status string) (int, error) {
-	return orders.CountForList(db.DB, status)
+// ListOrdersFiltered is the orders board's read: status view, ids, search and
+// page, in one query.
+func (db *DB) ListOrdersFiltered(f orders.Filter) ([]*orders.Order, error) {
+	return orders.ListFiltered(db.DB, f)
+}
+
+// CountOrdersFiltered is the total the same filter matches with no page applied.
+func (db *DB) CountOrdersFiltered(f orders.Filter) (int, error) {
+	return orders.CountFiltered(db.DB, f)
 }
 
 func (db *DB) ListActiveOrders() ([]*orders.Order, error) { return orders.ListActive(db.DB) }

@@ -31,7 +31,7 @@ import (
 // Create/Update, the filter + list helpers, and the outer store/ orders.go
 // delegates. History also lifted to domain in Stage 2A.2 so
 // www handlers can return order-with-history shapes without importing this
-// sub-package; Filter stays local because it's a query DSL.
+// sub-package. Filter followed for the same reason: the handler builds it.
 type Order = domain.Order
 
 // History is the order-history audit row. The struct lives in
@@ -768,24 +768,6 @@ func GetByVendorID(db *sql.DB, vendorOrderID string) (*Order, error) {
 	return ScanOrder(row)
 }
 
-// CountForList returns how many orders List would return with no limit — the
-// same status filter, without the LIMIT. It exists so the board can say "showing
-// 100 of 213" rather than truncating in silence, and it takes the status the
-// same way List does so the two cannot answer about different sets.
-func CountForList(db *sql.DB, status string) (int, error) {
-	var n int
-	var err error
-	if status != "" {
-		err = db.QueryRow(`SELECT COUNT(*) FROM orders WHERE status=$1`, status).Scan(&n)
-	} else {
-		err = db.QueryRow(`SELECT COUNT(*) FROM orders`).Scan(&n)
-	}
-	if err != nil {
-		return 0, fmt.Errorf("count orders for list: %w", err)
-	}
-	return n, nil
-}
-
 // List returns up to `limit` orders, optionally filtered by status.
 func List(db *sql.DB, status string, limit int) ([]*Order, error) {
 	var rows *sql.Rows
@@ -802,57 +784,91 @@ func List(db *sql.DB, status string, limit int) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
-// Filter supports filtered, paginated order queries.
-type Filter struct {
-	Statuses  []string   // filter by status IN (...); empty = all
-	StationID string     // filter by station_id; empty = all
-	Since     *time.Time // filter by created_at >= since
-	Limit     int        // max rows; 0 = default 100
-	Offset    int        // pagination offset
-}
+// Filter supports filtered, paginated order queries. See domain.OrderFilter.
+type Filter = domain.OrderFilter
 
-// ListFiltered returns orders matching the given filter with pagination.
-func ListFiltered(db *sql.DB, f Filter) ([]*Order, error) {
-	if f.Limit <= 0 {
-		f.Limit = 100
+// likeEscaper escapes a search term's own wildcards, so a search for "ALN_00"
+// means that and not "ALN" + any character + "00".
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// searchColumns are what the orders board prints in a row: the id, the route's
+// three nodes, station, type, payload, status, robot and the wait sentence.
+var searchColumns = []string{"CAST(id AS text)", "source_node", "process_node", "delivery_node",
+	"station_id", "order_type", "payload_code", "payload_desc", "status", "robot_id", "queue_reason"}
+
+// filterWhere builds the WHERE clause and its arguments for a Filter. ONE
+// builder for ListFiltered and CountFiltered, so a page and its total cannot
+// describe different sets.
+func filterWhere(f Filter) (string, []any) {
+	where := ` WHERE true`
+	var args []any
+	arg := func(v any) string {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args))
 	}
-	query := fmt.Sprintf(`SELECT %s FROM orders WHERE true`, SelectCols)
-	args := []any{}
-	n := 0
+	in := func(n int, at func(int) any) string {
+		ph := make([]string, n)
+		for i := range n {
+			ph[i] = arg(at(i))
+		}
+		return strings.Join(ph, ", ")
+	}
 
 	if len(f.Statuses) > 0 {
-		placeholders := make([]string, len(f.Statuses))
-		for i, s := range f.Statuses {
-			n++
-			placeholders[i] = fmt.Sprintf("$%d", n)
-			args = append(args, s)
+		where += ` AND status IN (` + in(len(f.Statuses), func(i int) any { return f.Statuses[i] }) + `)`
+	}
+	if f.ActiveOnly {
+		where += fmt.Sprintf(` AND status NOT IN (%s)`, protocol.TerminalStatusSQLList())
+	}
+	if len(f.IDs) > 0 {
+		where += ` AND id IN (` + in(len(f.IDs), func(i int) any { return f.IDs[i] }) + `)`
+	}
+	if q := strings.TrimSpace(f.Search); q != "" {
+		p := arg("%" + likeEscaper.Replace(q) + "%")
+		ors := make([]string, len(searchColumns))
+		for i, c := range searchColumns {
+			ors[i] = c + " ILIKE " + p
 		}
-		query += fmt.Sprintf(` AND status IN (%s)`, strings.Join(placeholders, ", "))
+		where += ` AND (` + strings.Join(ors, " OR ") + `)`
 	}
 	if f.StationID != "" {
-		n++
-		query += fmt.Sprintf(` AND station_id = $%d`, n)
-		args = append(args, f.StationID)
+		where += ` AND station_id = ` + arg(f.StationID)
 	}
 	if f.Since != nil {
-		n++
-		query += fmt.Sprintf(` AND created_at >= $%d`, n)
-		args = append(args, *f.Since)
+		where += ` AND created_at >= ` + arg(*f.Since)
 	}
+	return where, args
+}
 
-	n++
-	query += fmt.Sprintf(` ORDER BY id DESC LIMIT $%d`, n)
-	args = append(args, f.Limit)
-	n++
-	query += fmt.Sprintf(` OFFSET $%d`, n)
-	args = append(args, f.Offset)
-
+// ListFiltered returns the orders a filter matches, newest first: one page, or
+// every row when NoLimit says so.
+func ListFiltered(db *sql.DB, f Filter) ([]*Order, error) {
+	where, args := filterWhere(f)
+	query := fmt.Sprintf(`SELECT %s FROM orders`, SelectCols) + where + ` ORDER BY id DESC`
+	if !f.NoLimit {
+		if f.Limit <= 0 {
+			f.Limit = 100
+		}
+		args = append(args, f.Limit, f.Offset)
+		query += fmt.Sprintf(` LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+	}
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	return ScanOrders(rows)
+}
+
+// CountFiltered is how many orders the filter matches with no page applied —
+// the total a paged board states beside its page.
+func CountFiltered(db *sql.DB, f Filter) (int, error) {
+	where, args := filterWhere(f)
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM orders`+where, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count filtered orders: %w", err)
+	}
+	return n, nil
 }
 
 // ActiveIDsByRobot maps each robot currently carrying an in-flight order to

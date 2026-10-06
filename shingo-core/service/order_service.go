@@ -141,9 +141,16 @@ func (s *OrderService) ListOrders(status string, limit int) ([]*orders.Order, er
 	return s.db.ListOrders(status, limit)
 }
 
-// CountOrdersForList is ListOrders' unlimited count for the same status filter.
-func (s *OrderService) CountOrdersForList(status string) (int, error) {
-	return s.db.CountOrdersForList(status)
+// ListOrdersFiltered returns the orders a filter matches — the orders board's
+// read (status view, ids, search, page).
+func (s *OrderService) ListOrdersFiltered(f orders.Filter) ([]*orders.Order, error) {
+	return s.db.ListOrdersFiltered(f)
+}
+
+// CountOrdersFiltered is the total the same filter matches with no page
+// applied, so a paged board can say how much it is not showing.
+func (s *OrderService) CountOrdersFiltered(f orders.Filter) (int, error) {
+	return s.db.CountOrdersFiltered(f)
 }
 
 // ListOrderHistory returns the historical status transitions for a

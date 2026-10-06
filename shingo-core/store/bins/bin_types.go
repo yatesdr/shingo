@@ -223,6 +223,29 @@ func ListTypes(db *sql.DB) ([]*BinType, error) {
 	return ScanBinTypes(rows)
 }
 
+// ListTypeCodesByPayload maps each payload to the codes of its bin types,
+// sorted as ListTypesForPayload sorts them: the Payloads table's Bin types
+// column in one read, not one per row.
+func ListTypeCodesByPayload(db *sql.DB) (map[int64][]string, error) {
+	rows, err := db.Query(`SELECT pbt.payload_id, bt.code
+		FROM payload_bin_types pbt JOIN bin_types bt ON bt.id = pbt.bin_type_id
+		ORDER BY pbt.payload_id, bt.code`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]string{}
+	for rows.Next() {
+		var id int64
+		var code string
+		if err := rows.Scan(&id, &code); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], code)
+	}
+	return out, rows.Err()
+}
+
 // ListTypesForPayload returns all bin types associated with a payload template
 // via payload_bin_types. Owned by bins/ because the return type is *BinType;
 // caller at outer store/ exposes this as (*store.DB).ListBinTypesForPayload.

@@ -20,11 +20,6 @@ func (db *DB) ConfirmBinManifest(binID int64, producedAt string) error {
 	return bins.ConfirmManifest(db.DB, binID, producedAt)
 }
 
-// GetBinManifest fetches a bin and parses its manifest.
-func (db *DB) GetBinManifest(binID int64) (*bins.Manifest, error) {
-	return bins.GetManifest(db.DB, binID)
-}
-
 // FindSourceBinFIFO finds the best unclaimed bin at an enabled storage node
 // matching the given payload code, using FIFO ordering. excludeNodeID > 0
 // skips bins at that node (pass destination to avoid same-node retrieve).

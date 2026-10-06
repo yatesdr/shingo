@@ -1,5 +1,6 @@
-import { api, apiGet, apiPost, debounce, delegateActions, escapeHtml, h, hideModal, showModal, toggleVisibility, uiConfirm } from '/static/app.js';
-import { formatTime } from '/static/shared/utils.js';
+import { apiGet, apiPost, debounce, delegateActions, escapeHtml, h, hideModal, openFromQuery, showModal, uiConfirm } from '/static/app.js';
+import { formatDuration, formatTime } from '/static/shared/utils.js';
+import { formatClockSeconds, plantDate } from '/static/components/plantclock.js';
 import { relevantNotices } from '/static/pages/fleet-notices.js';
 import { installLiveDurations, onSSE, reconcileList, serverNow } from '/static/shared/utils.js';
 
@@ -232,15 +233,57 @@ function field(label, val, cls) {
 }
 function fieldH(label, val, cls) { return field(label, escapeHtml(val || '-'), cls); }
 
-// elapsedLabel answers "how long did this take / has this been going" —
-// the question the timestamps made you compute by hand.
-// durationText renders a span of seconds. One spelling, because the timeline's
-// unaccounted-gap marker has to read in the same units as the elapsed label
-// beside it — two formatters would drift into two vocabularies.
-function durationText(secs) {
-  return secs < 60 ? secs + 's'
-    : secs < 3600 ? Math.floor(secs / 60) + 'm ' + (secs % 60) + 's'
-    : Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm';
+// ── REFERENCES ARE LINKS ────────────────────────────────────────────────────
+//
+// Every order, robot, node and bin the pop-up names opens that thing's own
+// view: an order its pop-up (?open= here), a robot or node its page's pop-up
+// (?open= there), a bin its detail — Bins is behind login, so a bin is a link
+// only for a viewer who can open it. One spelling each, so a reference is never
+// a link in one section and plain text in the next. stopPropagation keeps a
+// link inside a clickable table row from opening the row instead.
+function orderLink(id, text) {
+  return '<a href="/orders?open=' + id + '" data-action="openOrderModal:' + id + '">' + (text || '#' + id) + '</a>';
+}
+function nodeLink(name) {
+  return '<a href="/nodes?open=' + encodeURIComponent(name) + '" data-action="stopPropagation">' + escapeHtml(name) + '</a>';
+}
+function robotLink(id) {
+  return '<a href="/robots?open=' + encodeURIComponent(id) + '" data-action="stopPropagation">' + escapeHtml(id) + '</a>';
+}
+function binRef(bin) {
+  if (!isAuthenticated()) return escapeHtml(bin.label);
+  return '<a href="/bins?open=' + bin.id + '" data-action="stopPropagation">' + escapeHtml(bin.label) + '</a>';
+}
+
+// An end of the route that is not chosen yet is no data, and says so — the
+// header used to read "UTN_013 → —" under a line saying where it was waiting.
+var NOT_ASSIGNED = '<span class="order-route-none">not assigned yet</span>';
+
+// routeHTML is From → Line → To, the line node omitted when it repeats an
+// end: the same rule as the board's order-route partial
+// (templates/partials/orders-rows.html), which the server draws. The two are
+// held together by TestOrderRouteRuleMatchesThePopup.
+function routeHTML(o) {
+  var parts = [o.source_node ? nodeLink(o.source_node) : NOT_ASSIGNED];
+  if (o.process_node && o.process_node !== o.source_node && o.process_node !== o.delivery_node) {
+    parts.push(nodeLink(o.process_node));
+  }
+  parts.push(o.delivery_node ? nodeLink(o.delivery_node) : NOT_ASSIGNED);
+  return parts.join(' <span class="manifest-arrow">&rarr;</span> ');
+}
+
+// One bin, one name. A dig leg's description is written as "reshuffle
+// unbury: bin 42" (dispatch/compound.go), so the pop-up said "bin 42" in one
+// line and "BIN-MT-07" in the next. When the text names this order's own bin by
+// id, it is shown by its label.
+function bySameBin(text, bin) {
+  var out = escapeHtml(text);
+  if (!bin || !bin.label) return out;
+  return out.replace(new RegExp('\\bbin ' + bin.id + '\\b'), binRef(bin));
+}
+function bySameBinPlain(text, bin) {
+  if (!bin || !bin.label) return text;
+  return text.replace(new RegExp('\\bbin ' + bin.id + '\\b'), bin.label);
 }
 
 // timelineExtra adds what a fault row knows and the timeline never read: the
@@ -265,7 +308,7 @@ function timelineExtra(ev, next) {
   if (next && next.created_at) {
     var secs = Math.round((new Date(next.created_at) - new Date(ev.created_at)) / 1000);
     if (isFinite(secs) && secs >= 0) {
-      parts += h`<span class="tl-detail tnum">${'· ' + durationText(secs)}</span>`;
+      parts += h`<span class="tl-detail tnum">${'· ' + formatDuration(secs * 1000)}</span>`;
     }
     return parts;
   }
@@ -281,7 +324,7 @@ function elapsedLabel(o) {
   var end = o.completed_at ? new Date(o.completed_at).getTime() : serverNow();
   var secs = Math.round((end - start) / 1000);
   if (!isFinite(secs) || secs < 0) return '';
-  var txt = durationText(secs);
+  var txt = formatDuration(secs * 1000);
   return o.completed_at ? 'took ' + txt : txt + ' elapsed';
 }
 
@@ -295,16 +338,13 @@ function buildManifest(data, opts) {
   var out = '<div class="manifest">';
 
   // ── HERO ──
-  // The route is what an order IS, so it leads — one readable
-  // "SMN_004 → SMN_001" line rather than two labelled cells in a grid, with
-  // the status and the elapsed time beside it. Everything else is a
-  // footnote to that. This replaced a header of bold-label / plain-value
-  // pairs, which inverted the emphasis: the eye landed on the word
-  // "Originating Station" instead of on the station.
+  // The route is what an order IS, so it leads — one readable From → Line →
+  // To line rather than labelled cells in a grid, with the status and the
+  // elapsed time beside it. Everything else is a footnote to that. An end not
+  // chosen yet reads "not assigned yet", never a bare dash.
   out += '<div class="manifest-head">';
   out += '<div class="manifest-hero">';
-  out += '<span class="manifest-route">' + escapeHtml(o.source_node || '—') +
-    ' <span class="manifest-arrow">&rarr;</span> ' + escapeHtml(o.delivery_node || '—') + '</span>';
+  out += '<span class="manifest-route">' + routeHTML(o) + '</span>';
   out += '<span class="badge badge-' + o.status + '">' + escapeHtml(o.status) + '</span>';
   var elapsed = elapsedLabel(o);
   if (elapsed) out += '<span class="manifest-elapsed tnum">' + elapsed + '</span>';
@@ -320,29 +360,37 @@ function buildManifest(data, opts) {
   // the error slot is red and terminal. Server-rendered and pre-escaped.
   if (data.fault_line) out += '<div class="manifest-reason">' + data.fault_line + '</div>';
 
-  // Identity strip: small, muted, one wrapping line. Zones ride along with
-  // the nodes they belong to instead of taking their own cells.
+  // Identity strip: small, muted, one wrapping line.
+  //
+  // The groups are the places themselves — the node's parent (lane or group)
+  // — not the zone, which read "from Area-01 · to Area-01" on every order in
+  // a one-zone plant. "station" is the Edge the order came from; nothing else
+  // in this pop-up is called a station. qty and priority appear only when they
+  // say something: "qty 0 · priority 0" was the column defaults.
   var ident = [];
   ident.push(escapeHtml(o.order_type));
-  if (o.payload_desc) ident.push(escapeHtml(o.payload_desc));
-  if (data.source_node && data.source_node.zone) ident.push('from ' + escapeHtml(data.source_node.zone));
-  if (data.delivery_node && data.delivery_node.zone) ident.push('to ' + escapeHtml(data.delivery_node.zone));
-  ident.push(escapeHtml(o.station_id));
-  ident.push('qty ' + o.quantity);
-  ident.push('priority ' + o.priority);
+  if (o.payload_desc && !o.payload_code) ident.push(bySameBin(o.payload_desc, data.bin));
+  var fromGroup = data.source_node && data.source_node.parent_name;
+  var toGroup = data.delivery_node && data.delivery_node.parent_name;
+  if (fromGroup && fromGroup === toGroup) {
+    ident.push('within ' + nodeLink(fromGroup));
+  } else {
+    if (fromGroup) ident.push('from ' + nodeLink(fromGroup));
+    if (toGroup) ident.push('to ' + nodeLink(toGroup));
+  }
+  if (o.station_id) ident.push('station ' + escapeHtml(o.station_id));
+  if (o.quantity > 1) ident.push('qty ' + o.quantity);
+  if (o.priority) ident.push('priority ' + o.priority);
   if (o.parent_order_id) {
-    ident.push('step ' + o.sequence + ' of <a href="#" data-action="openOrderModal:' + o.parent_order_id +
-      '" data-prevent-default="1">#' + o.parent_order_id + '</a>');
+    ident.push('step ' + o.sequence + ' of ' + orderLink(o.parent_order_id));
   }
   // A return order and the cancelled order whose bin it carried back off the
   // robot's deck, linked from both ends. Ids are integers from the server.
   if (o.recovers_order_id) {
-    ident.push('Returns the bin of cancelled order <a href="#" data-action="openOrderModal:' + o.recovers_order_id +
-      '" data-prevent-default="1">#' + o.recovers_order_id + '</a>');
+    ident.push('Returns the bin of cancelled order ' + orderLink(o.recovers_order_id));
   }
   if (data.recovered_by) {
-    ident.push('Bin returned by order <a href="#" data-action="openOrderModal:' + data.recovered_by.id +
-      '" data-prevent-default="1">#' + data.recovered_by.id + '</a>');
+    ident.push('Bin returned by order ' + orderLink(data.recovered_by.id));
   }
   out += '<div class="manifest-ident">' + ident.join('<span class="manifest-dot">&middot;</span>') + '</div>';
   out += '<div class="manifest-uuid">' + escapeHtml(o.edge_uuid) + '</div>';
@@ -356,51 +404,36 @@ function buildManifest(data, opts) {
   // occupy what they need.
   var facts = [];
   if (data.bin) {
-    facts.push(field('Bin', escapeHtml(data.bin.label) + ' <span class="manifest-sub">(' + escapeHtml(data.bin.bin_type_code) + ')</span>'));
+    facts.push(field('Bin', binRef(data.bin) + ' <span class="manifest-sub">(' + escapeHtml(data.bin.bin_type_code) + ')</span>'));
     facts.push(field('Bin Status', '<span class="badge">' + escapeHtml(data.bin.status) + '</span>'));
   }
-  if (data.payload) {
-    facts.push(field('Payload', '#' + data.payload.id + ' <span class="manifest-sub">' + escapeHtml(data.payload.payload_code) + '</span>'));
-    facts.push(field('UoP Remaining', data.payload.uop_remaining + ''));
-    facts.push(field('Manifest', data.payload.manifest_confirmed ? '<span class="badge badge-available">confirmed</span>' : '<span class="badge badge-empty">unconfirmed</span>'));
+  // The payload, as the board's row prints it: the code, its description in
+  // the title.
+  if (o.payload_code) {
+    // escapeHtml leaves quotes alone, and this one lands in an attribute.
+    var pdesc = o.payload_desc
+      ? ' title="' + escapeHtml(bySameBinPlain(o.payload_desc, data.bin)).replace(/"/g, '&quot;') + '"' : '';
+    facts.push(field('Payload', '<code' + pdesc + '>' + escapeHtml(o.payload_code) + '</code>'));
   }
   if (o.vendor_order_id) {
     facts.push(field('Vendor Order', '<span class="manifest-mono">' + escapeHtml(o.vendor_order_id) + '</span>'));
     facts.push(fieldH('Vendor State', o.vendor_state));
   }
-  if (o.robot_id) facts.push(fieldH('Robot', o.robot_id));
+  if (o.robot_id) facts.push(field('Robot', robotLink(o.robot_id)));
   if (facts.length) out += '<div class="manifest-facts">' + facts.join('') + '</div>';
 
-  if (data.bin || data.payload) {
-
-    // Manifest items (click to expand)
-    if (data.manifest_items && data.manifest_items.length > 0) {
-      var mid = 'om-manifest-' + o.id;
-      out += '<div class="manifest-expand">';
-      out += '<a href="#" data-action="toggleVisibility:' + mid + '" data-prevent-default="1" >';
-      out += 'Manifest (' + data.manifest_items.length + ' item' + (data.manifest_items.length > 1 ? 's' : '') + ')</a>';
-      // display:none, not .hide — the shared toggleVisibility helper flips
-      // style.display, and a class it cannot beat is exactly the bug that
-      // kept the manual-order Bin/Quantity groups permanently hidden.
-      out += h`<table class="table-compact manifest-items" id="${mid}" style="display:none">
-        <thead><tr><th>Part Number</th><th>Qty</th><th>Lot</th><th>Notes</th></tr></thead><tbody>${
-          data.manifest_items.map(function(item) {
-            return h`<tr><td>${item.part_number}</td><td>${item.quantity}</td><td>${item.lot_code || ''}</td><td>${item.notes || ''}</td></tr>`;
-          })
-        }</tbody></table></div>`;
-    }
-  }
-
-
   // ── ROBOT STATUS ──
+  // Live, so only on a live order: the server leaves it off a terminal one
+  // (apiGetOrderEnriched), where it described the robot's NEXT job. The robot
+  // is named once, in the Robot field above; its whereabouts are "Location".
   if (data.robot) {
     var rb = data.robot;
     var st = rb.Connected ? (rb.Emergency || rb.Blocked ? 'error' : (rb.Busy ? 'busy' : (rb.Available ? 'ready' : 'paused'))) : 'offline';
     out += '<div class="manifest-section">Robot Status</div>';
     out += '<div class="manifest-facts">';
-    out += '<div>' + field('Vehicle', escapeHtml(rb.VehicleID) + ' <span class="badge badge-' + st + '">' + st + '</span>') + '</div>';
+    out += '<div>' + field('State', '<span class="badge badge-' + st + '">' + st + '</span>') + '</div>';
     out += '<div>' + field('Battery', Math.round(rb.BatteryLevel) + '%' + (rb.Charging ? ' (charging)' : '')) + '</div>';
-    out += '<div>' + field('Station', escapeHtml(rb.CurrentStation || rb.LastStation || '-')) + '</div>';
+    out += '<div>' + field('Location', escapeHtml(rb.CurrentStation || rb.LastStation || '-')) + '</div>';
     out += '</div>';
     if (rb.Emergency) out += '<div class="manifest-alert manifest-alert-danger">EMERGENCY STOP ACTIVE</div>';
     if (rb.Blocked) out += '<div class="manifest-alert manifest-alert-warn">Robot is blocked</div>';
@@ -464,12 +497,16 @@ function buildManifest(data, opts) {
   // ── CHILD ORDERS / STEPS ──
   if (data.children && data.children.length > 0) {
     out += '<div class="manifest-section">Order Steps</div>';
+    // Each step's nodes and robot are links too; a step with no delivery yet
+    // says so rather than leaving the cell blank.
+    var placeCell = function(name) { return { __html: true, value: name ? nodeLink(name) : NOT_ASSIGNED }; };
     out += h`<table class="table-compact"><thead><tr><th>#</th><th>ID</th><th>Type</th><th>Status</th><th>Source</th><th>Delivery</th><th>Robot</th></tr></thead><tbody>${
       data.children.map(function(c) {
         return h`<tr class="row-click" data-action="openOrderModal:${c.id}">
-          <td>${c.sequence}</td><td>${c.id}</td><td>${c.order_type}</td>
+          <td>${c.sequence}</td><td>${{__html: true, value: orderLink(c.id, String(c.id))}}</td><td>${c.order_type}</td>
           <td><span class="badge badge-${c.status}">${c.status}</span></td>
-          <td>${c.source_node}</td><td>${c.delivery_node}</td><td>${c.robot_id}</td>
+          <td>${placeCell(c.source_node)}</td><td>${placeCell(c.delivery_node)}</td>
+          <td>${c.robot_id ? {__html: true, value: robotLink(c.robot_id)} : ''}</td>
         </tr>`;
       })
     }</tbody></table>`;
@@ -491,13 +528,23 @@ function buildManifest(data, opts) {
   // under it was dead by construction: the gap it measures is now the two
   // statements of one transaction. Both are gone; the row they stood in for is
   // the first thing the list renders.
+  //
+  // ── TIME OF DAY TO THE SECOND, THE DATE WHEN IT TURNS ─────────────────────
+  //
+  // An order's steps land seconds apart, and four rows in a row read "07:24"
+  // at minute resolution, so neither their order nor the gaps between them
+  // could be read. Each row carries the plant clock with seconds (the full
+  // stamp in its title); the plant date heads the list and every day it turns.
   if (data.history && data.history.length > 0) {
     out += '<div class="manifest-section">History</div>';
     out += h`<ul class="timeline-list">${
       data.history.map(function(ev, i) {
         var extra = timelineExtra(ev, data.history[i + 1]);
-        return h`<li>
-          <span class="tl-time">${{__html:true, value: formatTime(ev.created_at)}}</span>
+        var day = plantDate(ev.created_at);
+        var dayHead = (i === 0 || day !== plantDate(data.history[i - 1].created_at))
+          ? h`<li class="tl-day tnum">${day}</li>` : '';
+        return h`${{__html: true, value: dayHead}}<li>
+          <span class="tl-time tnum" title="${formatTime(ev.created_at)}">${formatClockSeconds(ev.created_at)}</span>
           <span class="badge badge-xs badge-${ev.status}">${ev.status}</span>
           ${ev.detail ? {__html:true, value: h`<span class="tl-detail">${ev.detail}</span>`} : ''}
           ${extra ? {__html:true, value: extra} : ''}
@@ -561,10 +608,7 @@ function renderOrderModal(data) {
 // separate detail page any more — one order view, reachable by link.
 // /orders/detail?id=N redirects here so old links and bookmarks still land
 // on the order.
-(function openFromQuery() {
-  var id = new URLSearchParams(location.search).get('open');
-  if (id) openOrderModal(id);
-})();
+openFromQuery(openOrderModal);
 
 // SSE auto-refresh for open modal — subscribed on the shared onSSE bus.
 // The handler receives the already-parsed payload (the bus does JSON.parse,
@@ -588,7 +632,7 @@ onSSE('order-update', debounce(function(data) {
 }, 2000));
 
 // A page that reloads itself every two seconds cannot host a one-second clock,
-// and it also threw away the text filter and the scroll position on every
+// and it also threw away the search and the scroll position on every
 // unrelated event. Rows are now refreshed in place from the same partial the
 // page renders, keyed by order id.
 //
@@ -596,15 +640,18 @@ onSSE('order-update', debounce(function(data) {
 // one is dropped, so the refresh does not depend on having heard about it.
 var ORDER_ROWS_BACKSTOP_MS = 30000;
 var _rowsRefreshInFlight = false;
+// A refresh asked for while one is in flight is run after it, not dropped: a
+// search keystroke that lands during an SSE refresh must still be answered.
+var _rowsRefreshAgain = false;
 
 function refreshOrderRows() {
-  if (_rowsRefreshInFlight) return;
   var tbody = document.getElementById('orders-rows');
   if (!tbody) return;
+  if (_rowsRefreshInFlight) { _rowsRefreshAgain = true; return; }
   _rowsRefreshInFlight = true;
   // Same query string as the page, so the server applies the same status
-  // filter. Reconciling rows the current filter excludes would quietly widen
-  // the view.
+  // filter, search and page. Reconciling rows the current filter excludes
+  // would quietly widen the view.
   fetch('/orders/rows' + location.search, { headers: { 'Accept': 'text/html' } })
     .then(function(r) {
       if (!r.ok) throw new Error('rows ' + r.status);
@@ -620,12 +667,31 @@ function refreshOrderRows() {
         create: function(tr) { return document.importNode(tr, true); },
         update: function(node, tr) { node.innerHTML = tr.innerHTML; },
       });
+      // The rows that are not orders — the empty state and the pager — are
+      // replaced whole, below the orders, from the same fragment.
+      Array.prototype.slice.call(tbody.querySelectorAll('tr:not([data-order-id])'))
+        .forEach(function(tr) { tr.remove(); });
+      doc.querySelectorAll('tbody > tr:not([data-order-id])').forEach(function(tr) {
+        tbody.appendChild(document.importNode(tr, true));
+      });
+      showPagerSummary();
       updateFaultedChip(res.count);
-      applyOrderFilter();
       installLiveDurations(tbody);
     })
     .catch(function(e) { console.error('refreshOrderRows', e); })
-    .then(function() { _rowsRefreshInFlight = false; });
+    .then(function() {
+      _rowsRefreshInFlight = false;
+      if (_rowsRefreshAgain) { _rowsRefreshAgain = false; refreshOrderRows(); }
+    });
+}
+
+// The count beside the search box is the server's sentence from the pager row
+// ("1–100 of 1,058", "12 matching"), so the page states one count, worded once.
+function showPagerSummary() {
+  var countEl = document.getElementById('filter-count');
+  if (!countEl) return;
+  var pager = document.querySelector('#orders-rows tr.orders-pager');
+  countEl.textContent = pager ? pager.getAttribute('data-summary') : '';
 }
 
 // The chip counts only faults past the notice threshold, so it can reach zero
@@ -1010,31 +1076,33 @@ function submitManualOrder() {
     });
 }
 
-// Client-side table filter.
+// The search asks the server.
 //
-// Rows are re-queried on every pass rather than cached at load: refreshOrderRows
-// inserts and removes them, and a cached NodeList would leave new rows
-// unfilterable and stale ones counted.
-function applyOrderFilter() {
-  var input = document.getElementById('filter-search');
-  var countEl = document.getElementById('filter-count');
-  var table = document.getElementById('orders-table');
-  if (!input || !table) return;
+// It used to hide the rendered rows that did not contain the text, so on "All"
+// it searched the hundred rows on screen: typing AMR-17 gave "0 of 100" while
+// AMR-17 had thirty orders further back. Now a keystroke (debounced, so a word
+// is one request rather than one per letter) puts q on the URL — the board's
+// state stays linkable and survives a reload — drops any page number, since
+// page 3 of the old set is not page 3 of the new one, and re-reads the rows.
+var SEARCH_DEBOUNCE_MS = 300;
 
-  var rows = table.querySelectorAll('tbody tr');
-  var q = input.value.toLowerCase().trim();
-  var visible = 0;
-  for (var i = 0; i < rows.length; i++) {
-    var show = !q || rows[i].textContent.toLowerCase().indexOf(q) !== -1;
-    rows[i].style.display = show ? '' : 'none';
-    if (show) visible++;
-  }
-  if (countEl) countEl.textContent = q ? visible + ' of ' + rows.length : '';
+function searchOrders() {
+  var input = document.getElementById('filter-search');
+  if (!input) return;
+  try {
+    var u = new URL(location.href);
+    var q = input.value.trim();
+    if (q === (u.searchParams.get('q') || '')) return;
+    if (q) u.searchParams.set('q', q); else u.searchParams.delete('q');
+    u.searchParams.delete('page');
+    history.replaceState(null, '', u.pathname + (u.search || '') + (u.hash || ''));
+  } catch (e) { return; }
+  refreshOrderRows();
 }
 
 (function() {
   var input = document.getElementById('filter-search');
-  if (input) input.addEventListener('input', applyOrderFilter);
+  if (input) input.addEventListener('input', debounce(searchOrders, SEARCH_DEBOUNCE_MS));
   installLiveDurations();
 })();
 

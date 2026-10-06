@@ -16,16 +16,14 @@ func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	compatNodes := make(map[int64][]string)
-	for _, p := range payloads {
-		nodeList, err := h.engine.PayloadService().ListCompatibleNodes(p.ID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		for _, n := range nodeList {
-			compatNodes[p.ID] = append(compatNodes[p.ID], n.Name)
-		}
+	// The three per-row columns are each one read for the whole table. They
+	// were three queries per payload (399 for a 133-payload table):
+	// compatible nodes, bin types, and a scan of every produce claim.
+	// Pin: TestHandlePayloadsPage_PerRowColumns.
+	compatNodes, err := h.engine.PayloadService().CompatibleNodeNamesByPayload()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	binTypes, err := h.engine.BinService().ListBinTypes()
@@ -34,16 +32,10 @@ func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payloadBinTypes := make(map[int64][]string)
-	for _, p := range payloads {
-		btList, err := h.engine.PayloadService().ListBinTypes(p.ID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		for _, bt := range btList {
-			payloadBinTypes[p.ID] = append(payloadBinTypes[p.ID], bt.Code)
-		}
+	payloadBinTypes, err := h.engine.PayloadService().BinTypeCodesByPayload()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	// Containment state per payload code — the table's Containment column.
@@ -67,10 +59,8 @@ func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
 	// to FG is the hole the floor needs to see before they believe the part
 	// is held.
 	unroutedProducers := make(map[string]string, len(payloads))
-	for _, p := range payloads {
-		if names := h.engine.PayloadService().UnroutedProducersForPayload(p.Code); len(names) > 0 {
-			unroutedProducers[p.Code] = strings.Join(names, ", ")
-		}
+	for code, names := range h.engine.PayloadService().UnroutedProducersByPayload() {
+		unroutedProducers[code] = strings.Join(names, ", ")
 	}
 
 	data := map[string]any{

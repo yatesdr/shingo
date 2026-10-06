@@ -116,6 +116,18 @@ sizing:
 .modal--touch button { min-height: var(--os-touch-min); }
 ```
 
+### Deep links: `?open=`
+
+A thing with a pop-up is linkable by `?open=<key>` on its page:
+`/orders?open=42`, `/robots?open=AMR-07`, `/nodes?open=ALN_003`,
+`/bins?open=17`. Core reads it with one helper, `app.js` `openFromQuery`.
+
+A pop-up that names an order, robot, node or bin links it this way — every
+reference, not some of them. A link inside a clickable table row carries
+`data-action="stopPropagation"` so it navigates instead of opening the row.
+A link to a page behind login renders only for a viewer who is logged in;
+for anyone else the name is plain text.
+
 ### What not to do
 
 - ❌ `style="display:none"` toggled by JS — fragile, no transitions

@@ -5,7 +5,9 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,7 +21,8 @@ import (
 )
 
 func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
-	orders, limit, err := h.listOrdersForPageWithLimit(r)
+	view := parseOrdersView(r)
+	orders, pager, err := h.listOrdersForPage(view)
 	if err != nil {
 		log.Printf("orders page: list orders: %v", err)
 	}
@@ -28,13 +31,15 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Page":               "orders",
 		"Orders":             orders,
-		"FilterStatus":       r.URL.Query().Get("status"),
+		"FilterStatus":       view.status,
+		"Search":             view.filter.Search,
+		"PickedIDs":          len(view.filter.IDs),
 		"QueueCodeCounts":    countQueueCodes(orders),
 		"QueueCodeLabels":    queueCodeLabels(),
 		"FaultLines":         faultLines,
 		"FaultedNoticeCount": noticeCount,
 		"WaitSince":          h.waitSinceFor(orders),
-		"TruncationNotice":   h.truncationNotice(r, len(orders), limit),
+		"Pager":              pager,
 	}
 	h.render(w, r, "orders.html", data)
 }
@@ -47,9 +52,12 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 // refresh would have required.
 //
 // Same filter semantics as handleOrders, read from the same query params, so a
-// refresh cannot quietly widen or narrow what the page is showing.
+// refresh cannot quietly widen or narrow what the page is showing. The search
+// box drives this endpoint too: a keystroke (debounced in orders.js) puts q on
+// the URL and asks for the rows again, so the search covers every order the
+// view matches rather than the rows already on screen.
 func (h *Handlers) handleOrdersRows(w http.ResponseWriter, r *http.Request) {
-	orders, err := h.listOrdersForPage(r)
+	orders, pager, err := h.listOrdersForPage(parseOrdersView(r))
 	if err != nil {
 		// 500, NOT a 200 with an empty <tbody>. This fragment REPLACES the
 		// board's rows, so answering a failed read with an empty body told the
@@ -78,74 +86,211 @@ func (h *Handlers) handleOrdersRows(w http.ResponseWriter, r *http.Request) {
 		"FaultLines":    faultLines,
 		"WaitSince":     h.waitSinceFor(orders),
 		"Authenticated": h.isAuthenticated(r),
+		"Pager":         pager,
 	}); err != nil {
 		log.Printf("orders rows: %v", err)
 	}
 }
 
-// listOrdersForPage is the order list behind both the page and the row
-// fragment. One function so the two cannot answer the same query differently.
-func (h *Handlers) listOrdersForPage(r *http.Request) ([]*domain.Order, error) {
-	list, _, err := h.listOrdersForPageWithLimit(r)
-	return list, err
+// ordersPageSize is how many rows one page of a capped view holds unless
+// ?limit= asks for another number. It is the cap the board has always used, so
+// page 1 of every view is the set it showed before paging existed, and the
+// "Why waiting" chips counted over those rows read the same.
+const ordersPageSize = 100
+
+// maxPickedIDs bounds ?ids=. The Overview alert line links its stuck orders
+// here; a list longer than this is not a pick, it is a view.
+const maxPickedIDs = 500
+
+// ordersView is what the board was asked to show: which orders, and which page
+// of them. Parsed once, from the query string the page and its row refresh
+// share.
+type ordersView struct {
+	status string // "" = Active, "all", or one status
+	filter domain.OrderFilter
+	paged  bool
+	page   int
+	query  url.Values
 }
 
-// listOrdersForPageWithLimit is listOrdersForPage plus the limit it applied, or
-// 0 when the view is unlimited (the default "Active" one). The caller needs it
-// to tell a full page from a truncated one — see truncationNotice.
-func (h *Handlers) listOrdersForPageWithLimit(r *http.Request) ([]*domain.Order, int, error) {
-	status := r.URL.Query().Get("status")
-	limit := 100
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if n, err := strconv.Atoi(l); err == nil && n > 0 {
-			limit = n
+// parseOrdersView reads the board's query string.
+//
+//   - status: "" is the Active view (every non-terminal order, never paged —
+//     paging the live board would hide orders that are moving), "all" is every
+//     order, anything else one status. The last two are paged.
+//   - ids: exactly these orders, whatever their status now. It replaces the
+//     status view: an order the alert line named that has since finished is
+//     still the order you clicked through to see.
+//   - q: a substring over what a row prints, applied by the server so it covers
+//     every order the view matches, not the page on screen.
+//   - page / limit: which page, and how many rows a page holds.
+func parseOrdersView(r *http.Request) ordersView {
+	q := r.URL.Query()
+	v := ordersView{status: q.Get("status"), page: 1, query: q}
+	v.filter.Search = strings.TrimSpace(q.Get("q"))
+
+	limit := ordersPageSize
+	if n, err := strconv.Atoi(q.Get("limit")); err == nil && n > 0 {
+		limit = n
+	}
+	if n, err := strconv.Atoi(q.Get("page")); err == nil && n > 1 {
+		v.page = n
+	}
+
+	for _, part := range strings.Split(q.Get("ids"), ",") {
+		if id, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64); err == nil && id > 0 {
+			v.filter.IDs = append(v.filter.IDs, id)
+		}
+		if len(v.filter.IDs) == maxPickedIDs {
+			break
 		}
 	}
-	svc := h.engine.OrderService()
+
 	switch {
-	case status == "":
-		list, err := svc.ListActiveOrders()
-		return list, 0, err
-	case status == "all":
-		list, err := svc.ListOrders("", limit)
-		return list, limit, err
+	case len(v.filter.IDs) > 0:
+		v.filter.NoLimit = true
+	case v.status == "":
+		v.filter.ActiveOnly = true
+		v.filter.NoLimit = true
 	default:
-		list, err := svc.ListOrders(status, limit)
-		return list, limit, err
+		if v.status != "all" {
+			v.filter.Statuses = []string{v.status}
+		}
+		v.paged = true
+		v.filter.Limit = limit
+		v.filter.Offset = (v.page - 1) * limit
 	}
+	return v
 }
 
-// truncationNotice returns "showing N of M" when the board is not showing
-// everything the filter matches, and "" when it is.
+// ordersPager is the board's position in its view: what it is showing of how
+// many, and the links either side. Zero when there is nothing to say — a whole
+// view with no search names no count.
+type ordersPager struct {
+	Summary string
+	PrevURL string
+	NextURL string
+}
+
+// listOrdersForPage is the order list behind both the page and the row
+// fragment. One function so the two cannot answer the same query differently.
 //
-// THE BOARD USED TO TRUNCATE IN SILENCE. status=all is ORDER BY id DESC LIMIT
-// 100, so on a plant with more than that the oldest orders simply were not
-// there — no control, no count, nothing to tell an operator looking for order 1
-// that it existed. `?limit=` has always worked and nobody could know.
-//
-// It only counts when the page came back FULL, which is the only case that can
-// be truncated; a short page is the whole answer and costs no query. Paging is
-// deliberately not built here: this is the display step's honesty fix, and a
-// number an operator can act on beats a control nobody asked for.
-func (h *Handlers) truncationNotice(r *http.Request, shown, limit int) string {
-	if limit == 0 || shown < limit {
-		return ""
-	}
-	status := r.URL.Query().Get("status")
-	if status == "all" {
-		status = ""
-	}
-	total, err := h.engine.OrderService().CountOrdersForList(status)
+// ONE QUERY FOR THE ROWS, and a COUNT only when the page could be holding
+// something back: a paged view whose page came back full, or any page past the
+// first. A short first page is the whole answer and costs nothing more — the
+// rule the old truncation notice used, kept.
+func (h *Handlers) listOrdersForPage(v ordersView) ([]*domain.Order, ordersPager, error) {
+	svc := h.engine.OrderService()
+	list, err := svc.ListOrdersFiltered(v.filter)
 	if err != nil {
-		// The board still renders; it simply does not claim a total it could not
-		// read. Saying nothing beats saying a wrong number.
-		log.Printf("orders page: count for the truncation notice: %v", err)
-		return ""
+		return nil, ordersPager{}, err
 	}
-	if total <= shown {
-		return ""
+	var p ordersPager
+	if !v.paged {
+		if v.filter.Search != "" {
+			p.Summary = countText(len(list)) + " matching"
+		}
+		return list, p, nil
 	}
-	return fmt.Sprintf("showing %d of %d — add ?limit=%d to see them all", shown, total, total)
+
+	total := v.filter.Offset + len(list)
+	if len(list) == v.filter.Limit || v.filter.Offset > 0 {
+		n, err := svc.CountOrdersFiltered(v.filter)
+		if err != nil {
+			// The rows still render; the pager simply does not claim a total it
+			// could not read, and offers no Next it cannot justify.
+			log.Printf("orders page: count for the pager: %v", err)
+			return list, p, nil
+		}
+		total = n
+	}
+	if v.page > 1 {
+		p.PrevURL = pageURL(v.query, v.page-1)
+	}
+	if v.filter.Offset+len(list) < total {
+		p.NextURL = pageURL(v.query, v.page+1)
+	}
+	switch {
+	case len(list) > 0 && (p.PrevURL != "" || p.NextURL != ""):
+		p.Summary = fmt.Sprintf("%s–%s of %s", countText(v.filter.Offset+1),
+			countText(v.filter.Offset+len(list)), countText(total))
+	case len(list) == 0 && v.filter.Offset > 0:
+		p.Summary = "past the last page — " + countText(total) + " in all"
+	default:
+		if v.filter.Search != "" {
+			p.Summary = countText(len(list)) + " matching"
+		}
+	}
+	return list, p, nil
+}
+
+// pageURL is the board's own URL on another page. Every other parameter rides
+// along — status, search, page size — except the open modal, which belongs to
+// the page it was opened on.
+func pageURL(q url.Values, page int) string {
+	next := url.Values{}
+	for k, vs := range q {
+		if k != "open" && k != "page" {
+			next[k] = vs
+		}
+	}
+	if page > 1 {
+		next.Set("page", strconv.Itoa(page))
+	}
+	return "/orders?" + next.Encode()
+}
+
+// countText prints a count with a thousands separator: the guide's abbreviation
+// rule ("The numbers themselves", rule 3) prints counts below 10,000 in full
+// with one, and a table never abbreviates.
+func countText(n int) string {
+	s := strconv.Itoa(n)
+	if n < 0 {
+		return "-" + countText(-n)
+	}
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
+}
+
+// orderStatusFilter is one status chip on the orders board.
+type orderStatusFilter struct {
+	Status protocol.Status
+	Label  string
+}
+
+// orderStatusFilters is the board's status chips, in lifecycle order: one per
+// status an order can hold. The list is the board's, so a status cannot get a
+// badge in the table and no way to filter for it.
+//
+// Two protocol statuses have no chip because Core never writes them:
+// `submitted` has no writer in shingo-core at all, and `acknowledged` has one
+// caller (engine/wiring_vendor_status.go) whose arm is dead — fleet.MapState
+// never yields it. Both are Edge lifecycle words. Guarded by
+// TestOrderStatusFilters_CoverEveryStatusCoreWrites.
+var orderStatusFilters = []orderStatusFilter{
+	{protocol.StatusPending, "Pending"},
+	// THE TWO WAITING RUNGS. Sourcing is the material hunt — the hand is short —
+	// and queued is the line, where the hand is complete and only the turn is
+	// missing; different questions, different answers, two chips.
+	{protocol.StatusSourcing, "Sourcing"},
+	{protocol.StatusQueued, "Queued"},
+	{protocol.StatusDispatched, "Dispatched"},
+	{protocol.StatusInTransit, "In Transit"},
+	// Staged is where a robot holds at a lane mark or a staging node — and where
+	// a gate-staged parent sits for the whole of a dig it owns, because
+	// staged → reshuffling is not a legal move.
+	{protocol.StatusStaged, "Staged"},
+	{protocol.StatusFaulted, "Faulted"},
+	{protocol.StatusDelivered, "Delivered"},
+	{protocol.StatusConfirmed, "Confirmed"},
+	{protocol.StatusFailed, "Failed"},
+	{protocol.StatusCancelled, "Cancelled"},
+	{protocol.StatusSkipped, "Skipped"},
+	// A compound parent that entered its dig from pending, sourcing or queued
+	// (dispatch.LifecycleService.BeginReshuffle).
+	{protocol.StatusReshuffling, "Reshuffling"},
 }
 
 // faultLinesFor builds the rendered fault line for each faulted order on the
@@ -451,7 +596,6 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 		Order        *domain.Order            `json:"order"`
 		History      []*domain.OrderHistory   `json:"history,omitempty"`
 		Bin          *domain.Bin              `json:"bin,omitempty"`
-		BinManifest  *domain.Manifest         `json:"bin_manifest,omitempty"`
 		SourceNode   *domain.Node             `json:"source_node,omitempty"`
 		DeliveryNode *domain.Node             `json:"delivery_node,omitempty"`
 		Children     []*domain.Order          `json:"children,omitempty"`
@@ -505,8 +649,9 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if order.BinID != nil {
+		// The bin alone. Its manifest was read here too and never rendered —
+		// the pop-up looked for it under another key — so the read is gone.
 		result.Bin, _ = h.engine.BinService().GetBin(*order.BinID)
-		result.BinManifest, _ = h.engine.BinService().GetManifest(*order.BinID)
 	}
 	if order.SourceNode != "" {
 		result.SourceNode, _ = h.engine.NodeService().GetByName(order.SourceNode)
@@ -532,7 +677,10 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 			result.VendorDetail, _ = vc.GetVendorOrderDetail(order.VendorOrderID)
 		}
 	}
-	if order.RobotID != "" {
+	// A finished order has no live robot. The robot's status is where it is
+	// NOW: on an order that finished hours ago it described the robot's next
+	// job, under this order's name.
+	if order.RobotID != "" && !protocol.IsTerminal(order.Status) {
 		if rs, ok := h.engine.GetCachedRobotStatus(order.RobotID); ok {
 			result.Robot = &rs
 		}

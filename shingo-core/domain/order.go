@@ -155,3 +155,19 @@ type Order struct {
 	// the move is skipped. nil on every other order. Written once at creation.
 	NamedBinID *int64 `json:"named_bin_id,omitempty"`
 }
+
+// OrderFilter is the query for a filtered, paged order list. It lives in
+// domain rather than store/orders for the reason TelemetryFilter does: the
+// handler parses HTTP parameters into it and hands it through the service, so
+// it is the contract between the two, not a persistence detail.
+type OrderFilter struct {
+	Statuses   []string   // status IN (...); empty = any status
+	ActiveOnly bool       // non-terminal statuses only
+	IDs        []int64    // id IN (...); empty = any id
+	Search     string     // case-insensitive substring over the fields the board prints
+	StationID  string     // station_id; empty = all
+	Since      *time.Time // created_at >= since
+	Limit      int        // max rows; 0 = default 100
+	NoLimit    bool       // every matching row (Limit and Offset ignored)
+	Offset     int        // pagination offset
+}

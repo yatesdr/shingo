@@ -94,6 +94,7 @@
       <thead>
         <tr>
           <th>ID</th>
+          <th title="From &rarr; Line &rarr; To">Route</th>
           <th>Station</th>
           <th>Type</th>
           <th>Payload</th>
@@ -106,13 +107,10 @@
         {{range .ActiveOrders}}
         <tr>
           <td><a href="/orders?open={{.ID}}">{{.ID}}</a></td>
+          <td class="orders-route">{{template "order-route" .}}</td>
           <td>{{stationName .StationID}}</td>
           <td>{{.OrderType}}</td>
-          <td>
-            {{if .PayloadCode}}<code>{{.PayloadCode}}</code>{{end}}
-            {{if .PayloadDesc}}<div class="text-muted" style="font-size:0.8rem">{{.PayloadDesc}}</div>{{end}}
-            {{if and (not .PayloadCode) (not .PayloadDesc)}}<span class="text-muted">-</span>{{end}}
-          </td>
+          <td>{{template "order-payload" .}}</td>
           {{/* THE WALL SHOULD NOT KNOW LESS THAN THE BOARD. This cell rendered
                the status word alone, so an order reading "queued — Waiting for
                material: PANEL-A in SYN_MARKET · 32m" on /orders read just
@@ -124,7 +122,8 @@
             {{if .QueueReason}}<div class="orders-subtext orders-reason">{{.QueueReason}}{{with index $.WaitSince .ID}} · <span class="tnum orders-wait-since" data-since="{{.}}"></span>{{end}}</div>{{end}}
           </td>
           <td>{{.RobotID}}</td>
-          <td>{{formatTime .CreatedAt}}</td>
+          {{/* Seconds, as on the orders board: rows can share a minute. */}}
+          <td class="orders-time">{{formatTimeSeconds .CreatedAt}}</td>
         </tr>
         {{end}}
       </tbody>

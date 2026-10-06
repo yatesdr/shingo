@@ -1,4 +1,4 @@
-import { api, apiGet, apiPost, delegateActions, el, escapeHtml, toast, uiConfirm } from '/static/app.js';
+import { api, apiGet, apiPost, delegateActions, el, escapeHtml, openFromQuery, toast, uiConfirm } from '/static/app.js';
 import { confirmAllowedBinsNarrowing, renderMaintainSection, saveMaintainedGroup } from '/static/pages/nodes-maintain.js';
 
 // Node detail modal: form fields, chip pickers (bin types & stations),
@@ -802,3 +802,10 @@ async function saveLaneGatePoints() {
     }
   }
 }
+
+// /nodes?open=ALN_003 opens that node's pop-up — the order pop-up links every
+// node it names here (app.js openFromQuery).
+openFromQuery(function(name) {
+  var tile = document.querySelector('.node-tile[data-name="' + CSS.escape(name) + '"]');
+  if (tile) openNodeModal(tile);
+});

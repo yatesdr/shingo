@@ -15,6 +15,12 @@ That's the entire taxonomy. Resist adding `.btn-secondary`, `.btn-success`
 etc. — if you need a green button, it's usually a primary action in a
 different context, not a new variant.
 
+**A destructive verb repeated on every row of a table is `.btn .btn-sm`, not
+`.btn-danger`.** A column of solid red buttons is structure shouting louder
+than the data beside it (Orders' Cancel, Payloads' Delete). The confirm dialog
+carries the warning and is unchanged. `.btn-danger` stays for the one
+destructive action of a dialog or a detail view.
+
 ### Touch sizing
 
 Operator HMI buttons get `min-height: var(--os-touch-min)` via the

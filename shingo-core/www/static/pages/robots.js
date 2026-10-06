@@ -1,4 +1,4 @@
-import { api, debounce, delegateActions, el, hideModal, showModal, uiConfirm } from '/static/app.js';
+import { api, debounce, delegateActions, el, hideModal, openFromQuery, showModal, uiConfirm } from '/static/app.js';
 import { installLiveDurations, reconcileList, onSSE } from '/static/shared/utils.js';
 import { createRobotTile, updateRobotTile } from '/static/components/RobotTile.js';
 import { createBoard } from '/static/components/localization-board.js';
@@ -191,3 +191,10 @@ if (document.readyState === 'loading') {
 } else {
   bootLocalizationBoard();
 }
+
+// /robots?open=AMR-07 opens that robot's pop-up — the order pop-up links the
+// robot it names here (app.js openFromQuery).
+openFromQuery(function(name) {
+  var tile = document.querySelector('.robot-tile[data-name="' + CSS.escape(name) + '"]');
+  if (tile) openRobotModal(tile);
+});

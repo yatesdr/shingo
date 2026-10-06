@@ -180,6 +180,10 @@ func templateFuncs(namer stationNamer) template.FuncMap {
 		"cacheBust":  func() string { return fmt.Sprintf("%x", time.Now().UnixNano()) },
 		"iconSprite": func() template.HTML { return iconSpriteHTML },
 		"canCancel":  canCancelStatus,
+		// orderStatusFilters: the orders board's status chips, one per status an
+		// order can hold (handlers_orders.go). A func rather than page data so
+		// every render of the page draws the one list.
+		"orderStatusFilters": func() []orderStatusFilter { return orderStatusFilters },
 
 		// stationName renders the operator's label for a station identity.
 		//
@@ -257,6 +261,19 @@ func templateFuncs(namer stationNamer) template.FuncMap {
 		// same-day columns.
 		"formatDayClock": func(t time.Time) string {
 			return t.In(plantLocation).Format("Jan 02 15:04")
+		},
+		// formatTimeSeconds: formatTime's full stamp with seconds, for a table
+		// column whose rows can share a minute (orders are created several a
+		// minute, so the board's Created column read "07:24" four rows running
+		// and their order was unreadable). Same <time data-utc> shape as
+		// planttime.Format. Core-only until a second surface needs it
+		// (docs/shared-layer-promotion.md).
+		"formatTimeSeconds": func(t time.Time) template.HTML {
+			if t.IsZero() {
+				return template.HTML("-")
+			}
+			return template.HTML(`<time data-utc="` + t.UTC().Format(time.RFC3339) + `">` +
+				t.In(plantLocation).Format("Jan 2, 2006 15:04:05 MST") + `</time>`)
 		},
 		"statusColor": func(status string) string {
 			switch protocol.Status(status) {

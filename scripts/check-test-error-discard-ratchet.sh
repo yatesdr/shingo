@@ -101,7 +101,7 @@ cd "$(dirname "$0")/.."
 # 1469 → 1447: S5-S7 (release intents) deleted the deferral, survivor and
 # collision tests and the release-cap and chip-prefix tests with the code
 # they pinned; their replacements check every read.
-FROZEN=1417
+FROZEN=1416
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"

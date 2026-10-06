@@ -148,3 +148,58 @@ func TestOrdersPage_HasAFaultedFilterPill(t *testing.T) {
 		t.Error("the status filter row must offer Faulted")
 	}
 }
+
+// TestOrderStatusFilters_CoverEveryStatusCoreWrites: the orders board has a
+// chip for every status an order can hold, and only for those.
+//
+// The board had none for staged, cancelled or skipped (U4 audit, 2026-10-05):
+// the badge was in the table and there was no way to narrow the board to it. A
+// gate-staged parent sits at `staged` for the whole of a dig it owns, so a
+// reshuffle in progress could be found by no chip at all.
+//
+// The two statuses left out have no writer in Core. `submitted`: no
+// shingo-core code writes it. `acknowledged`: LifecycleService.Acknowledge has
+// one caller (engine/wiring_vendor_status.go), an arm its own comment records as
+// dead because fleet.MapState never yields it. Expiry: when Core writes either,
+// it moves out of this list and gets a chip.
+func TestOrderStatusFilters_CoverEveryStatusCoreWrites(t *testing.T) {
+	t.Parallel()
+	noCoreWriter := map[protocol.Status]bool{
+		protocol.StatusSubmitted:    true,
+		protocol.StatusAcknowledged: true,
+	}
+	chips := map[protocol.Status]int{}
+	for _, f := range orderStatusFilters {
+		chips[f.Status]++
+		if f.Label == "" {
+			t.Errorf("the %s chip has no label", f.Status)
+		}
+	}
+	known := map[protocol.Status]bool{}
+	for _, s := range protocol.AllStatuses() {
+		known[s] = true
+		switch n := chips[s]; {
+		case noCoreWriter[s] && n > 0:
+			t.Errorf("%s has a chip but Core never writes it; if it does now, drop it from noCoreWriter", s)
+		case !noCoreWriter[s] && n == 0:
+			t.Errorf("%s is a status an order can hold and the board has no chip for it", s)
+		case n > 1:
+			t.Errorf("%s has %d chips", s, n)
+		}
+	}
+	for s := range chips {
+		if !known[s] {
+			t.Errorf("chip %q is not a protocol status", s)
+		}
+	}
+
+	namer := &fakeNamer{byUID: map[string]string{}}
+	html := renderPageWithNamer(t, "orders.html", namer, map[string]any{
+		"Page": "orders", "Orders": []*domain.Order{},
+	})
+	for _, f := range orderStatusFilters {
+		if !strings.Contains(html, `href="/orders?status=`+string(f.Status)+`"`) {
+			t.Errorf("the %s chip is in the list but not on the page", f.Status)
+		}
+	}
+}

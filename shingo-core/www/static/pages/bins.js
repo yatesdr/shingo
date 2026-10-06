@@ -1,4 +1,4 @@
-import { api, apiGet, apiPost, debounce, delegateActions, el, escapeHtml, h, hideModal, showModal, timeAgoHTML, toast, uiConfirm, uiPrompt } from '/static/app.js';
+import { api, apiGet, apiPost, debounce, delegateActions, el, escapeHtml, h, hideModal, openFromQuery, showModal, timeAgoHTML, toast, uiConfirm, uiPrompt } from '/static/app.js';
 import { onSSE } from '/static/shared/utils.js';
 
 // ===== STATE =====
@@ -991,3 +991,10 @@ delegateActions(document.body, {
     updateBinProps,
     updateBulkBar
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });
+
+// /bins?open=17 opens that bin's detail — the order pop-up links its bin here
+// (app.js openFromQuery).
+openFromQuery(function(id) {
+  var n = parseInt(id, 10);
+  if (n > 0) openBinDetail(n);
+});

@@ -154,9 +154,9 @@ func TestOrdersPage_ADispatchedOrderCarriesNoWaitClock(t *testing.T) {
 //
 // `status=all` is `ORDER BY id DESC LIMIT 100`, and it truncated in SILENCE:
 // on a plant with more orders than that the oldest ones simply were not on the
-// board, with no paging control and no count to say they existed. `?limit=` has
-// always worked, and there was no way for an operator to know that either — the
-// page looked like the whole answer.
+// board, with no paging control and no count to say they existed. A
+// "showing N of M — add ?limit=M" notice said so first; real paging replaced it
+// (U4, 2026-10-05), and the pager carries the same count.
 //
 // Both directions are asserted, because a notice that is always there is as
 // useless as one that never is: it appears when the page is holding back, and
@@ -172,14 +172,14 @@ func TestOrdersPage_ATruncatedBoardSaysSo(t *testing.T) {
 
 	// Held back: five exist, the page is asked for three.
 	body := renderOrdersPage(t, h, "?status=all&limit=3")
-	if !strings.Contains(body, "showing 3 of 5") {
+	if !strings.Contains(body, "1–3 of 5") {
 		t.Errorf("a board showing 3 of 5 orders says nothing about the other 2.\n" +
 			"An operator looking for an order that IS there reads an empty answer as the truth.")
 	}
 
 	// Complete: the page holds everything the filter matches.
 	body = renderOrdersPage(t, h, "?status=all&limit=50")
-	if strings.Contains(body, "showing") {
+	if strings.Contains(body, " of 5") {
 		t.Errorf("the board claims to be truncated while showing every order the filter matches — " +
 			"a notice that is always on is one nobody reads.")
 	}

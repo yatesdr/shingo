@@ -214,19 +214,22 @@ func TestPayloadService_SetAndListBinTypes(t *testing.T) {
 	}
 }
 
-func TestPayloadService_ListCompatibleNodes_EmptyByDefault(t *testing.T) {
+func TestPayloadService_CompatibleNodeNamesByPayload_EmptyByDefault(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	svc := NewPayloadService(db)
 	p := makePayload(t, svc, "PL-CNODES", "", 10)
 
-	rows, err := svc.ListCompatibleNodes(p.ID)
+	byPayload, err := svc.CompatibleNodeNamesByPayload()
 	if err != nil {
-		t.Fatalf("ListCompatibleNodes: %v", err)
+		t.Fatalf("CompatibleNodeNamesByPayload: %v", err)
 	}
-	// Sanity: matches direct *store.DB call.
-	dbRows, _ := db.ListNodesForPayload(p.ID)
-	if len(dbRows) != len(rows) {
-		t.Errorf("db rows = %d, svc rows = %d, should match", len(dbRows), len(rows))
+	// Sanity: matches the per-payload store read.
+	dbRows, err := db.ListNodesForPayload(p.ID)
+	if err != nil {
+		t.Fatalf("ListNodesForPayload: %v", err)
+	}
+	if len(dbRows) != len(byPayload[p.ID]) {
+		t.Errorf("db rows = %d, svc names = %d, should match", len(dbRows), len(byPayload[p.ID]))
 	}
 }

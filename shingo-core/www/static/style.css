@@ -346,7 +346,9 @@ textarea { resize: vertical; min-height: 60px; }
 .manifest .timeline-list { padding: 0; margin: 0.25rem 0 0; list-style: none; }
 .manifest .timeline-list li { padding: 0.2rem 0; display: flex; gap: 0.5rem; align-items: baseline; font-size: 0.8rem; }
 .manifest .timeline-list li + li { border-top: 1px dashed var(--border); }
-.manifest .tl-time { color: var(--text-muted); font-size: 0.72rem; white-space: nowrap; min-width: 10em; }
+.manifest .tl-time { color: var(--text-muted); font-size: 0.72rem; white-space: nowrap; min-width: 5.5em; }
+/* The plant date heads the history and every day it turns (orders.js). */
+.manifest .timeline-list li.tl-day { color: var(--text-muted); font-size: 0.68rem; font-weight: var(--fw-bold); border-top: none; padding-top: 0.4rem; }
 .manifest .tl-detail { color: var(--text-muted); font-size: 0.75rem; }
 /* The unaccounted-gap row: an order existed and nothing was written for it.
    Muted and italic because it is an ABSENCE being reported, not an event — it
@@ -957,6 +959,7 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .ofilter-dot[data-status="queued"]      { background:var(--status-queued-dot); }
 .ofilter-dot[data-status="dispatched"]  { background:var(--status-dispatched-dot); }
 .ofilter-dot[data-status="in_transit"]  { background:var(--status-in-transit-dot); }
+.ofilter-dot[data-status="staged"]      { background:var(--status-staged-dot); }
 .ofilter-dot[data-status="delivered"]   { background:var(--status-delivered-dot); }
 .ofilter-dot[data-status="confirmed"]   { background:var(--status-delivered-dot); }
 /* faulted reuses --warning the way failed reuses --danger. No new hue: the
@@ -964,21 +967,26 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .ofilter-dot[data-status="faulted"]     { background:var(--warning); }
 .ofilter-dot[data-status="failed"]      { background:var(--danger); }
 .ofilter-dot[data-status="reshuffling"] { background:var(--status-reshuffling-dot); }
+/* cancelled and skipped keep the default muted dot: both are quiet terminal
+   states, and their badges are greys too. */
 
-.orders-search { min-width:220px; max-width:260px; }
+.orders-search, .payloads-search { min-width:220px; max-width:260px; }
 .queue-why { display:flex; align-items:center; flex-wrap:wrap; gap:0.4rem; margin-bottom:var(--sp-3); }
 
 .orders-card { padding:0.75rem; }
 /* Rows open the detail modal. */
 .orders-table tbody tr { cursor:pointer; }
-/* The UUID is the widest column and the least-scanned field: clamp it with an
- * ellipsis rather than truncating the string, so the full value stays in the
- * DOM for the client-side text filter (and in the title on hover). */
-.orders-uuid {
-  font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size:var(--font-xs); color:var(--text-muted);
-  max-width:13rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-}
+/* From → Line → To (partials/orders-rows.html order-route), on the board and
+ * the Dashboard. Node names are single tokens; the arrows recede. An end not
+ * assigned yet is the guide's no-data dash. */
+.orders-route { white-space:nowrap; }
+.order-route-arrow { color:var(--text-muted); }
+.order-route-none { color:var(--text-muted); }
+.orders-scope { margin-bottom:var(--sp-2); }
+/* The pager row sits under the rows, not among them. */
+.orders-table tbody tr.orders-pager { cursor:default; }
+.orders-pager td { text-align:center; padding-top:0.6rem; }
+.orders-pager td > * { margin:0 0.4rem; }
 /* Part codes, robot ids and timestamps are single tokens — letting them wrap
  * broke them mid-string and doubled every row's height. */
 .orders-time { white-space:nowrap; font-variant-numeric:tabular-nums; }
@@ -991,11 +999,6 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .orders-subtext { font-size:var(--font-xs); color:var(--text-muted); }
 .orders-reason { max-width:22rem; white-space:normal; }
 .orders-actions { white-space:nowrap; }
-/* Destructive control on every row is loud structure; keep it quiet until
- * the row is under the cursor. */
-.orders-table tbody .btn-danger { opacity:0.55; transition:opacity var(--dur-fast) var(--ease); }
-.orders-table tbody tr:hover .btn-danger,
-.orders-table tbody .btn-danger:focus-visible { opacity:1; }
 
 .manifest-footer {
   text-align:right; font-size:var(--font-xs);

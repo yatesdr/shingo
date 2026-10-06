@@ -47,6 +47,11 @@ func (db *DB) ListBinTypesForPayload(payloadID int64) ([]*bins.BinType, error) {
 	return bins.ListTypesForPayload(db.DB, payloadID)
 }
 
+// ListBinTypeCodesByPayload maps each payload to its bin type codes, sorted.
+func (db *DB) ListBinTypeCodesByPayload() (map[int64][]string, error) {
+	return bins.ListTypeCodesByPayload(db.DB)
+}
+
 // LoadBinTypeRule resolves payload_bin_types for ONE payload code into the value
 // the per-bin predicates judge candidates against.
 //

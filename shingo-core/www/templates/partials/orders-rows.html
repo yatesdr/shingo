@@ -1,7 +1,21 @@
+{{define "order-route"}}{{/* From → Line → To, from source_node, process_node and
+     delivery_node. The line node is omitted when it repeats either end (a
+     retrieve delivering to the line names it once). An end not chosen yet is
+     no data, not an empty string: a muted dash whose title says so. One
+     partial for the orders board and the Dashboard, so the two cannot spell a
+     route two ways; the order pop-up's routeHTML (orders.js) draws the
+     same rule, held to this by TestOrderRouteRuleMatchesThePopup. */}}<span class="order-route">{{if .SourceNode}}{{.SourceNode}}{{else}}<span class="order-route-none" title="not assigned yet">—</span>{{end}}{{if and .ProcessNode (ne .ProcessNode .SourceNode) (ne .ProcessNode .DeliveryNode)}} <span class="order-route-arrow">→</span> {{.ProcessNode}}{{end}} <span class="order-route-arrow">→</span> {{if .DeliveryNode}}{{.DeliveryNode}}{{else}}<span class="order-route-none" title="not assigned yet">—</span>{{end}}</span>{{end}}
+
+{{define "order-payload"}}{{/* The payload, printed once. payload_desc is almost
+     always the payload's own catalog description ("SHIM" / "SHIM (dev)"), so
+     it rides in the title, and is printed only when there is no code. */}}{{if .PayloadCode}}<code{{if .PayloadDesc}} title="{{.PayloadDesc}}"{{end}}>{{.PayloadCode}}</code>{{else if .PayloadDesc}}<span class="orders-subtext">{{.PayloadDesc}}</span>{{else}}<span class="text-muted">-</span>{{end}}{{end}}
+
 {{define "orders-rows"}}
 {{/* One row per order. Defined as a partial because two things render it: the
-     page, and the row-refresh endpoint the SSE handler calls. A second copy in
-     JS would be the drift this partial exists to prevent. */}}
+     page, and the row-refresh endpoint the SSE handler and the search box
+     call. A second copy in JS would be the drift this partial exists to
+     prevent. The edge UUID is not a column: it tells an operator nothing, and
+     the order pop-up carries it. */}}
 {{range .Orders}}
 <tr data-order-id="{{.ID}}" data-action="openOrderModal:{{.ID}}">
   {{/* The whole row does ONE thing: open the order. It stays an
@@ -9,14 +23,10 @@
       a new tab, where ?open= reopens the same modal; a plain click
       is intercepted (see openOrderModal). */}}
   <td class="tnum" data-sort-value="{{.ID}}"><a href="/orders?open={{.ID}}" data-action="openOrderModal:{{.ID}}">{{.ID}}</a></td>
-  <td class="orders-uuid" title="{{.EdgeUUID}}">{{.EdgeUUID}}</td>
+  <td class="orders-route">{{template "order-route" .}}</td>
   <td>{{stationName .StationID}}</td>
   <td>{{.OrderType}}</td>
-  <td data-sort-value="{{.PayloadCode}}">
-    {{if .PayloadCode}}<code>{{.PayloadCode}}</code>{{end}}
-    {{if .PayloadDesc}}<div class="orders-subtext">{{.PayloadDesc}}</div>{{end}}
-    {{if and (not .PayloadCode) (not .PayloadDesc)}}<span class="text-muted">-</span>{{end}}
-  </td>
+  <td data-sort-value="{{.PayloadCode}}">{{template "order-payload" .}}</td>
   <td data-sort-value="{{.Status}}">
     <span class="badge badge-{{.Status}}">{{.Status}}</span>
     {{/* Same slot, either reason: an order still acquiring its material explains
@@ -38,7 +48,9 @@
     {{if $.FaultLines}}{{with index $.FaultLines .ID}}<div class="orders-subtext orders-reason">{{.}}</div>{{end}}{{end}}
   </td>
   <td class="orders-robot">{{.RobotID}}</td>
-  <td class="orders-time" data-sort-value="{{.CreatedAt}}">{{formatTime .CreatedAt}}</td>
+  {{/* Seconds: orders are created several a minute, and a minute-only stamp
+       read the same on the rows whose order was the question. */}}
+  <td class="orders-time" data-sort-value="{{.CreatedAt}}">{{formatTimeSeconds .CreatedAt}}</td>
   {{if $.Authenticated}}
   <td class="orders-actions">
     {{/* canCancel is engine.TerminateOrder's own gate
@@ -47,12 +59,29 @@
         This replaced a hand-listed status denylist that had
         drifted: it missed "skipped" (terminal — the button was
         dead) and guarded "completed", which is not a protocol
-        status at all. */}}
+        status at all.
+
+        Quiet, not solid red: a destructive verb on every row is
+        structure, and a column of red buttons outshouts the statuses
+        beside it. The confirm is unchanged (style guide, Buttons). */}}
     {{if canCancel .Status}}
-    <button class="btn btn-danger btn-sm" data-action="cancelOrderFromRow:{{.ID}}">Cancel</button>
+    <button class="btn btn-sm" data-action="cancelOrderFromRow:{{.ID}}">Cancel</button>
     {{end}}
   </td>
   {{end}}
 </tr>
+{{else}}
+<tr class="orders-empty" data-no-sort><td colspan="{{if $.Authenticated}}9{{else}}8{{end}}" class="dash-empty">No orders found.</td></tr>
 {{end}}
+{{/* The pager: what this page is of the whole view, and the pages either
+     side. Rendered with the rows so a search (which re-fetches the rows)
+     moves it too; data-no-sort pins it below the rows when a header is
+     clicked (shared/utils.js installTableSort). */}}
+{{with .Pager}}{{if or .Summary .PrevURL .NextURL}}
+<tr class="orders-pager" data-no-sort data-summary="{{.Summary}}"><td colspan="{{if $.Authenticated}}9{{else}}8{{end}}">
+  {{if .PrevURL}}<a class="btn btn-sm" href="{{.PrevURL}}" rel="prev">&larr; Newer</a>{{end}}
+  <span class="text-muted-xs tnum">{{.Summary}}</span>
+  {{if .NextURL}}<a class="btn btn-sm" href="{{.NextURL}}" rel="next">Older &rarr;</a>{{end}}
+</td></tr>
+{{end}}{{end}}
 {{end}}

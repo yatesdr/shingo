@@ -613,6 +613,29 @@ function uploadPayloadImport(file) {
 // Wire the hidden file input once. The change listener (rather than a
 // delegated data-action-change) is deliberate: file inputs do not fire
 // change through data-action delegation reliably across browsers.
+// The payloads search: the table is fully loaded, so it filters the rows it
+// already has, over what each row prints. The count says how many of how many.
+function filterPayloads() {
+  var input = document.getElementById('pl-search');
+  var table = document.getElementById('payloads-table');
+  if (!input || !table) return;
+  var q = input.value.toLowerCase().trim();
+  var rows = table.querySelectorAll('tbody tr');
+  var shown = 0;
+  rows.forEach(function(tr) {
+    var hit = !q || tr.textContent.toLowerCase().indexOf(q) !== -1;
+    tr.classList.toggle('hide', !hit);
+    if (hit) shown++;
+  });
+  var count = document.getElementById('pl-search-count');
+  if (count) count.textContent = q ? shown + ' of ' + rows.length : '';
+}
+
+(function initPayloadSearch() {
+  var input = document.getElementById('pl-search');
+  if (input) input.addEventListener('input', filterPayloads);
+})();
+
 (function initPayloadImport() {
   var input = document.getElementById('pl-import-file');
   if (!input) return;

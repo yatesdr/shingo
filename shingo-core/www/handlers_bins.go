@@ -127,18 +127,25 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 
 	// Per-payload bin-type allow-list (keyed by payload code). Empty list = unrestricted,
 	// matching the advisory semantics used by FindSourceFIFO / FindEmptyCompatible.
+	// One read for the whole table: the codes come back sorted per payload, and
+	// the bin types loaded above turn each code back into its id.
 	payloadBinTypeIDs := make(map[string][]int64, len(payloads))
-	for _, p := range payloads {
-		btList, btErr := h.engine.PayloadService().ListBinTypes(p.ID)
-		if btErr != nil {
-			log.Printf("bins page: list bin types for payload %d: %v", p.ID, btErr)
-			continue
+	if codesByPayload, btErr := h.engine.PayloadService().BinTypeCodesByPayload(); btErr != nil {
+		log.Printf("bins page: list bin types by payload: %v", btErr)
+	} else {
+		idByCode := make(map[string]int64, len(binTypes))
+		for _, bt := range binTypes {
+			idByCode[bt.Code] = bt.ID
 		}
-		ids := make([]int64, len(btList))
-		for i, bt := range btList {
-			ids[i] = bt.ID
+		for _, p := range payloads {
+			ids := make([]int64, 0, len(codesByPayload[p.ID]))
+			for _, code := range codesByPayload[p.ID] {
+				if id, ok := idByCode[code]; ok {
+					ids = append(ids, id)
+				}
+			}
+			payloadBinTypeIDs[p.Code] = ids
 		}
-		payloadBinTypeIDs[p.Code] = ids
 	}
 
 	// JSON-encode nodes, payloads, bin types, and compat map for JS consumption

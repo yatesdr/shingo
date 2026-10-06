@@ -26,7 +26,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"sort"
 	"time"
 
@@ -243,51 +242,59 @@ type ProducerRoute struct {
 	Routed    bool   `json:"routed"`
 }
 
-// ListProducersForPayload names every process in the mirror whose PRODUCE
-// claims cover a payload (the primary code or the claim's allowed set), and
-// whether that process's claims route containment for it. This is the
-// PARTIAL-CONTAINMENT read: a payload flagged while some of its producers
+// ListProducersByPayload names, for every payload, each process in the mirror
+// whose PRODUCE claims cover it (the primary code or the claim's allowed set),
+// and whether that process's covering claims route containment for it. This is
+// the PARTIAL-CONTAINMENT read: a payload flagged while some of its producers
 // lack a route keeps flowing to FG from exactly those processes, and the
-// contain-confirmation names them — a warning the floor can act on (enable
-// the hold on those processes) instead of a hole they discover by a shipped
-// bin.
-func (db *DB) ListProducersForPayload(payloadCode string) ([]ProducerRoute, error) {
+// contain-confirmation names them — a warning the floor can act on (enable the
+// hold on those processes) instead of a hole they discover by a shipped bin.
+//
+// One read of the produce claims for the whole Payloads table. It replaced a
+// per-payload read that scanned every produce claim once per row.
+func (db *DB) ListProducersByPayload() (map[string][]ProducerRoute, error) {
 	rows, err := db.DB.Query(`SELECT process_id, payload_code, allowed_payload_codes, containment_destination
 		FROM style_claims WHERE role = 'produce'`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	covered := map[string]bool{} // process → produces this payload
-	routed := map[string]bool{}  // process → any covering claim carries a route
+	covered := map[string]map[string]bool{} // payload → process → produces it
+	routed := map[string]map[string]bool{}  // payload → process → a covering claim carries a route
 	for rows.Next() {
 		var processID, primary, allowedJSON, dest string
 		if err := rows.Scan(&processID, &primary, &allowedJSON, &dest); err != nil {
 			return nil, err
 		}
-		covers := primary == payloadCode
-		if !covers && allowedJSON != "" {
+		codes := []string{primary}
+		if allowedJSON != "" {
 			var allowed []string
 			if json.Unmarshal([]byte(allowedJSON), &allowed) == nil {
-				covers = slices.Contains(allowed, payloadCode)
+				codes = append(codes, allowed...)
 			}
 		}
-		if !covers {
-			continue
-		}
-		covered[processID] = true
-		if dest != "" {
-			routed[processID] = true
+		for _, code := range codes {
+			if covered[code] == nil {
+				covered[code], routed[code] = map[string]bool{}, map[string]bool{}
+			}
+			covered[code][processID] = true
+			if dest != "" {
+				routed[code][processID] = true
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	out := make([]ProducerRoute, 0, len(covered))
-	for processID := range covered {
-		out = append(out, ProducerRoute{ProcessID: processID, Routed: routed[processID]})
+	out := make(map[string][]ProducerRoute, len(covered))
+	for code, procs := range covered {
+		list := make([]ProducerRoute, 0, len(procs))
+		for processID := range procs {
+			list = append(list, ProducerRoute{ProcessID: processID, Routed: routed[code][processID]})
+		}
+		sort.Slice(list, func(i, j int) bool { return list[i].ProcessID < list[j].ProcessID })
+		out[code] = list
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ProcessID < out[j].ProcessID })
 	return out, nil
 }
 

@@ -476,6 +476,37 @@ func createdStamp(row string) string {
 	return rest[:strings.Index(rest, "</time>")]
 }
 
+// visibleText is a fragment's text with the tags taken out and whitespace
+// collapsed — what a reader sees in a cell.
+func visibleText(html string) string {
+	var b strings.Builder
+	in := false
+	for _, r := range html {
+		switch {
+		case r == '<':
+			in = true
+		case r == '>':
+			in = false
+			b.WriteRune(' ')
+		case !in:
+			b.WriteRune(r)
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+// routeText is the visible text of a row's route cell.
+func routeText(row string) string {
+	i := strings.Index(row, `<span class="order-route">`)
+	if i < 0 {
+		return ""
+	}
+	rest := row[i:]
+	return visibleText(rest[:strings.Index(rest, "</td>")])
+}
+
+// U4: From → Line → To in place of the UUID column, the payload printed once,
+// and Created with seconds (rows share a minute).
 func TestOrdersBoard_RowColumns(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlersForRendering(t)
@@ -483,7 +514,7 @@ func TestOrdersBoard_RowColumns(t *testing.T) {
 	o := seedBoardOrder(t, db, &orders.Order{
 		EdgeUUID: "pin-uuid-7f3a", StationID: "line-1", OrderType: "complex",
 		Status: protocol.StatusInTransit, SourceNode: "UTN_014", ProcessNode: "ALN_003",
-		DeliveryNode: "UTN_013", PayloadCode: "SHIM", PayloadDesc: "SHIM (dev)", RobotID: "AMR-07",
+		DeliveryNode: "UTN_013", PayloadCode: "SHIM", PayloadDesc: "SHIM (dev)",
 	}, "2026-10-05T12:24:13Z")
 
 	body := renderOrdersPage(t, h, "")
@@ -492,23 +523,28 @@ func TestOrdersBoard_RowColumns(t *testing.T) {
 		t.Fatalf("order %d is not on the Active board", o.ID)
 	}
 
-	if !strings.Contains(body, "<th data-sort>UUID</th>") {
-		t.Error("before: the board has a UUID column")
+	if strings.Contains(body, "<th data-sort>UUID</th>") {
+		t.Error("the board still has a UUID column; the pop-up is where the UUID lives")
 	}
-	if !strings.Contains(row, "pin-uuid-7f3a") {
-		t.Error("before: the row prints the edge UUID")
+	if strings.Contains(row, "pin-uuid-7f3a") {
+		t.Error("the row still prints the edge UUID")
 	}
-	if strings.Contains(row, "UTN_014") || strings.Contains(row, "ALN_003") || strings.Contains(row, "UTN_013") {
-		t.Error("before: the row names no node at all")
+	if got, want := routeText(row), "UTN_014 → ALN_003 → UTN_013"; got != want {
+		t.Errorf("route = %q, want %q", got, want)
 	}
-	if !strings.Contains(row, "<code>SHIM</code>") || !strings.Contains(row, "SHIM (dev)") {
-		t.Error("before: the payload prints twice, code and description")
+	if strings.Count(visibleText(row), "SHIM") != 1 {
+		t.Errorf("the payload must be printed once, row reads %q", visibleText(row))
 	}
-	if stamp := createdStamp(row); stamp == "" || strings.Contains(stamp, ":24:13") {
-		t.Errorf("before: Created is the full stamp at minute resolution, got %q", stamp)
+	if !strings.Contains(row, `<code title="SHIM (dev)">SHIM</code>`) {
+		t.Error("the payload description should ride in the code's title")
+	}
+	if stamp := createdStamp(row); !strings.Contains(stamp, ":24:13") {
+		t.Errorf("Created must carry seconds, got %q", stamp)
 	}
 }
 
+// U4: the line node is omitted when it repeats an end; an end not chosen yet is
+// a dash that says so, not a blank.
 func TestOrdersBoard_RouteOmitsARepeatedNode(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlersForRendering(t)
@@ -518,13 +554,27 @@ func TestOrdersBoard_RouteOmitsARepeatedNode(t *testing.T) {
 		Status: protocol.StatusInTransit, SourceNode: "SYN_MARKET_01", ProcessNode: "ALN_008",
 		DeliveryNode: "ALN_008",
 	}, "")
+	open := seedBoardOrder(t, db, &orders.Order{
+		EdgeUUID: "pin-route-open", StationID: "line-1", OrderType: "complex",
+		Status: protocol.StatusSourcing, SourceNode: "UTN_013",
+	}, "")
 
-	row := boardRow(renderOrdersPage(t, h, ""), o.ID)
-	if strings.Contains(row, "SYN_MARKET_01") || strings.Contains(row, "ALN_008") {
-		t.Error("before: the row names no node at all")
+	body := renderOrdersPage(t, h, "")
+	if got, want := routeText(boardRow(body, o.ID)), "SYN_MARKET_01 → ALN_008"; got != want {
+		t.Errorf("route = %q, want %q", got, want)
+	}
+	openRow := boardRow(body, open.ID)
+	if got, want := routeText(openRow), "UTN_013 → —"; got != want {
+		t.Errorf("route = %q, want %q", got, want)
+	}
+	if !strings.Contains(openRow, `title="not assigned yet"`) {
+		t.Error("an unassigned destination must say so in its title (no data, not zero)")
 	}
 }
 
+// U4: real paging in place of the ?limit= notice. Both directions of the old
+// honesty pin survive: the board says what it holds back, and says nothing
+// when it holds back nothing.
 func TestOrdersBoard_Paging(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlersForRendering(t)
@@ -544,44 +594,70 @@ func TestOrdersBoard_Paging(t *testing.T) {
 		if boardRow(page1, id) == "" {
 			t.Errorf("page 1 is missing order %d (newest three)", id)
 		}
-	}
-	if !strings.Contains(page1, "showing 3 of 5 — add ?limit=5 to see them all") {
-		t.Error("before: a held-back page says so with the ?limit= notice")
-	}
-	for _, id := range ids[2:] {
-		if boardRow(page2, id) == "" {
-			t.Errorf("before: page=2 is ignored, so it shows the same three (missing %d)", id)
+		if boardRow(page2, id) != "" {
+			t.Errorf("page 2 repeats order %d from page 1", id)
 		}
 	}
 	for _, id := range ids[:2] {
-		if boardRow(page2, id) != "" {
-			t.Errorf("before: the two oldest (%d) are reachable only with ?limit=", id)
+		if boardRow(page2, id) == "" {
+			t.Errorf("page 2 is missing order %d (the oldest two)", id)
 		}
+	}
+	if strings.Contains(page1, "?limit=") && strings.Contains(page1, "to see them all") {
+		t.Error("the ?limit= notice is still on the page")
+	}
+	if !strings.Contains(page1, "1–3 of 5") || !strings.Contains(page1, `href="/orders?limit=3&amp;page=2&amp;status=all"`) {
+		t.Error("page 1 must say 1–3 of 5 and link page 2")
+	}
+	if !strings.Contains(page2, "4–5 of 5") || !strings.Contains(page2, `href="/orders?limit=3&amp;status=all"`) {
+		t.Error("page 2 must say 4–5 of 5 and link back to page 1")
+	}
+	if strings.Contains(page2, `rel="next"`) {
+		t.Error("the last page offers a next page")
+	}
+
+	whole := renderOrdersPage(t, h, "?status=all&limit=50")
+	if strings.Contains(whole, `class="orders-pager"`) {
+		t.Error("a view the page holds whole still draws a pager")
 	}
 }
 
+// U4: the filter box queries the server, so it finds an order that is not on
+// the page in front of it.
 func TestOrdersBoard_SearchQueriesTheServer(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlersForRendering(t)
 
 	hit := seedBoardOrder(t, db, &orders.Order{
 		EdgeUUID: "pin-search-hit", StationID: "line-1", OrderType: "move",
-		Status: protocol.StatusConfirmed, RobotID: "AMR-17",
+		Status: protocol.StatusConfirmed,
 	}, "")
+	_, err := db.DB.Exec(`UPDATE orders SET robot_id='AMR-17' WHERE id=$1`, hit.ID)
+	testutil.MustNoErr(t, err, "set robot")
+	// Newer than the hit, so on a one-row page the hit is not on page 1.
 	miss := seedBoardOrder(t, db, &orders.Order{
 		EdgeUUID: "pin-search-miss", StationID: "line-1", OrderType: "move",
-		Status: protocol.StatusConfirmed, RobotID: "AMR-03",
+		Status: protocol.StatusConfirmed,
 	}, "")
+	_, err = db.DB.Exec(`UPDATE orders SET robot_id='AMR-03' WHERE id=$1`, miss.ID)
+	testutil.MustNoErr(t, err, "set robot")
 
-	body := renderOrdersPage(t, h, "?status=all&q=amr-17")
+	body := renderOrdersPage(t, h, "?status=all&limit=1&q=amr-17")
 	if boardRow(body, hit.ID) == "" {
 		t.Error("the matching order is not on the page")
 	}
-	if boardRow(body, miss.ID) == "" {
-		t.Error("before: q is ignored by the server; the filter only hid rendered rows")
+	if boardRow(body, miss.ID) != "" {
+		t.Error("an order that does not match the search is on the page")
+	}
+
+	// A search term's own wildcards are literal.
+	if boardRow(renderOrdersPage(t, h, "?status=all&q=AMR_17"), hit.ID) != "" {
+		t.Error("an underscore in the search matched any character")
 	}
 }
 
+// U4: ?ids= (the Overview alert line) is exactly those orders, whatever their
+// status now.
 func TestOrdersBoard_IDsFilter(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlersForRendering(t)
@@ -597,27 +673,27 @@ func TestOrdersBoard_IDsFilter(t *testing.T) {
 	if boardRow(body, a.ID) == "" {
 		t.Error("a named active order is missing")
 	}
-	if boardRow(body, b.ID) == "" {
-		t.Error("before: ids is ignored, so the Active board shows every active order")
+	if boardRow(body, b.ID) != "" {
+		t.Error("an order the link did not name is on the page")
 	}
-	if boardRow(body, gone.ID) != "" {
-		t.Error("before: ids is ignored, so a named order that has since finished is not shown")
+	if boardRow(body, gone.ID) == "" {
+		t.Error("a named order that has since finished is missing")
+	}
+	if !strings.Contains(body, "Showing 2 orders picked by id") {
+		t.Error("the page does not say it is showing a pick")
 	}
 }
 
+// U4: a chip for every status an order can hold — staged, cancelled and
+// skipped added; reshuffling kept (BeginReshuffle writes it).
 func TestOrdersBoard_StatusChips(t *testing.T) {
 	t.Parallel()
 	h, _ := testHandlersForRendering(t)
 	body := renderOrdersPage(t, h, "")
-	for _, s := range []string{"pending", "sourcing", "queued", "dispatched", "in_transit",
-		"faulted", "delivered", "confirmed", "failed", "reshuffling"} {
+	for _, s := range []string{"pending", "sourcing", "queued", "dispatched", "in_transit", "staged",
+		"faulted", "delivered", "confirmed", "failed", "cancelled", "skipped", "reshuffling"} {
 		if !strings.Contains(body, `href="/orders?status=`+s+`"`) {
-			t.Errorf("before: a %s chip exists", s)
-		}
-	}
-	for _, s := range []string{"staged", "cancelled", "skipped"} {
-		if strings.Contains(body, `href="/orders?status=`+s+`"`) {
-			t.Errorf("before: there is no %s chip", s)
+			t.Errorf("there is no %s chip", s)
 		}
 	}
 }

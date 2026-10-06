@@ -399,6 +399,16 @@ export function toggleVisibility(id) {
   el.style.display = (el.style.display === 'none' || !el.style.display) ? '' : 'none';
 }
 
+// openFromQuery is the ?open=<value> deep link: a page reached as
+// /orders?open=42, /robots?open=AMR-07, /nodes?open=ALN_003 or /bins?open=17
+// opens that thing's pop-up on load. The order pop-up links every robot, node
+// and bin it names this way; one reader, so the parameter means the same on
+// every page.
+export function openFromQuery(open) {
+  var v = new URLSearchParams(location.search).get('open');
+  if (v) open(v);
+}
+
 // enterSubmits — used as data-action-keydown="enterSubmits:targetFn"
 // on form-input elements that should submit on Enter (and ignore
 // other keys). targetFn is the bare name of a window-resolved

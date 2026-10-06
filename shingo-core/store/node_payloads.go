@@ -48,6 +48,29 @@ func (db *DB) ListNodesForPayload(payloadID int64) ([]*nodes.Node, error) {
 	return nodes.ScanNodes(rows)
 }
 
+// ListCompatibleNodeNamesByPayload maps each payload to the names of the nodes
+// it is assigned to, sorted as ListNodesForPayload sorts them. The Payloads
+// table's Compatible nodes column in one read, not one per row.
+func (db *DB) ListCompatibleNodeNamesByPayload() (map[int64][]string, error) {
+	rows, err := db.Query(`SELECT np.payload_id, n.name
+		FROM node_payloads np JOIN nodes n ON n.id = np.node_id
+		ORDER BY np.payload_id, n.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]string{}
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], name)
+	}
+	return out, rows.Err()
+}
+
 // GetEffectivePayloads returns payload templates for a node, walking up the
 // parent chain until a non-empty set is found. Returns nil (all payloads) if
 // no ancestor has payloads. Uses a recursive CTE to resolve the ancestor

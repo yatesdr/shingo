@@ -8,7 +8,6 @@ import (
 	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/bins"
-	"shingocore/store/nodes"
 	"shingocore/store/payloads"
 )
 
@@ -202,22 +201,24 @@ func (s *PayloadService) ListHeldBins() ([]domain.HeldBinRow, error) {
 	return s.db.ListHeldBins()
 }
 
-// UnroutedProducersForPayload names the processes that PRODUCE a payload but
-// carry no containment route — the partial-containment warning the
-// contain-confirmation shows. Their FG deliveries keep flowing until their
-// holds are enabled.
-func (s *PayloadService) UnroutedProducersForPayload(payloadCode string) []string {
-	producers, err := s.db.ListProducersForPayload(payloadCode)
+// UnroutedProducersByPayload names, per payload code, the processes that
+// PRODUCE it but whose claims carry no containment route — activating
+// containment would not hold their output. A read error yields no map: the
+// page shows no warning rather than failing, as the per-payload read did.
+func (s *PayloadService) UnroutedProducersByPayload() map[string][]string {
+	byPayload, err := s.db.ListProducersByPayload()
 	if err != nil {
 		return nil
 	}
-	var unrouted []string
-	for _, p := range producers {
-		if !p.Routed {
-			unrouted = append(unrouted, p.ProcessID)
+	out := map[string][]string{}
+	for code, producers := range byPayload {
+		for _, p := range producers {
+			if !p.Routed {
+				out[code] = append(out[code], p.ProcessID)
+			}
 		}
 	}
-	return unrouted
+	return out
 }
 
 // ListManifest returns the manifest items defined for a payload
@@ -386,8 +387,12 @@ func (s *PayloadService) ListLoadSequenceNames() ([]string, error) {
 
 // --- Node compatibility ---------------------------------------------------
 
-// ListCompatibleNodes returns the nodes that accept the given payload
-// template (via explicit assignment or inherited-all mode).
-func (s *PayloadService) ListCompatibleNodes(payloadID int64) ([]*nodes.Node, error) {
-	return s.db.ListNodesForPayload(payloadID)
+// CompatibleNodeNamesByPayload maps each payload to its compatible node names.
+func (s *PayloadService) CompatibleNodeNamesByPayload() (map[int64][]string, error) {
+	return s.db.ListCompatibleNodeNamesByPayload()
+}
+
+// BinTypeCodesByPayload maps each payload to its bin type codes.
+func (s *PayloadService) BinTypeCodesByPayload() (map[int64][]string, error) {
+	return s.db.ListBinTypeCodesByPayload()
 }

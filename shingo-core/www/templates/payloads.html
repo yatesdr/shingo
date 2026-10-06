@@ -46,8 +46,15 @@
   {{end}}
 
   {{if .Payloads}}
+  {{/* The table holds every payload (handlePayloadsPage lists them all), so the
+       search filters it in the page: there is nothing further back to ask the
+       server for. */}}
+  <div class="filter-bar">
+    <input type="search" id="pl-search" class="form-input payloads-search" placeholder="Search code, robot group, bin type, notes..." aria-label="Search payloads">
+    <span id="pl-search-count" class="text-muted-xs tnum"></span>
+  </div>
   <div class="table-scroll-y">
-  <table>
+  <table id="payloads-table">
     <thead>
       <tr>
         <th>ID</th>
@@ -116,7 +123,9 @@
             data-load-sequence="{{.AdvancedLoadSequence}}">Edit</button>
           <form method="POST" action="/payloads/delete" style="display:inline" data-action-submit="confirmDeleteForm" data-confirm-msg="Delete this payload?">
             <input type="hidden" name="id" value="{{.ID}}">
-            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+            {{/* Quiet, not solid red: a destructive verb on every row is
+                 structure. The confirm is unchanged (style guide, Buttons). */}}
+            <button type="submit" class="btn btn-sm">Delete</button>
           </form>
         </td>
         {{end}}
