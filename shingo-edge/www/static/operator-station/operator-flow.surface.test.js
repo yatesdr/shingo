@@ -721,5 +721,7 @@ const pending = [];
     }));
 }
 
-if (failures) { console.log(failures + ' FAILED'); process.exit(1); }
-console.log('operator-flow surfaces: all checks pass');
+Promise.all(pending).then(() => {
+    if (failures) { console.log(failures + ' FAILED'); process.exit(1); }
+    console.log('operator-flow surfaces: all checks pass');
+}, err => { console.log('FAIL ' + (err && err.stack || err)); process.exit(1); });

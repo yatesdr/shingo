@@ -864,7 +864,7 @@ async function runPreview(opts) {
         // operator to re-check a flow that is fine and says nothing about the
         // press already running the part they picked.
         if (res.status === 409 && json && json.stale) { onStale(json); return; }
-        model = M().applyPreview(model, json);
+        model = M().applyPreview(model, json, { preflight: !!(opts && opts.preflight) });
     } catch (e) {
         if (e && e.name === 'AbortError') return;
     }
@@ -1301,7 +1301,8 @@ async function openConfirm(runAsIs) {
         '<div class="foot">Robots wait at the cell until you press Release.' +
         // Only the two things the preflight can actually say. "Inventory
         // checked." with no preflight at all was the sheet asserting a check
-        // nobody ran.
+        // nobody ran. A preview that did not ask carries no preflight
+        // (applyPreview drops it), so it says nothing here either.
         (!pv.preflight ? ''
             : pv.preflight.state === 'unchecked' ? ' Inventory not checked — Core is unreachable.'
                 : ' Inventory checked.') + '</div>' +

@@ -724,13 +724,28 @@ test('bar: a 400 with only an error shows the server sentence verbatim', () => {
     assert.strictEqual(b.button.enabled, false);
 });
 
-test('bar: Core unreachable says so in the detail', () => {
+// "unchecked" is the server's answer both when Core could not be asked and when
+// nobody asked (a preview without ?preflight=1 — every edit-loop preview, and
+// every desktop preview). Only the client knows which, so applyPreview is told.
+test('bar: Core unreachable, when the preview asked, says so in the detail', () => {
+    let s = initStyle(7);
+    s = M.applyPreview(s, {
+        order_count: 4, findings: [], unresolved: [],
+        preflight: { state: 'unchecked', missing: [] }, fingerprint: 'abc', actions: [],
+    }, { preflight: true });
+    assert.strictEqual(M.bar(s).detail, 'Inventory not checked — Core is unreachable');
+});
+
+test('bar: a preview that did not ask about inventory says nothing about it', () => {
     let s = initStyle(7);
     s = M.applyPreview(s, {
         order_count: 4, findings: [], unresolved: [],
         preflight: { state: 'unchecked', missing: [] }, fingerprint: 'abc', actions: [],
     });
-    assert.strictEqual(M.bar(s).detail, 'Inventory not checked — Core is unreachable');
+    assert.strictEqual(s.preview.preflight, null);
+    const d = M.bar(s).detail;
+    assert.ok(!/Inventory/.test(d), 'unasked preview spoke about inventory: ' + d);
+    assert.ok(d.startsWith('Inbound source '), 'detail lost the dock line: ' + d);
 });
 
 // ═══ 6. findings ═════════════════════════════════════════════════════════════

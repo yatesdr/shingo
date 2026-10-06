@@ -947,7 +947,14 @@ function toCells(state) {
 
 // ── preview ──────────────────────────────────────────────────────────────────
 // Takes the body of a 200 OR a 400 (the no-orders case carries the same fields).
-function applyPreview(state, res) {
+//
+// opts.preflight says the request asked Core about the parts (?preflight=1).
+// The server answers "unchecked" both when Core could not be asked and when
+// nobody asked, and only the caller knows which. An answer to a question the
+// caller did not ask is dropped, so nothing downstream reports an inventory
+// check that was never attempted as one that failed.
+function applyPreview(state, res, opts) {
+    const asked = !!(opts && opts.preflight);
     const s = clone(state);
     s.flowspec = state.flowspec;
     s.sceneAdj = state.sceneAdj;
@@ -961,7 +968,7 @@ function applyPreview(state, res) {
         running: !!(res && res.running),
         findings: (res && res.findings) || [],
         unresolved: (res && res.unresolved) || [],
-        preflight: (res && res.preflight) || null,
+        preflight: (asked && res && res.preflight) || null,
         fingerprint: (res && res.fingerprint) || '',
         error: (res && res.error) || '',
     };
