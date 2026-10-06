@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/store/bins"
 	"shingocore/store/internal/helpers"
 	"shingocore/store/nodes"
@@ -333,30 +334,20 @@ func (db *DB) LanesOccupiedInGroup(groupID int64) (map[int64]bool, error) {
 // no destination.
 //
 // THE ADMISSION LEDGER THAT USED TO COUNT THESE IS GONE (§R.79). It required a
-// new dig to fit on top of the room already owed, which was the wrong unit and
-// the wrong idea — see planUnbury. The remaining reader is the standoff tripwire,
-// which needs the IDENTITIES: an edge in the holder-of-holder graph only means
+// new dig to fit on top of the room already owed, and counted DIGS against
+// SLOTS. Its successor is DigFitFacts below, which counts the same
+// predicate in the right unit. This reader is the standoff tripwire's, which
+// needs the IDENTITIES: an edge in the holder-of-holder graph only means
 // something for a dig that is actually waiting for parking, and a dig owing
 // nothing cannot be a link in a cycle whatever else it is doing.
 func (db *DB) ListOutstandingDigClaims(groupID int64, asker reservations.DigAsker) ([]int64, error) {
 	args := append([]any{string(reservations.ModeDig), groupID}, asker.Args()...)
-	rows, err := db.DB.Query(fmt.Sprintf(`
+	rows, err := db.DB.Query(`
 		SELECT DISTINCT dig_hold.order_id
 		FROM reservations dig_hold
 		JOIN nodes lane ON lane.id = dig_hold.node_id
-		WHERE dig_hold.resource_kind = 'mouth'
-		  AND dig_hold.mode = $1
-		  AND `+reservations.ActiveStateSQL("dig_hold.")+`
-		  AND lane.parent_id = $2
-		  AND %s
-		  AND EXISTS (
-			SELECT 1 FROM orders leg
-			WHERE leg.parent_order_id = dig_hold.order_id
-			  AND leg.status NOT IN (%s)
-			  AND COALESCE(leg.delivery_node, '') = ''
-		  )`,
-		reservations.DigExclusionSQL("dig_hold.order_id", 3, 4),
-		protocol.TerminalStatusSQLList()), args...)
+		JOIN orders leg ON leg.parent_order_id = dig_hold.order_id
+		WHERE `+owedDigLegWhere(), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list outstanding dig claims in group %d: %w", groupID, err)
 	}
@@ -370,6 +361,102 @@ func (db *DB) ListOutstandingDigClaims(groupID int64, asker reservations.DigAske
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// DigFitFacts is what the plan-time dig verdict reads (plan.DigFits), in one
+// statement.
+//
+// Owed: what the group's running digs still owe — their non-terminal legs that
+// carry no destination yet, each a blocker that will need a parking slot from
+// this group's pool. LEGS, NOT DIGS: the unit is the slot (C2a; the §R.79 note
+// on planUnbury records the old ledger adding digs to slots). A dig's legs are
+// written whole when it starts and each takes its slot only at release, so
+// until then the pool still shows the slot free and a second dig's count would
+// spend it again. The same predicate as ListOutstandingDigClaims, one spelling
+// (owedDigLegWhere); the asker's own dig is exempt, so a re-plan never owes
+// itself.
+//
+// GrantedSlot / GrantedTo: the dug lane's shallowest slot, SHALLOWER THAN
+// frontOf (the deepest blocker this dig would lift), that a live order other
+// than the asker (or its legs) has CLAIMED and that has no bin recorded on it
+// yet — a slot the gate has granted to a placer that has not landed
+// (claimStoreSlot / confirmDropoffSlot write the claim; the landing or the
+// placer's end clears it). While it stands the placer's bin lands in front of
+// the dig's legs (s1-after 660fd228, order 233 / dig 242; Lane F's study).
+//
+// IN FRONT OF THE BLOCKERS, NOT ANYWHERE IN THE LANE. A slot claimed BEHIND
+// them is the usual reason the dig was asked for: the placer stands at the mark
+// waiting for the wall to go. A lane-clear dig plans as nobody in particular
+// (lane_clear_dig.go: one dig serves every demand behind the wall), so the
+// asker exemption cannot spare that placer; without the depth it refused its
+// own dig on every pass (C2a S.2 on the houseserver: order 147, LS_C1, 580
+// refusals, the plant still from mid-run).
+//
+// AND ONLY A PLACER THAT HAS BEEN RELEASED. The grant is "released into it, tail
+// appended, not yet landed" (the orc's amendment, ruling 1). An order STAGED at
+// a mark has not been released into the lane its claim is in: it holds the claim
+// from its hand at dispatch, or it is waiting at this very lane's wait. Counting
+// it held the mouth against the digs it was itself waiting on (S.2 after the
+// fix: order 214's own final drop at LS_C1's mouth refused its own dig and
+// 414's; S.3: 296, staged under lane-deeper-pending, held Lane_05's mouth
+// against 289's dig, its own releaser; completed 719 -> 544 and 621 -> 477). A
+// placer released into the lane is driving there; once it has set its bin down
+// the bin is recorded (an interior drop since A.5), and the slot drops out by
+// the NOT EXISTS below. An order driving to a mark it has not been released past
+// still counts until it stands there: the safe side, a dig a few seconds late.
+//
+// Read here and not through helpers.LaneBlockerPredicate, which is the one
+// reachability spelling and knows bins, not claims.
+type DigFitFacts = domain.DigFitFacts
+
+// DigFitFacts reads the verdict's facts for a dig of laneID in groupID.
+func (db *DB) DigFitFacts(groupID, laneID int64, frontOf int, asker reservations.DigAsker) (DigFitFacts, error) {
+	args := append([]any{string(reservations.ModeDig), groupID}, asker.Args()...)
+	args = append(args, laneID, frontOf)
+	var f DigFitFacts
+	err := db.DB.QueryRow(fmt.Sprintf(`
+		SELECT owed.n, COALESCE(granted.name, ''), COALESCE(granted.claimed_by, 0)
+		FROM (
+			SELECT COUNT(DISTINCT leg.id) AS n
+			FROM reservations dig_hold
+			JOIN nodes lane ON lane.id = dig_hold.node_id
+			JOIN orders leg ON leg.parent_order_id = dig_hold.order_id
+			WHERE `+owedDigLegWhere()+`
+		) owed
+		LEFT JOIN LATERAL (
+			SELECT s.name, s.claimed_by
+			FROM nodes s
+			JOIN orders placer ON placer.id = s.claimed_by
+			WHERE s.parent_id = $5
+			  AND COALESCE(s.depth, 0) < $6
+			  AND placer.status NOT IN (%s)
+			  AND placer.status <> '%s'
+			  AND placer.id NOT IN ($3, $4)
+			  AND (placer.parent_order_id IS NULL OR placer.parent_order_id NOT IN ($3, $4))
+			  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = s.id)
+			ORDER BY COALESCE(s.depth, 0)
+			LIMIT 1
+		) granted ON true`, protocol.TerminalStatusSQLList(), protocol.StatusStaged), args...).
+		Scan(&f.Owed, &f.GrantedSlot, &f.GrantedTo)
+	if err != nil {
+		return DigFitFacts{}, fmt.Errorf("dig fit facts for lane %d in group %d: %w", laneID, groupID, err)
+	}
+	return f, nil
+}
+
+// owedDigLegWhere is the owed-leg predicate over dig_hold (a mouth row), lane
+// and leg: the hold is a live dig on a lane of group $2, not the asker's ($3,
+// $4), and the leg is non-terminal with no destination. $1 is the dig mode.
+func owedDigLegWhere() string {
+	return fmt.Sprintf(`dig_hold.resource_kind = 'mouth'
+		  AND dig_hold.mode = $1
+		  AND `+reservations.ActiveStateSQL("dig_hold.")+`
+		  AND lane.parent_id = $2
+		  AND %s
+		  AND leg.status NOT IN (%s)
+		  AND COALESCE(leg.delivery_node, '') = ''`,
+		reservations.DigExclusionSQL("dig_hold.order_id", 3, 4),
+		protocol.TerminalStatusSQLList())
 }
 
 // LaneAcceptsInbound reports whether a lane currently has no mouth hold that

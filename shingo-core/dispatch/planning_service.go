@@ -661,10 +661,13 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 		// codeNoShuffleSlot carries the transience; the CAUSE on the row is what
 		// keeps them apart for whoever reads the board, which is the same split
 		// right of way takes three lines up.
-		var mouthHeld *LaneMouthHeldParkingError
-		if errors.As(err, &mouthHeld) {
+		//
+		// ASKED OF THE SENTINEL, NOT THE TYPE, since the dug lane's own granted
+		// mouth refuses with it too (plan.DugMouthGrantedError, C2a): matched by
+		// type only, that refusal fell to the read-failure arm below.
+		if errors.Is(err, ErrLaneMouthHeld) {
 			s.setQueueReason(order, protocol.QueueStorageRearranging, CauseLaneHeldTraffic,
-				QueueParams{Lane: mouthHeld.Lane, Payload: order.PayloadCode})
+				QueueParams{Lane: mouthHeldLane(err), Payload: order.PayloadCode})
 			return nil, &planningError{Code: codeNoShuffleSlot, Detail: fmt.Sprintf("cannot plan reshuffle yet: %v", err), Err: err}
 		}
 		var unseen *MouthUnreadableError
@@ -767,4 +770,18 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 	// the first left the dock on the 2026-05-27 production reshuffle.
 	s.dbg("retrieve: compound reshuffle created for order %d: %d steps", order.ID, len(plan.Steps))
 	return &PlanningResult{Handled: true}, nil
+}
+
+// mouthHeldLane names the lane an ErrLaneMouthHeld refusal is about: the
+// parking lane whose mouth is held, or the dug lane whose mouth is granted.
+func mouthHeldLane(err error) string {
+	var parking *LaneMouthHeldParkingError
+	if errors.As(err, &parking) {
+		return parking.Lane
+	}
+	var dug *plan.DugMouthGrantedError
+	if errors.As(err, &dug) {
+		return dug.Lane
+	}
+	return ""
 }

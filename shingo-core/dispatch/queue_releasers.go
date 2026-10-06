@@ -416,6 +416,15 @@ var causeReleasers = []causeReleaser{
 		// bridge's table and now reads CLAIMS (SlotsBlockedByHardClaims). The
 		// releaser is unchanged either way; what changed is which bins are
 		// protected, so a shifted count here is expected rather than alarming.
+		//
+		// C2A WIDENED PopAcquiring, NOT THE RELEASER. The plan-time verdict
+		// (plan.DigFits) parks two more shapes here: a dig short because running
+		// digs still owe their blockers slots, and a dig short because the room is
+		// in a lane a robot is inside. The first clears when a slot frees (a dug
+		// lane emptying as its dig finishes) or a running dig's legs end; the
+		// second when the robot leaves the lane. Each is an order releasing a slot
+		// or a terminal or block event, all scan triggers, and PopAcquiring is
+		// re-asked on every pass.
 		what: "any order anywhere in the group releases a slot",
 	},
 	{

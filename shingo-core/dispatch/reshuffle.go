@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"shingo/protocol"
+	"shingocore/dispatch/plan"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -209,30 +210,37 @@ func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, gr
 
 	// ── CAN THIS GROUP CLEAR THESE BLOCKERS? THAT IS THE WHOLE QUESTION ───
 	//
-	// A CLAIMS LEDGER STOOD HERE AND IS DELETED (§R.79 supersedes §R.75/§R.76
-	// arm 1). It counted the room already owed to running digs and required this
-	// dig to fit on top of it. Two things were wrong with it and the closing run
-	// showed both.
+	// A CLAIMS LEDGER STOOD HERE AND WAS DELETED (§R.79). It counted the room
+	// owed to running digs and required this dig to fit on top of it, and it
+	// counted the wrong UNIT: `outstanding` was a count of DIGS added to
+	// len(blockers), a count of SLOTS. §R.79 also argued the idea itself was
+	// wrong, because a dig's cost is every blocker it will park, which the
+	// ledger could not see. In legs it can: a dig writes all its legs when it
+	// starts, and a leg with no destination is a blocker still owed a slot.
 	//
-	// It counted the wrong UNIT: `outstanding` was a count of DIGS, added to
-	// len(blockers), a count of SLOTS. And correcting the unit would not have
-	// helped, because a dig's instantaneous claim genuinely IS one slot — a
-	// compound dispatches one child at a time — while its cost to the group is
-	// every blocker it will park, permanently, since blockers are never
-	// restocked. The ledger was an estimate of a future it could not see.
+	// ── SO WHAT RUNNING DIGS STILL OWE IS SPENT ALREADY (C2a, v4 §2.3) ──────
 	//
-	// What actually keeps two digs from eating each other is OWNERSHIP, not
-	// arithmetic: one robot per lane, enforced where the candidates are built
-	// (shuffleSlotsFrom now drops occupied lanes), so a dig fills a lane it owns
-	// deepest-first and cannot strand slots behind itself. A dig that can find
-	// somewhere to put its blockers runs; one that cannot, waits.
+	// A running dig's legs choose their slots at release, so until then the pool
+	// shows those slots free, and a count of this dig's blockers alone spends
+	// them a second time: six digs started against four parks and two could
+	// never put a blocker down. plan.DigFits asks for len(blockers) + owed, owed
+	// counted in legs (store.DB.DigFitFacts). Ownership (one robot per lane,
+	// shuffleSlotsFrom dropping occupied and dug lanes) keeps two digs out of
+	// each other's lanes; the verdict keeps a group from starting digs it cannot
+	// feed. A dig that does not fit takes no lane and lifts nothing; it waits
+	// under no-shuffle-slot, and a slot freeing in the group asks again. And a
+	// lane whose mouth the gate has granted to a placer not yet landed is not
+	// dug at all until it lands or leaves (ErrLaneMouthHeld, the same read).
 	//
-	// So the question is the plain one again, and the owner's ruling on it stands
-	// unchanged: if the count cannot be satisfied, that is an engineering and
-	// configuration capacity problem, not a dispatch one. The seed has to carry
-	// enough reachable room to clear a lane, which is what the census at birth
-	// asserts before a single order runs.
-	if _, err := findShuffleSlots(db, lane.ID, groupID, len(blockers), asker, noClaimantYet, exclude); err != nil {
+	// The owner's ruling stands: if the count cannot be satisfied, that is an
+	// engineering and configuration capacity problem, not a dispatch one. The
+	// seed has to carry enough reachable room to clear a lane, which is what the
+	// census at birth asserts before a single order runs.
+	err = plan.DigFits(db, groupID, lane.Name, lane.ID, len(blockers), deepestBlocker(blockers), asker, func(need int) error {
+		_, wErr := findShuffleSlots(db, lane.ID, groupID, need, asker, noClaimantYet, exclude)
+		return wErr
+	})
+	if err != nil {
 		return nil, 0, fmt.Errorf("find shuffle slots: %w", err)
 	}
 
@@ -254,6 +262,18 @@ func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, gr
 		seq++
 	}
 	return plan, seq, nil
+}
+
+// deepestBlocker is the depth of the deepest slot a blocker stands on: a slot
+// granted shallower than it is one the dig's legs would be landed in front of.
+func deepestBlocker(blockers []reshuffleBlocker) int {
+	deepest := 0
+	for _, b := range blockers {
+		if b.slot.Depth != nil && *b.slot.Depth > deepest {
+			deepest = *b.slot.Depth
+		}
+	}
+	return deepest
 }
 
 // PlanReshuffle creates a plan to unbury a target bin in a lane and then retrieve
@@ -955,10 +975,17 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 //
 // TRANSIENT, and the shortest-lived of the parking refusals — it clears when that
 // robot places its bin and drives out, which is a matter of seconds rather than
-// the length of another dig. That is exactly why it must not be reported as
-// ErrNoShuffleSlot: "the group is full" sends somebody to make room, and nothing
-// needs making.
-var ErrLaneOccupiedParking = errors.New("the parking this dig needs is in a lane a robot is inside")
+// the length of another dig.
+//
+// THE DWELL READS IT AS ITSELF; THE PLAN DOES NOT. This used to say it must
+// never be reported as ErrNoShuffleSlot, on law 8 (different releaser,
+// different cause). At the dwell that holds: a loaded robot is waiting on that
+// lane's exit, and dig_dwell.go names it. At plan time it does not (owner,
+// 2026-09-26; C2a): nothing has started, the waiter is re-asked on every scan
+// pass, and the robot's exit is itself a scan trigger, so "short" loses no
+// releaser. Read as a cause of its own there, it fell to the read-failure arm
+// and the demand's wait flipped on every pass. plan.DigFits answers it as short.
+var ErrLaneOccupiedParking = plan.ErrLaneOccupiedParking
 
 // LaneOccupiedParkingError names the lane that has to clear.
 type LaneOccupiedParkingError struct {
@@ -973,15 +1000,16 @@ func (e *LaneOccupiedParkingError) Error() string {
 
 func (e *LaneOccupiedParkingError) Unwrap() error { return ErrLaneOccupiedParking }
 
-// ErrLaneMouthHeld is the mouth refusing: the parking this dig needs is in a lane
-// whose entry another order owns.
+// ErrLaneMouthHeld is the mouth refusing: a lane this dig needs — a parking lane
+// (LaneMouthHeldParkingError) or, since C2a, the dug lane itself
+// (plan.DugMouthGrantedError) — has its entry owned by another order.
 //
 // TRANSIENT, with a releaser as real as Hold B's — that order finishes with the
 // lane and the row goes. It is kept apart from ErrLaneOccupiedParking because
 // they are different facts about different moments: occupancy is a robot INSIDE
 // the corridor, a mouth hold is an order that owns the right to enter it and may
 // not have set off yet. Same shape of wait, different thing to go and look at.
-var ErrLaneMouthHeld = errors.New("the parking this dig needs is in a lane whose mouth another order holds")
+var ErrLaneMouthHeld = plan.ErrLaneMouthHeld
 
 // LaneMouthHeldParkingError names the lane whose mouth has to free.
 type LaneMouthHeldParkingError struct {
@@ -1216,4 +1244,4 @@ var ErrSlotNotInLane = errors.New("target slot is not in a lane")
 // sentinel and how its disposition differs from a read failure.
 var ErrBlockerAtDisabledNode = errors.New("a bin in front of the target is at a disabled node; an engineer must move it")
 
-var ErrNoShuffleSlot = errors.New("no free shuffle slot")
+var ErrNoShuffleSlot = plan.ErrNoShuffleSlot
