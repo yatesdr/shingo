@@ -140,6 +140,10 @@
     box-shadow: inset 0 0 0 1px var(--os-accent-solid); }
 .os-chip.part { border-color: var(--os-green); color: var(--os-green); }
 .os-chip.part.free { border-style: dashed; color: var(--os-amber); border-color: var(--os-amber); }
+/* THE UNPLACED CHIP IS A BUTTON NOW, and a button's default font and background
+ * must not reshade the pill the span drew; `font: inherit` over the strip's own
+ * ground keeps it the same chip until tapped. */
+button.os-chip.part.free { font: inherit; font-size: 14px; background: none; }
 .os-chip.add { color: var(--os-accent); border-style: dashed; cursor: pointer; font: inherit; font-size: 14px; }
 .os-chip.need { border-style: dashed; color: var(--os-amber); border-color: var(--os-amber); }
 /* A DISABLED CHIP HAS TO LOOK DISABLED. Both `+ Add a part` buttons are drawn
@@ -195,13 +199,6 @@
 .os-comp-bar .l1.bad { color: var(--os-red); }
 .os-comp-bar .l2 { font-size: 13px; color: var(--os-text-muted); max-width: 620px; }
 .os-comp-bar .os-btn-primary { min-width: 300px; min-height: 60px; font-size: 19px; }
-/* --os-touch-min: the fix-it is the bar's ACTION — the one tap that repairs the
- * thing blocking the save — and it was 44 px beside a 60 px primary in an 84 px
- * bar that has the room. */
-.os-comp-fix { min-height: var(--os-touch-min, 56px); padding: 0 16px; border-radius: 10px; border: 0;
-    background: var(--os-accent-solid); color: var(--os-text); font-weight: 600; font-size: 14px;
-    margin-left: 12px; cursor: pointer; }
-
 /* ── S5/S6 popover ─────────────────────────────────────────────────────── */
 /* 520, NOT 420 AND NOT 720 (owner, Amendment A 2026-09-16, corrected).
  *

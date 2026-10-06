@@ -2382,14 +2382,15 @@ const until = (step, fn, ms = 8000) => new Promise((resolve, reject) => {
 
     save.click();
 
-    // THE PAGE RE-READ IT: the app bar's pill is drawn from the process the
-    // page holds, and saveSettings reloads that from the server before
-    // redrawing. So the pill flipping is the round trip, not the click.
+    // THE PAGE RE-READ IT: the app bar's gate sentence is drawn from the
+    // process the page holds, and saveSettings reloads that from the server
+    // before redrawing. So the sentence flipping is the round trip, not the
+    // click.
     await until('the app bar re-reads the gate', () => {
         threw();
-        const pill = d.querySelector('.pd-gate .pd-pill');
-        if (!pill) return false;
-        return pill.classList.contains('on') !== before;
+        const gate = d.querySelector('.pd-gate');
+        if (!gate) return false;
+        return (gate.textContent === 'Operators may change flows') !== before;
     });
 
     out.dataset.after = before ? 'off' : 'on';

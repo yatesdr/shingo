@@ -198,7 +198,7 @@ function flowSummary(s, labels) {
     const modes = [...new Set((s.claim_modes || []))];
     if (!modes.length) return 'no flow yet';
     return modes.map(m => labels[m] || m).join(' + ') +
-        (s.claim_nodes && s.claim_nodes.length ? ' · ' + s.claim_nodes.map(n => n.replace('PLN_', 'P')).join('/') : '');
+        (s.claim_nodes && s.claim_nodes.length ? ' · ' + s.claim_nodes.join('/') : '');
 }
 
 // pickerIndex is the rows the search filters: each style with its summary and
@@ -245,12 +245,18 @@ function verdict(s) {
     const src = sourcingFor(s.name);
     switch (src && src.code) {
         case 'green': return { cls: 'ok', text: 'Parts available' };
-        case 'red': return { cls: 'no', text: 'No parts' };
+        // Core's red is "at least one part has no available bin", so the pill
+        // says that, and Core's own note names the parts it could not find.
+        case 'red': return { cls: 'no', text: 'No bin at Core', note: src.note || '' };
         // Core's third tier. "Running low" is the board's word for it and it is
         // not one of the spec's four, but it is the truth Core sent and the
         // amber pill is where it belongs — flattening it into "Parts available"
         // would hide a shortage the operator is about to walk into.
-        case 'yellow': return { cls: 'unv', text: 'Running low' };
+        case 'yellow': return { cls: 'unv', text: 'Running low', note: src.note || '' };
+        // The style has no sourceability claims at Core, so Core has no answer
+        // to give. That is a fact about Core's set-up, not about the parts, and
+        // it is not the same as no answer having arrived.
+        case 'not_configured': return { cls: 'unv', text: 'Not checked at Core', note: src.note || '' };
         default: return { cls: 'unv', text: 'Unverified' };
     }
 }
@@ -270,11 +276,15 @@ function pickerRow(row) {
     // set-up card's no-flow variant, with the preset cards at full size and
     // "Start blank" only where the gate allows one.
     const last = s.last_run ? ' · ran ' + esc(s.last_run) : '';
+    // Core's note rides on the row's own line, where it can wrap, and on the
+    // pill's title; the pill itself stays one short phrase.
+    const note = v.note ? ' · ' + esc(v.note) : '';
+    const title = v.note ? ' title="' + esc(v.note) + '"' : '';
     return '<button class="os-comp-row"' +
         ' data-act="pick" data-style="' + s.id + '">' +
         '<span class="id">' + esc(s.name) + '</span>' +
-        '<span class="meta"><b>' + esc(row.summary) + '</b>' + last + '</span>' +
-        '<span class="vd ' + v.cls + '">' + esc(v.text) + '</span></button>';
+        '<span class="meta"><b>' + esc(row.summary) + '</b>' + last + note + '</span>' +
+        '<span class="vd ' + v.cls + '"' + title + '>' + esc(v.text) + '</span></button>';
 }
 
 function drawPickerRows(q) {
@@ -622,8 +632,16 @@ function drawStrip() {
     h += '<span class="sp"></span><span class="os-lbl">Parts</span>';
     for (const p of model.parts) {
         const used = Object.keys(model.cells).some(n => model.cells[n].part === p);
-        h += '<span class="os-chip part' + (used ? '' : ' free') + '">' + esc(M().shortPart(p)) +
-            (used ? '' : ' · unplaced') + '</span>';
+        // AN UNPLACED CHIP CARRIES ITS OWN DOOR OUT. removePart is the exact
+        // verb the part popover's "take off this position" uses; on a chip in
+        // the strip the part sits on nothing, so the tap just leaves the set —
+        // the thing the strip used to show with no way to undo short of
+        // re-picking. A chip WITH a position keeps no door: its panel is the
+        // way out, and it says which position it sits on.
+        h += (used
+            ? '<span class="os-chip part">' + esc(M().shortPart(p)) + '</span>'
+            : '<button class="os-chip part free" data-act="rmpart" data-part="' + esc(p) + '">' +
+                esc(M().shortPart(p)) + ' · unplaced</button>');
     }
     h += addPartButton('os-chip add', '+ Add a part', '');
     const strip = $('os-comp-strip');
@@ -781,12 +799,11 @@ function drawPicture() {
 
 function drawBar() {
     const b = M().bar(model);
-    const fix = b.fixIt ? '<button class="os-comp-fix" data-act="fix">' + esc(b.fixIt.label) + '</button>' : '';
     const bar = $('os-comp-bar');
     if (!bar) return;
     bar.innerHTML =
         '<div class="status"><div class="l1' + (b.tone === 'blocked' ? ' bad' : '') + '">' + esc(b.heading) + '</div>' +
-        '<div class="l2">' + esc(b.detail) + '</div></div>' + fix + '<span class="sp"></span>' +
+        '<div class="l2">' + esc(b.detail) + '</div></div><span class="sp"></span>' +
         '<button class="os-btn os-btn-primary" data-act="confirm"' + (b.button.enabled ? '' : ' disabled') + '>' +
         esc(b.button.label) + '</button>';
 }
@@ -1504,7 +1521,14 @@ function onClick(e) {
         case 'compose-blank': openComposer(model ? model.styleId : 0, true); break;
         case 'mode': sendQuiet({ type: 'setMode', node: node, mode: btn.dataset.mode }); openPositionPanel(node); break;
         case 'part': sendQuiet({ type: 'setPart', node: node, payloadCode: btn.dataset.part }); openPositionPanel(node); break;
-        case 'rmpart': sendQuiet({ type: 'removePart', payloadCode: btn.dataset.part }); openPositionPanel(node); break;
+        // The strip's unplaced chip and the panel's "take off this position"
+        // share the act; the panel re-opens itself, a strip tap only redraws —
+        // ONE DRAW PER TAP, the same split addpart makes.
+        case 'rmpart':
+            sendQuiet({ type: 'removePart', payloadCode: btn.dataset.part });
+            if (panelFor) openPositionPanel(node);
+            else drawPicture();
+            break;
         case 'role': sendQuiet({ type: 'setRole', node: node, role: btn.dataset.val }); openPositionPanel(node); break;
         case 'pair': sendQuiet({ type: 'setPartner', node: node, partner: btn.dataset.val }); openPositionPanel(node); break;
         case 'pair2': sendQuiet({ type: 'setSecondPartner', node: node, partner: btn.dataset.val }); openPositionPanel(node); break;
@@ -1520,11 +1544,6 @@ function onClick(e) {
                 : { type: 'setDockDest', dest: btn.dataset.val });
             closePop();
             break;
-        case 'fix': {
-            const b = M().bar(model);
-            if (b.fixIt) send(b.fixIt.action);
-            break;
-        }
         case 'confirm': openConfirm(false); break;
         case 'back': {
             const layer = root().querySelector('.os-comp-layer');
@@ -1592,7 +1611,28 @@ window.addEventListener('error', e => {
     } catch (_) { /* nothing left to report with */ }
 });
 
-window.ComposerUI = { openPicker, close, setView, openFromHash };
+// ONE ESCAPE RULE, THE DESKTOP'S, INNERMOST FIRST: the part-picker layer,
+// then the open panel popover, then the S2/S3 sheet back to the composer.
+// Escape has never touched the screens past S4 and does not start now — a
+// started changeover (S10) closes by its own countdown and nothing else, and
+// S9's buttons are the decision the screen exists for. The S2 search field is
+// the SCANNER's target and its text is filtering, not work, so the sheet arm
+// asks nothing: Escape over S2 has always meant "put it away". partPickerNode
+// is the layer's own state — asking root() here would CREATE the composer on
+// a page that never opened it.
+export function onEscape() {
+    if (partPickerNode) { closePartPicker(); return; }
+    const pop = $('os-comp-pop');
+    if (pop && !pop.hidden) { closePop(); return; }
+    if (screen === 'S2' || screen === 'S3') close();
+}
+
+document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    onEscape();
+});
+
+window.ComposerUI = { openPicker, close, setView, openFromHash, onEscape };
 
 // THE HASH ENTRY FETCHES ITS OWN VIEW. On the live path the board hands us one
 // (the CHANGEOVER branch passes getView()), but a shot loads the page cold at a

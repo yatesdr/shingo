@@ -68,7 +68,10 @@ const S = {
     settings: null,      // D5's draft; nothing is written until Save settings
     settingsError: '',
     settingsNotice: '',   // a success, which is not a refusal and is not drawn as one
+    notice: '',          // the same, on the Flows and Presets tabs: what the last write saved
+    flowSaved: null,     // {styleID, at}: the last Save flow, which the bar names until the next edit
     sheet: null,         // the open confirm/edit sheet: {run}
+    escapeHold: null,    // the sheet an Escape is holding: {sheet, html} — see onEscape
     gen: null,           // the Generate-variants dialog: {baseID, cols, rows, error}
     mapZoom: 1,
     presets: null,       // D6's read: {view, error, expanded}
@@ -121,9 +124,7 @@ function boot() {
     if (scrim) scrim.addEventListener('click', onAdvClick);
     document.addEventListener('keydown', e => {
         if (e.key !== 'Escape') return;
-        if (S.adv) closeAdvanced();
-        else if (S.gen) closeGenerate();
-        else if (S.sheet) closeSheet();
+        onEscape();
     });
     document.addEventListener('click', e => {
         if (!e.target.closest || !e.target.closest('.pd-pop')) closePop();
@@ -148,6 +149,7 @@ function runningStyle(p) {
 
 function drawList() {
     S.processID = 0;
+    syncHash();
     const groups = new Map();
     for (const p of S.processes) {
         const key = groupName(p.group_id) || 'Ungrouped';
@@ -178,7 +180,11 @@ function drawList() {
         const state = changing ? 'Changing over'
             : (run ? 'Running <span class="pd-statename" title="' + esc(run.name) + '">' + esc(run.name) + '</span>'
                 : 'No part running');
-        return '<tr data-open="' + p.id + '">' +
+        // EVERY STYLE IS SEARCHABLE, not only the running one: the cells show
+        // one style name at most, so a part that is not running could never
+        // be found by name. The names are already on the page.
+        const hay = stylesOf(p.id).map(s => s.name).join(' · ');
+        return '<tr data-open="' + p.id + '" data-hay="' + esc(hay) + '">' +
             '<td class="pn"><b>' + esc(p.name) + '</b><small>' + esc(st.length ? st[0].name : '—') + '</small></td>' +
             '<td>' + esc(groupName(p.group_id) || '—') + '</td>' +
             '<td>' + (run ? '<span class="pd-runname">' + esc(run.name) + '</span>' : '<span class="pd-dim">—</span>') + '</td>' +
@@ -198,13 +204,14 @@ function drawList() {
             '<td><span class="pd-state' + (running ? ' running' : '') + '">' + state + '</span></td>' +
             // A ROW THAT OPENS SOMETHING SAYS SO. The whole row has been
             // clickable since P0 was written and nothing on screen said it,
-            // so "how do I edit a process after I have made one" was a fair
-            // question with no answer visible on the page that lists them.
-            // The two links are the two things an engineer comes here to do,
-            // and they are the same pair D4's screens table already carries.
+            // so "how do I get to a process" was a fair question with no
+            // answer visible on the page that lists them. The two doors are
+            // the two things an engineer comes here to do — work a flow, or
+            // change what the process is — and each fact has exactly one
+            // editor: a process's name and group on Settings, its positions
+            // on Operator screens, its routing set and part set beside them.
             '<td class="pd-acts">' +
             '<button class="pd-dimlink" data-act="open-flows" data-process="' + p.id + '">Flows</button>' +
-            '<button class="pd-btn" data-act="edit-process" data-process="' + p.id + '">Edit</button>' +
             '<button class="pd-dimlink" data-act="open-settings" data-process="' + p.id + '">Settings</button>' +
             '</td></tr>';
     };
@@ -250,7 +257,7 @@ function filterList(text) {
         // "Flows" and "Settings" now, and a row's own buttons matching the
         // search box would mean typing either word selects the whole table.
         const cells = [...tr.children].filter(td => !td.classList.contains('pd-acts'));
-        const hay = cells.map(td => td.textContent).join(' ').toLowerCase();
+        const hay = (cells.map(td => td.textContent).join(' ') + ' ' + (tr.dataset.hay || '')).toLowerCase();
         tr.hidden = !!needle && hay.indexOf(needle) < 0;
     }
     for (const tbl of root().querySelectorAll('.pd-tbl')) {
@@ -298,9 +305,13 @@ function appbar() {
         tab('screens', 'Operator screens') + tab('settings', 'Settings') +
         tab('presets', 'Presets') + '</div>' +
         '<div class="pd-spacer"></div>' +
-        '<div class="pd-gate"><span class="pd-pill' + (on ? ' on' : '') + '">' +
-        (on ? 'Operators may change flows' : 'Operators run flows as set up') + '</span>' +
-        '<button class="pd-dimlink" data-tab="settings">Settings ›</button></div></div>';
+        // THE GATE IS A SENTENCE, NOT A BADGE, AND THE SETTINGS LINK WAS THE
+        // TABS' OWN DOOR DRAWN TWICE: a pill shape claims "status chip" for a
+        // thing that never changes here (the gate is set in Settings), and the
+        // link beside it opened the tab one glance to the left. The gate stays
+        // read-only; the words carry the state, so no border and no tone.
+        '<div class="pd-gate">' +
+        (on ? 'Operators may change flows' : 'Operators run flows as set up') + '</div></div>';
 }
 
 // ── D1 · Flows ───────────────────────────────────────────────────────────────
@@ -331,6 +342,7 @@ async function openProcess(id) {
     S.settings = null;
     S.settingsError = '';
     S.settingsNotice = '';
+    S.notice = '';
     root().innerHTML = appbar() + '<div class="pd-page"><div class="pd-dim" style="padding:24px">Loading…</div></div>';
     const res = await fetch('/api/processes/' + id + '/composer');
     if (!res.ok) {
@@ -374,6 +386,7 @@ async function openProcess(id) {
         }
     }
     else if (h.tab === 'settings') { S.tab = 'settings'; S.settings = settingsDraft(); await openSettings(); }
+    syncHash();
 }
 
 // The list's Settings link: open the process, then land on the tab the
@@ -383,6 +396,7 @@ async function openProcessAt(id, tab) {
     if (tab !== 'settings') return;
     S.tab = 'settings';
     await openSettings();
+    syncHash();
 }
 
 // #style=<id>;adv=<position>;tab=routing opens a particular flow, a particular
@@ -396,6 +410,35 @@ function hashOpts() {
         if (i > 0) out[part.slice(0, i)] = decodeURIComponent(part.slice(i + 1));
     }
     return out;
+}
+
+// AND THE URL FOLLOWS THE STATE, not the other way round. hashOpts reads once
+// at boot; every navigation then restates where it landed, in the same
+// vocabulary the templates mint (?process=) and this page reads (#style=,
+// #tab=) — so a reload, a bookmark made after three clicks, or a link pasted
+// out of the address bar lands on the same state. replaceState mints no
+// history entries, so back and forward stay the browser's, not this page's.
+// The boot-only one-shots (;adv=, #part=, ;preset=, ;apply=, ;tick=) are
+// consumed once and never re-minted: they exist so the shots harness can
+// reach a state without driving a mouse, and re-writing them would pin every
+// later click to a deep link nobody asked for.
+function syncHash() {
+    if (!window.history || !window.history.replaceState) return;
+    if (!S.processID) {
+        // The list owns no state: the bare path, so a reload stays a list.
+        // (An empty URL would be a no-op and leave the last process's deep
+        // link in the bar.) pathname is the page's own and always present in
+        // a browser; the fallback only spares the stub.
+        window.history.replaceState({}, '', window.location.pathname || '/processes');
+        return;
+    }
+    let url = '?process=' + S.processID;
+    if (S.tab === 'flows') {
+        if (S.styleID) url += '#style=' + S.styleID;
+    } else {
+        url += '#tab=' + S.tab;
+    }
+    window.history.replaceState({}, '', url);
 }
 
 // A NIL GO SLICE MARSHALS TO null, NOT []. ComposerData.Styles has no
@@ -492,9 +535,15 @@ function selectStyle(id) {
 }
 
 function drawFlows() {
+    // WHERE THE ENGINEER WAS SURVIVES THE REDRAW, as on Settings: the write
+    // below replaces both scrollers with fresh ones at the top, so a cell
+    // edit far down the table would otherwise throw the page back up.
+    const scrollers = ['.pd-main', '.pd-postbl'];
+    const wasAt = scrollers.map(sel => { const el = root().querySelector(sel); return el ? el.scrollTop : 0; });
     root().innerHTML = appbar() + '<div class="pd-page">' + rail() + main() + '</div>';
     drawPicture();
     drawBar();
+    scrollers.forEach((sel, i) => { const el = root().querySelector(sel); if (el) el.scrollTop = wasAt[i]; });
     const q = $('pd-railq');
     if (q) q.addEventListener('input', () => {
         const n = q.value.trim().toLowerCase();
@@ -595,7 +644,7 @@ function reportDesktopFit() {
 function styleRow(st, isRunning) {
     const on = st.id === S.styleID;
     const modes = [...new Set(st.claim_modes || [])].map(m => M().modeLabels()[m] || m).join(' + ');
-    const nodes = (st.claim_nodes || []).map(n => n.replace('PLN_', 'P')).join('/');
+    const nodes = (st.claim_nodes || []).join('/');
     const sub = st.claim_count
         ? modes + (nodes ? ' · ' + nodes : '') + (st.last_run ? ' · ran ' + esc(st.last_run) : '')
         : 'no flow yet';
@@ -772,10 +821,15 @@ function main() {
     const st = composerStyle(S.styleID) || { name: '', claim_count: 0 };
     const p = process();
     const isRunning = !!(p && p.active_style_id === S.styleID);
-    const modes = [...new Set(st.claim_modes || [])].map(m => M().modeLabels()[m] || m).join(' + ');
+    // THE SUBTITLE IS THE DRAFT'S. It was read off the saved style, so a mode
+    // changed in the table below left the head naming the old one until the
+    // flow was saved: two answers to "what is this flow" on one screen. Only
+    // `last run` is the style's, because a draft has never run.
+    const cells = M().toCells(S.model);
+    const modes = [...new Set(cells.map(c => c.swap_mode))].map(m => M().modeLabels()[m] || m).join(' + ');
     const sub = [
         modes || 'no flow yet',
-        (st.claim_count || 0) + ' position' + (st.claim_count === 1 ? '' : 's'),
+        cells.length + ' position' + (cells.length === 1 ? '' : 's'),
         st.last_run ? 'last run ' + st.last_run : 'never run here',
     ].join(' · ');
     return '<div class="pd-main">' +
@@ -818,6 +872,7 @@ function main() {
         // shape do to this flow".
         '<button class="pd-btn" data-act="use-preset">Use a preset ▾</button>' +
         '<button class="pd-btn primary" data-act="save" disabled>Save flow</button></div></div>' +
+        (S.notice ? '<div class="pd-notice">' + esc(S.notice) + '</div>' : '') +
         '<div class="pd-pic"><svg id="pd-svg" class="os-flow-picture" viewBox="0 0 1280 560"></svg>' +
         '<div class="pd-legend"><span><i class="r1"></i>Robot 1</span><span><i class="r2"></i>Robot 2</span></div></div>' +
         positionsTable() +
@@ -858,7 +913,8 @@ function positionsTable() {
         if (!c || !c.on || !c.mode) continue;
         const advSet = advancedCount(n);
         rows.push('<tr class="' + (S.selected === n ? 'selrow' : '') + '" data-row="' + n + '">' +
-            '<td class="pos">' + esc(n) + '<small>' + esc(rowWord(n)) + roleToggle(n, c.role) + '</small></td>' +
+            '<td class="pos">' + esc(n) + '<small>' + esc(rowWord(n)) + '</small></td>' +
+            '<td>' + roleCell(n, c.role) + '</td>' +
             '<td>' + picker(n, 'mode', gl(c.mode, 22, {}) + esc(M().modeLabels()[c.mode] || '')) + '</td>' +
             '<td>' + picker(n, 'part', esc(M().shortPart(c.part) || 'pick one'), c.part ? 'part' : 'bad', c.part || '') + '</td>' +
             '<td>' + columnCell(n, 'partner') + '</td>' +
@@ -874,7 +930,7 @@ function positionsTable() {
     const free = freePositions();
     let tail = '';
     if (paired.length) {
-        tail += '<tr class="paired"><td colspan="9">' + esc(paired.join(', ')) +
+        tail += '<tr class="paired"><td colspan="10">' + esc(paired.join(', ')) +
             ' — back positions, no row of their own, paired above</td></tr>';
     }
     // P3 · THE ADD ROW IS THE BOX'S FOOTER, NOT ITS LAST ROW. In the accepted
@@ -902,7 +958,7 @@ function positionsTable() {
         '<button class="pd-btn" data-act="add-position">+ Add a position</button>' +
         '<span>' + esc(free.join(' · ')) + (free.length === 1 ? ' is free' : ' are free') + '</span></div>'
         : '';
-    const cols = '<colgroup><col class="c-pos"><col class="c-mode"><col class="c-part"><col class="c-partner">' +
+    const cols = '<colgroup><col class="c-pos"><col class="c-role"><col class="c-mode"><col class="c-part"><col class="c-partner">' +
         '<col class="c-staging"><col class="c-src"><col class="c-via"><col class="c-dst"><col class="c-adv"></colgroup>';
     // THE LABEL AND THE FOOTER ARE OUTSIDE THE SCROLLER. `#pd-postbl` is still
     // the scrolling element and still the box T1 measures the table against —
@@ -910,7 +966,7 @@ function positionsTable() {
     // all three is what the picture now gives way to (T2's rule).
     return '<div class="pd-posbox" id="pd-posbox">' +
         '<div class="pd-lbl">Positions' +
-        '<span class="hint">click a card or a cell to change it · the picture and the rows are one thing</span></div>' +
+        '<span class="hint">click a card to find its row · click a cell to change it</span></div>' +
         '<div class="pd-postbl" id="pd-postbl">' +
         // F3: A FIELD IS CALLED WHAT THE CLAIM CALLS IT. These read `New bins
         // from`, `Old bins to`, `Robot drives via` and `Partner` — four names
@@ -929,7 +985,7 @@ function positionsTable() {
         // word for a node and the other is the name of a sheet. `Part` stays
         // the floor's word for payload_code (owner-accepted). `Staging` is a
         // group of two, and its chips carry the two names.
-        '<table>' + cols + '<thead><tr><th>Position</th><th>' + esc(W('swap_mode')) + '</th><th>Part</th>' +
+        '<table>' + cols + '<thead><tr><th>Position</th><th>Role</th><th>' + esc(W('swap_mode')) + '</th><th>Part</th>' +
         '<th>' + esc(W('paired_core_node')) + '</th><th>Staging</th>' +
         '<th>' + esc(W('inbound_source')) + '</th><th>' + esc(W('key_route')) + '</th>' +
         '<th>' + esc(W('outbound_destination')) + '</th><th>Advanced</th></tr></thead>' +
@@ -937,15 +993,16 @@ function positionsTable() {
         footer + '</div>';
 }
 
-// roleToggle is the position's consume/produce switch. The role starts derived
+// roleCell is the position's consume/produce control. The role starts derived
 // (deriveRole) and an engineer sets it here when the press does the other
-// thing; clicking flips it. It rides the front/back line under the name: on
-// a line of its own it made every row 72 px tall, and the table then showed
-// one position at 1440x900.
-function roleToggle(node, role) {
-    const next = role === 'produce' ? 'consume' : 'produce';
-    return '<button class="pd-role ' + esc(role || '') + '" data-act="set-role" data-node="' + esc(node) + '"' +
-        ' data-role="' + next + '" title="Switch to ' + next + '">' + esc(role || 'no role') + '</button>';
+// thing. A CONTROL IS DRAWN AS A CONTROL: it was a small pill riding the
+// front/back line under the name, with no heading, and a click flipped the
+// role with nothing to say there were two. It is a chip under its own Role
+// heading, like every other field in the row, and its menu offers both roles
+// through the same setRole action the pill sent. The station's cell card
+// draws the same two choices under the same word.
+function roleCell(node, role) {
+    return picker(node, 'role', esc(role || 'pick one'), role ? '' : 'bad', 'Role ' + (role || 'not set'));
 }
 
 // ONE WORD, ONE MEANING. The sub-label under a position is which ROW of the
@@ -1041,8 +1098,14 @@ function columnCell(node, column) {
         const word = chip.label.toLowerCase() === heading.toLowerCase() ? '' : chip.label;
         const k = word ? '<span class="k">' + esc(word) + '</span> ' : '';
         const kind = 'col:' + column + ':' + chip.key;
+        // THE VALUE IS WHAT THE ROW IS READ FOR. A set chip drew its word in
+        // front of its value, `Inbound Stag… ▾`, so at table width the word
+        // was all that showed and the node it named was cut off. A set chip
+        // draws its value alone and the word moves to the title, where two
+        // chips of one cell are still told apart. An empty chip has no value
+        // to show, so it keeps its word in front of the dash.
         if (chip.required || chip.value || isOpen(node, kind)) {
-            return picker(node, kind, k + esc(chip.value || '—'),
+            return picker(node, kind, chip.value ? esc(chip.value) : k + '—',
                 chip.required && !chip.value ? 'bad' : '', chip.label + ' ' + (chip.value || 'not set'));
         }
         return blank(node, kind, k + '<span class="pd-dim">—</span>', chip.label + ' not set');
@@ -1124,10 +1187,42 @@ function drawBar() {
     const b = M().bar(S.model);
     const bar = $('pd-bar');
     if (!bar) return;
-    const fix = b.fixIt ? ' <button class="pd-chip" data-act="bar-fix">' + esc(b.fixIt.label) + '</button>' : '';
-    bar.innerHTML = '<div><div class="h' + (b.tone === 'blocked' ? ' bad' : '') + '">' + esc(b.heading) + '</div>' +
-        '<div class="d">' + esc(b.detail) + fix + '</div></div>' +
-        '<div class="prov' + (dirty() ? ' dirty' : '') + '">' + (dirty() ? 'Unsaved changes' : 'No unsaved changes') + '</div>';
+    // THE PROBLEM LINE IS THE CONTROL. With fixIt gone there is no second
+    // button on the bar; the first finding names a position, and the word
+    // that names it takes you there — selected in the picture, its table row
+    // scrolled into view. A finding with no position (an unplaced part) is
+    // not clickable: there is nothing to take you to.
+    let target = null;
+    if (b.tone === 'blocked') {
+        for (const f of M().findings(S.model)) {
+            if (f.node && S.model.cells[f.node]) { target = f.node; break; }
+        }
+    }
+    // THE EMPTY SENTENCE IS PER SURFACE. The model's says "Tap a position",
+    // which is the HMI's door; on the desktop the picture never edits, and the
+    // ways in are the table's "+ Add a position" and the preset menu.
+    const detail = b.tone === 'empty' ? 'Add a position below, or use a preset' : b.detail;
+    const head = '<div class="h' + (b.tone === 'blocked' ? ' bad' : '') + '">' + esc(b.heading) + '</div>';
+    // AN UNPLACED PART CARRIES ITS OWN DOOR OFF THE FLOW, as on the station's
+    // strip. The part picker's take-off needs a position, and a part in the
+    // style's set that sits on none has no position to open — so without this
+    // the desktop had no way to drop it short of discarding the draft. It is
+    // the same removePart the picker sends: an edit to the draft, saved with
+    // the rest. Drawn whenever the finding exists, not only when it is the
+    // first one the bar names, because this bar is the one place the desktop
+    // shows a part with no position. A placed part gets no door here; its way
+    // out is its position's picker.
+    const loose = M().findings(S.model)
+        .filter(f => f.field === 'unplaced_part')
+        .reduce((all, f) => all.concat(f.parts || []), []);
+    const doors = loose.length
+        ? '<div class="fix">' + loose.map(p => '<button class="pd-chip" data-act="rmpart" data-part="' + esc(p) + '">' +
+            esc('Take ' + M().shortPart(p) + ' off this flow') + '</button>').join('') + '</div>'
+        : '';
+    bar.innerHTML = '<div' + (target ? ' class="as-link" data-act="bar-goto" data-node="' + esc(target) + '"' : '') + '>' +
+        head +
+        '<div class="d">' + esc(detail) + '</div></div>' + doors +
+        '<div class="prov' + (dirty() ? ' dirty' : '') + '">' + esc(provText()) + '</div>';
     const save = root().querySelector('[data-act="save"]');
     if (save) save.disabled = !dirty() || b.tone === 'blocked';
     // `Save as preset…` is the mirror image: enabled only on `No unsaved
@@ -1136,6 +1231,21 @@ function drawBar() {
     // enabled at the same time, which is the point rather than an accident.
     const asPreset = root().querySelector('[data-act="save-preset"]');
     if (asPreset) asPreset.disabled = dirty() || !(S.model && M().toCells(S.model).length);
+}
+
+// A SAVE SAYS IT SAVED. The bar read `No unsaved changes` before a save and
+// after one, so a Save flow that landed looked like a click that did nothing.
+// The time it saved stays on the bar until the next edit makes it dirty
+// again, and only on the flow that was saved.
+function provText() {
+    if (dirty()) return 'Unsaved changes';
+    const s = S.flowSaved;
+    return s && s.styleID === S.styleID ? 'Saved ' + s.at : 'No unsaved changes';
+}
+
+function clockNow() {
+    const d = new Date();
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
 
 // ── preview ──────────────────────────────────────────────────────────────────
@@ -1202,6 +1312,7 @@ async function saveFlow() {
     // Saved: the draft becomes the new baseline and the read is refreshed so the
     // rail's counts and last-run follow.
     S.baseline = JSON.stringify(M().toCells(S.model));
+    S.flowSaved = { styleID: S.model.styleId, at: clockNow() };
     await openProcess(S.processID);
 }
 
@@ -1222,6 +1333,11 @@ function optionsFor(node, kind) {
     // A kind may carry arguments: "col:staging:parkOld", "via:1".
     const parts = String(kind).split(':');
     switch (parts[0]) {
+        case 'role':
+            return ['consume', 'produce'].map(r => ({
+                value: r, label: r, on: c.role === r,
+                action: { type: 'setRole', node: node, role: r },
+            }));
         case 'mode': {
             const labels = M().modeLabels();
             return Object.keys(labels).map(m => ({
@@ -1265,12 +1381,22 @@ function optionsFor(node, kind) {
                     .map(r => r.core_node_name).concat(backs))];
             const act = { paired: 'setPartner', secondPaired: 'setSecondPartner', staging: 'setStaging', parkOld: 'setParkOld' }[key];
             const arg = { paired: 'partner', secondPaired: 'partner', staging: 'staging', parkOld: 'staging' }[key];
-            const clear = chip.required ? [] : [{
-                value: '', label: 'none', on: !chip.value,
-                action: Object.assign({ type: act, node: node }, { [arg]: '' }),
-            }];
+            // A REQUIRED CHIP SAYS SO. It has no `none` row, and a list that
+            // simply lacked one gave no reason why; the first line names the
+            // mode that needs the field.
+            const clear = chip.required
+                ? [{ note: 'required for ' + (M().modeLabels()[c.mode] || c.mode) }]
+                : [{
+                    value: '', label: 'none', on: !chip.value,
+                    action: Object.assign({ type: act, node: node }, { [arg]: '' }),
+                }];
+            // SHARED STAGING IS A WARNING, NOT A REFUSAL. Two positions of one
+            // flow may stage on the same node (the model's bar already says
+            // so as a note), so a node another active position uses for
+            // either staging field stays a choice and is marked with who.
+            const usedBy = partnering ? {} : stagingUsers(node);
             return clear.concat(list.map(n => ({
-                value: n, label: n, on: chip.value === n,
+                value: n, label: n, on: chip.value === n, use: usedBy[n] || '',
                 action: Object.assign({ type: act, node: node }, { [arg]: n }),
             })));
         }
@@ -1313,6 +1439,22 @@ function optionsFor(node, kind) {
     }
 }
 
+// stagingUsers maps each staging node to the other active positions that
+// stage or park on it, as "PLN_02, PLN_06".
+function stagingUsers(node) {
+    const by = {};
+    for (const p of S.model.positions) {
+        const n = p.core_node_name, cell = S.model.cells[n];
+        if (n === node || !cell || !cell.on || !cell.mode) continue;
+        for (const v of new Set([cell.staging, cell.parkOld])) {
+            if (v) (by[v] = by[v] || []).push(n);
+        }
+    }
+    const out = {};
+    for (const k of Object.keys(by)) out[k] = by[k].join(', ');
+    return out;
+}
+
 // routingFieldOf maps a picker kind to the claim field whose options it offers,
 // for the two that come from the routing set. `col:staging:*` is the
 // mode-dependent cell, whose key names the field.
@@ -1326,7 +1468,11 @@ function routingFieldOf(kind) {
     return '';
 }
 
+// The key route is walked over the plant map (viaWaypoints), so with no map
+// its picker is empty for a reason nothing on this page can fix, and it says
+// that instead of the generic line.
 function pickerEmptyWord(kind) {
+    if (String(kind).split(':')[0] === 'via' && !mapOf()) return 'No plant map on this Edge yet';
     const note = S.model ? M().routingNote(S.model, routingFieldOf(kind), 0) : '';
     return note || 'Nothing to choose here yet.';
 }
@@ -1405,9 +1551,12 @@ function openPicker(btn) {
     // picker below silently offering a single `none` where the station says
     // why. The note is keyed on the options that carry a VALUE.
     const note = opts.some(o => o.value) ? '' : pickerEmptyWord(kind);
+    // An option with a `note` is a line of text, not a choice; `use` marks a
+    // choice another position already takes, without disabling it.
     pop.innerHTML =
-        opts.map((o, i) => '<button data-opt="' + i + '" class="' + (o.on ? 'on' : '') + '">' +
-            (o.icon || '') + esc(o.label) + '</button>').join('') +
+        opts.map((o, i) => o.note ? '<div class="none">' + esc(o.note) + '</div>'
+            : '<button data-opt="' + i + '" class="' + (o.on ? 'on' : '') + '">' + (o.icon || '') + esc(o.label) +
+            (o.use ? '<span class="use"> · used by ' + esc(o.use) + '</span>' : '') + '</button>').join('') +
         (note ? '<div class="none">' + esc(note) + '</div>' : '');
     pop.hidden = false;
     placePopover(pop, btn);
@@ -1427,6 +1576,10 @@ function closePop() {
     // scrolled, until a group was picked or the tab redrew.
     const stpop = $('pd-stpop');
     if (stpop) { stpop.hidden = true; stpop.innerHTML = ''; }
+    // AND SO IS THE DIALOGS' OWN. Advanced and Generate open their pickers
+    // into #pd-advpop, inside the scrim; Escape closes it before the dialog.
+    const advpop = $('pd-advpop');
+    if (advpop) { advpop.hidden = true; advpop.innerHTML = ''; }
     // The placeholder that was clicked goes back to being a dash, unless the
     // pick gave it a value — `apply` redraws the whole tab and clears this
     // either way.
@@ -1853,12 +2006,10 @@ function plantProjector(m) {
         Math.min.apply(null, ys), Math.max.apply(null, ys)));
 }
 
+// Every caller has checked mapOf() first: with no map there is no frame to
+// draw into.
 function drawMap(w, h, scope) {
     const m = mapOf();
-    if (!m) {
-        return '<div class="pd-nomap">The plant map has not reached this edge yet. Core sends it ' +
-            'with the node list; the routing set is still a list beside this.</div>';
-    }
     scope = scope || pageMapScope();
     const project = plantProjector(m);
     const region = fitRegion(m, scope);
@@ -2342,9 +2493,11 @@ function routingSection() {
     routingPickersReady();
     const way = waypointNames();
     const m = mapOf();
+    // THE HEADING DESCRIBES THE SET, and the server's summary sentence does
+    // not: it counts the rows a backfill derived, a true answer to a narrower
+    // question, read above the whole set as though it described it.
     return '<div class="pd-sect"><h2>Routing set</h2>' +
-        '<span class="pd-dim">' + esc(S.routingSummary ||
-            'where this process may draw bins from, stage them, and send them') + '</span></div>' +
+        '<span class="pd-dim">where this process may draw bins from, stage them, and send them</span></div>' +
         ROUTING_GROUPS.map(routingRole).join('') +
         (way.length ? stBlock('Waypoints', 'from the map, on the shortest supply path — not editable',
             '<span class="pd-dim">' + esc(way.join(' · ')) + '</span>') : '') +
@@ -2357,10 +2510,16 @@ function routingSection() {
         // THE MAP IS THE READ-BACK. It draws what the set says, fitted to this
         // press, and a click on a name flashes that name's chip. It is not an
         // input: a click on a dot could only guess at the role, and the three
-        // lists above are the engineer saying it.
-        '<div class="pd-map pd-rsmap">' + drawMap(1040, 420) +
+        // lists above are the engineer saying it. With no map there is
+        // nothing to read back, so there is no frame, zoom or caption either.
+        (m ? routingMap(m) : '<p class="pd-note">No plant map on this Edge yet. Core sends it with the ' +
+            'node list; until then the lists above are the whole routing set.</p>');
+}
+
+function routingMap(m) {
+    return '<div class="pd-map pd-rsmap">' + drawMap(1040, 420) +
         '<div class="cap">' + esc(mapSubject()) + ' · ' +
-        esc(m ? 'plant map from Core · revision ' + m.revision : 'no plant map cached') +
+        esc('plant map from Core · revision ' + m.revision) +
         ' · teal = Robot 1 supply path · indigo = Robot 2 return' +
         ' · circles are the routing set, squares are this process\u2019s own positions</div>' +
         '<div class="zoom"><button data-act="rs-zoom" data-z="in">+</button>' +
@@ -2427,20 +2586,12 @@ async function loadRouting() {
         try { const j = await res.json(); why = j.error || j.message || why; } catch (_) { /* status only */ }
         S.routingError = why + ' Nothing below is the set — it is what could not be read.';
         S.routing = null;
-        S.routingSummary = '';
         return;
     }
     const view = await res.json();
     const rows = Array.isArray(view) ? view : (view.rows || view.routing_nodes || []);
     S.routing = rows;
     S.routingError = '';
-    // THE SUMMARY IS THE SERVER'S SENTENCE. The panel used to build its own
-    // from the rows — "derived from N claims" counted the claim_count on the
-    // styles block — and the derivation's own numbers are not on this page:
-    // how many claims it READ, and how many names still need a decision
-    // against Core's list. Two sentences about one derivation, and the one on
-    // screen was the one that could not see it.
-    S.routingSummary = view.summary || '';
 }
 
 // Clicking a name on the map FLASHES ITS ROW, and that is the whole of it.
@@ -2461,6 +2612,36 @@ function flashRoutingRow(name) {
     if (!chip) return;
     chip.scrollIntoView({ block: 'nearest' });
     chip.classList.add('flash');
+}
+
+// The bar's problem line, clicked: the finding's position becomes the
+// selection — the same state a card click or a row click sets, so the
+// picture, the table and the panel all agree — and the table row scrolls
+// into view. Nothing else changes: no model action, no write.
+//
+// The table's header row is sticky, so a row scrolled to the top of the
+// scroller would land under it. The scroller reserves the header's rendered
+// height first — measured, because the headings wrap to two lines at some
+// widths and not at others — and scrollIntoView honours that padding.
+function gotoFinding(node) {
+    S.selected = node;
+    drawFlows();
+    const box = $('pd-postbl');
+    const head = box && box.querySelector('thead');
+    if (head) box.style.scrollPaddingTop = head.offsetHeight + 'px';
+    const row = root().querySelector('[data-row="' + CSS.escape(node) + '"]');
+    if (row) row.scrollIntoView({ block: 'nearest' });
+}
+
+// A click on the selected position lets go of it; any other click goes to it.
+function toggleSelected(node) {
+    if (S.selected === node) { clearSelected(); return; }
+    gotoFinding(node);
+}
+
+function clearSelected() {
+    S.selected = null;
+    drawFlows();
 }
 
 async function openSettings() {
@@ -2511,7 +2692,7 @@ const ADV_SECTIONS = [
 // short names for them before the fields did; the field each one edits is
 // named here rather than guessed from the key.
 const ADV_COPY = {
-    allowed_payload_codes: ['allowed_payload_codes', 'which payloads a robot may bring to this position'],
+    allowed_payload_codes: ['allowed_payload_codes', 'which parts a robot may bring to this position'],
     reorder_point: ['reorder_point', 'units left when the next bin is requested'],
     auto_reorder: ['auto_reorder', 'request without the operator'],
     lineside_soft_threshold: ['lineside_soft_threshold', 'warn the operator above twice this on a release'],
@@ -2527,6 +2708,13 @@ const ADV_COPY = {
     sequence: ['sequence', 'where this position sits on the loader board'],
 };
 
+// The reorder point's source stamps that are worth a pill: the word drawn and
+// the sentence behind it. A stamp not listed here draws nothing.
+const REORDER_SOURCE = {
+    manual: ['typed', 'typed in by an engineer, not calculated'],
+    calculated: ['calculated', 'set by the reorder calculator, not typed'],
+};
+
 const CARRYOVER = {
     replace: 'replace',
     keep_lineside: 'keep at the line',
@@ -2536,9 +2724,13 @@ const CARRYOVER = {
 function openAdvanced(node) {
     const c = S.model.cells[node];
     if (!c) return;
+    const a = M().advancedFor(S.model, node);
     S.adv = {
         node: node,
-        a: M().advancedFor(S.model, node),
+        a: a,
+        // The values the sheet opened with, for advNumber's data-was: see
+        // onEscape.
+        was: Object.assign({}, a),
         evacNodes: (c.evacNodes || []).slice(),
         evacDest: c.evacDest || '',
     };
@@ -2572,9 +2764,10 @@ function advToggle(key) {
 }
 
 function advNumber(key) {
-    const v = advValue(key);
+    const v = advValue(key), was = S.adv.was[key];
     return '<input class="pd-inp' + (v ? '' : ' dflt') + '" type="text" inputmode="numeric" ' +
-        'data-adv="' + key + '" data-advkind="number" value="' + esc(v ? String(v) : '') + '" placeholder="—">';
+        'data-adv="' + key + '" data-advkind="number" data-f="adv:' + key + '" ' +
+        'data-was="' + esc(was ? String(was) : '') + '" value="' + esc(v ? String(v) : '') + '" placeholder="—">';
 }
 
 function advPick(key, label, cls) {
@@ -2600,8 +2793,15 @@ function advField(key) {
             // The source is a STAMP on the number, not a field of its own: it
             // says how the value got there. There is no calculator behind it on
             // Edge — see the report — so the pill is read-only.
-            const src = S.adv.a.reorder_point_source || 'legacy';
-            control = advNumber('reorder_point') + '<span class="pd-src">' + esc(src) + '</span>';
+            //
+            // ONLY A SOURCE THAT SAYS SOMETHING IS DRAWN. "legacy" is the stamp
+            // a number gets when nobody said how it was set — every row from
+            // before the column, and a cleared field — so as a pill it was a
+            // word the engineer could not act on or look up. The stored value
+            // is untouched; only the drawing changed.
+            const src = REORDER_SOURCE[S.adv.a.reorder_point_source];
+            control = advNumber('reorder_point') + (src
+                ? '<span class="pd-src" title="' + esc(src[1]) + '">' + esc(src[0]) + '</span>' : '');
             break;
         }
         case 'lineside_soft_threshold': case 'sequence': control = advNumber(key); break;
@@ -2672,7 +2872,13 @@ function drawAdvanced() {
         '<button class="pd-btn primary" data-act="adv-apply">Apply</button></div>' +
         '<div class="pd-pop" id="pd-advpop" hidden></div></div>';
     showSheet();
-    scrim.querySelectorAll('[data-advkind="number"]').forEach(el => {
+    bindAdvInputs();
+}
+
+// The number fields write through to S.adv as they are typed. Bound after
+// every write of the sheet's markup: a draw, or Keep editing's restore.
+function bindAdvInputs() {
+    $('pd-scrim').querySelectorAll('[data-advkind="number"]').forEach(el => {
         el.addEventListener('input', () => {
             const digits = el.value.replace(/[^0-9]/g, '');
             S.adv.a[el.dataset.adv] = digits ? Number(digits) : 0;
@@ -2835,6 +3041,32 @@ function onAdvClick(e) {
     if (act && act.dataset.act === 'adv-cancel') { closeAdvanced(); return; }
     if (act && act.dataset.act === 'adv-apply') { applyAdvanced(); return; }
     // The confirm/edit sheets share this scrim, so their two buttons answer here.
+    // While an Escape hold is up, Cancel is "Keep editing": the held sheet —
+    // markup, typed values and its own run — goes back exactly as it was. The
+    // values are re-applied to the restored markup, since innerHTML carried
+    // the OPENED sheet's attributes, not the typed properties.
+    if (act && act.dataset.act === 'sheet-cancel' && S.escapeHold) {
+        const hold = S.escapeHold;
+        S.escapeHold = null;
+        S.sheet = hold.sheet;
+        showSheet(hold.html);
+        for (const el of $('pd-scrim').querySelectorAll('[data-f]')) {
+            const name = (el.dataset && el.dataset.f) || el.getAttribute('data-f');
+            if (!(name in hold.fields)) continue;
+            if (el.type === 'checkbox') el.checked = hold.fields[name];
+            else el.value = hold.fields[name];
+        }
+        hold.rebind();
+        return;
+    }
+    if (act && act.dataset.act === 'escape-discard') {
+        const hold = S.escapeHold;
+        S.escapeHold = null;
+        if (!hold) { closeSheet(); return; }
+        S.sheet = hold.sheet;
+        hold.close();
+        return;
+    }
     if (act && act.dataset.act === 'sheet-cancel') { closeSheet(); return; }
     if (act && act.dataset.act === 'sheet-ok') { runSheet(); return; }
     // And so does the Generate-variants dialog.
@@ -3119,7 +3351,7 @@ function drawSettings() {
     const general = '<div class="pd-sect"><h2>General</h2></div>' +
         stField('Name', '', stText('name')) +
         stField('Description', '', stText('description', true)) +
-        stField('Group', 'pure taxonomy for the list — nothing reads it',
+        stField('Group', 'groups processes on the list',
             '<button class="pd-sel" data-act="st-group">' + esc(group ? group.name : 'Ungrouped') + '<i class="car"></i></button>');
 
     const counter = '<div class="pd-sect"><h2>Production counter</h2>' +
@@ -3409,6 +3641,7 @@ async function saveSettings() {
     if (keepCurtain) S.curtain = keepCurtain;
     await reloadProcesses();
     S.settings = settingsDraft();
+    if (!S.settingsError) S.settingsNotice = 'Saved.';
     drawSettings();
 }
 
@@ -3427,6 +3660,21 @@ async function reloadStations() {
     if (!res.ok) return;
     const rows = await res.json();
     S.stations = Array.isArray(rows) ? rows : [];
+}
+
+// core_node_name -> process name for every live position of a process other
+// than the open one, read once when the screen sheet opens. A failed read
+// marks nothing: the save still refuses, it just cannot be warned of here.
+async function positionsOfOtherProcesses() {
+    const out = {};
+    try {
+        const res = await fetch('/api/process-nodes');
+        const rows = res.ok ? await res.json() : [];
+        for (const n of Array.isArray(rows) ? rows : []) {
+            if (n.process_id !== S.processID && n.core_node_name) out[n.core_node_name] = n.process_name;
+        }
+    } catch (_) { /* nothing extra to mark */ }
+    return out;
 }
 
 // The positions one screen claims, re-read from the server rather than assumed
@@ -3599,7 +3847,8 @@ function pickerBox(key) {
     return '<div class="pd-npk" data-npkbox="' + key + '" id="npk-' + key + '">' +
         '<div class="chips" data-npkpart="chips">' + pickerChips(key) + '</div>' +
         '<input class="pd-npkq" type="text" autocomplete="off" data-npkq="' + key +
-        '" placeholder="find a node by name">' +
+        '" placeholder="' + (S.pickers[key] && S.pickers[key].source === 'payloads'
+            ? 'find a part by name' : 'find a node by name') + '">' +
         '<div class="opts" data-npkpart="opts">' + pickerOptions(key) + '</div></div>';
 }
 
@@ -3814,18 +4063,19 @@ function onPickerClick(el) {
 // One shell, the Advanced sheet's, because they are the same object: a small
 // modal over a scrim with a header, a body of labelled fields and two buttons.
 // A second modal shape would be a second set of paddings to keep in step.
-// cls is an optional width class — pd-narrow (480) for a one-field modal,
-// pd-wide (920) for Generate variants and Add process. The shell, the paddings
-// and the footer are the same in every case, because they are the same object.
+// One width, too: .pd-modal is sized in CSS from the label column and the
+// wide input that sheetField draws, so every field fits every sheet and no
+// sheet picks a width of its own. Generate variants, whose body is a table,
+// draws its own pd-wide shell and is the one exception.
 //
 // #pd-advpop RIDES ON THE SHELL rather than on the sheets that want a popover.
 // It is the Advanced sheet's answer to #pd-pop living inside #pd-root, which
 // the scrim covers; a list opened from a sheet against the page's popover
 // draws behind the modal. One per scrim, whichever sheet is open — and the
 // sheets that never open one pay an empty div.
-function openSheet(title, sub, body, confirm, run, danger, cls) {
+function openSheet(title, sub, body, confirm, run, danger) {
     S.sheet = { run: run };
-    showSheet('<div class="pd-modal ' + (cls || '') + '" role="dialog" aria-modal="true" aria-label="' + esc(title) + '">' +
+    showSheet('<div class="pd-modal" role="dialog" aria-modal="true" aria-label="' + esc(title) + '">' +
         '<div class="mh"><h2>' + esc(title) + '</h2>' + (sub ? '<p>' + esc(sub) + '</p>' : '') + '</div>' +
         '<div class="mb">' + body + '</div>' +
         '<div class="mf"><span class="st"></span>' +
@@ -3869,6 +4119,9 @@ async function runSheet() {
 function closeSheet() {
     hideSheet();
     S.sheet = null;
+    // A hold that outlives its sheet would answer the NEXT sheet's Cancel
+    // with the last one's markup, so it goes when the sheet does.
+    S.escapeHold = null;
     // A PICKER'S STATE BELONGS TO THE RENDER THAT DREW IT. The scrim is empty
     // now, so every picker whose box went with it is dead state — and a dead
     // picker with a selection is what would put last time's nodes in front of
@@ -3879,6 +4132,89 @@ function closeSheet() {
     // from nothing ticked (explicit re-apply), not from what was ticked last
     // time and previewed against a flow that has since been saved.
     S.papply = null;
+}
+
+// ── one Escape rule, innermost first ─────────────────────────────────────────
+//
+// THE RULE THE PAGE HAD, PLUS THE DOOR IT FORGOT. The boot handler closed
+// Advanced, then Generate, then the sheet — but the open popover outlived all
+// three arms, so Escape over a part menu closed the sheet under it and left
+// the menu floating. Innermost first, one order for every layer this page
+// stacks: popover, then Advanced, then Generate, then the sheet.
+//
+// A SHEET ASKS BEFORE IT DISCARDS TYPED WORK, every sheet: the openSheet
+// layer, Advanced and Generate. An Escape on a sheet with nothing typed still
+// closes it — a sheet's Cancel is a click away and Escape has always meant
+// "back out". But a sheet the engineer has typed into is work, and work does
+// not vanish on a key that elsewhere only closes menus. A typed field is one
+// marked data-f, and the test is attribute-vs-property: the markup carries the
+// value the sheet OPENED with — value="…" / checked, or data-was="…" on
+// Advanced and Generate, which redraw themselves from their own state and so
+// write a typed value back into value="…" — and the DOM property is what
+// typing moves, so a mismatch IS the edit: no dirty ledger to keep, no state
+// to drift. The question is drawn as its own sheet, so the typed work is
+// SNAPSHOTTED first and restored by the Cancel that opens the same sheet
+// again.
+function onEscape() {
+    // THE INNERMOST POPOVER FIRST: the page's, Settings' group list, or the
+    // picker an Advanced or Generate dialog opened over itself.
+    if (['pd-pop', 'pd-stpop', 'pd-advpop'].some(id => { const p = $(id); return p && !p.hidden; })) {
+        closePop();
+        return;
+    }
+    // The question is up: only its own two buttons answer it.
+    if (S.escapeHold) return;
+    const layer = S.adv ? { close: closeAdvanced, rebind: bindAdvInputs }
+        : S.gen ? { close: closeGenerate, rebind: bindGenInputs }
+            : S.sheet ? { close: closeSheet, rebind: bindPickers } : null;
+    // The selection is the outermost thing Escape can let go of: only with no
+    // popover and no sheet open does it clear the selected position.
+    if (!layer) {
+        if (S.selected && S.tab === 'flows') clearSelected();
+        return;
+    }
+    if (!askBeforeDiscard(layer)) layer.close();
+}
+
+function typedField(el) {
+    if (el.type === 'checkbox') return el.checked !== el.hasAttribute('checked');
+    const opened = el.hasAttribute('data-was') ? el.getAttribute('data-was') : el.getAttribute('value');
+    return (el.value || '') !== (opened || '');
+}
+
+// askBeforeDiscard puts the question up over the open sheet when it holds
+// typed work, and says whether it did.
+function askBeforeDiscard(layer) {
+    const scrim = $('pd-scrim');
+    if (!scrim) return false;
+    const els = [...scrim.querySelectorAll('[data-f]')];
+    if (!els.some(typedField)) return false;
+    // THE HOLD CARRIES THE VALUES, not just the markup: innerHTML serializes
+    // the attribute, typing lives in the property, so a markup-only snapshot
+    // would restore the sheet as it was OPENED and Keep editing would throw
+    // away the very work it says it keeps. The fields ride beside the html and
+    // are re-applied to the restored markup — the property is authoritative
+    // twice.
+    const fields = {};
+    for (const el of els) {
+        const name = (el.dataset && el.dataset.f) || el.getAttribute('data-f');
+        fields[name] = el.type === 'checkbox' ? el.checked : (el.value || '');
+    }
+    // THE HOLD IS THE WHOLE SHEET, not a summary of it: restoring the markup
+    // restores the sheet, its own state (S.sheet.run, S.adv, S.gen) never
+    // left, and Keep editing binds the layer's own listeners again. Discard
+    // closes the layer the way its own Cancel does.
+    S.escapeHold = { sheet: S.sheet, html: scrim.innerHTML, fields: fields, close: layer.close, rebind: layer.rebind };
+    S.sheet = { run: () => {} };
+    showSheet('<div class="pd-modal" role="dialog" aria-modal="true" aria-label="Discard the changes?">' +
+        '<div class="mh"><h2>Discard the changes?</h2>' +
+        '<p>this sheet has typed work in it.</p></div>' +
+        '<div class="mb"><p class="pd-note">Closing now throws away what was typed into it. ' +
+        'Keep editing puts every field back exactly as it was.</p></div>' +
+        '<div class="mf"><span class="st"></span>' +
+        '<button class="pd-btn" data-act="sheet-cancel">Keep editing</button>' +
+        '<button class="pd-btn danger" data-act="escape-discard">Discard</button></div></div>');
+    return true;
 }
 
 function sheetValue(name) {
@@ -3979,8 +4315,13 @@ function styleAction(act, id) {
         case 'clone':
             openSheet('Clone ' + st.name, 'a new style with the same flow, ready to be renamed.',
                 sheetField('Name', '', 'name', st.name + ' copy'),
-                'Clone', () => sheetSubmit('POST', '/api/styles/' + id + '/clone',
-                    B().styleClone(sheetValue('name')), refreshProcess));
+                'Clone', () => {
+                    const name = sheetValue('name');
+                    return sheetSubmit('POST', '/api/styles/' + id + '/clone', B().styleClone(name), () => {
+                        S.notice = 'Saved ' + name + ', a copy of ' + st.name + '.';
+                        return refreshProcess();
+                    });
+                });
             return;
         // R4: "Set Active" is now "Mark as running", and the sentence says
         // exactly what it does — because the old verb read like an instruction
@@ -4053,7 +4394,7 @@ function openNewStyle() {
             // refreshProcess keeps the id when the re-read still has it.
             S.styleID = Number(made.body.id) || S.styleID;
             await refreshProcess();
-        }, false, 'pd-narrow');
+        }, false);
 }
 
 // P0's "Add group". Taxonomy for the list and nothing else reads it, which the
@@ -4075,7 +4416,7 @@ function openNewGroup() {
                 if (Array.isArray(rows)) S.groups = rows;
             }
             drawList();
-        }, false, 'pd-narrow');
+        }, false);
 }
 
 // "+ Add a position" is a MODEL OP, not a server write: it turns on a position
@@ -4114,7 +4455,7 @@ function addFreePosition(btn) {
     if (free.length === 1) { apply({ type: 'addPosition', node: free[0], mode: defaultModeFor() }); return; }
     const pop = $('pd-pop');
     if (!pop) return;
-    pop.innerHTML = '<div class="pd-lbl">Turn on a position</div>' +
+    pop.innerHTML = '<div class="pd-lbl">Add a position</div>' +
         free.map(n => '<button data-freepos="' + esc(n) + '">' + esc(n) + '</button>').join('');
     pop.hidden = false;
     // The footer sits at the foot of the page, so this one always opens
@@ -4179,35 +4520,6 @@ async function loadProcessPayloads(processID) {
     }
 }
 
-// claimedPayloads is the OTHER half of the palette — the parts this process's
-// live flows already run — so the picker can say that unticking one changes
-// nothing. Answerable only for the process whose composer block is loaded;
-// for any other row in the list the honest answer is silence.
-//
-// Returns part -> ["<style> at <position>", ...]. The Edit sheet is reachable
-// from the list for a process this page never opened, and the loaded composer
-// block carries no process id to check it against, so this always reads the
-// edited process's own block. A failed read is silence.
-async function claimedPayloads(processID) {
-    let styles = null;
-    try {
-        const res = await fetch('/api/processes/' + processID + '/composer');
-        if (res.ok) styles = ((await res.json()) || {}).styles;
-    } catch (_) { styles = null; }
-    const out = new Map();
-    for (const st of (styles || [])) {
-        // styleFacts, not st.parts: on this page the block carries the cells
-        // and not the summary. See composerStyle.
-        for (const p of M().styleFacts(st).parts) {
-            const code = p.payload_code || p;
-            if (!code) continue;
-            if (!out.has(code)) out.set(code, []);
-            out.get(code).push((st.name || 'style ' + st.id) + (p.node ? ' at ' + p.node : ''));
-        }
-    }
-    return out;
-}
-
 // ── the sheet's map read-back (owner ruling 5, 2026-09-17) ──────────────────
 //
 // THE PICTURE OF WHAT HAS BEEN PICKED, inside the sheet that picks it. An
@@ -4223,7 +4535,9 @@ async function claimedPayloads(processID) {
 // destination.
 const SHEET_MAP_ID = 'pd-sheetmap';
 
+// No map, no section: a frame around "nothing here" is a drawing of nothing.
 function sheetMapField() {
+    if (!mapOf()) return '';
     return '<div class="pd-sec"><div class="pd-lbl">Where that is</div></div>' +
         '<div class="pd-fld pd-fld-wide"><div class="v">' +
         '<div class="pd-map pd-sheetmap" id="' + SHEET_MAP_ID + '">' + sheetMapSvg() + '</div>' +
@@ -4300,7 +4614,7 @@ function openAddProcess() {
         '<div class="pd-sec"><div class="pd-lbl">The process</div></div>' +
         sheetField('Name', 'what this process is called here', 'name', '') +
         sheetField('Description', '', 'description', '') +
-        '<div class="pd-fld"><label>Group<small>pure taxonomy for the list — nothing reads it</small></label>' +
+        '<div class="pd-fld"><label>Group<small>groups processes on the list</small></label>' +
         '<div class="v"><button class="pd-sel" id="pd-addgroup" data-act="add-pickgroup">' +
         'Ungrouped<i class="car"></i></button></div></div>' +
 
@@ -4311,242 +4625,36 @@ function openAddProcess() {
 
         '<div class="pd-sec"><div class="pd-lbl">The routing set</div></div>' +
         ROUTING_GROUPS.map(g => pickerField(routingPickerKey(g[0]), g[1], g[2])).join('') +
-        '<p class="pd-note">A name in one of these three lists is a place this process may route ' +
-        'material through. Operators are offered these and never the plant. Fill them in and the ' +
-        'flow composer opens on this process, because reviewing the set is exactly what that gate ' +
-        'is waiting for; leave them empty and it stays shut until Settings says otherwise.</p>' +
+        '<p class="pd-note">Operators are offered only these places, never the whole plant.</p>' +
 
         partSetField() +
         sheetMapField();
 
     openSheet('Add process', 'a process, the screen that works it, and where its bins come from and go.',
-        body, 'Create', submitAddProcess, false, 'pd-wide');
-}
-
-// ── Edit process, the same sheet backwards ───────────────────────────────────
-//
-// "Why can't I edit a process similar to add process, where I select what nodes
-// or other basic information it has?" — because everything Add asks in one
-// place was, afterwards, spread across two tabs and a row menu: the name and
-// group in Settings, the positions in Operator screens › Edit, the routing set
-// further down Settings. Making a press and changing a press are the same
-// three questions, so they are the same three sections.
-//
-// IT APPLIES A DIFF, WHICH IS THE ONE WAY IT DIFFERS FROM ADD. Add creates and
-// every write is an insert; this one has to compare against what is already
-// there and touch only what moved, because each of these endpoints is
-// destructive in its own way — the process PUT writes every column it decodes,
-// claimed-nodes is a set-to that deletes what it is not sent, and a routing
-// delete is refused while a live flow still routes through the name.
-//
-// Counter, changeover and the danger zone stay in Settings. They are not what
-// a press IS, they are how it is wired and what happens to it, and a sheet
-// that asked everything would be the Settings tab with a Cancel button.
-function openEditProcess(processID) {
-    const p = S.processes.find(x => x.id === Number(processID));
-    if (!p) return;
-    void openEditProcessFor(p);
-}
-
-async function openEditProcessFor(p) {
-    // The screen this process is worked from. A press has one in every case
-    // this page has met; more than one means the positions question belongs to
-    // whichever screen, and this sheet says so rather than guessing.
-    const screens = S.stations.filter(st => st.process_id === p.id);
-    const one = screens.length === 1 ? screens[0] : null;
-    if (one) await refreshStationNodes(one.id);
-    if (!S.routing || S.processID !== p.id) {
-        S.processID = p.id;
-        await loadRouting();
-    }
-    const positions = one ? (S.stationNodes[String(one.id)] || []).slice() : [];
-    const before = {
-        positions: positions.slice(),
-        roles: {},
-    };
-    // ONLY THE GROUP. The sheet's other two facts — which process and which
-    // screen — are arguments to submitEditProcess, so parking copies of them
-    // here made two records of one thing and nothing read the second.
-    S.add = { groupID: p.group_id || 0 };
-
-    pickerInit('positions', {
-        selected: positions,
-        expandGroups: true,
-        onChange: () => {
-            for (const g of ROUTING_GROUPS) {
-                const key = routingPickerKey(g[0]);
-                const pk = S.pickers[key];
-                if (!pk) continue;
-                pk.sel = pk.sel.filter(n => pickerValue('positions').indexOf(n) < 0);
-                redrawPicker(key);
-            }
-            redrawSheetMap();
-        },
-    });
-    for (const g of ROUTING_GROUPS) {
-        const mine = (S.routing || []).filter(r => r.role === g[0] && r.enabled)
-            .map(r => r.core_node_name);
-        before.roles[g[0]] = mine.slice();
-        pickerInit(routingPickerKey(g[0]), {
-            selected: mine,
-            exclude: n => (pickerValue('positions').indexOf(n) >= 0
-                ? 'a position of this process — available to every flow on it already'
-                : B().laneExclusion(S.coreNodes, n)),
-            onChange: redrawSheetMap,
+        body, 'Create', submitAddProcess, false);
+    // A REFUSED FIELD STOPS BEING REPORTED ONCE IT IS TYPED IN. Only the two
+    // up-front checks clear this way: a refusal from the write chain is the
+    // record of what was already made, and typing must not erase it.
+    for (const f of ['name', 'screen']) {
+        const el = $('pd-scrim').querySelector('[data-f="' + f + '"]');
+        if (el) el.addEventListener('input', () => {
+            if (S.add && S.add.refused) { S.add.refused = false; sheetStatus('', false); }
         });
     }
-    // THE STORED HALF OF THE PART SET, which is the only half a write may
-    // touch. The composer read's `palette` is the union with what the process's
-    // live claims already run, and opening this picker on the union would let
-    // an engineer "untick" a part they cannot remove — the claim keeps it
-    // offered. So the sheet reads the typed rows and says what the other half
-    // is in its note.
-    before.parts = await loadProcessPayloads(p.id);
-    const claimed = await claimedPayloads(p.id);
-    pickerInit(PART_SET_PICKER, {
-        source: 'payloads',
-        selected: (before.parts || []).slice(),
-        annotate: code => (claimed.has(code)
-            ? 'used by ' + claimed.get(code).join(', ') + ' — remove it from that flow to take it off' : ''),
-    });
-
-    const screenField = one
-        ? pickerField('positions', 'Positions',
-            'what ' + one.name + ' claims — a flow can only use a position its screen owns')
-        : '<div class="pd-fld"><label>Positions<small>which screen claims what</small></label>' +
-        '<div class="v"><span class="pd-dim">' +
-        esc(screens.length ? 'This process has ' + screens.length + ' screens, so a position ' +
-            'belongs to one of them — set those on Operator screens › Edit.'
-            : 'No screen works this process yet. Add one on Operator screens, then its ' +
-            'positions can be set here.') + '</span></div></div>';
-
-    openSheet('Edit ' + p.name, 'what this process is, what works it, and where its bins come from and go.',
-        '<div class="pd-sec"><div class="pd-lbl">The process</div></div>' +
-        sheetField('Name', 'what this process is called here', 'name', p.name) +
-        sheetField('Description', '', 'description', p.description) +
-        '<div class="pd-fld"><label>Group<small>pure taxonomy for the list — nothing reads it</small></label>' +
-        '<div class="v"><button class="pd-sel" id="pd-addgroup" data-act="add-pickgroup">' +
-        esc((S.groups.find(g => g.id === (p.group_id || 0)) || {}).name || 'Ungrouped') +
-        '<i class="car"></i></button></div></div>' +
-
-        '<div class="pd-sec"><div class="pd-lbl">The operator screen</div></div>' +
-        screenField +
-
-        '<div class="pd-sec"><div class="pd-lbl">The routing set</div></div>' +
-        ROUTING_GROUPS.map(g => pickerField(routingPickerKey(g[0]), g[1], g[2])).join('') +
-        '<p class="pd-note">Only what you change is written. Taking a name out of a role is ' +
-        'refused while a live flow still routes through it, and the refusal says which part. ' +
-        'The counter, the changeover rule and deleting this process are on Settings.</p>' +
-
-        partSetField() +
-        // THE READ FAILED, SO THE PICKER IS NOT THE SET. Saving an empty picker
-        // over a part set nobody could read would be a wipe made by a fetch,
-        // which is the shape that made the screen sheet destructive (see
-        // openScreenSheet). submitEditProcess skips the write when this is the
-        // state; the sheet says so rather than leaving it to be found later.
-        (before.parts === null
-            ? '<p class="pd-note pd-warn">This cell’s part set could not be read, so it is left ' +
-              'alone by Save. Reload the page to edit it.</p>'
-            : '') +
-        sheetMapField(),
-        'Save', () => submitEditProcess(p, before, one), false, 'pd-wide');
-}
-
-async function submitEditProcess(p, before, screen) {
-    const name = String(sheetValue('name') || '').trim();
-    if (!name) { sheetStatus('A process needs a name.', true); return; }
-
-    const done = [];
-    const stop = (what, why) => sheetStatus(
-        (done.length ? done.join('; ') + '. ' : '') + what + ' was refused: ' + why, true);
-
-    // THE PROCESS ROW, and only when something on it moved. processSettings
-    // carries the counter through untouched — the fields this sheet does not
-    // ask about must survive it, which is the whole reason that builder exists.
-    const draft = Object.assign(settingsDraftFor(p), {
-        name: name,
-        description: sheetValue('description'),
-        group_id: S.add.groupID,
-    });
-    if (JSON.stringify(draft) !== JSON.stringify(settingsDraftFor(p))) {
-        sheetStatus('Saving…');
-        const out = await postJSON('PUT', '/api/processes/' + p.id, B().processSettings(p, draft));
-        if (!out.ok) { stop('The process', out.error); return; }
-        done.push('The process was saved');
-    }
-
-    // THE POSITIONS, and only when the list moved — claimed-nodes is a set-to
-    // and re-sending an unchanged list is a delete-and-recreate of every one.
-    if (screen) {
-        const want = B().stationNodes(sheetValue('positions')).nodes;
-        const same = want.length === before.positions.length &&
-            want.every((n, i) => n === before.positions[i]);
-        if (!same) {
-            const out = await postJSON('PUT', '/api/operator-stations/' + screen.id + '/claimed-nodes',
-                { nodes: want });
-            if (!out.ok) { stop('Its positions', out.error); return; }
-            done.push('its positions set');
-        }
-    }
-
-    // THE ROUTING SET, as a diff. Added names are POSTed; removed ones are
-    // DELETEd, which the server refuses while a live claim still routes
-    // through them — and that refusal is the answer, not an obstacle.
-    for (const g of ROUTING_GROUPS) {
-        const was = before.roles[g[0]] || [];
-        const now = pickerValue(routingPickerKey(g[0]));
-        for (const nm of now) {
-            if (was.indexOf(nm) >= 0) continue;
-            const have = (S.routing || []).find(r => r.core_node_name === nm && r.role === g[0]);
-            const out = have
-                ? await postJSON('PATCH', '/api/processes/' + p.id + '/routing-nodes/' + have.id,
-                    B().routingEnable(true))
-                : await postJSON('POST', '/api/processes/' + p.id + '/routing-nodes',
-                    B().routingAdd(nm, g[0], now.indexOf(nm)));
-            if (!out.ok) { stop(nm + ' as a ' + g[0], out.error); return; }
-        }
-        for (const nm of was) {
-            if (now.indexOf(nm) >= 0) continue;
-            const have = (S.routing || []).find(r => r.core_node_name === nm && r.role === g[0]);
-            if (!have) continue;
-            const out = await postJSON('DELETE',
-                '/api/processes/' + p.id + '/routing-nodes/' + have.id, null);
-            if (!out.ok) { stop('Taking ' + nm + ' out of ' + g[0], out.error); return; }
-        }
-    }
-
-    // THE PART SET, and only when it moved — a set-to written on every Save is
-    // a delete-and-recreate of every row for an edit to the process's note.
-    // Skipped entirely when the baseline could not be read: an empty picker
-    // over an unread set is a wipe made by a fetch.
-    if (before.parts !== null) {
-        const want = pickerValue(PART_SET_PICKER);
-        const same = want.length === before.parts.length &&
-            want.every((n, i) => n === before.parts[i]);
-        if (!same) {
-            const out = await postJSON('PUT', '/api/processes/' + p.id + '/payloads',
-                B().processPayloads(want));
-            if (!out.ok) { stop('Its part set', out.error); return; }
-            done.push('its part set saved');
-        }
-    }
-
-    closeSheet();
-    await reloadProcesses();
-    await reloadStations();
-    if (screen) await refreshStationNodes(screen.id);
-    await loadRouting();
-    if (S.processID === p.id) await refreshProcess();
-    else drawList();
 }
 
 async function submitAddProcess() {
     const name = String(sheetValue('name') || '').trim();
-    if (!name) { sheetStatus('A process needs a name.', true); return; }
+    if (!name) { S.add.refused = true; sheetStatus('A process needs a name.', true); return; }
     const screen = String(sheetValue('screen') || '').trim();
     // A press with no HMI cannot be run by anybody, so the screen is required
     // here rather than left to be noticed on D4 later.
-    if (!screen) { sheetStatus('Name the operator screen — a process with no HMI cannot be run.', true); return; }
+    if (!screen) {
+        S.add.refused = true;
+        sheetStatus('Name the operator screen — a process with no HMI cannot be run.', true);
+        return;
+    }
+    S.add.refused = false;
 
     sheetStatus('Creating…');
     const made = await postJSON('POST', '/api/processes',
@@ -4661,10 +4769,21 @@ function stationBody(st, editing, change) {
 // So the sheet asks the server what this screen claims, and opens on the
 // answer. The write is also skipped when the engineer did not touch the list —
 // a note edit has no business calling a set-to endpoint at all.
+// The screen sheet's line for positions a save could not take off the screen
+// because each still has an active order.
+function keptPositionsSentence(names) {
+    return names.length === 1
+        ? 'Saved. ' + names[0] + ' stays on this screen until its active order finishes.'
+        : 'Saved. ' + names.join(', ') + ' stay on this screen until their active orders finish.';
+}
+
 async function openScreenSheet(stationID) {
     const st = stationsOf(S.processID).find(s => s.id === Number(stationID)) || {};
     const editing = !!st.id;
-    if (editing) await refreshStationNodes(st.id);
+    const [, onOther] = await Promise.all([
+        editing ? refreshStationNodes(st.id) : null,
+        positionsOfOtherProcesses(),
+    ]);
     const baseline = editing ? (S.stationNodes[String(st.id)] || []).slice() : [];
     const claimedElsewhere = {};
     for (const other of stationsOf(S.processID)) {
@@ -4679,7 +4798,11 @@ async function openScreenSheet(stationID) {
         // process_node row per process. The engineer is told whose it is before
         // they take it.
         exclude: () => '',
-        annotate: n => (claimedElsewhere[n] ? 'claimed by ' + claimedElsewhere[n] : ''),
+        // A position of ANOTHER process is shown for the same reason, and the
+        // save refuses it: one Core node is a position of one process. A
+        // sibling's claim is named first, since that one the save will move.
+        annotate: n => (claimedElsewhere[n] ? 'claimed by ' + claimedElsewhere[n]
+            : onOther[n] ? 'on ' + onOther[n] : ''),
     });
     openSheet(editing ? 'Edit ' + st.name : 'Add operator screen',
         'the HMI an operator works this process from.',
@@ -4710,13 +4833,26 @@ async function openScreenSheet(stationID) {
                     await reloadStations();
                     return;
                 }
+                // A REMOVED POSITION WITH AN ACTIVE ORDER IS KEPT, not retired:
+                // the server disables it and leaves it on the screen, naming it
+                // in `kept`. Closing would tell the engineer it was gone, so the
+                // sheet stays open and says which and why. Not a refusal — the
+                // save landed. An older server sends no `kept` and closes as before.
+                const kept = Array.isArray(nodes.body.kept) ? nodes.body.kept : [];
+                if (kept.length) {
+                    await reloadStations();
+                    await refreshStationNodes(id);
+                    await refreshProcess();
+                    sheetStatus(keptPositionsSentence(kept), false);
+                    return;
+                }
             }
             closeSheet();
             await reloadStations();
             await refreshStationNodes(id);
             await refreshProcess();
         },
-        false, 'pd-wide');
+        false);
 }
 
 // ONE GROUP LIST, TWO HOSTS. Settings picks a group into its draft and the
@@ -4872,7 +5008,7 @@ async function loadGenColumns() {
     }
 }
 
-// A row starts with every cell inheriting the base's payload, so an untouched
+// A row starts with every cell on the base's part, so an untouched
 // cell is "the same part as the base" rather than a blank the server refuses.
 function addGenRow() {
     S.gen.rows.push({
@@ -4890,20 +5026,21 @@ function drawGenerate() {
         ? '<table class="pd-gentbl"><thead><tr><th>New style name</th>' +
         S.gen.cols.map(c => '<th>' + esc(c.node) + '</th>').join('') + '<th></th></tr></thead><tbody>' +
         S.gen.rows.map((r, i) =>
-            '<tr><td><input class="pd-geninput" data-genrow="' + i + '" type="text" autocomplete="off" ' +
+            '<tr><td><input class="pd-geninput" data-genrow="' + i + '" data-f="gen:' + i + '" data-was="" ' +
+            'type="text" autocomplete="off" ' +
             'placeholder="e.g. SYN-PART-01" value="' + esc(r.name) + '"></td>' +
             S.gen.cols.map((c, j) => '<td>' + picker('', 'gen:' + i + ':' + j,
-                esc(M().shortPart(r.payloads[j]) || 'inherit'), r.payloads[j] ? '' : 'dflt',
-                r.payloads[j] || 'the base payload') + '</td>').join('') +
+                esc(M().shortPart(r.payloads[j]) || 'same as base'), r.payloads[j] ? '' : 'dflt',
+                r.payloads[j] || 'the base part') + '</td>').join('') +
             '<td><button class="pd-mv" data-act="gen-drop" data-i="' + i + '" title="remove this variant">&times;</button></td></tr>').join('') +
         '</tbody></table>' +
         '<button class="pd-chip add" data-act="gen-add">+ Add variant</button>'
-        : '<p class="pd-note">' + esc(baseName) + ' has no flow yet, so there is nothing to set a payload on. ' +
+        : '<p class="pd-note">' + esc(baseName) + ' has no flow yet, so there is nothing to set a part on. ' +
         'Build its flow in Flows first — a family is stamped out of a base that already works.</p>';
 
     scrim.innerHTML = '<div class="pd-modal pd-wide" role="dialog" aria-modal="true" aria-label="Generate variants">' +
         '<div class="mh"><h2>Generate variants</h2><p>One new style per row, stamped out of a base ' +
-        'that already runs. A cell left on <b>inherit</b> keeps the base part.</p></div>' +
+        'that already runs. Every cell starts on the base style’s part; change the ones that differ.</p></div>' +
         '<div class="mb">' +
         '<div class="pd-fld"><label>Base style<small>its flow is the shape every variant gets</small></label>' +
         '<div class="v">' + picker('', 'gen-base', esc(baseName)) + '</div></div>' +
@@ -4915,7 +5052,13 @@ function drawGenerate() {
         '<button class="pd-btn primary" data-act="gen-run">Generate</button></div>' +
         '<div class="pd-pop" id="pd-advpop" hidden></div></div>';
     showSheet();
-    scrim.querySelectorAll('[data-genrow]').forEach(el => {
+    bindGenInputs();
+}
+
+// The name fields write through to S.gen as they are typed; bound after every
+// write of the dialog's markup, as bindAdvInputs is.
+function bindGenInputs() {
+    $('pd-scrim').querySelectorAll('[data-genrow]').forEach(el => {
         el.addEventListener('input', () => { S.gen.rows[Number(el.dataset.genrow)].name = el.value; });
     });
 }
@@ -4943,9 +5086,9 @@ function genOptions(kind) {
     }
     const i = Number(parts[1]), j = Number(parts[2]);
     const set = code => () => { S.gen.rows[i].payloads[j] = code; drawGenerate(); };
-    // "inherit" is the base's payload, and it is the first option because it
-    // is the default a row opens on.
-    const head = [{ label: 'inherit · ' + (M().shortPart(S.gen.cols[j].base) || 'nothing'), on: !S.gen.rows[i].payloads[j], run: set('') }];
+    // "same as base" is the base's part, sent as no override at all; it is the
+    // first option because it is the part every cell opens on.
+    const head = [{ label: 'same as base · ' + (M().shortPart(S.gen.cols[j].base) || 'nothing'), on: !S.gen.rows[i].payloads[j], run: set('') }];
     return head.concat(S.gen.catalog.map(c => ({
         label: c.code + (c.uop_capacity ? ' · ' + c.uop_capacity + ' UOP' : ''),
         on: S.gen.rows[i].payloads[j] === c.code,
@@ -4984,7 +5127,7 @@ function genVariants() {
         const overrides = [];
         S.gen.cols.forEach((c, j) => {
             const code = r.payloads[j];
-            if (!code) return;                   // inherit: leave this claim alone
+            if (!code) return;                   // same as base: leave this claim alone
             overrides.push({
                 core_node_name: c.node,
                 // manual_swap stores '' in payload_code and drives off the
@@ -5110,9 +5253,19 @@ async function loadPresets() {
 // lexically — the same preset, two orders, one click apart — so the order is
 // computed once where the process's own node sequence lives
 // (domain.PresetShapeNodes) and both surfaces print it.
+//
+// A MIXED SHAPE HAS ITS OWN MARK. The server leaves mode blank when the
+// shape's positions disagree, and the glyph for no mode is the empty dashed
+// square — the drawing for "nothing here", on a shape that has several things.
+// Two overlapped squares say "more than one" without claiming any one mode's
+// geometry; composer-glyphs.js ships verbatim, so the mark is this page's.
 function shapeCell(mode, where) {
-    return '<span class="pd-shape">' + gl(mode || '', 22, {}) +
-        '<span class="w">' + esc(M().modeLabels()[mode] || 'mixed') + '</span>' +
+    const label = M().modeLabels()[mode];
+    const mark = label ? gl(mode, 22, {})
+        : '<span class="pd-mixed" aria-hidden="true"><i></i><i></i></span>';
+    const word = label ? '<span class="w">' + esc(label) + '</span>'
+        : '<span class="w" title="its positions run different modes">mixed</span>';
+    return '<span class="pd-shape">' + mark + word +
         '<span class="ns">' + esc(where || '') + '</span></span>';
 }
 
@@ -5173,7 +5326,8 @@ function presetRow(p) {
                 : '<span class="pd-dim">in step</span>') + '</div>';
     }).join('');
     return head + '<tr class="pd-memrow"><td colspan="6">' + (members ? rows
-        : '<p class="pd-dim">Nothing runs this shape yet. Apply it to a part to give it members.</p>') +
+        : '<p class="pd-dim">Not applied to any part yet. Saving a preset from a flow does not ' +
+        'apply it to that flow; Apply to parts… does.</p>') +
         '</td></tr>';
 }
 
@@ -5181,10 +5335,12 @@ function candidateRow(c) {
     const names = c.member_names || [];
     const n = (c.members || []).length;
     const sub = names.slice(0, 4).join(', ') + (names.length > 4 ? ', +' + (names.length - 4) + ' more' : '');
-    // `N parts` and not `used by N parts`: the column is headed USED BY, and a
-    // cell that repeats its own heading says it twice. It counts the way the
-    // presets table above it counts, because two tables on one screen counting
-    // the same thing differently is two things to learn.
+    // `N parts` and not `run by N parts`: the column is headed RUN BY, and a
+    // cell that repeats its own heading says it twice. The two tables count
+    // different things and their headings say which: a preset counts the parts
+    // it was APPLIED TO (a preset named from a flow marks nothing, so a shape
+    // every part runs can read 0 there), a found shape counts the parts whose
+    // flow RUNS it.
     //
     // THE SAME SHAPE CELL AS THE PRESETS TABLE (owner ruling R5, 2026-09-12).
     // The suggested name is the mode word alone now, so a row that drew only
@@ -5210,7 +5366,8 @@ function drawPresets() {
     const presets = v.presets || [];
     const cands = v.candidates || [];
     const flows = v.styles_with_flow || 0;
-    let h = '<div class="pd-sect"><h2>Presets</h2><span class="pd-lbl"><span class="cnt">' +
+    let h = (S.notice ? '<div class="pd-notice">' + esc(S.notice) + '</div>' : '') +
+        '<div class="pd-sect"><h2>Presets</h2><span class="pd-lbl"><span class="cnt">' +
         presets.length + '</span></span>' +
         '<span class="pd-dim">named shapes this process can apply to a part</span></div>';
     // THE COLUMNS ARE SIZED, the way D1's positions table is, and for the same
@@ -5226,7 +5383,7 @@ function drawPresets() {
         '<col style="width:9%"><col style="width:11%"><col style="width:18%"><col style="width:18%"></colgroup>';
     h += presets.length
         ? '<table class="pd-tbl pd-presettbl">' + presetCols +
-        '<thead><tr><th>Name</th><th>Shape</th><th>Used by</th>' +
+        '<thead><tr><th>Name</th><th>Shape</th><th>Applied to</th>' +
         '<th>Drift</th><th>Saved</th><th></th></tr></thead><tbody>' +
         presets.map(presetRow).join('') + '</tbody></table>'
         : '<p class="pd-dim">No presets yet — name a flow from the Flows tab, or start from a shape below.</p>';
@@ -5247,7 +5404,7 @@ function drawPresets() {
             // beside it. The glyph joins the name.
             '<table class="pd-tbl pd-candtbl"><colgroup><col style="width:53%">' +
             '<col style="width:10%"><col style="width:37%"></colgroup>' +
-            '<thead><tr><th>Shape</th><th>Used by</th><th></th></tr></thead><tbody>' +
+            '<thead><tr><th>Shape</th><th>Run by</th><th></th></tr></thead><tbody>' +
             cands.map(candidateRow).join('') + '</tbody></table>';
     }
     // THE ROW MENU NEEDS A POPOVER TO OPEN INTO. #pd-pop is rendered by main(),
@@ -5364,9 +5521,20 @@ function openPresetNaming(title, prefill, from) {
         '<p class="pd-note">A preset is the shape of a flow — which positions, how they swap, ' +
         'where bins come from and go. Parts are never part of it.</p>',
         'Save preset',
-        () => sheetSubmit('POST', '/api/processes/' + S.processID + '/presets',
-            B().flowPresetCreate(sheetValue('name'), from), refreshPresets),
-        false, 'pd-narrow');
+        () => {
+            const name = sheetValue('name');
+            return sheetSubmit('POST', '/api/processes/' + S.processID + '/presets',
+                B().flowPresetCreate(name, from), async () => {
+                    // Named from the Flows tab, the preset lands somewhere
+                    // else, and the sentence says where; on Presets it is in
+                    // the list under the notice.
+                    S.notice = 'Saved preset ' + name + '.' +
+                        (S.tab === 'presets' ? '' : ' It is on the Presets tab.');
+                    await refreshPresets();
+                    if (S.tab === 'flows') drawFlows();
+                });
+        },
+        false);
 }
 
 async function refreshPresets() {
@@ -5688,8 +5856,8 @@ async function previewApplyRow(styleID) {
         // THE PREVIEW'S FINDINGS BELONG ON THE ROW, not on the save that comes
         // after it. Measured on the HK fixture: applying `PLN_01 / PLN_04` to a
         // part running `PLN_03 / PLN_06` lands two cells with no part on them,
-        // and the preview says so twice — `PLN_01 · Select a payload`,
-        // `PLN_04 · Select a payload` — while planning two real press-index
+        // and the preview says so twice — `PLN_01 · Select a part`,
+        // `PLN_04 · Select a part` — while planning two real press-index
         // swaps whose supply legs carry no payload_code at all. The modal drew
         // `2 orders after the change` over `Save to 1 part`, and the engineer
         // learned the rest from a 422 AFTER pressing it.
@@ -5790,6 +5958,16 @@ async function runPresetApply() {
     // styles, and every other write on this page already goes through it.
     await refreshPresets();
     await refreshProcess();
+    // EVERY PART SAVED, SO THE DIALOG HAS NOTHING LEFT TO SAY. It stayed open
+    // on `N saved` over rows that were all done, and the engineer closed it by
+    // hand to see the result. A refusal keeps it open: the refused row says
+    // why, and that is the one place it is said.
+    if (S.papply && !failed && saved) {
+        closeSheet();
+        S.notice = 'Saved to ' + saved + ' part' + (saved === 1 ? '' : 's') + '.';
+        if (S.tab === 'presets') drawPresets();
+        return;
+    }
     if (S.papply) drawPresetApply();
 }
 
@@ -5823,18 +6001,14 @@ function onClick(e) {
     // add-a-position chooser does nothing whenever more than one is free.
     if (btn && POPOVER_ACTS[btn.dataset.act]) e.stopPropagation();
     if (btn && btn.dataset.act === 'pick') { openPicker(btn); return; }
+    if (btn && btn.dataset.act === 'bar-goto' && btn.dataset.node) { gotoFinding(btn.dataset.node); return; }
     if (btn) {
         switch (btn.dataset.act) {
             case 'list': drawList(); return;
             case 'save': saveFlow(); return;
             case 'discard': selectStyle(S.styleID); return;
             case 'advanced': openAdvanced(btn.dataset.node); return;
-            case 'set-role': apply({ type: 'setRole', node: btn.dataset.node, role: btn.dataset.role }); return;
-            case 'bar-fix': {
-                const fx = S.model && M().bar(S.model).fixIt;
-                if (fx) apply(fx.action);
-                return;
-            }
+            case 'rmpart': apply({ type: 'removePart', payloadCode: btn.dataset.part }); return;
             // The route's own two verbs. Both compute the whole new list and
             // hand it to setVia, because the order is the route and the model
             // has one action for it.
@@ -5921,7 +6095,7 @@ function onClick(e) {
                     'Rename',
                     () => sheetSubmit('PATCH', '/api/processes/' + S.processID + '/presets/' + p.id,
                         { name: sheetValue('name') }, refreshPresets),
-                    false, 'pd-narrow');
+                    false);
                 return;
             }
             case 'preset-name-cand': {
@@ -5952,7 +6126,6 @@ function onClick(e) {
                 return;
             }
             case 'open-flows': openProcess(Number(btn.dataset.process)); return;
-            case 'edit-process': openEditProcess(btn.dataset.process); return;
             case 'open-settings': openProcessAt(Number(btn.dataset.process), 'settings'); return;
             case 'rs-all-on': void rsAllOn(btn.dataset.role); return;
             case 'add-process': openAddProcess(); return;
@@ -5966,10 +6139,13 @@ function onClick(e) {
     if (mapEl && S.tab === 'settings') { flashRoutingRow(mapEl.dataset.mapname); return; }
     if (tab) {
         S.tab = tab.dataset.tab;
+        // A notice is about the tab it was written on, and this is another.
+        S.notice = '';
         if (S.tab === 'flows') drawFlows();
         else if (S.tab === 'screens') drawScreens();
         else if (S.tab === 'presets') openPresets();
         else if (S.tab === 'settings') openSettings();
+        syncHash();
         return;
     }
     // A preset row expands its member list; a second click closes it.
@@ -5981,10 +6157,12 @@ function onClick(e) {
         return;
     }
     if (openRow) { openProcess(Number(openRow.dataset.open)); return; }
-    if (styleRowEl && !btn) { selectStyle(Number(styleRowEl.dataset.style)); return; }
-    // SPEC §3: selecting a card selects its row and vice versa.
-    if (card) { S.selected = card.dataset.pos; drawFlows(); return; }
-    if (row) { S.selected = row.dataset.row; drawFlows(); return; }
+    if (styleRowEl && !btn) { selectStyle(Number(styleRowEl.dataset.style)); syncHash(); return; }
+    // A card and its row are one selection. The desktop picture never edits:
+    // a card click finds the row (the bar's problem line's own path), and a
+    // second click on the selected card or row lets go of it.
+    if (card) { toggleSelected(card.dataset.pos); return; }
+    if (row) { toggleSelected(row.dataset.row); return; }
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

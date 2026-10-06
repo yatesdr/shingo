@@ -128,12 +128,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 
 /* THE GATE IS A STATUS, NOT A CONTROL (R3). It reads on the app bar and is set
  * in Settings; a switch here would be the same decision in two places. */
-.pd-gate { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 13px; }
-.pd-pill {
-    font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 999px;
-    border: 1px solid var(--sub-3); color: var(--text-muted);
-}
-.pd-pill.on { color: var(--chip-ink-ok); border-color: var(--viz-green); }
+.pd-gate { color: var(--text-muted); font-size: 13px; }
 /* A LINK THAT DOES SOMETHING GETS A HOVER. .pd-dimlink carries P0's row
    actions, D4's Edit and Open and D6's row menu, and it had no :hover at all —
    so on a row whose other columns are literally .pd-dim, the only two controls
@@ -319,18 +314,22 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--sub-1);
     font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted);
 }
+/* THE HEADINGS STAY PUT WHILE THE ROWS SCROLL. Selecting a position scrolls
+   its row into view, and the header row used to go up with the rows: its last
+   few pixels were left under the POSITIONS caption and read as the caption
+   printed over the headings. Sticky to the scroller's top, opaque so rows pass
+   under it; the rule is a shadow because a collapsed border stays with the
+   table rather than the sticky cell. gotoFinding reserves the header's height
+   as the scroller's scroll padding, so a selected row lands below it. */
+.pd-postbl thead th {
+    position: sticky; top: 0; z-index: var(--z-sticky); background: var(--bg);
+    box-shadow: inset 0 -1px 0 var(--sub-1);
+}
 .pd-postbl td { padding: 5px 4px; border-bottom: 1px solid var(--sub-1); height: 32px; vertical-align: middle; }
 .pd-postbl tr.selrow td { background: var(--accent-wash, transparent); }
 .pd-postbl tr.selrow td:first-child { box-shadow: inset 3px 0 0 var(--accent-solid); }
 .pd-postbl td.pos { font-weight: 600; }
 .pd-postbl td.pos small { display: block; color: var(--text-muted); font-size: 11px; font-weight: 400; }
-.pd-postbl td.pos .pd-role {
-    display: inline-block; margin-left: 6px; padding: 0 5px; font: inherit; font-size: 10px; line-height: 14px; font-weight: 600;
-    text-transform: uppercase; letter-spacing: 0.03em; cursor: pointer;
-    border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--text);
-}
-.pd-postbl td.pos .pd-role.produce { border-color: var(--viz-green); color: var(--viz-green); }
-.pd-postbl td.pos .pd-role.consume { border-color: var(--accent); color: var(--accent); }
 .pd-postbl tr.paired td { color: var(--text-muted); font-size: 12px; }
 
 /* A CHIP NEVER WRAPS. Two lines of chip is a row that has stopped being
@@ -339,7 +338,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    with its full text in a title, and the columns below are sized so it does
    not have to. */
 .pd-postbl .pd-sel, .pd-postbl .pd-adv { white-space: nowrap; }
-/* Tighter chrome INSIDE THE TABLE ONLY. Nine columns share 1059 px at 1440 and
+/* Tighter chrome INSIDE THE TABLE ONLY. Ten columns share 1059 px at 1440 and
    a chip spends 30 of them on padding, gap and caret before it draws a
    character; the sheets, which have one field per row, keep the roomy one. */
 .pd-postbl .pd-sel { padding: 0 6px; gap: 5px; }
@@ -363,22 +362,44 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    The two dock columns are the widest, because they carry group names:
    "Supermarket Empty Totes" is the reference's widest chip and 17.5% of the
    1107 px the main column has at 1440 is 194 px, which holds it. */
-.pd-postbl table { width: 100%; table-layout: fixed; }
-/* Position holds the name, front/back and the role switch on one line; Part
-   holds a whole part number, which is what an engineer reads the row for —
-   at 7% it was `SYN-…` on every row. */
-.pd-postbl col.c-pos { width: 8.5%; }
-.pd-postbl col.c-mode { width: 12.5%; }
+.pd-postbl table { width: 100%; table-layout: fixed; min-width: 900px; }
+/* BELOW A READABLE WIDTH THE TABLE SCROLLS IN ITS BOX, NOT THE PAGE. Ten
+   percentage columns in the 545 px an 833 px window leaves drew every heading
+   and chip as a letter or two, which is a table nobody can read. 900 is under
+   the narrowest column the page is laid out for at full width — 932 px just
+   above the 1280 breakpoint, where the rail is still 300 — less a vertical
+   scrollbar, so a desktop window never scrolls it sideways; below that,
+   .pd-postbl (overflow: auto) scrolls it. The sticky headings scroll with it. */
+/* Position holds the name over its front/back word; Role holds one word,
+   `consume` or `produce`, and its caret, so it is the narrowest chip column.
+   Part holds a whole part number, which is what an engineer reads the row
+   for — at 7% it was `SYN-…` on every row. The Role column's 7% came out of
+   Position (whose role pill moved here), the two dock columns, Mode and
+   Partner; a set chip now draws its value without its word, so those columns
+   need less than they did.
+
+   ROLE HOLDS ITS WORD WHOLE from 1281 up. At 7% it was 65 px there and drew
+   `co…`; `consume ▾` measures 79 px plus the cell's padding, 87, and 10% of
+   the 914 px the table has at 1281 beside a scrollbar is 91. The 3% came from
+   the columns with room at that width — Partner (a node name, 83 px measured,
+   96 at 10.5%) and the two dock columns (113 measured, 121 at 13.25%) — and
+   not from Part, Staging, Mode, Key route or Advanced, which are full. At 1280
+   the rail narrows and the table is wider; narrower still, the table's 900 px
+   floor gives Role 90.
+   processes_desktop_positions_table_test.go holds the role column to that. */
+.pd-postbl col.c-pos { width: 7%; }
+.pd-postbl col.c-role { width: 10%; }
+.pd-postbl col.c-mode { width: 12%; }
 .pd-postbl col.c-part { width: 10%; }
-.pd-postbl col.c-partner { width: 13%; }
+.pd-postbl col.c-partner { width: 10.5%; }
 .pd-postbl col.c-staging { width: 9.5%; }
-.pd-postbl col.c-src { width: 16%; }
+.pd-postbl col.c-src { width: 13.25%; }
 .pd-postbl col.c-via { width: 7.5%; }
-.pd-postbl col.c-dst { width: 16%; }
+.pd-postbl col.c-dst { width: 13.25%; }
 .pd-postbl col.c-adv { width: 7%; }
-/* The nine add to 100. They have to be WRITTEN as nine: leaving Advanced to
-   "whatever is left" left it nothing, because the other eight already summed
-   to 100, and its badge then spilled 75 px past the table's right edge. */
+/* The ten add to 100. They have to be WRITTEN as ten: leaving Advanced to
+   "whatever is left" left it nothing, because the others already summed to
+   100, and its badge then spilled 75 px past the table's right edge. */
 
 /* AND A CELL CLIPS. table-layout: fixed sets the table's width; it does not
    stop a nowrap chip from painting outside its cell, which is the other half
@@ -402,6 +423,14 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 }
 .pd-blank:hover { color: var(--text); }
 .pd-blank .k { color: var(--text-muted); font-size: 11px; }
+/* A PLACEHOLDER ELLIPSISES; IT DOES NOT CUT. The button is a flex container,
+   and text-overflow on one does nothing: `Outbound staging —` in a staging
+   column at 1280 read `Outbound stagin`, the word cut and the dash gone. Each
+   part is its own box that shrinks and ellipsises, and the dash after a word
+   keeps its size, because the dash is what says the field is empty. The full
+   label is in the button's title. */
+.pd-blank > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-blank > .k ~ .pd-dim { flex: none; }
 /* Two fields in one cell stack, because side by side they cannot both fit a
    node name in 14% of the column. */
 .pd-cellsep { display: block; height: 2px; }
@@ -447,6 +476,14 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-bar .d { font-size: 12px; color: var(--text-muted); }
 .pd-bar .prov { margin-left: auto; color: var(--text-muted); font-size: 12px; }
 .pd-bar .prov.dirty { color: var(--chip-ink-near); }
+/* The problem line as the control (fixIt retired): it names a position the
+   engineer can go to, so it reads as a link and takes the pointer. A bar
+   with no finding behind it carries no class and no pointer. */
+.pd-bar .as-link { cursor: pointer; }
+.pd-bar .as-link:hover .h { text-decoration: underline; }
+/* An unplaced part's door off the flow: one chip per part, beside the line
+   that names it. */
+.pd-bar .fix { display: flex; flex-wrap: wrap; gap: 6px; }
 
 
 /* typeahead combo - the curtain's PLC/tag fields: a text input with the
@@ -472,6 +509,9 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-pop button.on { color: var(--accent); }
 .pd-pop .pd-lbl { padding: 8px 10px 4px; display: block; }
 .pd-pop .none { color: var(--text-muted); padding: 8px 10px; font-size: 12px; }
+/* A staging node another position already uses: still a choice, marked in the
+   warning ink, because shared staging is a warning and never a refusal. */
+.pd-pop button .use { color: var(--chip-ink-near); font-size: 11px; }
 
 /* ── D2 · the Advanced sheet ──────────────────────────────────────────────
    600 wide over a scrim, from the row's gear. It is the only place the twelve
@@ -483,8 +523,15 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    same declarations under a second name, switched by [hidden] instead of
    .active. #pd-scrim carries the base class now and this rule is gone; what
    stays below is the CARD, which is this page's own. */
+/* ONE WIDTH FOR EVERY SHEET, derived from the field it holds: a 230 px label
+   column, the 14 px column gap, a 420 px .pd-inp.wide, 24 px of body padding
+   each side, a 1 px border each side and 18 px for the body's scrollbar when a
+   long sheet scrolls: 732. A 480 and a 600 variant sat under that sum, so the
+   input ran out of the card. Below 780 px (the card plus the scrim's margin)
+   the card is capped at the window and the field stacks; see the media rule
+   after .pd-inp.wide. processes_desktop_sheet_width_test.go holds the sum. */
 .pd-modal {
-    position: relative; width: 600px; max-width: calc(100vw - 48px); max-height: calc(100vh - 64px);
+    position: relative; width: 732px; max-width: calc(100vw - 48px); max-height: calc(100vh - 64px);
     background: var(--surface); border: 1px solid var(--sub-2); border-radius: 16px;
     display: flex; flex-direction: column;
     box-shadow: var(--shadow-lg);
@@ -576,6 +623,8 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     margin: 4px 0 10px; padding: 10px 12px; border-radius: 10px; font-size: 12.5px;
     color: var(--text); border: 1px solid var(--sub-2); background: var(--surface);
 }
+/* On Flows the notice sits in the column under the head, inset like the picture. */
+.pd-main > .pd-notice { margin: 0 24px 8px; flex: none; }
 .pd-refusal {
     margin: 4px 0 10px; padding: 10px 12px; border-radius: 10px; font-size: 12.5px;
     color: var(--chip-ink-below); border: 1px solid var(--viz-coral);
@@ -615,9 +664,9 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .mp-keyt { font-size: 9px; font-weight: 600; fill: var(--accent); font-family: var(--font-mono, monospace); }
 
 /* ── Generate variants (Q2) ───────────────────────────────────────────────
-   The same modal shell as the Advanced sheet, one size wider, because its body
-   is a grid whose column count is the base style's produce claims rather than
-   a fixed two. Everything inside it — the chips, the section rule, the field
+   The same modal shell as the Advanced sheet, and the one sheet wider than the
+   field width, because its body is a TABLE whose column count is the base
+   style's produce claims rather than a fixed two. Everything inside it — the chips, the section rule, the field
    shape, the footer — is the sheet's, so the desktop still has one modal. */
 .pd-modal.pd-wide { width: 920px; }
 .pd-gentbl { width: 100%; border-collapse: collapse; }
@@ -664,6 +713,14 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-sfld small { display: block; color: var(--text-muted); font-size: 11.5px; font-weight: 400; }
 .pd-sfld .v { display: flex; align-items: center; gap: 10px; }
 .pd-inp.wide { min-width: 420px; }
+/* A window too narrow for the sheet: the card is already capped at the window
+   (.pd-modal max-width), so the label goes above its input and the input takes
+   the card's width rather than pushing past it into a horizontal scroll. 780 is
+   the 732 px card plus the scrim's 48 px margin. */
+@media (max-width: 780px) {
+    .pd-modal .pd-fld { grid-template-columns: 1fr; }
+    .pd-modal .pd-inp.wide { min-width: 0; width: 100%; }
+}
 .pd-note { margin: 2px 0 2px 314px; color: var(--text-muted); font-size: 12.5px; line-height: 1.35; max-width: 68ch; }
 .pd-modal .pd-note { margin-left: 0; }
 .pd-seg { display: inline-flex; border: 1px solid var(--sub-2); border-radius: 10px; overflow: hidden; }
@@ -718,6 +775,15 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-shape { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
 .pd-shape .gl, .pd-shape svg { flex: 0 0 auto; width: 22px; height: 22px; }
 .pd-shape .w { font-size: 13px; white-space: nowrap; }
+/* A shape whose positions run different modes: two overlapped squares, the
+   mark for "more than one", in the 22px box a mode glyph takes. */
+.pd-mixed { position: relative; flex: 0 0 auto; width: 22px; height: 22px; }
+.pd-mixed i {
+    position: absolute; width: 13px; height: 13px; border-radius: 3px;
+    border: 1.5px solid var(--text-muted); background: var(--bg);
+}
+.pd-mixed i:first-child { left: 2px; top: 2px; }
+.pd-mixed i:last-child { right: 2px; bottom: 2px; }
 .pd-shape .ns {
     color: var(--text-muted); font-size: 12px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
@@ -737,14 +803,10 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-mem .sp { flex: 1; }
 .pd-candtbl tbody tr { cursor: default; }
 
-/* ── the two modals ───────────────────────────────────────────────────────
-   The Advanced sheet's shell at two more widths. 480 for the naming modal —
-   one field and a sentence, and a 600 box around one field reads as a box with
-   something missing. 640 for the apply modal, whose body is a list of parts
-   with a diff under each: the diff lines are the widest thing on it and 600
-   wrapped them. */
-.pd-modal.pd-narrow { width: 480px; }
-.pd-modal.pd-apply { width: 640px; }
+/* ── the apply modal ─────────────────────────────────────────────────────
+   The Advanced sheet's shell at its one width. Its body is a list of parts
+   with a diff under each; the diff lines are the widest thing on it, and the
+   sheet width holds them. */
 
 /* The apply checklist. NONE PRE-TICKED is the ruling (explicit re-apply), so
    the empty tick is the resting state of every row and has to read as a

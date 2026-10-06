@@ -2,16 +2,16 @@
 // a lane.
 //
 // The claim and routing saves refuse a lane on every leg, staging included.
-// The pickers that feed a leg are the three routing pickers (Settings, the
-// Add-process sheet and the Edit-process sheet) and the Quality Hold
-// destination picker. Each draws from Core's node list, so each must leave a
-// LANE out, and all four ask one predicate in desktop-bodies.js.
+// The pickers that feed a leg are the two routing pickers (Settings and the
+// Add-process sheet) and the Quality Hold destination picker. Each draws from
+// Core's node list, so each must leave a LANE out, and all three ask one
+// predicate in desktop-bodies.js.
 //
 // TWO HALVES. The rule runs under node against a node list with a lane, a
 // group, a plain node and a lane's slot. The wiring is read off the page's
 // source: the pickers live inside an ES module that needs a DOM, so the test
 // counts the sites that declare a leg picker and requires the predicate at
-// every one. A fourth routing picker, or a picker that stops asking, fails.
+// every one. A third routing picker, or a picker that stops asking, fails.
 
 'use strict';
 
@@ -71,8 +71,9 @@ test('laneExclusion: no node list yet refuses nothing', () => {
 });
 
 // The text of each routing picker declaration, to the close of its options
-// object. The two sheets declare theirs as `pickerInit(routingPickerKey(…`;
-// Settings declares its own in routingPickersReady as `pickerInit(key, …`.
+// object. The Add-process sheet declares its picker as
+// `pickerInit(routingPickerKey(…`; Settings declares its own in
+// routingPickersReady as `pickerInit(key, …`.
 function routingPickerSites() {
     const sites = [];
     const declare = (at) => sites.push(PAGE.slice(at, PAGE.indexOf('});', at)));
@@ -86,10 +87,10 @@ function routingPickerSites() {
     return sites;
 }
 
-test('the three routing pickers each refuse a lane', () => {
+test('the two routing pickers each refuse a lane', () => {
     const sites = routingPickerSites();
-    assert.strictEqual(sites.length, 3,
-        'expected the Settings, Add-process and Edit-process routing pickers; found ' + sites.length);
+    assert.strictEqual(sites.length, 2,
+        'expected the Settings and Add-process routing pickers; found ' + sites.length);
     sites.forEach((s, i) => {
         assert.ok(/exclude:[\s\S]*B\(\)\.laneExclusion\(S\.coreNodes, n\)/.test(s),
             'routing picker #' + (i + 1) + ' does not ask laneExclusion:\n' + s);

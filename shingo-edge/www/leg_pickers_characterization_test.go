@@ -8,7 +8,7 @@ import (
 
 // TestLegPickersOfferNoLane runs the leg-picker characterization under node.
 //
-// The claim and routing saves refuse a lane on every leg. The desktop's three
+// The claim and routing saves refuse a lane on every leg. The desktop's two
 // routing pickers and its Quality Hold destination picker draw from Core's
 // node list, and each one leaves a lane out through one predicate in
 // desktop-bodies.js. The script pins the predicate and that every picker asks

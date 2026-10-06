@@ -1034,24 +1034,26 @@ function findings(state) {
     // named by several positions, and refusing would block a working
     // configuration to catch a likely mis-pick. But the flow will stage two
     // robots at one spot, and somebody looking for why a swap jammed deserves
-    // the sentence. It does not block the save (validateFlowInputs carries
-    // errors only) and it does not block the start on its own — it rides the
-    // findings list and is shown, not enforced.
+    // the sentence. severity:'warning' keeps it out of the bar's blocked arm
+    // (bar counts errors only) and onto the drawing beside the position's
+    // card — shown, never enforced; validateFlowInputs carries errors only,
+    // so the save is never blocked by it either.
     const stagedBy = {};
-    for (const [, c] of activeCells(state)) {
+    for (const [n, c] of activeCells(state)) {
         for (const spot of [c.staging, c.parkOld]) {
-            if (spot) (stagedBy[spot] = (stagedBy[spot] || 0) + 1);
+            if (spot && !stagedBy[spot]) stagedBy[spot] = [];
+            if (spot) stagedBy[spot].push(n);
         }
     }
-    const shared = Object.keys(stagedBy).filter(s => stagedBy[s] > 1);
-    if (shared.length) {
+    for (const spot of Object.keys(stagedBy)) {
+        if (stagedBy[spot].length < 2) continue;
         out.push({
-            local: true, node: '', field: 'shared_staging', parts: shared.slice(),
+            local: true, node: '', field: 'shared_staging', parts: [spot],
+            severity: 'warning',
             short: FINDING_SHORT.shared_staging,
-            message: shared.length === 1
-                ? shared[0] + ' is staged at by more than one position'
-                : shared.length + ' staging spots are shared by more than one position',
-            detail: shared.join(', ') + ' — that is legitimate for one spot serving several ' +
+            message: spot + ' is staged at by ' + stagedBy[spot].length + ' positions (' +
+                stagedBy[spot].join(', ') + ')',
+            detail: spot + ' — that is legitimate for one spot serving several ' +
                 'choreographies; check it is what you meant.',
         });
     }
@@ -1075,8 +1077,11 @@ function findings(state) {
             if (local.has(key(f.core_node_name, f.field))) continue;
             out.push({
                 local: false, node: f.core_node_name, field: f.field, side: f.side,
+                // NO DETAIL: the message is the whole sentence, and the bar
+                // joins message and detail, so repeating it here printed the
+                // server's refusal twice.
                 severity: f.severity, short: findingShort(f), message: f.message,
-                detail: f.message,
+                detail: '',
             });
         }
     }
@@ -1090,45 +1095,6 @@ function findingShort(f) {
     // Never blank: an unmapped field shows the server's own sentence rather
     // than an empty pill the operator cannot act on.
     return (f.message && String(f.message)) || String(f.field || 'needs attention');
-}
-
-// One-tap fixes, for the four the spec names. Returns null when there is
-// nothing safe to offer — a fix-it button that guesses is worse than none.
-function fixItFor(state, f) {
-    if (!f) return null;
-    // The finding's own detail says "or take it off this flow"; this is that
-    // action, one part at a time. It needs no node, so it comes before the
-    // guard below.
-    if (f.field === 'unplaced_part' && f.parts && f.parts.length) {
-        const part = f.parts[0];
-        return { label: 'Remove ' + shortPart(part) + ' from this flow', action: { type: 'removePart', payloadCode: part } };
-    }
-    const node = f.node || f.core_node_name;
-    // A FINDING WITH NO NODE HAS NO ONE-TAP FIX. Every arm below writes to
-    // `state.cells[node]`, and an unplaced part's finding deliberately names no
-    // position — offering `Use PIA09` there would dispatch a setPart onto a
-    // cell that does not exist and report nothing.
-    if (!node) return null;
-    switch (f.field) {
-        case 'payload_code': {
-            const free = state.parts.find(p => !Object.keys(state.cells).some(n => state.cells[n].part === p));
-            const part = free || state.parts[0];
-            if (!part) return null;
-            return { label: 'Use ' + shortPart(part), action: { type: 'setPart', node: node, payloadCode: part } };
-        }
-        case 'inbound_staging': {
-            const free = freeBackPosition(state, node);
-            if (!free) return null;
-            return { label: 'Stage at ' + free, action: { type: 'setStaging', node: node, staging: free } };
-        }
-        case 'outbound_destination': {
-            const d = defaultRouting(state, 'destination');
-            if (!d) return null;
-            return { label: 'Send to ' + d, action: { type: 'setDest', node: node, dest: d } };
-        }
-        default:
-            return null;   // swap_mode has no one-tap answer: it is the operator's choice
-    }
 }
 
 // shortPart is the part's name as the engineer typed it into Core. It used to
@@ -1570,22 +1536,34 @@ function viaWaypoints(state, node) {
 // ── the bottom bar ───────────────────────────────────────────────────────────
 function bar(state) {
     const fs = findings(state);
+    // THE BAR BLOCKS ON ERRORS AND NAMES WARNINGS WITHOUT BLOCKING. The
+    // findings list carries both severities (the shared-staging warning rides
+    // beside the errors, the way the server's membership check does), and a
+    // warning is advice: `2 things to fix` over a saveable flow was the bar
+    // refusing a save the engine allows. Warnings reach the engineer as the
+    // blocked arm's trailing sentence — or as the ok arm's, when nothing is
+    // actually wrong.
+    const errors = fs.filter(f => f.severity !== 'warning');
+    const warnings = fs.filter(f => f.severity === 'warning');
+    const warningLine = warnings.length
+        ? ' · note: ' + warnings.map(w => w.message).join('; ') : '';
     const active = activeCells(state);
     if (!active.length && !fs.length) {
         return {
             heading: 'Nothing in the flow yet',
             detail: 'Tap a position to add it, or pick a flow above',
-            tone: 'empty', fixIt: null,
+            tone: 'empty',
             button: { label: 'Save and start', enabled: false },
         };
     }
-    if (fs.length) {
-        const first = fs[0];
-        const fix = fixItFor(state, first);
+    if (errors.length) {
+        const first = errors[0];
         return {
-            heading: fs.length + ' thing' + (fs.length > 1 ? 's' : '') + ' to fix before you can start',
-            detail: first.message + (first.detail ? ' — ' + first.detail : ''),
-            tone: 'blocked', fixIt: fix,
+            // The detail below is the first finding only, so the heading says
+            // so when there are more.
+            heading: errors.length + ' to fix' + (errors.length > 1 ? ' · showing the first' : ''),
+            detail: first.message + (first.detail ? ' — ' + first.detail : '') + warningLine,
+            tone: 'blocked',
             button: { label: 'Fix the flow to continue', enabled: false },
         };
     }
@@ -1624,18 +1602,18 @@ function bar(state) {
     if (pv && pv.running) {
         return {
             heading: 'running — saved changes take effect on the next trip',
-            detail: 'not previewed while running · an order already on its way finishes as planned',
-            tone: 'ok', fixIt: null,
+            detail: 'not previewed while running · an order already on its way finishes as planned' + warningLine,
+            tone: 'ok',
             button: { label: 'Save flow', enabled: !state.previewStale },
         };
     }
     if (pv && (pv.error || pv.orderCount === 0)) {
         return {
             heading: pv.error || 'This flow fires no orders',
-            detail: pv.error
+            detail: (pv.error
                 ? 'Check the flow, or ask an engineer if this needs Core.'
-                : 'Nothing would move. Check the parts and the positions.',
-            tone: 'blocked', fixIt: fixItFor(state, findings(state)[0]),
+                : 'Nothing would move. Check the parts and the positions.') + warningLine,
+            tone: 'blocked',
             button: { label: 'Fix the flow to continue', enabled: false },
         };
     }
@@ -1657,9 +1635,9 @@ function bar(state) {
         // roles are still named where they mean something — the picture's
         // legend, the order rows, the started screen's sentence — and the bar
         // says the one number it can stand behind.
-        heading: 'Preview OK · ' + orders + ' orders',
-        detail: detail,
-        tone: 'ok', fixIt: null,
+        heading: 'Preview OK · ' + orders + (orders === 1 ? ' order' : ' orders'),
+        detail: detail + warningLine,
+        tone: 'ok',
         button: {
             label: 'Save and start',
             enabled: !state.previewStale && !!pv,
@@ -1991,7 +1969,7 @@ function advancedDefaults() { return clone(ADVANCED_DEFAULTS); }
     const api = {
         init, reduce, toCells, applyPreview,
         legs, dockNotes, cardLines, pictureCells, bar,
-        findings, findingShort, fixItFor,
+        findings, findingShort,
         modeLabels, modeHelp, rowFields, rowColumns, fieldRequired, fieldLabel, shortPart, robotWords,
         partOffers, partAllowed, styleFacts,
         routingNote, routingRoleOf,

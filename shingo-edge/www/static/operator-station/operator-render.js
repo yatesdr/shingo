@@ -24,11 +24,32 @@ export function setRenderRefs(refs) {
 
 // ─── Header ───
 
+// stationState is the one reading of what the station is doing, shared by the
+// header line, the style chip, the footer badge and the empty grid so they
+// cannot disagree. Both of its meanings are already in the poll: a changeover is
+// the process's target style differing from its active style (ActiveChangeover
+// is present while it runs), and the running part is current_style. The
+// Processes page's list column makes the same derivation.
+function stationState(view) {
+    const process = view.process || {};
+    const changing = !!(process.target_style_id &&
+        process.target_style_id !== process.active_style_id);
+    const current = view.current_style || null;
+    const words = changing ? 'Changing over'
+        : (current ? 'Running ' + current.name : 'No part running');
+    return { changing: changing, current: current, words: words };
+}
+
 export function renderHeader() {
     const view = getView();
-    const style = view.current_style ? view.current_style.name : 'No Style';
-    const target = view.target_style ? (' \u2192 ' + view.target_style.name) : '';
-    headerInfo.textContent = view.process.name + ' - ' + style + target;
+    const state = stationState(view);
+    const styleName = state.current ? state.current.name : 'No part running';
+    const targetName = view.target_style ? view.target_style.name : null;
+    const fromTo = targetName
+        ? (state.current ? state.current.name + ' \u2192 ' : 'to ') + targetName
+        : '';
+    headerInfo.textContent = view.process.name + ' - ' + state.words +
+        (state.changing && fromTo ? ' ' + fromTo : '');
 
     headerActions.innerHTML = '';
 
@@ -39,8 +60,6 @@ export function renderHeader() {
 
     // Active style chip — sits next to the changeover button so the operator
     // can see which style is running. During changeover shows "current → target".
-    const styleName = view.current_style ? view.current_style.name : 'No Style';
-    const targetName = view.target_style ? view.target_style.name : null;
     // The chip that names the running style is also the door to the picture
     // of its flow (operator-flow.js): a tap opens the read-only cell picture
     // over the board, its Board button comes back. No new button on the
@@ -290,6 +309,15 @@ function headerBtn(label, cls, onClick) {
 
 // ─── Grid ───
 
+// emptyGridWords says why the grid has no tiles: the screen has no positions
+// at all, or it has positions and no part is running on any of them.
+function emptyGridWords(view) {
+    if (!view || !view.nodes || view.nodes.length === 0) return 'No positions on this screen';
+    const state = stationState(view);
+    if (!state.changing && !state.current) return 'No part running \u2014 start a changeover to pick one';
+    return state.words + ' \u2014 no position on this screen is set up for it';
+}
+
 export function renderGrid() {
     const nodes = claimedNodes();
 
@@ -307,7 +335,7 @@ export function renderGrid() {
         document.body.classList.remove('os-board-mode-active');
         grid.style.removeProperty('--os-cols');
         grid.style.removeProperty('--os-rows');
-        const empty = el('div', { id: 'os-grid-empty', textContent: 'No claimed nodes' });
+        const empty = el('div', { id: 'os-grid-empty', textContent: emptyGridWords(getView()) });
         grid.appendChild(empty);
         return;
     }
@@ -1586,18 +1614,12 @@ export function renderFooter() {
         footerStatus.textContent = 'Operator Station Ready';
     }
 
-    // THE BADGE IS DERIVED, NOT ANNOUNCED. production_state rode the poll for
-    // this one read, and both of its meanings are already in the payload: a
-    // changeover is CurrentStyle \u2260 TargetStyle (with ActiveChangeover present
-    // while it runs), and the running part is CurrentStyle. Same derivation the
-    // Processes page's list column makes \u2014 one question, one answer on both
-    // surfaces.
-    const process = view.process || {};
-    const changing = !!(process.target_style_id &&
-        process.target_style_id !== process.active_style_id);
-    const current = view.current_style;
-    footerBadge.textContent = changing ? 'Changing over'
-        : (current ? 'Running ' + current.name : 'No part running');
+    // THE BADGE IS DERIVED, NOT ANNOUNCED: stationState reads it from fields
+    // the poll already carries, the same reading the header makes.
+    const state = stationState(view);
+    const changing = state.changing;
+    const current = state.current;
+    footerBadge.textContent = state.words;
     footerBadge.className = 'os-footer-badge';
     if (changing) footerBadge.classList.add('changeover');
     if (!changing && current) footerBadge.classList.add('producing');

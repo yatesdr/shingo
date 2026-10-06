@@ -627,6 +627,36 @@ test('bar: preview OK', () => {
     assert.strictEqual(b.button.enabled, true);
 });
 
+// ONE ORDER IS SINGULAR. The heading counts what the preview plans, and
+// `1 orders` is the bar getting its own grammar wrong.
+test('bar: preview OK with one order says 1 order', () => {
+    let s = initStyle(7);
+    s = M.applyPreview(s, {
+        order_count: 1, findings: [], unresolved: [],
+        preflight: { state: 'ok', missing: [] }, fingerprint: 'abc', actions: [],
+    });
+    assert.strictEqual(M.bar(s).heading, 'Preview OK · 1 order');
+});
+
+// A SERVER FINDING SAYS ITS SENTENCE ONCE. The finding's message is the whole
+// sentence; carrying it again as the detail made the bar print it twice,
+// joined by a dash.
+test('bar: one server finding reads 1 to fix and its sentence once', () => {
+    let s = initStyle(7);
+    const msg = '1‑robot swap requires inbound staging';
+    s = M.applyPreview(s, {
+        order_count: 2, unresolved: [], actions: [], fingerprint: 'abc',
+        preflight: { state: 'ok', missing: [] },
+        findings: [{ core_node_name: 'PLN_09', field: 'inbound_staging', side: '',
+            severity: 'error', message: msg }],
+    });
+    const b = M.bar(s);
+    assert.strictEqual(b.heading, '1 to fix');
+    assert.strictEqual(b.detail, msg);
+    const f = M.findings(s).find(x => !x.local);
+    assert.strictEqual(f.detail, '');
+});
+
 // TWO THINGS, and the second one is the point. Clearing PLN_01's swap mode
 // takes it out of the DRAFT — toCells skips a cell with no choreography — so
 // the part that was on it has nowhere to go, and the server says so
@@ -637,7 +667,7 @@ test('bar: blocked names the findings and disables the button', () => {
     let s = initStyle(7);
     s = M.reduce(s, { type: 'setMode', node: 'PLN_01', mode: null });
     const b = M.bar(s);
-    assert.strictEqual(b.heading, '2 things to fix before you can start');
+    assert.strictEqual(b.heading, '2 to fix · showing the first');
     assert.strictEqual(b.tone, 'blocked');
     assert.strictEqual(b.button.enabled, false);
     assert.strictEqual(b.button.label, 'Fix the flow to continue');
@@ -792,9 +822,6 @@ test('a part with no position is one finding, naming every loose part', () => {
     let one = M.reduce(initStyle(7), { type: 'setPart', node: 'PLN_01', payloadCode: null });
     assert.strictEqual(M.findings(one).find(x => x.field === 'unplaced_part').message,
         '1 part needs a position');
-    // Its one-tap fix takes the first loose part off the flow — it names no
-    // position, so it cannot place one.
-    assert.deepStrictEqual(M.fixItFor(s, f).action, { type: 'removePart', payloadCode: f.parts[0] });
 });
 
 // A BLANK FLOW LEAVES NOTHING UNPLACED. Every part is loose by construction
@@ -833,6 +860,63 @@ test('applyPreview carries the server findings through unchanged', () => {
     assert.strictEqual(got.short, 'no outbound destination');
 });
 
+// ── the bar's shape, every state ─────────────────────────────────────────────
+//
+// bar() is the one line both surfaces draw (the HMI's strip and the desktop's
+// bar read the same call), so its keys are a contract: heading, detail, tone,
+// button{label,enabled}. Pinned over the RETURNED object rather than rendered
+// markup, so a renderer change cannot move it and a model change cannot slip
+// a key past the two renderers that read it.
+test('the bar shape is the same four keys in every state', () => {
+    const shape = b => JSON.stringify(Object.keys(b).sort()) + '|' +
+        JSON.stringify(Object.keys(b.button).sort());
+    const wantShape = JSON.stringify(['button', 'detail', 'heading', 'tone']) + '|' +
+        JSON.stringify(['enabled', 'label']);
+
+    // Blocked: a part pulled off its position.
+    let s = M.reduce(initStyle(7), { type: 'setPart', node: 'PLN_01', payloadCode: null });
+    let b = M.bar(s);
+    assert.strictEqual(shape(b), wantShape, 'blocked state keys: ' + shape(b));
+    assert.strictEqual(b.tone, 'blocked');
+    // TWO rows for ONE pulled part, and that is the old count too: the
+    // position asks which part runs there and the part asks which position
+    // takes it. One problem, asked from both ends — the dedup below only
+    // collapses the pair when the SERVER also raises it.
+    assert.strictEqual(b.heading, '2 to fix · showing the first');
+    assert.ok(b.detail.indexOf('PLN_01') >= 0, b.detail);
+    assert.strictEqual(b.button.enabled, false);
+
+    // Blank: nothing in the flow yet.
+    b = M.bar(M.reduce(initStyle(7), { type: 'startBlank' }));
+    assert.strictEqual(shape(b), wantShape, 'blank state keys: ' + shape(b));
+    assert.strictEqual(b.tone, 'empty');
+    assert.strictEqual(b.heading, 'Nothing in the flow yet');
+    assert.strictEqual(b.button.enabled, false);
+
+    // Running: saved changes take effect on the next trip.
+    let run = initStyle(7);
+    run = M.applyPreview(run, {
+        order_count: 3, running: true, unresolved: [], actions: [], fingerprint: 'fp',
+        preflight: { state: 'ok', missing: [] }, findings: [],
+    });
+    b = M.bar(run);
+    assert.strictEqual(shape(b), wantShape, 'running state keys: ' + shape(b));
+    assert.strictEqual(b.tone, 'ok');
+    assert.ok(/running — saved changes/.test(b.heading), b.heading);
+
+    // Preview OK.
+    let ok = initStyle(7);
+    ok = M.applyPreview(ok, {
+        order_count: 3, unresolved: [], actions: [], fingerprint: 'fp',
+        preflight: { state: 'ok', missing: [] }, findings: [],
+    });
+    b = M.bar(ok);
+    assert.strictEqual(shape(b), wantShape, 'ok state keys: ' + shape(b));
+    assert.strictEqual(b.tone, 'ok');
+    assert.strictEqual(b.heading, 'Preview OK · 3 orders');
+    assert.strictEqual(b.button.enabled, true);
+});
+
 // ═══ 7. the vocabulary rule ══════════════════════════════════════════════════
 
 // SPEC §0.7. Asserted over what the model RETURNS rather than over its source:
@@ -848,7 +932,7 @@ test('no operator-visible string says R1 or R2', () => {
         for (const p of POSITIONS) said.push(...M.cardLines(s, p.core_node_name));
         for (const l of M.legs(s)) said.push(l.label);
         const b = M.bar(s);
-        said.push(b.heading, b.detail, b.button.label, b.fixIt && b.fixIt.label);
+        said.push(b.heading, b.detail, b.button.label);
         for (const f of M.findings(s)) said.push(f.short, f.message, f.detail);
     }
     said.push(...Object.values(M.modeLabels()), ...Object.values(M.modeHelp()));
