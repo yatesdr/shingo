@@ -225,9 +225,13 @@ func generateCode(db *sql.DB, processID int64, name string) (string, error) {
 // GetNodeNames returns the core_node_name list for a station's
 // process_nodes (helper used by the HMI surface to render the
 // node-picker).
+//
+// LIVE rows only. This is a picker source and the input to a wholesale-replace
+// save, so a retired row answering here resurrects the position the operator
+// just removed — the same split as liveNodes on the process-node list paths.
 func GetNodeNames(db *sql.DB, stationID int64) ([]string, error) {
 	rows, err := db.Query(`SELECT core_node_name FROM process_nodes
-		WHERE operator_station_id=? ORDER BY sequence, name`, stationID)
+		WHERE operator_station_id=? AND deleted_at IS NULL ORDER BY sequence, name`, stationID)
 	if err != nil {
 		return nil, err
 	}

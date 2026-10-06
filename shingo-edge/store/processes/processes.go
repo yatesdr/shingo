@@ -405,53 +405,73 @@ func GetNode(db *sql.DB, id int64) (*Node, error) {
 // wearing a signature. The honest fix for a lookup whose key is not unique is
 // to be deterministic about the answer and LOUD about the ambiguity.
 //
-// So: lowest id wins, stably, and a match count above one is reported with the
-// processes named. The disposition is unchanged — every caller still gets a
-// node — because turning this into an error would stop UOP tracking on a shared
-// loader, which is a working configuration. What changes is that the ambiguity
-// stops being invisible.
+// So: lowest id wins within each class, LIVE rows before retired ones, and a
+// live match count above one is reported with the processes named. The
+// disposition is unchanged — every caller still gets a node — because turning
+// this into an error would stop UOP tracking on a shared loader, which is a
+// working configuration. What changes is that the ambiguity stops being
+// invisible.
+//
+// LIVE BEFORE RETIRED, because the two classes answer different questions. A
+// position removed and re-added under the same Core name leaves a tombstone
+// and a live row (soft delete is a foreign-key decision — see DeleteNode), and
+// lowest-id across both classes together answered the TOMBSTONE: the
+// adjustment landed on a slot nobody can see while the live tile's count never
+// moved. Within a class the tie-break stays lowest id, so the answer is as
+// stable as it ever was; a name held only by retired rows still resolves to
+// one of them, which is the callers' unchanged fallback for a name whose live
+// position is gone.
 func GetNodeByCoreNodeName(db *sql.DB, coreNodeName string) (*Node, error) {
 	rows, err := db.Query(`SELECT `+nodeSelect+` `+nodeJoin+
-		` WHERE n.core_node_name=? ORDER BY n.id`, coreNodeName)
+		` WHERE n.core_node_name=? ORDER BY n.deleted_at IS NOT NULL, n.id`, coreNodeName)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
 	var (
-		first     *Node
-		processes []string
+		firstLive    *Node
+		liveNames    []string
+		firstRetired *Node
 	)
 	for rows.Next() {
 		n, serr := scanNode(rows)
 		if serr != nil {
 			return nil, serr
 		}
-		if first == nil {
+		if n.DeletedAt == nil {
+			if firstLive == nil {
+				node := n
+				firstLive = &node
+			}
+			liveNames = append(liveNames, fmt.Sprintf("process=%d node=%s", n.ProcessID, n.Name))
+		} else if firstRetired == nil {
 			node := n
-			first = &node
+			firstRetired = &node
 		}
-		processes = append(processes, fmt.Sprintf("process=%d node=%s", n.ProcessID, n.Name))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if first == nil {
-		// sql.ErrNoRows, preserved: resolveProjectionNode and the delivered
-		// fallback both branch on it, and both treat it as the ordinary "we do
-		// not own this destination" answer rather than a fault.
+	if firstLive != nil {
+		if len(liveNames) > 1 {
+			log.Printf("WARN: core node %q maps to %d LIVE process_node rows (%s) — resolving to the lowest "+
+				"id, which is STABLE but arbitrary. This lookup has no process to scope by; every "+
+				"caller is turning a Core-originated name into an Edge row. If the rows belong to "+
+				"different processes, whichever answer this gives, some caller is getting a node it "+
+				"did not mean — a UOP adjustment applied here is a count written to one process's slot "+
+				"on behalf of another's.",
+				coreNodeName, len(liveNames), strings.Join(liveNames, "; "))
+		}
+		return firstLive, nil
+	}
+	// Retired rows only. The ErrNoRows contract holds when there is nothing
+	// at all — the "not ours" answer resolveProjectionNode and the delivered
+	// fallback both branch on.
+	if firstRetired == nil {
 		return nil, sql.ErrNoRows
 	}
-	if len(processes) > 1 {
-		log.Printf("WARN: core node %q maps to %d process_node rows (%s) — resolving to the lowest "+
-			"id, which is STABLE but arbitrary. This lookup has no process to scope by; every "+
-			"caller is turning a Core-originated name into an Edge row. If the rows belong to "+
-			"different processes, whichever answer this gives, some caller is getting a node it "+
-			"did not mean — a UOP adjustment applied here is a count written to one process's slot "+
-			"on behalf of another's.",
-			coreNodeName, len(processes), strings.Join(processes, "; "))
-	}
-	return first, nil
+	return firstRetired, nil
 }
 
 // CreateNode inserts a process_node row, generating the code and

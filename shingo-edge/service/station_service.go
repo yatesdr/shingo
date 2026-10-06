@@ -308,6 +308,26 @@ func (s *StationService) GroupMembers() map[string][]string {
 	return s.coreNodeGroups()
 }
 
+// ErrPositionOfOtherProcess rejects a station node list naming a slot that is
+// already a live position of a different process (and no loader's window set
+// names it). Like ErrUnknownCoreNodes it is bad input, not a server fault.
+var ErrPositionOfOtherProcess = errors.New("already a position of another process")
+
+// otherProcessPositionError carries the slot and the process holding it, and
+// matches ErrPositionOfOtherProcess under errors.Is.
+type otherProcessPositionError struct {
+	name, process string
+}
+
+func (e *otherProcessPositionError) Error() string {
+	return fmt.Sprintf("%q is already a position of process %s — a slot can be modelled by only one process unless a loader's window set names it",
+		e.name, e.process)
+}
+
+func (e *otherProcessPositionError) Is(target error) bool {
+	return target == ErrPositionOfOtherProcess
+}
+
 // ErrUnknownCoreNodes rejects a station node list naming something that is not a
 // Core node.
 var ErrUnknownCoreNodes = errors.New("not a Core node")
@@ -350,6 +370,43 @@ func (s *StationService) unknownCoreNodes(names []string) []string {
 	return bad
 }
 
+// livePositionsOfOtherProcesses maps each core_node_name held by a LIVE
+// process_node row of a process other than excludeProcessID to that process's
+// name (the first such row, in list order). A name absent from the map has no
+// other holder — including the tombstone-only case, where re-adding under the
+// same name is exactly the recovery. One read of the whole table, so a save
+// checks every new name against it rather than reading once per name.
+func (s *StationService) livePositionsOfOtherProcesses(excludeProcessID int64) (map[string]string, error) {
+	nodes, err := s.db.ListProcessNodes()
+	if err != nil {
+		return nil, err
+	}
+	held := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		if n.ProcessID == excludeProcessID {
+			continue
+		}
+		if _, seen := held[n.CoreNodeName]; !seen {
+			held[n.CoreNodeName] = n.ProcessName
+		}
+	}
+	return held, nil
+}
+
+// loaderHolds reports whether a Core-owned loader's window/position set names
+// coreNodeName — the shared-window exception to the one-process-per-slot rule.
+// An unwired resolver or a clean miss is false: no loader, no exception.
+func (s *StationService) loaderHolds(coreNodeName string) bool {
+	if s.loaders == nil || coreNodeName == "" {
+		return false
+	}
+	l, err := s.loaders.LoaderForNode(domain.NodeID(coreNodeName))
+	if err != nil || l == nil {
+		return false
+	}
+	return l.Contains(domain.NodeID(coreNodeName))
+}
+
 // binTypeForPayload is the nil-safe read. An unwired resolver answers "unknown"
 // for every payload, and BuildChangeoverLoadDirective drops an unknown rather
 // than naming a carrier it cannot identify.
@@ -388,10 +445,14 @@ func (s *StationService) SetStrandedResolver(r func(coreNodeName string) string)
 // with active orders are disabled rather than deleted to preserve
 // referential integrity for downstream telemetry.
 //
+// kept names those disabled positions, in the station's order: the caller
+// asked for them to go and they did not, so a save that reports only "ok"
+// would tell the engineer something untrue. Empty when every removal retired.
+//
 // Phase 6.1 introduced this method as a thin delegate; Phase 6.4a
 // moved the body in from the (now-deleted) outer
 // store/station_nodes.go::SetStationNodes.
-func (s *StationService) SetNodes(stationID int64, nodeNames []string) error {
+func (s *StationService) SetNodes(stationID int64, nodeNames []string) (kept []string, err error) {
 	// EVERY EXIT PUBLISHES, INCLUDING THE FAILED ONES. This function writes
 	// process_nodes row by row rather than in one transaction, so a refusal
 	// half way through leaves rows already moved — and a board holding a cell
@@ -402,7 +463,7 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) error {
 
 	station, err := s.db.GetOperatorStation(stationID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Two different sets, deliberately.
@@ -412,7 +473,7 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) error {
 	// nodes out from under sibling stations.
 	stationNodes, err := s.db.ListProcessNodesByStation(stationID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// byCoreName — every node under the PROCESS. The reuse-or-create decision has
@@ -427,7 +488,7 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) error {
 	// a claim by core_node_name rather than by node id — so all three matched.
 	processNodes, err := s.db.ListProcessNodesByProcess(station.ProcessID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	byCoreName := map[string]processes.Node{}
 	for _, n := range processNodes {
@@ -451,8 +512,50 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) error {
 	// the operator adds three nodes, two land, and nothing says which. That is the
 	// same silent-partial-success shape this validation exists to remove.
 	if bad := s.unknownCoreNodes(clean); len(bad) > 0 {
-		return fmt.Errorf("%w: %s — if it was just created on Core, sync nodes and try again",
+		return nil, fmt.Errorf("%w: %s — if it was just created on Core, sync nodes and try again",
 			ErrUnknownCoreNodes, strings.Join(bad, ", "))
+	}
+
+	// ONE SLOT, ONE PROCESS — unless a loader aggregate holds the name. A name
+	// that is already a live position of a DIFFERENT process must not be written
+	// here as a second row: two rows resolving one physical slot means two tiles
+	// counting one window and a UOP adjustment resolving by name with no right
+	// answer. The exceptions, both real shapes:
+	//
+	//   - The name sits inside a Core-owned loader's window/position set (via the
+	//     same LoaderResolver the view uses). A shared window IS legitimately
+	//     named by several processes — that is what a shared loader is — and the
+	//     loader aggregate is what makes the sharing coherent. A clean miss
+	//     ((nil, nil)) or an unwired resolver is NOT the exception: it falls
+	//     through to the refusal.
+	//   - The existing row already belongs to this process (byCoreName is
+	//     process-global), which is this station's own re-save and moves through
+	//     the adopt-in-place path below.
+	//
+	// Checked BEFORE the first row is written, so the refusal is total like the
+	// unknown-name one above.
+	//
+	// The other processes' positions are read once per save, and only when the
+	// save adds a name this process does not already hold: a re-save of the
+	// station's own list reads nothing more than it did before the check.
+	var otherHolders map[string]string
+	for _, name := range clean {
+		if _, ours := byCoreName[name]; ours {
+			continue
+		}
+		if otherHolders == nil {
+			if otherHolders, err = s.livePositionsOfOtherProcesses(station.ProcessID); err != nil {
+				return nil, err
+			}
+		}
+		other, held := otherHolders[name]
+		if !held {
+			continue
+		}
+		if s.loaderHolds(name) {
+			continue
+		}
+		return nil, &otherProcessPositionError{name: name, process: other}
 	}
 
 	for i, name := range clean {
@@ -468,10 +571,10 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) error {
 			}
 			if _, err := s.db.Exec(`UPDATE process_nodes SET operator_station_id=?, sequence=?, enabled=1, updated_at=datetime('now')
 				WHERE id=?`, stationID, i+1, n.ID); err != nil {
-				return err
+				return nil, err
 			}
 			if _, err := s.db.EnsureProcessNodeRuntime(n.ID); err != nil {
-				return err
+				return nil, err
 			}
 			continue
 		}
@@ -484,37 +587,48 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) error {
 			Enabled:           true,
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if _, err := s.db.EnsureProcessNodeRuntime(id); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
+	return s.releaseRemovedPositions(stationNodes, desired)
+}
+
+// releaseRemovedPositions is SetNodes' removal pass: every position this
+// station owned that the new list leaves out is retired, unless it has an
+// active order — that one can only be disabled, because retiring it would
+// orphan the order. Those kept positions are returned by name, in station
+// order, so the save's reply can say which positions are still on the screen.
+func (s *StationService) releaseRemovedPositions(stationNodes []processes.Node, desired map[string]bool) ([]string, error) {
+	var kept []string
 	for _, n := range stationNodes {
 		if desired[n.CoreNodeName] {
 			continue
 		}
 		active, err := s.db.ListActiveOrdersByProcessNode(n.ID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if len(active) > 0 {
 			if _, err := s.db.Exec(`UPDATE process_nodes SET enabled=0, updated_at=datetime('now') WHERE id=?`, n.ID); err != nil {
-				return err
+				return nil, err
 			}
+			kept = append(kept, n.CoreNodeName)
 			continue
 		}
 		if s.nodeRetirer != nil {
 			if err := s.nodeRetirer(n.ID); err != nil {
-				return err
+				return nil, err
 			}
 		} else if err := s.db.DeleteProcessNode(n.ID); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	return nil
+	return kept, nil
 }
 
 // BuildView returns the operator station view used by the operator

@@ -28,7 +28,7 @@ func TestStation_SetNodes(t *testing.T) {
 	id, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 
 	// Initial set.
-	testutil.MustNoErr(t, svc.SetNodes(id, []string{"N1", "N2"}), "set 1")
+	testutil.MustNoErr(t, setNodesErr(svc, id, []string{"N1", "N2"}), "set 1")
 	names, err := svc.GetNodeNames(id)
 	if err != nil {
 		t.Fatalf("get names: %v", err)
@@ -53,7 +53,7 @@ func TestStation_SetNodes(t *testing.T) {
 	}
 
 	// Update: remove N1, add N3. N1 has no active orders, so it's deleted.
-	testutil.MustNoErr(t, svc.SetNodes(id, []string{"N2", "N3"}), "set 2")
+	testutil.MustNoErr(t, setNodesErr(svc, id, []string{"N2", "N3"}), "set 2")
 	nodes2, _ := db.ListProcessNodesByStation(id)
 	if len(nodes2) != 2 {
 		t.Fatalf("nodes len after update = %d", len(nodes2))
@@ -67,7 +67,7 @@ func TestStation_SetNodes(t *testing.T) {
 	}
 
 	// Input with duplicates + whitespace — dedupe + trim paths.
-	testutil.MustNoErr(t, svc.SetNodes(id, []string{" N2 ", "N2", "", "N4"}), "set 3")
+	testutil.MustNoErr(t, setNodesErr(svc, id, []string{" N2 ", "N2", "", "N4"}), "set 3")
 	nodes3, _ := db.ListProcessNodesByStation(id)
 	if len(nodes3) != 2 { // N2, N4 — N3 removed
 		t.Errorf("nodes after dedup = %d, want 2", len(nodes3))
@@ -82,7 +82,7 @@ func TestStation_SetNodesDisablesRatherThanDeletesWhenOrdersActive(t *testing.T)
 	pid, _ := db.CreateProcess("P", "", "", "", "", false)
 	id, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 
-	svc.SetNodes(id, []string{"N-KEEP"})
+	setNodesErr(svc, id, []string{"N-KEEP"})
 	nodes, _ := db.ListProcessNodesByStation(id)
 	var nodeID int64
 	for _, n := range nodes {
@@ -97,13 +97,56 @@ func TestStation_SetNodesDisablesRatherThanDeletesWhenOrdersActive(t *testing.T)
 	}
 
 	// Drop N-KEEP. Node should be disabled, not deleted.
-	testutil.MustNoErr(t, svc.SetNodes(id, []string{"N-NEW"}), "set")
+	testutil.MustNoErr(t, setNodesErr(svc, id, []string{"N-NEW"}), "set")
 	n, err := db.GetProcessNode(nodeID)
 	if err != nil {
 		t.Fatalf("get node: %v (should still exist)", err)
 	}
 	if n.Enabled {
 		t.Error("expected disabled=true for node with active orders")
+	}
+}
+
+// A position the save could only disable stays on the screen, so the save
+// must say which ones: reporting plain success for a list that did not land is
+// the engineer being told something untrue.
+func TestStation_SetNodesNamesThePositionsItCouldOnlyDisable(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := NewStationService(db)
+
+	pid, err := db.CreateProcess("P", "", "", "", "", false)
+	testutil.MustNoErr(t, err, "create process")
+	id, err := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
+	testutil.MustNoErr(t, err, "create station")
+
+	testutil.MustNoErr(t, setNodesErr(svc, id, []string{"N-BUSY", "N-IDLE"}), "seed")
+	byName := map[string]int64{}
+	nodes, err := db.ListProcessNodesByStation(id)
+	testutil.MustNoErr(t, err, "list station nodes")
+	for _, n := range nodes {
+		byName[n.CoreNodeName] = n.ID
+	}
+	busyID := byName["N-BUSY"]
+	if _, err := db.CreateOrder("busy-order", "retrieve", &busyID, false, 1, "", "", "", "", false, "", "", ""); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+
+	kept, err := svc.SetNodes(id, nil)
+	if err != nil {
+		t.Fatalf("SetNodes: %v", err)
+	}
+	if len(kept) != 1 || kept[0] != "N-BUSY" {
+		t.Errorf("kept = %v, want [N-BUSY]", kept)
+	}
+	left, err := db.ListProcessNodesByStation(id)
+	testutil.MustNoErr(t, err, "list station nodes after save")
+	if len(left) != 1 || left[0].CoreNodeName != "N-BUSY" {
+		names := make([]string, 0, len(left))
+		for _, n := range left {
+			names = append(names, n.CoreNodeName)
+		}
+		t.Errorf("station still holds %v, want only N-BUSY (N-IDLE has no active order and retires)", names)
 	}
 }
 
@@ -125,7 +168,7 @@ func TestStation_SetNodes_AdoptsOrphanInsteadOfDuplicating(t *testing.T) {
 
 	// Station A claims PLN_01, then drops it. The row survives, orphaned — this is
 	// the state that used to be invisible to the next rebind.
-	testutil.MustNoErr(t, svc.SetNodes(stationA, []string{"PLN_01"}), "claim PLN_01")
+	testutil.MustNoErr(t, setNodesErr(svc, stationA, []string{"PLN_01"}), "claim PLN_01")
 	nodes, _ := db.ListProcessNodesByStation(stationA)
 	if len(nodes) != 1 {
 		t.Fatalf("setup: nodes = %d, want 1", len(nodes))
@@ -137,12 +180,12 @@ func TestStation_SetNodes_AdoptsOrphanInsteadOfDuplicating(t *testing.T) {
 	if _, err := db.CreateOrder("uuid-adopt", "complex", &origID, false, 1, "PLN_01", "", "", "", false, "", "", ""); err != nil {
 		t.Fatalf("seed active order: %v", err)
 	}
-	testutil.MustNoErr(t, svc.SetNodes(stationA, []string{}), "un-claim PLN_01")
+	testutil.MustNoErr(t, setNodesErr(svc, stationA, []string{}), "un-claim PLN_01")
 
 	// A second station now claims the same Core node. Pre-fix this minted a
 	// duplicate row (code pln-01-2) with its own runtime; post-fix it adopts.
 	stationB, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "B"})
-	testutil.MustNoErr(t, svc.SetNodes(stationB, []string{"PLN_01"}), "station B claims PLN_01")
+	testutil.MustNoErr(t, setNodesErr(svc, stationB, []string{"PLN_01"}), "station B claims PLN_01")
 
 	all, err := db.ListProcessNodesByProcess(pid)
 	if err != nil {
@@ -201,12 +244,12 @@ func TestStation_SetNodes_LeavesRoutingRowsUntouched(t *testing.T) {
 		t.Fatalf("list routing before: %v", err)
 	}
 
-	testutil.MustNoErr(t, svc.SetNodes(stID, []string{"N1", "N2"}), "set 1")
-	testutil.MustNoErr(t, svc.SetNodes(stID, []string{"N2"}), "set 2 (deletes N1)")
+	testutil.MustNoErr(t, setNodesErr(svc, stID, []string{"N1", "N2"}), "set 1")
+	testutil.MustNoErr(t, setNodesErr(svc, stID, []string{"N2"}), "set 2 (deletes N1)")
 	// A routing name becoming a station position: SetNodes still leaves the
 	// routing row alone.
-	testutil.MustNoErr(t, svc.SetNodes(stID, []string{"N2", "STG_01"}), "set 3 (adds a routing name)")
-	testutil.MustNoErr(t, svc.SetNodes(stID, nil), "set 4 (clears the station)")
+	testutil.MustNoErr(t, setNodesErr(svc, stID, []string{"N2", "STG_01"}), "set 3 (adds a routing name)")
+	testutil.MustNoErr(t, setNodesErr(svc, stID, nil), "set 4 (clears the station)")
 
 	after, err := db.ListRoutingNodes(pid)
 	if err != nil {
@@ -220,4 +263,11 @@ func TestStation_SetNodes_LeavesRoutingRowsUntouched(t *testing.T) {
 			t.Errorf("routing row %d changed under SetNodes:\n before %+v\n after  %+v", i, before[i], after[i])
 		}
 	}
+}
+
+// setNodesErr is SetNodes for the tests that only care whether the save went
+// through.
+func setNodesErr(svc *StationService, stationID int64, names []string) error {
+	_, err := svc.SetNodes(stationID, names)
+	return err
 }

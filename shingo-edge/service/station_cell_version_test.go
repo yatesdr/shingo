@@ -112,7 +112,7 @@ func TestCellVersion_MovesOnEveryDoorThroughTheRealPath(t *testing.T) {
 	if err != nil || len(names) < 2 {
 		t.Fatalf("station node names: %v (%v)", err, names)
 	}
-	if err := svc.SetNodes(stationID, names[:len(names)-1]); err != nil {
+	if err := setNodesErr(svc, stationID, names[:len(names)-1]); err != nil {
 		t.Fatalf("SetNodes: %v", err)
 	}
 	moved("a station's node list was set (a position left the cell)")

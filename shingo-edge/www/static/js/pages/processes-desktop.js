@@ -5778,7 +5778,7 @@ async function runPresetApply() {
 // #pd-stpop, and the document-level closer does not care which popover — a
 // click that does not stop propagating opens the list and hides it before
 // paint, which is the "clickable, nothing happens" report.
-const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1, 'st-group': 1, 'st-holddest': 1 };
+const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1, 'st-group': 1, 'st-holddest': 1, 'use-preset': 1 };
 
 function onClick(e) {
     const openRow = e.target.closest && e.target.closest('[data-open]');

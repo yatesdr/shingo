@@ -196,7 +196,7 @@ func (s *StationService) CreateLoaderBoard(loaderKey string, processID int64) (i
 	if err != nil {
 		return 0, fmt.Errorf("create board for loader %s: %w", loaderKey, err)
 	}
-	if err := s.SetNodes(stationID, windows); err != nil {
+	if _, err := s.SetNodes(stationID, windows); err != nil {
 		// Roll the screen back by hand: SetNodes refuses for reasons the operator
 		// can act on (a window Core does not know), and leaving an empty screen
 		// behind would be the half-applied state this function exists to avoid.

@@ -17,7 +17,13 @@
 /* ── scrim, sheets ─────────────────────────────────────────────────────── */
 .os-comp-scrim { position: absolute; inset: 0; background: rgba(4, 6, 9, .62); }
 .os-comp-sheet {
-    position: absolute; left: 0; right: 0; bottom: 0; height: 700px;
+    /* min, NOT max-height: designed 700 px where the room exists, and it gives
+     * way only on a frame shorter than that — a bottom-anchored sheet at a bare
+     * 700 px puts its top edge above the viewport on a 768-tall laptop, and the
+     * close affordance with it. One declaration, so there is no second property
+     * to keep in step with it. */
+    position: absolute; left: 0; right: 0; bottom: 0;
+    height: min(700px, calc(100vh - 24px));
     background: var(--os-bg); border-top: 1px solid var(--sub-2);
     border-radius: 18px 18px 0 0; display: flex; flex-direction: column;
     box-shadow: 0 -20px 60px rgba(0, 0, 0, .5);

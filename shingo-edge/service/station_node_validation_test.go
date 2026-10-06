@@ -53,7 +53,7 @@ func nodeNames(t *testing.T, svc *StationService, stationID int64) []string {
 func TestSetNodes_NoResolverAcceptsAnything(t *testing.T) {
 	t.Parallel()
 	svc, id := newStationFixture(t)
-	testutil.MustNoErr(t, svc.SetNodes(id, []string{"Unloader Send To"}), "set")
+	testutil.MustNoErr(t, setNodesErr(svc, id, []string{"Unloader Send To"}), "set")
 	if got := nodeNames(t, svc, id); len(got) != 1 {
 		t.Errorf("expected the name through unchecked, got %v", got)
 	}
@@ -67,7 +67,7 @@ func TestSetNodes_EmptyCacheAcceptsAnything(t *testing.T) {
 	svc, id := newStationFixture(t)
 	svc.SetCoreNodeResolver(func() map[string]bool { return map[string]bool{} })
 
-	testutil.MustNoErr(t, svc.SetNodes(id, []string{"ULN_002"}), "set")
+	testutil.MustNoErr(t, setNodesErr(svc, id, []string{"ULN_002"}), "set")
 	if got := nodeNames(t, svc, id); len(got) != 1 {
 		t.Errorf("empty cache must fail open, got %v", got)
 	}
@@ -80,7 +80,7 @@ func TestSetNodes_RejectsANameCoreDoesNotHave(t *testing.T) {
 		return map[string]bool{"ULN_002": true, "ULN_003": true}
 	})
 
-	err := svc.SetNodes(id, []string{"ULN_002", "Unloader Send To"})
+	err := setNodesErr(svc, id, []string{"ULN_002", "Unloader Send To"})
 	if !errors.Is(err, ErrUnknownCoreNodes) {
 		t.Fatalf("expected ErrUnknownCoreNodes, got %v", err)
 	}
@@ -104,7 +104,7 @@ func TestSetNodes_AcceptsKnownNames(t *testing.T) {
 		return map[string]bool{"ULN_002": true, "ULN_003": true}
 	})
 
-	testutil.MustNoErr(t, svc.SetNodes(id, []string{"ULN_002", "ULN_003"}), "set")
+	testutil.MustNoErr(t, setNodesErr(svc, id, []string{"ULN_002", "ULN_003"}), "set")
 	if got := nodeNames(t, svc, id); len(got) != 2 {
 		t.Errorf("expected both windows bound, got %v", got)
 	}
@@ -118,10 +118,10 @@ func TestSetNodes_CanRemoveAnAlreadyStoredBadName(t *testing.T) {
 	svc, id := newStationFixture(t)
 
 	// Stored before the check existed.
-	testutil.MustNoErr(t, svc.SetNodes(id, []string{"Unloader Send To"}), "seed")
+	testutil.MustNoErr(t, setNodesErr(svc, id, []string{"Unloader Send To"}), "seed")
 
 	svc.SetCoreNodeResolver(func() map[string]bool { return map[string]bool{"ULN_002": true} })
-	testutil.MustNoErr(t, svc.SetNodes(id, []string{"ULN_002"}), "replace")
+	testutil.MustNoErr(t, setNodesErr(svc, id, []string{"ULN_002"}), "replace")
 
 	got := nodeNames(t, svc, id)
 	if len(got) != 1 || got[0] != "ULN_002" {
@@ -143,7 +143,7 @@ func TestSetNodes_ExpandsAGroupToItsNodes(t *testing.T) {
 		return map[string][]string{"UL · stage 1": {"FGN_001", "FGN_002"}}
 	})
 
-	testutil.MustNoErr(t, svc.SetNodes(id, []string{"FGN_002", "UL · stage 1", "ULN_009"}), "set")
+	testutil.MustNoErr(t, setNodesErr(svc, id, []string{"FGN_002", "UL · stage 1", "ULN_009"}), "set")
 	got := strings.Join(nodeNames(t, svc, id), ",")
 	if got != "FGN_002,FGN_001,ULN_009" {
 		t.Errorf("station nodes = %s, want the group's nodes in its place, deduplicated: FGN_002,FGN_001,ULN_009", got)

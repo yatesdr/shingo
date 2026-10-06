@@ -117,3 +117,69 @@ func TestGetProcessNodeByCoreNodeName_MissStaysErrNoRows(t *testing.T) {
 			"both branch on it and both treat it as the ordinary 'not ours' answer", err)
 	}
 }
+
+// TestGetProcessNodeByCoreNodeName_PrefersTheLiveRow closes the retired-row
+// arm: a position removed and re-added under the same Core name leaves a
+// tombstone and a live row, and the lookup answered the TOMBSTONE — the
+// lowest-id rule was applied across both classes together. Every caller turns
+// the name into a row to act on the live position, so an adjustment landed on
+// a slot nobody can see, while the live row's tile read a count that never
+// moved.
+//
+// The preference is per-class, not global: within live rows and within
+// retired rows the lowest id still wins (the stability pin above keeps its
+// meaning), and a name held ONLY by retired rows still resolves to one of
+// them — the callers' fallback behaviour is unchanged for names whose live
+// position is gone.
+func TestGetProcessNodeByCoreNodeName_PrefersTheLiveRow(t *testing.T) {
+	db := testDB(t)
+	firstID, _ := twoProcessesOneSlot(t, db, "SHARED_SLOT")
+
+	// Retire BOTH rows carrying the name, then re-add one in the first
+	// process: the tombstones stay (soft delete is a foreign-key decision —
+	// see processes.DeleteNode), and the new live row has the HIGHEST id of
+	// the three. The old answer, lowest id over all rows, is the tombstone.
+	if err := db.DeleteProcessNode(firstID); err != nil {
+		t.Fatalf("retire first: %v", err)
+	}
+	rows, err := db.Query(`SELECT id FROM process_nodes WHERE core_node_name='SHARED_SLOT' AND deleted_at IS NULL`)
+	if err != nil {
+		t.Fatalf("list live: %v", err)
+	}
+	var live []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		live = append(live, id)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatalf("close rows: %v", err)
+	}
+	for _, id := range live {
+		if err := db.DeleteProcessNode(id); err != nil {
+			t.Fatalf("retire %d: %v", id, err)
+		}
+	}
+
+	var processID int64
+	if err := db.QueryRow(`SELECT process_id FROM process_nodes WHERE id=?`, firstID).Scan(&processID); err != nil {
+		t.Fatalf("read process id: %v", err)
+	}
+	_, err = db.CreateProcessNode(processes.NodeInput{
+		ProcessID: processID, CoreNodeName: "SHARED_SLOT", Name: "SHARED_SLOT", Sequence: 9, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("re-add under the same name: %v", err)
+	}
+
+	n, err := db.GetProcessNodeByCoreNodeName("SHARED_SLOT")
+	if err != nil || n == nil {
+		t.Fatalf("lookup after re-add: node=%v err=%v", n, err)
+	}
+	if n.DeletedAt != nil {
+		t.Fatalf("lookup answered the retired row (id %d, deleted_at set) — the position was removed and "+
+			"re-added under the same Core name, and the resolution must follow the live row, not the tombstone", n.ID)
+	}
+}

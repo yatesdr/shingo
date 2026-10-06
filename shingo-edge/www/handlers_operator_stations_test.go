@@ -423,6 +423,59 @@ func TestOperatorStations_SetStationClaimedNodes_Success(t *testing.T) {
 	}
 }
 
+// A removed position with an active order is only disabled, so the reply
+// names it: the page has to say it stayed rather than report a clean save.
+func TestOperatorStations_SetStationClaimedNodes_NamesPositionsKeptByAnActiveOrder(t *testing.T) {
+	h, router := newOperatorStationsRouter(t)
+	cookie := authCookie(t, h)
+
+	pid := seedProcess(t, "KeptPositionsLine")
+	sid := seedOperatorStation(t, pid, "OS-KEPT-1", "KeptPositionsStation")
+	busyID := seedProcessNode(t, pid, sid, "kept-node-busy")
+	seedProcessNode(t, pid, sid, "kept-node-idle")
+	if _, err := testDB.CreateOrder("kept-node-busy-order", "retrieve", &busyID, false, 1, "", "", "", "", false, "", "", ""); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+
+	body := map[string]any{"nodes": []string{}}
+	resp := doRequest(t, router, "PUT", "/api/operator-stations/"+itoa(sid)+"/claimed-nodes", body, cookie)
+	assertStatus(t, resp, http.StatusOK)
+	var reply struct {
+		Status string   `json:"status"`
+		Kept   []string `json:"kept"`
+	}
+	decodeJSON(t, resp, &reply)
+	if reply.Status != "ok" {
+		t.Errorf("status = %q, want ok", reply.Status)
+	}
+	if len(reply.Kept) != 1 || reply.Kept[0] != "kept-node-busy" {
+		t.Errorf("kept = %v, want [kept-node-busy]", reply.Kept)
+	}
+}
+
+// A name that is already a live position of another process is bad input,
+// like a name Core does not have: 400, naming the other process.
+func TestOperatorStations_SetStationClaimedNodes_OtherProcessPositionIsBadRequest(t *testing.T) {
+	h, router := newOperatorStationsRouter(t)
+	cookie := authCookie(t, h)
+
+	pidOther := seedProcess(t, "CrossProcessOwnerLine")
+	seedProcessNode(t, pidOther, 0, "cross-process-slot")
+	pid := seedProcess(t, "CrossProcessClaimantLine")
+	sid := seedOperatorStation(t, pid, "OS-XPROC-1", "CrossProcessStation")
+
+	body := map[string]any{"nodes": []string{"cross-process-slot"}}
+	resp := doRequest(t, router, "PUT", "/api/operator-stations/"+itoa(sid)+"/claimed-nodes", body, cookie)
+	assertStatus(t, resp, http.StatusBadRequest)
+	var reply struct {
+		Error string `json:"error"`
+	}
+	decodeJSON(t, resp, &reply)
+	if !strings.Contains(reply.Error, "CrossProcessOwnerLine") {
+		t.Errorf("error does not name the other process: %q", reply.Error)
+	}
+}
+
 func TestOperatorStations_SetStationClaimedNodes_InvalidID(t *testing.T) {
 	h, router := newOperatorStationsRouter(t)
 	cookie := authCookie(t, h)
