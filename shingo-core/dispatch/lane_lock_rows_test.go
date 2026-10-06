@@ -141,7 +141,7 @@ func TestLaneLockRows_NonDigHoldBlocksADig(t *testing.T) {
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
 	lane := mirrorLane(t, db, "LANE-LLROW-MODE", 3)
-	plain := testdb.CreateOrder(t, db)
+	plain := testdb.CreateOrder(t, db, asDispatched) // (C1.5: a lane holder is dispatched)
 	digger := testdb.CreateOrder(t, db)
 
 	if err := reservations.AcquireLanes(db.DB, plain.ID, reservations.ModeOutbound, "test", lane); err != nil {

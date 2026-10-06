@@ -91,6 +91,7 @@ func TestDropoffGate_APlanIsNotAHolder(t *testing.T) {
 	// The plan becomes a hold: ClaimBinForTest reserves and claims in one step,
 	// so the bare reservation goes first.
 	testutil.MustNoErr(t, reservations.Release(db.DB, planner.ID, bin.ID), "drop the plan")
+	testdb.SeedOrderStatus(t, db, planner.ID, string(StatusDispatched), "") // (C1.5: the claim is taken with dispatch)
 	testdb.ClaimBinForTest(t, db, bin.ID, planner.ID)
 	if blocked, block := CheckDropoffCapacity(db, stage.Name, 0); !blocked || block.Cause != CauseDropoffInflight {
 		t.Fatalf("the gate let a second carrier toward %s after the first order claimed its bin "+

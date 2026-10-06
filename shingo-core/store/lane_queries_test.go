@@ -5,10 +5,12 @@ package store_test
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
 
@@ -73,8 +75,10 @@ func TestLaneAcceptsInbound(t *testing.T) {
 		t.Fatalf("empty lane: got ok=%v err=%v, want compatible", ok, err)
 	}
 
+	// (C1.5: each lane holder is built at dispatched; a confirmed mouth is a hard hold.)
+
 	// An inbound hold shares fine — still compatible.
-	oIn := testdb.CreateOrder(t, db)
+	oIn := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
 	if err := reservations.AcquireLanes(db.DB, oIn.ID, reservations.ModeInbound, "test", laneID); err != nil {
 		t.Fatalf("AcquireLanes inbound: %v", err)
 	}
@@ -86,7 +90,7 @@ func TestLaneAcceptsInbound(t *testing.T) {
 	}
 
 	// An outbound hold conflicts — incompatible for an inbound store.
-	oOut := testdb.CreateOrder(t, db)
+	oOut := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
 	if err := reservations.AcquireLanes(db.DB, oOut.ID, reservations.ModeOutbound, "test", laneID); err != nil {
 		t.Fatalf("AcquireLanes outbound: %v", err)
 	}
@@ -98,7 +102,7 @@ func TestLaneAcceptsInbound(t *testing.T) {
 	}
 
 	// A dig excludes everyone — incompatible.
-	oDig := testdb.CreateOrder(t, db)
+	oDig := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
 	if err := reservations.AcquireLanes(db.DB, oDig.ID, reservations.ModeDig, "test", laneID); err != nil {
 		t.Fatalf("AcquireLanes dig: %v", err)
 	}

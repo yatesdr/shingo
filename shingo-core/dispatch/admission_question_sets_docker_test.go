@@ -167,7 +167,7 @@ func TestQuestionSet_PlainEntryStillAsksOccupancyOnAnUnmarkedLane(t *testing.T) 
 	if err != nil {
 		t.Fatalf("resolve line node: %v", err)
 	}
-	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "qs-mouth-occ-inside" })
+	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "qs-mouth-occ-inside" }, asDispatched) // (C1.5: an occupant is dispatched)
 	if _, err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
 		t.Fatalf("acquire occupancy: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestQuestionSet_CompoundLegSkipsNothing(t *testing.T) {
 	laneID, shallow, _ := noneLaneWithTwoSlots(t, db, "QS-COMPOUND")
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "qs-compound-inside" })
+	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "qs-compound-inside" }, asDispatched) // (C1.5: an occupant is dispatched)
 	if _, err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
 		t.Fatalf("acquire occupancy: %v", err)
 	}

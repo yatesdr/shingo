@@ -403,11 +403,12 @@ func TestDigMarkExemption_SourceLockRetrieveIsAdmittedPastAMarkHolder(t *testing
 		o.SourceNode = w[2].Name
 		o.DeliveryNode = line.Name
 		o.BinID = &deeper.ID
-		o.Status = protocol.StatusPending
+		o.Status = protocol.StatusDispatched
 	})
-	// It holds the bin it points at (EntryHeldBin): a pending order pointing at a
-	// bin it holds nothing on is a pointer wedge (C1 sweeps pending too).
-	testdb.ReserveBin(t, db, retrieve.ID, deeper.ID)
+	// It holds the bin it points at (EntryHeldBin): an order pointing at a bin it
+	// holds nothing on is a pointer wedge. (C1.5: the lane hold it takes below is
+	// a committed robot's, so the order is dispatched and its bin claimed.)
+	testdb.ClaimBinForTest(t, db, deeper.ID, retrieve.ID)
 
 	admitted, cause, laneName, err := d.AcquireLanesForOrder(retrieve, w[2], line, EntryHeldBin)
 	if err != nil {

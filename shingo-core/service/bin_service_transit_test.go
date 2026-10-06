@@ -32,7 +32,7 @@ func TestMoveToTransit_PreservesClaim(t *testing.T) {
 
 	bin := &bins.Bin{BinTypeID: bt.ID, Label: "TR-BIN-1", NodeID: &source.ID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
-	orderID := testdb.CreateOrder(t, db).ID
+	orderID := dispatchedHolder(t, db).ID // (C1.5: in transit means dispatched)
 	testdb.ClaimBinForTest(t, db, bin.ID, orderID)
 
 	testutil.MustNoErr(t, svc.MoveToTransit(bin.ID), "MoveToTransit")
@@ -70,7 +70,7 @@ func TestMoveToTransit_Idempotent(t *testing.T) {
 
 	bin := &bins.Bin{BinTypeID: bt.ID, Label: "TR-BIN-IDEM", NodeID: &source.ID, Status: "available"}
 	db.CreateBin(bin)
-	idemOrder := testdb.CreateOrder(t, db)
+	idemOrder := dispatchedHolder(t, db) // (C1.5: in transit means dispatched)
 	testdb.ClaimBinForTest(t, db, bin.ID, idemOrder.ID)
 
 	testutil.MustNoErr(t, svc.MoveToTransit(bin.ID), "first MoveToTransit")

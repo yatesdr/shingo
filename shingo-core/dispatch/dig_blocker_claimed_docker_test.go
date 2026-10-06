@@ -264,7 +264,7 @@ func TestBlockerClaimedError_CarriesTheHolder(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "BIN-HOLDER-ID")
 
-	stranger := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "holder-id-stranger" })
+	stranger := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "holder-id-stranger" }, asDispatched) // (C1.5: a claimant is dispatched)
 	testdb.ClaimBinForTest(t, db, bin.ID, stranger.ID)
 
 	parent := testdb.CreateOrder(t, db, func(o *orders.Order) {

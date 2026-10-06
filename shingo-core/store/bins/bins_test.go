@@ -8,10 +8,12 @@ import (
 	"errors"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 	"shingocore/store/reservations"
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/domain"
 	"shingocore/internal/testdb"
@@ -175,7 +177,8 @@ func TestClaim_And_Unclaim(t *testing.T) {
 	testutil.MustNoErr(t, bins.Create(db.DB, bin), "bins.Create")
 
 	t.Run("Claim_sets_claimed_by", func(t *testing.T) {
-		o := testdb.CreateOrder(t, db)
+		// (C1.5: the claimant keeps the claim, so it is built at dispatched.)
+		o := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
 		testdb.ReserveBin(t, db, o.ID, bin.ID) // demoted-CAS guard requires a pending reservation
 		testutil.MustNoErr(t, bins.Claim(db.DB, bin.ID, o.ID), "bins.Claim")
 		got, _ := bins.Get(db.DB, bin.ID)
@@ -373,7 +376,8 @@ func TestNodeTileStates(t *testing.T) {
 	// Empty (no manifest) bin at line node, claimed by an order.
 	empty := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-TILE-EMPTY", NodeID: &std.LineNode.ID, Status: "available"}
 	testutil.MustNoErr(t, bins.Create(db.DB, empty), "bins.Create empty")
-	emptyOrder := testdb.CreateOrder(t, db)
+	// (C1.5: the holder is built at dispatched; a bin claim is a hard hold.)
+	emptyOrder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
 	testdb.ClaimBinForTest(t, db, empty.ID, emptyOrder.ID)
 
 	states, err := bins.NodeTileStates(db.DB)

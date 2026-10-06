@@ -84,7 +84,7 @@ func TestInventoryPreflight_AbsentIsNoBinAtAll(t *testing.T) {
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 	busy := testdb.CreateBinAtNode(t, db, std.Payload.Code, std.StorageNode.ID, "BIN-BUSY")
-	holder := testdb.CreateOrder(t, db)
+	holder := dispatchedHolder(t, db) // (C1.5: the holder is a committed robot)
 	testdb.ClaimBinForTest(t, db, busy.ID, holder.ID)
 
 	svc := NewInventoryService(db)

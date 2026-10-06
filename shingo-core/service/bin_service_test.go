@@ -1101,7 +1101,7 @@ func TestBinService_Retire_ClaimedBin(t *testing.T) {
 	svc := newBinSvc(db)
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-RET-CLAIMED", "", 0)
-	claimer := testdb.CreateOrder(t, db)
+	claimer := dispatchedHolder(t, db) // (C1.5: the claimer is a committed robot)
 	testdb.ClaimBinForTest(t, db, bin.ID, claimer.ID)
 
 	testutil.MustNoErr(t, svc.Retire(bin.ID), "Retire claimed bin")

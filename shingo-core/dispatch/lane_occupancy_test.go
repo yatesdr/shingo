@@ -159,8 +159,8 @@ func TestLaneOccupancy_TwoLegsTwoLanes(t *testing.T) {
 	slotsA, _ := db.ListLaneSlots(laneA)
 	slotsB, _ := db.ListLaneSlots(laneB)
 
-	legOne := testdb.CreateOrder(t, db)
-	legTwo := testdb.CreateOrder(t, db)
+	legOne := testdb.CreateOrder(t, db, asDispatched) // (C1.5: an occupant is dispatched)
+	legTwo := testdb.CreateOrder(t, db, asDispatched)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	// A dig leg picks out of A and places into B: it is inside both while it works.

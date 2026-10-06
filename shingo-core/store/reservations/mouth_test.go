@@ -12,6 +12,7 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
 
@@ -42,6 +43,13 @@ func laneWithSlots(t *testing.T, db *store.DB, laneName string, slotCount int) i
 	return lane.ID
 }
 
+// holder creates an order at `dispatched` (C1.5): a confirmed mouth row is a hard hold,
+// and only a committed robot holds hard (holds-at-rest).
+func holder(t *testing.T, db *store.DB) *orders.Order {
+	t.Helper()
+	return testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+}
+
 func mouthCount(t *testing.T, db *store.DB, laneID int64) int {
 	t.Helper()
 	rows, err := reservations.ActiveMouthRows(db.DB, laneID)
@@ -57,7 +65,7 @@ func TestMouth_FreeLaneAdmits(t *testing.T) {
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
 	lane := laneWithSlots(t, db, "LANE-FREE", 3)
-	o := testdb.CreateOrder(t, db)
+	o := holder(t, db)
 
 	if err := reservations.AcquireLanes(db.DB, o.ID, reservations.ModeInbound, "test", lane); err != nil {
 		t.Fatalf("acquire on free lane: %v", err)
@@ -74,8 +82,8 @@ func TestMouth_SameModeShares(t *testing.T) {
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
 	lane := laneWithSlots(t, db, "LANE-SHARE", 3)
-	a := testdb.CreateOrder(t, db)
-	b := testdb.CreateOrder(t, db)
+	a := holder(t, db)
+	b := holder(t, db)
 
 	if err := reservations.AcquireLanes(db.DB, a.ID, reservations.ModeInbound, "test", lane); err != nil {
 		t.Fatalf("A acquire inbound: %v", err)
@@ -95,7 +103,7 @@ func TestMouth_DifferentModeConflicts(t *testing.T) {
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
 	lane := laneWithSlots(t, db, "LANE-MIX", 3)
-	a := testdb.CreateOrder(t, db)
+	a := holder(t, db)
 	b := testdb.CreateOrder(t, db)
 
 	if err := reservations.AcquireLanes(db.DB, a.ID, reservations.ModeInbound, "test", lane); err != nil {
@@ -115,7 +123,7 @@ func TestMouth_DigExcludesEveryone(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
-	a := testdb.CreateOrder(t, db)
+	a := holder(t, db)
 	b := testdb.CreateOrder(t, db)
 
 	// dig admits on a free lane, then refuses an inbound.
@@ -144,7 +152,7 @@ func TestMouth_Idempotent(t *testing.T) {
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
 	lane := laneWithSlots(t, db, "LANE-IDEM", 3)
-	a := testdb.CreateOrder(t, db)
+	a := holder(t, db)
 
 	for i := 0; i < 3; i++ {
 		if err := reservations.AcquireLanes(db.DB, a.ID, reservations.ModeInbound, "test", lane); err != nil {
@@ -165,8 +173,8 @@ func TestMouth_AllOrNothingMultiLane(t *testing.T) {
 	testdb.SetupStandardData(t, db)
 	clean := laneWithSlots(t, db, "LANE-CLEAN", 3)
 	blocked := laneWithSlots(t, db, "LANE-BLOCKED", 3)
-	a := testdb.CreateOrder(t, db)
-	b := testdb.CreateOrder(t, db)
+	a := holder(t, db)
+	b := holder(t, db)
 
 	// B holds the blocked lane outbound.
 	if err := reservations.AcquireLanes(db.DB, b.ID, reservations.ModeOutbound, "test", blocked); err != nil {
@@ -196,8 +204,8 @@ func TestMouth_ConcurrentRaceOneWinner(t *testing.T) {
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
 	lane := laneWithSlots(t, db, "LANE-RACE", 3)
-	a := testdb.CreateOrder(t, db)
-	b := testdb.CreateOrder(t, db)
+	a := holder(t, db)
+	b := holder(t, db)
 
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
@@ -280,7 +288,7 @@ func TestMouth_Depth1IsGatedLikeAnyOtherLane(t *testing.T) {
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
 	lane := laneWithSlots(t, db, "LANE-D1", 1)
-	a := testdb.CreateOrder(t, db)
+	a := holder(t, db)
 	b := testdb.CreateOrder(t, db)
 
 	if err := reservations.AcquireLanes(db.DB, a.ID, reservations.ModeInbound, "test", lane); err != nil {
@@ -299,7 +307,7 @@ func TestMouth_Depth1IsGatedLikeAnyOtherLane(t *testing.T) {
 	// A DIG TAKES ONE TOO, which is the arm the exemption actually cost: a dig
 	// parking a blocker in a single-slot lane held nothing there at all.
 	digLane := laneWithSlots(t, db, "LANE-D1-DIG", 1)
-	dig := testdb.CreateOrder(t, db)
+	dig := holder(t, db)
 	if err := reservations.AcquireLanes(db.DB, dig.ID, reservations.ModeDig, "test", digLane); err != nil {
 		t.Fatalf("dig acquire on depth-1 lane: %v", err)
 	}
@@ -477,8 +485,8 @@ func TestMouth_BeneficiaryOwnHoldDoesNotRefuseItsOwnDig(t *testing.T) {
 	testdb.SetupStandardData(t, db)
 	lane := laneWithSlots(t, db, "LANE-BENEF", 3)
 
-	dweller := testdb.CreateOrder(t, db)
-	digParent := testdb.CreateOrder(t, db)
+	dweller := holder(t, db)
+	digParent := holder(t, db)
 	stranger := testdb.CreateOrder(t, db)
 
 	if err := reservations.AcquireLanes(db.DB, dweller.ID, reservations.ModeOutbound, "test", lane); err != nil {
@@ -583,7 +591,7 @@ func TestDigAdmissible_AgreesWithTheAcquireAboutTheBeneficiary(t *testing.T) {
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
 	lane := laneWithSlots(t, db, "LANE-PRECHECK", 3)
-	dweller := testdb.CreateOrder(t, db)
+	dweller := holder(t, db)
 	stranger := testdb.CreateOrder(t, db)
 
 	if err := reservations.AcquireLanes(db.DB, dweller.ID, reservations.ModeOutbound, "test", lane); err != nil {

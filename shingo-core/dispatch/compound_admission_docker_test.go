@@ -118,7 +118,7 @@ func TestCompound_ChildWaitsForADigOnItsDestinationLane(t *testing.T) {
 		t.Fatalf("parent2 dig on its source lane: %v", err)
 	}
 	// A STRANGER holds the destination lane, and puts nobody inside it.
-	stranger := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "cadm-stranger" })
+	stranger := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "cadm-stranger" }, asDispatched) // (C1.5: a lane holder is dispatched)
 	if err := reservations.AcquireLanes(db.DB, stranger.ID, reservations.ModeDig, "test", dstLane2); err != nil {
 		t.Fatalf("stranger dig on the destination lane: %v", err)
 	}

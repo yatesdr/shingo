@@ -24,7 +24,7 @@ func TestAcquireLanesForOrder_GatedByConfig(t *testing.T) {
 
 	_, _, slot := gatedLane(t, db, "AFO-MOUTH", "")
 	line := lineNode(t, db, "AFO-LINE")
-	a := testdb.CreateOrder(t, db)
+	a := testdb.CreateOrder(t, db, asDispatched) // (C1.5: a lane holder is dispatched)
 	b := testdb.CreateOrder(t, db)
 
 	// Store into the free mouth lane (line → slot, inbound): admitted.
@@ -316,8 +316,8 @@ func TestLaneGate_AcquireAdmitsFreeAndSharesSameMode(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, laneID, slot := gatedLane(t, db, "ACQ", "")
 	line := lineNode(t, db, "ACQ-LINE")
-	a := testdb.CreateOrder(t, db)
-	b := testdb.CreateOrder(t, db)
+	a := testdb.CreateOrder(t, db, asDispatched) // (C1.5: a lane holder is dispatched)
+	b := testdb.CreateOrder(t, db, asDispatched)
 
 	holdsA, _ := d.resolveOrderLaneHolds(line, slot) // inbound
 	adm := d.acquireOrderLanes(a.ID, holdsA)
@@ -346,7 +346,7 @@ func TestLaneGate_AcquireConflictRequeues(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, laneID, slot := gatedLane(t, db, "CONF", "")
 	line := lineNode(t, db, "CONF-LINE")
-	a := testdb.CreateOrder(t, db)
+	a := testdb.CreateOrder(t, db, asDispatched) // (C1.5: a lane holder is dispatched)
 	b := testdb.CreateOrder(t, db)
 
 	// A holds inbound.
@@ -379,7 +379,7 @@ func TestLaneGate_AcquireAllOrNothingAcrossModes(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	_, laneA, slotA := gatedLane(t, db, "AON-A", "")
 	_, laneB, slotB := gatedLane(t, db, "AON-B", "")
-	holder := testdb.CreateOrder(t, db)
+	holder := testdb.CreateOrder(t, db, asDispatched) // (C1.5: a lane holder is dispatched)
 	mover := testdb.CreateOrder(t, db)
 
 	// holder digs laneB (dig excludes everyone).
@@ -442,7 +442,7 @@ func TestLaneGate_SameLaneSourceAndDest_OneHoldStrongestMode(t *testing.T) {
 	}
 
 	// And the acquire admits: one row, no self-conflict, no wedge.
-	mover := testdb.CreateOrder(t, db)
+	mover := testdb.CreateOrder(t, db, asDispatched) // (C1.5: a lane holder is dispatched)
 	adm := d.acquireOrderLanes(mover.ID, holds)
 	admitted, err := adm.admitted, adm.err
 	if err != nil || !admitted {
@@ -526,8 +526,8 @@ func TestLaneGate_UnmarkedLaneSerializesOpposingModes(t *testing.T) {
 
 	_, laneID, slot := gatedLane(t, db, "UNMARKED-SER", "") // no mark: the plant's shape
 	line := lineNode(t, db, "UNMARKED-SER-LINE")
-	a := testdb.CreateOrder(t, db)
-	b := testdb.CreateOrder(t, db)
+	a := testdb.CreateOrder(t, db, asDispatched) // (C1.5: a lane holder is dispatched)
+	b := testdb.CreateOrder(t, db, asDispatched)
 
 	if d.laneIsGated(laneID) {
 		t.Fatal("fixture is wrong: this lane carries a mark, so it proves nothing about the plant")

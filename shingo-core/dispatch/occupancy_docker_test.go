@@ -77,6 +77,7 @@ func TestStepOccupancy_GateAndSlotClaimAgree(t *testing.T) {
 			}
 			_, takenFirst, err := d.allocator.binsAtStep(order, steps, stageStep, stage.Name)
 			testutil.MustNoErr(t, err, "binsAtStep")
+			testdb.SeedOrderStatus(t, db, order.ID, string(StatusDispatched), "") // (C1.5: the slot claim is taken with dispatch)
 			claimOK := db.ConfirmSlotClaim(stage.ID, order.ID, takenFirst) == nil
 
 			if gateClear != claimOK {

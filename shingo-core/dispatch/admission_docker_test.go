@@ -30,14 +30,20 @@ func laneSlots(t *testing.T, db *store.DB, laneID int64) []*nodes.Node {
 }
 
 // admitOrder makes a plain order sourcing from slot.
-func admitOrder(t *testing.T, db *store.DB, uuid string, slot *nodes.Node) *orders.Order {
+func admitOrder(t *testing.T, db *store.DB, uuid string, slot *nodes.Node, opts ...func(*orders.Order)) *orders.Order {
 	t.Helper()
-	return testdb.CreateOrder(t, db, func(o *orders.Order) {
+	return testdb.CreateOrder(t, db, append([]func(*orders.Order){func(o *orders.Order) {
 		o.EdgeUUID = uuid
 		o.StationID = "line-1"
 		o.SourceNode = slot.Name
-	})
+	}}, opts...)...)
 }
+
+// asDispatched builds an order at `dispatched`. A hard hold (a bin or slot
+// claim, a confirmed mouth or occupancy row) is a committed robot's: the
+// holds-at-rest teardown forbids one on a waiting order, so a fixture whose
+// point is the hold builds its holder here (C1.5).
+func asDispatched(o *orders.Order) { o.Status = StatusDispatched }
 
 // TestAdmit_PhysicalChecksIgnoreTheEnforcementMode is a CORRECTION to the
 // version of this file that shipped with admission, and the assertion is the
@@ -89,7 +95,7 @@ func TestAdmit_PhysicalChecksIgnoreTheEnforcementMode(t *testing.T) {
 	}
 
 	// And so does an occupant.
-	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "adm-off-inside" })
+	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "adm-off-inside" }, asDispatched) // (C1.5: an occupant is dispatched)
 	if _, err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
 		t.Fatalf("acquire occupancy: %v", err)
 	}
@@ -185,7 +191,7 @@ func TestAdmit_OccupantRefusesAndSelfDoesNot(t *testing.T) {
 	_, laneID, s0 := gatedLane(t, db, "ADM-OCC", "")
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "adm-occ-inside" })
+	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "adm-occ-inside" }, asDispatched) // (C1.5: an occupant is dispatched)
 	if _, err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
 		t.Fatalf("acquire occupancy: %v", err)
 	}
@@ -202,7 +208,7 @@ func TestAdmit_OccupantRefusesAndSelfDoesNot(t *testing.T) {
 
 	// The order already inside is not blocked by itself. Its own row is the only
 	// one left, so nothing else can be supplying the verdict.
-	insideAgain := admitOrder(t, db, "adm-occ-inside-2", s0)
+	insideAgain := admitOrder(t, db, "adm-occ-inside-2", s0, asDispatched) // (C1.5: in flight, so dispatched)
 	if _, err := reservations.AcquireOccupancy(db.DB, insideAgain.ID, laneID); err != nil {
 		t.Fatalf("acquire second occupancy: %v", err)
 	}

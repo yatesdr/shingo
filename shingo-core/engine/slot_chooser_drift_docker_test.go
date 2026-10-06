@@ -55,13 +55,18 @@ func engDriftHolder(t *testing.T, db *store.DB, fx *engDriftFixture, mutate ...f
 	}}, mutate...)...)
 }
 
+// engDriftCommitted builds a holder at `dispatched` (C1.5): a hard hold (a slot
+// claim, a confirmed row, occupancy) belongs to a committed robot, and a
+// pre-dispatch order holds nothing hard.
+func engDriftCommitted(o *orders.Order) { o.Status = protocol.StatusDispatched }
+
 var engDriftHolds = []engDriftHold{
 	{name: "free"},
 	{name: "bin-present", apply: func(t *testing.T, db *store.DB, fx *engDriftFixture) {
 		createTestBinAtNode(t, db, fx.payload, fx.candidate.ID, fx.prefix+"-OCCUPANT")
 	}},
 	{name: "stranger-hard-claim", apply: func(t *testing.T, db *store.DB, fx *engDriftFixture) {
-		h := engDriftHolder(t, db, fx)
+		h := engDriftHolder(t, db, fx, engDriftCommitted)
 		testutil.MustNoErr(t, db.ReserveSlot(fx.candidate.ID, h.ID), "reserve")
 		testutil.MustNoErr(t, db.ConfirmSlotClaim(fx.candidate.ID, h.ID, nil), "confirm the hard claim")
 	}},
@@ -70,7 +75,7 @@ var engDriftHolds = []engDriftHold{
 		testutil.MustNoErr(t, db.ReserveSlot(fx.candidate.ID, h.ID), "reserve")
 	}},
 	{name: "stranger-confirmed-reservation", apply: func(t *testing.T, db *store.DB, fx *engDriftFixture) {
-		h := engDriftHolder(t, db, fx)
+		h := engDriftHolder(t, db, fx, engDriftCommitted)
 		testutil.MustNoErr(t, db.ReserveSlot(fx.candidate.ID, h.ID), "reserve")
 		testutil.MustNoErr(t, db.ConfirmSlotReservation(fx.candidate.ID, h.ID), "confirm the reservation")
 	}},
@@ -82,7 +87,7 @@ var engDriftHolds = []engDriftHold{
 		})
 	}},
 	{name: "occupancy-row", laneOnly: true, apply: func(t *testing.T, db *store.DB, fx *engDriftFixture) {
-		h := engDriftHolder(t, db, fx)
+		h := engDriftHolder(t, db, fx, engDriftCommitted)
 		ok, err := reservations.AcquireOccupancy(db.DB, h.ID, fx.lane.ID)
 		testutil.MustNoErr(t, err, "take occupancy")
 		if !ok {

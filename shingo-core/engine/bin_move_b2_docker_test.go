@@ -210,18 +210,27 @@ func TestAcquire_AStationKnownOrderKeepsItsAckAndWalksPendingToDispatched(t *tes
 	bin := createTestBinAtNode(t, db, "PART-A", storageNode.ID, "B2-KNOWN")
 	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
 
-	known := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.StationID = "b2-known"
-		o.OrderType = protocol.OrderTypeMove
-		o.Status = protocol.StatusPending
-		o.SourceNode = storageNode.Name
-		o.DeliveryNode = lineNode.Name
-		o.BinID = &bin.ID
-		o.SourceIntent = "local"
+	// Born and acquired under the scan lock, as a door does it (Scanner.Door). A
+	// row inserted outside it is the started engine's to find, and its pass can
+	// dispatch the order before AcquireOne reaches it: the test then fails on a
+	// history it never made (C2a's source report, finding 5).
+	var known *orders.Order
+	var dispatched bool
+	eng.fulfillment.Door(func() {
+		known = testdb.CreateOrder(t, db, func(o *orders.Order) {
+			o.StationID = "b2-known"
+			o.OrderType = protocol.OrderTypeMove
+			o.Status = protocol.StatusPending
+			o.SourceNode = storageNode.Name
+			o.DeliveryNode = lineNode.Name
+			o.BinID = &bin.ID
+			o.SourceIntent = "local"
+		})
+		testdb.ReserveBin(t, db, known.ID, bin.ID)
+		dispatched = eng.fulfillment.AcquireLocked(known.ID, nil)
 	})
-	testdb.ReserveBin(t, db, known.ID, bin.ID)
 
-	if !eng.fulfillment.AcquireOne(known.ID) {
+	if !dispatched {
 		t.Fatalf("the known order did not dispatch; history %v", historyStatuses(t, db, known.ID))
 	}
 	got := historyStatuses(t, db, known.ID)

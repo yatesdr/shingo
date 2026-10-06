@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -112,8 +113,10 @@ func TestAcquiringOrphanClaims_OneSweepFreesTheBinAndTheDemandEscapes(t *testing
 			// AND THE DEMAND ESCAPES. Freeing the column is not the deliverable —
 			// the next order getting the bin through the guarded production path
 			// (reserve, then the CAS-guarded claim) is.
+			// (C1.5: the taker keeps the claim it takes, so it is built at dispatched.)
 			taker := testdb.CreateOrder(t, db, func(o *orders.Order) {
 				o.EdgeUUID = "orph-taker-" + status
+				o.Status = protocol.StatusDispatched
 			})
 			testutilAcquire(t, db, taker.ID, bin.ID)
 			if err := db.ClaimBin(bin.ID, taker.ID); err != nil {
@@ -128,6 +131,10 @@ func TestAcquiringOrphanClaims_OneSweepFreesTheBinAndTheDemandEscapes(t *testing
 // reservation behind it, and a sweep that took those would strip bins off robots.
 func TestAcquiringOrphanClaims_AHealthyClaimSurvives(t *testing.T) {
 	t.Parallel()
+	// The sweep reads acquiring orders only, so its precision is proven on an
+	// acquiring order holding a reserved claim, which holds-at-rest reports. Before
+	// Open (LIFO cleanups).
+	testdb.DisableWedgeSweep(t, "this fixture arranges an acquiring order holding a reserved bin claim so ReleaseAcquiringOrphanClaims has a healthy claim in its population to leave alone")
 	db := testdb.Open(t)
 
 	node := &nodes.Node{Name: "ORPH-OK-NODE", Enabled: true}
@@ -227,6 +234,9 @@ func TestAcquiringOrphanClaims_IsLoud(t *testing.T) {
 // half of the same book and drifts the same way.
 func TestAcquiringOrphanClaims_SweepsTheSlotDual(t *testing.T) {
 	t.Parallel()
+	// The orphaned and the healthy slot claim both sit on an acquiring order, the
+	// sweep's population, which holds-at-rest reports. Before Open (LIFO cleanups).
+	testdb.DisableWedgeSweep(t, "this fixture arranges an acquiring order holding an orphaned and a reserved slot claim so ReleaseAcquiringOrphanClaims has one to sweep and one to leave alone")
 	db := testdb.Open(t)
 
 	slot := &nodes.Node{Name: "ORPH-SLOT", Enabled: true}

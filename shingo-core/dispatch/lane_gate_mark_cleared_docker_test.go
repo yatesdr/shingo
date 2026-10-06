@@ -188,7 +188,7 @@ func TestGateMark_ClearedLaneParksTheNextOrderPreDispatch(t *testing.T) {
 
 	// Somebody is INSIDE the lane — Hold B, the row a dispatch takes when Core
 	// sends a robot into a corridor.
-	occupant := testdb.CreateOrder(t, db)
+	occupant := testdb.CreateOrder(t, db, asDispatched) // (C1.5: an occupant is dispatched)
 	if _, err := reservations.AcquireOccupancy(db.DB, occupant.ID, laneID); err != nil {
 		t.Fatalf("acquire occupancy: %v", err)
 	}

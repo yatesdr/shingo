@@ -45,7 +45,7 @@ func TestReserveConfirm_EmptyLegClaimsEmptyCarrier(t *testing.T) {
 		EdgeUUID:     "uuid-empty-leg",
 		StationID:    "line-1",
 		OrderType:    OrderTypeComplex,
-		Status:       StatusQueued,
+		Status:       StatusDispatched, // (C1.5: the confirmed claims are a committed robot's)
 		Quantity:     1,
 		SourceNode:   lineNode.Name,
 		ProcessNode:  lineNode.Name,

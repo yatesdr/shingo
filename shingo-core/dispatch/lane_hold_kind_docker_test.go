@@ -71,7 +71,7 @@ func TestLaneHoldKind_ASourceLockIsNotAnExcavation(t *testing.T) {
 		_, laneID, _ := gatedLane(t, db, "HKIND-SRC", "")
 		d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-		demand := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "hkind-src" })
+		demand := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "hkind-src" }, asDispatched) // (C1.5: a lane holder is dispatched)
 		adm := d.acquireOrderLanes(demand.ID, []laneHold{{laneID: laneID, mode: reservations.ModeDig}})
 		admitted, err := adm.admitted, adm.err
 		if err != nil || !admitted {
@@ -188,7 +188,7 @@ func TestDigWait_SentenceNamesADigOnlyWhenOneIsDigging(t *testing.T) {
 		_, laneID, _ := gatedLane(t, db, "DWAIT-SRC", "")
 		d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-		holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "dwait-src" })
+		holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "dwait-src" }, asDispatched) // (C1.5: a lane holder is dispatched)
 		if err := reservations.AcquireLanesFor(db.DB, holder.ID, reservations.ModeDig,
 			reservations.Anyone, nil, laneGateReservedBy, laneID); err != nil {
 			t.Fatalf("plant the source lock: %v", err)

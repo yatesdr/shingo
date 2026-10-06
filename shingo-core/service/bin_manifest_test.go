@@ -57,16 +57,25 @@ func createTestOrder(t *testing.T, db *store.DB, nodeID int64) *orders.Order {
 	t.Helper()
 	seq := atomic.AddInt64(&testOrderSeq, 1)
 	node, _ := db.GetNode(nodeID)
+	// (C1.5: dispatched, not pending.) Every caller claims or holds a bin for
+	// this order, and a hard bin claim belongs to a committed robot.
 	order := &orders.Order{
 		EdgeUUID:     fmt.Sprintf("test-order-%s-%d", t.Name(), seq),
 		StationID:    "test",
 		OrderType:    "move",
-		Status:       "pending",
+		Status:       "dispatched",
 		Quantity:     1,
 		DeliveryNode: node.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	return order
+}
+
+// dispatchedHolder is a testdb order at `dispatched`: the rung a fixture's
+// hard-claim holder needs, since a pre-dispatch order holds nothing hard.
+func dispatchedHolder(t *testing.T, db *store.DB) *orders.Order {
+	t.Helper()
+	return testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "dispatched" })
 }
 
 func TestBinManifestService_ClearForReuse(t *testing.T) {

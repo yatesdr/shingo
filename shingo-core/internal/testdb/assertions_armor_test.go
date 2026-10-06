@@ -163,46 +163,51 @@ func TestArmorAssertion_AFreshSliverIsARaceNotAFinding(t *testing.T) {
 	}
 }
 
-// TestArmorAssertion_CatchesTheHalfConfirmedPark is the converse clause's proof:
-// a hard claim held by an order that has committed no robot, with no reservation
-// of its own behind it.
-func TestArmorAssertion_CatchesTheHalfConfirmedPark(t *testing.T) {
+// TestArmorAssertion_CatchesAHoldAtRest is the converse clause's proof
+// (holds-at-rest, C1.5): a waiting order holding a hard claim is reported
+// whether or not its own reservation stands behind the claim — the half-confirmed
+// park the narrower clause caught, and the papered claim it let through.
+func TestArmorAssertion_CatchesAHoldAtRest(t *testing.T) {
 	t.Parallel()
-	// BEFORE Open, and that ordering is load-bearing: cleanups are LIFO, and
-	// DisableWedgeSweep registers one that clears the flag. Called after Open, its
-	// cleanup runs BEFORE the sweep and the opt-out silently does nothing.
-	testdb.DisableWedgeSweep(t, "this test MANUFACTURES the violating states so the assertions have something to catch")
-	db := testdb.Open(t)
+	for _, papered := range []bool{false, true} {
+		t.Run(map[bool]string{false: "paper-gone", true: "papered"}[papered], func(t *testing.T) {
+			t.Parallel()
+			// BEFORE Open, and that ordering is load-bearing: cleanups are LIFO, and
+			// DisableWedgeSweep registers one that clears the flag. Called after Open, its
+			// cleanup runs BEFORE the sweep and the opt-out silently does nothing.
+			testdb.DisableWedgeSweep(t, "this test MANUFACTURES the violating states so the assertions have something to catch")
+			db := testdb.Open(t)
 
-	o, binID := armorFixture(t, db, "halfpark", protocol.StatusQueued) // (C1: the converse covers top-level pending and queued)
-	testdb.ClaimBinForTest(t, db, binID, o.ID)
-	// The reservation goes; the claim stands. That is the shape.
-	testutil.MustNoErr(t, reservations.Release(db.DB, o.ID, binID), "drop the paper under the claim")
+			o, binID := armorFixture(t, db, map[bool]string{false: "halfpark", true: "papered"}[papered], protocol.StatusQueued)
+			testdb.ClaimBinForTest(t, db, binID, o.ID)
+			if !papered {
+				// The reservation goes; the claim stands.
+				testutil.MustNoErr(t, reservations.Release(db.DB, o.ID, binID), "drop the paper under the claim")
+			}
 
-	s := &spy{TB: t}
-	testdb.AssertArmorMatchesStatus(s, db)
-	if !s.caught("HALF-CONFIRMED PARK") {
-		t.Errorf("a claim held by an acquiring order with no paper behind it was not reported; "+
-			"the assertion said %v", s.errs)
+			s := &spy{TB: t}
+			testdb.AssertArmorMatchesStatus(s, db)
+			if !s.caught("HOLD AT REST") {
+				t.Errorf("a hard claim held by a waiting order was not reported; the assertion said %v", s.errs)
+			}
+		})
 	}
 }
 
-// TestArmorAssertion_APaperedAcquiringClaimIsFine is the converse's selectivity:
-// an order holding both books is exactly what a confirm produces.
-func TestArmorAssertion_APaperedAcquiringClaimIsFine(t *testing.T) {
+// TestArmorAssertion_ASoftHoldIsFine is the converse's selectivity: a waiting
+// order keeps its own pending reservation — the soft hold it is supposed to keep.
+func TestArmorAssertion_ASoftHoldIsFine(t *testing.T) {
 	t.Parallel()
-	// BEFORE Open, and that ordering is load-bearing: cleanups are LIFO, and
-	// DisableWedgeSweep registers one that clears the flag. Called after Open, its
-	// cleanup runs BEFORE the sweep and the opt-out silently does nothing.
+	// BEFORE Open, as above.
 	testdb.DisableWedgeSweep(t, "this test MANUFACTURES the violating states so the assertions have something to catch")
 	db := testdb.Open(t)
 
-	o, binID := armorFixture(t, db, "papered", protocol.StatusQueued) // (C1: as above)
-	testdb.ClaimBinForTest(t, db, binID, o.ID)
+	o, binID := armorFixture(t, db, "soft", protocol.StatusQueued)
+	testdb.ReserveBin(t, db, o.ID, binID)
 
 	s := &spy{TB: t}
 	testdb.AssertArmorMatchesStatus(s, db)
-	if s.caught("HALF-CONFIRMED PARK") {
-		t.Errorf("an acquiring order holding both books was reported: %v", s.errs)
+	if s.caught("HOLD AT REST") {
+		t.Errorf("a waiting order holding only its soft reservation was reported: %v", s.errs)
 	}
 }

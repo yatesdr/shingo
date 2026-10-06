@@ -267,7 +267,7 @@ func TestApplyArrival_GhostEvictionKeepsALiveHolderClaim(t *testing.T) {
 	// The occupant, claimed by an order that is STILL LIVE — the carrier.
 	carried := &bins.Bin{BinTypeID: bt.ID, Label: "L-CARRIED", NodeID: &destNode.ID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(carried), "create carried bin")
-	carrier := testdb.CreateOrder(t, db) // status 'queued' — non-terminal
+	carrier := dispatchedHolder(t, db) // non-terminal (C1.5: dispatched, the carrier is a committed robot)
 	testdb.ClaimBinForTest(t, db, carried.ID, carrier.ID)
 
 	arriving := &bins.Bin{BinTypeID: bt.ID, Label: "L-ARRIVING", NodeID: &startNode.ID, Status: "available"}
@@ -391,7 +391,7 @@ func TestApplyArrival_DoesNotClearAnotherOrdersClaim(t *testing.T) {
 	// THE DEMAND owns the bin. THE DIG LEG is putting it down. Two unrelated
 	// orders, which is the whole fixture: a dig parks a blocker, and the bin it
 	// parks is the most reachable one of its style in the group.
-	demand := testdb.CreateOrder(t, db)
+	demand := dispatchedHolder(t, db) // (C1.5: the owner is a committed robot)
 	digLeg := testdb.CreateOrder(t, db)
 	testdb.ClaimBinForTest(t, db, bin.ID, demand.ID)
 

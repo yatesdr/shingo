@@ -245,10 +245,11 @@ func TestApiRequestBinTransport_ClaimedBinReturns409(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-TRANSPORT-CLAIMED")
 
-	// Seed a claim via an existing order.
+	// Seed a claim via an existing order (C1.5: dispatched, since a hard claim
+	// is a committed robot's).
 	priorOrder := &orders.Order{
 		EdgeUUID: "xport-prior-1", StationID: "line-1",
-		OrderType: "move", Status: "pending", Quantity: 1,
+		OrderType: "move", Status: "dispatched", Quantity: 1,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(priorOrder), "create prior order")
 	testdb.ClaimBinForTest(t, db, bin.ID, priorOrder.ID)

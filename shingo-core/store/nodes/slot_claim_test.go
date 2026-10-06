@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"shingo/protocol"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
@@ -18,7 +19,19 @@ import (
 
 func mkSlotOrder(t *testing.T, sdb *sql.DB, uuid string) int64 {
 	t.Helper()
-	o := &orders.Order{EdgeUUID: uuid, StationID: "edge.1", OrderType: "complex", Status: "queued", Quantity: 1}
+	return mkSlotOrderAt(t, sdb, uuid, "queued")
+}
+
+// mkSlotHolder is an order that ends the test holding a confirmed slot claim, so
+// it is built at dispatched (C1.5: holds-at-rest).
+func mkSlotHolder(t *testing.T, sdb *sql.DB, uuid string) int64 {
+	t.Helper()
+	return mkSlotOrderAt(t, sdb, uuid, "dispatched")
+}
+
+func mkSlotOrderAt(t *testing.T, sdb *sql.DB, uuid string, status protocol.Status) int64 {
+	t.Helper()
+	o := &orders.Order{EdgeUUID: uuid, StationID: "edge.1", OrderType: "complex", Status: status, Quantity: 1}
 	if err := orders.Create(sdb, o); err != nil {
 		t.Fatalf("create order %s: %v", uuid, err)
 	}
@@ -132,7 +145,7 @@ func TestConfirmSlotClaim_OwnerIdempotentHeal(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	slot := mkSlotNode(t, db.DB, "CS-HEAL")
-	order := mkSlotOrder(t, db.DB, "cs-heal-o")
+	order := mkSlotHolder(t, db.DB, "cs-heal-o")
 
 	if err := reservations.AcquireSlot(db.DB, order, slot, "test"); err != nil {
 		t.Fatalf("AcquireSlot: %v", err)
@@ -201,7 +214,7 @@ func seatStagingWithBin(t *testing.T, db *store.DB, prefix string, holder, claim
 func TestConfirmSlotClaim_ClearsABinThePlanTakesFirst(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
-	order := mkSlotOrder(t, db.DB, "cs-step-own")
+	order := mkSlotHolder(t, db.DB, "cs-step-own")
 	node, bin := seatStagingWithBin(t, db, "CS-STEP-OWN", order, order)
 
 	if err := db.ConfirmSlotClaim(node, order, []int64{bin}); err != nil {
@@ -265,7 +278,7 @@ func TestConfirmSlotClaim_OneTx(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	slot := mkSlotNode(t, db.DB, "CS-ONETX")
-	order := mkSlotOrder(t, db.DB, "cs-onetx-o")
+	order := mkSlotHolder(t, db.DB, "cs-onetx-o")
 
 	// Failure path (no reservation → claim refused → neither half commits).
 	if err := db.ConfirmSlotClaim(slot, order, nil); err == nil {

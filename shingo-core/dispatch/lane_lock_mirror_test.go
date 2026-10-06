@@ -114,7 +114,7 @@ func TestLaneLockRestart_DigHoldSurvives(t *testing.T) {
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
 	lane := mirrorLane(t, db, "LANE-RESTART", 3)
-	parent := testdb.CreateOrder(t, db)
+	parent := testdb.CreateOrder(t, db, asDispatched) // (C1.5: a lane holder is dispatched)
 	competitor := testdb.CreateOrder(t, db)
 
 	// A dig was in flight before the crash: its durable row exists.

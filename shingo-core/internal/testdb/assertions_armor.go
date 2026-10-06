@@ -1,13 +1,13 @@
 package testdb
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // crashSliverAge is how old a `dispatched` order with no vendor order id has to
@@ -75,27 +75,27 @@ const crashSliverAge = 5 * time.Minute
 //
 // So the state is legal while YOUNG and a finding once old. See crashSliverAge.
 //
-// ── THE CONVERSE: a hard claim on an ACQUIRING order needs its own paper ──
+// ── THE CONVERSE: a waiting order holds nothing hard (holds-at-rest) ──────
 //
-// A hard claim means a robot is committed. An order still acquiring has not
-// committed one — so a claim it holds is legal only alongside its OWN live
-// reservation on that resource. Without one it is the half-confirmed park: the
-// confirm wrote the claim and the reservation went, or the reservation was
-// released under a claim that stood. Today that shape has no name and no reader,
-// and the tier work's rank comparisons read the reservation book — so a claim
-// standing outside it is a resource nobody can see is taken.
+// A hard hold is taken for the fleet call (A1's hand: slot, bins, lane and
+// status in one transaction). An order that has not reached `dispatched` has no
+// fleet call to take it for, so whatever it holds hard is withheld from every
+// other order for as long as it waits. The converse is orders.HoldsAtRestSQL,
+// the invariant soakstat and the verify-red pins read: no top-level pre-dispatch
+// order holds bins.claimed_by, nodes.claimed_by, or a confirmed slot, mouth (not
+// a dig lock) or occupancy row. Its own soft reservations are what it keeps.
 //
-// SLOT CLAIMS ARE OUT OF THE CONVERSE, stated rather than omitted. Nodes are
-// claimed through a sanctioned raw fixture bypass in a hundred tests
-// (ClaimSlotForTest, which deliberately writes no reservation). Extending the
-// converse to slots is a real question, and it is the narrowing's — the
-// resource-keyed refusal in ReleaseAcquiringOrphanClaims is the other half of
-// the same one.
+// It replaced (C1.5, deferred from A1 on 2026-09-25) the narrower clause that
+// asked only that a bin claim on an acquiring order carry its own reservation:
+// that let a waiting order hold a slot claim (ClaimSlotForTest writes one with no
+// reservation) or a confirmed row, and A1's hand makes none of those legal
+// before `dispatched`. A fixture whose point is a hard hold builds its order at
+// `dispatched`.
 func AssertArmorMatchesStatus(t testing.TB, db *store.DB) {
 	t.Helper()
 	assertDispatchedIsArmored(t, db)
 	assertNoOldCrashSliver(t, db)
-	assertAcquiringClaimHasItsPaper(t, db)
+	assertNothingHeldAtRest(t, db)
 }
 
 // assertDispatchedIsArmored is clause 1.
@@ -179,38 +179,17 @@ func assertNoOldCrashSliver(t testing.TB, db *store.DB) {
 	}
 }
 
-// assertAcquiringClaimHasItsPaper is the converse clause.
-func assertAcquiringClaimHasItsPaper(t testing.TB, db *store.DB) {
+// assertNothingHeldAtRest is the converse clause: holds-at-rest.
+func assertNothingHeldAtRest(t testing.TB, db *store.DB) {
 	t.Helper()
-	rows, err := db.DB.Query(fmt.Sprintf(`
-		SELECT b.id, b.claimed_by, o.status
-		  FROM bins b
-		  JOIN orders o ON o.id = b.claimed_by
-		 WHERE o.status IN (%s)
-		   AND o.parent_order_id IS NULL
-		   AND NOT EXISTS (
-		       SELECT 1 FROM reservations r
-		        WHERE r.order_id = o.id AND r.resource_kind = 'bin' AND r.bin_id = b.id
-		   )
-		 ORDER BY b.id`, protocol.AcquiringStatusSQLList()))
+	held, err := orders.ListHoldsAtRest(db.DB)
 	if err != nil {
-		t.Fatalf("AssertArmorMatchesStatus: scan acquiring claims: %v", err)
+		t.Fatalf("AssertArmorMatchesStatus: list holds at rest: %v", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var binID, orderID int64
-		var status string
-		if err := rows.Scan(&binID, &orderID, &status); err != nil {
-			t.Fatalf("AssertArmorMatchesStatus: scan claim row: %v", err)
-		}
-		t.Errorf("HALF-CONFIRMED PARK: bin %d is hard-claimed by order %d, which is still `%s` and "+
-			"holds no reservation of its own on it.\n"+
-			"    A hard claim means a robot is committed; an acquiring order has committed none. "+
-			"The bin is taken, and the reservation book — which every rank comparison reads — "+
-			"cannot see that it is.",
-			binID, orderID, status)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("AssertArmorMatchesStatus: acquiring claims: %v", err)
+	for _, h := range held {
+		t.Errorf("HOLD AT REST: %s.\n"+
+			"    A hard hold is taken for the fleet call; an order that has not reached "+
+			"`dispatched` has none, so what it holds is withheld from every other order while it "+
+			"waits. A fixture whose point is a hard hold builds its order at `dispatched`.", h.Line())
 	}
 }

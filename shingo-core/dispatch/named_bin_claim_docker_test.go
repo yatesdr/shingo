@@ -79,6 +79,7 @@ func TestNamedBin_EveryClaimRefusesTheBinOnceItHasLeft(t *testing.T) {
 			// Back on the source, the same claim lands.
 			_, err = f.db.DB.Exec(`UPDATE bins SET node_id=$1 WHERE id=$2`, f.src.ID, f.bin)
 			testutil.MustNoErr(t, err, "the bin is back on the source")
+			testdb.SeedOrderStatus(t, f.db, o.ID, string(StatusDispatched), "") // (C1.5: the claim lands with dispatch)
 			testutil.MustNoErr(t, f.d.binManifest.ConfirmClaim(f.bin, o.ID, c.uop), "claim the named bin on its source")
 		})
 	}

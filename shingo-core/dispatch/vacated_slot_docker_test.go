@@ -77,10 +77,13 @@ func vsPairRows(t *testing.T, db *store.DB, prefix, line, supplySrc, home string
 }
 
 // vsLift hands the pass context a partner that claimed bin at node at step 0 —
-// what the supply leaves behind when it acquires first.
+// what the supply leaves behind when it acquires first. (C1.5: the partner's
+// row is dispatched, so its claim is a committed robot's and not a hold at rest;
+// placement reads the pass context, not the partner's status.)
 func vsLift(t *testing.T, db *store.DB, partner *orders.Order, binID int64, node string) *pairPass {
 	t.Helper()
 	testdb.ClaimBinForTest(t, db, binID, partner.ID)
+	testdb.SeedOrderStatus(t, db, partner.ID, string(StatusDispatched), "")
 	steps, ok := decodeSteps(partner.StepsJSON)
 	if !ok {
 		t.Fatalf("partner %d plan unreadable", partner.ID)
@@ -227,8 +230,19 @@ func (f *failCreateFor) CreateOrder(req fleet.CreateOrderRequest) (fleet.Transpo
 // DEFECT PIN: at 6a590181 an inverted pair creates in id order, the return
 // first; the supply's create then fails and the return is left committed on a
 // lift that never happened.
+//
+// VERIFY-RED for C2b (holds-at-rest): the return is left `pending` holding the
+// bin claim its stage-1 phase took. A pair takes both legs' hard holds before
+// either dispatches (dispatchPairInOnePass; the pair is one hand only in C2b), and
+// a create refused on the lifter returns before the dropper's holds are let go —
+// the stage-1 failure arm releases its survivors, this arm does not. In the
+// engine the lifter's fleet_failed cancels its peer (HandleSwapPeerTerminal), so
+// the hold lasts until that event; the dispatch package runs no engine. The
+// teardown's holds-at-rest is opted out here and asserted as a predicted red
+// below, so it fails the day C2b makes the pair one hand.
 func TestVacatedSlot_P12_LifterCreateFailsDropperNotCreated(t *testing.T) {
 	t.Parallel()
+	testdb.DisableWedgeSweep(t, "the pair's stage-1 hold on its undispatched return is a predicted red (VerifyRed below, C2b)")
 	db := testDB(t)
 	home, _, _, _ := parkFixture(t, db)
 	backend := &failCreateFor{MockTrackingBackend: testdb.NewTrackingBackend(), uuid: "vs12-supply"}
@@ -248,6 +262,7 @@ func TestVacatedSlot_P12_LifterCreateFailsDropperNotCreated(t *testing.T) {
 		t.Fatalf("the return was committed to the fleet (vendor %q) although its supply's create failed — "+
 			"the lifter's create must go first", ret.VendorOrderID)
 	}
+	testdb.VerifyRed(t, "C2b pair hold on a refused lifter's dropper", testdb.HoldsAtRest(t, db))
 }
 
 // ── P2, P4, P5, P13, P25: the other shapes the rule covers ───────────────────
