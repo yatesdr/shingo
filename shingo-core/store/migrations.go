@@ -4352,6 +4352,12 @@ func migrationList() []migration {
 		{141, "orders.named_bin_id — a move names the one bin it is for, and lifts nothing once that bin has left its source",
 			v141OrderNamedBinID,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "named_bin_id") }},
+
+		// Data only; nil verify — the post-condition is "no row before 1971", a
+		// table scan, not a cheap schema probe.
+		{142, "mission_telemetry vendor times written as epoch milliseconds are re-read as the epoch seconds the fleet sent",
+			v142VendorTimesAreSeconds,
+			nil},
 	}
 }
 
@@ -5119,6 +5125,33 @@ func v140OrderRecoversOrderID(tx *sql.Tx) error {
 func v141OrderNamedBinID(tx *sql.Tx) error {
 	if _, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS named_bin_id BIGINT NULL`); err != nil {
 		return fmt.Errorf("v141 orders.named_bin_id: %w", err)
+	}
+	return nil
+}
+
+// v142VendorTimesAreSeconds corrects the vendor stamps engine/wiring_telemetry.go
+// wrote before it read the fleet's unit. SEER RDS sends createTime and
+// terminalTime as epoch SECONDS; the writer passed them to time.UnixMilli, so a
+// 2025 order was stored in January 1970 and vendor_duration_ms held the true
+// difference in seconds. The real instant is the stored epoch × 1000.
+//
+// GUARDED PER COLUMN by < '1971-01-01'. No genuine fleet stamp is that old, and
+// a corrected one never is, so a second run finds nothing and a correct row is
+// never touched. The SET expressions read the pre-update row: the duration is
+// scaled only where both stamps were wrong, which is the only case the writer
+// computed one from wrong stamps (it needs both). Pin:
+// TestV142_VendorTimesReadAsSeconds.
+func v142VendorTimesAreSeconds(tx *sql.Tx) error {
+	if _, err := tx.Exec(`
+		UPDATE mission_telemetry SET
+		  vendor_created = CASE WHEN vendor_created < '1971-01-01'
+		      THEN to_timestamp(EXTRACT(EPOCH FROM vendor_created) * 1000) ELSE vendor_created END,
+		  vendor_completed = CASE WHEN vendor_completed < '1971-01-01'
+		      THEN to_timestamp(EXTRACT(EPOCH FROM vendor_completed) * 1000) ELSE vendor_completed END,
+		  vendor_duration_ms = CASE WHEN vendor_created < '1971-01-01' AND vendor_completed < '1971-01-01'
+		      THEN vendor_duration_ms * 1000 ELSE vendor_duration_ms END
+		WHERE vendor_created < '1971-01-01' OR vendor_completed < '1971-01-01'`); err != nil {
+		return fmt.Errorf("v142 vendor times as seconds: %w", err)
 	}
 	return nil
 }
