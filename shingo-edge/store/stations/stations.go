@@ -33,7 +33,7 @@ type (
 )
 
 const stationSelect = `s.id, s.process_id, s.code, s.name, s.note, s.area_label, s.sequence,
-	s.controller_node_id, s.device_mode, s.enabled, s.health_status,
+	s.controller_node_id, s.enabled, s.health_status,
 	COALESCE(s.last_seen_at, ''), s.created_at, s.updated_at, COALESCE(p.name, '')`
 
 const stationJoin = `FROM operator_stations s
@@ -44,7 +44,7 @@ func scanStation(scanner interface{ Scan(...any) error }) (Station, error) {
 	var lastSeen, createdAt, updatedAt string
 	err := scanner.Scan(
 		&s.ID, &s.ProcessID, &s.Code, &s.Name, &s.Note, &s.AreaLabel, &s.Sequence,
-		&s.ControllerNodeID, &s.DeviceMode, &s.Enabled, &s.HealthStatus,
+		&s.ControllerNodeID, &s.Enabled, &s.HealthStatus,
 		&lastSeen, &createdAt, &updatedAt, &s.ProcessName,
 	)
 	if err != nil {
@@ -103,9 +103,6 @@ func Get(db *sql.DB, id int64) (*Station, error) {
 // Create inserts a station, generating code and sequence when not
 // supplied.
 func Create(db *sql.DB, in Input) (int64, error) {
-	if in.DeviceMode == "" {
-		in.DeviceMode = "fixed_hmi"
-	}
 	if strings.TrimSpace(in.Code) == "" {
 		code, err := generateCode(db, in.ProcessID, in.Name)
 		if err != nil {
@@ -121,9 +118,9 @@ func Create(db *sql.DB, in Input) (int64, error) {
 		in.Sequence = next
 	}
 	res, err := db.Exec(`INSERT INTO operator_stations (
-		process_id, code, name, note, area_label, sequence, controller_node_id, device_mode, enabled
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.ProcessID, in.Code, in.Name, in.Note, in.AreaLabel, in.Sequence, in.ControllerNodeID, in.DeviceMode, in.Enabled)
+		process_id, code, name, note, area_label, sequence, controller_node_id, enabled
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		in.ProcessID, in.Code, in.Name, in.Note, in.AreaLabel, in.Sequence, in.ControllerNodeID, in.Enabled)
 	if err != nil {
 		return 0, err
 	}
@@ -133,9 +130,6 @@ func Create(db *sql.DB, in Input) (int64, error) {
 // Update modifies an operator_station, falling back to the existing
 // code/sequence when blank.
 func Update(db *sql.DB, id int64, in Input) error {
-	if in.DeviceMode == "" {
-		in.DeviceMode = "fixed_hmi"
-	}
 	if strings.TrimSpace(in.Code) == "" || in.Sequence <= 0 {
 		existing, err := Get(db, id)
 		if err != nil {
@@ -149,9 +143,9 @@ func Update(db *sql.DB, id int64, in Input) error {
 		}
 	}
 	_, err := db.Exec(`UPDATE operator_stations SET
-		process_id=?, code=?, name=?, note=?, area_label=?, sequence=?, controller_node_id=?, device_mode=?, enabled=?, updated_at=datetime('now')
+		process_id=?, code=?, name=?, note=?, area_label=?, sequence=?, controller_node_id=?, enabled=?, updated_at=datetime('now')
 		WHERE id=?`,
-		in.ProcessID, in.Code, in.Name, in.Note, in.AreaLabel, in.Sequence, in.ControllerNodeID, in.DeviceMode, in.Enabled, id)
+		in.ProcessID, in.Code, in.Name, in.Note, in.AreaLabel, in.Sequence, in.ControllerNodeID, in.Enabled, id)
 	return err
 }
 

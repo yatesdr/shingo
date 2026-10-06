@@ -385,7 +385,7 @@ func TestRuntimeBinding_ConfirmDoesNotTouchCache(t *testing.T) {
 func TestRuntimeBinding_ManualSwapNodesSkipPLCTicks(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, err := db.CreateProcess("MS-SKIP", "manual swap skip", "active_production", "", "", false)
+	processID, err := db.CreateProcess("MS-SKIP", "manual swap skip", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

@@ -27,7 +27,7 @@ func positionScenario(t *testing.T) (db *store.DB, stationID, pressNodeID, posit
 	t.Helper()
 	db = testdb.Open(t)
 
-	processID, err := db.CreateProcess("POSITION-PROC", "child tile", "active_production", "", "", false)
+	processID, err := db.CreateProcess("POSITION-PROC", "child tile", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -202,7 +202,7 @@ func fanOutScenario(t *testing.T) (db *store.DB, stationID, pressNodeID, positio
 	t.Helper()
 	db = testdb.Open(t)
 
-	processID, err := db.CreateProcess("FANOUT-PROC", "fan out", "active_production", "", "", false)
+	processID, err := db.CreateProcess("FANOUT-PROC", "fan out", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

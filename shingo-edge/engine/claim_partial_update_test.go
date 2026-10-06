@@ -33,7 +33,7 @@ import (
 func fullyConfiguredClaim(t *testing.T, db *store.DB) (claimID int64, styleID int64) {
 	t.Helper()
 
-	processID, err := db.CreateProcess("PARTIAL-PROC", "partial update", "active_production", "", "", false)
+	processID, err := db.CreateProcess("PARTIAL-PROC", "partial update", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	_, err = db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "PU-FRONT", Code: "PUF", Name: "Front", Sequence: 1, Enabled: true,

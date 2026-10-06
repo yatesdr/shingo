@@ -1465,6 +1465,68 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 2
 			},
 		},
+		{
+			// Two stored state words retire together: processes.production_state
+			// ("active_production" | "changeover_active") and
+			// operator_stations.device_mode ("fixed_hmi" | "roaming_tablet" |
+			// "touch_hmi").
+			//
+			// production_state duplicated what the style pointers already say:
+			// the changeover flow writes target_style_id when a changeover
+			// starts and clears it at cutover or cancel, so "changing over" and
+			// "running <style>" DERIVE from active_style_id + target_style_id —
+			// the stored word could only fall out of step with the pointers it
+			// mirrored (a save that wrote the row without the word, a crash
+			// between the two writes). The screens read the derived words now.
+			//
+			// device_mode had no reader at all: every HMI renders the same
+			// page, and the value re-coerced to fixed_hmi on any station edit
+			// through paths that defaulted the field.
+			//
+			// Both drops are plain DROP COLUMN (bundled modernc SQLite is
+			// 3.35+; same shape as the frozen chain's core_loaders drops —
+			// neither column is indexed, neither table needs a rebuild). The
+			// frozen chain's step that re-added production_state on every boot
+			// was removed with this drop, in the same change — see the REMOVED
+			// note in migrateProcessColumns and frozen_chain_pin_test.go.
+			Version: 16,
+			Name:    "drop_process_production_state_and_station_device_mode",
+			Fn: func(tx *sql.Tx) error {
+				for _, ddl := range []string{
+					`ALTER TABLE processes DROP COLUMN production_state`,
+					`ALTER TABLE operator_stations DROP COLUMN device_mode`,
+				} {
+					var n int
+					table := "processes"
+					col := "production_state"
+					if ddl == `ALTER TABLE operator_stations DROP COLUMN device_mode` {
+						table, col = "operator_stations", "device_mode"
+					}
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(` + `'` + table + `'` + `)
+						WHERE name = '` + col + `'`).Scan(&n); err != nil {
+						return err
+					}
+					if n == 0 {
+						continue
+					}
+					if _, err := tx.Exec(ddl); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('processes')
+					WHERE name = 'production_state'`).Scan(&n)
+				if err != nil || n != 0 {
+					return false
+				}
+				err = q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('operator_stations')
+					WHERE name = 'device_mode'`).Scan(&n)
+				return err == nil && n == 0
+			},
+		},
 	}
 }
 
@@ -1552,7 +1614,11 @@ func (db *DB) migrateProcessColumns() error {
 	if err != nil || !has {
 		// Already migrated or fresh DB — ensure new columns exist
 		db.Exec("ALTER TABLE processes ADD COLUMN target_style_id INTEGER REFERENCES styles(id) ON DELETE SET NULL")
-		db.Exec("ALTER TABLE processes ADD COLUMN production_state TEXT NOT NULL DEFAULT 'active_production'")
+		// REMOVED 2026-10-05: the ALTER that added processes.production_state.
+		// Edge v16 drops that column, and this unguarded step re-ran on every
+		// boot, so it would have put the column straight back. A step that
+		// re-creates what a versioned migration drops is removed with the drop
+		// (see frozen_chain_pin_test.go).
 		return err
 	}
 	// Rebuild table with new column names

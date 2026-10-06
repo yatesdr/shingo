@@ -26,7 +26,7 @@ import (
 // staged_delivery.
 func seedDirectChangeover(t *testing.T, db *store.DB) (processID, nodeID, toStyleID, fromClaimID, toClaimID int64) {
 	t.Helper()
-	processID, err := db.CreateProcess("DIRECT-CO", "", "active_production", "", "", false)
+	processID, err := db.CreateProcess("DIRECT-CO", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nodeID, err = db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "ALN_007", Code: "D1",

@@ -14,7 +14,6 @@ type Station struct {
 	AreaLabel        string     `json:"area_label"`
 	Sequence         int        `json:"sequence"`
 	ControllerNodeID string     `json:"controller_node_id"`
-	DeviceMode       string     `json:"device_mode"`
 	Enabled          bool       `json:"enabled"`
 	HealthStatus     string     `json:"health_status"`
 	LastSeenAt       *time.Time `json:"last_seen_at,omitempty"`
@@ -35,6 +34,5 @@ type StationInput struct {
 	AreaLabel        string `json:"area_label"`
 	Sequence         int    `json:"sequence"`
 	ControllerNodeID string `json:"controller_node_id"`
-	DeviceMode       string `json:"device_mode"`
 	Enabled          bool   `json:"enabled"`
 }

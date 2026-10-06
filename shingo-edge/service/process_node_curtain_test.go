@@ -17,7 +17,7 @@ func TestSetNodeCurtain_Refusals(t *testing.T) {
 	db := testdb.Open(t)
 	svc := NewProcessService(db)
 
-	pid, err := db.CreateProcess("SYN-CURTAIN-SVC", "", "active_production", "", "", false)
+	pid, err := db.CreateProcess("SYN-CURTAIN-SVC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nid, err := db.CreateProcessNode(processes.NodeInput{ProcessID: pid, CoreNodeName: "SYN-FG-SVC-1", Name: "SYN-FG-SVC-1", Enabled: true})
 	testutil.MustNoErr(t, err, "create node")

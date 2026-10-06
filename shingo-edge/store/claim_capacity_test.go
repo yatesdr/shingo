@@ -233,7 +233,7 @@ func assertStoredCapacityZero(t *testing.T, db *DB, id int64, when string) {
 func seedCapacityProcess(t *testing.T, db *DB) {
 	t.Helper()
 	for _, stmt := range []string{
-		`INSERT INTO processes (id, name, description, production_state) VALUES (1, 'P1', '', 'running')`,
+		`INSERT INTO processes (id, name, description) VALUES (1, 'P1', '')`,
 		`INSERT INTO styles (id, name, description, process_id) VALUES (1, 'S1', '', 1)`,
 		`INSERT INTO process_nodes (id, process_id, core_node_name, code, name, sequence, enabled)
 		   VALUES (1, 1, 'PLN_01', 'pln01', 'PLN 01', 1, 1)`,

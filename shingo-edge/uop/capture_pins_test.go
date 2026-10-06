@@ -27,7 +27,7 @@ type captureFixture struct {
 func newCaptureFixture(t *testing.T, prefix string) *captureFixture {
 	t.Helper()
 	db := newReporterTestDB(t)
-	procID, err := db.CreateProcess(prefix+"-PROC", "", "active_production", "", "", false)
+	procID, err := db.CreateProcess(prefix+"-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: procID, CoreNodeName: prefix + "-SEAT", Code: "C1",

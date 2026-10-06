@@ -63,7 +63,7 @@ func pressIndexBinsStub(t *testing.T, occupied ...string) *httptest.Server {
 // picks from.
 func seedPressIndexProduce(t *testing.T, db *store.DB) (nodeID int64) {
 	t.Helper()
-	processID, err := db.CreateProcess("PI-PROC", "press index", "active_production", "", "", false)
+	processID, err := db.CreateProcess("PI-PROC", "press index", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nodeID, err = db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "PRESS-HEAD", Code: "PH1",

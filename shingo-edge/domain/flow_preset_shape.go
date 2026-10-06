@@ -266,9 +266,9 @@ func PresetShapeNodeWord(cells []FlowCell, pressOrder []string) string {
 // preset's suggested name is built from, and the ones on the positions table's
 // Swaps chip and the strip card.
 //
-// NOT swapModeLabel (claim_validation.go), which is the VALIDATOR's wording:
-// "2-Robot Press Index" is what a refusal says, "2‑robot index" is what a
-// control says, and a suggested preset name is a control.
+// The validator's refusals say the same words: swapModeLabel
+// (claim_validation.go) returns these, so a refusal and a control never name
+// one mode two ways.
 //
 // The authority is composer-model.js's MODES, because both surfaces render
 // from it; this is the Go copy the server needs to build a name, and

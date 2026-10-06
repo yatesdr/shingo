@@ -82,7 +82,7 @@ func TestScenario_SwapFinalizeStampsCoreBinWithoutOrderRow(t *testing.T) {
 
 	// ── Edge: full engine + a swap-mode produce node matching Core's node ──
 	edge := edgeharness.NewEdge(t, stationID)
-	processID, err := edge.DB.CreateProcess("SCN-PROC", "swap ingest scenario", "active_production", "", "", false)
+	processID, err := edge.DB.CreateProcess("SCN-PROC", "swap ingest scenario", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

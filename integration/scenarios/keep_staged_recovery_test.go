@@ -365,7 +365,7 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 		carriers = append(carriers, protocol.PayloadBinTypeInfo{PayloadCode: p[0], BinTypeCode: p[1]})
 	}
 	edge.Engine.SetPayloadBinTypes(carriers)
-	c.processID, err = edge.DB.CreateProcess("KSR-PROC", "keep-staged recovery", "active_production", "", "", false)
+	c.processID, err = edge.DB.CreateProcess("KSR-PROC", "keep-staged recovery", "", "", false)
 	mustNil(t, err, "process")
 	c.nodeID, err = edge.DB.CreateProcessNode(processes.NodeInput{
 		ProcessID: c.processID, CoreNodeName: ksrLine, Code: "KSR1", Name: ksrLine, Sequence: 1, Enabled: true,

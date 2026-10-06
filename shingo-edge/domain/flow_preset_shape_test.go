@@ -69,9 +69,9 @@ func TestFlowShape_Compare(t *testing.T) {
 	}{
 		{"the same flow", base, true, nil},
 		{"the same shape, a different part", otherPart, true, nil},
-		{"one field differs", oneField, false, []string{"PLN_04 · Outbound Destination"}},
+		{"one field differs", oneField, false, []string{"PLN_04 · Outbound destination"}},
 		{"two fields differ, both reported, in cell order", twoFields, false,
-			[]string{"PLN_01 · Swap Mode", "PLN_04 · Inbound Source"}},
+			[]string{"PLN_01 · Swap mode", "PLN_04 · Inbound source"}},
 		{"a position added", added, false, []string{"PLN_06 · not in the preset"}},
 		{"a position removed", removed, false, []string{"PLN_04 · missing"}},
 	} {

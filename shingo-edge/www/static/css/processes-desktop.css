@@ -206,8 +206,14 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-cnt { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12px; }
 .pd-cnt i { width: 7px; height: 7px; border-radius: 50%; background: var(--sub-4); flex: 0 0 auto; }
 .pd-cnt.ok i { background: var(--viz-green); }
+/* The list's state cell. The word is derived from the style pointers. Green
+ * marks a running part, as the ok tone does everywhere else; a changeover and
+ * an idle process stay muted — the guide keeps warm hues for alerts. */
 .pd-state { font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--text-muted); }
 .pd-state.running { color: var(--chip-ink-ok); }
+/* The style name is one unit: the cell may break after "Running" but never at
+   a hyphen inside the name, and never cut — the column sizes to it. */
+.pd-statename { white-space: nowrap; }
 
 /* ── D1 · rail + main ─────────────────────────────────────────────────── */
 /* The app area is whatever the shell hands down, not a guess at the viewport

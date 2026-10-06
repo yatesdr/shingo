@@ -162,7 +162,22 @@ function drawList() {
         const st = stationsOf(p.id);
         const run = runningStyle(p);
         const counting = !!(p.counter_plc_name && p.counter_enabled);
-        const state = (p.production_state === 'active_production') ? 'Running' : 'Idle';
+        // THE STATE IS DERIVED, NOT ANNOUNCED. production_state is a store
+        // column the page only ever read to split Running/Idle, and both of
+        // those are already derivable from the style pointers the list row
+        // carries for the Running column: a target set and not yet active is
+        // the changeover, the active style is the running part, and neither
+        // means anything is being made. The word says what is true; the ok
+        // tone marks only a part being made, so a changeover stays untoned
+        // (it is neither a success nor an alert). The style name is typed by
+        // an engineer, so it is escaped, and it sits in its own no-wrap box:
+        // a hyphenated name breaks only after "Running", never inside itself,
+        // and a name wider than the column ellipsises with the whole in title.
+        const changing = !!(p.target_style_id && p.target_style_id !== p.active_style_id);
+        const running = !changing && !!run;
+        const state = changing ? 'Changing over'
+            : (run ? 'Running <span class="pd-statename" title="' + esc(run.name) + '">' + esc(run.name) + '</span>'
+                : 'No part running');
         return '<tr data-open="' + p.id + '">' +
             '<td class="pn"><b>' + esc(p.name) + '</b><small>' + esc(st.length ? st[0].name : '—') + '</small></td>' +
             '<td>' + esc(groupName(p.group_id) || '—') + '</td>' +
@@ -180,7 +195,7 @@ function drawList() {
                     p.curtain_nodes.length + '</span>'
                 : '<span class="pd-dim">off</span>') + '</td>' +
             '<td class="num">' + st.length + '</td>' +
-            '<td><span class="pd-state ' + state.toLowerCase() + '">' + state.toUpperCase() + '</span></td>' +
+            '<td><span class="pd-state' + (running ? ' running' : '') + '">' + state + '</span></td>' +
             // A ROW THAT OPENS SOMETHING SAYS SO. The whole row has been
             // clickable since P0 was written and nothing on screen said it,
             // so "how do I edit a process after I have made one" was a fair
@@ -4446,9 +4461,8 @@ async function submitEditProcess(p, before, screen) {
         (done.length ? done.join('; ') + '. ' : '') + what + ' was refused: ' + why, true);
 
     // THE PROCESS ROW, and only when something on it moved. processSettings
-    // carries production_state and the counter through untouched — the fields
-    // this sheet does not ask about must survive it, which is the whole reason
-    // that builder exists.
+    // carries the counter through untouched — the fields this sheet does not
+    // ask about must survive it, which is the whole reason that builder exists.
     const draft = Object.assign(settingsDraftFor(p), {
         name: name,
         description: sheetValue('description'),
@@ -4842,8 +4856,15 @@ async function loadGenColumns() {
         const res = await fetch('/api/styles/' + S.gen.baseID + '/node-claims');
         let claims = res.ok ? await res.json() : [];
         if (!Array.isArray(claims)) claims = [];
-        const produce = claims.filter(c => c.role === 'produce');
-        S.gen.cols = (produce.length ? produce : claims).map(c => ({
+        // EVERY CLAIMED POSITION IS A VARIANT COLUMN, not just the produce
+        // ones. A staging or destination position is part of what the flow
+        // does — a variant that keeps the produce positions and loses the
+        // back positions' staging names a shape that cannot run — and the
+        // produce-only filter meant the sheet offered a two-column variant
+        // editor over a four-position flow whenever any claim carried a
+        // produce role and the rest did not. A column per claim is the same
+        // list the positions table draws.
+        S.gen.cols = claims.map(c => ({
             node: c.core_node_name, swapMode: c.swap_mode, base: c.payload_code || '',
         }));
     } catch (e) {

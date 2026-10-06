@@ -38,7 +38,7 @@ func newCRFixture(t *testing.T, prefix string) *crFixture {
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 	eng.wireEventHandlers()
 	f := &crFixture{eng: eng, db: db, wCore: prefix + "-W", pCore: prefix + "-P"}
-	procID, err := db.CreateProcess(prefix+"-PROC", "", "active_production", "", "", false)
+	procID, err := db.CreateProcess(prefix+"-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	node := func(core string, seq int) int64 {
 		id, nerr := db.CreateProcessNode(processes.NodeInput{

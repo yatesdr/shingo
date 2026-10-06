@@ -40,7 +40,7 @@ import (
 // cancel does not reach across process boundaries.
 func seedSecondProcess(t *testing.T, db *store.DB) (processID, nodeID int64) {
 	t.Helper()
-	processID, err := db.CreateProcess("OTHER-PROC", "unrelated process", "active_production", "", "", false)
+	processID, err := db.CreateProcess("OTHER-PROC", "unrelated process", "", "", false)
 	testutil.MustNoErr(t, err, "create other process")
 	nodeID, err = db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,

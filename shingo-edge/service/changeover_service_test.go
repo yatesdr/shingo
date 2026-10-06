@@ -17,7 +17,7 @@ import (
 // package-private to package store.
 func seedProcessStyle(t *testing.T, db *store.DB, procName, styleName string) (int64, int64) {
 	t.Helper()
-	pid, err := db.CreateProcess(procName, "desc", "active_production", "", "", false)
+	pid, err := db.CreateProcess(procName, "desc", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -75,13 +75,12 @@ func TestChangeover_CreateAtomic(t *testing.T) {
 		t.Fatal("expected nonzero id")
 	}
 
-	// Process target style + production state updated.
+	// Process target style updated — the changeover word the screens show
+	// derives from this pointer; there is no stored production_state
+	// (migration v16 dropped it).
 	proc, _ := db.GetProcess(pid)
 	if proc.TargetStyleID == nil || *proc.TargetStyleID != toStyle {
 		t.Errorf("target style = %v, want %d", proc.TargetStyleID, toStyle)
-	}
-	if proc.ProductionState != "changeover_active" {
-		t.Errorf("production_state = %q", proc.ProductionState)
 	}
 
 	// Station tasks created.

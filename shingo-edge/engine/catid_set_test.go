@@ -137,7 +137,7 @@ func TestStylesForCATID_QueryCountIsConstant(t *testing.T) {
 	t.Parallel()
 	db, counter := testEngineDBCounting(t)
 	eng := testEngine(t, db)
-	pid, err := db.CreateProcess("PRESS-4", "", "active_production", "", "", false)
+	pid, err := db.CreateProcess("PRESS-4", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 
 	seedCATIDStyles(t, db, pid, 0, 2)

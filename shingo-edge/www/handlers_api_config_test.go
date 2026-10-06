@@ -48,9 +48,8 @@ func TestApiConfig_CreateProcess(t *testing.T) {
 	cookie := authCookie(t, h)
 
 	body := map[string]any{
-		"name":             "TestLine",
-		"description":      "A test line",
-		"production_state": "active_production",
+		"name":        "TestLine",
+		"description": "A test line",
 	}
 	resp := doRequest(t, router, "POST", "/api/processes", body, cookie)
 	assertStatus(t, resp, http.StatusOK)

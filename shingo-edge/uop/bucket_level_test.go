@@ -19,11 +19,11 @@ import (
 func levelFixture(t *testing.T, prefix string, share bool) (db *store.DB, m *Mutator, procID, nodeA, nodeB int64) {
 	t.Helper()
 	db = newReporterTestDB(t)
-	procID, err := db.CreateProcess(prefix+"-PROC", "", "active_production", "", "", false)
+	procID, err := db.CreateProcess(prefix+"-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	procB, coreB := procID, prefix+"-B"
 	if share {
-		procB, err = db.CreateProcess(prefix+"-PROC2", "", "active_production", "", "", false)
+		procB, err = db.CreateProcess(prefix+"-PROC2", "", "", "", false)
 		testutil.MustNoErr(t, err, "create second process")
 		coreB = prefix + "-A"
 	}

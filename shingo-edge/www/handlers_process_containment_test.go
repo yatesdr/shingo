@@ -17,7 +17,7 @@ func TestApiProcessContainmentSetting(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	pid, err := testDB.CreateProcess("HoldProc", "", "active_production", "", "", false)
+	pid, err := testDB.CreateProcess("HoldProc", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	styleID, err := testDB.CreateStyle("HOLD-STYLE", "", pid)
 	testutil.MustNoErr(t, err, "create style")

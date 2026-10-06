@@ -22,7 +22,7 @@ import (
 func seedChangeoverScenario(t *testing.T, db *store.DB) (processID, nodeID, fromStyleID, toStyleID, fromClaimID, toClaimID int64) {
 	t.Helper()
 
-	processID, err := db.CreateProcess("CO-PROC", "changeover test", "active_production", "", "", false)
+	processID, err := db.CreateProcess("CO-PROC", "changeover test", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -103,7 +103,7 @@ func seedPhase3SwapScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 func seedPhase3SwapScenarioMode(t *testing.T, db *store.DB, mode protocol.SwapMode) (processID, nodeID, fromStyleID, toStyleID int64) {
 	t.Helper()
 
-	processID, err := db.CreateProcess("P3-PROC", "phase3 swap test", "active_production", "", "", false)
+	processID, err := db.CreateProcess("P3-PROC", "phase3 swap test", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -470,8 +470,8 @@ func TestChangeover_FullLifecycle(t *testing.T) {
 	changeover, _ := startChangeover(t, eng, db, processID, toStyleID)
 
 	process, _ := db.GetProcess(processID)
-	if process.ProductionState != "changeover_active" {
-		t.Fatalf("expected changeover_active, got %s", process.ProductionState)
+	if process.TargetStyleID == nil {
+		t.Fatal("target style pointer should be set while a changeover is active")
 	}
 
 	// Auto-staging already created the order — find it from the node task
@@ -520,8 +520,8 @@ func TestChangeover_FullLifecycle(t *testing.T) {
 	}
 
 	process, _ = db.GetProcess(processID)
-	if process.ProductionState != "active_production" {
-		t.Errorf("expected active_production, got %s", process.ProductionState)
+	if process.TargetStyleID != nil {
+		t.Errorf("target style should be cleared after cutover, got %v", *process.TargetStyleID)
 	}
 	if process.ActiveStyleID == nil || *process.ActiveStyleID != toStyleID {
 		t.Errorf("expected active style to be %d (to-style)", toStyleID)
@@ -614,8 +614,8 @@ func TestChangeover_CancelMidStaging(t *testing.T) {
 	}
 
 	process, _ := db.GetProcess(processID)
-	if process.ProductionState != "active_production" {
-		t.Errorf("expected active_production, got %s", process.ProductionState)
+	if process.TargetStyleID != nil {
+		t.Errorf("target style should be cleared after cancel, got %v", *process.TargetStyleID)
 	}
 }
 
@@ -624,7 +624,7 @@ func TestChangeover_CancelMidStaging(t *testing.T) {
 func seedAddNodeScenario(t *testing.T, db *store.DB) (processID, addNodeID, fromStyleID, toStyleID int64) {
 	t.Helper()
 
-	processID, err := db.CreateProcess("ADD-PROC", "add node test", "active_production", "", "", false)
+	processID, err := db.CreateProcess("ADD-PROC", "add node test", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -775,7 +775,7 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 	// we can force it by using the evacuate builder). For simplicity, we seed a
 	// swap scenario but override the situation to "evacuate" by having the same
 	// payload code (same material, different capacity triggers evacuate).
-	processID, err := db.CreateProcess("P3E-PROC", "phase3 evacuate test", "active_production", "", "", false)
+	processID, err := db.CreateProcess("P3E-PROC", "phase3 evacuate test", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -1000,7 +1000,7 @@ func TestChangeover_OrderBBeforeOrderA(t *testing.T) {
 func TestChangeover_PressIndex_CoreUnavailable_RefusesStart(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, err := db.CreateProcess("PI-NOCORE", "press-index core down", "active_production", "", "", false)
+	processID, err := db.CreateProcess("PI-NOCORE", "press-index core down", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -1069,7 +1069,7 @@ func TestSequentialEvacuate_OrderBCompletion_ResetsPairedRuntime(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 
-	processID, err := db.CreateProcess("SEQ-EV-PROC", "sequential evac", "active_production", "", "", false)
+	processID, err := db.CreateProcess("SEQ-EV-PROC", "sequential evac", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -1342,7 +1342,7 @@ func seedSequentialScenario(t *testing.T, db *store.DB, evacuate bool) (
 	eng *Engine, processID, activeNodeID, parkedNodeID int64, co *processes.Changeover) {
 	t.Helper()
 
-	processID, err := db.CreateProcess("SEQ-CUT-PROC", "sequential cutover", "active_production", "", "", false)
+	processID, err := db.CreateProcess("SEQ-CUT-PROC", "sequential cutover", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

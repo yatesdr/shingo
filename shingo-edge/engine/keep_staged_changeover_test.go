@@ -49,7 +49,7 @@ func seedKeepStagedChangeover(t *testing.T, from, to []coClaim, rows map[string]
 	eng.logFn = func(string, ...any) {}
 	eng.wireEventHandlers()
 
-	procID, err := db.CreateProcess("KSCO-PROC", "", "active_production", "", "", false)
+	procID, err := db.CreateProcess("KSCO-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "process")
 	fx := &coFixture{eng: eng, db: db, processID: procID, nodeIDs: map[string]int64{}}
 	node := func(line string) int64 {

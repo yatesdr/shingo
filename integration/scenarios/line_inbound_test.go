@@ -21,7 +21,7 @@ import (
 func (c *ksrCell) sibling() int64 {
 	c.t.Helper()
 	db := c.edge.DB
-	proc, err := db.CreateProcess("KSR-PROC-2", "a second station on the line", "active_production", "", "", false)
+	proc, err := db.CreateProcess("KSR-PROC-2", "a second station on the line", "", "", false)
 	mustNil(c.t, err, "sibling process")
 	id, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: proc, CoreNodeName: ksrLine, Code: "KSR2", Name: ksrLine + "-2", Sequence: 1, Enabled: true,

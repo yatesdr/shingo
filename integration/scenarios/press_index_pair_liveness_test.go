@@ -46,7 +46,7 @@ type pressIndexCell struct {
 // which is what makes the release disposition observable or not.
 func seedPressIndexCell(t *testing.T, edge *edgeharness.Edge, prefix string, role protocol.ClaimRole, flipped bool) pressIndexCell {
 	t.Helper()
-	processID, err := edge.DB.CreateProcess(prefix+"-PROC", "press index scenario", "active_production", "", "", false)
+	processID, err := edge.DB.CreateProcess(prefix+"-PROC", "press index scenario", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

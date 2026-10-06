@@ -23,7 +23,7 @@ func TestNodeClaimSet_MatchesThePerNodeResolver(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 
-	processID, err := db.CreateProcess("SET", "", "", "", "", false)
+	processID, err := db.CreateProcess("SET", "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestNodeClaimSet_SharesOneClaimPerRow(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 
-	processID, err := db.CreateProcess("ALIAS", "", "", "", "", false)
+	processID, err := db.CreateProcess("ALIAS", "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

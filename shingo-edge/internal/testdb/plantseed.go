@@ -49,7 +49,7 @@ func SeedPlant(t *testing.T, db *store.DB, fx scenefixtures.Plant, processName s
 	}
 	out := SeededPlant{Stations: map[string]int64{}, Styles: map[string]int64{}, Nodes: map[string]int64{}}
 	var err error
-	out.ProcessID, err = db.CreateProcess(proc.Name, "synthetic plant "+fx.Plant, "active_production", "", "", false)
+	out.ProcessID, err = db.CreateProcess(proc.Name, "synthetic plant "+fx.Plant, "", "", false)
 	if err != nil {
 		t.Fatalf("SeedPlant: create process: %v", err)
 	}

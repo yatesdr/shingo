@@ -1575,7 +1575,6 @@ function statusIcon(entry) {
 export function renderFooter() {
     const view = getView();
     const co = view.active_changeover;
-    const state = view.process.production_state || '';
 
     if (co) {
         const nodes = claimedNodes();
@@ -1587,10 +1586,21 @@ export function renderFooter() {
         footerStatus.textContent = 'Operator Station Ready';
     }
 
-    footerBadge.textContent = state.replace(/_/g, ' ');
+    // THE BADGE IS DERIVED, NOT ANNOUNCED. production_state rode the poll for
+    // this one read, and both of its meanings are already in the payload: a
+    // changeover is CurrentStyle \u2260 TargetStyle (with ActiveChangeover present
+    // while it runs), and the running part is CurrentStyle. Same derivation the
+    // Processes page's list column makes \u2014 one question, one answer on both
+    // surfaces.
+    const process = view.process || {};
+    const changing = !!(process.target_style_id &&
+        process.target_style_id !== process.active_style_id);
+    const current = view.current_style;
+    footerBadge.textContent = changing ? 'Changing over'
+        : (current ? 'Running ' + current.name : 'No part running');
     footerBadge.className = 'os-footer-badge';
-    if (state === 'active_production') footerBadge.classList.add('producing');
-    if (state === 'changeover_active') footerBadge.classList.add('changeover');
+    if (changing) footerBadge.classList.add('changeover');
+    if (!changing && current) footerBadge.classList.add('producing');
 }
 
 // Expose fillColor so the modal module can render the fill bar without

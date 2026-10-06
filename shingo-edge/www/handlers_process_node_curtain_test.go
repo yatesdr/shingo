@@ -17,7 +17,7 @@ func TestApiProcessNodeCurtainSetting(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	pid, err := testDB.CreateProcess("SYN-CurtainNodeProc", "", "active_production", "", "", false)
+	pid, err := testDB.CreateProcess("SYN-CurtainNodeProc", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nid, err := testDB.CreateProcessNode(processes.NodeInput{ProcessID: pid, CoreNodeName: "SYN-FG-CUR-1", Name: "SYN-FG-CUR-1", Enabled: true})
 	testutil.MustNoErr(t, err, "create node")

@@ -20,7 +20,7 @@ func TestProcessContainment_SetAndClear(t *testing.T) {
 	db := testdb.Open(t)
 	svc := NewProcessService(db)
 
-	pid, err := db.CreateProcess("HOLD-PROC", "", "active_production", "", "", false)
+	pid, err := db.CreateProcess("HOLD-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	styleA, err := db.CreateStyle("HOLD-A", "", pid)
 	testutil.MustNoErr(t, err, "create style A")

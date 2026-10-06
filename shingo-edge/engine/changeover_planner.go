@@ -310,7 +310,7 @@ type missingField struct {
 	// so the operator-visible diagnostic points at the right claim.
 	Side string
 	// Name is the user-facing field name (matches the claim editor
-	// labels: "Outbound Destination", "Inbound Source", etc.). Picked
+	// labels: "Outbound destination", "Inbound source", etc.). Picked
 	// for diagnostic readability rather than struct field accuracy.
 	Name string
 }

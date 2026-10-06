@@ -73,7 +73,7 @@ func TestScenario_KeepStagedWrongTypeEmpty_CoreMoveIsTheExit(t *testing.T) {
 	mustNil(t, coreDB.CreateBin(rightEmpty), "a right empty in the market")
 
 	edge := edgeharness.NewEdgeWithCoreAPI(t, "edge.test", core.url)
-	processID, err := edge.DB.CreateProcess("KSE-PROC", "", "active_production", "", "", false)
+	processID, err := edge.DB.CreateProcess("KSE-PROC", "", "", "", false)
 	mustNil(t, err, "process")
 	nodeID, err := edge.DB.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: line, Code: "KSE1", Name: line, Sequence: 1, Enabled: true,

@@ -32,7 +32,7 @@ func TestLoaderOnlyOperations_AdmitASynthesizedClaim(t *testing.T) {
 	eng := testEngine(t, db)
 	unreachableCore(t, eng)
 
-	processID, err := db.CreateProcess("SYN16-PROC", "", "active_production", "", "", false)
+	processID, err := db.CreateProcess("SYN16-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "SYN16-W1", Code: "S16", Name: "loader window", Enabled: true,

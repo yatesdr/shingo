@@ -21,7 +21,7 @@ func legacyPileDB(t *testing.T, seed func(db *DB, nodeID int64)) (path string, n
 	path = filepath.Join(t.TempDir(), "legacy-piles.db")
 	db, err := Open(path)
 	testutil.MustNoErr(t, err, "open fresh db")
-	procID, err := db.CreateProcess("MIG-PILE-PROC", "", "active_production", "", "", false)
+	procID, err := db.CreateProcess("MIG-PILE-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nodeID, err = db.CreateProcessNode(processes.NodeInput{
 		ProcessID: procID, CoreNodeName: "MIG-PILE-SEAT", Code: "C1", Name: "MIG-PILE-SEAT", Enabled: true,

@@ -79,7 +79,7 @@ func TestScenario_KeepStagedWrongSpare_CancelAndRequestIsTheExit(t *testing.T) {
 
 	// ── Edge: one keep-staged two-robot consume claim ──
 	edge := edgeharness.NewEdgeWithCoreAPI(t, "edge.test", core.url)
-	processID, err := edge.DB.CreateProcess("KSW-PROC", "", "active_production", "", "", false)
+	processID, err := edge.DB.CreateProcess("KSW-PROC", "", "", "", false)
 	mustNil(t, err, "process")
 	nodeID, err := edge.DB.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: line, Code: "KSW1", Name: line, Sequence: 1, Enabled: true,

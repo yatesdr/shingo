@@ -23,7 +23,7 @@ import (
 // cascade has an opinion about.
 func seedProcessWithChildren(t *testing.T, db *DB, name string) (processID, styleID, nodeID, stationID int64) {
 	t.Helper()
-	processID, err := db.CreateProcess(name, "", "", "", "", false)
+	processID, err := db.CreateProcess(name, "", "", "", false)
 	if err != nil {
 		t.Fatalf("CreateProcess: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestDeleteProcess_DropsOpenEpisodesAndTellsCoreNothing(t *testing.T) {
 
 	// A bystander: same table, different process. The delete is keyed on the
 	// NAME, so this row is the evidence that the key is doing the work.
-	if _, err := db.CreateProcess("EPI-BYSTANDER", "", "", "", "", false); err != nil {
+	if _, err := db.CreateProcess("EPI-BYSTANDER", "", "", "", false); err != nil {
 		t.Fatalf("create bystander process: %v", err)
 	}
 	seedOpenEpisode(t, db, "EPI-BYSTANDER", "SYN-PANEL-B", protocol.ClaimRoleConsume)

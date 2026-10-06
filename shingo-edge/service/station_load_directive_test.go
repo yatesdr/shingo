@@ -47,7 +47,7 @@ func loadDirectiveScenario(t *testing.T, loaderFlag bool) (*store.DB, int64) {
 	t.Helper()
 	db := testdb.Open(t)
 
-	processID, err := db.CreateProcess("LD-PROC", "load directive", "active_production", "", "", false)
+	processID, err := db.CreateProcess("LD-PROC", "load directive", "", "", false)
 	mustNoErr(t, err, "create process")
 	stationID, err := db.CreateOperatorStation(stations.Input{
 		ProcessID: processID, Code: "LD-ST", Name: "LD Station", Sequence: 1, Enabled: true,

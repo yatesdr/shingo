@@ -31,7 +31,7 @@ func oneSwapCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, 
 	eng := testEngine(t, db)
 	eng.logFn = func(string, ...any) {}
 
-	procID, err := db.CreateProcess("OS-PROC", "", "active_production", "", "", false)
+	procID, err := db.CreateProcess("OS-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "process")
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: procID, CoreNodeName: osLine, Code: "OS1", Name: osLine, Sequence: 1, Enabled: true,

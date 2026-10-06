@@ -126,7 +126,7 @@ func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
 
 	// ── Edge: one line node, two styles keeping the same spot ──
 	edge := edgeharness.NewEdgeWithCoreAPI(t, "edge.test", core.url)
-	processID, err := edge.DB.CreateProcess("KSC-PROC", "keep-staged cell", "active_production", "", "", false)
+	processID, err := edge.DB.CreateProcess("KSC-PROC", "keep-staged cell", "", "", false)
 	mustNil(t, err, "process")
 	stationID, err := edge.DB.CreateOperatorStation(stations.Input{
 		ProcessID: processID, Code: "KSC-ST", Name: "KSC Station", Sequence: 1, Enabled: true,

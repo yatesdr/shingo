@@ -68,7 +68,7 @@ func binTypeCoreServer(t *testing.T, binTypeByPayload map[string]string) *httpte
 func seedDiffBinTypePressIndex(t *testing.T, db *store.DB) (processID, frontID, backID, fromStyleID, toStyleID int64) {
 	t.Helper()
 
-	processID, err := db.CreateProcess("PI-DIFF-PROC", "different bin type press index", "active_production", "", "", false)
+	processID, err := db.CreateProcess("PI-DIFF-PROC", "different bin type press index", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 
 	frontID, err = db.CreateProcessNode(processes.NodeInput{

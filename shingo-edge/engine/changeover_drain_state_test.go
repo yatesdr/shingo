@@ -23,7 +23,7 @@ import (
 func seedDrainStateProcess(t *testing.T, db *store.DB, plcName, tagName string, counterEnabled bool) (processID, nodeID, claimID int64) {
 	t.Helper()
 	var err error
-	processID, err = db.CreateProcess("DRAIN-PROC", "", "active_production", plcName, tagName, counterEnabled)
+	processID, err = db.CreateProcess("DRAIN-PROC", "", plcName, tagName, counterEnabled)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

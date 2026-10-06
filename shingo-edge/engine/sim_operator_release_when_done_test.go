@@ -34,7 +34,7 @@ func newMachineFixture(t *testing.T) *machineFixture {
 	t.Helper()
 	db := testEngineDB(t)
 
-	procID, err := db.CreateProcess("MACHINE-PROC", "release when done", "active_production", "", "", false)
+	procID, err := db.CreateProcess("MACHINE-PROC", "release when done", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	consumeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: procID, CoreNodeName: "ALN_003", Code: "A03", Name: "ALN_003", Sequence: 1, Enabled: true,

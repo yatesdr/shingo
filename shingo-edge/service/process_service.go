@@ -123,14 +123,16 @@ func (s *ProcessService) SetContainment(kinds domain.CoreNodeKinds, processID in
 	})
 }
 
-// Create inserts a new process and returns the new row id.
-func (s *ProcessService) Create(name, description, productionState, counterPLC, counterTag string, counterEnabled bool) (int64, error) {
-	return s.db.CreateProcess(name, description, productionState, counterPLC, counterTag, counterEnabled)
+// Create inserts a new process and returns the new row id. (The
+// productionState parameter is gone with the column: migration v16, the
+// state words derive from the style pointers.)
+func (s *ProcessService) Create(name, description, counterPLC, counterTag string, counterEnabled bool) (int64, error) {
+	return s.db.CreateProcess(name, description, counterPLC, counterTag, counterEnabled)
 }
 
 // Update modifies an existing process.
-func (s *ProcessService) Update(id int64, name, description, productionState, counterPLC, counterTag string, counterEnabled bool) error {
-	return s.db.UpdateProcess(id, name, description, productionState, counterPLC, counterTag, counterEnabled)
+func (s *ProcessService) Update(id int64, name, description, counterPLC, counterTag string, counterEnabled bool) error {
+	return s.db.UpdateProcess(id, name, description, counterPLC, counterTag, counterEnabled)
 }
 
 // ErrDuplicateGroupName re-exports the store's UNIQUE-constraint refusal on

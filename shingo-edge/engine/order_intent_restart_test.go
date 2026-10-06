@@ -64,7 +64,7 @@ func openIntentDB(t *testing.T, path string) *store.DB {
 
 func seedIntentNode(t *testing.T, db *store.DB, proc, coreNode string) int64 {
 	t.Helper()
-	procID, err := db.CreateProcess(proc, "", "active_production", "", "", false)
+	procID, err := db.CreateProcess(proc, "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: procID, CoreNodeName: coreNode, Code: coreNode, Name: coreNode, Sequence: 1, Enabled: true,

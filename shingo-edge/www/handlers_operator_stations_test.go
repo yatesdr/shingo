@@ -121,13 +121,12 @@ func TestOperatorStations_CreateStation_Success(t *testing.T) {
 
 	pid := seedProcess(t, "CreateStationLine")
 	body := stations.Input{
-		ProcessID:  pid,
-		Code:       "OS-CREATE-1",
-		Name:       "CreatedStation",
-		AreaLabel:  "Zone A",
-		Sequence:   1,
-		DeviceMode: "fixed_hmi",
-		Enabled:    true,
+		ProcessID: pid,
+		Code:      "OS-CREATE-1",
+		Name:      "CreatedStation",
+		AreaLabel: "Zone A",
+		Sequence:  1,
+		Enabled:   true,
 	}
 	resp := doRequest(t, router, "POST", "/api/operator-stations", body, cookie)
 	assertStatus(t, resp, http.StatusOK)

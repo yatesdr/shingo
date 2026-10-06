@@ -101,7 +101,7 @@ func copyEngineDBTemplate(t *testing.T) string {
 // Returns the process ID and node ID.
 func seedProcessNode(t *testing.T, db *store.DB) (processID, nodeID int64) {
 	t.Helper()
-	pid, err := db.CreateProcess("TEST-PROC", "test process", "active_production", "", "", false)
+	pid, err := db.CreateProcess("TEST-PROC", "test process", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

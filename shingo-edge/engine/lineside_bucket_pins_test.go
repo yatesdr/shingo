@@ -205,7 +205,7 @@ func newCutoverFixture(t *testing.T, prefix string) *cutoverFixture {
 	db := testEngineDB(t)
 	f := &cutoverFixture{db: db}
 	var err error
-	f.processID, err = db.CreateProcess(prefix+"-PROC", "", "active_production", "", "", false)
+	f.processID, err = db.CreateProcess(prefix+"-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	f.fromStyle, err = db.CreateStyle(prefix+"-FROM", "", f.processID)
 	testutil.MustNoErr(t, err, "create from-style")

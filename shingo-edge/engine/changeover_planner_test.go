@@ -454,8 +454,8 @@ func TestPlanNodeAction_Sequential_RequiresPairedCoreNode(t *testing.T) {
 			t.Errorf("situation=%s: expected NodeAction.Err for unpaired sequential, got none", situation)
 		}
 		// Per-mode validation reports the user-facing field name.
-		if action.Err != nil && !strings.Contains(action.Err.Error(), "Paired Core Node") {
-			t.Errorf("situation=%s: err message = %q, want substring %q", situation, action.Err.Error(), "Paired Core Node")
+		if action.Err != nil && !strings.Contains(action.Err.Error(), "Paired core node") {
+			t.Errorf("situation=%s: err message = %q, want substring %q", situation, action.Err.Error(), "Paired core node")
 		}
 		if action.SupplyOrder != nil || action.EvacOrder != nil {
 			t.Errorf("situation=%s: misconfigured plan must dispatch no orders", situation)
@@ -866,14 +866,14 @@ func TestRequiredChangeoverFields_PerMode(t *testing.T) {
 			fromMode:   "single_robot",
 			from:       processes.NodeClaim{SwapMode: "single_robot", OutboundStaging: "OS", OutboundDestination: "OD"},
 			to:         processes.NodeClaim{}, // no InboundStaging
-			wantSubstr: []string{"to-claim", "Inbound Staging"},
+			wantSubstr: []string{"to-claim", "Inbound staging"},
 		},
 		{
 			name:       "two_robot_missing_destination",
 			fromMode:   "two_robot",
 			from:       processes.NodeClaim{SwapMode: "two_robot"}, // no OutboundDestination
 			to:         processes.NodeClaim{InboundStaging: "IS"},
-			wantSubstr: []string{"from-claim", "Outbound Destination"},
+			wantSubstr: []string{"from-claim", "Outbound destination"},
 		},
 		{
 			name:     "two_robot_complete",
@@ -887,7 +887,7 @@ func TestRequiredChangeoverFields_PerMode(t *testing.T) {
 			fromMode:   "two_robot_press_index",
 			from:       processes.NodeClaim{SwapMode: "two_robot_press_index", OutboundDestination: "OD"},
 			to:         processes.NodeClaim{InboundSource: "MARKET"},
-			wantSubstr: []string{"Paired Core Node"},
+			wantSubstr: []string{"Paired core node"},
 		},
 		{
 			name:     "press_index_complete",
@@ -901,7 +901,7 @@ func TestRequiredChangeoverFields_PerMode(t *testing.T) {
 			fromMode:   "sequential",
 			from:       processes.NodeClaim{SwapMode: "sequential", PairedCoreNode: "B", OutboundDestination: "OD"},
 			to:         processes.NodeClaim{}, // no InboundSource
-			wantSubstr: []string{"to-claim", "Inbound Source"},
+			wantSubstr: []string{"to-claim", "Inbound source"},
 		},
 		{
 			name:     "sequential_complete",
@@ -915,7 +915,7 @@ func TestRequiredChangeoverFields_PerMode(t *testing.T) {
 			fromMode:   "sequential",
 			from:       processes.NodeClaim{SwapMode: "sequential", OutboundDestination: "OD"},
 			to:         processes.NodeClaim{InboundSource: "MARKET"},
-			wantSubstr: []string{"Paired Core Node"},
+			wantSubstr: []string{"Paired core node"},
 		},
 		{
 			// Synthesized per-position claim from the press-index different-
@@ -925,7 +925,7 @@ func TestRequiredChangeoverFields_PerMode(t *testing.T) {
 			fromMode:   pressPositionSwapMode,
 			from:       processes.NodeClaim{SwapMode: pressPositionSwapMode},
 			to:         processes.NodeClaim{InboundSource: "MARKET"},
-			wantSubstr: []string{"from-claim", "Outbound Destination"},
+			wantSubstr: []string{"from-claim", "Outbound destination"},
 		},
 		{
 			name:     "press_position_complete_passes",
@@ -982,7 +982,7 @@ func TestPlanNodeAction_MissingFieldDiagnostic(t *testing.T) {
 	if !strings.Contains(msg, "two_robot changeover requires") {
 		t.Errorf("err must name the mode and changeover context: %q", msg)
 	}
-	if !strings.Contains(msg, "Outbound Destination") {
+	if !strings.Contains(msg, "Outbound destination") {
 		t.Errorf("err must name the missing field: %q", msg)
 	}
 }

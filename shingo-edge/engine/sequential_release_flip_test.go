@@ -79,7 +79,7 @@ func TestSequentialReleaseFlip_ChangeoverParkedThenActiveReleaseMovesTheLine(t *
 func seedSteadyStateSequentialPair(t *testing.T, db *store.DB) (eng *Engine, processID, aNodeID, bNodeID, aOrder int64) {
 	t.Helper()
 
-	processID, err := db.CreateProcess("SEQ-SS-PROC", "steady-state sequential", "active_production", "", "", false)
+	processID, err := db.CreateProcess("SEQ-SS-PROC", "steady-state sequential", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

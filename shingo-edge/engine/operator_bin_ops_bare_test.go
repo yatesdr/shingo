@@ -63,7 +63,7 @@ func (c *clearCaptureCore) snapshot() ([]map[string]string, []string) {
 // with no stored claim, and returns the window's process-node id.
 func coreUnloaderWindow(t *testing.T, eng *Engine, window string, info protocol.LoaderInfo) int64 {
 	t.Helper()
-	procID, err := eng.db.CreateProcess(window+"-PROC", "", "active_production", "", "", false)
+	procID, err := eng.db.CreateProcess(window+"-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nodeID, err := eng.db.CreateProcessNode(processes.NodeInput{
 		ProcessID: procID, CoreNodeName: window, Code: "W1", Name: window, Sequence: 1, Enabled: true,

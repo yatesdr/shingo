@@ -19,7 +19,7 @@ import (
 func seedDropScenario(t *testing.T, db *store.DB) (processID, nodeID, fromStyleID, toStyleID int64) {
 	t.Helper()
 
-	processID, err := db.CreateProcess("DROP-PROC", "drop test", "active_production", "", "", false)
+	processID, err := db.CreateProcess("DROP-PROC", "drop test", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -56,7 +56,7 @@ func seedMultiNodeScenario(t *testing.T, db *store.DB) (processID int64, nodes m
 	t.Helper()
 	nodes = make(map[string]int64)
 
-	processID, _ = db.CreateProcess("MULTI-PROC", "multi node test", "active_production", "", "", false)
+	processID, _ = db.CreateProcess("MULTI-PROC", "multi node test", "", "", false)
 	for i, name := range []string{"NODE-SWAP", "NODE-UNCHANGED", "NODE-DROP", "NODE-ADD"} {
 		nid, err := db.CreateProcessNode(processes.NodeInput{
 			ProcessID: processID, CoreNodeName: name, Code: string(rune('A' + i)),
@@ -114,7 +114,7 @@ func seedMultiNodeScenario(t *testing.T, db *store.DB) (processID int64, nodes m
 func seedNoChangeScenario(t *testing.T, db *store.DB) (processID, nodeID, fromStyleID, toStyleID int64) {
 	t.Helper()
 
-	processID, _ = db.CreateProcess("NOCHANGE-PROC", "no change test", "active_production", "", "", false)
+	processID, _ = db.CreateProcess("NOCHANGE-PROC", "no change test", "", "", false)
 	nodeID, _ = db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "NC-NODE", Code: "NC1", Name: "No Change Node", Sequence: 1, Enabled: true,
 	})
@@ -365,10 +365,11 @@ func TestChangeoverFlow_DoubleChangeover(t *testing.T) {
 		t.Error("second changeover should have active orders, not unchanged")
 	}
 
-	// Verify production state
+	// Verify the derived state's source: target pointer set mid-changeover
+	// (there is no stored production_state — migration v16 dropped it).
 	proc, _ := db.GetProcess(processID)
-	if proc.ProductionState != "changeover_active" {
-		t.Errorf("production state: expected changeover_active, got %s", proc.ProductionState)
+	if proc.TargetStyleID == nil {
+		t.Error("target style pointer should be set while a changeover is active")
 	}
 }
 
@@ -402,8 +403,8 @@ func TestChangeoverFlow_NoClaimChanges(t *testing.T) {
 	if proc.ActiveStyleID == nil || *proc.ActiveStyleID != toStyleID {
 		t.Error("active style should be set to to-style after cutover")
 	}
-	if proc.ProductionState != "active_production" {
-		t.Errorf("expected active_production, got %s", proc.ProductionState)
+	if proc.TargetStyleID != nil {
+		t.Errorf("target style should be cleared after cutover, got %v", *proc.TargetStyleID)
 	}
 }
 
@@ -445,8 +446,8 @@ func TestChangeoverFlow_CancelMidRelease(t *testing.T) {
 	}
 
 	proc, _ := db.GetProcess(processID)
-	if proc.ProductionState != "active_production" {
-		t.Errorf("expected active_production, got %s", proc.ProductionState)
+	if proc.TargetStyleID != nil {
+		t.Errorf("target style should be cleared after cancel, got %v", *proc.TargetStyleID)
 	}
 }
 
@@ -541,7 +542,7 @@ func TestChangeoverFlow_PartialCompletion(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 
-	processID, _ := db.CreateProcess("PARTIAL-PROC", "partial test", "active_production", "", "", false)
+	processID, _ := db.CreateProcess("PARTIAL-PROC", "partial test", "", "", false)
 	fromStyleID, _ := db.CreateStyle("PART-FROM", "from", processID)
 	toStyleID, _ := db.CreateStyle("PART-TO", "to", processID)
 	db.SetActiveStyle(processID, &fromStyleID)
@@ -667,9 +668,6 @@ func TestChangeoverFlow_CutoverCompletion(t *testing.T) {
 	if proc.TargetStyleID != nil {
 		t.Error("target style should be nil after cutover")
 	}
-	if proc.ProductionState != "active_production" {
-		t.Errorf("expected active_production, got %s", proc.ProductionState)
-	}
 
 	// Verify runtime switched to new claim. RemainingUOPCached is no
 	// longer asserted at confirm — the cache contract moved to delivered
@@ -702,7 +700,7 @@ func TestChangeoverFlow_KeepStagedMissingStaging(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 
-	processID, _ := db.CreateProcess("KSMS-PROC", "ks missing staging", "active_production", "", "", false)
+	processID, _ := db.CreateProcess("KSMS-PROC", "ks missing staging", "", "", false)
 	nodeID, _ := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "KSMS-NODE", Code: "KM1", Name: "KS Missing Staging", Sequence: 1, Enabled: true,
 	})

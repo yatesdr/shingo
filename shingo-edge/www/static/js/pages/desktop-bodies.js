@@ -9,17 +9,22 @@
 //
 //   - the settings save left out production_state and group_id. The direction
 //     of the first one is NOT what 82f05880's message said: store's Update
-//     coerces an empty productionState to "active_production"
-//     (store/processes/processes.go:102), so the missing field did not blank
-//     the column, it FORCED it — and the value it destroys is
-//     'changeover_active'. Saving an unrelated setting on D5 while the floor
-//     was mid-changeover told the rest of the system the changeover was over.
-//     The missing group_id did clear the FK: nil is the handler's "Ungrouped";
+//     coerced an empty productionState to "active_production", so the missing
+//     field did not blank the column, it FORCED it — and the value it destroyed
+//     was 'changeover_active'. Saving an unrelated setting on D5 while the
+//     floor was mid-changeover told the rest of the system the changeover was
+//     over. The missing group_id did clear the FK: nil is the handler's
+//     "Ungrouped";
 //   - rename and Expected CATID left out process_id (a 400) and description
 //     (blanked, had the 400 not fired first);
 //   - the operator-screen edit left out code, area_label, sequence,
 //     controller_node_id and device_mode, and `enabled` defaulting to false
 //     switched a live HMI off to fix a typo in its note.
+//
+// production_state and device_mode have since RETIRED: the state is derived
+// from the style pointers on both surfaces, the fixed-HMI mode had no second
+// value, and the store stopped coercing (so an omitted state no longer forces
+// production). The bodies here name neither.
 //
 // The fix in each case is the same shape — start from the row as it stands and
 // overlay the change — and the reason to put the eight builders here rather
@@ -40,12 +45,11 @@
 //
 // process is the row as it stands; draft is D5's editor state.
 //
-// production_state is NOT in the draft and never becomes editable here: P0
-// owns the display and the changeover owns the transitions, so it rides along
-// unchanged. It has to be SPOKEN, though, and not merely left out: the store
-// reads an empty one as "active_production", so omitting it forces every saved
-// process into production — ending a live changeover on the strength of an
-// edit to a counter tag.
+// production_state is NOT here, and that is safe only because the store's
+// empty-to-active_production coercion went with it (it FORCED every saved
+// process into production, ending a live changeover on the strength of an edit
+// to a counter tag). The state is derived from the style pointers now and this
+// page never reads or writes it.
 //
 // group_id is the draft's, because the group picker is on this screen, and
 // null is the handler's "Ungrouped" — which is why sending nothing ungrouped
@@ -58,7 +62,6 @@ function processSettings(process, draft) {
         counter_tag_name: draft.counter_tag_name || '',
         counter_enabled: !!draft.counter_enabled,
         changeover_auto_arm: draft.changeover_auto_arm || '',
-        production_state: (process && process.production_state) || '',
         group_id: draft.group_id || null,
     };
 }
@@ -73,11 +76,8 @@ function processSettings(process, draft) {
 // Settings, beside the press that is already running), not fields nobody
 // thought of.
 //
-// production_state is 'active_production' because that is the only state a new
-// process can be in: store's Create coerces an empty one to it
-// (store/processes/processes.go:89), the other value in the tree is
-// 'changeover_active', and a changeover owns that transition. The retired Add
-// Process modal sent the same.
+// production_state is NOT here: a new process is in production by the store's
+// own default, and the page does not speak a state it can never set.
 //
 // group_id is null for Ungrouped — the handler's own spelling, and the reason
 // sending nothing ungrouped every process that was saved.
@@ -85,7 +85,6 @@ function processCreate(draft) {
     return {
         name: (draft && draft.name) || '',
         description: (draft && draft.description) || '',
-        production_state: 'active_production',
         counter_plc_name: '',
         counter_tag_name: '',
         counter_enabled: false,
@@ -202,10 +201,12 @@ function processActiveStyle(styleID) {
 // stationWrite — POST /api/operator-stations and PUT /api/operator-stations/{id}.
 //
 // BOTH HANDLERS DECODE THE WHOLE StationInput. An edit therefore starts from
-// the station as it stands: code, area_label, sequence, controller_node_id and
-// device_mode are not on the sheet and must survive it, and `enabled` has to be
-// spoken because a missing bool decodes false and would switch a live HMI off.
-// A new screen takes the defaults the retired page sent for one.
+// the station as it stands: code, area_label, sequence and controller_node_id
+// are not on the sheet and must survive it, and `enabled` has to be spoken
+// because a missing bool decodes false and would switch a live HMI off.
+// device_mode is NOT here any more — the fixed-HMI column retired with the
+// field, and the handlers no longer decode it. A new screen takes the defaults
+// the retired page sent for one.
 function stationWrite(station, processID, editing, change) {
     const base = editing ? {
         process_id: (station && station.process_id) || processID,
@@ -215,11 +216,10 @@ function stationWrite(station, processID, editing, change) {
         area_label: (station && station.area_label) || '',
         sequence: (station && station.sequence) || 0,
         controller_node_id: (station && station.controller_node_id) || '',
-        device_mode: (station && station.device_mode) || 'fixed_hmi',
         enabled: !!(station && station.enabled),
     } : {
         process_id: processID, code: '', name: '', note: '', area_label: '',
-        sequence: 0, controller_node_id: '', device_mode: 'fixed_hmi', enabled: true,
+        sequence: 0, controller_node_id: '', enabled: true,
     };
     return Object.assign(base, change || {});
 }

@@ -6,11 +6,11 @@ package store
 // This file preserves the *store.DB method surface so external callers
 // do not need to change.
 //
-// CreateChangeover stays at the top-level store package because it
-// runs as a single transaction that also updates the processes table
-// (set target_style_id, production_state) and inserts into
-// process_nodes / process_node_runtime_states; that orchestration
-// would otherwise have to thread *sql.Tx through several files.
+// Creating a changeover is not here: it runs as a single transaction
+// that also updates the processes table (sets target_style_id) and
+// inserts into process_nodes / process_node_runtime_states, so it lives
+// in ChangeoverService.Create (shingoedge/service/changeover_service.go)
+// rather than threading *sql.Tx through several files.
 
 import (
 	"fmt"

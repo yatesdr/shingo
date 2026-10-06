@@ -24,7 +24,7 @@ func newStationFixture(t *testing.T) (*StationService, int64) {
 	t.Helper()
 	db := testdb.Open(t)
 	svc := NewStationService(db)
-	pid, err := db.CreateProcess("Press 4", "", "", "", "", false)
+	pid, err := db.CreateProcess("Press 4", "", "", "", false)
 	if err != nil {
 		t.Fatalf("CreateProcess: %v", err)
 	}

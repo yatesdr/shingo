@@ -99,7 +99,6 @@ func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name              string `json:"name"`
 		Description       string `json:"description"`
-		ProductionState   string `json:"production_state"`
 		CounterPLCName    string `json:"counter_plc_name"`
 		CounterTagName    string `json:"counter_tag_name"`
 		CounterEnabled    bool   `json:"counter_enabled"`
@@ -128,7 +127,7 @@ func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	id, err := h.engine.ProcessService().Create(req.Name, req.Description, req.ProductionState, req.CounterPLCName, req.CounterTagName, req.CounterEnabled)
+	id, err := h.engine.ProcessService().Create(req.Name, req.Description, req.CounterPLCName, req.CounterTagName, req.CounterEnabled)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -157,7 +156,6 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name              string `json:"name"`
 		Description       string `json:"description"`
-		ProductionState   string `json:"production_state"`
 		CounterPLCName    string `json:"counter_plc_name"`
 		CounterTagName    string `json:"counter_tag_name"`
 		CounterEnabled    bool   `json:"counter_enabled"`
@@ -186,7 +184,7 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if err := h.engine.ProcessService().Update(id, req.Name, req.Description, req.ProductionState, req.CounterPLCName, req.CounterTagName, req.CounterEnabled); err != nil {
+	if err := h.engine.ProcessService().Update(id, req.Name, req.Description, req.CounterPLCName, req.CounterTagName, req.CounterEnabled); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

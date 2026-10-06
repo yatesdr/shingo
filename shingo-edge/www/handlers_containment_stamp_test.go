@@ -16,7 +16,7 @@ import (
 func TestEnrichViewContainmentTargets(t *testing.T) {
 	h, _ := newTestHandlers(t)
 
-	pid, err := testDB.CreateProcess("StampProc", "", "active_production", "", "", false)
+	pid, err := testDB.CreateProcess("StampProc", "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestEnrichViewContainmentTargets(t *testing.T) {
 	// BIN'S PAYLOAD disambiguates whose outbound the tile shows (the release
 	// verb resolves the same way). An ASSY bin on the tile shows ULN-1; a
 	// PART-B bin shows ULN-2; an unknown payload shows nothing.
-	otherProc, err := testDB.CreateProcess("StampProcB", "", "active_production", "", "", false)
+	otherProc, err := testDB.CreateProcess("StampProcB", "", "", "", false)
 	testutil.MustNoErr(t, err, "create second process")
 	otherStyle, err := testDB.CreateStyle("STAMP-STYLE-B", "", otherProc)
 	testutil.MustNoErr(t, err, "create second style")
@@ -108,7 +108,7 @@ func TestEnrichViewContainmentTargets_ConflictingOutboundsStampNothing(t *testin
 	h, _ := newTestHandlers(t)
 
 	for i, out := range []string{"ULN-C1", "ULN-C2", "ULN-C3"} {
-		pid, err := testDB.CreateProcess("ConflictProc"+out, "", "active_production", "", "", false)
+		pid, err := testDB.CreateProcess("ConflictProc"+out, "", "", "", false)
 		testutil.MustNoErr(t, err, "create process")
 		styleID, err := testDB.CreateStyle("CONFLICT-STYLE-"+out, "", pid)
 		testutil.MustNoErr(t, err, "create style")

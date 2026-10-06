@@ -417,7 +417,7 @@ func TestRefuseToolingChangeoverWithoutStaging(t *testing.T) {
 	if !strings.Contains(err.Error(), "PLN_002") {
 		t.Errorf("refusal must name the cell; got %q", err)
 	}
-	if !strings.Contains(err.Error(), "Inbound Staging") {
+	if !strings.Contains(err.Error(), "inbound staging") {
 		t.Errorf("refusal must name the missing field; got %q", err)
 	}
 }

@@ -26,7 +26,7 @@ import (
 func twoProcessesOneSlot(t *testing.T, db *DB, coreNodeName string) (firstID, secondID int64) {
 	t.Helper()
 	mk := func(procName, nodeName string) int64 {
-		pid, err := db.CreateProcess(procName, "", "active_production", "", "", false)
+		pid, err := db.CreateProcess(procName, "", "", "", false)
 		if err != nil {
 			t.Fatalf("create process %s: %v", procName, err)
 		}

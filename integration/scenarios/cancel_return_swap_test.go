@@ -212,7 +212,7 @@ func TestScenario_ChangeoverSwapCancelledMidCarry_BothBinsGoHome(t *testing.T) {
 
 	// ── Edge: a consume line changing over from OLD to NEW, two_robot ──
 	edge := edgeharness.NewEdge(t, stationID)
-	processID, err := edge.DB.CreateProcess("CRS-PROC", "cancel-return swap", "active_production", "", "", false)
+	processID, err := edge.DB.CreateProcess("CRS-PROC", "cancel-return swap", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

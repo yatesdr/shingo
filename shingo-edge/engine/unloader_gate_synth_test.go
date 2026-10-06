@@ -43,7 +43,7 @@ func newSynthUGFixture(t *testing.T, prefix string, lAuto bool) *ugFixture {
 	seedCoreLoader(t, eng, unloader(prefix+"-L", lAuto, f.nCore, f.n2Core), unloader(prefix+"-M", true, f.w3Core))
 
 	var err error
-	f.nProcessID, err = db.CreateProcess(prefix+"-PROC", "", "active_production", "", "", false)
+	f.nProcessID, err = db.CreateProcess(prefix+"-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	node := func(core string, seq int) int64 {
 		id, nerr := db.CreateProcessNode(processes.NodeInput{

@@ -447,7 +447,7 @@ func refuseToolingChangeoverWithoutStaging(fromClaims, toClaims []processes.Node
 		return nil
 	}
 	return fmt.Errorf("cannot start changeover: %s marks press positions for tooling evacuation, "+
-		"which stages the incoming bins — set Inbound Staging on the incoming style's claim for %s",
+		"which stages the incoming bins — set inbound staging on the incoming style's claim for %s",
 		strings.Join(marked, ", "), strings.Join(missing, ", "))
 }
 

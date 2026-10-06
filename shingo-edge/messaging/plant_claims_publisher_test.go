@@ -32,7 +32,7 @@ func countingPublisherDB(t *testing.T) (*store.DB, *store.QueryCounter) {
 // id and the style ids in creation (= name) order.
 func seedClaimsProcess(t *testing.T, db *store.DB, name string, styles, claims int) (int64, []int64) {
 	t.Helper()
-	pid, err := db.CreateProcess(name, "", "active_production", "", "", false)
+	pid, err := db.CreateProcess(name, "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process %s: %v", name, err)
 	}

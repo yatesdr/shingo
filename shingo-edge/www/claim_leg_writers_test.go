@@ -519,7 +519,7 @@ func TestRoutingDerive_ALaneOnEachLeg(t *testing.T) {
 				db, err = store.Open(filepath.Join(t.TempDir(), "boot.db"))
 				testutil.MustNoErr(t, err, "open a boot database")
 				t.Cleanup(func() { db.Close() })
-				pid, err = db.CreateProcess("DW-Line", "", "", "", "", false)
+				pid, err = db.CreateProcess("DW-Line", "", "", "", false)
 				testutil.MustNoErr(t, err, "create process")
 				sid, err := db.CreateStyle("DW-Style", "", pid)
 				testutil.MustNoErr(t, err, "create style")

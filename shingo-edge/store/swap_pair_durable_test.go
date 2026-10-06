@@ -18,7 +18,7 @@ import (
 func seedStagedPair(t *testing.T, prefix string, link bool) (db *DB, runtime *processes.RuntimeState, a, b int64) {
 	t.Helper()
 	db = coverageDB(t)
-	processID, err := db.CreateProcess(prefix, "", "", "", "", false)
+	processID, err := db.CreateProcess(prefix, "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

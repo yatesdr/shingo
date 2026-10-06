@@ -60,7 +60,7 @@ func newUGFixture(t *testing.T, prefix string) *ugFixture {
 	seedCoreLoader(t, eng, unloader(prefix+"-L", f.nCore, f.n2Core), unloader(prefix+"-M", f.w3Core))
 
 	var err error
-	f.nProcessID, err = db.CreateProcess(prefix+"-PROC", "", "active_production", "", "", false)
+	f.nProcessID, err = db.CreateProcess(prefix+"-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	styleID, err := db.CreateStyle(prefix+"-STYLE", "", f.nProcessID)
 	testutil.MustNoErr(t, err, "create style")

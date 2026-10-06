@@ -44,7 +44,7 @@ func seedLoaderCard(t *testing.T) *loaderFixture {
 	t.Helper()
 	db := testEngineDB(t)
 
-	processID, err := db.CreateProcess("LOAD-PROC", "loader test", "active_production", "", "", false)
+	processID, err := db.CreateProcess("LOAD-PROC", "loader test", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	stationID, err := db.CreateOperatorStation(stations.Input{
 		ProcessID: processID, Code: "BL", Name: "Bin Loader", Sequence: 1, Enabled: true,

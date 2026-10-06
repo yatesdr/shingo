@@ -39,7 +39,7 @@ func keeperFixture(t *testing.T) (*Engine, *store.DB, int64, int64) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
-	procID, err := db.CreateProcess("KEEPER-PROC", "cell level keeper", "active_production", "", "", false)
+	procID, err := db.CreateProcess("KEEPER-PROC", "cell level keeper", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: procID, CoreNodeName: "ALN_003", Code: "A03", Name: "ALN_003", Sequence: 1, Enabled: true,

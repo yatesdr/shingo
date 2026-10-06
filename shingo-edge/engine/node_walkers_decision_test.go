@@ -92,7 +92,7 @@ func (f *walkerFixture) node(t *testing.T, suffix string) int64 {
 // tests (TestFindActiveClaim_PostCutover).
 func seedWalkerProcess(t *testing.T, db *store.DB, prefix string, specs []walkerNode) *walkerFixture {
 	t.Helper()
-	procID, err := db.CreateProcess(prefix+"-PROC", prefix+" walkers", "active_production", "", "", false)
+	procID, err := db.CreateProcess(prefix+"-PROC", prefix+" walkers", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	styleID, err := db.CreateStyle(prefix+"-STYLE", "", procID)
 	testutil.MustNoErr(t, err, "create style")

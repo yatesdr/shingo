@@ -55,7 +55,7 @@ func spokenForFixture(t *testing.T, occupied bool) (*Engine, *store.DB, int64) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
-	procID, err := db.CreateProcess("W1-PROC", "double-supply race", "active_production", "", "", false)
+	procID, err := db.CreateProcess("W1-PROC", "double-supply race", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: procID, CoreNodeName: "ALN_004", Code: "A04", Name: "ALN_004", Sequence: 1, Enabled: true,

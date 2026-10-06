@@ -20,7 +20,7 @@ func TestChangeoverLoadOrigin_DedicatedLoader(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
-	processID, err := db.CreateProcess("CLD-PROC", "", "active_production", "", "", false)
+	processID, err := db.CreateProcess("CLD-PROC", "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

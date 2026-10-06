@@ -30,11 +30,11 @@ func crossProcessFixture(t *testing.T) (*StationService, int64, int64) {
 	t.Helper()
 	db := testdb.Open(t)
 	svc := NewStationService(db)
-	pidA, err := db.CreateProcess("Press A", "", "", "", "", false)
+	pidA, err := db.CreateProcess("Press A", "", "", "", false)
 	if err != nil {
 		t.Fatalf("CreateProcess A: %v", err)
 	}
-	pidB, err := db.CreateProcess("Press B", "", "", "", "", false)
+	pidB, err := db.CreateProcess("Press B", "", "", "", false)
 	if err != nil {
 		t.Fatalf("CreateProcess B: %v", err)
 	}

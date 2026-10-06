@@ -31,7 +31,7 @@ import (
 // node, plus the node's runtime row. Returns the ids the tests steer with.
 func linesideFixture(t *testing.T, db *DB, coreNode string) (processID, styleID, nodeID, claimID int64) {
 	t.Helper()
-	processID, err := db.CreateProcess("LS-"+coreNode, "", "active_production", "", "", false)
+	processID, err := db.CreateProcess("LS-"+coreNode, "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

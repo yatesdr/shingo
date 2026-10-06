@@ -131,7 +131,7 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	// The rows are given every column a value, because a column that is
 	// already zero cannot show that a write zeroed it. This is the single
 	// biggest reason the original four bugs went unseen.
-	if err := testDB.UpdateProcess(pid, "WP-Press", "the description", "active_production", "PLC-1", "TAG-1", true); err != nil {
+	if err := testDB.UpdateProcess(pid, "WP-Press", "the description", "PLC-1", "TAG-1", true); err != nil {
 		t.Fatalf("seed process columns: %v", err)
 	}
 	if err := testDB.SetProcessGroupID(pid, &groupID); err != nil {
@@ -144,10 +144,11 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		t.Fatalf("seed expected catid: %v", err)
 	}
 	// Every station column given a value, so a write that zeroes one shows.
+	// (No device_mode: the column retired with migration v16.)
 	if err := testDB.UpdateOperatorStation(stationID, domain.StationInput{
 		ProcessID: pid, Code: "WP-CODE", Name: "WP Screen", Note: "the original note",
 		AreaLabel: "Cell 4", Sequence: 3, ControllerNodeID: "CTRL-9",
-		DeviceMode: "roaming_tablet", Enabled: true,
+		Enabled: true,
 	}); err != nil {
 		t.Fatalf("seed station columns: %v", err)
 	}
@@ -177,7 +178,7 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	bodies := buildDesktopBodies(t, map[string]any{
 		"processID": pid,
 		"process": map[string]any{
-			"id": pid, "name": proc.Name, "production_state": proc.ProductionState,
+			"id": pid, "name": proc.Name,
 		},
 		// The D5 draft: what the settings screen holds. It edits the name and
 		// nothing else, which is the case that broke.
@@ -194,8 +195,8 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		"station": map[string]any{
 			"id": stationID, "process_id": pid, "code": station.Code, "name": station.Name,
 			"note": station.Note, "area_label": station.AreaLabel, "sequence": station.Sequence,
-			"controller_node_id": station.ControllerNodeID, "device_mode": station.DeviceMode,
-			"enabled": station.Enabled,
+			"controller_node_id": station.ControllerNodeID,
+			"enabled":            station.Enabled,
 		},
 		// U10: the shape key an offered candidate carries, and the cells an
 		// apply would save. Both are opaque to the builders — this test is
@@ -232,9 +233,6 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		}
 		if made == nil {
 			t.Fatalf("no process named %q after the create: %+v", "Made here", rows)
-		}
-		if made.ProductionState != "active_production" {
-			t.Errorf("production_state = %q, want active_production", made.ProductionState)
 		}
 		if made.GroupID == nil || *made.GroupID != groupID {
 			t.Errorf("group_id = %v, want %d — the sheet's group did not land", made.GroupID, groupID)
@@ -277,15 +275,12 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 	})
 
 	// ── settings save ────────────────────────────────────────────────────────
-	t.Run("settings save keeps production_state and the group", func(t *testing.T) {
+	t.Run("settings save keeps the group and every unedited column", func(t *testing.T) {
 		resp := doRequest(t, router, "PUT", "/api/processes/"+itoa(pid), bodies["settings save"], cookie)
 		assertStatus(t, resp, http.StatusOK)
 		got, err := testDB.GetProcess(pid)
 		if err != nil {
 			t.Fatalf("read back: %v", err)
-		}
-		if got.ProductionState != "active_production" {
-			t.Errorf("production_state = %q, want active_production", got.ProductionState)
 		}
 		if got.GroupID == nil || *got.GroupID != groupID {
 			t.Errorf("group_id = %v, want %d — a nil group_id is the handler's Ungrouped", got.GroupID, groupID)
@@ -299,48 +294,15 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		}
 	})
 
-	// THE DIRECTION OF THE production_state BUG IS THE OTHER WAY ROUND, and
-	// this is the case that shows it.
-	//
-	// 82f05880's message says a body without production_state "blanked" it.
-	// It cannot: store/processes.Update coerces an empty productionState to
-	// "active_production" before the UPDATE (processes.go:102). So the missing
-	// field did not clear the column — it FORCED it to active_production,
-	// whatever it held. The state that gets destroyed is therefore
-	// 'changeover_active', the value changeover_service sets for the duration
-	// of a changeover: an engineer saving an unrelated setting on D5 while the
-	// floor was mid-changeover silently told the rest of the system the
-	// changeover was over. A process already active_production saw nothing,
-	// which is why a test seeded at the default would have missed it.
-	t.Run("a settings save mid-changeover does not end the changeover", func(t *testing.T) {
-		if err := testDB.SetProcessProductionState(pid, "changeover_active"); err != nil {
-			t.Fatalf("seed changeover_active: %v", err)
-		}
-		t.Cleanup(func() { _ = testDB.SetProcessProductionState(pid, "active_production") })
-		mid, err := testDB.GetProcess(pid)
-		testutil.MustNoErr(t, err, "testDB.GetProcess")
-		body := buildDesktopBodies(t, map[string]any{
-			"processID": pid,
-			"process": map[string]any{
-				"id": pid, "name": mid.Name, "production_state": mid.ProductionState,
-			},
-			"draft": map[string]any{
-				"name": mid.Name, "description": mid.Description,
-				"counter_plc_name": mid.CounterPLCName, "counter_tag_name": mid.CounterTagName,
-				"counter_enabled": mid.CounterEnabled, "changeover_auto_arm": mid.ChangeoverAutoArm,
-				"group_id": groupID,
-			},
-			"style":   map[string]any{"id": sid},
-			"station": map[string]any{"id": stationID},
-		})["settings save"]
-		resp := doRequest(t, router, "PUT", "/api/processes/"+itoa(pid), body, cookie)
-		assertStatus(t, resp, http.StatusOK)
-		got, err := testDB.GetProcess(pid)
-		testutil.MustNoErr(t, err, "testDB.GetProcess")
-		if got.ProductionState != "changeover_active" {
-			t.Errorf("production_state = %q, want changeover_active — saving a setting ended a live changeover", got.ProductionState)
-		}
-	})
+	// THE MID-CHANGEOVER CASE THIS SUITE ONCE PINNED IS GONE WITH THE COLUMN.
+	// A settings save used to FORCE production_state back to active_production
+	// (the store coerced an empty productionState before the UPDATE), which
+	// ended a live changeover on the strength of an unrelated edit. That
+	// cannot happen any more: the save names no state at all (the column and
+	// the coercion both went with migration v16), and the changeover's state
+	// lives in target_style_id, which only the changeover flow writes. The
+	// derived word reads the pointers, so "a save ended the changeover" is now
+	// structurally impossible rather than tested-against.
 
 	// ── the gate ─────────────────────────────────────────────────────────────
 	t.Run("the gate flips on its own and touches nothing else", func(t *testing.T) {
@@ -353,8 +315,7 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		if !got.FlowComposerEnabled {
 			t.Error("flow_composer_enabled did not read back")
 		}
-		if got.Name != before.Name || got.ProductionState != before.ProductionState ||
-			got.Description != before.Description {
+		if got.Name != before.Name || got.Description != before.Description {
 			t.Errorf("the gate PATCH moved another column: %+v", got)
 		}
 	})
@@ -475,7 +436,7 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		if got.ActiveStyleID == nil || *got.ActiveStyleID != sid {
 			t.Errorf("active_style_id = %v, want %d", got.ActiveStyleID, sid)
 		}
-		if got.Name != before.Name || got.ProductionState != before.ProductionState {
+		if got.Name != before.Name {
 			t.Errorf("marking a style running moved another column: %+v", got)
 		}
 	})
@@ -503,9 +464,6 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		if got.ControllerNodeID != station.ControllerNodeID {
 			t.Errorf("controller_node_id = %q, want %q", got.ControllerNodeID, station.ControllerNodeID)
 		}
-		if got.DeviceMode != station.DeviceMode {
-			t.Errorf("device_mode = %q, want %q — an edit reset it", got.DeviceMode, station.DeviceMode)
-		}
 		if !got.Enabled {
 			t.Error("enabled = false — fixing a typo in a note switched a live HMI off")
 		}
@@ -529,9 +487,6 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		}
 		if !added.Enabled {
 			t.Error("a new screen arrived disabled")
-		}
-		if added.DeviceMode != "fixed_hmi" {
-			t.Errorf("device_mode = %q, want fixed_hmi", added.DeviceMode)
 		}
 	})
 

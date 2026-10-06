@@ -79,7 +79,7 @@ func newTickRigEmitting(t *testing.T, em EventEmitter) *tickRig {
 	cfg.Counter.JumpThreshold = 100
 	mgr := NewManager(db, cfg, em, nil)
 
-	proc, err := db.CreateProcess("PROC-A", "", "", "", "", false)
+	proc, err := db.CreateProcess("PROC-A", "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

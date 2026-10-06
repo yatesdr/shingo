@@ -11,7 +11,7 @@ import (
 func TestHandleUOPAdjustment_ValidUpdate(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	pid, _ := db.CreateProcess("P", "", "", "", "", false)
+	pid, _ := db.CreateProcess("P", "", "", "", false)
 	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:         pid,
@@ -60,7 +60,7 @@ func TestHandleUOPAdjustment_ValidUpdate(t *testing.T) {
 func TestHandleUOPAdjustment_MismatchedBin(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	pid, _ := db.CreateProcess("P", "", "", "", "", false)
+	pid, _ := db.CreateProcess("P", "", "", "", false)
 	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:         pid,
@@ -126,7 +126,7 @@ func TestHandleUOPAdjustment_UnknownNode(t *testing.T) {
 func TestHandleUOPAdjustment_ReleasedClearsActiveBin(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	pid, _ := db.CreateProcess("P", "", "", "", "", false)
+	pid, _ := db.CreateProcess("P", "", "", "", false)
 	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:         pid,
@@ -184,7 +184,7 @@ func TestHandleUOPAdjustment_ReleasedClearsActiveBin(t *testing.T) {
 func TestHandleUOPAdjustment_StagedUnboundBinBindsOnCorrection(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	pid, _ := db.CreateProcess("P", "", "", "", "", false)
+	pid, _ := db.CreateProcess("P", "", "", "", false)
 	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:         pid,
@@ -254,7 +254,7 @@ func TestHandleUOPAdjustment_StagedUnboundBinBindsOnCorrection(t *testing.T) {
 func TestHandleUOPAdjustment_CorrectionForBinBoundElsewhereRejected(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	pid, _ := db.CreateProcess("P", "", "", "", "", false)
+	pid, _ := db.CreateProcess("P", "", "", "", false)
 	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:         pid,
@@ -300,7 +300,7 @@ func TestHandleUOPAdjustment_CorrectionForBinBoundElsewhereRejected(t *testing.T
 func TestHandleUOPAdjustment_BoundSetsActiveBin(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	pid, _ := db.CreateProcess("P", "", "", "", "", false)
+	pid, _ := db.CreateProcess("P", "", "", "", false)
 	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:         pid,
@@ -359,7 +359,7 @@ func TestHandleUOPAdjustment_BoundSetsActiveBin(t *testing.T) {
 func TestHandleUOPAdjustment_BoundOverwritesStaleBin(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	pid, _ := db.CreateProcess("P", "", "", "", "", false)
+	pid, _ := db.CreateProcess("P", "", "", "", false)
 	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:         pid,

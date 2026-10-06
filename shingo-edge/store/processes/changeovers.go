@@ -10,12 +10,12 @@
 // Function names carry Changeover / StationTask / NodeTask prefixes/
 // suffixes so they don't collide with sibling functions in this package.
 //
-// CreateChangeover stays at the top-level store package (in
-// store/process_changeovers.go) because it runs as a single transaction
-// that also updates the processes table (target_style_id,
-// production_state) and inserts rows into process_nodes /
-// process_node_runtime_states; that orchestration would otherwise have
-// to thread *sql.Tx through several files.
+// Creating a changeover is not in this package: it runs as a single
+// transaction that also updates the processes table (sets
+// target_style_id) and inserts rows into process_nodes /
+// process_node_runtime_states, so it lives in ChangeoverService.Create
+// (shingoedge/service/changeover_service.go) rather than threading
+// *sql.Tx through several files.
 
 package processes
 

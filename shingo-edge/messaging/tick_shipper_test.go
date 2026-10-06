@@ -37,7 +37,7 @@ func newShipRig(t *testing.T) *shipRig {
 		t.Fatalf("OpenCounting: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	proc, err := db.CreateProcess("PROC-A", "", "", "", "", false)
+	proc, err := db.CreateProcess("PROC-A", "", "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

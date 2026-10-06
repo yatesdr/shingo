@@ -70,7 +70,7 @@ func TestUpsertStyleNodeClaim_EditorSaveIsANoOp(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	processID, err := db.CreateProcess("RT-PROC", "", "active_production", "", "", false)
+	processID, err := db.CreateProcess("RT-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	styleID, err := db.CreateStyle("RT-STYLE", "", processID)
 	testutil.MustNoErr(t, err, "create style")
@@ -215,7 +215,7 @@ func TestUpsertStyleNodeClaim_ExplicitOptionalFieldsStillWrite(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	processID, err := db.CreateProcess("RT2-PROC", "", "active_production", "", "", false)
+	processID, err := db.CreateProcess("RT2-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	styleID, err := db.CreateStyle("RT2-STYLE", "", processID)
 	testutil.MustNoErr(t, err, "create style")
@@ -282,7 +282,7 @@ func TestUpsertStyleNodeClaim_EvacFieldsAreEditable(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	processID, err := db.CreateProcess("EV-PROC", "", "active_production", "", "", false)
+	processID, err := db.CreateProcess("EV-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	styleID, err := db.CreateStyle("EV-STYLE", "", processID)
 	testutil.MustNoErr(t, err, "create style")
@@ -345,7 +345,7 @@ func TestUpsertStyleNodeClaim_InsertDefaultsForAbsentOptionals(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	processID, err := db.CreateProcess("RT3-PROC", "", "active_production", "", "", false)
+	processID, err := db.CreateProcess("RT3-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	styleID, err := db.CreateStyle("RT3-STYLE", "", processID)
 	testutil.MustNoErr(t, err, "create style")

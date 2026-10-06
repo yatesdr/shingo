@@ -16,7 +16,7 @@ func TestResolveNodeClaim_Precedence(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 
-	processID, err := db.CreateProcess("PREC", "", "", "", "", false)
+	processID, err := db.CreateProcess("PREC", "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestResolveNodeClaim_FallbackOnlyWhenTheFirstChoiceIsSilent(t *testing.T) {
 	t.Parallel()
 	db := coverageDB(t)
 
-	processID, err := db.CreateProcess("PREC2", "", "", "", "", false)
+	processID, err := db.CreateProcess("PREC2", "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

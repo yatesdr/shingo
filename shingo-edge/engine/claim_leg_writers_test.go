@@ -104,7 +104,7 @@ func TestUpdateCellReorder_AClaimNamingALane(t *testing.T) {
 		t.Run(row.leg, func(t *testing.T) {
 			t.Parallel()
 			db := testEngineDB(t)
-			pid, err := db.CreateProcess("CW-PROC", "", "active_production", "", "", false)
+			pid, err := db.CreateProcess("CW-PROC", "", "", "", false)
 			testutil.MustNoErr(t, err, "create process")
 			sid, err := db.CreateStyle("CW-STYLE", "", pid)
 			testutil.MustNoErr(t, err, "create style")

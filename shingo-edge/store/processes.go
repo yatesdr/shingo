@@ -25,13 +25,13 @@ func (db *DB) GetProcess(id int64) (*processes.Process, error) {
 }
 
 // CreateProcess inserts a process and returns the new row id.
-func (db *DB) CreateProcess(name, description, productionState string, counterPLC, counterTag string, counterEnabled bool) (int64, error) {
-	return processes.Create(db.DB, name, description, productionState, counterPLC, counterTag, counterEnabled)
+func (db *DB) CreateProcess(name, description string, counterPLC, counterTag string, counterEnabled bool) (int64, error) {
+	return processes.Create(db.DB, name, description, counterPLC, counterTag, counterEnabled)
 }
 
 // UpdateProcess modifies a process row.
-func (db *DB) UpdateProcess(id int64, name, description, productionState string, counterPLC, counterTag string, counterEnabled bool) error {
-	return processes.Update(db.DB, id, name, description, productionState, counterPLC, counterTag, counterEnabled)
+func (db *DB) UpdateProcess(id int64, name, description string, counterPLC, counterTag string, counterEnabled bool) error {
+	return processes.Update(db.DB, id, name, description, counterPLC, counterTag, counterEnabled)
 }
 
 // DeleteProcess removes a process row.
@@ -53,11 +53,6 @@ func (db *DB) SetTargetStyle(processID int64, styleID *int64) error {
 // process.
 func (db *DB) GetActiveStyleID(processID int64) (*int64, error) {
 	return processes.GetActiveStyleID(db.DB, processID)
-}
-
-// SetProcessProductionState writes the production_state on a process.
-func (db *DB) SetProcessProductionState(processID int64, state string) error {
-	return processes.SetProductionState(db.DB, processID, state)
 }
 
 // SetChangeoverAutoArm writes the changeover_auto_arm mode (auto|prompt|off) on a

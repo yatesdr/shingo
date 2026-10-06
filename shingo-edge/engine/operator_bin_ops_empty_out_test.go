@@ -25,7 +25,7 @@ func TestEmptyOut_EnvelopeNamesNoPart(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(srv.URL)
 
-	procID, err := db.CreateProcess("D2-PROC", "", "active_production", "", "", false)
+	procID, err := db.CreateProcess("D2-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: procID, CoreNodeName: window, Code: "D2", Name: window, Sequence: 1, Enabled: true,

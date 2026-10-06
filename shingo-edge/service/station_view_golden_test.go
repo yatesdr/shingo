@@ -83,7 +83,7 @@ func goldenScenario(t *testing.T) (db *store.DB, stationID int64) {
 	t.Helper()
 	db = testdb.Open(t)
 
-	processID, err := db.CreateProcess("GOLD-PROC", "golden", "active_production", "", "", false)
+	processID, err := db.CreateProcess("GOLD-PROC", "golden", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

@@ -22,7 +22,7 @@ import (
 
 func seedClaimProcess(t *testing.T, db *DB, name string) (processID, styleID int64) {
 	t.Helper()
-	pid, err := db.CreateProcess(name, "", "", "", "", false)
+	pid, err := db.CreateProcess(name, "", "", "", false)
 	if err != nil {
 		t.Fatalf("CreateProcess: %v", err)
 	}

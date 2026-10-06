@@ -87,7 +87,7 @@ The same gate also runs unattended: `tryCompleteProcessChangeover` fires on term
 
 Each station card also carries a **Complete Station** button and its own state badge (`waiting` / `in_progress` / `switched` — `shingo-edge/domain/changeover_station_state.go:19-22`).
 
-Cutover also flips the line's active style, clears the process's target style, and returns its `production_state` from `changeover_active` to `active_production`. **Cancel Changeover** — offered only while the row is `active` — clears the target style and returns `production_state` the same way, but leaves the active style where it was (`shingo-edge/engine/operator_changeover_cancel.go:75-88`). Cancelling can hand off directly into a new changeover to a different style; that opens a fresh row, not a continuation of this one.
+Cutover also flips the line's active style and clears the process's target style. **Cancel Changeover** — offered only while the row is `active` — clears the target style the same way, but leaves the active style where it was (`shingo-edge/engine/operator_changeover_cancel.go:92`). Cancelling can hand off directly into a new changeover to a different style; that opens a fresh row, not a continuation of this one.
 
 ### Production
 

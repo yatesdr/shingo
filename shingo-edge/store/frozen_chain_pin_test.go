@@ -38,8 +38,11 @@ import (
 // versioned migration drops is removed WITH the drop, in the same change.
 // Otherwise the chain, which re-runs on every boot, undoes the migration on
 // the next start. First use: 2026-09-28, the payload_catalog.cycle_seconds
-// ALTER removed with Edge v3 (wantTotal 165 -> 164). Removal only: a
-// re-creating step is never rewritten in place, and nothing else qualifies.
+// ALTER removed with Edge v3 (wantTotal 165 -> 164). Second use:
+// 2026-10-05, the processes.production_state ALTER removed with Edge v16 —
+// that one lived in the migrateProcessColumns helper (migrate() calls it on
+// every boot), so the body count is unchanged. Removal only: a re-creating
+// step is never rewritten in place, and nothing else qualifies.
 // The chain's retirement condition is unchanged: every deployed Edge
 // reports schema version >= 1.
 //

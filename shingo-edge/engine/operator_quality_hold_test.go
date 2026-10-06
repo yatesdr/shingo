@@ -77,7 +77,7 @@ func (s *holdStubCore) holdCalls() (holds, unholds []int64) {
 // seedHoldNode seeds a process + active style + one produce node whose claim
 // declares a containment route, the shape the station's hold button needs.
 func seedHoldNode(t *testing.T, db interface {
-	CreateProcess(string, string, string, string, string, bool) (int64, error)
+	CreateProcess(string, string, string, string, bool) (int64, error)
 	CreateStyle(string, string, int64) (int64, error)
 	SetActiveStyle(int64, *int64) error
 	CreateProcessNode(processes.NodeInput) (int64, error)
@@ -85,7 +85,7 @@ func seedHoldNode(t *testing.T, db interface {
 	EnsureProcessNodeRuntime(int64) (*processes.RuntimeState, error)
 }, coreNode string) int64 {
 	t.Helper()
-	processID, err := db.CreateProcess("HOLD-PROC", "quality hold", "active_production", "", "", false)
+	processID, err := db.CreateProcess("HOLD-PROC", "quality hold", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestSendBinToQualityHold_RefusesWithoutRouteOrBin(t *testing.T) {
 	}
 
 	// A bin, but the claim has no containment route (reseed without one).
-	processID, err := eng.db.CreateProcess("HOLD-PROC-NOROUTE", "", "active_production", "", "", false)
+	processID, err := eng.db.CreateProcess("HOLD-PROC-NOROUTE", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	node2, err := eng.db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "PLN-NOROUTE", Code: "HN2", Name: "No Route", Sequence: 1, Enabled: true,
@@ -241,7 +241,7 @@ func TestReleaseFromContainment_AmbiguityAndHappyPath(t *testing.T) {
 	// BIN'S PAYLOAD disambiguates the release. The PART-HOLD bin still
 	// releases to FG-1 (its own producer's outbound) despite the second
 	// claim covering the same node.
-	otherProc, err := eng.db.CreateProcess("HOLD-PROC-B", "", "active_production", "", "", false)
+	otherProc, err := eng.db.CreateProcess("HOLD-PROC-B", "", "", "", false)
 	testutil.MustNoErr(t, err, "create second process")
 	otherStyle, err := eng.db.CreateStyle("HOLD-STYLE-B", "", otherProc)
 	testutil.MustNoErr(t, err, "create second style")

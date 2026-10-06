@@ -315,7 +315,7 @@ func TestLoadablePayloads_NotGatedByActiveStyle(t *testing.T) {
 // one so PushEmptyOut's guard can be exercised on it.
 func seedLegacySimpleClaim(t *testing.T, db *store.DB, prefix string, role protocol.ClaimRole) (nodeID int64) {
 	t.Helper()
-	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" simple", "active_production", "", "", false)
+	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" simple", "", "", false)
 	if err != nil {
 		t.Fatalf("create simple process: %v", err)
 	}

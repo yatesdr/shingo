@@ -84,7 +84,7 @@ func TestLoaderBoardGaps_PartiallyBoundIsNotAGap(t *testing.T) {
 	cacheLoader(t, db, "loader:7", "Supermarket", "dedicated_positions",
 		"SMN_014", "SMN_015", "SMN_003", "SMN_004")
 
-	pid, _ := db.CreateProcess("Bin Loader", "", "", "", "", false)
+	pid, _ := db.CreateProcess("Bin Loader", "", "", "", false)
 	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "Loader"})
 	bindWindow(t, db, pid, &sid, "SMN_014")
 	bindWindow(t, db, pid, &sid, "SMN_015")
@@ -106,7 +106,7 @@ func TestLoaderBoardGaps_InfersTheProcessHoldingTheWindows(t *testing.T) {
 	db, svc := boardFixture(t)
 	cacheLoader(t, db, "loader:9", "Unloader", "shared_window", "ULN_002", "ULN_003")
 
-	pid, _ := db.CreateProcess("Press 4", "", "", "", "", false)
+	pid, _ := db.CreateProcess("Press 4", "", "", "", false)
 	bindWindow(t, db, pid, nil, "ULN_002")
 	bindWindow(t, db, pid, nil, "ULN_003")
 
@@ -142,7 +142,7 @@ func TestCreateLoaderBoard_MakesTheScreenAndBindsWindows(t *testing.T) {
 	t.Parallel()
 	db, svc := boardFixture(t)
 	cacheLoader(t, db, "loader:9", "Unloader", "shared_window", "ULN_002", "ULN_003")
-	pid, _ := db.CreateProcess("Press 4", "", "", "", "", false)
+	pid, _ := db.CreateProcess("Press 4", "", "", "", false)
 
 	id, err := svc.CreateLoaderBoard("loader:9", pid)
 	if err != nil {
@@ -167,7 +167,7 @@ func TestCreateLoaderBoard_RollsBackTheScreenWhenBindingFails(t *testing.T) {
 	t.Parallel()
 	db, svc := boardFixture(t)
 	cacheLoader(t, db, "loader:9", "Unloader", "shared_window", "ULN_002")
-	pid, _ := db.CreateProcess("Press 4", "", "", "", "", false)
+	pid, _ := db.CreateProcess("Press 4", "", "", "", false)
 	// Core knows a different node, so binding ULN_002 is refused.
 	svc.SetCoreNodeResolver(func() map[string]bool { return map[string]bool{"PLN_001": true} })
 
@@ -189,7 +189,7 @@ func TestCreateLoaderBoard_RefusesWhatItCannotBind(t *testing.T) {
 	t.Parallel()
 	db, svc := boardFixture(t)
 	cacheLoader(t, db, "loader:9", "Unloader", "shared_window")
-	pid, _ := db.CreateProcess("Press 4", "", "", "", "", false)
+	pid, _ := db.CreateProcess("Press 4", "", "", "", false)
 
 	if _, err := svc.CreateLoaderBoard("loader:404", pid); err == nil {
 		t.Error("expected an unknown loader key to be refused")

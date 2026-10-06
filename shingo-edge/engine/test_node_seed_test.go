@@ -14,7 +14,7 @@ import (
 // compiling.
 func seedReconcilerNode(t *testing.T, db *store.DB, prefix, payloadCode string) (nodeID, styleID, claimID int64) {
 	t.Helper()
-	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" rec", "active_production", "", "", false)
+	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" rec", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

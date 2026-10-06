@@ -30,7 +30,7 @@ func TestBuildView_DedicatedHomeGetsTheLoadDirective(t *testing.T) {
 		return ""
 	})
 
-	procID, err := db.CreateProcess("DHD-PROC", "", "active_production", "", "", false)
+	procID, err := db.CreateProcess("DHD-PROC", "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

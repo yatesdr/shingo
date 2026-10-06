@@ -284,7 +284,7 @@ func TestPinEcho_SharedWindowL1ToASiblingWindow(t *testing.T) {
 	eng.coreClient = stubCoreClient(core.srv.URL)
 
 	const x, w = "ECHO-SW-X", "ECHO-SW-W"
-	procID, err := db.CreateProcess("ECHO-SW-PROC", "", "active_production", "", "", false)
+	procID, err := db.CreateProcess("ECHO-SW-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	xID, err := db.CreateProcessNode(processes.NodeInput{ProcessID: procID, CoreNodeName: x, Code: "SX", Name: x, Sequence: 1, Enabled: true})
 	testutil.MustNoErr(t, err, "create X")

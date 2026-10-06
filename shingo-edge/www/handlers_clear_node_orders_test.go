@@ -23,7 +23,7 @@ func TestClearNodeOrders_NamesTheNodeAndBothPointers(t *testing.T) {
 	r.Post("/api/nodes/{id}/clear-orders", h.apiClearNodeOrders)
 	db := h.engine.(*stubEngine).db
 
-	processID, err := db.CreateProcess("CLEARLOG", "clear log", "active_production", "", "", false)
+	processID, err := db.CreateProcess("CLEARLOG", "clear log", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestClearNodeOrders_EmptySlotsReadAsNone(t *testing.T) {
 	r.Post("/api/nodes/{id}/clear-orders", h.apiClearNodeOrders)
 	db := h.engine.(*stubEngine).db
 
-	processID, err := db.CreateProcess("CLEARLOG2", "clear log 2", "active_production", "", "", false)
+	processID, err := db.CreateProcess("CLEARLOG2", "clear log 2", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

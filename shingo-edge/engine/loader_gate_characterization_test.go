@@ -55,7 +55,7 @@ func seedClaimWithSwapMode(
 	payloadCode, outbound string, mode protocol.SwapMode,
 ) (nodeID int64) {
 	t.Helper()
-	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" cell", "active_production", "", "", false)
+	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" cell", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestLoaderOnlyOperations_RefuseNodesWithNoClaim(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
-	processID, err := db.CreateProcess("NOCLAIM-PROC", "no claim", "active_production", "", "", false)
+	processID, err := db.CreateProcess("NOCLAIM-PROC", "no claim", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

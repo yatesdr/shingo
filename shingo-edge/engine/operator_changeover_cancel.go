@@ -92,9 +92,6 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	if err := e.db.SetTargetStyle(processID, nil); err != nil {
 		return err
 	}
-	if err := e.db.SetProcessProductionState(processID, "active_production"); err != nil {
-		return err
-	}
 
 	// Redirect — start new changeover immediately to a different target style
 	// A redirect starts the next changeover at once, and its start reconciles

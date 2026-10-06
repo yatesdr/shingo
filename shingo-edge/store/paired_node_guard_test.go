@@ -22,7 +22,7 @@ func TestIsPairedOnDeckNode(t *testing.T) {
 	}
 	t.Cleanup(func() { d.Close() })
 
-	processID, err := d.CreateProcess("OD-PROC", "on-deck test", "active_production", "", "", false)
+	processID, err := d.CreateProcess("OD-PROC", "on-deck test", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	styleID, err := d.CreateStyle("OD-STYLE", "od", processID)
 	testutil.MustNoErr(t, err, "create style")
@@ -62,7 +62,7 @@ func TestIsPairedOnDeckNode(t *testing.T) {
 	}
 
 	// Process-scoped: PRESS-BACK is not paired in a DIFFERENT process.
-	otherProc, err := d.CreateProcess("OD-PROC2", "other", "active_production", "", "", false)
+	otherProc, err := d.CreateProcess("OD-PROC2", "other", "", "", false)
 	testutil.MustNoErr(t, err, "create other process")
 	got, err := d.IsPairedOnDeckNode(otherProc, "PRESS-BACK")
 	testutil.MustNoErr(t, err, "IsPairedOnDeckNode other process")

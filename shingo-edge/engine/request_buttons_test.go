@@ -169,7 +169,7 @@ func (w *buttonWorld) press(door string) buttonAnswer {
 func (w *buttonWorld) sibling() int64 {
 	w.t.Helper()
 	db := w.db
-	proc, err := db.CreateProcess("SIBLING-PROC", "", "active_production", "", "", false)
+	proc, err := db.CreateProcess("SIBLING-PROC", "", "", "", false)
 	testutil.MustNoErr(w.t, err, "sibling process")
 	sib, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: proc, CoreNodeName: ksLine, Code: "SIB", Name: ksLine + "-2", Sequence: 1, Enabled: true,
@@ -206,7 +206,7 @@ func newChangeoverWorld(t *testing.T, role protocol.ClaimRole) (w *buttonWorld, 
 	eng := testEngine(t, db)
 	eng.logFn = func(string, ...any) {}
 	eng.wireEventHandlers()
-	proc, err := db.CreateProcess("EX-PROC", "", "active_production", "", "", false)
+	proc, err := db.CreateProcess("EX-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "process")
 	x, err = db.CreateProcessNode(processes.NodeInput{ProcessID: proc, CoreNodeName: "EX-X", Code: "X", Name: "EX-X", Sequence: 1, Enabled: true})
 	testutil.MustNoErr(t, err, "X")
@@ -310,7 +310,7 @@ func lineStates() []lineState {
 			}), buttonAnswer{legs: 2, trips: 1}},
 		{"a process node with no claim", all, func(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode) *buttonWorld {
 			w := newButtonWorld(t, role, mode)
-			procID, err := w.db.CreateProcess("BARE-PROC", "", "active_production", "", "", false)
+			procID, err := w.db.CreateProcess("BARE-PROC", "", "", "", false)
 			testutil.MustNoErr(t, err, "process")
 			w.node, err = w.db.CreateProcessNode(processes.NodeInput{
 				ProcessID: procID, CoreNodeName: "NO-CLAIM", Code: "NC", Name: "NO-CLAIM", Sequence: 1, Enabled: true,

@@ -162,7 +162,7 @@ swap_required -> staging_requested -> staged -> empty_requested
 
 with `unchanged` for a node that needs no work, `switched` for an operator skip, and the off-ladder dispositions `error`, `capacity_blocked`, `awaiting_material`, `abandoned` and `cancelled` (`domain/changeover_node_state.go:19-71`). Cutover is gated on every node task reaching a terminal state *and* every order those tasks reference reaching a terminal status (`engine/operator_changeover_cutover.go:29-36`); there is no override.
 
-While a changeover is active the owning process sits in `production_state = 'changeover_active'`, returning to `active_production` on either cutover or cancel.
+While a changeover is active the owning process's `target_style_id` differs from its `active_style_id`; cutover and cancel both clear it. The screens derive their state words from those two pointers ("Changing over", "Running `<style>`", "No part running"); no state column is stored.
 
 See [UI Guide](docs/ui-guide.md) for what the operator sees at each node-task state.
 

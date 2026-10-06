@@ -44,7 +44,7 @@ func openEpisodesFor(t *testing.T, db *store.DB, processName string, n int) map[
 
 func newProcess(t *testing.T, db *store.DB, name string) int64 {
 	t.Helper()
-	id, err := db.CreateProcess(name, "", "active_production", "", "", false)
+	id, err := db.CreateProcess(name, "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process %q: %v", name, err)
 	}

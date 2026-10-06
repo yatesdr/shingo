@@ -9,20 +9,25 @@ import (
 )
 
 // Process is one production process at the edge — typically a line or
-// cell that runs styles in sequence. Holds the production state
-// machine, optional counter binding (PLC + tag) for automatic UOP
-// tracking, and the active/target style pointers used by the
-// changeover flow.
+// cell that runs styles in sequence. Holds the style pointers the
+// changeover flow and the derived state words read (active + target),
+// and the optional counter binding (PLC + tag) for automatic UOP
+// tracking.
+//
+// production_state WAS a column here and is gone (migration v16): the
+// words on the screens ("Running <style>", "Changing over") derive from
+// active_style_id + target_style_id, which the changeover flow already
+// writes, so the stored word could only ever fall out of step with the
+// pointers it duplicated.
 type Process struct {
-	ID              int64  `json:"id"`
-	Name            string `json:"name"`
-	Description     string `json:"description"`
-	ActiveStyleID   *int64 `json:"active_style_id"`
-	TargetStyleID   *int64 `json:"target_style_id,omitempty"`
-	ProductionState string `json:"production_state"`
-	CounterPLCName  string `json:"counter_plc_name"`
-	CounterTagName  string `json:"counter_tag_name"`
-	CounterEnabled  bool   `json:"counter_enabled"`
+	ID             int64  `json:"id"`
+	Name           string `json:"name"`
+	Description    string `json:"description"`
+	ActiveStyleID  *int64 `json:"active_style_id"`
+	TargetStyleID  *int64 `json:"target_style_id,omitempty"`
+	CounterPLCName string `json:"counter_plc_name"`
+	CounterTagName string `json:"counter_tag_name"`
+	CounterEnabled bool   `json:"counter_enabled"`
 	// PLC-driven cutover (the Changeover_Active subscription) was REMOVED.
 	// It read a tag that was never wired at any plant, so the feature could
 	// not fire — and its opt-in flag actively HID the operator station's

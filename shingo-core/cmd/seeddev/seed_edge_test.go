@@ -19,9 +19,10 @@ const edgeDDL = `
 CREATE TABLE processes (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
   description TEXT NOT NULL DEFAULT '', active_style_id INTEGER, target_style_id INTEGER,
-  production_state TEXT NOT NULL DEFAULT 'active_production',
   counter_plc_name TEXT NOT NULL DEFAULT '', counter_tag_name TEXT NOT NULL DEFAULT '',
   counter_enabled INTEGER NOT NULL DEFAULT 0, auto_cutover_enabled INTEGER NOT NULL DEFAULT 0,
+  changeover_auto_arm TEXT NOT NULL DEFAULT 'auto', group_id INTEGER,
+  flow_composer_enabled INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')));
 CREATE TABLE styles (
   id INTEGER PRIMARY KEY AUTOINCREMENT, process_id INTEGER REFERENCES processes(id) ON DELETE CASCADE,
@@ -31,7 +32,7 @@ CREATE TABLE operator_stations (
   id INTEGER PRIMARY KEY AUTOINCREMENT, process_id INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
   code TEXT NOT NULL, name TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', area_label TEXT NOT NULL DEFAULT '',
   sequence INTEGER NOT NULL DEFAULT 0, controller_node_id TEXT NOT NULL DEFAULT '',
-  device_mode TEXT NOT NULL DEFAULT 'touch_hmi', enabled INTEGER NOT NULL DEFAULT 1,
+  enabled INTEGER NOT NULL DEFAULT 1,
   health_status TEXT NOT NULL DEFAULT 'offline', last_seen_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(process_id, code));

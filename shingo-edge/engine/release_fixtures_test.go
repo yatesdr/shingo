@@ -89,7 +89,7 @@ func (s pairSpec) claimInput(styleID int64, payload string) processes.NodeClaimI
 func (h *relHarness) seedNode(s pairSpec) *processes.NodeClaim {
 	h.t.Helper()
 	db := h.db
-	pid, err := db.CreateProcess("SYN-PROC", "release harness", "active_production", "", "", false)
+	pid, err := db.CreateProcess("SYN-PROC", "release harness", "", "", false)
 	testutil.MustNoErr(h.t, err, "create process")
 	sid, err := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "SYN-STATION"})
 	testutil.MustNoErr(h.t, err, "create station")
@@ -194,7 +194,7 @@ func (h *relHarness) changeover(s coSpec) int64 {
 	h.t.Helper()
 	db := h.db
 	ps := pairSpec{mode: s.mode, role: s.role, threePos: s.threePos, flipped: s.flipped}
-	pid, err := db.CreateProcess("SYN-CO-PROC", "release harness changeover", "active_production", "", "", false)
+	pid, err := db.CreateProcess("SYN-CO-PROC", "release harness changeover", "", "", false)
 	testutil.MustNoErr(h.t, err, "create process")
 	sid, err := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "SYN-CO-STATION"})
 	testutil.MustNoErr(h.t, err, "create station")
@@ -350,7 +350,7 @@ func (h *relHarness) sequentialAB(role protocol.ClaimRole, partnerReady bool) {
 func (h *relHarness) sequentialPair(role protocol.ClaimRole, partnerReady bool) {
 	h.t.Helper()
 	db := h.db
-	pid, err := db.CreateProcess("SYN-SEQ-PROC", "release harness sequential", "active_production", "", "", false)
+	pid, err := db.CreateProcess("SYN-SEQ-PROC", "release harness sequential", "", "", false)
 	testutil.MustNoErr(h.t, err, "create process")
 	styleID, err := db.CreateStyle("SYN-SEQ", "", pid)
 	testutil.MustNoErr(h.t, err, "create style")

@@ -24,7 +24,7 @@ import (
 func seedTxStyle(t *testing.T, db *DB) (processID, styleID int64) {
 	t.Helper()
 	var err error
-	processID, err = db.CreateProcess("TX-PROC", "", "active_production", "", "", false)
+	processID, err = db.CreateProcess("TX-PROC", "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

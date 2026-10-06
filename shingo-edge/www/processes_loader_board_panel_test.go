@@ -77,7 +77,7 @@ func pageData(t *testing.T, out, attr string, into any) {
 func TestProcessesPage_CarriesLoaderBoardGaps(t *testing.T) {
 	out := renderProcessesPage(t, map[string]any{
 		"Page":            "processes",
-		"ActiveProcess":   &domain.Process{ID: 15, Name: "Press 4", ProductionState: "active_production"},
+		"ActiveProcess":   &domain.Process{ID: 15, Name: "Press 4"},
 		"ActiveProcessID": int64(15),
 		"LoaderBoardGaps": []service.LoaderBoardGap{{
 			LoaderKey: "loader:9", Name: "Unloader",
@@ -108,7 +108,7 @@ func TestProcessesPage_CarriesLoaderBoardGaps(t *testing.T) {
 func TestProcessesPage_NoGapsCarriesAnEmptyList(t *testing.T) {
 	out := renderProcessesPage(t, map[string]any{
 		"Page":            "processes",
-		"ActiveProcess":   &domain.Process{ID: 15, Name: "Press 4", ProductionState: "active_production"},
+		"ActiveProcess":   &domain.Process{ID: 15, Name: "Press 4"},
 		"ActiveProcessID": int64(15),
 		"LoaderBoardGaps": []service.LoaderBoardGap{},
 	})
@@ -136,7 +136,7 @@ func TestProcessesPage_CarriesTheGateInBothStates(t *testing.T) {
 		{"gate on", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p := domain.Process{ID: 15, Name: "Press 4", ProductionState: "active_production", FlowComposerEnabled: tc.enabled}
+			p := domain.Process{ID: 15, Name: "Press 4", FlowComposerEnabled: tc.enabled}
 			out := renderProcessesPage(t, map[string]any{
 				"Page":            "processes",
 				"ActiveProcess":   &p,

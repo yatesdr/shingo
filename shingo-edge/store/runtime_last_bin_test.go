@@ -67,7 +67,7 @@ func TestEmptyingASlotRemembersTheBinThatLeft(t *testing.T) {
 // seedRuntimeNode creates a process with one node and its runtime row.
 func seedRuntimeNode(t *testing.T, db *DB) int64 {
 	t.Helper()
-	processID, err := db.CreateProcess("LAST-BIN-PROC", "", "active_production", "", "", false)
+	processID, err := db.CreateProcess("LAST-BIN-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "LAST-BIN-NODE", Code: "C-LAST-BIN",

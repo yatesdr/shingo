@@ -33,7 +33,7 @@ import (
 func seedMarkedPressScenario(t *testing.T, db *store.DB) (processID, fromStyleID, toStyleID int64) {
 	t.Helper()
 
-	processID, err := db.CreateProcess("POSITION-PRESS", "marked press", "active_production", "", "", false)
+	processID, err := db.CreateProcess("POSITION-PRESS", "marked press", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -283,7 +283,7 @@ func keysOf[V any](m map[string]V) string {
 // hard cutover blocker.
 func seedDisjointPressScenario(t *testing.T, db *store.DB) (processID, toStyleID int64) {
 	t.Helper()
-	processID, err := db.CreateProcess("DISJOINT-PRESS", "moves nodes", "active_production", "", "", false)
+	processID, err := db.CreateProcess("DISJOINT-PRESS", "moves nodes", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

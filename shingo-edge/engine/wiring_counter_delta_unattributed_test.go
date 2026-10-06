@@ -113,7 +113,7 @@ func TestCounterDelta_UnattributedNamesManualSwapSkip(t *testing.T) {
 // process that has none.
 func TestCounterDelta_UnattributedNamesEmptyProcess(t *testing.T) {
 	db := testEngineDB(t)
-	processID, err := db.CreateProcess("NO-NODES", "no nodes", "active_production", "", "", false)
+	processID, err := db.CreateProcess("NO-NODES", "no nodes", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

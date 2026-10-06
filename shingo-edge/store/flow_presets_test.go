@@ -22,7 +22,7 @@ import (
 
 func seedPresetProcess(t *testing.T, db *DB) int64 {
 	t.Helper()
-	pid, err := db.CreateProcess("P400", "", "", "", "", false)
+	pid, err := db.CreateProcess("P400", "", "", "", false)
 	if err != nil {
 		t.Fatalf("CreateProcess: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestFlowPreset_CreateListGetArchive(t *testing.T) {
 		t.Fatalf("archived v1 must still resolve by id (provenance points at it): %+v %v", p1, err)
 	}
 	// Another process cannot see it.
-	other, err := db.CreateProcess("OTHER", "", "", "", "", false)
+	other, err := db.CreateProcess("OTHER", "", "", "", false)
 	testutil.MustNoErr(t, err, "db.CreateProcess")
 	l, err := db.ListFlowPresets(other, true)
 	testutil.MustNoErr(t, err, "db.ListFlowPresets")

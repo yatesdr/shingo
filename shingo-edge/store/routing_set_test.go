@@ -28,7 +28,7 @@ import (
 func TestProcess_FlowComposerEnabled_ReadsBack(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	pid, err := db.CreateProcess("P400", "", "", "", "", false)
+	pid, err := db.CreateProcess("P400", "", "", "", false)
 	if err != nil {
 		t.Fatalf("CreateProcess: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestProcess_FlowComposerEnabled_ReadsBack(t *testing.T) {
 // seedRoutingProcess is a process with one live style and one position.
 func seedRoutingProcess(t *testing.T, db *DB, name string) (processID, styleID int64) {
 	t.Helper()
-	pid, err := db.CreateProcess(name, "", "", "", "", false)
+	pid, err := db.CreateProcess(name, "", "", "", false)
 	if err != nil {
 		t.Fatalf("CreateProcess: %v", err)
 	}

@@ -67,7 +67,7 @@ func TestScenario_V2_SameBinTypePressIndex_EndToEnd(t *testing.T) {
 	edge := edgeharness.NewEdgeWithCoreAPI(t, stationID, core.URL)
 
 	// ── Seed: press (stationed) + paired position (row, NO station) + bystander ──
-	processID, err := edge.DB.CreateProcess("V2-PROC", "same-bin-type press-index", "active_production", "", "", false)
+	processID, err := edge.DB.CreateProcess("V2-PROC", "same-bin-type press-index", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

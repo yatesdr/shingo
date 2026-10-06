@@ -137,6 +137,7 @@ const FINDING_SHORT = {
     outbound_destination: 'no outbound destination',
     unplaced_part: 'needs a position',
     preset_position_missing: 'shape needs a position this cell lacks',
+    shared_staging: 'staging shared by several positions',
 };
 
 // ROW_FIELDS — which claim field each S5 row writes, in the order the rows are
@@ -1025,6 +1026,33 @@ function findings(state) {
                 : 'The shape names ' + names.length + ' positions this cell does not have',
             detail: names.join(', ') + ' — the rest of the shape was applied. Pick a shape ' +
                 'built for this cell, or add the positions from the desktop.',
+        });
+    }
+    // TWO POSITIONS ON ONE STAGING SPOT IS A WARNING, NOT A REFUSAL — the same
+    // ruling the server's membership check makes (ValidateNodeClaim's
+    // "a WARNING, never a refusal" arm): one physical slot is legitimately
+    // named by several positions, and refusing would block a working
+    // configuration to catch a likely mis-pick. But the flow will stage two
+    // robots at one spot, and somebody looking for why a swap jammed deserves
+    // the sentence. It does not block the save (validateFlowInputs carries
+    // errors only) and it does not block the start on its own — it rides the
+    // findings list and is shown, not enforced.
+    const stagedBy = {};
+    for (const [, c] of activeCells(state)) {
+        for (const spot of [c.staging, c.parkOld]) {
+            if (spot) (stagedBy[spot] = (stagedBy[spot] || 0) + 1);
+        }
+    }
+    const shared = Object.keys(stagedBy).filter(s => stagedBy[s] > 1);
+    if (shared.length) {
+        out.push({
+            local: true, node: '', field: 'shared_staging', parts: shared.slice(),
+            short: FINDING_SHORT.shared_staging,
+            message: shared.length === 1
+                ? shared[0] + ' is staged at by more than one position'
+                : shared.length + ' staging spots are shared by more than one position',
+            detail: shared.join(', ') + ' — that is legitimate for one spot serving several ' +
+                'choreographies; check it is what you meant.',
         });
     }
     const pv = state.preview;

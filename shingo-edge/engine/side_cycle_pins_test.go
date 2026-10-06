@@ -152,7 +152,7 @@ func scLoaderEngine(t *testing.T, window string) (*Engine, *store.DB, *scCore, *
 	logs := &scLog{}
 	eng.logFn = logs.fn
 
-	procID, err := db.CreateProcess(window+"-PROC", "", "active_production", "", "", false)
+	procID, err := db.CreateProcess(window+"-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: procID, CoreNodeName: window, Code: "W1", Name: window, Sequence: 1, Enabled: true,
@@ -431,7 +431,7 @@ func TestLanding_RePushesOnlyItsOwnLoader(t *testing.T) {
 			if stored {
 				nodeID, _ = seedManualSwapClaim(t, db, prefix, protocol.ClaimRoleProduce, "PART-RP", "FG-MARKET")
 			} else {
-				procID, err := db.CreateProcess(prefix+"-PROC", "", "active_production", "", "", false)
+				procID, err := db.CreateProcess(prefix+"-PROC", "", "", "", false)
 				testutil.MustNoErr(t, err, "create process")
 				nodeID, err = db.CreateProcessNode(processes.NodeInput{
 					ProcessID: procID, CoreNodeName: own, Code: "RP", Name: own, Sequence: 1, Enabled: true,
@@ -442,7 +442,7 @@ func TestLanding_RePushesOnlyItsOwnLoader(t *testing.T) {
 			}
 			// The other loader's window: a process node here, free, nothing in
 			// flight — a push that walked every loader would stage an empty there.
-			otherProc, err := db.CreateProcess(prefix+"-OTHER-PROC", "", "active_production", "", "", false)
+			otherProc, err := db.CreateProcess(prefix+"-OTHER-PROC", "", "", "", false)
 			testutil.MustNoErr(t, err, "create other process")
 			_, err = db.CreateProcessNode(processes.NodeInput{
 				ProcessID: otherProc, CoreNodeName: other, Code: "RO", Name: other, Sequence: 1, Enabled: true,

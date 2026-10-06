@@ -126,7 +126,7 @@ func TestProcessPalette_UnionsStoredRowsWithClaimedPayloads(t *testing.T) {
 // then nothing to put on the cell's first position.
 func TestProcessPalette_ATypedRowIsOfferedWithNoClaimsAtAll(t *testing.T) {
 	db := testdb.Open(t)
-	processID, err := db.CreateProcess("NEW-CELL", "new", "active_production", "", "", false)
+	processID, err := db.CreateProcess("NEW-CELL", "new", "", "", false)
 	if err != nil {
 		t.Fatalf("CreateProcess: %v", err)
 	}

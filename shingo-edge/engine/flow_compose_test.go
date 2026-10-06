@@ -86,7 +86,7 @@ func cellsOf(t *testing.T, db *store.DB, styleID int64) []domain.FlowCell {
 func seedFlowScenario(t *testing.T, db *store.DB) (processID, fromStyleID, toStyleID int64) {
 	t.Helper()
 	var err error
-	processID, err = db.CreateProcess("FLOW-PROC", "flow composer", "active_production", "", "", false)
+	processID, err = db.CreateProcess("FLOW-PROC", "flow composer", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	for i, name := range []string{"FLOW-SWAP", "FLOW-SAME", "FLOW-GONE", "FLOW-ADD"} {
 		id, err := db.CreateProcessNode(processes.NodeInput{ProcessID: processID, CoreNodeName: name, Code: name, Name: name, Sequence: i + 1, Enabled: true})

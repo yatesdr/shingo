@@ -31,7 +31,7 @@ func TestProduceClear_RePushesOnlyItsOwnLoader(t *testing.T) {
 	seedCoreLoader(t, eng,
 		sharedLoaderInfo(wa, "produce", "operator", "PART-PC", 0, 0),
 		sharedLoaderInfo(wb, "produce", "operator", "PART-PC", 0, 0))
-	procID, err := db.CreateProcess("PCR-PROC", "", "active_production", "", "", false)
+	procID, err := db.CreateProcess("PCR-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	node := func(core string, seq int) int64 {
 		id, nerr := db.CreateProcessNode(processes.NodeInput{

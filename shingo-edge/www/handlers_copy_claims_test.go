@@ -182,7 +182,7 @@ func TestApiCopyStyleClaims_KeylessOverrideRefused(t *testing.T) {
 // both ids (www's seedProcess does not create styles).
 func seedStyleProcess(t *testing.T, h *Handlers, procName, styleName string) (int64, int64) {
 	t.Helper()
-	pid, err := testDB.CreateProcess(procName, "", "active_production", "", "", false)
+	pid, err := testDB.CreateProcess(procName, "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

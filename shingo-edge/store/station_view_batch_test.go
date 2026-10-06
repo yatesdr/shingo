@@ -18,7 +18,7 @@ func TestRuntimesForNodes_MatchesPerNodeGet(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	pid, err := db.CreateProcess("P", "", "", "", "", false)
+	pid, err := db.CreateProcess("P", "", "", "", false)
 	if err != nil {
 		t.Fatalf("CreateProcess: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestListActiveByNodeKeys_MatchesPerNodeCalls(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	pid, err := db.CreateProcess("P", "", "", "", "", false)
+	pid, err := db.CreateProcess("P", "", "", "", false)
 	if err != nil {
 		t.Fatalf("CreateProcess: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestListActiveByNodeKeys_LaneHeldDerivation(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	pid, err := db.CreateProcess("P", "", "", "", "", false)
+	pid, err := db.CreateProcess("P", "", "", "", false)
 	if err != nil {
 		t.Fatalf("CreateProcess: %v", err)
 	}

@@ -449,8 +449,11 @@ var ErrKeepStagedSpot = errors.New("keep_staged_node")
 
 // KeepStagedModesMessage is the refusal both write paths give a claim that
 // names a keep-staged node in a mode whose flowspec row forbids it.
-const KeepStagedModesMessage = "A keep-staged node applies to swap claims only: Sequential A/B, " +
-	"Single-robot swap, Two-robot swap and 2-Robot Press Index"
+var KeepStagedModesMessage = "A keep-staged node applies to swap claims only: " +
+	SwapModeWord(protocol.SwapModeSequential) + ", " +
+	SwapModeWord(protocol.SwapModeSingleRobot) + ", " +
+	SwapModeWord(protocol.SwapModeTwoRobot) + " and " +
+	SwapModeWord(protocol.SwapModeTwoRobotPressIndex)
 
 // ValidateNodeClaim is the one server-side statement of what a claim must look
 // like. Pure: no database, no HTTP, no logging.
@@ -519,7 +522,7 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 	// payload set, which is the reason behind both spellings.
 	if (in.Role == protocol.ClaimRoleConsume || in.Role == protocol.ClaimRoleProduce) &&
 		spec[flowspec.PayloadCode] == flowspec.Required && !ClaimInputHas(in, flowspec.PayloadCode) {
-		add("payload_code", "Select a payload")
+		add("payload_code", "Select a part")
 	}
 
 	validateSwapModeRouting(in, spec, add)
@@ -567,7 +570,7 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 			add("changeover_carryover_disposition", fmt.Sprintf("%q is not a carry-over disposition", disp))
 		} else if disp == CarryoverOutboundStaging && in.OutboundStaging == "" {
 			add("changeover_carryover_disposition",
-				"Keeping a carried-over part at outbound staging requires an Outbound Staging node on this claim")
+				"Keeping a carried-over part at outbound staging requires an outbound staging node on this claim")
 		}
 		if disp != CarryoverReplace && len(marked) == 0 {
 			add("changeover_carryover_disposition",
@@ -579,7 +582,7 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 	// swap between.
 	if ClaimInputHas(in, flowspec.IndexRobotSupplies) && spec[flowspec.IndexRobotSupplies] == flowspec.Forbidden {
 		add("index_robot_supplies",
-			"Index robot fetches the replacement applies to 2-Robot Press Index only")
+			"Index robot fetches the replacement applies to "+swapModeLabel(protocol.SwapModeTwoRobotPressIndex)+" only")
 	}
 
 	// A kept spare is what a swap fetches its carrier from, and only the four
@@ -633,7 +636,7 @@ func ValidateNodeClaim(in NodeClaimInput, nodeCtx ClaimNodeContext) []FieldError
 				add("second_paired_core_node", "Third press position must differ from the front (Core Node)")
 			}
 			if in.SecondPairedCoreNode == in.PairedCoreNode {
-				add("second_paired_core_node", "Third press position must differ from the Back Press Node")
+				add("second_paired_core_node", "Third press position must differ from the back press node")
 			}
 		}
 	}
@@ -682,7 +685,9 @@ func describeProcessIDs(ids []int64) string {
 	}
 }
 
-// routingRequiredMessages is the wording of each routing refusal, per mode.
+// routingRequiredMessages is what each routing refusal says the mode requires,
+// per mode; validateSwapModeRouting puts swapModeLabel in front of it, so the
+// mode is named by the one word table and never spelled here.
 //
 // WHICH fields a mode requires is flowspec.Steady's answer, not this map's:
 // the map only says how to phrase it, in the words the editor has always
@@ -704,46 +709,43 @@ var routingRequiredMessages = map[protocol.SwapMode]map[flowspec.Field]string{
 	protocol.SwapModeSingleRobot: {
 		// One robot does the whole swap, so it needs somewhere to park the
 		// incoming bin AND somewhere to put the outgoing one.
-		flowspec.InboundStaging:      "Single-robot swap requires inbound staging",
-		flowspec.OutboundStaging:     "Single-robot swap requires outbound staging",
-		flowspec.OutboundDestination: "Single-robot swap requires an outbound destination",
+		flowspec.InboundStaging:      "inbound staging",
+		flowspec.OutboundStaging:     "outbound staging",
+		flowspec.OutboundDestination: "an outbound destination",
 	},
 	protocol.SwapModeTwoRobot: {
 		// Robot A waits at the staging node until Robot B clears the line.
 		// Without it BuildTwoRobotSwapSteps returns nil silently and the
 		// operator's RELEASE click does nothing.
-		flowspec.InboundStaging:      "Two-robot swap requires inbound staging",
-		flowspec.OutboundDestination: "Two-robot swap requires an outbound destination",
+		flowspec.InboundStaging:      "inbound staging",
+		flowspec.OutboundDestination: "an outbound destination",
 	},
 	protocol.SwapModeManualSwap: {
 		// Without it the post-swap bin has nowhere to go and the node
 		// deadlocks.
-		flowspec.OutboundDestination: "Loader/unloader claims require an outbound destination",
+		flowspec.OutboundDestination: "an outbound destination",
 	},
 	protocol.SwapModeTwoRobotPressIndex: {
-		flowspec.PairedCoreNode:      "2-Robot Press Index requires a Back Press Node",
-		flowspec.OutboundDestination: "2-Robot Press Index requires an Outbound Destination",
+		flowspec.PairedCoreNode:      "a back press node",
+		flowspec.OutboundDestination: "an outbound destination",
 	},
 	protocol.SwapModeSequential: {
-		flowspec.PairedCoreNode:      "Sequential A/B requires a Paired Position",
-		flowspec.OutboundDestination: "Sequential A/B requires an Outbound Destination",
-		flowspec.InboundSource:       "Sequential A/B requires an Inbound Source",
+		flowspec.PairedCoreNode:      "a paired position",
+		flowspec.OutboundDestination: "an outbound destination",
+		flowspec.InboundSource:       "an inbound source",
 	},
 }
 
-// swapModeLabel is the mode's name as the editor's messages say it.
+// swapModeLabel is the mode's name as the editor's messages say it: the
+// screens' word (SwapModeWord), so a refusal names the mode the operator
+// picked in the same spelling the chip shows. A loader/unloader claim has no
+// chip word, and an unknown mode falls back to its wire value.
 func swapModeLabel(mode protocol.SwapMode) string {
-	switch mode {
-	case protocol.SwapModeSingleRobot:
-		return "Single-robot swap"
-	case protocol.SwapModeTwoRobot:
-		return "Two-robot swap"
-	case protocol.SwapModeTwoRobotPressIndex:
-		return "2-Robot Press Index"
-	case protocol.SwapModeSequential:
-		return "Sequential A/B"
-	case protocol.SwapModeManualSwap:
-		return "Loader/unloader claims"
+	if w := SwapModeWord(mode); w != "" {
+		return w
+	}
+	if mode == protocol.SwapModeManualSwap {
+		return "A loader/unloader claim"
 	}
 	return string(mode)
 }
@@ -763,10 +765,10 @@ func validateSwapModeRouting(in NodeClaimInput, spec map[flowspec.Field]flowspec
 		if spec[f] != flowspec.Required || ClaimInputHas(in, f) {
 			continue
 		}
-		msg, ok := routingRequiredMessages[in.SwapMode][f]
+		what, ok := routingRequiredMessages[in.SwapMode][f]
 		if !ok {
-			msg = fmt.Sprintf("%s requires %s", in.SwapMode, flowspec.Label(f))
+			what = flowspec.Label(f)
 		}
-		add(string(f), msg)
+		add(string(f), swapModeLabel(in.SwapMode)+" requires "+what)
 	}
 }

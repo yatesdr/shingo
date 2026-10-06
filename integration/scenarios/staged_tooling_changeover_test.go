@@ -66,7 +66,7 @@ func seedStagedPress(t *testing.T, markedNodes []string, toStaging string) stage
 	core := stagedStubCore(t)
 	edge := edgeharness.NewEdgeWithCoreAPI(t, "edge.test", core.URL)
 
-	processID, err := edge.DB.CreateProcess("ST-PROC", "staged tooling", "active_production", "", "", false)
+	processID, err := edge.DB.CreateProcess("ST-PROC", "staged tooling", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestScenario_StagedToolingChangeover_RefusesWithoutStaging(t *testing.T) {
 	if !strings.Contains(err.Error(), "PLN-ST-A") {
 		t.Errorf("refusal must name the cell; got %q", err)
 	}
-	if !strings.Contains(err.Error(), "Inbound Staging") {
+	if !strings.Contains(err.Error(), "inbound staging") {
 		t.Errorf("refusal must name the missing field; got %q", err)
 	}
 	// And nothing was started.

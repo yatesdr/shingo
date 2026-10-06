@@ -107,7 +107,7 @@ func TestClearRuntimeOrders_DropsBoth(t *testing.T) {
 func seedRuntimeWithBothOrders(t *testing.T, prefix string) (db *DB, nodeID, supply, evac int64) {
 	t.Helper()
 	db = coverageDB(t)
-	pid, err := db.CreateProcess(prefix, "", "", "", "", false)
+	pid, err := db.CreateProcess(prefix, "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

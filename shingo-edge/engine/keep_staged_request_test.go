@@ -71,7 +71,7 @@ func seedCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, kee
 	eng := testEngine(t, db)
 	eng.logFn = func(string, ...any) {}
 
-	procID, err := db.CreateProcess("KS-PROC", "", "active_production", "", "", false)
+	procID, err := db.CreateProcess("KS-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "process")
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: procID, CoreNodeName: ksLine, Code: "KS1", Name: ksLine, Sequence: 1, Enabled: true,

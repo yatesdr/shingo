@@ -1326,7 +1326,10 @@ func TestComposerShots(t *testing.T) {
 			if afterProc.Description != want {
 				t.Errorf("description = %q, want %q — the edit did not land", afterProc.Description, want)
 			}
-			if afterProc.Name != beforeProc.Name || afterProc.ProductionState != beforeProc.ProductionState ||
+			sameStyle := func(a, b *int64) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }
+			if afterProc.Name != beforeProc.Name ||
+				!sameStyle(afterProc.ActiveStyleID, beforeProc.ActiveStyleID) ||
+				!sameStyle(afterProc.TargetStyleID, beforeProc.TargetStyleID) ||
 				afterProc.CounterPLCName != beforeProc.CounterPLCName ||
 				afterProc.CounterTagName != beforeProc.CounterTagName ||
 				afterProc.CounterEnabled != beforeProc.CounterEnabled {
@@ -2120,8 +2123,8 @@ func TestComposerShots(t *testing.T) {
 	desktopDOM("D6 apply unplaced", d6apply, `will need a position`)
 	// AND THE PREVIEW'S OWN FINDINGS ARE ON THE ROW. Measured on this fixture:
 	// applying PLN_01/PLN_04 to a part running PLN_03/PLN_06 lands two cells
-	// with no part, which the server answers with `PLN_01 · Select a payload`
-	// and `PLN_04 · Select a payload` while still planning two press-index
+	// with no part, which the server answers with `PLN_01 · Select a part`
+	// and `PLN_04 · Select a part` while still planning two press-index
 	// swaps. The modal drew `2 orders after the change` over an enabled
 	// `Save to 1 part`, and the engineer met the rest as a 422 afterwards.
 	desktopDOM("D6 apply row findings", d6apply, `class="pd-warn"`)

@@ -92,7 +92,7 @@ func seedCensusPress(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMo
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	eng.logFn = func(string, ...any) {}
-	procID, err := db.CreateProcess("CENSUS-PROC", "", "active_production", "", "", false)
+	procID, err := db.CreateProcess("CENSUS-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "process")
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: procID, CoreNodeName: ksLine, Code: "CN1", Name: ksLine, Sequence: 1, Enabled: true,

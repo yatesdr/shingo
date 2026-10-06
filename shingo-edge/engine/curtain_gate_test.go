@@ -57,7 +57,7 @@ func (c *curtainStubClient) OpenEventStream(ctx context.Context) (io.ReadCloser,
 // gate must refuse them anyway, whatever wrote them.
 func curtainSeedNode(t *testing.T, eng *Engine, enabled bool, plcName, tagName string, safe *bool) *processes.Node {
 	t.Helper()
-	procID, err := eng.db.CreateProcess("CurtainProc", "", "active_production", "", "", false)
+	procID, err := eng.db.CreateProcess("CurtainProc", "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

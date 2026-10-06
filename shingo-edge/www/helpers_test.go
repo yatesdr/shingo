@@ -612,7 +612,7 @@ func assertJSONPath(t *testing.T, resp *http.Response, path string, want any) {
 // seedProcess creates a process and returns its ID.
 func seedProcess(t *testing.T, name string) int64 {
 	t.Helper()
-	id, err := testDB.CreateProcess(name, "test process", "", "", "", false)
+	id, err := testDB.CreateProcess(name, "test process", "", "", false)
 	if err != nil {
 		t.Fatalf("seed process %q: %v", name, err)
 	}
@@ -635,11 +635,10 @@ func seedStyle(t *testing.T, name string, processID int64) int64 {
 func seedOperatorStation(t *testing.T, processID int64, code, name string) int64 {
 	t.Helper()
 	id, err := testDB.CreateOperatorStation(stations.Input{
-		ProcessID:  processID,
-		Code:       code,
-		Name:       name,
-		DeviceMode: "fixed_hmi",
-		Enabled:    true,
+		ProcessID: processID,
+		Code:      code,
+		Name:      name,
+		Enabled:   true,
 	})
 	if err != nil {
 		t.Fatalf("seed operator station %q: %v", code, err)

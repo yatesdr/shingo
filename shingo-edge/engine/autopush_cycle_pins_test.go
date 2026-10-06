@@ -38,7 +38,7 @@ func newCycleUnloader(t *testing.T, prefix string) *ugFixture {
 		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-AC"}}, AutoPush: true,
 	})
 	var err error
-	f.nProcessID, err = db.CreateProcess(prefix+"-PROC", "", "active_production", "", "", false)
+	f.nProcessID, err = db.CreateProcess(prefix+"-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	f.n, err = db.CreateProcessNode(processes.NodeInput{
 		ProcessID: f.nProcessID, CoreNodeName: f.nCore, Code: f.nCore, Name: f.nCore, Sequence: 1, Enabled: true,

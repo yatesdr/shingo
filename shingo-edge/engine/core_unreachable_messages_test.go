@@ -42,7 +42,7 @@ func unreachableCore(t *testing.T, eng *Engine) {
 
 func seedManualSwapConsume(t *testing.T, db *store.DB, coreNode string) int64 {
 	t.Helper()
-	processID, err := db.CreateProcess("UNREACH-"+coreNode, "", "active_production", "", "", false)
+	processID, err := db.CreateProcess("UNREACH-"+coreNode, "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: coreNode, Code: "U-" + coreNode,

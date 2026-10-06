@@ -314,9 +314,6 @@ func (e *Engine) finalizeChangeoverRow(processID, changeoverID int64, triggeredB
 	if err := e.db.SetTargetStyle(processID, nil); err != nil {
 		return err
 	}
-	if err := e.db.SetProcessProductionState(processID, "active_production"); err != nil {
-		return err
-	}
 	if err := e.SyncProcessCounter(processID); err != nil {
 		return err
 	}

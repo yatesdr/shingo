@@ -40,7 +40,7 @@ func scanProcess(scanner interface{ Scan(...any) error }) (Process, error) {
 	var p Process
 	var createdAt string
 	var groupID sql.NullInt64
-	if err := scanner.Scan(&p.ID, &p.Name, &p.Description, &p.ActiveStyleID, &p.TargetStyleID, &p.ProductionState, &p.CounterPLCName, &p.CounterTagName, &p.CounterEnabled, &p.ChangeoverAutoArm, &groupID, &p.FlowComposerEnabled, &createdAt); err != nil {
+	if err := scanner.Scan(&p.ID, &p.Name, &p.Description, &p.ActiveStyleID, &p.TargetStyleID, &p.CounterPLCName, &p.CounterTagName, &p.CounterEnabled, &p.ChangeoverAutoArm, &groupID, &p.FlowComposerEnabled, &createdAt); err != nil {
 		return p, err
 	}
 	p.CreatedAt = helpers.ScanTime(createdAt)
@@ -55,7 +55,7 @@ func scanProcess(scanner interface{ Scan(...any) error }) (Process, error) {
 // (the Changeover_Active tag was never wired at any plant). The column stays on
 // disk — dropping it means a SQLite table rebuild, and a rebuild is what
 // generates the dangling REFERENCES clauses the FK repair exists to fix.
-const processSelect = `id, name, description, active_style_id, target_style_id, production_state, counter_plc_name, counter_tag_name, counter_enabled, changeover_auto_arm, group_id, flow_composer_enabled, created_at`
+const processSelect = `id, name, description, active_style_id, target_style_id, counter_plc_name, counter_tag_name, counter_enabled, changeover_auto_arm, group_id, flow_composer_enabled, created_at`
 
 // List returns every process row sorted by name.
 func List(db *sql.DB) ([]Process, error) {
@@ -84,13 +84,12 @@ func Get(db DBTX, id int64) (*Process, error) {
 	return &l, nil
 }
 
-// Create inserts a process and returns the new row id.
-func Create(db *sql.DB, name, description, productionState string, counterPLC, counterTag string, counterEnabled bool) (int64, error) {
-	if productionState == "" {
-		productionState = "active_production"
-	}
-	res, err := db.Exec(`INSERT INTO processes (name, description, production_state, counter_plc_name, counter_tag_name, counter_enabled) VALUES (?, ?, ?, ?, ?, ?)`,
-		name, description, productionState, counterPLC, counterTag, counterEnabled)
+// Create inserts a process and returns the new row id. (The productionState
+// parameter is gone with the column: migration v16, the state words derive
+// from the style pointers.)
+func Create(db *sql.DB, name, description string, counterPLC, counterTag string, counterEnabled bool) (int64, error) {
+	res, err := db.Exec(`INSERT INTO processes (name, description, counter_plc_name, counter_tag_name, counter_enabled) VALUES (?, ?, ?, ?, ?)`,
+		name, description, counterPLC, counterTag, counterEnabled)
 	if err != nil {
 		return 0, err
 	}
@@ -98,12 +97,9 @@ func Create(db *sql.DB, name, description, productionState string, counterPLC, c
 }
 
 // Update modifies a process row.
-func Update(db *sql.DB, id int64, name, description, productionState string, counterPLC, counterTag string, counterEnabled bool) error {
-	if productionState == "" {
-		productionState = "active_production"
-	}
-	_, err := db.Exec(`UPDATE processes SET name=?, description=?, production_state=?, counter_plc_name=?, counter_tag_name=?, counter_enabled=? WHERE id=?`,
-		name, description, productionState, counterPLC, counterTag, counterEnabled, id)
+func Update(db *sql.DB, id int64, name, description string, counterPLC, counterTag string, counterEnabled bool) error {
+	_, err := db.Exec(`UPDATE processes SET name=?, description=?, counter_plc_name=?, counter_tag_name=?, counter_enabled=? WHERE id=?`,
+		name, description, counterPLC, counterTag, counterEnabled, id)
 	return err
 }
 
@@ -235,12 +231,6 @@ func GetActiveStyleID(db *sql.DB, processID int64) (*int64, error) {
 		return nil, err
 	}
 	return id, nil
-}
-
-// SetProductionState writes the production_state on a process.
-func SetProductionState(db *sql.DB, processID int64, state string) error {
-	_, err := db.Exec(`UPDATE processes SET production_state=? WHERE id=?`, state, processID)
-	return err
 }
 
 // SetChangeoverAutoArm writes the changeover_auto_arm mode on a process,

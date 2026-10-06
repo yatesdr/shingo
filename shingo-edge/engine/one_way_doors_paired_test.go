@@ -31,7 +31,7 @@ import (
 // mode — the population the consume REQUEST builds a pair for.
 func seedLineSwapClaim(t *testing.T, db *store.DB, prefix string, mode protocol.SwapMode) int64 {
 	t.Helper()
-	processID, err := db.CreateProcess(prefix+"-PROC", "", "active_production", "", "", false)
+	processID, err := db.CreateProcess(prefix+"-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: prefix + "-LINE", Code: prefix, Name: prefix + " line", Enabled: true,

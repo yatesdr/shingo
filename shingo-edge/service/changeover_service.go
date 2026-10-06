@@ -33,8 +33,8 @@ func NewChangeoverService(db *store.DB) *ChangeoverService {
 }
 
 // Create atomically creates a changeover with its station and node
-// tasks. Cross-aggregate: also flips the owning process into the
-// changeover state (target_style_id + production_state) and backfills
+// tasks. Cross-aggregate: also points the owning process at the target
+// style (target_style_id — the state the derived words read) and backfills
 // process_nodes / process_node_runtime_states for any core nodes that
 // didn't have a row yet. Returns the new changeover id.
 //
@@ -72,9 +72,6 @@ func (s *ChangeoverService) Create(processID int64, fromStyleID *int64, toStyleI
 		return 0, err
 	}
 	if _, err := tx.Exec(`UPDATE processes SET target_style_id=? WHERE id=?`, toStyleID, processID); err != nil {
-		return 0, err
-	}
-	if _, err := tx.Exec(`UPDATE processes SET production_state='changeover_active' WHERE id=?`, processID); err != nil {
 		return 0, err
 	}
 

@@ -641,7 +641,7 @@ func TestValidateNodeClaim_StrictModesRefuseFieldsTheyDoNotUse(t *testing.T) {
 	// The wording names the mode and the field, and the finding is an error.
 	for _, f := range ValidateNodeClaim(sr, ClaimNodeContext{}) {
 		if f.Field == "paired_core_node" {
-			if f.Severity != SeverityError || !strings.Contains(f.Message, "Paired Core Node") {
+			if f.Severity != SeverityError || !strings.Contains(f.Message, "Paired core node") {
 				t.Errorf("finding = %+v", f)
 			}
 		}

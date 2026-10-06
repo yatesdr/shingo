@@ -45,7 +45,7 @@ func demandLevelFixture(
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
-	procID, err := db.CreateProcess(prefix+"-PROC", "", "active_production", "", "", false)
+	procID, err := db.CreateProcess(prefix+"-PROC", "", "", "", false)
 	testutil.MustNoErr(t, err, "create process")
 	node := prefix + "_CELL"
 	_, err = db.CreateProcessNode(processes.NodeInput{

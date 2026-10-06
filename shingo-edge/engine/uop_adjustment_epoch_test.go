@@ -81,7 +81,7 @@ func TestUOPAdjustment_OlderCoreKeepsItsEpoch(t *testing.T) {
 // a test can watch what an adjustment does to it. Returns the node id.
 func boundNodeFixture(t *testing.T, eng *Engine, coreNode string, binID, epoch int64) (int64, int64) {
 	t.Helper()
-	procID, err := eng.db.CreateProcess("EPOCH-PROC-"+coreNode, "", "active_production", "", "", false)
+	procID, err := eng.db.CreateProcess("EPOCH-PROC-"+coreNode, "", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
