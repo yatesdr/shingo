@@ -23,9 +23,11 @@ Extend this pattern to:
 6. **Swap-mode WORDS** (shipped, U10) — `TestSwapModeWordsMatchTheModel` in
    `shingo-edge/domain` pins Go's `SwapModeWord` to `composer-model.js`'s
    `MODES` block, which is the authority because both surfaces draw their
-   chips and cards from it. Note these are not the validator's words:
-   `2-Robot Press Index` is what a refusal says and `2-robot index` is what a
-   control says, and a suggested preset name is a control.
+   chips and cards from it. The validator's refusals name a mode by the same
+   word (`swapModeLabel` returns `SwapModeWord`; only loader and unloader
+   claims, which have no chip, keep their own), so an operator who picked
+   `2‑robot index` reads `2‑robot index` in the refusal. A suggested preset
+   name is a control and uses it too.
 7. **Shape-field words** (shipped, U10) — `TestShapeFieldWordsMatchTheModel`
    pins `domain.shapeFields` to `composer-model.js`'s `SHAPE_FIELDS`: the same
    eleven fields, the same words, the same order. The server words a drifted

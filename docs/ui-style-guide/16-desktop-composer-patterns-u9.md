@@ -6,13 +6,40 @@ the end of the section. Reference shots:
 `hmi-flow-composer-design-2026-09-02/desktop/reference/P0,D1–D5.png` at
 1440×900. Each is one paragraph because each is one idea.
 
-**The app-bar status pill.** A read-only pill on the right of the app bar
-states a setting that is decided elsewhere — `Operators may change flows` /
-`Operators run flows as set up` — followed by a quiet `Settings ›` link to
-where it *is* decided. It is a pill and not a switch on purpose: the same
-decision drawn twice is a decision made in two places, and the second one is
-always the one somebody changes by accident. Use this wherever a screen needs
-to show a setting it is not the owner of. Reference: `D1-flows-selected.png`.
+**One editor per fact.** Each fact about a process is edited in exactly one
+place, and every other screen that shows it shows it read-only:
+
+| Fact | Its one editor |
+|---|---|
+| name, description, group, counter, curtain, changeover arm, HMI gate, quality hold, routing set | **Settings** |
+| the screens, and the positions each one works | **Operator screens › Edit** |
+| flows, and their Advanced fields | **Flows** |
+| the part set | **the part picker**, inline wherever a part is chosen |
+| presets | **Presets** |
+| all of it, once, when the process is made | **Add process** |
+
+The process list finds a process and opens it; it has no Edit sheet of its
+own. A second editor for a fact is two forms that can disagree about it, and
+the one the engineer did not open is the one holding the stale value. When a
+fact gains a better editor, the old one is deleted with its routes rather than
+kept in step. **"+ Add a position" on the Flows tab is not a second positions
+editor**: it turns a position on in the draft, nothing is written until the
+flow is saved, and which positions the process works is still Operator
+screens' to say. One phrase for it everywhere: "Add a position".
+
+**The app-bar gate sentence.** Plain muted text on the right of the app bar
+(`.pd-gate`: no border, no tone, no pill) states a setting that is decided
+elsewhere — `Operators may change flows` / `Operators run flows as set up`.
+It is not a switch on purpose: the same decision drawn twice is a decision
+made in two places, and the second one is always the one somebody changes by
+accident. It is not a pill either: a pill's shape claims "status chip" for a
+thing that never changes on this screen, and the words already carry the
+state. **It carries no link to where
+the setting is decided** when that place is already a tab on the same bar: a
+`Settings ›` link beside the Settings tab is the tab's own door drawn twice.
+Use this wherever a screen needs to show a setting it is not the owner of.
+Reference: `D1-flows-selected.png` (drawn when the gate was still a pill with
+a link).
 
 **The grouped list table.** One table per group with an 11 px letter-spaced
 group label and a count above it, the ungrouped bucket last, and a whole row
@@ -33,11 +60,12 @@ The count is computed from the SAME predicate the server uses for "has a
 value", so a badge and a save cannot disagree; a second spelling of it would
 put an indigo count on a row the server reads as untouched.
 
-**The Advanced sheet's field shape.** 600 wide over the scrim; a section per
-group of fields with an 11 px label and its own `N set`; each field a 230–300 px
-label column carrying a **one-line, plain-language sub-label** and a value
-column beside it. The sub-label is not optional — these are the fields nobody
-can name from memory, and the sheet exists precisely because they had no home.
+**The Advanced sheet's field shape.** The one sheet width over the scrim (see
+Modals › Sheets); a section per group of fields with an 11 px label and its
+own `N set`; each field a 230 px label column carrying a **one-line,
+plain-language sub-label** and a value column beside it. The sub-label is not
+optional — these are the fields nobody can name from memory, and the sheet
+exists precisely because they had no home.
 Footer states what the sheet does NOT do (`Nothing here changes the flow or the
 picture`) before the two buttons. Reference: `D2-advanced.png`.
 
@@ -164,6 +192,19 @@ planned them; it does not know how many AMRs the fleet will send, because that
 is the dispatcher's and the fleet's at the moment they run. Name roles where a
 role is the subject — the picture's legend, `Robot 1 · …` on an order row — and
 count only what the screen computed.
+
+**The bar's problem line is the control.** When the composer bar is blocked,
+its first finding that names a position is a link: on the desktop a click
+selects that position (picture and table row, the same selection a card click
+makes) and scrolls its row into view. On the station the same line's job is a
+tap that opens that position's panel — the station's way of going to a
+position, through the same `data-tap="pos"` door a card tap uses. A finding with no position is
+not clickable — there is nothing to take you to. There is no one-tap fix
+button beside it: every action such a button could take guesses at something
+the engineer has not said (a part, a free back position, removal over
+placement), and parts are never prefilled. Each field keeps its own picker,
+and taking an unplaced part off the flow is a control on the unplaced part's
+own chip.
 
 **The scroll fade (U10).** A panel that scrolls its own content carries a 12 px
 fade at the scrolling edge, over the panel's OWN surface token, present only

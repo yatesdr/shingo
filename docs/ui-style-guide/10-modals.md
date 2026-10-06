@@ -58,6 +58,51 @@ input — get the safe defaults automatically. The combo of "button-only
 close + clear-on-close" means an accidental backdrop click does nothing,
 and a deliberate close starts the next session fresh.
 
+### Sheets: one shell, one width, one Escape order
+
+A page that opens several dialogs opens them through **one shell**. On the
+Edge Processes page that is `openSheet` (`processes-desktop.js`): one
+`.pd-modal` card on the `.modal-overlay` scrim, header, body, a footer with the
+sheet's status line, Cancel and the action. Advanced, Generate variants and
+every one-field sheet use the same card, so the desktop has one dialog and
+not one per feature.
+
+**One width, derived from the field the sheet holds.** A sheet field is a
+230 px label column, a 14 px gap and a 420 px wide input; add 24 px of body
+padding and a 1 px border each side and 18 px for the body's scrollbar when a
+long sheet scrolls, and every sheet is **732 px**. A width set per sheet (there
+were a 480 and a 600) sat under that sum and the input ran out of the card.
+Below a 780 px window (the card plus the scrim's margin) the card is capped at
+the window and each label stacks above its input instead of pushing into a
+horizontal scroll. The one wider sheet is Generate variants (920 px), because
+its body is a table with a column per claimed position, not a field.
+`processes_desktop_sheet_width_test.go` reads the four rules from the
+stylesheet and holds the width to their sum, so changing one without the
+width goes red.
+
+**One Escape order: innermost first.** One key handler (`onEscape`) walks the
+layers the page stacks, innermost first, and acts on the first it finds: an
+open popover closes — the page's (`#pd-pop`), Settings' group list
+(`#pd-stpop`), or a picker a dialog opened over itself (`#pd-advpop`:
+Advanced's, Generate variants', a sheet's group list); else, while the discard question is up, Escape does nothing;
+else the open layer — Advanced, then Generate variants, then an `openSheet`
+sheet — asks or closes (below); else, on the Flows tab, the selected position
+is let go. An Escape that closed the sheet under an open menu left the menu
+floating over nothing.
+
+**A sheet with typed input asks before it discards.** An Escape on a sheet
+nobody has typed into closes it. On a sheet with typed work it opens
+*Discard the changes?* with **Keep editing**, which puts every field back
+exactly as it was, and **Discard**, which closes the layer the way its own
+Cancel does. Advanced, Generate variants and every `openSheet` sheet ask the
+same question, and while it is up Escape does nothing: only its two buttons
+answer it. "Typed" is read off the DOM, not kept in a ledger: a field whose
+property (`value`, `checked`) differs from the attribute it was drawn with has
+been edited. The question is for Escape — a key that elsewhere only closes
+menus. Cancel is a deliberate click and discards without
+asking; the backdrop does not close a sheet at all (the lifecycle default
+above).
+
 ### Touch variant
 
 Operator HMI uses the same mechanism with a `.modal--touch` modifier for

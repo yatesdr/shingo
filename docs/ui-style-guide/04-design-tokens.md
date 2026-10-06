@@ -165,14 +165,14 @@ Three tokens, theme-invariant, in `:root`:
 
 | Token | Value | What it is |
 |---|---|---|
-| `--robot-1` | `#22c9ae` | Robot 1 — its legs on the cell picture, its supply path on the plant map, its chevrons in a swap-mode glyph |
+| `--robot-1` | `#22c9ae` | Robot 1 — its chevrons and words on the cell picture, its supply path on the plant map, its chevrons in a swap-mode glyph |
 | `--robot-2` | `#8a7bff` | Robot 2 — the same three things for the second robot |
 | `--station` | `#f2f5f8` | the press itself: slot outlines, the line-side bar, and the NEW bin in a glyph |
 
 The operator station keeps its own copies — `--os-r1`, `--os-r2`,
 `--os-station` — for the reason the z-layer and substrate copies exist:
 `operator-display.html` links only `operator.css`, so a `var(--robot-1)` there
-resolves to nothing and a robot's leg silently disappears. Both copies move
+resolves to nothing and a robot's chevrons silently disappear. Both copies move
 together, and `TestOperatorStationRobotColoursMatchShared` /
 `TestOperatorStationStationHueMatchesShared` fail if one moves alone.
 
@@ -185,8 +185,8 @@ than borrowing the accent's or a status dot's, and the rules that follow are:
 - **Never `--accent` for a robot, and never a robot hue for a control.** Where a
   robot line and an accent selection share a screen — the desktop composer's D1
   is exactly that — **the accent is the border and the button, the robot is the
-  line.** Selecting a card outlines it in indigo; the leg leaving that card
-  stays teal.
+  move.** Selecting a module outlines its cards in indigo; the chevrons leaving
+  them stay teal.
 - **Never a robot hue for a status.** Status lives in `--status-*-dot` and the
   `.badge-*` classes, as always.
 - **`--status-staged-dot` (teal) and `--robot-1` (teal) never share a surface

@@ -36,7 +36,7 @@ This is the worst overloading in the codebase today — the word "Station" means
 |---|---|---|
 | **Edge Cell** | One Edge installation — a physical production cell with its own Edge instance, controllers, HMIs, and Core sync. Identified by `StationID` in `Config.Messaging`. Core's `NodeType` code `EDGE` and `Order.StationID` refer to this concept. **The term "Edge Cell" is the proposed unified name** — code currently uses "Station" (Edge config), "edge-station" (Core docstrings), and `StationID` (both) | `shingo-edge/config/...` `StationID`; `shingo-core/domain/order.go:23` `StationID`; `shingo-core/domain/node_type.go:6` "EDGE (edge station)" |
 | **Loader station** | The Core Nodes page's word for a bin loader or unloader (one `bin_loaders` row; a two-stage unloader is one station made of two loaders). UI text says **station** only on that page's box and card (**+ Station**, **New station**, **Delete station**); code says loader. A third meaning of "station" — see the reconciliation table | `shingo-core/store/loaders` `Loader`; `shingo-core/www/static/pages/loaders.js` |
-| **Operator Station** | A specific HMI screen inside an Edge Cell. Configured to claim a subset of the cell's Process Nodes; renders an operator-facing UI for those nodes. Multiple Operator Stations exist per cell. **The term "Operator Station" wins** — code currently mixes this with "Station" (the domain type) and "Operator Screen" (the processes-tab UI label) | `shingo-edge/domain/station.go:8` `type Station struct`; API at `/api/operator-stations`; URL `/operator/station/{id}` |
+| **Operator Station** | A specific HMI screen inside an Edge Cell. Configured to claim a subset of the cell's Process Nodes; renders an operator-facing UI for those nodes. Multiple Operator Stations exist per cell. **In code, "Operator Station" wins** — code currently mixes this with "Station" (the domain type). **In the UI it is a screen** (*Operator screens*, *Add operator screen*, *Screen* as a column head), which keeps "station" for the cell and the loader station | `shingo-edge/domain/station.go:8` `type Station struct`; API at `/api/operator-stations`; URL `/operator/station/{id}` |
 
 ### Carriers
 
@@ -75,7 +75,7 @@ name and migrate. Listed in rough order of impact × ease.
 |---|---|---|---|
 | **Edge installation / cell** | "Station" (Edge config UI, `StationID`), "edge-station" (Core docstrings), `EDGE` (Core NodeType code) | **"Edge Cell"** in UI labels and new docs. `StationID` field name stays in code (too disruptive to rename a serialized field across the protocol), but its meaning is "Edge Cell ID" | Update Edge config UI labels: "Station ID" → "Edge Cell ID". Update Core docstrings. Don't rename `StationID` in JSON/structs |
 | **Loader or unloader on Core's Nodes page** | "station" (the station box and card: **+ Station**, **New station**), "loader" (code, API, every other page) | Keep **station** on that page only; a plant person thinks "the press 6 unload station", and "loader" reads as the thing that fills. Qualify it (**loader station**) anywhere it could meet the two meanings above | Nothing to rename; don't spread "station" for a loader beyond the Nodes page |
-| **HMI screen inside a cell** | "Station" (domain type `shingo-edge/domain/station.go`), "OperatorStation" (API endpoint, JSON field), "Operator Screen" (processes-tab UI label) | **"Operator Station"** in code (matches existing API). In UI labels, **"Operator Station"** too — drop the "Operator Screen" label in `processes.html:46, 154` etc. | Rename UI strings only; data types and APIs already match. Single-PR Edge change |
+| **HMI screen inside a cell** | "Station" (domain type `shingo-edge/domain/station.go`), "OperatorStation" (API endpoint, JSON field), "screen" (Edge UI) | **"Operator Station"** in code (matches existing API). In UI labels, **screen** — *Operator screens* is the Processes page's tab and editor | Data types and APIs already match; UI strings that still say "station" for an HMI move to "screen" as their files are touched |
 | **Order list page on Edge** | **Done.** URL `/orders`, page identifier `"orders"`, handler `handleOrders`. A 301 redirect from `/kanbans` preserves old bookmarks. HTMX targets use `/orders/partial`. | — (completed) | — |
 | **Admin-created one-off order** | Edge: "Manual Order" (types move/retrieve/store/complex). Core: still "Spot Order" (subtypes transport/staged/swap/send_to_location) — rename to "Manual Order" is outstanding. | **"Manual Order"** — clearer than "Spot," and Edge's term is the broader one. Core's `/orders` admin modal should be renamed to "Manual Order." Subtype vocabularies stay distinct because they represent genuinely different operations | Rename Core's `apiSpotOrderSubmit` to `apiManualOrderSubmit`. Rename `.spot-tabs` CSS to `.manual-order-tabs`. Update Core nav label "Spot Order" → "Manual Order" |
 | **What Core calls "edge-station" in NodeType** | `EDGE` NodeType code described as "edge station" | Keep the code as `EDGE` (short codes are intentional). Rename the human description to "edge cell" | One docstring change on `shingo-core/domain/node_type.go:6` |
@@ -139,6 +139,55 @@ lists is not a guard. No such test exists yet.
 **The checkable end state:** that pattern returns nothing in any `.js` / `.css` /
 `.html` under `shingo-core/www`, `shingo-edge/www` or `shared/`. Verifiable in
 ten seconds, unlike a count in a table.
+
+### Words on the setup screens
+
+One word per thing on the Edge Processes page and the station composer. A
+field keeps the name its claim gives it (Desktop composer patterns › "A field
+is called what the claim calls it"); these are the nouns around the fields.
+
+| Say | Never | Why |
+|---|---|---|
+| **part** | payload (in UI text) | the plant's word on every surface, from the picker to the finding pill. `payload_code` stays the field name in code and on the wire; field labels and refusals say *part* (*Auto request part*; a claim with none is asked for a part) |
+| **flow** | — | what one part does on this process: which positions it works, how each swaps, where its bins come from and go |
+| **preset** | — | a named **shape** of flow. A preset is never a part and never names one; parts are applied to it |
+| **screen** | station, for an HMI | see Operator Station above |
+| **1‑robot swap**, **2‑robot swap**, **2‑robot index**, **Sequential A/B** | Single-robot swap, Two-robot swap, 2-Robot Press Index | the chip's word, everywhere, server refusals included. Go's `SwapModeWord` and `composer-model.js`'s `MODES` are the one table (pinned, see Drift detection) and keep its non-breaking hyphen |
+| **Add a position** | — | one phrase on every door that turns a position on in a flow (the table's *+ Add a position*, the free-position menu, the empty bar's *Add a position below, or use a preset*) |
+| a node name, in full | `PLN_01` → `P01` | the plant named its nodes; a shortened name is a second name nobody can search for. Too long for its box, it is cut in the middle with the full name in the tooltip |
+
+The changeover picker's red pill says what Core answered — **No bin at
+Core** (at least one part has no available bin), with Core's own note
+(`missing PANEL-A`) on the row and as the pill's title — and never "No
+parts". A style Core has not checked reads **Not checked at Core**. A pill
+that says more than its source said is a pill that sends someone looking for
+the wrong problem.
+
+### State words
+
+What a process or a station is doing is **three words, derived, never
+stored**:
+
+| Words | When |
+|---|---|
+| **Changing over** | the process's `target_style_id` is set and differs from its `active_style_id` |
+| **Running `<style>`** | otherwise, when a style is running (the station view's `current_style`; the process list's running style) |
+| **No part running** | neither |
+
+Changing over is tested first: during a changeover the old style is still the
+running one, and "Running Style A" would hide the changeover. Both readers —
+the station's `stationState` (`operator-render.js`: header, style chip,
+footer badge, empty grid) and the Processes list's State column
+(`processes-desktop.js`) — derive from fields their payloads already carry,
+and each surface reads its one derivation so its places cannot disagree.
+
+**Never store a state you can derive.** `processes.production_state` held the
+same fact as the two style pointers, written at changeover start, cutover and
+cancel; a Settings save could write a stale copy back over the live one. It
+was dropped (Edge migration v16) along with `operator_stations.device_mode`,
+which had no reader and two defaults that disagreed. Before adding a state
+column or payload field, check whether the words can be computed from what is
+already sent; if they can, compute them, in one function per surface.
 
 ### Working principle
 

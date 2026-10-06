@@ -97,3 +97,10 @@ holding bins and dims the others; the material layer's `?highlight=` deep-link
 reuses the same machinery. Dim the peers (lower opacity / desaturate) — do not
 grey out the whole canvas. The context stays readable; the focus just wins.
 
+**The cell picture is the exception: its selection dims nothing.** Selecting
+a position outlines its whole module in the accent and leaves every other
+module as it was. Each module is a choreography the engineer reads against
+the selected one, and fading them made the rest of the cell look disabled.
+The only dimmed mark on that picture is the bar over a position not in the
+flow (see Glyphs › The cell picture).
+
