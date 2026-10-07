@@ -7,12 +7,17 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingocore/engine"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -27,11 +32,13 @@ import (
 // never for any other reason.
 //
 // What these pin, in one place:
-//   - apiBinAction x all 16 verbs: input -> stored row -> response. The answer
-//     is the bare {"status":"ok"} for every verb: it carries no bin (LC12 adds
-//     the history-free detail to it).
-//   - apiBulkBinAction: {"results":[{id, ok, error}]} and nothing about the bins.
-//   - apiBinDetail: the key set, and that `audit` is the bin's whole history.
+//   - apiBinAction x all 16 verbs: input -> stored row -> response. Pinned bare
+//     {"status":"ok"} at 5c0beb74; LC12 moved it: the answer keeps
+//     "status":"ok" and carries the bin's history-free detail (no audit).
+//   - apiBulkBinAction: {"results":[{id, ok, error}]}; LC12 adds each existing
+//     bin's history-free detail to its result.
+//   - apiBinDetail: the key set, and that `audit` is the bin's whole history
+//     (unchanged by LC12); ?history=0 is the same answer without the audit.
 //   - record_count: a typed value, a stale value (the count moved after the page
 //     loaded) and a refused bin.
 
@@ -74,8 +81,80 @@ func pinKeys(m map[string]json.RawMessage) string {
 	return strings.Join(keys, ",")
 }
 
-// pinOKBody is the one answer every successful verb gives today.
-const pinOKBody = "{\"status\":\"ok\"}\n"
+// pinEchoTable reads ECHOES from static/pages/bins-echo.js: how many
+// bin-update events the page expects a successful verb to emit for its bin.
+// The page drops exactly that many as the echo of its own action, so the table
+// must match what the handlers really emit (TestPinBins_ActionEveryVerb).
+func pinEchoTable(t *testing.T) map[string]int {
+	t.Helper()
+	src, err := os.ReadFile(filepath.Join("static", "pages", "bins-echo.js"))
+	testutil.MustNoErr(t, err, "read bins-echo.js")
+	block := regexp.MustCompile(`(?s)export var ECHOES = \{(.*?)\};`).FindSubmatch(src)
+	if block == nil {
+		t.Fatal("bins-echo.js: no ECHOES table")
+	}
+	out := map[string]int{}
+	for _, m := range regexp.MustCompile(`(\w+):\s*(\d+)`).FindAllSubmatch(block[1], -1) {
+		n, err := strconv.Atoi(string(m[2]))
+		out[string(m[1])] = testutil.Must(t, n, err, "bins-echo.js: echo count "+string(m[1]))
+	}
+	return out
+}
+
+// pinCountBinUpdates counts the bin-update events emitted for bin id while fn
+// runs. The bus is synchronous (eventbus.Emit), so an emit inside the handler
+// is counted before fn returns.
+func pinCountBinUpdates(h *Handlers, id int64, fn func()) int {
+	var mu sync.Mutex
+	n := 0
+	sub := h.engine.EventBus().SubscribeTypes(func(evt engine.Event) {
+		if ev, ok := evt.Payload.(engine.BinUpdatedEvent); ok && ev.BinID == id {
+			mu.Lock()
+			n++
+			mu.Unlock()
+		}
+	}, engine.EventBinUpdated)
+	fn()
+	h.engine.EventBus().Unsubscribe(sub)
+	mu.Lock()
+	defer mu.Unlock()
+	return n
+}
+
+// pinHistoryFreeKeys is the key set of a history-free answer for a bin with a
+// payload and no claim (LC12): the detail's keys without `audit`.
+const pinHistoryFreeKeys = "bin,manifest,recent_orders,template"
+
+// pinRequireBinAnswer is what every successful verb answers since LC12: the
+// "status":"ok" it always carried, plus the bin as it now is, without history.
+// The answer's bin must be the stored row (id, status, count, label).
+func pinRequireBinAnswer(t *testing.T, db *store.DB, id int64, raw string) {
+	t.Helper()
+	var got map[string]json.RawMessage
+	testutil.MustNoErr(t, json.Unmarshal([]byte(raw), &got), "decode answer")
+	if string(got["status"]) != `"ok"` {
+		t.Errorf("answer status = %s, want \"ok\"; body %s", got["status"], raw)
+	}
+	if _, ok := got["audit"]; ok {
+		t.Error("answer carries the audit; LC12's answer is history-free")
+	}
+	for _, k := range []string{"bin", "manifest", "recent_orders"} {
+		if _, ok := got[k]; !ok {
+			t.Errorf("answer has no %q; body %s", k, raw)
+		}
+	}
+	var b struct {
+		ID           int64  `json:"id"`
+		Status       string `json:"status"`
+		UOPRemaining int    `json:"uop_remaining"`
+		Label        string `json:"label"`
+	}
+	testutil.MustNoErr(t, json.Unmarshal(got["bin"], &b), "decode answer bin")
+	stored := testdb.RequireBin(t, db, id)
+	if b.ID != id || b.Status != string(stored.Status) || b.UOPRemaining != stored.UOPRemaining || b.Label != stored.Label {
+		t.Errorf("answer bin = %+v, stored = id %d status %q uop %d label %q", b, id, stored.Status, stored.UOPRemaining, stored.Label)
+	}
+}
 
 // pinEmptyBin creates a carrier with no payload and no manifest at the node.
 func pinEmptyBin(t *testing.T, db *store.DB, nodeID int64, label string) *bins.Bin {
@@ -91,16 +170,16 @@ func pinEmptyBin(t *testing.T, db *store.DB, nodeID int64, label string) *bins.B
 
 // TestPinBins_ActionEveryVerb is the 16-verb table. Each row prepares the bin,
 // posts the verb through the HTTP door, and pins the stored row and the
-// response. The response is the bare ok for all 16 (LC12 moves it).
+// response. The response was the bare ok for all 16; LC12 moved it to ok plus
+// the bin's history-free detail.
 func TestPinBins_ActionEveryVerb(t *testing.T) {
 	t.Parallel()
 
 	type row struct {
-		verb    string
-		prep    func(t *testing.T, db *store.DB, sd *testdb.StandardData, b *bins.Bin) int64
-		params  func(sd *testdb.StandardData) any
-		stored  func(t *testing.T, db *store.DB, sd *testdb.StandardData, id int64)
-		comment string
+		verb   string
+		prep   func(t *testing.T, db *store.DB, sd *testdb.StandardData, b *bins.Bin) int64
+		params func(sd *testdb.StandardData) any
+		stored func(t *testing.T, db *store.DB, sd *testdb.StandardData, id int64)
 	}
 	same := func(_ *testing.T, _ *store.DB, _ *testdb.StandardData, b *bins.Bin) int64 { return b.ID }
 	status := func(want string) func(*testing.T, *store.DB, *testdb.StandardData, int64) {
@@ -231,6 +310,10 @@ func TestPinBins_ActionEveryVerb(t *testing.T) {
 	if len(rows) != 16 {
 		t.Fatalf("table has %d verbs, bin_actions.go:20-35 has 16", len(rows))
 	}
+	echoes := pinEchoTable(t)
+	if len(echoes) != 16 {
+		t.Fatalf("bins-echo.js ECHOES has %d verbs, want 16: %v", len(echoes), echoes)
+	}
 
 	for _, r := range rows {
 		r := r
@@ -242,18 +325,24 @@ func TestPinBins_ActionEveryVerb(t *testing.T) {
 			if r.params != nil {
 				params = r.params(sd)
 			}
-			code, body, raw := pinBinPost(t, h, id, r.verb, params)
+			var code int
+			var body map[string]any
+			var raw string
+			emitted := pinCountBinUpdates(h, id, func() { code, body, raw = pinBinPost(t, h, id, r.verb, params) })
+			// The page counts this verb's echoes (bins-echo.js ECHOES); the
+			// count must be what the handler emits.
+			if want, ok := echoes[r.verb]; !ok || emitted != want {
+				t.Errorf("%s emitted %d bin-update events for its bin; bins-echo.js ECHOES says %d (present %v)", r.verb, emitted, want, ok)
+			}
 			if code != http.StatusOK {
 				t.Fatalf("status = %d, want 200; body %s", code, raw)
 			}
-			// TODAY: the bare ok, no bin. LC12 moves this (the answer carries the
-			// bin's history-free detail).
-			if raw != pinOKBody {
-				t.Errorf("body = %q, want %q", raw, pinOKBody)
+			// LC12: was the bare ok with no bin; now ok plus the bin as stored,
+			// without history.
+			if body["status"] != "ok" {
+				t.Errorf("status = %v, want ok", body["status"])
 			}
-			if _, ok := body["bin"]; ok {
-				t.Error("answer carries a bin today; the pin says it does not")
-			}
+			pinRequireBinAnswer(t, db, id, raw)
 			r.stored(t, db, sd, id)
 		})
 	}
@@ -273,8 +362,12 @@ func TestPinBins_ActionRefusals(t *testing.T) {
 	if code != http.StatusBadRequest || raw != "{\"error\":\"unknown action: bogus\"}\n" {
 		t.Errorf("unknown verb = %d %q, want 400 unknown action: bogus", code, raw)
 	}
-	// A verb's own refusal: release of a bin that is not staged.
-	code, _, raw = pinBinPost(t, h, b.ID, "release", nil)
+	// A verb's own refusal: release of a bin that is not staged. A refused
+	// verb emits no bin-update (the page settles a refusal as zero echoes).
+	emitted := pinCountBinUpdates(h, b.ID, func() { code, _, raw = pinBinPost(t, h, b.ID, "release", nil) })
+	if emitted != 0 {
+		t.Errorf("refused release emitted %d bin-update events, want 0", emitted)
+	}
 	want := fmt.Sprintf("{\"error\":\"bin %d is not staged\"}\n", b.ID)
 	if code != http.StatusBadRequest || raw != want {
 		t.Errorf("release of an available bin = %d %q, want 400 %q", code, raw, want)
@@ -285,8 +378,8 @@ func TestPinBins_ActionRefusals(t *testing.T) {
 }
 
 // TestPinBins_BulkAction pins apiBulkBinAction's answer: one result per id,
-// {id, ok} or {id, error}, and nothing about the bins themselves (LC12 adds the
-// history-free detail per bin). A locked bin is refused per row unless the verb
+// {id, ok} or {id, error}; since LC12 each result of a bin that exists also
+// carries that bin's history-free detail (an unknown id carries none). A locked bin is refused per row unless the verb
 // is unlock; an unknown id is "not found"; more than 100 ids is refused whole.
 func TestPinBins_BulkAction(t *testing.T) {
 	t.Parallel()
@@ -300,10 +393,55 @@ func TestPinBins_BulkAction(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("bulk status = %d, want 200; body %s", rec.Code, rec.Body.String())
 	}
-	want := fmt.Sprintf(`{"results":[{"id":%d,"ok":true},{"id":%d,"ok":false,"error":"locked by pin-holder"},{"id":999999,"ok":false,"error":"not found"}]}`+"\n",
-		b.ID, locked.ID)
-	if rec.Body.String() != want {
-		t.Errorf("bulk body =\n  %s\nwant\n  %s", rec.Body.String(), want)
+	// Was exactly {"results":[{"id":A,"ok":true},{"id":B,"ok":false,"error":
+	// "locked by pin-holder"},{"id":999999,"ok":false,"error":"not found"}]}.
+	// LC12: the same id/ok/error per row, in the same order, and the two bins
+	// that exist carry their detail; the unknown id is byte-identical.
+	var bulk struct {
+		Results []map[string]json.RawMessage `json:"results"`
+	}
+	testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &bulk), "decode bulk")
+	if len(bulk.Results) != 3 {
+		t.Fatalf("bulk results = %d, want 3; body %s", len(bulk.Results), rec.Body.String())
+	}
+	type wantRow struct {
+		id     int64
+		ok     string
+		errMsg string
+		status string // the detail's bin status; "" = no detail
+	}
+	for i, w := range []wantRow{
+		{b.ID, "true", "", "flagged"},
+		{locked.ID, "false", `"locked by pin-holder"`, "available"},
+		{999999, "false", `"not found"`, ""},
+	} {
+		r := bulk.Results[i]
+		if string(r["id"]) != strconv.FormatInt(w.id, 10) || string(r["ok"]) != w.ok || string(r["error"]) != w.errMsg {
+			t.Errorf("result %d = id %s ok %s error %s, want %d %s %s", i, r["id"], r["ok"], r["error"], w.id, w.ok, w.errMsg)
+		}
+		if _, ok := r["audit"]; ok {
+			t.Errorf("result %d carries the audit; LC12's detail is history-free", i)
+		}
+		if w.status == "" {
+			if len(r) != 3 {
+				t.Errorf("unknown id result = %v, want only id, ok, error", r)
+			}
+			continue
+		}
+		var rb struct {
+			ID     int64  `json:"id"`
+			Status string `json:"status"`
+		}
+		testutil.MustNoErr(t, json.Unmarshal(r["bin"], &rb), "decode result bin")
+		if rb.ID != w.id || rb.Status != w.status {
+			t.Errorf("result %d bin = %+v, want id %d status %s", i, rb, w.id, w.status)
+		}
+		if _, ok := r["recent_orders"]; !ok {
+			t.Errorf("result %d has no recent_orders", i)
+		}
+	}
+	if !strings.HasSuffix(rec.Body.String(), `{"id":999999,"ok":false,"error":"not found"}]}`+"\n") {
+		t.Errorf("unknown id row moved: %s", rec.Body.String())
 	}
 	if got := testdb.RequireBin(t, db, b.ID); string(got.Status) != "flagged" {
 		t.Errorf("bulk flag: stored %q, want flagged", got.Status)
@@ -384,6 +522,41 @@ func TestPinBins_DetailKeysAndFullAudit(t *testing.T) {
 	}
 }
 
+// TestPinBins_DetailHistoryFree pins LC12's added read: GET
+// /api/bins/detail?id=N&history=0 is the default answer without `audit`, every
+// other key byte-identical to the default answer's.
+func TestPinBins_DetailHistoryFree(t *testing.T) {
+	t.Parallel()
+	h, _, _, b := setupBinForAction(t)
+	for i := 0; i < 3; i++ {
+		if code, _, raw := pinBinPost(t, h, b.ID, "add_note",
+			map[string]any{"note_type": "general", "message": fmt.Sprintf("n%d", i)}); code != http.StatusOK {
+			t.Fatalf("note %d: %d %s", i, code, raw)
+		}
+	}
+	full := pinBinDetail(t, h, b.ID)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/bins/detail?id="+strconv.FormatInt(b.ID, 10)+"&history=0", nil)
+	rec := httptest.NewRecorder()
+	h.apiBinDetail(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("history-free detail: status %d, body %s", rec.Code, rec.Body.String())
+	}
+	var lean map[string]json.RawMessage
+	testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &lean), "decode history-free detail")
+	if k := pinKeys(lean); k != pinHistoryFreeKeys {
+		t.Errorf("history-free keys = %s, want %s", k, pinHistoryFreeKeys)
+	}
+	for k, v := range lean {
+		if string(full[k]) != string(v) {
+			t.Errorf("history-free %q = %s, default answer has %s", k, v, full[k])
+		}
+	}
+	if _, ok := full["audit"]; !ok {
+		t.Error("default answer lost its audit")
+	}
+}
+
 // TestPinBins_RecordCount pins the cycle-count door (the wizard posts
 // record_count through /api/bins/action, bins.js:654-675):
 //   - typed: the typed value is stored, the audit says expected -> typed;
@@ -400,9 +573,10 @@ func TestPinBins_RecordCount(t *testing.T) {
 		t.Parallel()
 		h, db, _, b := setupBinForAction(t)
 		code, _, raw := pinBinPost(t, h, b.ID, "record_count", map[string]any{"actual_uop": 77, "actor": "cc"})
-		if code != http.StatusOK || raw != pinOKBody {
+		if code != http.StatusOK {
 			t.Fatalf("typed = %d %q, want 200 ok", code, raw)
 		}
+		pinRequireBinAnswer(t, db, b.ID, raw) // LC12: ok + the bin at 77
 		if got := testdb.RequireBin(t, db, b.ID); got.UOPRemaining != 77 {
 			t.Errorf("stored uop = %d, want 77", got.UOPRemaining)
 		}
@@ -417,14 +591,16 @@ func TestPinBins_RecordCount(t *testing.T) {
 		testutil.MustNoErr(t, err, "move the count")
 
 		code, _, raw := pinBinPost(t, h, b.ID, "record_count", map[string]any{"actual_uop": pageLoad, "actor": "cc"})
-		if code != http.StatusOK || raw != pinOKBody {
-			t.Fatalf("stale = %d %q, want 200 ok (today the server takes a stale match)", code, raw)
+		if code != http.StatusOK {
+			t.Fatalf("stale = %d %q, want 200 ok (the server still takes a stale match; the wizard no longer sends one)", code, raw)
 		}
+		pinRequireBinAnswer(t, db, b.ID, raw) // LC12: ok + the bin at 100
 		if got := testdb.RequireBin(t, db, b.ID); got.UOPRemaining != 100 {
 			t.Errorf("stored uop = %d, want 100 (the stale page value overwrote 80)", got.UOPRemaining)
 		}
 		requireAudit(t, db, b.ID, "counted", "80", "100", "cc")
-		entries, _ := db.ListEntityAudit("bin", b.ID)
+		entries, err := db.ListEntityAudit("bin", b.ID)
+		testutil.MustNoErr(t, err, "list bin audit")
 		note := findAuditByAction(entries, "note:count")
 		if note == nil || !strings.Contains(note.NewValue, "expected 80, actual 100 (+20)") {
 			t.Errorf("discrepancy note = %+v, want one naming expected 80, actual 100 (+20)", note)

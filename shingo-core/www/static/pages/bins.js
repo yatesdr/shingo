@@ -1,10 +1,78 @@
 import { api, apiGet, apiPost, debounce, delegateActions, el, escapeHtml, h, hideModal, openFromQuery, showModal, timeAgoHTML, toast, uiConfirm, uiPrompt } from '/static/app.js';
 import { onSSE } from '/static/shared/utils.js';
+import { binRowView, uopText } from '/static/pages/bins-row.js';
+import { echoesFor, newEchoLedger } from '/static/pages/bins-echo.js';
 
 // ===== STATE =====
 var currentBinId = null;
 var currentBinData = null;
-var ccState = { step: 0, bins: [], index: 0, results: [] };
+// journalFresh: the Journal tab shows the open bin's history as of its last
+// draw. The pop-up reads the bin without history (LC12); the history is read
+// when the Journal is opened, and again on an update while it is the open tab.
+var journalFresh = false;
+var ccState = newCCState();
+
+function newCCState() {
+  return { step: 0, bins: [], index: 0, results: [], ready: false, busy: false, seq: 0 };
+}
+
+// ===== READS =====
+// readBin is the one way this page reads a bin. withHistory=false is the
+// history-free read (?history=0): what the pop-up, the row and the cycle count
+// draw. withHistory=true is the default answer, the same plus the whole audit,
+// read only for the Journal.
+function readBin(id, withHistory) {
+  return apiGet('/api/bins/detail?id=' + id + (withHistory ? '' : '&history=0'));
+}
+
+function errText(e) {
+  return (typeof e === 'string' && e) || (e && e.error) || 'unknown';
+}
+
+// ===== OWN-ACTION ECHOES =====
+// Every action this page posts makes Core broadcast bin-update events for its
+// bin (ids only, www/sse.go). The action's answer already carries the bin, so
+// those echoes are not a reason to read it again. They are counted, not timed
+// (bins-echo.js): each own action expects exactly the number of events its
+// verb emits, for 5 s after its answer; every other event for the open bin is
+// a real update and costs the one read.
+var ECHO_EXPIRY_MS = 5000;
+var echoes = newEchoLedger(ECHO_EXPIRY_MS);
+
+// postBin posts an action for the bins in `ids` (verb `action`) and settles
+// each bin's expected echoes against the answer: a bin the server refused (or
+// a post that failed) emitted nothing, so any event already taken for it was a
+// real update, and the open bin is read.
+function postBin(url, body, ids, action) {
+  var expected = {};
+  ids.forEach(function(id) { expected[id] = echoes.expect(id, echoesFor(action)); });
+  function settle(okFor) {
+    var now = Date.now();
+    var reread = false;
+    ids.forEach(function(id) {
+      if (echoes.settle(expected[id], okFor(id), now) > 0 && id === currentBinId) reread = true;
+    });
+    if (reread) refreshOpenBin();
+  }
+  return apiPost(url, body).then(
+    function(resp) {
+      if (resp && Array.isArray(resp.results)) {
+        var ok = {};
+        resp.results.forEach(function(r) { ok[r.id] = !!r.ok; });
+        settle(function(id) { return !!ok[id]; });
+      } else {
+        settle(function() { return true; });
+      }
+      return resp;
+    },
+    function(e) { settle(function() { return false; }); throw e; });
+}
+
+// postBinAction posts one verb for one bin; the answer is the bin's
+// history-free detail plus "status":"ok".
+function postBinAction(id, action, params) {
+  return postBin('/api/bins/action', { id: id, action: action, params: params || {} }, [id], action);
+}
 
 // ===== ALERT ESCALATION (P20) =====
 // A card/row is as loud as the loudest status it contains (extends the Signal
@@ -48,6 +116,9 @@ function filterBins() {
     if (vis) shown++;
   });
   document.getElementById('bin-count').textContent = shown + ' bins';
+  // A ticked row a filter hides is out of the selection (getSelectedIds):
+  // keep the bar's count to what a bulk action would act on.
+  updateBulkBar();
 }
 
 // ===== DETAIL MODAL =====
@@ -62,24 +133,21 @@ function openBinDetailRow(el) {
   openBinDetail(parseInt(el.dataset.binId, 10));
 }
 
+// openBinDetail opens the pop-up on a bin: one history-free read, Overview.
 function openBinDetail(id) {
   currentBinId = id;
-  apiGet('/api/bins/detail?id=' + id)
+  journalFresh = false;
+  readBin(id, false)
     .then(function(resp) {
-      currentBinData = resp;
-      document.getElementById('bd-title').textContent = resp.bin.label;
-      document.getElementById('bd-subtitle').textContent =
-        resp.bin.bin_type_code + (resp.bin.node_name ? ' \u2022 ' + resp.bin.node_name : ' \u2022 unassigned');
-      renderOverview(resp);
-      renderContents(resp);
-      renderActions(resp);
-      renderJournal(resp);
+      if (currentBinId !== id) return;
+      document.getElementById('bd-journal').innerHTML = '';
+      drawBin(resp, null);
       switchTab('overview');
       showModal('bin-detail-modal');
     })
     .catch(function(e) {
       console.error('openBinDetail', id, e);
-      toast('Error loading bin: ' + ((typeof e === 'string' && e) || (e && e.error) || 'unknown'), 'error');
+      toast('Error loading bin: ' + errText(e), 'error');
     });
 }
 
@@ -87,9 +155,150 @@ function closeBinDetail() {
   hideModal('bin-detail-modal');
   currentBinId = null;
   currentBinData = null;
+  journalFresh = false;
+}
+
+function binDetailOpen() {
+  var m = document.getElementById('bin-detail-modal');
+  return !!(currentBinId && m && m.classList.contains('active'));
+}
+
+function openTab() {
+  var btn = document.querySelector('#bin-detail-modal .tab-btn.active');
+  var m = btn && /^switchTab:(\w+)$/.exec(btn.getAttribute('data-action') || '');
+  return m ? m[1] : 'overview';
+}
+
+// drawBin draws the pop-up from a detail answer. `reset` is null for a fresh
+// open; on an update it is the list of field ids to clear (the form an action
+// just submitted), and every other field the viewer has typed in keeps its
+// value and focus. The open tab is never changed here. The Journal is drawn
+// only when the answer carries the history.
+var drawGen = 0;
+function drawBin(resp, reset) {
+  var saved = reset ? captureTyped(reset) : [];
+  drawGen++;
+  currentBinData = resp;
+  document.getElementById('bd-title').textContent = resp.bin.label;
+  document.getElementById('bd-subtitle').textContent =
+    resp.bin.bin_type_code + (resp.bin.node_name ? ' \u2022 ' + resp.bin.node_name : ' \u2022 unassigned');
+  renderOverview(resp);
+  renderContents(resp);
+  renderActions(resp);
+  if ('audit' in resp) {
+    renderJournal(resp);
+    journalFresh = true;
+  } else {
+    journalFresh = false;
+  }
+  restoreTyped(saved);
+}
+
+// updateOpenBin redraws the open pop-up after the bin changed. With the
+// Journal open the history is read too (one default read in place of the
+// history-free one); otherwise the Journal is left to be read when opened.
+function updateOpenBin(resp, reset) {
+  if (!binDetailOpen() || !resp || !resp.bin || resp.bin.id !== currentBinId) return;
+  drawBin(resp, reset || []);
+  if (!journalFresh && openTab() === 'journal') loadJournal();
+}
+
+// loadJournal reads the open bin with its history and draws the Journal (and,
+// from the same answer, the rest), keeping what has been typed.
+var journalLoading = null;
+function loadJournal() {
+  var id = currentBinId;
+  if (!id || journalLoading === id) return;
+  journalLoading = id;
+  var gen = drawGen;
+  readBin(id, true)
+    .then(function(resp) {
+      journalLoading = null;
+      if (currentBinId !== id) return;
+      // The bin was drawn from a newer answer while this read was out: this
+      // one may predate it, so read again rather than draw an older state.
+      if (gen !== drawGen) {
+        if (!journalFresh && openTab() === 'journal') loadJournal();
+        return;
+      }
+      drawBin(resp, []);
+    })
+    .catch(function(e) {
+      journalLoading = null;
+      console.error('loadJournal', id, e);
+      toast('Error loading history: ' + errText(e), 'error');
+    });
+}
+
+// captureTyped records every field in the pop-up whose value differs from
+// what was drawn (a typed value, a changed choice), and which one has focus,
+// except the ids in `reset`.
+function captureTyped(reset) {
+  var saved = [];
+  var active = document.activeElement;
+  document.querySelectorAll('#bin-detail-modal input[id], #bin-detail-modal select[id], #bin-detail-modal textarea[id]')
+    .forEach(function(f) {
+      if (reset.indexOf(f.id) !== -1) return;
+      var dirty;
+      if (f.tagName === 'SELECT') {
+        dirty = f.selectedIndex !== drawnIndex(f);
+      } else {
+        dirty = f.value !== f.defaultValue;
+      }
+      var focused = f === active;
+      if (!dirty && !focused) return;
+      var rec = { id: f.id, tag: f.tagName, dirty: dirty, value: f.value, focused: focused, start: null, end: null };
+      try { rec.start = f.selectionStart; rec.end = f.selectionEnd; } catch (e) { /* not a text field */ }
+      saved.push(rec);
+    });
+  return saved;
+}
+
+// drawnIndex is the option a select was drawn with: the one marked selected,
+// else the first.
+function drawnIndex(f) {
+  for (var i = 0; i < f.options.length; i++) {
+    if (f.options[i].defaultSelected) return i;
+  }
+  return f.options.length ? 0 : -1;
+}
+
+// clearFields puts the named fields back to what was drawn, so a submitted
+// form is not carried over as typing by a later redraw.
+function clearFields(ids) {
+  ids.forEach(function(id) {
+    var f = document.getElementById(id);
+    if (!f) return;
+    if (f.tagName === 'SELECT') {
+      f.selectedIndex = drawnIndex(f);
+    } else {
+      f.value = f.defaultValue;
+    }
+  });
+}
+
+function restoreTyped(saved) {
+  saved.forEach(function(rec) {
+    var f = document.getElementById(rec.id);
+    if (!f || f.tagName !== rec.tag) return;
+    if (rec.dirty) {
+      if (f.tagName === 'SELECT') {
+        if (Array.prototype.some.call(f.options, function(o) { return o.value === rec.value; })) f.value = rec.value;
+      } else {
+        f.value = rec.value;
+      }
+    }
+    if (rec.focused && f.offsetParent !== null) {
+      f.focus({ preventScroll: true });
+      if (rec.start !== null) {
+        try { f.setSelectionRange(rec.start, rec.end); } catch (e) { /* not a text field */ }
+      }
+    }
+  });
 }
 
 function switchTab(name) {
+  if (name === 'journal' && !journalFresh) loadJournal();
   var tabs = ['overview', 'contents', 'actions', 'journal'];
   tabs.forEach(function(t) {
     var panel = document.getElementById('bd-' + t);
@@ -116,7 +325,7 @@ function renderOverview(data) {
     html += bdField('Location', esc(ord.source_node) + ' → ' + esc(ord.delivery_node) +
       ' <span class="badge badge-in_transit">in transit</span>'); // P21: in_transit is a Signal status — show its cyan pill, not muted text
   } else {
-    html += bdField('Location', b.node_name || '<span class="text-muted">unassigned</span>');
+    html += bdField('Location', b.node_name ? esc(b.node_name) : '<span class="text-muted">unassigned</span>');
   }
   html += bdField('Status', '<span class="badge badge-' + esc(b.status) + '">' + esc(b.status) + '</span>');
   var payloadDisplay = b.payload_code
@@ -129,7 +338,7 @@ function renderOverview(data) {
   html += bdField('Manifest', b.manifest_confirmed ? '<span style="color:var(--success)">Confirmed</span>' :
     (b.payload_code ? '<span style="color:var(--warning)">Unconfirmed</span>' : '<span class="text-muted">-</span>'));
   html += bdField('Locked', b.locked ? '<span style="color:var(--danger)">' + esc(b.locked_by) + '</span>' : 'No');
-  html += bdField('Description', b.description || '<span class="text-muted">-</span>');
+  html += bdField('Description', b.description ? esc(b.description) : '<span class="text-muted">-</span>');
   html += bdField('Bin Type', esc(b.bin_type_code));
   if (b.claimed_by) {
     html += bdField('Claimed By', 'Order #' + b.claimed_by);
@@ -306,7 +515,7 @@ async function renderActions(data) {
 
   // Retire
   html += '<div class="action-group">';
-  var confirmMsg = 'Mark ' + (b.label || ('bin ' + b.id)) + ' as retired? It will be removed from all production nodes and no longer assigned to orders. Bin history will be preserved.';
+  var confirmMsg = retireConfirmMsg(b);
   html += '<form method="POST" action="/bins/retire" data-action-submit="confirmDeleteForm" data-confirm-msg="' + escapeHtml(confirmMsg) + '">';
   html += '<input type="hidden" name="id" value="' + b.id + '">';
   html += '<button type="submit" class="btn btn-sm btn-danger">Retire Bin</button>';
@@ -364,9 +573,33 @@ function renderJournal(data) {
 }
 
 // ===== BIN ACTIONS =====
-function doBinAction(action, params) {
-  apiPost('/api/bins/action', { id: currentBinId, action: action, params: params || {} })
-    .then(function() { openBinDetail(currentBinId); refreshBinRow(currentBinId); })
+// doBinAction is the Actions tab's status and unlock buttons
+// (data-action="doBinAction:<verb>"). Retire asks first, with the words the
+// Retire Bin button below it asks with.
+async function doBinAction(action) {
+  if (action === 'retire' && currentBinData) {
+    if (!await uiConfirm(retireConfirmMsg(currentBinData.bin))) return;
+  }
+  runBinAction(action);
+}
+
+function retireConfirmMsg(b) {
+  return 'Mark ' + (b.label || ('bin ' + b.id)) + ' as retired? It will be removed from all production nodes and no longer assigned to orders. Bin history will be preserved.';
+}
+
+// runBinAction posts one verb for the open bin. The answer carries the bin
+// (LC12), so the pop-up and its table row are drawn from it: one POST, no
+// read. `reset` names the fields of the form that was submitted; they are
+// drawn fresh, every other typed field is kept, and the open tab stays.
+function runBinAction(action, params, reset) {
+  var id = currentBinId;
+  postBinAction(id, action, params)
+    .then(function(resp) {
+      if (!resp || !resp.bin) { refreshBinRow(id); return; }
+      clearFields(reset || []);
+      paintBinRow(resp);
+      updateOpenBin(resp, reset);
+    })
     .catch(function(e) { toast('Error: ' + (e.error || e), 'error'); });
 }
 
@@ -383,23 +616,23 @@ function loadPayload() {
     if (isNaN(uop) || uop < 0) { toast('Count must be 0 or more', 'info'); return; }
     params.uop_override = uop;
   }
-  doBinAction('load_payload', params);
+  runBinAction('load_payload', params, ['bd-load-payload', 'bd-load-uop']);
 }
 
 async function clearBin() {
   if (!await uiConfirm('Clear this bin\'s payload and manifest?')) return;
-  doBinAction('clear');
+  runBinAction('clear');
 }
 
 function toggleManifest() {
   var b = currentBinData.bin;
-  doBinAction(b.manifest_confirmed ? 'unconfirm_manifest' : 'confirm_manifest');
+  runBinAction(b.manifest_confirmed ? 'unconfirm_manifest' : 'confirm_manifest');
 }
 
 function lockBin() {
   var actor = document.getElementById('bd-lock-actor').value.trim();
   if (!actor) { toast('Enter who is locking this bin', 'info'); return; }
-  doBinAction('lock', { actor: actor });
+  runBinAction('lock', { actor: actor }, ['bd-lock-actor']);
 }
 
 function moveBin() {
@@ -408,7 +641,7 @@ function moveBin() {
   if (currentBinData && currentBinData.bin.node_id && nodeId === currentBinData.bin.node_id) {
     toast('Bin is already at this location', 'info'); return;
   }
-  doBinAction('move', { node_id: nodeId });
+  runBinAction('move', { node_id: nodeId }, ['bd-move-node']);
 }
 
 function requestTransport() {
@@ -448,7 +681,7 @@ async function askRobotToSetDown(binId, robot) {
 function recordCount() {
   var uop = parseInt(document.getElementById('bd-count-uop').value) || 0;
   var actor = document.getElementById('bd-count-actor').value.trim();
-  doBinAction('record_count', { actual_uop: uop, actor: actor });
+  runBinAction('record_count', { actual_uop: uop, actor: actor }, ['bd-count-uop', 'bd-count-actor']);
 }
 
 function updateBinProps() {
@@ -457,7 +690,7 @@ function updateBinProps() {
   var binTypeID = parseInt(document.getElementById('bd-edit-bin-type').value, 10);
   var params = { label: label, description: desc };
   if (binTypeID) params.bin_type_id = binTypeID;
-  doBinAction('update', params);
+  runBinAction('update', params, ['bd-edit-label', 'bd-edit-desc', 'bd-edit-bin-type']);
 }
 
 function addNote() {
@@ -465,7 +698,7 @@ function addNote() {
   var msg = document.getElementById('bd-note-msg').value.trim();
   var actor = document.getElementById('bd-note-actor').value.trim();
   if (!msg) { toast('Enter a note message', 'info'); return; }
-  doBinAction('add_note', { note_type: noteType, message: msg, actor: actor });
+  runBinAction('add_note', { note_type: noteType, message: msg, actor: actor }, ['bd-note-type', 'bd-note-actor', 'bd-note-msg']);
 }
 
 // ===== BULK OPERATIONS =====
@@ -492,17 +725,29 @@ function updateBulkBar() {
   }
 }
 
+// getSelectedIds is the ticked rows the viewer can see. A row ticked and then
+// hidden by a filter is not acted on: a bulk action does what the table shows.
 function getSelectedIds() {
   var ids = [];
   document.querySelectorAll('.bin-cb:checked').forEach(function(cb) {
+    var row = cb.closest('tr');
+    if (row && row.style.display === 'none') return;
     ids.push(parseInt(cb.value));
   });
   return ids;
 }
 
+// BULK_MAX is the server's limit on one bulk action (apiBulkBinAction refuses
+// more than 100 ids); the page says so before asking.
+var BULK_MAX = 100;
+
 async function bulkAction(action) {
   var ids = getSelectedIds();
   if (ids.length === 0) return;
+  if (ids.length > BULK_MAX) {
+    toast(ids.length + ' bins selected: a bulk action takes at most ' + BULK_MAX + '. Narrow the filter or untick some.', 'error');
+    return;
+  }
   var params = {};
   if (action === 'lock') {
     var actor = await uiPrompt('Lock by (name):');
@@ -510,72 +755,73 @@ async function bulkAction(action) {
     params = { actor: actor };
   }
   if (!await uiConfirm(action + ' ' + ids.length + ' bin(s)?')) return;
-  apiPost('/api/bins/bulk-action', { ids: ids, action: action, params: params })
+  postBin('/api/bins/bulk-action', { ids: ids, action: action, params: params }, ids, action)
     .then(function(data) {
-      var failed = (data.results || []).filter(function(r) { return !r.ok; });
+      var results = data.results || [];
+      var failed = results.filter(function(r) { return !r.ok; });
       if (failed.length > 0) {
         toast(failed.length + ' failed: ' + failed.map(function(f) { return '#' + f.id + ': ' + f.error; }).join(', '), 'error');
       }
-      ids.forEach(refreshBinRow);
+      // Each result carries its bin (LC12): repaint from the answer.
+      results.forEach(function(r) {
+        if (!r.bin) return;
+        paintBinRow(r);
+        updateOpenBin(r);
+      });
       clearSelection();
     })
     .catch(function(e) { toast('Error: ' + (e.error || e), 'error'); });
 }
 
-// uopText is a bin's count as the table and the detail modal show it: wherever
-// there is one, including a payload-less bin left negative by a clear (the bin
-// Inventory lists under "Count below zero"). Only no payload AND no count is not
-// applicable. Twin of the bins.html UoP cell.
-function uopText(b) {
-  return (b.payload_code || b.uop_remaining) ? String(b.uop_remaining) : '<span class="text-muted">-</span>';
-}
-
-// flagsHTML is the row's labelled flag chips. Twin of the bins.html flags cell.
-function flagsHTML(b) {
-  var flags = '';
-  if (b.locked) flags += '<span class="chip chip-muted" title="Locked by ' + escapeHtml(b.locked_by || '') + '">locked</span>';
-  if (b.claimed_by) flags += '<span class="chip chip-muted" title="Claimed by order #' + b.claimed_by + '">order #' + b.claimed_by + '</span>';
-  if (!b.manifest_confirmed && b.payload_code) flags += '<span class="chip chip-warn" title="Manifest unconfirmed">unconfirmed</span>';
-  if (b.anomaly_at) flags += '<span class="chip chip-err" title="Counts refused — payload mismatch (anomaly); reconcile this bin">counts refused</span>';
-  return flags;
-}
-
+// refreshBinRow reads one bin without history and repaints its row. Only the
+// callers whose answer does not carry the bin use it (Return, Request
+// Transport); an action's answer is painted directly.
 function refreshBinRow(id) {
-  apiGet('/api/bins/detail?id=' + id)
-    .then(function(resp) {
-      var row = document.querySelector('#bin-table tbody tr[data-id="' + id + '"]');
-      if (!row) return;
-      var b = resp.bin;
-      var contents = b.payload_code
-        ? (b.manifest_confirmed ? (b.uop_remaining > 0 ? 'loaded' : 'depleted') : 'unconfirmed')
-        : 'empty';
-      row.dataset.status = b.status;
-      row.dataset.node = b.node_name || '';
-      row.dataset.payload = b.payload_code || '';
-      row.dataset.uop = b.uop_remaining || 0;
-      row.dataset.locked = b.locked ? '1' : '0';
-      row.dataset.claimed = b.claimed_by ? '1' : '0';
-      row.dataset.confirmed = b.manifest_confirmed ? '1' : '0';
-      row.dataset.contents = contents;
-
-      var labelCell = row.querySelector('td:nth-child(' + (row.querySelector('.bin-cb') ? 2 : 1) + ')');
-      if (labelCell) {
-        labelCell.innerHTML = '<span class="bin-dot bin-dot-' + contents + '"></span>'
-          + '<strong><code>' + escapeHtml(b.label) + '</code></strong>';
-      }
-      var tds = row.querySelectorAll('td');
-      var off = row.querySelector('.bin-cb') ? 1 : 0;
-      // Location, Payload, UoP, Status, Flags
-      tds[off + 2].innerHTML = b.node_name ? escapeHtml(b.node_name) : '<span class="text-muted">-</span>';
-      tds[off + 3].innerHTML = b.payload_code ? '<code>' + escapeHtml(b.payload_code) + '</code>' : '<span class="text-muted">-</span>';
-      tds[off + 4].innerHTML = uopText(b);
-      tds[off + 5].innerHTML = '<span class="badge badge-' + escapeHtml(b.status) + '">' + escapeHtml(b.status) + '</span>';
-      // The detail API does not carry the notes flag; keep the one the server
-      // painted rather than dropping it on every refresh.
-      var notes = tds[off + 6].querySelector('[title="Has notes"]');
-      tds[off + 6].innerHTML = flagsHTML(b) + (notes ? notes.outerHTML : '');
-    })
+  readBin(id, false)
+    .then(paintBinRow)
     .catch(function(err) { console.error('refreshBinRow', id, err); });
+}
+
+// paintBinRow draws one table row from a detail answer as bins.html draws it
+// (bins-row.js binRowView): Location's display name, the Return button, and
+// the sort and search values with the cells.
+function paintBinRow(detail) {
+  var b = detail && detail.bin;
+  if (!b) return;
+  var row = document.querySelector('#bin-table tbody tr[data-id="' + b.id + '"]');
+  if (!row) return;
+  var v = binRowView(detail, PAGE_AUTH);
+  row.dataset.label = v.data.label;
+  row.dataset.type = v.data.type;
+  row.dataset.status = v.data.status;
+  row.dataset.node = v.data.node;
+  row.dataset.payload = v.data.payload;
+  row.dataset.uop = v.data.uop;
+  row.dataset.uopCapacity = v.data.uopCapacity;
+  row.dataset.locked = v.data.locked;
+  row.dataset.claimed = v.data.claimed;
+  row.dataset.confirmed = v.data.confirmed;
+  row.dataset.contents = v.data.contents;
+
+  var tds = row.querySelectorAll('td');
+  var off = row.querySelector('.bin-cb') ? 1 : 0;
+  function cell(i, html, sort) {
+    var td = tds[off + i];
+    if (!td) return;
+    td.innerHTML = html;
+    if (sort !== undefined) td.setAttribute('data-sort-value', sort);
+  }
+  // Label, Type, Location, Payload, UoP, Status, Flags
+  cell(0, v.label.html, v.label.sort);
+  if (tds[off + 1]) tds[off + 1].textContent = v.type.text;
+  cell(2, v.location.html, v.location.sort);
+  cell(3, v.payload.html, v.payload.sort);
+  cell(4, v.uop.html, v.uop.sort);
+  cell(5, v.status.html, v.status.sort);
+  // The detail API does not carry the notes flag; keep the one the server
+  // painted rather than dropping it on every refresh.
+  var notes = tds[off + 6] && tds[off + 6].querySelector('[title="Has notes"]');
+  cell(6, v.flags.html + (notes ? notes.outerHTML : '') + v.flags.returnHTML);
 }
 
 function clearSelection() {
@@ -602,8 +848,13 @@ function openCycleCount() {
 
 function closeCycleCount() {
   hideModal('cc-modal');
-  ccState = { step: 0, bins: [], index: 0, results: [] };
+  ccState = newCCState();
 }
+
+// A wizard dismissed by its backdrop is closed too: without this its state
+// (bins, index, results) outlived the dismiss.
+var ccModalEl = document.getElementById('cc-modal');
+if (ccModalEl) ccModalEl.addEventListener('backdropclose', function() { ccState = newCCState(); });
 
 function ccStart() {
   var rows = document.querySelectorAll('#bin-table tbody tr');
@@ -629,16 +880,41 @@ function ccStart() {
   ccShowBin();
 }
 
+// ccShowBin opens step 2 on the next bin and reads it again (history-free):
+// the count the wizard shows, and the one Confirm records, is the bin's count
+// now, not the one the table was painted with when the page loaded. Confirm
+// and Record Discrepancy wait for that read.
 function ccShowBin() {
-  var bin = ccState.bins[ccState.index];
-  document.getElementById('cc-index').textContent = ccState.index + 1;
-  var pct = ((ccState.index) / ccState.bins.length * 100);
+  var st = ccState;
+  var bin = st.bins[st.index];
+  var seq = ++st.seq;
+  st.ready = false;
+  document.getElementById('cc-index').textContent = st.index + 1;
+  var pct = ((st.index) / st.bins.length * 100);
   document.getElementById('cc-progress-bar').style.width = pct + '%';
+  ccPaintCard(bin, '&hellip;');
+  document.getElementById('cc-actual').value = '';
+  readBin(bin.id, false)
+    .then(function(resp) {
+      if (st !== ccState || seq !== st.seq) return;
+      bin.uop = resp.bin.uop_remaining;
+      bin.uopCapacity = resp.bin.uop_capacity || 0;
+      ccPaintCard(bin, String(bin.uop));
+      document.getElementById('cc-actual').value = bin.uop;
+      st.ready = true;
+    })
+    .catch(function(e) {
+      if (st !== ccState || seq !== st.seq) return;
+      ccPaintCard(bin, 'could not read (' + esc(errText(e)) + ')');
+      toast('Could not read ' + bin.label + ': ' + errText(e) + '. Skip it or flag it.', 'error');
+    });
+}
+
+function ccPaintCard(bin, expectedHTML) {
   document.getElementById('cc-bin-card').innerHTML =
     '<div class="cc-label">' + esc(bin.label) + '</div>' +
     '<div class="text-muted">' + esc(bin.node || 'unassigned') + ' &middot; ' + esc(bin.payload) + '</div>' +
-    '<div style="margin-top:0.5rem">Expected UoP: <strong>' + bin.uop + '</strong></div>';
-  document.getElementById('cc-actual').value = bin.uop;
+    '<div style="margin-top:0.5rem">Expected UoP: <strong>' + expectedHTML + '</strong></div>';
   document.getElementById('cc-actual').max = bin.uopCapacity || '';
   var hint = document.getElementById('cc-capacity-hint');
   if (bin.uopCapacity > 0) {
@@ -651,41 +927,62 @@ function ccShowBin() {
   document.getElementById('cc-actual').focus();
 }
 
-function ccConfirm() {
-  var bin = ccState.bins[ccState.index];
-  var actor = document.getElementById('cc-actor').value.trim() || 'cycle_count';
-  apiPost('/api/bins/action', { id: bin.id, action: 'record_count', params: { actual_uop: bin.uop, actor: actor } })
-    .catch(function(e) { console.error('ccConfirm record_count', bin.id, e); });
-  ccState.results.push({ id: bin.id, label: bin.label, result: 'match', expected: bin.uop, actual: bin.uop });
+// ccPost posts one wizard step and waits for it. The step is counted only
+// when the server took it; a refusal is shown and the wizard stays on the
+// bin (Skip or Flag moves on).
+async function ccPost(action, params, result) {
+  var st = ccState;
+  if (st.busy) return;
+  var bin = st.bins[st.index];
+  if (!bin) return;
+  st.busy = true;
+  try {
+    await postBinAction(bin.id, action, params);
+  } catch (e) {
+    if (st === ccState) toast(bin.label + ' not recorded: ' + errText(e), 'error');
+    return;
+  } finally {
+    st.busy = false;
+  }
+  if (st !== ccState) return;
+  st.results.push(Object.assign({ id: bin.id, label: bin.label }, result));
   ccAdvance();
 }
 
+function ccConfirm() {
+  var st = ccState;
+  var bin = st.bins[st.index];
+  if (!bin || !st.ready) return;
+  var actor = document.getElementById('cc-actor').value.trim() || 'cycle_count';
+  ccPost('record_count', { actual_uop: bin.uop, actor: actor },
+    { result: 'match', expected: bin.uop, actual: bin.uop });
+}
+
 function ccDiscrepancy() {
-  var bin = ccState.bins[ccState.index];
+  var st = ccState;
+  var bin = st.bins[st.index];
+  if (!bin || !st.ready) return;
   var actual = parseInt(document.getElementById('cc-actual').value) || 0;
   if (bin.uopCapacity > 0) {
     actual = Math.max(0, Math.min(actual, bin.uopCapacity));
     document.getElementById('cc-actual').value = actual;
   }
   var actor = document.getElementById('cc-actor').value.trim() || 'cycle_count';
-  apiPost('/api/bins/action', { id: bin.id, action: 'record_count', params: { actual_uop: actual, actor: actor } })
-    .catch(function(e) { console.error('ccDiscrepancy record_count', bin.id, e); });
-  ccState.results.push({ id: bin.id, label: bin.label, result: 'discrepancy', expected: bin.uop, actual: actual });
-  ccAdvance();
+  ccPost('record_count', { actual_uop: actual, actor: actor },
+    { result: 'discrepancy', expected: bin.uop, actual: actual });
 }
 
 function ccSkip() {
-  var bin = ccState.bins[ccState.index];
-  ccState.results.push({ id: bin.id, label: bin.label, result: 'skipped' });
+  var st = ccState;
+  var bin = st.bins[st.index];
+  if (!bin || st.busy) return;
+  st.results.push({ id: bin.id, label: bin.label, result: 'skipped' });
   ccAdvance();
 }
 
 function ccFlag() {
-  var bin = ccState.bins[ccState.index];
-  apiPost('/api/bins/action', { id: bin.id, action: 'flag' })
-    .catch(function(e) { console.error('ccFlag', bin.id, e); });
-  ccState.results.push({ id: bin.id, label: bin.label, result: 'flagged' });
-  ccAdvance();
+  if (!ccState.bins[ccState.index]) return;
+  ccPost('flag', {}, { result: 'flagged' });
 }
 
 function ccAdvance() {
@@ -732,11 +1029,27 @@ function ccSummary() {
 // Subscribed on the shared onSSE bus (shared/utils.js); the handler receives
 // the parsed payload. Replaces the retired app.js IIFE window.onBinUpdate
 // dispatch (Q-002).
-onSSE('bin-update', debounce(function(data) {
-  if (currentBinId && currentBinId === data.bin_id) {
-    openBinDetail(currentBinId);
-  }
-}, 500));
+//
+// The event carries ids only. The counted echoes of this page's own actions
+// are dropped (the action's answer already drew the bin); any other update to
+// the open bin costs one read: history-free, or with history when the Journal
+// is the open tab. The redraw keeps the open tab and anything typed.
+var refreshOpenBin = debounce(function() {
+  if (!binDetailOpen()) return;
+  var id = currentBinId;
+  readBin(id, openTab() === 'journal')
+    .then(function(resp) { updateOpenBin(resp); })
+    .catch(function(e) { console.error('bin-update refresh', id, e); });
+}, 500);
+
+onSSE('bin-update', function(data) {
+  if (!data || !data.bin_id) return;
+  // Taken for every bin, open or not, so a counted echo is consumed where it
+  // lands and cannot be mistaken for a later real update.
+  if (echoes.take(data.bin_id, Date.now())) return;
+  if (!currentBinId || currentBinId !== data.bin_id) return;
+  refreshOpenBin();
+});
 
 // ===== HELPERS =====
 function esc(s) { return escapeHtml(s); }
@@ -910,9 +1223,12 @@ document.addEventListener('keydown', function(e) {
     closeBTCreateModal(); closeBTEditModal();
     closeCreateBinModal(); closeCycleCount();
   }
-  // Cycle count shortcuts
+  // Cycle count shortcuts: only while the wizard is open on step 2. Step 2 is
+  // hidden by class, not by style, so the old style test was always true and
+  // every Enter, Tab and F on the page went to the wizard.
+  var ccModal = document.getElementById('cc-modal');
   var step2 = document.getElementById('cc-step2');
-  if (step2 && step2.style.display !== 'none') {
+  if (ccModal && ccModal.classList.contains('active') && step2 && !step2.classList.contains('hide')) {
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
       ccConfirm();
@@ -945,16 +1261,12 @@ function toggleBinTypesAccordion() {
 delegateActions(document.body, {
     addNote,
     askRobotToSetDown,
-    bdField,
     bulkAction,
-    ccAdvance,
     ccConfirm,
     ccDiscrepancy,
     ccFlag,
-    ccShowBin,
     ccSkip,
     ccStart,
-    ccSummary,
     clearBin,
     confirmBinCreate,
     clearSelection,
@@ -964,9 +1276,7 @@ delegateActions(document.body, {
     closeCreateBinModal,
     closeCycleCount,
     doBinAction,
-    esc,
     filterBins,
-    getSelectedIds,
     loadPayload,
     lockBin,
     moveBin,
@@ -977,17 +1287,11 @@ delegateActions(document.body, {
     openEditBTModal,
     previewBinLabels,
     recordCount,
-    refreshBinRow,
-    renderActions,
-    renderContents,
-    renderJournal,
-    renderOverview,
     requestTransport,
     switchTab,
     toggleAllBins,
     toggleBinTypesAccordion,
     toggleManifest,
-    uopBar,
     updateBinProps,
     updateBulkBar
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

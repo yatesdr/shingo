@@ -286,7 +286,25 @@ func (h *Handlers) apiBinAction(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	h.jsonSuccess(w)
+	// The answer carries the bin as it now is (LC12): what the pop-up and the
+	// table row draw, without the history, so the page draws from the answer
+	// instead of reading the bin again. "status":"ok" stays for every caller
+	// that only checks it. A re-read that fails after a successful action
+	// still answers ok, bare, as before.
+	fresh, err := h.engine.BinService().GetBin(req.ID)
+	if err != nil {
+		log.Printf("bin action %s: re-read bin %d: %v", req.Action, req.ID, err)
+		h.jsonSuccess(w)
+		return
+	}
+	h.jsonOK(w, binActionAnswer{Status: "ok", binView: h.binDetailView(fresh)})
+}
+
+// binActionAnswer is apiBinAction's answer: the bare ok plus the bin's
+// history-free detail, flattened, so it reads like GET /api/bins/detail?history=0.
+type binActionAnswer struct {
+	Status string `json:"status"`
+	binView
 }
 
 func derefInt64(p *int64) int64 {
@@ -312,6 +330,57 @@ type binDetailResponse struct {
 	RecentOrders     []*domain.Order               `json:"recent_orders"`
 }
 
+// binView is binDetailResponse without the history: what the bin pop-up and
+// the table row draw (LC12). The bin's audit has no limit, so it is read only
+// when someone opens the Journal. Same fields, same order, same tags.
+type binView struct {
+	Bin              *domain.Bin                   `json:"bin"`
+	Manifest         *domain.Manifest              `json:"manifest"`
+	Template         *domain.Payload               `json:"template,omitempty"`
+	TemplateManifest []*domain.PayloadManifestItem `json:"template_manifest,omitempty"`
+	CurrentOrder     *domain.Order                 `json:"current_order,omitempty"`
+	RecentOrders     []*domain.Order               `json:"recent_orders"`
+}
+
+// binDetailView reads everything the detail answer carries except the audit.
+func (h *Handlers) binDetailView(b *domain.Bin) binView {
+	v := binView{Bin: b}
+
+	// Parse manifest
+	if m, err := b.ParseManifest(); err == nil {
+		v.Manifest = m
+	}
+
+	// Payload template, and its manifest lines — the page derives each part's
+	// count from uop_remaining x parts_per_cycle, so the ratios travel with
+	// the bin rather than costing the page a second round trip.
+	if b.PayloadCode != "" {
+		if p, err := h.engine.PayloadService().GetByCode(b.PayloadCode); err == nil {
+			v.Template = p
+			if items, err := h.engine.PayloadService().ListManifest(p.ID); err == nil {
+				v.TemplateManifest = items
+			}
+		}
+	}
+
+	// Current order
+	if b.ClaimedBy != nil {
+		v.CurrentOrder, _ = h.engine.OrderService().GetOrder(*b.ClaimedBy)
+	}
+
+	// Recent orders
+	v.RecentOrders, _ = h.engine.OrderService().ListByBin(b.ID, 20)
+	if v.RecentOrders == nil {
+		v.RecentOrders = []*domain.Order{}
+	}
+	return v
+}
+
+// apiBinDetail answers GET /api/bins/detail?id=N. The default answer is
+// unchanged: the bin, its manifest, template, orders and its whole audit.
+// ?history=0 is the history-free read (LC12): the same answer without the
+// audit, which is what the Bins page reads on open, on a live update and in
+// the cycle-count wizard.
 func (h *Handlers) apiBinDetail(w http.ResponseWriter, r *http.Request) {
 	id, ok := h.parseIDParam(w, r, "id")
 	if !ok {
@@ -324,38 +393,23 @@ func (h *Handlers) apiBinDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := binDetailResponse{Bin: b}
-
-	// Parse manifest
-	if m, err := b.ParseManifest(); err == nil {
-		resp.Manifest = m
+	v := h.binDetailView(b)
+	if r.URL.Query().Get("history") == "0" {
+		h.jsonOK(w, v)
+		return
 	}
 
-	// Payload template, and its manifest lines — the page derives each part's
-	// count from uop_remaining x parts_per_cycle, so the ratios travel with
-	// the bin rather than costing the page a second round trip.
-	if b.PayloadCode != "" {
-		if p, err := h.engine.PayloadService().GetByCode(b.PayloadCode); err == nil {
-			resp.Template = p
-			if items, err := h.engine.PayloadService().ListManifest(p.ID); err == nil {
-				resp.TemplateManifest = items
-			}
-		}
+	resp := binDetailResponse{
+		Bin:              v.Bin,
+		Manifest:         v.Manifest,
+		Template:         v.Template,
+		TemplateManifest: v.TemplateManifest,
+		CurrentOrder:     v.CurrentOrder,
+		RecentOrders:     v.RecentOrders,
 	}
 
 	// Audit log
 	resp.Audit, _ = h.engine.AuditService().ListForEntity("bin", id)
-
-	// Current order
-	if b.ClaimedBy != nil {
-		resp.CurrentOrder, _ = h.engine.OrderService().GetOrder(*b.ClaimedBy)
-	}
-
-	// Recent orders
-	resp.RecentOrders, _ = h.engine.OrderService().ListByBin(id, 20)
-	if resp.RecentOrders == nil {
-		resp.RecentOrders = []*domain.Order{}
-	}
 
 	h.jsonOK(w, resp)
 }
@@ -377,13 +431,26 @@ func (h *Handlers) apiBulkBinAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Each result carries its bin's history-free detail (LC12), flattened like
+	// apiBinAction's answer, so the page repaints its rows from the answer
+	// instead of reading every bin again. An id with no bin carries none.
 	type bulkResult struct {
 		ID    int64  `json:"id"`
 		OK    bool   `json:"ok"`
 		Error string `json:"error,omitempty"`
+		*binView
 	}
 
 	svc := h.engine.BinService()
+	// current re-reads a bin an action may have changed; on a failed re-read
+	// the row read before the action is what the answer carries.
+	current := func(b *domain.Bin) *binView {
+		if fresh, err := svc.GetBin(b.ID); err == nil {
+			b = fresh
+		}
+		v := h.binDetailView(b)
+		return &v
+	}
 	results := make([]bulkResult, 0, len(req.IDs))
 	for _, id := range req.IDs {
 		b, err := svc.GetBin(id)
@@ -392,14 +459,15 @@ func (h *Handlers) apiBulkBinAction(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if b.Locked && req.Action != "unlock" {
-			results = append(results, bulkResult{ID: id, Error: fmt.Sprintf("locked by %s", b.LockedBy)})
+			v := h.binDetailView(b)
+			results = append(results, bulkResult{ID: id, Error: fmt.Sprintf("locked by %s", b.LockedBy), binView: &v})
 			continue
 		}
 		if err := h.executeBinAction(b, req.Action, req.Params); err != nil {
-			results = append(results, bulkResult{ID: id, Error: err.Error()})
+			results = append(results, bulkResult{ID: id, Error: err.Error(), binView: current(b)})
 			continue
 		}
-		results = append(results, bulkResult{ID: id, OK: true})
+		results = append(results, bulkResult{ID: id, OK: true, binView: current(b)})
 	}
 
 	h.jsonOK(w, map[string]any{"results": results})

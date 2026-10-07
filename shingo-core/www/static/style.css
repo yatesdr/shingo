@@ -830,6 +830,9 @@ textarea { resize: vertical; min-height: 60px; }
 .bulk-bar { position:fixed; bottom:0; left:0; right:0; background:var(--surface); border-top:2px solid var(--primary);
             padding:0.75rem 1.5rem; display:flex; align-items:center; gap:0.75rem; z-index:var(--z-chrome);
             box-shadow:0 -4px 12px rgba(0,0,0,0.1); }
+/* The bar is hidden until a row is ticked. .bulk-bar's display:flex sits after
+   .hide at the same specificity, so the bar showed "0 selected" on load. */
+.bulk-bar.hide { display:none; }
 
 /* Bin flags column */
 .bin-flags { font-size:0.85rem; white-space:nowrap; }
