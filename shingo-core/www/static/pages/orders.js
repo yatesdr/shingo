@@ -1119,22 +1119,15 @@ function searchOrders() {
 delegateActions(document.body, {
     closeManualOrderModal,
     closeOrderModal,
-    field,
-    fieldH,
     forceConfirmDelivered,
     hardReleaseOrder,
-    loadManualOrderBinDropdown,
-    loadManualOrderDropdowns,
     manualOrderTransportTypeChanged,
     openManualOrderModal,
     openOrderModal,
-    orderControlPost,
-    renderOrderModal,
     cancelOrderFromRow,
     setOrderPriority,
     stagedSourceChanged,
     submitManualOrder,
     switchManualOrderTab,
-    terminateOrder,
-    updateManualOrderQuantityVisibility
+    terminateOrder
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

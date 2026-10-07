@@ -1,4 +1,4 @@
-import { api, apiGet, apiPost, delegateActions, el, enterSubmits, escapeHtml, toast } from '/static/app.js';
+import { api, apiPost, delegateActions, el, enterSubmits, escapeHtml, toast } from '/static/app.js';
 import { openNodeModal } from '/static/pages/nodes-detail.js';
 
 // Supermarket / node-group hierarchy: NGRP and Lane modals, layout
@@ -58,90 +58,6 @@ function submitAddLane() {
       setTimeout(function() { location.reload(); }, 800);
     })
     .catch(function(e) { result.innerHTML = '<span style="color:var(--danger)">Error: ' + e + '</span>'; });
-}
-
-/* --- Add Node modal --- */
-var _addNodePending = null;
-function addChildNode(parentId, zone) {
-  _addNodePending = { parentId: parentId, zone: zone };
-  document.getElementById('add-node-title').textContent = 'Add Node';
-  document.getElementById('an-name').value = '';
-  document.getElementById('add-node-modal').classList.add('active');
-  document.getElementById('an-name').focus();
-}
-function submitAddNode() {
-  var p = _addNodePending;
-  if (!p) return;
-  var name = document.getElementById('an-name').value.trim();
-  if (!name) { document.getElementById('an-name').focus(); return; }
-  var form = document.createElement('form');
-  form.method = 'POST'; form.action = '/nodes/create'; form.style.display = 'none';
-  var fields = { name: name, zone: p.zone || '', enabled: 'on' };
-  if (p.parentId) fields.parent_id = p.parentId;
-  for (var k in fields) {
-    var inp = document.createElement('input');
-    inp.type = 'hidden'; inp.name = k; inp.value = fields[k];
-    form.appendChild(inp);
-  }
-  document.body.appendChild(form);
-  form.submit();
-}
-function closeAddNodeModal() {
-  document.getElementById('add-node-modal').classList.remove('active');
-  _addNodePending = null;
-}
-
-/* --- Node group grid in modal --- */
-function loadGroupLayout(nodeID) {
-  var list = document.getElementById('children-list');
-  list.innerHTML = '<span class="text-muted">Loading layout...</span>';
-  apiGet('/api/nodegroup/layout?id=' + nodeID)
-    .then(function(data) {
-      var lanes = data.lanes || [];
-      var directNodes = data.direct_nodes || [];
-      var stats = data.stats || {};
-      var html = '<div class="sm-grid">';
-      html += '<div style="font-size:0.75rem;margin-bottom:0.5rem">';
-      html += '<span class="sm-cell sm-empty" style="width:14px;height:14px;display:inline-flex;vertical-align:middle"></span> Empty ';
-      html += '<span class="sm-cell sm-occupied" style="width:14px;height:14px;display:inline-flex;vertical-align:middle"></span> Occupied ';
-      html += '<span class="sm-cell sm-claimed" style="width:14px;height:14px;display:inline-flex;vertical-align:middle"></span> Claimed ';
-      html += ' | Slots: ' + stats.total + ' | Occupied: ' + stats.occupied + ' | Claimed: ' + stats.claimed;
-      html += '</div>';
-      if (directNodes.length > 0) {
-        html += '<div class="sm-lane">';
-        html += '<span class="sm-lane-label">Direct Nodes</span>';
-        directNodes.forEach(function(node) {
-          var cls = 'sm-empty';
-          var label = escapeHtml(node.name);
-          if (node.payload) {
-            cls = node.payload.claimed_by ? 'sm-claimed' : 'sm-occupied';
-            label = '#' + node.payload.id;
-          }
-          html += '<span class="sm-cell ' + cls + '" title="' + escapeHtml(node.name) + (node.payload ? ' — ' + escapeHtml(node.payload.payload_code || '') : '') + '">' + label + '</span>';
-        });
-        html += '</div>';
-      }
-      lanes.forEach(function(lane) {
-        html += '<div class="sm-lane">';
-        html += '<span class="sm-lane-label">' + escapeHtml(lane.name) + '</span>';
-        (lane.slots || []).forEach(function(slot) {
-          var cls = 'sm-empty';
-          var label = slot.depth || '';
-          if (slot.payload) {
-            cls = slot.payload.claimed_by ? 'sm-claimed' : 'sm-occupied';
-            label = '#' + slot.payload.id;
-          }
-          html += '<span class="sm-cell ' + cls + '" title="' + escapeHtml(slot.name) + (slot.payload ? ' — ' + escapeHtml(slot.payload.payload_code || '') : '') + '">' + label + '</span>';
-        });
-        html += '</div>';
-      });
-      html += '</div>';
-      list.innerHTML = html;
-    })
-    .catch(function(err) {
-      console.error('loadGroupLayout', err);
-      list.innerHTML = '<span class="text-muted">Error loading group layout</span>';
-    });
 }
 
 /* --- Drag & Drop --- */
@@ -317,42 +233,6 @@ function reorderLane(laneID, orderedIDs) {
     window.location.reload();
   })
   .catch(function(e) { toast('Reorder error: ' + e, 'error'); });
-}
-
-function updateLaneDepths(container) {
-  var section = container.closest('.smkt-lane');
-  var isDirectNodes = section && section.classList.contains('ngrp-direct');
-  container.querySelectorAll('.node-tile').forEach(function(tile, idx) {
-    var depth = isDirectNodes ? 0 : idx + 1;
-    tile.dataset.depth = String(depth);
-    var badge = tile.querySelector('.slot-depth');
-    if (badge) badge.textContent = isDirectNodes ? '' : depth;
-  });
-}
-
-function updateLaneCounts(container) {
-  var section = container.closest('.smkt-lane');
-  if (!section) return;
-  var header = section.querySelector('.smkt-lane-header');
-  if (!header) return;
-  var count = container.querySelectorAll('.node-tile').length;
-  var name = header.dataset.laneName || '';
-  header.textContent = name + ' (' + count + ')';
-
-  var group = section.closest('.smkt-group');
-  if (group) updateGroupSummary(group);
-}
-
-function updateGroupSummary(group) {
-  var lanes = group.querySelectorAll('.smkt-lane:not(.ngrp-direct)');
-  var totalSlots = 0;
-  lanes.forEach(function(lane) {
-    totalSlots += lane.querySelectorAll('.smkt-lane-slots .node-tile').length;
-  });
-  var directSection = group.querySelector('.ngrp-direct');
-  var directCount = directSection ? directSection.querySelectorAll('.smkt-lane-slots .node-tile').length : 0;
-  var el = group.querySelector('.smkt-summary');
-  if (el) el.textContent = groupSummary(lanes.length, totalSlots, directCount);
 }
 
 // groupSummary is the count on a group's header, in plant words, naming only
@@ -580,32 +460,12 @@ function buildHierarchy() {
 // so binding the map across every event type keeps the page wiring
 // single-source.
 delegateActions(document.body, {
-    addChildNode,
-    buildHierarchy,
-    closeAddNodeModal,
     closeLaneModal,
     closeNgrpModal,
     createNodeGroup,
     enterSubmits,
-    initDragAndDrop,
-    loadGroupLayout,
-    onDragEnd,
-    onDragLeave,
-    onDragOver,
-    onDragOverArea,
-    onDragStart,
-    onDrop,
-    onDropGrid,
-    onGroupDragStart,
-    openLaneModal,
     openNgrpModal,
-    reorderLane,
-    reparentNode,
-    submitAddLane,
-    submitAddNode,
-    updateGroupSummary,
-    updateLaneCounts,
-    updateLaneDepths
+    submitAddLane
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -614,5 +474,5 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') { closeAddNodeModal(); closeNgrpModal(); closeLaneModal(); }
+  if (e.key === 'Escape') { closeNgrpModal(); closeLaneModal(); }
 });

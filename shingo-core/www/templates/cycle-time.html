@@ -16,9 +16,7 @@
   </div>
 
   <p class="text-muted mb-2">
-    One distribution per station, part and direction, from the applied
-    <code>BinUOPDelta</code> audit trail — the path that actually moved the
-    count. Last {{.WindowHours}} hours.
+    Last {{.WindowHours}} hours.
   </p>
 
   {{if .LoadError}}
@@ -31,30 +29,6 @@
     </div>
   </div>
   {{else}}
-
-  <div class="card mb-2">
-    <p class="ct-note">
-      <strong>What is being measured.</strong> The interval between consecutive
-      ticks for the same part at the same station. Edge accumulates deltas and
-      flushes them every {{.FlushInterval}}, so that is the resolution of every
-      figure here and nothing finer is printed. A median at or below it is
-      measuring the transport rather than the cell, and its row says so.
-    </p>
-    <p class="ct-note">
-      <strong>Station, not node.</strong> The applied-delta audit row carries no
-      node — the writer populates neither <code>node_id</code> nor the station
-      column and passes the station as the actor — so the grain here is station,
-      part and direction. Attributing these to a node needs a change at the
-      ingest path, not at this page.
-    </p>
-    <p class="ct-note">
-      <strong>Percentiles are order statistics, not interpolations.</strong>
-      Every figure printed is an interval that actually occurred. Bands are
-      relative to each key&rsquo;s own median so a 25-second line and a
-      75-second line can be read on one axis, and they are tolerance ranges —
-      never equality, never whole-second buckets.
-    </p>
-  </div>
 
   {{if .Truncated}}
   <div class="card mb-2">
@@ -141,16 +115,6 @@
     {{else}}
     Every one of them carried a part number.
     {{end}}
-  </p>
-  <p class="ct-note">
-    A greyed median has fewer than {{.MinSamples}} cycles behind it and is a
-    reading rather than a takt; p90 and p99 are withheld entirely below that
-    count, because at those sample sizes the nearest-rank p90 is simply the
-    largest gap observed. The tail cut is
-    <span class="tnum">median + {{.SpreadMultiple}} &times; (p90 &minus; median)</span>,
-    taken from each key&rsquo;s own spread — Springfield&rsquo;s slow parts are
-    steadier than its fast ones, so a cut expressed as a percentage of takt would
-    over-trigger on one family and under-trigger on the other.
   </p>
   {{else}}
   {{/* A table with no rows gets an EMPTY STATE, not an empty frame. A drawn

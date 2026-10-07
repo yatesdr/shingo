@@ -757,7 +757,7 @@ function editorRowHtml(r) {
       + '<a href="/nodes">Nodes page</a> to set a threshold.</div>';
   } else {
     editor += '<table class="thr-edit-table"><thead><tr><th></th><th>Loader</th><th>Node</th><th>Kind</th>'
-      + '<th>Cycle (s)</th><th></th><th>UoP threshold</th><th>Min stock</th><th></th></tr></thead><tbody>'
+      + '<th>Cycle (s)</th><th></th><th>UoP threshold</th><th></th></tr></thead><tbody>'
       + cfg.map(thrRowHtml).join('') + '</tbody></table>';
   }
   editor += holdingBinsHtml(r.payload_code);
@@ -768,11 +768,11 @@ function loaderRowsFor(pc) {
   loaders.forEach((item) => {
     const l = item.loader;
     (item.payloads || []).forEach((p) => {
-      if (p.payload_code === pc) rows.push({ l, node: l.core_node_name, kind: 'payload', thr: p.uop_threshold || 0, ms: p.min_stock || 0 });
+      if (p.payload_code === pc) rows.push({ l, node: l.core_node_name, kind: 'payload', thr: p.uop_threshold || 0 });
     });
     (item.homes || []).forEach((hm) => {
       if (hm.payload_code === pc) {
-        rows.push({ l, node: nodesById[hm.position_node_id] || ('node#' + hm.position_node_id), kind: 'home', thr: hm.uop_threshold || 0, ms: 0, positionNodeId: hm.position_node_id });
+        rows.push({ l, node: nodesById[hm.position_node_id] || ('node#' + hm.position_node_id), kind: 'home', thr: hm.uop_threshold || 0, positionNodeId: hm.position_node_id });
       }
     });
   });
@@ -781,8 +781,7 @@ function loaderRowsFor(pc) {
 function thrRowHtml(c) {
   const key = c.l.id + '|' + c.kind + '|' + c.node;
   const data = 'data-lid="' + c.l.id + '" data-kind="' + c.kind + '" data-node="' + escapeHtml(c.node) + '"'
-    + ' data-pnid="' + (c.positionNodeId || '') + '" data-anchor="' + escapeHtml(c.l.core_node_name || '') + '"'
-    + ' data-ms="' + (c.ms || 0) + '"';
+    + ' data-pnid="' + (c.positionNodeId || '') + '" data-anchor="' + escapeHtml(c.l.core_node_name || '') + '"';
   return '<tr data-thr-key="' + escapeHtml(key) + '">'
     + '<td><span class="dirty-dot" style="visibility:hidden"></span></td>'
     + '<td>' + escapeHtml(c.l.name || '') + '</td>'
@@ -792,7 +791,6 @@ function thrRowHtml(c) {
     + '<td><button class="btn btn-sm" data-action="calcThr" ' + data + '>Calc</button></td>'
     + '<td><input type="number" class="form-input thr-value" value="' + c.thr + '" data-orig="' + c.thr + '" ' + data
     + ' data-action-input="onThrInput"></td>'
-    + '<td><input type="number" class="form-input thr-ms" value="' + (c.ms || 0) + '"' + (c.kind === 'home' ? ' disabled title="Min stock applies to payload rows only"' : '') + ' style="width:70px"></td>'
     + '<td class="nowrap"><button class="btn btn-sm btn-primary thr-save" data-action="saveThr" ' + data + ' style="visibility:hidden">Save</button> '
     + '<button class="btn btn-sm thr-discard" data-action="discardThr" style="visibility:hidden">Discard</button></td>'
     + '</tr>';
@@ -901,8 +899,7 @@ async function saveThr(el) {
     if (d.kind === 'home') {
       await apiPost('/api/loader/set-home', { loader_id: Number(d.lid), position_node_id: Number(d.pnid), payload_code: expanded, uop_threshold: thr });
     } else {
-      const ms = Number(tr.querySelector('.thr-ms').value) || 0;
-      await apiPost('/api/loader/set-payload', { loader_id: Number(d.lid), payload_code: expanded, uop_threshold: thr, min_stock: ms });
+      await apiPost('/api/loader/set-payload', { loader_id: Number(d.lid), payload_code: expanded, uop_threshold: thr });
     }
     toast('Threshold saved — demand re-derived, edge push on next sync', 'success');
     await loadAll(true);

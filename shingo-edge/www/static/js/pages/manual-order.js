@@ -208,7 +208,6 @@ updateOrderForm();
 delegateActions(document.body, {
     autofillNodeDefaults,
     createOrder,
-    resetForm,
     syncNodes,
     updateOrderForm
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

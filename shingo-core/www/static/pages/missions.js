@@ -298,7 +298,7 @@ function refreshCells() {
         grid.innerHTML = '';
         cellTiles.clear();
         if (!cellList.length) {
-            grid.innerHTML = '<div class="dash-empty">No cells configured. <a href="/admin/cells">Define cells</a> to see production rhythm here.</div>';
+            grid.innerHTML = '<div class="dash-empty">No cells reported yet. They appear once an edge registers.</div>';
             if (note) note.textContent = '';
             return;
         }

@@ -113,7 +113,6 @@ delegateActions(document.body, {
     closeRobotModal,
     filterRobots,
     openRobotModal,
-    robotControlPost,
     robotForceComplete,
     robotRetryFailed,
     robotSetAvailability
@@ -167,9 +166,8 @@ installLiveDurations(document.getElementById('robot-grid') || document);
 // ── The localization board ────────────────────────────────────────────────
 //
 // Booted after the tiles so a slow map fetch never delays the fleet list, which
-// is what someone opening this page in a hurry came for. Robot positions are
-// pushed in from the SSE feed the page already consumes rather than polled
-// again — the fourth refusal of a second poll in this line of work.
+// is what someone opening this page in a hurry came for. The board does not
+// draw robots (R18): its robot control is the vehicle filter only.
 var board = null;
 
 function bootLocalizationBoard() {
@@ -180,10 +178,6 @@ function bootLocalizationBoard() {
     root.innerHTML = '<p class="lb-empty">Could not load the localization board: ' +
       (err && err.message ? err.message : err) + '</p>';
   });
-}
-
-export function pushRobotPositionsToBoard(robots) {
-  if (board) board.setRobots(robots || []);
 }
 
 if (document.readyState === 'loading') {

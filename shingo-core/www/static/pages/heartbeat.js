@@ -71,7 +71,7 @@ function loadCells() {
             // P4.4: a freshly-seeded board has no cells yet — render guidance,
             // not a dead end. (SCOPE_STATIONS may also be empty here, which is
             // fine: an unscoped board shows every cell once any exist.)
-            grid.appendChild(el('div', 'hb-empty', '0 cells configured. Set up cells at /admin/cells, then scope this board in Manage.'));
+            grid.appendChild(el('div', 'hb-empty', 'No cells reported yet. They appear once an edge registers; the stations on this board are chosen with Edit on the Dashboard page.'));
             return;
         }
         cellList.forEach((c, i) => {

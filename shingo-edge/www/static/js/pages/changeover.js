@@ -307,7 +307,6 @@ delegateActions(document.body, {
     navigateToProcess,
     previewProcessChangeover,
     releaseChangeoverMaterial,
-    renderChangeoverPreview,
     startProcessChangeover,
     switchStation
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

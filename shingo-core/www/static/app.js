@@ -296,14 +296,14 @@ export function setText(id, v) {
 // already renders plant-local on first paint; there is no DOMContentLoaded
 // rewrite to do.
 
-// ─── Nav chrome: live health pills ──────────────────────────────────────
+// ─── SSE bus: the subscription every page has ───────────────────────────
 //
 // The shared onSSE bus (shared/utils.js) maintains ONE EventSource per tab,
 // handles reconnect/backoff, and shows the build-id refresh banner on a Core
 // redeploy — so this file no longer opens its own EventSource. app.js loads on
-// every page, so subscribing here keeps the nav health pills live everywhere
-// (and, because the bus opens its connection on the first subscription, keeps
-// build-id detection running on every page too). Page-specific events
+// every page, and because the bus opens its connection on the first
+// subscription, subscribing here keeps build-id detection running on every
+// page. Page-specific events
 // (order-update, bin-update, robot-update, mission-event, cms-transaction,
 // debug-log, fire-alarm) are subscribed via onSSE in their own page modules.
 // This replaces the legacy auto-connecting SSE IIFE (Q-002) so each tab holds
@@ -311,21 +311,15 @@ export function setText(id, v) {
 // not here. inventory-update no longer exists at all — its only producer was
 // the correction path, which was removed; the two pages that subscribed to it
 // stay live on their bin-update subscriptions.
-onSSE('system-status', function(data) {
-  if (!data) return;
-  if (data.fleet !== undefined) {
-    var fleetEl = document.getElementById('fleet-status');
-    if (fleetEl) fleetEl.className = 'health ' + (data.fleet === 'connected' ? 'health-ok' : 'health-fail');
-  }
-  if (data.messaging !== undefined) {
-    var msgEl = document.getElementById('msg-status');
-    if (msgEl) msgEl.className = 'health ' + (data.messaging === 'connected' ? 'health-ok' : 'health-fail');
-  }
-  if (data.redis !== undefined) {
-    var redisEl = document.getElementById('redis-status');
-    if (redisEl) redisEl.className = 'health ' + (data.redis === 'connected' ? 'health-ok' : 'health-fail');
-  }
-});
+//
+// The handler is empty on purpose (RM4): the nav pills it used to paint
+// (#fleet-status, #msg-status, #redis-status) are in no template. The
+// SUBSCRIPTION is what matters: it is the one every layout page has, so
+// without it _busSync (shared/utils.js) never connects on a page with no
+// handler of its own and the new-build banner stops there. Do not swap it for
+// 'connected': that topic is excluded from the filter list, so the page would
+// become an unfiltered client and receive every event.
+onSSE('system-status', function() {});
 
 // ─── Auto-dispatching delegated click handler ─────────────────────────
 //

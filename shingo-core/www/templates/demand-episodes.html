@@ -14,13 +14,6 @@
     <h1>Demand episodes</h1>
   </div>
 
-  <p class="text-muted mb-2">
-    One row per continuous period during which a place needed material.
-    Open episodes always shown; closed ones from the last {{.WindowHours}} hours.
-    Sorted by cost ratio, worst first — with the rows the ratio cannot rank
-    floated to the top rather than buried at the bottom.
-  </p>
-
   {{if .LoadError}}
   <div class="card mb-2">
     <strong>Could not read demand episodes.</strong>
@@ -66,9 +59,7 @@
       </div>
     </div>
     <p class="de-note">
-      The sweep is the correctness floor under six notification close paths. Its
-      share climbing toward 100% means those paths have stopped firing — and
-      nothing else in the system would say so.
+      The sweep is the correctness floor under six notification close paths.
     </p>
   </div>
   {{end}}{{end}}
@@ -104,9 +95,7 @@
     </div>
     <p class="de-note">
       "Cancelled early" is orders cancelled before the fleet vendor ever
-      acknowledged them. Re-arm churn lives in that bucket — so does anything
-      that failed to reach the vendor for another reason, and the schema records
-      no way to tell them apart. Read it as an upper bound, not a churn count.
+      acknowledged them.
     </p>
   </div>
   {{end}}{{end}}
@@ -173,8 +162,7 @@
   </table>
   <p class="de-note">
     A greyed ratio has a denominator below {{.MinExpected}} and is not a reliable
-    comparison — read the order count beside it. Worry at {{.WorryAfter}},
-    concern at {{.ConcernAfter}}.
+    comparison — read the order count beside it.
   </p>
   {{else}}
   {{/*

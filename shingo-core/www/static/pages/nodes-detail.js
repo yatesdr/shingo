@@ -461,25 +461,16 @@ async function handleNodeSave(el, evt) {
 // so binding the map across every event type keeps the page wiring
 // single-source.
 delegateActions(document.body, {
-    clearChipPicker,
     closeNodeModal,
     deleteNode,
-    getPickerConfig,
     handleNodeSave,
-    loadInventory,
-    loadNodeDetail,
     onAsrsToggle,
     onModeChange,
     openNodeModal,
-    populateChipPicker,
-    renderChips,
     clearGatePoint,
     clearGroupWaitPoints,
     onGatePointSearch,
-    pickGatePoint,
-    saveAlgorithmProperties,
-    serializeChipPickers,
-    toggleInheritOption
+    pickGatePoint
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });
 
 document.addEventListener('keydown', function(e) {

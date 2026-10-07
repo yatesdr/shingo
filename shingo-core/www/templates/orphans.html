@@ -16,9 +16,6 @@
 
   <p class="text-muted mb-2">
     An orphan is an order that should have carried a demand origin and did not.
-    Findings are never deleted and never auto-attached — the record is the
-    evidence that a reconciliation gap existed. Live findings are the actionable
-    ones; aged findings are those the sweep has stopped asking about.
   </p>
 
   {{/* ── The lane ─────────────────────────────────────────────────────── */}}
@@ -99,9 +96,7 @@
       <span class="kpi-label">Orphans per {{$.BucketLabel}}, last {{$.WindowDays}} days</span>
     </div>
     <p class="de-note mb-2">
-      Bars carry the orphan COUNT, which every bucket has. The RATE beside it
-      needs a denominator, and a bucket in which no orders were created has
-      none — those read as unmeasured, never as 0%. A rate over fewer than
+      A rate over fewer than
       {{$.MinBucketOrders}} orders is greyed: one orphan would dominate it.
     </p>
 

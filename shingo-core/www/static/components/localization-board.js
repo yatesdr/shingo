@@ -283,7 +283,6 @@ export function createBoard(root, opts) {
         selected: null,      // lane key: area + lane, as serverLaneKey builds it
         focusDiff: null,     // diff id — dims lanes that edit did not touch
         change: null,        // the selected lane's annotation, fetched on select
-        robots: [],
         robot: '',            // vehicle_id filter; '' is the fleet view
         // Viewport. scale/tx/ty are the screen transform; strokes divide by
         // scale so they hold their SCREEN size — a lane that thickened as you
@@ -806,21 +805,6 @@ export function createBoard(root, opts) {
             world.appendChild(rg);
         }
 
-        // robots — this is the robots page; live positions belong on it
-        if (state.robots.length) {
-            const rg = svg('g', { 'class': 'lb-robots' });
-            state.robots.forEach(function (rb) {
-                if (typeof rb.x !== 'number') return;
-                const q = P(rb.x, rb.y);
-                rg.appendChild(svg('circle', {
-                    cx: q[0], cy: q[1], r: 3, 'data-r': 3,
-                    fill: 'var(--viz-primary)', stroke: 'var(--elev-surface)',
-                    'stroke-width': 1, 'data-w': 1
-                }));
-            });
-            world.appendChild(rg);
-        }
-
         drawLegend();
         applyTransform();
     }
@@ -1177,7 +1161,6 @@ export function createBoard(root, opts) {
 
     return {
         load: load,
-        setRobots: function (list) { state.robots = list || []; draw(); },
         setRobot: function (id) {
             state.robot = id || '';
             if (robotSel.value !== state.robot) robotSel.value = state.robot;

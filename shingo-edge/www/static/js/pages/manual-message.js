@@ -153,9 +153,6 @@ updateMessageForm();
 // so binding the map across every event type keeps the page wiring
 // single-source.
 delegateActions(document.body, {
-    buildPayload,
-    getFieldValue,
-    renderField,
     sendMessage,
     updateMessageForm,
     updatePreview
