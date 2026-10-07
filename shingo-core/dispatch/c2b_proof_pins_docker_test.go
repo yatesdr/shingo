@@ -162,7 +162,9 @@ func TestC2bPin_AGroupPickupWhoseBinIsTakenIsReChosen(t *testing.T) {
 		t.Fatalf("the Edge-named pickup was re-chosen: at %s, sent %v (want waiting at %s)",
 			node, named.VendorOrderID != "", chosen)
 	}
-	testdb.VerifyRed(t, "C2b proof 1: a group pickup whose bin is taken is never re-chosen", red)
+	if len(red) != 0 {
+		t.Fatalf("%v", red)
+	}
 }
 
 func nodeID(t *testing.T, db *store.DB, name string) int64 {
@@ -179,7 +181,7 @@ func nodeID(t *testing.T, db *store.DB, name string) int64 {
 // Fleet-refusal after 62666564, order 46: the supply's plan was persisted as
 // [wait LS_C8, pickup LSC_026 (group SYN_COMP), …] and the create refused. On
 // the retry LSC_026's bin was taken, the pickup went back to its group
-// (regroupPickup) and came back as LSC_028 in another lane. A splice that kept
+// and came back as LSC_028 in another lane. A splice that kept
 // the wait it recognised kept LS_C8's, inserted the new lane's in front of the
 // pickup, and the check failed the order (invalid_steps); the evac was cancelled
 // with it.
@@ -250,7 +252,9 @@ func TestC2bPin_ARefusedGatedOrderWhosePickupMovesLaneIsSentWithOneWait(t *testi
 	if r := prReloadUUID(t, db, "c2bp4-return"); r.Status == StatusCancelled || r.Status == StatusFailed {
 		red = append(red, fmt.Sprintf("the partner was ended (%s) for the supply's refusal", r.Status))
 	}
-	testdb.VerifyRed(t, "C2b proof 2b: a refused gated order whose pickup moves lane is not sent with one wait", red)
+	if len(red) != 0 {
+		t.Fatalf("%v", red)
+	}
 }
 
 // Ruling 5 — a gated complex order the fleet refuses is sent again on the next

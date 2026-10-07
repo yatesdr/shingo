@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"reflect"
 
 	"shingo/protocol"
 	"shingocore/fleet"
@@ -364,6 +365,10 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass) ([]r
 	// A plan a refused create left spliced is worked as the plan it was spliced
 	// from; the splice re-inserts its waits (withoutInboundLaneWaits).
 	resolvedSteps = withoutInboundLaneWaits(resolvedSteps)
+	// A queued order keeps its intent, not a choice made on an earlier pass:
+	// acquiring makes every group choice again (asIntent).
+	stored := resolvedSteps
+	resolvedSteps = asIntent(resolvedSteps)
 
 	// Round-3 follow-up: re-resolve any step that still references an
 	// NGRP. This happens on the deferred path — intake queued the order
@@ -377,7 +382,7 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass) ([]r
 	// the lane lock is held BY THIS ORDER to protect the bin it uncovered; an
 	// owner-blind re-resolve drops that lane and sends the parent back to a
 	// buried bin it will dig for again. See store/reservations/dig_exclusion.go.
-	newSteps, changed, rerr := d.reResolveComplexStepsFor(order, resolvedSteps, digAskerFor(order), pc)
+	newSteps, _, rerr := d.reResolveComplexStepsFor(order, resolvedSteps, digAskerFor(order), pc)
 	if rerr != nil {
 		class, payload := classifyResolutionError(rerr)
 		switch class {
@@ -410,9 +415,13 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass) ([]r
 	// as waiting_for_material instead of letting it fail terminal downstream.
 	// The park is the disposition change: a dry supply need is escapable
 	// (operator abandon) rather than a cancel→autoreorder loop.
-	widened, wchanged, hold := d.widenSupplyPickups(order, newSteps)
+	widened, _, hold := d.widenSupplyPickups(order, newSteps)
 	newSteps = widened
-	changed = changed || wchanged
+	// PERSISTED WHEN THE PLAN DIFFERS FROM THE ONE STORED, not when a stage says
+	// it moved something: asIntent puts every group choice back, so the stages
+	// report a change on every pass that re-chooses the same slot. Comparing the
+	// result with what was loaded writes only a choice that actually changed.
+	changed := !reflect.DeepEqual(newSteps, stored)
 
 	if changed {
 		d.persistWidenedPlan(order, newSteps)

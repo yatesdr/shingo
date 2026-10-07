@@ -122,17 +122,16 @@ func TestDropoffRegroup_ConcreteDropoffIsNotReverted(t *testing.T) {
 //
 // This constructs the population the run did not produce: a fungible complex
 // dropoff whose resolved slot is occupied while a sibling slot in the same group
-// stands empty. It asserts the whole sequence — the first tick parks and reverts,
-// the second tick re-resolves to a DIFFERENT slot and dispatches — because each
-// half alone is compatible with the defect. Reverting without re-resolving is a
-// widen that never lands; re-resolving without reverting is what the order-227
-// spin already did 4,520 times.
+// stands empty.
 //
-// MUTATION (verified): make revertFungibleDropoffToGroup return false
-// unconditionally. The first tick then leaves the step pinned to the occupied
-// slot and the second tick re-parks on it — the test fires on the re-resolve
-// assertion, naming the slot it never left.
-func TestDropoffRegroup_OccupiedSlotReResolvesToASiblingNextTick(t *testing.T) {
+// Since C2b, acquiring makes every group choice again (asIntent), so the order
+// is sent to the free sibling on the first tick and the occupied slot is never
+// asked. It used to assert two ticks: park and revert on the first, land on the
+// second.
+//
+// MUTATION: make asIntent return the plan as stored. The tick then asks the
+// occupied slot and parks, and the test fires on delivery_node.
+func TestDropoffRegroup_OccupiedSlotIsReChosenAtAcquiring(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	// A REAL RESOLVER, because this test is about the re-resolve and
@@ -168,51 +167,28 @@ func TestDropoffRegroup_OccupiedSlotReResolvesToASiblingNextTick(t *testing.T) {
 		o.Status = protocol.StatusQueued
 	})
 
-	// ── TICK ONE: the slot is occupied. Park, and hand the question back. ──
-	if err := d.DispatchPreparedComplex(order); err == nil {
-		t.Fatal("tick one dispatched onto an occupied slot — the capacity block did not fire, so " +
-			"this test is not exercising the population it was written for")
-	}
+	// ONE TICK, SINCE ACQUIRING MAKES THE CHOICE (asIntent). The plan's slot is an
+	// earlier pass's choice; acquiring puts it back to the group and chooses
+	// again, so the occupied slot is never asked and the free sibling is taken
+	// on the first tick. It used to park once (dropoff-occupied), revert, and
+	// land on the second tick.
+	testutil.MustNoErr(t, d.DispatchPreparedComplex(order), "the one tick")
 
-	afterFirst, err := db.GetOrder(order.ID)
-	testutil.MustNoErr(t, err, "reload after tick one")
-	if afterFirst.DeliveryNode != "RG3-GRP" {
-		t.Fatalf("delivery_node after tick one = %q, want the group RG3-GRP — an occupied fungible "+
-			"dropoff that stays bound to its one slot is order 227 and 4,520 re-queues",
-			afterFirst.DeliveryNode)
+	after, err := db.GetOrder(order.ID)
+	testutil.MustNoErr(t, err, "reload after the tick")
+	if after.DeliveryNode == w[0].Name {
+		t.Fatalf("delivery_node = %q — acquiring kept the occupied slot an earlier pass chose, which is "+
+			"order 227's spin", after.DeliveryNode)
 	}
-	if QueueCause(afterFirst.QueueCause) != CauseDropoffOccupied {
-		t.Errorf("queue cause after tick one = %q, want %q — the park must still name what it "+
-			"tripped on", afterFirst.QueueCause, CauseDropoffOccupied)
+	if after.DeliveryNode == "RG3-GRP" {
+		t.Fatalf("delivery_node is still the unresolved group — the choice landed nowhere, so the order " +
+			"waits on a group that has free slots in it")
 	}
-
-	// ── TICK TWO: the group re-resolves, and it must pick a DIFFERENT slot. ──
-	//
-	// This is the assertion the arm-level tests cannot make. Reverting to the
-	// group is only a fix if the next tick actually lands somewhere.
-	testutil.MustNoErr(t, d.DispatchPreparedComplex(afterFirst), "tick two after reverting to the group")
-
-	afterSecond, err := db.GetOrder(order.ID)
-	testutil.MustNoErr(t, err, "reload after tick two")
-	if afterSecond.DeliveryNode == w[0].Name {
-		t.Fatalf("delivery_node after tick two = %q — it re-resolved straight back onto the occupied "+
-			"slot, which is the spin rather than the fix", afterSecond.DeliveryNode)
+	if protocol.IsAcquiring(after.Status) {
+		t.Errorf("status = %q, want dispatched — a free sibling slot was available the whole time", after.Status)
 	}
-	if afterSecond.DeliveryNode == "RG3-GRP" {
-		t.Fatalf("delivery_node after tick two is still the unresolved group — the widen landed " +
-			"nowhere, so the order waits on a group that has free slots in it")
-	}
-	if protocol.IsAcquiring(afterSecond.Status) {
-		t.Errorf("status after tick two = %q, want dispatched — a free sibling slot was available "+
-			"the whole time", afterSecond.Status)
-	}
-
-	// ≤2 dropoff-occupied parks, which is the number the brief asks for: one for
-	// the tick that found the bin, and headroom for a single re-ask. 4,520 was the
-	// defect.
-	if parks := dropoffOccupiedParks(t, db, order.ID); parks > 2 {
-		t.Errorf("dropoff-occupied parks = %d, want <= 2 — more than one re-ask means the order is "+
-			"cycling rather than re-resolving", parks)
+	if parks := dropoffOccupiedParks(t, db, order.ID); parks != 0 {
+		t.Errorf("dropoff-occupied parks = %d, want 0 — the occupied slot is never asked", parks)
 	}
 }
 

@@ -77,7 +77,13 @@ func (p *Planner) ComplexSteps(steps []protocol.ComplexOrderStep, payloadCode st
 					PayloadCode: step.PayloadCode, ExclusiveSlot: step.ExclusiveSlot})
 				continue
 			}
-			nodeName, group, err := p.StepNode(step, payloadCode, asker, nextDrop, carrier)
+			stepOrderPayload := payloadCode
+			if step.Action == protocol.ActionDropoff {
+				stepOrderPayload = DropPayload(i, step.PayloadCode, payloadCode,
+					func(j int) bool { return steps[j].Action == protocol.ActionPickup },
+					func(j int) bool { return steps[j].Empty })
+			}
+			nodeName, group, err := p.StepNode(step, stepOrderPayload, asker, nextDrop, carrier)
 			if err != nil {
 				return nil, fmt.Errorf("step %d: %w", i, err)
 			}
@@ -85,7 +91,7 @@ func (p *Planner) ComplexSteps(steps []protocol.ComplexOrderStep, payloadCode st
 			if step.Action == protocol.ActionDropoff && group != "" {
 				if lane := p.OwnPickupLane(nodeName, laterRequestPickups(steps, i)); lane != 0 {
 					stated := binresolver.BinTypeFrom(carrier, "complex step: no preceding pickup resolved to exactly one carrier")
-					if nodeName, err = p.storeAvoidingOwnPickup(group, lane, StepPayload(step, payloadCode), stated, asker); err != nil {
+					if nodeName, err = p.storeAvoidingOwnPickup(group, lane, StepPayload(step, stepOrderPayload), stated, asker); err != nil {
 						return nil, fmt.Errorf("step %d: %w", i, err)
 					}
 				}
@@ -190,7 +196,13 @@ func (p *Planner) ReComplexSteps(steps []Step, need Need) (newSteps []Step, chan
 		// order), but a complex PARENT owns legs rather than cargo — its bin_id is
 		// NULL by design and its holds can name two carriers at once — so the
 		// paired pickup is the better answer and this prefers it.
-		newName, group, resolveErr := p.StepNode(ps, payloadCode, asker, "",
+		stepOrderPayload := payloadCode
+		if step.Action == protocol.ActionDropoff {
+			stepOrderPayload = DropPayload(i, step.PayloadCode, payloadCode,
+				func(j int) bool { return steps[j].Action == protocol.ActionPickup },
+				func(j int) bool { return steps[j].Empty })
+		}
+		newName, group, resolveErr := p.StepNode(ps, stepOrderPayload, asker, "",
 			p.BinTypeBeforeStep(steps, i))
 		// A GROUP DROP NEVER WALLS THIS PLAN'S OWN LATER PICKUP (Q1), on replay
 		// as at intake.
@@ -198,7 +210,7 @@ func (p *Planner) ReComplexSteps(steps []Step, need Need) (newSteps []Step, chan
 			if lane := p.OwnPickupLane(newName, LaterPickups(steps, i)); lane != 0 {
 				stated := binresolver.BinTypeFrom(p.BinTypeBeforeStep(steps, i),
 					"complex step: no preceding pickup resolved to exactly one carrier")
-				newName, resolveErr = p.storeAvoidingOwnPickup(group, lane, StepPayload(ps, payloadCode), stated, asker)
+				newName, resolveErr = p.storeAvoidingOwnPickup(group, lane, StepPayload(ps, stepOrderPayload), stated, asker)
 			}
 		}
 		var vacate *Vacate
@@ -263,6 +275,34 @@ func StepPayload(step protocol.ComplexOrderStep, orderPayload string) string {
 func ResolvedStepPayload(step Step, orderPayload string) string {
 	if step.PayloadCode != "" {
 		return step.PayloadCode
+	}
+	return orderPayload
+}
+
+// DropPayload is the payload a dropoff at step i asks its group with: its own,
+// if it names one; NONE, if the carrier it puts down is EMPTY (the nearest
+// pickup ahead of it is an Empty pickup); otherwise the order's (C2b Q4).
+//
+// An empty may be stored wherever an empty may stand (payloadAllowedAt passes an
+// empty payload), so asking with the order's payload refused it every lane that
+// declares another one: a consume press's swap stamped with the payload it is
+// leaving lifts an empty off the press, sets it down in the market, and waited
+// under ngrp-resolve for a lane declared for that payload. A full set down
+// mid-route still carries the order's payload, and is still fenced by it.
+//
+// pickupEmpty(j) answers whether step j is an Empty pickup, and false for every
+// other step, so the request's steps and the resolved plan share this walk.
+func DropPayload(i int, stepPayload, orderPayload string, isPickup, pickupEmpty func(j int) bool) string {
+	if stepPayload != "" {
+		return stepPayload
+	}
+	for j := i - 1; j >= 0; j-- {
+		if isPickup(j) {
+			if pickupEmpty(j) {
+				return ""
+			}
+			break
+		}
 	}
 	return orderPayload
 }

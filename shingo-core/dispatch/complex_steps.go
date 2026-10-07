@@ -659,3 +659,38 @@ func (d *Dispatcher) recalcBuriedNeed(order *orders.Order, hb *heldReservation, 
 func nextDropoffNode(steps []protocol.ComplexOrderStep, from int) string {
 	return plan.NextDropoffNode(steps, from)
 }
+
+// asIntent is a not-yet-sent plan with every choice made from a group put back
+// to the group it was made from, so this pass makes it again
+// (reResolveComplexStepsFor's group arm, the one spelling).
+//
+// ACQUIRING IS WHERE A CHOICE IS MADE, not an earlier pass. A queued order holds
+// nothing, but its plan kept the slot an earlier pass chose, and acquiring only
+// re-checked that slot: order 229 (packed after 71effbef) chose LSD_002 from
+// SYN_STAMP, another order's dig leg took the bin there 19 ms later, and 229
+// missed the same slot 3,650 times while the group had other bins. Replay
+// re-resolves only a step still NAMING its group, and the supply widen skips a
+// synthetic anchor, so nothing ever chose again.
+//
+// Kept as chosen:
+//   - a step the Edge named (no Group): the named-bin rule;
+//   - a step the vacated-slot rule stamped (Vacate): its own arm re-asks it, and
+//     reverting it would loop the market case (finalDropGate's case 1);
+//   - a step whose Group is a concrete pool anchor: the supply widen re-derives
+//     it from that anchor every pass already, and the resolver keeps a concrete
+//     node as it is, so putting it back changes nothing.
+func asIntent(steps []resolvedStep) []resolvedStep {
+	out := make([]resolvedStep, len(steps))
+	copy(out, steps)
+	for i := range out {
+		s := out[i]
+		if s.Group == "" || s.Group == s.Node || s.Vacate != nil {
+			continue
+		}
+		if s.Action != protocol.ActionPickup && s.Action != protocol.ActionDropoff {
+			continue
+		}
+		out[i].Node = s.Group
+	}
+	return out
+}
