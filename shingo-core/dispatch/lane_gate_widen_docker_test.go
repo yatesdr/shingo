@@ -76,7 +76,7 @@ func TestWiden_ClaimedBlockerWithAFreeSiblingWidens(t *testing.T) {
 	fresh, err := db.GetOrder(dweller.ID)
 	testutil.MustNoErr(t, err, "reload the dweller")
 	entryIdx := gateEntryIndexFor(t, fresh)
-	if err := d.releaseGatedOrder(fresh, wall, candidateFor(t, db, fresh, entryIdx)); err != nil {
+	if _, err := d.releaseGatedOrder(fresh, wall, candidateFor(t, db, fresh, entryIdx)); err != nil {
 		t.Fatalf("the release should have widened rather than refused: %v", err)
 	}
 
@@ -149,7 +149,7 @@ func TestWiden_ADigThatWouldHelpIsPreferredToWidening(t *testing.T) {
 	fresh, err := db.GetOrder(dweller.ID)
 	testutil.MustNoErr(t, err, "reload the dweller")
 	entryIdx := gateEntryIndexFor(t, fresh)
-	if err := d.releaseGatedOrder(fresh, wall, candidateFor(t, db, fresh, entryIdx)); err == nil {
+	if _, err := d.releaseGatedOrder(fresh, wall, candidateFor(t, db, fresh, entryIdx)); err == nil {
 		t.Fatal("the release WIDENED past a wall a dig would have cleared. The plan named this lane, " +
 			"the bins in front of the target are the problem, and going somewhere else leaves the " +
 			"wall standing for the next order")
@@ -214,7 +214,7 @@ func TestWiden_ConcurrentRebindsDoNotDoubleAppend(t *testing.T) {
 		if !IsGateStaged(fresh) {
 			continue
 		}
-		if err := d.releaseGatedOrder(fresh, wall, candidateFor(t, db, fresh, gateEntryIndexFor(t, fresh))); err == nil {
+		if _, err := d.releaseGatedOrder(fresh, wall, candidateFor(t, db, fresh, gateEntryIndexFor(t, fresh))); err == nil {
 			won++
 		}
 	}

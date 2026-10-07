@@ -107,6 +107,17 @@ func TestWaitKind_FenceHoldsBothWaysOnOneCoordinatedPlan(t *testing.T) {
 	// And the station's own release still works, appending only up to the lane
 	// wait. The requirement made concrete: do all the work you
 	// can, stop at the lane.
+	//
+	// THE LANE IS HELD FOR THIS, by a dig, so the order stops at its lane wait
+	// and position 2 has an order to look at. With the lane free, the station's
+	// append is the lane's own event and the gate releases the order through at
+	// once (C2b F1): 2 appends. That second append is not a new message: the
+	// floor sent the same one up to 60 s later (P0 ruling Q5 (a);
+	// TestC2bPin_ASwapsLaneReturnIsReleasedByItsOwnEventNotTheFloor).
+	digger := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "wk-both-digger" })
+	if !d.laneLock.TryLock(laneID, digger.ID) {
+		t.Fatal("fixture: the dig could not take the free lane")
+	}
 	before := len(backend.ReleaseCalls())
 	env := d.syntheticEnvelope(atOperator.StationID)
 	d.HandleOrderRelease(env, &protocol.OrderRelease{OrderUUID: atOperator.EdgeUUID})

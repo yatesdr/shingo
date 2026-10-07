@@ -147,16 +147,23 @@ func (s *laneGateSerializer) lock(laneID int64) func() {
 // serializing here would add a second, weaker answer to a question already
 // settled underneath.
 func (d *Dispatcher) RedriveHeldCompoundLegs(laneID int64) {
+	d.redriveHeldCompoundLegs(laneID)
+}
+
+// redriveHeldCompoundLegs is RedriveHeldCompoundLegs reporting the compounds
+// THIS CALL advanced, for the floor (C2b F6).
+func (d *Dispatcher) redriveHeldCompoundLegs(laneID int64) []int64 {
 	parents, err := d.db.ListHeldLegParentsInLane(laneID)
 	if err != nil {
 		log.Printf("lanegate: list held legs in lane %d: %v", laneID, err)
-		return
+		return nil
 	}
 	for _, parentID := range parents {
 		if err := d.AdvanceCompoundOrder(parentID); err != nil {
 			log.Printf("lanegate: re-drive compound %d after lane %d cleared: %v", parentID, laneID, err)
 		}
 	}
+	return parents
 }
 
 // EvaluateLaneReleases runs one release pass over a lane: every gate-staged order
@@ -191,9 +198,16 @@ func (d *Dispatcher) RedriveHeldCompoundLegs(laneID int64) {
 // per-lane query with no mode gate at all, and for the same reason: the state
 // it recovers is mode-independent.
 func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
+	d.evaluateLaneReleases(laneID)
+}
+
+// evaluateLaneReleases is EvaluateLaneReleases reporting the orders THIS CALL
+// released, the lanes it widened into included. The floor reads it to record
+// only what its own call changed (C2b F6).
+func (d *Dispatcher) evaluateLaneReleases(laneID int64) []int64 {
 	lane, err := d.db.GetNode(laneID)
 	if err != nil || lane == nil || lane.ParentID == nil {
-		return
+		return nil
 	}
 
 	// THE PASS RUNS UNDER THE LANE'S MUTEX; THE HEAL RUNS AFTER IT. Firing a dig
@@ -207,7 +221,7 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 	//
 	// Outside it, the nested pass is harmless and bounded: it finds the dig lock
 	// held, refuses everyone with lane-dig-active, and returns.
-	acceptance, wanted, freed, widened := d.evaluateLaneReleasesPass(lane)
+	acceptance, wanted, freed, widened, releasedIDs := d.evaluateLaneReleasesPass(lane)
 	// AND THE SAME SPLIT COVERS THE DWELL'S EXIT. A released dweller drives out of
 	// this lane and drops its occupancy row inside the pass, where the fact becomes
 	// true — but the re-drive that fact enables cannot run there: it dispatches,
@@ -237,8 +251,9 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 	// until the next unrelated event there or the 60-second floor — which is most
 	// of the latency the re-aim was supposed to remove.
 	for _, laneID := range widened {
-		d.EvaluateLaneReleases(laneID)
+		releasedIDs = append(releasedIDs, d.evaluateLaneReleases(laneID)...)
 	}
+	return releasedIDs
 }
 
 // evaluateLaneReleasesPass is the pass proper — everything that happens under the
@@ -250,7 +265,7 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 // excavation frees them all; a second request would find the lane locked by the
 // first and do nothing. Returning one keeps that obvious instead of relying on the
 // lock to absorb the duplicates.
-func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceRequest, bool, bool, []int64) {
+func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceRequest, bool, bool, []int64, []int64) {
 	laneID := lane.ID
 	unlock := d.laneGates.lock(laneID)
 	defer unlock()
@@ -267,12 +282,14 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 		// so the caller can wake whatever was queued behind it once the mutex is
 		// gone. See EvaluateLaneReleases for why it cannot be woken from in here.
 		freedLane bool
+		// releasedIDs is the orders this pass released, for the floor (F6).
+		releasedIDs []int64
 	)
 
 	candidates, err := d.gateStagedForLane(lane)
 	if err != nil {
 		log.Printf("lane gate: list staged orders for lane %s: %v", lane.Name, err)
-		return acceptance, false, false, nil
+		return acceptance, false, false, nil, nil
 	}
 
 	// Deepest first — but be clear about what this sort does and does not buy,
@@ -416,9 +433,16 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 			continue
 		}
 		if c.dwell {
-			if d.releaseDweller(c, lane) {
+			freedD, next := d.releaseDweller(c, lane)
+			if freedD {
 				released++
 				freedLane = true
+				releasedIDs = append(releasedIDs, c.order.ID)
+			}
+			// The dweller's tail may enter a marked lane: its wait there is that
+			// lane's event (F1), evaluated after this lane's mutex.
+			if next != 0 && next != laneID {
+				widened = append(widened, next)
 			}
 			continue
 		}
@@ -467,8 +491,7 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 			// before dispatch or dwelling at a mark, because to the operator it is
 			// the same fact about the same lane. Only where the robot is standing
 			// differs, and that is not the operator's problem to reconcile.
-			d.setQueueReason(c.order, protocol.QueueWaitingForSlot, v.Cause(),
-				QueueParams{Lane: lane.Name})
+			d.recordLaneWait(c.order, lane, v)
 			d.dbg("lane gate: order %d still held at %s (%s)", c.order.ID, lane.Name, v.Cause())
 			propose(c, v.Cause())
 			// AND THEN ASK WHETHER ANOTHER AISLE WOULD DO. This is where the
@@ -481,33 +504,14 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 			}
 			continue
 		}
-		var rErr error
-		if c.retrieve {
-			rErr = d.releaseGatedRetrieve(c.order, lane, c.entryIndex)
-		} else {
-			rErr = d.releaseGatedOrder(c.order, lane, c)
+		in, next, failed := d.releaseAdmittedCandidate(c, lane)
+		// AN APPEND THAT LEFT THE ORDER AT ANOTHER LANE'S WAIT is that lane's
+		// event (F1). Inside this lane's mutex, so it rides the widened list and
+		// is evaluated after the unlock (P0 ruling Q5).
+		if next != 0 && next != laneID {
+			widened = append(widened, next)
 		}
-		if errors.Is(rErr, ErrAppendNotOwed) {
-			// The leg ended while it waited (or another pass appended it). It owes
-			// the lane nothing: no wait is written on it, nothing is proposed, and
-			// the next candidate behind it is still asked.
-			continue
-		}
-		if rErr != nil {
-			// AND THE CAUSE GOES ON THE ROW. This arm wrote nothing, and it is the
-			// worst of the three places to write nothing: it runs AFTER the verdict
-			// admitted, so the order has just had any previous cause cleared on the
-			// success path's assumption — it loses the old sentence and gains none.
-			// A dweller whose release keeps failing then reads exactly like one
-			// nobody has evaluated yet. Measured on the lane-stress rig 2026-08-10:
-			// orders 6 and 40 dwelling 13-16 minutes under "no empty slot in lane"
-			// with a blank row, surfaced by the floor as a blank-cause release.
-			//
-			// It stays a candidate — the set is durable order state, never a verdict
-			// — so the next pass retries, which is what the cause's releaser says.
-			log.Printf("lane gate: release order %d into lane %s: %v", c.order.ID, lane.Name, rErr)
-			d.setQueueReason(c.order, protocol.QueueWaitingForSlot, CauseGateReleaseFailed,
-				QueueParams{Lane: lane.Name})
+		if failed {
 			// A FAILED RELEASE IS NOT A WALL. This used to propose, because the heal
 			// read the physics for itself and might find one. The classifier ADMITTED
 			// this candidate, so there is no burial here — the append failed, and the
@@ -515,17 +519,58 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 			propose(c, CauseGateReleaseFailed)
 			continue
 		}
-		// CLEARED ON ENTRY. The cause described a wait that is over; leaving it
-		// would put a stale "waiting for a slot" on a robot that is now driving,
-		// which is the same lie as the blank was, told the other way round.
-		d.setQueueReason(c.order, "", "", QueueParams{})
+		if !in {
+			continue
+		}
 		released++
+		releasedIDs = append(releasedIDs, c.order.ID)
 	}
 
 	if released > 0 {
 		log.Printf("lane gate: released %d order(s) into lane %s", released, lane.Name)
 	}
-	return acceptance, digWanted, freedLane, widened
+	return acceptance, digWanted, freedLane, widened, releasedIDs
+}
+
+// releaseAdmittedCandidate releases c, which the classifier admitted, into lane.
+// It returns whether the order went in, the lane its append left it waiting at
+// (0 for none), and whether the release failed — the pass proposes on a failure
+// and skips quietly on an append that was not owed.
+func (d *Dispatcher) releaseAdmittedCandidate(c gateCandidate, lane *nodes.Node) (in bool, next int64, failed bool) {
+	var rErr error
+	if c.retrieve {
+		next, rErr = d.releaseGatedRetrieve(c.order, lane, c.entryIndex)
+	} else {
+		next, rErr = d.releaseGatedOrder(c.order, lane, c)
+	}
+	if errors.Is(rErr, ErrAppendNotOwed) {
+		// The leg ended while it waited (or another pass appended it). It owes
+		// the lane nothing: no wait is written on it, nothing is proposed, and
+		// the next candidate behind it is still asked.
+		return false, next, false
+	}
+	if rErr != nil {
+		// AND THE CAUSE GOES ON THE ROW. This arm wrote nothing, and it is the
+		// worst of the three places to write nothing: it runs AFTER the verdict
+		// admitted, so the order has just had any previous cause cleared on the
+		// success path's assumption — it loses the old sentence and gains none.
+		// A dweller whose release keeps failing then reads exactly like one
+		// nobody has evaluated yet. Measured on the lane-stress rig 2026-08-10:
+		// orders 6 and 40 dwelling 13-16 minutes under "no empty slot in lane"
+		// with a blank row, surfaced by the floor as a blank-cause release.
+		//
+		// It stays a candidate — the set is durable order state, never a verdict
+		// — so the next pass retries, which is what the cause's releaser says.
+		log.Printf("lane gate: release order %d into lane %s: %v", c.order.ID, lane.Name, rErr)
+		d.setQueueReason(c.order, protocol.QueueWaitingForSlot, CauseGateReleaseFailed,
+			QueueParams{Lane: lane.Name})
+		return false, next, true
+	}
+	// CLEARED ON ENTRY. The cause described a wait that is over; leaving it
+	// would put a stale "waiting for a slot" on a robot that is now driving,
+	// which is the same lie as the blank was, told the other way round.
+	d.setQueueReason(c.order, "", "", QueueParams{})
+	return true, next, false
 }
 
 // gateCandidate is one gate-staged order with the destination and depth the
@@ -1091,7 +1136,9 @@ func namedID(named *nodes.Node) int64 {
 // if a digger is ever given a pre-position.
 
 // releaseGatedOrder binds the dropoff against the lane as it stands, appends the
-// tail, and seals the order.
+// tail, and seals the order. It returns the lane the append left the order
+// waiting at (laneWaitAfterAppend), for the pass to evaluate after its mutex
+// (F1), or 0.
 //
 // ── The double-append guard ───────────────────────────────────────────────
 // Called only under the per-lane mutex, and the FIRST thing it does is re-read
@@ -1105,15 +1152,15 @@ func namedID(named *nodes.Node) int64 {
 // lifecycle.Release inside the helper is the backstop: it validates
 // staged→in_transit against the live status and refuses an already-released order
 // (lifecycle.go transition → protocol.IsValidTransition).
-func (d *Dispatcher) releaseGatedOrder(order *orders.Order, lane *nodes.Node, c gateCandidate) error {
+func (d *Dispatcher) releaseGatedOrder(order *orders.Order, lane *nodes.Node, c gateCandidate) (int64, error) {
 	fresh, err := d.db.GetOrder(order.ID)
 	if err != nil || fresh == nil {
-		return err
+		return 0, err
 	}
 	if !IsGateStaged(fresh) {
 		d.dbg("lane gate: order %d no longer gate-staged (wait_index=%d status=%s) — another pass released it",
 			fresh.ID, fresh.WaitIndex, fresh.Status)
-		return nil
+		return 0, nil
 	}
 
 	dest, cause, err := d.rebindGatedDropoff(fresh, lane, c)
@@ -1124,19 +1171,19 @@ func (d *Dispatcher) releaseGatedOrder(order *orders.Order, lane *nodes.Node, c 
 		// The order stays staged and the next firing re-tries.
 		d.setQueueReason(fresh, protocol.QueueWaitingForSlot, cause,
 			QueueParams{Destination: lane.Name})
-		return err
+		return 0, err
 	}
 
 	if err := d.appendGateTail(fresh, "lane gate release"); err != nil {
 		if !errors.Is(err, ErrAppendNotOwed) {
 			d.noteGateAppendFailure(fresh, lane)
 		}
-		return err
+		return 0, err
 	}
 	d.clearGateAppendFailures(fresh.ID)
 	d.setQueueReason(fresh, "", "", QueueParams{})
 	d.dbg("lane gate: order %d released into lane %s at %s", fresh.ID, lane.Name, dest.Name)
-	return nil
+	return laneWaitAfterAppend(fresh), nil
 }
 
 // releaseGatedRetrieve is the retrieve mirror of releaseGatedOrder: re-bind the
@@ -1147,15 +1194,15 @@ func (d *Dispatcher) releaseGatedOrder(order *orders.Order, lane *nodes.Node, c 
 // The pickup re-bind is the retrieve's reason to bind at release: a dig may have
 // moved the wanted bin while this order dwelled at the gate, so the slot the order
 // was born wanting is not necessarily the slot the bin occupies when the lane opens.
-func (d *Dispatcher) releaseGatedRetrieve(order *orders.Order, lane *nodes.Node, entryIndex int) error {
+func (d *Dispatcher) releaseGatedRetrieve(order *orders.Order, lane *nodes.Node, entryIndex int) (int64, error) {
 	fresh, err := d.db.GetOrder(order.ID)
 	if err != nil || fresh == nil {
-		return err
+		return 0, err
 	}
 	if !IsGateStaged(fresh) {
 		d.dbg("lane gate: retrieve %d no longer gate-staged (wait_index=%d status=%s) — another pass released it",
 			fresh.ID, fresh.WaitIndex, fresh.Status)
-		return nil
+		return 0, nil
 	}
 
 	src, cause, err := d.rebindGatedPickup(fresh, lane, entryIndex)
@@ -1167,19 +1214,19 @@ func (d *Dispatcher) releaseGatedRetrieve(order *orders.Order, lane *nodes.Node,
 		// location and the next firing re-tries once the lane is consistent.
 		d.setQueueReason(fresh, protocol.QueueWaitingForSlot, cause,
 			QueueParams{Destination: lane.Name})
-		return err
+		return 0, err
 	}
 
 	if err := d.appendGateTail(fresh, "lane gate release (retrieve)"); err != nil {
 		if !errors.Is(err, ErrAppendNotOwed) {
 			d.noteGateAppendFailure(fresh, lane)
 		}
-		return err
+		return 0, err
 	}
 	d.clearGateAppendFailures(fresh.ID)
 	d.setQueueReason(fresh, "", "", QueueParams{})
 	d.dbg("lane gate: retrieve %d released into lane %s from %s", fresh.ID, lane.Name, src.Name)
-	return nil
+	return laneWaitAfterAppend(fresh), nil
 }
 
 // rebindGatedPickup re-resolves the order's pickup against where its bin ACTUALLY
@@ -1679,7 +1726,7 @@ func (d *Dispatcher) GroupGateStagedCount(groupID int64) (int, error) {
 // the lane -- so it takes neither release path and proposes no heal. That rule
 // is why this is a function and not an arm of the entry classifier, and why it
 // touches neither the pass's acceptance nor its dig proposal.
-func (d *Dispatcher) releaseDweller(c gateCandidate, lane *nodes.Node) (freed bool) {
+func (d *Dispatcher) releaseDweller(c gateCandidate, lane *nodes.Node) (freed bool, next int64) {
 	// A DWELLER ASKS A DIFFERENT QUESTION, SO IT DOES NOT GO THROUGH THE
 	// ENTRY CLASSIFIER.
 	//
@@ -1696,7 +1743,7 @@ func (d *Dispatcher) releaseDweller(c gateCandidate, lane *nodes.Node) (freed bo
 	// dweller is behind no wall here: its lane is already being dug, by the
 	// very parent this leg belongs to. What it lacks is somewhere in the
 	// GROUP to put a bin, and no dig on this lane produces one.
-	v, rErr := d.releaseDwellingDigLeg(c.order, lane)
+	v, next, rErr := d.releaseDwellingDigLeg(c.order, lane)
 	switch {
 	case errors.Is(rErr, ErrAppendNotOwed):
 		// The leg ended while it dwelled; nothing is written on it.
@@ -1725,7 +1772,7 @@ func (d *Dispatcher) releaseDweller(c gateCandidate, lane *nodes.Node) (freed bo
 		d.setQueueReason(c.order, "", "", QueueParams{})
 		freed = true
 	}
-	return freed
+	return freed, next
 }
 
 // widenDropoffToGroup re-aims a dwelling store at a SIBLING LANE in its own node
@@ -2021,4 +2068,47 @@ func (d *Dispatcher) widenRefusedDropoff(c gateCandidate, lane *nodes.Node, caus
 		"and its group had room",
 		c.order.ID, lane.Name, moved.Name, cause)
 	return newLane.ID
+}
+
+// recordLaneWait is the one write of a lane refusal on a gate-staged order's
+// row: the cause, the lane, and the order it waits behind (F5). The evaluator
+// writes it on every refused pass, and the valve writes it when it refuses a
+// create at its lane's wait (F2): before C2b the valve logged the refusal and
+// wrote nothing, so the row carried no cause and nothing named the order it was
+// waiting behind until the next evaluation or the floor.
+func (d *Dispatcher) recordLaneWait(order *orders.Order, lane *nodes.Node, v GateVerdict) {
+	d.setQueueReason(order, protocol.QueueWaitingForSlot, v.Cause(),
+		QueueParams{Lane: lane.Name, BehindOrderID: v.Blocker()})
+}
+
+// laneWaitAfterAppend is the lane an append left order waiting at, or 0 (C2b
+// F1). An append that advances an order onto a lane wait is that wait's own
+// event: the lane may be free now, and nothing else will ask it until an
+// unrelated event on that lane, the robot reaching the mark, or the periodic
+// floor (STUDY-floor-and-gate §1(b): 141-166 of every packed run's 131-170
+// floor releases were this). It reads the order as the append left it
+// (appendSegmentAndAdvance advances wait_index in memory), and nothing else.
+func laneWaitAfterAppend(order *orders.Order) int64 {
+	if order == nil || !IsGateStaged(order) {
+		return 0
+	}
+	var steps []resolvedStep
+	if json.Unmarshal([]byte(order.StepsJSON), &steps) != nil {
+		return 0
+	}
+	w, ok := waitAt(steps, order.WaitIndex)
+	if !ok || w.WaitKind != WaitKindLane {
+		return 0
+	}
+	return w.WaitLane
+}
+
+// evaluateLaneWaitAfterAppend evaluates the lane an append left order waiting
+// at, now. For a caller holding no lane's mutex: a caller inside one (the lane
+// release, the dwell) defers it through the pass's widened list, and the valve
+// after its unlock (P0 ruling Q5).
+func (d *Dispatcher) evaluateLaneWaitAfterAppend(order *orders.Order) {
+	if lane := laneWaitAfterAppend(order); lane != 0 {
+		d.EvaluateLaneReleases(lane)
+	}
 }

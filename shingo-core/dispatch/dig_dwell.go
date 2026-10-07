@@ -342,10 +342,10 @@ func (d *Dispatcher) digDwellPlan(order *orders.Order, sourceNode *nodes.Node) (
 // leg would have taken at dispatch. Both leave the robot dwelling exactly where
 // it is, which is the disposition the dwell exists to make cheap. An error is
 // reserved for a read or a write that did not answer.
-func (d *Dispatcher) releaseDwellingDigLeg(order *orders.Order, lane *nodes.Node) (GateVerdict, error) {
+func (d *Dispatcher) releaseDwellingDigLeg(order *orders.Order, lane *nodes.Node) (GateVerdict, int64, error) {
 	fresh, err := d.db.GetOrder(order.ID)
 	if err != nil {
-		return GateVerdict{}, fmt.Errorf("reload dwelling leg %d: %w", order.ID, err)
+		return GateVerdict{}, 0, fmt.Errorf("reload dwelling leg %d: %w", order.ID, err)
 	}
 	// SAME DOUBLE-APPEND GUARD AS EVERY OTHER RELEASE. wait_index is the durable
 	// witness: the shared append helper advances it only after the fleet accepted
@@ -353,12 +353,12 @@ func (d *Dispatcher) releaseDwellingDigLeg(order *orders.Order, lane *nodes.Node
 	// no longer awaiting a tail, and returns without touching the fleet.
 	if fresh == nil || !IsGateStaged(fresh) {
 		d.dbg("dig dwell: leg %d is no longer awaiting a tail — another pass released it", order.ID)
-		return Admitted(), nil
+		return Admitted(), 0, nil
 	}
 
 	dest, v, err := d.dwellDestination(fresh, lane)
 	if err != nil || !v.Admitted() {
-		return v, err
+		return v, 0, err
 	}
 
 	// HOLD B FOR THE DESTINATION LANE, HERE AND NOT AT THE LEG'S DISPATCH.
@@ -371,7 +371,7 @@ func (d *Dispatcher) releaseDwellingDigLeg(order *orders.Order, lane *nodes.Node
 	// slot (a direct child of the group, findShuffleSlots pass 1) contributes no
 	// row, exactly as it does everywhere else.
 	if err := d.TakeLaneOccupancy(fresh.ID, dest); err != nil {
-		return GateVerdict{}, err
+		return GateVerdict{}, 0, err
 	}
 	if err := d.appendGateTail(fresh, "dig dwell release"); err != nil {
 		// The robot never got the tail, so it is still standing in the dug lane and
@@ -389,7 +389,7 @@ func (d *Dispatcher) releaseDwellingDigLeg(order *orders.Order, lane *nodes.Node
 		if !IsAppendLanded(err) {
 			d.releaseOccupancyForLaneOf(fresh.ID, dest)
 		}
-		return GateVerdict{}, err
+		return GateVerdict{}, 0, err
 	}
 
 	// AND NOW IT IS LEAVING. A dig leg is released only once it has lifted its
@@ -420,7 +420,7 @@ func (d *Dispatcher) releaseDwellingDigLeg(order *orders.Order, lane *nodes.Node
 			"dropped: %v — the lane will read busy until the row is reaped", fresh.ID, lane.ID, err)
 	}
 	d.dbg("dig dwell: leg %d released from %s to %s", fresh.ID, lane.Name, dest.Name)
-	return Admitted(), nil
+	return Admitted(), laneWaitAfterAppend(fresh), nil
 }
 
 // dwellDestination answers where this leg's blocker goes, binding the answer as

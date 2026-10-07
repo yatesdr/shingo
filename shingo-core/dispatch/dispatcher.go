@@ -71,6 +71,12 @@ type Dispatcher struct {
 	// this package.
 	dwellChoiceHook func(legID int64, dest *nodes.Node)
 
+	// floorPassHook is a test-only seam the lane floor fires after it has read
+	// the waiting set and before it evaluates: the window an event can release a
+	// waiter in, which the floor must not record as its own (C2b F6). Nil in
+	// production; set directly by tests in this package.
+	floorPassHook func()
+
 	// preHandHook is a test-only seam fired just before a hand is acquired
 	// (commitToFleet → acquireHand), with the order's id. Nil in production; set
 	// via SetPreHandHook to put a second dispatcher inside the window deterministically.

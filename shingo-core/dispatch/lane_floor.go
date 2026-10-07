@@ -133,6 +133,16 @@ func (d *Dispatcher) SweepLaneWaiters() int {
 	for _, w := range before {
 		lanes[w.laneID] = true
 	}
+	if d.floorPassHook != nil {
+		d.floorPassHook()
+	}
+	// WHAT THIS CALL RELEASED, AND NOTHING ELSE (C2b F6). "Freed" used to be the
+	// before/after diff over the whole pass, so a release an event made while the
+	// pass ran was recorded as the floor's. The floor records a waiter only when
+	// its own evaluation released it, or its own re-drive advanced the compound a
+	// held leg belongs to.
+	mine := map[int64]bool{}
+	redriven := map[int64]bool{}
 	for laneID := range lanes {
 		// RE-READ THE CAUSE FIRST, and read it HERE rather than after the release.
 		//
@@ -148,8 +158,12 @@ func (d *Dispatcher) SweepLaneWaiters() int {
 		// re-drive is the last moment the live value still means "why this order is
 		// waiting".
 		d.refreshWaiterCauses(before, laneID)
-		d.EvaluateLaneReleases(laneID)
-		d.RedriveHeldCompoundLegs(laneID)
+		for _, id := range d.evaluateLaneReleases(laneID) {
+			mine[id] = true
+		}
+		for _, id := range d.redriveHeldCompoundLegs(laneID) {
+			redriven[id] = true
+		}
 	}
 
 	freed := 0
@@ -163,6 +177,13 @@ func (d *Dispatcher) SweepLaneWaiters() int {
 		}
 		if waiterState(after) == w.state {
 			continue // still waiting — the ordinary case, and it is silent
+		}
+		owned := mine[w.orderID]
+		if w.pop == PopCompoundLeg && after.ParentOrderID != nil {
+			owned = owned || redriven[*after.ParentOrderID]
+		}
+		if !owned {
+			continue // an event released it while this pass ran: not the floor's
 		}
 		d.recordFloorRelease(w)
 		freed++
@@ -464,8 +485,8 @@ func (d *Dispatcher) recordFloorRelease(w floorWaiter) {
 	// digLegNotYetLifted.) A held leg is a row; this is a robot.
 	if w.pop == PopGateStaged {
 		log.Printf("LANE FLOOR: order %d was waiting at lane %d under %q and only the periodic floor "+
-			"freed it — no event released a committed robot's wait (it may still have been driving; it "+
-			"stands only if it reached the mark first, for up to one interval). %s",
+			"freed it — no event released its wait. Its robot may still have been driving to the mark; "+
+			"it stood only if it reached the mark first, for up to one interval. %s",
 			w.orderID, w.laneID, cause, should)
 		return
 	}

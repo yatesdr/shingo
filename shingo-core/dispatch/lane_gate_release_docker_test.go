@@ -329,14 +329,14 @@ func TestGateRelease_StaleCopyCannotDoubleAppend(t *testing.T) {
 	entryIdx := gateEntryIndexFor(t, stale)
 
 	// Pass A releases it.
-	if err := d.releaseGatedOrder(stale, lane, candidateFor(t, db, stale, entryIdx)); err != nil {
+	if _, err := d.releaseGatedOrder(stale, lane, candidateFor(t, db, stale, entryIdx)); err != nil {
 		t.Fatalf("first release: %v", err)
 	}
 	// Pass B, holding the SAME struct it loaded before pass A ran, must not append.
 	staleCopy := *stale
 	staleCopy.WaitIndex = 0 // what pass B still believes, having never re-read
 	staleCopy.Status = StatusStaged
-	if err := d.releaseGatedOrder(&staleCopy, lane, candidateFor(t, db, &staleCopy, entryIdx)); err != nil {
+	if _, err := d.releaseGatedOrder(&staleCopy, lane, candidateFor(t, db, &staleCopy, entryIdx)); err != nil {
 		t.Fatalf("second release should be a silent no-op, got: %v", err)
 	}
 
@@ -905,7 +905,7 @@ func TestGateRelease_SwapBlocksKeepPressAsFinalDropoff(t *testing.T) {
 	swap, lane, press, emptySrc := tc.order, tc.lane, tc.press, tc.emptySrc
 
 	entryIdx := gateEntryIndexFor(t, swap)
-	if err := d.releaseGatedOrder(swap, lane, candidateFor(t, db, swap, entryIdx)); err != nil {
+	if _, err := d.releaseGatedOrder(swap, lane, candidateFor(t, db, swap, entryIdx)); err != nil {
 		t.Fatalf("gated release: %v", err)
 	}
 

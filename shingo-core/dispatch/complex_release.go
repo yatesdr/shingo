@@ -455,7 +455,12 @@ func (d *Dispatcher) HardReleaseStagedOrder(orderID int64, actor string) error {
 		orderID, owner, actor, physical)
 
 	d.patchRedirectSegments(segment, order, moreWaits)
-	return d.appendSegmentAndAdvance(order, segment, moreWaits, blockOffset, "hard release")
+	if err := d.appendSegmentAndAdvance(order, segment, moreWaits, blockOffset, "hard release"); err != nil {
+		return err
+	}
+	// The append may leave the order at a lane's wait: that lane's event (F1).
+	d.evaluateLaneWaitAfterAppend(order)
+	return nil
 }
 
 // hardReleasePhysicalVerdict asks the ordinary admission question about the
@@ -533,6 +538,9 @@ func appendLanded(err error) error { return AppendLandedError{err: err} }
 func (d *Dispatcher) dispatchFleetRelease(env *protocol.Envelope, order *orders.Order, segment []resolvedStep, moreWaits bool, blockOffset int) {
 	err := d.appendSegmentAndAdvance(order, segment, moreWaits, blockOffset, "complex release")
 	if err == nil {
+		// A STATION RELEASE ONTO A LANE WAIT IS THAT LANE'S EVENT (F1): order
+		// 233's shape, which the floor used to free a minute later under "(none)".
+		d.evaluateLaneWaitAfterAppend(order)
 		return
 	}
 	if IsAppendLanded(err) {

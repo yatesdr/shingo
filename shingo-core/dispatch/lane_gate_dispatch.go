@@ -775,6 +775,15 @@ func (d *Dispatcher) afterGatedCreate(order *orders.Order, target laneGateTarget
 	// transitions whose events the evaluator itself subscribes to (the bus
 	// dispatches synchronously on the emitting goroutine, so a lock held across one
 	// would deadlock against itself).
+	// AN APPEND HERE THAT LEAVES THE ORDER AT ANOTHER LANE'S WAIT is that lane's
+	// event (F1). It is evaluated after this lane's unlock, deferred FIRST so it
+	// runs LAST: one lane's mutex is never held while another lane is evaluated.
+	var nextLane int64
+	defer func() {
+		if nextLane != 0 && nextLane != target.lane.ID {
+			d.EvaluateLaneReleases(nextLane)
+		}
+	}()
 	unlock := d.laneGates.lock(target.lane.ID)
 	defer unlock()
 
@@ -797,14 +806,21 @@ func (d *Dispatcher) afterGatedCreate(order *orders.Order, target laneGateTarget
 		return vendorOrderID
 	}
 	if !v.Admitted() {
+		// THE REFUSAL GOES ON THE ROW (F2, with F5's blocker), through the
+		// evaluator's own write.
+		d.recordLaneWait(order, target.lane, v)
 		log.Printf("lane gate: order %d staged at %s for lane %s (%s) - awaiting release",
 			order.ID, target.gatePoint, target.lane.Name, v.Cause())
 		return vendorOrderID
 	}
-	if err := d.appendGateTail(order, "lane gate open"); err != nil && !errors.Is(err, ErrAppendNotOwed) {
-		log.Printf("lane gate: order %d created but tail append failed (%v) - left staged, robot holds at %s",
-			order.ID, err, target.gatePoint)
+	if err := d.appendGateTail(order, "lane gate open"); err != nil {
+		if !errors.Is(err, ErrAppendNotOwed) {
+			log.Printf("lane gate: order %d created but tail append failed (%v) - left staged, robot holds at %s",
+				order.ID, err, target.gatePoint)
+		}
+		return vendorOrderID
 	}
+	nextLane = laneWaitAfterAppend(order)
 	return vendorOrderID
 }
 

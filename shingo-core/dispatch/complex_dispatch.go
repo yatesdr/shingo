@@ -728,10 +728,13 @@ func (d *Dispatcher) buildComplexCommit(order *orders.Order, resolvedSteps []res
 func (d *Dispatcher) afterComplexCreate(c *complexCommit) {
 	order := c.order
 	if c.gated {
+		// Cleared BEFORE the valve: the create ended the wait the order was told,
+		// and a valve that refuses entry writes its own (F2). Clearing after it
+		// wiped that refusal, so a complex order held at the mark said nothing.
+		d.setQueueReason(order, "", "", QueueParams{})
 		d.afterGatedCreate(order, c.target, c.steps, c.req.OrderID)
 		log.Printf("dispatch: complex order %d dispatched gated into lane %s (%d steps)",
 			order.ID, c.target.lane.Name, len(c.steps))
-		d.setQueueReason(order, "", "", QueueParams{})
 		return
 	}
 	if !c.hasWait {

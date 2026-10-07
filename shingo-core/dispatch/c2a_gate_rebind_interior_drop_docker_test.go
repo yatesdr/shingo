@@ -73,8 +73,6 @@ func TestC2aPin_AGateRebindOfAnInteriorDropKeepsTheOrdersDestination(t *testing.
 			db, d := f.db, f.d
 			atStation, err := db.GetOrder(f.swap.ID)
 			testutil.MustNoErr(t, err, "reload the swap")
-			d.HandleOrderRelease(d.syntheticEnvelope(atStation.StationID),
-				&protocol.OrderRelease{OrderUUID: atStation.EdgeUUID})
 
 			// The slot the gate should end on, asked before the swap holds anything.
 			want := f.dDrop
@@ -83,7 +81,9 @@ func TestC2aPin_AGateRebindOfAnInteriorDropKeepsTheOrdersDestination(t *testing.
 			}
 
 			// The swap holds its old lane slot, and a claim at its far end that the
-			// re-bind has no business releasing.
+			// re-bind has no business releasing. Taken BEFORE the station release:
+			// since C2b F1 that release is the lane wait's own event, so the gate
+			// re-binds on it.
 			claim := func(n *nodes.Node, what string) {
 				testutil.MustNoErr(t, db.ReserveSlot(n.ID, f.swap.ID), "reserve "+what)
 				testutil.MustNoErr(t, db.ConfirmSlotClaim(n.ID, f.swap.ID, nil), "claim "+what)
@@ -93,7 +93,12 @@ func TestC2aPin_AGateRebindOfAnInteriorDropKeepsTheOrdersDestination(t *testing.
 			}
 			claim(f.press2, "the press")
 
-			// The gate's release, by whichever trigger: the evaluator is the one door.
+			d.HandleOrderRelease(d.syntheticEnvelope(atStation.StationID),
+				&protocol.OrderRelease{OrderUUID: atStation.EdgeUUID})
+
+			// The gate's release, by whichever trigger: the evaluator is the one
+			// door. The station release above already evaluated lane D (F1); a
+			// second evaluation finds nothing owed.
 			d.EvaluateLaneReleases(f.laneD)
 
 			after, err := db.GetOrder(f.swap.ID)

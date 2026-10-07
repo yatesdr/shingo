@@ -81,6 +81,15 @@ type laneEntryOrder struct {
 // liveness fact is already resolved into `others` (the active, not-completed stores
 // targeting the SAME lane). Returns a park cause, or "" to admit.
 func classifyLaneEntry(self laneEntryOrder, others []laneEntryOrder) QueueCause {
+	c, _ := laneEntryRefusal(self, others)
+	return c
+}
+
+// laneEntryRefusal is classifyLaneEntry with the order the refusal waits behind
+// (C2b F5): the deeper store, or the order of the active group, whose own event
+// is this order's releaser. 0 when admitted. The classification is this loop
+// alone; classifyLaneEntry is its cause.
+func laneEntryRefusal(self laneEntryOrder, others []laneEntryOrder) (QueueCause, int64) {
 	for _, o := range others {
 		if o.id == self.id {
 			continue
@@ -89,13 +98,13 @@ func classifyLaneEntry(self laneEntryOrder, others []laneEntryOrder) QueueCause 
 			continue // Tier 1: same-origin partner — co-dispatch, never gate
 		}
 		if o.depth > self.depth {
-			return CauseLaneDeeperPending // Tier 2: a deeper cross-origin store is still pending
+			return CauseLaneDeeperPending, o.id // Tier 2: a deeper cross-origin store is still pending
 		}
 		if o.grouped {
-			return CauseLaneGroupActive // Tier 3: an active cross-origin group holds the lane
+			return CauseLaneGroupActive, o.id // Tier 3: an active cross-origin group holds the lane
 		}
 	}
-	return ""
+	return "", 0
 }
 
 // sameOrigin reports whether two origin keys denote the same origin. Empty keys are
@@ -198,8 +207,8 @@ func (d *Dispatcher) laneEntryCause(lane *nodes.Node, order *orders.Order, destN
 	if err != nil {
 		return GateVerdict{}, err
 	}
-	if c := classifyLaneEntry(self, others); c != "" {
-		return Refused(c), nil
+	if c, by := laneEntryRefusal(self, others); c != "" {
+		return RefusedBy(c, by), nil
 	}
 	return Admitted(), nil
 }

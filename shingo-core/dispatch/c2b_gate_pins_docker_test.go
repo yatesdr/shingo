@@ -63,11 +63,11 @@ func c2bDeeperPending(t *testing.T, prefix string) (*Dispatcher, *orders.Order, 
 // F2 + F5 — a create the gate's valve refuses at lane wait 0 records that
 // refusal on the row, naming the order it is waiting behind.
 //
-// VERIFY-RED for C2b: the valve in dispatchGated asks gateEntryVerdict, logs
-// "staged at <mark> … - awaiting release", and writes nothing: the row carries
-// no cause, nothing names the deeper store, and the next evaluation of that lane
-// is whichever event or floor tick comes first. When the fix lands, replace the
-// VerifyRed call with the assertions spelled out beside it.
+// It was red at the base: the valve asked gateEntryVerdict, logged "staged at
+// <mark> … - awaiting release", and wrote nothing, so the row carried no cause,
+// nothing named the deeper store, and the next evaluation of that lane was
+// whichever event or floor tick came first. The valve now writes the refusal
+// through the evaluator's own write (recordLaneWait).
 func TestC2bPin_AGatedCreateTheValveRefusesSaysWhoItWaitsBehind(t *testing.T) {
 	t.Parallel()
 	d, deep, shallow, line, s0 := c2bDeeperPending(t, "C2BG1")
@@ -90,8 +90,9 @@ func TestC2bPin_AGatedCreateTheValveRefusesSaysWhoItWaitsBehind(t *testing.T) {
 		violations = append(violations, fmt.Sprintf("F5: the wait %q does not name the deeper store, order %d",
 			after.QueueReason, deep.ID))
 	}
-	// After the fix: if len(violations) != 0 { t.Fatalf("%v", violations) }
-	testdb.VerifyRed(t, "C2b F2/F5 a gated create's valve refusal is unrecorded and unnamed", violations)
+	if len(violations) != 0 {
+		t.Fatalf("%v", violations)
+	}
 }
 
 // stagedAtMarkByLane — "who is standing outside" has one spelling.

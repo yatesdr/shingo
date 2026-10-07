@@ -21,25 +21,26 @@
         "status": "in_transit",
         "payload": "PANEL-A",
         "source": "SMN_001",
-        "delivery": "SMN_007",
+        "delivery": "SMN_009",
         "bin": "BIN-PA-01",
         "steps": [
           "wait Lane_02-WAIT",
           "pickup SMN_001",
           "wait Lane_02-WAIT",
-          "dropoff SMN_007"
+          "dropoff SMN_009"
         ],
         "hard_bins": [
           "BIN-PA-01"
         ],
         "hard_slots": [
-          "SMN_007"
+          "SMN_009"
         ],
         "reservations": [
           "bin:confirmed:BIN-PA-01",
           "mouth:confirmed:Lane_01",
           "occupancy:confirmed:Lane_01",
-          "slot:confirmed:SMN_007"
+          "occupancy:confirmed:Lane_03",
+          "slot:confirmed:SMN_009"
         ],
         "to_fleet": true
       }

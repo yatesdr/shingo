@@ -217,6 +217,7 @@ type GateVerdict struct {
 	admitted bool
 	cause    QueueCause
 	lane     string
+	blocker  int64
 }
 
 // Admitted reports whether the move may proceed. False on the zero value.
@@ -251,6 +252,15 @@ func Refused(c QueueCause) GateVerdict { return GateVerdict{cause: c} }
 func RefusedAt(c QueueCause, laneName string) GateVerdict {
 	return GateVerdict{cause: c, lane: laneName}
 }
+
+// RefusedBy is Refused plus the order the refusal waits behind (C2b F5): the
+// one whose own event releases it.
+func RefusedBy(c QueueCause, blocker int64) GateVerdict {
+	return GateVerdict{cause: c, blocker: blocker}
+}
+
+// Blocker is the order a refusal waits behind, 0 when none is named.
+func (v GateVerdict) Blocker() int64 { return v.blocker }
 
 // admissionSituation is what admission is asked ABOUT.
 //

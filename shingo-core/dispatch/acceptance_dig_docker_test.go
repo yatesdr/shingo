@@ -147,8 +147,8 @@ func TestAcceptance_TwoPassesInTheSummonWindowRaiseOneDig(t *testing.T) {
 
 	wall, dweller, _ := stageDwellerBehindAWall(t, db, d, "ACC-WINDOW")
 
-	accA, wantA, _, _ := d.evaluateLaneReleasesPass(wall)
-	accB, wantB, _, _ := d.evaluateLaneReleasesPass(wall) // inside A's window
+	accA, wantA, _, _, _ := d.evaluateLaneReleasesPass(wall)
+	accB, wantB, _, _, _ := d.evaluateLaneReleasesPass(wall) // inside A's window
 	if !wantA {
 		t.Fatal("fixture: the first pass did not want a dig")
 	}

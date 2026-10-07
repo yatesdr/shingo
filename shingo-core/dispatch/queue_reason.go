@@ -86,6 +86,10 @@ type QueueParams struct {
 	// the wait is on another order's turn rather than on any machine, so the
 	// operator can look up who it is waiting behind.
 	HolderOrderID int64
+	// BehindOrderID is the order a lane refusal waits behind (C2b F5): the deeper
+	// store or the active group whose own event releases this one. Zero when the
+	// refusal names no order.
+	BehindOrderID int64
 	// TakenByOrderID names the order that took this order's promised bin (a
 	// person's move, CauseBinTaken) or slot (a dig that outranks it,
 	// CauseSlotTaken). Zero on every other wait.
@@ -275,6 +279,8 @@ func slotSentence(p QueueParams) string {
 		s += fmt.Sprintf(" — %s there now", plural(p.BlockingBins, "bin", "bins"))
 	case p.InboundOrders > 0:
 		s += fmt.Sprintf(" — %s already inbound", plural(p.InboundOrders, "order", "orders"))
+	case p.BehindOrderID != 0:
+		s += fmt.Sprintf(" — waiting behind order #%d", p.BehindOrderID)
 	}
 	return s
 }
