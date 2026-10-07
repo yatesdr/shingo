@@ -857,6 +857,21 @@ func (db *DB) StampDestinationResolved(orderID int64, at time.Time) error {
 	return nil
 }
 
+// StampDestinationBound records the instant the store-slot selector bound
+// orderID's drop to a NEW slot after intake: the lane gate's re-bind, or its
+// widen, moving the drop (C2b F4). A BARE SET, unlike StampDestinationResolved:
+// the re-bind is a new look at a new slot, and the burial shadow asks when the
+// selector last looked at the slot the bin was set down in. A later look is the
+// loud direction there (more claims read as already held), so moving it forward
+// cannot quiet a bypass.
+func (db *DB) StampDestinationBound(orderID int64, at time.Time) error {
+	if _, err := db.Exec(`UPDATE orders SET destination_resolved_at = $2 WHERE id = $1`,
+		orderID, at.UTC()); err != nil {
+		return fmt.Errorf("order %d stamp destination-bound: %w", orderID, err)
+	}
+	return nil
+}
+
 // OrderDestinationResolvedAt reports when intake's selector chose this order's
 // destination, and whether it did at all.
 //

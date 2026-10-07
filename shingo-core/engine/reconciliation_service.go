@@ -207,6 +207,16 @@ func (s *ReconciliationService) logBurialShadow() {
 			"price of law 6 (~2.5 min of re-work per occurrence), not a defect, and non-zero is "+
 			"expected on a busy plant.", t.Churn)
 	}
+	if t.BypassUndated > 0 {
+		s.logFn("burial-shadow BYPASS-UNDATED=%d of BYPASS=%d — the placer had no moment to compare: no "+
+			"selector stamp and no commit-to-fleet row. Counted as bypasses, the loud direction; these "+
+			"are a missing date, not a found bypass.", t.BypassUndated, t.Bypass)
+	}
+	if t.DigPastGrant > 0 {
+		s.logFn("burial-shadow DIGPASTGRANT=%d (expected 0) — a dig was admitted past a granted mouth: "+
+			"its leg's bin was buried by a placer whose slot in that lane was bound before the dig was "+
+			"born. The dig's planner should have waited (plan.DigFits' granted-mouth arm).", t.DigPastGrant)
+	}
 	if t.Soft == 0 && t.DigUncovered == 0 {
 		return
 	}

@@ -303,6 +303,7 @@ type dwellStats struct {
 type logStats struct {
 	source                       string
 	softN, hardN, churnN, stealN int
+	digPastGrantN, undatedN      int
 	// midLiftDissolves counts dig legs a dissolve cancelled after their bin was
 	// lifted and before it was set down: the bin is left in _TRANSIT with no
 	// order (lane-stress 2026-09-25, bin 59). Counted from the log because the
@@ -1029,6 +1030,12 @@ func readLog(source string) *logStats {
 			if n, ok := tallyValue(line, "CHURN="); ok {
 				s.churnN = n
 			}
+			if n, ok := tallyValue(line, "DIGPASTGRANT="); ok {
+				s.digPastGrantN = n
+			}
+			if n, ok := tallyValue(line, "BYPASS-UNDATED="); ok {
+				s.undatedN = n
+			}
 			if n, ok := tallyValue(line, "soft-hold burials "); ok {
 				s.softN = n
 			}
@@ -1142,6 +1149,8 @@ func (r *report) report() {
 		// of law 6, not a finding.
 		fmt.Printf("        hard burials (TRIPWIRE): %d   <- expected value is ZERO (never-asked)\n", r.logCounts.hardN)
 		fmt.Printf("        approved-then-invalid.:  %d   <- accepted churn, healed\n", r.logCounts.churnN)
+		fmt.Printf("        dig past grant:          %d   <- expected value is ZERO (the dig's planner)\n", r.logCounts.digPastGrantN)
+		fmt.Printf("        of the tripwire, undated: %d   <- no moment to compare; a missing date\n", r.logCounts.undatedN)
 		fmt.Printf("        dig steals:              %d\n", r.logCounts.stealN)
 		fmt.Printf("        slots lost choose->claim: %s\n", lostSlotsText(r.logCounts.lostSlots))
 	}

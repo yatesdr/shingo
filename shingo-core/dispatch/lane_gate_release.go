@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingocore/dispatch/binresolver"
 	"shingocore/dispatch/plan"
 	"shingocore/store"
@@ -1437,6 +1438,7 @@ func (d *Dispatcher) rebindGatedDropoff(order *orders.Order, lane *nodes.Node, c
 				order.ID, current.Name, best.Name, rErr)
 		}
 	}
+	d.stampBound(order, best)
 	// applyDeliveryNodeAtStep, not a raw delivery_node write: it patches the
 	// deferred tail in steps_json in the same breath, and that tail is exactly what
 	// the append is about to emit. A raw write would append a block for the slot the
@@ -1881,6 +1883,7 @@ func (d *Dispatcher) widenDropoffToGroup(order *orders.Order, lane *nodes.Node, 
 	if err := d.confirmDropoffSlot(order, result.Node); err != nil {
 		return nil, err
 	}
+	d.stampBound(order, result.Node)
 	if err := applyDeliveryNodeAtStep(d.db, order, result.Node.Name, entryIndex); err != nil {
 		return nil, err
 	}
@@ -2140,4 +2143,16 @@ func (d *Dispatcher) dropWallsOwnPickup(order *orders.Order, entryIndex int, des
 		return false
 	}
 	return d.pure.OwnPickupLane(dest.Name, plan.LaterPickups(steps, entryIndex)) == lane.ID
+}
+
+// stampBound records the moment the gate bound order's drop to slot, for the
+// burial shadow's question "when did the selector last look" (C2b F4). The
+// re-bind left no stamp, so a placement the selector re-bound was dated by a
+// later, unrelated in_transit row (order 233: read as a GUARD BYPASS). A failed
+// write costs the instrument a date, never the release.
+func (d *Dispatcher) stampBound(order *orders.Order, slot *nodes.Node) {
+	if err := d.db.StampDestinationBound(order.ID, clock.Now()); err != nil {
+		log.Printf("lane gate: order %d bound to %s but the bind moment was not recorded: %v",
+			order.ID, slot.Name, err)
+	}
 }

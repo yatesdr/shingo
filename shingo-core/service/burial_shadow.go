@@ -88,6 +88,11 @@ const (
 	// invalidated by a claim that arrived between the resolve and the placement
 	// (§R.4).
 	BurialChurnMarker = "APPROVED-THEN-INVALIDATED"
+	// BurialDigPastGrantMarker prefixes a dig admitted past a granted mouth: the
+	// buried bin is a dig leg's, and the dig was born after the placer's slot in
+	// that lane was bound, so the dig's own planner could have seen the grant
+	// (C2a's mouth clause, plan.DigFits). The mouth clause's should-be-zero.
+	BurialDigPastGrantMarker = "DIG PAST GRANT"
 )
 
 // BurialHoldKind names which hold class was buried.
@@ -142,7 +147,19 @@ type BurialTally struct {
 	// tripwire look dirty: a dig leg's placement resolves through findShuffleSlots
 	// and never consults the selector.
 	DigUncovered int64
-	LastBuriedAt time.Time
+	// DigPastGrant is a dig admitted past a granted mouth (C2b F4): the buried
+	// bin is a dig leg's, and the dig was born after the placer's slot was bound.
+	// The placer did nothing wrong; the dig's planner should have refused. It was
+	// filed as churn or as a bypass by the instant used (STUDY-floor-and-gate
+	// §1(a): 3 in 5 runs, 1 on base). Expected ZERO.
+	DigPastGrant int64
+	// BypassUndated is how many of Bypass had no moment to compare against: the
+	// placer has no selector stamp and no commit-to-fleet row (an order that went
+	// to confirmed without a dispatched row). They stay in Bypass, the loud
+	// direction; this says how many of that number are a missing date rather
+	// than a found bypass.
+	BypassUndated int64
+	LastBuriedAt  time.Time
 }
 
 // burialShadow holds the since-boot tally. In-process and crash-volatile on
@@ -183,6 +200,12 @@ const (
 	// hardDigUncovered is the known, named gap: a dig leg resolves its shuffle
 	// slots through findShuffleSlots and never consults the selector, on purpose.
 	hardDigUncovered
+	// hardDigPastGrant is a dig admitted past a granted mouth: the holder is a
+	// dig leg born after the placer's slot was bound (C2b F4).
+	hardDigPastGrant
+	// hardNeverAskedUndated is hardNeverAsked with no moment to compare: counted
+	// as a bypass, and apart as undated.
+	hardNeverAskedUndated
 )
 
 func (b *burialShadow) recordHard(kind hardBurialKind, at time.Time) {
@@ -195,6 +218,11 @@ func (b *burialShadow) recordHard(kind hardBurialKind, at time.Time) {
 		b.tally.Churn++
 	case hardDigUncovered:
 		b.tally.DigUncovered++
+	case hardDigPastGrant:
+		b.tally.DigPastGrant++
+	case hardNeverAskedUndated:
+		b.tally.Bypass++
+		b.tally.BypassUndated++
 	}
 	b.tally.LastBuriedAt = at
 }
@@ -359,6 +387,22 @@ func (s *BinService) noteHardBurial(at burialSite, b store.SpokenForBin, heldFor
 	// the hard-claim dating fix exists to reclassify: an order whose soft hold was
 	// still soft when
 	// the selector looked. One instant, read once, used for both.
+	// A DIG ADMITTED PAST A GRANTED MOUTH (C2b F4). The holder is a dig leg, and
+	// the dig was born (the leg's creation is its dig's start) after the selector
+	// last bound the placer's slot: the dig's planner could have seen the grant
+	// and refuse. Neither the placer's bypass nor churn, and asked first, because
+	// both of those readings blame the placement.
+	lookedAt, dated, _ := s.selectorLookedAt(at.placedBy)
+	if b.HolderIsChild && dated && b.HeldSince.UTC().After(lookedAt) {
+		log.Printf("%s: %s — dig leg %d was born at %s, AFTER order %d's slot in this lane was bound "+
+			"at %s, so the dig was admitted past a granted mouth: its planner could have seen the grant "+
+			"(plan.DigFits) and should have waited. Expected count is ZERO. %s",
+			burialShadowTag, BurialDigPastGrantMarker, b.HolderID, b.HeldSince.UTC().Format(time.RFC3339),
+			at.placedBy, lookedAt.UTC().Format(time.RFC3339), where)
+		s.burials.recordHard(hardDigPastGrant, now)
+		return
+	}
+
 	began := s.hardHoldBeganAt(b)
 	if s.burialWasApprovedThenInvalidated(at.placedBy, began) {
 		log.Printf("%s: %s — order %d's destination was approved and a later claim invalidated it. "+
@@ -378,6 +422,10 @@ func (s *BinService) noteHardBurial(at burialSite, b store.SpokenForBin, heldFor
 		"so it would have seen it and refused. Expected count is ZERO: find the placement path and "+
 		"route it through nodes.FindStoreSlotInLaneExcluding. %s",
 		burialShadowTag, BurialBypassMarker, at.placedBy, where)
+	if !dated {
+		s.burials.recordHard(hardNeverAskedUndated, now)
+		return
+	}
 	s.burials.recordHard(hardNeverAsked, now)
 }
 

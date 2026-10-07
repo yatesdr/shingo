@@ -749,3 +749,69 @@ func TestBurialShadow_SoftHoldThatHardensLaterIsNotABypass(t *testing.T) {
 			"accuses the selector of ignoring what it was designed to ignore", got)
 	}
 }
+
+// TestC2bPin_ADigPastAGrantedMouthIsItsOwnClass is F4's class (STUDY-floor-and-
+// gate §1(a), order 233 over legs 247/248). The placer's slot in the lane was
+// bound first; a dig in that lane was born after, and its leg's bin is the one
+// the placement buries. The placer did what the selector said; the dig's planner
+// could have seen the grant. It is neither a bypass (the placer's fault) nor
+// churn (nobody's): DIG PAST GRANT, a should-be-zero of its own.
+//
+// MUTATION: drop the dig-past-grant arm from noteHardBurial; the event files as
+// churn (the leg's claim came after the bind), as it did in p3 and s1-before.
+func TestC2bPin_ADigPastAGrantedMouthIsItsOwnClass(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	slots := burialLane(t, db, "BSGRANT", 4)
+	svc := newBinSvc(db)
+
+	bound := time.Now().Add(-time.Hour)
+	arriving := binAt(t, db, "BSGRANT-ARRIVE", slots[0])
+	placer := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+	testdb.ClaimBinForTest(t, db, arriving.ID, placer.ID)
+	resolveDestinationAt(t, db, placer.ID, bound)
+
+	buried := binAt(t, db, "BSGRANT-LEG", slots[2])
+	dig := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "reshuffling" })
+	leg := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.Status = "in_transit"
+		o.ParentOrderID = &dig.ID
+	})
+	_, err := db.Exec(`UPDATE orders SET created_at = $2 WHERE id = $1`, leg.ID, bound.Add(27*time.Second).UTC())
+	testutil.MustNoErr(t, err, "the dig is born after the bind")
+	testdb.ClaimBinForTest(t, db, buried.ID, leg.ID)
+	commitOrderToFleetAt(t, db, leg.ID, bound.Add(40*time.Second))
+
+	_, err = svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, placer.ID)
+	testutil.MustNoErr(t, err, "ApplyArrival")
+
+	got := svc.BurialShadowTally()
+	if got.DigPastGrant != 1 || got.Bypass != 0 || got.Churn != 0 {
+		t.Fatalf("tally = %+v, want DigPastGrant=1 Bypass=0 Churn=0: the dig was born after the "+
+			"placer's slot was bound, so its planner could have seen the grant", got)
+	}
+}
+
+// TestBurialShadow_AnUndatedBypassIsCountedApart: a placer with no moment to
+// compare stays in the loud bucket, and says how many of it are undated (F4).
+func TestBurialShadow_AnUndatedBypassIsCountedApart(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	slots := burialLane(t, db, "BSUNDATED", 4)
+	svc := newBinSvc(db)
+	buried := binAt(t, db, "BSUNDATED-HARD", slots[2])
+	holder := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "in_transit" })
+	testdb.ClaimBinForTest(t, db, buried.ID, holder.ID)
+	arriving := binAt(t, db, "BSUNDATED-ARRIVE", slots[0])
+	// Born `staged`: no selector stamp, and no dispatched or in_transit row (the
+	// birth row is the order's status), so nothing dates its look.
+	placer := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "staged" })
+	testdb.ClaimBinForTest(t, db, arriving.ID, placer.ID)
+
+	_, err := svc.ApplyArrival(arriving.ID, slots[1].ID, false, nil, placer.ID)
+	testutil.MustNoErr(t, err, "ApplyArrival")
+	got := svc.BurialShadowTally()
+	if got.Bypass != 1 || got.BypassUndated != 1 {
+		t.Fatalf("tally = %+v, want Bypass=1 BypassUndated=1", got)
+	}
+}
