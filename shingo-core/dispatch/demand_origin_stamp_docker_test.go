@@ -347,7 +347,7 @@ func TestOriginPropagation_DigChildrenStampAtTheSeamNotTheCaller(t *testing.T) {
 	testutil.MustNoErr(t, err, "plan unbury")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	testutil.MustNoErr(t, d.writeCompoundChildren(parent, plan), "writeCompoundChildren")
+	testutil.MustNoErr(t, d.writeCompoundChildren(parent, plan, nil), "writeCompoundChildren")
 
 	children, err := db.ListChildOrders(parent.ID)
 	testutil.MustNoErr(t, err, "list dig children")

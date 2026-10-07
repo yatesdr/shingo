@@ -73,6 +73,16 @@ func ActiveStateSQL(qualifier string) string { return qualifier + activeStates }
 // positive form is what the projector column below needs.
 const BinSpokenForSQL = `EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.` + blockingState + `)`
 
+// BinSpokenForByStrangerSQL is BinSpokenForSQL with the owner's own pending row
+// not counted: the order named by ownerExpr (a placeholder or a column) may
+// source a bin it already holds softly. Owner 0 is nobody, so for it every
+// pending row is a stranger's, which is the owner-blind answer. The same rule as
+// the group resolver's per-bin reservedByStranger, asked in SQL.
+func BinSpokenForByStrangerSQL(ownerExpr string) string {
+	return `EXISTS (SELECT 1 FROM reservations r WHERE r.bin_id = b.id AND r.` + blockingState +
+		` AND r.order_id <> ` + ownerExpr + `)`
+}
+
 // BinSpokenForByOrderSQL is BinSpokenForSQL answered with WHO: the order holding
 // the bin's pending reservation, or NULL when nobody does. It is the same row set
 // as the EXISTS (same alias, same state predicate), so a non-NULL answer here and
@@ -122,12 +132,27 @@ func HeldByOwnerSQL(kind Kind, orderParam, resourceParam int) string {
 // id expression; ownerExpr is the asking order's id — a bind placeholder like
 // "$2", or a format-rendered one from the caller's own Sprintf.
 func SlotSpokenForByStrangerSQL(alias, nodeExpr, ownerExpr string) string {
+	return SlotSpokenForByStrangerExceptSQL(alias, nodeExpr, ownerExpr, "")
+}
+
+// SlotSpokenForByStrangerExceptSQL is SlotSpokenForByStrangerSQL with one
+// stranger's PENDING row set aside: pendingHolderExpr's pending reservation on
+// the slot does not count, its confirmed one still does. "" sets nothing aside
+// and is SlotSpokenForByStrangerSQL. It is the question the dig walk asks of a
+// slot it may take by rank (nodes.TakeableSlotsInGroup): would the slot be free
+// but for that holder's promise.
+func SlotSpokenForByStrangerExceptSQL(alias, nodeExpr, ownerExpr, pendingHolderExpr string) string {
+	except := ""
+	if pendingHolderExpr != "" {
+		except = fmt.Sprintf(`
+			   AND NOT (%[1]s.order_id = %[2]s AND %[1]s.%[3]s)`, alias, pendingHolderExpr, blockingState)
+	}
 	return fmt.Sprintf(`EXISTS (SELECT 1 FROM reservations %[1]s
 			 WHERE %[1]s.node_id = %[2]s
 			   AND %[1]s.resource_kind = '%[4]s'
 			   AND %[1]s.%[5]s
-			   AND %[1]s.order_id <> %[3]s)`,
-		alias, nodeExpr, ownerExpr, string(KindSlot), activeStates)
+			   AND %[1]s.order_id <> %[3]s%[6]s)`,
+		alias, nodeExpr, ownerExpr, string(KindSlot), activeStates, except)
 }
 
 // OnTheBooksSQL asks whether a resource carries ANY active reservation row,

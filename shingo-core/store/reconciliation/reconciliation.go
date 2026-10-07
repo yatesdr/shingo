@@ -873,9 +873,10 @@ func ReleaseOrphanedClaims(db *sql.DB) (int, error) {
 //	orders.bin_id IS NEVER TOUCHED. A third book, already ruled: different fix.
 //
 //	A COMPOUND CHILD IS NOT AN ACQUIRING ORDER here. A dig leg rests `pending`
-//	(in the acquiring set since C1) and holds its part of the parent's hand by
-//	design: CreateCompoundChildren claims for it. The sweep's population is the
-//	top-level orders the scanner asks (S7), as the scan set's is.
+//	(in the acquiring set since C1) and is driven by its parent's dig, not by the
+//	scanner; it holds nothing until its handover (C2b A.1). The sweep's
+//	population is the top-level orders the scanner asks (S7), as the scan set's
+//	is.
 //
 //	TERMINAL ORDERS stay with ReleaseOrphanedClaims. Two sweeps, two
 //	populations, two log lines — a merged count could not tell a leak past a

@@ -231,18 +231,12 @@ func (f *failCreateFor) CreateOrder(req fleet.CreateOrderRequest) (fleet.Transpo
 // first; the supply's create then fails and the return is left committed on a
 // lift that never happened.
 //
-// VERIFY-RED for C2b (holds-at-rest): the return is left `pending` holding the
-// bin claim its stage-1 phase took. A pair takes both legs' hard holds before
-// either dispatches (dispatchPairInOnePass; the pair is one hand only in C2b), and
-// a create refused on the lifter returns before the dropper's holds are let go —
-// the stage-1 failure arm releases its survivors, this arm does not. In the
-// engine the lifter's fleet_failed cancels its peer (HandleSwapPeerTerminal), so
-// the hold lasts until that event; the dispatch package runs no engine. The
-// teardown's holds-at-rest is opted out here and asserted as a predicted red
-// below, so it fails the day C2b makes the pair one hand.
+// AND NEITHER LEG WAITS HOLDING. The pair is one hand (C2b A.2): both legs'
+// claims are taken in one transaction, and a lifter the fleet refuses takes the
+// return back with it, through the one door (commitPairToFleet). At the base the
+// return was left `pending` holding the bin claim its stage-1 phase took.
 func TestVacatedSlot_P12_LifterCreateFailsDropperNotCreated(t *testing.T) {
 	t.Parallel()
-	testdb.DisableWedgeSweep(t, "the pair's stage-1 hold on its undispatched return is a predicted red (VerifyRed below, C2b)")
 	db := testDB(t)
 	home, _, _, _ := parkFixture(t, db)
 	backend := &failCreateFor{MockTrackingBackend: testdb.NewTrackingBackend(), uuid: "vs12-supply"}
@@ -262,7 +256,7 @@ func TestVacatedSlot_P12_LifterCreateFailsDropperNotCreated(t *testing.T) {
 		t.Fatalf("the return was committed to the fleet (vendor %q) although its supply's create failed — "+
 			"the lifter's create must go first", ret.VendorOrderID)
 	}
-	testdb.VerifyRed(t, "C2b pair hold on a refused lifter's dropper", testdb.HoldsAtRest(t, db))
+	testdb.AssertNoHoldsAtRest(t, db, "after the lifter's create was refused")
 }
 
 // ── P2, P4, P5, P13, P25: the other shapes the rule covers ───────────────────

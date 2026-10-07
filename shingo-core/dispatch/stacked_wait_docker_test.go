@@ -302,8 +302,10 @@ func TestStacked_BuriedIrreplaceableNeed_InALockedLane_InAFullGroup(t *testing.T
 		t.Errorf("the wall is at node %v, want the spare %d", moved.NodeID, spare.ID)
 	}
 
-	// THE LANE STAYS HELD, and that is not a leak — but it is no longer held as a
-	// DIG. The assertion used to be `IsLocked(lane.ID)`, under: "Expose mode
+	// THE LANE IS RELEASED, AND THE BIN IS STILL COVERED (C2b A.1b). The demand
+	// soft-reserved its bin at the dig's birth and the burial guards read that
+	// row, so the corridor need not be held while the demand waits. The history,
+	// kept: the lane used to stay held, no longer as a DIG. The assertion used to be `IsLocked(lane.ID)`, under: "Expose mode
 	// transfers the lock to the complex parent until the target bin leaves (the
 	// re-burial window, catalog row 3.7), so an unlocked lane here would be the
 	// bug, not the tidy outcome."
@@ -317,14 +319,11 @@ func TestStacked_BuriedIrreplaceableNeed_InALockedLane_InAFullGroup(t *testing.T
 	// excavation keep digging.
 	holders, hErr := reservations.ActiveMouthRows(db.DB, lane.ID)
 	testutil.MustNoErr(t, hErr, "read the lane's mouth holds after the dig")
-	demandHolds := false
 	for _, h := range holders {
-		if h.OrderID == order.ID && h.Mode == reservations.ModeOutbound {
-			demandHolds = true
+		if h.OrderID == order.ID {
+			t.Errorf("lane %s holds %+v — demand %d waits holding its dug lane; a wait keeps soft "+
+				"holds only", lane.Name, holders, order.ID)
 		}
 	}
-	if !demandHolds {
-		t.Errorf("lane %s holds %+v — the demand has not picked its bin yet, and without its own "+
-			"outbound hold anything may store in front of it before it does", lane.Name, holders)
-	}
+	requireSoftHoldCovers(t, db, order.ID, slots[1].ID)
 }

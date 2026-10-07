@@ -33,6 +33,7 @@
           "dropoff SYN_MARKET"
         ],
         "reservations": [
+          "bin:pending:BIN-PA-03",
           "mouth:confirmed:Lane_01"
         ]
       },
@@ -65,13 +66,7 @@
         "status": "pending",
         "payload": "PANEL-A",
         "source": "SMN_002",
-        "bin": "BIN-PA-02",
-        "hard_bins": [
-          "BIN-PA-02"
-        ],
-        "reservations": [
-          "bin:confirmed:BIN-PA-02"
-        ]
+        "bin": "BIN-PA-02"
       }
     ],
     "refusals": null,

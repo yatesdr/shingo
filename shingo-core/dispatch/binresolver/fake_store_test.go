@@ -199,7 +199,7 @@ func (f *fakeStore) CountBinsInLane(laneID int64) (int, error) {
 	return f.laneBinCounts[laneID], nil
 }
 
-func (f *fakeStore) FindSourceBinInLane(laneID int64, payloadCode string) (*bins.Bin, error) {
+func (f *fakeStore) FindSourceBinInLane(laneID int64, payloadCode string, _ int64) (*bins.Bin, error) {
 	b := f.sourceInLane[laneID]
 	if b == nil {
 		return nil, errors.New("no source bin")

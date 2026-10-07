@@ -101,7 +101,7 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 	// it. A folder's requester can cancel and leave it digging towards a bin
 	// nobody wants, which is the whole of the dig_target_abandoned population;
 	// a demand that IS its dig takes the dig with it when it goes.
-	res := d.proposeLaneClearDigThen(lane, buried.Slot, order, buriedHere)
+	res := d.proposeLaneClearDigThen(lane, buried.Slot, order, buriedHere, buried.Bin.ID)
 	switch res.outcome {
 	case laneClearStarted:
 		d.dbg("complex: service dig %d proposed for demand %d — %d step(s) clearing %s to reach %s",

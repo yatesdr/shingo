@@ -379,16 +379,27 @@ func chapterEndedInFailure(children []*orders.Order) bool {
 // leg of a terminal parent. "Live" is non-terminal, so a gate-staged parent
 // still takes its dig as it stands.
 func (d *Dispatcher) CreateCompoundOrder(parentOrder *orders.Order, plan *ReshufflePlan) error {
-	return d.createCompoundOrder(parentOrder, plan, nil)
+	return d.createCompoundOrder(parentOrder, plan, nil, nil)
 }
 
-// createCompoundOrder is CreateCompoundOrder with one more step: legsWritten,
+// createDigCompound is the planning service's door onto createCompoundOrder: a
+// dig planned for a buried bin, its lane taken with its legs.
+func (d *Dispatcher) createDigCompound(parentOrder *orders.Order, plan *ReshufflePlan, dig *digLaneTake) error {
+	return d.createCompoundOrder(parentOrder, plan, nil, dig)
+}
+
+// createCompoundOrder is CreateCompoundOrder with two more inputs. legsWritten,
 // when not nil, runs once the legs exist and before the parent's status moves.
 // A demand that records why it waits for its own dig records it there, so the
 // wait is on the row while the order is still acquiring, and only once the dig
 // is real: a refusal of the legs writes nothing.
-func (d *Dispatcher) createCompoundOrder(parentOrder *orders.Order, plan *ReshufflePlan, legsWritten func()) error {
-	if err := d.writeCompoundChildren(parentOrder, plan); err != nil {
+//
+// dig, when not nil, is the dig's lane, taken in the transaction that writes the
+// legs (digLaneTake): every production dig passes one. A lane another holder
+// owns refuses the whole dig — nothing is written and nothing is held — and the
+// error carries reservations.ErrReservationConflict (digLaneRefused).
+func (d *Dispatcher) createCompoundOrder(parentOrder *orders.Order, plan *ReshufflePlan, legsWritten func(), dig *digLaneTake) error {
+	if err := d.writeCompoundChildren(parentOrder, plan, dig.inTx(parentOrder.ID, plan.Fit)); err != nil {
 		return err
 	}
 	if d.compoundWrittenHook != nil {
@@ -424,6 +435,10 @@ func (d *Dispatcher) createCompoundOrder(parentOrder *orders.Order, plan *Reshuf
 			"when the chapter closes", parentOrder.ID, len(plan.Steps))
 	} else if err := d.lifecycle.BeginReshuffle(parentOrder, reshuffleBeginDetail(plan)); err != nil {
 		if gone := d.withdrawIfParentEnded(parentOrder); gone != nil {
+			// The lane was committed with the legs; an ended parent holds nothing.
+			if dig != nil {
+				d.laneLock.Unlock(dig.laneID, parentOrder.ID)
+			}
 			return gone
 		}
 		// A LIVE PARENT THE TRANSITION REFUSES KEEPS ITS DIG, as a gate-staged one
@@ -536,10 +551,10 @@ func reshuffleBeginDetail(plan *ReshufflePlan) string {
 // this function's neighbour spends fifteen lines explaining.
 
 // writeCompoundChildren builds the compound's child orders from the plan and
-// writes them, with their bin claims, in the store's single transaction. It
-// touches the parent's STATUS not at all — that is the caller's, and the two
-// callers sequence it differently (see CreateCompoundOrder).
-func (d *Dispatcher) writeCompoundChildren(parentOrder *orders.Order, plan *ReshufflePlan) error {
+// writes them, with the dig's lane when lanes is set, in the store's single
+// transaction. The legs hold nothing (store.CreateCompoundChildren). It touches
+// the parent's STATUS not at all — that is the caller's (see CreateCompoundOrder).
+func (d *Dispatcher) writeCompoundChildren(parentOrder *orders.Order, plan *ReshufflePlan, lanes *store.CompoundLanes) error {
 	var children []store.CompoundChild
 	for _, step := range plan.Steps {
 		// The payload the child is moving, read off the bin it names. The column
@@ -655,7 +670,7 @@ func (d *Dispatcher) writeCompoundChildren(parentOrder *orders.Order, plan *Resh
 
 	// %w, not %v: store.BlockerClaimedError has to survive this wrap for the
 	// planners to tell a congestion refusal from a fault.
-	displaced, err := d.db.CreateCompoundChildren(children)
+	displaced, err := d.db.CreateCompoundChildren(children, lanes)
 	if err != nil {
 		return fmt.Errorf("create compound children: %w", err)
 	}
@@ -819,7 +834,7 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 	// would come back empty and land in the config-fault arm below, failing every
 	// dig. destNode stays nil and every reader beneath is written for that: the
 	// admission call treats a nil node as "this move does not touch a lane here",
-	// enteredAtDispatch skips it, and destName carries the empty string into the
+	// the leg's hand enters nothing for it, and destName carries the empty string into the
 	// operator sentences, which is honest — the destination is not chosen.
 	var destNode *nodes.Node
 	if next.DeliveryNode != "" {
@@ -994,65 +1009,22 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		return nil
 	}
 
-	// Hold B: this child is now inside the lane(s) it was sent into. Recorded
-	// before the fleet call, so the fact exists from the instant Core commits to
-	// it rather than from whenever the fleet answers.
-	//
-	// AND IT IS THE LANES THIS DISPATCH ENTERS, NOT THE PLAN'S TWO ENDPOINTS.
-	//
-	// This seam used to pass sourceNode and destNode raw, and that is the one thing
-	// every other dispatch path does not do: they pass what the create ENTERS.
-	// dispatchGated passes d.planNodes(preWait) — the segment before the mark — and
-	// says why (fleet_handover.go: a gated create "passes nothing and takes nothing,
-	// and its row is taken by the tail append that actually enters").
-	//
-	// On an ungated lane the two sets are identical, which is why the difference
-	// went years without showing. On a GATED lane they are not: the create ends at
-	// the mark, OUTSIDE the corridor, so a row taken here declares a robot inside a
-	// lane it is standing next to. That PHANTOM ROW refuses every other order the
-	// lane, and on the lane-stress rig 2026-08-12 it refused the one order that
-	// could have broken the cycle it had joined — four orders of one episode frozen
-	// 997 seconds, unwedged in two minutes by deleting that single row
-	// (PLAN §R.54/R.55).
-	//
-	// FILTERED HERE AND NOT INSIDE TakeLaneOccupancy, which was tried and is wrong:
-	// that function is also the general "this order IS in this lane" primitive, and
-	// a gated lane holds rows like any other — one robot inside at a time is the
-	// whole point of the gate. What is gated is not the LANE's ability to hold a
-	// row, it is whether THIS DISPATCH is the moment the robot goes in. Only the
-	// seam knows that, so only the seam can answer it.
-	//
-	// A leg held here rests at `pending` with a named cause, like every
-	// fail-closed arm above: the baton (orders.AwaitingFleetSQL — pre-dispatch
-	// AND no vendor id) finds it on the next advance and RedriveHeldCompoundLegs
-	// on a lane event.
-	if err := d.TakeLaneOccupancy(next.ID, d.enteredAtDispatch(sourceNode, destNode)...); err != nil {
-		// AND THE CAUSE GOES ON THE ROW, like every other arm in this function. This
-		// one was missed: the leg holds at `pending` with nothing written, so a leg
-		// stalled because Core could not RECORD its presence looked identical to one
-		// nobody had reached. Seen on the lane-stress rig 2026-08-10 as a `pending`
-		// order carrying no cause for 15 minutes.
-		//
-		// A failed occupancy write is a database error, so it is the read-failed
-		// class and its releaser is the database answering again.
-		log.Printf("dispatch: compound %d child %d — could not record lane occupancy: %v (holding the child)",
-			parentOrderID, next.ID, err)
-		d.setQueueReason(next, protocol.QueueWaitingForSlot, CauseReadFailed,
-			QueueParams{Destination: destName})
-		return nil
-	}
+	// Hold B, the leg's presence in the lanes it enters, is taken IN ITS HAND
+	// with its bin claim and its status (acquireHand's occupancy step, on the
+	// lanes the create enters: the segment before a mark on a gated lane, both
+	// ends on an ungated one). It used to be its own autocommit here, before the
+	// hand; a leg whose hand then refused would have rested `pending` holding a
+	// lane's occupancy. Taken together, a refusal holds nothing.
 
 	// THE CLAIM ON THIS CHILD IS THE HAND'S STATUS CAS. GetNextChildOrder takes
 	// the FIRST leg by sequence still awaiting the fleet (orders.AwaitingFleetSQL
 	// … LIMIT 1), so two concurrent callers resolve to the SAME child, and the
 	// hand's `→ dispatched` compare-and-swap (acquireHand, before the fleet call)
 	// lets exactly one of them through. The loser gets ConcurrentTransition and
-	// leaves quietly (parkLegOnFleetRefusal's first arm), holding nothing: the
-	// occupancy row taken above is keyed on this child's id and so is the
-	// winner's too — AcquireOccupancy de-duplicates on (order_id, node_id) — and
-	// commitToFleet releases it only on a non-CAS failure. Releasing it on a lost
-	// CAS would let the next leg read the winner's lane as empty: the collision
-	// Hold B exists to prevent.
+	// leaves quietly (parkLegOnFleetRefusal's first arm), holding nothing: its
+	// hand rolled back, and the occupancy row is the winner's (commitToFleet
+	// releases it only on a non-CAS failure, so a lost CAS cannot let the next
+	// leg read the winner's lane as empty).
 	//
 	// It used to be a separate `pending → sourcing` claim ahead of the hand. C1
 	// took the rung out of the ladder; the hand's CAS was always the last word.
@@ -1060,7 +1032,7 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 
 	// Build a synthetic envelope for the child dispatch
 	env := d.syntheticEnvelope(next.StationID)
-	if err := d.dispatchToFleet(next, env, sourceNode, destNode); err != nil {
+	if err := d.dispatchToFleet(next, env, sourceNode, destNode, legHand(next)); err != nil {
 		// NOWHERE TO STAND IS GEOMETRY, AND IT FAILS LOUD.
 		//
 		// This is where the old "missing source or delivery node" arm went. A
@@ -1079,20 +1051,39 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		var swf *StatusWriteFailed
 		if errors.As(err, &swf) {
 			// THE CLAIM COULD NOT BE WRITTEN, which is not the fleet saying no: the
-			// fleet was never asked. The leg's occupancy was taken above, before
-			// the hand, so it goes now (release on every failure except a lost
-			// CAS), and the leg rests `pending` under a read-failed cause for the
-			// re-drive. It used to be the separate `pending → sourcing` claim's
-			// refusal arm that did this.
-			log.Printf("dispatch: child order %d → dispatched could not be written: %v — NOT dispatching; "+
-				"releasing its lane occupancy", next.ID, err)
-			d.ReleaseLaneOccupancy(next.ID)
+			// fleet was never asked, and the hand rolled back whole, so nothing is
+			// held. The leg rests `pending` under a read-failed cause for the
+			// re-drive.
+			log.Printf("dispatch: child order %d → dispatched could not be written: %v — NOT dispatching",
+				next.ID, err)
 			d.setQueueReason(next, protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{Destination: destName})
+			return nil
+		}
+		if ref, ok := AsHandRefusal(err); ok {
+			// THE LEG'S BIN IS HELD OUTSIDE THE COMPOUND. Its hand rolled back, so it
+			// rests `pending` holding nothing, under the blocker cause the birth would
+			// have parked its parent under; the bin's own events re-drive it (the
+			// holder's lift and arrival, or its end), as they re-drive the parent's
+			// re-plan on the same refusal at birth.
+			log.Printf("dispatch: compound %d child %d — its hand was refused: %v (holding the leg)",
+				parentOrderID, next.ID, err)
+			d.setQueueReason(next, ref.Code, ref.Cause, QueueParams{Payload: next.PayloadCode,
+				HolderOrderID: promisedHolder(err)})
 			return nil
 		}
 		d.parkLegOnFleetRefusal(parentOrderID, next, destNode, err)
 	}
 	return nil
+}
+
+// legHand is what a dig leg takes at its handover: the bin it moves, claimed
+// through the compound's own claim (HandBin.DigLeg). A leg naming no bin takes
+// only its occupancy and status.
+func legHand(leg *orders.Order) Hand {
+	if leg.BinID == nil {
+		return Hand{}
+	}
+	return Hand{Bins: []HandBin{{BinID: *leg.BinID, DigLeg: true}}}
 }
 
 // advanceCompoundChapterEnd is the sql.ErrNoRows half of AdvanceCompoundOrder:

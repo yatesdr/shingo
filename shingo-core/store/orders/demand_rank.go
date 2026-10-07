@@ -9,10 +9,12 @@ import (
 
 // DemandRank is the plant's ranking of one demand: priority first, then oldest.
 //
-// §9's SEAM, WITH EXACTLY TWO CALLERS — the scan's ORDER BY (ListAcquiring, via
-// the SQL twin below) and the steal's under-lock outrank check. The ranking is
-// expected to become time-to-empty, which is a one-spot change only while it is
-// spelled once; a third spelling is a site that change would silently not reach.
+// §9's SEAM, SPELLED ONCE — the scan's ORDER BY (ListAcquiring, via the SQL twin
+// below) and Outranks, which the takes ask: the bin steal's under-lock check, and
+// since C2b A.3 the dig walk's offer of a stranger's pending slot and the slot
+// take's under-lock check. The ranking is expected to become time-to-empty,
+// which is a one-spot change only while it is spelled once; a third spelling is
+// a site that change would silently not reach.
 // TestNoThirdSpellingOfTheDemandRanking guards it.
 //
 // PRIORITY FIRST, strictly: a high-priority demand starves a low one by design,
@@ -94,8 +96,7 @@ func LoadDemandRank(db helpers.QueryRower, orderID int64) (DemandRank, error) {
 	// the other two columns — so Precedes breaks a tie between the two demands
 	// rather than between two pieces of paperwork.
 	err := db.QueryRow(`
-		SELECT COALESCE(p.priority, o.priority), COALESCE(p.created_at, o.created_at),
-		       COALESCE(p.id, o.id)
+		SELECT `+helpers.DemandRankColumnsSQL("o", "p")+`
 		  FROM orders o
 		  LEFT JOIN orders p ON p.id = o.parent_order_id
 		 WHERE o.id = $1`, orderID).Scan(&r.Priority, &r.CreatedAt, &r.ID)

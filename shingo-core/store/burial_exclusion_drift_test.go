@@ -46,6 +46,15 @@ func TestBurialExclusionOneSpelling(t *testing.T) {
 				"drift, one guard protects a set the other does not and a bin gets buried in the gap. "+
 				"If the geometry genuinely needs to change, change the helper.", what, path)
 		}
+		// AND "COMING FOR IT" IS ONE SPELLING TOO: the claim, the aim, and a live
+		// holder's pending row on the bin, the soft hold a complex demand's dig
+		// takes on the bin it uncovers (C2b A.1b). A guard that reads two of the
+		// three protects a set the other does not, which is the same gap.
+		if !strings.Contains(string(src), `ComingForBinSQL("holder", "held_bin", "held")`) {
+			t.Errorf("%s (%s) no longer joins its holder through ComingForBinSQL.\n"+
+				"Both guards must read the same three spellings of \"this order is coming for that bin\" "+
+				"(claim, aim, pending reservation). Change the helper, not one site.", what, path)
+		}
 		// Deliberately NOT also asserting "and does not mention the deleted bridge
 		// table": both files carry past-tense tombstones explaining what the exclusion
 		// used to read, which is exactly the record a future reader needs, and a test

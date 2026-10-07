@@ -3,6 +3,7 @@
 package dispatch
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
@@ -58,6 +59,9 @@ type driftFixture struct {
 	candidate *nodes.Node
 	claimant  *orders.Order
 	bp        *payloads.Payload
+	// byRank is the shuffle walk's word that it offered the candidate as a
+	// stranger's promise the dig outranks (C2b A.3).
+	byRank bool
 }
 
 type driftChooser struct {
@@ -316,10 +320,12 @@ func shuffleChoice(dwell bool) func(t *testing.T, db *store.DB, d *Dispatcher, f
 		if dwell {
 			asker, claimant = digAskerFor(fx.claimant), fx.claimant.ID
 		}
-		slots, err := findShuffleSlots(db, fx.dug.ID, fx.grp.ID, 1, asker, claimant, nil)
+		byRank := map[int64]bool{}
+		slots, err := findShuffleSlotsFor(db, fx.dug.ID, fx.grp.ID, 1, asker, asker.OrderID, claimant, nil, byRank)
 		if err != nil || len(slots) == 0 {
 			return nil
 		}
+		fx.byRank = byRank[slots[0].ID]
 		return slots[0]
 	}
 }
@@ -367,7 +373,10 @@ func TestSlotChoosers_NeverOfferWhatTheClaimDoorRefuses(t *testing.T) {
 				if got == nil {
 					return
 				}
-				if err := claimStoreSlot(db, fx.claimant, got); err != nil {
+				// A slot the walk offered BY RANK is claimed by taking it (C2b A.3):
+				// that is the dwell's claim door, bindChosenDestination.
+				if err := claimStoreSlot(db, fx.claimant, got); err != nil &&
+					!(fx.byRank && errors.Is(err, ErrSlotContended) && d.takeSlotByRank(fx.claimant, got)) {
 					t.Errorf("%s offered %s under a %s, and the claim door refused it: %v. A deterministic "+
 						"chooser offers it again on every ask for as long as the hold stands",
 						ch.name, got.Name, hold.name, err)

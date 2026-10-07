@@ -43,9 +43,9 @@ func (c *countingStore) GetNodeProperty(id int64, key string) string {
 	return c.fakeStore.GetNodeProperty(id, key)
 }
 
-func (c *countingStore) FindSourceBinInLane(id int64, p string) (*bins.Bin, error) {
+func (c *countingStore) FindSourceBinInLane(id int64, p string, owner int64) (*bins.Bin, error) {
 	c.reads++
-	return c.fakeStore.FindSourceBinInLane(id, p)
+	return c.fakeStore.FindSourceBinInLane(id, p, owner)
 }
 
 func (c *countingStore) FindOldestBuriedBin(id int64, p string) (*bins.Bin, *nodes.Node, error) {

@@ -217,7 +217,7 @@ func TestFindSourceBinInLane_NoMatch(t *testing.T) {
 	laneID, _, _, _ := laneFixture(t, db, "NOM")
 
 	// No bins at all — should error (no accessible bin).
-	if _, err := db.FindSourceBinInLane(laneID, "PAY-NONE"); err == nil {
+	if _, err := db.FindSourceBinInLane(laneID, "PAY-NONE", 0); err == nil {
 		t.Error("empty lane should error")
 	}
 
@@ -312,7 +312,7 @@ func TestFindBuriedBin_NoBuried(t *testing.T) {
 	}
 
 	// But a source lookup should succeed and return it.
-	src, err := db.FindSourceBinInLane(laneID, "PAY-A")
+	src, err := db.FindSourceBinInLane(laneID, "PAY-A", 0)
 	if err != nil {
 		t.Fatalf("FindSourceBinInLane: %v", err)
 	}

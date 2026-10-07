@@ -128,7 +128,7 @@ func TestC2aPin_DigPlanAndPoolDoNotCountAReservedSlot(t *testing.T) {
 
 	target, err := db.GetBin(target.ID)
 	testutil.MustNoErr(t, err, "reload the target")
-	if _, _, planErr := planUnbury(db, target, dugSlots[1], dug, grp.ID, asker, nil); !errors.Is(planErr, ErrNoShuffleSlot) {
+	if _, _, planErr := planUnbury(db, target, dugSlots[1], dug, grp.ID, asker, asker.OrderID, nil); !errors.Is(planErr, ErrNoShuffleSlot) {
 		t.Errorf("the plan-time count answered %v, want ErrNoShuffleSlot: the only free slot, %s, is "+
 			"order %d's on the reservation book", planErr, reserved.Name, holder.ID)
 	}

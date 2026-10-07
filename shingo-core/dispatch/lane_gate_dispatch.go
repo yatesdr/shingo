@@ -665,46 +665,10 @@ func IsGateStaged(order *orders.Order) bool {
 // block ids (SEER's one contract on them is uniqueness), so the retry belongs in
 // the evaluator, which re-derives the segment from durable state.
 func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, plan []resolvedStep, loadSeq []string, hand Hand) (string, error) {
-	vendorOrderID := mintVendorOrderID(order.ID)
-
-	stepsJSON, err := json.Marshal(plan)
+	req, preWait, err := d.buildGatedCreate(order, target, plan, loadSeq)
 	if err != nil {
-		return "", fmt.Errorf("marshal gated plan for order %d: %w", order.ID, err)
+		return "", err
 	}
-	if err := d.db.UpdateOrderStepsJSON(order.ID, string(stepsJSON)); err != nil {
-		return "", fmt.Errorf("persist gated plan for order %d: %w", order.ID, err)
-	}
-	order.StepsJSON = string(stepsJSON)
-
-	preWait, hasWait := splitAtWait(plan)
-	if !hasWait {
-		return "", fmt.Errorf("gated plan for order %d has no wait step", order.ID)
-	}
-	// loadSeq comes from the CALLER, not from the payload, because the two create
-	// sites answer it differently and always did: the plain path expands the load
-	// leg for a configured payload (F4c), and complex is explicitly never expanded
-	// ("F4c is scoped to the simple transport path"). Resolving it in here would
-	// have silently started expanding complex orders the moment they began using
-	// this valve.
-	blocks := stepsToBlocks(vendorOrderID, preWait, 0, loadSeq)
-
-	// The order's own priority - the depth-derived lane boost was deleted.
-	req := fleet.CreateOrderRequest{
-		OrderID:    vendorOrderID,
-		ExternalID: order.EdgeUUID,
-		Blocks:     blocks,
-		Priority:   order.Priority,
-		RobotGroup: d.robotGroupForOrder(order),
-		Vehicle:    pinnedVehicleFor(order),
-		// The claim's routing hints, if it configured any. Nil/empty is SEER
-		// auto-pick, which is every order in the plant until one does.
-		KeyRoute: order.KeyRoute,
-		KeyTask:  order.KeyTask,
-		Complete: false, // unsealed: the tail is appended when the lane is safe
-	}
-	d.dbg("lane gate: order=%d vendor=%s creating unsealed %d block(s) -> wait@%s (lane %s)",
-		order.ID, vendorOrderID, len(blocks), target.gatePoint, target.lane.Name)
-
 	// Claim, commit, name it - see fleet_handover.go. It also sets
 	// order.VendorOrderID, which the valve below relies on: IsGateStaged requires
 	// it, and the tail is appended from this struct.
@@ -740,6 +704,60 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, p
 	if err := d.commitToFleet(order, req, "dispatcher", hand, d.planNodes(preWait)...); err != nil {
 		return "", err
 	}
+	return d.afterGatedCreate(order, target, plan, req.OrderID), nil
+}
+
+// buildGatedCreate is the valve's first half: the spliced plan persisted, and
+// the unsealed create of its pre-wait segment built. Nothing is held and
+// nothing is sent. It returns the create and the pre-wait segment, whose nodes
+// the create declares.
+func (d *Dispatcher) buildGatedCreate(order *orders.Order, target laneGateTarget, plan []resolvedStep, loadSeq []string) (req fleet.CreateOrderRequest, preWait []resolvedStep, err error) {
+	vendorOrderID := mintVendorOrderID(order.ID)
+
+	stepsJSON, err := json.Marshal(plan)
+	if err != nil {
+		return req, nil, fmt.Errorf("marshal gated plan for order %d: %w", order.ID, err)
+	}
+	if err := d.db.UpdateOrderStepsJSON(order.ID, string(stepsJSON)); err != nil {
+		return req, nil, fmt.Errorf("persist gated plan for order %d: %w", order.ID, err)
+	}
+	order.StepsJSON = string(stepsJSON)
+
+	preWait, hasWait := splitAtWait(plan)
+	if !hasWait {
+		return req, nil, fmt.Errorf("gated plan for order %d has no wait step", order.ID)
+	}
+	// loadSeq comes from the CALLER, not from the payload, because the two create
+	// sites answer it differently and always did: the plain path expands the load
+	// leg for a configured payload (F4c), and complex is explicitly never expanded
+	// ("F4c is scoped to the simple transport path"). Resolving it in here would
+	// have silently started expanding complex orders the moment they began using
+	// this valve.
+	blocks := stepsToBlocks(vendorOrderID, preWait, 0, loadSeq)
+
+	// The order's own priority - the depth-derived lane boost was deleted.
+	req = fleet.CreateOrderRequest{
+		OrderID:    vendorOrderID,
+		ExternalID: order.EdgeUUID,
+		Blocks:     blocks,
+		Priority:   order.Priority,
+		RobotGroup: d.robotGroupForOrder(order),
+		Vehicle:    pinnedVehicleFor(order),
+		// The claim's routing hints, if it configured any. Nil/empty is SEER
+		// auto-pick, which is every order in the plant until one does.
+		KeyRoute: order.KeyRoute,
+		KeyTask:  order.KeyTask,
+		Complete: false, // unsealed: the tail is appended when the lane is safe
+	}
+	d.dbg("lane gate: order=%d vendor=%s creating unsealed %d block(s) -> wait@%s (lane %s)",
+		order.ID, vendorOrderID, len(blocks), target.gatePoint, target.lane.Name)
+	return req, preWait, nil
+}
+
+// afterGatedCreate is the valve's second half, once the fleet has the create:
+// the dispatched event, then the tail appended at once if the lane is already
+// safe. It returns the vendor order id.
+func (d *Dispatcher) afterGatedCreate(order *orders.Order, target laneGateTarget, plan []resolvedStep, vendorOrderID string) string {
 	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, order.SourceNode, order.DeliveryNode)
 
 	// The valve. An admitted order gets its tail NOW, back to back with the
@@ -764,30 +782,30 @@ func (d *Dispatcher) dispatchGated(order *orders.Order, target laneGateTarget, p
 	entry, _, isRetrieve, ok := laneEntryAfterWait(plan, 0)
 	if !ok {
 		log.Printf("lane gate: order %d has no actionable step after its wait - leaving staged", order.ID)
-		return vendorOrderID, nil
+		return vendorOrderID
 	}
 	entryNode, err := d.db.GetNodeByDotName(entry.Node)
 	if err != nil || entryNode == nil {
 		log.Printf("lane gate: order %d lane entry %q unresolvable (%v) - leaving staged for the evaluator",
 			order.ID, entry.Node, err)
-		return vendorOrderID, nil
+		return vendorOrderID
 	}
 
 	v, err := d.gateEntryVerdict(target.lane, order, entryNode, isRetrieve)
 	if err != nil {
 		log.Printf("lane gate: order %d classifier errored (%v) - leaving staged for the evaluator", order.ID, err)
-		return vendorOrderID, nil
+		return vendorOrderID
 	}
 	if !v.Admitted() {
 		log.Printf("lane gate: order %d staged at %s for lane %s (%s) - awaiting release",
 			order.ID, target.gatePoint, target.lane.Name, v.Cause())
-		return vendorOrderID, nil
+		return vendorOrderID
 	}
 	if err := d.appendGateTail(order, "lane gate open"); err != nil && !errors.Is(err, ErrAppendNotOwed) {
 		log.Printf("lane gate: order %d created but tail append failed (%v) - left staged, robot holds at %s",
 			order.ID, err, target.gatePoint)
 	}
-	return vendorOrderID, nil
+	return vendorOrderID
 }
 
 // appendGateTail appends the deferred [dropoff@slot] tail to a gate-staged order
@@ -962,4 +980,34 @@ func waitIndexOf(o *orders.Order) int {
 		return -1
 	}
 	return o.WaitIndex
+}
+
+// withoutInboundLaneWaits is a stored plan less the waits a splice inserted in
+// front of its lane entries: the plan the splice was given.
+//
+// A complex order the fleet refused is re-queued with its paper (Q6), and the
+// valve persisted its spliced plan before the create (persist-before-create).
+// Its next pass works on the plan it was spliced FROM, so the splice inserts one
+// wait per gated entry again, at the lane its entry is in now:
+//   - spliced twice, a second wait landed in front of the first and the order
+//     failed invalid_steps (fleet-refusal run, 23 orders);
+//   - a pickup re-chosen at acquiring can enter another lane, whose wait is
+//     not the one left behind;
+//   - the allocator writes order_bins against the plan at claim time and
+//     spliceStepShift counts every lane wait as inserted, so a kept wait would
+//     shift the junction twice.
+//
+// One lane wait per gated entry is what assertEachWaitGatesItsEntry checks.
+//
+// A wait with nothing after it gates an APPEND (a dwelling dig leg's) and is
+// kept: no splice inserts one, and a dwell plan is authored fresh each time.
+func withoutInboundLaneWaits(steps []resolvedStep) []resolvedStep {
+	out := steps[:0:0]
+	for i, s := range steps {
+		if s.Action == protocol.ActionWait && s.WaitKind == WaitKindLane && i+1 < len(steps) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }

@@ -142,64 +142,6 @@ func (d *Dispatcher) laneIsGated(laneID int64) bool {
 	return d.laneWaitPoint(laneID) != ""
 }
 
-// enteredAtDispatch narrows a dispatch's endpoints to the ones its robot is
-// actually being sent INTO, which is what Hold B records.
-//
-// ── WHY AN ENDPOINT IS NOT AN ENTRY ───────────────────────────────────────
-//
-// A create bound for a gated lane stops at that lane's MARK. The robot is next to
-// the corridor, not in it, and the row is taken later by the append that lets it
-// in (appendGateTail → takeLaneOccupancyByID). Recording it at dispatch would
-// declare a robot present in a lane it is deliberately parked outside of and wall
-// that lane for the length of the dwell — which is the opposite of what staging
-// is for, and is the defect PLAN §R.54 measured: a dig leg dwelling at LS_D2's
-// mark held LS_D2, refusing the only order that could break the cycle it had
-// joined. 997 seconds; one row.
-//
-// ── WHY IT IS HERE AND NOT INSIDE TakeLaneOccupancy ───────────────────────
-//
-// Enforcing it at the door was tried and is WRONG, and the suite said so in six
-// places at once. TakeLaneOccupancy is also the general "this order IS in this
-// lane" primitive — fixtures state a robot's presence with it, and a robot that
-// has been let THROUGH a gate is inside a gated lane like any other. A gated lane
-// holding occupancy rows is not the bug; it is the entire mechanism, since one
-// robot inside at a time is what the gate is for.
-//
-// What is conditional is not the LANE's ability to hold a row, it is whether THIS
-// DISPATCH is the moment the robot goes in — and only the seam issuing the
-// dispatch knows that. So the seams answer it, each in its own vocabulary: the
-// gated create walks its spliced plan (d.planNodes(preWait), lane_gate_dispatch.go)
-// because it has one, and the compound leg — which takes occupancy BEFORE its plan
-// is spliced, so that a failed take can still hold the child at `pending` — asks
-// the lane instead, through this.
-//
-// laneIsGated is the shared spelling, the same predicate admission asks in
-// entryDeferredToGate. An unresolvable or unreadable lane yields no skip and the
-// row is taken: over-restrictive, never under, which is the direction
-// TakeLaneOccupancy already argues for by name.
-func (d *Dispatcher) enteredAtDispatch(ns ...*nodes.Node) []*nodes.Node {
-	entered := make([]*nodes.Node, 0, len(ns))
-	for _, n := range ns {
-		if n == nil {
-			continue
-		}
-		lane, err := d.db.LaneForNode(n.ID)
-		if err != nil {
-			log.Printf("lanegate: resolve lane for node %d while deciding entry: %v (recording it as "+
-				"entered — an unreadable lane must not silently lose a presence)", n.ID, err)
-			entered = append(entered, n)
-			continue
-		}
-		if lane != nil && d.laneIsGated(lane.ID) {
-			d.dbg("lane occupancy: this dispatch stops at %s's mark, so no row is taken here; the "+
-				"tail append takes it when the robot actually enters", lane.Name)
-			continue
-		}
-		entered = append(entered, n)
-	}
-	return entered
-}
-
 // TWO QUESTIONS, ONE ANSWER — and the collapse is the ruling landing.
 //
 // takesMouthHold and sequencesLaneEntry lived here as separate predicates over
@@ -265,7 +207,8 @@ type laneHold struct {
 // The skip conflated two different things the mark answers. WHERE A ROBOT WAITS
 // is a configuration fact: a lane with a gate point stages the robot at the mark,
 // a lane without one parks the order before dispatch. That is still `laneIsGated`
-// and it still decides staging, at `enteredAtDispatch` and `entryDeferredToGate`.
+// and it still decides staging, at the hand's entering nodes (planNodes over the
+// pre-wait segment) and `entryDeferredToGate`.
 // WHETHER THE MOUTH IS SEQUENCED AT ALL is not a configuration fact — it is the
 // physics of a single-file lane, true of every lane on both plants whether or not
 // anyone drew a point on the map.
@@ -400,7 +343,7 @@ func (e *LaneRevisitError) Error() string {
 //
 // ── COMPLEX HAD NEVER ACQUIRED ANYTHING (§R.95's census, §R.101's scope) ──
 //
-// admitComplexLanes asked admission's physical questions and then took no holds
+// admitComplexLanes (now admitComplexLanesVerdict) asked admission's physical questions and then took no holds
 // at all, so the entire mouth mechanism was reachable only from the plain path.
 // That is not a small gap: complex is the bulk of both plants' lane traffic, and
 // the tree says so at complex_dispatch.go's ungated arm. §R.101's rule is written
@@ -491,9 +434,9 @@ func (d *Dispatcher) resolvePlanLaneHolds(steps []resolvedStep) ([]laneHold, err
 		// thing the splice exists to stop: a compound of 5, 7 or 10 steps must not
 		// queue on a lane block. It does all the work it can up to the lane.
 		//
-		// It is the same rule enteredAtDispatch states for occupancy and
-		// entryDeferredToGate states for admission, now said a third time for the
-		// mouth. On a marked lane the sequencing is the GATE's — one robot admitted
+		// It is the same rule the hand's entering nodes state for occupancy (the
+		// pre-wait segment's planNodes) and entryDeferredToGate states for
+		// admission, now said a third time for the mouth. On a marked lane the sequencing is the GATE's — one robot admitted
 		// at a time, occupancy recorded at the append — so nothing is unsequenced
 		// by deferring; the waiting simply happens at the mark instead of in the
 		// queue. On an unmarked lane, which is every lane at both plants, there is

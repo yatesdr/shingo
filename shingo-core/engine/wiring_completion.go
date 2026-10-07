@@ -289,9 +289,9 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) *ArrivalRefusal {
 	//
 	// Skip the guard for compound order children (ParentOrderID != nil):
 	// a multi-step reshuffle plan intentionally overlaps bin claims —
-	// when CreateCompoundChildren writes claims for all steps in one
-	// transaction, the LAST step's UPDATE wins for any bin that appears
-	// in multiple steps (e.g. an unbury followed by a restock both
+	// each leg claims its bin at its handover (store.ClaimCompoundLegBinTx),
+	// so the latest leg's claim stands for any bin that appears in
+	// multiple steps (e.g. an unbury followed by a restock both
 	// touching the same blocker bin). Interim child orders need to move
 	// the bin even though claimed_by points at a sibling child. The
 	// compound dispatcher serializes children sequentially, so the
@@ -299,14 +299,13 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) *ArrivalRefusal {
 	// apply within a compound family.
 	//
 	// "The LAST step's UPDATE wins" is no longer unconditional, and the
-	// difference matters to this skip. That claim is now a sibling-scoped
-	// compare-and-set (store/orders.go CreateCompoundChildren): last-write-wins
-	// still holds for a bin held by this compound's parent or by one of its
-	// children — which is every case this skip is about — but a bin held by an
-	// order OUTSIDE the compound is refused and fails the whole transaction.
-	// So a child reaching here can no longer be carrying a bin an unrelated
-	// order claimed after the plan was built: the compound would never have been
-	// created. The skip is therefore narrower than it was in what it lets
+	// difference matters to this skip. That claim is a sibling-scoped
+	// compare-and-set (store.ClaimCompoundLegBinTx): last-write-wins still holds
+	// for a bin held by this compound's parent or by one of its children — which
+	// is every case this skip is about — but a bin held by an order OUTSIDE the
+	// compound refuses the dig at its birth (stealSoftHolds) and the leg at its
+	// handover. So a child reaching here can no longer be carrying a bin an
+	// unrelated order claimed after the plan was built. The skip is therefore narrower than it was in what it lets
 	// through, and unchanged in what it is FOR.
 	guardBin, binErr := e.db.GetBin(*order.BinID)
 	if binErr != nil {

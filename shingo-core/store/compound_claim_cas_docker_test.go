@@ -78,6 +78,28 @@ func childFor(parent *orders.Order, binID int64, seq int) store.CompoundChild {
 	}
 }
 
+// handOver runs each leg's handover claim in order, as the leg's hand does at its
+// dispatch (dispatch.acquireHand). A leg is born holding nothing (C2b A.1), so a
+// test about the claim or its ledger row births the compound and then hands the
+// legs over. Returns the first refusal.
+func handOver(t *testing.T, db *store.DB, parentID int64, kids ...store.CompoundChild) error {
+	t.Helper()
+	for _, k := range kids {
+		tx, err := db.Begin()
+		if err != nil {
+			t.Fatalf("begin handover: %v", err)
+		}
+		if err := store.ClaimCompoundLegBinTx(tx, k.BinID, k.Order.ID, parentID); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit handover: %v", err)
+		}
+	}
+	return nil
+}
+
 // TestCompoundClaim_RefusesABinHeldOutsideTheCompound is the case the CAS exists
 // for, and it is the one DESIGN §16 rule 7 is about: the refusal is the FIRST
 // thing that can reject this write, so the unrelated claim has to genuinely be on
@@ -104,7 +126,7 @@ func TestCompoundClaim_RefusesABinHeldOutsideTheCompound(t *testing.T) {
 	claimFor(t, db, bin.ID, stranger.ID)
 
 	parent := compoundParent(t, db, "cas-parent")
-	_, err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)})
+	_, err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)}, nil)
 	if err == nil {
 		t.Fatal("CreateCompoundChildren succeeded against a bin held by an unrelated order — the " +
 			"reshuffle would drive to a bin another order is already carrying")
@@ -160,7 +182,11 @@ func TestCompoundClaim_AllowsTheOverlapsItsOwnPlanCreates(t *testing.T) {
 	t.Run("unclaimed", func(t *testing.T) {
 		bin := testdb.CreateBinAtNode(t, db, "DEFAULT", sd.StorageNode.ID, "CAS-FREE")
 		parent := compoundParent(t, db, "cas-free-parent")
-		if _, err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)}); err != nil {
+		kid := childFor(parent, bin.ID, 1)
+		if _, err := db.CreateCompoundChildren([]store.CompoundChild{kid}, nil); err != nil {
+			t.Fatalf("birthing over an unclaimed bin must succeed: %v", err)
+		}
+		if err := handOver(t, db, parent.ID, kid); err != nil {
 			t.Fatalf("claiming an unclaimed bin must succeed: %v", err)
 		}
 		assertClaimedByAChildOf(t, db, bin.ID, parent.ID)
@@ -171,7 +197,11 @@ func TestCompoundClaim_AllowsTheOverlapsItsOwnPlanCreates(t *testing.T) {
 		parent := compoundParent(t, db, "cas-parent-holds")
 		claimFor(t, db, bin.ID, parent.ID)
 
-		if _, err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)}); err != nil {
+		kid := childFor(parent, bin.ID, 1)
+		if _, err := db.CreateCompoundChildren([]store.CompoundChild{kid}, nil); err != nil {
+			t.Fatalf("a dig must be born over a bin its own PARENT holds: %v", err)
+		}
+		if err := handOver(t, db, parent.ID, kid); err != nil {
 			t.Fatalf("a child must be able to take a bin its own PARENT holds: %v.\nThe planners emit "+
 				"a retrieve step carrying the buried target — the very bin the parent retrieve exists "+
 				"to fetch — so excluding the parent fails a claim that works today", err)
@@ -185,8 +215,11 @@ func TestCompoundClaim_AllowsTheOverlapsItsOwnPlanCreates(t *testing.T) {
 
 		// Two steps over ONE bin — the unbury-then-retrieve shape.
 		kids := []store.CompoundChild{childFor(parent, bin.ID, 1), childFor(parent, bin.ID, 2)}
-		if _, err := db.CreateCompoundChildren(kids); err != nil {
+		if _, err := db.CreateCompoundChildren(kids, nil); err != nil {
 			t.Fatalf("a plan that touches one bin twice must be creatable: %v", err)
+		}
+		if err := handOver(t, db, parent.ID, kids...); err != nil {
+			t.Fatalf("each leg over one bin must claim it in turn: %v", err)
 		}
 		after, err := db.GetBin(bin.ID)
 		if err != nil {

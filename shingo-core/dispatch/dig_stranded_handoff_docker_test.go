@@ -5,6 +5,7 @@ package dispatch
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -42,11 +43,13 @@ import (
 // a marked lane whose only reservation is one `dighandoff` row owned by a
 // coordinated demand.
 //
-// The demand is created PRE-DISPATCH deliberately — that is the only state
-// handOffDugLane converts in (gate 3 releases a committed or faulted holder
-// rather than converting) — so a test that wants a stranded owner in some other
-// status seeds it AFTER the conversion, which is the ordering the plant
-// produces too.
+// The demand is created GATE-STAGED and not yet committed deliberately — sent,
+// standing at the lane's mark, `acknowledged` — because that is the only state
+// handOffDugLane converts in: gate 3 releases a committed or faulted holder, and
+// gate 4 (C2b A.1b) releases a demand not yet sent, whose soft hold on its bin
+// covers the window instead. A test that wants a stranded owner in some other
+// status seeds it AFTER the conversion, which is the ordering the plant produces
+// too.
 //
 // `shape` (nil for most tests) is handed the lane's slots as well as the order,
 // because the one field that matters here — DeliveryNode — names a node the
@@ -62,9 +65,16 @@ func strandedHandoffFixture(t *testing.T, name string, shape func(*orders.Order,
 	demand := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "stranded-" + name
 		o.Coordinated = true // gate 2: only a coordinated demand keeps its corridor
+		o.Status = StatusAcknowledged
 		if shape != nil {
 			shape(o, wallSlots)
 		}
+	})
+	// Gate 4: sent, and parked at this lane's mark.
+	testutil.MustNoErr(t, db.UpdateOrderVendor(demand.ID, "v-stranded-"+name, "RUNNING", ""), "send the demand")
+	demand = setSteps(t, db, demand, []resolvedStep{
+		{Action: protocol.ActionWait, Node: name + "-WAIT", WaitKind: WaitKindLane, WaitLane: lane.ID},
+		{Action: protocol.ActionPickup, Node: wallSlots[1].Name},
 	})
 
 	if !d.laneLock.TryLock(lane.ID, demand.ID) {

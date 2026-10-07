@@ -128,11 +128,15 @@ func TestServiceDig_BuriedComplexDemand_DigsThenDispatchesItsOwnPlan(t *testing.
 	//	ended without collecting the bin, the corridor was shut with no releaser in
 	//	the world. Five at once on the lane-stress rig.
 	//
-	//	THE HANDOFF, which is this. The lane goes to the live demand in the dig's
-	//	episode as that demand's OWN outbound hold, and the dig finishes. Outbound
-	//	excludes exactly what has to be excluded — a drop into the lane, the only
-	//	way the uncovered bin can be re-buried — and the hold now sits inside an
-	//	ordinary order's lifetime, so it cannot outlive the work it was taken for.
+	//	THE HANDOFF. The lane went to the live demand in the dig's episode as that
+	//	demand's OWN outbound hold, and the dig finished. Outbound excluded exactly
+	//	what had to be excluded — a drop into the lane — but for a demand not yet
+	//	sent it was a hold at rest (v4 §2.6).
+	//
+	//	THE SOFT HOLD, which is this (C2b A.1b). The demand soft-reserved the bin
+	//	at the dig's birth, the burial guards read that row, and the lane is
+	//	released with the dig. The demand takes the lane in its own hand when it
+	//	dispatches.
 	acc, err := db.IsSlotAccessible(slots[1].ID)
 	testutil.MustNoErr(t, err, "ask whether the target is reachable now")
 	if !acc {
@@ -146,12 +150,11 @@ func TestServiceDig_BuriedComplexDemand_DigsThenDispatchesItsOwnPlan(t *testing.
 	}
 	holders, err := reservations.ActiveMouthRows(db.DB, lane.ID)
 	testutil.MustNoErr(t, err, "read the lane's mouth holds after the dig finished")
-	if len(holders) != 1 || holders[0].OrderID != demand.ID || holders[0].Mode != reservations.ModeOutbound {
-		t.Fatalf("lane %s holds %+v after its dig finished, want one OUTBOUND row for the demand %d. "+
-			"Releasing outright leaves the bin the demand is queued for standing at an open mouth, "+
-			"with the slots the dig just emptied as the cheapest shuffle candidates in the group",
-			lane.Name, holders, demand.ID)
+	if len(holders) != 0 {
+		t.Fatalf("lane %s holds %+v after its dig finished, want nothing: demand %d has not been "+
+			"sent, and a wait keeps soft holds only", lane.Name, holders, demand.ID)
 	}
+	requireSoftHoldCovers(t, db, demand.ID, slots[1].ID)
 	// THE DIG IS THE DEMAND, so it does not terminate — it RESUMES. This assertion
 	// read `IsTerminal(finished.Status)`, under: "the dig is %q with its corridor
 	// already handed over. It owes nothing and holds nothing, and a row parked in

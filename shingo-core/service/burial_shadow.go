@@ -405,11 +405,12 @@ func (s *BinService) noteHardBurial(at burialSite, b store.SpokenForBin, heldFor
 // already uses. Unreadable falls back to created_at, which is the LOUD direction
 // and keeps the tripwire's over-report bias.
 //
-// A COMPOUND LEG IS EXEMPT AND KEEPS created_at. Its claim is stamped in the
-// transaction that inserts it (CreateCompoundChildren), so for a dig leg the two
-// instants are the same one and created_at is exact.
+// A COMPOUND LEG IS DATED THE SAME WAY. Its claim is taken at its handover, in
+// the hand that commits it to the fleet (store.ClaimCompoundLegBinTx), not at its
+// birth, so its own commit-to-fleet history is the moment and created_at would
+// date the hold from before it existed.
 func (s *BinService) hardHoldBeganAt(b store.SpokenForBin) time.Time {
-	if !b.HardClaim || b.HolderIsChild {
+	if !b.HardClaim {
 		return b.HeldSince
 	}
 	at, ok, err := s.db.OrderCommittedToFleetAt(b.HolderID)

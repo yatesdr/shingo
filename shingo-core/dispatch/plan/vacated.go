@@ -380,7 +380,7 @@ func (p *Planner) Vacated(need Need, steps []Step, i int, node string) *Vacate {
 		return nil
 	}
 	b := remaining[0]
-	if b.ClaimedBy == nil || *b.ClaimedBy != pc.Partner {
+	if !heldByPartner(b, pc.Partner) {
 		return nil
 	}
 	for _, l := range pc.Lifts {
@@ -392,6 +392,23 @@ func (p *Planner) Vacated(need Need, steps []Step, i int, node string) *Vacate {
 		}
 	}
 	return nil
+}
+
+// heldByPartner reports whether the partner holds b: by its claim, or by its
+// pending reservation with no claim on the bin.
+//
+// THE SOFT HOLD COUNTS HERE BECAUSE THE HAND RE-ASKS IT HARD. A pair is one
+// hand (C2b A.2): when this leg is planned, its partner has only reserved its
+// bins, and the claims are taken in the one transaction that takes both legs'
+// hands, the lifter's first. This leg's slot claim then credits the partner's
+// bin only if the partner holds it the way a confirmed claim leaves it, alive
+// and linked (store/nodes ClaimSlotTx), so a partner that lost the bin between
+// the plan and the hand refuses the hand, and the pair waits.
+func heldByPartner(b *bins.Bin, partner int64) bool {
+	if b.ClaimedBy != nil {
+		return *b.ClaimedBy == partner
+	}
+	return b.HasPendingReservation && b.PendingReservedBy != nil && *b.PendingReservedBy == partner
 }
 
 // PartnerLiftsResident reports whether the partner's pickup at step k takes a bin

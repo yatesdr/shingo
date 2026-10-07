@@ -445,10 +445,10 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 		// against a destination known clear. That holds here — same tick, same
 		// goroutine, under scanMu. The destination then stays covered against other
 		// orders for the whole compound, and not by the parent, which holds no claim:
-		// CreateCompoundChildren claims the target bin for the retrieve child in the
-		// transaction that creates it, and compound.go gives that child the parent's
-		// delivery node, so the child counts as inbound there
-		// (orders.InFlightForDropoffSQL) from creation.
+		// compound.go gives the retrieve child the parent's delivery node, and the
+		// child counts as inbound there (orders.InFlightForDropoffSQL) from creation
+		// — as a dig leg awaiting the fleet until its handover, and by the claim its
+		// hand takes after it.
 		//
 		// Return false and never advance the compound: createCompound already
 		// dispatched the first child, and the parent has left the acquiring set

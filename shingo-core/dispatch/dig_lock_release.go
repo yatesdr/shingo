@@ -527,6 +527,31 @@ func (d *Dispatcher) handOffDugLane(parent *orders.Order, laneID int64) bool {
 		return false
 	}
 
+	// ── GATE 4: A DEMAND THAT HAS NOT BEEN SENT HOLDS NOTHING (C2b A.1b) ──
+	//
+	// The naked-target window is real, and a lane row is no longer what covers
+	// it. A pre-dispatch demand rests in `pending`, and a wait keeps soft holds
+	// only (v4 §2.6): converting the dig row into its outbound row was a hold at
+	// rest (orders.DigLocksAtRestSQL). What protects the uncovered bin is the
+	// demand's soft hold on it — the pending bin row its dig took at birth
+	// (digLaneTake.aim), or its aim (bin_id + source_node) for a plain order —
+	// which both burial guards read through helpers.ComingForBinSQL: the store
+	// selector (nodes.FindStoreSlotInLaneExcluding, so the group resolver, the
+	// gate's re-bind and a cancel's return through plan.GroupStoreSlot) and the
+	// shuffle walk (store.SlotsBlockedByHardClaims). The demand takes the lane
+	// again in its own hand when it dispatches.
+	//
+	// WHAT IS LEFT CONVERTING is a gate-staged picker that gate 3 has not
+	// released: a robot standing at the mark, sent, whose status has not reached
+	// the committed set (gate 3 releases `staged` and every later status).
+	if !IsGateStaged(parent) {
+		log.Printf("dig lock: demand %d has not been sent (status %s) — releasing lane %d rather than "+
+			"converting its dig row. Its soft hold on the bin it dug for keeps stores and shuffles out "+
+			"of the slots in front of it, and it takes the lane in its own hand when it dispatches",
+			parent.ID, parent.Status, laneID)
+		return false
+	}
+
 	outcome, hErr := reservations.HandOffLaneToPicker(
 		d.db.DB, laneID, parent.ID, parent.ID, digHandoffReservedBy)
 	if hErr != nil {

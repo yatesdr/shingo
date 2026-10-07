@@ -3,6 +3,7 @@ package helpers
 import (
 	"fmt"
 
+	"shingo/protocol"
 	"shingocore/store/reservations"
 )
 
@@ -82,6 +83,71 @@ func ShallowerInSameLane(shallow, deep string) string {
 			  AND %[1]s.depth IS NOT NULL
 			  AND %[2]s.depth IS NOT NULL
 			  AND %[1]s.depth < %[2]s.depth`, shallow, deep)
+}
+
+// ComingForBinSQL is the burial guard's HOLDER arm, alone: the order at alias
+// `holder` is coming for the bin at alias `bin`, which stands in the slot at
+// alias `slot`. Both burial guards (nodes.FindStoreSlotInLaneExcluding and
+// store.SlotsBlockedByHardClaims) join their holder through it, so "coming for
+// it" means one thing to the store selector and the shuffle walk, as "in front
+// of" does through ShallowerInSameLane. Liveness is the caller's: each filters
+// the holder on non-terminal status.
+//
+// THREE SPELLINGS OF ONE FACT:
+//   - the hard claim (claimed_by): a robot is committed to the bin;
+//   - the aim (bin_id with source_node on the bin's slot): the order resolved
+//     onto the bin and is coming to collect it where it stands;
+//   - a pending bin reservation held by a demand that dug for it and is not
+//     yet with the fleet. A complex demand has no aim to read for its whole
+//     wait — its bin_id is written only at its confirm, and source_node names
+//     its pickup's group until the pickup resolves — so its dig soft-reserves
+//     the bin it uncovers at the dig's birth (C2b A.1b; dispatch
+//     digLaneTake.aim), and this arm is what makes that row keep the slots the
+//     dig just emptied from re-burying the bin before the demand's next pass.
+//
+// THE THIRD ARM IS SCOPED TWICE, and both scopes are load-bearing.
+//
+// "NOT YET SENT" (AwaitingFleetSQL) is its direction, as source_node is the
+// aim's. A sent order takes its bins by claim in its hand, so a pending row an
+// order still carries after it was sent is not a robot coming: a store that has
+// placed its bin in the lane and not yet ended is that shape, and reading its row
+// as "coming for it" closes the lane behind the store
+// (TestStoreBurst_DivertedOntoAMarkedLane_StagesInsteadOfParking).
+//
+// "A DEMAND THAT DUG FOR IT" (the holder has dig legs) keeps the arm off soft
+// holds in general, which TestBurialGuard_SoftHoldIsBuriable pins and whose
+// reason stands: a soft hold has no time bound, so two cross-lane movers parked
+// on each other's holds would refuse each other for ever, both alive and both
+// correct. A reserve-holding complex order keeps its partial holds for as long as
+// it waits; read as burials, those would close every slot in front of them, and
+// a plant's tiered slots under a group are lanes to this geometry. The dug-for
+// demand is the population the window exists for (the naked target), and its
+// wait has a releaser: its own next pass, one pass after the dig ends.
+//
+// The reservation arm is a scalar subquery, not a join: uq_reservations_bin_active
+// admits one active row per bin.
+func ComingForBinSQL(holder, bin, slot string) string {
+	return fmt.Sprintf(`(%[1]s.id = %[2]s.claimed_by
+			   OR (%[1]s.bin_id = %[2]s.id AND %[1]s.source_node = %[3]s.name)
+			   OR (%[1]s.id = (SELECT coming_r.order_id FROM reservations coming_r
+			                    WHERE coming_r.bin_id = %[2]s.id AND coming_r.resource_kind = 'bin'
+			                      AND %[4]s)
+			       AND %[5]s
+			       AND EXISTS (SELECT 1 FROM orders coming_dig WHERE coming_dig.parent_order_id = %[1]s.id)))`,
+		holder, bin, slot, reservations.BlockingStateSQL("coming_r."), AwaitingFleetSQL(holder))
+}
+
+// AwaitingFleetSQL is orders.AwaitingFleetSQL's one spelling — see it for why
+// vendor_order_id is the authority and the status set is derived. It lives here
+// because the burial guard's holder arm reads it, and this package cannot import
+// store/orders. alias is the orders table alias ("" for an unaliased `orders`).
+func AwaitingFleetSQL(alias string) string {
+	q := ""
+	if alias != "" {
+		q = alias + "."
+	}
+	return fmt.Sprintf("%sstatus IN (%s) AND COALESCE(%svendor_order_id, '') = ''",
+		q, protocol.PreDispatchStatusSQLList(), q)
 }
 
 // LaneBlockerPredicate is the definition: `blocker` is an occupied slot sitting

@@ -214,7 +214,7 @@ var ErrNotTheNamedBin = fmt.Errorf("reservations: the order names another bin, o
 //
 //	acquire (bin, slot)        *INSERT reservations
 //	AcquireOccupancy           *INSERT reservations
-//	AcquireLanesFor            advisory lane lock; per lane a plain read, then
+//	AcquireLanesFor            per lane: advisory lane lock; a plain read, then
 //	                           *UPDATE (promote/upgrade) or *INSERT
 //	HandOffLaneToPicker        advisory lane lock; *DELETE the dig owner's mouth
 //	                           row (the dig owner's, not the picker's); a plain
@@ -228,28 +228,38 @@ var ErrNotTheNamedBin = fmt.Errorf("reservations: the order names another bin, o
 //	ReplaceOrderBins           *DELETE order_bins (test in the same statement);
 //	                           INSERTs
 //	InsertOrderBin             *INSERT order_bins
-//	CreateCompoundChildren     *SELECT the parent FOR UPDATE; child rows; claims;
-//	                           the child's ledger INSERT tests the child, a row
-//	                           this transaction created and no other can lock.
-//	dispatch.acquireHand       *UPDATE orders (the status CAS, first); then the
-//	                           slot claims, the bin claims, the mouth writers and
+//	CreateCompoundChildren     a dig's lane advisory lock; *SELECT the parent FOR
+//	                           UPDATE; the dig's mouth write and, for a
+//	                           coordinated demand's own dig, its soft hold on
+//	                           the target bin (both tests read the row this
+//	                           transaction holds); child rows; the steal. A
+//	                           leg's claim and ledger row are its hand's.
+//	ClaimCompoundLegBinTx      inside the leg's hand, after its CAS: *UPDATE bins
+//	                           (claim); the ledger INSERT tests the leg's row.
+//	dispatch.acquireHand       advisory locks on all its lanes (sorted); then
+//	                           *UPDATE orders (the status CAS); then the slot
+//	                           claims, the bin claims, the mouth writers and
 //	                           AcquireOccupancy, whose tests read the row the CAS
-//	                           holds. Its lanes' advisory locks come after the
-//	                           order row: HandOffLaneToPicker for the same order
-//	                           at the same moment (lane lock, then the picker's
-//	                           row) can meet it. Postgres ends one of the two
-//	                           with a deadlock error: a failed handoff leaves its
-//	                           dig row to the compound's teardown, and a failed
-//	                           hand holds nothing and is asked again next pass.
+//	                           holds. Lane lock, then order row: the same order
+//	                           as HandOffLaneToPicker, so a hand and a handoff on
+//	                           one lane and one order wait for each other rather
+//	                           than close a cycle. A pair's hand
+//	                           (dispatch.acquireHands) is one transaction for both
+//	                           legs: every lane's lock first, then each leg's CAS
+//	                           and its statements in turn, each testing only its
+//	                           own row.
 //
 // No transaction holds an order row for update while taking this share lock on
 // a different, existing order's row: CreateCompoundChildren's second order is
-// its own new child, and every other writer tests only the order it writes for.
+// its own new child, a pair's hand takes its second leg's row with that leg's own
+// CAS before that leg's statements test it, and every other writer tests only the
+// order it writes for.
 //
 // The lock is a share lock on the OWNER'S OWN order row, taken after any lane
-// advisory lock the caller holds. What it can wait on: a transaction updating
-// that order row — a terminalize, a status transition. Those take the row and
-// then touch only that order's rows (its status, its history, its own
+// advisory lock the caller holds; every transaction that takes both takes the
+// lane's lock first. What it can wait on: a transaction updating that order
+// row — a terminalize, a status transition. Those take the row and then touch
+// only that order's rows (its status, its history, its own
 // reservations, bins and nodes claimed by it); none of them takes a lane
 // advisory lock or waits on a row this inserter holds, since the inserter's own
 // uncommitted rows are invisible to their deletes. HandOffLaneToPicker takes the

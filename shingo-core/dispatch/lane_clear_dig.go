@@ -332,14 +332,14 @@ type laneClearResult struct {
 // PlanLaneMouthClear. Same ruling, two planners (pinned by
 // TestPlainBuriedRetrieve_KeepsDemandAsItsOwnDigParent).
 func (d *Dispatcher) proposeLaneClearDig(lane, target *nodes.Node, requester *orders.Order) laneClearResult {
-	return d.proposeLaneClearDigThen(lane, target, requester, nil)
+	return d.proposeLaneClearDigThen(lane, target, requester, nil, 0)
 }
 
 // proposeLaneClearDigThen is proposeLaneClearDig with legsWritten passed to the
 // compound write: it runs only when the dig is written, before the requester
 // moves into `reshuffling` (createCompoundOrder).
 func (d *Dispatcher) proposeLaneClearDigThen(lane, target *nodes.Node, requester *orders.Order,
-	legsWritten func()) laneClearResult {
+	legsWritten func(), aimBin int64) laneClearResult {
 	if lane.ParentID == nil {
 		// A lane with no group has nowhere to park a blocker. Same terminal-shaped
 		// geometry planBuriedReshuffle names, and equally not worth an order.
@@ -469,7 +469,9 @@ func (d *Dispatcher) proposeLaneClearDigThen(lane, target *nodes.Node, requester
 	// to a lane, one dig serves every demand behind the wall (§R.40), so borrowing
 	// one requester's exemption would let the dig park inside a lane that requester
 	// happens to be digging — a 1:many truth wearing a 1:1 exemption.
-	plan, err := PlanLaneMouthClear(d.db, target, lane, *lane.ParentID, reservations.Anyone)
+	// Planned as nobody in particular, ranked for the requester: the demand
+	// this dig carries, which may take a stranger's pending slot it outranks.
+	plan, err := planLaneMouthClearFor(d.db, target, lane, *lane.ParentID, reservations.Anyone, requester.ID)
 	if err != nil {
 		// ORDER MATTERS HERE. readFailed() answers true for ANY non-nil error that
 		// is not sql.ErrNoRows — including every sentinel below it — so the named
@@ -573,37 +575,34 @@ func (d *Dispatcher) proposeLaneClearDigThen(lane, target *nodes.Node, requester
 	// ResumeCompound — Reshuffling → Queued — rather than confirming it. Its own
 	// work is still owed and the scanner re-resolves it against the corridor the
 	// dig just opened. No new status edge: both transitions already exist.
-	// The same exemption the pre-check used, re-read rather than carried: the
-	// two are separated by the parent INSERT above, so a dweller that walked in
-	// between must be seen by this half. Re-reading can only ever REFUSE a dig the
-	// pre-check allowed, which is the safe direction and the one the acquire is
-	// the arbiter of anyway.
-	if !d.laneLock.TryLockFor(lane.ID, requester.ID, digFor, stagedAtMarkOnLane(d.db, lane.ID)) {
-		return laneClearResult{outcome: laneClearLaneBusy}
-	}
-	if err := d.createCompoundOrder(requester, plan, legsWritten); err != nil {
-		// A REQUESTER THAT HAS ENDED HOLDS NOTHING, gate-staged or not: the lock
-		// was taken in the name of an order that no longer exists, and a dead
-		// order holding a lane is every later dig behind that lane starving.
+	//
+	// THE LANE IS TAKEN IN THE REQUESTER'S HAND, with the legs (digLaneTake).
+	// The exemption the pre-check used is re-read rather than carried, so a
+	// dweller that walked in since must be seen by the acquire; re-reading can
+	// only ever REFUSE a dig the pre-check allowed, which is the safe direction.
+	//
+	// AND A COORDINATED DEMAND SOFT-RESERVES THE BIN IT IS DIGGING FOR, in that
+	// same transaction (digLaneTake.inTx, aimForDig).
+	err = d.createCompoundOrder(requester, plan, legsWritten,
+		&digLaneTake{laneID: lane.ID, asker: digFor, staged: stagedAtMarkOnLane(d.db, lane.ID),
+			aim: aimForDig(requester, aimBin)})
+	if err != nil {
+		if digLaneRefused(err) {
+			return laneClearResult{outcome: laneClearLaneBusy}
+		}
+		// A REQUESTER THAT HAS ENDED HOLDS NOTHING: the transaction that would
+		// have taken its lane rolled back, or the lane was released as its legs
+		// were withdrawn (createCompoundOrder).
 		if errors.Is(err, store.ErrParentGone) {
-			d.laneLock.Unlock(lane.ID, requester.ID)
 			return laneClearResult{outcome: laneClearParentGone, err: err}
 		}
-		// A WAITING DIG HOLDS NOTHING — UNLESS ITS ROBOT IS ALREADY IN THE MOUTH.
+		// A REFUSED DIG HOLDS NOTHING, gate-staged requester or not. The lane
+		// step rolled back with the legs. A gate-staged requester keeps what it
+		// held before the dig — the mouth row and occupancy its own hand took
+		// when it was sent — because the transaction that would have upgraded
+		// that row to a dig never committed. Its robot in the mouth holds the
+		// corridor by those, not by a dig lock kept on a refusal.
 		//
-		// Backing out whole is the rule for a dig planned from scratch: it leaves
-		// the corridor so whoever can use it may, and that is what makes waiting
-		// cheaper than squatting. A GATE-STAGED requester cannot obey it. Its robot
-		// is standing at the mark holding a bin, so releasing the lane opens a
-		// corridor that is physically blocked to traffic that will queue behind the
-		// machine and wait on it — the deadlock §R.104 keeps the lock to prevent.
-		//
-		// It reached here on every refusal kind, and the ranked take made it
-		// routine: the plan-time pre-check only catches CLAIMED blockers, so a
-		// promised one (claimed_by NULL) always gets past it and lands on this arm.
-		if !IsGateStaged(requester) {
-			d.laneLock.Unlock(lane.ID, requester.ID)
-		}
 		// CARRY WHO AND WHICH REFUSAL, not just "blocked". The typed error holds
 		// both facts and this arm used to drop them: the callers then had no
 		// claimant to name and no way to tell the ranked refusal (§7) from the
@@ -629,6 +628,11 @@ func (d *Dispatcher) proposeLaneClearDigThen(lane, target *nodes.Node, requester
 			return laneClearResult{outcome: laneClearBlockerClaimed, err: err,
 				blockerCause: digBlockerCause(err)}
 		}
+		// THE VERDICT RE-ASKED IN THE HAND REFUSED IT (plan.DigStillFits): the
+		// same refusals the plan-time verdict makes, so the same waits.
+		if errors.Is(err, ErrNoShuffleSlot) || errors.Is(err, ErrLaneMouthHeld) {
+			return laneClearResult{outcome: classifyPlanError(err), err: err}
+		}
 		return laneClearResult{outcome: laneClearUnplannable, err: err}
 	}
 	return laneClearResult{outcome: laneClearStarted, parent: requester, steps: len(plan.Steps)}
@@ -638,11 +642,12 @@ func (d *Dispatcher) proposeLaneClearDigThen(lane, target *nodes.Node, requester
 // named predicate so the decision and the transaction that enforces it can be
 // read side by side.
 //
-// It is NOT the authority. store.ErrBlockerClaimed out of the compound transaction
-// is, because that test and the claim happen together under one lock; this one is
-// a read taken earlier and can be stale by the time the write runs. It is here to
-// keep the common case from minting an order it would immediately cancel, and the
-// stale case is handled where it lands.
+// It is NOT the authority. The leg's claim at its handover is
+// (store.ClaimCompoundLegBinTx), because that test and the claim happen together
+// under one lock; this one is a read taken earlier and can be stale by the time
+// the write runs. It is here to keep the common case from minting a dig it would
+// immediately stall, and the stale case is handled where it lands: the leg rests
+// `pending` under the blocker cause, holding nothing.
 //
 // AND IT IS DELIBERATELY NOT THE LIVENESS QUESTION — law 3's rider, asked and
 // answered NO. Since 2e the acceptance arm's "is somebody coming" is

@@ -14,9 +14,9 @@ import (
 // lanes it ENTERS — which is not the same as the lanes its plan names. A create
 // bound for a gated lane stops at the mark; that lane's row belongs to the tail
 // append (appendGateTail). Every dispatch seam has to answer "am I the moment the
-// robot goes in", and the two answer it in their own vocabulary: the gated create
-// walks its spliced plan (planNodes(preWait)), the compound leg asks the lane
-// (enteredAtDispatch), because it takes before its plan is spliced.
+// robot goes in", and since C2b A.1 both answer it the same way: the gated create
+// and the compound leg's hand both take the nodes of the pre-wait segment
+// (planNodes(preWait)).
 //
 // SO THE GUARD IS ON THE SEAM LIST, NOT ON THE RULE. Enforcing the rule inside
 // TakeLaneOccupancy was tried and is wrong — it is also the general "this order IS
@@ -48,7 +48,7 @@ func TestOccupancyIsTakenOnlyAtTheKnownSeams(t *testing.T) {
 		// commitToFleet is handed, so the rule above — pass what you ENTER — is
 		// still answered at commitToFleet's callers and nowhere else.
 		"hand.go":               "acquireHand — commitToFleet's occupancy take, inside the hand's transaction",
-		"compound.go":           "the compound leg, which filters through enteredAtDispatch (PLAN §R.54)",
+		"compound.go":           "the compound leg, whose hand takes its pre-wait segment's nodes (PLAN §R.54)",
 		"lane_gate_dispatch.go": "the gated append, which is the moment a staged robot actually enters",
 		// THE FOURTH SEAM, AND IT ANSWERED THE RULE'S QUESTION BEFORE IT WAS ADDED
 		// HERE. A destination-deferred dig leg enters its DUG lane at dispatch
@@ -83,8 +83,8 @@ func TestOccupancyIsTakenOnlyAtTheKnownSeams(t *testing.T) {
 					"its row belongs to the tail append, so passing the plan's endpoints raw declares a "+
 					"robot inside a corridor it is standing next to. That phantom row refused the only "+
 					"order able to break a four-order cycle on the rig, frozen 997 seconds (PLAN §R.54). "+
-					"Pass what you ENTER: planNodes(preWait) if you have a spliced plan, "+
-					"enteredAtDispatch if you do not — then add this file here.", name, call)
+					"Pass what you ENTER: planNodes over the pre-wait segment — then add this file "+
+					"here.", name, call)
 				break
 			}
 		}

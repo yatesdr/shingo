@@ -489,7 +489,9 @@ func (d *Dispatcher) dwellDestination(leg *orders.Order, lane *nodes.Node) (*nod
 		refused  GateVerdict
 	)
 	for {
-		slots, err := findShuffleSlots(d.db, lane.ID, *lane.ParentID, 1, digAskerFor(leg), leg.ID, excluded)
+		byRank := map[int64]bool{}
+		asker := digAskerFor(leg)
+		slots, err := findShuffleSlotsFor(d.db, lane.ID, *lane.ParentID, 1, asker, asker.OrderID, leg.ID, excluded, byRank)
 		if err != nil {
 			// RIGHT OF WAY ANSWERS FIRST, because it names an order and the other two
 			// name a shortage. Asked before ErrNoShuffleSlot deliberately: this error
@@ -543,7 +545,7 @@ func (d *Dispatcher) dwellDestination(leg *orders.Order, lane *nodes.Node) (*nod
 			return nil, GateVerdict{}, aErr
 		}
 		if v.Admitted() {
-			bound, bv, bErr := d.bindChosenDestination(leg, lane, dest)
+			bound, bv, bErr := d.bindChosenDestination(leg, lane, dest, byRank[dest.ID])
 			if !errors.Is(bErr, ErrSlotContended) {
 				return bound, bv, bErr
 			}
@@ -566,7 +568,11 @@ func (d *Dispatcher) dwellDestination(leg *orders.Order, lane *nodes.Node) (*nod
 // bindChosenDestination is the second half of the choice: claim the slot, write it
 // onto the leg, and hand it back. Split out so the candidate walk above reads as a
 // walk rather than as a walk with a commit buried in it.
-func (d *Dispatcher) bindChosenDestination(leg *orders.Order, lane, dest *nodes.Node) (*nodes.Node, GateVerdict, error) {
+//
+// takeByRank is the walk's word that dest is a stranger's promise the leg's
+// demand outranks: its claim takes it explicitly (takeSlotByRank). Any other
+// slot that turns out held at the claim is a race the walk lost, and walks on.
+func (d *Dispatcher) bindChosenDestination(leg *orders.Order, lane, dest *nodes.Node, takeByRank bool) (*nodes.Node, GateVerdict, error) {
 
 	// ── NO BIN EVER RETURNS TO A DUG LANE (§R.76, 2026-08-13) ─────────────
 	//
@@ -646,9 +652,13 @@ func (d *Dispatcher) bindChosenDestination(leg *orders.Order, lane, dest *nodes.
 		d.dwellChoiceHook(leg.ID, dest)
 	}
 	if err := claimStoreSlot(d.db, leg, dest); err != nil {
-		// ErrSlotContended goes back to the walk, which excludes this slot and
-		// carries on. Anything else is a read or write that did not answer.
-		return nil, GateVerdict{}, fmt.Errorf("dig dwell: leg %d claim %s: %w", leg.ID, dest.Name, err)
+		// A SLOT THE WALK OFFERED BY RANK IS TAKEN, explicitly (takeSlotByRank).
+		// Otherwise ErrSlotContended goes back to the walk, which excludes this
+		// slot and carries on, and anything else is a read or write that did not
+		// answer.
+		if !takeByRank || !errors.Is(err, ErrSlotContended) || !d.takeSlotByRank(leg, dest) {
+			return nil, GateVerdict{}, fmt.Errorf("dig dwell: leg %d claim %s: %w", leg.ID, dest.Name, err)
+		}
 	}
 	if err := bindDwellTail(d.db, leg, dest); err != nil {
 		return nil, GateVerdict{}, err
@@ -831,4 +841,38 @@ func (d *Dispatcher) releaseOccupancyForLaneOf(orderID int64, node *nodes.Node) 
 	if err := reservations.ReleaseOccupancyForLane(d.db.DB, orderID, lane.ID); err != nil {
 		log.Printf("dig dwell: roll back occupancy for order %d on lane %d: %v", orderID, lane.ID, err)
 	}
+}
+
+// takeSlotByRank takes dest for leg when a stranger holds it by a pending
+// reservation and the leg's demand outranks that holder (store.TakeSlotByRank:
+// the rank re-checked under lock, the holder's row deleted, its wait written
+// naming the dig's demand, the slot reserved for the leg, one transaction). The
+// walk offers such a slot only to a dig that outranks its holder
+// (shuffleSlotsFrom); a slot that went to anyone else meanwhile is declined and
+// the walk goes on. Reports whether the slot is now the leg's.
+func (d *Dispatcher) takeSlotByRank(leg *orders.Order, dest *nodes.Node) bool {
+	named := leg.ID
+	if leg.ParentOrderID != nil {
+		named = *leg.ParentOrderID
+	}
+	note := store.HolderNote{
+		Reason: FormatQueueSentence(protocol.QueueWaitingForSlot, QueueParams{TakenByOrderID: named}),
+		Code:   protocol.QueueWaitingForSlot,
+		Cause:  string(CauseSlotTaken),
+		Actor:  "dispatcher",
+	}
+	holder, err := d.db.TakeSlotByRank(dest.ID, leg.ID, named, note)
+	if err != nil {
+		if !errors.Is(err, store.ErrNoSlotTake) {
+			log.Printf("dig dwell: leg %d could not take %s by rank: %v", leg.ID, dest.Name, err)
+		}
+		return false
+	}
+	log.Printf("dig dwell: leg %d (dig %d) took %s from order %d — the dig's demand outranks the "+
+		"holder's promise; order %d is told and re-resolves its destination",
+		leg.ID, named, dest.Name, holder, holder)
+	if h, gErr := d.db.GetOrder(holder); gErr == nil && h != nil {
+		d.NotifyWaitChanged(h)
+	}
+	return true
 }

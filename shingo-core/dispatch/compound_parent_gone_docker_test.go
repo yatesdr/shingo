@@ -234,7 +234,7 @@ func TestCompoundDig_StoreRefusesALegUnderAnEndedParent(t *testing.T) {
 		ParentOrderID: &f.order.ID, Sequence: 1, BinID: &f.sc.Blockers[0].ID, SourceNode: f.sc.Slots[0].Name,
 	}
 
-	_, err := f.db.CreateCompoundChildren([]store.CompoundChild{{Order: leg, BinID: f.sc.Blockers[0].ID}})
+	_, err := f.db.CreateCompoundChildren([]store.CompoundChild{{Order: leg, BinID: f.sc.Blockers[0].ID}}, nil)
 
 	var gone *store.ParentGoneError
 	if !errors.As(err, &gone) || gone.ParentID != f.order.ID {

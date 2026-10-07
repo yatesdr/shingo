@@ -287,13 +287,11 @@ func ListChildren(db *sql.DB, parentOrderID int64) ([]*Order, error) {
 // no second place where the comparison is spelled.
 //
 // alias is the table alias the caller uses ("" for an unaliased `orders`).
+//
+// The spelling lives in helpers.AwaitingFleetSQL so the burial guard's holder
+// arm (helpers.ComingForBinSQL) can read it without importing this package.
 func AwaitingFleetSQL(alias string) string {
-	q := ""
-	if alias != "" {
-		q = alias + "."
-	}
-	return fmt.Sprintf("%sstatus IN (%s) AND COALESCE(%svendor_order_id, '') = ''",
-		q, protocol.PreDispatchStatusSQLList(), q)
+	return helpers.AwaitingFleetSQL(alias)
 }
 
 // GetNextChild returns the next child order a compound has not yet handed to
@@ -1610,13 +1608,18 @@ func UpdatePayloadCode(db *sql.DB, orderID int64, payloadCode string) error {
 // either (TestDropoffGate_TwoShoppersForOneExclusiveDropoffOneGoes). A status
 // says where an order is in its life, not whether a bin is coming.
 //
-// What brings a bin is a claim, and three things take one: a plain order's
-// confirm at dispatch (ConfirmForDispatch), a complex leg's acquisition phases in
-// the pass that sends it to the fleet, and a compound child's creation
-// (CreateCompoundChildren claims each child's bin in the transaction that makes
-// it). Terminalization hands them back and a fleet refusal takes them off
-// (DemoteHoldsAfterFleetRefusal). So the count reads the claim book and no status
-// word at all. A reservation is not counted — it is a plan, and an order that has
+// What brings a bin is a claim, and two things take one: a plain order's confirm
+// at dispatch (ConfirmForDispatch) and a complex leg's acquisition in the pass
+// that sends it to the fleet. Terminalization hands them back and a fleet
+// refusal takes them off (DemoteHoldsAfterFleetRefusal). So the count reads the
+// claim book and no status word at all — with one arm for a DIG LEG NOT YET
+// SENT. A leg is born holding nothing and takes its bin in its own hand at its
+// handover (C2b A.1), but it is not a plan anybody may yield: its parent's dig
+// holds the lane and the leg is coming, in sequence. It used to count from its
+// birth through the claim its birth took; it counts from its birth through this
+// arm now, until its handover's claim takes over. The scanner's dropoff gate
+// leans on exactly that for a plain buried retrieve, whose last leg delivers to
+// the parent's line (fulfillment/scanner.go). A reservation is not counted — it is a plan, and an order that has
 // only planned is not on its way. The order that loses the race waits its turn at
 // dispatch: the gate refuses it until the holder has landed.
 //
@@ -1632,7 +1635,8 @@ func UpdatePayloadCode(db *sql.DB, orderID int64, payloadCode string) error {
 // delivery_node clause counts any live order naming the slot. soakstat's pre-dispatch tallies keep their
 // own status list, because they count something else.
 func InFlightForDropoffSQL() string {
-	return `EXISTS (SELECT 1 FROM bins b WHERE b.claimed_by = orders.id)`
+	return `(EXISTS (SELECT 1 FROM bins b WHERE b.claimed_by = orders.id)
+	         OR (orders.parent_order_id IS NOT NULL AND orders.bin_id IS NOT NULL AND ` + AwaitingFleetSQL("orders") + `))`
 }
 
 // CountInFlightByDeliveryNode counts the orders delivering to a node that hold a

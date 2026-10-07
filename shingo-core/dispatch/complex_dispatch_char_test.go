@@ -20,6 +20,7 @@ package dispatch
 //   - happy-path claim + dispatch end state → complex_dispatch_path_test.go
 
 import (
+	"fmt"
 	"testing"
 
 	"shingo/protocol"
@@ -269,12 +270,18 @@ func TestChar_SkipOrderInternal_TransitionErrorFallback(t *testing.T) {
 	}
 }
 
-// TestChar_DispatchPreparedComplex_FleetCreateFailure_Fails pins the fleet-create
-// failure branch (complex_dispatch.go:747) — the guardless happy-path tail's one
-// failure exit — routing through failOrderInternal with fleet_failed. A fully
-// sourceable order (bin present, claim succeeds) that the fleet backend rejects
-// terminal-fails rather than silently dropping.
-func TestChar_DispatchPreparedComplex_FleetCreateFailure_Fails(t *testing.T) {
+// TestC2bPin_AComplexOrderTheFleetRefusesRequeues: a fully sourceable complex
+// order (bin present, claim succeeds) that the fleet backend refuses.
+//
+// It terminal-failed as `fleet_failed` at the base (failOrderInternal), and for
+// a pair leg the engine's failed handler cancelled its partner. A fleet refusal
+// is a blip, not a failure (C2b A.2; C1 ruling 6): like every other order it
+// goes through DemoteAfterFleetRefusal — `dispatched → queued` under
+// fleet_unavailable, holding nothing — and the next pass re-dispatches it.
+//
+// It was TestChar_DispatchPreparedComplex_FleetCreateFailure_Fails, a
+// characterisation of the terminal arm; the arm is what C2b removes.
+func TestC2bPin_AComplexOrderTheFleetRefusesRequeues(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
@@ -299,20 +306,22 @@ func TestChar_DispatchPreparedComplex_FleetCreateFailure_Fails(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
-	err := d.DispatchPreparedComplex(order)
-	if err == nil {
+	if err := d.DispatchPreparedComplex(order); err == nil {
 		t.Fatal("fleet CreateOrder failure must return a non-nil error")
 	}
-	// CHANGE-DETECTOR: same single-emit as the invalid-steps case — the lifecycle
-	// transition's fireFailed is the one authoritative emit; failOrderInternal's
-	// explicit emit is now a transition-error-only fallback. Deduped deliberately.
-	if len(emitter.failed) != 1 {
-		t.Fatalf("failed events = %d, want 1 (single authoritative fireFailed emit)", len(emitter.failed))
+	after, err := db.GetOrder(order.ID)
+	testutil.MustNoErr(t, err, "reload the refused order")
+	var violations []string
+	for _, f := range emitter.failed {
+		violations = append(violations, fmt.Sprintf("order %d failed as %s on a fleet refusal", f.orderID, f.errorCode))
 	}
-	for i, f := range emitter.failed {
-		if f.errorCode != "fleet_failed" {
-			t.Errorf("failed[%d] code = %q, want %q", i, f.errorCode, "fleet_failed")
-		}
+	if after.Status != StatusQueued || after.QueueCause != string(CauseFleetRefusedCreate) {
+		violations = append(violations, fmt.Sprintf("order %d is %s under %q, want %s under %q",
+			after.ID, after.Status, after.QueueCause, StatusQueued, CauseFleetRefusedCreate))
+	}
+	violations = append(violations, testdb.HoldsAtRest(t, db)...)
+	if len(violations) != 0 {
+		t.Fatalf("a complex fleet refusal did not wait like every other order: %v", violations)
 	}
 }
 

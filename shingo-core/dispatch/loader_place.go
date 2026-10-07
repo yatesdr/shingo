@@ -289,8 +289,8 @@ func (d *Dispatcher) tryPlaceFromHomeSource(order *orders.Order, steps []resolve
 //
 // TWO SOURCES, IN THIS ORDER, AND THE SECOND IS THE ONE THAT MATTERS.
 // order.BinID is the direct answer but it is usually nil here:
-// prepareComplexSteps runs BEFORE acquireComplexSources in
-// acquireComplexPhases (complex_dispatch.go), so at placement time the bin is resolved but
+// prepareComplexSteps runs BEFORE reserveComplexSources in
+// prepareComplexHand (complex_dispatch.go), so at placement time the bin is resolved but
 // not yet claimed. That is not a defect to route around — placement is a
 // resolution-time read on purpose, so the swap supply leg is never gated — it
 // just means the bin pointer cannot be the only source.

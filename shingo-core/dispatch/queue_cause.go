@@ -226,6 +226,12 @@ const (
 	// that is leaving; the sentence names the taking order (TakenByOrderID) and
 	// the order's history keeps the take after the cause is overwritten.
 	CauseBinTaken QueueCause = "bin-taken"
+	// CauseSlotTaken — a dig whose demand outranks this order took the slot this
+	// order had only promised itself (C2b A.3; Rule 2 ⚖: older wins, a reshuffle
+	// carries its demand's rank, the loser drops the hold and records who took
+	// it). The slot mirror of bin-taken: the sentence names the demand that took
+	// it (TakenByOrderID) and the order's history keeps the take.
+	CauseSlotTaken QueueCause = "slot-taken"
 	// CauseDigBlockerWaitsOnThisDig — the bin the dig must move is held by an
 	// order THIS DIG IS ITSELF REFUSING. A circular wait, not a stalled holder.
 	//

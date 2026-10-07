@@ -62,13 +62,7 @@
         "payload": "PANEL-A",
         "source": "SMN_009",
         "delivery": "SLN_003",
-        "bin": "BIN-PA-03",
-        "hard_bins": [
-          "BIN-PA-03"
-        ],
-        "reservations": [
-          "bin:confirmed:BIN-PA-03"
-        ]
+        "bin": "BIN-PA-03"
       }
     ],
     "refusals": null,

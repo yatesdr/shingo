@@ -46,8 +46,9 @@ const (
 // which had ZERO readers before this. Law 15 on our own terms: the fact is
 // recorded, so it is read rather than re-derived.
 const (
-	// ByExcavation — a reshuffle compound working this lane. LaneLock.TryLockFor,
-	// which is the one door every production dig comes through.
+	// ByExcavation — a reshuffle compound working this lane, written by the dig's
+	// lane step in the parent's hand (dispatch digLaneTake), the one door every
+	// production dig comes through.
 	ByExcavation = "lanelock"
 	// BySourceLock — §R.101's source hold: an ordinary demand owns the lane it
 	// resolved onto. Exclusive, and not an excavation. Written by the lane gate.
@@ -208,8 +209,15 @@ func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, s
 		return fmt.Errorf("reservations acquire-lanes: begin: %w", err)
 	}
 	defer tx.Rollback() // no-op once committed; the rollback path is what makes it all-or-nothing
-	if err := AcquireLanesForTx(tx, owner, mode, beneficiary, stagedOutside, reservedBy, laneIDs...); err != nil {
-		return err
+	// Each lane is locked just before it is admitted, so a conflict on an early
+	// lane returns without locking the later ones.
+	for _, lane := range sortedUniqueLanes(laneIDs) {
+		if err := LockLanesTx(tx, lane); err != nil {
+			return err
+		}
+		if err := admitLockedLane(tx, lane, owner, mode, beneficiary, stagedOutside, reservedBy); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("reservations acquire-lanes: commit: %w", err)
@@ -217,108 +225,131 @@ func AcquireLanesFor(db *sql.DB, owner int64, mode Mode, beneficiary DigAsker, s
 	return nil
 }
 
-// AcquireLanesForTx is AcquireLanesFor on the caller's transaction. The lane's
-// advisory lock is transaction-scoped, so it is held until the CALLER commits or
-// rolls back — for dispatch.acquireHand that is the whole hand, which is the
-// point: the lane is decided together with the slot, the bins and the status,
-// and a refusal anywhere in the hand leaves no mouth row behind.
-//
-// ErrReservationConflict is returned without undoing earlier lanes in the same
-// call; the caller's rollback does that.
-func AcquireLanesForTx(tx *sql.Tx, owner int64, mode Mode, beneficiary DigAsker, stagedOutside StagedOutsideByLane, reservedBy string, laneIDs ...int64) error {
-	lanes := sortedUniqueLanes(laneIDs)
-	for _, lane := range lanes {
-		// Transaction-scoped advisory lock on the lane id: serializes concurrent
-		// acquirers of THIS lane. xact-scoped, so a crash cannot strand it.
+// LockLanesTx takes each lane's transaction-scoped advisory lock, in ascending
+// id order with duplicates removed, on the caller's transaction. It is the one
+// spelling of "lock these lanes": AcquireLanesFor takes them through it, and so
+// does dispatch.acquireHand, which takes all of its lanes' locks as its first
+// statements, before the order row, and only then admits them
+// (AdmitLockedLanesTx). The locks are held until the caller commits or rolls
+// back; a crash cannot strand them.
+func LockLanesTx(tx *sql.Tx, laneIDs ...int64) error {
+	for _, lane := range sortedUniqueLanes(laneIDs) {
+		// Serializes concurrent acquirers of THIS lane, and orders every
+		// transaction that takes a lane and an order row the same way: the lane
+		// first (HandOffLaneToPicker, the hand).
 		if _, err := tx.Exec(`SELECT pg_advisory_xact_lock($1)`, lane); err != nil {
 			return fmt.Errorf("reservations acquire-lanes: lock lane %d: %w", lane, err)
 		}
-		// PER LANE, not once for the call: "standing outside" is true of one
-		// corridor at a time. See StagedOutsideByLane.
-		verdict, err := admitMouth(tx, lane, owner, mode, beneficiary, stagedOutside.On(lane))
-		if err != nil {
+	}
+	return nil
+}
+
+// AdmitLockedLanesTx is AcquireLanesFor's admission and mouth writes on the
+// caller's transaction, for lanes whose advisory locks the caller already holds
+// (LockLanesTx). It takes no lock of its own: a lock taken early is not taken
+// again. For dispatch.acquireHand the transaction is the whole hand, so the lane
+// is decided together with the slot, the bins and the status, and a refusal
+// anywhere in the hand leaves no mouth row behind.
+//
+// ErrReservationConflict is returned without undoing earlier lanes in the same
+// call; the caller's rollback does that.
+func AdmitLockedLanesTx(tx *sql.Tx, owner int64, mode Mode, beneficiary DigAsker, stagedOutside StagedOutsideByLane, reservedBy string, laneIDs ...int64) error {
+	for _, lane := range sortedUniqueLanes(laneIDs) {
+		if err := admitLockedLane(tx, lane, owner, mode, beneficiary, stagedOutside, reservedBy); err != nil {
 			return err
 		}
-		switch verdict {
-		case admitIdempotent:
-			// ── THE TAG IS PROMOTED, NEVER DEMOTED ────────────────────────
-			//
-			// The row is already this owner's in this mode, so there is nothing
-			// to do about the HOLD. There can still be something to do about
-			// what it is CALLED, and before §R.101 there never was: a demand
-			// that dug the lane it was holding arrived here holding an OUTBOUND
-			// row, so the verdict was admitUpgrade and the tag was rewritten by
-			// that arm's UPDATE. §R.101 made the source hold a dig too, which
-			// turned that upgrade into this no-op and froze the tag at whatever
-			// wrote first.
-			//
-			// MEASURED, not reasoned: a demand takes its source hold (lanegate),
-			// planBuriedReshuffle re-parents it onto its own excavation and
-			// TryLockFor acquires with lanelock — and the row still read
-			// lanegate. A genuine excavation wearing the source-lock tag is
-			// exactly the wrong-name failure IsExcavation exists to prevent,
-			// pointing the wrong way.
-			//
-			// Promotion only. A dig row that has been an excavation stays one
-			// until it is released or handed off, so a later gate acquire by the
-			// same owner cannot talk it back down — the compound legs of a live
-			// dig do re-enter through the lane gate, and letting them demote the
-			// parent's tag would be the same bug with the clock turned round.
-			if IsExcavation(reservedBy) {
-				// A row lock on the owner's own mouth row: the owner test comes
-				// first in the statement (OwnerLiveSQL's lock-order rule).
-				var live bool
-				if err := tx.QueryRow(
-					`WITH live AS (SELECT `+OwnerLiveSQL(2)+` AS ok),
-					 upd AS (UPDATE reservations SET reserved_by=$1
-					  WHERE order_id=$2 AND resource_kind='mouth' AND node_id=$3
-					    AND state IN ('pending','confirmed')
-					    AND COALESCE(reserved_by, '') <> $1
-					    AND (SELECT ok FROM live)
-					  RETURNING 1)
-					 SELECT (SELECT ok FROM live), (SELECT count(*) FROM upd)`,
-					reservedBy, owner, lane,
-				).Scan(&live, new(int)); err != nil {
-					return fmt.Errorf("reservations acquire-lanes: promote lane %d: %w", lane, err)
-				}
-				if !live {
-					return ErrOwnerEnded
-				}
-			}
-			continue // owner already holds this lane in this mode
-		case admitConflict:
-			return ErrReservationConflict
-		case admitUpgrade:
-			// The owner holds this lane in a weaker mode and is now digging it for
-			// itself. UPDATE rather than INSERT: one owner on one lane is one row.
+	}
+	return nil
+}
+
+// admitLockedLane admits owner to one lane whose advisory lock this transaction
+// holds, and writes its mouth row.
+func admitLockedLane(tx *sql.Tx, lane, owner int64, mode Mode, beneficiary DigAsker, stagedOutside StagedOutsideByLane, reservedBy string) error {
+	// PER LANE, not once for the call: "standing outside" is true of one
+	// corridor at a time. See StagedOutsideByLane.
+	verdict, err := admitMouth(tx, lane, owner, mode, beneficiary, stagedOutside.On(lane))
+	if err != nil {
+		return err
+	}
+	switch verdict {
+	case admitIdempotent:
+		// ── THE TAG IS PROMOTED, NEVER DEMOTED ────────────────────────
+		//
+		// The row is already this owner's in this mode, so there is nothing
+		// to do about the HOLD. There can still be something to do about
+		// what it is CALLED, and before §R.101 there never was: a demand
+		// that dug the lane it was holding arrived here holding an OUTBOUND
+		// row, so the verdict was admitUpgrade and the tag was rewritten by
+		// that arm's UPDATE. §R.101 made the source hold a dig too, which
+		// turned that upgrade into this no-op and froze the tag at whatever
+		// wrote first.
+		//
+		// MEASURED, not reasoned: a demand takes its source hold (lanegate),
+		// planBuriedReshuffle re-parents it onto its own excavation and
+		// TryLockFor acquires with lanelock — and the row still read
+		// lanegate. A genuine excavation wearing the source-lock tag is
+		// exactly the wrong-name failure IsExcavation exists to prevent,
+		// pointing the wrong way.
+		//
+		// Promotion only. A dig row that has been an excavation stays one
+		// until it is released or handed off, so a later gate acquire by the
+		// same owner cannot talk it back down — the compound legs of a live
+		// dig do re-enter through the lane gate, and letting them demote the
+		// parent's tag would be the same bug with the clock turned round.
+		if IsExcavation(reservedBy) {
+			// A row lock on the owner's own mouth row: the owner test comes
+			// first in the statement (OwnerLiveSQL's lock-order rule).
 			var live bool
 			if err := tx.QueryRow(
-				`WITH live AS (SELECT `+OwnerLiveSQL(3)+` AS ok),
-				 upd AS (UPDATE reservations SET mode=$1, reserved_by=$2
-				  WHERE order_id=$3 AND resource_kind='mouth' AND node_id=$4
+				`WITH live AS (SELECT `+OwnerLiveSQL(2)+` AS ok),
+				 upd AS (UPDATE reservations SET reserved_by=$1
+				  WHERE order_id=$2 AND resource_kind='mouth' AND node_id=$3
 				    AND state IN ('pending','confirmed')
+				    AND COALESCE(reserved_by, '') <> $1
 				    AND (SELECT ok FROM live)
 				  RETURNING 1)
 				 SELECT (SELECT ok FROM live), (SELECT count(*) FROM upd)`,
-				string(mode), reservedBy, owner, lane,
+				reservedBy, owner, lane,
 			).Scan(&live, new(int)); err != nil {
-				return fmt.Errorf("reservations acquire-lanes: upgrade lane %d: %w", lane, err)
+				return fmt.Errorf("reservations acquire-lanes: promote lane %d: %w", lane, err)
 			}
 			if !live {
 				return ErrOwnerEnded
 			}
-		case admitFresh:
-			res, err := tx.Exec(
-				`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, mode, created_at)
-				 SELECT $1, 'mouth', $2, 'confirmed', $3, $4, $5 WHERE `+OwnerLiveSQL(1),
-				owner, lane, reservedBy, string(mode), clock.Now().UTC(),
-			)
-			if err != nil {
-				return fmt.Errorf("reservations acquire-lanes: insert lane %d: %w", lane, err)
-			}
-			if n, _ := res.RowsAffected(); n == 0 {
-				return ErrOwnerEnded // the whole call rolls back: nothing is held for an ended order
-			}
+		}
+		return nil // owner already holds this lane in this mode
+	case admitConflict:
+		return ErrReservationConflict
+	case admitUpgrade:
+		// The owner holds this lane in a weaker mode and is now digging it for
+		// itself. UPDATE rather than INSERT: one owner on one lane is one row.
+		var live bool
+		if err := tx.QueryRow(
+			`WITH live AS (SELECT `+OwnerLiveSQL(3)+` AS ok),
+			 upd AS (UPDATE reservations SET mode=$1, reserved_by=$2
+			  WHERE order_id=$3 AND resource_kind='mouth' AND node_id=$4
+			    AND state IN ('pending','confirmed')
+			    AND (SELECT ok FROM live)
+			  RETURNING 1)
+			 SELECT (SELECT ok FROM live), (SELECT count(*) FROM upd)`,
+			string(mode), reservedBy, owner, lane,
+		).Scan(&live, new(int)); err != nil {
+			return fmt.Errorf("reservations acquire-lanes: upgrade lane %d: %w", lane, err)
+		}
+		if !live {
+			return ErrOwnerEnded
+		}
+	case admitFresh:
+		res, err := tx.Exec(
+			`INSERT INTO reservations (order_id, resource_kind, node_id, state, reserved_by, mode, created_at)
+			 SELECT $1, 'mouth', $2, 'confirmed', $3, $4, $5 WHERE `+OwnerLiveSQL(1),
+			owner, lane, reservedBy, string(mode), clock.Now().UTC(),
+		)
+		if err != nil {
+			return fmt.Errorf("reservations acquire-lanes: insert lane %d: %w", lane, err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrOwnerEnded // the whole call rolls back: nothing is held for an ended order
 		}
 	}
 	return nil

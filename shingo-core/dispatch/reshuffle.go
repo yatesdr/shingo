@@ -7,9 +7,11 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch/plan"
+	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
 
@@ -48,6 +50,23 @@ type ReshufflePlan struct {
 	TargetBin  *bins.Bin
 	TargetSlot *nodes.Node
 	Steps      []ReshuffleStep
+	// Fit is the plan-time verdict's facts, re-asked in the dig's hand
+	// (digLaneTake.inTx, plan.DigStillFits). Nil for a plan built without one
+	// (a test fixture's).
+	Fit *DigFit
+}
+
+// DigFit is what the plan-time verdict read and passed (plan.DigFits), and what
+// the dig's hand needs to read it again: the group and lane, the depth of the
+// deepest blocker, the blockers' count, the asker, and the facts.
+type DigFit struct {
+	GroupID  int64
+	LaneID   int64
+	Lane     string
+	FrontOf  int
+	Blockers int
+	Asker    reservations.DigAsker
+	Facts    domain.DigFitFacts
 }
 
 // blocker bundles a bin sitting in a slot shallower than the target
@@ -167,7 +186,7 @@ func findBuriedBlockers(db *store.DB, targetSlotID int64) ([]reshuffleBlocker, e
 // out of the count: a soft-held requester holds its destination as a pending
 // reservation, which the dropoff count (orders.InFlightForDropoffSQL) does not
 // read. Pinned by TestHeldBinDig_NeverParksOnTheOrdersOwnDestination (engine).
-func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, groupID int64, asker reservations.DigAsker, exclude map[int64]bool) (*ReshufflePlan, int, error) {
+func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, groupID int64, asker reservations.DigAsker, rankFor int64, exclude map[int64]bool) (*ReshufflePlan, int, error) {
 	if targetSlot.ParentID == nil {
 		return nil, 0, fmt.Errorf("%w: %s", ErrSlotNotInLane, targetSlot.Name)
 	}
@@ -236,8 +255,9 @@ func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, gr
 	// engineering and configuration capacity problem, not a dispatch one. The
 	// seed has to carry enough reachable room to clear a lane, which is what the
 	// census at birth asserts before a single order runs.
-	err = plan.DigFits(db, groupID, lane.Name, lane.ID, len(blockers), deepestBlocker(blockers), asker, func(need int) error {
-		_, wErr := findShuffleSlots(db, lane.ID, groupID, need, asker, noClaimantYet, exclude)
+	frontOf := deepestBlocker(blockers)
+	facts, err := plan.DigFits(db, groupID, lane.Name, lane.ID, len(blockers), frontOf, asker, func(need int) error {
+		_, wErr := findShuffleSlotsFor(db, lane.ID, groupID, need, asker, rankFor, noClaimantYet, exclude, nil)
 		return wErr
 	})
 	if err != nil {
@@ -247,6 +267,8 @@ func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, gr
 	plan := &ReshufflePlan{
 		TargetBin:  target,
 		TargetSlot: targetSlot,
+		Fit: &DigFit{GroupID: groupID, LaneID: lane.ID, Lane: lane.Name, FrontOf: frontOf,
+			Blockers: len(blockers), Asker: asker, Facts: facts},
 	}
 	seq := 1
 	// Front-to-back order = shallowest first, which is the order a robot can
@@ -296,7 +318,7 @@ func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane 
 	if deliverTo != nil {
 		exclude = map[int64]bool{deliverTo.ID: true}
 	}
-	plan, seq, err := planUnbury(db, target, targetSlot, lane, groupID, asker, exclude)
+	plan, seq, err := planUnbury(db, target, targetSlot, lane, groupID, asker, asker.OrderID, exclude)
 	if err != nil {
 		return nil, err
 	}
@@ -324,10 +346,16 @@ func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane 
 // lane moved underneath us between the two reads, and the right answer is to do
 // nothing and re-ask on the next pass.
 func PlanLaneMouthClear(db *store.DB, targetSlot, lane *nodes.Node, groupID int64, asker reservations.DigAsker) (*ReshufflePlan, error) {
+	return planLaneMouthClearFor(db, targetSlot, lane, groupID, asker, asker.OrderID)
+}
+
+// planLaneMouthClearFor is PlanLaneMouthClear ranked for rankFor, the demand the
+// dig carries (findShuffleSlotsFor).
+func planLaneMouthClearFor(db *store.DB, targetSlot, lane *nodes.Node, groupID int64, asker reservations.DigAsker, rankFor int64) (*ReshufflePlan, error) {
 	// No exclusion: this plan has no retrieve, so no child of it is bound for the
 	// requester's destination. Whether a complex requester's reserved destination
 	// can be the only parking this count sees is not pinned.
-	plan, _, err := planUnbury(db, nil, targetSlot, lane, groupID, asker, nil)
+	plan, _, err := planUnbury(db, nil, targetSlot, lane, groupID, asker, rankFor, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -471,11 +499,22 @@ var ErrNothingInTheWay = errors.New("nothing is in front of the target slot")
 // the name TestCrossFlow_TwoDigsOneLane_ANeverStarts, with the premise it used to
 // assert quoted in its own header.
 func findShuffleSlots(db *store.DB, laneID, groupID int64, count int, asker reservations.DigAsker, claimant int64, exclude map[int64]bool) ([]*nodes.Node, error) {
+	return findShuffleSlotsFor(db, laneID, groupID, count, asker, asker.OrderID, claimant, exclude, nil)
+}
+
+// findShuffleSlotsFor is findShuffleSlots ranked for rankFor: the order whose
+// demand the dig carries, which may take a stranger's PENDING slot that demand
+// outranks (C2b A.3). findShuffleSlots ranks for its asker; the lane-clear dig
+// plans as nobody in particular and ranks for its requester (§R.91: the demand
+// takes its own excavation). 0 ranks for nobody, and nothing is taken. byRank,
+// when not nil, is filled with the slots offered BY RANK: a stranger's promise
+// the caller's claim must take explicitly (takeSlotByRank).
+func findShuffleSlotsFor(db *store.DB, laneID, groupID int64, count int, asker reservations.DigAsker, rankFor, claimant int64, exclude, byRank map[int64]bool) ([]*nodes.Node, error) {
 	children, err := db.ListChildNodesUnlocked(groupID, asker)
 	if err != nil {
 		return nil, err
 	}
-	return shuffleSlotsFrom(db, laneID, groupID, children, count, asker, claimant, consultTheMouth, exclude)
+	return shuffleSlotsFrom(db, laneID, groupID, children, count, asker, rankFor, claimant, consultTheMouth, exclude, byRank)
 }
 
 // shuffleSlotsFrom is findShuffleSlots' body over a candidate list it is HANDED.
@@ -500,7 +539,7 @@ const (
 	skipTheMouth    = false
 )
 
-func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Node, count int, asker reservations.DigAsker, claimant int64, askTheMouth bool, exclude map[int64]bool) ([]*nodes.Node, error) {
+func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Node, count int, asker reservations.DigAsker, rankFor, claimant int64, askTheMouth bool, exclude, byRank map[int64]bool) ([]*nodes.Node, error) {
 
 	// A GATED DIG MAY PARK ITS BLOCKER IN ANOTHER GATED LANE. IT USED NOT TO.
 	//
@@ -718,17 +757,48 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 	// READ ONCE PER ASK, ON FIRST USE: one statement for the group in place of a
 	// capacity check (two or three statements) per candidate, and none at all on
 	// an ask that reaches no candidate.
-	var takeable map[int64]bool
-	isTakeable := func(id int64) (bool, error) {
+	//
+	// AND A STRANGER'S PROMISE IS OFFERED ONLY TO A DIG THAT OUTRANKS IT (C2b
+	// A.3; Rule 2 ⚖; P0 ruling Q2). The same read carries each slot held only by
+	// a stranger's pending reservation and that holder's demand rank; the walk
+	// offers it when rankFor's demand outranks the holder's (DemandRank.Outranks,
+	// the one comparator), and the leg's claim takes it explicitly
+	// (store.TakeSlotByRank, under lock). A younger dig never takes from an older
+	// waiter, a tie keeps the incumbent, and a confirmed slot is never offered.
+	// The dig's own rank is read only when such a slot is a candidate.
+	//
+	// AND ONLY WHEN THE FREE SLOTS FALL SHORT. A take is an explicit act, never
+	// an accident (Rule 4 ⚖): a dig with a free slot to stand in takes nobody's,
+	// so the rank candidates are kept apart, in walk order, and offered after the
+	// free ones (rankTakes, below).
+	var takeable map[int64]nodes.SlotTake
+	var askerRank *orders.DemandRank
+	isTakeable := func(id int64) (free, takeByRank bool, err error) {
 		if takeable == nil {
 			t, err := db.TakeableSlotsInGroup(groupID, claimant)
 			if err != nil {
-				return false, err
+				return false, false, err
 			}
 			takeable = t
 		}
-		return takeable[id], nil
+		t := takeable[id]
+		if t.Free {
+			return true, false, nil
+		}
+		if t.Holder == 0 || rankFor == 0 {
+			return false, false, nil
+		}
+		if askerRank == nil {
+			r, err := orders.LoadDemandRank(db.DB, rankFor)
+			if err != nil {
+				return false, false, err
+			}
+			askerRank = &r
+		}
+		return false, askerRank.Outranks(orders.DemandRank{Priority: t.HolderPriority,
+			CreatedAt: t.HolderCreatedAt, ID: t.HolderDemand}), nil
 	}
+	var rankTakes []*nodes.Node
 
 	var available []*nodes.Node
 
@@ -751,9 +821,12 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 		if !c.Enabled || c.IsSynthetic || exclude[c.ID] {
 			continue
 		}
-		ok, tErr := isTakeable(c.ID)
+		ok, byRankOK, tErr := isTakeable(c.ID)
 		if tErr != nil {
 			return nil, fmt.Errorf("%w: could not read slot availability: %v", ErrNoShuffleSlot, tErr)
+		}
+		if byRankOK {
+			rankTakes = append(rankTakes, c)
 		}
 		if !ok {
 			continue
@@ -908,9 +981,12 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 			// check used to sit: the set is read at the first candidate that would
 			// have paid for that check, so no ask issues more statements than it
 			// did.
-			ok, tErr := isTakeable(slot.ID)
+			ok, byRankOK, tErr := isTakeable(slot.ID)
 			if tErr != nil {
 				return nil, fmt.Errorf("%w: could not read slot availability: %v", ErrNoShuffleSlot, tErr)
+			}
+			if byRankOK {
+				rankTakes = append(rankTakes, slot)
 			}
 			if !ok {
 				continue
@@ -922,6 +998,17 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 		}
 	}
 
+	// THE FREE SLOTS FELL SHORT: top up from the promises this dig outranks, in
+	// walk order, and say which they are so the claim takes them explicitly.
+	for _, s := range rankTakes {
+		if len(available) >= count {
+			break
+		}
+		available = append(available, s)
+		if byRank != nil {
+			byRank[s.ID] = true
+		}
+	}
 	if len(available) < count {
 		// WHICH SHORTFALL IS THIS? "The group is full" and "the group has room, but
 		// only inside a lane another dig is holding" are different investigations
@@ -1151,7 +1238,7 @@ func digHeldParking(db *store.DB, laneID, groupID int64, unlocked []*nodes.Node,
 	// lucky: it is handed `all`, so if it comes up short it re-enters here with
 	// unlocked == all, the diff is empty, and this returns at the len(removed)==0
 	// line above without walking again.
-	if _, wErr := shuffleSlotsFrom(db, laneID, groupID, all, count, asker, claimant, skipTheMouth, exclude); wErr != nil {
+	if _, wErr := shuffleSlotsFrom(db, laneID, groupID, all, count, asker, asker.OrderID, claimant, skipTheMouth, exclude, nil); wErr != nil {
 		return nil // the wider pool comes up short too — right of way is not the reason
 	}
 

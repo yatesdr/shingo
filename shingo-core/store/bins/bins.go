@@ -697,6 +697,11 @@ func BinSourceableSQL(payloadExpr string) string {
 	return helpers.BinSourceableSQL(payloadExpr)
 }
 
+// BinSourceableSQLFor — see helpers.BinSourceableSQLFor.
+func BinSourceableSQLFor(payloadExpr, ownerExpr string) string {
+	return helpers.BinSourceableSQLFor(payloadExpr, ownerExpr)
+}
+
 // AccessibleEmptyOrder ranks compatible empty-bin candidates by least-work-to-
 // grab and is the trailing ORDER BY / LIMIT for every empty-source query.
 //

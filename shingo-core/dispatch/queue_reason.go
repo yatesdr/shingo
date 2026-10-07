@@ -86,8 +86,9 @@ type QueueParams struct {
 	// the wait is on another order's turn rather than on any machine, so the
 	// operator can look up who it is waiting behind.
 	HolderOrderID int64
-	// TakenByOrderID names the person's move that took this order's promised bin
-	// (CauseBinTaken). Zero on every other wait.
+	// TakenByOrderID names the order that took this order's promised bin (a
+	// person's move, CauseBinTaken) or slot (a dig that outranks it,
+	// CauseSlotTaken). Zero on every other wait.
 	TakenByOrderID int64
 	// Sibling is the partner order's edge UUID in a coordinated pair.
 	Sibling string
@@ -259,6 +260,11 @@ func slotSentence(p QueueParams) string {
 				p.Destination)
 		}
 		return "That group already holds the empties it is set to keep — waiting for one to leave"
+	}
+	// TAKEN: the order had a slot, and a dig that outranks it took it.
+	if p.TakenByOrderID != 0 {
+		return fmt.Sprintf("Its slot was taken by order #%d, a dig that outranks it — finding another",
+			p.TakenByOrderID)
 	}
 	s := "Waiting for a slot"
 	if p.Destination != "" {

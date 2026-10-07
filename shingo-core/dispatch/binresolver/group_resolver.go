@@ -254,7 +254,7 @@ func (r *GroupResolver) scanChildren(children []*nodes.Node, payloadCode string,
 		}
 
 		if child.NodeTypeCode == protocol.NodeClassLANE {
-			b, err := r.DB.FindSourceBinInLane(child.ID, payloadCode)
+			b, err := r.DB.FindSourceBinInLane(child.ID, payloadCode, asker.OrderID)
 			if err != nil {
 				r.dbg("%s: FindSourceBinInLane lane=%s: %v", s.label, child.Name, err)
 				continue

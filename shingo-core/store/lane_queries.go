@@ -411,10 +411,22 @@ type DigFitFacts = domain.DigFitFacts
 
 // DigFitFacts reads the verdict's facts for a dig of laneID in groupID.
 func (db *DB) DigFitFacts(groupID, laneID int64, frontOf int, asker reservations.DigAsker) (DigFitFacts, error) {
+	return digFitFacts(db.DB, groupID, laneID, frontOf, asker)
+}
+
+// DigFitFactsTx is DigFitFacts on the dig's own transaction: the verdict
+// re-asked in its hand (dispatch digLaneTake).
+func DigFitFactsTx(tx *sql.Tx, groupID, laneID int64, frontOf int, asker reservations.DigAsker) (DigFitFacts, error) {
+	return digFitFacts(tx, groupID, laneID, frontOf, asker)
+}
+
+func digFitFacts(q interface {
+	QueryRow(string, ...any) *sql.Row
+}, groupID, laneID int64, frontOf int, asker reservations.DigAsker) (DigFitFacts, error) {
 	args := append([]any{string(reservations.ModeDig), groupID}, asker.Args()...)
 	args = append(args, laneID, frontOf)
 	var f DigFitFacts
-	err := db.DB.QueryRow(fmt.Sprintf(`
+	err := q.QueryRow(fmt.Sprintf(`
 		SELECT owed.n, COALESCE(granted.name, ''), COALESCE(granted.claimed_by, 0)
 		FROM (
 			SELECT COUNT(DISTINCT leg.id) AS n
@@ -492,15 +504,18 @@ func (db *DB) LaneAcceptsInbound(laneID int64) (bool, error) {
 // predicate is defense-in-depth here — today _TRANSIT has no parent_id so it
 // cannot be a lane child, but a future migration adding a synthetic ghost-slot
 // under a lane must not let this reader claim an in-flight bin.
-func (db *DB) FindSourceBinInLane(laneID int64, payloadCode string) (*bins.Bin, error) {
+//
+// owner's own pending reservation does not hide a bin from it
+// (bins.BinSourceableSQLFor); owner 0 asks blind.
+func (db *DB) FindSourceBinInLane(laneID int64, payloadCode string, owner int64) (*bins.Bin, error) {
 	query := fmt.Sprintf(`%s
 		WHERE b.node_id IN (SELECT id FROM nodes WHERE parent_id = $1)
-		  AND `+bins.BinSourceableSQL("b.payload_code")+`
+		  AND `+bins.BinSourceableSQLFor("b.payload_code", "$3")+`
 		  AND ($2 = '' OR b.payload_code = $2)
 		  AND %s
 		ORDER BY COALESCE(n.depth, 0) ASC
 		LIMIT 1`, bins.BinJoinQuery, helpers.ReachableSQL("n"))
-	row := db.QueryRow(query, laneID, payloadCode)
+	row := db.QueryRow(query, laneID, payloadCode, owner)
 	bin, err := bins.ScanBin(row)
 	if err != nil {
 		return nil, fmt.Errorf("no accessible bin in lane %d", laneID)
@@ -524,7 +539,7 @@ func (db *DB) FindStoreSlotInLaneExcluding(laneID, excludeOrderID int64) (*nodes
 
 // TakeableSlotsInGroup is the store selector's availability question asked once
 // for a whole group's shuffle pool. See nodes.TakeableSlotsInGroup.
-func (db *DB) TakeableSlotsInGroup(groupID, owner int64) (map[int64]bool, error) {
+func (db *DB) TakeableSlotsInGroup(groupID, owner int64) (map[int64]nodes.SlotTake, error) {
 	return nodes.TakeableSlotsInGroup(db.DB, groupID, owner)
 }
 
@@ -1104,14 +1119,13 @@ func (db *DB) SlotsBlockedByHardClaims(groupID int64) (map[int64]bool, error) {
 		  AND EXISTS (
 			SELECT 1 FROM nodes held
 			JOIN bins held_bin ON held_bin.node_id = held.id
-			JOIN orders holder ON holder.id = held_bin.claimed_by
-			                   OR (holder.bin_id = held_bin.id AND holder.source_node = held.name)
+			JOIN orders holder ON %s
 			WHERE held_bin.status <> 'retired'
 			  AND holder.parent_order_id IS NULL
 			  AND holder.status NOT IN (%s)
 			  AND %s
 			  AND %s
-		  )`, protocol.TerminalStatusSQLList(),
+		  )`, helpers.ComingForBinSQL("holder", "held_bin", "held"), protocol.TerminalStatusSQLList(),
 		helpers.ShallowerInSameLane("n", "held"), helpers.ReachableSQL("held")), groupID)
 	if err != nil {
 		return nil, fmt.Errorf("slots blocked by hard claims in group %d: %w", groupID, err)

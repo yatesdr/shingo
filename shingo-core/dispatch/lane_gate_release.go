@@ -359,8 +359,8 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 	// already knew. This is the classifier's own verdict, so it inherits its
 	// discrimination: a lane-occupied refusal clears when the occupant leaves, a
 	// Tier-2 park clears when the deeper store places, and neither is a wall an
-	// excavation would help. One spelling, and it is the same one admitComplexLanes
-	// uses for the same fact on the complex path.
+	// excavation would help. One spelling, and it is the same one
+	// admitComplexLanesVerdict uses for the same fact on the complex path.
 	propose := func(c gateCandidate, cause QueueCause) {
 		if digWanted {
 			return // one dig per pass — see the function doc
@@ -664,7 +664,7 @@ func digLegNotYetLifted(c *orders.GateCandidate, steps []resolvedStep) bool {
 // FAULTED IS EXCLUDED, matching gateStagedForLane. A faulted leg is mid-recovery
 // and Core does not know where its robot will be when the recovery resolves, so
 // its row keeps refusing — over-restrictive, never under, which is the direction
-// enteredAtDispatch already argues for by name.
+// TakeLaneOccupancy already argues for by name.
 //
 // ON A READ ERROR IT RETURNS NOTHING, which exempts nobody and leaves the
 // refusal exactly as it is today. A dig that cannot be admitted retries on the
@@ -742,18 +742,14 @@ func stagedAtMarkByLane(db *store.DB, laneIDs ...int64) reservations.StagedOutsi
 	}
 	out := reservations.StagedOutsideByLane{}
 	for _, c := range active {
-		o := c.Order
-		if !IsGateStaged(o) || o.Status == StatusFaulted {
+		// ONE SPELLING OF "STANDING OUTSIDE" (C2b A.4): waitingAtLane's, which
+		// leaves out a dig leg that has not lifted its blocker — its robot is
+		// driving INSIDE the lane to it, whatever its plan's wait index says.
+		_, w, ok := waitingAtLane(c)
+		if !ok {
 			continue
 		}
-		var steps []resolvedStep
-		if uErr := json.Unmarshal([]byte(o.StepsJSON), &steps); uErr != nil {
-			continue // IsGateStaged already parsed and logged; defensive only
-		}
-		w, ok := waitAt(steps, o.WaitIndex)
-		if !ok {
-			continue // parked at no wait at all
-		}
+		o := c.Order
 		for laneID, kin := range siblings {
 			if kin == nil || !kin[w.WaitLane] {
 				continue // staged in a different group, or this lane is unreadable

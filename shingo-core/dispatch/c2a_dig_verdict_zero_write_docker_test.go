@@ -81,7 +81,7 @@ func TestC2aPin_TheDigVerdictWritesNothing(t *testing.T) {
 		d.planBuriedReshuffleAtIntake(demand, bp.Code, "line-1", targets[i])
 	}
 	fifth := mkQueuedComplexParent(t, db, "c2az-demand-5", bp.Code)
-	_, _, shortErr := planUnbury(cdb, targets[4].Bin, targets[4].Slot, lanes[4], grp.ID, digAskerFor(fifth), nil)
+	_, _, shortErr := planUnbury(cdb, targets[4].Bin, targets[4].Slot, lanes[4], grp.ID, digAskerFor(fifth), fifth.ID, nil)
 	if !errors.Is(shortErr, ErrNoShuffleSlot) {
 		t.Fatalf("fixture: the fifth dig answered %v, want ErrNoShuffleSlot (four parks, four owed)", shortErr)
 	}

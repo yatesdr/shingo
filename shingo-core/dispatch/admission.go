@@ -66,7 +66,7 @@ import (
 //     evaluator pass. Skips nothing, since the unification.
 //   - gateEntryVerdict — a gate-staged store, at the valve and every evaluator
 //     pass. skipsForGatedStoreEntry, which is empty.
-//   - admitComplexLanes — a coordinated order's whole plan, before its fleet
+//   - admitComplexLanesVerdict — a coordinated order's whole plan, before its fleet
 //     create (admitPlan walks the steps). skipsForComplexEntry. This was the
 //     largest hole: a complex order goes nowhere near the scanner's admit, and
 //     the valve only stands in front of a GATED lane, so on the ungated lanes
@@ -609,7 +609,7 @@ var skipsForGatedStoreEntry = admissionSkips{}
 // improvement, so the note said: close it by giving the refusal a dig, or accept
 // it. Not by deleting the line alone.
 //
-// The refusal now HAS a dig, which is what makes asking safe: admitComplexLanes
+// The refusal now HAS a dig, which is what makes asking safe: admitComplexLanesVerdict
 // can refuse on an unreachable pickup AND ask for the corridor to be opened.
 // Both halves landed together; neither works alone.
 //

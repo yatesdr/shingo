@@ -917,7 +917,7 @@ func TestDwell_ComposesWithTheGatedEntry(t *testing.T) {
 	// create — which is what makes an open gate invisible — and the row exists by
 	// the time this reads it. That is R.54's fix working, not bypassing it: the
 	// row's WRITER is appendGateTail, and the leg's own dispatch took nothing
-	// (enteredAtDispatch skips a gated lane). The state where the robot stands at
+	// (its hand enters only the pre-wait segment, which stops at the mark). The state where the robot stands at
 	// the mark with no row is the CONTENDED case, and it is pinned separately by
 	// TestGatedLeg_TakesNoOccupancyOnTheLaneItStandsOutsideOf; what this test is
 	// for is what happens to that row once the dwell begins.
@@ -1275,7 +1275,7 @@ func TestNoReturnToADugLane_TheAssertionFires(t *testing.T) {
 	// LIFT IT, so the slot the retreat wants is empty and legal.
 	liftBin(t, db, d, legs[0], dugSlots[0], transitNode(t, db, "DWNORET-TRANSIT"))
 
-	_, _, err := d.bindChosenDestination(legs[0], dug, dugSlots[0])
+	_, _, err := d.bindChosenDestination(legs[0], dug, dugSlots[0], false)
 	if err == nil {
 		t.Fatalf("bindChosenDestination accepted %s — a slot INSIDE %s, the lane leg %d is digging. "+
 			"The blocker would go back where it came from, in front of the target the dig exists to "+
@@ -1333,7 +1333,7 @@ func TestNoReturnToADugLane_ALegalSlotStillBinds(t *testing.T) {
 	legs := planDigFor(t, db, d, bp, dug, dugSlots[1], demand)
 	liftBin(t, db, d, legs[0], dugSlots[0], transitNode(t, db, "DWNORETOK-TRANSIT"))
 
-	dest, verdict, err := d.bindChosenDestination(legs[0], dug, sibSlots[0])
+	dest, verdict, err := d.bindChosenDestination(legs[0], dug, sibSlots[0], false)
 	testutil.MustNoErr(t, err, "bind a legal destination in "+sib.Name)
 	if !verdict.Admitted() {
 		t.Fatalf("a slot in %s was refused with %q — the guard is refusing legal parking, not the "+

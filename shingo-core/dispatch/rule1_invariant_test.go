@@ -175,7 +175,7 @@ func TestRule1_CompoundChildRawClaimIsExempted(t *testing.T) {
 		SourceNode: src.Name, DeliveryNode: lineNode.Name,
 		ParentOrderID: &parent.ID, Sequence: 1, BinID: &childBin.ID,
 	}
-	_, ccErr := db.CreateCompoundChildren([]store.CompoundChild{{Order: child, BinID: childBin.ID}})
+	_, ccErr := db.CreateCompoundChildren([]store.CompoundChild{{Order: child, BinID: childBin.ID}}, nil)
 	testutil.MustNoErr(t, ccErr, "create child")
 
 	binViolations, err := acquiringHardBinClaims(db)

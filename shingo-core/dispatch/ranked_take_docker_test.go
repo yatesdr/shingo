@@ -110,7 +110,7 @@ func TestRankedTake_AnOutrankedDigBacksOutWhole(t *testing.T) {
 
 	before := holdsOf(t, db, holder.ID)
 
-	_, err := db.CreateCompoundChildren(children)
+	_, err := db.CreateCompoundChildren(children, nil)
 	if err == nil {
 		t.Fatal("the dig's parent is outranked by the bin's holder; the steal must refuse")
 	}
@@ -169,9 +169,8 @@ func TestRankedTake_TheWinningPathIsUnchanged(t *testing.T) {
 	blocker := blockerBin(t, db, "RANKWIN")
 	holder := promiseHolder(t, db, "rankwin-holder", 0, blocker.ID)
 	parent, children := digAgainstBlocker(t, db, "rankwin", 5, blocker)
-	_ = parent
 
-	_, err := db.CreateCompoundChildren(children)
+	_, err := db.CreateCompoundChildren(children, nil)
 	testutil.MustNoErr(t, err, "the dig outranks the holder; the steal must proceed")
 
 	after := holdsOf(t, db, holder.ID)
@@ -180,11 +179,22 @@ func TestRankedTake_TheWinningPathIsUnchanged(t *testing.T) {
 			"through the finder to re-resolve; left pointed it re-enters through dispatchHeldBin, "+
 			"which never re-acquires.", after.binID)
 	}
+	// The leg claims the blocker at its handover, not at birth (C2b A.1).
 	var claimedBy *int64
 	testutil.MustNoErr(t, db.DB.QueryRow(
 		`SELECT claimed_by FROM bins WHERE id=$1`, blocker.ID).Scan(&claimedBy), "read the blocker's claim")
-	if claimedBy == nil {
-		t.Error("the winning dig did not claim the blocker")
+	if claimedBy != nil {
+		t.Errorf("the blocker is claimed by %d at the dig's birth — a leg waiting its turn holds nothing", *claimedBy)
+	}
+	tx, err := db.Begin()
+	testutil.MustNoErr(t, err, "begin the leg's handover")
+	testutil.MustNoErr(t, store.ClaimCompoundLegBinTx(tx, blocker.ID, children[0].Order.ID, parent.ID),
+		"the leg's handover claims the blocker")
+	testutil.MustNoErr(t, tx.Commit(), "commit the handover")
+	testutil.MustNoErr(t, db.DB.QueryRow(
+		`SELECT claimed_by FROM bins WHERE id=$1`, blocker.ID).Scan(&claimedBy), "read the blocker's claim")
+	if claimedBy == nil || *claimedBy != children[0].Order.ID {
+		t.Errorf("the winning dig's leg did not claim the blocker at its handover (claimed_by %v)", claimedBy)
 	}
 }
 
@@ -201,7 +211,7 @@ func TestRankedTake_ALegRanksOnItsParent(t *testing.T) {
 	// created_at is later than the holder's. On its own row it loses both ways.
 	_, children := digAgainstBlocker(t, db, "rankleg", 5, blocker)
 
-	_, err := db.CreateCompoundChildren(children)
+	_, err := db.CreateCompoundChildren(children, nil)
 	testutil.MustNoErr(t, err, "a leg of a priority-5 parent must beat a priority-3 promise-holder")
 
 	if after := holdsOf(t, db, holder.ID); after.binID != 0 {
@@ -225,7 +235,7 @@ func TestRankedTake_EqualRankGoesToTheOlder(t *testing.T) {
 	_, err := db.DB.Exec(`UPDATE orders SET created_at = NOW() - INTERVAL '2 hours' WHERE id=$1`, parent.ID)
 	testutil.MustNoErr(t, err, "age the dig's parent")
 
-	if _, err := db.CreateCompoundChildren(children); err != nil {
+	if _, err := db.CreateCompoundChildren(children, nil); err != nil {
 		t.Fatalf("an older demand at equal priority must win the bin: %v", err)
 	}
 	if after := holdsOf(t, db, holder.ID); after.binID != 0 {
@@ -245,7 +255,7 @@ func TestRankedTake_AnEqualAndYoungerDigYields(t *testing.T) {
 	testutil.MustNoErr(t, err, "age the holder's demand")
 	_, children := digAgainstBlocker(t, db, "rankyoung", 0, blocker)
 
-	if _, err := db.CreateCompoundChildren(children); err == nil {
+	if _, err := db.CreateCompoundChildren(children, nil); err == nil {
 		t.Fatal("a younger dig at equal priority must yield to the incumbent")
 	}
 	if after := holdsOf(t, db, holder.ID); after.binID != blocker.ID || after.res != 1 {
@@ -419,10 +429,11 @@ func TestSummonOwnDigs_AGateStagedDigYieldsWithoutCallingAHuman(t *testing.T) {
 		t.Fatal("fixture: the dweller is not gate-staged, so this is not the acceptance arm's shape")
 	}
 
-	// It took the corridor at RESOLVE (§R.101) and its robot is standing in it.
-	if !d.laneLock.TryLockFor(lane.ID, dweller.ID, digAskerFor(dweller), stagedAtMarkOnLane(d.db, lane.ID)) {
-		t.Fatal("fixture: the dweller could not take the lane it is standing in")
-	}
+	// It took the corridor at RESOLVE (§R.101), in its own hand, and its robot is
+	// standing in it: the source hold its hand took, dig MODE, tagged as the
+	// gate's. The fixture writes that row the way the hand does.
+	testutil.MustNoErr(t, reservations.AcquireLanesFor(db.DB, dweller.ID, reservations.ModeDig,
+		digAskerFor(dweller), nil, laneGateReservedBy, lane.ID), "fixture: the dweller's own source hold")
 
 	d.summonOwnDigs(lane, acceptanceRequest{order: dweller, entry: w[1]})
 
@@ -437,12 +448,18 @@ func TestSummonOwnDigs_AGateStagedDigYieldsWithoutCallingAHuman(t *testing.T) {
 			"no robot to have stopped — it is a demand ahead in the queue. RESOLVE-BY-HAND is for a "+
 			"machine that should be moving.", len(filed), holder.ID)
 	}
-	owner, err := d.laneLock.ExcavationOwner(lane.ID)
-	testutil.MustNoErr(t, err, "read the lane's excavation owner")
-	if owner != dweller.ID {
-		t.Errorf("the lane's excavation owner is %d, want the dweller %d — its robot is standing in "+
-			"that corridor's mouth, and §R.104 keeps the lock for exactly that reason. Yielding the "+
-			"take is not a reason to open the lane to traffic the robot is blocking.", owner, dweller.ID)
+	// THE YIELD KEEPS WHAT THE DWELLER'S HAND TOOK, AND ADDS NOTHING (C2b A.1).
+	// The dig's lane is taken in the transaction that writes its legs, so the
+	// ranked refusal rolled that transaction back: no excavation row is written
+	// for a dig that did not start. The dweller still holds the corridor its
+	// robot stands in, by its own hand's row — which is what §R.104 asked the old
+	// keep-the-lock arm to guarantee.
+	rows, err := reservations.ActiveMouthRows(db.DB, lane.ID)
+	testutil.MustNoErr(t, err, "read the lane's mouth rows")
+	if len(rows) != 1 || rows[0].OrderID != dweller.ID || rows[0].ReservedBy != laneGateReservedBy {
+		t.Errorf("lane %s holds %+v after the yield, want the dweller %d's own %q row and nothing else — "+
+			"its robot is standing in that corridor's mouth, and a refused dig neither keeps an "+
+			"excavation nor drops the hand's hold", lane.Name, rows, dweller.ID, laneGateReservedBy)
 	}
 }
 

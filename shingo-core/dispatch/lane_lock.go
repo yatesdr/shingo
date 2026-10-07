@@ -3,16 +3,20 @@ package dispatch
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 
+	"shingocore/dispatch/plan"
+	"shingocore/store"
+	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
 
 // LaneLock prevents concurrent reshuffle operations on the same lane.
 //
 // IT LIVES IN dispatch, NOT binresolver (B1): it writes dig rows, and binresolver
-// is a part of the pure planner, which holds nothing. The dig lane lock is
-// C2b's to move into the parent's hand.
+// is a part of the pure planner, which holds nothing. A production dig takes its
+// lane in the parent's hand (digLaneTake), not through TryLockFor.
 //
 // THE DURABLE ROW IS THE LOCK. There is no in-memory map: a lane is held iff a
 // dig mouth reservation row exists for it, and every question and every change
@@ -72,9 +76,106 @@ func NewLaneLockWithDB(db *sql.DB) *LaneLock {
 // reservedBy tags the dig mouth rows the lane lock writes. It is no longer only
 // forensics: since §R.101 gave every demand's source hold the dig MODE, this tag
 // is what separates an excavation from a source lock, and reservations.
-// IsExcavation is the one reader of it. Every production dig comes through
-// TryLockFor, so every excavation carries it.
+// IsExcavation is the one reader of it. Every production dig takes its lane
+// through digLaneTake, so every excavation carries it.
 const mirrorReservedBy = reservations.ByExcavation
+
+// digLaneTake is a dig's lane, taken IN THE PARENT'S HAND (v4 §2.6; SYNTH Fork
+// 1): the dig-mode mouth row is written in the transaction that writes the legs
+// (store.CreateCompoundChildren), after the parent's row is read under lock. A
+// dig is started whole or not at all — there is no lane held by a dig whose legs
+// were refused, and no standalone lock transaction ahead of the legs.
+//
+// TWO PLANS ARE TWO BELIEFS (§2.3). The planner's DigAdmissible is the cheap
+// pre-check; the lane's advisory lock and admitMouth inside this transaction are
+// the arbiter, so of two digs planned against one lane exactly one commits and
+// the other's transaction rolls back holding nothing (digLaneRefused).
+//
+// asker and staged are what TryLockFor carried: the order the dig is raised for
+// (its own holds on the lane are upgraded, not refused) and the orders standing
+// at the lane's group marks, whose robots are outside the corridor.
+//
+// aim, when not zero, is the bin a coordinated demand's own dig uncovers
+// (aimForDig). The demand soft-reserves it in the same transaction.
+type digLaneTake struct {
+	laneID int64
+	asker  reservations.DigAsker
+	staged reservations.StagedOutside
+	aim    int64
+}
+
+// inTx is the lane step for ownerID's hand; nil for a nil take, which writes no
+// lane (a test fixture's compound). The lane is locked before the parent's row
+// and admitted after it (store.CompoundLanes).
+//
+// THE AIM IS THE DEMAND'S OWN SOFT HOLD, TAKEN ONE PASS EARLY (C2b A.1b). It is
+// the pending bin row the demand's next pass writes anyway (reserveComplexPlan,
+// through ReserveForDispatch: the same reservations.Acquire, the same tag), so
+// that pass finds it held and writes nothing. What it buys is the gap between
+// the dig's end and that pass: the burial guards read a live holder's pending row
+// as "coming for this bin" (helpers.ComingForBinSQL), so the slots the dig just
+// emptied cannot re-bury the bin, and the dig's lane row need not outlive the
+// dig (handOffDugLane). The owner is the parent, which holds the dig, so the
+// acquire's dig arm exempts it.
+//
+// A CONFLICT IS NOT A REFUSAL OF THE DIG. The bin already carries a live
+// holder's row, and that row protects it the same way, whoever owns it. It must
+// not surface either: digLaneRefused reads ErrReservationConflict as "the lane
+// is someone else's".
+//
+// AND THE VERDICT IS RE-ASKED HERE (SYNTH Shape 4, C2.1), when fit is not nil:
+// the facts the plan-time verdict passed on are read again on this transaction,
+// after the lane's advisory lock and the parent's row, and a dig whose mouth was
+// granted since, or whose group now owes running digs more than it did, is
+// refused here holding nothing (plan.DigStillFits). +1 SELECT per dig start.
+func (t *digLaneTake) inTx(ownerID int64, fit *DigFit) *store.CompoundLanes {
+	if t == nil {
+		return nil
+	}
+	return &store.CompoundLanes{LaneIDs: []int64{t.laneID}, Admit: func(tx *sql.Tx) error {
+		if fit != nil {
+			now, err := store.DigFitFactsTx(tx, fit.GroupID, fit.LaneID, fit.FrontOf, fit.Asker)
+			if err != nil {
+				return &plan.DigShortError{Blockers: fit.Blockers,
+					Walk: fmt.Errorf("could not read the dig's facts in its hand: %w", err)}
+			}
+			if err := plan.DigStillFits(fit.Facts, now, fit.Lane, fit.Blockers); err != nil {
+				return err
+			}
+		}
+		if err := reservations.AdmitLockedLanesTx(tx, ownerID, reservations.ModeDig, t.asker,
+			reservations.StagedOutsideByLane{t.laneID: t.staged}, mirrorReservedBy, t.laneID); err != nil {
+			return err
+		}
+		if t.aim == 0 {
+			return nil
+		}
+		if err := reservations.Acquire(tx, ownerID, ownerID, t.aim, "reserveForDispatch"); err != nil &&
+			!errors.Is(err, reservations.ErrReservationConflict) {
+			return err
+		}
+		return nil
+	}}
+}
+
+// aimForDig is the bin a dig raised for requester should soft-reserve in the
+// requester's name: binID for a coordinated demand that has not been sent, 0
+// otherwise. A plain buried retrieve carries its aim on its row and its fetch is
+// one of its own legs; a gate-staged requester has been sent and holds what its
+// hand took.
+func aimForDig(requester *orders.Order, binID int64) int64 {
+	if requester == nil || !IsCoordinated(requester) || IsGateStaged(requester) {
+		return 0
+	}
+	return binID
+}
+
+// digLaneRefused reports a dig whose lane step refused: another holder owns the
+// lane, or the parent ended under it. Nothing was written. Any other error out
+// of the compound write is the store's (a blocker refusal, a fault).
+func digLaneRefused(err error) bool {
+	return errors.Is(err, reservations.ErrReservationConflict) || errors.Is(err, reservations.ErrOwnerEnded)
+}
 
 // TryLock attempts to lock a lane for a given order. Returns false if the lane
 // is already held — by another dig, or by an ordinary order's mouth hold.
@@ -91,12 +192,10 @@ func (l *LaneLock) TryLock(laneID, orderID int64) bool {
 // TryLockFor is TryLock for a dig raised to rescue a particular order:
 // beneficiary's own mouth holds do not refuse it.
 //
-// EVERY PRODUCTION DIG COMES THROUGH HERE, because every dig is raised for
-// somebody — a service dig for a gate dweller (owner is the synthetic parent,
-// beneficiary the dweller) or a plain re-parented retrieve (owner and
-// beneficiary are the same order, and its own hold is upgraded rather than
-// refused). TryLock above is the beneficiary-less form, which is what a test
-// fixture parking a foreign dig on a lane actually means.
+// NO PRODUCTION DIG COMES THROUGH HERE ANY MORE: a dig takes its lane in the
+// parent's hand, with its legs (digLaneTake), carrying the same asker. This is
+// the standalone form a test fixture uses to park a dig on a lane; TryLock above
+// is its beneficiary-less form.
 //
 // The rule and its limits live on reservations.AcquireLanesFor; this only
 // carries the asker down to it.
@@ -244,8 +343,8 @@ func (l *LaneLock) CanTake(laneID int64) bool {
 }
 
 // CanTakeFor is CanTake for a dig raised to rescue a particular order — the
-// pre-check paired with TryLockFor, asking the same question with the same
-// exemption. Asking the blind one here and the aware one at the acquire would
+// pre-check paired with the dig's lane step (digLaneTake), asking the same
+// question with the same exemption. Asking the blind one here and the aware one at the acquire would
 // leave the pre-check refusing digs the acquire would have admitted, which is
 // the 16,947 shape with the two answers swapped round.
 //

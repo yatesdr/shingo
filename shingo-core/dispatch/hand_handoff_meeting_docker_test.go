@@ -18,22 +18,21 @@ import (
 
 // A HAND WITH LANES AND A HANDOFF TO THE SAME PICKER, AT THE SAME MOMENT.
 //
-// The hand takes the order's row first (its status CAS) and the lane's advisory
-// lock after it (acquireLanesTx). HandOffLaneToPicker takes the lane's advisory
-// lock first and then, in its INSERT, OwnerLiveSQL's share lock on the picker's
-// row. Those are opposite orders, recorded in OwnerLiveSQL's comment. A meeting
-// is a cycle, and Postgres ends one side with a deadlock error.
-//
-// This pins that shape as it stands: one side gets 40P01, the other completes,
-// the order holds nothing hard unless the hand committed, and nothing wedges.
-// C2b gives the hand main's order (lane lock, then the row), and this test then
-// asserts that neither side aborts.
+// HandOffLaneToPicker takes the lane's advisory lock first and then, in its
+// INSERT, OwnerLiveSQL's share lock on the picker's row. The hand takes the
+// same two in the same order: its lanes' advisory locks are its first
+// statements, before the order row (its status CAS). So the hand waits on the
+// lane before it touches the picker's row, the handoff's INSERT takes its share
+// lock unopposed and commits, and the hand then proceeds and commits too.
+// Neither side aborts. Before the hand took its lanes first, it took the row and
+// then the lane, a meeting was a cycle, and Postgres ended one side with 40P01.
 //
 // The handoff's side is its lock sequence spelt out on a transaction of the
 // test's own, so the meeting is forced without a hook in the handoff. Its DELETE
-// finds no dig row here: the lane is free, so the hand can commit when it is the
-// side that survives. The DELETE takes no lock the hand wants either way.
-func TestHandMeetsHandOff_PostgresAbortsOneSideAndNothingWedges(t *testing.T) {
+// finds no dig row here: the lane is free, and the DELETE takes no lock the hand
+// wants. The hand finds the handoff's outbound row for the picker already there
+// and keeps it as its own: one row.
+func TestHandMeetsHandOff_NeitherSideAborts(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -89,12 +88,14 @@ func TestHandMeetsHandOff_PostgresAbortsOneSideAndNothingWedges(t *testing.T) {
 		}
 	}
 
-	handAborted, handoffAborted := isDeadlock(handErr), isDeadlock(handoffErr)
-	switch {
-	case handAborted && handoffAborted:
-		t.Fatalf("both sides aborted: hand %v; handoff %v", handErr, handoffErr)
-	case !handAborted && !handoffAborted:
-		t.Fatalf("neither side aborted (C2b's lock order?): hand %v; handoff %v. Flip this pin with C2b", handErr, handoffErr)
+	if isDeadlock(handErr) || isDeadlock(handoffErr) {
+		t.Fatalf("Postgres aborted a side of the meeting: hand %v; handoff %v; want neither", handErr, handoffErr)
+	}
+	if handoffErr != nil {
+		t.Fatalf("the handoff did not commit: %v", handoffErr)
+	}
+	if handErr != nil {
+		t.Fatalf("the hand did not commit: %v", handErr)
 	}
 
 	var status string
@@ -105,31 +106,9 @@ func TestHandMeetsHandOff_PostgresAbortsOneSideAndNothingWedges(t *testing.T) {
 	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT count(*) FROM reservations
 		 WHERE order_id=$1 AND resource_kind='mouth' AND node_id=$2 AND mode=$3`,
 		picker.ID, laneID, string(reservations.ModeOutbound)).Scan(&mouthRows), "mouth rows")
-
-	if handoffAborted {
-		t.Logf("Postgres ended the handoff: %v", handoffErr)
-		if handErr != nil {
-			t.Fatalf("the handoff aborted and the hand failed too: %v", handErr)
-		}
-		if status != string(StatusDispatched) || !claimedBy.Valid || claimedBy.Int64 != picker.ID || mouthRows != 1 {
-			t.Fatalf("the hand committed but holds status=%s bin claimed_by=%v mouth rows=%d; want dispatched, %d, 1",
-				status, claimedBy, mouthRows, picker.ID)
-		}
-		return
-	}
-	t.Logf("Postgres ended the hand: %v", handErr)
-	if handoffErr != nil {
-		t.Fatalf("the hand aborted and the handoff failed too: %v", handoffErr)
-	}
-	var refusal *HandRefusal
-	if !errors.As(handErr, &refusal) || refusal.Leg != HandLegLane {
-		t.Fatalf("the aborted hand returned %v; want a lane-leg refusal (the order is asked again next pass)", handErr)
-	}
-	if status != string(StatusQueued) || claimedBy.Valid {
-		t.Fatalf("the hand aborted but the order is %s with its bin claimed_by=%v; want queued, holding nothing hard", status, claimedBy)
-	}
-	if mouthRows != 1 {
-		t.Fatalf("the handoff committed but the picker holds %d outbound rows on the lane, want 1", mouthRows)
+	if status != string(StatusDispatched) || !claimedBy.Valid || claimedBy.Int64 != picker.ID || mouthRows != 1 {
+		t.Fatalf("both committed but the picker is status=%s, bin claimed_by=%v, outbound rows on the lane=%d; want %s, %d, 1",
+			status, claimedBy, mouthRows, StatusDispatched, picker.ID)
 	}
 }
 

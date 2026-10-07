@@ -8,6 +8,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
@@ -62,19 +63,23 @@ import (
 //
 // MUTATION (driven this session, fires): make handOffDugLane return false
 // unconditionally. The first sub-test reports the lane holding nothing.
+//
+// ── NARROWED TO THE GATE-STAGED PICKER (C2b A.1b) ─────────────────────────
+//
+// A demand not yet sent no longer keeps the corridor: a wait keeps soft holds
+// only (v4 §2.6), and its dig soft-reserved the bin it uncovered at birth, which
+// both burial guards read. The second sub-test pins that cover. What still
+// converts is a picker that has been sent and stands at the lane's mark.
 func TestSelfHandoff_ACoordinatedDemandKeepsItsOwnCorridorAsOutbound(t *testing.T) {
 	t.Parallel()
 
-	t.Run("coordinated: the dig row becomes the demand's own outbound hold", func(t *testing.T) {
+	t.Run("gate-staged: the dig row becomes the picker's own outbound hold", func(t *testing.T) {
 		t.Parallel()
 		db := testDBShared(t)
 		d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-		lane, _, _, _, _ := clearLaneFixture(t, db, "SELFHO")
+		lane, _, w, _, _ := clearLaneFixture(t, db, "SELFHO")
 
-		demand := testdb.CreateOrder(t, db, func(o *orders.Order) {
-			o.EdgeUUID = "selfho-demand"
-			o.Coordinated = true
-		})
+		demand := gateStagedPicker(t, db, "selfho-demand", lane.ID, w[2].Name)
 		if !d.laneLock.TryLock(lane.ID, demand.ID) {
 			t.Fatal("the demand could not take the lane it is about to excavate")
 		}
@@ -95,6 +100,43 @@ func TestSelfHandoff_ACoordinatedDemandKeepsItsOwnCorridorAsOutbound(t *testing.
 				"demand's own dispatch idempotent, since AcquireLanes asks for outbound and finds "+
 				"this row.", lane.Name, holders, demand.ID)
 		}
+	})
+
+	t.Run("pending: the lane is released and the soft hold covers the bin", func(t *testing.T) {
+		t.Parallel()
+		db := testDBShared(t)
+		d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+		lane, _, w, _, bp := clearLaneFixture(t, db, "SELFHS")
+
+		demand := testdb.CreateOrder(t, db, func(o *orders.Order) {
+			o.EdgeUUID = "selfhs-demand"
+			o.Coordinated = true
+		})
+		// What the dig's birth leaves behind: a leg under the demand, and the
+		// demand's pending row on the bin the dig uncovered (digLaneTake.aim).
+		testdb.CreateOrder(t, db, func(o *orders.Order) {
+			o.EdgeUUID = "selfhs-leg"
+			o.ParentOrderID = &demand.ID
+			o.Status = StatusConfirmed
+		})
+		target := createTestBinAtNode(t, db, bp.Code, w[2].ID, "BIN-SELFHS-TGT")
+		if !d.laneLock.TryLock(lane.ID, demand.ID) {
+			t.Fatal("the demand could not take the lane it is about to excavate")
+		}
+		testutil.MustNoErr(t, reservations.Acquire(db.DB, demand.ID, demand.ID, target.ID, "reserveForDispatch"),
+			"the dig's soft hold on its target")
+
+		if handed := d.handOffDugLane(demand, lane.ID); handed {
+			t.Fatalf("demand %d has not been sent and handOffDugLane kept lane %s as its hold — a "+
+				"hold at rest; its soft hold on the bin is what covers the window", demand.ID, lane.Name)
+		}
+		d.maybeReleaseDigOnLastBlockerOut(lane.ID)
+		holders, err := reservations.ActiveMouthRows(db.DB, lane.ID)
+		testutil.MustNoErr(t, err, "read the lane's holders")
+		if len(holders) != 0 {
+			t.Fatalf("lane %s holds %+v after the release evaluated, want nothing", lane.Name, holders)
+		}
+		requireSoftHoldCovers(t, db, demand.ID, w[2].ID)
 	})
 
 	t.Run("plain: a demand whose fetch was its own leg has nothing standing", func(t *testing.T) {
@@ -319,12 +361,10 @@ func TestSelfHandoff_ASecondReleaseKeepsTheRowTheFirstOneCreated(t *testing.T) {
 
 	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	lane, _, _, _, _ := clearLaneFixture(t, db, "SELFHR")
+	lane, _, w, _, _ := clearLaneFixture(t, db, "SELFHR")
 
-	demand := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID = "selfhr-demand"
-		o.Coordinated = true // and pre-dispatch: the naked target, the arm that converts
-	})
+	// The arm that converts: a gate-staged picker, sent and standing at the mark.
+	demand := gateStagedPicker(t, db, "selfhr-demand", lane.ID, w[2].Name)
 	if !d.laneLock.TryLock(lane.ID, demand.ID) {
 		t.Fatal("the demand could not take the lane it excavated")
 	}
@@ -405,4 +445,25 @@ func TestSelfHandoff_ADispatchedHolderWithItsBinStillInTheLaneKeepsIt(t *testing
 			"demand is on its way to fetch.",
 			lane.Name, holders, demand.ID, target.ID, wallSlots[0].Name)
 	}
+}
+
+// gateStagedPicker is a coordinated order sent to the fleet and parked at a
+// lane's mark, waiting to pick inside it: the one holder handOffDugLane still
+// converts (gate 4). `acknowledged` is a sent status gate 3 does not release.
+func gateStagedPicker(t *testing.T, db *store.DB, uuid string, laneID int64, pick string) *orders.Order {
+	t.Helper()
+	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = uuid
+		o.Coordinated = true
+		o.Status = StatusAcknowledged
+	})
+	testutil.MustNoErr(t, db.UpdateOrderVendor(o.ID, "v-"+uuid, "RUNNING", ""), "send the picker")
+	o = setSteps(t, db, o, []resolvedStep{
+		{Action: protocol.ActionWait, Node: uuid + "-WAIT", WaitKind: WaitKindLane, WaitLane: laneID},
+		{Action: protocol.ActionPickup, Node: pick},
+	})
+	if !IsGateStaged(o) {
+		t.Fatalf("fixture: order %d is not gate-staged (vendor %q, wait %d)", o.ID, o.VendorOrderID, o.WaitIndex)
+	}
+	return o
 }

@@ -291,8 +291,9 @@ func (d *Dispatcher) handoverToFleet(order *orders.Order, req fleet.CreateOrderR
 	vendorOrderID := req.OrderID
 
 	// 1. CLAIM — done before this function is called. The status CAS is the
-	// hand's last leg (acquireHand), committed together with the slot, the bins,
-	// the lane mouths and the occupancy. Everything the old comment here said
+	// hand's first row lock (acquireHand, after only its lanes' advisory locks),
+	// committed together with the slot, the bins, the lane mouths and the
+	// occupancy. Everything the old comment here said
 	// about it still holds, it just holds there: a lost CAS stops the caller
 	// having touched nothing outside the database, and a failed claim of any kind
 	// — a lost race, an illegal transition, a database error — aborts before the

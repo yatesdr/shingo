@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"shingo/protocol"
 	"shingocore/store/internal/helpers"
@@ -181,7 +182,7 @@ func FindStoreSlotInLaneExcluding(db *sql.DB, laneID, excludeOrderID int64) (*No
 // the two ways it can be true. Every caller matches with errors.Is, so the text
 // is reporting only.
 var ErrLaneClosedByClaim = errors.New(
-	"lane closed to stores: an order is coming for a bin deeper in this lane (claimed, or aimed at by bin_id+source_node)")
+	"lane closed to stores: an order is coming for a bin deeper in this lane (claimed, aimed at by bin_id+source_node, or soft-held by a demand that dug for it)")
 
 // findStoreSlot is the selector body. `guard` toggles THE BURIAL CLAUSE, and the
 // off form exists only to attribute a miss (see the caller); nothing in
@@ -284,12 +285,12 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 		burial = fmt.Sprintf(`NOT EXISTS (
 			SELECT 1 FROM nodes held
 			JOIN bins held_bin ON held_bin.node_id = held.id
-			JOIN orders holder ON holder.id = held_bin.claimed_by
-			                   OR (holder.bin_id = held_bin.id AND holder.source_node = held.name)
+			JOIN orders holder ON %s
 			WHERE holder.id <> $2
 			  AND holder.status NOT IN (%s)
 			  AND %s
-		  )`, protocol.TerminalStatusSQLList(), helpers.ShallowerInSameLane("n", "held"))
+		  )`, helpers.ComingForBinSQL("holder", "held_bin", "held"), protocol.TerminalStatusSQLList(),
+			helpers.ShallowerInSameLane("n", "held"))
 	}
 	row := db.QueryRow(fmt.Sprintf(`SELECT %s %s
 		WHERE n.parent_id = $1
@@ -389,6 +390,18 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 // holder holds it. A holder that is reserve-holding (waiting for material, no
 // claimed bin) can hold it indefinitely.
 func SlotTakeableSQL(alias, ownerExpr string) string {
+	return slotTakeable(alias, ownerExpr, "")
+}
+
+// slotTakeable is SlotTakeableSQL with one stranger's promise set aside:
+// pendingHolderExpr's pending slot reservation, and that holder naming the slot
+// as its delivery_node, do not count. "" sets nothing aside. The dig walk's read
+// asks it for a slot a ranked take could have (TakeableSlotsInGroup).
+func slotTakeable(alias, ownerExpr, pendingHolderExpr string) string {
+	exceptHolder := ""
+	if pendingHolderExpr != "" {
+		exceptHolder = "\n\t\t\t  AND tk_ord.id <> " + pendingHolderExpr
+	}
 	return fmt.Sprintf(`%[5]s
 		  AND NOT EXISTS (SELECT 1 FROM bins tk_bin WHERE tk_bin.node_id = %[1]s.id)
 		  AND NOT %[3]s
@@ -396,11 +409,11 @@ func SlotTakeableSQL(alias, ownerExpr string) string {
 			SELECT 1 FROM orders tk_ord
 			WHERE tk_ord.delivery_node = %[1]s.name
 			  AND tk_ord.status NOT IN (%[4]s)
-			  AND tk_ord.id <> %[2]s
+			  AND tk_ord.id <> %[2]s%[6]s
 		  )`, alias, ownerExpr,
-		reservations.SlotSpokenForByStrangerSQL("tk_res", alias+".id", ownerExpr),
+		reservations.SlotSpokenForByStrangerExceptSQL("tk_res", alias+".id", ownerExpr, pendingHolderExpr),
 		protocol.TerminalStatusSQLList(),
-		slotNotHardClaimedSQL(alias, ownerExpr))
+		slotNotHardClaimedSQL(alias, ownerExpr), exceptHolder)
 }
 
 // slotNotHardClaimedSQL is SlotTakeableSQL's hard-claim clause: nobody holds the
@@ -460,26 +473,64 @@ func SlotSpokenForByStranger(db *sql.DB, nodeID, owner int64) (bool, error) {
 //
 // It answers availability only. Enabled, synthetic, lane-being-dug, burial,
 // entombing and accessibility are the caller's rules and are not applied here.
-func TakeableSlotsInGroup(db *sql.DB, groupID, owner int64) (map[int64]bool, error) {
+//
+// AND THE SLOTS A RANKED TAKE COULD HAVE (C2b A.3, Rule 2 ⚖; P0 ruling Q2). A
+// slot that would be takeable but for one stranger's PENDING slot reservation —
+// a promise, no claim, no bin, held by an order not yet sent to the fleet (a
+// sent one is a robot coming, whatever state its row is in) — comes back with
+// Free false and its holder, and
+// the demand that holder presents at a rank comparison (the same columns
+// orders.LoadDemandRank reads). The caller decides with DemandRank.Outranks
+// whether its own demand may take it; this read does not rank. Same statement,
+// +0. A slot that is neither free nor held only by a promise is absent.
+func TakeableSlotsInGroup(db *sql.DB, groupID, owner int64) (map[int64]SlotTake, error) {
 	rows, err := db.Query(`
-		SELECT n.id
+		SELECT n.id, (`+SlotTakeableSQL("n", "$2")+`),
+		       ho.id, `+helpers.DemandRankColumnsSQL("ho", "hp")+`
 		FROM nodes n
+		LEFT JOIN reservations hr ON hr.node_id = n.id AND hr.resource_kind = 'slot'
+		     AND `+reservations.BlockingStateSQL("hr.")+` AND hr.order_id <> $2
+		LEFT JOIN orders ho ON ho.id = hr.order_id AND `+helpers.AwaitingFleetSQL("ho")+`
+		LEFT JOIN orders hp ON hp.id = ho.parent_order_id
 		WHERE (n.parent_id = $1
 		       OR n.parent_id IN (SELECT lane.id FROM nodes lane WHERE lane.parent_id = $1))
-		  AND `+SlotTakeableSQL("n", "$2"), groupID, owner)
+		  AND ((`+SlotTakeableSQL("n", "$2")+`)
+		       OR (ho.id IS NOT NULL AND `+slotTakeable("n", "$2", "hr.order_id")+`))`, groupID, owner)
 	if err != nil {
 		return nil, fmt.Errorf("takeable slots in group %d: %w", groupID, err)
 	}
 	defer rows.Close()
-	out := map[int64]bool{}
+	out := map[int64]SlotTake{}
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var (
+			id        int64
+			t         SlotTake
+			holder    sql.NullInt64
+			priority  sql.NullInt64
+			createdAt sql.NullTime
+			demand    sql.NullInt64
+		)
+		if err := rows.Scan(&id, &t.Free, &holder, &priority, &createdAt, &demand); err != nil {
 			return nil, fmt.Errorf("scan takeable slot in group %d: %w", groupID, err)
 		}
-		out[id] = true
+		if !t.Free && demand.Valid {
+			t.Holder = holder.Int64
+			t.HolderPriority, t.HolderCreatedAt, t.HolderDemand = int(priority.Int64), createdAt.Time, demand.Int64
+		}
+		out[id] = t
 	}
 	return out, rows.Err()
+}
+
+// SlotTake is one slot as the dig walk's read sees it: free to the asker, or
+// held only by Holder's pending slot reservation, whose demand ranks by
+// HolderPriority, HolderCreatedAt and HolderDemand (orders.DemandRank's fields).
+type SlotTake struct {
+	Free            bool
+	Holder          int64
+	HolderPriority  int
+	HolderCreatedAt time.Time
+	HolderDemand    int64
 }
 
 // LaneForNode returns the LANE node that directly parents nodeID, or (nil, nil)

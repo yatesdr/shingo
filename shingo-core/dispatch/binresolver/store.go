@@ -71,7 +71,7 @@ type Store interface {
 	// Lane-aware queries.
 	ListLaneSlots(laneID int64) ([]*nodes.Node, error)
 	CountBinsInLane(laneID int64) (int, error)
-	FindSourceBinInLane(laneID int64, payloadCode string) (*bins.Bin, error)
+	FindSourceBinInLane(laneID int64, payloadCode string, owner int64) (*bins.Bin, error)
 	FindStoreSlotInLane(laneID int64) (*nodes.Node, error)
 	// FindStoreSlotInLaneExcluding is the OWNER-AWARE form, and the group
 	// resolvers use it so a re-resolve can see the slot the asking order already

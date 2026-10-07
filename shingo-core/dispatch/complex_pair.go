@@ -233,17 +233,21 @@ func pairLegCommitted(s protocol.Status) bool {
 type preparedLeg struct {
 	order *orders.Order
 	steps []resolvedStep
+	hand  Hand
 }
 
-// dispatchPairInOnePass is the pair rule's body: run every leg's acquisition
-// phases, and only when EVERY leg has cleared, hand them all to the fleet.
+// dispatchPairInOnePass is the pair rule's body: prepare every leg, and only
+// when EVERY leg has cleared, take both legs' hands as one and hand them to the
+// fleet.
 //
 // ── TWO STAGES, AND THE BOUNDARY BETWEEN THEM IS THE RULE ─────────────────
 //
-// Stage 1 acquires: prepare, gates, destination reserve, source claim, lane
-// admit. Stage 2 commits: the fleet create. Nothing physical has been asked of a
-// robot until stage 2, so aborting in stage 1 costs a release and a wait, and
-// there is no half-committed state to unwind.
+// Stage 1 prepares: plan, gates, the destination's and the sources' soft
+// reserves, the lane verdict, the hand each leg would take. Stage 2 builds each
+// leg's create, and commitPairToFleet takes both hands in one transaction and
+// then asks the fleet. Nothing is held hard until that one hand, so aborting
+// before it costs a release and a wait, and there is no half-committed state to
+// unwind.
 //
 // ── THE LEADER, AND WHY IT IS A COMPARISON RATHER THAN A COLUMN ───────────
 //
@@ -256,8 +260,9 @@ type preparedLeg struct {
 // The leg with the lowest id among the legs STILL ACQUIRING drives; the other
 // returns the pass's verdict having touched nothing. Derived from durable state
 // every pass, so it needs no new column and cannot go stale: if the leader
-// dispatches and its partner does not (a stage-2 fleet failure), the partner is
-// then the lowest ACQUIRING leg, becomes the leader, and completes itself.
+// dispatches and its partner does not (the fleet refused its create), the
+// partner is then the lowest ACQUIRING leg, becomes the leader, and completes
+// itself.
 //
 // ── A ONE-LEG SLICE IS NOT AN ERROR ───────────────────────────────────────
 //
@@ -277,110 +282,141 @@ type preparedLeg struct {
 // the pivot keeps what it took and only its partners park, on the partner wait.
 func (d *Dispatcher) dispatchPairInOnePass(self *orders.Order, legs []*orders.Order) error {
 	if legs[0].ID != self.ID {
-		// Not the leader. Say so at debug and touch NOTHING: this is the no-op
-		// half of the election, and any write here would be the duplicate pass
-		// the election exists to remove.
 		d.dbg("complex: order %d defers this pass to pair leader %d", self.ID, legs[0].ID)
 		return fmt.Errorf("complex order %d: pair led by order %d this pass", self.ID, legs[0].ID)
 	}
 
-	// ── STAGE 1 RUNS THE LIFTER FIRST ─────────────────────────────────────
-	//
-	// A leg whose plan lifts before its first wait acquires first, ties in id
-	// order, and ONLY the leg after it is handed what it resolved and claimed
-	// (pairPass). That is how the vacated-slot rule (vacated_slot.go) learns a
-	// partner's lift without re-reading it, and why a mutual grant cannot exist:
-	// the first leg is never handed anything. The leader is still the lowest
-	// acquiring id; this orders the work the leader does, not who does it.
-	//
-	// Every Edge door that can form such a pair creates the lifter first, so this
-	// changes nothing for them. It matters when the outbox inverts a pair — the
-	// drain carries on past a failed publish, so the partner can reach Core
-	// first — where the returning leg used to read its supply's plan from before
-	// this pass's widen and could be sent at a home nobody was emptying.
+	// STAGE 1: each leg's soft half, lifters first (stageOneOrder): its plan, its
+	// soft reserves, its admission verdict and the hand it would take. The leg
+	// prepared first hands the next its plan and the pickups it reserved
+	// (pairPass), which the vacated-slot rule reads; nothing is hard yet.
 	ready := make([]preparedLeg, 0, len(legs))
 	var pc *pairPass
 	for _, leg := range stageOneOrder(legs) {
-		steps, claimed, st := d.acquireComplexPhases(leg, pc)
+		steps, hand, reserved, st := d.prepareComplexHand(leg, pc)
 		if st.done {
-			// ── A PHASE CAN END A LEG, AND THAT IS A DEATH, NOT A PARK ────
-			//
-			// acquireComplexPhases has terminal exits: a moot reserve skips the
-			// leg, a malformed plan fails it. A terminalized leg has already
-			// given everything back through TerminalizeOrder, and parking its
-			// partner on a cause the dead leg no longer carries (the terminal
-			// write clears queue_reason) would leave the partner waiting on
-			// something that cannot arrive.
-			//
-			// So the death rule takes it from here: it decides what a terminal
-			// leg means for its partner — cancelled with it, or, for a moot evac,
-			// free to go on its own. Run it IN THIS PASS rather than leaving it
-			// to the surviving side's next one — applySwapGates would find it
-			// eventually, but a pass later, and the partner would spend that
-			// pass acquiring for a job that is already over.
-			fresh, ferr := d.db.GetOrder(leg.ID)
-			if ferr == nil && fresh != nil && protocol.IsTerminal(fresh.Status) {
-				// The legs that acquired earlier in this pass hand it back: this
-				// pass dispatches nothing, and whether a survivor goes at all is the
-				// death rule's call, made below — a survivor that may proceed does
-				// so on its own next pass, as a one-leg slice.
-				for _, other := range legs {
-					if other.ID != leg.ID {
-						d.releaseLegHoldings(other, "pair leg died in the pass")
-					}
-				}
-				if kind := swapTerminalKind(fresh.Status); kind != "" {
-					d.HandleSwapPeerTerminal(fresh.ID, kind)
-				}
-				d.dbg("complex: pair leg %d went %s during its phases — the death rule has the pair", leg.ID, fresh.Status)
-				return st.err
-			}
-			if ferr == nil && fresh != nil && fresh.Status == StatusReshuffling {
-				for _, other := range legs {
-					if other.ID != leg.ID {
-						_ = d.parkPairAwaitingPartner(other, fresh)
-					}
-				}
-				d.dbg("complex: pair leg %d pivoted into its own dig — it keeps its lane; its partner waits", leg.ID)
-				return st.err
-			}
-			// THE FIRST REFUSAL PARKS THE PAIR. Every leg gives back what this
-			// pass gave it, including the legs that succeeded — a parked pair
-			// holds nothing — and both rows are written with the blocked leg's
-			// cause.
-			d.parkPair(legs, leg)
-			return st.err
+			return d.pairLegStopped(legs, leg, st.err)
 		}
-		ready = append(ready, preparedLeg{order: leg, steps: steps})
+		ready = append(ready, preparedLeg{order: leg, steps: steps, hand: hand})
 		if pc == nil {
-			pc = &pairPass{partner: leg, steps: steps, claimed: claimed}
+			pc = &pairPass{partner: leg, steps: steps, claimed: reserved}
 		}
 	}
 
-	// ── THE FLEET CREATES FOLLOW STAGE 1's ORDER, AND NOW THAT IS LOAD-BEARING ─
-	//
-	// This used to say the order bought nothing anyone consumes. For a press-index
-	// pair that is still true — both legs open with a wait, and the bins move at
-	// release, where the Edge's press-index lift rule (release.PlanAct's G7) orders them. It stopped
-	// being true for a pair the vacated-slot rule cleared: the second leg's drop
-	// is sound only because the first leg's lift is committed. So the lifter's
-	// create goes first, and a create that fails returns before the dropper is
-	// ever sent — a dropper is never committed on a lift that was not.
+	// STAGE 2: each leg's create, built and not sent.
+	commits := make([]*complexCommit, 0, len(ready))
 	for _, p := range ready {
-		// An empty hand: a pair leg acquired its holds in its phases (the pair
-		// stays on the split until it becomes one hand, C2), so only the
-		// occupancy and the status are taken here.
-		if err := d.dispatchComplexToFleet(p.order, p.steps, Hand{}); err != nil {
-			// The fleet create's failure paths either terminal-fail this leg —
-			// and the death rule then resolves its partner (swap_peer.go) — or
-			// park it on a read that failed before the create, in which case it
-			// is the lowest acquiring leg next pass and completes itself.
-			// Nothing to unwind here, and unwinding a leg that may already be
-			// moving is the one thing that would be worse than the failure.
+		c, err := d.buildComplexCommit(p.order, p.steps, p.hand, WaitOf(p.order))
+		if err != nil {
+			return d.pairLegStopped(legs, p.order, err)
+		}
+		commits = append(commits, c)
+	}
+	return d.commitPairToFleet(legs, commits)
+}
+
+// commitPairToFleet sends a pair as ONE JOB (C2b A.2): both legs' hands and
+// both `dispatched` writes in one transaction (acquireHands), so the pair holds
+// both or neither; then the creates, lifter first. The owner's model is
+// "release both or neither", and it is the hand's rule, not the fleet's (P0
+// ruling Q7):
+//
+//   - a hand refused on either leg holds nothing for either: the pair parks on
+//     that leg's cause (pairLegStopped), as a refusal in stage 1 does;
+//   - the lifter's create refused: nothing of the pair is with the fleet, so
+//     both demote through the one door, the return without having been asked;
+//   - the lifter accepted and the return refused: the lifter is with the fleet
+//     and is never preempted (v4 §2.7); the return demotes alone, holding
+//     nothing hard, bound to its sibling, and re-acquires through its own hand
+//     on the next pass.
+//
+// It replaced a stage 1 that confirmed each leg's slots, bins and lane mouths
+// in separate transactions and a stage 2 that created each leg with an empty
+// hand and returned on the first error: a lifter refused by the fleet left the
+// return `pending` holding its stage-1 claims
+// (TestVacatedSlot_P12_LifterCreateFailsDropperNotCreated).
+func (d *Dispatcher) commitPairToFleet(legs []*orders.Order, commits []*complexCommit) error {
+	takes := make([]handTake, 0, len(commits))
+	for _, c := range commits {
+		if err := d.assertDeclaredEveryLaneItEnters(c.order.ID, c.req, c.entering); err != nil {
+			d.refuseComplexHandover(c.order, c.told, err)
+			return d.pairLegStopped(legs, c.order, err)
+		}
+		if d.preHandHook != nil {
+			d.preHandHook(c.order.ID)
+		}
+		takes = append(takes, handTake{order: c.order, hand: c.hand, entering: c.entering, actor: c.actor,
+			reason: fmt.Sprintf("vendor order %s created", c.req.OrderID)})
+	}
+	if i, err := d.acquireHands(takes); err != nil {
+		c := commits[i]
+		if IsConcurrentTransition(err) {
+			// Another caller owns this leg and is dispatching it; the hand rolled
+			// back, so nothing of either leg is held. Leave both alone.
+			log.Printf("dispatch: pair leg %d was dispatched by another caller first — yielding the pair: %v",
+				c.order.ID, err)
 			return err
 		}
+		d.refuseComplexHandover(c.order, c.told, err)
+		return d.pairLegStopped(legs, c.order, err)
+	}
+
+	for i, c := range commits {
+		if err := d.handoverToFleet(c.order, c.req, c.actor); err != nil {
+			concurrent := IsConcurrentTransition(err)
+			if !concurrent {
+				d.ReleaseLaneOccupancy(c.order.ID)
+			}
+			d.refuseComplexHandover(c.order, c.told, err)
+			if i == 0 && !concurrent {
+				// Nothing of the pair is with the fleet: the legs after this one
+				// were held with it and are let go with it, through the same door.
+				for _, rest := range commits[1:] {
+					d.ReleaseLaneOccupancy(rest.order.ID)
+					code, cause, params := FleetRefusalCause(err, rest.order.DeliveryNode)
+					d.DemoteAfterFleetRefusal(rest.order, rest.told, code, cause, params)
+				}
+			}
+			return err
+		}
+		d.afterComplexCreate(c)
 	}
 	return nil
+}
+
+// pairLegStopped answers a pair whose leg stopped before the pair was sent —
+// in its preparation, its build, or its hand — and returns err. Three shapes,
+// asked of the leg as it now stands:
+//
+//   - it ended: the death rule has the pair (HandleSwapPeerTerminal), and the
+//     other legs let go of what they reserved;
+//   - it pivoted into its own dig: it keeps its lane, and the others wait for it;
+//   - it waits: the pair parks on its cause, holding nothing (parkPair).
+func (d *Dispatcher) pairLegStopped(legs []*orders.Order, leg *orders.Order, err error) error {
+	fresh, ferr := d.db.GetOrder(leg.ID)
+	if ferr == nil && fresh != nil && protocol.IsTerminal(fresh.Status) {
+		for _, other := range legs {
+			if other.ID != leg.ID {
+				d.releaseLegHoldings(other, "pair leg died in the pass")
+			}
+		}
+		if kind := swapTerminalKind(fresh.Status); kind != "" {
+			d.HandleSwapPeerTerminal(fresh.ID, kind)
+		}
+		d.dbg("complex: pair leg %d went %s during its pass — the death rule has the pair", leg.ID, fresh.Status)
+		return err
+	}
+	if ferr == nil && fresh != nil && fresh.Status == StatusReshuffling {
+		for _, other := range legs {
+			if other.ID != leg.ID {
+				_ = d.parkPairAwaitingPartner(other, fresh)
+			}
+		}
+		d.dbg("complex: pair leg %d pivoted into its own dig — it keeps its lane; its partner waits", leg.ID)
+		return err
+	}
+	d.parkPair(legs, leg)
+	return err
 }
 
 // parkPair releases everything the pass acquired for every leg and writes the

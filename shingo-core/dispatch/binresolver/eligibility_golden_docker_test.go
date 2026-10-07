@@ -380,7 +380,7 @@ func eligSQLVerdicts(ctx context.Context, t *testing.T, db *store.DB,
 	got, err := bins.FindSourceFIFO(db.DB, f.FlatAsk, 0)
 	row.FindSourceFIFO = eligVerdict(err == nil && got != nil && got.ID == f.FlatBinID)
 
-	laneBin, err := db.FindSourceBinInLane(f.LaneID, f.LaneAsk)
+	laneBin, err := db.FindSourceBinInLane(f.LaneID, f.LaneAsk, 0)
 	row.LaneAccessible = eligVerdict(err == nil && laneBin != nil && laneBin.ID == f.LaneBinID)
 
 	in, err := sourceability.BuildInputs(db.DB, time.Hour)

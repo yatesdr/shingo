@@ -84,8 +84,16 @@ func TestDigSteal_RepairsEveryHolderNotOne(t *testing.T) {
 	}
 
 	parent := compoundParent(t, db, "steal-many-parent")
-	displaced, err := db.CreateCompoundChildren([]store.CompoundChild{childFor(parent, bin.ID, 1)})
+	kid := childFor(parent, bin.ID, 1)
+	displaced, err := db.CreateCompoundChildren([]store.CompoundChild{kid}, nil)
 	testutil.MustNoErr(t, err, "the dig must win a soft-held blocker")
+	// The steal releases every victim's row at birth; the leg's own row comes
+	// with its handover (C2b A.1).
+	if rows := activeBinReservations(t, db, bin.ID); len(rows) != 0 {
+		t.Errorf("bin has %d active reservation(s) after the steal, want 0 — every victim's row goes "+
+			"with its pointer, and the leg holds nothing until its handover", len(rows))
+	}
+	testutil.MustNoErr(t, handOver(t, db, parent.ID, kid), "the leg's handover")
 	if len(displaced) != 0 {
 		t.Errorf("displaced = %+v, want none — none of these holders is hand-placed", displaced)
 	}
@@ -149,7 +157,7 @@ func TestDigSteal_LeavesAHandPlacedOrderPointedAndReportsIt(t *testing.T) {
 	parent := compoundParent(t, db, "steal-hand-parent")
 	child := childFor(parent, bin.ID, 1)
 	child.Order.DeliveryNode = sd.StorageNode.Name
-	displaced, err := db.CreateCompoundChildren([]store.CompoundChild{child})
+	displaced, err := db.CreateCompoundChildren([]store.CompoundChild{child}, nil)
 	testutil.MustNoErr(t, err, "the dig still wins")
 
 	if len(displaced) != 1 || displaced[0].OrderID != byHand.ID {

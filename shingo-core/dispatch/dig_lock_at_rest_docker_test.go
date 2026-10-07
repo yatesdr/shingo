@@ -11,22 +11,22 @@ import (
 	"shingocore/store/reservations"
 )
 
-// dig_lock_at_rest_docker_test.go — THE DIG PARENT HOLDS ITS LANE WHILE IT WAITS.
+// dig_lock_at_rest_docker_test.go — THE DIG PARENT HOLDS ITS LANE WHILE IT
+// DIGS, AND NOTHING WHILE IT WAITS.
 //
-// A characterisation, green today. A complex order whose supply bin is buried
-// becomes the parent of its own excavation, and the reshuffle planner takes the
-// lane for it at PLAN time (proposeLaneClearDig: LaneLock.TryLockFor, then
-// CreateCompoundOrder) — before any robot is committed to the order. When the dig
-// finishes, the demand goes back to `queued` and keeps the lane as its own
-// outbound hold until it has its bin. In both it is waiting and the lane is held
-// hard.
+// A complex order whose supply bin is buried becomes the parent of its own
+// excavation. The lane is the parent's while the dig runs (`reshuffling`: legs
+// are moving under it). When the dig finishes, the demand goes back to `pending`
+// and waits to be dispatched like any other order.
 //
-// That is not the hand's hold, and holds-at-rest does not count it: it is
-// counted apart as dig-lock-at-rest (orders.DigLocksAtRestSQL). Moving the dig
-// parent's lane into the hand is C2 ("the dig parent holds the hand, and each leg
-// takes its part at handover"), and C2 flips this test: the lane is then held
-// soft until the parent's own dispatch.
-func TestDigParent_TakesTheLaneAtPlanTimeAndWaitsHoldingIt(t *testing.T) {
+// VERIFY-RED for C2b (A.1): today the dig-end handoff converts the dig's row into
+// an outbound `dighandoff` row for the resumed demand, so it waits holding the
+// lane hard: a dig lock at rest (orders.DigLocksAtRestSQL). Under v4 §2.6 a wait
+// keeps soft holds only; the demand's aim at its bin (bin_id + source_node) is
+// the soft hold the store selector's burial clause already protects, and the
+// demand takes the lane again in its own hand when it dispatches. When the fix
+// lands, replace the VerifyRed call with the assertion spelled out beside it.
+func TestDigParent_TakesTheLaneInItsHandAndRestsHoldingNothing(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
@@ -64,30 +64,38 @@ func TestDigParent_TakesTheLaneAtPlanTimeAndWaitsHoldingIt(t *testing.T) {
 	driveDigToCompletion(t, db, d, laneClearFor(t, db, demand))
 	afterRaw, err := db.GetOrder(demand.ID)
 	after := testutil.Must(t, afterRaw, err, "db.GetOrder(demand.ID) after the dig")
-	// (C1: the resumed demand rests in `pending`, still holding the lane.)
+	// (C1: the resumed demand rests in `pending`.)
 	if after.Status != StatusPending {
 		t.Fatalf("demand status = %q after its dig, want %q", after.Status, StatusPending)
 	}
 	dugRaw, err := orders.ListDigLocksAtRest(db.DB)
 	dug := testutil.Must(t, dugRaw, err, "orders.ListDigLocksAtRest")
-	found := false
+	var atRest []string
 	for _, h := range dug {
-		if h.OrderID == demand.ID {
-			found = true
+		atRest = append(atRest, h.Line())
+	}
+	mouths, err := reservations.ActiveMouthRows(db.DB, lane.ID)
+	testutil.MustNoErr(t, err, "read the lane's mouth rows after the dig")
+	for _, m := range mouths {
+		if m.OrderID == demand.ID {
+			atRest = append(atRest, "the resumed demand holds a "+string(m.Mode)+" mouth row on its dug lane, tagged "+m.ReservedBy)
 		}
 	}
-	if !found {
-		t.Fatalf("dig-lock-at-rest = %+v, want the demand %d: it is `queued` and keeps its lane as the "+
-			"dig's handoff until it has its bin", dug, demand.ID)
+	if len(atRest) != 0 {
+		t.Fatalf("the demand waits holding its dug lane: %v", atRest)
+	}
+	// WHAT PROTECTS THE BIN IT DUG FOR instead (C2b A.1b): its own pending row on
+	// it, taken at the dig's birth, which both burial guards read.
+	var soft int
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT COUNT(*) FROM reservations
+		WHERE order_id = $1 AND resource_kind = 'bin' AND bin_id = $2 AND state = 'pending'`,
+		demand.ID, target.ID).Scan(&soft), "count the demand's soft hold on its target")
+	if soft != 1 {
+		t.Fatalf("the demand holds %d pending rows on bin %d after its dig, want 1: the soft hold its "+
+			"dig took at birth is what keeps the slots in front of that bin closed", soft, target.ID)
 	}
 
-	// (3) THE SPLIT: the same order is not a hold-at-rest. A1's gate counts what
-	// the acquire takes; this lane was taken by the planner.
-	heldRaw, err := orders.ListHoldsAtRest(db.DB)
-	held := testutil.Must(t, heldRaw, err, "orders.ListHoldsAtRest")
-	for _, h := range held {
-		if h.OrderID == demand.ID {
-			t.Fatalf("holds-at-rest names the dig parent: %s — its lane is a dig lock, counted apart", h.Line())
-		}
-	}
+	// THE SPLIT STAYS: the same order is not a hold-at-rest today, because its
+	// lane is a dig lock and is counted apart. After A.1 there is nothing to split.
+	testdb.AssertNoHoldsAtRest(t, db, "after the demand's own dig")
 }

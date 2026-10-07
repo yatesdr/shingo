@@ -40,12 +40,11 @@ func (h HoldAtRest) Line() string {
 // supposed to keep.
 //
 // A DIG LOCK IS COUNTED APART (owner, 2026-09-25). The reshuffle planner takes a
-// lane for the order whose bin is buried before that order is re-parented onto
-// its dig (proposeLaneClearDig: LaneLock.TryLockFor, then CreateCompoundOrder),
-// and a demand that finished its own excavation keeps the lane as an outbound
-// hold until it has its bin. Both are the dig parent holding its lane, which
-// moves into the hand in C2; neither is taken by the acquire this invariant
-// guards. They are the mouth rows whose reserved_by is one of DigLockTags, and
+// lane for the order whose bin is buried in the transaction that re-parents it
+// onto its dig (C2b A.1: the parent's hand writes the lane with the legs), and a
+// demand that finished its own excavation keeps the lane as an outbound hold
+// until it has its bin. Both are the dig parent holding its lane; neither is
+// taken by the acquire this invariant guards. They are the mouth rows whose reserved_by is one of DigLockTags, and
 // DigLocksAtRestSQL reports them. Every other confirmed mouth counts here. The kinds are spelled as literals because store/orders may
 // not import store/reservations; they are reservations.KindSlot, KindMouth and
 // KindOccupancy, and state 'confirmed' is the only non-pending state the table
@@ -84,8 +83,8 @@ func HoldsAtRestSQL() string {
 }
 
 // DigLockTags are the reserved_by tags of a dig lock's mouth rows:
-// reservations.ByExcavation (LaneLock.TryLockFor, the one door every production
-// dig comes through) and reservations.ByDigHandoff (the lock a demand keeps once
+// reservations.ByExcavation (the dig's lane step in the parent's hand, the one
+// door every production dig comes through) and reservations.ByDigHandoff (the lock a demand keeps once
 // its own excavation is done). Literals because store/orders may not import
 // store/reservations; a test in store/reservations holds them equal.
 var DigLockTags = []string{"lanelock", "dighandoff"}

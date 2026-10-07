@@ -86,10 +86,11 @@ func (r *ArrivalRefusal) Context() string {
 //
 // COMPOUND CHILDREN ARE EXEMPT, and that is not a loophole: one multi-step plan
 // touching a bin in several legs claims it for the LAST leg only, so an interim
-// child legitimately moves a bin its sibling holds. CreateCompoundChildren's
-// sibling-scoped compare-and-set is what makes this safe — a bin claimed from
-// OUTSIDE the compound fails the whole transaction, so a child reaching here
-// cannot be carrying an unrelated order's bin.
+// child legitimately moves a bin its sibling holds. The leg's sibling-scoped
+// claim (store.ClaimCompoundLegBinTx) is what makes this safe — a bin claimed
+// from OUTSIDE the compound refuses the dig at birth and the leg at its
+// handover, so a child reaching here cannot be carrying an unrelated order's
+// bin.
 func refuseArrival(order *orders.Order, bin *bins.Bin, destNodeID int64, site string) *ArrivalRefusal {
 	if order == nil || bin == nil {
 		return nil

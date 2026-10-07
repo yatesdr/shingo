@@ -131,9 +131,12 @@ func TestResolveLock_ClearsOnThePickupAndNotBefore(t *testing.T) {
 // §R.101's rule is written about complex orders, so a
 // source lock only plain orders take is the rule applied to the smaller half.
 //
-// MUTATION (verified): delete the acquireOrderLanes call from admitComplexLanes.
-// The complex order dispatches into a lane a plain demand has locked, and the
-// "must be refused" assertion fires.
+// The holds are taken in the order's hand (C2b A.2): the verdict names them and
+// the hand takes them, so this drives the two together, as prepareComplexHand
+// and the commit do.
+//
+// MUTATION: make admitComplexLanesVerdict return no holds. The hand takes no
+// lane, and the "took no hold" assertion fires.
 func TestResolveLock_ComplexTakesTheSourceLaneToo(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
@@ -142,10 +145,7 @@ func TestResolveLock_ComplexTakesTheSourceLaneToo(t *testing.T) {
 	_, laneID, slot := gatedLane(t, db, "RLOCK-CX", "") // unmarked: the plant's shape
 	line := lineNode(t, db, "RLOCK-CX-LINE")
 
-	// A coordinated plan picks out of the lane. Driven through admitComplexLanes
-	// itself, not through its parts: the defect was that this FUNCTION took no
-	// holds, so a test that calls the derivation and the acquire directly proves
-	// they work and says nothing about whether anybody calls them.
+	// A coordinated plan picks out of the lane.
 	steps := []resolvedStep{
 		{Action: protocol.ActionPickup, Node: slot.Name},
 		{Action: protocol.ActionDropoff, Node: line.Name},
@@ -164,9 +164,12 @@ func TestResolveLock_ComplexTakesTheSourceLaneToo(t *testing.T) {
 	fresh, err := db.GetOrder(cx.ID)
 	testutil.MustNoErr(t, err, "reload the order")
 	cx = fresh
-	if st := d.admitComplexLanes(cx, steps); st.done {
+	holds, st := d.admitComplexLanesVerdict(cx, steps)
+	if st.done {
 		t.Fatalf("a free lane must admit the coordinated order: %v", st.err)
 	}
+	testutil.MustNoErr(t, d.acquireHand(cx, Hand{Lanes: holds}, nil, "test", "the order's hand"),
+		"the coordinated order's hand")
 
 	// AND IT NOW OWNS THE LANE. This is the half that was missing: admission's
 	// questions were asked and answered, and then nothing was taken, so the lane

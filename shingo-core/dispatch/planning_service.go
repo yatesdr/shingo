@@ -157,7 +157,7 @@ type PlanningService struct {
 	pure  *plan.Planner
 	debug func(string, ...any)
 
-	createCompound func(parentOrder *orders.Order, plan *ReshufflePlan) error
+	createCompound func(parentOrder *orders.Order, plan *ReshufflePlan, dig *digLaneTake) error
 	// waitChanged tells a station its order's wait changed (WriteQueueDetail).
 	waitChanged func(*orders.Order)
 
@@ -168,7 +168,7 @@ type PlanningService struct {
 	ahead map[protocol.OrderType]bool
 }
 
-func newPlanningService(db *store.DB, resolver NodeResolver, finder *SourceFinder, laneLock *LaneLock, debug func(string, ...any), createCompound func(*orders.Order, *ReshufflePlan) error, waitChanged func(*orders.Order)) *PlanningService {
+func newPlanningService(db *store.DB, resolver NodeResolver, finder *SourceFinder, laneLock *LaneLock, debug func(string, ...any), createCompound func(*orders.Order, *ReshufflePlan, *digLaneTake) error, waitChanged func(*orders.Order)) *PlanningService {
 	s := &PlanningService{
 		db:             db,
 		resolver:       resolver,
@@ -746,23 +746,24 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 	// Owner-blind, that pairing was not a wait but a wedge: admitMouth refuses
 	// one owner two modes on one lane, so a demand that had taken an outbound
 	// hold could never dig the lane it was holding, and the answer would never
-	// change. Unreachable while the lane gate yields no holds; reachable the
-	// moment it does (§R.96 stage 2), which is why it is closed first.
-	// Orders parked at this lane's mark do not refuse the excavation: their robots
-	// are outside the corridor. Same set, same reason as the heal path — see
-	// stagedAtMarkOnLane.
-	if !s.laneLock.TryLockFor(buried.LaneID, order.ID, digAskerFor(order), stagedAtMarkOnLane(s.db, buried.LaneID)) {
-		return nil, &planningError{Code: codeLaneLocked, Detail: "lane locked concurrently"}
-	}
-	if err := s.createCompound(order, plan); err != nil {
-		s.laneLock.Unlock(buried.LaneID, order.ID)
+	// change. Orders parked at this lane's mark do not refuse the excavation:
+	// their robots are outside the corridor. Same set, same reason as the heal
+	// path — see stagedAtMarkOnLane.
+	//
+	// THE LANE IS TAKEN IN THE DEMAND'S HAND, with the legs (digLaneTake): a
+	// refusal anywhere in that transaction holds nothing, so no arm below
+	// releases a lane.
+	if err := s.createCompound(order, plan, &digLaneTake{laneID: buried.LaneID, asker: digAskerFor(order),
+		staged: stagedAtMarkOnLane(s.db, buried.LaneID)}); err != nil {
+		if digLaneRefused(err) {
+			return nil, &planningError{Code: codeLaneLocked, Detail: "lane locked concurrently"}
+		}
 		// A blocker held by an order outside the compound is CONGESTION, and the
 		// purest kind: the commonest holder is a dispatched retrieve whose robot is
 		// at that moment driving that very bin out of this lane. The blocker is
 		// ceasing to exist. Same shape as ErrNoShuffleSlot three lines up — park
-		// with a cause, re-plan when the lane changes — and it rides this arm's
-		// unlock rather than a second one, so the lane is free for whoever can use
-		// it while we wait.
+		// with a cause, re-plan when the lane changes — and the refused transaction
+		// took no lane, so the lane is free for whoever can use it while we wait.
 		//
 		// The releaser is already wired, and nothing is added for it: the shallow
 		// bin's pickup moves it to _TRANSIT and its arrival clears the claim, both
@@ -796,6 +797,16 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 				Detail: fmt.Sprintf("cannot dig yet: %v", err),
 				Err:    err,
 			}
+		}
+		// THE VERDICT RE-ASKED IN THE HAND REFUSED IT (plan.DigStillFits): the
+		// same two refusals the plan-time arms above answer, answered the same way.
+		if errors.Is(err, ErrLaneMouthHeld) {
+			s.setQueueReason(order, protocol.QueueStorageRearranging, CauseLaneHeldTraffic,
+				QueueParams{Lane: mouthHeldLane(err), Payload: order.PayloadCode})
+			return nil, &planningError{Code: codeNoShuffleSlot, Detail: fmt.Sprintf("cannot dig yet: %v", err), Err: err}
+		}
+		if errors.Is(err, ErrNoShuffleSlot) {
+			return nil, &planningError{Code: codeNoShuffleSlot, Detail: fmt.Sprintf("cannot dig yet: %v", err), Err: err}
 		}
 		return nil, &planningError{Code: codeReshuffle, Detail: fmt.Sprintf("cannot create compound order: %v", err), Err: err}
 	}

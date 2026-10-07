@@ -198,12 +198,13 @@ func TestRedirect_AsksAdmission(t *testing.T) {
 // changeover swap and a corridor.
 //
 // THE INVARIANT DID NOT MOVE; ITS HOME DID. The ask and the send used to sit in
-// one function body, so one Index comparison covered both halves. The pair rule
-// split complex dispatch into an ACQUISITION half (acquireComplexPhases, which
-// ends with the lane admit) and a COMMIT half (the fleet create). The property
-// being guarded is unchanged — admission is asked, and it is asked before the
-// fleet create — so this checks the solo path across the two symbols it now
-// lives in rather than being weakened to fit.
+// one function body, so one Index comparison covered both halves. Complex
+// dispatch is now a PREPARATION half (prepareComplexHand, which ends with the
+// lane verdict and the hand it names) and a COMMIT half (the hand and the fleet
+// create), and the pair prepares each leg through the same function (C2b A.2).
+// The property being guarded is unchanged — admission is asked, and it is asked
+// before the fleet create — so this checks it across the symbols it now lives
+// in rather than being weakened to fit.
 //
 // THE PAIR PATH IS PINNED BY BEHAVIOUR, NOT HERE. This compared two substrings in
 // dispatchPairInOnePass as well. The pair-rule tests replace that half: they
@@ -217,18 +218,18 @@ func TestComplexDispatch_AsksAdmission(t *testing.T) {
 
 	body := readRepoFile(t, filepath.Join("shingo-core", "dispatch", "complex_dispatch.go"))
 
-	// The pair's phases (acquireComplexPhases) and the solo order's hand
-	// preparation (prepareComplexHand) each ask admission. The solo order asks
-	// the verdict and takes the mouths in its hand; the pair asks and takes them
-	// in its phases.
-	acquire := funcBody(t, body, "func (d *Dispatcher) acquireComplexPhases(")
-	if !strings.Contains(acquire, "admitComplexLanes(") {
-		t.Fatal("acquireComplexPhases does not ask admission. The gated valve does not cover this: " +
-			"it only stands in front of a gated lane, and neither plant has one")
-	}
+	// The solo order and each leg of a pair prepare through prepareComplexHand,
+	// which asks the verdict; the mouths it names are taken in the hand.
 	prep := funcBody(t, body, "func (d *Dispatcher) prepareComplexHand(")
 	if !strings.Contains(prep, "admitComplexLanesVerdict(") {
-		t.Fatal("prepareComplexHand does not ask admission before building the solo order's hand")
+		t.Fatal("prepareComplexHand does not ask admission before building the order's hand. The " +
+			"gated valve does not cover this: it only stands in front of a gated lane, and neither " +
+			"plant has one")
+	}
+	pair := funcBody(t, readRepoFile(t, filepath.Join("shingo-core", "dispatch", "complex_pair.go")),
+		"func (d *Dispatcher) dispatchPairInOnePass(")
+	if !strings.Contains(pair, "prepareComplexHand(") {
+		t.Fatal("the pair no longer prepares its legs through prepareComplexHand; re-derive this test")
 	}
 
 	// Solo path: the hand's preparation (which asks), then the fleet create.

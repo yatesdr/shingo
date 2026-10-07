@@ -117,7 +117,7 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 	d.finder = NewSourceFinder(db, resolver, d.dbg)
 	d.pure = plan.NewPlanner(db, d.finder.picker, resolver, d.dbg)
 	d.lifecycle.pure = d.pure
-	d.planner = newPlanningService(db, resolver, d.finder, d.laneLock, d.dbg, d.CreateCompoundOrder, d.NotifyWaitChanged)
+	d.planner = newPlanningService(db, resolver, d.finder, d.laneLock, d.dbg, d.createDigCompound, d.NotifyWaitChanged)
 	d.planner.pure = d.pure
 	d.allocator = newAllocator(db, binManifest, d.finder, d.dbg)
 	return d
@@ -455,10 +455,10 @@ var ErrReshuffleWait = errors.New("reshuffle not plannable yet")
 //     which is the one thing the wait-not-fail rule forbids. `51a97a56` fixed
 //     exactly this on the plain path (DispatchDirect) and the dig path, whose
 //     only caller is this function, never got it.
-func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope, sourceNode, destNode *nodes.Node) error {
-	// An empty hand: both callers dispatch an order whose bins are already held
-	// (a redirect, a compound leg), so only the occupancy and the status are taken.
-	if _, err := d.dispatchToFleetCore(order, sourceNode, destNode, Hand{}); err != nil {
+func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope, sourceNode, destNode *nodes.Node, hand Hand) error {
+	// A redirect passes an empty hand (its bins are already held); a compound leg
+	// passes its bin (legHand), which it takes at this handover and not at birth.
+	if _, err := d.dispatchToFleetCore(order, sourceNode, destNode, hand); err != nil {
 		return err
 	}
 	d.sendAck(env, order.EdgeUUID, order.ID, sourceNode.Name)
@@ -1231,7 +1231,7 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 		return
 	}
 
-	if err := d.dispatchToFleet(order, env, sourceNode, newDest); err != nil {
+	if err := d.dispatchToFleet(order, env, sourceNode, newDest, Hand{}); err != nil {
 		// The redirect's disposition is unchanged: a person typed this node and is
 		// waiting on the reply, so a fleet refusal ends the request rather than
 		// parking it. PrepareRedirect has already cancelled the vendor leg, so

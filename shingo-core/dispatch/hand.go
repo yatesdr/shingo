@@ -34,21 +34,27 @@ import (
 //
 // ── THE ORDER ─────────────────────────────────────────────────────────────
 //
-// Slots, then bins, then lane mouths, then occupancy, then the status CAS. Slots
-// before bins is the order both old paths used, and keeping it keeps a
-// slot-versus-bin claim cycle from forming between two hands. The mouth's
-// advisory lock is transaction-scoped, so it is held until the hand commits:
-// the lane is decided together with everything else.
+// The lanes' advisory locks (sorted by id), then the status CAS, then slots,
+// then bins, then the lane mouths, then occupancy. The advisory locks come first
+// so that every transaction that takes a lane's lock and an order's row takes
+// them in that order: HandOffLaneToPicker locks the lane and then, in its INSERT,
+// the picker's row. A hand that took the row first and the lane second could
+// meet a handoff on the same lane and order, and Postgres would abort one side
+// (40P01). The locks are transaction-scoped, so they are held until the hand
+// commits: the lane is decided together with everything else. Slots before bins
+// is the order both old paths used, and keeping it keeps a slot-versus-bin claim
+// cycle from forming between two hands.
 //
-// THE OWNER'S ROW IS THE FIRST ROW LOCK. The status CAS is the hand's first
-// statement (acquireHand), and it takes this order's row for update, refusing an
-// order that has ended (ConcurrentTransition: the caller yields). A terminalize
-// running at the same moment waits for the hand, or the hand for it: the
-// lock-order rule in reservations.OwnerLiveSQL's comment, with the hand as one
-// more transaction in its list. The owner tests the later statements carry (the
-// slot and bin claims, the mouth and occupancy writers) read a row this
-// transaction already holds. One departure from that list's rule, recorded
-// there: a hand with lanes takes their advisory locks after the order row.
+// THE OWNER'S ROW IS THE FIRST ROW LOCK. Advisory locks are not row locks. The
+// status CAS is the hand's first statement that takes a row lock (acquireHand),
+// and it takes this order's row for update, refusing an order that has ended
+// (ConcurrentTransition: the caller yields). A terminalize running at the same
+// moment waits for the hand, or the hand for it: the lock-order rule in
+// reservations.OwnerLiveSQL's comment, with the hand as one more transaction in
+// its list. A terminalize takes no lane lock, so a hand waiting on a lane holds
+// nothing it wants. The owner tests the later statements carry (the slot and bin
+// claims, the mouth and occupancy writers) read a row this transaction already
+// holds.
 //
 // AN ENDED ORDER OR A GONE NAMED BIN IS NOT A WAIT. A leg refused with
 // reservations.ErrOwnerEnded or ErrNotTheNamedBin comes back as that error, not
@@ -87,9 +93,15 @@ type HandSlot struct {
 
 // HandBin is one soft-held bin to hard-claim. RemainingUOP is the operator's
 // release-correction count, as ConfirmClaim takes it (nil = a plain claim).
+//
+// DigLeg marks a dig leg's bin, which has no pending row behind it: a leg is born
+// holding nothing and its blocker is the dig's because the parent holds the lane
+// (store.CreateCompoundChildren). It is claimed by store.ClaimCompoundLegBinTx,
+// the compound's sibling-scoped claim, and its refusal is a blocker wait.
 type HandBin struct {
 	BinID        int64
 	RemainingUOP *int
+	DigLeg       bool
 }
 
 // HandLeg names the part of a hand that refused.
@@ -150,13 +162,88 @@ func (r *HandRefusal) ParkParams(order *orders.Order) QueueParams {
 //   - ConcurrentTransition: the order moved under us; nothing is held; yield;
 //   - any other error: a database fault; nothing is held.
 func (d *Dispatcher) acquireHand(order *orders.Order, h Hand, entering []*nodes.Node, actor, reason string) error {
+	_, err := d.acquireHands([]handTake{{order: order, hand: h, entering: entering, actor: actor, reason: reason}})
+	return err
+}
+
+// handTake is one order's part of a hand transaction: its hand, the nodes its
+// first segment enters (their lanes' occupancy), and the `dispatched` write's
+// actor and reason.
+type handTake struct {
+	order    *orders.Order
+	hand     Hand
+	entering []*nodes.Node
+	actor    string
+	reason   string
+}
+
+// acquireHands takes several orders' hands in ONE transaction, in the order
+// given, and returns -1 and nil, or the index of the take that refused and its
+// error (acquireHand's returns, for that order). A pair is one job: its legs are
+// held together or not at all (C2b A.2; the owner's model, "release both or
+// neither"; v4 §2.6). Every lane any take holds is locked first, sorted, before
+// any order row, so the lock order is the solo hand's.
+//
+// TWO ORDER ROWS IN ONE TRANSACTION, and the deadlock rule still holds. Each
+// take's CAS locks its own row; its later statements test only that row
+// (OwnerLiveSQL). Nothing else takes both legs' rows: a terminalize takes one
+// order's row and that order's own rows, and the partner cascade
+// (HandleSwapPeerTerminal) runs after the terminalize commits, in a
+// transaction of its own.
+func (d *Dispatcher) acquireHands(takes []handTake) (int, error) {
 	tx, err := d.db.Begin()
 	if err != nil {
-		return fmt.Errorf("hand: begin for order %d: %w", order.ID, err)
+		return 0, fmt.Errorf("hand: begin for order %d: %w", takes[0].order.ID, err)
 	}
 	defer tx.Rollback() // no-op once committed
 
-	// THE STATUS CAS GOES FIRST, so it is the detector (SYNTH §2.4). Two
+	// THE LANES' ADVISORY LOCKS GO BEFORE ANY ORDER ROW (the header's order).
+	// They are the same statements the lane step took; only their place moved,
+	// and the lane step below does not take them again.
+	var laneIDs []int64
+	lockFor := -1
+	for i, t := range takes {
+		if len(t.hand.Lanes) > 0 {
+			laneIDs = append(laneIDs, handLaneIDs(t.hand.Lanes)...)
+			if lockFor < 0 {
+				lockFor = i
+			}
+		}
+	}
+	if len(laneIDs) > 0 {
+		if err := reservations.LockLanesTx(tx, laneIDs...); err != nil {
+			return lockFor, &HandRefusal{OrderID: takes[lockFor].order.ID, Leg: HandLegLane,
+				Code: protocol.QueueWaitingForMaterial, Cause: CauseLaneAcquireError, Err: err}
+		}
+	}
+	finishes := make([]func(), 0, len(takes))
+	for i, t := range takes {
+		finish, err := d.takeHandTx(tx, t)
+		if err != nil {
+			return i, err
+		}
+		finishes = append(finishes, finish)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("hand: commit for order %d: %w", takes[0].order.ID, err)
+	}
+	for _, finish := range finishes {
+		finish()
+	}
+	for _, t := range takes {
+		for _, f := range t.hand.AfterCommit {
+			f()
+		}
+	}
+	return -1, nil
+}
+
+// takeHandTx is one take on the hand's transaction, after its lanes' advisory
+// locks: the status CAS, slots, bins, lane mouths, occupancy. It returns the
+// CAS's finish, to run after the commit.
+func (d *Dispatcher) takeHandTx(tx *sql.Tx, t handTake) (func(), error) {
+	order := t.order
+	// THE STATUS CAS IS THE FIRST ROW LOCK: the detector (SYNTH §2.4). Two
 	// dispatchers can reach one order: a hand door queues it, and a scanner pass
 	// takes it through the held-bin arm before the door's own hand. When the CAS
 	// came last, the loser was stopped earlier, at the bin leg, because the
@@ -164,65 +251,73 @@ func (d *Dispatcher) acquireHand(order *orders.Order, h Hand, entering []*nodes.
 	// material": the door released the winner's reservation and the scanner
 	// parked a dispatched order. First, the loser gets ConcurrentTransition and
 	// yields. Same statements, same transaction; only the order moved.
-	finish, err := d.lifecycle.transitionTx(tx, order, StatusDispatched, Event{Actor: actor, Reason: reason})
+	finish, err := d.lifecycle.transitionTx(tx, order, StatusDispatched, Event{Actor: t.actor, Reason: t.reason})
 	if err != nil {
 		if IsConcurrentTransition(err) {
 			log.Printf("dispatch: order %d moved under us before the fleet order was created — "+
 				"NOT dispatching (another caller owns it now): %v", order.ID, err)
-			return err
+			return nil, err
 		}
-		return &StatusWriteFailed{OrderID: order.ID, Err: err}
+		return nil, &StatusWriteFailed{OrderID: order.ID, Err: err}
 	}
 
-	for _, s := range h.Slots {
+	for _, s := range t.hand.Slots {
 		if err := store.ConfirmSlotClaimWithPartnerTx(tx, s.Node.ID, order.ID, s.TakenFirst, s.Partner, s.PartnerTaken); err != nil {
 			if NotAWait(err) {
-				return fmt.Errorf("hand: confirm slot %s for order %d: %w", s.Node.Name, order.ID, err)
+				return nil, fmt.Errorf("hand: confirm slot %s for order %d: %w", s.Node.Name, order.ID, err)
 			}
-			return &HandRefusal{OrderID: order.ID, Leg: HandLegSlot, Code: protocol.QueueWaitingForMaterial,
+			return nil, &HandRefusal{OrderID: order.ID, Leg: HandLegSlot, Code: protocol.QueueWaitingForMaterial,
 				Cause: CauseClaimFailed, Err: fmt.Errorf("confirm slot %s for order %d: %w", s.Node.Name, order.ID, err)}
 		}
 	}
-	for _, b := range h.Bins {
+	for _, b := range t.hand.Bins {
+		if b.DigLeg {
+			var parentID int64
+			if order.ParentOrderID != nil {
+				parentID = *order.ParentOrderID
+			}
+			if err := store.ClaimCompoundLegBinTx(tx, b.BinID, order.ID, parentID); err != nil {
+				var blocked *store.BlockerClaimedError
+				if errors.As(err, &blocked) {
+					return nil, &HandRefusal{OrderID: order.ID, Leg: HandLegBin, Code: protocol.QueueStorageRearranging,
+						Cause: digBlockerCause(err), Err: err}
+				}
+				return nil, fmt.Errorf("hand: claim leg bin %d for order %d: %w", b.BinID, order.ID, err)
+			}
+			continue
+		}
 		if err := d.binManifest.ConfirmClaimTx(tx, b.BinID, order.ID, b.RemainingUOP); err != nil {
 			if NotAWait(err) {
-				return fmt.Errorf("hand: confirm bin %d for order %d: %w", b.BinID, order.ID, err)
+				return nil, fmt.Errorf("hand: confirm bin %d for order %d: %w", b.BinID, order.ID, err)
 			}
-			return &HandRefusal{OrderID: order.ID, Leg: HandLegBin, Code: protocol.QueueWaitingForMaterial,
+			return nil, &HandRefusal{OrderID: order.ID, Leg: HandLegBin, Code: protocol.QueueWaitingForMaterial,
 				Cause: CauseClaimFailed, Err: fmt.Errorf("confirm bin %d for order %d: %w", b.BinID, order.ID, err)}
 		}
 	}
-	if len(h.Lanes) > 0 {
-		conflict, lerr := d.acquireLanesTx(tx, order.ID, h.Lanes)
+	if len(t.hand.Lanes) > 0 {
+		conflict, lerr := d.acquireLanesTx(tx, order.ID, t.hand.Lanes)
 		if lerr != nil {
 			if NotAWait(lerr) {
-				return fmt.Errorf("hand: lanes for order %d: %w", order.ID, lerr)
+				return nil, fmt.Errorf("hand: lanes for order %d: %w", order.ID, lerr)
 			}
-			return &HandRefusal{OrderID: order.ID, Leg: HandLegLane, Code: protocol.QueueWaitingForMaterial,
+			return nil, &HandRefusal{OrderID: order.ID, Leg: HandLegLane, Code: protocol.QueueWaitingForMaterial,
 				Cause: CauseLaneAcquireError, Err: lerr}
 		}
 		if conflict {
 			// Named after the rollback, so the refusal describes the lane as it
 			// stands without this order's half-taken rows in it (laneRefusal).
 			_ = tx.Rollback()
-			cause, lane := d.laneRefusal(order.ID, h.Lanes)
-			return &HandRefusal{OrderID: order.ID, Leg: HandLegLane, Code: protocol.QueueStorageRearranging,
+			cause, lane := d.laneRefusal(order.ID, t.hand.Lanes)
+			return nil, &HandRefusal{OrderID: order.ID, Leg: HandLegLane, Code: protocol.QueueStorageRearranging,
 				Cause: cause, Lane: lane, Err: reservations.ErrReservationConflict}
 		}
 	}
-	for _, laneID := range d.lanesFor(entering...) {
+	for _, laneID := range d.lanesFor(t.entering...) {
 		if _, err := reservations.AcquireOccupancy(tx, order.ID, laneID); err != nil {
-			return fmt.Errorf("take occupancy for order %d on lane %d: %w", order.ID, laneID, err)
+			return nil, fmt.Errorf("take occupancy for order %d on lane %d: %w", order.ID, laneID, err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("hand: commit for order %d: %w", order.ID, err)
-	}
-	finish()
-	for _, f := range h.AfterCommit {
-		f()
-	}
-	return nil
+	return finish, nil
 }
 
 // StatusWriteFailed is a hand whose `→ dispatched` write failed for a reason
@@ -248,7 +343,18 @@ func NotAWait(err error) bool {
 	return errors.Is(err, reservations.ErrOwnerEnded) || errors.Is(err, reservations.ErrNotTheNamedBin)
 }
 
-// acquireLanesTx is acquireOrderLanes on the hand's transaction. A conflict is
+// handLaneIDs is every lane the hand holds, in any mode: the locks the hand
+// takes before its order row. LockLanesTx sorts them and drops duplicates.
+func handLaneIDs(holds []laneHold) []int64 {
+	ids := make([]int64, 0, len(holds))
+	for _, h := range holds {
+		ids = append(ids, h.laneID)
+	}
+	return ids
+}
+
+// acquireLanesTx is acquireOrderLanes on the hand's transaction, for lanes whose
+// advisory locks the hand already holds (handLaneIDs, taken first). A conflict is
 // reported, not released: the caller's rollback releases every lane this call
 // took, which is what acquireOrderLanes had to do by hand.
 func (d *Dispatcher) acquireLanesTx(tx *sql.Tx, orderID int64, holds []laneHold) (conflict bool, err error) {
@@ -268,7 +374,7 @@ func (d *Dispatcher) acquireLanesTx(tx *sql.Tx, orderID int64, holds []laneHold)
 		if mode == reservations.ModeDig {
 			staged = stagedAtMarkByLane(d.db, lanes...)
 		}
-		if aErr := reservations.AcquireLanesForTx(tx, orderID, mode, asker, staged, laneGateReservedBy, lanes...); aErr != nil {
+		if aErr := reservations.AdmitLockedLanesTx(tx, orderID, mode, asker, staged, laneGateReservedBy, lanes...); aErr != nil {
 			if errors.Is(aErr, reservations.ErrReservationConflict) {
 				return true, nil
 			}

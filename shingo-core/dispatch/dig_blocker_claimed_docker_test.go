@@ -279,7 +279,7 @@ func TestBlockerClaimedError_CarriesTheHolder(t *testing.T) {
 			Quantity: 1, ParentOrderID: &pid, Sequence: 1, BinID: &bin.ID,
 		},
 		BinID: bin.ID,
-	}})
+	}}, nil)
 
 	if !errors.Is(err, store.ErrBlockerClaimed) {
 		t.Fatalf("err = %v, want it to match store.ErrBlockerClaimed — the planners branch on this "+

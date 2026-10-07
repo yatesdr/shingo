@@ -47,6 +47,15 @@ type CompoundChild struct {
 	BinID int64 // bin to claim for this child
 }
 
+// CompoundLanes is a dig's lane step in the transaction that writes its legs:
+// LaneIDs are locked (reservations.LockLanesTx) before the parent's row, and
+// Admit writes the mouth rows for those lanes after it, taking no lock of its own
+// (reservations.AdmitLockedLanesTx).
+type CompoundLanes struct {
+	LaneIDs []int64
+	Admit   func(*sql.Tx) error
+}
+
 // ErrBlockerClaimed is the sentinel behind BlockerClaimedError, for callers that
 // only need to know WHICH refusal this was.
 var ErrBlockerClaimed = errors.New("bin held by an order outside the compound")
@@ -136,17 +145,38 @@ type DisplacedByHand struct {
 	ParkedAt string // where that dig is putting the bin; "" if the leg named nowhere
 }
 
-// CreateCompoundChildren creates all child orders and claims their payloads
-// in a single transaction. Cross-aggregate (orders ↔ bins).
+// CreateCompoundChildren creates all child orders in a single transaction and
+// takes the foreign soft holds off their bins. Cross-aggregate (orders ↔ bins).
+//
+// A LEG IS BORN HOLDING NOTHING (v4 §2.6). It is `pending` until its turn, and a
+// wait keeps soft holds only, so the leg's bin claim and its ledger row are taken
+// at its handover, in its own hand (ClaimCompoundLegBinTx). What keeps the
+// blockers the dig's in between is the parent's dig hold on the lane: the finders
+// and the bin acquire ask the dig-exclusion question (reservations.DigExclusionSQL)
+// and keep everyone but the compound out of a lane a dig holds.
+//
+// lanes, when not nil, is the parent's lane step: the dig's mouth hold, taken in
+// this transaction so the dig is started whole or not at all. Its errors return
+// as they are (reservations.ErrReservationConflict when another holder owns the
+// lane).
 //
 // Returns the hand-placed orders whose bins it took — see DisplacedByHand. Empty
 // on the ordinary path and on every error.
-func (db *DB) CreateCompoundChildren(children []CompoundChild) ([]DisplacedByHand, error) {
+func (db *DB) CreateCompoundChildren(children []CompoundChild, lanes *CompoundLanes) ([]DisplacedByHand, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
+	// THE LANES' ADVISORY LOCKS COME FIRST, then the parent's row: the order every
+	// transaction that takes a lane and an order row keeps (the hand,
+	// HandOffLaneToPicker; reservations.OwnerLiveSQL's comment). The parent's
+	// FOR UPDATE below stays the first ROW lock.
+	if lanes != nil {
+		if err := reservations.LockLanesTx(tx, lanes.LaneIDs...); err != nil {
+			return nil, err
+		}
+	}
 	// THE PARENT IS READ UNDER LOCK, FIRST. A cancel's status write takes this
 	// row, so the two serialise: either this transaction commits before the
 	// cancel and the cancel's cascade lists these children and cancels them, or
@@ -164,6 +194,11 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) ([]DisplacedByHan
 			return nil, &ParentGoneError{ParentID: parentID, Status: status}
 		}
 	}
+	if lanes != nil {
+		if err := lanes.Admit(tx); err != nil {
+			return nil, err
+		}
+	}
 	var displaced []DisplacedByHand
 	var stolen []stolenBin
 
@@ -178,124 +213,29 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) ([]DisplacedByHan
 			return nil, fmt.Errorf("create child order (seq %d): %w", o.Sequence, err)
 		}
 
-		// Bin-centric claiming: if the child order has a bin, claim it.
+		// THE STEAL HAPPENS AT BIRTH; THE CLAIM AT THE HANDOVER. A blocker is
+		// POSITIONAL — the dig has no choice about which bins are in its way — so
+		// the foreign soft holds on it are settled now, while the dig can still
+		// back out whole: stealSoftHolds ranks the two demands and REFUSES when
+		// the holder wins (§7), which aborts this transaction and leaves the lane
+		// free. A refusal at a later handover could not back out: the parent
+		// would hold the lane and the holder would be refused by it.
 		//
-		// SIBLING-SCOPED COMPARE-AND-SET. This used to be an unconditional
-		// overwrite, which meant a compound could take a bin out from under an
-		// unrelated order that was already carrying it — silently, because the
-		// UPDATE reported success either way.
-		//
-		// The predicate is deliberately NOT the one bins.Claim uses
-		// (`claimed_by IS NULL OR claimed_by = $1`). A multi-step reshuffle plan
-		// INTENTIONALLY overlaps bin claims: a bin that appears in several steps —
-		// an unbury followed by a retrieve of the same bin — is claimed once per
-		// step, and the last step's write is the one that stands. That is relied on
-		// downstream (engine/wiring_completion.go skips the delivery-arrival
-		// teleport guard for children precisely because of it), so refusing a
-		// repeat claim would be a behaviour change, not a fence.
-		//
-		// THE PARENT IS IN THE SET, and that is the part worth getting right. Both
-		// the plain and target-node planners emit a `retrieve` step carrying the
-		// buried TARGET bin (dispatch/reshuffle.go), which is the same bin the
-		// parent retrieve exists to fetch; and the documented multi-burial loop
-		// re-plans a fresh compound after the parent has resumed and been
-		// dispatched, by which point the parent can be holding that claim. Excluding
-		// it would fail a claim that works today, which is the one direction a fence
-		// must not fail in.
-		//
-		// The child's own id needs no arm: it was inserted in this transaction a few
-		// lines above, so the sibling subquery already sees it and a re-claim by the
-		// same child is idempotent.
+		// The holder's row and its bin_id go together, in the steal, so it
+		// re-enters through the finder and re-resolves rather than confirming a
+		// bin that is leaving. The leg's own claim and ledger row are written at
+		// its handover (ClaimCompoundLegBinTx).
 		if o.BinID != nil {
 			parentID := int64(0)
 			if o.ParentOrderID != nil {
 				parentID = *o.ParentOrderID
 			}
-			// THE STEAL, MADE EXPLICIT. A blocker is POSITIONAL — the dig has no
-			// choice about which bins are in its way — and the claim CAS below
-			// admits any bin whose claimed_by is NULL, including one another order
-			// has softly promised itself. That has always happened; what had not
-			// happened is the bookkeeping.
-			//
-			// IT IS NO LONGER UNCONDITIONAL. Positional is an argument about WHICH
-			// bin, never about whose turn, so stealSoftHolds ranks the two demands
-			// first and REFUSES when the holder wins (§7). That refusal is an error
-			// and it aborts this transaction before the claim below — the gate
-			// carries the reasoning.
-			//
-			// The holder's row used to survive the steal and get deleted much later,
-			// at the dig leg's ARRIVAL (ReleaseByBin in ApplyArrival), which left a
-			// live reservation pointing at a bin somebody else was carrying away for
-			// the whole excavation. It worked by accident. Releasing it HERE — in
-			// the same transaction that makes the steal a fact — is what makes the
-			// books honest, and it is what lets the dig take a ledger row of its own
-			// (below) without fighting uq_reservations_bin_active.
-			//
-			// THE HOLDER'S bin_id GOES WITH IT, and that is not incidental. bin_id is
-			// stamped at SOFT-reserve time (fulfillment/scanner.go), so an order that
-			// merely reserved a bin re-enters through dispatchHeldBin, which confirms
-			// by id and never re-acquires — ConfirmClaim's seatbelt requires a pending
-			// reservation. Releasing the row and leaving bin_id would wedge the holder
-			// on claim_failed forever, which is the opposite of recalculating. Cleared
-			// together, the holder re-enters through the finder and re-resolves: it
-			// finds its bin at the shuffle slot the dig parked it in, or a better one.
 			byHand, took, err := stealSoftHolds(tx, *o.BinID, o.ID, parentID, o.DeliveryNode)
 			if err != nil {
 				return nil, err
 			}
 			displaced = append(displaced, byHand...)
 			stolen = append(stolen, took...)
-			res, err := tx.Exec(`UPDATE bins SET claimed_by=$1
-				WHERE id=$2
-				  AND (claimed_by IS NULL
-				       OR claimed_by = $3
-				       OR claimed_by IN (SELECT id FROM orders WHERE parent_order_id = $3))`,
-				o.ID, *o.BinID, parentID)
-			if err != nil {
-				return nil, fmt.Errorf("claim bin %d for child %d: %w", *o.BinID, o.ID, err)
-			}
-			if n, rErr := res.RowsAffected(); rErr == nil && n == 0 {
-				// Refused, not failed-to-write. The bin is held by an order outside
-				// this compound, so the plan was built against a lane that has since
-				// moved. Failing the whole transaction is right: a compound missing
-				// one leg's bin is a reshuffle that strands mid-dig, and the callers
-				// drop the lane lock on any error out of here.
-				//
-				// TYPED, because what the caller does next is not what it does with
-				// the other errors: the holder is a live order, not a broken row, so
-				// the digger waits for it rather than dying. Read the holder back so
-				// the wait can say whose bin it is waiting on — the SELECT is safe
-				// inside this transaction because nothing has errored, the UPDATE
-				// simply matched no row.
-				var holder sql.NullInt64
-				if qErr := tx.QueryRow(`SELECT claimed_by FROM bins WHERE id=$1`, *o.BinID).Scan(&holder); qErr != nil {
-					holder = sql.NullInt64{}
-				}
-				return nil, &BlockerClaimedError{
-					BinID:    *o.BinID,
-					ChildID:  o.ID,
-					ParentID: parentID,
-					HolderID: holder.Int64,
-				}
-			}
-
-			// THE LEDGER ROW — hold class 3 closed. A dig's claim was STAMPED with
-			// no reservation behind it: a claimed_by pointing at nothing in the
-			// books, the one-fact-two-mechanisms shape this codebase keeps finding.
-			// It stayed open because writing an honest row needs an answer to "whose
-			// entry wins when a dig and a holder both have books on one bin", and
-			// the answer is the steal above: the dig's entry supersedes, at the
-			// moment the claim lands.
-			//
-			// DEDUPE BY BIN, because a plan legitimately touches one bin twice — an
-			// unbury followed by a retrieve of the same bin — and the index allows
-			// one active row per bin. The delete-then-insert makes the row follow
-			// the claim: last write wins for both, together, which is exactly the
-			// property wiring_completion.go's teleport-guard skip already relies on
-			// for claimed_by.
-			if err := supersedeBinLedger(tx, *o.BinID, o.ID); err != nil {
-				return nil, err
-			}
 		}
 	}
 
@@ -328,13 +268,13 @@ func compoundParentID(children []CompoundChild) int64 {
 // instead of following a plan that is no longer true.
 //
 // Foreign means: not this compound's. A row belonging to the parent or to a
-// sibling is the same demand holding its own bin across steps, and
-// supersedeBinLedger moves it rather than reporting a theft.
+// sibling is the same demand holding its own bin across steps, and the leg's
+// handover moves it (supersedeBinLedger) rather than reporting a theft.
 //
 // ── SET-VALUED, AND IT WAS A COIN FLIP ────────────────────────────
 //
-// This read one holder, with an unordered QueryRow, while supersedeBinLedger a
-// few statements later already deleted the bin's WHOLE book. The two halves
+// This read one holder, with an unordered QueryRow, while the ledger write that
+// followed it deleted the bin's WHOLE book. The two halves
 // agreed only because uq_reservations_bin_active makes one active row per bin
 // structural. The day that index narrows, the singular read leaves every holder
 // but one with a bin_id pointing at a bin the dig owns and no reservation behind
@@ -347,10 +287,9 @@ func compoundParentID(children []CompoundChild) int64 {
 // Only PENDING rows are victims. A confirmed row is a hold that has been acted
 // on — the claim and the confirm move together in one transaction — so a robot
 // is on its way and the hold is physics, not a plan anybody may rewrite. The
-// claim CAS below refuses such a bin outright and rolls the whole compound back,
-// so this scoping changed no outcome the day it was written; it is here because
-// the CAS is a different guard for a different reason, and a set-valued sweep
-// must not rely on being saved by one.
+// leg's claim at its handover refuses such a bin (ClaimCompoundLegBinTx); it is
+// a different guard for a different reason, and a set-valued sweep must not rely
+// on being saved by one.
 //
 // ── AND A PERSON'S ORDER IS NOT REPAIRED THIS WAY AT ALL ──────────────
 //
@@ -373,13 +312,24 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 		handPlaced bool
 		pointsHere bool
 	}
-	rows, err := tx.Query(`SELECT r.order_id, COALESCE(o.origin_class,''), COALESCE(o.bin_id,0)
-		FROM reservations r
-		JOIN orders o ON o.id = r.order_id
-		WHERE r.bin_id=$1 AND r.resource_kind='bin' AND `+reservations.BlockingStateSQL("r.")+`
+	// ONE READ, THE BIN'S CLAIM AND ITS FOREIGN SOFT HOLDS. The bin row leads, so
+	// the claim is read even when nobody has a soft hold; a row per soft holder
+	// follows it (r.order_id NULL when there is none). The claim is the birth's
+	// refusal of a blocker held outside the compound — the leg's own claim waits
+	// for its handover (ClaimCompoundLegBinTx), and a dig must not be started
+	// over a bin a robot is already carrying.
+	rows, err := tx.Query(`SELECT b.claimed_by,
+		       (b.claimed_by = $2 OR b.claimed_by = $3
+		        OR b.claimed_by IN (SELECT id FROM orders WHERE parent_order_id = $3)),
+		       r.order_id, COALESCE(o.origin_class,''), COALESCE(o.bin_id,0)
+		FROM bins b
+		LEFT JOIN reservations r ON r.bin_id = b.id AND r.resource_kind='bin'
+		  AND `+reservations.BlockingStateSQL("r.")+`
 		  AND r.order_id <> $2
 		  AND r.order_id <> $3
 		  AND r.order_id NOT IN (SELECT id FROM orders WHERE parent_order_id = $3)
+		LEFT JOIN orders o ON o.id = r.order_id
+		WHERE b.id = $1
 		ORDER BY r.order_id`, binID, childID, parentID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read soft holds on bin %d: %w", binID, err)
@@ -388,23 +338,35 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 	// statement at a time, so an UPDATE issued while these rows are open kills
 	// the query it is iterating.
 	var victims []victim
+	var claimedBy sql.NullInt64
+	var claimOurs sql.NullBool
+	found := false
 	for rows.Next() {
-		var v victim
+		found = true
+		var holder sql.NullInt64
 		var originClass string
 		var pointsAt int64
-		if err := rows.Scan(&v.orderID, &originClass, &pointsAt); err != nil {
+		if err := rows.Scan(&claimedBy, &claimOurs, &holder, &originClass, &pointsAt); err != nil {
 			rows.Close()
 			return nil, nil, fmt.Errorf("scan soft hold on bin %d: %w", binID, err)
 		}
-		v.handPlaced = originClass == protocol.OriginClassNoDemand
-		v.pointsHere = pointsAt == binID
-		victims = append(victims, v)
+		if !holder.Valid {
+			continue
+		}
+		victims = append(victims, victim{
+			orderID:    holder.Int64,
+			handPlaced: originClass == protocol.OriginClassNoDemand,
+			pointsHere: pointsAt == binID,
+		})
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		return nil, nil, fmt.Errorf("read soft holds on bin %d: %w", binID, err)
 	}
 	rows.Close()
+	if !found {
+		return nil, nil, &BlockerClaimedError{BinID: binID, ChildID: childID, ParentID: parentID}
+	}
 
 	// ── THE RANKED TAKE (§7): A DIG IS NOT A PRIVILEGED MOVE ──────────────
 	//
@@ -419,13 +381,12 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 	// demand — its own row is priority 0 and the plant's youngest timestamp, and
 	// would lose every contest (T2).
 	//
-	// A REFUSAL IS AN ERROR, NOT A SKIP (T3). The claim CAS below only refuses
-	// bins whose claimed_by is set, and a promise-holder has none — so a gate that
-	// merely declined to un-point a holder would fall through: the CAS passes and
-	// supersedeBinLedger, three statements later, evicts the whole bin's ledger.
-	// That shreds the book of the order that WON while leaving its pointer
-	// stamped: the pointer wedge, built for the winner. The error aborts the
-	// transaction and everything unwinds on the caller's defer.
+	// A REFUSAL IS AN ERROR, NOT A SKIP (T3). The leg's claim only refuses bins
+	// whose claimed_by is set, and a promise-holder has none — so a gate that
+	// merely declined to un-point a holder would fall through, and the leg's
+	// supersedeBinLedger at its handover would evict the winner's row while
+	// leaving its pointer stamped: the pointer wedge, built for the winner. The
+	// error aborts the transaction and everything unwinds on the caller's defer.
 	//
 	// SCOPE: EVERY dig, gate-staged included. The gate sits in the one
 	// compound-creation door — CreateCompoundOrder → writeCompoundChildren → here
@@ -464,10 +425,24 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 		}
 	}
 
+	// A HARD CLAIM OUTSIDE THE COMPOUND REFUSES THE DIG, after the ranked take
+	// and before any write. The holder is a live order whose robot is carrying
+	// the blocker out; the dig backs out whole and waits for it, as it always
+	// has. Asked here because the leg no longer claims at birth.
+	if claimedBy.Valid && !claimOurs.Bool {
+		return nil, nil, &BlockerClaimedError{BinID: binID, ChildID: childID, ParentID: parentID,
+			HolderID: claimedBy.Int64}
+	}
+
 	var displaced []DisplacedByHand
 	var stolen []stolenBin
 	for _, v := range victims {
 		if v.handPlaced && v.pointsHere {
+			// The person's order keeps its pointer and loses its row, as below.
+			if _, err := tx.Exec(`DELETE FROM reservations WHERE bin_id=$1 AND order_id=$2 AND resource_kind='bin'`,
+				binID, v.orderID); err != nil {
+				return nil, nil, fmt.Errorf("release bin %d from hand-placed holder %d: %w", binID, v.orderID, err)
+			}
 			stolen = append(stolen, stolenBin{
 				binID: binID, holderID: v.orderID, digID: parentID, handPlaced: true,
 			})
@@ -476,15 +451,15 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 			})
 			continue
 		}
-		// THE ROW ITSELF IS NOT DELETED HERE. supersedeBinLedger, three statements
-		// later in this same transaction, is the one writer that clears this bin's
-		// reservations — deleting it here too would be two writers for one fact, which
-		// is the shape this codebase keeps having to unpick. Either both land or the
-		// transaction rolls back, so there is no window where a holder's pointer is
-		// cleared and its row is not.
+		// THE ROW AND THE POINTER GO IN ONE STATEMENT, so there is no window where
+		// a holder's pointer is cleared and its row is not. The row used to be left
+		// to supersedeBinLedger, which cleared the bin's whole book in this same
+		// transaction when the leg was born claiming it; the leg now takes its own
+		// row at its handover (ClaimCompoundLegBinTx), so the steal releases what it
+		// takes.
 		//
-		// Scoped to a holder still pointing AT THIS BIN: an order that has already
-		// moved on to another bin must keep the one it moved to.
+		// The pointer is scoped to a holder still pointing AT THIS BIN: an order
+		// that has already moved on to another bin must keep the one it moved to.
 		//
 		// updated_at IS STAMPED FROM THE INJECTED CLOCK, like every other writer of
 		// this column. It was `NOW()` — the one Postgres-clock writer among ~20
@@ -495,7 +470,8 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 		// readers now care: ListAnomalies' runtime-stuck detector, and the stale-dig
 		// disposition's liveness test.
 		if _, err := tx.Exec(
-			`UPDATE orders SET bin_id=NULL, updated_at=$3 WHERE id=$1 AND bin_id=$2`,
+			`WITH released AS (DELETE FROM reservations WHERE bin_id=$2 AND order_id=$1 AND resource_kind='bin')
+			 UPDATE orders SET bin_id=NULL, updated_at=$3 WHERE id=$1 AND bin_id=$2`,
 			v.orderID, binID, clock.Now().UTC()); err != nil {
 			return nil, nil, fmt.Errorf("clear bin %d off holder %d: %w", binID, v.orderID, err)
 		}
@@ -601,6 +577,84 @@ func TakeSoftHolds(tx *sql.Tx, binID, takerID int64, note HolderNote) (handPlace
 	return handPlaced, nil
 }
 
+// ErrNoSlotTake is TakeSlotByRank declining: no stranger holds the slot by a
+// pending reservation, or the taker's demand does not outrank the holder's.
+// Nothing was written.
+var ErrNoSlotTake = errors.New("no slot to take by rank")
+
+// TakeSlotByRank is a dig leg's take of a slot another order has only promised
+// itself (C2b A.3; Rule 2 ⚖, the rank steal of SYNTH Fork 2; P0 ruling Q2). In
+// one transaction:
+//
+//   - the slot's pending holder is read under lock (a confirmed row is a claim
+//     acted on, never taken; a holder already sent to the fleet is a robot
+//     coming, never taken either), and both demands' ranks are compared under that
+//     lock (orders.DemandRank.Outranks; a leg presents its parent's demand), so
+//     a rank read before the lock cannot decide it;
+//   - the holder's row is deleted, its wait set to the note (slot-taken, naming
+//     the demand that took it, named) and a history row written at its status
+//     (code slot-taken, ref taken_by) — the bin take's shape (TakeSoftHolds);
+//   - the slot is reserved for the taker.
+//
+// Returns the holder. ErrNoSlotTake when there is no pending holder or the
+// taker does not outrank it; a tie keeps the slot with the incumbent, as the bin
+// steal does. Cost per take: the locked read, two rank reads, one DELETE, the
+// cause write (UPDATE + history INSERT), the reservation INSERT.
+func (db *DB) TakeSlotByRank(nodeID, takerID, named int64, note HolderNote) (int64, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	var holder int64
+	var status string
+	err = tx.QueryRow(`SELECT r.order_id, o.status FROM reservations r JOIN orders o ON o.id = r.order_id
+		WHERE r.node_id = $1 AND r.resource_kind = 'slot' AND r.state = $2 AND r.order_id <> $3
+		  AND `+orders.AwaitingFleetSQL("o")+`
+		FOR UPDATE OF r`, nodeID, string(reservations.StatePending), takerID).Scan(&holder, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNoSlotTake
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read the pending holder of slot %d: %w", nodeID, err)
+	}
+	takerRank, err := orders.LoadDemandRank(tx, takerID)
+	if err != nil {
+		return 0, err
+	}
+	holderRank, err := orders.LoadDemandRank(tx, holder)
+	if err != nil {
+		return 0, err
+	}
+	if !takerRank.Outranks(holderRank) {
+		return 0, fmt.Errorf("%w: order %d's demand does not outrank holder %d's", ErrNoSlotTake, takerID, holder)
+	}
+	if _, err := tx.Exec(`DELETE FROM reservations
+		WHERE node_id = $1 AND order_id = $2 AND resource_kind = 'slot' AND state = $3`,
+		nodeID, holder, string(reservations.StatePending)); err != nil {
+		return 0, fmt.Errorf("release order %d's hold on slot %d: %w", holder, nodeID, err)
+	}
+	now := clock.Now().UTC()
+	if _, err := tx.Exec(`UPDATE orders SET queue_reason=$2, queue_code=$3, queue_cause=$4, updated_at=$5
+		WHERE id=$1`, holder, note.Reason, string(note.Code), note.Cause, now); err != nil {
+		return 0, fmt.Errorf("tell order %d its slot was taken: %w", holder, err)
+	}
+	ref, _ := json.Marshal(map[string]int64{"taken_by": named})
+	if _, err := tx.Exec(
+		`INSERT INTO order_history (order_id, status, detail, code, actor, ref, created_at)
+		 VALUES ($1, $2, $3, 'slot-taken', NULLIF($4,''), $5, $6)`,
+		holder, status, note.Reason, note.Actor, ref, now); err != nil {
+		return 0, fmt.Errorf("record the take on order %d: %w", holder, err)
+	}
+	if err := reservations.AcquireSlot(tx, takerID, nodeID, "reserveSlot"); err != nil {
+		return 0, fmt.Errorf("reserve slot %d for order %d: %w", nodeID, takerID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return holder, nil
+}
+
 // stolenBin is one steal, held back for the log that runs AFTER the commit.
 //
 // The log lines used to fire inside the transaction, at the moment of the write,
@@ -632,6 +686,46 @@ func logSteals(stolen []stolenBin) {
 			"its new home)",
 			s.digID, s.binID, s.holderID, s.holderID)
 	}
+}
+
+// ClaimCompoundLegBinTx is a dig leg's bin claim, taken at its handover in the
+// leg's own hand (dispatch.acquireHand), not at its birth: a leg waiting its
+// turn holds nothing (v4 §2.6).
+//
+// SIBLING-SCOPED COMPARE-AND-SET. The predicate is deliberately NOT the one
+// bins.Claim uses (`claimed_by IS NULL OR claimed_by = $1`). A multi-step plan
+// touches one bin more than once — an unbury followed by a retrieve of the same
+// bin — and each leg claims it in turn; engine/wiring_completion.go skips the
+// delivery-arrival teleport guard for children because of it. THE PARENT IS IN
+// THE SET: the planners emit a `retrieve` step carrying the buried target bin,
+// which the parent itself may hold by the time a re-planned dig runs.
+//
+// A refusal is a *BlockerClaimedError naming the holder: the bin is held by an
+// order outside the compound. The birth already refused such a bin
+// (stealSoftHolds reads the claim), and the parent's dig hold keeps the finders
+// and the bin acquire out of the lane after it, so this is the backstop, not the
+// rule.
+//
+// The ledger row follows the claim (supersedeBinLedger): the last leg to claim
+// the bin holds its one active row.
+func ClaimCompoundLegBinTx(tx *sql.Tx, binID, legID, parentID int64) error {
+	res, err := tx.Exec(`UPDATE bins SET claimed_by=$1
+		WHERE id=$2
+		  AND (claimed_by IS NULL
+		       OR claimed_by = $3
+		       OR claimed_by IN (SELECT id FROM orders WHERE parent_order_id = $3))`,
+		legID, binID, parentID)
+	if err != nil {
+		return fmt.Errorf("claim bin %d for leg %d: %w", binID, legID, err)
+	}
+	if n, rErr := res.RowsAffected(); rErr == nil && n == 0 {
+		var holder sql.NullInt64
+		if qErr := tx.QueryRow(`SELECT claimed_by FROM bins WHERE id=$1`, binID).Scan(&holder); qErr != nil {
+			holder = sql.NullInt64{}
+		}
+		return &BlockerClaimedError{BinID: binID, ChildID: legID, ParentID: parentID, HolderID: holder.Int64}
+	}
+	return supersedeBinLedger(tx, binID, legID)
 }
 
 // supersedeBinLedger makes the reservation books say what the claim says: one

@@ -197,3 +197,14 @@ func EvictStaleGhostBinsTx(tx *sql.Tx, destNodeID, keepBinID int64) ([]int64, er
 	}
 	return evicted, rows.Err()
 }
+
+// DemandRankColumnsSQL is the demand an order presents at a rank comparison, as
+// three columns — priority, created_at, the demand's id — for the order at alias
+// o LEFT JOINed to its parent at alias p (p.id = o.parent_order_id). A compound
+// leg presents its parent's demand. orders.LoadDemandRank reads it for one
+// order, and the dig walk's slot read reads it for each slot's pending holder
+// (nodes.TakeableSlotsInGroup), so the two cannot resolve a leg differently.
+// The ORDERING is not here: orders.DemandRank.Outranks is its one comparator.
+func DemandRankColumnsSQL(o, p string) string {
+	return fmt.Sprintf(`COALESCE(%[2]s.priority, %[1]s.priority), COALESCE(%[2]s.created_at, %[1]s.created_at), COALESCE(%[2]s.id, %[1]s.id)`, o, p)
+}

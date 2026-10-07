@@ -71,7 +71,7 @@ func TestDigTakesAHandPlacedBin_FailsLoudlyWithItsOwnCode(t *testing.T) {
 	testutil.MustNoErr(t, err, "plan unbury")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	testutil.MustNoErr(t, d.writeCompoundChildren(parent, plan), "writeCompoundChildren")
+	testutil.MustNoErr(t, d.writeCompoundChildren(parent, plan, nil), "writeCompoundChildren")
 
 	after, err := db.GetOrder(byHand.ID)
 	testutil.MustNoErr(t, err, "reload hand-placed order")

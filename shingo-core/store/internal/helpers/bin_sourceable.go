@@ -177,6 +177,27 @@ const BinInUndeclaredCarrierSQL = `b.undeclared_carrier_at IS NOT NULL`
 // rule, and the day the stamp lagged a rule change the two halves would
 // disagree about the same bin.
 func BinSourceableSQL(payloadExpr string) string {
+	return binSourceable(payloadExpr, BinUnheldSQL)
+}
+
+// BinSourceableSQLFor is BinSourceableSQL asked for one order (ownerExpr): that
+// order's own pending reservation on a bin does not make the bin unavailable to
+// it. Everything else is the one predicate, unchanged.
+//
+// It exists for the group resolver's lane scan (FindSourceBinInLane), which was
+// the one owner-blind arm of an owner-aware scan: a slot child's bins pass the
+// asker's own soft hold through (binresolver reservedByStranger), a lane's did
+// not. A complex demand whose dig soft-reserved the bin it uncovered (C2b A.1b)
+// re-resolves its group pickup on the next pass, and a blind lane scan would
+// skip that bin as somebody else's.
+func BinSourceableSQLFor(payloadExpr, ownerExpr string) string {
+	return binSourceable(payloadExpr,
+		BinUnclaimedSQL+` AND NOT `+reservations.BinSpokenForByStrangerSQL(ownerExpr))
+}
+
+// binSourceable composes the predicate around its held arm, the one part that
+// differs between the blind and the owner-aware asking.
+func binSourceable(payloadExpr, heldArm string) string {
 	return BinCarriesSourceableStockSQL + ` AND ` + BinAtLiveNodeSQL +
-		` AND ` + BinUnheldSQL + PayloadBinTypeRuleArm(payloadExpr)
+		` AND ` + heldArm + PayloadBinTypeRuleArm(payloadExpr)
 }

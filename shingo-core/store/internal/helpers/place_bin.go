@@ -70,9 +70,9 @@ type BinPlacement struct {
 
 	// PlacedByOrder is the order whose placement this is. It SCOPES THE UNCLAIM
 	// and it cannot be inferred from the bin's own claim: a compound child's
-	// placement routinely reads claimed_by as a SIBLING's id, because
-	// CreateCompoundChildren writes claims for every step in one transaction and
-	// the last write wins for a bin appearing in several. Every production
+	// placement can read claimed_by as a SIBLING's id: each leg claims its bin at
+	// its handover (store.ClaimCompoundLegBinTx), sibling-scoped, so for a bin
+	// appearing in several legs the latest leg's claim stands. Every production
 	// caller has its own order in hand.
 	PlacedByOrder int64
 

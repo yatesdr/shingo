@@ -486,6 +486,16 @@ var causeReleasers = []causeReleaser{
 			"because a holder abandoning a promise emits nothing anyone listens for",
 	},
 	{
+		cause:       CauseSlotTaken,
+		populations: []WaitPopulation{PopAcquiring},
+		// The take tells the holder it changed (NotifyWaitChanged), and the
+		// holder's next scanner pass re-resolves its destination: its own row
+		// on the slot is gone, so the reconcile reserves another child or waits
+		// under the group's own capacity cause.
+		what: "the holder's next scanner pass, on which it re-resolves its destination elsewhere in the " +
+			"group; the periodic floor if that pass is missed",
+	},
+	{
 		cause:       CauseBinTaken,
 		populations: []WaitPopulation{PopAcquiring},
 		// The take is the releaser's own trigger: the person's move is queued with
