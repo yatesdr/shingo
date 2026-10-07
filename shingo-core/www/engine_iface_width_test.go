@@ -111,8 +111,10 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Core's wide surface at 63 methods —
-// ServiceAccess's 49 embedded, plus 14 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Core's wide surface at 62 methods —
+// ServiceAccess's 49 embedded, plus 13 orchestration verbs of its own.
+// (PrepareDatabase left it in R27: Core's database settings apply after a
+// restart, so the save door only pings the draft, through HealthService.)
 //
 // CMSFeedHealth is on the wide surface rather than reached through a service
 // accessor because two of its three inputs are PROCESS state — whether a cms:
@@ -172,7 +174,6 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"OrderService",
 		"PayloadService",
 		"Reconciliation",
-		"ReconfigureDatabase",
 		"ReconfigureFleet",
 		"ReconfigureMessaging",
 		"ReconfigureNotifications",

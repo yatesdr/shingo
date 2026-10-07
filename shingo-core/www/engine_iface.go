@@ -192,10 +192,12 @@ type EngineOrchestration interface {
 	SendDataToEdge(subject string, stationID string, payload any) error
 
 	// ── Live reconfiguration ───────────────────────────────────────
-	ReconfigureDatabase()
-	ReconfigureFleet()
-	ReconfigureMessaging()
-	ReconfigureNotifications()
+	// The config page's save door applies the live config after the swap,
+	// and an error lands in the answer's `failed` list. The database has no
+	// verb: its settings apply after a restart (R27).
+	ReconfigureFleet() error
+	ReconfigureMessaging() error
+	ReconfigureNotifications() error
 }
 
 // Compile-time assertions: *engine.Engine must satisfy both interfaces.

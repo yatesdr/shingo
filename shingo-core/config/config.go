@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -68,13 +69,14 @@ type Config struct {
 
 	// Timezone is the plant's IANA zone for DISPLAY rendering (plant-local
 	// timestamps on every core page, via shared/planttime) and for the
-	// plant-local date-filter resolution (Q-004). Empty resolves to
-	// America/Chicago — correct for both plants' wall clocks, and at
-	// Hopkinsville it is the only thing making core right until the key is
-	// seeded (the box's OS zone is Eastern; the plant clock is Central).
-	// Storage and the wire stay UTC regardless; this field never touches
-	// either. PLANT_TIMEZONE env still overrides it, so existing
-	// deployments don't move on upgrade.
+	// plant-local date-filter resolution (Q-004). Empty resolves to UTC
+	// (www/plant_timezone.go defaultPlantTimezone): visibly foreign rather than
+	// plausibly local, so an unset zone shows. Storage and the wire stay UTC
+	// regardless; this field never touches either. PLANT_TIMEZONE env still
+	// overrides it, so existing deployments don't move on upgrade; Edges are
+	// offered the same zone Core's screens use (www.OfferedPlantTimezone), as
+	// read at Core's boot.
+	// Read once at boot on both paths: a change applies after a restart.
 	Timezone string `yaml:"timezone"`
 }
 
@@ -733,6 +735,102 @@ func (c *Config) Save(path string) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0644)
+}
+
+// Clone returns a deep copy of the config, taken under the read lock. It is
+// written in Go, field by field, and NOT as a yaml round-trip: a field tagged
+// `yaml:"-"` would not survive one. Every top-level field is listed here
+// (ReplaceFrom walks the struct by reflection and has no list);
+// TestConfigCloneAndReplaceCoverEveryField sets every field by reflection and
+// fails if either drops one, so a field added later cannot be silently lost by
+// the config page's save.
+//
+// The copy has its own zero mutex; the source's is never copied.
+func (c *Config) Clone() *Config {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := &Config{
+		Database:        c.Database,
+		RDS:             c.RDS,
+		Web:             c.Web,
+		Messaging:       c.Messaging,
+		Staging:         c.Staging,
+		FireAlarm:       c.FireAlarm,
+		Notifications:   c.Notifications,
+		Sim:             c.Sim,
+		Sourceability:   c.Sourceability,
+		Logging:         c.Logging,
+		Dispatch:        c.Dispatch,
+		Demand:          c.Demand,
+		RobotConfidence: c.RobotConfidence,
+		CMS:             c.CMS,
+		Display:         c.Display,
+		Timezone:        c.Timezone,
+	}
+	// The three slices are the only reference fields: copy their backing
+	// arrays so an edit to the clone never reaches the original.
+	out.Logging.StderrSubsystems = cloneStrings(c.Logging.StderrSubsystems)
+	out.Messaging.Kafka.Brokers = cloneStrings(c.Messaging.Kafka.Brokers)
+	out.Notifications.Recipients = cloneStrings(c.Notifications.Recipients)
+	return out
+}
+
+// ReplaceFrom assigns every field of src into c, field by field, under c's
+// write lock. It is how a saved draft becomes the live config: never
+// `*c = *src`, which would overwrite c's mutex (and vet flags it), and never a
+// new pointer, because subsystems hold pointers into the live struct (the
+// messaging client holds &cfg.Messaging). src must not be in use elsewhere: its
+// slices are taken, not copied.
+//
+// ONLY A LEAF THAT DIFFERS IS WRITTEN. Background loops read the live config
+// without the lock (the claim sweep reads Staging, the demand reconciler
+// Demand), as they always have; a save that rewrote every field would race
+// each of them on values it did not change. Writing only what the draft
+// changed keeps a save's writes to the fields its sections own, which is all
+// the form door it replaced ever wrote. It walks the struct by reflection, so
+// no field can be left out of the swap; TestConfigCloneAndReplaceCoverEveryField
+// proves it with every field set.
+func (c *Config) ReplaceFrom(src *Config) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	assignChanged(reflect.ValueOf(c).Elem(), reflect.ValueOf(src).Elem())
+}
+
+// assignChanged writes src's exported leaves into dst where they differ,
+// recursing into plain structs (a struct with unexported fields, such as
+// time.Time, is a leaf).
+func assignChanged(dst, src reflect.Value) {
+	t := dst.Type()
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		d, s := dst.Field(i), src.Field(i)
+		if f.Type.Kind() == reflect.Struct && allExported(f.Type) {
+			assignChanged(d, s)
+			continue
+		}
+		if !reflect.DeepEqual(d.Interface(), s.Interface()) {
+			d.Set(s)
+		}
+	}
+}
+
+func allExported(t reflect.Type) bool {
+	for i := 0; i < t.NumField(); i++ {
+		if !t.Field(i).IsExported() {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneStrings(s []string) []string {
+	if s == nil {
+		return nil
+	}
+	return append([]string(nil), s...)
 }
 
 func (c *Config) Lock()   { c.mu.Lock() }

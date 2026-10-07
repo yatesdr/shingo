@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -13,6 +14,7 @@ import (
 
 	"shingo/protocol/debuglog"
 	"shingo/shared"
+	"shingocore/config"
 	"shingocore/engine"
 )
 
@@ -49,6 +51,17 @@ type Handlers struct {
 	tmpls         map[string]*template.Template
 	eventHub      *EventHub
 	debugLog      *debuglog.Logger
+
+	// configMu is the config page's one save mutex: held across the whole
+	// save (copy, validate, ping, write, swap). The save door is the only
+	// place Core writes its config file.
+	configMu sync.Mutex
+	// pingDB checks a changed database section before the save writes it.
+	// nil (production) means HealthService().TestDatabase; the pins stub it.
+	pingDB func(config.DatabaseConfig) error
+	// boot is the restart-only settings as read at process start, for the
+	// config page's restart notice. nil (most tests) means no notice.
+	boot bootSnapshot
 }
 
 // NewRouter registers all HTTP endpoints for shingo-core.
@@ -110,6 +123,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		tmpls:         tmpls,
 		eventHub:      hub,
 		debugLog:      dbg,
+		boot:          takeBootSnapshot(eng.AppConfig()),
 	}
 
 	h.ensureDefaultAdmin()
@@ -394,6 +408,11 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				// Inventory export
 				r.Get("/inventory/export", h.apiInventoryExport)
 
+				// Configuration page: its one save door and its Test
+				// connection (the page itself is GET /config, below).
+				r.Put("/config", h.apiConfigSave)
+				r.Post("/config/test-database", h.apiConfigTestDatabase)
+
 				// Cells — production-cell config (Phase E, Q-025)
 				r.Get("/cells/processes", h.apiCellProcesses)
 				r.Post("/cells", h.apiCellUpsert)
@@ -548,7 +567,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/bins", h.handleBins)
 			r.Get("/diagnostics", h.handleDiagnostics)
 			r.Get("/config", h.handleConfig)
-			r.Post("/config/save", h.handleConfigSave)
 			r.Post("/config/test-email", h.handleConfigTestEmail)
 			r.Post("/config/test-alert", h.handleConfigTestAlert)
 			r.Post("/config/password", h.handleConfigPassword)

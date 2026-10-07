@@ -1,250 +1,232 @@
 {{define "content"}}
-<div>
-  <h1 class="mb-2">Configuration</h1>
+<h1 class="mb-2">Configuration</h1>
+{{/* The settings shape (docs/ui-style-guide/33-settings-pages.md): one page,
+     one column, one Save. Neutral .set- names only; .set-ui scopes them above
+     Core's global label/input rules. config.js binds it with settingsPage. A
+     secret is never rendered: its box says "saved" or "none saved", blank
+     keeps it, Remove clears it. */}}
+<div class="set-page set-ui" id="config-page" data-restart="{{.V.RestartJSON}}">
 
-  {{if .Saved}}
-  <div class="alert alert-ok mb-2">Settings saved ({{.Saved}}).</div>
-  {{end}}
+  <!-- Plant -->
+  <div class="set-sect"><h2>Plant</h2>
+    {{if .V.TZEnv}}<span class="set-cnt"><i></i>PLANT_TIMEZONE sets {{.V.ShownZone}}</span>
+    {{else if not .Config.Timezone}}<span class="set-cnt warn"><i></i>no timezone set · showing UTC</span>
+    {{else}}<span class="set-cnt ok"><i></i>showing {{.V.ShownZone}}</span>{{end}}
+  </div>
+  <div class="set-fld">
+    <label for="cfg-timezone">Plant timezone<small>{{if .V.TZEnv}}set on this server by PLANT_TIMEZONE · the plant's clock on Core's screens · Edges with no zone of their own are offered the value Core read at start, so a change reaches them after Core restarts{{else}}the plant's clock on Core's screens · Edges with no zone of their own are offered the value Core read at start, so a change reaches them after Core restarts · applies after a restart{{end}}</small></label>
+    <div class="v"><input class="set-inp mid" id="cfg-timezone" type="text" data-field="timezone" value="{{if .V.TZEnv}}{{.V.TZEnv}}{{else}}{{.Config.Timezone}}{{end}}" placeholder="America/Chicago" spellcheck="false" autocomplete="off"{{if .V.TZEnv}} readonly{{end}}></div>
+  </div>
+
+  <!-- Fleet -->
+  <div class="set-sect"><h2>Fleet</h2></div>
+  <div class="set-fld">
+    <label for="cfg-fleet-url">Fleet manager address<small>where Core sends orders to the robots</small></label>
+    <div class="v"><input class="set-inp wide" id="cfg-fleet-url" type="text" data-field="fleet_base_url" value="{{.Config.RDS.BaseURL}}" placeholder="http://fleet-host:8088" spellcheck="false" autocomplete="off"></div>
+  </div>
+  <div class="set-fld">
+    <label for="cfg-fleet-timeout">Give up on a request after</label>
+    <div class="v"><input class="set-inp" id="cfg-fleet-timeout" type="text" size="6" data-field="fleet_timeout" value="{{.V.TimeoutText}}" placeholder="10 s"></div>
+  </div>
+  <div class="set-fld">
+    <label for="cfg-fleet-poll">Ask for robot status every<small>applies after a restart</small></label>
+    <div class="v"><input class="set-inp" id="cfg-fleet-poll" type="text" size="6" data-field="fleet_poll_interval" value="{{.V.PollText}}" placeholder="5 s"></div>
+  </div>
+  <div class="set-fld">
+    <label for="cfg-fleet-grace">Fail a faulted order after<small>a robot that recovers sooner keeps its order · faults already counting down keep their deadline · Edges are offered the value Core read at start, so for them it applies after a restart</small></label>
+    <div class="v"><input class="set-inp" id="cfg-fleet-grace" type="text" size="6" data-field="fleet_fault_grace" value="{{.V.GraceText}}" placeholder="45 min"></div>
+  </div>
+
+  <!-- Messaging -->
+  <div class="set-sect"><h2>Messaging</h2>
+    {{if .V.MessagingWords}}<span class="set-cnt{{if .V.MessagingOK}} ok{{else}} warn{{end}}"><i></i>{{.V.MessagingWords}}</span>{{end}}
+  </div>
+  <div class="set-fld">
+    <label>Kafka brokers<small>host:port · how Core and the Edges talk</small></label>
+    <div class="v col" id="cfg-brokers">
+      {{range .Config.Messaging.Kafka.Brokers}}
+      <div class="v" data-row="broker"><input class="set-inp mid" type="text" value="{{.}}" placeholder="kafka:9092" aria-label="Broker" spellcheck="false" autocomplete="off"><button type="button" class="set-btn quiet" data-action="removeRow">Remove</button></div>
+      {{end}}
+      <div class="v"><button type="button" class="set-btn" data-action="addBroker">Add broker</button></div>
+    </div>
+  </div>
+  <div class="set-fld">
+    <label>Group and topics<small id="cfg-topics-now">{{.Config.Messaging.Kafka.GroupID}} · {{.Config.Messaging.OrdersTopic}} · {{.Config.Messaging.DispatchTopic}}</small></label>
+    <div class="v"><button type="button" class="set-btn" data-action="toggleMore" data-more="topics" aria-expanded="false">Change…</button></div>
+  </div>
+  <div class="set-fld" data-more-of="topics" hidden>
+    <label for="cfg-group">Group ID</label>
+    <div class="v"><input class="set-inp mid" id="cfg-group" type="text" data-field="group_id" value="{{.Config.Messaging.Kafka.GroupID}}" placeholder="shingocore" spellcheck="false"></div>
+  </div>
+  <div class="set-fld" data-more-of="topics" hidden>
+    <label for="cfg-orders-topic">Orders topic<small>every Edge has to use the same name · applies after a restart</small></label>
+    <div class="v"><input class="set-inp mid" id="cfg-orders-topic" type="text" data-field="orders_topic" value="{{.Config.Messaging.OrdersTopic}}" spellcheck="false"></div>
+  </div>
+  <div class="set-fld" data-more-of="topics" hidden>
+    <label for="cfg-dispatch-topic">Dispatch topic<small>every Edge has to use the same name · applies after a restart</small></label>
+    <div class="v"><input class="set-inp mid" id="cfg-dispatch-topic" type="text" data-field="dispatch_topic" value="{{.Config.Messaging.DispatchTopic}}" spellcheck="false"></div>
+  </div>
+
+  <!-- Notifications -->
+  <div class="set-sect"><h2>Notifications</h2>
+    <span class="set-cnt{{if .Config.Notifications.Enabled}} ok{{end}}" id="cfg-notif-words"><i></i>{{if .Config.Notifications.Enabled}}email alerts on{{else}}off{{end}}</span>
+    <span class="set-spacer"></span>
+    <button type="button" class="set-btn" data-action="openTestModal">Send a test…</button>
+  </div>
+  <div class="set-fld">
+    <label id="cfg-notif-enabled-l">Email alerts<small>when an order faults or fails, or a robot is blocked during an order</small></label>
+    <div class="v"><button type="button" class="set-chk{{if .Config.Notifications.Enabled}} on{{end}}" role="switch" aria-checked="{{if .Config.Notifications.Enabled}}true{{else}}false{{end}}" aria-labelledby="cfg-notif-enabled-l" data-switch="notif_enabled" data-field="notif_enabled"></button></div>
+  </div>
+  <div class="set-fld" data-shown-by="notif_enabled"{{if not .Config.Notifications.Enabled}} hidden{{end}}>
+    <label for="cfg-smtp-host">Mail server<small>host and port</small></label>
+    <div class="v"><input class="set-inp mid" id="cfg-smtp-host" type="text" data-field="notif_smtp_host" value="{{.Config.Notifications.SMTPHost}}" placeholder="smtp.company.com" spellcheck="false"><input class="set-inp" type="text" size="5" inputmode="numeric" aria-label="Mail server port" data-field="notif_smtp_port" value="{{.Config.Notifications.SMTPPort}}" placeholder="587"></div>
+  </div>
+  <div class="set-fld" data-shown-by="notif_enabled"{{if not .Config.Notifications.Enabled}} hidden{{end}}>
+    <label id="cfg-smtp-tls-l">Encrypt with TLS</label>
+    <div class="v"><button type="button" class="set-chk{{if .Config.Notifications.SMTPTLS}} on{{end}}" role="switch" aria-checked="{{if .Config.Notifications.SMTPTLS}}true{{else}}false{{end}}" aria-labelledby="cfg-smtp-tls-l" data-switch="notif_smtp_tls"></button></div>
+  </div>
+  <div class="set-fld" data-shown-by="notif_enabled"{{if not .Config.Notifications.Enabled}} hidden{{end}}>
+    <label for="cfg-smtp-user">Sign in<small>user and password · blank password keeps the saved one · applies after a restart</small></label>
+    <div class="v"><input class="set-inp mid" id="cfg-smtp-user" type="text" data-field="notif_smtp_user" value="{{.Config.Notifications.SMTPUser}}" placeholder="user" autocomplete="off"><input class="set-inp" type="password" size="14" aria-label="Mail server password" data-field="notif_smtp_password" data-secret="smtp" data-saved="{{if .V.SMTPPassSaved}}1{{end}}" value="" placeholder="{{if .V.SMTPPassSaved}}saved{{else}}none saved{{end}}" autocomplete="new-password">{{if .V.SMTPPassSaved}}<button type="button" class="set-btn quiet" data-action="removeSecret" data-secret-for="smtp">Remove</button>{{end}}</div>
+  </div>
+  <div class="set-fld" data-shown-by="notif_enabled"{{if not .Config.Notifications.Enabled}} hidden{{end}}>
+    <label for="cfg-smtp-from">Send from</label>
+    <div class="v"><input class="set-inp mid" id="cfg-smtp-from" type="text" data-field="notif_from_address" value="{{.Config.Notifications.FromAddress}}" placeholder="shingo@company.com" spellcheck="false"></div>
+  </div>
+  <div class="set-fld" data-shown-by="notif_enabled"{{if not .Config.Notifications.Enabled}} hidden{{end}}>
+    <label>Send to</label>
+    <div class="v col" id="cfg-recipients">
+      {{range .Config.Notifications.Recipients}}
+      <div class="v" data-row="recipient"><input class="set-inp mid" type="text" value="{{.}}" placeholder="name@company.com" aria-label="Recipient" spellcheck="false" autocomplete="off"><button type="button" class="set-btn quiet" data-action="removeRow">Remove</button></div>
+      {{else}}
+      <div class="v" data-empty="recipient"><span class="set-dim">nobody yet</span></div>
+      {{end}}
+      <div class="v"><button type="button" class="set-btn" data-action="addRecipient">Add a person</button></div>
+    </div>
+  </div>
+  <div class="set-fld" data-shown-by="notif_enabled"{{if not .Config.Notifications.Enabled}} hidden{{end}}>
+    <label for="cfg-throttle">Wait between alerts<small>the shortest gap between two alerts to one person</small></label>
+    <div class="v"><input class="set-inp" id="cfg-throttle" type="text" size="6" data-field="notif_throttle_minutes" value="{{.V.ThrottleText}}" placeholder="15 min"></div>
+  </div>
+
+  <!-- Fire alarm -->
+  <div class="set-sect"><h2>Fire alarm</h2>
+    <span class="set-cnt{{if .Config.FireAlarm.Enabled}} ok{{end}}" id="cfg-fa-words"><i></i>{{if .Config.FireAlarm.Enabled}}on{{else}}off{{end}}</span>
+  </div>
+  <div class="set-fld">
+    <label id="cfg-fa-enabled-l">Fire alarm controls<small>off: hidden · on: a Fire Alarm tab on Diagnostics; the fleet manager decides what robots do</small></label>
+    <div class="v"><button type="button" class="set-chk{{if .Config.FireAlarm.Enabled}} on{{end}}" role="switch" aria-checked="{{if .Config.FireAlarm.Enabled}}true{{else}}false{{end}}" aria-labelledby="cfg-fa-enabled-l" data-switch="fa_enabled"></button></div>
+  </div>
+  <div class="set-fld" data-shown-by="fa_enabled"{{if not .Config.FireAlarm.Enabled}} hidden{{end}}>
+    <label id="cfg-fa-resume-l">Resume robots when the alarm clears<small>how the auto-resume box starts out; whoever clears the alarm can still change it</small></label>
+    <div class="v"><button type="button" class="set-chk{{if .Config.FireAlarm.AutoResumeDefault}} on{{end}}" role="switch" aria-checked="{{if .Config.FireAlarm.AutoResumeDefault}}true{{else}}false{{end}}" aria-labelledby="cfg-fa-resume-l" data-switch="fa_auto_resume"></button></div>
+  </div>
 
   <!-- Database -->
-  <div class="card mb-2">
-    <h3>Database</h3>
-    <form method="POST" action="/config/save">
-      <input type="hidden" name="section" value="database">
-      <div>
-        <div class="grid grid-3">
-          <div class="form-group">
-            <label>Host</label>
-            <input type="text" name="pg_host" value="{{.Config.Database.Postgres.Host}}" placeholder="localhost">
-          </div>
-          <div class="form-group">
-            <label>Port</label>
-            <input type="number" name="pg_port" value="{{.Config.Database.Postgres.Port}}" placeholder="5432">
-          </div>
-          <div class="form-group">
-            <label>Database</label>
-            <input type="text" name="pg_database" value="{{.Config.Database.Postgres.Database}}" placeholder="shingocore">
-          </div>
-        </div>
-        <div class="grid grid-3">
-          <div class="form-group">
-            <label>User</label>
-            <input type="text" name="pg_user" value="{{.Config.Database.Postgres.User}}" placeholder="shingocore">
-          </div>
-          <div class="form-group">
-            <label>Password</label>
-            <input type="password" name="pg_password" value="{{.Config.Database.Postgres.Password}}" placeholder="">
-          </div>
-          <div class="form-group">
-            <label>SSL Mode</label>
-            <select name="pg_sslmode">
-              <option value="disable" {{if eq .Config.Database.Postgres.SSLMode "disable"}}selected{{end}}>disable</option>
-              <option value="require" {{if eq .Config.Database.Postgres.SSLMode "require"}}selected{{end}}>require</option>
-              <option value="verify-ca" {{if eq .Config.Database.Postgres.SSLMode "verify-ca"}}selected{{end}}>verify-ca</option>
-              <option value="verify-full" {{if eq .Config.Database.Postgres.SSLMode "verify-full"}}selected{{end}}>verify-full</option>
-            </select>
-          </div>
-        </div>
-        <div class="grid grid-3" style="margin-top: 0.5rem;">
-          <div class="form-group">
-            <label>Max Open Conns</label>
-            <input type="number" name="pg_max_open_conns" value="{{if gt .Config.Database.Postgres.MaxOpenConns 0}}{{.Config.Database.Postgres.MaxOpenConns}}{{else}}25{{end}}" placeholder="25">
-          </div>
-          <div class="form-group">
-            <label>Max Idle Conns</label>
-            <input type="number" name="pg_max_idle_conns" value="{{if gt .Config.Database.Postgres.MaxIdleConns 0}}{{.Config.Database.Postgres.MaxIdleConns}}{{else}}10{{end}}" placeholder="10">
-          </div>
-          <div class="form-group">
-            <label>Conn Max Lifetime</label>
-            <input type="text" name="pg_conn_max_lifetime" value="{{if .Config.Database.Postgres.ConnMaxLifetime}}{{.Config.Database.Postgres.ConnMaxLifetime}}{{else}}5m0s{{end}}" placeholder="5m">
-          </div>
-        </div>
-      </div>
+  <div class="set-sect"><h2>Database</h2>
+    {{if .V.DatabaseWords}}<span class="set-cnt{{if .V.DatabaseOK}} ok{{else}} warn{{end}}"><i></i>{{.V.DatabaseWords}}</span>{{end}}
+    <span class="set-spacer"></span>
+    <button type="button" class="set-btn" data-action="testDatabase">Test connection</button>
+  </div>
+  <div class="set-fld">
+    <label for="cfg-pg-host">Postgres server<small>host and port · applies after a restart</small></label>
+    <div class="v"><input class="set-inp mid" id="cfg-pg-host" type="text" data-field="pg_host" value="{{.Config.Database.Postgres.Host}}" placeholder="localhost" spellcheck="false"><input class="set-inp" type="text" size="5" inputmode="numeric" aria-label="Postgres port" data-field="pg_port" value="{{.Config.Database.Postgres.Port}}" placeholder="5432"></div>
+  </div>
+  <div class="set-fld">
+    <label for="cfg-pg-db">Database name<small>applies after a restart</small></label>
+    <div class="v"><input class="set-inp mid" id="cfg-pg-db" type="text" data-field="pg_database" value="{{.Config.Database.Postgres.Database}}" placeholder="shingocore" spellcheck="false"></div>
+  </div>
+  <div class="set-fld">
+    <label for="cfg-pg-user">Sign in<small>user and password · blank password keeps the saved one · applies after a restart</small></label>
+    <div class="v"><input class="set-inp mid" id="cfg-pg-user" type="text" data-field="pg_user" value="{{.Config.Database.Postgres.User}}" placeholder="shingocore" autocomplete="off"><input class="set-inp" type="password" size="14" aria-label="Database password" data-field="pg_password" data-secret="pg" data-saved="{{if .V.DBPasswordSaved}}1{{end}}" value="" placeholder="{{if .V.DBPasswordSaved}}saved{{else}}none saved{{end}}" autocomplete="new-password">{{if .V.DBPasswordSaved}}<button type="button" class="set-btn quiet" data-action="removeSecret" data-secret-for="pg">Remove</button>{{end}}</div>
+  </div>
+  <div class="set-fld">
+    <label id="cfg-pg-ssl-l">Encryption (SSL mode)<small>applies after a restart</small></label>
+    <div class="v"><div class="set-seg" role="group" aria-labelledby="cfg-pg-ssl-l" data-seg="pg_sslmode" data-field="pg_sslmode">
+      {{$m := .Config.Database.Postgres.SSLMode}}
+      {{range $opt := $.V.SSLModes}}<button type="button" data-val="{{$opt}}" aria-pressed="{{if eq $opt $m}}true{{else}}false{{end}}"{{if eq $opt $m}} class="on"{{end}}>{{$opt}}</button>{{end}}
+    </div></div>
+  </div>
+  <div class="set-fld">
+    <label>Connection pool<small><span id="cfg-pool-now">{{.V.MaxOpen}} open · {{.V.MaxIdle}} idle · each replaced after {{.V.LifetimeText}}</span> · applies after a restart</small></label>
+    <div class="v"><button type="button" class="set-btn" data-action="toggleMore" data-more="pool" aria-expanded="false">Change…</button></div>
+  </div>
+  <div class="set-fld" data-more-of="pool" hidden>
+    <label>Open, idle, replace after<small>applies after a restart</small></label>
+    <div class="v"><input class="set-inp" type="text" size="5" inputmode="numeric" aria-label="Most open connections" data-field="pg_max_open_conns" value="{{.V.MaxOpen}}"><input class="set-inp" type="text" size="5" inputmode="numeric" aria-label="Most idle connections" data-field="pg_max_idle_conns" value="{{.V.MaxIdle}}"><input class="set-inp" type="text" size="6" aria-label="Replace a connection after" data-field="pg_conn_max_lifetime" value="{{.V.LifetimeText}}"></div>
+  </div>
+  <p class="set-note">Save tries the new connection first. If it does not answer, nothing is written. If it does, the file is written and Core keeps using the database it has until it restarts.</p>
 
-      <button type="submit" class="btn btn-primary btn-sm">Save</button>
-    </form>
+  <!-- Account -->
+  <div class="set-sect"><h2>Account</h2></div>
+  <div class="set-fld">
+    <label>Admin password<small>for the login you are signed in with</small></label>
+    <div class="v"><button type="button" class="set-btn" data-action="openPasswordModal">Change password…</button></div>
   </div>
 
-  <!-- General (Server Identity + Fleet combined) -->
-  <div class="card mb-2">
-    <h3>General</h3>
-    <form method="POST" action="/config/save">
-      <input type="hidden" name="section" value="general">
-      <h4 class="mb-1">Fleet Backend</h4>
-      <div class="grid grid-3">
-        <div class="form-group">
-          <label>Base URL</label>
-          <input type="text" name="fleet_base_url" value="{{.Config.RDS.BaseURL}}" placeholder="http://192.168.1.100:8088">
-        </div>
-        <div class="form-group">
-          <label>Poll Interval</label>
-          <input type="text" name="fleet_poll_interval" value="{{.Config.RDS.PollInterval}}" placeholder="5s">
-        </div>
-        <div class="form-group">
-          <label>Timeout</label>
-          <input type="text" name="fleet_timeout" value="{{.Config.RDS.Timeout}}" placeholder="10s">
-        </div>
-        <div class="form-group">
-          <label>Faulted Grace Period</label>
-          <input type="text" name="fleet_fault_grace" value="{{.Config.RDS.FaultGrace}}" placeholder="45m">
-          <div class="field-help">How long an order waits in <code>faulted</code> after the fleet reports FAILED before Core fails it. A robot that recovers inside the window keeps its order. Applies to faults recorded after saving; orders already counting down keep their original deadline.</div>
-        </div>
-      </div>
-      <button type="submit" class="btn btn-primary btn-sm">Save</button>
-    </form>
-  </div>
-
-  <!-- Services (Messaging) -->
-  <div class="card mb-2">
-    <h3>Services</h3>
-    <form method="POST" action="/config/save">
-      <input type="hidden" name="section" value="services">
-
-      <!-- Messaging subsection -->
-      <h4 class="mb-1">Messaging (Kafka)</h4>
-
-      <label class="text-sm">Brokers</label>
-      <div id="kafka-broker-rows">
-        {{range $i, $b := .Config.Messaging.Kafka.Brokers}}
-        {{$parts := splitBroker $b}}
-        <div class="flex gap-1 mb-1 kafka-broker-row">
-          <input type="text" name="kafka_host_{{$i}}" value="{{index $parts 0}}" placeholder="Host" style="flex:2">
-          <input type="number" name="kafka_port_{{$i}}" value="{{index $parts 1}}" placeholder="9093" style="flex:1">
-          <button type="button" class="btn btn-danger btn-sm" data-action="removeKafkaBroker">-</button>
-        </div>
-        {{end}}
-      </div>
-      <button type="button" class="btn btn-sm mb-1" data-action="addKafkaBroker">+ Add Broker</button>
-
-      <div class="form-group mb-1">
-        <label>Group ID</label>
-        <input type="text" name="group_id" value="{{.Config.Messaging.Kafka.GroupID}}" placeholder="shingocore">
-      </div>
-
-      <h4 class="mb-1" style="margin-top:0.75rem; border-top:1px solid var(--border); padding-top:0.75rem">Topics</h4>
-      <div class="grid grid-2">
-        <div class="form-group">
-          <label>Orders Topic</label>
-          <input type="text" name="orders_topic" value="{{.Config.Messaging.OrdersTopic}}">
-        </div>
-        <div class="form-group">
-          <label>Dispatch Topic</label>
-          <input type="text" name="dispatch_topic" value="{{.Config.Messaging.DispatchTopic}}">
-        </div>
-      </div>
-
-      <button type="submit" class="btn btn-primary btn-sm">Save</button>
-    </form>
-  </div>
-  <!-- Fire Alarm -->
-  <div class="card mb-2">
-    <h3>Fire Alarm</h3>
-    <form method="POST" action="/config/save">
-      <input type="hidden" name="section" value="fire_alarm">
-      <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.75rem;">
-        Pass-through to RDS fire alarm endpoints. When enabled, a Fire Alarm tab
-        appears on the Diagnostics page. RDS owns all robot logic.
-      </p>
-      <div class="grid grid-2">
-        <div class="form-group">
-          <label style="display:inline;cursor:pointer;">
-            <input type="checkbox" name="fa_enabled" {{if .Config.FireAlarm.Enabled}}checked{{end}}>
-            Enabled
-          </label>
-          <div style="color:var(--text-muted);font-size:0.8rem;margin-top:0.25rem;">
-            Show Fire Alarm tab on Diagnostics page and expose API endpoints.
-          </div>
-        </div>
-        <div class="form-group">
-          <label style="display:inline;cursor:pointer;">
-            <input type="checkbox" name="fa_auto_resume" {{if .Config.FireAlarm.AutoResumeDefault}}checked{{end}}>
-            Auto-resume on clear (default)
-          </label>
-          <div style="color:var(--text-muted);font-size:0.8rem;margin-top:0.25rem;">
-            Default checkbox state for auto-resume when clearing the alarm.
-          </div>
-        </div>
-      </div>
-      <button type="submit" class="btn btn-primary btn-sm">Save</button>
-    </form>
-  </div>
-  <!-- Notifications -->
-  <div class="card mb-2">
-    <h3>Notifications</h3>
-    <form method="POST" action="/config/save">
-      <input type="hidden" name="section" value="notifications">
-      <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.75rem;">
-        Send email alerts when an order faults, fails, or a robot is blocked during an order. Requires an SMTP server.
-      </p>
-      <div class="grid grid-2" style="margin-bottom:0.5rem;">
-        <div class="form-group">
-          <label style="display:inline;cursor:pointer;">
-            <input type="checkbox" name="notif_enabled" {{if .Config.Notifications.Enabled}}checked{{end}}>
-            Enabled
-          </label>
-        </div>
-        <div class="form-group">
-          <label>Throttle (minutes)</label>
-          <input type="number" name="notif_throttle_minutes" value="{{.Config.Notifications.ThrottleMinutes}}" placeholder="15">
-          <div class="field-help">Minimum interval between alerts to the same recipient.</div>
-        </div>
-      </div>
-      <h4 class="mb-1" style="margin-top:0.75rem;border-top:1px solid var(--border);padding-top:0.75rem;">SMTP</h4>
-      <div class="grid grid-3">
-        <div class="form-group">
-          <label>Host</label>
-          <input type="text" name="notif_smtp_host" value="{{.Config.Notifications.SMTPHost}}" placeholder="smtp.company.com">
-        </div>
-        <div class="form-group">
-          <label>Port</label>
-          <input type="number" name="notif_smtp_port" value="{{.Config.Notifications.SMTPPort}}" placeholder="587">
-        </div>
-        <div class="form-group">
-          <label style="display:inline;cursor:pointer;margin-top:1.25rem;">
-            <input type="checkbox" name="notif_smtp_tls" {{if .Config.Notifications.SMTPTLS}}checked{{end}}>
-            TLS
-          </label>
-        </div>
-      </div>
-      <div class="grid grid-3">
-        <div class="form-group">
-          <label>User</label>
-          <input type="text" name="notif_smtp_user" value="{{.Config.Notifications.SMTPUser}}" placeholder="">
-        </div>
-        <div class="form-group">
-          <label>Password</label>
-          <input type="password" name="notif_smtp_password" value="{{.Config.Notifications.SMTPPassword}}" placeholder="">
-        </div>
-        <div class="form-group">
-          <label>From Address</label>
-          <input type="text" name="notif_from_address" value="{{.Config.Notifications.FromAddress}}" placeholder="shingo@company.com">
-        </div>
-      </div>
-      <h4 class="mb-1" style="margin-top:0.75rem;border-top:1px solid var(--border);padding-top:0.75rem;">Recipients</h4>
-      <label class="text-sm">Email Addresses</label>
-      <div id="notif-recipient-rows">
-        {{range $i, $r := .Config.Notifications.Recipients}}
-        <div class="flex gap-1 mb-1 notif-recipient-row">
-          <input type="email" name="notif_recipient_{{$i}}" value="{{$r}}" placeholder="user@company.com" style="flex:2">
-          <button type="button" class="btn btn-danger btn-sm" data-action="removeNotifRecipient">Delete</button>
-        </div>
-        {{end}}
-      </div>
-      <button type="button" class="btn btn-sm mb-1" data-action="addNotifRecipient">+ Add Recipient</button>
-      <div class="flex gap-1 mb-1">
-        <button type="submit" class="btn btn-primary btn-sm">Save</button>
-        <button type="button" class="btn btn-sm" data-action="clearNotifications">Clear</button>
-        <button type="button" class="btn btn-sm" id="btn-test-email" data-action="testNotifEmail">Send Test Email</button>
-        <button type="button" class="btn btn-sm" id="btn-test-fault" data-action="testNotifAlert" data-alert-type="fault">Test Fault Alert</button>
-        <button type="button" class="btn btn-sm" id="btn-test-fail" data-action="testNotifAlert" data-alert-type="fail">Test Fail Alert</button>
-        <button type="button" class="btn btn-sm" id="btn-test-cleared" data-action="testNotifAlert" data-alert-type="cleared">Test Fault Cleared</button>
-        <button type="button" class="btn btn-sm" id="btn-test-chain" data-action="testNotifAlert" data-alert-type="chain">Test Fault Chain</button>
-      </div>
-      <div id="notif-test-result" style="display:none;margin-top:0.5rem;" class="mb-1"></div>
-    </form>
+  <div class="set-savebar">
+    <span class="prov">No unsaved changes</span>
+    <button type="button" class="set-btn quiet" data-set="discard">Discard</button>
+    <button type="button" class="set-btn primary" data-set="save">Save</button>
   </div>
 </div>
 
-<div id="page-data" data-broker-count="{{len .Config.Messaging.Kafka.Brokers}}" data-recipient-count="{{len .Config.Notifications.Recipients}}"></div>
+<!-- Send a test (C5): uses what is on the page now, saved or not. -->
+<div class="modal-overlay" id="cfg-test-modal">
+  <div class="modal modal-wide set-ui" role="dialog" aria-labelledby="cfg-test-title">
+    <div class="modal-header flex flex-between">
+      <h2 id="cfg-test-title">Send a test</h2>
+      <button type="button" class="modal-close" data-action="closeModal" data-modal="cfg-test-modal" aria-label="Close">&times;</button>
+    </div>
+    <p class="set-dim">Sent with the mail settings on the page now, saved or not, to everyone in Send to.</p>
+    <div class="set-fld">
+      <label>Test email<small>a plain message: the mail server answers</small></label>
+      <div class="v"><button type="button" class="set-btn" data-action="sendTest" data-kind="email">Send</button></div>
+    </div>
+    <div class="set-fld">
+      <label>Fault alert<small>what goes out when an order faults</small></label>
+      <div class="v"><button type="button" class="set-btn" data-action="sendTest" data-kind="fault">Send</button></div>
+    </div>
+    <div class="set-fld">
+      <label>Fail alert<small>what goes out when an order fails</small></label>
+      <div class="v"><button type="button" class="set-btn" data-action="sendTest" data-kind="fail">Send</button></div>
+    </div>
+    <div class="set-fld">
+      <label>Fault cleared<small>what goes out when a fault clears</small></label>
+      <div class="v"><button type="button" class="set-btn" data-action="sendTest" data-kind="cleared">Send</button></div>
+    </div>
+    <div class="set-fld">
+      <label>Fault, then cleared<small>two emails 2 s apart on one thread: check the threading</small></label>
+      <div class="v"><button type="button" class="set-btn" data-action="sendTest" data-kind="chain">Send</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- Change password (C8): posts POST /config/password. -->
+<div class="modal-overlay" id="cfg-password-modal">
+  <div class="modal set-ui" role="dialog" aria-labelledby="cfg-password-title">
+    <div class="modal-header flex flex-between">
+      <h2 id="cfg-password-title">Change password</h2>
+      <button type="button" class="modal-close" data-action="closeModal" data-modal="cfg-password-modal" aria-label="Close">&times;</button>
+    </div>
+    <div class="set-fld">
+      <label for="cfg-pw-old">Current password</label>
+      <div class="v"><input class="set-inp" id="cfg-pw-old" type="password" size="16" data-pw="old" autocomplete="current-password"></div>
+    </div>
+    <div class="set-fld">
+      <label for="cfg-pw-new">New password</label>
+      <div class="v"><input class="set-inp" id="cfg-pw-new" type="password" size="16" data-pw="new" autocomplete="new-password"></div>
+    </div>
+    <div class="set-fld">
+      <label for="cfg-pw-again">New password again</label>
+      <div class="v"><input class="set-inp" id="cfg-pw-again" type="password" size="16" data-pw="again" autocomplete="new-password"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="set-btn quiet" data-action="closeModal" data-modal="cfg-password-modal">Cancel</button>
+      <button type="button" class="set-btn primary" data-action="changePassword">Change password</button>
+    </div>
+  </div>
+</div>
+
 <script type="module" src="/static/pages/config.js"></script>
 {{end}}

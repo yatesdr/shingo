@@ -356,13 +356,6 @@ func templateFuncs(namer stationNamer) template.FuncMap {
 				return "chip-below"
 			}
 		},
-		"splitBroker": func(broker string) [2]string {
-			parts := strings.SplitN(broker, ":", 2)
-			if len(parts) == 2 {
-				return [2]string{parts[0], parts[1]}
-			}
-			return [2]string{broker, "9093"}
-		},
 		"nodeColor": func(count, _ int) string {
 			return "" // Styling handled via tile state CSS classes
 		},

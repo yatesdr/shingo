@@ -34,7 +34,8 @@ import (
 const defaultPlantTimezone = "UTC"
 
 // plantLocation is the plant's IANA timezone, resolved once from the
-// PLANT_TIMEZONE env var (default America/Chicago). The dashboards follow a
+// PLANT_TIMEZONE env var (default UTC, defaultPlantTimezone above), then from
+// the yaml `timezone:` at router construction. The dashboards follow a
 // plant-local-at-server convention (Q-004): timestamps are stored UTC, but
 // bare YYYY-MM-DD date filters from the URL resolve in THIS zone — so "Today"
 // means the plant's calendar day, not the server's (which runs UTC). Without
@@ -80,6 +81,24 @@ func applyPlantTimezoneConfig(cfgTimezone string) {
 	}
 	plantLocation = loc
 	log.Printf("www: plant timezone %s (from config)", plantLocation)
+}
+
+// OfferedPlantTimezone is the plant zone Core offers its Edges on every
+// heartbeat ack (main.go → CoreDataService.SetPlantTimezone): the zone Core was
+// EXPLICITLY told, by the same precedence applyPlantTimezoneConfig uses for
+// Core's own screens. PLANT_TIMEZONE when set, else the yaml `timezone:`, else
+// "" — never defaultPlantTimezone, which is nobody's answer
+// (protocol.EdgeHeartbeatAck.Timezone says why). So Core's screens and the
+// Edges with no zone of their own show the same clock (C9).
+//
+// An invalid PLANT_TIMEZONE is offered as written: Core's screens fall back to
+// UTC, and an Edge refuses a zone that does not parse (adoptPlantTimezone), so
+// no default goes out in its place.
+func OfferedPlantTimezone(cfgTimezone string) string {
+	if env := os.Getenv("PLANT_TIMEZONE"); env != "" {
+		return env
+	}
+	return cfgTimezone
 }
 
 // plantDayStart truncates t to midnight in the plant timezone. parseMissionFilter

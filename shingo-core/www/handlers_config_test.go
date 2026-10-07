@@ -3,6 +3,7 @@
 package www
 
 import (
+	"encoding/json"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
@@ -24,18 +25,27 @@ import (
 )
 
 // Characterization tests for handlers_config.go — handleConfig (renders the
-// config page) and handleConfigSave (per-section form persist + hot-reload).
+// config page) and apiConfigSave (PUT /api/config: the page's one save door,
+// which replaced the per-section form door POST /config/save in U2, R4).
 //
-// The save handler writes config.yaml to disk via cfg.Save(h.engine.ConfigPath()),
-// so we set ConfigPath to a temp file and assert both the in-memory config
-// mutation and the redirect.
+// The save handler writes config.yaml to disk via draft.Save(ConfigPath()),
+// so we set ConfigPath to a temp file and assert the in-memory config.
 
 // testHandlersWithConfigPath builds a handler whose engine has a real
-// ConfigPath pointing at a writable temp file. Required by handleConfigSave.
+// ConfigPath pointing at a writable temp file. Required by apiConfigSave.
 func testHandlersWithConfigPath(t *testing.T) (*Handlers, *store.DB, string) {
 	t.Helper()
+	h, db, path, _ := testHandlersWithConfigAndDB(t)
+	return h, db, path
+}
 
-	db := testdb.Open(t)
+// testHandlersWithConfigAndDB is testHandlersWithConfigPath plus the
+// coordinates of the test container's database, for the database save, which
+// pings a real pool against what it is given (C3, R27).
+func testHandlersWithConfigAndDB(t *testing.T) (*Handlers, *store.DB, string, *config.DatabaseConfig) {
+	t.Helper()
+
+	db, dbCfg := testdb.OpenWithConfig(t)
 	sim := simulator.New()
 
 	cfg := config.Defaults()
@@ -73,7 +83,7 @@ func testHandlersWithConfigPath(t *testing.T) (*Handlers, *store.DB, string) {
 		debugLog:      dbgLog,
 	}
 	loadTestTemplates(t, h)
-	return h, db, cfgPath
+	return h, db, cfgPath, dbCfg
 }
 
 // --- handleConfig (page render) ---------------------------------------------
@@ -97,65 +107,123 @@ func TestHandleConfig_RendersHTML(t *testing.T) {
 	}
 }
 
-func TestHandleConfig_SavedBanner(t *testing.T) {
+// --- apiConfigSave (re-pointed from the form door, U2) ----------------------
+
+// L3 + R27: the database save pings the draft (C3), so it posts the test
+// container's own coordinates; the posted fields are applied to the config
+// and the file, and nothing swaps the live pool: the *sql.DB is the same object
+// afterwards and still answers, and every changed database field waits on a
+// restart.
+func TestPinConfig_R27_DatabaseSaveKeepsLivePool(t *testing.T) {
 	t.Parallel()
-	h, _, _ := testHandlersWithConfigPath(t)
+	h, db, cfgPath, dbCfg := testHandlersWithConfigAndDB(t)
+	h.boot = takeBootSnapshot(h.engine.AppConfig())
+	pg := dbCfg.Postgres
+	livePool := db.DB
 
-	req := httptest.NewRequest(http.MethodGet, "/config?saved=database", nil)
-	rec := httptest.NewRecorder()
-	h.handleConfig(rec, req)
-
+	rec := pinPut(t, h.apiConfigSave, "/api/config", map[string]any{"database": map[string]any{
+		"host": pg.Host, "port": pg.Port, "database": pg.Database, "user": pg.User,
+		"password": pg.Password, "sslmode": pg.SSLMode, "max_open_conns": 42,
+		"max_idle_conns": 5, "conn_max_lifetime": "5m0s",
+	}})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "Settings saved") || !strings.Contains(body, "database") {
-		t.Errorf("expected saved banner with section name; body excerpt=%q", excerpt(body))
-	}
-}
-
-// --- handleConfigSave -------------------------------------------------------
-
-func TestHandleConfigSave_DatabaseSection(t *testing.T) {
-	t.Parallel()
-	h, _, _ := testHandlersWithConfigPath(t)
-
-	form := url.Values{}
-	form.Set("section", "database")
-	form.Set("pg_host", "db-1.example")
-	form.Set("pg_port", "5433")
-	form.Set("pg_database", "newdb")
-	form.Set("pg_user", "newuser")
-	form.Set("pg_password", "newsecret")
-	form.Set("pg_sslmode", "require")
-	form.Set("pg_max_open_conns", "42")
-
-	rec := postForm(t, h.handleConfigSave, "/config/save", form)
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("status: got %d, want 303; body=%s", rec.Code, rec.Body.String())
-	}
-	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "saved=database") {
-		t.Errorf("redirect: got %q, want '...saved=database'", loc)
-	}
 
 	cfg := h.engine.AppConfig()
-	if cfg.Database.Postgres.Host != "db-1.example" {
+	if cfg.Database.Postgres.Host != pg.Host {
 		t.Errorf("host: got %q", cfg.Database.Postgres.Host)
 	}
-	if cfg.Database.Postgres.Port != 5433 {
+	if cfg.Database.Postgres.Port != pg.Port {
 		t.Errorf("port: got %d", cfg.Database.Postgres.Port)
 	}
-	if cfg.Database.Postgres.Database != "newdb" {
+	if cfg.Database.Postgres.Database != pg.Database {
 		t.Errorf("database: got %q", cfg.Database.Postgres.Database)
 	}
-	if cfg.Database.Postgres.User != "newuser" {
+	if cfg.Database.Postgres.User != pg.User {
 		t.Errorf("user: got %q", cfg.Database.Postgres.User)
 	}
-	if cfg.Database.Postgres.Password != "newsecret" {
+	if cfg.Database.Postgres.Password != pg.Password {
 		t.Errorf("password not updated")
 	}
 	if cfg.Database.Postgres.MaxOpenConns != 42 {
 		t.Errorf("max_open_conns: got %d", cfg.Database.Postgres.MaxOpenConns)
+	}
+	if got := pinYAML(t, cfgPath, "database.postgres.max_open_conns"); got != "42" {
+		t.Errorf("yaml max_open_conns: got %q", got)
+	}
+	// R27: the live pool is the one Core booted with, still open.
+	if db.DB != livePool {
+		t.Errorf("the live *sql.DB was replaced by a database save")
+	}
+	if got := db.Stats().MaxOpenConnections; got == 42 {
+		t.Errorf("the live pool took max_open_conns=42 before a restart")
+	}
+	if err := h.engine.HealthService().PingDB(); err != nil {
+		t.Errorf("ping after the save: %v", err)
+	}
+	var ans configAnswer
+	testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &ans), "decode answer")
+	found := false
+	for _, f := range ans.Restart {
+		found = found || f == "Database connection pool"
+	}
+	if !found {
+		t.Errorf("restart: got %q, want it to list the database connection pool", ans.Restart)
+	}
+}
+
+// C3 (L3's added case): an unreachable host is refused before anything is
+// written: 400, the file and the live config untouched, Core still on its
+// database.
+func TestHandleConfigSave_DatabaseDeadHostRefused(t *testing.T) {
+	t.Parallel()
+	h, _, cfgPath := testHandlersWithConfigPath(t)
+	before := h.engine.AppConfig().Database
+	fileBefore, err := os.ReadFile(cfgPath)
+	testutil.MustNoErr(t, err, "read config before")
+
+	rec := pinPut(t, h.apiConfigSave, "/api/config", map[string]any{"database": map[string]any{
+		"host": "127.0.0.1", "port": 1, "database": "nodb", "user": "nobody",
+		"password": "x", "sslmode": "disable", "max_open_conns": 2,
+		"max_idle_conns": 1, "conn_max_lifetime": "1m0s",
+	}})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "did not answer") {
+		t.Errorf("body should say the database did not answer, got %q", rec.Body.String())
+	}
+	if after := h.engine.AppConfig().Database; after != before {
+		t.Errorf("live database config changed: %+v", after)
+	}
+	fileAfter, err := os.ReadFile(cfgPath)
+	testutil.MustNoErr(t, err, "read config after")
+	if string(fileAfter) != string(fileBefore) {
+		t.Errorf("config file written by a refused database save")
+	}
+	if err := h.engine.HealthService().PingDB(); err != nil {
+		t.Errorf("Core lost its database: %v", err)
+	}
+}
+
+// C3's Test connection opens and pings the draft, nothing more.
+func TestHandleConfigTestDatabase_RealContainer(t *testing.T) {
+	t.Parallel()
+	h, _, cfgPath, dbCfg := testHandlersWithConfigAndDB(t)
+	pg := dbCfg.Postgres
+	rec := pinRequest(t, http.MethodPost, h.apiConfigTestDatabase, "/api/config/test-database", map[string]any{
+		"host": pg.Host, "port": pg.Port, "database": pg.Database, "user": pg.User,
+		"password": pg.Password, "sslmode": pg.SSLMode, "max_open_conns": 2,
+		"max_idle_conns": 1, "conn_max_lifetime": "1m0s",
+	})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"ok":true`) {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	raw, err := os.ReadFile(cfgPath)
+	testutil.MustNoErr(t, err, "read config file")
+	if string(raw) != "{}" {
+		t.Errorf("config file written by the test door")
 	}
 }
 
@@ -163,15 +231,11 @@ func TestHandleConfigSave_FleetSection(t *testing.T) {
 	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
-	form := url.Values{}
-	form.Set("section", "fleet")
-	form.Set("fleet_base_url", "http://fleet:8080")
-	form.Set("fleet_poll_interval", "10s")
-	form.Set("fleet_timeout", "5s")
-
-	rec := postForm(t, h.handleConfigSave, "/config/save", form)
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("status: got %d, want 303; body=%s", rec.Code, rec.Body.String())
+	rec := pinPut(t, h.apiConfigSave, "/api/config", map[string]any{"fleet": map[string]any{
+		"base_url": "http://fleet:8080", "poll_interval": "10s", "timeout": "5s", "fault_grace": "45m0s",
+	}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 
 	cfg := h.engine.AppConfig()
@@ -189,19 +253,14 @@ func TestHandleConfigSave_MessagingSection(t *testing.T) {
 	// unresolvable hostname made this test a flat ~11.7s (two brokers × 5s) — a
 	// quarter of the package's wall time. Connection refused is instant and
 	// exercises the same unreachable-broker path.
-	form := url.Values{}
-	form.Set("section", "messaging")
-	form.Set("kafka_host_0", "127.0.0.1")
-	form.Set("kafka_port_0", "9092")
-	form.Set("kafka_host_1", "127.0.0.1")
-	form.Set("kafka_port_1", "9093")
-	form.Set("group_id", "shingo-test")
-	form.Set("orders_topic", "orders.test")
-	form.Set("dispatch_topic", "dispatch.test")
-
-	rec := postForm(t, h.handleConfigSave, "/config/save", form)
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("status: got %d, want 303; body=%s", rec.Code, rec.Body.String())
+	rec := pinPut(t, h.apiConfigSave, "/api/config", map[string]any{"messaging": map[string]any{
+		"brokers":        []string{"127.0.0.1:9092", "127.0.0.1:9093"},
+		"group_id":       "shingo-test",
+		"orders_topic":   "orders.test",
+		"dispatch_topic": "dispatch.test",
+	}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 
 	cfg := h.engine.AppConfig()
@@ -223,14 +282,11 @@ func TestHandleConfigSave_FireAlarmSection(t *testing.T) {
 	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
-	form := url.Values{}
-	form.Set("section", "fire_alarm")
-	form.Set("fa_enabled", "on")
-	form.Set("fa_auto_resume", "on")
-
-	rec := postForm(t, h.handleConfigSave, "/config/save", form)
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("status: got %d, want 303; body=%s", rec.Code, rec.Body.String())
+	rec := pinPut(t, h.apiConfigSave, "/api/config", map[string]any{"fire_alarm": map[string]any{
+		"enabled": true, "auto_resume_default": true,
+	}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 
 	cfg := h.engine.AppConfig()
@@ -246,10 +302,7 @@ func TestHandleConfigSave_UnknownSection(t *testing.T) {
 	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
-	form := url.Values{}
-	form.Set("section", "no-such-section")
-
-	rec := postForm(t, h.handleConfigSave, "/config/save", form)
+	rec := pinPut(t, h.apiConfigSave, "/api/config", map[string]any{"no-such-section": map[string]any{}})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
@@ -266,25 +319,13 @@ func TestHandleConfigSave_InvalidConfigPathReturns500(t *testing.T) {
 	testutil.MustNoErr(t, os.Remove(cfgPath), "remove cfg file")
 	testutil.MustNoErr(t, os.Mkdir(cfgPath, 0755), "mkdir over cfg path")
 
-	form := url.Values{}
-	form.Set("section", "fire_alarm")
-	form.Set("fa_enabled", "on")
-
-	rec := postForm(t, h.handleConfigSave, "/config/save", form)
+	rec := pinPut(t, h.apiConfigSave, "/api/config", map[string]any{"fire_alarm": map[string]any{"enabled": true}})
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status: got %d, want 500; body=%s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "Failed to save") {
 		t.Errorf("body should mention 'Failed to save', got %q", rec.Body.String())
 	}
-}
-
-// excerpt returns the first 200 chars of s for error messages.
-func excerpt(s string) string {
-	if len(s) > 200 {
-		return s[:200] + "…"
-	}
-	return s
 }
 
 // --- handleConfigPassword (admin password rotation) --------------------------

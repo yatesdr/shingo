@@ -2,6 +2,8 @@ package service
 
 import (
 	"database/sql"
+
+	"shingocore/config"
 	"shingocore/store"
 )
 
@@ -24,6 +26,13 @@ func NewHealthService(db *store.DB) *HealthService {
 // PingDB returns nil when the database is reachable.
 func (s *HealthService) PingDB() error {
 	return s.db.Ping()
+}
+
+// TestDatabase opens a pool for cfg, pings it with a bounded deadline and
+// closes it. It never migrates and never touches the pool in use: the config
+// page's Test connection, run against the draft. It does not read s.db.
+func (s *HealthService) TestDatabase(cfg config.DatabaseConfig) error {
+	return store.Ping(&cfg)
 }
 
 // PoolStats returns the database connection-pool counters behind the Core

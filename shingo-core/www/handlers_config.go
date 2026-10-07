@@ -3,9 +3,11 @@ package www
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
-	"strconv"
+	"os"
+	"strings"
 	"time"
 
 	"shingo/protocol/auth"
@@ -13,81 +15,313 @@ import (
 	"shingocore/notify"
 )
 
+// The Core Configuration page: one page, one Save (docs/ui-style-guide/
+// 33-settings-pages.md). GET /config renders it; PUT /api/config is its one
+// save door; POST /api/config/test-database, /config/test-email,
+// /config/test-alert and /config/password are its actions, none of which
+// touches the draft or the file.
+
 func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
-	cfg := h.engine.AppConfig()
-	data := map[string]any{
+	cfg := h.engine.AppConfig().Clone()
+	h.render(w, r, "config.html", map[string]any{
 		"Page":   "config",
 		"Config": cfg,
-		"Saved":  r.URL.Query().Get("saved"),
-	}
-	h.render(w, r, "config.html", data)
+		"V":      h.configView(cfg),
+	})
 }
 
-func (h *Handlers) handleConfigSave(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	section := r.FormValue("section")
-	cfg := h.engine.AppConfig()
-
-	// NOT `defer cfg.Unlock()`, however much the two Unlock calls below invite
-	// it: config.Config.Save takes the same non-reentrant mutex, so a deferred
-	// unlock would still be holding it at the Save call and deadlock the write.
-	// The lock covers the mutation and nothing else.
-	cfg.Lock()
-	switch section {
-	case "database":
-		applyDatabaseSection(cfg, r)
-	case "general", "fleet":
-		applyFleetSection(cfg, r)
-	case "services", "messaging":
-		applyMessagingSection(cfg, r)
-	case "fire_alarm":
-		applyFireAlarmSection(cfg, r)
-	case "notifications":
-		applyNotificationsSection(cfg, r)
-	default:
-		cfg.Unlock()
-		http.Error(w, "unknown section", http.StatusBadRequest)
-		return
-	}
-	cfg.Unlock()
-
-	if err := cfg.Save(h.engine.ConfigPath()); err != nil {
-		log.Printf("config: save error: %v", err)
-		http.Error(w, "Failed to save: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Hot-reload the affected subsystem
-	switch section {
-	case "database":
-		h.orchestration.ReconfigureDatabase()
-	case "general", "fleet":
-		h.orchestration.ReconfigureFleet()
-	case "services", "messaging":
-		h.orchestration.ReconfigureMessaging()
-	case "notifications":
-		h.orchestration.ReconfigureNotifications()
-	}
-
-	log.Printf("config: %s section saved", section)
-	http.Redirect(w, r, "/config?saved="+section, http.StatusSeeOther)
+// configView is what the page shows beyond the raw config: durations as
+// typed, live words for the section titles, whether a secret is saved (never
+// the secret), and the restart notice.
+type configView struct {
+	TZEnv           string // PLANT_TIMEZONE, when set: the row is read-only
+	ShownZone       string // the zone Core's own screens are using
+	MessagingWords  string
+	MessagingOK     bool
+	DatabaseWords   string
+	DatabaseOK      bool
+	PollText        string
+	TimeoutText     string
+	GraceText       string
+	ThrottleText    string
+	LifetimeText    string
+	MaxOpen         int
+	MaxIdle         int
+	DBPasswordSaved bool
+	SMTPPassSaved   bool
+	SSLModes        []string
+	RestartJSON     string
 }
 
-func (h *Handlers) handleConfigTestEmail(w http.ResponseWriter, r *http.Request) {
-	cfg := h.engine.AppConfig()
-	n := cfg.Notifications
+func (h *Handlers) configView(cfg *config.Config) configView {
+	pg := cfg.Database.Postgres
+	v := configView{
+		TZEnv:           os.Getenv("PLANT_TIMEZONE"),
+		ShownZone:       plantLocation.String(),
+		PollText:        durationText(cfg.RDS.PollInterval),
+		TimeoutText:     durationText(cfg.RDS.Timeout),
+		GraceText:       durationText(cfg.RDS.FaultGrace),
+		ThrottleText:    durationText(time.Duration(cfg.Notifications.ThrottleMinutes) * time.Minute),
+		LifetimeText:    durationText(pg.ConnMaxLifetime),
+		MaxOpen:         pg.MaxOpenConns,
+		MaxIdle:         pg.MaxIdleConns,
+		DBPasswordSaved: pg.Password != "",
+		SMTPPassSaved:   cfg.Notifications.SMTPPassword != "",
+		SSLModes:        sslModes,
+	}
+	// The pool's own defaults (store.OpenWithoutMigrate), shown when unset,
+	// as the form page did.
+	if v.MaxOpen <= 0 {
+		v.MaxOpen = 25
+	}
+	if v.MaxIdle <= 0 {
+		v.MaxIdle = 10
+	}
+	if pg.ConnMaxLifetime <= 0 {
+		v.LifetimeText = "5 min"
+	}
+	if mc := h.engine.MsgClient(); mc != nil {
+		v.MessagingOK = mc.IsConnected()
+		v.MessagingWords = map[bool]string{true: "connected", false: "not connected"}[v.MessagingOK]
+	}
+	if hs := h.engine.HealthService(); hs != nil {
+		if _, ok := hs.PoolStats(); ok {
+			v.DatabaseOK = hs.PingDB() == nil
+			v.DatabaseWords = map[bool]string{true: "connected", false: "not answering"}[v.DatabaseOK]
+		}
+	}
+	restart, _ := json.Marshal(h.boot.pending(cfg))
+	v.RestartJSON = string(restart)
+	return v
+}
 
+func writeConfigJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
 
-	if n.SMTPHost == "" || n.FromAddress == "" || len(n.Recipients) == 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "SMTP host, from address, and at least one recipient are required"})
+// configRefusal is a save or test that did not go through: a top-level
+// `error` always (L2, L5), and the field errors when there are any.
+func configRefusal(w http.ResponseWriter, status int, msg string, errs fieldErrs) {
+	if errs == nil {
+		errs = fieldErrs{}
+	}
+	writeConfigJSON(w, status, map[string]any{"ok": false, "error": msg, "errors": errs})
+}
+
+// readConfigBody decodes a JSON object body. An empty body is an empty object.
+func readConfigBody(r *http.Request, v any) error {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		return err
+	}
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		raw = []byte("{}")
+	}
+	return json.Unmarshal(raw, v)
+}
+
+// apiConfigSave is the page's one save door: PUT /api/config with
+// {section: {...}} for the dirty sections only.
+//
+// ONE SAVE PATH. Under h.configMu, held for the whole sequence: copy the live
+// config, apply the posted sections to the copy, validate, (database: ping
+// the draft, C3; it applies after a restart, R27), write the file, swap the copy into the live config field
+// by field, then reconfigure what changed. Any error before the write and
+// nothing is written and the live config is untouched. The copy is taken
+// inside the mutex and only the posted sections are applied to it, so two
+// people saving different sections both land.
+//
+// Answers: 400 {ok:false, error, errors{field: msg}} for a refused save; 500
+// {ok:false, error: "Failed to save: …"} when the file cannot be written; 200
+// {ok:true, applied, restart, failed}, where `failed` names a subsystem that
+// did not take the saved config (the file stays).
+func (h *Handlers) apiConfigSave(w http.ResponseWriter, r *http.Request) {
+	var body map[string]json.RawMessage
+	if err := readConfigBody(r, &body); err != nil {
+		configRefusal(w, http.StatusBadRequest, "The body is not a JSON object of sections: "+err.Error(), nil)
 		return
 	}
+	posted, unknown := orderedConfigSections(body)
+	if unknown != "" {
+		configRefusal(w, http.StatusBadRequest, "unknown section: "+unknown, nil)
+		return
+	}
+
+	h.configMu.Lock()
+	defer h.configMu.Unlock()
+
+	live := h.engine.AppConfig()
+	draft := live.Clone()
+	errs := fieldErrs{}
+	for _, name := range posted {
+		applyConfigSection(draft, name, body[name], errs)
+	}
+	if len(errs) > 0 {
+		configRefusal(w, http.StatusBadRequest, errs.first(), errs)
+		return
+	}
+
+	if err := h.pingConfigDatabase(live, draft, posted); err != nil {
+		configRefusal(w, http.StatusBadRequest,
+			"The database did not answer, so nothing was saved: "+err.Error(), nil)
+		return
+	}
+	if err := draft.Save(h.engine.ConfigPath()); err != nil {
+		log.Printf("config: save error: %v", err)
+		configRefusal(w, http.StatusInternalServerError, "Failed to save: "+err.Error(), nil)
+		return
+	}
+
+	changed := make(map[string]bool, len(posted))
+	for _, name := range posted {
+		changed[name] = configSectionChanged(live, draft, name)
+	}
+	live.ReplaceFrom(draft)
+	failed := h.reconfigureConfigSections(posted, changed)
+
+	log.Printf("config: saved %s", strings.Join(posted, ", "))
+	writeConfigJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"applied": posted,
+		"restart": h.boot.pending(live),
+		"failed":  failed,
+	})
+}
+
+// orderedConfigSections returns the posted section names in page order, or
+// the first name it does not know. Nothing posted is itself unknown.
+func orderedConfigSections(body map[string]json.RawMessage) (posted []string, unknown string) {
+	for name := range body {
+		if !knownConfigSection(name) && (unknown == "" || name < unknown) {
+			unknown = name
+		}
+	}
+	if unknown != "" {
+		return nil, unknown
+	}
+	if len(body) == 0 {
+		return nil, "none posted"
+	}
+	for _, name := range configSectionOrder {
+		if _, ok := body[name]; ok {
+			posted = append(posted, name)
+		}
+	}
+	return posted, ""
+}
+
+// pingConfigDatabase: when the posted database section changes the
+// connection, the draft is opened and pinged (bounded, no migrate) before
+// anything is written, and a database that does not answer refuses the save
+// (C3, R2). It is only a check: the new settings apply after a restart (R27),
+// because the lane lock and the ETA cache hold the *sql.DB they were built
+// with, so swapping the pool under a running Core left them on a closed one.
+func (h *Handlers) pingConfigDatabase(live, draft *config.Config, posted []string) error {
+	for _, name := range posted {
+		if name == "database" && configSectionChanged(live, draft, name) {
+			if h.pingDB != nil {
+				return h.pingDB(draft.Database)
+			}
+			return h.engine.HealthService().TestDatabase(draft.Database)
+		}
+	}
+	return nil
+}
+
+// reconfigureConfigSections applies the live config to each subsystem whose
+// section changed. Plant and fire alarm have none (read at boot and at use).
+func (h *Handlers) reconfigureConfigSections(posted []string, changed map[string]bool) []string {
+	failed := []string{}
+	for _, name := range posted {
+		if !changed[name] {
+			continue
+		}
+		var err error
+		switch name {
+		case "fleet":
+			err = h.orchestration.ReconfigureFleet()
+		case "messaging":
+			err = h.orchestration.ReconfigureMessaging()
+		case "notifications":
+			err = h.orchestration.ReconfigureNotifications()
+		}
+		if err != nil {
+			failed = append(failed, name+" ("+err.Error()+")")
+		}
+	}
+	return failed
+}
+
+// apiConfigTestDatabase is the Database section's Test connection: it opens
+// and pings the posted draft (blank password = the saved one) and never
+// migrates or saves.
+func (h *Handlers) apiConfigTestDatabase(w http.ResponseWriter, r *http.Request) {
+	var wire databaseWire
+	if err := readConfigBody(r, &wire); err != nil {
+		configRefusal(w, http.StatusBadRequest, "The body is not the database section: "+err.Error(), nil)
+		return
+	}
+	draft := h.engine.AppConfig().Clone().Database
+	errs := fieldErrs{}
+	wire.apply(&draft.Postgres, errs)
+	if len(errs) > 0 {
+		configRefusal(w, http.StatusBadRequest, errs.first(), errs)
+		return
+	}
+	pg := draft.Postgres
+	if err := h.engine.HealthService().TestDatabase(draft); err != nil {
+		writeConfigJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "message": err.Error()})
+		return
+	}
+	msg := fmt.Sprintf("Connected to %s:%d/%s.", pg.Host, pg.Port, pg.Database)
+	writeConfigJSON(w, http.StatusOK, map[string]any{"ok": true, "message": msg})
+}
+
+// notificationsDraft decodes a posted notifications section over the saved
+// one (so a blank password is the saved password) for the test doors (C5).
+func (h *Handlers) notificationsDraft(r *http.Request) (config.NotificationsConfig, fieldErrs, error) {
+	n := h.engine.AppConfig().Clone().Notifications
+	var wire notificationsWire
+	if err := readConfigBody(r, &wire); err != nil {
+		return n, nil, err
+	}
+	errs := fieldErrs{}
+	wire.apply(&n, errs)
+	return n, errs, nil
+}
+
+const smtpFieldsRequired = "SMTP host, from address, and at least one recipient are required"
+
+// testSendDraft reads the posted draft and answers for it when it cannot be
+// sent: a malformed body, a field error, or the SMTP fields missing. ok is
+// false when it has already answered.
+func (h *Handlers) testSendDraft(w http.ResponseWriter, r *http.Request) (config.NotificationsConfig, bool) {
+	n, errs, err := h.notificationsDraft(r)
+	if err != nil {
+		writeConfigJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error(), "error": err.Error()})
+		return n, false
+	}
+	if len(errs) > 0 {
+		writeConfigJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": errs.first(), "error": errs.first(), "errors": errs})
+		return n, false
+	}
+	if n.SMTPHost == "" || n.FromAddress == "" || len(n.Recipients) == 0 {
+		writeConfigJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": smtpFieldsRequired})
+		return n, false
+	}
+	return n, true
+}
+
+// handleConfigTestEmail sends a plain test email with the posted draft (C5:
+// the draft, not the saved config; Enabled is not required).
+func (h *Handlers) handleConfigTestEmail(w http.ResponseWriter, r *http.Request) {
+	n, ok := h.testSendDraft(w, r)
+	if !ok {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
 
 	subject := "Shingo Test Email"
 	body := "This is a test email from ShinGo Core.\n\n" +
@@ -114,28 +348,19 @@ func (h *Handlers) handleConfigTestEmail(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": fmt.Sprintf("Test email sent to %d recipient(s)", len(n.Recipients))})
 }
 
+// handleConfigTestAlert sends one of the alert emails with the posted draft
+// (C5: the draft; Enabled is no longer required).
 func (h *Handlers) handleConfigTestAlert(w http.ResponseWriter, r *http.Request) {
 	alertType := r.URL.Query().Get("type")
 	if alertType != "fault" && alertType != "fail" && alertType != "cleared" && alertType != "chain" {
 		http.Error(w, "type must be fault, fail, cleared, or chain", http.StatusBadRequest)
 		return
 	}
-
-	cfg := h.engine.AppConfig()
-	n := cfg.Notifications
-
+	n, ok := h.testSendDraft(w, r)
+	if !ok {
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-
-	if !n.Enabled {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "Notifications are not enabled"})
-		return
-	}
-	if n.SMTPHost == "" || n.FromAddress == "" || len(n.Recipients) == 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "SMTP host, from address, and at least one recipient are required"})
-		return
-	}
 
 	addr := fmt.Sprintf("%s:%d", n.SMTPHost, n.SMTPPort)
 	sendMail := notify.PlainSend
@@ -145,31 +370,7 @@ func (h *Handlers) handleConfigTestAlert(w http.ResponseWriter, r *http.Request)
 	testRobotID := "ROBOT-42"
 
 	if alertType == "chain" {
-		msgID := notify.GenerateMessageID("fault-chain-test")
-		subject := notify.FaultSubject(testRobotID)
-		body := notify.FaultAlert(99999, "test-edge-uuid", "STATION-01", "Simulated fault for chain testing", testRobotID)
-		if err := sendMail(addr, n.SMTPUser, n.SMTPPassword, n.FromAddress, n.Recipients, subject, body, notify.WithMessageID(msgID)); err != nil {
-			log.Printf("config: test chain fault failed: %v", err)
-			json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "Fault email failed: " + err.Error()})
-			return
-		}
-
-		time.Sleep(2 * time.Second)
-
-		clearSubject := notify.FaultClearedSubject(testRobotID)
-		clearBody := notify.FaultClearedAlert(99999, "test-edge-uuid", "STATION-01", testRobotID, "3 m 0 s")
-		if err := sendMail(addr, n.SMTPUser, n.SMTPPassword, n.FromAddress, n.Recipients, clearSubject, clearBody,
-			notify.WithMessageID(notify.GenerateMessageID("cleared-chain-test")),
-			notify.WithInReplyTo(msgID),
-			notify.WithReferences(msgID),
-		); err != nil {
-			log.Printf("config: test chain cleared failed: %v", err)
-			json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "Fault sent, but cleared email failed: " + err.Error()})
-			return
-		}
-
-		log.Printf("config: test chain sent to %d recipient(s)", len(n.Recipients))
-		json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": fmt.Sprintf("Test fault chain sent to %d recipient(s) — check email threading", len(n.Recipients))})
+		sendTestChain(w, n, addr, sendMail, testRobotID)
 		return
 	}
 
@@ -186,14 +387,7 @@ func (h *Handlers) handleConfigTestAlert(w http.ResponseWriter, r *http.Request)
 		body = notify.FaultClearedAlert(99999, "test-edge-uuid", "STATION-01", testRobotID, "")
 	}
 
-	var sendErr error
-	if n.SMTPTLS {
-		sendErr = notify.TLSSend(addr, n.SMTPUser, n.SMTPPassword, n.FromAddress, n.Recipients, subject, body)
-	} else {
-		sendErr = notify.PlainSend(addr, n.SMTPUser, n.SMTPPassword, n.FromAddress, n.Recipients, subject, body)
-	}
-
-	if sendErr != nil {
+	if sendErr := sendMail(addr, n.SMTPUser, n.SMTPPassword, n.FromAddress, n.Recipients, subject, body); sendErr != nil {
 		log.Printf("config: test %s alert failed: %v", alertType, sendErr)
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": sendErr.Error()})
@@ -202,6 +396,38 @@ func (h *Handlers) handleConfigTestAlert(w http.ResponseWriter, r *http.Request)
 
 	log.Printf("config: test %s alert sent to %d recipient(s)", alertType, len(n.Recipients))
 	json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": fmt.Sprintf("Test %s alert sent to %d recipient(s)", alertType, len(n.Recipients))})
+}
+
+type mailSender func(addr, user, pass, from string, to []string, subject, body string, opts ...notify.SendOption) error
+
+// sendTestChain sends a fault and, 2 s later, its cleared reply on the same
+// thread, so the threading can be checked in a mail client.
+func sendTestChain(w http.ResponseWriter, n config.NotificationsConfig, addr string, sendMail mailSender, robot string) {
+	msgID := notify.GenerateMessageID("fault-chain-test")
+	subject := notify.FaultSubject(robot)
+	body := notify.FaultAlert(99999, "test-edge-uuid", "STATION-01", "Simulated fault for chain testing", robot)
+	if err := sendMail(addr, n.SMTPUser, n.SMTPPassword, n.FromAddress, n.Recipients, subject, body, notify.WithMessageID(msgID)); err != nil {
+		log.Printf("config: test chain fault failed: %v", err)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "Fault email failed: " + err.Error()})
+		return
+	}
+
+	time.Sleep(2 * time.Second)
+
+	clearSubject := notify.FaultClearedSubject(robot)
+	clearBody := notify.FaultClearedAlert(99999, "test-edge-uuid", "STATION-01", robot, "3 m 0 s")
+	if err := sendMail(addr, n.SMTPUser, n.SMTPPassword, n.FromAddress, n.Recipients, clearSubject, clearBody,
+		notify.WithMessageID(notify.GenerateMessageID("cleared-chain-test")),
+		notify.WithInReplyTo(msgID),
+		notify.WithReferences(msgID),
+	); err != nil {
+		log.Printf("config: test chain cleared failed: %v", err)
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": "Fault sent, but cleared email failed: " + err.Error()})
+		return
+	}
+
+	log.Printf("config: test chain sent to %d recipient(s)", len(n.Recipients))
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": fmt.Sprintf("Test fault chain sent to %d recipient(s) — check email threading", len(n.Recipients))})
 }
 
 // handleConfigPassword rotates the logged-in admin's password.
@@ -213,8 +439,8 @@ func (h *Handlers) handleConfigTestAlert(w http.ResponseWriter, r *http.Request)
 // order, same JSON shape as the rest of core's /config POSTs.
 //
 // The current password is verified here rather than at the service layer
-// because that is where edge verifies it and where the session lives. There is
-// no UI calling this yet; core's config page has no account section.
+// because that is where edge verifies it and where the session lives. The
+// config page's Account section calls it from its Change password modal (C8).
 func (h *Handlers) handleConfigPassword(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -269,117 +495,4 @@ func (h *Handlers) handleConfigPassword(w http.ResponseWriter, r *http.Request) 
 	}
 
 	json.NewEncoder(w).Encode(map[string]any{"ok": true})
-}
-
-// applyDatabaseSection writes the Postgres connection settings from the posted form.
-//
-// Takes the request rather than r.Form so the body is the posted one verbatim:
-// r.FormValue and r.Form.Has are both used across these sections, and rewriting
-// the calls would turn a move into forty small substitutions.
-func applyDatabaseSection(cfg *config.Config, r *http.Request) {
-	cfg.Database.Postgres.Host = r.FormValue("pg_host")
-	if p, err := strconv.Atoi(r.FormValue("pg_port")); err == nil {
-		cfg.Database.Postgres.Port = p
-	}
-	cfg.Database.Postgres.Database = r.FormValue("pg_database")
-	cfg.Database.Postgres.User = r.FormValue("pg_user")
-	if v := r.FormValue("pg_password"); v != "" {
-		cfg.Database.Postgres.Password = v
-	}
-	cfg.Database.Postgres.SSLMode = r.FormValue("pg_sslmode")
-	if v, err := strconv.Atoi(r.FormValue("pg_max_open_conns")); err == nil && v > 0 {
-		cfg.Database.Postgres.MaxOpenConns = v
-	}
-	if v, err := strconv.Atoi(r.FormValue("pg_max_idle_conns")); err == nil && v > 0 {
-		cfg.Database.Postgres.MaxIdleConns = v
-	}
-	if d, err := time.ParseDuration(r.FormValue("pg_conn_max_lifetime")); err == nil && d > 0 {
-		cfg.Database.Postgres.ConnMaxLifetime = d
-	}
-}
-
-// applyFleetSection writes the fleet/general settings from the posted form.
-//
-// Takes the request rather than r.Form so the body is the posted one verbatim:
-// r.FormValue and r.Form.Has are both used across these sections, and rewriting
-// the calls would turn a move into forty small substitutions.
-func applyFleetSection(cfg *config.Config, r *http.Request) {
-	if v := r.FormValue("fleet_base_url"); v != "" || r.Form.Has("fleet_base_url") {
-		cfg.RDS.BaseURL = v
-		if d, err := time.ParseDuration(r.FormValue("fleet_poll_interval")); err == nil {
-			cfg.RDS.PollInterval = d
-		}
-		if d, err := time.ParseDuration(r.FormValue("fleet_timeout")); err == nil {
-			cfg.RDS.Timeout = d
-		}
-		// Guard the zero: an empty or unparseable field must not silently
-		// drop the grace period to 0, which would fail every faulted
-		// order on the next poll instead of giving the floor time.
-		if d, err := time.ParseDuration(r.FormValue("fleet_fault_grace")); err == nil && d > 0 {
-			cfg.RDS.FaultGrace = d
-		}
-	}
-}
-
-// applyMessagingSection writes the Kafka/messaging settings from the posted form.
-//
-// Takes the request rather than r.Form so the body is the posted one verbatim:
-// r.FormValue and r.Form.Has are both used across these sections, and rewriting
-// the calls would turn a move into forty small substitutions.
-func applyMessagingSection(cfg *config.Config, r *http.Request) {
-	var brokers []string
-	for i := 0; ; i++ {
-		host := r.FormValue(fmt.Sprintf("kafka_host_%d", i))
-		if host == "" {
-			break
-		}
-		port := r.FormValue(fmt.Sprintf("kafka_port_%d", i))
-		if port == "" {
-			port = "9093"
-		}
-		brokers = append(brokers, host+":"+port)
-	}
-	cfg.Messaging.Kafka.Brokers = brokers
-	cfg.Messaging.Kafka.GroupID = r.FormValue("group_id")
-	cfg.Messaging.OrdersTopic = r.FormValue("orders_topic")
-	cfg.Messaging.DispatchTopic = r.FormValue("dispatch_topic")
-}
-
-// applyFireAlarmSection writes the fire-alarm settings from the posted form.
-//
-// Takes the request rather than r.Form so the body is the posted one verbatim:
-// r.FormValue and r.Form.Has are both used across these sections, and rewriting
-// the calls would turn a move into forty small substitutions.
-func applyFireAlarmSection(cfg *config.Config, r *http.Request) {
-	cfg.FireAlarm.Enabled = r.FormValue("fa_enabled") == "on"
-	cfg.FireAlarm.AutoResumeDefault = r.FormValue("fa_auto_resume") == "on"
-}
-
-// applyNotificationsSection writes the notification settings and recipient list from the posted form.
-//
-// Takes the request rather than r.Form so the body is the posted one verbatim:
-// r.FormValue and r.Form.Has are both used across these sections, and rewriting
-// the calls would turn a move into forty small substitutions.
-func applyNotificationsSection(cfg *config.Config, r *http.Request) {
-	cfg.Notifications.Enabled = r.FormValue("notif_enabled") == "on"
-	cfg.Notifications.SMTPHost = r.FormValue("notif_smtp_host")
-	if p, err := strconv.Atoi(r.FormValue("notif_smtp_port")); err == nil && p > 0 {
-		cfg.Notifications.SMTPPort = p
-	}
-	cfg.Notifications.SMTPTLS = r.FormValue("notif_smtp_tls") == "on"
-	cfg.Notifications.SMTPUser = r.FormValue("notif_smtp_user")
-	cfg.Notifications.SMTPPassword = r.FormValue("notif_smtp_password")
-	cfg.Notifications.FromAddress = r.FormValue("notif_from_address")
-	if v, err := strconv.Atoi(r.FormValue("notif_throttle_minutes")); err == nil && v > 0 {
-		cfg.Notifications.ThrottleMinutes = v
-	}
-	var recipients []string
-	for i := 0; ; i++ {
-		addr := r.FormValue(fmt.Sprintf("notif_recipient_%d", i))
-		if addr == "" {
-			break
-		}
-		recipients = append(recipients, addr)
-	}
-	cfg.Notifications.Recipients = recipients
 }

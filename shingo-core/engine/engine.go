@@ -8,7 +8,7 @@
 //   engine_accessors.go   one-liner subsystem getters
 //   engine_messaging.go   SendDataToEdge, RunFulfillmentScan
 //   engine_connection.go  checkConnectionStatus, connectionHealthLoop
-//   engine_reconfigure.go ReconfigureDatabase/Fleet/Messaging
+//   engine_reconfigure.go ReconfigureFleet/Messaging/Notifications
 //   engine_scene_sync.go  SyncScenePoints, SyncFleetNodes, UpdateNodeZones, SceneSync
 //   engine_background.go  robotRefreshLoop, claimSweepLoop
 //

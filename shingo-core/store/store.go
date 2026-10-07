@@ -13,9 +13,8 @@ import (
 )
 
 // DB wraps *sql.DB with application-level query methods.
-// The underlying *sql.DB is safe for concurrent use. Reconnect()
-// swaps the pointer; brief overlap during the swap is tolerable
-// since the old pool drains gracefully.
+// The underlying *sql.DB is safe for concurrent use. It is set once at
+// Open and never swapped: holders keep the *sql.DB itself (R27).
 //
 // *store.DB method-surface convention (Phase 6.4b, 2026-04-25):
 // target is no new methods on this receiver. Existing delegates
@@ -205,36 +204,26 @@ func Open(cfg *config.DatabaseConfig) (*DB, error) {
 	return db, nil
 }
 
-// Reconnect swaps the underlying database connection in-place.
-// The old connection is closed after the swap. All holders of *DB
-// see the new connection immediately. Brief overlap during the swap
-// is safe because *sql.DB handles in-flight queries on the old pool.
+// Ping opens a pool for cfg, pings it with a bounded deadline, and closes it.
+// It never migrates and changes nothing: the config page's Test connection, and
+// its save of a changed Database section, which refuses a database that does
+// not answer and otherwise only writes the file. Nothing swaps a live pool: the
+// lane lock and the ETA cache hold the *sql.DB they were built with, so a new
+// database applies after a restart (R27).
 //
-// Connectivity probe FIRST, migration second. Pre-fix this path called
-// Open(cfg) which ran migrate() before any ping; a misconfigured host
-// (typo, stale DNS, firewall) wedged the migrate's QueryRow calls
-// inside database/sql's pool wait — connect_timeout in the DSN didn't
-// reach those code paths. Now we PingContext with a bounded deadline
-// against the new pool before touching migrate, so an unreachable host
-// surfaces a fast error and the engine stays on its existing
-// connection.
-func (db *DB) Reconnect(cfg *config.DatabaseConfig) error {
-	newDB, err := OpenWithoutMigrate(cfg)
+// The probe is bounded: a misconfigured host (typo, stale DNS, firewall)
+// surfaces a fast error instead of wedging inside database/sql's pool wait,
+// which connect_timeout in the DSN does not reach.
+func Ping(cfg *config.DatabaseConfig) error {
+	db, err := OpenWithoutMigrate(cfg)
 	if err != nil {
 		return err
 	}
+	defer db.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), (connectTimeoutSeconds+2)*time.Second)
 	defer cancel()
-	if err := newDB.PingContext(ctx); err != nil {
-		newDB.Close()
+	if err := db.PingContext(ctx); err != nil {
 		return fmt.Errorf("ping new db: %w", err)
 	}
-	if err := newDB.migrate(); err != nil {
-		newDB.Close()
-		return fmt.Errorf("migrate new db: %w", err)
-	}
-	old := db.DB
-	db.DB = newDB.DB
-	old.Close()
 	return nil
 }
