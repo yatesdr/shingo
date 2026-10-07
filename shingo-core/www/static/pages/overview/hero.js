@@ -16,9 +16,21 @@ import { onSSE, debounce, formatDuration } from '/static/shared/utils.js';
 import { windowFor } from '/static/components/plantclock.js';
 import { KpiTile, updateKpiTile } from '/static/components/KpiTile.js';
 import { RUN_TIME_TITLE } from '/static/components/DrillModal.js';
+import { createLiveSchedule, createEventThrottle, countRobotAlerts } from '/static/pages/live-schedule.js';
+
+// A stuck order is one with NO events, so with no order event only the robot
+// tick can bring it to the banner. The alerts read rides robot-update at most
+// this often (LC9): a newly stuck order can appear up to 30 s later than when
+// every tick read it. The thresholds it is judged by are minutes.
+const ALERTS_FROM_ROBOTS_MS = 30000;
 
 export function createHeroSection(store) {
     const tiles = {}; // id -> tile node
+    // The banner's two halves. robots comes from the last robot-update or
+    // alerts read, whichever is newer; stuck only from an alerts read.
+    let alerts = null;
+    // Every alerts read counts against the 30 s robot throttle.
+    const alertsThrottle = createEventThrottle(ALERTS_FROM_ROBOTS_MS);
 
     function mount() {
         const grid = document.getElementById('ops-kpi-grid');
@@ -49,12 +61,33 @@ export function createHeroSection(store) {
             support.appendChild(t);
         }
         grid.appendChild(support);
-        // Live: the active-order count + alerts react to order/robot churn.
-        const live = debounce(() => { refreshActive(); refreshAlerts(); }, 1500);
-        onSSE('order-update', live);
-        onSSE('robot-update', live);
+        // Live (LC9). order-update: its own debounce, with a 10 s max wait
+        // (a steady stream of events closer than 1.5 s would otherwise never
+        // read) → the active count and the alerts read. robot-update: no request; the robot half of the
+        // banner is counted from the frame (it is the whole fleet), and the
+        // alerts read runs at most once per 30 s off it. A hidden tab reads
+        // nothing; one catch-up runs when it is shown again.
+        let fullPending = false;
+        const live = createLiveSchedule(() => { refreshActive(); refreshAlerts(); }, {
+            debounceMs: 1500,
+            maxWaitMs: 10000,
+            catchUp: () => {
+                if (fullPending) { fullPending = false; refresh(store.get()); return; }
+                refreshActive(); refreshAlerts();
+            },
+        });
+        onSSE('order-update', live.kick);
+        onSSE('robot-update', (robots) => {
+            if (live.hidden()) { live.markStale(); return; }
+            if (alerts) { alerts = Object.assign({}, alerts, countRobotAlerts(robots)); renderAlerts(); }
+            if (alertsThrottle.ready()) refreshAlerts();
+        });
         // Reconnect → re-fetch everything to close the staleness gap (§13).
-        onSSE('connected', debounce(() => refresh(store.get()), 500));
+        const reconnect = debounce(() => refresh(store.get()), 500);
+        onSSE('connected', () => {
+            if (live.hidden()) { fullPending = true; live.markStale(); return; }
+            reconnect();
+        });
     }
 
     function refresh(state) {
@@ -133,18 +166,30 @@ export function createHeroSection(store) {
     function refreshAlerts() {
         const holder = document.getElementById('ops-alerts');
         if (!holder) return;
+        alertsThrottle.touch();
         apiGet('/api/missions/alerts').then((a) => {
-            if (!a || !a.total) { holder.innerHTML = ''; return; }
-            const parts = [];
-            if (a.robots_blocked) parts.push(a.robots_blocked + ' robot' + (a.robots_blocked > 1 ? 's' : '') + ' blocked');
-            if (a.robots_emergency) parts.push(a.robots_emergency + ' emergency');
-            if (a.robots_error) parts.push(a.robots_error + ' in error');
-            const text = parts.join(' · ');
-            const stuck = a.stuck_missions
-                ? h`<a href="${stuckHref(a.stuck_items)}">${a.stuck_missions + ' active order' + (a.stuck_missions > 1 ? 's' : '') + ' stuck'}</a>`
-                : '';
-            holder.innerHTML = h`<div class="alerts-banner" role="status"><span class="alerts-banner__count">${'⚠ ' + a.total + ' alert' + (a.total > 1 ? 's' : '')}</span><span>${text}${text && stuck ? ' · ' : ''}${{ __html: true, value: stuck }}</span></div>`;
-        }).catch(() => { holder.innerHTML = ''; });
+            alerts = a || null;
+            renderAlerts();
+        }).catch(() => { alerts = null; holder.innerHTML = ''; });
+    }
+
+    function renderAlerts() {
+        const holder = document.getElementById('ops-alerts');
+        if (!holder) return;
+        const a = alerts;
+        // The total is re-summed here: the robot half may be newer than the
+        // read that carried the stuck half.
+        const total = a ? (a.robots_blocked || 0) + (a.robots_emergency || 0) + (a.robots_error || 0) + (a.stuck_missions || 0) : 0;
+        if (!total) { holder.innerHTML = ''; return; }
+        const parts = [];
+        if (a.robots_blocked) parts.push(a.robots_blocked + ' robot' + (a.robots_blocked > 1 ? 's' : '') + ' blocked');
+        if (a.robots_emergency) parts.push(a.robots_emergency + ' emergency');
+        if (a.robots_error) parts.push(a.robots_error + ' in error');
+        const text = parts.join(' · ');
+        const stuck = a.stuck_missions
+            ? h`<a href="${stuckHref(a.stuck_items)}">${a.stuck_missions + ' active order' + (a.stuck_missions > 1 ? 's' : '') + ' stuck'}</a>`
+            : '';
+        holder.innerHTML = h`<div class="alerts-banner" role="status"><span class="alerts-banner__count">${'⚠ ' + total + ' alert' + (total > 1 ? 's' : '')}</span><span>${text}${text && stuck ? ' · ' : ''}${{ __html: true, value: stuck }}</span></div>`;
     }
 
     function showError() {

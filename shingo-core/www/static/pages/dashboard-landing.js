@@ -470,8 +470,11 @@ async function refreshCoreHealth() {
     }
 }
 
-if (document.getElementById('core-strip')) {
-    refreshCoreHealth();
+const coreStrip = document.getElementById('core-strip');
+if (coreStrip) {
+    // The first render is the server's own reading, carried on the strip: one
+    // health check per view, not a second one at load (LC10).
+    try { renderCoreHealth(JSON.parse(coreStrip.dataset.healthJson)); } catch { refreshCoreHealth(); }
     setInterval(refreshCoreHealth, 15000);
 }
 

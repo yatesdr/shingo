@@ -16,6 +16,7 @@
 package www
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -531,14 +532,56 @@ func (h *Handlers) apiCoreHealth(w http.ResponseWriter, r *http.Request) {
 // dependencyState reports whether every dependency is up, and names the ones
 // that are not.
 func (h *Handlers) dependencyState() (bool, []string) {
+	return h.probeDependencies().state()
+}
+
+// fleetPingTimeout bounds the fleet check behind the health strip (LC10). The
+// fleet client's own timeout is the RDS one (10 s by default), and an
+// unreachable fleet manager used to hold the Dashboard for that long per
+// check. Past this the fleet counts as down and the page answers.
+const fleetPingTimeout = 3 * time.Second
+
+var errFleetPingTimeout = errors.New("fleet did not answer within " + fleetPingTimeout.String())
+
+// pingWithin runs ping and waits at most d for it. On timeout it answers an
+// error and leaves the ping to finish on its own; the fleet client's timeout
+// still ends it.
+func pingWithin(ping func() error, d time.Duration) error {
+	done := make(chan error, 1)
+	go func() { done <- ping() }()
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-t.C:
+		return errFleetPingTimeout
+	}
+}
+
+// depProbe is one reading of each dependency: a view checks them once and
+// every figure on it is drawn from that reading.
+type depProbe struct {
+	fleetOK, msgOK, dbOK bool
+}
+
+func (h *Handlers) probeDependencies() depProbe {
+	return depProbe{
+		fleetOK: pingWithin(h.engine.Fleet().Ping, fleetPingTimeout) == nil,
+		msgOK:   h.engine.MsgClient().IsConnected(),
+		dbOK:    h.engine.HealthService().PingDB() == nil,
+	}
+}
+
+func (p depProbe) state() (bool, []string) {
 	var down []string
-	if err := h.engine.Fleet().Ping(); err != nil {
+	if !p.fleetOK {
 		down = append(down, "fleet down")
 	}
-	if !h.engine.MsgClient().IsConnected() {
+	if !p.msgOK {
 		down = append(down, "messaging down")
 	}
-	if h.engine.HealthService().PingDB() != nil {
+	if !p.dbOK {
 		down = append(down, "database down")
 	}
 	return len(down) == 0, down

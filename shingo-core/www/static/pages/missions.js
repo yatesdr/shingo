@@ -278,7 +278,6 @@ function refresh(state) {
     refreshBreakdowns(state);
     refreshFailures(state);
     refreshList(state);
-    refreshCells();
 }
 
 // ─── Section D: cells (production rhythm, §3.D / Phase E) ────────────────────
@@ -413,7 +412,10 @@ function renderPareto(reasons) {
     // Clicking a bar filters the list to failures.
     canvas.onclick = () => setState('FAILED');
 }
-function refreshAll(state) { refresh(state); }
+// The cells are filter-independent (live via cell-heartbeat), so a filter
+// change does not re-read them; opening the page and the refresh button do
+// (LC11).
+function refreshAll(state) { refresh(state); refreshCells(); }
 const onFilterChange = debounce(refresh, 150);
 
 // §3.F breakdowns, U3 — TABLES, and an INDEXED per-robot figure.

@@ -3,8 +3,10 @@ package www
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"shingo/protocol"
+	"shingo/protocol/debuglog"
 	"shingocore/engine"
 )
 
@@ -26,9 +28,12 @@ func (h *Handlers) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	entries, logPage := pageLogEntries(h.debugLog.Entries(subsystem), page)
 	data := map[string]any{
 		"Page":                "logs", // DO NOT change — drives nav active state
-		"Entries":             h.debugLog.Entries(subsystem),
+		"Entries":             entries,
+		"LogPage":             logPage,
 		"Subsystems":          h.debugLog.Subsystems(),
 		"Subsystem":           subsystem,
 		"Anomalies":           anomalies,
@@ -38,6 +43,47 @@ func (h *Handlers) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 		"FireAlarmAutoResume": cfg.FireAlarm.AutoResumeDefault,
 	}
 	h.render(w, r, "diagnostics.html", data)
+}
+
+// logPageSize is how many log rows the Logs page shows at a time (R25).
+const logPageSize = 100
+
+// logPage says which rows of the log a page shows. Rows are counted from the
+// newest: page 1 is rows 1–100, the newest. Older and Newer are the page
+// numbers either side, 0 where there is none.
+type logPage struct {
+	Page, From, To, Total int
+	Older, Newer          int
+}
+
+// pageLogEntries cuts one page out of the log, which arrives oldest first, and
+// keeps that order inside the page (the table reads top to bottom in time). A
+// page past the end shows the oldest page.
+func pageLogEntries(all []debuglog.Entry, page int) ([]debuglog.Entry, logPage) {
+	total := len(all)
+	pages := (total + logPageSize - 1) / logPageSize
+	if pages < 1 {
+		pages = 1
+	}
+	if page < 1 {
+		page = 1
+	}
+	if page > pages {
+		page = pages
+	}
+	p := logPage{Page: page, Total: total}
+	if total == 0 {
+		return nil, p
+	}
+	p.From = (page-1)*logPageSize + 1
+	p.To = min(page*logPageSize, total)
+	if page < pages {
+		p.Older = page + 1
+	}
+	if page > 1 {
+		p.Newer = page - 1
+	}
+	return all[total-p.To : total-p.From+1], p
 }
 
 func (h *Handlers) apiHealthCheck(w http.ResponseWriter, r *http.Request) {

@@ -34,14 +34,10 @@ func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Fleet health check
-	fleetOK := false
-	if err := h.engine.Fleet().Ping(); err == nil {
-		fleetOK = true
-	}
-
-	msgOK := h.engine.MsgClient().IsConnected()
-	dbOK := h.engine.HealthService().PingDB() == nil
+	// One reading of the dependencies for the whole view (LC10): the strip,
+	// the flags below and the page's first render all come from it.
+	deps := h.probeDependencies()
+	fleetOK, msgOK, dbOK := deps.fleetOK, deps.msgOK, deps.dbOK
 	recon, _ := h.engine.Reconciliation().Summary()
 
 	trackerCount := 0
@@ -49,7 +45,7 @@ func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		trackerCount = t.ActiveCount()
 	}
 
-	depsOK, depReasons := h.dependencyState()
+	depsOK, depReasons := deps.state()
 
 	// Inventory count anomalies: the open report_divergence episodes, where the
 	// Edge's lineside report and Core's count disagree about a carrier or a
@@ -62,11 +58,15 @@ func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		anomalies = nil
 	}
 
+	health := h.coreHealth(depsOK, depReasons)
 	data := map[string]any{
 		"Page": "dashboard",
 		// Server-rendered so the strip is correct on first paint rather than
 		// flashing empty until the first poll lands.
-		"Health":       h.coreHealth(depsOK, depReasons),
+		"Health": health,
+		// The same reading as JSON: the page draws its meters and sparkline
+		// from it instead of asking /api/core/health again at load (LC10).
+		"HealthJSON":   sseJSON(health),
 		"ActiveOrders": activeOrders,
 		"WaitSince":    waitSince,
 		"StatusCounts": statusCounts,

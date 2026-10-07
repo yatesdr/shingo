@@ -29,6 +29,10 @@ type RobotOrderLine struct {
 	FaultNotice bool       `json:"fault_notice,omitempty"`
 }
 
+// buildRobotOrderLines is what the robot feed calls. A variable only so a test
+// can count the builds per fleet tick (LC8); production never reassigns it.
+var buildRobotOrderLines = robotOrderLines
+
 // robotOrderLines maps robot id to the active order it is on.
 //
 // One pass over the active orders, plus one history read per FAULTED order —

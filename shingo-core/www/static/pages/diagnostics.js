@@ -57,6 +57,11 @@ import { onSSE } from '/static/shared/utils.js';
   var autoScroll = document.getElementById('log-autoscroll');
   var filterEl = document.getElementById('log-filter');
   var maxRows = 1000;
+  // The log is paged (R25): page 1 is the newest 100 and stays live; an older
+  // page is history and takes no live rows.
+  var pager = document.getElementById('log-pager');
+  var logPage = pager ? Number(pager.dataset.logPage) || 1 : 1;
+  var debugMaxRows = 100;
 
   function debugAppendRow(entry) {
     var tr = document.createElement('tr');
@@ -70,7 +75,7 @@ import { onSSE } from '/static/shared/utils.js';
       tr.style.display = 'none';
     }
     body.appendChild(tr);
-    while (body.children.length > maxRows) {
+    while (body.children.length > debugMaxRows) {
       body.removeChild(body.firstChild);
     }
     if (autoScroll.checked) {
@@ -469,7 +474,7 @@ import { onSSE } from '/static/shared/utils.js';
   function onFireAlarmUpdate(data) {
     updateFireAlarmUI(data.is_fire, null);
   }
-  onSSE('debug-log', debugAppendRow);
+  if (logPage === 1) onSSE('debug-log', debugAppendRow); // an older page is history: no live stream
   onSSE('cms-transaction', cmsAppendRows);
   onSSE('fire-alarm', onFireAlarmUpdate);
 

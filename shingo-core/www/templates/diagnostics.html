@@ -50,6 +50,12 @@
       </table>
     </div>
   </div>
+  <!-- Paged (R25): the newest 100 rows, Older / Newer. Live rows join page 1 only. -->
+  <div class="flex gap-1 items-center mt-1" id="log-pager" data-log-page="{{.LogPage.Page}}">
+    <span class="text-muted-sm">{{if .LogPage.Total}}Rows {{.LogPage.From}}–{{.LogPage.To}} of {{.LogPage.Total}}{{else}}No rows{{end}}</span>
+    {{if .LogPage.Newer}}<a class="btn btn-sm" href="/diagnostics?page={{.LogPage.Newer}}{{if .Subsystem}}&amp;subsystem={{.Subsystem}}{{end}}">Newer</a>{{end}}
+    {{if .LogPage.Older}}<a class="btn btn-sm" href="/diagnostics?page={{.LogPage.Older}}{{if .Subsystem}}&amp;subsystem={{.Subsystem}}{{end}}">Older</a>{{end}}
+  </div>
 </div>
 
 <!-- CMS Transactions Tab -->

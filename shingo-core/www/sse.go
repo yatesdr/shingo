@@ -222,6 +222,21 @@ func (h *EventHub) ClientCount() int {
 	return len(h.clients)
 }
 
+// HasSubscriber reports whether a broadcast of event would reach any client:
+// one that subscribed to it by name, or an unfiltered one (nil topics). It is
+// the question to ask before BUILDING a costly payload, where ClientCount asks
+// only whether anyone is connected at all.
+func (h *EventHub) HasSubscriber(event string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for c := range h.clients {
+		if c.topics == nil || c.topics[event] {
+			return true
+		}
+	}
+	return false
+}
+
 // sseJSON safely marshals data to JSON for SSE broadcast.
 // Falls back to an error payload if marshaling fails.
 func sseJSON(v any) string {
@@ -407,15 +422,17 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			// The order this robot is on. See RobotOrderLine — no alarms.
 			RobotOrderLine
 		}
-		// Once per broadcast, not once per robot — and not at all when nobody is
-		// listening. This costs a ListActiveOrders plus a history read, and the
-		// event that carries it fires on every fleet change, which on a running
-		// plant is most 2-second ticks. Without the guard a Core with no browser
-		// open anywhere still paid for it around the clock. Broadcast to zero
-		// clients is already a no-op; this makes BUILDING the payload one too.
+		// Once per broadcast, not once per robot — and not at all when nobody
+		// would receive it. This costs a ListActiveOrders plus a history read,
+		// and the event that carries it fires on every fleet change, which on a
+		// running plant is most 2-second ticks. Without the guard a Core with no
+		// browser open anywhere still paid for it around the clock. Broadcast to
+		// zero receivers is already a no-op; this makes BUILDING the payload one
+		// too. "Receivers", not "clients" (LC8): a tab filtered to other topics
+		// (/events?topics=system-status) is connected but is never sent this.
 		var orderLines map[string]RobotOrderLine
-		if h.ClientCount() > 0 {
-			orderLines = robotOrderLines(eng.OrderService(), eng.AppConfig())
+		if h.HasSubscriber("robot-update") {
+			orderLines = buildRobotOrderLines(eng.OrderService(), eng.AppConfig())
 		}
 		out := make([]robotJSON, len(ev.Robots))
 		for i, r := range ev.Robots {

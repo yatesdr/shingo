@@ -13,6 +13,7 @@ import {
   apiGet, apiPost, escapeHtml, delegateActions, toast, uiConfirm, timeAgo, timeAgoHTML, debounce,
 } from '/static/app.js';
 import { formatClock, formatDuration, formatTime, onSSE, serverNow } from '/static/shared/utils.js';
+import { createLiveSchedule } from '/static/pages/live-schedule.js';
 
 // ── state ──────────────────────────────────────────────────────────────
 let health = [];        // /api/inventory/monitor-totals rows
@@ -36,33 +37,45 @@ const STALE_WARN_MS = 7 * 24 * 3600 * 1000;
 const STALE_BAD_MS = 30 * 24 * 3600 * 1000;
 
 // ── data loading ─────────────────────────────────────────────────────────
-async function loadAll(quiet) {
-  healthLoadError = null;
-  try {
-    const [h, ld, inv, bk, nd, an, lx, mg] = await Promise.all([
-      apiGet('/api/inventory/monitor-totals').catch((e) => { healthLoadError = e; return null; }),
-      apiGet('/api/loader/list').catch(() => ({ loaders: [] })),
-      apiGet('/api/inventory').catch(() => []),
-      apiGet('/api/buckets').catch(() => []),
-      apiGet('/api/nodes').catch(() => ({})),
-      apiGet('/api/inventory/anomaly-summary').catch(() => ({})),
-      apiGet('/api/inventory/ledger-exceptions').catch(() => ({})),
-      apiGet('/api/inventory/maintained-groups').catch(() => []),
-    ]);
-    ledgerExceptions = lx && typeof lx === 'object' ? lx : {};
-    maintained = Array.isArray(mg) ? mg : [];
-    // A failed read keeps the last rows; with none, renderHealth says it failed.
-    if (h !== null) health = Array.isArray(h) ? h : [];
-    anomalySummary = an && typeof an === 'object' ? an : {};
+let lastLoadAt = 0; // Date.now() of the last loadAll start (the 20 s fallback reads it)
+
+// The loader list and the node names are read only by an open row's editor
+// (loaderRowsFor), so they are fetched only while a row is open (LC11).
+function loadEditorData() {
+  return Promise.all([
+    apiGet('/api/loader/list').catch(() => ({ loaders: [] })),
+    apiGet('/api/nodes').catch(() => ({})),
+  ]).then(([ld, nd]) => {
     loaders = (ld && ld.loaders) || [];
-    bins = Array.isArray(inv) ? inv : (inv && inv.rows) || [];
-    buckets = Array.isArray(bk) ? bk : (bk && bk.rows) || [];
     const nodes = (nd && (nd.nodes || nd.data || nd)) || [];
     nodesById = {};
     (Array.isArray(nodes) ? nodes : []).forEach((n) => {
       const id = n.id != null ? n.id : n.ID;
       if (id != null) nodesById[id] = n.name != null ? n.name : n.Name;
     });
+  });
+}
+
+async function loadAll(quiet) {
+  healthLoadError = null;
+  lastLoadAt = Date.now();
+  try {
+    const [h, inv, bk, an, lx, mg] = await Promise.all([
+      apiGet('/api/inventory/monitor-totals').catch((e) => { healthLoadError = e; return null; }),
+      apiGet('/api/inventory').catch(() => []),
+      apiGet('/api/buckets').catch(() => []),
+      apiGet('/api/inventory/anomaly-summary').catch(() => ({})),
+      apiGet('/api/inventory/ledger-exceptions').catch(() => ({})),
+      apiGet('/api/inventory/maintained-groups').catch(() => []),
+      expanded !== null ? loadEditorData() : null,
+    ]);
+    ledgerExceptions = lx && typeof lx === 'object' ? lx : {};
+    maintained = Array.isArray(mg) ? mg : [];
+    // A failed read keeps the last rows; with none, renderHealth says it failed.
+    if (h !== null) health = Array.isArray(h) ? h : [];
+    anomalySummary = an && typeof an === 'object' ? an : {};
+    bins = Array.isArray(inv) ? inv : (inv && inv.rows) || [];
+    buckets = Array.isArray(bk) ? bk : (bk && bk.rows) || [];
     indexBins();
     sampleOnHand();
     renderAll();
@@ -873,8 +886,11 @@ function scrollTo(id) {
 }
 function exportInventory() { window.location = '/api/inventory/export'; }
 
-function toggleRow(pc) {
+async function toggleRow(pc) {
   expanded = expanded === pc ? null : pc;
+  // Opening a row reads its editor's data first: the page no longer carries
+  // the loader list and node names while no row is open (LC11).
+  if (expanded !== null) await loadEditorData();
   renderHealth();
 }
 
@@ -1020,12 +1036,27 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// Live: refresh on order/inventory events; a light interval as a fallback so the
-// "as of" stamp stays honest even without live traffic.
+// Live: refresh on order events; a light interval as a fallback so the
+// "as of" stamp stays honest even without live traffic. LC11: a burst of
+// order events is one reload after it settles; a hidden tab reloads nothing
+// and catches up once when shown; the fallback skips a turn when a reload ran
+// within its interval (the answer would be the same rows).
+const FALLBACK_MS = 20000;
 const live = document.getElementById('inv-live');
 function markLive() { if (live) { live.textContent = 'live'; live.classList.add('is-live'); } }
-onSSE('order-update', () => { markLive(); loadAll(true); });
-onSSE('connected', () => { markLive(); loadAll(true); });
-setInterval(() => loadAll(true), 20000);
+const reload = createLiveSchedule(() => loadAll(true), { debounceMs: 1500 });
+onSSE('order-update', () => { markLive(); reload.kick(); });
+// The first connect is the page's own open, which loadAll() below already
+// reads; a later one is a reconnect and reloads.
+let connectedOnce = false;
+onSSE('connected', () => {
+  markLive();
+  if (connectedOnce) reload.kick();
+  connectedOnce = true;
+});
+setInterval(() => {
+  if (reload.hidden()) { reload.markStale(); return; }
+  if (Date.now() - lastLoadAt >= FALLBACK_MS - 1000) loadAll(true);
+}, FALLBACK_MS);
 
 loadAll();
