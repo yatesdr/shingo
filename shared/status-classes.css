@@ -146,11 +146,11 @@
  * belongs to — sand (benign) → orange (attention) → red (failed) — which
  * also matches the lifecycle: faulted either recovers or becomes failed.
  * 5.40:1 on the pill (AA). */
-.badge-faulted      { background: #fed7aa; color: #9a3412; border-color: #fdba74; }
+.badge-faulted      { background: var(--status-faulted-bg); color: var(--status-faulted-ink); border-color: var(--status-faulted-border); }
 
 /* ── Terminal — failure ───────────────────────────────────────────────
  * Strong red — something broke. Impossible to miss. */
-.badge-failed       { background: #fecaca; color: #991b1b; border-color: #fca5a5; }
+.badge-failed       { background: var(--status-failed-bg); color: var(--status-failed-ink); border-color: var(--status-failed-border); }
 
 /* ── Terminal — cancelled ─────────────────────────────────────────────
  * Operator-initiated stop. The ONE badge allowed to be grey: pure
@@ -222,13 +222,9 @@
 /* Cancelled — dark: the one allowed grey, contrast-corrected */
 [data-theme="dark"] .badge-cancelled    { background: #1c1f26; color: #9ca3af; border-color: #2d313c; }
 
-/* Needs attention — dark. Background is lifted off failed's near-black
- * (#450a0a) so the two loud pills don't collapse into one dark smudge on
- * a shop-floor LCD; the text does most of the separating. 7.92:1 (AAA). */
-[data-theme="dark"] .badge-faulted      { background: #4a2606; color: #fdba74; border-color: #6b2c06; }
-
-/* Failure — dark */
-[data-theme="dark"] .badge-failed       { background: #450a0a; color: #f87171; border-color: #5c1515; }
+/* Needs attention and Failure — dark: no rule here. .badge-faulted and
+ * .badge-failed read --status-faulted-* / --status-failed-*, which tokens.css
+ * sets per theme (U1). Dark faulted is 7.92:1 (AAA). */
 
 /* Dark overrides for non-status semantic badges. */
 [data-theme="dark"] .badge-info  { background: #0a2b32; color: #39d2f5; border-color: #144751; }

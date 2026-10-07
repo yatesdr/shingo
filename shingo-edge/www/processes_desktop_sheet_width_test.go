@@ -1,11 +1,14 @@
 package www
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"testing"
+
+	"shingo/shared"
 )
 
 // processes_desktop_sheet_width_test.go — the desktop dialog shell is wide
@@ -34,13 +37,25 @@ func desktopCSS(t *testing.T) string {
 	return string(b)
 }
 
+// sharedComponentsCSS reads shared/components.css, where U1 moved the settings
+// shape. .pd-inp.wide is one of the moved rules: it is written there as a
+// grouped selector beside its neutral twin (.set-ui .set-inp.wide).
+func sharedComponentsCSS(t *testing.T) string {
+	t.Helper()
+	b, err := fs.ReadFile(shared.Files, "components.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 // cssPx returns the integer captures of re's first match in css, failing the
 // test by name when the rule it reads is gone.
 func cssPx(t *testing.T, css, what string, re *regexp.Regexp) []int {
 	t.Helper()
 	m := re.FindStringSubmatch(css)
 	if m == nil {
-		t.Fatalf("processes-desktop.css: no rule for %s (%s)", what, re)
+		t.Fatalf("no rule for %s (%s)", what, re)
 	}
 	out := make([]int, 0, len(m)-1)
 	for _, s := range m[1:] {
@@ -57,8 +72,8 @@ func TestDesktopSheetFitsItsWideField(t *testing.T) {
 	css := desktopCSS(t)
 	label := cssPx(t, css, ".pd-fld label column",
 		regexp.MustCompile(`(?s)\.pd-fld \{[^}]*grid-template-columns:\s*(\d+)px 1fr;[^}]*gap:\s*\d+px (\d+)px;`))
-	input := cssPx(t, css, ".pd-inp.wide min-width",
-		regexp.MustCompile(`\.pd-inp\.wide \{ min-width: (\d+)px; \}`))[0]
+	input := cssPx(t, sharedComponentsCSS(t), ".pd-inp.wide min-width",
+		regexp.MustCompile(`(?m)^\.pd-inp\.wide(?:, [^{]+)? \{ min-width: (\d+)px; \}`))[0]
 	pad := cssPx(t, css, ".pd-modal .mb padding",
 		regexp.MustCompile(`\.pd-modal \.mb \{ padding: \d+px (\d+)px \d+px;`))[0]
 	border := cssPx(t, css, ".pd-modal border",

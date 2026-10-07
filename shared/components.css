@@ -11,6 +11,21 @@
  * promotion criteria; this file is the canonical destination.
  */
 
+/* ─── Colour scheme follows the theme (S1, R22) ───────────────────────
+ *
+ * Both apps declare <meta name="color-scheme" content="light dark">, so the
+ * browser drew native controls and scrollbars for the OS scheme, not the
+ * theme: OS dark + theme light drew a dark scrollbar on the light page and an
+ * unticked box that reads as ticked. The theme decides. Same specificity, so
+ * the dark rule comes second.
+ *
+ * Here, not in tokens.css: operator-display.html loads tokens.css only and
+ * hard-codes data-theme="dark", and there this would turn every kiosk's native
+ * controls and scrollbars dark. The Core wall displays that load this file set
+ * data-theme="dark" on <html> too, so they keep their dark scheme. */
+:root { color-scheme: light; }
+[data-theme="dark"] { color-scheme: dark; }
+
 /* ─── Form scaffolding ──────────────────────────────────────────────── */
 
 /* Bordered fieldset with a legend. Used by claim editor, station
@@ -1076,4 +1091,162 @@ nav {
   white-space: nowrap;
   vertical-align: middle;
   cursor: help;
+}
+
+/* ── The settings shape (U1) ──────────────────────────────────────────────
+ *
+ * One definition for three pages: the Edge Processes page's Settings tab, Core
+ * Configuration and Edge Configuration. The rules below were moved verbatim
+ * out of shingo-edge/www/static/css/processes-desktop.css, in their source
+ * order. Each selector carries its old .pd- name, which the Processes page
+ * still uses, and a neutral .set- name, which the config pages use
+ * (docs/ui-style-guide/33-settings-pages.md has the map).
+ *
+ * THE NEUTRAL HALF IS SCOPED UNDER .set-ui. Core's style.css loads after this
+ * file and styles bare label and input[type=text|password|number|date] at
+ * specificity 0,1,1; .set-ui .set-inp is 0,2,0, so it outranks them. The page
+ * container (.set-page) carries .set-ui, and so does the body of every modal a
+ * settings page opens, because a showModal element sits outside the page.
+ * The .pd- half is never scoped and never reset: the Processes page draws
+ * exactly as it did.
+ *
+ * Type sizes and spacing in the moved rules are their own px values, off the
+ * token scales. They were moved, not changed (25-deprecations-tracker.md). */
+.pd-btn, .set-ui .set-btn {
+    height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--sub-2);
+    background: var(--surface-2, var(--surface)); color: var(--text);
+    font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
+}
+.pd-btn.quiet, .set-ui .set-btn.quiet { border-color: transparent; background: none; color: var(--text-muted); }
+/* A disabled control has to LOOK disabled. Only the primary had this, so
+   "Generate variants..", disabled with its reason in the section note, drew
+   exactly like the live "Sync catalog" beside it. */
+.pd-btn:disabled, .set-ui .set-btn:disabled { opacity: .5; cursor: default; }
+.pd-btn.primary, .set-ui .set-btn.primary {
+    background: var(--accent-solid); border-color: var(--accent-solid); color: var(--on-accent-solid);
+    height: 40px; padding: 0 20px; font-size: 14px;
+}
+.pd-btn.primary:disabled, .set-ui .set-btn.primary:disabled { opacity: .5; cursor: default; }
+.pd-dim, .set-ui .set-dim { color: var(--text-muted); font-size: 12px; }
+.pd-cnt, .set-ui .set-cnt { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12px; }
+.pd-cnt i, .set-ui .set-cnt i { width: 7px; height: 7px; border-radius: 50%; background: var(--sub-4); flex: 0 0 auto; }
+.pd-cnt.ok i, .set-ui .set-cnt.ok i { background: var(--viz-green); }
+.pd-inp, .set-ui .set-inp {
+    height: 32px; min-width: 96px; padding: 0 10px; border: 1px solid var(--sub-2);
+    border-radius: 8px; background: var(--bg); color: var(--text); font: inherit;
+    font-variant-numeric: tabular-nums;
+}
+.pd-note, .set-ui .set-note { color: var(--text-muted); font-size: 12px; }
+.pd-chk, .set-ui .set-chk {
+    width: 34px; height: 20px; border-radius: 10px; background: var(--sub-2);
+    position: relative; border: 0; padding: 0; cursor: pointer; flex: 0 0 auto;
+}
+.pd-chk::after, .set-ui .set-chk::after {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px;
+    border-radius: 7px; background: var(--sub-5); transition: left 120ms ease;
+}
+.pd-chk.on, .set-ui .set-chk.on { background: var(--accent-solid); }
+.pd-chk.on::after, .set-ui .set-chk.on::after { left: 17px; background: var(--on-accent-solid); }
+@media (prefers-reduced-motion: reduce) { .pd-chk::after, .set-ui .set-chk::after { transition: none; } }
+.pd-chip, .set-ui .set-chip {
+    display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
+    border-radius: 999px; border: 1px solid var(--sub-2); background: none;
+    color: var(--text-muted); font: inherit; font-size: 12.5px; cursor: pointer;
+}
+/* A SUCCESS IS NOT A REFUSAL. "Generated 3 styles" and "Catalog synced from
+   Core" were reported through the same state the server's refusals are, so
+   they rendered in .pd-refusal's coral border and warning ink — good news
+   drawn as bad. Same box, the affirmative ink. */
+.pd-notice, .set-ui .set-notice {
+    margin: 4px 0 10px; padding: 10px 12px; border-radius: 10px; font-size: 12.5px;
+    color: var(--text); border: 1px solid var(--sub-2); background: var(--surface);
+}
+.pd-refusal, .set-ui .set-refusal {
+    margin: 4px 0 10px; padding: 10px 12px; border-radius: 10px; font-size: 12.5px;
+    color: var(--chip-ink-below); border: 1px solid var(--viz-coral);
+}
+.pd-sheet, .set-ui.set-page { padding: 12px 32px 20px; }
+/* Settings is a FORM and reads best at a form's width; operator screens is a
+   TABLE and gets the page. The reference draws them that way (D4 full-bleed,
+   D5 ending near 1008 px), and one cap on both made D4's table stop two-thirds
+   of the way across an otherwise empty screen. */
+.pd-sheet.pd-settings, .set-ui.set-page { max-width: 1040px; }
+/* THE RHYTHM IS THE REFERENCE'S. Five sections at 18/10 padding, fields at
+   3 px and a note at 6 px pushed Styles and Danger below the fold at 900 —
+   D5's whole point is that the dangerous thing is visible from the same place
+   as the safe ones. The reference's spacing is tighter: 12 above a section
+   rule, 6 below it, and a field row that is its control's height plus two. */
+.pd-sect, .set-ui .set-sect {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 10px 0 4px; border-top: 1px solid var(--sub-1);
+}
+.pd-sheet > .pd-sect:first-child, .set-ui.set-page > .set-sect:first-child { border-top: 0; padding-top: 0; }
+.pd-sect h2, .set-ui .set-sect h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.pd-sect.danger h2, .set-ui .set-sect.danger h2 { color: var(--chip-ink-below); }
+.pd-sect .pd-spacer, .set-ui .set-sect .set-spacer { flex: 1; }
+.pd-sfld, .set-ui .set-fld {
+    display: grid; grid-template-columns: 300px 1fr; align-items: center;
+    gap: 4px 14px; padding: 1px 0;
+}
+.pd-sfld label, .set-ui .set-fld label { font-size: 13px; }
+.pd-sfld small, .set-ui .set-fld small { display: block; color: var(--text-muted); font-size: 11.5px; font-weight: 400; }
+.pd-sfld .v, .set-ui .set-fld .v { display: flex; align-items: center; gap: 10px; }
+.pd-inp.wide, .set-ui .set-inp.wide { min-width: 420px; }
+.pd-note, .set-ui .set-note { margin: 2px 0 2px 314px; color: var(--text-muted); font-size: 12.5px; line-height: 1.35; max-width: 68ch; }
+.pd-seg, .set-ui .set-seg { display: inline-flex; border: 1px solid var(--sub-2); border-radius: 10px; overflow: hidden; }
+.pd-seg button, .set-ui .set-seg button {
+    height: 34px; padding: 0 14px; border: 0; border-right: 1px solid var(--sub-2);
+    background: none; color: var(--text-muted); font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
+}
+.pd-seg button:last-child, .set-ui .set-seg button:last-child { border-right: 0; }
+.pd-seg button.on, .set-ui .set-seg button.on { background: var(--surface-2, var(--surface)); color: var(--text); }
+.pd-btn.danger, .set-ui .set-btn.danger { border-color: var(--viz-coral); color: var(--chip-ink-below); }
+.pd-savebar, .set-ui .set-savebar {
+    display: flex; align-items: center; justify-content: flex-end; gap: 12px;
+    padding: 12px 0 0; margin-top: 8px; border-top: 1px solid var(--sub-1);
+}
+.pd-savebar .prov, .set-ui .set-savebar .prov { margin-right: auto; color: var(--text-muted); font-size: 12px; }
+.pd-savebar .prov.dirty, .set-ui .set-savebar .prov.dirty { color: var(--chip-ink-near); }
+.pd-sfld .v.col, .set-ui .set-fld .v.col { flex-direction: column; align-items: stretch; gap: 2px; }
+
+/* THE RESET, on the neutral names only. What the moved rules inherit on the
+ * Edge and do not declare, restored where Core's style.css would otherwise
+ * impose its own: the Edge body's 14 px (Core's body sets none, so 16 px; the
+ * buttons, inputs and segments above use font: inherit), an input's own width
+ * (Core: width 100%), and a label's weight and spacing (Core: 600 and
+ * margin-bottom .25rem). On the Edge each is already the value it restores. */
+.set-ui { font-size: var(--font-sm); }
+.set-ui label { font-weight: var(--fw-normal); margin-bottom: 0; }
+.set-ui .set-inp { width: auto; }
+/* [hidden] hides. The rules above set display on .set-fld and the rest, and an
+ * author display beats the UA sheet's [hidden], so a row that is off (rule 7)
+ * would still draw. This restores the native behaviour on the neutral side. */
+.set-ui [hidden] { display: none; }
+
+/* ADDED FOR THE CONFIG PAGES, on the neutral names only (Processes has no use
+ * for them).
+ *
+ * The middle width step. A port is the base box (96), a host this one, a URL
+ * .wide (420): the control is the size of its answer. */
+.set-ui .set-inp.mid { min-width: 240px; }
+/* The live indicator's warning form, for a state that needs someone (no
+ * timezone set, showing UTC). The dot and the words both take the warning hue. */
+.set-ui .set-cnt.warn { color: var(--chip-ink-near); }
+.set-ui .set-cnt.warn i { background: var(--viz-amber); }
+/* The error line under a field: a sibling after its .set-fld row, in the value
+ * column like .set-note, in the refusal ink. Nothing styled one outside a modal
+ * before. */
+.set-ui .set-err { margin: 2px 0 2px 314px; color: var(--chip-ink-below); font-size: 12.5px; line-height: 1.35; max-width: 68ch; }
+/* A value column with more controls than fit (the Edge's PLC chips, one per
+ * PLC) wraps onto a second line instead of running past the page edge. A row
+ * that fits is unchanged. */
+.set-ui .set-fld .v { flex-wrap: wrap; }
+/* A window too narrow for the row (label 300 + gap 14 + a .wide box 420, inside
+ * the page's padding): the label goes above its control, the note and the
+ * error line lose their indent, and a wide box takes the column instead of
+ * pushing past it into a horizontal scroll. */
+@media (max-width: 900px) {
+    .set-ui .set-fld { grid-template-columns: 1fr; }
+    .set-ui .set-note, .set-ui .set-err { margin-left: 0; }
+    .set-ui .set-inp.wide { min-width: 0; width: 100%; }
 }

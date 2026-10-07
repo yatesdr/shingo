@@ -651,6 +651,26 @@ func badgePalette(t *testing.T, css string) (light, dark map[string]map[string]s
 		merge(d, darkRules[c])
 		dark[c] = d
 	}
+
+	// A badge that reads a token (.badge-faulted, .badge-failed: U1) is
+	// resolved per theme through tokens.css, the same table the page uses: the
+	// light rule's var() takes the :root value, and in dark, where the rule is
+	// not restated, the [data-theme="dark"] value. A var() that does not end in
+	// a literal is left as written, so the caller's isHex check reports it.
+	tokens := tokenThemes(t, readShared(t, "tokens.css"))
+	resolve := func(theme map[string]map[string]string, tbl map[string]string) {
+		for _, decls := range theme {
+			for k, v := range decls {
+				if m := varRefPattern.FindStringSubmatch(strings.TrimSpace(v)); m != nil {
+					if r := resolveToken(tbl, m[1]); r != "" {
+						decls[k] = r
+					}
+				}
+			}
+		}
+	}
+	resolve(light, tokens["light"])
+	resolve(dark, tokens["dark"])
 	return light, dark
 }
 

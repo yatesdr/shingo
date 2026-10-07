@@ -256,6 +256,18 @@
   --status-blocked-dot:     #f85149;   /* red = alarm */
   --status-delivered-dot:   #3fb950;   /* green */
 
+  /* The Signal attention and failure pills as tokens (U1): .badge-faulted and
+   * .badge-failed in status-classes.css read them, and the operator boards
+   * need them. Values unchanged from the literals they replace; the contrast
+   * and CVD tests resolve them per theme through tokenThemes. Faulted is deep
+   * orange (needs a human), failed is strong red (something broke). */
+  --status-faulted-bg:      #fed7aa;
+  --status-faulted-ink:     #9a3412;
+  --status-faulted-border:  #fdba74;
+  --status-failed-bg:       #fecaca;
+  --status-failed-ink:      #991b1b;
+  --status-failed-border:   #fca5a5;
+
   /* Substrate ramp (U8) — the neutral steel scaffold that static structure is
    * drawn from. "Structure recedes, state glows" says structure carries no
    * saturated colour; until this ramp existed there was no steel token outside
@@ -538,6 +550,16 @@
    * theme-invariant, so its ink is too. The scrim is, because the page it
    * darkens is. */
   --scrim: rgba(4, 6, 9, .62);
+
+  /* Needs attention, dark. Background lifted off failed's near-black so the
+   * two loud pills do not collapse into one dark smudge on a shop-floor LCD;
+   * the text does most of the separating. */
+  --status-faulted-bg:      #4a2606;
+  --status-faulted-ink:     #fdba74;
+  --status-faulted-border:  #6b2c06;
+  --status-failed-bg:       #450a0a;
+  --status-failed-ink:      #f87171;
+  --status-failed-border:   #5c1515;
 }
 
 /* Reduced-motion, by law ("motion means motion"). Zeroing the motion

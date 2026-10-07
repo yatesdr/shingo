@@ -17,6 +17,11 @@ The `.form-input` class is **mandatory** on inputs, selects, and textareas.
 This is the Edge convention; Core inputs need the class added during
 migration.
 
+**The exception: a settings page** (§33) uses the settings shape
+(`.set-fld`, `.set-inp`, …) instead of `.form-group` / `.form-input`, and drafts
+and saves together with one Save, because a half-typed address must never be
+applied.
+
 ### Choice buttons
 
 A question with two or three answers, where the answer decides what else is

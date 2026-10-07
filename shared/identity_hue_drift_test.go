@@ -186,7 +186,9 @@ func TestSurfaceInkTokensAreReadByBothAdminSurfaces(t *testing.T) {
 		// .modal-overlay's declarations under a second name. It carries the
 		// base class now, so the one scrim declaration on this surface is
 		// shingoedge.css's above — pinned there, once.
-		{filepath.Join("..", "shingo-edge", "www", "static", "css", "processes-desktop.css"), decl("color", "--on-accent-solid")},
+		// .pd-btn.primary, the one match, moved to components.css with the
+		// settings shape (U1), grouped with .set-btn.primary.
+		{"components.css", decl("color", "--on-accent-solid")},
 	} {
 		body, err := os.ReadFile(c.path)
 		if err != nil {

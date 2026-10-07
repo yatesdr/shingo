@@ -48,6 +48,10 @@ or threshold, a layout switch that drops members, Delete, Cancel, Terminate.
 An edit that loses nothing does not ask. A confirmation on every change
 teaches people to click through the one that matters.
 
+**The exception: a settings page.** A settings page (§33: Processes Settings,
+Core and Edge Configuration) drafts and saves together, with one Save in its
+foot bar, because a half-typed address must never be applied.
+
 The station box's settings panel (*Settings that save as ticked*) is this
 rule's original statement. The Nodes page follows it: a dedicated position's
 payload `change` is instant, and its `×` asks only when the position has a

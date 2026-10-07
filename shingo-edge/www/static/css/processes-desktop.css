@@ -138,26 +138,13 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-dimlink:hover { color: var(--text); text-decoration: underline; }
 
 /* ── buttons ──────────────────────────────────────────────────────────── */
-.pd-btn {
-    height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--sub-2);
-    background: var(--surface-2, var(--surface)); color: var(--text);
-    font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
-}
-.pd-btn.quiet { border-color: transparent; background: none; color: var(--text-muted); }
-/* A disabled control has to LOOK disabled. Only the primary had this, so
-   "Generate variants..", disabled with its reason in the section note, drew
-   exactly like the live "Sync catalog" beside it. */
-.pd-btn:disabled { opacity: .5; cursor: default; }
-.pd-btn.primary {
-    background: var(--accent-solid); border-color: var(--accent-solid); color: var(--on-accent-solid);
-    height: 40px; padding: 0 20px; font-size: 14px;
-}
-.pd-btn.primary:disabled { opacity: .5; cursor: default; }
+/* .pd-btn and its quiet / disabled / primary forms moved to shared/components.css (U1),
+   grouped with .set-btn. .pd-btn.danger went with them. */
 .pd-lbl {
     font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
     color: var(--text-muted);
 }
-.pd-dim { color: var(--text-muted); font-size: 12px; }
+/* .pd-dim moved to shared/components.css (U1), grouped with .set-dim. */
 /* THE FIELD FITS ITS PLACEHOLDER. The app-bar box was sized by its container
    and the P0 placeholder came out as "find a process, station or p" — a
    truncated instruction is worse than none, and shortening the words to fit a
@@ -201,9 +188,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-tag.ok { color: var(--chip-ink-ok); border-color: var(--viz-green); }
 .pd-tag.build { color: var(--accent); border-color: var(--accent); }
 .pd-tag.run { color: var(--chip-ink-ok); border-color: var(--viz-green); }
-.pd-cnt { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12px; }
-.pd-cnt i { width: 7px; height: 7px; border-radius: 50%; background: var(--sub-4); flex: 0 0 auto; }
-.pd-cnt.ok i { background: var(--viz-green); }
+/* .pd-cnt (the live indicator) moved to shared/components.css (U1), grouped with .set-cnt. */
 /* The list's state cell. The word is derived from the style pointers. Green
  * marks a running part, as the ok tone does everywhere else; a changeover and
  * an idle process stay muted — the guide keeps warm hues for alerts. */
@@ -572,33 +557,16 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .pd-fld label { font-size: 13px; }
 .pd-fld small { display: block; color: var(--text-muted); font-size: 11.5px; font-weight: 400; }
 .pd-fld .v { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.pd-inp {
-    height: 32px; min-width: 96px; padding: 0 10px; border: 1px solid var(--sub-2);
-    border-radius: 8px; background: var(--bg); color: var(--text); font: inherit;
-    font-variant-numeric: tabular-nums;
-}
+/* .pd-inp moved to shared/components.css (U1), grouped with .set-inp; .wide went with it. */
 .pd-inp.dflt { color: var(--text-muted); }
 .pd-src {
     font-size: 10.5px; font-weight: 600; letter-spacing: .04em; padding: 2px 7px;
     border-radius: 999px; border: 1px solid var(--sub-3); color: var(--text-muted);
 }
-.pd-note { color: var(--text-muted); font-size: 12px; }
-.pd-chk {
-    width: 34px; height: 20px; border-radius: 10px; background: var(--sub-2);
-    position: relative; border: 0; padding: 0; cursor: pointer; flex: 0 0 auto;
-}
-.pd-chk::after {
-    content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px;
-    border-radius: 7px; background: var(--sub-5); transition: left 120ms ease;
-}
-.pd-chk.on { background: var(--accent-solid); }
-.pd-chk.on::after { left: 17px; background: var(--on-accent-solid); }
-@media (prefers-reduced-motion: reduce) { .pd-chk::after { transition: none; } }
-.pd-chip {
-    display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
-    border-radius: 999px; border: 1px solid var(--sub-2); background: none;
-    color: var(--text-muted); font: inherit; font-size: 12.5px; cursor: pointer;
-}
+/* .pd-note (both definitions, in order) and .pd-chk moved to shared/components.css (U1),
+   grouped with .set-note and .set-chk. */
+/* .pd-chip (the plain chip) moved to shared/components.css (U1), grouped with
+   .set-chip; its .set / .add / .need forms stay here. */
 .pd-chip.set { border-color: var(--accent); color: var(--text); }
 .pd-chip.set i { font-style: normal; color: var(--text-muted); }
 .pd-chip.add { border-style: dashed; color: var(--accent); }
@@ -626,20 +594,10 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    so there is no row, no swatch, no provenance line and no switch to draw.
    What the map still needs is a way to point at a name, and that is the chip. */
 .pd-npk .pd-nchip.flash { border-color: var(--accent); color: var(--text); }
-/* A SUCCESS IS NOT A REFUSAL. "Generated 3 styles" and "Catalog synced from
-   Core" were reported through the same state the server's refusals are, so
-   they rendered in .pd-refusal's coral border and warning ink — good news
-   drawn as bad. Same box, the affirmative ink. */
-.pd-notice {
-    margin: 4px 0 10px; padding: 10px 12px; border-radius: 10px; font-size: 12.5px;
-    color: var(--text); border: 1px solid var(--sub-2); background: var(--surface);
-}
+/* .pd-notice and .pd-refusal moved to shared/components.css (U1), grouped with
+   .set-notice and .set-refusal. */
 /* On Flows the notice sits in the column under the head, inset like the picture. */
 .pd-main > .pd-notice { margin: 0 24px 8px; flex: none; }
-.pd-refusal {
-    margin: 4px 0 10px; padding: 10px 12px; border-radius: 10px; font-size: 12.5px;
-    color: var(--chip-ink-below); border: 1px solid var(--viz-coral);
-}
 
 /* The map's marks. Structure recedes: every edge is one substrate stroke and
    the only saturated things are the two robot paths and the waypoints. */
@@ -697,33 +655,9 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    One sheet shape for both: a section rule, a 230 px label column and the
    value beside it — the same grid the Advanced modal uses, so the desktop has
    one field shape and not three. */
-.pd-sheet { padding: 12px 32px 20px; }
-/* Settings is a FORM and reads best at a form's width; operator screens is a
-   TABLE and gets the page. The reference draws them that way (D4 full-bleed,
-   D5 ending near 1008 px), and one cap on both made D4's table stop two-thirds
-   of the way across an otherwise empty screen. */
-.pd-sheet.pd-settings { max-width: 1040px; }
-/* THE RHYTHM IS THE REFERENCE'S. Five sections at 18/10 padding, fields at
-   3 px and a note at 6 px pushed Styles and Danger below the fold at 900 —
-   D5's whole point is that the dangerous thing is visible from the same place
-   as the safe ones. The reference's spacing is tighter: 12 above a section
-   rule, 6 below it, and a field row that is its control's height plus two. */
-.pd-sect {
-    display: flex; align-items: baseline; gap: 12px;
-    padding: 10px 0 4px; border-top: 1px solid var(--sub-1);
-}
-.pd-sheet > .pd-sect:first-child { border-top: 0; padding-top: 0; }
-.pd-sect h2 { margin: 0; font-size: 16px; font-weight: 600; }
-.pd-sect.danger h2 { color: var(--chip-ink-below); }
-.pd-sect .pd-spacer { flex: 1; }
-.pd-sfld {
-    display: grid; grid-template-columns: 300px 1fr; align-items: center;
-    gap: 4px 14px; padding: 1px 0;
-}
-.pd-sfld label { font-size: 13px; }
-.pd-sfld small { display: block; color: var(--text-muted); font-size: 11.5px; font-weight: 400; }
-.pd-sfld .v { display: flex; align-items: center; gap: 10px; }
-.pd-inp.wide { min-width: 420px; }
+/* .pd-sheet, .pd-sheet.pd-settings, .pd-sect and .pd-sfld moved to shared/components.css
+   (U1), grouped with .set-page, .set-sect and .set-fld: the settings shape is shared by
+   this tab and both Configuration pages. */
 /* A window too narrow for the sheet: the card is already capped at the window
    (.pd-modal max-width), so the label goes above its input and the input takes
    the card's width rather than pushing past it into a horizontal scroll. 780 is
@@ -732,22 +666,8 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
     .pd-modal .pd-fld { grid-template-columns: 1fr; }
     .pd-modal .pd-inp.wide { min-width: 0; width: 100%; }
 }
-.pd-note { margin: 2px 0 2px 314px; color: var(--text-muted); font-size: 12.5px; line-height: 1.35; max-width: 68ch; }
 .pd-modal .pd-note { margin-left: 0; }
-.pd-seg { display: inline-flex; border: 1px solid var(--sub-2); border-radius: 10px; overflow: hidden; }
-.pd-seg button {
-    height: 34px; padding: 0 14px; border: 0; border-right: 1px solid var(--sub-2);
-    background: none; color: var(--text-muted); font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
-}
-.pd-seg button:last-child { border-right: 0; }
-.pd-seg button.on { background: var(--surface-2, var(--surface)); color: var(--text); }
-.pd-btn.danger { border-color: var(--viz-coral); color: var(--chip-ink-below); }
-.pd-savebar {
-    display: flex; align-items: center; justify-content: flex-end; gap: 12px;
-    padding: 12px 0 0; margin-top: 8px; border-top: 1px solid var(--sub-1);
-}
-.pd-savebar .prov { margin-right: auto; color: var(--text-muted); font-size: 12px; }
-.pd-savebar .prov.dirty { color: var(--chip-ink-near); }
+/* .pd-seg, .pd-btn.danger and .pd-savebar moved to shared/components.css (U1). */
 .pd-nchip {
     display: inline-block; margin: 0 6px 0 0; padding: 3px 10px; border-radius: 999px;
     border: 1px solid var(--sub-2); font-size: 12px; color: var(--text-muted);
@@ -912,7 +832,7 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
    gate it is the precondition for. Nothing here is a new shape — the rows are
    the node picker's, the label column is the settings field's, and the map is the
    same .pd-map at a height instead of a flex share. */
-.pd-sfld .v.col { flex-direction: column; align-items: stretch; gap: 2px; }
+/* .pd-sfld .v.col moved to shared/components.css (U1), grouped with .set-fld .v.col. */
 .pd-sfld .v.col .pd-npk { margin-top: 6px; }
 .pd-settings .pd-rsmap {
     flex: none; height: 520px; margin: 10px 0 4px;
