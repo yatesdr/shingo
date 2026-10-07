@@ -303,10 +303,12 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		return messaging.BuildCellCatalog(pts)
 	}
 	// Plant display zone on every register/heartbeat, so Core's /edges table
-	// shows what this edge is ON. Read from the engine config snapshot the
-	// process booted with — a zone saved mid-run applies at restart, and the
-	// wire flips exactly then, not before. Unset config sends "" and Core's
-	// table shows the blank, which is the "go set it" signal.
+	// shows what this edge is set to. Read from the LIVE config at send time,
+	// not a boot snapshot: a zone saved mid-run (or adopted from Core) is
+	// reported from the next heartbeat on, although this Edge's own display
+	// and hourly bucketing keep the boot zone until a restart. Unset config
+	// sends "" and Core's table shows the blank, which is the "go set it"
+	// signal.
 	hb.TimezoneFn = func() string {
 		if cfg := eng.AppConfig(); cfg != nil {
 			cfg.Lock()
@@ -1236,6 +1238,11 @@ func adoptPlantTimezone(cfg *config.Config, configPath, offered string) {
 	if offered == "" || cfg == nil {
 		return
 	}
+	// The one save path's mutex, held across the read, the write, the save
+	// and the rollback below, so a config-page save cannot interleave and
+	// write the old (blank) zone back. Taken before cfg.Lock, as everywhere.
+	cfg.LockSave()
+	defer cfg.UnlockSave()
 	cfg.Lock()
 	existing := cfg.Timezone
 	cfg.Unlock()

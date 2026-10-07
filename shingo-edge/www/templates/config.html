@@ -1,295 +1,230 @@
 {{template "header" .}}
 
 <div class="page-header">
-    <h1>Config</h1>
+    <h1>Configuration</h1>
 </div>
 
-<div id="page-data" data-station-id="{{.Config.StationID}}"></div>
+<div id="config" class="set-page set-ui"
+     data-station-id="{{.StationID}}"
+     {{- if not .Config.StationUID}}{{with .Config.Messaging.StationID}} data-legacy-station-id="{{.}}"{{end}}{{end}}
+     data-restart="{{.RestartJSON}}"
+     data-backup-status="{{.BackupStatusJSON}}">
 
-<div class="card" style="margin-bottom:1rem">
-    <div class="card-header"><strong>Identity</strong></div>
-    <div class="card-body" style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap">
-        <div class="form-group" style="margin:0;min-width:18rem;flex:1">
-            <label>Station UID</label>
-            <input type="text" id="station-uid-input" class="form-input" value="{{.Config.StationUID}}" placeholder="stn-…">
-        </div>
-        <div style="color:var(--text-muted);font-size:0.9rem;flex:1;min-width:16rem">
-            Minted by Core when this station is enrolled. If you are replacing this box for an
-            existing station, paste that station&#39;s <em>existing</em> UID here — its history
-            follows the UID, not the hardware.
-            <strong>Takes effect on restart.</strong>
-        </div>
-        <button class="btn btn-primary" data-action="saveIdentity">Save Identity</button>
+    <!-- Station -->
+    <div class="set-sect">
+        <h2>Station</h2>
+        {{if not .Config.Timezone}}<span class="set-cnt warn"><i></i>no timezone set · showing {{.DisplayZone}}</span>{{end}}
     </div>
-    <div class="card-body" style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:0.75rem">
-        <div class="form-group" style="margin:0;min-width:18rem;flex:1">
-            <label>Plant Timezone (IANA)</label>
-            <input type="text" id="timezone-input" class="form-input" value="{{.Config.Timezone}}" placeholder="America/Chicago">
-        </div>
-        <div style="color:var(--text-muted);font-size:0.9rem;flex:1;min-width:16rem">
-            The plant&#39;s wall-clock zone, for display <em>and</em> hourly-count bucketing.
-            Empty is unconfigured: display falls back to UTC and counts bucket in the box&#39;s
-            OS zone, which may disagree with the plant clock.
-            <strong>Takes effect on restart.</strong>
-        </div>
-        <button class="btn btn-primary" data-action="saveTimezone">Save Timezone</button>
+    <div class="set-fld">
+        <label for="cf-uid">Station UID<small>issued by Core at enrolment · replacing a box? enter the old station's UID · applies after a restart</small></label>
+        <div class="v"><input id="cf-uid" class="set-inp mid" type="text" data-field="station_uid" value="{{.Config.StationUID}}" placeholder="stn-…" spellcheck="false" autocomplete="off"></div>
     </div>
+    <div class="set-fld">
+        <label for="cf-tz">Plant timezone<small>blank takes the plant's zone from Core · applies after a restart</small></label>
+        <div class="v"><input id="cf-tz" class="set-inp mid" type="text" data-field="timezone" value="{{.Config.Timezone}}" placeholder="America/Chicago" spellcheck="false" autocomplete="off"></div>
+    </div>
+    <div class="set-fld">
+        <label for="cf-autoconfirm">Confirm deliveries automatically<small>off: someone confirms at the station · on: confirmed when the robot reports it arrived</small></label>
+        <div class="v"><button id="cf-autoconfirm" type="button" class="set-chk{{if .Config.Web.AutoConfirm}} on{{end}}" role="switch" aria-checked="{{if .Config.Web.AutoConfirm}}true{{else}}false{{end}}" data-sw="auto_confirm" data-action="flip"></button></div>
+    </div>
+
+    <!-- Core connection -->
+    <div class="set-sect">
+        <h2>Core connection</h2>
+        {{if not .Config.CoreAPI}}<span class="set-cnt warn"><i></i>no address set</span>{{end}}
+        <span class="set-spacer"></span>
+        <button type="button" class="set-btn" data-action="testCore">Test connection</button>
+    </div>
+    <div class="set-fld">
+        <label for="cf-core">Core address<small>where this Edge reads nodes, bins and payloads · applies after a restart</small></label>
+        <div class="v"><input id="cf-core" class="set-inp wide" type="text" data-field="core_api" value="{{.Config.CoreAPI}}" placeholder="http://core:8080" spellcheck="false" autocomplete="off"><span class="set-dim" id="core-test" role="status"></span></div>
+    </div>
+    <div class="set-fld">
+        <label>Node list and payload catalog<small>refreshed about every 2 minutes without help · use after a change on Core</small></label>
+        <div class="v">
+            <button type="button" class="set-btn" id="sync-nodes" data-action="syncCoreNodes">Refresh nodes</button>
+            <button type="button" class="set-btn" id="sync-catalog" data-action="syncPayloadCatalog">Refresh catalog</button>
+            <span class="set-dim" id="core-sync" role="status"></span>
+        </div>
+    </div>
+
+    <!-- PLC link -->
+    <div class="set-sect">
+        <h2>PLC link</h2>
+        <span class="set-cnt{{if .PLCLiveClass}} {{.PLCLiveClass}}{{end}}" id="plc-live"><i></i><span>{{.PLCLive}}</span></span>
+    </div>
+    <div class="set-fld">
+        <label for="cf-plc-on">Read PLCs through WarLink<small>off: no tag values are read from the PLCs</small></label>
+        <div class="v"><button id="cf-plc-on" type="button" class="set-chk{{if .Config.WarLink.Enabled}} on{{end}}" role="switch" aria-checked="{{if .Config.WarLink.Enabled}}true{{else}}false{{end}}" data-sw="plc_enabled" data-action="flip"></button></div>
+    </div>
+    <div class="set-fld" data-dep="plc_enabled">
+        <label for="cf-wl-host">WarLink address<small>host and port</small></label>
+        <div class="v">
+            <input id="cf-wl-host" class="set-inp mid" type="text" data-field="host" value="{{.Config.WarLink.Host}}" spellcheck="false" autocomplete="off">
+            <input class="set-inp" type="text" inputmode="numeric" size="5" data-field="port" aria-label="WarLink port" value="{{.Config.WarLink.Port}}">
+        </div>
+    </div>
+    <div class="set-fld" data-dep="plc_enabled">
+        <label>Tag values arrive<small>pushed: WarLink sends each change · polled: Edge reads every tag on a timer</small></label>
+        <div class="v">
+            <span class="set-seg" role="group" aria-label="Tag values arrive" data-field="mode">
+                <button type="button" data-action="pickMode:sse" data-mode="sse" class="{{if ne .Config.WarLink.Mode "poll"}}on{{end}}" aria-pressed="{{if ne .Config.WarLink.Mode "poll"}}true{{else}}false{{end}}">Pushed</button><button type="button" data-action="pickMode:poll" data-mode="poll" class="{{if eq .Config.WarLink.Mode "poll"}}on{{end}}" aria-pressed="{{if eq .Config.WarLink.Mode "poll"}}true{{else}}false{{end}}">Polled</button>
+            </span>
+            <span class="set-dim" data-poll>every</span>
+            <input class="set-inp" type="text" size="5" data-poll data-field="poll_rate" aria-label="Poll every" value="{{.PollRateText}}">
+        </div>
+    </div>
+    <div class="set-fld" data-dep="plc_enabled">
+        <label>PLCs WarLink can see<small>{{if .PLCNames}}{{.PLCConnected}} of {{len .PLCNames}} connected{{else}}as WarLink reports them{{end}}</small></label>
+        <div class="v">
+            {{range .PLCNames}}<span class="set-chip">{{.}}</span>{{else}}<span class="set-dim">none seen</span>{{end}}
+        </div>
+    </div>
+
+    <!-- Messaging -->
+    <div class="set-sect">
+        <h2>Messaging</h2>
+        {{if .MessagingLive}}<span class="set-cnt{{if .MessagingLiveClass}} {{.MessagingLiveClass}}{{end}}"><i></i>{{.MessagingLive}}</span>{{end}}
+        <span class="set-spacer"></span>
+        <button type="button" class="set-btn" data-action="testBrokers">Test brokers</button>
+    </div>
+    <div class="set-fld">
+        <label>Kafka brokers<small>host:port · how this Edge and Core talk</small></label>
+        <div class="v col" id="broker-list" data-field="brokers">
+            {{range .Config.Messaging.Kafka.Brokers}}<div class="v" data-broker-row>
+                <input class="set-inp mid" type="text" data-broker value="{{.}}" aria-label="Broker" spellcheck="false" autocomplete="off">
+                <button type="button" class="set-btn quiet" data-action="removeBroker">Remove</button>
+                <span class="set-dim" data-broker-status role="status"></span>
+            </div>{{end}}
+            <div class="v" id="broker-add"><button type="button" class="set-btn" data-action="addBroker">Add broker</button></div>
+        </div>
+    </div>
+
+    <!-- Shifts (the database, not shingoedge.yaml: their own door) -->
+    <div class="set-sect">
+        <h2>Shifts</h2>
+        <span class="set-cnt" id="shift-live"><i></i><span>{{if .Shifts}}{{len .Shifts}} of 3{{else}}none set{{end}}</span></span>
+    </div>
+    <div id="shift-list" data-field="shifts">
+        {{range .Shifts}}<div class="set-fld" data-shift-row>
+            <label>Shift {{.ShiftNumber}}<small>name, start and end in plant time</small></label>
+            <div class="v">
+                <input class="set-inp" type="text" data-sh="name" value="{{.Name}}" placeholder="Name" aria-label="Shift name">
+                <input class="set-inp" type="time" data-sh="start" value="{{.StartTime}}" aria-label="Start">
+                <span class="set-dim">to</span>
+                <input class="set-inp" type="time" data-sh="end" value="{{.EndTime}}" aria-label="End">
+                <button type="button" class="set-btn quiet" data-action="removeShift">Remove</button>
+            </div>
+        </div>{{end}}
+    </div>
+    <div class="set-fld" id="shift-add">
+        <label><span id="shift-add-hint">{{if not .Shifts}}No shifts yet{{end}}</span></label>
+        <div class="v"><button type="button" class="set-btn" id="shift-add-btn" data-action="addShift"{{if ge (len .Shifts) 3}} disabled{{end}}>Add shift</button></div>
+    </div>
+
+    <!-- Backups -->
+    <div class="set-sect">
+        <h2>Backups</h2>
+        <span class="set-cnt" id="backup-live"><i></i><span></span></span>
+        <span class="set-spacer"></span>
+        <button type="button" class="set-btn" data-action="testBackup" data-needs-storage>Test connection</button>
+        <button type="button" class="set-btn" data-action="runBackup" data-needs-storage>Back up now</button>
+    </div>
+    <div class="set-fld">
+        <label>Storage<small id="storage-sub">S3 storage for copies of this Edge's database and config</small></label>
+        <div class="v"><button type="button" class="set-btn" id="storage-toggle" data-action="toggleStorage">Set up storage…</button></div>
+    </div>
+    <div class="set-fld" data-storage>
+        <label for="cf-endpoint">Endpoint</label>
+        <div class="v"><input id="cf-endpoint" class="set-inp wide" type="text" data-field="endpoint" value="{{.Config.Backup.S3.Endpoint}}" placeholder="https://s3.example.com" spellcheck="false" autocomplete="off"></div>
+    </div>
+    <div class="set-fld" data-storage>
+        <label for="cf-bucket">Bucket and region</label>
+        <div class="v">
+            <input id="cf-bucket" class="set-inp mid" type="text" data-field="bucket" value="{{.Config.Backup.S3.Bucket}}" spellcheck="false" autocomplete="off">
+            <input class="set-inp" type="text" size="10" data-field="region" aria-label="Region" value="{{.Config.Backup.S3.Region}}" spellcheck="false" autocomplete="off">
+        </div>
+    </div>
+    <div class="set-fld" data-storage>
+        <label for="cf-access">Keys<small>access key and secret key · blank secret keeps the saved one</small></label>
+        <div class="v">
+            <input id="cf-access" class="set-inp mid" type="text" data-field="access_key" value="{{.Config.Backup.S3.AccessKey}}" spellcheck="false" autocomplete="off">
+            <input class="set-inp mid" type="password" data-field="secret_key" aria-label="Secret key" placeholder="{{if .SecretSaved}}saved{{else}}none saved{{end}}" autocomplete="new-password">
+            <button type="button" class="set-btn quiet" id="secret-remove" data-action="removeSecret"{{if not .SecretSaved}} hidden{{end}}>Remove</button>
+        </div>
+    </div>
+    <div class="set-fld" data-storage>
+        <label for="cf-pathstyle">Path-style addresses<small>most storage that is not Amazon's needs this on</small></label>
+        <div class="v"><button id="cf-pathstyle" type="button" class="set-chk{{if .Config.Backup.S3.UsePathStyle}} on{{end}}" role="switch" aria-checked="{{if .Config.Backup.S3.UsePathStyle}}true{{else}}false{{end}}" data-sw="use_path_style" data-action="flip"></button></div>
+    </div>
+    <div class="set-fld" data-storage>
+        <label for="cf-skiptls">Skip the certificate check<small>only for storage with a self-signed certificate</small></label>
+        <div class="v"><button id="cf-skiptls" type="button" class="set-chk{{if .Config.Backup.S3.InsecureSkipTLSVerify}} on{{end}}" role="switch" aria-checked="{{if .Config.Backup.S3.InsecureSkipTLSVerify}}true{{else}}false{{end}}" data-sw="insecure_skip_tls_verify" data-action="flip"></button></div>
+    </div>
+    <div class="set-fld" data-storage>
+        <label for="cf-autobackup">Back up automatically<small>off: only when someone presses Back up now</small></label>
+        <div class="v">
+            <button id="cf-autobackup" type="button" class="set-chk{{if .Config.Backup.Enabled}} on{{end}}" role="switch" aria-checked="{{if .Config.Backup.Enabled}}true{{else}}false{{end}}" data-sw="backup_enabled" data-action="flip"></button>
+            <span class="set-dim" data-dep="backup_enabled">every</span>
+            <input class="set-inp" type="text" size="5" data-dep="backup_enabled" data-field="schedule_interval" aria-label="Back up every" value="{{.BackupIntervalText}}">
+        </div>
+    </div>
+    <div class="set-fld" data-storage>
+        <label>How many to keep<small>hourly, daily, weekly, monthly</small></label>
+        <div class="v">
+            <input class="set-inp" type="text" inputmode="numeric" size="4" data-field="keep_hourly" aria-label="Keep hourly" value="{{.Config.Backup.KeepHourly}}">
+            <input class="set-inp" type="text" inputmode="numeric" size="4" data-field="keep_daily" aria-label="Keep daily" value="{{.Config.Backup.KeepDaily}}">
+            <input class="set-inp" type="text" inputmode="numeric" size="4" data-field="keep_weekly" aria-label="Keep weekly" value="{{.Config.Backup.KeepWeekly}}">
+            <input class="set-inp" type="text" inputmode="numeric" size="4" data-field="keep_monthly" aria-label="Keep monthly" value="{{.Config.Backup.KeepMonthly}}">
+        </div>
+    </div>
+    <div class="set-note" id="backup-op" role="status" hidden></div>
+
+    <!-- Account -->
+    <div class="set-sect">
+        <h2>Account</h2>
+    </div>
+    <div class="set-fld">
+        <label>Admin password<small>for the login you are signed in with</small></label>
+        <div class="v"><button type="button" class="set-btn" data-action="openPassword">Change password…</button></div>
+    </div>
+
+    <!-- Restore: the danger section, last. Shown once storage is configured. -->
+    <div class="set-sect danger" data-restore hidden>
+        <h2>Restore from a backup</h2>
+    </div>
+    <div class="set-fld" data-restore hidden>
+        <label>Backups in storage<small>a restore replaces this Edge's database and config at the next restart · you type the station ID to confirm</small></label>
+        <div class="v"><button type="button" class="set-btn" id="backup-list-btn" data-action="listBackups">Show backups</button><span class="set-dim" id="backup-list-status" role="status"></span></div>
+    </div>
+    <div id="backup-list" data-restore hidden></div>
 </div>
 
-<div class="card" style="margin-bottom:1rem">
-    <div class="card-header"><strong>Core API</strong></div>
-    <div class="card-body" style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap">
-        <div class="form-group" style="margin:0;min-width:22rem;flex:1">
-            <label>Core URL</label>
-            <input type="text" id="core-api-url" class="form-input" value="{{.Config.CoreAPI}}" placeholder="http://192.168.1.10:8080">
+<!-- Change password. The modal body carries set-ui: a modal sits outside the page. -->
+<div class="modal-overlay" id="password-modal">
+    <div class="modal modal-md set-ui" role="dialog" aria-modal="true" aria-labelledby="password-title">
+        <div class="modal-header">
+            <span id="password-title">Change password</span>
+            <button type="button" class="set-btn quiet" data-action="closePassword" aria-label="Close">&times;</button>
         </div>
-        <button class="btn btn-sm" data-action="testCoreAPI">Test</button>
-        <span id="core-api-status" style="font-size:0.85rem;color:var(--text-muted)"></span>
-        <button class="btn btn-primary" data-action="saveCoreAPI">Save</button>
-    </div>
-    <div class="card-body" style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:0.75rem">
-        <div style="flex:1;min-width:18rem">
-            <strong>Sync from Core</strong>
-            <div style="color:var(--text-muted);font-size:0.85rem">Force-refresh the cached node list and payload catalog. Background refresh runs ~every 2 minutes; use this after a Core-side add/rename if you don't want to wait.</div>
-        </div>
-        <button class="btn btn-sm" id="sync-core-nodes-btn" data-action="syncCoreNodes">Sync Nodes</button>
-        <button class="btn btn-sm" id="sync-payload-catalog-btn" data-action="syncPayloadCatalog">Sync Catalog</button>
-        <span id="core-sync-status" style="font-size:0.85rem;color:var(--text-muted)"></span>
-    </div>
-</div>
-
-<div class="card" style="margin-bottom:1rem">
-    <div class="card-header"><strong>WarLink</strong></div>
-    <div class="card-body" id="warlink-form">
-        <div style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap">
-            <div class="form-group" style="margin:0;flex:1;min-width:14rem">
-                <label>Host</label>
-                <input type="text" name="host" class="form-input" value="{{.Config.WarLink.Host}}">
+        <div class="card-body" id="password-body">
+            <div class="set-fld">
+                <label for="pw-old">Current password</label>
+                <div class="v"><input id="pw-old" class="set-inp mid" type="password" data-pw="old" autocomplete="current-password"></div>
             </div>
-            <div class="form-group" style="margin:0;width:7rem">
-                <label>Port</label>
-                <input type="number" name="port" class="form-input" value="{{.Config.WarLink.Port}}">
+            <div class="set-fld">
+                <label for="pw-new">New password</label>
+                <div class="v"><input id="pw-new" class="set-inp mid" type="password" data-pw="new" autocomplete="new-password"></div>
             </div>
-            <div class="form-group" style="margin:0;width:8rem">
-                <label>Poll Rate</label>
-                <input type="text" name="poll_rate" class="form-input" value="{{.Config.WarLink.PollRate}}">
+            <div class="set-fld">
+                <label for="pw-again">New password again</label>
+                <div class="v"><input id="pw-again" class="set-inp mid" type="password" data-pw="again" autocomplete="new-password"></div>
             </div>
-            <div class="form-group" style="margin:0;width:8rem">
-                <label>Mode</label>
-                <select name="mode" class="form-input">
-                    <option value="poll" {{if eq .Config.WarLink.Mode "poll"}}selected{{end}}>Poll</option>
-                    <option value="sse" {{if ne .Config.WarLink.Mode "poll"}}selected{{end}}>SSE</option>
-                </select>
-            </div>
-            <label style="display:flex;align-items:center;gap:0.45rem;margin:0 0 0.5rem 0">
-                <input type="checkbox" name="enabled" {{if .Config.WarLink.Enabled}}checked{{end}}>
-                <span>Enabled</span>
-            </label>
-            <div class="status-badge {{if .WarLinkConnected}}status-connected{{else}}status-disconnected{{end}}" id="warlink-status">{{if .WarLinkConnected}}Connected{{else}}Disconnected{{end}}</div>
-            <button class="btn btn-primary" data-action="saveWarLink">Save WarLink</button>
+            <div class="set-refusal" id="pw-refusal" role="alert" hidden></div>
         </div>
-        <div style="margin-top:0.75rem">
-            <strong style="display:block;margin-bottom:0.4rem">Available PLCs</strong>
-            <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
-                {{range .PLCNames}}
-                <span class="plc-chip {{if index $.PLCStatus .}}plc-chip-connected{{else}}plc-chip-disconnected{{end}}">
-                    <span class="plc-health-dot {{if index $.PLCStatus .}}plc-health-online{{else}}plc-health-unknown{{end}}"></span>{{.}}
-                </span>
-                {{else}}
-                <span class="empty-cell">No PLCs discovered</span>
-                {{end}}
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="card" style="margin-bottom:1rem">
-    <div class="card-header"><strong>Messaging</strong></div>
-    <div class="card-body">
-        <div id="broker-rows">
-            {{range .Config.Messaging.Kafka.Brokers}}
-            <div class="broker-row">
-                <input type="text" class="form-input broker-host" style="flex:1" value="{{brokerHost .}}" placeholder="localhost">
-                <input type="number" class="form-input broker-port" style="width:7rem" value="{{brokerPort .}}" placeholder="9092">
-                <button class="btn btn-sm" data-action="testBroker">Test</button>
-                <span class="broker-status"></span>
-                <button class="btn-icon btn-icon-danger" data-action="removeBrokerRow" title="Remove">&#10005;</button>
-            </div>
-            {{else}}
-            <div class="broker-row">
-                <input type="text" class="form-input broker-host" style="flex:1" placeholder="localhost">
-                <input type="number" class="form-input broker-port" style="width:7rem" placeholder="9092">
-                <button class="btn btn-sm" data-action="testBroker">Test</button>
-                <span class="broker-status"></span>
-                <button class="btn-icon btn-icon-danger" data-action="removeBrokerRow" title="Remove">&#10005;</button>
-            </div>
-            {{end}}
-        </div>
-        <div style="display:flex;gap:0.75rem;justify-content:space-between;align-items:center;margin-top:0.75rem;flex-wrap:wrap">
-            <label style="display:flex;align-items:center;gap:0.5rem">
-                <input type="checkbox" id="auto-confirm" {{if .Config.Web.AutoConfirm}}checked{{end}}>
-                <span>Auto-confirm deliveries when AMR reports arrival</span>
-            </label>
-            <div style="display:flex;gap:0.5rem">
-                <button class="btn btn-sm" data-action="addBrokerRow">+ Add Broker</button>
-                <button class="btn btn-primary" data-action="saveMessaging">Save Messaging</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="card" style="margin-bottom:1rem">
-    <div class="card-header"><strong>Backups</strong></div>
-    <div class="card-body">
-        <div id="backup-form">
-            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:0.75rem">
-                <label class="form-group" style="margin:0">
-                    <span>Enabled</span>
-                    <input type="checkbox" id="backup-enabled" name="enabled" {{if .Config.Backup.Enabled}}checked{{end}}>
-                </label>
-                <label class="form-group" style="margin:0">
-                    <span>Schedule Interval</span>
-                    <input type="text" name="schedule_interval" class="form-input" value="{{.Config.Backup.ScheduleInterval}}">
-                </label>
-                <label class="form-group" style="margin:0">
-                    <span>Keep Hourly</span>
-                    <input type="number" name="keep_hourly" class="form-input" value="{{.Config.Backup.KeepHourly}}">
-                </label>
-                <label class="form-group" style="margin:0">
-                    <span>Keep Daily</span>
-                    <input type="number" name="keep_daily" class="form-input" value="{{.Config.Backup.KeepDaily}}">
-                </label>
-                <label class="form-group" style="margin:0">
-                    <span>Keep Weekly</span>
-                    <input type="number" name="keep_weekly" class="form-input" value="{{.Config.Backup.KeepWeekly}}">
-                </label>
-                <label class="form-group" style="margin:0">
-                    <span>Keep Monthly</span>
-                    <input type="number" name="keep_monthly" class="form-input" value="{{.Config.Backup.KeepMonthly}}">
-                </label>
-                <label class="form-group" style="margin:0">
-                    <span>Endpoint</span>
-                    <input type="text" name="endpoint" class="form-input" value="{{.Config.Backup.S3.Endpoint}}">
-                </label>
-                <label class="form-group" style="margin:0">
-                    <span>Bucket</span>
-                    <input type="text" name="bucket" class="form-input" value="{{.Config.Backup.S3.Bucket}}">
-                </label>
-                <label class="form-group" style="margin:0">
-                    <span>Region</span>
-                    <input type="text" name="region" class="form-input" value="{{.Config.Backup.S3.Region}}">
-                </label>
-                <label class="form-group" style="margin:0">
-                    <span>Access Key</span>
-                    <input type="text" name="access_key" class="form-input" value="{{.Config.Backup.S3.AccessKey}}">
-                </label>
-                <label class="form-group" style="margin:0">
-                    <span>Secret Key</span>
-                    <input type="password" name="secret_key" class="form-input" value="{{.Config.Backup.S3.SecretKey}}">
-                </label>
-                <label style="display:flex;align-items:center;gap:0.5rem;margin-top:1.8rem">
-                    <input type="checkbox" name="use_path_style" {{if .Config.Backup.S3.UsePathStyle}}checked{{end}}>
-                    <span>Use Path Style</span>
-                </label>
-                <label style="display:flex;align-items:center;gap:0.5rem;margin-top:1.8rem">
-                    <input type="checkbox" name="insecure_skip_tls_verify" {{if .Config.Backup.S3.InsecureSkipTLSVerify}}checked{{end}}>
-                    <span>Skip TLS Verify</span>
-                </label>
-            </div>
-        </div>
-        <div id="backup-connection-status" style="margin-top:0.75rem;color:var(--text-muted)">Connection test not yet run.</div>
-        <div id="backup-operation-status" style="margin-top:0.35rem;color:var(--text-muted)">No manual backup operation running.</div>
-        <div id="backup-status" style="margin-top:0.75rem;color:var(--text-muted)">Loading backup status...</div>
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem">
-            <button class="btn" id="backup-test-btn" data-action="testBackupConfig">Test Connection</button>
-            <button class="btn" id="backup-run-btn" data-action="runBackupNow">Backup Now</button>
-            <button class="btn btn-primary" id="backup-save-btn" data-action="saveBackupConfig">Save Backup Settings</button>
-        </div>
-        <div class="card" style="margin-top:1rem">
-            <div class="card-header"><strong>Available Backups</strong></div>
-            <div class="card-body" style="padding:0">
-                <table class="table">
-                    <thead>
-                        <tr>
-                            <th>Created</th>
-                            <th>Size</th>
-                            <th>Key</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="backup-body">
-                        <tr><td colspan="4" class="empty-cell">Loading backups...</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="card" style="margin-bottom:1rem">
-    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
-        <strong>Security</strong>
-    </div>
-    <div class="card-body" style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap">
-        <div class="form-group" style="margin:0;min-width:14rem">
-            <label>Current Password</label>
-            <input type="password" id="pw-old" class="form-input">
-        </div>
-        <div class="form-group" style="margin:0;min-width:14rem">
-            <label>New Password</label>
-            <input type="password" id="pw-new" class="form-input">
-        </div>
-        <div class="form-group" style="margin:0;min-width:14rem">
-            <label>Confirm New Password</label>
-            <input type="password" id="pw-confirm" class="form-input">
-        </div>
-        <button class="btn btn-primary" data-action="changePassword">Change Password</button>
-    </div>
-</div>
-
-<div class="card" style="margin-bottom:1rem">
-    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
-        <strong>Shifts</strong>
-        <button class="btn btn-sm" id="add-shift-btn" data-action="addShiftRow" {{if ge (len .Shifts) 3}}disabled title="Maximum 3 shifts"{{end}}>+ Add Shift</button>
-    </div>
-    <div class="card-body">
-        <div id="shift-rows">
-            {{range .Shifts}}
-            <div class="shift-row" data-shift-number="{{.ShiftNumber}}" style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap;margin-bottom:0.5rem;padding:0.5rem;border:1px solid var(--border);border-radius:var(--radius)">
-                <div class="form-group" style="margin:0;flex:1;min-width:10rem">
-                    <label>Name</label>
-                    <input type="text" class="form-input shift-name" value="{{.Name}}" placeholder="Shift name">
-                </div>
-                <div class="form-group" style="margin:0;width:8rem">
-                    <label>Start Time</label>
-                    <input type="time" class="form-input shift-start" value="{{.StartTime}}">
-                </div>
-                <div class="form-group" style="margin:0;width:8rem">
-                    <label>End Time</label>
-                    <input type="time" class="form-input shift-end" value="{{.EndTime}}">
-                </div>
-                <button class="btn btn-sm btn-danger" data-action="removeShiftRow" title="Remove shift">Remove</button>
-            </div>
-            {{else}}
-            <div class="shift-row" data-shift-number="1" style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap;margin-bottom:0.5rem;padding:0.5rem;border:1px solid var(--border);border-radius:var(--radius)">
-                <div class="form-group" style="margin:0;flex:1;min-width:10rem">
-                    <label>Name</label>
-                    <input type="text" class="form-input shift-name" placeholder="Shift name">
-                </div>
-                <div class="form-group" style="margin:0;width:8rem">
-                    <label>Start Time</label>
-                    <input type="time" class="form-input shift-start">
-                </div>
-                <div class="form-group" style="margin:0;width:8rem">
-                    <label>End Time</label>
-                    <input type="time" class="form-input shift-end">
-                </div>
-                <button class="btn btn-sm btn-danger" data-action="removeShiftRow" title="Remove shift">Remove</button>
-            </div>
-            {{end}}
-        </div>
-        <div style="margin-top:0.75rem">
-            <button class="btn btn-primary" data-action="saveShifts">Save Shifts</button>
+        <div class="modal-footer">
+            <button type="button" class="set-btn quiet" data-action="closePassword">Cancel</button>
+            <button type="button" class="set-btn primary" data-action="changePassword">Change password</button>
         </div>
     </div>
 </div>

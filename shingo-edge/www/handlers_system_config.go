@@ -1,7 +1,7 @@
-// handlers_system_config.go — system-level config endpoints: Core API
-// URL, messaging/Kafka, station ID, auto-confirm flag, change-password.
-// All of these mutate the persisted config file via cfg.Save and the
-// auth-side flow uses the protocol/auth package.
+// handlers_system_config.go — the Configuration page's test doors (Core
+// address, a Kafka broker) and the change-password door. The settings
+// themselves are saved through the one door, PUT /api/config
+// (handlers_config_save.go).
 
 package www
 
@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"time"
@@ -18,25 +17,6 @@ import (
 )
 
 // --- Core API ---
-
-func (h *Handlers) apiUpdateCoreAPI(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		CoreAPI string `json:"core_api"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	cfg := h.engine.AppConfig()
-	cfg.Lock()
-	cfg.CoreAPI = req.CoreAPI
-	cfg.Unlock()
-	if err := cfg.Save(h.engine.ConfigPath()); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, map[string]string{"status": "ok"})
-}
 
 func (h *Handlers) apiTestCoreAPI(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -66,128 +46,6 @@ func (h *Handlers) apiTestCoreAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"connected": resp.StatusCode < 500})
 }
 
-// --- Config Admin ---
-
-func (h *Handlers) apiUpdateMessaging(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		KafkaBrokers []string `json:"kafka_brokers"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	cfg := h.engine.AppConfig()
-	cfg.Lock()
-	cfg.Messaging.Kafka.Brokers = req.KafkaBrokers
-	cfg.Unlock()
-
-	if err := cfg.Save(h.engine.ConfigPath()); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	if err := h.orchestration.ReconnectKafka(); err != nil {
-		log.Printf("kafka reconnect after config update: %v", err)
-	}
-
-	h.requestBackup("messaging-config")
-	writeJSON(w, map[string]string{"status": "ok"})
-}
-
-// apiUpdateStationID writes this edge's identity into shingoedge.yaml.
-//
-// IT TAKES EFFECT ON RESTART, AND SAYING SO IS THE FIX. This endpoint used to
-// return a bare {"status":"ok"} while the running station id stayed exactly
-// where it was — captured once at main.go's identity block and closed over by
-// the Kafka ingest filter. Its sibling apiUpdateMessaging calls ReconnectKafka;
-// this one cannot, because the station id is not one connection, it is the
-// ingest filter, the envelope source address, the consumer group and the backup
-// manifest. Rewiring all of those live is a larger change than telling the
-// truth, so it tells the truth.
-//
-// THE OTHER HALF OF THE OLD DEFECT IS ALREADY GONE. Saving used to persist the
-// derived Kafka group id alongside the station id — KafkaConfig.GroupID carried
-// a yaml tag and Save marshals the whole struct — which pinned the consumer
-// group to the OLD station id forever. Renaming through this endpoint therefore
-// made the "one edge is deaf" condition permanent rather than fixing it. The
-// field is `yaml:"-"` now, so no Save can write it and no config can override
-// the derivation. See config.KafkaConfig.GroupID.
-//
-// apiUpdateTimezone writes the plant timezone into shingoedge.yaml.
-//
-// Same restart-to-apply contract as apiUpdateStationID, and for the same
-// reason said out loud there: the running process captured plantLocation
-// (display) and the HourlyTracker's bucket zone at startup, and neither is
-// rewirable live. Two consumers, one key — display rendering and hourly
-// count bucketing — so setting it here fixes both on the same restart.
-//
-// The value is validated as an IANA location BEFORE saving: a typo would
-// otherwise only surface at boot as a logged fallback, on a headless box
-// nobody reads until the counts are wrong.
-func (h *Handlers) apiUpdateTimezone(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Timezone string `json:"timezone"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	loc, err := time.LoadLocation(req.Timezone)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("not an IANA timezone: %q", req.Timezone))
-		return
-	}
-
-	cfg := h.engine.AppConfig()
-	cfg.Lock()
-	cfg.Timezone = loc.String()
-	cfg.Unlock()
-
-	if err := cfg.Save(h.engine.ConfigPath()); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	h.requestBackup("timezone")
-	writeJSON(w, map[string]string{
-		"status": "ok",
-		"note":   "written to shingoedge.yaml — RESTART shingoedge for display and hourly bucketing to pick it up",
-	})
-}
-
-// station_uid is the enrolled identity Core minted. station_id is the legacy
-// override and is accepted for the migration window only.
-func (h *Handlers) apiUpdateStationID(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		StationUID string `json:"station_uid"`
-		StationID  string `json:"station_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	cfg := h.engine.AppConfig()
-	cfg.Lock()
-	if req.StationUID != "" {
-		cfg.StationUID = req.StationUID
-	}
-	if req.StationID != "" {
-		cfg.Messaging.StationID = req.StationID
-	}
-	cfg.Unlock()
-
-	if err := cfg.Save(h.engine.ConfigPath()); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	h.requestBackup("station-id")
-	writeJSON(w, map[string]string{
-		"status": "ok",
-		"note":   "written to shingoedge.yaml — RESTART shingoedge for it to take effect",
-	})
-}
-
 func (h *Handlers) apiTestKafka(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Broker string `json:"broker"`
@@ -205,28 +63,6 @@ func (h *Handlers) apiTestKafka(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"connected": true})
 }
 
-func (h *Handlers) apiUpdateAutoConfirm(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		AutoConfirm bool `json:"auto_confirm"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	cfg := h.engine.AppConfig()
-	cfg.Lock()
-	cfg.Web.AutoConfirm = req.AutoConfirm
-	cfg.Unlock()
-
-	if err := cfg.Save(h.engine.ConfigPath()); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	h.requestBackup("auto-confirm")
-	writeJSON(w, map[string]string{"status": "ok"})
-}
-
 func (h *Handlers) apiChangePassword(w http.ResponseWriter, r *http.Request) {
 	username, ok := h.sessions.getUser(r)
 	if !ok {
@@ -239,6 +75,12 @@ func (h *Handlers) apiChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// An empty new password is refused here, not only in the page (U3
+	// Account; Core already refuses it).
+	if req.NewPassword == "" {
+		writeError(w, http.StatusBadRequest, "new password is required")
 		return
 	}
 

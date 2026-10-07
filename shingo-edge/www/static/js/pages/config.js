@@ -1,485 +1,508 @@
-import { api, delegateActions, escapeHtml, getFormData, prompt, toast } from '/static/js/shingoedge.js';
-import { formatTime as sharedFormatTime } from '/static/shared/utils.js';
+// config.js — the Edge Configuration page (U3).
+//
+// One page, one Save (docs/ui-style-guide/33-settings-pages.md). The settings
+// in shingoedge.yaml go through ONE request, PUT /api/config, for the dirty
+// sections only; the shifts live in the database and keep PUT /api/shifts,
+// sent only when the shift rows are dirty (an own-save section). Actions that
+// are not settings — Test connection, Refresh, Test brokers, Back up now,
+// Show backups, Restore, Change password — are their own buttons and never
+// touch the draft.
+//
+// A load makes no request: the live words, the restart notice and the backup
+// status come in the render. The backup list is fetched only when storage is
+// configured and someone opens it (E6).
 
-function collectBrokers() {
-    return Array.from(document.querySelectorAll('.broker-row')).map(function(row) {
-        const host = row.querySelector('.broker-host').value.trim();
-        const port = row.querySelector('.broker-port').value.trim();
-        if (!host) return '';
-        return port ? host + ':' + port : host;
-    }).filter(Boolean);
+import { api, delegateActions, prompt, showModal, hideModal } from '/static/js/shingoedge.js';
+import {
+    settingsPage, apiResult, durationFromText, collectList, el, formatClock, formatTime, toast,
+} from '/static/shared/utils.js';
+import { backupRow, backupWords, makeStageRestore, stationBody, stationErrors } from '/static/js/pages/config-backups.js';
+
+const root = document.getElementById('config');
+const $ = (sel) => root.querySelector(sel);
+const $$ = (sel) => Array.from(root.querySelectorAll(sel));
+const field = (name) => root.querySelector('[data-field="' + name + '"]');
+const val = (name) => { const f = field(name); return f ? f.value.trim() : ''; };
+const sw = (name) => { const b = root.querySelector('[data-sw="' + name + '"]'); return !!(b && b.classList.contains('on')); };
+const setSw = (name, on) => {
+    const b = root.querySelector('[data-sw="' + name + '"]');
+    if (!b) return;
+    b.classList.toggle('on', !!on);
+    b.setAttribute('aria-checked', on ? 'true' : 'false');
+};
+const setVal = (name, v) => { const f = field(name); if (f) f.value = v === undefined || v === null ? '' : String(v); };
+
+function readJSON(attr, fallback) {
+    try { return JSON.parse(root.getAttribute(attr) || ''); } catch (e) { return fallback; }
 }
 
-function addBrokerRow() {
-    const row = document.createElement('div');
-    row.className = 'broker-row';
-    row.innerHTML = '' +
-        '<input type="text" class="form-input broker-host" style="flex:1" placeholder="localhost">' +
-        '<input type="number" class="form-input broker-port" style="width:7rem" placeholder="9092">' +
-        '<button class="btn btn-sm" data-action="testBroker">Test</button>' +
-        '<span class="broker-status"></span>' +
-        '<button class="btn-icon btn-icon-danger" data-action="removeBrokerRow" title="Remove">&#10005;</button>';
-    document.getElementById('broker-rows').appendChild(row);
+const stationID = root.dataset.stationId || '';
+// Set only on a legacy-only Edge (no UID): carried unchanged in the station body.
+const legacyStationID = root.dataset.legacyStationId || '';
+let backupStatus = readJSON('data-backup-status', { available: false });
+let storageOpen = false;
+let secretRemoved = false;
+
+// ─── Rule 7: a row that is off hides what depends on it ──────────────────
+
+function mode() {
+    const on = root.querySelector('[data-field="mode"] button.on');
+    return on ? on.dataset.mode : 'sse';
 }
 
-function removeBrokerRow(button) {
-    const rows = document.querySelectorAll('.broker-row');
-    if (rows.length <= 1) {
-        rows[0].querySelector('.broker-host').value = '';
-        rows[0].querySelector('.broker-port').value = '';
-        rows[0].querySelector('.broker-status').textContent = '';
-        return;
+function storageConfigured() {
+    return !!(backupStatus && backupStatus.configured);
+}
+
+function syncVisibility() {
+    const plcOn = sw('plc_enabled');
+    $$('[data-dep="plc_enabled"]').forEach((n) => { n.hidden = !plcOn; });
+    $$('[data-poll]').forEach((n) => { n.hidden = mode() !== 'poll'; });
+    const autoOn = sw('backup_enabled');
+    $$('[data-dep="backup_enabled"]').forEach((n) => { n.hidden = !autoOn; });
+
+    const configured = storageConfigured();
+    const showStorage = configured || storageOpen;
+    $$('[data-storage]').forEach((n) => { n.hidden = !showStorage; });
+    $$('[data-needs-storage]').forEach((b) => { b.hidden = !showStorage; });
+    $$('[data-restore]').forEach((n) => { n.hidden = !configured; });
+
+    const toggle = $('#storage-toggle');
+    const sub = $('#storage-sub');
+    if (configured) {
+        const where = [val('bucket'), val('endpoint')].filter(Boolean).join(' at ');
+        sub.textContent = 'S3 storage for copies of this Edge\'s database and config · ' + (where || 'set up');
+        toggle.hidden = true;
+    } else {
+        sub.textContent = 'S3 storage for copies of this Edge\'s database and config · none set up';
+        toggle.hidden = false;
+        toggle.textContent = storageOpen ? 'Hide' : 'Set up storage…';
     }
-    button.closest('.broker-row').remove();
+    $('#secret-remove').hidden = secretRemoved || field('secret_key').placeholder !== 'saved';
 }
 
-async function testBroker(button) {
-    const row = button.closest('.broker-row');
-    const host = row.querySelector('.broker-host').value.trim();
-    const port = row.querySelector('.broker-port').value.trim();
-    const status = row.querySelector('.broker-status');
-    if (!host || !port) {
-        status.textContent = 'Enter host and port';
-        return;
-    }
-    status.textContent = 'Testing...';
-    try {
-        const res = await api.post('/api/config/kafka/test', { broker: host + ':' + port });
-        status.textContent = res.connected ? 'Connected' : (res.error || 'Failed');
-    } catch (e) {
-        status.textContent = String(e);
-    }
+function drawBackupLive() {
+    const w = backupWords(backupStatus, formatClock);
+    const live = $('#backup-live');
+    live.className = 'set-cnt' + (w.cls ? ' ' + w.cls : '');
+    live.lastElementChild.textContent = w.text;
 }
 
-async function saveIdentity() {
-    try {
-        await api.put('/api/config/station-id', {
-            station_uid: document.getElementById('station-uid-input').value.trim()
-        });
-        toast('Station identity saved — RESTART shingoedge for it to take effect', 'success');
-    } catch (e) {
-        toast('Error: ' + e, 'error');
-    }
-}
-
-async function saveTimezone() {
-    try {
-        const tz = document.getElementById('timezone-input').value.trim();
-        if (!tz) {
-            toast('Enter an IANA zone (e.g. America/Chicago); empty means unconfigured', 'error');
-            return;
-        }
-        await api.put('/api/config/timezone', { timezone: tz });
-        toast('Timezone saved — RESTART shingoedge for display and hourly counts to pick it up', 'success');
-    } catch (e) {
-        toast('Error: ' + e, 'error');
-    }
-}
-
-async function saveWarLink() {
-    try {
-        const form = document.getElementById('warlink-form');
-        await api.put('/api/config/warlink', {
-            host: form.querySelector('[name="host"]').value.trim(),
-            port: parseInt(form.querySelector('[name="port"]').value || '0', 10),
-            poll_rate: form.querySelector('[name="poll_rate"]').value.trim(),
-            mode: form.querySelector('[name="mode"]').value,
-            enabled: form.querySelector('[name="enabled"]').checked
-        });
-        toast('WarLink config saved', 'success');
-        location.reload();
-    } catch (e) {
-        toast('Error: ' + e, 'error');
-    }
-}
-
-async function saveMessaging() {
-    try {
-        await Promise.all([
-            api.put('/api/config/messaging', { kafka_brokers: collectBrokers() }),
-            api.put('/api/config/auto-confirm', { auto_confirm: document.getElementById('auto-confirm').checked })
-        ]);
-        toast('Messaging config saved', 'success');
-    } catch (e) {
-        toast('Error: ' + e, 'error');
-    }
-}
-
-function backupFormData() {
-    return getFormData('backup-form');
-}
-
-function backupFingerprint() {
-    const data = backupFormData();
-    return JSON.stringify({
-        endpoint: data.endpoint || '',
-        bucket: data.bucket || '',
-        region: data.region || '',
-        access_key: data.access_key || '',
-        secret_key: data.secret_key || '',
-        use_path_style: !!data.use_path_style,
-        insecure_skip_tls_verify: !!data.insecure_skip_tls_verify
+function drawShiftLive() {
+    const n = $$('[data-shift-row]').length;
+    $('#shift-live').lastElementChild.textContent = n ? n + ' of 3' : 'none set';
+    $('#shift-add-btn').disabled = n >= 3;
+    $('#shift-add-hint').textContent = n ? '' : 'No shifts yet';
+    $$('[data-shift-row]').forEach((row, i) => {
+        row.querySelector('label').firstChild.textContent = 'Shift ' + (i + 1);
     });
 }
 
-let testedBackupFingerprint = '';
-const stationID = document.getElementById('page-data').dataset.stationId || '';
+// ─── Sections ────────────────────────────────────────────────────────────
 
-function setBackupConnectionStatus(message, ok) {
-    const el = document.getElementById('backup-connection-status');
-    el.innerHTML = (ok === true ? '<span class="status-badge status-connected" style="margin-right:0.5rem">Connected</span>' :
-        ok === false ? '<span class="status-badge status-disconnected" style="margin-right:0.5rem">Failed</span>' : '') + message;
+const intOrText = (s) => (/^\d+$/.test(s) ? parseInt(s, 10) : s);
+
+const sections = {
+    station: {
+        read: () => ({
+            station_uid: val('station_uid'),
+            timezone: val('timezone'),
+            auto_confirm: sw('auto_confirm'),
+        }),
+        write: (v) => {
+            setVal('station_uid', v.station_uid);
+            setVal('timezone', v.timezone);
+            setSw('auto_confirm', v.auto_confirm);
+        },
+        validate: (d) => stationErrors(d, legacyStationID),
+        body: (d) => stationBody(d, legacyStationID),
+    },
+    core: {
+        read: () => ({ core_api: val('core_api') }),
+        write: (v) => setVal('core_api', v.core_api),
+    },
+    plc: {
+        read: () => ({
+            enabled: sw('plc_enabled'),
+            host: val('host'),
+            port: val('port'),
+            mode: mode(),
+            poll_rate: val('poll_rate'),
+        }),
+        write: (v) => {
+            setSw('plc_enabled', v.enabled);
+            setVal('host', v.host);
+            setVal('port', v.port);
+            pickMode(v.mode);
+            setVal('poll_rate', v.poll_rate);
+        },
+        validate: (d) => {
+            const e = {};
+            if (d.port !== '' && !/^\d+$/.test(d.port)) e.port = 'A port is a whole number.';
+            if (d.mode === 'poll' && durationFromText(d.poll_rate) === null) e.poll_rate = 'Not a duration, e.g. 2 s.';
+            return Object.keys(e).length ? e : null;
+        },
+        body: (d) => ({
+            enabled: d.enabled,
+            host: d.host,
+            port: d.port === '' ? 0 : parseInt(d.port, 10),
+            mode: d.mode,
+            poll_rate: durationFromText(d.poll_rate) || '',
+        }),
+    },
+    messaging: {
+        read: () => ({
+            brokers: collectList($('#broker-list'), '[data-broker-row]', (row) => row.querySelector('[data-broker]').value.trim()),
+        }),
+        write: (v) => {
+            $$('[data-broker-row]').forEach((r) => r.remove());
+            (v.brokers || []).forEach((b) => addBroker(b));
+        },
+    },
+    backups: {
+        read: () => ({
+            enabled: sw('backup_enabled'),
+            schedule_interval: val('schedule_interval'),
+            keep_hourly: val('keep_hourly'),
+            keep_daily: val('keep_daily'),
+            keep_weekly: val('keep_weekly'),
+            keep_monthly: val('keep_monthly'),
+            endpoint: val('endpoint'),
+            bucket: val('bucket'),
+            region: val('region'),
+            access_key: val('access_key'),
+            secret_key: val('secret_key'),
+            remove_secret: secretRemoved,
+            use_path_style: sw('use_path_style'),
+            insecure_skip_tls_verify: sw('insecure_skip_tls_verify'),
+        }),
+        write: (v) => {
+            setSw('backup_enabled', v.enabled);
+            ['schedule_interval', 'keep_hourly', 'keep_daily', 'keep_weekly', 'keep_monthly',
+                'endpoint', 'bucket', 'region', 'access_key', 'secret_key'].forEach((k) => setVal(k, v[k]));
+            secretRemoved = !!v.remove_secret;
+            setSw('use_path_style', v.use_path_style);
+            setSw('insecure_skip_tls_verify', v.insecure_skip_tls_verify);
+        },
+        validate: (d) => {
+            const e = {};
+            if (d.enabled && durationFromText(d.schedule_interval) === null) e.schedule_interval = 'Not a duration, e.g. 1 h.';
+            ['keep_hourly', 'keep_daily', 'keep_weekly', 'keep_monthly'].forEach((k) => {
+                if (d[k] !== '' && !/^\d+$/.test(d[k])) e[k] = 'How many to keep is a whole number.';
+            });
+            return Object.keys(e).length ? e : null;
+        },
+        body: (d) => ({
+            enabled: d.enabled,
+            schedule_interval: durationFromText(d.schedule_interval) || '',
+            keep_hourly: intOrText(d.keep_hourly || '0'),
+            keep_daily: intOrText(d.keep_daily || '0'),
+            keep_weekly: intOrText(d.keep_weekly || '0'),
+            keep_monthly: intOrText(d.keep_monthly || '0'),
+            endpoint: d.endpoint,
+            bucket: d.bucket,
+            region: d.region,
+            access_key: d.access_key,
+            secret_key: d.secret_key,
+            remove_secret: d.remove_secret,
+            use_path_style: d.use_path_style,
+            insecure_skip_tls_verify: d.insecure_skip_tls_verify,
+        }),
+    },
+    shifts: {
+        label: 'shifts',
+        read: () => ({
+            rows: $$('[data-shift-row]').map((row) => ({
+                name: row.querySelector('[data-sh="name"]').value.trim(),
+                start: row.querySelector('[data-sh="start"]').value,
+                end: row.querySelector('[data-sh="end"]').value,
+            })),
+        }),
+        write: (v) => {
+            $$('[data-shift-row]').forEach((r) => r.remove());
+            (v.rows || []).forEach((s) => addShift(s));
+        },
+        // The full desired set, in order: a removed row is simply absent
+        // (apiSaveShifts deletes what is not sent).
+        save: async (d) => {
+            const shifts = [];
+            d.rows.forEach((s, i) => {
+                if (!s.name && !s.start && !s.end) return;
+                shifts.push({ shift_number: i + 1, name: s.name, start_time: s.start, end_time: s.end });
+            });
+            const r = await apiResult('PUT', '/api/shifts', shifts);
+            const b = (r.body && typeof r.body === 'object') ? r.body : {};
+            return Object.assign({ ok: r.ok }, b, { ok: r.ok && b.ok !== false });
+        },
+    },
+};
+
+// ─── Draft controls (they change the draft, so they update the page) ─────
+
+let page = null;
+const changed = () => { syncVisibility(); if (page) page.update(); };
+
+function flip(...args) {
+    const btn = args[args.length - 2];
+    const on = !btn.classList.contains('on');
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-checked', on ? 'true' : 'false');
+    changed();
 }
 
-function setBackupOperationStatus(message, kind) {
-    const el = document.getElementById('backup-operation-status');
-    el.innerHTML = (kind === 'ok' ? '<span class="status-badge status-connected" style="margin-right:0.5rem">Ready</span>' :
-        kind === 'busy' ? '<span class="status-badge" style="margin-right:0.5rem">Working</span>' :
-        kind === 'error' ? '<span class="status-badge status-disconnected" style="margin-right:0.5rem">Error</span>' : '') + message;
+function pickMode(m) {
+    root.querySelectorAll('[data-field="mode"] button').forEach((b) => {
+        const on = b.dataset.mode === (m === 'poll' ? 'poll' : 'sse');
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    changed();
 }
 
-async function testBackupConfig() {
-    setBackupConnectionStatus('Testing backup storage connection...', null);
+function addBroker(value) {
+    const row = el('div', { className: 'v', dataset: { brokerRow: '1' } }, [
+        el('input', {
+            className: 'set-inp mid', type: 'text', 'aria-label': 'Broker', spellcheck: 'false',
+            autocomplete: 'off', placeholder: 'host:9092', dataset: { broker: '1' },
+        }),
+        el('button', { type: 'button', className: 'set-btn quiet', dataset: { action: 'removeBroker' } }, 'Remove'),
+        el('span', { className: 'set-dim', role: 'status', dataset: { brokerStatus: '1' } }),
+    ]);
+    row.querySelector('input').value = typeof value === 'string' ? value : '';
+    $('#broker-list').insertBefore(row, $('#broker-add'));
+    if (typeof value !== 'string') row.querySelector('input').focus();
+    changed();
+}
+
+function removeBroker(...args) {
+    args[args.length - 2].closest('[data-broker-row]').remove();
+    changed();
+}
+
+function addShift(values) {
+    if ($$('[data-shift-row]').length >= 3) return;
+    const v = (values && typeof values === 'object' && !values.nodeType) ? values : {};
+    const row = el('div', { className: 'set-fld', dataset: { shiftRow: '1' } }, [
+        el('label', null, ['Shift', el('small', null, 'name, start and end in plant time')]),
+        el('div', { className: 'v' }, [
+            el('input', { className: 'set-inp', type: 'text', placeholder: 'Name', 'aria-label': 'Shift name', dataset: { sh: 'name' } }),
+            el('input', { className: 'set-inp', type: 'time', 'aria-label': 'Start', dataset: { sh: 'start' } }),
+            el('span', { className: 'set-dim' }, 'to'),
+            el('input', { className: 'set-inp', type: 'time', 'aria-label': 'End', dataset: { sh: 'end' } }),
+            el('button', { type: 'button', className: 'set-btn quiet', dataset: { action: 'removeShift' } }, 'Remove'),
+        ]),
+    ]);
+    row.querySelector('[data-sh="name"]').value = v.name || '';
+    row.querySelector('[data-sh="start"]').value = v.start || '';
+    row.querySelector('[data-sh="end"]').value = v.end || '';
+    $('#shift-list').appendChild(row);
+    drawShiftLive();
+    changed();
+}
+
+function removeShift(...args) {
+    args[args.length - 2].closest('[data-shift-row]').remove();
+    drawShiftLive();
+    changed();
+}
+
+function toggleStorage() {
+    storageOpen = !storageOpen;
+    syncVisibility();
+}
+
+function removeSecret() {
+    secretRemoved = true;
+    setVal('secret_key', '');
+    field('secret_key').placeholder = 'none saved';
+    changed();
+}
+
+// ─── Actions that are not settings ───────────────────────────────────────
+
+function note(msg, ok) {
+    const n = $('#backup-op');
+    n.hidden = !msg;
+    n.textContent = msg || '';
+    n.className = ok === false ? 'set-err' : 'set-note';
+}
+
+async function testCore() {
+    const out = $('#core-test');
+    const url = val('core_api');
+    if (!url) { out.textContent = 'Enter an address first.'; return; }
+    out.textContent = 'Testing…';
     try {
-        await api.post('/api/backups/test', backupFormData());
-        testedBackupFingerprint = backupFingerprint();
-        setBackupConnectionStatus('Connection test succeeded.', true);
-        toast('Backup connection succeeded', 'success');
+        const res = await api.post('/api/config/core-api/test', { core_api: url });
+        out.textContent = res.connected ? 'Core answered.' : ('No answer: ' + (res.error || 'failed') + '.');
     } catch (e) {
-        setBackupConnectionStatus('Connection test failed: ' + e, false);
-        toast('Backup test failed: ' + e, 'error');
+        out.textContent = String(e);
     }
 }
 
-async function saveBackupConfig() {
+async function syncWith(btn, url, what) {
+    const out = $('#core-sync');
+    btn.disabled = true;
+    out.textContent = 'Asking Core for the ' + what + '…';
     try {
-        const data = backupFormData();
-        if (data.enabled && testedBackupFingerprint !== backupFingerprint()) {
-            throw 'run Test Connection after changing storage settings before enabling backups';
+        await api.post(url);
+        out.textContent = 'Asked; the ' + what + ' arrives with Core\'s next answer.';
+    } catch (e) {
+        out.textContent = 'Not sent: ' + e;
+    }
+    setTimeout(() => { btn.disabled = false; }, 1500);
+}
+
+function syncCoreNodes() { return syncWith($('#sync-nodes'), '/api/core-nodes/sync', 'node list'); }
+function syncPayloadCatalog() { return syncWith($('#sync-catalog'), '/api/payload-catalog/sync', 'payload catalog'); }
+
+async function testBrokers() {
+    const rows = $$('[data-broker-row]');
+    for (const row of rows) {
+        const addr = row.querySelector('[data-broker]').value.trim();
+        const out = row.querySelector('[data-broker-status]');
+        if (!addr) { out.textContent = ''; continue; }
+        out.textContent = 'Testing…';
+        try {
+            const res = await api.post('/api/config/kafka/test', { broker: addr });
+            out.textContent = res.connected ? 'reachable' : ('not reachable: ' + (res.error || 'failed'));
+        } catch (e) {
+            out.textContent = String(e);
         }
-        await api.put('/api/backups/config', data);
-        setBackupOperationStatus('Backup settings saved.', 'ok');
-        toast('Backup settings saved', 'success');
-        await loadBackupStatus();
-        await loadBackups();
-    } catch (e) {
-        setBackupOperationStatus('Failed to save backup settings: ' + e, 'error');
-        toast('Error: ' + e, 'error');
     }
 }
 
-async function runBackupNow() {
-    try {
-        setBackupOperationStatus('Manual backup in progress...', 'busy');
-        await api.post('/api/backups/run', {});
-        setBackupOperationStatus('Manual backup completed successfully.', 'ok');
-        toast('Backup completed', 'success');
-        await loadBackupStatus();
-        await loadBackups();
-    } catch (e) {
-        setBackupOperationStatus('Manual backup failed: ' + e, 'error');
-        toast('Backup failed: ' + e, 'error');
+function storageDraft() {
+    const d = sections.backups.read();
+    return {
+        endpoint: d.endpoint, bucket: d.bucket, region: d.region, access_key: d.access_key,
+        secret_key: d.remove_secret ? '' : d.secret_key,
+        use_path_style: d.use_path_style, insecure_skip_tls_verify: d.insecure_skip_tls_verify,
+    };
+}
+
+async function testBackup() {
+    note('Testing the storage…');
+    const r = await apiResult('POST', '/api/backups/test', storageDraft());
+    note(r.ok ? 'The storage answered.' : 'Storage test failed: ' + ((r.body && r.body.error) || 'no answer.'), r.ok);
+}
+
+async function refreshBackupStatus() {
+    const r = await apiResult('GET', '/api/backups/status');
+    if (r.ok && r.body && typeof r.body === 'object') {
+        backupStatus = Object.assign({ available: true }, r.body);
     }
+    drawBackupLive();
+    syncVisibility();
 }
 
-function formatMaybeDate(value) {
-    if (!value) return '';
-    const date = new Date(value);
-    return isNaN(date) ? String(value) : sharedFormatTime(value);
+async function runBackup() {
+    note('Backing up…');
+    const r = await apiResult('POST', '/api/backups/run', {});
+    note(r.ok ? 'Backed up.' : 'Backup failed: ' + ((r.body && r.body.error) || 'no answer.'), r.ok);
+    await refreshBackupStatus();
 }
 
-function formatBytes(bytes) {
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let value = bytes || 0;
-    let unit = 0;
-    while (value >= 1024 && unit < units.length - 1) {
-        value /= 1024;
-        unit++;
-    }
-    return (unit === 0 ? String(value) : value.toFixed(1)) + ' ' + units[unit];
-}
-
-async function loadBackupStatus() {
-    try {
-        const status = await api.get('/api/backups/status');
-        const lines = [];
-        lines.push('<div><strong>Automatic Backups:</strong> ' + (status.enabled ? 'Enabled' : 'Disabled') + '</div>');
-        lines.push('<div><strong>Scheduler:</strong> ' + (status.running ? 'Backup currently running' : 'Idle') + '</div>');
-        if (status.last_success_at) lines.push('<div><strong>Last Success:</strong> ' + formatMaybeDate(status.last_success_at) + '</div>');
-        if (status.last_failure_at) lines.push('<div><strong>Last Failure:</strong> ' + formatMaybeDate(status.last_failure_at) + '</div>');
-        if (status.next_scheduled_at) lines.push('<div><strong>Next Scheduled Run:</strong> ' + formatMaybeDate(status.next_scheduled_at) + '</div>');
-        document.getElementById('backup-status').innerHTML = lines.join('');
-    } catch (e) {
-        document.getElementById('backup-status').textContent = 'Backup status unavailable: ' + e;
-    }
-}
-
-async function stageRestore(key) {
-    const typed = await prompt('Type the station ID to confirm restore.', { value: stationID });
-    if (typed !== stationID) {
-        toast('Restore cancelled: station ID mismatch.', 'warning');
+async function listBackups() {
+    const list = $('#backup-list');
+    const status = $('#backup-list-status');
+    status.textContent = 'Loading…';
+    const r = await apiResult('GET', '/api/backups');
+    list.replaceChildren();
+    if (!r.ok) {
+        status.textContent = 'Could not list backups: ' + ((r.body && r.body.error) || 'no answer.');
         return;
     }
-    try {
-        setBackupOperationStatus('Downloading and staging restore archive...', 'busy');
-        await api.post('/api/backups/restore', { key: key });
-        setBackupOperationStatus('Restore staged successfully. Restart shingo-edge to apply it.', 'ok');
-        toast('Restore staged. Restart shingo-edge to apply it.', 'warning');
-        await loadBackupStatus();
-        await loadBackups();
-    } catch (e) {
-        setBackupOperationStatus('Restore staging failed: ' + e, 'error');
-        toast('Restore staging failed: ' + e, 'error');
-    }
+    const items = Array.isArray(r.body) ? r.body : [];
+    status.textContent = items.length ? items.length + ' in storage' : 'none in storage for this station';
+    items.forEach((item) => list.appendChild(backupRow(item, el, formatTime)));
 }
 
-async function loadBackups() {
-    const body = document.getElementById('backup-body');
-    body.innerHTML = '<tr><td colspan="4" class="empty-cell">Loading backups...</td></tr>';
-    try {
-        const items = await api.get('/api/backups');
-        if (!items || !items.length) {
-            body.innerHTML = '<tr><td colspan="4" class="empty-cell">No backups found for this station</td></tr>';
-            return;
-        }
-        body.innerHTML = items.map(function(item) {
-            const action = item.restore_pending
-                ? '<span class="status-badge status-connected">Pending Restart</span>'
-                : '<button class="btn btn-sm btn-danger" data-action="stageRestore:' + JSON.stringify(item.key).replace(/"/g, '&quot;') + ')">Restore On Restart</button>';
-            return '<tr>' +
-                '<td>' + escapeHtml(formatMaybeDate(item.created_at || item.last_modified || '')) + '</td>' +
-                '<td>' + escapeHtml(formatBytes(item.size || 0)) + '</td>' +
-                '<td><code>' + escapeHtml(item.key) + '</code></td>' +
-                '<td>' + action + '</td>' +
-                '</tr>';
-        }).join('');
-    } catch (e) {
-        body.innerHTML = '<tr><td colspan="4" class="empty-cell">Failed to load backups: ' + escapeHtml(String(e)) + '</td></tr>';
-    }
+const stageRestore = makeStageRestore({
+    stationID,
+    prompt,
+    post: (url, body) => apiResult('POST', url, body),
+    done: (msg, ok) => {
+        $('#backup-list-status').textContent = msg;
+        toast(msg, ok ? 'warning' : 'error');
+        if (ok) listBackups();
+    },
+});
+
+// ─── Account ─────────────────────────────────────────────────────────────
+
+const pw = (k) => document.querySelector('#password-modal [data-pw="' + k + '"]');
+
+function pwRefuse(msg) {
+    const box = document.getElementById('pw-refusal');
+    box.hidden = !msg;
+    box.textContent = msg || '';
+}
+
+function openPassword() {
+    pwRefuse('');
+    showModal('password-modal');
+    setTimeout(() => pw('old').focus(), 0);
+}
+
+function closePassword() {
+    pwRefuse('');
+    hideModal('password-modal');
 }
 
 async function changePassword() {
-    const oldPassword = document.getElementById('pw-old').value;
-    const newPassword = document.getElementById('pw-new').value;
-    const confirm = document.getElementById('pw-confirm').value;
-    if (!newPassword) {
-        toast('Enter a new password', 'warning');
+    const next = pw('new').value;
+    if (!next) { pwRefuse('Enter a new password.'); return; }
+    if (next !== pw('again').value) { pwRefuse('The two new passwords are not the same.'); return; }
+    const r = await apiResult('POST', '/api/config/password', { old_password: pw('old').value, new_password: next });
+    if (!r.ok) {
+        pwRefuse('Not changed: ' + ((r.body && r.body.error) || 'no answer.'));
         return;
     }
-    if (newPassword !== confirm) {
-        toast('New password confirmation does not match', 'warning');
-        return;
-    }
-    try {
-        await api.post('/api/config/password', {
-            old_password: oldPassword,
-            new_password: newPassword
-        });
-        document.getElementById('pw-old').value = '';
-        document.getElementById('pw-new').value = '';
-        document.getElementById('pw-confirm').value = '';
-        toast('Password changed', 'success');
-    } catch (e) {
-        toast('Error: ' + e, 'error');
-    }
+    closePassword();
+    toast('Password changed', 'success');
 }
 
-// --- Core API ---
+// ─── The page ────────────────────────────────────────────────────────────
 
-async function saveCoreAPI() {
-    try {
-        await api.put('/api/config/core-api', {
-            core_api: document.getElementById('core-api-url').value.trim()
-        });
-        toast('Core API URL saved', 'success');
-    } catch (e) {
-        toast('Error: ' + e, 'error');
-    }
-}
+drawShiftLive();
+drawBackupLive();
+syncVisibility();
 
-async function testCoreAPI() {
-    var status = document.getElementById('core-api-status');
-    var url = document.getElementById('core-api-url').value.trim();
-    if (!url) { status.textContent = 'Enter a URL'; return; }
-    status.textContent = 'Testing...';
-    try {
-        var res = await api.post('/api/config/core-api/test', { core_api: url });
-        status.textContent = res.connected ? 'Connected' : (res.error || 'Failed');
-        status.style.color = res.connected ? 'var(--success, green)' : 'var(--danger, red)';
-    } catch (e) {
-        status.textContent = String(e);
-        status.style.color = 'var(--danger, red)';
-    }
-}
+page = settingsPage(root, {
+    url: '/api/config',
+    restart: readJSON('data-restart', []),
+    sections,
+    onSaved: (body, saved) => {
+        // E3: no reload. E4: in sim the PLC apply is skipped on purpose.
+        if (Array.isArray(body.simulated) && body.simulated.indexOf('PLC link') >= 0) {
+            const live = $('#plc-live');
+            live.className = 'set-cnt';
+            live.lastElementChild.textContent = 'simulated';
+        }
+        if (saved.indexOf('backups') >= 0) {
+            // The secret is never rendered: what was typed is now saved.
+            const d = sections.backups.read();
+            const box = field('secret_key');
+            if (d.remove_secret) box.placeholder = 'none saved';
+            else if (d.secret_key) box.placeholder = 'saved';
+            box.value = '';
+            secretRemoved = false;
+            page.state.baseline.backups = JSON.stringify(sections.backups.read());
+            refreshBackupStatus();
+        }
+        syncVisibility();
+        page.update();
+    },
+});
 
-// Manual on-demand syncs of cached Core data. The heartbeat re-requests
-// every ~2 minutes; these buttons let an admin shave the wait after a
-// Core-side rename/add. apiSyncCoreNodes /
-// apiSyncPayloadCatalog are fire-and-forget (the response just means
-// "request enqueued") — the actual cache refresh arrives via the next
-// CoreNodes / PayloadCatalog SSE/Kafka message.
-async function syncCoreNodes() {
-    var btn = document.getElementById('sync-core-nodes-btn');
-    var status = document.getElementById('core-sync-status');
-    btn.disabled = true;
-    status.textContent = 'Requesting node sync...';
-    try {
-        await api.post('/api/core-nodes/sync');
-        status.textContent = 'Node sync requested';
-    } catch (e) {
-        status.textContent = 'Sync failed: ' + e;
-    }
-    setTimeout(function () { btn.disabled = false; }, 1500);
-}
+// Discard writes the saved values back through each section's write(); the
+// rows that depend on a switch follow after any click.
+root.addEventListener('click', () => { Promise.resolve().then(() => { syncVisibility(); drawShiftLive(); }); });
 
-async function syncPayloadCatalog() {
-    var btn = document.getElementById('sync-payload-catalog-btn');
-    var status = document.getElementById('core-sync-status');
-    btn.disabled = true;
-    status.textContent = 'Requesting catalog sync...';
-    try {
-        await api.post('/api/payload-catalog/sync');
-        status.textContent = 'Catalog sync requested';
-    } catch (e) {
-        status.textContent = 'Sync failed: ' + e;
-    }
-    setTimeout(function () { btn.disabled = false; }, 1500);
-}
-
-// ─── Shift management ─────────────────────────────────
-
-var _nextShiftNumber = 1;
-
-(function initShiftNumbers() {
-    var rows = document.querySelectorAll('.shift-row');
-    var nums = [];
-    rows.forEach(function(row) {
-        var n = parseInt(row.getAttribute('data-shift-number') || '0', 10);
-        if (n > 0) nums.push(n);
-    });
-    if (nums.length > 0) _nextShiftNumber = Math.max.apply(null, nums) + 1;
-})();
-
-function addShiftRow() {
-    var container = document.getElementById('shift-rows');
-    if (container.querySelectorAll('.shift-row').length >= 3) {
-        toast('Maximum 3 shifts allowed', 'warning');
-        return;
-    }
-    var num = _nextShiftNumber++;
-    var row = document.createElement('div');
-    row.className = 'shift-row';
-    row.setAttribute('data-shift-number', String(num));
-    row.style.cssText = 'display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap;margin-bottom:0.5rem;padding:0.5rem;border:1px solid var(--border);border-radius:var(--radius)';
-    row.innerHTML = '' +
-        '<div class="form-group" style="margin:0;flex:1;min-width:10rem">' +
-        '<label>Name</label>' +
-        '<input type="text" class="form-input shift-name" placeholder="Shift name">' +
-        '</div>' +
-        '<div class="form-group" style="margin:0;width:8rem">' +
-        '<label>Start Time</label>' +
-        '<input type="time" class="form-input shift-start">' +
-        '</div>' +
-        '<div class="form-group" style="margin:0;width:8rem">' +
-        '<label>End Time</label>' +
-        '<input type="time" class="form-input shift-end">' +
-        '</div>' +
-        '<button class="btn btn-sm btn-danger" data-action="removeShiftRow" title="Remove shift">Remove</button>';
-    container.appendChild(row);
-    updateAddShiftButton();
-}
-
-function removeShiftRow() {
-    var container = document.getElementById('shift-rows');
-    if (container.querySelectorAll('.shift-row').length <= 1) {
-        var row = container.querySelector('.shift-row');
-        row.querySelector('.shift-name').value = '';
-        row.querySelector('.shift-start').value = '';
-        row.querySelector('.shift-end').value = '';
-        return;
-    }
-    this.closest('.shift-row').remove();
-    renumberShiftRows();
-    updateAddShiftButton();
-}
-
-function renumberShiftRows() {
-    var rows = document.querySelectorAll('.shift-row');
-    rows.forEach(function(row, i) {
-        row.setAttribute('data-shift-number', String(i + 1));
-    });
-    _nextShiftNumber = rows.length + 1;
-}
-
-function updateAddShiftButton() {
-    var btn = document.getElementById('add-shift-btn');
-    if (!btn) return;
-    var count = document.querySelectorAll('.shift-row').length;
-    btn.disabled = count >= 3;
-}
-
-async function saveShifts() {
-    var rows = document.querySelectorAll('.shift-row');
-    var shifts = [];
-    rows.forEach(function(row, i) {
-        var name = row.querySelector('.shift-name').value.trim();
-        var start = row.querySelector('.shift-start').value;
-        var end = row.querySelector('.shift-end').value;
-        if (!name && !start && !end) return;
-        shifts.push({
-            shift_number: i + 1,
-            name: name,
-            start_time: start,
-            end_time: end
-        });
-    });
-    try {
-        await api.put('/api/shifts', shifts);
-        toast('Shifts saved', 'success');
-    } catch(e) {
-        toast('Error: ' + e, 'error');
-    }
-}
-
-loadBackupStatus();
-loadBackups();
-
-// ─── delegated event handlers ─────────────────────────
-// All page-level data-action verbs route through delegateActions
-// on document.body. Multiple event types share the same handler
-// map — most handlers are click-only but a few (e.g. updatePreview)
-// are referenced via data-action-change / data-action-input too,
-// so binding the map across every event type keeps the page wiring
-// single-source.
 delegateActions(document.body, {
-    addBrokerRow,
-    addShiftRow,
-    backupFingerprint,
-    backupFormData,
-    changePassword,
-    collectBrokers,
-    formatBytes,
-    formatMaybeDate,
-    loadBackupStatus,
-    loadBackups,
-    removeBrokerRow,
-    removeShiftRow,
-    renumberShiftRows,
-    runBackupNow,
-    saveBackupConfig,
-    saveCoreAPI,
-    saveIdentity,
-    saveTimezone,
-    saveMessaging,
-    saveShifts,
-    saveWarLink,
-    setBackupConnectionStatus,
-    setBackupOperationStatus,
-    stageRestore,
-    syncCoreNodes,
-    syncPayloadCatalog,
-    testBackupConfig,
-    testBroker,
-    testCoreAPI,
-    updateAddShiftButton
-}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });
+    flip, pickMode, addBroker, removeBroker, addShift, removeShift, toggleStorage, removeSecret,
+    testCore, syncCoreNodes, syncPayloadCatalog, testBrokers,
+    testBackup, runBackup, listBackups, stageRestore,
+    openPassword, closePassword, changePassword,
+});

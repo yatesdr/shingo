@@ -628,15 +628,17 @@ func TestApiConfig_GetCoreNodes_GroupCarriesMembers(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 // Config endpoints — UpdateCoreAPI, UpdateMessaging, UpdateStationID,
 // UpdateAutoConfirm, UpdateWarLink
-// These call AppConfig() + ConfigPath() + Save()
+// Re-pointed by U3 at the one save door, PUT /api/config, each posting its
+// old body as that door's section; the assertions are the same (lead ruling
+// L5 keeps `status` and the top-level `error` on the new door).
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiConfig_UpdateCoreAPI(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]string{"core_api": "http://core.test:8080"}
-	resp := doRequest(t, router, "PUT", "/api/config/core-api", body, cookie)
+	body := map[string]any{"core": map[string]string{"core_api": "http://core.test:8080"}}
+	resp := doRequest(t, router, "PUT", "/api/config", body, cookie)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
 }
@@ -645,10 +647,10 @@ func TestApiConfig_UpdateMessaging(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]any{
-		"kafka_brokers": []string{"broker1:9092", "broker2:9092"},
-	}
-	resp := doRequest(t, router, "PUT", "/api/config/messaging", body, cookie)
+	body := map[string]any{"messaging": map[string]any{
+		"brokers": []string{"broker1:9092", "broker2:9092"},
+	}}
+	resp := doRequest(t, router, "PUT", "/api/config", body, cookie)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
 }
@@ -657,8 +659,9 @@ func TestApiConfig_UpdateStationID(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]string{"station_id": "plant-a.line-1"}
-	resp := doRequest(t, router, "PUT", "/api/config/station-id", body, cookie)
+	// E1 check: the legacy station_id alone is still accepted.
+	body := map[string]any{"station": map[string]string{"station_id": "plant-a.line-1"}}
+	resp := doRequest(t, router, "PUT", "/api/config", body, cookie)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
 }
@@ -667,8 +670,10 @@ func TestApiConfig_UpdateAutoConfirm(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]bool{"auto_confirm": true}
-	resp := doRequest(t, router, "PUT", "/api/config/auto-confirm", body, cookie)
+	// Auto-confirm is in the Station section, which carries the Station UID
+	// (a station post with neither id is refused, E1).
+	body := map[string]any{"station": map[string]any{"station_uid": "test.station", "auto_confirm": true}}
+	resp := doRequest(t, router, "PUT", "/api/config", body, cookie)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
 }
@@ -677,14 +682,14 @@ func TestApiConfig_UpdateWarLink(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]any{
+	body := map[string]any{"plc": map[string]any{
 		"host":      "warlink.test",
 		"port":      9090,
 		"enabled":   true,
 		"poll_rate": "2s",
 		"mode":      "sse",
-	}
-	resp := doRequest(t, router, "PUT", "/api/config/warlink", body, cookie)
+	}}
+	resp := doRequest(t, router, "PUT", "/api/config", body, cookie)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
 }
@@ -693,8 +698,8 @@ func TestApiConfig_UpdateWarLink_InvalidMode(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]any{"mode": "invalid"}
-	resp := doRequest(t, router, "PUT", "/api/config/warlink", body, cookie)
+	body := map[string]any{"plc": map[string]any{"mode": "invalid"}}
+	resp := doRequest(t, router, "PUT", "/api/config", body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", `mode must be "poll" or "sse"`)
 }
@@ -703,8 +708,8 @@ func TestApiConfig_UpdateWarLink_InvalidPollRate(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	body := map[string]any{"poll_rate": "not-a-duration"}
-	resp := doRequest(t, router, "PUT", "/api/config/warlink", body, cookie)
+	body := map[string]any{"plc": map[string]any{"poll_rate": "not-a-duration"}}
+	resp := doRequest(t, router, "PUT", "/api/config", body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 
@@ -762,7 +767,7 @@ func TestApiConfig_AdminAuth_RequiresLogin(t *testing.T) {
 		{"GET", "/api/processes"},
 		{"GET", "/api/styles"},
 		{"GET", "/api/warlink/status"},
-		{"PUT", "/api/config/core-api"},
+		{"PUT", "/api/config"},
 	}
 
 	for _, ep := range endpoints {

@@ -2,6 +2,7 @@ package www
 
 import (
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -20,11 +21,14 @@ import (
 // Coverage of their DB call sites therefore lands through the process
 // helpers already exercised elsewhere — we assert shape at the DB layer.
 //
-// Backup: every endpoint except apiUpdateBackupConfig guards on
-// `h.backup == nil` and returns 501. In the test harness h.backup is nil,
-// so we cover all five early-exit branches. apiUpdateBackupConfig does
-// *not* have that guard and is testable end-to-end (cfg.Save lands on
-// disk, h.requestBackup is a safe no-op when h.backup is nil).
+// Backup: every backup endpoint guards on `h.backup == nil` and returns 501.
+// In the test harness h.backup is nil, so we cover all five early-exit
+// branches. The backup SETTINGS save through PUT /api/config (U3) as its
+// "backups" section: validation answers first (a bad body is a 400 even with
+// no service, lead ruling L6), and only enabling with changed storage needs
+// the service (E8: 501 here). A disabled save is testable end-to-end
+// (cfg.Save lands on disk, h.requestBackup is a safe no-op when h.backup is
+// nil).
 // ═══════════════════════════════════════════════════════════════════════
 
 func newOrdersBackupRouter(t *testing.T) (*Handlers, *chi.Mux) {
@@ -34,7 +38,9 @@ func newOrdersBackupRouter(t *testing.T) (*Handlers, *chi.Mux) {
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/backups", h.apiListBackups)
 		r.Get("/backups/status", h.apiBackupStatus)
-		r.Put("/backups/config", h.apiUpdateBackupConfig)
+		// The backup settings save through the Configuration page's one door
+		// (U3, R4), as the "backups" section; it replaced PUT /backups/config.
+		r.Put("/config", h.apiSaveConfig)
 		r.Post("/backups/test", h.apiTestBackupConfig)
 		r.Post("/backups/run", h.apiRunBackup)
 		r.Post("/backups/restore", h.apiStageBackupRestore)
@@ -71,7 +77,7 @@ func TestApiBackup_NilService_ReturnsNotImplemented(t *testing.T) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// apiUpdateBackupConfig — no nil-check, fully testable.
+// The "backups" section of PUT /api/config (was apiUpdateBackupConfig).
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiUpdateBackupConfig_DisabledDefaults(t *testing.T) {
@@ -89,7 +95,7 @@ func TestApiUpdateBackupConfig_DisabledDefaults(t *testing.T) {
 		"endpoint":          "  ",
 		"bucket":            "",
 	}
-	resp := doRequest(t, router, "PUT", "/api/backups/config", body, nil)
+	resp := doRequest(t, router, "PUT", "/api/config", map[string]any{"backups": body}, nil)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
 
@@ -110,6 +116,12 @@ func TestApiUpdateBackupConfig_DisabledDefaults(t *testing.T) {
 	}
 }
 
+// Flipped by E8 (U3). At the U0 tree this enabled automatic backups with new
+// storage and no backup service, and saved it untested. Now enabling with
+// changed storage settings runs the storage check first, and with no service
+// (h.backup == nil, as in this router) that save answers 501 and writes
+// nothing. The trim assertions are kept, on the same body saved disabled
+// (disabling needs no service).
 func TestApiUpdateBackupConfig_EnabledTrimsAndPersists(t *testing.T) {
 	h, router := newOrdersBackupRouter(t)
 
@@ -125,14 +137,30 @@ func TestApiUpdateBackupConfig_EnabledTrimsAndPersists(t *testing.T) {
 		"use_path_style":           true,
 		"insecure_skip_tls_verify": false,
 	}
-	resp := doRequest(t, router, "PUT", "/api/backups/config", body, nil)
-	assertStatus(t, resp, http.StatusOK)
+	resp := doRequest(t, router, "PUT", "/api/config", map[string]any{"backups": body}, nil)
+	assertStatus(t, resp, http.StatusNotImplemented)
+	assertJSONPath(t, resp, "error", "backup service unavailable")
 
 	cfg := h.engine.AppConfig()
 	cfg.Lock()
+	if cfg.Backup.Enabled || cfg.Backup.S3.Endpoint != "" || cfg.Backup.S3.SecretKey != "" {
+		t.Errorf("501 applied something: enabled=%v endpoint=%q secret=%q",
+			cfg.Backup.Enabled, cfg.Backup.S3.Endpoint, cfg.Backup.S3.SecretKey)
+	}
+	cfg.Unlock()
+	if _, err := os.Stat(h.engine.ConfigPath()); !os.IsNotExist(err) {
+		t.Errorf("501 wrote the config file (stat err %v)", err)
+	}
+
+	// The same body saved disabled: every string trimmed, the rest applied.
+	body["enabled"] = false
+	resp = doRequest(t, router, "PUT", "/api/config", map[string]any{"backups": body}, nil)
+	assertStatus(t, resp, http.StatusOK)
+
+	cfg.Lock()
 	defer cfg.Unlock()
-	if !cfg.Backup.Enabled {
-		t.Error("Backup.Enabled: got false, want true")
+	if cfg.Backup.Enabled {
+		t.Error("Backup.Enabled: got true, want false")
 	}
 	if cfg.Backup.ScheduleInterval != 30*time.Minute {
 		t.Errorf("ScheduleInterval: got %v, want 30m", cfg.Backup.ScheduleInterval)
@@ -169,7 +197,7 @@ func TestApiUpdateBackupConfig_EnabledRequiresEndpoint(t *testing.T) {
 		"access_key":        "k",
 		"secret_key":        "s",
 	}
-	resp := doRequest(t, router, "PUT", "/api/backups/config", body, nil)
+	resp := doRequest(t, router, "PUT", "/api/config", map[string]any{"backups": body}, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 
@@ -184,7 +212,7 @@ func TestApiUpdateBackupConfig_EnabledRequiresBucket(t *testing.T) {
 		"access_key":        "k",
 		"secret_key":        "s",
 	}
-	resp := doRequest(t, router, "PUT", "/api/backups/config", body, nil)
+	resp := doRequest(t, router, "PUT", "/api/config", map[string]any{"backups": body}, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 
@@ -214,7 +242,7 @@ func TestApiUpdateBackupConfig_EnabledRequiresAccessAndSecret(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := doRequest(t, router, "PUT", "/api/backups/config", tc.body, nil)
+			resp := doRequest(t, router, "PUT", "/api/config", map[string]any{"backups": tc.body}, nil)
 			assertStatus(t, resp, http.StatusBadRequest)
 		})
 	}
@@ -227,7 +255,7 @@ func TestApiUpdateBackupConfig_InvalidScheduleInterval(t *testing.T) {
 		"enabled":           false,
 		"schedule_interval": "not-a-duration",
 	}
-	resp := doRequest(t, router, "PUT", "/api/backups/config", body, nil)
+	resp := doRequest(t, router, "PUT", "/api/config", map[string]any{"backups": body}, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 
@@ -244,7 +272,7 @@ func TestApiUpdateBackupConfig_EnabledZeroInterval(t *testing.T) {
 		"access_key":        "k",
 		"secret_key":        "s",
 	}
-	resp := doRequest(t, router, "PUT", "/api/backups/config", body, nil)
+	resp := doRequest(t, router, "PUT", "/api/config", map[string]any{"backups": body}, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 
@@ -253,14 +281,14 @@ func TestApiUpdateBackupConfig_InvalidJSON(t *testing.T) {
 
 	// enabled must be bool; sending a string breaks the outer decode.
 	body := map[string]any{"enabled": "yes"}
-	resp := doRequest(t, router, "PUT", "/api/backups/config", body, nil)
+	resp := doRequest(t, router, "PUT", "/api/config", map[string]any{"backups": body}, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 // requestBackup — package-level helper that the handler calls after
 // persisting. With h.backup == nil it must be a safe no-op; this is
-// already exercised indirectly by TestApiUpdateBackupConfig_EnabledTrimsAndPersists,
+// already exercised indirectly by TestApiUpdateBackupConfig_DisabledDefaults,
 // but we pin the contract directly here to guard against regressions.
 // ═══════════════════════════════════════════════════════════════════════
 

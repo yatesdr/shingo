@@ -509,17 +509,23 @@ func (h *Handlers) apiSaveShifts(w http.ResponseWriter, r *http.Request) {
 	// Reconcile against the existing rows so absence is also deletion.
 	// Only IN-RANGE numbers count as "present": a payload consisting
 	// solely of out-of-range rows (a malformed or hand-rolled call) must
-	// not mark every real shift absent and wipe the config.
-	existing, err := h.engine.ShiftService().List()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+	// not mark every real shift absent and wipe the config, so it is
+	// refused with nothing written. An empty array is the operator's
+	// "no shifts" and still deletes them all.
 	seen := make(map[int]bool, len(shifts))
 	for _, s := range shifts {
 		if s.ShiftNumber >= 1 && s.ShiftNumber <= 3 {
 			seen[s.ShiftNumber] = true
 		}
+	}
+	if len(shifts) > 0 && len(seen) == 0 {
+		writeError(w, http.StatusBadRequest, "no shift_number in range 1-3")
+		return
+	}
+	existing, err := h.engine.ShiftService().List()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	for _, ex := range existing {
 		if !seen[ex.ShiftNumber] {

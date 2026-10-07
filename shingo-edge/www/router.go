@@ -46,6 +46,12 @@ type Handlers struct {
 	eventHub      *EventHub
 	debugLog      *debuglog.Logger
 
+	// boot is the restart-only config fields as read at process start (Station
+	// UID, Plant timezone, Core address), for the Configuration page's restart
+	// notice. Taken once in NewRouter. Nil in handler tests that build
+	// &Handlers{} directly: no snapshot, no notice.
+	boot *configBoot
+
 	// stationViews coalesces concurrent builds of the same operator-station
 	// view. See stationViewGroup — the short version is that a station view is
 	// expensive, every DB read serialises on one connection, and without this
@@ -123,6 +129,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		sessions:       newSessionStore(eng.AppConfig().Web.SessionSecret),
 		eventHub:       NewEventHub(),
 		debugLog:       dbg,
+		boot:           newConfigBoot(eng.AppConfig()),
 		stationViews:   newStationViewGroup(),
 		specChangeCh:   make(chan struct{}, 1),
 		specChangeStop: make(chan struct{}),
@@ -409,7 +416,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Get("/plcs/all-tags/{name}", h.apiPLCAllTags)
 				r.Post("/plcs/read-tag", h.apiReadTag)
 				r.Get("/warlink/status", h.apiWarLinkStatus)
-				r.Put("/config/warlink", h.apiUpdateWarLink)
 
 				// Cell-side autoreorder. The loader-threshold routes that sat
 				// here were deleted with the dead Edge threshold surface —
@@ -515,18 +521,16 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				r.Get("/shifts", h.apiListShifts)
 				r.Put("/shifts", h.apiSaveShifts)
 
-				// Config & backups
-				r.Put("/config/core-api", h.apiUpdateCoreAPI)
+				// Config & backups. PUT /config is the Configuration page's one save
+				// door (handlers_config_save.go); it replaced the per-item doors
+				// (core-api, messaging, station-id, timezone, auto-confirm, warlink,
+				// backups/config), R4. Shifts keep their own door above.
+				r.Put("/config", h.apiSaveConfig)
 				r.Post("/config/core-api/test", h.apiTestCoreAPI)
-				r.Put("/config/messaging", h.apiUpdateMessaging)
-				r.Put("/config/station-id", h.apiUpdateStationID)
-				r.Put("/config/timezone", h.apiUpdateTimezone)
 				r.Post("/config/kafka/test", h.apiTestKafka)
-				r.Put("/config/auto-confirm", h.apiUpdateAutoConfirm)
 				r.Post("/config/password", h.apiChangePassword)
 				r.Get("/backups", h.apiListBackups)
 				r.Get("/backups/status", h.apiBackupStatus)
-				r.Put("/backups/config", h.apiUpdateBackupConfig)
 				r.Post("/backups/test", h.apiTestBackupConfig)
 				r.Post("/backups/run", h.apiRunBackup)
 				r.Post("/backups/restore", h.apiStageBackupRestore)

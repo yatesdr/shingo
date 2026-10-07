@@ -40,7 +40,12 @@ type SnapshotInfo struct {
 }
 
 type Status struct {
-	Enabled            bool       `json:"enabled"`
+	Enabled bool `json:"enabled"`
+	// Configured: the storage settings are complete (endpoint, bucket, access
+	// key, secret), WHATEVER Enabled says, so the Configuration page can list
+	// and restore backups with automatic backups off (E6). Not
+	// backupsConfigured, which is false whenever Enabled is.
+	Configured         bool       `json:"configured"`
 	ScheduleInterval   string     `json:"schedule_interval,omitempty"`
 	Running            bool       `json:"running"`
 	Pending            bool       `json:"pending"`

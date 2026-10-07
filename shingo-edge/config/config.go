@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"os"
+	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -14,6 +15,13 @@ import (
 // Config is the top-level application configuration.
 type Config struct {
 	mu sync.RWMutex `yaml:"-"`
+
+	// saveMu is the ONE SAVE PATH's mutex (see LockSave). It is a different
+	// lock from mu: mu guards each read and write of a field, saveMu guards a
+	// whole copy → apply → validate → write → swap sequence, so two writers
+	// cannot interleave and write each other's old values back. Always taken
+	// BEFORE mu, never while holding it.
+	saveMu sync.Mutex `yaml:"-"`
 
 	// StationUID is this edge's identity, minted by Core at enrollment. It is
 	// opaque, it never changes, and it is the value that travels as
@@ -621,6 +629,137 @@ func (c *Config) RLock() { c.mu.RLock() }
 
 // RUnlock releases the config read lock.
 func (c *Config) RUnlock() { c.mu.RUnlock() }
+
+// LockSave takes the save mutex. Every code path that changes the config AND
+// writes it to disk holds it across the whole sequence: the config page's
+// save door and adoptPlantTimezone (cmd/shingoedge). Without it a page save
+// running beside an adopted timezone writes the old zone back. Take it before
+// Lock/RLock, never while holding either.
+func (c *Config) LockSave() { c.saveMu.Lock() }
+
+// UnlockSave releases the save mutex.
+func (c *Config) UnlockSave() { c.saveMu.Unlock() }
+
+// Clone returns a deep copy of the config, made in Go and not through a yaml
+// round trip: KafkaConfig.GroupID is `yaml:"-"`, set once at boot, and a yaml
+// clone would carry it as blank into the next ReconnectKafka. Slices and
+// pointers are copied, so nothing in the clone aliases the original. The
+// clone has its own (zero) mutexes. Takes the read lock.
+//
+// TestConfig_CloneAndAdoptCoverEveryField sets every field by reflection and
+// fails if Clone or Adopt drops one, so a field added later is not silently
+// lost on a save.
+func (c *Config) Clone() *Config {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := &Config{}
+	out.assignFrom(c)
+	out.Messaging.Kafka.Brokers = cloneSlice(c.Messaging.Kafka.Brokers)
+	out.Sim.Calendar.Weekend = cloneSlice(c.Sim.Calendar.Weekend)
+	if c.Sim.Calendar.Shifts != nil {
+		out.Sim.Calendar.Shifts = make([]SimShiftConfig, len(c.Sim.Calendar.Shifts))
+		for i, s := range c.Sim.Calendar.Shifts {
+			s.Break = cloneSlice(s.Break)
+			out.Sim.Calendar.Shifts[i] = s
+		}
+	}
+	out.Sim.Downtime.Machines = cloneSlice(c.Sim.Downtime.Machines)
+	out.Sim.Processes = cloneSlice(c.Sim.Processes)
+	out.Logging.StderrSubsystems = cloneSlice(c.Logging.StderrSubsystems)
+	if c.LoadersMultiWindow != nil {
+		v := *c.LoadersMultiWindow
+		out.LoadersMultiWindow = &v
+	}
+	if c.Demand.HysteresisPercent != nil {
+		v := *c.Demand.HysteresisPercent
+		out.Demand.HysteresisPercent = &v
+	}
+	return out
+}
+
+// Adopt swaps a saved copy into this (the live) config, under the write lock.
+// Not `*c = *from` (that would overwrite the mutexes, and vet flags it) and
+// not a new pointer: the messaging client and the backup service hold
+// pointers into the live config. from must not be used after (its slices and
+// pointers are taken, not copied).
+//
+// ONLY A LEAF THAT DIFFERS IS WRITTEN. The engine's loops read the live
+// config without the lock (e.cfg.Web.AutoConfirm, ApplyWarLinkConfig's
+// e.cfg.WarLink, cfg.StationID() users), as they always have. A swap that
+// rewrote every field raced each of them on values the save did not change
+// (a same-value write is still a race); the per-item doors it replaced wrote
+// only their own fields. Writing only what the draft changed keeps a save's
+// writes to the fields its sections own. It walks the struct by reflection,
+// so no field can be left out of the swap (the same approach as Core's
+// ReplaceFrom). TestConfig_CloneAndAdoptCoverEveryField proves every field
+// lands; TestRace_AdoptLeavesUnchangedFieldsAlone proves the rest are left
+// alone.
+func (c *Config) Adopt(from *Config) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	assignChanged(reflect.ValueOf(c).Elem(), reflect.ValueOf(from).Elem())
+}
+
+// assignChanged writes src's exported leaves into dst where they differ,
+// recursing into plain structs (a struct with unexported fields, such as
+// time.Time, is a leaf, and so is every slice, map and pointer).
+func assignChanged(dst, src reflect.Value) {
+	t := dst.Type()
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		d, s := dst.Field(i), src.Field(i)
+		if f.Type.Kind() == reflect.Struct && allExported(f.Type) {
+			assignChanged(d, s)
+			continue
+		}
+		if !reflect.DeepEqual(d.Interface(), s.Interface()) {
+			d.Set(s)
+		}
+	}
+}
+
+func allExported(t reflect.Type) bool {
+	for i := 0; i < t.NumField(); i++ {
+		if !t.Field(i).IsExported() {
+			return false
+		}
+	}
+	return true
+}
+
+// assignFrom copies every exported field of from into c, for Clone (a fresh
+// struct nobody else holds). TestConfig_CloneAndAdoptCoverEveryField fails if
+// a field added later is missing here.
+func (c *Config) assignFrom(from *Config) {
+	c.StationUID = from.StationUID
+	c.Namespace = from.Namespace
+	c.LineID = from.LineID
+	c.DatabasePath = from.DatabasePath
+	c.PollRate = from.PollRate
+	c.Timezone = from.Timezone
+	c.CoreAPI = from.CoreAPI
+	c.WarLink = from.WarLink
+	c.Web = from.Web
+	c.Messaging = from.Messaging
+	c.Counter = from.Counter
+	c.Backup = from.Backup
+	c.Sim = from.Sim
+	c.Logging = from.Logging
+	c.LoadersMultiWindow = from.LoadersMultiWindow
+	c.UOPAccumulatingCTAAfter = from.UOPAccumulatingCTAAfter
+	c.Demand = from.Demand
+	c.PlantClaims = from.PlantClaims
+}
+
+func cloneSlice[T any](s []T) []T {
+	if s == nil {
+		return nil
+	}
+	return append(make([]T, 0, len(s)), s...)
+}
 
 // NewInstanceID returns a random id identifying ONE RUN of this process.
 //

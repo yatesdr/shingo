@@ -57,58 +57,6 @@ func (h *Handlers) apiWarLinkStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handlers) apiUpdateWarLink(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Host     string `json:"host"`
-		Port     int    `json:"port"`
-		PollRate string `json:"poll_rate"`
-		Enabled  bool   `json:"enabled"`
-		Mode     string `json:"mode"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if req.Mode != "" && req.Mode != "poll" && req.Mode != "sse" {
-		writeError(w, http.StatusBadRequest, "mode must be \"poll\" or \"sse\"")
-		return
-	}
-
-	cfg := h.engine.AppConfig()
-	cfg.Lock()
-	if req.Host != "" {
-		cfg.WarLink.Host = req.Host
-	}
-	if req.Port > 0 {
-		cfg.WarLink.Port = req.Port
-	}
-	if req.PollRate != "" {
-		d, err := time.ParseDuration(req.PollRate)
-		if err != nil {
-			cfg.Unlock()
-			writeError(w, http.StatusBadRequest, "invalid poll_rate: "+err.Error())
-			return
-		}
-		cfg.WarLink.PollRate = d
-	}
-	cfg.WarLink.Enabled = req.Enabled
-	if req.Mode != "" {
-		cfg.WarLink.Mode = req.Mode
-	}
-	cfg.Unlock()
-
-	if err := cfg.Save(h.engine.ConfigPath()); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	h.orchestration.ApplyWarLinkConfig()
-
-	h.requestBackup("warlink-config")
-	writeJSON(w, map[string]string{"status": "ok"})
-}
-
 func (h *Handlers) apiPLCTags(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	tags, err := h.engine.PLCManager().DiscoverTags(name)

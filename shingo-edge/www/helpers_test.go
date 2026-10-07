@@ -434,7 +434,10 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 
 			r.Get("/plcs", h.apiListPLCs)
 			r.Get("/warlink/status", h.apiWarLinkStatus)
-			r.Put("/config/warlink", h.apiUpdateWarLink)
+			// The Configuration page's one save door (U3, R4). It replaced the
+			// per-item doors this router used to register (warlink, core-api,
+			// messaging, station-id, auto-confirm).
+			r.Put("/config", h.apiSaveConfig)
 
 			r.Get("/processes", h.apiListProcesses)
 			r.Post("/processes", h.apiCreateProcess)
@@ -500,12 +503,8 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 			r.Post("/core-nodes/sync", h.apiSyncCoreNodes)
 			r.Post("/payload-catalog/sync", h.apiSyncPayloadCatalog)
 
-			r.Put("/config/core-api", h.apiUpdateCoreAPI)
 			r.Post("/config/core-api/test", h.apiTestCoreAPI)
-			r.Put("/config/messaging", h.apiUpdateMessaging)
-			r.Put("/config/station-id", h.apiUpdateStationID)
 			r.Post("/config/kafka/test", h.apiTestKafka)
-			r.Put("/config/auto-confirm", h.apiUpdateAutoConfirm)
 			r.Post("/config/password", h.apiChangePassword)
 		})
 	})

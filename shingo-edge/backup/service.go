@@ -358,10 +358,16 @@ func (s *Service) backupsConfigured() bool {
 	if !b.Enabled {
 		return false
 	}
-	return strings.TrimSpace(b.S3.Endpoint) != "" &&
-		strings.TrimSpace(b.S3.Bucket) != "" &&
-		strings.TrimSpace(b.S3.AccessKey) != "" &&
-		strings.TrimSpace(b.S3.SecretKey) != ""
+	return storageComplete(b.S3)
+}
+
+// storageComplete reports whether the S3 target has every field a backup run
+// needs. The caller holds the config lock.
+func storageComplete(s3 config.BackupS3Config) bool {
+	return strings.TrimSpace(s3.Endpoint) != "" &&
+		strings.TrimSpace(s3.Bucket) != "" &&
+		strings.TrimSpace(s3.AccessKey) != "" &&
+		strings.TrimSpace(s3.SecretKey) != ""
 }
 
 func (s *Service) storageFromConfig() (Storage, string, config.BackupConfig, error) {
@@ -380,6 +386,7 @@ func (s *Service) refreshStaticStatus() {
 	s.cfg.RLock()
 	enabled := s.cfg.Backup.Enabled
 	interval := s.cfg.Backup.ScheduleInterval
+	configured := storageComplete(s.cfg.Backup.S3)
 	s.cfg.RUnlock()
 	if interval <= 0 {
 		interval = config.DefaultBackupScheduleInterval
@@ -387,6 +394,7 @@ func (s *Service) refreshStaticStatus() {
 	next := time.Now().UTC().Add(interval)
 	s.mu.Lock()
 	s.status.Enabled = enabled
+	s.status.Configured = configured
 	s.status.ScheduleInterval = interval.String()
 	if s.status.LastSuccessAt != nil {
 		t := s.status.LastSuccessAt.Add(interval)
@@ -407,7 +415,12 @@ func (s *Service) refreshStaticStatus() {
 			s.status.StaleReason = ""
 		}
 	}
-	s.status.NextScheduledAt = &next
+	// No next run when automatic backups are off: there is none (E7).
+	if enabled {
+		s.status.NextScheduledAt = &next
+	} else {
+		s.status.NextScheduledAt = nil
+	}
 	s.mu.Unlock()
 }
 
