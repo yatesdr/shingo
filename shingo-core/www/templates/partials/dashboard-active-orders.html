@@ -1,0 +1,53 @@
+{{define "dashboard-active-orders"}}{{/* The Dashboard's Active Orders card (W4). One
+     partial, rendered by the page (dashboard.html) and by GET
+     /dashboard-active-orders (handleDashboardActiveOrders), which the page
+     swaps in on order-update, so a refreshed card is the reloaded one. Takes
+     the page's data: .ActiveOrders and .WaitSince. */}}
+  {{if .ActiveOrders}}
+  <div class="card" id="dash-active-orders">
+    <h3>Active Orders</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th title="From &rarr; Line &rarr; To">Route</th>
+          <th>Station</th>
+          <th>Type</th>
+          <th>Payload</th>
+          <th>Status</th>
+          <th>Robot</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .ActiveOrders}}
+        <tr>
+          <td><a href="/orders?open={{.ID}}">{{.ID}}</a></td>
+          <td class="orders-route">{{template "order-route" .}}</td>
+          <td>{{stationName .StationID}}</td>
+          <td>{{.OrderType}}</td>
+          <td>{{template "order-payload" .}}</td>
+          {{/* THE WALL SHOULD NOT KNOW LESS THAN THE BOARD. This cell rendered
+               the status word alone, so an order reading "queued — Waiting for
+               material: PANEL-A in SYN_MARKET · 32m" on /orders read just
+               "queued" here — on the Operations Overview, which is the page a
+               wall display shows. Same slot, same markup, same data-since
+               contract as partials/orders-rows.html. */}}
+          <td>
+            <span class="badge badge-{{.Status}}">{{.Status}}</span>
+            {{if .QueueReason}}<div class="orders-subtext orders-reason">{{.QueueReason}}{{with index $.WaitSince .ID}} · <span class="tnum orders-wait-since" data-since="{{.}}"></span>{{end}}</div>{{end}}
+          </td>
+          <td>{{.RobotID}}</td>
+          {{/* Seconds, as on the orders board: rows can share a minute. */}}
+          <td class="orders-time">{{formatTimeSeconds .CreatedAt}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="card" id="dash-active-orders">
+    <p class="text-muted">No active orders.</p>
+  </div>
+  {{end}}
+{{end}}

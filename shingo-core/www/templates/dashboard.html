@@ -27,7 +27,7 @@
        the strip names that one thing next to the verdict. -->
   <section class="card core-strip mb-2" id="core-strip" data-health='{{.Health.Verdict}}'>
     <div class="cs-zone cs-counts">
-      <div class="cs-fig"><span class="cs-num{{if eq .TotalOrders 0}} is-zero{{end}}">{{.TotalOrders}}</span><span class="cs-lbl">Active orders</span></div>
+      <div class="cs-fig"><span class="cs-num{{if eq .TotalOrders 0}} is-zero{{end}}" id="cs-orders-val">{{.TotalOrders}}</span><span class="cs-lbl">Active orders</span></div>
       <div class="cs-fig"><span class="cs-num{{if eq .TotalNodes 0}} is-zero{{end}}">{{.TotalNodes}}</span><span class="cs-lbl">Nodes</span></div>
       <div class="cs-fig"><span class="cs-num{{if eq .PollerActive 0}} is-zero{{end}}">{{.PollerActive}}</span><span class="cs-lbl">Polling</span></div>
       {{if .Recon}}
@@ -87,53 +87,7 @@
   </section>
 
 
-  {{if .ActiveOrders}}
-  <div class="card">
-    <h3>Active Orders</h3>
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th title="From &rarr; Line &rarr; To">Route</th>
-          <th>Station</th>
-          <th>Type</th>
-          <th>Payload</th>
-          <th>Status</th>
-          <th>Robot</th>
-          <th>Created</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{range .ActiveOrders}}
-        <tr>
-          <td><a href="/orders?open={{.ID}}">{{.ID}}</a></td>
-          <td class="orders-route">{{template "order-route" .}}</td>
-          <td>{{stationName .StationID}}</td>
-          <td>{{.OrderType}}</td>
-          <td>{{template "order-payload" .}}</td>
-          {{/* THE WALL SHOULD NOT KNOW LESS THAN THE BOARD. This cell rendered
-               the status word alone, so an order reading "queued — Waiting for
-               material: PANEL-A in SYN_MARKET · 32m" on /orders read just
-               "queued" here — on the Operations Overview, which is the page a
-               wall display shows. Same slot, same markup, same data-since
-               contract as partials/orders-rows.html. */}}
-          <td>
-            <span class="badge badge-{{.Status}}">{{.Status}}</span>
-            {{if .QueueReason}}<div class="orders-subtext orders-reason">{{.QueueReason}}{{with index $.WaitSince .ID}} · <span class="tnum orders-wait-since" data-since="{{.}}"></span>{{end}}</div>{{end}}
-          </td>
-          <td>{{.RobotID}}</td>
-          {{/* Seconds, as on the orders board: rows can share a minute. */}}
-          <td class="orders-time">{{formatTimeSeconds .CreatedAt}}</td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-  </div>
-  {{else}}
-  <div class="card">
-    <p class="text-muted">No active orders.</p>
-  </div>
-  {{end}}
+  {{template "dashboard-active-orders" .}}
 </div>
 <script type="module" src="/static/pages/dashboard-landing.js"></script>
 {{end}}

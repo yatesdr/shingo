@@ -378,13 +378,19 @@ export function openFromQuery(open) {
 
 // enterSubmits — used as data-action-keydown="enterSubmits:targetFn"
 // on form-input elements that should submit on Enter (and ignore
-// other keys). targetFn is the bare name of a window-resolved
-// function; this helper calls it after preventDefault.
+// other keys). The page maps enterSubmits in its delegateActions map,
+// and targetFn is a verb in the page's click map (the one its Create
+// button names): a page module's functions are never on window, so the
+// target is looked up in the handler map delegateActions keeps on the
+// root (shared/utils.js, '__delegateActionsMap_' + sentinel; the click
+// sentinel is 'delegated'). This helper calls it after preventDefault.
 export function enterSubmits(targetFnName, el, evt) {
   if (!evt || evt.key !== 'Enter') return;
   evt.preventDefault();
-  var fn = window[targetFnName];
-  if (typeof fn === 'function') fn(el, evt);
+  var root = evt.currentTarget || document.body;
+  var clickMap = root && root.__delegateActionsMap_delegated;
+  var fn = clickMap && clickMap[targetFnName];
+  if (typeof fn === 'function') fn.call(el, el, evt);
 }
 
 // confirmDeleteForm — for `data-action-submit="confirmDeleteForm"

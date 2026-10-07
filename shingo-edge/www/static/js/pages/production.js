@@ -696,6 +696,7 @@ delegateActions(document.body, {
     closeLoadBinModal,
     createOrder,
     ensureLoadBinCatalog,
+    hideModal,
     navigateToProcess,
     onLoadPayloadChanged,
     onShiftProcessChange,

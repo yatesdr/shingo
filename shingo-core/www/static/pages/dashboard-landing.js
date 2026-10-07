@@ -13,7 +13,7 @@
 // when authenticated — detected from the presence of the auth-gated "+ New"
 // button the template emits.
 
-import { installLiveDurations } from '/static/shared/utils.js';
+import { installLiveDurations, onSSE } from '/static/shared/utils.js';
 import { el, apiGet, apiPost, apiPut, apiDelete, toast, uiConfirm } from '/static/app.js';
 
 // Known kinds. A kind needs a renderer template + dashboard.js branch to display.
@@ -479,3 +479,86 @@ if (document.getElementById('core-strip')) {
 // same data-since contract — the overview is a wall display, so a duration that
 // never ticks is worse here than anywhere else.
 installLiveDurations();
+
+// ── Active Orders card: live (W4) ────────────────────────────────────────────
+// The card is server-rendered by the partial "dashboard-active-orders"; on
+// order-update the page swaps it from GET /dashboard-active-orders (the same
+// partial, the same reads), on the Overview's 1500 ms debounce with a 10 s
+// max wait (see debounceMaxWait). The answer's
+// X-Active-Orders-Count header is the strip's "Active orders" figure, counted
+// off the same list, so the strip and the card never disagree. Nothing is
+// fetched in a hidden tab: an update that lands while hidden is remembered and
+// fetched once when the tab is shown again. A failed fetch keeps the card it
+// has (the server answers a failed read with a 500, never an empty card).
+// debounceMaxWait is a trailing debounce that also fires at most maxMs after
+// the first call of a burst. A plain trailing debounce never fires while calls
+// keep arriving closer together than waitMs: under a steady order-update stream
+// the card went 30 s without a refresh. With sparse calls it behaves exactly
+// like the trailing debounce. Local to this page on purpose (the Overview has
+// its own schedule).
+function debounceMaxWait(fn, waitMs, maxMs) {
+    let trailing = null;
+    let ceiling = null;
+    function fire() {
+        clearTimeout(trailing);
+        clearTimeout(ceiling);
+        trailing = null;
+        ceiling = null;
+        fn();
+    }
+    return function () {
+        clearTimeout(trailing);
+        trailing = setTimeout(fire, waitMs);
+        if (ceiling === null) ceiling = setTimeout(fire, maxMs);
+    };
+}
+
+let ordersInFlight = false;
+let ordersAgain = false;
+let ordersMissedWhileHidden = false;
+
+function setActiveOrdersCount(n) {
+    const v = document.getElementById('cs-orders-val');
+    if (!v || n === null || n === '' || isNaN(Number(n))) return;
+    v.textContent = String(Number(n));
+    v.classList.toggle('is-zero', Number(n) === 0);
+}
+
+function refreshActiveOrders() {
+    if (document.hidden) { ordersMissedWhileHidden = true; return; }
+    if (ordersInFlight) { ordersAgain = true; return; }
+    ordersInFlight = true;
+    fetch('/dashboard-active-orders', { headers: { 'Accept': 'text/html' } })
+        .then((r) => {
+            if (!r.ok) throw new Error('active orders ' + r.status);
+            const count = r.headers.get('X-Active-Orders-Count');
+            return r.text().then((html) => ({ html, count }));
+        })
+        .then(({ html, count }) => {
+            const card = document.getElementById('dash-active-orders');
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            const fresh = doc.getElementById('dash-active-orders');
+            if (!card || !fresh) return;
+            card.replaceWith(document.importNode(fresh, true));
+            setActiveOrdersCount(count);
+            // Re-arm the wait clocks: the interval stops itself once no
+            // [data-since] is left, so a swap from an empty card would freeze
+            // the new rows' clocks without this.
+            installLiveDurations();
+        })
+        .catch((e) => { console.error('refreshActiveOrders', e); })
+        .then(() => {
+            ordersInFlight = false;
+            if (ordersAgain) { ordersAgain = false; refreshActiveOrders(); }
+        });
+}
+
+if (document.getElementById('dash-active-orders')) {
+    onSSE('order-update', debounceMaxWait(refreshActiveOrders, 1500, 10000));
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && ordersMissedWhileHidden) {
+            ordersMissedWhileHidden = false;
+            refreshActiveOrders();
+        }
+    });
+}

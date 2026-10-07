@@ -541,6 +541,7 @@ delegateActions(document.body, {
     cancelCommand,
     cancelOrder,
     formatRoute,
+    hideModal,
     loadRobots,
     loadScenePoints,
     openReceipt,

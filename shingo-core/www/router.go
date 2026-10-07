@@ -143,6 +143,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		// system-health) landing stays the home page; Overview lives in the
 		// Dashboards dropdown at /overview.
 		r.Get("/", h.handleDashboard)
+		// The Dashboard's Active Orders card alone, for the page's live swap
+		// on order-update (W4). Public like the page: same data, same audience.
+		r.Get("/dashboard-active-orders", h.handleDashboardActiveOrders)
 		r.Get("/overview", h.handleOverview)
 		r.Get("/login", h.handleLoginPage)
 		r.Post("/login", h.handleLogin)

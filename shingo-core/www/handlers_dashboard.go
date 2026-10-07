@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"shingo/protocol/clock"
+	"shingo/shared"
 )
 
 func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -105,6 +106,40 @@ func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		data["CountAnomalies"] = views
 	}
 	h.render(w, r, "dashboard.html", data)
+}
+
+// handleDashboardActiveOrders answers the Dashboard's Active Orders card alone
+// (W4), so the page can swap it in on order-update instead of showing the
+// orders it was loaded with forever. Same reads and same partial as the page
+// (ListActiveOrders, then waitSinceFor: one history query per waiting status),
+// so a refreshed card is the reloaded one. The strip's "Active orders" figure
+// counts the same list, so the count rides a header with the card; without it
+// the strip and the card would disagree after the first swap.
+//
+// A failed read is a 500, not the "No active orders." card: this fragment
+// replaces what the page shows, and the page keeps its last card on a non-2xx
+// (the orders board's /orders/rows makes the same trade).
+func (h *Handlers) handleDashboardActiveOrders(w http.ResponseWriter, r *http.Request) {
+	activeOrders, err := h.engine.OrderService().ListActiveOrders()
+	if err != nil {
+		log.Printf("dashboard active orders: %v", err)
+		http.Error(w, "could not list active orders", http.StatusInternalServerError)
+		return
+	}
+	tmpl, ok := h.tmpls["dashboard.html"]
+	if !ok {
+		http.Error(w, "template not found", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("X-Active-Orders-Count", strconv.Itoa(len(activeOrders)))
+	w.Header().Set("Cache-Control", "no-store, must-revalidate")
+	shared.SetHTMLContentType(w)
+	if err := tmpl.ExecuteTemplate(w, "dashboard-active-orders", map[string]any{
+		"ActiveOrders": activeOrders,
+		"WaitSince":    h.waitSinceFor(activeOrders),
+	}); err != nil {
+		log.Printf("dashboard active orders: %v", err)
+	}
 }
 
 // countAnomalyView is one inventory count anomaly as the homepage prints it:

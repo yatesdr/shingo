@@ -8,13 +8,12 @@ import (
 	"testing"
 )
 
-// pin_wire_test.go — P0 pins for lane W (ui-cleanup, 2026-10-07), Core side.
+// pin_wire_test.go — lane W pins (ui-cleanup, 2026-10-07), Core side.
 //
-// Each test pins a control that is built and one connection short, AS DEAD, at
-// 5c0beb74. The W unit wires each one and flips the matching assertion; the
-// predicted after-value of every case is in the evidence folder
-// (predictions/p0-wrm.md). Nothing here is a guard to keep: when the W unit
-// lands, each of these is rewritten to the wired state or deleted with it.
+// P0 pinned each control AS DEAD at 5c0beb74 (built and one connection
+// short). The W unit wired them and flipped each pin to the wired state, under
+// its label (W1, W4, W5); the before and after of every case is in the
+// evidence folder (predictions/p0-wrm.md).
 
 // pinDelegateActionsKeys returns the keys of every `delegateActions(document.body,
 // { … })` map in a page script, in source order, one slice per call. A key is the
@@ -81,24 +80,24 @@ func pinContains(keys []string, k string) bool {
 	return false
 }
 
-// W1 (Core). test-orders.js imports hideModal and leaves it out of its one
-// delegateActions map, so the four data-action="hideModal:<id>" buttons in
-// test-orders.html (history and receipt modals: × and Close/Cancel) do nothing.
-func TestPinWire_W1_CoreTestOrdersHideModalUnmapped(t *testing.T) {
+// W1 (Core). test-orders.js imports hideModal and now maps it, so the four
+// data-action="hideModal:<id>" buttons in test-orders.html (history and
+// receipt modals: × and Close/Cancel) close their modal.
+func TestPinWire_W1_CoreTestOrdersHideModalMapped(t *testing.T) {
 	js := pinReadFile(t, "static/pages/test-orders.js")
 	maps := pinDelegateActionsKeys(js)
 	if len(maps) != 1 {
 		t.Fatalf("test-orders.js: %d delegateActions maps, want 1", len(maps))
 	}
-	// Scanner self-check: the map parses to its known size and members.
-	if len(maps[0]) < 28 || !pinContains(maps[0], "cancelCommand") || !pinContains(maps[0], "viewHistory") {
-		t.Fatalf("test-orders.js map parsed as %v; want at least 28 keys incl. cancelCommand and viewHistory", maps[0])
+	// Scanner self-check: the map parses to known members.
+	if len(maps[0]) < 10 || !pinContains(maps[0], "cancelCommand") || !pinContains(maps[0], "viewHistory") {
+		t.Fatalf("test-orders.js map parsed as %v; want cancelCommand and viewHistory among its keys", maps[0])
 	}
 	if !regexp.MustCompile(`(?m)^import \{[^}]*\bhideModal\b[^}]*\} from '/static/app.js';`).MatchString(js) {
 		t.Errorf("test-orders.js no longer imports hideModal from app.js")
 	}
-	if pinContains(maps[0], "hideModal") {
-		t.Errorf("W1 NOW: hideModal is in test-orders.js's delegateActions map — the W unit flips this pin")
+	if !pinContains(maps[0], "hideModal") {
+		t.Errorf("W1: hideModal is missing from test-orders.js's delegateActions map; its four buttons do nothing")
 	}
 	tmpl := pinReadFile(t, "templates/test-orders.html")
 	if n := strings.Count(tmpl, `data-action="hideModal:`); n != 4 {
@@ -106,31 +105,56 @@ func TestPinWire_W1_CoreTestOrdersHideModalUnmapped(t *testing.T) {
 	}
 }
 
-// W4. The Dashboard's Active Orders card is server-rendered once and never
-// updates: dashboard-landing.js (the page's only module) subscribes to no SSE
-// topic, and app.js (on every page) subscribes to system-status only.
-func TestPinWire_W4_DashboardActiveOrdersHasNoSSE(t *testing.T) {
+// W4. The Dashboard's Active Orders card is live: the card is one partial,
+// rendered by the page and by GET /dashboard-active-orders (public, beside
+// "/"), and dashboard-landing.js swaps it in on order-update on a 1500 ms
+// debounce, never in a hidden tab, with one catch-up when the tab is shown,
+// re-arming the wait clocks after each swap and setting the strip's count
+// from the same answer. app.js (on every page) still subscribes to
+// system-status only: RM4 empties that handler's body and keeps the
+// subscription.
+func TestPinWire_W4_DashboardActiveOrdersLive(t *testing.T) {
 	page := pinReadFile(t, "templates/dashboard.html")
 	if !strings.Contains(page, `src="/static/pages/dashboard-landing.js`) {
 		t.Fatalf("dashboard.html no longer loads dashboard-landing.js; repoint this pin")
 	}
-	// The card's heading may move into a partial (W4 cuts the card out); look
-	// in the page and the partials.
-	card := page
-	if parts, _ := filepath.Glob(filepath.Join("templates", "partials", "*.html")); len(parts) > 0 {
-		for _, p := range parts {
-			card += pinReadFile(t, filepath.ToSlash(p))
-		}
+	if !strings.Contains(page, `{{template "dashboard-active-orders" .}}`) {
+		t.Errorf("W4: dashboard.html does not render the dashboard-active-orders partial")
 	}
-	if !strings.Contains(card, "<h3>Active Orders</h3>") {
-		t.Fatalf("no Active Orders card in dashboard.html or templates/partials; repoint this pin")
+	if !strings.Contains(page, `id="cs-orders-val">{{.TotalOrders}}</span><span class="cs-lbl">Active orders</span>`) {
+		t.Errorf("W4: the strip's Active orders figure lost its id; the swap cannot keep it in step with the card")
 	}
+	if strings.Contains(page, "<h3>Active Orders</h3>") {
+		t.Errorf("W4: the card is still inline in dashboard.html as well as in the partial")
+	}
+	part := pinReadFile(t, "templates/partials/dashboard-active-orders.html")
+	if !strings.Contains(part, `{{define "dashboard-active-orders"}}`) || !strings.Contains(part, "<h3>Active Orders</h3>") ||
+		!strings.Contains(part, "No active orders.") || strings.Count(part, `id="dash-active-orders"`) != 2 {
+		t.Errorf("W4: partials/dashboard-active-orders.html is not the card (both branches carrying id=dash-active-orders)")
+	}
+
+	router := pinReadFile(t, "router.go")
+	if !regexp.MustCompile(`r\.Get\("/", h\.handleDashboard\)\n(?:\s*//[^\n]*\n)*\s*r\.Get\("/dashboard-active-orders", h\.handleDashboardActiveOrders\)`).MatchString(router) {
+		t.Errorf("W4: GET /dashboard-active-orders is not registered beside \"/\" in the public group")
+	}
+
 	js := pinReadFile(t, "static/pages/dashboard-landing.js")
-	for _, s := range []string{"onSSE", "order-update", "EventSource", "createSSE"} {
-		if strings.Contains(js, s) {
-			t.Errorf("W4 NOW: dashboard-landing.js names %q — the W unit flips this pin", s)
+	for _, s := range []string{
+		`onSSE('order-update', debounceMaxWait(refreshActiveOrders, 1500, 10000))`,
+		`fetch('/dashboard-active-orders'`,
+		`r.headers.get('X-Active-Orders-Count')`,
+		`if (document.hidden) { ordersMissedWhileHidden = true; return; }`,
+		`'visibilitychange'`,
+	} {
+		if !strings.Contains(js, s) {
+			t.Errorf("W4: dashboard-landing.js lacks %q", s)
 		}
 	}
+	// installLiveDurations runs at load and again after each swap.
+	if n := strings.Count(js, "installLiveDurations();"); n < 2 {
+		t.Errorf("W4: installLiveDurations() called %d times in dashboard-landing.js, want the load call and the post-swap call", n)
+	}
+
 	app := pinReadFile(t, "static/app.js")
 	subs := regexp.MustCompile(`onSSE\(\s*'([\w-]+)'`).FindAllStringSubmatch(app, -1)
 	if len(subs) != 1 || subs[0][1] != "system-status" {
@@ -139,9 +163,11 @@ func TestPinWire_W4_DashboardActiveOrdersHasNoSSE(t *testing.T) {
 }
 
 // W5. Enter in "New Node Group" (nodes.html ngrp-name) and "Add Lane"
-// (lane-name) does nothing: enterSubmits is in no delegateActions map, and its
-// body resolves the target on window, where no module function lives.
-func TestPinWire_W5_EnterSubmitsUnmappedAndWindowResolved(t *testing.T) {
+// (lane-name) submits: nodes-supermarket.js maps enterSubmits, and enterSubmits
+// finds its target in the page's delegateActions map instead of on window,
+// where no module function lives. The behaviour is run by
+// static/app.entersubmits.test.js (TestAppEnterSubmitsJS).
+func TestPinWire_W5_EnterSubmitsMappedAndMapResolved(t *testing.T) {
 	tmpl := pinReadFile(t, "templates/nodes.html")
 	for _, want := range []string{
 		`id="ngrp-name" placeholder="e.g. GRP-ZONE-A" data-action-keydown="enterSubmits:createNodeGroup"`,
@@ -173,12 +199,21 @@ func TestPinWire_W5_EnterSubmitsUnmappedAndWindowResolved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Scanner self-check: Core registers a few hundred map entries.
-	if total < 200 {
-		t.Fatalf("parsed %d delegateActions keys under static/, want hundreds; the scanner is broken", total)
+	// Scanner self-check: Core registers well over a hundred map entries.
+	if total < 100 {
+		t.Fatalf("parsed %d delegateActions keys under static/, want well over a hundred; the scanner is broken", total)
 	}
-	if len(mapped) != 0 {
-		t.Errorf("W5 NOW: enterSubmits is in a delegateActions map in %v — the W unit flips this pin", mapped)
+	if len(mapped) != 1 || mapped[0] != "static/pages/nodes-supermarket.js" {
+		t.Errorf("W5: enterSubmits is mapped in %v, want [static/pages/nodes-supermarket.js]", mapped)
+	}
+	smkt := pinReadFile(t, "static/pages/nodes-supermarket.js")
+	for _, fn := range []string{"createNodeGroup", "submitAddLane"} {
+		if !regexp.MustCompile(`(?m)^    ` + fn + `,?$`).MatchString(smkt) {
+			t.Errorf("W5: %s is not in nodes-supermarket.js's map; enterSubmits has nothing to call", fn)
+		}
+		if strings.Contains(smkt, "window."+fn) {
+			t.Errorf("nodes-supermarket.js assigns window.%s; W5 resolves through the map, not window", fn)
+		}
 	}
 
 	app := pinReadFile(t, "static/app.js")
@@ -186,12 +221,10 @@ func TestPinWire_W5_EnterSubmitsUnmappedAndWindowResolved(t *testing.T) {
 	if body == nil {
 		t.Fatalf("app.js: enterSubmits not found; repoint this pin")
 	}
-	if !strings.Contains(body[1], "window[targetFnName]") {
-		t.Errorf("W5 NOW: enterSubmits no longer resolves its target on window — the W unit flips this pin:\n%s", body[1])
+	if strings.Contains(body[1], "window[targetFnName]") {
+		t.Errorf("W5: enterSubmits still resolves its target on window:\n%s", body[1])
 	}
-	for _, fn := range []string{"createNodeGroup", "submitAddLane"} {
-		if strings.Contains(pinReadFile(t, "static/pages/nodes-supermarket.js"), "window."+fn) {
-			t.Errorf("nodes-supermarket.js assigns window.%s; the premise of W5 is gone", fn)
-		}
+	if !strings.Contains(body[1], "__delegateActionsMap_delegated") {
+		t.Errorf("W5: enterSubmits does not resolve its target through the page's delegateActions map:\n%s", body[1])
 	}
 }

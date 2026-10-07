@@ -1,4 +1,4 @@
-import { api, apiGet, apiPost, delegateActions, el, escapeHtml, toast } from '/static/app.js';
+import { api, apiGet, apiPost, delegateActions, el, enterSubmits, escapeHtml, toast } from '/static/app.js';
 import { openNodeModal } from '/static/pages/nodes-detail.js';
 
 // Supermarket / node-group hierarchy: NGRP and Lane modals, layout
@@ -586,6 +586,7 @@ delegateActions(document.body, {
     closeLaneModal,
     closeNgrpModal,
     createNodeGroup,
+    enterSubmits,
     initDragAndDrop,
     loadGroupLayout,
     onDragEnd,

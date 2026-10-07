@@ -240,6 +240,7 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 		"NodeTaskMap":       d.NodeTaskMap,
 		"CentralNodeTasks":  d.CentralNodeTasks,
 		"AllNodesComplete":  d.AllNodesComplete,
+		"GateBlockers":      d.GateBlockers,
 		"SourcingByStyle":   d.SourcingByStyle,
 		"ChangeoverHistory": changeoverHistory,
 	}
@@ -267,6 +268,7 @@ func (h *Handlers) handleChangeoverPartial(w http.ResponseWriter, r *http.Reques
 		"NodeTaskMap":      d.NodeTaskMap,
 		"CentralNodeTasks": d.CentralNodeTasks,
 		"AllNodesComplete": d.AllNodesComplete,
+		"GateBlockers":     d.GateBlockers,
 		"SourcingByStyle":  d.SourcingByStyle,
 	}
 
