@@ -68,6 +68,60 @@ func ListByProcess(db *sql.DB, processID int64) ([]Order, error) {
 	return scanOrders(rows)
 }
 
+// PageQuery picks one page of the orders history (the Orders page's All tab
+// and its status pills). Status "" means every status; ProcessID 0 means every
+// process. Limit <= 0 returns no rows (the count still answers).
+type PageQuery struct {
+	Status    string
+	ProcessID int64
+	Limit     int
+	Offset    int
+}
+
+// ListPage returns one page of orders, newest first, and how many orders the
+// filter matches in total. The status filter is in the SQL, so a pill reads
+// only its own rows. List and ListByProcess stay as they are: they return
+// every row, and engine tests read them.
+func ListPage(db *sql.DB, q PageQuery) ([]Order, int, error) {
+	var where []string
+	var args []any
+	if q.Status != "" {
+		where = append(where, "o.status = ?")
+		args = append(args, q.Status)
+	}
+	if q.ProcessID > 0 {
+		where = append(where, "pl.id = ?")
+		args = append(args, q.ProcessID)
+	}
+	cond := ""
+	if len(where) > 0 {
+		cond = " WHERE " + strings.Join(where, " AND ")
+	}
+
+	var total int
+	if err := db.QueryRow(`SELECT COUNT(*) `+joinClause+cond, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count orders page: %w", err)
+	}
+	if q.Limit <= 0 {
+		return nil, total, nil
+	}
+	offset := q.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := db.Query(`SELECT `+selectCols+` `+joinClause+cond+`
+		ORDER BY o.created_at DESC, o.id DESC LIMIT ? OFFSET ?`, append(args, q.Limit, offset)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	list, err := scanOrders(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return list, total, nil
+}
+
 // operatorWindowSQL is the orders-history visibility rule, shared by
 // ListActive and ListActiveByProcess.
 //

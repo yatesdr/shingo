@@ -158,13 +158,11 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var activeProcessID int64
-	var processStyles []domain.Style
 	var processStations []domain.Station
 	var processNodes []domain.Node
 	stationNodeMap := map[int64][]string{}
 	if activeProcess != nil {
 		activeProcessID = activeProcess.ID
-		processStyles, _ = h.engine.StyleService().ListByProcess(activeProcess.ID)
 		processStations, _ = h.engine.StationService().ListByProcess(activeProcess.ID)
 		processNodes, _ = h.engine.ProcessService().ListNodesByProcess(activeProcess.ID)
 	}
@@ -237,7 +235,6 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 		"PLCNames":         plcNames,
 		"ActiveProcess":    activeProcess,
 		"ActiveProcessID":  activeProcessID,
-		"ProcessStyles":    processStyles,
 		"ProcessStations":  processStations,
 		"ProcessNodes":     processNodes,
 		"StationNodeMap":   stationNodeMap,

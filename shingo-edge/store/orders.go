@@ -21,6 +21,12 @@ func (db *DB) ListOrdersByProcess(processID int64) ([]orders.Order, error) {
 	return orders.ListByProcess(db.DB, processID)
 }
 
+// ListOrdersPage returns one page of orders, newest first, and the number the
+// filter matches in total (status and process filtered in the SQL).
+func (db *DB) ListOrdersPage(q orders.PageQuery) ([]orders.Order, int, error) {
+	return orders.ListPage(db.DB, q)
+}
+
 // ListActiveOrders returns every non-terminal order, newest first.
 func (db *DB) ListActiveOrders() ([]orders.Order, error) {
 	return orders.ListActive(db.DB)

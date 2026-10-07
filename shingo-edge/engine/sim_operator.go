@@ -514,6 +514,12 @@ func (op *simOperator) reconcile() {
 			// sim-hours"). Since 2026-09-27 (fact-owners Lane G) the release
 			// trunk flips the pair itself when the partner can feed the line,
 			// so scheduleRelease is the whole action: nothing left to re-derive.
+			//
+			// A LaneHeld leg is Core's to release; runRelease would only be
+			// refused (LC7), so the sweep does not schedule it.
+			if o.LaneHeld {
+				continue
+			}
 			op.scheduleRelease(o.ID)
 			pending++
 		case protocol.StatusDelivered:
@@ -819,6 +825,16 @@ func (op *simOperator) runRelease(orderID int64) {
 	// on the 2026-08-10 lane-stress rig); Core's next OrderStaged, at the
 	// station wait, schedules this again.
 	if o, err := op.e.db.GetOrder(orderID); err == nil && o.WaitKind == protocol.WaitKindLane {
+		return
+	}
+	// A LaneHeld leg (staged with no Edge-authored step plan: a Core-created
+	// child order) is Core's to release too, and Core refuses it
+	// (invalid_state). The Edge rolls the refusal back to staged, and that
+	// transition scheduled this again, forever: 36,188 refusals for one child
+	// leg on the shingo-dev sim (LC7). The station hides Release on the same
+	// field. Checked before the pair branch so neither door is pressed.
+	// PIN: TestPinSimOperator_LaneHeldChildIsNotReleased
+	if o, err := op.e.db.GetOrder(orderID); err == nil && o.LaneHeld {
 		return
 	}
 	if op.ops.PairRelease {

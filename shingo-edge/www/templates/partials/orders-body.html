@@ -107,4 +107,14 @@
         {{end}}
     </tbody>
 </table>
+{{/* The pager (R25): which rows of how many, and the pages either side. Every
+     view but Active is paged. It sits outside the table so the text filter,
+     which walks the table's rows, filters only the orders shown. */}}
+{{with .Pager}}
+<div class="flex-center gap-1" data-orders-pager>
+    {{if .NewerURL}}<a class="btn btn-sm" href="{{.NewerURL}}" rel="prev">&larr; Newer</a>{{end}}
+    <span class="text-muted-xs tnum">{{.Summary}}</span>
+    {{if .OlderURL}}<a class="btn btn-sm" href="{{.OlderURL}}" rel="next">Older &rarr;</a>{{end}}
+</div>
+{{end}}
 {{end}}

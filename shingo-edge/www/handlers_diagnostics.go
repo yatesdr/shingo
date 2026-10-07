@@ -15,9 +15,11 @@ func (h *Handlers) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	summary, _ := h.engine.Reconciliation().Summary()
 	reconAnomalies, _ := h.engine.Reconciliation().ListAnomalies()
 	deadletters, _ := h.engine.Reconciliation().ListDeadLetterOutbox(50)
+	entries, pager := logsPage(h.debugLog.Entries(subsystem), subsystem, requestedPage(r))
 	data := map[string]any{
 		"Page":           "logs",
-		"Entries":        h.debugLog.Entries(subsystem),
+		"Entries":        entries,
+		"Pager":          pager,
 		"Subsystems":     h.debugLog.Subsystems(),
 		"Subsystem":      subsystem,
 		"Recon":          summary,

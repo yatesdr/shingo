@@ -26,7 +26,7 @@
           <th>Message</th>
         </tr>
       </thead>
-      <tbody id="debug-log-body">
+      <tbody id="debug-log-body" data-page="{{with .Pager}}{{.Page}}{{else}}1{{end}}">
         {{range .Entries}}
         <tr class="debug-row" data-subsystem="{{.Subsystem}}">
           <td>{{formatClockSeconds .Time}}</td>
@@ -38,6 +38,14 @@
     </table>
   </div>
 </div>
+{{/* The pager (R25): the newest 100 lines of the ring, then Older / Newer. */}}
+{{with .Pager}}
+<div class="flex-center gap-1" data-logs-pager>
+  {{if .NewerURL}}<a class="btn btn-sm" href="{{.NewerURL}}" rel="prev">&larr; Newer</a>{{end}}
+  <span class="text-muted-xs tnum">{{.Summary}}</span>
+  {{if .OlderURL}}<a class="btn btn-sm" href="{{.OlderURL}}" rel="next">Older &rarr;</a>{{end}}
+</div>
+{{end}}
 
 {{if .Recon}}
 <div class="card mt-2">

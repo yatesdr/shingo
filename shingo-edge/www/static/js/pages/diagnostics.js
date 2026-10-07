@@ -19,9 +19,14 @@ import { createSSE, delegateActions, escapeHtml } from '/static/js/shingoedge.js
   var wrap = document.querySelector('.debug-log-wrap');
   var autoScroll = document.getElementById('log-autoscroll');
   var filterEl = document.getElementById('log-filter');
-  var maxRows = 1000;
+  // R25: the page shows the newest 100 lines of the ring (the server's
+  // historyPageSize). Live lines join only the newest page, which keeps its
+  // 100; an older page is history and stays as it was served.
+  var maxRows = 100;
+  var newestPage = (body.getAttribute('data-page') || '1') === '1';
 
   window.debugAppendRow = function(entry) {
+    if (!newestPage) return;
     var tr = document.createElement('tr');
     tr.className = 'debug-row';
     tr.setAttribute('data-subsystem', entry.subsystem || '');

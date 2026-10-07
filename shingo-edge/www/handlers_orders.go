@@ -2,6 +2,7 @@ package www
 
 import (
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"shingoedge/domain"
@@ -23,43 +24,8 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Status filter — mirrors Core's orders handler exactly:
-	//   status == ""      → Active tab: strict non-terminal set
-	//   status == "all"   → All tab: every order
-	//   anything else     → orders of that specific status (from all orders)
 	filterStatus := r.URL.Query().Get("status")
-
-	var orders []domain.Order
-	switch {
-	case filterStatus == "":
-		// Active tab — non-terminal only (Core's ListActiveOrders predicate)
-		if activeProcessID > 0 {
-			orders, _ = h.engine.OrderService().ListActiveStrictByProcess(activeProcessID)
-		} else {
-			orders, _ = h.engine.OrderService().ListActiveStrict()
-		}
-	case filterStatus == "all":
-		// All tab — every order
-		if activeProcessID > 0 {
-			orders, _ = h.engine.OrderService().ListAllByProcess(activeProcessID)
-		} else {
-			orders, _ = h.engine.OrderService().ListAll()
-		}
-	default:
-		// Specific status pill — from ALL orders, post-filtered
-		if activeProcessID > 0 {
-			orders, _ = h.engine.OrderService().ListAllByProcess(activeProcessID)
-		} else {
-			orders, _ = h.engine.OrderService().ListAll()
-		}
-		var filtered []domain.Order
-		for _, o := range orders {
-			if string(o.Status) == filterStatus {
-				filtered = append(filtered, o)
-			}
-		}
-		orders = filtered
-	}
+	orders, pager := h.ordersView(activeProcessID, filterStatus, requestedPage(r))
 
 	// Core-synced nodes for redirect dropdown
 	coreNodes := h.engine.CoreNodes()
@@ -74,6 +40,8 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 		"ActiveProcessID": activeProcessID,
 		"FilterStatus":    filterStatus,
 		"ActiveOrders":    orders,
+		"Pager":           pager,
+		"PageNumber":      pagerPage(pager),
 		"KnownNodes":      knownNodes,
 		// How long each still-acquiring order has been waiting. The board has
 		// always shown WHY a parked order waits; without a duration beside it the
@@ -96,38 +64,11 @@ func (h *Handlers) handleOrdersPartial(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filterStatus := r.URL.Query().Get("status")
-
-	var orders []domain.Order
-	switch {
-	case filterStatus == "":
-		if activeProcessID > 0 {
-			orders, _ = h.engine.OrderService().ListActiveStrictByProcess(activeProcessID)
-		} else {
-			orders, _ = h.engine.OrderService().ListActiveStrict()
-		}
-	case filterStatus == "all":
-		if activeProcessID > 0 {
-			orders, _ = h.engine.OrderService().ListAllByProcess(activeProcessID)
-		} else {
-			orders, _ = h.engine.OrderService().ListAll()
-		}
-	default:
-		if activeProcessID > 0 {
-			orders, _ = h.engine.OrderService().ListAllByProcess(activeProcessID)
-		} else {
-			orders, _ = h.engine.OrderService().ListAll()
-		}
-		var filtered []domain.Order
-		for _, o := range orders {
-			if string(o.Status) == filterStatus {
-				filtered = append(filtered, o)
-			}
-		}
-		orders = filtered
-	}
+	orders, pager := h.ordersView(activeProcessID, filterStatus, requestedPage(r))
 
 	data := map[string]any{
 		"ActiveOrders": orders,
+		"Pager":        pager,
 		// Same map the page builds — the partial IS the page's rows, and a
 		// refresh that dropped the clock would blank it every three seconds.
 		"WaitSince":  h.engine.OrderService().WaitSince(orders),
@@ -137,4 +78,55 @@ func (h *Handlers) handleOrdersPartial(w http.ResponseWriter, r *http.Request) {
 	if err := h.tmpl.ExecuteTemplate(w, "orders-body", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// ordersView reads the rows for one view of the Orders page. Status, mirroring
+// Core's orders handler:
+//
+//	""     → Active tab: the strict non-terminal set, not paged (it is small)
+//	"all"  → All tab: every order, one page
+//	other  → that status only (filtered in the SQL), one page
+//
+// A paged view shows the newest historyPageSize rows on page 1 (R25). The
+// pager is nil on the Active tab.
+func (h *Handlers) ordersView(processID int64, status string, page int) ([]domain.Order, *historyPage) {
+	svc := h.engine.OrderService()
+	if status == "" {
+		var list []domain.Order
+		if processID > 0 {
+			list, _ = svc.ListActiveStrictByProcess(processID)
+		} else {
+			list, _ = svc.ListActiveStrict()
+		}
+		return list, nil
+	}
+	sqlStatus := status
+	if status == "all" {
+		sqlStatus = ""
+	}
+	read := func(p int) ([]domain.Order, int) {
+		list, total, err := svc.ListPage(sqlStatus, processID, historyPageSize, (p-1)*historyPageSize)
+		if err != nil {
+			return nil, 0
+		}
+		return list, total
+	}
+	list, total := read(page)
+	if clamped := clampPage(page, total); clamped != page {
+		page = clamped
+		list, total = read(page)
+	}
+	q := url.Values{}
+	q.Set("status", status)
+	q.Set("process", strconv.FormatInt(processID, 10))
+	return list, newHistoryPage("/orders", q, page, len(list), total)
+}
+
+// pagerPage is the page number a view's live refresh must keep (1 when the
+// view is not paged).
+func pagerPage(p *historyPage) int {
+	if p == nil {
+		return 1
+	}
+	return p.Page
 }

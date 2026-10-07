@@ -315,10 +315,10 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			if p, ok := evt.Payload.(engine.UOPAdjustedEvent); ok {
 				sseEvt = SSEEvent{Type: "counter-update", Data: p}
 			}
-		case engine.EventCounterRead:
-			if p, ok := evt.Payload.(engine.CounterReadEvent); ok {
-				sseEvt = SSEEvent{Type: "counter-read", Data: p}
-			}
+		// EventCounterRead and EventCounterReadError (the raw PLC poll reading
+		// and its failure) are not broadcast: no page listens for either, and
+		// counter-read alone was ~2,090 frames a minute per client (LC3). The
+		// engine events stay; they fall to the default arm below.
 		case engine.EventPLCHealthAlert:
 			if p, ok := evt.Payload.(engine.PLCHealthAlertEvent); ok {
 				sseEvt = SSEEvent{Type: "plc-health-alert", Data: p}
@@ -342,10 +342,6 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		case engine.EventCoreNodesUpdated:
 			if p, ok := evt.Payload.(engine.CoreNodesUpdatedEvent); ok {
 				sseEvt = SSEEvent{Type: "core-nodes", Data: p}
-			}
-		case engine.EventCounterReadError:
-			if p, ok := evt.Payload.(engine.CounterReadErrorEvent); ok {
-				sseEvt = SSEEvent{Type: "counter-read-error", Data: p}
 			}
 		case engine.EventUOPStranded:
 			// Parked-ticks alarm (P2-C8): push a refresh so the operator tile

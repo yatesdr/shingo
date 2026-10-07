@@ -38,7 +38,7 @@
 
 <div class="card orders-card"
      id="orders-content"
-     hx-get="/orders/partial?process={{.ActiveProcessID}}&status={{.FilterStatus}}"
+     hx-get="/orders/partial?process={{.ActiveProcessID}}&status={{.FilterStatus}}&page={{.PageNumber}}"
      hx-trigger="refreshOrders from:body, sse:order-update throttle:3s, sse:order-completed, sse:order-failed"
      hx-swap="innerHTML"
      hx-ext="sse"

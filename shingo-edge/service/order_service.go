@@ -65,6 +65,13 @@ func (s *OrderService) ListAllByProcess(processID int64) ([]orders.Order, error)
 	return s.db.ListOrdersByProcess(processID)
 }
 
+// ListPage returns one page of the orders history (the All tab and the status
+// pills), newest first, with the total the filter matches. status "" is every
+// status; processID 0 is every process.
+func (s *OrderService) ListPage(status string, processID int64, limit, offset int) ([]orders.Order, int, error) {
+	return s.db.ListOrdersPage(orders.PageQuery{Status: status, ProcessID: processID, Limit: limit, Offset: offset})
+}
+
 // WaitSince answers "how long has this order been waiting" for every order in
 // the list that is still ACQUIRING its material, as the RFC3339 instant its
 // current wait began. Keyed by order id; absent means no clock, which is the
