@@ -81,6 +81,15 @@ func (p *Planner) ComplexSteps(steps []protocol.ComplexOrderStep, payloadCode st
 			if err != nil {
 				return nil, fmt.Errorf("step %d: %w", i, err)
 			}
+			// A GROUP DROP NEVER WALLS THIS PLAN'S OWN LATER PICKUP (Q1).
+			if step.Action == protocol.ActionDropoff && group != "" {
+				if lane := p.OwnPickupLane(nodeName, laterRequestPickups(steps, i)); lane != 0 {
+					stated := binresolver.BinTypeFrom(carrier, "complex step: no preceding pickup resolved to exactly one carrier")
+					if nodeName, err = p.storeAvoidingOwnPickup(group, lane, StepPayload(step, payloadCode), stated, asker); err != nil {
+						return nil, fmt.Errorf("step %d: %w", i, err)
+					}
+				}
+			}
 			if step.Action == protocol.ActionPickup {
 				carrier = BinTypeAtNode(p.db, nodeName)
 			}
@@ -183,6 +192,15 @@ func (p *Planner) ReComplexSteps(steps []Step, need Need) (newSteps []Step, chan
 		// paired pickup is the better answer and this prefers it.
 		newName, group, resolveErr := p.StepNode(ps, payloadCode, asker, "",
 			p.BinTypeBeforeStep(steps, i))
+		// A GROUP DROP NEVER WALLS THIS PLAN'S OWN LATER PICKUP (Q1), on replay
+		// as at intake.
+		if resolveErr == nil && step.Action == protocol.ActionDropoff && group != "" {
+			if lane := p.OwnPickupLane(newName, LaterPickups(steps, i)); lane != 0 {
+				stated := binresolver.BinTypeFrom(p.BinTypeBeforeStep(steps, i),
+					"complex step: no preceding pickup resolved to exactly one carrier")
+				newName, resolveErr = p.storeAvoidingOwnPickup(group, lane, StepPayload(ps, payloadCode), stated, asker)
+			}
+		}
 		var vacate *Vacate
 		if resolveErr != nil {
 			// THE VACATED-SLOT RULE, WHERE THIS WOULD WAIT. A group drop with no

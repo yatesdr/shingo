@@ -71,6 +71,24 @@ const (
 type GroupResolver struct {
 	DB       Store
 	DebugLog func(string, ...any)
+	// ExcludeLanes are lanes a store resolve must not offer: a drop that would
+	// stand in front of a later pickup of its own plan in that lane (plan
+	// OwnPickupLane, C2b Q1). Nil excludes nothing. Store paths only.
+	ExcludeLanes map[int64]bool
+}
+
+// withoutExcludedLanes is children less ExcludeLanes.
+func (r *GroupResolver) withoutExcludedLanes(children []*nodes.Node) []*nodes.Node {
+	if len(r.ExcludeLanes) == 0 {
+		return children
+	}
+	out := make([]*nodes.Node, 0, len(children))
+	for _, c := range children {
+		if !r.ExcludeLanes[c.ID] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func (r *GroupResolver) dbg(format string, args ...any) {
@@ -698,6 +716,7 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
 	}
+	children = r.withoutExcludedLanes(children)
 
 	// Resolve-around (§13.3), off by default: only when the group enables it does
 	// the ranker consult each lane's mouth. Read once — a no-op group read when
@@ -829,6 +848,7 @@ func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, 
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
 	}
+	children = r.withoutExcludedLanes(children)
 
 	// First pass: try lanes (deepest empty slot)
 	for _, child := range children {

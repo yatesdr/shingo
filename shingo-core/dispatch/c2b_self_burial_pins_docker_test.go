@@ -5,6 +5,7 @@ package dispatch
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -196,9 +197,9 @@ func TestC2bPin_AnInteriorGroupDropWaitsForAFreeChild(t *testing.T) {
 // with FindStoreSlotInLaneExcluding, whose burial clause exempts the asker: the
 // mouth, in front of the empty the swap fetches next.
 //
-// VERIFY-RED for C2b: the gate releases the swap into the lane with its drop at
-// the mouth. Green: the gate's re-bind refuses that lane for the drop (the widen,
-// that lane excluded), and the swap is not released in front of its own pickup.
+// It was red at the base: the gate released the swap into the lane with its drop
+// at the mouth. Now the re-bind sets that lane aside (plan.OwnPickupLane): the
+// widen, which declines an interior drop, so the swap waits at the mark.
 func TestC2bPin_ASwapNeverDropsInFrontOfItsOwnPickup(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -246,6 +247,83 @@ func TestC2bPin_ASwapNeverDropsInFrontOfItsOwnPickup(t *testing.T) {
 	if after.WaitIndex > 1 {
 		red = selfBurial(t, db, steps)
 	}
-	// After the fix: if len(red) != 0 { t.Fatalf("%v", red) }
-	testdb.VerifyRed(t, "C2b Q1 the gate re-binds a swap's drop in front of its own pickup", red)
+	if len(red) != 0 {
+		t.Fatalf("%v", red)
+	}
+}
+
+// TestC2bPin_AnIntakeDropNeverWallsItsOwnPickup is Q1 at intake, with the
+// resolver production has. The swap's interior drop names a group; its only free
+// child is the mouth of the lane whose deeper slot holds the empty the swap
+// fetches next. Alone, the group has nowhere else: the swap waits under the
+// capacity cause a full group has, holding nothing, and is never sent with its
+// drop in front of its own pickup. With a second lane in the group, the drop goes
+// there.
+//
+// MUTATION: make plan.OwnPickupLane answer 0; the first case dispatches with
+// its drop at the mouth, and so does the gate pin above. (The second case may
+// land in the other lane by the group's own ranking either way; it pins that the
+// set-aside re-ask finds it.)
+func TestC2bPin_AnIntakeDropNeverWallsItsOwnPickup(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		secondLane bool
+	}{{"one lane: it waits", false}, {"two lanes: the other", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db := testDB(t)
+			sd := testdb.SetupStandardData(t, db)
+			d, _ := newTestDispatcherWithResolver(t, db)
+			prefix := "C2BQ1A"
+			if tc.secondLane {
+				prefix = "C2BQ1B"
+			}
+			grp, laneID, mouth, deep := c2bSelfBurialLane(t, db, prefix, "")
+			var other *nodes.Node
+			if tc.secondLane {
+				g, err := db.GetNodeByDotName(grp)
+				g = testutil.Must(t, g, err, "read the group")
+				laneType, err := db.GetNodeTypeByCode(protocol.NodeClassLANE)
+				testutil.MustNoErr(t, err, "LANE type")
+				lane2 := &nodes.Node{Name: prefix + "-LANE2", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: &g.ID}
+				testutil.MustNoErr(t, db.CreateNode(lane2), "create the second lane")
+				d0, d1 := 0, 1
+				other = &nodes.Node{Name: prefix + "-L2S0", Enabled: true, ParentID: &lane2.ID, Depth: &d0}
+				testutil.MustNoErr(t, db.CreateNode(other), "slot")
+				testutil.MustNoErr(t, db.CreateNode(&nodes.Node{Name: prefix + "-L2S1", Enabled: true, ParentID: &lane2.ID, Depth: &d1}), "slot")
+			}
+			press, press2 := lineNode(t, db, prefix+"-PRESS"), lineNode(t, db, prefix+"-PRESS2")
+			prResident(t, db, press, sd.BinType.ID, sd.Payload.Code, prefix+"-FULL")
+			testdb.CreateBinAtNode(t, db, "", deep.ID, prefix+"-EMPTY")
+
+			uuid := strings.ToLower(prefix)
+			d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+				OrderUUID: uuid, PayloadCode: sd.Payload.Code, Quantity: 1, ProcessNode: press.Name,
+				Steps: []protocol.ComplexOrderStep{
+					prPick(press.Name), prDrop(grp),
+					{Action: protocol.ActionPickup, Node: deep.Name, Empty: true}, prDrop(press2.Name),
+				},
+			})
+			prScanPass(t, d, db, uuid)
+			o := prReloadUUID(t, db, uuid)
+			var steps []resolvedStep
+			testutil.MustNoErr(t, json.Unmarshal([]byte(o.StepsJSON), &steps), "read the plan")
+			if red := selfBurial(t, db, steps); len(red) != 0 {
+				t.Fatalf("the swap's plan walls its own pickup: %v (status %s)", red, o.Status)
+			}
+			if !tc.secondLane {
+				if o.Status != StatusQueued || o.QueueCause != string(CauseNGRPResolve) {
+					t.Fatalf("with lane %d its group's only lane the swap is %s under %q, want %s under %q",
+						laneID, o.Status, o.QueueCause, StatusQueued, CauseNGRPResolve)
+				}
+				testdb.AssertNoHoldsAtRest(t, db, "the swap waits for somewhere that does not wall its pickup")
+				return
+			}
+			if o.Status != StatusDispatched || !strings.HasPrefix(steps[1].Node, prefix+"-L2S") {
+				t.Fatalf("with a second lane the swap is %s with its drop at %q, want dispatched into %s's lane "+
+					"(not %s)", o.Status, steps[1].Node, other.Name, mouth.Name)
+			}
+		})
+	}
 }

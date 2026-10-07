@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
+	"shingocore/dispatch/plan"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -1360,6 +1361,23 @@ func (d *Dispatcher) rebindGatedDropoff(order *orders.Order, lane *nodes.Node, c
 		return nil, causeForGateRebind(err), err
 	}
 	best, err := d.db.FindStoreSlotInLaneExcluding(lane.ID, order.ID)
+	// THE SELECTOR EXEMPTS THE ASKER AND CANNOT SEE PLAN ORDER, so the slot it
+	// offers may wall a pickup this same order makes later in this lane (swap
+	// 270). The plan says so (plan.OwnPickupLane, C2b Q1), and the lane is set
+	// aside: the widen, which re-asks the group, or the existing no-slot wait.
+	if err == nil && d.dropWallsOwnPickup(order, entryIndex, best, lane) {
+		d.dbg("lane gate: order %d's drop at %s would wall its own later pickup in %s — setting the "+
+			"lane aside", order.ID, best.Name, lane.Name)
+		widened, wErr := d.widenDropoffToGroup(order, lane, entryIndex)
+		if wErr != nil {
+			return nil, causeForGateRebind(wErr), wErr
+		}
+		if widened == nil {
+			return nil, CauseGateRebindUnavailable, fmt.Errorf("lane %s: every slot it offers order %d "+
+				"walls the order's own later pickup there", lane.Name, order.ID)
+		}
+		return widened, "", nil
+	}
 	if err != nil {
 		// ── THE ASSIGNED LANE HAS NOWHERE. TWO QUESTIONS, IN THIS ORDER ───
 		//
@@ -2111,4 +2129,15 @@ func (d *Dispatcher) evaluateLaneWaitAfterAppend(order *orders.Order) {
 	if lane := laneWaitAfterAppend(order); lane != 0 {
 		d.EvaluateLaneReleases(lane)
 	}
+}
+
+// dropWallsOwnPickup reports whether dropping at dest, for the drop at
+// entryIndex, would wall a pickup order makes later in lane (plan.OwnPickupLane).
+// An unreadable plan answers no, as the re-bind did before.
+func (d *Dispatcher) dropWallsOwnPickup(order *orders.Order, entryIndex int, dest, lane *nodes.Node) bool {
+	var steps []resolvedStep
+	if json.Unmarshal([]byte(order.StepsJSON), &steps) != nil {
+		return false
+	}
+	return d.pure.OwnPickupLane(dest.Name, plan.LaterPickups(steps, entryIndex)) == lane.ID
 }

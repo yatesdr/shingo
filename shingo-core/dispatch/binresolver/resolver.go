@@ -277,3 +277,12 @@ func (r *DefaultResolver) resolveStore(children []*nodes.Node, payloadCode strin
 
 	return bestStorageCandidate(candidates), nil
 }
+
+// ResolveStoreExcludingLanes is Resolve's NGRP store arm with lanes set aside
+// (GroupResolver.ExcludeLanes): the re-ask a plan makes when the group's first
+// answer would wall a later pickup of its own (plan OwnPickupLane, C2b Q1).
+func (r *DefaultResolver) ResolveStoreExcludingLanes(group *nodes.Node, payloadCode string, stated BinTypeStatement,
+	asker domain.DigAsker, exclude map[int64]bool) (*ResolveResult, error) {
+	gr := &GroupResolver{DB: r.DB, DebugLog: r.DebugLog, ExcludeLanes: exclude}
+	return gr.ResolveStore(group, payloadCode, stated, asker)
+}
