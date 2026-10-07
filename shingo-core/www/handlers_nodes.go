@@ -228,7 +228,10 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		log.Printf("WARNING admin handleNodeUpdate: trimmed whitespace from name %q", rawName)
 	}
 	node.Name = name
-	node.Zone = r.FormValue("zone")
+	// The nodes page has no zone field: a save that does not send one leaves it.
+	if _, sent := r.Form["zone"]; sent {
+		node.Zone = r.FormValue("zone")
+	}
 	node.Enabled = r.FormValue("enabled") == "on"
 
 	if ntID, err := strconv.ParseInt(r.FormValue("node_type_id"), 10, 64); err == nil && ntID > 0 {

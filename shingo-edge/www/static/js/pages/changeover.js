@@ -203,6 +203,96 @@ function renderUnresolvedParticipants(nodes) {
     el.hidden = false;
 }
 
+// ─── live refresh: one reload per action (LC4) ────────
+// #changeover-content reloads on refreshChangeover (an action's own answer, or
+// the explicit trigger above) and on the SSE events the action causes
+// (changeover-update, order-update, order-failed). They arrive together, and
+// each used to start its own reload: up to three per click. Every trigger now
+// joins one pending reload, issued once the burst has settled. Order traffic
+// keeps the 2 s spacing its throttle gave it; anything else is not held back
+// by it.
+var SETTLE_MS = 300;
+var ORDER_GAP_MS = 2000;
+var reloadTimer = null;
+var reloadDue = 0;
+var lastReload = 0;
+document.body.addEventListener('htmx:confirm', function(evt) {
+    if (!evt.detail.elt || evt.detail.elt.id !== 'changeover-content') return;
+    evt.preventDefault();
+    var now = Date.now();
+    var trig = evt.detail.triggeringEvent;
+    var due = now + SETTLE_MS;
+    if (trig && trig.type === 'sse:order-update') due = Math.max(due, lastReload + ORDER_GAP_MS);
+    if (reloadTimer) {
+        if (due >= reloadDue) return; // joins the pending reload
+        clearTimeout(reloadTimer);
+    }
+    reloadDue = due;
+    reloadTimer = setTimeout(function() {
+        reloadTimer = null;
+        lastReload = Date.now();
+        evt.detail.issueRequest(true);
+    }, due - now);
+});
+
+// ─── live refresh keeps the chosen target style ───────
+// The partial is swapped wholesale, and #co-to-style and the preview live in
+// it. Carry the choice and its open preview across the swap, as long as the
+// new partial still offers that style (no changeover started meanwhile).
+//
+// Restored on afterSwap AND afterSettle: htmx 2's settle step puts the
+// server's attributes back about 20 ms after the swap, which re-hides the
+// panel (style="display:none") after an afterSwap-only restore. The choice is
+// held here until a settle has applied it, so a refresh that starts in
+// between saves nothing from the half-restored page and loses nothing.
+var keptChoice = null;      // {style, preview}: to apply after the swap in flight
+var restorePending = false; // keptChoice not yet applied by an afterSettle
+function isChangeoverSwap(evt) {
+    return evt.detail && evt.detail.target && evt.detail.target.id === 'changeover-content';
+}
+function readChoice() {
+    var sel = document.getElementById('co-to-style');
+    var panel = document.getElementById('changeover-preview');
+    var body = document.getElementById('changeover-preview-body');
+    return sel && sel.value ? {
+        style: sel.value,
+        preview: panel && body && panel.style.display !== 'none' ? body.innerHTML : null
+    } : null;
+}
+function applyChoice(kept) {
+    var sel = document.getElementById('co-to-style');
+    if (!kept || !sel) return false;
+    var offered = Array.prototype.some.call(sel.options, function(o) {
+        return o.value === kept.style && !o.disabled;
+    });
+    if (!offered) return false;
+    sel.value = kept.style;
+    var panel = document.getElementById('changeover-preview');
+    var body = document.getElementById('changeover-preview-body');
+    if (kept.preview !== null && panel && body) {
+        body.innerHTML = kept.preview;
+        panel.style.display = '';
+    }
+    return true;
+}
+document.body.addEventListener('htmx:beforeSwap', function(evt) {
+    // A failed reload is not swapped (no afterSwap/afterSettle follows), so
+    // it must not arm a restore.
+    if (!isChangeoverSwap(evt) || evt.detail.shouldSwap === false) return;
+    if (!restorePending) keptChoice = readChoice();
+    restorePending = true;
+});
+document.body.addEventListener('htmx:afterSwap', function(evt) {
+    if (!isChangeoverSwap(evt) || !restorePending) return;
+    if (!applyChoice(keptChoice)) keptChoice = null;
+});
+document.body.addEventListener('htmx:afterSettle', function(evt) {
+    if (!isChangeoverSwap(evt) || !restorePending) return;
+    applyChoice(keptChoice);
+    keptChoice = null;
+    restorePending = false;
+});
+
 // ─── delegated event handlers ─────────────────────────
 // All page-level data-action verbs route through delegateActions
 // on document.body. Multiple event types share the same handler

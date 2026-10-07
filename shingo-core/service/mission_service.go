@@ -62,6 +62,11 @@ func (s *MissionService) DailyConcurrency(since, until, now time.Time, tz, stati
 	return s.db.GetDailyConcurrency(since, until, now, tz, stationID)
 }
 
+// OrderScope narrows a DwellStats or FaultStats read to some orders. It is
+// the store's type, re-exported so www handlers name it through the service
+// and never import the store package.
+type OrderScope = orders.OrderScope
+
 // DwellStats returns p50/p95/count for each requested order_history
 // transition over [start, end] — the per-state dwell answer the missions page
 // needs: time-to-dispatch, transit, staged dwell, operator fill.
@@ -71,12 +76,12 @@ func (s *MissionService) DailyConcurrency(since, until, now time.Time, tz, stati
 // skip and most cancels never produce one). Dwell is a question about what
 // happened to the ORDERS, which is what order_history answers.
 //
-// Pass nil pairs for the standard set. payloadCode / orderType "" mean "all".
-func (s *MissionService) DwellStats(pairs []domain.DwellPair, payloadCode, orderType string, start, end time.Time) ([]domain.DwellStat, error) {
+// Pass nil pairs for the standard set. An empty scope field means "all".
+func (s *MissionService) DwellStats(pairs []domain.DwellPair, scope OrderScope, start, end time.Time) ([]domain.DwellStat, error) {
 	if len(pairs) == 0 {
 		pairs = domain.FlowDwellPairs()
 	}
-	return orders.DwellStats(s.db.DB, pairs, payloadCode, orderType,
+	return orders.DwellStatsScoped(s.db.DB, pairs, scope,
 		orders.LeadTimeRange{Start: start, End: end})
 }
 
@@ -90,8 +95,10 @@ func (s *MissionService) DwellStats(pairs []domain.DwellPair, payloadCode, order
 //
 // noticeAfter is the config threshold. It is passed in rather than read here so
 // the card's split and every other fault surface use the same number.
-func (s *MissionService) FaultStats(start, end time.Time, noticeAfter time.Duration, loc *time.Location) (*orders.FaultStats, error) {
-	return s.db.GetFaultStats(orders.LeadTimeRange{Start: start, End: end}, noticeAfter, loc)
+//
+// scope narrows it to one station's and/or one robot's orders ("" means all).
+func (s *MissionService) FaultStats(scope OrderScope, start, end time.Time, noticeAfter time.Duration, loc *time.Location) (*orders.FaultStats, error) {
+	return orders.GetFaultStatsScoped(s.db.DB, orders.LeadTimeRange{Start: start, End: end}, scope, noticeAfter, loc)
 }
 
 // Breakdown returns the top-10 mission groups by robot or route (plan §3.F).

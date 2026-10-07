@@ -130,11 +130,19 @@ async function replayDeadLetter(id) {
     if (note) note.textContent = body.error || 'expired — cannot replay';
     return;
   }
-  if (resp.ok) location.reload();
+  if (resp.ok) { location.reload(); return; }
+  const note = document.getElementById('replay-note-' + id);
+  if (note) note.textContent = 'Replay failed: ' + await failureText(resp);
 }
 async function requestOrderStatusSync() {
   const resp = await fetch('/api/diagnostics/orders/sync', { method: 'POST' });
-  if (resp.ok) location.reload();
+  if (resp.ok) { location.reload(); return; }
+  window.ShingoEdge.toast('Sync failed: ' + await failureText(resp), 'error');
+}
+// The error these doors answer, whether the body is JSON or plain text.
+async function failureText(resp) {
+  const text = await resp.text().catch(() => '');
+  try { return JSON.parse(text).error || text || resp.status; } catch (e) { return text || resp.status; }
 }
 </script>
 

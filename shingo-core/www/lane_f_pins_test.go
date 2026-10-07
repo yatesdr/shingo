@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,10 +23,11 @@ import (
 // 5c0beb74. Predicted values after the lane lands are in the evidence folder's
 // predictions/p0-bins-f.md.
 
-// TestPinNodes_UpdateWithoutZoneBlanksIt: handleNodeUpdate writes
-// r.FormValue("zone") (handlers_nodes.go:231) and templates/nodes.html posts no
-// zone field, so every save from the page blanks the zone. TODAY: stored "".
-func TestPinNodes_UpdateWithoutZoneBlanksIt(t *testing.T) {
+// TestPinNodes_UpdateWithoutZoneKeepsIt: templates/nodes.html posts no zone
+// field. Before lane F, handleNodeUpdate wrote r.FormValue("zone") and every
+// save from the page blanked the zone. AFTER (lane F, node zone bug): a save
+// that does not send zone leaves it.
+func TestPinNodes_UpdateWithoutZoneKeepsIt(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 
@@ -42,8 +44,8 @@ func TestPinNodes_UpdateWithoutZoneBlanksIt(t *testing.T) {
 	}
 	got, err := db.GetNode(node.ID)
 	testutil.MustNoErr(t, err, "get node")
-	if got.Zone != "" {
-		t.Errorf("stored zone = %q, want \"\" (today a save without zone blanks it)", got.Zone)
+	if got.Zone != "A" {
+		t.Errorf("stored zone = %q, want \"A\" (a save without zone leaves it)", got.Zone)
 	}
 }
 
@@ -80,12 +82,13 @@ func pinGet(t *testing.T, handler http.HandlerFunc, path string) string {
 	return rec.Body.String()
 }
 
-// TestPinMissions_DwellAndFaultsIgnoreStationAndRobot: apiMissionDwell
-// (handlers_missions.go:297-316) and apiMissionFaults (:329-345) parse the
-// filter but pass neither station_id nor robot_id on. Two orders, one per
-// station and robot: TODAY the answer with ?station_id= / ?robot_id= is byte
-// for byte the unfiltered one, and counts both orders.
-func TestPinMissions_DwellAndFaultsIgnoreStationAndRobot(t *testing.T) {
+// TestPinMissions_DwellAndFaultsHonourStationAndRobot: before lane F,
+// apiMissionDwell and apiMissionFaults parsed the filter but passed neither
+// station_id nor robot_id on, so a filtered answer was byte for byte the
+// unfiltered one. AFTER (lane F, Missions filters bug): two orders, one per
+// station and robot; unfiltered counts both, each of ?station_id= /
+// ?robot_id= / both counts the one order that matches.
+func TestPinMissions_DwellAndFaultsHonourStationAndRobot(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 
@@ -93,87 +96,82 @@ func TestPinMissions_DwellAndFaultsIgnoreStationAndRobot(t *testing.T) {
 	pinSeedMissionOrder(t, db, "pin-line-a", "PIN-R1", t0, 60*time.Second)
 	pinSeedMissionOrder(t, db, "pin-line-b", "PIN-R2", t0.Add(time.Hour), 120*time.Second)
 
-	const win = "since=2026-01-01&until=2026-01-31"
-	for _, door := range []struct {
-		name    string
-		handler http.HandlerFunc
-		path    string
-	}{
-		{"dwell", h.apiMissionDwell, "/api/missions/dwell"},
-		{"faults", h.apiMissionFaults, "/api/missions/faults"},
-	} {
-		base := pinGet(t, door.handler, door.path+"?"+win)
-		for _, f := range []string{"&station_id=pin-line-a", "&robot_id=PIN-R1", "&station_id=pin-line-a&robot_id=PIN-R1"} {
-			if got := pinGet(t, door.handler, door.path+"?"+win+f); got != base {
-				t.Errorf("%s%s differs from the unfiltered answer (today the filters are ignored):\n  %s\n  %s",
-					door.name, f, got, base)
+	dwellTransit := func(body string) int64 {
+		var resp struct {
+			Rows []struct {
+				Key   string `json:"key"`
+				Count int64  `json:"count"`
+			} `json:"rows"`
+		}
+		testutil.MustNoErr(t, json.Unmarshal([]byte(body), &resp), "decode dwell")
+		for _, r := range resp.Rows {
+			if r.Key == "transit" {
+				return r.Count
 			}
 		}
-		switch door.name {
-		case "dwell":
-			var resp struct {
-				Rows []struct {
-					Key   string `json:"key"`
-					Count int64  `json:"count"`
-				} `json:"rows"`
-			}
-			testutil.MustNoErr(t, json.Unmarshal([]byte(base), &resp), "decode dwell")
-			found := false
-			for _, r := range resp.Rows {
-				if r.Key == "transit" {
-					found = true
-					if r.Count != 2 {
-						t.Errorf("dwell transit count = %d, want 2 (both stations)", r.Count)
-					}
-				}
-			}
-			if !found {
-				t.Errorf("dwell has no transit row: %s", base)
-			}
-		case "faults":
-			var resp struct {
-				Stats struct {
-					Outcomes []struct {
-						Count int64 `json:"count"`
-					} `json:"outcomes"`
-					ByRobot []json.RawMessage `json:"by_robot"`
-				} `json:"stats"`
-			}
-			testutil.MustNoErr(t, json.Unmarshal([]byte(base), &resp), "decode faults")
-			var n int64
-			for _, o := range resp.Stats.Outcomes {
-				n += o.Count
-			}
-			if n != 2 || len(resp.Stats.ByRobot) != 2 {
-				t.Errorf("faults = %d faults over %d robots, want 2 over 2: %s", n, len(resp.Stats.ByRobot), base)
-			}
+		t.Errorf("dwell has no transit row: %s", body)
+		return -1
+	}
+	faults := func(body string) (n int64, robots int) {
+		var resp struct {
+			Stats struct {
+				Outcomes []struct {
+					Count int64 `json:"count"`
+				} `json:"outcomes"`
+				ByRobot []json.RawMessage `json:"by_robot"`
+			} `json:"stats"`
+		}
+		testutil.MustNoErr(t, json.Unmarshal([]byte(body), &resp), "decode faults")
+		for _, o := range resp.Stats.Outcomes {
+			n += o.Count
+		}
+		return n, len(resp.Stats.ByRobot)
+	}
+
+	const win = "since=2026-01-01&until=2026-01-31"
+	for _, c := range []struct {
+		filter string
+		want   int64
+	}{
+		{"", 2},
+		{"&station_id=pin-line-a", 1},
+		{"&robot_id=PIN-R1", 1},
+		{"&station_id=pin-line-a&robot_id=PIN-R1", 1},
+		{"&station_id=pin-line-a&robot_id=PIN-R2", 0},
+	} {
+		if got := dwellTransit(pinGet(t, h.apiMissionDwell, "/api/missions/dwell?"+win+c.filter)); got != c.want {
+			t.Errorf("dwell%s transit count = %d, want %d", c.filter, got, c.want)
+		}
+		n, robots := faults(pinGet(t, h.apiMissionFaults, "/api/missions/faults?"+win+c.filter))
+		if n != c.want || int64(robots) != c.want {
+			t.Errorf("faults%s = %d faults over %d robots, want %d over %d", c.filter, n, robots, c.want, c.want)
 		}
 	}
 }
 
-// TestPinTestOrders_ReleaseAnswersReleasedWhateverHappened: apiDirectOrderRelease
-// (handlers_test_orders_direct.go:189) calls the dispatcher, which answers on the
-// wire (an outbox order.error), and then writes 200 "released" regardless. The
-// page reads res.ok (test-orders.js:398-412), so it toasts "Released" for an
-// order Core does not have. TODAY: 200 {"order_uuid":…,"status":"released"}.
-func TestPinTestOrders_ReleaseAnswersReleasedWhateverHappened(t *testing.T) {
+// TestPinTestOrders_ReleaseOfUnknownOrderAnswersNotFound: before lane F,
+// apiDirectOrderRelease called the dispatcher, which refused on the wire (an
+// outbox order.error), and then wrote 200 "released" regardless, so the page
+// toasted "Released" for an order Core does not have. AFTER (lane F, Test
+// Orders release bug): 404 {"error":"order not found"}; the page shows it.
+func TestPinTestOrders_ReleaseOfUnknownOrderAnswersNotFound(t *testing.T) {
 	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := postJSON(t, h.apiDirectOrderRelease, "/api/test-orders/direct/release",
 		map[string]any{"order_uuid": "pin-no-such-order"})
-	want := "{\"order_uuid\":\"pin-no-such-order\",\"status\":\"released\"}\n"
-	if rec.Code != http.StatusOK || rec.Body.String() != want {
-		t.Errorf("release of an unknown order = %d %q, want 200 %q", rec.Code, rec.Body.String(), want)
+	want := "{\"error\":\"order not found\"}\n"
+	if rec.Code != http.StatusNotFound || rec.Body.String() != want {
+		t.Errorf("release of an unknown order = %d %q, want 404 %q", rec.Code, rec.Body.String(), want)
 	}
 }
 
-// TestPinTestOrders_ComplexSubmitAnswersOKWhateverHappened: the direct complex
-// submit (handlers_test_orders_direct.go:106) hands the request to the
-// dispatcher and answers 200 with the uuids it made up, whether or not an order
-// was created. TODAY: a sequential submit naming nodes that do not exist is 200
-// with one order uuid.
-func TestPinTestOrders_ComplexSubmitAnswersOKWhateverHappened(t *testing.T) {
+// TestPinTestOrders_ComplexSubmitWithNoRowAnswersFailure: before lane F, the
+// direct complex submit answered 200 with the uuids it made up whether or not
+// an order was created. AFTER (lane F, complex submit bug): a sequential submit
+// naming nodes that do not exist creates no row and answers 409 with the
+// dispatcher's refusal ("not created: sequential: <detail>").
+func TestPinTestOrders_ComplexSubmitWithNoRowAnswersFailure(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 
@@ -181,24 +179,21 @@ func TestPinTestOrders_ComplexSubmitAnswersOKWhateverHappened(t *testing.T) {
 		"cycle_mode": "sequential", "location": "PIN-NO-SUCH-NODE", "payload_code": "PIN-NO-SUCH-PAYLOAD",
 		"inbound_source": "PIN-NO-SUCH-SRC", "outbound_destination": "PIN-NO-SUCH-DEST",
 	})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	t.Logf("answer: %d %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body %s", rec.Code, rec.Body.String())
 	}
 	var resp struct {
-		CycleMode string `json:"cycle_mode"`
-		Orders    []struct {
-			Role      string `json:"role"`
-			OrderUUID string `json:"order_uuid"`
-		} `json:"orders"`
+		Error string `json:"error"`
 	}
 	testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode")
-	if resp.CycleMode != "sequential" || len(resp.Orders) != 1 || resp.Orders[0].OrderUUID == "" {
-		t.Fatalf("body = %s, want sequential with one order uuid", rec.Body.String())
+	const prefix = "not created: sequential: "
+	if !strings.HasPrefix(resp.Error, prefix) || len(resp.Error) == len(prefix) || resp.Error == prefix+"no order was created" {
+		t.Errorf("error = %q, want %q followed by the dispatcher's refusal", resp.Error, prefix)
 	}
-	// TODAY: the answered uuid names no order at all — the dispatcher refused it
-	// on the wire and the page toasts "Complex order created".
-	if o, err := db.GetOrderByUUID(resp.Orders[0].OrderUUID); err == nil {
-		t.Errorf("an order row exists for the answered uuid (status %q); today there is none", o.Status)
+	// Still no row: the fix is the answer, not the intake.
+	if n, err := db.ListOrdersByStation("core-direct", 50); err != nil || len(n) != 0 {
+		t.Errorf("core-direct orders = %d (%v), want 0", len(n), err)
 	}
 }
 

@@ -1,4 +1,4 @@
-import { apiGet, apiPost, debounce, delegateActions, escapeHtml, h, hideModal, openFromQuery, showModal, uiConfirm } from '/static/app.js';
+import { apiGet, apiPost, debounce, delegateActions, escapeHtml, h, hideModal, openFromQuery, showModal, toast, uiConfirm } from '/static/app.js';
 import { formatDuration, formatTime } from '/static/shared/utils.js';
 import { formatClockSeconds, plantDate } from '/static/components/plantclock.js';
 import { relevantNotices } from '/static/pages/fleet-notices.js';
@@ -89,7 +89,10 @@ async function cancelOrderFromRow(id, el) {
   // reload the list has always done.
   apiPost('/api/orders/terminate', {order_id: oid})
     .then(function() { location.reload(); })
-    .catch(function(e) { console.error('cancelOrderFromRow', oid, e); });
+    .catch(function(e) {
+      console.error('cancelOrderFromRow', oid, e);
+      toast('Cancel failed: ' + ((typeof e === 'string' && e) ? e : 'network error'), 'error');
+    });
 }
 
 // Force-confirm a delivered order whose bin can't be recovered (moved by

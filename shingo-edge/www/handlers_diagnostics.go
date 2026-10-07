@@ -1,6 +1,8 @@
 package www
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -45,7 +47,19 @@ func (h *Handlers) apiReplayOutbox(w http.ResponseWriter, r *http.Request) {
 	// The exp stamp is fixed at enqueue time, so age is decided before the
 	// button exists. Re-stamping it on replay would be a per-subject class
 	// decision nobody has made, and for a snapshot subject it would be wrong.
-	if msg, err := h.engine.Reconciliation().GetOutboxMessage(id); err == nil && msg != nil {
+	msg, err := h.engine.Reconciliation().GetOutboxMessage(id)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && msg == nil) {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("no outbox message %d", id))
+		return
+	}
+	// A delivered row is skipped by the requeue, so a replay would answer ok
+	// and do nothing.
+	if err == nil && msg.SentAt != nil {
+		writeError(w, http.StatusConflict, fmt.Sprintf("already sent at %s — nothing to replay",
+			msg.SentAt.UTC().Format(time.RFC3339)))
+		return
+	}
+	if err == nil {
 		if hdr, perr := protocol.ParseHeader(msg.Payload, []byte(h.engine.AppConfig().Messaging.SigningKey)); perr == nil && protocol.IsExpiredHeader(hdr) {
 			age := time.Since(hdr.ExpiresAt).Round(time.Second)
 			writeError(w, http.StatusConflict, fmt.Sprintf(

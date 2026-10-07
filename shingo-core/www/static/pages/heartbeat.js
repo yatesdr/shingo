@@ -52,7 +52,10 @@ const DASH_ID = (document.body.dataset.dashboardId || '').trim();
 
 function loadCells() {
     const url = DASH_ID ? '/api/dashboards/' + encodeURIComponent(DASH_ID) + '/cells' : '/api/cells';
-    fetch(url).then((r) => r.json()).then((list) => {
+    fetch(url).then((r) => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+    }).then((list) => {
         // Board endpoint already scoped + applied overrides; the bare kiosk still
         // honors any data-stations client scope.
         cellList = DASH_ID
@@ -80,7 +83,13 @@ function loadCells() {
             refreshCellState(c.cell_id);
             seedRhythm(c.cell_id, i);
         });
-    }).catch(() => {});
+    }).catch((e) => {
+        // A failed load is not "Loading…" forever. Tiles already drawn stay.
+        const grid = document.getElementById('hb-grid');
+        if (!grid || cellTiles.size) return;
+        grid.innerHTML = '';
+        grid.appendChild(el('div', 'hb-empty', 'Could not load cells — ' + (e && e.message ? e.message : e)));
+    });
 }
 
 function refreshCellState(cellID) {

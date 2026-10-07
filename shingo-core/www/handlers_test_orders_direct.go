@@ -7,6 +7,7 @@ package www
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -120,11 +121,20 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 	dst := protocol.Address{Role: protocol.RoleCore, Station: h.engine.AppConfig().Messaging.StationID}
 
 	var results []map[string]any
+	// refused holds one line per leg Core did not create, from the order.error
+	// the dispatcher sent (or, with none, from the missing row).
+	var refused []string
+	note := func(role, uid, problem string) {
+		results = append(results, map[string]any{"role": role, "order_uuid": uid})
+		if problem != "" {
+			refused = append(refused, role+": "+problem)
+		}
+	}
 
 	switch req.CycleMode {
 	case protocol.SwapModeSequential:
-		uid := h.dispatchComplex(src, dst, req.PayloadCode, buildSwapSequentialSteps(req), req.Priority, "", "", "")
-		results = append(results, map[string]any{"role": string(protocol.SwapModeSequential), "order_uuid": uid})
+		uid, problem := h.dispatchComplex(src, dst, req.PayloadCode, buildSwapSequentialSteps(req), req.Priority, "", "", "")
+		note(string(protocol.SwapModeSequential), uid, problem)
 
 	case protocol.SwapModeTwoRobot:
 		if req.InboundStaging == "" {
@@ -136,26 +146,30 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 		// pointer, the supply reached intake as a solo order and went to the fleet
 		// before its removal existed. The supply is still sent first.
 		supplyUUID, removalUUID := uuid.New().String(), uuid.New().String()
-		uid1 := h.dispatchComplex(src, dst, req.PayloadCode, buildSwapResupplySteps(req), req.Priority, req.Location, removalUUID, supplyUUID)
-		results = append(results, map[string]any{"role": "resupply", "order_uuid": uid1})
+		uid1, problem1 := h.dispatchComplex(src, dst, req.PayloadCode, buildSwapResupplySteps(req), req.Priority, req.Location, removalUUID, supplyUUID)
+		note("resupply", uid1, problem1)
 
 		// Removal
-		uid2 := h.dispatchComplex(src, dst, req.PayloadCode, buildSwapRemovalSteps(req), req.Priority, req.Location, supplyUUID, removalUUID)
-		results = append(results, map[string]any{"role": "removal", "order_uuid": uid2})
+		uid2, problem2 := h.dispatchComplex(src, dst, req.PayloadCode, buildSwapRemovalSteps(req), req.Priority, req.Location, supplyUUID, removalUUID)
+		note("removal", uid2, problem2)
 
 	case protocol.SwapModeSingleRobot:
 		if req.InboundStaging == "" || req.OutboundStaging == "" {
 			h.jsonError(w, "inbound_staging and outbound_staging required for single robot", http.StatusBadRequest)
 			return
 		}
-		uid := h.dispatchComplex(src, dst, req.PayloadCode, buildSwapSingleRobotSteps(req), req.Priority, "", "", "")
-		results = append(results, map[string]any{"role": string(protocol.SwapModeSingleRobot), "order_uuid": uid})
+		uid, problem := h.dispatchComplex(src, dst, req.PayloadCode, buildSwapSingleRobotSteps(req), req.Priority, "", "", "")
+		note(string(protocol.SwapModeSingleRobot), uid, problem)
 
 	default:
 		h.jsonError(w, "invalid cycle_mode", http.StatusBadRequest)
 		return
 	}
 
+	if len(refused) > 0 {
+		h.jsonError(w, "not created: "+strings.Join(refused, "; "), http.StatusConflict)
+		return
+	}
 	h.jsonOK(w, map[string]any{"cycle_mode": req.CycleMode, "orders": results})
 }
 
@@ -164,7 +178,10 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 // processNode and siblingUUID are what make a pair of legs a swap. Both were
 // omitted here, so this page produced two unrelated orders that happened to be
 // about the same node — see the two-robot branch above for what that costs.
-func (h *Handlers) dispatchComplex(src, dst protocol.Address, payloadCode string, steps []protocol.ComplexOrderStep, priority int, processNode, siblingUUID, orderUUID string) string {
+//
+// problem is "" when Core created the order, else why it did not: the detail
+// of the order.error the dispatcher sent, or, with none, "no order was created".
+func (h *Handlers) dispatchComplex(src, dst protocol.Address, payloadCode string, steps []protocol.ComplexOrderStep, priority int, processNode, siblingUUID, orderUUID string) (uid, problem string) {
 	if orderUUID == "" {
 		orderUUID = uuid.New().String()
 	}
@@ -181,8 +198,30 @@ func (h *Handlers) dispatchComplex(src, dst protocol.Address, payloadCode string
 	}
 
 	env, _ := protocol.NewEnvelope(protocol.TypeComplexOrderRequest, src, dst, complexReq)
-	h.engine.Dispatcher().HandleComplexOrderRequest(env, complexReq)
-	return orderUUID
+	d := h.engine.Dispatcher()
+	refusals := d.RefusalsFor(env, func() { d.HandleComplexOrderRequest(env, complexReq) })
+	// The row decides. An order that was created and then failed is reported
+	// on the orders table like any other; only a missing row is a refusal here.
+	if _, err := h.engine.OrderService().GetOrderByUUID(orderUUID); err == nil {
+		return orderUUID, ""
+	}
+	if msg := refusalDetail(refusals, orderUUID); msg != "" {
+		return orderUUID, msg
+	}
+	return orderUUID, "no order was created"
+}
+
+// refusalDetail is the detail of the first order.error sent for orderUUID, or "".
+func refusalDetail(refusals []protocol.OrderError, orderUUID string) string {
+	for _, e := range refusals {
+		if e.OrderUUID == orderUUID {
+			if e.Detail != "" {
+				return e.Detail
+			}
+			return e.ErrorCode
+		}
+	}
+	return ""
 }
 
 // apiDirectOrderRelease releases a staged order directly through the dispatcher.
@@ -206,7 +245,16 @@ func (h *Handlers) apiDirectOrderRelease(w http.ResponseWriter, r *http.Request)
 	}
 
 	env, _ := protocol.NewEnvelope(protocol.TypeOrderRelease, src, dst, releaseReq)
-	h.engine.Dispatcher().HandleOrderRelease(env, releaseReq)
+	d := h.engine.Dispatcher()
+	refusals := d.RefusalsFor(env, func() { d.HandleOrderRelease(env, releaseReq) })
+	if msg := refusalDetail(refusals, req.OrderUUID); msg != "" {
+		status := http.StatusConflict
+		if _, err := h.engine.OrderService().GetOrderByUUID(req.OrderUUID); err != nil {
+			status, msg = http.StatusNotFound, "order not found"
+		}
+		h.jsonError(w, msg, status)
+		return
+	}
 
 	h.jsonOK(w, map[string]string{"status": "released", "order_uuid": req.OrderUUID})
 }

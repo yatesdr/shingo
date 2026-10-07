@@ -315,7 +315,8 @@ function renderShiftChart() {
         canvas.width = canvas.offsetWidth * (window.devicePixelRatio || 1);
         canvas.height = 260 * (window.devicePixelRatio || 1);
         ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
-        ctx.fillStyle = 'var(--text-muted)';
+        // A canvas cannot read a CSS variable: resolve it, as the chart does.
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#8b949e';
         ctx.font = '14px sans-serif';
         ctx.textAlign = 'center';
         ctx.fillText('No shifts configured', canvas.offsetWidth / 2, 130);
@@ -335,7 +336,12 @@ function renderShiftChart() {
     var plotW = W - padL - padR;
     var plotH = H - padT - padB;
 
-    var numHours = 8;
+    // One column per hour of the longest shift, not a fixed 8.
+    var numHours = 0;
+    for (var sh = 0; sh < shifts.length; sh++) {
+        numHours = Math.max(numHours, shiftClockHours(shifts[sh]).length);
+    }
+    if (numHours < 1) numHours = 1;
     var numVisibleShifts = shifts.length;
     var maxVal = 0;
     var grandTotal = 0;

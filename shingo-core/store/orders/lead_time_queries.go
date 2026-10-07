@@ -133,9 +133,24 @@ func FlowDwellPairs() []DwellPair { return domain.FlowDwellPairs() }
 //   - The window bounds the FROM transition. A transition that starts inside
 //     the window and ends after it is still counted, at its full duration.
 func DwellStats(db *sql.DB, pairs []DwellPair, payloadCode, orderType string, r LeadTimeRange) ([]DwellStat, error) {
+	return DwellStatsScoped(db, pairs, OrderScope{PayloadCode: payloadCode, OrderType: orderType}, r)
+}
+
+// OrderScope narrows a lead-time read to some orders. An empty field means
+// "all". StationID and RobotID are the orders' own station_id and robot_id,
+// the same columns the missions list filters on.
+type OrderScope struct {
+	PayloadCode string
+	OrderType   string
+	StationID   string
+	RobotID     string
+}
+
+// DwellStatsScoped is DwellStats over the orders in scope.
+func DwellStatsScoped(db *sql.DB, pairs []DwellPair, scope OrderScope, r LeadTimeRange) ([]DwellStat, error) {
 	out := make([]DwellStat, 0, len(pairs))
 	for _, p := range pairs {
-		cte, args := transitionCTE(p.From, p.FromEarliest, p.To, payloadCode, orderType, r)
+		cte, args := transitionCTEScoped(p.From, p.FromEarliest, p.To, scope, r)
 		args = append(args, 0.5, 0.95)
 		q := cte + fmt.Sprintf(`
 			SELECT PERCENTILE_CONT($%d::float8) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (to_ts - from_ts))),
@@ -169,6 +184,11 @@ func DwellStats(db *sql.DB, pairs []DwellPair, payloadCode, orderType string, r 
 // JOINED the line rather than the last time it was seen standing in it. To is
 // always the LAST matching row at or after the anchor.
 func transitionCTE(fromStates []string, fromEarliest bool, toState, payloadCode, orderType string, r LeadTimeRange) (string, []any) {
+	return transitionCTEScoped(fromStates, fromEarliest, toState, OrderScope{PayloadCode: payloadCode, OrderType: orderType}, r)
+}
+
+// transitionCTEScoped is transitionCTE over the orders in scope.
+func transitionCTEScoped(fromStates []string, fromEarliest bool, toState string, scope OrderScope, r LeadTimeRange) (string, []any) {
 	args := []any{toState}
 	// The from-set, one placeholder each. Rendered rather than passed as an
 	// array so this stays driver-agnostic — the package builds every other IN
@@ -199,15 +219,17 @@ func transitionCTE(fromStates []string, fromEarliest bool, toState, payloadCode,
 		  AND h_from.created_at <= $%d`,
 		fromAgg, strings.Join(placeholders, ", "), startArg, endArg)
 	n := len(args)
-	if payloadCode != "" {
-		n++
-		cte += fmt.Sprintf(" AND o.payload_code = $%d", n)
-		args = append(args, payloadCode)
-	}
-	if orderType != "" {
-		n++
-		cte += fmt.Sprintf(" AND o.order_type = $%d", n)
-		args = append(args, orderType)
+	for _, c := range []struct{ col, val string }{
+		{"payload_code", scope.PayloadCode},
+		{"order_type", scope.OrderType},
+		{"station_id", scope.StationID},
+		{"robot_id", scope.RobotID},
+	} {
+		if c.val != "" {
+			n++
+			cte += fmt.Sprintf(" AND o.%s = $%d", c.col, n)
+			args = append(args, c.val)
+		}
 	}
 	cte += " GROUP BY h_from.order_id)"
 	return cte, args

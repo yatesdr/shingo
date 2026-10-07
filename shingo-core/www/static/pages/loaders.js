@@ -32,6 +32,7 @@ let nodeInfo = {}; // node id -> {id, name, parentName, synthetic, typeCode}
 let payloadCodes = [];
 let payloadOptionsHtml = ''; // the catalogue as <option>s, built once per refresh
 let loaderData = []; // raw /api/loader/list: [{loader, payloads, homes, quota, window_bin_types}]
+let loadError = null; // why the last refresh failed, else null
 let draggingMemberNode = null;
 
 // View state for the boxes. None of it is configuration: it says which slot
@@ -1283,7 +1284,8 @@ async function refresh() {
     }).filter(Boolean);
     payloadOptionsHtml = buildPayloadOptions(payloadCodes);
     loaderData = (ld && ld.loaders) || [];
-  } catch (e) { /* keep last render */ }
+    loadError = null;
+  } catch (e) { loadError = e; /* keep last render */ }
   if (armed && !loaderItem(armed.loaderID)) armed = null;
   renderGrid();
 }
@@ -1305,7 +1307,9 @@ function renderGrid() {
   }
   host.innerHTML = loaderData.length
     ? stationsHeadHtml(loaderData) + gridHtml(loaderData)
-    : (isAuth ? h`<div class="loader-empty">No stations yet. Use <strong>+ Station</strong> to add one.</div>` : '');
+    : loadError
+      ? h`<div class="loader-empty">Could not load stations — ${String(loadError.message || loadError)}</div>`
+      : (isAuth ? h`<div class="loader-empty">No stations yet. Use <strong>+ Station</strong> to add one.</div>` : '');
   bar.innerHTML = assignBarHtml();
   bar.classList.toggle('is-hidden', !armed);
   wireAll(host);

@@ -942,7 +942,15 @@ func (d *Dispatcher) getOwnedOrder(env *protocol.Envelope, orderUUID string) (*o
 		return nil, false
 	}
 	if !d.checkOwnership(env, order) {
-		d.dbg("station %s does not own order %s (owner: %s)", env.Src.Station, orderUUID, order.StationID)
+		// Say which rule refused it: a compound child carries its parent's
+		// station_id, so "does not own … (owner: <the same station>)" reads as a
+		// contradiction for one.
+		if order.ParentOrderID != nil && env.Src.Role != protocol.RoleCore {
+			d.dbg("station %s cannot act on order %s: it is a leg of compound order %d, which Core runs",
+				env.Src.Station, orderUUID, *order.ParentOrderID)
+		} else {
+			d.dbg("station %s does not own order %s (owner: %s)", env.Src.Station, orderUUID, order.StationID)
+		}
 		return nil, false
 	}
 	return order, true

@@ -20,6 +20,7 @@
 // Migrate it to module imports and the window-bridge can go.
 
 import {
+    escapeHtml,
     installBackdropClose,
     installHtmxLiveDurations,
     installHtmxTimestampConversion,
@@ -39,12 +40,10 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // --- HTML escaping ---
-export function escapeHtml(text) {
-    if (text === null || text === undefined || text === '') return '';
-    var div = document.createElement('div');
-    div.appendChild(document.createTextNode(text));
-    return div.innerHTML;
-}
+// The shared one: safe between tags and inside a quoted attribute
+// (production.js builds data-part="…" with it). Edge's own DOM-based copy
+// left quotes alone.
+export { escapeHtml };
 
 // --- SSE Factory ---
 export function createSSE(url, handlers) {

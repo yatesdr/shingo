@@ -32,8 +32,9 @@
 // through this, so `title="${note}"` could be broken out of by a quote in the
 // note. Pin: utils.escape.test.js. Core imports this one; its own copy and
 // the page-local ones are gone, and www/clock_globals_drift_test.go's
-// TestEscapeHtmlDefinedOnce keeps it that way. Edge's shingoedge.js and
-// operator-util.js carry their own text-only copies (another stream's pages).
+// TestEscapeHtmlDefinedOnce keeps it that way. Edge's shingoedge.js re-exports
+// this one; operator-util.js carries its own text-only copy (another stream's
+// pages).
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 export function escapeHtml(s) {
     if (s === null || s === undefined || s === '') return '';

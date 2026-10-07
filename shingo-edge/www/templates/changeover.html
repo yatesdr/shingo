@@ -17,11 +17,14 @@
      response, and is not persisted anywhere to re-render from. -->
 <div id="changeover-advisory" class="alert alert-warning" hidden></div>
 
+<!-- changeover.js joins these triggers into one reload per burst and spaces
+     order-update reloads 2 s apart (htmx:confirm), so no throttle here. -->
+
 <div class="card" id="changeover-content"
      hx-ext="sse"
      sse-connect="/events"
      hx-get="/changeover/partial?process={{.ActiveProcessID}}"
-     hx-trigger="refreshChangeover from:body, sse:order-update throttle:2s, sse:order-failed, sse:changeover-update"
+     hx-trigger="refreshChangeover from:body, sse:order-update, sse:order-failed, sse:changeover-update"
      hx-swap="innerHTML">
     {{template "changeover-body" .}}
 </div>

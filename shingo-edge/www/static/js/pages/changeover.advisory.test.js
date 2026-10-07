@@ -32,7 +32,7 @@ function makeContext() {
     const advisory = { id: 'changeover-advisory', hidden: true, innerHTML: '' };
     const pageData = { dataset: { processId: '7' } };
     const document = {
-        body: {},
+        body: { addEventListener() {} },
         getElementById(id) {
             if (id === 'changeover-advisory') return advisory;
             if (id === 'page-data') return pageData;

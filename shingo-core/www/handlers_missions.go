@@ -11,6 +11,7 @@ import (
 	"shingo/protocol/clock"
 	"shingocore/domain"
 	"shingocore/engine"
+	"shingocore/service"
 )
 
 func (h *Handlers) handleMissions(w http.ResponseWriter, r *http.Request) {
@@ -291,9 +292,9 @@ func (h *Handlers) apiMissionBreakdown(w http.ResponseWriter, r *http.Request) {
 // to one that spent them driving.
 //
 // Window/filter args match the rest of the missions API (?since=&until=
-// as plant-local dates, ?payload_code=, ?order_type=). Defaults to the last
-// 30 days. Each row carries its sample count — read the percentiles with it,
-// not without it.
+// as plant-local dates, ?payload_code=, ?order_type=, ?station_id=,
+// ?robot_id=). Defaults to the last 30 days. Each row carries its sample
+// count — read the percentiles with it, not without it.
 func (h *Handlers) apiMissionDwell(w http.ResponseWriter, r *http.Request) {
 	f := parseMissionFilter(r)
 	end := clock.Now().UTC()
@@ -305,8 +306,12 @@ func (h *Handlers) apiMissionDwell(w http.ResponseWriter, r *http.Request) {
 		start = *f.Since
 	}
 
-	rows, err := h.engine.MissionService().DwellStats(nil,
-		r.URL.Query().Get("payload_code"), r.URL.Query().Get("order_type"), start, end)
+	rows, err := h.engine.MissionService().DwellStats(nil, service.OrderScope{
+		PayloadCode: r.URL.Query().Get("payload_code"),
+		OrderType:   r.URL.Query().Get("order_type"),
+		StationID:   f.StationID,
+		RobotID:     f.RobotID,
+	}, start, end)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -337,7 +342,8 @@ func (h *Handlers) apiMissionFaults(w http.ResponseWriter, r *http.Request) {
 		start = *f.Since
 	}
 
-	stats, err := h.engine.MissionService().FaultStats(start, end,
+	stats, err := h.engine.MissionService().FaultStats(
+		service.OrderScope{StationID: f.StationID, RobotID: f.RobotID}, start, end,
 		h.engine.AppConfig().RDS.FaultNoticeAfter, plantLocation)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -444,7 +450,7 @@ func (h *Handlers) apiMissionsAlerts(w http.ResponseWriter, r *http.Request) {
 		// statuses at a time.
 		var usual map[string]time.Duration
 		if pairs := dwellPairsFor(active); len(pairs) > 0 {
-			dwell, _ := h.engine.MissionService().DwellStats(pairs, "", "", now.AddDate(0, 0, -7).UTC(), now.UTC())
+			dwell, _ := h.engine.MissionService().DwellStats(pairs, service.OrderScope{}, now.AddDate(0, 0, -7).UTC(), now.UTC())
 			usual = usualDwellByStatus(dwell)
 		}
 

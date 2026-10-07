@@ -14,15 +14,16 @@ import (
 )
 
 // child_ownership_pins_docker_test.go — P0 pin for lane F's child-order refusal
-// log (dispatcher.go:945 in getOwnedOrder; the child branch is checkOwnership
-// :924-931), taken at 5c0beb74.
+// log (getOwnedOrder; the child branch is checkOwnership), taken at 5c0beb74
+// and moved by lane F.
 //
 // Two halves, and only one may move:
 //   - the WIRE replies: invalid_state on release (complex_release.go:31-35),
-//     not_found on cancel (:958) and redirect (:1064). These must NOT change.
-//   - the LOG line: today it says the station "does not own" the order and then
-//     names that same station as the owner. Lane F rewrites it to say why (the
-//     order is a compound child). The predicted text is in predictions/p0-bins-f.md.
+//     not_found on cancel and redirect. These must NOT change.
+//   - the LOG line: at 5c0beb74 it said the station "does not own" the order and
+//     then named that same station as the owner. AFTER (lane F, child refusal
+//     log): it says the order is a leg of a compound order Core runs. A
+//     genuinely foreign station keeps the does-not-own line.
 func TestPinDispatch_ChildOrderRefusal(t *testing.T) {
 	t.Parallel()
 
@@ -78,8 +79,9 @@ func TestPinDispatch_ChildOrderRefusal(t *testing.T) {
 				t.Errorf("child status = %q, want %q (refused, untouched)", got.Status, StatusStaged)
 			}
 
-			// The log: TODAY "station line-1 does not own order X (owner: line-1)".
-			wantLog := fmt.Sprintf("station line-1 does not own order %s (owner: line-1)", child.EdgeUUID)
+			// The log says why: the order is a compound leg.
+			wantLog := fmt.Sprintf("station line-1 cannot act on order %s: it is a leg of compound order %d, which Core runs",
+				child.EdgeUUID, parent.ID)
 			mu.Lock()
 			defer mu.Unlock()
 			found := false
@@ -87,7 +89,7 @@ func TestPinDispatch_ChildOrderRefusal(t *testing.T) {
 				if l == wantLog {
 					found = true
 				}
-				if strings.Contains(l, "does not own") && l != wantLog {
+				if strings.Contains(l, "does not own") {
 					t.Errorf("unexpected ownership line %q", l)
 				}
 			}
@@ -96,4 +98,40 @@ func TestPinDispatch_ChildOrderRefusal(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPinDispatch_ForeignStationRefusal: an order that is not a compound leg,
+// refused because another station owns it, keeps the does-not-own line and
+// its not_found reply.
+func TestPinDispatch_ForeignStationRefusal(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	setupTestData(t, db)
+	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
+
+	var mu sync.Mutex
+	var lines []string
+	d.DebugLog = func(format string, args ...any) {
+		mu.Lock()
+		lines = append(lines, fmt.Sprintf(format, args...))
+		mu.Unlock()
+	}
+
+	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID, o.StationID, o.Status = "pin-foreign", "line-2", StatusStaged
+	})
+	d.HandleOrderCancel(testdb.Envelope(), &protocol.OrderCancel{OrderUUID: o.EdgeUUID, Reason: "pin"})
+
+	if codes := orderErrorCodes(t, db, o.EdgeUUID); len(codes) != 1 || codes[0] != "not_found" {
+		t.Errorf("wire reply codes = %v, want [not_found]", codes)
+	}
+	wantLog := fmt.Sprintf("station line-1 does not own order %s (owner: line-2)", o.EdgeUUID)
+	mu.Lock()
+	defer mu.Unlock()
+	for _, l := range lines {
+		if l == wantLog {
+			return
+		}
+	}
+	t.Errorf("no line %q; dbg lines: %q", wantLog, lines)
 }

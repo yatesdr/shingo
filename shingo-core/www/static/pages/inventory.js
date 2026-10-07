@@ -16,6 +16,7 @@ import { formatClock, formatDuration, formatTime, onSSE, serverNow } from '/stat
 
 // ── state ──────────────────────────────────────────────────────────────
 let health = [];        // /api/inventory/monitor-totals rows
+let healthLoadError = null; // why the last monitor-totals read failed, else null
 let ledgerExceptions = {}; // /api/inventory/ledger-exceptions
 let maintained = [];    // /api/inventory/maintained-groups — the keeper's last tick
 let anomalySummary = {}; // /api/inventory/anomaly-summary (rejected/stale counts)
@@ -36,9 +37,10 @@ const STALE_BAD_MS = 30 * 24 * 3600 * 1000;
 
 // ── data loading ─────────────────────────────────────────────────────────
 async function loadAll(quiet) {
+  healthLoadError = null;
   try {
     const [h, ld, inv, bk, nd, an, lx, mg] = await Promise.all([
-      apiGet('/api/inventory/monitor-totals').catch(() => []),
+      apiGet('/api/inventory/monitor-totals').catch((e) => { healthLoadError = e; return null; }),
       apiGet('/api/loader/list').catch(() => ({ loaders: [] })),
       apiGet('/api/inventory').catch(() => []),
       apiGet('/api/buckets').catch(() => []),
@@ -49,7 +51,8 @@ async function loadAll(quiet) {
     ]);
     ledgerExceptions = lx && typeof lx === 'object' ? lx : {};
     maintained = Array.isArray(mg) ? mg : [];
-    health = Array.isArray(h) ? h : [];
+    // A failed read keeps the last rows; with none, renderHealth says it failed.
+    if (h !== null) health = Array.isArray(h) ? h : [];
     anomalySummary = an && typeof an === 'object' ? an : {};
     loaders = (ld && ld.loaders) || [];
     bins = Array.isArray(inv) ? inv : (inv && inv.rows) || [];
@@ -297,6 +300,12 @@ function renderHealth() {
     if (ra !== rb) return ra - rb;
     return headroom(a) - headroom(b); // within a band, least headroom first
   });
+  if (!health.length && healthLoadError) {
+    body.innerHTML = '<tr><td colspan="8" class="dash-empty">Could not load payloads — '
+      + escapeHtml(String(healthLoadError.message || healthLoadError))
+      + ' <button class="btn btn-sm" data-action="refresh">Retry</button></td></tr>';
+    return;
+  }
   if (!rows.length) {
     body.innerHTML = '<tr><td colspan="8" class="dash-empty">'
       + (health.length ? 'No payloads match the filter.' : 'No monitored or stocked payloads.') + '</td></tr>';

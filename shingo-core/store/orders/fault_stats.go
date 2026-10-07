@@ -60,7 +60,7 @@ type FaultGroup struct {
 }
 
 // faultCTE is the shared "every faulted row in the window, with what happened
-// next" CTE.
+// next" CTE. Its one %s is the order scope; render it through faultCTEFor.
 //
 // IT USES LEAD, NOT DwellStats' MAX(from)→MAX(to). That difference is the whole
 // reason this query exists rather than four DwellStats pairs. DwellStats
@@ -92,7 +92,7 @@ ranked AS (
            LEAD(h.created_at) OVER (PARTITION BY h.order_id ORDER BY h.created_at, h.id) AS next_at
       FROM order_history h
       JOIN windowed w ON w.order_id = h.order_id
-      JOIN orders o    ON o.id = h.order_id
+      JOIN orders o    ON o.id = h.order_id%s
 ),
 faults AS (
     SELECT order_id, created_at, ref, robot_id,
@@ -106,6 +106,24 @@ faults AS (
        AND created_at >= $1 AND created_at <= $2
 )`
 
+// faultCTEFor renders faultCTE narrowed to the orders in scope (station and
+// robot; the other OrderScope fields are not read here). nBase is how many
+// args the query already binds, so the scope's placeholders follow them.
+func faultCTEFor(scope OrderScope, nBase int) (string, []any) {
+	cond := ""
+	var args []any
+	for _, c := range []struct{ col, val string }{
+		{"station_id", scope.StationID},
+		{"robot_id", scope.RobotID},
+	} {
+		if c.val != "" {
+			args = append(args, c.val)
+			cond += fmt.Sprintf(" AND o.%s = $%d", c.col, nBase+len(args))
+		}
+	}
+	return fmt.Sprintf(faultCTE, cond), args
+}
+
 // GetFaultStats computes the Faults card over [start, end]. loc is the plant
 // zone the per-day split is cut in: the session is pinned to UTC, so a bare
 // date_trunc('day') put a Central plant's evening faults on the next day.
@@ -115,6 +133,12 @@ faults AS (
 // costs more than the queries do, and each of these is a grouped aggregate over
 // at most a few thousand rows.
 func GetFaultStats(db *sql.DB, r LeadTimeRange, noticeAfter time.Duration, loc *time.Location) (*FaultStats, error) {
+	return GetFaultStatsScoped(db, r, OrderScope{}, noticeAfter, loc)
+}
+
+// GetFaultStatsScoped is GetFaultStats over the faults of the orders in scope
+// (station and robot).
+func GetFaultStatsScoped(db *sql.DB, r LeadTimeRange, scope OrderScope, noticeAfter time.Duration, loc *time.Location) (*FaultStats, error) {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -124,11 +148,12 @@ func GetFaultStats(db *sql.DB, r LeadTimeRange, noticeAfter time.Duration, loc *
 
 	// Outcomes. The empty next_status is "still faulted", and it keeps its own
 	// row rather than being dropped or merged into a recovery.
-	rows, err := db.Query(faultCTE+`
+	cte, sargs := faultCTEFor(scope, 2)
+	rows, err := db.Query(cte+`
 		SELECT next_status, COUNT(*),
 		       COALESCE(PERCENTILE_CONT(0.5)  WITHIN GROUP (ORDER BY dwell_s), 0),
 		       COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY dwell_s), 0)
-		  FROM faults GROUP BY 1 ORDER BY 2 DESC`, args[0], args[1])
+		  FROM faults GROUP BY 1 ORDER BY 2 DESC`, append([]any{args[0], args[1]}, sargs...)...)
 	if err != nil {
 		return nil, fmt.Errorf("fault outcomes: %w", err)
 	}
@@ -146,11 +171,12 @@ func GetFaultStats(db *sql.DB, r LeadTimeRange, noticeAfter time.Duration, loc *
 	}
 
 	// Per day, split by the threshold.
-	rows, err = db.Query(faultCTE+`
+	cte, sargs = faultCTEFor(scope, 4)
+	rows, err = db.Query(cte+`
 		SELECT (created_at AT TIME ZONE $4)::date,
 		       COUNT(*) FILTER (WHERE dwell_s <  $3),
 		       COUNT(*) FILTER (WHERE dwell_s >= $3)
-		  FROM faults GROUP BY 1 ORDER BY 1`, append(args, loc.String())...)
+		  FROM faults GROUP BY 1 ORDER BY 1`, append([]any{args[0], args[1], args[2], loc.String()}, sargs...)...)
 	if err != nil {
 		return nil, fmt.Errorf("faults per day: %w", err)
 	}
@@ -185,13 +211,14 @@ func GetFaultStats(db *sql.DB, r LeadTimeRange, noticeAfter time.Duration, loc *
 		if g.label != "" {
 			label = "COALESCE(" + g.label + ", '')"
 		}
-		q := faultCTE + fmt.Sprintf(`
+		cte, sargs := faultCTEFor(scope, len(args))
+		q := cte + fmt.Sprintf(`
 			SELECT %s AS k, %s, COUNT(*),
 			       COUNT(*) FILTER (WHERE dwell_s >= $3),
 			       COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY dwell_s), 0)
 			  FROM faults WHERE %s IS NOT NULL
 			 GROUP BY k ORDER BY 3 DESC, k LIMIT 10`, g.expr, label, g.expr)
-		rows, err := db.Query(q, args...)
+		rows, err := db.Query(q, append(append([]any{}, args...), sargs...)...)
 		if err != nil {
 			return nil, fmt.Errorf("faults by %s: %w", g.key, err)
 		}

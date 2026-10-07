@@ -282,8 +282,16 @@ import { onSSE } from '/static/shared/utils.js';
 
   function loadReconciliation() {
     fetch('/api/reconciliation')
-      .then(function(r) { return r.json(); })
-      .then(renderReconciliation);
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(renderReconciliation)
+      .catch(function(e) {
+        // A failed load is not "No anomalies detected".
+        reconBody.innerHTML = '<tr><td colspan="10" class="text-muted">Could not load anomalies — ' +
+          escapeHtml(String(e.message || e)) + '</td></tr>';
+      });
   }
 
   function renderDeadLetters(items) {
