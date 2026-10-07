@@ -5,10 +5,10 @@ import { delegateActions, uiConfirm } from '/static/app.js';
 // data-action="openNodeModal" and nodes-detail.js is what answers it.
 //
 // It is an IMPORT rather than a second <script> tag because the tag would load
-// the module a second time: {{cacheBust}} is a fresh timestamp per call and the
-// import below (and nodes-supermarket.js's) carries no query, so the two URLs
-// differ and the browser instantiates the module twice. Declaring the need here
-// also keeps it off nodes-supermarket.js, which imports the same module for its
+// the module a second time whenever the two URLs differ (the tags once carried a
+// per-render cache-bust query and the import below, and nodes-supermarket.js's,
+// carries none), and the browser instantiates the module twice. Declaring the
+// need here also keeps it off nodes-supermarket.js, which imports the same module for its
 // own reasons — if that import ever went away, the tiles must not stop working.
 import '/static/pages/nodes-detail.js';
 

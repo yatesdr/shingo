@@ -313,17 +313,17 @@
 
 <div id="page-data" data-authenticated="{{if .Authenticated}}true{{else}}false{{end}}" data-bin-types='{{.BinTypesJSON}}' data-edges='{{.EdgesJSON}}'></div>
 <!-- ONE TAG PER MODULE, AND ONLY FOR MODULES NOBODY IMPORTS.
-     A module reached BOTH by a tag and by an import is loaded twice, because
-     {{cacheBust}} is a fresh timestamp per call and a bare import carries no
-     query — two URLs, two module instances, two copies of whatever state the
-     module holds, and which copy a handler sees depends on load order. Worse
-     after a deploy: the tag'd copy is un-cacheable and the imported copy is
-     not, so the two instances can be different VERSIONS of the file.
+     A module reached BOTH by a tag and by an import is two URLs the moment
+     either one carries a query (tags here once carried a per-render cache-bust
+     stamp) — two module instances, two copies of whatever state the module
+     holds, and which copy a handler sees depends on load order. Worse after a
+     deploy: the two instances can be different VERSIONS of the file. Tags stay
+     bare; staticCache's ETag is what makes a bare URL fresh across a restart.
      nodes-detail.js and nodes-maintain.js are therefore imported, never tagged;
      see nodes-overview.js, which declares the dependency. -->
-<script type="module" src="/static/pages/nodes-overview.js?v={{cacheBust}}"></script>
-<script type="module" src="/static/pages/nodes-supermarket.js?v={{cacheBust}}"></script>
-<script type="module" src="/static/pages/loaders.js?v={{cacheBust}}"></script>
+<script type="module" src="/static/pages/nodes-overview.js"></script>
+<script type="module" src="/static/pages/nodes-supermarket.js"></script>
+<script type="module" src="/static/pages/loaders.js"></script>
 
 
 

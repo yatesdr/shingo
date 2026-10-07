@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"shingo/protocol/testutil"
 	"strings"
 	"testing"
 
@@ -200,4 +201,54 @@ func assertAssetsServed(t *testing.T, base, label, path string, extra ...string)
 		return
 	}
 	t.Logf("%s: %d assets, all served and compressed", label, checked)
+}
+
+// TestStaticAssets_FaviconUnderTheETagHandler: both favicon paths answer under
+// serverInstanceETag like every other asset — 200 with an ETag, then 304 when
+// the browser presents it. They used to have a no-store handler of their own
+// (Safari), so the icon was refetched in full on every page view; a restart
+// changing the ETag is all freshness needs.
+func TestStaticAssets_FaviconUnderTheETagHandler(t *testing.T) {
+	_, router := realFlowRouter(t, testdb.Open(t))
+	srv := httptest.NewServer(router)
+	t.Cleanup(srv.Close)
+
+	for _, path := range []string{"/favicon.ico", "/static/favicon.ico"} {
+		t.Run(path, func(t *testing.T) {
+			resp, err := http.Get(srv.URL + path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			n, err := io.Copy(io.Discard, resp.Body)
+			testutil.MustNoErr(t, err, "read first answer")
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK || n == 0 {
+				t.Fatalf("%s answered %d with %d bytes, want 200 with the icon", path, resp.StatusCode, n)
+			}
+			etag := resp.Header.Get("ETag")
+			if etag == "" {
+				t.Fatalf("%s carries no ETag — it is not under serverInstanceETag", path)
+			}
+			if cc := resp.Header.Get("Cache-Control"); strings.Contains(cc, "no-store") {
+				t.Errorf("%s Cache-Control %q: no-store forbids the 304 this test wants", path, cc)
+			}
+
+			req, err := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+			testutil.MustNoErr(t, err, "build conditional request")
+			req.Header.Set("If-None-Match", etag)
+			resp2, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			n2, err := io.Copy(io.Discard, resp2.Body)
+			testutil.MustNoErr(t, err, "read second answer")
+			resp2.Body.Close()
+			if resp2.StatusCode != http.StatusNotModified {
+				t.Fatalf("%s with If-None-Match %s answered %d, want 304", path, etag, resp2.StatusCode)
+			}
+			if n2 != 0 {
+				t.Errorf("%s 304 carried %d body bytes", path, n2)
+			}
+		})
+	}
 }

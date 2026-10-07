@@ -2,7 +2,6 @@ package www
 
 import (
 	"html/template"
-	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
@@ -162,17 +161,12 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Compress(5))
 
-		// Favicon: serve with no-cache headers to defeat aggressive browser caching (Safari).
-		faviconData, _ := fs.ReadFile(staticFS, "static/favicon.ico")
-		faviconHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "image/x-icon")
-			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-			w.Header().Set("Pragma", "no-cache")
-			w.Header().Set("Expires", "0")
-			w.Write(faviconData)
-		})
-		r.Handle("/favicon.ico", faviconHandler)
-		r.Handle("/static/favicon.ico", faviconHandler)
+		// Favicon: under the same ETag handler as every other asset. A restart
+		// changes the ETag, which is all a cache-bust stamp ever bought.
+		// /static/favicon.ico is served by /static/* below; the root path is the
+		// same file, and its request path already matches StaticFS's root, so
+		// no StripPrefix is needed.
+		r.Handle("/favicon.ico", serverInstanceETag(http.FileServer(http.FS(StaticFS()))))
 
 		// Static files (no auth) — ETag keyed on serverInstance + path so every
 		// rebuild invalidates every /static/* URL. Files are embedded at compile

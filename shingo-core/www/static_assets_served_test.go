@@ -130,9 +130,9 @@ func assertAssetsServed(t *testing.T, base, label, path string) {
 		seen[ref] = true
 		checked++
 
-		// THE SUFFIX TEST IS ON THE PATH, NOT THE REF: layout.html pins
-		// cache-busted tags (`…/style.css?v={{cacheBust}}`), so a suffix test
-		// on the raw ref never fires. Same burn as Edge's twin.
+		// THE SUFFIX TEST IS ON THE PATH, NOT THE REF: a ref may carry a
+		// query (`…/style.css?v=…`, as the tags once did), and a suffix test
+		// on the raw ref would never fire. Same burn as Edge's twin.
 		refPath := ref
 		if i := strings.IndexByte(refPath, '?'); i >= 0 {
 			refPath = refPath[:i]

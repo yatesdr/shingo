@@ -19,8 +19,8 @@ import (
 // `connected` event. The client compares it across reconnects: if it
 // changes, the core has been restarted (likely with a new JS bundle)
 // and the tab hard-reloads. Without this, a long-lived admin tab keeps
-// its previously-cached static assets forever — cacheBust on HTML only
-// fires on fresh page loads.
+// its previously-cached static assets forever — an asset's ETag is only
+// revalidated on a fresh page load.
 var serverInstance = fmt.Sprintf("%x", time.Now().UnixNano())
 
 type SSEEvent struct {

@@ -7,8 +7,8 @@
   <title>{{.Dashboard.Name}} — Shingo Dashboard</title>
   {{template "clock-globals" .}}
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/shared/tokens.css?v={{cacheBust}}">
-  <link rel="stylesheet" href="/static/dashboard.css?v={{cacheBust}}">
+  <link rel="stylesheet" href="/static/shared/tokens.css">
+  <link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body class="dash-kiosk"
       data-dashboard-id="{{.Dashboard.ID}}"
@@ -42,6 +42,6 @@
     <div class="board-empty" id="board-empty" style="display:none">No active orders</div>
   </main>
 
-  <script type="module" src="/static/pages/dashboard.js?v={{cacheBust}}"></script>
+  <script type="module" src="/static/pages/dashboard.js"></script>
 </body>
 </html>

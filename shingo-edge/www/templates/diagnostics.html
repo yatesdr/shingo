@@ -116,7 +116,7 @@
 </div>
 {{end}}
 
-<script type="module" src="/static/js/pages/diagnostics.js?v={{cacheBust}}"></script>
+<script type="module" src="/static/js/pages/diagnostics.js"></script>
 <script>
 async function replayDeadLetter(id) {
   const resp = await fetch('/api/diagnostics/outbox/replay?id=' + encodeURIComponent(id), { method: 'POST' });

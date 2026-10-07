@@ -178,7 +178,6 @@ type stationNamer interface {
 func templateFuncs(namer stationNamer) template.FuncMap {
 	return template.FuncMap{
 		"simMode":    simModeEnabled, // dev speed top-strip gate; false in prod builds
-		"cacheBust":  func() string { return fmt.Sprintf("%x", time.Now().UnixNano()) },
 		"iconSprite": func() template.HTML { return iconSpriteHTML },
 		"canCancel":  canCancelStatus,
 		// orderStatusFilters: the orders board's status chips, one per status an

@@ -8,9 +8,10 @@ import "net/http"
 // WHY IT EXISTS. Static assets were served with no validator at all — an
 // embed.FS reports a zero modtime, so http.ServeContent emits no Last-Modified,
 // and nothing emitted an ETag. Freshness was bought instead by hanging
-// ?v={{cacheBust}} on each <script> tag, where cacheBust is a fresh nanosecond
-// timestamp PER CALL. That worked, at the cost of refetching every asset on
-// every page load, and it only covered assets a TEMPLATE names: a module reached
+// a ?v=<stamp> query on each <script> tag, where the stamp was a fresh
+// nanosecond timestamp PER RENDER (since removed; a template test now fails on
+// any ?v= in a src or href). That worked, at the cost of refetching every asset
+// on every page load, and it only covered assets a TEMPLATE names: a module reached
 // by a bare `import` (shared/utils.js, components/*, pages/overview/*,
 // nodes-detail.js, nodes-maintain.js) carried no query and had no validator
 // either, so it was cached heuristically and could go stale after a deploy with

@@ -7,9 +7,9 @@
   <title>Production Heartbeat — Shingo</title>
   {{template "clock-globals" .}}
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/shared/tokens.css?v={{cacheBust}}">
-  <link rel="stylesheet" href="/static/shared/components.css?v={{cacheBust}}">
-  <link rel="stylesheet" href="/static/style.css?v={{cacheBust}}">
+  <link rel="stylesheet" href="/static/shared/tokens.css">
+  <link rel="stylesheet" href="/static/shared/components.css">
+  <link rel="stylesheet" href="/static/style.css">
   <style>
     /* Kiosk chrome — big, wall-readable, dark. */
     body.hb-kiosk { margin: 0; background: var(--bg-dark, #0b0e13); color: var(--text); font-size: 18px; }
@@ -54,6 +54,6 @@
     <div class="hb-empty" id="hb-empty">Loading cells&hellip;</div>
   </main>
 
-  <script type="module" src="/static/pages/heartbeat.js?v={{cacheBust}}"></script>
+  <script type="module" src="/static/pages/heartbeat.js"></script>
 </body>
 </html>

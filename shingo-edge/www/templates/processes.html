@@ -43,9 +43,9 @@
      the same declarations under another name. */}}
 <div id="pd-scrim" class="modal-overlay"></div>
 
-<link rel="stylesheet" href="/static/operator-station/flow-picture.css?v={{cacheBust}}">
-<link rel="stylesheet" href="/static/css/processes-desktop.css?v={{cacheBust}}">
-<link rel="stylesheet" href="/static/operator-station/composer-glyphs.css?v={{cacheBust}}">
+<link rel="stylesheet" href="/static/operator-station/flow-picture.css">
+<link rel="stylesheet" href="/static/css/processes-desktop.css">
+<link rel="stylesheet" href="/static/operator-station/composer-glyphs.css">
 
 {{/*
   Classic scripts, for the same reason the station loads them that way:
@@ -54,10 +54,10 @@
   puts both on window without either file needing an ESM-only line the other
   loader would choke on.
 */}}
-<script src="/static/operator-station/composer-model.js?v={{cacheBust}}"></script>
-<script src="/static/operator-station/composer-glyphs.js?v={{cacheBust}}"></script>
-<script src="/static/operator-station/flowspec-data.js?v={{cacheBust}}"></script>
+<script src="/static/operator-station/composer-model.js"></script>
+<script src="/static/operator-station/composer-glyphs.js"></script>
+<script src="/static/operator-station/flowspec-data.js"></script>
 {{/* Every request body the page sends, in one place the handler tests read too. */}}
-<script src="/static/js/pages/desktop-bodies.js?v={{cacheBust}}"></script>
-<script type="module" src="/static/js/pages/processes-desktop.js?v={{cacheBust}}"></script>
+<script src="/static/js/pages/desktop-bodies.js"></script>
+<script type="module" src="/static/js/pages/processes-desktop.js"></script>
 {{template "footer" .}}
