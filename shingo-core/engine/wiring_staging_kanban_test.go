@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"shingocore/internal/testdb"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -49,7 +50,7 @@ func TestIsStorageSlot_ChildOfLane(t *testing.T) {
 	seedLaneNodeType(t, db)
 
 	laneTypeID := mustGetNodeTypeID(t, db, "LANE")
-	lane := &nodes.Node{Name: "LANE-K1", Enabled: true, NodeTypeID: &laneTypeID}
+	lane := &nodes.Node{Name: "LANE-K1", Enabled: true, NodeTypeID: &laneTypeID, ParentID: testdb.MarkedGroup(t, db, "LANE-K1-GRP")}
 	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
 	slot := &nodes.Node{Name: "LANE-K1-SLOT-1", Enabled: true, ParentID: &lane.ID}
 	testutil.MustNoErr(t, db.CreateNode(slot), "create slot")

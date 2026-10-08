@@ -4,6 +4,7 @@ package engine
 
 import (
 	"fmt"
+	"shingocore/internal/testdb"
 	"sync"
 	"testing"
 	"time"
@@ -48,6 +49,7 @@ func newS2Fixture(t *testing.T, db *store.DB, prefix string, slots int) *s2Fixtu
 	f := &s2Fixture{db: db, loaders: service.NewLoaderService(db, nil)}
 	grpID, err := db.CreateNodeGroup(prefix + "-WAIT")
 	testutil.MustNoErr(t, err, "wait group")
+	testdb.MarkGroup(t, db, grpID)
 	f.group, err = db.GetNode(grpID)
 	testutil.MustNoErr(t, err, "read wait group")
 	for i := 1; i <= slots; i++ {
@@ -177,6 +179,7 @@ func TestStage2Pull_IgnoresOtherGroups(t *testing.T) {
 	p := f.pair(t, "S2G", 1)
 	otherID, err := db.CreateNodeGroup("S2G-OTHER")
 	testutil.MustNoErr(t, err, "other group")
+	testdb.MarkGroup(t, db, otherID)
 	slot := &nodes.Node{Name: "S2G-OTHER-1", Enabled: true, ParentID: &otherID}
 	testutil.MustNoErr(t, db.CreateNode(slot), "other slot")
 	loose := &nodes.Node{Name: "S2G-LOOSE", Enabled: true}

@@ -323,6 +323,8 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 		// outside the lane for the dig to park the blocker in.
 		lane, err := coreDB.GetNodeTypeByCode("LANE")
 		mustNil(t, err, "LANE type")
+		// A lane is never without a waiting spot: its group gets one first.
+		mustNil(t, coreDB.SetNodeProperty(c.mktB.ID, "group_wait_points", ksrMktB+"-WAIT"), "B's waiting spot")
 		c.laneB = node(&corenodes.Node{Name: ksrMktB + "-L1", NodeTypeID: &lane.ID, ParentID: &c.mktB.ID, IsSynthetic: true})
 		var deep []*corenodes.Node
 		for d := 1; d <= 2; d++ {

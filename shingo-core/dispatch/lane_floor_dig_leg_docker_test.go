@@ -48,16 +48,20 @@ func TestFloor_LeavesADigLegThatHasNotLiftedAlone(t *testing.T) {
 			"(vendor %q, destination %q, gate-staged %v)", leg.VendorOrderID, leg.DeliveryNode, IsGateStaged(leg))
 	}
 
+	// The gate opened the leg's entry at dispatch (every lane entry is the gate's,
+	// and its own dig exempts it): count appends from there.
+	base := appendsTo(backend, leg.VendorOrderID)
+
 	// ── THE ROBOT IS STILL DRIVING TO THE BLOCKER ────────────────────────────
 	freed := d.SweepLaneWaiters()
 	after, err := db.GetOrder(leg.ID)
 	testutil.MustNoErr(t, err, "reload the leg")
 	if freed != 0 || after.DeliveryNode != "" || after.WaitIndex != leg.WaitIndex ||
-		appendsTo(backend, leg.VendorOrderID) != 0 {
+		appendsTo(backend, leg.VendorOrderID) != base {
 		t.Fatalf("the floor released a dig leg that has not lifted: freed %d, destination %q, wait index "+
 			"%d -> %d, %d tail append(s). Its blocker is still in its slot, so the robot is driving to it, "+
 			"and the lift is what releases it", freed, after.DeliveryNode, leg.WaitIndex, after.WaitIndex,
-			appendsTo(backend, leg.VendorOrderID))
+			appendsTo(backend, leg.VendorOrderID)-base)
 	}
 	if recs := floorReleaseRecords(t, db); len(recs) != 0 {
 		t.Fatalf("the floor recorded %d release(s) for a robot that was driving: %q", len(recs), recs)
@@ -74,10 +78,10 @@ func TestFloor_LeavesADigLegThatHasNotLiftedAlone(t *testing.T) {
 	testutil.MustNoErr(t, err, "reload the leg")
 	// The pass frees the leg and then the dig's next leg, which the first leg's
 	// drive-out lets in; one record each.
-	if freed == 0 || after.DeliveryNode != park.Name || appendsTo(backend, leg.VendorOrderID) != 1 {
+	if freed == 0 || after.DeliveryNode != park.Name || appendsTo(backend, leg.VendorOrderID) != base+1 {
 		t.Fatalf("a lifted dig leg whose release went missing was not freed by the floor: freed %d, "+
 			"destination %q (want %s), %d tail append(s)", freed, after.DeliveryNode, park.Name,
-			appendsTo(backend, leg.VendorOrderID))
+			appendsTo(backend, leg.VendorOrderID)-base)
 	}
 	if recs := floorReleaseRecords(t, db); len(recs) != freed {
 		t.Errorf("floor records = %d, want one for each of the %d order(s) it freed", len(recs), freed)
@@ -122,6 +126,8 @@ func TestLaneEvent_LeavesADigLegThatHasNotLiftedAlone(t *testing.T) {
 	}
 	lifted := digIn(dug, dugSlots, "A")
 	driving := digIn(sib, sibSlots, "B")
+	// Each leg's entry was opened by the gate at dispatch: count appends from there.
+	baseA, baseB := appendsTo(backend, lifted.VendorOrderID), appendsTo(backend, driving.VendorOrderID)
 
 	// ── DIG A LIFTS AND IS RELEASED BY ITS LIFT ──────────────────────────────
 	transit, err := db.GetNodeByName(domain.TransitNodeName)
@@ -130,9 +136,9 @@ func TestLaneEvent_LeavesADigLegThatHasNotLiftedAlone(t *testing.T) {
 	d.EvaluateLaneReleases(dug.ID)
 	afterA, err := db.GetOrder(lifted.ID)
 	testutil.MustNoErr(t, err, "reload dig A's leg")
-	if afterA.DeliveryNode == "" || appendsTo(backend, lifted.VendorOrderID) != 1 {
+	if afterA.DeliveryNode == "" || appendsTo(backend, lifted.VendorOrderID) != baseA+1 {
 		t.Fatalf("fixture: dig A's lifted leg was not released (destination %q, %d tail append(s))",
-			afterA.DeliveryNode, appendsTo(backend, lifted.VendorOrderID))
+			afterA.DeliveryNode, appendsTo(backend, lifted.VendorOrderID)-baseA)
 	}
 
 	// ── THE RELEASE WAKES THE GROUP; DIG B HAS NOT LIFTED ────────────────────
@@ -140,11 +146,11 @@ func TestLaneEvent_LeavesADigLegThatHasNotLiftedAlone(t *testing.T) {
 	afterB, err := db.GetOrder(driving.ID)
 	testutil.MustNoErr(t, err, "reload dig B's leg")
 	if afterB.DeliveryNode != "" || afterB.WaitIndex != driving.WaitIndex ||
-		appendsTo(backend, driving.VendorOrderID) != 0 {
+		appendsTo(backend, driving.VendorOrderID) != baseB {
 		t.Fatalf("a lane event released a dig leg that has not lifted: destination %q, wait index %d -> %d, "+
 			"%d tail append(s). Its blocker is still in %s, so the robot is driving to it, and the lift is "+
 			"what releases it", afterB.DeliveryNode, driving.WaitIndex, afterB.WaitIndex,
-			appendsTo(backend, driving.VendorOrderID), sibSlots[0].Name)
+			appendsTo(backend, driving.VendorOrderID)-baseB, sibSlots[0].Name)
 	}
 
 	// ── B LIFTS: ITS OWN EVENT RELEASES IT ───────────────────────────────────
@@ -152,8 +158,8 @@ func TestLaneEvent_LeavesADigLegThatHasNotLiftedAlone(t *testing.T) {
 	d.EvaluateLaneReleases(sib.ID)
 	afterB, err = db.GetOrder(driving.ID)
 	testutil.MustNoErr(t, err, "reload dig B's leg")
-	if afterB.DeliveryNode == "" || appendsTo(backend, driving.VendorOrderID) != 1 {
+	if afterB.DeliveryNode == "" || appendsTo(backend, driving.VendorOrderID) != baseB+1 {
 		t.Fatalf("dig B's leg was not released at its lift: destination %q, %d tail append(s)",
-			afterB.DeliveryNode, appendsTo(backend, driving.VendorOrderID))
+			afterB.DeliveryNode, appendsTo(backend, driving.VendorOrderID)-baseB)
 	}
 }

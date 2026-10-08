@@ -99,8 +99,6 @@ type recordingDispatcher struct {
 	// P4 park branch); releaseLaneCalls counts fleet-fail lane releases.
 	laneConflict     bool
 	releaseLaneCalls int
-	buriedErr        error // makes BuriedForHeldBin fail (cannot describe the dig)
-	laneBuried       bool  // admission reports the order's source bin walled
 	entryKinds       []dispatch.EntryKind
 
 	// demoteCalls records each trip through the one fleet-refusal door.
@@ -187,14 +185,11 @@ func (d *recordingDispatcher) DispatchHand(o *orders.Order, binID int64, src, ds
 	return d.DispatchDirect(o, src, dst)
 }
 
-// AdmitLanesForOrder / ReleaseLanesForOrder: the lane admission verdict is OFF
-// in these mock-based tests (admit everything) except for laneBuried, which
-// forces admission's buried refusal. A mouth conflict is the hand's (above).
+// AdmitLanesForOrder / ReleaseLanesForOrder: lane admission admits every lane at
+// dispatch (the gate owns the entry), so the fake admits. A mouth conflict is the
+// hand's (above).
 func (d *recordingDispatcher) AdmitLanesForOrder(_ *orders.Order, _, _ *nodes.Node, kind dispatch.EntryKind) (bool, dispatch.QueueCause, string, error) {
 	d.entryKinds = append(d.entryKinds, kind)
-	if d.laneBuried {
-		return false, dispatch.CauseLaneTargetBuried, "LANE-B", nil
-	}
 	return true, "", "", nil
 }
 func (d *recordingDispatcher) ReleaseLanesForOrder(int64) error { d.releaseLaneCalls++; return nil }
@@ -208,16 +203,6 @@ func (d *recordingDispatcher) DemoteAfterFleetRefusal(o *orders.Order, _ dispatc
 	o.QueueCode, o.QueueCause = string(code), string(cause)
 }
 func (d *recordingDispatcher) PostFindHook() {}
-
-// BuriedForHeldBin: the held-bin burial route. buriedErr drives the "cannot
-// describe the dig" arm; otherwise a minimal BuriedError is enough, since
-// PlanBuriedReshuffle above only records the order.
-func (d *recordingDispatcher) BuriedForHeldBin(o *orders.Order) (*dispatch.BuriedError, error) {
-	if d.buriedErr != nil {
-		return nil, d.buriedErr
-	}
-	return &dispatch.BuriedError{Bin: &bins.Bin{ID: 1}, Slot: &nodes.Node{ID: 2, Name: "SLOT"}, LaneID: 3}, nil
-}
 
 func (d *recordingDispatcher) PlanBuriedReshuffle(o *orders.Order, _ *dispatch.BuriedError) error {
 	d.reshuffleCalls = append(d.reshuffleCalls, o.ID)
@@ -769,84 +754,5 @@ func TestHeldBin_DeclaresItselfAsHeldBinEntry(t *testing.T) {
 		t.Fatalf("entry kinds = %v, want [EntryHeldBin]. This caller never called the finder, so it "+
 			"has no answer to the reachability question and must not inherit the skip that assumes one",
 			d.entryKinds)
-	}
-}
-
-// TestHeldBin_BuriedRoutesToADig is the wiring that makes the new refusal safe.
-//
-// Admission can now tell a held-bin order its bin is walled. A refusal with
-// nothing to clear it is a permanent park — trading "drives to a slot it cannot
-// reach" for "never moves again" is not the better failure. This routes it to the
-// same dig the FRESH path already plans for the same fact.
-//
-// MUTATION (verified): drop the CauseLaneTargetBuried arm in dispatchHeldBin. No
-// reshuffle is planned and this fires.
-func TestHeldBin_BuriedRoutesToADig(t *testing.T) {
-	t.Parallel()
-	f := newFakeStore()
-	binID := int64(78)
-	order := &orders.Order{
-		ID: 5, Status: protocol.StatusQueued, OrderType: protocol.OrderType("retrieve"),
-		BinID: &binID, SourceNode: "HB2-SRC", DeliveryNode: "HB2-DEST",
-	}
-	f.queued = append(f.queued, order)
-	f.ordersByID[5] = order
-	f.nodesByDot["HB2-SRC"] = &nodes.Node{ID: 502, Name: "HB2-SRC"}
-	f.nodesByDot["HB2-DEST"] = &nodes.Node{ID: 503, Name: "HB2-DEST"}
-
-	d := &recordingDispatcher{laneBuried: true}
-	s := newScannerWith(t, f, waitFinder(protocol.QueueWaitingForMaterial, dispatch.QueueParams{}), d,
-		func(orderID int64, code, detail string) {
-			t.Errorf("a buried held bin must not FAIL the order: order=%d code=%s detail=%s",
-				orderID, code, detail)
-		})
-	s.RunOnce()
-
-	if len(d.reshuffleCalls) != 1 || d.reshuffleCalls[0] != 5 {
-		t.Fatalf("reshuffle calls = %v, want [5]. A held bin buried after its hold was taken has no "+
-			"other releaser: the finder is never consulted on this path, so nothing else will ever "+
-			"plan the dig", d.reshuffleCalls)
-	}
-	if len(d.directCalls) != 0 {
-		t.Errorf("the order dispatched anyway (%+v) — it would drive to a slot behind another bin",
-			d.directCalls)
-	}
-}
-
-// TestHeldBin_BuriedCongestionWaitsRatherThanFails is D18-Q4 on the new path.
-//
-// ErrReshuffleWait means the lane is busy or no shuffle slot is free RIGHT NOW.
-// That is congestion, not a broken lane: the order keeps its held bin and retries
-// next tick. Failing here is what the buried path did at intake before D18-Q4
-// (sim order 21, 2026-07-10) and it must not come back through this door.
-func TestHeldBin_BuriedCongestionWaitsRatherThanFails(t *testing.T) {
-	t.Parallel()
-	f := newFakeStore()
-	binID := int64(79)
-	order := &orders.Order{
-		ID: 6, Status: protocol.StatusQueued, OrderType: protocol.OrderType("retrieve"),
-		BinID: &binID, SourceNode: "HB3-SRC", DeliveryNode: "HB3-DEST", PayloadCode: "PN-9",
-	}
-	f.queued = append(f.queued, order)
-	f.ordersByID[6] = order
-	f.nodesByDot["HB3-SRC"] = &nodes.Node{ID: 504, Name: "HB3-SRC"}
-	f.nodesByDot["HB3-DEST"] = &nodes.Node{ID: 505, Name: "HB3-DEST"}
-
-	d := &recordingDispatcher{laneBuried: true, reshuffleErr: dispatch.ErrReshuffleWait}
-	s := newScannerWith(t, f, waitFinder(protocol.QueueWaitingForMaterial, dispatch.QueueParams{}), d,
-		func(orderID int64, code, detail string) {
-			t.Errorf("congestion FAILED the order: order=%d code=%s detail=%s", orderID, code, detail)
-		})
-	s.RunOnce()
-
-	found := false
-	for _, qr := range f.queueReasons {
-		if qr.OrderID == 6 && qr.Code == string(protocol.QueueStorageRearranging) {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("no storage_rearranging queue reason for the congested order (got %+v). The lane is "+
-			"crowded, not broken, and the row has to say so", f.queueReasons)
 	}
 }

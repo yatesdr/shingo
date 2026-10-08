@@ -15,7 +15,6 @@ import (
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/plantclaims"
-	"shingocore/store/reservations"
 )
 
 // cancel_return_pins_docker_test.go — what the carried-bin door and the watch
@@ -114,34 +113,6 @@ func seedRoleClaim(t *testing.T, db *store.DB, proc, node string, role protocol.
 		"seed claim "+proc)
 }
 
-// heldLaneReturn is a full bin on AMR-<prefix> whose cancelled order a claim
-// sources from a two-lane group, with lane 0 already holding the payload — so
-// the store takes the bin into lane 0 — and lane 0 held OUTBOUND by an order in
-// transit. The return is chosen, then parks at the lane admission: congestion,
-// not a refusal.
-//
-// OUTBOUND, NOT DIG. A dig takes the lane out of the store's candidates, so the
-// group would answer "no available slot" and the press would be refused before
-// any lane question. And IN TRANSIT, not queued: a queued blocker is in the
-// scanner's own scan set, which fails it and releases the lane before the
-// assertion runs.
-func heldLaneReturn(t *testing.T, db *store.DB, prefix string) (*bins.Bin, *orders.Order, *nodes.Node) {
-	t.Helper()
-	grp, lanes, slots := laneGroup(t, db, prefix, 2, 2)
-	binAt(t, db, slots[0][1], prefix+"-P")
-	seedClaim(t, db, "PROC-"+prefix, "STY", "LINE-"+prefix, prefix+"-P", grp.Name, true)
-	bin, _ := seedCancelledCarry(t, db, "AMR-"+prefix, prefix+"-P", "LINE-"+prefix)
-
-	elsewhere := &nodes.Node{Name: prefix + "-ELSEWHERE", Enabled: true}
-	testutil.MustNoErr(t, db.CreateNode(elsewhere), "create the blocker's destination")
-	blocker := &orders.Order{EdgeUUID: prefix + "-blocker", StationID: "edge.test", OrderType: "move",
-		Status: protocol.StatusInTransit, Quantity: 1, DeliveryNode: elsewhere.Name}
-	testutil.MustNoErr(t, db.CreateOrder(blocker), "create blocker")
-	testutil.MustNoErr(t, reservations.AcquireLanes(db.DB, blocker.ID, reservations.ModeOutbound,
-		"test-blocker", lanes[0].ID), "blocker holds lane 0 outbound")
-	return bin, blocker, lanes[0]
-}
-
 func onDeckOrders(t *testing.T, db *store.DB, binID int64) []*orders.Order {
 	t.Helper()
 	ords, err := db.ListOrdersByBin(binID, 20)
@@ -156,54 +127,6 @@ func onDeckOrders(t *testing.T, db *store.DB, binID int64) []*orders.Order {
 }
 
 // ── the pins ─────────────────────────────────────────────────────────────────
-
-// PIN, CHANGED BY THE DOOR EXTRACTION (SHAPE §3.4). At the base tree a PARKED
-// (queued) recovery order refused the next press as "already in flight", exactly
-// as a dispatched one did — and a parked order never goes terminal on its own,
-// so nothing released it. The button is now that releaser: the press cancels
-// the parked order and chooses afresh (here it parks again, behind the same
-// held lane). A dispatched one still refuses
-// (TestRecoverCarriedBin_SecondCallIsRefused).
-func TestPin_RecoverCarriedBin_PressSupersedesAParkedRecovery(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
-
-	bin, _, _ := heldLaneReturn(t, db, "PIN-PARK")
-	cacheRobot(eng, dispatchableRobot("AMR-PIN-PARK"))
-
-	parked, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
-	testutil.MustNoErr(t, err, "first press parks")
-	got, err := db.GetOrder(parked.ID)
-	testutil.MustNoErr(t, err, "re-read the parked order")
-	if !protocol.IsAcquiring(got.Status) {
-		t.Fatalf("setup: the first recovery order is %s, want it parked", got.Status)
-	}
-
-	second, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
-	testutil.MustNoErr(t, err, "second press on a parked recovery")
-	if second.ID == parked.ID {
-		t.Fatal("the second press returned the parked order instead of superseding it")
-	}
-	old, err := db.GetOrder(parked.ID)
-	testutil.MustNoErr(t, err, "re-read the superseded order")
-	if old.Status != protocol.StatusCancelled {
-		t.Errorf("the superseded parked order is %s, want cancelled", old.Status)
-	}
-	if live := onDeckOrders(t, db, bin.ID); countLive(live) != 1 {
-		t.Errorf("%d live on-deck orders after the press, want exactly the new one", countLive(live))
-	}
-}
-
-func countLive(ords []*orders.Order) int {
-	n := 0
-	for _, o := range ords {
-		if !protocol.IsTerminal(o.Status) {
-			n++
-		}
-	}
-	return n
-}
 
 // PIN, CHANGED BY THE TRIGGER (SHAPE §3.1). At the base tree the watch, on a
 // loaded deck after a cancel, with a dispatchable robot at rest and a claim

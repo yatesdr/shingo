@@ -73,6 +73,7 @@ func setupDeadNodeLane(t *testing.T) deadNodeLane {
 
 	group := &nodes.Node{Name: "DEAD-GRP", IsSynthetic: true, Enabled: true, NodeTypeID: &grpType.ID}
 	testutil.MustNoErr(t, db.CreateNode(group), "create group")
+	testdb.MarkGroup(t, db, group.ID)
 	lane := &nodes.Node{Name: "DEAD-LANE", IsSynthetic: true, Enabled: true,
 		NodeTypeID: &laneType.ID, ParentID: &group.ID}
 	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")

@@ -10,7 +10,9 @@ import (
 	"sync"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
 
@@ -20,7 +22,7 @@ import (
 // The old `default:` arm in summonOwnDigs folded laneClearNoGroup,
 // laneClearSlotNotInLane and laneClearUnplannable into one quiet line shared
 // with every other unplannable outcome, while the complex path
-// (proposeDigForBuriedPickup, complex_dispatch.go) gives the same three their own
+// (a walled-pickup dig proposal, since retired) gave the same three their own
 // arm and a sentence that says the corridor is never going to open. §R.45 ruled
 // the disposition: a slot attached to no lane keeps failing loudly WITH THE SLOT
 // NAMED — no bin moving anywhere changes which nodes exist, so the wait has no
@@ -71,21 +73,25 @@ func TestSummonOwnDigs_GeometryFaultIsLoudAndNamesTheSlot(t *testing.T) {
 	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
-	lane, slots, bp := orphanLane(t, db, "GEOM")
+	// A slot attached to no lane: since a lane cannot exist without a marked
+	// group, the reachable geometry fault is an entry the lane does not hold.
+	_, laneID, mouth := gatedLane(t, db, "GEOM", "")
+	lane, err := db.GetNode(laneID)
+	testutil.MustNoErr(t, err, "reload the lane")
+	stray := lineNode(t, db, "GEOM-STRAY")
+	slots := []*nodes.Node{stray}
 	buf := captureDispatchLog(t)
 
-	// A bin in front of the entry, so the shape is the buried one; a dweller to
-	// own the dig. acceptanceDigNeeded's facts are not re-driven here — the arm
-	// under test is the OUTCOME DISPOSITION, and the request is exactly what the
-	// evaluator would have built for this lane. orphanLane is the fixture the
-	// planner's own parentless-lane pin already uses (one spelling of the shape,
-	// law 3) — its mouth slot is the entry.
-	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "GEOM-WALL")
+	// A bin at the lane's mouth, so the shape is the buried one; a dweller to own
+	// the dig. acceptanceDigNeeded's facts are not re-driven here — the arm under
+	// test is the OUTCOME DISPOSITION.
+	sd := testdb.SetupStandardData(t, db)
+	createTestBinAtNode(t, db, sd.Payload.Code, mouth.ID, "GEOM-WALL")
 	dweller := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "geom-dweller"
 		o.Status = "staged"
 	})
-	req := acceptanceRequest{order: dweller, entry: slots[0]}
+	req := acceptanceRequest{order: dweller, entry: stray}
 
 	d.summonOwnDigs(lane, req)
 

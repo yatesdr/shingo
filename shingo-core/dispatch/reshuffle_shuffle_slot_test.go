@@ -40,6 +40,7 @@ func setupTwoLanesWithShuffles(t *testing.T, db *store.DB, prefix string, shuffl
 	testutil.MustNoErr(t, db.CreateNode(grp), "create group")
 
 	mkLane := func(name string) (*nodes.Node, []*nodes.Node) {
+		testdb.MarkGroup(t, db, grp.ID)
 		lane := &nodes.Node{Name: name, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
 		testutil.MustNoErr(t, db.CreateNode(lane), "create "+name)
 		var slots []*nodes.Node

@@ -35,29 +35,64 @@ function createNodeGroup() {
 }
 
 /* --- Lane modal --- */
+// One state object (style guide, Forms): the group the lane goes into and the
+// name typed. The group is never a hidden input — the modal is opened for one.
+var laneForm = { groupId: 0, name: '' };
+
+function laneErrors(errors) {
+  setErrorText('lane-name-error', '');
+  setErrorText('lane-form-error', '');
+  (errors || []).forEach(function(er) {
+    setErrorText(er.field === 'name' ? 'lane-name-error' : 'lane-form-error', er.msg);
+  });
+}
+
+function setErrorText(id, text) {
+  var el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+// validateLane is pure: the name is required. The server checks the same rule
+// and the one the page cannot see (the group still has a waiting spot).
+function validateLane(state) {
+  var errors = [];
+  if (!state.name) errors.push({ field: 'name', msg: 'Give the lane a name.' });
+  return { ok: errors.length === 0, errors: errors };
+}
+
 function openLaneModal(groupId) {
-  document.getElementById('lane-group-id').value = groupId;
+  laneForm = { groupId: Number(groupId), name: '' };
   document.getElementById('lane-name').value = '';
-  document.getElementById('lane-result').innerHTML = '';
+  laneErrors([]);
   document.getElementById('lane-modal').classList.add('active');
   document.getElementById('lane-name').focus();
 }
-function closeLaneModal() { document.getElementById('lane-modal').classList.remove('active'); }
-function submitAddLane() {
-  var name = document.getElementById('lane-name').value.trim();
-  if (!name) { document.getElementById('lane-name').focus(); return; }
-  var result = document.getElementById('lane-result');
-  result.textContent = 'Creating...';
-  apiPost('/api/nodegroup/add-lane', {
-    group_id: parseInt(document.getElementById('lane-group-id').value),
-    name: name
-  })
-    .then(function(data) {
-      if (data.error) { result.innerHTML = '<span style="color:var(--danger)">' + escapeHtml(data.error) + '</span>'; return; }
-      result.innerHTML = '<span style="color:var(--success)">Created!</span>';
-      setTimeout(function() { location.reload(); }, 800);
-    })
-    .catch(function(e) { result.innerHTML = '<span style="color:var(--danger)">Error: ' + e + '</span>'; });
+
+// Closing discards what was typed (clear-on-close), whichever way it was
+// closed: ×, Cancel or Esc. The backdrop does not close it.
+function closeLaneModal() {
+  document.getElementById('lane-modal').classList.remove('active');
+  laneForm = { groupId: 0, name: '' };
+  document.getElementById('lane-name').value = '';
+  laneErrors([]);
+}
+
+async function submitAddLane() {
+  laneForm.name = document.getElementById('lane-name').value.trim();
+  var v = validateLane(laneForm);
+  laneErrors(v.errors);
+  if (!v.ok) return;
+  var btn = document.getElementById('lane-submit-btn');
+  btn.disabled = true;
+  try {
+    await apiPost('/api/nodegroup/add-lane', { group_id: laneForm.groupId, name: laneForm.name });
+    closeLaneModal();
+    location.reload();
+  } catch (e) {
+    laneErrors([{ field: 'form', msg: '' + e }]);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 /* --- Drag & Drop --- */
@@ -332,6 +367,8 @@ function buildHierarchy() {
       totalSlots += slots.length;
     });
 
+    var hasWaitingSpots = grpTile.dataset.waitingSpots === 'true';
+
     var group = document.createElement('div');
     group.className = 'smkt-group';
     group.dataset.smktId = grpId;
@@ -383,7 +420,9 @@ function buildHierarchy() {
       if (isEmpty) {
         var hint = document.createElement('span');
         hint.className = 'node-group-empty';
-        hint.textContent = 'No nodes yet. Drag a node here, or add a lane.';
+        hint.textContent = hasWaitingSpots
+          ? 'No nodes yet. Drag a node here, or add a lane.'
+          : 'No nodes yet. Drag a node here.';
         directContainer.appendChild(hint);
       }
       directSection.appendChild(directContainer);
@@ -423,14 +462,22 @@ function buildHierarchy() {
       body.appendChild(section);
     });
 
+    // A LANE IS NEVER WITHOUT A MARK: a group with no waiting spot cannot take a
+    // lane, so it offers the one place its waiting spots are set instead. The
+    // line is the control (style guide, the bar's problem line): it opens the
+    // group with its waiting spots in view, and no button guesses a spot.
     if (isAuth) {
-      var addLaneBtn = document.createElement('div');
-      addLaneBtn.className = 'smkt-add-lane';
-      addLaneBtn.textContent = '+ Add lane';
-      addLaneBtn.addEventListener('click', function() {
-        openLaneModal(grpId);
-      });
-      body.appendChild(addLaneBtn);
+      var addLane = document.createElement('div');
+      if (hasWaitingSpots) {
+        addLane.className = 'smkt-add-lane';
+        addLane.textContent = '+ Add lane';
+        addLane.addEventListener('click', function() { openLaneModal(grpId); });
+      } else {
+        addLane.className = 'smkt-add-lane smkt-add-lane-blocked';
+        addLane.textContent = 'Give this group its waiting spots to add a lane';
+        addLane.addEventListener('click', function() { openNodeModal(grpTile, { focus: 'waiting-spots' }); });
+      }
+      body.appendChild(addLane);
     }
 
     group.appendChild(body);

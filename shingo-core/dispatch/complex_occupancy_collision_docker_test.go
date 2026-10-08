@@ -76,7 +76,9 @@ import (
 
 // committedInLane counts the orders the fleet is currently executing whose
 // source or destination lies in this lane — the fleet's record of committed
-// robots, deliberately NOT reservations.
+// robots, deliberately NOT reservations. An order held at the lane's mark is not
+// committed into it: its route stops at the waiting spot until the gate appends
+// the rest.
 func committedInLane(t *testing.T, db *store.DB, laneID int64) []int64 {
 	t.Helper()
 	rows, err := db.DB.Query(`
@@ -99,7 +101,14 @@ func committedInLane(t *testing.T, db *store.DB, laneID int64) []int64 {
 		}
 		out = append(out, id)
 	}
-	return out
+	inside := out[:0]
+	for _, id := range out {
+		if o, err := db.GetOrder(id); err == nil && o != nil && IsGateStaged(o) {
+			continue
+		}
+		inside = append(inside, id)
+	}
+	return inside
 }
 
 func terminalStatusArray() []string {
@@ -163,24 +172,17 @@ func TestCollision_PlainStoreIsRefusedFromACorridorAComplexOrderOccupies(t *test
 	plainRaw, err := db.GetOrder(plain.ID)
 	plain = testutil.Must(t, plainRaw, err, "db.GetOrder(plain.ID)")
 
-	admitted, cause, lane, err := d.AcquireLanesForOrder(plain, srcNode, mouth, EntryHeldBin)
-	testutil.MustNoErr(t, err, "the admission ask must not error")
-	if admitted {
-		// Follow through so the failure names the real consequence rather than a
-		// verdict: actually send it, then count what is in the corridor.
-		_, _ = d.DispatchDirect(plain, srcNode, mouth)
-		t.Fatalf("the plain store was ADMITTED into a lane order %d is already executing in.\n"+
-			"Committed orders in the corridor: %v.\n"+
-			"Nothing here is illegal — that is the point. The ledger said the lane was empty "+
-			"because the complex arm never wrote its page, so the admission was lawful and two "+
-			"robots went into one single-file lane.", cplx.ID, committedInLane(t, db, laneID))
+	// Every lane is marked: the plain store is sent to the mark and held there
+	// by the gate's valve, which reads the complex order's occupancy.
+	held := heldAtTheMark(t, d, db, plain, srcNode, mouth)
+	if got := committedInLane(t, db, laneID); len(got) != 1 {
+		t.Fatalf("committed orders in the corridor: %v, want only the complex order %d. "+
+			"The ledger said the lane was empty because the complex arm never wrote its page, so the "+
+			"entry was lawful and two robots went into one single-file lane.", got, cplx.ID)
 	}
-	if cause != CauseLaneOccupied {
-		t.Errorf("refused with cause %q, want %q — the operator sentence has to say a robot is in "+
-			"the lane, not something vaguer", cause, CauseLaneOccupied)
-	}
-	if lane == "" {
-		t.Error("the refusal names no lane; the queue row cannot tell an operator where to look")
+	if held.QueueCause != string(CauseLaneOccupied) {
+		t.Errorf("held with cause %q, want %q — the operator sentence has to say a robot is in "+
+			"the lane, not something vaguer", held.QueueCause, CauseLaneOccupied)
 	}
 }
 

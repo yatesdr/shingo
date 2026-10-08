@@ -41,6 +41,7 @@ func setupGatedDigGroup(t *testing.T, db *store.DB, withOpenLane bool) (grp, dug
 	testutil.MustNoErr(t, db.CreateNode(grp), "create group")
 
 	mkLane := func(name, mark string) (*nodes.Node, []*nodes.Node) {
+		testdb.MarkGroup(t, db, grp.ID)
 		lane := &nodes.Node{Name: name, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
 		testutil.MustNoErr(t, db.CreateNode(lane), "create "+name)
 		if mark != "" {

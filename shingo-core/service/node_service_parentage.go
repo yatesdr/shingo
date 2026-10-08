@@ -30,3 +30,8 @@ func IsParentCycle(err error) bool { return nodes.IsParentCycle(err) }
 func IsSlotEnabledFollowsLane(err error) bool {
 	return errors.Is(err, nodes.ErrSlotEnabledFollowsLane)
 }
+
+// IsLaneUnmarked reports whether err is the store's refusal of a lane without a
+// waiting spot (nodes.ErrLaneUnmarked), so an HTTP layer can answer 400: the
+// person fixes it by giving the group its waiting spots.
+func IsLaneUnmarked(err error) bool { return errors.Is(err, nodes.ErrLaneUnmarked) }

@@ -108,6 +108,7 @@ func SetupCompound(t *testing.T, db *store.DB, cfg CompoundConfig) *CompoundScen
 	}
 
 	// Create LANE under NGRP
+	MarkGroup(t, db, grp.ID)
 	lane := &nodes.Node{
 		Name: fmt.Sprintf("GRP-%s-L1", cfg.Prefix), NodeTypeID: &lanType.ID,
 		ParentID: &grp.ID, Enabled: true, IsSynthetic: true,

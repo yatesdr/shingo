@@ -293,11 +293,13 @@ func TestCharSeam_ComplexIsRefusedByAnotherOrdersOccupancy(t *testing.T) {
 
 	_ = d.DispatchPreparedComplex(order)
 
+	// Every lane is marked: the order is sent to the mark and the gate holds it
+	// there, reading the occupant's row.
 	got, _ := db.GetOrder(order.ID)
-	if got.VendorOrderID != "" {
-		t.Fatalf("the complex order dispatched as %q into a lane order %d is inside. The READ half "+
-			"of Hold B is what stops this, and it is the half that already works.",
-			got.VendorOrderID, sitting.ID)
+	if got.VendorOrderID != "" && !IsGateStaged(got) {
+		t.Fatalf("the complex order went into a lane order %d is inside (vendor %q, wait index %d). The "+
+			"READ half of Hold B is what stops this, and it is the half that already works.",
+			sitting.ID, got.VendorOrderID, got.WaitIndex)
 	}
 	if protocol.IsTerminal(got.Status) {
 		t.Errorf("the complex order is %q — a busy lane is congestion and the order must wait for it, "+

@@ -52,6 +52,7 @@ func clearLaneFixture(t *testing.T, db *store.DB, name string) (wall, park *node
 	testutil.MustNoErr(t, db.CreateNode(grp), "create group")
 
 	mkLane := func(lname, mark string, depth int) (*nodes.Node, []*nodes.Node) {
+		testdb.MarkGroup(t, db, grp.ID)
 		lane := &nodes.Node{Name: lname, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
 		testutil.MustNoErr(t, db.CreateNode(lane), "create "+lname)
 		if mark != "" {
@@ -547,7 +548,7 @@ func TestWindow3_OrdinaryMouthHoldRefusesTheHealBeforeMintingAParent(t *testing.
 // WHY THE EXISTING FACT-3 CHECK DID NOT CATCH IT: acceptanceDigNeeded asks about
 // claimed blockers, but acceptanceDigNeeded is the LANE GATE's route into the
 // proposer. The rig's loop came through a complex demand's walled pickup
-// (proposeDigForBuriedPickup), which asked nothing. That is why the check now
+// (a walled-pickup dig proposal, since retired), which asked nothing. That is why the check now
 // lives in proposeLaneClearDig — the one writer of a service dig — instead of in
 // a third caller.
 //

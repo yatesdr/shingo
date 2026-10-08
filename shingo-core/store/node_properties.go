@@ -30,3 +30,12 @@ func (db *DB) GetNodeProperty(nodeID int64, key string) string {
 func (db *DB) GetNodePropertyOrError(nodeID int64, key string) (string, error) {
 	return nodes.GetPropertyOrError(db.DB, nodeID, key)
 }
+
+// UnmarkedLanes names every lane with no waiting spot (nodes.UnmarkedLanes).
+func (db *DB) UnmarkedLanes() ([]string, error) { return nodes.UnmarkedLanes(db.DB) }
+
+// GroupsWithWaitingSpots is the set of groups a lane can be added to
+// (nodes.GroupsWithWaitingSpots).
+func (db *DB) GroupsWithWaitingSpots() (map[int64]bool, error) {
+	return nodes.GroupsWithWaitingSpots(db.DB)
+}

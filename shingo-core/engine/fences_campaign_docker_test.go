@@ -40,6 +40,7 @@ func fenceGroup(t *testing.T, db *store.DB, name, code string, want, slots int,
 	t.Helper()
 	grpID, err := nodes.CreateGroup(db.DB, name)
 	testutil.MustNoErr(t, err, "CreateGroup "+name)
+	testdb.MarkGroup(t, db, grpID)
 
 	testutil.MustNoErr(t, db.QueryRow(`
 		INSERT INTO bin_types (code) VALUES ($1)

@@ -33,7 +33,7 @@ func burialLane(t *testing.T, db *store.DB, name string, depth int) []*nodes.Nod
 	t.Helper()
 	laneType, err := db.GetNodeTypeByCode(protocol.NodeClassLANE)
 	testutil.MustNoErr(t, err, "get LANE node type")
-	lane := &nodes.Node{Name: name + "-LANE", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID}
+	lane := &nodes.Node{Name: name + "-LANE", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: testdb.MarkedGroup(t, db, name+"-LANE-GRP")}
 	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
 
 	out := make([]*nodes.Node, 0, depth)

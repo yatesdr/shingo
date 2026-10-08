@@ -227,6 +227,7 @@ func setupDigsAndParks(t *testing.T, db *store.DB, prefix string, digs, parks in
 
 	var lanes []*nodes.Node
 	for i := 1; i <= digs; i++ {
+		testdb.MarkGroup(t, db, grp.ID)
 		lane := &nodes.Node{Name: fmt.Sprintf("%s-L%d", prefix, i), NodeTypeID: &lanType.ID,
 			ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
 		testutil.MustNoErr(t, db.CreateNode(lane), "create dig lane")

@@ -23,6 +23,11 @@ type Property = domain.NodeProperty
 // the audit_log's question, and it is answered there (old→new, unconditionally,
 // at the property endpoint) — the two are different facts and each has one home.
 func SetProperty(db *sql.DB, nodeID int64, key, value string) error {
+	if key == PropGroupWaitPoints {
+		if err := refuseUnmarkingAGroupWithLanes(db, nodeID, value); err != nil {
+			return err
+		}
+	}
 	_, err := db.Exec(`INSERT INTO node_properties (node_id, key, value) VALUES ($1, $2, $3)
 		ON CONFLICT (node_id, key) DO UPDATE SET value=$4, updated_at=NOW()`,
 		nodeID, key, value, value)
@@ -31,6 +36,11 @@ func SetProperty(db *sql.DB, nodeID int64, key, value string) error {
 
 // DeleteProperty removes a property from a node.
 func DeleteProperty(db *sql.DB, nodeID int64, key string) error {
+	if key == PropGroupWaitPoints {
+		if err := refuseUnmarkingAGroupWithLanes(db, nodeID, ""); err != nil {
+			return err
+		}
+	}
 	_, err := db.Exec(`DELETE FROM node_properties WHERE node_id=$1 AND key=$2`, nodeID, key)
 	return err
 }

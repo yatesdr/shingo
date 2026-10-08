@@ -461,7 +461,7 @@ func TestVacatedSlot_P6_LoaderArmRefusalsWait(t *testing.T) {
 		{"a lane slot", func(t *testing.T, db *store.DB, supply, ret *orders.Order, home, buffer *nodes.Node, partial int64) (*pairPass, []resolvedStep) {
 			laneType, err := db.GetNodeTypeByCode(protocol.NodeClassLANE)
 			testutil.MustNoErr(t, err, "LANE type")
-			lane := &nodes.Node{Name: "VS6-LANE", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID}
+			lane := &nodes.Node{Name: "VS6-LANE", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: testdb.MarkedGroup(t, db, "VS6-LANE-GRP")}
 			testutil.MustNoErr(t, db.CreateNode(lane), "lane")
 			vsReparent(t, db, buffer, lane)
 			return vsLift(t, db, supply, partial, buffer.Name), nil

@@ -3,6 +3,7 @@
 package dispatch
 
 import (
+	"shingocore/internal/testdb"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -54,6 +55,7 @@ func TestFinderPin_HomeRefillFromGroupTakesItsLoadersBufferEmpty(t *testing.T) {
 	setupTestData(t, db)
 	grpID, err := nodes.CreateGroup(db.DB, "SPR-SMKT")
 	testutil.MustNoErr(t, err, "create group")
+	testdb.MarkGroup(t, db, grpID)
 	slot := func(name string) *nodes.Node {
 		n := &nodes.Node{Name: name, Enabled: true, ParentID: &grpID}
 		testutil.MustNoErr(t, db.CreateNode(n), "create "+name)

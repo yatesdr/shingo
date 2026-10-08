@@ -4,6 +4,7 @@ package service
 
 import (
 	"errors"
+	"shingocore/internal/testdb"
 	"strings"
 	"testing"
 
@@ -87,6 +88,7 @@ func TestTwoStage_DirectModeDerivesStage1Destination(t *testing.T) {
 
 	grpID, err := f.db.CreateNodeGroup("TS-SOMEONE-ELSES")
 	testutil.MustNoErr(t, err, "other group")
+	testdb.MarkGroup(t, f.db, grpID)
 	taken := &nodes.Node{Name: "TS-TAKEN", Enabled: true, ParentID: &grpID}
 	testutil.MustNoErr(t, f.db.CreateNode(taken), "node in another group")
 	err = f.loader.SetHome(s2, taken.ID, "", "", 0)
@@ -128,6 +130,7 @@ func TestTwoStage_PullModeSendsStage1ToTheWaitGroup(t *testing.T) {
 	s1, s2 := f.create(t, "TS-PULL")
 	grpID, err := f.db.CreateNodeGroup("TS-WAIT")
 	testutil.MustNoErr(t, err, "wait group")
+	testdb.MarkGroup(t, f.db, grpID)
 	testutil.MustNoErr(t, f.loader.SetHome(s2, f.stage2.ID, "", "", 0), "stage-2 window")
 	two, err := f.db.GetLoader(s2)
 	testutil.MustNoErr(t, err, "read stage 2")

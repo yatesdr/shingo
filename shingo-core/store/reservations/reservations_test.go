@@ -569,6 +569,7 @@ func digRaceLane(t *testing.T, db *store.DB, name string, depth int) (*nodes.Nod
 	testutil.MustNoErr(t, err, "LANE type")
 	grp := &nodes.Node{Name: name + "-GRP", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(grp), "create group")
+	testdb.MarkGroup(t, db, grp.ID)
 	lane := &nodes.Node{Name: name, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
 

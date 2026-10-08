@@ -62,6 +62,7 @@ func setupReservedSlotGroup(t *testing.T, db *store.DB, prefix string) *reserved
 	testutil.MustNoErr(t, db.CreateNode(g.grp), "create group")
 
 	mkLane := func(name string, depth int) (*nodes.Node, []*nodes.Node) {
+		testdb.MarkGroup(t, db, g.grp.ID)
 		l := &nodes.Node{Name: name, NodeTypeID: &lanType.ID, ParentID: &g.grp.ID, Enabled: true, IsSynthetic: true}
 		testutil.MustNoErr(t, db.CreateNode(l), "create "+name)
 		var out []*nodes.Node

@@ -88,13 +88,6 @@ type Dispatcher interface {
 	// anything else is structural and fails the order.
 	PlanBuriedReshuffle(order *orders.Order, buried *dispatch.BuriedError) error
 
-	// BuriedForHeldBin reconstructs the BuriedError for an order whose HELD bin
-	// has become unreachable, so a refusal on the held-bin path can be turned
-	// into the dig that clears it. The fresh path gets this from the finder;
-	// dispatchHeldBin never calls the finder, which is why it needs its own way
-	// to ask.
-	BuriedForHeldBin(order *orders.Order) (*dispatch.BuriedError, error)
-
 	// PostFindHook fires between the scanner's Find and Claim. A no-op in
 	// production (nil hook); concurrency tests install one via
 	// Dispatcher.SetPostFindHook to make a claim race deterministic. It lives on

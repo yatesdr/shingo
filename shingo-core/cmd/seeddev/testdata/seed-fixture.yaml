@@ -74,6 +74,7 @@ zones:
   - name: SYN_SM_Stamp
     retrieve_algorithm: FIFO
     store_algorithm: LKND
+    wait_points: [SYN_SM_Stamp-WAIT]
     lanes:
       # Lane_01 = PANEL-LH source (seeded full); Lane_02/03 = PANEL-RH source (full)
       - {name: Lane_01, slots: [{name: SMN_001, depth: 1}, {name: SMN_002, depth: 2}, {name: SMN_003, depth: 3}]}
@@ -93,12 +94,14 @@ zones:
   - name: SYN_SM_Comp
     retrieve_algorithm: FIFO
     store_algorithm: LKND
+    wait_points: [SYN_SM_Comp-WAIT]
     lanes:
       - {name: Lane_06, slots: [{name: SMN_016, depth: 1}, {name: SMN_017, depth: 2}, {name: SMN_018, depth: 3}]}
       - {name: Lane_07, slots: [{name: SMN_019, depth: 1}, {name: SMN_020, depth: 2}, {name: SMN_021, depth: 3}]}
   - name: SYN_SM_FG
     retrieve_algorithm: FIFO
     store_algorithm: LKND
+    wait_points: [SYN_SM_FG-WAIT]
     lanes:
       - {name: Lane_08, slots: [{name: SMN_022, depth: 1}, {name: SMN_023, depth: 2}, {name: SMN_024, depth: 3}]}
       - {name: Lane_09, slots: [{name: SMN_025, depth: 1}, {name: SMN_026, depth: 2}, {name: SMN_027, depth: 3}]}
@@ -112,6 +115,7 @@ zones:
   - name: SYN_MT_Return
     retrieve_algorithm: FIFO
     store_algorithm: DPTH
+    wait_points: [SYN_MT_Return-WAIT]
     lanes:
       - {name: Lane_12, slots: [{name: UTN_001, depth: 1}, {name: UTN_002, depth: 2}, {name: UTN_003, depth: 3}, {name: UTN_004, depth: 4}]}
       - {name: Lane_13, slots: [{name: UTN_005, depth: 1}, {name: UTN_006, depth: 2}, {name: UTN_007, depth: 3}, {name: UTN_008, depth: 4}]}
@@ -148,6 +152,7 @@ zones:
   - name: SYN_BUF_Deck
     retrieve_algorithm: FIFO
     store_algorithm: DPTH
+    wait_points: [SYN_BUF_Deck-WAIT]
     lanes:
       - {name: Lane_31, slots: [{name: BUF_001, depth: 1}, {name: BUF_002, depth: 2}, {name: BUF_003, depth: 3}, {name: BUF_004, depth: 4}, {name: BUF_005, depth: 5}, {name: BUF_006, depth: 6}]}
   # Isolated component supermarkets so each loader's loop is independently observable
@@ -157,12 +162,14 @@ zones:
   - name: SYN_SM_Clip
     retrieve_algorithm: FIFO
     store_algorithm: LKND
+    wait_points: [SYN_SM_Clip-WAIT]
     lanes:
       - {name: Lane_32, slots: [{name: SMN_041, depth: 1}, {name: SMN_042, depth: 2}, {name: SMN_043, depth: 3}]}
       - {name: Lane_33, slots: [{name: SMN_044, depth: 1}]}   # reshuffle headroom
   - name: SYN_SM_Stud
     retrieve_algorithm: FIFO
     store_algorithm: LKND
+    wait_points: [SYN_SM_Stud-WAIT]
     lanes:
       - {name: Lane_34, slots: [{name: SMN_045, depth: 1}, {name: SMN_046, depth: 2}, {name: SMN_047, depth: 3}]}
       - {name: Lane_35, slots: [{name: SMN_048, depth: 1}]}
@@ -171,21 +178,25 @@ zones:
   - name: SYN_SM_StampC
     retrieve_algorithm: FIFO
     store_algorithm: LKND
+    wait_points: [SYN_SM_StampC-WAIT]
     lanes:
       - {name: Lane_36, slots: [{name: SMN_049, depth: 1}, {name: SMN_050, depth: 2}, {name: SMN_051, depth: 3}]}
   - name: SYN_SM_StampD
     retrieve_algorithm: FIFO
     store_algorithm: LKND
+    wait_points: [SYN_SM_StampD-WAIT]
     lanes:
       - {name: Lane_37, slots: [{name: SMN_052, depth: 1}, {name: SMN_053, depth: 2}, {name: SMN_054, depth: 3}]}
   - name: SYN_SM_FGC
     retrieve_algorithm: FIFO
     store_algorithm: LKND
+    wait_points: [SYN_SM_FGC-WAIT]
     lanes:
       - {name: Lane_38, slots: [{name: SMN_055, depth: 1}, {name: SMN_056, depth: 2}, {name: SMN_057, depth: 3}]}
   - name: SYN_SM_FGD
     retrieve_algorithm: FIFO
     store_algorithm: LKND
+    wait_points: [SYN_SM_FGD-WAIT]
     lanes:
       - {name: Lane_39, slots: [{name: SMN_058, depth: 1}, {name: SMN_059, depth: 2}, {name: SMN_060, depth: 3}]}
   # A MAINTAINED GROUP, and the FLAT topology shape this fixture exists to freeze:

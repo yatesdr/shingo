@@ -45,6 +45,7 @@ func laneGroup(t *testing.T, db *store.DB, prefix string, nLanes, depth int) (*n
 	var lanes []*nodes.Node
 	var slots [][]*nodes.Node
 	for i := 0; i < nLanes; i++ {
+		testdb.MarkGroup(t, db, grp.ID)
 		lane := &nodes.Node{Name: fmt.Sprintf("%s-L%d", prefix, i), NodeTypeID: &laneType.ID,
 			ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
 		testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
@@ -411,99 +412,6 @@ func TestCancelReturn_LoaderPositionSourceTakesHomeThenBuffer(t *testing.T) {
 }
 
 // ── 7. the lane-held park and its releasers ─────────────────────────────────
-
-// parkedReturn returns a bin into lane 0 of a two-lane group while lane 0 is
-// held OUTBOUND by a foreign order: the resolver offers the lane (only a dig
-// hides one), and inbound admission refuses it, so the return parks.
-func parkedReturn(t *testing.T, db *store.DB, eng *Engine, prefix string) (bin *bins.Bin, ret, blocker *orders.Order, lanes []*nodes.Node, slots [][]*nodes.Node) {
-	t.Helper()
-	grp, lanes, slots := laneGroup(t, db, prefix, 2, 2)
-	binAt(t, db, slots[0][1], prefix+"-P")
-	seedClaim(t, db, "PROC-"+prefix, "STY", "LINE-"+prefix, prefix+"-P", grp.Name, true)
-	bin, _ = seedCancelledCarry(t, db, "AMR-"+prefix, prefix+"-P", "LINE-"+prefix)
-	cacheRobot(eng, loadedDispatchable("AMR-"+prefix))
-
-	elsewhere := &nodes.Node{Name: prefix + "-ELSEWHERE", Enabled: true}
-	testutil.MustNoErr(t, db.CreateNode(elsewhere), "create blocker destination")
-	blocker = &orders.Order{EdgeUUID: prefix + "-blocker", StationID: "edge.test", OrderType: "move",
-		Status: protocol.StatusInTransit, Quantity: 1, DeliveryNode: elsewhere.Name}
-	testutil.MustNoErr(t, db.CreateOrder(blocker), "create blocker")
-	testutil.MustNoErr(t, reservations.AcquireLanes(db.DB, blocker.ID, reservations.ModeOutbound,
-		"test-blocker", lanes[0].ID), "blocker holds lane 0 outbound")
-
-	eng.sweepCarriedBins()
-	ret = theReturn(t, db, bin.ID)
-	if !protocol.IsAcquiring(ret.Status) {
-		t.Fatalf("setup: the return is %s aimed at %s, want it parked behind the held lane", ret.Status, ret.DeliveryNode)
-	}
-	return bin, ret, blocker, lanes, slots
-}
-
-func TestCancelReturn_LaneHeldParksAndTheScannerDispatchesIt(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	backend := testdb.NewTrackingBackend()
-	eng := newTestEngine(t, db, backend)
-	_, ret, blocker, lanes, _ := parkedReturn(t, db, eng, "CR7A")
-
-	testutil.MustNoErr(t, reservations.ReleaseLane(db.DB, blocker.ID, lanes[0].ID), "the lane clears")
-	eng.fulfillment.RunOnce()
-
-	done, err := db.GetOrder(ret.ID)
-	testutil.MustNoErr(t, err, "re-read the return")
-	if protocol.IsAcquiring(done.Status) || done.VendorOrderID == "" {
-		t.Fatalf("return is %s (vendor %q) with a free lane — nothing re-drove the park", done.Status, done.VendorOrderID)
-	}
-	reqs := backend.CreateRequests()
-	if last := reqs[len(reqs)-1]; last.Vehicle != "AMR-CR7A" {
-		t.Errorf("scanner dispatched the return with Vehicle=%q, want the pin", last.Vehicle)
-	}
-}
-
-func TestCancelReturn_TheButtonSupersedesAParkedReturn(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
-	bin, ret, _, _, _ := parkedReturn(t, db, eng, "CR7B")
-
-	// The button asks the same chooser: the claim's group, parked again behind
-	// the held lane.
-	order, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
-	testutil.MustNoErr(t, err, "the button on a parked return")
-	old, err := db.GetOrder(ret.ID)
-	testutil.MustNoErr(t, err, "re-read the parked return")
-	if old.Status != protocol.StatusCancelled {
-		t.Errorf("parked return is %s after the press, want cancelled", old.Status)
-	}
-	if order.RecoversOrderID == nil || ret.RecoversOrderID == nil || *order.RecoversOrderID != *ret.RecoversOrderID {
-		t.Errorf("the button's order recovers %v, want the cancelled order the parked return recovered (%v)",
-			order.RecoversOrderID, ret.RecoversOrderID)
-	}
-	// The watch does not try again: the episode had its attempt.
-	eng.sweepCarriedBins()
-	if n := countLive(onDeckOrders(t, db, bin.ID)); n != 1 {
-		t.Errorf("%d live on-deck orders after the press and a sweep, want the button's one", n)
-	}
-}
-
-func TestCancelReturn_ADigWhileParkedReAimsTheReturn(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
-	_, ret, blocker, lanes, slots := parkedReturn(t, db, eng, "CR7C")
-
-	// The blocker's hold becomes a dig: the return's lane is being excavated.
-	testutil.MustNoErr(t, reservations.ReleaseLane(db.DB, blocker.ID, lanes[0].ID), "drop the outbound hold")
-	testutil.MustNoErr(t, reservations.AcquireLanes(db.DB, blocker.ID, reservations.ModeDig,
-		"test-dig", lanes[0].ID), "dig lane 0")
-	eng.fulfillment.RunOnce()
-
-	done, err := db.GetOrder(ret.ID)
-	testutil.MustNoErr(t, err, "re-read the return")
-	if done.DeliveryNode != slots[1][1].Name {
-		t.Errorf("return aimed at %q after the dig, want %s — Core chose the slot, so a dig re-aims it", done.DeliveryNode, slots[1][1].Name)
-	}
-}
 
 // ── 8. once per episode ─────────────────────────────────────────────────────
 

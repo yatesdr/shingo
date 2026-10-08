@@ -64,6 +64,7 @@ func twoLaneAllBuried(t *testing.T, db *store.DB, prefix, code string) (heldLane
 
 	grpID, err := nodes.CreateGroup(db.DB, prefix+"-GRP")
 	testutil.MustNoErr(t, err, "CreateGroup")
+	testdb.MarkGroup(t, db, grpID)
 
 	var btID int64
 	testutil.MustNoErr(t, db.QueryRow(
@@ -74,6 +75,7 @@ func twoLaneAllBuried(t *testing.T, db *store.DB, prefix, code string) (heldLane
 	build := func(name string) (laneID, emptyID int64) {
 		laneType, terr := db.GetNodeTypeByCode(protocol.NodeClassLANE)
 		testutil.MustNoErr(t, terr, "LANE type")
+		testdb.MarkGroup(t, db, grpID)
 		lane := &nodes.Node{Name: name, IsSynthetic: true, Enabled: true,
 			NodeTypeID: &laneType.ID, ParentID: &grpID}
 		testutil.MustNoErr(t, db.CreateNode(lane), "create "+name)

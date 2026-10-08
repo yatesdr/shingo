@@ -148,7 +148,7 @@ func (s StagedOutside) Has(orderID int64) bool {
 // Membership is group-scoped (see StagedOutside), so within a single group the
 // answer is the same for every lane and a flat set would do. The keying is here
 // because AcquireLanesFor takes every lane a plan needs in ONE transaction, and
-// resolvePlanLaneHolds can hand it lanes belonging to DIFFERENT GROUPS. A flat
+// a plan's lane walk could hand it lanes belonging to DIFFERENT GROUPS. A flat
 // set across that loop would exempt an order staged in group A on a lane in
 // group B, which is a corridor it has never been near. Each lane therefore
 // resolves against its own group.

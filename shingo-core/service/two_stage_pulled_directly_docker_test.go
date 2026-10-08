@@ -4,6 +4,7 @@ package service
 
 import (
 	"errors"
+	"shingocore/internal/testdb"
 	"strings"
 	"testing"
 
@@ -99,6 +100,7 @@ func TestPulledDirectly_RefusesAWindowInAnotherGroup(t *testing.T) {
 		_, s2 := f.setUpMode(t, "TS-PDG-"+mode, pull)
 		grpID, err := f.db.CreateNodeGroup("TS-OTHERS-" + mode)
 		testutil.MustNoErr(t, err, "other group")
+		testdb.MarkGroup(t, f.db, grpID)
 		taken := &nodes.Node{Name: "TS-TAKEN-" + mode, Enabled: true, ParentID: &grpID}
 		testutil.MustNoErr(t, f.db.CreateNode(taken), "node in another group")
 		err = f.loader.SetHome(s2, taken.ID, "", "", 0)
@@ -187,6 +189,7 @@ func TestPulledDirectly_FindersHandTheCartOnlyToItsGroup(t *testing.T) {
 		}
 		otherID, err := f.db.CreateNodeGroup("TS-ELSEWHERE-" + mode)
 		testutil.MustNoErr(t, err, "another group")
+		testdb.MarkGroup(t, f.db, otherID)
 		if b, err := f.db.FindEmptyBinOfTypeInGroup(f.carrier.Code, otherID, 0, none); err == nil && b != nil {
 			t.Errorf("%s mode: a request naming another group took %s", mode, b.Label)
 		}

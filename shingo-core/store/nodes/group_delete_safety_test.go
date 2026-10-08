@@ -58,6 +58,7 @@ func TestDeleteGroup_ListChildrenError_NoPartialDelete(t *testing.T) {
 
 	grpID, err := nodes.CreateGroup(sdb, "GRP-LCERR")
 	testutil.MustNoErr(t, err, "CreateGroup")
+	testdb.MarkGroup(t, db, grpID)
 	laneID, err := nodes.AddLane(sdb, grpID, "LAN-LCERR")
 	testutil.MustNoErr(t, err, "AddLane")
 	physical := &nodes.Node{Name: "PHYS-LCERR", Enabled: true, ParentID: &laneID}

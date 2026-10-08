@@ -56,6 +56,7 @@ func setupDwellGroup(t *testing.T, db *store.DB, prefix string, sibDepth int, wi
 	testutil.MustNoErr(t, db.CreateNode(grp), "create group")
 
 	mkLane := func(name string, depth int) (*nodes.Node, []*nodes.Node) {
+		testdb.MarkGroup(t, db, grp.ID)
 		lane := &nodes.Node{Name: name, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
 		testutil.MustNoErr(t, db.CreateNode(lane), "create "+name)
 		var slots []*nodes.Node
@@ -180,7 +181,7 @@ func TestDwell_LiftsAndWaitsAtTheShallowestSlot(t *testing.T) {
 	}
 
 	// ── LEG 1: LIFTS AT DEPTH 1 AND DOES NOT MOVE ────────────────────────────
-	steps := planOf(t, db, legs[0].ID)
+	steps := afterEntryWait(t, planOf(t, db, legs[0].ID), dug.ID)
 	if len(steps) != 2 {
 		t.Fatalf("leg 1's plan is %d step(s) (%+v), want [pickup, wait] — an unsealed dwell", len(steps), steps)
 	}
@@ -211,7 +212,7 @@ func TestDwell_LiftsAndWaitsAtTheShallowestSlot(t *testing.T) {
 	landLeg(t, d, db, legs[0])
 	testutil.MustNoErr(t, d.AdvanceCompoundOrder(demand.ID), "advance onto leg 2")
 
-	steps = planOf(t, db, legs[1].ID)
+	steps = afterEntryWait(t, planOf(t, db, legs[1].ID), dug.ID)
 	if len(steps) != 2 || steps[1].Action != protocol.ActionWait {
 		t.Fatalf("leg 2's plan is %+v, want [pickup, wait]", steps)
 	}
@@ -292,7 +293,7 @@ func TestDwell_OpenDestinationReleasesOnArrival(t *testing.T) {
 	// AND THE TAIL IS ON THE PLAN, not only on the column: the robot is driven from
 	// steps_json, and a column moving without its step is what sent a robot to one
 	// node while the plan said another (§R.5).
-	steps := planOf(t, db, legs[0].ID)
+	steps := afterEntryWait(t, planOf(t, db, legs[0].ID), dug.ID)
 	if len(steps) != 3 || steps[2].Action != protocol.ActionDropoff || steps[2].Node != park.Name {
 		t.Errorf("the leg's plan is %+v, want a dropoff at %s appended after the wait", steps, park.Name)
 	}
@@ -606,6 +607,7 @@ func TestDwell_WalksPastASlotAdmissionRefuses(t *testing.T) {
 	// DWWALK-SIB is offered before this one.
 	lanType, err := db.GetNodeTypeByCode("LANE")
 	testutil.MustNoErr(t, err, "db.GetNodeTypeByCode(\"LANE\")")
+	testdb.MarkGroup(t, db, grp.ID)
 	open := &nodes.Node{Name: "DWWALK-ZOPEN", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(open), "create the open lane")
 	openDepth := 1
@@ -1540,4 +1542,16 @@ func TestNodeIDsForOrder_IncludesTheLaneItWaitedOn(t *testing.T) {
 	t.Errorf("NodeIDsForOrder(%d) = %v, which omits lane %s (%d) — the lane this order's robot is "+
 		"parked outside. When it goes terminal, the one place that certainly wants re-asking is "+
 		"the lane whose queue just got shorter", dweller.ID, got, wall.Name, wall.ID)
+}
+
+// afterEntryWait checks a dig leg's plan opens with the gate's wait at the mark
+// of the lane it digs (every lane entry goes through the gate; its own dig
+// exempts it, so it is released at once) and returns the plan after that wait.
+func afterEntryWait(t *testing.T, steps []resolvedStep, lane int64) []resolvedStep {
+	t.Helper()
+	if len(steps) == 0 || steps[0].Action != protocol.ActionWait || steps[0].WaitKind != WaitKindLane ||
+		steps[0].WaitLane != lane {
+		t.Fatalf("the leg's plan %+v does not open with the gate's wait for lane %d", steps, lane)
+	}
+	return steps[1:]
 }

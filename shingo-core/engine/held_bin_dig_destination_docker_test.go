@@ -9,6 +9,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/dispatch"
 	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
@@ -33,14 +34,16 @@ import (
 // own delivery. planUnbury now excludes the destination PlanReshuffle's retrieve
 // will deliver to.
 //
-// Driven through the real engine: the scanner's held-bin path is what reaches
-// digForBuriedHeldBin, and the release goes through the lift and then
+// Driven through the real engine. Every lane is marked, so the held-bin order is
+// sent to the lane's mark and the dig is the gate's own (proposeLaneClearDig),
+// not the held-bin path's PlanReshuffle: what keeps the destination out of its
+// parking is the slot rule every chooser reads (a slot a live order names as
+// its delivery is not free, nodes.SlotTakeableSQL), since the dig's order is the
+// one that names it. The release goes through the lift and then
 // EvaluateWaitLaneForStagedOrder.
 //
-// RED before the fix: the first scan planned the dig (two legs, the lane locked)
-// with the destination as its only parking. MUTATION: pass no destination to
-// PlanReshuffle from planBuriedReshuffle — the same dig starts again and the
-// first assertion fires.
+// MUTATION (not yet run): drop the delivery_node clause from slotTakeable. The
+// destination is offered as parking and the first assertion fires.
 func TestHeldBinDig_NeverParksOnTheOrdersOwnDestination(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -65,39 +68,33 @@ func TestHeldBinDig_NeverParksOnTheOrdersOwnDestination(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderBinID(move.ID, sc.TargetBin.ID), "stamp the held bin")
 
 	// ── The only free parking is the order's own destination: no dig ──────
+	// Every lane is marked: the move is sent to the lane's mark, and the dig is
+	// the gate's own (the order digs its lane as its own children, staying at
+	// the mark), asked when the lane is evaluated.
 	eng.RunFulfillmentScan()
+	eng.Dispatcher().EvaluateLaneReleases(sc.Lane.ID)
 	move = testdb.RequireOrder(t, db, "hbd-move")
 	legs, err := db.ListChildOrders(move.ID)
 	testutil.MustNoErr(t, err, "list the dig's legs")
-	digRows, err := reservations.ActiveMouthRows(db.DB, sc.Lane.ID)
-	testutil.MustNoErr(t, err, "read the lane's mouth rows")
-	if len(legs) != 0 || move.Status == protocol.StatusReshuffling || len(digRows) != 0 {
+	if len(legs) != 0 || excavating(t, db, sc.Lane.ID) {
 		t.Fatalf("the dig started with %s — the held-bin order's own destination — as its only parking: "+
-			"order %s, %d leg(s), %d mouth row(s) on %s. Its retrieve will deliver there, so the release "+
-			"can never put the blocker down and the lane stays locked with nothing able to free it",
-			dest.Name, move.Status, len(legs), len(digRows), sc.Lane.Name)
+			"%d leg(s), excavation on %s %v. Its retrieve will deliver there, so the release can never put "+
+			"the blocker down and the lane stays locked with nothing able to free it",
+			dest.Name, len(legs), sc.Lane.Name, excavating(t, db, sc.Lane.ID))
 	}
-	if !protocol.IsAcquiring(move.Status) || move.QueueCause != string(dispatch.CauseNoShuffleSlot) {
-		t.Errorf("the held-bin order is %q under cause %q, want an acquiring order waiting under %q — "+
-			"there is no parking the dig could use", move.Status, move.QueueCause, dispatch.CauseNoShuffleSlot)
-	}
-	if claimed, err := db.ListBinsByClaim(move.ID); err != nil || len(claimed) != 0 {
-		t.Errorf("the waiting order hard-claims %d bin(s) (err %v) — it waits on its soft holds only",
-			len(claimed), err)
+	if !dispatch.IsGateStaged(move) || move.QueueCause == "" {
+		t.Errorf("the held-bin order is %q under cause %q (gate-staged %v), want it held at the lane's "+
+			"mark under a named cause", move.Status, move.QueueCause, dispatch.IsGateStaged(move))
 	}
 
 	// ── The releaser: another slot in the group frees ─────────────────────
 	testutil.MustNoErr(t, db.MoveBinClearingStaging(occupant.ID, sc.LineNode.ID, false), "free the other shuffle slot")
-	eng.RunFulfillmentScan()
-	move = testdb.RequireOrder(t, db, "hbd-move")
+	eng.Dispatcher().EvaluateLaneReleases(sc.Lane.ID)
 	legs, err = db.ListChildOrders(move.ID)
 	testutil.MustNoErr(t, err, "list the dig's legs after a slot freed")
-	if move.Status != protocol.StatusReshuffling || len(legs) < 2 {
-		t.Fatalf("%s freed and the dig still did not start: order %s under %q, %d leg(s)",
-			other.Name, move.Status, move.QueueCause, len(legs))
-	}
-	if retrieve := legs[len(legs)-1]; retrieve.DeliveryNode != dest.Name {
-		t.Errorf("the dig's retrieve delivers to %q, want the order's destination %s", retrieve.DeliveryNode, dest.Name)
+	if len(legs) == 0 {
+		move = testdb.RequireOrder(t, db, "hbd-move")
+		t.Fatalf("%s freed and the dig still did not start: order %s under %q", other.Name, move.Status, move.QueueCause)
 	}
 
 	// ── And the blocker goes to the slot that freed ────────────────────────
@@ -113,4 +110,18 @@ func TestHeldBinDig_NeverParksOnTheOrdersOwnDestination(t *testing.T) {
 		t.Fatalf("the dig's first leg was released to %q (cause %q), want the slot that freed, %s",
 			unbury.DeliveryNode, unbury.QueueCause, other.Name)
 	}
+}
+
+// excavating reports whether a dig (an excavation, not an order's source lock)
+// holds laneID.
+func excavating(t *testing.T, db *store.DB, laneID int64) bool {
+	t.Helper()
+	rows, err := reservations.ActiveMouthRows(db.DB, laneID)
+	testutil.MustNoErr(t, err, "read the lane's mouth rows")
+	for _, r := range rows {
+		if reservations.IsExcavation(r.ReservedBy) {
+			return true
+		}
+	}
+	return false
 }

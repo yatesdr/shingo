@@ -779,6 +779,7 @@ func TestRetrieveEmpty_LaneSourceScopesToLane(t *testing.T) {
 	grp := &nodes.Node{Name: "LSC-GRP", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
 	db.CreateNode(grp)
 	grp, _ = db.GetNode(grp.ID)
+	testdb.MarkGroup(t, db, grp.ID)
 	lane := &nodes.Node{Name: "LSC-LANE", IsSynthetic: true, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true}
 	db.CreateNode(lane)
 	lane, _ = db.GetNode(lane.ID)
@@ -837,6 +838,7 @@ func TestRetrieveEmpty_BuriedTriggersReshuffle(t *testing.T) {
 	grp, _ = db.GetNode(grp.ID)
 
 	// Lane 1: full bins at depth 1+2, empty buried at depth 3
+	testdb.MarkGroup(t, db, grp.ID)
 	lane1 := &nodes.Node{Name: "TC41-L1", IsSynthetic: true, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true}
 	db.CreateNode(lane1)
 	lane1, _ = db.GetNode(lane1.ID)
@@ -865,6 +867,7 @@ func TestRetrieveEmpty_BuriedTriggersReshuffle(t *testing.T) {
 	db.CreateBin(emptyBin)
 
 	// Lane 2: completely empty — provides shuffle slots for the reshuffle
+	testdb.MarkGroup(t, db, grp.ID)
 	lane2 := &nodes.Node{Name: "TC41-L2", IsSynthetic: true, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true}
 	db.CreateNode(lane2)
 	lane2, _ = db.GetNode(lane2.ID)
@@ -947,6 +950,7 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 	db.CreateNode(grp)
 	grp, _ = db.GetNode(grp.ID)
 
+	testdb.MarkGroup(t, db, grp.ID)
 	lane1 := &nodes.Node{Name: "ASRS_Lane_Test-L1", IsSynthetic: true, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true}
 	db.CreateNode(lane1)
 	lane1, _ = db.GetNode(lane1.ID)
@@ -974,6 +978,7 @@ func TestComplex_BuriedSourceTriggersReshuffle(t *testing.T) {
 	db.ConfirmBinManifest(targetBin.ID, "")
 
 	// Shuffle lane (provides empty slots for unbury).
+	testdb.MarkGroup(t, db, grp.ID)
 	lane2 := &nodes.Node{Name: "ASRS_Lane_Test-L2", IsSynthetic: true, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true}
 	db.CreateNode(lane2)
 	lane2, _ = db.GetNode(lane2.ID)
@@ -1381,7 +1386,7 @@ func TestDispatcher_RetrieveOrder_NGRPSource(t *testing.T) {
 	})
 	dispatchSimpleViaScanner(t, d2, db, "retrieve-ngrp-1")
 
-	order := testdb.RequireOrderStatus(t, db, "retrieve-ngrp-1", StatusDispatched)
+	order := testdb.RequireOrderStatus(t, db, "retrieve-ngrp-1", StatusInTransit) // the lane is marked and free: the gate opens at once
 
 	if order.BinID == nil {
 		t.Fatal("BinID nil — planRetrieve must claim a bin via NGRP resolver")
@@ -1442,7 +1447,7 @@ func TestDispatcher_MoveOrder_NGRPSource(t *testing.T) {
 	dispatchSimpleViaScanner(t, d2, db, "move-ngrp-1")
 
 	// Verify the order was dispatched (not failed)
-	order := testdb.RequireOrderStatus(t, db, "move-ngrp-1", StatusDispatched)
+	order := testdb.RequireOrderStatus(t, db, "move-ngrp-1", StatusInTransit) // the lane is marked and free: the gate opens at once
 
 	// Verify the bin was claimed
 	if order.BinID == nil {
@@ -1487,6 +1492,7 @@ func TestDispatcher_MoveOrder_NGRPSource_NoBin(t *testing.T) {
 	// Create NGRP with an empty lane (no bins)
 	grp := &nodes.Node{Name: "GRP-MVEMPTY", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(grp), "create NGRP")
+	testdb.MarkGroup(t, db, grp.ID)
 	lane := &nodes.Node{Name: "GRP-MVEMPTY-L1", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
 	depth := 1

@@ -275,6 +275,7 @@ func TestNodeService_CreateNodeGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateNodeGroup: %v", err)
 	}
+	testdb.MarkGroup(t, db, id)
 	if id == 0 {
 		t.Fatal("CreateNodeGroup returned id=0")
 	}
@@ -299,6 +300,7 @@ func TestNodeService_AddLane(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateNodeGroup: %v", err)
 	}
+	testdb.MarkGroup(t, db, grpID)
 	laneID, err := svc.AddLane(grpID, "NGRP-ADDLANE-L1")
 	if err != nil {
 		t.Fatalf("AddLane: %v", err)
@@ -327,6 +329,7 @@ func TestNodeService_DeleteNodeGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateNodeGroup: %v", err)
 	}
+	testdb.MarkGroup(t, db, grpID)
 	if _, err := svc.AddLane(grpID, "NGRP-DELETE-L1"); err != nil {
 		t.Fatalf("AddLane: %v", err)
 	}
@@ -346,6 +349,7 @@ func TestNodeService_GetGroupLayout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateNodeGroup: %v", err)
 	}
+	testdb.MarkGroup(t, db, grpID)
 	laneID, err := svc.AddLane(grpID, "NGRP-LAYOUT-L1")
 	if err != nil {
 		t.Fatalf("AddLane: %v", err)
@@ -389,6 +393,7 @@ func TestNodeService_ListLaneSlots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateNodeGroup: %v", err)
 	}
+	testdb.MarkGroup(t, db, grpID)
 	laneID, err := svc.AddLane(grpID, "NGRP-LISTSLOTS-L1")
 	if err != nil {
 		t.Fatalf("AddLane: %v", err)
@@ -421,6 +426,7 @@ func TestNodeService_ReorderLaneSlots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateNodeGroup: %v", err)
 	}
+	testdb.MarkGroup(t, db, grpID)
 	laneID, err := svc.AddLane(grpID, "NGRP-REORDER-L1")
 	if err != nil {
 		t.Fatalf("AddLane: %v", err)
@@ -890,6 +896,7 @@ func TestNodeService_ReparentNode_MovesUnderNewParent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateNodeGroup: %v", err)
 	}
+	testdb.MarkGroup(t, db, grpID)
 	laneID, err := svc.AddLane(grpID, "NGRP-REPARENT-PR3A1B-L1")
 	if err != nil {
 		t.Fatalf("AddLane: %v", err)

@@ -55,7 +55,7 @@ func TestResolveNodeStaging_StorageSlotUnderLane(t *testing.T) {
 		t.Fatalf("get LANE node type: %v", err)
 	}
 
-	laneNode := &nodes.Node{Name: "LANE-A", Enabled: true, NodeTypeID: &laneType.ID}
+	laneNode := &nodes.Node{Name: "LANE-A", Enabled: true, NodeTypeID: &laneType.ID, ParentID: testdb.MarkedGroup(t, db, "LANE-A-GRP")}
 	testutil.MustNoErr(t, db.CreateNode(laneNode), "create lane node")
 
 	// Create a storage slot under the LANE.

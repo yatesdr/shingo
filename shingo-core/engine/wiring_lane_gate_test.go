@@ -23,7 +23,7 @@ func laneWithSlots(t *testing.T, db *store.DB, name string, slotCount int) (int6
 	if err != nil {
 		t.Fatalf("get LANE type: %v", err)
 	}
-	lane := &nodes.Node{Name: name, IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID}
+	lane := &nodes.Node{Name: name, IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: testdb.MarkedGroup(t, db, name+"-GRP")}
 	if err := db.CreateNode(lane); err != nil {
 		t.Fatalf("create lane: %v", err)
 	}

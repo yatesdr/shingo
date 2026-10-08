@@ -25,6 +25,7 @@ func mntFixture(t *testing.T, db *store.DB, group string, slots int, typeCode st
 	t.Helper()
 	grpID, err := nodes.CreateGroup(db.DB, group)
 	testutil.MustNoErr(t, err, "CreateGroup")
+	testdb.MarkGroup(t, db, grpID)
 	for i := 0; i < slots; i++ {
 		n := &nodes.Node{
 			Name: group + "-P" + string(rune('A'+i)), Enabled: true, ParentID: &grpID,

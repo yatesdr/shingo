@@ -37,7 +37,8 @@ func (s *stubNodesPageDataStore) NodeTileStates() (map[int64]bins.NodeTileState,
 func (s *stubNodesPageDataStore) ListScenePoints() ([]*scene.Point, error) {
 	return s.scenePoints, nil
 }
-func (s *stubNodesPageDataStore) ListBinTypes() ([]*bins.BinType, error) { return s.binTypes, nil }
+func (s *stubNodesPageDataStore) ListBinTypes() ([]*bins.BinType, error)          { return s.binTypes, nil }
+func (s *stubNodesPageDataStore) GroupsWithWaitingSpots() (map[int64]bool, error) { return nil, nil }
 func (s *stubNodesPageDataStore) ListEdges() ([]registry.Edge, error) {
 	return s.edges, nil
 }

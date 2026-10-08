@@ -33,6 +33,9 @@ func AddLane(db *sql.DB, groupID int64, name string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("LANE node type not found")
 	}
+	if err := requireMarkedGroup(db, &Node{Name: name, NodeTypeID: &lanType.ID, ParentID: &groupID}); err != nil {
+		return 0, err
+	}
 	laneID, err := helpers.InsertID(db, `INSERT INTO nodes (name, is_synthetic, node_type_id, parent_id, zone, enabled) VALUES ($1, true, $2, $3, $4, true) RETURNING id`,
 		name, lanType.ID, groupID, grpNode.Zone)
 	if err != nil {

@@ -204,6 +204,7 @@ func TestStagedOrder_KeepsTheOperatorsPayloadWhenTheSourceIsAGroup(t *testing.T)
 	if err != nil {
 		t.Fatalf("create node group: %v", err)
 	}
+	testdb.MarkGroup(t, db, groupID)
 	group, err := db.GetNode(groupID)
 	if err != nil {
 		t.Fatalf("reload node group: %v", err)

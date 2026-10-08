@@ -135,6 +135,7 @@ func loaderOwnBufferFixture(t *testing.T, db *store.DB) ownBufferFixture {
 	if err != nil {
 		t.Fatalf("create group: %v", err)
 	}
+	testdb.MarkGroup(t, db, grpID)
 	slot := func(name string) *nodes.Node {
 		n := &nodes.Node{Name: name, Enabled: true, ParentID: &grpID}
 		if err := db.CreateNode(n); err != nil {

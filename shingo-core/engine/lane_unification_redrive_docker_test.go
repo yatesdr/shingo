@@ -46,6 +46,7 @@ func laneWithTwoSlots(t *testing.T, db *store.DB, name string) (laneID int64, sl
 	}
 	grp := &nodes.Node{Name: name + "-GRP", IsSynthetic: true, Enabled: true, NodeTypeID: &ngrpType.ID}
 	testutil.MustNoErr(t, db.CreateNode(grp), "create group")
+	testdb.MarkGroup(t, db, grp.ID)
 	lane := &nodes.Node{Name: name + "-LANE", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: &grp.ID}
 	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
 	d0, d1 := 0, 1
@@ -56,30 +57,10 @@ func laneWithTwoSlots(t *testing.T, db *store.DB, name string) (laneID int64, sl
 	return lane.ID, []*nodes.Node{s0, s1}
 }
 
-// waitForStatus polls for a status, bounded well under the 60s periodic sweep so
-// a pass cannot be the sweep's doing.
-func waitForStatus(t *testing.T, db *store.DB, uuid string, want protocol.Status, within time.Duration) *orders.Order {
-	t.Helper()
-	deadline := time.Now().Add(within)
-	var last protocol.Status
-	for time.Now().Before(deadline) {
-		o, err := db.GetOrderByUUID(uuid)
-		if err == nil && o != nil {
-			last = o.Status
-			if o.Status == want {
-				return o
-			}
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	t.Fatalf("order %s did not reach %s within %s (last status %s)", uuid, want, within, last)
-	return nil
-}
-
 // TestUnification_LaneClearingEventRedrivesAParkedPlainOrder.
 //
 // A retrieve whose only source bin sits in a lane that another order is inside.
-// It parks. Then the occupant goes terminal — which releases its occupancy in
+// It is held at the lane's mark. Then the occupant goes terminal — which releases its occupancy in
 // the SAME transaction as the status write (store/orders.go →
 // reservations.ReleaseByOrder) — and the terminal event re-drives the scanner.
 //
@@ -100,9 +81,12 @@ func TestUnification_LaneClearingEventRedrivesAParkedPlainOrder(t *testing.T) {
 	// acquiring set — an occupant that the scanner also tries to fulfil would
 	// fail on its own account and muddy what this test is watching — while still
 	// being terminalizable below.
+	// Its route ends in the lane, as an occupant's does: the terminal event finds
+	// the lane through it (LaneIDsForOrder).
 	occupant := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "redrive-occupant"
 		o.Status = dispatch.StatusDispatched
+		o.DeliveryNode = slots[1].Name
 	})
 	if _, err := reservations.AcquireOccupancy(db.DB, occupant.ID, laneID); err != nil {
 		t.Fatalf("acquire occupancy: %v", err)
@@ -122,14 +106,15 @@ func TestUnification_LaneClearingEventRedrivesAParkedPlainOrder(t *testing.T) {
 	})
 
 	// PRECONDITION, and the whole test rests on it: the order must genuinely be
-	// parked on the lane. If it dispatched, the release below proves nothing.
+	// held at the lane. Every lane is marked, so it is sent to the mark and the
+	// gate holds it there. If it went in, the release below proves nothing.
 	parked, err := db.GetOrderByUUID("redrive-1")
 	if err != nil || parked == nil {
 		t.Fatalf("reload parked order: %v", err)
 	}
-	if parked.Status == dispatch.StatusDispatched {
-		t.Fatal("the order dispatched into a lane another order occupies — the unification's ask " +
-			"is not reaching this path, and the rest of this test is vacuous")
+	if !dispatch.IsGateStaged(parked) {
+		t.Fatalf("the order went into a lane another order occupies (status %s, wait index %d) — the "+
+			"gate is not reaching this path, and the rest of this test is vacuous", parked.Status, parked.WaitIndex)
 	}
 	if parked.QueueCause != string(dispatch.CauseLaneOccupied) {
 		t.Fatalf("queue_cause = %q, want %q — the park must say WHY on the row, or an operator "+
@@ -152,7 +137,7 @@ func TestUnification_LaneClearingEventRedrivesAParkedPlainOrder(t *testing.T) {
 	}})
 
 	// Seconds, against a 60s sweep: this is the event's doing.
-	waitForStatus(t, db, "redrive-1", dispatch.StatusDispatched, 10*time.Second)
+	waitUntilOffTheMark(t, db, "redrive-1", 10*time.Second)
 
 	// END-OF-SCENARIO LEDGER SWEEP. The occupancy assertion above is scoped to
 	// this lane and this occupant, which is the fact this test is about; the
@@ -161,4 +146,38 @@ func TestUnification_LaneClearingEventRedrivesAParkedPlainOrder(t *testing.T) {
 	// here. Cheap, and it turns every scenario into a check on the release paths
 	// it happens to run through. See testdb.AssertNoOrphanedHolds.
 	testdb.AssertNoOrphanedHolds(t, db)
+}
+
+// waitUntilOffTheMark polls until the order is no longer held at a lane's mark,
+// bounded well under the 60s periodic sweep so a release cannot be the sweep's.
+func waitUntilOffTheMark(t *testing.T, db *store.DB, uuid string, within time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		if o, err := db.GetOrderByUUID(uuid); err == nil && o != nil && !dispatch.IsGateStaged(o) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("order %s was not released from the mark within %s", uuid, within)
+}
+
+// waitUntilSent polls until the order has left the acquiring set with a vendor
+// order (dispatched, or already in_transit once the gate appended), bounded well
+// under the 60s periodic sweep so it cannot be the sweep's doing.
+func waitUntilSent(t *testing.T, db *store.DB, uuid string, within time.Duration) *orders.Order {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	var last protocol.Status
+	for time.Now().Before(deadline) {
+		if o, err := db.GetOrderByUUID(uuid); err == nil && o != nil {
+			last = o.Status
+			if o.VendorOrderID != "" && !protocol.IsAcquiring(o.Status) {
+				return o
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("order %s was not sent within %s (last status %s)", uuid, within, last)
+	return nil
 }

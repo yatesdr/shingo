@@ -65,7 +65,7 @@ func TestBinMove_RefusesSameNodeEvenInsideALane(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get LANE node type: %v", err)
 	}
-	lane := &nodes.Node{Name: "SAMENODE-LANE", IsSynthetic: true, NodeTypeID: &laneType.ID, Enabled: true}
+	lane := &nodes.Node{Name: "SAMENODE-LANE", IsSynthetic: true, NodeTypeID: &laneType.ID, Enabled: true, ParentID: testdb.MarkedGroup(t, db, "SAMENODE-LANE-GRP")}
 	if err := db.CreateNode(lane); err != nil {
 		t.Fatalf("create lane: %v", err)
 	}

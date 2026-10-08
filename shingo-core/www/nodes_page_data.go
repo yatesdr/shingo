@@ -32,7 +32,10 @@ func (a *nodesPageDataAdapter) NodeTileStates() (map[int64]domain.NodeTileState,
 func (a *nodesPageDataAdapter) ListScenePoints() ([]*domain.ScenePoint, error) {
 	return a.ns.ListScenePoints()
 }
-func (a *nodesPageDataAdapter) ListBinTypes() ([]*domain.BinType, error)  { return a.bs.ListBinTypes() }
+func (a *nodesPageDataAdapter) ListBinTypes() ([]*domain.BinType, error) { return a.bs.ListBinTypes() }
+func (a *nodesPageDataAdapter) GroupsWithWaitingSpots() (map[int64]bool, error) {
+	return a.ns.GroupsWithWaitingSpots()
+}
 func (a *nodesPageDataAdapter) ListEdges() ([]domain.RegistryEdge, error) { return a.ns.ListEdges() }
 func (a *nodesPageDataAdapter) CachedRobots() []fleet.RobotStatus {
 	if a.robots == nil {
@@ -52,6 +55,7 @@ type nodesPageDataStore interface {
 	ListScenePoints() ([]*domain.ScenePoint, error)
 	ListBinTypes() ([]*domain.BinType, error)
 	ListEdges() ([]domain.RegistryEdge, error)
+	GroupsWithWaitingSpots() (map[int64]bool, error)
 	CachedRobots() []fleet.RobotStatus
 }
 
@@ -72,18 +76,21 @@ type nodeRobots struct {
 
 // nodesPageData aggregates all data needed to render the nodes page.
 type nodesPageData struct {
-	Nodes       []*domain.Node
-	Counts      map[int64]int
-	TileStates  map[int64]domain.NodeTileState
-	Zones       []string
-	NodeLabels  map[string]string
-	NodeInfo    map[string]*nodeSceneInfo
-	MapGroups   map[string][]*domain.ScenePoint
-	BinTypes    []*domain.BinType
-	Edges       []domain.RegistryEdge
-	ChildCounts map[int64]int
-	Depths      map[int64]int
-	RobotsAt    map[int64]nodeRobots
+	Nodes      []*domain.Node
+	Counts     map[int64]int
+	TileStates map[int64]domain.NodeTileState
+	// WaitingSpots is the groups that have a waiting spot: a lane can be added
+	// only to one of them.
+	WaitingSpots map[int64]bool
+	Zones        []string
+	NodeLabels   map[string]string
+	NodeInfo     map[string]*nodeSceneInfo
+	MapGroups    map[string][]*domain.ScenePoint
+	BinTypes     []*domain.BinType
+	Edges        []domain.RegistryEdge
+	ChildCounts  map[int64]int
+	Depths       map[int64]int
+	RobotsAt     map[int64]nodeRobots
 }
 
 // getNodesPageData assembles all data for the nodes page.
@@ -110,13 +117,8 @@ func getNodesPageData(db nodesPageDataStore) (*nodesPageData, error) {
 	if counts == nil {
 		counts = make(map[int64]int, len(nodes))
 	}
-	tileStates, err := db.NodeTileStates()
-	if err != nil {
-		log.Printf("nodes page: tile states: %v", err)
-	}
-	if tileStates == nil {
-		tileStates = make(map[int64]domain.NodeTileState, len(nodes))
-	}
+	tileStates := loadTileStates(db, len(nodes))
+	waitingSpots := loadWaitingSpots(db)
 	zoneSet := map[string]bool{}
 	for _, n := range nodes {
 		if n.Zone != "" {
@@ -184,18 +186,19 @@ func getNodesPageData(db nodesPageDataStore) (*nodesPageData, error) {
 	}
 
 	return &nodesPageData{
-		Nodes:       nodes,
-		Counts:      counts,
-		TileStates:  tileStates,
-		Zones:       zones,
-		NodeLabels:  nodeLabels,
-		NodeInfo:    nodeInfo,
-		MapGroups:   mapGroups,
-		BinTypes:    binTypes,
-		Edges:       edges,
-		ChildCounts: childCounts,
-		Depths:      depths,
-		RobotsAt:    robotsAtNodes(db.CachedRobots(), nodes, scenePoints),
+		Nodes:        nodes,
+		Counts:       counts,
+		TileStates:   tileStates,
+		WaitingSpots: waitingSpots,
+		Zones:        zones,
+		NodeLabels:   nodeLabels,
+		NodeInfo:     nodeInfo,
+		MapGroups:    mapGroups,
+		BinTypes:     binTypes,
+		Edges:        edges,
+		ChildCounts:  childCounts,
+		Depths:       depths,
+		RobotsAt:     robotsAtNodes(db.CachedRobots(), nodes, scenePoints),
 	}, nil
 }
 
@@ -313,4 +316,28 @@ func parseNodeTasks(jsonStr string) string {
 		}
 	}
 	return strings.Join(names, ", ")
+}
+
+// loadTileStates is the tiles' state, empty (never nil) when the read fails: a
+// page with plain tiles is better than no page.
+func loadTileStates(db nodesPageDataStore, n int) map[int64]domain.NodeTileState {
+	tileStates, err := db.NodeTileStates()
+	if err != nil {
+		log.Printf("nodes page: tile states: %v", err)
+	}
+	if tileStates == nil {
+		tileStates = make(map[int64]domain.NodeTileState, n)
+	}
+	return tileStates
+}
+
+// loadWaitingSpots is the groups a lane can be added to. A failed read leaves it
+// empty, so every group offers its waiting spots instead of "+ Add lane": the
+// store would refuse a lane the page cannot vouch for anyway.
+func loadWaitingSpots(db nodesPageDataStore) map[int64]bool {
+	spots, err := db.GroupsWithWaitingSpots()
+	if err != nil {
+		log.Printf("nodes page: groups with waiting spots: %v", err)
+	}
+	return spots
 }

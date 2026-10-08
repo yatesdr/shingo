@@ -649,7 +649,7 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	// outside, the robot is admitted, enters, lifts, and dwells at the second
 	// wait. Two waits, one plan, released independently: the multi-gate shape rule
 	// 2 already builds.
-	plan, dwellTarget, dwelling, err := d.digDwellPlan(order, sourceNode)
+	plan, _, dwelling, err := d.digDwellPlan(order, sourceNode)
 	if err != nil {
 		return "", err
 	}
@@ -667,11 +667,6 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 	spliced, target, gated, err := d.spliceLaneWait(plan, order.ID)
 	if err != nil {
 		return "", err
-	}
-	if dwelling && !gated {
-		// An unmarked dug lane: the splice found nothing to gate, and the dwell is
-		// the reason this order is unsealed.
-		target, gated = dwellTarget, true
 	}
 	// A no-op on this path today: the junction is written only for multi-bin
 	// complex orders and this builds a fresh single-bin transport plan. It is
@@ -923,7 +918,7 @@ func (d *Dispatcher) DispatchHand(order *orders.Order, binID int64, sourceNode, 
 	if destNode != nil && isStorageDropoff(d.db, order.DeliveryNode) {
 		hand.Slots = []HandSlot{{Node: destNode}}
 	}
-	holds, err := d.resolveOrderLaneHolds(sourceNode, destNode)
+	holds, err := d.resolveOrderLaneHolds(sourceNode)
 	if err != nil {
 		return "", &HandRefusal{OrderID: order.ID, Leg: HandLegLane, Code: protocol.QueueWaitingForMaterial,
 			Cause: CauseLaneAcquireError, Err: err}

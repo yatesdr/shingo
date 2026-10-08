@@ -148,7 +148,8 @@ import (
 //	reachability  | finder Tier 6 (EMPTY intent  | ADMISSION asks it — window 2
 //	              | only, plan.Finder.Pick)      | (3326c1bb) gave the refusal a
 //	              | / NGRP resolver raising      | releaser first
-//	              | BuriedError                  | (digForBuriedHeldBin), then
+//	              | BuriedError                  | (a held-bin dig, retired with  |
+//	              |                              | the unmarked lane), then
 //	              | (group_resolver.go:241)      | skipsForEntry stopped skipping
 //
 // TWO THINGS THAT CELL TABLE SAYS OUT LOUD, both reached here from a different
@@ -353,10 +354,11 @@ type admissionSkips struct {
 	// If the dispatch does not enter the lane, NONE of the in-lane questions are
 	// about it. Same question, asked once, at the moment it is about.
 	//
-	// It is narrow on purpose. Only a MARK moves the entry moment; an unmarked
-	// lane has no wait point and its dispatch drives straight in, so deferring
-	// there would mean nobody asks at all. Pinned by
-	// TestQuestionSet_PlainEntryStillAsksOccupancyOnAnUnmarkedLane.
+	// It is narrow on purpose: only a MARK moves the entry moment. Every lane has
+	// one now (store/nodes/marks.go: the store refuses an unmarked lane, boot
+	// refuses a database with one), so for a declaring caller this answers every
+	// lane. It used to read the lane's mark first and ask everything on an
+	// unmarked lane; that branch, and the read, are gone with the unmarked lane.
 	entryWhenGated bool
 }
 
@@ -438,8 +440,9 @@ type admissionSkips struct {
 // parked on burial with no finder in its path would never move again, which is
 // a worse floor failure than driving to a slot it cannot reach.
 //
-// So the releaser was built first. fulfillment/scanner.go digForBuriedHeldBin
-// routes a held-bin burial into reshuffle planning directly, which is what made
+// So the releaser was built first: the scanner routed a held-bin burial into
+// reshuffle planning directly (a dig since retired with the unmarked lane; the
+// gate's acceptance arm serves a buried held bin at the mark), which is what made
 // the refusal safe; EntryKind below then splits the two plain callers so the
 // held-bin one asks the question and the fresh-bin one keeps the skip its finder
 // has already answered. Neither half works alone, which is why the skip stayed
@@ -706,28 +709,6 @@ func (d *Dispatcher) admitPlan(order *orders.Order, steps []resolvedStep, skip a
 	return Admitted(), nil
 }
 
-// entryDeferredToGate reports whether this caller's dispatch stops OUTSIDE the
-// lane — the marked-lane case, where the create ends at the wait point and only
-// the tail append puts a robot in the corridor.
-//
-// False unless the caller declared entryWhenGated, so a caller that forgets
-// the field asks the question, which is the same forgetting-is-safe discipline as
-// the rest of this file. False for a lane with no group: an ungated lane cannot
-// defer anything to a gate that is not there.
-//
-// laneIsGated is the shared half. The OTHER decision that turns on "does the gate
-// own this lane's entry" is Hold B's node door (TakeLaneOccupancy, lane_gate.go),
-// which skips a gated lane for the same reason this skips its questions: the
-// robot is at the mark, and the append owns both the entry and the row. One
-// spelling, two decisions — what differs is only this caller's declaration, which
-// is a statement about the CALLER's moment rather than about the lane.
-func (d *Dispatcher) entryDeferredToGate(skip admissionSkips, lane *nodes.Node) bool {
-	if !skip.entryWhenGated || lane.ParentID == nil {
-		return false
-	}
-	return d.laneIsGated(lane.ID)
-}
-
 // admit answers whether this move may happen now.
 //
 // The checks run source-lane-first, then destination, and the FIRST refusal is
@@ -823,7 +804,7 @@ func (d *Dispatcher) admitLane(s admissionSituation, node *nodes.Node, isSource 
 	// order whose lane was being dug was refused at DISPATCH — parked whole, its
 	// pre-lane work never sent — which is precisely the disposition the gate
 	// exists to replace, and it was re-asked at the gate a moment later anyway.
-	if d.entryDeferredToGate(s.skip, lane) {
+	if s.skip.entryWhenGated {
 		return Admitted(), nil
 	}
 

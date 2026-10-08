@@ -3,6 +3,7 @@
 package service
 
 import (
+	"shingocore/internal/testdb"
 	"strings"
 	"testing"
 
@@ -27,6 +28,7 @@ func mgGroup(t *testing.T, db *store.DB, name string, children int) (int64, []*n
 	t.Helper()
 	grpID, err := nodes.CreateGroup(db.DB, name)
 	testutil.MustNoErr(t, err, "CreateGroup")
+	testdb.MarkGroup(t, db, grpID)
 	var kids []*nodes.Node
 	for i := 0; i < children; i++ {
 		k := &nodes.Node{Name: name + "-P" + string(rune('A'+i)), Enabled: true, ParentID: &grpID}

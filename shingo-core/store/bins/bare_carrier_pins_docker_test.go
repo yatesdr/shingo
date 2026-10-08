@@ -40,6 +40,7 @@ func bareCarrierFixture(t *testing.T, db *store.DB) bareFixture {
 	}
 	grpID, err := nodes.CreateGroup(sdb, "HLPIN-GRP")
 	testutil.MustNoErr(t, err, "CreateGroup")
+	testdb.MarkGroup(t, db, grpID)
 	bank, bank2 := mk("HLPIN-BANK-1", nil), mk("HLPIN-BANK-2", nil)
 	slot := mk("HLPIN-GRP-SLOT-1", &grpID)
 

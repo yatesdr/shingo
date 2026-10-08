@@ -3,6 +3,7 @@
 package dispatch
 
 import (
+	"shingocore/internal/testdb"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -31,6 +32,7 @@ func depthlessLaneFixture(t *testing.T, db *store.DB, prefix string) (lane, shal
 	grp := &nodes.Node{Name: prefix + "-GRP", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(grp), "create group")
 
+	testdb.MarkGroup(t, db, grp.ID)
 	lane = &nodes.Node{Name: prefix + "-LANE", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
 	lane, err = db.GetNode(lane.ID)

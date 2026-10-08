@@ -129,58 +129,15 @@ func TestQuestionSet_PlainEntryStillAsksTheDig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AcquireLanesForOrder: %v", err)
 	}
-	if admitted || cause != CauseLaneDigActive {
-		t.Fatalf("admitted=%v cause=%q, want refused with %q — the dig question is the one this path "+
-			"does ask, and it is mode-independent", admitted, cause, CauseLaneDigActive)
+	// Every lane is marked: the entry's dig question is the gate's, at release,
+	// and the refusal here is the source lock meeting the dig's row.
+	if admitted || cause != CauseLaneHeldDig {
+		t.Fatalf("admitted=%v cause=%q, want refused with %q — a plain retrieve never walks into a "+
+			"corridor another reshuffle owns", admitted, cause, CauseLaneHeldDig)
 	}
 	if laneName == "" {
 		t.Error("no lane name on the refusal; the operator sentence names the contended lane, and " +
 			"carrying it is why GateVerdict gained a lane field when digRefusalFor was folded in")
-	}
-}
-
-// TestQuestionSet_PlainEntryStillAsksOccupancyOnAnUnmarkedLane is the NARROWNESS
-// assertion for entryWhenGated, and it is the mistake worth pinning.
-//
-// The flag defers the in-lane questions to the gate for a lane that HAS a mark,
-// because only there does the create end outside the corridor and the tail append
-// record presence instead. A lane with no mark has no gate and no wait point — its
-// dispatch drives the robot straight in — so deferring there would mean nobody
-// asks at all, on every lane at both plants.
-//
-// The plausible wrong implementation is deferring for any lane in a group that
-// has SOME gated lane in it, or for any lane at all. Either would silently delete
-// the unification's refusal on the unmarked majority while every gate test stayed
-// green.
-//
-// MUTATION (verified): make entryDeferredToGate return true whenever the caller
-// declares the flag, without consulting the lane. This fires — the occupied
-// unmarked lane admits.
-func TestQuestionSet_PlainEntryStillAsksOccupancyOnAnUnmarkedLane(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	sd := testdb.SetupStandardData(t, db)
-	_, laneID, shallow := gatedLane(t, db, "QS-UNMARKED-OCC", "") // no mark: not gated
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-
-	line, err := db.GetNodeByDotName(sd.LineNode.Name)
-	if err != nil {
-		t.Fatalf("resolve line node: %v", err)
-	}
-	inside := testdb.CreateOrder(t, db, func(o *orders.Order) { o.EdgeUUID = "qs-mouth-occ-inside" }, asDispatched) // (C1.5: an occupant is dispatched)
-	if _, err := reservations.AcquireOccupancy(db.DB, inside.ID, laneID); err != nil {
-		t.Fatalf("acquire occupancy: %v", err)
-	}
-
-	store := admitOrder(t, db, "qs-mouth-occ", shallow)
-	admitted, cause, _, err := d.AcquireLanesForOrder(store, line, shallow, EntryFreshBin)
-	if err != nil {
-		t.Fatalf("AcquireLanesForOrder: %v", err)
-	}
-	if admitted || cause != CauseLaneOccupied {
-		t.Fatalf("a plain store was admitted into an occupied UNMARKED lane (admitted=%v cause=%q). "+
-			"There is no gate on a lane with no mark: the robot goes straight in at dispatch, so "+
-			"this is the only moment the question can be asked", admitted, cause)
 	}
 }
 

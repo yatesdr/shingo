@@ -189,8 +189,9 @@ func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequ
 				Reason: fmt.Sprintf("recovery order %d is already in flight (%s)", live.ID, live.Status)}
 		}
 		// A PARKED ONE IS SUPERSEDED, NOT DEFERRED TO. An on-deck order waiting
-		// on a held lane holds until the lane clears or the slot empties, and it
-		// never goes terminal on its own (queueRecoveryForLane). A person
+		// before dispatch (a lane that could not be read,
+		// queueRecoveryForUnreadableLane, or a destination not yet secured) never
+		// goes terminal on its own. A person
 		// pressing the button is the releaser that wait was promised: the press
 		// cancels it and this attempt runs its policy afresh. A dispatched one
 		// has a robot acting on it and still refuses above.
@@ -474,27 +475,19 @@ func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceN
 		destNode = dest.Node
 	}
 	// The lane question, asked for the same reason the bin-move door asks it: a
-	// robot driving to the destination is a robot in a lane. EntryHeldBin
-	// because the bin is named and no finder answered the reachability
-	// question. The SOURCE is synthetic and has no lane, so in practice only
-	// the destination's lane can hold this order — which is correct.
-	//
-	// AND IT PARKS, like the sibling door it says it mirrors. This arm called
-	// fail("lane_held"), which terminalizes: a busy corridor — the most ordinary,
-	// most self-clearing condition in the plant — killed the order and, because
-	// the edge_uuid is deterministic per (bin, robot), left the next attempt to
-	// clean up after it. bin_move.go asks the identical question at the identical
-	// point and queues (queueBinMoveForLane). Two spellings of one situation, and
-	// the terminal one was the door whose own doc claims it mirrors the other.
-	if admitted, cause, laneName, aerr := e.dispatcher.AdmitLanesForOrder(
-		order, sourceNode, destNode, dispatch.EntryHeldBin); aerr != nil || !admitted {
-		return e.queueRecoveryForLane(order, destNode, cause, laneName, aerr)
+	// robot driving to the destination is a robot in a lane. The SOURCE is
+	// synthetic and has no lane, and the destination's lane is marked (every lane
+	// is), so the robot stops at the mark and the gate decides its entry: no lane
+	// refuses this order here, and this door no longer has a lane-park arm. What
+	// is left is a lane that could not be READ, which parks rather than kills.
+	if _, _, _, aerr := e.dispatcher.AdmitLanesForOrder(
+		order, sourceNode, destNode, dispatch.EntryHeldBin); aerr != nil {
+		return e.queueRecoveryForUnreadableLane(order, destNode, aerr)
 	}
-	// THE HAND: slot, bin, lane mouths, occupancy and status in one transaction,
-	// then the fleet. A lane refusal inside it parks exactly as the admission
-	// refusal above does; a slot or bin refusal, an ended order or a gone named
-	// bin is the claim failure the old confirm returned. Either way the hand held
-	// nothing.
+	// THE HAND: slot, bin, occupancy and status in one transaction, then the
+	// fleet. It takes no lane hold for this order (the source has no lane), so a
+	// refusal is a slot or bin refusal, an ended order or a gone named bin: the
+	// claim failure the old confirm returned. Either way the hand held nothing.
 	_, err := e.dispatcher.DispatchHand(order, binID, sourceNode, destNode)
 	if dispatch.IsConcurrentTransition(err) {
 		// Another dispatcher took the order first and holds it; the hand held
@@ -506,10 +499,7 @@ func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceN
 		}
 		return nil
 	}
-	if r, refused := dispatch.AsHandRefusal(err); refused || dispatch.NotAWait(err) {
-		if refused && r.Leg == dispatch.HandLegLane && r.Cause != dispatch.CauseLaneAcquireError {
-			return e.queueRecoveryForLane(order, destNode, r.Cause, r.Lane, nil)
-		}
+	if _, refused := dispatch.AsHandRefusal(err); refused || dispatch.NotAWait(err) {
 		return fail("claim_failed", fmt.Sprintf("could not claim bin %d and slot %s: %v", binID, destNode.Name, err), err)
 	}
 	if err != nil {
@@ -525,20 +515,17 @@ func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceN
 	return nil
 }
 
-// queueRecoveryForLane parks a recovery order on a busy corridor instead of
-// killing it — the same disposition, and very nearly the same body, as
-// bin_move.go's queueBinMoveForLane.
+// queueRecoveryForUnreadableLane parks a recovery order whose lane could not be
+// read, instead of killing it: Core declining to answer is the undetermined
+// family, a wait and not a fault. It used to be queueRecoveryForLane, which also
+// parked a refusal on a busy corridor; every lane is marked now, so no lane
+// refuses this order before dispatch and that arm is gone.
 //
-// ── WHAT RE-DRIVES IT, WHICH IS THE WHOLE QUESTION ─────────────────
+// ── WHAT RE-DRIVES IT ─────────────────────────────────────────────────
 //
-// A park nobody releases is a wedge wearing a cause, and this file's own header
-// gives the reason to fear one: "the scanner would never pick this up — it
-// sources a move order by FINDING a bin at the source node, and every finder
-// excludes synthetic nodes". That is true of the FIND path, and this order never
-// takes it. A recovery order is born with orders.bin_id set, so the scanner
-// routes it to dispatchHeldBin (fulfillment/scanner.go, the `order.BinID != nil`
-// branch) — the arm that reuses a held bin and never consults a finder. The
-// chain, end to end:
+// A recovery order is born with orders.bin_id set, so the scanner routes it to
+// dispatchHeldBin (fulfillment/scanner.go, the `order.BinID != nil` branch),
+// which reuses the held bin and never consults a finder:
 //
 //   - ListAcquiring selects {pending, queued}, so a parked recovery order is in
 //     the scan set (store/orders/orders.go).
@@ -547,31 +534,16 @@ func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceN
 //     row and `_ROBOT:<id>` carries no dot, so GetNodeByDotName falls through to
 //     GetByName and finds it (store/nodes/nodes.go).
 //   - It re-reserves the destination (owner-idempotent), re-asks the lane, and
-//     on success calls the same DispatchDirect this door would have called —
-//     which keys on SourceIntentOnDeck for buildUnloadOnlyPlan and on
-//     pinnedVehicleFor for the robot pin (dispatch/dispatcher.go). The plan the
-//     scanner sends is the plan this door would have sent.
+//     on success calls the same DispatchDirect this door would have called. The
+//     plan the scanner sends is the plan this door would have sent.
 //
-// Proven end to end by TestRecoveryOrderParksOnAHeldLaneAndTheScannerDispatchesIt.
-//
-// The holds are exactly what that arm expects to find: the bin is SOFT (a
-// pending reservation from ReserveForDispatch, never hard-claimed on this path)
-// and the destination reservation is owner-idempotent. Only the mouth hold the
-// refused acquire may have taken is dropped, so a parked order does not sit on a
-// lane it is not using — the same line, for the same reason, as its sibling.
-func (e *Engine) queueRecoveryForLane(order *orders.Order, destNode *nodes.Node,
-	cause dispatch.QueueCause, laneName string, aerr error,
-) error {
+// The bin is SOFT (a pending reservation from ReserveForDispatch) and the
+// destination reservation is owner-idempotent, which is what that arm expects.
+func (e *Engine) queueRecoveryForUnreadableLane(order *orders.Order, destNode *nodes.Node, aerr error) error {
 	code := protocol.QueueStorageRearranging
-	params := dispatch.QueueParams{Lane: laneName, Payload: order.PayloadCode}
-	if aerr != nil {
-		// An unreadable lane is Core declining to answer, not a busy corridor —
-		// the undetermined family, kept distinct so an outage never reads as
-		// congestion.
-		e.logFn("engine: carried bin recovery %d — lane admission could not be read: %v (holding)", order.ID, aerr)
-		cause = dispatch.CauseLaneAcquireError
-		params.Lane = destNode.Name
-	}
+	e.logFn("engine: carried bin recovery %d — lane admission could not be read: %v (holding)", order.ID, aerr)
+	cause := dispatch.CauseLaneAcquireError
+	params := dispatch.QueueParams{Lane: destNode.Name, Payload: order.PayloadCode}
 	if lerr := e.dispatcher.ReleaseLanesForOrder(order.ID); lerr != nil {
 		e.logFn("engine: release lanes for parked recovery order %d: %v", order.ID, lerr)
 	}
@@ -592,8 +564,7 @@ func (e *Engine) queueRecoveryForLane(order *orders.Order, destNode *nodes.Node,
 			Reason: fmt.Sprintf("the route to %s was not clear and the order could not be queued: %v", destNode.Name, err)}
 	}
 	// No scan trigger here: this park runs under the scan lock the door holds
-	// (a synchronous pass would deadlock on it), and the lane admission just said
-	// no. The periodic pass and the lane-clearing events re-ask it.
+	// (a synchronous pass would deadlock on it). The periodic pass re-asks it.
 	return nil
 }
 

@@ -40,9 +40,6 @@ func (s *stubDispatcher) DemoteAfterFleetRefusal(*orders.Order, dispatch.QueueWa
 	panic("scanner complex-order branch never reaches the fleet, so it never demotes")
 }
 func (s *stubDispatcher) PostFindHook() {}
-func (s *stubDispatcher) BuriedForHeldBin(*orders.Order) (*dispatch.BuriedError, error) {
-	panic("scanner complex-order branch should not describe a held-bin burial")
-}
 
 func (s *stubDispatcher) PlanBuriedReshuffle(*orders.Order, *dispatch.BuriedError) error {
 	panic("scanner complex-order branch should not plan a reshuffle")

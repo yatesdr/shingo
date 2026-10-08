@@ -187,8 +187,25 @@ func mustOpenDatabase(cfg *config.Config) *store.DB {
 		log.Fatalf("open database: %v", err)
 	}
 	log.Printf("shingocore: database open (postgres)")
+	refuseUnmarkedLanes(db)
 	auditLaneGeometry(db)
 	return db
+}
+
+// refuseUnmarkedLanes stops the boot on a database with a lane that has no
+// waiting spot. Every lane entry goes through the splice and the lane oracle,
+// which need a mark to hold a robot at; the store refuses an unmarked lane from
+// now on, and a database written before that rule is refused here, naming each
+// lane, so it is marked (its group's wait_points) before Core runs on it.
+func refuseUnmarkedLanes(db *store.DB) {
+	lanes, err := db.UnmarkedLanes()
+	if err != nil {
+		log.Fatalf("shingocore: could not check every lane has a waiting spot: %v", err)
+	}
+	if len(lanes) > 0 {
+		log.Fatalf("shingocore: %d lane(s) have no waiting spot — give each group its wait points "+
+			"(group_wait_points) before starting: %s", len(lanes), strings.Join(lanes, ", "))
+	}
 }
 
 // auditLaneGeometry logs any single-file lane geometry the mouth-gate's one-hop

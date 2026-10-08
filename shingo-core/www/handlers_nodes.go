@@ -190,6 +190,10 @@ func (h *Handlers) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.engine.NodeService().CreateNode(node); err != nil {
+		if service.IsLaneUnmarked(err) {
+			http.Error(w, "A lane needs a waiting spot: give this group its waiting spots first.", http.StatusBadRequest)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -289,6 +293,10 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		code := http.StatusInternalServerError
 		if service.IsParentCycle(err) || service.IsSlotEnabledFollowsLane(err) {
 			code = http.StatusBadRequest
+		}
+		if service.IsLaneUnmarked(err) {
+			http.Error(w, "A lane needs a waiting spot: give this group its waiting spots first.", http.StatusBadRequest)
+			return
 		}
 		http.Error(w, err.Error(), code)
 		return
@@ -493,6 +501,10 @@ func (h *Handlers) apiNodePropertySet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := h.setNodePropertyAudited(req.NodeID, req.Key, req.Value); err != nil {
+		if service.IsLaneUnmarked(err) {
+			h.jsonError(w, "This group has lanes, and every lane needs a waiting spot: keep at least one.", http.StatusBadRequest)
+			return
+		}
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -695,6 +707,10 @@ func (h *Handlers) apiNodePropertyDelete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := h.engine.NodeService().DeleteNodeProperty(req.NodeID, req.Key); err != nil {
+		if service.IsLaneUnmarked(err) {
+			h.jsonError(w, "This group has lanes, and every lane needs a waiting spot: keep at least one.", http.StatusBadRequest)
+			return
+		}
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"shingocore/internal/testdb"
+	"shingocore/store"
+	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
@@ -65,22 +67,13 @@ func TestUnification_PlainStoreParksOnAnOccupiedLane(t *testing.T) {
 		t.Fatalf("acquire occupancy: %v", err)
 	}
 
+	// Every lane is marked: the store is sent to the mark and the gate's valve
+	// refuses its entry, on the row (F2).
 	store := admitOrder(t, db, "uni-ask-store", shallow)
-	admitted, cause, laneName, err := d.AcquireLanesForOrder(store, line, shallow, EntryFreshBin)
-	if err != nil {
-		t.Fatalf("AcquireLanesForOrder: %v", err)
-	}
-	if admitted {
-		t.Fatal("a plain store was admitted into a lane another order is physically inside. " +
-			"On `none` — what both plants run — resolveOrderLaneHolds yields no mouth holds, so " +
-			"nothing else on this path was ever going to notice")
-	}
-	if cause != CauseLaneOccupied {
+	held := heldAtTheMark(t, d, db, store, line, shallow)
+	if held.QueueCause != string(CauseLaneOccupied) {
 		t.Errorf("cause = %q, want %q — the row has to say WHY, and occupied is investigated "+
-			"differently from a dig or from traffic", cause, CauseLaneOccupied)
-	}
-	if laneName == "" {
-		t.Error("no lane named on the refusal; the operator sentence is \"Waiting for a slot at ‹lane›\"")
+			"differently from a dig or from traffic", held.QueueCause, CauseLaneOccupied)
 	}
 }
 
@@ -149,26 +142,19 @@ func TestUnification_TwoPlainStoresIntoOneLaneSerialize(t *testing.T) {
 		o.Status = "pending"
 	})
 	// The first store passes the gate and goes in.
-	if adm, cause, _, err := d.AcquireLanesForOrder(first, line, deep, EntryFreshBin); err != nil || !adm {
-		t.Fatalf("first store refused (%v, cause %q) — an empty lane must admit", err, cause)
-	}
 	if _, err := d.DispatchDirect(first, line, deep); err != nil {
 		t.Fatalf("DispatchDirect first: %v", err)
 	}
+	if f, _ := db.GetOrder(first.ID); IsGateStaged(f) {
+		t.Fatalf("the first store is held at the mark of an empty lane (cause %q) — an empty lane must admit",
+			f.QueueCause)
+	}
 
-	// The second, into the same single-file lane, must wait for it.
+	// The second is sent to the mark and held there: two robots never share the lane.
 	second := admitOrder(t, db, "uni-ser-2", shallow)
-	admitted, cause, _, err := d.AcquireLanesForOrder(second, line, shallow, EntryFreshBin)
-	if err != nil {
-		t.Fatalf("AcquireLanesForOrder second: %v", err)
-	}
-	if admitted {
-		t.Fatal("two plain stores were both admitted into one single-file lane. This is the " +
-			"collision Hold B exists to prevent, and until the unification it could only be " +
-			"prevented between two COMPOUND legs")
-	}
-	if cause != CauseLaneOccupied {
-		t.Errorf("cause = %q, want %q", cause, CauseLaneOccupied)
+	held := heldAtTheMark(t, d, db, second, line, shallow)
+	if held.QueueCause == "" {
+		t.Errorf("the second store is held at the mark with no cause on its row")
 	}
 }
 
@@ -192,13 +178,9 @@ func TestUnification_PlainRetrieveParksOnAnOccupiedSourceLane(t *testing.T) {
 	}
 
 	retrieve := admitOrder(t, db, "uni-ret", shallow)
-	admitted, cause, _, err := d.AcquireLanesForOrder(retrieve, shallow, line, EntryFreshBin)
-	if err != nil {
-		t.Fatalf("AcquireLanesForOrder: %v", err)
-	}
-	if admitted || cause != CauseLaneOccupied {
-		t.Errorf("retrieve out of an occupied lane: admitted=%v cause=%q, want refused with %q",
-			admitted, cause, CauseLaneOccupied)
+	held := heldAtTheMark(t, d, db, retrieve, shallow, line)
+	if held.QueueCause != string(CauseLaneOccupied) {
+		t.Errorf("retrieve out of an occupied lane is held under %q, want %q", held.QueueCause, CauseLaneOccupied)
 	}
 }
 
@@ -276,4 +258,23 @@ func TestUnification_FailedDispatchLeavesNoOccupancy(t *testing.T) {
 			"No robot is in that lane and nothing else will ever release the row — every later "+
 			"order into this lane parks forever", occ)
 	}
+}
+
+// heldAtTheMark dispatches a plain order and requires it held at the lane's mark:
+// sent to the waiting spot, gate-staged, nothing appended past the wait. That is
+// how a marked lane refuses an entry; there is no refusal before dispatch.
+func heldAtTheMark(t *testing.T, d *Dispatcher, db *store.DB, o *orders.Order, src, dst *nodes.Node) *orders.Order {
+	t.Helper()
+	if _, err := d.DispatchDirect(o, src, dst); err != nil {
+		t.Fatalf("DispatchDirect %s: %v", o.EdgeUUID, err)
+	}
+	after, err := db.GetOrder(o.ID)
+	if err != nil {
+		t.Fatalf("reload %s: %v", o.EdgeUUID, err)
+	}
+	if !IsGateStaged(after) {
+		t.Fatalf("%s went into the lane (status %s, wait index %d, cause %q) — it must be held at the mark",
+			o.EdgeUUID, after.Status, after.WaitIndex, after.QueueCause)
+	}
+	return after
 }

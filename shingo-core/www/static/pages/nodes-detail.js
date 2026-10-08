@@ -10,7 +10,9 @@ import { confirmAllowedBinsNarrowing, renderMaintainSection, saveMaintainedGroup
 
 var isAuth = document.getElementById('page-data').dataset.authenticated === 'true';
 
-export function openNodeModal(el) {
+// opts.focus 'waiting-spots' opens a group with its waiting spots in view: the
+// problem line a group without any shows in place of "+ Add lane" lands here.
+export function openNodeModal(el, opts) {
   if (!el || !el.dataset) return;
   var m = document.getElementById('node-modal');
   var inv = document.getElementById('modal-inventory');
@@ -140,7 +142,8 @@ function loadNodeDetail(nodeID, isSynthetic) {
       // The waiting-points section is built from the group's LANE children.
       renderLaneGate(
         data.node && data.node.node_type_code === 'NGRP',
-        data.node ? data.node.id : 0);
+        data.node ? data.node.id : 0,
+        !!(opts && opts.focus === 'waiting-spots'));
 
       var props = data.properties || [];
       props.forEach(function(p) {
@@ -441,7 +444,7 @@ async function handleNodeSave(el, evt) {
   }
 
   // This one can ask the human a question (a mark the map does not know).
-  await saveLaneGatePoints();
+  if (await saveLaneGatePoints() === false) return;
   await saveMaintainedGroup();
 
   form.submit();
@@ -500,10 +503,11 @@ var _gateMarksLoaded = false;  // false until a search has answered at least onc
 var _gateSearchTimer = null;
 var _gateRowSeq = 0;
 
-// renderLaneGate builds the section for a GROUP from its child lanes. Hidden for
-// anything that is not a group, and for a group with no lanes — there is nothing
-// to say about waiting points on a node with no aisles.
-function renderLaneGate(isGroup, groupID) {
+// renderLaneGate builds the section for a GROUP. Shown for every group, with or
+// without lanes: a lane cannot be added until the group has a waiting spot, so
+// a new group's spots are set here first. Hidden for anything that is not a
+// group. focus puts the waiting spots in view and the cursor in them.
+function renderLaneGate(isGroup, groupID, focus) {
   var box = document.getElementById('lane-gate');
   var list = document.getElementById('lane-gate-list');
   if (!box || !list) return;
@@ -520,11 +524,15 @@ function renderLaneGate(isGroup, groupID) {
   apiGet('/api/nodes/lane-gate-points?group_id=' + groupID)
     .then(function(data) {
       var lanes = (data && data.lanes) || [];
-      box.classList.toggle('hide', lanes.length === 0);
-      if (lanes.length === 0) return;
+      box.classList.remove('hide');
       _gateGroupID = groupID;
-      list.appendChild(groupWaitRow(groupID, (data && data.group_wait_points) || ''));
+      var row = groupWaitRow(groupID, (data && data.group_wait_points) || '', lanes.length);
+      list.appendChild(row);
       lanes.forEach(function(lane) { list.appendChild(gateRow(lane)); });
+      if (focus) {
+        var input = row.querySelector('.group-wait-input');
+        if (input) { input.scrollIntoView({ block: 'center' }); input.focus(); }
+      }
     })
     .catch(function(err) {
       console.warn('lane gate: list lanes', err);
@@ -540,20 +548,22 @@ function renderLaneGate(isGroup, groupID) {
 // one name at a time and this is a list; a multi-select widget for a value an
 // engineer types once at commissioning is machinery nobody asked for. The save
 // still round-trips against the known marks, one entry at a time.
-function groupWaitRow(groupID, value) {
+function groupWaitRow(groupID, value, laneCount) {
   var row = document.createElement('div');
   row.className = 'form-group';
   row.style.marginBottom = '14px';
   row.dataset.groupId = groupID;
   row.dataset.saved = value || '';
   row.innerHTML =
-    '<label class="text-sm" style="font-weight:600">Waiting spots for this block</label>' +
+    '<label class="text-sm" style="font-weight:600">Waiting spots for this group</label>' +
     '<input type="text" class="text-sm group-wait-input" style="width:100%"' +
     ' value="' + escapeHtml(value || '') + '"' +
     ' placeholder="Comma-separated map points, e.g. AISLE-A-WAIT, AISLE-B-WAIT" autocomplete="off">' +
     '<div class="flex flex-between" style="margin-top:4px;align-items:center">' +
       '<span class="text-muted group-wait-state" style="font-size:0.75rem"></span>' +
-      '<button type="button" class="btn btn-sm" data-action="clearGroupWaitPoints">Clear</button>' +
+      // A group with lanes always keeps a spot (the store refuses the last one
+      // going), so Clear is offered only where it can succeed.
+      (laneCount ? '' : '<button type="button" class="btn btn-sm" data-action="clearGroupWaitPoints">Clear</button>') +
     '</div>';
   renderGroupWaitState(row, value || '');
   return row;
@@ -569,34 +579,17 @@ function renderGroupWaitState(row, value) {
   var pts = String(value || '').split(',').map(function(p) { return p.trim(); })
               .filter(function(p) { return p.length > 0; });
   s.textContent = pts.length
-    ? 'Gated — ' + pts.length + ' spot' + (pts.length === 1 ? '' : 's') +
-      ' for every lane in this block. Orders ship unsealed and their slot is chosen on arrival.'
-    : 'Not gated — every lane here decides its slot before dispatch and holds the order if the answer is no.';
+    ? pts.length + ' spot' + (pts.length === 1 ? '' : 's') + ' for every lane in this group. ' +
+      'A robot waits here until its lane is clear, and its slot is chosen when it goes in.'
+    : 'Required before this group can have a lane.';
 }
 
-// clearGroupWaitPoints stands down the WHOLE block, so the confirmation counts
-// the whole block. A per-lane number here would quote an interruption far
-// smaller than the one about to happen.
-async function clearGroupWaitPoints(el) {
+// clearGroupWaitPoints empties the field. It is offered only for a group with
+// no lanes, so no robot can be waiting at the spots it clears.
+function clearGroupWaitPoints(el) {
   var row = el.closest('[data-group-id]');
   if (!row) return;
   var input = row.querySelector('.group-wait-input');
-  if (!input.value.trim()) { renderGroupWaitState(row, ''); return; }
-
-  var waiting = 0;
-  try {
-    var data = await apiGet('/api/nodes/lane-waiting?group_id=' + row.dataset.groupId);
-    waiting = (data && data.waiting) || 0;
-  } catch (e) {
-    console.warn('group wait: waiting count', e);
-  }
-  if (waiting > 0) {
-    var ok = await uiConfirm(waiting + ' robot' + (waiting === 1 ? ' is' : 's are') +
-      ' waiting in this block. ' + (waiting === 1 ? 'It' : 'They') +
-      ' will complete under the old rules; new orders for EVERY lane here will wait before ' +
-      'dispatch instead. Clear the spots?');
-    if (!ok) return;
-  }
   input.value = '';
   renderGroupWaitState(row, '');
 }
@@ -764,7 +757,10 @@ async function saveLaneGatePoints() {
             {node_id: parseInt(groupRow.dataset.groupId, 10), key: 'group_wait_points', value: groupValue});
           groupRow.dataset.saved = groupValue;
         } catch (err) {
-          toast('Could not save the waiting spots for this block: ' + err, 'error');
+          // Stops the save: the form would reload the page and take the reason
+          // with it.
+          toast('Could not save the waiting spots: ' + err, 'error');
+          return false;
         }
       }
     }

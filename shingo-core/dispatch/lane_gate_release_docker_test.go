@@ -635,32 +635,6 @@ func TestGateRelease_AppendFailureStaysStaged(t *testing.T) {
 	}
 }
 
-// TestGateRelease_IgnoresNonGatedLanes: the evaluator is a no-op for every lane
-// whose group is not gated, so the fallback arm and unconfigured
-// plants never see it.
-func TestGateRelease_IgnoresNonGatedLanes(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	backend := testdb.NewSuccessBackend()
-	d, _ := newTestDispatcher(t, db, backend)
-
-	for _, name := range []string{"GROFF-A", "GROFF-B"} {
-		_, laneID, s0 := gatedLane(t, db, name, "") // no mark: the evaluator must not touch it
-		line := lineNode(t, db, name+"-LINE")
-		o := testdb.CreateOrder(t, db, func(ord *orders.Order) {
-			ord.DeliveryNode = s0.Name
-			ord.Status = "pending"
-		})
-		if _, err := d.DispatchDirect(o, line, s0); err != nil {
-			t.Fatalf("[%s] DispatchDirect: %v", name, err)
-		}
-		d.EvaluateLaneReleases(laneID)
-	}
-	if n := len(backend.ReleaseCalls()); n != 0 {
-		t.Errorf("append calls = %d, want 0 — the evaluator must not touch a lane with no mark", n)
-	}
-}
-
 // swapGateFixture builds the swap shape the two waybill tests share: store a
 // full bin in a gated lane, pick an empty out of it, return the empty to a press.
 //

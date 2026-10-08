@@ -60,6 +60,7 @@ func TestMaintainer_DoesNotSourceFromItsOwnGroup(t *testing.T) {
 	// — and the assertion is about which carrier it chose.
 	outsideGrp, err := nodes.CreateGroup(db.DB, "SELFSRC-ELSEWHERE")
 	testutil.MustNoErr(t, err, "elsewhere group")
+	testdb.MarkGroup(t, db, outsideGrp)
 	outsideSlot := &nodes.Node{Name: "SELFSRC-FAR", Enabled: true, ParentID: &outsideGrp}
 	testutil.MustNoErr(t, db.CreateNode(outsideSlot), "create SELFSRC-FAR")
 	landCarrier(t, db, bt, outsideSlot.ID, "SELF-BIN-OUTSIDE")

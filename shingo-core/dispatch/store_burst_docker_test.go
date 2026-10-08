@@ -62,6 +62,7 @@ func storeBurstGroup(t *testing.T, db *store.DB, prefix string, depth int) (grp,
 	testutil.MustNoErr(t, db.CreateNode(grp), "create group")
 
 	mkLane := func(name, mark string) (*nodes.Node, []*nodes.Node) {
+		testdb.MarkGroup(t, db, grp.ID)
 		lane := &nodes.Node{Name: name, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
 		testutil.MustNoErr(t, db.CreateNode(lane), "create "+name)
 		if mark != "" {
@@ -220,7 +221,7 @@ func TestStoreBurst_FiveAtOneDugLane_DivertToDistinctSlots(t *testing.T) {
 // the lane's congestion back on the press.
 //
 // MUTATION (verified): delete the entryWhenGated arm from admitLane — the
-// `if d.entryDeferredToGate(s.skip, lane)` early return (admission.go). Store 1 is
+// `if s.skip.entryWhenGated` early return (admission.go). Store 1 is
 // then refused at DISPATCH with lane-occupied — parked whole, its pre-lane work
 // never sent — and the "refused at DISPATCH on a MARKED lane" assertion fires on
 // the second store of the burst. One store could never show this: the first one is

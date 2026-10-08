@@ -54,6 +54,7 @@
          data-parent-name="{{.ParentName}}"
          data-depth="{{index $.Depths .ID}}"
          data-node-type-id="{{if .NodeTypeID}}{{deref .NodeTypeID}}{{end}}"
+         {{if eq .NodeTypeCode "NGRP"}}data-waiting-spots="{{index $.WaitingSpots .ID}}"{{end}}
          {{with index $.NodeInfo .Name}}data-point-name="{{.PointName}}" data-node-tasks="{{.Tasks}}" data-bound-map="{{.BoundMap}}"{{end}}
          data-action="openNodeModal"
          title="{{.Name}}{{if $count}} ({{$count}} items){{end}}{{if .IsSynthetic}} [synthetic, {{$childCount}} children]{{end}}">
@@ -255,14 +256,13 @@
       </div>
     </div>
 
-    <!-- Waiting points — on the GROUP, one row per lane (and on a LANE, its own row) -->
+    <!-- Waiting spots — on the GROUP (and a lane's legacy override, one row per lane) -->
     <div id="lane-gate" class="hide mb-2">
-      <label class="text-sm" style="display:block;margin-bottom:6px;font-weight:600">Waiting points</label>
+      <label class="text-sm" style="display:block;margin-bottom:6px;font-weight:600">Waiting spots</label>
       <div class="text-muted" style="font-size:0.75rem;margin-bottom:10px">
-        Where robots wait their turn for each lane. Set a point and a robot drives out, does
-        everything it can, and holds there until the lane is clear. Leave it empty and the order waits
-        before a robot is sent. Either way the lane is protected from collisions — this chooses where
-        the waiting happens.
+        Where robots wait their turn for this group's lanes. A robot drives out, does everything it
+        can, and holds at a waiting spot until its lane is clear. A lane cannot be added until its
+        group has at least one.
       </div>
       <!-- Rows are rendered per lane. One row today; when multi-point staging is
            built, a lane grows more rows and nothing about this shape changes. -->
@@ -395,23 +395,28 @@
   </div>
 </div>
 
-<!-- Add Lane Modal -->
-<div id="lane-modal" class="modal-overlay" data-backdrop-close>
-  <div class="modal" style="max-width:400px">
+<!-- Add lane. Opened only for a group that has a waiting spot: a lane cannot
+     exist without one, so a group without any offers its waiting spots instead
+     (nodes-supermarket.js). No data-backdrop-close: a stray click must not throw
+     away what was typed. ×, Cancel and Esc close it. -->
+<div id="lane-modal" class="modal-overlay">
+  <div class="modal" role="dialog" aria-labelledby="lane-modal-title">
     <div class="modal-header flex flex-between">
-      <h2>Add Lane</h2>
-      <button class="modal-close" data-action="closeLaneModal">&times;</button>
+      <h2 id="lane-modal-title">Add lane</h2>
+      <button type="button" class="modal-close" aria-label="Close" data-action="closeLaneModal">&times;</button>
     </div>
-    <div class="form-group">
-      <label>Lane Name</label>
-      <input type="text" id="lane-name" placeholder="e.g. LAN-01" data-action-keydown="enterSubmits:submitAddLane">
+    <div class="modal-body">
+      <div class="form-group">
+        <label for="lane-name">Name</label>
+        <input type="text" id="lane-name" class="form-input" autocomplete="off" placeholder="e.g. LAN-01" data-action-keydown="enterSubmits:submitAddLane">
+        <div class="form-error" id="lane-name-error" data-error-for="lane-name"></div>
+      </div>
+      <div class="form-error" id="lane-form-error" data-error-for="lane-form"></div>
     </div>
-    <input type="hidden" id="lane-group-id">
-    <div class="flex-end gap-1 mt-1">
-      <button class="btn" data-action="closeLaneModal">Cancel</button>
-      <button class="btn btn-primary" data-action="submitAddLane">Create</button>
+    <div class="modal-footer">
+      <button type="button" class="btn" data-action="closeLaneModal">Cancel</button>
+      <button type="button" id="lane-submit-btn" class="btn btn-primary" data-action="submitAddLane">Add lane</button>
     </div>
-    <span id="lane-result" class="text-sm"></span>
   </div>
 </div>
 

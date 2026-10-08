@@ -4,6 +4,7 @@ package service
 
 import (
 	"errors"
+	"shingocore/internal/testdb"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -52,6 +53,7 @@ func TestTwoStage_Stage1WindowsStandInAGroup(t *testing.T) {
 	// A window standing in someone else's group is refused, not taken.
 	otherID, err := f.db.CreateNodeGroup("TS-PLANT-GROUP")
 	testutil.MustNoErr(t, err, "other group")
+	testdb.MarkGroup(t, f.db, otherID)
 	taken := &nodes.Node{Name: "TS-S1-TAKEN", Enabled: true, ParentID: &otherID}
 	testutil.MustNoErr(t, f.db.CreateNode(taken), "node in another group")
 	if err := f.loader.SetHome(s1, taken.ID, "", "", 0); !errors.Is(err, ErrWindowInAnotherGroup) {

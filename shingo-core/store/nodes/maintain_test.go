@@ -34,6 +34,7 @@ func TestMaintainLevels_DeclareChangeUndeclare(t *testing.T) {
 
 	grpID, err := nodes.CreateGroup(sdb, "GRP-MAINTAIN")
 	testutil.MustNoErr(t, err, "CreateGroup")
+	testdb.MarkGroup(t, db, grpID)
 	big := mkBinType(t, sdb, "45x58x32")
 	small := mkBinType(t, sdb, "45x48x24")
 
@@ -103,6 +104,7 @@ func TestMaintainLevels_NegativeWantRefused(t *testing.T) {
 
 	grpID, err := nodes.CreateGroup(sdb, "GRP-NEGATIVE")
 	testutil.MustNoErr(t, err, "CreateGroup")
+	testdb.MarkGroup(t, db, grpID)
 	btID := mkBinType(t, sdb, "NEG-TOTE")
 
 	if err := nodes.SetMaintainLevel(sdb,
@@ -122,6 +124,7 @@ func TestMaintainSupports_ReplacesWholeSet(t *testing.T) {
 
 	grpID, err := nodes.CreateGroup(sdb, "GRP-SUPPORTS")
 	testutil.MustNoErr(t, err, "CreateGroup")
+	testdb.MarkGroup(t, db, grpID)
 
 	pressA := &nodes.Node{Name: "PRESS-A", Enabled: true}
 	pressB := &nodes.Node{Name: "PRESS-B", Enabled: true}

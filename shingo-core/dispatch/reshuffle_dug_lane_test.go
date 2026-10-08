@@ -5,6 +5,7 @@ package dispatch
 import (
 	"errors"
 	"fmt"
+	"shingocore/internal/testdb"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -41,6 +42,7 @@ func dugLaneFixture(t *testing.T, db *store.DB, prefix string, extraLanes int) (
 	testutil.MustNoErr(t, db.CreateNode(grp), "create group")
 
 	mkLane := func(name string) (*nodes.Node, []*nodes.Node) {
+		testdb.MarkGroup(t, db, grp.ID)
 		l := &nodes.Node{Name: name, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
 		testutil.MustNoErr(t, db.CreateNode(l), "create "+name)
 		var out []*nodes.Node

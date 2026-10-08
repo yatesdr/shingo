@@ -48,6 +48,7 @@ func TestNoneFound_IsAlwaysErrNoRows(t *testing.T) {
 	// reason that the group does not exist.
 	grpID, err := nodes.CreateGroup(sdb, "NF-EMPTY-GRP")
 	testutil.MustNoErr(t, err, "CreateGroup")
+	testdb.MarkGroup(t, db, grpID)
 	slot := &nodes.Node{Name: "NF-EMPTY-SLOT", Enabled: true, ParentID: &grpID}
 	testutil.MustNoErr(t, nodes.Create(sdb, slot), "create slot")
 	testutil.MustNoErr(t, sdb.QueryRow(

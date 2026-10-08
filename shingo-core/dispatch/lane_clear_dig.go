@@ -35,7 +35,7 @@ import (
 //
 //	fresh-bin retrieve   source_finder's accessibility check → OutcomeReshuffle
 //	NGRP full retrieve   group_resolver raises BuriedError
-//	held-bin retrieve    admission's re-check → BuriedForHeldBin
+//	held-bin retrieve    admission's re-check (retired: every lane is marked)
 //	complex pickup       the NGRP re-resolve / supply widen → handleComplexBuriedOnReplay
 //
 // All four are asked BEFORE the order is dispatched. A gate-staged order is past

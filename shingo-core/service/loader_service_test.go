@@ -4,6 +4,7 @@ package service
 
 import (
 	"errors"
+	"shingocore/internal/testdb"
 	"testing"
 
 	"shingo/protocol"
@@ -122,6 +123,7 @@ func TestLoaderService_FlowEndpointsAreTheRightKindOfNode(t *testing.T) {
 	testutil.MustNoErr(t, err, "LANE type")
 	group := &nodes.Node{Name: "FE-GRP", NodeTypeID: &ngrp.ID, Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(group), "group")
+	testdb.MarkGroup(t, db, group.ID)
 	lane := &nodes.Node{Name: "FE-LANE", NodeTypeID: &laneType.ID, ParentID: &group.ID, Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(lane), "lane")
 	bank := &nodes.Node{Name: "FE-BANK", NodeTypeID: &ngrp.ID, Enabled: true, IsSynthetic: true}

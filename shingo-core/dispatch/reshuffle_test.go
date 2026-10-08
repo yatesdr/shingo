@@ -50,6 +50,7 @@ func setupNodeGroupWithShuffle(t *testing.T, db *store.DB) (grp, lane *nodes.Nod
 	testutil.MustNoErr(t, db.CreateNode(grp), "fixture: create NGRP")
 
 	// Create 1 lane with 5 slots
+	testdb.MarkGroup(t, db, grp.ID)
 	lane = &nodes.Node{Name: "GRP-TEST-L1", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(lane), "fixture: create lane")
 

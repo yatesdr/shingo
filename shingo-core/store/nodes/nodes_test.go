@@ -463,6 +463,7 @@ func TestCreateGroupAndAddLane(t *testing.T) {
 	if err != nil {
 		t.Fatalf("nodes.CreateGroup: %v", err)
 	}
+	testdb.MarkGroup(t, db, grpID)
 	if grpID == 0 {
 		t.Fatalf("nodes.CreateGroup: expected non-zero ID")
 	}
@@ -546,6 +547,7 @@ func TestDeleteGroupHierarchy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("nodes.CreateGroup: %v", err)
 	}
+	testdb.MarkGroup(t, db, grpID)
 	laneID, err := nodes.AddLane(sdb, grpID, "LAN-DEL")
 	if err != nil {
 		t.Fatalf("nodes.AddLane: %v", err)

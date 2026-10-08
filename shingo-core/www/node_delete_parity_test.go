@@ -29,6 +29,7 @@ func TestHandleNodeDelete_NGRPWithActiveOrdersIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create node group: %v", err)
 	}
+	testdb.MarkGroup(t, db, grpID)
 	blocking := createActiveOrderRefSource(t, db, "ndel-block-1", "line-1", "GRP-NDEL-BLOCK")
 
 	rec := postForm(t, h.handleNodeDelete, "/nodes/delete", url.Values{"id": {strconv.FormatInt(grpID, 10)}})
@@ -53,6 +54,7 @@ func TestHandleNodeDelete_NGRPNotifiesEdge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create node group: %v", err)
 	}
+	testdb.MarkGroup(t, db, grpID)
 
 	rec := postForm(t, h.handleNodeDelete, "/nodes/delete", url.Values{"id": {strconv.FormatInt(grpID, 10)}})
 	if rec.Code != http.StatusSeeOther {

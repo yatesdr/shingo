@@ -27,6 +27,7 @@ func levelledGroup(t *testing.T, db *store.DB, name, code string, want, held, sl
 	t.Helper()
 	grpID, err := nodes.CreateGroup(db.DB, name)
 	testutil.MustNoErr(t, err, "CreateGroup "+name)
+	testdb.MarkGroup(t, db, grpID)
 
 	var btID int64
 	testutil.MustNoErr(t, db.QueryRow(`

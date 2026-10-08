@@ -69,6 +69,7 @@ func closedGroup(t *testing.T, db *store.DB, prefix, payloadCode string, n int) 
 	testutil.MustNoErr(t, db.CreateNode(grp), "create group")
 
 	for i := 1; i <= n; i++ {
+		testdb.MarkGroup(t, db, grp.ID)
 		lane := &nodes.Node{
 			Name: fmt.Sprintf("%s-L%d", prefix, i), NodeTypeID: &laneType.ID,
 			ParentID: &grp.ID, Enabled: true, IsSynthetic: true,
@@ -209,7 +210,9 @@ func TestBurialGuard_ClaimClearEventRedrivesAParkedStore(t *testing.T) {
 	}})
 
 	// Seconds, against a 60s sweep: this is the event's doing.
-	released := waitForStatus(t, db, "bgrd-store", protocol.StatusDispatched, 10*time.Second)
+	// Sent, not exactly dispatched: on a free marked lane the gate opens at once
+	// and appends, so the order is already in_transit.
+	released := waitUntilSent(t, db, "bgrd-store", 10*time.Second)
 
 	if !strings.HasPrefix(released.DeliveryNode, lanes[0].Name+"-") {
 		t.Errorf("dropoff = %q, want a slot in %s — the reopened lane is the only one the guard "+

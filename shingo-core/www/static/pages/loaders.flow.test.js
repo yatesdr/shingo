@@ -151,7 +151,7 @@ const smktSrc = fs.readFileSync(path.join(__dirname, 'nodes-supermarket.js'), 'u
 
 function loaderModalMarkup() {
     const a = nodesHtml.indexOf('<div id="loader-modal"');
-    const b = nodesHtml.indexOf('<!-- Add Lane Modal -->');
+    const b = nodesHtml.indexOf('<!-- Add lane. ');
     return nodesHtml.slice(a, b);
 }
 

@@ -507,3 +507,9 @@ func (s *NodeService) ClaimEdge(uid, displayName string) (bool, error) {
 func (s *NodeService) RebindEdge(uid, hostname string) (bool, error) {
 	return s.db.RebindEdgeHostname(uid, hostname)
 }
+
+// GroupsWithWaitingSpots is the set of groups that have at least one waiting
+// spot: the groups a lane can be added to.
+func (s *NodeService) GroupsWithWaitingSpots() (map[int64]bool, error) {
+	return s.db.GroupsWithWaitingSpots()
+}

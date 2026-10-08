@@ -141,15 +141,14 @@ func ResetFolderShadow() {
 	folderShadowTally.seen = map[string]int{}
 }
 
-// FolderShadowSites are the six, named once so the emitter, the tally and any
+// FolderShadowSites are the five, named once so the emitter, the tally and any
 // reader share one list.
 const (
-	FolderSiteDeliverySettle   = "wiring_completion delivery settle"
-	FolderSiteCompletionNet    = "wiring_completion completion safety net"
-	FolderSiteHeldBinDispatch  = "fulfillment held-bin dispatch"
-	FolderSiteRecoveryReapply  = "recovery reapply-completion"
-	FolderSiteBuriedForHeldBin = "lane gate buried-for-held-bin"
-	FolderSiteBlockCompleted   = "block-completed single-bin fallback"
+	FolderSiteDeliverySettle  = "wiring_completion delivery settle"
+	FolderSiteCompletionNet   = "wiring_completion completion safety net"
+	FolderSiteHeldBinDispatch = "fulfillment held-bin dispatch"
+	FolderSiteRecoveryReapply = "recovery reapply-completion"
+	FolderSiteBlockCompleted  = "block-completed single-bin fallback"
 )
 
 // NoteFolderShadow records one firing of a site's `BinID == nil` branch under

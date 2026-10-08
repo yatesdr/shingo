@@ -39,6 +39,7 @@ func laneWithBins(t *testing.T, db *store.DB, prefix, code string) (int64, []int
 
 	grpID, err := nodes.CreateGroup(sdb, prefix+"-GRP")
 	testutil.MustNoErr(t, err, "CreateGroup")
+	testdb.MarkGroup(t, db, grpID)
 
 	laneType, err := nodes.GetTypeByCode(sdb, "LANE")
 	testutil.MustNoErr(t, err, "LANE node type")

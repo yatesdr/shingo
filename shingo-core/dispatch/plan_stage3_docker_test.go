@@ -41,7 +41,7 @@ func TestStage3_IsStorageDropoff(t *testing.T) {
 	storNode := &nodes.Node{Name: "S3-STOR", Enabled: true, NodeTypeID: &storType.ID}
 	testutil.MustNoErr(t, db.CreateNode(storNode), "create STOR node")
 
-	lane := &nodes.Node{Name: "S3-LANE", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID}
+	lane := &nodes.Node{Name: "S3-LANE", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: testdb.MarkedGroup(t, db, "S3-LANE-GRP")}
 	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
 	laneRaw, err := db.GetNode(lane.ID)
 	lane = testutil.Must(t, laneRaw, err, "db.GetNode(lane.ID)")

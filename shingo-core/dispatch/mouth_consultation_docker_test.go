@@ -6,13 +6,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"shingo/protocol"
-	"shingo/protocol/testutil"
-	"shingocore/internal/testdb"
-	"shingocore/store"
-	"shingocore/store/nodes"
-	"shingocore/store/reservations"
 )
 
 // mouth_consultation_docker_test.go — the resolver's consultation as a REAL
@@ -29,66 +22,6 @@ import (
 // slot SHALLOWER in the same lane. That is the LS_C4 shape (a four-slot empty
 // lane left X X . X with an unreachable hole at depth 3), reached through the
 // mouth instead of through occupancy.
-
-// A lane whose mouth another order owns leaves the pool at the source, and the
-// refusal NAMES it rather than reporting a full group.
-//
-// MUTATION (verified): pass skipTheMouth from findShuffleSlots. The held lane is
-// offered as parking and the typed refusal never appears.
-func TestMouthConsultation_AHeldLaneIsNotParking(t *testing.T) {
-	t.Parallel()
-	db := testDBShared(t)
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-
-	// One group, two lanes: the one being dug, and the only parking.
-	_, dugID, dugSlot := gatedLane(t, db, "MC-DUG", "")
-	dug, err := db.GetNode(dugID)
-	testutil.MustNoErr(t, err, "reload the dug lane")
-	grpID := *dug.ParentID
-
-	sib := laneInGroup(t, db, grpID, "MC-SIB")
-	line := lineNode(t, db, "MC-LINE")
-
-	// The digger, and the pool it can reach while nothing holds the sibling.
-	digger := testdb.CreateOrder(t, db)
-	asker := reservations.AskerFor(digger.ID, digger.ID)
-	slots, err := findShuffleSlots(db, dugID, grpID, 1, asker, noClaimantYet, nil)
-	testutil.MustNoErr(t, err, "the sibling must be parking while it is free")
-	if len(slots) != 1 {
-		t.Fatalf("free pool returned %d slot(s), want 1 — the fixture has no parking to lose", len(slots))
-	}
-
-	// ── AND NOW SOMEBODY ELSE OWNS THE SIBLING'S MOUTH. An ordinary store on
-	// its way in: an INBOUND hold, which the SQL exclusion cannot see.
-	store := testdb.CreateOrder(t, db)
-	sibSlot, err := db.GetNodeByDotName("MC-SIB-S0")
-	testutil.MustNoErr(t, err, "resolve the sibling's slot")
-	admitted, _, _, err := d.AcquireLanesForOrder(store, line, sibSlot, EntryFreshBin)
-	testutil.MustNoErr(t, err, "the store's acquire")
-	if !admitted {
-		t.Fatal("the store must take the sibling's mouth for this fixture to mean anything")
-	}
-	if held := digHoldOwnerOrZero(t, db, sib); held != 0 {
-		t.Fatalf("the sibling is held as a DIG by %d — then the SQL exclusion already sees it and "+
-			"this test proves nothing about the mouth", held)
-	}
-
-	_, err = findShuffleSlots(db, dugID, grpID, 1, asker, noClaimantYet, nil)
-	if err == nil {
-		t.Fatal("the pool offered parking in a lane whose mouth another order owns. The dig would be " +
-			"refused at admission, drop that slot, and walk to the next one shallower in the same " +
-			"lane — which is how a four-slot empty lane ends up with a hole nothing can reach")
-	}
-	var mouthHeld *LaneMouthHeldParkingError
-	if !errors.As(err, &mouthHeld) {
-		t.Fatalf("the refusal is %v, want the typed mouth-held error — a wait that cannot name the "+
-			"lane it is waiting on has no releaser a reader can check (law 8)", err)
-	}
-	if mouthHeld.Lane != "MC-SIB-LANE" {
-		t.Errorf("the refusal names lane %q, want MC-SIB-LANE", mouthHeld.Lane)
-	}
-	_ = dugSlot
-}
 
 // AND "CANNOT SEE" IS NOT "FULL" — asserted on the DISPOSITION, which is where
 // the distinction actually has to hold.
@@ -164,27 +97,4 @@ func TestMouthConsultation_BothRefusalsAreTransient(t *testing.T) {
 				"neither of these is a fact about geometry", tc.name, got, tc.want)
 		}
 	}
-}
-
-// laneInGroup adds a LANE with one slot under an existing group, so a fixture can
-// have parking that is not the lane being dug.
-func laneInGroup(t *testing.T, db *store.DB, groupID int64, name string) int64 {
-	t.Helper()
-	laneType, err := db.GetNodeTypeByCode(protocol.NodeClassLANE)
-	testutil.MustNoErr(t, err, "get LANE type")
-	lane := &nodes.Node{Name: name + "-LANE", IsSynthetic: true, Enabled: true,
-		NodeTypeID: &laneType.ID, ParentID: &groupID}
-	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
-	d0 := 0
-	slot := &nodes.Node{Name: name + "-S0", Enabled: true, ParentID: &lane.ID, Depth: &d0}
-	testutil.MustNoErr(t, db.CreateNode(slot), "create slot")
-	return lane.ID
-}
-
-// digHoldOwnerOrZero reports the dig-mode holder of a lane, 0 when there is none.
-func digHoldOwnerOrZero(t *testing.T, db *store.DB, laneID int64) int64 {
-	t.Helper()
-	owner, err := reservations.DigHoldOwner(db.DB, laneID)
-	testutil.MustNoErr(t, err, "read the dig hold owner")
-	return owner
 }

@@ -23,7 +23,7 @@ func realLaneWithDepthlessChild(t *testing.T, db *store.DB, prefix string, occup
 		t.Fatalf("get LANE node type: %v", err)
 	}
 
-	lane = &nodes.Node{Name: prefix + "-LANE", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID}
+	lane = &nodes.Node{Name: prefix + "-LANE", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: testdb.MarkedGroup(t, db, prefix+"-LANE-GRP")}
 	if err := db.CreateNode(lane); err != nil {
 		t.Fatalf("create lane: %v", err)
 	}

@@ -90,8 +90,10 @@ func TestAcquireLanesForOrder_ForeignDigRefuses(t *testing.T) {
 			"The dig row is written regardless of enforcement mode; on `none` — what both " +
 			"plants run — nothing on the plain-order path read it")
 	}
-	if cause != CauseLaneDigActive {
-		t.Errorf("cause = %q, want %q", cause, CauseLaneDigActive)
+	// Every lane is marked, so the dig question for the ENTRY is the gate's, at
+	// release; what refuses here is the order's source lock meeting the dig's row.
+	if cause != CauseLaneHeldDig {
+		t.Errorf("cause = %q, want %q", cause, CauseLaneHeldDig)
 	}
 	if laneName == "" {
 		t.Error("no lane name reported; the operator sentence needs the contended lane")
@@ -169,13 +171,15 @@ func TestAcquireLanesForOrder_OwnDigAdmitsItsOwnLeg(t *testing.T) {
 	}
 }
 
-// TestAcquireLanesForOrder_NoDigUnaffected — the no-dig path stays byte-identical
-// on the default mode. The wiring must add a refusal where a dig exists, not a
-// new way for ordinary work to park.
+// TestAcquireLanesForOrder_NoDigUnaffected — with no dig on the lane, a plain
+// retrieve is admitted with no cause. The wiring must add a refusal where a dig
+// exists, not a new way for ordinary work to park. It takes its source lock, so
+// the order is built dispatched (C1.5: a lane holder is dispatched).
 func TestAcquireLanesForOrder_NoDigUnaffected(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	o, _, src, dest := plainOrderIntoLane(t, db, "NODIG")
+	testdb.SeedOrderStatus(t, db, o.ID, string(StatusDispatched), "")
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	admitted, cause, laneName, err := d.AcquireLanesForOrder(o, src, dest, EntryFreshBin)
@@ -183,7 +187,7 @@ func TestAcquireLanesForOrder_NoDigUnaffected(t *testing.T) {
 		t.Fatalf("AcquireLanesForOrder: %v", err)
 	}
 	if !admitted || cause != "" || laneName != "" {
-		t.Fatalf("un-dug lane on the default mode: admitted=%v cause=%q lane=%q, want admitted with "+
-			"no cause — nothing here is gated", admitted, cause, laneName)
+		t.Fatalf("un-dug lane: admitted=%v cause=%q lane=%q, want admitted with no cause",
+			admitted, cause, laneName)
 	}
 }

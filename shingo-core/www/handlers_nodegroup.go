@@ -50,6 +50,10 @@ func (h *Handlers) apiAddLane(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id, err := h.engine.NodeService().AddLane(req.GroupID, req.Name)
+	if service.IsLaneUnmarked(err) {
+		h.jsonError(w, "A lane needs a waiting spot: give this group its waiting spots first.", http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		h.jsonError(w, "add lane: "+err.Error(), http.StatusInternalServerError)
 		return

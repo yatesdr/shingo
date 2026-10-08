@@ -45,6 +45,7 @@ func setupNodeGroupFixture(t *testing.T, db *store.DB, prefix string, slotCount 
 	if err != nil {
 		t.Fatalf("create node group: %v", err)
 	}
+	testdb.MarkGroup(t, db, grpID)
 	laneID, err := db.AddLane(grpID, "GRP-"+prefix+"-L1")
 	if err != nil {
 		t.Fatalf("add lane: %v", err)
@@ -96,10 +97,12 @@ func setupReparentFixture(t *testing.T, db *store.DB, prefix string) *reparentFi
 	if err != nil {
 		t.Fatalf("create src group: %v", err)
 	}
+	testdb.MarkGroup(t, db, srcID)
 	dstID, err := db.CreateNodeGroup("GRP-" + prefix + "-DST")
 	if err != nil {
 		t.Fatalf("create dst group: %v", err)
 	}
+	testdb.MarkGroup(t, db, dstID)
 	child := &nodes.Node{
 		Name:     "NODE-" + prefix + "-CHILD",
 		ParentID: &srcID,
@@ -271,6 +274,38 @@ func TestApiCreateNodeGroup_MissingName(t *testing.T) {
 
 // --- apiAddLane -------------------------------------------------------------
 
+// A lane needs a waiting spot: adding one to a group without any is a 400 that
+// tells the person what to do, and so is clearing the last spot of a group that
+// has lanes. Both are the store's refusal (nodes.ErrLaneUnmarked) answered at
+// the door.
+func TestApiAddLane_AGroupWithoutWaitingSpotsIsTold(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+
+	grpID, err := db.CreateNodeGroup("GRP-NOSPOTS")
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	rec := postJSON(t, h.apiAddLane, "/api/node-group/add-lane",
+		map[string]any{"group_id": grpID, "name": "GRP-NOSPOTS-L1"})
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "waiting spot") {
+		t.Fatalf("add lane to a group without waiting spots: %d %s, want 400 naming the waiting spots",
+			rec.Code, rec.Body.String())
+	}
+
+	testdb.MarkGroup(t, db, grpID)
+	rec = postJSON(t, h.apiAddLane, "/api/node-group/add-lane",
+		map[string]any{"group_id": grpID, "name": "GRP-NOSPOTS-L1"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("add lane once the group has a waiting spot: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = postJSON(t, h.apiNodePropertyDelete, "/api/nodes/properties/delete",
+		map[string]any{"node_id": grpID, "key": "group_wait_points"})
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "waiting spot") {
+		t.Fatalf("clear the last waiting spot of a group with a lane: %d %s, want 400", rec.Code, rec.Body.String())
+	}
+}
+
 func TestApiAddLane_HappyPath(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
@@ -280,6 +315,7 @@ func TestApiAddLane_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create group: %v", err)
 	}
+	testdb.MarkGroup(t, db, grpID)
 
 	rec := postJSON(t, h.apiAddLane, "/api/node-group/add-lane",
 		map[string]any{"group_id": grpID, "name": "GRP-ADDLANE-L1"})

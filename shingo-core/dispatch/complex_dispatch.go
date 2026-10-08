@@ -176,11 +176,9 @@ func (d *Dispatcher) prepareComplexHand(order *orders.Order, pc *pairPass) ([]re
 	if st.done {
 		return nil, Hand{}, nil, st
 	}
-	holds, st := d.admitComplexLanesVerdict(order, resolvedSteps)
-	if st.done {
+	if st := d.admitComplexLanesVerdict(order, resolvedSteps); st.done {
 		return nil, Hand{}, nil, st
 	}
-	hand.Lanes = holds
 	return resolvedSteps, hand, assigned, dispatchStep{}
 }
 
@@ -252,73 +250,25 @@ func (d *Dispatcher) handFromComplexPlan(order *orders.Order, plan *ComplexPlan,
 }
 
 // admitComplexLanesVerdict is the lane question with no row written: the
-// physical admission (and the dig it proposes for a buried pickup) and the mouth
-// holds the plan needs. They go into the order's hand; a pair's legs' hands are
-// taken together (commitPairToFleet).
-func (d *Dispatcher) admitComplexLanesVerdict(order *orders.Order, resolvedSteps []resolvedStep) ([]laneHold, dispatchStep) {
-	v, err := d.admitPlan(order, resolvedSteps, skipsForComplexEntry)
-	if err != nil {
+// physical admission (and the dig it proposes for a buried pickup) and the
+// tripwire on a plan that revisits a lane it leaves. A coordinated order takes no
+// mouth hold: every lane is marked, and its entry is the gate's (refuseLaneRevisit).
+func (d *Dispatcher) admitComplexLanesVerdict(order *orders.Order, resolvedSteps []resolvedStep) dispatchStep {
+	// THE ADMISSION IS A READ HERE. skipsForComplexEntry declares the gate owns the
+	// entry, and every lane is marked, so admitPlan admits every lane this plan
+	// names and refuses nothing: the in-lane questions are asked at the tail
+	// append. What it can still say is that a lane could not be read.
+	if _, err := d.admitPlan(order, resolvedSteps, skipsForComplexEntry); err != nil {
 		// FAIL CLOSED, with a cause that says so. An unreadable lane is a busy
 		// lane; an undetermined answer is Core declining, not a lane that is
 		// honestly occupied, and the two are investigated differently.
 		log.Printf("dispatch: admission for complex order %d: %v (holding)", order.ID, err)
 		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseAdmissionError,
 			QueueParams{Destination: order.DeliveryNode})
-		return nil, dispatchStep{done: true, err: err}
-	}
-	if !v.Admitted() {
-		d.dbg("complex: order %d held at lane %s (%s)", order.ID, v.Lane(), v.Cause())
-		// A LANE REFUSAL IS NOT A SLOT REFUSAL. Every cause this arm can carry is a
-		// fact about a corridor — dig-active, held-source, occupied, target-buried,
-		// pickup-elsewhere — and the same causes are filed under
-		// QueueStorageRearranging by every other door (complex_reshuffle,
-		// planning_service, compound). Filed as QueueWaitingForSlot they rendered
-		// "Waiting for a slot" for an order that is waiting for a lane, and one
-		// cause read two ways depending on which door parked it.
-		//
-		// The params move with the code: rearrangingSentence reads Lane and Payload,
-		// slotSentence read Destination, so leaving them would have dropped the lane
-		// name out of the sentence entirely.
-		d.setQueueReason(order, protocol.QueueStorageRearranging, v.Cause(),
-			QueueParams{Lane: v.Lane(), Payload: order.PayloadCode})
-		// THE REFUSAL ASKS FOR THE CORRIDOR TO BE OPENED, which is what made it
-		// safe to ask the reachability question here at all.
-		//
-		// skipsForComplexEntry used to skip it, and the justification was never
-		// "this caller does not need the answer" — it was that a lane-target-buried
-		// refusal raised HERE would park the order with nothing to unbury it, for
-		// ever, because the complex dig was wired to a finder outcome rather than to
-		// an admission verdict. A dig is a service to a LANE now and is proposed
-		// WITHOUT consuming the demand, so the refusal can do both: hold the order
-		// where it is, and ask for the wall to be taken down.
-		//
-		// The cause is written ABOVE and is not re-written here (the session-4
-		// lesson: the write and the outcome are different moments, and the station
-		// is told once per outcome). CauseLaneTargetBuried already names the right
-		// releaser — "the bin in front is moved, by a dig or by whoever claimed it
-		// carrying it out" — and that sentence is now true by construction.
-		if v.Cause() == CauseLaneTargetBuried {
-			d.proposeDigForBuriedPickup(order, v.Lane())
-		}
-		return nil, dispatchStep{done: true, err: fmt.Errorf("complex order %d held at lane %s: %s",
-			order.ID, v.Lane(), v.Cause())}
+		return dispatchStep{done: true, err: err}
 	}
 
-	// ── AND NOW THE MOUTH, WHICH THIS PATH HAD NEVER TAKEN (§R.101) ───────
-	//
-	// Everything above is admission: ordinary reads, no rows written. The holds are
-	// the acquisition, and a coordinated order took none — so §R.95's census found
-	// complex acquiring nothing, on the traffic class that carries both plants.
-	//
-	// Same split, same order, same reasons as AcquireLanesForOrder states for the
-	// plain path: the physical questions first because a dig excludes everything,
-	// then the mouth, which cannot be lifted out because it runs under the lane's
-	// advisory lock inside its own transaction.
-	//
-	// A conflict is a WAIT, not a fault. The order parks with the contended lane
-	// named and the ordinary triggers re-ask; nothing it holds is given up, which
-	// is Rule 1 exactly as the plain path applies it.
-	holds, hErr := d.resolvePlanLaneHolds(resolvedSteps)
+	hErr := d.refuseLaneRevisit(resolvedSteps)
 	// ── ONE OF THESE ERRORS IS NOT A WAIT ─────────────────────────────────
 	//
 	// Everything else here fails closed into a hold, because an unreadable lane is
@@ -337,15 +287,15 @@ func (d *Dispatcher) admitComplexLanesVerdict(order *orders.Order, resolvedSteps
 	if errors.As(hErr, &revisit) {
 		log.Printf("dispatch: REFUSING complex order %d — %v", order.ID, revisit)
 		d.failOrderInternal(order, codeStructural, revisit.Error())
-		return nil, dispatchStep{done: true, err: hErr}
+		return dispatchStep{done: true, err: hErr}
 	}
 	if hErr != nil {
-		log.Printf("dispatch: resolving lane holds for complex order %d: %v (holding)", order.ID, hErr)
+		log.Printf("dispatch: walking complex order %d's lanes: %v (holding)", order.ID, hErr)
 		d.setQueueReason(order, protocol.QueueWaitingForSlot, CauseLaneAcquireError,
 			QueueParams{Destination: order.DeliveryNode})
-		return nil, dispatchStep{done: true, err: hErr}
+		return dispatchStep{done: true, err: hErr}
 	}
-	return holds, dispatchStep{}
+	return dispatchStep{}
 }
 
 // prepareComplexSteps re-resolves and widens the order's stored steps (Phase A),
@@ -1169,64 +1119,6 @@ func (d *Dispatcher) skipOrderInternal(order *orders.Order, code, detail string)
 // has left its source ends skipped, the bin it was for having gone.
 func (d *Dispatcher) SkipOrder(order *orders.Order, code, detail string) {
 	d.skipOrderInternal(order, code, detail)
-}
-
-// proposeDigForBuriedPickup asks for a lane-clear dig on behalf of a complex
-// demand whose PICKUP is walled in. Best-effort throughout: every doubt leaves
-// the demand exactly as admission left it — parked with a cause and a releaser —
-// because the dig is an improvement on the wait, not a precondition for it.
-//
-// The slot is re-derived through pickupSlotNow rather than carried on the
-// verdict. That is the same function admission itself used to reach this refusal,
-// so it is one spelling asked twice, not a second opinion; and a verdict that
-// carried a slot would be a verdict about a bin rather than about a lane, which
-// is not what admission answers.
-func (d *Dispatcher) proposeDigForBuriedPickup(order *orders.Order, laneName string) {
-	lane, err := d.db.GetNodeByDotName(laneName)
-	if err != nil || lane == nil {
-		d.dbg("complex: order %d is walled at %s but the lane could not be read (%v) — waiting",
-			order.ID, laneName, err)
-		return
-	}
-	target, _, err := d.pickupSlotNow(order, lane)
-	if err != nil || target == nil {
-		d.dbg("complex: order %d is walled in %s but its pickup slot could not be located (%v) — waiting",
-			order.ID, laneName, err)
-		return
-	}
-	// §R.91: this demand is `queued` with no vehicle committed to it, so it takes
-	// its own excavation and resumes through `queued` when the corridor opens.
-	//
-	// NO AIM IS PASSED (C2b A.1b): this refusal comes after the demand's source
-	// reserve, so the bin it is walled from already carries the demand's own
-	// pending row, and the burial guards read that row (helpers.ComingForBinSQL).
-	res := d.proposeLaneClearDig(lane, target, order)
-	switch res.outcome {
-	case laneClearStarted:
-		log.Printf("dispatch: service dig %d created for %s — complex order %d's pickup at %s is "+
-			"walled in and admission refused it; the demand keeps waiting with its cause",
-			res.parent.ID, lane.Name, order.ID, target.Name)
-	case laneClearParentGone:
-		log.Printf("dispatch: complex order %d ended while its dig at %s was planned — no dig", order.ID, lane.Name)
-	case laneClearLaneBusy, laneClearNoShuffleSlot, laneClearBlockerClaimed,
-		laneClearNothingInTheWay, laneClearReadFailed, laneClearParkingHeldByDig,
-		laneClearEpisodeAlreadyDigging, laneClearLaneOccupied:
-		// All of them self-clear and all of them already have a releaser the demand is
-		// sitting on. Nothing to arrange and nothing new to tell anyone. Right of
-		// way joins the list rather than getting its own arm because this caller
-		// reports nothing either way — the demand it is digging on behalf of is
-		// already parked with its own cause, which is what this site's header means
-		// by "one proposer, two reporting policies". The ranked take's promised
-		// refusal (§7) rides this same do-nothing arm for the same reason.
-		d.dbg("complex: no dig for %s yet on behalf of order %d (%v)", lane.Name, order.ID, res.err)
-	case laneClearNoGroup, laneClearSlotNotInLane, laneClearBlockerAtDisabledNode, laneClearUnplannable:
-		// Geometry. The demand is NOT failed here: admission's refusal is about one
-		// lane on one tick, and the demand may still be re-planned onto another
-		// source. Loud, because nothing will clear it on its own.
-		log.Printf("dispatch: complex order %d is walled in %s and no dig can be planned there (%v) — "+
-			"the demand is waiting on a corridor nothing is going to open",
-			order.ID, lane.Name, res.err)
-	}
 }
 
 // persistWidenedPlan writes a rewritten step plan back to the order and

@@ -3,7 +3,6 @@
 package engine
 
 import (
-	"errors"
 	"testing"
 
 	"shingo/protocol"
@@ -31,6 +30,7 @@ func laneWithSlot(t *testing.T, db *store.DB, prefix string) (lane, slot *nodes.
 
 	grp := &nodes.Node{Name: prefix + "-GRP", NodeTypeID: &ngrpType.ID, Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(grp), "create lane group")
+	testdb.MarkGroup(t, db, grp.ID)
 	lane = &nodes.Node{Name: prefix + "-LANE", NodeTypeID: &laneType.ID, ParentID: &grp.ID,
 		Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
@@ -90,41 +90,6 @@ func TestBinMovePark_AHistoryRowCarriesItsLaneCause(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("no waiting row carries %q. Full history: %v", protocol.QueueStorageRearranging, historyLine(history))
-	}
-}
-
-// TestBinMove_NowhereToParkABlockerIsRefusedAtOnce: a named bin buried behind a
-// blocker in a lane with no group has nowhere to park the blocker, and the move
-// is refused in the same call. The old door answered "queued" while the
-// synchronous scanner pass it triggered failed the order underneath; the
-// refusal is the truthful answer (the orc's ruling, 2026-09-26; behaviour list).
-func TestBinMove_NowhereToParkABlockerIsRefusedAtOnce(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	_, lineNode, _ := setupTestData(t, db)
-
-	laneType, err := db.GetNodeTypeByCode(protocol.NodeClassLANE)
-	testutil.MustNoErr(t, err, "get LANE type")
-	lane := &nodes.Node{Name: "BMQH-L1", NodeTypeID: &laneType.ID, Enabled: true, IsSynthetic: true}
-	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
-	d1, d2 := 1, 2
-	front := &nodes.Node{Name: "BMQH-L1-S1", ParentID: &lane.ID, Enabled: true, Depth: &d1}
-	testutil.MustNoErr(t, db.CreateNode(front), "create front slot")
-	back := &nodes.Node{Name: "BMQH-L1-S2", ParentID: &lane.ID, Enabled: true, Depth: &d2}
-	testutil.MustNoErr(t, db.CreateNode(back), "create back slot")
-	createTestBinAtNode(t, db, "PART-A", front.ID, "BMQH-BLOCKER")
-	target := createTestBinAtNode(t, db, "PART-A", back.ID, "BMQH-TARGET")
-
-	eng := newTestEngine(t, db, simulator.New())
-	res, err := eng.CreateBinMove(BinMoveRequest{
-		Selection: BinSelectionByLabel, BinLabel: target.Label, DestNodeID: lineNode.ID, StationID: "test-station",
-	})
-	if err == nil {
-		t.Fatalf("the move was answered %+v: a buried bin with nowhere to park its blocker cannot move", res)
-	}
-	var bmErr *BinMoveError
-	if !errors.As(err, &bmErr) || bmErr.Kind != BinMoveFault {
-		t.Errorf("err = %v, want the door's fault refusal carrying the reason", err)
 	}
 }
 

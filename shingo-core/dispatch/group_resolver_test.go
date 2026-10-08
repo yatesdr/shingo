@@ -47,6 +47,7 @@ func setupNodeGroup(t *testing.T, db *store.DB) (grp *nodes.Node, lanes []*nodes
 	lanes = make([]*nodes.Node, 2)
 	slots = make([][]*nodes.Node, 2)
 	for i := 0; i < 2; i++ {
+		testdb.MarkGroup(t, db, grp.ID)
 		lane := &nodes.Node{
 			Name: fmt.Sprintf("GRP-1-L%d", i+1), IsSynthetic: true,
 			NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true,
@@ -407,6 +408,7 @@ func setupNodeGroup3Lane(t *testing.T, db *store.DB) (grp *nodes.Node, lanes []*
 	lanes = make([]*nodes.Node, 3)
 	slots = make([][]*nodes.Node, 3)
 	for i := 0; i < 3; i++ {
+		testdb.MarkGroup(t, db, grp.ID)
 		lane := &nodes.Node{
 			Name: fmt.Sprintf("GRP-3L-L%d", i+1), IsSynthetic: true,
 			NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true,

@@ -62,8 +62,8 @@ func asDispatched(o *orders.Order) { o.Status = StatusDispatched }
 // serialising compound legs on every lane in production while every gated-lane
 // test stayed green.
 //
-// MUTATION (verified): put the mode back in front of the physical arms — add
-// `if !d.laneIsGated(lane.ID) { return Admitted() }` ahead of admitLane's dig
+// MUTATION (verified): put the mode back in front of the physical arms — an
+// early Admitted() for a lane read as unmarked, ahead of admitLane's dig
 // arm. This fires on both arms; every other admission test stays green, because
 // they all build mouth-enforced lanes — which is exactly how the original
 // slipped through.

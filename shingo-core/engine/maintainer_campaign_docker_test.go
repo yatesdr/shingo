@@ -49,6 +49,7 @@ func campaignGroup(t *testing.T, db *store.DB, group string, slots int, levels m
 	t.Helper()
 	grpID, err := nodes.CreateGroup(db.DB, group)
 	testutil.MustNoErr(t, err, "CreateGroup")
+	testdb.MarkGroup(t, db, grpID)
 	for i := 0; i < slots; i++ {
 		n := &nodes.Node{Name: fmt.Sprintf("%s-P%02d", group, i+1), Enabled: true, ParentID: &grpID}
 		testutil.MustNoErr(t, db.CreateNode(n), "create position")

@@ -51,6 +51,7 @@ func TestEmptyOfTypeInGroup_CountAndFindAgree(t *testing.T) {
 
 	grpID, err := nodes.CreateGroup(sdb, "AGREE-GRP")
 	testutil.MustNoErr(t, err, "CreateGroup")
+	testdb.MarkGroup(t, db, grpID)
 	slot := &nodes.Node{Name: "AGREE-SLOT-1", Enabled: true, ParentID: &grpID}
 	testutil.MustNoErr(t, nodes.Create(sdb, slot), "create slot")
 
@@ -165,6 +166,7 @@ func TestEmptyOfTypeInGroup_TheyPartOnlyUnderAForeignDig(t *testing.T) {
 
 	grpID, err := nodes.CreateGroup(sdb, "PART-GRP")
 	testutil.MustNoErr(t, err, "CreateGroup")
+	testdb.MarkGroup(t, db, grpID)
 	laneType, err := nodes.GetTypeByCode(sdb, "LANE")
 	testutil.MustNoErr(t, err, "LANE type")
 	lane := &nodes.Node{Name: "PART-LANE", Enabled: true, IsSynthetic: true,

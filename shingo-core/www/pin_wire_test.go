@@ -171,7 +171,7 @@ func TestPinWire_W5_EnterSubmitsMappedAndMapResolved(t *testing.T) {
 	tmpl := pinReadFile(t, "templates/nodes.html")
 	for _, want := range []string{
 		`id="ngrp-name" placeholder="e.g. GRP-ZONE-A" data-action-keydown="enterSubmits:createNodeGroup"`,
-		`id="lane-name" placeholder="e.g. LAN-01" data-action-keydown="enterSubmits:submitAddLane"`,
+		`id="lane-name" class="form-input" autocomplete="off" placeholder="e.g. LAN-01" data-action-keydown="enterSubmits:submitAddLane"`,
 	} {
 		if !strings.Contains(tmpl, want) {
 			t.Fatalf("nodes.html lost %q; repoint this pin", want)

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 
 	"shingo/protocol"
 	"shingocore/fleet"
@@ -81,7 +80,7 @@ import (
 // — for a point that never holds a bin and is not part of the lane's geometry.
 // The value is passed through to the fleet as a block location verbatim and is
 // never resolved against nodes; only the fleet has to know it exists.
-const PropLaneGatePoint = "lane_gate_point"
+const PropLaneGatePoint = nodes.PropLaneGatePoint
 
 // PropGroupWaitPoints is the node-property key, read on the NODE GROUP, naming
 // the map points where robots with work anywhere in that group stand while Core
@@ -108,26 +107,14 @@ const PropLaneGatePoint = "lane_gate_point"
 // counts nobody standing at one, and refuses nothing when more robots want to
 // wait than there are spots. If that happens the fleet queues them, which is
 // what fleets do. See the splicer's pick for how one is chosen.
-const PropGroupWaitPoints = "group_wait_points"
+const PropGroupWaitPoints = nodes.PropGroupWaitPoints
 
 // ParseWaitPoints splits a group's configured wait points, dropping blanks and
 // surrounding space. Exported so the seeder and the UI validate what they are
 // about to write with the SAME parse the dispatcher will read it back with — a
 // door that accepts a value the reader then drops is a door that reports success
 // for a lane that comes up ungated.
-func ParseWaitPoints(raw string) []string {
-	if raw == "" {
-		return nil
-	}
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
+func ParseWaitPoints(raw string) []string { return nodes.ParseWaitPoints(raw) }
 
 // laneGateTarget describes a destination that the valve owns: the lane node, the
 // points its robots may stage at, and — once the splicer has chosen — the one it
@@ -321,8 +308,12 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep, orderID int64) ([]reso
 			return nil, laneGateTarget{}, false, err
 		}
 		if !gated {
-			inside = 0
-			continue
+			// UNREACHABLE: a lane is never without a mark. The store refuses a lane
+			// whose group has no wait points and refuses unmarking a group with
+			// lanes, and boot refuses a database that has one (nodes.UnmarkedLanes).
+			// Reaching here means that rule was bypassed, and no robot is sent into
+			// a lane the oracle cannot gate.
+			return nil, laneGateTarget{}, false, fmt.Errorf("splice: %w: %s", nodes.ErrLaneUnmarked, lane.Name)
 		}
 		if lane.ID == inside {
 			continue // still in the lane the last wait let it into

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"testing"
 
-	"shingo/protocol"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
@@ -240,19 +239,12 @@ func blockOccupancyFor(t *testing.T, db *store.DB, orderID int64) {
 // the exactly-once re-read passes because no vendor id exists yet. If any of
 // those refused first the test would pass with the fix reverted.
 //
-// MUTATION 1 (verified): restore the log-and-continue body of TakeLaneOccupancy.
-// BOTH assertions fire. Assertion 1 — "leg one was dispatched into a lane its
-// occupancy could not be recorded for" — and assertion 2 reports the leg at
-// `dispatched`, because with the write swallowed nothing stops the call. The
-// resulting state is a child in flight with NO occupancy row, which is exactly
-// what the next leg's read cannot tell apart from an empty lane.
+// Every lane is marked now, so the leg is sent to the mark and its occupancy is
+// taken at the gate's tail append: the write failing there leaves the robot at
+// the mark, gate-staged, and the evaluator re-asks it.
 //
-// MUTATION 2 (verified): keep the returned error, move the take back below
-// MoveToSourcing. Assertion 1 PASSES — the child is genuinely not dispatched and
-// the lane is genuinely empty — and only assertion 2 fires, reporting `sourcing`.
-// That split is the reason this test is two assertions and not one: the obvious
-// fix passes half of it and leaves the leg stranded where no re-drive can find
-// it. A one-assertion version of this test would have shipped that.
+// MUTATION (not yet run): make the tail append ignore TakeLaneOccupancy's error. The leg goes
+// into the lane with no occupancy row, and assertion 1 fires.
 func TestCompound_UnrecordableOccupancyHoldsTheChild(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -265,31 +257,27 @@ func TestCompound_UnrecordableOccupancyHoldsTheChild(t *testing.T) {
 		t.Fatalf("advance with an unwritable occupancy row must hold the child, not error out: %v", err)
 	}
 
-	// 1. Nothing was sent.
-	if inFlight(t, db, children[0].ID) {
-		t.Error("leg one was dispatched into a lane its occupancy could not be recorded for — the next " +
+	// 1. Leg one is not in the lane. Every lane is marked, so the leg is sent to
+	// the mark and its occupancy is taken when the gate appends its tail into
+	// the lane: with the write failing, nothing is appended and nobody is inside.
+	held, err := db.GetOrder(children[0].ID)
+	if err != nil {
+		t.Fatalf("reload leg one: %v", err)
+	}
+	if inFlight(t, db, children[0].ID) && !IsGateStaged(held) {
+		t.Error("leg one was sent into a lane its occupancy could not be recorded for — the next " +
 			"leg's admission read sees an empty lane and follows it in")
 	}
 	if got := occupants(t, db, lane); len(got) != 0 {
 		t.Errorf("lane occupants = %v, want none", got)
 	}
 
-	// 2. And it is still claimable. This is the position assertion.
-	held, err := db.GetOrder(children[0].ID)
-	if err != nil {
-		t.Fatalf("reload leg one: %v", err)
-	}
-	if held.Status != protocol.StatusPending {
-		t.Fatalf("leg one is %s, want %s — a held child must stay pending or GetNextChildOrder "+
-			"(status='pending') never returns it again, and no transition out of sourcing goes back. "+
-			"The leg is stranded and the parent stays in reshuffling forever",
-			held.Status, protocol.StatusPending)
-	}
-
-	// The re-drive proves it: same call, working write, leg one goes.
-	next, err := db.GetNextChildOrder(parent.ID)
-	if err != nil || next == nil || next.ID != children[0].ID {
-		t.Fatalf("GetNextChildOrder after the hold = %v (err %v), want leg one (%d)", next, err, children[0].ID)
+	// 2. And it is not stranded: it stands at the mark, gate-staged, which is a
+	// candidate the lane's evaluator and its floor re-ask on every pass, so the
+	// append that takes its occupancy is retried once the write works.
+	if !IsGateStaged(held) {
+		t.Fatalf("leg one is %s (wait index %d), want it held at the mark — a candidate the gate re-asks",
+			held.Status, held.WaitIndex)
 	}
 }
 

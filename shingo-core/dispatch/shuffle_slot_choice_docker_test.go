@@ -60,6 +60,7 @@ func setupChoiceFixture(t *testing.T, db *store.DB, prefix string) *choiceFixtur
 	testutil.MustNoErr(t, db.CreateNode(f.grp), "create group")
 
 	mkLane := func(name string, depth int) (*nodes.Node, []*nodes.Node) {
+		testdb.MarkGroup(t, db, f.grp.ID)
 		l := &nodes.Node{Name: name, NodeTypeID: &lanType.ID, ParentID: &f.grp.ID, Enabled: true, IsSynthetic: true}
 		testutil.MustNoErr(t, db.CreateNode(l), "create "+name)
 		var out []*nodes.Node

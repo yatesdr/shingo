@@ -348,34 +348,3 @@ func TestSplice_RefusesAnUnresolvedStepBeforeTheEntry(t *testing.T) {
 		t.Errorf("a blank AFTER the gated entry refused the splice (gated=%v err=%v)", gated, err)
 	}
 }
-
-// TestSplice_UngatedPlanIsUntouched is the narrowness assertion, and it covers
-// every order at both plants: no lane anywhere carries a mark, so the
-// walk finds nothing gated and the plan comes back byte-identical.
-func TestSplice_UngatedPlanIsUntouched(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	sd := testdb.SetupStandardData(t, db)
-	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
-	_, shallow, _ := noneLaneWithTwoSlots(t, db, "SPL-NONE")
-
-	plan := []resolvedStep{
-		{Action: protocol.ActionPickup, Node: sd.LineNode.Name},
-		{Action: protocol.ActionDropoff, Node: shallow.Name},
-	}
-	out, _, gated, err := d.spliceLaneWait(plan, 0)
-	if err != nil {
-		t.Fatalf("splice on an ungated lane errored: %v", err)
-	}
-	if gated {
-		t.Fatal("a lane on the DEFAULT enforcement mode was treated as gated")
-	}
-	if len(out) != len(plan) {
-		t.Fatalf("plan length changed from %d to %d with nothing gated", len(plan), len(out))
-	}
-	for i := range plan {
-		if out[i] != plan[i] {
-			t.Errorf("step %d changed: %+v -> %+v", i, plan[i], out[i])
-		}
-	}
-}

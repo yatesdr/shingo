@@ -186,6 +186,9 @@ func Create(db *sql.DB, n *Node) error {
 	// (admin handler trims at form ingress); this guards non-handler
 	// callers and the RDS/fleet-sync path. Silent — no warning log.
 	n.Name = strings.TrimSpace(n.Name)
+	if err := requireMarkedGroup(db, n); err != nil {
+		return err
+	}
 	id, err := helpers.InsertID(db, `INSERT INTO nodes (name, is_synthetic, zone, enabled, depth, node_type_id, parent_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
 		n.Name, n.IsSynthetic, n.Zone, n.Enabled, helpers.NullableInt(n.Depth), helpers.NullableInt64(n.NodeTypeID), helpers.NullableInt64(n.ParentID))
 	if err != nil {
@@ -216,6 +219,9 @@ func Update(db *sql.DB, n *Node) error {
 	defer tx.Rollback()
 
 	if err := checkEnabledIsLaneGrain(tx, n); err != nil {
+		return err
+	}
+	if err := requireMarkedGroup(tx, n); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`UPDATE nodes SET name=$1, is_synthetic=$2, zone=$3, enabled=$4, depth=$5, node_type_id=$6, parent_id=$7, updated_at=NOW() WHERE id=$8`,
@@ -411,12 +417,18 @@ func SetParent(db *sql.DB, nodeID, parentID int64) error {
 	if err := CheckParentage(db, nodeID, parentID); err != nil {
 		return err
 	}
+	if err := requireMarkedParent(db, nodeID, &parentID); err != nil {
+		return err
+	}
 	_, err := db.Exec(`UPDATE nodes SET parent_id=$1, updated_at=NOW() WHERE id=$2`, parentID, nodeID)
 	return err
 }
 
 // ClearParent removes a node's parent assignment.
 func ClearParent(db *sql.DB, nodeID int64) error {
+	if err := requireMarkedParent(db, nodeID, nil); err != nil {
+		return err
+	}
 	_, err := db.Exec(`UPDATE nodes SET parent_id=NULL, updated_at=NOW() WHERE id=$1`, nodeID)
 	return err
 }

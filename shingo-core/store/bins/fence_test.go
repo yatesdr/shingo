@@ -48,6 +48,7 @@ func fenceFixture(t *testing.T, db *store.DB, prefix, code string, strict bool) 
 
 	grpID, err := nodes.CreateGroup(sdb, prefix+"-GRP")
 	testutil.MustNoErr(t, err, "CreateGroup")
+	testdb.MarkGroup(t, db, grpID)
 	// UPSERT, because the reciprocity case builds TWO groups holding the SAME
 	// carrier type — which is the whole shape it is testing, not an accident of
 	// the fixture.
@@ -278,6 +279,7 @@ func TestFence_ClosesNesting(t *testing.T) {
 	// A group inside the fenced group, with a carrier in it.
 	innerID, err := nodes.CreateGroup(sdb, "NEST-INNER")
 	testutil.MustNoErr(t, err, "inner group")
+	testdb.MarkGroup(t, db, innerID)
 	_, err = sdb.Exec(`UPDATE nodes SET parent_id = $1 WHERE id = $2`, grpID, innerID)
 	testutil.MustNoErr(t, err, "nest the inner group")
 

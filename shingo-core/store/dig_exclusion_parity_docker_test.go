@@ -186,6 +186,7 @@ func seedGroupWithOneLane(t *testing.T, db *store.DB, prefix string) (group, lan
 	if err != nil {
 		t.Fatalf("create node group: %v", err)
 	}
+	testdb.MarkGroup(t, db, groupID)
 	group, err = db.GetNode(groupID)
 	if err != nil || group == nil {
 		t.Fatalf("reload node group %d: %v", groupID, err)

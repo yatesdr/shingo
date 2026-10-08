@@ -7,7 +7,6 @@ import (
 	"log"
 
 	"shingo/protocol"
-	"shingocore/service"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
@@ -65,40 +64,6 @@ import (
 // reservations.IsExcavation.
 const laneGateReservedBy = reservations.BySourceLock
 
-// laneWaitPoint returns ONE map point a lane's robots may dwell at while Core
-// decides whether they may enter, or "" when the lane is ungated.
-//
-// It is the whole of the gate's configuration, and it decides two things, not
-// one — see the header. A non-empty value means: ship lane-bound orders UNSEALED
-// to this point and append their tail when the lane is safe, which is also the
-// only moment the dropoff slot is re-resolved (rebindGatedDropoff). Empty means:
-// choose the slot before dispatch, park the order if the answer is no, and never
-// ask again — so the slot the robot drives to is as old as the drive.
-//
-// ── ONE POINT, WHICH IS NO LONGER THE WHOLE ANSWER ────────────────────────
-//
-// The waiting spots belong to the GROUP now (laneWaitPoints), so a lane can have
-// several. This returns the first, and it stays because every one of its callers
-// is asking the BOOLEAN question — is this lane gated — through laneIsGated, and
-// for that question any point answers it. The caller that needs the whole set is
-// gateTargetForLane, and it asks for the set.
-func (d *Dispatcher) laneWaitPoint(laneID int64) string {
-	lane, err := d.db.GetNode(laneID)
-	if err != nil || lane == nil {
-		// UNREADABLE IS UNGATED, which is the direction this already had: the old
-		// body read one property and a failed read returned "". Every caller is
-		// laneIsGated, and answering "not gated" there parks the order before
-		// dispatch instead of staging it — the pre-mark behaviour, which is the
-		// conservative half.
-		return ""
-	}
-	points, _ := d.laneWaitPoints(lane)
-	if len(points) == 0 {
-		return ""
-	}
-	return points[0]
-}
-
 // laneWaitPoints returns every point this lane's robots may dwell at, and
 // whether they came from the lane's own legacy key.
 //
@@ -109,7 +74,8 @@ func (d *Dispatcher) laneWaitPoint(laneID int64) string {
 //     disables the group's benefit for that lane and makes a part-migrated rig
 //     the worst possible regression fixture.
 //  2. otherwise the GROUP's `group_wait_points`.
-//  3. otherwise the lane is ungated.
+//  3. otherwise none: an unmarked lane, which the store refuses to hold
+//     (store/nodes/marks.go); gateTargetForLane reports it as the breach.
 //
 // It reads and never refuses. A duplicate point across two groups is a real
 // configuration error and it is caught at the two doors where a person is
@@ -129,37 +95,6 @@ func (d *Dispatcher) laneWaitPoints(lane *nodes.Node) ([]string, bool) {
 	}
 	return ParseWaitPoints(d.db.GetNodeProperty(*lane.ParentID, PropGroupWaitPoints)), false
 }
-
-// laneIsGated reports whether Core stages robots at this lane rather than parking
-// their orders before dispatch. Derived, never configured separately: the
-// existence of the mark IS the answer.
-//
-// It is ALSO the answer to "does this lane get a late-bound dropoff", because the
-// two ride one flag. If you are here asking the second question, that coupling is
-// the thing to know: the header says why, and it is not obviously the right
-// design — it is simply the design.
-func (d *Dispatcher) laneIsGated(laneID int64) bool {
-	return d.laneWaitPoint(laneID) != ""
-}
-
-// TWO QUESTIONS, ONE ANSWER — and the collapse is the ruling landing.
-//
-// takesMouthHold and sequencesLaneEntry lived here as separate predicates over
-// the enforcement mode. They returned the same value for every mode, and were
-// deliberately kept apart for one reason: the derivation that was coming might
-// want to answer them independently.
-//
-// It does not. A lane with a mark gets the whole gate — mouth holds, entry
-// sequencing, staging at the point — and a lane without one gets none of it and
-// keeps parking orders pre-dispatch. There is no third shape left to express, so
-// the two predicates are one derivation (laneIsGated) and the split retires
-// having done its job: it survived exactly until the moment that decided it.
-//
-// The trap the original single predicate created is not rebuilt by this. That bug
-// was a boolean standing in for a MODE, so a new arm silently inherited the wrong
-// branch of a three-way choice. There is no three-way choice now — the mark is
-// there or it is not — and the question a caller asks is the same question in
-// every case.
 
 // laneHold is a (lane, mode) an order must hold to work that lane: THE FULL LANE
 // LOCK on the lane it picks from, inbound when it drops into one.
@@ -190,113 +125,36 @@ type laneHold struct {
 	mode   reservations.Mode
 }
 
-// resolveOrderLaneHolds computes the mouth holds a plain order needs from its
-// source and destination nodes: the source lane is outbound (the order picks
-// there), the destination lane is inbound (the order drops there). A node that is
-// not a direct lane slot (LaneForNode == nil) contributes no hold.
+// resolveOrderLaneHolds computes the mouth hold a plain order takes at dispatch:
+// the full lane lock on the lane it picks from (§R.101, see laneHold). A source
+// that is not a direct lane slot (LaneForNode == nil) contributes no hold.
 //
-// ── EVERY LANE CONTRIBUTES (§R.95/§R.96 stage 2, a1) ──────────────────────
+// ── THE SOURCE ONLY ───────────────────────────────────────────────────────
 //
-// This used to skip any lane without a gate mark, and the paragraph here said so
-// plainly, ending: "an unmarked plant yields zero holds, so the gate is a no-op
-// at both plants today." §R.95's census turned that sentence from a caveat into
-// a finding — zero holds on unmarked lanes at Springfield and Hopkinsville,
-// complex never acquiring at all. The mouth machinery existed, was correct, and
-// had never once run where it mattered.
+// There used to be a destination arm, an INBOUND hold on the lane the order drops
+// into. Every lane has a mark now (store/nodes/marks.go), so a plain order bound
+// for a lane stops at the mark with its slot not chosen yet, and the gate's tail
+// append is the moment it goes in: an inbound row taken here would reserve a
+// mouth for a destination the order has not committed to, and the occupancy row
+// at the append is what serialises the corridor. The arm skipped every lane and
+// is gone, and with it the same-lane dedupe it needed (one owner picking from and
+// dropping into one lane holds the one dig row).
 //
-// The skip conflated two different things the mark answers. WHERE A ROBOT WAITS
-// is a configuration fact: a lane with a gate point stages the robot at the mark,
-// a lane without one parks the order before dispatch. That is still `laneIsGated`
-// and it still decides staging, at the hand's entering nodes (planNodes over the
-// pre-wait segment) and `entryDeferredToGate`.
-// WHETHER THE MOUTH IS SEQUENCED AT ALL is not a configuration fact — it is the
-// physics of a single-file lane, true of every lane on both plants whether or not
-// anyone drew a point on the map.
-//
-// So the mouth is universal and the staging stays configured. An unmarked lane
-// now yields its holds and an order refused on one parks pre-dispatch, which is
-// exactly what an unmarked lane has always done with every other refusal.
-func (d *Dispatcher) resolveOrderLaneHolds(sourceNode, destNode *nodes.Node) ([]laneHold, error) {
-	var holds []laneHold
-	seen := map[int64]int{} // laneID -> index into holds; one entry per lane
-	add := func(n *nodes.Node, mode reservations.Mode) error {
-		if n == nil {
-			return nil
-		}
-		lane, err := d.db.LaneForNode(n.ID)
-		if err != nil {
-			return err
-		}
-		if lane == nil || lane.ParentID == nil {
-			return nil // not a lane slot, or a lane with no group — no hold
-		}
-		// ── ONE OWNER, ONE LANE, ONE HOLD — THE STRONGER MODE WINS ─────────
-		//
-		// The source arm and the dest arm can resolve to the SAME lane: an
-		// order that picks from a lane and drops back into it, same-lane
-		// source+destination. Undeduped, that is two rows for one owner on one
-		// lane — the incoherent state admitMouth exists to refuse — and the
-		// refusal it raises does NOT wrap ErrReservationConflict (it is the
-		// "still a caller bug" arm, and AcquireLanesFor returns its error
-		// before the verdict switch translates it), so acquireOrderLanes'
-		// conflict rollback never fires: the first mode's row is committed in
-		// its own transaction, the error path returns without releasing it,
-		// and every retry meets the order's own committed row. The lane is
-		// wedged by the order that needs it, permanently.
-		//
-		// The same rule resolvePlanLaneHolds states a plan walk's version of:
-		// an order that both picks from and drops into a lane owns it for the
-		// whole visit, and dig is the stronger mode. Reachable through the
-		// operator bin-move door, which is how it surfaced.
-		// ── A GATED LANE'S ENTRY IS NOT THIS MOMENT, ON THE DESTINATION SIDE ─
-		//
-		// The same rule resolvePlanLaneHolds states for a coordinated plan, said
-		// here for the plain path, and narrowed to the arm it is true of.
-		//
-		// A plain store bound for a MARKED lane stops at the mark. Its dropoff is
-		// not chosen yet — that is the whole of what the gate buys, the slot
-		// resolved at release against the lane as it stands — so an INBOUND row
-		// taken here reserves the mouth for a destination the order has not
-		// committed to. The robot then stands at the spot holding a corridor it
-		// is not in, against a lane it may not even end up entering. That row is
-		// a signal wearing a mutex's clothes: the thing that actually serialises
-		// the corridor is the OCCUPANCY row, taken at the append when the robot
-		// really goes in.
-		//
-		// THE SOURCE HOLD IS UNTOUCHED AND MUST BE. §R.101's ModeDig lock says a
-		// demand that resolves onto a bin owns that lane until the bin leaves by
-		// its mover, and that is a real lock about a real commitment: the bin is
-		// chosen, it is in that lane, and no gate changes which lane it is in. It
-		// is also what the five `lane-held-source` refusals of run 12f were, and
-		// every one of them was correct.
-		//
-		// AN UNMARKED LANE IS BYTE-IDENTICAL. entryDeferredToGate is false
-		// without a wait point, so every lane at both plants today yields exactly
-		// the holds it yielded before.
-		if mode == reservations.ModeInbound && d.entryDeferredToGate(skipsForPlainEntry, lane) {
-			d.dbg("lane mouth: this order's entry to %s stops at its mark and its slot is not chosen "+
-				"yet, so no destination hold is taken here; the tail append is the moment it goes in",
-				lane.Name)
-			return nil
-		}
-		if i, ok := seen[lane.ID]; ok {
-			if holds[i].mode != reservations.ModeDig && mode == reservations.ModeDig {
-				holds[i].mode = reservations.ModeDig
-			}
-			return nil
-		}
-		seen[lane.ID] = len(holds)
-		holds = append(holds, laneHold{laneID: lane.ID, mode: mode})
-		return nil
+// THE SOURCE HOLD IS UNTOUCHED AND MUST BE. A demand that resolves onto a bin owns
+// that lane until the bin leaves by its mover; the bin is chosen and in that lane,
+// and no gate changes which lane it is in.
+func (d *Dispatcher) resolveOrderLaneHolds(sourceNode *nodes.Node) ([]laneHold, error) {
+	if sourceNode == nil {
+		return nil, nil
 	}
-	// The SOURCE lane is locked, not merely queued at (§R.101). See laneHold.
-	if err := add(sourceNode, reservations.ModeDig); err != nil {
+	lane, err := d.db.LaneForNode(sourceNode.ID)
+	if err != nil {
 		return nil, err
 	}
-	if err := add(destNode, reservations.ModeInbound); err != nil {
-		return nil, err
+	if lane == nil || lane.ParentID == nil {
+		return nil, nil // not a lane slot, or a lane with no group: no hold
 	}
-	return holds, nil
+	return []laneHold{{laneID: lane.ID, mode: reservations.ModeDig}}, nil
 }
 
 // LaneRevisitError is the TRIPWIRE on a plan shape nothing builds: a pickup in
@@ -304,9 +162,10 @@ func (d *Dispatcher) resolveOrderLaneHolds(sourceNode, destNode *nodes.Node) ([]
 //
 // ── WHY IT IS A REFUSAL AND NOT A HOLD ────────────────────────────────────
 //
-// Mouth holds are taken ONCE, at dispatch, and this walk deduplicates a lane
-// named twice into one row on the rule that an order picking from and dropping
-// into a lane "owns it for the whole visit". That rule is honest for the two
+// A lane is held for one visit: the plan walk used to take a lane named twice as
+// one mouth row, and the gate's occupancy row now spans one entry, on the rule
+// that an order picking from and dropping into a lane "owns it for the whole
+// visit". That rule is honest for the two
 // shapes the plant actually emits — an in-lane MOVE (which finishes in the lane,
 // so the visit and the order end together) and a RELAY (whose bin stands parked
 // IN the lane between visits, claimed, where the lane's own state carries it).
@@ -337,51 +196,32 @@ func (e *LaneRevisitError) Error() string {
 		e.Lane, e.PickupNode, e.DropoffNode, e.FinalNode)
 }
 
-// resolvePlanLaneHolds is resolveOrderLaneHolds over a whole coordinated plan:
-// every pickup step's lane is a source (the full lock), every dropoff step's is a
-// destination (inbound).
+// refuseLaneRevisit is the tripwire's walk over a coordinated plan (see
+// LaneRevisitError). It returns nil for every plan a door builds.
 //
-// ── COMPLEX HAD NEVER ACQUIRED ANYTHING (§R.95's census, §R.101's scope) ──
+// ── IT USED TO BE resolvePlanLaneHolds, AND THE HOLDS ARE GONE ────────────
 //
-// admitComplexLanes (now admitComplexLanesVerdict) asked admission's physical questions and then took no holds
-// at all, so the entire mouth mechanism was reachable only from the plain path.
-// That is not a small gap: complex is the bulk of both plants' lane traffic, and
-// the tree says so at complex_dispatch.go's ungated arm. §R.101's rule is written
-// about complex orders — a complex order resolving on an open or shallow bin
-// proceeds as normal, the lane locks, and the lane clears on the pickup — so a
-// source lock that only plain orders take is the rule applied to the smaller
-// half of the plant.
+// This walk also took the plan's mouth holds: the full lock on every pickup's
+// lane, inbound on every dropoff's (§R.101 applied to complex orders). A
+// coordinated create bound for a marked lane stops at the mark and its entry is
+// the gate's tail append, so the walk skipped every marked lane; every lane has
+// a mark now (store/nodes/marks.go), so it took nothing, and the holds are gone.
+// What keeps a bin from being put in front of a complex order's target is the
+// burial guard on slot choice and the gate serialising entries by occupancy.
 //
-// ONE PLAN CAN NAME ONE LANE TWICE and legitimately: a step picks from a lane the
-// same plan later drops into, or two pickups come from one lane. The holds are
-// deduplicated with the STRONGER mode winning, because an order that both picks
-// from and drops into a lane owns it for the whole visit — and because inserting
-// two rows for one owner on one lane is the incoherent state admitMouth exists to
-// refuse.
-func (d *Dispatcher) resolvePlanLaneHolds(steps []resolvedStep) ([]laneHold, error) {
-	strongest := map[int64]reservations.Mode{}
-	var order []int64 // deterministic output; map iteration is not
-
-	// ── THE TRIPWIRE'S EVIDENCE, GATHERED ON THIS SAME WALK ───────────────
-	//
-	// It rides here rather than in a pass of its own because this loop is already
-	// resolving every step's node and lane, and those are database reads on every
-	// dispatch tick — a second walk would double them to answer a question this
-	// one has in hand.
-	//
-	// Recorded BEFORE the gated-lane skip below, deliberately: whether a lane
-	// defers its hold to its mark is configuration, and the shape is malformed
-	// either way. A tripwire that a mark can switch off is not a tripwire.
+// The tripwire stays: a plan that picks from a lane, leaves, and comes back is
+// malformed whoever holds what, and a mark does not switch it off.
+func (d *Dispatcher) refuseLaneRevisit(steps []resolvedStep) error {
 	pickedFrom := map[int64]string{} // lane -> the node this plan picked at
 	var revisit *LaneRevisitError
 	revisitLane := int64(0)
 	finalNode, finalLane, finalResolved := "", int64(0), false
 
 	for _, step := range steps {
-		mode := reservations.ModeInbound
+		isPickup := false
 		switch step.Action {
 		case protocol.ActionPickup:
-			mode = reservations.ModeDig
+			isPickup = true
 		case protocol.ActionDropoff:
 		default:
 			continue
@@ -397,20 +237,20 @@ func (d *Dispatcher) resolvePlanLaneHolds(steps []resolvedStep) ([]laneHold, err
 		node, err := d.db.GetNodeByDotName(step.Node)
 		if err != nil || node == nil {
 			// A step whose node does not resolve is admission's problem, not the
-			// mouth's — and it already ran. Skipping matches admitPlan's own arm on
-			// the same read, so the two walk the same steps.
+			// tripwire's — and it already ran. Skipping matches admitPlan's own arm
+			// on the same read, so the two walk the same steps.
 			continue
 		}
 		lane, err := d.db.LaneForNode(node.ID)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		finalResolved = true
 		if lane == nil || lane.ParentID == nil {
 			continue
 		}
 		finalLane = lane.ID
-		if mode == reservations.ModeDig {
+		if isPickup {
 			if _, seen := pickedFrom[lane.ID]; !seen {
 				pickedFrom[lane.ID] = step.Node
 			}
@@ -421,39 +261,6 @@ func (d *Dispatcher) resolvePlanLaneHolds(steps []resolvedStep) ([]laneHold, err
 			// is over.
 			revisit = &LaneRevisitError{Lane: lane.Name, PickupNode: at, DropoffNode: step.Node}
 			revisitLane = lane.ID
-		}
-		// ── A GATED LANE'S ENTRY IS NOT THIS MOMENT ───────────────────────
-		//
-		// This caller declares entryWhenGated, and the declaration is about the
-		// whole entry decision, not only about admission's half of it. A
-		// coordinated create bound for a MARKED lane stops at the mark: the fleet
-		// is sent `preWait` and nothing else, and the tail that actually puts the
-		// robot in the corridor is appended later, when the evaluator says the
-		// lane is safe. Taking the lane here would refuse the order BEFORE
-		// DISPATCH and waste every step in front of the lane — which is the exact
-		// thing the splice exists to stop: a compound of 5, 7 or 10 steps must not
-		// queue on a lane block. It does all the work it can up to the lane.
-		//
-		// It is the same rule the hand's entering nodes state for occupancy (the
-		// pre-wait segment's planNodes) and entryDeferredToGate states for
-		// admission, now said a third time for the mouth. On a marked lane the sequencing is the GATE's — one robot admitted
-		// at a time, occupancy recorded at the append — so nothing is unsequenced
-		// by deferring; the waiting simply happens at the mark instead of in the
-		// queue. On an unmarked lane, which is every lane at both plants, there is
-		// no mark to wait at and the hold below is the whole of the sequencing.
-		if d.entryDeferredToGate(skipsForComplexEntry, lane) {
-			d.dbg("lane mouth: order's entry to %s stops at its mark, so no hold is taken here; the "+
-				"tail append is the moment it goes in", lane.Name)
-			continue
-		}
-		prev, seen := strongest[lane.ID]
-		if !seen {
-			order = append(order, lane.ID)
-			strongest[lane.ID] = mode
-			continue
-		}
-		if prev != reservations.ModeDig && mode == reservations.ModeDig {
-			strongest[lane.ID] = mode
 		}
 	}
 
@@ -470,14 +277,9 @@ func (d *Dispatcher) resolvePlanLaneHolds(steps []resolvedStep) ([]laneHold, err
 	// unresolvable node and has already run.
 	if revisit != nil && finalResolved && finalLane != revisitLane {
 		revisit.FinalNode = finalNode
-		return nil, revisit
+		return revisit
 	}
-
-	holds := make([]laneHold, 0, len(order))
-	for _, laneID := range order {
-		holds = append(holds, laneHold{laneID: laneID, mode: strongest[laneID]})
-	}
-	return holds, nil
+	return nil
 }
 
 // laneAdmission is one acquireOrderLanes decision, carrying the cause the park
@@ -1055,7 +857,7 @@ func (d *Dispatcher) AcquireLanesForOrder(order *orders.Order, sourceNode, destN
 		return admitted, cause, laneName, err
 	}
 
-	holds, err := d.resolveOrderLaneHolds(sourceNode, destNode)
+	holds, err := d.resolveOrderLaneHolds(sourceNode)
 	if err != nil {
 		return false, "", "", err
 	}
@@ -1071,52 +873,6 @@ func (d *Dispatcher) AcquireLanesForOrder(order *orders.Order, sourceNode, destN
 	}
 	// THE CAUSE COMES FROM THE VERDICT, not from a second read taken here.
 	return false, adm.cause, d.laneDisplayName(holds), nil
-}
-
-// BuriedForHeldBin builds the BuriedError for an order whose HELD bin has become
-// unreachable, so the caller can plan the dig that unburies it.
-//
-// It exists because a refusal is not an answer. Admission can now tell a held-bin
-// order that its bin is walled, but a refusal with nothing to clear it is a
-// permanent park — the wedge shape this stream keeps refusing to build. The fresh
-// path never had that problem: the finder returns OutcomeReshuffle carrying a
-// BuriedError, and the scanner turns it into PlanBuriedReshuffle. This is the same
-// fact, reconstructed for the caller that did not go through the finder.
-//
-// The bin's CURRENT slot, not the order's remembered source_node: pickupSlotNow
-// is the one definition of where a held bin actually sits, shared with the
-// classifier and the gate rebind, and a dig planned against an abandoned slot
-// would dig out the wrong thing.
-func (d *Dispatcher) BuriedForHeldBin(order *orders.Order) (*BuriedError, error) {
-	if order == nil || order.BinID == nil {
-		if order != nil {
-			// SHADOWED: "holds no bin" is the folder's permanent state as well as
-			// the fault this error was written for.
-			owns, oerr := d.db.OrderOwnsNoCargo(order.ID)
-			service.NoteFolderShadow(service.FolderSiteBuriedForHeldBin, order.ID, owns, oerr)
-		}
-		return nil, fmt.Errorf("buried-for-held-bin: order holds no bin")
-	}
-	slot, err := d.db.GetNodeByDotName(order.SourceNode)
-	if err != nil || slot == nil {
-		return nil, fmt.Errorf("buried-for-held-bin: source node %q: %v", order.SourceNode, err)
-	}
-	lane, err := d.db.LaneForNode(slot.ID)
-	if err != nil {
-		return nil, err
-	}
-	if lane == nil {
-		return nil, fmt.Errorf("buried-for-held-bin: %q is not a lane slot", slot.Name)
-	}
-	at, _, err := d.pickupSlotNow(order, lane)
-	if err != nil {
-		return nil, err
-	}
-	bin, err := d.db.GetBin(*order.BinID)
-	if err != nil || bin == nil {
-		return nil, fmt.Errorf("buried-for-held-bin: bin %d: %v", *order.BinID, err)
-	}
-	return &BuriedError{Bin: bin, Slot: at, LaneID: lane.ID}, nil
 }
 
 // laneDisplayName returns a human name for the first contended lane, for the

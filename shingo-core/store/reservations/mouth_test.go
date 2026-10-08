@@ -24,7 +24,7 @@ func laneWithSlots(t *testing.T, db *store.DB, laneName string, slotCount int) i
 	if err != nil {
 		t.Fatalf("get LANE node type: %v", err)
 	}
-	lane := &nodes.Node{Name: laneName, IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID}
+	lane := &nodes.Node{Name: laneName, IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: testdb.MarkedGroup(t, db, laneName+"-GRP")}
 	if err := db.CreateNode(lane); err != nil {
 		t.Fatalf("create lane %s: %v", laneName, err)
 	}
@@ -356,7 +356,7 @@ func TestLaneForNode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get LANE type: %v", err)
 	}
-	lane := &nodes.Node{Name: "LANE-WALK", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID}
+	lane := &nodes.Node{Name: "LANE-WALK", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: testdb.MarkedGroup(t, db, "LANE-WALK-GRP")}
 	if err := db.CreateNode(lane); err != nil {
 		t.Fatalf("create lane: %v", err)
 	}
@@ -437,10 +437,11 @@ func TestAuditLaneGeometry(t *testing.T) {
 
 	// Lane nested under a lane.
 	laneType, _ := db.GetNodeTypeByCode(protocol.NodeClassLANE)
-	outer := &nodes.Node{Name: "LANE-OUTER", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID}
+	outer := &nodes.Node{Name: "LANE-OUTER", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: testdb.MarkedGroup(t, db, "LANE-OUTER-GRP")}
 	if err := db.CreateNode(outer); err != nil {
 		t.Fatalf("create outer lane: %v", err)
 	}
+	testdb.MarkGroup(t, db, outer.ID)
 	inner := &nodes.Node{Name: "LANE-INNER", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: &outer.ID}
 	if err := db.CreateNode(inner); err != nil {
 		t.Fatalf("create nested lane: %v", err)

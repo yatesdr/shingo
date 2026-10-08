@@ -96,6 +96,7 @@ func setupDriftFixture(t *testing.T, db *store.DB, prefix string, ch driftChoose
 	testutil.MustNoErr(t, db.CreateNode(fx.grp), "create parent")
 
 	if !ch.plainParent {
+		testdb.MarkGroup(t, db, fx.grp.ID)
 		fx.dug = &nodes.Node{Name: prefix + "-DUG", NodeTypeID: &lanType.ID, ParentID: &fx.grp.ID, Enabled: true, IsSynthetic: true}
 		testutil.MustNoErr(t, db.CreateNode(fx.dug), "create dug lane")
 		for d := 1; d <= 2; d++ {
@@ -110,6 +111,7 @@ func setupDriftFixture(t *testing.T, db *store.DB, prefix string, ch driftChoose
 		fx.candidate = &nodes.Node{Name: prefix + "-X", ParentID: &fx.grp.ID, Enabled: true}
 		testutil.MustNoErr(t, db.CreateNode(fx.candidate), "create flat candidate")
 	} else {
+		testdb.MarkGroup(t, db, fx.grp.ID)
 		fx.lane = &nodes.Node{Name: prefix + "-L", NodeTypeID: &lanType.ID, ParentID: &fx.grp.ID, Enabled: true, IsSynthetic: true}
 		testutil.MustNoErr(t, db.CreateNode(fx.lane), "create candidate lane")
 		one := 1

@@ -59,8 +59,8 @@ import (
 // without moving that signal."
 //
 // Both halves landed together, in one commit, because either alone is broken.
-// resolveOrderLaneHolds now defers the plain arm's DESTINATION hold on a gated
-// lane — the row reserved a mouth for a slot the dweller had not chosen yet —
+// resolveOrderLaneHolds stopped taking the plain arm's DESTINATION hold on a
+// gated lane — the row reserved a mouth for a slot the dweller had not chosen yet —
 // and stillComingToLane no longer asks about rows at all. It keeps a candidate
 // that is not dispatched, one standing at THIS lane's mark (IsGateStaged +
 // WaitLane), or one holding lane occupancy. The mouth row was doing two jobs,
@@ -178,7 +178,7 @@ func (d *Dispatcher) redriveHeldCompoundLegs(laneID int64) []int64 {
 //
 // ── IT DOES NOT CONSULT THE LANE'S MARK, AND THAT IS THE ROLLBACK RULE ────
 //
-// There was a `if !d.laneIsGated(lane.ID) { return }` here, sold as "an
+// There was an early return here for a lane with no mark, sold as "an
 // unconfigured plant does one lane lookup and returns". It also stranded every
 // robot already dwelling when a mark was cleared, which is the one thing the
 // enablement ruling promises it will not do: "rollback is clearing it (robots

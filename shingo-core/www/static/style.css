@@ -1253,6 +1253,9 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
   text-align: center;
 }
 .smkt-add-lane:hover { color: var(--primary); border-color: var(--primary); }
+/* A group without waiting spots cannot take a lane: the line is the control and
+   reads as a link to where its spots are set, not as the add button. */
+.smkt-add-lane-blocked { border: none; color: var(--text); text-decoration: underline; }
 .ngrp-direct .smkt-lane-slots {
   border: 1px dashed var(--border);
   border-radius: var(--radius);

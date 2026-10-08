@@ -182,11 +182,12 @@ func TestC2bPin_AnInteriorGroupDropWaitsForAFreeChild(t *testing.T) {
 	testutil.MustNoErr(t, db.MoveBinClearingStaging(atMouth.ID, press2.ID, false), "the mouth's bin leaves")
 	prScanPass(t, d, db, "c2big")
 	o = prReloadUUID(t, db, "c2big")
-	if o.Status != StatusDispatched {
-		t.Fatalf("the swap is %s under %q after a child freed, want %s", o.Status, o.QueueCause, StatusDispatched)
+	if o.VendorOrderID == "" || protocol.IsAcquiring(o.Status) {
+		t.Fatalf("the swap is %s under %q after a child freed, want it sent", o.Status, o.QueueCause)
 	}
 	var steps []resolvedStep
 	testutil.MustNoErr(t, json.Unmarshal([]byte(o.StepsJSON), &steps), "read the plan")
+	steps = withoutInboundLaneWaits(steps) // the gate's waits, in front of each lane entry
 	if steps[1].Node != mouth.Name {
 		t.Fatalf("the interior drop was sent to %q, want the freed child %s", steps[1].Node, mouth.Name)
 	}
@@ -286,6 +287,7 @@ func TestC2bPin_AnIntakeDropNeverWallsItsOwnPickup(t *testing.T) {
 				g = testutil.Must(t, g, err, "read the group")
 				laneType, err := db.GetNodeTypeByCode(protocol.NodeClassLANE)
 				testutil.MustNoErr(t, err, "LANE type")
+				testdb.MarkGroup(t, db, g.ID)
 				lane2 := &nodes.Node{Name: prefix + "-LANE2", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: &g.ID}
 				testutil.MustNoErr(t, db.CreateNode(lane2), "create the second lane")
 				d0, d1 := 0, 1
@@ -320,8 +322,9 @@ func TestC2bPin_AnIntakeDropNeverWallsItsOwnPickup(t *testing.T) {
 				testdb.AssertNoHoldsAtRest(t, db, "the swap waits for somewhere that does not wall its pickup")
 				return
 			}
-			if o.Status != StatusDispatched || !strings.HasPrefix(steps[1].Node, prefix+"-L2S") {
-				t.Fatalf("with a second lane the swap is %s with its drop at %q, want dispatched into %s's lane "+
+			steps = withoutInboundLaneWaits(steps) // the gate's waits, in front of each lane entry
+			if o.VendorOrderID == "" || protocol.IsAcquiring(o.Status) || !strings.HasPrefix(steps[1].Node, prefix+"-L2S") {
+				t.Fatalf("with a second lane the swap is %s with its drop at %q, want it sent into %s's lane "+
 					"(not %s)", o.Status, steps[1].Node, other.Name, mouth.Name)
 			}
 		})

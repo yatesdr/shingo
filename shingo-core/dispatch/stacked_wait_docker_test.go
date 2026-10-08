@@ -62,6 +62,7 @@ func stackedLane(t *testing.T, db *store.DB, prefix string) (grp, lane *nodes.No
 	grp = &nodes.Node{Name: prefix + "-GRP", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(grp), "create group")
 
+	testdb.MarkGroup(t, db, grp.ID)
 	lane = &nodes.Node{Name: prefix + "-LANE", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
 	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
 	for d := 1; d <= 3; d++ {

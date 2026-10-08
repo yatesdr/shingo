@@ -37,6 +37,7 @@ func proofGroup(t *testing.T, db *store.DB, prefix string) (group string, a, b *
 	groupID, _, a := gatedLane(t, db, prefix+"A", "")
 	laneType, err := db.GetNodeTypeByCode(protocol.NodeClassLANE)
 	testutil.MustNoErr(t, err, "LANE type")
+	testdb.MarkGroup(t, db, groupID)
 	laneB := &nodes.Node{Name: prefix + "B-LANE", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: &groupID}
 	testutil.MustNoErr(t, db.CreateNode(laneB), "create lane B")
 	d0 := 0
@@ -194,6 +195,7 @@ func TestC2bPin_ARefusedGatedOrderWhosePickupMovesLaneIsSentWithOneWait(t *testi
 	groupID, laneA, a := gatedLane(t, db, "C2BP4A", "C2BP4A-WAIT")
 	laneType, err := db.GetNodeTypeByCode(protocol.NodeClassLANE)
 	testutil.MustNoErr(t, err, "LANE type")
+	testdb.MarkGroup(t, db, groupID)
 	laneB := &nodes.Node{Name: "C2BP4B-LANE", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: &groupID}
 	testutil.MustNoErr(t, db.CreateNode(laneB), "create lane B")
 	testutil.MustNoErr(t, db.SetNodeProperty(laneB.ID, PropLaneGatePoint, "C2BP4B-WAIT"), "gate lane B")
