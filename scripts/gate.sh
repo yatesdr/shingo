@@ -124,6 +124,9 @@ done
 gate_scope=""
 [ "$(echo $MODULES)" = "$ALL_MODULES" ] || gate_scope="$(echo $MODULES)"
 rc=0
+# Set by `full` alone (see unit_packages); never read from the environment, so
+# an exported SIM_TAKES cannot shrink a unit run that no sim step follows.
+SIM_TAKES=""
 
 # Which modules actually carry docker-tagged tests. COMPUTED, not listed,
 # and computed in ONE place because two copies of this answer is exactly the
@@ -441,6 +444,50 @@ harness_verdict() {
   fi
 }
 
+# unit_packages <module> — what the unit step runs in a module: ./..., less the
+# packages the sim step will run, when this gate runs the sim step.
+#
+# `-race -tags sim` OVER A PACKAGE RUNS EVERY UNTAGGED TEST IN IT, because the
+# tag adds files and removes none — unless a file in that package says
+# `//go:build !sim`, which the sim build then leaves out. So a package is left
+# to the sim step only when no file under it carries that constraint: checked
+# per package directory on every run, and failing safe, the same way
+# untagged_only_modules guards its `!docker` skip. Today that leaves the edge's
+# engine packages to the sim step (182s of race-detected tests that already
+# include all ~56s of their untagged ones), and keeps shingo-core's
+# fleet/simulator in the unit run, because a stub in it is `!sim`.
+#
+# Only `full` sets SIM_TAKES, because only `full` runs the sim step; the bare
+# gate and `gate.sh test` run ./... whole. If the sim step then fails to run
+# at all it says FAIL, so nothing left to it goes silently untested.
+unit_packages() {
+  local m="$1" pats p d mod skip=""
+  case "$m" in
+    shingo-core) pats="$SIM_PKGS_CORE" ;;
+    shingo-edge) pats="$SIM_PKGS_EDGE" ;;
+    *) pats="" ;;
+  esac
+  if [ -z "${SIM_TAKES:-}" ] || [ -z "$pats" ]; then
+    printf '%s' "./..."
+    return
+  fi
+  for p in $pats; do
+    d="${p#./}"; d="${d%/...}"
+    [ -d "$ROOT/$m/$d" ] || continue
+    grep -rlq 'go:build.*!sim' --include='*.go' "$ROOT/$m/$d" 2>/dev/null && continue
+    skip="$skip $d"
+  done
+  if [ -z "$skip" ]; then
+    printf '%s' "./..."
+    return
+  fi
+  mod="$(sed -n 's/^module[[:space:]]*//p' "$ROOT/$m/go.mod" | tr -d '
+')"
+  go list ./... 2>/dev/null | awk -v mod="$mod" -v skip="$skip" '
+    BEGIN { n = split(skip, s, " ") }
+    { for (i = 1; i <= n; i++) { d = mod "/" s[i]; if ($0 == d || index($0, d "/") == 1) next }; print }'
+}
+
 step_test() {
   local m failed=0 logdir mods
   mods="${1:-$MODULES}"
@@ -472,7 +519,7 @@ step_test() {
   # Each job records its own exit code: the verdict is go test's, not a guess
   # read back out of the log text.
   for m in $mods; do
-    ( cd "$ROOT/$m" && go test -count=1 ./... >"$logdir/test-$m.log" 2>&1
+    ( cd "$ROOT/$m" && go test -count=1 $(unit_packages "$m") >"$logdir/test-$m.log" 2>&1
       echo $? >"$logdir/test-$m.rc" ) &
   done
   wait
@@ -1065,6 +1112,9 @@ case "${1:-all}" in
     # not reach need their own run. See untagged_only_modules. When docker is
     # out of scope nothing else covers them and every module runs, which is
     # what `all` does too.
+    # The sim step runs below in every `full`, so the unit step leaves its
+    # packages to it. See unit_packages.
+    SIM_TAKES=1
     if step_scope "${2:-}"; then
       if step_test "$(untagged_only_modules)"; then note_step unit; else rc=1; fi
       if step_docker; then gate_docker=ran; else rc=1; fi
