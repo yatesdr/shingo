@@ -75,13 +75,25 @@ text, for a human; nothing queries it.
 ### Drop-point inference
 
 When an order terminates with its bin still at `_TRANSIT`, Core asks the robot
-where it went, rather than waiting for an operator to find it. Three outcomes:
+where it went, rather than waiting for an operator to find it.
 
-| Robot's deck | Station resolves? | Outcome |
+The watch starts at the pickup, not at the end. While the order runs, the same
+two-second poll records the order's deck going loaded and the first at-rest
+empty reading after that, frozen as above; it places nothing, because the
+order's own arrival does. A later loaded reading forgets the set-down — a swap's
+supply sets its carrier down at staging and lifts it again. So when the order
+ends without arriving, Core already knows where the deck emptied, even if the
+robot has since driven on and reads busy with another task (SPR 2026-10-08: a
+bin set back on its slot before the cancel was otherwise left in transit and
+the slot read empty). Outcomes, in order:
+
+| Robot's deck at the end | Set-down seen during the order | Outcome |
 |---|---|---|
-| empty (`jack_state` 3) | yes, and the node is free | bin placed there, `system:inferred` |
-| loaded (`jack_state` 1) | — | bin moves to `_ROBOT:<vehicle>` |
-| anything else | no, or the node is occupied | anomaly, with the position in `anomaly_note` |
+| loaded (`jack_state` 1) | — | bin moves to `_ROBOT:<vehicle>`; any earlier set-down is forgotten |
+| empty | yes, at a station that resolves and is free | bin placed there, `system:inferred` |
+| empty | yes, anywhere else | anomaly, with where it was set down in `anomaly_note`; an occupied slot is retried by the sweep |
+| empty (`jack_state` 3) | no; the station resolves and the node is free | bin placed there, `system:inferred` |
+| anything else | no | anomaly, with the position in `anomaly_note` |
 
 A deck MID-TRAVEL (`jack_state` 0 or 2) is not an answer: a bin halfway down is
 neither on the robot nor at the station, so the inference declines rather than

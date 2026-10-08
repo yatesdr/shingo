@@ -109,25 +109,53 @@ func (e *Engine) placeStrandedBin(binID int64, robotID string, robot fleet.Robot
 		return
 	}
 
+	var carrying, certain bool
+	if haveRobot {
+		carrying, certain = service.RobotCarryingBin(robot)
+	}
+	if certain && carrying {
+		// Branch B: the bin is still on the deck, so it is not lost and it is
+		// not at a station. It rides the robot until the deck reports empty. A
+		// loaded deck now outranks any earlier set-down the watch saw: the
+		// robot has lifted the bin again since.
+		e.parkOnCarrier(binID, robotID, robot)
+		return
+	}
+
+	// THE SET-DOWN THE WATCH SAW WHILE THE ORDER WAS LIVE (watchOrderDeck), and
+	// it is the answer whenever there is one. The deck emptied mid-order — a
+	// failed leg set down, or a person drove the robot back and lowered it —
+	// and by the time the order ends the robot may be anywhere: SPR bin 135
+	// (2026-10-08) was set back on SMN_0013 before its order was cancelled, the
+	// cancel read the robot as busy and declined, and every later sweep read it
+	// at a charger. The frozen sample is placed through the same gate as the
+	// carried-bin watch's (placeInferred): a slot it resolves to takes the bin,
+	// anything else stays stranded with where it was set down. It needs no live
+	// robot and no Busy check — the reading was taken at rest when it was made.
+	window := e.strandedSweepWindow()
+	if obs, expired, ok := e.heldDrop(binID, window); ok {
+		if expired {
+			e.declineInferred(binID, robotID, obs, e.placementIntent(binID),
+				"drop observed more than "+window.String()+" ago, never placed — too old to record", true)
+			return
+		}
+		if e.placeInferred(binID, robotID, obs, true) {
+			e.forgetDrop(binID)
+		}
+		return
+	}
+
 	if !haveRobot {
 		// No robot in the cache — an order that never dispatched, or a fleet
 		// Core has not heard from. There is nothing to infer from.
 		e.strandedAnomaly(binID, robotID, robot, false, "no robot telemetry")
 		return
 	}
-
-	carrying, certain := service.RobotCarryingBin(robot)
 	if !certain {
 		// The deck is mid-travel or in an error state. A bin halfway down is
 		// neither on the robot nor at the station, and either answer would be
 		// a guess an operator would then have to un-do.
 		e.strandedAnomaly(binID, robotID, robot, true, "jack state not at rest")
-		return
-	}
-	if carrying {
-		// Branch B: the bin is still on the deck, so it is not lost and it is
-		// not at a station. It rides the robot until the deck reports empty.
-		e.parkOnCarrier(binID, robotID, robot)
 		return
 	}
 
@@ -457,6 +485,11 @@ func (e *Engine) parkOnCarrier(binID int64, robotID string, robot fleet.RobotSta
 	if robot.Connected {
 		e.markDeckLoaded(binID)
 	}
+	// AND ANY EARLIER SET-DOWN GOES. The order's watch may have frozen one that
+	// a re-lift it never sampled has since undone; left in place, the carried
+	// watch would read it as this deck's drop and place the bin where it was
+	// lifted from.
+	e.forgetDrop(binID)
 	e.logFn("engine: stranded transit: bin %d rides %s (deck loaded)", binID, robotID)
 }
 
@@ -493,6 +526,12 @@ func (e *Engine) carrierNode(robotID string) (*nodes.Node, error) {
 // Driven by the robot poll Core already makes every 2 seconds, so it adds no
 // RDS traffic. There is no jack-unload EVENT to subscribe to — the jack is
 // sampled state — which is why this is a watch and not a notification.
+//
+// IT ALSO WATCHES WHAT A LIVE ORDER CARRIES (watchOrderDeck): a bin at
+// _TRANSIT, claimed by the order that lifted it. That half only records — the
+// order's own arrival places the bin — so that when the order ends without
+// arriving, the inference has the reading of where the deck emptied rather
+// than wherever the robot has driven since.
 func (e *Engine) sweepCarriedBins() {
 	e.retireEmptyCarrierNodes()
 
@@ -516,7 +555,58 @@ func (e *Engine) sweepCarriedBins() {
 		}
 		e.placeCarriedBinIfSettled(bin, robotID, robot, onNode[bin.NodeName] == 1)
 	}
-	e.pruneDropObservations(carried)
+
+	// A FAILED READ PRUNES NOTHING. The prune deletes what the population does
+	// not name, so pruning against a list that could not be read would discard
+	// the very readings this half exists to keep.
+	inTransit, err := e.db.ListBinsOnTransit(transitNodeName)
+	if err != nil {
+		e.logFn("engine: carried bins: list bins in transit: %v", err)
+		return
+	}
+	live := make(map[int64]bool, len(carried)+len(inTransit))
+	for _, bin := range carried {
+		live[bin.ID] = true
+	}
+	for _, tb := range inTransit {
+		live[tb.BinID] = true
+		if tb.RobotID != "" && !protocol.IsTerminal(protocol.Status(tb.OrderStatus)) {
+			e.watchOrderDeck(tb.BinID, tb.RobotID)
+		}
+	}
+	e.pruneDropObservations(live)
+}
+
+// watchOrderDeck records what one live order's robot reports about the bin it
+// lifted: when its deck reads loaded (the witness), and the first at-rest
+// empty reading after that (the frozen drop). It places nothing — the order is
+// still running and its arrival is the answer — and it is what placeStrandedBin
+// reads if the order ends without arriving.
+//
+// A LOADED READING FORGETS AN EARLIER DROP. A swap's supply sets its carrier
+// down at staging and lifts it again, so a set-down the robot has since
+// re-lifted is not where the bin is; the frozen sample stands only while the
+// deck stays empty. Known limit: an order that carries two bins in turn reads
+// one deck for both, so a later lift of the second forgets the first's
+// set-down — that bin falls back to the live reading at the order's end.
+func (e *Engine) watchOrderDeck(binID int64, robotID string) {
+	robot, ok := e.GetCachedRobotStatus(robotID)
+	if !ok {
+		return
+	}
+	carrying, certain := service.RobotCarryingBin(robot)
+	switch {
+	case !certain:
+		// Mid-travel or in error: nothing this reading can say.
+	case carrying:
+		// Only from a live reading — see placeCarriedBinIfSettled.
+		if robot.Connected {
+			e.markDeckLoaded(binID)
+			e.forgetDrop(binID)
+		}
+	default:
+		e.freezeDrop(binID, observeDrop(robotID, robot, clock.Now().UTC()), e.strandedSweepWindow())
+	}
 }
 
 // retireEmptyCarrierNodes removes carrier nodes nothing is riding any more,

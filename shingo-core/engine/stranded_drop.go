@@ -24,7 +24,6 @@ import (
 
 	"shingo/protocol/clock"
 	"shingocore/fleet"
-	"shingocore/store/bins"
 )
 
 // dropObservation is the RAW sample: what the robot reported, not what Core
@@ -215,6 +214,19 @@ func (e *Engine) freezeDrop(binID int64, obs dropObservation, window time.Durati
 	return obs, dropUsable
 }
 
+// heldDrop is the frozen sample the watch already took for a bin, if any, and
+// whether it has outlived window. It takes nothing: a bin with no frozen
+// sample has no answer here, and the caller falls back to what it can read.
+func (e *Engine) heldDrop(binID int64, window time.Duration) (obs dropObservation, expired, ok bool) {
+	e.dropObsMu.Lock()
+	defer e.dropObsMu.Unlock()
+	obs, ok = e.dropObs[binID]
+	if !ok {
+		return dropObservation{}, false, false
+	}
+	return obs, clock.Now().UTC().Sub(obs.At) > window, true
+}
+
 // forgetDrop discards a bin's frozen sample.
 //
 // Called when the bin is placed, and when a recovery order takes over the
@@ -232,14 +244,13 @@ func (e *Engine) forgetDrop(binID int64) {
 	e.dropObsMu.Unlock()
 }
 
-// pruneDropObservations drops what no bin on a carrier node is entitled to any
-// more.
+// pruneDropObservations drops what no watched bin is entitled to any more.
 //
-// AGAINST THE CARRIED LIST, AND ONLY THAT. That list is the population both
-// maps describe: a bin that left a deck by any route — this watch, a recovery
-// order, an operator — is gone from it, so self-healing against the real
-// population needs no other bookkeeping, and both maps stay bounded by the
-// handful of bins riding decks.
+// AGAINST THE WATCHED POPULATION, AND ONLY THAT: live is every bin on a carrier
+// node or at _TRANSIT (sweepCarriedBins). A bin that left either by any route —
+// an arrival, this watch, a recovery order, an operator — is gone from it, so
+// self-healing against the real population needs no other bookkeeping, and the
+// maps stay bounded by the handful of bins riding decks or in flight.
 //
 // AGE IS DELIBERATELY NOT A REASON TO DELETE, and it used to be. Dropping a
 // still-carried bin's sample because it was old left the WITNESS behind to
@@ -247,11 +258,7 @@ func (e *Engine) forgetDrop(binID int64) {
 // it with a reading taken hours after the drop, at a station the robot had
 // since driven to. Age is now decided where the answer is used (freezeDrop),
 // where it can be SAID instead of silently acted on.
-func (e *Engine) pruneDropObservations(carried []*bins.Bin) {
-	live := make(map[int64]bool, len(carried))
-	for _, bin := range carried {
-		live[bin.ID] = true
-	}
+func (e *Engine) pruneDropObservations(live map[int64]bool) {
 	e.dropObsMu.Lock()
 	defer e.dropObsMu.Unlock()
 	for id := range e.dropObs {

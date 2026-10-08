@@ -126,6 +126,12 @@ func (db *DB) ListBinsOnCarrierNodes() ([]*bins.Bin, error) {
 	return bins.ListOnCarrierNodes(db.DB)
 }
 
+// ListBinsOnTransit returns every bin parked at the transit node — see
+// bins.ListOnTransit.
+func (db *DB) ListBinsOnTransit(transitName string) ([]bins.TransitBin, error) {
+	return bins.ListOnTransit(db.DB, transitName)
+}
+
 // MarkBinAnomalyWithNote stamps the anomaly and records where the robot
 // carrying the bin last was — see bins.MarkAnomalyWithNote.
 func (db *DB) MarkBinAnomalyWithNote(binID int64, note string) error {

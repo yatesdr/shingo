@@ -1530,6 +1530,43 @@ func ListOnCarrierNodes(db *sql.DB) ([]*Bin, error) {
 	return scanBins(rows)
 }
 
+// TransitBin is one bin parked at the transit node, with the order claiming it.
+// RobotID and OrderStatus are blank when no order claims it — a bin an ended
+// order left there.
+type TransitBin struct {
+	BinID       int64
+	RobotID     string
+	OrderStatus string
+}
+
+// ListOnTransit returns every bin parked at the synthetic transit node, claimed
+// or not, with its claiming order's robot and status: a bin an order has lifted
+// and still carries, and one an ended order left there. transitName is that
+// node's name. One statement and only the columns the jack watch reads, because
+// the robot poll runs it.
+func ListOnTransit(db *sql.DB, transitName string) ([]TransitBin, error) {
+	rows, err := db.Query(`
+		SELECT b.id, COALESCE(o.robot_id, ''), COALESCE(o.status, '')
+		  FROM bins b
+		  JOIN nodes n ON n.id = b.node_id
+		  LEFT JOIN orders o ON o.id = b.claimed_by
+		 WHERE n.name = $1
+		 ORDER BY b.id`, transitName)
+	if err != nil {
+		return nil, fmt.Errorf("list bins on %s: %w", transitName, err)
+	}
+	defer rows.Close()
+	var out []TransitBin
+	for rows.Next() {
+		var t TransitBin
+		if err := rows.Scan(&t.BinID, &t.RobotID, &t.OrderStatus); err != nil {
+			return nil, fmt.Errorf("scan bin on %s: %w", transitName, err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // MarkAnomalyWithNote stamps the anomaly and records where the robot carrying
 // the bin last was, so the operator gets a map pin instead of a search.
 //
