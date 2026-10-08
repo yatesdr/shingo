@@ -1032,7 +1032,14 @@ mkdir -p "$ROOT/.gate" 2>/dev/null || true
 # leaves: the shared Postgres (step_docker) and the gate lock. INT and TERM
 # exit explicitly so the EXIT trap runs for them too.
 . "$ROOT/scripts/gate-lock.sh"
-gate_on_exit() { stop_shared_pg; gate_lock_release; }
+# side_pid is the race-and-sim job `full` runs beside the docker step: an
+# interrupted gate takes it down too, rather than leaving it running against
+# a tree nobody is gating.
+side_pid=""
+gate_on_exit() {
+  [ -n "$side_pid" ] && kill "$side_pid" 2>/dev/null
+  stop_shared_pg; gate_lock_release
+}
 trap gate_on_exit EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -1115,20 +1122,38 @@ case "${1:-all}" in
     # The sim step runs below in every `full`, so the unit step leaves its
     # packages to it. See unit_packages.
     SIM_TAKES=1
-    if step_scope "${2:-}"; then
-      if step_test "$(untagged_only_modules)"; then note_step unit; else rc=1; fi
-      if step_docker; then gate_docker=ran; else rc=1; fi
-    else
-      if step_test; then note_step unit; else rc=1; fi
-      gate_docker=skipped
-      echo "     (docker suites skipped — nothing in this diff can reach one)"
-    fi
-    if step_race; then note_step race; else rc=1; fi
     # The sim step rides with `full` and not with the bare gate, for the same
     # reason -race does: it is the slow, thorough half. It is NOT scoped away
     # with the docker suites — a sim-tagged file is invisible to every other
     # step, so skipping it is how the hole reopens.
-    if step_sim; then note_step sim; else rc=1; fi
+    if step_scope "${2:-}"; then
+      if step_test "$(untagged_only_modules)"; then note_step unit; else rc=1; fi
+      # RACE AND SIM RUN BESIDE THE DOCKER STEP, NOT AFTER IT. Neither touches
+      # Postgres (race is untagged, sim is -tags sim, the edge is SQLite), and
+      # the docker step's longest stretch is integration/scenarios, one package
+      # that spends most of its time waiting on the bus rather than computing.
+      # In series the two added ~3.5 min to every full gate on the 4-core box.
+      # Their output is held in files and printed after the docker step's, in
+      # the order it always had, so the log reads the same as a serial run.
+      # A missing rc file reads as a failure, so last gate's must not survive.
+      rm -f "$ROOT/.gate/side-race.rc" "$ROOT/.gate/side-sim.rc"
+      ( step_race; echo $? > "$ROOT/.gate/side-race.rc"
+        step_sim;  echo $? > "$ROOT/.gate/side-sim.rc"
+      ) > "$ROOT/.gate/side.out" 2>&1 &
+      side_pid=$!
+      if step_docker; then gate_docker=ran; else rc=1; fi
+      wait "$side_pid"
+      side_pid=""
+      cat "$ROOT/.gate/side.out"
+      if [ "$(cat "$ROOT/.gate/side-race.rc" 2>/dev/null)" = 0 ]; then note_step race; else rc=1; fi
+      if [ "$(cat "$ROOT/.gate/side-sim.rc" 2>/dev/null)" = 0 ]; then note_step sim; else rc=1; fi
+    else
+      if step_test; then note_step unit; else rc=1; fi
+      gate_docker=skipped
+      echo "     (docker suites skipped — nothing in this diff can reach one)"
+      if step_race; then note_step race; else rc=1; fi
+      if step_sim; then note_step sim; else rc=1; fi
+    fi
     ;;
   all)
     # Every step runs even after one fails: a gate that stops at the first
