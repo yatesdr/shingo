@@ -152,6 +152,22 @@ func (h *Handlers) apiReleaseNodeStagedOrders(w http.ResponseWriter, r *http.Req
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
 }
 
+// apiResumeKeepStaged is the board's RESUME on a line whose keep-staged keeper
+// a cancel paused. It re-arms the keeper and refills the spot; nothing is sent
+// to the line.
+func (h *Handlers) apiResumeKeepStaged(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	if err := h.orchestration.ResumeKeepStaged(id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
+}
+
 func (h *Handlers) apiRequestProduceSwap(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {

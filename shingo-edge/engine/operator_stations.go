@@ -242,7 +242,7 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	// pure and the witness is a DB read.
 	downgraded := plan.DowngradedFromSwapMode != ""
 	if err := e.gateLineRows(node, claim, downgraded, spot, func(read spotRead, rows []domain.Order) {
-		e.setKeepStagedNote(claim.CoreNodeName, planSpotForConsume(plan, claim, e.spotFactsOf(claim, read, rows)))
+		e.setKeepStagedNote(claim.CoreNodeName, planSpotForConsume(plan, claim, e.spotFactsOf(claim, read, rows, nil)))
 	}); err != nil {
 		return nil, err
 	}

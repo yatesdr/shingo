@@ -93,27 +93,68 @@ func TestSpotPause_FromTheRows(t *testing.T) {
 			DeliveryNode: "LINE", CreatedAt: created}
 	}
 	for _, st := range []protocol.Status{protocol.StatusCancelled, protocol.StatusFailed, protocol.StatusSkipped} {
-		if got := spotPause([]domain.Order{refill(5, st, t0)}, c); !strings.Contains(got, "paused") {
+		if got := spotPause([]domain.Order{refill(5, st, t0)}, c, nil); !strings.Contains(got, "paused") {
 			t.Errorf("a refill ended %s: pause = %q, want paused", st, got)
 		}
 	}
-	if got := spotPause([]domain.Order{refill(5, protocol.StatusConfirmed, t0)}, c); got != "" {
+	if got := spotPause([]domain.Order{refill(5, protocol.StatusConfirmed, t0)}, c, nil); got != "" {
 		t.Errorf("a landed refill paused the keeper: %q", got)
 	}
-	if got := spotPause([]domain.Order{ret}, c); !strings.Contains(got, "return from SPOT") {
+	if got := spotPause([]domain.Order{ret}, c, nil); !strings.Contains(got, "return from SPOT") {
 		t.Errorf("a cancelled return: pause = %q, want it named", got)
 	}
-	if got := spotPause([]domain.Order{refill(5, protocol.StatusCancelled, t0), swap(t0.Add(time.Second))}, c); got != "" {
+	if got := spotPause([]domain.Order{refill(5, protocol.StatusCancelled, t0), swap(t0.Add(time.Second))}, c, nil); got != "" {
 		t.Errorf("an order of the line created after the cancel did not re-arm: %q", got)
 	}
-	if got := spotPause([]domain.Order{refill(5, protocol.StatusCancelled, t0), swap(t0.Add(-time.Hour))}, c); got == "" {
+	if got := spotPause([]domain.Order{refill(5, protocol.StatusCancelled, t0), swap(t0.Add(-time.Hour))}, c, nil); got == "" {
 		t.Error("an order of the line created BEFORE the cancel re-armed it")
 	}
 	saved := *c
 	later := t0.Add(time.Second)
 	saved.UpdatedAt = &later
-	if got := spotPause([]domain.Order{refill(5, protocol.StatusCancelled, t0)}, &saved); got != "" {
+	if got := spotPause([]domain.Order{refill(5, protocol.StatusCancelled, t0)}, &saved, nil); got != "" {
 		t.Errorf("a claim save after the cancel did not re-arm: %q", got)
+	} // The board's RESUME re-arms on its own, with no order and no claim save.
+	resumed := t0.Add(time.Second)
+	if got := spotPause([]domain.Order{refill(5, protocol.StatusCancelled, t0)}, c, &resumed); got != "" {
+		t.Errorf("a RESUME after the cancel did not re-arm: %q", got)
+	}
+	before := t0.Add(-time.Second)
+	if got := spotPause([]domain.Order{refill(5, protocol.StatusCancelled, t0)}, c, &before); got == "" {
+		t.Error("a RESUME from BEFORE the cancel re-armed it")
+	}
+}
+
+// The board's RESUME, end to end: a cancel pauses the line, RESUME refills the
+// spot at once, and nothing is sent to the line (no swap legs).
+func TestKeepStagedKeeper_ResumeRefillsWithoutASwap(t *testing.T) {
+	t.Parallel()
+	eng, db, nodeID := keeperCell(t)
+	endedRefill(t, eng, db, nodeID, protocol.StatusCancelled)
+	eng.sweepCellLevels()
+	if got := readSpotOrders(t, db, nodeID); got.refills != 0 {
+		t.Fatalf("refills = %d while paused, want 0", got.refills)
+	}
+	// The cancel happened a moment ago: SQLite stamps both at one-second
+	// resolution, and a RESUME in the same second as the cancel is not after it.
+	_, err := db.DB.Exec(`UPDATE orders SET updated_at = datetime('now', '-5 seconds') WHERE delivery_node = ?`, ksSpot)
+	testutil.MustNoErr(t, err, "backdate the cancel")
+	testutil.MustNoErr(t, eng.ResumeKeepStaged(nodeID), "resume")
+	if got := readSpotOrders(t, db, nodeID); got.refills != 1 {
+		t.Fatalf("refills = %d after RESUME, want 1", got.refills)
+	}
+	rows, rerr := db.ListActiveOrdersByProcessNode(nodeID)
+	testutil.MustNoErr(t, rerr, "rows")
+	for _, o := range rows {
+		if o.DeliveryNode == ksLine || o.OrderType == protocol.OrderTypeComplex {
+			t.Errorf("RESUME sent order %d (%s to %s) to the line; it must only refill the spot", o.ID, o.OrderType, o.DeliveryNode)
+		}
+	}
+	if note := eng.KeepStagedNote(ksLine); note != "" {
+		t.Errorf("board note = %q after RESUME, want it cleared", note)
+	}
+	if err := eng.ResumeKeepStaged(nodeID + 999); err == nil {
+		t.Error("RESUME on an unknown node succeeded")
 	}
 }
 

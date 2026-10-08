@@ -129,7 +129,7 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 		return nil, fmt.Errorf("node %s has no parts to finalize", node.Name)
 	}
 	if err := e.gateLineRows(node, claim, plan.SimpleMove, spot, func(read spotRead, rows []domain.Order) {
-		e.setKeepStagedNote(claim.CoreNodeName, planSpotForProduce(plan, claim, e.spotFactsOf(claim, read, rows)))
+		e.setKeepStagedNote(claim.CoreNodeName, planSpotForProduce(plan, claim, e.spotFactsOf(claim, read, rows, nil)))
 	}); err != nil {
 		return nil, err
 	}

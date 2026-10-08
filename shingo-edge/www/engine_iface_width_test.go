@@ -84,8 +84,8 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Edge's wide surface at 73 methods -
-// ServiceAccess's 20 embedded, plus 53 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Edge's wide surface at 74 methods -
+// ServiceAccess's 20 embedded, plus 54 orchestration verbs of its own.
 //
 // 2026-09-27 (fact-owners Lane G): FlipABNode and SetActivePullSide were
 // REMOVED — two entries, the count 77 → 75. The release trunk flips the
@@ -101,6 +101,12 @@ func TestServiceAccessWidth(t *testing.T) {
 // /reporting-points CRUD routes, its only caller, and ManageReportingPointTag
 // left the interface with them: its one live caller is the engine's own
 // counter sync (warlink.go), not www. The count 75 -> 73.
+//
+// 2026-10-08 (owner, SPR FG trial): ResumeKeepStaged was ADDED, the count
+// 73 -> 74. Any cancel of a keep-staged order pauses the line's keeper, and the
+// only resumes were a REQUEST (a swap the operator did not want), a changeover
+// start or a desktop claim save. The board's paused chip calls it
+// (POST /process-nodes/{id}/keep-staged/resume).
 //
 // 52-54 are PreviewFlow, SaveFlow and FlowFingerprint, added 2026-09-03 for
 // the HMI flow composer (design ruling SYNTH-round2 R-S3, brief U7): the two
@@ -178,6 +184,8 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"ReleaseNodeWithRemainingUOP",
 		"ReleaseOrderWithLineside",
 		"ReleaseStagedOrders",
+		// Added 2026-10-08: the board's RESUME on a paused keep-staged line.
+		"ResumeKeepStaged",
 		// Added 2026-08-25 with the changeover-wide release BUTTON, which is the
 		// condition its predecessor was retired for failing: the route exists
 		// because the operator UI calls it. See apiReleaseChangeoverProcess.

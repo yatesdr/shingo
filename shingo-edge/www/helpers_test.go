@@ -199,6 +199,8 @@ func (s *stubEngine) ReleaseOrderWithLineside(orderID int64, disp engine.Release
 	s.lastReleaseOrderDisposition = &d
 	return s.orderMgr.ReleaseOrder(orderID, nil, "", nil)
 }
+func (s *stubEngine) ResumeKeepStaged(int64) error { return nil }
+
 func (s *stubEngine) ReleaseStagedOrders(_ int64, disp engine.ReleaseDisposition) error {
 	d := disp
 	s.lastReleaseStagedOrdersDisposition = &d

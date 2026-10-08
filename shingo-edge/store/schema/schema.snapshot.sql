@@ -556,7 +556,13 @@ CREATE TABLE process_node_runtime_states (
     active_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,
     staged_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,
     active_pull        INTEGER NOT NULL DEFAULT 1,
-    updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    -- keep_staged_resumed_at is when an operator last resumed this line's
+    -- keep-staged keeper from the board after a cancel paused it ('' = never).
+    -- Its own column because the claim's updated_at is the setup card's "flow
+    -- saved" date, and a resume is not a change to the flow. Last, where the
+    -- v17 ALTER puts it on an existing database.
+    keep_staged_resumed_at TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE process_nodes (

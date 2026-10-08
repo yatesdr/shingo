@@ -103,6 +103,19 @@ export function confirmUndoSupplyRefusal(nodeID, code, onDone) {
     );
 }
 
+// confirmResumeKeepStaged is the board's RESUME on a line whose keep-staged
+// keeper a cancel paused. It refills the staging spot and sends nothing to the
+// line, which is the point: a REQUEST would resume it too, but by starting a
+// swap the operator did not ask for.
+export function confirmResumeKeepStaged(nodeID, line, onDone) {
+    askConfirm(
+        'RESUME KEEP-STAGED ON ' + line + '?',
+        'The staging spot is refilled. Nothing is sent to the line.',
+        'YES — RESUME',
+        function () { postAction('/api/process-nodes/' + nodeID + '/keep-staged/resume', {}, onDone); },
+    );
+}
+
 function doUndo(nodeID, code, onDone) {
     // DELETE carries a body because the key is (node, part) and a part number
     // cannot ride the path without inventing an encoding for the ones with a

@@ -55,7 +55,12 @@ func (e *Engine) keepSpot(node *processes.Node, claim *processes.NodeClaim) {
 		e.logFn("keep-staged: node %s: read the line's orders: %v — the next pass re-asks", node.Name, err)
 		return
 	}
-	f := e.spotFactsOf(claim, spotRead{known: true}, rows)
+	resumed, rerr := processes.KeepStagedResumedAt(e.db.DB, node.ID)
+	if rerr != nil {
+		e.logFn("keep-staged: node %s: read the resume stamp: %v — the next pass re-asks", node.Name, rerr)
+		return
+	}
+	f := e.spotFactsOf(claim, spotRead{known: true}, rows, resumed)
 	if f.paused != "" || f.drops {
 		_, note := decideSpot(claim, f)
 		e.setKeepStagedNote(claim.CoreNodeName, note)
@@ -77,7 +82,7 @@ func (e *Engine) keepSpot(node *processes.Node, claim *processes.NodeClaim) {
 	if !read.known {
 		return
 	}
-	f = e.spotFactsOf(claim, read, rows)
+	f = e.spotFactsOf(claim, read, rows, resumed)
 	plan, note := decideSpot(claim, f)
 	e.setKeepStagedNote(claim.CoreNodeName, note)
 	e.applySpotPlan(node, claim, plan, f.read, liftingOrigin(rows, claim))
@@ -86,12 +91,14 @@ func (e *Engine) keepSpot(node *processes.Node, claim *processes.NodeClaim) {
 // spotFactsOf reads the facts decideSpot decides from: the spot read with a
 // spare already going taken off it, and from the line's rows what is coming,
 // what its legs still lift from the spot or drop onto it, and the pause.
-func (e *Engine) spotFactsOf(claim *processes.NodeClaim, read spotRead, rows []domain.Order) spotFacts {
+// resumed is the line's board RESUME stamp (nil when never), one of the things
+// that re-arms the pause.
+func (e *Engine) spotFactsOf(claim *processes.NodeClaim, read spotRead, rows []domain.Order, resumed *time.Time) spotFacts {
 	spot := spotNode(claim)
 	f := spotFacts{
 		read:   read.lessLeaving(spotLeaving(rows, spot, claim.CoreNodeName)),
 		coming: spotComing(rows, claim),
-		paused: spotPause(rows, claim),
+		paused: spotPause(rows, claim, resumed),
 	}
 	f.drops, f.lifts = e.liveSpotLegs(rows, claim)
 	return f
@@ -146,10 +153,11 @@ func isSpotReturn(o *domain.Order, c *processes.NodeClaim) bool {
 // (congestion waits), so re-creating it each sweep would be a failure on a
 // timer, and a cancel is someone saying stop; the Edge does not record who
 // cancelled, and does not need to. What re-arms it: a REQUEST or a changeover
-// start (each creates an order of the line, read here as newer than the end),
-// or a save of the claim. Nothing is stored, so the pause survives a restart
-// because the rows do.
-func spotPause(rows []domain.Order, c *processes.NodeClaim) string {
+// start (each creates an order of the line, read here as newer than the end), a
+// save of the claim, or the board's RESUME (resumed, the line's runtime stamp),
+// which re-arms without a swap. The pause itself is not stored; it survives a
+// restart because the rows do.
+func spotPause(rows []domain.Order, c *processes.NodeClaim, resumed *time.Time) string {
 	var last *domain.Order
 	var rearmed time.Time
 	for i := range rows {
@@ -175,6 +183,9 @@ func spotPause(rows []domain.Order, c *processes.NodeClaim) string {
 	if c.UpdatedAt != nil && c.UpdatedAt.After(rearmed) {
 		rearmed = *c.UpdatedAt
 	}
+	if resumed != nil && resumed.After(rearmed) {
+		rearmed = *resumed
+	}
 	if rearmed.After(last.UpdatedAt) {
 		return ""
 	}
@@ -182,8 +193,28 @@ func spotPause(rows []domain.Order, c *processes.NodeClaim) string {
 	if isSpotReturn(last, c) {
 		what = "return from"
 	}
-	return fmt.Sprintf("Keep-staged is paused: the last %s %s was %s. Press REQUEST to resume.",
+	return fmt.Sprintf("Keep-staged is paused: the last %s %s was %s. Tap to resume.",
 		what, spotNode(c), last.Status)
+}
+
+// ResumeKeepStaged is the board's RESUME on a line whose keep-staged keeper a
+// cancel paused: it stamps the line's resume and runs the keeper at once, so the
+// spot is refilled without a REQUEST and without anything sent to the line.
+func (e *Engine) ResumeKeepStaged(nodeID int64) error {
+	node, err := e.db.GetProcessNode(nodeID)
+	if err != nil || node == nil {
+		return fmt.Errorf("node %d: not found", nodeID)
+	}
+	claim := e.claimAtNode(node)
+	if spotNode(claim) == "" {
+		return fmt.Errorf("node %s does not keep a spare staged", node.Name)
+	}
+	if err := processes.ResumeKeepStaged(e.db.DB, node.ID); err != nil {
+		return err
+	}
+	e.logFn("keep-staged: node %s: resumed from the board", node.Name)
+	e.keepSpot(node, claim)
+	return nil
 }
 
 // liftingOrigin is the demand a refill serves: the episode of a live leg of the

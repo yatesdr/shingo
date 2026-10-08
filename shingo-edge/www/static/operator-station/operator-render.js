@@ -5,6 +5,7 @@ import { isActive } from './order-status.js';
 import { cardModel, headerModel, nodeFacts, ROLE_WORDS } from './operator-window-state.js';
 import { mountFlowPanel, openFlowPanel, syncFlowPanel } from './operator-flow.js';
 import { ensureComposer } from './composer-boot.js';
+import { confirmResumeKeepStaged } from './operator-supply-refusal.js';
 
 const grid = document.getElementById('os-grid');
 const headerInfo = document.getElementById('os-header-info');
@@ -1404,11 +1405,20 @@ function createNodeButton(entry) {
         const paused = entry.keep_staged_note.indexOf('paused') !== -1;
         const ks = el('span', {
             className: 'os-node-alarm',
-            textContent: paused ? 'KEEP-STAGED PAUSED' : 'SPOT BLOCKED',
+            textContent: paused ? 'KEEP-STAGED PAUSED - TAP TO RESUME' : 'SPOT BLOCKED',
         });
         ks.style.cssText = 'position:absolute;top:4px;left:4px;font-size:11px;' +
             'font-weight:700;padding:2px 6px;border-radius:4px;color:#1a1204;background:#ffd98a';
         ks.title = entry.keep_staged_note;
+        // A paused keeper resumes from its own chip: the tap is the chip's, not
+        // the tile's, so it does not open the node.
+        if (paused) {
+            ks.style.cursor = 'pointer';
+            ks.addEventListener('click', function (evt) {
+                evt.stopPropagation();
+                confirmResumeKeepStaged(entry.node.id, entry.node.name, loadViewRef);
+            });
+        }
         btn.appendChild(ks);
     }
 
