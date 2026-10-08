@@ -364,7 +364,8 @@ func planSpotForProduce(plan *ProducePlan, c *processes.NodeClaim, f spotFacts) 
 //
 // A failure here does not fail the request that called it: the swap legs are
 // already on their way. It is logged, and the next decision point — the next
-// request or the level keeper's floor — re-reads the spot and asks again.
+// request, the sweep's keeper, or the next order of the line to end — re-reads
+// the spot and asks again.
 func (e *Engine) applySpotPlan(node *processes.Node, c *processes.NodeClaim, plan spotPlan, read spotRead, origin ordermgr.Origin) {
 	if plan.returnSpare {
 		e.returnSpare(node, spotNode(c), c.InboundSource, read.payload, read.binID, origin)

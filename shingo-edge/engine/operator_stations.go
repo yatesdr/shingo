@@ -196,7 +196,7 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	// ONE CELL, ONE DECISION AT A TIME. The occupancy read, the plan and the
 	// apply run under the cell's prime lock, as the produce request does: a
 	// keep-staged spot's refills are counted from rows this request is about to
-	// write, and a second request or the level keeper's floor deciding in the
+	// write, and a second request or the keep-staged keeper deciding in the
 	// same moment has to see them.
 	mu := e.primeNodeLock(claim)
 	mu.Lock()

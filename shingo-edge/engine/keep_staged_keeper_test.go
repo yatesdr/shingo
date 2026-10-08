@@ -123,14 +123,14 @@ func TestKeepStagedKeeper_IdleBareSpotGetsOneRefill(t *testing.T) {
 	}
 }
 
-// A REQUEST and the floor deciding in the same moment create the spot's orders
+// A REQUEST and the keeper deciding in the same moment create the spot's orders
 // once. Both hold the cell's prime lock from their read of what is coming to
 // their create. Here the test holds it the way a request's apply does: the
-// floor, started in that moment with its swap waiting and nothing coming yet,
+// keeper, started in that moment with its swap waiting and nothing coming yet,
 // finds the cell being decided and leaves it to the decider; the "request"
-// writes its refills. Without the lock the floor reads nothing coming and adds
+// writes its refills. Without the lock the keeper reads nothing coming and adds
 // its own.
-func TestKeepStagedKeeper_RequestAndFloorTogetherCreateOnce(t *testing.T) {
+func TestKeepStagedKeeper_RequestAndKeeperTogetherCreateOnce(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID := keeperCell(t)
 	holdingSwap(t, db, nodeID)
@@ -149,14 +149,14 @@ func TestKeepStagedKeeper_RequestAndFloorTogetherCreateOnce(t *testing.T) {
 	<-done
 
 	if got := readSpotOrders(t, db, nodeID); got.refills != 2 {
-		t.Fatalf("refills = %d, want the request's 2 and nothing from the floor", got.refills)
+		t.Fatalf("refills = %d, want the request's 2 and nothing from the keeper", got.refills)
 	}
 }
 
 // A changeover start aborts the keep-staged line's waiting swap and the refill
 // coming to its spot while it holds the line's prime lock. The refill's
 // completion cascade is delivered on the start's own goroutine and kicks the
-// floor; the floor must not wait for a lock its caller holds.
+// keeper; the keeper must not wait for a lock its caller holds.
 func TestKeepStagedKeeper_StartAbortingTheCellDoesNotWaitOnItself(t *testing.T) {
 	t.Parallel()
 	fx := seedKeepStagedChangeover(t,
@@ -167,7 +167,7 @@ func TestKeepStagedKeeper_StartAbortingTheCellDoesNotWaitOnItself(t *testing.T) 
 	fx.eng.orderMgr = orders.NewManager(fx.db, &orderEmitter{bus: fx.eng.Events}, "test.station")
 	nodeID := fx.nodeIDs["L1"]
 	// The refill is the older row, so the start aborts it first, while the swap
-	// still holds the line's slot and the floor goes as far as the lock.
+	// still holds the line's slot and the keeper goes as far as the lock.
 	_, err := fx.eng.orderMgr.CreateRetrieveOrder(&nodeID, false, 1, "SPOT", "SRC-OLD", "", "standard", "PART-OLD",
 		true, false, orders.Attached("floor-start"))
 	testutil.MustNoErr(t, err, "refill coming")
@@ -178,7 +178,7 @@ func TestKeepStagedKeeper_StartAbortingTheCellDoesNotWaitOnItself(t *testing.T) 
 	// the package's parallel tests sharing the SQLite driver's one allocator
 	// lock, a start that waits on nothing has taken 32 s. A start that waits on
 	// its own lock never returns, and go test -timeout fails it with every
-	// goroutine's stack, the floor's among them.
+	// goroutine's stack, the keeper's among them.
 	_, err = fx.eng.StartProcessChangeover(fx.processID, fx.toStyleID, "test", "keep-staged")
 	testutil.MustNoErr(t, err, "start")
 }
@@ -186,7 +186,7 @@ func TestKeepStagedKeeper_StartAbortingTheCellDoesNotWaitOnItself(t *testing.T) 
 // A produce refill is an empty-in. Edge writes it as retrieve with
 // retrieve_empty set; Core promotes it to retrieve_empty and its projection
 // overwrites the row's order_type. Under either spelling it is a refill: it is
-// counted as coming, so the floor adds nothing while two are on their way, and
+// counted as coming, so the keeper adds nothing while two are on their way, and
 // it does not work the cell, so the level keeper still asks for the swap.
 func TestKeepStagedKeeper_ProduceRefillsUnderCoresSpelling(t *testing.T) {
 	t.Parallel()
