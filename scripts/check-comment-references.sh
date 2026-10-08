@@ -64,55 +64,66 @@ FAIL=0
 cites=$(grep -RhoE --include='*.go' '^[[:space:]]*//.*' $MODULES 2>/dev/null |
   grep -oE '[a-zA-Z0-9_/-]+[.]go:[0-9]+' | sort -u)
 
-bad_cites=""
-while IFS= read -r cite; do
-  [ -z "$cite" ] && continue
-  f="${cite%%:*}"
-  ln="${cite##*:}"
-  base="${f##*/}"
-  if [ -n "${ALLOWED_MISSING_FILE[$base]:-}" ]; then
-    continue
-  fi
-  # RESOLVE ON A PATH-COMPONENT BOUNDARY, three ways, in this order. All three
-  # shapes occur in the tree and the first cut of this check got every one of
-  # them wrong:
-  #
-  #   exact       "protocol/payloads.go" is a real path from the repo root, and
-  #               a "*/..." glob cannot match it (nothing precedes it).
-  #   suffix      "edge/engine/changeover.go" is how this codebase abbreviates
-  #               shingo-edge; it resolves only as a trailing path fragment.
-  #   basename    "capacity.go" on its own. -name, NOT -path "*capacity.go":
-  #               the glob form matched a SUFFIX, so a citation to reshuffle.go
-  #               resolved to complex_reshuffle.go — a different, shorter file —
-  #               and a perfectly good citation was reported as past the end.
-  #
-  # EVERY MATCH, NOT THE FIRST. A suffix or a basename can name several files,
-  # and "the first" is whichever find walks to first: alphabetical on NTFS, hash
-  # order on ext4. A citation to compound.go passed on Windows (dispatch's) and
-  # failed in CI (internal/testdb's, a tenth the length). The line must fit in
-  # at least one of the files the citation could name, the same answer on every
-  # OS.
-  found=""
-  [ -f "$f" ] && found="$f"
-  if [ -z "$found" ] && [[ "$f" == */* ]]; then
-    found=$(find $MODULES -path "*/$f" -print 2>/dev/null | sort)
-  fi
-  if [ -z "$found" ]; then
-    found=$(find $MODULES -name "$base" -print 2>/dev/null | sort)
-  fi
-  if [ -z "$found" ]; then
-    bad_cites+="$cite|no such file"$'\n'
-    continue
-  fi
-  longest="" total=0
-  while IFS= read -r cand; do
-    n=$(wc -l < "$cand" | tr -d ' ')
-    if [ "$n" -gt "$total" ]; then total=$n longest=$cand; fi
-  done <<< "$found"
-  if [ "$ln" -gt "$total" ]; then
-    bad_cites+="$cite|$longest has only $total lines"$'\n'
-  fi
-done <<< "$cites"
+# RESOLVE ON A PATH-COMPONENT BOUNDARY, three ways, in this order. All three
+# shapes occur in the tree and the first cut of this check got every one of
+# them wrong:
+#
+#   exact       "protocol/payloads.go" is a real path from the repo root, and
+#               a "*/..." glob cannot match it (nothing precedes it).
+#   suffix      "edge/engine/changeover.go" is how this codebase abbreviates
+#               shingo-edge; it resolves only as a trailing path fragment.
+#   basename    "capacity.go" on its own. The whole last component, NOT a
+#               suffix of it: a suffix match resolved a citation to
+#               reshuffle.go to complex_reshuffle.go — a different, shorter
+#               file — and a perfectly good citation was reported as past the
+#               end.
+#
+# EVERY MATCH, NOT THE FIRST. A suffix or a basename can name several files,
+# and "the first" is whichever a directory walk reaches first: alphabetical on
+# NTFS, hash order on ext4. A citation to compound.go passed on Windows
+# (dispatch's) and failed in CI (internal/testdb's, a tenth the length). The
+# line must fit in at least one of the files the citation could name, the same
+# answer on every OS.
+#
+# ONE WALK OF THE TREE, NOT ONE PER CITATION. Every .go file and its line count
+# is listed once, and every citation is resolved against that list in one awk
+# pass. It used to run find two or three times per citation and wc once per
+# candidate: over a hundred citations, that was 50s of the gate on Windows,
+# where a fork is expensive. The exact arm still covers any path from the repo
+# root; suffix and basename still search only the modules.
+index=$(find . -name '*.go' -not -path './.git/*' -not -path '*/node_modules/*' -exec wc -l {} + 2>/dev/null |
+  awk '$2 != "total" { sub(/^\.\//, "", $2); print $1, $2 }')
+
+allowed="${!ALLOWED_MISSING_FILE[*]}"
+bad_cites=$(awk -v mods="$MODULES" -v allowed="$allowed" '
+  BEGIN {
+    nm = split(mods, m, " "); for (i = 1; i <= nm; i++) inmod[m[i]] = 1
+    na = split(allowed, a, " "); for (i = 1; i <= na; i++) skip[a[i]] = 1
+  }
+  NR == FNR {
+    lines[$2] = $1; path[++np] = $2
+    top = $2; sub(/\/.*/, "", top); modfile[$2] = (top in inmod)
+    b = $2; sub(/.*\//, "", b); base[$2] = b
+    next
+  }
+  $0 == "" { next }
+  {
+    cite = $0; f = cite; sub(/:[0-9]+$/, "", f); ln = cite; sub(/.*:/, "", ln)
+    bn = f; sub(/.*\//, "", bn)
+    if (bn in skip) next
+    n = 0; delete cand
+    if (f in lines) cand[++n] = f
+    if (n == 0 && index(f, "/") > 0)
+      for (i = 1; i <= np; i++) { p = path[i]
+        if (modfile[p] && length(p) > length(f) && substr(p, length(p) - length(f)) == "/" f) cand[++n] = p }
+    if (n == 0)
+      for (i = 1; i <= np; i++) { p = path[i]
+        if (modfile[p] && base[p] == bn) cand[++n] = p }
+    if (n == 0) { print cite "|no such file"; next }
+    longest = ""; total = 0
+    for (i = 1; i <= n; i++) if (lines[cand[i]] + 0 > total) { total = lines[cand[i]] + 0; longest = cand[i] }
+    if (ln + 0 > total) print cite "|" longest " has only " total " lines"
+  }' <(printf '%s\n' "$index") <(printf '%s\n' "$cites"))
 
 if [ -n "${bad_cites//[$'\n' ]/}" ]; then
   echo "Comments cite file:line positions that cannot be right:"
