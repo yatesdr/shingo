@@ -489,10 +489,17 @@ func (c *ksrCell) breached() int {
 }
 
 // settle pumps the bus until both outboxes stay empty.
+//
+// The quiet window is what lets a message that a goroutine is still writing
+// land before settle calls the bus empty. 10ms, not 50: this cell's 66
+// subtests settle thousands of times between them, all in series, and at
+// 50ms the windows alone were most of the package's 7 minutes in the gate.
+// A message missed by a short window is not lost; the next tick pumps it,
+// and every wait on an outcome goes through eventually.
 func (c *ksrCell) settle() {
 	for i := 0; i < 40; i++ {
 		if c.bus.PumpAll() == 0 {
-			time.Sleep(50 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond)
 			if c.bus.PumpAll() == 0 {
 				return
 			}
@@ -508,14 +515,18 @@ func (c *ksrCell) tick() {
 	c.settle()
 }
 
+// eventually ticks until ok holds. Its budget is a DEADLINE, not a count of
+// tries: the poll is short so a met condition is seen at once, and a count
+// of tries at a short poll would shrink the budget with it and fail a slow
+// machine instead of waiting for it.
 func (c *ksrCell) eventually(what string, ok func() bool) {
 	c.t.Helper()
-	for i := 0; i < 60; i++ {
+	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
 		c.tick()
 		if ok() {
 			return
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 	c.dump("timed out: " + what)
 	c.t.Fatalf("timed out waiting for: %s", what)
