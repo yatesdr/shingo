@@ -5,6 +5,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 )
 
 // TestHoldAndReplay_BinUOPDeltaLumpsAcrossBinSwapGap is the gating correctness
@@ -132,4 +133,38 @@ func TestHoldAndReplay_BinUOPDeltaLumpsAcrossBinSwapGap(t *testing.T) {
 	// dashboard reading BinUOPDelta sees the cell idle for the whole gap and
 	// then fire 4 parts instantaneously at rebind. production.tick (see the plc
 	// test) instead carries all 6 ticks, each with its own RecordedAt.
+}
+
+// A produce node is delivered an EMPTY, which Core reports as a known-empty
+// carrier. Every produce tick must still carry the claim's part, or Core's
+// first-delta bind never labels the bin (SPR ALN_011 2026-10-08: 81 parts on an
+// unlabelled carrier; HK press bins labelled only at release since 09-06).
+func TestProduceTick_KnownEmptyCarrierStillCarriesTheClaimsPart(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, nodeID, styleID, claimID := seedProduceNode(t, db, protocol.SwapModeSimple)
+
+	const binID int64 = 7101
+	b := binID
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &b, 0), "bind empty")
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+	sink := &fakeDeltaSink{}
+	eng.SetInventoryDeltaSink(sink)
+	eng.recordLinesideCarrier(nodeID, "PRODUCE-NODE", domain.KnownCarrier(""), domain.CarrierFromDelivery)
+
+	eng.Events.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{
+		ProcessID: processID, StyleID: styleID, Delta: 1,
+	}})
+
+	if len(sink.binCalls) != 1 {
+		t.Fatalf("binCalls=%d, want 1: %+v", len(sink.binCalls), sink.binCalls)
+	}
+	claim, err := db.GetStyleNodeClaim(claimID)
+	testutil.MustNoErr(t, err, "read claim")
+	if got := sink.binCalls[0].PayloadCode; got != claim.PayloadCode {
+		t.Errorf("produce tick payload = %q, want the claim's %q: a blank part on the wire means "+
+			"Core never labels the bin it is filling", got, claim.PayloadCode)
+	}
 }

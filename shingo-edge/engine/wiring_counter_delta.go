@@ -364,7 +364,8 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 	_, binAttributed, _ := e.applyHoldAndReplay(node, runtime, delta, +1)
 
 	if e.inventoryDelta != nil && binAttributed > 0 {
-		binID, payload, epoch := e.binAtNode(runtime, claim)
+		binID, _, epoch := e.binAtNode(runtime, claim)
+		payload := producedPayload(claim)
 		_ = e.inventoryDelta.Produced(uop.TickEvent{
 			NodeID:       node.ID,
 			BinID:        binID,
@@ -374,6 +375,24 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 		})
 	}
 	e.countMu.Unlock()
+}
+
+// producedPayload is the part a produce tick is stamped with: the part of the
+// claim the tick was matched to (handleCounterDelta's claim.StyleID ==
+// delta.StyleID guard), which is the part the press just made.
+//
+// NOT binAtNode's resident payload. That is the right answer for a consume
+// tick, which draws down what the carrier already holds. A produce node is
+// delivered an EMPTY, which Core reports as a known-empty carrier, so the
+// resident payload is "" for the whole fill and Core's first-delta bind
+// (uop/applier.go), which needs a part on the wire, never labels the bin.
+// That was the state from 69df3870 (2026-09-06) until this: HK press bins
+// labelled only at release, the SPR FG bin never.
+func producedPayload(claim *processes.NodeClaim) string {
+	if claim == nil {
+		return ""
+	}
+	return claim.PayloadCode
 }
 
 // handleABFallthrough is the safety-net path when no active-pull consume node
