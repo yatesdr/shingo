@@ -51,8 +51,8 @@ and `AllStatuses()`.
 | `sourcing` | `queued`, `submitted`, `dispatched`, `reshuffling`, `cancelled`, `failed`, `skipped` |
 | `queued` | `acknowledged`, `dispatched`, `in_transit`, `sourcing`, `reshuffling`, `cancelled`, `failed`, `skipped` |
 | `submitted` | `acknowledged`, `queued`, `cancelled`, `failed`, `skipped` |
-| `dispatched` | `in_transit`, `delivered`, `sourcing`, `cancelled`, `faulted`, `failed` |
-| `acknowledged` | `dispatched`, `in_transit`, `sourcing`, `cancelled`, `faulted`, `failed` |
+| `dispatched` | `in_transit`, `staged`, `delivered`, `sourcing`, `cancelled`, `faulted`, `failed` |
+| `acknowledged` | `dispatched`, `in_transit`, `staged`, `sourcing`, `cancelled`, `faulted`, `failed` |
 | `in_transit` | `delivered`, `staged`, `cancelled`, `faulted`, `failed` |
 | `staged` | `in_transit`, `delivered`, `cancelled`, `faulted`, `failed` |
 | `delivered` | `confirmed`, `cancelled`, `failed` |

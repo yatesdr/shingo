@@ -60,6 +60,19 @@ func TestVendorStatus_RunningUpdatesStatus(t *testing.T) {
 	}
 }
 
+// A ROBOT ALREADY ON ITS WAIT NODE. The fleet finishes the Wait block within a
+// poll and reports CREATED -> WAITING with no RUNNING between, so a dispatched
+// order goes straight to staged. Refused, it stayed dispatched while the station
+// was told staged, and Core rejected every release (SPR order 7664, 2026-10-08).
+func TestVendorStatus_WaitingStraightFromDispatchedStages(t *testing.T) {
+	t.Parallel()
+	db, _, sim, order, _, _ := dispatchRetrieveOrder(t)
+
+	sim.DriveStateWithRobot(order.VendorOrderID, "WAITING", "AMB-01")
+
+	testdb.AssertOrderStatus(t, db, "vs-order-1", "staged")
+}
+
 // Idempotent status — driving same state twice doesn't error.
 func TestVendorStatus_IdempotentStatus(t *testing.T) {
 	t.Parallel()

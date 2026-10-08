@@ -83,6 +83,9 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 	wasFaulted := order.Status == dispatch.StatusFaulted
 	var faultRef protocol.TermRef
 	var faultSince time.Time
+	// refused is the lifecycle turning down a non-terminal transition. Core then
+	// has NOT moved the order, so nothing below may tell the station it did.
+	var refused error
 
 	switch newStatus {
 	case dispatch.StatusInTransit:
@@ -101,15 +104,18 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 				protocol.FaultPhaseRecovered, ref, since, now, false)
 			if err := lc.MarkFaultedRecovered(order, effectiveRobotID, ref, reason); err != nil {
 				e.logFn("engine: mark recovered order %d: %v", order.ID, err)
+				refused = err
 			}
 			break
 		}
 		if err := lc.MarkInTransit(order, effectiveRobotID, "fleet"); err != nil {
 			e.logFn("engine: mark in_transit order %d: %v", order.ID, err)
+			refused = err
 		}
 	case dispatch.StatusStaged:
 		if err := lc.MarkStaged(order, "fleet"); err != nil {
 			e.logFn("engine: mark staged order %d: %v", order.ID, err)
+			refused = err
 		}
 	case dispatch.StatusDelivered:
 		// Move bins to their destinations FIRST, then transition the order.
@@ -158,6 +164,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		// Core's vendor flow.
 		if err := lc.Acknowledge(order, "fleet"); err != nil {
 			e.logFn("engine: acknowledge order %d: %v", order.ID, err)
+			refused = err
 		}
 	case dispatch.StatusDispatched:
 		// Fleet shouldn't actually report Dispatched — the dispatcher
@@ -178,6 +185,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 			protocol.FaultPhaseLive, faultRef, now, now, false)
 		if err := lc.MarkFaulted(order, effectiveRobotID, faultRef, reason); err != nil {
 			e.logFn("engine: mark faulted order %d: %v", order.ID, err)
+			refused = err
 		}
 	default:
 		// Unknown mapped status — should never fire under the current
@@ -190,6 +198,16 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 	}
 	if err := e.db.UpdateOrderVendor(order.ID, order.VendorOrderID, ev.NewStatus, effectiveRobotID); err != nil {
 		e.logFn("engine: update order %d vendor state: %v", order.ID, err)
+	}
+	// DO NOT ANNOUNCE A STATUS CORE REFUSED. The station acts on what it is told:
+	// told "staged" for an order Core still holds as dispatched, it offered a
+	// release that Core then rejected on every tap (SPR order 7664, 2026-10-08).
+	// The vendor state is recorded above; the order's own status stays what Core
+	// has, and the station hears nothing it would have to unlearn.
+	if refused != nil && !e.fleet.IsTerminalState(ev.NewStatus) {
+		e.logFn("engine: order %d: fleet reports %s but Core refused %s -> %s; the station is not told (%v)",
+			order.ID, ev.NewStatus, order.Status, newStatus, refused)
+		return
 	}
 
 	// Send status update to ShinGo Edge. On transitions INTO in_transit

@@ -506,8 +506,15 @@ var validTransitions = map[Status][]Status{
 	// Acknowledged|Dispatched → Sourcing supports PrepareRedirect: the order
 	// is re-resolved against a new delivery node after the vendor leg is
 	// cancelled.
-	StatusAcknowledged: {StatusDispatched, StatusInTransit, StatusSourcing, StatusCancelled, StatusFaulted, StatusFailed},
-	StatusDispatched:   {StatusInTransit, StatusDelivered, StatusSourcing, StatusCancelled, StatusFaulted, StatusFailed},
+	//
+	// Acknowledged|Dispatched → Staged is a robot already standing on its wait
+	// node: the fleet finishes the Wait block within a poll and reports
+	// CREATED -> WAITING with no RUNNING between. Refused, the order stayed
+	// dispatched while the station was told it was staged, and every release
+	// was rejected (SPR order 7664, 2026-10-08: the supply robot had just
+	// dropped the spare it was sent to lift).
+	StatusAcknowledged: {StatusDispatched, StatusInTransit, StatusStaged, StatusSourcing, StatusCancelled, StatusFaulted, StatusFailed},
+	StatusDispatched:   {StatusInTransit, StatusStaged, StatusDelivered, StatusSourcing, StatusCancelled, StatusFaulted, StatusFailed},
 
 	StatusInTransit: {StatusDelivered, StatusStaged, StatusCancelled, StatusFaulted, StatusFailed},
 	StatusStaged:    {StatusInTransit, StatusDelivered, StatusCancelled, StatusFaulted, StatusFailed},
