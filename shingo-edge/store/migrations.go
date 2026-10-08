@@ -1439,7 +1439,7 @@ func edgeMigrations() []migrate.Migration {
 		},
 		{
 			// The level keeper's read of a keep-staged line's orders
-			// (orders.ListActiveByProcessNodeWithLatestTo) walked the node's
+			// (the floor's, since replaced by orders.ListKeptSpotRows) walked the node's
 			// whole history twice: once for its live rows, once for the newest
 			// refill to the spot. The Edge never deletes orders, so it grew for
 			// the life of the plant. These two indexes serve it from the live

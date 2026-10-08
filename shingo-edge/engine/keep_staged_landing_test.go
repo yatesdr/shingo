@@ -134,7 +134,8 @@ func TestKeepStagedLanding_FlownIncomingRefillAfterCancelGoesBack(t *testing.T) 
 // One return per bin: the landing sends it back, and a REQUEST in the next
 // moment, which Core answers with the same wrong bin still on the spot, counts
 // that return as the spare leaving instead of sending it back again. And the
-// return's own completion orders nothing (the kick fires only on a refill).
+// return's own completion, which is a decision point like any order's end, finds
+// the spot bare with a refill already coming and orders nothing.
 func TestKeepStagedLanding_OneReturnPerBin_AndAReturnOrdersNothing(t *testing.T) {
 	t.Parallel()
 	rows := lineRows(protocol.ClaimRoleConsume)
@@ -160,6 +161,8 @@ func TestKeepStagedLanding_OneReturnPerBin_AndAReturnOrdersNothing(t *testing.T)
 
 	before, err := fx.db.ListActiveOrdersByProcessNode(fx.nodeIDs["L1"])
 	testutil.MustNoErr(t, err, "rows")
+	rows["SPOT"] = NodeBinInfo{} // the return lifted the bin
+	fx.eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
 	land(t, fx, returns[0].ID)
 	after, err := fx.db.ListActiveOrdersByProcessNode(fx.nodeIDs["L1"])
 	testutil.MustNoErr(t, err, "rows")

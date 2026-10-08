@@ -860,31 +860,65 @@ func ListActiveByDeliveryNodeSet(db *sql.DB, deliveryNodes []string) ([]Order, e
 	return scanOrders(rows)
 }
 
-// ListActiveByProcessNodeWithLatestTo is ListActiveByProcessNode plus, whatever
-// its status, the newest retrieve the line sent to deliveryNode — in ONE
-// statement. The keep-staged floor needs both: what is live at the line, and
-// how the last refill to the spot ended, so a refill that failed structurally
-// is not re-created every period. One read, where two queries would be two.
+// ListKeptSpotRows is the keep-staged keeper's one read for a line and its
+// spot: the line's non-terminal orders, plus three rows in any status — the
+// newest retrieve to the spot (a refill), the newest move off the spot to
+// anywhere but the line that is newer than that refill (a return), and the
+// newest of every other order of the line (what a REQUEST or a changeover
+// start last created). The keeper's pause is decided from those, so a terminal
+// one has to be in the answer.
 //
-// It is spelled as an id list so it reads no history: the live rows come
-// through idx_orders_live_process_node and the newest refill is one seek on
-// idx_orders_process_node_delivery_id (both Edge v15). The older spelling,
-// process_node_id = ? AND (live OR newest), walked every order the node has
-// ever had, twice.
-func ListActiveByProcessNodeWithLatestTo(db *sql.DB, processNodeID int64, deliveryNode string) ([]Order, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
-		WHERE o.id IN (
-			SELECT l.id FROM orders l WHERE l.process_node_id = ? AND l.status NOT IN (%s)
-			UNION ALL
-			SELECT MAX(r.id) FROM orders r
-			WHERE r.process_node_id = ? AND r.delivery_node = ? AND r.order_type IN (?, ?))
-		ORDER BY o.created_at`, protocol.TerminalStatusSQLList()),
-		processNodeID, processNodeID, deliveryNode, string(protocol.OrderTypeRetrieve), string(protocol.OrderTypeRetrieveEmpty))
+// IT READS NO HISTORY, as the floor's read before it did not:
+// the live rows come through idx_orders_live_process_node, the newest refill is
+// one seek on idx_orders_process_node_delivery_id (both Edge v15), the return is
+// searched only above the newest refill's id (an older one cannot decide the
+// pause), and the newest other order walks the node's rows backwards and stops
+// at the first. The keeper runs this for every keep-staged line on every sweep,
+// on a Pi, against a table the Edge never prunes.
+func ListKeptSpotRows(db *sql.DB, processNodeID int64, spot, line string) ([]Order, error) {
+	q, args := KeptSpotRowsQuery(processNodeID, spot, line)
+	rows, err := db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	return scanOrders(rows)
+}
+
+// KeptSpotRowsQuery is ListKeptSpotRows' statement and arguments, exported so
+// the plan test reads the statement the keeper runs, not a copy of it.
+func KeptSpotRowsQuery(processNodeID int64, spot, line string) (string, []any) {
+	newestRefill := `SELECT MAX(r.id) FROM orders r
+			WHERE r.process_node_id = ? AND r.delivery_node = ? AND r.order_type IN (?, ?)`
+	q := fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
+		WHERE o.id IN (
+			SELECT l.id FROM orders l WHERE l.process_node_id = ? AND l.status NOT IN (%s)
+			UNION ALL
+			`+newestRefill+`
+			UNION ALL
+			SELECT * FROM (SELECT m.id FROM orders m
+				WHERE m.process_node_id = ? AND m.id > COALESCE((`+newestRefill+`), 0)
+				  AND m.order_type = ? AND m.source_node = ? AND m.delivery_node <> ?
+				ORDER BY m.id DESC LIMIT 1)
+			UNION ALL
+			SELECT * FROM (SELECT x.id FROM orders x
+				WHERE x.process_node_id = ?
+				  AND NOT (x.delivery_node = ? AND x.order_type IN (?, ?, ?))
+				  AND NOT (x.order_type = ? AND x.source_node = ? AND x.delivery_node <> ?)
+				ORDER BY x.id DESC LIMIT 1))
+		ORDER BY o.created_at`, protocol.TerminalStatusSQLList())
+	return q, keptSpotArgs(processNodeID, spot, line)
+}
+
+// keptSpotArgs is ListKeptSpotRows' arguments in statement order.
+func keptSpotArgs(processNodeID int64, spot, line string) []any {
+	retrieve, retrieveEmpty, move := string(protocol.OrderTypeRetrieve), string(protocol.OrderTypeRetrieveEmpty), string(protocol.OrderTypeMove)
+	return []any{
+		processNodeID,
+		processNodeID, spot, retrieve, retrieveEmpty,
+		processNodeID, processNodeID, spot, retrieve, retrieveEmpty, move, spot, line,
+		processNodeID, spot, retrieve, retrieveEmpty, move, move, spot, line,
+	}
 }
 
 // ListActiveByProcessNode returns non-terminal orders for a process

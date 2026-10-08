@@ -1396,6 +1396,22 @@ function createNodeButton(entry) {
         btn.appendChild(alarm);
     }
 
+    // Keep-staged keeper: paused (REQUEST resumes it) or unable to keep its
+    // spot. Amber, because it asks someone to do something; the sentence is the
+    // server's (keep_staged_note), shown on hover. Top-left, so it does not sit
+    // on the bottom-left chips.
+    if (entry.keep_staged_note) {
+        const paused = entry.keep_staged_note.indexOf('paused') !== -1;
+        const ks = el('span', {
+            className: 'os-node-alarm',
+            textContent: paused ? 'KEEP-STAGED PAUSED' : 'SPOT BLOCKED',
+        });
+        ks.style.cssText = 'position:absolute;top:4px;left:4px;font-size:11px;' +
+            'font-weight:700;padding:2px 6px;border-radius:4px;color:#1a1204;background:#ffd98a';
+        ks.title = entry.keep_staged_note;
+        btn.appendChild(ks);
+    }
+
     // The line moved onto this sequential position before its bin arrived:
     // the count waits and replays onto the bin when it binds. Informational;
     // the sentence is the server's (count_waits).

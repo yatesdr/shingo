@@ -258,7 +258,7 @@ func (e *Engine) guardSourceKnownDry(node *processes.Node, claim *processes.Node
 // position a robot is standing at is the failure this exists to stop — but it
 // means the floor's escape from a stuck cell is terminalizing that order
 // (abandon / force-complete / cancel), not re-asking.
-func (e *Engine) gateLineRows(node *processes.Node, claim *processes.NodeClaim, bare bool, spot spotRead, planSpot func(spotRead, int)) error {
+func (e *Engine) gateLineRows(node *processes.Node, claim *processes.NodeClaim, bare bool, spot spotRead, planSpot func(spotRead, []domain.Order)) error {
 	if claim.IsLoaderNode() {
 		bare = false
 	}
@@ -272,8 +272,7 @@ func (e *Engine) gateLineRows(node *processes.Node, claim *processes.NodeClaim, 
 		return fmt.Errorf("node %s: cannot tell what is on its way to it (%w) — the next request will re-ask", node.Name, err)
 	}
 	if spotKnown {
-		leaving := spotLeaving(rows, spotNode(claim), claim.CoreNodeName)
-		planSpot(spot.lessLeaving(leaving), spotComing(rows, claim))
+		planSpot(spot, rows)
 	}
 	if !bare {
 		return nil

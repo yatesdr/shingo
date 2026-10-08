@@ -152,6 +152,9 @@ type StationService struct {
 	// core node name. Optional: nil leaves StrandedAlarm empty. The engine injects
 	// the live resolver (its strandedAlarms map) via SetStrandedResolver.
 	stranded func(coreNodeName string) string
+	// keepStaged resolves a line's keep-staged keeper sentence; nil leaves
+	// KeepStagedNote empty. The engine injects KeepStagedNote.
+	keepStaged func(coreNodeName string) string
 	// binTypes resolves a payload code to its dunnage code, for the
 	// changeover load directive. Optional, and OPTIONAL MATTERS: unset means
 	// no bin type resolves, which means no directive — a card that cannot
@@ -437,6 +440,11 @@ func (s *StationService) binTypeForPayload(payloadCode string) string {
 // engine's StrandedAlarmDetail — so BuildView can render the tile chip. Optional;
 // unset leaves StrandedAlarm empty for the lighter test constructors.
 func (s *StationService) SetStrandedResolver(r func(coreNodeName string) string) { s.stranded = r }
+
+// SetKeepStagedResolver injects the keep-staged keeper's sentence per line (the
+// engine's KeepStagedNote) so BuildView can render its chip. Optional; unset
+// leaves KeepStagedNote empty.
+func (s *StationService) SetKeepStagedResolver(r func(coreNodeName string) string) { s.keepStaged = r }
 
 // ── Cross-aggregate orchestrations ──────────────────────────────────
 
@@ -1611,6 +1619,9 @@ func (s *StationService) buildNodeTile(
 	// up on this node while no bin is bound. Rendered as an amber chip.
 	if s.stranded != nil {
 		nodeView.StrandedAlarm = s.stranded(node.CoreNodeName)
+	}
+	if s.keepStaged != nil {
+		nodeView.KeepStagedNote = s.keepStaged(node.CoreNodeName)
 	}
 	nodeView.CountWaits = countWaits(node.CoreNodeName, nodeView.ActiveClaim, runtime)
 	// THE CUSTOMER'S HALF. A call and the part: this node has an outstanding

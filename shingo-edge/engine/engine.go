@@ -177,6 +177,11 @@ type Engine struct {
 	// station view reads it via StrandedAlarmDetail so the tile renders the chip
 	// on load AND on the SSE-driven refresh. Empty/absent = no active alarm.
 	strandedAlarms sync.Map
+	// keepStagedNotes holds the keep-staged keeper's sentence per line (core
+	// node name -> string): paused, or why it cannot keep its spot. Recomputed
+	// on every keeper pass, so a restart loses nothing the next sweep does not
+	// say again.
+	keepStagedNotes sync.Map
 
 	// loaderResv serializes the count→fire reservation per loader so concurrent
 	// writers (an HTTP RequestEmptyBin vs the push sweep) can't both read the
@@ -287,6 +292,7 @@ func New(c Config) *Engine {
 	// Wire the parked-ticks alarm (P2-C7) onto the operator tile: BuildView reads
 	// the live alarm map so the chip renders on load and on every refresh.
 	e.stationService.SetStrandedResolver(e.StrandedAlarmDetail)
+	e.stationService.SetKeepStagedResolver(e.KeepStagedNote)
 	// The changeover load directive names a BIN TYPE, so it needs the payload
 	// -> dunnage catalog Core delivers with every node-list sync.
 	e.stationService.SetBinTypeResolver(e.BinTypeForPayload)

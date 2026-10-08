@@ -157,14 +157,13 @@ func (e *Engine) sweepProcessLevels(process *processes.Process) {
 		if runtime == nil {
 			continue
 		}
-		// THE KEEP-STAGED FLOOR, ahead of the level: a swap waiting at Core for a
-		// spare that is never coming is a state the level says nothing about, and
-		// it reaches cells that never auto-reorder. Not while a changeover is
-		// armed: its legs fill the slots, and the claim resolved here is the
-		// outgoing style's, which would judge the incoming spare wrong. The
-		// changeover's own start and cancel reconcile the spots.
+		// THE KEEP-STAGED KEEPER, ahead of the level: a spot is kept whether or
+		// not the line auto-reorders, and whether or not a swap is in flight. Not
+		// while a changeover is armed: its legs fill the slots, and the claim
+		// resolved here is the outgoing style's, which would judge the incoming
+		// spare wrong. The changeover's own start and cancel reconcile the spots.
 		if spotNode(claim) != "" && process.TargetStyleID == nil {
-			e.keepStagedFloor(node, runtime, claim)
+			e.keepSpot(node, claim)
 		}
 		e.sweepNodeLevel(node, runtime, claim)
 	}

@@ -162,22 +162,22 @@ func TestKeepStagedRequest_TheSpotGetsWhatTheRuleSays(t *testing.T) {
 	}{
 		{"consume two_robot, spare right: the swap eats it, one comes", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
 			NodeBinInfo{Occupied: true, PayloadCode: ksPart}, 1, 0, ""},
-		{"consume two_robot, spot bare: one for the swap, one to stand", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-			NodeBinInfo{}, 2, 0, ""},
-		{"consume single_robot, spare of another part: it goes back, two come", protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot,
-			NodeBinInfo{Occupied: true, PayloadCode: "PART-OTHER"}, 2, 1, "PART-OTHER"},
+		{"consume two_robot, spot bare: one now, the second when it lands", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
+			NodeBinInfo{}, 1, 0, ""},
+		{"consume single_robot, spare of another part: it goes back, one comes", protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot,
+			NodeBinInfo{Occupied: true, PayloadCode: "PART-OTHER"}, 1, 1, "PART-OTHER"},
 		{"produce two_robot, empty spare: one comes", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot,
 			NodeBinInfo{Occupied: true}, 1, 0, ""},
-		{"produce two_robot, a full on the spot: it goes back carrying its part", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot,
-			NodeBinInfo{Occupied: true, PayloadCode: ksPart}, 2, 1, ksPart},
+		{"produce two_robot, a full on the spot: it goes back carrying its part, one comes", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot,
+			NodeBinInfo{Occupied: true, PayloadCode: ksPart}, 1, 1, ksPart},
 		// The same decisions on the two modes with no staging hop: the
 		// sequential backfill and the press's refill leg lift the spare.
 		{"consume sequential, spare right: the backfill eats it, one comes", protocol.ClaimRoleConsume, protocol.SwapModeSequential,
 			NodeBinInfo{Occupied: true, PayloadCode: ksPart}, 1, 0, ""},
-		{"produce sequential, spot bare: one for the backfill, one to stand", protocol.ClaimRoleProduce, protocol.SwapModeSequential,
-			NodeBinInfo{}, 2, 0, ""},
-		{"consume press, spare of another part: it goes back, two come", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobotPressIndex,
-			NodeBinInfo{Occupied: true, PayloadCode: "PART-OTHER"}, 2, 1, "PART-OTHER"},
+		{"produce sequential, spot bare: one now, the second when it lands", protocol.ClaimRoleProduce, protocol.SwapModeSequential,
+			NodeBinInfo{}, 1, 0, ""},
+		{"consume press, spare of another part: it goes back, one comes", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobotPressIndex,
+			NodeBinInfo{Occupied: true, PayloadCode: "PART-OTHER"}, 1, 1, "PART-OTHER"},
 		{"produce press, empty spare: the refill leg eats it, one comes", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobotPressIndex,
 			NodeBinInfo{Occupied: true}, 1, 0, ""},
 	}
@@ -235,10 +235,12 @@ func TestKeepStagedRequest_CountsWhatIsComing(t *testing.T) {
 
 	_, err = eng.RequestNodeMaterial(nodeID, 1)
 	testutil.MustNoErr(t, err, "request")
-	// Bare spot, swap consumes: 2 needed, 1 of this part coming → 1 more. The
-	// other part's refill counts for nothing.
-	if got := readSpotOrders(t, db, nodeID); got.refills != 3 {
-		t.Fatalf("refills to the spot = %d, want 3 (the two prior plus one)", got.refills)
+	// Bare spot, swap consumes: 2 needed and 1 of this part coming, but at most
+	// one refill is in flight, so nothing more until it lands. The other part's
+	// refill counts for nothing: had it counted, the cap would read the same,
+	// so the coming count is pinned on its own in TestDecideSpot_CountsOnlyThisPart.
+	if got := readSpotOrders(t, db, nodeID); got.refills != 2 {
+		t.Fatalf("refills to the spot = %d, want 2 (the two prior and nothing more)", got.refills)
 	}
 	_ = claim
 }
@@ -309,8 +311,8 @@ func TestKeepStagedRequest_TheReturnIsWrittenBeforeTheRefills(t *testing.T) {
 			refills = append(refills, o.ID)
 		}
 	}
-	if ret == 0 || len(refills) != 2 {
-		t.Fatalf("return=%d refills=%v, want one return and two refills", ret, refills)
+	if ret == 0 || len(refills) != 1 {
+		t.Fatalf("return=%d refills=%v, want one return and one refill", ret, refills)
 	}
 	for _, r := range refills {
 		if r < ret {

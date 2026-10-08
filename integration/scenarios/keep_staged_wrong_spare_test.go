@@ -3,10 +3,11 @@
 //
 // No decision point re-judges a spot whose spare changes after the last
 // reconcile. A consume cell's swap then waits at Core for the right part, the
-// refill waits behind the wrong bin, the floor sees a refill coming, and REQUEST
-// is refused while the swap is in flight. That is a state that needs a person.
-// The exit is to cancel the swap and REQUEST again: the request's reconcile
-// sends the wrong spare back, the refill lands, and the new swap takes it.
+// refill waits behind the wrong bin, and REQUEST is refused while the swap is in
+// flight. That is a state that needs a person. The exit is to cancel the swap
+// and REQUEST again: the cancel is an order of the line ending, so the keeper
+// re-reads the spot and sends the wrong spare back, the refill lands, and the
+// new swap takes it.
 //
 //go:build docker
 
@@ -165,13 +166,13 @@ func TestScenario_KeepStagedWrongSpare_CancelAndRequestIsTheExit(t *testing.T) {
 	}
 	settle()
 
-	// ── the call, against a dry market: the swap and two refills wait ──
+	// ── the call, against a dry market: the swap and one refill wait (one in flight at a time) ──
 	_, err = edge.Engine.RequestNodeMaterial(nodeID, 1)
 	mustNil(t, err, "call")
 	settle()
 	legs, refills, _ := rows()
-	if len(legs) != 2 || len(refills) != 2 {
-		t.Fatalf("call made legs=%d refills=%d, want 2 and 2 (bare spot)", len(legs), len(refills))
+	if len(legs) != 2 || len(refills) != 1 {
+		t.Fatalf("call made legs=%d refills=%d, want 2 and 1 (bare spot, one refill in flight)", len(legs), len(refills))
 	}
 
 	// ── after that decision, a wrong part lands on the spot, then stock of A ──
@@ -241,15 +242,15 @@ func TestScenario_KeepStagedWrongSpare_CancelAndRequestIsTheExit(t *testing.T) {
 	if len(newLegs) != 2 {
 		t.Fatalf("the REQUEST made %d swap legs, want 2", len(newLegs))
 	}
-	// The return is written before any refill this REQUEST adds; the two refills
-	// already coming are counted, so it adds none.
+	// One refill is already coming, and at most one is in flight, so neither the
+	// keeper's return nor the REQUEST adds another.
 	for _, r := range refills2 {
 		if r.ID > returns[0].ID {
-			t.Errorf("refill %d written after the return: the two already coming should have sufficed", r.ID)
+			t.Errorf("refill %d written after the return: the one already coming should have sufficed", r.ID)
 		}
 	}
-	if len(refills2) != 2 {
-		t.Fatalf("refills coming = %d, want the 2 from the call", len(refills2))
+	if len(refills2) != 1 {
+		t.Fatalf("refills coming = %d, want the 1 from the call", len(refills2))
 	}
 
 	// The return goes, a refill lands, the new swap takes the right spare.

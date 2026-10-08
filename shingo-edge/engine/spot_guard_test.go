@@ -73,11 +73,24 @@ func assertCellShut(t *testing.T, eng *Engine, db *store.DB, nodeID int64, why s
 	if gerr := bareLineGate(eng, node, rt, keeperClaim(t, db, nodeID)); gerr == nil {
 		t.Errorf("the bare-line gate admitted a downgrade while %s", why)
 	}
-	before := countOrders(t, db)
+	before := countLineAsks(t, db)
 	eng.sweepCellLevels()
-	if after := countOrders(t, db); after != before {
+	if after := countLineAsks(t, db); after != before {
 		t.Errorf("the level sweep asked (orders %d -> %d) while %s", before, after, why)
 	}
+}
+
+// countLineAsks counts the orders that could be the level keeper asking for the
+// line: everything except a keep-staged refill, a plain retrieve to the line's
+// inbound staging, which the keep-staged keeper sends on its own to top up a
+// bare spot whatever the line is doing.
+func countLineAsks(t *testing.T, db *store.DB) int {
+	t.Helper()
+	var n int
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT COUNT(*) FROM orders o WHERE NOT (
+		o.order_type IN ('retrieve','retrieve_empty') AND o.delivery_node IN (
+			SELECT keep_staged_node FROM style_node_claims WHERE keep_staged_node <> ''))`).Scan(&n), "count line asks")
+	return n
 }
 
 func TestGuardPositionSpokenFor_ArmTwoRefusesEveryNonLinePopulation(t *testing.T) {

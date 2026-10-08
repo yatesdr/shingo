@@ -46,8 +46,8 @@ func TestKeepStagedCarrier_AWrongCarrierGoesBackAtEveryDecision(t *testing.T) {
 		eng.SetPayloadBinTypes(ksCatalog(map[string]string{ksPart: ksTypeA}))
 		_, err := eng.RequestProduceSwap(nodeID)
 		testutil.MustNoErr(t, err, "request")
-		if got := readSpotOrders(t, db, nodeID); got.returns != 1 || got.refills != 2 {
-			t.Fatalf("returns=%d refills=%d, want the wrong empty back and 2 refills (one the swap lifts)",
+		if got := readSpotOrders(t, db, nodeID); got.returns != 1 || got.refills != 1 {
+			t.Fatalf("returns=%d refills=%d, want the wrong empty back and 1 refill (one in flight at a time)",
 				got.returns, got.refills)
 		}
 	})
@@ -59,8 +59,8 @@ func TestKeepStagedCarrier_AWrongCarrierGoesBackAtEveryDecision(t *testing.T) {
 		eng.SetPayloadBinTypes(ksCatalog(map[string]string{ksPart: ksTypeA}))
 		holdingSwap(t, db, nodeID)
 		eng.sweepCellLevels()
-		if got := readSpotOrders(t, db, nodeID); got.returns != 1 || got.refills != 2 {
-			t.Fatalf("returns=%d refills=%d, want the wrong empty back and 2 refills (one the waiting swap lifts)",
+		if got := readSpotOrders(t, db, nodeID); got.returns != 1 || got.refills != 1 {
+			t.Fatalf("returns=%d refills=%d, want the wrong empty back and 1 refill (one in flight at a time)",
 				got.returns, got.refills)
 		}
 	})

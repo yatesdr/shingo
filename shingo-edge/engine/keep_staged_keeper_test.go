@@ -10,9 +10,10 @@ import (
 	"shingoedge/store/processes"
 )
 
-// THE FLOOR: a keep-staged swap waiting at Core for its spare, with nothing on
-// its way to the spot. Each test seeds a keep-staged consume cell whose swap
-// leg sits in the runtime slot still acquiring (queued), and a bare spot.
+// THE KEEPER: one decision for a keep-staged spot (decideSpot), asked by the
+// sweep, by REQUEST and by an order's end. Most tests seed a keep-staged
+// consume cell whose swap leg sits in the runtime slot still acquiring
+// (queued), and a bare spot.
 
 func holdingSwap(t *testing.T, db *store.DB, nodeID int64) {
 	t.Helper()
@@ -39,7 +40,7 @@ func endedRefill(t *testing.T, eng *Engine, db *store.DB, nodeID int64, status p
 	testutil.MustNoErr(t, db.UpdateOrderStatus(o.ID, string(status)), "end the refill")
 }
 
-func floorCell(t *testing.T) (*Engine, *store.DB, int64) {
+func keeperCell(t *testing.T) (*Engine, *store.DB, int64) {
 	t.Helper()
 	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
 		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: {}})
@@ -50,19 +51,19 @@ func floorCell(t *testing.T) (*Engine, *store.DB, int64) {
 // structural failure would repeat on a timer, and a cancel is someone saying
 // stop (SPR 2026-10-08: five cancels, five identical re-creations). REQUEST
 // re-arms it.
-func TestKeepStagedFloor_EndedRefillIsNotRecreated(t *testing.T) {
+func TestKeepStagedKeeper_EndedRefillIsNotRecreated(t *testing.T) {
 	t.Parallel()
 	for _, ended := range []protocol.Status{protocol.StatusFailed, protocol.StatusSkipped, protocol.StatusCancelled} {
 		t.Run(string(ended), func(t *testing.T) {
 			t.Parallel()
-			eng, db, nodeID := floorCell(t)
+			eng, db, nodeID := keeperCell(t)
 			holdingSwap(t, db, nodeID)
 			endedRefill(t, eng, db, nodeID, ended)
 			for i := 0; i < 5; i++ {
 				eng.sweepCellLevels()
 			}
 			if got := readSpotOrders(t, db, nodeID); got.refills != 0 {
-				t.Fatalf("the floor re-created %d refill(s) after one ended %s", got.refills, ended)
+				t.Fatalf("the keeper re-created %d refill(s) after one ended %s", got.refills, ended)
 			}
 		})
 	}
@@ -74,7 +75,7 @@ func TestKeepStagedFloor_EndedRefillIsNotRecreated(t *testing.T) {
 // lifting a spare, and ordered a return of the standing bin plus two refills:
 // the return queued behind the swap's own carrier, the swap behind the bin. It
 // must order nothing while a live leg still drops onto the spot.
-func TestKeepStagedFloor_SwapThatDropsOnTheSpotOrdersNothing(t *testing.T) {
+func TestKeepStagedKeeper_SwapThatDropsOnTheSpotOrdersNothing(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
 		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart},
@@ -96,9 +97,9 @@ func TestKeepStagedFloor_SwapThatDropsOnTheSpotOrdersNothing(t *testing.T) {
 	}
 }
 
-func TestKeepStagedFloor_ARefillOnItsWaySuppresses(t *testing.T) {
+func TestKeepStagedKeeper_ARefillOnItsWaySuppresses(t *testing.T) {
 	t.Parallel()
-	eng, db, nodeID := floorCell(t)
+	eng, db, nodeID := keeperCell(t)
 	holdingSwap(t, db, nodeID)
 	_, err := eng.orderMgr.CreateRetrieveOrder(&nodeID, false, 1, ksSpot, ksMarket, "", "standard", ksPart, true, false,
 		orders.Attached("floor-coming"))
@@ -109,14 +110,16 @@ func TestKeepStagedFloor_ARefillOnItsWaySuppresses(t *testing.T) {
 	}
 }
 
-// A keep-staged cell with no swap in flight costs the floor nothing: no read of
-// the line's orders and no call to Core.
-func TestKeepStagedFloor_NoSwapInFlightOrdersNothing(t *testing.T) {
+// An idle keep-staged line with a bare spot is topped up: the keeper runs on
+// the sweep whether or not a swap is in flight, and orders exactly one.
+func TestKeepStagedKeeper_IdleBareSpotGetsOneRefill(t *testing.T) {
 	t.Parallel()
-	eng, db, nodeID := floorCell(t)
-	eng.sweepCellLevels()
-	if got := readSpotOrders(t, db, nodeID); got.refills != 0 {
-		t.Fatalf("refills = %d with no swap in flight, want 0", got.refills)
+	eng, db, nodeID := keeperCell(t)
+	for i := 0; i < 3; i++ {
+		eng.sweepCellLevels()
+	}
+	if got := readSpotOrders(t, db, nodeID); got.refills != 1 {
+		t.Fatalf("refills = %d on an idle bare spot after three sweeps, want exactly 1", got.refills)
 	}
 }
 
@@ -127,22 +130,19 @@ func TestKeepStagedFloor_NoSwapInFlightOrdersNothing(t *testing.T) {
 // finds the cell being decided and leaves it to the decider; the "request"
 // writes its refills. Without the lock the floor reads nothing coming and adds
 // its own.
-func TestKeepStagedFloor_RequestAndFloorTogetherCreateOnce(t *testing.T) {
+func TestKeepStagedKeeper_RequestAndFloorTogetherCreateOnce(t *testing.T) {
 	t.Parallel()
-	eng, db, nodeID := floorCell(t)
+	eng, db, nodeID := keeperCell(t)
 	holdingSwap(t, db, nodeID)
 	node, err := db.GetProcessNode(nodeID)
 	testutil.MustNoErr(t, err, "node")
 	claim := keeperClaimByID(t, db, nodeID)
-	runtime, err := db.GetProcessNodeRuntime(nodeID)
-	testutil.MustNoErr(t, err, "runtime")
-
 	mu := eng.primeNodeLock(claim)
 	mu.Lock()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		eng.keepStagedFloor(node, runtime, claim)
+		eng.keepSpot(node, claim)
 	}()
 	eng.refillSpot(node, claim, 2, orders.Attached("floor-request"))
 	mu.Unlock()
@@ -157,7 +157,7 @@ func TestKeepStagedFloor_RequestAndFloorTogetherCreateOnce(t *testing.T) {
 // coming to its spot while it holds the line's prime lock. The refill's
 // completion cascade is delivered on the start's own goroutine and kicks the
 // floor; the floor must not wait for a lock its caller holds.
-func TestKeepStagedFloor_StartAbortingTheCellDoesNotWaitOnItself(t *testing.T) {
+func TestKeepStagedKeeper_StartAbortingTheCellDoesNotWaitOnItself(t *testing.T) {
 	t.Parallel()
 	fx := seedKeepStagedChangeover(t,
 		[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
@@ -188,7 +188,7 @@ func TestKeepStagedFloor_StartAbortingTheCellDoesNotWaitOnItself(t *testing.T) {
 // overwrites the row's order_type. Under either spelling it is a refill: it is
 // counted as coming, so the floor adds nothing while two are on their way, and
 // it does not work the cell, so the level keeper still asks for the swap.
-func TestKeepStagedFloor_ProduceRefillsUnderCoresSpelling(t *testing.T) {
+func TestKeepStagedKeeper_ProduceRefillsUnderCoresSpelling(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID, claim := keepStagedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot,
 		map[string]NodeBinInfo{ksLine: {Occupied: true}, ksSpot: {}})

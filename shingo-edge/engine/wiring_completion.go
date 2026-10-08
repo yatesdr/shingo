@@ -150,9 +150,9 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 	if ctx == nil {
 		return
 	}
-	// A keep-staged refill going terminal re-runs the spot's floor once the
-	// cascade below has settled the line's slots (kickKeepStagedFloor).
-	defer e.kickKeepStagedFloor(ctx)
+	// Any order of a keep-staged line going terminal re-runs the spot's keeper
+	// once the cascade below has settled the line's slots (kickKeepSpot).
+	defer e.kickKeepSpot(ctx)
 
 	// EmitOrderCompleted fires for any terminal status (confirmed, cancelled,
 	// failed) — it's the engine bus's "order reached terminal" signal. Every

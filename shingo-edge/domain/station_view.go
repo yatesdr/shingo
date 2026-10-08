@@ -112,6 +112,11 @@ type StationNodeView struct {
 	// "CARRIER-XXXX staged Nh at <node>, not bound — Record Count on the bin tab."
 	// Empty when the node has no active stranding alarm.
 	StrandedAlarm string `json:"stranded_alarm,omitempty"`
+	// KeepStagedNote is the keep-staged keeper's sentence for this line: that
+	// it is paused and REQUEST resumes it, or why it cannot keep its spot.
+	// Rendered as a chip on the node card, verbatim. Empty when there is
+	// nothing to say.
+	KeepStagedNote string `json:"keep_staged_note,omitempty"`
 	// CountWaits is the sentence for a sequential position the line has moved
 	// onto before its bin arrived: "The line is on <node>; its parts wait for
 	// <node>'s bin." The count is held (pending_uop_delta) and replays when the

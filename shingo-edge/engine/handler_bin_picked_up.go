@@ -74,6 +74,9 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 	// And the auto_push unloader's re-pull, for the same reason it sits here: it
 	// reads the order and the window's claim and touches no runtime slot.
 	e.rePullOnEmptyOutPickup(order, location)
+	// And the keep-staged keeper, when the lift was at the line's spot: the
+	// refill behind the spare is ordered now, not at the swap's end.
+	e.keepSpotOnPickup(order, location)
 
 	// === Location gate (inverted; fails closed) ===
 	//

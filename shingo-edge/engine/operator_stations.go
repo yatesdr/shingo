@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"log"
+	"slices"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -102,6 +103,11 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, sp
 	spot := spotNode(claim)
 	if spot != "" {
 		asked = append(append([]string(nil), names...), spot)
+		// And the inbound source, where a wrong spare would be returned to: a
+		// return into an occupied source is not made (decideSpot).
+		if src := claim.InboundSource; src != "" && src != spot && !slices.Contains(names, src) {
+			asked = append(asked, src)
+		}
 	}
 	// A SINGLE-ROBOT CLAIM ASKS ABOUT ITS OUTBOUND STAGING TOO, in the same call,
 	// for a bin a cancelled changeover's leg left parked there (parkAsked). Its
@@ -135,6 +141,9 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, sp
 	for _, b := range bins {
 		if b.NodeName == spot && b.NodeName != claim.CoreNodeName {
 			continue // the spot: read below, not a line position
+		}
+		if spot != "" && b.NodeName == claim.InboundSource && !slices.Contains(names, b.NodeName) {
+			continue // the return destination: read into the spot's read, not a line position
 		}
 		if parkAsked(claim) && b.NodeName == claim.OutboundStaging && b.NodeName != claim.CoreNodeName {
 			park = b
@@ -232,8 +241,8 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	// nothing is coming. Here and not in BuildConsumePlan because the planner is
 	// pure and the witness is a DB read.
 	downgraded := plan.DowngradedFromSwapMode != ""
-	if err := e.gateLineRows(node, claim, downgraded, spot, func(read spotRead, coming int) {
-		planSpotForConsume(plan, claim, read, coming)
+	if err := e.gateLineRows(node, claim, downgraded, spot, func(read spotRead, rows []domain.Order) {
+		e.setKeepStagedNote(claim.CoreNodeName, planSpotForConsume(plan, claim, e.spotFactsOf(claim, read, rows)))
 	}); err != nil {
 		return nil, err
 	}

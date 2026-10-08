@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	ordermgr "shingoedge/orders"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -127,8 +128,8 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	if ask.finalizes && plan.Dispatch != nil && runtime.RemainingUOPCached <= 0 {
 		return nil, fmt.Errorf("node %s has no parts to finalize", node.Name)
 	}
-	if err := e.gateLineRows(node, claim, plan.SimpleMove, spot, func(read spotRead, coming int) {
-		planSpotForProduce(plan, claim, read, coming)
+	if err := e.gateLineRows(node, claim, plan.SimpleMove, spot, func(read spotRead, rows []domain.Order) {
+		e.setKeepStagedNote(claim.CoreNodeName, planSpotForProduce(plan, claim, e.spotFactsOf(claim, read, rows)))
 	}); err != nil {
 		return nil, err
 	}
