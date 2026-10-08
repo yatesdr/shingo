@@ -331,6 +331,48 @@ func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane 
 	return plan, nil
 }
 
+// MoveDigFits answers, before a person's move of a bin is born, whether the
+// bin's group can park what stands in front of it. nil when the bin is not in a
+// lane, nothing is in front of it, or the dig fits. A *plan.DigShortError whose
+// walk found the group's parking short is the refusal a door with a person
+// waiting gives at once (owner, 2026-09-26), rather than send a robot to the
+// mark to wait under no-shuffle-slot.
+//
+// It is the dig's own plan-time verdict asked earlier: the same blockers, the
+// same parking walk and the same owed count (planUnbury), with the move's own
+// destination kept out of the parking as PlanReshuffle keeps a retrieve's.
+// Read-only. Any other answer, a failed read included, lets the move be born,
+// and the gate asks again at the mark.
+func (d *Dispatcher) MoveDigFits(bin *bins.Bin, source, dest *nodes.Node) error {
+	if bin == nil || source == nil {
+		return nil
+	}
+	lane, err := d.db.LaneForNode(source.ID)
+	if err != nil || lane == nil || lane.ParentID == nil {
+		return nil
+	}
+	blockers, err := findBuriedBlockers(d.db, source.ID)
+	if err != nil || len(blockers) == 0 {
+		return nil
+	}
+	groupID := *lane.ParentID
+	exclude := map[int64]bool{}
+	if dest != nil {
+		exclude[dest.ID] = true
+	}
+	_, err = plan.DigFits(d.db, groupID, lane.Name, lane.ID, len(blockers), deepestBlocker(blockers),
+		reservations.Anyone, func(need int) error {
+			_, wErr := findShuffleSlotsFor(d.db, lane.ID, groupID, need, reservations.Anyone,
+				noClaimantYet, noClaimantYet, exclude, nil)
+			return wErr
+		})
+	var short *plan.DigShortError
+	if errors.As(err, &short) && errors.Is(short.Walk, ErrNoShuffleSlot) {
+		return short
+	}
+	return nil
+}
+
 // PlanLaneMouthClear plans the excavation that makes targetSlot reachable and
 // STOPS THERE: this dig exists to open a path, not to fetch anything.
 //

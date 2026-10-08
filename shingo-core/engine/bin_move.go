@@ -189,6 +189,16 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 	if p.Refused != nil {
 		return nil, moveRefusal(p.Refused, bin, sourceNode, destNode)
 	}
+	// A BURIED BIN WHOSE GROUP HAS NOWHERE TO PARK ITS BLOCKERS IS REFUSED NOW
+	// (owner, 2026-09-26): a person is waiting at this door. Born, the move would
+	// be sent to the lane's mark and wait there under no-shuffle-slot while the
+	// person is told "queued". The dig's own verdict, asked before the birth.
+	var short *plan.DigShortError
+	if err := e.dispatcher.MoveDigFits(p.Bin, p.Node, p.Dest); errors.As(err, &short) {
+		return nil, refuse(BinMoveConflict, err,
+			"bin %s is behind %d other bin(s) at %s, and its group has nowhere to park them right now "+
+				"— free a slot in the group and try again", p.Bin.Label, short.Blockers, p.Node.Name)
+	}
 
 	edgeUUID := req.EdgeUUID
 	if edgeUUID == "" {

@@ -14,6 +14,7 @@ import (
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/payloads"
+	"shingocore/store/reservations"
 )
 
 // stale_dig_docker_test.go — a dig's plan is written once, and the lane does not
@@ -482,5 +483,128 @@ func TestStaleDig_DeadClaimantObstruction_Dissolves(t *testing.T) {
 					"scanner looks at it again", after.Status)
 			}
 		})
+	}
+}
+
+// TestStaleDig_GateOwnDig_DissolvesResummonsAndCompletes is window 2's
+// composition on the gate path: one self-heal window composed with another, and
+// followed to the demand closing.
+//
+// It replaces TestStaleDig_Window2Dig_DissolvesReplansAndCompletes, whose door
+// (the held-bin re-check at pre-dispatch admission) no lane reaches now: every
+// lane is marked, so a held bin buried after its hold was taken is found by the
+// gate at the mark, and the order summons its OWN dig there, keeping `staged`
+// and its lane lock. What this pins is the same promise through that door:
+//
+//   - the dig goes stale (a wall lands in front of its pending leg) and
+//     DISSOLVES rather than waiting on a bin nothing will move;
+//   - the order stays at its mark holding its bin, and the next pass summons a
+//     fresh dig that includes the wall;
+//   - that dig completes, the chapter closes, the tail is appended where the
+//     robot stands, and the demand CONFIRMS with its bin at the line (F-07's
+//     assertion: "not failed" was true of a demand that never closed);
+//   - the ledger is clean: no lane lock, no occupants.
+//
+// MUTATION (run 2026-10-08): make handleStaleDigLeg hold the walled leg instead
+// of dissolving (skip its dissolveCompound tail). The dissolve-marker assertion
+// fires. The retired pin's closed-chapter mutation (compoundGenerations) does NOT
+// fire here, and should not: on this path the demand closes by its own tail, not
+// by the compound's completion arithmetic.
+func TestStaleDig_GateOwnDig_DissolvesResummonsAndCompletes(t *testing.T) {
+	t.Parallel()
+	db := testDBShared(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	_, lane, slots, bp := staleDigLane(t, db, "SD-GW")
+
+	// [empty, blocker, blocker, HELD]: two blockers, so the dig's second leg is
+	// still pending when the wall lands.
+	testdb.CreateBinAtNode(t, db, bp.Code, slots[1].ID, "SD-GW-BLK1")
+	testdb.CreateBinAtNode(t, db, bp.Code, slots[2].ID, "SD-GW-BLK2")
+	held := testdb.CreateBinAtNode(t, db, bp.Code, slots[3].ID, "SD-GW-HELD")
+	line := lineNode(t, db, "SD-GW-LINE")
+	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "sd-gw-demand"
+		o.OrderType = OrderTypeRetrieve
+		o.PayloadCode = bp.Code
+		o.SourceNode = slots[3].Name
+		o.DeliveryNode = line.Name
+		o.Status = protocol.StatusPending
+	})
+	testdb.ReserveBin(t, db, order.ID, held.ID)
+	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, held.ID), "stamp the held bin")
+	order, err := db.GetOrder(order.ID)
+	testutil.MustNoErr(t, err, "reload the held-bin order")
+	reload := func(what string) *orders.Order {
+		o, err := db.GetOrder(order.ID)
+		testutil.MustNoErr(t, err, "reload the demand: "+what)
+		return o
+	}
+
+	// ── TO THE MARK, AND THE GATE FINDS IT BURIED ─────────────────────────
+	_, err = d.DispatchHand(order, held.ID, slots[3], line)
+	testutil.MustNoErr(t, err, "dispatch the held-bin order")
+	if o := reload("at the mark"); !IsGateStaged(o) || o.QueueCause != string(CauseLaneTargetBuried) {
+		t.Fatalf("the order is %s (staged=%v, cause %q), want it held at the mark as buried — the rest of "+
+			"this test is about the dig the gate summons for it", o.Status, IsGateStaged(o), o.QueueCause)
+	}
+	d.EvaluateLaneReleases(lane.ID)
+	legs := legsOf(t, db, order.ID)
+	if len(legs) != 2 || legs[0].VendorOrderID == "" || legs[1].Status != protocol.StatusPending {
+		t.Fatalf("the own dig is %+v, want two legs with the first sent and the second pending", legs)
+	}
+	if owner := d.laneLock.LockedBy(lane.ID); owner != order.ID {
+		t.Fatalf("lane lock is held by %d, want the order digging its own lane (%d)", owner, order.ID)
+	}
+
+	// ── AND THEN IT GOES STALE ────────────────────────────────────────────
+	// A wall lands at the mouth, in front of the pending leg's blocker. Nothing in
+	// this dig will ever move it: its legs were written before it existed.
+	testdb.CreateBinAtNode(t, db, bp.Code, slots[0].ID, "SD-GW-WALL")
+	landLeg(t, d, db, legs[0])
+	sawDissolveMarker := false
+	for _, l := range legsOf(t, db, order.ID) {
+		if l.Status == protocol.StatusCancelled && l.ErrorDetail == reshuffleDissolveDetail {
+			sawDissolveMarker = true
+		}
+	}
+	if !sawDissolveMarker {
+		t.Fatal("no leg carries the dissolve marker — the walled leg is waiting on a bin nothing will move")
+	}
+	if o := reload("after the dissolve"); protocol.IsTerminal(o.Status) || !IsGateStaged(o) ||
+		o.BinID == nil || *o.BinID != held.ID {
+		t.Fatalf("after the dissolve the demand is %s (staged=%v, bin %v), want it still at its mark holding "+
+			"bin %d: nothing is wrong with the demand, the lane changed", o.Status, IsGateStaged(o), o.BinID, held.ID)
+	}
+
+	// ── THE NEXT PASS SUMMONS A FRESH DIG, AND IT COMPLETES ───────────────
+	d.EvaluateLaneReleases(lane.ID)
+	for pass := 0; pass < 4 && IsGateStaged(reload("digging")); pass++ {
+		for _, l := range legsOf(t, db, order.ID) {
+			if !protocol.IsTerminal(l.Status) && l.VendorOrderID != "" {
+				landLeg(t, d, db, l)
+			}
+		}
+		testutil.MustNoErr(t, d.AdvanceCompoundOrder(order.ID), "close the dig's chapter")
+		d.EvaluateLaneReleases(lane.ID)
+	}
+	released := reload("released")
+	if IsGateStaged(released) || released.Status != protocol.StatusInTransit {
+		t.Fatalf("the demand is %s (staged=%v, cause %q) after the second dig, want its tail appended and "+
+			"the robot sent in for its bin", released.Status, IsGateStaged(released), released.QueueCause)
+	}
+
+	// ── AND THE DEMAND CLOSES ─────────────────────────────────────────────
+	testutil.MustNoErr(t, db.MoveBinClearingStaging(held.ID, line.ID, false), "the bin reaches the line")
+	_, err = db.TerminalizeOrder(order.ID, protocol.StatusConfirmed, "delivered")
+	testutil.MustNoErr(t, err, "the demand completes")
+	if done := reload("closed"); done.Status != protocol.StatusConfirmed {
+		t.Fatalf("the demand is %q at the end, want %q", done.Status, protocol.StatusConfirmed)
+	}
+	if d.laneLock.IsLocked(lane.ID) {
+		t.Error("the lane is still locked after the demand completed")
+	}
+	occRaw, err := reservations.OccupantsOf(db.DB, lane.ID)
+	if occ := testutil.Must(t, occRaw, err, "reservations.OccupantsOf(db.DB, lane.ID)"); len(occ) != 0 {
+		t.Errorf("lane %s still has occupants %v", lane.Name, occ)
 	}
 }

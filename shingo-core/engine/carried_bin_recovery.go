@@ -548,8 +548,8 @@ func (e *Engine) queueRecoveryForUnreadableLane(order *orders.Order, destNode *n
 		e.logFn("engine: release lanes for parked recovery order %d: %v", order.ID, lerr)
 	}
 	// Through the dispatcher's helper so the sentence and the history row's code
-	// come from one computation — see queueBinMoveForLane for what a direct store
-	// write costs here.
+	// come from one computation: a direct store write would set the code without
+	// the history row that says why.
 	e.dispatcher.SetQueueReason(order, code, cause, params)
 	if err := e.dispatcher.Lifecycle().Park(order, "carried-bin-recovery"); err != nil {
 		// The park was refused (the order moved under us, or the cause did not

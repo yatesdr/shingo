@@ -411,7 +411,155 @@ func TestCancelReturn_LoaderPositionSourceTakesHomeThenBuffer(t *testing.T) {
 	}
 }
 
-// ── 7. the lane-held park and its releasers ─────────────────────────────────
+// ── 7. a busy lane holds the return at the mark, and its releasers ──────────
+//
+// These were pre-dispatch parks: an inbound mouth hold refused the return before
+// it left, and the scanner re-drove it. Every lane is marked now, so the return
+// is sent to the group's mark and the gate holds it there; the properties are
+// pinned on that path.
+
+// occupy puts a dispatched order inside lane, ending at endsAt in it: a robot
+// in the corridor. Its route ends in the lane, as an occupant's does, so its
+// terminal event finds the lane (LaneIDsForOrder).
+func occupy(t *testing.T, db *store.DB, lane, endsAt *nodes.Node) *orders.Order {
+	t.Helper()
+	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "occupant-" + lane.Name
+		o.Status = dispatch.StatusDispatched
+		o.DeliveryNode = endsAt.Name
+	})
+	if _, err := reservations.AcquireOccupancy(db.DB, o.ID, lane.ID); err != nil {
+		t.Fatalf("occupy %s: %v", lane.Name, err)
+	}
+	return o
+}
+
+// leave terminalizes an occupant (its occupancy goes in the same transaction)
+// and emits the event that tells the gate its lane cleared.
+func leave(t *testing.T, db *store.DB, eng *Engine, o *orders.Order) {
+	t.Helper()
+	if _, err := db.TerminalizeOrder(o.ID, protocol.StatusCancelled, "test: occupant leaves"); err != nil {
+		t.Fatalf("terminalize occupant %d: %v", o.ID, err)
+	}
+	eng.Events.Emit(Event{Type: EventOrderCancelled, Payload: OrderCancelledEvent{OrderID: o.ID, EdgeUUID: o.EdgeUUID}})
+}
+
+// heldReturn returns a bin into a group whose every lane has a robot inside:
+// the return is sent to the group's mark and held there with its cause.
+// viaButton presses Recover instead of letting the watch order the return; both
+// go through the button's door.
+func heldReturn(t *testing.T, db *store.DB, eng *Engine, prefix string, nLanes int, viaButton bool) (*bins.Bin, *orders.Order, []*orders.Order, [][]*nodes.Node) {
+	t.Helper()
+	grp, lanes, slots := laneGroup(t, db, prefix, nLanes, 2)
+	binAt(t, db, slots[0][1], prefix+"-P")
+	seedClaim(t, db, "PROC-"+prefix, "STY", "LINE-"+prefix, prefix+"-P", grp.Name, true)
+	bin, _ := seedCancelledCarry(t, db, "AMR-"+prefix, prefix+"-P", "LINE-"+prefix)
+	cacheRobot(eng, loadedDispatchable("AMR-"+prefix))
+	// Each occupant's route ends at its lane's deep slot, so the mouth slot is
+	// still a choice: the lane is busy at the gate, not full at the chooser.
+	var occupants []*orders.Order
+	for i, l := range lanes {
+		occupants = append(occupants, occupy(t, db, l, slots[i][1]))
+	}
+	if viaButton {
+		_, _, err := eng.RecoverCarriedBin(bin.ID, "operator:test")
+		testutil.MustNoErr(t, err, "press Recover")
+	} else {
+		eng.sweepCarriedBins()
+	}
+	ret := theReturn(t, db, bin.ID)
+	if !dispatch.IsGateStaged(ret) {
+		t.Fatalf("setup: the return is %s (wait index %d) aimed at %s, want it held at the group's mark "+
+			"behind the busy lanes", ret.Status, ret.WaitIndex, ret.DeliveryNode)
+	}
+	if ret.QueueCause == "" {
+		t.Fatal("the return is held at the mark with no cause on the row — a wait nobody can read")
+	}
+	return bin, ret, occupants, slots
+}
+
+// TestCancelReturn_ABusyLaneHoldsTheReturnAtTheMarkAndItsClearingReleasesIt: a
+// return into a busy lane waits rather than fails, carrying the robot pin, and
+// the lane clearing is what releases it (not the periodic sweep).
+func TestCancelReturn_ABusyLaneHoldsTheReturnAtTheMarkAndItsClearingReleasesIt(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	backend := testdb.NewTrackingBackend()
+	eng := newTestEngine(t, db, backend)
+	_, ret, occupants, _ := heldReturn(t, db, eng, "CR7A", 1, false)
+
+	reqs := backend.CreateRequests()
+	if len(reqs) == 0 || reqs[len(reqs)-1].Vehicle != "AMR-CR7A" {
+		t.Fatalf("the return went to the mark without the robot pin (requests %+v): only the robot "+
+			"carrying the bin can set it down", reqs)
+	}
+	leave(t, db, eng, occupants[0])
+	waitUntilOffTheMark(t, db, ret.EdgeUUID, 10*time.Second)
+	done, err := db.GetOrder(ret.ID)
+	testutil.MustNoErr(t, err, "re-read the return")
+	if protocol.IsTerminal(done.Status) {
+		t.Fatalf("the return is %s after its lane cleared, want it released into the lane", done.Status)
+	}
+}
+
+// TestRecoveryOrder_ABusyLaneHoldsItAtTheMarkAndItsClearingReleasesIt is the
+// same property for the button: a recovery into a busy lane waits at the mark
+// with its cause, and the lane clearing releases it.
+func TestRecoveryOrder_ABusyLaneHoldsItAtTheMarkAndItsClearingReleasesIt(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
+	_, ret, occupants, _ := heldReturn(t, db, eng, "CR7B", 1, true)
+
+	leave(t, db, eng, occupants[0])
+	waitUntilOffTheMark(t, db, ret.EdgeUUID, 10*time.Second)
+	done, err := db.GetOrder(ret.ID)
+	testutil.MustNoErr(t, err, "re-read the recovery order")
+	if protocol.IsTerminal(done.Status) {
+		t.Fatalf("the recovery order is %s after its lane cleared, want it released into the lane", done.Status)
+	}
+}
+
+// TestCancelReturn_ADigWhileHeldAtTheMarkHoldsItUntilTheDigEnds: a dig taking
+// the lane a held return is aimed at keeps it at the mark under the dig's cause,
+// and the dig ending releases it.
+//
+// The retired pre-dispatch version pinned that the dig RE-AIMED the return: Core
+// chose the slot, so a re-ask went elsewhere. On the gate path the verdict
+// refuses a dug lane before the release-time re-bind runs (rebindGatedDropoff
+// widens to the group only when the lane has no slot), so a held return waits
+// for the dig instead. That is a question for the gate's verdict, not something
+// this pin decides; what it pins is that the wait has its releaser.
+func TestCancelReturn_ADigWhileHeldAtTheMarkHoldsItUntilTheDigEnds(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newTestEngine(t, db, testdb.NewTrackingBackend())
+	_, ret, occupants, slots := heldReturn(t, db, eng, "CR7C", 1, false)
+
+	lane := *slots[0][0].ParentID
+	digger := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "CR7C-dig"
+		o.Status = protocol.StatusInTransit
+		o.DeliveryNode = slots[0][1].Name
+	})
+	testutil.MustNoErr(t, reservations.AcquireLanes(db.DB, digger.ID, reservations.ModeDig,
+		reservations.ByExcavation, lane), "dig the return's lane")
+	leave(t, db, eng, occupants[0])
+
+	held, err := db.GetOrder(ret.ID)
+	testutil.MustNoErr(t, err, "re-read the return")
+	if !dispatch.IsGateStaged(held) {
+		t.Fatalf("the return left the mark into a lane being dug (status %s)", held.Status)
+	}
+	if held.QueueCause != string(dispatch.CauseLaneDigActive) {
+		t.Errorf("held return's cause = %q, want %q: the row names what it waits for now", held.QueueCause,
+			dispatch.CauseLaneDigActive)
+	}
+
+	testutil.MustNoErr(t, reservations.ReleaseLane(db.DB, digger.ID, lane), "the dig gives up the lane")
+	leave(t, db, eng, digger)
+	waitUntilOffTheMark(t, db, ret.EdgeUUID, 10*time.Second)
+}
 
 // ── 8. once per episode ─────────────────────────────────────────────────────
 
