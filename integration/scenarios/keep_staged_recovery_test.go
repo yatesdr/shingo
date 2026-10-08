@@ -78,6 +78,11 @@ func (k *kickTicker) Reset(time.Duration) {}
 type kickClock struct {
 	mu      sync.Mutex
 	tickers []*kickTicker
+	// starting is held by a cell from starting its Edge until it has taken
+	// the ticker that Edge's reconciler asked for. Cells that share one clock
+	// (the parallel subtests below) would otherwise each take "the newest
+	// ticker" and could take each other's.
+	starting sync.Mutex
 }
 
 func (k *kickClock) Now() time.Time                         { return time.Now() }
@@ -213,13 +218,19 @@ type ksrOpts struct {
 	claimC bool
 	// plain: the claims do not keep a staged spare.
 	plain bool
+	// kicks is a clock already installed as the default, shared by cells
+	// running in parallel. Nil: the cell installs its own for its test.
+	kicks *kickClock
 }
 
 func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	t.Helper()
-	kicks := &kickClock{}
-	clock.SetDefault(kicks)
-	t.Cleanup(func() { clock.SetDefault(clock.Real()) })
+	kicks := o.kicks
+	if kicks == nil {
+		kicks = &kickClock{}
+		clock.SetDefault(kicks)
+		t.Cleanup(func() { clock.SetDefault(clock.Real()) })
+	}
 
 	c := &ksrCell{t: t, kicks: kicks, role: o.role, mode: o.mode, robots: map[string]string{},
 		heldBlocker: o.buriedB && !o.claimC}
@@ -340,17 +351,24 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	}
 
 	// ── Edge ──
-	c.edge = edgeharness.NewEdgeWithCoreAPI(t, "edge.test", c.core.url)
-	edge := c.edge
-	// The level keeper's loop has started on its own goroutine: wait for its
-	// ticker.
-	for i := 0; kicks.count() == 0; i++ {
-		if i > 200 {
-			t.Fatal("the demand reconciler never took its ticker")
+	// Released by defer, so a t.Fatal inside (which exits through
+	// runtime.Goexit) cannot leave every other cell waiting on it.
+	func() {
+		kicks.starting.Lock()
+		defer kicks.starting.Unlock()
+		before := kicks.count()
+		c.edge = edgeharness.NewEdgeWithCoreAPI(t, "edge.test", c.core.url)
+		// The level keeper's loop has started on its own goroutine: wait for
+		// its ticker.
+		for i := 0; kicks.count() == before; i++ {
+			if i > 200 {
+				t.Fatal("the demand reconciler never took its ticker")
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	c.kick = kicks.ticker(kicks.count() - 1)
+		c.kick = kicks.ticker(before)
+	}()
+	edge := c.edge
 	// The catalog Core would sync: the produce level is the part's capacity.
 	for i, code := range []string{ksrPartA, ksrPartB} {
 		mustNil(t, edge.DB.UpsertPayloadCatalog(&catalog.CatalogEntry{ID: int64(i + 1), Name: code, Code: code, UOPCapacity: 40}),
@@ -1462,7 +1480,17 @@ func (c *ksrCell) assertRecovered() {
 // for A runs a normal A swap to the end, the level keeper's next ask runs the
 // fast swap from a standing A spare, and nothing of B is left anywhere but B's
 // market.
+// THE SUBTESTS RUN IN PARALLEL. Each builds its own Core, Edge and database,
+// and runs ~3s, nearly all of it waiting on its bus to go quiet; in series
+// the 66 of them were most of integration/scenarios' time in the gate. What
+// they share is the default clock, which must be the kick clock for every
+// Edge's reconciler: one is installed here, before any subtest starts, and
+// removed after the last one ends (a parent's Cleanup runs after its
+// parallel subtests).
 func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
+	kicks := &kickClock{}
+	clock.SetDefault(kicks)
+	t.Cleanup(func() { clock.SetDefault(clock.Real()) })
 	type cell struct {
 		role protocol.ClaimRole
 		mode protocol.SwapMode
@@ -1485,6 +1513,7 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 				continue
 			}
 			t.Run(fmt.Sprintf("%s/%s/%s", cl.role, cl.mode, m.name), func(t *testing.T) {
+				t.Parallel()
 				if m.buriedB && cl.mode == protocol.SwapModeTwoRobotPressIndex && cl.role == protocol.ClaimRoleConsume {
 					// NOT REACHED, and not for the spot. A consume press
 					// changing carrier type sends each position its own leg
@@ -1500,7 +1529,7 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 				}
 				started := time.Now()
 				defer func() { t.Logf("case %s ran %s", m.name, time.Since(started).Round(time.Second)) }()
-				c := newKsrCell(t, ksrOpts{role: cl.role, mode: cl.mode, buriedB: m.buriedB, claimC: m.claimC})
+				c := newKsrCell(t, ksrOpts{role: cl.role, mode: cl.mode, buriedB: m.buriedB, claimC: m.claimC, kicks: kicks})
 				co := c.startChangeover()
 				m.at(c, co)
 				c.dump("at the cancel: " + m.what)
