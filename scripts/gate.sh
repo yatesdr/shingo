@@ -34,8 +34,8 @@
 # DOCKER SUITES ARE SCOPED, NOT SKIPPED. See `scope` below.
 #
 # Usage:
-#   bash scripts/gate.sh                  fmt, vet, standalone builds, lint,
-#                                         script guards, unit tests
+#   bash scripts/gate.sh                  fmt, standalone builds, lint (which
+#                                         carries vet), script guards, unit tests
 #   bash scripts/gate.sh scope [BASE]     say whether the docker suites are needed
 #                                         (exit 0 = needed, 1 = not needed)
 #   bash scripts/gate.sh race             -race over ./engine/... and ./www/...
@@ -43,8 +43,8 @@
 #   bash scripts/gate.sh docker           run the docker suites (no -race)
 #   bash scripts/gate.sh sim              -tags sim tests (edge sim operator, core
 #                                         fleet simulator, simwarlink), with -race
-#   bash scripts/gate.sh full [BASE]      the four, then race, then sim, then docker
-#                                         if scope says so
+#   bash scripts/gate.sh full [BASE]      the bare gate, then docker if scope says
+#                                         so, with race and sim
 #   bash scripts/gate.sh scripts          the scripts/check-*.sh guards
 #   bash scripts/gate.sh modbuild         GOWORK=off go build, per module
 #   bash scripts/gate.sh fmt|vet|modbuild|lint|scripts|test|race|sim  one step
@@ -186,6 +186,15 @@ step_modbuild() {
   return $failed
 }
 
+# NOT IN `all` OR `full`: LINT IS THE VET STEP THERE. golangci-lint v2.11.4's
+# govet runs the same analyzers `go vet` runs by default — the two lists were
+# compared name by name, 35 each — and this config neither narrows govet nor
+# excludes any of its findings. Lint also runs them over the docker-tagged
+# files, which this step never compiles. So in a gate that runs lint, this
+# was a second compile of every module to ask a subset of the same question:
+# ~25s on the Windows host, ~75s on the 4-core gate box. It stays as
+# `gate.sh vet`, for asking that one question quickly.
+#
 # NOT parallelised across modules, unlike step_test, and that is a measured
 # decision rather than an oversight: 8s serial against 7s concurrent. Vet's
 # wall time is one module (shingo-core) compiling, and the other four are
@@ -1047,7 +1056,6 @@ case "${1:-all}" in
   docker) if step_docker; then gate_docker=ran; else rc=1; fi ;;
   full)
     if step_fmt;  then note_step fmt;  else rc=1; fi
-    if step_vet;  then note_step vet;  else rc=1; fi
     if step_modbuild; then note_step modbuild; else rc=1; fi
     if step_lint; then note_step lint; else rc=1; fi
     if step_scripts; then note_step scripts; else rc=1; fi
@@ -1076,7 +1084,6 @@ case "${1:-all}" in
     # Every step runs even after one fails: a gate that stops at the first
     # problem makes you re-run the slow parts once per problem.
     if step_fmt;  then note_step fmt;  else rc=1; fi
-    if step_vet;  then note_step vet;  else rc=1; fi
     if step_modbuild; then note_step modbuild; else rc=1; fi
     if step_lint; then note_step lint; else rc=1; fi
     if step_scripts; then note_step scripts; else rc=1; fi
