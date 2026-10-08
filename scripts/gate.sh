@@ -1071,6 +1071,16 @@ esac
 # output is now a visible contradiction rather than an invisible one.
 gate_steps=""
 gate_docker=""   # "" = not attempted | "ran" | "skipped"
+
+# timed <step_fn> — runs one step and prints how long it took. The log had no
+# per-step times at all, so "why is the gate slow" could only be answered by
+# re-timing each step by hand on another machine.
+timed() {
+  local t0=$SECONDS r
+  "$@"; r=$?
+  echo "     ($1: $((SECONDS - t0))s)"
+  return $r
+}
 note_step() { gate_steps="${gate_steps:+$gate_steps, }$1"; }
 
 gate_sentence() {
@@ -1109,10 +1119,10 @@ case "${1:-all}" in
   scope) step_scope "${2:-}"; exit $? ;;
   docker) if step_docker; then gate_docker=ran; else rc=1; fi ;;
   full)
-    if step_fmt;  then note_step fmt;  else rc=1; fi
-    if step_modbuild; then note_step modbuild; else rc=1; fi
-    if step_lint; then note_step lint; else rc=1; fi
-    if step_scripts; then note_step scripts; else rc=1; fi
+    if timed step_fmt;  then note_step fmt;  else rc=1; fi
+    if timed step_modbuild; then note_step modbuild; else rc=1; fi
+    if timed step_lint; then note_step lint; else rc=1; fi
+    if timed step_scripts; then note_step scripts; else rc=1; fi
     # Scope is decided BEFORE the tests here, because it decides what the tests
     # have to cover: when the docker step runs it already runs every untagged
     # test in the modules that carry docker tests, so only the modules it does
@@ -1126,8 +1136,8 @@ case "${1:-all}" in
     # reason -race does: it is the slow, thorough half. It is NOT scoped away
     # with the docker suites — a sim-tagged file is invisible to every other
     # step, so skipping it is how the hole reopens.
-    if step_scope "${2:-}"; then
-      if step_test "$(untagged_only_modules)"; then note_step unit; else rc=1; fi
+    if timed step_scope "${2:-}"; then
+      if timed step_test "$(untagged_only_modules)"; then note_step unit; else rc=1; fi
       # RACE AND SIM RUN BESIDE THE DOCKER STEP, NOT AFTER IT. Neither touches
       # Postgres (race is untagged, sim is -tags sim, the edge is SQLite), and
       # the docker step's longest stretch is integration/scenarios, one package
@@ -1137,32 +1147,32 @@ case "${1:-all}" in
       # the order it always had, so the log reads the same as a serial run.
       # A missing rc file reads as a failure, so last gate's must not survive.
       rm -f "$ROOT/.gate/side-race.rc" "$ROOT/.gate/side-sim.rc"
-      ( step_race; echo $? > "$ROOT/.gate/side-race.rc"
-        step_sim;  echo $? > "$ROOT/.gate/side-sim.rc"
+      ( timed step_race; echo $? > "$ROOT/.gate/side-race.rc"
+        timed step_sim;  echo $? > "$ROOT/.gate/side-sim.rc"
       ) > "$ROOT/.gate/side.out" 2>&1 &
       side_pid=$!
-      if step_docker; then gate_docker=ran; else rc=1; fi
+      if timed step_docker; then gate_docker=ran; else rc=1; fi
       wait "$side_pid"
       side_pid=""
       cat "$ROOT/.gate/side.out"
       if [ "$(cat "$ROOT/.gate/side-race.rc" 2>/dev/null)" = 0 ]; then note_step race; else rc=1; fi
       if [ "$(cat "$ROOT/.gate/side-sim.rc" 2>/dev/null)" = 0 ]; then note_step sim; else rc=1; fi
     else
-      if step_test; then note_step unit; else rc=1; fi
+      if timed step_test; then note_step unit; else rc=1; fi
       gate_docker=skipped
       echo "     (docker suites skipped — nothing in this diff can reach one)"
-      if step_race; then note_step race; else rc=1; fi
-      if step_sim; then note_step sim; else rc=1; fi
+      if timed step_race; then note_step race; else rc=1; fi
+      if timed step_sim; then note_step sim; else rc=1; fi
     fi
     ;;
   all)
     # Every step runs even after one fails: a gate that stops at the first
     # problem makes you re-run the slow parts once per problem.
-    if step_fmt;  then note_step fmt;  else rc=1; fi
-    if step_modbuild; then note_step modbuild; else rc=1; fi
-    if step_lint; then note_step lint; else rc=1; fi
-    if step_scripts; then note_step scripts; else rc=1; fi
-    if step_test; then note_step unit; else rc=1; fi
+    if timed step_fmt;  then note_step fmt;  else rc=1; fi
+    if timed step_modbuild; then note_step modbuild; else rc=1; fi
+    if timed step_lint; then note_step lint; else rc=1; fi
+    if timed step_scripts; then note_step scripts; else rc=1; fi
+    if timed step_test; then note_step unit; else rc=1; fi
     ;;
   *) usage ;;
 esac
