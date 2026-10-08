@@ -281,6 +281,7 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	}
 
 	e.clearStrandedPark(node, claim, park)
+	e.rearmKeepStaged(node, claim)
 
 	// The demand episode is opened HERE — after the plan exists and before any
 	// order does. That ordering is the whole reason expected_orders can be the

@@ -106,6 +106,16 @@ func TestSpotPause_FromTheRows(t *testing.T) {
 	if got := spotPause([]domain.Order{refill(5, protocol.StatusCancelled, t0), swap(t0.Add(-time.Hour))}, c, nil); got == "" {
 		t.Error("an order of the line created BEFORE the cancel re-armed it")
 	}
+	// The rows are stamped to the second. An order in the cancel's own second
+	// could have come first, so it does not re-arm; a resume stamp in that
+	// second is a person saying go after it, and does.
+	if got := spotPause([]domain.Order{refill(5, protocol.StatusCancelled, t0), swap(t0)}, c, nil); got == "" {
+		t.Error("an order of the line created in the cancel's own second re-armed it")
+	}
+	sameSecond := t0
+	if got := spotPause([]domain.Order{refill(5, protocol.StatusCancelled, t0)}, c, &sameSecond); got != "" {
+		t.Errorf("a resume in the cancel's own second did not re-arm: %q", got)
+	}
 	saved := *c
 	later := t0.Add(time.Second)
 	saved.UpdatedAt = &later

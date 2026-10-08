@@ -147,11 +147,17 @@ func isSpotReturn(o *domain.Order, c *processes.NodeClaim) bool {
 // ANY CANCEL STOPS IT. Core fails a plain order for a structural reason
 // (congestion waits), so re-creating it each sweep would be a failure on a
 // timer, and a cancel is someone saying stop; the Edge does not record who
-// cancelled, and does not need to. What re-arms it: a REQUEST or a changeover
-// start (each creates an order of the line, read here as newer than the end), a
-// save of the claim, or the board's RESUME (resumed, the line's runtime stamp),
-// which re-arms without a swap. The pause itself is not stored; it survives a
-// restart because the rows do.
+// cancelled, and does not need to. What re-arms it: a changeover start (it
+// creates an order of the line, read here as newer than the end), a save of the
+// claim, or the line's resume stamp (resumed), which the board's RESUME and a
+// REQUEST both write. The pause itself is not stored; it survives a restart
+// because the rows do.
+//
+// A RESUME IN THE CANCEL'S OWN SECOND RE-ARMS; NOTHING ELSE DOES. The Edge
+// stamps its rows to the second, so a stamp written in the second the refill
+// was cancelled reads as neither before nor after it. The resume stamp is only
+// ever a person saying go, so the tie goes to it. An order or a claim save in
+// that second could equally have come first, so it has to be strictly later.
 func spotPause(rows []domain.Order, c *processes.NodeClaim, resumed *time.Time) string {
 	var last *domain.Order
 	var rearmed time.Time
@@ -178,10 +184,7 @@ func spotPause(rows []domain.Order, c *processes.NodeClaim, resumed *time.Time) 
 	if c.UpdatedAt != nil && c.UpdatedAt.After(rearmed) {
 		rearmed = *c.UpdatedAt
 	}
-	if resumed != nil && resumed.After(rearmed) {
-		rearmed = *resumed
-	}
-	if rearmed.After(last.UpdatedAt) {
+	if rearmed.After(last.UpdatedAt) || (resumed != nil && !resumed.Before(last.UpdatedAt)) {
 		return ""
 	}
 	what := "refill to"

@@ -9,9 +9,9 @@ import (
 )
 
 // ResumeKeepStaged stamps a line's keep-staged resume: an operator asked the
-// keeper to start again after a cancel paused it. The keeper reads the stamp as
-// re-arming, like a REQUEST or a claim save, without either: no swap, and no
-// change to the claim's "flow saved" date.
+// keeper to start again after a cancel paused it — the board's RESUME, or a
+// REQUEST on the line. The keeper reads the stamp as re-arming, like a claim
+// save, without changing the claim's "flow saved" date.
 func ResumeKeepStaged(db *sql.DB, processNodeID int64) error {
 	res, err := db.Exec(`UPDATE process_node_runtime_states SET keep_staged_resumed_at = datetime('now')
 		WHERE process_node_id = ?`, processNodeID)

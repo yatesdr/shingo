@@ -325,6 +325,21 @@ func requestClaim(claim, swapClaim *processes.NodeClaim, s spotAtRequest) (*proc
 	return withoutSpot(swapClaim), false
 }
 
+// rearmKeepStaged is a REQUEST re-arming its line's keeper: pressing REQUEST is
+// a person saying go, as the board's RESUME is, so it writes the same resume
+// stamp (spotPause). Written once the request has passed every refusal, so a
+// refused REQUEST re-arms nothing. A failed write is logged and does not fail
+// the request: the swap is what the operator asked for, and the next REQUEST or
+// a RESUME stamps again.
+func (e *Engine) rearmKeepStaged(node *processes.Node, claim *processes.NodeClaim) {
+	if spotNode(claim) == "" {
+		return
+	}
+	if err := processes.ResumeKeepStaged(e.db.DB, node.ID); err != nil {
+		e.logFn("keep-staged: node %s: re-arm the keeper on REQUEST: %v", node.Name, err)
+	}
+}
+
 // withoutSpot is a copy of a claim that keeps no spare: the claim a REQUEST
 // builds from when it does not take one (requestClaim).
 func withoutSpot(c *processes.NodeClaim) *processes.NodeClaim {
