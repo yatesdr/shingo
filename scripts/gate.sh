@@ -876,7 +876,7 @@ docker_p() {
 }
 
 step_docker() {
-  local m failed=0 mods logdir p
+  local m failed=0 mods logdir p pids=""
   mods="$(docker_modules)"
   p="$(docker_p)"
   if [ -z "$mods" ]; then
@@ -920,9 +920,24 @@ step_docker() {
   # Requiring docker there would turn every laptop-unit-run into a wall of
   # failures and teach people to ignore the gate.
   export SHINGO_TEST_REQUIRE_DOCKER=1
+  # THE MODULES RUN AT ONCE, NOT ONE AFTER ANOTHER. integration is one package,
+  # integration/scenarios, that spends most of its minutes waiting on its bus
+  # between ticks rather than computing, so in series the 4-core gate box sat
+  # half idle through it while shingo-core's suite waited its turn. Each module
+  # keeps its own -p, its own log and its own exit code, and the excerpts are
+  # printed afterwards in module order, so a red run reads as it always did.
   for m in $mods; do
     echo "  docker: $m"
-    ( cd "$ROOT/$m" && go test -tags=docker -timeout=20m -count=1 -p "$p" ./... >"$logdir/docker-$m.log" 2>&1 ) \
+    rm -f "$logdir/docker-$m.rc"
+    ( cd "$ROOT/$m" && go test -tags=docker -timeout=20m -count=1 -p "$p" ./... >"$logdir/docker-$m.log" 2>&1
+      echo $? >"$logdir/docker-$m.rc" ) &
+    pids="$pids $!"
+  done
+  # These jobs by pid: a bare wait would also wait for the race-and-sim job
+  # `full` runs beside this step.
+  wait $pids
+  for m in $mods; do
+    [ "$(cat "$logdir/docker-$m.rc" 2>/dev/null)" = 0 ] \
       || { failed=1
            echo "  --- $m ---"
            excerpt_failures "$logdir/docker-$m.log"; }
