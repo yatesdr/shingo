@@ -33,12 +33,9 @@ func TestDecideSpot_TheRule(t *testing.T) {
 	}{
 		{"idle, spare standing: nothing", spotFacts{read: right}, 0, false, ""},
 		{"idle, bare: one", spotFacts{read: bare}, 1, false, ""},
-		{"a leg will lift the spare: one to stand after it", spotFacts{read: right, lifts: 1}, 1, false, ""},
-		{"bare and a leg will lift: one now, never two in flight", spotFacts{read: bare, lifts: 1}, 1, false, ""},
-		{"one coming and a leg will lift a bare spot: nothing more yet", spotFacts{read: bare, lifts: 1, coming: 1}, 0, false, ""},
-		{"wrong spare: it goes back, one comes", spotFacts{read: wrong}, 1, true, ""},
-		{"wrong spare, source occupied: nothing, and the board says why",
-			spotFacts{read: spotRead{known: true, occupied: true, payload: "OTHER", sourceBusy: true}}, 0, false, "cannot go back"},
+		{"bare, one coming: nothing more, never two in flight", spotFacts{read: bare, coming: 1}, 0, false, ""},
+		{"wrong spare: it stays, nothing comes, and the board says to move it", spotFacts{read: wrong}, 0, false, "Move it by hand"},
+		{"an empty on a consume spot is wrong: the same", spotFacts{read: spotRead{known: true, occupied: true}}, 0, false, "Move it by hand"},
 		{"a leg still drops onto the spot: nothing", spotFacts{read: wrong, drops: true}, 0, false, "still bringing a bin"},
 		{"paused: nothing, and the board says so", spotFacts{read: bare, paused: "Keep-staged is paused: x"}, 0, false, "paused"},
 		{"unknown spot: nothing", spotFacts{}, 0, false, ""},
@@ -159,7 +156,9 @@ func TestKeepStagedKeeper_ResumeRefillsWithoutASwap(t *testing.T) {
 }
 
 // End to end: a cancelled refill is not re-created by any sweep and the board
-// says so; REQUEST resumes it.
+// says so; REQUEST re-arms it. The REQUEST orders nothing for the spot itself:
+// its swap, with the spot bare, fetches from the market and stages on the spot,
+// so the keeper's next pass waits for that leg instead of refilling.
 func TestKeepStagedKeeper_CancelPausesAndRequestResumes(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID := keeperCell(t)
@@ -173,13 +172,61 @@ func TestKeepStagedKeeper_CancelPausesAndRequestResumes(t *testing.T) {
 	if note := eng.KeepStagedNote(ksLine); !strings.Contains(note, "paused") {
 		t.Fatalf("board note = %q, want it to say the keeper is paused", note)
 	}
-	_, err := eng.RequestNodeMaterial(nodeID, 1)
+	// SQLite stamps at one-second resolution, and a REQUEST in the same second
+	// as the cancel is not after it.
+	_, err := db.DB.Exec(`UPDATE orders SET updated_at = datetime('now', '-5 seconds'), created_at = datetime('now', '-6 seconds') WHERE delivery_node = ?`, ksSpot)
+	testutil.MustNoErr(t, err, "backdate the cancel")
+	_, err = eng.RequestNodeMaterial(nodeID, 1)
 	testutil.MustNoErr(t, err, "REQUEST")
-	if got := readSpotOrders(t, db, nodeID); got.refills != 1 {
-		t.Fatalf("refills = %d after REQUEST, want the one the request re-armed", got.refills)
+	if got := readSpotOrders(t, db, nodeID); got.refills != 0 {
+		t.Fatalf("refills = %d after REQUEST, want none: a request asks only for the line", got.refills)
 	}
-	if note := eng.KeepStagedNote(ksLine); note != "" {
-		t.Errorf("board note = %q after REQUEST, want it cleared", note)
+	eng.sweepCellLevels()
+	if note := eng.KeepStagedNote(ksLine); strings.Contains(note, "paused") || !strings.Contains(note, "still bringing a bin") {
+		t.Errorf("board note = %q after REQUEST, want the pause gone and the keeper waiting for the swap's staging", note)
+	}
+}
+
+// NOTHING IS ORDERED AHEAD OF A LIFT. A swap waiting at Core to take the
+// standing spare leaves the spot as it is; the refill comes at the lift
+// (TestKeepStagedKeeper_ALiftAtTheSpotOrdersTheRefill). So a swap cancelled
+// before its lift leaves no refill queued behind a spare that never moved.
+func TestKeepStagedKeeper_NothingAheadOfALift(t *testing.T) {
+	t.Parallel()
+	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
+		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: {Occupied: true, PayloadCode: ksPart}})
+	holdingSwap(t, db, nodeID) // built from the keep-staged claim: it lifts the spare
+	for i := 0; i < 3; i++ {
+		eng.sweepCellLevels()
+	}
+	if got := readSpotOrders(t, db, nodeID); got.refills != 0 || got.returns != 0 {
+		t.Fatalf("refills=%d returns=%d with the spare still standing, want none", got.refills, got.returns)
+	}
+}
+
+// A WRONG BIN IS LEFT WHERE IT STANDS, on every pass: the keeper neither sends
+// it anywhere nor orders a refill that could not be set down, and the board
+// names it for a person to move.
+func TestKeepStagedKeeper_AWrongBinIsLeftStanding(t *testing.T) {
+	t.Parallel()
+	for name, wrong := range map[string]NodeBinInfo{
+		"another part": {Occupied: true, PayloadCode: "PART-OTHER"},
+		"an empty":     {Occupied: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
+				map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: wrong})
+			for i := 0; i < 3; i++ {
+				eng.sweepCellLevels()
+			}
+			if got := readSpotOrders(t, db, nodeID); got.refills != 0 || got.returns != 0 {
+				t.Fatalf("refills=%d returns=%d with a wrong bin on the spot, want none", got.refills, got.returns)
+			}
+			if note := eng.KeepStagedNote(ksLine); !strings.Contains(note, ksSpot) || !strings.Contains(note, "Move it by hand") {
+				t.Errorf("board note = %q, want it to name %s for a person to move", note, ksSpot)
+			}
+		})
 	}
 }
 

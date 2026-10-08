@@ -131,7 +131,7 @@ func TestKeepStagedLanding_FlownIncomingRefillAfterCancelGoesBack(t *testing.T) 
 	}
 }
 
-// One return per bin: the landing sends it back, and a REQUEST in the next
+// One return per bin: the landing sends it back, and a keeper pass in the next
 // moment, which Core answers with the same wrong bin still on the spot, counts
 // that return as the spare leaving instead of sending it back again. And the
 // return's own completion, which is a decision point like any order's end, finds
@@ -152,11 +152,10 @@ func TestKeepStagedLanding_OneReturnPerBin_AndAReturnOrdersNothing(t *testing.T)
 	rows["SPOT"] = NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW"}
 	fx.eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
 
-	_, err := fx.eng.RequestNodeMaterial(fx.nodeIDs["L1"], 1)
-	testutil.MustNoErr(t, err, "REQUEST")
+	fx.eng.sweepCellLevels()
 	_, returns := liveSpot(t, fx, "SPOT")
 	if len(returns) != 1 {
-		t.Fatalf("returns = %d after the landing and a REQUEST, want 1", len(returns))
+		t.Fatalf("returns = %d after the landing and the keeper's pass, want 1", len(returns))
 	}
 
 	before, err := fx.db.ListActiveOrdersByProcessNode(fx.nodeIDs["L1"])

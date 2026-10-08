@@ -21,10 +21,8 @@ import (
 // which of the two the bin is comes from the claim, not from this decision. The
 // planners read it and their applies create the orders their role carries.
 //
-// The keep-staged spot is not decided here. When the right spare stands on it,
-// planSpotForConsume and planSpotForProduce move the line's delivery onto the
-// spot, because what stands there and what is leaving it are read after the
-// plan, under the cell's lock.
+// The keep-staged spot is not decided here. When a right spare stands on it
+// (requestClaim), the request moves the line's delivery onto the spot.
 type bareLine struct {
 	source string
 	// dest is the line's own position, or "" when the line holds a bin and only

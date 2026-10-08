@@ -13,12 +13,15 @@ import (
 
 // keep_staged_keeper.go — the keeper of a keep-staged spot.
 //
-// ONE DECISION, THREE CALLERS. What a spot needs is decided by decideSpot
-// (keep_staged_spot.go) and nothing else: a REQUEST asks it as it creates the
-// swap, so the refill travels alongside the swap; the level sweep asks it for
-// every keep-staged line, idle ones included, so a spot is topped up without
-// anyone pressing anything; and the end of any order of the line, or a pickup
-// at the spot, asks it at once instead of at the next sweep.
+// ONE DECISION, ONE OWNER. What a spot needs is decided by decideSpot
+// (keep_staged_spot.go), and only the keeper asks it: the level sweep, for every
+// keep-staged line, idle ones included, so a spot is topped up without anyone
+// pressing anything; and the end of any order of the line, or a pickup at the
+// spot, at once instead of at the next sweep. A REQUEST does not: it asks only
+// for the line, taking the spare when one stands and the market's carrier when
+// none does (requestClaim), so cancelling what a REQUEST made leaves nothing of
+// the spot's behind (SPR ALN_011, 2026-10-08: a refill created with each request
+// outlived the request's cancel and took the carrier it freed).
 //
 // It replaced a floor that ran only while a swap waited at Core and assumed that
 // swap would lift a spare. A swap planned before the spot was kept never does:
@@ -30,7 +33,7 @@ import (
 //
 // COST. One indexed read of the line's orders (ListKeptSpotRows) and, unless the
 // rows alone settle it (paused, or a leg dropping onto the spot), one node-bins
-// read for the spot and the inbound source, per keep-staged line per sweep.
+// read for the spot, per keep-staged line per sweep.
 
 // keepSpot runs the keeper for one keep-staged line.
 //
@@ -69,11 +72,7 @@ func (e *Engine) keepSpot(node *processes.Node, claim *processes.NodeClaim) {
 	if e.coreClient == nil || !e.coreClient.Available() {
 		return
 	}
-	names := []string{spot}
-	if claim.InboundSource != "" && claim.InboundSource != spot {
-		names = append(names, claim.InboundSource)
-	}
-	bins, _, ferr := e.coreClient.FetchNodeBins(names)
+	bins, _, ferr := e.coreClient.FetchNodeBins([]string{spot})
 	if ferr != nil {
 		e.logFn("keep-staged: node %s: read the spot %s: %v — the next pass re-asks", node.Name, spot, ferr)
 		return
@@ -85,12 +84,12 @@ func (e *Engine) keepSpot(node *processes.Node, claim *processes.NodeClaim) {
 	f = e.spotFactsOf(claim, read, rows, resumed)
 	plan, note := decideSpot(claim, f)
 	e.setKeepStagedNote(claim.CoreNodeName, note)
-	e.applySpotPlan(node, claim, plan, f.read, liftingOrigin(rows, claim))
+	e.applySpotPlan(node, claim, plan, liftingOrigin(rows, claim))
 }
 
 // spotFactsOf reads the facts decideSpot decides from: the spot read with a
 // spare already going taken off it, and from the line's rows what is coming,
-// what its legs still lift from the spot or drop onto it, and the pause.
+// whether a leg still drops onto it, and the pause.
 // resumed is the line's board RESUME stamp (nil when never), one of the things
 // that re-arms the pause.
 func (e *Engine) spotFactsOf(claim *processes.NodeClaim, read spotRead, rows []domain.Order, resumed *time.Time) spotFacts {
@@ -100,41 +99,37 @@ func (e *Engine) spotFactsOf(claim *processes.NodeClaim, read spotRead, rows []d
 		coming: spotComing(rows, claim),
 		paused: spotPause(rows, claim, resumed),
 	}
-	f.drops, f.lifts = e.liveSpotLegs(rows, claim)
+	f.drops = e.legDropsOnSpot(rows, claim)
 	return f
 }
 
-// liveSpotLegs reads the line's live legs, keep-staged refills and returns
-// excepted: drops is true when one will still drop onto the spot, and lifts
-// counts those still acquiring at Core that pick up from it (spotFacts.lifts).
-// A plain move off the spot to the line is a lift. An order whose steps cannot
-// be read is judged by its delivery node alone.
-func (e *Engine) liveSpotLegs(rows []domain.Order, claim *processes.NodeClaim) (drops bool, lifts int) {
+// legDropsOnSpot reports whether a live leg of the line, keep-staged refills and
+// returns excepted, will still set a carrier down on the spot: a swap built
+// without the spare stages there when the spot is its inbound staging. A plain
+// move off the spot is a lift, not a drop. An order whose steps cannot be read
+// is judged by its delivery node alone.
+func (e *Engine) legDropsOnSpot(rows []domain.Order, claim *processes.NodeClaim) bool {
 	spot := spotNode(claim)
 	for i := range rows {
 		o := &rows[i]
 		if ordermgr.IsTerminal(o.Status) || isSpotRefill(o, claim) || isSpotReturn(o, claim) {
 			continue
 		}
-		acquiring := protocol.IsAcquiring(o.Status)
 		if o.OrderType == protocol.OrderTypeMove && o.SourceNode == spot {
-			if acquiring {
-				lifts++
-			}
 			continue
 		}
 		steps, err := e.storedStepsOf(o.ID)
 		if err != nil || len(steps) == 0 {
-			drops = drops || o.DeliveryNode == spot
+			if o.DeliveryNode == spot {
+				return true
+			}
 			continue
 		}
-		d, l := spotSteps(steps, spot)
-		drops = drops || d
-		if l && acquiring {
-			lifts++
+		if drops, _ := spotSteps(steps, spot); drops {
+			return true
 		}
 	}
-	return drops, lifts
+	return false
 }
 
 // isSpotReturn reports whether a line's order is a keep-staged return: a plain
@@ -249,8 +244,9 @@ func (e *Engine) KeepStagedNote(line string) string {
 }
 
 // kickKeepSpot runs the keeper at once when an order of a keep-staged line ends,
-// instead of at the next sweep. A refill that landed on a spot nobody keeps it
-// for goes back first (returnUnwantedLanding).
+// instead of at the next sweep. A refill a changeover cancel left flying, landing
+// on a spot no longer kept for it, goes back first (returnUnwantedLanding): that
+// is the cancel finishing its own work, not the keeper deciding a bin.
 func (e *Engine) kickKeepSpot(ctx *orderCompletionCtx) {
 	o := ctx.order
 	if isRetrieve(o.OrderType) && o.DeliveryNode != "" && o.DeliveryNode != ctx.node.CoreNodeName &&
@@ -291,6 +287,12 @@ func (e *Engine) keepSpotOnPickup(order *domain.Order, location string) {
 
 // returnUnwantedLanding sends a refill's bin straight back when it lands on a
 // spot nobody keeps it for.
+//
+// THE CHANGEOVER'S OWN BIN, NOT A JUDGEMENT ABOUT A STRANGER. It acts only on a
+// refill this line ordered, judged by what the Edge ordered and not by a read;
+// a bin that reached the spot any other way is left where it stands
+// (decideSpot). A running line orders refills only for the part it keeps, so in
+// practice this is a changeover's refill outliving the changeover's cancel.
 //
 // A refill already with the fleet cannot be cancelled, so it lands, possibly
 // after the last decision about its spot: a changeover cancelled while the

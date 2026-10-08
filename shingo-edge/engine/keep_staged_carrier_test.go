@@ -32,10 +32,12 @@ func ksCatalog(rides map[string]string) []protocol.PayloadBinTypeInfo {
 	return out
 }
 
-// At a request, at the level keeper's sweep, at a changeover start and at a
-// cancel, an empty of a carrier the part does not ride goes back, and the spot
-// is refilled.
-func TestKeepStagedCarrier_AWrongCarrierGoesBackAtEveryDecision(t *testing.T) {
+// An empty of a carrier the part does not ride is wrong at every decision point.
+// A changeover's start and cancel, which change what the spot is kept for, send
+// it back and refill the spot. A running line leaves it standing: the keeper
+// orders nothing, and a request builds its market swap, which Core holds while
+// the wrong empty occupies the staging spot.
+func TestKeepStagedCarrier_AWrongCarrierAtEveryDecision(t *testing.T) {
 	t.Parallel()
 	wrong := NodeBinInfo{Occupied: true, BinTypeCode: ksTypeB}
 
@@ -46,8 +48,11 @@ func TestKeepStagedCarrier_AWrongCarrierGoesBackAtEveryDecision(t *testing.T) {
 		eng.SetPayloadBinTypes(ksCatalog(map[string]string{ksPart: ksTypeA}))
 		_, err := eng.RequestProduceSwap(nodeID)
 		testutil.MustNoErr(t, err, "request")
-		if got := readSpotOrders(t, db, nodeID); got.returns != 1 || got.refills != 1 {
-			t.Fatalf("returns=%d refills=%d, want the wrong empty back and 1 refill (one in flight at a time)",
+		if got := swapFetchesFrom(t, eng, db, nodeID); got != "market" {
+			t.Errorf("the swap fetches from %q, want the market: the wrong empty is not a spare", got)
+		}
+		if got := readSpotOrders(t, db, nodeID); got.returns != 0 || got.refills != 0 {
+			t.Fatalf("returns=%d refills=%d from a request, want none: the keeper decides the spot",
 				got.returns, got.refills)
 		}
 	})
@@ -59,8 +64,8 @@ func TestKeepStagedCarrier_AWrongCarrierGoesBackAtEveryDecision(t *testing.T) {
 		eng.SetPayloadBinTypes(ksCatalog(map[string]string{ksPart: ksTypeA}))
 		holdingSwap(t, db, nodeID)
 		eng.sweepCellLevels()
-		if got := readSpotOrders(t, db, nodeID); got.returns != 1 || got.refills != 1 {
-			t.Fatalf("returns=%d refills=%d, want the wrong empty back and 1 refill (one in flight at a time)",
+		if got := readSpotOrders(t, db, nodeID); got.returns != 0 || got.refills != 0 {
+			t.Fatalf("returns=%d refills=%d, want none: a running line leaves the wrong empty standing",
 				got.returns, got.refills)
 		}
 	})

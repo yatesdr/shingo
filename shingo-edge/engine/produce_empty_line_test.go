@@ -50,9 +50,11 @@ func TestProduceEmptyLine_SingleRobotRequestDeliversAnEmpty(t *testing.T) {
 	}{
 		{"no spot, count left over", false, NodeBinInfo{}, 30, ksMarket, orders.TypeRetrieve, 0, 0},
 		{"no spot, count zero", false, NodeBinInfo{}, 0, ksMarket, orders.TypeRetrieve, 0, 0},
-		{"keep-staged, empty spare on the spot", true, NodeBinInfo{Occupied: true}, 0, ksSpot, orders.TypeMove, 1, 0},
-		{"keep-staged, spot bare", true, NodeBinInfo{}, 0, ksMarket, orders.TypeRetrieve, 1, 0},
-		{"keep-staged, a full on the spot", true, NodeBinInfo{Occupied: true, PayloadCode: ksPart}, 0, ksMarket, orders.TypeRetrieve, 1, 1},
+		// The request orders nothing for the spot: the keeper refills it, and
+		// sends a wrong bin back, on its own pass.
+		{"keep-staged, empty spare on the spot", true, NodeBinInfo{Occupied: true}, 0, ksSpot, orders.TypeMove, 0, 0},
+		{"keep-staged, spot bare", true, NodeBinInfo{}, 0, ksMarket, orders.TypeRetrieve, 0, 0},
+		{"keep-staged, a full on the spot", true, NodeBinInfo{Occupied: true, PayloadCode: ksPart}, 0, ksMarket, orders.TypeRetrieve, 0, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

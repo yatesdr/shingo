@@ -11,8 +11,8 @@ import (
 
 // A SPARE'S RETURN NAMES THE BIN IT IS FOR.
 //
-// The read that decided the return saw the bin standing on the spot, and the
-// return is for that bin. It travels on the move as the bin's Core id, so a
+// A changeover's start or cancel decided the return from a read that saw the bin
+// standing on the spot, and the return is for that bin. It travels on the move as the bin's Core id, so a
 // return still waiting when something else lifts the spare lifts nothing,
 // instead of the refill that lands after it. Every other move names no bin.
 
@@ -34,18 +34,6 @@ func sentMoves(t *testing.T, db *store.DB) map[string][]protocol.OrderRequest {
 
 func TestKeepStagedReturn_NamesTheBinItWasFor(t *testing.T) {
 	t.Parallel()
-
-	t.Run("request", func(t *testing.T) {
-		t.Parallel()
-		eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-			map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart},
-				ksSpot: {Occupied: true, PayloadCode: "PART-OTHER", BinID: 77}})
-		_, err := eng.RequestNodeMaterial(nodeID, 1)
-		testutil.MustNoErr(t, err, "request")
-		if got := sentMoves(t, db)[ksSpot]; len(got) != 1 || got[0].BinID != 77 {
-			t.Fatalf("moves off the spot = %+v, want one return naming bin 77", got)
-		}
-	})
 
 	t.Run("changeover start", func(t *testing.T) {
 		t.Parallel()

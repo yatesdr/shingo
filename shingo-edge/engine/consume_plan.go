@@ -52,11 +52,6 @@ type ConsumePlan struct {
 	// Dispatch is the shared swap-mode dispatch for sequential / single_robot
 	// / two_robot / two_robot_press_index. Nil when SimpleMove is true.
 	Dispatch *SwapDispatch
-
-	// Spot is what a keep-staged claim's spot needs from this request
-	// (planSpotForConsume); zero for every other claim. The apply creates it
-	// after the swap legs.
-	Spot spotPlan
 }
 
 // SimplePrime describes one fire-and-forget delivery move emitted as
@@ -91,7 +86,7 @@ func (p *ConsumePlan) OrderCount() int {
 		return len(p.PrimePairedPositions)
 	}
 	if p.SimpleMove {
-		return 1 + len(p.PrimePairedPositions) + p.Spot.orders()
+		return 1 + len(p.PrimePairedPositions)
 	}
 	if p.Dispatch == nil {
 		return 0
@@ -100,7 +95,7 @@ func (p *ConsumePlan) OrderCount() int {
 	if p.Dispatch.StepsB != nil {
 		n++
 	}
-	return n + p.Spot.orders()
+	return n
 }
 
 // BuildConsumePlan validates the (node, runtime, claim) triple and

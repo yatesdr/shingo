@@ -11,7 +11,7 @@ import (
 )
 
 // THE KEEPER: one decision for a keep-staged spot (decideSpot), asked by the
-// sweep, by REQUEST and by an order's end. Most tests seed a keep-staged
+// sweep, by a lift at the spot and by an order's end. Most tests seed a keep-staged
 // consume cell whose swap leg sits in the runtime slot still acquiring
 // (queued), and a bare spot.
 
@@ -123,13 +123,12 @@ func TestKeepStagedKeeper_IdleBareSpotGetsOneRefill(t *testing.T) {
 	}
 }
 
-// A REQUEST and the keeper deciding in the same moment create the spot's orders
-// once. Both hold the cell's prime lock from their read of what is coming to
-// their create. Here the test holds it the way a request's apply does: the
-// keeper, started in that moment with its swap waiting and nothing coming yet,
-// finds the cell being decided and leaves it to the decider; the "request"
-// writes its refills. Without the lock the keeper reads nothing coming and adds
-// its own.
+// Whoever holds the cell's prime lock decides the cell, and the keeper started
+// in that moment leaves it to them: a request, or a changeover start writing the
+// spot's refills. Here the test holds it the way a changeover start does: the
+// keeper, with nothing coming yet, finds the cell being decided and leaves it;
+// the holder writes its refills. Without the lock the keeper reads nothing
+// coming and adds its own.
 func TestKeepStagedKeeper_RequestAndKeeperTogetherCreateOnce(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID := keeperCell(t)

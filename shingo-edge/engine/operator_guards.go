@@ -194,11 +194,9 @@ func (e *Engine) guardSourceKnownDry(node *processes.Node, claim *processes.Node
 	return nil
 }
 
-// gateLineRows is the bare-line gate, the same for both roles, and the
-// keep-staged spot's count, over one read of the line's own rows. Only a plan
-// that brings a bin to a bare line (bare), or a keep-staged claim whose spot
-// Core answered for, pays the read. planSpot is the role's spot planner, given
-// what stands on the spot less what is leaving it and what is coming to it.
+// gateLineRows is the bare-line gate, the same for both roles, over one read of
+// the line's own rows. Only a plan that brings a bin to a bare line (bare) pays
+// the read.
 //
 // THE GATE REFUSES THE BARE-LINE DELIVERY WHILE THIS POSITION IS STILL
 // MID-CYCLE. "Core reports no bin on it" and "this position is bare" are
@@ -258,24 +256,14 @@ func (e *Engine) guardSourceKnownDry(node *processes.Node, claim *processes.Node
 // position a robot is standing at is the failure this exists to stop — but it
 // means the floor's escape from a stuck cell is terminalizing that order
 // (abandon / force-complete / cancel), not re-asking.
-func (e *Engine) gateLineRows(node *processes.Node, claim *processes.NodeClaim, bare bool, spot spotRead, planSpot func(spotRead, []domain.Order)) error {
-	if claim.IsLoaderNode() {
-		bare = false
-	}
-	spotKnown := spotNode(claim) != "" && spot.known && planSpot != nil
-	if !spotKnown && !bare {
+func (e *Engine) gateLineRows(node *processes.Node, claim *processes.NodeClaim, bare bool) error {
+	if !bare || claim.IsLoaderNode() {
 		return nil
 	}
 	rows, err := e.db.ListActiveOrdersByProcessNode(node.ID)
 	if err != nil {
 		log.Printf("[request] node %s: could not read its in-flight orders (%v) — refusing the request", node.Name, err)
 		return fmt.Errorf("node %s: cannot tell what is on its way to it (%w) — the next request will re-ask", node.Name, err)
-	}
-	if spotKnown {
-		planSpot(spot, rows)
-	}
-	if !bare {
-		return nil
 	}
 	return positionWorkedBy(node, claim, rows)
 }

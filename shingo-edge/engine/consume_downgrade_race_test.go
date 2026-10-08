@@ -230,7 +230,7 @@ func bareLineGate(eng *Engine, node *processes.Node, runtime *processes.RuntimeS
 	if _, err := eng.guardLineRequest(node, runtime, claim); err != nil {
 		return err
 	}
-	return eng.gateLineRows(node, claim, true, spotRead{}, nil)
+	return eng.gateLineRows(node, claim, true)
 }
 
 // TestConsumeDowngrade_LoaderWindowIsExempt pins the exemption. A manual_swap

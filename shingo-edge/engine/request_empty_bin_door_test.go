@@ -38,8 +38,9 @@ func TestRequestEmptyBin_PositionStillWorkedRefuses(t *testing.T) {
 	}
 }
 
-// A keep-staged line's swap lifts the spare from the spot; the request orders
-// the spot's refill, as the produce request does.
+// A keep-staged line's swap lifts the spare from the spot, and the request
+// orders nothing for the spot, as the produce request does: the keeper refills
+// it once the spare is lifted.
 func TestRequestEmptyBin_KeepStagedSpotIsRefilled(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID, _ := seedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeSingleRobot, true,
@@ -52,8 +53,8 @@ func TestRequestEmptyBin_KeepStagedSpotIsRefilled(t *testing.T) {
 	if len(legs) != 1 {
 		t.Fatalf("swap legs = %d, want the one single-robot leg", len(legs))
 	}
-	if got := readSpotOrders(t, db, nodeID); got.refills != 1 || got.returns != 0 {
-		t.Errorf("spot refills=%d returns=%d, want 1 and 0", got.refills, got.returns)
+	if got := readSpotOrders(t, db, nodeID); got.refills != 0 || got.returns != 0 {
+		t.Errorf("spot refills=%d returns=%d, want none from the request", got.refills, got.returns)
 	}
 }
 

@@ -41,10 +41,6 @@ type ProducePlan struct {
 	SimpleMove   bool
 	SimpleSource string
 	FromSpot     bool
-
-	// Spot is what a keep-staged claim's spot needs from this request
-	// (planSpotForProduce); zero for every other claim.
-	Spot spotPlan
 }
 
 // OrderCount is how many ORDER ROWS applying this plan will create — the
@@ -60,7 +56,7 @@ func (p *ProducePlan) OrderCount() int {
 		return len(p.PrimePairedPositions)
 	}
 	if p.SimpleMove {
-		return 1 + len(p.PrimePairedPositions) + p.Spot.orders()
+		return 1 + len(p.PrimePairedPositions)
 	}
 	if p.Dispatch == nil {
 		return 0
@@ -69,7 +65,7 @@ func (p *ProducePlan) OrderCount() int {
 	if p.Dispatch.StepsB != nil {
 		n++
 	}
-	return n + p.Spot.orders()
+	return n
 }
 
 // BuildProducePlan validates the (node, runtime, claim) triple and composes

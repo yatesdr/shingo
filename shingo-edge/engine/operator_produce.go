@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"shingo/protocol"
-	"shingoedge/domain"
 	ordermgr "shingoedge/orders"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -104,10 +103,17 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	// See swap_evac_dest.go: the outgoing carrier goes to ITS home, not the
 	// requested style's. Blank override = today's behaviour.
 	swapClaim := withResidentEvacDest(claim, e.residentEvacDest(runtime, claim))
-
-	plan, err := BuildProducePlan(node, runtime, swapClaim, occupancy, inbound)
+	planClaim, takeSpare, err := e.requestClaim(node, claim, swapClaim, spot)
 	if err != nil {
 		return nil, err
+	}
+
+	plan, err := BuildProducePlan(node, runtime, planClaim, occupancy, inbound)
+	if err != nil {
+		return nil, err
+	}
+	if takeSpare && plan.SimpleMove {
+		plan.SimpleSource, plan.FromSpot = spotNode(claim), true
 	}
 	// THE COUNT IS THE FINALIZING REQUEST'S QUESTION. It finalizes the filled bin
 	// a swap takes away, so a swap with no parts counted is refused. Only a swap:
@@ -128,9 +134,7 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	if ask.finalizes && plan.Dispatch != nil && runtime.RemainingUOPCached <= 0 {
 		return nil, fmt.Errorf("node %s has no parts to finalize", node.Name)
 	}
-	if err := e.gateLineRows(node, claim, plan.SimpleMove, spot, func(read spotRead, rows []domain.Order) {
-		e.setKeepStagedNote(claim.CoreNodeName, planSpotForProduce(plan, claim, e.spotFactsOf(claim, read, rows, nil)))
-	}); err != nil {
+	if err := e.gateLineRows(node, claim, plan.SimpleMove); err != nil {
 		return nil, err
 	}
 	if plan.SimpleMove {
@@ -169,12 +173,7 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 		origin = e.requestEmptyOrigin(node, claim, runtime.RemainingUOPCached, plan.OrderCount())
 	}
 
-	result, err := e.applyProducePlan(node, runtime, claim, plan, origin)
-	if err != nil {
-		return nil, err
-	}
-	e.applySpotPlan(node, claim, plan.Spot, spot, origin)
-	return result, nil
+	return e.applyProducePlan(node, runtime, claim, plan, origin)
 }
 
 // applyProduceEmptyLine creates the empty-line plan's one order: the spare on the

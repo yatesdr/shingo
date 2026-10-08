@@ -11,15 +11,24 @@ import (
 
 // keep_staged_spot.go — what a keep-staged spot needs, decided in one place.
 //
-// A keep-staged claim keeps one spare on its spot, and its swap fetches its
-// carrier from there instead of from the inbound source (refillPickup), in
-// every swap mode. Nothing about the spot is stored on Edge: what
-// stands there is Core's answer, read in the occupancy call the request already
-// makes, and what is coming is Edge's own order rows. Every arrival at the spot
-// is a plain order — a retrieve from the inbound source, or nothing — and a
-// wrong spare leaves by a plain move back to that source. Those are the only
-// orders this file makes, and decideSpot is the only thing that decides them for
-// a running line (a changeover's start and cancel ask reconcileSpot directly).
+// A keep-staged claim keeps one spare on its spot. A REQUEST's swap fetches its
+// carrier from there when a right spare stands on it (refillPickup), and from
+// the inbound source otherwise, exactly as a line without a spot does
+// (spareToTake). Nothing about the spot is stored on Edge: what stands there is
+// Core's answer, read in the occupancy call the request already makes, and what
+// is coming is Edge's own order rows. Every arrival at the spot is a plain order
+// — a retrieve from the inbound source, or nothing — and decideSpot, the
+// keeper's, is the only thing that decides them for a running line. A REQUEST
+// makes none: it asks only for the line.
+//
+// A RUNNING LINE NEVER MOVES A BIN OFF ITS SPOT. A bin standing there that is
+// not a spare is left where it is, and the board says so; a swap that stages
+// its carrier on the spot is held by Core's staging check (waiting for slot,
+// dropoff occupied) until a person moves it, as on any line whose staging node
+// is occupied. Only a changeover's start and cancel, and the save that clears
+// the flag, send a spare back (reconcileSpot): those change what the spot is
+// kept for. So does a refill a cancel left flying, when it lands
+// (returnUnwantedLanding): that is the cancel's own bin.
 
 // spotNode is the claim's keep-staged node (its spot), blank when it keeps no
 // spare. Nil-safe, for the callers that hold an optional claim.
@@ -66,11 +75,6 @@ type spotRead struct {
 	// force when the spot was read; nil before the first one arrives. An empty
 	// is judged against it (spareIsRight).
 	catalog []protocol.PayloadBinTypeInfo
-	// sourceBusy is true when Core answered for the claim's inbound source, the
-	// node a wrong spare is returned to, and a bin stands there. A return into
-	// it queues behind that bin; when that bin is what the line's own swap is
-	// waiting to fetch, the two wait on each other (SPR ALN_011 2026-10-08).
-	sourceBusy bool
 }
 
 // readOfRow is a spot's read from its row in a node-bins answer, with the
@@ -89,13 +93,6 @@ type spotFacts struct {
 	read spotRead
 	// coming is the line's live refills to the spot (spotComing).
 	coming int
-	// lifts is the spares still owed to the line's own legs: live legs, still
-	// acquiring at Core, whose steps pick up at the spot. Read from the legs'
-	// steps, never assumed from a swap being in flight. A leg already with the
-	// fleet is not counted: Core moves a lifted bin off the spot before it
-	// reports the pickup, so after the lift the spot reads bare and the refill
-	// follows; before it, the spare still stands and is counted as standing.
-	lifts int
 	// drops is true when a live leg of the line will still drop onto the spot:
 	// a swap planned before the spot was kept, staging its own carrier there.
 	drops bool
@@ -105,13 +102,22 @@ type spotFacts struct {
 	paused string
 }
 
-// decideSpot is THE decision for a keep-staged spot, and every decision point
-// asks it: a REQUEST as it creates the swap, the level sweep (idle lines
-// included), and the end of any order to or from the spot. The rule is one
-// right spare standing, or on its way, for each spare the line's legs still owe
-// plus the one that stands after them, with at most one refill in flight. It
-// returns the orders to make and the sentence the board shows for the spot,
-// blank when there is nothing to say.
+// decideSpot is THE decision for a keep-staged spot, and the keeper is its only
+// caller: the level sweep (idle lines included), a lift at the spot, and the end
+// of any order of the line. The rule is one right spare standing or on its way,
+// with at most one refill in flight, and only onto a spot that is bare.
+//
+// A WRONG BIN IS LEFT WHERE IT STANDS. A refill cannot be set down on it, and
+// sending it somewhere is a decision about a bin the Edge did not put there; the
+// board names it for a person to move, and the next pass after it has gone
+// refills the spot.
+//
+// NOTHING IS ORDERED AHEAD OF A LIFT. A spare a swap is about to take still
+// stands, and counts as standing; the refill behind it is ordered when it is
+// lifted (keepSpotOnPickup), so a swap cancelled before its lift leaves no
+// refill queued behind a spare that never moved. It returns the orders to make
+// and the sentence the board shows for the spot, blank when there is nothing to
+// say.
 func decideSpot(c *processes.NodeClaim, f spotFacts) (spotPlan, string) {
 	spot := spotNode(c)
 	if spot == "" || !f.read.known {
@@ -124,13 +130,13 @@ func decideSpot(c *processes.NodeClaim, f spotFacts) (spotPlan, string) {
 		return spotPlan{}, "Keep-staged waits: an order of this line is still bringing a bin to " + spot + "."
 	}
 	right := spareIsRight(c, f.read)
-	plan := reconcileSpot(c, f.read.occupied, right, f.coming, f.lifts, 1)
+	if f.read.occupied && !right {
+		return spotPlan{}, fmt.Sprintf("Keep-staged waits: the bin on %s is not a spare for %s. Move it by hand.",
+			spot, c.PayloadCode)
+	}
+	plan := reconcileSpot(c, f.read.occupied, right, f.coming, 0, 1)
 	if room := 1 - f.coming; plan.refills > room {
 		plan.refills = max(room, 0)
-	}
-	if plan.returnSpare && f.read.sourceBusy {
-		return spotPlan{}, fmt.Sprintf("Keep-staged is stuck: the bin on %s is not a spare for %s, and %s is "+
-			"occupied, so it cannot go back. Move it by hand.", spot, c.PayloadCode, c.InboundSource)
 	}
 	return plan, ""
 }
@@ -265,30 +271,45 @@ func (r spotRead) lessLeaving(leaving int) spotRead {
 	return r
 }
 
-// planRequestSpot is what a request decides for the spot, for both roles: the
-// keeper's decision (decideSpot) over the line as it stands, plus the legs this
-// request is about to create. dispatch is the swap's two step lists, read for a
-// pickup at the spot like any live leg's; bareLine is a plan that brings one bin
-// to a bare line, which takes the spare instead of a market bin when it stands
-// there right. fromSpot says the bare-line delivery is sourced from the spot. A
-// request is not subject to the keeper's pause: pressing REQUEST is what
-// re-arms it. Pure: the facts come from the caller.
-func planRequestSpot(c *processes.NodeClaim, f spotFacts, dispatch [][]protocol.ComplexOrderStep, bareLine bool) (plan spotPlan, fromSpot bool, note string) {
-	if spotNode(c) == "" || !f.read.known {
-		return spotPlan{}, false, ""
+// requestClaim is the claim a REQUEST builds its plan from, for both roles, and
+// whether that plan takes the spare. claim is the line's claim and swapClaim the
+// one the request would build from (its evac destination already adjusted).
+//
+// THE SPARE WHEN IT STANDS, THE MARKET WHEN IT DOES NOT. When Core says a right
+// spare stands on the spot (spareIsRight) and no return of the line is taking it
+// away, the swap is built from swapClaim, so every leg that fetches a carrier
+// fetches it from the spot (refillPickup). Otherwise it is built from swapClaim
+// without its spot, which is the swap a line with no spot runs: its carrier
+// comes from the inbound source, and nothing waits for a spare to arrive. A
+// REQUEST orders nothing for the spot either way; the keeper refills it when it
+// reads it bare (decideSpot). A spot Core did not answer for is not a spare.
+//
+// One read of the line's rows, only when a right spare stands. It fails closed:
+// a request that cannot tell whether the spare is leaving takes neither it nor
+// a market carrier, and the next request re-asks.
+func (e *Engine) requestClaim(node *processes.Node, claim, swapClaim *processes.NodeClaim, spot spotRead) (*processes.NodeClaim, bool, error) {
+	if spotNode(claim) == "" {
+		return swapClaim, false, nil
 	}
-	f.paused = ""
-	for _, steps := range dispatch {
-		if _, lifts := spotSteps(steps, spotNode(c)); lifts {
-			f.lifts++
+	if spot.known && spareIsRight(claim, spot) {
+		rows, err := e.db.ListActiveOrdersByProcessNode(node.ID)
+		if err != nil {
+			return nil, false, fmt.Errorf("node %s: cannot tell whether the spare on %s is leaving (%w) — the next request will re-ask",
+				node.Name, spotNode(claim), err)
+		}
+		if spotLeaving(rows, spotNode(claim), claim.CoreNodeName) == 0 {
+			return swapClaim, true, nil
 		}
 	}
-	if bareLine && spareIsRight(c, f.read) {
-		fromSpot = true
-		f.lifts++
-	}
-	plan, note = decideSpot(c, f)
-	return plan, fromSpot, note
+	return withoutSpot(swapClaim), false, nil
+}
+
+// withoutSpot is a copy of a claim that keeps no spare: the claim a REQUEST
+// builds from when it does not take one (requestClaim).
+func withoutSpot(c *processes.NodeClaim) *processes.NodeClaim {
+	cp := *c
+	cp.KeepStagedNode = ""
+	return &cp
 }
 
 // spotSteps reports whether a leg's steps drop onto the spot, and whether they
@@ -308,72 +329,18 @@ func spotSteps(steps []protocol.ComplexOrderStep, spot string) (drops, lifts boo
 	return drops, lifts
 }
 
-// swapLegsOf is the step lists of every leg a swap will run: its one or two
-// dispatched legs, and for sequential the backfill the wiring creates once the
-// removal is done (handleSequentialBackfill), which is the leg that lifts the
-// spare. Read so the spare it will take is counted now, at the request.
-func swapLegsOf(d *SwapDispatch, c *processes.NodeClaim) [][]protocol.ComplexOrderStep {
-	legs := [][]protocol.ComplexOrderStep{d.StepsA, d.StepsB}
-	if d.CycleMode == protocol.SwapModeSequential {
-		legs = append(legs, BuildSequentialBackfillSteps(c))
-	}
-	return legs
-}
-
-// planSpotForConsume adds the spot's orders to a consume plan. The node-empty
-// downgrade's delivery is the bare-line one.
-func planSpotForConsume(plan *ConsumePlan, c *processes.NodeClaim, f spotFacts) string {
-	if plan == nil {
-		return ""
-	}
-	var dispatch [][]protocol.ComplexOrderStep
-	if plan.Dispatch != nil {
-		dispatch = swapLegsOf(plan.Dispatch, c)
-	}
-	spot, fromSpot, note := planRequestSpot(c, f, dispatch, plan.SimpleMove && plan.DowngradedFromSwapMode != "")
-	if fromSpot {
-		plan.SimpleSource = spotNode(c)
-	}
-	plan.Spot = spot
-	return note
-}
-
-// planSpotForProduce adds the spot's orders to a produce plan, as on the
-// consume side.
-func planSpotForProduce(plan *ProducePlan, c *processes.NodeClaim, f spotFacts) string {
-	if plan == nil {
-		return ""
-	}
-	var dispatch [][]protocol.ComplexOrderStep
-	if plan.Dispatch != nil {
-		dispatch = swapLegsOf(plan.Dispatch, c)
-	}
-	spot, fromSpot, note := planRequestSpot(c, f, dispatch, plan.SimpleMove)
-	if fromSpot {
-		plan.SimpleSource, plan.FromSpot = spotNode(c), true
-	}
-	plan.Spot = spot
-	return note
-}
-
-// applySpotPlan creates the spot's orders: the return move first, so the spot
-// can clear, then the refills, which Core's gate holds until it has. Each is
-// attributed to the line (process_node_id), never written into a runtime slot
-// and never linked to a changeover task; refills auto-confirm, because nobody
-// receives a carrier onto a staging node.
+// applySpotPlan creates the keeper's refills. Each is attributed to the line
+// (process_node_id), never written into a runtime slot and never linked to a
+// changeover task, and auto-confirms, because nobody receives a carrier onto a
+// staging node. The keeper's plan never returns a bin (decideSpot).
 //
-// A failure here does not fail the request that called it: the swap legs are
-// already on their way. It is logged, and the next decision point — the next
-// request, the sweep's keeper, or the next order of the line to end — re-reads
+// A failure here is logged, and the next decision point — the sweep's keeper,
+// a lift at the spot, or the next order of the line to end — re-reads
 // the spot and asks again.
-func (e *Engine) applySpotPlan(node *processes.Node, c *processes.NodeClaim, plan spotPlan, read spotRead, origin ordermgr.Origin) {
-	if plan.returnSpare {
-		e.returnSpare(node, spotNode(c), c.InboundSource, read.payload, read.binID, origin)
-	}
+func (e *Engine) applySpotPlan(node *processes.Node, c *processes.NodeClaim, plan spotPlan, origin ordermgr.Origin) {
 	e.refillSpot(node, c, plan.refills, origin)
-	if plan.orders() > 0 {
-		e.logFn("keep-staged: node %s spot %s: return=%v refills=%d", node.Name, spotNode(c),
-			plan.returnSpare, plan.refills)
+	if plan.refills > 0 {
+		e.logFn("keep-staged: node %s spot %s: refills=%d", node.Name, spotNode(c), plan.refills)
 	}
 }
 
@@ -410,18 +377,10 @@ func spotOf(c *processes.NodeClaim, rows []NodeBinInfo, nodeKnown func(string) b
 	if spot == "" || !nodeKnown(spot) {
 		return spotRead{}
 	}
-	var read spotRead
-	busy := false
 	for _, b := range rows {
-		switch b.NodeName {
-		case spot:
-			read = readOfRow(b, catalog)
-		case c.InboundSource:
-			busy = b.Occupied && nodeKnown(b.NodeName)
+		if b.NodeName == spot {
+			return readOfRow(b, catalog)
 		}
 	}
-	if read.known {
-		read.sourceBusy = busy
-	}
-	return read
+	return spotRead{}
 }

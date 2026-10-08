@@ -17,11 +17,17 @@ import (
 
 // THE REQUEST PATH, FOR A KEEP-STAGED CELL.
 //
-// One REQUEST sends the short swap and whatever the spot needs, decided by
-// reconcileSpot from what Core says stands on the spot (the occupancy call the
-// request already makes, one more name) and what is already coming (the line's
-// own rows). These drive RequestNodeMaterial / RequestProduceSwap end to end
-// against a Core stub and count what lands in the order table.
+// A REQUEST ASKS ONLY FOR THE LINE. Its swap takes the spare when Core says a
+// right one stands on the spot (the occupancy call the request already makes,
+// one more name) and the market's carrier when none does, exactly as a line
+// without a spot; it orders nothing for the spot (the keeper refills it when it
+// reads it bare). A wrong bin on a spot the swap stages on does not refuse the
+// request: the market swap is built, and Core holds it until the spot clears, as
+// on any line whose staging node is occupied. SPR ALN_011
+// 2026-10-08: the refill each request created outlived the request's cancel and
+// took the carrier the cancel freed. These drive RequestNodeMaterial /
+// RequestProduceSwap end to end against a Core stub and read what lands in the
+// order table.
 
 const (
 	ksLine   = "KS-LINE"
@@ -148,38 +154,35 @@ func readSpotOrders(t *testing.T, db *store.DB, nodeID int64) spotOrders {
 	return got
 }
 
-func TestKeepStagedRequest_TheSpotGetsWhatTheRuleSays(t *testing.T) {
+func TestKeepStagedRequest_AsksOnlyForTheLine(t *testing.T) {
 	t.Parallel()
 	occupiedLine := NodeBinInfo{Occupied: true, PayloadCode: ksPart}
 	cases := []struct {
-		name        string
-		role        protocol.ClaimRole
-		mode        protocol.SwapMode
-		spot        NodeBinInfo
-		wantRefills int
-		wantReturns int
-		returnCarry string
+		name     string
+		role     protocol.ClaimRole
+		mode     protocol.SwapMode
+		spot     NodeBinInfo
+		wantFrom string // "spot" or "market"
 	}{
-		{"consume two_robot, spare right: the swap eats it, one comes", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-			NodeBinInfo{Occupied: true, PayloadCode: ksPart}, 1, 0, ""},
-		{"consume two_robot, spot bare: one now, the second when it lands", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-			NodeBinInfo{}, 1, 0, ""},
-		{"consume single_robot, spare of another part: it goes back, one comes", protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot,
-			NodeBinInfo{Occupied: true, PayloadCode: "PART-OTHER"}, 1, 1, "PART-OTHER"},
-		{"produce two_robot, empty spare: one comes", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot,
-			NodeBinInfo{Occupied: true}, 1, 0, ""},
-		{"produce two_robot, a full on the spot: it goes back carrying its part, one comes", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot,
-			NodeBinInfo{Occupied: true, PayloadCode: ksPart}, 1, 1, ksPart},
-		// The same decisions on the two modes with no staging hop: the
-		// sequential backfill and the press's refill leg lift the spare.
-		{"consume sequential, spare right: the backfill eats it, one comes", protocol.ClaimRoleConsume, protocol.SwapModeSequential,
-			NodeBinInfo{Occupied: true, PayloadCode: ksPart}, 1, 0, ""},
-		{"produce sequential, spot bare: one now, the second when it lands", protocol.ClaimRoleProduce, protocol.SwapModeSequential,
-			NodeBinInfo{}, 1, 0, ""},
-		{"consume press, spare of another part: it goes back, one comes", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobotPressIndex,
-			NodeBinInfo{Occupied: true, PayloadCode: "PART-OTHER"}, 1, 1, "PART-OTHER"},
-		{"produce press, empty spare: the refill leg eats it, one comes", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobotPressIndex,
-			NodeBinInfo{Occupied: true}, 1, 0, ""},
+		{"consume two_robot, spare right: the swap takes it", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
+			NodeBinInfo{Occupied: true, PayloadCode: ksPart}, "spot"},
+		{"consume two_robot, spot bare: the swap fetches from the market", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
+			NodeBinInfo{}, "market"},
+		{"consume two_robot, spare of another part on the staging spot: the market swap, held by Core", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
+			NodeBinInfo{Occupied: true, PayloadCode: "PART-OTHER"}, "market"},
+		{"produce two_robot, empty spare: the swap takes it", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot,
+			NodeBinInfo{Occupied: true}, "spot"},
+		{"produce two_robot, spot bare: the swap fetches an empty from the market", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot,
+			NodeBinInfo{}, "market"},
+		{"produce two_robot, a full on the staging spot: the market swap, held by Core", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot,
+			NodeBinInfo{Occupied: true, PayloadCode: ksPart}, "market"},
+		// A press has no staging hop: a wrong bin on its spot is in nobody's way.
+		{"consume press, spare of another part: the refill leg fetches from the market", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobotPressIndex,
+			NodeBinInfo{Occupied: true, PayloadCode: "PART-OTHER"}, "market"},
+		{"produce press, empty spare: the refill leg takes it", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobotPressIndex,
+			NodeBinInfo{Occupied: true}, "spot"},
+		{"produce press, spot bare: the refill leg fetches from the market", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobotPressIndex,
+			NodeBinInfo{}, "market"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -193,56 +196,63 @@ func TestKeepStagedRequest_TheSpotGetsWhatTheRuleSays(t *testing.T) {
 				_, err = eng.RequestNodeMaterial(nodeID, 1)
 			}
 			testutil.MustNoErr(t, err, "request")
-			got := readSpotOrders(t, db, nodeID)
-			if got.refills != c.wantRefills || got.returns != c.wantReturns {
-				t.Fatalf("refills=%d returns=%d, want %d and %d", got.refills, got.returns, c.wantRefills, c.wantReturns)
+			if got := swapFetchesFrom(t, eng, db, nodeID); got != c.wantFrom {
+				t.Errorf("the swap fetches from %q, want %q", got, c.wantFrom)
 			}
-			if c.wantReturns > 0 && got.returnPayloads[0] != c.returnCarry {
-				t.Errorf("the return carries %q, want the bin's own %q", got.returnPayloads[0], c.returnCarry)
+			if got := readSpotOrders(t, db, nodeID); got.refills != 0 || got.returns != 0 {
+				t.Errorf("the request ordered refills=%d returns=%d for the spot, want none", got.refills, got.returns)
 			}
 		})
 	}
 }
 
-// AN EMPTY GOES BACK UNTAGGED. A move's blank payload is back-filled from the
-// line's claim everywhere else (and mid-changeover from the incoming style's);
-// the carrier is the subject here, and an empty one carries no part. An empty
-// standing on a consume claim's spot is wrong for it, so it goes back blank.
-func TestKeepStagedRequest_AnEmptyReturnsUntagged(t *testing.T) {
-	t.Parallel()
-	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: {Occupied: true}})
-	_, err := eng.RequestNodeMaterial(nodeID, 1)
-	testutil.MustNoErr(t, err, "request")
-	got := readSpotOrders(t, db, nodeID)
-	if got.returns != 1 || got.returnPayloads[0] != "" {
-		t.Fatalf("returns=%d payloads=%q, want one return carrying no part", got.returns, got.returnPayloads)
+// swapFetchesFrom is where the line's swap legs fetch their carrier: "market"
+// when a leg picks up at the inbound source, else "spot" when one picks up at
+// the spot, "" when neither (a refused request creates no legs).
+func swapFetchesFrom(t *testing.T, eng *Engine, db *store.DB, nodeID int64) string {
+	t.Helper()
+	rows, err := db.ListActiveOrdersByProcessNode(nodeID)
+	testutil.MustNoErr(t, err, "rows")
+	from := ""
+	for _, o := range rows {
+		if o.OrderType != orders.TypeComplex {
+			continue
+		}
+		steps, err := eng.storedStepsOf(o.ID)
+		testutil.MustNoErr(t, err, "steps")
+		for _, s := range steps {
+			if s.Action != protocol.ActionPickup {
+				continue
+			}
+			// A market swap that stages on the spot also lifts there (the relay),
+			// so a pickup at the market decides it.
+			switch s.Node {
+			case ksMarket:
+				from = "market"
+			case ksSpot:
+				if from == "" {
+					from = "spot"
+				}
+			}
+		}
 	}
+	return from
 }
 
-// What is already coming is counted, and only for the claim's part and role.
-func TestKeepStagedRequest_CountsWhatIsComing(t *testing.T) {
+// A spare with a live return is leaving: the request does not take it. Its swap
+// fetches from the market, staging on the spot the leaving spare still stands
+// on, and Core holds it until the return has lifted it.
+func TestKeepStagedRequest_ALeavingSpareIsNotTaken(t *testing.T) {
 	t.Parallel()
-	eng, db, nodeID, claim := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: {}})
-	// One refill already on its way for this part, and one for another part.
-	_, err := eng.orderMgr.CreateRetrieveOrder(&nodeID, false, 1, ksSpot, ksMarket, "", "standard", ksPart, true, false,
-		orders.Attached("prior"))
-	testutil.MustNoErr(t, err, "prior refill")
-	_, err = eng.orderMgr.CreateRetrieveOrder(&nodeID, false, 1, ksSpot, ksMarket, "", "standard", "PART-OLD", true, false,
-		orders.Attached("stale"))
-	testutil.MustNoErr(t, err, "stale refill")
-
+	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
+		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: {Occupied: true, PayloadCode: ksPart}})
+	_, err := eng.orderMgr.CreateMoveOrderForBin(&nodeID, ksSpot, ksMarket, ksPart, 0, orders.NoDemand())
+	testutil.MustNoErr(t, err, "the spare's return")
 	_, err = eng.RequestNodeMaterial(nodeID, 1)
 	testutil.MustNoErr(t, err, "request")
-	// Bare spot, swap consumes: 2 needed and 1 of this part coming, but at most
-	// one refill is in flight, so nothing more until it lands. The other part's
-	// refill counts for nothing: had it counted, the cap would read the same,
-	// so the coming count is pinned on its own in TestDecideSpot_CountsOnlyThisPart.
-	if got := readSpotOrders(t, db, nodeID); got.refills != 2 {
-		t.Fatalf("refills to the spot = %d, want 2 (the two prior and nothing more)", got.refills)
+	if got := swapFetchesFrom(t, eng, db, nodeID); got != "market" {
+		t.Errorf("the swap fetches from %q, want the market", got)
 	}
-	_ = claim
 }
 
 // Nothing is decided on a spot Core did not answer for.
@@ -262,7 +272,8 @@ func TestKeepStagedRequest_UnknownSpotOrdersNothing(t *testing.T) {
 }
 
 // S4: the line reads empty and the spare stands there right, so the simple
-// delivery comes from the spot, and one refill replaces it.
+// delivery comes from the spot. The request orders nothing to replace it: the
+// keeper does, once the spare is lifted.
 func TestKeepStagedRequest_EmptyLineIsFedFromTheSpot(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
@@ -272,51 +283,7 @@ func TestKeepStagedRequest_EmptyLineIsFedFromTheSpot(t *testing.T) {
 	if res.Order == nil || res.Order.SourceNode != ksSpot || res.Order.DeliveryNode != ksLine {
 		t.Fatalf("downgrade = %+v, want a move %s -> %s", res.Order, ksSpot, ksLine)
 	}
-	if got := readSpotOrders(t, db, nodeID); got.refills != 1 {
-		t.Errorf("refills = %d, want 1 to replace the spare the downgrade lifts", got.refills)
-	}
-}
-
-func TestSpotPlan_OrderCountCountsTheSpot(t *testing.T) {
-	t.Parallel()
-	p := &ConsumePlan{Dispatch: &SwapDispatch{StepsA: []protocol.ComplexOrderStep{{}}, StepsB: []protocol.ComplexOrderStep{{}}},
-		Spot: spotPlan{returnSpare: true, refills: 2}}
-	if got := p.OrderCount(); got != 5 {
-		t.Errorf("consume OrderCount = %d, want 5 (two legs, a return, two refills)", got)
-	}
-	pp := &ProducePlan{Dispatch: &SwapDispatch{StepsA: []protocol.ComplexOrderStep{{}}}, Spot: spotPlan{refills: 1}}
-	if got := pp.OrderCount(); got != 2 {
-		t.Errorf("produce OrderCount = %d, want 2", got)
-	}
-}
-
-// A wrong spare goes back before anything is sent to replace it: the request
-// writes the return first, then the refills, so Core's dropoff gate sees the
-// spot being cleared before it sees anything bound for it.
-func TestKeepStagedRequest_TheReturnIsWrittenBeforeTheRefills(t *testing.T) {
-	t.Parallel()
-	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: {Occupied: true, PayloadCode: "PART-OTHER"}})
-	_, err := eng.RequestNodeMaterial(nodeID, 1)
-	testutil.MustNoErr(t, err, "request")
-	rows, err := db.ListActiveOrdersByProcessNode(nodeID)
-	testutil.MustNoErr(t, err, "rows")
-	var ret int64
-	var refills []int64
-	for _, o := range rows {
-		switch {
-		case o.SourceNode == ksSpot:
-			ret = o.ID
-		case o.DeliveryNode == ksSpot:
-			refills = append(refills, o.ID)
-		}
-	}
-	if ret == 0 || len(refills) != 1 {
-		t.Fatalf("return=%d refills=%v, want one return and one refill", ret, refills)
-	}
-	for _, r := range refills {
-		if r < ret {
-			t.Fatalf("refill %d written before the return %d", r, ret)
-		}
+	if got := readSpotOrders(t, db, nodeID); got.refills != 0 {
+		t.Errorf("refills = %d, want none from the request", got.refills)
 	}
 }

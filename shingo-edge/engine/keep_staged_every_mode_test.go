@@ -171,7 +171,9 @@ func TestKeepStagedNode_TheSpotCostsNoRoundTrip(t *testing.T) {
 						if kept {
 							_, err := w.db.DB.Exec(`UPDATE style_node_claims SET keep_staged_node=?`, ksSpot)
 							testutil.MustNoErr(t, err, "name the spot")
-							w.occupied(ksSpot)
+							// The spot is read whatever stands there; bare, so every
+							// mode builds its swap rather than refusing one that would
+							// stage on a bin the stub cannot name as a spare.
 						}
 						door := doorMaterial
 						if role == protocol.ClaimRoleProduce {

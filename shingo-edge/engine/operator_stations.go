@@ -3,7 +3,6 @@ package engine
 import (
 	"fmt"
 	"log"
-	"slices"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -103,11 +102,6 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, sp
 	spot := spotNode(claim)
 	if spot != "" {
 		asked = append(append([]string(nil), names...), spot)
-		// And the inbound source, where a wrong spare would be returned to: a
-		// return into an occupied source is not made (decideSpot).
-		if src := claim.InboundSource; src != "" && src != spot && !slices.Contains(names, src) {
-			asked = append(asked, src)
-		}
 	}
 	// A SINGLE-ROBOT CLAIM ASKS ABOUT ITS OUTBOUND STAGING TOO, in the same call,
 	// for a bin a cancelled changeover's leg left parked there (parkAsked). Its
@@ -141,9 +135,6 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, sp
 	for _, b := range bins {
 		if b.NodeName == spot && b.NodeName != claim.CoreNodeName {
 			continue // the spot: read below, not a line position
-		}
-		if spot != "" && b.NodeName == claim.InboundSource && !slices.Contains(names, b.NodeName) {
-			continue // the return destination: read into the spot's read, not a line position
 		}
 		if parkAsked(claim) && b.NodeName == claim.OutboundStaging && b.NodeName != claim.CoreNodeName {
 			park = b
@@ -195,9 +186,8 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	}
 	// ONE CELL, ONE DECISION AT A TIME. The occupancy read, the plan and the
 	// apply run under the cell's prime lock, as the produce request does: a
-	// keep-staged spot's refills are counted from rows this request is about to
-	// write, and a second request or the keep-staged keeper deciding in the
-	// same moment has to see them.
+	// keep-staged spare this request takes must not be taken or sent back by a
+	// second request or the keep-staged keeper deciding in the same moment.
 	mu := e.primeNodeLock(claim)
 	mu.Lock()
 	defer mu.Unlock()
@@ -228,8 +218,12 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	// The evac leg lifts whatever is ON the cell, which is not always the style
 	// being requested — see swap_evac_dest.go. Blank override = today's behaviour.
 	swapClaim := withResidentEvacDest(claim, e.residentEvacDest(runtime, claim))
+	planClaim, takeSpare, err := e.requestClaim(node, claim, swapClaim, spot)
+	if err != nil {
+		return nil, err
+	}
 
-	plan, err := BuildConsumePlan(node, runtime, swapClaim, quantity, occupancy, inbound, autoConfirm)
+	plan, err := BuildConsumePlan(node, runtime, planClaim, quantity, occupancy, inbound, autoConfirm)
 	if err != nil {
 		return nil, err
 	}
@@ -241,9 +235,10 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	// nothing is coming. Here and not in BuildConsumePlan because the planner is
 	// pure and the witness is a DB read.
 	downgraded := plan.DowngradedFromSwapMode != ""
-	if err := e.gateLineRows(node, claim, downgraded, spot, func(read spotRead, rows []domain.Order) {
-		e.setKeepStagedNote(claim.CoreNodeName, planSpotForConsume(plan, claim, e.spotFactsOf(claim, read, rows, nil)))
-	}); err != nil {
+	if takeSpare && plan.SimpleMove && downgraded {
+		plan.SimpleSource = spotNode(claim)
+	}
+	if err := e.gateLineRows(node, claim, downgraded); err != nil {
 		return nil, err
 	}
 	if downgraded {
@@ -289,12 +284,7 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	// both swap legs. Choreography is not demand.
 	origin := e.openEpisodeForConsume(node, runtime, claim, plan, trigger)
 
-	result, err := e.applyConsumePlan(node, claim, plan, origin)
-	if err != nil {
-		return nil, err
-	}
-	e.applySpotPlan(node, claim, plan.Spot, spot, origin)
-	return result, nil
+	return e.applyConsumePlan(node, claim, plan, origin)
 }
 
 // openEpisodeForConsume opens or joins the supply-direction episode for a
