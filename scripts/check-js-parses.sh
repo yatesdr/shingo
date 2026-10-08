@@ -48,33 +48,52 @@ fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-FAIL=0
-CHECKED=0
+# check_one <file> — ESM first, then CommonJS (see the header). Each file gets
+# its own scratch directory, because node picks the grammar from the extension
+# and the copies of parallel checks must not land on one another. A file that
+# parses under neither grammar leaves node's own message, which names the line
+# and the token, under $TMP/fail.
+check_one() {
+  local f="$1" d
+  d="$(mktemp -d "$TMP/c.XXXXXX")"
+  cp "$f" "$d/candidate.mjs"
+  node --check "$d/candidate.mjs" >/dev/null 2>&1 && return 0
+  cp "$f" "$d/candidate.cjs"
+  node --check "$d/candidate.cjs" >/dev/null 2>&1 && return 0
+  { echo "FAIL js-parse — $f does not parse:"
+    node --check "$d/candidate.mjs" 2>&1 | sed 's/^/    /' || true
+    echo
+  } > "$d/fail"
+  return 0
+}
+export -f check_one
+export TMP
 
 # Repo-wide and self-maintaining: a new static directory is covered the day it
 # is added, with nobody having to remember this file. Test bundles are included
 # on purpose — they are JavaScript too, and they cost nothing to parse.
-while IFS= read -r f; do
-  CHECKED=$((CHECKED + 1))
+#
+# IN PARALLEL, ONE NODE PER CORE. A node start is most of each check's cost, and
+# the files are independent, so the checks run side by side; one after another
+# they were 24s of the gate on Windows. Failures are collected afterwards and
+# printed in file order, so the output reads the same however the checks
+# interleaved.
+JOBS="$(nproc 2>/dev/null || echo "${NUMBER_OF_PROCESSORS:-4}")"
+case "$JOBS" in *[!0-9]*|"") JOBS=4 ;; esac
+find . -name '*.js' -not -path './.git/*' -not -path '*/node_modules/*' -print0 | sort -z > "$TMP/files"
+CHECKED="$(grep -zc '' "$TMP/files")"
+xargs -0 -P "$JOBS" -n 1 bash -c 'check_one "$1"' _ < "$TMP/files"
 
-  cp "$f" "$TMP/candidate.mjs"
-  if node --check "$TMP/candidate.mjs" >/dev/null 2>&1; then
-    continue
-  fi
-
-  # Not valid as a module — it may be an honest classic script.
-  cp "$f" "$TMP/candidate.cjs"
-  if node --check "$TMP/candidate.cjs" >/dev/null 2>&1; then
-    continue
-  fi
-
-  # Neither grammar accepts it. Re-run without suppression so the operator
-  # gets node's own message, which names the line and the offending token.
-  echo "FAIL js-parse — $f does not parse:"
-  node --check "$TMP/candidate.mjs" 2>&1 | sed 's/^/    /' || true
-  echo
-  FAIL=1
-done < <(find . -name '*.js' -not -path './.git/*' -not -path '*/node_modules/*' -print)
+FAIL=0
+while IFS= read -r -d '' f; do
+  for d in "$TMP"/c.*; do
+    [ -f "$d/fail" ] || continue
+    if grep -qF -- "FAIL js-parse — $f does not parse:" "$d/fail"; then
+      cat "$d/fail"
+      FAIL=1
+    fi
+  done
+done < "$TMP/files"
 
 if [ "$FAIL" -eq 0 ]; then
   echo "ok   js-parse ($CHECKED files)"
