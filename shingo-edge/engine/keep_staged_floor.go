@@ -31,11 +31,12 @@ import (
 // refill for the claim's part and role is on its way. Status alone: Core pushes
 // a wait's cause once, at intake, so a cause on the row says nothing about now.
 //
-// THE STOP. It does not re-create after a refill to the spot that ended failed
-// or skipped: Core fails a plain order for a structural reason (congestion
-// waits), so re-creating it each period would be a failure on a timer. The
-// operator's REQUEST is not subject to the stop and re-arms it. A cancelled
-// refill is re-created: a cancel is a person's or the fleet's, not the plan's.
+// THE STOP. It does not re-create after a refill to the spot that ended failed,
+// skipped or cancelled: Core fails a plain order for a structural reason
+// (congestion waits), so re-creating it each period would be a failure on a
+// timer, and a cancel is someone saying stop (SPR 2026-10-08: five cancels, five
+// identical re-creations). The operator's REQUEST is not subject to the stop
+// and re-arms it.
 func (e *Engine) keepStagedFloor(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) {
 	spot := spotNode(claim)
 	if node == nil || runtime == nil || spot == "" {
@@ -65,9 +66,22 @@ func (e *Engine) keepStagedFloor(node *processes.Node, runtime *processes.Runtim
 		return
 	}
 	if last := latestRefill(rows, claim); last != nil &&
-		(last.Status == ordermgr.StatusFailed || last.Status == ordermgr.StatusSkipped) {
+		(last.Status == ordermgr.StatusFailed || last.Status == ordermgr.StatusSkipped ||
+			last.Status == ordermgr.StatusCancelled) {
 		e.debugFn("keep-staged floor: node %s: the last refill to %s ended %s; not re-created — REQUEST re-arms it",
 			node.Name, spot, last.Status)
+		return
+	}
+	// READ WHAT THE LINE'S LEGS DO AT THE SPOT, DO NOT GUESS IT. A swap planned
+	// before keep-staged was switched on fetches its own carrier and drops it ON
+	// the spot as its staging stop; it never lifts a spare. Ordering against it
+	// (SPR ALN_011 2026-10-08) sent the bin standing there back to a source the
+	// swap's own carrier occupied, and two refills queued behind both: a circular
+	// wait. While any live leg will still drop onto the spot, order nothing.
+	drops, lifts := e.spotStepsOfLiveLegs(rows, runtime, claim)
+	if drops {
+		e.debugFn("keep-staged floor: node %s: a live order of the line drops onto %s; nothing ordered",
+			node.Name, spot)
 		return
 	}
 	if e.coreClient == nil || !e.coreClient.Available() {
@@ -82,7 +96,7 @@ func (e *Engine) keepStagedFloor(node *processes.Node, runtime *processes.Runtim
 	if !read.known {
 		return
 	}
-	plan := reconcileSpot(claim, read.occupied, spareIsRight(claim, read), 0, 1, 1)
+	plan := reconcileSpot(claim, read.occupied, spareIsRight(claim, read), 0, lifts, 1)
 	origin := ordermgr.NoDemand()
 	if leg.OriginID != "" {
 		origin = ordermgr.Attached(leg.OriginID) // the refill serves the swap's demand
@@ -104,6 +118,50 @@ func waitingSwapLeg(rows []domain.Order, runtime *processes.RuntimeState) *domai
 		}
 	}
 	return nil
+}
+
+// spotStepsOfLiveLegs reads the steps of the line's live orders, keep-staged
+// refills and returns excepted: drops is true when one will still drop onto the
+// spot, and lifts is 1 when a swap leg in the runtime slots that is still
+// acquiring at Core picks up at the spot (it has not been lifted yet, so the
+// spare it takes is still owed). An order whose steps cannot be read is judged
+// by its delivery node alone.
+func (e *Engine) spotStepsOfLiveLegs(rows []domain.Order, runtime *processes.RuntimeState, claim *processes.NodeClaim) (drops bool, lifts int) {
+	spot := spotNode(claim)
+	for i := range rows {
+		o := &rows[i]
+		if ordermgr.IsTerminal(o.Status) || isSpotRefill(o, claim) ||
+			(o.OrderType == protocol.OrderTypeMove && o.SourceNode == spot) {
+			continue
+		}
+		steps, err := e.storedStepsOf(o.ID)
+		if err != nil || len(steps) == 0 {
+			if o.DeliveryNode == spot {
+				drops = true
+			}
+			continue
+		}
+		inSlot := isRuntimeSlot(runtime, o.ID) && protocol.IsAcquiring(o.Status)
+		for _, s := range steps {
+			switch {
+			case s.Action == protocol.ActionDropoff && s.Node == spot:
+				drops = true
+			case s.Action == protocol.ActionPickup && s.Node == spot && inSlot:
+				lifts = 1
+			}
+		}
+	}
+	return drops, lifts
+}
+
+// isRuntimeSlot reports whether id is one of the line's runtime slots.
+func isRuntimeSlot(runtime *processes.RuntimeState, id int64) bool {
+	for _, slot := range []*int64{runtime.ActiveOrderID, runtime.StagedOrderID} {
+		if slot != nil && *slot == id {
+			return true
+		}
+	}
+	return false
 }
 
 // latestRefill is the newest retrieve the line sent to the claim's spot, any

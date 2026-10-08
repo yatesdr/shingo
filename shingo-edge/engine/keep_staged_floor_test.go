@@ -46,9 +46,13 @@ func floorCell(t *testing.T) (*Engine, *store.DB, int64) {
 	return eng, db, nodeID
 }
 
-func TestKeepStagedFloor_FailedRefillIsNotRecreated(t *testing.T) {
+// A refill that ended failed, skipped or cancelled is not re-created: a
+// structural failure would repeat on a timer, and a cancel is someone saying
+// stop (SPR 2026-10-08: five cancels, five identical re-creations). REQUEST
+// re-arms it.
+func TestKeepStagedFloor_EndedRefillIsNotRecreated(t *testing.T) {
 	t.Parallel()
-	for _, ended := range []protocol.Status{protocol.StatusFailed, protocol.StatusSkipped} {
+	for _, ended := range []protocol.Status{protocol.StatusFailed, protocol.StatusSkipped, protocol.StatusCancelled} {
 		t.Run(string(ended), func(t *testing.T) {
 			t.Parallel()
 			eng, db, nodeID := floorCell(t)
@@ -58,24 +62,37 @@ func TestKeepStagedFloor_FailedRefillIsNotRecreated(t *testing.T) {
 				eng.sweepCellLevels()
 			}
 			if got := readSpotOrders(t, db, nodeID); got.refills != 0 {
-				t.Fatalf("the floor re-created %d refill(s) after one ended %s: a structural failure on a timer",
-					got.refills, ended)
+				t.Fatalf("the floor re-created %d refill(s) after one ended %s", got.refills, ended)
 			}
 		})
 	}
 }
 
-func TestKeepStagedFloor_CancelledRefillIsRecreatedOnce(t *testing.T) {
+// SPR ALN_011 2026-10-08. The swap was planned before keep-staged was switched
+// on: it fetches its own carrier and drops it ON the spot as its staging stop,
+// and a wrong bin stands there. The floor used to read the waiting swap as
+// lifting a spare, and ordered a return of the standing bin plus two refills:
+// the return queued behind the swap's own carrier, the swap behind the bin. It
+// must order nothing while a live leg still drops onto the spot.
+func TestKeepStagedFloor_SwapThatDropsOnTheSpotOrdersNothing(t *testing.T) {
 	t.Parallel()
-	eng, db, nodeID := floorCell(t)
-	holdingSwap(t, db, nodeID)
-	endedRefill(t, eng, db, nodeID, protocol.StatusCancelled)
-	for i := 0; i < 5; i++ {
+	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
+		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart},
+			ksSpot: {Occupied: true, PayloadCode: "SOMETHING-ELSE", BinID: 150}})
+	claim := keeperClaimByID(t, db, nodeID)
+	planned := *claim
+	planned.KeepStagedNode = "" // planned before the flag
+	a, _ := BuildTwoRobotSwapSteps(&planned)
+	leg := mkSwapLeg(t, db, nodeID, "pre-flag-swap", a, "")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(leg.ID, string(protocol.StatusQueued)), "queued")
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &leg.ID, nil), "slot")
+
+	for i := 0; i < 3; i++ {
 		eng.sweepCellLevels()
 	}
-	// Bare spot, the waiting swap will lift what lands: one for it, one to stand.
-	if got := readSpotOrders(t, db, nodeID); got.refills != 2 {
-		t.Fatalf("refills after five sweeps = %d, want the reconcile's 2 once and no more", got.refills)
+	got := readSpotOrders(t, db, nodeID)
+	if got.refills != 0 || got.returns != 0 {
+		t.Fatalf("refills=%d returns=%d, want 0 and 0: the swap drops onto the spot itself", got.refills, got.returns)
 	}
 }
 
