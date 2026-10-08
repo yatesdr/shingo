@@ -248,7 +248,9 @@ func (r *DefaultResolver) resolveStore(children []*nodes.Node, payloadCode strin
 			r.dbg("resolveStore: CountBinsByNode node=%s: %v", child.Name, err)
 			continue
 		}
-		inflight, _ := r.DB.CountActiveOrdersByDeliveryNode(child.Name)
+		// The asker's own delivery is not a competitor for the slot it names:
+		// a re-choice (asIntent) asks with it already written.
+		inflight, _ := r.DB.CountActiveOrdersByDeliveryNodeExcluding(child.Name, owner)
 		if count+inflight >= 1 {
 			continue
 		}

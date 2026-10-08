@@ -126,6 +126,7 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 	d.planner = newPlanningService(db, resolver, d.finder, d.laneLock, d.dbg, d.createDigCompound, d.NotifyWaitChanged)
 	d.planner.pure = d.pure
 	d.allocator = newAllocator(db, binManifest, d.finder, d.dbg)
+	d.allocator.slotReleased = d.wakeLanesOfSlots
 	return d
 }
 

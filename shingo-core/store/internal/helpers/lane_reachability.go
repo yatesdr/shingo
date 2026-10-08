@@ -247,6 +247,11 @@ func BuriedSQL(target string) string {
 // for the reason the burial exclusion states about itself: "not even your own"
 // is the load-bearing half, and a compound that entombs a slot its own next leg
 // is driving to has cost itself the same slot as anybody else would.
+//
+// A pre-dispatch order that only NAMES the deeper slot does not count, for the
+// reason nodes.SlotTakeableSQL gives: it holds nothing, and it chooses again when
+// acquired. One that holds the slot reserves it, and the reservation clause reads
+// that. The two spellings of "spoken for" say the same thing.
 func EntombsASpokenForSlotSQL(candidate, ownerParam, terminalStatusList string) string {
 	return fmt.Sprintf(`EXISTS (
 			SELECT 1 FROM nodes spoken
@@ -257,11 +262,12 @@ func EntombsASpokenForSlotSQL(candidate, ownerParam, terminalStatusList string) 
 			     OR %[4]s
 			     OR EXISTS (SELECT 1 FROM orders spoken_ord
 			                 WHERE spoken_ord.delivery_node = spoken.name
-			                   AND spoken_ord.status NOT IN (%[3]s)
+			                   AND spoken_ord.status NOT IN (%[3]s, %[5]s)
 			                   AND spoken_ord.id <> %[2]s)
 			   )
 		  )`, ShallowerInSameLane(candidate, "spoken"), ownerParam, terminalStatusList,
-		reservations.SlotSpokenForByStrangerSQL("spoken_res", "spoken.id", ownerParam))
+		reservations.SlotSpokenForByStrangerSQL("spoken_res", "spoken.id", ownerParam),
+		protocol.PreDispatchStatusSQLList())
 }
 
 // ── ONE SPELLING FOR "DOES THIS ORDER MOVE A BIN OF ITS OWN?" ─────────────

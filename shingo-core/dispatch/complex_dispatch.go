@@ -71,6 +71,10 @@ func isConcreteStorageDropoff(db *store.DB, deliveryNode string) bool {
 type dispatchStep struct {
 	done bool
 	err  error
+	// byChoice marks a stop the plan's own group choices caused (a group with no
+	// room for the choice as made), the one preparation stop a re-made choice can
+	// cure (remakeAfter).
+	byChoice bool
 }
 
 // DispatchPreparedComplex performs the side-effecting tail of complex-
@@ -157,29 +161,140 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 // itself: the soft holds survive the wait, and the hand's confirm is guarded by
 // them — a hard claim may only land where this order already holds a live
 // reservation — so a later order cannot take what this one is waiting to confirm.
+//
+// ── THE PASS THAT REACHES THE HAND RE-MAKES THE GROUP CHOICES ─────────────
+//
+// A queued order's saved group choices are re-made at acquiring (asIntent; the
+// owner's direction), spelled as the pass that reaches the hand: the phases run
+// first on the choices the order holds. A run that reaches the hand, or that a
+// choice itself stopped (remakeAfter: a group with no room for it, an occupied
+// group drop, a group pickup's bin gone), runs once more with the choices
+// re-made, and that run's holds are what the hand takes: the allocator
+// reconciles the order's soft holds against the plan it is handed
+// (reserveComplexPlan), so a choice that moved moves its hold. A run stopped by
+// anything else (material at a named node, a lane, the swap gates, a loader
+// home) re-makes nothing and pays nothing for it. Re-making every pass under an
+// unrelated cause cost 23 reads per queued order per pass (10 → 33, C2b item 7);
+// this is +0 per queued order per pass, and about +27 once on the pass that
+// dispatches a plan with group choices (the planner golden's
+// complex-empty-pickup-press case, 95 → 122).
 func (d *Dispatcher) prepareComplexHand(order *orders.Order, pc *pairPass) ([]resolvedStep, Hand, []reservedPickup, dispatchStep) {
-	resolvedSteps, st := d.prepareComplexSteps(order, pc)
+	steps, hand, assigned, st, at := d.prepareComplexHandWith(order, pc, false)
+	if !d.remakeAfter(order, at) {
+		return steps, hand, assigned, st
+	}
+	steps, hand, assigned, st, _ = d.prepareComplexHandWith(order, pc, true)
+	return steps, hand, assigned, st
+}
+
+// handPhase is where a run of the acquisition phases stopped.
+type handPhase int
+
+const (
+	phasePrepare      handPhase = iota // stopped resolving a group choice (byChoice)
+	phasePrepareOther                  // stopped in preparation for anything else
+	phaseSwapGates
+	phaseDestination
+	phaseSources
+	phaseHand
+	phaseLanes
+	phaseReached // the run built the hand
+)
+
+// remakeAfter says whether a run that stopped at phase at is followed by one that
+// re-makes the plan's group choices. It is the choices' own business, and nothing
+// else's: a run that reached the hand re-makes them before they are taken; one
+// stopped by its destination re-makes them only if a drop is a group choice, one
+// stopped by its sources only if a pickup is; one stopped in preparation if any
+// step is. A run stopped by the swap gates, the hand or the lanes waits on
+// something no group choice changes, and re-making there is the cost item 7
+// counted. Read off the stored plan: a run stopped in preparation returns none.
+func (d *Dispatcher) remakeAfter(order *orders.Order, at handPhase) bool {
+	if at != phasePrepare && at != phaseDestination && at != phaseSources && at != phaseReached {
+		return false
+	}
+	fresh, err := d.db.GetOrder(order.ID)
+	if err != nil || fresh == nil || fresh.StepsJSON == "" {
+		return false
+	}
+	var stored []resolvedStep
+	if json.Unmarshal([]byte(fresh.StepsJSON), &stored) != nil {
+		return false
+	}
+	intent := asIntent(stored)
+	drop, pickup, reverted := false, false, false
+	for i := range stored {
+		if stored[i].Action == protocol.ActionDropoff && stored[i].Group != "" && stored[i].Node == stored[i].Group {
+			reverted = true // the destination phase put an occupied drop back to its group
+		}
+		if intent[i].Node == stored[i].Node {
+			continue
+		}
+		switch stored[i].Action {
+		case protocol.ActionDropoff:
+			drop = true
+		case protocol.ActionPickup:
+			pickup = true
+		}
+	}
+	switch at {
+	case phaseDestination:
+		// A drop still naming its group here was reverted by this run (a
+		// preparation that failed to resolve one stops in phasePrepare and is not
+		// re-run: it would fail the same way, which is packed's ngrp-resolve
+		// population at every pass).
+		return drop || reverted
+	case phaseSources:
+		return pickup
+	}
+	return drop || pickup
+}
+
+// heldBinNodes is the set of nodes the order's soft-held bins stand on: the
+// pickups asIntent keeps as chosen (asIntentKeeping). Read only on a run that
+// re-makes; unreadable keeps nothing, which is asIntent's own answer.
+func (d *Dispatcher) heldBinNodes(order *orders.Order) map[string]bool {
+	rows, err := reservations.ListByOrder(d.db.DB, order.ID)
+	if err != nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, h := range d.allocator.resolveHeldReservations(rows) {
+		if h.kind == reservations.KindBin && h.nodeName != "" {
+			out[h.nodeName] = true
+		}
+	}
+	return out
+}
+
+// prepareComplexHandWith is one run of the acquisition phases; remake re-makes
+// the plan's group choices first (asIntent). It reports where it stopped.
+func (d *Dispatcher) prepareComplexHandWith(order *orders.Order, pc *pairPass, remake bool) ([]resolvedStep, Hand, []reservedPickup, dispatchStep, handPhase) {
+	resolvedSteps, st := d.prepareComplexSteps(order, pc, remake)
 	if st.done {
-		return nil, Hand{}, nil, st
+		if !st.byChoice {
+			return nil, Hand{}, nil, st, phasePrepareOther
+		}
+		return nil, Hand{}, nil, st, phasePrepare
 	}
 	if st := d.applySwapGates(order, resolvedSteps); st.done {
-		return nil, Hand{}, nil, st
+		return nil, Hand{}, nil, st, phaseSwapGates
 	}
 	if st := d.reserveComplexDestination(order, resolvedSteps, pc); st.done {
-		return nil, Hand{}, nil, st
+		return nil, Hand{}, nil, st, phaseDestination
 	}
 	plan, assigned, st := d.reserveComplexSources(order, resolvedSteps)
 	if st.done {
-		return nil, Hand{}, nil, st
+		return nil, Hand{}, nil, st, phaseSources
 	}
 	hand, st := d.handFromComplexPlan(order, plan, assigned)
 	if st.done {
-		return nil, Hand{}, nil, st
+		return nil, Hand{}, nil, st, phaseHand
 	}
 	if st := d.admitComplexLanesVerdict(order, resolvedSteps); st.done {
-		return nil, Hand{}, nil, st
+		return nil, Hand{}, nil, st, phaseLanes
 	}
-	return resolvedSteps, hand, assigned, dispatchStep{}
+	return resolvedSteps, hand, assigned, dispatchStep{}, phaseReached
 }
 
 // handFromComplexPlan turns a complete soft reserve into the hand that confirms
@@ -306,7 +421,7 @@ func (d *Dispatcher) admitComplexLanesVerdict(order *orders.Order, resolvedSteps
 // dedicated-loader placement. done=true means the order was parked or terminalized
 // here and the orchestrator returns st.err verbatim; on done=false the returned
 // slice is the single source of truth the read-only phases B–E consume.
-func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass) ([]resolvedStep, dispatchStep) {
+func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass, remake bool) ([]resolvedStep, dispatchStep) {
 	var resolvedSteps []resolvedStep
 	if err := json.Unmarshal([]byte(order.StepsJSON), &resolvedSteps); err != nil {
 		d.failOrderInternal(order, "invalid_steps", fmt.Sprintf("parse stored steps: %v", err))
@@ -315,10 +430,13 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass) ([]r
 	// A plan a refused create left spliced is worked as the plan it was spliced
 	// from; the splice re-inserts its waits (withoutInboundLaneWaits).
 	resolvedSteps = withoutInboundLaneWaits(resolvedSteps)
-	// A queued order keeps its intent, not a choice made on an earlier pass:
-	// acquiring makes every group choice again (asIntent).
+	// A queued order keeps its intent, not a choice made on an earlier pass: the
+	// pass that reaches the hand makes every group choice again (asIntent;
+	// prepareComplexHand says when).
 	stored := resolvedSteps
-	resolvedSteps = asIntent(resolvedSteps)
+	if remake {
+		resolvedSteps = asIntentKeeping(resolvedSteps, d.heldBinNodes(order))
+	}
 
 	// Round-3 follow-up: re-resolve any step that still references an
 	// NGRP. This happens on the deferred path — intake queued the order
@@ -350,7 +468,7 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass) ([]r
 			d.setQueueReason(order, code, causeForCapacity(capDetail.kindOf(), CauseNGRPResolve),
 				queueParamsForCapacity(capDetail, order.PayloadCode, order.DeliveryNode))
 			d.dbg("complex: order %d still capacity-blocked at NGRP resolution: %s", order.ID, code)
-			return nil, dispatchStep{done: true, err: rerr}
+			return nil, dispatchStep{done: true, err: rerr, byChoice: true}
 		default:
 			d.failOrderInternal(order, "invalid_steps", rerr.Error())
 			return nil, dispatchStep{done: true, err: rerr}

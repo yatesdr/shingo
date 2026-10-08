@@ -129,8 +129,8 @@ func TestDropoffRegroup_ConcreteDropoffIsNotReverted(t *testing.T) {
 // asked. It used to assert two ticks: park and revert on the first, land on the
 // second.
 //
-// MUTATION: make asIntent return the plan as stored. The tick then asks the
-// occupied slot and parks, and the test fires on delivery_node.
+// MUTATION: make remakeAfter answer false. The tick then parks on the occupied
+// slot, and the test fires on delivery_node.
 func TestDropoffRegroup_OccupiedSlotIsReChosenAtAcquiring(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -167,11 +167,14 @@ func TestDropoffRegroup_OccupiedSlotIsReChosenAtAcquiring(t *testing.T) {
 		o.Status = protocol.StatusQueued
 	})
 
-	// ONE TICK, SINCE ACQUIRING MAKES THE CHOICE (asIntent). The plan's slot is an
-	// earlier pass's choice; acquiring puts it back to the group and chooses
-	// again, so the occupied slot is never asked and the free sibling is taken
-	// on the first tick. It used to park once (dropoff-occupied), revert, and
-	// land on the second tick.
+	// ONE TICK, SINCE THE PASS THAT IS STOPPED BY ITS CHOICE MAKES IT AGAIN. The
+	// plan's slot is an earlier pass's choice. The pass runs first on the choice
+	// the order holds, and the occupied slot stops it at the destination; a stop
+	// there on a group drop re-makes the choices in the same pass (prepareComplexHand,
+	// C2b item 3: re-choosing every pass under an unrelated cause cost 23 reads
+	// per queued order per pass), and the free sibling is taken on the first tick.
+	// So the occupied slot IS asked, once, and its park is superseded in the same
+	// pass. It used to park, revert, and land on the second tick.
 	testutil.MustNoErr(t, d.DispatchPreparedComplex(order), "the one tick")
 
 	after, err := db.GetOrder(order.ID)
@@ -187,8 +190,9 @@ func TestDropoffRegroup_OccupiedSlotIsReChosenAtAcquiring(t *testing.T) {
 	if protocol.IsAcquiring(after.Status) {
 		t.Errorf("status = %q, want dispatched — a free sibling slot was available the whole time", after.Status)
 	}
-	if parks := dropoffOccupiedParks(t, db, order.ID); parks != 0 {
-		t.Errorf("dropoff-occupied parks = %d, want 0 — the occupied slot is never asked", parks)
+	if parks := dropoffOccupiedParks(t, db, order.ID); parks > 1 {
+		t.Errorf("dropoff-occupied parks = %d, want at most the one the stored choice wrote before the "+
+			"same pass re-made it", parks)
 	}
 }
 

@@ -103,6 +103,9 @@ func stageDeeperBlocker(t *testing.T, db *store.DB, d *Dispatcher, line, deepSlo
 		o.DeliveryNode = deepSlot.Name
 		o.Status = "queued"
 	})
+	// A store that is coming holds its slot: a parked order that only names one
+	// is a plan, not a presence, and walls nothing (stillComingToLane).
+	testutil.MustNoErr(t, db.ReserveSlot(deepSlot.ID, deep.ID), "the deeper store holds its slot")
 	return deep
 }
 
@@ -221,6 +224,9 @@ func TestGateRelease_ReleasesWhenLaneClears(t *testing.T) {
 		// through a row. Same order, same depth, same Tier-2 wall.
 		o.Status = "queued"
 	})
+	// A store that is coming holds its slot (a pending reservation): naming a
+	// slot is not holding it before dispatch (nodes.SlotTakeableSQL).
+	testutil.MustNoErr(t, db.ReserveSlot(s1.ID, deep.ID), "the blocker holds its slot")
 
 	shallow := stageGatedStore(t, db, d, line, s0, nil)
 	if !IsGateStaged(shallow) {
@@ -443,6 +449,7 @@ func TestGateRelease_DeepestFirstAndTier1(t *testing.T) {
 		// through a row. Same order, same depth, same Tier-2 wall.
 		o.Status = "queued"
 	})
+	testutil.MustNoErr(t, db.ReserveSlot(slots[1].ID, blocker.ID), "the deeper store holds its slot (a plan alone walls nothing)")
 
 	// The pair stages behind it, both bound to the one remaining slot's lane. Use
 	// the shallow slot for one and let the other re-bind — both share an origin.
@@ -508,6 +515,9 @@ func TestGateRelease_RebindKeepsItsOwnSlot(t *testing.T) {
 		// through a row. Same order, same depth, same Tier-2 wall.
 		o.Status = "queued"
 	})
+	// A store that is coming holds its slot (a pending reservation): naming a
+	// slot is not holding it before dispatch (nodes.SlotTakeableSQL).
+	testutil.MustNoErr(t, db.ReserveSlot(slots[2].ID, blocker.ID), "the blocker holds its slot")
 
 	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.DeliveryNode = slots[1].Name
@@ -595,6 +605,7 @@ func TestGateRelease_AppendFailureStaysStaged(t *testing.T) {
 		// through a row. Same order, same depth, same Tier-2 wall.
 		o.Status = "queued"
 	})
+	testutil.MustNoErr(t, db.ReserveSlot(s1.ID, blocker.ID), "the deeper store holds its slot (a plan alone walls nothing)")
 	staged := stageGatedStore(t, db, d, line, s0, nil)
 	if !IsGateStaged(staged) {
 		t.Fatal("order must be gate-staged")

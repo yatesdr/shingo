@@ -46,6 +46,10 @@ type Allocator struct {
 	// instance identity.
 	finder *SourceFinder
 	dbg    func(string, ...any)
+	// slotReleased is told each slot the reconcile releases (a re-made choice
+	// that moved): a lane a never-dispatched store walled only through that row
+	// may now admit its dweller (Dispatcher.wakeLanesOfSlots).
+	slotReleased func(nodeIDs ...int64)
 }
 
 func newAllocator(db *store.DB, binManifest *service.BinManifestService, finder *SourceFinder, dbg func(string, ...any)) *Allocator {
@@ -489,6 +493,10 @@ func (a *Allocator) reserveComplexSlots(order *orders.Order, resolvedSteps []res
 			}
 		} else if rerr := a.db.ReleaseSlotReservation(hb.nodeID, order.ID); rerr != nil {
 			log.Printf("dispatch: reservation-release failed (reconcile stray slot) order=%d node=%d: %v", order.ID, hb.nodeID, rerr)
+			continue
+		}
+		if a.slotReleased != nil {
+			a.slotReleased(hb.nodeID)
 		}
 	}
 
@@ -571,19 +579,31 @@ func (a *Allocator) resolveHeldReservations(rows []reservations.Reservation) []*
 	return out
 }
 
-// matchHeldToNeed returns the first unused held bin that satisfies the need —
-// same node, same empty-status. Owner-aware (the held bin is the order's own).
-// Skips slot rows (the slot reconcile matches those).
+// matchHeldToNeed returns the unused held bin that satisfies the need: one at
+// the same node that findAvailableForNeed would have acquired for it. Owner-aware
+// (the held bin is the order's own). Skips slot rows (the slot reconcile matches
+// those).
+//
+// Same empty-status first. Failing that, a step that is not an empty leg keeps
+// an EMPTY bin held at its node: the acquire rule takes one for it (an empty
+// bin carries no payload to mismatch, and a removal clears whatever is
+// resident), so a key that demanded equal empty-status read the order's own
+// hold as somebody else's, every pass. An empty leg never keeps a full bin;
+// the acquire rule never takes one for it.
 func matchHeldToNeed(held []*heldReservation, step resolvedStep) *heldReservation {
+	var keptEmpty *heldReservation
 	for _, hb := range held {
-		if hb.used || hb.kind == reservations.KindSlot || hb.nodeName == "" {
+		if hb.used || hb.kind == reservations.KindSlot || hb.nodeName == "" || hb.nodeName != step.Node {
 			continue
 		}
-		if hb.nodeName == step.Node && hb.empty == step.Empty {
+		if hb.empty == step.Empty {
 			return hb
 		}
+		if keptEmpty == nil && hb.empty && !step.Empty {
+			keptEmpty = hb
+		}
 	}
-	return nil
+	return keptEmpty
 }
 
 // matchHeldSlot returns the first unused held SLOT reservation on nodeName —

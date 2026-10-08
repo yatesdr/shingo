@@ -801,7 +801,9 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 				r.dbg("LKND: CountBinsByNode node=%s: %v", child.Name, err)
 				continue
 			}
-			inflight, _ := r.DB.CountActiveOrdersByDeliveryNode(child.Name)
+			// The asker's own delivery is not a competitor for the slot it
+			// names: a re-choice (asIntent) asks with it already written.
+			inflight, _ := r.DB.CountActiveOrdersByDeliveryNodeExcluding(child.Name, asker.OrderID)
 			if count+inflight >= 1 {
 				continue
 			}
@@ -904,7 +906,9 @@ func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, 
 			r.dbg("DPTH: CountBinsByNode node=%s: %v", child.Name, err)
 			continue
 		}
-		inflight, _ := r.DB.CountActiveOrdersByDeliveryNode(child.Name)
+		// The asker's own delivery is not a competitor (resolveStoreLKND's flat
+		// branch).
+		inflight, _ := r.DB.CountActiveOrdersByDeliveryNodeExcluding(child.Name, asker.OrderID)
 		if count+inflight >= 1 {
 			continue
 		}

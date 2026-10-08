@@ -219,6 +219,9 @@ func TestShuffleWalk_PicksForTheHoldsItAlreadyRespects(t *testing.T) {
 				o := strangerOrder(t, db, p+"-INBOUND", func(o *orders.Order) {
 					o.DeliveryNode = f.laSlots[1].Name
 					o.PayloadCode = f.bp.Code
+					// Carrying a claimed bin is a dispatched order's state: claims
+					// land at the hand.
+					o.Status = protocol.StatusInTransit
 				})
 				claimCarriedBin(t, db, o, f.bp.Code)
 				return reservations.Anyone
@@ -226,18 +229,37 @@ func TestShuffleWalk_PicksForTheHoldsItAlreadyRespects(t *testing.T) {
 			want: func(f *choiceFixture) []string { return []string{f.p1.Name, f.lbSlot.Name} },
 		},
 		{
-			// A live order names LB-S1 as its delivery_node but holds no bin and no
-			// reservation yet (it has planned, not dispatched). THIS PICK CHANGED.
-			// The walk used to count only orders BRINGING a bin, and offered LB-S1.
-			// It now asks the store selector's spelling (nodes.SlotTakeableSQL),
-			// whose delivery_node clause counts any live order naming the slot, so
-			// the dig and a store agree that LB-S1 is spoken for.
+			// A queued order names LB-S1 as its delivery_node but holds no bin and
+			// no reservation (it has planned, not dispatched). THIS PICK HAS CHANGED
+			// TWICE. The walk first counted only orders BRINGING a bin and offered
+			// LB-S1; then it took the store selector's spelling, whose delivery_node
+			// clause counted any live order naming the slot, and skipped it. Now
+			// (2026-10-08) a pre-dispatch order counts only through the rows it
+			// holds (nodes.SlotTakeableSQL), so LB-S1 is offered again: a parked
+			// order naming a slot is the demo wedge, and it chooses again when
+			// acquired. The dig and a store still agree.
 			name: "named-not-bringing",
 			hold: func(t *testing.T, db *store.DB, f *choiceFixture, p string) reservations.DigAsker {
 				strangerOrder(t, db, p+"-PLANNED", func(o *orders.Order) {
 					o.DeliveryNode = f.lbSlot.Name
 					o.Status = protocol.StatusQueued
 				})
+				return reservations.Anyone
+			},
+			want: func(f *choiceFixture) []string {
+				return []string{f.p1.Name, f.laSlots[1].Name, f.laSlots[0].Name, f.lbSlot.Name}
+			},
+		},
+		{
+			// The same order holding a reservation on LB-S1: it holds the slot, so
+			// LB-S1 is skipped.
+			name: "named-and-reserving",
+			hold: func(t *testing.T, db *store.DB, f *choiceFixture, p string) reservations.DigAsker {
+				o := strangerOrder(t, db, p+"-RESERVING", func(o *orders.Order) {
+					o.DeliveryNode = f.lbSlot.Name
+					o.Status = protocol.StatusQueued
+				})
+				testutil.MustNoErr(t, db.ReserveSlot(f.lbSlot.ID, o.ID), "reserve the slot")
 				return reservations.Anyone
 			},
 			want: func(f *choiceFixture) []string {

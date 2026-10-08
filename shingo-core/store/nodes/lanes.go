@@ -389,6 +389,17 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 // clause offers a slot whose claim is refused on every ask for as long as the
 // holder holds it. A holder that is reserve-holding (waiting for material, no
 // claimed bin) can hold it indefinitely.
+//
+// ── NAMING A SLOT IS NOT HOLDING IT, BEFORE DISPATCH ──────────────────────
+//
+// The delivery_node clause counts a dispatched order: a robot is bound for the
+// slot. A pre-dispatch order (pending, queued) counts only through the rows it
+// holds, which the reservation clause already reads: an order that holds the slot
+// soft-reserves it. One that holds nothing is a choice it will make again when it
+// is acquired (asIntent), and counting it hid the slot from the store selector
+// and from a dig's parking. The demo wedge of 2026-10-07 was exactly this: parked
+// swap returns that held nothing still named empty mouths, a dwelling dig could
+// not park its blocker, and the market could not drain.
 func SlotTakeableSQL(alias, ownerExpr string) string {
 	return slotTakeable(alias, ownerExpr, "")
 }
@@ -408,12 +419,12 @@ func slotTakeable(alias, ownerExpr, pendingHolderExpr string) string {
 		  AND NOT EXISTS (
 			SELECT 1 FROM orders tk_ord
 			WHERE tk_ord.delivery_node = %[1]s.name
-			  AND tk_ord.status NOT IN (%[4]s)
+			  AND tk_ord.status NOT IN (%[4]s, %[7]s)
 			  AND tk_ord.id <> %[2]s%[6]s
 		  )`, alias, ownerExpr,
 		reservations.SlotSpokenForByStrangerExceptSQL("tk_res", alias+".id", ownerExpr, pendingHolderExpr),
 		protocol.TerminalStatusSQLList(),
-		slotNotHardClaimedSQL(alias, ownerExpr), exceptHolder)
+		slotNotHardClaimedSQL(alias, ownerExpr), exceptHolder, protocol.PreDispatchStatusSQLList())
 }
 
 // slotNotHardClaimedSQL is SlotTakeableSQL's hard-claim clause: nobody holds the

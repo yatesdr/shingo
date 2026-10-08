@@ -3,6 +3,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -606,5 +607,74 @@ func TestStaleDig_GateOwnDig_DissolvesResummonsAndCompletes(t *testing.T) {
 	occRaw, err := reservations.OccupantsOf(db.DB, lane.ID)
 	if occ := testutil.Must(t, occRaw, err, "reservations.OccupantsOf(db.DB, lane.ID)"); len(occ) != 0 {
 		t.Errorf("lane %s still has occupants %v", lane.Name, occ)
+	}
+}
+
+// TestStaleDig_TheOwnDigResumeReAsksTheDropBeforeItAppends is demo r2's hard
+// burial (62666564; the §R.101 case): a store waiting at its mark named its slot
+// before another order claimed the bin behind it; the gate found the slot walled
+// and the store summoned its own dig; when the dig's chapter closed, the resume
+// appended the tail it had been holding — the slot chosen before the claim — and
+// put the bin in front of the claimed one. The resume now goes through the gate's
+// own release (releaseAdmittedCandidate): the drop is re-asked against the lane as
+// it stands, with the burial guard, before the tail is sent.
+func TestStaleDig_TheOwnDigResumeReAsksTheDropBeforeItAppends(t *testing.T) {
+	t.Parallel()
+	db := testDBShared(t)
+	d, _ := newTestDispatcherWithResolver(t, db)
+	_, lane, slots, bp := staleDigLane(t, db, "SD-RS")
+	testdb.CreateBinAtNode(t, db, bp.Code, slots[0].ID, "SD-RS-BLK")
+	claimed := testdb.CreateBinAtNode(t, db, bp.Code, slots[2].ID, "SD-RS-CLAIMED")
+	press := lineNode(t, db, "SD-RS-PRESS")
+
+	plan := []resolvedStep{
+		{Action: protocol.ActionPickup, Node: press.Name},
+		{Action: protocol.ActionWait, Node: "SD-RS-GRP-WAIT", WaitKind: WaitKindLane, WaitLane: lane.ID},
+		{Action: protocol.ActionDropoff, Node: slots[1].Name, Group: "SD-RS-GRP"},
+	}
+	planJSON, err := json.Marshal(plan)
+	testutil.MustNoErr(t, err, "marshal the store's plan")
+	store := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "sd-rs-store"
+		o.OrderType = OrderTypeComplex
+		o.Coordinated = true
+		o.PayloadCode = bp.Code
+		o.SourceNode = press.Name
+		o.DeliveryNode = slots[1].Name
+		o.Status = protocol.StatusStaged
+	})
+	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(store.ID, string(planJSON)), "persist the plan")
+	testutil.MustNoErr(t, db.UpdateOrderVendor(store.ID, "SD-RS-V1", "WAITING", "AMR-1"), "set the vendor order")
+
+	// Another order claims the bin behind the store's slot while it waits.
+	collector := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = "sd-rs-collector"
+		o.Status = protocol.StatusDispatched
+		o.SourceNode = slots[2].Name
+	})
+	testdb.ClaimBinForTest(t, db, claimed.ID, collector.ID)
+
+	// The gate finds the slot walled and the store digs its own lane open.
+	d.EvaluateLaneReleases(lane.ID)
+	legs := legsOf(t, db, store.ID)
+	if len(legs) == 0 {
+		t.Fatal("fixture: the store summoned no dig — the resume under test never runs")
+	}
+	for _, l := range legs {
+		if l.VendorOrderID != "" && !protocol.IsTerminal(l.Status) {
+			landLeg(t, d, db, l)
+		}
+	}
+	testutil.MustNoErr(t, d.AdvanceCompoundOrder(store.ID), "close the dig's chapter")
+
+	after, err := db.GetOrder(store.ID)
+	testutil.MustNoErr(t, err, "reload the store")
+	var steps []resolvedStep
+	testutil.MustNoErr(t, json.Unmarshal([]byte(after.StepsJSON), &steps), "read the plan")
+	drop := steps[len(steps)-1]
+	if !IsGateStaged(after) && (drop.Node == slots[0].Name || drop.Node == slots[1].Name) {
+		t.Fatalf("the resume sent the store to %s, in front of bin %d at %s, which order %d claimed while "+
+			"the store waited: the tail it appended was chosen before the claim and never re-asked",
+			drop.Node, claimed.ID, slots[2].Name, collector.ID)
 	}
 }

@@ -45,7 +45,11 @@ type Scanner struct {
 	logFn    func(string, ...any)
 	debugLog func(string, ...any)
 
-	scanMu    sync.Mutex // serializes scan() calls
+	scanMu sync.Mutex // serializes scan() calls
+	// askedThisPass is the orders this RunOnce has asked and not dispatched,
+	// guarded by scanMu; nil outside a RunOnce (AcquireOne asks once anyway).
+	askedThisPass map[int64]bool
+
 	triggerMu sync.Mutex
 	pending   bool // coalesce triggers during a scan
 	stopChan  chan struct{}
@@ -98,6 +102,15 @@ func (s *Scanner) RunOnce() int {
 	s.triggerMu.Lock()
 	s.pending = false
 	s.triggerMu.Unlock()
+
+	// AN ORDER IS ASKED ONCE PER PASS. A pass triggered while it scanned scans
+	// again (below), and an order it has just asked and parked was asked again
+	// there and paid its whole acquisition again for a state that had not moved
+	// for it: the order-22 shape, a pair re-parked 43 times in 3 s under one
+	// cause. Every trigger also starts a fresh pass of its own
+	// (engine.triggerFulfillment), so nothing waits on this rerun to see it.
+	s.askedThisPass = map[int64]bool{}
+	defer func() { s.askedThisPass = nil }()
 
 	fulfilled := s.scan()
 
@@ -240,6 +253,9 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// Re-check status. The scan set is {pending, queued} (the acquiring set),
 	// so re-verify the order is still acquiring (not cancelled/failed/dispatched
 	// between listing and processing).
+	if s.askedThisPass[order.ID] {
+		return false // asked and parked earlier in this pass (RunOnce)
+	}
 	current, err := s.db.GetOrder(order.ID)
 	if err != nil || !protocol.IsAcquiring(current.Status) {
 		return false
@@ -247,6 +263,9 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// Use the fresh copy for all subsequent operations.
 	if s.fulfill(current, nil) {
 		return true
+	}
+	if s.askedThisPass != nil {
+		s.askedThisPass[current.ID] = true
 	}
 	s.park(current)
 	return false
@@ -610,6 +629,13 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
 		s.logFn("fulfillment: update source_node for order %d: %v", order.ID, err)
 	}
+	// AND ON THE ORDER THIS PASS HANDS ON. The hand and the gated create read the
+	// struct, not the row: a gated retrieve's classifier resolves its pickup from
+	// order.SourceNode, and the source it was born with (blank, or a group) is not
+	// the slot this bin stands on. It errored and left the order staged with no
+	// cause for the floor to free (demo 103, 267, 409).
+	order.BinID = &bin.ID
+	order.SourceNode = sourceNode.Name
 
 	// Lane admission (P4), with no row written. Every lane is marked, so the
 	// in-lane questions are the gate's, asked at the tail append; what parks the

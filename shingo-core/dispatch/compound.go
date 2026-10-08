@@ -1417,14 +1417,21 @@ func (d *Dispatcher) advanceCompoundChapterEnd(parentOrderID int64) error {
 			// The cause is cleared FIRST: it describes a wait that is over, and the
 			// append below can fail, in which case the release arm writes its own.
 			d.setQueueReason(parent, "", "", QueueParams{})
-			log.Printf("dispatch: order %d's own dig chapter is closed — appending its tail to the "+
-				"robot standing at its mark", parentOrderID)
-			if err := d.appendGateTail(parent, "own-dig resume"); err == nil {
+			log.Printf("dispatch: order %d's own dig chapter is closed — releasing the robot standing at "+
+				"its mark through the gate's release", parentOrderID)
+			// THROUGH THE GATE'S RELEASE, NOT A BARE APPEND (§R.101, demo r2). The
+			// tail this order holds was chosen before the dig, and the lane has
+			// changed under it since; another order may have claimed a bin behind
+			// its slot. releaseAfterOwnDig re-asks the step against the lane as it
+			// stands, exactly as a release does, and only then appends.
+			if err := d.releaseAfterOwnDig(parent); err == nil {
 				// The resume may leave it at a later lane's wait: that lane's
 				// event (F1).
-				d.evaluateLaneWaitAfterAppend(parent)
-			} else if !errors.Is(err, ErrAppendNotOwed) {
-				log.Printf("dispatch: order %d could not be appended after its own dig: %v "+
+				if fresh, gErr := d.db.GetOrder(parent.ID); gErr == nil && fresh != nil {
+					d.evaluateLaneWaitAfterAppend(fresh)
+				}
+			} else if errors.Is(err, errOwnDigNotACandidate) {
+				log.Printf("dispatch: order %d could not be released after its own dig: %v "+
 					"(it stays at the mark; the evaluator re-asks)", parentOrderID, err)
 				d.setQueueReason(parent, protocol.QueueWaitingForSlot, CauseGateAppendFailed,
 					QueueParams{Lane: d.firstLaneName(heldLanes)})

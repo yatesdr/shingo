@@ -150,7 +150,7 @@ func TestGateChoreo_ContendedCreatesUnsealedAndHolds(t *testing.T) {
 
 	// A deeper cross-origin store is in flight and has not placed: Tier 2 parks
 	// the shallow entrant, so its valve is CLOSED.
-	_ = testdb.CreateOrder(t, db, func(o *orders.Order) {
+	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.DeliveryNode = s1.Name
 		// STILL COMING, NOT YET DISPATCHED. See stageDeeperBlocker: a gated
 		// lane no longer writes a destination mouth row, so a blocker states
@@ -158,6 +158,7 @@ func TestGateChoreo_ContendedCreatesUnsealedAndHolds(t *testing.T) {
 		// through a row. Same order, same depth, same Tier-2 wall.
 		o.Status = "queued"
 	})
+	testutil.MustNoErr(t, db.ReserveSlot(s1.ID, deep.ID), "the deeper store holds its slot (a plan alone walls nothing)")
 
 	shallow := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.DeliveryNode = s0.Name

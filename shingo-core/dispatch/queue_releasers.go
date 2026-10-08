@@ -257,7 +257,7 @@ var causeReleasers = []causeReleaser{
 	{
 		cause:       CauseLaneDeeperPending,
 		populations: []WaitPopulation{PopAcquiring, PopGateStaged},
-		what:        "the deeper cross-origin store PLACES its bin, dropping its inbound mouth row",
+		what:        "the deeper cross-origin store PLACES its bin, or (never dispatched) gives up its slot row there: a re-made choice that moved, or a park (wakeLanesOfSlots)",
 	},
 	{
 		cause:       CauseLaneGroupActive,

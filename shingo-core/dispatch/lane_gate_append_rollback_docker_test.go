@@ -162,6 +162,7 @@ func TestAppendRollback_InboundFailureReleasesOnlyTheTakenLane(t *testing.T) {
 		o.Status = StatusQueued
 		o.DeliveryNode = w[2].Name
 	})
+	testutil.MustNoErr(t, db.ReserveSlot(w[2].ID, deeper.ID), "the deeper store holds its slot (a plan alone walls nothing)")
 	_ = deeper
 	parent := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.Status = StatusReshuffling

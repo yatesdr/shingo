@@ -441,8 +441,7 @@ func (d *Dispatcher) widenSupplyPickups(order *orders.Order, steps []resolvedSte
 			continue
 		}
 		if hb := matchHeldToNeed(held, step); hb != nil {
-			// Same (node, empty-status) key the reserve reconcile matches on;
-			// consume the hold so a second identical need can't ride the same
+			// The same match the reserve reconcile keeps by; consume the hold so a second identical need can't ride the same
 			// reservation past the finder.
 			hb.used = true
 
@@ -678,8 +677,18 @@ func nextDropoffNode(steps []protocol.ComplexOrderStep, from int) string {
 //     reverting it would loop the market case (finalDropGate's case 1);
 //   - a step whose Group is a concrete pool anchor: the supply widen re-derives
 //     it from that anchor every pass already, and the resolver keeps a concrete
-//     node as it is, so putting it back changes nothing.
+//     node as it is, so putting it back changes nothing;
+//   - a pickup at a node where the order soft-holds a bin (asIntentKeeping's
+//     held set): the hold IS the choice, nobody can have taken that bin, and the
+//     finders exclude reserved bins owner-blind, so re-choosing it cannot see the
+//     order's own bin and either shops a second one or finds none.
 func asIntent(steps []resolvedStep) []resolvedStep {
+	return asIntentKeeping(steps, nil)
+}
+
+// asIntentKeeping is asIntent keeping as chosen every pickup at a node in
+// heldBinNodes (the nodes the order's soft-held bins stand on).
+func asIntentKeeping(steps []resolvedStep, heldBinNodes map[string]bool) []resolvedStep {
 	out := make([]resolvedStep, len(steps))
 	copy(out, steps)
 	for i := range out {
@@ -688,6 +697,9 @@ func asIntent(steps []resolvedStep) []resolvedStep {
 			continue
 		}
 		if s.Action != protocol.ActionPickup && s.Action != protocol.ActionDropoff {
+			continue
+		}
+		if s.Action == protocol.ActionPickup && heldBinNodes[s.Node] {
 			continue
 		}
 		out[i].Node = s.Group

@@ -64,6 +64,7 @@ func (p *Planner) ComplexSteps(steps []protocol.ComplexOrderStep, payloadCode st
 	// the next dropoff puts down. See the storeType comment in resolveStepNode
 	// for why the dropoff cannot work this out for itself at intake.
 	var carrier *int64
+	var drops []groupDrop
 	for i, step := range steps {
 		// MG3-4: where this leg's carrier is GOING, for the pickup that has not
 		// happened yet. See resolveStepNode.
@@ -87,14 +88,12 @@ func (p *Planner) ComplexSteps(steps []protocol.ComplexOrderStep, payloadCode st
 			if err != nil {
 				return nil, fmt.Errorf("step %d: %w", i, err)
 			}
-			// A GROUP DROP NEVER WALLS THIS PLAN'S OWN LATER PICKUP (Q1).
+			// A GROUP DROP NEVER WALLS THIS PLAN'S OWN LATER PICKUP (Q1), asked
+			// once every step has its slot (unwallOwnPickups).
 			if step.Action == protocol.ActionDropoff && group != "" {
-				if lane := p.OwnPickupLane(nodeName, laterRequestPickups(steps, i)); lane != 0 {
-					stated := binresolver.BinTypeFrom(carrier, "complex step: no preceding pickup resolved to exactly one carrier")
-					if nodeName, err = p.storeAvoidingOwnPickup(group, lane, StepPayload(step, stepOrderPayload), stated, asker); err != nil {
-						return nil, fmt.Errorf("step %d: %w", i, err)
-					}
-				}
+				drops = append(drops, groupDrop{i: len(resolved), group: group,
+					payload: StepPayload(step, stepOrderPayload),
+					stated:  binresolver.BinTypeFrom(carrier, "complex step: no preceding pickup resolved to exactly one carrier")})
 			}
 			if step.Action == protocol.ActionPickup {
 				carrier = BinTypeAtNode(p.db, nodeName)
@@ -128,6 +127,9 @@ func (p *Planner) ComplexSteps(steps []protocol.ComplexOrderStep, payloadCode st
 			return nil, fmt.Errorf("step %d: unknown step action: %s", i, step.Action)
 		}
 	}
+	if _, err := p.unwallOwnPickups(resolved, drops, asker); err != nil {
+		return nil, err
+	}
 	return resolved, nil
 }
 
@@ -151,6 +153,7 @@ func (p *Planner) ReComplexSteps(steps []Step, need Need) (newSteps []Step, chan
 	payloadCode, asker := need.PayloadCode, need.Asker
 	defer observe(p.db, "complex-steps-replay")()
 	newSteps = make([]Step, 0, len(steps))
+	var drops []groupDrop
 	for i, step := range steps {
 		if step.Node == "" {
 			newSteps = append(newSteps, step)
@@ -204,14 +207,13 @@ func (p *Planner) ReComplexSteps(steps []Step, need Need) (newSteps []Step, chan
 		}
 		newName, group, resolveErr := p.StepNode(ps, stepOrderPayload, asker, "",
 			p.BinTypeBeforeStep(steps, i))
-		// A GROUP DROP NEVER WALLS THIS PLAN'S OWN LATER PICKUP (Q1), on replay
-		// as at intake.
+		// A GROUP DROP NEVER WALLS THIS PLAN'S OWN LATER PICKUP (Q1), on replay as
+		// at intake, asked once every step has its slot (unwallOwnPickups).
 		if resolveErr == nil && step.Action == protocol.ActionDropoff && group != "" {
-			if lane := p.OwnPickupLane(newName, LaterPickups(steps, i)); lane != 0 {
-				stated := binresolver.BinTypeFrom(p.BinTypeBeforeStep(steps, i),
-					"complex step: no preceding pickup resolved to exactly one carrier")
-				newName, resolveErr = p.storeAvoidingOwnPickup(group, lane, StepPayload(ps, stepOrderPayload), stated, asker)
-			}
+			drops = append(drops, groupDrop{i: len(newSteps), group: group,
+				payload: StepPayload(ps, stepOrderPayload),
+				stated: binresolver.BinTypeFrom(p.BinTypeBeforeStep(steps, i),
+					"complex step: no preceding pickup resolved to exactly one carrier")})
 		}
 		var vacate *Vacate
 		if resolveErr != nil {
@@ -244,7 +246,11 @@ func (p *Planner) ReComplexSteps(steps []Step, need Need) (newSteps []Step, chan
 			Vacate:        vacate,
 			Anchor:        step.Anchor})
 	}
-	return newSteps, changed, nil
+	moved, err := p.unwallOwnPickups(newSteps, drops, asker)
+	if err != nil {
+		return steps, false, err
+	}
+	return newSteps, changed || moved, nil
 }
 
 // StepPayload is the payload THIS step's bin selection resolves against.

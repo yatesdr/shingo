@@ -40,6 +40,7 @@ func TestGateAppend_ACancelledLegGetsNoTail(t *testing.T) {
 	laneID, s0, s1 := gateChoreoLane(t, db, "GTERM1", "GTERM1-WAIT")
 	line := lineNode(t, db, "GTERM1-LINE")
 	blocker := testdb.CreateOrder(t, db, func(o *orders.Order) { o.DeliveryNode = s1.Name; o.Status = "queued" })
+	testutil.MustNoErr(t, db.ReserveSlot(s1.ID, blocker.ID), "the deeper store holds its slot (a plan alone walls nothing)")
 	leg := stageGatedStore(t, db, d, line, s0, nil)
 	if !IsGateStaged(leg) {
 		t.Fatalf("fixture: the leg must stage behind the blocker (wait=%d)", leg.WaitIndex)
@@ -73,6 +74,7 @@ func TestGateAppend_ADeadLegDoesNotSwallowTheWake(t *testing.T) {
 	slots := laneSlotsByDepth(t, db, laneID) // S0 shallow … S2 deepest
 	line := lineNode(t, db, "GTERM2-LINE")
 	blocker := testdb.CreateOrder(t, db, func(o *orders.Order) { o.DeliveryNode = slots[2].Name; o.Status = "queued" })
+	testutil.MustNoErr(t, db.ReserveSlot(slots[2].ID, blocker.ID), "the deeper store holds its slot (a plan alone walls nothing)")
 	dead := stageGatedStore(t, db, d, line, slots[1], nil)
 	live := stageGatedStore(t, db, d, line, slots[0], nil)
 	if !IsGateStaged(dead) || !IsGateStaged(live) {

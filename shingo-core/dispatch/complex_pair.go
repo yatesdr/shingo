@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/store/orders"
+	"shingocore/store/reservations"
 )
 
 // complex_pair.go — A COORDINATED PAIR IS ONE JOB.
@@ -494,8 +495,21 @@ func (d *Dispatcher) parkPair(legs []*orders.Order, blocked *orders.Order) {
 // are the backstop for a row that leaks past here, and failing a park because a
 // release errored would trade a described wait for an undescribed stall.
 func (d *Dispatcher) releaseLegHoldings(leg *orders.Order, why string) {
+	// THE SLOTS IT HELD ARE READ FIRST: a lane this leg walled only through a
+	// slot row (a never-dispatched deeper store, stillComingToLane) is woken
+	// once the row is gone (wakeLanesOfSlots), or its dweller waits for the floor.
+	var slots []int64
+	if rows, err := d.db.ListReservationsByOrder(leg.ID); err == nil {
+		for _, r := range rows {
+			if r.Kind == reservations.KindSlot {
+				slots = append(slots, r.NodeID)
+			}
+		}
+	}
 	if err := d.db.ReleaseOrderHoldings(leg.ID); err != nil {
 		log.Printf("dispatch: %s — release holdings for order %d: %v (reconciliation will sweep it)", why, leg.ID, err)
+	} else {
+		d.wakeLanesOfSlots(slots...)
 	}
 	if err := d.ReleaseLanesForOrder(leg.ID); err != nil {
 		log.Printf("dispatch: %s — release lanes for order %d: %v", why, leg.ID, err)

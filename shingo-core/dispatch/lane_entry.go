@@ -305,7 +305,7 @@ func (d *Dispatcher) stillComingToLane(laneID int64, active []*orders.Order) ([]
 	// candidates; an unreadable answer keeps EVERY witness (a read that failed
 	// is not a fact about the order, and dropping a live witness walks an
 	// entrant into a lane somebody is still coming to).
-	motionless, err := d.motionlessWitnesses(active)
+	planned, motionless, err := d.neverDispatchedWitnesses(laneID, active)
 	if err != nil {
 		return nil, err
 	}
@@ -323,13 +323,18 @@ func (d *Dispatcher) stillComingToLane(laneID int64, active []*orders.Order) ([]
 		// explain. Repeats per sweep like the "still held" lines do, and stops
 		// the same way — when the dweller admits and the lane stops being
 		// evaluated.
+		if o.VendorOrderID == "" && planned[o.ID] {
+			d.dbg("lane entry: order %d is not a witness in lane %d — never dispatched and holding no slot "+
+				"there: it names one, which is a plan, not a presence", o.ID, laneID)
+			continue
+		}
 		if o.VendorOrderID == "" && motionless[o.ID] {
 			d.dbg("lane entry: order %d dropped as a witness in lane %d — never dispatched and no status "+
 				"change for over %s", o.ID, laneID, motionlessWitnessBound)
 			continue
 		}
 		switch {
-		case o.VendorOrderID == "": // not dispatched — certainly still coming
+		case o.VendorOrderID == "": // not dispatched, holding its slot here — still coming
 		case inCorridor[o.ID]: // physically inside the lane
 		case inbound[o.ID]: // an unmarked lane's destination hold: not placed yet
 		case IsGateStaged(o) && gateWaitLane(o) == laneID: // standing at THIS lane's mark
@@ -341,8 +346,24 @@ func (d *Dispatcher) stillComingToLane(laneID int64, active []*orders.Order) ([]
 	return kept, nil
 }
 
-// motionlessWitnesses resolves which of the never-dispatched orders in the
-// active set have gone quiet: no order_history transition of any status for
+// neverDispatchedWitnesses reads, in one statement (orders.LaneWitnesses; the
+// history read it replaces was one too), which never-dispatched orders in the
+// active set are only a PLAN in this lane, and which have gone motionless.
+//
+// ── A PARKED ORDER THAT ONLY NAMES A SLOT IS A PLAN, NOT A PRESENCE ───────
+//
+// Arm 1 kept every never-dispatched order naming a deeper slot as "certainly
+// still coming". Before dispatch an order's delivery_node is a choice it may
+// make again (asIntent), and one that holds nothing there is not coming there:
+// packed 477 waited behind order 481, queued behind its pair leader and holding
+// nothing, whose drop was then re-chosen into another lane. The take answers the
+// same question the same way (nodes.SlotTakeableSQL, 35bc1fff): such an order
+// counts only through the rows it holds. So arm 1 keeps a never-dispatched order
+// only while it holds a slot row in this lane (planned is the complement), and
+// the bound below still narrows those.
+//
+// motionless is the never-dispatched witnesses holding a slot here that have
+// gone quiet: no order_history transition of any status for
 // longer than motionlessWitnessBound. Returns the motionless subset keyed by
 // order id; an order absent from the history read is NOT motionless (the safe
 // direction — see the caller).
@@ -360,7 +381,7 @@ func (d *Dispatcher) stillComingToLane(laneID int64, active []*orders.Order) ([]
 // may since have been taken — a manufactured wall, recovered by the existing
 // dig / re-resolve machinery. The wall soak cannot see this (its stores are
 // all dispatched); the acceptance re-run is where it would show.
-func (d *Dispatcher) motionlessWitnesses(active []*orders.Order) (map[int64]bool, error) {
+func (d *Dispatcher) neverDispatchedWitnesses(laneID int64, active []*orders.Order) (planned, motionless map[int64]bool, err error) {
 	var pending []int64
 	for _, o := range active {
 		if o.VendorOrderID == "" {
@@ -368,24 +389,29 @@ func (d *Dispatcher) motionlessWitnesses(active []*orders.Order) (map[int64]bool
 		}
 	}
 	if len(pending) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
-	lastMoved, err := d.db.LatestOrderHistoryTimes(pending)
+	facts, err := d.db.LaneWitnesses(laneID, pending)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	now := clock.Now().UTC()
-	out := make(map[int64]bool, len(pending))
+	planned = make(map[int64]bool, len(pending))
+	motionless = make(map[int64]bool, len(pending))
 	for _, id := range pending {
-		at, ok := lastMoved[id]
+		w, ok := facts[id]
 		if !ok {
-			continue // no history rows: keep the witness, never drop it
+			continue // unread: keep the witness, never drop it
 		}
-		if now.Sub(at) > motionlessWitnessBound {
-			out[id] = true
+		if !w.HoldsSlot {
+			planned[id] = true
+			continue
+		}
+		if !w.LastMoved.IsZero() && now.Sub(w.LastMoved) > motionlessWitnessBound {
+			motionless[id] = true
 		}
 	}
-	return out, nil
+	return planned, motionless, nil
 }
 
 // gateWaitLane names the lane the order's current wait gates, or 0.

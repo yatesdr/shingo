@@ -50,7 +50,7 @@
       {
         "index": 2,
         "type": "retrieve_empty",
-        "status": "dispatched",
+        "status": "in_transit",
         "source": "UTN_001",
         "delivery": "PEB_002",
         "bin": "BIN-MT-01",
@@ -68,6 +68,7 @@
         "reservations": [
           "bin:confirmed:BIN-MT-01",
           "mouth:confirmed:Lane_11",
+          "occupancy:confirmed:Lane_11",
           "slot:confirmed:PEB_002"
         ],
         "to_fleet": true
@@ -75,7 +76,7 @@
       {
         "index": 3,
         "type": "retrieve_empty",
-        "status": "dispatched",
+        "status": "in_transit",
         "source": "UTN_004",
         "delivery": "PEB_003",
         "bin": "BIN-MT-04",
@@ -93,6 +94,7 @@
         "reservations": [
           "bin:confirmed:BIN-MT-04",
           "mouth:confirmed:Lane_12",
+          "occupancy:confirmed:Lane_12",
           "slot:confirmed:PEB_003"
         ],
         "to_fleet": true

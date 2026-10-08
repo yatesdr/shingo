@@ -311,6 +311,7 @@ func TestWiden_ATierTwoWallIsAReasonToReAim(t *testing.T) {
 		o.Status = "queued"
 		o.PayloadCode = bp.Code
 	})
+	testutil.MustNoErr(t, db.ReserveSlot(w[2].ID, stuck.ID), "the deeper store holds its slot (a plan alone walls nothing)")
 
 	// The dweller, aimed at the shallower slot, walled by Tier 2.
 	dweller := stageGatedStore(t, db, d, line, w[1], func(o *orders.Order) { o.PayloadCode = bp.Code })

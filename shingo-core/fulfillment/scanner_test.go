@@ -756,3 +756,46 @@ func TestHeldBin_DeclaresItselfAsHeldBinEntry(t *testing.T) {
 			d.entryKinds)
 	}
 }
+
+// triggeringFinder waits like waitFinder, and on its first call triggers the
+// scanner the way an event in mid-pass does (engine.triggerFulfillment), so the
+// pass reruns.
+type triggeringFinder struct {
+	fakeFinder
+	s *Scanner
+}
+
+func (f *triggeringFinder) FindSource(order *orders.Order, intent dispatch.Intent) dispatch.SourceResult {
+	if len(f.calls) == 0 {
+		f.s.Trigger()
+	}
+	return f.fakeFinder.FindSource(order, intent)
+}
+
+// TestScanner_AnOrderParkedThisPassIsNotReAskedInItsRerun: a pass that was
+// triggered while it scanned scans once more (RunOnce's rerun). An order it has
+// just asked and parked under a cause was asked again there, and paid its whole
+// acquisition again, for a state that had not moved for it (the order-22 shape:
+// 43 re-parks in 3 s under one cause). Every trigger also starts a fresh pass of
+// its own (engine.triggerFulfillment), so nothing waits on the rerun to see it
+// again.
+func TestScanner_AnOrderParkedThisPassIsNotReAskedInItsRerun(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	order := seedQueuedRetrieve(f, 7, "dest-07")
+	s := newTestScanner(t, f)
+	finder := &triggeringFinder{fakeFinder: *waitFinder(protocol.QueueWaitingForMaterial, dispatch.QueueParams{}), s: s}
+	s.finder = finder
+
+	s.RunOnce()
+	asked := 0
+	for _, c := range finder.calls {
+		if c.orderID == order.ID {
+			asked++
+		}
+	}
+	if asked != 1 {
+		t.Fatalf("order %d was asked %d times in one pass, want 1: the rerun re-asked an order this pass had "+
+			"just parked", order.ID, asked)
+	}
+}

@@ -24,6 +24,7 @@ import (
 	"shingocore/domain"
 	"shingocore/store/internal/helpers"
 	"shingocore/store/internal/nodetree"
+	"shingocore/store/reservations"
 )
 
 // Order is the order domain entity. The struct lives in shingocore/domain
@@ -1311,6 +1312,53 @@ func LatestHistoryTimesForStatus(db *sql.DB, orderIDs []int64, status protocol.S
 			return nil, err
 		}
 		out[id] = at
+	}
+	return out, rows.Err()
+}
+
+// LaneWitness is what Tier 2 reads of a never-dispatched order that might wall
+// a lane: whether it holds a slot row (an active slot reservation) in that lane,
+// and when it last moved (its newest history row's time; zero when it has none).
+type LaneWitness struct {
+	HoldsSlot bool
+	LastMoved time.Time
+}
+
+// LaneWitnesses reads, in one statement, LaneWitness for each of orderIDs
+// against laneID's slots. An order with no row in orders is absent.
+func LaneWitnesses(db *sql.DB, laneID int64, orderIDs []int64) (map[int64]LaneWitness, error) {
+	if len(orderIDs) == 0 {
+		return nil, nil
+	}
+	ph := make([]string, len(orderIDs))
+	args := make([]any, 0, len(orderIDs)+1)
+	args = append(args, laneID)
+	for i, id := range orderIDs {
+		ph[i] = fmt.Sprintf("$%d", i+2)
+		args = append(args, id)
+	}
+	rows, err := db.Query(`SELECT o.id,
+		       EXISTS (SELECT 1 FROM reservations r JOIN nodes n ON n.id = r.node_id
+		                WHERE r.order_id = o.id AND r.resource_kind = 'slot'
+		                  AND r.`+reservations.ActiveStateSQL("")+` AND n.parent_id = $1),
+		       (SELECT h.created_at FROM order_history h WHERE h.order_id = o.id ORDER BY h.id DESC LIMIT 1)
+		FROM orders o WHERE o.id IN (`+strings.Join(ph, ",")+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("lane witnesses for %d orders: %w", len(orderIDs), err)
+	}
+	defer rows.Close()
+	out := make(map[int64]LaneWitness, len(orderIDs))
+	for rows.Next() {
+		var id int64
+		var w LaneWitness
+		var at sql.NullTime
+		if err := rows.Scan(&id, &w.HoldsSlot, &at); err != nil {
+			return nil, err
+		}
+		if at.Valid {
+			w.LastMoved = at.Time
+		}
+		out[id] = w
 	}
 	return out, rows.Err()
 }

@@ -219,9 +219,10 @@ func TestComplexDispatch_AsksAdmission(t *testing.T) {
 	body := readRepoFile(t, filepath.Join("shingo-core", "dispatch", "complex_dispatch.go"))
 
 	// The solo order and each leg of a pair prepare through prepareComplexHand,
-	// which asks the verdict; the mouths it names are taken in the hand.
+	// each of whose runs (prepareComplexHandWith) asks the verdict.
 	prep := funcBody(t, body, "func (d *Dispatcher) prepareComplexHand(")
-	if !strings.Contains(prep, "admitComplexLanesVerdict(") {
+	run := funcBody(t, body, "func (d *Dispatcher) prepareComplexHandWith(")
+	if !strings.Contains(prep, "prepareComplexHandWith(") || !strings.Contains(run, "admitComplexLanesVerdict(") {
 		t.Fatal("prepareComplexHand does not ask admission before building the order's hand. The " +
 			"gated valve does not cover this: it only stands in front of a gated lane, and neither " +
 			"plant has one")

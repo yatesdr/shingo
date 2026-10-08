@@ -62,15 +62,50 @@ func LaterPickups(steps []Step, i int) []string {
 	return out
 }
 
-// laterRequestPickups is LaterPickups over the request's steps, at intake.
-func laterRequestPickups(steps []protocol.ComplexOrderStep, i int) []string {
-	var out []string
-	for j := i + 1; j < len(steps); j++ {
-		if steps[j].Action == protocol.ActionPickup && steps[j].Node != "" {
-			out = append(out, steps[j].Node)
+// groupDrop is a group drop a resolution walk chose, held for the Q1 check until
+// every step of the plan has its slot (unwallOwnPickups). i indexes the resolved
+// plan; payload and stated are what the drop was resolved with, for the re-ask.
+type groupDrop struct {
+	i       int
+	group   string
+	payload string
+	stated  binresolver.BinTypeStatement
+}
+
+// unwallOwnPickups is Q1 on the FULLY RESOLVED plan: a group drop that stands in
+// front of a pickup this plan makes later in the same lane is re-asked with that
+// lane set aside (storeAvoidingOwnPickup), in place.
+//
+// ── WHY AFTER THE WALK AND NOT IN IT ──────────────────────────────────────
+//
+// The walk resolves steps left to right, so when a swap's drop of the press's full
+// is resolved, the empty it fetches next may still name its GROUP, and a group is
+// not a slot OwnPickupLane can place. The empty then resolved behind the drop, in
+// the same lane, and nothing asked again: order 266 (packed, b6880b5d) left with
+// its drop at LSD_006 in front of its own empty at LSD_009, the gate refused it
+// at the mark, and it stood there for the rest of the run. Asked here, every
+// later pickup is a slot. The reads are the walk's own, moved: one per drop and
+// one per later pickup, plus the lane's when a wall is found.
+//
+// The re-asked drop is checked against the one lane it walled. Reports whether
+// any step moved; a group with nowhere else is the resolver's capacity error.
+func (p *Planner) unwallOwnPickups(steps []Step, drops []groupDrop, asker domain.DigAsker) (bool, error) {
+	moved := false
+	for _, gd := range drops {
+		lane := p.OwnPickupLane(steps[gd.i].Node, LaterPickups(steps, gd.i))
+		if lane == 0 {
+			continue
+		}
+		name, err := p.storeAvoidingOwnPickup(gd.group, lane, gd.payload, gd.stated, asker)
+		if err != nil {
+			return moved, fmt.Errorf("step %d: %w", gd.i, err)
+		}
+		if name != steps[gd.i].Node {
+			steps[gd.i].Node = name
+			moved = true
 		}
 	}
-	return out
+	return moved, nil
 }
 
 // laneExcludingResolver is the resolver's store arm with lanes set aside

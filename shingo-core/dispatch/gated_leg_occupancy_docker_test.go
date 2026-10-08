@@ -67,6 +67,7 @@ func TestGatedLeg_TakesNoOccupancyOnTheLaneItStandsOutsideOf(t *testing.T) {
 		o.Status = StatusQueued
 		o.DeliveryNode = w[2].Name // deeper than the leg's w[0], and not yet dispatched
 	})
+	testutil.MustNoErr(t, db.ReserveSlot(w[2].ID, deeper.ID), "the deeper store holds its slot (a plan alone walls nothing)")
 	_ = deeper
 
 	parent := testdb.CreateOrder(t, db, func(o *orders.Order) {

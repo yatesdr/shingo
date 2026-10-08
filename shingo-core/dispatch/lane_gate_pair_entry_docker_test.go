@@ -111,6 +111,7 @@ func TestGatePair_SameOriginPairSerializesAtTheMouth(t *testing.T) {
 		// through a row. Same order, same depth, same Tier-2 wall.
 		o.Status = "queued"
 	})
+	testutil.MustNoErr(t, db.ReserveSlot(slots[2].ID, blocker.ID), "the deeper store holds its slot (a plan alone walls nothing)")
 
 	// The pair, dispatched exactly as the scanner dispatches: admit, then create.
 	// Both take their inbound mouth rows (same mode shares), both stage behind the

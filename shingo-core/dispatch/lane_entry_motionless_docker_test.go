@@ -72,6 +72,9 @@ func TestLaneEntry_MotionlessWitnessStopsBlocking(t *testing.T) {
 		o.DeliveryNode = s1.Name
 		o.Status = "queued"
 	})
+	// A witness counts only while it holds its slot (a parked order that only
+	// names one is a plan, not a presence); the bound narrows those.
+	testutil.MustNoErr(t, db.ReserveSlot(s1.ID, aged.ID), "the aged witness holds its slot")
 	backdateNewestRow(t, db, aged.ID, motionlessWitnessBound+time.Minute)
 
 	v, err := d.laneEntryCause(laneNode, shallow, s0)
@@ -84,10 +87,14 @@ func TestLaneEntry_MotionlessWitnessStopsBlocking(t *testing.T) {
 	}
 
 	// ── leg 2: the FRESH witness still parks ───────────────────────────────
+	d2 := 2
+	s2 := &nodes.Node{Name: "TEMOT-S2", Enabled: true, ParentID: &laneID, Depth: &d2}
+	testutil.MustNoErr(t, db.CreateNode(s2), "a deeper slot for the fresh witness")
 	fresh := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.DeliveryNode = s1.Name
+		o.DeliveryNode = s2.Name
 		o.Status = "queued"
 	})
+	testutil.MustNoErr(t, db.ReserveSlot(s2.ID, fresh.ID), "the fresh witness holds its slot")
 	v, err = d.laneEntryCause(laneNode, shallow, s0)
 	if err != nil || v.Admitted() || v.Cause() != CauseLaneDeeperPending {
 		t.Fatalf("fresh witness %d: admitted=%v cause=%q err=%v — Tier 2 must still park behind an order "+

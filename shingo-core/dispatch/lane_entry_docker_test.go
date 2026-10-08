@@ -50,10 +50,13 @@ func TestLaneEntryTiers_ParksDeeperPending(t *testing.T) {
 			o.DeliveryNode = s0.Name
 			o.Status = "queued"
 		})
-		_ = testdb.CreateOrder(t, db, func(o *orders.Order) {
+		deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
 			o.DeliveryNode = deliveryFor(laneNode.Name, s1.Name)
 			o.Status = "in_transit"
 		})
+		// Never sent to the fleet (no vendor order), so it walls the lane only
+		// through the slot it holds: a plan alone is not a presence.
+		testutil.MustNoErr(t, db.ReserveSlot(s1.ID, deep.ID), "the deeper store holds its slot")
 
 		v, err := d.laneEntryCause(laneNode, shallow, s0)
 		if err != nil || v.Admitted() || v.Cause() != CauseLaneDeeperPending {

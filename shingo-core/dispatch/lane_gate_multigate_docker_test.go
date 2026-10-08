@@ -221,6 +221,7 @@ func TestMultiGate_SecondGateGetsWindow3sRescue(t *testing.T) {
 		// through a row. Same order, same depth, same Tier-2 wall.
 		o.Status = "queued"
 	})
+	testutil.MustNoErr(t, db.ReserveSlot(w[2].ID, deep.ID), "the deeper store holds its slot (a plan alone walls nothing)")
 
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.SourceNode = a0.Name

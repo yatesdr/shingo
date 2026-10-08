@@ -534,6 +534,81 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 	return acceptance, digWanted, freedLane, widened, releasedIDs
 }
 
+// wakeLanesOfSlots evaluates the lane of each slot an order just stopped holding.
+//
+// ── A SLOT ROW GIVEN UP IS THE OTHER END OF lane-deeper-pending ───────────
+//
+// A never-dispatched deeper store walls a lane only through the slot row it
+// holds there (stillComingToLane: a parked order that only names a slot is a
+// plan, not a presence). Placing its bin is one way the wall ends; giving up the
+// row is the other: a re-made choice that moved (the allocator's reconcile) or a
+// park that releases its holdings. Nothing else wakes the lane, and its dweller
+// waited for the floor: packed 477, behind order 481 whose drop was re-chosen
+// into another lane. Never under a lane mutex: both callers run in the scanner's
+// acquisition, before the valve or the evaluator takes one.
+func (d *Dispatcher) wakeLanesOfSlots(nodeIDs ...int64) {
+	woken := map[int64]bool{}
+	for _, id := range nodeIDs {
+		lane := d.LaneIDsForGateEvent(id)
+		if lane == 0 || woken[lane] {
+			continue
+		}
+		woken[lane] = true
+		d.EvaluateLaneReleases(lane)
+	}
+}
+
+// errOwnDigNotACandidate: the order whose own dig just closed is not a gate
+// candidate at the lane it waits for, so there is nothing to release it as.
+var errOwnDigNotACandidate = errors.New("not a gate candidate at its lane")
+
+// releaseAfterOwnDig is the own-dig resume's release: the robot that summoned the
+// dig stands at its mark, and its tail goes out through the gate's own release
+// (releaseAdmittedCandidate) — the step re-asked against the lane as it stands
+// (rebindGatedDropoff, or releaseGatedRetrieve's pickup re-bind), then appended.
+// One spelling of "a tail is re-asked before it is sent". The dig having opened
+// the lane for this order is the admission; nothing else is asked.
+//
+// nil when it went in. ErrAppendNotOwed when another pass already appended it.
+// errOwnDigNotACandidate when the evaluator cannot see it as a candidate. Any
+// other error is a release that failed, whose cause is already on the row.
+func (d *Dispatcher) releaseAfterOwnDig(order *orders.Order) error {
+	fresh, err := d.db.GetOrder(order.ID)
+	if err != nil || fresh == nil {
+		return fmt.Errorf("own-dig release: reload order %d: %v", order.ID, err)
+	}
+	var steps []resolvedStep
+	if err := json.Unmarshal([]byte(fresh.StepsJSON), &steps); err != nil {
+		return fmt.Errorf("own-dig release: parse steps for order %d: %w", order.ID, err)
+	}
+	w, ok := waitAt(steps, fresh.WaitIndex)
+	if !ok || w.WaitKind != WaitKindLane {
+		return fmt.Errorf("%w: order %d waits at no lane", errOwnDigNotACandidate, order.ID)
+	}
+	lane, err := d.db.GetNode(w.WaitLane)
+	if err != nil || lane == nil {
+		return fmt.Errorf("own-dig release: lane %d for order %d: %v", w.WaitLane, order.ID, err)
+	}
+	cands, err := d.gateStagedForLane(lane)
+	if err != nil {
+		return fmt.Errorf("own-dig release: candidates at lane %s: %w", lane.Name, err)
+	}
+	for _, c := range cands {
+		if c.order.ID != order.ID {
+			continue
+		}
+		in, _, failed := d.releaseAdmittedCandidate(c, lane)
+		switch {
+		case in:
+			return nil
+		case failed:
+			return fmt.Errorf("own-dig release: order %d was not released into lane %s", order.ID, lane.Name)
+		}
+		return ErrAppendNotOwed
+	}
+	return fmt.Errorf("%w: order %d at lane %s", errOwnDigNotACandidate, order.ID, lane.Name)
+}
+
 // releaseAdmittedCandidate releases c, which the classifier admitted, into lane.
 // It returns whether the order went in, the lane its append left it waiting at
 // (0 for none), and whether the release failed — the pass proposes on a failure
@@ -1814,12 +1889,18 @@ func (d *Dispatcher) releaseDweller(c gateCandidate, lane *nodes.Node) (freed bo
 // resolver is handed the LANE'S OWN PARENT and nothing else, so the boundary is
 // structural rather than a check that could be forgotten.
 //
-// ONLY FINAL DROPOFFS, for now. An intermediate staging leg's destination is
-// paired with a later pickup, and the paired-index writer that keeps those two
-// in step does not exist yet — re-aiming one half would send the robot to fetch
-// from a slot it never filled. That is the rule the fungible-dropoff regroup
-// states and applyPlanNode states for the step patch, said a third time; when the
-// paired writer lands, this restriction lifts with it.
+// NOT A RELAY. A drop that a later step of the same plan picks back up from (a
+// relay: the bin is set down and fetched again) is not re-aimed: re-aiming one
+// half would send the robot to fetch from a slot it never filled, and the
+// paired-index writer that would move both halves together does not exist. Any
+// other mid-trip drop IS widened (C2b, 2026-10-08). This used to read "only final
+// dropoffs", which is broader than its reason: a swap's drop of the press's full,
+// followed by an empty fetched from a different slot, was refused, and order 266
+// stood at the mark for the rest of a packed run holding the press's bin.
+//
+// A widened mid-trip drop moves the step, not the order's delivery (the trip's
+// end), and the steps after it may now enter a lane the robot is not in: each
+// such entry gets its own wait (gateLaterLaneEntries).
 //
 // FOUR RULES, VERBATIM FROM redirectStoreOffDugLane, because they are the same
 // decision at a different moment: no re-aim without a resolver, none for a
@@ -1833,10 +1914,10 @@ func (d *Dispatcher) widenDropoffToGroup(order *orders.Order, lane *nodes.Node, 
 	if d.resolver == nil || order.OriginClass == protocol.OriginClassNoDemand || lane.ParentID == nil {
 		return nil, nil
 	}
-	if !d.entryIsFinalDropoff(order, entryIndex) {
-		d.dbg("lane gate: order %d's entry at step %d is an intermediate leg — not widening, its "+
-			"destination is paired with a later pickup and the paired-index writer does not exist yet",
-			order.ID, entryIndex)
+	final := d.entryIsFinalDropoff(order, entryIndex)
+	if !final && relaysFromDrop(order, entryIndex) {
+		d.dbg("lane gate: order %d's drop at step %d is picked back up later in the plan (a relay) — not "+
+			"widening; the paired-index writer that would move both halves does not exist", order.ID, entryIndex)
 		return nil, nil
 	}
 	group, err := d.db.GetNode(*lane.ParentID)
@@ -1884,11 +1965,20 @@ func (d *Dispatcher) widenDropoffToGroup(order *orders.Order, lane *nodes.Node, 
 		return nil, err
 	}
 	d.stampBound(order, result.Node)
-	if err := applyDeliveryNodeAtStep(d.db, order, result.Node.Name, entryIndex); err != nil {
-		return nil, err
+	if final {
+		if err := applyDeliveryNodeAtStep(d.db, order, result.Node.Name, entryIndex); err != nil {
+			return nil, err
+		}
+	} else {
+		applyPlanNode(d.db, order, result.Node.Name, entryIndex, protocol.ActionDropoff)
 	}
 	if err := d.rebindWaitLane(order, newLane.ID); err != nil {
 		return nil, err
+	}
+	if !final {
+		if err := d.gateLaterLaneEntries(order, entryIndex, newLane.ID); err != nil {
+			return nil, err
+		}
 	}
 	d.refreshOrderBinDestinations(order)
 
@@ -1922,6 +2012,110 @@ func (d *Dispatcher) widenDropoffToGroup(order *orders.Order, lane *nodes.Node, 
 // exactly the node this step filled. Re-aiming one half sends the robot to fetch
 // from a slot it never filled, which is the same rule the fungible-dropoff
 // regroup states and applyPlanNode states for the step patch.
+// relaysFromDrop reports whether a step after entryIndex picks up from the very
+// node the drop at entryIndex names: a relay. Unreadable answers yes, the side
+// that does not re-aim.
+func relaysFromDrop(order *orders.Order, entryIndex int) bool {
+	var steps []resolvedStep
+	if json.Unmarshal([]byte(order.StepsJSON), &steps) != nil || entryIndex < 0 || entryIndex >= len(steps) {
+		return true
+	}
+	at := steps[entryIndex].Node
+	for i := entryIndex + 1; i < len(steps); i++ {
+		if steps[i].Action == protocol.ActionPickup && steps[i].Node == at {
+			return true
+		}
+	}
+	return false
+}
+
+// gateLaterLaneEntries puts a lane wait in front of each step after entryIndex
+// that enters a lane the robot is not in, starting from inLane (where the widened
+// drop now puts it). It is the splice's rule 2 (a wait per lane change) applied to
+// the rest of a plan whose entry lane moved at release: the plan was spliced for
+// the lane it pencilled, and a later step in that lane was "still in the lane"
+// then, so it carries no wait of its own. An existing lane wait is kept and moves
+// the robot into its lane. The junction (order_bins) shifts with the plan, as the
+// splice's does (reindexOrderBinsForSplice).
+func (d *Dispatcher) gateLaterLaneEntries(order *orders.Order, entryIndex int, inLane int64) error {
+	var steps []resolvedStep
+	if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err != nil {
+		return fmt.Errorf("gate later entries: parse steps for order %d: %w", order.ID, err)
+	}
+	out := append(make([]resolvedStep, 0, len(steps)+1), steps[:entryIndex+1]...)
+	moved := map[int]int{}
+	inside := inLane
+	for i := entryIndex + 1; i < len(steps); i++ {
+		s := steps[i]
+		if s.Action == protocol.ActionWait {
+			if s.WaitKind == WaitKindLane {
+				inside = s.WaitLane
+			}
+		} else if (s.Action == protocol.ActionPickup || s.Action == protocol.ActionDropoff) && s.Node != "" {
+			lane, err := d.laneOfStep(s.Node)
+			if err != nil {
+				return fmt.Errorf("gate later entries: order %d step %d: %w", order.ID, i, err)
+			}
+			switch {
+			case lane == nil:
+				inside = 0
+			case lane.ID != inside:
+				t, gated, err := d.gateTargetForLane(lane)
+				if err != nil {
+					return err
+				}
+				if !gated {
+					return fmt.Errorf("gate later entries: %w: %s", nodes.ErrLaneUnmarked, lane.Name)
+				}
+				out = append(out, resolvedStep{Action: protocol.ActionWait, Node: t.pointFor(order.ID),
+					WaitKind: WaitKindLane, WaitLane: lane.ID})
+				inside = lane.ID
+			}
+		}
+		if len(out) != i {
+			moved[i] = len(out)
+		}
+		out = append(out, s)
+	}
+	if len(out) == len(steps) {
+		return nil
+	}
+	patched, err := json.Marshal(out)
+	if err != nil {
+		return fmt.Errorf("gate later entries: marshal steps for order %d: %w", order.ID, err)
+	}
+	if err := d.db.UpdateOrderStepsJSON(order.ID, string(patched)); err != nil {
+		return fmt.Errorf("gate later entries: persist steps for order %d: %w", order.ID, err)
+	}
+	order.StepsJSON = string(patched)
+	rows, err := d.db.ListOrderBins(order.ID)
+	if err != nil {
+		return fmt.Errorf("gate later entries: read order_bins for order %d: %w", order.ID, err)
+	}
+	shift := map[int]int{}
+	for _, r := range rows {
+		if to, ok := moved[r.StepIndex]; ok {
+			shift[r.StepIndex] = to
+		}
+	}
+	if len(shift) > 0 {
+		if err := d.db.ShiftOrderBinSteps(order.ID, shift); err != nil {
+			return fmt.Errorf("gate later entries: shift order_bins for order %d: %w", order.ID, err)
+		}
+	}
+	return nil
+}
+
+// laneOfStep is the lane a step's node stands in, or nil when it is not a lane
+// slot (or not a Core node, as a wait's map point is not).
+func (d *Dispatcher) laneOfStep(name string) (*nodes.Node, error) {
+	node, err := d.db.GetNodeByDotName(name)
+	if err != nil || node == nil {
+		return nil, nil
+	}
+	return d.db.LaneForNode(node.ID)
+}
+
 func (d *Dispatcher) entryIsFinalDropoff(order *orders.Order, entryIndex int) bool {
 	var steps []resolvedStep
 	if json.Unmarshal([]byte(order.StepsJSON), &steps) != nil {

@@ -1024,6 +1024,12 @@ func (db *DB) LatestOrderHistoryTimes(orderIDs []int64) (map[int64]time.Time, er
 	return orders.LatestHistoryTimes(db.DB, orderIDs)
 }
 
+// LaneWitnesses is orders.LaneWitnesses: Tier 2's read of never-dispatched
+// orders against one lane.
+func (db *DB) LaneWitnesses(laneID int64, orderIDs []int64) (map[int64]orders.LaneWitness, error) {
+	return orders.LaneWitnesses(db.DB, laneID, orderIDs)
+}
+
 // OrderEverReachedStatus reports whether the order ever recorded the status —
 // see orders.EverReachedStatus.
 func (db *DB) OrderEverReachedStatus(orderID int64, status string) (bool, error) {

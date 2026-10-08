@@ -330,3 +330,226 @@ func TestC2bPin_AnIntakeDropNeverWallsItsOwnPickup(t *testing.T) {
 		})
 	}
 }
+
+// TestC2bPin_ADropNeverWallsAGroupPickupResolvedAfterIt is order 266's shape
+// (packed, 297290ba..b6880b5d): the swap's empty pickup NAMES ITS GROUP, so at
+// the moment the drop is resolved the plan's later pickup has no slot yet, and the
+// Q1 check (plan.OwnPickupLane) skipped it. The empty then resolved behind the
+// drop in the same lane; at the mark the gate refused the drop and the swap stood
+// there for the rest of the run, holding the press's bin. The check runs on the
+// fully resolved plan now.
+//
+// The lane holds the only empty (behind a free mouth) and, deepest, a full of the
+// same part, so like-kind prefers it for the drop. Alone in its group, the swap
+// waits under the capacity cause. With a free second lane, the drop goes there.
+func TestC2bPin_ADropNeverWallsAGroupPickupResolvedAfterIt(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		secondLane bool
+	}{{"one lane: it waits", false}, {"two lanes: the other", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db := testDB(t)
+			sd := testdb.SetupStandardData(t, db)
+			d, _ := newTestDispatcherWithResolver(t, db)
+			prefix := "C2BW1"
+			if tc.secondLane {
+				prefix = "C2BW2"
+			}
+			grp, laneID, mouth, mid := c2bSelfBurialLane(t, db, prefix, "")
+			d2 := 2
+			deepest := &nodes.Node{Name: prefix + "-S2", Enabled: true, ParentID: &laneID, Depth: &d2}
+			testutil.MustNoErr(t, db.CreateNode(deepest), "a third slot")
+			testdb.CreateBinAtNode(t, db, sd.Payload.Code, deepest.ID, prefix+"-SAMEKIND")
+			testdb.CreateBinAtNode(t, db, "", mid.ID, prefix+"-EMPTY")
+			if tc.secondLane {
+				g, err := db.GetNodeByDotName(grp)
+				g = testutil.Must(t, g, err, "read the group")
+				laneType, err := db.GetNodeTypeByCode(protocol.NodeClassLANE)
+				testutil.MustNoErr(t, err, "LANE type")
+				lane2 := &nodes.Node{Name: prefix + "-LANE2", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: &g.ID}
+				testutil.MustNoErr(t, db.CreateNode(lane2), "create the second lane")
+				d0, d1 := 0, 1
+				testutil.MustNoErr(t, db.CreateNode(&nodes.Node{Name: prefix + "-L2S0", Enabled: true, ParentID: &lane2.ID, Depth: &d0}), "slot")
+				testutil.MustNoErr(t, db.CreateNode(&nodes.Node{Name: prefix + "-L2S1", Enabled: true, ParentID: &lane2.ID, Depth: &d1}), "slot")
+			}
+			press, press2 := lineNode(t, db, prefix+"-PRESS"), lineNode(t, db, prefix+"-PRESS2")
+			prResident(t, db, press, sd.BinType.ID, sd.Payload.Code, prefix+"-FULL")
+
+			uuid := strings.ToLower(prefix)
+			d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+				OrderUUID: uuid, PayloadCode: sd.Payload.Code, Quantity: 1, ProcessNode: press.Name,
+				Steps: []protocol.ComplexOrderStep{
+					prPick(press.Name), prDrop(grp),
+					{Action: protocol.ActionPickup, Node: grp, Empty: true}, prDrop(press2.Name),
+				},
+			})
+			prScanPass(t, d, db, uuid)
+			o := prReloadUUID(t, db, uuid)
+			var steps []resolvedStep
+			testutil.MustNoErr(t, json.Unmarshal([]byte(o.StepsJSON), &steps), "read the plan")
+			if red := selfBurial(t, db, steps); len(red) != 0 {
+				t.Fatalf("the swap's plan walls its own pickup: %v (status %s, drop lane %d's mouth %s)",
+					red, o.Status, laneID, mouth.Name)
+			}
+			if !tc.secondLane {
+				if o.Status != StatusQueued || o.QueueCause != string(CauseNGRPResolve) {
+					t.Fatalf("with its group's only lane walling its own pickup the swap is %s under %q, want %s "+
+						"under %q", o.Status, o.QueueCause, StatusQueued, CauseNGRPResolve)
+				}
+				return
+			}
+			steps = withoutInboundLaneWaits(steps)
+			if !strings.HasPrefix(steps[1].Node, prefix+"-L2S") {
+				t.Fatalf("with a free second lane the swap's drop is at %q, want the second lane (status %s)",
+					steps[1].Node, o.Status)
+			}
+		})
+	}
+}
+
+// midTripSwapAtMark stages a coordinated swap whose interior drop (step 3) is
+// pencilled into lane A, with a free second lane B in the same group, and
+// releases it from its station wait so the gate takes it at lane A's mark.
+// emptyAt is where it fetches its empty next (step 4).
+func midTripSwapAtMark(t *testing.T, db *store.DB, d *Dispatcher, prefix string, fillLaneA bool,
+	emptyAt func(mouth, deep *nodes.Node) *nodes.Node) (swap *orders.Order, laneA int64, mouth, deep *nodes.Node, laneB *nodes.Node) {
+	t.Helper()
+	sd := testdb.SetupStandardData(t, db)
+	grp, laneA, mouth, deep := c2bSelfBurialLane(t, db, prefix, prefix+"-WAIT")
+	g, err := db.GetNodeByDotName(grp)
+	g = testutil.Must(t, g, err, "read the group")
+	laneType, err := db.GetNodeTypeByCode(protocol.NodeClassLANE)
+	testutil.MustNoErr(t, err, "LANE type")
+	laneB = &nodes.Node{Name: prefix + "-LANEB", IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: &g.ID}
+	testutil.MustNoErr(t, db.CreateNode(laneB), "create lane B")
+	d0, d1 := 0, 1
+	testutil.MustNoErr(t, db.CreateNode(&nodes.Node{Name: prefix + "-B0", Enabled: true, ParentID: &laneB.ID, Depth: &d0}), "slot")
+	testutil.MustNoErr(t, db.CreateNode(&nodes.Node{Name: prefix + "-B1", Enabled: true, ParentID: &laneB.ID, Depth: &d1}), "slot")
+	press, press2 := lineNode(t, db, prefix+"-PRESS"), lineNode(t, db, prefix+"-PRESS2")
+	empty := emptyAt(mouth, deep)
+	if !fillLaneA || (empty.ID != mouth.ID && empty.ID != deep.ID) {
+		testdb.CreateBinAtNode(t, db, "", empty.ID, prefix+"-EMPTY")
+	}
+	if fillLaneA {
+		testdb.CreateBinAtNode(t, db, sd.Payload.Code, mouth.ID, prefix+"-FILL0")
+		testdb.CreateBinAtNode(t, db, sd.Payload.Code, deep.ID, prefix+"-FILL1")
+	}
+	plan := []resolvedStep{
+		{Action: protocol.ActionWait, Node: press.Name, WaitKind: WaitKindStation},
+		{Action: protocol.ActionPickup, Node: press.Name},
+		{Action: protocol.ActionWait, Node: prefix + "-WAIT", WaitKind: WaitKindLane, WaitLane: laneA},
+		{Action: protocol.ActionDropoff, Node: mouth.Name, Group: grp},
+		{Action: protocol.ActionPickup, Node: empty.Name, Empty: true},
+		{Action: protocol.ActionDropoff, Node: press2.Name},
+	}
+	planJSON, err := json.Marshal(plan)
+	testutil.MustNoErr(t, err, "marshal the swap's plan")
+	swap = testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.EdgeUUID = strings.ToLower(prefix) + "-swap"
+		o.StationID = "line-1"
+		o.OrderType = OrderTypeComplex
+		o.Coordinated = true
+		o.PayloadCode = sd.Payload.Code
+		o.SourceNode = press.Name
+		o.DeliveryNode = press2.Name
+		o.Status = protocol.StatusStaged
+	})
+	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(swap.ID, string(planJSON)), "persist the plan")
+	testutil.MustNoErr(t, db.UpdateOrderVendor(swap.ID, prefix+"-V1", "WAITING", "AMR-1"), "set the vendor order")
+	atStation, err := db.GetOrder(swap.ID)
+	testutil.MustNoErr(t, err, "reload the swap")
+	d.HandleOrderRelease(d.syntheticEnvelope(atStation.StationID), &protocol.OrderRelease{OrderUUID: atStation.EdgeUUID})
+	d.EvaluateLaneReleases(laneA)
+	after, err := db.GetOrder(swap.ID)
+	testutil.MustNoErr(t, err, "reload after the gate")
+	return after, laneA, mouth, deep, laneB
+}
+
+// widenedMidTrip asserts the swap's interior drop was re-aimed into lane B, the
+// order is past lane A's mark, its delivery stays the press, and every lane wait
+// still gates the entry after it.
+func widenedMidTrip(t *testing.T, d *Dispatcher, db *store.DB, o *orders.Order, laneB *nodes.Node, press2 string) []resolvedStep {
+	t.Helper()
+	var steps []resolvedStep
+	testutil.MustNoErr(t, json.Unmarshal([]byte(o.StepsJSON), &steps), "read the plan")
+	var drop *resolvedStep
+	for i := range steps {
+		if steps[i].Action == protocol.ActionDropoff && steps[i].Node != press2 {
+			drop = &steps[i]
+			break
+		}
+	}
+	if drop == nil || !strings.HasPrefix(drop.Node, strings.TrimSuffix(laneB.Name, "-LANEB")+"-B") {
+		t.Fatalf("the interior drop is %+v, want it widened into %s: a full or self-walling pencilled lane "+
+			"left the robot at the mark for the rest of the run (order 266)", drop, laneB.Name)
+	}
+	if o.WaitIndex < 2 {
+		t.Fatalf("the swap is still at lane A's mark (wait index %d, cause %q)", o.WaitIndex, o.QueueCause)
+	}
+	if o.DeliveryNode != press2 {
+		t.Errorf("delivery_node = %q, want the trip's end %s: a mid-trip widen moves the drop, not the delivery",
+			o.DeliveryNode, press2)
+	}
+	if err := d.assertEachWaitGatesItsEntry(steps); err != nil {
+		t.Errorf("the widened plan no longer holds: %v", err)
+	}
+	return steps
+}
+
+// TestC2bPin_AMidTripDropThatWouldWallItsOwnPickupIsWidened is order 266 at the
+// mark: the pencilled drop stands in front of the trip's own empty, the gate sets
+// the lane aside, and with a free sibling lane the drop is widened there; the
+// later pickup in lane A gets its own wait. It used to be refused ("an
+// intermediate leg — not widening"), and the robot stood at the mark holding the
+// press's bin.
+func TestC2bPin_AMidTripDropThatWouldWallItsOwnPickupIsWidened(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcherWithResolver(t, db)
+	o, laneA, _, deep, laneB := midTripSwapAtMark(t, db, d, "C2BWD1", false,
+		func(_, deep *nodes.Node) *nodes.Node { return deep })
+	steps := widenedMidTrip(t, d, db, o, laneB, "C2BWD1-PRESS2")
+	for i, s := range steps {
+		if s.Action == protocol.ActionPickup && s.Node == deep.Name {
+			if i == 0 || steps[i-1].Action != protocol.ActionWait || steps[i-1].WaitLane != laneA {
+				t.Fatalf("the later pickup in lane A (step %d) has no wait in front of it: the robot would "+
+					"drive into lane %d ungated", i, laneA)
+			}
+		}
+	}
+	if red := selfBurial(t, db, steps); len(red) != 0 {
+		t.Fatalf("%v", red)
+	}
+}
+
+// TestC2bPin_AMidTripDropIntoALaneFullAtArrivalIsWidened: the pencilled lane
+// filled while the robot drove; a free sibling lane takes the drop.
+func TestC2bPin_AMidTripDropIntoALaneFullAtArrivalIsWidened(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcherWithResolver(t, db)
+	elsewhere := lineNode(t, db, "C2BWD2-EMPTYSRC")
+	o, _, _, _, laneB := midTripSwapAtMark(t, db, d, "C2BWD2", true,
+		func(_, _ *nodes.Node) *nodes.Node { return elsewhere })
+	widenedMidTrip(t, d, db, o, laneB, "C2BWD2-PRESS2")
+}
+
+// TestC2bPin_ARelayDropIsNotWidened: a later step picks from the drop's own slot
+// (a relay), so re-aiming the drop would send the robot back to a slot it never
+// filled. The rule the widen keeps, narrowed to its reason: lane A has no room at
+// arrival, the relay is not widened, and the swap waits at the mark.
+func TestC2bPin_ARelayDropIsNotWidened(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcherWithResolver(t, db)
+	o, laneA, mouth, _, _ := midTripSwapAtMark(t, db, d, "C2BWD3", true,
+		func(mouth, _ *nodes.Node) *nodes.Node { return mouth })
+	var steps []resolvedStep
+	testutil.MustNoErr(t, json.Unmarshal([]byte(o.StepsJSON), &steps), "read the plan")
+	if steps[3].Node != mouth.Name || o.WaitIndex != 1 {
+		t.Fatalf("the relay's drop is %q at wait index %d, want it left at %s in lane %d at the mark: a later "+
+			"step picks from that slot", steps[3].Node, o.WaitIndex, mouth.Name, laneA)
+	}
+}
