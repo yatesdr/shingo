@@ -1,19 +1,19 @@
 // A wrong spare that lands on a keep-staged spot after the last decision, end
 // to end: the state it leaves, and the operator's way out of it.
 //
-// No decision point re-judges a spot whose spare changes after the last
-// reconcile. A consume cell's swap then waits at Core for the right part, the
-// refill waits behind the wrong bin, and REQUEST is refused while the swap is in
-// flight. That is a state that needs a person. The exit is to cancel the swap
-// and REQUEST again: the cancel is an order of the line ending, so the keeper
-// re-reads the spot and sends the wrong spare back, the refill lands, and the
-// new swap takes it.
+// The call found the spot bare, so its swap fetches from the market and stages
+// its carrier on the spot. A wrong part then lands there by hand. Nothing on the
+// Edge moves it: the keeper orders nothing onto an occupied spot, and Core holds
+// the swap at its staging stop, as it holds any order whose staging node is
+// occupied. The exit is a person moving the wrong bin off the spot at Core; the
+// held swap then goes, fetching its carrier from the market.
 //
 //go:build docker
 
 package scenarios
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -32,12 +32,12 @@ import (
 	edgeharness "shingoedge/testharness"
 )
 
-func TestScenario_KeepStagedWrongSpare_CancelAndRequestIsTheExit(t *testing.T) {
+func TestScenario_KeepStagedWrongSpare_APersonsMoveIsTheExit(t *testing.T) {
 	core := startKeepStagedCore(t)
 	coreDB, sim := core.eng.DB(), core.sim
 	const (
-		line, spot, market, dest = "KSW-LINE", "KSW-SPOT", "KSW-MKT", "KSW-DEST"
-		partA, partC             = "KSW-PA", "KSW-PC"
+		line, spot, market, dest, aside = "KSW-LINE", "KSW-SPOT", "KSW-MKT", "KSW-DEST", "KSW-ASIDE"
+		partA, partC                    = "KSW-PA", "KSW-PC"
 	)
 
 	// ── Core: the cell, its spot, a market of one-bin slots, no stock of A yet ──
@@ -55,6 +55,7 @@ func TestScenario_KeepStagedWrongSpare_CancelAndRequestIsTheExit(t *testing.T) {
 	}
 	lineNode, spotNode := node(&corenodes.Node{Name: line}), node(&corenodes.Node{Name: spot})
 	node(&corenodes.Node{Name: dest})
+	node(&corenodes.Node{Name: aside})
 	mkt := node(&corenodes.Node{Name: market, IsSynthetic: true, NodeTypeID: &ngrp.ID})
 	var slots []*corenodes.Node
 	for i := 1; i <= 6; i++ {
@@ -166,118 +167,76 @@ func TestScenario_KeepStagedWrongSpare_CancelAndRequestIsTheExit(t *testing.T) {
 	}
 	settle()
 
-	// ── the call, against a dry market: the swap and one refill wait (one in flight at a time) ──
+	// ── the call, against a dry market: the swap fetches from the market, no refill ──
 	_, err = edge.Engine.RequestNodeMaterial(nodeID, 1)
 	mustNil(t, err, "call")
 	settle()
 	legs, refills, _ := rows()
-	if len(legs) != 2 || len(refills) != 1 {
-		t.Fatalf("call made legs=%d refills=%d, want 2 and 1 (bare spot, one refill in flight)", len(legs), len(refills))
+	if len(legs) != 2 || len(refills) != 0 {
+		t.Fatalf("call made legs=%d refills=%d, want 2 and 0 (a request orders nothing for the spot)", len(legs), len(refills))
 	}
 
 	// ── after that decision, a wrong part lands on the spot, then stock of A ──
-	full("KSW-WRONG", partC, spotNode)
+	wrongBin := full("KSW-WRONG", partC, spotNode)
 	full("KSW-A1", partA, slots[0])
 	full("KSW-A2", partA, slots[1])
 	core.eng.RunFulfillmentScan()
 	settle()
 
 	// THE STATE. What the station and Core's order page say about it.
-	for _, o := range append(append([]domain.Order{}, legs...), refills...) {
+	for _, o := range legs {
 		c, e := coreOf(o), edgeRow(o)
 		t.Logf("WEDGE %s %s->%s %s | Core: status=%s cause=%q reason=%q | Edge: status=%s reason=%q code=%q",
 			o.OrderType, o.SourceNode, o.DeliveryNode, o.PayloadCode,
 			c.Status, c.QueueCause, c.QueueReason, e.Status, e.QueueReason, e.QueueCode)
-		if c.VendorOrderID != "" {
-			t.Errorf("%s %d went to the fleet with a wrong part on the spot", o.OrderType, o.ID)
+	}
+	for _, o := range legs {
+		if c := coreOf(o); c.VendorOrderID != "" {
+			t.Fatalf("Core sent %s %d to the fleet with a wrong bin on its staging spot", o.OrderType, o.ID)
 		}
 	}
-	// The station reads Core's CURRENT wait for each refill. Each refill entered
-	// the queue waiting for material in a dry market; it now waits for its slot
-	// behind the wrong part, and the station says so.
-	for _, o := range refills {
-		if c, e := coreOf(o), edgeRow(o); e.QueueReason != c.QueueReason {
-			t.Errorf("refill %d: the station reads %q, Core %q", o.ID, e.QueueReason, c.QueueReason)
-		}
-	}
-	// And a wait that does not change sends nothing more, pass after pass.
-	updates := func() int {
-		var n int
-		mustNil(t, core.eng.DB().DB.QueryRow(`SELECT COUNT(*) FROM outbox WHERE msg_type = $1`,
-			protocol.TypeOrderUpdate).Scan(&n), "count order updates")
-		return n
-	}
-	before := updates()
-	for i := 0; i < 5; i++ {
-		core.eng.RunFulfillmentScan()
-		settle()
-	}
-	if n := updates() - before; n != 0 {
-		t.Errorf("five scan passes with nothing changed sent %d order updates, want 0", n)
-	}
-	if _, err := edge.Engine.RequestNodeMaterial(nodeID, 1); err == nil {
-		t.Fatal("REQUEST was accepted with the swap in flight; the state is supposed to need the cancel")
+	// Nothing on the Edge moves the wrong bin or orders onto the spot it holds.
+	mustNil(t, edge.Engine.ResumeKeepStaged(nodeID), "run the keeper")
+	settle()
+	if _, refills, returns := rows(); len(refills) != 0 || len(returns) != 0 {
+		t.Fatalf("the keeper ordered refills=%d returns=%d with the wrong bin standing, want none", len(refills), len(returns))
 	}
 
-	// ── THE EXIT: cancel the swap, then REQUEST ──
-	for _, leg := range legs {
-		if e := edgeRow(leg); !protocol.IsTerminal(e.Status) {
-			mustNil(t, edge.Engine.OrderManager().AbortOrder(leg.ID), "cancel swap leg")
+	// THE EXIT: a person moves the wrong bin off the spot at Core. The
+	// manual-order door builds this request and hands it to this intake.
+	moveReq := &protocol.OrderRequest{
+		OrderUUID: "ksw-person-move", OrderType: protocol.OrderTypeMove, SourceNode: spot, DeliveryNode: aside,
+		Quantity: 1, OriginClass: protocol.OriginClassNoDemand,
+	}
+	env, err := protocol.NewEnvelope(protocol.TypeOrderRequest,
+		protocol.Address{Role: protocol.RoleCore, Station: "core-operator"}, protocol.Address{Role: protocol.RoleCore}, moveReq)
+	mustNil(t, err, "envelope")
+	core.eng.Dispatcher().HandleOrderRequest(env, moveReq)
+	var move *coreorders.Order
+	eventually("the person's move to go to the fleet", func() bool {
+		m, err := coreDB.GetOrderByUUID("ksw-person-move")
+		if err != nil || m.VendorOrderID == "" {
+			return false
 		}
-	}
-	settle()
-	_, err = edge.Engine.RequestNodeMaterial(nodeID, 1)
-	mustNil(t, err, "REQUEST after the cancel")
-	settle()
-	legs2, refills2, returns := rows()
-	if len(returns) != 1 || returns[0].PayloadCode != partC || returns[0].DeliveryNode != market {
-		t.Fatalf("returns = %+v, want one sending the %s spare back to %s carrying it", returns, partC, market)
-	}
-	var newLegs []domain.Order
-	for _, l := range legs2 {
-		if l.ID > legs[len(legs)-1].ID {
-			newLegs = append(newLegs, l)
-		}
-	}
-	if len(newLegs) != 2 {
-		t.Fatalf("the REQUEST made %d swap legs, want 2", len(newLegs))
-	}
-	// One refill is already coming, and at most one is in flight, so neither the
-	// keeper's return nor the REQUEST adds another.
-	for _, r := range refills2 {
-		if r.ID > returns[0].ID {
-			t.Errorf("refill %d written after the return: the one already coming should have sufficed", r.ID)
-		}
-	}
-	if len(refills2) != 1 {
-		t.Fatalf("refills coming = %d, want the 1 from the call", len(refills2))
-	}
-
-	// The return goes, a refill lands, the new swap takes the right spare.
-	eventually("the return to go to the fleet", func() bool { return coreOf(returns[0]).VendorOrderID != "" })
-	ret := coreOf(returns[0])
-	sim.DriveSimpleLifecycle(ret.VendorOrderID)
-	var landed *coreorders.Order
-	eventually("a refill to go to the fleet once the spot clears", func() bool {
-		for _, r := range refills2 {
-			if c := coreOf(r); c.VendorOrderID != "" {
-				landed = c
-				return true
-			}
-		}
-		return false
+		move = m
+		return true
 	})
-	sim.DriveSimpleLifecycle(landed.VendorOrderID)
+	if move.BinID == nil || *move.BinID != wrongBin.ID {
+		t.Fatalf("the person's move holds bin %v, want the wrong spare %d", move.BinID, wrongBin.ID)
+	}
+	sim.DriveSimpleLifecycle(move.VendorOrderID)
+
+	// The held swap goes once the spot has cleared, its carrier from the market.
 	var supply *coreorders.Order
-	eventually("the new swap to take the right spare", func() bool {
-		for _, l := range newLegs {
-			c := coreOf(l)
-			if c.VendorOrderID != "" && c.BinID != nil && landed.BinID != nil && *c.BinID == *landed.BinID {
+	eventually("the held swap to go once the spot clears", func() bool {
+		core.eng.RunFulfillmentScan()
+		for _, l := range legs {
+			if c := coreOf(l); c.VendorOrderID != "" && strings.HasPrefix(c.SourceNode, market+"-") {
 				supply = c
 				return true
 			}
 		}
 		return false
 	})
-	t.Logf("EXIT: return %d, refill %d landed bin %d, new swap leg %d took it", ret.ID, landed.ID, *landed.BinID, supply.ID)
+	t.Logf("EXIT: move %d cleared %s, swap leg %d went from %s", move.ID, spot, supply.ID, supply.SourceNode)
 }

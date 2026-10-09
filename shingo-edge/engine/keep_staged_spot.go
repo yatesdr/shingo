@@ -14,7 +14,7 @@ import (
 // A keep-staged claim keeps one spare on its spot. A REQUEST's swap fetches its
 // carrier from there when a right spare stands on it (refillPickup), and from
 // the inbound source otherwise, exactly as a line without a spot does
-// (spareToTake). Nothing about the spot is stored on Edge: what stands there is
+// (requestClaim). Nothing about the spot is stored on Edge: what stands there is
 // Core's answer, read in the occupancy call the request already makes, and what
 // is coming is Edge's own order rows. Every arrival at the spot is a plain order
 // — a retrieve from the inbound source, or nothing — and decideSpot, the
@@ -161,20 +161,18 @@ func (p spotPlan) orders() int {
 
 // reconcileSpot is the arithmetic of what the spot needs. It is pure, and every
 // caller asks it the same question under the cell's prime lock: decideSpot (the
-// request, the sweep and an order's end), changeover start and cancel, and the
-// save that clears the flag:
+// keeper: the sweep, a lift at the spot and an order's end), changeover start
+// and cancel, and the save that clears the flag:
 //
 //   - present: a bin stands on the spot (spotRead.occupied, known);
 //   - right:   that bin suits this claim (spareIsRight): a full by its part,
 //     an empty by its carrier, asked as Core asks it at the pickup;
 //   - coming:  this line's non-terminal plain orders bound for the spot, for the
 //     claim's part and role (spotComing);
-//   - consumes: 1 when the plan being applied lifts the spare;
+//   - consumes: 1 when the plan being applied lifts the spare — a changeover's
+//     legs, planned and created together; the keeper passes 0, because it
+//     orders behind a lift only once the lift has happened;
 //   - target:  1, or 0 when the claim no longer keeps a spare.
-//
-// A bare spot with a swap about to consume asks for two: one the swap eats, one
-// to stand after it. decideSpot sends the first and the second once it lands,
-// never two in flight.
 func reconcileSpot(c *processes.NodeClaim, present, right bool, coming, consumes, target int) spotPlan {
 	if spotNode(c) == "" {
 		return spotPlan{}
@@ -271,37 +269,60 @@ func (r spotRead) lessLeaving(leaving int) spotRead {
 	return r
 }
 
+// spotAtRequest is what a REQUEST knows about a keep-staged claim's spot: Core's
+// read of it, and from the line's rows whether its spare is leaving and how many
+// refills are on their way to it.
+type spotAtRequest struct {
+	read    spotRead
+	leaving bool
+	coming  int
+}
+
+// takesSpare says the request takes the spare standing on the spot: Core says a
+// right one stands there (spareIsRight) and no return of the line is taking it.
+func (s spotAtRequest) takesSpare(c *processes.NodeClaim) bool {
+	return s.read.known && spareIsRight(c, s.read) && !s.leaving
+}
+
+// readSpotAtRequest reads the line's rows for a keep-staged claim whose spot Core
+// answered for; nothing for any other claim. It fails closed: a request that
+// cannot tell what is leaving or coming takes neither the spare nor a market
+// carrier, and the next request re-asks.
+func (e *Engine) readSpotAtRequest(node *processes.Node, claim *processes.NodeClaim, read spotRead) (spotAtRequest, error) {
+	s := spotAtRequest{read: read}
+	if spotNode(claim) == "" || !read.known {
+		return s, nil
+	}
+	rows, err := e.db.ListActiveOrdersByProcessNode(node.ID)
+	if err != nil {
+		return s, fmt.Errorf("node %s: cannot tell what is leaving or coming to %s (%w) — the next request will re-ask",
+			node.Name, spotNode(claim), err)
+	}
+	s.leaving = spotLeaving(rows, spotNode(claim), claim.CoreNodeName) > 0
+	s.coming = spotComing(rows, claim)
+	return s, nil
+}
+
 // requestClaim is the claim a REQUEST builds its plan from, for both roles, and
-// whether that plan takes the spare. claim is the line's claim and swapClaim the
-// one the request would build from (its evac destination already adjusted).
+// whether that plan takes the spare. swapClaim is the one the request would build
+// from (its evac destination already adjusted).
 //
-// THE SPARE WHEN IT STANDS, THE MARKET WHEN IT DOES NOT. When Core says a right
-// spare stands on the spot (spareIsRight) and no return of the line is taking it
-// away, the swap is built from swapClaim, so every leg that fetches a carrier
-// fetches it from the spot (refillPickup). Otherwise it is built from swapClaim
-// without its spot, which is the swap a line with no spot runs: its carrier
-// comes from the inbound source, and nothing waits for a spare to arrive. A
-// REQUEST orders nothing for the spot either way; the keeper refills it when it
-// reads it bare (decideSpot). A spot Core did not answer for is not a spare.
-//
-// One read of the line's rows, only when a right spare stands. It fails closed:
-// a request that cannot tell whether the spare is leaving takes neither it nor
-// a market carrier, and the next request re-asks.
-func (e *Engine) requestClaim(node *processes.Node, claim, swapClaim *processes.NodeClaim, spot spotRead) (*processes.NodeClaim, bool, error) {
+// THE SPARE WHEN IT STANDS, THE MARKET WHEN IT DOES NOT. When the request takes
+// the spare (takesSpare), the swap is built from swapClaim, so every leg that
+// fetches a carrier fetches it from the spot (refillPickup). Otherwise it is
+// built from swapClaim without its spot, which is the swap a line with no spot
+// runs: its carrier comes from the inbound source. A REQUEST orders nothing for
+// the spot either way; the keeper refills it when it reads it bare (decideSpot).
+// takesComingSpare then asks whether that market swap should wait for a spare
+// already on its way instead.
+func requestClaim(claim, swapClaim *processes.NodeClaim, s spotAtRequest) (*processes.NodeClaim, bool) {
 	if spotNode(claim) == "" {
-		return swapClaim, false, nil
+		return swapClaim, false
 	}
-	if spot.known && spareIsRight(claim, spot) {
-		rows, err := e.db.ListActiveOrdersByProcessNode(node.ID)
-		if err != nil {
-			return nil, false, fmt.Errorf("node %s: cannot tell whether the spare on %s is leaving (%w) — the next request will re-ask",
-				node.Name, spotNode(claim), err)
-		}
-		if spotLeaving(rows, spotNode(claim), claim.CoreNodeName) == 0 {
-			return swapClaim, true, nil
-		}
+	if s.takesSpare(claim) {
+		return swapClaim, true
 	}
-	return withoutSpot(swapClaim), false, nil
+	return withoutSpot(swapClaim), false
 }
 
 // withoutSpot is a copy of a claim that keeps no spare: the claim a REQUEST
@@ -310,6 +331,30 @@ func withoutSpot(c *processes.NodeClaim) *processes.NodeClaim {
 	cp := *c
 	cp.KeepStagedNode = ""
 	return &cp
+}
+
+// takesComingSpare says a swap built without the spare should take the spare
+// that is coming instead. A keep-staged claim may name its spot as its inbound
+// staging, and the market swap stages its carrier there: with a refill about to
+// land on it, the carrier and the refill could not both be set down, and the
+// keeper waits for a leg that drops on the spot, so the two would hold each
+// other. Taking the coming spare orders nothing new; Core holds the pickup until
+// it lands. A swap that does not stage on the spot fetches from the market.
+//
+// NOT A REFUSAL FOR A BIN STANDING THERE. A market swap staging on a spot a bin
+// still holds is the case every line has when its staging node is occupied:
+// Core holds it (waiting for slot, dropoff occupied) and sends it when the spot
+// clears.
+func takesComingSpare(claim *processes.NodeClaim, s spotAtRequest, d *SwapDispatch) bool {
+	if d == nil || spotNode(claim) == "" || !s.read.known || s.coming == 0 {
+		return false
+	}
+	for _, steps := range [][]protocol.ComplexOrderStep{d.StepsA, d.StepsB} {
+		if drops, _ := spotSteps(steps, spotNode(claim)); drops {
+			return true
+		}
+	}
+	return false
 }
 
 // spotSteps reports whether a leg's steps drop onto the spot, and whether they

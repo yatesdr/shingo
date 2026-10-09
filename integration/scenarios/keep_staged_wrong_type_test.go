@@ -2,10 +2,11 @@
 // the state it leaves and the person's way out of it.
 //
 // The Edge did not order this bin, so no landing kick sees it, and the Edge
-// reads any unstamped empty as right for a produce claim, so no reconcile sends
-// it back. Core refuses it for the swap, and the refill waits behind it. The
-// exit is a Core manual move of the empty off the spot; the refill then lands a
-// right-type empty and the swap takes it.
+// reads any unstamped empty as right for a produce claim, so the request takes
+// it and no reconcile sends it back. Core refuses it for the swap's pickup. The
+// exit is a Core manual move of the empty off the spot, then the keeper — the
+// board's RESUME at once, or its sweep within a minute — refills the spot with a
+// right-type empty, and the swap takes it.
 //
 //go:build docker
 
@@ -147,15 +148,15 @@ func TestScenario_KeepStagedWrongTypeEmpty_CoreMoveIsTheExit(t *testing.T) {
 			refills = append(refills, o)
 		}
 	}
-	if len(legs) != 2 || len(refills) != 1 {
-		t.Fatalf("the call made legs=%d refills=%d, want 2 and 1: Edge reads the wrong empty as a standing spare",
-			len(legs), len(refills))
+	if len(legs) != 2 || len(refills) != 0 {
+		t.Fatalf("the call made legs=%d refills=%d, want 2 and 0: Edge reads the wrong empty as a standing spare, "+
+			"and a request orders nothing for the spot", len(legs), len(refills))
 	}
 
 	// THE STATE. What the station and Core's order page say about it.
 	core.eng.RunFulfillmentScan()
 	settle()
-	for _, o := range append(append([]domain.Order{}, legs...), refills...) {
+	for _, o := range legs {
 		c := coreOf(o)
 		e, err := edge.DB.GetOrder(o.ID)
 		mustNil(t, err, "edge order")
@@ -165,9 +166,6 @@ func TestScenario_KeepStagedWrongTypeEmpty_CoreMoveIsTheExit(t *testing.T) {
 		if c.VendorOrderID != "" && c.BinID != nil && *c.BinID == wrongEmpty.ID {
 			t.Fatalf("Core sent %s %d to the fleet holding the wrong-type empty", o.OrderType, o.ID)
 		}
-	}
-	if c := coreOf(refills[0]); c.VendorOrderID != "" {
-		t.Fatalf("the refill went to the fleet with the wrong empty still on the spot (status %s)", c.Status)
 	}
 
 	// THE EXIT: a person moves the wrong empty off the spot at Core. The
@@ -193,6 +191,21 @@ func TestScenario_KeepStagedWrongTypeEmpty_CoreMoveIsTheExit(t *testing.T) {
 		t.Fatalf("the person's move holds bin %v, want the wrong empty %d", move.BinID, wrongEmpty.ID)
 	}
 	sim.DriveSimpleLifecycle(move.VendorOrderID)
+	settle()
+	// The keeper refills the cleared spot: the board's RESUME runs it at once.
+	mustNil(t, edge.Engine.ResumeKeepStaged(nodeID), "RESUME")
+	settle()
+	all, err = edge.DB.ListOrdersByProcess(processID)
+	mustNil(t, err, "edge rows")
+	refills = nil
+	for _, o := range all {
+		if o.OrderType != protocol.OrderTypeComplex && o.DeliveryNode == spot {
+			refills = append(refills, o)
+		}
+	}
+	if len(refills) != 1 {
+		t.Fatalf("refills after RESUME = %d, want the keeper's 1", len(refills))
+	}
 	var landed *coreorders.Order
 	eventually("the refill to go once the spot clears", func() bool {
 		if c := coreOf(refills[0]); c.VendorOrderID != "" {

@@ -236,14 +236,15 @@ func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
 		return *c.BinID
 	}
 
-	// ── 1. The call: the short swap lifts the spare, one refill comes ──
+	// ── 1. The call: the short swap lifts the spare, and asks nothing of the
+	// spot — the keeper refills it once the spare is lifted ──
 	if _, err := edge.Engine.RequestNodeMaterial(nodeID, 1); err != nil {
 		t.Fatalf("call: %v", err)
 	}
 	settle()
 	call := step()
-	if len(call.legs) != 2 || len(call.refills) != 1 || len(call.returns) != 0 {
-		t.Fatalf("call made legs=%d refills=%d returns=%d, want 2, 1, 0",
+	if len(call.legs) != 2 || len(call.refills) != 0 || len(call.returns) != 0 {
+		t.Fatalf("call made legs=%d refills=%d returns=%d, want 2, 0, 0",
 			len(call.legs), len(call.refills), len(call.returns))
 	}
 	lifted := map[int64]bool{}
@@ -257,16 +258,9 @@ func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
 	if !lifted[spare.ID] || !lifted[lineBin.ID] {
 		t.Fatalf("the call's legs hold bins %v, want the spare %d and the line's bin %d", lifted, spare.ID, lineBin.ID)
 	}
-	// The refill waits at Core while the spare stands: the spot takes one
-	// landing at a time.
-	if c := coreOf(call.refills[0]); c.VendorOrderID != "" || c.PayloadCode != kscPartA {
-		t.Fatalf("call refill at Core: status %q payload %q vendor %q, want held for the spot, part %s",
-			c.Status, c.PayloadCode, c.VendorOrderID, kscPartA)
-	}
-
 	// The call's robots are recalled at Core. The spot is left where a finished
 	// call leaves it: one spare of the running part standing.
-	callOrders := append(append([]domain.Order{}, call.legs...), call.refills...)
+	callOrders := append([]domain.Order{}, call.legs...)
 	for _, o := range callOrders {
 		c := coreOf(o)
 		if protocol.IsTerminal(c.Status) {

@@ -239,6 +239,39 @@ func swapFetchesFrom(t *testing.T, eng *Engine, db *store.DB, nodeID int64) stri
 	return from
 }
 
+// A refill already on its way to a spot the market swap would stage on: that
+// carrier and the refill could not both be set down there, so the swap takes
+// the spare that is coming (its pickup at the spot, which Core holds until the
+// refill lands) and nothing new is ordered. A press stages nowhere near its
+// spot, so it fetches from the market as usual.
+func TestKeepStagedRequest_ASpareOnItsWayIsWaitedFor(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		mode     protocol.SwapMode
+		wantFrom string
+	}{
+		{protocol.SwapModeTwoRobot, "spot"},
+		{protocol.SwapModeTwoRobotPressIndex, "market"},
+	} {
+		t.Run(string(c.mode), func(t *testing.T) {
+			t.Parallel()
+			eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, c.mode,
+				map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksPair: {Occupied: true, PayloadCode: ksPart}, ksSpot: {}})
+			_, err := eng.orderMgr.CreateRetrieveOrder(&nodeID, false, 1, ksSpot, ksMarket, "", "standard", ksPart, true, false,
+				orders.Attached("coming"))
+			testutil.MustNoErr(t, err, "a refill on its way")
+			_, err = eng.RequestNodeMaterial(nodeID, 1)
+			testutil.MustNoErr(t, err, "request")
+			if got := swapFetchesFrom(t, eng, db, nodeID); got != c.wantFrom {
+				t.Errorf("the swap fetches from %q, want %q", got, c.wantFrom)
+			}
+			if got := readSpotOrders(t, db, nodeID); got.refills != 1 || got.returns != 0 {
+				t.Errorf("refills=%d returns=%d, want only the one already coming", got.refills, got.returns)
+			}
+		})
+	}
+}
+
 // A spare with a live return is leaving: the request does not take it. Its swap
 // fetches from the market, staging on the spot the leaving spare still stands
 // on, and Core holds it until the return has lifted it.

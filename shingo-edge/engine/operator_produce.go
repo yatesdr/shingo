@@ -103,14 +103,21 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 	// See swap_evac_dest.go: the outgoing carrier goes to ITS home, not the
 	// requested style's. Blank override = today's behaviour.
 	swapClaim := withResidentEvacDest(claim, e.residentEvacDest(runtime, claim))
-	planClaim, takeSpare, err := e.requestClaim(node, claim, swapClaim, spot)
+	atSpot, err := e.readSpotAtRequest(node, claim, spot)
 	if err != nil {
 		return nil, err
 	}
+	planClaim, takeSpare := requestClaim(claim, swapClaim, atSpot)
 
 	plan, err := BuildProducePlan(node, runtime, planClaim, occupancy, inbound)
 	if err != nil {
 		return nil, err
+	}
+	if !takeSpare && takesComingSpare(claim, atSpot, plan.Dispatch) {
+		takeSpare = true
+		if plan, err = BuildProducePlan(node, runtime, swapClaim, occupancy, inbound); err != nil {
+			return nil, err
+		}
 	}
 	if takeSpare && plan.SimpleMove {
 		plan.SimpleSource, plan.FromSpot = spotNode(claim), true

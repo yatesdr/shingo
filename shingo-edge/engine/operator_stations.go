@@ -218,14 +218,21 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	// The evac leg lifts whatever is ON the cell, which is not always the style
 	// being requested — see swap_evac_dest.go. Blank override = today's behaviour.
 	swapClaim := withResidentEvacDest(claim, e.residentEvacDest(runtime, claim))
-	planClaim, takeSpare, err := e.requestClaim(node, claim, swapClaim, spot)
+	atSpot, err := e.readSpotAtRequest(node, claim, spot)
 	if err != nil {
 		return nil, err
 	}
+	planClaim, takeSpare := requestClaim(claim, swapClaim, atSpot)
 
 	plan, err := BuildConsumePlan(node, runtime, planClaim, quantity, occupancy, inbound, autoConfirm)
 	if err != nil {
 		return nil, err
+	}
+	if !takeSpare && takesComingSpare(claim, atSpot, plan.Dispatch) {
+		takeSpare = true
+		if plan, err = BuildConsumePlan(node, runtime, swapClaim, quantity, occupancy, inbound, autoConfirm); err != nil {
+			return nil, err
+		}
 	}
 	// THE DOWNGRADE IS THE ONE DECISION THAT IGNORES WHAT THIS CELL ALREADY HAS
 	// IN FLIGHT, and it is the decision that mints a second delivery into a
