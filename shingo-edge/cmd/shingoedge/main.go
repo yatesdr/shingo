@@ -485,6 +485,12 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 			log.Printf("edge_handler: containment snapshot: %v", err)
 		}
 	})
+	// Core's whole open refusal set, sent to this Edge when its refusals digest
+	// differs from Core's. Merged per field, not copied; a failed apply is
+	// logged by the engine and the next heartbeat's digest asks again.
+	router.RegisterSubject(subjectRouter, protocol.SubjectSupplyRefusalSnapshot, func(_ *protocol.Envelope, snap *protocol.SupplyRefusalSnapshot) {
+		_ = eng.ApplySupplyRefusalSnapshot(*snap)
+	})
 	// A whole order row pushed down by Core, for an order this Edge did not
 	// create. Without it a Core-authored order is invisible here: nothing on the
 	// board, and the delivery handler falls back to binding the bin alone.

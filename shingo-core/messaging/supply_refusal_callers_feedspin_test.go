@@ -4,21 +4,22 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 )
 
-// TestFeedsPin_ListOpenSupplyRefusalsHasNoCaller pins that Core's open-refusal
-// read is called by nothing in shingo-core today: the "set Core broadcasts to
-// the edges" its comment names is never built, so a lost refusal message is
-// never repaired from Core's record.
+// TestFeedsPin_ListOpenSupplyRefusalsCallers pins who calls Core's open-refusal
+// read. At the base nothing in shingo-core did: the "set Core broadcasts to the
+// edges" its comment names was never built, so a lost refusal message was never
+// repaired from Core's record.
 //
-// A source-shape pin, because "nothing calls it" has no behaviour to drive.
+// A source-shape pin, because "who calls it" has no behaviour to drive.
 //
-// after (F3): exactly one non-test caller, the refusals digest/snapshot
+// F3 (flipped): exactly one non-test caller, the refusals digest/snapshot
 // builder on the heartbeat path (messaging/feeds.go).
-func TestFeedsPin_ListOpenSupplyRefusalsHasNoCaller(t *testing.T) {
+func TestFeedsPin_ListOpenSupplyRefusalsCallers(t *testing.T) {
 	call := regexp.MustCompile(`\.ListOpenSupplyRefusals\(`)
 	var callers []string
 	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
@@ -46,7 +47,8 @@ func TestFeedsPin_ListOpenSupplyRefusalsHasNoCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("walk shingo-core: %v", err)
 	}
-	if len(callers) != 0 {
-		t.Errorf("ListOpenSupplyRefusals callers = %v, want none at the base (after F3: messaging/feeds.go only)", callers)
+	want := []string{"../messaging/feeds.go"} // F3; base: none
+	if !reflect.DeepEqual(callers, want) {
+		t.Errorf("ListOpenSupplyRefusals callers = %v, want %v (base: none)", callers, want)
 	}
 }

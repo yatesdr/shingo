@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingoedge/store"
 	"shingoedge/store/processes"
 )
 
@@ -70,8 +71,14 @@ func (e *Engine) UndoSupplyRefusal(processNodeID int64, payloadCode string) erro
 	if err != nil {
 		return err
 	}
-	if err := e.db.DeleteSupplyRefusal(node.CoreNodeName, payloadCode); err != nil {
+	deleted, err := e.db.DeleteSupplyRefusal(node.CoreNodeName, payloadCode)
+	if err != nil {
 		return err
+	}
+	// Closed only for a row that went: an undo of nothing (a second tap, or a
+	// card a LOAD already cleared) has nothing to tell Core.
+	if !deleted {
+		return nil
 	}
 	e.logFn("supply_refusal: %s withdrew the refusal for %s", node.CoreNodeName, payloadCode)
 	e.emitSupplyRefusal(protocol.SupplyRefusalState{
@@ -127,15 +134,28 @@ func (e *Engine) AckSupplyRefusal(processNodeID int64, loaderNode, payloadCode, 
 
 // emitSupplyRefusal puts one refusal message on the outbox for Core.
 //
-// BEST-EFFORT BY DESIGN, unlike the demand-episode emit it otherwise resembles.
-// An episode that never reaches Core leaves a gap in the duration record and
-// nothing else can recover it. A refusal that never reaches Core still did its
-// job locally — the card is dormant and the cells on this edge see it on their
-// next poll — and Core's copy is for history, cross-edge supply, and the Core UI.
-// So a failed enqueue is logged and swallowed rather than failing the operator's
-// action, which is the opposite disposition from emitOriginState and deliberately
-// so.
+// A failed enqueue is logged and swallowed rather than failing the operator's
+// action — the opposite disposition from emitOriginState, and safe here because
+// a refusal message that never reaches Core is not lost for good. The local
+// write already did the job on this Edge (the card is dormant, its cells see
+// it), and the table it wrote is digested into every heartbeat (FeedRefusals).
+// While Core's open set differs, Core sends it back on supply.refusal_snapshot
+// and ApplySupplyRefusalSnapshot re-emits whatever this Edge owns that Core is
+// missing. A message that failed to enqueue, expired in flight or arrived out
+// of order heals the same way, within a heartbeat or two of Core answering.
 func (e *Engine) emitSupplyRefusal(msg protocol.SupplyRefusalState) {
+	data, err := e.encodeSupplyRefusal(msg)
+	if err != nil {
+		e.logFn("supply_refusal: %v", err)
+		return
+	}
+	if _, err := e.db.EnqueueOutbox(data, protocol.SubjectSupplyRefusal); err != nil {
+		e.logFn("supply_refusal: enqueue %s/%s: %v", msg.LoaderNode, msg.PayloadCode, err)
+	}
+}
+
+// encodeSupplyRefusal builds the outbox payload for one refusal message.
+func (e *Engine) encodeSupplyRefusal(msg protocol.SupplyRefusalState) ([]byte, error) {
 	env, err := protocol.NewDataEnvelope(
 		protocol.SubjectSupplyRefusal,
 		protocol.Address{Role: protocol.RoleEdge, Station: e.cfg.StationID()},
@@ -143,17 +163,13 @@ func (e *Engine) emitSupplyRefusal(msg protocol.SupplyRefusalState) {
 		&msg,
 	)
 	if err != nil {
-		e.logFn("supply_refusal: build envelope %s/%s: %v", msg.LoaderNode, msg.PayloadCode, err)
-		return
+		return nil, fmt.Errorf("build envelope %s/%s: %w", msg.LoaderNode, msg.PayloadCode, err)
 	}
 	data, err := env.Encode()
 	if err != nil {
-		e.logFn("supply_refusal: encode %s/%s: %v", msg.LoaderNode, msg.PayloadCode, err)
-		return
+		return nil, fmt.Errorf("encode %s/%s: %w", msg.LoaderNode, msg.PayloadCode, err)
 	}
-	if _, err := e.db.EnqueueOutbox(data, protocol.SubjectSupplyRefusal); err != nil {
-		e.logFn("supply_refusal: enqueue %s/%s: %v", msg.LoaderNode, msg.PayloadCode, err)
-	}
+	return data, nil
 }
 
 // HandleSupplyRefusalState applies a refusal Core broadcast to every edge.
@@ -163,8 +179,26 @@ func (e *Engine) emitSupplyRefusal(msg protocol.SupplyRefusalState) {
 // message back, which is intended: every apply path here is idempotent, and it
 // means a single-edge line exercises the identical code path a multi-edge one
 // will, instead of leaving the cross-edge path untested until the day it matters.
+//
+// AT THIS EDGE'S OWN WINDOWS, AN OPENED OR CLOSED FROM CORE IS NOT APPLIED. A
+// refusal at a loader window exists or not because that window's Edge says so
+// (the ownership mergeRefusalSnapshot already applies), and that Edge wrote the
+// change to its own table before it told Core — so in order, the echo changes
+// nothing. Out of order it did: the versioned-feeds proof held an Opened back,
+// let the operator's undo (Closed) through, then released the Opened; Core
+// stored it and broadcast it, this Edge re-created the refusal its operator had
+// withdrawn, and with all three tables agreeing nothing ever healed it. Ignored
+// here, the stale Opened leaves Core holding a row this Edge lacks, its next
+// heartbeat's digest differs, and the snapshot merge re-sends the Closed. An
+// ack is applied at any window: it is the answering Edge's, not the window's.
+// A failed ownership read applies the message as before.
 func (e *Engine) HandleSupplyRefusalState(st protocol.SupplyRefusalState) {
 	if st.LoaderNode == "" || st.PayloadCode == "" {
+		return
+	}
+	if (st.Action == protocol.SupplyRefusalOpened || st.Action == protocol.SupplyRefusalClosed) && e.ownsRefusalWindow(st.LoaderNode) {
+		e.logFn("supply_refusal: %s for %s/%s is this Edge's own window — its table stands, not applied",
+			st.Action, st.LoaderNode, st.PayloadCode)
 		return
 	}
 	var err error
@@ -174,7 +208,7 @@ func (e *Engine) HandleSupplyRefusalState(st protocol.SupplyRefusalState) {
 	case protocol.SupplyRefusalAcked:
 		_, err = e.db.AckSupplyRefusal(st.LoaderNode, st.PayloadCode, st.AckChoice, st.AckProcessID)
 	case protocol.SupplyRefusalClosed:
-		err = e.db.DeleteSupplyRefusal(st.LoaderNode, st.PayloadCode)
+		_, err = e.db.DeleteSupplyRefusal(st.LoaderNode, st.PayloadCode)
 	default:
 		e.logFn("supply_refusal: unknown action %q for %s/%s — ignored",
 			st.Action, st.LoaderNode, st.PayloadCode)
@@ -183,6 +217,60 @@ func (e *Engine) HandleSupplyRefusalState(st protocol.SupplyRefusalState) {
 	if err != nil {
 		e.logFn("supply_refusal: apply %s for %s/%s: %v", st.Action, st.LoaderNode, st.PayloadCode, err)
 	}
+}
+
+// ownsRefusalWindow reports whether loaderNode is one of this Edge's loader
+// windows. false when the ownership read fails.
+func (e *Engine) ownsRefusalWindow(loaderNode string) bool {
+	own, err := e.refusalOwnership()
+	if err != nil {
+		e.logFn("supply_refusal: ownership of %s: %v — applied as a broadcast", loaderNode, err)
+		return false
+	}
+	return own.windows[loaderNode]
+}
+
+// ApplySupplyRefusalSnapshot takes Core's whole open refusal set, sent when
+// this Edge's FeedRefusals digest differed from Core's.
+//
+// NOT A REPLACE. A refusal has two authors, so ownership is per field
+// (mergeRefusalSnapshot): a row's existence belongs to the Edge whose loader
+// window it is, an ack to the Edge whose process answered it while Core holds
+// the row open, everything else to Core. Where this Edge owns a fact Core does
+// not have, it keeps its own and re-emits the message Core missed (Opened,
+// Closed or Acked); everything it does not own it takes from Core.
+//
+// One transaction: the table read, the rewrite and the re-emitted messages
+// commit together. No digest is held for refusals — the next heartbeat digests
+// the table as it now stands, and that is what Core compares.
+func (e *Engine) ApplySupplyRefusalSnapshot(snap protocol.SupplyRefusalSnapshot) error {
+	own, err := e.refusalOwnership()
+	if err != nil {
+		e.logFn("supply_refusal: snapshot: %v — not applied", err)
+		return err
+	}
+	var heals []protocol.SupplyRefusalState
+	err = e.db.ReconcileSupplyRefusals(func(open []store.SupplyRefusal) ([]store.SupplyRefusal, [][]byte, error) {
+		keep, emits := mergeRefusalSnapshot(open, snap.Open, own)
+		outbox := make([][]byte, 0, len(emits))
+		for _, m := range emits {
+			data, err := e.encodeSupplyRefusal(m)
+			if err != nil {
+				return nil, nil, err
+			}
+			outbox = append(outbox, data)
+		}
+		heals = emits
+		return keep, outbox, nil
+	})
+	if err != nil {
+		e.logFn("supply_refusal: snapshot: %v — not applied", err)
+		return err
+	}
+	for _, m := range heals {
+		e.logFn("supply_refusal: snapshot: Core is missing %s for %s/%s — re-sent", m.Action, m.LoaderNode, m.PayloadCode)
+	}
+	return nil
 }
 
 // loaderCardNode resolves a process node to the loader window a card lives on,
@@ -204,12 +292,8 @@ func (e *Engine) loaderCardNode(processNodeID int64, payloadCode string) (*proce
 	if err != nil || node == nil {
 		return nil, fmt.Errorf("no such process node %d", processNodeID)
 	}
-	if node.CoreNodeName == "" {
-		return nil, fmt.Errorf("node %s has no core node name", node.Name)
-	}
-	if node.OperatorStationID == nil {
-		return nil, fmt.Errorf("node %s belongs to no operator station, so it renders no card",
-			node.Name)
+	if err := loaderCardShape(node); err != nil {
+		return nil, err
 	}
 	// Engine.loadActiveNode, not the package-level one: it carries the
 	// Core-owned-loader fallback, synthesising a manual_swap claim for a window
@@ -217,13 +301,38 @@ func (e *Engine) loaderCardNode(processNodeID int64, payloadCode string) (*proce
 	// direction the whole loader refactor went — would fail this check and the
 	// button would be dead on exactly the boards it was built for.
 	_, _, claim, cerr := e.loadActiveNode(processNodeID)
-	if cerr != nil || claim == nil {
-		return nil, fmt.Errorf("node %s has no active claim", node.Name)
+	if cerr != nil {
+		claim = nil
 	}
-	if !claim.IsLoaderNode() {
-		return nil, fmt.Errorf("node %s is not a loader window (swap mode %q)", node.Name, claim.SwapMode)
+	if err := loaderCardClaim(node, claim); err != nil {
+		return nil, err
 	}
 	return node, nil
+}
+
+// loaderCardShape is loaderCardNode's check on the node row itself: it names a
+// Core node, and it renders on an operator station's board.
+func loaderCardShape(node *processes.Node) error {
+	if node.CoreNodeName == "" {
+		return fmt.Errorf("node %s has no core node name", node.Name)
+	}
+	if node.OperatorStationID == nil {
+		return fmt.Errorf("node %s belongs to no operator station, so it renders no card",
+			node.Name)
+	}
+	return nil
+}
+
+// loaderCardClaim is loaderCardNode's check on the node's active claim: there
+// is one, and it is a loader window's.
+func loaderCardClaim(node *processes.Node, claim *processes.NodeClaim) error {
+	if claim == nil {
+		return fmt.Errorf("node %s has no active claim", node.Name)
+	}
+	if !claim.IsLoaderNode() {
+		return fmt.Errorf("node %s is not a loader window (swap mode %q)", node.Name, claim.SwapMode)
+	}
+	return nil
 }
 
 // THE "SOMEBODY ASKED" CHECK USED TO LIVE HERE and was deleted, not disabled.

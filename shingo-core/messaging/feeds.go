@@ -262,8 +262,26 @@ func (s *CoreDataService) buildFeed(station, key string) (digest string, value a
 			return "", nil, true, err
 		}
 		return snap.Digest, snap, true, nil
+	case protocol.FeedRefusals:
+		digest, value, err = s.buildRefusalsFeed()
+		return digest, value, true, err
 	}
 	return "", nil, false, nil
+}
+
+// buildRefusalsFeed is the FeedRefusals build: every refusal Core holds open,
+// digested with the same function the Edge digests its own table with. One
+// statement per build.
+func (s *CoreDataService) buildRefusalsFeed() (string, any, error) {
+	open, err := s.db.ListOpenSupplyRefusals()
+	if err != nil {
+		return "", nil, err
+	}
+	digest, err := protocol.RefusalsDigest(open)
+	if err != nil {
+		return "", nil, err
+	}
+	return digest, protocol.SupplyRefusalSnapshot{Digest: digest, Open: open}, nil
 }
 
 // sendFeeds sends each due feed to one station, the value exactly as digested.
@@ -279,6 +297,8 @@ func (s *CoreDataService) sendFeeds(station string, due map[string]feedMemoEntry
 		switch key {
 		case protocol.FeedContainment:
 			s.resp.sendData(protocol.SubjectContainmentSnapshot, station, due[key].value)
+		case protocol.FeedRefusals:
+			s.resp.sendData(protocol.SubjectSupplyRefusalSnapshot, station, due[key].value)
 		default:
 			log.Printf("core_feeds: no sender for %s", key)
 		}

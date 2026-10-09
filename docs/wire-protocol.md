@@ -254,6 +254,7 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `supply.refusal` | Edge -> Core | `SupplyRefusalState` | A loader operator says they cannot fill a call, or takes that back |
 | `supply.refusal_state` | Core -> Edge | `SupplyRefusalState` | Core broadcasts the refusal's state so the cell can answer; station-broadcast, filtered per-process on arrival |
 | `containment.snapshot` | Core -> Edge | `ContainmentSnapshot` | Core's whole containment state (flags, held bins, what stands at each containment destination) with its digest; broadcast after a containment write, unicast when an Edge's heartbeat quotes a different `containment` digest. An Edge older than the subject logs "no handler" once per broadcast |
+| `supply.refusal_snapshot` | Core -> Edge | `SupplyRefusalSnapshot` | Core's whole open refusal set, sent to one Edge whose `refusals` feed digest differs from Core's; the Edge merges it per field and re-sends what it owns that Core is missing |
 | `transit.bin_picked_up` | Core -> Edge | `BinPickedUp` | The robot has the bin — the pickup half of a transit, distinct from delivery |
 | `transit.bin_return` | Core -> Edge | `BinReturn` | Notice only: the bin a cancelled order left on a robot is returning, returned, or held — keyed by the cancelled order's uuid; no status or count changes |
 | `node.structure_changed` | Core -> Edge | `NodeStructureChanged` | A node was reparented or deleted, so the Edge's topology view is stale |
@@ -281,8 +282,9 @@ All of the unlinked rows were absent from this document until 2026-08-17, having
 across the supply-refusal, demand-origin and inventory work — except the three
 added 2026-09-26 (`production.tick`, `production.ticks`,
 `inventory.lineside_level_report`), which had existed as constants for weeks
-with no row. `supply.refusal` / `supply.refusal_state` are the whole
-supply-refusal channel that shipped 2026-07-30.
+with no row. `supply.refusal` / `supply.refusal_state` are the
+supply-refusal channel that shipped 2026-07-30; `supply.refusal_snapshot`
+joined them with the feed digests, so a lost refusal message heals.
 
 **Note the name.** The downtime subject is `production.downtime`. An earlier
 version of this document called it `downtime.event` in prose, which matches no

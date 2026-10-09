@@ -165,9 +165,9 @@ func TestHandleSupplyRefusalState_Arms_FeedsPin(t *testing.T) {
 // fields that action owns. A repeated refuse emits again (the write is
 // idempotent, the emit is not guarded); a repeated ack emits nothing.
 //
-// after: the same, except an undo that deleted no row emits nothing (X1: Closed
-// only when a row went). F3 keeps the per-verb messages; healing rides the
-// heartbeat.
+// X1 (flipped): an undo that deleted no row emits nothing — Closed only when a
+// row went; at the base the second undo emitted Closed again. F3 keeps the
+// per-verb messages; healing rides the heartbeat.
 func TestSupplyRefusal_Emit_FeedsPin(t *testing.T) {
 	t.Parallel()
 	f := seedLoaderCard(t)
@@ -181,8 +181,7 @@ func TestSupplyRefusal_Emit_FeedsPin(t *testing.T) {
 	testutil.MustNoErr(t, f.eng.AckSupplyRefusal(f.nodeID, f.core, "PART-A", protocol.SupplyRefusalChoiceWait), "ack")
 	testutil.MustNoErr(t, f.eng.AckSupplyRefusal(f.nodeID, f.core, "PART-A", protocol.SupplyRefusalChoiceChangeover), "ack again")
 	testutil.MustNoErr(t, f.eng.UndoSupplyRefusal(f.nodeID, "PART-A"), "undo")
-	// Undo with no row still emits Closed: the delete does not report whether a
-	// row went. after: no message (X1)
+	// Undo with no row emits nothing (X1; at the base it emitted Closed again).
 	testutil.MustNoErr(t, f.eng.UndoSupplyRefusal(f.nodeID, "PART-A"), "undo again")
 
 	out := refusalOutbox(t, f.db)
@@ -201,27 +200,26 @@ func TestSupplyRefusal_Emit_FeedsPin(t *testing.T) {
 		"opened " + f.core + " PART-A by=Bin Loader at=true",
 		"acked " + f.core + " PART-A wait " + procName + " at=true",
 		"closed " + f.core + " PART-A",
-		"closed " + f.core + " PART-A", // after: gone (X1)
-	}
+	} // X1: the second closed is gone
 	var got []string
 	for _, s := range out {
 		got = append(got, render(s))
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Errorf("outbox supply.refusal messages:\n%s\nwant:\n%s\n(after: the second closed gone, X1)",
+		t.Errorf("outbox supply.refusal messages:\n%s\nwant:\n%s\n(after: same, X1)",
 			strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
 
 // TestClearOnLoad_FeedsPin pins clear-on-LOAD (operator_bin_ops.go, the
 // DeleteSupplyRefusal after the fallback outbound): a LOAD with no L1 in
-// flight deletes the card's refusal and emits nothing, so every other Edge and
-// Core keep the refusal until something else closes it. A LOAD at an unrefused
-// card also emits nothing.
+// flight deletes the card's refusal and, since X1, emits Closed so every other
+// Edge and Core close it too (before X1 it emitted nothing). A LOAD at an
+// unrefused card emits nothing.
 //
-// The normal side cycle — LOAD confirming a delivered L1 — returns before that
-// line, so the refusal survives the LOAD and nothing is emitted. after: X1 runs
-// the clear on both paths, so that LOAD deletes the refusal and emits Closed.
+// The normal side cycle — LOAD confirming a delivered L1 — returned before that
+// line at the base, so the refusal survived the LOAD and nothing was emitted.
+// X1 (flipped) runs the clear on both paths.
 func TestClearOnLoad_FeedsPin(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -236,7 +234,7 @@ func TestClearOnLoad_FeedsPin(t *testing.T) {
 	}{
 		{
 			name: "fallback LOAD at a refused card", refused: true,
-			wantRow: "none", wantMsgs: "",
+			wantRow: "none", wantMsgs: "closed", // X1
 			afterRow: "none", afterMsgs: "closed", label: "X1",
 		},
 		{
@@ -246,7 +244,7 @@ func TestClearOnLoad_FeedsPin(t *testing.T) {
 		},
 		{
 			name: "LOAD confirming a delivered L1 at a refused card", refused: true, l1: true,
-			wantRow: "open by=FP Loader ack=-", wantMsgs: "",
+			wantRow: "none", wantMsgs: "closed", // X1
 			afterRow: "none", afterMsgs: "closed", label: "X1",
 		},
 	}
@@ -290,15 +288,14 @@ func TestClearOnLoad_FeedsPin(t *testing.T) {
 //
 // Edge A owns the loader window and refuses. Core relays A's Opened to Edge B
 // (and back to A). An operator on B answers; B's Acked is enqueued on B's
-// outbox and never delivered. What Core then sends A is all it has: the Opened
-// again (an echo or a redelivery). Today A's row never shows the answer and
-// nothing re-sends it: B's message is the only copy, and Edge-to-Core refusal
-// messages are sent once.
+// outbox and never delivered. At the base, what Core then sent A was all it
+// had: the Opened again, so A's row never showed the answer and nothing
+// re-sent it.
 //
-// after: B's heartbeat carries its refusals digest; Core's differs, B re-emits
-// Acked (it owns the ack fields while Core has the row open), and the next
-// supply.refusal_snapshot to A carries the ack, so A's row reads answered.
-// (label F3)
+// F3 (flipped): B's heartbeat carries its refusals digest; Core's differs, B
+// re-emits Acked (it owns the ack fields while Core has the row open), and the
+// next supply.refusal_snapshot to A carries the ack, so A's row reads answered
+// and every digest converges.
 func TestSupplyRefusal_LostAckNeverReachesLoaderEdge_FeedsPin(t *testing.T) {
 	t.Parallel()
 	a := seedLoaderCard(t) // the loader Edge
@@ -326,16 +323,39 @@ func TestSupplyRefusal_LostAckNeverReachesLoaderEdge_FeedsPin(t *testing.T) {
 	testutil.MustNoErr(t, engB.AckSupplyRefusal(nodeB, a.core, "PART-A", protocol.SupplyRefusalChoiceWait), "B answers")
 	lost := refusalOutbox(t, dbB)
 
-	// Core's state for A: the only thing Core sends today, the Opened again.
-	a.eng.HandleSupplyRefusalState(sent[0])
+	// F3: Core holds A's refusal, unanswered. B's heartbeat quotes the digest of
+	// its own table, which carries the answer, so it differs from Core's and
+	// Core sends B its open set; B owns the ack while Core holds the row open
+	// and re-emits Acked. Core applies it, and A's digest now differs, so Core
+	// sends A its set, which carries the answer.
+	coreOpen := []protocol.SupplyRefusalState{sent[0]}
+	engB.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}})
+	a.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}})
+	coreDigest := func() string {
+		d, err := protocol.RefusalsDigest(coreOpen)
+		testutil.MustNoErr(t, err, "core digest")
+		return d
+	}
+	if engB.FeedDigests()[protocol.FeedRefusals] == coreDigest() {
+		t.Fatal("B's refusals digest equals Core's although Core lacks B's answer")
+	}
+	testutil.MustNoErr(t, engB.ApplySupplyRefusalSnapshot(protocol.SupplyRefusalSnapshot{Digest: coreDigest(), Open: coreOpen}), "B applies")
+	healed := refusalOutbox(t, dbB)
+	if len(healed) != 2 || healed[1].Action != protocol.SupplyRefusalAcked {
+		t.Fatalf("B's outbox after the snapshot = %+v, want the lost Acked re-emitted", healed)
+	}
+	coreOpen[0].AckAt, coreOpen[0].AckChoice, coreOpen[0].AckProcessID = healed[1].AckAt, healed[1].AckChoice, healed[1].AckProcessID
+	testutil.MustNoErr(t, a.eng.ApplySupplyRefusalSnapshot(protocol.SupplyRefusalSnapshot{Digest: coreDigest(), Open: coreOpen}), "A applies")
 
 	cases := []struct {
 		name, got, want, after, label string
 	}{
 		{"B's row", refusalRow(t, dbB, a.core, "PART-A"), "open by=Bin Loader ack=wait/FP-CELL-B", "same", "F3"},
 		{"B's Acked enqueued once", itoa(int64(len(lost))), "1", "same; re-emitted on a refusals digest mismatch", "F3"},
-		{"A's row after Core's state", refusalRow(t, a.db, a.core, "PART-A"), "open by=Bin Loader ack=-", "open by=Bin Loader ack=wait/FP-CELL-B (from supply.refusal_snapshot)", "F3"},
+		{"A's row after Core's state", refusalRow(t, a.db, a.core, "PART-A"), "open by=Bin Loader ack=wait/FP-CELL-B", "open by=Bin Loader ack=wait/FP-CELL-B (from supply.refusal_snapshot)", "F3"}, // F3
 		{"A emits nothing on apply", itoa(int64(len(refusalOutbox(t, a.db)) - 1)), "0", "same", "F3"},
+		{"A's digest equals Core's", feedsPinBool(a.eng.FeedDigests()[protocol.FeedRefusals] == coreDigest()), "true", "same", "F3"},
+		{"B's digest equals Core's", feedsPinBool(engB.FeedDigests()[protocol.FeedRefusals] == coreDigest()), "true", "same", "F3"},
 	}
 	for _, c := range cases {
 		if c.got != c.want {

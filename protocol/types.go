@@ -385,6 +385,7 @@ func EdgeInboundSubjects() []string {
 		SubjectBinEpochRefresh,
 		SubjectSourcingState,
 		SubjectSupplyRefusalState,
+		SubjectSupplyRefusalSnapshot,
 		SubjectOrderProjected,
 		SubjectContainmentSnapshot,
 	}

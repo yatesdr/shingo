@@ -74,7 +74,7 @@ func TestSupplyRefusal_KeyIsTheCardNotThePayload(t *testing.T) {
 	}
 
 	// And clearing one must not clear the other.
-	if err := db.DeleteSupplyRefusal("SMN_014", "PART-A"); err != nil {
+	if _, err := db.DeleteSupplyRefusal("SMN_014", "PART-A"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	if _, err := db.GetSupplyRefusal("SMN_015", "PART-A"); err != nil {
@@ -133,8 +133,8 @@ func TestSupplyRefusal_DeleteTakesTheAckWithIt(t *testing.T) {
 	if _, err := db.AckSupplyRefusal("SMN_014", "PART-A", "wait", "SNF2"); err != nil {
 		t.Fatalf("ack: %v", err)
 	}
-	if err := db.DeleteSupplyRefusal("SMN_014", "PART-A"); err != nil {
-		t.Fatalf("delete: %v", err)
+	if deleted, err := db.DeleteSupplyRefusal("SMN_014", "PART-A"); err != nil || !deleted {
+		t.Fatalf("delete: deleted=%v err=%v, want true, nil", deleted, err)
 	}
 	if _, err := db.GetSupplyRefusal("SMN_014", "PART-A"); !errors.Is(err, ErrNoOpenRefusal) {
 		t.Fatalf("row survived the delete: %v", err)
@@ -163,7 +163,7 @@ func TestSupplyRefusal_DeleteIsHarmlessWhenNothingIsOpen(t *testing.T) {
 	// The clear-on-load hook fires on every LOAD at a window, and almost every
 	// load happens with no refusal standing. That must be a cheap no-op, not an
 	// error the caller has to filter.
-	if err := db.DeleteSupplyRefusal("SMN_014", "PART-A"); err != nil {
-		t.Errorf("delete with nothing open: %v", err)
+	if deleted, err := db.DeleteSupplyRefusal("SMN_014", "PART-A"); err != nil || deleted {
+		t.Errorf("delete with nothing open: deleted=%v err=%v, want false, nil", deleted, err)
 	}
 }

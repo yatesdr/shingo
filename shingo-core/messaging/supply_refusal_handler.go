@@ -51,9 +51,15 @@ func (s *CoreDataService) HandleSupplyRefusal(env *protocol.Envelope, st *protoc
 			st.LoaderNode, st.PayloadCode, st.Action, env.Src.Station, err)
 		return
 	}
-	// Stored. Now fan out. sendData is fire-and-forget by design on this seam —
-	// if it does not land, the row is durable and the next edge boot reconciles
-	// from it, so a lost broadcast degrades to "the cell finds out later" rather
-	// than "the cell never finds out".
+	// Stored, so the refusals digest Core quotes has moved: drop the memo so
+	// the next heartbeat compares against the new set, not one up to ten
+	// seconds old.
+	s.feeds.drop(protocol.FeedRefusals)
+	// Now fan out. sendData is fire-and-forget by design on this seam. A
+	// broadcast that does not land heals from the stored row: every Edge
+	// quotes the digest of its own refusal table on each heartbeat, and an
+	// Edge whose digest differs from Core's is sent Core's open set
+	// (supply.refusal_snapshot, feeds.go). A lost broadcast degrades to "the
+	// cell finds out within a heartbeat or two" rather than "never".
 	s.resp.sendData(protocol.SubjectSupplyRefusalState, protocol.StationBroadcast, st)
 }

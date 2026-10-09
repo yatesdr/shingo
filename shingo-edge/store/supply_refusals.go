@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"shingo/protocol"
+	"shingoedge/store/messaging"
 )
 
 // supply_refusals.go — a loader operator's standing statement that they cannot
@@ -110,7 +113,13 @@ func (db *DB) GetSupplyRefusal(loaderNode, payloadCode string) (*SupplyRefusal, 
 // real plant is a handful — so a whole-table read is cheaper than a query per
 // card, and the board render path is the one place that difference is felt.
 func (db *DB) ListOpenSupplyRefusals() ([]SupplyRefusal, error) {
-	rows, err := db.Query(`SELECT ` + supplyRefusalCols + ` FROM supply_refusals_open`)
+	return listOpenSupplyRefusals(db)
+}
+
+func listOpenSupplyRefusals(q interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}) ([]SupplyRefusal, error) {
+	rows, err := q.Query(`SELECT ` + supplyRefusalCols + ` FROM supply_refusals_open`)
 	if err != nil {
 		return nil, fmt.Errorf("list open supply refusals: %w", err)
 	}
@@ -156,11 +165,81 @@ func (db *DB) AckSupplyRefusal(loaderNode, payloadCode, choice, processID string
 // Two callers, both ending the same episode: a LOAD at that window for that
 // payload (the normal path — the parts arrived, the operator loads them, the
 // card goes back to normal) and UNDO (the mis-tap path).
-func (db *DB) DeleteSupplyRefusal(loaderNode, payloadCode string) error {
-	if _, err := db.Exec(
+//
+// Returns whether a row was deleted, so clear-on-LOAD tells the plant only
+// when there was a refusal to end rather than on every LOAD.
+func (db *DB) DeleteSupplyRefusal(loaderNode, payloadCode string) (bool, error) {
+	res, err := db.Exec(
 		`DELETE FROM supply_refusals_open WHERE loader_node = ? AND payload_code = ?`,
-		loaderNode, payloadCode); err != nil {
-		return fmt.Errorf("delete supply refusal %s/%s: %w", loaderNode, payloadCode, err)
+		loaderNode, payloadCode)
+	if err != nil {
+		return false, fmt.Errorf("delete supply refusal %s/%s: %w", loaderNode, payloadCode, err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// SupplyRefusalMerge decides, from the open set read inside the transaction,
+// the set to keep and the encoded supply.refusal messages to enqueue with it.
+type SupplyRefusalMerge func(open []SupplyRefusal) (keep []SupplyRefusal, outbox [][]byte, err error)
+
+// ReconcileSupplyRefusals reads the open set, hands it to merge, and replaces
+// the table with what merge keeps, enqueuing merge's messages, in ONE
+// transaction. The read is inside it so an operator's refuse, answer or undo
+// landing between the read and the write cannot be overwritten by a merge that
+// never saw it; the messages are inside it so a kept row and the message that
+// re-sends it to Core commit together or not at all. An error from merge rolls
+// everything back and leaves the table as it was.
+func (db *DB) ReconcileSupplyRefusals(merge SupplyRefusalMerge) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("reconcile supply refusals: begin: %w", err)
+	}
+	defer tx.Rollback()
+	open, err := listOpenSupplyRefusals(tx)
+	if err != nil {
+		return err
+	}
+	keep, outbox, err := merge(open)
+	if err != nil {
+		return err
+	}
+	if err := replaceSupplyRefusals(tx, keep); err != nil {
+		return err
+	}
+	for _, p := range outbox {
+		if _, err := messaging.EnqueueIn(tx, p, protocol.SubjectSupplyRefusal); err != nil {
+			return fmt.Errorf("reconcile supply refusals: enqueue: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("reconcile supply refusals: commit: %w", err)
+	}
+	if len(outbox) > 0 {
+		messaging.NotifyEnqueued()
+	}
+	return nil
+}
+
+// replaceSupplyRefusals rewrites the open table as rows. The table holds a
+// handful of rows, one per card refused right now, and it is rewritten only
+// when Core's digest differed from this Edge's, so a whole rewrite costs less
+// than working out which rows moved.
+func replaceSupplyRefusals(tx *sql.Tx, rows []SupplyRefusal) error {
+	if _, err := tx.Exec(`DELETE FROM supply_refusals_open`); err != nil {
+		return fmt.Errorf("reconcile supply refusals: clear: %w", err)
+	}
+	for _, r := range rows {
+		var ackAt any
+		if r.AckAt != nil {
+			ackAt = r.AckAt.UTC().Format(time.RFC3339Nano)
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO supply_refusals_open (`+supplyRefusalCols+`) VALUES (?,?,?,?,?,?,?)`,
+			r.LoaderNode, r.PayloadCode, r.RefusedAt.UTC().Format(time.RFC3339Nano), r.RefusedBy,
+			ackAt, r.AckChoice, r.AckProcessID); err != nil {
+			return fmt.Errorf("reconcile supply refusals: insert %s/%s: %w", r.LoaderNode, r.PayloadCode, err)
+		}
 	}
 	return nil
 }

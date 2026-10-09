@@ -202,6 +202,9 @@ func (e *Engine) loadFeedCopies() {
 func (e *Engine) FeedDigests() map[string]string {
 	out := map[string]string{}
 	out[protocol.FeedContainment] = e.heldDigest(protocol.FeedContainment)
+	if d, ok := e.refusalsDigest(); ok {
+		out[protocol.FeedRefusals] = d
+	}
 	return out
 }
 
