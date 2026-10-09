@@ -583,8 +583,10 @@ func GetByUID(db *sql.DB, uid string) (*Edge, error) {
 // the skew exactly where it was.
 //
 // An enrolled-but-never-started station is not swept: status begins as
-// 'enrolled', and only a register promotes it to 'active'. Sweeping it would
-// mean marking stale a station that has correctly never claimed to be up.
+// 'enrolled' with no last_heartbeat, and only a register or a heartbeat
+// (UpdateHeartbeat sets status = 'active' with the time) promotes it to
+// 'active'. Sweeping it would mean marking stale a station that has correctly
+// never claimed to be up.
 func MarkStale(db *sql.DB, threshold time.Duration) ([]string, error) {
 	rows, err := db.Query(`
 		UPDATE edge_registry

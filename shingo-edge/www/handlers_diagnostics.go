@@ -25,6 +25,7 @@ func (h *Handlers) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 		"Recon":          summary,
 		"ReconAnomalies": reconAnomalies,
 		"Deadletters":    deadletters,
+		"CoreLink":       h.diagnosticsCoreLink(),
 	}
 	h.renderTemplate(w, r, "diagnostics.html", data)
 }

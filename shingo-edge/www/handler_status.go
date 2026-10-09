@@ -56,6 +56,9 @@ type statusResponse struct {
 	ProductionTicksPending           int64  `json:"production_ticks_pending"`
 	ProductionTicksOldestUnsentAgeMS int64  `json:"production_ticks_oldest_unsent_age_ms"`
 	ProductionTicksError             string `json:"production_ticks_error,omitempty"`
+	// The Core link: last ack, clock offset, expired drops, feed ages and
+	// flags (core_link_status.go). Inlined into the top-level object.
+	coreLinkStatus
 }
 
 // statusEngine is the narrow interface the /status handler needs.
@@ -71,6 +74,11 @@ type statusEngine interface {
 	KafkaLastPublish() (bool, time.Time, bool)
 	ProductionTickLag() (pending, oldestAgeMS int64, err error)
 	StationID() string
+	// The Core link (engine/feeds.go). Read-only, and read here rather than
+	// through the page interface, which keeps that interface's width.
+	LastCoreAck() (local, server time.Time)
+	FeedTimes(key string) (receivedAt, confirmedAt time.Time)
+	FeedFlags() []string
 }
 
 func (h *Handlers) apiStatus(w http.ResponseWriter, r *http.Request) {
@@ -86,6 +94,7 @@ func (h *Handlers) apiStatus(w http.ResponseWriter, r *http.Request) {
 		KafkaConnected:   eng.KafkaConnected(),
 		SubscribersWired: eng.SubscribersWired(),
 		StationID:        eng.StationID(),
+		coreLinkStatus:   readCoreLink(eng, time.Now()),
 	}
 	if depth, err := eng.CountPendingOutbox(); err != nil {
 		resp.OutboxDepthError = err.Error()

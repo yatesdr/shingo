@@ -96,7 +96,7 @@ func TestSSE_DebugLogReachesEveryClient_FeedsPin(t *testing.T) {
 		after  bool
 		label  string
 	}{
-		{"/events", plain, "debug-log", true, false, "C1"},
+		{"/events", plain, "debug-log", false, false, "C1"}, // C1: was true
 		{"/events?debug=1", debug, "debug-log", true, true, "C1"},
 	}
 	for _, c := range cases {

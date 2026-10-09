@@ -52,15 +52,14 @@ func TestProductionRefreshTriggers_FeedsPin(t *testing.T) {
 		triggers = append(triggers, strings.TrimSpace(p))
 	}
 
-	// What the content refresh listens for. sse:order-completed has no
-	// producer: the Edge broadcasts EventOrderCompleted as order-update
-	// (www/sse.go), so that trigger never fires. after: gone (edge costs);
-	// a completion refreshes through order-update.
+	// What the content refresh listens for. The base also listed
+	// sse:order-completed, which nothing sends: the Edge broadcasts
+	// EventOrderCompleted as order-update (www/sse.go). It is gone (flipped in
+	// the edge costs commit); a completion refreshes through order-update.
 	wantTriggers := []string{
 		"refreshProduction from:body",
 		"refreshMaterial from:body",
 		"sse:order-update throttle:5s",
-		"sse:order-completed",
 		"sse:order-failed",
 		"sse:counter-update throttle:10s",
 	}
@@ -84,13 +83,20 @@ func TestProductionRefreshTriggers_FeedsPin(t *testing.T) {
 		after any
 		label string
 	}{
-		{"production.html sse-connect=\"/events\"", strings.Contains(attrs, `sse-connect="/events"`), true, false, "C2"},
-		{"production.html hx-ext=\"sse\"", strings.Contains(attrs, `hx-ext="sse"`), true, false, "C2"},
+		// C2: the next two were true.
+		{"production.html sse-connect=\"/events\"", strings.Contains(attrs, `sse-connect="/events"`), false, false, "C2"},
+		{"production.html hx-ext=\"sse\"", strings.Contains(attrs, `hx-ext="sse"`), false, false, "C2"},
 		{"production.js createSSE('/events'", strings.Count(js, "createSSE('/events'"), 1, 1, "C2"},
+		// C2, prediction corrected: the page's own handlers are unchanged; the
+		// order-update / order-failed / counter-update
+		// forwarding is added around them by productionStreamHandlers
+		// (production-refresh.js, tested in production-refresh.test.js).
 		{"production.js createSSE handlers", strings.Join(handlers, ","), "onCounterUpdate,onCoreNodes",
-			"onCounterUpdate,onCoreNodes plus handlers for order-update, order-failed (and order-completed if kept)", "C2"},
-		{"production.js calls htmx.trigger", strings.Contains(js, "htmx.trigger("), false, true, "C2"},
-		{"diagnostics.js opens /events (no debug)", strings.Contains(readWWWFile(t, "static", "js", "pages", "diagnostics.js"), "createSSE('/events',"), true, false, "C1 (opens /events?debug=1)"},
+			"onCounterUpdate,onCoreNodes (forwarding wrapped around them by production-refresh.js)", "C2"},
+		// C2: was false.
+		{"production.js calls htmx.trigger", strings.Contains(js, "htmx.trigger("), true, true, "C2"},
+		// C1: was true.
+		{"diagnostics.js opens /events (no debug)", strings.Contains(readWWWFile(t, "static", "js", "pages", "diagnostics.js"), "createSSE('/events',"), false, false, "C1 (opens /events?debug=1)"},
 		{"manual-order.js opens /events", strings.Contains(readWWWFile(t, "static", "js", "pages", "manual-order.js"), "createSSE('/events',"), true, true, "C1"},
 	}
 	for _, c := range cases {

@@ -11,10 +11,10 @@
     <div class="card-body" style="padding:0">
         <div id="production-content"
      hx-get="/production/partial?process={{if .IsAll}}all{{else}}{{.ActiveProcessID}}{{end}}"
-     hx-trigger="refreshProduction from:body, refreshMaterial from:body, sse:order-update throttle:5s, sse:order-completed, sse:order-failed, sse:counter-update throttle:10s"
-     hx-swap="innerHTML"
-     hx-ext="sse"
-     sse-connect="/events">
+     hx-trigger="refreshProduction from:body, refreshMaterial from:body, sse:order-update throttle:5s, sse:order-failed, sse:counter-update throttle:10s"
+     hx-swap="innerHTML">
+     {{/* The sse: triggers are fired by production.js from the page's one
+          /events stream (production-refresh.js), not by a second stream here. */}}
      {{template "production-body" .}}
         </div>
     </div>

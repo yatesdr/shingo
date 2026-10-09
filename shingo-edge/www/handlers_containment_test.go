@@ -15,8 +15,10 @@ import (
 func (s *stubEngine) LocalContainment() (*engine.ContainmentState, bool) {
 	return s.containment, s.containment != nil
 }
-func (s *stubEngine) CoreSpeaksFeeds() bool                  { return s.speaksFeeds }
-func (s *stubEngine) LastCoreAck() (local, server time.Time) { return s.lastAck, s.lastAck }
+func (s *stubEngine) CoreSpeaksFeeds() bool { return s.speaksFeeds }
+
+// LastCoreAck is shared with /status (core_link_status_test.go): the page reads
+// statusCoreLink.ackLocal.
 
 // The page under each state of the feed: nothing held before any ack, nothing
 // held after an ack from an older Core (a new Edge on an old Core), a held copy
@@ -63,7 +65,7 @@ func TestContainmentPage_FeedStates(t *testing.T) {
 			if tc.held != nil {
 				stub.containment = tc.held()
 			}
-			stub.lastAck, stub.speaksFeeds = tc.lastAck, tc.speaks
+			stub.statusCoreLink.ackLocal, stub.speaksFeeds = tc.lastAck, tc.speaks
 
 			rec := httptest.NewRecorder()
 			h.handleContainmentPage(rec, httptest.NewRequest(http.MethodGet, "/containment", nil))

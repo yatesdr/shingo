@@ -43,7 +43,7 @@ func TestIngestor_HeaderDebugLineVsStationFilter_FeedsPin(t *testing.T) {
 	}{
 		{"this station", self, []string{"raw:", "header:"}, true, "same", "C1"},
 		{"broadcast", StationBroadcast, []string{"raw:", "header:"}, true, "same", "C1"},
-		{"another station", "edge.other", []string{"raw:", "header:"}, false, "raw: only (no header line)", "C1"},
+		{"another station", "edge.other", []string{"raw:"}, false, "raw: only (no header line)", "C1"}, // C1: was raw:,header:
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

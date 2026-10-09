@@ -45,7 +45,7 @@ func TestFeedsPin_SourcingSnapshotRewrites(t *testing.T) {
 		{
 			name:       "unchanged snapshot",
 			second:     []protocol.SourcingState{at(a, t0), at(b, t0)},
-			wantWrites: 4, afterWrites: 0, // DELETE 2 + INSERT 2 → nothing
+			wantWrites: 0, afterWrites: 0, // X4: was DELETE 2 + INSERT 2
 			wantRows: 2, afterRows: 2,
 			wantA: t0, afterA: t0,
 			label: "X4",
@@ -53,15 +53,15 @@ func TestFeedsPin_SourcingSnapshotRewrites(t *testing.T) {
 		{
 			name:       "same verdicts, newer computed_at",
 			second:     []protocol.SourcingState{at(a, t1), at(b, t1)},
-			wantWrites: 4, afterWrites: 0, // computed_at is ignored by the compare
+			wantWrites: 0, afterWrites: 0, // X4: computed_at is ignored by the compare
 			wantRows: 2, afterRows: 2,
-			wantA: t1, afterA: t0, // computed_at becomes "last verdict change"
+			wantA: t0, afterA: t0, // X4: computed_at becomes "last verdict change"
 			label: "X4",
 		},
 		{
 			name:       "one verdict changed",
 			second:     []protocol.SourcingState{at(a, t0), at(bGreen, t0)},
-			wantWrites: 4, afterWrites: 1,
+			wantWrites: 1, afterWrites: 1, // X4: was 4
 			wantRows: 2, afterRows: 2,
 			wantA: t0, afterA: t0,
 			label: "X4",
@@ -69,7 +69,7 @@ func TestFeedsPin_SourcingSnapshotRewrites(t *testing.T) {
 		{
 			name:       "one row left",
 			second:     []protocol.SourcingState{at(a, t0)},
-			wantWrites: 3, afterWrites: 1, // DELETE 2 + INSERT 1 → DELETE 1
+			wantWrites: 1, afterWrites: 1, // X4: was DELETE 2 + INSERT 1
 			wantRows: 1, afterRows: 1,
 			wantA: t0, afterA: t0,
 			label: "X4",

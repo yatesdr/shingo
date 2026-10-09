@@ -47,6 +47,17 @@
 </div>
 {{end}}
 
+{{with .CoreLink}}
+<div class="card mt-2" data-core-link>
+  <h2 style="margin:0 0 0.5rem 0;">Core link</h2>
+  <div class="text-muted tnum" style="font-size:0.9rem;">{{.Summary}}</div>
+  <div class="text-muted" style="font-size:0.9rem;">
+    {{range $i, $f := .Feeds}}{{if $i}} | {{end}}{{$f.Key}}: {{$f.Note}}{{end}}
+  </div>
+  {{range .Flags}}<div class="text-muted" style="font-size:0.9rem;">{{.}}</div>{{end}}
+</div>
+{{end}}
+
 {{if .Recon}}
 <div class="card mt-2">
   <div class="flex flex-between mb-1">

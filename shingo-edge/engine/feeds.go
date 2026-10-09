@@ -67,6 +67,18 @@ type feedBook struct {
 	// reconcile is what an ack after a gap runs; nil means StartupReconcile.
 	// A field so a test can count it.
 	reconcile func() error
+	// now is this Edge's clock for stamping acks; nil means time.Now. A field
+	// so a test can run the Edge's clock ahead of or behind Core's — the rig
+	// cannot shift one container's wall clock.
+	now func() time.Time
+}
+
+// clock is the time an ack is stamped with on this Edge.
+func (b *feedBook) clock() time.Time {
+	if b.now != nil {
+		return b.now()
+	}
+	return time.Now()
 }
 
 const (
@@ -293,7 +305,7 @@ func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 	if ack == nil {
 		return
 	}
-	now := time.Now()
+	now := e.feeds.clock()
 	var persist []store.FeedCopy
 	e.feeds.mu.Lock()
 	// Monotonic: a wall-clock step on the Pi must not fake or hide a gap. No

@@ -72,8 +72,6 @@ func (ing *Ingestor) HandleRaw(data []byte) {
 		return
 	}
 
-	ing.dbg("header: type=%s id=%s dst=%s/%s", hdr.Type, hdr.ID, hdr.Dst.Role, hdr.Dst.Station)
-
 	// Check expiry
 	if IsExpiredHeader(&hdr) {
 		expiredDrops.Add(1)
@@ -86,6 +84,11 @@ func (ing *Ingestor) HandleRaw(data []byte) {
 	if ing.filter != nil && !ing.filter(&hdr) {
 		return
 	}
+
+	// After the filter: on a shared topic most messages are for other
+	// stations, and a header line for each of them filled the debug ring
+	// with traffic this process drops.
+	ing.dbg("header: type=%s id=%s dst=%s/%s", hdr.Type, hdr.ID, hdr.Dst.Role, hdr.Dst.Station)
 
 	// Phase 2: full envelope decode
 	var env Envelope

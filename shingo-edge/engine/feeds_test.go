@@ -178,6 +178,28 @@ func TestSendDue_StreakEndsWhenCoreHoldsTheLastSend(t *testing.T) {
 	}
 }
 
+// TestOnCoreAck_StampsTheEdgeClock: an ack is stamped with this Edge's clock
+// and carries Core's, so with the Edge's clock run ahead of or behind Core's
+// the pair LastCoreAck returns differs by exactly the shift — the offset
+// /status reports (www/core_link_status.go). Injected because the rig cannot
+// shift one container's wall clock.
+func TestOnCoreAck_StampsTheEdgeClock(t *testing.T) {
+	t.Parallel()
+	coreNow := time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC)
+	for _, shift := range []time.Duration{0, 2 * time.Minute, 6 * time.Minute, -2 * time.Minute} {
+		e := testEngine(t, testEngineDB(t))
+		e.feeds.now = func() time.Time { return coreNow.Add(shift) }
+		e.OnCoreAck(&protocol.EdgeHeartbeatAck{ServerTS: coreNow, Feeds: map[string]string{}})
+		local, server := e.LastCoreAck()
+		if !local.Equal(coreNow.Add(shift)) || !server.Equal(coreNow) {
+			t.Errorf("shift %v: ack stamped local %v, server %v; want %v and %v", shift, local, server, coreNow.Add(shift), coreNow)
+		}
+		if got := server.Sub(local); got != -shift {
+			t.Errorf("shift %v: server - local = %v, want %v", shift, got, -shift)
+		}
+	}
+}
+
 // The first ack after more than four minutes without one reconciles orders;
 // acks a minute apart do not, and the first ack since boot does not.
 func TestOnCoreAck_GapReconciles(t *testing.T) {

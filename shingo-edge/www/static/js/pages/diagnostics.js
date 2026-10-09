@@ -68,8 +68,9 @@ import { createSSE, delegateActions, escapeHtml } from '/static/js/shingoedge.js
     wrap.scrollTop = wrap.scrollHeight;
   }
 
-  // SSE listener for live debug entries
-  createSSE('/events', {
+  // SSE listener for live debug entries. debug-log reaches only a client
+  // that asks for it (?debug=1); this page is the one that renders it.
+  createSSE('/events?debug=1', {
     onDebugLog: function(entry) {
       debugAppendRow(entry);
     }

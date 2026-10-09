@@ -6,12 +6,12 @@ package www
 // Edge's containment screens can render the state without holding Core
 // credentials (Core has no machine-auth path — see auth.go).
 //
-// There is deliberately NO bin-hold endpoint yet. The per-bin flow is
-// delivered by the move order the station action creates (order provenance is
-// the audit); the bins.quality_hold marker shipped in v100 for the v2
-// hardening pass (re-release protection for a bin whose containment move
-// failed), and wiring an Edge→Core write for it needs an auth story Core
-// does not have — session cookies only.
+// The per-bin hold has its own write: apiBinQualityHold below, on the
+// telemetry machine path (POST /api/telemetry/bin-quality-hold, beside
+// bin-load and bin-clear, router.go), which the Edge's station action calls
+// when its operator sends a bin to containment. It sets or clears the
+// bins.quality_hold marker (v100); the move order the same action creates
+// carries the bin, and its provenance is the audit.
 
 import (
 	"encoding/json"

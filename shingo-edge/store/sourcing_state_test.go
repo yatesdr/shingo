@@ -144,3 +144,45 @@ func TestSourcingState_SurvivesRestart(t *testing.T) {
 		t.Errorf("rows after restart = %d, want 2 (persisted)", len(all))
 	}
 }
+
+// TestSourcingState_SnapshotWritesOnlyDifferences: a full snapshot inserts a
+// new style, rewrites a changed one (taking its computed_at, the time of the
+// verdict change) and leaves an unchanged one, computed_at and all, untouched.
+// A change in at_risk alone is a changed verdict.
+func TestSourcingState_SnapshotWritesOnlyDifferences(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	t0 := time.Unix(1_700_000_000, 0).UTC()
+	t1 := t0.Add(2 * time.Minute)
+	at := func(s protocol.SourcingState, ts time.Time) protocol.SourcingState { s.ComputedAt = ts; return s }
+	a := srcState("SNF2", "A", "green")
+	b := srcState("SNF2", "B", "yellow")
+	if err := db.ReplaceSourcingState([]protocol.SourcingState{at(a, t0), at(b, t0)}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	bRisk := b
+	bRisk.AtRisk = []protocol.SourcingAtRisk{{PayloadCode: "PART-B", TimeToEmptySeconds: 600}}
+	c := srcState("SNF2", "C", "red", "BIN-C")
+	before := sourcingChanges(t, db)
+	if err := db.ReplaceSourcingState([]protocol.SourcingState{at(a, t1), at(bRisk, t1), at(c, t1)}); err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if got := sourcingChanges(t, db) - before; got != 2 {
+		t.Errorf("rows written = %d, want 2 (B changed, C new)", got)
+	}
+	all, err := db.ListSourcingState()
+	if err != nil {
+		t.Fatalf("list sourcing state: %v", err)
+	}
+	want := map[string]time.Time{"A": t0, "B": t1, "C": t1}
+	for style, ts := range want {
+		s, ok := findState(all, "SNF2", style)
+		if !ok {
+			t.Errorf("style %s missing after snapshot: %+v", style, all)
+			continue
+		}
+		if !s.ComputedAt.Equal(ts) {
+			t.Errorf("style %s computed_at = %v, want %v", style, s.ComputedAt, ts)
+		}
+	}
+}

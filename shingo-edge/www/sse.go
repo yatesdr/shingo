@@ -47,9 +47,9 @@ var sseKeepaliveInterval = 30 * time.Second
 //     arrives as counter-update (EventCounterDelta / EventUOPAdjusted), which
 //     stays on the durable queue.
 //   - debug-log is the debug-console feed, wired from dbg.SetOnEntry in
-//     router.go. Every debug line is broadcast to every client, so with
-//     --log-debug on (as it is at Springfield and Hopkinsville) it is pure
-//     volume — logging should not be able to degrade the operator UI.
+//     router.go. It reaches only a client that asked for it (sseDebugTopic);
+//     with --log-debug on it is pure volume, and logging should not be able
+//     to degrade the operator UI.
 //
 // Do NOT add a state change here to quieten a drop log. Anything the operator
 // or the engine acts on belongs on the durable queue, including the per-PLC
@@ -58,6 +58,12 @@ var lossySSETopics = map[string]bool{
 	"counter-read": true,
 	"debug-log":    true,
 }
+
+// sseDebugTopic is delivered only to a client that connects with ?debug=1
+// (the Diagnostics page). Before, every /events client got every debug line:
+// Production, the station boards and Manual Order received a stream none of
+// them renders, for as long as the page stayed open.
+const sseDebugTopic = "debug-log"
 
 type sseClient struct {
 	// events carries state changes. Nothing lossy is written here, so its
@@ -68,6 +74,8 @@ type sseClient struct {
 	// deeper backlog of them.
 	lossy chan SSEEvent
 	drops int // consecutive DURABLE drops; eviction trigger.
+	// debug is set when the client asked for sseDebugTopic (?debug=1).
+	debug bool
 }
 
 // MaxSSEClients caps concurrent SSE connections to prevent a
@@ -168,6 +176,9 @@ func (h *EventHub) run() {
 			lossy := lossySSETopics[evt.Type]
 			for c := range h.clients {
 				if lossy {
+					if evt.Type == sseDebugTopic && !c.debug {
+						continue
+					}
 					// Best-effort, and deliberately not logged: these are the
 					// bulk of the traffic, so a line per drop is itself noise.
 					// They also do not count toward eviction — falling behind
@@ -224,6 +235,7 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	client := &sseClient{
 		events: make(chan SSEEvent, 64),
 		lossy:  make(chan SSEEvent, 16),
+		debug:  r.URL.Query().Get("debug") == "1",
 	}
 	h.register(client)
 	defer h.unregister(client)

@@ -271,7 +271,7 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `inventory.lineside_level_report` | Edge -> Core | `LinesideLevelReport` | The Edge's own view of its lineside levels, for Core's divergence comparison |
 | `production.downtime` | Edge -> Core | `DowntimeEvent` | A persisted downtime start or end |
 
-The sixteen rows with linked schemas carry full field tables below. The sixteen
+The twelve rows with linked schemas carry full field tables below. The nineteen
 added after them do not — the Go structs in `protocol/payloads.go` and
 `protocol/lineside_level_report.go` are the reference
 for their fields. The table's membership is pinned against

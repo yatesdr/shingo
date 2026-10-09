@@ -117,6 +117,8 @@ type stubEngine struct {
 	statusLastPublishEver  bool
 	statusTickPending      int64
 	statusTickOldestMS     int64
+	// statusCoreLink is what the Core-link reads answer (core_link_status_test.go).
+	statusCoreLink stubCoreLink
 
 	gateCanComplete bool
 	gateBlockers    []domain.Blocker
@@ -150,10 +152,10 @@ type stubEngine struct {
 
 	// The containment feed as the containment page reads it: the held copy
 	// (nil = nothing held), and what the last heartbeat ack said about Core
-	// (lastAck zero = no ack yet; speaksFeeds false after one = an older Core).
+	// (statusCoreLink.ackLocal zero = no ack yet; speaksFeeds false after one
+	// = an older Core).
 	containment *engine.ContainmentState
 	speaksFeeds bool
-	lastAck     time.Time
 }
 
 func (s *stubEngine) AppConfig() *config.Config     { return s.cfg }

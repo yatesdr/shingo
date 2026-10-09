@@ -1,4 +1,5 @@
 import { api, createSSE, delegateActions, escapeHtml, hideModal, navigateToProcess, prompt, showModal, toast } from '/static/js/shingoedge.js';
+import { productionStreamHandlers } from '/static/js/pages/production-refresh.js';
 
 // Production page — operator-facing actions for the per-process node grid.
 //
@@ -484,7 +485,16 @@ async function onShiftProcessChange() {
 
 renderShiftChart();
 
-createSSE('/events', {
+// refreshProductionContent fires one of #production-content's hx-trigger
+// events (production-refresh.js) on the element, as htmx's sse extension did
+// when the element held its own /events stream. Looked up at fire time, so a
+// page without the element does nothing.
+function refreshProductionContent(trigger, data) {
+    var el = document.getElementById('production-content');
+    if (window.htmx && el) window.htmx.trigger(el, trigger, data);
+}
+
+createSSE('/events', productionStreamHandlers(refreshProductionContent, {
     onCounterUpdate: function(data) {
         // When viewing "All Processes" (activeProcessID = 0), accept
         // counter updates from any process. Otherwise only match the
@@ -522,7 +532,7 @@ createSSE('/events', {
             sel.value = cur;
         });
     }
-});
+}));
 
 // ─── Manual order ────────────────────────────────────────
 
