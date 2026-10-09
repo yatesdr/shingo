@@ -158,6 +158,10 @@ type Engine struct {
 	// waiting for the snapshot. Wired at the composition root; nil in
 	// tests that don't assert the publish (call sites nil-guard).
 	plantClaimsFn func(processID int64)
+	// claimsAckFn reconciles this Edge's plant claims against the digests a
+	// heartbeat ack quotes back (feeds_claims.go). nil in tests that do not
+	// wire the publisher.
+	claimsAckFn func(claims map[string]string)
 
 	// inventoryDelta is the Phase 1 delta sink. Set by the composition
 	// root via SetInventoryDeltaSink. Nil in test contexts that don't

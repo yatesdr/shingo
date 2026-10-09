@@ -1684,10 +1684,12 @@ type PlantClaimsReport struct {
 	// appears (empty Claims) so Core knows the style exists for an
 	// all-styles recompute.
 	Styles []PlantClaimsStyle `json:"styles"`
-	// ConfigGen is bumped by Edge on every plant-spec write. Core records
-	// it so a stale snapshot (an older ConfigGen arriving after a newer
-	// one) can be detected and ignored. Optional; zero means "not tracked"
-	// (Core accepts the message regardless).
+	// ConfigGen is a stale-report guard Core honours but no Edge sets: the
+	// publisher leaves it zero, and zero always applies. Core would skip a
+	// report whose ConfigGen is older than the one its mirror holds for the
+	// process; with every report at zero that never happens, and a lost or
+	// out-of-order report is healed by Digest instead. Kept on the wire so a
+	// sender that does stamp it is still understood.
 	ConfigGen int64 `json:"config_gen,omitempty"`
 	// Digest is ClaimsDigest of this report, set by the Edge where it builds
 	// it. Core stores it per process and quotes it on the heartbeat ack, so a

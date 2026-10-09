@@ -712,6 +712,15 @@ func main() {
 		// client). sim_enabled.go / sim_disabled.go (T3.1).
 		Warlink: simWarlinkClient(cfg),
 	})
+	// Plant claims on the heartbeat ack: Core quotes each process's digest
+	// back and the publisher re-sends what differs. Set here, before Kafka is
+	// wired, so no ack can race the assignment; the publisher itself is built
+	// later and read through plantClaimsPub, nil until then.
+	eng.SetClaimsAckFunc(func(claims map[string]string) {
+		if pub := plantClaimsPub.Load(); pub != nil {
+			pub.ReconcileClaims(claims, eng)
+		}
+	})
 	eng.Start()
 	defer eng.Stop()
 
@@ -989,10 +998,12 @@ func main() {
 	// Publishes the plant-spec claim set so Core can mirror what every
 	// process can source. Start publishes one full snapshot immediately
 	// (boot), then a periodic snapshot every plant_claims.snapshot_interval
-	// (default 60m; late-joiner rebuild). The spec-change hook re-publishes on every style/claim
+	// (default 60m; late-joiner rebuild) while Core does not quote digests
+	// back. The spec-change hook re-publishes on every style/claim
 	// edit via the coalesced spec-change signal.
 	plantClaims := messaging.NewPlantClaimsPublisher(db, stationID, cfg.PlantClaims.SnapshotInterval)
 	plantClaims.DebugLog = messaging.DebugLogFunc(dbg.Func("plant_claims"))
+	plantClaims.CoreSpeaksFeeds = eng.CoreSpeaksFeeds
 	// Publish it for the SubjectEdgeRegistered handler registered far above,
 	// which cannot capture a variable that does not exist yet.
 	plantClaimsPub.Store(plantClaims)

@@ -4358,6 +4358,10 @@ func migrationList() []migration {
 		{142, "mission_telemetry vendor times written as epoch milliseconds are re-read as the epoch seconds the fleet sent",
 			v142VendorTimesAreSeconds,
 			nil},
+
+		{143, "plant_claims_reports — per process, the station whose plant-claims report the mirror holds and the digest it carried, quoted back on the heartbeat ack",
+			v143PlantClaimsReports,
+			func(q schema.Querier) bool { return schema.TableExists(q, "plant_claims_reports") }},
 	}
 }
 
@@ -5152,6 +5156,25 @@ func v142VendorTimesAreSeconds(tx *sql.Tx) error {
 		      THEN vendor_duration_ms * 1000 ELSE vendor_duration_ms END
 		WHERE vendor_created < '1971-01-01' OR vendor_completed < '1971-01-01'`); err != nil {
 		return fmt.Errorf("v142 vendor times as seconds: %w", err)
+	}
+	return nil
+}
+
+// v143PlantClaimsReports records, per process, which station's plant-claims
+// report the mirror last took and the digest that report carried. Keyed on the
+// process alone because the mirror is: two stations reporting one process is a
+// conflict the handler flags, not two rows. Starts empty; each process gains
+// its row with its next report, and a newer Edge asked about a process Core
+// has no row for simply re-sends it.
+func v143PlantClaimsReports(tx *sql.Tx) error {
+	if _, err := tx.Exec(`
+		CREATE TABLE IF NOT EXISTS plant_claims_reports (
+			process_id  TEXT PRIMARY KEY,
+			station_id  TEXT NOT NULL,
+			digest      TEXT NOT NULL,
+			received_at TIMESTAMPTZ NOT NULL
+		)`); err != nil {
+		return fmt.Errorf("v143 plant_claims_reports: %w", err)
 	}
 	return nil
 }

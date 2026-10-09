@@ -538,6 +538,7 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 			ServerTS:  clock.Now().UTC(),
 			Timezone:  s.plantTimezone,
 			Feeds:     feeds,
+			Claims:    s.claimsFor(p),
 		})
 
 	if !found {
@@ -667,7 +668,10 @@ func (s *CoreDataService) unlistedFor(stationID string, asked map[string]bool) [
 // ConfigGen is a stale-snapshot guard: if the mirror already holds a NEWER
 // config_gen for this process (an out-of-order older snapshot landing after a
 // newer one), the replace is a no-op. Zero ConfigGen means "not tracked" and
-// is always applied.
+// is always applied — and no Edge sets it, so every report applies. A lost or
+// out-of-order report is healed instead by the report row written after the
+// replace: its digest goes back on the station's heartbeat ack, and the Edge
+// re-sends a process whose digest differs (plant_claims_reports.go).
 func (s *CoreDataService) HandlePlantClaims(env *protocol.Envelope, report *protocol.PlantClaimsReport) {
 	if report.ProcessID == "" {
 		log.Printf("core_handler: plant.claims from %s: empty process_id — ignored", env.Src.Station)
@@ -714,6 +718,7 @@ func (s *CoreDataService) HandlePlantClaims(env *protocol.Envelope, report *prot
 		log.Printf("core_handler: plant.claims mirror %s: %v", report.ProcessID, err)
 		return
 	}
+	s.recordClaimsReport(env, report)
 	log.Printf("core_handler: plant.claims mirrored %s: %d styles, %d claims (config_gen=%d)",
 		report.ProcessID, len(styles), len(claims), report.ConfigGen)
 }

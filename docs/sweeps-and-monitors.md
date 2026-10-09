@@ -28,7 +28,7 @@ this machinery.
 
 The threshold monitor reads `demand_registry` and `demand_origins` on every evaluation and holds only timers. A read error at any path decides nothing — no open, no close, no order.
 
-**The plant-claims snapshot is a safety net, not the delivery mechanism.** Changes reach Core via `PublishChanged` on every style/claim edit, and a full snapshot goes out on every registration — including the re-register Core asks for after it restarts. The ticker only has to catch a change whose publish was lost outright, which is why it moved from 5 minutes to 60: at 5 it was ~65 messages an hour of unchanged config and 66% of everything Core discarded for expiry.
+**The plant-claims snapshot is a safety net, not the delivery mechanism.** Changes reach Core via `PublishChanged` on every style/claim edit, and a full snapshot goes out on every registration — including the re-register Core asks for after it restarts. The ticker only has to catch a change whose publish was lost outright, which is why it moved from 5 minutes to 60: at 5 it was ~65 messages an hour of unchanged config and 66% of everything Core discarded for expiry. It runs only while Core does not speak feeds: a Core that does quotes each process's claims digest back on every heartbeat ack, and the Edge re-publishes exactly the processes that differ (`ReconcileClaims`), so a lost publish heals within a heartbeat or two.
 
 **Every fire path reads Core's count, and the Edge's lineside report decides nothing.** The report is a per-carrier checksum: `HandleLinesideLevelReport` (`messaging/lineside_report_handler.go`) upserts it and, when a row moved, `service/lineside_divergence.go` compares it against Core's replica and opens or closes `report_divergence` episodes in `bin_uop_exception` (listed on `/inventory`). It triggers no evaluation. From 2026-07-24 until the seat-count ruling of 2026-09-23 the report did decide (`lineside_decision_mode`, default `edge_reports`, in `engine/threshold_monitor_lineside.go`); the knob and the file are deleted, and rolling back is the previous build.
 
@@ -97,7 +97,7 @@ none of them will notice a problem on their own if the path is never taken.
 | stranded-carrier monitor | `engine/uop_stranded_monitor.go` | Start | 60s |
 | demand reconciler | `engine/demand_reconciler.go` | Start | 60s |
 | lineside reporter | `engine/lineside_reporter.go` | Start | 60s — one SELECT and one snapshot enqueue, under the accumulator's flush lock; counts stated as of each carrier's flushed seq |
-| plant-claims snapshot | `messaging/plant_claims_publisher.go` | Start | **60m** (was 5m until 2026-08-22) |
+| plant-claims snapshot | `messaging/plant_claims_publisher.go` | Start | **60m** (was 5m until 2026-08-22); skipped while Core speaks feeds |
 | CATID monitor | `engine/plc_catid_monitor.go` | Start | 500ms |
 | `restoreChangeoverState` | `engine/changeover_restore.go` | Start | boot once |
 | `applyHoldAndReplay` | `engine/wiring_counter_delta.go` | counter delta with no bound bin | per tick |

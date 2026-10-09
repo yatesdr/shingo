@@ -277,8 +277,9 @@ func (e *Engine) CoreSpeaksFeeds() bool {
 	return e.feeds.coreSpeaksFeeds
 }
 
-// OnCoreAck takes Core's answer to a heartbeat: whether Core speaks feeds, and
-// for each feed whose digest equals the one held, the confirmation.
+// OnCoreAck takes Core's answer to a heartbeat: whether Core speaks feeds,
+// for each feed whose digest equals the one held, the confirmation, and the
+// plant-claims digests Core holds for this station (feeds_claims.go).
 func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 	if ack == nil {
 		return
@@ -305,4 +306,5 @@ func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 			e.logFn("feeds: save %s confirmation: %v", row.Feed, err)
 		}
 	}
+	e.answerClaims(ack.Claims)
 }

@@ -12,18 +12,20 @@ import (
 )
 
 // Mixed versions on the heartbeat, Core side. An older Edge (no Feeds) gets
-// the ack it always got plus an empty feeds map, and nothing is sent to it. A
-// newer Edge naming a key this Core does not serve gets that key left out of
-// the answer, and nothing sent.
+// the ack it always got plus an empty feeds map and nil claims, and nothing is
+// sent to it. A newer Edge naming a key this Core does not serve gets that key
+// left out of the answer, nothing sent, and its plant-claims digests — {} when
+// Core holds none.
 func TestHandleEdgeHeartbeat_FeedsByEdgeVersion(t *testing.T) {
 	t.Parallel()
 	const st = "edge.test"
 	cases := []struct {
-		name  string
-		feeds map[string]string
+		name       string
+		feeds      map[string]string
+		wantClaims bool // non-nil and empty
 	}{
-		{"older Edge, no feeds", nil},
-		{"newer Edge, a key this Core does not serve", map[string]string{"no-such-feed": "x"}},
+		{"older Edge, no feeds", nil, false},
+		{"newer Edge, a key this Core does not serve", map[string]string{"no-such-feed": "x"}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -42,7 +44,10 @@ func TestHandleEdgeHeartbeat_FeedsByEdgeVersion(t *testing.T) {
 			if ack.Feeds == nil || len(ack.Feeds) != 0 {
 				t.Errorf("ack feeds = %#v, want an empty, non-nil map", ack.Feeds)
 			}
-			if ack.Claims != nil {
+			if tc.wantClaims && (ack.Claims == nil || len(ack.Claims) != 0) {
+				t.Errorf("ack claims = %#v, want an empty, non-nil map", ack.Claims)
+			}
+			if !tc.wantClaims && ack.Claims != nil {
 				t.Errorf("ack claims = %#v, want nil", ack.Claims)
 			}
 		})

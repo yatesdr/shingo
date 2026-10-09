@@ -176,6 +176,17 @@ func (f *feedState) setFlag(station, id, text string) {
 	f.mu.Unlock()
 }
 
+// clearFlagEverywhere clears one flag id from every station that carries it,
+// for a condition raised on several stations at once (a process two stations
+// report) whose end is seen from only one of them.
+func (f *feedState) clearFlagEverywhere(id string) {
+	f.mu.Lock()
+	for station := range f.flags {
+		f.clearFlagLocked(station, id)
+	}
+	f.mu.Unlock()
+}
+
 func (f *feedState) setFlagLocked(station, id, text string) {
 	if f.flags[station] == nil {
 		f.flags[station] = map[string]string{}

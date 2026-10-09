@@ -34,12 +34,13 @@ func reportBody(t *testing.T, payload []byte) string {
 // catalog carries both payloads.
 func TestFeedsPin_PlantClaimsReportBytes(t *testing.T) {
 	t.Parallel()
-	const want = `{"process_id":"PCL","styles":[` +
+	const base = `{"process_id":"PCL","styles":[` +
 		`{"style_id":"PCL-S-000","claims":[{"core_node_name":"N-0","role":"produce","swap_mode":"sequential","payload_code":"PCL-P-000-0","allowed_payload_codes":["PCL-P-000-0"],"uop_capacity":100,"reorder_point":0}]},` +
 		`{"style_id":"PCL-S-001","claims":[{"core_node_name":"N-0","role":"produce","swap_mode":"sequential","payload_code":"PCL-P-001-0","allowed_payload_codes":["PCL-P-001-0"],"uop_capacity":100,"reorder_point":0}],"active":true}]}`
-	// after (F5): the same bytes with `,"digest":"<16 hex>"` appended — Digest
-	// of the report without it, set where the report is built.
-	const after = `<want minus the closing brace>,"digest":"<16 hex of sha256(want)>"}`
+	// F5: the same bytes with the digest appended — protocol.Digest of the
+	// report without it, i.e. the first 16 hex of sha256(base), set where the
+	// report is built. At the base the body was exactly `base`.
+	want := base[:len(base)-1] + `,"digest":"86d786a5a3800350"}`
 
 	cases := []struct {
 		name    string
@@ -71,7 +72,7 @@ func TestFeedsPin_PlantClaimsReportBytes(t *testing.T) {
 				t.Fatalf("plant.claims rows = %d, want 1", len(payloads))
 			}
 			if got := reportBody(t, payloads[0]); got != want {
-				t.Errorf("report bytes:\n got  %s\n want %s\n(after %s: %s)", got, want, tc.label, after)
+				t.Errorf("report bytes:\n got  %s\n want %s\n(%s)", got, want, tc.label)
 			}
 		})
 	}
@@ -82,7 +83,7 @@ func TestFeedsPin_PlantClaimsReportBytes(t *testing.T) {
 // TestPlantClaimsPublisher_SnapshotIntervalIsTheSafetyNet) that calls
 // PublishAll on every tick with no condition.
 //
-// after (F5): the tick publishes only while !coreSpeaksFeeds, read through a
+// F5 (flipped): the tick publishes only while !CoreSpeaksFeeds, read through a
 // func hook set in main.go; the unconditional pattern stops matching.
 func TestFeedsPin_PlantClaimsHourlyLoop(t *testing.T) {
 	t.Parallel()
@@ -99,7 +100,7 @@ func TestFeedsPin_PlantClaimsHourlyLoop(t *testing.T) {
 	}{
 		{"ticker on snapshotInterval", regexp.MustCompile(`time\.NewTicker\(p\.snapshotInterval\)`), true, true, "same"},
 		{"unconditional PublishAll on each tick",
-			regexp.MustCompile(`case <-ticker\.C:\s*if err := p\.PublishAll\(\); err != nil \{`), true, false, "F5"},
+			regexp.MustCompile(`case <-ticker\.C:\s*if err := p\.PublishAll\(\); err != nil \{`), false, false, "F5"}, // F5: gated on CoreSpeaksFeeds
 	}
 	for _, tc := range cases {
 		if got := tc.re.Match(src); got != tc.want {

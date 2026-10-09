@@ -955,6 +955,13 @@ CREATE SEQUENCE public.payloads_id_seq
 
 ALTER SEQUENCE public.payloads_id_seq OWNED BY public.payloads.id;
 
+CREATE TABLE public.plant_claims_reports (
+    process_id text NOT NULL,
+    station_id text NOT NULL,
+    digest text NOT NULL,
+    received_at timestamp with time zone NOT NULL
+);
+
 CREATE TABLE public.plant_confidence_daily (
     day date NOT NULL,
     samples_read bigint DEFAULT 0 NOT NULL,
@@ -1663,6 +1670,9 @@ ALTER TABLE ONLY public.payloads
 
 ALTER TABLE ONLY public.payloads
     ADD CONSTRAINT payloads_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.plant_claims_reports
+    ADD CONSTRAINT plant_claims_reports_pkey PRIMARY KEY (process_id);
 
 ALTER TABLE ONLY public.plant_confidence_daily
     ADD CONSTRAINT plant_confidence_daily_pkey PRIMARY KEY (day);

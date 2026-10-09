@@ -59,6 +59,7 @@ var migrationOnlyTables = map[string]string{
 	"scene_areas":                 "added by v81 — declared map areas, temporally versioned, parsed from the robot .smap",
 	"scene_reflectors":            "added by v81 — reflector positions, temporally versioned; identity IS the position",
 	"area_confidence_daily":       "added by v82 — the per-ZONE roll-up. One reading can be in several zones (SEER areas overlap), so its samples column does not sum to the plant total",
+	"plant_claims_reports":        "added by v143 — per process, the station whose plant-claims report the mirror holds and the digest it carried; read back onto each station's heartbeat ack",
 	"plant_confidence_daily":      "added by v82 — the plant-day record for counts that have no lane to hang on: orphans, unkeyable, unversioned, unattributed",
 	"sourceability_events":        "added by a numbered migration after the baseline was frozen",
 	"tte_samples":                 "added by v118 — the per-line time-to-empty the sourceability pass computes on every full pass and used to discard. Written only by the two-minute full recompute, self-pruning at 45 days",

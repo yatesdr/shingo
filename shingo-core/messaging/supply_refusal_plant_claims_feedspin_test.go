@@ -145,6 +145,9 @@ func TestFeedsPin_HandlePlantClaims(t *testing.T) {
 
 		wantP1 []string // mirror of process P1 after the reports
 		wantP2 []string // mirror of process P2 (untouched bystander)
+		// wantRows is plant_claims_reports as "process@station", sorted; nil
+		// where the case does not assert it.
+		wantRows []string
 
 		after string
 		label string
@@ -157,7 +160,8 @@ func TestFeedsPin_HandlePlantClaims(t *testing.T) {
 				plantClaimsReport("P1", 2, one("A", "PC-A")),
 			},
 			wantP1: []string{"A@2"}, wantP2: []string{"X@1"},
-			after: "same, plus a report row per process (F5)", label: "F5",
+			wantRows: []string{"P1@edge.test", "P2@edge.test"}, // F5
+			after:    "same, plus a report row per process (F5)", label: "F5",
 		},
 		{
 			name: "older ConfigGen is ignored",
@@ -185,7 +189,8 @@ func TestFeedsPin_HandlePlantClaims(t *testing.T) {
 				plantClaimsReport("P1", 2, nil),
 			},
 			wantP1: []string{}, wantP2: []string{"X@1"},
-			after: "same, and P1's plant_claims_reports row is deleted too", label: "F5",
+			wantRows: []string{"P2@edge.test"}, // F5
+			after:    "same, and P1's plant_claims_reports row is deleted too", label: "F5",
 		},
 	}
 
@@ -203,30 +208,55 @@ func TestFeedsPin_HandlePlantClaims(t *testing.T) {
 			if got := mirrorStyles(t, db, "P2"); !reflect.DeepEqual(got, tc.wantP2) {
 				t.Errorf("P2 mirror = %v, want %v (after: same)", got, tc.wantP2)
 			}
+			if tc.wantRows != nil {
+				if got := reportRows(t, db); !reflect.DeepEqual(got, tc.wantRows) {
+					t.Errorf("report rows = %v, want %v (%s)", got, tc.wantRows, tc.label)
+				}
+			}
 		})
 	}
 }
 
-// TestFeedsPin_HandlePlantClaims_NoReportRecord pins that Core keeps no
-// per-process record of who reported or what digest it carried: there is no
-// plant_claims_reports table at the base.
-//
-// after (F5): the table exists; after one report from edge.test for P1 it
-// holds exactly one row (process_id P1, station_id edge.test, digest = the
-// report's Digest, received_at set). The ack's Claims is read from it.
-func TestFeedsPin_HandlePlantClaims_NoReportRecord(t *testing.T) {
+// reportRows is plant_claims_reports as "process@station", sorted by process.
+func reportRows(t *testing.T, db *store.DB) []string {
+	t.Helper()
+	rows, err := db.Query(`SELECT process_id, station_id FROM plant_claims_reports ORDER BY process_id`)
+	testutil.MustNoErr(t, err, "read plant_claims_reports")
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var process, station string
+		testutil.MustNoErr(t, rows.Scan(&process, &station), "scan plant_claims_reports")
+		out = append(out, process+"@"+station)
+	}
+	testutil.MustNoErr(t, rows.Err(), "iterate plant_claims_reports")
+	return out
+}
+
+// TestFeedsPin_HandlePlantClaims_ReportRecord pins the per-process record F5
+// adds. At the base there was no plant_claims_reports table (Core kept no
+// record of who reported a process or what digest it carried); after F5 one
+// report from edge.test for P1 leaves exactly one row: process_id P1,
+// station_id edge.test, the report's Digest, received_at set. The ack's
+// Claims is read from it.
+func TestFeedsPin_HandlePlantClaims_ReportRecord(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	svc := NewCoreDataService(db, &feedsPinResponder{}, service.EpochAnnounce{})
-	svc.HandlePlantClaims(feedsPinEnv("edge.test"), plantClaimsReport("P1", 1, []styleSpec{
+	report := plantClaimsReport("P1", 1, []styleSpec{
 		{name: "A", claims: []claimSpec{{node: "LN-1", payload: "PC-A", allowed: []string{"PC-A"}}}},
-	}))
+	})
+	report.Digest = "0123456789abcdef"
+	svc.HandlePlantClaims(feedsPinEnv("edge.test"), report)
 
-	var exists bool
-	testutil.MustNoErr(t, db.QueryRow(
-		`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'plant_claims_reports')`,
-	).Scan(&exists), "probe plant_claims_reports")
-	if exists {
-		t.Errorf("plant_claims_reports exists at the base (after F5: it does, with one row for P1 from edge.test)")
+	// F5: the table exists and holds the one row (base: no table).
+	var n int
+	var station, digest string
+	var stamped bool
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) OVER (), station_id, digest, received_at IS NOT NULL
+		FROM plant_claims_reports WHERE process_id = 'P1'`).Scan(&n, &station, &digest, &stamped), "read plant_claims_reports")
+	if n != 1 || station != "edge.test" || digest != report.Digest || !stamped {
+		t.Errorf("report row = (%d rows, station %q, digest %q, stamped %v), want 1 row from edge.test with digest %q, stamped (F5)",
+			n, station, digest, stamped, report.Digest)
 	}
 }

@@ -26,7 +26,11 @@ import (
 //     covers Core restarting (Core sends EdgeRegisterRequest to an edge it does
 //     not know, the edge re-registers, and the ack lands on that handler).
 //   - a periodic full snapshot (snapshotInterval) as the last-resort safety net
-//     for a change whose publish was lost outright.
+//     for a change whose publish was lost outright — only while Core does not
+//     speak feeds. A Core that does quotes every process's digest back on each
+//     heartbeat ack, and ReconcileClaims re-publishes exactly the processes
+//     whose digest differs, so a lost publish heals within a heartbeat or two
+//     instead of an hour.
 //
 // Together the periodic + boot snapshots replace Kafka compaction for late
 // joiners: Core persists the mirror on every message, and a snapshot rebuilds
@@ -50,6 +54,12 @@ type PlantClaimsPublisher struct {
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
+
+	// CoreSpeaksFeeds reports whether the last heartbeat ack came from a Core
+	// that quotes plant-claims digests back. While it does, the hourly
+	// snapshot is redundant and skipped. Set at the composition root before
+	// Start; nil (tests, an unwired publisher) keeps the snapshot running.
+	CoreSpeaksFeeds func() bool
 
 	DebugLog DebugLogFunc
 }
@@ -93,10 +103,20 @@ func (p *PlantClaimsPublisher) loop() {
 		case <-p.stopCh:
 			return
 		case <-ticker.C:
-			if err := p.PublishAll(); err != nil {
-				log.Printf("plant_claims: periodic publish: %v", err)
-			}
+			p.snapshotTick()
 		}
+	}
+}
+
+// snapshotTick is one tick of the safety-net snapshot: a full PublishAll for
+// an older Core, nothing for one that quotes digests back (ReconcileClaims
+// heals that Core's mirror on the heartbeat, process by process).
+func (p *PlantClaimsPublisher) snapshotTick() {
+	if p.CoreSpeaksFeeds != nil && p.CoreSpeaksFeeds() {
+		return
+	}
+	if err := p.PublishAll(); err != nil {
+		log.Printf("plant_claims: periodic publish: %v", err)
 	}
 }
 
@@ -126,12 +146,22 @@ func (p *PlantClaimsPublisher) PublishChanged(processID int64) error {
 	if err != nil {
 		return fmt.Errorf("plant_claims: process %d: %w", processID, err)
 	}
-	data, err := p.buildProcess(*proc)
+	report, err := p.reportFor(*proc)
 	if err != nil {
 		return fmt.Errorf("plant_claims: build %s: %w", proc.Name, err)
 	}
+	return p.publishOne(report)
+}
+
+// publishOne enqueues one process's report on plain Enqueue — see
+// PublishChanged for why a one-process report must not supersede.
+func (p *PlantClaimsPublisher) publishOne(report protocol.PlantClaimsReport) error {
+	data, err := p.encode(report)
+	if err != nil {
+		return fmt.Errorf("plant_claims: build %s: %w", report.ProcessID, err)
+	}
 	if _, err := p.db.EnqueueOutbox(data, protocol.SubjectPlantClaims); err != nil {
-		return fmt.Errorf("plant_claims: enqueue %s: %w", proc.Name, err)
+		return fmt.Errorf("plant_claims: enqueue %s: %w", report.ProcessID, err)
 	}
 	return nil
 }
@@ -176,13 +206,25 @@ func (p *PlantClaimsPublisher) PublishAll() error {
 // arrive ordered by (style_id, sequence, core_node_name), so each style's
 // slice is in ListClaims order and Core's Seq column does not churn.
 func (p *PlantClaimsPublisher) buildProcess(proc processes.Process) ([]byte, error) {
-	styles, err := processes.ListStylesByProcess(p.db.DB, proc.ID)
+	report, err := p.reportFor(proc)
 	if err != nil {
 		return nil, err
 	}
+	return p.encode(report)
+}
+
+// reportFor reads one process's report (the two queries buildProcess
+// describes) and stamps its Digest, so every path that publishes it — and
+// ReconcileClaims, which compares it with what Core quotes back — carries the
+// digest of exactly the value sent.
+func (p *PlantClaimsPublisher) reportFor(proc processes.Process) (protocol.PlantClaimsReport, error) {
+	styles, err := processes.ListStylesByProcess(p.db.DB, proc.ID)
+	if err != nil {
+		return protocol.PlantClaimsReport{}, err
+	}
 	allClaims, err := processes.ListLiveClaimsByProcess(p.db.DB, proc.ID)
 	if err != nil {
-		return nil, err
+		return protocol.PlantClaimsReport{}, err
 	}
 	claimsByStyle := make(map[int64][]processes.NodeClaim, len(styles))
 	for _, c := range allClaims {
@@ -235,7 +277,17 @@ func (p *PlantClaimsPublisher) buildProcess(proc processes.Process) ([]byte, err
 		}
 		report.Styles = append(report.Styles, wire)
 	}
-	return p.encode(report)
+	return withDigest(report)
+}
+
+// withDigest sets a report's Digest to protocol.ClaimsDigest of the rest of it.
+func withDigest(report protocol.PlantClaimsReport) (protocol.PlantClaimsReport, error) {
+	d, err := protocol.ClaimsDigest(report)
+	if err != nil {
+		return protocol.PlantClaimsReport{}, err
+	}
+	report.Digest = d
+	return report, nil
 }
 
 // encode builds one process's envelope. It does NOT touch the outbox — the

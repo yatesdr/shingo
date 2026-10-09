@@ -108,7 +108,9 @@ type Config struct {
 type PlantClaimsConfig struct {
 	// SnapshotInterval is the safety snapshot's period: the full claims set is
 	// republished this often even when no edit triggered a publish, so a Core
-	// that missed one converges. <= 0 uses DefaultPlantClaimsSnapshotInterval.
+	// that missed one converges. It runs only while Core does not quote the
+	// digests back on the heartbeat ack; a Core that does is healed per process
+	// on the ack instead. <= 0 uses DefaultPlantClaimsSnapshotInterval.
 	SnapshotInterval time.Duration `yaml:"snapshot_interval"`
 }
 
