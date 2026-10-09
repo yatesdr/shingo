@@ -282,14 +282,31 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 		// order terminalizes and bin_id is not, so without it a finished order's
 		// aim would close a lane to stores for the life of the plant. It is a
 		// filter on the HOLDER so both spellings pass one liveness test.
+		//
+		// ── A PLAN NEVER BLOCKS A COMMITTED ROBOT ─────────────────────────
+		//
+		// The requester is committed when the fleet has it and it holds a
+		// confirmed slot in this lane: a robot that may be standing at the
+		// lane's waiting spot with a bin. For it only parties already moving
+		// count (ComingForBinCommittedSQL). The demo jam of 2026-10-08 was the
+		// other reading: a never-sent demand's pending hold on the bin its dig
+		// uncovered closed Lane_04 to a press bin at the mark, and the demand
+		// was waiting for a market slot that robot held. The demand re-makes
+		// its plan on its next pass, and a burial it meets becomes a dig.
+		// A requester that has not been sent still reads all three arms: that
+		// is the naked-target window A.1b closed
+		// (TestBurialGuard_APlanNeverBlocksACommittedRobot).
+		committed := fmt.Sprintf(`EXISTS (SELECT 1 FROM orders req WHERE req.id = $2 AND NOT (%s) AND %s)`,
+			helpers.AwaitingFleetSQL("req"), reservations.ConfirmedSlotInLaneSQL("req.id", "$1"))
 		burial = fmt.Sprintf(`NOT EXISTS (
 			SELECT 1 FROM nodes held
 			JOIN bins held_bin ON held_bin.node_id = held.id
-			JOIN orders holder ON %s
+			JOIN orders holder ON CASE WHEN %s THEN %s ELSE %s END
 			WHERE holder.id <> $2
 			  AND holder.status NOT IN (%s)
 			  AND %s
-		  )`, helpers.ComingForBinSQL("holder", "held_bin", "held"), protocol.TerminalStatusSQLList(),
+		  )`, committed, helpers.ComingForBinCommittedSQL("holder", "held_bin", "held"),
+			helpers.ComingForBinSQL("holder", "held_bin", "held"), protocol.TerminalStatusSQLList(),
 			helpers.ShallowerInSameLane("n", "held"))
 	}
 	row := db.QueryRow(fmt.Sprintf(`SELECT %s %s

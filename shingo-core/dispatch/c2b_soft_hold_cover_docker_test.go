@@ -45,7 +45,7 @@ func requireSoftHoldCovers(t *testing.T, db *store.DB, demandID, slotID int64) {
 
 	lane, err := db.GetNode(*slot.ParentID)
 	lane = testutil.Must(t, lane, err, "read the lane")
-	blocked, err := db.SlotsBlockedByHardClaims(*lane.ParentID)
+	blocked, err := db.SlotsBlockedByHardClaims(*lane.ParentID, 0)
 	testutil.MustNoErr(t, err, "read the walk's blocked set")
 	siblings, err := db.ListLaneSlots(lane.ID)
 	testutil.MustNoErr(t, err, "list the lane's slots")

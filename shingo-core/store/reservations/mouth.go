@@ -57,6 +57,10 @@ const (
 	// (HandOffLaneToPicker). Never a dig row, so never a kind this predicate has
 	// to rule on; named here so the three tags are in one place.
 	ByDigHandoff = "dighandoff"
+	// ByDigParking — a dig leg's parking slot, pencilled at its dig's birth (a
+	// slot row, not a mouth row; store.pencilParkingTx). Named here with the
+	// dig's other tags.
+	ByDigParking = "digParking"
 )
 
 // IsExcavation reports whether a mouth row's reserved_by tag says a reshuffle

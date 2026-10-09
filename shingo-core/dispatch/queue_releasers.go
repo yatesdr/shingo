@@ -389,6 +389,11 @@ var causeReleasers = []causeReleaser{
 		what:        "whatever the more specific arms would have named — this is the unmapped fallback",
 	},
 	{
+		cause:       CauseDigLegTurn,
+		populations: []WaitPopulation{PopCompoundLeg},
+		what:        "the dig's earlier leg ends and the chapter advances to this one",
+	},
+	{
 		cause: CauseNoShuffleSlot,
 		// TWO POPULATIONS SINCE THE OUTBOUND DWELL, and the second one is a ROBOT.
 		//

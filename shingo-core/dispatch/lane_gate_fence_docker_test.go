@@ -4,6 +4,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -270,9 +271,9 @@ func TestGateTail_StaleStructDoesNotDoubleAppend(t *testing.T) {
 			"test is not the thing being exercised")
 	}
 
-	if err := d.appendGateTail(&stale, "stale-struct probe"); err != nil {
-		t.Fatalf("appendGateTail on a stale struct returned an error: %v — it should decline "+
-			"quietly, not fail the caller", err)
+	if err := d.appendGateTail(&stale, "stale-struct probe"); !errors.Is(err, ErrAppendNotOwed) {
+		t.Fatalf("appendGateTail on a stale struct returned %v — it should decline with "+
+			"ErrAppendNotOwed, which every caller stops on quietly", err)
 	}
 
 	if n := len(backend.ReleaseCalls()); n != before {

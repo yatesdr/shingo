@@ -134,12 +134,12 @@ func (t *digLaneTake) inTx(ownerID int64, fit *DigFit) *store.CompoundLanes {
 	}
 	return &store.CompoundLanes{LaneIDs: []int64{t.laneID}, Admit: func(tx *sql.Tx) error {
 		if fit != nil {
-			now, err := store.DigFitFactsTx(tx, fit.GroupID, fit.LaneID, fit.FrontOf, fit.Asker)
+			now, err := store.DigFitFactsTx(tx, fit.GroupID, fit.LaneID, fit.FrontOf, fit.Asker, fit.Own.DemandID)
 			if err != nil {
 				return &plan.DigShortError{Blockers: fit.Blockers,
 					Walk: fmt.Errorf("could not read the dig's facts in its hand: %w", err)}
 			}
-			if err := plan.DigStillFits(fit.Facts, now, fit.Lane, fit.Blockers); err != nil {
+			if err := plan.DigStillFits(fit.Facts, now, fit.Lane, fit.Blockers, fit.Own); err != nil {
 				return err
 			}
 		}

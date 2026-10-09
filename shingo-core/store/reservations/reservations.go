@@ -559,6 +559,20 @@ func release(db Execer, orderID int64, ref Ref) error {
 	return nil
 }
 
+// ReleaseOtherPendingSlots deletes orderID's PENDING slot rows on every node but
+// keepNodeID: a dig leg that bound its destination gives back the parking it
+// pencilled at birth and did not use (dispatch bindChosenDestination). A
+// confirmed row is a slot the leg's hand acted on and is not touched.
+func ReleaseOtherPendingSlots(db Execer, orderID, keepNodeID int64) error {
+	_, err := db.Exec(`DELETE FROM reservations
+		WHERE order_id=$1 AND resource_kind=$2 AND state=$3 AND node_id<>$4`,
+		orderID, string(KindSlot), string(StatePending), keepNodeID)
+	if err != nil {
+		return fmt.Errorf("reservations release other pending slots: %w", err)
+	}
+	return nil
+}
+
 // ReleaseByOrder deletes all reservations for the given order, both pending
 // and confirmed. Used by teardown paths (TerminalizeOrder) to ensure no holds
 // outlive the order that owns them.

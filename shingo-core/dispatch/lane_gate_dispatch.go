@@ -881,9 +881,13 @@ func (d *Dispatcher) appendGateTail(order *orders.Order, what string) error {
 	if fresh, err := d.db.GetOrder(order.ID); err != nil {
 		return fmt.Errorf("reload gated order %d before append: %w", order.ID, err)
 	} else if fresh == nil || !IsGateStaged(fresh) {
+		// NOT OWED, AND SAID SO. Returning nil here told the caller its own append
+		// went in, and the floor recorded another pass's release as its own (the
+		// packed run's order 171, 2026-10-08). Every caller already stops quietly
+		// on ErrAppendNotOwed.
 		d.dbg("%s: order %d is no longer awaiting a tail (wait_index=%d) — another pass appended it",
 			what, order.ID, waitIndexOf(fresh))
-		return nil
+		return fmt.Errorf("%s: order %d: %w (%w)", what, order.ID, ErrAppendNotOwed, errTailAppendedElsewhere)
 	}
 
 	var steps []resolvedStep

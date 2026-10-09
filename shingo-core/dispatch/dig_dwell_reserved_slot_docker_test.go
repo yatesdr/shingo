@@ -151,9 +151,12 @@ func TestDwell_AStrangersPendingSlotReservationIsNotOffered(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	g := setupReservedSlotGroup(t, db, "F6R")
 
+	// The swap held its slot before the dwellers existed, as in the specimen.
+	// Since the dig-parking ruling a dig pencils its parking at birth, so a swap
+	// reserving PARK after the digs would collide with a dig's own paper.
+	swap := reserveHoldingSwap(t, db, "f6r-swap", g.park)
 	legA := digFrom(t, db, d, g, g.dugA, g.dugASlots, "f6r-a")
 	legB := digFrom(t, db, d, g, g.dugB, g.dugBSlots, "f6r-b")
-	swap := reserveHoldingSwap(t, db, "f6r-swap", g.park)
 
 	var offered []string
 	d.dwellChoiceHook = func(legID int64, dest *nodes.Node) { offered = append(offered, dest.Name) }
@@ -213,7 +216,15 @@ func TestDwell_ALostClaimWalksOnInTheSamePass(t *testing.T) {
 	db := testDBShared(t)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 	g := setupReservedSlotGroup(t, db, "LCW")
+	// The leg pencils its parking at birth (dig-parking ruling), and a slot the
+	// leg holds cannot be lost in a race. So PARK, the walk's first candidate, is
+	// a swap's before the dig, the leg pencils a lane slot, and a better slot
+	// frees after the birth: the walk offers it first, and that is the slot the
+	// race takes.
+	reserveHoldingSwap(t, db, "lcw-swap", g.park)
 	leg := digFrom(t, db, d, g, g.dugA, g.dugASlots, "lcw-a")
+	better := &nodes.Node{Name: "LCW-BETTER", ParentID: &g.grp.ID, Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(better), "a better slot frees after the birth")
 
 	var thief *orders.Order
 	d.dwellChoiceHook = func(legID int64, dest *nodes.Node) {

@@ -10,13 +10,28 @@ import (
 // dig.go — does this dig fit? The plan-time verdict on an excavation, asked
 // before the dig takes a lane, lifts a bin or writes a leg (C2a, v4 §2.3).
 //
-// THE VERDICT IS len(blockers) + owed <= reachable. blockers is what this dig
-// must park; owed is what the group's running digs must still park (their legs
-// with no destination yet, store.DB.DigFitFacts); reachable is the shuffle
-// pool as dispatch's walk reads it. Running digs choose their slots at release,
-// so until then the pool still shows those slots free; a count of blockers
-// alone spends them a second time, and six digs start against four parks
-// (TestC2aPin_SixDigsFourParks_TheFifthParksOnPaper).
+// THE VERDICT IS len(blockers) + own <= reachable, and the blockers' slots are
+// then HELD. blockers is what this dig must park; own is the demand's own drops
+// into the dug group that hold no slot there yet (domain.OwnDrop); reachable is
+// the shuffle pool as dispatch's walk reads it, which passes by every slot
+// already on paper.
+//
+// ROOM IS HELD, NOT COUNTED (C2b dig-parking ruling, 2026-10-09). The walk's
+// slots for the blockers are pencilled at the dig's birth, one pending slot
+// reservation per blocker's leg (dispatch planUnbury, store
+// CreateCompoundChildren). Running digs' parking is on paper, and the walk
+// passes it by, so nothing is "owed" on top: the owed count this verdict carried
+// (C2a) counted legs without destinations and held nothing. Two digs 90 ms apart
+// counted the same free slots, a store took one, and each lifted leg needed a
+// slot only inside the other's locked lane (c2b-demo-visible-923254b1-20m,
+// 959/963). A dig that cannot hold a slot per blocker does not start.
+//
+// OWN IS COUNTED LIKE A BLOCKER (demo, 2026-10-08). A demand whose drop is bound
+// for the group it digs in needs a slot there after the dig's shuffles; a
+// verdict that counted only the blockers let the shuffles spend the group's
+// last free slot, and the demand, holding the bin its dig uncovered, waited on
+// a slot its own dig had spent. The demand's own pass reserves that slot; the
+// dig keeps room for it.
 //
 // SHORT IS SHORT, WHATEVER MADE IT SHORT. A pool that is short because the
 // room is in a lane a robot is inside answers ErrNoShuffleSlot here, the same
@@ -57,7 +72,7 @@ var ErrLaneMouthHeld = errors.New("a lane this dig needs has its mouth held by a
 
 // DigDB is the verdict's own read: one statement (store.DB.DigFitFacts).
 type DigDB interface {
-	DigFitFacts(groupID, laneID int64, frontOf int, asker domain.DigAsker) (domain.DigFitFacts, error)
+	DigFitFacts(groupID, laneID int64, frontOf int, asker domain.DigAsker, demandID int64) (domain.DigFitFacts, error)
 }
 
 // Parking is dispatch's shuffle walk, asked whether need slots are reachable
@@ -70,7 +85,7 @@ type Parking func(need int) error
 // refusals.
 type DigShortError struct {
 	Blockers int
-	Owed     int
+	Own      int
 	Walk     error
 }
 
@@ -79,8 +94,8 @@ func (e *DigShortError) Error() string {
 	if !errors.Is(e.Walk, ErrNoShuffleSlot) {
 		walk = ErrNoShuffleSlot.Error() + ": " + walk
 	}
-	return fmt.Sprintf("%s (this dig needs %d: %d blocker(s) + %d owed by running digs)",
-		walk, e.Blockers+e.Owed, e.Blockers, e.Owed)
+	return fmt.Sprintf("%s (this dig needs %d: %d blocker(s) + %d for the demand's own drop)",
+		walk, e.Blockers+e.Own, e.Blockers, e.Own)
 }
 
 func (e *DigShortError) Unwrap() error { return ErrNoShuffleSlot }
@@ -107,9 +122,9 @@ func (e *DugMouthGrantedError) Unwrap() error { return ErrLaneMouthHeld }
 // another order. A *DigShortError means the group's parking is short. Any
 // other error is the walk's narrower refusal (parking another dig or demand
 // holds, a mouth held or unread), passed through for its own cause.
-func DigFits(db DigDB, groupID int64, lane string, laneID int64, blockers, frontOf int, asker domain.DigAsker, parking Parking) (domain.DigFitFacts, error) {
+func DigFits(db DigDB, groupID int64, lane string, laneID int64, blockers, frontOf int, asker domain.DigAsker, own domain.OwnDrop, parking Parking) (domain.DigFitFacts, error) {
 	defer observe(db, "dig-fits")()
-	facts, err := db.DigFitFacts(groupID, laneID, frontOf, asker)
+	facts, err := db.DigFitFacts(groupID, laneID, frontOf, asker, own.DemandID)
 	if err != nil {
 		// Cannot tell what is owed or granted, so cannot say the dig fits: a
 		// wait, the disposition every other read on this path takes.
@@ -118,13 +133,13 @@ func DigFits(db DigDB, groupID int64, lane string, laneID int64, blockers, front
 	if facts.GrantedTo != 0 {
 		return facts, &DugMouthGrantedError{Lane: lane, Slot: facts.GrantedSlot, Holder: facts.GrantedTo}
 	}
-	owed := facts.Owed
-	err = parking(blockers + owed)
+	mine := own.Owed(facts)
+	err = parking(blockers + mine)
 	switch {
 	case err == nil:
 		return facts, nil
 	case errors.Is(err, ErrNoShuffleSlot), errors.Is(err, ErrLaneOccupiedParking):
-		return facts, &DigShortError{Blockers: blockers, Owed: owed, Walk: err}
+		return facts, &DigShortError{Blockers: blockers, Own: mine, Walk: err}
 	}
 	return facts, err
 }
@@ -133,21 +148,24 @@ func DigFits(db DigDB, groupID int64, lane string, laneID int64, blockers, front
 // the facts read again on the transaction that starts the dig, against the ones
 // the plan-time verdict passed on. nil means nothing it counted has changed
 // against it. A *DugMouthGrantedError means the lane's mouth was granted since.
-// A *DigShortError means running digs owe more than they did when this dig was
-// planned: the walk found room for blockers + the owed it read then, and the
-// difference is spent.
+// A *DigShortError means the demand's own drop needs more room than it did.
 //
-// The walk itself is not re-run: it is many reads, and what it counts the facts
-// account for (a slot taken since by a store is the store's own refusal of the
-// leg at its handover, a wait; a slot another dig's leg is owed is in Owed).
-func DigStillFits(planned, now domain.DigFitFacts, lane string, blockers int) error {
+// The blockers' parking is not re-asked here: it is held in this same
+// transaction by the legs' pencils, and a slot another dig or a store took
+// since the walk refuses the pencil's insert (store.ParkingTakenError), the
+// same wait.
+//
+// The demand's own drop is counted on both sides (own.Owed): it grows only if
+// the demand gave up a slot it held in the group since the plan.
+func DigStillFits(planned, now domain.DigFitFacts, lane string, blockers int, own domain.OwnDrop) error {
 	if now.GrantedTo != 0 {
 		return &DugMouthGrantedError{Lane: lane, Slot: now.GrantedSlot, Holder: now.GrantedTo}
 	}
-	if now.Owed > planned.Owed {
-		return &DigShortError{Blockers: blockers, Owed: now.Owed, Walk: fmt.Errorf(
-			"%w: running digs owe %d slot(s), %d more than when this dig was planned",
-			ErrNoShuffleSlot, now.Owed, now.Owed-planned.Owed)}
+	was, is := own.Owed(planned), own.Owed(now)
+	if is > was {
+		return &DigShortError{Blockers: blockers, Own: is, Walk: fmt.Errorf(
+			"%w: the demand's own drop needs %d slot(s) in the group, %d more than when this dig was planned",
+			ErrNoShuffleSlot, is, is-was)}
 	}
 	return nil
 }

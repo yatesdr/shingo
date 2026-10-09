@@ -559,6 +559,11 @@ func (d *Dispatcher) dispatchFleetRelease(env *protocol.Envelope, order *orders.
 // nothing.
 var ErrAppendNotOwed = errors.New("the order has ended or its tail was already appended")
 
+// errTailAppendedElsewhere narrows ErrAppendNotOwed to the reload's answer: the
+// order is live and another pass appended its tail. Unlike the claim's refusal,
+// which a cancel also produces, the robot is moving under that pass's append.
+var errTailAppendedElsewhere = errors.New("its tail was appended by another pass")
+
 // appendSegmentAndAdvance is the ONE fleet-append path: convert a segment to
 // blocks, append them to the order's live (unsealed) waybill, and — only on
 // success — advance wait_index and take the staged→in_transit transition.

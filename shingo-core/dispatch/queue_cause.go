@@ -132,6 +132,11 @@ const (
 	// CauseNoShuffleSlot — the dig had nowhere to park its blockers (findShuffleSlots
 	// came up short). Clears when any order releases a slot anywhere in the group.
 	CauseNoShuffleSlot QueueCause = "no-shuffle-slot"
+	// CauseDigLegTurn — a dig leg born `pending` behind an earlier leg of its
+	// own dig, waiting its turn. Written at the dig's birth on every leg after the
+	// first (markLegsWaitingTheirTurn); the chapter's advance hands it over when
+	// the leg ahead ends, and its own wait replaces this one if it is then held.
+	CauseDigLegTurn QueueCause = "dig-leg-turn"
 	// CauseDigHoldsParking — right of way (§R.61): the group HAS room, and the room
 	// is inside a lane another dig is holding, so this dig may not plan into it.
 	//

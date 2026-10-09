@@ -366,15 +366,12 @@ func (db *DB) ListOutstandingDigClaims(groupID int64, asker reservations.DigAske
 // DigFitFacts is what the plan-time dig verdict reads (plan.DigFits), in one
 // statement.
 //
-// Owed: what the group's running digs still owe — their non-terminal legs that
-// carry no destination yet, each a blocker that will need a parking slot from
-// this group's pool. LEGS, NOT DIGS: the unit is the slot (C2a; the §R.79 note
-// on planUnbury records the old ledger adding digs to slots). A dig's legs are
-// written whole when it starts and each takes its slot only at release, so
-// until then the pool still shows the slot free and a second dig's count would
-// spend it again. The same predicate as ListOutstandingDigClaims, one spelling
-// (owedDigLegWhere); the asker's own dig is exempt, so a re-plan never owes
-// itself.
+// NO OWED COUNT (C2b dig-parking ruling, 2026-10-09). It read the group's
+// running digs' legs with no destination, and held nothing; their parking is on
+// paper now (a pending slot reservation per blocker's leg, from the dig's
+// birth), which the shuffle walk passes by, so a count of it on top would spend
+// it twice. ListOutstandingDigClaims keeps the predicate for the standoff
+// tripwire, which needs the identities.
 //
 // GrantedSlot / GrantedTo: the dug lane's shallowest slot, SHALLOWER THAN
 // frontOf (the deepest blocker this dig would lift), that a live order other
@@ -410,46 +407,46 @@ func (db *DB) ListOutstandingDigClaims(groupID int64, asker reservations.DigAske
 type DigFitFacts = domain.DigFitFacts
 
 // DigFitFacts reads the verdict's facts for a dig of laneID in groupID.
-func (db *DB) DigFitFacts(groupID, laneID int64, frontOf int, asker reservations.DigAsker) (DigFitFacts, error) {
-	return digFitFacts(db.DB, groupID, laneID, frontOf, asker)
+func (db *DB) DigFitFacts(groupID, laneID int64, frontOf int, asker reservations.DigAsker, demandID int64) (DigFitFacts, error) {
+	return digFitFacts(db.DB, groupID, laneID, frontOf, asker, demandID)
 }
 
 // DigFitFactsTx is DigFitFacts on the dig's own transaction: the verdict
 // re-asked in its hand (dispatch digLaneTake).
-func DigFitFactsTx(tx *sql.Tx, groupID, laneID int64, frontOf int, asker reservations.DigAsker) (DigFitFacts, error) {
-	return digFitFacts(tx, groupID, laneID, frontOf, asker)
+func DigFitFactsTx(tx *sql.Tx, groupID, laneID int64, frontOf int, asker reservations.DigAsker, demandID int64) (DigFitFacts, error) {
+	return digFitFacts(tx, groupID, laneID, frontOf, asker, demandID)
 }
 
 func digFitFacts(q interface {
 	QueryRow(string, ...any) *sql.Row
-}, groupID, laneID int64, frontOf int, asker reservations.DigAsker) (DigFitFacts, error) {
-	args := append([]any{string(reservations.ModeDig), groupID}, asker.Args()...)
-	args = append(args, laneID, frontOf)
+}, groupID, laneID int64, frontOf int, asker reservations.DigAsker, demandID int64) (DigFitFacts, error) {
+	args := append([]any{groupID}, asker.Args()...)
+	args = append(args, laneID, frontOf, demandID)
 	var f DigFitFacts
 	err := q.QueryRow(fmt.Sprintf(`
-		SELECT owed.n, COALESCE(granted.name, ''), COALESCE(granted.claimed_by, 0)
-		FROM (
-			SELECT COUNT(DISTINCT leg.id) AS n
-			FROM reservations dig_hold
-			JOIN nodes lane ON lane.id = dig_hold.node_id
-			JOIN orders leg ON leg.parent_order_id = dig_hold.order_id
-			WHERE `+owedDigLegWhere()+`
-		) owed
+		SELECT COALESCE(granted.name, ''), COALESCE(granted.claimed_by, 0),
+		       COALESCE((SELECT g.name FROM nodes g WHERE g.id = $1), ''),
+		       (SELECT COUNT(*) FROM reservations dr
+		          JOIN nodes ds ON ds.id = dr.node_id
+		          LEFT JOIN nodes dl ON dl.id = ds.parent_id
+		         WHERE dr.order_id = $6 AND dr.resource_kind = '%s' AND `+reservations.ActiveStateSQL("dr.")+`
+		           AND (ds.parent_id = $1 OR dl.parent_id = $1))
+		FROM (SELECT 1) one
 		LEFT JOIN LATERAL (
 			SELECT s.name, s.claimed_by
 			FROM nodes s
 			JOIN orders placer ON placer.id = s.claimed_by
-			WHERE s.parent_id = $5
-			  AND COALESCE(s.depth, 0) < $6
+			WHERE s.parent_id = $4
+			  AND COALESCE(s.depth, 0) < $5
 			  AND placer.status NOT IN (%s)
 			  AND placer.status <> '%s'
-			  AND placer.id NOT IN ($3, $4)
-			  AND (placer.parent_order_id IS NULL OR placer.parent_order_id NOT IN ($3, $4))
+			  AND placer.id NOT IN ($2, $3)
+			  AND (placer.parent_order_id IS NULL OR placer.parent_order_id NOT IN ($2, $3))
 			  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = s.id)
 			ORDER BY COALESCE(s.depth, 0)
 			LIMIT 1
-		) granted ON true`, protocol.TerminalStatusSQLList(), protocol.StatusStaged), args...).
-		Scan(&f.Owed, &f.GrantedSlot, &f.GrantedTo)
+		) granted ON true`, string(reservations.KindSlot), protocol.TerminalStatusSQLList(), protocol.StatusStaged), args...).
+		Scan(&f.GrantedSlot, &f.GrantedTo, &f.GroupName, &f.DemandSlotsHeld)
 	if err != nil {
 		return DigFitFacts{}, fmt.Errorf("dig fit facts for lane %d in group %d: %w", laneID, groupID, err)
 	}
@@ -1125,7 +1122,24 @@ func (db *DB) SlotsThatWouldEntombASpokenForSlot(groupID int64) (map[int64]bool,
 	return out, rows.Err()
 }
 
-func (db *DB) SlotsBlockedByHardClaims(groupID int64) (map[int64]bool, error) {
+// SlotsBlockedByHardClaims computes the burial set its long note further up this
+// file describes. claimant is the order that will place the bin: the dwelling
+// dig leg at release, 0 at plan time.
+//
+// ── A PLAN NEVER BLOCKS A COMMITTED ROBOT, HERE TOO ──────────────────────
+//
+// A claimant the fleet has (not awaiting the fleet) is a robot standing with a
+// lifted bin, and for it only parties already moving count
+// (ComingForBinCommittedSQL), as the store selector reads it (nodes
+// findStoreSlot). The second jam of 2026-10-09 was the other reading: dig leg
+// 803 pencilled the mouth UTN_001; never-sent demand 782 then soft-held the bin
+// behind it, and this set refused 803 its own pencilled slot on every pass while
+// 782 waited for room 803's stuck dig held. The demand re-plans or digs on its
+// next pass. Plan time (claimant 0) and a claimant not yet sent read all three
+// arms. +0 statements: the same statement, the CASE picks the arm.
+func (db *DB) SlotsBlockedByHardClaims(groupID, claimant int64) (map[int64]bool, error) {
+	committed := fmt.Sprintf(`EXISTS (SELECT 1 FROM orders placer WHERE placer.id = $2 AND NOT (%s))`,
+		helpers.AwaitingFleetSQL("placer"))
 	rows, err := db.DB.Query(fmt.Sprintf(`
 		SELECT DISTINCT n.id
 		FROM nodes n
@@ -1134,14 +1148,15 @@ func (db *DB) SlotsBlockedByHardClaims(groupID int64) (map[int64]bool, error) {
 		  AND EXISTS (
 			SELECT 1 FROM nodes held
 			JOIN bins held_bin ON held_bin.node_id = held.id
-			JOIN orders holder ON %s
+			JOIN orders holder ON CASE WHEN %s THEN %s ELSE %s END
 			WHERE held_bin.status <> 'retired'
 			  AND holder.parent_order_id IS NULL
 			  AND holder.status NOT IN (%s)
 			  AND %s
 			  AND %s
-		  )`, helpers.ComingForBinSQL("holder", "held_bin", "held"), protocol.TerminalStatusSQLList(),
-		helpers.ShallowerInSameLane("n", "held"), helpers.ReachableSQL("held")), groupID)
+		  )`, committed, helpers.ComingForBinCommittedSQL("holder", "held_bin", "held"),
+		helpers.ComingForBinSQL("holder", "held_bin", "held"), protocol.TerminalStatusSQLList(),
+		helpers.ShallowerInSameLane("n", "held"), helpers.ReachableSQL("held")), groupID, claimant)
 	if err != nil {
 		return nil, fmt.Errorf("slots blocked by hard claims in group %d: %w", groupID, err)
 	}

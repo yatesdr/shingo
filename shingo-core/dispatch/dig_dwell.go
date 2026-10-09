@@ -353,7 +353,7 @@ func (d *Dispatcher) releaseDwellingDigLeg(order *orders.Order, lane *nodes.Node
 	// no longer awaiting a tail, and returns without touching the fleet.
 	if fresh == nil || !IsGateStaged(fresh) {
 		d.dbg("dig dwell: leg %d is no longer awaiting a tail — another pass released it", order.ID)
-		return Admitted(), 0, nil
+		return GateVerdict{}, 0, ErrAppendNotOwed
 	}
 
 	dest, v, err := d.dwellDestination(fresh, lane)
@@ -386,7 +386,11 @@ func (d *Dispatcher) releaseDwellingDigLeg(order *orders.Order, lane *nodes.Node
 		// is given back. Both holds stay, which is the conservative side: a corridor
 		// held one pass too long stalls; a corridor freed under a moving robot
 		// collides.
-		if !IsAppendLanded(err) {
+		//
+		// AND UNLESS ANOTHER PASS APPENDED IT. The row is keyed (order, lane), so the
+		// one this call took is the one that pass took for the same robot, now
+		// driving to its destination. Giving it back frees a corridor under it.
+		if !IsAppendLanded(err) && !errors.Is(err, errTailAppendedElsewhere) {
 			d.releaseOccupancyForLaneOf(fresh.ID, dest)
 		}
 		return GateVerdict{}, 0, err
@@ -659,6 +663,15 @@ func (d *Dispatcher) bindChosenDestination(leg *orders.Order, lane, dest *nodes.
 		if !takeByRank || !errors.Is(err, ErrSlotContended) || !d.takeSlotByRank(leg, dest) {
 			return nil, GateVerdict{}, fmt.Errorf("dig dwell: leg %d claim %s: %w", leg.ID, dest.Name, err)
 		}
+	}
+	// THE PENCIL MOVES WITH THE LEG. The leg pencilled a parking slot at its
+	// dig's birth; the walk offers that slot to the leg as its own, or a better
+	// free one first. Whatever it bound, any other pending slot it holds is a
+	// pencil it did not use, and is given back now so no chooser passes it by.
+	// +1 DELETE per leg release.
+	if err := reservations.ReleaseOtherPendingSlots(d.db.DB, leg.ID, dest.ID); err != nil {
+		log.Printf("dig dwell: leg %d bound %s but could not release its other pencilled parking: %v",
+			leg.ID, dest.Name, err)
 	}
 	if err := bindDwellTail(d.db, leg, dest); err != nil {
 		return nil, GateVerdict{}, err

@@ -45,6 +45,68 @@ func (db *DB) CreateOrder(o *orders.Order) error {
 type CompoundChild struct {
 	Order *orders.Order
 	BinID int64 // bin to claim for this child
+	// Park is the parking slot this leg pencils at birth (a pending slot
+	// reservation in its name), 0 for none. ParkByRank: the dig's walk offered
+	// it by rank, so a stranger's pending promise on it is taken
+	// (takeSlotByRankTx) under ParkNamed's demand, the holder told ParkNote.
+	Park       int64
+	ParkByRank bool
+	ParkNamed  int64
+	ParkNote   HolderNote
+}
+
+// ErrParkingTaken is a dig birth refused because the parking slot the walk found
+// for one of its blockers was taken between the walk and the birth: another
+// order's reservation is on it, and the dig cannot take it by rank. Nothing was
+// written. Dispatch reads it as a short walk (no-shuffle-slot).
+var ErrParkingTaken = errors.New("a dig's parking slot was taken before its birth")
+
+// ParkingTakenError names the slot. It unwraps to ErrParkingTaken.
+type ParkingTakenError struct {
+	SlotID int64
+	LegSeq int
+}
+
+func (e *ParkingTakenError) Error() string {
+	return fmt.Sprintf("%s: slot %d for the leg at sequence %d", ErrParkingTaken, e.SlotID, e.LegSeq)
+}
+
+func (e *ParkingTakenError) Unwrap() error { return ErrParkingTaken }
+
+// MarkCompoundLegsWaiting writes the turn wait on every pending leg of parentID
+// after sequence first: one UPDATE (dispatch markLegsWaitingTheirTurn).
+func (db *DB) MarkCompoundLegsWaiting(parentID int64, first int, reason, code, cause string) error {
+	_, err := db.Exec(`UPDATE orders SET queue_reason=$3, queue_code=$4, queue_cause=$5, updated_at=$6
+		WHERE parent_order_id=$1 AND sequence>$2 AND status=$7`,
+		parentID, first, reason, code, cause, clock.Now().UTC(), string(protocol.StatusPending))
+	if err != nil {
+		return fmt.Errorf("mark dig %d's later legs waiting: %w", parentID, err)
+	}
+	return nil
+}
+
+// pencilParkingTx is a leg's parking pencil at its dig's birth: a pending slot
+// reservation in the leg's name on c.Park, taken from a stranger's pending
+// promise by rank when the walk offered it so. A slot already on someone's paper
+// that the dig cannot take refuses the birth (*ParkingTakenError).
+func pencilParkingTx(tx *sql.Tx, legID int64, c CompoundChild) error {
+	err := reservations.AcquireSlot(tx, legID, c.Park, reservations.ByDigParking)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, reservations.ErrReservationConflict) {
+		return fmt.Errorf("pencil parking slot %d for leg %d: %w", c.Park, legID, err)
+	}
+	if c.ParkByRank {
+		_, tErr := takeSlotByRankTx(tx, c.Park, legID, c.ParkNamed, c.ParkNote)
+		if tErr == nil {
+			return nil
+		}
+		if !errors.Is(tErr, ErrNoSlotTake) {
+			return tErr
+		}
+	}
+	return &ParkingTakenError{SlotID: c.Park, LegSeq: c.Order.Sequence}
 }
 
 // CompoundLanes is a dig's lane step in the transaction that writes its legs:
@@ -236,6 +298,16 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild, lanes *CompoundLa
 			}
 			displaced = append(displaced, byHand...)
 			stolen = append(stolen, took...)
+		}
+
+		// THE LEG PENCILS ITS PARKING, in the dig's transaction (C2b dig-parking
+		// ruling): one pending slot reservation per blocker, so the dig's room is
+		// held from its birth. uq_reservations_slot_active is what keeps two digs
+		// from booking one slot; the loser's birth rolls back whole.
+		if c.Park != 0 {
+			if err := pencilParkingTx(tx, o.ID, c); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -606,9 +678,22 @@ func (db *DB) TakeSlotByRank(nodeID, takerID, named int64, note HolderNote) (int
 		return 0, err
 	}
 	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	holder, err := takeSlotByRankTx(tx, nodeID, takerID, named, note)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return holder, nil
+}
+
+// takeSlotByRankTx is TakeSlotByRank on the caller's transaction: a dig leg's
+// release (TakeSlotByRank) or its birth's parking pencil (pencilParkingTx).
+func takeSlotByRankTx(tx *sql.Tx, nodeID, takerID, named int64, note HolderNote) (int64, error) {
 	var holder int64
 	var status string
-	err = tx.QueryRow(`SELECT r.order_id, o.status FROM reservations r JOIN orders o ON o.id = r.order_id
+	err := tx.QueryRow(`SELECT r.order_id, o.status FROM reservations r JOIN orders o ON o.id = r.order_id
 		WHERE r.node_id = $1 AND r.resource_kind = 'slot' AND r.state = $2 AND r.order_id <> $3
 		  AND `+orders.AwaitingFleetSQL("o")+`
 		FOR UPDATE OF r`, nodeID, string(reservations.StatePending), takerID).Scan(&holder, &status)
@@ -648,9 +733,6 @@ func (db *DB) TakeSlotByRank(nodeID, takerID, named int64, note HolderNote) (int
 	}
 	if err := reservations.AcquireSlot(tx, takerID, nodeID, "reserveSlot"); err != nil {
 		return 0, fmt.Errorf("reserve slot %d for order %d: %w", nodeID, takerID, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, err
 	}
 	return holder, nil
 }

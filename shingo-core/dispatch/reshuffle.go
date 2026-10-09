@@ -22,6 +22,14 @@ type ReshuffleStep struct {
 	BinID    int64
 	FromNode *nodes.Node
 	ToNode   *nodes.Node
+	// Park is the parking slot an unbury step's leg pencils at the dig's birth
+	// (a pending slot reservation in the leg's name, store.CreateCompoundChildren):
+	// the walk's slot for this blocker. ToNode stays nil; the leg places into
+	// Park or a better free slot at release (dig_dwell.go). ParkByRank says the
+	// walk offered it by rank, from a stranger's promise the dig outranks (C2b
+	// A.3), so the birth takes it explicitly. Nil for a step with no blocker.
+	Park       *nodes.Node
+	ParkByRank bool
 }
 
 // ReshufflePlan describes the full reshuffle needed to access a buried bin.
@@ -66,6 +74,7 @@ type DigFit struct {
 	FrontOf  int
 	Blockers int
 	Asker    reservations.DigAsker
+	Own      domain.OwnDrop
 	Facts    domain.DigFitFacts
 }
 
@@ -186,7 +195,7 @@ func findBuriedBlockers(db *store.DB, targetSlotID int64) ([]reshuffleBlocker, e
 // out of the count: a soft-held requester holds its destination as a pending
 // reservation, which the dropoff count (orders.InFlightForDropoffSQL) does not
 // read. Pinned by TestHeldBinDig_NeverParksOnTheOrdersOwnDestination (engine).
-func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, groupID int64, asker reservations.DigAsker, rankFor int64, exclude map[int64]bool) (*ReshufflePlan, int, error) {
+func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, groupID int64, asker reservations.DigAsker, rankFor int64, own domain.OwnDrop, exclude map[int64]bool) (*ReshufflePlan, int, error) {
 	if targetSlot.ParentID == nil {
 		return nil, 0, fmt.Errorf("%w: %s", ErrSlotNotInLane, targetSlot.Name)
 	}
@@ -255,31 +264,53 @@ func planUnbury(db *store.DB, target *bins.Bin, targetSlot, lane *nodes.Node, gr
 	// engineering and configuration capacity problem, not a dispatch one. The
 	// seed has to carry enough reachable room to clear a lane, which is what the
 	// census at birth asserts before a single order runs.
+	//
+	// ── AND THE ROOM IS HELD, NOT COUNTED (C2b dig-parking ruling, 2026-10-09) ──
+	//
+	// The walk's slots for the blockers ride the steps (ReshuffleStep.Park), and
+	// each blocker's leg pencils its slot at the dig's birth, in the dig's own
+	// transaction. From then on the slot is on paper: every chooser passes it by
+	// (SlotSpokenForByStrangerSQL), so no store and no later dig can spend it, and
+	// the counted-not-held race of 959/963 cannot recur. A slot taken between this
+	// walk and the birth refuses the pencil's insert, and the dig does not start:
+	// the same no-shuffle-slot wait as a short walk. The extra slots the walk finds
+	// for the demand's own drop are counted, not pencilled: the demand's own pass
+	// reserves its drop.
 	frontOf := deepestBlocker(blockers)
-	facts, err := plan.DigFits(db, groupID, lane.Name, lane.ID, len(blockers), frontOf, asker, func(need int) error {
-		_, wErr := findShuffleSlotsFor(db, lane.ID, groupID, need, asker, rankFor, noClaimantYet, exclude, nil)
+	var parked []*nodes.Node
+	byRank := map[int64]bool{}
+	facts, err := plan.DigFits(db, groupID, lane.Name, lane.ID, len(blockers), frontOf, asker, own, func(need int) error {
+		slots, wErr := findShuffleSlotsFor(db, lane.ID, groupID, need, asker, rankFor, noClaimantYet, exclude, byRank)
+		parked = slots
 		return wErr
 	})
 	if err != nil {
 		return nil, 0, fmt.Errorf("find shuffle slots: %w", err)
+	}
+	if len(parked) < len(blockers) {
+		return nil, 0, fmt.Errorf("find shuffle slots: %w: the walk returned %d slot(s) for %d blocker(s)",
+			ErrNoShuffleSlot, len(parked), len(blockers))
 	}
 
 	plan := &ReshufflePlan{
 		TargetBin:  target,
 		TargetSlot: targetSlot,
 		Fit: &DigFit{GroupID: groupID, LaneID: lane.ID, Lane: lane.Name, FrontOf: frontOf,
-			Blockers: len(blockers), Asker: asker, Facts: facts},
+			Blockers: len(blockers), Asker: asker, Own: own, Facts: facts},
 	}
 	seq := 1
 	// Front-to-back order = shallowest first, which is the order a robot can
 	// physically take them out in.
-	for _, b := range blockers {
+	for i, b := range blockers {
 		plan.Steps = append(plan.Steps, ReshuffleStep{
 			Sequence: seq,
 			StepType: protocol.StepUnbury,
 			BinID:    b.bin.ID,
 			FromNode: b.slot,
-			// ToNode stays nil: the destination is chosen at release time.
+			// ToNode stays nil: the destination is chosen at release time, from
+			// Park or a better free slot.
+			Park:       parked[i],
+			ParkByRank: byRank[parked[i].ID],
 		})
 		seq++
 	}
@@ -313,12 +344,24 @@ func deepestBlocker(blockers []reshuffleBlocker) int {
 // deliverTo is the node that retrieve delivers to — the requesting order's
 // DeliveryNode, resolved by the caller — and planUnbury keeps it out of the
 // parking count (see planUnbury). nil excludes nothing.
+//
+// ONE DIG BIRTH FOR BOTH DOORS (C2b dig-parking ruling, item 4). This and the
+// lane-clear dig (planLaneMouthClearFor) are the same planUnbury, the same
+// pencilled parking and the same birth (createCompoundOrder). The own-drop rule
+// applies where the demand's drop is in the dug group: a retrieve whose delivery
+// names the GROUP needs a slot there after the shuffles, counted like a
+// blocker's; one delivering to a slot keeps that slot out of the parking
+// instead; one delivering to a line needs neither.
 func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane *nodes.Node, groupID int64, asker reservations.DigAsker, deliverTo *nodes.Node) (*ReshufflePlan, error) {
 	var exclude map[int64]bool
-	if deliverTo != nil {
+	var own domain.OwnDrop
+	switch {
+	case deliverTo != nil && deliverTo.ID == groupID:
+		own = domain.OwnDrop{DemandID: asker.OrderID, Groups: []string{deliverTo.Name}}
+	case deliverTo != nil:
 		exclude = map[int64]bool{deliverTo.ID: true}
 	}
-	plan, seq, err := planUnbury(db, target, targetSlot, lane, groupID, asker, asker.OrderID, exclude)
+	plan, seq, err := planUnbury(db, target, targetSlot, lane, groupID, asker, asker.OrderID, own, exclude)
 	if err != nil {
 		return nil, err
 	}
@@ -361,7 +404,7 @@ func (d *Dispatcher) MoveDigFits(bin *bins.Bin, source, dest *nodes.Node) error 
 		exclude[dest.ID] = true
 	}
 	_, err = plan.DigFits(d.db, groupID, lane.Name, lane.ID, len(blockers), deepestBlocker(blockers),
-		reservations.Anyone, func(need int) error {
+		reservations.Anyone, domain.OwnDrop{}, func(need int) error {
 			_, wErr := findShuffleSlotsFor(d.db, lane.ID, groupID, need, reservations.Anyone,
 				noClaimantYet, noClaimantYet, exclude, nil)
 			return wErr
@@ -388,16 +431,16 @@ func (d *Dispatcher) MoveDigFits(bin *bins.Bin, source, dest *nodes.Node) error 
 // lane moved underneath us between the two reads, and the right answer is to do
 // nothing and re-ask on the next pass.
 func PlanLaneMouthClear(db *store.DB, targetSlot, lane *nodes.Node, groupID int64, asker reservations.DigAsker) (*ReshufflePlan, error) {
-	return planLaneMouthClearFor(db, targetSlot, lane, groupID, asker, asker.OrderID)
+	return planLaneMouthClearFor(db, targetSlot, lane, groupID, asker, asker.OrderID, domain.OwnDrop{})
 }
 
 // planLaneMouthClearFor is PlanLaneMouthClear ranked for rankFor, the demand the
-// dig carries (findShuffleSlotsFor).
-func planLaneMouthClearFor(db *store.DB, targetSlot, lane *nodes.Node, groupID int64, asker reservations.DigAsker, rankFor int64) (*ReshufflePlan, error) {
+// dig carries (findShuffleSlotsFor), with that demand's own drops owed (own).
+func planLaneMouthClearFor(db *store.DB, targetSlot, lane *nodes.Node, groupID int64, asker reservations.DigAsker, rankFor int64, own domain.OwnDrop) (*ReshufflePlan, error) {
 	// No exclusion: this plan has no retrieve, so no child of it is bound for the
 	// requester's destination. Whether a complex requester's reserved destination
 	// can be the only parking this count sees is not pinned.
-	plan, _, err := planUnbury(db, nil, targetSlot, lane, groupID, asker, rankFor, nil)
+	plan, _, err := planUnbury(db, nil, targetSlot, lane, groupID, asker, rankFor, own, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -754,7 +797,7 @@ func shuffleSlotsFrom(db *store.DB, laneID, groupID int64, children []*nodes.Nod
 		return nil, fmt.Errorf("%w: could not read lane occupancy: %v", ErrNoShuffleSlot, oErr)
 	}
 
-	blocked, hErr := db.SlotsBlockedByHardClaims(groupID)
+	blocked, hErr := db.SlotsBlockedByHardClaims(groupID, claimant)
 	if hErr != nil {
 		// Cannot tell what is protected, so cannot safely offer anything. Reported
 		// as congestion (which waits and retries) rather than geometry (which kills

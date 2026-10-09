@@ -1,10 +1,12 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -471,7 +473,7 @@ func (d *Dispatcher) proposeLaneClearDigThen(lane, target *nodes.Node, requester
 	// happens to be digging — a 1:many truth wearing a 1:1 exemption.
 	// Planned as nobody in particular, ranked for the requester: the demand
 	// this dig carries, which may take a stranger's pending slot it outranks.
-	plan, err := planLaneMouthClearFor(d.db, target, lane, *lane.ParentID, reservations.Anyone, requester.ID)
+	plan, err := planLaneMouthClearFor(d.db, target, lane, *lane.ParentID, reservations.Anyone, requester.ID, ownDropOf(requester))
 	if err != nil {
 		// ORDER MATTERS HERE. readFailed() answers true for ANY non-nil error that
 		// is not sql.ErrNoRows — including every sentinel below it — so the named
@@ -664,3 +666,24 @@ func (d *Dispatcher) proposeLaneClearDigThen(lane, target *nodes.Node, requester
 // The old header called this "the pre-check half of fact 3". It is not: fact 3
 // moved to blockersSpokenFor, and this predicate stayed where it was.
 func binIsUnclaimed(b *bins.Bin) bool { return b != nil && b.ClaimedBy == nil }
+
+// ownDropOf is the demand a lane-clear dig carries, as the dig verdict counts
+// it: the groups its drops name (domain.OwnDrop). Read off the steps already in
+// hand; a step list that does not parse owes nothing, which is the verdict's
+// answer before the demand's drop was counted.
+func ownDropOf(requester *orders.Order) domain.OwnDrop {
+	own := domain.OwnDrop{DemandID: requester.ID}
+	if requester.StepsJSON == "" {
+		return own
+	}
+	var steps []resolvedStep
+	if json.Unmarshal([]byte(requester.StepsJSON), &steps) != nil {
+		return own
+	}
+	for _, s := range steps {
+		if s.Action == protocol.ActionDropoff && s.Group != "" {
+			own.Groups = append(own.Groups, s.Group)
+		}
+	}
+	return own
+}

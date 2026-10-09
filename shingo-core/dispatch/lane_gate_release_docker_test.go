@@ -4,6 +4,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -342,8 +343,8 @@ func TestGateRelease_StaleCopyCannotDoubleAppend(t *testing.T) {
 	staleCopy := *stale
 	staleCopy.WaitIndex = 0 // what pass B still believes, having never re-read
 	staleCopy.Status = StatusStaged
-	if _, err := d.releaseGatedOrder(&staleCopy, lane, candidateFor(t, db, &staleCopy, entryIdx)); err != nil {
-		t.Fatalf("second release should be a silent no-op, got: %v", err)
+	if _, err := d.releaseGatedOrder(&staleCopy, lane, candidateFor(t, db, &staleCopy, entryIdx)); !errors.Is(err, ErrAppendNotOwed) {
+		t.Fatalf("second release should decline with ErrAppendNotOwed, got: %v", err)
 	}
 
 	if n := len(backend.ReleaseCalls()) - before; n != 1 {

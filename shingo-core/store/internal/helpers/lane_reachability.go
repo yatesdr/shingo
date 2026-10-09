@@ -137,6 +137,17 @@ func ComingForBinSQL(holder, bin, slot string) string {
 		holder, bin, slot, reservations.BlockingStateSQL("coming_r."), AwaitingFleetSQL(holder))
 }
 
+// ComingForBinCommittedSQL is ComingForBinSQL as a committed robot reads it:
+// only parties already moving. The hard claim counts, and the aim counts only
+// for a holder the fleet has; a pending row and an unsent order's aim are plans,
+// and a plan never blocks a committed robot (nodes.findStoreSlot says when a
+// requester is one).
+func ComingForBinCommittedSQL(holder, bin, slot string) string {
+	return fmt.Sprintf(`(%[1]s.id = %[2]s.claimed_by
+			   OR (%[1]s.bin_id = %[2]s.id AND %[1]s.source_node = %[3]s.name AND NOT (%[4]s)))`,
+		holder, bin, slot, AwaitingFleetSQL(holder))
+}
+
 // AwaitingFleetSQL is orders.AwaitingFleetSQL's one spelling — see it for why
 // vendor_order_id is the authority and the status set is derived. It lives here
 // because the burial guard's holder arm reads it, and this package cannot import

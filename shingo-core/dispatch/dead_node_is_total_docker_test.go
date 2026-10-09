@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -277,7 +278,7 @@ func TestDeadNode_DigIsRefusedWhenABlockerStandsOnADeadNode(t *testing.T) {
 	lane, err := f.db.GetNode(f.laneID)
 	testutil.MustNoErr(t, err, "read lane")
 
-	_, _, planErr := planUnbury(f.db, target, targetSlot, lane, f.groupID, reservations.Anyone, 0, nil)
+	_, _, planErr := planUnbury(f.db, target, targetSlot, lane, f.groupID, reservations.Anyone, 0, domain.OwnDrop{}, nil)
 	if planErr == nil {
 		t.Fatalf("the dig was planned. It emits one StepUnbury per blocker, so it just "+
 			"told a ROBOT to lift bin %d off %s — a node the plant has switched off, "+

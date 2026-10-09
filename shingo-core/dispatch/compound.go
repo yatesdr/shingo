@@ -11,6 +11,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	dplan "shingocore/dispatch/plan"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -665,17 +666,68 @@ func (d *Dispatcher) writeCompoundChildren(parentOrder *orders.Order, plan *Resh
 			child.DeliveryNode = parentOrder.DeliveryNode
 		}
 
-		children = append(children, store.CompoundChild{Order: child, BinID: step.BinID})
+		cc := store.CompoundChild{Order: child, BinID: step.BinID}
+		if step.Park != nil {
+			cc.Park, cc.ParkByRank, cc.ParkNamed = step.Park.ID, step.ParkByRank, parentOrder.ID
+			cc.ParkNote = store.HolderNote{
+				Reason: FormatQueueSentence(protocol.QueueWaitingForSlot, QueueParams{TakenByOrderID: parentOrder.ID}),
+				Code:   protocol.QueueWaitingForSlot,
+				Cause:  string(CauseSlotTaken),
+				Actor:  "dispatcher",
+			}
+		}
+		children = append(children, cc)
 	}
 
 	// %w, not %v: store.BlockerClaimedError has to survive this wrap for the
 	// planners to tell a congestion refusal from a fault.
 	displaced, err := d.db.CreateCompoundChildren(children, lanes)
 	if err != nil {
+		// A PENCIL REFUSED IS A SHORT WALK. The slot the walk found for a blocker
+		// was taken between the walk and the birth (a store, another dig), so the
+		// dig does not start and nothing was written: the same no-shuffle-slot
+		// wait both doors already answer.
+		var taken *store.ParkingTakenError
+		if errors.As(err, &taken) {
+			blockers := 0
+			for _, s := range plan.Steps {
+				if s.Park != nil {
+					blockers++
+				}
+			}
+			return &dplan.DigShortError{Blockers: blockers, Walk: fmt.Errorf("%w: %v", ErrNoShuffleSlot, err)}
+		}
 		return fmt.Errorf("create compound children: %w", err)
 	}
 	d.failDisplacedByHand(displaced)
+	d.markLegsWaitingTheirTurn(parentOrder, plan)
 	return nil
+}
+
+// markLegsWaitingTheirTurn writes the turn wait on every leg after the first:
+// pending behind an earlier sibling, which the chapter's advance releases.
+// Leg 968 of the 10-09 demo waited that way with nothing on its row, and the
+// cause sweep, reading queued orders only, did not see it. One UPDATE per dig
+// birth. The first leg is advanced at once and writes its own wait if held.
+func (d *Dispatcher) markLegsWaitingTheirTurn(parent *orders.Order, plan *ReshufflePlan) {
+	if len(plan.Steps) < 2 {
+		return
+	}
+	first := plan.Steps[0].Sequence
+	for _, s := range plan.Steps {
+		if s.Sequence < first {
+			first = s.Sequence
+		}
+	}
+	lane := ""
+	if plan.Fit != nil {
+		lane = plan.Fit.Lane
+	}
+	reason := FormatQueueSentence(protocol.QueueStorageRearranging, QueueParams{Lane: lane, DigOrderID: parent.ID})
+	if err := d.db.MarkCompoundLegsWaiting(parent.ID, first, reason, string(protocol.QueueStorageRearranging),
+		string(CauseDigLegTurn)); err != nil {
+		log.Printf("dispatch: dig %d: write the turn wait on its later legs: %v", parent.ID, err)
+	}
 }
 
 // failDisplacedByHand ends the hand-placed orders this dig took bins from.

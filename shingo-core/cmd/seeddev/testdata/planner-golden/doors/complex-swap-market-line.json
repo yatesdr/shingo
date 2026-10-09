@@ -55,7 +55,8 @@
         ],
         "reservations": [
           "bin:confirmed:BIN-PA-01",
-          "occupancy:confirmed:Lane_01"
+          "occupancy:confirmed:Lane_01",
+          "slot:pending:SMN_009"
         ],
         "to_fleet": true
       },
@@ -66,7 +67,12 @@
         "status": "pending",
         "payload": "PANEL-A",
         "source": "SMN_002",
-        "bin": "BIN-PA-02"
+        "bin": "BIN-PA-02",
+        "queue_code": "storage_rearranging",
+        "queue_cause": "dig-leg-turn",
+        "reservations": [
+          "slot:pending:SMN_008"
+        ]
       }
     ],
     "refusals": null,

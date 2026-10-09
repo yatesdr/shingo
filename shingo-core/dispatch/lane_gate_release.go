@@ -1235,9 +1235,11 @@ func (d *Dispatcher) releaseGatedOrder(order *orders.Order, lane *nodes.Node, c 
 		return 0, err
 	}
 	if !IsGateStaged(fresh) {
+		// Another pass's release, not this call's: ErrAppendNotOwed, so the
+		// candidate is not reported as released (F6, appendGateTail's note).
 		d.dbg("lane gate: order %d no longer gate-staged (wait_index=%d status=%s) — another pass released it",
 			fresh.ID, fresh.WaitIndex, fresh.Status)
-		return 0, nil
+		return 0, ErrAppendNotOwed
 	}
 
 	dest, cause, err := d.rebindGatedDropoff(fresh, lane, c)
@@ -1279,7 +1281,7 @@ func (d *Dispatcher) releaseGatedRetrieve(order *orders.Order, lane *nodes.Node,
 	if !IsGateStaged(fresh) {
 		d.dbg("lane gate: retrieve %d no longer gate-staged (wait_index=%d status=%s) — another pass released it",
 			fresh.ID, fresh.WaitIndex, fresh.Status)
-		return 0, nil
+		return 0, ErrAppendNotOwed
 	}
 
 	src, cause, err := d.rebindGatedPickup(fresh, lane, entryIndex)

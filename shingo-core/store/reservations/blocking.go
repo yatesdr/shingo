@@ -46,8 +46,9 @@ import "fmt"
 // state half alone goes through BlockingStateSQL / ActiveStateSQL, which is what
 // makes the qualifier explicit at the call site.
 const (
-	blockingState = `state = 'pending'`
-	activeStates  = `state IN ('pending','confirmed')`
+	blockingState  = `state = 'pending'`
+	activeStates   = `state IN ('pending','confirmed')`
+	confirmedState = `state = 'confirmed'`
 )
 
 // BlockingStateSQL renders "this row makes its resource unavailable", qualified
@@ -177,4 +178,16 @@ func OnTheBooksSQL(kind Kind, resourceExpr string) string {
 		      WHERE r.resource_kind = '%s' AND r.%s = %s
 		        AND r.%s
 		    )`, string(kind), col, resourceExpr, activeStates)
+}
+
+// ConfirmedSlotInLaneSQL renders "the order at orderExpr holds a confirmed slot
+// row in the lane at laneExpr": a slot confirmed in a hand the fleet has, which
+// is a robot entitled to a place in that lane. The store selector reads it to
+// tell a committed robot from a plan (nodes.findStoreSlot).
+func ConfirmedSlotInLaneSQL(orderExpr, laneExpr string) string {
+	return fmt.Sprintf(`EXISTS (SELECT 1 FROM reservations committed_r
+		JOIN nodes committed_s ON committed_s.id = committed_r.node_id
+		WHERE committed_r.order_id = %s AND committed_r.resource_kind = '%s'
+		  AND committed_r.%s AND committed_s.parent_id = %s)`,
+		orderExpr, string(KindSlot), confirmedState, laneExpr)
 }
