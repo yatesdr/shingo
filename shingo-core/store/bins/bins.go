@@ -1515,6 +1515,21 @@ func MoveToTransit(db *sql.DB, binID, transitNodeID int64) error {
 	return err
 }
 
+// TakeOffDeck moves a bin recorded on a carrier node to the transit node,
+// reporting whether it was on one. A bin on any other node is left where it is,
+// so a placement that got there first stands.
+func TakeOffDeck(db *sql.DB, binID, transitNodeID int64) (bool, error) {
+	res, err := db.Exec(`UPDATE bins b SET node_id=$2, updated_at=$3
+		  FROM nodes n
+		 WHERE b.id=$1 AND n.id=b.node_id AND `+CarrierNodeSQL,
+		binID, transitNodeID, clock.Now().UTC())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // ListOnCarrierNodes returns every bin parked on a per-robot carrier node
 // (`_ROBOT:<vehicle>`), with the vehicle id its node names.
 //

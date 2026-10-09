@@ -964,60 +964,92 @@ func (s *BinService) ClearAnomaly(binID int64) error {
 }
 
 // InferredActor is the actor the stranded-bin inference records on a placement
-// it made without a human walking out to confirm it.
-//
-// It lives HERE, not in engine, because this is where it is ENFORCED: it is the
-// one actor allowed to move a bin off a carrier node, on the grounds that the
-// jack watch has verified what an operator cannot — deck at rest, deck empty,
-// robot parked. engine spells its placements with this constant.
+// it made without a human walking out to confirm it (PlaceObserved), so the
+// audit row reads as what it is.
 const InferredActor = "system:inferred"
+
+// PlaceObserved records a bin where a robot was seen setting it down: the jack
+// watch's placement. It is an ARRIVAL, not an assertion. The robot put the bin
+// there, which is the same fact a finished drop block is, so it runs the same
+// placement every delivery runs (PlaceBinTx) and, like every delivery, evicts a
+// stale record standing at that node instead of refusing it: a robot cannot set
+// a bin down onto one that is really there. The evicted ids are returned for
+// the caller to surface.
+//
+// The destination slot's own claim and reservation are left alone: they belong
+// to whatever order is driving there, not to this bin. The bin's anomaly flag
+// and note are cleared in the same transaction, and the recovery_actions row
+// names InferredActor with evidence, what the watch saw.
+func (s *BinService) PlaceObserved(binID, toNodeID int64, staged bool, placedByOrder int64, evidence string) ([]int64, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	evicted, err := s.db.PlaceBinTx(tx, store.BinPlacement{
+		BinID:         binID,
+		ToNodeID:      toNodeID,
+		PlacedByOrder: placedByOrder,
+		ReleaseClaim:  true,
+		Staged:        staged,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`UPDATE bins SET anomaly_at=NULL, anomaly_note='' WHERE id=$1`, binID); err != nil {
+		return nil, fmt.Errorf("clear anomaly on bin %d: %w", binID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit observed placement of bin %d: %w", binID, err)
+	}
+	if err := s.db.RecordRecoveryAction("transit_anomaly_recover", "bin", binID, evidence, InferredActor); err != nil {
+		return evicted, fmt.Errorf("record recovery action: %w", err)
+	}
+	return evicted, nil
+}
+
+// TakeOffDeck moves a bin recorded on a robot's carrier node back to _TRANSIT,
+// reporting whether it was on one: the deck has been read empty, so the bin is
+// not on it. A bin on any other node is untouched.
+func (s *BinService) TakeOffDeck(binID int64) (bool, error) {
+	transitNode, err := s.db.GetNodeByName(domain.TransitNodeName)
+	if err != nil {
+		return false, fmt.Errorf("lookup transit node %q: %w", domain.TransitNodeName, err)
+	}
+	moved, err := s.db.TakeBinOffDeck(binID, transitNode.ID)
+	if err != nil {
+		return false, fmt.Errorf("take bin %d off its deck: %w", binID, err)
+	}
+	return moved, nil
+}
 
 // RecoverTransitAnomaly is the operator's "I found this bin and put it
 // at node X" action: moves the bin out of _TRANSIT to the chosen real
 // node and clears the anomaly flag. Validates that the destination is
-// physical (not _TRANSIT, not synthetic) and currently empty.
+// physical (not _TRANSIT, not synthetic) and currently empty: a person
+// asserting where a bin is must not overwrite a record without seeing it.
 //
 // actor identifies the operator for the recovery_actions audit row.
-//
-// evidence is what the caller knew when it decided, appended to that row's
-// detail. The operator's door passes "" because the operator IS the evidence;
-// the inference passes the point it resolved, when the deck read empty, and
-// where the cancelled order had been taking the bin — because "why did it go
-// there" is the question a misplaced bin raises and the audit row is where the
-// rest of this subsystem answers it.
 //
 // Sequencing matches sibling RecoveryService recovery actions: mutate
 // first, then record the recovery_actions row. If the audit write fails
 // the bin move is durable but the error is returned so the operator sees
 // the failure.
-func (s *BinService) RecoverTransitAnomaly(binID, toNodeID int64, actor, evidence string) error {
+func (s *BinService) RecoverTransitAnomaly(binID, toNodeID int64, actor string) error {
 	if actor == "" {
 		return fmt.Errorf("actor is required for recovery")
 	}
-	// THE SOURCE IS GUARDED TOO, not just the destination — but only against a
-	// HUMAN.
-	//
-	// A bin on a carrier node is riding a robot's deck: its location is known
-	// exactly, and the honest way for it to move is for the robot to set it
-	// down. "I found it, it's at X" about a bin on a moving robot would record
-	// the bin at a node the floor is then sent to fetch, and leave the real one
-	// to be placed a second time when the deck reports empty. The listing no
-	// longer offers these (ListAnomalousTransitBins), so a human reaching here
-	// means a stale page or a hand-made request.
-	//
-	// The jack watch is the EXCEPTION, and it is the whole reason this is keyed
-	// on the actor rather than on the source alone: sweepCarriedBins places a
-	// carried bin through this very method the moment the deck reports empty at
-	// a station it can name, and that is the sanctioned way off a carrier node.
-	// It has verified what the operator cannot — that the deck is at rest, empty,
-	// and the robot parked. A flat refusal broke that path and stranded every
-	// carried bin on its robot forever, which the docker suite caught.
-	if actor != InferredActor {
-		if src, err := s.db.GetBin(binID); err == nil && src != nil &&
-			strings.HasPrefix(src.NodeName, bins.CarrierNodePrefix) {
-			return fmt.Errorf("bin %d is on %s — it is riding a robot, not lost; "+
-				"it is placed automatically when the deck reports empty", binID, src.NodeName)
-		}
+	// THE SOURCE IS GUARDED TOO, not just the destination. A bin on a carrier
+	// node is riding a robot's deck: the honest way for it to move is for the
+	// robot to set it down, and the jack watch records that (PlaceObserved).
+	// "I found it, it's at X" about a bin on a robot would record it at a node
+	// the floor is then sent to fetch. The listing no longer offers these
+	// (ListAnomalousTransitBins), so reaching here means a stale page or a
+	// hand-made request.
+	if src, err := s.db.GetBin(binID); err == nil && src != nil &&
+		strings.HasPrefix(src.NodeName, bins.CarrierNodePrefix) {
+		return fmt.Errorf("bin %d is on %s — it is riding a robot, not lost; "+
+			"it is placed automatically when the deck reports empty", binID, src.NodeName)
 	}
 	dest, err := s.db.GetNode(toNodeID)
 	if err != nil {
@@ -1036,12 +1068,8 @@ func (s *BinService) RecoverTransitAnomaly(binID, toNodeID int64, actor, evidenc
 	if err := s.db.RecoverBinToNode(binID, toNodeID); err != nil {
 		return fmt.Errorf("move bin to recovery node: %w", err)
 	}
-	detail := fmt.Sprintf("recovered to node %s", dest.Name)
-	if evidence != "" {
-		detail += " — " + evidence
-	}
 	if err := s.db.RecordRecoveryAction(
-		"transit_anomaly_recover", "bin", binID, detail, actor); err != nil {
+		"transit_anomaly_recover", "bin", binID, "recovered to node "+dest.Name, actor); err != nil {
 		return fmt.Errorf("record recovery action: %w", err)
 	}
 	return nil

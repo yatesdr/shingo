@@ -44,14 +44,23 @@ from the point a robot reports (`AP102`) to the station it serves (`SMN_007`).
 At Springfield no reported point has ever been a node name, so the scene lookup
 is the one that answers.
 
-Anything the watch will not place files an anomaly that says WHY, because the
-reasons need different responses: the point is not a station (and the note names
-what it is — a charge point, a park point); the destination will not take this
+A set-down the watch saw at a station is an ARRIVAL: the robot put the bin
+there, which it could not have done onto a bin really standing there. So it is
+placed the way a delivery is, and a stale record at that node is evicted to
+`_TRANSIT` and surfaced, not obeyed (SPR 2026-10-08: CARRIER-0019's set-down at
+ALN_006 was refused over CARRIER-0031's stale record there).
+
+Once the deck reads empty the bin is not on it, whatever else is true. Anything
+the watch will not place goes back to `_TRANSIT` as an anomaly that says WHY,
+and is never left recorded on a deck seen empty: left there, every later lift
+and set-down of that robot's other work read as this bin's (SPR 2026-10-08:
+CARRIER-0019 credited to SLN_005, CARRIER-0010 to SLN_006). The reasons need
+different responses: the point is not a station (and the note names what it is
+— a charge point, a park point, an aisle); the destination will not take this
 bin's type; Core restarted after the unload, so nobody watched it; Core was
 running but heard nothing from that robot across the drop; or the drop was
 watched but could not be placed before the observation aged out. The last three
-never place, by design — the operator's "ask the robot to set it down" button on
-the bins page is the exit.
+never place, by design; a person finds the bin and moves it on the bins page.
 
 ### Anomaly
 
@@ -90,16 +99,20 @@ the slot read empty). Outcomes, in order:
 | Robot's deck at the end | Set-down seen during the order | Outcome |
 |---|---|---|
 | loaded (`jack_state` 1) | — | bin moves to `_ROBOT:<vehicle>`; any earlier set-down is forgotten |
-| empty | yes, at a station that resolves and is free | bin placed there, `system:inferred` |
-| empty | yes, anywhere else | anomaly, with where it was set down in `anomaly_note`; an occupied slot is retried by the sweep |
+| empty | yes, at a station that resolves | bin placed there, `system:inferred`; a stale record there is evicted |
+| empty | yes, anywhere else | anomaly, with where it was set down in `anomaly_note`; the sweep retries the resolution |
 | empty (`jack_state` 3) | no; the station resolves and the node is free | bin placed there, `system:inferred` |
 | anything else | no | anomaly, with the position in `anomaly_note` |
 
+On the later sweep a loaded deck is this bin only if the watch never saw it set
+down: by then the robot may be working another order, and a deck loaded then is
+carrying that order's bin.
+
 A deck MID-TRAVEL (`jack_state` 0 or 2) is not an answer: a bin halfway down is
 neither on the robot nor at the station, so the inference declines rather than
-making a placement an operator would have to undo. Placement goes through the
-same `RecoverTransitAnomaly` the operator's own button calls, so the empty-node
-guard is never bypassed.
+making a placement an operator would have to undo. A placement from one reading
+of a parked robot (no set-down seen) only suggests where the bin went, so it
+declines a node Core shows occupied.
 
 The terminal-event hook is the fast path; `ReconciliationService.Loop` re-runs
 the whole decision over every stranded bin on its sweep, which is the guarantee

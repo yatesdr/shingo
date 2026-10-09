@@ -73,8 +73,14 @@ func binNote(t *testing.T, db *store.DB, binID int64) string {
 // ── The incident replay ────────────────────────────────────────────────────
 
 // BIN 5. The deck empties at AP102, the robot then drives away and the station
-// field decays through five more points. The placement and the note must both
-// name SMN_007, from the FIRST reading — which is the whole of fix B.
+// field decays through five more points. The placement and the note name
+// SMN_007, from the FIRST reading — which is the whole of fix B.
+//
+// AND SMN_007 HOLDS A STALE RECORD. A robot cannot set a bin down onto one that
+// is really there, so the watched set-down is placed the way a delivery is: on
+// that tick, with the record standing there evicted to _TRANSIT and surfaced,
+// not refused while the robot drives on (SPR 2026-10-08: CARRIER-0019 refused
+// at ALN_006 over CARRIER-0031's stale record, then credited to SLN_005).
 func TestCarriedBin_PlacementSurvivesTheStationFieldDecaying(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -83,12 +89,9 @@ func TestCarriedBin_PlacementSurvivesTheStationFieldDecaying(t *testing.T) {
 	dest := &nodes.Node{Name: "SMN_007", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create SMN_007")
 	seedScenePoint(t, db, "Area-01", "SMN_007", "GeneralLocation", "AP102")
-	// Something occupies the destination for the first few ticks, so the
-	// placement CANNOT happen on the tick the good reading is live. That is what
-	// makes this a test of the freeze rather than of tick ordering.
-	blocker := &bins.Bin{BinTypeID: mustBinType(t, db, "DECAY"), Label: "resident-decay",
+	stale := &bins.Bin{BinTypeID: mustBinType(t, db, "DECAY"), Label: "stale-decay",
 		NodeID: &dest.ID, Status: "available"}
-	testutil.MustNoErr(t, db.CreateBin(blocker), "create blocking bin")
+	testutil.MustNoErr(t, db.CreateBin(stale), "create the stale record")
 
 	bin, ord := seedStranded(t, db, "AMR-09")
 	cacheRobot(eng, loadedDeck("AMR-09"))
@@ -97,41 +100,26 @@ func TestCarriedBin_PlacementSurvivesTheStationFieldDecaying(t *testing.T) {
 		t.Fatalf("setup: bin is at %q, want the carrier node", got)
 	}
 
-	// Tick 1: the deck reports empty at AP102. The node is still occupied, so
-	// the placement is refused — but the reading is taken.
+	// The deck reports empty at AP102: the bin is placed there, and the stale
+	// record goes to _TRANSIT.
 	cacheRobot(eng, atPoint("AMR-09", "AP102", 0.88, 11.82))
 	eng.sweepCarriedBins()
-	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-09" {
-		t.Fatalf("bin was placed onto an occupied node (%q)", got)
+	if got := binNodeName(t, db, bin.ID); got != "SMN_007" {
+		t.Fatalf("bin is at %q, want SMN_007, where the robot set it down", got)
+	}
+	if got := binNodeName(t, db, stale.ID); got != "_TRANSIT" {
+		t.Errorf("the stale record is at %q, want evicted to _TRANSIT", got)
 	}
 
-	// The reading decays exactly as the journal recorded it, while the node is
-	// still blocked.
-	for _, point := range []string{"LM100", "LM7", "LM8", "LM9"} {
+	// The reading decays exactly as the journal recorded it, and the robot parks
+	// 12.3 m away. None of it moves the bin.
+	for _, point := range []string{"LM100", "LM7", "LM8", "LM9", "PP95"} {
 		cacheRobot(eng, atPoint("AMR-09", point, 0.9, 20.0))
 		eng.sweepCarriedBins()
+		eng.sweepStrandedBins()
 	}
-	// And the robot parks 12.3 m away, where it stayed for 50 ticks.
-	cacheRobot(eng, atPoint("AMR-09", "PP95", 0.91, 24.84))
-	eng.sweepCarriedBins()
-
-	if note := binNote(t, db, bin.ID); !strings.Contains(note, "AP102") ||
-		!strings.Contains(note, "x=0.88") {
-		t.Errorf("the note drifted with the robot: %q — it must describe the moment the deck "+
-			"emptied, not where the robot went next", note)
-	}
-	if note := binNote(t, db, bin.ID); strings.Contains(note, "PP95") {
-		t.Errorf("the note names the park point the robot drove to: %q", note)
-	}
-
-	// The slot frees. The bin is placed at SMN_007 — from the frozen reading,
-	// while the robot is still standing at PP95.
-	testutil.MustNoErr(t, db.DeleteBin(blocker.ID), "remove the blocking bin")
-	eng.sweepCarriedBins()
-
 	if got := binNodeName(t, db, bin.ID); got != "SMN_007" {
-		t.Errorf("bin is at %q, want SMN_007 — the frozen reading, not the live one, "+
-			"is what says where the bin was set down", got)
+		t.Errorf("bin is at %q, want SMN_007 — a later reading is where the robot went next", got)
 	}
 }
 
@@ -174,7 +162,8 @@ func TestCarriedBin_FrozenReadingSurvivesTheDeckReloading(t *testing.T) {
 
 // A SCENE SYNC THAT LANDS LATE STILL RESCUES THE BIN. This is why the RAW
 // sample is frozen and not the resolution: the reading cannot be re-taken, but
-// resolving it is free to re-run.
+// resolving it is free to re-run. The bin is stranded meanwhile — the deck read
+// empty, so it is not on the robot — and the sweep re-runs the resolution.
 func TestCarriedBin_LateSceneSyncResolvesAFrozenReading(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -190,8 +179,8 @@ func TestCarriedBin_LateSceneSyncResolvesAFrozenReading(t *testing.T) {
 	// The deck empties at AP233 with no scene synced at all.
 	cacheRobot(eng, atPoint("AMR-LATE", "AP233", -7.7, -15.6))
 	eng.sweepCarriedBins()
-	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-LATE" {
-		t.Fatalf("bin moved to %q with no scene to resolve against", got)
+	if got := binNodeName(t, db, bin.ID); got != "_TRANSIT" {
+		t.Fatalf("bin is at %q, want stranded at _TRANSIT with no scene to resolve against", got)
 	}
 	if note := binNote(t, db, bin.ID); !strings.Contains(note, "never synced") {
 		t.Errorf("note = %q, want the never-synced reason — that is a fact about Core, "+
@@ -202,7 +191,7 @@ func TestCarriedBin_LateSceneSyncResolvesAFrozenReading(t *testing.T) {
 	// matter.
 	seedScenePoint(t, db, "Area-01", "SMN_020", "GeneralLocation", "AP233")
 	cacheRobot(eng, atPoint("AMR-LATE", "PP224", 60.0, 60.0))
-	eng.sweepCarriedBins()
+	eng.sweepStrandedBins()
 
 	if got := binNodeName(t, db, bin.ID); got != "SMN_020" {
 		t.Errorf("bin is at %q, want SMN_020 — freezing the RESOLUTION rather than the "+
@@ -238,8 +227,8 @@ func TestCarriedBin_UnwitnessedUnloadAfterARestartIsNeverPlaced(t *testing.T) {
 	cacheRobot(eng, atPoint("AMR-RESTART", "AP198", -6.4, -15.7))
 	eng.sweepCarriedBins()
 
-	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-RESTART" {
-		t.Fatalf("bin was placed at %q from a drop nobody watched — while Core was down an "+
+	if got := binNodeName(t, db, bin.ID); got != "_TRANSIT" {
+		t.Fatalf("bin is at %q, want stranded at _TRANSIT, not placed from a drop nobody watched — while Core was down an "+
 			"operator may have taken it off the deck, so this reading says nothing about "+
 			"where the bin is", got)
 	}
@@ -259,7 +248,7 @@ func TestCarriedBin_UnwitnessedUnloadAfterARestartIsNeverPlaced(t *testing.T) {
 	}
 	after, err := db.GetBin(bin.ID)
 	testutil.MustNoErr(t, err, "get bin again")
-	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-RESTART" {
+	if got := binNodeName(t, db, bin.ID); got != "_TRANSIT" {
 		t.Errorf("a later tick placed it at %q — the reason it declined does not expire", got)
 	}
 	if after.AnomalyNote != before.AnomalyNote {
@@ -404,8 +393,8 @@ func TestCarriedBin_ChargePointDeclinesWithItsClassAndNoGeometry(t *testing.T) {
 	cacheRobot(eng, atPoint("AMR-11", "CP37", 0.65, 14.59))
 	eng.sweepCarriedBins()
 
-	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-11" {
-		t.Fatalf("bin was placed at %q from a charge point", got)
+	if got := binNodeName(t, db, bin.ID); got != "_TRANSIT" {
+		t.Fatalf("bin is at %q, want stranded at _TRANSIT: a charge point is not a slot", got)
 	}
 	note := binNote(t, db, bin.ID)
 	for _, want := range []string{"charge point", "SMN_033", "x=0.65"} {
@@ -451,8 +440,8 @@ func TestCarriedBin_BinTypeMismatchDeclinesNamingBoth(t *testing.T) {
 	cacheRobot(eng, atPoint("AMR-TYPE", "AP201", -2.3, -15.6))
 	eng.sweepCarriedBins()
 
-	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-TYPE" {
-		t.Fatalf("bin was placed at %q despite the node not accepting its type", got)
+	if got := binNodeName(t, db, bin.ID); got != "_TRANSIT" {
+		t.Fatalf("bin is at %q, want stranded at _TRANSIT: the node does not accept its type", got)
 	}
 	note := binNote(t, db, bin.ID)
 	for _, want := range []string{"SMN_024", "48x45x34"} {
@@ -513,8 +502,8 @@ func TestCarriedBin_SpecificWithNoTypesDeclinesNamingTheConfig(t *testing.T) {
 	cacheRobot(eng, atPoint("AMR-SNF2", "AP206", 0.4, -15.8))
 	eng.sweepCarriedBins()
 
-	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-SNF2" {
-		t.Fatalf("bin was placed at %q on a node whose config accepts nothing", got)
+	if got := binNodeName(t, db, bin.ID); got != "_TRANSIT" {
+		t.Fatalf("bin is at %q, want stranded at _TRANSIT: the node's config accepts nothing", got)
 	}
 	if note := binNote(t, db, bin.ID); !strings.Contains(note, "configuration gap") {
 		t.Errorf("note = %q, want the config named as the problem", note)

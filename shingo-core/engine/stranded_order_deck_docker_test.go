@@ -186,9 +186,11 @@ func TestStrandedTransit_AnUnsampledReliftStillUndoesTheSetDown(t *testing.T) {
 	}
 }
 
-// The set-down survives the order's end for the sweep to retry: the slot was
-// occupied at the cancel, and frees later.
-func TestStrandedSweep_RetriesASetDownWhenItsSlotFrees(t *testing.T) {
+// A set-down during the order onto a slot Core shows occupied: the robot put the
+// bin there, which it could not have done onto a bin really standing there, so
+// at the order's end the bin is placed and the record that was standing there is
+// evicted to _TRANSIT, as a delivery does.
+func TestStrandedTransit_ASetDownOntoAStaleRecordEvictsIt(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newUnstartedEngine(t, db, simulator.New())
@@ -196,8 +198,8 @@ func TestStrandedSweep_RetriesASetDownWhenItsSlotFrees(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(slot), "slot")
 
 	bin, ord := seedStranded(t, db, "AMR-SD4")
-	resident := &bins.Bin{BinTypeID: bin.BinTypeID, Label: "resident-sd", NodeID: &slot.ID, Status: "available"}
-	testutil.MustNoErr(t, db.CreateBin(resident), "a bin already in the slot")
+	stale := &bins.Bin{BinTypeID: bin.BinTypeID, Label: "stale-sd", NodeID: &slot.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(stale), "a stale record in the slot")
 	liveOrderCarries(t, db, bin, ord)
 
 	cacheRobot(eng, loadedDeck("AMR-SD4"))
@@ -206,17 +208,52 @@ func TestStrandedSweep_RetriesASetDownWhenItsSlotFrees(t *testing.T) {
 	eng.sweepCarriedBins()
 	orderEnds(t, db, bin, ord)
 	eng.inferStrandedTransitBin(ord.ID)
-	if got := binNodeName(t, db, bin.ID); got != "_TRANSIT" {
-		t.Fatalf("bin forced into an occupied slot: %q", got)
+
+	if got := binNodeName(t, db, bin.ID); got != "BUSY-SD" {
+		t.Errorf("bin is at %q, want BUSY-SD, where the robot set it down", got)
+	}
+	if got := binNodeName(t, db, stale.ID); got != "_TRANSIT" {
+		t.Errorf("the stale record is at %q, want evicted to _TRANSIT", got)
+	}
+}
+
+// SPR 2026-10-08, CARRIER-0010. A cancelled order left the bin riding AMR-06,
+// and the deck emptied in an aisle Core cannot name. The bin is stranded there
+// and taken off the deck. The robot's next job, a lift and a set-down at a slot,
+// is that job's bin and never this one's: it used to be credited to it,
+// because a decline left the bin recorded on a deck seen empty.
+func TestCarriedBin_AnAisleSetDownStrandsAndTheRobotsNextJobIsNotThisBin(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	eng := newUnstartedEngine(t, db, simulator.New())
+	next := &nodes.Node{Name: "NEXT-JOB-SLOT", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(next), "the next job's slot")
+
+	bin, ord := seedStranded(t, db, "AMR-AISLE")
+	cacheRobot(eng, loadedDeck("AMR-AISLE"))
+	eng.inferStrandedTransitBin(ord.ID)
+	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-AISLE" {
+		t.Fatalf("setup: bin is at %q, want riding AMR-AISLE", got)
 	}
 
-	// The robot drives off; the poll prunes against what is still watched.
-	cacheRobot(eng, atPoint("AMR-SD4", "ELSEWHERE", 0, 0))
+	cacheRobot(eng, atPoint("AMR-AISLE", "LM168", -40.15, 56.68))
 	eng.sweepCarriedBins()
-	_, err := db.DB.Exec(`UPDATE bins SET node_id=NULL, status='retired' WHERE id=$1`, resident.ID)
-	testutil.MustNoErr(t, err, "the resident leaves")
+	if got := binNodeName(t, db, bin.ID); got != "_TRANSIT" {
+		t.Fatalf("bin is at %q, want stranded at _TRANSIT: the deck read empty in an aisle", got)
+	}
+	if note := binNote(t, db, bin.ID); !strings.Contains(note, "x=-40.15") {
+		t.Errorf("note = %q, want where the deck emptied", note)
+	}
+
+	// The robot goes back to work: lifts another job's bin, sets it down at a slot.
+	cacheRobot(eng, loadedDeck("AMR-AISLE"))
+	eng.sweepCarriedBins()
 	eng.sweepStrandedBins()
-	if got := binNodeName(t, db, bin.ID); got != "BUSY-SD" {
-		t.Errorf("bin is at %q, want BUSY-SD once it freed — the set-down is kept for the retry", got)
+	cacheRobot(eng, atPoint("AMR-AISLE", "NEXT-JOB-SLOT", 0, 0))
+	eng.sweepCarriedBins()
+	eng.sweepStrandedBins()
+
+	if got := binNodeName(t, db, bin.ID); got != "_TRANSIT" {
+		t.Errorf("bin is at %q, want still stranded: the robot's next job is not this bin", got)
 	}
 }

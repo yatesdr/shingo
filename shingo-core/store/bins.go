@@ -117,6 +117,11 @@ func (db *DB) MoveBinToTransit(binID, transitNodeID int64) error {
 	return bins.MoveToTransit(db.DB, binID, transitNodeID)
 }
 
+// TakeBinOffDeck: see bins.TakeOffDeck.
+func (db *DB) TakeBinOffDeck(binID, transitNodeID int64) (bool, error) {
+	return bins.TakeOffDeck(db.DB, binID, transitNodeID)
+}
+
 // MarkBinAnomaly stamps bins.anomaly_at = NOW().
 func (db *DB) MarkBinAnomaly(binID int64) error { return bins.MarkAnomaly(db.DB, binID) }
 

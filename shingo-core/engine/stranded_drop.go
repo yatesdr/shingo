@@ -180,9 +180,8 @@ const (
 // only when the reading AGREES with the cancelled order's destination sounds
 // safe and is not: the robot parks at the destination station often enough that
 // both sources agree while a human carried the bin somewhere else, and the
-// agreement then reads as corroboration. The operator button (the bins page's
-// Return, and RecoverTransitAnomaly for a bin already off the deck) is the
-// designed exit.
+// agreement then reads as corroboration. The bin is stranded, off the deck, and
+// a person who finds it records it (the bins page's Move).
 //
 // AN EXPIRED SAMPLE IS RETURNED, NOT DROPPED. The alternative — delete it and
 // let the next tick decide afresh — is how a live reading gets promoted into an

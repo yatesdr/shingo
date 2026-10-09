@@ -144,13 +144,14 @@ func TestCarriedBin_AnExpiredObservationDeclinesAndIsNeverRetaken(t *testing.T) 
 
 	cacheRobot(eng, atPoint("AMR-EXPIRE", "PP41", 0.91, 24.84))
 	eng.sweepCarriedBins()
-	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-EXPIRE" {
-		t.Fatalf("setup: bin is at %q, want the carrier node — a park point must not place", got)
+	if got := binNodeName(t, db, bin.ID); got != "_TRANSIT" {
+		t.Fatalf("setup: bin is at %q, want stranded at _TRANSIT — a park point must not place, "+
+			"and the deck read empty, so the bin is not on it", got)
 	}
 
-	// A night passes. ONLY THE OBSERVATION AGES: the bin never left the deck
-	// and this process never stopped running, which is what makes this a test
-	// of the expiry rather than of the restart rule.
+	// A night passes. ONLY THE OBSERVATION AGES: this process never stopped
+	// running, which is what makes this a test of the expiry rather than of the
+	// restart rule. The sweep retries the stranded bin's set-down.
 	eng.dropObsMu.Lock()
 	aged := eng.dropObs[bin.ID]
 	aged.At = aged.At.Add(-3 * time.Hour)
@@ -159,10 +160,10 @@ func TestCarriedBin_AnExpiredObservationDeclinesAndIsNeverRetaken(t *testing.T) 
 
 	// The robot has long since gone back to work and is parked at a station.
 	cacheRobot(eng, atPoint("AMR-EXPIRE", "AP241", -7.2, 3.4))
-	eng.sweepCarriedBins()
-	eng.sweepCarriedBins()
+	eng.sweepStrandedBins()
+	eng.sweepStrandedBins()
 
-	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-EXPIRE" {
+	if got := binNodeName(t, db, bin.ID); got != "_TRANSIT" {
 		t.Errorf("bin was placed at %q from a reading taken three hours after the deck "+
 			"emptied — the observation expired and the watch took a fresh one, which is "+
 			"the pin drift the freeze exists to prevent, delayed by one window", got)
@@ -219,8 +220,8 @@ func TestCarriedBin_ATelemetryGapIsNotAWitnessedDrop(t *testing.T) {
 	cacheRobot(eng, atPoint("AMR-GAP", "AP242", 3.3, -4.4))
 	eng.sweepCarriedBins()
 
-	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-GAP" {
-		t.Errorf("bin was placed at %q from a drop nobody watched — the deck was last read "+
+	if got := binNodeName(t, db, bin.ID); got != "_TRANSIT" {
+		t.Errorf("bin is at %q, want stranded at _TRANSIT, not placed from a drop nobody watched — the deck was last read "+
 			"loaded an hour earlier, and everything that could have happened to the bin "+
 			"happened inside that gap", got)
 	}
@@ -336,7 +337,7 @@ func TestStrandedBin_ReStrandAfterAnOperatorRecoveryIsStampedAndLogged(t *testin
 
 	// THE OPERATOR DOOR, both halves of it: the service call, and the
 	// bookkeeping the handler does around it.
-	testutil.MustNoErr(t, eng.BinService().RecoverTransitAnomaly(bin.ID, home.ID, "operator:test", ""),
+	testutil.MustNoErr(t, eng.BinService().RecoverTransitAnomaly(bin.ID, home.ID, "operator:test"),
 		"operator recovery")
 	eng.forgetStrandedNote(bin.ID)
 
@@ -490,8 +491,9 @@ func TestCarriedBin_ADisconnectedRobotDoesNotRefreshTheWitness(t *testing.T) {
 	cacheRobot(eng, atPoint("AMR-OFFLINE", "AP301", 4.4, -5.5))
 	eng.sweepCarriedBins()
 
-	if got := binNodeName(t, db, bin.ID); got != "_ROBOT:AMR-OFFLINE" {
-		t.Errorf("bin was placed at %q from a drop nobody watched", got)
+	if got := binNodeName(t, db, bin.ID); got != "_TRANSIT" {
+		t.Errorf("bin is at %q, want stranded at _TRANSIT: a drop nobody watched places nothing, "+
+			"and the deck read empty, so the bin is not on it", got)
 	}
 	note := binNote(t, db, bin.ID)
 	if !strings.Contains(note, "last read loaded") {

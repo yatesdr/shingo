@@ -14,9 +14,11 @@
 //	B — the deck is still loaded                    → the bin rides the robot (unit 13)
 //	C — anything else                               → anomaly, with the robot's last position
 //
-// Nothing here bypasses a guard. Branch A goes through the same
-// RecoverTransitAnomaly an operator's button calls, including its empty-node
-// check, and falls to C when that refuses.
+// A set-down the jack watch saw is an arrival, and is placed the way a delivery
+// is: the robot put the bin there, so a stale record at that node is evicted
+// and surfaced (PlaceObserved). Branch A, one reading of a parked robot, only
+// suggests where the bin went, and declines a node Core shows occupied. A bin
+// that is not placed is lost, and never left recorded on a deck read empty.
 
 package engine
 
@@ -39,8 +41,8 @@ import (
 // is deliberately distinguishable from an operator: a placement nobody walked
 // out and confirmed should be readable as such afterwards.
 //
-// Defined in service, where it is also ENFORCED — it is the only actor allowed
-// to move a bin off a carrier node. One spelling, on the side that checks it.
+// Defined in service, beside the placement that records it (PlaceObserved). One
+// spelling.
 const inferredActor = service.InferredActor
 
 // inferStrandedTransitBin runs the A/B/C decision for every bin the terminating
@@ -74,14 +76,15 @@ func (e *Engine) inferStrandedTransitBin(orderID int64) {
 		return
 	}
 	robot, haveRobot := e.GetCachedRobotStatus(order.RobotID)
-	e.placeStrandedBin(bin.ID, order.RobotID, robot, haveRobot)
+	e.placeStrandedBin(bin.ID, order.RobotID, robot, haveRobot, true)
 }
 
 // transitNodeName is the synthetic node a picked-up bin parks at.
 const transitNodeName = "_TRANSIT"
 
-// placeStrandedBin is the decision for one bin.
-func (e *Engine) placeStrandedBin(binID int64, robotID string, robot fleet.RobotStatus, haveRobot bool) {
+// placeStrandedBin is the decision for one bin. atEnd says it runs at the end of
+// the bin's order (the terminal handlers), not on the later sweep.
+func (e *Engine) placeStrandedBin(binID int64, robotID string, robot fleet.RobotStatus, haveRobot, atEnd bool) {
 	// THE ROBOT MUST HAVE LIFTED THE BIN, or nothing below is about this bin.
 	//
 	// Every branch reads the robot of the last order that claimed the bin, and
@@ -109,19 +112,6 @@ func (e *Engine) placeStrandedBin(binID int64, robotID string, robot fleet.Robot
 		return
 	}
 
-	var carrying, certain bool
-	if haveRobot {
-		carrying, certain = service.RobotCarryingBin(robot)
-	}
-	if certain && carrying {
-		// Branch B: the bin is still on the deck, so it is not lost and it is
-		// not at a station. It rides the robot until the deck reports empty. A
-		// loaded deck now outranks any earlier set-down the watch saw: the
-		// robot has lifted the bin again since.
-		e.parkOnCarrier(binID, robotID, robot)
-		return
-	}
-
 	// THE SET-DOWN THE WATCH SAW WHILE THE ORDER WAS LIVE (watchOrderDeck), and
 	// it is the answer whenever there is one. The deck emptied mid-order — a
 	// failed leg set down, or a person drove the robot back and lowered it —
@@ -133,7 +123,25 @@ func (e *Engine) placeStrandedBin(binID int64, robotID string, robot fleet.Robot
 	// anything else stays stranded with where it was set down. It needs no live
 	// robot and no Busy check — the reading was taken at rest when it was made.
 	window := e.strandedSweepWindow()
-	if obs, expired, ok := e.heldDrop(binID, window); ok {
+	obs, expired, held := e.heldDrop(binID, window)
+
+	var carrying, certain bool
+	if haveRobot {
+		carrying, certain = service.RobotCarryingBin(robot)
+	}
+	// Branch B: the bin is still on the deck, so it is not lost and it is not at
+	// a station. It rides the robot until the deck reports empty.
+	//
+	// A LOADED DECK IS THIS BIN ONLY WHILE THE ROBOT IS STILL ON ITS ORDER. At the
+	// order's end it is, and a loaded deck outranks an earlier set-down: the
+	// robot lifted the bin again since, sampled or not. On the sweep, later, the
+	// robot may be working another order, and a deck loaded then is this bin only
+	// if the watch never saw it set down.
+	if certain && carrying && (atEnd || !held) {
+		e.parkOnCarrier(binID, robotID, robot)
+		return
+	}
+	if held {
 		if expired {
 			e.declineInferred(binID, robotID, obs, e.placementIntent(binID),
 				"drop observed more than "+window.String()+" ago, never placed — too old to record", true)
@@ -259,9 +267,9 @@ func (e *Engine) pickupAt(ord *orders.Order) (time.Time, bool) {
 // placeInferred is THE placement gate, shared by both inference paths.
 //
 // One helper and not two call sites, because the two used to duplicate the
-// resolve-then-RecoverTransitAnomaly shape and a rule added to one would have
-// been forgotten by the other — which is exactly the failure mode the bin-type
-// check below would have had.
+// resolve-then-place shape and a rule added to one would have been forgotten by
+// the other — which is exactly the failure mode the bin-type check below would
+// have had.
 //
 // The order of the gate is the order of what can be known:
 //
@@ -271,8 +279,13 @@ func (e *Engine) pickupAt(ord *orders.Order) (time.Time, bool) {
 //  2. RESOLVE the reported point to a node (identity, then the scene alias).
 //     A miss or an ambiguity declines, naming what the point actually is.
 //  3. THE NODE'S BIN-TYPE CONFIG must admit this bin.
-//  4. RecoverTransitAnomaly's own guards — occupied, synthetic, _TRANSIT —
-//     stay the final authority. Nothing here bypasses them.
+//  4. THE PLACEMENT, and what an occupied node means depends on what was seen.
+//     A set-down the watch saw (watchedUnload) is an arrival: the robot put the
+//     bin there, which it could not have done onto a bin really standing there,
+//     so it is placed the way a delivery is (PlaceObserved) and a stale record at
+//     the node is evicted and surfaced. A single reading of a parked robot
+//     (branch A) only suggests where the bin went, so a node Core shows occupied
+//     declines it.
 //
 // INTENT IS RECORDED ON EVERY OUTCOME AND GATES NONE OF THEM. The order's
 // delivery node goes into the placement log line, the decline note and the
@@ -309,18 +322,26 @@ func (e *Engine) placeInferred(binID int64, robotID string, obs dropObservation,
 		return false
 	}
 
-	evidence := fmt.Sprintf("inferred from %s at %s, reported by %s; %s",
-		point, obs.At.Format(time.RFC3339), robotID, intentPhrase(intent))
-	if err := e.BinService().RecoverTransitAnomaly(binID, node.ID, inferredActor, evidence); err != nil {
-		// The commonest refusal is an occupied node: something else is in that
-		// slot, so the placement cannot be made right now. Fall to C rather than
-		// forcing it — the empty-node guard is the reason this is safe to run
-		// unattended at all. The frozen sample SURVIVES this: the next tick
-		// retries the same observation against a slot that may since have freed.
+	if !watchedUnload {
+		if n, err := e.db.CountBinsByNode(node.ID); err != nil || n > 0 {
+			e.declineInferred(binID, robotID, obs, intent,
+				fmt.Sprintf("could not place at %s: Core shows %d bin(s) there (%v)", node.Name, n, err), watchedUnload)
+			return false
+		}
+	}
+	placedBy := int64(0)
+	if ord, _, ok := e.lastClaimingOrder(binID); ok {
+		placedBy = ord.ID
+	}
+	evidence := fmt.Sprintf("recovered to node %s — inferred from %s at %s, reported by %s; %s",
+		node.Name, point, obs.At.Format(time.RFC3339), robotID, intentPhrase(intent))
+	evicted, err := e.BinService().PlaceObserved(binID, node.ID, e.resolveNodeStaging(node), placedBy, evidence)
+	if err != nil {
 		e.declineInferred(binID, robotID, obs, intent,
 			fmt.Sprintf("could not place at %s: %v", node.Name, err), watchedUnload)
 		return false
 	}
+	e.noteEvictedGhosts(evicted, "observed set-down", binID, node.Name)
 	// FORGET THE NOTE ON EVERY PLACEMENT, not just the sweep's. The map that
 	// suppresses a repeated log line is also a SILENCER when it outlives the
 	// episode it describes: a bin placed by the fast path and later stranded
@@ -386,9 +407,10 @@ func intentPhrase(intent string) string {
 // is fail-CLOSED on every node at Springfield, where node_bin_types is empty
 // and 41 of 52 physical nodes carry no mode row at all.
 //
-// ON THE INFERENCE PATH ONLY — deliberately not inside RecoverTransitAnomaly,
-// even though that would be one place instead of two. That method is also the
-// operator's "I found it, it's at X" door, and refusing to record a physical
+// ON THE INFERENCE PATH ONLY — deliberately not inside the placement, even
+// though that would be one place instead of two. A person recording where they
+// found a bin (RecoverTransitAnomaly, the bins page's Move) states a physical
+// fact, and refusing to record a physical
 // fact a human observed because a config row says the node should not hold that
 // type would be wrong. The inference is guessing and should be conservative;
 // the operator is asserting and should be believed.
@@ -688,10 +710,50 @@ func (e *Engine) placeCarriedBinIfSettled(bin *bins.Bin, robotID string, robot f
 
 	// FROZEN FIRST, BEFORE EVERY GATE THAT CAN FAIL. The reading is what decays;
 	// the gates are what may need another tick. A freeze taken after the
-	// stand-down check or the Busy check would be a freeze the robot had already
-	// driven away from.
+	// stand-down check would be a freeze the robot had already driven away from.
+	//
+	// FROM HERE THE DECK READS EMPTY AT REST, so the bin is not on it, whatever
+	// else is true: it is placed where the deck emptied, or every decline below
+	// takes it off the deck as lost (strandedAnomaly). Left recorded on a deck
+	// seen empty, every later lift and set-down of that robot's other work reads
+	// as this bin's (SPR 2026-10-08: CARRIER-0019 on SLN_005, CARRIER-0010 on
+	// SLN_006).
 	window := e.strandedSweepWindow()
 	obs, verdict := e.freezeDrop(bin.ID, observeDrop(robotID, robot, clock.Now().UTC()), window)
+
+	// ── THE CARRIER-NODE GUARD, AND WHY IT IS HERE AND NOT ON THE MOVE ──
+	//
+	// A recovery order (carried_bin_recovery.go) asks this robot to unload at a
+	// chosen destination. While that order is running the deck will report empty
+	// the instant the bin is set down — and this watch would then place the bin
+	// at whatever station resolves for the tick, racing the order's own arrival
+	// handling. Two placements, and the second one wins by accident.
+	//
+	// The order is the better answer whenever there is one: it has a destination
+	// somebody chose, a slot reservation behind it, and the ordinary arrival
+	// path to record where the bin actually landed. So this watch stands down
+	// for the duration.
+	//
+	// AHEAD OF EVERY DECLINE BELOW, because a decline takes the bin off the deck
+	// (strandedAnomaly): while its recovery order runs, the order owns the bin.
+	//
+	// A FAILED READ STANDS DOWN TOO. The error used to be discarded, so a list
+	// that could not be read meant "no live order" and this watch went on to
+	// place the bin — racing the arrival of the very order it was written to
+	// yield to. The two answers do not cost the same: standing down wrongly
+	// costs one tick, and the next poll asks again, while proceeding wrongly is
+	// the double placement.
+	live, err := e.liveRecoveryOrderForBin(bin.ID)
+	if err != nil {
+		e.logFn("engine: carried bins: bin %d — cannot tell whether a recovery order is live (%v); "+
+			"standing down this tick rather than racing one", bin.ID, err)
+		return
+	}
+	if live != nil {
+		e.dbg("engine: carried bins: bin %d left to recovery order %d (%s)",
+			bin.ID, live.ID, live.Status)
+		return
+	}
 	switch verdict {
 	case dropUnwitnessed:
 		// See freezeDrop: an already-empty deck this process never saw loaded is
@@ -732,52 +794,10 @@ func (e *Engine) placeCarriedBinIfSettled(bin *bins.Bin, robotID string, robot f
 		return
 	}
 
-	// ── THE CARRIER-NODE GUARD, AND WHY IT IS HERE AND NOT ON THE MOVE ──
-	//
-	// A recovery order (carried_bin_recovery.go) asks this robot to unload at a
-	// chosen destination. While that order is running the deck will report empty
-	// the instant the bin is set down — and this watch would then place the bin
-	// at whatever station resolves for the tick, racing the order's own arrival
-	// handling. Two placements, and the second one wins by accident.
-	//
-	// The order is the better answer whenever there is one: it has a destination
-	// somebody chose, a slot reservation behind it, and the ordinary arrival
-	// path to record where the bin actually landed. So this watch stands down
-	// for the duration.
-	//
-	// Deliberately NOT done by widening BinService's actor guard on
-	// RecoverTransitAnomaly. That guard stops a HUMAN asserting a location for a
-	// bin that is riding a robot, and the jack watch is its sanctioned
-	// exception; adding a third actor would re-open the same question a fourth
-	// time. What is needed here is not "who may move this bin" but "is something
-	// already moving it", and that is a liveness question, answered where the
-	// race is.
-	//
-	// A FAILED READ STANDS DOWN TOO. The error used to be discarded, so a list
-	// that could not be read meant "no live order" and this watch went on to
-	// place the bin — racing the arrival of the very order it was written to
-	// yield to. The two answers do not cost the same: standing down wrongly
-	// costs one tick, and the next poll asks again, while proceeding wrongly is
-	// the double placement.
-	live, err := e.liveRecoveryOrderForBin(bin.ID)
-	if err != nil {
-		e.logFn("engine: carried bins: bin %d — cannot tell whether a recovery order is live (%v); "+
-			"standing down this tick rather than racing one", bin.ID, err)
-		return
-	}
-	if live != nil {
-		e.dbg("engine: carried bins: bin %d left to recovery order %d (%s)",
-			bin.ID, live.ID, live.Status)
-		return
-	}
-	if robot.Busy {
-		// Kept, and weak — see the same check in placeStrandedBin. `Busy` is the
-		// vendor's task flag, not a motion flag, and it was false throughout the
-		// drive-off that produced this whole fix. On THIS path the freeze above
-		// is the real guard: the answer was taken before the robot moved, so a
-		// robot that is driving now costs a tick, not a wrong station.
-		return
-	}
+	// NO BUSY CHECK. The sample was frozen at rest when the deck emptied; what
+	// the robot is doing now says nothing about where it set the bin down, and
+	// waiting on it kept the bin recorded on a deck that had been seen empty
+	// for as long as the robot went on working (SPR 2026-10-08, CARRIER-0019).
 	if !e.placeInferred(bin.ID, robotID, obs, true) {
 		return
 	}
@@ -859,7 +879,7 @@ func (e *Engine) sweepStrandedBins() {
 		}
 		robot, haveRobot := e.GetCachedRobotStatus(robotID)
 		e.dbg("engine: stranded sweep: bin %d from order %d robot %q", bin.ID, ord.ID, robotID)
-		e.placeStrandedBin(bin.ID, robotID, robot, haveRobot)
+		e.placeStrandedBin(bin.ID, robotID, robot, haveRobot, false)
 	}
 	if declined > 0 {
 		e.logFn("engine: stranded sweep: %d bin(s) left as anomalies — older than %s, "+
@@ -924,6 +944,13 @@ func (e *Engine) lastClaimingOrder(binID int64) (ord *orders.Order, robotID stri
 // strandedAnomaly is branch C: leave the bin at _TRANSIT, stamp it, and record
 // where the robot last was so the operator gets a map pin instead of a search.
 func (e *Engine) strandedAnomaly(binID int64, robotID string, robot fleet.RobotStatus, haveRobot bool, why string) {
+	// A STRANDED BIN IS NEVER ON A DECK. Every caller that reaches here with the
+	// bin recorded on a carrier node has just read that deck empty at rest, so
+	// the bin goes back to _TRANSIT as lost before it is stamped; the empty
+	// carrier node is retired by the next sweep. A bin anywhere else is untouched.
+	if _, err := e.BinService().TakeOffDeck(binID); err != nil {
+		e.logFn("engine: stranded transit: bin %d: %v", binID, err)
+	}
 	note := strandedNote(robotID, robot, haveRobot, why)
 	if err := e.BinService().MarkAnomalyWithPosition(binID, note); err != nil {
 		e.logFn("engine: stranded transit: mark bin %d anomalous: %v", binID, err)
@@ -972,9 +999,8 @@ func (e *Engine) strandedAnomaly(binID int64, robotID string, robot fleet.RobotS
 // strandedAnomaly saw its own stale entry and suppressed the line. For a bin
 // that strands the same way twice, "until the note changes" is never.
 //
-// THE HANDLER CALLS IT, NOT BinService. RecoverTransitAnomaly is the shared
-// door — the inference goes through it too — and it holds no Engine and should
-// not grow one for a log silencer.
+// THE HANDLER CALLS IT, NOT BinService. RecoverTransitAnomaly holds no Engine
+// and should not grow one for a log silencer.
 //
 // ON RecoveryService, WHICH THE HANDLERS ALREADY REACH, so the narrow
 // ServiceAccess interface does not have to widen to carry it. That width is a
