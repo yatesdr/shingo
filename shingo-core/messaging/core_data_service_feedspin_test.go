@@ -372,6 +372,7 @@ func TestFeedsPin_HandleNodeListRequest_GeometryAndDigest(t *testing.T) {
 		{name: "current revision held", heldRevision: current, wantGeometry: false, after: "same", label: "-"},
 		{name: "stale revision held", heldRevision: "not-the-revision", wantGeometry: true, after: "same", label: "-"},
 	}
+	firstDigest := ""
 	for _, tc := range cases {
 		r := ask(tc.heldRevision)
 		if got := hasGeometry(r); got != tc.wantGeometry {
@@ -380,14 +381,20 @@ func TestFeedsPin_HandleNodeListRequest_GeometryAndDigest(t *testing.T) {
 		if r.SceneRevision != current {
 			t.Errorf("%s: scene_revision = %q, want the current %q on every reply (after: same)", tc.name, r.SceneRevision, current)
 		}
-		keys := jsonKeys(t, r)
-		for _, k := range keys {
-			if k == "digest" {
-				// after (F4): "digest" present and equal to protocol.Digest over
-				// {Nodes, Loaders, PayloadBinTypes}, identical across these three
-				// replies because only the held scene revision differs.
-				t.Errorf("%s: reply carries a digest key today; keys %v", tc.name, keys)
-			}
+		// F4: "digest" present and equal to the FeedNodes digest of
+		// {Nodes, Loaders, PayloadBinTypes} (protocol.NodesDigest — the pin
+		// predicted protocol.Digest; the canonical-copy function is the one
+		// both paths use), identical across these three replies because only
+		// the held scene revision differs.
+		wantDigest, err := protocol.NodesDigest(r.Nodes, r.Loaders, r.PayloadBinTypes)
+		testutil.MustNoErr(t, err, "digest")
+		if r.Digest == "" || r.Digest != wantDigest {
+			t.Errorf("%s: digest = %q, want %q", tc.name, r.Digest, wantDigest)
+		}
+		if firstDigest == "" {
+			firstDigest = r.Digest
+		} else if r.Digest != firstDigest {
+			t.Errorf("%s: digest %q differs from the first reply's %q", tc.name, r.Digest, firstDigest)
 		}
 	}
 }
@@ -421,7 +428,7 @@ func TestFeedsPin_HandleCatalogPayloadsRequest(t *testing.T) {
 	r := resp.events[0].payload.(*protocol.CatalogPayloadsResponse)
 
 	keys := jsonKeys(t, r)
-	wantKeys := []string{"payloads"}
+	wantKeys := []string{"digest", "payloads"}  // F4: was payloads only
 	afterKeys := []string{"digest", "payloads"} // F4
 	if !reflect.DeepEqual(keys, wantKeys) {
 		t.Errorf("catalog reply keys = %v, want %v (after F4: %v)", keys, wantKeys, afterKeys)

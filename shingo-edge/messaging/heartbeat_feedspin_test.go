@@ -144,7 +144,7 @@ func TestFeedsPin_HeartbeatLoopReasksEverySecondTick(t *testing.T) {
 		{
 			name:  "unguarded tick%2 re-ask of node list and catalog",
 			re:    regexp.MustCompile(`if tick%2 == 0 \{\s*h\.sendNodeListRequest\(\)\s*h\.sendCatalogRequest\(\)\s*\}`),
-			want:  true,
+			want:  false, // F4: guarded by !h.coreSpeaksFeeds()
 			after: false,
 			label: "F4",
 		},

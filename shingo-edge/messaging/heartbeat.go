@@ -67,6 +67,11 @@ type Heartbeater struct {
 	// differs. Read at send time. Nil leaves the field nil, which Core reads as
 	// an Edge that predates feeds.
 	FeedsFn func() map[string]string
+	// CoreSpeaksFeedsFn, when set, reports whether the last ack came from a
+	// Core that answers feed digests. While it does, the node list and catalog
+	// arrive as feeds and the two-minute re-ask is not sent. Nil keeps the
+	// re-ask, as for an older Core.
+	CoreSpeaksFeedsFn func() bool
 
 	DebugLog DebugLogFunc
 }
@@ -257,6 +262,10 @@ func (h *Heartbeater) sendHeartbeat() {
 	}
 }
 
+func (h *Heartbeater) coreSpeaksFeeds() bool {
+	return h.CoreSpeaksFeedsFn != nil && h.CoreSpeaksFeedsFn()
+}
+
 func (h *Heartbeater) loop() {
 	// Recover-and-restart-with-5s-backoff. The earlier
 	// recover-and-exit silently killed the goroutine on panic — the
@@ -283,12 +292,14 @@ func (h *Heartbeater) loop() {
 					h.sendHeartbeat()
 					tick++
 					// Re-request node list and payload catalog every
-					// other tick (base interval is 60s → ~2 min poll).
-					// coreNodes is display-only per
-					// operator_guards.go:15-22 — no dispatch / routing
-					// decision reads from it — so this is purely a
-					// freshness improvement.
-					if tick%2 == 0 {
+					// other tick (base interval is 60s → ~2 min poll), for
+					// an older Core only: a Core that answers feed digests
+					// sends both when they differ from what this Edge
+					// holds. The node list is not display-only — CoreNodes
+					// gates the delivery and prime paths
+					// (engine/operator_produce.go) — so neither path may
+					// leave it to go stale.
+					if tick%2 == 0 && !h.coreSpeaksFeeds() {
 						h.sendNodeListRequest()
 						h.sendCatalogRequest()
 					}

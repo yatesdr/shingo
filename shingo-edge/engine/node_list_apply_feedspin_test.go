@@ -12,16 +12,20 @@ import (
 // reply do to the Edge, pinned before the versioned feeds make an identical
 // reply a no-op.
 //
-// applyNodeListReply makes the calls the SubjectNodeListResponse closure in
-// cmd/shingoedge/main.go makes, in its order; that order is pinned in
-// cmd/shingoedge/main_feedspin_test.go, so the two cannot drift apart silently.
+// applyNodeListReply is what the SubjectNodeListResponse closure in
+// cmd/shingoedge/main.go does (pinned there): since F4, eng.ApplyNodeList.
 
 func applyNodeListReply(e *Engine, resp *protocol.NodeListResponse) {
-	e.SetCoreNodes(resp.Nodes)
-	e.SetCoreLoaders(resp.Loaders)
-	e.SetPayloadBinTypes(resp.PayloadBinTypes)
-	e.SetSceneGraph(resp.ScenePoints, resp.SceneEdges)
-	e.SetSceneGeometry(resp.SceneRevision, resp.ScenePoints, resp.SceneEdges)
+	e.ApplyNodeList(resp)
+}
+
+// feedspinDigest is the FeedNodes digest Core puts on a reply carrying the
+// pin's nodes, loaders and bin types.
+func feedspinDigest(t *testing.T) string {
+	t.Helper()
+	d, err := protocol.NodesDigest(feedspinNodes(), feedspinLoaders(), feedspinBinTypes())
+	testutil.MustNoErr(t, err, "digest")
+	return d
 }
 
 // totalChanges is SQLite's running count of rows inserted, updated or deleted
@@ -88,20 +92,24 @@ func TestFeedsPin_NodeListReplyApply(t *testing.T) {
 	pts2[0].PosX = fp(-16.5)
 	np, ne := namesOnly()
 
+	digest := feedspinDigest(t)
 	cases := []struct {
 		name   string
+		digest string // on both replies (F4); "" is an older Core
 		second protocol.NodeListResponse
 		want   moved
 		after  moved
 		label  string
 	}{
 		{
-			name: "identical repeat, digest matching the held one",
+			name:   "identical repeat, digest matching the held one",
+			digest: digest,
 			second: protocol.NodeListResponse{Nodes: feedspinNodes(), Loaders: feedspinLoaders(),
 				PayloadBinTypes: feedspinBinTypes(), ScenePoints: np, SceneEdges: ne, SceneRevision: "rev-1"},
-			// SetCoreNodes bumps and emits on every call; ReplaceCoreLoaders
-			// deletes and re-inserts every loader row.
-			want:  moved{genBump: 1, events: 1, rowsHit: true, revision: "rev-1", pln01X: -16.929},
+			// Before F4: SetCoreNodes bumped and emitted on every call and
+			// ReplaceCoreLoaders deleted and re-inserted every loader row
+			// (genBump 1, events 1, rowsHit true).
+			want:  moved{genBump: 0, events: 0, rowsHit: false, revision: "rev-1", pln01X: -16.929}, // F4
 			after: moved{genBump: 0, events: 0, rowsHit: false, revision: "rev-1", pln01X: -16.929},
 			label: "F4 (B16)",
 		},
@@ -116,10 +124,12 @@ func TestFeedsPin_NodeListReplyApply(t *testing.T) {
 		{
 			// Same nodes, loaders and bin types; the scene moved to a new
 			// revision. The geometry is applied (and written) either way.
-			name: "scene-only change",
+			name:   "scene-only change",
+			digest: digest,
 			second: protocol.NodeListResponse{Nodes: feedspinNodes(), Loaders: feedspinLoaders(),
 				PayloadBinTypes: feedspinBinTypes(), ScenePoints: pts2, SceneEdges: eds2, SceneRevision: "rev-2"},
-			want:  moved{genBump: 2, events: 1, rowsHit: true, revision: "rev-2", pln01X: -16.5},
+			// Before F4: genBump 2, events 1.
+			want:  moved{genBump: 1, events: 0, rowsHit: true, revision: "rev-2", pln01X: -16.5}, // F4
 			after: moved{genBump: 1, events: 0, rowsHit: true, revision: "rev-2", pln01X: -16.5},
 			label: "F4 (the scene applies; with a matching nodes digest only SetSceneGeometry bumps)",
 		},
@@ -130,14 +140,17 @@ func TestFeedsPin_NodeListReplyApply(t *testing.T) {
 			db := testEngineDB(t)
 			e := testEngine(t, db)
 			applyNodeListReply(e, &protocol.NodeListResponse{Nodes: feedspinNodes(), Loaders: feedspinLoaders(),
-				PayloadBinTypes: feedspinBinTypes(), ScenePoints: pts, SceneEdges: eds, SceneRevision: "rev-1"})
+				PayloadBinTypes: feedspinBinTypes(), ScenePoints: pts, SceneEdges: eds, SceneRevision: "rev-1",
+				Digest: tc.digest})
 			if e.SceneRevision() != "rev-1" {
 				t.Fatalf("first reply did not cache rev-1 (held %q)", e.SceneRevision())
 			}
 
 			events := countCoreNodesEvents(e)
 			gen0, rows0 := e.PlantGeneration(), totalChanges(t, db)
-			applyNodeListReply(e, &tc.second)
+			second := tc.second
+			second.Digest = tc.digest
+			applyNodeListReply(e, &second)
 			got := moved{
 				genBump:  e.PlantGeneration() - gen0,
 				events:   *events,

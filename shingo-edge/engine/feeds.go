@@ -205,6 +205,13 @@ func (e *Engine) FeedDigests() map[string]string {
 	if d, ok := e.refusalsDigest(); ok {
 		out[protocol.FeedRefusals] = d
 	}
+	out[protocol.FeedNodes] = e.heldDigest(protocol.FeedNodes)
+	// The scene revision lives with the geometry; note it so the ack can
+	// confirm it.
+	rev := e.SceneRevision()
+	e.noteHeld(protocol.FeedScene, rev)
+	out[protocol.FeedScene] = rev
+	out[protocol.FeedCatalog] = e.heldDigest(protocol.FeedCatalog)
 	return out
 }
 

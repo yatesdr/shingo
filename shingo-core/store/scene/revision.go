@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+
+	"shingo/protocol"
 )
 
 // Revision identifies one state of the scene tables, for the node-list sync's
@@ -27,11 +29,24 @@ import (
 // name set, so hashing them costs no extra query; the marginal price of the
 // stronger signal is zero.
 //
+// NO SCENE IS ITS OWN REVISION. The Edge caches geometry only when a response
+// carries both points and edges (domain.NewSceneGeometry), so a hash over a
+// scene with neither, or with one and not the other, names a scene no Edge can
+// ever hold: the Edge kept quoting what it last held, the scene feed never
+// converged, and Core resent it on every guard window and flagged the station
+// — on a plant that never had a map, and on one whose map was deleted. Such a
+// scene is protocol.SceneRevisionNone: the Edge clears its geometry and holds
+// that value, and the feed converges. Not "", which stays what a partial read
+// mints (messaging/scene_slices.go) and changes nothing on the Edge.
+//
 // A FUNCTION OF THE ROWS ONLY. Two Cores answering the same scene — or one
 // Core restarted — produce the same revision, so an Edge's cached revision is
 // comparable across Core lifetimes. It must never depend on read order, the
 // clock, or the process.
 func Revision(points []*Point, edges []*Edge) string {
+	if len(points) == 0 || len(edges) == 0 {
+		return protocol.SceneRevisionNone
+	}
 	type row struct {
 		id int64
 		ns int64

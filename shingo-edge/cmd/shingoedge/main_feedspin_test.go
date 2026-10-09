@@ -84,15 +84,17 @@ func TestFeedsPin_SubjectClosureSteps(t *testing.T) {
 		},
 		{
 			subject: "SubjectNodeListResponse",
-			want: []string{"log.Printf", "eng.SetCoreNodes", "eng.SetCoreLoaders", "eng.SetPayloadBinTypes",
-				"eng.SetSceneGraph", "eng.SetSceneGeometry"},
+			// F4: the five calls moved into eng.ApplyNodeList, which skips the
+			// first three on a matching digest (pinned behaviourally in
+			// engine/node_list_apply_feedspin_test.go).
+			want: []string{"log.Printf", "eng.ApplyNodeList"},
 			after: "SetCoreNodes/SetCoreLoaders/SetPayloadBinTypes skipped when resp.Digest equals the held digest; " +
 				"SetSceneGraph and SetSceneGeometry on every reply; digest stored only after SetCoreLoaders returns nil",
 			label: "F4",
 		},
 		{
 			subject: "SubjectCatalogPayloadsResponse",
-			want:    []string{"log.Printf", "eng.HandlePayloadCatalog"},
+			want:    []string{"log.Printf", "eng.ApplyCatalog"}, // F4: HandlePayloadCatalog, then the digest on nil
 			after:   "HandlePayloadCatalog returns an error; the catalog digest is stored only on nil",
 			label:   "F1, F4",
 		},

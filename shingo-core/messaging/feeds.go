@@ -265,6 +265,21 @@ func (s *CoreDataService) buildFeed(station, key string) (digest string, value a
 	case protocol.FeedRefusals:
 		digest, value, err = s.buildRefusalsFeed()
 		return digest, value, true, err
+	case protocol.FeedNodes:
+		v, err := s.buildNodeList(station, true)
+		if err != nil {
+			return "", nil, true, err
+		}
+		return v.Digest, v, true, nil
+	case protocol.FeedScene:
+		d, rows, err := s.buildScene()
+		return d, rows, true, err
+	case protocol.FeedCatalog:
+		v, err := s.buildCatalog(true)
+		if err != nil {
+			return "", nil, true, err
+		}
+		return v.Digest, v, true, nil
 	}
 	return "", nil, false, nil
 }
@@ -293,12 +308,22 @@ func (s *CoreDataService) sendFeeds(station string, due map[string]feedMemoEntry
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	nodeListSent := false
 	for _, key := range keys {
 		switch key {
 		case protocol.FeedContainment:
 			s.resp.sendData(protocol.SubjectContainmentSnapshot, station, due[key].value)
 		case protocol.FeedRefusals:
 			s.resp.sendData(protocol.SubjectSupplyRefusalSnapshot, station, due[key].value)
+		case protocol.FeedNodes, protocol.FeedScene:
+			// One node-list message carries both; geometry rides it when the
+			// scene differs.
+			if !nodeListSent {
+				s.sendNodeFeed(station, held)
+				nodeListSent = true
+			}
+		case protocol.FeedCatalog:
+			s.resp.sendData(protocol.SubjectCatalogPayloadsResponse, station, due[key].value)
 		default:
 			log.Printf("core_feeds: no sender for %s", key)
 		}

@@ -27,7 +27,17 @@ import (
 // matching revision produces, a half-read scene with no revision — leaves it
 // exactly as it was. Called from the node-list-response handler beside
 // SetSceneGraph.
+//
+// protocol.SceneRevisionNone is the one revision with nothing to place: Core
+// has no scene this Edge can cache (never mapped, or the map deleted). The
+// geometry is cleared and that revision held, on disk as well, so the
+// heartbeat quotes it back and the scene feed converges instead of Core
+// resending to an Edge still quoting the old map.
 func (e *Engine) SetSceneGeometry(revision string, points []protocol.ScenePointInfo, edges []protocol.SceneEdgeInfo) {
+	if revision == protocol.SceneRevisionNone {
+		e.holdNoScene()
+		return
+	}
 	g, err := domain.NewSceneGeometry(revision, points, edges)
 	if err != nil {
 		// The ordinary case is a matching revision (names only), which is not
@@ -55,6 +65,26 @@ func (e *Engine) SetSceneGeometry(revision string, points []protocol.ScenePointI
 	log.Printf("scene geometry: cached revision %s (%d points, %d edges)", g.Revision, len(g.Points), len(g.Edges))
 }
 
+// holdNoScene clears the geometry and holds SceneRevisionNone. Once held, a
+// repeat changes nothing: no write, no generation bump.
+func (e *Engine) holdNoScene() {
+	if e.SceneRevision() == protocol.SceneRevisionNone {
+		return
+	}
+	g := &domain.SceneGeometry{Revision: protocol.SceneRevisionNone, Points: map[string]domain.ScenePointGeom{}}
+	if e.db != nil {
+		if err := e.db.ReplaceSceneGeometry(g); err != nil {
+			log.Printf("scene geometry: no scene on Core, not recorded: %v", err)
+			return
+		}
+	}
+	e.sceneGeometryMu.Lock()
+	e.sceneGeometry = g
+	e.sceneGeometryMu.Unlock()
+	e.bumpPlantGeneration()
+	log.Printf("scene geometry: Core holds no scene — geometry cleared")
+}
+
 // loadSceneGeometry fills the hot copy from the store at boot, so the first
 // node-list request already quotes the revision held and the picture is
 // drawn before Core has answered anything. A read failure logs and leaves
@@ -80,20 +110,25 @@ func (e *Engine) loadSceneGeometry() {
 }
 
 // SceneGeometry returns the hot copy, or nil before the first complete
-// response. Callers treat nil as "draw the schematic", never as "the plant
-// has no map".
+// response and while Core has no scene. Callers treat nil as "draw the
+// schematic", never as "the plant has no map".
 func (e *Engine) SceneGeometry() *domain.SceneGeometry {
 	e.sceneGeometryMu.RLock()
 	defer e.sceneGeometryMu.RUnlock()
+	if e.sceneGeometry != nil && e.sceneGeometry.Revision == protocol.SceneRevisionNone {
+		return nil
+	}
 	return e.sceneGeometry
 }
 
 // SceneRevision is what the heartbeater sends on every node-list request:
-// the revision of the geometry held, or "" when none is — which Core reads
-// as "send everything".
+// the revision held — SceneRevisionNone when Core has no scene — or "" when
+// nothing is, which Core reads as "send everything".
 func (e *Engine) SceneRevision() string {
-	if g := e.SceneGeometry(); g != nil {
-		return g.Revision
+	e.sceneGeometryMu.RLock()
+	defer e.sceneGeometryMu.RUnlock()
+	if e.sceneGeometry != nil {
+		return e.sceneGeometry.Revision
 	}
 	return ""
 }

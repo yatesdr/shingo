@@ -339,6 +339,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// The digest of every Core feed this Edge holds, on every heartbeat; Core
 	// answers on the ack and sends whichever differ.
 	hb.FeedsFn = eng.FeedDigests
+	hb.CoreSpeaksFeedsFn = eng.CoreSpeaksFeeds
 
 	// ── Subject router (Data sub-dispatch) ─────────────────────────────
 	// Every protocol.Subject* constant is registered against the closure that
@@ -388,17 +389,11 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	router.RegisterSubject(subjectRouter, protocol.SubjectNodeListResponse, func(_ *protocol.Envelope, resp *protocol.NodeListResponse) {
 		log.Printf("edge_handler: received node list (%d nodes, %d loaders, %d payload-bin-types, %d scene points, %d scene edges)",
 			len(resp.Nodes), len(resp.Loaders), len(resp.PayloadBinTypes), len(resp.ScenePoints), len(resp.SceneEdges))
-		eng.SetCoreNodes(resp.Nodes)
-		eng.SetCoreLoaders(resp.Loaders)
-		eng.SetPayloadBinTypes(resp.PayloadBinTypes)
-		eng.SetSceneGraph(resp.ScenePoints, resp.SceneEdges)
-		// The same two slices, second consumer: replaced only when the
-		// response carries the whole scene with its revision.
-		eng.SetSceneGeometry(resp.SceneRevision, resp.ScenePoints, resp.SceneEdges)
+		eng.ApplyNodeList(resp)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectCatalogPayloadsResponse, func(_ *protocol.Envelope, resp *protocol.CatalogPayloadsResponse) {
 		log.Printf("edge_handler: received payload catalog (%d entries)", len(resp.Payloads))
-		eng.HandlePayloadCatalog(resp.Payloads)
+		eng.ApplyCatalog(resp)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectOrderStatusResponse, func(_ *protocol.Envelope, resp *protocol.OrderStatusResponse) {
 		eng.HandleOrderStatusSnapshots(resp.Orders)

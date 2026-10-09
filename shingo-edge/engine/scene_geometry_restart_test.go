@@ -8,6 +8,48 @@ import (
 	"shingoedge/internal/testdb"
 )
 
+// TestSceneGeometry_NoSceneIsHeld: Core's SceneRevisionNone clears the
+// geometry, the heartbeat quotes it back (so the scene feed converges), the
+// cell picture falls back to the schematic, a repeat writes nothing and bumps
+// nothing, and a restart still holds it. A later real scene replaces it.
+func TestSceneGeometry_NoSceneIsHeld(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	pts, eds := completeScene()
+	e := &Engine{db: db}
+	e.SetSceneGeometry("rev-1", pts, eds)
+
+	e.SetSceneGeometry(protocol.SceneRevisionNone, nil, nil)
+	if e.SceneRevision() != protocol.SceneRevisionNone || e.SceneGeometry() != nil {
+		t.Fatalf("after Core's no-scene: revision %q, geometry %+v; want %q and nil",
+			e.SceneRevision(), e.SceneGeometry(), protocol.SceneRevisionNone)
+	}
+	if got := e.FeedDigests()[protocol.FeedScene]; got != protocol.SceneRevisionNone {
+		t.Errorf("heartbeat quotes scene %q, want %q", got, protocol.SceneRevisionNone)
+	}
+	gen := e.PlantGeneration()
+	e.SetSceneGeometry(protocol.SceneRevisionNone, nil, nil)
+	if e.PlantGeneration() != gen {
+		t.Error("a repeated no-scene bumped the plant generation")
+	}
+	stored, err := db.LoadSceneGeometry()
+	testutil.MustNoErr(t, err, "load")
+	if stored == nil || stored.Revision != protocol.SceneRevisionNone || len(stored.Points) != 0 || len(stored.Edges) != 0 {
+		t.Fatalf("store holds %+v, want the no-scene revision and no rows", stored)
+	}
+
+	second := &Engine{db: db}
+	second.loadSceneGeometry()
+	if second.SceneRevision() != protocol.SceneRevisionNone || second.SceneGeometry() != nil {
+		t.Errorf("after restart: revision %q, geometry %+v; want %q and nil", second.SceneRevision(), second.SceneGeometry(), protocol.SceneRevisionNone)
+	}
+
+	second.SetSceneGeometry("rev-2", pts, eds)
+	if second.SceneRevision() != "rev-2" || second.SceneGeometry() == nil {
+		t.Errorf("a new map after no scene: revision %q, geometry nil %v", second.SceneRevision(), second.SceneGeometry() == nil)
+	}
+}
+
 // TestSceneGeometry_CacheSurvivesAnEngineRestart is the durable half: a
 // complete response is written through to the store, a fresh engine on the
 // same database picks it up at boot, and a name-only response — the ordinary

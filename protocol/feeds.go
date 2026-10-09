@@ -42,6 +42,16 @@ const (
 	FeedCatalog = "catalog"
 )
 
+// SceneRevisionNone is the scene revision of a plant with no scene an Edge can
+// cache — no points, no edges, or one without the other (the Edge keeps
+// geometry only when a response carries both). An Edge that receives it clears
+// its geometry and holds this value, so the scene feed converges on "no scene"
+// rather than resending forever to an Edge still quoting a deleted map. It is
+// not "": that is a read that minted no revision (a partial read), which
+// changes nothing on the Edge. A real revision is 64 hex characters, so the two
+// can never be confused.
+const SceneRevisionNone = "none"
+
 // Digest is the first 16 hex characters of the SHA-256 of v's JSON encoding.
 //
 // Callers pass the value they send, canonicalised by the feed's own digest
