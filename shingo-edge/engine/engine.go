@@ -77,6 +77,9 @@ type Engine struct {
 	// feeds is what this Edge holds of each Core feed and what the last
 	// heartbeat ack said about Core (feeds.go).
 	feeds feedBook
+	// containment is the held copy of Core's containment feed, for readers
+	// (LocalContainment); nil until one is received or loaded at boot.
+	containment atomic.Pointer[protocol.ContainmentSnapshot]
 
 	cfg         *config.Config
 	configPath  string
@@ -356,6 +359,7 @@ func (e *Engine) Start() {
 	e.loadSceneGeometry()
 	// What this Edge holds of each Core feed, as of the last run.
 	e.loadFeedCopies()
+	e.loadContainmentCopy()
 
 	// Wire the event chain
 	e.wireEventHandlers()

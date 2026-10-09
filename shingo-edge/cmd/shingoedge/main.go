@@ -476,6 +476,15 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	router.RegisterSubject(subjectRouter, protocol.SubjectSupplyRefusalState, func(_ *protocol.Envelope, st *protocol.SupplyRefusalState) {
 		eng.HandleSupplyRefusalState(*st)
 	})
+	// Core's containment state, broadcast after a containment write and sent
+	// to this Edge alone when its held digest differs. The containment page
+	// reads the copy held here instead of calling Core. Registered here in the
+	// same place the subject joins EdgeInboundSubjects.
+	router.RegisterSubject(subjectRouter, protocol.SubjectContainmentSnapshot, func(_ *protocol.Envelope, snap *protocol.ContainmentSnapshot) {
+		if err := eng.ApplyContainmentSnapshot(*snap); err != nil {
+			log.Printf("edge_handler: containment snapshot: %v", err)
+		}
+	})
 	// A whole order row pushed down by Core, for an order this Edge did not
 	// create. Without it a Core-authored order is invisible here: nothing on the
 	// board, and the delivery handler falls back to binding the bin alone.

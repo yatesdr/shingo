@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"shingocore/domain"
 	"shingocore/store"
@@ -20,6 +21,24 @@ import (
 // (PR 3a.6). Methods are thin delegates today.
 type PayloadService struct {
 	db *store.DB
+	// containmentChanged is called after a successful containment write
+	// (SetContainment, SetBinHold) so the Edges' copies are pushed at once.
+	// Atomic because the composition root sets it after the engine is built,
+	// while HTTP handlers may already be writing. Nil: nothing is pushed and
+	// the heartbeat carries the change.
+	containmentChanged atomic.Pointer[func()]
+}
+
+// SetContainmentChangedFunc installs the hook called after a successful
+// containment write. Set once, through Engine.SetContainmentChangedFunc.
+func (s *PayloadService) SetContainmentChangedFunc(fn func()) {
+	s.containmentChanged.Store(&fn)
+}
+
+func (s *PayloadService) notifyContainmentChanged() {
+	if fn := s.containmentChanged.Load(); fn != nil && *fn != nil {
+		(*fn)()
+	}
 }
 
 func NewPayloadService(db *store.DB) *PayloadService {
@@ -181,7 +200,11 @@ func (s *PayloadService) SetContainment(payloadCode, reason, by string, active b
 			return fmt.Errorf("no claim for payload %s declares a containment destination — configure the producing cell's claim (Quality Containment section) before activating", payloadCode)
 		}
 	}
-	return s.db.SetPayloadContainment(payloadCode, reason, by, active)
+	if err := s.db.SetPayloadContainment(payloadCode, reason, by, active); err != nil {
+		return err
+	}
+	s.notifyContainmentChanged()
+	return nil
 }
 
 // ListContainment returns every containment row (active first).
@@ -193,7 +216,11 @@ func (s *PayloadService) ListContainment() ([]domain.PayloadContainmentRow, erro
 // station action (Send to Quality Hold) and by the containment screen's
 // release (which clears the hold as it sends the bin to FG).
 func (s *PayloadService) SetBinHold(binID int64, hold bool, by string) error {
-	return s.db.SetBinQualityHold(binID, hold, by)
+	if err := s.db.SetBinQualityHold(binID, hold, by); err != nil {
+		return err
+	}
+	s.notifyContainmentChanged()
+	return nil
 }
 
 // ListHeldBins returns every bin carrying the hold marker.

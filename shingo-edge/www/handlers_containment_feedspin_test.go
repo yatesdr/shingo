@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -17,16 +18,16 @@ import (
 )
 
 // handlers_containment_feedspin_test.go — what the Edge containment page and
-// its JSON twin show today, and where each value comes from: a live read of
-// Core's /api/containment on every request, plus a children read per group
-// destination and a node-bins read per destination.
+// its JSON twin show, and where each value comes from.
 //
-// Each case asserts the value at the base. `after` is the predicted value once
-// the page builds from the Edge's held copy (LocalContainment) instead of
-// calling Core, and `label` is the brief label that moves it.
+// At the base every request read Core live: /api/containment, a children read
+// per group destination and a node-bins read per destination. F2 flipped the
+// cases: the page builds from the Edge's held copy of the containment feed
+// (LocalContainment) and calls Core zero times. Each case asserts the F2 value
+// and carries the base value beside it as `base`.
 
-// containmentCoreStub answers the three Core reads the page makes and counts
-// them per kind, so a pin can say how many calls a render costs.
+// containmentCoreStub answers the three Core reads the page used to make and
+// counts them per kind, so a pin can say how many calls a render costs.
 type containmentCoreStub struct {
 	mu       sync.Mutex
 	calls    map[string]int
@@ -129,17 +130,48 @@ func seedContainmentPinClaims(t *testing.T) {
 }
 
 const containmentPinStateBody = `{
- "containment":[{"payload_code":"FP-PART","active":true,"reason":"burr","activated_by":"qa","activated_at":"2026-10-01T08:00:00Z","deactivated_by":"","deactivated_at":""}],
+ "containment":[{"payload_code":"FP-PART","active":true,"reason":"burr","activated_by":"qa","activated_at":"2026-10-01T08:00:00Z","deactivated_by":"","deactivated_at":null}],
  "held_bins":[{"bin_id":9,"label":"FP-BIN-9","payload_code":"FP-PART","node_name":"","hold_by":"edge.test","hold_at":"2026-10-01T08:05:00Z"}]
 }`
 
+// containmentPinHeld is the same picture as the Edge holds it after F2: the
+// flags and held bins of containmentPinStateBody, and the two destinations as
+// Core's snapshot builds them (the group's non-group children, the occupied
+// bins only), confirmed just now.
+func containmentPinHeld(t *testing.T) *engine.ContainmentState {
+	t.Helper()
+	at := func(s string) *time.Time {
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Fatalf("parse %q: %v", s, err)
+		}
+		return &v
+	}
+	now := time.Now()
+	return &engine.ContainmentState{
+		Containment: []engine.ContainmentRow{{PayloadCode: "FP-PART", Active: true, Reason: "burr",
+			ActivatedBy: "qa", ActivatedAt: at("2026-10-01T08:00:00Z")}},
+		HeldBins: []engine.HeldBinRow{{BinID: 9, Label: "FP-BIN-9", PayloadCode: "FP-PART",
+			HoldBy: "edge.test", HoldAt: at("2026-10-01T08:05:00Z")}},
+		Destinations: []protocol.ContainmentDestination{
+			{Node: "FP-GRP", Children: []string{"FP-GRP.A", "FP-GRP.B"}, Bins: []protocol.ContainmentBin{
+				{Node: "FP-GRP.A", BinID: 11, Label: "FP-BIN-11", PayloadCode: "FP-PART", UOP: 7}}},
+			{Node: "FP-PLAIN", Children: []string{}, Bins: []protocol.ContainmentBin{
+				{Node: "FP-PLAIN", BinID: 12, Label: "FP-BIN-12", PayloadCode: "FP-PART", UOP: 3}}},
+		},
+		ReceivedAt: now, ConfirmedAt: now,
+	}
+}
+
 // newContainmentPinHandlers wires Handlers over the shared stub with a
-// CoreClient aimed at a fresh Core stub, the claims seeded, the group node in
-// the Edge's Core node map, and the real templates.
+// CoreClient aimed at a fresh Core stub (answering as before, so a call to it
+// would still be counted), the held copy in the stub engine, the claims
+// seeded, the group node in the Edge's Core node map, and the real templates.
 func newContainmentPinHandlers(t *testing.T) (*Handlers, *containmentCoreStub) {
 	t.Helper()
 	h, _ := newTestHandlers(t)
 	stub := h.engine.(*stubEngine)
+	stub.containment = containmentPinHeld(t)
 	stub.core = map[string]protocol.NodeInfo{
 		"FP-GRP":   {Name: "FP-GRP", NodeType: "NGRP"},
 		"FP-PLAIN": {Name: "FP-PLAIN", NodeType: "STG"},
@@ -163,9 +195,10 @@ func newContainmentPinHandlers(t *testing.T) (*Handlers, *containmentCoreStub) {
 
 // containmentPinState is the JSON twin's body as the pin reads it.
 type containmentPinState struct {
-	Containment []engine.ContainmentRow `json:"containment"`
-	Sections    []containmentSection    `json:"sections"`
-	HeldBins    []engine.HeldBinRow     `json:"held_bins"`
+	Containment []containmentFlagRow `json:"containment"`
+	Sections    []containmentSection `json:"sections"`
+	HeldBins    []containmentHeldRow `json:"held_bins"`
+	Notice      string               `json:"notice"`
 }
 
 func (s containmentPinState) section(name string) *containmentSection {
@@ -190,11 +223,10 @@ func getContainmentPinState(t *testing.T, h *Handlers) (int, containmentPinState
 	return rec.Code, st, rec.Body.String()
 }
 
-// TestContainmentState_FeedsPin pins GET /api/containment/state with Core
-// answering: the flags and held bins are Core's body passed through, each
-// destination is a section with its claims' outbounds, a group destination
-// carries its non-group children by suffix and reads bins across them, and only
-// occupied bins render.
+// TestContainmentState_FeedsPin pins GET /api/containment/state: the flags and
+// held bins are the held copy's, each destination is a section with its claims'
+// outbounds, a group destination carries its non-group children by suffix and
+// its bins across them, and only occupied bins render. No call reaches Core.
 func TestContainmentState_FeedsPin(t *testing.T) {
 	h, core := newContainmentPinHandlers(t)
 
@@ -224,24 +256,24 @@ func TestContainmentState_FeedsPin(t *testing.T) {
 	calls := core.snapshot()
 
 	cases := []struct {
-		name, got, want, after, label string
+		name, got, want, base, label string
 	}{
-		{"flags", flag, "FP-PART/burr", "same, from LocalContainment", "F2"},
-		{"held bins", held, "FP-BIN-9@", "same, from LocalContainment", "F2"},
-		{"group children (suffix, nested group skipped)", strings.Join(grp.Children, ","), "A,B", "same, from ContainmentDestination.Children", "F2"},
+		{"flags", flag, "FP-PART/burr", "same, from Core's body", "F2"},
+		{"held bins", held, "FP-BIN-9@", "same, from Core's body", "F2"},
+		{"group children (suffix, nested group skipped)", strings.Join(grp.Children, ","), "A,B", "same, from a children read", "F2"},
 		{"group outbounds", strings.Join(grp.Outbounds, ","), "FP-OUT-1", "same (Edge's own claims)", "F2"},
-		{"group bins (occupied only, across children)", binsOf(grp), "A:FP-BIN-11:FP-PART", "same, from ContainmentDestination.Bins", "F2"},
+		{"group bins (occupied only, across children)", binsOf(grp), "A:FP-BIN-11:FP-PART", "same, from a node-bins read", "F2"},
 		{"concrete children", strings.Join(plain.Children, ","), "", "same", "F2"},
-		{"concrete bins", binsOf(plain), "FP-PLAIN:FP-BIN-12:FP-PART", "same, from ContainmentDestination.Bins", "F2"},
-		{"Core /api/containment calls", itoa(int64(calls["containment"])), "1", "0", "F2"},
-		{"Core children calls", itoa(int64(calls["children"])), "1", "0", "F2"},
-		// One node-bins read per section; the shared testDB may hold other
-		// tests' destinations, so the floor is the two this test seeded.
-		{"Core node-bins calls >= 2", feedsPinBoolWord(calls["node-bins"] >= 2), "true", "false (0 calls)", "F2"},
+		{"concrete bins", binsOf(plain), "FP-PLAIN:FP-BIN-12:FP-PART", "same, from a node-bins read", "F2"},
+		{"no notice with a copy held", st.Notice, "", "no such key", "F2"},
+		// F2: the three below were 1, 1 and >= 2 (one node-bins read per section).
+		{"Core /api/containment calls", itoa(int64(calls["containment"])), "0", "1", "F2"},
+		{"Core children calls", itoa(int64(calls["children"])), "0", "1", "F2"},
+		{"Core node-bins calls", itoa(int64(calls["node-bins"])), "0", ">= 2", "F2"},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
-			t.Errorf("%s = %q, want %q (after: %s, %s)", c.name, c.got, c.want, c.after, c.label)
+			t.Errorf("%s = %q, want %q (base: %s, %s)", c.name, c.got, c.want, c.base, c.label)
 		}
 	}
 }
@@ -261,77 +293,78 @@ func TestContainmentPage_FeedsPin(t *testing.T) {
 	cases := []struct {
 		name, needle string
 		want         bool
-		after, label string
+		base, label  string
 	}{
 		{"flag row with Recall", `data-payload="FP-PART"`, true, "same", "F2"},
+		{"flag since, as Core's JSON wrote it", `2026-10-01T08:00:00Z`, true, "same", "F2"},
 		{"group section name", `<strong class="mono">FP-GRP</strong>`, true, "same", "F2"},
 		{"group child A", `<span class="mono">A</span>`, true, "same", "F2"},
 		{"release target", `<span class="mono">FP-OUT-1</span>`, true, "same", "F2"},
 		{"bin with Verify Good", `data-node="A" data-bin-id="11"`, true, "same", "F2"},
 		{"held bin", `FP-BIN-9`, true, "same", "F2"},
 		{"held bin in transit", `in transit`, true, "same", "F2"},
-		{"no 'as of' line (fresh)", `as of `, false, "same while confirmed within 150 s", "F2"},
+		{"no 'as of' line (fresh)", `as of `, false, "same", "F2"},
+		{"no notice", containmentNoData, false, "same", "F2"},
 	}
 	for _, c := range cases {
 		if got := strings.Contains(body, c.needle); got != c.want {
-			t.Errorf("%s: contains %q = %v, want %v (after: %s, %s)", c.name, c.needle, got, c.want, c.after, c.label)
+			t.Errorf("%s: contains %q = %v, want %v (base: %s, %s)", c.name, c.needle, got, c.want, c.base, c.label)
 		}
 	}
-	if n := core.snapshot()["containment"]; n != 1 {
-		t.Errorf("page render read Core's /api/containment %d times, want 1 (after: 0, F2)", n)
+	// base: 1   (label F2)
+	if n := core.snapshot()["containment"]; n != 0 {
+		t.Errorf("page render read Core's /api/containment %d times, want 0 (base: 1, F2)", n)
 	}
 }
 
 // TestContainmentState_CoreDown_FeedsPin pins the page with Core not
-// answering. Today the read is live, so an unreachable Core is a 500 on both
-// the page and the JSON twin, and a Core that answers non-200 renders as
-// "nothing contained" because GetContainment decodes the error body as state.
+// answering. At the base the read was live, so an unreachable Core was a 500 on
+// both the page and the JSON twin, and a Core answering non-200 rendered as
+// "nothing contained" because GetContainment decoded the error body as state.
 // After F2 neither reads Core: with nothing held the page says "No data from
 // Core yet"; with a held copy it renders that copy.
 func TestContainmentState_CoreDown_FeedsPin(t *testing.T) {
-	t.Run("unreachable", func(t *testing.T) {
+	t.Run("unreachable, nothing held", func(t *testing.T) {
 		h, core := newContainmentPinHandlers(t)
 		core.srv.Close()
+		h.engine.(*containmentPinEngine).containment = nil
 
-		code, _, raw := getContainmentPinState(t, h)
-		// after: 200, built from LocalContainment (nothing held: empty, and the
-		// page says "No data from Core yet")   (label F2)
-		if code != http.StatusInternalServerError || !strings.Contains(raw, "containment read failed") {
-			t.Errorf("state with Core unreachable = %d %q, want 500 containment read failed (after: 200 from the held copy, F2)", code, raw)
+		code, st, raw := getContainmentPinState(t, h)
+		// base: 500 "containment read failed"   (label F2)
+		if code != http.StatusOK || st.Notice != containmentNoData || len(st.Containment) != 0 {
+			t.Errorf("state with Core unreachable = %d %q, want 200 with notice %q (base: 500 containment read failed, F2)",
+				code, raw, containmentNoData)
+		}
+		if st.section("FP-GRP") == nil {
+			t.Errorf("sections = %+v, want the claims' sections still rendered", st.Sections)
 		}
 
 		rec := httptest.NewRecorder()
 		h.handleContainmentPage(rec, httptest.NewRequest(http.MethodGet, "/containment", nil))
-		// after: 200 with "No data from Core yet"   (label F2)
-		if rec.Code != http.StatusInternalServerError {
-			t.Errorf("page with Core unreachable = %d, want 500 (after: 200 \"No data from Core yet\", F2)", rec.Code)
-		}
-		if strings.Contains(rec.Body.String(), "No data from Core yet") {
-			t.Error("page already says \"No data from Core yet\" (base: it has no such text; after: it does, F2)")
+		// base: 500 and no such text   (label F2)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "No data from Core yet") {
+			t.Errorf("page with Core unreachable = %d, want 200 with %q (base: 500, F2)", rec.Code, containmentNoData)
 		}
 	})
 
-	t.Run("non-200", func(t *testing.T) {
+	t.Run("non-200, copy held", func(t *testing.T) {
 		h, core := newContainmentPinHandlers(t)
 		core.stateMu.Lock()
 		core.status, core.body = http.StatusInternalServerError, `{"error":"database unavailable"}`
 		core.stateMu.Unlock()
 
 		code, st, raw := getContainmentPinState(t, h)
-		// after: the Core status is never read (F2); GetContainment itself errors
-		// on a non-200 (X3, pinned in engine)   (label F2, X3)
-		if code != http.StatusOK || len(st.Containment) != 0 || len(st.HeldBins) != 0 {
-			t.Errorf("state with Core 500 = %d %s, want 200 with no flags and no held bins (after: from the held copy, F2)", code, raw)
+		// base: 200 with no flags and no held bins (the error body decoded as
+		// state). Now the Core status is never read (F2), and GetContainment
+		// itself errors on a non-200 (X3, pinned in engine)   (label F2, X3)
+		if code != http.StatusOK || len(st.Containment) != 1 || len(st.HeldBins) != 1 {
+			t.Errorf("state with Core 500 = %d %s, want 200 with the held flag and held bin (base: none of either, F2)", code, raw)
 		}
 		if st.section("FP-GRP") == nil {
 			t.Errorf("sections = %+v, want the claims' sections still rendered", st.Sections)
 		}
+		if n := core.snapshot()["containment"]; n != 0 {
+			t.Errorf("Core read %d times, want 0 (base: 1, F2)", n)
+		}
 	})
-}
-
-func feedsPinBoolWord(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
 }

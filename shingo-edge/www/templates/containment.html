@@ -4,9 +4,12 @@
   <div class="page-header mb-2">
     <h1>Quality Containment</h1>
     <span class="text-muted-sm">Bins of a contained payload divert here instead of the FG drop zone. Verify each bin good to release it; recall walks landed bins in.</span>
+    {{if .AsOf}}<span class="text-muted-sm">as of {{.AsOf}}</span>{{end}}
   </div>
 
-  {{if .Containment}}
+  {{if .Notice}}
+  <div class="card mb-2"><div class="card-body text-muted">{{.Notice}}</div></div>
+  {{else if .Containment}}
   <div class="card mb-2">
     <div class="card-header"><strong>Contained payloads</strong></div>
     <div class="card-body">

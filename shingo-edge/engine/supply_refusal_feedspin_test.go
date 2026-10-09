@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -344,10 +345,10 @@ func TestSupplyRefusal_LostAckNeverReachesLoaderEdge_FeedsPin(t *testing.T) {
 }
 
 // TestGetContainment_Non200_FeedsPin pins CoreClient.GetContainment on each
-// status: it never reads the status, so a non-200 whose body decodes is
-// returned as state with no error, and only an undecodable body errors.
-//
-// after: any non-200 is an error naming the status (label X3).
+// status. At the base it never read the status, so a non-200 whose body
+// decoded was returned as state with no error, and only an undecodable body
+// errored. X3 flipped it: any non-200 is an error naming the status. `base` is
+// the value before X3.
 func TestGetContainment_Non200_FeedsPin(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -356,13 +357,13 @@ func TestGetContainment_Non200_FeedsPin(t *testing.T) {
 		body      string
 		wantErr   bool
 		wantFlags int
-		after     string
+		base      string
 		label     string
 	}{
 		{"200 with state", http.StatusOK, `{"containment":[{"payload_code":"FP-PART","active":true}],"held_bins":[]}`, false, 1, "same", "X3"},
-		{"500 with a jsonError body", http.StatusInternalServerError, `{"error":"database unavailable"}`, false, 0, "error", "X3"},
-		{"503 with a state-shaped body", http.StatusServiceUnavailable, `{"containment":[{"payload_code":"FP-STALE","active":true}]}`, false, 1, "error", "X3"},
-		{"404 with a text body", http.StatusNotFound, "404 page not found\n", true, 0, "error (naming the status)", "X3"},
+		{"500 with a jsonError body", http.StatusInternalServerError, `{"error":"database unavailable"}`, true, 0, "no error, 0 flags", "X3"},                             // X3
+		{"503 with a state-shaped body", http.StatusServiceUnavailable, `{"containment":[{"payload_code":"FP-STALE","active":true}]}`, true, 0, "no error, 1 flag", "X3"}, // X3
+		{"404 with a text body", http.StatusNotFound, "404 page not found\n", true, 0, "error (a decode error, not naming the status)", "X3"},                             // X3
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -381,10 +382,13 @@ func TestGetContainment_Non200_FeedsPin(t *testing.T) {
 
 			st, err := stubCoreClient(srv.URL).GetContainment()
 			if (err != nil) != tc.wantErr {
-				t.Fatalf("err = %v, want error %v (after: %s, %s)", err, tc.wantErr, tc.after, tc.label)
+				t.Fatalf("err = %v, want error %v (base: %s, %s)", err, tc.wantErr, tc.base, tc.label)
+			}
+			if err != nil && !strings.Contains(err.Error(), strconv.Itoa(tc.status)) {
+				t.Errorf("err = %v, want it to name status %d (base: %s, %s)", err, tc.status, tc.base, tc.label)
 			}
 			if err == nil && len(st.Containment) != tc.wantFlags {
-				t.Errorf("flags = %d, want %d (after: %s, %s)", len(st.Containment), tc.wantFlags, tc.after, tc.label)
+				t.Errorf("flags = %d, want %d (base: %s, %s)", len(st.Containment), tc.wantFlags, tc.base, tc.label)
 			}
 		})
 	}

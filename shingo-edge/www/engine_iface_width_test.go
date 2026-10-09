@@ -54,8 +54,12 @@ func assertInterfaceWidth(t *testing.T, name string, rt reflect.Type, want []str
 	}
 }
 
-// TestServiceAccessWidth pins Edge's narrow surface at 20 methods. The
+// TestServiceAccessWidth pins Edge's narrow surface at 21 methods. The
 // interface's own doc comment states the same number; keep them together.
+//
+// The 21st is LocalContainment, added 2026-10-09 with the containment feed
+// (owner approved, read-only): the containment page renders the Edge's held
+// copy of Core's containment state instead of calling Core.
 func TestServiceAccessWidth(t *testing.T) {
 	t.Parallel()
 	want := []string{
@@ -75,6 +79,7 @@ func TestServiceAccessWidth(t *testing.T) {
 		"ProcessService",
 		"ScenePointNames",
 		"Reconciliation",
+		"LocalContainment",
 		"ShiftService",
 		"SourcingStateForProcess",
 		"StationService",
@@ -84,8 +89,9 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Edge's wide surface at 74 methods -
-// ServiceAccess's 20 embedded, plus 54 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Edge's wide surface at 75 methods -
+// ServiceAccess's 21 embedded, plus 54 orchestration verbs of its own.
+// (2026-10-09: 74 -> 75 with ServiceAccess's LocalContainment, embedded.)
 //
 // 2026-09-27 (fact-owners Lane G): FlipABNode and SetActivePullSide were
 // REMOVED — two entries, the count 77 → 75. The release trunk flips the
@@ -165,6 +171,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"FetchMarketBins",
 		"FlowFingerprint",
 		"LoadBin",
+		"LocalContainment",
 		"OrderManager",
 		"OrderService",
 		"PLCManager",

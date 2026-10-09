@@ -138,6 +138,9 @@ type Engine struct {
 	// Edges page (SetEdgeFeedFlagsFunc). Atomic because the composition root
 	// sets it after Start, while HTTP handlers may already be reading.
 	edgeFeedFlags atomic.Pointer[func(station string) []string]
+	// containmentChanged pushes the containment feed after a known write
+	// (SetContainmentChangedFunc). Atomic for the same reason as edgeFeedFlags.
+	containmentChanged atomic.Pointer[func()]
 	// cmsBuildFailures counts movements whose CMS rows could not be built.
 	//
 	// A COUNTER rather than only a log line, because the loss is otherwise

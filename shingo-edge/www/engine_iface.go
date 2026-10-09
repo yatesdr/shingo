@@ -24,7 +24,7 @@ import (
 // captures the architectural role distinction surfaced in three
 // independent dev reviews: most edge handlers do pure CRUD through
 // services and have no business reaching engine-level orchestration.
-// ServiceAccess gives those handlers a 20-method surface; orchestration
+// ServiceAccess gives those handlers a 21-method surface; orchestration
 // handlers take EngineOrchestration explicitly via h.orchestration.
 // The count is asserted by a test in this package — change it there when
 // you change it here.
@@ -83,6 +83,10 @@ type ServiceAccess interface {
 	// SourcingStateForProcess returns the cached sourceability verdicts for a
 	// process (by Name) so the changeover picker can annotate each style.
 	SourcingStateForProcess(process string) []protocol.SourcingState
+	// LocalContainment is the Edge's held copy of Core's containment feed
+	// with its received and confirmed times; false when nothing is held. The
+	// containment page renders from it with no call to Core. Read-only.
+	LocalContainment() (*engine.ContainmentState, bool)
 }
 
 // EngineOrchestration is the wide interface for handlers that drive

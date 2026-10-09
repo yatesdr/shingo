@@ -57,6 +57,22 @@ func (e *Engine) SetEdgeFeedFlagsFunc(fn func(station string) []string) {
 	e.edgeFeedFlags.Store(&fn)
 }
 
+// SetContainmentChangedFunc wires the push that follows a known containment
+// write to the messaging layer, which builds and broadcasts the snapshot. One
+// hook for every writer: the payload service's flag and bin-hold writes and
+// the divert's arrival stamp. Set once at the composition root.
+func (e *Engine) SetContainmentChangedFunc(fn func()) {
+	e.containmentChanged.Store(&fn)
+	e.payloadService.SetContainmentChangedFunc(fn)
+}
+
+// notifyContainmentChanged calls the hook, if one is wired.
+func (e *Engine) notifyContainmentChanged() {
+	if fn := e.containmentChanged.Load(); fn != nil && *fn != nil {
+		(*fn)()
+	}
+}
+
 // EdgeFeedFlags lists the plain-text feed conditions flagged for one station —
 // a feed resent three times without converging, a process two stations both
 // report. Read-only; nil until the messaging layer is wired, and empty when

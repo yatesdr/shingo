@@ -106,9 +106,16 @@ func (f *feedState) lookup(station, key string, now time.Time) (feedMemoEntry, b
 	return e, true
 }
 
+// store keeps a build unless the memo already holds one started later: a
+// heartbeat's build that began before a known write must not overwrite the
+// build the write's push made, or the memo would hold the old digest and the
+// next heartbeats would resend the old value to Edges that have the new one.
 func (f *feedState) store(station, key string, e feedMemoEntry) {
 	f.mu.Lock()
-	f.memo[memoKey(station, key)] = e
+	k := memoKey(station, key)
+	if cur, ok := f.memo[k]; !ok || !cur.at.After(e.at) {
+		f.memo[k] = e
+	}
 	f.mu.Unlock()
 }
 
@@ -249,6 +256,12 @@ func (s *CoreDataService) feedCurrent(station, key string, now time.Time) (feedM
 // a digest of a partial read would confirm a copy nobody read.
 func (s *CoreDataService) buildFeed(station, key string) (digest string, value any, known bool, err error) {
 	switch key {
+	case protocol.FeedContainment:
+		snap, err := s.buildContainmentSnapshot()
+		if err != nil {
+			return "", nil, true, err
+		}
+		return snap.Digest, snap, true, nil
 	}
 	return "", nil, false, nil
 }
@@ -264,6 +277,8 @@ func (s *CoreDataService) sendFeeds(station string, due map[string]feedMemoEntry
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
+		case protocol.FeedContainment:
+			s.resp.sendData(protocol.SubjectContainmentSnapshot, station, due[key].value)
 		default:
 			log.Printf("core_feeds: no sender for %s", key)
 		}

@@ -427,6 +427,9 @@ func main() {
 	// The Edges page shows each station's feed flags (a feed that will not
 	// converge); the send records behind them live in the data service.
 	eng.SetEdgeFeedFlagsFunc(coreDataService.EdgeFeedFlags)
+	// A known containment write (a flag, a bin hold, a diverted bin stamped on
+	// arrival) pushes the containment snapshot to every Edge at once.
+	eng.SetContainmentChangedFunc(coreDataService.ContainmentChanged)
 
 	subjectRouter, err := buildSubjectRouter(coreDataService)
 	if err != nil {

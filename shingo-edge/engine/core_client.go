@@ -509,6 +509,10 @@ func (c *CoreClient) SetBinQualityHold(binID int64, hold bool, by string) error 
 
 // GetContainment reads Core's quality-containment state (public read — the
 // containment screens render state; they hold no Core credentials).
+//
+// A non-200 is an error naming the status. Core answers its failures with a
+// JSON error body, which used to decode as a state with nothing in it — so a
+// Core whose database was down read as "nothing is contained".
 func (c *CoreClient) GetContainment() (*ContainmentState, error) {
 	if c.baseURL == "" {
 		return nil, fmt.Errorf("core API not configured")
@@ -518,6 +522,11 @@ func (c *CoreClient) GetContainment() (*ContainmentState, error) {
 		return nil, fmt.Errorf("containment read failed: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("containment read returned %d: %s", resp.StatusCode,
+			coreErrorText(strings.TrimSpace(string(raw)), "", resp.StatusCode))
+	}
 	var state ContainmentState
 	if err := json.NewDecoder(resp.Body).Decode(&state); err != nil {
 		return nil, fmt.Errorf("decode containment: %w", err)
@@ -525,32 +534,29 @@ func (c *CoreClient) GetContainment() (*ContainmentState, error) {
 	return &state, nil
 }
 
-// ContainmentState mirrors Core's /api/containment body.
+// ContainmentState is Core's containment state as the Edge reads it: Core's
+// /api/containment body (the flags and held bins), or the Edge's held copy of
+// the containment feed (LocalContainment), which adds the destinations and
+// the two times the screens say "as of" with.
+//
+// The rows are the protocol's, the same type Core serves, so the HTTP body and
+// the snapshot decode alike. The slices of a held copy are shared with it:
+// readers must not modify them.
 type ContainmentState struct {
-	Containment []ContainmentRow `json:"containment"`
-	HeldBins    []HeldBinRow     `json:"held_bins"`
+	Containment  []ContainmentRow                  `json:"containment"`
+	HeldBins     []HeldBinRow                      `json:"held_bins"`
+	Destinations []protocol.ContainmentDestination `json:"destinations,omitempty"`
+	// ReceivedAt is when the held copy arrived from Core; ConfirmedAt when a
+	// heartbeat ack last quoted its digest back. Zero for a direct read.
+	ReceivedAt  time.Time `json:"-"`
+	ConfirmedAt time.Time `json:"-"`
 }
 
 // ContainmentRow is one payload's containment flag state.
-type ContainmentRow struct {
-	PayloadCode   string `json:"payload_code"`
-	Active        bool   `json:"active"`
-	Reason        string `json:"reason"`
-	ActivatedBy   string `json:"activated_by"`
-	ActivatedAt   string `json:"activated_at"`
-	DeactivatedBy string `json:"deactivated_by"`
-	DeactivatedAt string `json:"deactivated_at"`
-}
+type ContainmentRow = protocol.PayloadContainmentRow
 
 // HeldBinRow is one bin carrying the hold marker.
-type HeldBinRow struct {
-	BinID       int64  `json:"bin_id"`
-	Label       string `json:"label"`
-	PayloadCode string `json:"payload_code"`
-	NodeName    string `json:"node_name"`
-	HoldBy      string `json:"hold_by"`
-	HoldAt      string `json:"hold_at"`
-}
+type HeldBinRow = protocol.HeldBinRow
 
 // ClearBin clears the manifest on the bin at a node via Core's HTTP API.
 // binTypeCode is optional: when non-empty Core re-stamps the carrier's

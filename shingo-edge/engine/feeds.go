@@ -201,6 +201,7 @@ func (e *Engine) loadFeedCopies() {
 // Edge from one that predates feeds.
 func (e *Engine) FeedDigests() map[string]string {
 	out := map[string]string{}
+	out[protocol.FeedContainment] = e.heldDigest(protocol.FeedContainment)
 	return out
 }
 

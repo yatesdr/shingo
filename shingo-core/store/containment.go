@@ -29,6 +29,8 @@ import (
 	"sort"
 	"time"
 
+	"shingo/protocol"
+
 	"shingocore/domain"
 	"shingocore/store/internal/nodetree"
 	"shingocore/store/nodes"
@@ -181,6 +183,95 @@ func (db *DB) ListHeldBins() ([]HeldBinRow, error) {
 // HeldBinRow is one held bin as the containment screens read it. Domain-owned;
 // see PayloadContainmentRow.
 type HeldBinRow = domain.HeldBinRow
+
+// containmentDestinationsSQL reads every containment destination the claim
+// mirror names, with what stands there, in one statement — so the snapshot
+// costs the same whatever the number of destinations.
+//
+// It answers exactly what the Edge's containment page used to ask Core per
+// destination over HTTP: the name resolves as GetByDotName resolves it
+// ("PARENT.CHILD" is the child under that parent); a GROUP destination's
+// members are its direct, non-synthetic, non-group children, named
+// "<group>.<child>" as the node-children read names them; a destination with
+// no such children is its own single member; and each member shows the bin the
+// node-bins read showed — its newest non-retired bin, if any. An unresolved
+// name is a member with no node and so no bin.
+const containmentDestinationsSQL = `
+WITH dests AS (
+	SELECT DISTINCT containment_destination AS dest FROM style_claims
+	WHERE containment_destination <> ''
+), resolved AS (
+	SELECT d.dest, n.id, n.name, COALESCE(nt.code, '') AS type_code
+	FROM dests d
+	LEFT JOIN LATERAL (
+		SELECT x.id, x.name, x.node_type_id FROM nodes x
+		WHERE CASE WHEN strpos(d.dest, '.') = 0 THEN x.name = d.dest
+			ELSE x.name = substr(d.dest, strpos(d.dest, '.') + 1)
+				AND x.parent_id IN (SELECT p.id FROM nodes p WHERE p.name = split_part(d.dest, '.', 1))
+			END
+		ORDER BY x.id LIMIT 1
+	) n ON TRUE
+	LEFT JOIN node_types nt ON nt.id = n.node_type_id
+), children AS (
+	SELECT r.dest, c.id, r.name || '.' || c.name AS member
+	FROM resolved r
+	JOIN nodes c ON c.parent_id = r.id
+	LEFT JOIN node_types ct ON ct.id = c.node_type_id
+	WHERE r.type_code = 'NGRP' AND NOT c.is_synthetic AND COALESCE(ct.code, '') <> 'NGRP'
+		AND r.name || '.' || c.name <> r.dest
+), members AS (
+	SELECT dest, id, member, TRUE AS is_child FROM children
+	UNION ALL
+	SELECT r.dest, r.id, r.dest, FALSE FROM resolved r
+	WHERE NOT EXISTS (SELECT 1 FROM children ch WHERE ch.dest = r.dest)
+)
+SELECT m.dest, m.member, m.is_child, b.id, COALESCE(b.label, ''), COALESCE(b.payload_code, ''),
+	COALESCE(b.uop_remaining, 0)
+FROM members m
+LEFT JOIN LATERAL (
+	SELECT id, label, payload_code, uop_remaining FROM bins
+	WHERE node_id = m.id AND status <> 'retired'
+	ORDER BY id DESC LIMIT 1
+) b ON TRUE
+ORDER BY m.dest, m.member`
+
+// ListContainmentDestinations returns every containment destination the claim
+// mirror names, ordered by name, each with its group children and the occupied
+// bins at it or at its children (containmentDestinationsSQL says how each part
+// is read). Children and Bins are never nil, so a destination with none sends
+// [] like every other empty list in the snapshot.
+func (db *DB) ListContainmentDestinations() ([]protocol.ContainmentDestination, error) {
+	rows, err := db.DB.Query(containmentDestinationsSQL)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []protocol.ContainmentDestination{}
+	for rows.Next() {
+		var dest, member, label, payload string
+		var isChild bool
+		var binID sql.NullInt64
+		var uop int
+		if err := rows.Scan(&dest, &member, &isChild, &binID, &label, &payload, &uop); err != nil {
+			return nil, err
+		}
+		if len(out) == 0 || out[len(out)-1].Node != dest {
+			out = append(out, protocol.ContainmentDestination{
+				Node: dest, Children: []string{}, Bins: []protocol.ContainmentBin{},
+			})
+		}
+		d := &out[len(out)-1]
+		if isChild {
+			d.Children = append(d.Children, member)
+		}
+		if binID.Valid {
+			d.Bins = append(d.Bins, protocol.ContainmentBin{
+				Node: member, BinID: binID.Int64, Label: label, PayloadCode: payload, UOP: uop,
+			})
+		}
+	}
+	return out, rows.Err()
+}
 
 // ContainmentRouteForNode resolves the quality-containment route the dispatch
 // divert reads: the claim rows Core mirrors for one core node, narrowed to

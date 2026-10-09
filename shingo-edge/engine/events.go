@@ -117,6 +117,12 @@ const (
 	// press reports a part matching style B or nothing). It never blocks beyond
 	// the existing request-path mismatch guard — it is a confirmation prompt.
 	EventChangeoverVerifyMismatch
+
+	// EventContainmentUpdated fires when the Edge's held copy of Core's
+	// containment feed changes digest — a snapshot applied that differs from
+	// the one held. The containment page reloads on it; an identical re-send
+	// does not fire it.
+	EventContainmentUpdated
 )
 
 // Event is the envelope emitted by the Engine's EventBus.
@@ -206,6 +212,12 @@ type WarLinkEvent struct {
 	eventbus.PayloadBase
 	Connected bool   `json:"connected"`
 	Error     string `json:"error,omitempty"`
+}
+
+// ContainmentUpdatedEvent names the digest of the containment copy just held.
+type ContainmentUpdatedEvent struct {
+	eventbus.PayloadBase
+	Digest string `json:"digest"`
 }
 
 // CoreNodesUpdatedEvent is emitted when the core node list is received.

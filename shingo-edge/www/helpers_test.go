@@ -147,6 +147,13 @@ type stubEngine struct {
 	flowFingerprintErr error
 	startCalls         int
 	clearFlagCalls     int
+
+	// The containment feed as the containment page reads it: the held copy
+	// (nil = nothing held), and what the last heartbeat ack said about Core
+	// (lastAck zero = no ack yet; speaksFeeds false after one = an older Core).
+	containment *engine.ContainmentState
+	speaksFeeds bool
+	lastAck     time.Time
 }
 
 func (s *stubEngine) AppConfig() *config.Config     { return s.cfg }

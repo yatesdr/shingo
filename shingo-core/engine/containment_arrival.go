@@ -41,5 +41,6 @@ func (e *Engine) stampContainmentArrival(binID int64, destNode *nodes.Node, payl
 	if stamped {
 		e.logFn("containment: bin %d arrived at %s (payload %s is contained, %s) - hold marker stamped",
 			binID, destNode.Name, payloadCode, site)
+		e.notifyContainmentChanged()
 	}
 }

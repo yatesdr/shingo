@@ -3,9 +3,10 @@ package www
 // handlers_containment.go — the Edge side of quality containment (v100).
 //
 // The page is a shop-floor screen (public, like the operator stations): it
-// renders Core's containment state (via the public /api/containment read —
-// the Edge holds no Core credentials) grouped by the claims that declare a
-// containment route, with the three verbs:
+// renders the Edge's held copy of Core's containment feed (LocalContainment —
+// Core pushes it on every known containment write and the heartbeat heals a
+// missed push), grouped by this Edge's own claims that declare a containment
+// route, with the three verbs:
 //
 //	Verify Good  — a bin at a containment node, verified, walks to its
 //	               claim's ordinary outbound (the FG drop). Per bin.
@@ -16,20 +17,68 @@ package www
 //	               at FG before/while the flag flipped (in-transit bins land
 //	               at FG by design; recall is the mop).
 //
-// The state refreshes on reload; a kiosk left open sees stale bins and the
-// release verb refuses a bin that is no longer there (the engine checks the
-// bin is still standing at the node before creating anything).
+// Rendering makes no call to Core. Nothing is blanked for being old: a copy
+// Core has not confirmed for FeedAsOfAfter renders with "as of HH:MM" beside
+// it. The page reloads on the SSE `containment` event, sent when the held copy
+// changes; the release verb still refuses a bin that is no longer there (the
+// engine checks the bin is still standing at the node before creating
+// anything).
 
 import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
+	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/engine"
 )
 
+// The page's lines for a missing copy. With nothing held, the page says why:
+// no snapshot has arrived yet, or the last ack came from a Core that does not
+// send the feed at all, which no amount of waiting will fix.
+const (
+	containmentNoData   = "No data from Core yet"
+	containmentOldCore  = "Core does not send containment (older Core)"
+	containmentAsOfZero = "an unknown time"
+)
+
+// containmentFeedEngine is what the page reads about the feed beyond the copy:
+// whether the last heartbeat ack came from a Core that sends feeds. Asserted on
+// the orchestration surface, as /status asserts statusEngine, so neither
+// interface widens for it.
+type containmentFeedEngine interface {
+	CoreSpeaksFeeds() bool
+	LastCoreAck() (local, server time.Time)
+}
+
+// containmentFlagRow and containmentHeldRow are the feed's rows as the page and
+// its JSON twin render them: the times as the RFC 3339 text Core's JSON
+// carries, and "" for none — the shape the page served when it read Core's
+// body into string fields, so the JSON and the rendered "Since" column are
+// unchanged.
+type containmentFlagRow struct {
+	PayloadCode   string `json:"payload_code"`
+	Active        bool   `json:"active"`
+	Reason        string `json:"reason"`
+	ActivatedBy   string `json:"activated_by"`
+	ActivatedAt   string `json:"activated_at"`
+	DeactivatedBy string `json:"deactivated_by"`
+	DeactivatedAt string `json:"deactivated_at"`
+}
+
+type containmentHeldRow struct {
+	BinID       int64  `json:"bin_id"`
+	Label       string `json:"label"`
+	PayloadCode string `json:"payload_code"`
+	NodeName    string `json:"node_name"`
+	HoldBy      string `json:"hold_by"`
+	HoldAt      string `json:"hold_at"`
+}
+
 // containmentBin is one bin at one containment node as the page renders it —
-// the Core bin read (FetchNodeBins) flattened onto the node it sits at.
+// the feed's destination bin, named by its suffix under a group destination.
 type containmentBin struct {
 	NodeName    string `json:"node_name"`
 	BinID       int64  `json:"bin_id"`
@@ -51,47 +100,85 @@ type containmentSection struct {
 	Bins      []containmentBin `json:"bins"`
 }
 
+// containmentView is everything the page and its JSON twin render.
+type containmentView struct {
+	Flags    []containmentFlagRow
+	HeldBins []containmentHeldRow
+	Sections []containmentSection
+	// AsOf is the plant-time HH:MM the held copy was last current at, set
+	// only when that is longer ago than engine.FeedAsOfAfter.
+	AsOf string
+	// Notice replaces the flags and held bins when nothing is held.
+	Notice string
+}
+
 func (h *Handlers) handleContainmentPage(w http.ResponseWriter, r *http.Request) {
-	state, sections, err := h.containmentPicture()
+	v, err := h.containmentPicture()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	h.renderTemplate(w, r, "containment.html", map[string]any{
 		"Page":        "containment",
-		"Containment": state.Containment,
-		"Sections":    sections,
-		"HeldBins":    state.HeldBins,
+		"Containment": v.Flags,
+		"Sections":    v.Sections,
+		"HeldBins":    v.HeldBins,
+		"AsOf":        v.AsOf,
+		"Notice":      v.Notice,
 	})
 }
 
 // apiGetContainmentState is the page's JSON twin — same picture for a poller
-// or the station screens.
+// or the station screens. "as_of" and "notice" appear only when set, so a
+// current copy serves the body it always did.
 func (h *Handlers) apiGetContainmentState(w http.ResponseWriter, r *http.Request) {
-	state, sections, err := h.containmentPicture()
+	v, err := h.containmentPicture()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, map[string]any{"containment": state.Containment, "sections": sections, "held_bins": state.HeldBins})
+	body := map[string]any{"containment": v.Flags, "sections": v.Sections, "held_bins": v.HeldBins}
+	if v.AsOf != "" {
+		body["as_of"] = v.AsOf
+	}
+	if v.Notice != "" {
+		body["notice"] = v.Notice
+	}
+	writeJSON(w, body)
 }
 
-// containmentPicture assembles everything the page renders: Core's flag
-// state + the claims that declare a containment route, grouped per
-// destination, each with the bins standing there (read from Core, whose bins
-// are the authoritative location record).
-func (h *Handlers) containmentPicture() (*engine.ContainmentState, []containmentSection, error) {
-	state, err := h.engine.CoreAPI().GetContainment()
+// containmentPicture assembles everything the page renders from the held copy
+// of Core's containment feed and this Edge's own claims that declare a
+// containment route, grouped per destination. No call to Core.
+func (h *Handlers) containmentPicture() (containmentView, error) {
+	var v containmentView
+	claimRows, err := h.engine.StyleService().ListContainmentClaims()
 	if err != nil {
-		return nil, nil, err
+		return v, err
 	}
-	claims, err := h.engine.StyleService().ListContainmentClaims()
-	if err != nil {
-		return nil, nil, err
+	dests := map[string]protocol.ContainmentDestination{}
+	if state, held := h.engine.LocalContainment(); held {
+		v.Flags = containmentFlagRows(state.Containment)
+		v.HeldBins = containmentHeldRows(state.HeldBins)
+		for _, d := range state.Destinations {
+			dests[d.Node] = d
+		}
+		v.AsOf = containmentAsOf(state, time.Now())
+	} else {
+		v.Notice = h.containmentNotice()
 	}
+	v.Sections = containmentSections(claimRows, dests)
+	return v, nil
+}
+
+// containmentSections groups the claims per destination, in claim order, with
+// each destination's outbounds from the claims and its children and bins from
+// the feed. Children render by SUFFIX only (the model names group children
+// "Group.Child"; the prefix is the parent's, printed beside them already).
+func containmentSections(claimRows []domain.NodeClaim, dests map[string]protocol.ContainmentDestination) []containmentSection {
 	byNode := map[string]*containmentSection{}
 	var order []string
-	for _, c := range claims {
+	for _, c := range claimRows {
 		sec, ok := byNode[c.ContainmentDestination]
 		if !ok {
 			sec = &containmentSection{NodeName: c.ContainmentDestination}
@@ -103,52 +190,81 @@ func (h *Handlers) containmentPicture() (*engine.ContainmentState, []containment
 		}
 	}
 	sections := make([]containmentSection, 0, len(order))
-	coreNodes := h.engine.CoreNodes()
 	for _, name := range order {
 		sec := byNode[name]
-		// A GROUP destination spreads across its children: read their names
-		// for the header's parenthetical and read BINS across them — the
-		// group node itself holds nothing. A concrete node reads direct.
-		// Children render by SUFFIX only (the model names group children
-		// "Group.Child"; the prefix is the parent's, printed beside them
-		// already).
-		binNodes := []string{name}
-		if info, ok := coreNodes[name]; ok && info.NodeType == "NGRP" {
-			if children, cerr := h.engine.CoreAPI().FetchNodeChildren(name, false); cerr == nil && len(children) > 0 {
-				for _, ch := range children {
-					if ch.NodeType == "NGRP" || ch.Name == name {
-						continue
-					}
-					sec.Children = append(sec.Children, childDisplaySuffix(name, ch.Name))
-				}
-				if len(sec.Children) > 0 {
-					binNodes = nil
-					for _, ch := range children {
-						if ch.NodeType == "NGRP" || ch.Name == name {
-							continue
-						}
-						binNodes = append(binNodes, ch.Name)
-					}
-				}
-			}
+		d := dests[name]
+		for _, ch := range d.Children {
+			sec.Children = append(sec.Children, childDisplaySuffix(name, ch))
 		}
-		bins, _, berr := h.engine.CoreAPI().FetchNodeBins(binNodes)
-		if berr == nil {
-			for _, b := range bins {
-				if b.Occupied {
-					sec.Bins = append(sec.Bins, containmentBin{
-						NodeName:    childDisplaySuffix(name, b.NodeName),
-						BinID:       b.BinID,
-						Label:       b.BinLabel,
-						PayloadCode: b.PayloadCode,
-						UOP:         b.UOPRemaining,
-					})
-				}
-			}
+		for _, b := range d.Bins {
+			sec.Bins = append(sec.Bins, containmentBin{
+				NodeName: childDisplaySuffix(name, b.Node), BinID: b.BinID,
+				Label: b.Label, PayloadCode: b.PayloadCode, UOP: b.UOP,
+			})
 		}
 		sections = append(sections, *sec)
 	}
-	return state, sections, nil
+	return sections
+}
+
+// containmentNotice says why nothing is held: an older Core (the last ack
+// carried no feeds map) or no snapshot yet.
+func (h *Handlers) containmentNotice() string {
+	if fe, ok := h.orchestration.(containmentFeedEngine); ok {
+		if local, _ := fe.LastCoreAck(); !local.IsZero() && !fe.CoreSpeaksFeeds() {
+			return containmentOldCore
+		}
+	}
+	return containmentNoData
+}
+
+// containmentAsOf is the "as of" time for a held copy, or "" while it is
+// current. The copy is current as of the later of its arrival and Core's last
+// confirmation: a snapshot that has just arrived is as fresh as a confirmed one.
+func containmentAsOf(st *engine.ContainmentState, now time.Time) string {
+	current := st.ConfirmedAt
+	if st.ReceivedAt.After(current) {
+		current = st.ReceivedAt
+	}
+	if now.Sub(current) <= engine.FeedAsOfAfter {
+		return ""
+	}
+	if current.IsZero() {
+		return containmentAsOfZero
+	}
+	return current.In(plantLocation).Format("15:04")
+}
+
+func containmentFlagRows(rows []protocol.PayloadContainmentRow) []containmentFlagRow {
+	out := make([]containmentFlagRow, len(rows))
+	for i, r := range rows {
+		out[i] = containmentFlagRow{
+			PayloadCode: r.PayloadCode, Active: r.Active, Reason: r.Reason,
+			ActivatedBy: r.ActivatedBy, ActivatedAt: wireTimeText(r.ActivatedAt),
+			DeactivatedBy: r.DeactivatedBy, DeactivatedAt: wireTimeText(r.DeactivatedAt),
+		}
+	}
+	return out
+}
+
+func containmentHeldRows(rows []protocol.HeldBinRow) []containmentHeldRow {
+	out := make([]containmentHeldRow, len(rows))
+	for i, r := range rows {
+		out[i] = containmentHeldRow{
+			BinID: r.BinID, Label: r.Label, PayloadCode: r.PayloadCode,
+			NodeName: r.NodeName, HoldBy: r.HoldBy, HoldAt: wireTimeText(r.HoldAt),
+		}
+	}
+	return out
+}
+
+// wireTimeText is a time as encoding/json writes it (RFC 3339 with
+// nanoseconds, in the time's own zone), "" for none.
+func wireTimeText(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format(time.RFC3339Nano)
 }
 
 // childDisplaySuffix renders a group child's name for a screen that already
