@@ -150,14 +150,20 @@ func TestStationName_RenameIsVisibleWithoutRestart(t *testing.T) {
 
 // TestStationName_UnknownStationsFallBackToThemselves covers the values that
 // are real in production and have no registry row: Core's own synthetic order
-// sources and the broadcast address.
+// sources, which read as their labels, and the broadcast address and an
+// unenrolled station, which read as themselves.
 func TestStationName_UnknownStationsFallBackToThemselves(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	ns := service.NewNodeService(db)
 	enroll(t, db, "plant-a.line-1", "SPRINGFIELD / LINE 1")
 
-	for _, station := range []string{"core-operator", "core-direct", "core-test", "*", "stn-nope"} {
+	for station, want := range service.CoreSourceLabels {
+		if got := ns.StationName(station); got != want {
+			t.Errorf("StationName(%q) = %q, want %q", station, got, want)
+		}
+	}
+	for _, station := range []string{"*", "stn-nope"} {
 		if got := ns.StationName(station); got != station {
 			t.Errorf("StationName(%q) = %q, want the identity back — an unenrolled "+
 				"station must degrade to today's behaviour, not to blank", station, got)

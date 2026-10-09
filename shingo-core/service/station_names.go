@@ -122,10 +122,25 @@ func (s *NodeService) stationNameMap() map[string]string {
 	return m
 }
 
+// CoreSourceLabels are the labels for Core's own order sources, which have no
+// registry row: a manual order from Core's orders page, the direct-dispatch and
+// test-order pages. A return order Core mints for a bin left on a deck has no
+// station at all and is labelled CoreRecoveryLabel where it is shown.
+var CoreSourceLabels = map[string]string{
+	"core-operator": "Core · Manual",
+	"core-direct":   "Core · Direct",
+	"core-test":     "Core · Test",
+}
+
+// CoreRecoveryLabel is the label for an order Core minted to return a bin left
+// on a robot's deck (orders.recovers_order_id).
+const CoreRecoveryLabel = "Core · Recovery"
+
 // StationName resolves one station identity to the operator's label.
 //
-// Falls back to the identity itself for anything with no enrolled row —
-// core-operator, '*', an edge that has not been enrolled yet. Callers render the
+// Core's own sources resolve to CoreSourceLabels. Falls back to the identity
+// itself for anything else with no enrolled row — '*', an edge that has not
+// been enrolled yet. Callers render the
 // result directly; there is no "unknown station" sentinel to special-case,
 // because degrading to the value the screen shows today is the correct
 // behaviour and a sentinel would be a second thing to handle everywhere.
@@ -134,6 +149,9 @@ func (s *NodeService) StationName(station string) string {
 		return ""
 	}
 	if name := s.stationNameMap()[station]; name != "" {
+		return name
+	}
+	if name := CoreSourceLabels[station]; name != "" {
 		return name
 	}
 	return station

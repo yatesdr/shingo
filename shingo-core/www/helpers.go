@@ -18,6 +18,7 @@ import (
 	"shingocore/domain"
 	"shingocore/engine"
 	"shingocore/fleet"
+	"shingocore/service"
 )
 
 // binMoveStatus turns a refused bin move into the status it deserves.
@@ -199,6 +200,7 @@ func templateFuncs(namer stationNamer) template.FuncMap {
 			}
 			return namer.StationName(station)
 		},
+		"coreRecoveryLabel": func() string { return service.CoreRecoveryLabel },
 		"timeAgo": func(t time.Time) string {
 			if t.IsZero() {
 				return ""
