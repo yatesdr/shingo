@@ -519,8 +519,13 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 	found, err := s.db.UpdateHeartbeat(p.StationID, p.Timezone,
 		store.TickLag{Pending: p.TickPending, OldestUnsentAgeMS: p.TickOldestUnsentAgeMS})
 	if err != nil {
-		log.Printf("core_handler: update heartbeat for %s: %v", p.StationID, err)
-		return
+		// Acked anyway. The ack is the Edge's evidence that Core is alive and
+		// the carrier of its feed answers; withholding it because one registry
+		// write failed would make every Edge read a database fault as an
+		// outage and run its gap reconcile. What was not read is not claimed:
+		// the feeds answer only what could be read, and no register request
+		// goes out on a row Core could not check.
+		log.Printf("core_handler: update heartbeat for %s: %v — acking without the registry write", p.StationID, err)
 	}
 
 	// Feeds: an Edge that names none (nil — an older binary) gets exactly the
@@ -532,16 +537,23 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 	if p.Feeds != nil {
 		feeds = s.answerFeeds(p.StationID, p.Feeds)
 	}
+	// Claims stay off an ack whose registry write failed: the Edge reads nil
+	// as "Core could not read them" and republishes nothing on the strength
+	// of a database that is failing.
+	var claims map[string]string
+	if err == nil {
+		claims = s.claimsFor(p)
+	}
 	s.resp.replyData(env, protocol.SubjectEdgeHeartbeatAck,
 		&protocol.EdgeHeartbeatAck{
 			StationID: p.StationID,
 			ServerTS:  clock.Now().UTC(),
 			Timezone:  s.plantTimezone,
 			Feeds:     feeds,
-			Claims:    s.claimsFor(p),
+			Claims:    claims,
 		})
 
-	if !found {
+	if err == nil && !found {
 		log.Printf("core_handler: heartbeat from unenrolled station %s, requesting registration", p.StationID)
 		s.resp.sendData(protocol.SubjectEdgeRegisterRequest, p.StationID,
 			&protocol.EdgeRegisterRequest{StationID: p.StationID, Reason: "station not enrolled"})

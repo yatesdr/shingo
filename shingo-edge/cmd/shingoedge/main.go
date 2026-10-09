@@ -287,9 +287,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	}
 
 	// ── Heartbeater (built early so subject-router closures can capture it) ──
-	hb := messaging.NewHeartbeater(msgClient, stationID, Version, instanceID, cfg.Messaging.OrdersTopic, func() int {
-		return db.CountActiveOrders()
-	})
+	hb := messaging.NewHeartbeater(msgClient, stationID, Version, instanceID, cfg.Messaging.OrdersTopic)
 	hb.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
 	// Q-034: attach the PLC-grouped cell catalog to every register so Core can
 	// auto-derive cells (no manual cell setup). Read errors degrade to no

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -13,7 +14,8 @@ import (
 // the after/label fields say what the named change is predicted to move it to.
 
 // TestFeedsPin_HeartbeatBodyBytes pins the heartbeat payload byte for byte.
-// startTime is set to now so uptime_s reads 0; the field is whole seconds.
+// X5 removed uptime_s and active_orders (no Core reader; the count was a store
+// read every minute).
 func TestFeedsPin_HeartbeatBodyBytes(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -26,18 +28,17 @@ func TestFeedsPin_HeartbeatBodyBytes(t *testing.T) {
 		{
 			name:  "unwired",
 			wire:  func(h *Heartbeater) {},
-			want:  `{"station_id":"edge.test","uptime_s":0,"active_orders":0,"feeds":null}`, // F1: feeds joins, nil when unwired
+			want:  `{"station_id":"edge.test","feeds":null}`, // F1: feeds joins, nil when unwired; X5: uptime_s, active_orders gone
 			after: `{"station_id":"edge.test","feeds":null}`,
 			label: "X5, F1",
 		},
 		{
 			name: "orders, zone and tick lag wired",
 			wire: func(h *Heartbeater) {
-				h.orderCountFn = func() int { return 3 }
 				h.TimezoneFn = func() string { return "America/Chicago" }
 				h.TickLagFn = func() (int64, int64, bool) { return 2, 1500, true }
 			},
-			want: `{"station_id":"edge.test","uptime_s":0,"active_orders":3,"timezone":"America/Chicago","tick_pending":2,"tick_oldest_unsent_age_ms":1500,"feeds":null}`, // F1
+			want: `{"station_id":"edge.test","timezone":"America/Chicago","tick_pending":2,"tick_oldest_unsent_age_ms":1500,"feeds":null}`, // F1, X5
 			// Prediction corrected at F1: this case wires no FeedsFn, so feeds
 			// stays null; the map is covered where FeedsFn is wired.
 			after: `{"station_id":"edge.test","timezone":"America/Chicago","tick_pending":2,"tick_oldest_unsent_age_ms":1500,"feeds":null}`,
@@ -47,9 +48,8 @@ func TestFeedsPin_HeartbeatBodyBytes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := NewHeartbeater(nil, "edge.test", "v-test", "inst-1", "shingo.orders", nil)
+			h := NewHeartbeater(nil, "edge.test", "v-test", "inst-1", "shingo.orders")
 			tc.wire(h)
-			h.startTime = time.Now()
 			got, err := json.Marshal(h.heartbeatBody())
 			if err != nil {
 				t.Fatalf("marshal heartbeat: %v", err)
@@ -61,16 +61,13 @@ func TestFeedsPin_HeartbeatBodyBytes(t *testing.T) {
 	}
 }
 
-// TestFeedsPin_HeartbeatCountsActiveOrdersEveryBeat pins the per-beat order
-// count: one orderCountFn call per heartbeat body, on a 60 s interval. The
-// count is a store read on the Edge's single connection, once a minute.
+// TestFeedsPin_HeartbeatCountsActiveOrdersEveryBeat pinned the per-beat order
+// count: one orderCountFn call per heartbeat body, on a 60 s interval. X5
+// removed the func and its NewHeartbeater parameter; the body carries no
+// active_orders key.
 func TestFeedsPin_HeartbeatCountsActiveOrdersEveryBeat(t *testing.T) {
 	t.Parallel()
-	calls := 0
-	h := NewHeartbeater(nil, "edge.test", "v-test", "inst-1", "shingo.orders", func() int {
-		calls++
-		return 0
-	})
+	h := NewHeartbeater(nil, "edge.test", "v-test", "inst-1", "shingo.orders")
 	cases := []struct {
 		name  string
 		got   func() any
@@ -79,11 +76,13 @@ func TestFeedsPin_HeartbeatCountsActiveOrdersEveryBeat(t *testing.T) {
 		label string
 	}{
 		{"heartbeat interval", func() any { return h.interval }, 60 * time.Second, 60 * time.Second, "same"},
-		{"order counts per heartbeat body", func() any {
-			calls = 0
-			h.heartbeatBody()
-			return calls
-		}, 1, 0, "X5 (the func and the NewHeartbeater parameter are removed)"},
+		{"active_orders on the heartbeat body", func() any {
+			b, err := json.Marshal(h.heartbeatBody())
+			if err != nil {
+				t.Fatalf("marshal heartbeat body: %v", err)
+			}
+			return strings.Contains(string(b), "active_orders")
+		}, false, false, "X5 (was 1 order count per body)"},
 	}
 	for _, tc := range cases {
 		if got := tc.got(); got != tc.want {
@@ -109,7 +108,7 @@ func TestFeedsPin_NodeAndCatalogRequestBodies(t *testing.T) {
 		{"nothing held", func() string { return "" }, `{}`, `{}`, "same"},
 	}
 	for _, tc := range cases {
-		h := NewHeartbeater(nil, "edge.test", "v-test", "inst-1", "shingo.orders", nil)
+		h := NewHeartbeater(nil, "edge.test", "v-test", "inst-1", "shingo.orders")
 		h.SceneRevisionFn = tc.rev
 		got, err := json.Marshal(h.nodeListRequest())
 		if err != nil {

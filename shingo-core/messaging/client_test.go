@@ -291,11 +291,7 @@ func TestClient_DataEnvelope(t *testing.T) {
 		"edge.heartbeat",
 		protocol.Address{Role: protocol.RoleEdge, Station: "line-1"},
 		protocol.Address{Role: protocol.RoleCore},
-		&protocol.EdgeHeartbeat{
-			StationID: "line-1",
-			Uptime:    3600,
-			Orders:    2,
-		},
+		&protocol.EdgeHeartbeat{StationID: "line-1", Timezone: "America/Chicago"},
 	)
 	if err != nil {
 		t.Fatalf("create data envelope: %v", err)

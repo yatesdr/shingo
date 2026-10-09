@@ -152,9 +152,10 @@ func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 			label:        "F1, F5",
 		},
 		{
-			name: "registry write fails: no ack, no register request", enroll: true, breakRegistry: true, plantTZ: "America/Chicago",
-			wantTrace:   []string{},
-			wantAckKeys: nil,
+			// X8: was no ack at all (trace empty).
+			name: "registry write fails: ack, no register request", enroll: true, breakRegistry: true, plantTZ: "America/Chicago",
+			wantTrace:   []string{ack},
+			wantAckKeys: []string{"claims", "feeds", "server_ts", "station_id", "timezone"},
 			// X8: Core acks anyway, with only the feed keys it could read (none
 			// for an old Edge) and Claims nil; still no register request.
 			afterTrace:   []string{ack},
@@ -222,7 +223,7 @@ func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 				t.Errorf("ack server_ts = %v, want UTC now (after: same)", gotAck.ServerTS)
 			}
 
-			if !tc.enroll {
+			if !tc.enroll || tc.breakRegistry {
 				return
 			}
 			// The registry write: status promoted, the Edge's own zone and tick
@@ -283,8 +284,9 @@ func TestFeedsPin_HandleNodeListRequest_Scope(t *testing.T) {
 			afterReplies: 1, label: "same",
 		},
 		{
-			name: "station-list read error falls back to the plant-wide list", station: "edge.test", breakStationRead: true,
-			wantReplies: 1, wantHas: []string{"LN-1", "LN-9"},
+			// X6: was one reply with the plant-wide list.
+			name: "station-list read error is a failed read: nothing sent", station: "edge.test", breakStationRead: true,
+			wantReplies:  0,
 			afterReplies: 0, label: "X6",
 		},
 	}

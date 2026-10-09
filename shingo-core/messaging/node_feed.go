@@ -52,13 +52,18 @@ func logNodeList(what string, resp *protocol.NodeListResponse, edgeRevision, sta
 // — the FeedNodes value — and its digest. strict is the feed path: every read
 // must succeed.
 func (s *CoreDataService) buildNodeList(stationID string, strict bool) (*protocol.NodeListResponse, error) {
+	// A station with no nodes of its own gets the plant-wide list. A station
+	// whose list could not be READ gets nothing: falling back on an error
+	// would hand it every node in the plant as though they were its own.
 	nodeList, err := s.db.ListNodesForStation(stationID)
-	stationScoped := err == nil && len(nodeList) > 0
-	if !stationScoped {
-		nodeList, err = s.db.ListNodes()
-	}
 	if err != nil {
-		return nil, fmt.Errorf("list nodes: %w", err)
+		return nil, fmt.Errorf("list nodes for station: %w", err)
+	}
+	stationScoped := len(nodeList) > 0
+	if !stationScoped {
+		if nodeList, err = s.db.ListNodes(); err != nil {
+			return nil, fmt.Errorf("list nodes: %w", err)
+		}
 	}
 
 	// Which groups keep a level of empties: one read for the whole list. A

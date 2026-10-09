@@ -100,16 +100,10 @@ func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) 
 		})
 
 	case "edge.heartbeat":
-		var p struct {
-			Uptime int64 `json:"uptime"`
-		}
-		if e := json.Unmarshal(req.Payload, &p); e != nil {
-			writeError(w, http.StatusBadRequest, "invalid payload: "+e.Error())
-			return
-		}
+		// The heartbeat carries no field a person sets: a hand-fired one names
+		// the station and no feeds, which Core answers like an older Edge.
 		env, err = protocol.NewDataEnvelope(protocol.SubjectEdgeHeartbeat, src, dst, &protocol.EdgeHeartbeat{
 			StationID: stationID,
-			Uptime:    p.Uptime,
 		})
 
 	case "node.list_request":

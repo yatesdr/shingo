@@ -87,8 +87,6 @@ type EdgeRegister struct {
 // EdgeHeartbeat is sent periodically by an edge.
 type EdgeHeartbeat struct {
 	StationID string `json:"station_id"`
-	Uptime    int64  `json:"uptime_s"`
-	Orders    int    `json:"active_orders"`
 	// Timezone mirrors EdgeRegister.Timezone on every heartbeat. Edge reads
 	// it once at boot (not live), so the wire value flips only when a
 	// process that actually renders the new zone comes up — Core's table

@@ -14,9 +14,7 @@ var _fieldDefs = {
     'edge.register': [
         { id: 'version', label: 'Version', type: 'text', value: 'dev' }
     ],
-    'edge.heartbeat': [
-        { id: 'uptime', label: 'Uptime (seconds)', type: 'number', value: '0' }
-    ],
+    'edge.heartbeat': [],
     'node.list_request': [],
     'order.request': [
         { id: 'order_uuid', label: 'Order UUID', type: 'text', value: function(){ return crypto.randomUUID(); } },
@@ -91,7 +89,6 @@ function buildPayload() {
         case 'edge.register':
             return { version: getFieldValue('version') };
         case 'edge.heartbeat':
-            return { uptime: getFieldValue('uptime') };
         case 'node.list_request':
             return {};
         case 'order.request':

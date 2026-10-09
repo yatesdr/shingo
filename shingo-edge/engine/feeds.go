@@ -30,6 +30,12 @@ const (
 	// unreachable, where an "as of" a few minutes early is honest and a write
 	// per row per heartbeat would be 1,440 a day each.
 	feedConfirmPersistEvery = 5 * time.Minute
+	// feedAckGap is the silence after which the next ack reconciles orders.
+	// Core's order projections live 5 minutes on the wire and Core calls a
+	// station stale only after 15, so a projection pushed during a 5-15
+	// minute outage expired with nothing to repair it. Four minutes sits
+	// inside the data TTL and well under the stale threshold.
+	feedAckGap = 4 * time.Minute
 )
 
 // feedHold is what this Edge holds of one Core feed.
@@ -58,6 +64,9 @@ type feedBook struct {
 	// Core applies to its feeds.
 	sent  map[string]*feedSendRecord
 	flags map[string]string
+	// reconcile is what an ack after a gap runs; nil means StartupReconcile.
+	// A field so a test can count it.
+	reconcile func() error
 }
 
 const (
@@ -287,6 +296,10 @@ func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 	now := time.Now()
 	var persist []store.FeedCopy
 	e.feeds.mu.Lock()
+	// Monotonic: a wall-clock step on the Pi must not fake or hide a gap. No
+	// previous ack since boot is not a gap; boot runs its own reconcile.
+	gap := !e.feeds.lastAck.IsZero() && now.Sub(e.feeds.lastAck) > feedAckGap
+	reconcile := e.feeds.reconcile
 	e.feeds.coreSpeaksFeeds = ack.Feeds != nil
 	e.feeds.lastAck, e.feeds.lastServerTS = now, ack.ServerTS
 	for key, d := range ack.Feeds {
@@ -307,4 +320,20 @@ func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 		}
 	}
 	e.answerClaims(ack.Claims)
+	if gap {
+		e.reconcileAfterGap(reconcile)
+	}
+}
+
+// reconcileAfterGap runs the order reconcile on the first ack after a silence
+// longer than feedAckGap: whatever Core pushed meanwhile may have expired on
+// the wire, and the reconcile asks Core for every order this Edge should hold.
+func (e *Engine) reconcileAfterGap(reconcile func() error) {
+	if reconcile == nil {
+		reconcile = e.StartupReconcile
+	}
+	e.logFn("feeds: first ack after more than %v without one — reconciling orders", feedAckGap)
+	if err := reconcile(); err != nil {
+		e.logFn("feeds: reconcile after an ack gap: %v", err)
+	}
 }

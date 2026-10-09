@@ -87,9 +87,8 @@ func TestApiSendManualMessage_EdgeRegister_Success(t *testing.T) {
 func TestApiSendManualMessage_EdgeHeartbeat_Success(t *testing.T) {
 	_, router := newDiagnosticsManualRouter(t)
 
-	resp := sendManualPayload(t, router, "edge.heartbeat", map[string]any{
-		"uptime": 60,
-	})
+	// The heartbeat carries no hand-set field since uptime left the wire.
+	resp := sendManualPayload(t, router, "edge.heartbeat", map[string]any{})
 	assertStatus(t, resp, http.StatusOK)
 }
 
@@ -163,11 +162,12 @@ func TestApiSendManualMessage_InvalidOuterJSON(t *testing.T) {
 func TestApiSendManualMessage_InvalidInnerPayload(t *testing.T) {
 	_, router := newDiagnosticsManualRouter(t)
 
-	// edge.heartbeat requires uptime to unmarshal as an integer.
-	// Sending a string should trigger the inner "invalid payload" branch.
+	// edge.register requires version to unmarshal as a string. Sending a
+	// number should trigger the inner "invalid payload" branch. (This used
+	// edge.heartbeat's uptime, which left the wire.)
 	body := map[string]any{
-		"type":    "edge.heartbeat",
-		"payload": json.RawMessage([]byte(`{"uptime":"not-a-number"}`)),
+		"type":    "edge.register",
+		"payload": json.RawMessage([]byte(`{"version":5}`)),
 	}
 	resp := doRequest(t, router, "POST", "/api/manual-message", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)

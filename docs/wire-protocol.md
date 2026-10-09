@@ -209,10 +209,10 @@ The `data` message type provides a generic, extensible channel for non-order com
   "src": {"role": "edge", "station": "plant-a.line-1", "factory": "plant-a"},
   "dst": {"role": "core", "station": "", "factory": ""},
   "ts": "2026-02-18T10:01:00Z",
-  "exp": "2026-02-18T10:02:30Z",
+  "exp": "2026-02-18T10:06:00Z",
   "p": {
     "subject": "edge.heartbeat",
-    "data": {"station_id": "plant-a.line-1", "uptime_s": 3600, "active_orders": 2}
+    "data": {"station_id": "plant-a.line-1", "feeds": {"nodes": "3f9c0a1b2d4e5f60", "scene": "", "catalog": "a3c26451e6bac0e0"}}
   }
 }
 ```
@@ -433,17 +433,15 @@ Sent every 60 seconds by each edge node via `data` message with subject `edge.he
 
 ```json
 {
-  "station_id":       "plant-a.line-1",
-  "uptime_s":      3600,
-  "active_orders": 2
+  "station_id": "plant-a.line-1",
+  "feeds":      {"nodes": "3f9c0a1b2d4e5f60", "scene": "", "catalog": "a3c26451e6bac0e0"}
 }
 ```
 
 | Field | JSON Key | Type | Required | Description |
 |---|---|---|---|---|
 | Station ID | `station_id` | string | Yes | Edge station identifier (must match registration). |
-| Uptime | `uptime_s` | integer | No | Seconds since edge process started. |
-| Active Orders | `active_orders` | integer | No | Number of currently active (non-terminal) orders. |
+| Feeds | `feeds` | object | No | Per Core feed this edge holds (`containment`, `refusals`, `nodes`, `scene`, `catalog`), the digest it holds; `""` when it holds nothing. Always present (at least `{}`) from an edge that speaks feeds; `null` from an older edge. Core answers on the ack and sends each feed whose digest differs. See `protocol/feeds.go`. |
 | Tick Pending | `tick_pending` | integer | No | Production tick shipper backlog: shippable `counter_snapshots` rows past its cursor. Absent from an edge without the shipper. |
 | Tick Oldest Unsent Age | `tick_oldest_unsent_age_ms` | integer | No | Age in ms of the oldest of those rows (0 when none). Core flags the station on `/inventory` past 5 minutes. |
 
@@ -470,14 +468,18 @@ Acknowledges a heartbeat via `data` message with subject `edge.heartbeat_ack`. P
 ```json
 {
   "station_id": "plant-a.line-1",
-  "server_ts":  "2026-02-18T10:01:01Z"
+  "server_ts":  "2026-02-18T10:01:01Z",
+  "feeds":      {"nodes": "3f9c0a1b2d4e5f60", "scene": "9d1e", "catalog": "a3c26451e6bac0e0"},
+  "claims":     {"PR1": "f407896ad88a27dd"}
 }
 ```
 
 | Field | JSON Key | Type | Required | Description |
 |---|---|---|---|---|
 | Station ID | `station_id` | string | Yes | The heartbeating edge station ID (echo back). |
-| Server Timestamp | `server_ts` | timestamp | Yes | Core's current time as ISO 8601 / RFC 3339. Edges can compare with their own clock to detect drift. |
+| Server Timestamp | `server_ts` | timestamp | Yes | Core's current time as ISO 8601 / RFC 3339. Edges compare it with their own clock and show the offset on `/status` (it includes Core's outbox delay). |
+| Feeds | `feeds` | object | Yes (new Core) | Core's current digest for each key the heartbeat named that Core could read. A key Core could not read is absent, never `""`. Always at least `{}` from a Core that speaks feeds; absent/`null` from an older Core, for which the edge keeps its own re-asks. |
+| Claims | `claims` | object | No | For an edge that speaks feeds: per process Core holds a plant-claims report for from this station, the digest that came with its last report. `null` when Core could not read them; `{}` when it holds none. |
 
 #### EdgeStale
 
@@ -1469,13 +1471,12 @@ shingo.dispatch -+--> filter(type="order.delivered") -+--> deliveries_per_hour
   "src": {"role": "edge", "station": "plant-a.line-1", "factory": "plant-a"},
   "dst": {"role": "core", "station": "", "factory": ""},
   "ts": "2026-02-18T10:01:00Z",
-  "exp": "2026-02-18T10:02:30Z",
+  "exp": "2026-02-18T10:06:00Z",
   "p": {
     "subject": "edge.heartbeat",
     "data": {
       "station_id": "plant-a.line-1",
-      "uptime_s": 60,
-      "active_orders": 1
+      "feeds": {}
     }
   }
 }

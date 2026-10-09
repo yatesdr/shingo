@@ -9,7 +9,7 @@ import "testing"
 // empty string, which Core reads as "send everything".
 func TestHeartbeater_NodeListRequestQuotesTheCachedSceneRevision(t *testing.T) {
 	t.Parallel()
-	h := NewHeartbeater(nil, "edge.test", "v-test", "inst-1", "shingo.orders", nil)
+	h := NewHeartbeater(nil, "edge.test", "v-test", "inst-1", "shingo.orders")
 
 	if got := h.nodeListRequest().SceneRevision; got != "" {
 		t.Errorf("no revision source wired, request carries %q — must be empty so Core sends the full scene", got)
@@ -34,7 +34,7 @@ func TestHeartbeater_NodeListRequestQuotesTheCachedSceneRevision(t *testing.T) {
 // leaves the fields off the wire rather than reporting a zero nobody measured.
 func TestHeartbeater_CarriesTickLag(t *testing.T) {
 	t.Parallel()
-	h := NewHeartbeater(nil, "edge.test", "v-test", "inst-1", "shingo.orders", nil)
+	h := NewHeartbeater(nil, "edge.test", "v-test", "inst-1", "shingo.orders")
 	if b := h.heartbeatBody(); b.TickPending != nil || b.TickOldestUnsentAgeMS != nil {
 		t.Errorf("unwired: lag fields = %v/%v, want absent", b.TickPending, b.TickOldestUnsentAgeMS)
 	}
@@ -46,5 +46,34 @@ func TestHeartbeater_CarriesTickLag(t *testing.T) {
 	h.TickLagFn = func() (int64, int64, bool) { return 0, 0, false }
 	if b := h.heartbeatBody(); b.TickPending != nil {
 		t.Errorf("failed read: lag fields present")
+	}
+}
+
+// TestHeartbeater_FeedsAndTheReAsk: the heartbeat carries the feed digests the
+// engine supplies, and the two-minute node and catalog re-ask is skipped only
+// while Core answers feeds. Unwired, and with an older Core, the re-ask runs as
+// it always did.
+func TestHeartbeater_FeedsAndTheReAsk(t *testing.T) {
+	t.Parallel()
+	h := NewHeartbeater(nil, "edge.test", "v-test", "inst-1", "shingo.orders")
+	if b := h.heartbeatBody(); b.Feeds != nil {
+		t.Errorf("unwired: feeds = %v, want nil (an older Edge's heartbeat)", b.Feeds)
+	}
+	if h.coreSpeaksFeeds() {
+		t.Error("unwired: re-ask skipped, want it kept")
+	}
+
+	h.FeedsFn = func() map[string]string { return map[string]string{"catalog": "c1"} }
+	if b := h.heartbeatBody(); b.Feeds["catalog"] != "c1" {
+		t.Errorf("wired: feeds = %v, want catalog c1", b.Feeds)
+	}
+	speaks := false
+	h.CoreSpeaksFeedsFn = func() bool { return speaks }
+	if h.coreSpeaksFeeds() {
+		t.Error("older Core: re-ask skipped, want it kept")
+	}
+	speaks = true
+	if !h.coreSpeaksFeeds() {
+		t.Error("Core answers feeds: re-ask kept, want it skipped")
 	}
 }

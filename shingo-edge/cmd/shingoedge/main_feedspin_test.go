@@ -176,13 +176,13 @@ func TestFeedsPin_HeartbeaterCountsActiveOrders(t *testing.T) {
 		want, after any
 		label       string
 	}{
-		{"NewHeartbeater argument count", func() any { return len(args) }, 6, 5, "X5"},
+		{"NewHeartbeater argument count", func() any { return len(args) }, 5, 5, "X5"}, // X5: was 6
 		{"last argument reads db.CountActiveOrders", func() any {
 			if len(args) == 0 {
 				return false
 			}
 			return allCalls(args[len(args)-1])["db.CountActiveOrders"]
-		}, true, false, "X5"},
+		}, false, false, "X5"}, // X5: was true
 	}
 	for _, tc := range cases {
 		if got := tc.got(); got != tc.want {

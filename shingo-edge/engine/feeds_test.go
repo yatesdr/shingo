@@ -177,3 +177,33 @@ func TestSendDue_StreakEndsWhenCoreHoldsTheLastSend(t *testing.T) {
 		t.Errorf("Core stuck on d4: flags = %v, want the not-converging flag", got)
 	}
 }
+
+// The first ack after more than four minutes without one reconciles orders;
+// acks a minute apart do not, and the first ack since boot does not.
+func TestOnCoreAck_GapReconciles(t *testing.T) {
+	t.Parallel()
+	e := testEngine(t, testEngineDB(t))
+	runs := 0
+	e.feeds.reconcile = func() error { runs++; return nil }
+	ack := &protocol.EdgeHeartbeatAck{Feeds: map[string]string{}}
+
+	e.OnCoreAck(ack)
+	if runs != 0 {
+		t.Fatalf("first ack since boot reconciled (%d)", runs)
+	}
+	e.OnCoreAck(ack)
+	if runs != 0 {
+		t.Fatalf("ack right after the last reconciled (%d)", runs)
+	}
+	e.feeds.mu.Lock()
+	e.feeds.lastAck = time.Now().Add(-feedAckGap - time.Second)
+	e.feeds.mu.Unlock()
+	e.OnCoreAck(ack)
+	if runs != 1 {
+		t.Errorf("ack after a gap: reconciles = %d, want 1", runs)
+	}
+	e.OnCoreAck(ack)
+	if runs != 1 {
+		t.Errorf("ack after the gap ack: reconciles = %d, want still 1", runs)
+	}
+}

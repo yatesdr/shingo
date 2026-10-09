@@ -228,7 +228,7 @@ func TestWireFormatKeys(t *testing.T) {
 	env, _ := NewDataEnvelope(SubjectEdgeHeartbeat,
 		Address{Role: RoleEdge, Station: "n1"},
 		Address{Role: RoleCore},
-		&EdgeHeartbeat{StationID: "n1", Uptime: 60},
+		&EdgeHeartbeat{StationID: "n1", Timezone: "America/Chicago"},
 	)
 	data, _ := env.Encode()
 
@@ -354,7 +354,7 @@ func TestDataWireFormat(t *testing.T) {
 	env, _ := NewDataEnvelope(SubjectEdgeHeartbeat,
 		Address{Role: RoleEdge, Station: "plant-a.line-1"},
 		Address{Role: RoleCore},
-		&EdgeHeartbeat{StationID: "plant-a.line-1", Uptime: 3600, Orders: 2},
+		&EdgeHeartbeat{StationID: "plant-a.line-1", Timezone: "America/Chicago"},
 	)
 	raw, _ := env.Encode()
 
@@ -389,11 +389,8 @@ func TestDataWireFormat(t *testing.T) {
 	// Verify inner data can be decoded
 	var hb EdgeHeartbeat
 	testutil.MustNoErr(t, json.Unmarshal(payload["data"], &hb), "unmarshal heartbeat data")
-	if hb.Uptime != 3600 {
-		t.Errorf("uptime = %d, want 3600", hb.Uptime)
-	}
-	if hb.Orders != 2 {
-		t.Errorf("orders = %d, want 2", hb.Orders)
+	if hb.StationID != "plant-a.line-1" || hb.Timezone != "America/Chicago" {
+		t.Errorf("heartbeat = %+v, want station plant-a.line-1, zone America/Chicago", hb)
 	}
 }
 

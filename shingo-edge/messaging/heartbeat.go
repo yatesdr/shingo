@@ -10,9 +10,6 @@ import (
 	"shingo/protocol"
 )
 
-// ActiveOrderCountFunc returns the number of active (non-terminal) orders.
-type ActiveOrderCountFunc func() int
-
 // CellCatalogFunc returns the edge's cell catalog (PLC-grouped reporting points)
 // to attach to the registration payload (Q-034). Nil or a nil return means "no
 // catalog" — an old/absent catalog is not an error.
@@ -26,13 +23,11 @@ type TimezoneFunc func() string
 
 // Heartbeater sends edge.register on startup and edge.heartbeat periodically.
 type Heartbeater struct {
-	sender       *DataSender
-	stationID    string
-	version      string
-	instance     string
-	interval     time.Duration
-	startTime    time.Time
-	orderCountFn ActiveOrderCountFunc
+	sender    *DataSender
+	stationID string
+	version   string
+	instance  string
+	interval  time.Duration
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
@@ -81,22 +76,20 @@ type Heartbeater struct {
 // instance identifies ONE RUN of the edge process and must be generated ONCE
 // by the composition root, not here — this constructor runs again on the
 // Kafka-retry path. See config.NewInstanceID.
-func NewHeartbeater(client *Client, stationID, version, instance string, ordersTopic string, orderCountFn ActiveOrderCountFunc) *Heartbeater {
+func NewHeartbeater(client *Client, stationID, version, instance string, ordersTopic string) *Heartbeater {
 	stopCh := make(chan struct{})
 	return &Heartbeater{
-		sender:       NewDataSender(client, ordersTopic, stopCh),
-		stationID:    stationID,
-		version:      version,
-		instance:     instance,
-		interval:     60 * time.Second,
-		orderCountFn: orderCountFn,
-		stopCh:       stopCh,
+		sender:    NewDataSender(client, ordersTopic, stopCh),
+		stationID: stationID,
+		version:   version,
+		instance:  instance,
+		interval:  60 * time.Second,
+		stopCh:    stopCh,
 	}
 }
 
 // Start sends an initial registration, requests the core node list, and begins the heartbeat loop.
 func (h *Heartbeater) Start() {
-	h.startTime = time.Now()
 	h.sendRegister()
 	h.sendNodeListRequest()
 	h.sendCatalogRequest()
@@ -221,13 +214,7 @@ func (h *Heartbeater) sendCatalogRequest() {
 
 // heartbeatBody builds the periodic heartbeat, every field read at send time.
 func (h *Heartbeater) heartbeatBody() *protocol.EdgeHeartbeat {
-	b := &protocol.EdgeHeartbeat{
-		StationID: h.stationID,
-		Uptime:    int64(time.Since(h.startTime).Seconds()),
-	}
-	if h.orderCountFn != nil {
-		b.Orders = h.orderCountFn()
-	}
+	b := &protocol.EdgeHeartbeat{StationID: h.stationID}
 	if h.TimezoneFn != nil {
 		b.Timezone = h.TimezoneFn()
 	}
@@ -258,7 +245,7 @@ func (h *Heartbeater) sendHeartbeat() {
 	if err := h.sender.PublishEnvelope(env, "heartbeat"); err != nil {
 		log.Printf("heartbeater: send heartbeat failed after retries: %v", err)
 	} else {
-		h.DebugLog.Log("heartbeat sent uptime=%ds orders=%d", body.Uptime, body.Orders)
+		h.DebugLog.Log("heartbeat sent station=%s", body.StationID)
 	}
 }
 
