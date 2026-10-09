@@ -22,7 +22,7 @@ import (
 // Phase 6.5 (2026-04-25) split this out of EngineAccess. The split
 // captures the architectural role distinction: most handlers do pure
 // CRUD through services and have no business reaching engine-level
-// orchestration. ServiceAccess gives those handlers a 49-method surface;
+// orchestration. ServiceAccess gives those handlers a 50-method surface;
 // orchestration handlers take EngineOrchestration explicitly via
 // h.orchestration.
 //
@@ -113,6 +113,10 @@ type ServiceAccess interface {
 	// second opinion computed at render time. Empty until the first tick, and
 	// empty forever on a plant with no maintained group.
 	MaintainedGroupStates() []engine.MaintainerGroupState
+	// EdgeFeedFlags lists the plain-text feed conditions flagged for one
+	// station (a feed resent without converging, a process reported by two
+	// stations), shown on its row of the Edges page. A pure read.
+	EdgeFeedFlags(station string) []string
 
 	// Ledger-integrity exception list (Phase 4.6). Read-side only.
 	OpenNegativeBins() ([]domain.OpenNegativeBin, error)

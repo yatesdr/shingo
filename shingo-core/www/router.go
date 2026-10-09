@@ -24,7 +24,7 @@ import (
 // of different interface types so that compile-time enforcement
 // constrains where orchestration verbs can be reached:
 //
-//   - h.engine (ServiceAccess) — narrow surface, 49 methods. CRUD-only
+//   - h.engine (ServiceAccess) — narrow surface, 50 methods. CRUD-only
 //     handlers and read-only state queries use this. Calling
 //     orchestration verbs through h.engine fails to compile because
 //     those methods are not on ServiceAccess.

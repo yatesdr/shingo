@@ -74,6 +74,10 @@ type Engine struct {
 	// flush lock, everywhere.
 	countMu sync.Mutex
 
+	// feeds is what this Edge holds of each Core feed and what the last
+	// heartbeat ack said about Core (feeds.go).
+	feeds feedBook
+
 	cfg         *config.Config
 	configPath  string
 	db          *store.DB
@@ -350,6 +354,8 @@ func (e *Engine) Start() {
 	// The map the station draws from, as of the last full sync. Before the
 	// event chain so nothing that fires during wiring sees a blank picture.
 	e.loadSceneGeometry()
+	// What this Edge holds of each Core feed, as of the last run.
+	e.loadFeedCopies()
 
 	// Wire the event chain
 	e.wireEventHandlers()
@@ -728,7 +734,10 @@ func (e *Engine) RequestCatalogSync() {
 // txns per sync held the edge's single SQLite connection ~41,000 times/day
 // to write back rows that almost never change). The upsert itself is
 // conditional on a real change, so an unchanged catalog writes nothing.
-func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) {
+//
+// It returns the sync's error, so the caller records the catalog's digest only
+// when the rows landed.
+func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) error {
 	rows := make([]*catalog.CatalogEntry, 0, len(entries))
 	for _, b := range entries {
 		rows = append(rows, &catalog.CatalogEntry{
@@ -740,6 +749,7 @@ func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) {
 	}
 	if err := e.db.SyncPayloadCatalog(rows); err != nil {
 		log.Printf("engine: sync payload catalog: %v", err)
+		return err
 	}
 	// NOTHING CLEARS expected_catid ANY MORE. A sync used to run
 	// ClearRedundantExpectedCATIDs here, deleting every pin that agreed with the
@@ -748,6 +758,7 @@ func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) {
 	// permanent human intent: it IS the style's set when present, it always
 	// wins, and only a person removes it.
 	e.logFn("engine: updated payload catalog (%d entries)", len(entries))
+	return nil
 }
 
 // ── Outbound messaging ──────────────────────────────────────────────

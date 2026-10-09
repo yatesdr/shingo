@@ -134,6 +134,10 @@ type Engine struct {
 	// cheaper answer: a value that never changes needs no synchronisation.
 	// Start() only launches its loop.
 	cmsPoster *poster.Poster
+	// edgeFeedFlags reads the messaging layer's per-station feed flags for the
+	// Edges page (SetEdgeFeedFlagsFunc). Atomic because the composition root
+	// sets it after Start, while HTTP handlers may already be reading.
+	edgeFeedFlags atomic.Pointer[func(station string) []string]
 	// cmsBuildFailures counts movements whose CMS rows could not be built.
 	//
 	// A COUNTER rather than only a log line, because the loss is otherwise

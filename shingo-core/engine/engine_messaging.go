@@ -50,3 +50,20 @@ func (e *Engine) RunFulfillmentScan() int {
 	}
 	return e.fulfillment.RunOnce()
 }
+
+// SetEdgeFeedFlagsFunc wires the read behind EdgeFeedFlags to the messaging
+// layer, which owns the feed send records. Set once at the composition root.
+func (e *Engine) SetEdgeFeedFlagsFunc(fn func(station string) []string) {
+	e.edgeFeedFlags.Store(&fn)
+}
+
+// EdgeFeedFlags lists the plain-text feed conditions flagged for one station —
+// a feed resent three times without converging, a process two stations both
+// report. Read-only; nil until the messaging layer is wired, and empty when
+// nothing is wrong.
+func (e *Engine) EdgeFeedFlags(station string) []string {
+	if fn := e.edgeFeedFlags.Load(); fn != nil {
+		return (*fn)(station)
+	}
+	return nil
+}

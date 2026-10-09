@@ -105,8 +105,13 @@ var subjectTTLs = map[string]time.Duration{
 	// TTL already allowed for five minutes.
 	SubjectBinPickedUp: NoExpiry,
 
-	SubjectEdgeHeartbeat:    90 * time.Second,
-	SubjectEdgeHeartbeatAck: 90 * time.Second,
+	// The heartbeat and its ack carry the feed digests, and the ack drives the
+	// Edge's reconcile after a gap. Both are stamped on one clock and checked
+	// on the other, so the TTL is also the clock skew a station tolerates: at
+	// 90 s a Pi clock off by 90 s silently lost its acks or its heartbeats.
+	// Five minutes is the rest of the data channel's TTL.
+	SubjectEdgeHeartbeat:    5 * time.Minute,
+	SubjectEdgeHeartbeatAck: 5 * time.Minute,
 	SubjectEdgeRegister:     5 * time.Minute,
 	SubjectEdgeRegistered:   5 * time.Minute,
 

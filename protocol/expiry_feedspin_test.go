@@ -24,8 +24,9 @@ func TestFeedsPin_HeartbeatAndAckTTL(t *testing.T) {
 		dispatchedLate, dispatchedLateAft bool
 		label                             string
 	}{
-		{SubjectEdgeHeartbeat, 90 * time.Second, 5 * time.Minute, false, true, "F1"},
-		{SubjectEdgeHeartbeatAck, 90 * time.Second, 5 * time.Minute, false, true, "F1"},
+		// F1: was 90 s, and a copy 2 minutes late was dropped.
+		{SubjectEdgeHeartbeat, 5 * time.Minute, 5 * time.Minute, true, true, "F1"},
+		{SubjectEdgeHeartbeatAck, 5 * time.Minute, 5 * time.Minute, true, true, "F1"},
 		// The register pair already carries 5 minutes and does not move.
 		{SubjectEdgeRegister, 5 * time.Minute, 5 * time.Minute, true, true, "same"},
 		{SubjectEdgeRegistered, 5 * time.Minute, 5 * time.Minute, true, true, "same"},

@@ -221,6 +221,14 @@ CREATE TABLE demand_origins_open (
     opened_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE feed_copy (
+					feed         TEXT PRIMARY KEY,
+					digest       TEXT NOT NULL,
+					body         TEXT,
+					received_at  TEXT,
+					confirmed_at TEXT
+				);
+
 CREATE TABLE flow_presets (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     process_id  INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,

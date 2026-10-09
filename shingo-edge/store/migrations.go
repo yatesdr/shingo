@@ -1554,6 +1554,31 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// What this Edge holds of each Core feed, so a restart while Core
+			// is unreachable still knows the containment state, the digest of
+			// the catalog it holds, and when each feed was last confirmed. One
+			// row per feed key; written when a digest changes, and a
+			// confirmation at most every few minutes — never per heartbeat. See
+			// store/feed_copy.go for which rows carry a digest and a body.
+			Version: 18,
+			Name:    "feed_copy",
+			Fn: func(tx *sql.Tx) error {
+				_, err := tx.Exec(`CREATE TABLE IF NOT EXISTS feed_copy (
+					feed         TEXT PRIMARY KEY,
+					digest       TEXT NOT NULL,
+					body         TEXT,
+					received_at  TEXT,
+					confirmed_at TEXT
+				)`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'feed_copy'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

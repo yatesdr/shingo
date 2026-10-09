@@ -296,8 +296,8 @@ Data messages have a default TTL of 5 minutes, but individual subjects can overr
 
 | Subject | TTL | Rationale |
 |---|---|---|
-| `edge.heartbeat` | 90 seconds | Stale after 1.5 heartbeat intervals |
-| `edge.heartbeat_ack` | 90 seconds | Stale after 1.5 heartbeat intervals |
+| `edge.heartbeat` | 5 minutes | Also the clock skew tolerated between Edge and Core |
+| `edge.heartbeat_ack` | 5 minutes | Also the clock skew tolerated between Edge and Core |
 | `edge.register` | 5 minutes | Should complete quickly after connect |
 | `edge.registered` | 5 minutes | Should complete quickly after connect |
 | `edge.stale` | 5 minutes | Notification, not time-critical |
@@ -360,7 +360,7 @@ These are the TTLs applied by the sender when creating a message. The `exp` fiel
 | Category | Message Types | TTL | Rationale |
 |---|---|---|---|
 | Data channel | `data` (default) | 5 minutes | Safe general default for data exchange |
-| Data: heartbeat | `data` with subject `edge.heartbeat` / `edge.heartbeat_ack` | 90 seconds | Stale after 1.5 heartbeat intervals |
+| Data: heartbeat | `data` with subject `edge.heartbeat` / `edge.heartbeat_ack` | 5 minutes | Also the clock skew tolerated between Edge and Core |
 | Data: registration | `data` with subject `edge.register` / `edge.registered` | 5 minutes | Should complete quickly after connect |
 | Order commands | `order.request`, `order.complex_request`, `order.cancel`, `order.redirect` | 10 minutes | Operator can resubmit if expired |
 | Release and produce ingest | `order.release`, `order.ingest` | **none** | A dropped release strands a staged robot; a dropped ingest leaves a full bin unconfirmed. Core fences a late ingest by its `bin_epoch`, and the release's `station_wait` echo makes a late release for a passed wait a no-op. Neither is dead-lettered. |

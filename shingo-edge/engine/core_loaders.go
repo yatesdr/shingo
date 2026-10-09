@@ -10,10 +10,15 @@ import (
 // threshold-replay gate, and reconciles the second authority away. Called from
 // the node-list-response handler alongside SetCoreNodes, so the cache — the
 // loader resolvers' read source — rides every node-list sync.
-func (e *Engine) SetCoreLoaders(loaders []protocol.LoaderInfo) {
+//
+// It returns the cache write's error, so the caller records the node list's
+// digest only when the loaders actually landed; a later failure (the snapshot
+// refresh, the claim reconcile) is logged and is not a failed apply, because
+// the durable cache is already current and a resend would change nothing.
+func (e *Engine) SetCoreLoaders(loaders []protocol.LoaderInfo) error {
 	if err := e.db.ReplaceCoreLoaders(loaders); err != nil {
 		e.logFn("core_loaders: cache replace failed (%d loaders) — keeping last-known-good: %v", len(loaders), err)
-		return
+		return err
 	}
 	if len(loaders) > 0 {
 		e.debugFn("core_loaders: cached %d loader(s) from node-list sync", len(loaders))
@@ -29,6 +34,7 @@ func (e *Engine) SetCoreLoaders(loaders []protocol.LoaderInfo) {
 	// moves must be resolvable through the aggregate on the very next read, and
 	// the aggregate is only current once Refresh has run.
 	e.reconcileLoaderClaims(loaders)
+	return nil
 }
 
 // reconcileLoaderClaims moves every stored manual_swap claim into the quarantine

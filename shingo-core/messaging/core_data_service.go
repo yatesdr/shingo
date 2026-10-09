@@ -88,6 +88,9 @@ type CoreDataService struct {
 	// status without the clock.
 	faultGrace       time.Duration
 	faultNoticeAfter time.Duration
+	// feeds is the feed-digest memo, the per-station send records and the
+	// flags they raise (feeds.go). Built by NewCoreDataService.
+	feeds *feedState
 }
 
 // SetThresholdMonitor wires the engine's threshold-monitor for
@@ -132,6 +135,7 @@ func NewCoreDataService(db *store.DB, resp coreDataResponder, announce service.E
 		linesideDivergence: service.NewLinesideDivergenceService(db),
 		resp:               resp,
 		downtimeCh:         make(chan downtime.DowntimeEvent, 1024),
+		feeds:              newFeedState(),
 	}
 }
 
@@ -520,11 +524,21 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 		return
 	}
 
+	// Feeds: an Edge that names none (nil — an older binary) gets exactly the
+	// ack it always got. A newer one gets Core's digest for every key it named
+	// that Core could read, and the feeds whose digests differ are sent to it.
+	// The ack always carries a map, so the Edge can tell this Core from an
+	// older one.
+	feeds := map[string]string{}
+	if p.Feeds != nil {
+		feeds = s.answerFeeds(p.StationID, p.Feeds)
+	}
 	s.resp.replyData(env, protocol.SubjectEdgeHeartbeatAck,
 		&protocol.EdgeHeartbeatAck{
 			StationID: p.StationID,
 			ServerTS:  clock.Now().UTC(),
 			Timezone:  s.plantTimezone,
+			Feeds:     feeds,
 		})
 
 	if !found {

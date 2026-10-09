@@ -62,7 +62,7 @@
       <td><code>{{.StationUID}}</code></td>
       <td>{{if .Hostname}}{{.Hostname}}{{else}}-{{end}}</td>
       <td title="The applied edge schema version this station last reported on register — its SQLite migration state, shown beside Core's own. A station behind on a migration is a station whose dispatch surface may not match what Core sends.">{{if .SchemaVersion}}v{{.SchemaVersion}}{{else}}<span class="badge badge-warn" title="No register has carried a schema version: an edge older than the wire field, or a Core row predating v137.">unknown</span>{{end}}</td>
-      <td>{{.Status}}</td>
+      <td>{{.Status}}{{with index $.FeedFlags .StationUID}}{{range .}}<div class="text-muted">{{.}}</div>{{end}}{{end}}</td>
       <td>
         {{/* Wire-reported, never hand-set. Blank = the edge is unconfigured —
              shown as the warning it is, because a guessed zone is exactly the

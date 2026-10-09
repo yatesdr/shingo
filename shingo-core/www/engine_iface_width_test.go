@@ -54,7 +54,7 @@ func assertInterfaceWidth(t *testing.T, name string, rt reflect.Type, want []str
 	}
 }
 
-// TestServiceAccessWidth pins Core's narrow surface at 49 methods. The
+// TestServiceAccessWidth pins Core's narrow surface at 50 methods. The
 // interface's own doc comment states the same number; keep them together.
 func TestServiceAccessWidth(t *testing.T) {
 	t.Parallel()
@@ -73,6 +73,7 @@ func TestServiceAccessWidth(t *testing.T) {
 		"DeltaIntegrityDaily",
 		"DemandEpisodeService",
 		"Dispatcher",
+		"EdgeFeedFlags",
 		"EventBus",
 		"Fleet",
 		"FootprintService",
@@ -111,8 +112,8 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Core's wide surface at 62 methods —
-// ServiceAccess's 49 embedded, plus 13 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Core's wide surface at 63 methods —
+// ServiceAccess's 50 embedded, plus 13 orchestration verbs of its own.
 // (PrepareDatabase left it in R27: Core's database settings apply after a
 // restart, so the save door only pings the draft, through HealthService.)
 //
@@ -149,6 +150,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"DeltaIntegrityDaily",
 		"DemandEpisodeService",
 		"Dispatcher",
+		"EdgeFeedFlags",
 		"EventBus",
 		"Fleet",
 		"FootprintService",

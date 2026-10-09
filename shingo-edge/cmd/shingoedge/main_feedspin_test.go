@@ -78,7 +78,7 @@ func TestFeedsPin_SubjectClosureSteps(t *testing.T) {
 			// The ack does only a log line and the zone adoption: no feed
 			// confirm, no claims compare, no reconcile.
 			subject: "SubjectEdgeHeartbeatAck",
-			want:    []string{"log.Printf", "adoptPlantTimezone"},
+			want:    []string{"log.Printf", "adoptPlantTimezone", "eng.OnCoreAck"}, // F1
 			after:   "[log.Printf adoptPlantTimezone eng.OnCoreAck] (feeds confirm, F5 claims compare, X2 gap rule inside OnCoreAck)",
 			label:   "F1, F5, X2",
 		},
@@ -125,7 +125,7 @@ func TestFeedsPin_AckDoesNotReconcile(t *testing.T) {
 		label       string
 	}{
 		{"eng.StartupReconcile", false, false, "same (X2 reconciles inside eng.OnCoreAck, not in the closure)"},
-		{"eng.OnCoreAck", false, true, "F1"},
+		{"eng.OnCoreAck", true, true, "F1"}, // F1: was false
 	}
 	for _, tc := range cases {
 		if got := calls[tc.callee]; got != tc.want {

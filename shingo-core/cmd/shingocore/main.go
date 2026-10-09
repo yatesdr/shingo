@@ -424,6 +424,9 @@ func main() {
 	// config edit drifts an in-flight countdown, which is acceptable for a
 	// countdown and is the same trade the live push makes.
 	coreDataService.SetFaultWindow(cfg.RDS.FaultGrace, cfg.RDS.FaultNoticeAfter)
+	// The Edges page shows each station's feed flags (a feed that will not
+	// converge); the send records behind them live in the data service.
+	eng.SetEdgeFeedFlagsFunc(coreDataService.EdgeFeedFlags)
 
 	subjectRouter, err := buildSubjectRouter(coreDataService)
 	if err != nil {

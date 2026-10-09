@@ -102,6 +102,13 @@ type EdgeHeartbeat struct {
 	// measured.
 	TickPending           *int64 `json:"tick_pending,omitempty"`
 	TickOldestUnsentAgeMS *int64 `json:"tick_oldest_unsent_age_ms,omitempty"`
+	// Feeds names, per Core feed this Edge holds (FeedContainment, ...), the
+	// digest it holds — "" when it holds nothing yet. Core answers each key on
+	// the ack and sends the feed where they differ (see feeds.go).
+	//
+	// NOT omitempty: nil is how Core recognises an Edge that predates feeds and
+	// does nothing new for it, so a new Edge always sends at least {}.
+	Feeds map[string]string `json:"feeds"`
 }
 
 // EdgeRegistered acknowledges edge registration.
@@ -130,6 +137,19 @@ type EdgeHeartbeatAck struct {
 	// field, and an old Core sends nothing, which a new edge reads as "Core has
 	// no opinion" rather than as an instruction.
 	Timezone string `json:"timezone,omitempty"`
+	// Feeds is Core's current digest for each key the heartbeat named that Core
+	// could read. A key Core failed to read is absent — not "", which would be a
+	// digest of nothing — so the Edge confirms nothing it was not told.
+	//
+	// NOT omitempty: a new Core always sends at least {}, and nil is how the
+	// Edge recognises an older Core and keeps its own timers running.
+	Feeds map[string]string `json:"feeds"`
+	// Claims is, for every process Core holds a plant-claims report for from
+	// this station, the digest that arrived with that process's last report.
+	// The Edge re-publishes a process whose digest differs or is missing, and
+	// publishes an empty report for a name it no longer has. nil means Core
+	// could not read them (or is older); {} means it holds none.
+	Claims map[string]string `json:"claims"`
 }
 
 // --- Order payloads: Edge -> Core ---
@@ -912,6 +932,11 @@ type NodeListResponse struct {
 	// counter: two Cores, or one Core restarted, answer the same scene with the
 	// same revision.
 	SceneRevision string `json:"scene_revision,omitempty"`
+	// Digest is the FeedNodes digest of Nodes, Loaders and PayloadBinTypes as
+	// this reply carries them (NodesDigest), on every path that builds the
+	// reply. An Edge holding that digest already applies none of the three.
+	// Absent from an older Core, whose replies apply as they always did.
+	Digest string `json:"digest,omitempty"`
 }
 
 // ScenePointInfo is one location in the vendor's map.
@@ -1185,6 +1210,9 @@ type CatalogPayloadInfo struct {
 // CatalogPayloadsResponse carries the core's payload catalog.
 type CatalogPayloadsResponse struct {
 	Payloads []CatalogPayloadInfo `json:"payloads"`
+	// Digest is the FeedCatalog digest of Payloads (CatalogDigest). Absent from
+	// an older Core.
+	Digest string `json:"digest,omitempty"`
 }
 
 // OrderStatusRequest asks Core for the current authoritative status of a set of orders.
@@ -1661,6 +1689,11 @@ type PlantClaimsReport struct {
 	// one) can be detected and ignored. Optional; zero means "not tracked"
 	// (Core accepts the message regardless).
 	ConfigGen int64 `json:"config_gen,omitempty"`
+	// Digest is ClaimsDigest of this report, set by the Edge where it builds
+	// it. Core stores it per process and quotes it on the heartbeat ack, so a
+	// lost or out-of-order report is noticed and re-sent. Absent from an older
+	// Edge.
+	Digest string `json:"digest,omitempty"`
 }
 
 // PlantClaimsStyle is one style of a process in a PlantClaimsReport.
@@ -2035,4 +2068,75 @@ type SupplyRefusalState struct {
 	// matching the demand grain. Note it is who answered, not who was told —
 	// with a broadcast there is no single addressee to record.
 	AckProcessID string `json:"ack_process_id,omitempty"`
+}
+
+// SupplyRefusalSnapshot is Core's open refusal set, sent to one Edge on
+// SubjectSupplyRefusalSnapshot when that Edge's FeedRefusals digest differs from
+// Core's. Open carries every refusal Core holds open, each with Action
+// SupplyRefusalOpened and its ack fields filled where answered.
+//
+// The Edge does not simply replace its table with it: a refusal has two authors,
+// and an Edge keeps (and re-sends) the facts it authored that Core has not
+// recorded. See the Edge's ApplySupplyRefusalSnapshot.
+type SupplyRefusalSnapshot struct {
+	Digest string               `json:"digest"`
+	Open   []SupplyRefusalState `json:"open"`
+}
+
+// --- Containment: Core -> Edge ---
+
+// PayloadContainmentRow is one payload's containment flag as the screens read
+// it. The row persists after deactivation so the alert's history survives it.
+// Core's GET /api/containment serves the same rows (Core's domain package
+// aliases this type), so the HTTP body and the snapshot cannot drift apart.
+type PayloadContainmentRow struct {
+	PayloadCode   string     `json:"payload_code"`
+	Active        bool       `json:"active"`
+	Reason        string     `json:"reason"`
+	ActivatedBy   string     `json:"activated_by"`
+	ActivatedAt   *time.Time `json:"activated_at"`
+	DeactivatedBy string     `json:"deactivated_by"`
+	DeactivatedAt *time.Time `json:"deactivated_at"`
+}
+
+// HeldBinRow is one bin carrying the quality-hold marker. Its location is the
+// node name only: the screens render the name, and the Edge has no Core node id
+// to read.
+type HeldBinRow struct {
+	BinID       int64      `json:"bin_id"`
+	Label       string     `json:"label"`
+	PayloadCode string     `json:"payload_code"`
+	NodeName    string     `json:"node_name"`
+	HoldBy      string     `json:"hold_by"`
+	HoldAt      *time.Time `json:"hold_at"`
+}
+
+// ContainmentDestination is one node a containment claim sends contained bins
+// to, with what sits there: its non-group children (a group destination is
+// filled through its children) and the occupied bins at it or at any child.
+type ContainmentDestination struct {
+	Node     string           `json:"node"`
+	Children []string         `json:"children"`
+	Bins     []ContainmentBin `json:"bins"`
+}
+
+// ContainmentBin is one occupied bin at a containment destination or one of its
+// children.
+type ContainmentBin struct {
+	Node        string `json:"node"`
+	BinID       int64  `json:"bin_id"`
+	Label       string `json:"label"`
+	PayloadCode string `json:"payload_code"`
+	UOP         int    `json:"uop"`
+}
+
+// ContainmentSnapshot is Core's whole containment state, sent on
+// SubjectContainmentSnapshot: broadcast after a known containment write, and to
+// one Edge whose FeedContainment digest differs from Core's. Digest is
+// ContainmentDigest of the other three fields, computed over the value sent.
+type ContainmentSnapshot struct {
+	Digest       string                   `json:"digest,omitempty"`
+	Flags        []PayloadContainmentRow  `json:"flags"`
+	HeldBins     []HeldBinRow             `json:"held_bins"`
+	Destinations []ContainmentDestination `json:"destinations"`
 }

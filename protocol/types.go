@@ -291,6 +291,19 @@ const (
 	// The precedent is sourcing.state, which is broadcast for the same reason and
 	// filtered per-process on arrival.
 	SubjectSupplyRefusalState = "supply.refusal_state"
+
+	// SubjectSupplyRefusalSnapshot — Core → one Edge: Core's whole open refusal
+	// set, sent when that Edge's heartbeat quotes a FeedRefusals digest that
+	// differs from Core's. It is how a lost, expired, reordered or never-sent
+	// refusal message heals. Payload: SupplyRefusalSnapshot.
+	SubjectSupplyRefusalSnapshot = "supply.refusal_snapshot"
+
+	// SubjectContainmentSnapshot — Core → Edge: the containment state
+	// (flags, held bins, what sits at each containment destination), so the
+	// Edge's containment screens read a local copy instead of calling Core.
+	// Broadcast after a known containment write; unicast to an Edge whose
+	// FeedContainment digest differs. Payload: ContainmentSnapshot.
+	SubjectContainmentSnapshot = "containment.snapshot"
 )
 
 // AllTypes returns every envelope Type constant in this package. Used by

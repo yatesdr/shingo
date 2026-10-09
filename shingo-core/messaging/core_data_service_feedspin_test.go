@@ -130,7 +130,7 @@ func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 		{
 			name: "enrolled station, plant zone configured", enroll: true, plantTZ: "America/Chicago",
 			wantTrace:    []string{ack},
-			wantAckKeys:  []string{"server_ts", "station_id", "timezone"},
+			wantAckKeys:  []string{"claims", "feeds", "server_ts", "station_id", "timezone"}, // F1: feeds={}, claims=null
 			afterTrace:   []string{ack},
 			afterAckKeys: []string{"claims", "feeds", "server_ts", "station_id", "timezone"}, // feeds={}, claims=null
 			label:        "F1, F5",
@@ -138,7 +138,7 @@ func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 		{
 			name: "enrolled station, plant zone unset", enroll: true, plantTZ: "",
 			wantTrace:    []string{ack},
-			wantAckKeys:  []string{"server_ts", "station_id"},
+			wantAckKeys:  []string{"claims", "feeds", "server_ts", "station_id"}, // F1
 			afterTrace:   []string{ack},
 			afterAckKeys: []string{"claims", "feeds", "server_ts", "station_id"}, // feeds={}, claims=null
 			label:        "F1, F5",
@@ -146,7 +146,7 @@ func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 		{
 			name: "unenrolled station gets the ack and a register request", enroll: false, plantTZ: "America/Chicago",
 			wantTrace:    []string{ack, regReq},
-			wantAckKeys:  []string{"server_ts", "station_id", "timezone"},
+			wantAckKeys:  []string{"claims", "feeds", "server_ts", "station_id", "timezone"}, // F1
 			afterTrace:   []string{ack, regReq},
 			afterAckKeys: []string{"claims", "feeds", "server_ts", "station_id", "timezone"},
 			label:        "F1, F5",

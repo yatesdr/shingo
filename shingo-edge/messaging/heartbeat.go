@@ -62,6 +62,11 @@ type Heartbeater struct {
 	// flag a station whose feed has stalled without a message of its own. ok
 	// false leaves the fields off. Read at send time. Set post-construction.
 	TickLagFn func() (pending, oldestAgeMS int64, ok bool)
+	// FeedsFn, when set, supplies the digest of every Core feed this Edge holds,
+	// stamped onto every heartbeat so Core can answer them and send what
+	// differs. Read at send time. Nil leaves the field nil, which Core reads as
+	// an Edge that predates feeds.
+	FeedsFn func() map[string]string
 
 	DebugLog DebugLogFunc
 }
@@ -225,6 +230,9 @@ func (h *Heartbeater) heartbeatBody() *protocol.EdgeHeartbeat {
 		if pending, age, ok := h.TickLagFn(); ok {
 			b.TickPending, b.TickOldestUnsentAgeMS = &pending, &age
 		}
+	}
+	if h.FeedsFn != nil {
+		b.Feeds = h.FeedsFn()
 	}
 	return b
 }

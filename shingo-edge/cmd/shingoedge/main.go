@@ -336,6 +336,10 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// request, so Core sends the geometry only when the map changed.
 	hb.SceneRevisionFn = eng.SceneRevision
 
+	// The digest of every Core feed this Edge holds, on every heartbeat; Core
+	// answers on the ack and sends whichever differ.
+	hb.FeedsFn = eng.FeedDigests
+
 	// ── Subject router (Data sub-dispatch) ─────────────────────────────
 	// Every protocol.Subject* constant is registered against the closure that
 	// drives the corresponding Edge subsystem (engine method, heartbeater
@@ -379,6 +383,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeHeartbeatAck, func(_ *protocol.Envelope, ack *protocol.EdgeHeartbeatAck) {
 		log.Printf("edge_handler: heartbeat ack: station=%s server_ts=%s", ack.StationID, ack.ServerTS)
 		adoptPlantTimezone(eng.AppConfig(), eng.ConfigPath(), ack.Timezone)
+		eng.OnCoreAck(ack)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectNodeListResponse, func(_ *protocol.Envelope, resp *protocol.NodeListResponse) {
 		log.Printf("edge_handler: received node list (%d nodes, %d loaders, %d payload-bin-types, %d scene points, %d scene edges)",

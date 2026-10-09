@@ -26,7 +26,7 @@ func TestFeedsPin_HeartbeatBodyBytes(t *testing.T) {
 		{
 			name:  "unwired",
 			wire:  func(h *Heartbeater) {},
-			want:  `{"station_id":"edge.test","uptime_s":0,"active_orders":0}`,
+			want:  `{"station_id":"edge.test","uptime_s":0,"active_orders":0,"feeds":null}`, // F1: feeds joins, nil when unwired
 			after: `{"station_id":"edge.test","feeds":null}`,
 			label: "X5, F1",
 		},
@@ -37,8 +37,10 @@ func TestFeedsPin_HeartbeatBodyBytes(t *testing.T) {
 				h.TimezoneFn = func() string { return "America/Chicago" }
 				h.TickLagFn = func() (int64, int64, bool) { return 2, 1500, true }
 			},
-			want:  `{"station_id":"edge.test","uptime_s":0,"active_orders":3,"timezone":"America/Chicago","tick_pending":2,"tick_oldest_unsent_age_ms":1500}`,
-			after: `{"station_id":"edge.test","timezone":"America/Chicago","tick_pending":2,"tick_oldest_unsent_age_ms":1500,"feeds":{"catalog":"…","containment":"…","nodes":"…","refusals":"…","scene":"…"}}`,
+			want: `{"station_id":"edge.test","uptime_s":0,"active_orders":3,"timezone":"America/Chicago","tick_pending":2,"tick_oldest_unsent_age_ms":1500,"feeds":null}`, // F1
+			// Prediction corrected at F1: this case wires no FeedsFn, so feeds
+			// stays null; the map is covered where FeedsFn is wired.
+			after: `{"station_id":"edge.test","timezone":"America/Chicago","tick_pending":2,"tick_oldest_unsent_age_ms":1500,"feeds":null}`,
 			label: "X5, F1",
 		},
 	}

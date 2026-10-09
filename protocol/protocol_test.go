@@ -301,8 +301,8 @@ func TestDataTTLForSubjects(t *testing.T) {
 		subject string
 		want    time.Duration
 	}{
-		{SubjectEdgeHeartbeat, 90 * time.Second},
-		{SubjectEdgeHeartbeatAck, 90 * time.Second},
+		{SubjectEdgeHeartbeat, 5 * time.Minute}, // was 90 s: the TTL is also the clock skew tolerated
+		{SubjectEdgeHeartbeatAck, 5 * time.Minute},
 		{SubjectEdgeRegister, 5 * time.Minute},
 		{SubjectEdgeRegistered, 5 * time.Minute},
 		{"inventory.query", 5 * time.Minute}, // unknown subject falls back to TypeData default
