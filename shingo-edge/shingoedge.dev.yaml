@@ -221,6 +221,10 @@ sim:
     enabled: true
     loader_auto_load: 5s
     unloader_auto_clear: 8s
+    # The floor's pull (owner, 2026-10-10): at a consume release with 5% of the
+    # pack or less left, the operator pulls it into the lineside bucket and
+    # releases the bin empty; the weld runs on the bucket through the exchange.
+    lineside_pull_percent: 5
   # Downtime model v1 (G9, §3.1): clustered random outages.
   # Per-machine 85% availability via exponential TBF + bounded MTTR.
   # Produces realistic clustering (good weeks / bad weeks) for OEE.

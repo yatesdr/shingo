@@ -397,6 +397,14 @@ type SimOperatorsConfig struct {
 	// against the round-4 collision gate lost that window 480 times to this
 	// timer and reported the gate as never firing.
 	SwapRelease time.Duration `yaml:"swap_release"`
+	// LinesidePullPercent is how much of a pack the consume operator pulls into
+	// the lineside bucket to release a bin empty: at a release with the tracked
+	// count at or under this percent of the pack (rounded up), the remainder is
+	// captured to the pile and the bin goes empty; above it, a count release.
+	// 0 = never (a count release always). The owner's floor fact, 2026-10-10:
+	// operators pull the last few parts lineside so the weld runs through the
+	// exchange. Read by simOperator.consumeDisposition.
+	LinesidePullPercent int `yaml:"lineside_pull_percent"`
 	// PairRelease routes a staged swap through ReleaseStagedOrders — the
 	// operator's RELEASE button — instead of releasing each leg on its own.
 	//

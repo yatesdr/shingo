@@ -917,7 +917,11 @@ func (op *simOperator) runRelease(orderID int64) {
 //	                 this disposition is for — same wire shape as release-empty,
 //	                 and the tag carries the "physical inventory was less than
 //	                 tracked" signal so Core records released_underpack.
-//	tracked >  0  -> SEND PARTIAL BACK. Stock is left; the bin returns to the pool
+//	0 < tracked <= the pull (LinesidePullPercent of the pack, rounded up)
+//	              -> CAPTURE LINESIDE. The operator pulls the last parts into the
+//	                 lineside bucket and releases the bin empty; the weld runs on
+//	                 the bucket through the exchange (SimMachineReady).
+//	tracked >  the pull -> SEND PARTIAL BACK. Stock is left; the bin returns to the pool
 //	                 with its count and manifest intact, which is what makes it
 //	                 re-sourceable oldest-first.
 //
@@ -935,6 +939,14 @@ func (op *simOperator) consumeDisposition(nodeID int64) (ReleaseDisposition, boo
 	switch {
 	case ferr == nil && len(bins) > 0 && bins[0].Occupied && bins[0].UOPRemaining <= 0:
 		disp.Mode = DispositionReleaseUnderpack
+	case ferr == nil && len(bins) > 0 && bins[0].Occupied && bins[0].PayloadCode != "" &&
+		bins[0].UOPRemaining <= op.linesidePullAt(bins[0].PayloadCode, claim.UOPCapacity):
+		// THE FLOOR'S PULL (owner, 2026-10-10): the last few parts go into the
+		// lineside bucket and the bin is released empty, so the weld runs on the
+		// bucket through the exchange. The capture door is the HMI's: the pile
+		// gains the remainder and the bin's capture_reduction takes it to 0.
+		disp.Mode = DispositionCaptureLineside
+		disp.LinesideCapture = map[string]int{bins[0].PayloadCode: bins[0].UOPRemaining}
 	case !reachable:
 		// A HARNESS-FIDELITY HAZARD, NOT A PRODUCTION ONE, and it is worth a line
 		// because of what it turns into. The default is SendPartialBack, which
@@ -948,6 +960,26 @@ func (op *simOperator) consumeDisposition(nodeID int64) (ReleaseDisposition, boo
 			node.CoreNodeName, OccupancyOutcome(reachable, ferr))
 	}
 	return disp, true
+}
+
+// linesidePullAt is the count at or under which the consume operator pulls the
+// rest of a bin lineside: LinesidePullPercent of the pack, rounded up. The pack
+// is the payload catalog's (where a part's standard pack lives), the claim's
+// capacity when the catalog has none. 0 when the knob is off or no pack is
+// known, so no positive count is ever pulled.
+func (op *simOperator) linesidePullAt(payload string, claimCap int) int {
+	pct := op.ops.LinesidePullPercent
+	if pct <= 0 {
+		return 0
+	}
+	pack := claimCap
+	if entry, err := op.e.db.GetPayloadCatalogByCode(payload); err == nil && entry != nil && entry.UOPCapacity > 0 {
+		pack = entry.UOPCapacity
+	}
+	if pack <= 0 {
+		return 0
+	}
+	return (pack*pct + 99) / 100
 }
 
 // releaseAsPair pushes the operator's RELEASE BUTTON for the node this order
@@ -1083,5 +1115,40 @@ func (op *simOperator) loadBin(nodeID int64, claim *processes.NodeClaim) error {
 	manifest := []protocol.IngestManifestItem{{PartNumber: payload, Quantity: capacity}}
 	// The sim declares a count, so it travels as a value rather than as the
 	// absence that asks Core for the standard pack.
+	err := op.e.LoadBin(nodeID, payload, &capacity, manifest)
+	if err == nil || !op.clearedLabelledAtZero(nodeID) {
+		return err
+	}
 	return op.e.LoadBin(nodeID, payload, &capacity, manifest)
+}
+
+// clearedLabelledAtZero is what a trained person at the loader does with a
+// carrier that came back labelled but reading 0: confirm it is empty, CLEAR it,
+// then load. LOAD refuses such a carrier as "already loaded" and names an
+// outbound move that never comes, because Core will not send a carrier with no
+// units and the loader will not fill one with a label (the SHIM loop,
+// RULINGS-C2b-rebase6-and-loader-orphan §3, ruling a).
+//
+// A LABELLED CARRIER WITH UNITS IS NEVER CLEARED: it is stock, and it waits for
+// its outbound move as before. The read happens only after a refused load, so a
+// load that succeeds costs nothing more.
+func (op *simOperator) clearedLabelledAtZero(nodeID int64) bool {
+	node, err := op.e.db.GetProcessNode(nodeID)
+	if err != nil || node == nil || !op.e.coreClient.Available() {
+		return false
+	}
+	bins, _, ferr := op.e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
+	if ferr != nil || len(bins) == 0 {
+		return false
+	}
+	b := bins[0]
+	if !b.Occupied || b.PayloadCode == "" || b.UOPRemaining > 0 {
+		return false
+	}
+	if cerr := op.e.ClearBin(nodeID, ""); cerr != nil {
+		op.e.debugFn("[sim] operator: clear labelled carrier at 0 on %s: %v", node.CoreNodeName, cerr)
+		return false
+	}
+	op.e.logFn("[sim] operator cleared %s's labelled carrier at 0 (%s) before loading", node.CoreNodeName, b.PayloadCode)
+	return true
 }

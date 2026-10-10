@@ -152,6 +152,8 @@ sim:
     loader_auto_load: 30s
     unloader_auto_clear: 30s
     swap_release: 60s
+    # The floor's pull, as EDGE 1 (simOperator.consumeDisposition).
+    lineside_pull_percent: 5
 
   # Downtime OFF, deliberately. EDGE 1 runs it for OEE realism; here a random
   # outage inside the observation window would be indistinguishable from the

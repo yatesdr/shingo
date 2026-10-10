@@ -69,7 +69,9 @@ import (
 // a carrier early, and a DB blip must not stop the line.
 func SimMachineReady(db *sql.DB, processID, styleID int64) bool {
 	rows, err := db.Query(`
-		SELECT c.role, c.swap_mode, `+store.ClaimCapacitySQL("c")+`, r.active_bin_id, r.remaining_uop_cached, r.active_pull
+		SELECT c.role, c.swap_mode, `+store.ClaimCapacitySQL("c")+`, r.active_bin_id, r.remaining_uop_cached, r.active_pull,
+			EXISTS (SELECT 1 FROM node_lineside_bucket b WHERE b.node_id = pn.id
+				AND b.payload_code = c.payload_code AND b.state = 'active' AND b.qty > 0)
 		FROM process_nodes pn
 		JOIN style_node_claims c ON c.style_id = ? AND c.core_node_name = pn.core_node_name
 			AND c.retired_at IS NULL
@@ -84,12 +86,12 @@ func SimMachineReady(db *sql.DB, processID, styleID int64) bool {
 		var role string
 		var uopCap, remainingUOP int
 		var activeBinID sql.NullInt64
-		var activePull bool
+		var activePull, onPile bool
 		// Scanned into a claim rather than a bare string so the loader question
 		// is asked by name, the same way every other reader asks it. SwapMode is
 		// a sql.Scanner, so this costs nothing at the scan.
 		var claim processes.NodeClaim
-		if err := rows.Scan(&role, &claim.SwapMode, &uopCap, &activeBinID, &remainingUOP, &activePull); err != nil {
+		if err := rows.Scan(&role, &claim.SwapMode, &uopCap, &activeBinID, &remainingUOP, &activePull, &onPile); err != nil {
 			return true
 		}
 		// Loader windows are operator-managed, not PLC-ticked.
@@ -104,8 +106,18 @@ func SimMachineReady(db *sql.DB, processID, styleID int64) bool {
 		if !activePull {
 			continue
 		}
+		// A CONSUME SEAT RUNS ON ITS PILE through the exchange (owner, 2026-10-10):
+		// the operator pulled the last parts of the old bin into the lineside
+		// bucket, and the weld draws from it while the seat's carrier is at 0 or
+		// gone. A consume tick drains the pile first (drainLinesideFirst), so the
+		// count goes where the parts physically are. Only the seat's own part's
+		// pile counts; another part's parts do not feed this input.
+		empty := !activeBinID.Valid || activeBinID.Int64 == 0
+		if role == "consume" && (empty || remainingUOP <= 0) && onPile {
+			continue
+		}
 		// Every active non-loader node needs a bound carrier.
-		if !activeBinID.Valid || activeBinID.Int64 == 0 {
+		if empty {
 			return false // nothing on the position
 		}
 		// Consume nodes need UOP > 0 — a real cell cannot cycle an empty input,
