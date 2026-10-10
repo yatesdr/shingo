@@ -174,12 +174,12 @@ func TestEveryCheckReportsFailedToRunOnABrokenDB(t *testing.T) {
 func TestEveryMeasureReportsFailedToRunOnABrokenDB(t *testing.T) {
 	t.Parallel()
 	for _, drv := range brokenDrivers {
-		r := collect(stubDB(t, drv), "")
+		r := collect(stubDB(t, drv), "", "", nil)
 		if len(r.violations) != 0 {
 			t.Errorf("[%s] a broken database produced violations %v — failures must be failed-to-run, not findings", drv, r.violations)
 		}
 		for _, m := range []string{measureDigs, measureReuse, measureLanes, measureGated,
-			measureDwell, measureDepth, measureDissolves, measureCauses} {
+			measureDwell, measureDepth, measureDissolves, measureCauses, measurePull} {
 			if !r.unrunMeasures[m] {
 				t.Errorf("[%s] measure %s did not report FAILED TO RUN on a broken database", drv, m)
 			}

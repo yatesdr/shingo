@@ -1064,6 +1064,18 @@ func DeclaredQueueCauses() []string {
 	return out
 }
 
+// ReleaserOf is the inventory's answer for one cause: the sentence naming what
+// ends the wait, and whether that is an event (a row with no finding). Exported
+// for the soak's stranded-orders table, which asks whether a waiter nobody holds
+// has a releaser that can still fire.
+func ReleaserOf(cause string) (what string, evented bool) {
+	r, ok := releaserFor(QueueCause(cause))
+	if !ok {
+		return "", false
+	}
+	return r.what, r.finding == ""
+}
+
 // FloorReleaseAction is the recovery_actions verb the liveness floor writes,
 // exported so the soak can group by it.
 const FloorReleaseAction = floorReleaseAction

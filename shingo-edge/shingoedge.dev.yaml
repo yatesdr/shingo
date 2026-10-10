@@ -95,10 +95,35 @@ sim:
   # headroom — it sits mid-level, neither pinning full (no overfill jam) nor draining dry
   # (no weld starvation). BRKT has no PLC (loader-fed; WELD-2 drains it at 6/min). Verify
   # with `make dev-rates` (the fill/starve helper).
+  # THE PRESSES TICK AT 27s, BALANCED TO THEIR WELDS' MEASURED DRAW (C2b,
+  # 2026-10-09; RULINGS-C2b-second-jam-and-sim-stabilisation, item 3).
+  #
+  # Nameplate parity (press 6/min = weld 6/min) does not hold in this rig, because a
+  # weld cycles only while every carrier it needs is in place (engine
+  # SimMachineReady): WELD-2 needs PANEL-B, BRKT and an ASSY carrier with room,
+  # WELD-1 its PANEL-A and its ASSY carrier, and each swap stops the cell until a
+  # robot brings the next one. So the welds' EFFECTIVE draw is set by their swap
+  # cadence, about a third of nameplate, while a press cycles on its own. Measured
+  # from the unit ledger (units per plant-minute):
+  #
+  #   demo 05800934:        WELD-1 1.79  WELD-2 1.82   PRESS-1 3.9  PRESS-2 3.0
+  #   packed d1c51dba base: WELD-1 1.98  WELD-2 1.95   PRESS-1 2.4  PRESS-2 3.0
+  #
+  # Over-production is not storage: every full rides a finite carrier pool, so the
+  # fulls captured all 18 STANDARD-SM carriers (every press-empty order then waited,
+  # 05800934 and 8a2b01e4) and filled SYN_MARKET with PANEL-A (41/45, the second
+  # jam's layer 2). 27s is 2.22/min nameplate, 1.89/min at the 85% availability
+  # below: within ~6% of every weld draw above, in both fixtures. soakstat's
+  # [S.2] FIXTURE BALANCE flags any payload made faster than it is drawn by more
+  # than 10%, so a fixture imbalance never again reads as a Core jam.
+  #
+  # The 10s / 12s settings and their notes below are the history of this setting:
+  # 12s for PRESS-2 matched WELD-2's 4.2/min draw of the 2026-09-07 run, before
+  # WELD-1 went back to the line rate and the swap modes changed; it no longer does.
   processes:
     - plc_name: PRESS-1
       tag_name: PRESS-1_COUNTER
-      tick_interval: 10s
+      tick_interval: 27s
       uop_per_tick: 1
     # PRESS-2 IS SLOWER THAN PARITY, ON PURPOSE (acceptance run 2026-09-07).
     #
@@ -128,7 +153,7 @@ sim:
     # (dev-rates' second half) is the one that bit before.
     - plc_name: PRESS-2
       tag_name: PRESS-2_COUNTER
-      tick_interval: 12s
+      tick_interval: 27s
       uop_per_tick: 1
     # WELD-1 IS BACK TO THE LINE RATE, and the halving it carried was compensation
     # for a drain that no longer exists.

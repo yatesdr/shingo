@@ -643,6 +643,21 @@ func simSeconds(cfg *config.Config) *float64 {
 	return &s
 }
 
+// simNowTime is the sim clock's now, nil when the config runs no synced sim
+// clock (a dump read offline, a real plant).
+func simNowTime(cfg *config.Config) *time.Time {
+	s := simSeconds(cfg)
+	if s == nil {
+		return nil
+	}
+	epoch, _, _, err := clock.ResolveAnchor(cfg.Sim.Epoch, cfg.Sim.AnchorWall)
+	if err != nil {
+		return nil
+	}
+	t := epoch.Add(time.Duration(*s * float64(time.Second)))
+	return &t
+}
+
 // appendLedger takes one sample now and appends it to path.
 func appendLedger(db *sql.DB, path string, n int, simS *float64) error {
 	l, err := takeLedgerSample(db, n, time.Now(), simS)

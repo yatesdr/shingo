@@ -31,7 +31,7 @@ func TestEverySoakstatQueryRunsAgainstTheMigratedSchema(t *testing.T) {
 	typeCode, nodeID := poolFixture(t, db, "EVERYQUERY")
 	seedCarrier(t, db, typeCode, nodeID, typeCode+"-1", "")
 
-	r := collect(db, "")
+	r := collect(db, "", "", nil)
 	for _, l := range r.failedToRun {
 		t.Errorf("%s", l)
 	}

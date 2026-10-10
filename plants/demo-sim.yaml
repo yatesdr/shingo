@@ -12,6 +12,16 @@
 # 40-minute runs starved (Stage A certification, 2026-09-26). +150 uop takes it to 265 uop,
 # 4.4 sim-h, about 53 wall-minutes: a 40-minute run stays healthy with margin.
 #
+# demo-sim: THE PRESSES ARE BALANCED TO THEIR WELDS (2026-10-09). PRESS-1 and PRESS-2
+# made PANEL-A and PANEL-B two and 1.7 times as fast as WELD-1 and WELD-2 drew them,
+# because a weld's effective draw is set by its swap cadence, not its nameplate. The
+# fulls captured every STANDARD-SM carrier (the press-empty waits) and filled
+# SYN_MARKET with PANEL-A (the second jam of 2026-10-09). The presses now tick at
+# 27s, about 1.89/min effective against the welds' measured 1.8-2.0/min. The rates
+# live in shingo-edge/shingoedge.dev.yaml (the PRESS-1 block says why); this plant
+# carries no rate of its own. The before runs on the unbalanced fixture stay in the
+# C2b record as that fixture's.
+#
 # plants/demo.yaml — the local-dev/sim demo plant.
 #
 # A small, self-running circular loop with REALISTIC SHARED MARKETS: a few depth-3 FIFO

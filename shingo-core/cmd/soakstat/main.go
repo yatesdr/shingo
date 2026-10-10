@@ -55,6 +55,12 @@ func main() {
 	oneline := flag.Bool("oneline", false, "print the single-line summary and nothing else")
 	ledgerPath := flag.String("ledger", "", "append one ledger sample to this file and exit (see ledger.go)")
 	sampleN := flag.Int("sample", 0, "the ledger sample number (with -ledger)")
+	pullPath := flag.String("pull", "", "read each station's orders against this baseline (see station_pull.go)")
+	pullOut := flag.String("pull-out", "", "write this run's station rates as a baseline to this file")
+	strandedOnly := flag.Bool("stranded", false, "print the stranded-orders table and Active Orders only (reads main's schema too)")
+	var edgeDBs edgeDBFlag
+	flag.Var(&edgeDBs, "edge-db", "an Edge SQLite to read, read-only (repeatable, or a comma list; see edge.go)")
+	edgeDir := flag.String("edge-dir", "", "a directory of <svc>/shingoedge.db (and optional <svc>/edge.log), one per Edge")
 	flag.Parse()
 
 	cfg, err := config.Load(*configPath)
@@ -82,7 +88,29 @@ func main() {
 		return
 	}
 
-	r := collect(db, *logSource)
+	if *strandedOnly {
+		sr, err := readStranded(db.DB, simNowTime(cfg))
+		if err != nil {
+			log.Fatalf("stranded: %v", err)
+		}
+		sr.print()
+		if sr.noRel > 0 {
+			os.Exit(1)
+		}
+		return
+	}
+
+	r := collect(db, *logSource, *pullPath, simNowTime(cfg))
+	sources, err := edgeSources(edgeDBs, *edgeDir)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	r.addEdges(sources)
+	if *pullOut != "" {
+		if err := writePullBaseline(*pullOut, r.pulls, r.pullHours); err != nil {
+			log.Fatalf("pull-out: %v", err)
+		}
+	}
 	if *oneline {
 		fmt.Println(r.summary())
 		fmt.Println(r.pair.pairLine())
@@ -121,7 +149,43 @@ type report struct {
 	// unrunMeasures marks the measure sections whose query failed, so the
 	// report prints FAILED-TO-RUN in place of their (empty) numbers.
 	unrunMeasures map[string]bool
+
+	pulls         []stationPull
+	pullHours     float64
+	pullFindings  []string
+	pullBaselined bool
 	pair          pairStats
+	// stranded is the jam check, printed before everything else (stranded.go).
+	// nil when its query failed, which is a failed-to-run line.
+	stranded *strandedReport
+	// balance is the fixture check, printed right after it (fixture_balance.go).
+	balance []payloadBalance
+	// divergences is the run's lineside report episodes (divergences.go).
+	divergences []divergenceClass
+	// handoff is the carrier-handoff before-numbers (handoff.go); nil when its
+	// reads failed.
+	handoff *handoffCore
+	// edges is one reading per -edge-db / -edge-dir Edge, nil where it failed
+	// to read (edge.go).
+	edges []*edgeReading
+}
+
+// addEdges reads the Edges named on the command line. Run after collect, and
+// a failure joins its failed-to-run lines, so an Edge that did not read fails
+// the run as any instrument does.
+func (r *report) addEdges(sources []edgeSource) {
+	if len(sources) == 0 {
+		return
+	}
+	u := &unrun{}
+	r.edges = readEdges(sources, u)
+	r.failedToRun = append(r.failedToRun, u.lines...)
+	if r.unrunMeasures == nil {
+		r.unrunMeasures = map[string]bool{}
+	}
+	for m := range u.measures {
+		r.unrunMeasures[m] = true
+	}
 }
 
 // pairStats is what a sim pair compares, base tip against phase tip, on the same
@@ -224,6 +288,7 @@ func (r reading) String() string {
 
 // The measure sections, as the report names them.
 const (
+	measureStranded  = "STRANDED ORDERS"
 	measureOrders    = "ORDERS"
 	measureDigs      = "[3.8] ROBOTS PER DIG"
 	measureReuse     = "[8.8] ROBOT REUSE ACROSS LEGS"
@@ -323,9 +388,29 @@ var (
 	lostSlotRe = regexp.MustCompile(`dig dwell: leg (\d+) lost \S+ between choosing it and claiming it`)
 )
 
-func collect(db *store.DB, logSource string) *report {
+func collect(db *store.DB, logSource, pullPath string, simNow *time.Time) *report {
 	r := &report{gated: map[bool]flowStats{}}
 	u := &unrun{}
+	if dv, err := lineSideDivergences(db.DB, simNow); err != nil {
+		u.fail(measureDivergence, err)
+	} else {
+		r.divergences = dv
+	}
+	if sr, err := readStranded(db.DB, simNow); err != nil {
+		u.fail(measureStranded, err)
+	} else {
+		r.stranded = sr
+	}
+	if bal, err := fixtureBalance(db.DB); err != nil {
+		u.fail(measureBalance, err)
+	} else {
+		r.balance = bal
+	}
+	if h, err := readHandoff(db.DB); err != nil {
+		u.fail(measureHandoff, err)
+	} else {
+		r.handoff = h
+	}
 	r.orders = orderCounts(db, u)
 	r.digs = digDistribution(db, u)
 	r.robotReuse = robotReuse(db, u)
@@ -345,9 +430,30 @@ func collect(db *store.DB, logSource string) *report {
 	}
 	var checksUnrun []string
 	r.violations, checksUnrun = splitFailedToRun(checkInvariants(db))
+	if r.stranded != nil && r.stranded.noRel > 0 {
+		r.violations = append([]string{strandedVerdictPrefix + " " + r.stranded.verdict()}, r.violations...)
+	}
 	// After the checks (it counts the stall violations) and before the
 	// failed-to-run lines are gathered, so a pair query that fails is one.
 	r.pair = pairMeasures(db, u, r.violations, r.lanes)
+	if pulls, hours, err := stationPulls(db.DB); err != nil {
+		u.fail(measurePull, err)
+	} else {
+		r.pulls, r.pullHours = pulls, hours
+		if pullPath != "" {
+			base, berr := readPullBaseline(pullPath)
+			if berr != nil {
+				u.fail(measurePull, berr)
+			} else {
+				var silent []string
+				r.pulls, silent = applyPullBaseline(r.pulls, base)
+				r.pullFindings = pullFindings(r.pulls, silent)
+				r.pullBaselined = true
+				// A station below its pull is the run failing the plant: a violation.
+				r.violations = append(r.violations, r.pullFindings...)
+			}
+		}
+	}
 	r.failedToRun = append(u.lines, checksUnrun...)
 	r.unrunMeasures = u.measures
 	return r
@@ -789,7 +895,11 @@ func gatedVsUngated(db *store.DB, u *unrun) map[bool]flowStats {
 // takes the latest, which is the outbound one by construction (the dwell cannot
 // precede the entry it follows).
 //
-// AN OPEN DWELL IS MEASURED AGAINST NOW, deliberately. A leg still standing when
+// AN OPEN DWELL IS MEASURED AGAINST NOW, deliberately, and NOW IS THE SIM'S:
+// the newest history row, as hist-wedges reads it. History is stamped on the
+// sim clock, which a sped-up sim runs ahead of the server's; aged against the
+// server's NOW() one open leg read minus two and a half hours and took the
+// demo run's average to -2219 s (2026-10-08). A leg still standing when
 // the sample is taken is exactly the population a ballooning trend is made of,
 // and excluding it would make the average look best at the worst moment — the
 // same premature-read error §R.12 cost this stream once already.
@@ -800,7 +910,8 @@ func dwellDuration(db *store.DB, u *unrun) dwellStats {
 	// written (protocol.TerminalStatusSQLList), and a second spelling of "which
 	// statuses are terminal" is exactly what a status added later would break.
 	err := db.DB.QueryRow(fmt.Sprintf(`
-		WITH last_stage AS (
+		WITH now_sim AS (SELECT MAX(created_at) AS t FROM order_history),
+		last_stage AS (
 			SELECT DISTINCT ON (h.order_id) h.order_id, h.created_at AS started
 			FROM order_history h
 			JOIN orders o ON o.id = h.order_id
@@ -820,8 +931,8 @@ func dwellDuration(db *store.DB, u *unrun) dwellStats {
 		)
 		SELECT COUNT(*),
 		       COUNT(*) FILTER (WHERE still_open),
-		       COALESCE(AVG(EXTRACT(EPOCH FROM (COALESCE(ended, NOW()) - started))), 0),
-		       COALESCE(MAX(EXTRACT(EPOCH FROM (COALESCE(ended, NOW()) - started))), 0)
+		       COALESCE(AVG(EXTRACT(EPOCH FROM (COALESCE(ended, (SELECT t FROM now_sim)) - started))), 0),
+		       COALESCE(MAX(EXTRACT(EPOCH FROM (COALESCE(ended, (SELECT t FROM now_sim)) - started))), 0)
 		FROM dwell`, protocol.TerminalStatusSQLList()),
 		string(protocol.StatusStaged)).
 		Scan(&s.n, &s.open, &s.avgS, &s.maxS)
@@ -1054,15 +1165,11 @@ func readLog(source string) *logStats {
 // ── output ────────────────────────────────────────────────────────────────────
 
 func (r *report) report() {
+	// THE JAM CHECK FIRST. Throughput is read only after it, never before.
+	r.printStranded()
 	fmt.Println("SOAK MEASURES")
 	fmt.Println(strings.Repeat("=", 78))
-
-	if len(r.failedToRun) > 0 {
-		fmt.Printf("\nFAILED TO RUN — %d instrument(s) did not measure; their sections read FAILED-TO-RUN, not zero\n", len(r.failedToRun))
-		for _, l := range r.failedToRun {
-			fmt.Printf("        %s\n", l)
-		}
-	}
+	r.printFailedToRun()
 
 	c := r.orders
 	fmt.Printf("\nORDERS  total %s · completed %s · failed %s · cancelled %s · in-flight %s · queued %s\n",
@@ -1164,6 +1271,10 @@ func (r *report) report() {
 		}
 	}
 
+	r.printPullSection()
+	printDivergences(r.divergences, r.unrunMeasures[measureDivergence])
+	r.printHandoffSections()
+
 	fmt.Printf("\nINVARIANTS\n")
 	switch {
 	case len(r.violations) == 0 && len(r.failedToRun) == 0:
@@ -1174,6 +1285,30 @@ func (r *report) report() {
 	for _, v := range r.violations {
 		fmt.Printf("        VIOLATION: %s\n", v)
 	}
+}
+
+// printFailedToRun lists the instruments that did not measure, when any.
+func (r *report) printFailedToRun() {
+	if len(r.failedToRun) == 0 {
+		return
+	}
+	fmt.Printf("\nFAILED TO RUN — %d instrument(s) did not measure; their sections read FAILED-TO-RUN, not zero\n", len(r.failedToRun))
+	for _, l := range r.failedToRun {
+		fmt.Printf("        %s\n", l)
+	}
+}
+
+// printStranded prints the stranded-orders table and Active Orders, or says the
+// table failed to run (stranded.go), and then the fixture balance, which is what
+// tells a fixture's material waits from Core's.
+func (r *report) printStranded() {
+	if r.stranded == nil {
+		fmt.Println("STRANDED ORDERS AT RUN END  FAILED-TO-RUN")
+		fmt.Println()
+	} else {
+		r.stranded.print()
+	}
+	printBalance(r.balance, r.unrunMeasures[measureBalance])
 }
 
 // summary is the one line the campaign asked for: a soak run readable at a
@@ -1188,7 +1323,14 @@ func (r *report) summary() string {
 	if r.robotReuse.consecutivePairs > 0 {
 		reuse = fmt.Sprintf("%.0f%%", 100*float64(r.robotReuse.sameRobot)/float64(r.robotReuse.consecutivePairs))
 	}
-	return fmt.Sprintf(
+	jam := "stranded ?"
+	if r.stranded != nil {
+		jam = "stranded " + r.stranded.verdict()
+	}
+	if !r.unrunMeasures[measureBalance] {
+		jam += " · " + balanceFlags(r.balance)
+	}
+	return jam + " · " + fmt.Sprintf(
 		"SOAK: orders %s done/%s fail · digs %d (max %d legs) · reuse %s · gated %.0fs vs ungated %.0fs · "+
 			"dwell %d avg %.0fs max %.0fs (%d open) · dissolves %s (mid-lift %s) · hard-burials %s · holds-at-rest %d · violations %d · failed-to-run %d",
 		r.orders.completed, r.orders.failed, r.digs.parents, r.digs.maxLegs, reuse,
@@ -1662,12 +1804,17 @@ func checkQueuedWithoutCause(db *store.DB) []string {
 	// A wait with no cause on the row. The operator sentence is the whole point
 	// of parking rather than failing; a parked order nobody can explain is the
 	// shape this stream exists to refuse.
+	//
+	// AND A DIG LEG WAITING `pending` IS A WAIT (dig-parking ruling, 2026-10-09,
+	// item 5). The waiting statuses do not include `pending`, so a leg born behind
+	// its sibling was read by nothing: leg 968 of the 10-09 demo waited with no
+	// cause and this sweep could not see it.
 	n, err := scalar(db, fmt.Sprintf(`
 		SELECT COUNT(*) FROM orders
-		WHERE status IN (%s)
+		WHERE (status IN (%s) OR (status = '%s' AND parent_order_id IS NOT NULL))
 		  AND (queue_cause IS NULL OR queue_cause = '')
 		  AND created_at < now() - interval '5 minutes'`,
-		protocol.WaitingStatusSQLList()))
+		protocol.WaitingStatusSQLList(), protocol.StatusPending))
 	if err != nil {
 		return append(out, failedToRun("waiting with no cause", err))
 	}
