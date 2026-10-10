@@ -37,6 +37,7 @@ import (
 type scWindow struct {
 	occupied bool
 	payload  string
+	uop      int // what node-bins reports as UOPRemaining
 }
 
 // scCore serves node-bins, bin-load and bin-clear from a per-node map the test
@@ -48,6 +49,8 @@ type scCore struct {
 	binReads int
 	// loadBinIDs is the bin_id of every bin-load request, in order.
 	loadBinIDs []int64
+	// clears counts the bin-clear requests Core accepted.
+	clears int
 }
 
 // nodeBinReads is how many node-bins requests Core has served so far.
@@ -71,6 +74,20 @@ func (c *scCore) set(node string, occupied bool, payload string) {
 	c.windows[node] = &scWindow{occupied: occupied, payload: payload}
 }
 
+// setCount is set with the carrier's count as well.
+func (c *scCore) setCount(node string, occupied bool, payload string, uop int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.windows[node] = &scWindow{occupied: occupied, payload: payload, uop: uop}
+}
+
+// clearCount is how many bin-clear requests Core has accepted so far.
+func (c *scCore) clearCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.clears
+}
+
 func (c *scCore) serve(w http.ResponseWriter, r *http.Request) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -84,7 +101,7 @@ func (c *scCore) serve(w http.ResponseWriter, r *http.Request) {
 				out = append(out, NodeBinInfo{NodeName: n})
 				continue
 			}
-			out = append(out, NodeBinInfo{NodeName: n, Occupied: win.occupied, PayloadCode: win.payload, BinID: 77})
+			out = append(out, NodeBinInfo{NodeName: n, Occupied: win.occupied, PayloadCode: win.payload, BinID: 77, UOPRemaining: win.uop})
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	case "/api/telemetry/bin-load":
@@ -93,6 +110,7 @@ func (c *scCore) serve(w http.ResponseWriter, r *http.Request) {
 		c.loadBinIDs = append(c.loadBinIDs, req.BinID)
 		if win := c.windows[req.NodeName]; win != nil {
 			win.payload = req.PayloadCode
+			win.uop = 40
 		}
 		_ = json.NewEncoder(w).Encode(BinLoadResponse{
 			Status: "ok", BinID: 77, PayloadCode: req.PayloadCode, UOPRemaining: 40, DeltaEpoch: 3,
@@ -109,6 +127,8 @@ func (c *scCore) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		cleared := win.payload
 		win.payload = ""
+		win.uop = 0
+		c.clears++
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "bin_id": 77, "delta_epoch": 4, "cleared_payload_code": cleared})
 	default:
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
