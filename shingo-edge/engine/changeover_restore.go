@@ -89,15 +89,14 @@ func (e *Engine) reconcileNodeTask(task *processes.NodeTask, toStyleID int64) bo
 								// where the bin was delivered and its count seeded, so
 								// zeroing here destroys a measurement of something
 								// physically standing at the node. Advance the claim;
-								// leave the number alone. Same rule as SwitchNode's
-								// seed, which this restore was written alongside and
-								// did not get.
-								uop := 0
-								if rt, rerr := e.db.GetProcessNodeRuntime(task.ProcessNodeID); rerr == nil &&
-									rt != nil && rt.ActiveBinID != nil {
-									uop = rt.RemainingUOPCached
-								}
-								if err := e.inventoryDelta.SetClaimAndCount(task.ProcessNodeID, &claimID, uop); err != nil {
+								// leave the number alone.
+								//
+								// The claim-only statement is what leaves it alone.
+								// This used to re-read the runtime and write its count
+								// back (0 when no carrier was bound, and 0 on a failed
+								// read, over a bound carrier); the re-read went with
+								// it (DESIGN-H §9.1).
+								if err := e.inventoryDelta.SetClaim(task.ProcessNodeID, &claimID); err != nil {
 									log.Printf("changeover: set runtime for node %d: %v", task.ProcessNodeID, err)
 								}
 							}

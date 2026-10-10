@@ -126,7 +126,11 @@ func NewEdgeWithCoreAPI(t *testing.T, stationID, coreAPI string) *Edge {
 		eng.SetCoreNodes(resp.Nodes)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectBinPickedUp, func(_ *protocol.Envelope, bp *protocol.BinPickedUp) {
-		eng.HandleBinPickedUp(bp.OrderUUID, bp.BinID, bp.Location)
+		eng.HandleBinPickedUpMessage(*bp)
+	})
+	// The landing (Lane H): the one door that binds a carrier Core placed.
+	router.RegisterSubject(subjectRouter, protocol.SubjectBinLanded, func(_ *protocol.Envelope, bl *protocol.BinLanded) {
+		eng.HandleBinLanded(*bl)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectBinReturn, func(_ *protocol.Envelope, br *protocol.BinReturn) {
 		eng.HandleBinReturn(*br)

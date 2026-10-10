@@ -262,7 +262,7 @@ func TestFence_AdjustmentsRacingTicksAndFlushesKeepTheInvariant(t *testing.T) {
 	claim, err := db.GetStyleNodeClaim(fromClaimID)
 	testutil.MustNoErr(t, err, "read claim")
 	const binID, epoch = int64(15), int64(1)
-	testutil.MustNoErr(t, db.SetProcessNodeRuntimeForDeliveredBin(nodeID, &fromClaimID, binID, epoch, 7032), "bind carrier")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &fromClaimID, binPtr(binID), epoch, 7032), "bind carrier")
 	node, err := db.GetProcessNode(nodeID)
 	testutil.MustNoErr(t, err, "read node")
 

@@ -32,6 +32,12 @@ func (db *DB) SetProcessNodeRuntime(processNodeID int64, activeClaimID *int64, r
 	return processes.SetRuntime(db.DB, processNodeID, activeClaimID, remainingUOP)
 }
 
+// SetProcessNodeActiveClaim points the runtime row at a claim, leaving the
+// count, the pointers and the hold alone. See processes.SetRuntimeClaim.
+func (db *DB) SetProcessNodeActiveClaim(processNodeID int64, activeClaimID *int64) error {
+	return processes.SetRuntimeClaim(db.DB, processNodeID, activeClaimID)
+}
+
 // SetProcessNodeRuntimeClaimCountAndEpoch writes the claim and the count
 // and advances the stamp for the carrier the write names, leaving the bin
 // pointer alone. Used by the clear routes, where Core starts the carrier's
@@ -59,6 +65,12 @@ func (db *DB) SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64)
 // See processes.ClearActiveBinAndCount.
 func (db *DB) ClearProcessNodeActiveBinAndCount(processNodeID int64) error {
 	return processes.ClearActiveBinAndCount(db.DB, processNodeID)
+}
+
+// LeaveProcessNodeAtPickup is the pickup's carrier-left statement (Lane H,
+// D11): see processes.LeaveAtPickup.
+func (db *DB) LeaveProcessNodeAtPickup(processNodeID, pickupEpoch int64, hold int, holdPart string) error {
+	return processes.LeaveAtPickup(db.DB, processNodeID, pickupEpoch, hold, holdPart)
 }
 
 // SetProcessNodeActiveBinIDAndEpoch writes the active bin pointer and
@@ -90,14 +102,11 @@ func (db *DB) BindEmptySlotUnlessDeparted(processNodeID int64, activeClaimID *in
 	return processes.BindEmptySlotUnlessDeparted(db.DB, processNodeID, activeClaimID, binID, deltaEpoch, remainingUOP)
 }
 
-// SetProcessNodeRuntimeForDeliveredBin writes active_claim_id,
-// active_bin_id, active_bin_epoch, and remaining_uop_cached atomically
-// when a bin physically arrives at the slot. deltaEpoch is the arrived
-// bin's load-lifecycle epoch (from the OrderDelivered envelope) so
-// subsequent tick deltas carry the right generation; remainingUOP is the
-// bin's authoritative count from the same envelope.
-func (db *DB) SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, remainingUOP int) error {
-	return processes.SetRuntimeForDeliveredBin(db.DB, processNodeID, activeClaimID, binID, deltaEpoch, remainingUOP)
+// BindLandingAt binds the carrier a landing names at the slot, its refusals
+// in its WHERE (Lane H, H.4). Reports whether it landed. See
+// processes.BindLanding.
+func (db *DB) BindLandingAt(processNodeID int64, l processes.LandingBind) (bool, error) {
+	return processes.BindLanding(db.DB, processNodeID, l)
 }
 
 // SetProcessNodeRuntimeLinesidePayload records the identity of the carrier
@@ -149,10 +158,25 @@ func (db *DB) UpdateProcessNodeUOP(processNodeID int64, remainingUOP int) error 
 	return processes.UpdateRuntimeUOP(db.DB, processNodeID, remainingUOP)
 }
 
-// AddPendingUOPDelta accumulates a tick count held while no bin is bound
-// at the slot (hold-and-replay gap handling).
+// SetProcessNodeReleaseCount writes the outgoing carrier's count at its
+// release and marks it released-empty when the count is 0. See
+// processes.SetRuntimeReleaseCount.
+func (db *DB) SetProcessNodeReleaseCount(processNodeID int64, remainingUOP int) error {
+	return processes.SetRuntimeReleaseCount(db.DB, processNodeID, remainingUOP)
+}
+
+// HoldPendingUOP accumulates a tick count held for the next carrier of part
+// (hold-and-replay), writing the part in the same statement. The tick path's
+// hold (applyHoldAndReplay).
+func (db *DB) HoldPendingUOP(processNodeID int64, delta int, part string) error {
+	return processes.AddPendingUOPDelta(db.DB, processNodeID, delta, part)
+}
+
+// AddPendingUOPDelta seeds a hold of no known part. NO PRODUCTION CALLER:
+// the tick path holds through HoldPendingUOP, which records the part; test
+// fixtures seed holds with this.
 func (db *DB) AddPendingUOPDelta(processNodeID int64, delta int) error {
-	return processes.AddPendingUOPDelta(db.DB, processNodeID, delta)
+	return processes.AddPendingUOPDelta(db.DB, processNodeID, delta, "")
 }
 
 // SetProcessNodeUOPClearPending writes the cached UOP and zeroes the

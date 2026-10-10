@@ -170,3 +170,18 @@ func TestNewDataEnvelope_BinPickedUpCarriesNoExpiry(t *testing.T) {
 		t.Fatalf("transit.bin_picked_up ExpiresAt = %v, want zero (never expires)", env.ExpiresAt)
 	}
 }
+
+// TestNewDataEnvelope_BinLandedCarriesNoExpiry: a carrier's drop is durable
+// (Lane H, H.6): a copy dropped after an outage leaves a seat empty while a
+// carrier stands on it. A late copy is refused by the seat's placement stamp.
+func TestNewDataEnvelope_BinLandedCarriesNoExpiry(t *testing.T) {
+	t.Parallel()
+	env, err := NewDataEnvelope(SubjectBinLanded, Address{Role: RoleCore}, Address{Role: RoleEdge, Station: "plant-a.line-1"},
+		&BinLanded{BinID: 9, CoreNodeName: "SYN-PRESS", Count: 40, Epoch: 2, PlacedSeq: 7})
+	if err != nil {
+		t.Fatalf("NewDataEnvelope: %v", err)
+	}
+	if !env.ExpiresAt.IsZero() || IsExpired(env) {
+		t.Fatalf("transit.bin_landed ExpiresAt = %v, want zero (never expires)", env.ExpiresAt)
+	}
+}

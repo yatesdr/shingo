@@ -433,6 +433,17 @@ type OrderDelivered struct {
 	// node's CoreNodeName. Empty for single-bin orders, whose existing
 	// delivery-gate (steps finalDropoff / DeliveryNode) is unchanged.
 	BinDestNode string `json:"bin_dest_node,omitempty"`
+
+	// LandingSent says the Core that sent this also announces its carriers'
+	// drops on SubjectBinLanded (Lane H, H.7). A new Edge binds nothing from a
+	// delivered that carries it (H.5). Without it the sender is an older Core
+	// that never sends a landing, and a new Edge routes the carrier fields
+	// above through its landing verb with no placement stamp: into an empty
+	// slot or onto the same bin only, never over a different bound carrier.
+	// Nothing else forbids a new Edge talking to an old Core (DESIGN-H S6),
+	// hence the flag. The flag, that adapter and the carrier fields above go on
+	// the cleanup sweep row the release after.
+	LandingSent bool `json:"landing_sent,omitempty"`
 }
 
 // BinPickedUp notifies Edge that a robot has physically picked up a
@@ -447,11 +458,60 @@ type OrderDelivered struct {
 // Edge crash during the pickup window is handled by the reconciler:
 // the released bin's count may be biased by a tick or two, accepted
 // per SME (open-items.md Q2”).
+//
+// Lane H, DECISIONS D11: the lift ends the carrier's generation. Core writes
+// this message in the transaction that moved the bin to _TRANSIT and, for a
+// streamed bin, bumped its delta_epoch and stamped bins.lifted_at. Epoch is
+// the generation the lift left the bin at (0 from a Core that predates it);
+// PickedUpAt is lifted_at itself, the T of mechanism (ii)'s rule: a window of
+// the generation that ended here is the old bin's if it starts before T and
+// not if it starts at or after T, judged the same way by both books.
 type BinPickedUp struct {
 	OrderUUID  string    `json:"order_uuid"`
 	BinID      int64     `json:"bin_id"`
 	Location   string    `json:"location"`
 	PickedUpAt time.Time `json:"picked_up_at"`
+	Epoch      int64     `json:"epoch,omitempty"`
+}
+
+// BinLanded tells the station that binds at CoreNodeName that bin BinID came
+// to rest there (Lane H, H.1). Sent on SubjectBinLanded, written by Core as an
+// outbox row in the same transaction that moved the bin (H.2), so it exists
+// exactly when the move does. It is the only message that binds a carrier
+// Core placed; order.delivered closes the order and binds nothing (H.5).
+//
+// Count and Epoch are the bin's uop_remaining and delta_epoch as that
+// transaction left them. PayloadCode with PayloadKnown is what the carrier
+// is: PayloadKnown false means Core does not know, which the Edge records as
+// UNKNOWN, never as the previous occupant's part. OrderUUID is the order whose
+// drop this was, empty for a move with none (an admin move, an inferred
+// placement).
+//
+// PlacedSeq is the placement stamp (DECISIONS D10): a value of Core's
+// bin_placement_seq taken in the arrival's own UPDATE, so it grows with every
+// placement Core records. The seat keeps the stamp of the landing it last
+// bound and refuses one not newer, which is what makes a redelivered or
+// overtaken landing harmless (the Edge has no inbound dedup, and this subject
+// never expires). PlacedAt is Core's clock at the move, for the time-ordered
+// readers; the bind orders on PlacedSeq alone, because a clock can step.
+// EdgeSchemaBinLanded is the first Edge schema version (its applied
+// schema_migrations version, EdgeRegister.SchemaVersion) that can bind a
+// landing: the migration that adds process_node_runtime_states.placed_seq
+// (Lane H, D10). Core sends a landing only to a station registered at or
+// above it, and today's wire (an addressed Bound) to the rest (H.7). The Edge
+// pins its own migration list against this number, so the two cannot drift.
+const EdgeSchemaBinLanded = 20
+
+type BinLanded struct {
+	BinID        int64     `json:"bin_id"`
+	CoreNodeName string    `json:"core_node_name"`
+	Count        int       `json:"count"`
+	Epoch        int64     `json:"epoch"`
+	PayloadCode  string    `json:"payload_code,omitempty"`
+	PayloadKnown bool      `json:"payload_known"`
+	OrderUUID    string    `json:"order_uuid,omitempty"`
+	PlacedAt     time.Time `json:"placed_at"`
+	PlacedSeq    int64     `json:"placed_seq"`
 }
 
 // BinReturn tells a station what became of the bin its cancelled order left
@@ -802,6 +862,32 @@ type OrderRelease struct {
 	// any other is a logged no-op. Absent = an Edge that predates it, which
 	// gets today's behaviour.
 	StationWait *int `json:"station_wait,omitempty"`
+	// AsOf fences the bin's count stream at the declaration (Lane H,
+	// DECISIONS D11 (i)): RemainingUOP is the count as of this point in the
+	// station's (bin, epoch) delta stream. Core writes the declared count with
+	// no generation bump and moves its dedup cursor for the scope to it, so a
+	// delta flushed before the release and delivered after it is at or below
+	// high water and skipped (its count is in the declaration). Nil = an Edge
+	// that predates it, or a release with no bound carrier: Core bumps the
+	// generation at the release as before.
+	AsOf *ReleaseFence `json:"as_of,omitempty"`
+}
+
+// ReleaseFence is the stream position a release's declared count is as of
+// (OrderRelease.AsOf). AsOfSeq is the last seq the Edge allocated for the
+// scope (BinID, Epoch); AsOfNet is the scope's flushed running net plus what
+// the accumulator holds unflushed, read in one instant with the count write
+// (the read engine.fencedCount makes). AsOfAt is the Edge's window clock at
+// that read: every window the fence covers ended at or before it, so Core
+// moves the scope's applied window end there too, and a late pre-release
+// delta reads as late (skipped), not as a station whose counter went
+// backward (an edge_rollback, which would end the generation).
+type ReleaseFence struct {
+	BinID   int64     `json:"bin_id"`
+	Epoch   int64     `json:"epoch"`
+	AsOfSeq int64     `json:"as_of_seq"`
+	AsOfNet int64     `json:"as_of_net"`
+	AsOfAt  time.Time `json:"as_of_at"`
 }
 
 // OrderStaged notifies edge that an order is dwelling at a staging node.

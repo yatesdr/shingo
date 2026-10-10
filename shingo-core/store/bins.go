@@ -8,6 +8,7 @@ package store
 // service.BinManifestService.SetFromTemplate for the audit-bearing path.
 
 import (
+	"database/sql"
 	"shingocore/store/reservations"
 	"time"
 
@@ -117,6 +118,17 @@ func (db *DB) MoveBinToTransit(binID, transitNodeID int64) error {
 	return bins.MoveToTransit(db.DB, binID, transitNodeID)
 }
 
+// LiftBinToTransitTx is the lift on the caller's transaction (Lane H, D11
+// (i)): see bins.LiftToTransitTx.
+func (db *DB) LiftBinToTransitTx(tx *sql.Tx, binID, transitNodeID int64, station string, now time.Time) (bins.Lift, error) {
+	return bins.LiftToTransitTx(tx, binID, transitNodeID, station, now)
+}
+
+// BinLiftedAt: see bins.LiftedAt.
+func (db *DB) BinLiftedAt(binID int64) (*time.Time, error) {
+	return bins.LiftedAt(db.DB, binID)
+}
+
 // TakeBinOffDeck: see bins.TakeOffDeck.
 func (db *DB) TakeBinOffDeck(binID, transitNodeID int64) (bool, error) {
 	return bins.TakeOffDeck(db.DB, binID, transitNodeID)
@@ -147,8 +159,14 @@ func (db *DB) MarkBinAnomalyWithNote(binID int64, note string) error {
 func (db *DB) ClearBinAnomaly(binID int64) error { return bins.ClearAnomaly(db.DB, binID) }
 
 // RecoverBinToNode moves a bin to toNodeID and clears anomaly_at atomically.
-func (db *DB) RecoverBinToNode(binID, toNodeID int64) error {
-	return bins.RecoverToNode(db.DB, binID, toNodeID)
+func (db *DB) RecoverBinToNode(binID, toNodeID int64, onPlaced OnPlaced) error {
+	return bins.RecoverToNode(db.DB, binID, toNodeID, onPlaced)
+}
+
+// MoveBinByHandAnnounced is the hand move with the landing verb in its
+// transaction. See bins.MoveByHandAnnounced.
+func (db *DB) MoveBinByHandAnnounced(binID, toNodeID int64, clearStaging, offTransit bool, onPlaced OnPlaced) error {
+	return bins.MoveByHandAnnounced(db.DB, binID, toNodeID, clearStaging, offTransit, onPlaced)
 }
 
 // UnconfirmBinManifest resets the manifest confirmation flag.

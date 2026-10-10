@@ -12,7 +12,8 @@
 // payloadCode resolution, or cache write. Engine computes the drains via
 // drainLinesideFirst (which has already written them to the pile rows),
 // resolves (binID, payloadCode) via binAtNode, holds ticks in
-// pending_uop_delta when no bin is bound and replays them on bind.
+// pending_uop_delta when no bin is bound and replays them on bind of a carrier
+// of the held part (pending_uop_payload, Lane H R2).
 //
 // A drain is consumption; the pile's level goes out on the next flush with the
 // window's drains in Drained, for Core's drain ledger.

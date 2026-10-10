@@ -266,3 +266,55 @@ func TestInventoryDeltaReporter_BucketScopeKeyComposite(t *testing.T) {
 // for IsPendingBinDelta / IsPendingBucketDelta.
 // Correctness lives at Core: inventory_delta_dedup guards order and the
 // running net carried on each message heals a lost or reordered one.
+
+// TestTakeAfterLift_TheWindowsAfterTheLiftComeOutOfTheBooks pins the Edge half
+// of Lane H's late-lift rule (R4, DECISIONS D11 (ii)): a window of the lifted
+// generation that started at or after the lift time T comes out — flushed ones
+// summed from memory, the unflushed one taken and never sent — and a window
+// that started before T stays the carrier's. Another generation's windows are
+// not counted. A lift older than the accumulator (an Edge restart since) reads
+// the outbox instead, and finds the same windows.
+func TestTakeAfterLift_TheWindowsAfterTheLiftComeOutOfTheBooks(t *testing.T) {
+	t.Parallel()
+	db := newReporterTestDB(t)
+	r := New(db, "ALN_001", nil, nil)
+	base := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	at := base
+	r.acc.now = func() time.Time { return at }
+	r.acc.bootedAt = base // booted before the lift: the in-memory list is whole
+
+	r.acc.recordBin(42, "PART-A", -2, protocol.ReasonConsumeTick, 5) // before T
+	r.Flush()
+	lift := base.Add(10 * time.Second)
+	at = base.Add(11 * time.Second)
+	r.acc.recordBin(42, "PART-A", -3, protocol.ReasonConsumeTick, 5) // after T, flushed
+	r.Flush()
+	at = base.Add(12 * time.Second)
+	r.acc.recordBin(42, "PART-A", -1, protocol.ReasonConsumeTick, 5) // after T, unflushed
+
+	got, err := r.TakeAfterLift(42, 5, lift)
+	testutil.MustNoErr(t, err, "take after lift")
+	if got != -4 {
+		t.Errorf("taken = %d, want -4 (the flushed -3 and the unflushed -1 after the lift; not the -2 before)", got)
+	}
+	r.Flush()
+	if deltas := pendingOutboxByType[protocol.BinUOPDelta](t, db, protocol.SubjectBinUOPDelta); len(deltas) != 2 {
+		t.Errorf("outbox holds %d bin deltas, want 2: the unflushed window after the lift is never sent", len(deltas))
+	}
+	if again, _ := r.TakeAfterLift(42, 5, lift); again != 0 {
+		t.Errorf("a second take = %d, want 0: the list clears when the carrier leaves", again)
+	}
+
+	// After a restart: a new accumulator over the same database, booted after
+	// the lift, reads the outbox for the flushed windows.
+	r2 := New(db, "ALN_001", nil, nil)
+	r2.acc.bootedAt = lift.Add(time.Minute)
+	got2, err := r2.TakeAfterLift(42, 5, lift)
+	testutil.MustNoErr(t, err, "take after lift across a restart")
+	if got2 != -3 {
+		t.Errorf("taken across a restart = %d, want -3 (the flushed window after the lift, from the outbox)", got2)
+	}
+	if other, _ := r2.TakeAfterLift(42, 6, lift); other != 0 {
+		t.Errorf("another generation's windows taken = %d, want 0", other)
+	}
+}

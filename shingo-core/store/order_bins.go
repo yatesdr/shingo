@@ -56,9 +56,18 @@ type BinPlacement = helpers.BinPlacement
 //
 // A thin delegate on purpose: the whole value of the primitive is that the three
 // writers run the SAME code, so this must add nothing and decide nothing.
-func (db *DB) PlaceBinTx(tx *sql.Tx, p BinPlacement) ([]int64, error) {
+func (db *DB) PlaceBinTx(tx *sql.Tx, p BinPlacement) (Placed, error) {
 	return helpers.PlaceBinTx(tx, p)
 }
+
+// Placed and OnPlaced re-export the placement's result and the landing hook
+// (helpers.Placed, helpers.OnPlaced) for the service layer, which owns the
+// landing verb (service.BinService.announceLanding) and cannot import
+// store/internal.
+type (
+	Placed   = helpers.Placed
+	OnPlaced = helpers.OnPlaced
+)
 
 // ApplyMultiBinArrival moves multiple bins to their per-step destinations and
 // unclaims them atomically in a single transaction. The caller provides
@@ -82,7 +91,11 @@ func (db *DB) PlaceBinTx(tx *sql.Tx, p BinPlacement) ([]int64, error) {
 // placedByOrder is the order whose placement this is — every instruction in one
 // call belongs to it, which is why it is a parameter rather than a field on
 // BinArrivalInstruction.
-func (db *DB) ApplyMultiBinArrival(placedByOrder int64, instructions []orders.BinArrivalInstruction) ([]int64, error) {
+//
+// onPlaced is the landing verb (Lane H, H.2), called once per bin in this
+// transaction, so every bin a settle sets down at a seat is announced, not
+// only the one order.delivered named (DESIGN-H §3). Nil announces nothing.
+func (db *DB) ApplyMultiBinArrival(placedByOrder int64, instructions []orders.BinArrivalInstruction, onPlaced OnPlaced) ([]int64, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -95,7 +108,7 @@ func (db *DB) ApplyMultiBinArrival(placedByOrder int64, instructions []orders.Bi
 		// eviction, the node_id write, the unclaim, the reservation, the slot,
 		// the staging state — and every drift between it and the single-bin
 		// writer lived in that duplication. See helpers.PlaceBinTx.
-		ghosts, err := helpers.PlaceBinTx(tx, helpers.BinPlacement{
+		placed, err := helpers.PlaceBinTx(tx, helpers.BinPlacement{
 			BinID:                  inst.BinID,
 			ToNodeID:               inst.ToNodeID,
 			PlacedByOrder:          placedByOrder,
@@ -107,7 +120,12 @@ func (db *DB) ApplyMultiBinArrival(placedByOrder int64, instructions []orders.Bi
 		if err != nil {
 			return nil, err
 		}
-		evictedGhosts = append(evictedGhosts, ghosts...)
+		if onPlaced != nil {
+			if err := onPlaced(tx, placed); err != nil {
+				return nil, err
+			}
+		}
+		evictedGhosts = append(evictedGhosts, placed.Evicted...)
 	}
 
 	if err := tx.Commit(); err != nil {

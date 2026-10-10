@@ -306,15 +306,24 @@ type RuntimeState struct {
 	RemainingUOPCached int       `json:"remaining_uop_cached"`
 	// PendingUOPDelta holds count changes that arrived while no bin was
 	// bound at this slot (active_bin_id nil — the pickup→delivery gap).
-	// The next tick that finds a bound bin applies (current + pending) and
-	// resets this to 0, so a swap or message-lag window can't lose or
+	// The next tick that finds a bound bin of the held part (PendingUOPPayload)
+	// applies (current + pending) and resets this to 0, so a swap or
+	// message-lag window can't lose or
 	// misattribute consumption. Durable (column) so an Edge restart
 	// mid-gap doesn't drop the held count.
-	PendingUOPDelta int64     `json:"pending_uop_delta"`
-	ActiveOrderID   *int64    `json:"active_order_id,omitempty"`
-	StagedOrderID   *int64    `json:"staged_order_id,omitempty"`
-	ActivePull      bool      `json:"active_pull"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	PendingUOPDelta int64 `json:"pending_uop_delta"`
+	// PendingUOPPayload is the part of the held ticks. The hold replays only
+	// onto a bound carrier of that part (Lane H R2, DECISIONS D12); "" is a
+	// hold from before the column, which replays onto any carrier as before.
+	PendingUOPPayload string `json:"pending_uop_payload,omitempty"`
+	// ReleasedEmpty: the bound carrier was released as empty and is not
+	// charged afterwards (Lane H R3, D12). Meaningful only while it is bound;
+	// cleared when it leaves or another carrier binds.
+	ReleasedEmpty bool      `json:"released_empty,omitempty"`
+	ActiveOrderID *int64    `json:"active_order_id,omitempty"`
+	StagedOrderID *int64    `json:"staged_order_id,omitempty"`
+	ActivePull    bool      `json:"active_pull"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // NodeClaim is a per-Style binding to a process Node — declares the

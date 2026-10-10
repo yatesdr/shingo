@@ -537,7 +537,21 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 	// life of the bin it was taken from: the Edge stamps the epoch it counted
 	// under, and a bin emptied or re-bound since has a newer one. Absent (0) is
 	// the manual HTTP door, and today's behaviour.
-	if p.BinEpoch != 0 && bin.DeltaEpoch != p.BinEpoch {
+	//
+	// A LIFT IS NOT A NEW LIFE (Lane H, DECISIONS D11 (i), 2026-10-10). The
+	// robot lifting the finished bin off the press bumps its generation now,
+	// and the ingest the Edge sent at the release usually lands first but need
+	// not. An ingest one generation behind a bin whose generation ended at a
+	// lift (lifted_at set) counts the life the lift closed, and applies. One
+	// read, only on a mismatch. Residual: an ingest later than the bin's
+	// arrival (lifted_at cleared) is refused, as one later than any reset is.
+	countedEpoch := p.BinEpoch
+	if countedEpoch != 0 && bin.DeltaEpoch == countedEpoch+1 {
+		if at, err := s.db.BinLiftedAt(bin.ID); err == nil && at != nil {
+			countedEpoch = bin.DeltaEpoch
+		}
+	}
+	if countedEpoch != 0 && bin.DeltaEpoch != countedEpoch {
 		if err := s.binManifest.RecordIngestRefused(bin.ID, p.PayloadCode, bin.UOPRemaining,
 			p.BinEpoch, bin.DeltaEpoch, p.Quantity); err != nil {
 			log.Printf("dispatch: ingest refusal audit bin=%d: %v", bin.ID, err)

@@ -4396,7 +4396,54 @@ func migrationList() []migration {
 				}
 				return n == 0
 			}},
+
+		// 150, not 149: Lane L adds v149 (edge_lineside_reports' unread
+		// columns) on its own branch, and the runner applies any version it has
+		// not recorded, so the gap is harmless and the two land in either order
+		// without a collision.
+		{150, "bin_placement_seq — the placement stamp a landing carries, so a seat refuses a landing not newer than the one it last bound",
+			v150BinPlacementSeq,
+			func(q schema.Querier) bool {
+				var n int
+				if err := q.QueryRow(`SELECT COUNT(*) FROM pg_class WHERE relkind = 'S' AND relname = 'bin_placement_seq'`).Scan(&n); err != nil {
+					return false
+				}
+				return n == 1
+			}},
+
+		{151, "bins.lifted_at — when a streamed carrier's generation ended at a lift, the T a late window is judged against",
+			v151BinLiftedAt,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "bins", "lifted_at")
+			}},
 	}
+}
+
+// v151BinLiftedAt adds bins.lifted_at (Lane H, DECISIONS D11). The lift of a
+// streamed carrier bumps its generation and stamps this in the same UPDATE
+// (bins.LiftToTransitTx); the arrival clears it. The delta applier reads it in
+// the statement that already reads the generation (readBinScope, +0): a window
+// of the generation that ended at the lift applies if it started before it and
+// is refused as after_lift if not. NULL on every existing row: no carrier is
+// mid-lift under the new rule yet. The baseline DDL declares the same column
+// (schema-constant rule).
+func v151BinLiftedAt(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE bins ADD COLUMN IF NOT EXISTS lifted_at TIMESTAMPTZ`); err != nil {
+		return fmt.Errorf("v151 bins.lifted_at: %w", err)
+	}
+	return nil
+}
+
+// v150BinPlacementSeq creates the placement stamp's sequence (Lane H,
+// DECISIONS D10). The arrival's own UPDATE takes nextval from it in its
+// RETURNING (helpers.PlaceBinTx), so the stamp costs no statement; the landing
+// carries it, and the Edge keeps it per seat in placed_seq. The baseline DDL
+// creates the same sequence for a fresh database (schema-constant rule).
+func v150BinPlacementSeq(tx *sql.Tx) error {
+	if _, err := tx.Exec(`CREATE SEQUENCE IF NOT EXISTS bin_placement_seq`); err != nil {
+		return fmt.Errorf("v150 bin_placement_seq: %w", err)
+	}
+	return nil
 }
 
 // LinesideBucketsUniqueConstraintV131 is the uniqueness constraint v131 puts on

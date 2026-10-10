@@ -218,7 +218,7 @@ func TestFlipReadiness_StopsRefusingOnceTheClaimAdvances(t *testing.T) {
 	// The order has delivered; the readiness check gets past its first arm.
 	markOrderTerminal(db, ctx.order.ID)
 	const binID int64 = 4500
-	testutil.MustNoErr(t, db.SetProcessNodeRuntimeForDeliveredBin(nodeID, &fromClaimID, binID, 1, 4500),
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &fromClaimID, binPtr(binID), 1, 4500),
 		"seed the stale pointer over a full carrier")
 	if reason := eng.flipTargetReady(node); reason == "" {
 		t.Fatal("fixture: the stale pointer should still refuse — otherwise this test proves nothing")
@@ -276,7 +276,7 @@ func TestBinAtNode_KnownEmptyCarrierDoesNotFallBackToTheClaim(t *testing.T) {
 	_, nodeID, _, fromClaimID, _ := seedDirectChangeover(t, db)
 
 	const binID int64 = 4242
-	testutil.MustNoErr(t, db.SetProcessNodeRuntimeForDeliveredBin(nodeID, &fromClaimID, binID, 1, 0), "bind carrier")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &fromClaimID, binPtr(binID), 1, 0), "bind carrier")
 	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier(""), domain.CarrierFromOperator)
 
 	rt, err := db.GetProcessNodeRuntime(nodeID)
@@ -306,7 +306,7 @@ func TestBinAtNode_UnestablishedCarrierStillFallsBackToTheClaim(t *testing.T) {
 	_, nodeID, _, fromClaimID, _ := seedDirectChangeover(t, db)
 
 	const binID int64 = 4243
-	testutil.MustNoErr(t, db.SetProcessNodeRuntimeForDeliveredBin(nodeID, &fromClaimID, binID, 1, 100), "bind carrier")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &fromClaimID, binPtr(binID), 1, 100), "bind carrier")
 
 	rt, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "read runtime")
@@ -331,7 +331,7 @@ func TestSwitchNode_KeepsTheCountOfABoundCarrier(t *testing.T) {
 	_, _ = startChangeover(t, eng, db, processID, toStyleID)
 
 	const binID int64 = 777
-	testutil.MustNoErr(t, db.SetProcessNodeRuntimeForDeliveredBin(nodeID, &fromClaimID, binID, 1, 1750),
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &fromClaimID, binPtr(binID), 1, 1750),
 		"a carrier with 1750 parts is standing here")
 
 	testutil.MustNoErr(t, eng.SwitchNodeToTarget(processID, nodeID), "switch")
@@ -351,6 +351,11 @@ func TestSwitchNode_KeepsTheCountOfABoundCarrier(t *testing.T) {
 // carried the payload the whole way and the fallback emit dropped it, so a
 // straight-drop during a changeover produced the incident's mechanism with no
 // identity record to correct it from.
+//
+// CONVERTED with Lane H (H.7): the fallback binds only for an older Core (no
+// LandingSent), through the landing verb, and only a carrier with a count
+// (the blind seed is gone), so the envelope carries Core's count; the
+// identity is recorded by the landing verb, source "landing".
 func TestFallbackDelivered_RecordsTheCarrier(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -359,8 +364,10 @@ func TestFallbackDelivered_RecordsTheCarrier(t *testing.T) {
 
 	payload := "SYN-PART01E.06"
 	binID := int64(9001)
+	count := 40
 	eng.handleFallbackDelivered(OrderDeliveredEvent{
 		BinID:          &binID,
+		BinUOP:         &count,
 		BinPayloadCode: &payload,
 		BinEpoch:       3,
 		DeliveryNode:   "ALN_007",
@@ -379,14 +386,16 @@ func TestFallbackDelivered_RecordsTheCarrier(t *testing.T) {
 	if !rt.LinesidePayloadKnown {
 		t.Error("LinesidePayloadKnown = false for an identity Core stated outright")
 	}
-	if rt.LinesideSource != string(domain.CarrierFromDelivery) {
-		t.Errorf("LinesideSource = %q, want delivery", rt.LinesideSource)
+	if rt.LinesideSource != string(domain.CarrierFromLanding) {
+		t.Errorf("LinesideSource = %q, want landing", rt.LinesideSource)
 	}
 }
 
 // An older Core sends no payload on the fallback envelope. That records as an
 // UNKNOWN carrier rather than being skipped: leaving the previous occupant's
 // identity standing would be a confident wrong answer about this one.
+// CONVERTED with Lane H (H.7): the envelope carries Core's count, which an
+// older Core's delivered needs to bind at all (the blind seed is gone).
 func TestFallbackDelivered_NoPayloadClearsRatherThanInherits(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -395,7 +404,8 @@ func TestFallbackDelivered_NoPayloadClearsRatherThanInherits(t *testing.T) {
 
 	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier("PREVIOUS-OCCUPANT"), domain.CarrierFromDelivery)
 	binID := int64(9002)
-	eng.handleFallbackDelivered(OrderDeliveredEvent{BinID: &binID, BinEpoch: 4, DeliveryNode: "ALN_007"})
+	count := 40
+	eng.handleFallbackDelivered(OrderDeliveredEvent{BinID: &binID, BinUOP: &count, BinEpoch: 4, DeliveryNode: "ALN_007"})
 
 	rt, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "read runtime")

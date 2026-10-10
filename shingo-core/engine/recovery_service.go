@@ -54,7 +54,10 @@ func (s *RecoveryService) ReapplyOrderCompletion(orderID int64, actor string) er
 	isStorage := e.isStorageSlot(destNode.ID)
 
 	// No expiry: staging does not expire (resolveNodeStaging).
-	if err := s.db.RepairConfirmedOrderCompletion(order.ID, *order.BinID, destNode.ID, !isStorage, nil); err != nil {
+	// The repair announces its drop like any arrival (Lane H, H.2): it may be
+	// the only record that the carrier came to rest there.
+	if err := s.db.RepairConfirmedOrderCompletion(order.ID, *order.BinID, destNode.ID, !isStorage, nil,
+		e.binService.LandingHook(order.ID, false)); err != nil {
 		return err
 	}
 

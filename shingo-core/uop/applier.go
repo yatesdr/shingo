@@ -182,7 +182,15 @@ func NewInventoryDeltaService(db *store.DB, binManifest ManifestClearer, announc
 // That is also why this cannot ride the ordinary adjustment message: its count
 // field has no absent value, so an adjustment sent to carry only a generation
 // says "zero", and the station would write it. See protocol.BinEpochRefresh.
-func (s *InventoryDeltaService) repairEpoch(tx *sql.Tx, binID, currentEpoch int64) (bool, error) {
+//
+// IT GOES TO station, the one whose count was dropped (Lane H, DESIGN-H §9.4):
+// that station is the one behind, and every other station only parsed it and
+// dropped it. And it is not sent for a carrier at no seat — a synthetic node
+// (_TRANSIT, a robot's deck, a group) or a storage-class node (the landing's
+// own test, helpers.ArrivalReturningSQL's) — where no station holds it: r6
+// sent 18, 15 of them to _TRANSIT. The node read below already ran; it now
+// returns the class with the name, +0.
+func (s *InventoryDeltaService) repairEpoch(tx *sql.Tx, station string, binID, currentEpoch int64) (bool, error) {
 	if !s.announce.Wired() {
 		log.Printf("stale-epoch drop bin=%d: no announce topic wired, cannot tell the station "+
 			"it is behind — every count it reports for this carrier will keep being discarded", binID)
@@ -192,17 +200,30 @@ func (s *InventoryDeltaService) repairEpoch(tx *sql.Tx, binID, currentEpoch int6
 		return false, nil
 	}
 	var nodeName string
+	var notASeat bool
 	if err := tx.QueryRow(
-		`SELECT COALESCE((SELECT n.name FROM nodes n WHERE n.id = b.node_id), '')
-		 FROM bins b WHERE b.id=$1`, binID).Scan(&nodeName); err != nil {
+		`SELECT COALESCE(n.name, ''),
+		        COALESCE(n.is_synthetic OR left(n.name, 1) = '_'
+		                 OR COALESCE(nt.code, '') IN ('STOR', 'LANE', 'NGRP')
+		                 OR COALESCE(pt.code, '') IN ('LANE', 'NGRP'), true)
+		   FROM bins b
+		   LEFT JOIN nodes n ON n.id = b.node_id
+		   LEFT JOIN node_types nt ON nt.id = n.node_type_id
+		   LEFT JOIN nodes p ON p.id = n.parent_id
+		   LEFT JOIN node_types pt ON pt.id = p.node_type_id
+		  WHERE b.id=$1`, binID).Scan(&nodeName, &notASeat); err != nil {
 		return false, fmt.Errorf("resolve node for epoch repair bin=%d: %w", binID, err)
 	}
-	if nodeName == "" {
-		// The carrier is at no node, so no station is modelling it and there is
-		// nobody the reply could be for.
+	if nodeName == "" || notASeat {
+		// The carrier is at no node, or at one no station binds at, so no
+		// station is modelling it and there is nobody the reply could be for.
+		// It learns the generation from the landing at its next seat.
 		return false, nil
 	}
-	if err := s.announce.Send(tx, protocol.SubjectBinEpochRefresh, &protocol.BinEpochRefresh{
+	if station == "" {
+		station = protocol.StationBroadcast
+	}
+	if err := s.announce.SendTo(tx, protocol.SubjectBinEpochRefresh, station, &protocol.BinEpochRefresh{
 		BinID:        binID,
 		CoreNodeName: nodeName,
 		Epoch:        currentEpoch,
@@ -327,8 +348,30 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	// being consumed — is a known inventory-accuracy follow-up, intentionally
 	// out of scope here. The behavior is observable, not silent: every
 	// dropped delta writes a discrepancy audit row.
+	//
+	// THE LIFT IS NOT A RESET (Lane H R4, DECISIONS D11 (ii), 2026-10-10). The
+	// release no longer bumps; the lift does (service.BinService.Lift), and it
+	// resets nothing — the count is continuous across it. So a window of the
+	// generation that ended at a lift is judged by TIME against lifted_at,
+	// read in readBinScope's statement (+0): a window that started before the
+	// lift is the lifted carrier's and APPLIES (at E−1, onto the bin's count,
+	// in its own scope's cursor); one that started at or after it was counted
+	// after the carrier left and is REFUSED as after_lift. The Edge judges the
+	// same two numbers when the pickup reaches it and moves exactly those
+	// windows to the pile or the hold, so both books agree. Granularity: one
+	// flush window; a window straddling the lift stays on the carrier. A window
+	// with no start (an Edge that predates it) cannot be judged and keeps the
+	// stale path.
+	liftEnded := false
+	if cur.liftedAt.Valid && d.Epoch > 0 && !d.WindowStart.IsZero() &&
+		(d.Epoch == currentEpoch-1 || d.Epoch == currentEpoch) {
+		if !d.WindowStart.Before(cur.liftedAt.Time) {
+			return s.refuseAfterLift(tx, station, d, currentEpoch, cur)
+		}
+		liftEnded = d.Epoch == currentEpoch-1
+	}
 	switch {
-	case d.Epoch > 0 && d.Epoch < currentEpoch:
+	case d.Epoch > 0 && d.Epoch < currentEpoch && !liftEnded:
 		var before int
 		if err := tx.QueryRow(`SELECT uop_remaining FROM bins WHERE id=$1`, d.BinID).Scan(&before); err != nil {
 			return fmt.Errorf("read bin %d for stale-epoch audit: %w", d.BinID, err)
@@ -373,7 +416,7 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 		// lands. The reply rides the SAME transaction as the audit row, so
 		// a discarded count is never recorded without the answer that ends
 		// the stall going with it.
-		repaired, err := s.repairEpoch(tx, d.BinID, currentEpoch)
+		repaired, err := s.repairEpoch(tx, station, d.BinID, currentEpoch)
 		if err != nil {
 			return err
 		}
@@ -1018,6 +1061,14 @@ type scopeCursor struct {
 	lastSeq          int64
 	appliedNet       sql.NullInt64
 	appliedWindowEnd sql.NullTime
+	// liftedAt is the bin's lifted_at, read in the same statement (Lane H,
+	// D11 (ii)): set when its generation ended at a lift, NULL once it lands.
+	// Bin-level, not scope-level; it rides here because readBinScope is the
+	// one read the apply takes.
+	liftedAt sql.NullTime
+	// binCount is the bin's uop_remaining as read, for the after_lift
+	// observation row (no second read).
+	binCount int
 }
 
 // effectiveDelta is the apply rule (SYNTH-round2 §3):
@@ -1071,13 +1122,13 @@ func readBinScope(tx *sql.Tx, station, scopeKey string, d *protocol.BinUOPDelta)
 		cur     scopeCursor
 		lastSeq sql.NullInt64
 	)
-	err := tx.QueryRow(`SELECT b.delta_epoch, dd.last_seq, dd.applied_net, dd.applied_window_end
+	err := tx.QueryRow(`SELECT b.delta_epoch, dd.last_seq, dd.applied_net, dd.applied_window_end, b.lifted_at, b.uop_remaining
 		FROM bins b
 		LEFT JOIN inventory_delta_dedup dd
 		  ON dd.station=$2 AND dd.scope_kind=$3 AND dd.scope_key=$4 AND dd.epoch=$5
 		WHERE b.id=$1
 		FOR UPDATE OF b`,
-		d.BinID, station, invDeltaScopeBin, scopeKey, d.Epoch).Scan(&epoch, &lastSeq, &cur.appliedNet, &cur.appliedWindowEnd)
+		d.BinID, station, invDeltaScopeBin, scopeKey, d.Epoch).Scan(&epoch, &lastSeq, &cur.appliedNet, &cur.appliedWindowEnd, &cur.liftedAt, &cur.binCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, cur, fmt.Errorf("BinUOPDelta target bin %d does not exist", d.BinID)
 	}
@@ -1125,6 +1176,39 @@ func (s *InventoryDeltaService) atOrBelowHighWater(tx *sql.Tx, station string, d
 		return true, fmt.Errorf("%w: seq %d at or below last_seq %d: a duplicate, or a late message whose count no net carries",
 			ErrInventoryDeltaSkipped, d.SequenceID, cur.lastSeq)
 	}
+}
+
+// refuseAfterLift refuses a window that started at or after the lift that
+// ended its generation (Lane H R4, D11 (ii)): one observation row on the
+// caller's transaction, then commit. No exception row, no anomaly_at, no epoch
+// refresh: it is the rule working, not a station behind — the Edge moves
+// these ticks itself when the pickup reaches it. Like every refusal, it
+// consumes neither the seq nor the net. Returns ErrInventoryDeltaSkipped
+// (wrapped).
+func (s *InventoryDeltaService) refuseAfterLift(tx *sql.Tx, station string, d *protocol.BinUOPDelta, currentEpoch int64, cur scopeCursor) error {
+	metadata, err := json.Marshal(struct {
+		WireEpoch   int64     `json:"wire_epoch"`
+		BinEpoch    int64     `json:"bin_epoch"`
+		SequenceID  int64     `json:"sequence_id"`
+		Delta       int       `json:"delta"`
+		WindowStart time.Time `json:"window_start"`
+		LiftedAt    time.Time `json:"lifted_at"`
+	}{d.Epoch, currentEpoch, d.SequenceID, d.Delta, d.WindowStart, cur.liftedAt.Time})
+	if err != nil {
+		return fmt.Errorf("marshal after-lift metadata bin=%d: %w", d.BinID, err)
+	}
+	if err := audit.AppendBinUOPOverride(tx, d.BinID, cur.binCount, cur.binCount,
+		audit.OpAfterLift, "uop/applier.go:afterLift", nil, d.PayloadCode, station, metadata); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit after-lift refusal bin=%d: %w", d.BinID, err)
+	}
+	log.Printf("BinUOPDelta after lift REFUSED bin=%d wire_epoch=%d bin_epoch=%d seq=%d delta=%d window_start=%s lifted_at=%s",
+		d.BinID, d.Epoch, currentEpoch, d.SequenceID, d.Delta,
+		d.WindowStart.Format(time.RFC3339Nano), cur.liftedAt.Time.Format(time.RFC3339Nano))
+	return fmt.Errorf("%w: seq %d started at or after the lift that ended generation %d; the station moves it",
+		ErrInventoryDeltaSkipped, d.SequenceID, d.Epoch)
 }
 
 // recordEdgeRollback writes the edge_rollback exception and starts the bin's

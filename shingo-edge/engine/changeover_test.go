@@ -3,7 +3,9 @@ package engine
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -204,47 +206,62 @@ func startChangeover(t *testing.T, eng *Engine, db *store.DB, processID, toStyle
 	return changeover, &tasks[0]
 }
 
-// emitOrderCompleted simulates an order completion event on the event bus,
-// with NO count on the delivery envelope.
+// emitOrderCompleted simulates an order completion on the event bus, as a
+// Core that sends landings does it, with no count the test cares about (the
+// landing carries 0). A test whose subject IS the count wants
+// emitOrderCompletedWithBinUOP.
 //
-// That is the blind-delivery shape — Core named a bin and could not read its
-// row — and the Edge seats 0 for it. Most callers here do not care about the
-// count and only need the binding to happen. A test whose subject IS the count
-// wants emitOrderCompletedWithBinUOP, which is the ordinary production shape.
+// CONVERTED with Lane H (H.5): order.delivered binds nothing, so these helpers
+// used to drive the delivered bind and now drive the new door — Core's landing
+// at the node the order's bin came to rest at (transit.bin_landed, written in
+// the arrival's own transaction, so it reaches the Edge first), then the
+// delivered with LandingSent, which only checks.
 func emitOrderCompleted(eng *Engine, orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID *int64) {
-	emitOrderCompletedWithEnvelopeUOP(eng, orderID, orderUUID, orderType, processNodeID, nil)
+	zero := 0
+	emitOrderCompletedWithEnvelopeUOP(eng, orderID, orderUUID, orderType, processNodeID, &zero)
 }
 
 // emitOrderCompletedWithBinUOP is the ordinary delivery: Core read the bin row
-// and stamped its count on the envelope, and the Edge seats exactly that.
+// and stamped its count on the landing, and the Edge seats exactly that.
 func emitOrderCompletedWithBinUOP(eng *Engine, orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID *int64, binUOP int) {
 	emitOrderCompletedWithEnvelopeUOP(eng, orderID, orderUUID, orderType, processNodeID, &binUOP)
 }
 
+// testPlacedSeq is the placement stamp the test Core issues, one per landing,
+// increasing as bin_placement_seq does.
+var testPlacedSeq atomic.Int64
+
 func emitOrderCompletedWithEnvelopeUOP(eng *Engine, orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID *int64, binUOP *int) {
-	// Fire EventOrderDelivered first so the runtime cache binding (which
-	// now lives on the delivered event under the new contract, not on
-	// EventOrderCompleted) sees the bin's arrival before any completion-
-	// time bookkeeping runs. Production order lifecycle goes through
-	// applyTransition which fires both events on the path through
-	// StatusDelivered → StatusConfirmed; tests bypassing the lifecycle
-	// service need the same shape.
+	// The landing first, then the delivered, then the completion: the order a
+	// Core that sends landings produces them in. A removal-shaped order (its
+	// bin came to rest elsewhere) lands nothing at this node.
 	if processNodeID != nil {
 		var binID *int64
-		if order, err := eng.db.GetOrder(orderID); err == nil {
+		order, oerr := eng.db.GetOrder(orderID)
+		if oerr == nil {
 			binID = order.BinID
 		}
-		eng.Events.Emit(Event{
-			Type: EventOrderDelivered,
-			Payload: OrderDeliveredEvent{
-				OrderID:       orderID,
-				OrderUUID:     orderUUID,
-				OrderType:     orderType,
-				ProcessNodeID: processNodeID,
-				BinID:         binID,
-				BinUOP:        binUOP,
-			},
-		})
+		ev := OrderDeliveredEvent{
+			OrderID:       orderID,
+			OrderUUID:     orderUUID,
+			OrderType:     orderType,
+			ProcessNodeID: processNodeID,
+			BinID:         binID,
+			BinUOP:        binUOP,
+			LandingSent:   true,
+		}
+		if node, nerr := eng.db.GetProcessNode(*processNodeID); oerr == nil && nerr == nil && node != nil && binID != nil &&
+			eng.deliveredAtNode(order, node, ev) {
+			count := 0
+			if binUOP != nil {
+				count = *binUOP
+			}
+			eng.HandleBinLanded(protocol.BinLanded{
+				BinID: *binID, CoreNodeName: node.CoreNodeName, Count: count,
+				OrderUUID: orderUUID, PlacedAt: time.Now().UTC(), PlacedSeq: testPlacedSeq.Add(1),
+			})
+		}
+		eng.Events.Emit(Event{Type: EventOrderDelivered, Payload: ev})
 	}
 	eng.Events.Emit(Event{
 		Type: EventOrderCompleted,

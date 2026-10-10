@@ -305,6 +305,12 @@ type OrderDeliveredEvent struct {
 	// for a swap names the last leg, not where this bin landed). Empty for
 	// single-bin orders — their existing delivery gate is unchanged.
 	BinDestNode string `json:"bin_dest_node,omitempty"`
+	// LandingSent is protocol.OrderDelivered.LandingSent: the Core announced
+	// this carrier's drop on transit.bin_landed, so the delivered binds
+	// nothing and only checks (Lane H, H.5). False is an older Core: the
+	// carrier fields above bind through the landing verb with no placement
+	// stamp, into an empty slot or onto the same bin only (H.7).
+	LandingSent bool `json:"landing_sent,omitempty"`
 }
 
 // UOPAdjustedEvent is emitted when Core sends an admin-originated UOP

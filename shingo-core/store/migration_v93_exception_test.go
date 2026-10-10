@@ -175,13 +175,23 @@ func TestV93_IdempotentOnReapply(t *testing.T) {
 // earlier rows did not bump, so they are not historical boundaries and the
 // backfill must not treat them as ones. sync_uop_and_claim started bumping when
 // syncUOPAndClaimTx was routed through bumpEpoch (SYNTH-round2 S7).
+//
+// CONVERTED (Lane H, DECISIONS D11 (i), 2026-10-10): stoppedBumpingAfterV93
+// are the release-declaration ops, which left audit.EpochBumpOps when the
+// release stopped bumping. Their rows written before that DID bump, so the
+// v93 backfill rightly keeps them as historical boundaries; the migration's
+// copy is history and is not edited. lifted started bumping after v93, so it
+// joins bumpedAfterV93.
 func TestV93BackfillOpsMatchEpochBumpOps(t *testing.T) {
-	bumpedAfterV93 := map[string]bool{audit.OpSyncUOPAndClaim: true}
+	bumpedAfterV93 := map[string]bool{audit.OpSyncUOPAndClaim: true, audit.OpLifted: true}
 	want := map[string]bool{}
 	for _, op := range audit.EpochBumpOps {
 		if !bumpedAfterV93[op] {
 			want[op] = true
 		}
+	}
+	for _, op := range audit.ReleaseDeclarationOps {
+		want[op] = true // stopped bumping after v93; historical rows are boundaries
 	}
 	got := map[string]bool{}
 	for _, op := range store.BumpOpsForBackfill {

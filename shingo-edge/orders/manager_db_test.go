@@ -69,10 +69,10 @@ func (e *capturingEmitter) EmitOrderCompleted(orderID int64, orderUUID string, o
 	e.completed = append(e.completed, string(orderType)+":"+orderUUID)
 }
 
-func (e *capturingEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binPayloadCode *string, binEpoch int64, binDestNode, deliveryNode string) {
+func (e *capturingEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binPayloadCode *string, binEpoch int64, binDestNode, deliveryNode string, landingSent bool) {
 }
 
-func (e *capturingEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, binPayloadCode *string, binEpoch int64, deliveryNode string) {
+func (e *capturingEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, binPayloadCode *string, binEpoch int64, deliveryNode string, landingSent bool) {
 	e.fallbackPayloads = append(e.fallbackPayloads, binPayloadCode)
 }
 

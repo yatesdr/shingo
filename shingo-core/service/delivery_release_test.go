@@ -80,7 +80,7 @@ func TestDeliveryReleasesReservationAndSlot(t *testing.T) {
 		_, err := db.ApplyMultiBinArrival(order.ID, []orders.BinArrivalInstruction{
 			{BinID: binA.ID, ToNodeID: slotA.ID},
 			{BinID: binB.ID, ToNodeID: slotB.ID},
-		})
+		}, nil)
 		testutil.MustNoErr(t, err, "ApplyMultiBinArrival")
 
 		for _, p := range []struct{ bin, slot int64 }{{binA.ID, slotA.ID}, {binB.ID, slotB.ID}} {

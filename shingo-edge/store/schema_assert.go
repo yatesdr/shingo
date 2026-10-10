@@ -141,6 +141,13 @@ var requiredColumns = []requiredColumn{
 	{"process_node_runtime_states", "adj_bin_id"},
 	{"process_node_runtime_states", "adj_bin_epoch"},
 	{"process_node_runtime_states", "adj_as_of_seq"},
+	// The held part and the released-empty flag (v19, D12): scanRuntime
+	// SELECTs both, so a missing column kills every runtime-row read.
+	{"process_node_runtime_states", "pending_uop_payload"},
+	{"process_node_runtime_states", "released_empty"},
+	// The landing's placement stamp (v20, D10): every landing bind names it
+	// in its SET and WHERE, so a missing column fails every landing.
+	{"process_node_runtime_states", "placed_seq"},
 	// group_id is an ALTER-added column that scanProcess selects
 	// unconditionally; an ignored-error failure would kill every process
 	// query at runtime rather than at startup.

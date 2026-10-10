@@ -7,6 +7,7 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingocore/service"
 	"shingocore/store/bins"
 	"shingocore/store/orders"
 )
@@ -275,8 +276,17 @@ func (d *Dispatcher) syncManifestForRelease(env *protocol.Envelope, order *order
 		kind = p.Disposition.Kind
 	}
 
+	// The stream fence (Lane H, DECISIONS D11 (i)): the station whose delta
+	// scope it fences is the envelope's sender, never a field the message
+	// names. Nil from an Edge that predates it, which keeps the release-time
+	// bump.
+	var fence *service.ReleaseFence
+	if p.AsOf != nil && env != nil {
+		fence = &service.ReleaseFence{Station: env.Src.Station, ReleaseFence: *p.AsOf}
+	}
+
 	if order.BinID != nil {
-		if err := d.binManifest.SyncOrClearForReleased(*order.BinID, order.ID, p.RemainingUOP, kind, p.CalledBy); err != nil {
+		if err := d.binManifest.SyncOrClearForReleasedFenced(*order.BinID, order.ID, p.RemainingUOP, kind, p.CalledBy, fence); err != nil {
 			log.Printf("dispatch: manifest sync on release for order %d: %v", order.ID, err)
 			d.sendError(env, p.OrderUUID, "manifest_sync_failed", err.Error())
 			return err
@@ -305,7 +315,7 @@ func (d *Dispatcher) syncManifestForRelease(env *protocol.Envelope, order *order
 	log.Printf("dispatch: release for order %d had nil BinID; fallback located bin %d at %s",
 		order.ID, fallbackBin.ID, fallbackLookup)
 
-	if err := d.binManifest.SyncOrClearForReleasedNoOwner(fallbackBin.ID, order.ID, p.RemainingUOP, p.CalledBy); err != nil {
+	if err := d.binManifest.SyncOrClearForReleasedNoOwnerFenced(fallbackBin.ID, order.ID, p.RemainingUOP, p.CalledBy, fence); err != nil {
 		log.Printf("dispatch: fallback manifest sync on release for order %d (bin %d): %v", order.ID, fallbackBin.ID, err)
 		d.sendError(env, p.OrderUUID, "manifest_sync_failed", err.Error())
 		return err

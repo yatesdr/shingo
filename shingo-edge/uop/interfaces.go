@@ -10,7 +10,12 @@
 // exercise one concern.
 package uop
 
-import "shingoedge/store/lineside"
+import (
+	"time"
+
+	"shingoedge/store/lineside"
+	"shingoedge/store/processes"
+)
 
 // Ticker — PLC tick path emission. Paired pile drain + bin emission with
 // reason taxonomy locked at the verb boundary.
@@ -28,9 +33,10 @@ type SlotWriter interface {
 	BindFromCore(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error
 	BindStagedUnlessDeparted(nodeID int64, activeClaimID *int64, binID, deltaEpoch int64, uop int) (bool, error)
 	ClearActiveBin(nodeID int64) error
-	SetClaimAndCount(nodeID int64, activeClaimID *int64, uop int) error
+	LeaveAtPickup(nodeID, pickupEpoch int64, hold int, holdPart string) error
+	SetClaim(nodeID int64, activeClaimID *int64) error
 	SetClaimCountAndEpoch(nodeID int64, activeClaimID *int64, uop int, binID, deltaEpoch int64) error
-	OnDelivered(nodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, uop int) error
+	Land(nodeID int64, l processes.LandingBind) (bool, error)
 	ManualLoad(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error
 }
 
@@ -55,6 +61,8 @@ type Piles interface {
 // Pickup — bin-pickup boundary event (flush before slot pointers clear).
 type Pickup interface {
 	OnBinPickedUp(nodeID *int64) error
+	// TakeAfterLift: the windows counted after a late-heard lift (Lane H R4).
+	TakeAfterLift(binID, epoch int64, liftedAt time.Time) (int, error)
 }
 
 // Boundary — non-UOP orchestration boundary that needs a flush before

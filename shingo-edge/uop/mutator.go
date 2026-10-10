@@ -11,6 +11,7 @@ import (
 
 	"shingo/protocol/types"
 	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // DebugLogFunc is a nil-safe debug logging function. Mirrors the
@@ -93,6 +94,24 @@ func (m *Mutator) OnBinPickedUp(nodeID *int64) error {
 	_ = nodeID
 	m.acc.flush()
 	return nil
+}
+
+// TakeAfterLift takes out of the books the windows of (binID, epoch) that
+// started at or after liftedAt — the ticks counted after the robot lifted the
+// carrier, which Core refuses as after_lift — and returns their signed sum
+// (Lane H R4, DECISIONS D11 (ii)). Its caller is the pickup handler, BEFORE
+// the pickup's flush, so an unflushed window after the lift is never sent.
+// +0 statements; one outbox read only for a lift older than this process.
+func (m *Mutator) TakeAfterLift(binID, epoch int64, liftedAt time.Time) (int, error) {
+	return m.acc.takeAfterLift(binID, epoch, liftedAt)
+}
+
+// LeaveAtPickup is ClearActiveBin for the robot's pickup: the same one
+// statement, also stamping the lift's generation as the departed carrier's
+// and adding hold ticks (of holdPart) to the seat's hold (Lane H, D11; see
+// processes.LeaveAtPickup). Its one caller is Engine.carrierLeftAtPickup.
+func (m *Mutator) LeaveAtPickup(nodeID, pickupEpoch int64, hold int, holdPart string) error {
+	return m.rw.LeaveProcessNodeAtPickup(nodeID, pickupEpoch, hold, holdPart)
 }
 
 // MarkAttributionBoundary flushes pending deltas before a non-UOP
@@ -185,22 +204,23 @@ func (m *Mutator) ClearActiveBin(nodeID int64) error {
 	return m.rw.ClearProcessNodeActiveBinAndCount(nodeID)
 }
 
-// SetClaimAndCount writes claim + count without touching either bin
-// pointer. Today's callers:
+// SetClaim points the slot at a claim and writes nothing else: not the count,
+// not either bin pointer, not the hold. Callers: the changeover's claim
+// advances — applyStagedDelivery and advanceClaimOnRelease
+// (wiring_completion.go), SwitchNodeToTarget (operator_node_changeover.go)
+// and the restore safety net reconcileNodeTask (changeover_restore.go).
 //
-//   - operator_bin_ops.go:200 (ClearBin manual-swap unloader empty-out)
-//   - operator_node_changeover.go:260 (switch-node UOP reset during changeover)
-//   - changeover_restore.go:75 (engine-startup safety net for in-progress changeovers)
-//   - wiring_completion.go:149 (count carry-forward on staged-delivery)
-//
-// All three field-shape-identical: claim stays meaningful, count
-// goes to a known value, bin pointers untouched. Caller decides the
-// uop value; verb does not derive.
-func (m *Mutator) SetClaimAndCount(nodeID int64, activeClaimID *int64, uop int) error {
-	return m.rw.SetProcessNodeRuntime(nodeID, activeClaimID, uop)
+// It replaced SetClaimAndCount, which wrote the count too. Every caller passed
+// back a count it had read earlier, so a tick between that read and the write
+// was erased: a claim change rewrote a measurement of the carrier, which the
+// claim change did not touch (DESIGN-H §9.1; pins
+// TestPinH_ClaimAdvanceLeavesTheCount,
+// TestPinH_ClaimAdvanceStatementWritesNoCount).
+func (m *Mutator) SetClaim(nodeID int64, activeClaimID *int64) error {
+	return m.rw.SetProcessNodeActiveClaim(nodeID, activeClaimID)
 }
 
-// SetClaimCountAndEpoch is SetClaimAndCount plus the carrier's new
+// SetClaimCountAndEpoch writes claim + count plus the carrier's new
 // generation stamp: the clear shape. Clearing a carrier for reuse starts a
 // new life for it on Core — Core bumps the stamp and returns it in the same
 // reply — but the carrier does not move, so the bin pointer is untouched
@@ -222,21 +242,17 @@ func (m *Mutator) SetClaimCountAndEpoch(nodeID int64, activeClaimID *int64, uop 
 	return m.rw.SetProcessNodeRuntimeClaimCountAndEpoch(nodeID, activeClaimID, uop, binID, deltaEpoch)
 }
 
-// OnDelivered atomically writes claim + active_bin_id + active_bin_epoch
-// + count when a bin physically arrives at the slot. Today's caller
-// is wiring_delivered.go:82 (delivery completion handler). Binds
-// active_bin_id to the delivered bin so PLC ticks attribute to it.
+// Land binds the carrier Core placed at the slot: THE landing verb (Lane H,
+// H.4). Its one caller is Engine.landCarrier (engine/handler_bin_landed.go),
+// for the landing itself and, for one release, for an older Core's Bound and
+// delivered routed through it (H.7). Its refusals are the statement's WHERE
+// (processes.BindLanding); it reports whether it landed.
 //
-// uop and deltaEpoch are seeded from the OrderDelivered envelope (the
-// bin's authoritative count + load-lifecycle epoch carried by Core at
-// arrival), or a configured fallback when the envelope omits them;
-// wiring_delivered.go owns the resolution decision today.
-//
-// activeClaimID is a pointer so the caller can thread the existing
-// runtime.ActiveClaimID through (or set a fresh claim for the
-// to-style on changeover).
-func (m *Mutator) OnDelivered(nodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, uop int) error {
-	return m.rw.SetProcessNodeRuntimeForDeliveredBin(nodeID, activeClaimID, binID, deltaEpoch, uop)
+// It replaced OnDelivered, which bound from order.delivered with WHERE node
+// only and wrote Core's arrival count over the ticks the line had counted
+// since the carrier landed (H.5; TestPinH5_LandingThenDeliveredKeepsTheTicks).
+func (m *Mutator) Land(nodeID int64, l processes.LandingBind) (bool, error) {
+	return m.rw.BindLandingAt(nodeID, l)
 }
 
 // ManualLoad atomically writes claim + active_bin_id + epoch + count

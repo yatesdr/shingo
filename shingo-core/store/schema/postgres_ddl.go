@@ -111,7 +111,12 @@ CREATE TABLE IF NOT EXISTS bins (
     hold_by            TEXT NOT NULL DEFAULT '',
     hold_at            TIMESTAMPTZ,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Lane H, DECISIONS D11 (migration v151): when a streamed carrier's
+    -- generation ended at a lift, set with the bump in the lift's UPDATE and
+    -- cleared at the arrival. A late window starting at or after it is not
+    -- the lifted carrier's (refused as after_lift).
+    lifted_at          TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_bins_type ON bins(bin_type_id);
 CREATE INDEX IF NOT EXISTS idx_bins_node ON bins(node_id);
@@ -119,6 +124,12 @@ CREATE INDEX IF NOT EXISTS idx_bins_status ON bins(status);
 CREATE INDEX IF NOT EXISTS idx_bins_payload_code ON bins(payload_code);
 CREATE INDEX IF NOT EXISTS idx_bins_locked ON bins(locked) WHERE locked = true;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_bins_label_unique ON bins(label) WHERE label != '';
+-- The placement stamp (Lane H, DECISIONS D10; migration v150): one value per
+-- placement Core records, taken in the arrival's own UPDATE and carried on the
+-- landing. A seat refuses a landing whose stamp is not newer than the one it
+-- last bound, so a redelivered or overtaken landing binds nothing. A sequence,
+-- not a clock, because a clock can step.
+CREATE SEQUENCE IF NOT EXISTS bin_placement_seq;
 
 CREATE TABLE IF NOT EXISTS orders (
     id              BIGSERIAL PRIMARY KEY,

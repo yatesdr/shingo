@@ -34,6 +34,7 @@
 package uop
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"runtime/debug"
@@ -103,7 +104,34 @@ type binDeltaEntry struct {
 	// holds none of it.
 	netted      int
 	nettedEpoch int64
+
+	// flushed is this entry's windows as enqueued, (window_start, epoch,
+	// delta), appended at each successful flush commit (Lane H R4, DECISIONS
+	// D11 (ii)). When the pickup reaches the Edge late, the windows of the
+	// lifted generation that started at or after the lift are exactly the ones
+	// Core refuses as after_lift; takeAfterLift sums them here, in memory, at
+	// +0 statements, and clears the list (the carrier has left). A window of
+	// another generation resets the list: only the current generation's windows
+	// can be after a lift that has not happened yet. Capped at maxFlushedWindows,
+	// dropping the OLDEST, which are the ones a lift after them cannot claim.
+	flushed []flushedWindow
 }
+
+// flushedWindow is one enqueued window of a bin entry (binDeltaEntry.flushed).
+type flushedWindow struct {
+	start time.Time
+	epoch int64
+	delta int
+}
+
+// maxFlushedWindows bounds binDeltaEntry.flushed: about 5.7 hours of
+// continuous 5-s windows. A pickup later than that after the lift loses the
+// oldest windows past it from the move; Core still refuses them.
+const maxFlushedWindows = 4096
+
+// flushedWindowsKeep is how long evictIdle keeps an idle entry that still
+// holds flushed windows (a carrier whose pickup has not reached the Edge).
+const flushedWindowsKeep = 24 * time.Hour
 
 // bucketLevelEntry is one pile level the Edge owes Core: a dirty flag and the
 // drains of the flush window, keyed by (core node, payload, state). It holds
@@ -179,6 +207,11 @@ type accumulator struct {
 	recordHook func()
 
 	debugLog DebugLogFunc
+
+	// bootedAt is when this accumulator was built: a lift before it may have
+	// windows flushed by a previous process, which the in-memory lists do not
+	// hold (takeAfterLift reads the outbox then).
+	bootedAt time.Time
 }
 
 // newAccumulator constructs an accumulator for the given Edge identity.
@@ -191,6 +224,7 @@ func newAccumulator(db *store.DB, stationID string) *accumulator {
 		interval:    defaultInventoryDeltaInterval,
 		stopCh:      make(chan struct{}),
 		flushSignal: make(chan struct{}, 1),
+		bootedAt:    clock.Now().UTC(),
 	}
 }
 
@@ -495,6 +529,14 @@ func (r *accumulator) flushBins() {
 		e.delta -= sDelta
 		e.netted = 0
 		e.lastTouched = time.Now().UTC()
+		// Remember the window for a late pickup (Lane H R4): +0 statements.
+		if n := len(e.flushed); n > 0 && e.flushed[n-1].epoch != sEpoch {
+			e.flushed = e.flushed[:0]
+		}
+		if len(e.flushed) >= maxFlushedWindows {
+			e.flushed = append(e.flushed[:0], e.flushed[1:]...)
+		}
+		e.flushed = append(e.flushed, flushedWindow{start: sWindowStart, epoch: sEpoch, delta: sDelta})
 		if e.delta == 0 {
 			// No concurrent records during send — full reset.
 			e.reason = ""
@@ -651,7 +693,14 @@ func (r *accumulator) evictIdle(maxIdle time.Duration) {
 	r.bins.Range(func(key, value any) bool {
 		e := value.(*binDeltaEntry)
 		e.mu.Lock()
-		idle := e.delta == 0 && e.netted == 0 && !e.lastTouched.IsZero() && e.lastTouched.Before(cutoff)
+		// An entry still holding flushed windows is a carrier the pickup has
+		// not cleared yet (Lane H R4): kept for a day, not an hour, so a late
+		// pickup still finds the windows after its lift.
+		entryCutoff := cutoff
+		if len(e.flushed) > 0 {
+			entryCutoff = time.Now().UTC().Add(-flushedWindowsKeep)
+		}
+		idle := e.delta == 0 && e.netted == 0 && !e.lastTouched.IsZero() && e.lastTouched.Before(entryCutoff)
 		if idle {
 			// Mark before unlocking so a recordBin that acquires the
 			// lock next sees the eviction and retries against a fresh
@@ -686,11 +735,93 @@ func (r *accumulator) evictIdle(maxIdle time.Duration) {
 // nothing to restore on failure — the entry is already in the
 // correct state.
 
+// clock is the window clock. It is protocol/clock's, not wall time (Lane H,
+// DECISIONS D11 (ii), S4): a window's start is one of the two numbers the
+// late-lift rule compares, the other being Core's lifted_at off clock.Now, so
+// under a sim clock the two must be the same clock. plc/manager.go already
+// reads it.
 func (r *accumulator) clock() time.Time {
 	if r.now != nil {
 		return r.now()
 	}
-	return time.Now().UTC()
+	return clock.Now().UTC()
+}
+
+// takeAfterLift takes out of the books, for bin binID, the windows of
+// generation epoch that started at or after liftedAt: the ticks counted after
+// the robot lifted the carrier, which Core refuses as after_lift (Lane H R4,
+// DECISIONS D11 (ii)). It returns their signed sum (negative for consumption)
+// and clears the entry's flushed list, since the carrier has left.
+//
+//   - The unflushed part: taken out of the entry if its window started at or
+//     after liftedAt (it is never sent); a window straddling the lift stays
+//     and flushes to the carrier, as Core will apply it.
+//   - The flushed windows: summed from the entry's in-memory list (+0). After
+//     an Edge restart the list is empty, so when the lift is older than this
+//     accumulator the outbox's own rows are read instead (one read, only for
+//     a pickup late across a restart).
+//
+// Under flushMu, so no flush moves a window between the two halves.
+func (r *accumulator) takeAfterLift(binID, epoch int64, liftedAt time.Time) (int, error) {
+	r.flushMu.Lock()
+	defer r.flushMu.Unlock()
+	sum := 0
+	var flushed []flushedWindow
+	if v, ok := r.bins.Load(strconv.FormatInt(binID, 10)); ok {
+		e := v.(*binDeltaEntry)
+		e.mu.Lock()
+		if e.delta != 0 && e.epoch == epoch && !e.windowStart.Before(liftedAt) {
+			sum += e.delta
+			e.delta, e.netted = 0, 0
+			e.reason = ""
+			e.windowStart, e.windowEnd = time.Time{}, time.Time{}
+		}
+		flushed = e.flushed
+		e.flushed = nil
+		e.mu.Unlock()
+	}
+	if liftedAt.Before(r.bootedAt) {
+		n, err := r.flushedSinceFromOutbox(binID, epoch, liftedAt)
+		if err != nil {
+			return sum, err
+		}
+		return sum + n, nil
+	}
+	for _, w := range flushed {
+		if w.epoch == epoch && !w.start.Before(liftedAt) {
+			sum += w.delta
+		}
+	}
+	return sum, nil
+}
+
+// flushedSinceFromOutbox sums the bin_uop_delta rows of (binID, epoch) in the
+// outbox whose window started at or after since: takeAfterLift's fallback
+// after a restart. One read.
+func (r *accumulator) flushedSinceFromOutbox(binID, epoch int64, since time.Time) (int, error) {
+	payloads, err := r.db.OutboxPayloadsSince(protocol.SubjectBinUOPDelta, since.Add(-time.Second))
+	if err != nil {
+		return 0, fmt.Errorf("read outbox for windows after the lift of bin %d: %w", binID, err)
+	}
+	sum := 0
+	for _, raw := range payloads {
+		var env protocol.Envelope
+		if json.Unmarshal(raw, &env) != nil {
+			continue
+		}
+		var data protocol.Data
+		if env.DecodePayload(&data) != nil {
+			continue
+		}
+		var d protocol.BinUOPDelta
+		if json.Unmarshal(data.Body, &d) != nil {
+			continue
+		}
+		if d.BinID == binID && d.Epoch == epoch && !d.WindowStart.Before(since) {
+			sum += d.Delta
+		}
+	}
+	return sum, nil
 }
 
 // bucketLevelKey is a pile level's key: "<core_node_name>|<payload>|<state>",

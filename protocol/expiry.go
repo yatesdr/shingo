@@ -105,6 +105,16 @@ var subjectTTLs = map[string]time.Duration{
 	// TTL already allowed for five minutes.
 	SubjectBinPickedUp: NoExpiry,
 
+	// The drop of a bin (Lane H, H.6): the only door that binds a carrier Core
+	// placed, so a dropped copy leaves a seat empty while a carrier stands on
+	// it, and every tick there is held. A late copy is safe by the receiving
+	// side's guard, which is what the rule above asks for: the seat keeps the
+	// placement stamp of the landing it last bound (placed_seq, DECISIONS
+	// D10), and the bind's WHERE refuses one not newer, so a redelivered or
+	// overtaken landing binds nothing; the same bin at an equal or newer
+	// generation keeps its count (H.4).
+	SubjectBinLanded: NoExpiry,
+
 	// The heartbeat and its ack carry the feed digests, and the ack drives the
 	// Edge's reconcile after a gap. Both are stamped on one clock and checked
 	// on the other, so the TTL is also the clock skew a station tolerates: at

@@ -233,14 +233,21 @@ func TestCarrierBindings_BoundAtIsTheNewestEpochBumpOnly(t *testing.T) {
 		t.Errorf("uop_capacity = %v, want 1000 — without it a negative cannot be sized", row.UOPCapacity)
 	}
 
-	// And a release AFTER all of it does start a new binding.
+	// And the lift AFTER all of it does start a new binding.
+	//
+	// CONVERTED (Lane H, DECISIONS D11 (i), 2026-10-10): this was "a release
+	// does". The release now declares a count inside the binding with no bump,
+	// and the generation ends at the lift, which writes `lifted`. So the release
+	// row leaves bound_at where it was, and the lift row moves it.
 	later := base.Add(28 * 24 * time.Hour)
 	seedAudit(t, db, b.ID, -40, 0, "released_underpack", "PART-A", later)
+	lifted := later.Add(10 * time.Minute)
+	seedAudit(t, db, b.ID, 0, 0, "lifted", "PART-A", lifted)
 	got2, err := bins.CarrierBindings(db.DB, audit.EpochBumpOps)
 	testutil.MustNoErr(t, err, "CarrierBindings after release")
 	for _, r := range got2 {
-		if r.BinID == b.ID && (r.BoundAt == nil || !r.BoundAt.Equal(later)) {
-			t.Errorf("after a release, bound_at = %v, want %s", r.BoundAt, later)
+		if r.BinID == b.ID && (r.BoundAt == nil || !r.BoundAt.Equal(lifted)) {
+			t.Errorf("after a release and the lift, bound_at = %v, want %s (the lift, not the release)", r.BoundAt, lifted)
 		}
 	}
 }

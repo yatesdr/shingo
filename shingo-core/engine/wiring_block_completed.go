@@ -40,7 +40,6 @@ import (
 	"strings"
 
 	"shingo/protocol"
-	"shingo/protocol/clock"
 	"shingocore/domain"
 	"shingocore/service"
 	"shingocore/store/orders"
@@ -168,34 +167,30 @@ func (e *Engine) handlePickupBlockCompleted(ev BlockCompletedEvent) {
 		return
 	}
 
-	if err := e.binService.MoveToTransit(binID); err != nil {
-		e.logFn("transit: MoveToTransit bin %d for order %d: %v", binID, ev.OrderID, err)
-		return
-	}
-
-	e.dbg("transit: bin %d entered _TRANSIT (order %d, block %s @ %s, step %d)",
-		binID, ev.OrderID, ev.BlockID, ev.Location, stepIndex)
-
 	// Item 11: notify Edge that the bin was physically picked up. The
 	// SEND PARTIAL BACK flow needs this signal to flush the released
 	// bin's delta accumulator and advance the active claim. We publish
 	// for every pickup (not just partial-back) — the Edge handler
 	// no-ops gracefully when the order doesn't match a tracked bin.
+	//
+	// THE LIFT AND ITS NOTICE ARE ONE TRANSACTION (Lane H, DECISIONS D11
+	// (i)): the lift ends a streamed bin's generation, and the pickup message
+	// carrying the new Epoch and the lift time is that bump's announcement. It
+	// used to be the UPDATE, then a separate outbox row after it; a crash
+	// between them moved the bin and told nobody.
 	order, err := e.db.GetOrder(ev.OrderID)
-	var station string
+	notice := service.PickupNotice{OrderID: ev.OrderID, Location: ev.Location}
 	if err == nil && order != nil {
-		station, _ = materialStation(order)
+		notice.Station, _ = materialStation(order)
+		notice.OrderUUID = order.EdgeUUID
 	}
-	if station != "" {
-		if err := e.SendDataToEdge(protocol.SubjectBinPickedUp, station, &protocol.BinPickedUp{
-			OrderUUID:  order.EdgeUUID,
-			BinID:      binID,
-			Location:   ev.Location,
-			PickedUpAt: clock.Now().UTC(),
-		}); err != nil {
-			e.logFn("transit: send BinPickedUp bin %d order %d: %v", binID, ev.OrderID, err)
-		}
+	if _, err := e.binService.Lift(binID, notice); err != nil {
+		e.logFn("transit: lift bin %d for order %d: %v", binID, ev.OrderID, err)
+		return
 	}
+
+	e.dbg("transit: bin %d entered _TRANSIT (order %d, block %s @ %s, step %d)",
+		binID, ev.OrderID, ev.BlockID, ev.Location, stepIndex)
 
 	e.Events.Emit(Event{Type: EventBinEnteredTransit, Payload: BinEnteredTransitEvent{
 		BinID:      binID,
@@ -436,7 +431,11 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 		}
 	}
 	if location == "" || location == strings.TrimSpace(order.DeliveryNode) {
-		return // final delivery is recorded at whole-order FINISHED
+		// Final delivery is recorded at whole-order FINISHED, and its landing
+		// goes with it (applyArrival writes it in that move's transaction, Lane
+		// H, H.2): the reason for returning here stands, and the bind gap it
+		// left (no Bound for the final drop) is closed there.
+		return
 	}
 
 	binID, ok := e.resolveDropoffBin(order, location)
@@ -499,44 +498,22 @@ func (e *Engine) handleStoreBlockCompleted(ev BlockCompletedEvent) {
 			OrderID:     order.ID,
 		}})
 
-		// Bind the arrived bin onto the Edge runtime if this dropoff node is an
-		// Edge line node. A MULTI-BIN swap (single_robot carries the new bin IN and
-		// the old bin OUT in one order) drops the new bin here as an INTERMEDIATE
-		// dropoff, and the whole-order OrderDelivered then lands at the market — so
-		// handleNodeOrderDelivered (single-bin only; no-ops on BinID==nil) never
-		// binds it and the line node sits unbound (active_bin_id=NULL → "no bin /
-		// starved", its PLC ticks attributed to nothing). Reuse the
-		// UOPAdjustment{Bound} channel the admin-Move fix added (75643f9): the Edge
-		// binds ONLY the process node it owns and no-ops for supermarket / staging /
-		// synthetic dests, so it is safe to fire on every intermediate dropoff.
+		// The Edge hears of this placement from the landing ApplyIntermediateStore
+		// wrote in the move's own transaction (Lane H, H.2; service.announceLanding),
+		// addressed to the station claiming the node, or the order's (H.3). This
+		// used to be a UOPAdjustment{Bound} broadcast here, after the commit: a
+		// crash between the two left the carrier on the line unbound. It is still
+		// the PLACEMENT RECORD half of a leg's departure (the Edge's
+		// settleCellPlacement hangs off the bind; shingo-edge/engine/
+		// leg_departure.go, docs/order-lifecycle.md § Departed legs and
+		// cell-done). An Edge too old for the landing gets that Bound, addressed
+		// to it (H.7).
 		//
-		// NOT DORMANT, and this comment used to say it was. It claimed the broadcast
-		// fires only for multi-bin swaps because "single-bin swaps have no junction
-		// rows, so resolveDropoffBin returns false for them above". resolveDropoffBin
-		// stopped reading the junction (see its own header) — it asks what this order
-		// has at _TRANSIT — and a two_robot supply leg's intermediate dropoff at
-		// InboundStaging resolves fine and reaches this broadcast. Edge binds by the
-		// node's NAME (GetProcessNodeByCoreNodeName), so this is a no-op only for a
-		// staging node that is not also some style's line position; one that is gets
-		// its runtime bound to the staged bin. Keep-staged refuses that overlap at
-		// config, and never stages a complex leg on its spot at all. A reader
-		// reasoning from "dormant" would be reasoning from a fact that has not held
-		// for some time.
-		//
-		// It is also load-bearing now, and not only for the tile: this is the
-		// PLACEMENT RECORD half of a leg's departure. Edge's settleCellPlacement
-		// hangs off this bind, and a leg that places at a cell stays undeparted —
-		// holding the cell — until it lands. See shingo-edge/engine/leg_departure.go
-		// and docs/order-lifecycle.md § Departed legs and cell-done.
-		if err := e.SendDataToEdge(protocol.SubjectUOPAdjustment, protocol.StationBroadcast, &protocol.UOPAdjustment{
-			BinID:        binID,
-			CoreNodeName: destNode.Name,
-			NewRemaining: updated.UOPRemaining,
-			Epoch:        updated.DeltaEpoch,
-			Bound:        true,
-		}); err != nil {
-			e.logFn("transit: bind-to-edge broadcast bin %d -> %s: %v", binID, destNode.Name, err)
-		}
+		// The old comment's facts stand for the landing: a single_robot swap's
+		// fresh carrier is placed on the line as an INTERMEDIATE drop and the
+		// whole-order delivered lands at the market, so this is the only bind it
+		// gets; and a staging node that is no station's position is told nothing
+		// worth binding (the Edge binds by the node's name).
 	}
 }
 

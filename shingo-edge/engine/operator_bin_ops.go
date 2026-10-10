@@ -767,7 +767,7 @@ func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.N
 	}
 	log.Printf("side-cycle: U2 (empty-out) order %d for unloader %s → %s (names no part)", order.ID, node.Name, outbound)
 	// Point the runtime active order at U2 so the unloader UI shows the empty-out next.
-	// (ClearBin's SetClaimAndCount zeroes the count/claim but leaves this pointer.)
+	// (ClearBin's SetClaimCountAndEpoch zeroes the count but leaves this pointer.)
 	if err := e.db.SetProcessNodeRuntimeActiveOrder(node.ID, &order.ID); err != nil {
 		log.Printf("side-cycle: update runtime orders for unloader %d: %v", node.ID, err)
 	}

@@ -165,7 +165,9 @@ func TestArch_ActiveBinPointerWritersAreKnown(t *testing.T) {
 		"SetProcessNodeRuntimeWithBin(",
 		"SetProcessNodeRuntimeWithBinAndEpoch(",
 		"SetProcessNodeRuntimeClaimCountAndEpoch(",
-		"SetProcessNodeRuntimeForDeliveredBin(",
+		// The landing's bind (Lane H, H.4) replaced the delivered bind
+		// (SetProcessNodeRuntimeForDeliveredBin, deleted with H.5).
+		".BindLandingAt(",
 	}
 
 	var bad []string
@@ -289,6 +291,7 @@ func TestArch_CarrierLeavesThroughOneVerb(t *testing.T) {
 	verb := filepath.Join("engine", "carrier_left.go")
 	patterns := []string{
 		".ClearActiveBin(",
+		"inventoryDelta.LeaveAtPickup(", // the pickup's form of the same statement (Lane H, D11)
 		"domain.CarrierDeparted",
 	}
 	var bad []string

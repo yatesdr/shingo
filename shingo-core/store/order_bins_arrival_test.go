@@ -64,7 +64,7 @@ func TestApplyMultiBinArrival_EvictsStaleGhostOnOccupiedPhysicalNode(t *testing.
 	evicted, err := db.ApplyMultiBinArrival(order.ID, []orders.BinArrivalInstruction{
 		{BinID: arrA.ID, ToNodeID: destA.ID}, // collides with the ghost
 		{BinID: arrB.ID, ToNodeID: destB.ID}, // empty destination
-	})
+	}, nil)
 	testutil.MustNoErr(t, err, "ApplyMultiBinArrival")
 
 	// Exactly the ghost was reported evicted.
@@ -136,7 +136,7 @@ func TestApplyMultiBinArrival_SyntheticDestNotEvicted(t *testing.T) {
 
 	evicted, err := db.ApplyMultiBinArrival(order.ID, []orders.BinArrivalInstruction{
 		{BinID: arriving.ID, ToNodeID: syn.ID},
-	})
+	}, nil)
 	testutil.MustNoErr(t, err, "ApplyMultiBinArrival")
 	if len(evicted) != 0 {
 		t.Errorf("evicted = %v, want none (synthetic destinations hold many bins)", evicted)
@@ -175,7 +175,7 @@ func TestApplyMultiBinArrival_EvictsMultipleGhostsAtOneNode(t *testing.T) {
 
 	evicted, err := db.ApplyMultiBinArrival(order.ID, []orders.BinArrivalInstruction{
 		{BinID: arriving.ID, ToNodeID: dest.ID},
-	})
+	}, nil)
 	testutil.MustNoErr(t, err, "ApplyMultiBinArrival")
 	if len(evicted) != 2 {
 		t.Fatalf("evicted %d ghosts, want 2", len(evicted))

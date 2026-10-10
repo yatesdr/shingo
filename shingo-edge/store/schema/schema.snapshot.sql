@@ -558,8 +558,9 @@ CREATE TABLE process_node_runtime_states (
     lineside_at TEXT NOT NULL DEFAULT '',
     remaining_uop_cached INTEGER NOT NULL DEFAULT 0,
     -- pending_uop_delta holds tick counts that arrived while no bin was
-    -- bound (the pickup->delivery gap); the next tick with a bound bin
-    -- applies current+pending and resets it. Durable across restart.
+    -- bound (the pickup->delivery gap); the next tick with a bound bin of
+    -- the held part (pending_uop_payload) applies current+pending and resets
+    -- it. Durable across restart.
     pending_uop_delta  INTEGER NOT NULL DEFAULT 0,
     active_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,
     staged_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,
@@ -570,7 +571,27 @@ CREATE TABLE process_node_runtime_states (
     -- Its own column because the claim's updated_at is the setup card's "flow
     -- saved" date, and a resume is not a change to the flow. Last, where the
     -- v17 ALTER puts it on an existing database.
-    keep_staged_resumed_at TEXT NOT NULL DEFAULT ''
+    keep_staged_resumed_at TEXT NOT NULL DEFAULT '',
+    -- pending_uop_payload is the part of the ticks held in pending_uop_delta,
+    -- written by the hold's own statement and cleared with it. The hold
+    -- replays only onto a bound carrier of that part (Lane H R2, DECISIONS
+    -- D12); a different part's carrier takes none. '' is a hold from before
+    -- the column, which replays as it always did.
+    pending_uop_payload TEXT NOT NULL DEFAULT '',
+    -- released_empty: the bound carrier was released as empty (RELEASE EMPTY,
+    -- an underpack, a release declaring 0). It is not charged afterwards: a
+    -- consume tick drains the pile, then is held for the next carrier of the
+    -- part (Lane H R3, D12). Set by the release's count write, cleared when
+    -- the carrier leaves or another carrier binds. After the v17 column,
+    -- where the v19 ALTERs put both.
+    released_empty INTEGER NOT NULL DEFAULT 0,
+    -- placed_seq: the placement stamp of the landing this seat last bound
+    -- (Core's bin_placement_seq, Lane H, DECISIONS D10). The landing's bind
+    -- refuses one not newer, so a redelivered or overtaken landing binds
+    -- nothing. Kept by every leave; a person's bind leaves it as it is. NULL
+    -- until the first landing. After released_empty, where the v20 ALTER puts
+    -- it.
+    placed_seq INTEGER
 );
 
 CREATE TABLE process_nodes (

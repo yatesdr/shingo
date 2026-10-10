@@ -26,21 +26,40 @@ import (
 // OrderDelivered protocol message. When the order isn't found by UUID (Core-
 // admin manual orders have no Edge row), a fallback bind event is emitted using
 // deliveryNode so the runtime cache can still be updated.
+//
+// This entry is the delivered of a Core that sends no landing (an older Core,
+// protocol.OrderDelivered.LandingSent false): its carrier fields still bind,
+// through the landing verb with no placement stamp (Lane H, H.7). The wire
+// handler calls HandleDeliveredNotice, which carries the flag.
 func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, binPayloadCode *string, epoch int64, deliveryNode, binDestNode string) error {
+	return m.handleDeliveredWire(orderUUID, statusDetail, stagedExpireAt, binID, uop, binPayloadCode, epoch, deliveryNode, binDestNode, false)
+}
+
+// HandleDeliveredNotice is the wire's order.delivered. With LandingSent the
+// sending Core announced the carrier's drop on transit.bin_landed, so the
+// delivered closes the order and binds nothing (Lane H, H.5); without it the
+// carrier fields are an older Core's and bind as HandleDeliveredWithExpiry's
+// do (H.7).
+func (m *Manager) HandleDeliveredNotice(p *protocol.OrderDelivered) error {
+	return m.handleDeliveredWire(p.OrderUUID, p.DeliveredAt.Format(time.RFC3339), p.StagedExpireAt, p.BinID,
+		p.UOPRemaining, p.BinPayloadCode, p.DeltaEpoch, p.DeliveryNode, p.BinDestNode, p.LandingSent)
+}
+
+func (m *Manager) handleDeliveredWire(orderUUID, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, binPayloadCode *string, epoch int64, deliveryNode, binDestNode string, landingSent bool) error {
 	order, err := m.db.GetOrderByUUID(orderUUID)
 	if err != nil {
-		// Core-admin order — no Edge row. Emit a bind-only fallback event so the
-		// runtime cache updates if the delivery node maps to an Edge process node.
+		// Core-admin order — no Edge row. Emit a fallback event so the engine
+		// can check (or, for an older Core, bind) the node by its name.
 		if binID != nil && deliveryNode != "" {
-			m.emitter.EmitOrderDeliveredFallback(*binID, uop, binPayloadCode, epoch, deliveryNode)
+			m.emitter.EmitOrderDeliveredFallback(*binID, uop, binPayloadCode, epoch, deliveryNode, landingSent)
 		}
 		return fmt.Errorf("order %s not found: %w", orderUUID, err)
 	}
-	return m.handleDelivered(order, statusDetail, stagedExpireAt, binID, uop, binPayloadCode, epoch, binDestNode)
+	return m.handleDelivered(order, statusDetail, stagedExpireAt, binID, uop, binPayloadCode, epoch, binDestNode, landingSent)
 }
 
-func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, binPayloadCode *string, epoch int64, binDestNode string) error {
-	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, binID, uop, binPayloadCode, epoch, binDestNode); err != nil {
+func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, binPayloadCode *string, epoch int64, binDestNode string, landingSent bool) error {
+	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, binID, uop, binPayloadCode, epoch, binDestNode, landingSent); err != nil {
 		return err
 	}
 	if order.AutoConfirm {
@@ -81,7 +100,7 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		// Dispatch-reply delivery carries no bin snapshot (that rides the
 		// OrderDelivered envelope); pass nil/0/"" and let the OrderDelivered
 		// path seat the count when it arrives.
-		return m.handleDelivered(order, statusDetail, nil, nil, nil, nil, 0, "")
+		return m.handleDelivered(order, statusDetail, nil, nil, nil, nil, 0, "", false)
 	case ReplyError:
 		return m.TransitionOrder(order.ID, StatusFailed, statusDetail)
 	case ReplySkipped:

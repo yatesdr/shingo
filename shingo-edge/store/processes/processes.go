@@ -657,7 +657,7 @@ func scanRuntime(scanner interface{ Scan(...any) error }) (RuntimeState, error) 
 	var updatedAt, linesideAt string
 	err := scanner.Scan(&r.ID, &r.ProcessNodeID, &r.ActiveClaimID, &r.ActiveBinID, &r.ActiveBinEpoch,
 		&r.LinesidePayloadCode, &r.LinesidePayloadKnown, &r.LinesideSource, &linesideAt, &r.RemainingUOPCached,
-		&r.PendingUOPDelta, &r.ActiveOrderID, &r.StagedOrderID, &r.ActivePull, &updatedAt)
+		&r.PendingUOPDelta, &r.PendingUOPPayload, &r.ReleasedEmpty, &r.ActiveOrderID, &r.StagedOrderID, &r.ActivePull, &updatedAt)
 	if err != nil {
 		return r, err
 	}
@@ -702,7 +702,7 @@ func RuntimesForNodes(db *sql.DB, processNodeIDs []int64) (map[int64]*RuntimeSta
 	}
 	rows, err := db.Query(`SELECT id, process_node_id, active_claim_id, active_bin_id, active_bin_epoch, lineside_payload_code,
 		lineside_payload_known, lineside_source, lineside_at, remaining_uop_cached,
-		pending_uop_delta, active_order_id, staged_order_id, active_pull, updated_at
+		pending_uop_delta, pending_uop_payload, released_empty, active_order_id, staged_order_id, active_pull, updated_at
 		FROM process_node_runtime_states WHERE process_node_id IN (`+placeholders.String()+`)`, args...)
 	if err != nil {
 		return nil, err
@@ -740,7 +740,7 @@ func EnsureRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 func GetRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 	r, err := scanRuntime(db.QueryRow(`SELECT id, process_node_id, active_claim_id, active_bin_id, active_bin_epoch, lineside_payload_code,
 		lineside_payload_known, lineside_source, lineside_at, remaining_uop_cached,
-		pending_uop_delta, active_order_id, staged_order_id, active_pull, updated_at
+		pending_uop_delta, pending_uop_payload, released_empty, active_order_id, staged_order_id, active_pull, updated_at
 		FROM process_node_runtime_states WHERE process_node_id=?`, processNodeID))
 	if err != nil {
 		return nil, err
@@ -759,6 +759,24 @@ func SetRuntime(db *sql.DB, processNodeID int64, activeClaimID *int64, remaining
 		active_claim_id=?, remaining_uop_cached=?, updated_at=datetime('now')
 		WHERE process_node_id=?`,
 		activeClaimID, remainingUOPCached, processNodeID)
+	return err
+}
+
+// SetRuntimeClaim points the runtime row at a claim and writes nothing else.
+//
+// A CLAIM CHANGE DOES NOT WRITE THE COUNT. The claim advances during a
+// changeover (the staged delivery, the release's completion, the switch, the
+// restore) all used SetRuntime and passed back a count read earlier, so a tick
+// landing between that read and the write was erased. The count belongs to the
+// carrier, not to the claim, and the carrier did not change (DESIGN-H §9.1;
+// pins TestPinH_ClaimAdvanceLeavesTheCount,
+// TestPinH_ClaimAdvanceStatementWritesNoCount). One statement, as before, with
+// one column less.
+func SetRuntimeClaim(db *sql.DB, processNodeID int64, activeClaimID *int64) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET
+		active_claim_id=?, updated_at=datetime('now')
+		WHERE process_node_id=?`,
+		activeClaimID, processNodeID)
 	return err
 }
 
@@ -792,10 +810,10 @@ func SetRuntimeClaimCountAndEpoch(db *sql.DB, processNodeID int64, activeClaimID
 // names who said it.
 func SetRuntimeWithBin(db *sql.DB, processNodeID int64, activeClaimID, activeBinID *int64, remainingUOPCached int) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_claim_id=?, active_bin_id=?, `+rememberDepartedBin+`, remaining_uop_cached=?,
+		`+releasedEmptyOnBind+`, active_claim_id=?, active_bin_id=?, `+rememberDepartedBin+`, remaining_uop_cached=?,
 		updated_at=datetime('now')
 		WHERE process_node_id=?`,
-		activeClaimID, activeBinID, remainingUOPCached, processNodeID)
+		activeBinID, remainingUOPCached, activeClaimID, activeBinID, remainingUOPCached, processNodeID)
 	return err
 }
 
@@ -866,6 +884,25 @@ const epochAssignForBoundBin = `active_bin_epoch=CASE
 const rememberDepartedBin = `last_bin_id=CASE WHEN active_bin_id IS NOT NULL THEN active_bin_id ELSE last_bin_id END,
 		last_bin_epoch=CASE WHEN active_bin_id IS NOT NULL THEN active_bin_epoch ELSE last_bin_epoch END`
 
+// releasedEmptyOnBind keeps or clears released_empty (Lane H R3, DECISIONS
+// D12) on a statement that writes active_bin_id and the count. The flag
+// belongs to the carrier the release declared empty, so a different carrier
+// (or none) clears it, and so does the same carrier given a count above 0 (a
+// LOAD, or Core announcing parts in it). The same carrier re-bound at 0 keeps
+// it, and that case is not hypothetical: the release's own echo (Core's
+// generation bump after an empty release, uop_adjustment {B, 0, E+1}) re-binds
+// the released carrier through SetRuntimeWithBinAndEpoch, and clearing there
+// would charge the released bin again for the rest of its stay.
+//
+// Right-hand columns read the row as it was. Takes two bind parameters: the
+// incoming bin, then the incoming count. No statement of its own.
+const releasedEmptyOnBind = `released_empty=CASE WHEN active_bin_id IS ? AND ? <= 0 THEN released_empty ELSE 0 END`
+
+// releasedEmptyOnPointer is the same rule for a pointer write that carries no
+// count (SetActiveBinID, SetActiveBinIDAndEpoch): the same carrier keeps the
+// flag, any other clears it. One bind parameter: the incoming bin.
+const releasedEmptyOnPointer = `released_empty=CASE WHEN active_bin_id IS ? THEN released_empty ELSE 0 END`
+
 // epochArgs supplies either rule's three bind parameters: the bin the write
 // is for, then the incoming stamp twice (once to compare, once to store).
 func epochArgs(activeBinID any, deltaEpoch int64) []any {
@@ -885,11 +922,11 @@ func epochArgs(activeBinID any, deltaEpoch int64) []any {
 // The epoch is subject to epochAssignOnBind; the other three columns are
 // written unconditionally.
 func SetRuntimeWithBinAndEpoch(db *sql.DB, processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOPCached int) error {
-	args := []any{activeClaimID, activeBinID}
+	args := []any{activeBinID, remainingUOPCached, activeClaimID, activeBinID}
 	args = append(args, epochArgs(activeBinID, deltaEpoch)...)
 	args = append(args, remainingUOPCached, processNodeID)
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_claim_id=?, active_bin_id=?, `+rememberDepartedBin+`, `+epochAssignOnBind+`, remaining_uop_cached=?, updated_at=datetime('now')
+		`+releasedEmptyOnBind+`, active_claim_id=?, active_bin_id=?, `+rememberDepartedBin+`, `+epochAssignOnBind+`, remaining_uop_cached=?, updated_at=datetime('now')
 		WHERE process_node_id=?`, args...)
 	return err
 }
@@ -944,11 +981,11 @@ func SetCountFenced(db *sql.DB, processNodeID, binID, deltaEpoch int64, remainin
 // The refusal is the WHERE clause of the bind itself, so it costs no
 // statement.
 func BindEmptySlotUnlessDeparted(db *sql.DB, processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOPCached int) (bool, error) {
-	args := []any{activeClaimID, binID}
+	args := []any{binID, remainingUOPCached, activeClaimID, binID}
 	args = append(args, epochArgs(binID, deltaEpoch)...)
 	args = append(args, remainingUOPCached, processNodeID, binID, deltaEpoch)
 	res, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_claim_id=?, active_bin_id=?, `+rememberDepartedBin+`, `+epochAssignOnBind+`, remaining_uop_cached=?, updated_at=datetime('now')
+		`+releasedEmptyOnBind+`, active_claim_id=?, active_bin_id=?, `+rememberDepartedBin+`, `+epochAssignOnBind+`, remaining_uop_cached=?, updated_at=datetime('now')
 		WHERE process_node_id=?
 		  AND NOT (active_bin_id IS NULL AND last_bin_id IS ? AND last_bin_epoch > ?)`, args...)
 	if err != nil {
@@ -961,21 +998,95 @@ func BindEmptySlotUnlessDeparted(db *sql.DB, processNodeID int64, activeClaimID 
 	return n == 1, nil
 }
 
-// SetRuntimeForDeliveredBin is the atomic write used when a bin
-// physically arrives at the slot: active_claim_id and active_bin_id
-// become the delivered bin's id, active_bin_epoch becomes the bin's
-// load-lifecycle epoch, and remaining_uop_cached becomes the bin's
-// authoritative uop_remaining (carried on the OrderDelivered envelope).
-// binID is not a pointer — this is the delivered-bin handler's atomic
-// write and a delivery always names a carrier; callers gate on
-// order.DeliveryNode == ctx.node.CoreNodeName before invoking.
+// LandingBind is one landing's bind (Lane H, H.4): the carrier Core placed at
+// this seat, its count and generation, and its placement stamp.
 //
-// The body was a byte-identical copy of SetRuntimeWithBinAndEpoch's,
-// differing only in that non-pointer parameter. Kept as its own name
-// because the two call sites mean different things — a delivery versus
-// an operator's imprint — and the name is the only place that shows.
-func SetRuntimeForDeliveredBin(db *sql.DB, processNodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, remainingUOPCached int) error {
-	return SetRuntimeWithBinAndEpoch(db, processNodeID, activeClaimID, &binID, deltaEpoch, remainingUOPCached)
+// PlacedSeq nil is a bind with no stamp: an older Core's Bound or delivered
+// routed through the landing verb for one release (H.7). MayDisplace says
+// whether such an unstamped bind may replace a DIFFERENT carrier bound here:
+// true for the Bound (Core's move refused a destination that held another bin,
+// so the bound one is stale), false for the delivered (a delivered names the
+// order's carrier, not the seat's; it binds only into an empty slot or onto
+// the same bin). A stamped landing ignores it: the stamp decides.
+type LandingBind struct {
+	BinID       int64
+	Epoch       int64
+	Count       int
+	PlacedSeq   *int64
+	MayDisplace bool
+}
+
+// BindLanding is THE landing bind (Lane H, H.4; DECISIONS D10): one statement
+// whose refusals are its WHERE, the shape of BindEmptySlotUnlessDeparted.
+// Reports whether it landed.
+//
+// Refused, writing nothing:
+//   - a stamped landing not newer than the one the seat last bound
+//     (placed_seq IS NULL OR placed_seq < :seq). This is the general guard:
+//     a redelivered landing carries the stamp it bound with, an overtaken one
+//     an older stamp, so neither re-binds a carrier that has left, whatever
+//     way it left and whatever has been bound since (DESIGN-H §5 L1–L10). The
+//     one-deep last_bin memory and the generation cannot see those;
+//   - the carrier that last left this empty slot at a newer generation (the
+//     departed guard, kept for the unstamped binds);
+//   - an unstamped bind that may not displace, onto a different carrier.
+//
+// Landed: the pointer and the generation (epochAssignOnBind, forward only for
+// the same bin), and placed_seq when stamped. THE SAME BIN ALREADY BOUND AT AN
+// EQUAL OR NEWER GENERATION KEEPS ITS COUNT (H.4): Core's number is the
+// arrival's, and the ticks the line counted since are in the Edge's. It keeps
+// released_empty with it (R3: the carrier the release declared empty stays
+// declared). Otherwise the count is Core's, and released_empty follows
+// releasedEmptyOnBind.
+//
+// The claim is left as it is: a carrier arriving changes what is on the seat,
+// not what the node makes or uses. The identity is written by the caller
+// through the lineside doorway (Engine.recordLinesideCarrier).
+//
+// placed_seq is written here and nowhere else. Every leave keeps it; a
+// person's bind (ManualLoad, the count correction, the cancel reconcile)
+// leaves it as it is.
+func BindLanding(db *sql.DB, processNodeID int64, l LandingBind) (bool, error) {
+	var seq any
+	if l.PlacedSeq != nil {
+		seq = *l.PlacedSeq
+	}
+	mayDisplace := 0
+	if l.MayDisplace {
+		mayDisplace = 1
+	}
+	args := []any{
+		// released_empty: kept with the kept count, else releasedEmptyOnBind.
+		l.BinID, l.Epoch, l.BinID, l.Count,
+		// remaining_uop_cached: kept for the same bin at >= generation.
+		l.BinID, l.Epoch, l.Count,
+		l.BinID,
+	}
+	args = append(args, epochArgs(l.BinID, l.Epoch)...)
+	args = append(args, seq, seq,
+		processNodeID,
+		seq, seq,
+		seq, mayDisplace, l.BinID,
+		l.BinID, l.Epoch)
+	res, err := db.Exec(`UPDATE process_node_runtime_states SET
+		released_empty=CASE WHEN active_bin_id IS ? AND active_bin_epoch >= ? THEN released_empty
+		                    ELSE (CASE WHEN active_bin_id IS ? AND ? <= 0 THEN released_empty ELSE 0 END) END,
+		remaining_uop_cached=CASE WHEN active_bin_id IS ? AND active_bin_epoch >= ? THEN remaining_uop_cached ELSE ? END,
+		active_bin_id=?, `+rememberDepartedBin+`, `+epochAssignOnBind+`,
+		placed_seq=CASE WHEN ? IS NULL THEN placed_seq ELSE ? END,
+		updated_at=datetime('now')
+		WHERE process_node_id=?
+		  AND (? IS NULL OR placed_seq IS NULL OR placed_seq < ?)
+		  AND (? IS NOT NULL OR ? = 1 OR active_bin_id IS NULL OR active_bin_id = ?)
+		  AND NOT (active_bin_id IS NULL AND last_bin_id IS ? AND last_bin_epoch > ?)`, args...)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
 }
 
 // SetActiveBinID writes only the active_bin_id pointer on a runtime
@@ -985,9 +1096,9 @@ func SetRuntimeForDeliveredBin(db *sql.DB, processNodeID int64, activeClaimID *i
 // claim or count.
 func SetActiveBinID(db *sql.DB, processNodeID int64, activeBinID *int64) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_bin_id=?, `+rememberDepartedBin+`, updated_at=datetime('now')
+		`+releasedEmptyOnPointer+`, active_bin_id=?, `+rememberDepartedBin+`, updated_at=datetime('now')
 		WHERE process_node_id=?`,
-		activeBinID, processNodeID)
+		activeBinID, activeBinID, processNodeID)
 	return err
 }
 
@@ -1005,11 +1116,39 @@ func SetActiveBinID(db *sql.DB, processNodeID int64, activeBinID *int64) error {
 // engine's lineside doorway right after this statement, so the one place
 // that writes the identity also names who cleared it.
 func ClearActiveBinAndCount(db *sql.DB, processNodeID int64) error {
+	// released_empty goes with the carrier it describes (Lane H R3, D12).
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_bin_id=NULL, `+rememberDepartedBin+`, remaining_uop_cached=0,
+		active_bin_id=NULL, `+rememberDepartedBin+`, remaining_uop_cached=0, released_empty=0,
 		updated_at=datetime('now')
 		WHERE process_node_id=?`,
 		processNodeID)
+	return err
+}
+
+// LeaveAtPickup is ClearActiveBinAndCount for the robot's pickup (Lane H,
+// DECISIONS D11), in the same one statement (+0):
+//
+//   - last_bin_epoch remembers max(active_bin_epoch, pickupEpoch): the lift
+//     ended the carrier's generation at pickupEpoch, so a redelivered landing
+//     of it at the generation it held here is refused by the departed rule
+//     (DESIGN-H §11(e); L1/L2 of §5);
+//   - hold ticks are added to pending_uop_delta with part holdPart: the ticks
+//     counted after the lift that had been charged to the carrier (R4), which
+//     the next carrier of the part takes (R2). The caller decides hold under
+//     D12's rule (a hold of another part is kept, and these are not held).
+//
+// pickupEpoch 0 (a Core that predates it) and hold 0 write what
+// ClearActiveBinAndCount writes.
+func LeaveAtPickup(db *sql.DB, processNodeID, pickupEpoch int64, hold int, holdPart string) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET
+		last_bin_id=CASE WHEN active_bin_id IS NOT NULL THEN active_bin_id ELSE last_bin_id END,
+		last_bin_epoch=CASE WHEN active_bin_id IS NOT NULL THEN MAX(active_bin_epoch, ?) ELSE last_bin_epoch END,
+		active_bin_id=NULL, remaining_uop_cached=0, released_empty=0,
+		pending_uop_delta=pending_uop_delta + ?,
+		pending_uop_payload=CASE WHEN ? != 0 THEN ? ELSE pending_uop_payload END,
+		updated_at=datetime('now')
+		WHERE process_node_id=?`,
+		pickupEpoch, hold, hold, holdPart, processNodeID)
 	return err
 }
 
@@ -1020,11 +1159,11 @@ func ClearActiveBinAndCount(db *sql.DB, processNodeID int64) error {
 // re-anchor from Core's push, which passes the bound bin id straight back).
 // The epoch is subject to epochAssignOnBind.
 func SetActiveBinIDAndEpoch(db *sql.DB, processNodeID int64, activeBinID *int64, deltaEpoch int64) error {
-	args := []any{activeBinID}
+	args := []any{activeBinID, activeBinID}
 	args = append(args, epochArgs(activeBinID, deltaEpoch)...)
 	args = append(args, processNodeID)
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_bin_id=?, `+rememberDepartedBin+`, `+epochAssignOnBind+`, updated_at=datetime('now')
+		`+releasedEmptyOnPointer+`, active_bin_id=?, `+rememberDepartedBin+`, `+epochAssignOnBind+`, updated_at=datetime('now')
 		WHERE process_node_id=?`, args...)
 	return err
 }
@@ -1124,21 +1263,47 @@ func UpdateRuntimeUOP(db *sql.DB, processNodeID int64, remainingUOPCached int) e
 	return err
 }
 
+// SetRuntimeReleaseCount writes the outgoing carrier's count at its release,
+// and whether the release declared it empty, in one statement.
+//
+// released_empty is set when the release declares 0 (RELEASE EMPTY, an
+// underpack, a send-back with nothing left) and cleared when it declares a
+// count: a bin released as empty is not charged afterwards (pile, then
+// held), while a count release keeps charging the bin until the lift (Lane H
+// R1/R3, DECISIONS D12). It rides the count write the release already ran,
+// so it costs no statement.
+func SetRuntimeReleaseCount(db *sql.DB, processNodeID int64, remainingUOPCached int) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET
+		remaining_uop_cached=?, released_empty=?, updated_at=datetime('now')
+		WHERE process_node_id=?`,
+		remainingUOPCached, remainingUOPCached == 0, processNodeID)
+	return err
+}
+
 // AddPendingUOPDelta accumulates count change held while no bin is bound
 // at the slot (hold-and-replay). Signed: consume holds positive magnitude
 // to subtract on bind, produce holds positive to add. Atomic increment.
-func AddPendingUOPDelta(db *sql.DB, processNodeID int64, delta int) error {
-	_, err := db.Exec(`UPDATE process_node_runtime_states SET pending_uop_delta = pending_uop_delta + ?, updated_at=datetime('now') WHERE process_node_id=?`,
-		delta, processNodeID)
+//
+// part is the part the held ticks are of, written in the same statement: the
+// hold replays only onto a carrier of that part (Lane H R2, DECISIONS D12).
+// The caller adds to a hold only when it is empty or already of this part;
+// "" is a hold of no known part, which replays as holds always did.
+func AddPendingUOPDelta(db *sql.DB, processNodeID int64, delta int, part string) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET
+		pending_uop_delta = pending_uop_delta + ?, pending_uop_payload=?, updated_at=datetime('now')
+		WHERE process_node_id=?`,
+		delta, part, processNodeID)
 	return err
 }
 
 // SetRuntimeUOPClearPending writes the cached UOP and resets pending to 0
 // in one statement — used when a tick finds a bound bin and has applied
 // (current + pending) to the count, so the held delta is consumed exactly
-// once.
+// once. Clearing the hold clears its part.
 func SetRuntimeUOPClearPending(db *sql.DB, processNodeID int64, remainingUOPCached int) error {
-	_, err := db.Exec(`UPDATE process_node_runtime_states SET remaining_uop_cached=?, pending_uop_delta=0, updated_at=datetime('now') WHERE process_node_id=?`,
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET
+		remaining_uop_cached=?, pending_uop_delta=0, pending_uop_payload='', updated_at=datetime('now')
+		WHERE process_node_id=?`,
 		remainingUOPCached, processNodeID)
 	return err
 }

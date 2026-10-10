@@ -31,9 +31,13 @@
 package engine
 
 import (
+	"log"
 	"strings"
 
+	"shingo/protocol"
 	"shingoedge/domain"
+	"shingoedge/store/processes"
+	"shingoedge/uop"
 )
 
 // HandleBinPickedUp processes a Core BinPickedUp notification.
@@ -49,6 +53,15 @@ import (
 // slot pickup event ever fires. Without the gate, the supermarket
 // pickup's BinPickedUp would clear active state at our slot.
 func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location string) {
+	e.HandleBinPickedUpMessage(protocol.BinPickedUp{OrderUUID: orderUUID, BinID: binID, Location: location})
+}
+
+// HandleBinPickedUpMessage is HandleBinPickedUp with the whole message: the
+// lift's generation (Epoch) and time (PickedUpAt) that Lane H's mechanisms
+// read (DECISIONS D11). A message without an Epoch (a Core that predates it)
+// is handled as before.
+func (e *Engine) HandleBinPickedUpMessage(bp protocol.BinPickedUp) {
+	orderUUID, binID, location := bp.OrderUUID, bp.BinID, bp.Location
 	order, err := e.db.GetOrderByUUID(orderUUID)
 	if err != nil || order == nil {
 		// Unknown order — Edge may have GC'd a terminal order, or the
@@ -57,7 +70,7 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 		return
 	}
 	// A lift anywhere is a held placer's wake (G7), before every filter below.
-	e.onPickupForIntents(orderUUID)
+	e.onPickupForIntents(order)
 
 	// === Departure stamp — ABOVE the location gate, and the only thing above it ===
 	//
@@ -164,11 +177,25 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 		return
 	}
 
+	// The runtime row is read BEFORE the flush now (it was read just after):
+	// the late-lift move below needs the generation the seat holds. Same one
+	// read. Under countMu from here to the leave, so no tick lands between
+	// taking the after-lift windows out and the seat letting the carrier go
+	// (lock order countMu, then the flush lock, as everywhere).
+	e.countMu.Lock()
+	runtime, rterr := e.db.GetProcessNodeRuntime(*order.ProcessNodeID)
+	bound := rterr == nil && runtime != nil && runtime.ActiveBinID != nil && *runtime.ActiveBinID == binID
+	hold, holdPart := 0, ""
+	if bound {
+		hold, holdPart = e.takeTicksAfterLift(node, runtime, bp)
+	}
+
 	// Flush the released-bin's accumulator: any deltas recorded
 	// between RELEASE PARTIAL and BinPickedUp must ship before the
 	// active claim advances or the runtime clears, otherwise
 	// post-flush ticks attribute against a bin that's no longer at
-	// the slot.
+	// the slot. A window that started after the lift was taken out above
+	// and is not sent.
 	if err := e.inventoryDelta.OnBinPickedUp(order.ProcessNodeID); err != nil {
 		e.logFn("bin_picked_up: flush failed: %v", err)
 	}
@@ -196,17 +223,20 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 	// (single_robot's 4→8 window). orderWorksTheCell (leg_departure.go) frees
 	// the cell honestly instead: the pointer stays set until the leg is
 	// terminal or departed.
-	runtime, rterr := e.db.GetProcessNodeRuntime(*order.ProcessNodeID)
 	if rterr != nil || runtime == nil {
+		e.countMu.Unlock()
 		return
 	}
-	if runtime.ActiveBinID != nil && *runtime.ActiveBinID == binID {
+	if bound {
 		// The carrier left: pointer, count and identity go together
-		// (carrier_left.go).
-		if err := e.carrierLeft(*order.ProcessNodeID, location); err != nil {
+		// (carrier_left.go), with the lift's generation stamped and the
+		// ticks after the lift held for the next carrier of the part, in the
+		// same statement (Lane H, D11).
+		if err := e.carrierLeftAtPickup(*order.ProcessNodeID, location, bp.Epoch, hold, holdPart); err != nil {
 			e.logFn("bin_picked_up: clear active bin node=%d: %v", *order.ProcessNodeID, err)
 		}
 	}
+	e.countMu.Unlock()
 
 	e.logFn("bin_picked_up: flushed deltas + cleared active bin for order=%s bin=%d (status=%s)",
 		orderUUID, binID, order.Status)
@@ -218,4 +248,68 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 	if it, ok := e.takeOrderIntent(order.ID, intentConsolidation); ok {
 		e.dispatchBufferConsolidation(it.consolidation())
 	}
+}
+
+// takeTicksAfterLift is the Edge half of the late-lift rule (Lane H R4,
+// DECISIONS D11 (ii)). Core ended the carrier's generation at the lift, at
+// time T = bp.PickedUpAt, and refuses every window of that generation that
+// started at or after T as after_lift. The same windows are taken out of the
+// Edge's books here, BEFORE the pickup's flush: the unflushed one is never
+// sent, and the flushed ones are summed (uop.Mutator.TakeAfterLift). Those m
+// ticks were charged to the carrier because it was still bound when they were
+// counted; they belong to what the line drew from after the robot took it.
+// So they go back the way a tick goes when no carrier is chargeable: the pile
+// first (drainLinesideFirst), then the hold with the carrier's part (R2),
+// which the next carrier of the part takes on its first tick. The hold rides
+// the leave's statement (carrierLeftAtPickup, +0); the pile drain is one
+// write only when a pile has stock.
+//
+// The carrier's own count needs no correction: the leave zeroes it.
+//
+// Only for a lift Core bumped (bp.Epoch above the generation the seat holds):
+// a pickup from a Core that predates the rule, or a lift Core did not bump,
+// refuses nothing at Core, so nothing moves here. Normal latency and a long
+// outage are the same path; at normal latency m is usually 0. Caller holds
+// countMu. Returns the hold to add and its part.
+func (e *Engine) takeTicksAfterLift(node *processes.Node, rt *processes.RuntimeState, bp protocol.BinPickedUp) (int, string) {
+	if bp.Epoch <= rt.ActiveBinEpoch || bp.PickedUpAt.IsZero() {
+		return 0, ""
+	}
+	sum, err := e.inventoryDelta.TakeAfterLift(bp.BinID, rt.ActiveBinEpoch, bp.PickedUpAt)
+	if err != nil {
+		log.Printf("bin_picked_up: windows after the lift of bin %d: %v", bp.BinID, err)
+	}
+	if sum == 0 {
+		return 0, ""
+	}
+	var claim *processes.NodeClaim
+	if rt.ActiveClaimID != nil {
+		claim, _ = e.db.GetStyleNodeClaim(*rt.ActiveClaimID)
+	}
+	part := string(rt.LinesidePayloadCode)
+	if !rt.LinesidePayloadKnown && claim != nil {
+		part = claim.PayloadCode
+	}
+	held := -sum // a draw: the ticks consumed after the lift
+	if claim != nil && claim.Role == protocol.ClaimRoleProduce {
+		held = sum // a fill: the parts made after the lift
+	} else if held > 0 {
+		drains, rest := e.drainLinesideFirst(node.ID, claim, held)
+		if len(drains) > 0 {
+			_ = e.inventoryDelta.Consumed(uop.TickEvent{NodeID: node.ID, CoreNodeName: node.CoreNodeName, Drains: drains})
+		}
+		held = rest
+	}
+	if held <= 0 {
+		return 0, ""
+	}
+	if rt.PendingUOPDelta != 0 && !holdIsOf(rt.PendingUOPPayload, part) {
+		// D12: the seat holds another part's ticks, which keep their hold.
+		log.Printf("bin_picked_up: %d of part %s counted after the lift of bin %d not held -- the seat holds %d of part %s (D12)",
+			held, part, bp.BinID, rt.PendingUOPDelta, rt.PendingUOPPayload)
+		return 0, ""
+	}
+	log.Printf("bin_picked_up: bin %d lifted at %s (generation %d -> %d): %d counted after the lift held for the next carrier of %s",
+		bp.BinID, bp.PickedUpAt.Format("15:04:05.000"), rt.ActiveBinEpoch, bp.Epoch, held, part)
+	return held, part
 }

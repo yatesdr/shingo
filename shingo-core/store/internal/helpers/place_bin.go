@@ -102,29 +102,100 @@ type BinPlacement struct {
 	ExpiresAt *time.Time
 }
 
+// ArrivalReturningSQL is the RETURNING list of every UPDATE that puts a bin
+// at a node (Lane H, H.2): what the landing announces, read from the same
+// statement that moves the bin, so the move costs no extra statement and the
+// announcement cannot carry a mismatched pair.
+//
+//   - the placement stamp, nextval of bin_placement_seq (DECISIONS D10), taken
+//     here so every placement Core records has one;
+//   - the bin's count, generation and part as the statement leaves them;
+//   - the node's name, and whether it is a place a station never binds at: a
+//     synthetic node (_TRANSIT, a robot's deck, a group), a STOR, LANE or NGRP
+//     node, or a direct child of a LANE or NGRP (H.3: storage class, not
+//     sent). That is dispatch.isStorageDropoff's union. It is NOT
+//     service.IsStorageSlot, which counts a loader home as storage for the
+//     staging state: a loader home is a STATION node an Edge binds at, and its
+//     landing goes to the order's station (D9).
+//
+// Scanned by ScanPlaced, in this order.
+const ArrivalReturningSQL = `RETURNING nextval('bin_placement_seq'), uop_remaining, delta_epoch, payload_code,
+	COALESCE((SELECT n.name FROM nodes n WHERE n.id = bins.node_id), ''),
+	` + NodeNotASeatSQL
+
+// NodeNotASeatSQL is the not-a-seat judgement on the node bins.node_id names,
+// as one boolean expression over the row: true for a synthetic node, a STOR,
+// LANE or NGRP node, a direct child of a LANE or NGRP, or no node at all. In
+// a RETURNING it reads the row as the statement left it (the arrival's
+// destination); in a SET it reads the row as it was (the lift's source:
+// bins.LiftToTransitTx, Lane H D11 (i), which bumps only a lift from a seat
+// or of a streamed bin). One spelling, so the landing and the lift cannot
+// disagree about what a seat is.
+const NodeNotASeatSQL = `COALESCE((SELECT n.is_synthetic OR left(n.name, 1) = '_'
+	                 OR COALESCE(nt.code, '') IN ('STOR', 'LANE', 'NGRP')
+	                 OR COALESCE(pt.code, '') IN ('LANE', 'NGRP')
+	            FROM nodes n
+	            LEFT JOIN node_types nt ON nt.id = n.node_type_id
+	            LEFT JOIN nodes p ON p.id = n.parent_id
+	            LEFT JOIN node_types pt ON pt.id = p.node_type_id
+	           WHERE n.id = bins.node_id), true)`
+
+// Placed is one placement as its UPDATE left it: what the landing verb
+// (service.BinService.announceLanding) announces. NotASeat is true for a
+// place no station binds at, where no landing is sent.
+type Placed struct {
+	BinID       int64
+	NodeID      int64
+	NodeName    string
+	NotASeat    bool
+	PlacedSeq   int64
+	Count       int
+	Epoch       int64
+	PayloadCode string
+	// Evicted are the stale ghosts PlaceBinTx moved off the node first.
+	Evicted []int64
+}
+
+// ScanPlaced reads ArrivalReturningSQL's columns into p.
+func ScanPlaced(row interface{ Scan(...any) error }, p *Placed) error {
+	return row.Scan(&p.PlacedSeq, &p.Count, &p.Epoch, &p.PayloadCode, &p.NodeName, &p.NotASeat)
+}
+
+// OnPlaced is the landing verb as a hook, for the store-level writers that own
+// their transaction (the multi-bin settle, the completion repair, the hand
+// move, the recovery): each calls it in its own transaction with what its
+// UPDATE returned. Nil means nobody announces (a test, or a writer whose
+// caller has no announcer).
+type OnPlaced func(tx *sql.Tx, p Placed) error
+
 // PlaceBinTx puts one bin down, inside the caller's transaction.
 //
-// Returns the ids of any stale ghosts evicted at the destination, so callers can
-// surface them as operator alerts. A normal arrival onto an empty slot returns
-// nil and does no extra work.
+// Returns the placement (Placed), carrying the ids of any stale ghosts evicted
+// at the destination, so callers can surface them as operator alerts, and what
+// the landing announces. A normal arrival onto an empty slot evicts nothing and
+// does no extra work.
 //
 // THE TRANSACTION IS THE CALLER'S, deliberately: every one of the three writers
 // is placing a bin as part of something larger (an order completion, a multi-bin
 // settle, a repair that also stamps completed_at), and a primitive that opened
 // its own transaction would make those non-atomic — which is the partial-write
 // class the R.26 assert exists to refuse.
-func PlaceBinTx(tx *sql.Tx, p BinPlacement) ([]int64, error) {
+func PlaceBinTx(tx *sql.Tx, p BinPlacement) (Placed, error) {
 	// 1. Reconcile occupancy BEFORE placing the newcomer. Synthetic nodes are
 	//    exempt, handled inside the helper.
 	evicted, err := EvictStaleGhostBinsTx(tx, p.ToNodeID, p.BinID)
 	if err != nil {
-		return nil, fmt.Errorf("reconcile stale ghost at node %d: %w", p.ToNodeID, err)
+		return Placed{}, fmt.Errorf("reconcile stale ghost at node %d: %w", p.ToNodeID, err)
 	}
 
-	// 2. The fact.
-	if _, err := tx.Exec(
-		`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2`, p.ToNodeID, p.BinID); err != nil {
-		return nil, fmt.Errorf("move bin %d: %w", p.BinID, err)
+	// 2. The fact, and what the landing announces about it (ArrivalReturningSQL:
+	//    the placement stamp rides this statement, +0). An arrival ends the
+	//    lift's window: lifted_at clears here (Lane H, D11 (ii)), so a late
+	//    window of the lifted generation is judged by the stale guard again.
+	placed := Placed{BinID: p.BinID, NodeID: p.ToNodeID, Evicted: evicted}
+	if err := ScanPlaced(tx.QueryRow(
+		`UPDATE bins SET node_id=$1, lifted_at=NULL, updated_at=NOW() WHERE id=$2 `+ArrivalReturningSQL, p.ToNodeID, p.BinID), &placed); err != nil {
+		return Placed{}, fmt.Errorf("move bin %d: %w", p.BinID, err)
 	}
 
 	if p.ReleaseClaim {
@@ -158,13 +229,13 @@ func PlaceBinTx(tx *sql.Tx, p BinPlacement) ([]int64, error) {
 			                AND holder.parent_order_id = placer.parent_order_id))`,
 			p.BinID, p.PlacedByOrder)
 		if err != nil {
-			return nil, fmt.Errorf("unclaim bin %d: %w", p.BinID, err)
+			return Placed{}, fmt.Errorf("unclaim bin %d: %w", p.BinID, err)
 		}
 		// 4. The reservation lives exactly as long as the claim — released only
 		//    when the claim actually ended HERE.
 		if n, _ := res.RowsAffected(); n > 0 {
 			if err := reservations.ReleaseByBin(tx, p.BinID); err != nil {
-				return nil, fmt.Errorf("release reservation on bin %d: %w", p.BinID, err)
+				return Placed{}, fmt.Errorf("release reservation on bin %d: %w", p.BinID, err)
 			}
 		}
 	}
@@ -176,10 +247,10 @@ func PlaceBinTx(tx *sql.Tx, p BinPlacement) ([]int64, error) {
 		//    delivery, which is never slot-claimed or slot-reserved.
 		if _, err := tx.Exec(
 			`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, p.ToNodeID); err != nil {
-			return nil, fmt.Errorf("release destination slot claim node %d: %w", p.ToNodeID, err)
+			return Placed{}, fmt.Errorf("release destination slot claim node %d: %w", p.ToNodeID, err)
 		}
 		if err := reservations.ReleaseByNode(tx, p.ToNodeID); err != nil {
-			return nil, fmt.Errorf("release slot reservation on node %d: %w", p.ToNodeID, err)
+			return Placed{}, fmt.Errorf("release slot reservation on node %d: %w", p.ToNodeID, err)
 		}
 	}
 
@@ -220,14 +291,14 @@ func PlaceBinTx(tx *sql.Tx, p BinPlacement) ([]int64, error) {
 	if p.Staged {
 		if _, err := tx.Exec(`UPDATE bins SET `+StagedSetSQL+`
 			WHERE id=$3 AND `+StagingOwnsStatusSQL, now, NullableTime(p.ExpiresAt), p.BinID); err != nil {
-			return nil, fmt.Errorf("stage bin %d: %w", p.BinID, err)
+			return Placed{}, fmt.Errorf("stage bin %d: %w", p.BinID, err)
 		}
 	} else {
 		if _, err := tx.Exec(`UPDATE bins SET `+AvailableSetSQL+`
 			WHERE id=$2 AND `+StagingOwnsStatusSQL, now, p.BinID); err != nil {
-			return nil, fmt.Errorf("set available bin %d: %w", p.BinID, err)
+			return Placed{}, fmt.Errorf("set available bin %d: %w", p.BinID, err)
 		}
 	}
 
-	return evicted, nil
+	return placed, nil
 }

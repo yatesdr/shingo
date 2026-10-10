@@ -46,6 +46,14 @@ func (a EpochAnnounce) Send(ex Execer, subject string, payload any) error {
 	return EnqueueDataToEdge(ex, a.Topic, subject, a.CoreStation, protocol.StationBroadcast, payload)
 }
 
+// SendTo enqueues a Core→Edge message addressed to one station on ex. The
+// landing (Lane H, H.3) and the refresh (§9.4) know which station is behind
+// the carrier, so they say so instead of broadcasting: the other stations
+// would only parse it and drop it.
+func (a EpochAnnounce) SendTo(ex Execer, subject, station string, payload any) error {
+	return EnqueueDataToEdge(ex, a.Topic, subject, a.CoreStation, station, payload)
+}
+
 // BuildDataEnvelope builds a Core→Edge data-channel envelope and returns its
 // encoded bytes plus the outbox msg_type. Split out so the two enqueue paths
 // — the engine's plain send and the in-transaction send below — cannot drift

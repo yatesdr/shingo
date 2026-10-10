@@ -7,6 +7,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"shingo/protocol"
 	"shingo/protocol/migrate"
 )
 
@@ -177,4 +178,23 @@ func TestEdgeMigrations_Shape(t *testing.T) {
 	if got, last := migrate.LatestVersion(ms), ms[len(ms)-1].Version; got != last {
 		t.Errorf("LatestVersion = %d, want the last entry's %d", got, last)
 	}
+}
+
+// TestEdgeSchemaBinLandedIsThePlacedSeqMigration — Lane H, H.7: Core sends a
+// landing only to a station whose registered schema is at or above
+// protocol.EdgeSchemaBinLanded, so that number must be the migration that adds
+// process_node_runtime_states.placed_seq, which the landing's bind names. A
+// number below it sends landings to an Edge that cannot bind them; above it,
+// withholds them from one that can.
+func TestEdgeSchemaBinLandedIsThePlacedSeqMigration(t *testing.T) {
+	t.Parallel()
+	for _, m := range edgeMigrations() {
+		if m.Name == "runtime_placed_seq" {
+			if m.Version != protocol.EdgeSchemaBinLanded {
+				t.Errorf("placed_seq migration is v%d, protocol.EdgeSchemaBinLanded is %d", m.Version, protocol.EdgeSchemaBinLanded)
+			}
+			return
+		}
+	}
+	t.Fatal("no runtime_placed_seq migration in edgeMigrations()")
 }

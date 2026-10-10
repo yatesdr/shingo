@@ -63,6 +63,13 @@ func TestSwitchNodeToTarget_SkipsUOPResetWhenAlreadyAtTarget(t *testing.T) {
 // below its reorder point during the window between the switch and its bin
 // landing — in a field Core reads as a count of parts that physically exist. A
 // pinning test is a record of what the code did, not a ruling that it should.
+//
+// CONVERTED (Lane H, DESIGN-H §9.1 / §10 D6): it then pinned a 0 seed, the
+// advance writing 0 over an unbound slot's count. A claim change writes the
+// claim only (TestPinH_ClaimAdvanceStatementWritesNoCount), so the count the
+// fixture seeded is left as it stands; capacity must still not appear. An
+// unbound slot's count is zeroed by the departure that unbound it
+// (carrierLeft), not by a claim advance.
 func TestSwitchNodeToTarget_SeedsNoCapacityWhenNoCarrierIsBound(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -85,9 +92,9 @@ func TestSwitchNodeToTarget_SeedsNoCapacityWhenNoCarrierIsBound(t *testing.T) {
 	// seedChangeoverScenario's to-claim has UOPCapacity=200, and that number
 	// must not appear: no carrier is bound at this node, so there are no parts
 	// here and the count says so.
-	if runtime.RemainingUOPCached != 0 {
-		t.Errorf("RemainingUOP = %d, want 0 — no bin is bound, so any non-zero count is a "+
-			"policy value in a measurement field. 200 means the capacity seed came back.",
+	if runtime.RemainingUOPCached != 5 {
+		t.Errorf("RemainingUOP = %d, want 5 unchanged — the switch writes the claim, not the count. "+
+			"200 means the capacity seed came back; 0 means the advance wrote a count.",
 			runtime.RemainingUOPCached)
 	}
 	if runtime.ActiveClaimID == nil || *runtime.ActiveClaimID != toClaimID {

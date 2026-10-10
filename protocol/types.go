@@ -208,6 +208,18 @@ const (
 	SubjectBinPickedUp   = "transit.bin_picked_up"
 	SubjectUOPAdjustment = "inventory.uop_adjustment" // Core -> Edge
 
+	// SubjectBinLanded — Core → Edge: a carrier came to rest at a node a
+	// station binds at (Lane H, H.1). The pickup's partner: one says the robot
+	// lifted it, this one says it was set down. Written as an outbox row in the
+	// transaction that moves the bin (H.2), addressed to the claiming station
+	// and never broadcast (H.3, D9), never expiring and never dead-lettered
+	// (H.6). It is the Edge's only door for binding a carrier Core placed;
+	// order.delivered closes the order and binds nothing (H.5). An Edge too old
+	// to register the subject drops it through the SubjectRouter's
+	// unknown-subject path, which is why Core sends it only to a station whose
+	// schema says it can bind it (H.7) and keeps today's Bound for the rest.
+	SubjectBinLanded = "transit.bin_landed" // Core -> Edge
+
 	// SubjectBinReturn — Core → Edge: what happened to the bin a cancelled
 	// order left on a robot's deck (returning, returned, or held for an
 	// engineer). NOTICE-ONLY: the cancelled order is already terminal at the
@@ -380,6 +392,7 @@ func EdgeInboundSubjects() []string {
 		SubjectEdgeStale,
 		SubjectNodeStructureChanged,
 		SubjectBinPickedUp,
+		SubjectBinLanded,
 		SubjectBinReturn,
 		SubjectUOPAdjustment,
 		SubjectBinEpochRefresh,

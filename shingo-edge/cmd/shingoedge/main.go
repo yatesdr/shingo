@@ -426,7 +426,17 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	router.RegisterSubject(subjectRouter, protocol.SubjectBinPickedUp, func(_ *protocol.Envelope, bp *protocol.BinPickedUp) {
 		log.Printf("edge_handler: bin_picked_up: order=%s bin=%d at=%s",
 			bp.OrderUUID, bp.BinID, bp.Location)
-		eng.HandleBinPickedUp(bp.OrderUUID, bp.BinID, bp.Location)
+		eng.HandleBinPickedUpMessage(*bp)
+	})
+	// The landing (Lane H, H.1): Core set a carrier down at a node, written in
+	// the transaction that moved it and addressed to this station. The one
+	// door that binds a carrier Core placed; order.delivered binds nothing
+	// (H.5). Registered here in the same place the subject joins
+	// EdgeInboundSubjects, so the boot coverage assertion holds.
+	router.RegisterSubject(subjectRouter, protocol.SubjectBinLanded, func(_ *protocol.Envelope, bl *protocol.BinLanded) {
+		log.Printf("edge_handler: bin_landed: bin=%d at=%s epoch=%d seq=%d order=%s",
+			bl.BinID, bl.CoreNodeName, bl.Epoch, bl.PlacedSeq, bl.OrderUUID)
+		eng.HandleBinLanded(*bl)
 	})
 	// What became of the bin a cancelled order left on a robot's deck.
 	// Notice only: stored for display, no order status or count moves.

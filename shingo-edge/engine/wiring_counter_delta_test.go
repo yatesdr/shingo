@@ -4,11 +4,13 @@ import (
 	"log"
 	"sync"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/store/lineside"
+	"shingoedge/store/processes"
 	"shingoedge/uop"
 )
 
@@ -31,13 +33,13 @@ type fakeDeltaSink struct {
 	// bindCalls / clearActiveCalls record BindActiveBin and
 	// ClearActiveBin invocations for tests that assert on slot-pointer
 	// lifecycle.
-	bindCalls             []fakeBindCall
-	clearActiveCalls      []int64
-	setClaimAndCountCalls []fakeSetClaimAndCountCall
+	bindCalls        []fakeBindCall
+	clearActiveCalls []int64
+	setClaimCalls    []fakeSetClaimCall
 	//nolint:unused // asserted by the clear-route epoch tests
 	setClaimCountAndEpochCalls []fakeSetClaimCountAndEpochCall
 	bindFromCoreCalls          []fakeManualLoadCall
-	onDeliveredCalls           []fakeOnDeliveredCall
+	landCalls                  []fakeLandCall
 	manualLoadCalls            []fakeManualLoadCall
 	onBinPickedUpCalls         []*int64
 	captureToLinesideCalls     []uop.CaptureEvent
@@ -58,12 +60,13 @@ type fakeDeltaSink struct {
 type writeActiveBinIDer interface {
 	SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64) error
 	ClearProcessNodeActiveBinAndCount(processNodeID int64) error
+	LeaveProcessNodeAtPickup(processNodeID, pickupEpoch int64, hold int, holdPart string) error
 	SetProcessNodeActiveBinIDAndEpoch(processNodeID int64, activeBinID *int64, deltaEpoch int64) error
 	SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error
-	SetProcessNodeRuntime(processNodeID int64, activeClaimID *int64, remainingUOP int) error
+	SetProcessNodeActiveClaim(processNodeID int64, activeClaimID *int64) error
 	SetProcessNodeRuntimeClaimCountAndEpoch(processNodeID int64, activeClaimID *int64, remainingUOP int, binID, deltaEpoch int64) error
 	BindEmptySlotUnlessDeparted(processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOP int) (bool, error)
-	SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, remainingUOP int) error
+	BindLandingAt(processNodeID int64, l processes.LandingBind) (bool, error)
 	CaptureLinesideBucket(nodeID int64, payloadCode string, qty int) (int, error)
 }
 
@@ -138,19 +141,18 @@ func (s *fakeDeltaSink) ClearActiveBin(nodeID int64) error {
 	return nil
 }
 
-type fakeSetClaimAndCountCall struct {
+type fakeSetClaimCall struct {
 	NodeID  int64
 	ClaimID *int64
-	UOP     int
 }
 
-func (s *fakeDeltaSink) SetClaimAndCount(nodeID int64, activeClaimID *int64, uop int) error {
+func (s *fakeDeltaSink) SetClaim(nodeID int64, activeClaimID *int64) error {
 	s.mu.Lock()
-	s.setClaimAndCountCalls = append(s.setClaimAndCountCalls, fakeSetClaimAndCountCall{nodeID, activeClaimID, uop})
+	s.setClaimCalls = append(s.setClaimCalls, fakeSetClaimCall{nodeID, activeClaimID})
 	db := s.db
 	s.mu.Unlock()
 	if db != nil {
-		return db.SetProcessNodeRuntime(nodeID, activeClaimID, uop)
+		return db.SetProcessNodeActiveClaim(nodeID, activeClaimID)
 	}
 	return nil
 }
@@ -175,23 +177,22 @@ func (s *fakeDeltaSink) SetClaimCountAndEpoch(nodeID int64, activeClaimID *int64
 	return nil
 }
 
-type fakeOnDeliveredCall struct {
-	NodeID  int64
-	ClaimID *int64
-	BinID   int64
-	Epoch   int64
-	UOP     int
+type fakeLandCall struct {
+	NodeID int64
+	Bind   processes.LandingBind
 }
 
-func (s *fakeDeltaSink) OnDelivered(nodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, uop int) error {
+// Land is the landing verb (Lane H, H.4; uop.Mutator.Land), which replaced
+// OnDelivered: it records the call and binds through the real statement.
+func (s *fakeDeltaSink) Land(nodeID int64, l processes.LandingBind) (bool, error) {
 	s.mu.Lock()
-	s.onDeliveredCalls = append(s.onDeliveredCalls, fakeOnDeliveredCall{nodeID, activeClaimID, binID, deltaEpoch, uop})
+	s.landCalls = append(s.landCalls, fakeLandCall{nodeID, l})
 	db := s.db
 	s.mu.Unlock()
 	if db != nil {
-		return db.SetProcessNodeRuntimeForDeliveredBin(nodeID, activeClaimID, binID, deltaEpoch, uop)
+		return db.BindLandingAt(nodeID, l)
 	}
-	return nil
+	return true, nil
 }
 
 type fakeManualLoadCall struct {
@@ -235,6 +236,24 @@ func (s *fakeDeltaSink) BindStagedUnlessDeparted(nodeID int64, activeClaimID *in
 		return db.BindEmptySlotUnlessDeparted(nodeID, activeClaimID, binID, deltaEpoch, uop)
 	}
 	return true, nil
+}
+
+// LeaveAtPickup records the pickup's leave as a clear (the same pointer/count
+// write, Lane H D11) and runs the real statement when a DB is wired.
+func (s *fakeDeltaSink) LeaveAtPickup(nodeID, pickupEpoch int64, hold int, holdPart string) error {
+	s.mu.Lock()
+	s.clearActiveCalls = append(s.clearActiveCalls, nodeID)
+	db := s.db
+	s.mu.Unlock()
+	if db != nil {
+		return db.LeaveProcessNodeAtPickup(nodeID, pickupEpoch, hold, holdPart)
+	}
+	return nil
+}
+
+// TakeAfterLift: the fake holds no windows.
+func (s *fakeDeltaSink) TakeAfterLift(binID, epoch int64, liftedAt time.Time) (int, error) {
+	return 0, nil
 }
 
 func (s *fakeDeltaSink) OnBinPickedUp(nodeID *int64) error {

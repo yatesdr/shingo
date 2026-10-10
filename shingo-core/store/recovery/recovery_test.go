@@ -38,7 +38,7 @@ func TestCoverage_RepairConfirmedOrderCompletion(t *testing.T) {
 	}
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID)
 	testdb.SeedOrderStatus(t, db, order.ID, "confirmed", "simulated")
-	if err := recovery.RepairConfirmedOrderCompletion(db.DB, order.ID, bin.ID, dest.ID, true, nil); err != nil {
+	if err := recovery.RepairConfirmedOrderCompletion(db.DB, order.ID, bin.ID, dest.ID, true, nil, nil); err != nil {
 		t.Fatalf("repair: %v", err)
 	}
 	gotOrder, err := orders.Get(db.DB, order.ID)
@@ -132,7 +132,7 @@ func TestRepair_ScopesItsUnclaimAndCouplesTheReservation(t *testing.T) {
 	if countRes(ownBin.ID) == 0 {
 		t.Fatalf("fixture: expected a reservation on the own-claim bin before repair")
 	}
-	if err := recovery.RepairConfirmedOrderCompletion(db.DB, owner.ID, ownBin.ID, destOwn.ID, false, nil); err != nil {
+	if err := recovery.RepairConfirmedOrderCompletion(db.DB, owner.ID, ownBin.ID, destOwn.ID, false, nil, nil); err != nil {
 		t.Fatalf("repair (own claim): %v", err)
 	}
 	gotOwn, err := bins.Get(db.DB, ownBin.ID)
@@ -157,7 +157,7 @@ func TestRepair_ScopesItsUnclaimAndCouplesTheReservation(t *testing.T) {
 	holder := mkOrder("scope-repair-holder", "in_transit", nil, destForeign.Name)
 	testdb.ClaimBinForTest(t, db, foreignBin.ID, holder.ID)
 
-	if err := recovery.RepairConfirmedOrderCompletion(db.DB, repairer.ID, foreignBin.ID, destForeign.ID, false, nil); err != nil {
+	if err := recovery.RepairConfirmedOrderCompletion(db.DB, repairer.ID, foreignBin.ID, destForeign.ID, false, nil, nil); err != nil {
 		t.Fatalf("repair (foreign claim): %v", err)
 	}
 	gotForeign, err := bins.Get(db.DB, foreignBin.ID)

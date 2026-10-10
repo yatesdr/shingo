@@ -46,7 +46,7 @@ func TestReportLinesideLevels_ShipsTheCarriersPart(t *testing.T) {
 	eng := testEngine(t, db)
 	_, nodeID, _, fromClaimID, _ := seedDirectChangeover(t, db)
 
-	testutil.MustNoErr(t, db.SetProcessNodeRuntimeForDeliveredBin(nodeID, &fromClaimID, 15, 1, 7032), "bind carrier")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &fromClaimID, binPtr(15), 1, 7032), "bind carrier")
 	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier("SYN-PART01E.06"), domain.CarrierFromDelivery)
 
 	eng.reportLinesideLevels()
@@ -75,7 +75,7 @@ func TestReportLinesideLevels_WithholdsAnUnidentifiedCarrier(t *testing.T) {
 
 	// A bound carrier with real parts and no identity — a bind by a path that
 	// carries no envelope, or an older Core.
-	testutil.MustNoErr(t, db.SetProcessNodeRuntimeForDeliveredBin(nodeID, &fromClaimID, 16, 1, 4200), "bind carrier")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &fromClaimID, binPtr(16), 1, 4200), "bind carrier")
 
 	eng.reportLinesideLevels()
 
@@ -95,7 +95,7 @@ func TestReportLinesideLevels_ShipsAKnownEmptyCarrier(t *testing.T) {
 	eng := testEngine(t, db)
 	_, nodeID, _, fromClaimID, _ := seedDirectChangeover(t, db)
 
-	testutil.MustNoErr(t, db.SetProcessNodeRuntimeForDeliveredBin(nodeID, &fromClaimID, 17, 1, 0), "bind carrier")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &fromClaimID, binPtr(17), 1, 0), "bind carrier")
 	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier(""), domain.CarrierFromOperator)
 
 	eng.reportLinesideLevels()
@@ -180,7 +180,7 @@ func TestReportLinesideLevels_StatementsPerReport(t *testing.T) {
 	db, counter := testEngineDBCounting(t)
 	eng := testEngine(t, db)
 	_, nodeID, _, fromClaimID, _ := seedDirectChangeover(t, db)
-	testutil.MustNoErr(t, db.SetProcessNodeRuntimeForDeliveredBin(nodeID, &fromClaimID, 15, 1, 7032), "bind carrier")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &fromClaimID, binPtr(15), 1, 7032), "bind carrier")
 	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier("PART-A"), domain.CarrierFromDelivery)
 
 	counter.Reset()
@@ -236,7 +236,7 @@ func TestReportLinesideLevels_RowNamesItsCarrierAndFlushedSeq(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	_, nodeID, _, fromClaimID, _ := seedDirectChangeover(t, db)
-	testutil.MustNoErr(t, db.SetProcessNodeRuntimeForDeliveredBin(nodeID, &fromClaimID, 15, 2, 7032), "bind carrier")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &fromClaimID, binPtr(15), 2, 7032), "bind carrier")
 	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier("PART-A"), domain.CarrierFromDelivery)
 	for _, s := range []struct {
 		key   string
@@ -280,7 +280,7 @@ func TestReportLinesideLevels_CountIsAsOfFlushedSeqWithoutFlushing(t *testing.T)
 	mut := uop.New(db, "stn-test", db, db)
 	eng.SetInventoryDeltaSink(mut)
 	_, nodeID, _, fromClaimID, _ := seedDirectChangeover(t, db)
-	testutil.MustNoErr(t, db.SetProcessNodeRuntimeForDeliveredBin(nodeID, &fromClaimID, 15, 1, 7032), "bind carrier")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &fromClaimID, binPtr(15), 1, 7032), "bind carrier")
 	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier("PART-A"), domain.CarrierFromDelivery)
 	node, err := db.GetProcessNode(nodeID)
 	testutil.MustNoErr(t, err, "read node")
@@ -354,7 +354,7 @@ func TestReportLinesideLevels_TicksRacingReportsNeverMoveTheStatedCount(t *testi
 	processID, nodeID, _, fromClaimID, _ := seedDirectChangeover(t, db)
 	claim, err := db.GetStyleNodeClaim(fromClaimID)
 	testutil.MustNoErr(t, err, "read claim")
-	testutil.MustNoErr(t, db.SetProcessNodeRuntimeForDeliveredBin(nodeID, &fromClaimID, 15, 1, 7032), "bind carrier")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &fromClaimID, binPtr(15), 1, 7032), "bind carrier")
 	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier("PART-A"), domain.CarrierFromDelivery)
 
 	const ticks = 200
@@ -404,7 +404,7 @@ func TestReportLinesideLevels_FlushesRacingReportsStateTheNetAtFlushedSeq(t *tes
 	processID, nodeID, _, fromClaimID, _ := seedDirectChangeover(t, db)
 	claim, err := db.GetStyleNodeClaim(fromClaimID)
 	testutil.MustNoErr(t, err, "read claim")
-	testutil.MustNoErr(t, db.SetProcessNodeRuntimeForDeliveredBin(nodeID, &fromClaimID, 15, 1, 7032), "bind carrier")
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &fromClaimID, binPtr(15), 1, 7032), "bind carrier")
 	eng.recordLinesideCarrier(nodeID, "ALN_007", domain.KnownCarrier("PART-A"), domain.CarrierFromDelivery)
 
 	const ticks = 200

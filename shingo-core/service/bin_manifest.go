@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strconv"
 	"time"
 
 	"shingo/protocol"
@@ -1180,7 +1181,77 @@ func (s *BinManifestService) laneOwnerOf(orderID int64) int64 {
 // Idempotent: re-running with the same arguments produces the same row state,
 // so retries after a failed fleet release are safe.
 func (s *BinManifestService) SyncOrClearForReleased(binID, orderID int64, remainingUOP *int, kind protocol.UOPDispositionKind, actor string) error {
-	return s.syncOrClearForReleased(binID, orderID, remainingUOP, kind, actor, false)
+	return s.syncOrClearForReleased(binID, orderID, remainingUOP, kind, actor, false, nil)
+}
+
+// ReleaseFence is a release's stream fence as Core applies it (Lane H,
+// DECISIONS D11 (i)): protocol.ReleaseFence plus the station whose delta
+// scope it fences, which is the release envelope's sender, never a field the
+// message names.
+type ReleaseFence struct {
+	Station string
+	protocol.ReleaseFence
+}
+
+// SyncOrClearForReleasedFenced is SyncOrClearForReleased for a release that
+// fences the stream (OrderRelease.AsOf). The declared count is written with
+// NO generation bump, and the station's dedup cursor for (bin, epoch) moves
+// to the fence in the same transaction, so a delta flushed before the release
+// and delivered after it is at or below high water and skipped. The
+// generation ends at the lift (BinService.Lift). A fence for another bin or
+// another generation than the bin's current one cannot fence anything, and
+// the release bumps as an unfenced one does.
+func (s *BinManifestService) SyncOrClearForReleasedFenced(binID, orderID int64, remainingUOP *int, kind protocol.UOPDispositionKind, actor string, fence *ReleaseFence) error {
+	return s.syncOrClearForReleased(binID, orderID, remainingUOP, kind, actor, false, fence)
+}
+
+// SyncOrClearForReleasedNoOwnerFenced is the source-node fallback with a
+// fence; see SyncOrClearForReleasedFenced.
+func (s *BinManifestService) SyncOrClearForReleasedNoOwnerFenced(binID, orderID int64, remainingUOP *int, actor string, fence *ReleaseFence) error {
+	return s.syncOrClearForReleased(binID, orderID, remainingUOP, "", actor, true, fence)
+}
+
+// applyReleaseFence moves the station's dedup cursor for (bin, epoch) to the
+// fence, inside the release's transaction: last_seq to at least AsOfSeq, and
+// applied_net to AsOfNet, the net the declared count is as of, and the applied
+// window end to AsOfAt (so a late pre-release window reads as late, not as a
+// rollback: atOrBelowHighWater). One statement
+// (the release's +1, D11 (i)).
+//
+// It returns the drift: the net of windows Core ALREADY applied past the
+// fence (a delta flushed after the Edge read the fence, delivered ahead of the
+// release by the drainer). Those ticks were counted after the declaration, so
+// the declared count must take them again (count + drift), and the cursor
+// keeps their net so they are not applied a second time. The same arithmetic
+// as the Edge's fencedCount, from the other side. 0 when nothing passed the
+// fence, or when the scope's row carries no net (an older stream, which no
+// fenced release comes from).
+func applyReleaseFence(tx *sql.Tx, binID int64, f *ReleaseFence) (int, error) {
+	var (
+		lastSeq int64
+		net     sql.NullInt64
+	)
+	if err := tx.QueryRow(`
+		INSERT INTO inventory_delta_dedup (station, scope_kind, scope_key, epoch, last_seq, applied_net, applied_window_end, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+		ON CONFLICT (station, scope_kind, scope_key, epoch)
+		DO UPDATE SET
+			applied_net = CASE WHEN inventory_delta_dedup.last_seq > EXCLUDED.last_seq
+			                    AND inventory_delta_dedup.applied_net IS NOT NULL
+			                   THEN inventory_delta_dedup.applied_net ELSE EXCLUDED.applied_net END,
+			last_seq = GREATEST(inventory_delta_dedup.last_seq, EXCLUDED.last_seq),
+			applied_window_end = GREATEST(inventory_delta_dedup.applied_window_end, EXCLUDED.applied_window_end),
+			updated_at = NOW()
+		RETURNING last_seq, applied_net`,
+		f.Station, protocol.InvDeltaScopeBin, strconv.FormatInt(binID, 10), f.Epoch, f.AsOfSeq, f.AsOfNet,
+		sql.NullTime{Time: f.AsOfAt, Valid: !f.AsOfAt.IsZero()},
+	).Scan(&lastSeq, &net); err != nil {
+		return 0, fmt.Errorf("fence the stream for released bin %d (station %s, epoch %d): %w", binID, f.Station, f.Epoch, err)
+	}
+	if lastSeq > f.AsOfSeq && net.Valid {
+		return int(net.Int64 - f.AsOfNet), nil
+	}
+	return 0, nil
 }
 
 // SyncOrClearForReleasedNoOwner is the source-node-fallback variant of
@@ -1201,15 +1272,22 @@ func (s *BinManifestService) SyncOrClearForReleased(binID, orderID int64, remain
 // Idempotent: re-running with the same arguments produces the same row
 // state, so retries after a failed fleet release are safe.
 func (s *BinManifestService) SyncOrClearForReleasedNoOwner(binID, orderID int64, remainingUOP *int, actor string) error {
-	return s.syncOrClearForReleased(binID, orderID, remainingUOP, "", actor, true)
+	return s.syncOrClearForReleased(binID, orderID, remainingUOP, "", actor, true, nil)
 }
 
-// syncOrClearForReleased is the shared body of the two exported variants.
+// syncOrClearForReleased is the shared body of the exported variants.
 // sourceNodeFallback toggles the claimed_by SQL guard, audit-op constants,
 // legacy-tag suffixes, and error-message strings. kind is honored only for
 // the owner path (sourceNodeFallback=false); the fallback path passes ""
 // and never emits an underpack tag.
-func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remainingUOP *int, kind protocol.UOPDispositionKind, actor string, sourceNodeFallback bool) error {
+//
+// fence (Lane H, DECISIONS D11 (i)): a release that fences the stream writes
+// the declared count with no bump and moves the dedup cursor; the generation
+// ends at the lift. A nil fence, or one naming another bin or generation, is
+// a release from an Edge that predates it, and keeps today's bump in the
+// release's transaction (mixed-version safety; pin
+// TestRelease_UnfencedReleaseStillBumps).
+func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remainingUOP *int, kind protocol.UOPDispositionKind, actor string, sourceNodeFallback bool, fence *ReleaseFence) error {
 	if remainingUOP == nil {
 		return nil
 	}
@@ -1252,8 +1330,24 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	// Capture the part code before the zero-path clears payload_code, so the
 	// release audit row names the part (the discrepancy view reads it).
 	// Best-effort: a missing bin surfaces below via the UPDATE's 0-rows guard.
-	var releasedPayloadCode string
-	_ = tx.QueryRow(`SELECT COALESCE(payload_code, '') FROM bins WHERE id=$1`, binID).Scan(&releasedPayloadCode)
+	// The generation rides the same read (+0): a fence counts only for the
+	// generation it was read under.
+	var (
+		releasedPayloadCode string
+		currentEpoch        int64
+	)
+	_ = tx.QueryRow(`SELECT COALESCE(payload_code, ''), delta_epoch FROM bins WHERE id=$1`, binID).Scan(&releasedPayloadCode, &currentEpoch)
+	fenced := fence != nil && fence.Station != "" && fence.BinID == binID && fence.Epoch == currentEpoch
+	if fence != nil && !fenced {
+		log.Printf("bin_manifest: release of bin %d carries a fence for bin %d epoch %d (station %q); the bin is at epoch %d — "+
+			"bumping at the release, as an unfenced release does", binID, fence.BinID, fence.Epoch, fence.Station, currentEpoch)
+	}
+	drift := 0
+	if fenced {
+		if drift, err = applyReleaseFence(tx, binID, fence); err != nil {
+			return err
+		}
+	}
 
 	if *remainingUOP == 0 {
 		// Clear manifest, preserve claim (if applicable). The claimed_by guard
@@ -1284,8 +1378,15 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 		// bind an empty slot to a carrier on its way out, which is the
 		// departed-carrier misattribution the Edge guard exists to prevent.
 		// Two questions, two values — see protocol.Declarer.
-		if _, err := s.bumpEpoch(tx, binID, protocol.DeclaredByLifecycle); err != nil {
-			return err
+		//
+		// ONLY UNFENCED (Lane H, D11 (i)): a fenced release declares the
+		// count inside the generation, which ends at the lift. The drift is
+		// not taken here: a carrier released empty is not charged afterwards
+		// (R3, the Edge's released_empty flag), so no window passes its fence.
+		if !fenced {
+			if _, err := s.bumpEpoch(tx, binID, protocol.DeclaredByLifecycle); err != nil {
+				return err
+			}
 		}
 		op := audit.OpReleasedEmpty
 		legacyTag := "released_empty"
@@ -1372,11 +1473,15 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 			END,
 			updated_at=NOW()
 		WHERE id=$2 AND locked=false`
+	// The count written is the declaration plus any windows Core applied
+	// past the fence before the release reached it (applyReleaseFence's
+	// drift; 0 unfenced and almost always 0 fenced).
+	written := *remainingUOP + drift
 	var res sql.Result
 	if sourceNodeFallback {
-		res, err = tx.Exec(syncSQL, *remainingUOP, binID)
+		res, err = tx.Exec(syncSQL, written, binID)
 	} else {
-		res, err = tx.Exec(syncSQL+` AND claimed_by=$3`, *remainingUOP, binID, orderID)
+		res, err = tx.Exec(syncSQL+` AND claimed_by=$3`, written, binID, orderID)
 	}
 	if err != nil {
 		return fmt.Errorf("sync UOP for released bin %d%s: %w", binID, errSuffix, err)
@@ -1386,9 +1491,11 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 		return notFoundErr
 	}
 	// The partial-release branch of the same departure; lifecycle for the
-	// reason given at the empty branch above.
-	if _, err := s.bumpEpoch(tx, binID, protocol.DeclaredByLifecycle); err != nil {
-		return err
+	// reason given at the empty branch above, and unfenced only (D11 (i)).
+	if !fenced {
+		if _, err := s.bumpEpoch(tx, binID, protocol.DeclaredByLifecycle); err != nil {
+			return err
+		}
 	}
 	op := audit.OpReleasedPartial
 	if sourceNodeFallback {
@@ -1398,7 +1505,7 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	if err != nil {
 		return err
 	}
-	if err := audit.AppendBinUOP(tx, binID, before, *remainingUOP,
+	if err := audit.AppendBinUOP(tx, binID, before, written,
 		op, sourceLabel,
 		&orderID, releasedPayloadCode, actor, uopCtx); err != nil {
 		return err

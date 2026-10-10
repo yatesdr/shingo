@@ -34,6 +34,12 @@ func (db *DB) StationsClaimingNode(nodeName string) ([]string, error) {
 	return plantclaims.StationsClaimingNode(db.DB, nodeName)
 }
 
+// ResolveLandingAddress reads where a landing at nodeName by orderID goes, on q
+// (the arrival's transaction). See plantclaims.ResolveLandingAddress.
+func (db *DB) ResolveLandingAddress(q plantclaims.Querier, nodeName string, orderID int64) (plantclaims.LandingAddress, error) {
+	return plantclaims.ResolveLandingAddress(q, nodeName, orderID)
+}
+
 // WipePlantClaims drops every plant-claims mirror row. See plantclaims.WipeAll.
 func (db *DB) WipePlantClaims() error {
 	return plantclaims.WipeAll(db.DB)

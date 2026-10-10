@@ -50,6 +50,9 @@ type deliveredSeed struct {
 	payloadCode *string
 	epoch       int64
 	binDestNode string
+	// landingSent: the Core that sent this delivered announces drops on
+	// transit.bin_landed, so the delivered binds nothing (Lane H, H.5, H.7).
+	landingSent bool
 }
 
 func newLifecycleService(db *store.DB, emitter EventEmitter, debug DebugLogFunc) *LifecycleService {
@@ -223,11 +226,12 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 		var binPayloadCode *string
 		var binEpoch int64
 		var binDestNode string
+		var landingSent bool
 		if v, ok := s.deliveredSeeds.LoadAndDelete(order.ID); ok {
 			seed := v.(deliveredSeed)
-			binUOP, binPayloadCode, binEpoch, binDestNode = seed.uop, seed.payloadCode, seed.epoch, seed.binDestNode
+			binUOP, binPayloadCode, binEpoch, binDestNode, landingSent = seed.uop, seed.payloadCode, seed.epoch, seed.binDestNode, seed.landingSent
 		}
-		s.emitter.EmitOrderDelivered(order.ID, order.UUID, order.OrderType, order.ProcessNodeID, binID, binUOP, binPayloadCode, binEpoch, binDestNode, order.DeliveryNode)
+		s.emitter.EmitOrderDelivered(order.ID, order.UUID, order.OrderType, order.ProcessNodeID, binID, binUOP, binPayloadCode, binEpoch, binDestNode, order.DeliveryNode, landingSent)
 	}
 	if IsTerminal(newStatus) {
 		s.emitter.EmitOrderCompleted(order.ID, order.UUID, order.OrderType, nil, order.ProcessNodeID)
@@ -238,7 +242,7 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 	return nil
 }
 
-func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, binPayloadCode *string, epoch int64, binDestNode string) error {
+func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64, uop *int, binPayloadCode *string, epoch int64, binDestNode string, landingSent bool) error {
 	if stagedExpireAt != nil {
 		if err := s.db.UpdateOrderStagedExpireAt(order.ID, stagedExpireAt); err != nil {
 			log.Printf("lifecycle: update staged_expire_at for order=%d: %v", order.ID, err)
@@ -255,7 +259,7 @@ func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail str
 			log.Printf("update order bin_id: %v", err)
 		}
 	}
-	s.deliveredSeeds.Store(order.ID, deliveredSeed{uop: uop, payloadCode: binPayloadCode, epoch: epoch, binDestNode: binDestNode})
+	s.deliveredSeeds.Store(order.ID, deliveredSeed{uop: uop, payloadCode: binPayloadCode, epoch: epoch, binDestNode: binDestNode, landingSent: landingSent})
 	defer s.deliveredSeeds.Delete(order.ID)
 	return s.Transition(order.ID, StatusDelivered, statusDetail)
 }

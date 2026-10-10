@@ -119,6 +119,13 @@ const (
 	// read off the bin row itself. The ordinary case.
 	CarrierFromDelivery CarrierSource = "delivery"
 
+	// CarrierFromLanding: Core named the carrier on its landing
+	// (transit.bin_landed, Lane H, H.1), read off the bin row in the
+	// transaction that put it at this node: the part, and whether Core knows
+	// it. The ordinary case once a Core sends landings; delivery is the older
+	// Core's.
+	CarrierFromLanding CarrierSource = "landing"
+
 	// CarrierFromOperator: a person put this carrier here and said what it is.
 	// ON A MANUAL LOAD THE OPERATOR IS THE FINEST INSTRUMENT IN THE ROOM —
 	// no envelope arrives ahead of them, so before this there was simply no

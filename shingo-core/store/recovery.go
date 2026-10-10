@@ -10,8 +10,8 @@ import (
 	"shingocore/store/recovery"
 )
 
-func (db *DB) RepairConfirmedOrderCompletion(orderID, binID, toNodeID int64, staged bool, expiresAt *time.Time) error {
-	return recovery.RepairConfirmedOrderCompletion(db.DB, orderID, binID, toNodeID, staged, expiresAt)
+func (db *DB) RepairConfirmedOrderCompletion(orderID, binID, toNodeID int64, staged bool, expiresAt *time.Time, onPlaced OnPlaced) error {
+	return recovery.RepairConfirmedOrderCompletion(db.DB, orderID, binID, toNodeID, staged, expiresAt, onPlaced)
 }
 
 func (db *DB) ReleaseTerminalBinClaim(binID int64) (int64, error) {

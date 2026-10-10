@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -44,15 +45,22 @@ func TestEpochBumpOpsCoversEveryBumpSite(t *testing.T) {
 	sites := regexp.MustCompile(`(?m)^\s*(?:if\s+)?(?:_|\w+)?(?:,\s*\w+)?\s*(?::?=\s*)?s\.bumpEpoch\(tx,`).
 		FindAllIndex(src, -1)
 
-	// SEVEN SITES, ELEVEN OPS — the two are not the same number and that is fine.
-	// The clear-manifest site takes its op as a PARAMETER, so clear_for_reuse and
-	// released_capture_empty both reach it; the released-empty site branches
-	// across three ops and the released-partial site across two. The sixth site
+	// SEVEN SITES — the clear-manifest site takes its op as a PARAMETER, so
+	// clear_for_reuse and released_capture_empty both reach it. The sixth site
 	// is the dispatch claim of a partly consumed carrier (sync_uop_and_claim); the
 	// seventh is the rebase after a station's count stream went backward, which
 	// writes edge_rollback. Counting sites rather than ops is deliberate: a new op
 	// routed through an existing site is already covered, and it is a NEW SITE
 	// that can introduce a boundary this set has never heard of.
+	//
+	// CONVERTED (Lane H, DECISIONS D11 (i), 2026-10-10): the two release sites
+	// (released-empty, three ops; released-partial, two) are still counted, but
+	// they now bump ONLY for a release that carries no stream fence (an Edge
+	// that predates it), and their ops left EpochBumpOps: a fenced release
+	// declares a count inside its binding, and the binding ends at the lift
+	// (OpLifted). The lift's bump is not an s.bumpEpoch site at all: it rides
+	// the lift's own UPDATE in store/bins (LiftToTransitTx), which
+	// TestTheLiftIsTheOneUnannouncedBump below holds.
 	const wantSites = 7
 	if len(sites) != wantSites {
 		t.Errorf("service/bin_manifest.go has %d s.bumpEpoch(tx, …) call sites; this test is "+
@@ -107,9 +115,15 @@ func TestEveryBumpGoesThroughTheAnnouncingWrapper(t *testing.T) {
 //
 // ReleaseFamilyOps answers "was the carrier emptied" and deliberately excludes
 // clear_and_claim. EpochBumpOps answers "did the count start over", and
-// clear_and_claim does. Every release is also a fresh start, so the containment
-// runs one way only — and a new release variant appended to ReleaseFamilyOps and
-// not here would be a boundary CarrierBindings cannot see.
+// clear_and_claim does.
+//
+// CONVERTED (Lane H, DECISIONS D11 (i), 2026-10-10): it was "every release is
+// a fresh start, so EpochBumpOps contains the release family". A release no
+// longer ends the generation; the lift does. The containment now holds for the
+// release family LESS ReleaseDeclarationOps, the release ops that declare a
+// count inside the binding, and those must NOT be boundaries: one treated as a
+// boundary would cut a binding at the release click, minutes before the
+// carrier left. A new release variant must land in exactly one of the two.
 func TestEpochBumpOpsIsASupersetOfTheReleaseFamily(t *testing.T) {
 	bump := map[string]bool{}
 	for _, op := range EpochBumpOps {
@@ -118,19 +132,27 @@ func TestEpochBumpOpsIsASupersetOfTheReleaseFamily(t *testing.T) {
 		}
 		bump[op] = true
 	}
-
-	for _, op := range ReleaseFamilyOps {
-		if !bump[op] {
-			t.Errorf("%q is in ReleaseFamilyOps but not in EpochBumpOps. Every release "+
-				"retires the manifest and bumps the epoch, so it starts a new binding — "+
-				"a release missing here is a binding boundary CarrierBindings walks past, "+
-				"and the two bindings it joins report as one that is too old.", op)
+	declaration := map[string]bool{}
+	for _, op := range ReleaseDeclarationOps {
+		declaration[op] = true
+		if bump[op] {
+			t.Errorf("%q is a release declaration (D11 (i): no bump at the release) and is in "+
+				"EpochBumpOps; it would cut every binding at the release click", op)
 		}
 	}
 
-	// The two ops that are in this set and NOT in the release family, named
-	// explicitly so the difference between the sets stays deliberate.
-	for _, op := range []string{OpSetForProduction, OpClearAndClaim, OpSyncUOPAndClaim} {
+	for _, op := range ReleaseFamilyOps {
+		if !bump[op] && !declaration[op] {
+			t.Errorf("%q is in ReleaseFamilyOps but in neither EpochBumpOps nor "+
+				"ReleaseDeclarationOps. Decide whether it ends the generation (a boundary "+
+				"CarrierBindings must see) or declares a count inside it.", op)
+		}
+	}
+
+	// The ops that are in this set and NOT in the release family, named
+	// explicitly so the difference between the sets stays deliberate. lifted
+	// is where a released carrier's generation ends now (D11 (i)).
+	for _, op := range []string{OpSetForProduction, OpClearAndClaim, OpSyncUOPAndClaim, OpLifted} {
 		if !bump[op] {
 			t.Errorf("%q is missing from EpochBumpOps. It is not an unload — which is why "+
 				"ReleaseFamilyOps excludes it — but it does start the count over.", op)
@@ -145,12 +167,74 @@ func TestEpochBumpOpsIsASupersetOfTheReleaseFamily(t *testing.T) {
 	for _, op := range []string{
 		OpCycleCount, OpManifestConfirmed, OpManifestUnconfirmed, OpStaleEpochDropped, OpPayloadMismatchDropped,
 		OpPayloadBoundFirstDelta, OpPayloadReboundWithInventory,
-		OpOperatorOverrideReleasePartial, OpOperatorOverridePullParts,
+		OpOperatorOverrideReleasePartial, OpOperatorOverridePullParts, OpAfterLift,
 	} {
 		if bump[op] {
 			t.Errorf("%q is in EpochBumpOps and does not bump the epoch. A non-boundary op "+
 				"treated as a boundary SHORTENS every binding it appears in, which hides "+
 				"real stale bindings — the failure that points the reassuring way.", op)
+		}
+	}
+}
+
+// TestTheLiftIsTheOneUnannouncedBump holds the named exception to "bump and
+// announce are inseparable" (Lane H, DECISIONS D11 (i), 2026-10-10).
+//
+// Every generation bump in Core is one SQL fragment, delta_epoch=delta_epoch+1.
+// Two statements carry it: bumpEpochRaw, reached only through the announcing
+// wrapper (TestEveryBumpGoesThroughTheAnnouncingWrapper), and the lift's own
+// UPDATE in store/bins (LiftToTransitTx). The lift does NOT broadcast the A4
+// uop_adjustment: the bin is at _TRANSIT, which no station models, and the
+// pickup message — written in the same transaction, addressed to the station,
+// carrying the new Epoch — IS the announcement. A third statement carrying the
+// fragment is a bump nobody hears of, which is the Hopkinsville defect.
+//
+// Expiry: the lift starts announcing through bumpEpoch, or the bump leaves the
+// lift; either way this table changes in the same commit.
+func TestTheLiftIsTheOneUnannouncedBump(t *testing.T) {
+	want := map[string]int{
+		"service/bin_manifest.go": 1, // bumpEpochRaw, behind the announcing wrapper
+		"store/bins/bins.go":      1, // LiftToTransitTx: the pickup message is the announcement
+	}
+	bumpRE := regexp.MustCompile(`delta_epoch\s*=\s*delta_epoch\s*\+`)
+	root := filepath.Join("..", "..")
+	got := map[string]int{}
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if info.Name() == "testdata" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		src, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		if n := len(bumpRE.FindAllIndex(src, -1)); n > 0 {
+			rel, _ := filepath.Rel(root, path)
+			got[filepath.ToSlash(rel)] = n
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	for f, n := range got {
+		if want[f] != n {
+			t.Errorf("%s carries %d generation bump(s) (delta_epoch=delta_epoch+…), want %d. A bump outside "+
+				"bumpEpoch tells no station; the lift is the one named exception (its pickup message is the "+
+				"announcement). Route a new bump through s.bumpEpoch.", f, n, want[f])
+		}
+	}
+	for f, n := range want {
+		if got[f] != n {
+			t.Errorf("%s carries %d generation bump(s), want %d: the census no longer matches the code", f, got[f], n)
 		}
 	}
 }

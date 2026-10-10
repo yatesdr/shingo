@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingoedge/store/processes"
 	"shingoedge/uop"
 )
@@ -91,4 +92,58 @@ func (e *Engine) fencedCount(nodeID int64, rt *processes.RuntimeState, adj proto
 	log.Printf("uop_adjustment: fenced count bin %d at node %s: counted %d, as of net %d seq %d, drift %+d -> %d",
 		adj.BinID, adj.CoreNodeName, adj.NewRemaining, *adj.AsOfNet, *adj.AsOfSeq, drift, remaining)
 	return true, true, remaining
+}
+
+// writeReleaseCount writes the old carrier's count at a release and reads the
+// stream fence the release carries (Lane H, DECISIONS D11 (i)): the count the
+// operator declared is as of THIS point in the carrier's (bin, epoch) delta
+// stream — the last seq allocated and the flushed net plus what the
+// accumulator holds unflushed. Core writes the declared count with no
+// generation bump and moves its dedup cursor to the fence, so a delta flushed
+// before the release and delivered after it is skipped (its count is in the
+// declaration) and every later window applies only the ticks after it.
+//
+// ONE INSTANT, as fencedCount reads it: under countMu, which every tick holds
+// across its runtime write and its record, and the accumulator's flush lock
+// (WithPending), with the count write inside both. A tick is either before
+// the write and in the fence, or after both and charged on top of the
+// declaration, in both books. Cost: +1 read per release (the cursor); the
+// write is the one the release always made.
+//
+// Returns nil — no fence, and Core bumps at the release as before — when no
+// carrier is bound at the seat, the bound carrier is not the released one, no
+// accumulator is wired, or the read fails.
+func (e *Engine) writeReleaseCount(nodeID int64, rt *processes.RuntimeState, binID int64, count int) *protocol.ReleaseFence {
+	plain := func() *protocol.ReleaseFence {
+		if err := e.db.SetProcessNodeReleaseCount(nodeID, count); err != nil {
+			log.Printf("release: finalize old-bin count for node %d: %v", nodeID, err)
+		}
+		return nil
+	}
+	if e.inventoryDelta == nil || rt == nil || rt.ActiveBinID == nil || (binID != 0 && *rt.ActiveBinID != binID) {
+		return plain()
+	}
+	bin, epoch := *rt.ActiveBinID, rt.ActiveBinEpoch
+	var fence *protocol.ReleaseFence
+	e.countMu.Lock()
+	err := e.inventoryDelta.WithPending(func(p uop.Pending) error {
+		seq, net, err := e.db.InventoryDeltaCursor(protocol.InvDeltaScopeBin, strconv.FormatInt(bin, 10), epoch)
+		if err != nil {
+			return err
+		}
+		if err := e.db.SetProcessNodeReleaseCount(nodeID, count); err != nil {
+			return err
+		}
+		fence = &protocol.ReleaseFence{BinID: bin, Epoch: epoch, AsOfSeq: seq, AsOfNet: net + int64(p.Bin(bin, epoch)), AsOfAt: clock.Now().UTC()}
+		return nil
+	})
+	e.countMu.Unlock()
+	if err != nil {
+		log.Printf("release: fence the stream for bin %d at node %d: %v — releasing unfenced (Core bumps at the release)", bin, nodeID, err)
+		if fence == nil {
+			return plain()
+		}
+		return nil
+	}
+	return fence
 }

@@ -277,29 +277,12 @@ func (h *Handlers) binMove(b *domain.Bin, params json.RawMessage) error {
 		}
 	}
 
-	// Tell Edge to BIND the moved bin onto its NEW node's runtime so that node
-	// resumes counting it. A Core admin Move mirrors a physical relocation the
-	// robot-delivery path never recorded (manual fork-truck recovery, a failed
-	// delivery that left the bin unregistered) — without this the destination's
-	// active_bin_id stays nil and its PLC ticks attribute to nothing. The dual
-	// of the release broadcast above. Move() already rejected the relocation if
-	// the destination held another bin, so there is no live bin to clobber. Seed
-	// remaining + epoch from the bin's authoritative values so the operator
-	// screen and the first tick's delta are correct. Skip synthetic dests
-	// (transit / group nodes aren't Edge process nodes).
-	if res.DestNode != nil && !res.DestNode.IsSynthetic {
-		if err := h.orchestration.SendDataToEdge(protocol.SubjectUOPAdjustment, protocol.StationBroadcast, &protocol.UOPAdjustment{
-			BinID:        b.ID,
-			CoreNodeName: res.DestNode.Name,
-			NewRemaining: b.UOPRemaining,
-			Epoch:        b.DeltaEpoch,
-			Bound:        true,
-			Actor:        protocol.AuditActorUI,
-			AdjustedAt:   time.Now().UTC(),
-		}); err != nil {
-			log.Printf("bin_move: bind-to-edge broadcast bin %d (new node %s): %v", b.ID, res.DestNode.Name, err)
-		}
-	}
+	// The NEW node hears of the move from the landing MoveByHand wrote in the
+	// move's own transaction (Lane H, H.2; service.announceLanding), addressed
+	// to the station claiming the node (H.3). This used to be a broadcast
+	// Bound here, after the commit. An Edge too old for the landing gets that
+	// Bound, addressed to it (H.7). The release above stays as it was (SYNTH
+	// §9).
 	return nil
 }
 

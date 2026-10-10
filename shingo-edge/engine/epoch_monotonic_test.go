@@ -25,7 +25,7 @@ func TestActiveBinEpoch_NeverGoesBackwardForTheSameBin(t *testing.T) {
 	node, binID := boundNodeFixture(t, eng, "EPOCH-MONO-1", 7001, 9)
 
 	// The same bin, an older stamp — a reordered retry off the drainer.
-	if err := eng.db.SetProcessNodeRuntimeForDeliveredBin(node, nil, binID, 4, 25); err != nil {
+	if err := eng.db.SetProcessNodeRuntimeWithBinAndEpoch(node, nil, binPtr(binID), 4, 25); err != nil {
 		t.Fatalf("write delivered bin at the older epoch: %v", err)
 	}
 
@@ -46,7 +46,7 @@ func TestActiveBinEpoch_ADifferentBinBindsAtAnyEpoch(t *testing.T) {
 
 	// A different carrier arrives at the same slot, early in its own life.
 	const otherBin = int64(7003)
-	if err := eng.db.SetProcessNodeRuntimeForDeliveredBin(node, nil, otherBin, 4, 25); err != nil {
+	if err := eng.db.SetProcessNodeRuntimeWithBinAndEpoch(node, nil, binPtr(otherBin), 4, 25); err != nil {
 		t.Fatalf("write the arriving bin: %v", err)
 	}
 
@@ -114,7 +114,12 @@ func adjustmentEpoch(t *testing.T, eng *Engine, node int64, adj protocol.UOPAdju
 
 // TestUOPAdjustmentEpoch_BoundSiteNeverGoesBackward: the Bound branch (Core
 // moved the bin onto this node) names a bin already bound here at a newer
-// generation. The stale announcement lands its count, not its stamp.
+// generation. The stamp does not walk backward.
+//
+// CONVERTED with Lane H (H.4): the Bound is an older Core's landing, bound
+// through the landing verb, and the same bin already bound at an equal or
+// newer generation keeps its count too. It used to land its count (11) over
+// the bound carrier's.
 func TestUOPAdjustmentEpoch_BoundSiteNeverGoesBackward(t *testing.T) {
 	t.Parallel()
 	eng := newCoverageEngine(t)
@@ -127,8 +132,9 @@ func TestUOPAdjustmentEpoch_BoundSiteNeverGoesBackward(t *testing.T) {
 	if rt.ActiveBinEpoch != 9 {
 		t.Errorf("epoch = %d, want 9 — a late Bound announcement walked the stamp backward", rt.ActiveBinEpoch)
 	}
-	if rt.RemainingUOPCached != 11 {
-		t.Errorf("remaining = %d, want 11 — the Bound write ran; only its stamp is refused", rt.RemainingUOPCached)
+	if rt.RemainingUOPCached != 25 {
+		t.Errorf("remaining = %d, want 25 — a landing for the bin already bound at a newer generation "+
+			"keeps the seat's count (H.4)", rt.RemainingUOPCached)
 	}
 }
 

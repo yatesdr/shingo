@@ -3,7 +3,6 @@ package messaging
 import (
 	"encoding/json"
 	"log"
-	"time"
 
 	"shingo/protocol"
 	"shingoedge/orders"
@@ -173,7 +172,7 @@ func encodeFaultRef(ref *protocol.TermRef) string {
 func (h *EdgeHandler) HandleOrderDelivered(env *protocol.Envelope, p *protocol.OrderDelivered) {
 	h.DebugLog.Log("order_delivered uuid=%s at=%s", p.OrderUUID, p.DeliveredAt)
 	log.Printf("edge_handler: order delivered: uuid=%s at=%s", p.OrderUUID, p.DeliveredAt)
-	if err := h.orderMgr.HandleDeliveredWithExpiry(p.OrderUUID, p.DeliveredAt.Format(time.RFC3339), p.StagedExpireAt, p.BinID, p.UOPRemaining, p.BinPayloadCode, p.DeltaEpoch, p.DeliveryNode, p.BinDestNode); err != nil {
+	if err := h.orderMgr.HandleDeliveredNotice(p); err != nil {
 		log.Printf("edge_handler: handle delivered for %s: %v", p.OrderUUID, err)
 	}
 }

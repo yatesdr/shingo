@@ -33,7 +33,7 @@ import (
 // main ReleaseOrderWithLineside path) call ReleaseOrderWithDisposition
 // directly so Core gets the override-audit context.
 func (m *Manager) ReleaseOrder(orderID int64, remainingUOP *int, calledBy string, stationWait *int) error {
-	return m.ReleaseOrderWithDisposition(orderID, remainingUOP, nil, calledBy, stationWait)
+	return m.ReleaseOrderWithDisposition(orderID, remainingUOP, nil, calledBy, stationWait, nil)
 }
 
 // ReleaseOrderWithDisposition is the Phase 0b release path that carries
@@ -49,7 +49,11 @@ func (m *Manager) ReleaseOrder(orderID int64, remainingUOP *int, calledBy string
 // stationWait is the echo (protocol.OrderRelease.StationWait): the station
 // wait this release is for. The release's outbox row and its intent's sent_at
 // are written in one transaction.
-func (m *Manager) ReleaseOrderWithDisposition(orderID int64, remainingUOP *int, disposition *protocol.UOPDisposition, calledBy string, stationWait *int) error {
+//
+// fence is the stream fence of the count (protocol.OrderRelease.AsOf; Lane H,
+// DECISIONS D11 (i)): nil for a release that declares no count or has no
+// bound carrier, and Core then bumps the generation at the release as before.
+func (m *Manager) ReleaseOrderWithDisposition(orderID int64, remainingUOP *int, disposition *protocol.UOPDisposition, calledBy string, stationWait *int, fence *protocol.ReleaseFence) error {
 	order, err := m.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("get order: %w", err)
@@ -66,6 +70,7 @@ func (m *Manager) ReleaseOrderWithDisposition(orderID int64, remainingUOP *int, 
 		Disposition:  disposition,
 		CalledBy:     calledBy,
 		StationWait:  stationWait,
+		AsOf:         fence,
 	})
 	if err != nil {
 		return fmt.Errorf("enqueue release: %w", err)

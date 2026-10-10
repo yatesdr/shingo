@@ -62,7 +62,11 @@ func ListActions(db *sql.DB, limit int) ([]*Action, error) {
 // RepairConfirmedOrderCompletion finalizes an order that is already
 // confirmed but missing completed_at, while atomically applying the bin
 // arrival.
-func RepairConfirmedOrderCompletion(db *sql.DB, orderID, binID, toNodeID int64, staged bool, expiresAt *time.Time) error {
+//
+// onPlaced is the landing verb (Lane H, H.2), called in this transaction: a
+// repair may be the only record that the carrier arrived, so its seat hears of
+// it like any other drop (DESIGN-H §3). Nil announces nothing.
+func RepairConfirmedOrderCompletion(db *sql.DB, orderID, binID, toNodeID int64, staged bool, expiresAt *time.Time, onPlaced helpers.OnPlaced) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -98,7 +102,7 @@ func RepairConfirmedOrderCompletion(db *sql.DB, orderID, binID, toNodeID int64, 
 	// that already happened, possibly long ago; the slot's dispatch-time claim,
 	// if there is one, belongs to whatever is driving there now, and clearing it
 	// would take a live claim off a slot on the strength of a historical event.
-	evicted, err := helpers.PlaceBinTx(tx, helpers.BinPlacement{
+	placed, err := helpers.PlaceBinTx(tx, helpers.BinPlacement{
 		BinID:                  binID,
 		ToNodeID:               toNodeID,
 		PlacedByOrder:          orderID,
@@ -110,7 +114,12 @@ func RepairConfirmedOrderCompletion(db *sql.DB, orderID, binID, toNodeID int64, 
 	if err != nil {
 		return err
 	}
-	for _, ghostID := range evicted {
+	if onPlaced != nil {
+		if err := onPlaced(tx, placed); err != nil {
+			return err
+		}
+	}
+	for _, ghostID := range placed.Evicted {
 		log.Printf("WARN: completion repair for order %d evicted a stale bin record (bin %d) to "+
 			"_TRANSIT — the slot it repaired onto already recorded another bin; recover via the "+
 			"anomalies page", orderID, ghostID)

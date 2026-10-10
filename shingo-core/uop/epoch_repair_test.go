@@ -75,6 +75,11 @@ func outboxRefreshes(t *testing.T, db *store.DB, binID int64) []protocol.BinEpoc
 // channel: Core replies with the current generation, the station adopts it, and
 // the next count lands.
 //
+// The carrier stands at a line seat: a carrier at a storage slot is at no seat
+// and gets no refresh (Lane H, DESIGN-H §9.4,
+// TestPinH_EpochRefreshIsNotSentForABinAtStorage), so this fixture and its
+// siblings below moved from the storage node to the line node with that change.
+//
 // This fixture is that plant. No orders, no deliveries. A carrier is reset with
 // its announcement thrown away — the mixed-version case, or a station that was
 // down when the announcement went out. Two ticks: the first is discarded and
@@ -85,7 +90,7 @@ func TestQuietPlant_TheDropAnswers(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	svc := repairingService(db)
 
-	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-QUIET-1", "PART-A", 100)
+	bin := createTestBin(t, db, sd.LineNode.ID, "BIN-QUIET-1", "PART-A", 100)
 	// The reset happened and the station never heard: Core is at generation 2,
 	// the station is still stamping its counts with 1.
 	_, err := db.Exec(`UPDATE bins SET delta_epoch=2 WHERE id=$1`, bin.ID)
@@ -109,8 +114,8 @@ func TestQuietPlant_TheDropAnswers(t *testing.T) {
 		t.Errorf("repair carries generation %d, want 2 — the reply is the current stamp or it "+
 			"is nothing", refreshes[0].Epoch)
 	}
-	if refreshes[0].CoreNodeName != sd.StorageNode.Name {
-		t.Errorf("repair addressed to %q, want %q", refreshes[0].CoreNodeName, sd.StorageNode.Name)
+	if refreshes[0].CoreNodeName != sd.LineNode.Name {
+		t.Errorf("repair addressed to %q, want %q", refreshes[0].CoreNodeName, sd.LineNode.Name)
 	}
 
 	// The station adopts and reports again under the right generation.
@@ -141,7 +146,7 @@ func TestQuietPlant_TheRepairDoesNotStorm(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	svc := repairingService(db)
 
-	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-QUIET-2", "PART-A", 100)
+	bin := createTestBin(t, db, sd.LineNode.ID, "BIN-QUIET-2", "PART-A", 100)
 	_, err := db.Exec(`UPDATE bins SET delta_epoch=2 WHERE id=$1`, bin.ID)
 	testutil.MustNoErr(t, err, "advance a generation")
 
@@ -185,7 +190,7 @@ func TestRepairNotSentForACarrierAtNoNode(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	svc := repairingService(db)
 
-	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-QUIET-3", "PART-A", 100)
+	bin := createTestBin(t, db, sd.LineNode.ID, "BIN-QUIET-3", "PART-A", 100)
 	_, err := db.Exec(`UPDATE bins SET delta_epoch=2, node_id=NULL WHERE id=$1`, bin.ID)
 	testutil.MustNoErr(t, err, "advance a generation and unplace the carrier")
 
@@ -219,7 +224,7 @@ func TestQuietPlant_TheRepairIsResentAfterTheWindow(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	svc := repairingService(db)
 
-	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-QUIET-4", "PART-A", 100)
+	bin := createTestBin(t, db, sd.LineNode.ID, "BIN-QUIET-4", "PART-A", 100)
 	_, err := db.Exec(`UPDATE bins SET delta_epoch=2 WHERE id=$1`, bin.ID)
 	testutil.MustNoErr(t, err, "advance a generation")
 

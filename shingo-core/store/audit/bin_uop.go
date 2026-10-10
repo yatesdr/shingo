@@ -138,6 +138,24 @@ const (
 	// generation, which the station adopts. The applier writes the matching
 	// edge_rollback exception (ExcEdgeRollback) with the seqs and windows.
 	OpEdgeRollback = "edge_rollback"
+
+	// OpLifted tags the lift of a streamed carrier (Lane H, DECISIONS D11
+	// (i)): the robot took it off the seat, and its generation ends HERE, not
+	// at the release. Written by service.BinService.Lift in the transaction
+	// whose UPDATE moved the bin to _TRANSIT, bumped delta_epoch and stamped
+	// lifted_at. before_uop == after_uop: a lift changes no count. It is a
+	// binding boundary (EpochBumpOps).
+	OpLifted = "lifted"
+
+	// OpAfterLift tags a BinUOPDelta the applier refused because its window
+	// started at or after the lift that ended its generation (Lane H R4,
+	// DECISIONS D11 (ii)): those ticks were counted after the carrier left,
+	// and the Edge moves them to the pile or the hold when it hears of the
+	// lift. One observation row (before_uop == after_uop), metadata
+	// {wire_epoch, bin_epoch, sequence_id, delta, window_start, lifted_at}. No
+	// exception row, no anomaly_at, no refresh: it is the rule working, not a
+	// station behind.
+	OpAfterLift = "after_lift"
 )
 
 // ReleaseFamilyOps is the canonical set of ops that retire a bin's manifest —
@@ -205,18 +223,45 @@ var ReleaseFamilyOps = []string{
 // TestEpochBumpOpsCoversEveryBumpSite pins the seven call sites, so an eighth
 // arrives as a failing test pointing here rather than as a binding age that is
 // silently too long.
+//
+// THE RELEASE OPS LEFT THIS SET (Lane H, DECISIONS D11 (i), 2026-10-10). A
+// release now writes the declared count with no bump and fences the stream;
+// the generation ends at the LIFT, which writes OpLifted, below. So
+// released_empty / released_partial / released_underpack and their fallback
+// variants are no longer boundaries: a release is a count declaration INSIDE
+// the binding it ends at the lift. Two residuals, named rather than hidden:
+//
+//   - A release from an Edge that sends no fence (one that predates it) still
+//     bumps at the release (mixed-version safety) and writes no boundary row;
+//     its binding is cut at the lift instead, a few minutes later. Expiry: the
+//     unfenced arm in syncOrClearForReleased is removed.
+//   - Ledger history written before this change has release rows that DID
+//     bump; a carrier released before the deploy and not lifted, loaded or
+//     claimed since reads its binding from the load before. Expiry: every such
+//     carrier has a later boundary.
+//
+// released_capture_empty and clear_for_reuse stay: they reach the clear site,
+// which still bumps.
 var EpochBumpOps = []string{
 	OpSetForProduction,
 	OpClearAndClaim,
 	OpSyncUOPAndClaim,
 	OpClearForReuse,
+	OpReleasedCaptureEmpty,
+	OpEdgeRollback,
+	OpLifted,
+}
+
+// ReleaseDeclarationOps are the release ops that, since Lane H (D11 (i)),
+// declare a count without ending the generation: the release-family ops that
+// are NOT in EpochBumpOps. Named so the census test can hold the difference
+// between the two sets deliberate.
+var ReleaseDeclarationOps = []string{
 	OpReleasedEmpty,
 	OpReleasedPartial,
 	OpReleasedEmptyFallback,
 	OpReleasedPartialFallback,
-	OpReleasedCaptureEmpty,
 	OpReleasedUnderpack,
-	OpEdgeRollback,
 }
 
 // BinUOPExecer is the minimal interface satisfied by *sql.Tx and *sql.DB.

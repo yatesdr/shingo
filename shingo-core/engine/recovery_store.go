@@ -31,7 +31,9 @@ type RecoveryStore interface {
 	GetBin(id int64) (*bins.Bin, error)
 
 	// Recovery-specific mutations.
-	RepairConfirmedOrderCompletion(orderID, binID, toNodeID int64, staged bool, expiresAt *time.Time) error
+	// onPlaced is the landing verb (service.BinService.LandingHook), run in the
+	// repair's transaction.
+	RepairConfirmedOrderCompletion(orderID, binID, toNodeID int64, staged bool, expiresAt *time.Time, onPlaced store.OnPlaced) error
 	ReleaseTerminalBinClaim(binID int64) (int64, error)
 	ReleaseStagedBin(binID int64) (released bool, err error)
 

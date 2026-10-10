@@ -292,7 +292,9 @@ var neverDeadLetter = map[string]bool{
 	protocol.TypeOrderIngest:            true,
 	// Core writes its data rows as "data."+subject (store/messaging).
 	"data." + protocol.SubjectBinPickedUp: true,
-	protocol.TypeOrderRelease:             true,
+	// A dead-lettered landing leaves a carrier unbound at its seat (H.6).
+	"data." + protocol.SubjectBinLanded: true,
+	protocol.TypeOrderRelease:           true,
 }
 
 // publishOne reports whether the message was acked. False means the publish

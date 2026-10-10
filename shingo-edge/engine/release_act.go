@@ -502,8 +502,13 @@ func (e *Engine) wakeOrderNodes(o *storeorders.Order, why string) {
 // onPickupForIntents is BinPickedUp for any leg, at any location — before the
 // pickup handler's station-node filter: a lifter's lift is a held placer's
 // wake wherever it happened.
-func (e *Engine) onPickupForIntents(orderUUID string) {
-	if o, err := e.db.GetOrderByUUID(orderUUID); err == nil && o != nil {
+//
+// IT TAKES THE ORDER, NOT ITS UUID. HandleBinPickedUp has just read the order
+// by uuid; this used to read it again, one more statement per pickup on the
+// one SQLite connection for an answer already in hand (DESIGN-H §9.3, pin
+// TestPinH_PickupHandlerReadsItsOrderOnce).
+func (e *Engine) onPickupForIntents(o *storeorders.Order) {
+	if o != nil {
 		e.wakeOrderNodes(o, "lift")
 	}
 }

@@ -130,3 +130,27 @@ func (db *DB) RequeueOutbox(id int64) error {
 func (db *DB) PurgeOldOutbox(delivered, deadLetter time.Duration) (int64, error) {
 	return messaging.PurgeOld(db.DB, delivered, deadLetter)
 }
+
+// OutboxPayloadsSince returns the payload of every outbox row of msgType
+// enqueued at or after since (to the second created_at keeps), sent or not,
+// oldest first. One read. Its caller is the late pickup after an Edge restart
+// (Lane H R4, DECISIONS D11 (ii)): the accumulator's in-memory list of flushed
+// windows died with the process, and the rows it would have listed are still
+// here until the purge.
+func (db *DB) OutboxPayloadsSince(msgType string, since time.Time) ([][]byte, error) {
+	rows, err := db.Query(`SELECT payload FROM outbox WHERE msg_type = ? AND created_at >= ? ORDER BY id`,
+		msgType, since.UTC().Format("2006-01-02 15:04:05"))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][]byte
+	for rows.Next() {
+		var p []byte
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

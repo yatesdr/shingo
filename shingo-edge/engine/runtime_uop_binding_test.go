@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
 	"shingoedge/orders"
@@ -136,14 +137,18 @@ func TestRuntimeBinding_DeliveredFlipsCacheAndPointers(t *testing.T) {
 	bid := deliveredBinID
 	db.UpdateOrderBinID(orderID, &bid)
 
-	// Seed rides the OrderDelivered envelope (Core's snapshot at arrival):
-	// bin uop + load-lifecycle epoch. No HTTP pull.
+	// CONVERTED with Lane H (H.5): the seed rides the landing (Core's count
+	// and generation, read in the arrival's own transaction), which binds; the
+	// delivered that follows only checks. No HTTP pull.
 	uop := deliveredBinUOP
+	eng.HandleBinLanded(protocol.BinLanded{
+		BinID: bid, CoreNodeName: "DEL-FLIP-NODE", Count: deliveredBinUOP, Epoch: deliveredEpoch, PlacedSeq: 1,
+	})
 	eng.Events.Emit(Event{
 		Type: EventOrderDelivered,
 		Payload: OrderDeliveredEvent{
 			OrderID: orderID, OrderUUID: "uuid-del-flip", OrderType: orders.TypeRetrieve,
-			ProcessNodeID: &nodeID, BinID: &bid, BinUOP: &uop, BinEpoch: deliveredEpoch,
+			ProcessNodeID: &nodeID, BinID: &bid, BinUOP: &uop, BinEpoch: deliveredEpoch, LandingSent: true,
 		},
 	})
 

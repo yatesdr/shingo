@@ -76,7 +76,7 @@ func assertNoLegColumns(t *testing.T, what, src string) {
 // style_claims, each with the reason it may. A new reader is a decision, not an
 // accident: add it here with its reason, or move the read behind one of these.
 var sanctionedLegReaders = map[string]string{
-	"store/plantclaims/plantclaims.go": "the writer (ReplaceProcess)",
+	"store/plantclaims/plantclaims.go": "the writer (ReplaceProcess), and the addressing read: a station binds at its cell's paired positions too (Lane H, H.3)",
 	"store/return_sources.go":          "the cancel-return policy: where a line's bins come from and its empties go",
 	"store/containment.go":             "the containment divert scopes itself to the claim's own outbound flow",
 	"store/migrations.go":              "the schema",

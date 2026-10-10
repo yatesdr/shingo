@@ -242,7 +242,9 @@ func applyStagedDelivery(e *Engine, ctx *orderCompletionCtx) bool {
 	toClaim := ctx.ToClaim() // cached in Match
 	claimID := toClaim.ID
 	if e.inventoryDelta != nil {
-		if err := e.inventoryDelta.SetClaimAndCount(ctx.node.ID, &claimID, ctx.runtime.RemainingUOPCached); err != nil {
+		// The claim only: the count on ctx.runtime was read when the context
+		// loaded, and writing it back would erase any tick since (DESIGN-H §9.1).
+		if err := e.inventoryDelta.SetClaim(ctx.node.ID, &claimID); err != nil {
 			log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 		}
 	}
@@ -313,9 +315,25 @@ func matchOrderBSimple(ctx *orderCompletionCtx) bool {
 // time (drop tasks without the evacuate marker land at line_cleared
 // during planning — skip the redundant state write to avoid churning
 // updated_at).
+//
+// ONLY THE CARRIER ORDER B TOOK LEAVES. Order B's completion arrives after the
+// robot has driven away, and by then the next carrier may already have landed
+// on the seat; clearing whatever is bound would unbind it and zero its count.
+// So the seat clears only when the bound carrier is the order's bin. Both are
+// already in hand from loadOrderCompletionCtx, so the check costs no
+// statement. When the order names no bin, or another carrier is bound, the
+// seat is left alone and the skip is logged: the pickup (HandleBinPickedUp,
+// which checks the same identity) is the departure's other door. (DESIGN-H
+// §9.2; pin TestPinH_OrderBSimpleCompletionLeavesADifferentCarrier.)
 func applyOrderBSimple(e *Engine, ctx *orderCompletionCtx) bool {
-	if err := e.carrierLeft(ctx.node.ID, ctx.node.CoreNodeName); err != nil {
-		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+	rt, ob := ctx.runtime.ActiveBinID, ctx.order.BinID
+	if rt != nil && ob != nil && *rt == *ob {
+		if err := e.carrierLeft(ctx.node.ID, ctx.node.CoreNodeName); err != nil {
+			log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+		}
+	} else {
+		log.Printf("order B %d completed at node %s: bound carrier %s is not the order's bin %s -- "+
+			"leaving the seat as it stands", ctx.order.ID, ctx.node.CoreNodeName, binIDText(rt), binIDText(ob))
 	}
 	if domain.IsNodeTaskStateTerminal(ctx.nodeTask.State, ctx.nodeTask.Situation) {
 		return true
@@ -324,6 +342,14 @@ func applyOrderBSimple(e *Engine, ctx *orderCompletionCtx) bool {
 		log.Printf("update node task %d to line_cleared: %v", ctx.nodeTask.ID, err)
 	}
 	return true
+}
+
+// binIDText renders a bin pointer for a log line: the id, or "none".
+func binIDText(id *int64) string {
+	if id == nil {
+		return "none"
+	}
+	return fmt.Sprintf("%d", *id)
 }
 
 // matchChangeoverRelease matches Order A completing to release staged or
@@ -450,7 +476,8 @@ func advanceClaimOnRelease(e *Engine, ctx *orderCompletionCtx) {
 			"leaving the claim pointer as it stands", ctx.node.CoreNodeName)
 		return
 	}
-	if err := e.inventoryDelta.SetClaimAndCount(ctx.node.ID, claimID, ctx.runtime.RemainingUOPCached); err != nil {
+	// The claim only, never the count read with ctx (DESIGN-H §9.1).
+	if err := e.inventoryDelta.SetClaim(ctx.node.ID, claimID); err != nil {
 		log.Printf("changeover release: advance claim for node %d: %v", ctx.node.ID, err)
 	}
 }

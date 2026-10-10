@@ -195,8 +195,13 @@ func TestDelivered_ComplexOrderBindsActiveBin(t *testing.T) {
 	bid := binID
 	testutil.MustNoErr(t, db.UpdateOrderBinID(orderID, &bid), "set bin id")
 
+	// CONVERTED with Lane H (H.5): Core lands the bin at the order's final
+	// dropoff (the landing binds), and the delivered that follows only checks.
+	// The steps' final dropoff still decides whether the delivered is about
+	// this node.
+	eng.HandleBinLanded(protocol.BinLanded{BinID: bid, CoreNodeName: node.CoreNodeName, PlacedSeq: 1})
 	eng.Events.Emit(Event{Type: EventOrderDelivered, Payload: OrderDeliveredEvent{
-		OrderID: orderID, OrderType: orders.TypeComplex, ProcessNodeID: &nodeID, BinID: &bid,
+		OrderID: orderID, OrderType: orders.TypeComplex, ProcessNodeID: &nodeID, BinID: &bid, LandingSent: true,
 	}})
 
 	rt, err := db.GetProcessNodeRuntime(nodeID)
@@ -216,8 +221,10 @@ func TestDelivered_ComplexOrderBindsActiveBin(t *testing.T) {
 	bid2 := binID2
 	testutil.MustNoErr(t, db.UpdateOrderBinID(orderID2, &bid2), "set removal bin id")
 
+	// Its bin landed at FILLED-STORAGE, a storage slot: Core sends no landing
+	// here, and the delivered binds nothing.
 	eng.Events.Emit(Event{Type: EventOrderDelivered, Payload: OrderDeliveredEvent{
-		OrderID: orderID2, OrderType: orders.TypeComplex, ProcessNodeID: &nodeID, BinID: &bid2,
+		OrderID: orderID2, OrderType: orders.TypeComplex, ProcessNodeID: &nodeID, BinID: &bid2, LandingSent: true,
 	}})
 
 	rt2, err := db.GetProcessNodeRuntime(nodeID)

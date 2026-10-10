@@ -256,6 +256,7 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `containment.snapshot` | Core -> Edge | `ContainmentSnapshot` | Core's whole containment state (flags, held bins, what stands at each containment destination) with its digest; broadcast after a containment write, unicast when an Edge's heartbeat quotes a different `containment` digest. An Edge older than the subject logs "no handler" once per broadcast |
 | `supply.refusal_snapshot` | Core -> Edge | `SupplyRefusalSnapshot` | Core's whole open refusal set, sent to one Edge whose `refusals` feed digest differs from Core's; the Edge merges it per field and re-sends what it owns that Core is missing |
 | `transit.bin_picked_up` | Core -> Edge | `BinPickedUp` | The robot has the bin — the pickup half of a transit, distinct from delivery |
+| `transit.bin_landed` | Core -> Edge | `BinLanded` | A carrier came to rest at a node a station binds at — the drop half of a transit; the only door that binds a carrier Core placed (Lane H) |
 | `transit.bin_return` | Core -> Edge | `BinReturn` | Notice only: the bin a cancelled order left on a robot is returning, returned, or held — keyed by the cancelled order's uuid; no status or count changes |
 | `node.structure_changed` | Core -> Edge | `NodeStructureChanged` | A node was reparented or deleted, so the Edge's topology view is stale |
 | `inventory.uop_adjustment` | Core -> Edge | `UOPAdjustment` | An operator's UoP correction on Core, pushed so the Edge's Bins view agrees |
@@ -313,9 +314,10 @@ Data messages have a default TTL of 5 minutes, but individual subjects can overr
 | `inventory.uop_adjustment` | **none** | Count announcement a dropped copy strands under a dead generation — see below |
 | `inventory.bin_epoch_refresh` | **none** | Epoch re-anchor a dropped copy strands under a dead generation — see below |
 | `transit.bin_picked_up` | **none** | A bin's lift; a dropped copy strands the slot's clear and a supply deferred to it — see below |
+| `transit.bin_landed` | **none** | A carrier's drop; a dropped copy leaves the seat empty while a carrier stands on it — see below |
 | Unknown subjects | 5 minutes | Safe general default |
 
-**Six subjects carry NO expiry at all** (`protocol.NoExpiry`, 2026-08-22; the set is
+**Seven subjects carry NO expiry at all** (`protocol.NoExpiry`, 2026-08-22; the set is
 pinned against `protocol/expiry.go` by `protocol/docs_drift_test.go`). Every other data
 subject is a snapshot whose successor carries the same truth seconds later, so discarding a late
 copy costs nothing. The bin delta is an *increment*: a dropped one is a permanently wrong count
@@ -330,7 +332,9 @@ bin epoch refresh) are counts a station still holds after an outage longer than 
 discarded at Core until the next announcement. A bin's lift (`transit.bin_picked_up`, 2026-09-30)
 is the only trigger for the slot's clear, a changeover supply deferred to that lift, and a
 consolidation's Order B; each branch of the Edge's handler is safe on a late copy (see
-`protocol/expiry.go` for the audit and the one residual shape).
+`protocol/expiry.go` for the audit and the one residual shape). A carrier's drop (`transit.bin_landed`,
+2026-10-10) is the only door that binds a carrier Core placed; a late copy is refused by the
+seat's placement stamp (`placed_seq`), so a redelivery binds nothing twice.
 
 They are safe to arrive arbitrarily late because Core guards both ends — `ApplyBinUOPDelta`
 dedups on `SequenceID` via `inventory_delta_dedup`, and the stale-epoch guard routes a delta from

@@ -182,7 +182,7 @@ func (e *Engine) releaseOrderDropFastPath(orderID int64, node *processes.Node, r
 	wireDisposition := buildProtocolDisposition(disp, runtime)
 	e.logRelease("order=%d node=%s disposition=%q — drop release: passing manifest sync through, skipping toClaim-dependent bookkeeping",
 		orderID, node.Name, string(disp.Mode))
-	return e.orderMgr.ReleaseOrderWithDisposition(orderID, manifestUOP, wireDisposition, disp.CalledBy, echo)
+	return e.orderMgr.ReleaseOrderWithDisposition(orderID, manifestUOP, wireDisposition, disp.CalledBy, echo, nil)
 }
 
 // releaseOrderWithFullLineside is the lineside release: the capture of parts
@@ -275,10 +275,26 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 	// The OLD bin's local count follows what Core was told (RELEASE EMPTY →
 	// 0, SEND PARTIAL BACK → the partial). The incoming bin's count arrives on
 	// its OrderDelivered envelope; ticks in between are held and replayed.
+	//
+	// A release declaring 0 also marks the bin released-empty in the same
+	// statement: it is not charged afterwards, and ticks past the pile are
+	// held for the next bin of the part (Lane H R3, DECISIONS D12; pin
+	// TestPinR3_ReleasedEmptyIsNotChargedThenTheNextBinOfThePartTakesTheHold).
+	// A count release keeps charging the bin until the lift (R1).
+	//
+	// NOT COVERED: PULL PARTS LINESIDE that captures the whole bin. That
+	// release runs no runtime statement (manifestUOP is nil; Core zeroes the
+	// bin from the capture_reduction), so the flag has no statement to ride at
+	// +0 and the bin is charged until the lift, as before.
+	//
+	// THE COUNT WRITE FENCES THE STREAM (Lane H, DECISIONS D11 (i)): the release
+	// carries where in the carrier's delta stream the declared count stands,
+	// read in the same instant as the write (writeReleaseCount), so Core declares
+	// it with no generation bump and the ticks until the lift stay the carrier's
+	// in both books (R1).
+	var fence *protocol.ReleaseFence
 	if manifestUOP != nil {
-		if err := e.db.UpdateProcessNodeUOP(node.ID, *manifestUOP); err != nil {
-			e.logRelease("finalize old-bin cache for node %s on release: %v", node.Name, err)
-		}
+		fence = e.writeReleaseCount(node.ID, runtime, resolvedBinID, *manifestUOP)
 	}
 	if nodeTask != nil {
 		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, domain.NodeTaskReleased); err != nil {
@@ -291,7 +307,7 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 	if e.inventoryDelta != nil {
 		e.inventoryDelta.Flush()
 	}
-	return e.orderMgr.ReleaseOrderWithDisposition(orderID, manifestUOP, wireDisposition, disp.CalledBy, echo)
+	return e.orderMgr.ReleaseOrderWithDisposition(orderID, manifestUOP, wireDisposition, disp.CalledBy, echo, fence)
 }
 
 func computeReleaseRemainingUOP(disp ReleaseDisposition, runtime *processes.RuntimeState, resolvedBinID int64) *int {

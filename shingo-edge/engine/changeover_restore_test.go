@@ -66,7 +66,13 @@ func TestRestore_BoundCarrierKeepsItsCount(t *testing.T) {
 }
 
 // TestRestore_SeedsZeroWhenNoCarrierIsBound is the other half: with no carrier
-// on the node there is no measurement to keep, and 0 is what is there.
+// on the node, the restore's claim advance writes no count either.
+//
+// CONVERTED (Lane H, DESIGN-H §9.1 / §10 D6): this pinned the old door, where
+// the advance wrote 0 over an unbound slot's count. A claim change writes the
+// claim only (TestPinH_ClaimAdvanceStatementWritesNoCount); an unbound slot's
+// count is zeroed by the departure that unbound it (carrierLeft), not by a
+// claim advance. The name is kept so the history reads.
 func TestRestore_SeedsZeroWhenNoCarrierIsBound(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -89,8 +95,8 @@ func TestRestore_SeedsZeroWhenNoCarrierIsBound(t *testing.T) {
 
 	gotRT, err := db.GetProcessNodeRuntime(nodeID)
 	rt := testutil.Must(t, gotRT, err, "reload node runtime")
-	if rt.RemainingUOPCached != 0 {
-		t.Errorf("remaining = %d, want 0 — nothing is bound to this node, so there is no count "+
-			"to carry over from the outgoing style", rt.RemainingUOPCached)
+	if rt.RemainingUOPCached != rtBefore.RemainingUOPCached {
+		t.Errorf("remaining = %d, want %d unchanged — the claim advance writes the claim, not the count",
+			rt.RemainingUOPCached, rtBefore.RemainingUOPCached)
 	}
 }

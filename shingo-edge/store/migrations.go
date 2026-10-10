@@ -1588,6 +1588,80 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// process_node_runtime_states.pending_uop_payload and released_empty
+			// (Lane H, DECISIONS D12).
+			//
+			// pending_uop_payload is the part of the held ticks: a hold replays
+			// only onto a carrier of that part (R2). Before it the hold was a bare
+			// integer and replayed onto whatever bound next, of any part. Existing
+			// rows read '' and keep that old behaviour until their hold clears.
+			//
+			// released_empty marks a bound carrier the operator released as empty:
+			// it is not charged afterwards; ticks past the pile are held for the
+			// next carrier of the part (R3). 0 on every existing row.
+			//
+			// Column-check guarded per column, like v17.
+			Version: 19,
+			Name:    "runtime_pending_uop_payload_and_released_empty",
+			Fn: func(tx *sql.Tx) error {
+				for _, c := range []struct{ name, ddl string }{
+					{"pending_uop_payload", `ALTER TABLE process_node_runtime_states ADD COLUMN pending_uop_payload TEXT NOT NULL DEFAULT ''`},
+					{"released_empty", `ALTER TABLE process_node_runtime_states ADD COLUMN released_empty INTEGER NOT NULL DEFAULT 0`},
+				} {
+					var n int
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states')
+						WHERE name = ?`, c.name).Scan(&n); err != nil {
+						return err
+					}
+					if n > 0 {
+						continue
+					}
+					if _, err := tx.Exec(c.ddl); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states')
+					WHERE name IN ('pending_uop_payload', 'released_empty')`).Scan(&n)
+				return err == nil && n == 2
+			},
+		},
+		{
+			// process_node_runtime_states.placed_seq (Lane H, DECISIONS D10): the
+			// placement stamp of the landing the seat last bound. The landing's
+			// bind refuses one not newer (processes.BindLanding), which is what
+			// makes a redelivered or overtaken landing harmless. NULL on every
+			// existing row: the first landing binds.
+			//
+			// This version is protocol.EdgeSchemaBinLanded: Core sends a landing
+			// only to a station registered at or above it (H.7), pinned by
+			// TestEdgeSchemaBinLandedIsThePlacedSeqMigration. Column-check
+			// guarded, like v17.
+			Version: 20,
+			Name:    "runtime_placed_seq",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states')
+					WHERE name = 'placed_seq'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE process_node_runtime_states ADD COLUMN placed_seq INTEGER`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('process_node_runtime_states')
+					WHERE name = 'placed_seq'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

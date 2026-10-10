@@ -66,7 +66,7 @@ func linesideFixture(t *testing.T, db *DB, coreNode string) (processID, styleID,
 // is — the identity is the thing under test and each case sets it explicitly.
 func bindCarrier(t *testing.T, db *DB, nodeID, claimID, binID int64, uop int) {
 	t.Helper()
-	if err := db.SetProcessNodeRuntimeForDeliveredBin(nodeID, &claimID, binID, 1, uop); err != nil {
+	if err := db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &claimID, &binID, 1, uop); err != nil {
 		t.Fatalf("bind carrier: %v", err)
 	}
 }

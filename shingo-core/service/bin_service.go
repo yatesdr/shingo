@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/audit"
@@ -366,11 +367,16 @@ func (s *BinService) Move(b *bins.Bin, toNodeID int64) (*MoveResult, error) {
 	// SCOPED TO THAT SOURCE. An ordinary node-to-node move says nothing about
 	// an anomaly and must not clear one — a count-refusal stamp on a bin being
 	// shuffled between slots is still live.
-	move := s.db.MoveBinClearingStaging
-	if wasUnlocated(b.NodeName) && !destNode.IsSynthetic {
-		move = s.db.MoveBinOffTransit
+	offTransit := wasUnlocated(b.NodeName) && !destNode.IsSynthetic
+	// The landing in the move's transaction (Lane H, H.2), replacing the admin
+	// move's broadcast Bound after the commit (www binMove). legacyBound: that
+	// Bound is this writer's old wire, which an Edge too old for the landing
+	// still gets, addressed (H.7). The engine's own carrier parking also comes
+	// through here, onto a robot's synthetic deck node, where nothing is sent.
+	onPlaced := func(tx *sql.Tx, p store.Placed) error {
+		return s.announceLanding(tx, p, 0, true, protocol.AuditActorUI)
 	}
-	if err := move(b.ID, toNodeID, clearStaging); err != nil {
+	if err := s.db.MoveBinByHandAnnounced(b.ID, toNodeID, clearStaging, offTransit, onPlaced); err != nil {
 		return nil, err
 	}
 	return &MoveResult{DestNode: destNode}, nil
@@ -862,7 +868,7 @@ func (s *BinService) applyArrival(binID, toNodeID int64, staged bool, expiresAt 
 	// releaseClaim is the ONE thing this file still decides, and it is the
 	// handoff-versus-set-down distinction the two exported methods above exist to
 	// express. See ApplyIntermediateStore for what conflating them cost.
-	evictedGhosts, err := s.db.PlaceBinTx(tx, store.BinPlacement{
+	placed, err := s.db.PlaceBinTx(tx, store.BinPlacement{
 		BinID:                  binID,
 		ToNodeID:               toNodeID,
 		PlacedByOrder:          placedByOrder,
@@ -874,6 +880,17 @@ func (s *BinService) applyArrival(binID, toNodeID int64, staged bool, expiresAt 
 	if err != nil {
 		return nil, err
 	}
+	// The landing, in this transaction, for the handoff and the set-down alike
+	// (Lane H, H.2). The final drop used to be told to the Edge only by
+	// order.delivered after the whole order FINISHED, and the completion
+	// safety net told nobody; the set-down's Bound was broadcast after the
+	// commit by its caller (wiring_block_completed). legacyBound for the
+	// set-down only: that is the writer whose old wire was a Bound, which an
+	// Edge too old for the landing still gets, addressed (H.7).
+	if err := s.announceLanding(tx, placed, placedByOrder, !releaseClaim, ""); err != nil {
+		return nil, err
+	}
+	evictedGhosts := placed.Evicted
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit arrival bin %d: %w", binID, err)
@@ -905,15 +922,98 @@ func (s *BinService) applyArrival(binID, toNodeID int64, staged bool, expiresAt 
 //   - `status`: location and readiness are orthogonal. A bin can be
 //     `staged` at source, in transit, then `available` at destination —
 //     the status transition belongs to ApplyArrival.
+//
+// It is the lift with no pickup notice (Lift): a streamed bin's generation
+// still ends here (Lane H, D11 (i)); nobody is told.
 func (s *BinService) MoveToTransit(binID int64) error {
+	_, err := s.Lift(binID, PickupNotice{})
+	return err
+}
+
+// PickupNotice addresses the pickup message a lift writes in its own
+// transaction. Station "" sends nothing (MoveToTransit). OrderID is the
+// lifting order, for the ledger row.
+type PickupNotice struct {
+	Station   string
+	OrderUUID string
+	OrderID   int64
+	Location  string
+}
+
+// Lift moves a bin to _TRANSIT and, for a streamed bin, ends its generation
+// (Lane H, DECISIONS D11 (i)): the bump that used to ride the release moved
+// here, so every tick charged before the robot lifts the carrier is the
+// carrier's (R1) and the window after it is not (R4). One transaction:
+//
+//   - the lift's UPDATE: node_id, delta_epoch+1 and lifted_at in one statement
+//     for a streamed bin (bins.LiftToTransitTx says which bins are streamed);
+//   - for a bump, the ledger op `lifted`, which is a binding boundary
+//     (audit.EpochBumpOps: the row, the epoch_seq read, the boundary row);
+//   - the pickup message to the lifting order's station, carrying Epoch and
+//     PickedUpAt = lifted_at, the T both books judge a late window by.
+//
+// It used to be the UPDATE on the pool and a separate outbox row after it
+// (wiring_block_completed.go). Statements per seat lift: +3 (ledger row,
+// epoch_seq read, boundary row) and one transaction; a storage lift +0.
+//
+// No A4 broadcast for the bump, the named exception to "bump and announce are
+// inseparable" (TestTheLiftIsTheOneUnannouncedBump): the pickup is the
+// announcement. A bin already at _TRANSIT (a pickup retry) writes nothing
+// moved, and the notice still goes, with the bin's current generation (one
+// read, only on a retry), as the old code sent one for every pickup.
+func (s *BinService) Lift(binID int64, n PickupNotice) (bins.Lift, error) {
 	transitNode, err := s.db.GetNodeByName(domain.TransitNodeName)
 	if err != nil {
-		return fmt.Errorf("lookup transit node %q: %w", domain.TransitNodeName, err)
+		return bins.Lift{}, fmt.Errorf("lookup transit node %q: %w", domain.TransitNodeName, err)
 	}
-	if err := s.db.MoveBinToTransit(binID, transitNode.ID); err != nil {
-		return fmt.Errorf("move bin %d to transit: %w", binID, err)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return bins.Lift{}, fmt.Errorf("begin tx: %w", err)
 	}
-	return nil
+	defer tx.Rollback()
+	now := clock.Now().UTC()
+	l, err := s.db.LiftBinToTransitTx(tx, binID, transitNode.ID, n.Station, now)
+	if err != nil {
+		return bins.Lift{}, fmt.Errorf("move bin %d to transit: %w", binID, err)
+	}
+	pickedUpAt := now
+	switch {
+	case l.Bumped:
+		pickedUpAt = l.LiftedAt
+		var orderID *int64
+		if n.OrderID != 0 {
+			orderID = &n.OrderID
+		}
+		count := l.Count
+		if err := audit.AppendBinUOP(tx, binID, &count, count, audit.OpLifted,
+			"service/bin_service.go:Lift", orderID, l.PayloadCode, "system",
+			audit.BinUOPContext{Station: n.Station}); err != nil {
+			return bins.Lift{}, err
+		}
+	case !l.Moved && n.Station != "":
+		var at sql.NullTime
+		if err := tx.QueryRow(`SELECT delta_epoch, lifted_at FROM bins WHERE id=$1`, binID).Scan(&l.Epoch, &at); err != nil {
+			return bins.Lift{}, fmt.Errorf("read bin %d for a repeated pickup: %w", binID, err)
+		}
+		if at.Valid {
+			pickedUpAt = at.Time.UTC()
+		}
+	}
+	if n.Station != "" && s.manifest != nil && s.manifest.announce.Wired() {
+		if err := s.manifest.announce.SendTo(tx, protocol.SubjectBinPickedUp, n.Station, &protocol.BinPickedUp{
+			OrderUUID:  n.OrderUUID,
+			BinID:      binID,
+			Location:   n.Location,
+			PickedUpAt: pickedUpAt,
+			Epoch:      l.Epoch,
+		}); err != nil {
+			return bins.Lift{}, fmt.Errorf("pickup notice bin %d: %w", binID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return bins.Lift{}, fmt.Errorf("commit lift bin %d: %w", binID, err)
+	}
+	return l, nil
 }
 
 // MarkAnomaly stamps `bins.anomaly_at = NOW()` for the given bin. Idempotent —
@@ -986,7 +1086,7 @@ func (s *BinService) PlaceObserved(binID, toNodeID int64, staged bool, placedByO
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
-	evicted, err := s.db.PlaceBinTx(tx, store.BinPlacement{
+	placed, err := s.db.PlaceBinTx(tx, store.BinPlacement{
 		BinID:         binID,
 		ToNodeID:      toNodeID,
 		PlacedByOrder: placedByOrder,
@@ -996,8 +1096,14 @@ func (s *BinService) PlaceObserved(binID, toNodeID int64, staged bool, placedByO
 	if err != nil {
 		return nil, err
 	}
+	evicted := placed.Evicted
 	if _, err := tx.Exec(`UPDATE bins SET anomaly_at=NULL, anomaly_note='' WHERE id=$1`, binID); err != nil {
 		return nil, fmt.Errorf("clear anomaly on bin %d: %w", binID, err)
+	}
+	// An arrival Core inferred is an arrival: the seat hears of it like any
+	// other drop (Lane H, H.2). It told nobody before.
+	if err := s.announceLanding(tx, placed, placedByOrder, false, InferredActor); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit observed placement of bin %d: %w", binID, err)
@@ -1065,7 +1171,12 @@ func (s *BinService) RecoverTransitAnomaly(binID, toNodeID int64, actor string) 
 		return err
 	}
 
-	if err := s.db.RecoverBinToNode(binID, toNodeID); err != nil {
+	// The person who found the carrier placed it; the seat hears of it in the
+	// move's transaction (Lane H, H.2). It told nobody before.
+	onPlaced := func(tx *sql.Tx, p store.Placed) error {
+		return s.announceLanding(tx, p, 0, false, actor)
+	}
+	if err := s.db.RecoverBinToNode(binID, toNodeID, onPlaced); err != nil {
 		return fmt.Errorf("move bin to recovery node: %w", err)
 	}
 	if err := s.db.RecordRecoveryAction(

@@ -16,6 +16,7 @@ import (
 	"database/sql"
 
 	"shingoedge/store/lineside"
+	"shingoedge/store/processes"
 )
 
 // runtimeWriter is the write surface on process_node_runtime_states
@@ -27,6 +28,11 @@ type runtimeWriter interface {
 	// pointer/count half of the carrier-left verb (the count on the row is
 	// the departed bin's).
 	ClearProcessNodeActiveBinAndCount(processNodeID int64) error
+
+	// LeaveProcessNodeAtPickup is the same statement at the robot's pickup,
+	// also stamping the lift's generation and adding the ticks after the
+	// lift to the hold (Lane H, D11). Used by LeaveAtPickup.
+	LeaveProcessNodeAtPickup(processNodeID, pickupEpoch int64, hold int, holdPart string) error
 
 	// SetProcessNodeActiveBinIDAndEpoch writes active_bin_id and
 	// active_bin_epoch together. Used by BindActiveBin when the epoch
@@ -40,12 +46,10 @@ type runtimeWriter interface {
 	// the slot).
 	SetProcessNodeRuntimeWithBinAndEpoch(processNodeID int64, activeClaimID, activeBinID *int64, deltaEpoch int64, remainingUOP int) error
 
-	// SetProcessNodeRuntime writes active_claim_id + remaining_uop_cached
-	// without touching either bin pointer. Used by SetClaimAndCount —
-	// the ClearBin manual-swap path, changeover switch-node, changeover
-	// restore safety net, and the manual/drop Order B completion's
-	// count carry-forward all share this shape.
-	SetProcessNodeRuntime(processNodeID int64, activeClaimID *int64, remainingUOP int) error
+	// SetProcessNodeActiveClaim writes active_claim_id and nothing else.
+	// Used by SetClaim — the changeover's claim advances (staged delivery,
+	// the release's completion, switch-node, the restore safety net).
+	SetProcessNodeActiveClaim(processNodeID int64, activeClaimID *int64) error
 
 	// SetProcessNodeRuntimeClaimCountAndEpoch writes claim + count and
 	// advances the stamp for the carrier it names, without touching
@@ -59,12 +63,9 @@ type runtimeWriter interface {
 	// last left the slot at an older stamp. Used by BindStagedUnlessDeparted.
 	BindEmptySlotUnlessDeparted(processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOP int) (bool, error)
 
-	// SetProcessNodeRuntimeForDeliveredBin atomically writes
-	// active_claim_id, active_bin_id, active_bin_epoch, and
-	// remaining_uop_cached when a bin physically arrives at the slot.
-	// Used by OnDelivered — the count and epoch are seeded from the
-	// OrderDelivered envelope.
-	SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, remainingUOP int) error
+	// BindLandingAt is the landing's bind (Lane H, H.4): its refusals are
+	// its WHERE. Reports whether it landed. Used by Land.
+	BindLandingAt(processNodeID int64, l processes.LandingBind) (bool, error)
 }
 
 // bucketStore is the lineside pile surface uop verbs need.

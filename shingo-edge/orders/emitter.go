@@ -15,7 +15,12 @@ type EventEmitter interface {
 	// PLN_01/PLN_04, bound neither, and the presses counted into pending_uop_delta
 	// with no bin). Pass order.DeliveryNode; the handler prefers processNodeID and
 	// falls back to the name.
-	EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binPayloadCode *string, binEpoch int64, binDestNode, deliveryNode string)
+	//
+	// landingSent is protocol.OrderDelivered.LandingSent: the sending Core
+	// announced the carrier's drop on transit.bin_landed, so the delivered
+	// binds nothing (Lane H, H.5); false is an older Core whose carrier fields
+	// still bind, through the landing verb (H.7).
+	EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binPayloadCode *string, binEpoch int64, binDestNode, deliveryNode string, landingSent bool)
 	// EmitOrderDeliveredFallback binds the runtime cache for Core-admin orders
 	// that have no Edge order row. ProcessNodeID is resolved from deliveryNode by
 	// the engine handler. Called when HandleDeliveredWithExpiry can't find the UUID.
@@ -27,7 +32,7 @@ type EventEmitter interface {
 	// identity — the same envelope, the same bin row, the same fact, thrown away
 	// on the one path with no Edge order to reconstruct it from. nil is an older
 	// Core that does not send one, and records as an UNKNOWN carrier.
-	EmitOrderDeliveredFallback(binID int64, binUOP *int, binPayloadCode *string, binEpoch int64, deliveryNode string)
+	EmitOrderDeliveredFallback(binID int64, binUOP *int, binPayloadCode *string, binEpoch int64, deliveryNode string, landingSent bool)
 	EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string)
 	EmitOrderFaulted(orderID int64, orderUUID, reason string)
 }

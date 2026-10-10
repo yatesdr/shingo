@@ -117,6 +117,13 @@ CREATE SEQUENCE public.bin_loaders_id_seq
 
 ALTER SEQUENCE public.bin_loaders_id_seq OWNED BY public.bin_loaders.id;
 
+CREATE SEQUENCE public.bin_placement_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
 CREATE TABLE public.bin_types (
     id bigint NOT NULL,
     code text NOT NULL,
@@ -237,6 +244,7 @@ CREATE TABLE public.bins (
     hold_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    lifted_at timestamp with time zone,
     anomaly_note text DEFAULT ''::text NOT NULL,
     undeclared_carrier_at timestamp with time zone
 );

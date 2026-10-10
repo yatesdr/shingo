@@ -158,6 +158,12 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 	if err := e.sendToEdge(protocol.TypeOrderDelivered, stationID, &protocol.OrderDelivered{
 		OrderUUID:   order.EdgeUUID,
 		DeliveredAt: clock.Now().UTC(),
+		// This Core announces every carrier's drop on transit.bin_landed, in
+		// the arrival's transaction (applyArrival above), so a new Edge binds
+		// nothing from this message (H.5, H.7). The bind fields below stay one
+		// release for an Edge too old for the landing; they go, with this
+		// flag, on the cleanup sweep row.
+		LandingSent: true,
 		// StagedExpireAt stays unset: staging no longer expires
 		// (resolveNodeStaging). The field stays on the wire for older Edges.
 		BinID:          binID,
@@ -547,7 +553,9 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *orders.Order, orderBins []*
 		return refusals
 	}
 
-	evictedGhosts, err := e.db.ApplyMultiBinArrival(order.ID, instructions)
+	// Through BinService so each bin set down at a seat is announced in the
+	// settle's transaction (Lane H, H.2).
+	evictedGhosts, err := e.binService.ApplyMultiBinArrival(order.ID, instructions)
 	if err != nil {
 		e.logFn("engine: multi-bin delivery arrival for order %d: %v", order.ID, err)
 		return refusals
@@ -788,7 +796,9 @@ func (e *Engine) handleMultiBinCompleted(order *orders.Order, orderBins []*order
 		return
 	}
 
-	evictedGhosts, err := e.db.ApplyMultiBinArrival(order.ID, instructions)
+	// Through BinService so each bin set down at a seat is announced in the
+	// settle's transaction (Lane H, H.2).
+	evictedGhosts, err := e.binService.ApplyMultiBinArrival(order.ID, instructions)
 	if err != nil {
 		e.logFn("engine: multi-bin arrival for order %d: %v", order.ID, err)
 		return

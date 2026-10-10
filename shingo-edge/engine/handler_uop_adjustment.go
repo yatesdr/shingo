@@ -24,14 +24,22 @@ import (
 // attributing consumption to a bin that has left — fixing the "moved bin
 // keeps counting down" bug. NewRemaining is ignored in that case.
 //
-// When adj.Bound is set (Core moved the bin ONTO this node via admin Move),
-// Edge instead BINDS the node's runtime to the bin — active_bin_id, the epoch
-// from adj.Epoch, and the cached UOP from adj.NewRemaining — so its PLC ticks
-// resume counting the arrived bin. The dual of Released. This runs ahead of
-// the active-bin guard below, because the destination is blank (or stale) by
-// definition and that guard would otherwise reject it; Core's Move already
-// refused the relocation if the destination held another bin, so any stale
-// pointer is safe to overwrite.
+// When adj.Bound is set, an older Core moved a bin ONTO this node: an admin
+// Move, or a mid-order set-down (wiring_block_completed), sent as a Bound
+// after the commit. A Core that sends landings sends a Bound only to a
+// station too old for them (Lane H, H.7), so on this Edge a Bound is an older
+// Core's landing, and it binds through the landing verb with no placement
+// stamp (bindAdjustmentFromCore). That bind keeps the count of the same bin
+// already bound at an equal or newer generation (H.4) and refuses the
+// carrier that last left an empty slot at a newer generation. It may replace
+// a different carrier: Core's Move refused a destination that held another
+// bin, so the bound one is stale.
+//
+// THIS COMMENT USED TO SAY the Bound was the admin Move's only, that it ran
+// ahead of every guard because "Core's Move already refused the relocation",
+// and that any stale pointer was safe to overwrite. The mid-order set-down
+// sent it too (since 75643f9), and the overwrite wrote Core's count over the
+// ticks the line had counted on the same carrier (DESIGN-H §1 A1, §2).
 //
 // A plain count correction (neither Bound nor Released) addressed to a node
 // with NO bin bound also binds: the carrier is staged there and Edge never
@@ -219,6 +227,36 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		return
 	}
 
+	// A PERSON'S ACT IS APPLIED ONCE (condor F7; DESIGN-H §9.5, fix (b)). A
+	// LOAD or CLEAR at this station writes Core's reply here first: the
+	// carrier, its count and the generation the act started. Core's lifecycle
+	// announcement of the same act (bumpEpoch's, unfenced) arrives after, and
+	// by then the line may have counted on the new generation. Writing its
+	// number again erased those ticks here while Core applied their deltas
+	// (TestPinF7_LocalClearThenTickThenUnfencedEchoKeepsTheTick, …Load…). A
+	// lifecycle announcement always starts a generation, so one naming the
+	// generation this slot already holds for this carrier is news this slot
+	// already took: ignore it.
+	//
+	// Not fix (a), Core fencing the load and clear announcements (AsOfNet 0
+	// for the new generation): the fenced arm would rebase correctly, but an
+	// unfenced echo from a Core without it, or a redelivered one, still
+	// erases, and the pins are that echo. A person's count is never ignored
+	// here: its actor is the person, and a count that Core could not fence
+	// is still written as is.
+	//
+	// What this does not close: the slot can hold the generation without its
+	// count, when Core's refresh (BinEpochRefresh, stamp only) overtook the
+	// announcement it follows. The refresh is written in a later transaction
+	// than the announcement, so that order needs the drainer to retry the
+	// announcement past it; the count is then the Edge's own until the next
+	// declaration.
+	if protocol.IsLifecycleActor(adj.Actor) && adj.AsOfNet == nil && rt.ActiveBinEpoch == adj.Epoch {
+		log.Printf("uop_adjustment: bin %d at node %s epoch %d is a lifecycle announcement of the generation "+
+			"this slot already holds — the act was applied from its reply; keeping the count", adj.BinID, adj.CoreNodeName, adj.Epoch)
+		return
+	}
+
 	// TAKE THE EPOCH WITH THE COUNT. Core sends both in this message and the Edge
 	// used to keep only the count, which is incoherent: it accepted "this bin now
 	// holds N" and ignored "...and it has started a new life".
@@ -262,48 +300,17 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 	}})
 }
 
-// bindAdjustmentFromCore is HandleUOPAdjustment's Bound arm: Core moved a bin
-// onto this node, so the node's runtime binds it. Split out to keep the handler
-// under the funlen ceiling; the arm is unchanged.
+// bindAdjustmentFromCore is HandleUOPAdjustment's Bound arm: an older Core
+// placed a bin onto this node, and it binds through the landing verb with no
+// placement stamp, as a displacing bind (Lane H, H.7; see the handler's
+// header). The Bound carries no payload, so the identity is UNKNOWN: whatever
+// the slot said of the previous occupant would be a confident wrong answer
+// about this one. The landing verb settles the placement (leg_departure.go).
+//
+// For one release; it goes on the cleanup sweep row with the delivered bind
+// fields.
 func (e *Engine) bindAdjustmentFromCore(node *processes.Node, adj protocol.UOPAdjustment) {
-	// Bind the destination's runtime to the moved bin. EnsureProcessNodeRuntime
-	// because a never-active destination may have no runtime row yet.
-	// rt.ActiveClaimID is preserved — the move changes which bin sits at the
-	// slot, not what the node produces/consumes.
-	rt, err := e.db.EnsureProcessNodeRuntime(node.ID)
-	if err != nil || rt == nil {
-		log.Printf("uop_adjustment: bind bin %d — ensure runtime for node %s: %v", adj.BinID, adj.CoreNodeName, err)
-		return
-	}
-	if rt.ActiveBinID != nil && *rt.ActiveBinID != adj.BinID {
-		log.Printf("uop_adjustment: bind bin %d onto node %s overwrote stale active_bin_id=%d (Core moved destination to empty)",
-			adj.BinID, adj.CoreNodeName, *rt.ActiveBinID)
-	}
-	if e.inventoryDelta == nil {
-		return
-	}
-	if err := e.inventoryDelta.BindFromCore(node.ID, rt.ActiveClaimID, &adj.BinID, adj.Epoch, adj.NewRemaining); err != nil {
-		log.Printf("uop_adjustment: bind active bin %d to node %s: %v", adj.BinID, adj.CoreNodeName, err)
-		return
-	}
-	// The bind is a carrier arriving: whatever identity the slot carried for
-	// the previous occupant is now a confident wrong answer about this one.
-	// The adjustment envelope carries no payload field, so the honest write
-	// is UNKNOWN — through the doorway, so the pin holds.
-	e.recordLinesideCarrier(node.ID, node.CoreNodeName, domain.UnknownCarrier(), domain.CarrierFromDelivery)
-	log.Printf("uop_adjustment: bound bin %d to node %s (remaining=%d epoch=%d, moved in Core)",
-		adj.BinID, adj.CoreNodeName, adj.NewRemaining, adj.Epoch)
-	// THE SECOND HALF OF A DEPARTURE. This bind is the record that a bin is
-	// on the cell, and it is the fact a leg that has already left the cell's
-	// nodes was waiting on. Firing it here rather than only at the pickup is
-	// what makes arrival order irrelevant: whichever of the two facts lands
-	// second completes the departure. See leg_departure.go.
-	e.settleCellPlacement(node.ID)
-	e.Events.Emit(Event{Type: EventUOPAdjusted, Payload: UOPAdjustedEvent{
-		ProcessNodeID: node.ID,
-		CoreNodeName:  adj.CoreNodeName,
-		BinID:         adj.BinID,
-		NewRemaining:  adj.NewRemaining,
-		Actor:         adj.Actor,
-	}})
+	e.landCarrier(node, processes.LandingBind{
+		BinID: adj.BinID, Epoch: adj.Epoch, Count: adj.NewRemaining, MayDisplace: true,
+	}, domain.UnknownCarrier(), "an older Core's Bound, actor "+adj.Actor)
 }

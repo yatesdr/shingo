@@ -302,14 +302,27 @@ func ProcessStations(db *sql.DB) (map[string]string, error) {
 	return out, rows.Err()
 }
 
+// claimsNodeSQL is "a style_claims row sc claims node $1": as its own position
+// or as one of a press-index cell's paired positions. The paired positions are
+// where a station binds too (after a changeover creates the row), and reading
+// core_node_name alone left them resolving to no station (Lane H, H.3; DESIGN-H
+// §4; DECISIONS D9). The same predicate as the empty scan's
+// (bins.emptyCarrierWhere).
+const claimsNodeSQL = `$1 IN (sc.core_node_name, sc.paired_core_node, sc.second_paired_core_node)`
+
 // StationsClaimingNode lists the stations whose processes claim a node, from
-// the mirror: a style_claims row naming the node, its process's publishing
-// station (process_styles.station_id). One statement. A node no process claims,
-// or one claimed only by processes with no recorded station, lists none.
+// the mirror: a style_claims row naming the node (its own or a paired
+// position), its process's publishing station (process_styles.station_id). One
+// statement. A node no process claims, or one claimed only by processes with no
+// recorded station, lists none.
+//
+// Loader, unloader and FG positions are not in the mirror at all (the Edge's
+// publisher skips manual_swap claims), so they list none here; the landing
+// reaches them by its order's station (D9). That gap is recorded, not closed.
 func StationsClaimingNode(db *sql.DB, nodeName string) ([]string, error) {
 	rows, err := db.Query(`SELECT DISTINCT ps.station_id FROM style_claims sc
 		JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
-		WHERE sc.core_node_name = $1 AND ps.station_id IS NOT NULL
+		WHERE `+claimsNodeSQL+` AND ps.station_id IS NOT NULL
 		ORDER BY ps.station_id`, nodeName)
 	if err != nil {
 		return nil, fmt.Errorf("plantclaims stations claiming %s: %w", nodeName, err)
@@ -322,6 +335,71 @@ func StationsClaimingNode(db *sql.DB, nodeName string) ([]string, error) {
 			return nil, fmt.Errorf("plantclaims stations claiming %s: scan: %w", nodeName, err)
 		}
 		out = append(out, station)
+	}
+	return out, rows.Err()
+}
+
+// Querier is a *sql.DB or a *sql.Tx.
+type Querier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+// AddressedStation is a station a landing could go to, with the schema
+// version that station last registered with (edge_registry.schema_version).
+// SchemaVersion is 0 for a station that has not registered or reported none.
+type AddressedStation struct {
+	StationID     string
+	SchemaVersion int
+}
+
+// LandingAddress is what one read tells the landing about where it goes
+// (Lane H, H.3): the stations whose processes claim the node, and the order's
+// own material station (its station, or the one a station-unaware order
+// projects to; empty when it has none), each with its schema version (H.7).
+type LandingAddress struct {
+	Claiming  []AddressedStation
+	Order     AddressedStation
+	OrderUUID string
+}
+
+// ResolveLandingAddress reads LandingAddress for a carrier placed at nodeName
+// by orderID (0 for a placement with no order). ONE statement, the "+1 mirror
+// read per arrival at a non-storage node" the brief names: the claims mirror,
+// the order's station and both stations' schema versions together, so the
+// version check (H.7) and the fallback cost nothing more.
+//
+// The order's station is spelled as engine.materialStation spells it: the
+// order's own station unless it is station-unaware, then the station it
+// projects to.
+func ResolveLandingAddress(q Querier, nodeName string, orderID int64) (LandingAddress, error) {
+	rows, err := q.Query(`
+		SELECT 'claim', c.station_id, COALESCE(er.schema_version, 0), ''
+		  FROM (SELECT DISTINCT ps.station_id FROM style_claims sc
+		          JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
+		         WHERE `+claimsNodeSQL+` AND ps.station_id IS NOT NULL) c
+		  LEFT JOIN edge_registry er ON er.station_id = c.station_id
+		UNION ALL
+		SELECT 'order', o.st, COALESCE(er.schema_version, 0), o.edge_uuid
+		  FROM (SELECT CASE WHEN station_unaware THEN projects_to ELSE station_id END AS st, edge_uuid
+		          FROM orders WHERE id = $2) o
+		  LEFT JOIN edge_registry er ON er.station_id = o.st AND o.st <> ''
+		ORDER BY 1, 2`, nodeName, orderID)
+	if err != nil {
+		return LandingAddress{}, fmt.Errorf("plantclaims landing address %s: %w", nodeName, err)
+	}
+	defer rows.Close()
+	var out LandingAddress
+	for rows.Next() {
+		var kind, uuid string
+		var st AddressedStation
+		if err := rows.Scan(&kind, &st.StationID, &st.SchemaVersion, &uuid); err != nil {
+			return LandingAddress{}, fmt.Errorf("plantclaims landing address %s: scan: %w", nodeName, err)
+		}
+		if kind == "order" {
+			out.Order, out.OrderUUID = st, uuid
+			continue
+		}
+		out.Claiming = append(out.Claiming, st)
 	}
 	return out, rows.Err()
 }

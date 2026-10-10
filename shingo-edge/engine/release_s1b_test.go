@@ -20,6 +20,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/store/processes"
 )
 
 // ticks runs n parts through the counter path, as the PLC reports them: the
@@ -64,18 +65,16 @@ func liftedAt(leg, node string, bin int64) func(h *relHarness) error {
 	}
 }
 
-// delivered binds a new bin at a node the way the delivery handler does
-// (uop.Mutator.OnDelivered): the claim the runtime holds, the bin, epoch 1,
-// Core's count 0 for an empty.
+// delivered binds a new bin at a node the way Core's placement does, through
+// the landing verb (uop.Mutator.Land, which replaced the delivery handler's
+// OnDelivered, Lane H, H.5): the bin, epoch 1, Core's count 0 for an empty;
+// unstamped and displacing, as the old bind was.
 func delivered(nodeID func(h *relHarness) int64, bin int64) func(h *relHarness) error {
 	return func(h *relHarness) error {
 		h.t.Helper()
 		id := nodeID(h)
-		rt, err := h.db.GetProcessNodeRuntime(id)
-		testutil.MustNoErr(h.t, err, "runtime")
-		testutil.MustNoErr(h.t, h.eng.inventoryDelta.(interface {
-			OnDelivered(nodeID int64, activeClaimID *int64, binID int64, deltaEpoch int64, uop int) error
-		}).OnDelivered(id, rt.ActiveClaimID, bin, 1, 0), "bind delivered bin")
+		_, err := h.eng.inventoryDelta.Land(id, processes.LandingBind{BinID: bin, Epoch: 1, Count: 0, MayDisplace: true})
+		testutil.MustNoErr(h.t, err, "bind delivered bin")
 		return nil
 	}
 }

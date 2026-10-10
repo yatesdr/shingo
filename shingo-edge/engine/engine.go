@@ -73,6 +73,11 @@ type Engine struct {
 	// never across a network call. Order: countMu before the accumulator's
 	// flush lock, everywhere.
 	countMu sync.Mutex
+	// unheldTickLogged is the once-per-episode memory for a tick that is
+	// neither charged nor held because the seat holds another part's ticks
+	// (applyHoldAndReplay, DECISIONS D12): node -> "held|tick" parts already
+	// logged. Guarded by countMu; created on first use.
+	unheldTickLogged map[int64]string
 
 	// feeds is what this Edge holds of each Core feed and what the last
 	// heartbeat ack said about Core (feeds.go).

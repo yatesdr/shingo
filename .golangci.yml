@@ -190,10 +190,13 @@ linters:
         # only THIS guard is relaxed there). The un-reconciled db.MoveBin and
         # bins.Move twins were deleted outright (zero production callers); their
         # forbidigo patterns went with them in the 2026-09-26 dead-pattern sweep.
-        - pattern: 'db\.MoveBinClearingStaging'
-          msg: "Direct db.MoveBinClearingStaging bypasses the service-layer occupancy fail-close (BinService.Move). Route bin moves through service.BinService.Move."
-        - pattern: 'bins\.MoveAndClearStaging'
-          msg: "Direct bins.MoveAndClearStaging bypasses the service-layer occupancy fail-close (BinService.Move). Route bin moves through service.BinService.Move."
+        # MoveBinByHandAnnounced / MoveByHandAnnounced are the same move with
+        # the landing written in its transaction (Lane H, H.2); BinService.Move
+        # is their one caller, and a direct call would also skip the landing.
+        - pattern: 'db\.(MoveBinClearingStaging|MoveBinByHandAnnounced)'
+          msg: "Direct db.MoveBinClearingStaging / db.MoveBinByHandAnnounced bypasses the service-layer occupancy fail-close (BinService.Move). Route bin moves through service.BinService.Move."
+        - pattern: 'bins\.(MoveAndClearStaging|MoveByHandAnnounced)'
+          msg: "Direct bins.MoveAndClearStaging / bins.MoveByHandAnnounced bypasses the service-layer occupancy fail-close (BinService.Move). Route bin moves through service.BinService.Move."
         # Raw bin-writer guard (2026-09-26). The four writers below mutate bin
         # location/lifecycle directly; callers must route through the BinService
         # wrappers, which hold the occupancy fail-close and ghost-reconciliation.
@@ -206,8 +209,8 @@ linters:
         # died with the tag-verify service deletion, same date.
         - pattern: 'db\.UpdateBin\b'
           msg: "Raw bin writer: db.UpdateBin bypasses BinService validation. Route through service.BinService (Update/MergeUpdate path)."
-        - pattern: 'db\.MoveBinToTransit\b'
-          msg: "Raw bin writer: db.MoveBinToTransit bypasses the occupancy fail-close. Route through service.BinService.Move."
+        - pattern: 'db\.(MoveBinToTransit|LiftBinToTransitTx)\b'
+          msg: "Raw bin writer: the lift bypasses the occupancy fail-close and (Lane H D11) the lift's generation bump, ledger row and pickup notice. Route through service.BinService.Lift / MoveToTransit."
         - pattern: 'db\.RecoverBinToNode\b'
           msg: "Raw bin writer: db.RecoverBinToNode bypasses BinService recovery checks. Route through service.BinService.Recover."
         - pattern: 'db\.RetireBin\b'

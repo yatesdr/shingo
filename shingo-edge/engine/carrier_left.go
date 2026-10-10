@@ -44,6 +44,21 @@ func (e *Engine) carrierLeft(nodeID int64, nodeName string) error {
 	return err
 }
 
+// carrierLeftAtPickup is carrierLeft at the robot's pickup (Lane H, DECISIONS
+// D11): the same two halves, with the pointer/count statement also stamping
+// the lift's generation as the departed carrier's (last_bin_epoch =
+// max(active, pickupEpoch), DESIGN-H §11(e)) and adding hold ticks of
+// holdPart to the seat's hold — the ticks counted after the lift that had been
+// charged to the carrier (R4). Same statement count as carrierLeft (+0).
+func (e *Engine) carrierLeftAtPickup(nodeID int64, nodeName string, pickupEpoch int64, hold int, holdPart string) error {
+	if e.inventoryDelta == nil {
+		return nil
+	}
+	err := e.inventoryDelta.LeaveAtPickup(nodeID, pickupEpoch, hold, holdPart)
+	e.recordLinesideCarrier(nodeID, nodeName, domain.UnknownCarrier(), domain.CarrierDeparted)
+	return err
+}
+
 // carrierClearedInPlace records a Core clear-for-reuse of the carrier bound at
 // a slot that the carrier does NOT leave: the count and the new generation
 // stamp land (uop.SetClaimCountAndEpoch), and the carrier is known-empty, said

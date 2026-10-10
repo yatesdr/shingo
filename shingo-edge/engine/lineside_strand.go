@@ -29,7 +29,9 @@ import (
 // strandLinesidePiles folds every active pile at the process's nodes into its
 // (node, payload) stranded row in one transaction, logs each as a count
 // anomaly, and sends both levels (active 0, stranded N) for each.
-// pending_uop_delta is not touched: held ticks belong to the next bin.
+// pending_uop_delta is not touched: held ticks belong to the next bin OF THEIR
+// PART, which the hold records (pending_uop_payload, Lane H R2, DECISIONS D12),
+// so the incoming part's carrier takes none of them.
 func (e *Engine) strandLinesidePiles(processID int64) error {
 	// The write and the mark are one change to the seat for the lineside
 	// report (countMu); PilesChanged takes the flush lock inside it.

@@ -318,15 +318,18 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 	// applyChangeoverRelease for the direct shape, applyStagedDelivery for the
 	// staging one. This comment used to name the release CLICK, which does not
 	// point the claim anywhere: ReleaseOrderWithLineside's only runtime write is
-	// UpdateProcessNodeUOP, a count. On the direct path the skip could therefore
-	// never fire, and this arm re-ran on every switch.
+	// SetProcessNodeReleaseCount, a count and the released-empty flag. On the
+	// direct path the skip could therefore never fire, and this arm re-ran on
+	// every switch.
 	//
-	// Re-writing here once the claim is already on target would clobber counter
-	// drift accumulated while the robots were heading home.
+	// The skip used to guard the count: the advance wrote one back, and once the
+	// claim was on target that clobbered the ticks counted while the robots
+	// headed home. The advance is claim-only now (DESIGN-H §9.1), so the skip
+	// only saves a statement.
 	runtime, runtimeErr := e.db.EnsureProcessNodeRuntime(nodeID)
-	needsUOPReset := runtimeErr != nil || runtime == nil ||
+	needsClaimAdvance := runtimeErr != nil || runtime == nil ||
 		runtime.ActiveClaimID == nil || *runtime.ActiveClaimID != claimID
-	if needsUOPReset {
+	if needsClaimAdvance {
 		// NO CAPACITY SEED. This wrote the since-removed deliveredFallbackUOP(claim) — capacity for
 		// consume, 0 for produce — which is a POLICY number in a field that Core
 		// reads as a physical measurement. It existed to hold a consume tile above
@@ -345,12 +348,14 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 		// tells the line a starved node is full, the second tells it a full node
 		// is starved, and the next PLC tick ships the wrong one to Core. Advance
 		// the claim; leave the measurement alone.
-		uop := 0
-		if runtime != nil && runtime.ActiveBinID != nil {
-			uop = runtime.RemainingUOPCached
-		}
+		//
+		// LEAVING IT ALONE MEANS NOT WRITING IT. This passed back the count read
+		// above, so a tick between that read and the write was erased; the
+		// claim-only statement cannot (DESIGN-H §9.1, pin
+		// TestPinH_ClaimAdvanceStatementWritesNoCount). An unbound slot's count
+		// is already 0: the carrier's departure zeroed it (carrierLeft).
 		if e.inventoryDelta != nil {
-			if err := e.inventoryDelta.SetClaimAndCount(nodeID, &claimID, uop); err != nil {
+			if err := e.inventoryDelta.SetClaim(nodeID, &claimID); err != nil {
 				return err
 			}
 		}
