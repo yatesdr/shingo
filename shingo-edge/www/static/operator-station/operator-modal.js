@@ -501,7 +501,7 @@ export function renderModal(entry) {
                 }
             }
 
-            if (hasBin && remaining > 0) {
+            if (loaderOffersClear(binState, remaining)) {
                 html += actionBtn('CLEAR BIN', 'empty-tools', true,
                     '/api/process-nodes/' + entry.node.id + '/clear-bin');
             }
@@ -631,6 +631,17 @@ export function renderModal(entry) {
     nodeModalContent.querySelectorAll('[data-action]').forEach(btn => {
         btn.addEventListener('click', handleModalAction);
     });
+}
+
+// loaderOffersClear decides whether a loader window's modal offers CLEAR BIN:
+// for a carrier with units, as always, and for one that came back labelled but
+// reading 0 (Core's count, in binState). That carrier has no outbound move
+// coming; LOAD refuses it and names the clear (row L item 5), so the clear must
+// be on the card. Pure, so operator-modal-loader-clear.test.js drives it.
+function loaderOffersClear(binState, remaining) {
+    if (!binState || !binState.occupied) return false;
+    if (remaining > 0) return true;
+    return !!binState.payload_code && binState.uop_remaining <= 0;
 }
 
 // cellCardAction decides the ONE button a swap cell's card offers, and returns

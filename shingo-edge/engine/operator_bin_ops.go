@@ -237,21 +237,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 			return fmt.Errorf("no bin at node %s — request an empty bin first", node.Name)
 		}
 		if bins[0].PayloadCode != "" {
-			// A LOAD WHOSE REPLY WAS LOST. Core loaded the carrier and the reply
-			// timed out, so the Edge never filed the loader's outbound move; the
-			// retry lands here and a refusal naming "wait for outbound move" waits
-			// for a move nothing will file (Lane 0 calibration run, PLK_X2). A
-			// carrier of a part this loader loads, with units, at a window that
-			// owes no outbound, is that carrier: file its outbound now.
-			// fileLoadedOutbound owns the owed-move guard, so a window whose
-			// outbound is already filed still refuses below.
-			if b := bins[0]; b.UOPRemaining > 0 && slices.Contains(e.loadablePayloads(node, claim), b.PayloadCode) &&
-				e.fileLoadedOutbound(node, claim, b.PayloadCode) {
-				log.Printf("bin_ops: LOAD at %s found %s already loaded with no outbound owed (a lost reply); outbound filed",
-					node.Name, b.PayloadCode)
-				return nil
-			}
-			return fmt.Errorf("bin at node %s already loaded with %s — wait for outbound move", node.Name, bins[0].PayloadCode)
+			return e.loadOntoLabelledCarrier(node, claim, bins[0])
 		}
 		checkedBinID = bins[0].BinID
 	}
@@ -1139,4 +1125,31 @@ func (e *Engine) stationTakesLoadDirective(coreNodeName string) bool {
 		return false
 	}
 	return l.ChangeoverLoadDirective()
+}
+
+// loadOntoLabelledCarrier answers a LOAD at a window whose carrier already
+// carries a label: nil when the load is in fact done, else the refusal that
+// names what frees the window.
+func (e *Engine) loadOntoLabelledCarrier(node *processes.Node, claim *processes.NodeClaim, b NodeBinInfo) error {
+	// A LABELLED CARRIER AT 0 has no outbound move coming: Core will not send a
+	// carrier with no units, and LOAD will not fill one with a label. The
+	// operator clears it, then loads (row L item 5). (<= 0: a ledger can go
+	// negative.) With units it is stock, and waits.
+	if b.UOPRemaining <= 0 {
+		return fmt.Errorf("bin at node %s is labelled %s but holds 0 — confirm it is empty, CLEAR it, then load", node.Name, b.PayloadCode)
+	}
+	// A LOAD WHOSE REPLY WAS LOST. Core loaded the carrier and the reply timed
+	// out, so the Edge never filed the loader's outbound move; the retry lands
+	// here, and a refusal naming "wait for outbound move" waits for a move
+	// nothing will file (Lane 0 calibration run, PLK_X2). A carrier of a part
+	// this loader loads, with units, at a window that owes no outbound, is that
+	// carrier: file its outbound now. fileLoadedOutbound owns the owed-move
+	// guard, so a window whose outbound is already filed still refuses.
+	if slices.Contains(e.loadablePayloads(node, claim), b.PayloadCode) &&
+		e.fileLoadedOutbound(node, claim, b.PayloadCode) {
+		log.Printf("bin_ops: LOAD at %s found %s already loaded with no outbound owed (a lost reply); outbound filed",
+			node.Name, b.PayloadCode)
+		return nil
+	}
+	return fmt.Errorf("bin at node %s already loaded with %s — wait for outbound move", node.Name, b.PayloadCode)
 }

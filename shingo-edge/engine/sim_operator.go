@@ -1124,8 +1124,8 @@ func (op *simOperator) loadBin(nodeID int64, claim *processes.NodeClaim) error {
 
 // clearedLabelledAtZero is what a trained person at the loader does with a
 // carrier that came back labelled but reading 0: confirm it is empty, CLEAR it,
-// then load. LOAD refuses such a carrier as "already loaded" and names an
-// outbound move that never comes, because Core will not send a carrier with no
+// then load. LOAD refuses such a carrier and tells the operator to clear it,
+// because no outbound move is coming: Core will not send a carrier with no
 // units and the loader will not fill one with a label (the SHIM loop,
 // RULINGS-C2b-rebase6-and-loader-orphan §3, ruling a).
 //

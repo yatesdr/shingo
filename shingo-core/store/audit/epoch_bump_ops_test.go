@@ -217,7 +217,10 @@ func TestTheLiftIsTheOneUnannouncedBump(t *testing.T) {
 			return rerr
 		}
 		if n := len(bumpRE.FindAllIndex(src, -1)); n > 0 {
-			rel, _ := filepath.Rel(root, path)
+			rel, rerr := filepath.Rel(root, path)
+			if rerr != nil {
+				return rerr
+			}
 			got[filepath.ToSlash(rel)] = n
 		}
 		return nil

@@ -98,7 +98,10 @@ func TestArch_EveryArrivalWriterAnnouncesOrIsNamed(t *testing.T) {
 		if rerr != nil {
 			return rerr
 		}
-		rel, _ := filepath.Rel(root, path)
+		rel, rerr := filepath.Rel(root, path)
+		if rerr != nil {
+			return rerr
+		}
 		rel = filepath.ToSlash(rel)
 		f, perr := parser.ParseFile(fset, path, src, 0)
 		if perr != nil {

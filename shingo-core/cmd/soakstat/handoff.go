@@ -42,9 +42,9 @@ import (
 //	   the bin): a seat still counting into a carrier it has let go.
 //	g. ticks held and replayed: Edge-only (see edge.go).
 //
-// THE OUTBOX IS PURGED 24 h (wall) after a row is sent (outbox.MessageRetention
-// Period), so a and d are the run's whole count only for a run collected within
-// a day of its start.
+// THE OUTBOX IS PURGED 24 h (wall) after a row is sent
+// (outbox.MessageRetentionPeriod), so a and d are the run's whole count only for
+// a run collected within a day of its start.
 const measureHandoff = "[S.4] HANDOFF"
 
 var (

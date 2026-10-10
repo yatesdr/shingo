@@ -391,8 +391,9 @@ type OrderDelivered struct {
 	// NIL IS NOT ONLY AN OLD CORE, and reading it that way is how the Edge's
 	// own fallback got its wrong direction. Core sends the count when it named
 	// a bin AND could read that bin's row; a read that fails leaves this nil on
-	// a current build. The Edge seats 0 and says so loudly rather than assuming
-	// a full carrier — see engine.BlindDeliveryMarker.
+	// a current build. A current Edge binds nothing from this message (the
+	// landing binds); for an older Core it binds through the landing verb with
+	// this count and never assumes a full carrier (engine.landFromOldCore).
 	//
 	// DeltaEpoch 0 is the pre-migration / unknown sentinel. Both are only
 	// meaningful for single-bin orders (BinID != nil).

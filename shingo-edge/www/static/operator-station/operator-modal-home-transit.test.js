@@ -71,6 +71,7 @@ vm.runInContext('var PRESS_MAX_MS = 2000; var pressInFlight = false; var pressSt
 vm.runInContext(extractFn(modalSrc, 'pressIsStale'), ctx);
 vm.runInContext(extractFn(modalSrc, 'actionBtn'), ctx);
 vm.runInContext(extractFn(windowSrc, 'isOwnEmptyOut'), ctx);
+vm.runInContext(extractFn(modalSrc, 'loaderOffersClear'), ctx);
 vm.runInContext(extractFn(modalSrc, 'renderModal') + '\nthis.renderModal = renderModal;', ctx);
 
 // labelFor returns the status word the demand queue printed for one payload row.

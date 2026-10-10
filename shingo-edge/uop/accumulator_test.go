@@ -301,7 +301,9 @@ func TestTakeAfterLift_TheWindowsAfterTheLiftComeOutOfTheBooks(t *testing.T) {
 	if deltas := pendingOutboxByType[protocol.BinUOPDelta](t, db, protocol.SubjectBinUOPDelta); len(deltas) != 2 {
 		t.Errorf("outbox holds %d bin deltas, want 2: the unflushed window after the lift is never sent", len(deltas))
 	}
-	if again, _ := r.TakeAfterLift(42, 5, lift); again != 0 {
+	again, err := r.TakeAfterLift(42, 5, lift)
+	testutil.MustNoErr(t, err, "second take after lift")
+	if again != 0 {
 		t.Errorf("a second take = %d, want 0: the list clears when the carrier leaves", again)
 	}
 
@@ -314,7 +316,9 @@ func TestTakeAfterLift_TheWindowsAfterTheLiftComeOutOfTheBooks(t *testing.T) {
 	if got2 != -3 {
 		t.Errorf("taken across a restart = %d, want -3 (the flushed window after the lift, from the outbox)", got2)
 	}
-	if other, _ := r2.TakeAfterLift(42, 6, lift); other != 0 {
+	other, err := r2.TakeAfterLift(42, 6, lift)
+	testutil.MustNoErr(t, err, "take another generation after lift")
+	if other != 0 {
 		t.Errorf("another generation's windows taken = %d, want 0", other)
 	}
 }
