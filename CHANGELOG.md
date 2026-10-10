@@ -3,6 +3,50 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-10 — UI cleanup and versioned feeds land
+
+Core and Edge (Core 143, Edge v18). Local main; not pushed or deployed.
+
+- Both Configuration pages share one settings shape and one save
+- One colour scheme and set of status tokens across both apps
+- Bare asset URLs on both apps; favicon cached
+- Bins: one POST per action, history only on the Journal
+- Five controls wired to their actions; dead fields and page code gone
+- Core and Edge pages page their lists and read less
+- Core and Edge compare feed digests on each heartbeat; send what differs
+- Node list, scene and catalog no longer resent every two minutes
+- Containment page reads the Edge's own copy, no Core calls (Edge v18)
+- A lost supply-refusal message heals from Core's open set
+- LOAD clears a refusal on both paths; Undo closes only what it removed
+- A plant with no map, or a deleted one, converges
+- Core keeps each process's claims digest and asks for what differs (143)
+- An Edge reconciles its orders after a gap in acks
+- /status and Diagnostics show the Core link: offset, ack age, feeds
+- Production keeps one stream; debug log only on Diagnostics
+- Sourcing writes only rows that changed
+
+## 2026-10-08 — Keep-staged keeper, bins placed where they are set down
+
+Core and Edge (Edge v17). Pushed; deployed to Springfield at e801c9e5.
+
+- One keeper decides a keep-staged spot, idle lines too
+- A paused keep-staged line resumes from its board chip (Edge v17)
+- A keep-staged REQUEST asks only for the line and re-arms the keeper
+- A REQUEST waits for a spare already on its way
+- A produce tick carries its part, so Core labels the bin
+- A robot already on its wait node stages its order
+- A bin set down during its order is placed where it was set down
+- Core's own orders are named on the orders board
+- Gate: docker modules run at once; keep-staged tests faster
+
+## 2026-10-07 — A faster gate
+
+Tooling only. Pushed.
+
+- Race and sim run beside the docker step; lint is the vet step
+- Each gate step prints its time
+- Comment-reference and JS parse checks run faster
+
 ## 2026-10-06 — Edge process setup: fixes, plain words, a cleaner cell picture
 
 Edge only (Edge v16), plus a gate lock. Not pushed or deployed.
