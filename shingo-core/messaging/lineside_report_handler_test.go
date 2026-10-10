@@ -83,24 +83,28 @@ func TestLinesideReport_NewerIdenticalValuesStillMovesTheRow(t *testing.T) {
 }
 
 // An upsert that fails skips that entry and only that entry: the others are
-// still written. The failure is forced with a value the INTEGER column cannot
-// hold. The failed entry is also left out of the comparison.
+// still written. The failure is forced with a NUL byte in the part code, which a
+// Postgres text column refuses (it used to be a count the INTEGER column could
+// not hold; v149 dropped that column). The failed entry is also left out of the
+// comparison.
 func TestLinesideReport_UpsertErrorSkipsOnlyThatEntry(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	svc := newLinesideService(t, db)
 
 	const station = "stn-lineside-err"
+	const badPart = "P-ERR-BAD\x00"
 	svc.HandleLinesideLevelReport(linesideEnvelope(station), &protocol.LinesideLevelReport{
 		Station:    station,
 		ReportedAt: time.Now().UTC().Truncate(time.Millisecond),
 		Entries: []protocol.LinesideLevelEntry{
-			linesideEntry("ALN_003", "P-ERR-BAD", 1<<40),
+			linesideEntry("ALN_003", badPart, 30),
 			linesideEntry("ALN_004", "P-ERR-GOOD", 30),
 		},
 	})
 
 	if _, ok := storedReportedAt(t, db, station, "ALN_003", "P-ERR-BAD"); ok {
+		// Read back without the NUL: the query would refuse it too.
 		t.Error("the bad entry was stored")
 	}
 	if _, ok := storedReportedAt(t, db, station, "ALN_004", "P-ERR-GOOD"); !ok {

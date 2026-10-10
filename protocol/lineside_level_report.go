@@ -56,7 +56,8 @@ const SubjectLinesideLevelReport = "inventory.lineside_level_report"
 //     overstates by one only while an enqueue has just failed (the next flush
 //     re-sends under seq+1), which can only hold a divergence back. 0 means
 //     nothing was flushed for this generation. Core compares the count only
-//     when its own last_seq for the scope equals this.
+//     when its own last_seq for the scope equals this, and never at epoch 0
+//     with nothing flushed.
 type LinesideLevelEntry struct {
 	CoreNodeName string `json:"core_node_name"`
 	PayloadCode  string `json:"payload_code"`
@@ -69,7 +70,7 @@ type LinesideLevelEntry struct {
 }
 
 // LinesideLevelReport is the Edge's periodic (60s) batch of per-consuming-node
-// lineside levels. Core upserts each entry into edge_lineside_reports keyed by
+// lineside levels. Core records each entry's seat in edge_lineside_reports keyed by
 // (station, core_node_name, payload_code), latest-wins on ReportedAt, and
 // compares the batch against its replica when at least one row moved.
 type LinesideLevelReport struct {

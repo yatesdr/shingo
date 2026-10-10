@@ -6,8 +6,9 @@ import (
 )
 
 // EdgeLinesideReport is one persisted per-(station, node, payload) lineside
-// level as the Edge reported it. Its own table (edge_lineside_reports, v52;
-// carrier columns v127); nothing here touches bins.uop_remaining.
+// seat as the Edge reported it. Its own table (edge_lineside_reports, v52; the
+// carrier and count columns v127 added went in v149, unread); nothing here
+// touches bins.uop_remaining.
 //
 // A CHECKSUM, NOT A DECISION INPUT. Nothing on a fire path reads this table:
 // every replenishment decision reads Core's count (SystemUOPForPayload). The
@@ -15,19 +16,10 @@ import (
 // (service/lineside_divergence.go) and records a disagreement as a
 // report_divergence episode. The table keeps the latest report per seat, and
 // which seats a station has reported is the seat set that comparison checks.
-//
-// BinID is nil on a row an Edge that predates the carrier keys wrote (and on
-// any row with no carrier bound); BinEpoch and FlushedSeq are then unset too.
 type EdgeLinesideReport struct {
 	Station      string
 	CoreNodeName string
 	PayloadCode  string
-	BinCount     int
-	BinUOP       int
-	BucketQty    int
-	BinID        *int64
-	BinEpoch     int64
-	FlushedSeq   int64
 	ReportedAt   time.Time
 }
 
@@ -57,27 +49,15 @@ type EdgeLinesideReport struct {
 // statement's own CommandComplete tag (pgx stdlib), so it is not another round
 // trip.
 func (db *DB) UpsertEdgeLinesideReport(r EdgeLinesideReport) (moved bool, err error) {
-	var binID, binEpoch, flushed any
-	if r.BinID != nil {
-		binID, binEpoch, flushed = *r.BinID, r.BinEpoch, r.FlushedSeq
-	}
 	res, err := db.Exec(`
 		INSERT INTO edge_lineside_reports
-			(station, core_node_name, payload_code, bin_count, bin_uop, bucket_qty,
-			 bin_id, bin_epoch, flushed_seq, reported_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW())
+			(station, core_node_name, payload_code, reported_at, updated_at)
+		VALUES ($1,$2,$3,$4, NOW())
 		ON CONFLICT (station, core_node_name, payload_code) DO UPDATE SET
-			bin_count   = EXCLUDED.bin_count,
-			bin_uop     = EXCLUDED.bin_uop,
-			bucket_qty  = EXCLUDED.bucket_qty,
-			bin_id      = EXCLUDED.bin_id,
-			bin_epoch   = EXCLUDED.bin_epoch,
-			flushed_seq = EXCLUDED.flushed_seq,
 			reported_at = EXCLUDED.reported_at,
 			updated_at  = NOW()
 		WHERE edge_lineside_reports.reported_at < EXCLUDED.reported_at`,
-		r.Station, r.CoreNodeName, r.PayloadCode, r.BinCount, r.BinUOP, r.BucketQty,
-		binID, binEpoch, flushed, r.ReportedAt)
+		r.Station, r.CoreNodeName, r.PayloadCode, r.ReportedAt)
 	if err != nil {
 		return false, fmt.Errorf("upsert edge_lineside_report %s/%s/%s: %w", r.Station, r.CoreNodeName, r.PayloadCode, err)
 	}

@@ -632,7 +632,7 @@ var rtCountCases = []rtCountCase{
 	{name: "healthy_fresh_report", setup: func(r *rtRig, node string) {
 		_, err := r.eng.db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
 			Station: r.b.stationID, CoreNodeName: node, PayloadCode: r.b.payloadCode,
-			BinCount: 1, BinUOP: 500, ReportedAt: time.Now().UTC(),
+			ReportedAt: time.Now().UTC(),
 		})
 		testutil.MustNoErr(r.t, err, "upsert report")
 	}},

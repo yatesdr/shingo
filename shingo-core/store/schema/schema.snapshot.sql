@@ -460,14 +460,8 @@ CREATE TABLE public.edge_lineside_reports (
     station text NOT NULL,
     core_node_name text NOT NULL,
     payload_code text NOT NULL,
-    bin_count integer DEFAULT 0 NOT NULL,
-    bin_uop integer DEFAULT 0 NOT NULL,
-    bucket_qty integer DEFAULT 0 NOT NULL,
     reported_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    bin_id bigint,
-    bin_epoch bigint,
-    flushed_seq bigint
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 CREATE TABLE public.edge_registry (

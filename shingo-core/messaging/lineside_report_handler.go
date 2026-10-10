@@ -59,12 +59,6 @@ func (s *CoreDataService) HandleLinesideLevelReport(env *protocol.Envelope, r *p
 			Station:      station,
 			CoreNodeName: e.CoreNodeName,
 			PayloadCode:  e.PayloadCode,
-			BinCount:     e.BinCount,
-			BinUOP:       e.BinUOP,
-			BucketQty:    e.BucketQty,
-			BinID:        e.BinID,
-			BinEpoch:     e.BinEpoch,
-			FlushedSeq:   e.FlushedSeq,
 			ReportedAt:   r.ReportedAt,
 		})
 		if err != nil {

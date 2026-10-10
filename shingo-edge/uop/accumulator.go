@@ -260,12 +260,16 @@ func (r *accumulator) stop() {
 // accumulator's clock.
 //
 // Multiple deltas in the same window for the same bin sum into a
-// single envelope on the next flush; reason is the most recent value
-// recorded — if a window mixes consume_tick with capture_reduction
-// (rare; release transitions don't typically overlap with steady-
-// state ticks) the audit trail at Core uses the latest reason. A
-// future refinement could split per-reason at the cost of one
-// SequenceID per (bin, reason).
+// single envelope on the next flush. Its reason is the most recent one
+// recorded, EXCEPT that a capture_reduction holds for the rest of its
+// window: Core clears a bin's manifest when a capture takes it to 0, and
+// keys that clear on the reason (shingo-core uop/applier.go). A PULL
+// PARTS LINESIDE release sends no count, so the capture's delta is the
+// only writer of that clear; a tick landing on the bin in the same window
+// used to relabel it consume_tick and leave the carrier labelled at 0.
+// The ticks in such a window are counted as the capture (one window of
+// rate data); splitting per reason would cost an envelope on every
+// mixed window, which the floor's pull makes most capture releases.
 // recordBin accumulates a signed delta against a specific bin. epoch is
 // the bin's current load-lifecycle epoch — caller threads it through
 // from the bin-state cache (populated by Core's LoadBin response, by the
@@ -316,16 +320,20 @@ func (r *accumulator) recordBin(binID int64, payloadCode string, delta int, reas
 			e.payloadCode = payloadCode
 			e.epoch = epoch
 		} else if epoch > e.epoch {
-			// Mid-window lifecycle bump. The accumulator currently coalesces
-			// the older epoch's residual delta into the next flush under
-			// the newer epoch — close enough since Edge's tick attribution
-			// only resolves to "the active bin at tick time" and the older
-			// epoch's deltas at this point are noise (the bin transitioned
-			// to a different load-life before they shipped).
+			// Mid-window lifecycle bump. The older epoch's residual is
+			// coalesced into the next flush under the newer epoch, so Core
+			// applies it to the new generation, not the old: ticks that
+			// belonged to the carrier's previous life are charged to this
+			// one. Known (lineside SYNTH §4.6); left as is until the leaving
+			// rule decides what a tick after a generation change belongs to.
 			e.epoch = epoch
 		}
 		e.delta += delta
-		e.reason = reason
+		if e.reason != protocol.ReasonCaptureReduction || e.delta == delta {
+			// A capture holds its window (see the doc above); a fresh
+			// window takes whatever reason opens it.
+			e.reason = reason
+		}
 		e.windowEnd = now
 		e.lastTouched = now
 		e.mu.Unlock()

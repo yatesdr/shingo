@@ -6,9 +6,9 @@ UOP (Unit of Production) is the count of consumable parts in a physical bin and 
 
 Bins are the unit of inventory. A bin's UOP count belongs to the physical container — not to the slot it sits in, not to the order that's moving it, not to any cached projection. Movement does not change the count. Storage→storage moves, supermarket→line, line→supermarket, complex two-bin orders: none of them touch the count. The count changes only when parts physically enter or leave the bin.
 
-**Post-2026-05-04 (commit `6d226d1`):** Edge is authoritative for the count of any bin physically at one of its nodes. The bin's runtime cache on Edge — `process_node_runtime_states.remaining_uop_cached`, indexed by `active_bin_id` — is the source of truth for at-node bins. Core mirrors via the delta stream. There is no reconciler healing Edge from Core; if the delta stream drops a message and Edge's local truth diverges from Core's mirror, `FlushFailures` surfaces the problem.
+**Post-2026-05-04 (commit `6d226d1`):** Edge is authoritative for the count of any bin physically at one of its nodes. The bin's runtime cache on Edge — `process_node_runtime_states.remaining_uop_cached`, indexed by `active_bin_id` — is the source of truth for at-node bins. Core mirrors via the delta stream. There is no reconciler healing Edge from Core; a divergence shows as a `report_divergence` episode from the 60-s lineside report, and a dropped message's count is carried by the next message's running `Net`.
 
-This is a flip from the prior architecture, where Core was authoritative and a reconciler healed Edge's local cache from Core every ~60s. The flip happened because plant logs showed the reconciler was healing *correct* Edge decrements with *frozen* Core values from a broken delta pipeline — masking the underlying bug. The new "trust the bus, surface failures, no heal" model relies on Kafka delivery + Core's `inventory_delta_dedup` for correctness and dashboards (`FlushFailures`, consumer lag) for ops visibility.
+This is a flip from the prior architecture, where Core was authoritative and a reconciler healed Edge's local cache from Core every ~60s. The flip happened because plant logs showed the reconciler was healing *correct* Edge decrements with *frozen* Core values from a broken delta pipeline — masking the underlying bug. The new "trust the bus, surface failures, no heal" model relies on Kafka delivery + Core's `inventory_delta_dedup` for correctness and consumer lag for ops visibility.
 
 **What Core remains authoritative for:** cross-station inventory aggregation, the manifest on a bin, the audit trail. Edge owns the per-tick count; Core owns the inventory picture across all stations.
 
@@ -57,7 +57,7 @@ The Edge-side mutator. Holds:
 
 The Core-side applier. Holds:
 
-- `InventoryDeltaService` — receives `BinUOPDelta` envelopes from Edge, dedups against `inventory_delta_dedup`, applies the signed delta to `bins.uop_remaining`, writes the audit row, fires `ClearForReuse` when a `capture_reduction` drives `uop_remaining` to zero. It also receives `LinesideBucketLevel` envelopes and sets the `lineside_buckets` mirror row to the level under a seq guard (one UPSERT, or a DELETE at 0), writing a `lineside_drain_ledger` row when the level carries drains. Core never writes a pile.
+- `InventoryDeltaService` — receives `BinUOPDelta` envelopes from Edge, dedups against `inventory_delta_dedup`, applies the message's running net minus what it has already applied for the scope to `bins.uop_remaining` (the signed delta only for an Edge that sends no net), writes the audit row, fires `ClearForReuse` when a `capture_reduction` drives `uop_remaining` to zero. It also receives `LinesideBucketLevel` envelopes and sets the `lineside_buckets` mirror row to the level under a seq guard (one UPSERT, or a DELETE at 0), writing a `lineside_drain_ledger` row when the level carries drains. Core never writes a pile.
 - `ManifestClearer` narrow interface — the `*sql.Tx`-taking method used to fire `BinManifestService.ClearForReuse` atomically inside the delta-apply transaction. Atomicity is load-bearing; a crash between the bin update and manifest clear would leave a bin with `uop_remaining=0` but a stale manifest.
 
 Audit table writes (`bin_uop_ledger`) live in `shingo-core/store/audit/`. The audit package is shared infrastructure: the uop applier writes it, but so does `BinManifestService` (manifest imprint, manifest clear, partial-back sync, release override). Audit consolidation is a deferred follow-up; see `SHINGO_TODO.md`.
@@ -123,13 +123,13 @@ type BinUOPDelta struct {
     Delta       int       // signed
     Reason      string    // consume_tick / produce_tick / capture_reduction /
                           // ab_fallthrough / operator_correction
-    SequenceID  int64     // monotonic per (station, bin_id)
+    SequenceID  int64     // monotonic per (scope_kind, scope_key, epoch); Net carries the scope's running total
     WindowStart time.Time
     WindowEnd   time.Time
 }
 ```
 
-Subject: `inventory.bin_uop_delta`. Edge emits one envelope per accumulated delta window (default 5s, configurable via `uop.delta_flush_interval`). The accumulator at `shingo-edge/uop/accumulator.go`: per-bin accumulation under a mutex, periodic flush via the outbox, restore on enqueue failure.
+Subject: `inventory.bin_uop_delta`. Edge emits one envelope per accumulated delta window (default 5s, configurable via `uop.delta_flush_interval`). The accumulator at `shingo-edge/uop/accumulator.go`: per-bin accumulation under a mutex, periodic flush via the outbox, send-then-sweep: the entry is not touched until the enqueue succeeds, so a failed flush is retried whole by the next.
 
 `PayloadCode` carries the bin's actual current payload at the moment of delta emission, not the target style's template payload. Core's `ApplyBinUOPDelta` validates this against the bin row and rejects mismatches.
 
@@ -166,11 +166,11 @@ Subject: `transit.bin_picked_up`. Core fires this when the RDS poller's `diffBlo
 
 The envelope exists to close the SEND PARTIAL BACK timing gap. When the operator releases a partial bin and the cell keeps cycling, ticks need to attribute to the released bin until the robot physically picks it up — not to the next claim. The pickup transition is the boundary signal.
 
-**Acceptable bias:** if Edge crashes between Core sending `BinPickedUp` and Edge processing it, the active-claim transition is lost; subsequent ticks attribute to the released bin instead of the new one. The miscount is bounded by the pickup-to-restart window. No reconciler heals it post-flip; `FlushFailures` surfaces any Core-side delta rejections that result.
+**Acceptable bias:** if Edge crashes between Core sending `BinPickedUp` and Edge processing it, the active-claim transition is lost; subsequent ticks attribute to the released bin instead of the new one. The miscount is bounded by the pickup-to-restart window. No reconciler heals it post-flip; Core-side delta rejections land on the ledger as discrepancy rows (stale-epoch / payload-mismatch audit).
 
 ### Dedup
 
-Every delta envelope carries a monotonic `SequenceID` per scope. Core's `inventory_delta_dedup` table records the last-applied sequence per `(station, scope_kind, scope_key)`. Replays with `seq <= last_applied` are silently dropped. Cycle counts and other admin actions that bypass the delta channel write directly to the bins table and bump the dedup sequence to invalidate any in-flight deltas with stale sequences.
+Every delta envelope carries a monotonic `SequenceID` per scope. Core's `inventory_delta_dedup` table records `last_seq` per `(station, scope_kind, scope_key, epoch)`. A message at or below it is skipped, and its count is carried by the next applied message's running `Net`. A count correction writes `bins.uop_remaining` directly and reaches the counting station as a `UOPAdjustment` fenced by the net it was taken at (`AsOfNet`/`AsOfSeq`); a reset bumps `delta_epoch`, which retires the old generation's in-flight deltas.
 
 ## Process semantics
 
@@ -184,7 +184,7 @@ These are SME-locked and treated as ground truth across the codebase.
 
 **Manual swap nodes have no PLC.** All state changes on manual-swap nodes (loaders, unloaders) are operator-driven. They write through Core's HTTP API (e.g., `LoadBin`) and audit via direct insert. They have no lineside piles. This is a legitimate exception to "deltas are the only mutation path" — operator actions are conceptually different from automated PLC events.
 
-**Cycle count is admin-only.** Operators do not cycle-count bins during production; SCO uses the Bins admin page on Core. Cycle count writes the new value to `bins.uop_remaining` directly and bumps the dedup sequence to invalidate in-flight deltas.
+**Cycle count is admin-only.** Operators do not cycle-count bins during production; SCO uses the Bins admin page on Core. Cycle count writes the new value to `bins.uop_remaining` directly; the counting station rebases through the fenced `UOPAdjustment`. No dedup sequence is touched.
 
 **Operator-trusted measurements.** SEND PARTIAL BACK count is ground truth — overrides the runtime cache. Produce-ingest count uses the operator-measured runtime value at finalize time, not the template's `UOPCapacity`.
 
@@ -261,9 +261,9 @@ For multi-part captures, the aggregate lands in `before_uop`/`after_uop`; per-pa
 
 **Negative bin values are normal.** Overpack means a bin reads negative briefly until the operator catches it via PARTIAL release with the actual count. Underpack means the bin reads positive briefly and the operator releases EMPTY when they see it's actually empty. Either way, the inventory tracks physical reality. An unbounded growth of negative bins would indicate systematic miscalibration of nominal capacity.
 
-**No reconciler.** Edge's runtime cache is durable across restarts (sqlite-backed) and Core mirrors via the delta stream. If the delta stream drops a message, `FlushFailures` increments and the per-bin scope stays out of sync until manually addressed. There is no automated heal. Operationally this means dashboards on `FlushFailures` (Edge) and consumer lag (Core) are the primary signals for delta-pipeline health.
+**No reconciler.** Edge's runtime cache is durable across restarts (sqlite-backed) and Core mirrors via the delta stream. A dropped message's count is carried by the next applied message's running `Net`; a disagreement that persists shows as a `report_divergence` episode from the Edge's 60-s lineside report. There is no automated heal. Consumer lag (Core) and the report episodes are the signals for delta-pipeline health.
 
-**Trust the bus.** Kafka delivery + Core's `inventory_delta_dedup` handle correctness. The accumulator's restore-on-failure preserves count changes through a transient outbox blip. The dedup sequence handles out-of-order delivery and replay. What the system does NOT do anymore is cross-check Edge and Core periodically; if those mechanisms fail simultaneously, you have a bug, not a routine drift.
+**Trust the bus.** Kafka delivery + Core's `inventory_delta_dedup` handle correctness. The accumulator's send-then-sweep (the entry is left intact until the enqueue succeeds) preserves count changes through a transient outbox blip. The dedup sequence handles out-of-order delivery and replay. What the system does not do is heal from a cross-check. The Edge's 60-s lineside report is compared against Core's replica on every ingest, and a disagreement opens a `report_divergence` episode on /inventory. Nothing writes a count from it.
 
 ## Known integrity gaps
 
@@ -281,7 +281,7 @@ Pre-flip, this was healed by the reconciler. Post-flip, no heal mechanism exists
 - **Shadow stores or shadow columns.** One authoritative row per concept. No promotion-from-shadow lifecycle.
 - **Scrap accounting as an invariant problem.** SCO zeros bin UOP via shingo before physical scrap; the explicit zero preserves the invariant. There is no automated scrap event.
 - **Backup-restore handling.** If Core is restored from a backup, behaviour is undefined relative to lost-since-backup state. Operational concern: stop Edge processes before restoring Core if needed.
-- **Reverse reconciliation.** The old `uop_reconciler.go` is gone. There is no automated heal from Core to Edge. If divergence occurs, it manifests via `FlushFailures` or operator-reported count anomalies and requires manual investigation.
+- **Reverse reconciliation.** The old `uop_reconciler.go` is gone. There is no automated heal from Core to Edge. If divergence occurs, it manifests as a `report_divergence` episode or an operator-reported anomaly and requires manual investigation.
 
 ## Quick reference
 

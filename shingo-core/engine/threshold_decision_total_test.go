@@ -51,7 +51,7 @@ func decisionFixture(t *testing.T, payload string, ledgerUOP, edgeUOP int) (*Thr
 	if edgeUOP >= 0 {
 		_, err := db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
 			Station: b.stationID, CoreNodeName: sd.LineNode.Name, PayloadCode: payload,
-			BinCount: 1, BinUOP: edgeUOP, ReportedAt: time.Now().UTC(),
+			ReportedAt: time.Now().UTC(),
 		})
 		testutil.MustNoErr(t, err, "upsert fresh edge report")
 	}

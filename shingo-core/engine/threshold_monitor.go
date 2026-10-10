@@ -558,7 +558,7 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 	m.eng.logFn("threshold_monitor: startup sweep complete — evaluating from authoritative DB reads")
 }
 
-// OnBinUOPDelta applies a bin UOP delta to the cached total and checks
+// OnBinUOPDelta re-reads the payload's authoritative total and checks
 // thresholds. Called by HandleBinUOPDelta after the delta has been applied to
 // bins.uop_remaining. The delta value is retained for interface compatibility
 // with the messaging layer but no longer drives the math: the monitor re-reads

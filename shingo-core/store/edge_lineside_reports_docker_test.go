@@ -3,7 +3,6 @@
 package store_test
 
 import (
-	"database/sql"
 	"testing"
 	"time"
 
@@ -27,8 +26,7 @@ import (
 // the tests read it directly.
 func reportRows(t *testing.T, db *store.DB, payload string) []store.EdgeLinesideReport {
 	t.Helper()
-	rows, err := db.Query(`SELECT station, core_node_name, payload_code, bin_count, bin_uop, bucket_qty,
-		       bin_id, COALESCE(bin_epoch, 0), COALESCE(flushed_seq, 0), reported_at
+	rows, err := db.Query(`SELECT station, core_node_name, payload_code, reported_at
 		FROM edge_lineside_reports WHERE payload_code = $1`, payload)
 	if err != nil {
 		t.Fatalf("list reports for %s: %v", payload, err)
@@ -37,14 +35,8 @@ func reportRows(t *testing.T, db *store.DB, payload string) []store.EdgeLineside
 	var out []store.EdgeLinesideReport
 	for rows.Next() {
 		var r store.EdgeLinesideReport
-		var bin sql.NullInt64
-		if err := rows.Scan(&r.Station, &r.CoreNodeName, &r.PayloadCode, &r.BinCount, &r.BinUOP, &r.BucketQty,
-			&bin, &r.BinEpoch, &r.FlushedSeq, &r.ReportedAt); err != nil {
+		if err := rows.Scan(&r.Station, &r.CoreNodeName, &r.PayloadCode, &r.ReportedAt); err != nil {
 			t.Fatalf("scan report row: %v", err)
-		}
-		if bin.Valid {
-			v := bin.Int64
-			r.BinID = &v
 		}
 		out = append(out, r)
 	}
@@ -79,15 +71,12 @@ func TestUpsertEdgeLinesideReport_LatestWins(t *testing.T) {
 	// write returns whether the row moved: the handler compares a report only
 	// when a row moved, so a wrong answer here either re-runs the comparison on
 	// stale values or stops a fresh report from being compared at all.
-	write := func(at time.Time, binUOP int) bool {
+	write := func(at time.Time) bool {
 		t.Helper()
 		moved, err := db.UpsertEdgeLinesideReport(store.EdgeLinesideReport{
 			Station:      station,
 			CoreNodeName: node,
 			PayloadCode:  payload,
-			BinCount:     1,
-			BinUOP:       binUOP,
-			BucketQty:    0,
 			ReportedAt:   at,
 		})
 		if err != nil {
@@ -97,16 +86,13 @@ func TestUpsertEdgeLinesideReport_LatestWins(t *testing.T) {
 	}
 
 	// Current report.
-	if !write(now, 46) {
+	if !write(now) {
 		t.Error("first write reported not moved — an insert moves the row")
-	}
-	if got := linesideRow(t, db, station, node, payload); got.BinUOP != 46 {
-		t.Fatalf("bin_uop = %d after first write, want 46", got.BinUOP)
 	}
 
 	// A stale report arrives afterwards — a replay, or a reordered delivery.
 	// It must not land.
-	if write(now.Add(-time.Minute), 150) {
+	if write(now.Add(-time.Minute)) {
 		t.Error("STALE write reported moved")
 	}
 	got := linesideRow(t, db, station, node, payload)
@@ -114,33 +100,22 @@ func TestUpsertEdgeLinesideReport_LatestWins(t *testing.T) {
 		t.Errorf("reported_at = %v after a STALE write, want %v — the row must "+
 			"never move backwards in time", got.ReportedAt.UTC(), now)
 	}
-	if got.BinUOP != 46 {
-		t.Errorf("bin_uop = %d after a STALE write, want 46 — the older report's "+
-			"values must not overwrite the current ones", got.BinUOP)
-	}
 
 	// An exact duplicate is a no-op: strict `<`, so it neither errors nor
 	// rewrites the row.
-	if write(now, 999) {
+	if write(now) {
 		t.Error("same-timestamp write reported moved")
-	}
-	if got := linesideRow(t, db, station, node, payload); got.BinUOP != 46 {
-		t.Errorf("bin_uop = %d after a same-timestamp write, want 46 — an exact "+
-			"duplicate must be a no-op", got.BinUOP)
 	}
 
 	// A genuinely newer report still lands.
 	newer := now.Add(time.Minute)
-	if !write(newer, 12) {
+	if !write(newer) {
 		t.Error("NEWER write reported not moved")
 	}
 	got = linesideRow(t, db, station, node, payload)
 	if !got.ReportedAt.UTC().Equal(newer) {
 		t.Errorf("reported_at = %v after a NEWER write, want %v — latest-wins must "+
 			"not become never-updates", got.ReportedAt.UTC(), newer)
-	}
-	if got.BinUOP != 12 {
-		t.Errorf("bin_uop = %d after a NEWER write, want 12", got.BinUOP)
 	}
 }
 
@@ -164,8 +139,6 @@ func TestPurgeStaleLinesideReports(t *testing.T) {
 			Station:      station,
 			CoreNodeName: node,
 			PayloadCode:  payload,
-			BinCount:     1,
-			BinUOP:       10,
 			ReportedAt:   now.Add(-age),
 		}); err != nil {
 			t.Fatalf("seed %s: %v", node, err)
@@ -196,37 +169,5 @@ func TestPurgeStaleLinesideReports(t *testing.T) {
 	}
 	if !survived["ALN_FRESH"] {
 		t.Error("a row reported a minute ago was purged")
-	}
-}
-
-// THE CARRIER COLUMNS (v127) round-trip, and an old Edge's row stores NULL for
-// all three: that NULL is how the comparison on ingest knows not to compare a
-// carrier for it.
-func TestUpsertEdgeLinesideReport_CarrierColumns(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	const payload = "P-CARRIER-COLS"
-	now := time.Now().UTC().Truncate(time.Millisecond)
-	bin := int64(4242)
-	for _, r := range []store.EdgeLinesideReport{
-		{Station: "stn-new", CoreNodeName: "ALN_001", PayloadCode: payload, BinCount: 1, BinUOP: 40,
-			BinID: &bin, BinEpoch: 3, FlushedSeq: 17, ReportedAt: now},
-		{Station: "stn-old", CoreNodeName: "ALN_001", PayloadCode: payload, BinCount: 1, BinUOP: 40, ReportedAt: now},
-	} {
-		if _, err := db.UpsertEdgeLinesideReport(r); err != nil {
-			t.Fatalf("upsert %s: %v", r.Station, err)
-		}
-	}
-	got := linesideRow(t, db, "stn-new", "ALN_001", payload)
-	if got.BinID == nil || *got.BinID != bin || got.BinEpoch != 3 || got.FlushedSeq != 17 {
-		t.Errorf("new Edge row = bin %v epoch %d flushed %d, want 4242/3/17", got.BinID, got.BinEpoch, got.FlushedSeq)
-	}
-	var nulls int
-	if err := db.QueryRow(`SELECT count(*) FROM edge_lineside_reports
-		WHERE station = 'stn-old' AND bin_id IS NULL AND bin_epoch IS NULL AND flushed_seq IS NULL`).Scan(&nulls); err != nil {
-		t.Fatalf("read old row: %v", err)
-	}
-	if nulls != 1 {
-		t.Error("an old Edge's row did not store NULL carrier columns")
 	}
 }

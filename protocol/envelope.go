@@ -50,8 +50,9 @@ func NewEnvelope(msgType string, src, dst Address, payload any) (*Envelope, erro
 	// no-op in production / at 1×). Without this, lifecycle messages expire in
 	// the pipeline at high speed and strand orders. See clock.ScaleTTL.
 	// A zero TTL means NO expiry, not "expires now" — see NoExpiry. now.Add(0)
-	// would stamp exp = now and expire on the next tick. No msgType currently
-	// uses NoExpiry; the guard is here so adding one cannot silently invert.
+	// would stamp exp = now and expire on the next tick. Several types and
+	// subjects use NoExpiry (protocol/expiry.go); the guard is what keeps them
+	// from expiring on the next tick.
 	exp := zeroOrDeadline(now, clock.ScaleTTL(DefaultTTLFor(msgType)))
 
 	return &Envelope{

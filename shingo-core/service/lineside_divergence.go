@@ -36,7 +36,9 @@ import (
 //     includes, so only a transport reorder or an Edge restore does this).
 //     Either way the count is undecided: an open count episode is neither
 //     opened nor closed on it. Round 2 S8 wrote ">="; equality is the exact
-//     form once the report states its count as of FlushedSeq.
+//     form once the report states its count as of FlushedSeq. An epoch-0 row
+//     that has flushed nothing is undecided too: its FlushedSeq and last_seq
+//     both read the empty epoch-0 scope, so their equality says nothing.
 //   - epoch: the Edge counts the carrier under a generation other than Core's.
 //     Core drops every delta of a retired generation, so the counts cannot
 //     converge. No seq test applies: the dropped deltas never advance last_seq,
@@ -257,7 +259,7 @@ func classifyCarrier(e protocol.LinesideLevelEntry, byID map[int64]store.Linesid
 		d.Class = ReportDivergenceEpoch
 	case e.BinUOP != c.UOP:
 		key := divergenceKey(ReportDivergenceCount, e.CoreNodeName, e.PayloadCode, &id)
-		if c.LastSeq != e.FlushedSeq {
+		if c.LastSeq != e.FlushedSeq || (e.BinEpoch == 0 && e.FlushedSeq == 0) {
 			return nil, key
 		}
 		flushed, last := e.FlushedSeq, c.LastSeq

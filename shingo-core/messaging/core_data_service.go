@@ -300,8 +300,10 @@ func (s *CoreDataService) projectTicks(station string, events []heartbeat.PartEv
 // words the reason; this only prints it.
 //
 // There is no reconciler. Core's count is the Edge's stream applied; the
-// Edge's own count is the durable one for a bin at its node, and nothing
-// writes Core's number back to it except a generation change's announcement.
+// Edge's own count is the durable one for a bin at its node. Core's number
+// reaches the Edge only through declarations: a generation change's
+// announcement, a count correction's UOPAdjustment (fenced on the counting
+// station), and the count an arrival binds.
 func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.BinUOPDelta) {
 	// The station is the ENVELOPE's, which is the one the transport carried
 	// rather than the one the sender asserted in its own body. See

@@ -198,6 +198,12 @@ import (
 // instead of picking again. Blank on every existing row, which acquiring reads
 // as "pick". Inert to a pre-v147 binary; rollback is DROP COLUMN.
 //
+// v149 DROPS edge_lineside_reports' six carrier and count columns (bin_count,
+// bin_uop, bucket_qty, bin_id, bin_epoch, flushed_seq): the report is compared
+// on the wire and nothing read them back. Not inert to an older binary: its
+// upsert names them, so rollback re-adds them first. v127's verify narrowed to
+// bin_uop_exception.bin_id in the same commit, or every boot re-adds them.
+//
 // The hard-coded head number that used to close this test is gone (orc ruling,
 // 2026-09-28): it conflicted with every stream that adds a migration. What it
 // guarded, a migration added below the head, is now TestMigrationList_Shape's

@@ -4260,12 +4260,10 @@ func migrationList() []migration {
 
 		{127, "edge_lineside_reports carrier columns + bin_uop_exception.bin_id nullable — the lineside report is a per-carrier checksum, and a bucket divergence has no bin",
 			v127LinesideReportCarrier,
-			func(q schema.Querier) bool {
-				return schema.ColumnExists(q, "edge_lineside_reports", "bin_id") &&
-					schema.ColumnExists(q, "edge_lineside_reports", "bin_epoch") &&
-					schema.ColumnExists(q, "edge_lineside_reports", "flushed_seq") &&
-					schema.ColumnNullable(q, "bin_uop_exception", "bin_id")
-			}},
+			// bin_uop_exception.bin_id only: v149 drops the three report columns, and a
+			// verify that still asked for them would fail on every boot after v149 and
+			// re-run this body, which re-adds them.
+			func(q schema.Querier) bool { return schema.ColumnNullable(q, "bin_uop_exception", "bin_id") }},
 
 		{128, "cell_part_events keyed on (cell_id, edge_snapshot_id, recorded_at) — the production tick dedup moves onto the projection, production_tick_dedup and payload_code go, edge_registry keeps each station's tick-feed lag",
 			v128ProductionTickKey,
@@ -4397,10 +4395,17 @@ func migrationList() []migration {
 				return n == 0
 			}},
 
-		// 150, not 149: Lane L adds v149 (edge_lineside_reports' unread
-		// columns) on its own branch, and the runner applies any version it has
-		// not recorded, so the gap is harmless and the two land in either order
-		// without a collision.
+		{149, "drop edge_lineside_reports' six carrier and count columns — Core compares the lineside report on the wire, and nothing reads them back",
+			v149DropLinesideReportColumns,
+			func(q schema.Querier) bool {
+				for _, c := range linesideReportDroppedColumnsV149 {
+					if !schema.ColumnAbsent(q, "edge_lineside_reports", c) {
+						return false
+					}
+				}
+				return true
+			}},
+
 		{150, "bin_placement_seq — the placement stamp a landing carries, so a seat refuses a landing not newer than the one it last bound",
 			v150BinPlacementSeq,
 			func(q schema.Querier) bool {
@@ -4584,6 +4589,30 @@ func v148SourcingToQueued(tx *sql.Tx) error {
 		  updated_at = NOW()
 		WHERE status = 'sourcing'`); err != nil {
 		return fmt.Errorf("v148 sourcing → queued: %w", err)
+	}
+	return nil
+}
+
+// linesideReportDroppedColumnsV149 are the edge_lineside_reports columns v149
+// drops: the carrier and count each report row stated. The report is compared
+// on the decoded message (service.CheckReport), so the table never needed them;
+// the seat (station, core_node_name, payload_code) and reported_at stay.
+var linesideReportDroppedColumnsV149 = []string{"bin_count", "bin_uop", "bucket_qty", "bin_id", "bin_epoch", "flushed_seq"}
+
+// v149DropLinesideReportColumns drops them (row L item 2).
+//
+// ROLLBACK to a pre-v149 binary needs the six back first (bin_count, bin_uop,
+// bucket_qty INTEGER NOT NULL DEFAULT 0; bin_id, bin_epoch, flushed_seq BIGINT
+// NULL): its upsert names them, and every report would fail to record.
+func v149DropLinesideReportColumns(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE edge_lineside_reports
+		DROP COLUMN IF EXISTS bin_count,
+		DROP COLUMN IF EXISTS bin_uop,
+		DROP COLUMN IF EXISTS bucket_qty,
+		DROP COLUMN IF EXISTS bin_id,
+		DROP COLUMN IF EXISTS bin_epoch,
+		DROP COLUMN IF EXISTS flushed_seq`); err != nil {
+		return fmt.Errorf("v149 drop edge_lineside_reports carrier columns: %w", err)
 	}
 	return nil
 }

@@ -58,3 +58,31 @@ func TestClassifyLinesideReport_EpochZeroIsNotADivergence(t *testing.T) {
 		t.Errorf("divergences = %+v, want none for an epoch-0 row that agrees on the count", divs)
 	}
 }
+
+// An epoch-0 carrier that has flushed nothing gives the in-flight test no
+// scope: its FlushedSeq and Core's last_seq both read the empty epoch-0 row, so
+// "0 == 0" says nothing is in flight without having looked. A count gap there is
+// undecided, not a divergence (row L item 1). The scope guard: the same gap at
+// a real generation, where 0/0 is a fresh generation with no deltas on either
+// side, is still compared.
+func TestClassifyLinesideReport_EpochZeroNeverFlushedIsUndecided(t *testing.T) {
+	t.Parallel()
+	bin := int64(9)
+	e := protocol.LinesideLevelEntry{CoreNodeName: "ALN_1", PayloadCode: "PART-A",
+		BinCount: 1, BinUOP: 90, BinID: &bin}
+	core := store.LinesideCoreSide{
+		Carriers: []store.LinesideCoreCarrier{{BinID: 9, NodeName: "ALN_1", Payload: "PART-A",
+			Epoch: 5, UOP: 100, AtSeat: true, LastSeq: 0}},
+		Buckets: map[store.LinesideReportSeat]int{},
+	}
+	divs, undecided := ClassifyLinesideReport([]protocol.LinesideLevelEntry{e}, core)
+	if len(divs) != 0 || !undecided["count|ALN_1|PART-A|9"] {
+		t.Errorf("epoch 0, nothing flushed: divs %+v undecided %v, want undecided", divs, undecided)
+	}
+
+	e.BinEpoch = 5
+	divs, _ = ClassifyLinesideReport([]protocol.LinesideLevelEntry{e}, core)
+	if len(divs) != 1 || divs[0].Class != ReportDivergenceCount {
+		t.Errorf("epoch 5 at 0/0: divs %+v, want one count divergence (a fresh generation is compared)", divs)
+	}
+}

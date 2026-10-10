@@ -120,7 +120,7 @@ case "${1:-}" in
          WHERE n.name IN ('PRS_010','PRS_010B','PRS_011','WLD_010','SLN_L2_01')
          ORDER BY n.name;"
     echo "-- lineside reports (Core read-model) --"
-    $QC "SELECT station, core_node_name, payload_code, bin_count, bin_uop, bucket_qty, reported_at
+    $QC "SELECT station, core_node_name, payload_code, reported_at
          FROM edge_lineside_reports WHERE station LIKE 'edge2%' ORDER BY core_node_name, payload_code;"
     echo "-- cms transactions --"
     $QC "SELECT id, node_name, cat_id, delta, bin_label, payload_code, source_type, storeroom
