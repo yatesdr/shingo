@@ -158,6 +158,7 @@ func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {
 		"Edges":         pd.Edges,
 		"ChildCounts":   pd.ChildCounts,
 		"Depths":        pd.Depths,
+		"WaitingSpots":  pd.WaitingSpots,
 		"RobotsAt":      pd.RobotsAt,
 		"BinTypesJSON":  string(binTypesJSON),
 		"EdgesJSON":     string(edgesJSON),
