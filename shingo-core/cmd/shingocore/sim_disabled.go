@@ -8,6 +8,7 @@ import (
 	"log"
 
 	"shingocore/config"
+	"shingocore/engine"
 	"shingocore/fleet"
 )
 
@@ -25,3 +26,7 @@ func simGuard() {
 func newSimBackend(ctx context.Context, cfg *config.Config) (fleet.TrackingBackend, error) {
 	return nil, fmt.Errorf("this binary was built without sim support; rebuild with -tags sim")
 }
+
+// simWatch exists only so main.go compiles without the sim tag; like
+// newSimBackend it is never reached (simGuard fatals first).
+func simWatch(*engine.Engine) {}

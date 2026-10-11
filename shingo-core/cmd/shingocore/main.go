@@ -382,6 +382,9 @@ func main() {
 
 	eng.Start()
 	defer eng.Stop()
+	if cfg.Sim.Enabled {
+		simWatch(eng) // sim_watch_*.go (sim build) / sim_disabled.go (!sim build)
+	}
 
 	eng.Dispatcher().DebugLog = dbg.Func("dispatch")
 
