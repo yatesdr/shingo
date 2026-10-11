@@ -977,6 +977,17 @@ var causeReleasers = []causeReleaser{
 		what:        "an empty of the DECLARED TYPE appears; it waits rather than taking another",
 	},
 	{
+		cause:       CauseFinderCarrierRefused,
+		populations: []WaitPopulation{PopAcquiring},
+		what: "a person acts on the carrier standing at the named node: moves it off, relabels or " +
+			"clears it, or adds its type to the part's carriers; or a carrier the part may ride " +
+			"is set down there beside it",
+		finding: "A PERSON WAIT, NOT A MATERIAL ONE. The part is on the node; its carrier is " +
+			"one the part may not ride, so every finder passes it by and nothing arriving " +
+			"elsewhere ends the wait. It used to be filed as finder-node-empty, which reads " +
+			"as a shortage at a node holding the part (D33).",
+	},
+	{
 		cause:       CauseFinderAccessibilityUnreadable,
 		populations: []WaitPopulation{PopAcquiring},
 		what:        "the reachability read succeeds — the finder declining to answer, not an empty plant",

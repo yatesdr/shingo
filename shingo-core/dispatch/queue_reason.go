@@ -23,7 +23,7 @@ import (
 //
 // Field use is per code:
 //   - QueueWaitingForMaterial: Payload + Kind + Partial + Group + Reserved +
-//     SourceMissing (+ Step)
+//     SourceMissing + CarrierRefused (+ Step)
 //   - QueueWaitingForSlot:     Destination + BlockingBins/InboundOrders +
 //     DestUnresolved (+ Step)
 //   - QueueStorageRearranging: Lane + Payload + DigOrderID + HolderOrderID + StoppedOrderID (+ Step)
@@ -144,6 +144,13 @@ type QueueParams struct {
 	// a person re-creates the node or changes the source, so it is its own
 	// sentence (CauseFinderSourceMissing).
 	SourceMissing bool
+	// CarrierRefused marks a material wait whose named node holds the part only
+	// on carriers the part may not ride. Group carries the node, Payload the part.
+	//
+	// "Waiting for material: X in NODE" is false here: X is standing on NODE.
+	// What ends the wait is a person moving or relabelling that carrier, so it
+	// is its own sentence (CauseFinderCarrierRefused).
+	CarrierRefused bool
 	// AtLevel marks a slot wait where the group is holding the number of empties
 	// it was configured to hold, rather than being physically out of space.
 	//
@@ -233,6 +240,19 @@ func materialSentence(p QueueParams) string {
 		} else {
 			s = "The source this order names no longer exists — waiting for its configuration to be fixed"
 		}
+	}
+	// CARRIER REFUSED REPLACES IT TOO: the part is on the node, on a carrier it
+	// may not ride.
+	if p.CarrierRefused {
+		where := "the source node"
+		if p.Group != "" {
+			where = p.Group
+		}
+		part := "the part"
+		if p.Payload != "" {
+			part = p.Payload
+		}
+		s = fmt.Sprintf("%s holds %s only on a carrier type it may not ride — waiting for that carrier to be moved off or relabelled", where, part)
 	}
 	// TAKEN REPLACES IT TOO: the order is not short of anything, somebody moved
 	// the bin it had picked, and it is finding another.

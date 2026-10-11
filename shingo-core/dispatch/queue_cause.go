@@ -632,6 +632,16 @@ const (
 	// declared. It waits rather than taking another: "a declared mix that is
 	// abandoned when inconvenient is not a mix".
 	CauseFinderNoEmptyOfType QueueCause = "finder-no-empty-of-type"
+	// CauseFinderCarrierRefused — the named source node holds the part, but only
+	// on carriers the part may not ride (payload_bin_types), so the carrier rule
+	// passes every one of them by. A PERSON WAIT: nothing arriving elsewhere
+	// clears it while the refused carrier stands there. Somebody moves it off the
+	// node, relabels or clears it, or adds its type to the part's carriers.
+	//
+	// It was filed as finder-node-empty, which sent the reader looking for
+	// material at a node that holds it (D33: a loader window holding its part on
+	// the wrong carrier, the move out waiting "for material" for good).
+	CauseFinderCarrierRefused QueueCause = "finder-carrier-refused"
 
 	// ── Intake ────────────────────────────────────────────────────────────
 

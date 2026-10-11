@@ -632,6 +632,11 @@ func (f *Finder) Pick(need Need) Plan {
 			}
 		}
 		onlyPartials := false
+		// carrierRefused: a candidate was passed by ONLY because of its carrier
+		// type — it would pass with no carrier rule. The wait then names the
+		// rule, not an empty node (CauseFinderCarrierRefused). The second
+		// judgement is the same pure predicate, no read.
+		carrierRefused := false
 		// A FULL ON A CARRIER ITS PART MAY NOT RIDE, ON ITS WAY INTO STORAGE
 		// (C2a A.3; the press known issue). The store door judges a full by the
 		// thing it is: it is stored, held, and offered to no order (the door sets
@@ -673,9 +678,12 @@ func (f *Finder) Pick(need Need) Plan {
 				rule = domain.BinTypeRule{}
 			}
 			if binresolver.BinUnavailableReasonFor(b, claimPayload, rule, need.Asker) != "" {
-				if foreign == nil && moveShaped && storesInto && b.PayloadCode != "" &&
-					binresolver.BinUnavailableReasonFor(b, claimPayload, domain.BinTypeRule{}, need.Asker) == "" {
-					foreign = b // refused by the carrier rule alone
+				if binresolver.BinUnavailableReasonFor(b, claimPayload, domain.BinTypeRule{}, need.Asker) == "" {
+					// Refused by the carrier rule alone.
+					carrierRefused = true
+					if foreign == nil && moveShaped && storesInto && b.PayloadCode != "" {
+						foreign = b
+					}
 				}
 				continue
 			}
@@ -691,10 +699,15 @@ func (f *Finder) Pick(need Need) Plan {
 				params.Kind = "empty"
 			}
 			cause := CauseFinderNodeEmpty
-			if onlyPartials {
+			switch {
+			case onlyPartials:
 				// The part IS on the node, but only as partials, and this is a
 				// drain window: the same wait the seatbelt gives, naming where.
 				cause = CauseFinderNoFullCarrier
+			case carrierRefused:
+				// The part IS on the node, on a carrier it may not ride (D33).
+				cause = CauseFinderCarrierRefused
+				params.CarrierRefused = true
 			}
 			return Plan{
 				Outcome:   OutcomeWait,

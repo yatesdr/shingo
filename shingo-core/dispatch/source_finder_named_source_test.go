@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -339,4 +340,30 @@ const (
 func (c *countingFinderDB) GetLoaderHomeCarriers(id int64) (*loaders.Home, []string, error) {
 	c.reads++
 	return c.fakeFinderDB.GetLoaderHomeCarriers(id)
+}
+
+// CONCRETE NODE holding a full of the part on a carrier the part may not ride:
+// the wait names the carrier rule, not an empty node (D1 item 10, D33). The bin
+// is standing there; "finder-node-empty" sent the reader looking for material
+// at a node that holds it. Nothing arriving clears this — a person moves the
+// carrier off, relabels it, or changes the part's carrier types.
+func TestNamedSourcePin_AFullOnACarrierItsPartMayNotRideNamesTheCarrier(t *testing.T) {
+	t.Parallel()
+	db := namedSourceFixture()
+	db.binTypeRule = map[string][]int64{"PART-A": {5}}
+	dropNodeWith(db, &bins.Bin{ID: 630, PayloadCode: "PART-A", BinTypeID: 7, BinTypeCode: "OTHER",
+		UOPRemaining: 100, UOPCapacity: 100})
+	res := NewSourceFinder(db, nil, nil).FindSource(u1Order("FG-DROP-01"), IntentFull)
+	if res.Outcome != OutcomeWait || res.QueueCause != "finder-carrier-refused" || res.QueueParams.Group != "FG-DROP-01" {
+		t.Fatalf("outcome=%v cause=%q params=%+v bin=%v, want Wait %q on FG-DROP-01",
+			res.Outcome, res.QueueCause, res.QueueParams, res.Bin, "finder-carrier-refused")
+	}
+	if db.fifoCalls != 0 {
+		t.Errorf("FindSourceBinFIFO calls = %d, want 0 — a concrete source never widens", db.fifoCalls)
+	}
+	// The operator's sentence says the part is there, on a carrier it may not ride.
+	if s := FormatQueueSentence(res.QueueCode, res.QueueParams); !strings.Contains(s, "FG-DROP-01 holds PART-A") ||
+		!strings.Contains(s, "may not ride") {
+		t.Errorf("sentence %q does not say the node holds the part on a carrier it may not ride", s)
+	}
 }

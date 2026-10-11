@@ -93,7 +93,10 @@ func TestC2aPin_AFullOnACarrierItsPartMayNotRideIsStoredHeld(t *testing.T) {
 		t.Errorf("the bin is held by %q, which does not name the carrier rule it broke", by)
 	}
 
-	// The same kind of full moved to a node that is not storage: judged as before.
+	// The same kind of full moved to a node that is not storage: judged as before,
+	// and the wait names the carrier rule. CONVERTED at D1 item 10 (D33): this
+	// asserted finder-node-empty, which misnamed a bin-type refusal as an empty
+	// node while the full stood on it; the wait is finder-carrier-refused now.
 	press2 := &nodes.Node{Name: "C2AP-PRESS2", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(press2), "create a second press position")
 	elsewhere := &nodes.Node{Name: "C2AP-ELSEWHERE", Enabled: true}
@@ -108,9 +111,9 @@ func TestC2aPin_AFullOnACarrierItsPartMayNotRideIsStoredHeld(t *testing.T) {
 	})
 	other, err := db.GetOrderByUUID("c2ap-elsewhere")
 	testutil.MustNoErr(t, err, "read the second move back")
-	if other.Status != protocol.StatusQueued || QueueCause(other.QueueCause) != CauseFinderNodeEmpty {
-		t.Errorf("a move of the full to a node that is not storage is %s under %q, want queued under %q as before",
-			other.Status, other.QueueCause, CauseFinderNodeEmpty)
+	if other.Status != protocol.StatusQueued || other.QueueCause != "finder-carrier-refused" {
+		t.Errorf("a move of the full to a node that is not storage is %s under %q, want queued under %q",
+			other.Status, other.QueueCause, "finder-carrier-refused")
 	}
 	if held2, _, err := db.BinQualityHold(full2.ID); err != nil || held2 {
 		t.Errorf("the full moved to a node that is not storage was held (%v, %v): only the store door holds", held2, err)

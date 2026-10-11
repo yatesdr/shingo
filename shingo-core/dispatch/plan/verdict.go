@@ -39,6 +39,7 @@ const (
 	CauseFinderSourceUnreadable        Cause = "finder-source-unreadable"
 	CauseFinderSourceMissing           Cause = "finder-source-missing"
 	CauseFinderNoEmptyOfType           Cause = "finder-no-empty-of-type"
+	CauseFinderCarrierRefused          Cause = "finder-carrier-refused"
 )
 
 // The dropoff-capacity gate's causes (capacity.go), under the same rule: each is
@@ -57,6 +58,7 @@ var Causes = []Cause{
 	CauseFinderNodeEmpty, CauseFinderGroupEmpty, CauseFinderPoolEmpty, CauseFinderPlantEmpty,
 	CauseFinderNoFullCarrier, CauseFinderAccessibilityUnreadable, CauseFinderGroupFenced,
 	CauseFinderSourceUnreadable, CauseFinderSourceMissing, CauseFinderNoEmptyOfType,
+	CauseFinderCarrierRefused,
 	CauseDropoffOccupied, CauseDropoffInflight, CauseNGRPFull, CauseNGRPAtLevel, CauseCapacityCheckFailed,
 }
 
@@ -68,6 +70,9 @@ type Params struct {
 	Group         string
 	Reserved      bool
 	SourceMissing bool
+	// CarrierRefused: the named node holds the part only on carriers the part
+	// may not ride (CauseFinderCarrierRefused). Group carries the node.
+	CarrierRefused bool
 
 	// The capacity gate's: the destination it gated, the bins standing there,
 	// the orders already inbound, and whether a maintained group is at its level.

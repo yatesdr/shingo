@@ -167,14 +167,15 @@ func queueCauseOf(c plan.Cause) QueueCause { return QueueCause(c) }
 // operator sentence is built from.
 func queueParamsOf(p plan.Params) QueueParams {
 	return QueueParams{
-		Payload:       p.Payload,
-		Kind:          p.Kind,
-		Group:         p.Group,
-		Reserved:      p.Reserved,
-		SourceMissing: p.SourceMissing,
-		Destination:   p.Destination,
-		BlockingBins:  p.BlockingBins,
-		InboundOrders: p.InboundOrders,
-		AtLevel:       p.AtLevel,
+		Payload:        p.Payload,
+		Kind:           p.Kind,
+		Group:          p.Group,
+		Reserved:       p.Reserved,
+		SourceMissing:  p.SourceMissing,
+		CarrierRefused: p.CarrierRefused,
+		Destination:    p.Destination,
+		BlockingBins:   p.BlockingBins,
+		InboundOrders:  p.InboundOrders,
+		AtLevel:        p.AtLevel,
 	}
 }
