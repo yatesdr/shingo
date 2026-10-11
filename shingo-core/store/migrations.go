@@ -4425,6 +4425,11 @@ func migrationList() []migration {
 		{152, "process_positions — the seats a process binds at that no claim names (loader windows and homes, FG drains), so a landing there is addressed to its station",
 			v152ProcessPositions,
 			func(q schema.Querier) bool { return schema.TableExists(q, "process_positions") }},
+		{154, "edge_registry.clock_offset_ms — each edge's clock offset as its last heartbeat implied it",
+			v154EdgeClockOffset,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "edge_registry", "clock_offset_ms")
+			}},
 	}
 }
 
@@ -4449,6 +4454,20 @@ func v152ProcessPositions(tx *sql.Tx) error {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v152 process_positions: %w", err)
 		}
+	}
+	return nil
+}
+
+// v154EdgeClockOffset adds edge_registry.clock_offset_ms: the edge's clock
+// minus Core's, from its heartbeat's envelope ts at receipt, written in the
+// UPDATE the heartbeat already runs (+0 statements). The lift's time rule
+// compares an edge's window time with Core's lift time, so the Edges page
+// shows the offset and flags one above the flush window. NULL on every
+// existing row until the next heartbeat. The baseline DDL declares the same
+// column.
+func v154EdgeClockOffset(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE edge_registry ADD COLUMN IF NOT EXISTS clock_offset_ms BIGINT`); err != nil {
+		return fmt.Errorf("v154 edge_registry.clock_offset_ms: %w", err)
 	}
 	return nil
 }

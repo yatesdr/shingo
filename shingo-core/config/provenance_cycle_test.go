@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"shingo/protocol"
 )
 
 // provenance_cycle_test.go — enforcement for the 5.10 constants.
@@ -45,22 +47,31 @@ func TestCycleFlushIntervalMatchesEdge(t *testing.T) {
 			"deleting the test)", path, err)
 	}
 
+	// The Edge may name the cadence through the shared constant (D1 Lane 0
+	// item 12 moved it there, so the clock-offset flag and the flush cannot
+	// drift); Core imports protocol, so the constant is then the value.
+	var want time.Duration
+	if regexp.MustCompile(`defaultInventoryDeltaInterval\s*=\s*protocol\.InventoryDeltaFlushWindow\b`).Match(src) {
+		want = protocol.InventoryDeltaFlushWindow
+	}
 	re := regexp.MustCompile(`defaultInventoryDeltaInterval\s*=\s*(\d+)\s*\*\s*time\.(Second|Millisecond|Minute)`)
 	m := re.FindSubmatch(src)
-	if m == nil {
+	if m == nil && want == 0 {
 		t.Fatalf("no defaultInventoryDeltaInterval declaration found in %s — the regex is "+
 			"stale, and a silent miss here would leave this test passing on nothing", path)
 	}
-	n, err := strconv.Atoi(string(m[1]))
-	if err != nil {
-		t.Fatalf("parse %q: %v", m[1], err)
+	if m != nil {
+		n, err := strconv.Atoi(string(m[1]))
+		if err != nil {
+			t.Fatalf("parse %q: %v", m[1], err)
+		}
+		unit := map[string]time.Duration{
+			"Millisecond": time.Millisecond,
+			"Second":      time.Second,
+			"Minute":      time.Minute,
+		}[string(m[2])]
+		want = time.Duration(n) * unit
 	}
-	unit := map[string]time.Duration{
-		"Millisecond": time.Millisecond,
-		"Second":      time.Second,
-		"Minute":      time.Minute,
-	}[string(m[2])]
-	want := time.Duration(n) * unit
 
 	if got := DisplayDefaults().CycleFlushInterval; got != want {
 		t.Errorf("display.cycle_flush_interval is %s but %s declares %s.\n"+

@@ -533,9 +533,20 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 // it, which is strictly worse evidence than the register would have left.
 // found=false drives the same edge.register_request the old isNew flag did;
 // the difference is that the request is now the only outcome.
+//
+// THE EDGE'S CLOCK OFFSET rides the same UPDATE: the envelope's ts (the Edge's
+// clock when it built the heartbeat) minus Core's clock on receipt. The
+// broker's delay is in it, reading as the Edge being behind by that much; the
+// Edge's /status shows the mirror reading from the ack. A heartbeat with no ts
+// leaves the last reading.
 func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protocol.EdgeHeartbeat) {
+	var clockOffsetMS *int64
+	if env != nil && !env.Timestamp.IsZero() {
+		ms := env.Timestamp.Sub(clock.Now()).Milliseconds()
+		clockOffsetMS = &ms
+	}
 	found, err := s.db.UpdateHeartbeat(p.StationID, p.Timezone,
-		store.TickLag{Pending: p.TickPending, OldestUnsentAgeMS: p.TickOldestUnsentAgeMS})
+		store.TickLag{Pending: p.TickPending, OldestUnsentAgeMS: p.TickOldestUnsentAgeMS}, clockOffsetMS)
 	if err != nil {
 		// Acked anyway. The ack is the Edge's evidence that Core is alive and
 		// the carrier of its feed answers; withholding it because one registry

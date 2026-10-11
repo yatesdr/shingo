@@ -39,6 +39,7 @@
       <th title="The applied edge schema version this station last reported on register — its SQLite migration state, shown beside Core's own. A station behind on a migration is a station whose dispatch surface may not match what Core sends.">Schema</th>
       <th>Status</th>
       <th title="The plant display zone this edge reports being on. Blank means its shingoedge.yaml has no timezone: set one (Edge → System Config → Plant Timezone) and restart it.">Zone</th>
+      <th title="The station's clock minus Core's, from its last heartbeat (the broker's delay is in it, reading as the station behind). Flagged above the {{.FlushWindow}} flush window: the lift's time rule compares the station's tick windows with Core's lift time.">Clock</th>
       <th title="Registers that arrived from a machine other than the one this station is bound to. A climbing count means two machines are alive on one identity.">Conflicts</th>
       <th></th>
     </tr>
@@ -69,6 +70,9 @@
              wrongness this column exists to surface (HK: OS Eastern, plant
              Central). */}}
         {{if .Timezone}}<code>{{.Timezone}}</code>{{else}}<span class="badge badge-warn" title="shingoedge.yaml has no timezone:">unset</span>{{end}}
+      </td>
+      <td class="col-num tnum">
+        {{with index $.Clocks .StationUID}}{{if .Flagged}}<span class="badge badge-warn edge-clock-flag" title="Above the {{$.FlushWindow}} flush window: a tick at a lift can be charged to the wrong carrier. Check the station's time sync.">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{else}}-{{end}}
       </td>
       <td class="col-num tnum">
         {{if gt .ConflictCount 0}}<span class="badge badge-warn">{{.ConflictCount}}</span>{{else}}0{{end}}

@@ -58,9 +58,9 @@ const (
 	invDeltaScopeBucketLevel = protocol.InvDeltaScopeBucketLevel
 
 	// defaultInventoryDeltaInterval is the periodic flush cadence used
-	// when the caller leaves interval unset. 5s matches the original
-	// rollout plan; YAML-configurable.
-	defaultInventoryDeltaInterval = 5 * time.Second
+	// when the caller leaves interval unset: the protocol's flush window,
+	// which Core reads an Edge's clock offset against.
+	defaultInventoryDeltaInterval = protocol.InventoryDeltaFlushWindow
 )
 
 // binDeltaEntry is the per-bin accumulator. Exported fields are written

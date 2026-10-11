@@ -483,6 +483,7 @@ CREATE TABLE public.edge_registry (
     conflict_count bigint DEFAULT 0 NOT NULL,
     conflict_at timestamp with time zone,
     schema_version integer,
+    clock_offset_ms bigint,
     timezone text DEFAULT ''::text NOT NULL,
     tick_pending bigint,
     tick_oldest_unsent_age_ms bigint,

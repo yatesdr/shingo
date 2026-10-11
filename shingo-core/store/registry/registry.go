@@ -459,14 +459,18 @@ func SetDisplayName(db *sql.DB, uid, displayName string) (bool, error) {
 // lag rides the same statement: the production tick shipper's backlog as the
 // heartbeat reported it. A nil Pending (an edge without the shipper, or a
 // failed read on the edge) leaves the stored report and its time alone.
-func UpdateHeartbeat(db *sql.DB, uid, timezone string, lag TickLag) (found bool, err error) {
+//
+// clockOffsetMS rides it too: the edge's clock minus Core's as this heartbeat
+// implied it. Nil (a heartbeat with no ts) leaves the last reading.
+func UpdateHeartbeat(db *sql.DB, uid, timezone string, lag TickLag, clockOffsetMS *int64) (found bool, err error) {
 	res, err := db.Exec(`
 		UPDATE edge_registry SET last_heartbeat = NOW(), status = 'active', timezone = $2,
 			tick_pending              = COALESCE($3, tick_pending),
 			tick_oldest_unsent_age_ms = COALESCE($4, tick_oldest_unsent_age_ms),
-			tick_reported_at          = CASE WHEN $3::BIGINT IS NULL THEN tick_reported_at ELSE NOW() END
+			tick_reported_at          = CASE WHEN $3::BIGINT IS NULL THEN tick_reported_at ELSE NOW() END,
+			clock_offset_ms           = COALESCE($5, clock_offset_ms)
 		WHERE station_uid = $1
-	`, uid, timezone, lag.Pending, lag.OldestUnsentAgeMS)
+	`, uid, timezone, lag.Pending, lag.OldestUnsentAgeMS, clockOffsetMS)
 	if err != nil {
 		return false, err
 	}
@@ -496,7 +500,7 @@ const edgeColumns = `id, station_uid, display_name, station_id, hostname, versio
 	       conflict_hostname, conflict_count, conflict_at,
 	       timezone,
 	       tick_pending, tick_oldest_unsent_age_ms, tick_reported_at, tick_rejected,
-	       schema_version`
+	       schema_version, clock_offset_ms`
 
 func scanEdge(sc interface{ Scan(...any) error }) (Edge, error) {
 	var e Edge
@@ -506,7 +510,7 @@ func scanEdge(sc interface{ Scan(...any) error }) (Edge, error) {
 		&e.ConflictHostname, &e.ConflictCount, &e.ConflictAt,
 		&e.Timezone,
 		&e.TickPending, &e.TickOldestUnsentAgeMS, &e.TickReportedAt, &e.TickRejected,
-		&e.SchemaVersion)
+		&e.SchemaVersion, &e.ClockOffsetMS)
 	return e, err
 }
 

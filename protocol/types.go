@@ -1,6 +1,9 @@
 package protocol
 
-import "slices"
+import (
+	"slices"
+	"time"
+)
 
 // Message type constants for the unified protocol.
 const (
@@ -450,6 +453,13 @@ const (
 // on the value it receives. Both sides spelled them independently and
 // identically; a rename on one side alone silently stops deduplication, which
 // is the failure this single definition exists to prevent.
+// InventoryDeltaFlushWindow is the Edge's inventory-delta flush cadence: a
+// window of ticks reaches the outbox at most this long after its first tick.
+// It is also the granularity the lift's time rule judges a boundary tick at,
+// so Core flags an Edge whose clock is further than this from its own (the
+// Edges page).
+const InventoryDeltaFlushWindow = 5 * time.Second
+
 const (
 	InvDeltaScopeBin = "bin"
 	// InvDeltaScopeBucketLevel is the lineside bucket level's scope, keyed

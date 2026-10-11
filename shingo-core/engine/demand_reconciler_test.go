@@ -46,7 +46,7 @@ func registerActiveEdge(t *testing.T, db *store.DB, stationID string) {
 	if _, err := db.RegisterEdge(stationID, "test-host", "test-inst", "test", "", sql.NullInt64{}); err != nil {
 		t.Fatalf("register edge: %v", err)
 	}
-	if _, err := db.UpdateHeartbeat(stationID, "", store.TickLag{}); err != nil {
+	if _, err := db.UpdateHeartbeat(stationID, "", store.TickLag{}, nil); err != nil {
 		t.Fatalf("heartbeat: %v", err)
 	}
 }
@@ -418,10 +418,10 @@ func TestDemandReconciler_ReachabilityIsAPositiveAssertionNotAnAbsentFlag(t *tes
 	// (c) And the guard is about RECENCY, not about never closing. One heartbeat
 	// lands and the same two episodes become decidable — otherwise the two
 	// assertions above are satisfied by a sweep that closes nothing at all.
-	if _, err := db.UpdateHeartbeat("PLANT.MUTE", "", store.TickLag{}); err != nil {
+	if _, err := db.UpdateHeartbeat("PLANT.MUTE", "", store.TickLag{}, nil); err != nil {
 		t.Fatalf("heartbeat: %v", err)
 	}
-	if _, err := db.UpdateHeartbeat("PLANT.DEAF", "", store.TickLag{}); err != nil {
+	if _, err := db.UpdateHeartbeat("PLANT.DEAF", "", store.TickLag{}, nil); err != nil {
 		t.Fatalf("heartbeat: %v", err)
 	}
 	eng.reconcileDemandEpisodes()

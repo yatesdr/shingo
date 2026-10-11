@@ -86,4 +86,12 @@ type RegistryEdge struct {
 	// every partition). The Edge had already moved past them, so they are lost;
 	// each one is also logged with its edge_snapshot_id and recorded_at.
 	TickRejected int64 `json:"tick_rejected"`
+
+	// ClockOffsetMS is this edge's clock minus Core's, as its last heartbeat
+	// implied it: the envelope's ts minus Core's clock on receipt, so the
+	// broker's delay is in it and reads as the edge being behind. Nil until a
+	// heartbeat carried a ts. The Edges page flags one above the flush window
+	// (protocol.InventoryDeltaFlushWindow): the lift's time rule compares the
+	// edge's window time with Core's lift time.
+	ClockOffsetMS *int64 `json:"clock_offset_ms"`
 }

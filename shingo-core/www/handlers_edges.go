@@ -4,9 +4,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
+	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/service"
 )
@@ -57,8 +60,38 @@ func (h *Handlers) handleEdgesAdmin(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		data["FeedFlags"] = flags
+		clocks := map[string]*edgeClock{}
+		for _, e := range edges {
+			if c, ok := edgeClockFor(e); ok {
+				clocks[e.StationUID] = &c
+			}
+		}
+		data["Clocks"] = clocks
+		data["FlushWindow"] = protocol.InventoryDeltaFlushWindow.String()
 	}
 	h.render(w, r, "edges.html", data)
+}
+
+// edgeClock is one station's clock offset as the Edges page shows it.
+type edgeClock struct {
+	Text    string // "+0.3 s": the edge's clock minus Core's
+	Flagged bool   // the size is above the flush window
+}
+
+// edgeClockFor reads a station's clock offset off its registry row (written by
+// its heartbeat). ok is false when no heartbeat has carried one. It is flagged
+// above the Edge's flush window: the lift's time rule compares the edge's
+// window time with Core's lift time, so an offset that size can put a boundary
+// tick on the wrong carrier.
+func edgeClockFor(e domain.RegistryEdge) (edgeClock, bool) {
+	if e.ClockOffsetMS == nil {
+		return edgeClock{}, false
+	}
+	off := time.Duration(*e.ClockOffsetMS) * time.Millisecond
+	return edgeClock{
+		Text:    fmt.Sprintf("%+.1f s", off.Seconds()),
+		Flagged: off > protocol.InventoryDeltaFlushWindow || off < -protocol.InventoryDeltaFlushWindow,
+	}, true
 }
 
 // apiEdges lists enrolled stations, including the binding and conflict state.

@@ -42,8 +42,12 @@ func TestFeedsPin_EdgesPageRow(t *testing.T) {
 	}
 
 	// Name (display name defaults to the uid), uid, host, schema, status,
-	// zone, conflicts, action.
-	want := []string{"edge.test", "edge.test", "edge-host-a", "v3", "active", "America/Chicago", "0", "Rename"}
+	// zone, clock, conflicts, action.
+	//
+	// CONVERTED (D1 Lane 0, item 12): the row gained the Clock cell, the
+	// station's clock offset from its last heartbeat; "-" here, where no
+	// heartbeat has carried one. Every other cell is as it was.
+	want := []string{"edge.test", "edge.test", "edge-host-a", "v3", "active", "America/Chicago", "-", "0", "Rename"}
 	after := want // F1: same when EdgeFeedFlags(uid) is empty
 	if !reflect.DeepEqual(cells, want) {
 		t.Errorf("edges row cells = %q, want %q (after F1 with no flags: %q)", cells, want, after)

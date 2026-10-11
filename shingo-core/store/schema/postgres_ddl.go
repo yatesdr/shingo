@@ -519,7 +519,12 @@ CREATE TABLE IF NOT EXISTS edge_registry (
     -- has carried one. The historical record of how an existing plant
     -- acquired this column is migration v137; this line is today's shape
     -- for fresh databases — both live, one truth each.
-    schema_version    INTEGER
+    schema_version    INTEGER,
+    -- clock_offset_ms is the edge's clock minus Core's, as its last heartbeat
+    -- implied it: the envelope's ts minus Core's clock on receipt (the
+    -- broker's delay is in it). Written by the heartbeat's UPDATE; NULL until
+    -- a heartbeat carried a ts. Migration v154.
+    clock_offset_ms   BIGINT
 );
 
 -- PARTIAL, because the identity migration deliberately leaves a window in
