@@ -85,7 +85,10 @@ func (e *Engine) landCarrier(node *processes.Node, l processes.LandingBind, carr
 		return false
 	}
 	e.recordLinesideCarrier(node.ID, node.CoreNodeName, carrier, domain.CarrierFromLanding)
-	log.Printf("bin_landed: bound bin %d at %s (count=%d epoch=%d, %s)", l.BinID, node.CoreNodeName, l.Count, l.Epoch, why)
+	// Debug, not info: the landing itself is the record, and one line per
+	// carrier at every seat was the Pi's only log-line rise under Lane H
+	// (RULINGS-C2c-run-through §3.4; DECISIONS D35). Refusals stay at info.
+	e.debugFn("bin_landed: bound bin %d at %s (count=%d epoch=%d, %s)", l.BinID, node.CoreNodeName, l.Count, l.Epoch, why)
 	e.settleCellPlacement(node.ID)
 	e.Events.Emit(Event{Type: EventUOPAdjusted, Payload: UOPAdjustedEvent{
 		ProcessNodeID: node.ID,
