@@ -107,12 +107,12 @@ func (e *Engine) fencedCount(nodeID int64, rt *processes.RuntimeState, adj proto
 // across its runtime write and its record, and the accumulator's flush lock
 // (WithPending), with the count write inside both. A tick is either before
 // the write and in the fence, or after both and charged on top of the
-// declaration, in both books. Cost: +1 read per release (the cursor); the
-// write is the one the release always made.
+// declaration, in both books. Cost: one statement, the count write, with the
+// cursor read in its RETURNING (store.ReleaseCountWithCursor).
 //
 // Returns nil — no fence, and Core bumps at the release as before — when no
 // carrier is bound at the seat, the bound carrier is not the released one, no
-// accumulator is wired, or the read fails.
+// accumulator is wired, the seat has no runtime row, or the statement fails.
 func (e *Engine) writeReleaseCount(nodeID int64, rt *processes.RuntimeState, binID int64, count int) *protocol.ReleaseFence {
 	plain := func() *protocol.ReleaseFence {
 		if err := e.db.SetProcessNodeReleaseCount(nodeID, count); err != nil {
@@ -127,11 +127,8 @@ func (e *Engine) writeReleaseCount(nodeID int64, rt *processes.RuntimeState, bin
 	var fence *protocol.ReleaseFence
 	e.countMu.Lock()
 	err := e.inventoryDelta.WithPending(func(p uop.Pending) error {
-		seq, net, err := e.db.InventoryDeltaCursor(protocol.InvDeltaScopeBin, strconv.FormatInt(bin, 10), epoch)
-		if err != nil {
-			return err
-		}
-		if err := e.db.SetProcessNodeReleaseCount(nodeID, count); err != nil {
+		seq, net, found, err := e.db.ReleaseCountWithCursor(nodeID, count, protocol.InvDeltaScopeBin, strconv.FormatInt(bin, 10), epoch)
+		if err != nil || !found {
 			return err
 		}
 		fence = &protocol.ReleaseFence{BinID: bin, Epoch: epoch, AsOfSeq: seq, AsOfNet: net + int64(p.Bin(bin, epoch)), AsOfAt: clock.Now().UTC()}

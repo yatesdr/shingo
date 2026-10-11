@@ -318,7 +318,8 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 	// applyChangeoverRelease for the direct shape, applyStagedDelivery for the
 	// staging one. This comment used to name the release CLICK, which does not
 	// point the claim anywhere: ReleaseOrderWithLineside's only runtime write is
-	// SetProcessNodeReleaseCount, a count and the released-empty flag. On the
+	// the release count write (writeReleaseCount), a count and the
+	// released-empty flag. On the
 	// direct path the skip could therefore never fire, and this arm re-ran on
 	// every switch.
 	//

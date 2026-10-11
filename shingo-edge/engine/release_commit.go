@@ -171,6 +171,14 @@ func (e *Engine) commitFlip(ll *legLoad) error {
 //
 // finalized: a produce bin's count went to Core as its ingest, so the release
 // carries none (the slot's count is already cleared and would wipe it).
+//
+// THE COUNT WRITE FENCES THE STREAM, as the lineside release's does (Lane H,
+// DECISIONS D11 (i)): the old carrier's declared count goes on the seat and
+// the release carries where in the carrier's delta stream it stands, so Core
+// declares it with no generation bump and the generation ends at the lift.
+// Ticks between the release and the lift stay the carrier's in both books
+// (R1); a release declaring 0 marks the seat released-empty in the same
+// statement, so the carrier is not charged afterwards (R3).
 func (e *Engine) releaseOrderDropFastPath(orderID int64, node *processes.Node, runtime *processes.RuntimeState, disp ReleaseDisposition, finalized bool, echo *int) error {
 	// No CaptureToLineside here (no to-style claim to fill buckets against),
 	// so resolvedBinID=0: a PULL PARTS LINESIDE shape falls through to the
@@ -180,9 +188,13 @@ func (e *Engine) releaseOrderDropFastPath(orderID int64, node *processes.Node, r
 		manifestUOP = nil
 	}
 	wireDisposition := buildProtocolDisposition(disp, runtime)
+	var fence *protocol.ReleaseFence
+	if manifestUOP != nil {
+		fence = e.writeReleaseCount(node.ID, runtime, 0, *manifestUOP)
+	}
 	e.logRelease("order=%d node=%s disposition=%q — drop release: passing manifest sync through, skipping toClaim-dependent bookkeeping",
 		orderID, node.Name, string(disp.Mode))
-	return e.orderMgr.ReleaseOrderWithDisposition(orderID, manifestUOP, wireDisposition, disp.CalledBy, echo, nil)
+	return e.orderMgr.ReleaseOrderWithDisposition(orderID, manifestUOP, wireDisposition, disp.CalledBy, echo, fence)
 }
 
 // releaseOrderWithFullLineside is the lineside release: the capture of parts
