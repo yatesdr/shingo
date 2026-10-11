@@ -96,8 +96,15 @@ func TestReplenishLoader_NeverMoreThanTheWindowsCanHold(t *testing.T) {
 		if o.SourceNode != cfg.InboundSource {
 			t.Errorf("source = %q, want the loader's inbound market %q", o.SourceNode, cfg.InboundSource)
 		}
-		if o.PayloadCode != "" {
-			t.Errorf("payload = %q, want blank — an empty carrier is generic until the loader fills it", o.PayloadCode)
+		// CONVERTED (D1 Lane 0, item 11): this asserted the returned order's
+		// payload was blank. That was the in-memory struct only: the row got the
+		// loader's part in a second write after the birth, and a scanner pass
+		// could read the row between the two. The part is now in the INSERT, so
+		// the order and its row both carry it from birth. The carrier is still
+		// generic: the station's projection carries no payload
+		// (TestPinCoreAsk_TheLoaderAskIsBornWithItsPart).
+		if o.PayloadCode != req.PayloadCode {
+			t.Errorf("payload = %q, want the loader's part %q — the ask is the loader's demand for it, written at birth", o.PayloadCode, req.PayloadCode)
 		}
 		if o.Quantity != 1 {
 			t.Errorf("quantity = %d, want 1 — one order, one carrier, one window", o.Quantity)

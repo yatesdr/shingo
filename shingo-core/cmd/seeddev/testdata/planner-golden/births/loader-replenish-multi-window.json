@@ -13,6 +13,7 @@
       "status": "pending",
       "station": "edge1.line1",
       "quantity": 1,
+      "payload": "BRKT",
       "source": "SYN_MARKET",
       "delivery": "PLK_W1",
       "source_intent": "empty",

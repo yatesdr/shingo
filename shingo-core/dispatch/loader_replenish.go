@@ -317,15 +317,6 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 			return res, err
 		}
 		res.Created = append(res.Created, order)
-		// The part the loader asked for goes on the row before its acquire, as
-		// the queue tail wrote it: the empty is generic, but the order is the
-		// loader's demand for this part, and the lead-time readers
-		// (AvgL1QueueSeconds) select on it.
-		if req.PayloadCode != "" && order.PayloadCode == "" {
-			if err := d.db.UpdateOrderPayloadCode(order.ID, req.PayloadCode); err != nil {
-				d.dbg("loader_replenish: payload code for order %d: %v", order.ID, err)
-			}
-		}
 		d.acquireCoreAsk(order)
 	}
 
@@ -352,6 +343,7 @@ func (d *Dispatcher) admitReplenishOrder(req ReplenishRequest, cfg LoaderRepleni
 		StationID:    req.StationID,
 		SourceNode:   cfg.InboundSource,
 		DeliveryNode: t.NodeName,
+		PayloadCode:  req.PayloadCode,
 		OriginID:     req.OriginID,
 		OriginClass:  req.OriginClass,
 	})
@@ -367,7 +359,7 @@ func (d *Dispatcher) admitReplenishOrder(req ReplenishRequest, cfg LoaderRepleni
 // TWO CALLERS, ONE DOOR. The loader replenishment loop and the maintained-group
 // level keeper both mint retrieve_empty orders nobody on the Edge requested. What
 // they share — the order shape, the admit, the projection, the origin-class rule
-// — is everything except the six fields below, and a second copy of that body is
+// — is everything except the fields below, and a second copy of that body is
 // exactly the drift the order-writer consolidation removed one layer down.
 type CoreAskSpec struct {
 	// UUIDPrefix marks where the order came from, readably, without a join.
@@ -377,10 +369,19 @@ type CoreAskSpec struct {
 	StationID    string
 	SourceNode   string
 	DeliveryNode string
-	// PayloadDesc is the human line on the Edge board card. The carrier is
-	// generic so PayloadCode stays blank (below), which leaves the card with
-	// nothing to render — this is what it renders instead ("empty 45x58x32").
+	// PayloadDesc is the human line on the Edge board card. The station's row
+	// for a Core ask is projected without a payload code (AdmitCoreAsk), which
+	// leaves the card with nothing to render — this is what it renders instead
+	// ("empty 45x58x32").
 	PayloadDesc string
+	// PayloadCode is the part a loader's ask is for, written on Core's row in
+	// the birth's INSERT. The empty carrier is generic, but the order is the
+	// loader's demand for this part: the lead-time readers (AvgL1QueueSeconds)
+	// select on it, and the finder takes the carrier types the part may ride
+	// from it. In the INSERT, not a write after it: a scanner pass outside the
+	// door can read the row between the two and see a payload-less ask. Blank
+	// for the level keeper, whose ask is for a carrier type, not a part.
+	PayloadCode string
 	OriginID    string
 	OriginClass string
 }
@@ -400,10 +401,10 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 		Quantity:     1,
 		SourceNode:   spec.SourceNode,
 		DeliveryNode: spec.DeliveryNode,
-		// No payload code, deliberately. An empty carrier is generic: the part
-		// binds when the loader fills it. Stamping the payload here would tag a
-		// carrier that is supposed to be untagged, and that tag then picks the
-		// robot — the same rule lookupPayloadMeta states from the Edge side.
+		// No payload code on the admitted struct: admission would read the
+		// payload catalog for it (checkOrderRefs), and the part is Core's own
+		// configuration, not a sender's claim to check. It goes in the birth's
+		// Need below, so the INSERT writes it.
 		PayloadCode:  "",
 		PayloadDesc:  spec.PayloadDesc,
 		SourceIntent: SourceIntentForType(OrderTypeRetrieveEmpty),
@@ -437,6 +438,7 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 			Ref:          order.EdgeUUID,
 			Quantity:     order.Quantity,
 			Desc:         order.PayloadDesc,
+			PayloadCode:  spec.PayloadCode,
 			OriginID:     order.OriginID,
 			OriginClass:  order.OriginClass,
 			StationKnows: true,
@@ -453,7 +455,14 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 	// order, so nobody there has a row for it; without the projection the
 	// operator watches a robot arrive at a window with nothing on the board to
 	// say why.
-	d.lifecycle.projectOrder(order)
+	//
+	// PROJECTED GENERIC. The station's row for a Core ask has never carried
+	// the part (the empty is untagged until the loader fills it), so the
+	// projection leaves it off: the part is Core's bookkeeping, and the Edge's
+	// row and the bytes it receives stay as they were.
+	projected := *order
+	projected.PayloadCode = ""
+	d.lifecycle.projectOrder(&projected)
 	return order, nil
 }
 

@@ -15,6 +15,7 @@
       "status": "pending",
       "station": "edge1.line1",
       "quantity": 1,
+      "payload": "SHIM",
       "source": "SYN_MARKET",
       "delivery": "PLK_H1",
       "source_intent": "empty",
