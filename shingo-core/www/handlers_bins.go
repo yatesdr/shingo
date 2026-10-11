@@ -473,9 +473,18 @@ func (h *Handlers) apiBulkBinAction(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, map[string]any{"results": results})
 }
 
-// --- Request transport API ---
+// --- Request move API ---
 
-func (h *Handlers) apiRequestBinTransport(w http.ResponseWriter, r *http.Request) {
+// apiRequestBinMove is the bins page's "Request move": a plain move of this bin
+// to the node picked in the detail panel's Destination list, carried by a robot.
+//
+// It files the move through the Orders page's manual-move door for a named bin
+// (fileBinMove → CreateBinMove, by label), so the order is born by the one
+// builder and every refusal — claimed, locked, a full or disabled destination,
+// the carrier rule, a buried bin with nowhere to park its blockers — is that
+// door's, with its sentence and status. The bins page names the bin by id; the
+// only thing this handler adds is reading its label.
+func (h *Handlers) apiRequestBinMove(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		BinID             int64 `json:"bin_id"`
 		DestinationNodeID int64 `json:"destination_node_id"`
@@ -483,43 +492,16 @@ func (h *Handlers) apiRequestBinTransport(w http.ResponseWriter, r *http.Request
 	if !h.parseJSON(w, r, &req) {
 		return
 	}
-
 	b, err := h.engine.BinService().GetBin(req.BinID)
 	if err != nil {
 		h.jsonError(w, "bin not found", http.StatusNotFound)
 		return
 	}
-	if b.ClaimedBy != nil {
-		h.jsonError(w, fmt.Sprintf("bin is claimed by order %d", *b.ClaimedBy), http.StatusConflict)
-		return
-	}
-	if b.NodeID == nil {
-		h.jsonError(w, "bin has no current location", http.StatusBadRequest)
-		return
-	}
-	if *b.NodeID == req.DestinationNodeID {
-		h.jsonError(w, "bin is already at this location", http.StatusBadRequest)
-		return
-	}
-
-	nodes := h.engine.NodeService()
-	srcNode, err := nodes.GetNode(*b.NodeID)
-	if err != nil {
-		h.jsonError(w, "source node not found", http.StatusNotFound)
-		return
-	}
-	destNode, err := nodes.GetNode(req.DestinationNodeID)
-	if err != nil {
-		h.jsonError(w, "destination node not found", http.StatusNotFound)
-		return
-	}
-
-	// Create a manual move order using the existing manual order infrastructure
-	h.jsonOK(w, map[string]any{
-		"message": fmt.Sprintf("Transport requested: %s → %s", srcNode.Name, destNode.Name),
-		"bin_id":  b.ID,
-		"from":    srcNode.Name,
-		"to":      destNode.Name,
+	h.fileBinMove(w, engine.BinMoveRequest{
+		Selection:  engine.BinSelectionByLabel,
+		BinLabel:   b.Label,
+		DestNodeID: req.DestinationNodeID,
+		StationID:  "core-operator",
 	})
 }
 

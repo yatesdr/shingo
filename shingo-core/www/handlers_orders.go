@@ -987,7 +987,7 @@ func (h *Handlers) readBackManualOrder(w http.ResponseWriter, orderUUID string) 
 // lost race reported as a server fault, the missing creation history. They are
 // one function now, and this is the adapter for one of its two input shapes.
 func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, deliveryNode, desc string, priority int, orderUUID string) {
-	result, err := h.orchestration.CreateBinMove(engine.BinMoveRequest{
+	h.fileBinMove(w, engine.BinMoveRequest{
 		Selection:    engine.BinSelectionByLabel,
 		BinLabel:     binLabel,
 		DestNodeName: deliveryNode,
@@ -996,6 +996,16 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 		Priority:     priority,
 		Desc:         desc,
 	})
+}
+
+// fileBinMove files one named bin's move through the one bin-move door
+// (CreateBinMove) and answers with the order as acquiring left it. It is the
+// tail every person's bin-move button shares — the Orders page's "Retrieve
+// Specific Bin" and the bins page's "Request move" — so each refuses what the
+// door refuses, with the door's sentence and status, and none keeps a private
+// answer of its own.
+func (h *Handlers) fileBinMove(w http.ResponseWriter, req engine.BinMoveRequest) {
+	result, err := h.orchestration.CreateBinMove(req)
 	if err != nil {
 		h.jsonError(w, err.Error(), binMoveStatus(err))
 		return
@@ -1009,12 +1019,14 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 			"order_id":     result.OrderID,
 			"status":       protocol.StatusQueued,
 			"queue_reason": result.QueueReason,
+			"to":           result.ToNode,
 		})
 		return
 	}
 	h.jsonOK(w, map[string]any{
 		"order_id": result.OrderID,
 		"status":   protocol.StatusDispatched,
+		"to":       result.ToNode,
 	})
 }
 

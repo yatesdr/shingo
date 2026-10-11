@@ -19,8 +19,8 @@ import (
 //
 //   - apiBulkBinAction: the size guard (1..100), locked-bin skip (action !=
 //     "unlock"), and per-bin error reporting structure.
-//   - apiRequestBinTransport: claim-guard (409), node-presence guards, and
-//     the happy-path response shape.
+//   - apiRequestBinMove (was apiRequestBinTransport): claim-guard (409),
+//     node-presence guards, and the happy-path response shape.
 
 // bulkResp mirrors the envelope emitted by apiBulkBinAction.
 type bulkResp struct {
@@ -31,11 +31,11 @@ type bulkResp struct {
 	} `json:"results"`
 }
 
-// transportResp mirrors the envelope emitted by apiRequestBinTransport.
+// transportResp mirrors the envelope emitted by apiRequestBinMove (fileBinMove,
+// the manual-move door's answer).
 type transportResp struct {
-	Message string `json:"message"`
-	BinID   int64  `json:"bin_id"`
-	From    string `json:"from"`
+	OrderID int64  `json:"order_id"`
+	Status  string `json:"status"`
 	To      string `json:"to"`
 	Error   string `json:"error"`
 }
@@ -190,15 +190,21 @@ func TestApiBulkBinAction_BinNotFoundAppearsInResults(t *testing.T) {
 // --- apiRequestBinTransport -------------------------------------------------
 
 // TestApiRequestBinTransport_HappyPath pins the happy-path envelope:
-// un-claimed bin with a known source + destination node returns 200 with a
-// message like "Transport requested: SRC → DST".
+// un-claimed bin with a known source + destination node returns 200 naming the
+// order filed and where it goes.
+//
+// CONVERTED (D1 certification §4 item 1): it pinned {bin_id, from, to, message
+// "Transport requested: SRC → DST"} from a handler that filed no order. The
+// handler now files the move through the manual-move door, whose answer is the
+// order (order_id, status, to); the order row itself is pinned by
+// TestRequestBinMove_FilesAMoveOrderThroughTheManualMoveDoor.
 func TestApiRequestBinTransport_HappyPath(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-TRANSPORT-OK")
 
-	rec := postJSON(t, h.apiRequestBinTransport, "/api/bin/transport",
+	rec := postJSON(t, h.apiRequestBinMove, "/api/bins/request-move",
 		map[string]any{
 			"bin_id":              bin.ID,
 			"destination_node_id": sd.LineNode.ID,
@@ -209,15 +215,11 @@ func TestApiRequestBinTransport_HappyPath(t *testing.T) {
 
 	var resp transportResp
 	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
-	if resp.BinID != bin.ID {
-		t.Errorf("bin_id: got %d, want %d", resp.BinID, bin.ID)
+	if resp.OrderID == 0 {
+		t.Error("response should name the order filed")
 	}
-	if resp.From != sd.StorageNode.Name || resp.To != sd.LineNode.Name {
-		t.Errorf("from/to: got %q/%q, want %q/%q",
-			resp.From, resp.To, sd.StorageNode.Name, sd.LineNode.Name)
-	}
-	if resp.Message == "" {
-		t.Error("response message should be populated")
+	if resp.To != sd.LineNode.Name {
+		t.Errorf("to: got %q, want %q", resp.To, sd.LineNode.Name)
 	}
 }
 
@@ -228,7 +230,7 @@ func TestApiRequestBinTransport_BinNotFoundReturns404(t *testing.T) {
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
-	rec := postJSON(t, h.apiRequestBinTransport, "/api/bin/transport",
+	rec := postJSON(t, h.apiRequestBinMove, "/api/bins/request-move",
 		map[string]any{"bin_id": 9999999, "destination_node_id": sd.LineNode.ID})
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status: got %d, want 404; body=%s", rec.Code, rec.Body.String())
@@ -254,7 +256,7 @@ func TestApiRequestBinTransport_ClaimedBinReturns409(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(priorOrder), "create prior order")
 	testdb.ClaimBinForTest(t, db, bin.ID, priorOrder.ID)
 
-	rec := postJSON(t, h.apiRequestBinTransport, "/api/bin/transport",
+	rec := postJSON(t, h.apiRequestBinMove, "/api/bins/request-move",
 		map[string]any{"bin_id": bin.ID, "destination_node_id": sd.LineNode.ID})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status: got %d, want 409; body=%s", rec.Code, rec.Body.String())
@@ -275,7 +277,7 @@ func TestApiRequestBinTransport_NoNodeReturns400(t *testing.T) {
 	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-TRANSPORT-NONODE", Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(bin), "create orphan bin")
 
-	rec := postJSON(t, h.apiRequestBinTransport, "/api/bin/transport",
+	rec := postJSON(t, h.apiRequestBinMove, "/api/bins/request-move",
 		map[string]any{"bin_id": bin.ID, "destination_node_id": sd.LineNode.ID})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400; body=%s", rec.Code, rec.Body.String())
@@ -291,24 +293,29 @@ func TestApiRequestBinTransport_SameLocationReturns400(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-TRANSPORT-SAME")
 
-	rec := postJSON(t, h.apiRequestBinTransport, "/api/bin/transport",
+	rec := postJSON(t, h.apiRequestBinMove, "/api/bins/request-move",
 		map[string]any{"bin_id": bin.ID, "destination_node_id": sd.StorageNode.ID})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
 }
 
-// TestApiRequestBinTransport_UnknownDestinationReturns404 pins the
+// TestApiRequestBinTransport_UnknownDestinationReturns400 pins the
 // destination-not-found branch.
-func TestApiRequestBinTransport_UnknownDestinationReturns404(t *testing.T) {
+//
+// CONVERTED (D1 certification §4 item 1): 404 → 400. The move now goes through
+// the manual-move door, which calls naming a node that does not exist the
+// caller's mistake (BinMoveBadRequest), as the Orders page answers it
+// (TestBinMove_BothDoorsCallAMistypedNodeABadRequest).
+func TestApiRequestBinTransport_UnknownDestinationReturns400(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-TRANSPORT-NODEST")
 
-	rec := postJSON(t, h.apiRequestBinTransport, "/api/bin/transport",
+	rec := postJSON(t, h.apiRequestBinMove, "/api/bins/request-move",
 		map[string]any{"bin_id": bin.ID, "destination_node_id": 9999999})
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status: got %d, want 404; body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
 }

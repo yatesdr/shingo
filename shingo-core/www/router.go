@@ -500,7 +500,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				r.Post("/bins/bulk-register", h.apiBulkRegisterBins)
 				r.Post("/bins/action", h.apiBinAction)
 				r.Post("/bins/bulk-action", h.apiBulkBinAction)
-				r.Post("/bins/request-transport", h.apiRequestBinTransport)
+				r.Post("/bins/request-move", h.apiRequestBinMove)
 
 				// Node groups
 				r.Post("/nodegroup/create", h.apiCreateNodeGroup)

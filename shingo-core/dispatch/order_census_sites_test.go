@@ -150,7 +150,7 @@ func TestCensus_PersonDoors(t *testing.T) {
 	sameSites(t, "the Core UI's person doors", got, map[string]string{
 		"www/handlers_orders.go:apiManualOrderSubmit":             "Edge wire intake: the manual order form (retrieve, retrieve_empty, move)",
 		"www/handlers_orders.go:submitSpotComplexOrder":           "complex intake: a spot complex order",
-		"www/handlers_orders.go:submitSpotRetrieveSpecific":       "bin move: retrieve a named bin to a node",
+		"www/handlers_orders.go:fileBinMove":                      "bin move: a named bin to a node (the Orders page's Retrieve Specific Bin, the bins page's Request move)",
 		"www/handlers_test_orders_direct.go:apiDirectOrderSubmit": "bin move: the /test-orders direct form",
 		"www/handlers_test_orders_direct.go:dispatchComplex":      "complex intake: the /test-orders direct swap forms",
 		"www/handlers_test_orders_kafka.go:apiTestOrderSubmit":    "Edge wire intake, over the bus: the /test-orders Kafka form",

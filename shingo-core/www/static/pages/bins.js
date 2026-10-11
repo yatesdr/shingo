@@ -488,7 +488,7 @@ async function renderActions(data) {
   });
   html += '</select></div>';
   html += '<button class="btn btn-sm" data-action="moveBin">Move</button>';
-  html += '<button class="btn btn-sm" data-action="requestTransport">Request Transport</button>';
+  html += '<button class="btn btn-sm" data-action="requestMove">Request Move</button>';
   html += '</div></div>';
 
   // Record Count
@@ -644,14 +644,24 @@ function moveBin() {
   runBinAction('move', { node_id: nodeId }, ['bd-move-node']);
 }
 
-function requestTransport() {
+// requestMove is "Request Move": a robot carries this bin to the node picked in
+// Destination, as a plain move order filed through the manual-move door the
+// Orders page uses for a named bin. "Move" beside it records a move made by
+// hand and sends no robot. A refusal shows the door's sentence unchanged.
+function requestMove() {
   var nodeId = parseInt(document.getElementById('bd-move-node').value);
   if (!nodeId) { toast('Select a destination', 'info'); return; }
   if (currentBinData && currentBinData.bin.node_id && nodeId === currentBinData.bin.node_id) {
     toast('Bin is already at this location', 'info'); return;
   }
-  apiPost('/api/bins/request-transport', { bin_id: currentBinId, destination_node_id: nodeId })
-    .then(function(data) { toast(data.message || 'Transport requested', 'info'); openBinDetail(currentBinId); refreshBinRow(currentBinId); })
+  apiPost('/api/bins/request-move', { bin_id: currentBinId, destination_node_id: nodeId })
+    .then(function(data) {
+      var msg = 'Move #' + data.order_id + ' to ' + (data.to || 'the destination') + ' requested (' + data.status + ')';
+      if (data.queue_reason) msg += ': ' + data.queue_reason;
+      toast(msg, 'info');
+      openBinDetail(currentBinId);
+      refreshBinRow(currentBinId);
+    })
     .catch(function(e) { toast('Error: ' + (e.error || e), 'error'); });
 }
 
@@ -659,8 +669,8 @@ function requestTransport() {
 // recovery action, which sends the bin on a robot back to where a claim
 // declares it is used from — the same chooser the cancel-return watch uses.
 //
-// THE ONLY ACTION ON THIS PAGE THAT PUTS A ROBOT IN MOTION, which is why the
-// answer is shown rather than swallowed. On success the detail names the
+// ONE OF THE TWO ACTIONS ON THIS PAGE THAT PUT A ROBOT IN MOTION (Request Move
+// is the other), which is why the answer is shown rather than swallowed. On success the detail names the
 // destination and which declaration chose it; on refusal the sentence the
 // server returns is shown UNCHANGED — "AMR-09 is not dispatchable, the plant
 // has taken it out of the pool" is already written for a person, and
@@ -775,7 +785,7 @@ async function bulkAction(action) {
 
 // refreshBinRow reads one bin without history and repaints its row. Only the
 // callers whose answer does not carry the bin use it (Return, Request
-// Transport); an action's answer is painted directly.
+// Move); an action's answer is painted directly.
 function refreshBinRow(id) {
   readBin(id, false)
     .then(paintBinRow)
@@ -1287,7 +1297,7 @@ delegateActions(document.body, {
     openEditBTModal,
     previewBinLabels,
     recordCount,
-    requestTransport,
+    requestMove,
     switchTab,
     toggleAllBins,
     toggleBinTypesAccordion,
