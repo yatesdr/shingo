@@ -382,7 +382,11 @@ func TestExecuteBinAction_LoadPayload_AnnouncesOnceAsAPerson(t *testing.T) {
 
 	btRaw, err := db.GetBinTypeByCode("DEFAULT")
 	bt := testutil.Must(t, btRaw, err, `db.GetBinTypeByCode("DEFAULT")`)
-	nodeID := sd.StorageNode.ID
+	// CONVERTED (Lane 0 item 5): the bin stood at STORAGE-A1, where the load was
+	// broadcast. It is now addressed like the landing (not sent at storage), so
+	// the bin stands at the line seat a station claims.
+	nodeID := sd.LineNode.ID
+	claimSeatFor(t, db, "stn-www", sd.LineNode.Name)
 	cleanBin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-LOAD-BIND-1", NodeID: &nodeID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(cleanBin), "create clean bin")
 	freshRaw, err := db.GetBin(cleanBin.ID)
@@ -437,7 +441,10 @@ func TestExecuteBinAction_Clear_AnnouncesOnceAsAPerson(t *testing.T) {
 
 	btRaw, err := db.GetBinTypeByCode("DEFAULT")
 	bt := testutil.Must(t, btRaw, err, `db.GetBinTypeByCode("DEFAULT")`)
-	nodeID := sd.StorageNode.ID
+	// CONVERTED (Lane 0 item 5): as the load test above, the bin stands at a
+	// seat a station claims, where the clear is still announced.
+	nodeID := sd.LineNode.ID
+	claimSeatFor(t, db, "stn-www", sd.LineNode.Name)
 	loadedBin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-CLEAR-ONCE-1", NodeID: &nodeID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(loadedBin), "create bin")
 	madeRaw, err := db.GetBin(loadedBin.ID)

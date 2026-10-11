@@ -234,6 +234,11 @@ func TestPlantClaimsPublisher_BuildProcessReportShape(t *testing.T) {
 	if len(s0.Claims) != 2 {
 		t.Errorf("style 0 claims = %d, want 2 — the manual_swap loader claim must be excluded: %+v", len(s0.Claims), s0.Claims)
 	}
+	// Excluded from the claims, the loader's seat is still named, so Core can
+	// address a landing there to this station (Lane 0 item 6, D9).
+	if !reflect.DeepEqual(got.Positions, []string{"LOADER-1"}) {
+		t.Errorf("positions = %v, want [LOADER-1] — the excluded loader claim's seat", got.Positions)
+	}
 	if len(s1.Claims) != 3 || s1.Claims[0].CoreNodeName != "N-0" ||
 		s1.Claims[1].CoreNodeName != "A-FIRST" || s1.Claims[2].CoreNodeName != "N-1" {
 		t.Fatalf("style 1 claim order = %v, want [N-0 A-FIRST N-1] (sequence, then core_node_name — not insertion order)", claimNodes(s1.Claims))

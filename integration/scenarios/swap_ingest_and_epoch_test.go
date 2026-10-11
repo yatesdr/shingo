@@ -31,6 +31,7 @@ import (
 	corebins "shingocore/store/bins"
 	corenodes "shingocore/store/nodes"
 	coreorders "shingocore/store/orders"
+	coreplantclaims "shingocore/store/plantclaims"
 	coreharness "shingocore/testharness"
 	"shingocore/uop"
 
@@ -234,6 +235,17 @@ func TestScenario_StaleEpochDeltaDroppedAndRecordedAfterRelease(t *testing.T) {
 	}
 	if err := coreDB.CreateBin(bin); err != nil {
 		t.Fatalf("create bin: %v", err)
+	}
+	// CONVERTED (Lane 0 item 5): a bump's announcement is addressed like the
+	// landing, to the station that claims the seat; LINE-1 was claimed by nobody
+	// on a plant with no registered Edge, so it went to nobody. The station the
+	// release order names claims it.
+	if _, err := coreDB.ReplacePlantClaimsFromStation("SCN-EPOCH-PROC", "edge.test",
+		[]coreplantclaims.StyleRow{{ProcessID: "SCN-EPOCH-PROC", StyleID: "S1", IsActive: true}},
+		[]coreplantclaims.ClaimRow{{ProcessID: "SCN-EPOCH-PROC", StyleID: "S1",
+			CoreNodeName: sd.LineNode.Name, Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSequential}},
+		nil, 0); err != nil {
+		t.Fatalf("mirror: edge.test claims %s: %v", sd.LineNode.Name, err)
 	}
 
 	consume := func(epoch int64, delta int, seq int64) error {

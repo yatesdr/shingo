@@ -82,7 +82,7 @@ func seedStationPlant(t *testing.T, db *store.DB) (binID int64) {
 		_, err := plantclaims.ReplaceProcessFromStation(db.DB, p.process, p.station,
 			[]plantclaims.StyleRow{{ProcessID: p.process, StyleID: "S1"}},
 			[]plantclaims.ClaimRow{{ProcessID: p.process, StyleID: "S1", CoreNodeName: storageNode.Name, PayloadCode: "BIN-A"}},
-			0)
+			nil, 0)
 		testutil.MustNoErr(t, err, "seed "+p.process)
 	}
 	return bin.ID
@@ -166,7 +166,7 @@ func TestSourcingFeed_EachStationGetsItsOwnProcesses(t *testing.T) {
 
 	// PRESS-B's style disappears: a delta cannot say so, so edge-b gets a
 	// snapshot now, without it.
-	_, err = plantclaims.ReplaceProcessFromStation(db.DB, "PRESS-B", "edge-b", nil, nil, 0)
+	_, err = plantclaims.ReplaceProcessFromStation(db.DB, "PRESS-B", "edge-b", nil, nil, nil, 0)
 	testutil.MustNoErr(t, err, "withdraw PRESS-B's styles")
 	since = outboxMax(t, db)
 	m.recomputeAll()
@@ -200,12 +200,12 @@ func TestPlantClaims_TheLastPublishingStationIsKept(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	style := []plantclaims.StyleRow{{ProcessID: "SNF9", StyleID: "S1"}}
-	prev, err := plantclaims.ReplaceProcessFromStation(db.DB, "SNF9", "edge-a", style, nil, 0)
+	prev, err := plantclaims.ReplaceProcessFromStation(db.DB, "SNF9", "edge-a", style, nil, nil, 0)
 	testutil.MustNoErr(t, err, "first publish")
 	if prev != "" {
 		t.Fatalf("first publish reported previous station %q, want none", prev)
 	}
-	prev, err = plantclaims.ReplaceProcessFromStation(db.DB, "SNF9", "edge-b", style, nil, 0)
+	prev, err = plantclaims.ReplaceProcessFromStation(db.DB, "SNF9", "edge-b", style, nil, nil, 0)
 	testutil.MustNoErr(t, err, "second station publishes the same process")
 	if prev != "edge-a" {
 		t.Fatalf("second publish reported previous station %q, want edge-a (so the ingest can name both)", prev)

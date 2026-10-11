@@ -109,6 +109,64 @@ func ListStylesByProcess(db *sql.DB, processID int64) ([]Style, error) {
 	return scanStyles(rows)
 }
 
+// scanFunc adapts a function to the Scan interface scanStyle reads, so a query
+// that selects the style columns plus more can still scan them in one place.
+type scanFunc func(dest ...any) error
+
+func (f scanFunc) Scan(dest ...any) error { return f(dest...) }
+
+// positionSep separates the names ListStylesAndPositionsByProcess packs into
+// one column (the ASCII unit separator, char(31), which no node name carries).
+const positionSep = "\x1f"
+
+// ListStylesAndPositionsByProcess is ListStylesByProcess plus the process's
+// positions: the core node names of its live process_nodes that no live,
+// non-manual_swap claim on a live style of the process names, as its own node
+// or a paired one. Those are the seats the process binds at that its claims do
+// not tell Core about — loader windows and homes and FG drains, which are
+// process_nodes served by Loader.SynthClaim with no claim row.
+//
+// ONE statement, for the plant-claims publisher: the positions ride the styles
+// read as one uncorrelated scalar column (evaluated once), because the
+// publisher builds every process's report on every heartbeat's reconcile and a
+// separate read would be one more statement per process per heartbeat on the
+// Pi. A process with no live style returns no rows, and so no positions: its
+// report carries no styles either, and Core drops its mirror.
+func ListStylesAndPositionsByProcess(db *sql.DB, processID int64) ([]Style, []string, error) {
+	rows, err := db.Query(`SELECT `+styleSelectColumns+`,
+		COALESCE((SELECT group_concat(core_node_name, char(31)) FROM (
+			SELECT DISTINCT n.core_node_name FROM process_nodes n
+			 WHERE n.process_id = ?1 AND`+liveNodes+` AND n.core_node_name <> ''
+			   AND NOT EXISTS (SELECT 1 FROM style_node_claims WHERE`+liveClaims+`
+			          AND swap_mode <> 'manual_swap'
+			          AND n.core_node_name IN (core_node_name, paired_core_node, second_paired_core_node)
+			          AND style_id IN (SELECT id FROM styles WHERE process_id = ?1 AND`+liveStyles+`)))), '')
+		FROM styles WHERE process_id = ?1 AND`+liveStyles+` ORDER BY name`, processID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	var styles []Style
+	var packed string
+	withPositions := scanFunc(func(dest ...any) error { return rows.Scan(append(dest, &packed)...) })
+	for rows.Next() {
+		s, err := scanStyle(withPositions)
+		if err != nil {
+			return nil, nil, err
+		}
+		styles = append(styles, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	var positions []string
+	if packed != "" {
+		positions = strings.Split(packed, positionSep)
+		slices.Sort(positions)
+	}
+	return styles, positions, nil
+}
+
 // GetStyleByName looks up a single LIVE style by name.
 //
 // PICKER-side: name is an ingress key, and a retired style must not resolve

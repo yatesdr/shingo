@@ -25,10 +25,11 @@ type Execer interface {
 // up with something that changes generations and tells nobody — which is the
 // state both plants were in.
 //
-// Broadcast, not point-to-point: the station modelling the node applies the
-// message and every other station no-ops. Core does not try to pre-resolve
-// which station owns a node — the same choice already made for node-structure
-// changes and the cycle-count correction.
+// Point-to-point: every sender addresses the station behind the carrier. The
+// lifecycle announcements (a reset's bump, a count) were broadcast, and every
+// Edge that does not model the node parsed each one and logged "process node
+// not found"; they now go by the landing's address rule
+// (service.announceLifecycle), so there is no broadcast sender left.
 type EpochAnnounce struct {
 	// Topic is the dispatch topic the outbox row is written to. Empty means
 	// unwired; senders log rather than swallow.
@@ -40,16 +41,11 @@ type EpochAnnounce struct {
 // Wired reports whether this announcer can send.
 func (a EpochAnnounce) Wired() bool { return a.Topic != "" }
 
-// Send enqueues a broadcast Core→Edge message on ex — a *sql.Tx to make it
-// commit with the work that caused it.
-func (a EpochAnnounce) Send(ex Execer, subject string, payload any) error {
-	return EnqueueDataToEdge(ex, a.Topic, subject, a.CoreStation, protocol.StationBroadcast, payload)
-}
-
-// SendTo enqueues a Core→Edge message addressed to one station on ex. The
-// landing (Lane H, H.3) and the refresh (§9.4) know which station is behind
-// the carrier, so they say so instead of broadcasting: the other stations
-// would only parse it and drop it.
+// SendTo enqueues a Core→Edge message addressed to one station on ex — a
+// *sql.Tx to make it commit with the work that caused it. The landing (Lane H,
+// H.3), the refresh (§9.4) and the lifecycle announcements (Lane 0 item 5) know
+// which station is behind the carrier, so they say so instead of broadcasting:
+// the other stations would only parse it and drop it.
 func (a EpochAnnounce) SendTo(ex Execer, subject, station string, payload any) error {
 	return EnqueueDataToEdge(ex, a.Topic, subject, a.CoreStation, station, payload)
 }

@@ -3,6 +3,7 @@ package messaging
 import (
 	"fmt"
 	"log"
+	"slices"
 	"sync"
 	"time"
 
@@ -36,7 +37,8 @@ import (
 // joiners: Core persists the mirror on every message, and a snapshot rebuilds
 // it from scratch. Loaders/unloaders (manual_swap claims) are EXCLUDED here —
 // they enter the computation as pool supply/demand via the loader aggregate,
-// never as style claims.
+// never as style claims. Their seats travel as the report's Positions, which
+// Core reads only to address a landing or an announcement to this station.
 type PlantClaimsPublisher struct {
 	db        *store.DB
 	stationID string
@@ -217,8 +219,12 @@ func (p *PlantClaimsPublisher) buildProcess(proc processes.Process) ([]byte, err
 // describes) and stamps its Digest, so every path that publishes it — and
 // ReconcileClaims, which compares it with what Core quotes back — carries the
 // digest of exactly the value sent.
+//
+// Positions (the seats no claim names: loader windows and homes, FG drains)
+// come back with the styles read, so a report is still two reads; a legacy
+// manual_swap claim row's node joins them, since its claim is not published.
 func (p *PlantClaimsPublisher) reportFor(proc processes.Process) (protocol.PlantClaimsReport, error) {
-	styles, err := processes.ListStylesByProcess(p.db.DB, proc.ID)
+	styles, positions, err := processes.ListStylesAndPositionsByProcess(p.db.DB, proc.ID)
 	if err != nil {
 		return protocol.PlantClaimsReport{}, err
 	}
@@ -245,7 +251,10 @@ func (p *PlantClaimsPublisher) reportFor(proc processes.Process) (protocol.Plant
 		}
 		for _, c := range claimsByStyle[st.ID] {
 			if c.IsLoaderNode() {
-				continue // loaders/unloaders excluded — pool, not claims
+				// loaders/unloaders excluded — pool, not claims; the seat is
+				// still named, for addressing
+				positions = append(positions, c.CoreNodeName)
+				continue
 			}
 			wire.Claims = append(wire.Claims, protocol.PlantClaim{
 				CoreNodeName:           c.CoreNodeName,
@@ -276,6 +285,10 @@ func (p *PlantClaimsPublisher) reportFor(proc processes.Process) (protocol.Plant
 			})
 		}
 		report.Styles = append(report.Styles, wire)
+	}
+	if len(positions) > 0 {
+		slices.Sort(positions)
+		report.Positions = slices.Compact(positions)
 	}
 	return withDigest(report)
 }

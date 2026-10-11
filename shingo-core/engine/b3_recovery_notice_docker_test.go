@@ -131,7 +131,7 @@ func twoEdgePark(t *testing.T, prefix string, claim bool) (projectsTo string, no
 		_, err := db.ReplacePlantClaimsFromStation("PROC-B-"+prefix, "edge.b",
 			[]plantclaims.StyleRow{{ProcessID: "PROC-B-" + prefix, StyleID: "S1", ConfigGen: 1}},
 			[]plantclaims.ClaimRow{{ProcessID: "PROC-B-" + prefix, StyleID: "S1", CoreNodeName: child.Name,
-				Role: protocol.ClaimRoleConsume}}, 0)
+				Role: protocol.ClaimRoleConsume}}, nil, 0)
 		testutil.MustNoErr(t, err, "claims mirror")
 	}
 	return recoverInto(t, eng, db, binID, child)

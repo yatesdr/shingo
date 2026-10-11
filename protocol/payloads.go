@@ -1753,7 +1753,8 @@ type BinEpochRefresh struct {
 //
 // Loaders/unloaders are EXCLUDED here — a manual_swap claim never appears in
 // Claims. They enter the computation as pool supply/demand via the loader
-// aggregate, not as style claims.
+// aggregate, not as style claims. Their seats are named in Positions, for
+// addressing only.
 //
 // Value schema is ADDITIVE-only. Future fields append with omitempty; an
 // older Core ignores unknown fields (forward-compatible), and an older Core
@@ -1781,6 +1782,14 @@ type PlantClaimsReport struct {
 	// lost or out-of-order report is noticed and re-sent. Absent from an older
 	// Edge.
 	Digest string `json:"digest,omitempty"`
+	// Positions are the core node names, sorted and de-duplicated, where this
+	// process binds carriers that no claim in Styles names: its loader windows
+	// and homes and its FG drains (a Core-owned loader has no claim row on the
+	// Edge). Core mirrors them so the landing's address read finds this station
+	// at those seats. omitempty: a process with none encodes, and digests,
+	// exactly as before the field existed, so no Edge republishes on upgrade
+	// for nothing; the digest carries the field, so a change re-sends it.
+	Positions []string `json:"positions,omitempty"`
 }
 
 // PlantClaimsStyle is one style of a process in a PlantClaimsReport.

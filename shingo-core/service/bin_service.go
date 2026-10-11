@@ -481,7 +481,7 @@ func (s *BinService) RecordCount(b *bins.Bin, actualUOP int, actor string) (*Cou
 	}
 	defer tx.Rollback()
 
-	epoch, nodeName, err := bins.RecordCount(tx, b.ID, actualUOP, actor)
+	epoch, nodeName, addr, err := bins.RecordCount(tx, b.ID, actualUOP, actor)
 	if err != nil {
 		return nil, fmt.Errorf("record count bin %d: %w", b.ID, err)
 	}
@@ -507,7 +507,7 @@ func (s *BinService) RecordCount(b *bins.Bin, actualUOP int, actor string) (*Cou
 			return nil, fmt.Errorf("audit over-capacity count bin %d: %w", b.ID, err)
 		}
 	}
-	if err := s.announceCount(tx, b.ID, nodeName, actualUOP, epoch, actor, fence); err != nil {
+	if err := s.announceCount(tx, b.ID, nodeName, addr, actualUOP, epoch, actor, fence); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -570,7 +570,11 @@ func countFence(tx *sql.Tx, binID, epoch int64) (countFenceValue, error) {
 //
 // The line door used to announce nothing and the bins page announced after the
 // commit; see www binRecordCount and apiBinCount.
-func (s *BinService) announceCount(tx *sql.Tx, binID int64, nodeName string, n int, epoch int64, actor string, f countFenceValue) error {
+//
+// It is addressed as bumpEpoch's announcement is (announceLifecycle): the
+// landing's rule for a placement with no order, the address read by the
+// count's own UPDATE (bins.RecordCount), +0 statements.
+func (s *BinService) announceCount(tx *sql.Tx, binID int64, nodeName string, addr bins.LifecycleAddress, n int, epoch int64, actor string, f countFenceValue) error {
 	if nodeName == "" || s.manifest == nil {
 		return nil
 	}
@@ -579,7 +583,7 @@ func (s *BinService) announceCount(tx *sql.Tx, binID int64, nodeName string, n i
 			"the stations modelling the node keep their old count", binID, nodeName)
 		return nil
 	}
-	if err := s.manifest.announce.Send(tx, protocol.SubjectUOPAdjustment, &protocol.UOPAdjustment{
+	if err := announceLifecycle(s.manifest.announce, tx, addr, "count", &protocol.UOPAdjustment{
 		BinID:        binID,
 		CoreNodeName: nodeName,
 		NewRemaining: n,

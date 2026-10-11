@@ -69,12 +69,16 @@ func consumeDelta(binID, epoch, seq int64, delta int) *protocol.BinUOPDelta {
 func TestRecordCount_SameEpochDeltaAfterTheCountAppliesOnTop(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	sd := testdb.SetupStandardData(t, db)
+	testdb.SetupStandardData(t, db)
 	manifest := announcingService(db)
 	bins := NewBinService(db, manifest)
 	deltas := NewInventoryDeltaService(db, manifest, EpochAnnounce{Topic: announceTopic, CoreStation: "core.test"})
 
-	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-P0F", "PART-A", 100)
+	// CONVERTED (Lane 0 item 5): the bin stood at STORAGE-A1, a STOR node, where
+	// the announcement was broadcast. It is now addressed like the landing and a
+	// storage node is not sent, so the bin stands at a seat pinStation claims.
+	seat := ownedSeat(t, db, "SEAT-P0F", pinStation)
+	bin := createTestBin(t, db, seat.ID, "BIN-P0F", "PART-A", 100)
 	epoch := binEpoch(t, db, bin.ID)
 
 	// The Edge's first window lands normally: 100 -> 90.
@@ -133,7 +137,11 @@ func TestSyncUOPAndClaim_StartsANewGenerationAndAnnouncesIt(t *testing.T) {
 	manifest := announcingService(db)
 	deltas := NewInventoryDeltaService(db, manifest, EpochAnnounce{Topic: announceTopic, CoreStation: "core.test"})
 
-	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SYNC", "PART-A", 100)
+	// CONVERTED (Lane 0 item 5): the bin stood at STORAGE-A1, a STOR node, where
+	// the announcement was broadcast. It is now addressed like the landing and a
+	// storage node is not sent, so the bin stands at a seat pinStation claims.
+	seat := ownedSeat(t, db, "SEAT-SYNC", pinStation)
+	bin := createTestBin(t, db, seat.ID, "BIN-SYNC", "PART-A", 100)
 	order := createTestOrder(t, db, sd.LineNode.ID)
 	epoch := binEpoch(t, db, bin.ID)
 
@@ -152,9 +160,9 @@ func TestSyncUOPAndClaim_StartsANewGenerationAndAnnouncesIt(t *testing.T) {
 		t.Fatalf("outbox holds %d announcements for the sync, want 1: a bump nobody hears about "+
 			"leaves the station stamping deltas with a retired epoch", len(adj))
 	}
-	if adj[0].Epoch != epoch+1 || adj[0].NewRemaining != 37 || adj[0].CoreNodeName != sd.StorageNode.Name {
+	if adj[0].Epoch != epoch+1 || adj[0].NewRemaining != 37 || adj[0].CoreNodeName != seat.Name {
 		t.Errorf("announcement = {epoch %d, remaining %d, node %q}, want {epoch %d, remaining 37, node %q}",
-			adj[0].Epoch, adj[0].NewRemaining, adj[0].CoreNodeName, epoch+1, sd.StorageNode.Name)
+			adj[0].Epoch, adj[0].NewRemaining, adj[0].CoreNodeName, epoch+1, seat.Name)
 	}
 	if !protocol.IsLifecycleActor(adj[0].Actor) {
 		t.Errorf("announcement actor = %q, want a lifecycle actor: a dispatch claim is nobody "+

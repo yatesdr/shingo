@@ -71,25 +71,29 @@ func binTypeCodeInTx(tx *sql.Tx, id int64) string {
 
 // bumpEpochRaw increments a bin's delta_epoch inside the caller's tx and
 // returns the new generation, the bin's count as it stands after the caller's
-// own UPDATE, and the node the bin is at (empty when it is at none).
+// own UPDATE, the node the bin is at (empty when it is at none), and where the
+// announcement may go (bins.LifecycleAddressSQL).
 //
 // Not to be called directly — bumpEpoch is the entry point, and the census
 // test in store/audit holds that. Bumping without announcing is the defect
 // this whole change exists to remove, and the two must not be separable.
 //
-// The count and the node come back from the SAME statement as the bump so the
-// announcement cannot carry a mismatched pair. Every reset path writes an
-// absolute uop_remaining in the UPDATE immediately before this one, inside the
-// same transaction, so the value read here is the one that reset just wrote.
-func bumpEpochRaw(tx *sql.Tx, binID int64) (epoch int64, remaining int, nodeName string, err error) {
+// The count, the node and the address come back from the SAME statement as the
+// bump so the announcement cannot carry a mismatched pair, and addressing it
+// costs no statement. Every reset path writes an absolute uop_remaining in the
+// UPDATE immediately before this one, inside the same transaction, so the
+// value read here is the one that reset just wrote.
+func bumpEpochRaw(tx *sql.Tx, binID int64) (epoch int64, remaining int, nodeName string, addr bins.LifecycleAddress, err error) {
+	addrDest, address := bins.ScanLifecycleAddress()
 	if err := tx.QueryRow(
 		`UPDATE bins SET delta_epoch=delta_epoch+1 WHERE id=$1
 		 RETURNING delta_epoch, uop_remaining,
-		           COALESCE((SELECT n.name FROM nodes n WHERE n.id = bins.node_id), '')`,
-		binID).Scan(&epoch, &remaining, &nodeName); err != nil {
-		return 0, 0, "", fmt.Errorf("bump delta_epoch bin %d: %w", binID, err)
+		           COALESCE((SELECT n.name FROM nodes n WHERE n.id = bins.node_id), ''),
+		           `+bins.LifecycleAddressSQL,
+		binID).Scan(append([]any{&epoch, &remaining, &nodeName}, addrDest...)...); err != nil {
+		return 0, 0, "", bins.LifecycleAddress{}, fmt.Errorf("bump delta_epoch bin %d: %w", binID, err)
 	}
-	return epoch, remaining, nodeName, nil
+	return epoch, remaining, nodeName, address(), nil
 }
 
 // bumpEpoch ends a bin's current life, starts the next one, and tells the
@@ -128,8 +132,15 @@ func bumpEpochRaw(tx *sql.Tx, binID int64) (epoch int64, remaining int, nodeName
 // drives are indistinguishable here from the two a machine drives. Passing it
 // is the call site being asked the question; see protocol.Declarer for why it
 // is not the audit actor.
+//
+// Where it goes is the landing's rule for a placement with no order
+// (announceLifecycle; Lane 0 item 5): not to a place no station binds at, to
+// the one station that claims the seat, to nobody when several do, and to
+// every registered Edge (the last arm) when none does. It used to go to every
+// Edge, and an Edge that does not model the node parsed it and logged "process
+// node not found".
 func (s *BinManifestService) bumpEpoch(tx *sql.Tx, binID int64, by protocol.Declarer) (int64, error) {
-	epoch, remaining, nodeName, err := bumpEpochRaw(tx, binID)
+	epoch, remaining, nodeName, addr, err := bumpEpochRaw(tx, binID)
 	if err != nil {
 		return 0, err
 	}
@@ -146,7 +157,7 @@ func (s *BinManifestService) bumpEpoch(tx *sql.Tx, binID int64, by protocol.Decl
 			binID, epoch, nodeName)
 		return epoch, nil
 	}
-	if err := s.announce.Send(tx, protocol.SubjectUOPAdjustment, &protocol.UOPAdjustment{
+	if err := announceLifecycle(s.announce, tx, addr, "epoch", &protocol.UOPAdjustment{
 		BinID:        binID,
 		CoreNodeName: nodeName,
 		NewRemaining: remaining,

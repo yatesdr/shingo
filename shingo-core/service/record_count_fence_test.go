@@ -26,12 +26,16 @@ func netDelta(binID, epoch, seq int64, delta int, net int64) *protocol.BinUOPDel
 func countWithFenceFixture(t *testing.T, label string) (*BinService, *InventoryDeltaService, int64, int64, string) {
 	t.Helper()
 	db := testDB(t)
-	sd := testdb.SetupStandardData(t, db)
+	testdb.SetupStandardData(t, db)
 	manifest := announcingService(db)
 	bins := NewBinService(db, manifest)
 	deltas := NewInventoryDeltaService(db, manifest, EpochAnnounce{Topic: announceTopic, CoreStation: "core.test"})
-	bin := createTestBin(t, db, sd.StorageNode.ID, label, "PART-A", 100)
-	return bins, deltas, bin.ID, binEpoch(t, db, bin.ID), sd.StorageNode.Name
+	// CONVERTED (Lane 0 item 5): the bin stood at STORAGE-A1, a STOR node, where
+	// the announcement was broadcast. It is now addressed like the landing and a
+	// storage node is not sent, so the bin stands at a seat pinStation claims.
+	seat := ownedSeat(t, db, "SEAT-"+label, pinStation)
+	bin := createTestBin(t, db, seat.ID, label, "PART-A", 100)
+	return bins, deltas, bin.ID, binEpoch(t, db, bin.ID), seat.Name
 }
 
 func TestRecordCount_AnnouncesTheCountWithTheStationsCursor(t *testing.T) {

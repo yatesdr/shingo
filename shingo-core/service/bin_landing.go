@@ -8,6 +8,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/store"
+	"shingocore/store/bins"
 	"shingocore/store/orders"
 	"shingocore/store/plantclaims"
 )
@@ -35,14 +36,16 @@ import (
 //   - a place no station binds at (p.NotASeat: synthetic, STOR, a lane or
 //     group slot): not sent;
 //   - else the stations whose processes claim the node in the mirror (its own
-//     position or a paired one): exactly one → to it;
+//     position or a paired one, or a position the process publishes: a loader
+//     window or home, an FG drain; plantclaims.ClaimingStationsSQL): exactly
+//     one → to it;
 //   - several, and the order's station is one of them → to it; several and
 //     it is not → not sent (a guess binds a carrier at the wrong Edge);
 //   - none, and the order has a station → the order's station
 //     (materialStation's spelling);
-//   - none, and no order station (an admin move onto a loader or FG seat: the
-//     Edge's publisher skips manual_swap claims, so the mirror never names
-//     them) → THE LAST ARM: the plant's only Edge, or every Edge when there
+//   - none, and no order station (an admin move onto a seat no Edge publishes;
+//     loader and FG seats are published as positions, so about never) → THE
+//     LAST ARM: the plant's only Edge, or every Edge when there
 //     are several, each addressed. An Edge that does not model the node drops
 //     it (HandleBinLanded). Expected about 0 a run; logged per landing
 //     ("bin_landing: last arm") and counted in soakstat [S.4].
@@ -152,6 +155,57 @@ func landingStations(addr plantclaims.LandingAddress) []plantclaims.AddressedSta
 		return nil
 	}
 	return []plantclaims.AddressedStation{addr.Order}
+}
+
+// announceLifecycle writes a lifecycle announcement (a generation bump's, a
+// count's) on tx, addressed by the landing's rule for a placement with no
+// order (Lane 0 item 5; RULINGS-C2c-certification §4.1): addr is what the
+// bump's or count's own UPDATE read (bins.LifecycleAddressSQL), and the rule
+// is landingStations, the landing's, so the two cannot drift.
+//
+//   - not a seat (storage, synthetic, a lane or group slot): not sent;
+//   - exactly one station claims the node (a claim or a position): to it;
+//   - several claim it: nobody (no order station to decide);
+//   - none claims it: the last arm, every registered Edge, each addressed;
+//     logged per announcement ("bin_landing: last arm") so soakstat [S.4]
+//     counts it with the landings' last arm.
+//
+// Cost: +0 statements (the address rides the caller's UPDATE); one outbox row
+// per station addressed. It used to be one broadcast row, parsed by every Edge
+// and logged as "process node not found" by each that does not model the node.
+func announceLifecycle(ann EpochAnnounce, tx *sql.Tx, addr bins.LifecycleAddress, what string, adj *protocol.UOPAdjustment) error {
+	sts, lastArm := lifecycleStations(addr)
+	if lastArm && len(sts) > 0 {
+		log.Printf("bin_landing: last arm (%s) — bin %d at %s: no station claims it and no order; "+
+			"sent to %d Edge(s)", what, adj.BinID, adj.CoreNodeName, len(sts))
+	}
+	for _, st := range sts {
+		if err := ann.SendTo(tx, protocol.SubjectUOPAdjustment, st.StationID, adj); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// lifecycleStations is landingStations for a placement with no order: the
+// stations addr names, and whether they are the last arm's.
+func lifecycleStations(addr bins.LifecycleAddress) ([]plantclaims.AddressedStation, bool) {
+	if addr.NotASeat {
+		return nil, false
+	}
+	la := plantclaims.LandingAddress{Claiming: addressed(addr.Claiming)}
+	if len(la.Claiming) == 0 {
+		la.Plant = addressed(addr.Plant)
+	}
+	return landingStations(la), len(la.Claiming) == 0
+}
+
+func addressed(stations []string) []plantclaims.AddressedStation {
+	out := make([]plantclaims.AddressedStation, 0, len(stations))
+	for _, st := range stations {
+		out = append(out, plantclaims.AddressedStation{StationID: st})
+	}
+	return out
 }
 
 // LandingHook is the landing verb as a placement hook for the store-level

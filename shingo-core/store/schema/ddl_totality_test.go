@@ -47,6 +47,7 @@ var migrationOnlyTables = map[string]string{
 	"order_intake_refusals":       "added by v115 — the pair legs Core refused at intake. A refused request leaves no order row, so the partner naming one could not tell refused from not-received-yet; the pair rule reads this when the partner's row is absent",
 	"parts":                       "added by v107 — a part under both of the names it is known by, the part number CMS books against and the cat id a cell's PLC declares. It is a table rather than two columns on payload_manifest because a cat id belongs to the PART, not to the line that mentions it, and because a foreign key from the line is the one guard that cannot be forgotten at a door",
 	"process_styles":              "added by a numbered migration after the baseline was frozen",
+	"process_positions":           "added by v152 — the seats a process binds at that no claim names (loader windows and homes, FG drains), mirrored from plant.claims for addressing only",
 	"reservations":                "added by a numbered migration after the baseline was frozen",
 	"robot_confidence_daily":      "added by v77 — the permanent per-robot residual roll-up",
 	"robot_confidence_low":        "added by v77 — the long-retention low-confidence forensic trail",

@@ -4421,7 +4421,36 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "bins", "lifted_at")
 			}},
+
+		{152, "process_positions — the seats a process binds at that no claim names (loader windows and homes, FG drains), so a landing there is addressed to its station",
+			v152ProcessPositions,
+			func(q schema.Querier) bool { return schema.TableExists(q, "process_positions") }},
 	}
+}
+
+// v152ProcessPositions creates the positions mirror (Lane 0 item 6; C2c
+// DECISIONS D9, D30; DESIGN-H §4 S1). A loader window or home, or an FG drain,
+// is an Edge process_node with no claim, so the claims mirror named no station
+// there and a landing or announcement at it with no order station fell to the
+// last arm (every Edge). plant.claims now carries the process's Positions;
+// plantclaims.ReplaceProcessFromStation replaces these rows with the process's
+// others, and plantclaims.ClaimingStationsSQL reads them with the claims. The
+// station is the process's process_styles.station_id, not repeated here.
+// Indexed by node for the address read.
+func v152ProcessPositions(tx *sql.Tx) error {
+	for _, s := range []string{
+		`CREATE TABLE IF NOT EXISTS process_positions (
+			process_id     TEXT NOT NULL,
+			core_node_name TEXT NOT NULL,
+			PRIMARY KEY (process_id, core_node_name)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_process_positions_node ON process_positions(core_node_name)`,
+	} {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v152 process_positions: %w", err)
+		}
+	}
+	return nil
 }
 
 // v151BinLiftedAt adds bins.lifted_at (Lane H, DECISIONS D11). The lift of a

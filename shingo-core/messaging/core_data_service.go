@@ -753,7 +753,7 @@ func (s *CoreDataService) HandlePlantClaims(env *protocol.Envelope, report *prot
 	if env != nil {
 		station = env.Src.Station
 	}
-	previous, err := s.db.ReplacePlantClaimsFromStation(report.ProcessID, station, styles, claims, report.ConfigGen)
+	previous, err := s.db.ReplacePlantClaimsFromStation(report.ProcessID, station, styles, claims, report.Positions, report.ConfigGen)
 	if err != nil {
 		log.Printf("core_handler: plant.claims mirror %s: %v", report.ProcessID, err)
 		return
@@ -764,8 +764,8 @@ func (s *CoreDataService) HandlePlantClaims(env *protocol.Envelope, report *prot
 			"keeping %s's (the last writer). A process belongs to one station: fix the plant spec on one of them",
 			report.ProcessID, previous, station, station)
 	}
-	log.Printf("core_handler: plant.claims mirrored %s: %d styles, %d claims (config_gen=%d)",
-		report.ProcessID, len(styles), len(claims), report.ConfigGen)
+	log.Printf("core_handler: plant.claims mirrored %s: %d styles, %d claims, %d positions (config_gen=%d)",
+		report.ProcessID, len(styles), len(claims), len(report.Positions), report.ConfigGen)
 }
 
 // StartDowntimeProjection launches the async downtime_events projection worker

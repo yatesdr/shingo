@@ -334,7 +334,7 @@ func TestRecordCount_And_UnconfirmManifest(t *testing.T) {
 	testutil.MustNoErr(t, bins.ConfirmManifest(db.DB, bin.ID, ""), "bins.ConfirmManifest")
 
 	t.Run("RecordCount_updates_uop_and_actor", func(t *testing.T) {
-		_, _, err := bins.RecordCount(db.DB, bin.ID, 73, "operator-1")
+		_, _, _, err := bins.RecordCount(db.DB, bin.ID, 73, "operator-1")
 		testutil.MustNoErr(t, err, "bins.RecordCount")
 		got, _ := bins.Get(db.DB, bin.ID)
 		if got.UOPRemaining != 73 {

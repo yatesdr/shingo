@@ -16,10 +16,11 @@ func (db *DB) ReplacePlantClaims(processID string, styles []plantclaims.StyleRow
 }
 
 // ReplacePlantClaimsFromStation is ReplacePlantClaims recording the publishing
-// station; it returns the station the mirror named before (see
+// station and the report's positions; it returns the station the mirror named
+// before (see
 // plantclaims.ReplaceProcessFromStation).
-func (db *DB) ReplacePlantClaimsFromStation(processID, stationID string, styles []plantclaims.StyleRow, claims []plantclaims.ClaimRow, staleGuardConfigGen int64) (string, error) {
-	return plantclaims.ReplaceProcessFromStation(db.DB, processID, stationID, styles, claims, staleGuardConfigGen)
+func (db *DB) ReplacePlantClaimsFromStation(processID, stationID string, styles []plantclaims.StyleRow, claims []plantclaims.ClaimRow, positions []string, staleGuardConfigGen int64) (string, error) {
+	return plantclaims.ReplaceProcessFromStation(db.DB, processID, stationID, styles, claims, positions, staleGuardConfigGen)
 }
 
 // ProcessStations maps each process to the station that published it. See

@@ -1863,15 +1863,18 @@ func RecoverToNode(db *sql.DB, binID, toNodeID int64, onPlaced helpers.OnPlaced)
 // new value". That stopped being true when bumpEpoch began announcing every
 // bump; it was never the reason that holds.)
 //
-// Returns the bin's delta_epoch and the name of the node it is at ("" when at
-// none), read in the same statement, so the caller's announcement and cursor
-// read name the generation this count was written into.
-func RecordCount(db RecordCountQuerier, binID int64, actualUOP int, actor string) (epoch int64, nodeName string, err error) {
+// Returns the bin's delta_epoch, the name of the node it is at ("" when at
+// none) and where the count's announcement may go (LifecycleAddressSQL), read
+// in the same statement, so the caller's announcement and cursor read name the
+// generation this count was written into and the address costs no statement.
+func RecordCount(db RecordCountQuerier, binID int64, actualUOP int, actor string) (epoch int64, nodeName string, addr LifecycleAddress, err error) {
+	addrDest, address := ScanLifecycleAddress()
 	err = db.QueryRow(`UPDATE bins SET uop_remaining=$1, last_counted_at=$4, last_counted_by=$2,
 		anomaly_at=NULL, updated_at=$4 WHERE id=$3
-		RETURNING delta_epoch, COALESCE((SELECT n.name FROM nodes n WHERE n.id = bins.node_id), '')`,
-		actualUOP, actor, binID, clock.Now().UTC()).Scan(&epoch, &nodeName)
-	return epoch, nodeName, err
+		RETURNING delta_epoch, COALESCE((SELECT n.name FROM nodes n WHERE n.id = bins.node_id), ''),
+		`+LifecycleAddressSQL,
+		actualUOP, actor, binID, clock.Now().UTC()).Scan(append([]any{&epoch, &nodeName}, addrDest...)...)
+	return epoch, nodeName, address(), err
 }
 
 // RecordCountQuerier is the minimal interface satisfied by *sql.DB and

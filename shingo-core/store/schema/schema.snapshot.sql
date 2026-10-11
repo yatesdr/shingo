@@ -984,6 +984,11 @@ CREATE TABLE public.plant_confidence_daily (
     lane_robot_rows integer DEFAULT 0 NOT NULL
 );
 
+CREATE TABLE public.process_positions (
+    process_id text NOT NULL,
+    core_node_name text NOT NULL
+);
+
 CREATE TABLE public.process_styles (
     process_id text NOT NULL,
     style_id text NOT NULL,
@@ -1683,6 +1688,9 @@ ALTER TABLE ONLY public.plant_claims_reports
 ALTER TABLE ONLY public.plant_confidence_daily
     ADD CONSTRAINT plant_confidence_daily_pkey PRIMARY KEY (day);
 
+ALTER TABLE ONLY public.process_positions
+    ADD CONSTRAINT process_positions_pkey PRIMARY KEY (process_id, core_node_name);
+
 ALTER TABLE ONLY public.process_styles
     ADD CONSTRAINT process_styles_pkey PRIMARY KEY (process_id, style_id);
 
@@ -1853,6 +1861,8 @@ CREATE INDEX idx_payload_manifest_part ON public.payload_manifest USING btree (p
 CREATE INDEX idx_payload_manifest_payload ON public.payload_manifest USING btree (payload_id);
 
 CREATE UNIQUE INDEX idx_payload_manifest_payload_part ON public.payload_manifest USING btree (payload_id, part_number);
+
+CREATE INDEX idx_process_positions_node ON public.process_positions USING btree (core_node_name);
 
 CREATE INDEX idx_recovery_actions_created ON public.recovery_actions USING btree (created_at);
 

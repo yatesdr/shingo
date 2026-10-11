@@ -86,7 +86,7 @@ func TestPinH2_AFinalDropAtAClaimedSeatEnqueuesOneLandingToTheClaimingStation(t 
 	_, err := db.ReplacePlantClaimsFromStation("proc-h2", station,
 		[]plantclaims.StyleRow{{ProcessID: "proc-h2", StyleID: "style-h2", IsActive: true}},
 		[]plantclaims.ClaimRow{{ProcessID: "proc-h2", StyleID: "style-h2", CoreNodeName: sd.LineNode.Name,
-			Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSimple, PayloadCode: "PART-A", UOPCapacity: 100}}, 0)
+			Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSimple, PayloadCode: "PART-A", UOPCapacity: 100}}, nil, 0)
 	testutil.MustNoErr(t, err, "mirror: the station claims the line seat")
 	registerEdgeSchema(t, db, station, protocol.EdgeSchemaBinLanded)
 
@@ -154,7 +154,7 @@ func TestPinH2_TwoArrivalsGetIncreasingPlacementStamps(t *testing.T) {
 	_, err := db.ReplacePlantClaimsFromStation("proc-h2b", "edge-h2b.line",
 		[]plantclaims.StyleRow{{ProcessID: "proc-h2b", StyleID: "s", IsActive: true}},
 		[]plantclaims.ClaimRow{{ProcessID: "proc-h2b", StyleID: "s", CoreNodeName: sd.LineNode.Name,
-			Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSimple, PayloadCode: "PART-A"}}, 0)
+			Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSimple, PayloadCode: "PART-A"}}, nil, 0)
 	testutil.MustNoErr(t, err, "mirror")
 	registerEdgeSchema(t, db, "edge-h2b.line", protocol.EdgeSchemaBinLanded)
 
@@ -219,7 +219,7 @@ func TestPinH7_AnOldEdgeGetsTodaysWireAddressed(t *testing.T) {
 	_, err := db.ReplacePlantClaimsFromStation("proc-h7", station,
 		[]plantclaims.StyleRow{{ProcessID: "proc-h7", StyleID: "s", IsActive: true}},
 		[]plantclaims.ClaimRow{{ProcessID: "proc-h7", StyleID: "s", CoreNodeName: sd.LineNode.Name,
-			Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSimple, PayloadCode: "PART-A"}}, 0)
+			Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSimple, PayloadCode: "PART-A"}}, nil, 0)
 	testutil.MustNoErr(t, err, "mirror")
 	registerEdgeSchema(t, db, station, protocol.EdgeSchemaBinLanded-1)
 

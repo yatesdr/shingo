@@ -66,10 +66,14 @@ func outboxAdjustments(t *testing.T, db *store.DB, binID int64) []protocol.UOPAd
 func TestSetForProduction_AnnouncesTheNewGenerationOnce(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	sd := testdb.SetupStandardData(t, db)
+	testdb.SetupStandardData(t, db)
 	svc := announcingService(db)
 
-	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-ANN-1", "", 0)
+	// CONVERTED (Lane 0 item 5): the bin stood at STORAGE-A1, a STOR node, where
+	// the announcement was broadcast. It is now addressed like the landing and a
+	// storage node is not sent, so the bin stands at a seat pinStation claims.
+	seat := ownedSeat(t, db, "SEAT-ANN-1", pinStation)
+	bin := createTestBin(t, db, seat.ID, "BIN-ANN-1", "", 0)
 
 	epoch, err := svc.SetForProduction(bin.ID, `{"items":[{"catid":"PART-A","qty":40}]}`, "PART-A", 40, protocol.DeclaredByLifecycle)
 	if err != nil {
@@ -91,9 +95,9 @@ func TestSetForProduction_AnnouncesTheNewGenerationOnce(t *testing.T) {
 			"carries its number; the count and the generation come from the same write",
 			got.NewRemaining)
 	}
-	if got.CoreNodeName != sd.StorageNode.Name {
+	if got.CoreNodeName != seat.Name {
 		t.Errorf("announced node = %q, want %q — nothing can apply a message it cannot address",
-			got.CoreNodeName, sd.StorageNode.Name)
+			got.CoreNodeName, seat.Name)
 	}
 }
 
@@ -109,10 +113,14 @@ func TestSetForProduction_AnnouncesTheNewGenerationOnce(t *testing.T) {
 func TestSetForProduction_AnnouncementRollsBackWithTheReset(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	sd := testdb.SetupStandardData(t, db)
+	testdb.SetupStandardData(t, db)
 	svc := announcingService(db)
 
-	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-ANN-2", "", 0)
+	// CONVERTED (Lane 0 item 5): the bin stood at STORAGE-A1, a STOR node, where
+	// the announcement was broadcast. It is now addressed like the landing and a
+	// storage node is not sent, so the bin stands at a seat pinStation claims.
+	seat := ownedSeat(t, db, "SEAT-ANN-2", pinStation)
+	bin := createTestBin(t, db, seat.ID, "BIN-ANN-2", "", 0)
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -138,10 +146,14 @@ func TestSetForProduction_AnnouncementRollsBackWithTheReset(t *testing.T) {
 func TestClearForReuse_AnnouncesTheNewGeneration(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	sd := testdb.SetupStandardData(t, db)
+	testdb.SetupStandardData(t, db)
 	svc := announcingService(db)
 
-	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-ANN-3", "PART-A", 100)
+	// CONVERTED (Lane 0 item 5): the bin stood at STORAGE-A1, a STOR node, where
+	// the announcement was broadcast. It is now addressed like the landing and a
+	// storage node is not sent, so the bin stands at a seat pinStation claims.
+	seat := ownedSeat(t, db, "SEAT-ANN-3", pinStation)
+	bin := createTestBin(t, db, seat.ID, "BIN-ANN-3", "PART-A", 100)
 
 	epoch, err := svc.ClearForReuse(bin.ID, nil, protocol.DeclaredByLifecycle)
 	if err != nil {

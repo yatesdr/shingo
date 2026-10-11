@@ -8,9 +8,11 @@ import (
 	"strconv"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/plantclaims"
 )
 
 // The two doors that write a counted number (SYNTH-round2 S7, V6): the
@@ -28,6 +30,20 @@ func seedCursor(t *testing.T, db *store.DB, station string, binID, epoch, seq, n
 	testutil.MustNoErr(t, err, "seed cursor")
 }
 
+// claimSeatFor records station as claiming node in the plant-claims mirror, as
+// its plant.claims report would. A count's or a reset's announcement is
+// addressed like the landing (Lane 0 item 5): to the station that claims the
+// seat, and not at all at a storage node.
+func claimSeatFor(t *testing.T, db *store.DB, station, node string) {
+	t.Helper()
+	process := "PROC-" + station
+	_, err := db.ReplacePlantClaimsFromStation(process, station,
+		[]plantclaims.StyleRow{{ProcessID: process, StyleID: process + "-RUN", IsActive: true}},
+		[]plantclaims.ClaimRow{{ProcessID: process, StyleID: process + "-RUN", CoreNodeName: node,
+			Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSequential, UOPCapacity: 100}}, nil, 0)
+	testutil.MustNoErr(t, err, "mirror: "+station+" claims "+node)
+}
+
 // TestAdminCount_BroadcastsCoresNumberFenced is the inverted
 // TestPin_AdminCount_BroadcastsCoresNumberUnfenced. The bins-page count used to
 // enqueue its broadcast after the transaction, with nothing to say which of the
@@ -36,7 +52,12 @@ func seedCursor(t *testing.T, db *store.DB, station string, binID, epoch, seq, n
 // exactly one message (the door's own after-commit send is gone).
 func TestAdminCount_BroadcastsCoresNumberFenced(t *testing.T) {
 	t.Parallel()
-	h, db, _, bin := setupBinForAction(t)
+	h, db, sd, _ := setupBinForAction(t)
+	// CONVERTED (Lane 0 item 5): the bin stood at STORAGE-A1, where the count was
+	// broadcast. It is now addressed like the landing (not sent at storage), so
+	// the bin stands at the line seat the counting station claims.
+	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.LineNode.ID, "BIN-ADMIN-COUNT")
+	claimSeatFor(t, db, "stn-www", sd.LineNode.Name)
 	seedCursor(t, db, "stn-www", bin.ID, bin.DeltaEpoch, 4, -12)
 
 	testutil.MustNoErr(t, h.executeBinAction(bin, "record_count",
@@ -70,11 +91,15 @@ func TestLineCount_BroadcastsFencedAndRepliesWithTheFence(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
-	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-LINE-COUNT")
+	// CONVERTED (Lane 0 item 5): the bin stood at STORAGE-A1, where the count was
+	// broadcast. It is now addressed like the landing (not sent at storage), so
+	// the bin stands at the line seat the counting station claims.
+	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.LineNode.ID, "BIN-LINE-COUNT")
+	claimSeatFor(t, db, "stn-line", sd.LineNode.Name)
 	seedCursor(t, db, "stn-line", bin.ID, bin.DeltaEpoch, 9, -30)
 
 	rec := postJSON(t, h.apiBinCount, "/api/telemetry/bin-count", map[string]any{
-		"node_name": sd.StorageNode.Name, "actual_uop": 7, "actor": "line-operator",
+		"node_name": sd.LineNode.Name, "actual_uop": 7, "actor": "line-operator",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d, body %s", rec.Code, rec.Body.String())

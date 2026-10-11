@@ -53,7 +53,7 @@ func mixedCore(t *testing.T) (*coreengine.Engine, *harness.Bus, *edgeharness.Edg
 			[]coreplantclaims.StyleRow{{ProcessID: p.process, StyleID: "S1"}},
 			[]coreplantclaims.ClaimRow{{ProcessID: p.process, StyleID: "S1",
 				CoreNodeName: sd.StorageNode.Name, PayloadCode: sd.Payload.Code}},
-			0); err != nil {
+			nil, 0); err != nil {
 			t.Fatalf("mirror %s: %v", p.process, err)
 		}
 	}

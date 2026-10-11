@@ -94,6 +94,10 @@ func TestRelease_UnfencedReleaseStillBumps(t *testing.T) {
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	manifest := announcingService(db)
+	// CONVERTED (Lane 0 item 5): the announcement is addressed like the landing,
+	// and LINE-1 was claimed by no station on a plant with no registered Edge, so
+	// it went to nobody; pinStation claims the seat.
+	claimSeat(t, db, "PROC-NOFENCE", pinStation, sd.LineNode.Name)
 
 	for _, tc := range []struct {
 		label string
