@@ -152,7 +152,11 @@ type SystemUOPForPayloadResult struct {
 // Lifecycle filter on bins is SystemBinCount's (outOfLoopFilterSQL) — bins in
 // flagged, maintenance, or retired status are excluded
 // (preserves the 2026-05-11 SNF2 fix semantics: production can't rely
-// on those bins so they don't count as loop inventory).
+// on those bins so they don't count as loop inventory). A carrier stamped
+// undeclared_carrier_at is excluded too: nothing can fetch it. Every caller
+// is reorder-facing (the threshold monitor's decision, the replenishment-health
+// rollup, the sourceability loader sample), so all three agree with the
+// decision.
 //
 // Empty payload codes in the request are rejected.
 func (s *InventoryService) SystemUOPForPayload(ctx context.Context, payloads []string) (SystemUOPForPayloadResult, error) {
@@ -187,11 +191,17 @@ func (s *InventoryService) SystemUOPForPayload(ctx context.Context, payloads []s
 	}
 	in := string(placeholders)
 
-	// Bin sum. Same lifecycle filter as SystemBinCount.
+	// Bin sum. Same lifecycle filter as SystemBinCount, and one more predicate:
+	// a carrier stamped undeclared_carrier_at holds parts no sourcing reader
+	// will ever fetch (BinSourceableSQL refuses it), so they are not stock the
+	// reorder level can wait on. Counting them is what held a loader's total at
+	// its threshold while the part left the plant (D33). The carrier still
+	// counts on SystemBinCount and on /material-flags, where a person finds it.
 	binQuery := `SELECT payload_code, COALESCE(SUM(uop_remaining), 0) AS total
 		FROM bins
 		WHERE payload_code IN (` + in + `)
 		  AND ` + outOfLoopFilterSQL + `
+		  AND undeclared_carrier_at IS NULL
 		GROUP BY payload_code`
 	binRows, err := s.db.QueryContext(ctx, binQuery, args...)
 	if err != nil {

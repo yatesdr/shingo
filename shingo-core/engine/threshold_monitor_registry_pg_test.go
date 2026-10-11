@@ -17,7 +17,9 @@ import (
 	"shingocore/messaging"
 	"shingocore/service"
 	"shingocore/store"
+	"shingocore/store/bins"
 	"shingocore/store/demands"
+	"shingocore/store/payloads"
 )
 
 // TestThresholdMonitor_OnThresholdChanges_FiresImmediatelyWhenBelowThreshold
@@ -667,4 +669,81 @@ func seedBinWithUOP(t *testing.T, db *store.DB, payloadCode string, uop int) {
 		_, err := db.DB.Exec(`UPDATE bins SET payload_code=$1, uop_remaining=$2 WHERE id=$3`, payloadCode, uop, bin.ID)
 		return err
 	}(), "seed bin with uop")
+}
+
+// TestThresholdMonitor_AFlaggedCarrierAtTheLoaderDoesNotHoldOffTheRefill is
+// D33's chain at Core (D1 item 9). A press finishes the part onto a carrier the
+// part may not ride: the write lands and the carrier is flagged
+// undeclared_carrier_at (the lifecycle door, unchanged). No sourcing reader will
+// ever fetch that carrier, so its parts are not stock anything can deliver. They
+// used to count toward the reorder level, and at a threshold equal to the
+// carrier's count the total could never fall below it: the loader never refired
+// and the part left the plant (r7 demo before, orders 445/493/494).
+//
+// The total excludes the flagged carrier, so the place is below its threshold
+// and replenishment fires at 0.
+func TestThresholdMonitor_AFlaggedCarrierAtTheLoaderDoesNotHoldOffTheRefill(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	eng := newTestEngine(t, db, simulator.New())
+	sd := testdb.SetupStandardData(t, db)
+
+	const (
+		stationID = "station-flagged-carrier"
+		payload   = "P-FLAGGED-CARRIER"
+	)
+	loader := sd.LineNode.Name
+
+	fits := &bins.BinType{Code: "FC-FITS"}
+	foreign := &bins.BinType{Code: "FC-FOREIGN"}
+	for _, bt := range []*bins.BinType{fits, foreign} {
+		testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type "+bt.Code)
+	}
+	part := &payloads.Payload{Code: payload, UOPCapacity: 40}
+	testutil.MustNoErr(t, payloads.Create(db.DB, part), "create the part")
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(part.ID, []int64{fits.ID}), "the part rides FC-FITS only")
+
+	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
+		StationID:             stationID,
+		CoreNodeName:          loader,
+		Role:                  protocol.ClaimRoleProduce,
+		PayloadCode:           payload,
+		ReplenishUOPThreshold: 40,
+	}}); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+
+	// The wrong carrier at the loader, finished by the press: lands, flagged.
+	b := &bins.Bin{BinTypeID: foreign.ID, Label: "BIN-FC-WRONG", NodeID: &sd.LineNode.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(b), "the carrier at the loader")
+	testutil.MustNoErr(t, eng.binManifest.RecordProducedBinFromTemplate(b.ID, payload, nil, ""),
+		"the press finishes the part onto it")
+	var flagged bool
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT undeclared_carrier_at IS NOT NULL FROM bins WHERE id=$1`, b.ID).Scan(&flagged),
+		"read the finding")
+	if !flagged {
+		t.Fatal("the press door did not flag the carrier; the chain this pins starts with the flag")
+	}
+
+	fires := captureThresholdFires(t, eng)
+	preCount := fires.count(stationID)
+	eng.thresholdMonitor.OnBinUOPDelta(payload, -1)
+
+	deadline := time.Now().Add(2 * time.Second)
+	var hit *firedBinding
+	for time.Now().Before(deadline) && hit == nil {
+		if fires.count(stationID) > preCount {
+			hit = fires.find(stationID)
+		}
+		if hit == nil {
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	if hit == nil {
+		t.Fatalf("the loader did not refire: the flagged carrier's 40 still count toward a threshold of 40, "+
+			"and nothing can fetch them (outbox=%v)", fires.fired)
+	}
+	if hit.CurrentUOP != 0 {
+		t.Errorf("fired at CurrentUOP %d, want 0: the flagged carrier's parts are not reorder stock", hit.CurrentUOP)
+	}
 }
