@@ -34,8 +34,9 @@ import (
 //
 // A plan never blocks a committed robot. 765 has not been sent: its hold is a
 // plan, re-made on its next pass, and a burial it meets becomes a dig the
-// burial instrument counts. 779 is with the fleet and holds a confirmed slot in
-// the lane: it enters. A store that has not been sent is still refused, which
+// burial instrument counts. 779 is with the fleet and holds a slot in the lane's
+// group — since C2c (D13 F5) paper until its release, not a confirmed slot in the
+// lane: it enters. A store that has not been sent is still refused, which
 // is the naked-target window A.1b closed.
 func TestBurialGuard_APlanNeverBlocksACommittedRobot(t *testing.T) {
 	t.Parallel()
@@ -55,8 +56,12 @@ func TestBurialGuard_APlanNeverBlocksACommittedRobot(t *testing.T) {
 	committed := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.OrderType, o.Status, o.VendorOrderID = "complex", protocol.StatusStaged, "sg-commit-1"
 	})
-	testutil.MustNoErr(t, reservations.AcquireSlot(db.DB, committed.ID, slot2ID, "hand"), "the robot's slot")
-	testutil.MustNoErr(t, reservations.ConfirmSlot(db.DB, committed.ID, slot2ID), "confirmed in its hand")
+	// PAPER, NOT ARMOR (converted with C2c, D13 F5): a gated group drop holds its
+	// pencilled slot as a pending groupRoom row until release, so a robot at the
+	// group's spot holds no confirmed slot anywhere. It is committed because the
+	// fleet has it and it holds a slot row in this lane's group.
+	testutil.MustNoErr(t, reservations.AcquireSlot(db.DB, committed.ID, slot2ID, reservations.GroupRoomTag),
+		"the robot's paper")
 
 	got, err := db.FindStoreSlotInLaneExcluding(laneID, committed.ID)
 	if err != nil {

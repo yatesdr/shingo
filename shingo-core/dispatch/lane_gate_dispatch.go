@@ -60,8 +60,9 @@ import (
 // Inert is the right word for the WAIT: with no mark, nothing dwells and nothing
 // is left un-appended, so the increment is genuinely safe unfinished. It is the
 // wrong word for what the same flag also switches off. The gated arm is the only
-// caller of rebindGatedDropoff, which is the only place a dropoff slot is
-// re-resolved after the order was planned — so "no plant sets a gate mark" also
+// caller of the release-time chooser (releaseStoreCandidate; the in-lane re-bind
+// until C2c), which is the only place a dropoff slot is re-resolved after the
+// order was planned — so "no plant sets a gate mark" also
 // says, without meaning to, that no plant has ever late-bound a dropoff.
 //
 // What an unmarked lane does instead is bind at dispatch and drive. The slot is
@@ -361,6 +362,8 @@ func (d *Dispatcher) spliceLaneWait(steps []resolvedStep, orderID int64) ([]reso
 				Node:     gates[next].target.gatePoint,
 				WaitKind: WaitKindLane,
 				WaitLane: gates[next].target.lane.ID,
+				// The gate key (C2c ruling 4): the group whose pass releases it.
+				WaitGroup: groupIDOf(gates[next].target.lane),
 			})
 			next++
 		}
@@ -472,6 +475,13 @@ func (d *Dispatcher) assertEachWaitGatesItsEntry(steps []resolvedStep) error {
 		lane, err := d.db.LaneForNode(node.ID)
 		if err != nil {
 			return fmt.Errorf("splice: resolve lane for %q: %w", next.Node, err)
+		}
+		if lane == nil && s.WaitLane == 0 && s.WaitGroup != 0 && node.ParentID != nil && *node.ParentID == s.WaitGroup {
+			// RELEASED ONTO A FLAT CHILD OF ITS GROUP (RULINGS-C2c-run-through
+			// §3.2): the robot stood at the group's spot, and the group's chooser
+			// sent it beside the lanes rather than into one. It gates no corridor
+			// now, and names the group it was released by.
+			continue
 		}
 		if lane == nil || lane.ID != s.WaitLane {
 			return fmt.Errorf("splice: the wait at step %d names lane %d but the step after it (%q) "+
@@ -771,15 +781,18 @@ func (d *Dispatcher) afterGatedCreate(order *orders.Order, target laneGateTarget
 	// runs LAST: one lane's mutex is never held while another lane is evaluated.
 	var nextLane int64
 	defer func() {
-		if nextLane != 0 && nextLane != target.lane.ID {
+		if nextLane != 0 {
 			d.EvaluateLaneReleases(nextLane)
 		}
 	}()
-	unlock := d.laneGates.lock(target.lane.ID)
+	// UNDER THE GROUP'S KEY (C2c ruling 4), the one the evaluator takes: one
+	// group's waiters compete for one group's room.
+	groupID := groupIDOf(target.lane)
+	unlock := d.laneGates.lock(groupID)
 	defer unlock()
 
 	// Direction off the plan, exactly as the evaluator reads it.
-	entry, _, isRetrieve, ok := laneEntryAfterWait(plan, 0)
+	entry, entryIdx, isRetrieve, ok := laneEntryAfterWait(plan, 0)
 	if !ok {
 		log.Printf("lane gate: order %d has no actionable step after its wait - leaving staged", order.ID)
 		return vendorOrderID
@@ -788,6 +801,24 @@ func (d *Dispatcher) afterGatedCreate(order *orders.Order, target laneGateTarget
 	if err != nil || entryNode == nil {
 		log.Printf("lane gate: order %d lane entry %q unresolvable (%v) - leaving staged for the evaluator",
 			order.ID, entry.Node, err)
+		return vendorOrderID
+	}
+
+	// THE VALVE IS A RELEASE, AND A STORE'S RELEASE CHOOSES ITS DROP (C2c ruling
+	// 1; D13, P0's premise correction 2). It used to admit and append with no
+	// re-ask at all, so the "release-time oracle" ran only for robots that had
+	// waited. A store goes through the same release the group pass runs.
+	if !isRetrieve {
+		group, gErr := d.db.GetNode(groupID)
+		if gErr != nil || group == nil {
+			log.Printf("lane gate: order %d's group %d unreadable (%v) - leaving staged for the evaluator",
+				order.ID, groupID, gErr)
+			return vendorOrderID
+		}
+		c := gateCandidate{order: order, node: entryNode, lane: target.lane, entryIndex: entryIdx}
+		if _, next, _ := d.releaseStoreCandidate(c, group, nil, nil, 0, nil, "lane gate open"); next != 0 {
+			nextLane = next
+		}
 		return vendorOrderID
 	}
 

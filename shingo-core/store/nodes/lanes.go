@@ -286,8 +286,11 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 		// ── A PLAN NEVER BLOCKS A COMMITTED ROBOT ─────────────────────────
 		//
 		// The requester is committed when the fleet has it and it holds a
-		// confirmed slot in this lane: a robot that may be standing at the
-		// lane's waiting spot with a bin. For it only parties already moving
+		// slot row, paper or armor, in this lane's GROUP: a robot dispatched to
+		// the group's waiting spot with a bin (D13 F5: under C2c a gated group
+		// drop holds paper until release, so "a confirmed slot in this lane"
+		// no longer names a robot at the spot; reservations.SlotInGroupOfLaneSQL
+		// says why the superset). For it only parties already moving
 		// count (ComingForBinCommittedSQL). The demo jam of 2026-10-08 was the
 		// other reading: a never-sent demand's pending hold on the bin its dig
 		// uncovered closed Lane_04 to a press bin at the mark, and the demand
@@ -296,18 +299,7 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 		// A requester that has not been sent still reads all three arms: that
 		// is the naked-target window A.1b closed
 		// (TestBurialGuard_APlanNeverBlocksACommittedRobot).
-		committed := fmt.Sprintf(`EXISTS (SELECT 1 FROM orders req WHERE req.id = $2 AND NOT (%s) AND %s)`,
-			helpers.AwaitingFleetSQL("req"), reservations.ConfirmedSlotInLaneSQL("req.id", "$1"))
-		burial = fmt.Sprintf(`NOT EXISTS (
-			SELECT 1 FROM nodes held
-			JOIN bins held_bin ON held_bin.node_id = held.id
-			JOIN orders holder ON CASE WHEN %s THEN %s ELSE %s END
-			WHERE holder.id <> $2
-			  AND holder.status NOT IN (%s)
-			  AND %s
-		  )`, committed, helpers.ComingForBinCommittedSQL("holder", "held_bin", "held"),
-			helpers.ComingForBinSQL("holder", "held_bin", "held"), protocol.TerminalStatusSQLList(),
-			helpers.ShallowerInSameLane("n", "held"))
+		burial = storeBurialSQL("n", "$1", "$2")
 	}
 	row := db.QueryRow(fmt.Sprintf(`SELECT %s %s
 		WHERE n.parent_id = $1
@@ -383,6 +375,110 @@ func findStoreSlot(db *sql.DB, laneID, excludeOrderID int64, guard bool) (*Node,
 		return nil, fmt.Errorf("no empty slot in lane %d", laneID)
 	}
 	return n, nil
+}
+
+// storeBurialSQL is findStoreSlot's burial clause for the candidate slot at
+// alias, in the lane at laneExpr, asked for the order at ownerExpr: not in
+// front of a bin a live party is coming for, where a committed requester
+// counts only parties already moving (see findStoreSlot for both halves).
+// PaperSlotsInGroup asks the same clause of a slot it offers, so the paper a
+// chooser may take is fenced exactly as a free slot is (C2c ruling 1: the hard
+// rules before anything else).
+func storeBurialSQL(alias, laneExpr, ownerExpr string) string {
+	committed := fmt.Sprintf(`EXISTS (SELECT 1 FROM orders req WHERE req.id = %s AND NOT (%s) AND %s)`,
+		ownerExpr, helpers.AwaitingFleetSQL("req"), reservations.SlotInGroupOfLaneSQL("req.id", laneExpr))
+	return fmt.Sprintf(`NOT EXISTS (
+			SELECT 1 FROM nodes held
+			JOIN bins held_bin ON held_bin.node_id = held.id
+			JOIN orders holder ON CASE WHEN %s THEN %s ELSE %s END
+			WHERE holder.id <> %s
+			  AND holder.status NOT IN (%s)
+			  AND %s
+		  )`, committed, helpers.ComingForBinCommittedSQL("holder", "held_bin", "held"),
+		helpers.ComingForBinSQL("holder", "held_bin", "held"), ownerExpr, protocol.TerminalStatusSQLList(),
+		helpers.ShallowerInSameLane(alias, "held"))
+}
+
+// PaperSlot is one lane slot of a group that is free but for ONE stranger's
+// paper: a pending slot row tagged reservations.GroupRoomTag (C2c ruling 2;
+// D13 F1, the paper anchored on a slot rather than a group row). HolderSent
+// says the fleet has the holder — a committed robot, whose paper an unsent plan
+// never takes (D13 F2). The Holder* rank fields are the demand the holder
+// presents at a rank comparison (orders.LoadDemandRank's columns); this read
+// does not rank.
+type PaperSlot struct {
+	Slot            *Node
+	LaneID          int64
+	Holder          int64
+	HolderSent      bool
+	HolderPriority  int
+	HolderCreatedAt time.Time
+	HolderDemand    int64
+}
+
+// PaperSlotsInGroup returns every lane slot of the group that the store selector
+// would offer owner but for one stranger's groupRoom paper on it: enabled, not
+// synthetic, takeable once that holder's pending row is set aside, reachable
+// from its lane's mouth, and not in front of a bin a live party is coming for —
+// findStoreSlot's predicate, with the holder's promise lifted. Deepest first
+// within each lane. One statement for the whole group.
+//
+// The chooser (plan.Planner.ChooseDrop) asks it only when the group has no free
+// slot, and offers a row only to an asker that may take it: by rank (the asker
+// outranks an unsent holder) or by commitment (the asker is a robot at the
+// group's spot and the holder was never sent). The take itself is the store's
+// (DB.ConfirmReleaseDrop, DB.TakeSlotByRank), re-checked under lock.
+//
+// LANE SLOTS ONLY. A flat group keeps today's moment and its paper is a plain
+// pending row (C2c ruling 5); nothing here offers one.
+func PaperSlotsInGroup(db *sql.DB, groupID, owner int64) ([]PaperSlot, error) {
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s, n.parent_id, hr.order_id, NOT (%s), %s
+		%s
+		JOIN reservations hr ON hr.node_id = n.id AND hr.resource_kind = 'slot'
+		     AND %s AND hr.reserved_by = '%s' AND hr.order_id <> $2
+		JOIN orders ho ON ho.id = hr.order_id
+		LEFT JOIN orders hp ON hp.id = ho.parent_order_id
+		WHERE pn.parent_id = $1
+		  AND n.is_synthetic = false
+		  AND `+helpers.NodeEnabledSQL+`
+		  AND %s
+		  AND %s
+		  AND %s
+		ORDER BY n.parent_id, COALESCE(n.depth, 0) DESC`,
+		SelectCols, helpers.AwaitingFleetSQL("ho"), helpers.DemandRankColumnsSQL("ho", "hp"), FromClause,
+		reservations.BlockingStateSQL("hr."), reservations.GroupRoomTag,
+		slotTakeable("n", "$2", "hr.order_id"), helpers.ReachableSQL("n"),
+		storeBurialSQL("n", "n.parent_id", "$2")), groupID, owner)
+	if err != nil {
+		return nil, fmt.Errorf("paper slots in group %d: %w", groupID, err)
+	}
+	defer rows.Close()
+	var out []PaperSlot
+	for rows.Next() {
+		var p PaperSlot
+		var priority sql.NullInt64
+		var createdAt sql.NullTime
+		var demand sql.NullInt64
+		n, err := ScanNode(withTrailingCols{rows, []any{&p.LaneID, &p.Holder, &p.HolderSent,
+			&priority, &createdAt, &demand}})
+		if err != nil {
+			return nil, fmt.Errorf("scan paper slot in group %d: %w", groupID, err)
+		}
+		p.Slot = n
+		p.HolderPriority, p.HolderCreatedAt, p.HolderDemand = int(priority.Int64), createdAt.Time, demand.Int64
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// withTrailingCols scans a node row followed by extra columns.
+type withTrailingCols struct {
+	row   interface{ Scan(...any) error }
+	extra []any
+}
+
+func (w withTrailingCols) Scan(dest ...any) error {
+	return w.row.Scan(append(dest, w.extra...)...)
 }
 
 // SlotTakeableSQL is the one spelling of "may this order put a bin on this

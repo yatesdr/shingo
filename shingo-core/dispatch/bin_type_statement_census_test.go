@@ -69,8 +69,11 @@ func TestCensus_BinTypeStatements(t *testing.T) {
 			"scanner deferral keeper: runs inside ReserveStorageDropoff, after the source claim"},
 		{"dispatch/store_slot.go", "redirectStoreOffDugLane", "settled",
 			"re-aims an order that already chose a destination, so it holds its bin"},
-		{"dispatch/lane_gate_release.go", "widenDropoffToGroup", "settled",
-			"at the lane gate the order is mid-plan and holds its carrier"},
+		// C2c: the widen (widenDropoffToGroup, "settled": it asked UnknownBinType)
+		// is deleted with the in-lane re-bind; the gate's release now asks the one
+		// chooser with the carried bin's type, and settles only when it is unknown.
+		{"dispatch/lane_gate_choose.go", "carriedType", "known",
+			"at the lane gate the robot carries the bin of the pickup ahead of the drop (binForStep); unknown falls to settleBinType"},
 		{"dispatch/planning_service.go", "planMove", "settled",
 			"runs after CreateInboundOrder, so the order id is real"},
 
@@ -79,6 +82,8 @@ func TestCensus_BinTypeStatements(t *testing.T) {
 		// and every caller is named above with what that is.
 		{"dispatch/plan/destination.go", "StoreDestination", "known",
 			"forwards its caller's statement unchanged; the callers above say what each one knows"},
+		{"dispatch/plan/choose_drop.go", "ChooseDrop", "known",
+			"the one chooser of a drop in a group (C2c ruling 1): forwards its caller's statement unchanged (StepNode, the gate's carriedType)"},
 
 		// NONE — places nothing.
 		{"dispatch/plan/finder.go", "Pick", "none",

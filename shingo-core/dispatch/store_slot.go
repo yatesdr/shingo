@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
+	"shingocore/dispatch/plan"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -166,6 +167,14 @@ func causeForGateRebind(err error) QueueCause {
 // reused (the scanner re-runs this every dispatch tick), so re-acquiring never
 // self-conflicts.
 func claimStoreSlot(db *store.DB, order *orders.Order, node *nodes.Node) error {
+	return claimStoreSlotAs(db, order, node, false)
+}
+
+// claimStoreSlotAs is claimStoreSlot with the row's kind named: paper reserves
+// it as a group drop's paper (reservations.GroupRoomTag, C2c ruling 2), which a
+// rank or a committed robot may take; otherwise the plain reserveSlot row. The
+// same one INSERT either way. A row the order already holds is kept as it is.
+func claimStoreSlotAs(db *store.DB, order *orders.Order, node *nodes.Node, paper bool) error {
 	if node == nil {
 		return fmt.Errorf("store order %d: nil destination node", order.ID)
 	}
@@ -187,7 +196,11 @@ func claimStoreSlot(db *store.DB, order *orders.Order, node *nodes.Node) error {
 	if orderHoldsSlotReservation(db, order.ID, node.ID) {
 		return nil
 	}
-	if err := db.ReserveSlot(node.ID, order.ID); err != nil {
+	reserve := db.ReserveSlot
+	if paper {
+		reserve = db.ReserveGroupRoom
+	}
+	if err := reserve(node.ID, order.ID); err != nil {
 		// ErrReservationConflict here means another store already reserved this
 		// slot — the caller requeues and waits, and that IS contention. A hard DB
 		// error is likewise not safe to dispatch on, but it is a different wait
@@ -248,15 +261,53 @@ func isStorageDropoff(db *store.DB, deliveryNode string) bool {
 // move-to-storage race that previously had only a CheckDropoffCapacity read.
 // The gating is node-driven, NOT type-driven; the inner claimStoreSlot stays the
 // reserve-only exclusivity primitive (never a hard claim). No-op ⇒ nil.
+//
+// A GROUP DROP'S ROW IS THE GROUP'S PAPER (plainGroupDrop): the slot stands in
+// a lane of a group and Core chose it, so the row is tagged GroupRoomTag, and
+// that tag is where the plain path keeps the group it chose from until its plan
+// is written. The node is read once and its parent once (storageDropoffOf),
+// where this read the node three times and the parent once.
 func reserveStorageDropoff(db *store.DB, order *orders.Order) error {
-	if !isStorageDropoff(db, order.DeliveryNode) {
-		return nil // line / consume point / no dest — nothing to reserve
+	if order.DeliveryNode == "" {
+		return nil // no dest — nothing to reserve
 	}
 	node, err := db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil || node == nil {
-		return fmt.Errorf("plain order %d delivery node %q not found: %w", order.ID, order.DeliveryNode, errRead(err))
+		// Not readable is not a storage slot here, as isStorageDropoff answered
+		// it; the caller's settle-read reports it with the order's id.
+		return nil
 	}
-	return claimStoreSlot(db, order, node)
+	storage, lane := storageDropoffOf(db, node)
+	if !storage {
+		return nil // line / consume point — nothing to reserve
+	}
+	return claimStoreSlotAs(db, order, node, plainGroupDrop(order, lane))
+}
+
+// storageDropoffOf is isStorageDropoff for a node already in hand, and the lane
+// the node stands in (nil for a flat child or a top-level node): one read, the
+// parent's. A storage dropoff is a STOR node or a child of a LANE or an NGRP,
+// exactly isStorageDropoff's union; an unreadable parent answers as
+// isConcreteStorageDropoff did, not concrete.
+func storageDropoffOf(db *store.DB, node *nodes.Node) (storage bool, lane *nodes.Node) {
+	if node == nil || node.IsSynthetic {
+		return false, nil
+	}
+	stor := node.NodeTypeCode == protocol.NodeClassSTOR
+	if node.ParentID == nil {
+		return stor, nil
+	}
+	parent, err := db.GetNode(*node.ParentID)
+	if err != nil || parent == nil {
+		return stor, nil
+	}
+	switch parent.NodeTypeCode {
+	case protocol.NodeClassLANE:
+		return true, parent
+	case protocol.NodeClassNGRP:
+		return true, nil
+	}
+	return stor, nil
 }
 
 // ReserveStorageDropoff is the Dispatcher-surface (interface) entrypoint the
@@ -290,12 +341,32 @@ func (d *Dispatcher) ReserveStorageDropoff(order *orders.Order) StorageDropoff {
 		// wait for that one slot: the winner's bin lands there, and a storage slot
 		// can stay full for good while the group has room. Aimed at the group
 		// again, the next pass resolves afresh. One update, only on this path.
-		if resolved && errors.Is(err, ErrSlotContended) {
-			if uErr := d.db.UpdateOrderDeliveryNode(order.ID, asked); uErr != nil {
-				log.Printf("dispatch: order %d lost slot %s and could not be aimed back at %s: %v",
-					order.ID, order.DeliveryNode, asked, uErr)
-			} else {
-				order.DeliveryNode = asked
+		//
+		// AND SO DOES A GROUP DROP'S PAPER, whenever it was chosen
+		// (RULINGS-C2c-run-through §3.2: the plain path keeps the group it chose
+		// from). A slot intake settled, or one whose paper a rank took
+		// (takeGroupRoomByRank), is a choice of the group's like any other: it
+		// goes back to the group rather than waiting on the one slot. Two reads,
+		// only on a contended slot.
+		if errors.Is(err, ErrSlotContended) {
+			back := ""
+			if resolved {
+				back = asked
+			} else if slot, group := d.groupOfPlainDrop(order); group != "" {
+				// Its own paper on a slot it cannot have goes with it (a bin landed
+				// there), or the row would hold a slot nobody is coming to.
+				if rErr := d.db.ReleaseSlotReservation(slot.ID, order.ID); rErr != nil {
+					log.Printf("dispatch: order %d could not let go of %s: %v", order.ID, slot.Name, rErr)
+				}
+				back = group
+			}
+			if back != "" {
+				if uErr := d.db.UpdateOrderDeliveryNode(order.ID, back); uErr != nil {
+					log.Printf("dispatch: order %d lost slot %s and could not be aimed back at %s: %v",
+						order.ID, order.DeliveryNode, back, uErr)
+				} else {
+					order.DeliveryNode = back
+				}
 			}
 		}
 		return refuse(err)
@@ -310,6 +381,19 @@ func (d *Dispatcher) ReserveStorageDropoff(order *orders.Order) StorageDropoff {
 			order.DeliveryNode, order.ID, ErrSlotUnreadable))
 	}
 	return StorageDropoff{Node: node}
+}
+
+// groupOfPlainDrop is the group a plain order's slot was chosen from, when its
+// drop is a group drop (plainGroupDrop), with the slot; or nil and "".
+func (d *Dispatcher) groupOfPlainDrop(order *orders.Order) (*nodes.Node, string) {
+	node, err := d.db.GetNodeByDotName(order.DeliveryNode)
+	if err != nil || node == nil {
+		return nil, ""
+	}
+	if _, lane := storageDropoffOf(d.db, node); plainGroupDrop(order, lane) {
+		return node, lane.ParentName
+	}
+	return nil, ""
 }
 
 // SyntheticUnresolved is the refusal when a destination still names a synthetic
@@ -367,21 +451,38 @@ func (d *Dispatcher) resolveSyntheticDropoff(order *orders.Order) error {
 		// the order id attached rather than swallowing it here.
 		return nil
 	}
-	result, rErr := d.pure.StoreDestination(node, order.PayloadCode,
+	choice, rErr := d.pure.StoreDrop(node, order.PayloadCode,
 		binresolver.UnknownBinType("scanner deferral keeper: order holds no bin and no hold"), digAskerFor(order))
-	if rErr != nil || result == nil || result.Node == nil {
-		if rErr == nil {
-			rErr = fmt.Errorf("resolver returned no node")
-		}
+	if rErr == nil && choice.Slot == nil {
+		rErr = fmt.Errorf("resolver returned no node")
+	}
+	if rErr == nil && !d.takeOfferedPaper(order, choice) {
+		rErr = fmt.Errorf("no available slot in node group %s", node.Name)
+	}
+	if rErr != nil {
 		return SyntheticUnresolved{OrderID: order.ID, Group: order.DeliveryNode, Err: rErr}
 	}
-	if uErr := d.db.UpdateOrderDeliveryNode(order.ID, result.Node.Name); uErr != nil {
+	if uErr := d.db.UpdateOrderDeliveryNode(order.ID, choice.Slot.Name); uErr != nil {
 		return fmt.Errorf("order %d resolved %s to %s but delivery_node could not be written: %w",
-			order.ID, order.DeliveryNode, result.Node.Name, uErr)
+			order.ID, order.DeliveryNode, choice.Slot.Name, uErr)
 	}
-	d.dbg("store: order %d resolved group %s -> %s at dispatch", order.ID, order.DeliveryNode, result.Node.Name)
-	order.DeliveryNode = result.Node.Name
+	d.dbg("store: order %d resolved group %s -> %s at dispatch", order.ID, order.DeliveryNode, choice.Slot.Name)
+	order.DeliveryNode = choice.Slot.Name
 	return nil
+}
+
+// takeOfferedPaper makes the take the one chooser offered a plain store at
+// acquiring (ruling 2, "taken by rank"; the chooser offers a stranger's paper
+// only when the group has no free slot and the asker outranks a never-sent
+// holder): the holder's row goes, it is told, and the slot is this order's
+// paper (takeGroupRoomByRank, re-checked under lock). True when there was no
+// take to make or it was made; false when the take was refused, and the store
+// then waits as a full group does.
+func (d *Dispatcher) takeOfferedPaper(order *orders.Order, choice plan.DropChoice) bool {
+	if choice.Take == nil {
+		return true
+	}
+	return d.takeGroupRoomByRank(order, choice.Slot)
 }
 
 // redirectStoreOffDugLane re-aims a store whose destination lane has been taken
@@ -444,11 +545,17 @@ func (d *Dispatcher) redirectStoreOffDugLane(order *orders.Order) {
 	// The resolver's candidate read drops dig-locked lanes, so this either comes
 	// back with somewhere else or comes back empty — and empty means every lane in
 	// the group is locked or full, which is the existing park.
-	result, err := d.pure.StoreDestination(group, order.PayloadCode,
+	choice, err := d.pure.StoreDrop(group, order.PayloadCode,
 		binresolver.UnknownBinType("dug-lane redirect: order holds no bin and no hold"), digAskerFor(order))
-	if err != nil || result == nil || result.Node == nil || result.Node.ID == node.ID {
+	if err != nil || choice.Slot == nil || choice.Slot.ID == node.ID {
 		d.dbg("store: order %d is aimed at %s in dug lane %s and the group has nowhere else — waiting",
 			order.ID, node.Name, lane.Name)
+		return
+	}
+	result := &binresolver.ResolveResult{Node: choice.Slot}
+	// A STRANGER'S PAPER THE CHOOSER OFFERED is taken before the old hold goes,
+	// take-before-release: a refused take leaves the order aimed where it was.
+	if !d.takeOfferedPaper(order, choice) {
 		return
 	}
 

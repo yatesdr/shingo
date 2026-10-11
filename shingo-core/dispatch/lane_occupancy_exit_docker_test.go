@@ -68,7 +68,8 @@ func TestOccupancy_ReleasedWhenTheRobotLeavesNotWhenItDrops(t *testing.T) {
 	}
 
 	// THE WAITER: gate-staged at the same lane's mark, refused by the leaver.
-	waiter := stageGatedStore(t, db, d, line, w[1], nil)
+	// CONVERTED (C2c §3.2): a plain store is a group drop; the sibling lane declares another payload so only this lane takes it.
+	waiter := stageGatedStore(t, db, d, line, w[1], onlyItsLaneTakes(t, db, lane))
 	if !IsGateStaged(waiter) {
 		t.Fatalf("the waiter is not gate-staged (wait_index=%d vendor=%q)",
 			waiter.WaitIndex, waiter.VendorOrderID)
@@ -97,6 +98,10 @@ func TestOccupancy_ReleasedWhenTheRobotLeavesNotWhenItDrops(t *testing.T) {
 	// this test green or red for reasons that have nothing to do with occupancy.
 	// The exit signal resolves its lane from the node id alone.
 	d.HandleTransitForLaneGate(leaver.ID, w[0].ID)
+	// CONVERTED (RULINGS-C2c-run-through §3.3): the exit handler releases the row
+	// and no longer wakes the lane; the pickout's own subscriber does, one group
+	// pass per event. Replayed as the engine runs it (c2cPickout).
+	c2cPickout(d, w[0].ID)
 
 	// (a) THE ROW GOES WITH THE ROBOT.
 	occ, err = reservations.OccupantsOf(db.DB, lane.ID)
@@ -208,7 +213,8 @@ func TestOccupancy_ExitReleasesTheLEGsRowNotItsParents(t *testing.T) {
 		t.Fatalf("seed the leg's occupancy: %v", err)
 	}
 
-	waiter := stageGatedStore(t, db, d, line, w[1], nil)
+	// CONVERTED (C2c §3.2): a plain store is a group drop; the sibling lane declares another payload so only this lane takes it.
+	waiter := stageGatedStore(t, db, d, line, w[1], onlyItsLaneTakes(t, db, lane))
 	markStaged(t, db, waiter.ID)
 	d.EvaluateLaneReleases(lane.ID)
 	parked, err := db.GetOrder(waiter.ID)
@@ -223,6 +229,10 @@ func TestOccupancy_ExitReleasesTheLEGsRowNotItsParents(t *testing.T) {
 	// The LEG picks and drives out. The event carries the leg's id, as the real
 	// emitter does — the bin was picked by the leg, not by its parent.
 	d.HandleTransitForLaneGate(leg.ID, w[0].ID)
+	// CONVERTED (RULINGS-C2c-run-through §3.3): the exit handler releases the row
+	// and no longer wakes the lane; the pickout's own subscriber does, one group
+	// pass per event. Replayed as the engine runs it (c2cPickout).
+	c2cPickout(d, w[0].ID)
 
 	// (a) THE LEG'S ROW GOES.
 	occ, err := reservations.OccupantsOf(db.DB, lane.ID)

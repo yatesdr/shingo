@@ -3,7 +3,6 @@
 package dispatch
 
 import (
-	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -13,228 +12,213 @@ import (
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/payloads"
 	"shingocore/store/reservations"
 )
 
 // lane_gate_widen_docker_test.go — the oracle widening to the group.
 //
-// Three claims, and the first is the one nothing in the suite exercised before:
-// a lane walled by a CLAIMED blocker, where no dig would help, with a free
-// sibling in the same group. Until the widening there was no path out of that
-// state except waiting for the claim to resolve, so the true arm of "should this
-// order go somewhere else" had never once been taken.
+// ── CONVERTED WITH C2c (Lane C, 2026-10-10) ───────────────────────────────
+//
+// The widen arm these tests were written for (widenDropoffToGroup and
+// widenRefusedDropoff, behind the in-lane re-bind) is deleted: C2c ruling 1
+// leaves one spelling for choosing a drop in a group, asked across the group at
+// every release, and ruling 3 makes a refused mouth the next candidate, not a
+// wait, while the group has one (DESIGN-C2c §7.3). The claims are kept, and
+// their fixtures are the drop C2c chooses across the group: a coordinated swap
+// standing at its group's waiting spot with its interior drop pencilled in lane
+// A, stamped with the group, holding paper (c2c_group_choice_pins). A drop with
+// no group stamp — the plain stores these fixtures used to stage — is asked of
+// its own lane only (D13 Q-NAMED), so it could not carry the claims any more.
+//
+// Named moves (DESIGN-C2c §5.2): TestWiden_ClaimedBlockerWithAFreeSiblingWidens,
+// TestWiden_ConcurrentRebindsDoNotDoubleAppend and
+// TestWiden_ATierTwoWallIsAReasonToReAim keep their outcome (the sibling).
+// TestWiden_ADigThatWouldHelpIsPreferredToWidening (D13 F3) and
+// TestWiden_ATransientRefusalIsNotReAimed (D13 F4) FLIP and are renamed for what
+// they now pin; their old names are in their comments.
 
-// TestWiden_ClaimedBlockerWithAFreeSiblingWidens is the missing RED test.
-//
-// ── THE SHAPE ─────────────────────────────────────────────────────────────
-//
-// A dweller is aimed into a lane it cannot use, and a dig is NOT the answer: the
-// bin walling it is hard-claimed by a live order, so somebody is already coming
-// for it (acceptanceDigNeeded's rule 3 — "a hard claim is a robot in motion, so
-// the bin is leaving anyway"). Refusing the dig is right. Standing still is not,
-// when a sibling lane in the same group has room.
-//
-// RED at base: the release refuses with gate-rebind-unavailable and the order
-// keeps dwelling. Nothing in the tree took it anywhere else.
+// c2cWidenWall puts a bin at slot claimed by a live order, so no dig would help
+// (acceptanceDigNeeded's rule 3: a hard claim is a robot in motion).
+func c2cWidenWall(t *testing.T, db *store.DB, payload, label string, slot, line *nodes.Node) {
+	t.Helper()
+	blocker := createTestBinAtNode(t, db, payload, slot.ID, label)
+	claimant := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.SourceNode = slot.Name
+		o.DeliveryNode = line.Name
+		o.Status = "in_transit"
+	})
+	// RESERVE THEN CLAIM: a bare claim is refused by design (store/bins.go).
+	testdb.ReserveBin(t, db, claimant.ID, blocker.ID)
+	testutil.MustNoErr(t, db.ClaimBin(blocker.ID, claimant.ID), "a live order claims the wall bin")
+}
+
+// c2cWaitLaneAt is the lane the plan's lane wait in front of the interior drop
+// names after the release.
+func c2cWaitLaneAt(steps []resolvedStep) (int64, bool) {
+	i, _ := c2cInteriorDrop(steps)
+	if i <= 0 || steps[i-1].Action != protocol.ActionWait || steps[i-1].WaitKind != WaitKindLane {
+		return 0, false
+	}
+	return steps[i-1].WaitLane, true
+}
+
+// TestWiden_ClaimedBlockerWithAFreeSiblingWidens: a drop pencilled into a lane
+// it cannot use, where a dig is NOT the answer (the walling bin is claimed by a
+// live order, so it is leaving anyway), with a sibling lane of the same group
+// empty. Standing still while the group has room is the state the group gate
+// exists to end: the release chooses across the group and the drop lands in
+// the sibling, and the wait moves with it (a stale WaitLane takes the wrong
+// lane's occupancy at append, F-12's shape).
 func TestWiden_ClaimedBlockerWithAFreeSiblingWidens(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
 	d, _ := newTestDispatcherWithResolver(t, db)
-
-	wall, park, w, p, bp := clearLaneFixture(t, db, "WIDEN1")
-	line := lineNode(t, db, "WIDEN1-LINE")
-
-	// The dweller is aimed at the wall lane's deep slot.
-	deep := stageDeeperBlocker(t, db, d, line, w[2], "widen1-deep")
-	dweller := stageGatedStore(t, db, d, line, w[1], func(o *orders.Order) { o.PayloadCode = bp.Code })
-	if !IsGateStaged(dweller) {
-		t.Fatalf("fixture: the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
-	}
-	markStaged(t, db, dweller.ID)
-	placeDeeperBlocker(t, db, d, deep.ID, w[2].Name)
-
-	// FILL the wall lane so there is nowhere in it, and CLAIM the blocker so no
-	// dig is wanted. Both halves matter: an unclaimed wall would summon a dig,
-	// which is the correct answer and a different test.
-	blocker := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-WIDEN1-WALL")
-	claimant := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.SourceNode = w[0].Name
-		o.DeliveryNode = line.Name
-		o.Status = "in_transit"
-	})
-	// RESERVE THEN CLAIM. A bare claim is refused by design: claimed_by and the
-	// bin reservation are coupled, so a hard claim with no reservation behind it
-	// would leave a bin nothing can release (store/bins.go).
-	testdb.ReserveBin(t, db, claimant.ID, blocker.ID)
-	testutil.MustNoErr(t, db.ClaimBin(blocker.ID, claimant.ID), "a live order claims the wall bin")
-
-	// The sibling lane is EMPTY the whole time.
-	if n := binsIn(t, db, p...); n != 0 {
+	g := c2cTwoLaneGroup(t, db, "WIDEN1", 3, 2)
+	press, press2 := lineNode(t, db, "WIDEN1-PRESS"), lineNode(t, db, "WIDEN1-PRESS2")
+	elsewhere := lineNode(t, db, "WIDEN1-EMPTYSRC")
+	testdb.CreateBinAtNode(t, db, "", elsewhere.ID, "WIDEN1-EMPTY")
+	swap := c2cAtSpot(t, db, "widen1-swap", sd.Payload.Code, 0,
+		c2cSwapPlan(g, press.Name, g.a[1].Name, elsewhere.Name, press2.Name, true))
+	c2cPaper(t, db, swap.ID, g.a[1])
+	c2cWidenWall(t, db, sd.Payload.Code, "BIN-WIDEN1-WALL", g.a[0], press)
+	if n := binsIn(t, db, g.b...); n != 0 {
 		t.Fatalf("fixture: the sibling lane must start empty, has %d bins", n)
 	}
 
-	fresh, err := db.GetOrder(dweller.ID)
-	testutil.MustNoErr(t, err, "reload the dweller")
-	entryIdx := gateEntryIndexFor(t, fresh)
-	if _, err := d.releaseGatedOrder(fresh, wall, candidateFor(t, db, fresh, entryIdx)); err != nil {
-		t.Fatalf("the release should have widened rather than refused: %v", err)
-	}
+	c2cGatePass(d, g)
 
-	after, err := db.GetOrder(dweller.ID)
-	testutil.MustNoErr(t, err, "reload after the release")
-	landed, err := db.GetNodeByDotName(after.DeliveryNode)
-	testutil.MustNoErr(t, err, "resolve where it landed")
-	newLane, err := db.LaneForNode(landed.ID)
-	testutil.MustNoErr(t, err, "lane of the new destination")
-	if newLane == nil || newLane.ID != park.ID {
-		t.Fatalf("delivery_node = %q (lane %s), want a slot in the free sibling %s — a lane walled "+
-			"by a CLAIMED blocker cannot be dug open, and standing still while the group has room "+
-			"is the state the widening exists to end",
-			after.DeliveryNode, nodeName(newLane), park.Name)
+	after, steps := c2cReload(t, db, swap)
+	_, drop := c2cInteriorDrop(steps)
+	if lane := c2cLaneOf(t, db, drop.Node); lane != g.laneB.ID || after.WaitIndex < 2 {
+		t.Fatalf("the drop is at %q (lane %d) at wait index %d (cause %q), want it released into the free "+
+			"sibling %s — a lane walled by a CLAIMED blocker cannot be dug open, and its group has room",
+			drop.Node, lane, after.WaitIndex, after.QueueCause, g.laneB.Name)
 	}
-
-	// AND THE WAIT MOVED WITH IT. A stale WaitLane takes the wrong lane's
-	// occupancy at append — the robot enters one corridor while another lane's
-	// row says it is inside.
-	var steps []resolvedStep
-	testutil.MustNoErr(t, json.Unmarshal([]byte(after.StepsJSON), &steps), "parse the patched plan")
-	w0, ok := waitAt(steps, 0)
-	if !ok || w0.WaitLane != park.ID {
-		t.Errorf("the wait still names lane %d, want the lane it was re-aimed into (%d) — the wait "+
-			"and the entry it gates must name one corridor", w0.WaitLane, park.ID)
+	if wl, ok := c2cWaitLaneAt(steps); !ok || wl != g.laneB.ID {
+		t.Errorf("the wait in front of the drop names lane %d, want the lane it was released into (%d) — "+
+			"the wait and the entry it gates must name one corridor", wl, g.laneB.ID)
 	}
 	if aErr := d.assertEachWaitGatesItsEntry(steps); aErr != nil {
-		t.Errorf("the patched plan does not satisfy the splice-time guard: %v", aErr)
+		t.Errorf("the released plan does not satisfy the splice-time guard: %v", aErr)
 	}
 }
 
-// TestWiden_ADigThatWouldHelpIsPreferredToWidening is the heal-first guard, and
-// it is the half that keeps the widening from becoming a way to leave walls
-// standing.
-//
-// Same fixture, one fact changed: the walling bin is UNCLAIMED, so a dig would
-// open the lane. The plan named that lane for a reason and the bins in front of
-// the target are the actual problem — widening past them serves this order and
-// leaves the wall for whoever comes next. So the release must REFUSE, which is
-// what lets the pass summon the excavation (F-11).
-func TestWiden_ADigThatWouldHelpIsPreferredToWidening(t *testing.T) {
+// TestWiden_ADigIsSummonedOnlyWhenNoLaneOfTheGroupCanTakeTheDrop was
+// TestWiden_ADigThatWouldHelpIsPreferredToWidening ("heal first", F-11), and it
+// FLIPS with C2c (D13 F3): a walled slot is not reachable, so it is not a
+// candidate (ruling 1), and a refused or walled lane is the next candidate, not
+// a wait, while the group has one (ruling 3). Heal first holds only for a group
+// with no other lane that can take the drop (DESIGN-C2c §7.3.4), which is the
+// shape here: the pencilled lane's only free slot is behind an UNCLAIMED bin (a
+// dig would open it), and the sibling lane is full. The group offers nothing,
+// so the release refuses and the pass summons the order's own dig of its lane;
+// the order stays at the spot. The flip's other half — the same wall with room
+// in the sibling, released there with no dig — is
+// TestC2cPin_ADropPlannedOnAFullLaneLandsInASiblingWithNoWait.
+func TestWiden_ADigIsSummonedOnlyWhenNoLaneOfTheGroupCanTakeTheDrop(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
 	d, _ := newTestDispatcherWithResolver(t, db)
-
-	wall, _, w, p, bp := clearLaneFixture(t, db, "WIDEN2")
-	line := lineNode(t, db, "WIDEN2-LINE")
-
-	deep := stageDeeperBlocker(t, db, d, line, w[2], "widen2-deep")
-	dweller := stageGatedStore(t, db, d, line, w[1], func(o *orders.Order) { o.PayloadCode = bp.Code })
-	if !IsGateStaged(dweller) {
-		t.Fatalf("fixture: the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
+	g := c2cTwoLaneGroup(t, db, "WIDEN2", 2, 2)
+	// Somewhere for the dig to park the blocker, outside both lanes: a flat
+	// child of the group. CONVERTED (RULINGS-C2c-run-through §3.2, "the chooser
+	// considers every child of the group"): the release used to pass a flat child
+	// over, and now offers it, so the child declares another payload — the
+	// store's chooser refuses it (payloadAllowedAt) and the dig still parks there
+	// (its walk asks no payload fence, D13 Q-SCOPE). The group still has no
+	// candidate for this drop, which is the shape under test.
+	park := &nodes.Node{Name: "WIDEN2-PARK", Enabled: true, ParentID: &g.grp.ID}
+	testutil.MustNoErr(t, db.CreateNode(park), "create a parking child")
+	parkOnly := &payloads.Payload{Code: "WIDEN2-PARKONLY"}
+	testutil.MustNoErr(t, db.CreatePayload(parkOnly), "create the parking child's payload")
+	testutil.MustNoErr(t, db.SetNodePayloads(park.ID, []int64{parkOnly.ID}), "the parking child declares it")
+	press, press2 := lineNode(t, db, "WIDEN2-PRESS"), lineNode(t, db, "WIDEN2-PRESS2")
+	elsewhere := lineNode(t, db, "WIDEN2-EMPTYSRC")
+	testdb.CreateBinAtNode(t, db, "", elsewhere.ID, "WIDEN2-EMPTY")
+	swap := c2cAtSpot(t, db, "widen2-swap", sd.Payload.Code, 0,
+		c2cSwapPlan(g, press.Name, g.a[1].Name, elsewhere.Name, press2.Name, true))
+	c2cPaper(t, db, swap.ID, g.a[1])
+	wall := testdb.CreateBinAtNode(t, db, sd.Payload.Code, g.a[0].ID, "BIN-WIDEN2-WALL")
+	if wall.ClaimedBy != nil {
+		t.Fatal("fixture: the walling bin must be UNCLAIMED, or no dig is wanted")
 	}
-	markStaged(t, db, dweller.ID)
-	placeDeeperBlocker(t, db, d, deep.ID, w[2].Name)
+	fillLaneSlots(t, db, sd.Payload.Code, "WIDEN2-SIB", g.b...) // no other lane can take it
 
-	// UNCLAIMED wall — a dig is warranted — and the deeper slot filled so the
-	// lane genuinely has nowhere.
-	blocker := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-WIDEN2-WALL")
-	if blocker.ClaimedBy != nil {
-		t.Fatal("fixture: the walling bin must be UNCLAIMED, or no dig is wanted and this is the " +
-			"other test")
+	c2cGatePass(d, g)
+
+	after, steps := c2cReload(t, db, swap)
+	if after.WaitIndex != 1 {
+		t.Fatalf("the swap left the spot (wait index %d) although no lane of its group could take its drop",
+			after.WaitIndex)
 	}
-	// NOTHING ELSE IS FILLED. The dweller's own slot (w[1]) stays EMPTY, which is
-	// acceptanceDigNeeded's rule 2 — a store whose own slot is taken has a
-	// different problem and the wall is not it — and the slot is UNREACHABLE
-	// behind the wall bin, so the in-lane finder still has nowhere to offer.
-	_ = p
-
-	fresh, err := db.GetOrder(dweller.ID)
-	testutil.MustNoErr(t, err, "reload the dweller")
-	entryIdx := gateEntryIndexFor(t, fresh)
-	if _, err := d.releaseGatedOrder(fresh, wall, candidateFor(t, db, fresh, entryIdx)); err == nil {
-		t.Fatal("the release WIDENED past a wall a dig would have cleared. The plan named this lane, " +
-			"the bins in front of the target are the problem, and going somewhere else leaves the " +
-			"wall standing for the next order")
+	if _, drop := c2cInteriorDrop(steps); drop.Node != g.a[1].Name {
+		t.Errorf("the drop was moved to %q with nowhere in the group to go", drop.Node)
 	}
-
-	after, err := db.GetOrder(dweller.ID)
-	testutil.MustNoErr(t, err, "reload after the refusal")
-	landed, err := db.GetNodeByDotName(after.DeliveryNode)
-	testutil.MustNoErr(t, err, "resolve where it is aimed")
-	stillLane, err := db.LaneForNode(landed.ID)
-	testutil.MustNoErr(t, err, "lane of the destination")
-	if stillLane == nil || stillLane.ID != wall.ID {
-		t.Errorf("delivery_node = %q (lane %s), want it still aimed into %s — heal first",
-			after.DeliveryNode, nodeName(stillLane), wall.Name)
+	if dig := digParentFor(t, db, g.a[0].Name); dig == nil {
+		t.Errorf("no dig was summoned out of %s: the group has no other lane for the drop, the wall in "+
+			"front of its slot is unclaimed, and heal first holds for a group with no candidate", g.laneA.Name)
 	}
 }
 
-// TestWiden_ConcurrentRebindsDoNotDoubleAppend is the concurrency claim finch's
-// no-new-lock reading rests on.
-//
-// TWO dwellers, ONE free sibling slot. The per-lane serializer does not help
-// here — they are released from different passes over the same lane — so what
-// arbitrates is the transactional slot claim: claimStoreSlot goes through the
-// reservation layer, which is exclusive per node, and the loser gets an error,
-// refuses to release, and stays a candidate for the next pass.
-//
-// The property is NOT "both succeed". It is that exactly one takes the slot, the
+// TestWiden_ConcurrentRebindsDoNotDoubleAppend: TWO waiters, ONE free sibling
+// slot. Each release is driven directly, one after the other, as two passes
+// would; what arbitrates is the release hand's slot claim (DB.ConfirmReleaseDrop:
+// the reservation is exclusive per node), so exactly one takes the slot, the
 // other does not append, and neither ends up holding a destination the other
-// owns.
+// owns. (Two passes over one GROUP cannot interleave in-process since C2c: the
+// gate's mutex is the group's, ruling 4. The claim still arbitrates against
+// every other chooser.)
 func TestWiden_ConcurrentRebindsDoNotDoubleAppend(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
 	d, backend := newTestDispatcherWithResolver(t, db)
-
-	wall, park, w, p, bp := clearLaneFixture(t, db, "WIDEN3")
-	line := lineNode(t, db, "WIDEN3-LINE")
-
-	deep := stageDeeperBlocker(t, db, d, line, w[2], "widen3-deep")
-	dwellerA := stageGatedStore(t, db, d, line, w[1], func(o *orders.Order) { o.PayloadCode = bp.Code })
-	markStaged(t, db, dwellerA.ID)
-	placeDeeperBlocker(t, db, d, deep.ID, w[2].Name)
-	dwellerB := stageGatedStore(t, db, d, line, w[0], func(o *orders.Order) { o.PayloadCode = bp.Code })
-	markStaged(t, db, dwellerB.ID)
-
-	// The wall lane is full and claimed (no dig wanted), and the sibling has
-	// exactly ONE free slot for the two of them.
-	blocker := createTestBinAtNode(t, db, bp.Code, w[0].ID, "BIN-WIDEN3-WALL")
-	claimant := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.SourceNode = w[0].Name
-		o.DeliveryNode = line.Name
-		o.Status = "in_transit"
-	})
-	testdb.ReserveBin(t, db, claimant.ID, blocker.ID)
-	testutil.MustNoErr(t, db.ClaimBin(blocker.ID, claimant.ID), "a live order claims the wall bin")
-	fillLaneSlots(t, db, bp.Code, "WIDEN3-SIB", p[1:]...) // leave p[0] free, and only p[0]
+	g := c2cTwoLaneGroup(t, db, "WIDEN3", 3, 2)
+	press, press2 := lineNode(t, db, "WIDEN3-PRESS"), lineNode(t, db, "WIDEN3-PRESS2")
+	var swaps []*orders.Order
+	for i, pencil := range []*nodes.Node{g.a[1], g.a[2]} {
+		empty := lineNode(t, db, fmt.Sprintf("WIDEN3-EMPTYSRC-%d", i))
+		testdb.CreateBinAtNode(t, db, "", empty.ID, fmt.Sprintf("WIDEN3-EMPTY-%d", i))
+		s := c2cAtSpot(t, db, fmt.Sprintf("widen3-swap-%d", i), sd.Payload.Code, 0,
+			c2cSwapPlan(g, press.Name, pencil.Name, empty.Name, press2.Name, true))
+		c2cPaper(t, db, s.ID, pencil)
+		swaps = append(swaps, s)
+	}
+	// The pencilled lane is walled and claimed (no dig wanted), and the sibling
+	// has exactly ONE free slot for the two of them.
+	c2cWidenWall(t, db, sd.Payload.Code, "BIN-WIDEN3-WALL", g.a[0], press)
+	fillLaneSlots(t, db, sd.Payload.Code, "WIDEN3-SIB", g.b[1:]...) // leave b[0] free, and only b[0]
 
 	before := len(backend.ReleaseCalls())
 	won := 0
-	for _, id := range []int64{dwellerA.ID, dwellerB.ID} {
-		fresh, err := db.GetOrder(id)
-		testutil.MustNoErr(t, err, "reload a dweller")
+	for _, s := range swaps {
+		fresh, err := db.GetOrder(s.ID)
+		testutil.MustNoErr(t, err, "reload a waiter")
 		if !IsGateStaged(fresh) {
 			continue
 		}
-		if _, err := d.releaseGatedOrder(fresh, wall, candidateFor(t, db, fresh, gateEntryIndexFor(t, fresh))); err == nil {
+		if _, err := releaseGatedStore(d, db, fresh, g.laneA, candidateFor(t, db, fresh, gateEntryIndexFor(t, fresh))); err == nil {
 			won++
 		}
 	}
 
 	if won != 1 {
-		t.Errorf("releases that succeeded = %d, want exactly 1 — two dwellers and one free slot, so "+
+		t.Errorf("releases that succeeded = %d, want exactly 1 — two waiters and one free slot, so "+
 			"one takes it and the other refuses and retries", won)
 	}
 	if n := len(backend.ReleaseCalls()) - before; n != 1 {
 		t.Errorf("appends = %d, want exactly 1 — a second append into a slot another order booked is "+
 			"two bins on one position", n)
 	}
-	// And nobody is holding a slot they did not win.
-	holders, err := reservations.OccupantsOf(db.DB, park.ID)
+	holders, err := reservations.OccupantsOf(db.DB, g.laneB.ID)
 	testutil.MustNoErr(t, err, "read the sibling lane's occupancy")
 	if len(holders) > 1 {
 		t.Errorf("occupancy rows on %s = %v, want at most one — the corridor is single file",
-			park.Name, holders)
+			g.laneB.Name, holders)
 	}
-	_ = protocol.ActionWait
 }
 
 // newTestDispatcherWithResolver is newTestDispatcher with a REAL resolver.
@@ -268,7 +252,7 @@ func binsIn(t *testing.T, db *store.DB, slots ...*nodes.Node) int {
 }
 
 // TestWiden_ATierTwoWallIsAReasonToReAim is the shape the whole oracle round is
-// for, and it is the one the widening could not reach until it moved.
+// for.
 //
 // ── THE SHAPE, FROM THE PLANT ─────────────────────────────────────────────
 //
@@ -284,146 +268,188 @@ func binsIn(t *testing.T, db *store.DB, slots ...*nodes.Node) int {
 // and 134 is walled behind 132. Two robots stood 39 minutes while their group
 // had free lanes.
 //
-// ── WHY IT WAS UNREACHABLE ────────────────────────────────────────────────
-//
-// The widening lived inside rebindGatedDropoff, which runs only after the
-// classifier ADMITS a candidate. So it could answer "this lane has no free slot
-// for me" and could not answer "this lane has a slot with my name on it and it
-// is not my turn" — which returns from the refusal arm and never reaches a
-// re-bind. The run reported `WIDENED: 0`, and the reason was not that the
-// population is rare.
-//
-// RED before the move: the dweller keeps its lane-deeper-pending refusal and its
-// destination, pass after pass, for as long as the deeper store cannot place.
+// Since C2c the Tier-2 wall is a lane fact asked AFTER the group's choice, and a
+// refusal sends the drop to the group's next lane (rulings 3 and 4; DESIGN-C2c
+// §7.4). Outcome kept: the drop lands in the free sibling, and the wait names it.
 func TestWiden_ATierTwoWallIsAReasonToReAim(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
 	d, _ := newTestDispatcherWithResolver(t, db)
-
-	wall, park, w, p, bp := clearLaneFixture(t, db, "WIDEN4")
-	line := lineNode(t, db, "WIDEN4-LINE")
+	g := c2cTwoLaneGroup(t, db, "WIDEN4", 3, 2)
+	press, press2 := lineNode(t, db, "WIDEN4-PRESS"), lineNode(t, db, "WIDEN4-PRESS2")
+	elsewhere := lineNode(t, db, "WIDEN4-EMPTYSRC")
+	testdb.CreateBinAtNode(t, db, "", elsewhere.ID, "WIDEN4-EMPTY")
 
 	// THE DEEPER STORE THAT CANNOT PLACE. Not dispatched — which is exactly what
 	// makes it a legitimate blocker (stillComingToLane's first arm) and exactly
 	// what makes the wait it creates unbounded.
 	stuck := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.DeliveryNode = w[2].Name
+		o.DeliveryNode = g.a[2].Name
 		o.Status = "queued"
-		o.PayloadCode = bp.Code
+		o.PayloadCode = sd.Payload.Code
 	})
-	testutil.MustNoErr(t, db.ReserveSlot(w[2].ID, stuck.ID), "the deeper store holds its slot (a plan alone walls nothing)")
+	testutil.MustNoErr(t, db.ReserveSlot(g.a[2].ID, stuck.ID), "the deeper store holds its slot (a plan alone walls nothing)")
 
-	// The dweller, aimed at the shallower slot, walled by Tier 2.
-	dweller := stageGatedStore(t, db, d, line, w[1], func(o *orders.Order) { o.PayloadCode = bp.Code })
-	if !IsGateStaged(dweller) {
-		t.Fatalf("fixture: the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
-	}
-	markStaged(t, db, dweller.ID)
+	swap := c2cAtSpot(t, db, "widen4-swap", sd.Payload.Code, 0,
+		c2cSwapPlan(g, press.Name, g.a[1].Name, elsewhere.Name, press2.Name, true))
+	c2cPaper(t, db, swap.ID, g.a[1])
 
 	// The refusal really is Tier 2 and not something else — if it were, this test
 	// would be about a different arm and would pass for the wrong reason.
-	laneNode, err := db.GetNode(wall.ID)
-	testutil.MustNoErr(t, err, "reload the lane")
-	fresh, err := db.GetOrder(dweller.ID)
-	testutil.MustNoErr(t, err, "reload the dweller")
-	slot, err := db.GetNodeByDotName(fresh.DeliveryNode)
-	testutil.MustNoErr(t, err, "resolve its slot")
-	v, err := d.gateEntryVerdict(laneNode, fresh, slot, false)
-	testutil.MustNoErr(t, err, "classify the dweller")
+	v, err := d.gateEntryVerdict(g.laneA, swap, g.a[1], false)
+	testutil.MustNoErr(t, err, "classify the swap at its pencilled lane")
 	if v.Admitted() || v.Cause() != CauseLaneDeeperPending {
-		t.Fatalf("fixture: want a %q refusal, got admitted=%v cause=%q — this test is about the "+
+		t.Fatalf("fixture: want a %q refusal in lane A, got admitted=%v cause=%q — this test is about the "+
 			"ordering wall, not whichever refusal happened instead",
 			CauseLaneDeeperPending, v.Admitted(), v.Cause())
 	}
-
-	// The sibling lane is empty and stays that way.
-	if n := binsIn(t, db, p...); n != 0 {
+	if n := binsIn(t, db, g.b...); n != 0 {
 		t.Fatalf("fixture: the sibling lane must be empty, has %d bins", n)
 	}
-	_ = stuck
 
-	// ONE PASS of the evaluator — the same call the event wiring makes.
-	d.EvaluateLaneReleases(wall.ID)
+	c2cGatePass(d, g)
 
-	after, err := db.GetOrder(dweller.ID)
-	testutil.MustNoErr(t, err, "reload after the pass")
-	landed, err := db.GetNodeByDotName(after.DeliveryNode)
-	testutil.MustNoErr(t, err, "resolve where it is aimed now")
-	newLane, err := db.LaneForNode(landed.ID)
-	testutil.MustNoErr(t, err, "lane of that destination")
-	if newLane == nil || newLane.ID != park.ID {
-		t.Fatalf("delivery_node = %q (lane %s), want a slot in the free sibling %s. It is walled by a "+
-			"deeper store that cannot place, no dig would help, and its group has an empty aisle — "+
-			"standing there is the 39-minute wait this round exists to end",
-			after.DeliveryNode, nodeName(newLane), park.Name)
+	after, steps := c2cReload(t, db, swap)
+	_, drop := c2cInteriorDrop(steps)
+	if lane := c2cLaneOf(t, db, drop.Node); lane != g.laneB.ID || after.WaitIndex < 2 {
+		t.Fatalf("the drop is at %q (lane %d) at wait index %d (cause %q), want it released into the free "+
+			"sibling %s. It is walled by a deeper store that cannot place, no dig would help, and its group "+
+			"has an empty aisle — standing there is the 39-minute wait this round exists to end",
+			drop.Node, lane, after.WaitIndex, after.QueueCause, g.laneB.Name)
 	}
-
-	// AND THE WAIT MOVED WITH IT, or the append takes the wrong lane's occupancy.
-	// The plan's LANE WAIT, found by walking rather than by WaitIndex: the pass
-	// evaluates the new lane straight after the re-aim, so a re-aimed order is
-	// frequently already released and indexed past its wait — which is the
-	// outcome we want, not a reason to look at the wrong step.
-	var steps []resolvedStep
-	testutil.MustNoErr(t, json.Unmarshal([]byte(after.StepsJSON), &steps), "parse the patched plan")
-	sawLaneWait := false
-	for _, st := range steps {
-		if st.Action == protocol.ActionWait && st.WaitKind == WaitKindLane {
-			sawLaneWait = true
-			if st.WaitLane != park.ID {
-				t.Errorf("the lane wait names lane %d, want %d — the wait and the entry it gates must "+
-					"name one corridor, or the append takes the wrong lane's occupancy",
-					st.WaitLane, park.ID)
-			}
-		}
-	}
-	if !sawLaneWait {
-		t.Error("the patched plan has no lane wait at all — the re-aim dropped the gate")
+	if wl, ok := c2cWaitLaneAt(steps); !ok || wl != g.laneB.ID {
+		t.Errorf("the lane wait names lane %d, want %d — the wait and the entry it gates must name one "+
+			"corridor, or the append takes the wrong lane's occupancy", wl, g.laneB.ID)
 	}
 	if aErr := d.assertEachWaitGatesItsEntry(steps); aErr != nil {
-		t.Errorf("the patched plan does not satisfy the splice-time guard: %v", aErr)
+		t.Errorf("the released plan does not satisfy the splice-time guard: %v", aErr)
 	}
 }
 
-// TestWiden_ATransientRefusalIsNotReAimed is the other half, and it is what
-// keeps the widened trigger from becoming churn.
+// TestWiden_ATransientRefusalIsReAimedWhileTheGroupHasRoom was
+// TestWiden_ATransientRefusalIsNotReAimed, and it FLIPS with C2c (D13 F4).
 //
-// A lane-occupied refusal means a robot is INSIDE the corridor right now.
-// Occupancy is transient by construction — it ends when that robot drives out,
-// which is at most a pass or two away — so re-aiming for it spends a drive to
-// avoid a wait that was already ending. The named set in refusalCanWiden is what
-// draws that line, and this asserts the line is where it is claimed to be.
-func TestWiden_ATransientRefusalIsNotReAimed(t *testing.T) {
+// A lane-occupied refusal means a robot is INSIDE the corridor right now, and
+// the old rule held the waiter there because occupancy is transient: re-aiming
+// spends a drive to skip a wait that was already ending (refusalCanWiden's named
+// set). Ruling 3 decides it the other way: "a refused mouth is the next
+// candidate, not a wait, while the group has one". The cost the old rule avoided
+// is accepted and measured in the pair (re-aims per run). The event-driven twin
+// is TestC2cPin_AWaiterIsReleasedByABinLeavingAnotherLaneOfItsGroup.
+func TestWiden_ATransientRefusalIsReAimedWhileTheGroupHasRoom(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
 	d, _ := newTestDispatcherWithResolver(t, db)
+	g := c2cTwoLaneGroup(t, db, "WIDEN5", 2, 2)
+	press, press2 := lineNode(t, db, "WIDEN5-PRESS"), lineNode(t, db, "WIDEN5-PRESS2")
+	elsewhere := lineNode(t, db, "WIDEN5-EMPTYSRC")
+	testdb.CreateBinAtNode(t, db, "", elsewhere.ID, "WIDEN5-EMPTY")
 
-	wall, _, w, _, bp := clearLaneFixture(t, db, "WIDEN5")
-	line := lineNode(t, db, "WIDEN5-LINE")
-
-	// SOMEBODY IS IN THE CORRIDOR FIRST — otherwise nothing refuses the dweller
-	// and it is released rather than left standing, which is a different test.
+	// SOMEBODY IS IN LANE A'S CORRIDOR, and stays.
 	occupant := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.DeliveryNode = w[0].Name
+		o.DeliveryNode = g.a[0].Name
 		o.Status = "in_transit"
 	})
-	if ok, oErr := reservations.AcquireOccupancy(db.DB, occupant.ID, wall.ID); oErr != nil || !ok {
-		t.Fatalf("fixture: put a robot inside the lane: ok=%v err=%v", ok, oErr)
+	if ok, oErr := reservations.AcquireOccupancy(db.DB, occupant.ID, g.laneA.ID); oErr != nil || !ok {
+		t.Fatalf("fixture: put a robot inside lane A: ok=%v err=%v", ok, oErr)
 	}
+	swap := c2cAtSpot(t, db, "widen5-swap", sd.Payload.Code, 0,
+		c2cSwapPlan(g, press.Name, g.a[1].Name, elsewhere.Name, press2.Name, true))
+	c2cPaper(t, db, swap.ID, g.a[1])
 
-	dweller := stageGatedStore(t, db, d, line, w[1], func(o *orders.Order) { o.PayloadCode = bp.Code })
-	if !IsGateStaged(dweller) {
-		t.Fatalf("fixture: the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
+	c2cGatePass(d, g)
+
+	after, steps := c2cReload(t, db, swap)
+	_, drop := c2cInteriorDrop(steps)
+	if lane := c2cLaneOf(t, db, drop.Node); lane != g.laneB.ID || after.WaitIndex < 2 {
+		t.Errorf("the drop is at %q (lane %d) at wait index %d (cause %q), want it released into %s: lane "+
+			"A refused it lane-occupied, and a refused mouth is the next candidate while the group has one",
+			drop.Node, lane, after.WaitIndex, after.QueueCause, g.laneB.Name)
 	}
-	markStaged(t, db, dweller.ID)
-	was := dweller.DeliveryNode
+}
 
-	d.EvaluateLaneReleases(wall.ID)
+// ── P7: TWO FLAT BUGS IN THE WIDEN ARM (DESIGN-C2c §0.5, §9 P7) ───────────
+//
+// Found by C2c's P0 (2026-10-10) reading widenDropoffToGroup; neither was
+// exercised by any test. Both die with the arm when C2c deletes it (one chooser,
+// ruling 1), so they are pinned here and reported as flat bugs the deletion
+// fixes rather than fixed separately. The fixture is C2c's (c2c_group_choice_pins).
 
-	after, err := db.GetOrder(dweller.ID)
-	testutil.MustNoErr(t, err, "reload after the pass")
-	if after.DeliveryNode != was {
-		t.Errorf("delivery_node = %q, want it unchanged at %q — a robot in the corridor leaves on its "+
-			"own, and re-aiming for that spends a drive to skip a wait that was already ending",
-			after.DeliveryNode, was)
+// TestWiden_ACarriedEmptyIsAskedAsAnEmpty is P7 (i), §0.5(a). The swap carries
+// an EMPTY from the press into G (its drop's payload is "": plan.DropPayload)
+// and lane A filled while it drove. Lane B is declared for another payload Q,
+// which refuses a full of P but not an empty (payloadAllowedAt: "an empty
+// carrier has no payload to check against a declaration"). So the group has
+// room for this drop, in B. C2c ruling 1's hard rules ask with the drop's own
+// payload and carrier (DESIGN-C2c §7.1 `need`).
+//
+// RED AT BASE, by reading: the widen asks Resolve(G) with order.PayloadCode (P,
+// the full's payload) and UnknownBinType, B refuses P, A is full, and the swap
+// waits at G's spot under gate-rebind-unavailable — the C2b Q4 leak, at release.
+func TestWiden_ACarriedEmptyIsAskedAsAnEmpty(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
+	d, _ := newTestDispatcherWithResolver(t, db)
+	g := c2cTwoLaneGroup(t, db, "C2CP7A", 2, 2)
+	other := &payloads.Payload{Code: "C2CP7A-Q"}
+	testutil.MustNoErr(t, db.CreatePayload(other), "create the other payload")
+	testutil.MustNoErr(t, db.SetNodePayloads(g.laneB.ID, []int64{other.ID}), "declare lane B for Q")
+	testdb.CreateBinAtNode(t, db, sd.Payload.Code, g.a[0].ID, "C2CP7A-A0")
+	testdb.CreateBinAtNode(t, db, sd.Payload.Code, g.a[1].ID, "C2CP7A-A1")
+	press, press2 := lineNode(t, db, "C2CP7A-PRESS"), lineNode(t, db, "C2CP7A-PRESS2")
+	fullSrc := lineNode(t, db, "C2CP7A-FULLSRC")
+	testdb.CreateBinAtNode(t, db, sd.Payload.Code, fullSrc.ID, "C2CP7A-FULL")
+	plan := c2cSwapPlan(g, press.Name, g.a[0].Name, fullSrc.Name, press2.Name, false)
+	plan[1].Empty = true // the carried bin is the press's empty
+	swap := c2cAtSpot(t, db, "c2cp7a-swap", sd.Payload.Code, 0, plan)
+
+	c2cGatePass(d, g)
+
+	after, steps := c2cReload(t, db, swap)
+	_, drop := c2cInteriorDrop(steps)
+	if lane := c2cLaneOf(t, db, drop.Node); lane != g.laneB.ID || after.WaitIndex < 2 {
+		t.Fatalf("the carried empty's drop is at %q (lane %d) at wait index %d (cause %q), want it in lane B "+
+			"(%d): B refuses a full of %s, not an empty, and the release asked as the full",
+			drop.Node, lane, after.WaitIndex, after.QueueCause, g.laneB.ID, sd.Payload.Code)
+	}
+}
+
+// TestWiden_AWidenNeverAnswersTheLaneItWalled is P7 (ii), §0.5(b). Order 266's
+// shape with one fact added: lane A also holds a full of the swap's payload, so
+// the group's like-kind answer IS lane A. The re-bind sets A aside (its only
+// slot walls the swap's own empty at A1) and widens; the widen asks the group
+// without setting A aside, the group answers A, and "same lane" reads as "no
+// widening". B is empty the whole time. C2c ruling 1: never burying the order's
+// own later pickup is a hard rule, applied before the group's algorithm
+// (ExcludeLanes from every later pickup, DESIGN-C2c §7.1), so the answer is B.
+//
+// RED AT BASE, by reading: the swap waits at G's spot under
+// gate-rebind-unavailable although a sibling has room.
+func TestWiden_AWidenNeverAnswersTheLaneItWalled(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sd := testdb.SetupStandardData(t, db)
+	d, _ := newTestDispatcherWithResolver(t, db)
+	g := c2cTwoLaneGroup(t, db, "C2CP7B", 3, 2)
+	testdb.CreateBinAtNode(t, db, "", g.a[1].ID, "C2CP7B-EMPTY")
+	testdb.CreateBinAtNode(t, db, sd.Payload.Code, g.a[2].ID, "C2CP7B-SAMEKIND")
+	press, press2 := lineNode(t, db, "C2CP7B-PRESS"), lineNode(t, db, "C2CP7B-PRESS2")
+	swap := c2cAtSpot(t, db, "c2cp7b-swap", sd.Payload.Code, 0,
+		c2cSwapPlan(g, press.Name, g.a[0].Name, g.a[1].Name, press2.Name, true))
+
+	c2cGatePass(d, g)
+
+	after, steps := c2cReload(t, db, swap)
+	_, drop := c2cInteriorDrop(steps)
+	if lane := c2cLaneOf(t, db, drop.Node); lane != g.laneB.ID || after.WaitIndex < 2 {
+		t.Fatalf("the drop is at %q (lane %d) at wait index %d (cause %q), want it in lane B (%d): A walls the "+
+			"swap's own pickup at %s, and the group's like-kind preference for A is asked after that rule, "+
+			"not instead of it", drop.Node, lane, after.WaitIndex, after.QueueCause, g.laneB.ID, g.a[1].Name)
+	}
+	if red := selfBurial(t, db, steps); len(red) != 0 {
+		t.Errorf("%v", red)
 	}
 }

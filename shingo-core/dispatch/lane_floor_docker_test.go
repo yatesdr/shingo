@@ -68,7 +68,8 @@ func TestFloor_WakesAQuiescedPlantAndRecordsTheDefect(t *testing.T) {
 		t.Fatal("precondition: the dig must hold the lane")
 	}
 
-	dweller := stageGatedStore(t, db, d, line, w[1], nil)
+	// CONVERTED (C2c §3.2): a plain store is a group drop; the sibling lane declares another payload so only this lane takes it.
+	dweller := stageGatedStore(t, db, d, line, w[1], onlyItsLaneTakes(t, db, lane))
 	if !IsGateStaged(dweller) {
 		t.Fatalf("the dweller is not gate-staged (wait_index=%d vendor=%q)",
 			dweller.WaitIndex, dweller.VendorOrderID)
@@ -179,7 +180,8 @@ func TestFloor_IsSilentWhenItFreesNobody(t *testing.T) {
 	if !d.laneLock.TryLock(lane.ID, digger.ID) {
 		t.Fatal("precondition: the dig must hold the lane")
 	}
-	dweller := stageGatedStore(t, db, d, line, w[1], nil)
+	// CONVERTED (C2c §3.2): a plain store is a group drop; the sibling lane declares another payload so only this lane takes it.
+	dweller := stageGatedStore(t, db, d, line, w[1], onlyItsLaneTakes(t, db, lane))
 	markStaged(t, db, dweller.ID)
 	d.EvaluateLaneReleases(lane.ID)
 

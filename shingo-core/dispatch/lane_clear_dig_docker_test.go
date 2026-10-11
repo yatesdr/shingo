@@ -74,6 +74,40 @@ func clearLaneFixture(t *testing.T, db *store.DB, name string) (wall, park *node
 	return wall, park, w, p, bp
 }
 
+// onlyItsLaneTakes is the conversion these heal fixtures took when a plain
+// store into a group became a group drop (RULINGS-C2c-run-through §3.2): a
+// store waiting at the wall lane's mark is released into any sibling lane of
+// its group that can take it, so the PARK lane — free, to give the dig
+// somewhere to put the blocker — took the store and the heal under test never
+// ran. Every other lane of the wall's group now declares a payload only it
+// takes, and the store this returns the option for carries a payload of its
+// own: the group offers the store nothing but its walled lane (heal first, D13
+// F3), and the dig still parks there (its walk asks no payload fence, D13
+// Q-SCOPE). Call it once per wall.
+func onlyItsLaneTakes(t *testing.T, db *store.DB, wall *nodes.Node) func(*orders.Order) {
+	t.Helper()
+	own := &payloads.Payload{Code: wall.Name + "-DWELL"}
+	testutil.MustNoErr(t, db.CreatePayload(own), "create the walled store's payload")
+	siblingsRefuse(t, db, wall)
+	return func(o *orders.Order) { o.PayloadCode = own.Code }
+}
+
+// siblingsRefuse is onlyItsLaneTakes' fence alone, for a fixture whose store
+// already carries a payload: every other lane of the wall's group declares one
+// only it takes.
+func siblingsRefuse(t *testing.T, db *store.DB, wall *nodes.Node) {
+	t.Helper()
+	other := &payloads.Payload{Code: wall.Name + "-PARKONLY"}
+	testutil.MustNoErr(t, db.CreatePayload(other), "create the sibling lanes' payload")
+	kids, err := db.ListChildNodes(*wall.ParentID)
+	testutil.MustNoErr(t, err, "list the wall's group")
+	for _, k := range kids {
+		if k.ID != wall.ID && k.NodeTypeCode == protocol.NodeClassLANE {
+			testutil.MustNoErr(t, db.SetNodePayloads(k.ID, []int64{other.ID}), "declare "+k.Name)
+		}
+	}
+}
+
 // digParentFor returns the compound parent whose children move bins out of this
 // lane, or nil. It looks for the thing the heal creates rather than for a
 // particular id, because "a dig now exists that did not before" is the claim.
@@ -134,7 +168,8 @@ func TestWindow3_UnclaimedMouthBinIsDugOutWithNobodyAsking(t *testing.T) {
 	// This is what puts the dweller at the mark in the first place (Tier 2).
 	deep := stageDeeperBlocker(t, db, d, line, w[2], "hl1-deep")
 
-	dweller := stageGatedStore(t, db, d, line, w[1], nil)
+	// CONVERTED (C2c §3.2): a plain store is a group drop; PARK declares another payload so only the wall takes it.
+	dweller := stageGatedStore(t, db, d, line, w[1], onlyItsLaneTakes(t, db, wall))
 	if !IsGateStaged(dweller) {
 		t.Fatalf("the dweller must be gate-staged behind the deeper store "+
 			"(wait_index=%d vendor=%q) — the fixture is not reproducing F-11",
@@ -322,7 +357,8 @@ func TestWindow3_ClaimedBlockerWaitsInsteadOfDigging(t *testing.T) {
 
 	deep := stageDeeperBlocker(t, db, d, line, w[2], "hl2-deep")
 
-	dweller := stageGatedStore(t, db, d, line, w[1], nil)
+	// CONVERTED (C2c §3.2): a plain store is a group drop; PARK declares another payload so only the wall takes it.
+	dweller := stageGatedStore(t, db, d, line, w[1], onlyItsLaneTakes(t, db, wall))
 	if !IsGateStaged(dweller) {
 		t.Fatalf("the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
 	}
@@ -379,7 +415,8 @@ func TestWindow3_OccupiedSlotIsNotAWallToDigOut(t *testing.T) {
 
 	deep := stageDeeperBlocker(t, db, d, line, w[2], "hl3-deep")
 
-	dweller := stageGatedStore(t, db, d, line, w[1], nil)
+	// CONVERTED (C2c §3.2): a plain store is a group drop; PARK declares another payload so only the wall takes it.
+	dweller := stageGatedStore(t, db, d, line, w[1], onlyItsLaneTakes(t, db, wall))
 	if !IsGateStaged(dweller) {
 		t.Fatalf("the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
 	}
@@ -468,7 +505,8 @@ func TestWindow3_OrdinaryMouthHoldRefusesTheHealBeforeMintingAParent(t *testing.
 	// builds it.
 	deep := stageDeeperBlocker(t, db, d, line, w[2], "hl4-deep")
 
-	dweller := stageGatedStore(t, db, d, line, w[1], nil)
+	// CONVERTED (C2c §3.2): a plain store is a group drop; PARK declares another payload so only the wall takes it.
+	dweller := stageGatedStore(t, db, d, line, w[1], onlyItsLaneTakes(t, db, wall))
 	if !IsGateStaged(dweller) {
 		t.Fatalf("the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
 	}

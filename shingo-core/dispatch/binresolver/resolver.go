@@ -288,3 +288,11 @@ func (r *DefaultResolver) ResolveStoreExcludingLanes(group *nodes.Node, payloadC
 	gr := &GroupResolver{DB: r.DB, DebugLog: r.DebugLog, ExcludeLanes: exclude}
 	return gr.ResolveStore(group, payloadCode, stated, asker)
 }
+
+// RankStoreExcludingLanes is GroupResolver.RankStore with lanes set aside: the
+// group's store candidates, best first (C2c's release walks them).
+func (r *DefaultResolver) RankStoreExcludingLanes(group *nodes.Node, payloadCode string, stated BinTypeStatement,
+	asker domain.DigAsker, exclude map[int64]bool) ([]*nodes.Node, error) {
+	gr := &GroupResolver{DB: r.DB, DebugLog: r.DebugLog, ExcludeLanes: exclude}
+	return gr.RankStore(group, payloadCode, stated, asker)
+}

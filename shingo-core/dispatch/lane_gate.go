@@ -27,9 +27,10 @@ import (
 //
 //	THE WAIT    where a robot stands while Core decides. This is the part the
 //	            mark is named for, and the part that needs a real map point.
-//	THE ORACLE  rebindGatedDropoff — the dropoff slot resolved AT RELEASE
-//	            against the lane as it stands, through the owner-aware selector.
-//	            It is reachable from the gated arm and from nowhere else.
+//	THE ORACLE  the dropoff slot chosen AT RELEASE (releaseStoreCandidate):
+//	            since C2c across the whole group, through the one chooser
+//	            (plan.Planner.ChooseDrop), for a group-stamped drop, and in its
+//	            own lane for any other. Reachable from the gated arm only.
 //
 // An UNMARKED lane binds its slot at dispatch and drives. Nothing re-asks. The
 // robot arrives minutes later at a lane that has changed underneath it, and the
@@ -1055,16 +1056,22 @@ func (d *Dispatcher) releaseOccupancyOnExit(orderID int64, node *nodes.Node) {
 		d.maybeReleaseDigOnLastBlockerOut(lane.ID)
 		return
 	}
+	// THE WAKE IS THE PICKOUT'S OWN (RULINGS-C2c-run-through §3.3: the group's
+	// slot state is read once per event). The bin entering transit is the event
+	// the engine's lane-gate subscriber answers with the group's one pass and
+	// this lane's held legs (wireLaneGateHandlers' PICKOUT, registered after this
+	// handler, so it sees the row gone). Waking here as well ran the group's
+	// pass twice for one event.
 	d.releaseOccupancyForExitFromLane(orderID, lane)
 }
 
-// releaseOccupancyForExitFromLane is the release proper: drop the row and wake
-// the lane, because a corridor that just emptied is exactly the condition a
-// dweller at its mark is waiting on.
-//
-// Split from the caller above so the DWELL's own exit — which happens at the
-// append rather than at the lift — goes through the same two steps rather than a
-// second spelling of them.
+// releaseOccupancyForExitFromLane is the release proper: drop the row, and the
+// dig's claim with the last blocker. It used to wake the lane too; the pickout
+// that calls it is answered by the engine's lane-gate subscriber with the
+// group's pass and the lane's held legs, so the wake here ran the group's pass
+// a second time for one event (RULINGS-C2c-run-through §3.3). Its comment also
+// named the dwell's exit at its append as a second caller; there is none at
+// this tree (grep), so that reasoning was not checked and is retired with it.
 func (d *Dispatcher) releaseOccupancyForExitFromLane(orderID int64, lane *nodes.Node) {
 	if err := reservations.ReleaseOccupancyForLane(d.db.DB, orderID, lane.ID); err != nil {
 		log.Printf("lanegate: release occupancy for order %d on lane %d: %v", orderID, lane.ID, err)
@@ -1073,11 +1080,9 @@ func (d *Dispatcher) releaseOccupancyForExitFromLane(orderID int64, lane *nodes.
 	// AND THE DIG'S CLAIM GOES WITH THE LAST BLOCKER — flip 2. A robot leaving is
 	// the moment to ask whether the excavation still has anything IN this lane, as
 	// opposed to a transport leg still driving somewhere else. It is asked before
-	// the wake below rather than after, so a lane that just became enterable is
-	// evaluated once, in a state that includes both facts.
+	// the pickout's wake (the engine's subscriber runs after this handler), so a
+	// lane that just became enterable is evaluated once, with both facts in.
 	d.maybeReleaseDigOnLastBlockerOut(lane.ID)
-	d.EvaluateLaneReleases(lane.ID)
-	d.RedriveHeldCompoundLegs(lane.ID)
 }
 
 // holdsOccupancyThroughDwell reports whether this order is currently DWELLING in

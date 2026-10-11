@@ -48,7 +48,7 @@ func TestDeclaredReleaserEventsAreSubscribed(t *testing.T) {
 	// Where each population's re-driver is wired. Two files, because the lane
 	// populations and the acquiring set are wired separately and deliberately.
 	wiringFor := map[string]string{
-		"Dispatcher.EvaluateLaneReleases":    "wiring_lane_gate.go",
+		"Dispatcher.EvaluateGroupReleases":   "wiring_lane_gate.go",
 		"Dispatcher.RedriveHeldCompoundLegs": "wiring_lane_gate.go",
 		"fulfillment.Scanner.RunOnce":        "wiring.go",
 		"Dispatcher.AdvanceCompoundOrder":    "wiring.go",
@@ -112,7 +112,7 @@ func TestDeclaredReleaserEventsAreSubscribed(t *testing.T) {
 	}
 }
 
-// shortName turns "Dispatcher.EvaluateLaneReleases" into "EvaluateLaneReleases",
+// shortName turns "Dispatcher.EvaluateGroupReleases" into "EvaluateGroupReleases",
 // which is how the call reads at the wiring site.
 func shortName(qualified string) string {
 	if i := strings.LastIndex(qualified, "."); i >= 0 {

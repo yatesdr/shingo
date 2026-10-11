@@ -11,6 +11,7 @@ import (
 	"shingocore/service"
 	"shingocore/store"
 	binsstore "shingocore/store/bins"
+	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
@@ -50,6 +51,10 @@ type Allocator struct {
 	// that moved): a lane a never-dispatched store walled only through that row
 	// may now admit its dweller (Dispatcher.wakeLanesOfSlots).
 	slotReleased func(nodeIDs ...int64)
+	// takeGroupRoom is asked, on a slot reservation conflict for a group drop,
+	// whether this order may take the holder's paper by rank (C2c ruling 2;
+	// Dispatcher.takeGroupRoomByRank). It reports whether the slot is now held.
+	takeGroupRoom func(order *orders.Order, slot *nodes.Node) bool
 }
 
 func newAllocator(db *store.DB, binManifest *service.BinManifestService, finder *SourceFinder, dbg func(string, ...any)) *Allocator {
@@ -460,7 +465,23 @@ func (a *Allocator) reserveComplexSlots(order *orders.Order, resolvedSteps []res
 			missing++ // node unresolvable → hold and retry
 			continue
 		}
-		aerr := a.db.ReserveSlot(node.ID, order.ID)
+		// A GROUP DROP'S ROW IS PAPER (C2c ruling 2; D13 F1): the same pending
+		// row, tagged groupRoom, so a rank or a committed robot may take it.
+		reserve := a.db.ReserveSlot
+		if sn.group != "" {
+			reserve = a.db.ReserveGroupRoom
+		}
+		aerr := reserve(node.ID, order.ID)
+		if errors.Is(aerr, reservations.ErrReservationConflict) && sn.group != "" &&
+			a.takeGroupRoom != nil && a.takeGroupRoom(order, node) {
+			// TAKEN BY RANK. The chooser offered this slot because its holder's
+			// paper is an outranked, never-sent plan's (plan.Planner.ChooseDrop);
+			// the take re-checked that under lock, told the holder, and reserved
+			// the slot for this order.
+			a.db.AppendAudit("node", node.ID, "slot_reserved", "",
+				fmt.Sprintf("complex order %d took the paper at %s by rank", order.ID, sn.nodeName), "system")
+			continue
+		}
 		if errors.Is(aerr, reservations.ErrReservationConflict) {
 			missing++
 			if sn.group != "" {

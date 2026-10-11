@@ -196,6 +196,13 @@ func TestCollision_ComplexIsRefusedFromACorridorAPlainStoreOccupies(t *testing.T
 	db := testDBShared(t)
 	srcNode, _, bp := setupTestData(t, db)
 	laneID, mouth := seamLane(t, db, "COLL-B")
+	// C2c: the valve is a release and asks the chooser (D13, P0's premise
+	// correction 2), which places a store at its lane's DEEPEST reachable slot.
+	// Both orders aim at that one, so the plain store keeps it and the complex
+	// order meets it in flight; aimed at the mouth, the plain store was moved
+	// behind it at create and the complex order met the corridor instead.
+	deepest, sErr := db.GetNodeByDotName("COLL-B-S1")
+	mouth = testutil.Must(t, deepest, sErr, "the lane's deepest slot")
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
 	bin := testdb.CreateBinAtNode(t, db, bp.Code, srcNode.ID, "COLL-B-PLAIN-BIN")

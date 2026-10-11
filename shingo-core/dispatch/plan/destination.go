@@ -27,15 +27,43 @@ import (
 var errNoResolver = errors.New("planner has no group resolver")
 
 // StoreDestination chooses the child of a group (an NGRP, or a LANE) that a
-// store puts its carrier on: binresolver's store mode, asked once, with the
-// carrier the caller could state.
+// store puts its carrier on, with the carrier the caller could state: the one
+// chooser's answer (ChooseDrop; RULINGS-C2c-run-through §3.2, "every choice of
+// a drop in a group goes through ChooseDrop"), asked once.
+//
+// FOR A DOOR THAT ASKS BEFORE IT HOLDS AN ORDER ROW (intake, the overflow, the
+// move door), OR THAT MAY NOT WRITE (the plain transport's decide). Asked for no
+// order, the chooser offers no stranger's paper — rank and commitment are an
+// order's — so its answer is always a free slot; a paper take offered to a
+// caller that cannot make one reads as a full group, and acquiring's settle
+// (StoreDrop) makes it on the order's next pass. A caller that can write asks
+// StoreDrop, which names the take for it to make.
 func (p *Planner) StoreDestination(group *nodes.Node, payloadCode string, stated binresolver.BinTypeStatement,
 	asker domain.DigAsker) (*binresolver.ResolveResult, error) {
 	defer observe(p.db, "store-destination")()
-	if p.resolver == nil {
-		return nil, errNoResolver
+	choice, err := p.StoreDrop(group, payloadCode, stated, asker)
+	if err != nil {
+		return nil, err
 	}
-	return p.resolver.Resolve(group, binresolver.ResolveModeStore, payloadCode, stated, asker, nil)
+	if choice.Take != nil {
+		// Unreachable for the callers above (no order, no take). A caller that
+		// could take paper and asked here would drop the take on the floor, so it
+		// is told there is no free slot, in the capacity sentence callers read.
+		return nil, fmt.Errorf("no available slot in node group %s", group.Name)
+	}
+	return &binresolver.ResolveResult{Node: choice.Slot}, nil
+}
+
+// StoreDrop is StoreDestination for a caller holding an order row (acquiring's
+// settle and its dug-lane re-aim, the plain move's deferred group): the
+// chooser's whole answer, so a slot that is a stranger's paper comes back with
+// the take named (ruling 2: taken by rank), for the caller's store door to make.
+func (p *Planner) StoreDrop(group *nodes.Node, payloadCode string, stated binresolver.BinTypeStatement,
+	asker domain.DigAsker) (DropChoice, error) {
+	if p.resolver == nil {
+		return DropChoice{}, errNoResolver
+	}
+	return p.ChooseDrop(group, DropNeed{Payload: payloadCode, Stated: stated, Asker: asker})
 }
 
 // OverflowDestination chooses where a push goes when its group is at its level:
@@ -133,9 +161,15 @@ func (p *Planner) GroupStoreSlot(group *nodes.Node, payloadCode string, stated b
 	return p.groupStore(group, payloadCode, stated)
 }
 
-// groupStore is the group resolver's store mode, the one slot chooser
-// MaintainedSlot and GroupStoreSlot share.
+// groupStore is MaintainedSlot's and GroupStoreSlot's one ask of the chooser
+// (ChooseDrop, RULINGS-C2c-run-through §3.2), as nobody's dig and taking the
+// group resolver's store arm directly (see MaintainedSlot for why no child
+// listing). Asked for no order, it is offered no paper; its refusal is the
+// resolver's own, so ErrAtDeclaredLevel still reads through.
 func (p *Planner) groupStore(group *nodes.Node, payloadCode string, stated binresolver.BinTypeStatement) (*binresolver.ResolveResult, error) {
-	gr := &binresolver.GroupResolver{DB: p.db, DebugLog: p.dbg}
-	return gr.ResolveStore(group, payloadCode, stated, domain.Anyone)
+	choice, err := p.ChooseDrop(group, DropNeed{Payload: payloadCode, Stated: stated, Asker: domain.Anyone, direct: true})
+	if err != nil {
+		return nil, err
+	}
+	return &binresolver.ResolveResult{Node: choice.Slot}, nil
 }

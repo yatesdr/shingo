@@ -46,9 +46,8 @@ import "fmt"
 // state half alone goes through BlockingStateSQL / ActiveStateSQL, which is what
 // makes the qualifier explicit at the call site.
 const (
-	blockingState  = `state = 'pending'`
-	activeStates   = `state IN ('pending','confirmed')`
-	confirmedState = `state = 'confirmed'`
+	blockingState = `state = 'pending'`
+	activeStates  = `state IN ('pending','confirmed')`
 )
 
 // BlockingStateSQL renders "this row makes its resource unavailable", qualified
@@ -180,14 +179,32 @@ func OnTheBooksSQL(kind Kind, resourceExpr string) string {
 		    )`, string(kind), col, resourceExpr, activeStates)
 }
 
-// ConfirmedSlotInLaneSQL renders "the order at orderExpr holds a confirmed slot
-// row in the lane at laneExpr": a slot confirmed in a hand the fleet has, which
-// is a robot entitled to a place in that lane. The store selector reads it to
-// tell a committed robot from a plan (nodes.findStoreSlot).
-func ConfirmedSlotInLaneSQL(orderExpr, laneExpr string) string {
+// SlotInGroupOfLaneSQL renders "the order at orderExpr holds an active slot row
+// (paper or armor) on a slot of the node group the lane at laneExpr stands in":
+// a slot of any of that group's lanes, or a flat child of the group. With the
+// fleet holding the order (the caller's other half) that is a robot dispatched
+// to the group's waiting spot, or already inside one of its lanes: the
+// committed robot of "a plan never blocks a committed robot". The store
+// selector reads it to tell a committed robot from a plan (nodes.findStoreSlot).
+//
+// ── IT WAS "A CONFIRMED SLOT IN THIS LANE" (ConfirmedSlotInLaneSQL) ──────
+//
+// D13 F5 (DESIGN-C2c §6.4). Under C2c rulings 2 and 3 a gated group drop holds
+// PAPER from plan to release: the hand no longer confirms the pencilled slot at
+// dispatch, and the slot the robot takes is chosen across the group at release.
+// A robot standing at the spot therefore holds no confirmed slot in any lane,
+// and the old predicate would never fire for it — the demo jam of 2026-10-08
+// reopened. The new set is a superset on purpose: a confirmed slot in this lane
+// is still inside it. Pinned by TestBurialGuard_APlanNeverBlocksACommittedRobot,
+// converted to a robot holding only paper in the group.
+func SlotInGroupOfLaneSQL(orderExpr, laneExpr string) string {
 	return fmt.Sprintf(`EXISTS (SELECT 1 FROM reservations committed_r
 		JOIN nodes committed_s ON committed_s.id = committed_r.node_id
-		WHERE committed_r.order_id = %s AND committed_r.resource_kind = '%s'
-		  AND committed_r.%s AND committed_s.parent_id = %s)`,
-		orderExpr, string(KindSlot), confirmedState, laneExpr)
+		JOIN nodes committed_lane ON committed_lane.id = %[3]s
+		LEFT JOIN nodes committed_sl ON committed_sl.id = committed_s.parent_id
+		WHERE committed_r.order_id = %[1]s AND committed_r.resource_kind = '%[2]s'
+		  AND committed_r.%[4]s
+		  AND (committed_s.parent_id = committed_lane.parent_id
+		       OR committed_sl.parent_id = committed_lane.parent_id))`,
+		orderExpr, string(KindSlot), laneExpr, activeStates)
 }

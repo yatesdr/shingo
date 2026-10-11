@@ -623,6 +623,20 @@ func TestStaleDig_TheOwnDigResumeReAsksTheDropBeforeItAppends(t *testing.T) {
 	db := testDBShared(t)
 	d, _ := newTestDispatcherWithResolver(t, db)
 	_, lane, slots, bp := staleDigLane(t, db, "SD-RS")
+	// CONVERTED (RULINGS-C2c-run-through §3.2, "the chooser considers every child
+	// of the group"): the fixture's parking is four flat children of the group,
+	// which the release used to pass over and now offers — the store would be
+	// released onto parking and never dig. They declare another payload, so the
+	// store's chooser refuses them and the dig still parks there (its walk asks
+	// no payload fence, D13 Q-SCOPE): the group has no candidate, as the resume
+	// under test needs.
+	parkOnly := &payloads.Payload{Code: "SD-RS-PARKONLY"}
+	testutil.MustNoErr(t, db.CreatePayload(parkOnly), "create the parking payload")
+	for i := 1; i <= 4; i++ {
+		p, pErr := db.GetNodeByDotName(fmt.Sprintf("SD-RS-PARK-%d", i))
+		testutil.MustNoErr(t, pErr, "read a parking child")
+		testutil.MustNoErr(t, db.SetNodePayloads(p.ID, []int64{parkOnly.ID}), "the parking child declares it")
+	}
 	testdb.CreateBinAtNode(t, db, bp.Code, slots[0].ID, "SD-RS-BLK")
 	claimed := testdb.CreateBinAtNode(t, db, bp.Code, slots[2].ID, "SD-RS-CLAIMED")
 	press := lineNode(t, db, "SD-RS-PRESS")

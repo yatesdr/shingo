@@ -540,6 +540,19 @@ func (db *DB) TakeableSlotsInGroup(groupID, owner int64) (map[int64]nodes.SlotTa
 	return nodes.TakeableSlotsInGroup(db.DB, groupID, owner)
 }
 
+// PaperSlotsInGroup is the store selector's predicate asked once for a group's
+// lane slots held only by a stranger's groupRoom paper (C2c ruling 2). See
+// nodes.PaperSlotsInGroup.
+func (db *DB) PaperSlotsInGroup(groupID, owner int64) ([]nodes.PaperSlot, error) {
+	return nodes.PaperSlotsInGroup(db.DB, groupID, owner)
+}
+
+// LoadDemandRank is the demand an order presents at a rank comparison (a leg
+// presents its parent's). See orders.LoadDemandRank.
+func (db *DB) LoadDemandRank(orderID int64) (orders.DemandRank, error) {
+	return orders.LoadDemandRank(db.DB, orderID)
+}
+
 // SlotSpokenForByStranger reports whether an order other than owner holds an
 // active slot reservation on nodeID. See nodes.SlotSpokenForByStranger.
 func (db *DB) SlotSpokenForByStranger(nodeID, owner int64) (bool, error) {
@@ -782,7 +795,7 @@ func (db *DB) SpokenForBinsBehind(placedNodeID int64, now time.Time) ([]SpokenFo
 // it could.
 //
 // `in_transit` is the moment for a GATED order — its destination is chosen at
-// release by rebindGatedDropoff, and staged→in_transit is that release.
+// release by the gate's chooser (releaseChosenDrop), and staged→in_transit is that release.
 // `dispatched` is the moment for the plain path, where a plan can go straight to
 // delivered without ever reporting in_transit. MAX over the two is right for
 // both: for a gated order in_transit(release) is strictly later than

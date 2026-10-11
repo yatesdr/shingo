@@ -116,7 +116,7 @@ func (e *Engine) noteDestNodeDrift(order *orders.Order, orderBins []*orders.Orde
 
 		e.logFn("WARN: "+DestNodeDriftMarker+" %s — order %d bin %d is recorded for %s but its own plan "+
 			"sends it to %s. The allocation-time destination went stale against the plan; the "+
-			"re-bind is what should have updated it (rebindGatedDropoff → refreshOrderBinDestinations). "+
+			"re-bind at release is what should have updated it (releaseChosenDrop → refreshOrderBinDestinations). "+
 			"Expected count is ZERO: the bin is about to be placed from the RECORD, so the robot and "+
 			"the ledger are about to disagree about where this bin is.",
 			site, order.ID, ob.BinID, ob.DestNode, want)

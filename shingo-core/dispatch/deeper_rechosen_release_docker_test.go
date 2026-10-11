@@ -57,7 +57,13 @@ func TestLaneGate_ADeeperStoreReChosenOutOfTheLaneReleasesTheShallowerDweller(t 
 		o.Status = protocol.StatusQueued
 	})
 	testutil.MustNoErr(t, db.ReserveSlot(s1.ID, deep.ID), "the deeper store holds its slot")
-	shallow := stageGatedStore(t, db, d, line, s0, nil)
+	// CONVERTED (C2c §3.2): a plain store is a group drop and would be released
+	// into the other lane at once; that lane declares another payload, so the
+	// dweller's group offers it its own lane only and it waits behind the deeper
+	// store, as the test needs.
+	lane, err := db.GetNode(laneID)
+	testutil.MustNoErr(t, err, "read the lane")
+	shallow := stageGatedStore(t, db, d, line, s0, onlyItsLaneTakes(t, db, lane))
 	markStaged(t, db, shallow.ID)
 	d.EvaluateLaneReleases(laneID)
 	held, err := db.GetOrder(shallow.ID)

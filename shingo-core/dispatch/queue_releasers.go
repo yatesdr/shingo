@@ -155,7 +155,8 @@ var waitPopulations = []populationReleaser{
 	{
 		population: PopGateStaged,
 		owner:      OwnerCore,
-		redriver:   "Dispatcher.EvaluateLaneReleases",
+		// The GROUP pass since C2c (ruling 4: a waiter is keyed by its group).
+		redriver: "Dispatcher.EvaluateGroupReleases",
 		events: []string{
 			"EventBlockCompleted", "EventBinEnteredTransit", "EventBinUpdated",
 			"EventOrderCompleted", "EventOrderCancelled", "EventOrderFailed",

@@ -35,7 +35,9 @@ func stageDwellerBehindAWall(t *testing.T, db *store.DB, d *Dispatcher, tag stri
 
 	deep := stageDeeperBlocker(t, db, d, line, w[2], tag+"-deep")
 
-	dweller = stageGatedStore(t, db, d, line, w[1], nil)
+	// CONVERTED (C2c §3.2): a plain store is a group drop; PARK declares another
+	// payload so only the wall takes it (onlyItsLaneTakes).
+	dweller = stageGatedStore(t, db, d, line, w[1], onlyItsLaneTakes(t, db, wallLane))
 	if !IsGateStaged(dweller) {
 		t.Fatalf("the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
 	}
@@ -138,7 +140,7 @@ func TestAcceptance_ADiggingDwellerProposesNoSecondDig(t *testing.T) {
 // incidentally: the first chapter's leg is already dispatched and the lane reads
 // occupied. In the plant the two proposals overlapped and neither saw the other.
 //
-// MUTATION: drop the in-flight summon claim in evaluateLaneReleasesPass. The
+// MUTATION: drop the in-flight summon claim in evaluateGroupReleasesPass. The
 // second pass decides the same summon.
 func TestAcceptance_TwoPassesInTheSummonWindowRaiseOneDig(t *testing.T) {
 	t.Parallel()
@@ -147,8 +149,11 @@ func TestAcceptance_TwoPassesInTheSummonWindowRaiseOneDig(t *testing.T) {
 
 	wall, dweller, _ := stageDwellerBehindAWall(t, db, d, "ACC-WINDOW")
 
-	accA, wantA, _, _, _ := d.evaluateLaneReleasesPass(wall)
-	accB, wantB, _, _, _ := d.evaluateLaneReleasesPass(wall) // inside A's window
+	// C2c: the pass is the group's (ruling 4); the heal it decides is the same.
+	passA := d.evaluateGroupReleasesPass(*wall.ParentID)
+	passB := d.evaluateGroupReleasesPass(*wall.ParentID) // inside A's window
+	accA, wantA := passA.acceptance, passA.digWanted
+	accB, wantB := passB.acceptance, passB.digWanted
 	if !wantA {
 		t.Fatal("fixture: the first pass did not want a dig")
 	}

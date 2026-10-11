@@ -3,6 +3,7 @@
 package store_test
 
 import (
+	"errors"
 	"testing"
 
 	"shingo/protocol"
@@ -319,4 +320,189 @@ func TestFindBuriedBin_NoBuried(t *testing.T) {
 	if src.ID != b.ID {
 		t.Errorf("source bin = %d, want %d", src.ID, b.ID)
 	}
+}
+
+// TestGroupSlotState_AnswersAsTheSelectorsDo pins the gate pass's one read of a
+// group (nodes.ReadGroupSlotState, RULINGS-C2c-run-through §3.3) to the SQL
+// selectors it answers for: for every asker the fixture names — nobody, a
+// committed robot holding paper, an unsent plan, a stranger naming a slot, a
+// stranger's paper, a holder coming for a deeper bin, a dig — each lane's store
+// slot (with the closed-by-claim diagnosis), the group's paper, its unlocked
+// children, each lane's slots and bin count come out the same. Then a release
+// the pass makes (a committed robot taking a slot as armor, its final drop) is
+// made in the store and written into the read, and the store slot every other
+// asker is offered still agrees.
+func TestGroupSlotState_AnswersAsTheSelectorsDo(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	testdb.SetupStandardData(t, db)
+	ngrp, err := db.GetNodeTypeByCode(protocol.NodeClassNGRP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneType, err := db.GetNodeTypeByCode(protocol.NodeClassLANE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grp := &nodes.Node{Name: "GSS-GRP", IsSynthetic: true, Enabled: true, NodeTypeID: &ngrp.ID}
+	mustNo(t, db.CreateNode(grp))
+	testdb.MarkGroup(t, db, grp.ID)
+	mkLane := func(name string, depth int) (*nodes.Node, []*nodes.Node) {
+		lane := &nodes.Node{Name: name, IsSynthetic: true, Enabled: true, NodeTypeID: &laneType.ID, ParentID: &grp.ID}
+		mustNo(t, db.CreateNode(lane))
+		var slots []*nodes.Node
+		for i := 0; i < depth; i++ {
+			d := i
+			s := &nodes.Node{Name: name + "-S" + string(rune('0'+i)), Enabled: true, ParentID: &lane.ID, Depth: &d}
+			mustNo(t, db.CreateNode(s))
+			slots = append(slots, s)
+		}
+		return lane, slots
+	}
+	l1, s1 := mkLane("GSS-L1", 4)
+	l2, s2 := mkLane("GSS-L2", 3)
+	flat := &nodes.Node{Name: "GSS-F", Enabled: true, ParentID: &grp.ID}
+	mustNo(t, db.CreateNode(flat))
+	away := &nodes.Node{Name: "GSS-AWAY", Enabled: true}
+	mustNo(t, db.CreateNode(away))
+
+	order := func(uuid string, status protocol.Status, vendor string, set func(*orders.Order)) *orders.Order {
+		o := testdb.CreateOrder(t, db, func(o *orders.Order) {
+			o.EdgeUUID, o.Status, o.DeliveryNode = uuid, status, away.Name
+			if set != nil {
+				set(o)
+			}
+		})
+		if vendor != "" {
+			mustNo(t, db.UpdateOrderVendor(o.ID, vendor, "WAITING", "AMR-1"))
+		}
+		return o
+	}
+	// A: a robot at the group's spot, holding paper on L1-S2 (committed).
+	a := order("gss-a", protocol.StatusStaged, "GSS-VA", func(o *orders.Order) { o.DeliveryNode = s1[2].Name })
+	mustNo(t, reservations.AcquireSlot(db.DB, a.ID, s1[2].ID, reservations.GroupRoomTag))
+	// B: a plan never sent, holding nothing.
+	b := order("gss-b", protocol.StatusQueued, "", nil)
+	// N: a dispatched stranger naming L2-S1.
+	n := order("gss-n", protocol.StatusInTransit, "GSS-VN", func(o *orders.Order) { o.DeliveryNode = s2[1].Name })
+	// P: a never-sent stranger's paper on L2-S2.
+	p := order("gss-p", protocol.StatusQueued, "", nil)
+	mustNo(t, reservations.AcquireSlot(db.DB, p.ID, s2[2].ID, reservations.GroupRoomTag))
+	// H: an unsent demand aiming at the bin at the back of L1 (bin_id + source_node).
+	deep := testdb.CreateBinAtNode(t, db, "", s1[3].ID, "GSS-DEEP")
+	h := order("gss-h", protocol.StatusQueued, "", func(o *orders.Order) { o.SourceNode = s1[3].Name })
+	mustNo(t, reservations.Acquire(db.DB, h.ID, h.ID, deep.ID, "test")) // its aim holds the bin softly
+	mustNo(t, db.UpdateOrderBinID(h.ID, deep.ID))
+	// D: a dig holding L2's mouth.
+	dig := order("gss-d", protocol.StatusInTransit, "GSS-VD", nil)
+	if _, err := db.DB.Exec(`INSERT INTO reservations (order_id, resource_kind, node_id, state, mode, reserved_by, created_at)
+		VALUES ($1, 'mouth', $2, 'confirmed', 'dig', 'test', NOW())`, dig.ID, l2.ID); err != nil {
+		t.Fatalf("the dig's mouth row: %v", err)
+	}
+	// A bin on the flat child.
+	testdb.CreateBinAtNode(t, db, "", flat.ID, "GSS-ONFLAT")
+
+	askers := []int64{0, a.ID, b.ID, n.ID, p.ID, h.ID, dig.ID}
+	compare := func(stage string) {
+		t.Helper()
+		state, err := nodes.ReadGroupSlotState(db.DB, grp.ID)
+		if err != nil {
+			t.Fatalf("%s: read the group: %v", stage, err)
+		}
+		for _, owner := range askers {
+			for _, lane := range []*nodes.Node{l1, l2} {
+				want, wErr := db.FindStoreSlotInLaneExcluding(lane.ID, owner)
+				got, open := state.StoreSlot(lane.ID, owner)
+				switch {
+				case wErr == nil && (got == nil || got.ID != want.ID):
+					t.Errorf("%s: owner %d lane %s: the read offers %v, the selector %s", stage, owner, lane.Name, got, want.Name)
+				case wErr != nil && got != nil:
+					t.Errorf("%s: owner %d lane %s: the read offers %s, the selector none (%v)", stage, owner, lane.Name, got.Name, wErr)
+				case wErr != nil && open != errors.Is(wErr, nodes.ErrLaneClosedByClaim):
+					t.Errorf("%s: owner %d lane %s: closed-by-claim %v, the selector says %v", stage, owner, lane.Name, open, wErr)
+				}
+			}
+			wantP, err := db.PaperSlotsInGroup(grp.ID, owner)
+			if err != nil {
+				t.Fatalf("%s: paper: %v", stage, err)
+			}
+			gotP := state.PaperSlots(owner)
+			if len(wantP) != len(gotP) {
+				t.Errorf("%s: owner %d: %d paper slot(s) in the read, %d from the selector", stage, owner, len(gotP), len(wantP))
+			} else {
+				for i := range wantP {
+					w, g := wantP[i], gotP[i]
+					if w.Slot.ID != g.Slot.ID || w.LaneID != g.LaneID || w.Holder != g.Holder || w.HolderSent != g.HolderSent ||
+						w.HolderPriority != g.HolderPriority || w.HolderDemand != g.HolderDemand {
+						t.Errorf("%s: owner %d paper %d: read %+v, selector %+v", stage, owner, i, g, w)
+					}
+				}
+			}
+			asker := reservations.DigAsker{OrderID: owner, LaneOwner: owner}
+			wantC, err := db.ListChildNodesUnlocked(grp.ID, asker)
+			if err != nil {
+				t.Fatalf("%s: children: %v", stage, err)
+			}
+			gotC := state.ChildrenUnlocked(asker)
+			if names(wantC) != names(gotC) {
+				t.Errorf("%s: owner %d: unlocked children %s in the read, %s from the store", stage, owner, names(gotC), names(wantC))
+			}
+		}
+		for _, lane := range []*nodes.Node{l1, l2} {
+			wantS, err := db.ListLaneSlots(lane.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if names(wantS) != names(state.LaneSlots(lane.ID)) {
+				t.Errorf("%s: lane %s slots %s in the read, %s from the store", stage, lane.Name,
+					names(state.LaneSlots(lane.ID)), names(wantS))
+			}
+			wantB, err := db.CountBinsInLane(lane.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if wantB != state.LaneBins(lane.ID) {
+				t.Errorf("%s: lane %s holds %d bin(s) in the read, %d in the store", stage, lane.Name, state.LaneBins(lane.ID), wantB)
+			}
+		}
+	}
+	compare("as built")
+
+	// THE RELEASE, made in the store and written into the read: A takes L2-S0 as
+	// armor and lets go of L1-S2; its drop is its last, so its delivery follows.
+	state, err := nodes.ReadGroupSlotState(db.DB, grp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ConfirmReleaseDrop(l2.ID, s2[0].ID, a.ID, s1[2].ID, nil); err != nil {
+		t.Fatalf("A's release hand: %v", err)
+	}
+	mustNo(t, db.UpdateOrderDeliveryNode(a.ID, s2[0].Name))
+	state.NoteReleased(a.ID, s2[0].ID, s1[2].ID, true)
+	for _, owner := range askers {
+		for _, lane := range []*nodes.Node{l1, l2} {
+			want, wErr := db.FindStoreSlotInLaneExcluding(lane.ID, owner)
+			got, _ := state.StoreSlot(lane.ID, owner)
+			if (wErr == nil) != (got != nil) || (wErr == nil && got.ID != want.ID) {
+				t.Errorf("after the release: owner %d lane %s: the noted read offers %v, the selector %v (%v)",
+					owner, lane.Name, got, want, wErr)
+			}
+		}
+	}
+	compare("after the release")
+}
+
+func mustNo(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func names(ns []*nodes.Node) string {
+	out := ""
+	for _, n := range ns {
+		out += n.Name + ","
+	}
+	return out
 }

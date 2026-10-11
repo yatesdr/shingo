@@ -101,6 +101,13 @@ func (db *DB) ReserveSlot(nodeID, orderID int64) error {
 	return reservations.AcquireSlot(db.DB, orderID, nodeID, "reserveSlot")
 }
 
+// ReserveGroupRoom is ReserveSlot for a planned group drop: the same pending
+// row, tagged as paper (reservations.GroupRoomTag, C2c ruling 2), which a rank
+// or a committed robot may take.
+func (db *DB) ReserveGroupRoom(nodeID, orderID int64) error {
+	return reservations.AcquireSlot(db.DB, orderID, nodeID, reservations.GroupRoomTag)
+}
+
 // ReleaseSlotReservation drops a PENDING slot reservation the order no longer needs
 // (a stray left by a re-resolution) — the plain, uncoupled release (no claim yet).
 func (db *DB) ReleaseSlotReservation(nodeID, orderID int64) error {

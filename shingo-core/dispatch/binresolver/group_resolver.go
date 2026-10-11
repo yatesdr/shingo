@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"shingocore/domain"
+	"sort"
 	"strings"
 	"time"
 
@@ -497,6 +498,121 @@ func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, stat
 	// makes that un-forgettable — a new store path gets the gate by existing.
 	stated = r.settleBinType(stated, asker, group)
 	binTypeID := stated.TypeID()
+	if err := r.groupAdmitsStore(group, payloadCode, binTypeID); err != nil {
+		return nil, err
+	}
+
+	algo := r.getGroupAlgorithm(group.ID, PropStoreAlgorithm, StoreLKND)
+	switch algo {
+	case StoreDPTH:
+		return r.resolveStoreDPTH(group, payloadCode, binTypeID, asker)
+	default:
+		return r.resolveStoreLKND(group, payloadCode, binTypeID, asker)
+	}
+}
+
+// RankStore is ResolveStore's candidates in the group's own order, best first:
+// the same fences, the same per-lane read, the same comparator (LKND's
+// candidateBetter, stable, so the first is exactly ResolveStore's answer; DPTH's
+// child order, lanes before flat children). One slot per lane — its deepest
+// usable one — and each usable flat child.
+//
+// C2c's release walks it (ruling 3: a refused mouth is the next candidate, not a
+// wait, while the group has one), so a refusal costs no second read of the group
+// (DESIGN-C2c §7.3: the group's slot state read once per release).
+func (r *GroupResolver) RankStore(group *nodes.Node, payloadCode string, stated BinTypeStatement,
+	asker domain.DigAsker) ([]*nodes.Node, error) {
+	stated = r.settleBinType(stated, asker, group)
+	binTypeID := stated.TypeID()
+	if err := r.groupAdmitsStore(group, payloadCode, binTypeID); err != nil {
+		return nil, err
+	}
+	var candidates []storageCandidate
+	var err error
+	if r.getGroupAlgorithm(group.ID, PropStoreAlgorithm, StoreLKND) == StoreDPTH {
+		candidates, err = r.storeCandidatesDPTH(group, payloadCode, binTypeID, asker)
+	} else {
+		candidates, err = r.storeCandidatesLKND(group, payloadCode, binTypeID, asker)
+		if err == nil {
+			sort.SliceStable(candidates, func(i, j int) bool { return candidateBetter(candidates[i], candidates[j]) })
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*nodes.Node, 0, len(candidates))
+	for _, c := range candidates {
+		out = append(out, c.node)
+	}
+	return out, nil
+}
+
+// storeCandidatesDPTH is depth-first's whole candidate list, in its order: every
+// lane with a usable slot in child order, then every usable flat child —
+// resolveStoreDPTH's two passes without the early return, asked the same fences.
+func (r *GroupResolver) storeCandidatesDPTH(group *nodes.Node, payloadCode string, binTypeID *int64,
+	asker domain.DigAsker) ([]storageCandidate, error) {
+	children, err := r.DB.ListChildNodesUnlocked(group.ID, asker)
+	if err != nil {
+		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
+	}
+	children = r.withoutExcludedLanes(children)
+	var out []storageCandidate
+	for _, child := range children {
+		if !child.Enabled || child.NodeTypeCode != protocol.NodeClassLANE ||
+			!r.payloadAllowedAt(child.ID, payloadCode) || !r.binTypeAllowed(child.ID, binTypeID) {
+			continue
+		}
+		if slot, sErr := r.DB.FindStoreSlotInLaneExcluding(child.ID, asker.OrderID); sErr == nil {
+			out = append(out, storageCandidate{node: slot})
+		}
+	}
+	for _, child := range children {
+		if !child.Enabled || child.IsSynthetic || child.ClaimedBy != nil ||
+			!r.payloadAllowedAt(child.ID, payloadCode) || !r.binTypeAllowed(child.ID, binTypeID) {
+			continue
+		}
+		count, cErr := r.DB.CountBinsByNode(child.ID)
+		if cErr != nil {
+			continue
+		}
+		inflight, _ := r.DB.CountActiveOrdersByDeliveryNodeExcluding(child.Name, asker.OrderID)
+		if count+inflight >= 1 {
+			continue
+		}
+		if spoken, sErr := r.DB.SlotSpokenForByStranger(child.ID, asker.OrderID); sErr != nil || spoken {
+			continue
+		}
+		out = append(out, storageCandidate{node: child})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no available slot in node group %s", group.Name)
+	}
+	return out, nil
+}
+
+// StoreFitsPaper asks a slot that is free but for a stranger's paper the fences
+// ResolveStore asks of a free one, so a take cannot place where a free choice
+// would be refused (C2c ruling 1: the hard rules before anything else): the
+// group's declared level and its empties-only refusal, then the payload and the
+// carrier the lane declares and the slot declares. The carrier is settled from
+// the asker exactly as ResolveStore settles it. Reachability, the burial guard
+// and takeability are the read's (nodes.PaperSlotsInGroup).
+func (r *GroupResolver) StoreFitsPaper(group, lane, slot *nodes.Node, payloadCode string, stated BinTypeStatement,
+	asker domain.DigAsker) bool {
+	stated = r.settleBinType(stated, asker, group)
+	binTypeID := stated.TypeID()
+	if r.groupAdmitsStore(group, payloadCode, binTypeID) != nil {
+		return false
+	}
+	return r.payloadAllowedAt(lane.ID, payloadCode) && r.binTypeAllowed(lane.ID, binTypeID) &&
+		r.payloadAllowedAt(slot.ID, payloadCode) && r.binTypeAllowed(slot.ID, binTypeID)
+}
+
+// groupAdmitsStore is ResolveStore's group-level refusals, asked before any
+// child: the empties-only declaration and the declared level. Moved out of
+// ResolveStore unchanged so StoreFitsPaper asks the same two.
+func (r *GroupResolver) groupAdmitsStore(group *nodes.Node, payloadCode string, binTypeID *int64) error {
 	// ── MG4-1: THE LEVEL IS A CAP, AND THIS IS WHERE IT BINDS ───────────────
 	//
 	// A maintained group holds a declared number of empty carriers. The keeper
@@ -517,7 +633,7 @@ func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, stat
 	// would be asking a question the configuration does not answer.
 	levels, err := r.DB.ListMaintainLevels(group.ID)
 	if err != nil {
-		return nil, fmt.Errorf("read declared level for %s: %w", group.Name, err)
+		return fmt.Errorf("read declared level for %s: %w", group.Name, err)
 	}
 
 	// ── A DECLARED LEVEL SAYS WHAT THE GROUP HOLDS, AND IT IS EMPTIES ───────
@@ -547,22 +663,15 @@ func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, stat
 	// THE KEEPER CANNOT BE REFUSED BY THIS. Its own stores pass an empty
 	// payloadCode (maintainer.go), which is what an empties bank is for.
 	if payloadCode != "" && len(levels) > 0 {
-		return nil, fmt.Errorf("payload %s cannot be stored in empties-only node group %s", payloadCode, group.Name)
+		return fmt.Errorf("payload %s cannot be stored in empties-only node group %s", payloadCode, group.Name)
 	}
 
 	if full, err := r.atDeclaredLevel(group, binTypeID, levels); err != nil {
-		return nil, err
+		return err
 	} else if full {
-		return nil, &atLevelError{group: group.Name}
+		return &atLevelError{group: group.Name}
 	}
-
-	algo := r.getGroupAlgorithm(group.ID, PropStoreAlgorithm, StoreLKND)
-	switch algo {
-	case StoreDPTH:
-		return r.resolveStoreDPTH(group, payloadCode, binTypeID, asker)
-	default:
-		return r.resolveStoreLKND(group, payloadCode, binTypeID, asker)
-	}
+	return nil
 }
 
 // ResolveStoreVacated asks whether one flat child of a group may take a store
@@ -707,6 +816,18 @@ func (r *GroupResolver) ResolveStoreInLane(lane *nodes.Node, binTypeID *int64, a
 
 // resolveStoreLKND consolidates matching payload codes first, then picks the emptiest slot.
 func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, binTypeID *int64, asker domain.DigAsker) (*ResolveResult, error) {
+	candidates, err := r.storeCandidatesLKND(group, payloadCode, binTypeID, asker)
+	if err != nil {
+		return nil, err
+	}
+	return &ResolveResult{Node: bestStorageCandidate(candidates)}, nil
+}
+
+// storeCandidatesLKND is like-kind's candidate set: one per lane with a usable
+// slot (its deepest), and each usable flat child, with what the ranking reads.
+// resolveStoreLKND takes the best; RankStore orders them all. Empty is the
+// capacity error.
+func (r *GroupResolver) storeCandidatesLKND(group *nodes.Node, payloadCode string, binTypeID *int64, asker domain.DigAsker) ([]storageCandidate, error) {
 	// Lanes that had a usable slot and were refused by the burial guard. Kept so
 	// a group that comes up empty can say whether it is FULL or merely CLOSED —
 	// two conditions with the same disposition (walk on) and completely different
@@ -838,7 +959,7 @@ func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, 
 		return nil, fmt.Errorf("no available slot in node group %s", group.Name)
 	}
 
-	return &ResolveResult{Node: bestStorageCandidate(candidates)}, nil
+	return candidates, nil
 }
 
 // resolveStoreDPTH packs back-to-front regardless of payload. Prefers lanes over direct children.

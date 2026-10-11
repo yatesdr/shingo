@@ -1472,7 +1472,8 @@ func TestGroupTrigger_EntrantDwellerIsWokenBySiblingLane(t *testing.T) {
 
 	deep := stageDeeperBlocker(t, db, d, line, w[2], "gtrig-deep")
 	_ = deep
-	dweller := stageGatedStore(t, db, d, line, w[1], nil)
+	// CONVERTED (C2c §3.2): a plain store is a group drop; the sibling lane declares another payload so only this lane takes it.
+	dweller := stageGatedStore(t, db, d, line, w[1], onlyItsLaneTakes(t, db, wall))
 	if !IsGateStaged(dweller) {
 		t.Fatalf("fixture: the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
 	}
@@ -1528,7 +1529,8 @@ func TestNodeIDsForOrder_IncludesTheLaneItWaitedOn(t *testing.T) {
 
 	deep := stageDeeperBlocker(t, db, d, line, w[2], "nidw-deep")
 	_ = deep
-	dweller := stageGatedStore(t, db, d, line, w[1], nil)
+	// CONVERTED (C2c §3.2): a plain store is a group drop; the sibling lane declares another payload so only this lane takes it.
+	dweller := stageGatedStore(t, db, d, line, w[1], onlyItsLaneTakes(t, db, wall))
 	if !IsGateStaged(dweller) {
 		t.Fatalf("fixture: the dweller must be gate-staged (wait_index=%d)", dweller.WaitIndex)
 	}

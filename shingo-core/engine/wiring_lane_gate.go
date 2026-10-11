@@ -2,10 +2,10 @@
 //
 // A robot dwelling at a lane's wait point is waiting on ONE thing: the lane
 // becoming safe to enter. Every event below is a way that can happen, and each
-// one asks the dispatcher to re-evaluate the affected lane.
+// one asks the dispatcher to re-evaluate the affected lane's GROUP (C2c ruling 4).
 //
 // The handler is deliberately dumb — it resolves "which lane just changed" and
-// calls EvaluateLaneReleases, which derives everything else from live state.
+// calls EvaluateGroupReleases, which derives everything else from live state.
 // Nothing here decides anything, so a duplicate event is harmless, a dropped one
 // costs only latency until the next firing, and the trigger set can be generous
 // without any of these subscribers having to agree about ordering.
@@ -26,47 +26,59 @@ func (e *Engine) wireLaneGateHandlers() {
 	if e.dispatcher == nil {
 		return
 	}
-	// evaluateGroup is the DWELLER's half of the trigger set.
+	// gate is one event's gate work: every GROUP the event touched evaluated
+	// ONCE, and the held compound legs of every lane it touched re-driven (C2c
+	// ruling 4: "evaluated once per group per event"; the dispatcher owns the
+	// keys, GateKeysForNode and GroupIDForLane).
 	//
-	// An entrant waits for one lane and is woken by that lane changing. An OUTBOUND
-	// dweller — a dig leg standing inside the lane it is digging, holding a blocker
-	// — waits for a shuffle slot to free ANYWHERE IN THE GROUP, and the one lane
-	// that will not clear is the one it is standing in. So a node freeing here has
-	// to reach the lanes that hold dwellers in the same group, not just its own.
+	// It used to be two closures and two passes: the lane's own evaluation (and
+	// its held legs), then the DWELLER's half — the group fan-out over every lane
+	// of the same group that held a waiter, because an outbound dweller waits for
+	// a shuffle slot to free ANYWHERE IN THE GROUP and an inbound one can be
+	// re-aimed to a sibling. A pickout evaluated the lane the bin left twice. The
+	// waiters are keyed by their group now, so the group's one pass sees all of
+	// them, entrants and dwellers alike.
 	//
-	// It rides the same events for the same reason the rest of this file does:
-	// nothing here decides anything, so a duplicate is harmless and a miss costs
+	// Nothing here decides anything, so a duplicate is harmless and a miss costs
 	// only latency until the 60-second floor.
-	evaluateGroup := func(nodeIDs ...int64) {
-		for _, nodeID := range nodeIDs {
-			if nodeID == 0 {
+	gate := func(lanes []int64, nodeIDs ...int64) {
+		done, redriven := map[int64]bool{}, map[int64]bool{}
+		pass := func(groupID int64) {
+			if groupID != 0 && !done[groupID] {
+				done[groupID] = true
+				e.dispatcher.EvaluateGroupReleases(groupID)
+			}
+		}
+		// A COMPOUND LEG HELD AT THIS LANE IS WAITING ON THE SAME FACT.
+		// It is not gate-staged and has no vendor order, so the evaluator
+		// cannot see it — its candidate query keys on IsGateStaged. Its
+		// dispatch path names a sibling's dropoff as its releaser, and with
+		// no sibling in flight nothing was ever going to come back. These
+		// are the events that actually free a lane, whoever caused it.
+		//
+		// Separate call rather than a branch inside the evaluator because
+		// the two act on different POPULATIONS and do different things: the
+		// evaluator appends a tail to a waybill the fleet already holds,
+		// this dispatches a leg for the first time. (It is NOT because the
+		// evaluator is gated-lane-only — that gate was deleted by
+		// F-05. See RedriveHeldCompoundLegs.) Once per lane per event.
+		redrive := func(laneID int64) {
+			if laneID != 0 && !redriven[laneID] {
+				redriven[laneID] = true
+				e.dispatcher.RedriveHeldCompoundLegs(laneID)
+			}
+		}
+		for _, laneID := range lanes {
+			if laneID == 0 {
 				continue
 			}
-			// The dispatcher owns the spelling: the dig-lock release needs the
-			// same fan-out and used to lack it entirely, so the loop moved to
-			// where all three callers can share it.
-			e.dispatcher.EvaluateDwellersSharingGroupWith(nodeID)
+			pass(e.dispatcher.GroupIDForLane(laneID))
+			redrive(laneID)
 		}
-	}
-	evaluate := func(laneIDs ...int64) {
-		for _, id := range laneIDs {
-			if id != 0 {
-				e.dispatcher.EvaluateLaneReleases(id)
-				// A COMPOUND LEG HELD AT THIS LANE IS WAITING ON THE SAME FACT.
-				// It is not gate-staged and has no vendor order, so the evaluator
-				// cannot see it — its candidate query keys on IsGateStaged. Its
-				// dispatch path names a sibling's dropoff as its releaser, and with
-				// no sibling in flight nothing was ever going to come back. These
-				// are the events that actually free a lane, whoever caused it.
-				//
-				// Separate call rather than a branch inside the evaluator because
-				// the two act on different POPULATIONS and do different things: the
-				// evaluator appends a tail to a waybill the fleet already holds,
-				// this dispatches a leg for the first time. (It is NOT because the
-				// evaluator is gated-lane-only — that gate was deleted by
-				// F-05. See RedriveHeldCompoundLegs.)
-				e.dispatcher.RedriveHeldCompoundLegs(id)
-			}
+		for _, nodeID := range nodeIDs {
+			laneID, groupID := e.dispatcher.GateKeysForNode(nodeID)
+			pass(groupID)
+			redrive(laneID)
 		}
 	}
 
@@ -82,7 +94,7 @@ func (e *Engine) wireLaneGateHandlers() {
 	// to release — correct but a firing late. wireLaneGateHandlers is called at the
 	// end of wireEventHandlers to guarantee it.
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BlockCompletedEvent]) {
-		evaluate(e.dispatcher.LaneIDForNodeName(evt.Payload.Location))
+		gate([]int64{e.dispatcher.LaneIDForNodeName(evt.Payload.Location)})
 	}, EventBlockCompleted)
 
 	// PICKOUT — a bin left a lane slot: an outbound holder released its mouth row,
@@ -92,8 +104,7 @@ func (e *Engine) wireLaneGateHandlers() {
 	// is a shuffle slot becoming available, which is the one thing a leg holding a
 	// blocker with nowhere to put it is waiting for.
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinEnteredTransitEvent]) {
-		evaluate(e.dispatcher.LaneIDsForGateEvent(evt.Payload.FromNodeID))
-		evaluateGroup(evt.Payload.FromNodeID)
+		gate(nil, evt.Payload.FromNodeID)
 	}, EventBinEnteredTransit)
 
 	// BIN MOVED — the catch-all occupancy change (operator moves, corrections,
@@ -102,11 +113,8 @@ func (e *Engine) wireLaneGateHandlers() {
 	// both.
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinUpdatedEvent]) {
 		ev := evt.Payload
-		evaluate(
-			e.dispatcher.LaneIDsForGateEvent(ev.FromNodeID),
-			e.dispatcher.LaneIDsForGateEvent(ev.ToNodeID),
-		)
-		evaluateGroup(ev.FromNodeID)
+		// The landing side as a LANE only: a bin arriving on a flat node frees nothing.
+		gate([]int64{e.dispatcher.LaneIDsForGateEvent(ev.ToNodeID)}, ev.FromNodeID)
 	}, EventBinUpdated)
 
 	// TERMINAL — a lane worker died holding a mouth row. TerminalizeOrder releases
@@ -119,8 +127,7 @@ func (e *Engine) wireLaneGateHandlers() {
 	// frees that slot for a dweller without anything physically moving. Nothing
 	// else in this set fires for that.
 	terminal := func(orderID int64) {
-		evaluate(e.dispatcher.LaneIDsForOrder(orderID)...)
-		evaluateGroup(e.dispatcher.NodeIDsForOrder(orderID)...)
+		gate(e.dispatcher.LaneIDsForOrder(orderID), e.dispatcher.NodeIDsForOrder(orderID)...)
 	}
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
 		terminal(evt.Payload.OrderID)

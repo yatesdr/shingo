@@ -112,7 +112,8 @@ func TestLaneEntry_DwellingCandidateStillBlocks(t *testing.T) {
 	// left standing at the mark when that blocker places. Its bin is on the deck
 	// and its lane wait is un-appended.
 	deeper := stageDeeperBlocker(t, db, d, line, w[2], "dwblk-deeper")
-	dweller := stageGatedStore(t, db, d, line, w[1], nil)
+	// CONVERTED (C2c §3.2): a plain store is a group drop; the sibling lane declares another payload so only this lane takes it.
+	dweller := stageGatedStore(t, db, d, line, w[1], onlyItsLaneTakes(t, db, wall))
 	if !IsGateStaged(dweller) {
 		t.Fatalf("fixture: the dweller must be gate-staged (wait_index=%d vendor=%q)",
 			dweller.WaitIndex, dweller.VendorOrderID)

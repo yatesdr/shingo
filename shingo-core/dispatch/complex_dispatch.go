@@ -326,6 +326,16 @@ func (d *Dispatcher) handFromComplexPlan(order *orders.Order, plan *ComplexPlan,
 		if gerr != nil || node == nil {
 			return claimFailed(fmt.Sprintf("confirm slot %s for order %d: node unresolved", sn.nodeName, order.ID))
 		}
+		// A GATED GROUP DROP STAYS PAPER UNTIL RELEASE (C2c rulings 2 and 3; D13,
+		// P0's premise correction 1). Its slot is chosen across the group again
+		// when the robot stands at the group's spot, and the release hand takes
+		// the chosen slot as armor then (DB.ConfirmReleaseDrop). Confirming the
+		// pencil here is what made the plan's lane a commitment before anybody
+		// asked whether it was the right one. A relay, a person-named slot and a
+		// group without lanes keep today's moment (rulings 5, 6; Q-NAMED).
+		if gatedGroupDrop(order, steps, sn.stepIndex, node) {
+			continue
+		}
 		_, takenFirst, oerr := a.binsAtStep(order, steps, sn.stepIndex, sn.nodeName)
 		if oerr != nil {
 			return claimFailed(fmt.Sprintf("read slot %s for order %d: %v", sn.nodeName, order.ID, oerr))

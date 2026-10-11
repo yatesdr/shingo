@@ -21,10 +21,11 @@ import (
 // (store/nodes/lanes.go). It cannot see plan order, so nothing there stops a
 // drop at step i walling the order's own pickup at step j > i (swap 270's
 // shape, 2-3 a run on base). The plan can, and this is where it asks: intake
-// and replay step resolution (ComplexSteps, ReComplexSteps) and the gate's
-// re-bind (dispatch rebindGatedDropoff). The remedy is the existing widen: the
-// drop re-asks the group with that lane set aside, and a group with nowhere else
-// waits under the existing no-slot cause.
+// and replay step resolution (ComplexSteps, ReComplexSteps), as the trigger for
+// unwallOwnPickups's re-ask. The remedy is the one chooser (ChooseDrop, C2c
+// ruling 1) asked with the lanes of every later pickup set aside; a group with
+// nowhere else waits under the existing no-slot cause. The gate's release asks
+// ChooseDrop with the same set from the start, so it needs no trigger.
 //
 // Same lane means the same LANE node; the geometry is helpers.ShallowerInSameLane's
 // (same parent, strictly shallower depth). Tiers directly under a group are not
@@ -73,8 +74,9 @@ type groupDrop struct {
 }
 
 // unwallOwnPickups is Q1 on the FULLY RESOLVED plan: a group drop that stands in
-// front of a pickup this plan makes later in the same lane is re-asked with that
-// lane set aside (storeAvoidingOwnPickup), in place.
+// front of a pickup this plan makes later in the same lane is re-asked of the
+// one chooser with the lanes of EVERY later pickup set aside (ChooseDrop's hard
+// rule S), in place.
 //
 // ── WHY AFTER THE WALK AND NOT IN IT ──────────────────────────────────────
 //
@@ -87,21 +89,35 @@ type groupDrop struct {
 // later pickup is a slot. The reads are the walk's own, moved: one per drop and
 // one per later pickup, plus the lane's when a wall is found.
 //
-// The re-asked drop is checked against the one lane it walled. Reports whether
-// any step moved; a group with nowhere else is the resolver's capacity error.
+// ── EVERY LATER PICKUP, NOT THE ONE IT WALLED (C2c ruling 1) ─────────────
+//
+// The re-ask used to set aside only the lane it walled, so the answer could
+// stand in front of a SECOND later pickup in another lane of the group
+// (DESIGN-C2c §0 finding 6, latent: no fixture made a plan with two). The rule
+// is now asked before the algorithm, of all of them at once.
+//
+// Reports whether any step moved; a group with nowhere else is the resolver's
+// capacity error.
 func (p *Planner) unwallOwnPickups(steps []Step, drops []groupDrop, asker domain.DigAsker) (bool, error) {
 	moved := false
 	for _, gd := range drops {
-		lane := p.OwnPickupLane(steps[gd.i].Node, LaterPickups(steps, gd.i))
+		later := LaterPickups(steps, gd.i)
+		lane := p.OwnPickupLane(steps[gd.i].Node, later)
 		if lane == 0 {
 			continue
 		}
-		name, err := p.storeAvoidingOwnPickup(gd.group, lane, gd.payload, gd.stated, asker)
-		if err != nil {
-			return moved, fmt.Errorf("step %d: %w", gd.i, err)
+		g, err := p.db.GetNodeByDotName(gd.group)
+		if err != nil || g == nil {
+			return moved, fmt.Errorf("step %d: cannot resolve group %s: %v", gd.i, gd.group, err)
 		}
-		if name != steps[gd.i].Node {
-			steps[gd.i].Node = name
+		choice, err := p.ChooseDrop(g, DropNeed{Payload: gd.payload, Stated: gd.stated, Asker: asker, LaterPickups: later})
+		if err != nil {
+			return moved, fmt.Errorf("step %d: cannot resolve group %s: %w", gd.i, gd.group, err)
+		}
+		p.debug("plan: a drop into %s would wall this plan's own later pickup in lane %d — re-asked without the "+
+			"lanes of its later pickups: %s", gd.group, lane, choice.Slot.Name)
+		if choice.Slot.Name != steps[gd.i].Node {
+			steps[gd.i].Node = choice.Slot.Name
 			moved = true
 		}
 	}
@@ -113,27 +129,4 @@ func (p *Planner) unwallOwnPickups(steps []Step, drops []groupDrop, asker domain
 type laneExcludingResolver interface {
 	ResolveStoreExcludingLanes(group *nodes.Node, payloadCode string, stated binresolver.BinTypeStatement,
 		asker domain.DigAsker, exclude map[int64]bool) (*binresolver.ResolveResult, error)
-}
-
-// storeAvoidingOwnPickup is a group drop's resolution re-asked with the lane it
-// would wall its own later pickup in set aside. It returns the slot, or the
-// resolver's capacity error: the group has nowhere else, and the drop waits
-// under the cause a full group already has.
-func (p *Planner) storeAvoidingOwnPickup(group string, lane int64, payloadCode string, stated binresolver.BinTypeStatement,
-	asker domain.DigAsker) (string, error) {
-	r, ok := p.resolver.(laneExcludingResolver)
-	if !ok {
-		return "", fmt.Errorf("cannot resolve group %s without lane %d: the resolver cannot set a lane aside", group, lane)
-	}
-	g, err := p.db.GetNodeByDotName(group)
-	if err != nil || g == nil {
-		return "", fmt.Errorf("cannot resolve group %s: %v", group, err)
-	}
-	res, err := r.ResolveStoreExcludingLanes(g, payloadCode, stated, asker, map[int64]bool{lane: true})
-	if err != nil {
-		return "", fmt.Errorf("cannot resolve group %s: %w", group, err)
-	}
-	p.debug("plan: a drop into %s would wall this plan's own later pickup in lane %d — re-asked without it: %s",
-		group, lane, res.Node.Name)
-	return res.Node.Name, nil
 }

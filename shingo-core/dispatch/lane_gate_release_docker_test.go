@@ -138,15 +138,54 @@ func placeDeeperBlocker(t *testing.T, db *store.DB, d *Dispatcher, orderID int64
 	}
 }
 
-// candidateFor builds the gateCandidate a direct releaseGatedOrder call needs,
-// from the same durable state the evaluator's own walk reads. It exists because
-// the release now takes the whole candidate rather than an index: the widening
-// asks acceptanceDigNeeded, which needs the lane-relevant node and the direction.
+// candidateFor builds the gateCandidate a direct store release needs, from the
+// same durable state the evaluator's own walk reads: the entry step's node (the
+// pencil the release re-chooses) and the lane it stands in. It read
+// delivery_node until C2c, which is the press on a swap; the release now reads
+// the candidate's node as the slot the order's paper sits on.
 func candidateFor(t *testing.T, db *store.DB, o *orders.Order, entryIndex int) gateCandidate {
 	t.Helper()
-	node, err := db.GetNodeByDotName(o.DeliveryNode)
+	name := o.DeliveryNode
+	var steps []resolvedStep
+	if json.Unmarshal([]byte(o.StepsJSON), &steps) == nil && entryIndex >= 0 && entryIndex < len(steps) {
+		name = steps[entryIndex].Node
+	}
+	node, err := db.GetNodeByDotName(name)
 	testutil.MustNoErr(t, err, "resolve the candidate's node")
-	return gateCandidate{order: o, node: node, entryIndex: entryIndex}
+	c := gateCandidate{order: o, node: node, entryIndex: entryIndex}
+	if node != nil && node.ParentID != nil {
+		lane, lErr := db.GetNode(*node.ParentID)
+		testutil.MustNoErr(t, lErr, "resolve the candidate's lane")
+		c.lane = lane
+	}
+	return c
+}
+
+// releaseGatedStore is a direct release of one gate-staged store, the way the
+// group pass makes it (releaseStoreCandidate, C2c), for the tests that drove the
+// deleted releaseGatedOrder. lane is the lane the order waits for; as that
+// function did, it is not asked for its admission (the caller stands in for an
+// admitting classifier). It answers releaseGatedOrder's shape: the lane the
+// append left the order waiting at, ErrAppendNotOwed when it was no longer owed,
+// and an error naming the cause when the order was not released.
+func releaseGatedStore(d *Dispatcher, db *store.DB, order *orders.Order, lane *nodes.Node, c gateCandidate) (int64, error) {
+	c.lane = lane
+	group, err := db.GetNode(*lane.ParentID)
+	if err != nil || group == nil {
+		return 0, fmt.Errorf("group of lane %s: %v", lane.Name, err)
+	}
+	in, next, _ := d.releaseStoreCandidate(c, group, nil, nil, lane.ID, nil, "test release")
+	if in {
+		return next, nil
+	}
+	after, err := db.GetOrder(order.ID)
+	if err != nil || after == nil {
+		return 0, fmt.Errorf("reload order %d: %v", order.ID, err)
+	}
+	if !IsGateStaged(after) {
+		return 0, ErrAppendNotOwed
+	}
+	return 0, fmt.Errorf("order %d not released: %s", order.ID, after.QueueCause)
 }
 
 // markStaged puts a dispatched gated order into `staged`, the status the poller
@@ -336,14 +375,14 @@ func TestGateRelease_StaleCopyCannotDoubleAppend(t *testing.T) {
 	entryIdx := gateEntryIndexFor(t, stale)
 
 	// Pass A releases it.
-	if _, err := d.releaseGatedOrder(stale, lane, candidateFor(t, db, stale, entryIdx)); err != nil {
+	if _, err := releaseGatedStore(d, db, stale, lane, candidateFor(t, db, stale, entryIdx)); err != nil {
 		t.Fatalf("first release: %v", err)
 	}
 	// Pass B, holding the SAME struct it loaded before pass A ran, must not append.
 	staleCopy := *stale
 	staleCopy.WaitIndex = 0 // what pass B still believes, having never re-read
 	staleCopy.Status = StatusStaged
-	if _, err := d.releaseGatedOrder(&staleCopy, lane, candidateFor(t, db, &staleCopy, entryIdx)); !errors.Is(err, ErrAppendNotOwed) {
+	if _, err := releaseGatedStore(d, db, &staleCopy, lane, candidateFor(t, db, &staleCopy, entryIdx)); !errors.Is(err, ErrAppendNotOwed) {
 		t.Fatalf("second release should decline with ErrAppendNotOwed, got: %v", err)
 	}
 
@@ -801,9 +840,23 @@ func TestGateRebind_SwapPatchesLaneEntryNotFinalDropoff(t *testing.T) {
 			"the candidate walk no longer names the leg the gate speaks for", entryIdx)
 	}
 
-	rebound, _, err := d.rebindGatedDropoff(swap, lane, candidateFor(t, db, swap, entryIdx))
-	if err != nil {
-		t.Fatalf("rebind: %v", err)
+	// C2c: the in-lane re-bind is deleted; the release chooses the drop through
+	// the one chooser (releaseStoreCandidate) and patches the same step. The slot
+	// it bound is the one the entry step names after it.
+	if _, err := releaseGatedStore(d, db, swap, lane, candidateFor(t, db, swap, entryIdx)); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	var bound []resolvedStep
+	if after, err := db.GetOrder(swap.ID); err != nil || json.Unmarshal([]byte(after.StepsJSON), &bound) != nil || len(bound) < 4 {
+		t.Fatalf("read the plan after the release: %v", err)
+	}
+	rebound, err := db.GetNodeByDotName(bound[3].Node)
+	if err != nil || rebound == nil {
+		t.Fatalf("resolve the bound slot %q: %v", bound[3].Node, err)
+	}
+	if rebound.ParentID == nil || *rebound.ParentID != lane.ID {
+		t.Fatalf("the swap's lane drop was bound to %s, outside its lane %s: a drop with no group stamp is "+
+			"asked of its own lane only (D13 Q-NAMED)", rebound.Name, lane.Name)
 	}
 
 	reloaded, err := db.GetOrder(swap.ID)
@@ -891,7 +944,7 @@ func TestGateRelease_SwapBlocksKeepPressAsFinalDropoff(t *testing.T) {
 	swap, lane, press, emptySrc := tc.order, tc.lane, tc.press, tc.emptySrc
 
 	entryIdx := gateEntryIndexFor(t, swap)
-	if _, err := d.releaseGatedOrder(swap, lane, candidateFor(t, db, swap, entryIdx)); err != nil {
+	if _, err := releaseGatedStore(d, db, swap, lane, candidateFor(t, db, swap, entryIdx)); err != nil {
 		t.Fatalf("gated release: %v", err)
 	}
 

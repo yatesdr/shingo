@@ -1092,16 +1092,23 @@ func ActiveByDeliveryNodes(db *sql.DB, names []string) ([]*Order, error) {
 // is waiting at its lane only once it has lifted its blocker, and the lift is
 // the bin leaving its slot; every reader of these rows asks that, so the answer
 // rides on the read they already make instead of a bin read per order.
+//
+// AND THE DEMAND IT PRESENTS (LoadDemandRank's columns: a leg presents its
+// parent's), in the same statement: the group gate orders its waiters by the one
+// comparator, DemandRank.Precedes (C2c ruling 4), and a rank read per waiter per
+// pass would be the per-candidate cost the group key exists to remove.
 func ActiveGateCandidates(db *sql.DB) ([]*GateCandidate, error) {
 	rows, err := db.Query(fmt.Sprintf(
-		`SELECT %s,
-		        COALESCE((SELECT n.name FROM bins b JOIN nodes n ON n.id = b.node_id
-		                   WHERE b.id = orders.bin_id), '')
-		   FROM orders
-		  WHERE vendor_order_id <> '' AND steps_json <> ''
-		    AND status NOT IN (%s)
-		  ORDER BY id`,
-		SelectCols, protocol.TerminalStatusSQLList()))
+		`SELECT q.*, %s
+		   FROM (SELECT %s,
+		                COALESCE((SELECT n.name FROM bins b JOIN nodes n ON n.id = b.node_id
+		                           WHERE b.id = orders.bin_id), '') AS gate_bin_node
+		           FROM orders
+		          WHERE vendor_order_id <> '' AND steps_json <> ''
+		            AND status NOT IN (%s)) q
+		   LEFT JOIN orders gp ON gp.id = q.parent_order_id
+		  ORDER BY q.id`,
+		helpers.DemandRankColumnsSQL("q", "gp"), SelectCols, protocol.TerminalStatusSQLList()))
 	if err != nil {
 		return nil, err
 	}
@@ -1109,7 +1116,7 @@ func ActiveGateCandidates(db *sql.DB) ([]*GateCandidate, error) {
 	var out []*GateCandidate
 	for rows.Next() {
 		c := &GateCandidate{}
-		o, err := ScanOrder(withTrailing{rows, []any{&c.BinNode}})
+		o, err := ScanOrder(withTrailing{rows, []any{&c.BinNode, &c.Rank.Priority, &c.Rank.CreatedAt, &c.Rank.ID}})
 		if err != nil {
 			return nil, err
 		}
@@ -1119,11 +1126,13 @@ func ActiveGateCandidates(db *sql.DB) ([]*GateCandidate, error) {
 	return out, rows.Err()
 }
 
-// GateCandidate is one ActiveGateCandidates row: the order, and the name of the
-// node its bin reads at ("" when it has no bin or the bin is on no node).
+// GateCandidate is one ActiveGateCandidates row: the order, the name of the
+// node its bin reads at ("" when it has no bin or the bin is on no node), and
+// the demand it presents at a rank comparison.
 type GateCandidate struct {
 	*Order
 	BinNode string
+	Rank    DemandRank
 }
 
 // withTrailing scans a row whose columns are an order's followed by extras.

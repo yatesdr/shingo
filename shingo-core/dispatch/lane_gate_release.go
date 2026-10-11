@@ -10,8 +10,6 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
-	"shingocore/dispatch/binresolver"
-	"shingocore/dispatch/plan"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -71,9 +69,22 @@ import (
 // The SOURCE hold is untouched and still held from dispatch: §R.101's lock is
 // about a bin that has already been chosen in a lane, which no gate changes.
 //
-// What DOES change mid-pass is a re-bind (§ rebindGatedDropoff), which moves a
-// candidate's depth. That is why each candidate is evaluated against a freshly
-// read view rather than one snapshot taken up front.
+// What DOES change mid-pass is a release, which takes a slot and a lane's
+// occupancy. That is why each candidate is evaluated against a freshly read
+// view rather than one snapshot taken up front.
+//
+// ── C2c: THE GATE IS KEYED BY GROUP, AND THE DROP IS CHOSEN THERE ─────────
+//
+// The owner's rule (2026-10-08 §2; BRIEF-unification-C2c Lane C): the plan
+// targets the group; the oracle chooses the drop across the whole node group at
+// every release, by the group's store algorithm, hard rules first; the gate is
+// keyed by group; room is a group count; the stop is the group's waiting spot.
+// So a pass is a GROUP's (EvaluateGroupReleases, ruling 4), its waiters taken in
+// DemandRank.Precedes order, and a store's drop is asked of the one chooser
+// (plan.Planner.ChooseDrop, ruling 1) with every lane whose admission refused it
+// set aside, until a lane admits it or the group has none (ruling 3). The
+// widen arm and the in-lane re-bind it backed up are deleted: one release path
+// (DESIGN-C2c §7.3).
 
 // laneGateRetryQueueThreshold is how many consecutive append failures on one
 // order are tolerated before the wait becomes operator-visible. Below it a
@@ -82,7 +93,8 @@ import (
 // holding at a gate for a fleet reason rather than a traffic one.
 const laneGateRetryQueueThreshold = 3
 
-// laneGateSerializer serializes evaluator passes per lane.
+// laneGateSerializer serializes evaluator passes per key: since C2c the GROUP
+// (ruling 4; the valve and the pass take the same group key, D13 H1).
 //
 // The evaluator fires from event subscribers, and the event bus dispatches on the
 // EMITTING goroutine — so two different emitters (the RDS poller and the
@@ -97,7 +109,7 @@ const laneGateRetryQueueThreshold = 3
 // append, which means a database transaction open across an external HTTP call.
 // That trades a race we can close in-process for connection-pool exposure and a
 // lock that outlives a hung vendor call. The DURABLE half of the guard is the
-// reload-and-recheck inside the critical section (see releaseGatedOrder), which is
+// reload-and-recheck inside the critical section (see releaseStoreCandidate), which is
 // what actually makes a double-append impossible rather than merely unlikely.
 type laneGateSerializer struct {
 	mu    sync.Mutex
@@ -168,8 +180,12 @@ func (d *Dispatcher) redriveHeldCompoundLegs(laneID int64) []int64 {
 	return parents
 }
 
-// EvaluateLaneReleases runs one release pass over a lane: every gate-staged order
-// the classifier now admits gets its tail appended and is released into the lane.
+// EvaluateLaneReleases runs one release pass over the GROUP the lane stands in
+// (C2c ruling 4: a waiter is keyed by its group). It is kept under its old name
+// because a lane is what most triggers have in hand — a slot's lane, a wait's
+// lane, a dig's lane — and every one of them now means "this group's room may
+// have changed". EvaluateGroupReleases is the same pass for a caller that has
+// the group.
 //
 // Idempotent and level-triggered — it derives everything from live state and
 // nothing from the event that woke it. A firing that finds nothing to do is a
@@ -190,8 +206,8 @@ func (d *Dispatcher) redriveHeldCompoundLegs(laneID int64) []int64 {
 // A dwelling robot is not a fact about configuration. It is unsealed at the
 // fleet, parked on a Wait block, and only Core can append its tail — so whether
 // it may be released is a question about the ORDER, which is exactly what the
-// candidate derivation below already asks (gate-staged, wait kind lane,
-// wait_lane = this lane). Deriving the set from durable order state and then
+// candidate derivation below already asks (gate-staged, wait kind lane, its
+// wait in this group). Deriving the set from durable order state and then
 // gating the whole pass on live config was the one place those two disagreed.
 //
 // WHAT IT COSTS on an ungated plant: one ActiveGateCandidates query per
@@ -204,207 +220,176 @@ func (d *Dispatcher) EvaluateLaneReleases(laneID int64) {
 }
 
 // evaluateLaneReleases is EvaluateLaneReleases reporting the orders THIS CALL
-// released, the lanes it widened into included. The floor reads it to record
-// only what its own call changed (C2b F6).
+// released. The floor reads it to record only what its own call changed (C2b
+// F6).
 func (d *Dispatcher) evaluateLaneReleases(laneID int64) []int64 {
 	lane, err := d.db.GetNode(laneID)
 	if err != nil || lane == nil || lane.ParentID == nil {
 		return nil
 	}
+	return d.evaluateGroupReleases(*lane.ParentID)
+}
 
-	// THE PASS RUNS UNDER THE LANE'S MUTEX; THE HEAL RUNS AFTER IT. Firing a dig
+// EvaluateGroupReleases runs one release pass over a node group's waiters: every
+// gate-staged order waiting at one of the group's lanes (C2c ruling 4).
+func (d *Dispatcher) EvaluateGroupReleases(groupID int64) {
+	d.evaluateGroupReleases(groupID)
+}
+
+// evaluateGroupReleases is EvaluateGroupReleases reporting the orders THIS CALL
+// released, the groups its appends left orders waiting at included (F1).
+func (d *Dispatcher) evaluateGroupReleases(groupID int64) []int64 {
+	if groupID == 0 {
+		return nil
+	}
+	// THE PASS RUNS UNDER THE GROUP'S MUTEX; THE HEAL RUNS AFTER IT. Firing a dig
 	// creates a compound, which dispatches its first leg synchronously, which emits
 	// events, which the bus delivers ON THIS GOROUTINE to subscribers that call
-	// EvaluateLaneReleases for this same lane. The per-lane mutex is not reentrant,
-	// so doing it inside the pass is a self-deadlock — the same shape the dissolve
+	// back into this evaluator for this same group. The mutex is not reentrant, so
+	// doing it inside the pass is a self-deadlock — the same shape the dissolve
 	// site documents for scanMu (compound.go). Split rather than made reentrant: a
 	// reentrant lock here would let a nested pass append a tail against state the
 	// outer pass is halfway through changing, which is what the mutex is for.
 	//
 	// Outside it, the nested pass is harmless and bounded: it finds the dig lock
 	// held, refuses everyone with lane-dig-active, and returns.
-	acceptance, wanted, freed, widened, releasedIDs := d.evaluateLaneReleasesPass(lane)
+	res := d.evaluateGroupReleasesPass(groupID)
 	// AND THE SAME SPLIT COVERS THE DWELL'S EXIT. A released dweller drives out of
-	// this lane and drops its occupancy row inside the pass, where the fact becomes
+	// its lane and drops its occupancy row inside the pass, where the fact becomes
 	// true — but the re-drive that fact enables cannot run there: it dispatches,
 	// which emits, which re-enters this function on the same goroutine for the same
-	// lane. So the wake happens here, outside the mutex, exactly like the heal.
+	// group. So the wake happens here, outside the mutex, exactly like the heal.
 	//
 	// RedriveHeldCompoundLegs and not another evaluator pass: the population that
 	// queues behind a dwelling dig leg is its own siblings, which are `pending` legs
-	// the evaluator cannot see. Gate-staged waiters on this lane were re-asked by
+	// the evaluator cannot see. Gate-staged waiters in this group were re-asked by
 	// the pass itself — it re-reads per candidate, so the ones after the release
 	// already saw the freed corridor.
-	if freed {
+	for _, laneID := range res.freed {
 		// FLIP 2 RIDES THE SAME DEFERRAL. A released dweller driving out of the dug
 		// lane can be the last thing that dig had in it, and the claim should go with
 		// it — but releasing a lane wakes it, and waking it from inside the pass is
 		// the self-deadlock above. Same split, same reason.
-		d.maybeReleaseDigOnLastBlockerOut(lane.ID)
-		d.RedriveHeldCompoundLegs(lane.ID)
+		d.maybeReleaseDigOnLastBlockerOut(laneID)
+		d.RedriveHeldCompoundLegs(laneID)
 	}
-	if wanted {
-		d.summonOwnDigs(lane, acceptance)
+	if res.digWanted {
+		d.summonOwnDigs(res.digLane, res.acceptance)
 	}
-	// AND THE LANES CANDIDATES WERE RE-AIMED INTO, for the same reason and by the
-	// same split. A re-aimed order is a candidate of its NEW lane now, and nothing
-	// else is going to say so: the event that would have woken that lane already
-	// happened, before the order was pointed at it. Without this the robot stands
-	// until the next unrelated event there or the 60-second floor — which is most
-	// of the latency the re-aim was supposed to remove.
-	for _, laneID := range widened {
-		releasedIDs = append(releasedIDs, d.evaluateLaneReleases(laneID)...)
+	// AND THE LANES AN APPEND LEFT AN ORDER WAITING AT (F1), by the same split: a
+	// robot sent on to its next wait is a waiter of that wait's group now, and the
+	// event that would have woken it already happened. Evaluated once per group.
+	done := map[int64]bool{}
+	released := res.released
+	for _, laneID := range res.next {
+		g := d.groupOfLane(laneID)
+		if g == 0 || done[g] {
+			continue
+		}
+		done[g] = true
+		released = append(released, d.evaluateGroupReleases(g)...)
 	}
-	return releasedIDs
+	return released
 }
 
-// evaluateLaneReleasesPass is the pass proper — everything that happens under the
-// lane's mutex. It returns the one heal the caller should fire afterwards, if any.
+// groupOfLane is the group a lane stands in, or 0.
+func (d *Dispatcher) groupOfLane(laneID int64) int64 {
+	lane, err := d.db.GetNode(laneID)
+	if err != nil || lane == nil || lane.ParentID == nil {
+		return 0
+	}
+	return *lane.ParentID
+}
+
+// groupPass is what one group pass decided that has to happen after its mutex:
+// the one heal (and the lane it digs), the lanes a dweller drove out of, the
+// lanes an append left an order waiting at, and the orders it released.
+type groupPass struct {
+	acceptance acceptanceRequest
+	digLane    *nodes.Node
+	digWanted  bool
+	freed      []int64
+	next       []int64
+	released   []int64
+}
+
+// evaluateGroupReleasesPass is the pass proper — everything that happens under
+// the group's mutex.
 //
-// ONE PER PASS, not one per candidate, and the reason is that a dig is a fact
-// about the LANE rather than about the order that noticed. The wall in front of a
-// depth-2 store is the same wall in front of the depth-4 store behind it, so one
-// excavation frees them all; a second request would find the lane locked by the
-// first and do nothing. Returning one keeps that obvious instead of relying on the
-// lock to absorb the duplicates.
-func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceRequest, bool, bool, []int64, []int64) {
-	laneID := lane.ID
-	unlock := d.laneGates.lock(laneID)
+// ONE HEAL PER PASS, not one per candidate, and the reason is that a dig is a
+// fact about the LANE rather than about the order that noticed. The wall in
+// front of a depth-2 store is the same wall in front of the depth-4 store behind
+// it, so one excavation frees them all; a second request would find the lane
+// locked by the first and do nothing. Returning one keeps that obvious instead of
+// relying on the lock to absorb the duplicates.
+//
+// ── THE MUTEX IS THE GROUP'S (D13 H1) ─────────────────────────────────────
+//
+// One group's waiters are decided together, because they compete for one
+// group's room: two passes for two lanes of a group could each choose the same
+// sibling slot for a different waiter. The cost is that the RDS append runs under
+// it, so the lanes of a large group serialize behind one append; D13 H1 accepts
+// it and measures release latency in the pair.
+func (d *Dispatcher) evaluateGroupReleasesPass(groupID int64) groupPass {
+	unlock := d.laneGates.lock(groupID)
 	defer unlock()
 
-	var (
-		acceptance acceptanceRequest
-		digWanted  bool
-		// widened collects the sibling lanes candidates were re-aimed into, for
-		// the caller to evaluate once the mutex is gone. Same split as the heal
-		// and the dwell exit: evaluating a lane dispatches, which emits, which
-		// re-enters this evaluator on this goroutine.
-		widened []int64
-		// freedLane records that a dweller drove out of this lane during the pass,
-		// so the caller can wake whatever was queued behind it once the mutex is
-		// gone. See EvaluateLaneReleases for why it cannot be woken from in here.
-		freedLane bool
-		// releasedIDs is the orders this pass released, for the floor (F6).
-		releasedIDs []int64
-	)
-
-	candidates, err := d.gateStagedForLane(lane)
+	var out groupPass
+	candidates, lanes, err := d.gateStagedForGroup(groupID)
 	if err != nil {
-		log.Printf("lane gate: list staged orders for lane %s: %v", lane.Name, err)
-		return acceptance, false, false, nil, nil
+		log.Printf("lane gate: list staged orders for group %d: %v", groupID, err)
+		return out
+	}
+	if len(candidates) == 0 {
+		return out
 	}
 
-	// Deepest first — but be clear about what this sort does and does not buy,
-	// because it is easy to mistake it for the safety mechanism.
-	//
-	// It is NOT what keeps a shallower order from walling a deeper one. That is
-	// the classifier's Tier-2 rule: a candidate with a deeper un-placed
-	// cross-origin store in the lane is held no matter when it is evaluated, so
-	// iterating shallow-first produces the same releases in the same pass.
-	// (Verified: reversing this comparison leaves every gate scenario and the
-	// 200-seed soak green, whereas disabling Tier-2 walls 160/200 seeds.)
-	//
-	// What it buys is that the deepest admissible order goes out on THIS pass
-	// rather than the next firing.
-	//
-	// It used to buy more: the appends left in the same sequence as the
-	// depth-derived RDS priorities they carried, so Core's append order and the
-	// fleet's own dispatch order could not disagree. That boost is deleted (see
-	// lane_gate.go), so the fleet now sequences these however it sequences equal
-	// priorities, and this sort no longer has a counterpart on the RDS side. The
-	// safety property is unaffected — that is Tier 2's, stated below, not this
-	// sort's.
-	//
-	// Tier 1 rides on the same loop: a SAME-ORIGIN partner is skipped by the
-	// classifier rather than depth-gated, so a press pair is released together in
-	// one pass instead of one partner waiting for the other to place.
+	// THE ONE COMPARATOR (C2c ruling 4): priority, then oldest, then id —
+	// DemandRank.Precedes, the scan's own order. This used to be depth-first,
+	// which bought "the deepest admissible order goes out on THIS pass rather than
+	// the next firing" and nothing about safety: that is Tier 2's (a candidate
+	// with a deeper un-placed cross-origin store in its lane is held whenever it
+	// is evaluated; reversing the old sort left every gate scenario and the
+	// 200-seed soak green, whereas disabling Tier-2 walls 160/200 seeds). Tier 1
+	// and Tier 2 stay lane facts, asked after the choice, as refusals that send a
+	// store to the group's next lane (DESIGN-C2c §7.4).
 	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].depth != candidates[j].depth {
-			return candidates[i].depth > candidates[j].depth
-		}
-		return candidates[i].order.ID < candidates[j].order.ID // deterministic
+		return candidates[i].rank.Precedes(candidates[j].rank)
 	})
 
-	// ONE LOOP. There used to be two, because there were two candidate queries —
-	// one matching delivery_node for stores, one matching source_node for
-	// retrieves. Direction is now read off the PLAN (the first actionable step
-	// after the wait: a pickup means the robot is going in to take something out),
-	// so which query found the order stops being how Core knows what it is.
-	//
-	// What stays per-direction is the release itself, and legitimately so: a store
-	// re-binds its DROPOFF against the lane as it stands, a retrieve re-binds its
-	// PICKUP against where its bin actually sits. Those are different facts about
-	// different ends of the order.
-	released := 0
-	// WINDOW 3's QUESTION IS ASKED OF EVERY CANDIDATE THAT WAS REFUSED, whatever
-	// refused it. A Tier-2 park, a lane-occupied refusal and a failed re-bind can
-	// all be sitting on top of the same unclaimed bin, so keying the heal on a
-	// particular refusal cause would find it from one arm and miss it from the other
-	// two. The refusal is the PROMPT; acceptanceDigNeeded reads the physics and answers.
-	//
-	// ── AND NOT OF A CANDIDATE CORE COULD NOT JUDGE. THAT IS DELIBERATE. ──
-	//
-	// This used to say "every candidate that did not get in", which was false by
-	// one arm and is the kind of false a reader in these files takes as evidence.
-	// The classifier-ERROR arm below does not propose, and should not:
-	//
-	//   - A heal is an EXCAVATION. It creates a compound, takes the lane's dig
-	//     lock exclusively, and commits robots. That is the largest action this
-	//     evaluator can take, and taking it because Core could not read the lane
-	//     is deciding to dig on no evidence.
-	//   - acceptanceDigNeeded reads the same database that just failed to answer. It
-	//     would either fail too — a dig proposed on a coin flip of which query
-	//     recovered first — or succeed on partial state and propose an excavation
-	//     from it.
-	//   - A refusal is a fact about the PLANT, which is what a heal responds to.
-	//     An error is Core declining, which is why it carries CauseAdmissionError
-	//     rather than a lane cause. Fail-closed on an undetermined answer means
-	//     doing LESS, not more — the same rule the compound leg's admission-error
-	//     arm states as "an unreadable lane is a busy lane".
-	//
-	// Nothing is lost by waiting: the order stays a candidate, and the next pass
-	// re-asks. If the read failure persists, the wall it might be sitting on is
-	// still there to be found on the pass after that — by which time the
-	// classifier can actually see it.
-	// ── THE ACCEPTANCE ARM (§R.104) ───────────────────────────────────────
-	//
-	// The oracle has just asked fresh and answered BURIED. Under the folder era
-	// that answer raised a synthetic parent to dig on this order's behalf; now the
-	// order digs its own lane, as its own children, without moving off `staged`.
-	//
-	// KEYED ON THE CAUSE, which is narrower than the heal's "any refusal at all"
-	// and is the point rather than a regression. The heal read the physics itself
-	// because it was a side channel that had to re-derive what the classifier
-	// already knew. This is the classifier's own verdict, so it inherits its
-	// discrimination: a lane-occupied refusal clears when the occupant leaves, a
-	// Tier-2 park clears when the deeper store places, and neither is a wall an
-	// excavation would help. One spelling, and it is the same one
-	// admitComplexLanesVerdict uses for the same fact on the complex path.
-	propose := func(c gateCandidate, cause QueueCause) {
-		if digWanted {
-			return // one dig per pass — see the function doc
+	var group *nodes.Node // read once, on the first store candidate that needs it
+	groupNode := func() *nodes.Node {
+		if group == nil {
+			if g, gErr := d.db.GetNode(groupID); gErr == nil {
+				group = g
+			}
 		}
-		// ── THE PHYSICS, NOT THE CAUSE ────────────────────────────────
-		//
-		// The first build of this keyed on CauseLaneTargetBuried, reasoning that
-		// the classifier is the oracle and its verdict should be inherited rather
-		// than re-derived. The suite refused it in two places, and the deleted
-		// heal's own header had said why: "a Tier-2 park, a lane-occupied refusal
-		// and a failed re-bind can all be sitting on top of the same wall, and any
-		// of them noticing it is enough."
-		//
-		// Measured on the two window-3 fixtures: the dweller that must be dug out
-		// is refused with `lane-deeper-pending` at the gate and then fails its
-		// release with "no empty slot in lane" — the burial is real and the word
-		// "buried" is never said. The REFUSAL IS THE PROMPT; the physics is the
-		// question. `cause` is carried only so a caller that admitted cleanly
-		// cannot reach here at all.
-		if cause == "" {
-			return
+		return group
+	}
+	// THE PASS ASKS THE CHOOSER THROUGH ONE READ OF THE GROUP (store.GroupPassReads):
+	// the group's slot state is read once per pass, and every waiter after the
+	// first is answered from it at 0 reads (RULINGS-C2c-run-through §3.3).
+	var reads *store.GroupPassReads
+
+	// THE HEAL'S PROMPT. A refusal is the prompt and the physics is the question
+	// (acceptanceDigNeeded reads it): a dig is summoned only for bins physically in
+	// the corridor that nobody live is coming for. A store asks it only when its
+	// group offered it no candidate at all (D13 F3, DESIGN-C2c §7.3.4): a wall in
+	// front of the pencilled slot is not a reason to dig while a sibling lane has
+	// room. A retrieve asks it on any refusal, as before — its lane is where its
+	// bin is, which no choice changes.
+	//
+	// AND NOT OF A CANDIDATE CORE COULD NOT JUDGE. The classifier-error arm does
+	// not propose: a heal is the largest action this evaluator can take, and
+	// taking it because Core could not read the lane is deciding to dig on no
+	// evidence. Fail-closed on an undetermined answer means doing LESS.
+	propose := func(c gateCandidate, lane *nodes.Node, cause QueueCause) {
+		if out.digWanted || cause == "" {
+			return // one dig per pass; and an admitted candidate never reaches here
 		}
 		// ONE SUMMON AT A TIME PER DWELLER. The summon runs after this pass
-		// releases the lane's gate lock, so until it has written its chapter the
-		// open-chapter skip above finds nothing, and a second pass decided the
+		// releases the gate lock, so until it has written its chapter the
+		// open-chapter skip below finds nothing, and a second pass decided the
 		// same summon (order 95, before-edge2 2026-09-24: two legs for one wall).
 		// The claim is taken here, under the lock, and summonOwnDigs gives it
 		// back once the chapter is written or refused. In-process, no statement.
@@ -414,9 +399,10 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 			return
 		}
 		if req, ok := d.acceptanceDigNeeded(lane, c); ok && d.beginSummon(req.order.ID) {
-			acceptance, digWanted = req, true
+			out.acceptance, out.digLane, out.digWanted = req, lane, true
 		}
 	}
+	released := 0
 	for _, c := range candidates {
 		// ── NOTHING IS APPENDED MID-EXCAVATION (§R.104a's ordering) ───────
 		//
@@ -431,110 +417,98 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 		// a candidate for another excavation of the lane it is already excavating.
 		if d.hasOpenDigChapter(c.order.ID) {
 			d.dbg("lane gate: order %d is digging %s open with its own children — not released, and "+
-				"not a candidate for anything else, until its chapter closes", c.order.ID, lane.Name)
+				"not a candidate for anything else, until its chapter closes", c.order.ID, c.lane.Name)
 			continue
 		}
 		if c.dwell {
-			freedD, next := d.releaseDweller(c, lane)
+			freedD, next := d.releaseDweller(c, c.lane)
 			if freedD {
 				released++
-				freedLane = true
-				releasedIDs = append(releasedIDs, c.order.ID)
+				out.freed = append(out.freed, c.lane.ID)
+				out.released = append(out.released, c.order.ID)
 			}
 			// The dweller's tail may enter a marked lane: its wait there is that
-			// lane's event (F1), evaluated after this lane's mutex.
-			if next != 0 && next != laneID {
-				widened = append(widened, next)
+			// group's event (F1), evaluated after this group's mutex.
+			if next != 0 {
+				out.next = append(out.next, next)
 			}
 			continue
 		}
-		// Re-read per candidate rather than reusing one snapshot: a re-bind by an
-		// earlier candidate in this pass moves its depth and its bound node, and
-		// the classifier's view has to see that.
-		v, cErr := d.gateEntryVerdict(lane, c.order, c.node, c.retrieve)
-		if cErr != nil {
-			// AND THE CAUSE GOES ON THE ROW, exactly as the refusal arm below does
-			// it. This arm logged and continued, so a robot dwelling at a mark
-			// because Core could not READ the lane was indistinguishable, on the row,
-			// from one nobody had evaluated yet — and the two are investigated
-			// differently. `dcb2c014` gave the refusal arm its cause and left this one
-			// blank, which is the same gap it closed, one branch over.
-			//
-			// CauseAdmissionError, not a lane cause: an undetermined answer is Core
-			// declining, not a busy lane. Same distinction, same constant, as the
-			// compound leg's admission-error arm (compound.go).
-			//
-			// The order stays a candidate — the set is derived from durable order
-			// state, never from a verdict — so the next firing re-asks, and the cause
-			// is cleared on entry like every other.
-			log.Printf("lane gate: classifier error for order %d on lane %s: %v", c.order.ID, lane.Name, cErr)
-			d.setQueueReason(c.order, protocol.QueueWaitingForSlot, CauseAdmissionError,
-				QueueParams{Lane: lane.Name})
-			continue
-		}
-		if !v.Admitted() {
-			// STAYS A CANDIDATE. The candidate set is derived from the order's own
-			// durable state — gate-staged, wait_kind lane, wait_lane this lane — and
-			// never from a verdict, so a refusal here removes nothing. The next
-			// firing re-derives the same set and re-asks. That matters more since
-			// the unification: a gate-staged retrieve is now refused while a plain
-			// store holds occupancy, which is a condition that clears on an event
-			// this evaluator is already subscribed to.
-			// AND IT SAYS WHY, ON THE ROW. A dwell used to be the one wait state
-			// with nothing an operator could read: the order sits `staged` with a
-			// robot parked at the mark and a blank queue_cause, so the board shows a
-			// robot doing nothing and no sentence explaining it. Three of them ran
-			// 77 minutes that way on the lane-stress rig before anyone could say
-			// what they were waiting for, and the answer was in this verdict the
-			// whole time.
-			//
-			// Same code and cause vocabulary as the pre-dispatch park, deliberately:
-			// a lane-occupied wait reads identically whether the order is parked
-			// before dispatch or dwelling at a mark, because to the operator it is
-			// the same fact about the same lane. Only where the robot is standing
-			// differs, and that is not the operator's problem to reconcile.
-			d.recordLaneWait(c.order, lane, v)
-			d.dbg("lane gate: order %d still held at %s (%s)", c.order.ID, lane.Name, v.Cause())
-			propose(c, v.Cause())
-			// AND THEN ASK WHETHER ANOTHER AISLE WOULD DO. This is where the
-			// oracle belongs for the common case: the widening inside
-			// rebindGatedDropoff only ever sees candidates the classifier
-			// ADMITTED, so it answers "this lane has no slot for me" and never
-			// "it is not my turn here and never will be". See refusalCanWiden.
-			if to := d.widenRefusedDropoff(c, lane, v.Cause()); to != 0 {
-				widened = append(widened, to)
+		var (
+			in, failed bool
+			next       int64
+		)
+		if c.retrieve {
+			in, next, failed = d.releaseRetrieveCandidate(c, propose)
+		} else {
+			g := groupNode()
+			if g == nil {
+				continue
 			}
-			continue
+			if reads == nil {
+				reads = d.db.GroupPassReads(groupID)
+			}
+			in, next, failed = d.releaseStoreCandidate(c, g, lanes, propose, 0, reads, "lane gate release")
 		}
-		in, next, failed := d.releaseAdmittedCandidate(c, lane)
-		// AN APPEND THAT LEFT THE ORDER AT ANOTHER LANE'S WAIT is that lane's
-		// event (F1). Inside this lane's mutex, so it rides the widened list and
-		// is evaluated after the unlock (P0 ruling Q5).
-		if next != 0 && next != laneID {
-			widened = append(widened, next)
+		// AN APPEND THAT LEFT THE ORDER AT ANOTHER WAIT is that wait's group's
+		// event (F1), evaluated after the unlock (P0 ruling Q5).
+		if next != 0 {
+			out.next = append(out.next, next)
 		}
-		if failed {
-			// A FAILED RELEASE IS NOT A WALL. This used to propose, because the heal
-			// read the physics for itself and might find one. The classifier ADMITTED
-			// this candidate, so there is no burial here — the append failed, and the
-			// releaser for that is a retry, not an excavation.
-			propose(c, CauseGateReleaseFailed)
-			continue
-		}
-		if !in {
+		if failed || !in {
 			continue
 		}
 		released++
-		releasedIDs = append(releasedIDs, c.order.ID)
+		out.released = append(out.released, c.order.ID)
 	}
 
 	if released > 0 {
-		log.Printf("lane gate: released %d order(s) into lane %s", released, lane.Name)
+		log.Printf("lane gate: released %d order(s) into group %d", released, groupID)
 	}
-	return acceptance, digWanted, freedLane, widened, releasedIDs
+	return out
 }
 
-// wakeLanesOfSlots evaluates the lane of each slot an order just stopped holding.
+// releaseRetrieveCandidate is a gate-staged RETRIEVE's turn in its group's pass:
+// its lane is the lane its bin stands in, which no choice changes, so it asks
+// its own lane's admission and nothing else — the per-lane evaluator's arm,
+// unchanged by C2c (DESIGN-C2c §7.3.3).
+func (d *Dispatcher) releaseRetrieveCandidate(c gateCandidate,
+	propose func(gateCandidate, *nodes.Node, QueueCause)) (in bool, next int64, failed bool) {
+	v, cErr := d.gateEntryVerdict(c.lane, c.order, c.node, true)
+	if cErr != nil {
+		// AND THE CAUSE GOES ON THE ROW, exactly as the refusal arm below does it:
+		// a robot dwelling because Core could not READ the lane must not read like
+		// one nobody has evaluated. CauseAdmissionError, not a lane cause: an
+		// undetermined answer is Core declining, not a busy lane (compound.go's
+		// admission-error arm, same constant). It stays a candidate — the set is
+		// derived from durable order state, never from a verdict.
+		log.Printf("lane gate: classifier error for order %d on lane %s: %v", c.order.ID, c.lane.Name, cErr)
+		d.setQueueReason(c.order, protocol.QueueWaitingForSlot, CauseAdmissionError,
+			QueueParams{Lane: c.lane.Name})
+		return false, 0, false
+	}
+	if !v.Admitted() {
+		// STAYS A CANDIDATE, AND IT SAYS WHY ON THE ROW: the same code and cause
+		// vocabulary as the pre-dispatch park, so a lane-occupied wait reads the
+		// same whether the robot is parked before dispatch or at a mark.
+		d.recordLaneWait(c.order, c.lane, v)
+		d.dbg("lane gate: order %d still held at %s (%s)", c.order.ID, c.lane.Name, v.Cause())
+		propose(c, c.lane, v.Cause())
+		return false, 0, false
+	}
+	in, next, failed = d.releaseAdmittedCandidate(c, c.lane)
+	if failed {
+		// A FAILED RELEASE IS NOT A WALL — the classifier admitted it — but the
+		// physics is still the question, so it is still a prompt.
+		propose(c, c.lane, CauseGateReleaseFailed)
+	}
+	return in, next, failed
+}
+
+// wakeLanesOfSlots evaluates the group of each slot an order just stopped
+// holding (C2c ruling 4: a hold dropped is an event that changes the group's
+// room — DESIGN-C2c §7.2's wakeGroupsOfSlots, kept under its old name for its
+// two callers).
 //
 // ── A SLOT ROW GIVEN UP IS THE OTHER END OF lane-deeper-pending ───────────
 //
@@ -542,19 +516,19 @@ func (d *Dispatcher) evaluateLaneReleasesPass(lane *nodes.Node) (acceptanceReque
 // holds there (stillComingToLane: a parked order that only names a slot is a
 // plan, not a presence). Placing its bin is one way the wall ends; giving up the
 // row is the other: a re-made choice that moved (the allocator's reconcile) or a
-// park that releases its holdings. Nothing else wakes the lane, and its dweller
+// park that releases its holdings. Nothing else wakes the group, and its dweller
 // waited for the floor: packed 477, behind order 481 whose drop was re-chosen
-// into another lane. Never under a lane mutex: both callers run in the scanner's
-// acquisition, before the valve or the evaluator takes one.
+// into another lane. Never under a gate mutex: both callers run in the scanner's
+// acquisition, before the valve or the evaluator takes one. One pass per group.
 func (d *Dispatcher) wakeLanesOfSlots(nodeIDs ...int64) {
 	woken := map[int64]bool{}
 	for _, id := range nodeIDs {
-		lane := d.LaneIDsForGateEvent(id)
-		if lane == 0 || woken[lane] {
+		g := d.groupOfNode(id)
+		if g == 0 || woken[g] {
 			continue
 		}
-		woken[lane] = true
-		d.EvaluateLaneReleases(lane)
+		woken[g] = true
+		d.EvaluateGroupReleases(g)
 	}
 }
 
@@ -563,11 +537,12 @@ func (d *Dispatcher) wakeLanesOfSlots(nodeIDs ...int64) {
 var errOwnDigNotACandidate = errors.New("not a gate candidate at its lane")
 
 // releaseAfterOwnDig is the own-dig resume's release: the robot that summoned the
-// dig stands at its mark, and its tail goes out through the gate's own release
-// (releaseAdmittedCandidate) — the step re-asked against the lane as it stands
-// (rebindGatedDropoff, or releaseGatedRetrieve's pickup re-bind), then appended.
-// One spelling of "a tail is re-asked before it is sent". The dig having opened
-// the lane for this order is the admission; nothing else is asked.
+// dig stands at its mark, and its tail goes out through the gate's own release —
+// a store's drop chosen by the one chooser (releaseStoreCandidate, C2c ruling 1:
+// "every release"), a retrieve's pickup re-bound (releaseGatedRetrieve) — then
+// appended. One spelling of "a tail is re-asked before it is sent". The dig
+// having opened its lane for this order is that lane's admission; another lane
+// of the group the chooser answers is asked as at any release.
 //
 // nil when it went in. ErrAppendNotOwed when another pass already appended it.
 // errOwnDigNotACandidate when the evaluator cannot see it as a candidate. Any
@@ -585,41 +560,47 @@ func (d *Dispatcher) releaseAfterOwnDig(order *orders.Order) error {
 	if !ok || w.WaitKind != WaitKindLane {
 		return fmt.Errorf("%w: order %d waits at no lane", errOwnDigNotACandidate, order.ID)
 	}
-	lane, err := d.db.GetNode(w.WaitLane)
-	if err != nil || lane == nil {
-		return fmt.Errorf("own-dig release: lane %d for order %d: %v", w.WaitLane, order.ID, err)
+	groupID := w.WaitGroup
+	if groupID == 0 {
+		groupID = d.groupOfLane(w.WaitLane)
 	}
-	cands, err := d.gateStagedForLane(lane)
+	cands, lanes, err := d.gateStagedForGroup(groupID)
 	if err != nil {
-		return fmt.Errorf("own-dig release: candidates at lane %s: %w", lane.Name, err)
+		return fmt.Errorf("own-dig release: candidates at group %d: %w", groupID, err)
 	}
 	for _, c := range cands {
 		if c.order.ID != order.ID {
 			continue
 		}
-		in, _, failed := d.releaseAdmittedCandidate(c, lane)
+		var in, failed bool
+		if c.retrieve {
+			in, _, failed = d.releaseAdmittedCandidate(c, c.lane)
+		} else {
+			group, gErr := d.db.GetNode(groupID)
+			if gErr != nil || group == nil {
+				return fmt.Errorf("own-dig release: group %d for order %d: %v", groupID, order.ID, gErr)
+			}
+			in, _, failed = d.releaseStoreCandidate(c, group, lanes, nil, c.lane.ID, nil, "lane gate release")
+		}
 		switch {
 		case in:
 			return nil
 		case failed:
-			return fmt.Errorf("own-dig release: order %d was not released into lane %s", order.ID, lane.Name)
+			return fmt.Errorf("own-dig release: order %d was not released from lane %s", order.ID, c.lane.Name)
 		}
 		return ErrAppendNotOwed
 	}
-	return fmt.Errorf("%w: order %d at lane %s", errOwnDigNotACandidate, order.ID, lane.Name)
+	return fmt.Errorf("%w: order %d at lane %d", errOwnDigNotACandidate, order.ID, w.WaitLane)
 }
 
-// releaseAdmittedCandidate releases c, which the classifier admitted, into lane.
-// It returns whether the order went in, the lane its append left it waiting at
-// (0 for none), and whether the release failed — the pass proposes on a failure
-// and skips quietly on an append that was not owed.
+// releaseAdmittedCandidate releases c, a RETRIEVE the classifier admitted, into
+// lane: its pickup re-bound to where its bin sits now, then the tail. A store's
+// release is releaseStoreCandidate's, which chooses the drop across the group
+// (C2c ruling 1). It returns whether the order went in, the lane its append left
+// it waiting at (0 for none), and whether the release failed — the pass proposes
+// on a failure and skips quietly on an append that was not owed.
 func (d *Dispatcher) releaseAdmittedCandidate(c gateCandidate, lane *nodes.Node) (in bool, next int64, failed bool) {
-	var rErr error
-	if c.retrieve {
-		next, rErr = d.releaseGatedRetrieve(c.order, lane, c.entryIndex)
-	} else {
-		next, rErr = d.releaseGatedOrder(c.order, lane, c)
-	}
+	next, rErr := d.releaseGatedRetrieve(c.order, lane, c.entryIndex)
 	if errors.Is(rErr, ErrAppendNotOwed) {
 		// The leg ended while it waited (or another pass appended it). It owes
 		// the lane nothing: no wait is written on it, nothing is proposed, and
@@ -650,16 +631,22 @@ func (d *Dispatcher) releaseAdmittedCandidate(c gateCandidate, lane *nodes.Node)
 	return true, next, false
 }
 
-// gateCandidate is one gate-staged order with the destination and depth the
-// ordering and the classifier need.
+// gateCandidate is one gate-staged order with what the ordering and the
+// classifier need.
 type gateCandidate struct {
 	order *orders.Order
 	// node is the LANE-RELEVANT node: the slot the order's next step works —
 	// its dropoff target for a store, its pickup slot for a retrieve. It was
 	// called `dest` when two queries produced it and the retrieve query had to
-	// explain that it carried the source there instead.
-	node  *nodes.Node
-	depth int
+	// explain that it carried the source there instead. For a gated group drop it
+	// is the pencil: the slot its paper sits on, which the release re-chooses.
+	node *nodes.Node
+	// lane is the lane the wait names (WaitLane): the retrieve's lane, the
+	// dweller's, the pencilled lane of a store.
+	lane *nodes.Node
+	// rank is the demand the order presents: the group pass's one comparator
+	// (DemandRank.Precedes, C2c ruling 4).
+	rank orders.DemandRank
 	// retrieve is the direction, read off the plan (a pickup after the wait)
 	// rather than inferred from which query found the order.
 	retrieve bool
@@ -673,7 +660,7 @@ type gateCandidate struct {
 	// not being one (waitGatesAnAppend).
 	dwell bool
 	// entryIndex is the steps_json index of THAT lane-entry step — the same walk
-	// that produced `node` and `retrieve` already knew it. The rebind needs it to
+	// that produced `node` and `retrieve` already knew it. The release needs it to
 	// patch the step it is actually speaking for: a swap has two dropoffs and a
 	// spliced plan two pickups, so "the last dropoff" and "the first pickup" name
 	// the wrong leg (see applyPlanNode).
@@ -898,76 +885,74 @@ func (d *Dispatcher) gateStagedForLane(lane *nodes.Node) ([]gateCandidate, error
 		if !ok || w.WaitLane != lane.ID {
 			continue // not waiting at a lane yet, or at somebody else's
 		}
-		o := c.Order
-		entry, entryIdx, isRetrieve, ok := laneEntryAfterWait(steps, o.WaitIndex)
-		if !ok {
-			// THE OUTBOUND ARM. A lane wait with nothing actionable after it is not
-			// a broken plan — it is a dig leg dwelling in the lane it is digging,
-			// whose next step is exactly what Core has not chosen yet. Its tail
-			// cannot be BUILT from the plan; it is APPENDED to it by the release-time
-			// resolver, which is what this candidate is for.
-			//
-			// The old sentence stays for the case it was written about, and it is a
-			// different one: a plan whose wait is neither a dweller's nor followed by
-			// its entry is a mis-splice, and it is still loud rather than skipped
-			// quietly, because the order would otherwise dwell with no diagnosis.
-			if !waitGatesAnAppend(steps, o.WaitIndex) {
-				log.Printf("lane gate: order %d is parked at a wait for lane %s with no actionable step "+
-					"after it and no destination to choose — its tail cannot be built", o.ID, lane.Name)
-				continue
-			}
-			// The node the dweller STANDS IN, which is the lane-relevant one for it:
-			// the wait's own node. Resolving it is also the assertion that §3's
-			// identity holds on the live row — a dweller must be inside the lane it
-			// names, or the wait is not what it says it is.
-			at, aErr := d.db.GetNodeByDotName(w.Node)
-			if aErr != nil || at == nil {
-				log.Printf("lane gate: dwelling leg %d waits at %q, which does not resolve: %v",
-					o.ID, w.Node, aErr)
-				continue
-			}
-			atLane, alErr := d.db.LaneForNode(at.ID)
-			if alErr != nil {
-				return nil, alErr
-			}
-			if atLane == nil || atLane.ID != lane.ID {
-				log.Printf("lane gate: dwelling leg %d names lane %s but stands at %q in %s — "+
-					"mis-spliced plan, refusing to release it here",
-					o.ID, lane.Name, w.Node, nodeName(atLane))
-				continue
-			}
-			depth, dErr := d.db.GetSlotDepth(at.ID)
-			if dErr != nil {
-				return nil, dErr
-			}
-			out = append(out, gateCandidate{order: o, node: at, depth: depth, dwell: true, entryIndex: -1})
-			continue
+		cand, ok, cErr := d.gateCandidateAt(c, steps, w, lane)
+		if cErr != nil {
+			return nil, cErr
 		}
-		node, nErr := d.db.GetNodeByDotName(entry.Node)
-		if nErr != nil || node == nil {
-			log.Printf("lane gate: order %d's lane entry %q does not resolve: %v", o.ID, entry.Node, nErr)
-			continue
+		if ok {
+			out = append(out, cand)
 		}
-		// The wait says which lane owns it; this checks the PLAN agrees. A
-		// disagreement is a mis-spliced plan, and it is loud rather than skipped
-		// quietly, because the order would otherwise dwell with no diagnosis.
-		entryLane, lErr := d.db.LaneForNode(node.ID)
-		if lErr != nil {
-			return nil, lErr
-		}
-		if entryLane == nil || entryLane.ID != lane.ID {
-			log.Printf("lane gate: order %d waits for lane %s but its next step %q is in %s — "+
-				"mis-spliced plan, refusing to release it here",
-				o.ID, lane.Name, entry.Node, nodeName(entryLane))
-			continue
-		}
-		depth, dErr := d.db.GetSlotDepth(node.ID)
-		if dErr != nil {
-			return nil, dErr
-		}
-		out = append(out, gateCandidate{order: o, node: node, depth: depth, retrieve: isRetrieve, entryIndex: entryIdx})
 	}
 	return out, nil
+}
+
+// gateCandidateAt builds one waiter's candidate against the lane its wait names:
+// the per-lane derivation's body, shared with the group's (gateStagedForGroup)
+// so the two cannot disagree about who is releasable. ok=false drops a waiter
+// whose tail cannot be built, loudly.
+func (d *Dispatcher) gateCandidateAt(c *orders.GateCandidate, steps []resolvedStep, w resolvedStep,
+	lane *nodes.Node) (gateCandidate, bool, error) {
+	o := c.Order
+	entry, entryIdx, isRetrieve, ok := laneEntryAfterWait(steps, o.WaitIndex)
+	if !ok {
+		// THE OUTBOUND ARM. A lane wait with nothing actionable after it is not
+		// a broken plan — it is a dig leg dwelling in the lane it is digging,
+		// whose next step is exactly what Core has not chosen yet. Its tail
+		// cannot be BUILT from the plan; it is APPENDED to it by the release-time
+		// resolver, which is what this candidate is for.
+		//
+		// The old sentence stays for the case it was written about, and it is a
+		// different one: a plan whose wait is neither a dweller's nor followed by
+		// its entry is a mis-splice, and it is still loud rather than skipped
+		// quietly, because the order would otherwise dwell with no diagnosis.
+		if !waitGatesAnAppend(steps, o.WaitIndex) {
+			log.Printf("lane gate: order %d is parked at a wait for lane %s with no actionable step "+
+				"after it and no destination to choose — its tail cannot be built", o.ID, lane.Name)
+			return gateCandidate{}, false, nil
+		}
+		// The node the dweller STANDS IN, which is the lane-relevant one for it:
+		// the wait's own node. Resolving it is also the assertion that §3's
+		// identity holds on the live row — a dweller must be inside the lane it
+		// names, or the wait is not what it says it is.
+		at, aErr := d.db.GetNodeByDotName(w.Node)
+		if aErr != nil || at == nil {
+			log.Printf("lane gate: dwelling leg %d waits at %q, which does not resolve: %v",
+				o.ID, w.Node, aErr)
+			return gateCandidate{}, false, nil
+		}
+		if at.ParentID == nil || *at.ParentID != lane.ID {
+			log.Printf("lane gate: dwelling leg %d names lane %s but stands at %q (parent %q) — "+
+				"mis-spliced plan, refusing to release it here", o.ID, lane.Name, w.Node, at.ParentName)
+			return gateCandidate{}, false, nil
+		}
+		return gateCandidate{order: o, node: at, lane: lane, rank: c.Rank, dwell: true, entryIndex: -1}, true, nil
+	}
+	node, nErr := d.db.GetNodeByDotName(entry.Node)
+	if nErr != nil || node == nil {
+		log.Printf("lane gate: order %d's lane entry %q does not resolve: %v", o.ID, entry.Node, nErr)
+		return gateCandidate{}, false, nil
+	}
+	// The wait says which lane owns it; this checks the PLAN agrees. A
+	// disagreement is a mis-spliced plan, and it is loud rather than skipped
+	// quietly, because the order would otherwise dwell with no diagnosis. A lane
+	// slot's lane is its parent, read off the row already in hand.
+	if node.ParentID == nil || *node.ParentID != lane.ID {
+		log.Printf("lane gate: order %d waits for lane %s but its next step %q is in %q — "+
+			"mis-spliced plan, refusing to release it here", o.ID, lane.Name, entry.Node, node.ParentName)
+		return gateCandidate{}, false, nil
+	}
+	return gateCandidate{order: o, node: node, lane: lane, rank: c.Rank, retrieve: isRetrieve, entryIndex: entryIdx},
+		true, nil
 }
 
 // gateEntryVerdict is the ONE question asked before a gate-staged order is let
@@ -1212,60 +1197,7 @@ func namedID(named *nodes.Node) int64 {
 // See ownsDig for the current statement of both, including the line to revisit
 // if a digger is ever given a pre-position.
 
-// releaseGatedOrder binds the dropoff against the lane as it stands, appends the
-// tail, and seals the order. It returns the lane the append left the order
-// waiting at (laneWaitAfterAppend), for the pass to evaluate after its mutex
-// (F1), or 0.
-//
-// ── The double-append guard ───────────────────────────────────────────────
-// Called only under the per-lane mutex, and the FIRST thing it does is re-read
-// the order and re-check IsGateStaged. wait_index is the durable witness: the
-// shared append helper advances it to 1 only after ReleaseOrder returns nil, so a
-// second pass that raced this one reloads, sees wait_index 1, and returns without
-// touching the fleet. Reloading is what makes the guard durable rather than a
-// property of one in-memory struct — two passes hold two different *orders.Order
-// values, and the stale one would otherwise pass every check.
-//
-// lifecycle.Release inside the helper is the backstop: it validates
-// staged→in_transit against the live status and refuses an already-released order
-// (lifecycle.go transition → protocol.IsValidTransition).
-func (d *Dispatcher) releaseGatedOrder(order *orders.Order, lane *nodes.Node, c gateCandidate) (int64, error) {
-	fresh, err := d.db.GetOrder(order.ID)
-	if err != nil || fresh == nil {
-		return 0, err
-	}
-	if !IsGateStaged(fresh) {
-		// Another pass's release, not this call's: ErrAppendNotOwed, so the
-		// candidate is not reported as released (F6, appendGateTail's note).
-		d.dbg("lane gate: order %d no longer gate-staged (wait_index=%d status=%s) — another pass released it",
-			fresh.ID, fresh.WaitIndex, fresh.Status)
-		return 0, ErrAppendNotOwed
-	}
-
-	dest, cause, err := d.rebindGatedDropoff(fresh, lane, c)
-	if err != nil {
-		// The lane moved against this order and no reachable slot is available.
-		// Refusing is the safe disposition: appending into an occupied or walled
-		// slot is the exact failure the bind-at-release rule exists to prevent.
-		// The order stays staged and the next firing re-tries.
-		d.setQueueReason(fresh, protocol.QueueWaitingForSlot, cause,
-			QueueParams{Destination: lane.Name})
-		return 0, err
-	}
-
-	if err := d.appendGateTail(fresh, "lane gate release"); err != nil {
-		if !errors.Is(err, ErrAppendNotOwed) {
-			d.noteGateAppendFailure(fresh, lane)
-		}
-		return 0, err
-	}
-	d.clearGateAppendFailures(fresh.ID)
-	d.setQueueReason(fresh, "", "", QueueParams{})
-	d.dbg("lane gate: order %d released into lane %s at %s", fresh.ID, lane.Name, dest.Name)
-	return laneWaitAfterAppend(fresh), nil
-}
-
-// releaseGatedRetrieve is the retrieve mirror of releaseGatedOrder: re-bind the
+// releaseGatedRetrieve is the retrieve's release (a store's is releaseStoreCandidate): re-bind the
 // pickup against where the bin actually sits NOW, append the [pickup, dropoff]
 // tail, and seal. Same double-append guard (re-read + IsGateStaged re-check under
 // the per-lane mutex) — wait_index is the witness either way.
@@ -1311,7 +1243,7 @@ func (d *Dispatcher) releaseGatedRetrieve(order *orders.Order, lane *nodes.Node,
 // rebindGatedPickup re-resolves the order's pickup against where its bin ACTUALLY
 // SITS at the moment of append. Returns the node the tail will pick from.
 //
-// The pickup mirror of rebindGatedDropoff, and now with the same three outcomes:
+// The pickup's re-ask at release (a drop's is the group chooser), with three outcomes:
 //
 //   - the bin is still at the order's own slot → keep it. No writes at all.
 //   - the bin moved to a different slot in this lane → re-point the order at it.
@@ -1358,199 +1290,6 @@ func (d *Dispatcher) rebindGatedPickup(order *orders.Order, lane *nodes.Node, en
 	log.Printf("lane gate: retrieve %d re-bound at release %s → %s (lane %s, bin %d)",
 		order.ID, was, at.Name, lane.Name, *order.BinID)
 	return at, "", nil
-}
-
-// rebindGatedDropoff re-resolves the order's dropoff against the lane AS IT
-// STANDS, at the moment of append. Returns the node the tail will target.
-//
-// ── THIS IS THE ORACLE, AND HERE IS THE EXACT CLAIM ───────────────────────
-//
-// It is the only RELEASE-TIME re-ask of a store destination on the gated path:
-// the one place where a slot chosen before the drive is asked again after the
-// robot has driven, against the lane as it now stands.
-//
-// IT USED TO SAY "THE ONLY ONE", FULL STOP, AND THAT WAS TOO BROAD IN TWO WAYS.
-//
-// Three other sites re-ask a concrete destination today, all of them before the
-// drive rather than after it, which is why they are not oracles and why the
-// distinction is worth keeping sharp:
-//
-//	redirectStoreOffDugLane (store_slot.go:354)  a plain store whose lane was
-//	    taken by a dig re-resolves GROUP-WIDE at dispatch. Its own header says it
-//	    exists for orders that "chose EARLIER" — a patch on an early bind.
-//	allocator.go:429-432                         the escape valve: on a slot
-//	    conflict a fungible NGRP dropoff step is REVERTED to its group name so
-//	    reResolveComplexSteps re-picks next tick. Precedent that a step holding a
-//	    group name is an expressible state.
-//	placeForDedicatedLoader (loader_place.go:61) re-decides home vs buffer on
-//	    every dispatch tick.
-//
-// And it is no longer the only production caller of the owner-aware selector.
-// The group store resolvers now pass asker.OrderID through
-// FindStoreSlotInLaneExcluding as well (binresolver/group_resolver.go:500 and
-// :622), which is what makes a group-scoped oracle possible at all. What is
-// still true here: this is the only owner-aware re-ask that happens AT RELEASE,
-// and the only one whose answer the robot has not already driven toward.
-//
-// Every other destination writer — intake, planning, the complex step resolver,
-// ReserveStorageDropoff — binds ONCE and drives. The census of 2026-08-31 put
-// that at roughly twenty destination CHOICES across ~41 write sites; the exact
-// number depends on what you count as one decision, and the shape does not.
-//
-// So its reachability is worth knowing before reading anything else here: it is
-// called only from releaseGatedOrder, which only sees orders spliceLaneWait
-// staged, which only happens on a lane carrying a mark (lane_gate.go). No mark
-// existed at either plant as of 2026-08-31. On an unmarked lane the slot a robot
-// drives to is the slot chosen before the drive, and this function does not run.
-//
-// If you arrived here from a `dropoff-occupied` row, or from a lane with an
-// empty slot walled in behind a full one, that is the reason: not that this
-// resolved wrongly, but that nothing asked it.
-//
-// This is the bind-at-release property, and it is the reason a gated create
-// carries no dropoff block at all: there is no committed binding to go stale, so
-// there is nothing to re-confirm — only something to resolve, once, late.
-//
-// Three outcomes, and the common one writes nothing:
-//
-//   - the order's own slot is still the deepest reachable pick → keep it. The
-//     owner-aware resolver is what makes this the answer instead of a spurious
-//     move to a shallower slot (see nodes.FindStoreSlotInLaneExcluding).
-//   - a different slot wins — its own was walled by a bin that landed shallower
-//     while it dwelled, or a DEEPER slot freed → move to it.
-//   - nothing is available → error; the caller refuses to release.
-//
-// The move takes the new slot BEFORE releasing the old one, so a failure part-way
-// leaves the order holding exactly what it held before. Holding two slot rows for
-// the instant between is legal: the uniqueness index is per NODE, not per order.
-func (d *Dispatcher) rebindGatedDropoff(order *orders.Order, lane *nodes.Node, c gateCandidate) (*nodes.Node, QueueCause, error) {
-	entryIndex := c.entryIndex
-	// THE SLOT THIS DROP HOLDS IS THE ENTRY STEP'S, not delivery_node's. They are
-	// one node only when the entry is the plan's last drop. On a swap the entry is
-	// interior and delivery_node is the press at the far end: read from there, every
-	// interior drop re-bound "PLN_002 → LSD_001" when it already held LSD_001, and
-	// the release below let go of the press (C2a A.5; STUDY-floor-and-gate.md §1(c)).
-	at, err := entryDropoffNode(order, entryIndex)
-	if err != nil {
-		return nil, causeForGateRebind(err), err
-	}
-	current, err := d.db.GetNodeByDotName(at)
-	if err != nil {
-		return nil, causeForGateRebind(err), err
-	}
-	best, err := d.db.FindStoreSlotInLaneExcluding(lane.ID, order.ID)
-	// THE SELECTOR EXEMPTS THE ASKER AND CANNOT SEE PLAN ORDER, so the slot it
-	// offers may wall a pickup this same order makes later in this lane (swap
-	// 270). The plan says so (plan.OwnPickupLane, C2b Q1), and the lane is set
-	// aside: the widen, which re-asks the group, or the existing no-slot wait.
-	if err == nil && d.dropWallsOwnPickup(order, entryIndex, best, lane) {
-		d.dbg("lane gate: order %d's drop at %s would wall its own later pickup in %s — setting the "+
-			"lane aside", order.ID, best.Name, lane.Name)
-		widened, wErr := d.widenDropoffToGroup(order, lane, entryIndex)
-		if wErr != nil {
-			return nil, causeForGateRebind(wErr), wErr
-		}
-		if widened == nil {
-			return nil, CauseGateRebindUnavailable, fmt.Errorf("lane %s: every slot it offers order %d "+
-				"walls the order's own later pickup there", lane.Name, order.ID)
-		}
-		return widened, "", nil
-	}
-	if err != nil {
-		// ── THE ASSIGNED LANE HAS NOWHERE. TWO QUESTIONS, IN THIS ORDER ───
-		//
-		// HEAL FIRST. If a dig would open this lane, the answer is the dig, not
-		// another lane: the plan named this lane for a reason, the bins in front
-		// of the target are the actual problem, and widening past them leaves the
-		// wall standing for whoever comes next. Refusing here is what lets the
-		// evaluator's propose() summon the excavation — F-11's whole mechanism —
-		// and the order stays a candidate and takes the lane when it opens.
-		//
-		// WIDEN ONLY WHEN NO DIG WOULD HELP. That is a claimed blocker somebody
-		// live is coming for, a lane with a robot in it, an occupied own-slot —
-		// the cases acceptanceDigNeeded refuses, each because an excavation is
-		// the wrong remedy. Then, and only then, a sibling lane in the same group
-		// is a better answer than standing still.
-		//
-		// Nothing here exercised the true arm before: a lane walled by a CLAIMED
-		// blocker with a free sibling had no path except waiting for the claim to
-		// resolve.
-		if _, wouldHelp := d.acceptanceDigNeeded(lane, c); wouldHelp {
-			d.dbg("lane gate: order %d has nowhere in %s, but a dig would open it — refusing so the "+
-				"pass can summon one rather than widening past the wall", order.ID, lane.Name)
-			return nil, CauseGateRebindUnavailable, err
-		}
-		widened, wErr := d.widenDropoffToGroup(order, lane, entryIndex)
-		if wErr != nil {
-			return nil, causeForGateRebind(wErr), wErr
-		}
-		if widened == nil {
-			// The group has nowhere either. The original refusal is the honest
-			// one to report: it names the lane the plan chose.
-			return nil, CauseGateRebindUnavailable, err
-		}
-		return widened, "", nil
-	}
-	if current != nil && best.ID == current.ID {
-		return current, "", nil // still the right slot; no writes at all
-	}
-
-	// THE CAUSE IS DETERMINED AT THE REFUSAL, beside the error, and returned with
-	// it — the shape ReserveStorageDropoff already uses and that
-	// TestRefusalClassifiersAreNotReimplementedScan exists to keep. A caller that
-	// re-derives a classification from a store it has to read again is how a
-	// failed database read got parked as slot contention.
-	if err := claimStoreSlot(d.db, order, best); err != nil {
-		return nil, causeForGateRebind(err), err
-	}
-	if err := d.confirmDropoffSlot(order, best); err != nil {
-		return nil, causeForGateRebind(err), err
-	}
-	if current != nil {
-		if rErr := d.db.ReleaseSlotClaim(current.ID, order.ID); rErr != nil {
-			// Non-fatal: the new slot is secured and the append is correct. A
-			// lingering old hold is reclaimed by the owner-liveness reaper when the
-			// order goes terminal. Log it — a leaked hold narrows the lane.
-			log.Printf("lane gate: order %d re-bound %s → %s but releasing the old slot failed: %v",
-				order.ID, current.Name, best.Name, rErr)
-		}
-	}
-	d.stampBound(order, best)
-	// applyDeliveryNodeAtStep, not a raw delivery_node write: it patches the
-	// deferred tail in steps_json in the same breath, and that tail is exactly what
-	// the append is about to emit. A raw write would append a block for the slot the
-	// order no longer owns.
-	//
-	// AT THE LANE-ENTRY INDEX, not at the plan's last dropoff. A swap's plan is
-	// [… dropoff <lane>, pickup <empty>, dropoff <press>], and the leg this gate
-	// speaks for is the FIRST dropoff. Re-pointing the last one instead sent the
-	// empty into the lane and put both of the order's bins in one slot — see
-	// applyPlanNode for the full failure and PLAN §R.5 for the specimens.
-	//
-	// AND delivery_node ONLY WHEN THIS DROP IS THE LAST. The column is the order's
-	// final destination, and handleStoreBlockCompleted reads a drop AT it as the
-	// final one, recorded only when the whole order finishes. Writing an interior
-	// lane slot there left the bin set down in the lane in _TRANSIT for the rest of
-	// the swap, the slot reading empty to every dig plan (order 233, dig 242). The
-	// interior drop moves in the plan alone, as widenDropoffToGroup already knew.
-	if d.entryIsFinalDropoff(order, entryIndex) {
-		if err := applyDeliveryNodeAtStep(d.db, order, best.Name, entryIndex); err != nil {
-			return nil, causeForGateRebind(err), err
-		}
-	} else {
-		applyPlanNode(d.db, order, best.Name, entryIndex, protocol.ActionDropoff)
-	}
-	// AND THE PER-BIN LEDGER FOLLOWS THE PLAN. The two lines above move the two
-	// copies the robot is driven from; order_bins.dest_node is the third, and until
-	// now it was written once at allocation and never again — so a re-bound swap
-	// drove to the new slot while the junction row still named the old one, and the
-	// whole-order settle placed the bin at the row's stale value (D2).
-	//
-	// After the step patch, not before: the derivation reads the plan.
-	d.refreshOrderBinDestinations(order)
-	log.Printf("lane gate: order %d re-bound at release %s → %s (lane %s)",
-		order.ID, nodeName(current), best.Name, lane.Name)
-	return best, "", nil
 }
 
 func nodeName(n *nodes.Node) string {
@@ -1872,167 +1611,8 @@ func (d *Dispatcher) releaseDweller(c gateCandidate, lane *nodes.Node) (freed bo
 	return freed, next
 }
 
-// widenDropoffToGroup re-aims a dwelling store at a SIBLING LANE in its own node
-// group, when its assigned lane has nowhere and no dig would help.
-//
-// ── THE ORACLE'S REACH, AND ITS BOUNDARY ──────────────────────────────────
-//
-// This is the widening the group wait points exist for. A robot standing at a
-// group's spot owns nothing and has committed to no lane, so re-aiming it costs
-// only a plan patch — and the alternative is a robot standing still beside a
-// block of lanes with room in it.
-//
-// IT NEVER CROSSES THE GROUP BOUNDARY. That is the law that replaced the
-// round-11 keeper carve-out, and it is not a convenience: the keeper's bound is
-// a COUNTING bound at group level, so a within-group re-aim never moves the
-// count and needs no exemption — while a cross-group one both breaks that count
-// and sends a robot to a supermarket nobody asked for (the Hopkinsville
-// wrong-supermarket fence states the same rule from the other side). The
-// resolver is handed the LANE'S OWN PARENT and nothing else, so the boundary is
-// structural rather than a check that could be forgotten.
-//
-// NOT A RELAY. A drop that a later step of the same plan picks back up from (a
-// relay: the bin is set down and fetched again) is not re-aimed: re-aiming one
-// half would send the robot to fetch from a slot it never filled, and the
-// paired-index writer that would move both halves together does not exist. Any
-// other mid-trip drop IS widened (C2b, 2026-10-08). This used to read "only final
-// dropoffs", which is broader than its reason: a swap's drop of the press's full,
-// followed by an empty fetched from a different slot, was refused, and order 266
-// stood at the mark for the rest of a packed run holding the press's bin.
-//
-// A widened mid-trip drop moves the step, not the order's delivery (the trip's
-// end), and the steps after it may now enter a lane the robot is not in: each
-// such entry gets its own wait (gateLaterLaneEntries).
-//
-// FOUR RULES, VERBATIM FROM redirectStoreOffDugLane, because they are the same
-// decision at a different moment: no re-aim without a resolver, none for a
-// no-demand order, none for a destination that is not a storage slot, and none
-// when the group answers with the slot we already have.
-//
-// Returns a nil node with a nil error when the group has nowhere — the caller
-// then reports the original lane's refusal, which is the honest one because it
-// names the lane the plan chose.
-func (d *Dispatcher) widenDropoffToGroup(order *orders.Order, lane *nodes.Node, entryIndex int) (*nodes.Node, error) {
-	if d.resolver == nil || order.OriginClass == protocol.OriginClassNoDemand || lane.ParentID == nil {
-		return nil, nil
-	}
-	final := d.entryIsFinalDropoff(order, entryIndex)
-	if !final && relaysFromDrop(order, entryIndex) {
-		d.dbg("lane gate: order %d's drop at step %d is picked back up later in the plan (a relay) — not "+
-			"widening; the paired-index writer that would move both halves does not exist", order.ID, entryIndex)
-		return nil, nil
-	}
-	group, err := d.db.GetNode(*lane.ParentID)
-	if err != nil || group == nil {
-		return nil, err
-	}
-	result, err := d.resolver.Resolve(group, binresolver.ResolveModeStore, order.PayloadCode,
-		binresolver.UnknownBinType("lane-gate widen: order holds no bin and no hold"), digAskerFor(order), nil)
-	if err != nil || result == nil || result.Node == nil {
-		d.dbg("lane gate: order %d has nowhere in %s and its group %s has nowhere either — waiting",
-			order.ID, lane.Name, group.Name)
-		return nil, nil
-	}
-	newLane, err := d.db.LaneForNode(result.Node.ID)
-	if err != nil {
-		return nil, err
-	}
-	if newLane == nil || newLane.ID == lane.ID {
-		// The group answered with this same lane, which the read above already
-		// said has nowhere. Nothing gained; report it as no widening.
-		return nil, nil
-	}
-
-	// ── THREE FIELDS, AND ALL THREE OR NONE ───────────────────────────────
-	//
-	// A cross-lane re-bind moves the order to a different CORRIDOR, so three
-	// copies of "where is this going" have to move together:
-	//
-	//	the entry step + delivery_node  what the append emits, and what the row says
-	//	order_bins.dest_node            what the whole-order settle places against
-	//	the WAIT step's WaitLane        which lane's evaluator owns this wait, and
-	//	                                which lane's occupancy the append takes
-	//
-	// The third is the one a same-lane re-bind never needed, and it is what F-12's
-	// shape is made of: a stale WaitLane takes the WRONG LANE'S occupancy at
-	// append, so the robot enters lane B while lane A's row says it is inside.
-	//
-	// The claim is booked BEFORE the plan moves — claimStoreSlot then
-	// confirmDropoffSlot — so a failure anywhere below leaves the order where it
-	// was, holding nothing it is not entitled to.
-	if err := claimStoreSlot(d.db, order, result.Node); err != nil {
-		return nil, err
-	}
-	if err := d.confirmDropoffSlot(order, result.Node); err != nil {
-		return nil, err
-	}
-	d.stampBound(order, result.Node)
-	if final {
-		if err := applyDeliveryNodeAtStep(d.db, order, result.Node.Name, entryIndex); err != nil {
-			return nil, err
-		}
-	} else {
-		applyPlanNode(d.db, order, result.Node.Name, entryIndex, protocol.ActionDropoff)
-	}
-	if err := d.rebindWaitLane(order, newLane.ID); err != nil {
-		return nil, err
-	}
-	if !final {
-		if err := d.gateLaterLaneEntries(order, entryIndex, newLane.ID); err != nil {
-			return nil, err
-		}
-	}
-	d.refreshOrderBinDestinations(order)
-
-	// ── AND THE GUARD RUNS AGAIN ──────────────────────────────────────────
-	//
-	// assertEachWaitGatesItsEntry ran at splice time, when the lane a wait named
-	// and the step after it were chosen together and could not disagree. This
-	// makes that value MUTABLE, and a guard that runs only where a value is born
-	// stops guarding the moment somebody can change it. Re-running is cheap, and
-	// it is the only thing standing between a mis-paired write and a robot
-	// admitted to one lane on another lane's authority.
-	var steps []resolvedStep
-	if uErr := json.Unmarshal([]byte(order.StepsJSON), &steps); uErr != nil {
-		return nil, fmt.Errorf("widen: re-read the patched plan for order %d: %w", order.ID, uErr)
-	}
-	if aErr := d.assertEachWaitGatesItsEntry(steps); aErr != nil {
-		return nil, fmt.Errorf("widen: order %d re-bound %s to %s but the plan no longer holds: %w",
-			order.ID, lane.Name, result.Node.Name, aErr)
-	}
-
-	log.Printf("lane gate: order %d WIDENED at release into %s (was %s) — the assigned lane had "+
-		"nowhere and no dig would help, and a sibling in group %s did",
-		order.ID, newLane.Name, lane.Name, group.Name)
-	return result.Node, nil
-}
-
-// entryIsFinalDropoff reports whether the step this gate speaks for is the plan's
-// LAST actionable one — the only kind the widening may re-aim.
-//
-// An intermediate staging dropoff is half of a pair: a later pickup fetches from
-// exactly the node this step filled. Re-aiming one half sends the robot to fetch
-// from a slot it never filled, which is the same rule the fungible-dropoff
-// regroup states and applyPlanNode states for the step patch.
-// relaysFromDrop reports whether a step after entryIndex picks up from the very
-// node the drop at entryIndex names: a relay. Unreadable answers yes, the side
-// that does not re-aim.
-func relaysFromDrop(order *orders.Order, entryIndex int) bool {
-	var steps []resolvedStep
-	if json.Unmarshal([]byte(order.StepsJSON), &steps) != nil || entryIndex < 0 || entryIndex >= len(steps) {
-		return true
-	}
-	at := steps[entryIndex].Node
-	for i := entryIndex + 1; i < len(steps); i++ {
-		if steps[i].Action == protocol.ActionPickup && steps[i].Node == at {
-			return true
-		}
-	}
-	return false
-}
-
 // gateLaterLaneEntries puts a lane wait in front of each step after entryIndex
-// that enters a lane the robot is not in, starting from inLane (where the widened
+// that enters a lane the robot is not in, starting from inLane (where the chosen
 // drop now puts it). It is the splice's rule 2 (a wait per lane change) applied to
 // the rest of a plan whose entry lane moved at release: the plan was spliced for
 // the lane it pencilled, and a later step in that lane was "still in the lane"
@@ -2070,7 +1650,7 @@ func (d *Dispatcher) gateLaterLaneEntries(order *orders.Order, entryIndex int, i
 					return fmt.Errorf("gate later entries: %w: %s", nodes.ErrLaneUnmarked, lane.Name)
 				}
 				out = append(out, resolvedStep{Action: protocol.ActionWait, Node: t.pointFor(order.ID),
-					WaitKind: WaitKindLane, WaitLane: lane.ID})
+					WaitKind: WaitKindLane, WaitLane: lane.ID, WaitGroup: groupIDOf(lane)})
 				inside = lane.ID
 			}
 		}
@@ -2118,44 +1698,18 @@ func (d *Dispatcher) laneOfStep(name string) (*nodes.Node, error) {
 	return d.db.LaneForNode(node.ID)
 }
 
-func (d *Dispatcher) entryIsFinalDropoff(order *orders.Order, entryIndex int) bool {
-	var steps []resolvedStep
-	if json.Unmarshal([]byte(order.StepsJSON), &steps) != nil {
-		return false // unreadable answers NO, like every other read on this path
-	}
-	if entryIndex < 0 || entryIndex >= len(steps) || steps[entryIndex].Action != protocol.ActionDropoff {
-		return false
-	}
-	for i := entryIndex + 1; i < len(steps); i++ {
-		if steps[i].Action == protocol.ActionDropoff || steps[i].Action == protocol.ActionPickup {
-			return false // something works the plan after this — not the final leg
-		}
-	}
-	return true
-}
-
-// entryDropoffNode is the node the plan's drop at entryIndex names: the slot the
-// gate's re-bind speaks for. The candidate walk found that index in this same
-// plan, so a plan that does not name a drop there disagrees with its caller, and
-// that is an error, never a guess from delivery_node.
-func entryDropoffNode(order *orders.Order, entryIndex int) (string, error) {
-	var steps []resolvedStep
-	if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err != nil {
-		return "", fmt.Errorf("rebind: parse steps for order %d: %w", order.ID, err)
-	}
-	if entryIndex < 0 || entryIndex >= len(steps) || steps[entryIndex].Action != protocol.ActionDropoff {
-		return "", fmt.Errorf("rebind: order %d's step %d is not the lane drop its gate speaks for", order.ID, entryIndex)
-	}
-	return steps[entryIndex].Node, nil
-}
-
 // rebindWaitLane re-points the lane wait the order is parked AT, so the wait and
-// the entry it gates name the same corridor after a cross-lane widening.
+// the entry it gates name the same corridor once the release chose a slot in
+// another lane of the group (C2c: the drop is chosen across the group).
 //
 // It patches the wait at the order's CURRENT WaitIndex — the one the evaluator is
 // releasing — and not "the first lane wait", which is a different step on any
 // plan that enters two lanes.
-func (d *Dispatcher) rebindWaitLane(order *orders.Order, laneID int64) error {
+//
+// groupID, when not 0, is written as the wait's group (WaitGroup) with it: the
+// release onto a group's flat child names no lane (laneID 0), and the plan's
+// check (assertEachWaitGatesItsEntry) reads the child against that group.
+func (d *Dispatcher) rebindWaitLane(order *orders.Order, laneID, groupID int64) error {
 	var steps []resolvedStep
 	if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err != nil {
 		return fmt.Errorf("rebind wait lane: parse steps for order %d: %w", order.ID, err)
@@ -2171,6 +1725,9 @@ func (d *Dispatcher) rebindWaitLane(order *orders.Order, laneID int64) error {
 					order.ID, steps[i].WaitKind)
 			}
 			steps[i].WaitLane = laneID
+			if groupID != 0 {
+				steps[i].WaitGroup = groupID
+			}
 			patched, mErr := json.Marshal(steps)
 			if mErr != nil {
 				return fmt.Errorf("rebind wait lane: marshal steps for order %d: %w", order.ID, mErr)
@@ -2184,107 +1741,6 @@ func (d *Dispatcher) rebindWaitLane(order *orders.Order, laneID int64) error {
 		seen++
 	}
 	return fmt.Errorf("rebind wait lane: order %d has no wait at index %d", order.ID, order.WaitIndex)
-}
-
-// refusalCanWiden reports whether a lane refusal is one a SIBLING LANE could
-// answer, so the oracle should re-aim rather than let the robot keep standing.
-//
-// ── THE ORACLE WAS BEHIND THE WRONG DOOR ──────────────────────────────────
-//
-// The widening began life inside rebindGatedDropoff, which runs only after the
-// classifier ADMITS a candidate — so it could only ever fire on "this lane has
-// no free slot for me". That is the rarest way a dweller gets stuck. The common
-// way is "this lane has a slot with my name on it and it is not my turn", which
-// returns from the refusal arm above and never reaches a re-bind at all.
-//
-// MEASURED, demo.yaml 2026-08-30, and it is the shape the whole round is for:
-//
-//	134  complex ASSY  staged  lane-deeper-pending  AMR-03  -> SMN_016 (depth 1)
-//	132  move    ASSY  staged  lane-deeper-pending  AMR-02  -> SMN_017 (depth 2)
-//	128  complex PANEL-A queued  swap-hold                  -> SMN_018 (depth 3)
-//
-// All three in Lane_06. 128 is the deepest and cannot move — it waits on a
-// partner that waits on PANEL-A the plant does not have — and stillComingToLane
-// correctly counts it as a deeper store still coming, so 132 is walled, and 134
-// is walled behind 132. Two robots stood there 39 minutes while the group had
-// room. The run reported `WIDENED: 0` and the reason was not that the population
-// is rare; it was that the population could not reach the code.
-//
-// ── WHICH REFUSALS, AND WHY NOT ALL OF THEM ───────────────────────────────
-//
-// A refusal that clears ON ITS OWN IN A PASS OR TWO must not re-aim: moving a
-// robot to another aisle costs a drive, and doing it for a wait that was about
-// to end is churn dressed as progress. So this is a NAMED SET with a reason per
-// member rather than "anything that refused".
-//
-//	lane-deeper-pending   the ordering wall. Clears when a deeper store places —
-//	                      and when the deeper store CANNOT place, never. A sibling
-//	                      lane carries no such ordering, so it is a real answer.
-//	lane-dig-active       an excavation owns the corridor for a whole reshuffle:
-//	                      several legs, a teardown, minutes. redirectStoreOffDugLane
-//	                      already re-aims this shape BEFORE dispatch; this is the
-//	                      same decision for a robot that is already standing.
-//	lane-held-dig         same fact, read at the mouth instead of the lock.
-//
-// DELIBERATELY OUT, each because its releaser is one robot-movement away:
-// lane-occupied (a robot is inside and occupancy is transient by construction),
-// lane-held-source (§R.101's lock ends when one robot carries one bin out),
-// lane-target-buried and the dig-blocker family (a dig would help, so the heal
-// is the answer and propose is what gives it), and every read-failure cause (an
-// undetermined answer means do LESS, not re-aim on no evidence).
-func refusalCanWiden(cause QueueCause) bool {
-	switch cause {
-	case CauseLaneDeeperPending, CauseLaneDigActive, CauseLaneHeldDig:
-		return true
-	default:
-		return false
-	}
-}
-
-// widenRefusedDropoff re-aims a REFUSED store dweller into a sibling lane of its
-// own group, when no dig would help it where it is.
-//
-// Reports the lane it moved to, or 0. The caller collects those and evaluates
-// them AFTER the mutex — the same split the heal and the dwell exit already use,
-// and for the same reason: evaluating a lane dispatches, which emits, which
-// re-enters the evaluator on this goroutine.
-//
-// HEAL FIRST, unchanged. acceptanceDigNeeded is asked per candidate rather than
-// read off the pass's digWanted flag, because that flag is "somebody already got
-// this pass's dig" — an earlier candidate consuming it must not turn this one's
-// diggable wall into a re-aim.
-//
-// RETRIEVES AND DWELLERS ARE OUT. A retrieve's lane is where its BIN is, which
-// no re-aim can change; a dweller is already inside the corridor holding a
-// blocker, and its destination question is redirectStoreOffDugLane's.
-func (d *Dispatcher) widenRefusedDropoff(c gateCandidate, lane *nodes.Node, cause QueueCause) int64 {
-	if c.retrieve || c.dwell || !refusalCanWiden(cause) {
-		return 0
-	}
-	if _, wouldHelp := d.acceptanceDigNeeded(lane, c); wouldHelp {
-		return 0 // a dig opens this lane — propose() summons it, and the plan's lane is kept
-	}
-	moved, err := d.widenDropoffToGroup(c.order, lane, c.entryIndex)
-	if err != nil {
-		d.dbg("lane gate: order %d refused on %s (%s) and could not be re-aimed: %v",
-			c.order.ID, lane.Name, cause, err)
-		return 0
-	}
-	if moved == nil {
-		return 0 // the group has nowhere either — the refusal stands, unchanged
-	}
-	newLane, err := d.db.LaneForNode(moved.ID)
-	if err != nil || newLane == nil {
-		return 0
-	}
-	// The cause described a wait in a lane this order has left. Clearing it stops
-	// the board explaining the old lane's queue to somebody looking at a robot
-	// now bound for a different one; the next pass writes whatever is true there.
-	d.setQueueReason(c.order, "", "", QueueParams{})
-	log.Printf("lane gate: order %d re-aimed off %s to %s — refused there (%s), no dig would help, "+
-		"and its group had room",
-		c.order.ID, lane.Name, moved.Name, cause)
-	return newLane.ID
 }
 
 // recordLaneWait is the one write of a lane refusal on a gate-staged order's
@@ -2328,17 +1784,6 @@ func (d *Dispatcher) evaluateLaneWaitAfterAppend(order *orders.Order) {
 	if lane := laneWaitAfterAppend(order); lane != 0 {
 		d.EvaluateLaneReleases(lane)
 	}
-}
-
-// dropWallsOwnPickup reports whether dropping at dest, for the drop at
-// entryIndex, would wall a pickup order makes later in lane (plan.OwnPickupLane).
-// An unreadable plan answers no, as the re-bind did before.
-func (d *Dispatcher) dropWallsOwnPickup(order *orders.Order, entryIndex int, dest, lane *nodes.Node) bool {
-	var steps []resolvedStep
-	if json.Unmarshal([]byte(order.StepsJSON), &steps) != nil {
-		return false
-	}
-	return d.pure.OwnPickupLane(dest.Name, plan.LaterPickups(steps, entryIndex)) == lane.ID
 }
 
 // stampBound records the moment the gate bound order's drop to slot, for the

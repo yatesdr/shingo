@@ -143,6 +143,14 @@ func (d *Dispatcher) SweepLaneWaiters() int {
 	// held leg belongs to.
 	mine := map[int64]bool{}
 	redriven := map[int64]bool{}
+	// ONE GROUP PASS PER GROUP (C2c ruling 4: a waiter is keyed by its group, and
+	// one pass sees every waiter of it). The held legs stay per lane. The floor
+	// is still the should-be-zero; its records are unchanged.
+	passed := map[int64]bool{}
+	groupOf := make(map[int64]int64, len(lanes))
+	for laneID := range lanes {
+		groupOf[laneID] = d.groupOfLane(laneID)
+	}
 	for laneID := range lanes {
 		// RE-READ THE CAUSE FIRST, and read it HERE rather than after the release.
 		//
@@ -157,9 +165,16 @@ func (d *Dispatcher) SweepLaneWaiters() int {
 		// blank is a different defect record entirely. Immediately before the
 		// re-drive is the last moment the live value still means "why this order is
 		// waiting".
-		d.refreshWaiterCauses(before, laneID)
-		for _, id := range d.evaluateLaneReleases(laneID) {
-			mine[id] = true
+		if g := groupOf[laneID]; g != 0 && !passed[g] {
+			passed[g] = true
+			for other, og := range groupOf {
+				if og == g {
+					d.refreshWaiterCauses(before, other)
+				}
+			}
+			for _, id := range d.evaluateGroupReleases(g) {
+				mine[id] = true
+			}
 		}
 		for _, id := range d.redriveHeldCompoundLegs(laneID) {
 			redriven[id] = true

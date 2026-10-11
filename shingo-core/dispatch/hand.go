@@ -73,6 +73,11 @@ type Hand struct {
 	Slots []HandSlot
 	Bins  []HandBin
 	Lanes []laneHold
+	// DropGroup is a plain group drop's group (plainGroupDrop): its slot is not
+	// in Slots — it stays paper until the release takes it (C2c rulings 2 and 3)
+	// — and the plan's drop is stamped with the group, so the release asks the
+	// group (RULINGS-C2c-run-through §3.2). "" for every other order.
+	DropGroup string
 	// AfterCommit runs once the hand has committed — audit lines that must not
 	// claim a hold the rollback took back.
 	AfterCommit []func()

@@ -355,6 +355,15 @@ func AcquireSlot(db RowExecer, orderID, nodeID int64, reservedBy string) error {
 	return acquire(db, orderID, orderID, SlotRef(nodeID), reservedBy)
 }
 
+// GroupRoomTag is the reserved_by of a planned group drop's PAPER: one pending
+// slot row on the slot the group's algorithm chose, standing for one unit of
+// room in the group (C2c ruling 2; D13 F1 — no schema change, so the paper is
+// anchored on a slot and the tag says what it is). The slot it sits on is not
+// binding: the drop is chosen across the group again at release. It is taken by
+// rank or by a committed robot (nodes.PaperSlotsInGroup offers it; the store's
+// take re-checks under lock), which no other pending slot row is.
+const GroupRoomTag = "groupRoom"
+
 // acquire inserts a pending reservation for ref. Kind-agnostic: the resource_kind
 // is a parameter and the target column is routed by it in SQL (no per-kind Go
 // branching). ON CONFLICT DO NOTHING catches EITHER per-kind partial unique index,
@@ -531,6 +540,21 @@ func DemoteConfirmedByOrder(db Execer, orderID int64) error {
 		orderID, string(StatePending), string(StateConfirmed))
 	if err != nil {
 		return fmt.Errorf("reservations demote-confirmed-by-order: %w", err)
+	}
+	return nil
+}
+
+// DemoteSlot is DemoteConfirmedByOrder for one slot: orderID's confirmed row on
+// nodeID goes back to pending, its paper again. The release hand's give-back
+// (store.DB.GiveBackReleaseDrop): a release that took the slot and whose tail
+// never reached the fleet. Idempotent.
+func DemoteSlot(db Execer, orderID, nodeID int64) error {
+	_, err := db.Exec(
+		`UPDATE reservations SET state=$3
+		 WHERE order_id=$1 AND node_id=$2 AND resource_kind=$4 AND state=$5`,
+		orderID, nodeID, string(StatePending), string(KindSlot), string(StateConfirmed))
+	if err != nil {
+		return fmt.Errorf("reservations demote-slot: %w", err)
 	}
 	return nil
 }

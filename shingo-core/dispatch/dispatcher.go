@@ -127,6 +127,7 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 	d.planner.pure = d.pure
 	d.allocator = newAllocator(db, binManifest, d.finder, d.dbg)
 	d.allocator.slotReleased = d.wakeLanesOfSlots
+	d.allocator.takeGroupRoom = d.takeGroupRoomByRank
 	return d
 }
 
@@ -664,10 +665,28 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 		} else {
 			plan = buildTransportPlan(sourceNode.Name, destNode.Name, order.SourceIntent == SourceIntentEmpty)
 		}
+		// THE PLAN KEEPS THE GROUP ITS DROP WAS CHOSEN FROM (plainGroupDrop),
+		// stamped as a complex group drop's step is, so the gate's release asks
+		// the group (gatedGroupDrop). Persisted with the spliced plan.
+		if hand.DropGroup != "" {
+			for i := len(plan) - 1; i >= 0; i-- {
+				if plan[i].Action == protocol.ActionDropoff && plan[i].Node == destNode.Name {
+					plan[i].Group = hand.DropGroup
+					break
+				}
+			}
+		}
 	}
 	spliced, target, gated, err := d.spliceLaneWait(plan, order.ID)
 	if err != nil {
 		return "", err
+	}
+	if !gated && hand.DropGroup != "" {
+		// UNREACHABLE: a lane is never without a mark, so a drop into a lane is
+		// always gated. Were it not, no release would come to take the paper, so
+		// the slot is confirmed here, as any plain storage drop's is.
+		hand.Slots = append(hand.Slots, HandSlot{Node: destNode})
+		hand.DropGroup = ""
 	}
 	// A no-op on this path today: the junction is written only for multi-bin
 	// complex orders and this builds a fresh single-bin transport plan. It is
@@ -899,7 +918,17 @@ func FleetRefusalCause(err error, destination string) (protocol.QueueCode, Queue
 // caller whose bins are already held. A caller that soft-held a bin and a slot
 // and wants them made hard with the dispatch uses DispatchHand.
 func (d *Dispatcher) DispatchDirect(order *orders.Order, sourceNode, destNode *nodes.Node) (string, error) {
-	return d.dispatchDirect(order, sourceNode, destNode, Hand{})
+	// THE SAME RULE AS THE HAND'S (RULINGS-C2c-run-through §3.2): a plain drop
+	// into a lane of a group that Core chose is a group drop, whichever door
+	// sends it, so its plan keeps the group and the group's pass releases it.
+	// It takes nothing here: the caller holds what it holds.
+	var hand Hand
+	if destNode != nil && destNode.Name == order.DeliveryNode {
+		if storage, lane := storageDropoffOf(d.db, destNode); storage && plainGroupDrop(order, lane) {
+			hand.DropGroup = lane.ParentName
+		}
+	}
+	return d.dispatchDirect(order, sourceNode, destNode, hand)
 }
 
 // DispatchHand dispatches a plain order that SOFT-holds binID (and, for a
@@ -916,8 +945,24 @@ func (d *Dispatcher) DispatchHand(order *orders.Order, binID int64, sourceNode, 
 	hand := Hand{Bins: []HandBin{{BinID: binID, RemainingUOP: order.RemainingUOP}}}
 	// Only a concrete storage dropoff is hard-claimed; a line or consume point
 	// has no slot reservation to confirm. Same test the split confirm used.
-	if destNode != nil && isStorageDropoff(d.db, order.DeliveryNode) {
-		hand.Slots = []HandSlot{{Node: destNode}}
+	//
+	// A GROUP DROP IS NOT (RULINGS-C2c-run-through §3.2: a plain store into a
+	// group is a group drop): its slot stays paper and the release takes the
+	// slot the group's pass chooses, as a complex group drop's does
+	// (handFromComplexPlan). The storage question is asked of the node in hand,
+	// so the lane it stands in comes with it at one read.
+	if destNode != nil {
+		if destNode.Name != order.DeliveryNode {
+			if isStorageDropoff(d.db, order.DeliveryNode) {
+				hand.Slots = []HandSlot{{Node: destNode}}
+			}
+		} else if storage, lane := storageDropoffOf(d.db, destNode); storage {
+			if plainGroupDrop(order, lane) {
+				hand.DropGroup = lane.ParentName
+			} else {
+				hand.Slots = []HandSlot{{Node: destNode}}
+			}
+		}
 	}
 	holds, err := d.resolveOrderLaneHolds(sourceNode)
 	if err != nil {

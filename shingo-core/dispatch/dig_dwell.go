@@ -414,7 +414,7 @@ func (d *Dispatcher) releaseDwellingDigLeg(order *orders.Order, lane *nodes.Node
 	//
 	// So the two halves are split exactly as the heal's are: the row goes now,
 	// because the fact is true now, and the caller wakes the lane once it is out of
-	// the critical section (evaluateLaneReleasesPass reports that it freed one).
+	// the critical section (evaluateGroupReleasesPass reports that it freed one).
 	if err := reservations.ReleaseOccupancyForLane(d.db.DB, fresh.ID, lane.ID); err != nil {
 		// The append has landed and the robot is driving out, so this is a stale row
 		// rather than a failed release: loud, and left to the floor, because
@@ -764,10 +764,13 @@ func bindDwellTail(db *store.DB, leg *orders.Order, dest *nodes.Node) error {
 //
 // One spelling, called from all three, so the releaser row's promise is true by
 // construction rather than by coincidence.
+//
+// SINCE C2c IT IS THE GROUP'S PASS (ruling 4): a waiter is keyed by its group,
+// so the one pass over nodeID's group sees every dweller in it, inbound and
+// outbound, where this used to run one lane pass per lane holding a waiter
+// (DESIGN-C2c §6.3: "EvaluateDwellersSharingGroupWith is subsumed").
 func (d *Dispatcher) EvaluateDwellersSharingGroupWith(nodeID int64) {
-	for _, laneID := range d.DwellerLanesSharingGroupWith(nodeID) {
-		d.EvaluateLaneReleases(laneID)
-	}
+	d.EvaluateGroupReleases(d.groupOfNode(nodeID))
 }
 
 func (d *Dispatcher) DwellerLanesSharingGroupWith(nodeID int64) []int64 {

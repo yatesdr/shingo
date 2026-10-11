@@ -8,6 +8,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
@@ -272,12 +273,34 @@ func TestDwell_TwoDwellersRacingForOneSlotBindTwo(t *testing.T) {
 	legA := digFrom(t, db, d, g, g.dugA, g.dugASlots, "tdr-a")
 	legB := digFrom(t, db, d, g, g.dugB, g.dugBSlots, "tdr-b")
 
+	// B IS RELEASED IN A's WINDOW, BUT NOT THROUGH A SECOND GATE PASS. Since C2c
+	// the gate's mutex is the GROUP's (ruling 4; D13 H1), so two passes over one
+	// group's dwellers are serialized and cannot interleave in-process: driving
+	// B through EvaluateWaitLaneForStagedOrder from inside A's pass re-enters the
+	// group's mutex on the same goroutine. What this pins is the slot claim's
+	// arbitration, which still matters against every other chooser, so B's
+	// release body runs directly in the window (its lift, then
+	// releaseDwellingDigLeg), as another chooser's would.
 	var b *orders.Order
 	d.dwellChoiceHook = func(legID int64, dest *nodes.Node) {
 		if legID != legA.ID || b != nil {
 			return
 		}
-		b = askOnce(t, d, db, legB)
+		if legB.BinID != nil {
+			bin, err := db.GetBin(*legB.BinID)
+			testutil.MustNoErr(t, err, "read B's bin")
+			if bin.NodeName == legB.SourceNode {
+				transit, tErr := db.GetNodeByName(domain.TransitNodeName)
+				testutil.MustNoErr(t, tErr, "find the transit node")
+				testutil.MustNoErr(t, db.MoveBinToTransit(bin.ID, transit.ID), "lift B's blocker")
+				d.HandleTransitForLaneGate(legB.ID, *bin.NodeID)
+			}
+		}
+		if _, _, err := d.releaseDwellingDigLeg(legB, g.dugB); err != nil {
+			t.Fatalf("release dweller B: %v", err)
+		}
+		fresh, err := db.GetOrder(legB.ID)
+		b = testutil.Must(t, fresh, err, "reload dweller B")
 	}
 
 	a := askOnce(t, d, db, legA)

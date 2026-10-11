@@ -54,7 +54,10 @@ func TestGateChoreo_OpenValveCreatesUnsealedThenAppends(t *testing.T) {
 	backend := testdb.NewSuccessBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
-	_, s0, _ := gateChoreoLane(t, db, "GCOPEN", "GCOPEN-WAIT")
+	// C2c: the valve is a release and asks the chooser (D13, P0's premise
+	// correction 2), which binds a store to its lane's deepest reachable slot.
+	// The order aims at that slot, so the append is the one dropoff it named.
+	_, _, s0 := gateChoreoLane(t, db, "GCOPEN", "GCOPEN-WAIT")
 	line := lineNode(t, db, "GCOPEN-LINE")
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.DeliveryNode = s0.Name

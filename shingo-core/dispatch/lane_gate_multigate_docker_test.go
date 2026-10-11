@@ -223,6 +223,9 @@ func TestMultiGate_SecondGateGetsWindow3sRescue(t *testing.T) {
 	})
 	testutil.MustNoErr(t, db.ReserveSlot(w[2].ID, deep.ID), "the deeper store holds its slot (a plan alone walls nothing)")
 
+	// CONVERTED (C2c §3.2): a plain store is a group drop; PARK declares another
+	// payload so the wall lane is the only one its group offers this store.
+	siblingsRefuse(t, db, wall)
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.SourceNode = a0.Name
 		o.DeliveryNode = w[1].Name

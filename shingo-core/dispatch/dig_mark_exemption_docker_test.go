@@ -262,9 +262,13 @@ func stagedDwellerHoldingItsRow(t *testing.T, db *store.DB, d *Dispatcher, name 
 
 	deep := stageDeeperBlocker(t, db, d, line, w[2], name+"-deep")
 
+	// CONVERTED (C2c §3.2): a plain store is a group drop; PARK declares another
+	// payload so the wall lane is the only one its group offers the dweller.
+	keep := onlyItsLaneTakes(t, db, wall)
 	o := testdb.CreateOrder(t, db, func(ord *orders.Order) {
 		ord.DeliveryNode = w[1].Name
 		ord.Status = "pending"
+		keep(ord)
 	})
 	// STATED, NOT PRODUCED, and the reason is the whole subject of this file.
 	//

@@ -65,6 +65,16 @@ type Step struct {
 	// per candidate on the release path and would not survive a lane rename —
 	// and unlike Node, nothing downstream re-derives it from the plant.
 	WaitLane int64 `json:"wait_lane,omitempty"`
+	// WaitGroup is the node group whose gate owns this wait — the key the gate
+	// is evaluated under (C2c ruling 4: a waiter is keyed by its group). WaitLane
+	// still names the lane the entry after the wait is in, and for a group drop
+	// it is written at release, to the lane the chooser picked (rebindWaitLane).
+	//
+	// ADDITIVE, no migration (DESIGN-C2c §7.8): steps_json is TEXT, and a plan
+	// written before the field carries only WaitLane. The one reader rule, used
+	// everywhere (dispatch.groupOfLane at the readers): WaitGroup when set, otherwise the parent
+	// of WaitLane.
+	WaitGroup int64 `json:"wait_group,omitempty"`
 
 	// Vacate is set on a DROPOFF the vacated-slot rule admitted: a drop that
 	// would otherwise have waited, onto a node whose only bin a committed lift

@@ -243,6 +243,7 @@ func (p *Planner) ReComplexSteps(steps []Step, need Need) (newSteps []Step, chan
 			ExclusiveSlot: step.ExclusiveSlot,
 			WaitKind:      step.WaitKind,
 			WaitLane:      step.WaitLane,
+			WaitGroup:     step.WaitGroup,
 			Vacate:        vacate,
 			Anchor:        step.Anchor})
 	}
@@ -445,6 +446,14 @@ func (p *Planner) StepNode(step protocol.ComplexOrderStep, orderPayload string,
 			if mode == binresolver.ResolveModeStore {
 				storeCarrier = binresolver.BinTypeFrom(carrierTypeID,
 					"complex step: no preceding pickup resolved to exactly one carrier")
+				// A DROP INTO A GROUP IS CHOSEN BY THE ONE CHOOSER (C2c ruling 1),
+				// at intake and at acquiring alike. Its own later pickups are set
+				// aside once every step has its slot (unwallOwnPickups).
+				choice, err := p.ChooseDrop(node, DropNeed{Payload: payloadCode, Stated: storeCarrier, Asker: asker})
+				if err != nil {
+					return "", "", fmt.Errorf("cannot resolve group %s: %w", step.Node, err)
+				}
+				return choice.Slot.Name, step.Node, nil
 			}
 			result, err := p.resolver.Resolve(node, mode, payloadCode, storeCarrier, asker, nil)
 			if err != nil {

@@ -504,6 +504,11 @@ func widenedMidTrip(t *testing.T, d *Dispatcher, db *store.DB, o *orders.Order, 
 // later pickup in lane A gets its own wait. It used to be refused ("an
 // intermediate leg — not widening"), and the robot stood at the mark holding the
 // press's bin.
+//
+// CONVERTED WITH C2c (DESIGN-C2c §5.2, §9 P6): the widen arm is deleted, and the
+// same assertions are reached by the release's one chooser (ChooseDrop sets the
+// lanes of the plan's later pickups aside before the group's algorithm runs;
+// gateLaterLaneEntries gates the later entry, ruling 6). The names keep "Widened".
 func TestC2bPin_AMidTripDropThatWouldWallItsOwnPickupIsWidened(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -536,11 +541,13 @@ func TestC2bPin_AMidTripDropIntoALaneFullAtArrivalIsWidened(t *testing.T) {
 	widenedMidTrip(t, d, db, o, laneB, "C2BWD2-PRESS2")
 }
 
-// TestC2bPin_ARelayDropIsNotWidened: a later step picks from the drop's own slot
-// (a relay), so re-aiming the drop would send the robot back to a slot it never
-// filled. The rule the widen keeps, narrowed to its reason: lane A has no room at
-// arrival, the relay is not widened, and the swap waits at the mark.
-func TestC2bPin_ARelayDropIsNotWidened(t *testing.T) {
+// TestC2bPin_ARelayDropIsNotReAimed (was ...IsNotWidened; renamed with C2c,
+// ruling 6, DESIGN-C2c §9 P6): a later step picks from the drop's own slot (a
+// relay), so re-aiming the drop would send the robot back to a slot it never
+// filled. A relay is not a group drop for the release (gatedGroupDrop): it is
+// asked of its own lane only, as the in-lane path asked it. Lane A has no room at
+// arrival, the relay is not re-aimed, and the swap waits at the mark.
+func TestC2bPin_ARelayDropIsNotReAimed(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	d, _ := newTestDispatcherWithResolver(t, db)

@@ -691,28 +691,175 @@ func (db *DB) TakeSlotByRank(nodeID, takerID, named int64, note HolderNote) (int
 // takeSlotByRankTx is TakeSlotByRank on the caller's transaction: a dig leg's
 // release (TakeSlotByRank) or its birth's parking pencil (pencilParkingTx).
 func takeSlotByRankTx(tx *sql.Tx, nodeID, takerID, named int64, note HolderNote) (int64, error) {
+	return takeSlotTx(tx, nodeID, takerID, named, note, SlotTakeByRank, "", "reserveSlot")
+}
+
+// SlotTakeMode is the right a take of a stranger's pending slot is made under
+// (C2c ruling 2: paper "is taken by rank or yields to a committed robot").
+type SlotTakeMode int
+
+const (
+	// SlotTakeByRank: the taker's demand outranks the holder's, compared under
+	// the lock (a tie keeps the incumbent). The dig leg's take, and since C2c any
+	// chooser's (DESIGN-C2c §7.2 generalises the door from dig legs).
+	SlotTakeByRank SlotTakeMode = iota
+	// SlotTakeByCommitment: the taker is a robot at the group's waiting spot (a
+	// committed robot, D13 F5) and the holder was never sent. No rank is asked:
+	// "a plan never blocks a committed robot" (HANDOFF §5). The caller vouches for
+	// the commitment; the holder's unsent state is re-read under the lock.
+	SlotTakeByCommitment
+)
+
+// TakeGroupRoomByRank is TakeSlotByRank for a planned group drop's paper at
+// acquiring (C2c ruling 2): the same door, the slot reserved for the taker as
+// paper (reservations.GroupRoomTag) rather than as a dig leg's parking.
+func (db *DB) TakeGroupRoomByRank(nodeID, takerID, named int64, note HolderNote) (int64, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	holder, err := takeSlotTx(tx, nodeID, takerID, named, note, SlotTakeByRank, reservations.GroupRoomTag,
+		reservations.GroupRoomTag)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return holder, nil
+}
+
+// SlotTake asks ConfirmReleaseDrop to take the chosen slot from the stranger
+// whose paper is on it, under mode, naming named in the holder's wait.
+type SlotTake struct {
+	Mode  SlotTakeMode
+	Named int64
+	Note  HolderNote
+}
+
+// ConfirmReleaseDrop is the RELEASE HAND of a gate-staged drop (C2c ruling 3:
+// "at release the hand takes the chosen slot and its lane's mouth as armor"),
+// one transaction:
+//
+//   - the lane's advisory lock first, the hand's lock order (dispatch/hand.go);
+//   - take, when the chooser answered a stranger's paper: the holder's pending
+//     row deleted and its wait written, re-checked under lock (takeSlotTx);
+//   - the chosen slot's row for the order (its paper moves with the choice, so
+//     the row is acquired when it does not already hold one), then the hard
+//     claim and the confirm — paper to armor;
+//   - the slot the order leaves, if any and if different: its claim cleared and
+//     its row released, take-before-release as the in-lane re-bind did.
+//
+// Returns the holder taken from, or 0. A refusal anywhere rolls the whole hand
+// back, so the order keeps exactly the paper it had. The lane's OCCUPANCY row is
+// not taken here: the tail append takes it immediately before the fleet call
+// and gives back only what it took when the append fails (appendGateTail), and
+// taking it here would hand that rollback a row it did not take.
+func (db *DB) ConfirmReleaseDrop(laneID, slotID, orderID, leaveID int64, take *SlotTake) (int64, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	// laneID 0 is a group's flat child: there is no corridor to lock, and the
+	// slot claim below is what keeps two releases off one child.
+	if laneID != 0 {
+		if err := reservations.LockLanesTx(tx, laneID); err != nil {
+			return 0, fmt.Errorf("lock lane %d for order %d's release: %w", laneID, orderID, err)
+		}
+	}
+	var holder int64
+	if take != nil {
+		if holder, err = takeSlotTx(tx, slotID, orderID, take.Named, take.Note, take.Mode,
+			reservations.GroupRoomTag, reservations.GroupRoomTag); err != nil {
+			return 0, err
+		}
+	} else {
+		var held bool
+		if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM reservations
+			WHERE order_id = $1 AND node_id = $2 AND resource_kind = 'slot')`, orderID, slotID).Scan(&held); err != nil {
+			return 0, fmt.Errorf("read order %d's row on slot %d: %w", orderID, slotID, err)
+		}
+		if !held {
+			if err := reservations.AcquireSlot(tx, orderID, slotID, reservations.GroupRoomTag); err != nil {
+				return 0, fmt.Errorf("reserve slot %d for order %d: %w", slotID, orderID, err)
+			}
+		}
+	}
+	if err := ConfirmSlotClaimTx(tx, slotID, orderID, nil); err != nil {
+		return 0, fmt.Errorf("confirm slot %d for order %d: %w", slotID, orderID, err)
+	}
+	if leaveID != 0 && leaveID != slotID {
+		if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE id=$1 AND claimed_by=$2`,
+			leaveID, orderID); err != nil {
+			return 0, fmt.Errorf("clear order %d's claim on slot %d: %w", orderID, leaveID, err)
+		}
+		if err := reservations.ReleaseSlot(tx, orderID, leaveID); err != nil {
+			return 0, fmt.Errorf("release order %d's row on slot %d: %w", orderID, leaveID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return holder, nil
+}
+
+// GiveBackReleaseDrop undoes ConfirmReleaseDrop's armor when the release's tail
+// never reached the fleet (RULINGS-C2c-run-through §3.2, the occupancy pin): the
+// lane's occupancy is taken at the tail append, after the release transaction,
+// and an append refused there leaves the robot at the group's spot. Its claim
+// on the slot is cleared and its row is paper again, in one transaction, so it
+// waits holding what it held before the release and the next pass chooses
+// afresh. A stranger whose paper the release took keeps its re-plan: the take
+// is not undone.
+func (db *DB) GiveBackReleaseDrop(slotID, orderID int64) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE id=$1 AND claimed_by=$2`,
+		slotID, orderID); err != nil {
+		return fmt.Errorf("clear order %d's claim on slot %d: %w", orderID, slotID, err)
+	}
+	if err := reservations.DemoteSlot(tx, orderID, slotID); err != nil {
+		return fmt.Errorf("give order %d's slot %d back as paper: %w", orderID, slotID, err)
+	}
+	return tx.Commit()
+}
+
+// takeSlotTx is the one take of a stranger's pending slot, under mode; the slot
+// is reserved for the taker tagged reservedBy. onlyTag, when set, takes only a
+// row of that tag: a group drop's paper (GroupRoomTag) is taken by a chooser,
+// never another kind of pending row; the dig leg's take passes "" as before.
+func takeSlotTx(tx *sql.Tx, nodeID, takerID, named int64, note HolderNote, mode SlotTakeMode,
+	onlyTag, reservedBy string) (int64, error) {
 	var holder int64
 	var status string
 	err := tx.QueryRow(`SELECT r.order_id, o.status FROM reservations r JOIN orders o ON o.id = r.order_id
 		WHERE r.node_id = $1 AND r.resource_kind = 'slot' AND r.state = $2 AND r.order_id <> $3
 		  AND `+orders.AwaitingFleetSQL("o")+`
-		FOR UPDATE OF r`, nodeID, string(reservations.StatePending), takerID).Scan(&holder, &status)
+		  AND ($4::text = '' OR COALESCE(r.reserved_by, '') = $4::text)
+		FOR UPDATE OF r`, nodeID, string(reservations.StatePending), takerID, onlyTag).Scan(&holder, &status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNoSlotTake
 	}
 	if err != nil {
 		return 0, fmt.Errorf("read the pending holder of slot %d: %w", nodeID, err)
 	}
-	takerRank, err := orders.LoadDemandRank(tx, takerID)
-	if err != nil {
-		return 0, err
-	}
-	holderRank, err := orders.LoadDemandRank(tx, holder)
-	if err != nil {
-		return 0, err
-	}
-	if !takerRank.Outranks(holderRank) {
-		return 0, fmt.Errorf("%w: order %d's demand does not outrank holder %d's", ErrNoSlotTake, takerID, holder)
+	if mode == SlotTakeByRank {
+		takerRank, err := orders.LoadDemandRank(tx, takerID)
+		if err != nil {
+			return 0, err
+		}
+		holderRank, err := orders.LoadDemandRank(tx, holder)
+		if err != nil {
+			return 0, err
+		}
+		if !takerRank.Outranks(holderRank) {
+			return 0, fmt.Errorf("%w: order %d's demand does not outrank holder %d's", ErrNoSlotTake, takerID, holder)
+		}
 	}
 	if _, err := tx.Exec(`DELETE FROM reservations
 		WHERE node_id = $1 AND order_id = $2 AND resource_kind = 'slot' AND state = $3`,
@@ -731,7 +878,7 @@ func takeSlotByRankTx(tx *sql.Tx, nodeID, takerID, named int64, note HolderNote)
 		holder, status, note.Reason, note.Actor, ref, now); err != nil {
 		return 0, fmt.Errorf("record the take on order %d: %w", holder, err)
 	}
-	if err := reservations.AcquireSlot(tx, takerID, nodeID, "reserveSlot"); err != nil {
+	if err := reservations.AcquireSlot(tx, takerID, nodeID, reservedBy); err != nil {
 		return 0, fmt.Errorf("reserve slot %d for order %d: %w", nodeID, takerID, err)
 	}
 	return holder, nil
