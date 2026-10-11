@@ -8,6 +8,7 @@ import (
 	"shingoedge/config"
 	"shingoedge/engine"
 	"shingoedge/plc"
+	"shingoedge/store"
 )
 
 // simGuard in a non-sim build: sim.enabled is a misconfiguration — a production
@@ -25,3 +26,6 @@ func startSimSubsystems(eng *engine.Engine, cfg *config.Config, _ plc.WarlinkCli
 // nil and the PLC manager builds the real HTTP client. Defined here only so
 // main.go compiles without the sim tag.
 func simWarlinkClient(cfg *config.Config) plc.WarlinkClient { return nil }
+
+// openDatabase is the store's own Open in a production build.
+func openDatabase(path string) (*store.DB, error) { return store.Open(path) }

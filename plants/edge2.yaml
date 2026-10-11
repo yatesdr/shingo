@@ -368,7 +368,12 @@ bins:
   - {name: L2-AT-P10B, slot: PRS_010B, payload: PART-W, uop: 20}
 
 demands:
-  - {payload: PART-W, node: SMN_L2_01, replenish_uop_threshold: 20}
+  # PART-W's threshold is ABOVE WHAT ITS CELLS HOLD (C2c D24). Core's monitor
+  # counts the plant-wide total, cells included, and PRS_010 + PRS_010B + PRS_011
+  # hold up to 60 between them: at 20 the cells alone met it, the total froze at
+  # 34 once PRS_011 drained, and the loader never refired (a stranded swap).
+  # TestEdge2Fixture_ThresholdCoversSeatStock keeps every threshold above it.
+  - {payload: PART-W, node: SMN_L2_01, replenish_uop_threshold: 80}
   - {payload: PART-X, node: SMN_L2_02, replenish_uop_threshold: 20}
   - {payload: PART-Y, node: FGN_L2_01, replenish_uop_threshold: 0}
 

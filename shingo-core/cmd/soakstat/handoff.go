@@ -487,10 +487,11 @@ func printHandoff(h *handoffCore, edges []*edgeReading, logs *logStats, unrun bo
 	printHeldTicks(edges)
 }
 
-// printHandoffSections prints [S.4] and, when an Edge was named, [S.5].
+// printHandoffSections prints [S.4] and, when an Edge was named, [S.5] and [S.6].
 func (r *report) printHandoffSections() {
 	printHandoff(r.handoff, r.edges, r.logCounts, r.unrunMeasures[measureHandoff])
 	printEdgeStarvation(r.edges, r.pulls, r.unrunMeasures[measureEdgeStarve])
+	printEdgeWork(r.edges, r.orders.completed)
 }
 
 // printHeldTicks is item g: Edge-only, and only its end state exists.

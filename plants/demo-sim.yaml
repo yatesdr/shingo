@@ -17,7 +17,7 @@
 # because a weld's effective draw is set by its swap cadence, not its nameplate. The
 # fulls captured every STANDARD-SM carrier (the press-empty waits) and filled
 # SYN_MARKET with PANEL-A (the second jam of 2026-10-09). The presses now tick at
-# 27s, about 1.89/min effective against the welds' measured 1.8-2.0/min. The rates
+# 24s (27s until D1, 2026-10-11: PANEL-A ran 11-16% short at the pull). The rates
 # live in shingo-edge/shingoedge.dev.yaml (the PRESS-1 block says why); this plant
 # carries no rate of its own. The before runs on the unbalanced fixture stay in the
 # C2b record as that fixture's.

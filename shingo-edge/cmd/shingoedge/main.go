@@ -230,7 +230,7 @@ func ensureIdentity(cfg *config.Config, configPath string) {
 }
 
 func mustOpenDatabase(path string) *store.DB {
-	db, err := store.Open(path)
+	db, err := openDatabase(path)
 	if err != nil {
 		log.Fatalf("open database: %v", err)
 	}

@@ -160,6 +160,8 @@ type edgeReading struct {
 
 	logRead               bool
 	logNotFound, logBound int
+
+	work *edgeWork // [S.6], edge_work.go
 }
 
 // linesideSample is one decoded lineside report.
@@ -196,6 +198,7 @@ func readEdge(src edgeSource) (*edgeReading, error) {
 		e.wallSpan = samples[n-1].wall.Sub(samples[0].wall)
 	}
 	e.seats, e.gaps = starvation(samples)
+	var logBytes []byte
 	if src.logPath != "" {
 		b, err := os.ReadFile(src.logPath)
 		if err != nil {
@@ -204,6 +207,10 @@ func readEdge(src edgeSource) (*edgeReading, error) {
 		e.logRead = true
 		e.logNotFound = len(edgeNotFoundRe.FindAll(b, -1))
 		e.logBound = len(edgeBoundRe.FindAll(b, -1))
+		logBytes = b
+	}
+	if e.work, err = readEdgeWork(src.dbPath, logBytes); err != nil {
+		return nil, fmt.Errorf("%s edge work: %w", src.dbPath, err)
 	}
 	return e, nil
 }

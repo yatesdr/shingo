@@ -77,6 +77,18 @@ func (c *QueryCounter) Reset() {
 	c.mu.Unlock()
 }
 
+// Drain returns the statements counted since the last Reset or Drain and zeroes
+// the count, under one lock, so a periodic reader loses none in between.
+func (c *QueryCounter) Drain() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := c.stmts
+	c.n.Store(0)
+	c.q.Store(0)
+	c.stmts = nil
+	return out
+}
+
 // OpenCounting is Open with every statement counted. Same DSN pragmas, same
 // single-connection pin, same migrate + verifySchema — the only difference is
 // that the connection is reached through a counting driver.Connector rather
