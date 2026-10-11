@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -491,7 +492,7 @@ func printHandoff(h *handoffCore, edges []*edgeReading, logs *logStats, unrun bo
 func (r *report) printHandoffSections() {
 	printHandoff(r.handoff, r.edges, r.logCounts, r.unrunMeasures[measureHandoff])
 	printEdgeStarvation(r.edges, r.pulls, r.unrunMeasures[measureEdgeStarve])
-	printEdgeWork(r.edges, r.orders.completed)
+	printEdgeWork(os.Stdout, r.edges, r.orders.completed)
 }
 
 // printHeldTicks is item g: Edge-only, and only its end state exists.

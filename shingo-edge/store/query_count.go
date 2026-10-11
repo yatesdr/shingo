@@ -39,8 +39,18 @@ type QueryCounter struct {
 	stmts []string // the SQL of each counted statement, for a breakdown by kind
 }
 
+// statementObserver, when set, sees every statement a counting store sends,
+// on the goroutine that sent it. Only a sim build sets it
+// (SetStatementObserver, query_count_observe_sim.go); the variable is here and
+// not in that file so the untagged package keeps its file set, and with it a
+// production binary its bytes.
+var statementObserver atomic.Pointer[func(query string)]
+
 // record counts one statement and keeps its text.
 func (c *QueryCounter) record(query string) {
+	if fn := statementObserver.Load(); fn != nil {
+		(*fn)(query)
+	}
 	c.mu.Lock()
 	c.n.Add(1)
 	c.stmts = append(c.stmts, query)

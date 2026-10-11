@@ -212,6 +212,11 @@ func readEdge(src edgeSource) (*edgeReading, error) {
 	if e.work, err = readEdgeWork(src.dbPath, logBytes); err != nil {
 		return nil, fmt.Errorf("%s edge work: %w", src.dbPath, err)
 	}
+	// A database without the table prints "not read" in [S.6] rather than
+	// failing the Edge's other sections.
+	if n, err := readPLCTicks(db); err == nil {
+		e.work.ticks, e.work.ticksRead = n, true
+	}
 	return e, nil
 }
 
