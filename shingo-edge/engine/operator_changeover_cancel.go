@@ -49,18 +49,28 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 		}
 	}
 	defer release()
+
+	// THE TASKS ARE CANCELLED BEFORE ANY ORDER IS ABORTED. Each abort runs the
+	// completion cascade on this goroutine, under the cells' locks. A task still
+	// open there reads to the orphan handler as an operator cancelling one order,
+	// and that handler runs the changeover's completion, which confirms delivered
+	// legs; a confirm's keep-spot kick takes a cell's lock, which this goroutine
+	// already holds, and waits for itself (LOCKS.md, E2). A cancelled task is the
+	// cancel's own, and the orphan handler leaves it alone.
+	nodeTasks, _ := e.db.ListChangeoverNodeTasks(changeover.ID)
+	for _, task := range nodeTasks {
+		if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskCancelled); err != nil {
+			log.Printf("changeover: update node task %d state to cancelled: %v", task.ID, err)
+		}
+	}
 	flows := e.abortSpotOrdersNotFlown(spots)
 
-	nodeTasks, _ := e.db.ListChangeoverNodeTasks(changeover.ID)
 	// The line's bin an aborted leg left parked on its way out, and the incoming
 	// bin its stage left waiting for it (changeover_cancel_park.go). A keep-staged
 	// spot is the spots' own business, decided below.
 	var parks []parkedBin
 	for _, task := range nodeTasks {
 		parks = append(parks, withoutSpots(e.taskLeftOnStaging(task), spots)...)
-		if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskCancelled); err != nil {
-			log.Printf("changeover: update node task %d state to cancelled: %v", task.ID, err)
-		}
 	}
 
 	// Clear runtime order references AND reconcile the active-bin pointer for

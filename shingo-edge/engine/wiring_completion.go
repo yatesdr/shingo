@@ -760,6 +760,12 @@ func (e *Engine) handleOrphanedTaskOrderCompleted(order *storeorders.Order) {
 		log.Printf("orphan: skip task %d stamp — changeover %d already %s", task.ID, task.ProcessChangeoverID, changeoverState)
 		return
 	}
+	// A cancelled task is the changeover cancel's own, aborting its legs: not an
+	// operator cancelling one order, and nothing for the changeover's completion
+	// (operator_changeover_cancel.go, which stamps its tasks before it aborts).
+	if task.State == domain.NodeTaskCancelled {
+		return
+	}
 	// An operator-cancelled order lands the task ABANDONED, not CANCELLED.
 	//
 	// NodeTaskCancelled is documented (changeover_node_state.go) as
