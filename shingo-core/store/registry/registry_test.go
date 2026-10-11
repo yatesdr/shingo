@@ -567,9 +567,9 @@ func TestCoverage_MarkStaleEdges(t *testing.T) {
 	enrolled(t, db, "stn-stale-1")
 	enrolled(t, db, "stn-stale-2")
 	registry.Register(db.DB, "stn-stale-1", "h1", "i1", "v", "", sql.NullInt64{}) //nolint:errcheck // fixture
-	registry.UpdateHeartbeat(db.DB, "stn-stale-1", "", registry.TickLag{}, nil)        //nolint:errcheck // fixture
+	registry.UpdateHeartbeat(db.DB, "stn-stale-1", "", registry.TickLag{}, nil)   //nolint:errcheck // fixture
 	registry.Register(db.DB, "stn-stale-2", "h2", "i2", "v", "", sql.NullInt64{}) //nolint:errcheck // fixture
-	registry.UpdateHeartbeat(db.DB, "stn-stale-2", "", registry.TickLag{}, nil)        //nolint:errcheck // fixture
+	registry.UpdateHeartbeat(db.DB, "stn-stale-2", "", registry.TickLag{}, nil)   //nolint:errcheck // fixture
 	stale, err := registry.MarkStale(db.DB, 0)
 	if err != nil {
 		t.Fatalf("MarkStale: %v", err)

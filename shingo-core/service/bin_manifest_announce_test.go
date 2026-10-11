@@ -207,7 +207,12 @@ func TestLoadAtLine_AnnouncesAsLifecycle(t *testing.T) {
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := announcingService(db)
-	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-ANN-LOAD", "", 0)
+	// CONVERTED (Lane 0 item 5): the bin stood at the standard data's storage
+	// node. Lane 0B wrote this pin while announcements were still broadcast; under
+	// item 5 a storage node is not sent, so the bin stands at a seat pinStation
+	// claims, as a loader window is. The assertion is unchanged.
+	seat := ownedSeat(t, db, "SEAT-ANN-LOAD", pinStation)
+	bin := createTestBin(t, db, seat.ID, "BIN-ANN-LOAD", "", 0)
 
 	uop := int64(12)
 	if _, _, err := svc.LoadAtLine(bin.ID, `{"items":[{"part_number":"P1"}]}`, sd.Payload.Code, &uop); err != nil {

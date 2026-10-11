@@ -563,7 +563,7 @@ func (s *BinManifestService) writeProductionTx(tx *sql.Tx, binID int64, manifest
 //
 // ── DERIVED FROM protocol.Declarer AT EVERY DOOR BUT ONE ──────────────────
 //
-// This started as a private `payloadWriteDoor` with two values, collapsed onto
+// This started as a private two-valued door type (since removed), collapsed onto
 // Declarer because every produce/tick/ingest call site passed lifecycle and the
 // one admin door passed person: a second enum kept in lockstep by hand. It is a
 // separate value again (carrierNo) because the loader's LOAD made the two
