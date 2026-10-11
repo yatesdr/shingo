@@ -209,6 +209,10 @@ type FinderDB interface {
 	FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, excludeNodeID int64, asker domain.DigAsker) (*bins.Bin, error)
 	FindEmptyBinOfType(binTypeCode, preferZone string, excludeNodeID int64, fence bins.EmptyFence, asker domain.DigAsker) (*bins.Bin, error)
 	FindEmptyBinOfTypeInGroup(binTypeCode string, groupNodeID, excludeNodeID int64, asker domain.DigAsker) (*bins.Bin, error)
+	// The typed finders for a SET of types: a no-mix loader whose payloads may
+	// ride more than one carrier type (Finder.wantedBinTypes).
+	FindEmptyBinOfTypes(binTypeCodes []string, preferZone string, excludeNodeID int64, fence bins.EmptyFence, asker domain.DigAsker) (*bins.Bin, error)
+	FindEmptyBinOfTypesInGroup(binTypeCodes []string, groupNodeID, excludeNodeID int64, asker domain.DigAsker) (*bins.Bin, error)
 	// MaintainedEpisodeForOrigin is the same read with BOTH halves of the pair:
 	// the group the episode belongs to as well as its carrier type. The group is
 	// what keeps a top-off ask from sourcing out of the group it is filling.
@@ -233,6 +237,9 @@ type FinderDB interface {
 
 	IsSlotAccessible(slotNodeID int64) (bool, error)
 	GetLoaderHomeByPositionNode(positionNodeID int64) (*loaders.Home, error)
+	// GetLoaderHomeCarriers is the home with the carrier types its payloads may
+	// ride (nil = any), one read: the type derivation's home read.
+	GetLoaderHomeCarriers(positionNodeID int64) (*loaders.Home, []string, error)
 	// GetLoaderHomeAndLayout is the home with its loader's layout, one read: the
 	// loader tier's gate.
 	GetLoaderHomeAndLayout(positionNodeID int64) (*loaders.Home, string, error)

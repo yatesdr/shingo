@@ -39,6 +39,9 @@ type fakeFinderDB struct {
 	homes     []loaders.Home
 	loaders   map[int64]*loaders.Loader
 	homeByPos map[int64]*loaders.Home
+	// homeCarriers is GetLoaderHomeCarriers' second answer per window: the
+	// carrier types its payloads may ride. Absent is nil, any carrier.
+	homeCarriers map[int64][]string
 
 	// Declared carrier mix: quota per loader, capability per window.
 	quotas       map[int64][]loaders.Quota
@@ -937,4 +940,39 @@ func TestFindSource_MoveOfEmptyIgnoresPartCarrierRule(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (f *fakeFinderDB) GetLoaderHomeCarriers(posID int64) (*loaders.Home, []string, error) {
+	return f.homeByPos[posID], f.homeCarriers[posID], nil
+}
+
+// The set finders answer from typedEmpty like their single-type twins, taking
+// the first of the codes that has a carrier; the calls count as typed.
+func (f *fakeFinderDB) FindEmptyBinOfTypes(codes []string, _ string, _ int64, fence bins.EmptyFence, asker reservations.DigAsker) (*bins.Bin, error) {
+	f.typedGlobalCalls++
+	f.lastFence = fence
+	f.lastAsker = asker
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
+	for _, c := range codes {
+		if b, ok := f.typedEmpty[c]; ok {
+			return b, nil
+		}
+	}
+	return nil, sql.ErrNoRows
+}
+
+func (f *fakeFinderDB) FindEmptyBinOfTypesInGroup(codes []string, _, _ int64, asker reservations.DigAsker) (*bins.Bin, error) {
+	f.typedGroupCalls++
+	f.lastAsker = asker
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
+	for _, c := range codes {
+		if b, ok := f.typedEmpty[c]; ok {
+			return b, nil
+		}
+	}
+	return nil, sql.ErrNoRows
 }

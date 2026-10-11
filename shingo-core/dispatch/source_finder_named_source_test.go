@@ -335,3 +335,8 @@ const (
 	wantNGRPReads     = 6
 	wantConcreteReads = 8
 )
+
+func (c *countingFinderDB) GetLoaderHomeCarriers(id int64) (*loaders.Home, []string, error) {
+	c.reads++
+	return c.fakeFinderDB.GetLoaderHomeCarriers(id)
+}

@@ -479,12 +479,14 @@ func (f *Finder) Pick(need Need) Plan {
 		}
 	}
 
-	// WHICH CARRIER TYPE, when the destination loader has declared a mix. Empty
-	// string means no mix declared — first come, first served, exactly as
-	// before. Resolved once, used by both empty tiers, because a declared mix
+	// WHICH CARRIER TYPE, when the destination loader has declared a mix.
+	// Resolved once, used by both empty tiers, because a declared mix
 	// has to be searched FOR: asking for any empty and rejecting the wrong type
 	// would let one wrong-typed carrier mask every right one behind it.
-	wantType := f.WantedBinType(need)
+	// A loader with no declared mix gets the carriers its payloads may ride
+	// (wantedBinTypes), searched FOR in the same way and waiting under the same
+	// typed cause. nil is any carrier; several are searched as one set.
+	wantTypes := f.wantedBinTypes(need)
 
 	// ── Tier 3: group/lane-scoped empty (empty intent, synthetic source) ──
 	// Restricts empties to descendants of the SourceNode NGRP/LANE so a
@@ -527,10 +529,13 @@ func (f *Finder) Pick(need Need) Plan {
 
 		var groupBin *bins.Bin
 		var gerr error
-		if wantType != "" {
-			groupBin, gerr = f.db.FindEmptyBinOfTypeInGroup(wantType, srcNode.ID, excludeID, need.Asker)
-		} else {
+		switch len(wantTypes) {
+		case 0:
 			groupBin, gerr = f.db.FindEmptyCompatibleBinInGroup(payloadCode, srcNode.ID, excludeID, need.Asker)
+		case 1:
+			groupBin, gerr = f.db.FindEmptyBinOfTypeInGroup(wantTypes[0], srcNode.ID, excludeID, need.Asker)
+		default:
+			groupBin, gerr = f.db.FindEmptyBinOfTypesInGroup(wantTypes, srcNode.ID, excludeID, need.Asker)
 		}
 		if sourceSearchFailed(gerr) {
 			// THE SEARCH DID NOT RUN. Nothing below this line is known about the
@@ -541,12 +546,12 @@ func (f *Finder) Pick(need Need) Plan {
 		}
 		if groupBin == nil {
 			cause := CauseFinderGroupEmpty
-			if wantType != "" {
+			if len(wantTypes) > 0 {
 				// The loader asked for a specific type and the group has none.
 				// It WAITS rather than taking another: a declared mix that is
 				// abandoned when inconvenient is not a mix.
 				cause = CauseFinderNoEmptyOfType
-				f.debug("finder: no empty %s in group %s for %s, waiting", wantType, need.SourceNode, need.DeliveryNode)
+				f.debug("finder: no empty %s in group %s for %s, waiting", wantTypes, need.SourceNode, need.DeliveryNode)
 			} else {
 				f.debug("finder: no empty in group %s for payload=%s, waiting", need.SourceNode, payloadCode)
 			}
@@ -727,11 +732,15 @@ func (f *Finder) Pick(need Need) Plan {
 			// the queries they were before MG3-1: sharing is the plant default and
 			// the only fenced zones are maintained groups.
 			fence := f.emptyFenceFor(need)
-			if wantType != "" {
-				b, err = f.db.FindEmptyBinOfType(wantType, preferZone, excludeID, fence, need.Asker)
-				cause = CauseFinderNoEmptyOfType
-			} else {
+			switch len(wantTypes) {
+			case 0:
 				b, err = f.db.FindEmptyCompatibleBin(payloadCode, preferZone, excludeID, fence, need.Asker)
+			case 1:
+				b, err = f.db.FindEmptyBinOfType(wantTypes[0], preferZone, excludeID, fence, need.Asker)
+				cause = CauseFinderNoEmptyOfType
+			default:
+				b, err = f.db.FindEmptyBinOfTypes(wantTypes, preferZone, excludeID, fence, need.Asker)
+				cause = CauseFinderNoEmptyOfType
 			}
 			if sourceSearchFailed(err) {
 				f.debug("finder: plant-wide empty search unreadable: %v", err)

@@ -544,6 +544,15 @@ func OfTypeArm(typeParam int) string {
 	  AND bt.code = $%d`, typeParam)
 }
 
+// OfTypesArm narrows to a SET of carrier types, matched on code as OfTypeArm
+// is; the parameter is a text array. Its reader is a loader that declared no
+// carrier mix and whose payloads may ride more than one type
+// (plan.Finder.wantedBinTypes).
+func OfTypesArm(typesParam int) string {
+	return fmt.Sprintf(`
+	  AND bt.code = ANY($%d)`, typesParam)
+}
+
 // InGroupArm narrows to carriers standing inside a group's subtree.
 //
 // Assumes a `descendants(id)` CTE is in scope — compose nodetree.DescendantsOf
@@ -1297,6 +1306,26 @@ func FindEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID, exclude
 	return ScanBin(db.QueryRow(q, a.vals...))
 }
 
+// FindEmptyOfTypesInGroup is FindEmptyOfTypeInGroup for a SET of types: one
+// statement, the set in the query for the same reason the single type is (the
+// group returns its best candidate, not a list). Its reader is a no-mix loader
+// whose payloads may ride several types. An empty set finds nothing, as a blank
+// code does. Not counted by the level keeper, so it does not share
+// EmptyOfTypeInGroupWhere; it is that WHERE with OfTypesArm in OfTypeArm's place.
+func FindEmptyOfTypesInGroup(db *sql.DB, binTypeCodes []string, groupNodeID, excludeNodeID int64,
+	asker reservations.DigAsker) (*Bin, error) {
+
+	if len(binTypeCodes) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	a := &emptyQueryArgs{vals: []any{binTypeCodes, groupNodeID, excludeNodeID}}
+	q := nodetree.DescendantsOf(2) + " " + BinJoinQuery +
+		EmptyCarrierWhereInGroup(3, 2) + OfTypesArm(1) + InGroupArm() + ExcludeNodeArm(3) +
+		NotForeignDugArm(a.add(string(reservations.ModeDig)),
+			a.add(asker.OrderID), a.add(asker.LaneOwner)) + AccessibleEmptyOrder
+	return ScanBin(db.QueryRow(q, a.vals...))
+}
+
 // CountEmptyOfTypeInGroup counts what FindEmptyOfTypeInGroup can see.
 //
 // THE SAME WHERE, LITERALLY — EmptyOfTypeInGroupWhere, interpolated by both. The
@@ -1382,6 +1411,27 @@ func FindEmptyOfType(db *sql.DB, binTypeCode, preferZone string, excludeNodeID i
 	if binTypeCode == "" {
 		return nil, sql.ErrNoRows
 	}
+	return findEmptyTyped(db, OfTypeArm, binTypeCode, preferZone, excludeNodeID, fence, asker)
+}
+
+// FindEmptyOfTypes is FindEmptyOfType for a SET of types (OfTypesArm): the same
+// zone preference, fence and dig exclusion, one statement per zone pass. An
+// empty set finds nothing, as a blank code does. Its reader is a no-mix loader
+// whose payloads may ride several types (plan.Finder.wantedBinTypes).
+func FindEmptyOfTypes(db *sql.DB, binTypeCodes []string, preferZone string, excludeNodeID int64,
+	fence EmptyFence, asker reservations.DigAsker) (*Bin, error) {
+
+	if len(binTypeCodes) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return findEmptyTyped(db, OfTypesArm, binTypeCodes, preferZone, excludeNodeID, fence, asker)
+}
+
+// findEmptyTyped is the body FindEmptyOfType and FindEmptyOfTypes share: typeArm
+// renders the type narrowing against the parameter that carries typeVal.
+func findEmptyTyped(db *sql.DB, typeArm func(int) string, typeVal any, preferZone string, excludeNodeID int64,
+	fence EmptyFence, asker reservations.DigAsker) (*Bin, error) {
+
 	// TWO PARAMETERS, NOT ONE STRUCT. The fence is POLICY — config-born, changes
 	// at save time, keyed on supports and origin. The dig exclusion is PHYSICAL
 	// CONTENTION — reservation-born, changes per dig, keyed on order identity. A
@@ -1392,7 +1442,7 @@ func FindEmptyOfType(db *sql.DB, binTypeCode, preferZone string, excludeNodeID i
 	build := func(withZone bool) (string, []any) {
 		a := &emptyQueryArgs{}
 		destP := a.add(excludeNodeID)
-		where := EmptyCarrierWhereFor(destP) + OfTypeArm(a.add(binTypeCode))
+		where := EmptyCarrierWhereFor(destP) + typeArm(a.add(typeVal))
 		if withZone {
 			where += InZoneArm(a.add(preferZone))
 		}

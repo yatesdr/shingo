@@ -51,6 +51,18 @@ func (db *DB) FindEmptyBinOfTypeInGroup(binTypeCode string, groupNodeID, exclude
 	return bins.FindEmptyOfTypeInGroup(db.DB, binTypeCode, groupNodeID, excludeNodeID, asker)
 }
 
+// FindEmptyBinOfTypes / FindEmptyBinOfTypesInGroup are the typed finders for a
+// SET of bin types. See bins.FindEmptyOfTypes and bins.FindEmptyOfTypesInGroup.
+func (db *DB) FindEmptyBinOfTypes(binTypeCodes []string, preferZone string, excludeNodeID int64,
+	fence bins.EmptyFence, asker reservations.DigAsker) (*bins.Bin, error) {
+	return bins.FindEmptyOfTypes(db.DB, binTypeCodes, preferZone, excludeNodeID, fence, asker)
+}
+
+func (db *DB) FindEmptyBinOfTypesInGroup(binTypeCodes []string, groupNodeID, excludeNodeID int64,
+	asker reservations.DigAsker) (*bins.Bin, error) {
+	return bins.FindEmptyOfTypesInGroup(db.DB, binTypeCodes, groupNodeID, excludeNodeID, asker)
+}
+
 // CountEmptyBinsOfTypeInGroup counts exactly what FindEmptyBinOfTypeInGroup can
 // see — the same WHERE, interpolated by both. The level keeper's "resident"
 // tally. See bins.CountEmptyOfTypeInGroup.

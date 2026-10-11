@@ -42,6 +42,12 @@ func (db *DB) GetLoaderHomeByPositionNode(positionNodeID int64) (*loaders.Home, 
 func (db *DB) GetLoaderHomeAndLayout(positionNodeID int64) (*loaders.Home, string, error) {
 	return loaders.GetHomeAndLayoutByPositionNode(db.DB, positionNodeID)
 }
+
+// GetLoaderHomeCarriers is the home at a window with the carrier types its
+// payloads may ride (nil = any). See loaders.GetHomeCarriersByPositionNode.
+func (db *DB) GetLoaderHomeCarriers(positionNodeID int64) (*loaders.Home, []string, error) {
+	return loaders.GetHomeCarriersByPositionNode(db.DB, positionNodeID)
+}
 func (db *DB) UpsertLoaderPayload(p loaders.Payload) error { return loaders.UpsertPayload(db.DB, p) }
 func (db *DB) RemoveLoaderPayload(loaderID int64, payloadCode string) error {
 	return loaders.RemovePayload(db.DB, loaderID, payloadCode)

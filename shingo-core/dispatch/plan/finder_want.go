@@ -13,9 +13,12 @@ import "shingocore/store/bins"
 // a move.
 
 // WantedBinType decides WHICH carrier type an empty going to a loader window
-// should be, from the loader's declared carrier mix. Returns "" when the loader
-// has declared no mix — which is every loader today, and means "first come,
-// first served": take whatever compatible empty is available, exactly as before.
+// should be, from the loader's declared carrier mix. A loader that has declared
+// no mix — every loader today — is "first come, first served" among the carriers
+// its own payloads may ride (see the no-mix arm in wantedBinTypes): this returns
+// that type when there is exactly one, and "" when there are several or the rule
+// admits any carrier. The finder itself searches by the set (wantedBinTypes);
+// this single-code form is what the mix tests read.
 //
 // The rule composes two facts that answer different questions:
 //
@@ -36,8 +39,26 @@ import "shingocore/store/bins"
 // inconvenient makes declaring it pointless. A loader that wants any-type
 // behaviour says so by declaring no mix.
 func (f *Finder) WantedBinType(need Need) string {
+	if types := f.wantedBinTypes(need); len(types) == 1 {
+		return types[0]
+	}
+	return ""
+}
+
+// oneType is a single derived code as a set: "" (nothing said) is nil, any.
+func oneType(code string) []string {
+	if code == "" {
+		return nil
+	}
+	return []string{code}
+}
+
+// wantedBinTypes is WantedBinType's answer as a set, which is what the finder
+// searches by: nil is any carrier, one code is that type, several are any of
+// them. Only the no-mix loader arm below ever answers with more than one.
+func (f *Finder) wantedBinTypes(need Need) []string {
 	if need.Intent != IntentEmpty {
-		return ""
+		return nil
 	}
 
 	// ── FIRST ARM: THE TYPE IS PINNED, NOT DERIVED ──────────────────────────
@@ -67,7 +88,7 @@ func (f *Finder) WantedBinType(need Need) string {
 	// versus a wrong-typed carrier delivered as though it were right.
 	if need.OriginID != "" {
 		if _, code, err := f.db.MaintainedEpisodeForOrigin(need.OriginID); err == nil && code != "" {
-			return code
+			return []string{code}
 		} else if err != nil {
 			f.debug("WantedBinType: maintained episode for origin %s: %v", need.OriginID, err)
 		}
@@ -75,23 +96,50 @@ func (f *Finder) WantedBinType(need Need) string {
 
 	// ── The loader derivation. Needs a destination WINDOW to derive from. ────
 	if need.DeliveryNode == "" {
-		return f.typeFromDestinationPosition(need)
+		return oneType(f.typeFromDestinationPosition(need))
 	}
 	dest, err := f.db.GetNodeByDotName(need.DeliveryNode)
 	if err != nil || dest == nil {
-		return f.typeFromDestinationPosition(need)
+		return oneType(f.typeFromDestinationPosition(need))
 	}
-	home, err := f.db.GetLoaderHomeByPositionNode(dest.ID)
+	// The home and, in the same read, the carrier types the window's payloads
+	// may ride — so the no-mix arm below costs no statement the quota read did
+	// not already pay for.
+	home, carriers, err := f.db.GetLoaderHomeCarriers(dest.ID)
 	if err != nil || home == nil {
-		return f.typeFromDestinationPosition(need)
+		return oneType(f.typeFromDestinationPosition(need))
 	}
 	quotas, err := f.db.ListLoaderQuotas(home.LoaderID)
-	if err != nil || len(quotas) == 0 {
-		return "" // no declared mix — first come, first served
+	if err != nil {
+		return nil
+	}
+	if len(quotas) == 0 {
+		// ── NO DECLARED MIX: THE CARRIERS THE LOADER'S PARTS MAY RIDE ───────
+		//
+		// No mix means "first come, first served" among the carriers this
+		// loader can USE — not among every carrier in the plant. The empty is
+		// generic, but the loader will fill it with one of its own payloads, and
+		// where payload_bin_types lists a payload's carriers the rule is hard:
+		// a full on any other type is refused as a source for good
+		// (helpers.PayloadBinTypeRuleArm). Fetching one anyway delivers a
+		// carrier that, once loaded, can never leave as stock.
+		//
+		// r7 demo, 2026-10-10: 2 of 23 PLK pulls brought a STANDARD-SM empty to
+		// a STUD / BRKT loader (both STANDARD-only); each stranded its outbound
+		// and held its loader's threshold satisfied (TRACE-r7-demo-before-
+		// stranded.md). Pins: TestReplenishAsk_NoMixTakesACarrierItsPartMayRide,
+		// TestReplenishAsk_NoMixWaitsRatherThanTakeTheWrongCarrier.
+		//
+		// nil — any carrier, today's behaviour — when the window stages no
+		// payload or any of its payloads has no rows: that payload constrains
+		// nothing, so any carrier is one the loader can fill. Otherwise the
+		// union of its payloads' types, and a group with none of them WAITS
+		// under the typed cause rather than taking another.
+		return carriers
 	}
 	homes, err := f.db.ListLoaderHomes(home.LoaderID)
 	if err != nil {
-		return ""
+		return nil
 	}
 	nodeIDs := make([]int64, 0, len(homes))
 	for _, h := range homes {
@@ -99,7 +147,7 @@ func (f *Finder) WantedBinType(need Need) string {
 	}
 	resident, err := f.db.ListBinsByNodes(nodeIDs)
 	if err != nil {
-		return ""
+		return nil
 	}
 	have := map[string]int{}
 	for _, b := range resident {
@@ -108,7 +156,7 @@ func (f *Finder) WantedBinType(need Need) string {
 	// What this window can physically take. Absent = anything.
 	caps, err := f.db.ListLoaderHomeBinTypes(home.LoaderID)
 	if err != nil {
-		return ""
+		return nil
 	}
 	allowed := caps[dest.ID]
 	fits := func(code string) bool {
@@ -148,7 +196,7 @@ func (f *Finder) WantedBinType(need Need) string {
 			best, bestGap, bestWant = q.BinTypeCode, gap, q.Want
 		}
 	}
-	return best
+	return oneType(best)
 }
 
 // emptyFenceFor builds the maintained-group fence for one need.

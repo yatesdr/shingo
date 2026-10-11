@@ -3,15 +3,19 @@
 package dispatch
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
+	"shingocore/store/payloads"
 )
 
 // replenishFixture builds a shared-window loader over `count` windows, plus the
@@ -747,4 +751,166 @@ func TestReplenishLoader_FailsClosedWhenAnyReadDies(t *testing.T) {
 		t.Errorf("neither Skipped nor HeldBy is set on a dead read (%+v); a fail-closed run must say why it ordered nothing", res)
 	}
 	_ = windows
+}
+
+// ── THE REPLENISH EMPTY RIDES A CARRIER THE LOADER'S PART MAY RIDE ──────────
+//
+// r7 demo run, 2026-10-10 (TRACE-r7-demo-before-stranded.md in the C2c run
+// folder): the loader-replenish ask is born with no payload — an empty carrier
+// is generic — and a loader with no declared carrier mix (no bin_loader_quotas,
+// every loader in the demo plant) asked its market for ANY empty. Twice in 23
+// pulls that was a STANDARD-SM carrier for a loader whose parts (STUD, BRKT)
+// ride STANDARD only. The Edge loaded it, the carrier rule then refused it as a
+// source for good, and its 40 UOP held the loader's threshold total satisfied:
+// the loader never refilled and five orders stranded.
+//
+// The rule these pin: with no declared mix, the carrier types are the ones the
+// loader's own payloads may ride (payload_bin_types). Exactly those; a payload
+// with no rows lets any carrier through.
+
+// carrierRuleLoader builds a no-quota shared-window loader at one window whose
+// one payload rides `std` only, with its inbound market an NGRP of two slots.
+// It returns the window, the market and the two slots.
+func carrierRuleLoader(t *testing.T, db *store.DB, prefix string) (window, market *nodes.Node, slots [2]*nodes.Node, std, sm *bins.BinType) {
+	t.Helper()
+	setupTestData(t, db)
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	testutil.MustNoErr(t, err, "NGRP type")
+	market = &nodes.Node{Name: prefix + "-MKT", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(market), "create the market")
+	for i := range slots {
+		s := &nodes.Node{Name: fmt.Sprintf("%s-MKT-%d", prefix, i+1), Enabled: true}
+		testutil.MustNoErr(t, db.CreateNode(s), "create a market slot")
+		testutil.MustNoErr(t, db.SetNodeParent(s.ID, market.ID), "parent the slot")
+		slots[i] = s
+	}
+	window = &nodes.Node{Name: prefix + "-WIN", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(window), "create the loader window")
+
+	std = &bins.BinType{Code: prefix + "-STANDARD"}
+	testutil.MustNoErr(t, db.CreateBinType(std), "create STANDARD")
+	sm = &bins.BinType{Code: prefix + "-STANDARD-SM"}
+	testutil.MustNoErr(t, db.CreateBinType(sm), "create STANDARD-SM")
+	part := &payloads.Payload{Code: prefix + "-STUD", UOPCapacity: 40}
+	testutil.MustNoErr(t, db.CreatePayload(part), "create the part")
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(part.ID, []int64{std.ID}), "the part rides STANDARD only")
+
+	loaderID, err := db.CreateLoader(store.Loader{
+		Name: prefix + "-LOADER", Role: "produce", Layout: loaders.LayoutSharedWindow,
+		Replenishment: "threshold", InboundSource: market.Name, OutboundDest: market.Name,
+	})
+	testutil.MustNoErr(t, err, "create the loader")
+	testutil.MustNoErr(t, db.UpsertLoaderHome(store.LoaderHome{LoaderID: loaderID, PositionNodeID: window.ID}),
+		"the window is the loader's home")
+	testutil.MustNoErr(t, db.UpsertLoaderPayload(store.LoaderPayload{LoaderID: loaderID, PayloadCode: part.Code, UOPThreshold: 40}),
+		"the loader stages the part")
+	// No quotas: no declared carrier mix, which is every loader in the demo plant.
+	return window, market, slots, std, sm
+}
+
+// emptyCarrier puts an empty carrier of one type on a node.
+func emptyCarrier(t *testing.T, db *store.DB, bt *bins.BinType, node *nodes.Node, label string) *bins.Bin {
+	t.Helper()
+	b := &bins.Bin{BinTypeID: bt.ID, Label: label, NodeID: &node.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(b), "create "+label)
+	return b
+}
+
+// replenishAskPick admits the loader's empty pull exactly as the replenish loop
+// births it (AdmitCoreAsk, no payload) and asks the finder for its carrier.
+func replenishAskPick(t *testing.T, d *Dispatcher, db *store.DB, market, window *nodes.Node) SourceResult {
+	t.Helper()
+	order, err := d.AdmitCoreAsk(CoreAskSpec{
+		UUIDPrefix: "core-l1-", StationID: "edge.line1",
+		SourceNode: market.Name, DeliveryNode: window.Name,
+	})
+	testutil.MustNoErr(t, err, "admit the replenish ask")
+	o, err := db.GetOrder(order.ID)
+	testutil.MustNoErr(t, err, "read the ask back")
+	if o.PayloadCode != "" {
+		t.Fatalf("the ask was born carrying payload %q; this pin is about the generic empty", o.PayloadCode)
+	}
+	return d.planner.finder.FindSource(o, IntentEmpty)
+}
+
+// TestReplenishAsk_NoMixTakesACarrierItsPartMayRide: an accessible STANDARD-SM
+// empty ranks ahead of a STANDARD one; the STUD loader's ask takes the STANDARD.
+func TestReplenishAsk_NoMixTakesACarrierItsPartMayRide(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	window, market, slots, std, sm := carrierRuleLoader(t, db, "RCR")
+	wrong := emptyCarrier(t, db, sm, slots[0], "RCR-SM") // lower id: ranked first
+	right := emptyCarrier(t, db, std, slots[1], "RCR-STD")
+
+	d, _ := newTestDispatcher(t, db, nil)
+	res := replenishAskPick(t, d, db, market, window)
+	if res.Outcome != OutcomeFound || res.Bin == nil {
+		t.Fatalf("the ask did not find a carrier (outcome %v, cause %q); a STANDARD empty stands in the market",
+			res.Outcome, res.QueueCause)
+	}
+	if res.Bin.ID == wrong.ID {
+		t.Fatalf("the ask took %s (%s) for a loader whose part rides %s only: the Edge will load it and the "+
+			"carrier rule will refuse it as a source for good", wrong.Label, sm.Code, std.Code)
+	}
+	if res.Bin.ID != right.ID {
+		t.Errorf("the ask took bin %d, want the STANDARD empty %d", res.Bin.ID, right.ID)
+	}
+}
+
+// TestReplenishAsk_NoMixWaitsRatherThanTakeTheWrongCarrier: with only a
+// STANDARD-SM empty in the market, the STUD loader's ask waits under the typed
+// cause instead of taking it.
+func TestReplenishAsk_NoMixWaitsRatherThanTakeTheWrongCarrier(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	window, market, slots, _, sm := carrierRuleLoader(t, db, "RCW")
+	wrong := emptyCarrier(t, db, sm, slots[0], "RCW-SM")
+
+	d, _ := newTestDispatcher(t, db, nil)
+	res := replenishAskPick(t, d, db, market, window)
+	if res.Outcome == OutcomeFound {
+		t.Fatalf("the ask took bin %d (%s is %s, which the loader's part may not ride); it must wait",
+			res.Bin.ID, wrong.Label, sm.Code)
+	}
+	if res.Outcome != OutcomeWait || res.QueueCause != CauseFinderNoEmptyOfType {
+		t.Errorf("outcome %v cause %q, want a wait under %q — the market has an empty, just not one this loader can use",
+			res.Outcome, res.QueueCause, CauseFinderNoEmptyOfType)
+	}
+}
+
+// TestReplenishAsk_NoMixCarrierSetIsTheUnionAndAnyAbsorbs pins the set arm and
+// the "any" arm of the same rule. A second staged payload that rides
+// STANDARD-SM makes the set {STANDARD, STANDARD-SM}, searched as one, so the
+// first-ranked SM empty is now a carrier the loader can fill. A third payload
+// with no payload_bin_types rows constrains nothing: the window takes any.
+func TestReplenishAsk_NoMixCarrierSetIsTheUnionAndAnyAbsorbs(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	window, market, slots, std, sm := carrierRuleLoader(t, db, "RCU")
+	smBin := emptyCarrier(t, db, sm, slots[0], "RCU-SM")
+	emptyCarrier(t, db, std, slots[1], "RCU-STD")
+	home, err := db.GetLoaderHomeByPositionNode(window.ID)
+	testutil.MustNoErr(t, err, "read the home")
+
+	panel := &payloads.Payload{Code: "RCU-PANEL", UOPCapacity: 30}
+	testutil.MustNoErr(t, db.CreatePayload(panel), "create the second part")
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(panel.ID, []int64{sm.ID}), "it rides STANDARD-SM only")
+	testutil.MustNoErr(t, db.UpsertLoaderPayload(store.LoaderPayload{LoaderID: home.LoaderID, PayloadCode: panel.Code}),
+		"the loader stages it too")
+
+	_, carriers, err := db.GetLoaderHomeCarriers(window.ID)
+	testutil.MustNoErr(t, err, "read the carriers")
+	if strings.Join(carriers, ",") != std.Code+","+sm.Code {
+		t.Fatalf("carriers = %v, want [%s %s] — the union of what the staged parts may ride", carriers, std.Code, sm.Code)
+	}
+	d, _ := newTestDispatcher(t, db, nil)
+	if res := replenishAskPick(t, d, db, market, window); res.Outcome != OutcomeFound || res.Bin.ID != smBin.ID {
+		t.Errorf("outcome %v bin %v, want the first-ranked SM empty %d — the set admits it", res.Outcome, res.Bin, smBin.ID)
+	}
+
+	testutil.MustNoErr(t, db.UpsertLoaderPayload(store.LoaderPayload{LoaderID: home.LoaderID, PayloadCode: "RCU-UNDESCRIBED"}),
+		"a staged part nobody described")
+	if _, carriers, err = db.GetLoaderHomeCarriers(window.ID); err != nil || carriers != nil {
+		t.Errorf("carriers = %v (%v), want nil — a part with no rows constrains nothing, so any carrier", carriers, err)
+	}
 }

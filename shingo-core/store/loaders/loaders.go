@@ -459,6 +459,77 @@ func GetHomeAndLayoutByPositionNode(db *sql.DB, positionNodeID int64) (*Home, st
 	return &h, layout, nil
 }
 
+// GetHomeCarriersByPositionNode is GetHomeByPositionNode with the carrier types
+// an empty bound for this window may be, in one statement: the source finder's
+// type derivation for a loader that has declared no carrier mix.
+//
+// THE PAYLOADS ARE THE WINDOW'S: its pinned payload when it has one, otherwise
+// every payload the loader stages (bin_loader_payloads). THE CARRIERS ARE THE
+// UNION of the types those payloads may ride (payload_bin_types) — the same rows
+// helpers.PayloadBinTypeRuleArm judges a sourced bin by, read the same way.
+//
+// carriers is NIL — any carrier — when the window stages no payload, or when any
+// one of its payloads has no rows: that payload constrains nothing (the sparse
+// table, see PayloadBinTypeRuleArm), so a carrier of any type is one the loader
+// can fill. No home is (nil, nil, nil).
+//
+// One row per carrier code, the home's columns repeated, and one row with a NULL
+// code when there are none — rows rather than an array so the scan needs nothing
+// beyond database/sql.
+func GetHomeCarriersByPositionNode(db *sql.DB, positionNodeID int64) (*Home, []string, error) {
+	rows, err := db.Query(`
+		WITH h AS (
+		  SELECT loader_id, position_node_id, payload_code, home_kind, uop_threshold, sort_order
+		  FROM bin_loader_homes WHERE position_node_id = $1
+		), p AS (
+		  SELECT h.payload_code AS code FROM h WHERE h.payload_code <> ''
+		  UNION
+		  SELECT lp.payload_code FROM bin_loader_payloads lp JOIN h ON lp.loader_id = h.loader_id
+		  WHERE h.payload_code = ''
+		), c AS (
+		  SELECT DISTINCT bt.code FROM p
+		  JOIN payloads pl ON pl.code = p.code
+		  JOIN payload_bin_types pbt ON pbt.payload_id = pl.id
+		  JOIN bin_types bt ON bt.id = pbt.bin_type_id
+		)
+		SELECT h.loader_id, h.position_node_id, h.payload_code, h.home_kind, h.uop_threshold, h.sort_order,
+		  NOT EXISTS (SELECT 1 FROM p)
+		    OR EXISTS (SELECT 1 FROM p WHERE NOT EXISTS (
+		      SELECT 1 FROM payload_bin_types pbt JOIN payloads pl ON pl.id = pbt.payload_id
+		      WHERE pl.code = p.code)),
+		  c.code
+		FROM h LEFT JOIN c ON true
+		ORDER BY c.code`, positionNodeID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get home carriers by position node %d: %w", positionNodeID, err)
+	}
+	defer rows.Close()
+	var home *Home
+	var carriers []string
+	anyCarrier := false
+	for rows.Next() {
+		var h Home
+		var code sql.NullString
+		if err := rows.Scan(&h.LoaderID, &h.PositionNodeID, &h.PayloadCode, &h.Kind, &h.UOPThreshold, &h.SortOrder,
+			&anyCarrier, &code); err != nil {
+			return nil, nil, fmt.Errorf("scan home carriers for position node %d: %w", positionNodeID, err)
+		}
+		if home == nil {
+			home = &h
+		}
+		if code.Valid {
+			carriers = append(carriers, code.String)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("get home carriers by position node %d: %w", positionNodeID, err)
+	}
+	if anyCarrier {
+		carriers = nil
+	}
+	return home, carriers, nil
+}
+
 // UpsertPayload adds or updates an allowed payload on a shared_window loader.
 // Bumps config_gen.
 func UpsertPayload(db *sql.DB, p Payload) error {
