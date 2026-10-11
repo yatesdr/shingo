@@ -297,9 +297,8 @@ export function primeNoticeText(result) {
 
 // withQueueCause appends Core's typed queue-cause sentence to a status label.
 //
-// THE STATUS WORD STAYS. `queued` and `sourcing` are distinct lifecycles and
-// are not merged, renamed or collapsed anywhere — the cause is rendered BESIDE
-// whatever the surface already said, never instead of it.
+// THE STATUS WORD STAYS. The cause is rendered BESIDE whatever the surface
+// already said, never instead of it, and never renames the status.
 //
 // The sentence is built once, at set-time, by Core's queue-reason formatter
 // from the structured cause (queue_code + queue_cause carry the analytic

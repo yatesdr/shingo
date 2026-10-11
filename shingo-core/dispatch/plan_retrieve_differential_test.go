@@ -41,15 +41,16 @@ func TestStage1_RetrievePlanDifferential_Dispatch(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
-	// Intake planning — emits the shadow plan and QUEUES (the claim-move to the
-	// scanner: the scanner is the single claimer, so intake resolves + queues but
-	// does not claim).
+	// Intake planning — emits the shadow plan and hands a found pick to the door's
+	// one acquire (the claim-move to the scanner: the scanner is the single
+	// claimer, so intake resolves but does not claim). A found pick is not a wait,
+	// so it is not parked (C1).
 	result, perr := d.planner.planTransport(order, testEnvelope(), bp.Code)
 	if perr != nil {
 		t.Fatalf("planTransport: %s", perr.Detail)
 	}
-	if !result.Queued {
-		t.Fatal("retrieve with an available source must queue for the scanner (claim-moved)")
+	if result.Queued {
+		t.Fatal("retrieve with an available source must go to the acquire, not park")
 	}
 	if result.SourceNode == nil || result.DestNode == nil {
 		t.Fatal("shadow plan result must carry source + dest nodes")

@@ -171,6 +171,9 @@ func TestDigMarkExemption_InTransitHolderStillRefusesTheDig(t *testing.T) {
 		o.BinID = &srcBin.ID
 		o.Status = protocol.StatusPending
 	})
+	// It holds the bin it points at (EntryHeldBin): a pending order pointing at a
+	// bin it holds nothing on is a pointer wedge (C1 sweeps pending too).
+	testdb.ReserveBin(t, db, sourceLock.ID, srcBin.ID)
 	admitted, cause, _, err := d.AcquireLanesForOrder(sourceLock, w[2], line, EntryHeldBin)
 	if err != nil {
 		t.Fatalf("source-lock acquire errored: %v", err)
@@ -261,7 +264,7 @@ func stagedDwellerHoldingItsRow(t *testing.T, db *store.DB, d *Dispatcher, name 
 
 	o := testdb.CreateOrder(t, db, func(ord *orders.Order) {
 		ord.DeliveryNode = w[1].Name
-		ord.Status = "sourcing"
+		ord.Status = "pending"
 	})
 	// STATED, NOT PRODUCED, and the reason is the whole subject of this file.
 	//
@@ -402,6 +405,9 @@ func TestDigMarkExemption_SourceLockRetrieveIsAdmittedPastAMarkHolder(t *testing
 		o.BinID = &deeper.ID
 		o.Status = protocol.StatusPending
 	})
+	// It holds the bin it points at (EntryHeldBin): a pending order pointing at a
+	// bin it holds nothing on is a pointer wedge (C1 sweeps pending too).
+	testdb.ReserveBin(t, db, retrieve.ID, deeper.ID)
 
 	admitted, cause, laneName, err := d.AcquireLanesForOrder(retrieve, w[2], line, EntryHeldBin)
 	if err != nil {

@@ -58,7 +58,7 @@ type Order struct {
 	// HMI renders it as "IN QUEUE: <reason>" so operators can see WHY a
 	// robot isn't coming.
 	//
-	// Non-empty only while the status is acquiring (queued|sourcing) —
+	// Non-empty only while the order waits (queued, IsWaiting) —
 	// enforced on arrival in messaging/edge_handler.HandleOrderUpdate, which
 	// clears it on any non-acquiring push. This comment claimed that
 	// invariant from the start; nothing held it up until 2026-08-03, and the

@@ -42,7 +42,7 @@ func TestSlotClaim_NoABBADeadlock(t *testing.T) {
 
 	// Order A already holds a slot RESERVATION on S1 (soft — the reservation-native
 	// stand-in for "A got there first").
-	orderA := &orders.Order{EdgeUUID: "abba-A", StationID: "line-1", OrderType: OrderTypeComplex, Status: StatusSourcing, Quantity: 1}
+	orderA := &orders.Order{EdgeUUID: "abba-A", StationID: "line-1", OrderType: OrderTypeComplex, Status: StatusPending, Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(orderA), "create order A")
 	testutil.MustNoErr(t, db.ReserveSlot(s1.ID, orderA.ID), "A reserves S1")
 
@@ -88,7 +88,7 @@ func TestSlotClaim_NoABBADeadlock(t *testing.T) {
 
 	// B is requeued (not terminal), free to retry once A releases S1.
 	gotB, _ := db.GetOrder(orderB.ID)
-	if gotB.Status != StatusQueued && gotB.Status != StatusSourcing {
-		t.Errorf("order B status=%q, want queued/sourcing (requeued to retry)", gotB.Status)
+	if gotB.Status != StatusQueued {
+		t.Errorf("order B status=%q, want queued (requeued to retry)", gotB.Status)
 	}
 }

@@ -165,10 +165,11 @@ func TestServiceDig_BuriedComplexDemand_DigsThenDispatchesItsOwnPlan(t *testing.
 	// LEAVING reshuffling rather than by terminating.
 	finished, err := db.GetOrder(dig.ID)
 	testutil.MustNoErr(t, err, "reload the dig")
-	if finished.Status != StatusQueued {
+	// (C1: ResumeCompound is `reshuffling → pending`.)
+	if finished.Status != StatusPending {
 		t.Fatalf("the demand is %q after its own excavation finished, want %q — it still owes its "+
 			"own pickup and must go back to the acquiring set for the scanner to re-resolve it",
-			finished.Status, StatusQueued)
+			finished.Status, StatusPending)
 	}
 
 	// (5) THE DEMAND IS BACK IN THE ACQUIRING SET WITH ITS OWN PLAN INTACT. This
@@ -179,8 +180,8 @@ func TestServiceDig_BuriedComplexDemand_DigsThenDispatchesItsOwnPlan(t *testing.
 	// scanner dispatches ITS OWN plan against the corridor it just opened.
 	after, err := db.GetOrder(demand.ID)
 	testutil.MustNoErr(t, err, "reload the demand after the dig finished")
-	if after.Status != StatusQueued {
-		t.Fatalf("demand status = %q after the dig, want %q — something moved it", after.Status, StatusQueued)
+	if after.Status != StatusPending {
+		t.Fatalf("demand status = %q after the dig, want %q — something moved it", after.Status, StatusPending)
 	}
 	kidsRaw, err = db.ListChildOrders(demand.ID)
 	if kids := testutil.Must(t, kidsRaw, err, "db.ListChildOrders(demand.ID)"); len(kids) == 0 {

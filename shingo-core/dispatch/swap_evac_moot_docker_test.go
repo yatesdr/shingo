@@ -77,7 +77,7 @@ func TestReserve_EvacHoldingItsReplacementIsMootWhenTheLineBinIsGone(t *testing.
 	evac := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.OrderType = OrderTypeComplex
 		o.Coordinated = true
-		o.Status = "sourcing"
+		o.Status = "pending"
 		o.ProcessNode = front.Name
 		o.SourceNode = front.Name
 	})
@@ -142,13 +142,13 @@ func TestReserve_EvacWithBinsPresentStillHolds(t *testing.T) {
 	createTestBinAtNode(t, db, bp.Code, spare.ID, "BIN-HOLD-SPARE")
 	// A bin IS at the line — reserved by another order, so present-but-taken.
 	resident := createTestBinAtNode(t, db, bp.Code, front.ID, "BIN-HOLD-RESIDENT")
-	other := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "sourcing" })
+	other := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "pending" })
 	testutil.MustNoErr(t, d.binManifest.ReserveForDispatch(resident.ID, other.ID), "other order reserves the line bin")
 
 	evac := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.OrderType = OrderTypeComplex
 		o.Coordinated = true
-		o.Status = "sourcing"
+		o.Status = "pending"
 		o.ProcessNode = front.Name
 		o.SourceNode = front.Name
 	})
@@ -189,7 +189,7 @@ func TestReserve_FillerWithEmptySourceStillHolds(t *testing.T) {
 	filler := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.OrderType = OrderTypeComplex
 		o.Coordinated = true
-		o.Status = "sourcing"
+		o.Status = "pending"
 		o.ProcessNode = front.Name
 		o.SourceNode = back.Name
 	})

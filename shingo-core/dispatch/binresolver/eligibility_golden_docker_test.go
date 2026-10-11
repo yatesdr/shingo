@@ -142,10 +142,14 @@ func TestGolden_EligibilitySQL(t *testing.T) {
 	ctx := context.Background()
 
 	// reservations.order_id carries an FK, so the reserved arm needs a real
-	// order. Nothing reads it; the row only has to exist.
+	// order. Nothing reads it; the row only has to exist. It is `dispatched`
+	// with a fleet id because the claimed arm hard-claims bins in its name, and
+	// a top-level pending order holding a hard claim with no reservation is the
+	// half-confirmed park the teardown sweep reports (C1).
 	var orderID int64
 	if err := db.DB.QueryRow(
-		`INSERT INTO orders (edge_uuid) VALUES ('elig-golden-sql') RETURNING id`,
+		`INSERT INTO orders (edge_uuid, status, vendor_order_id)
+		 VALUES ('elig-golden-sql', 'dispatched', 'elig-golden-fleet') RETURNING id`,
 	).Scan(&orderID); err != nil {
 		t.Fatalf("seed order for reservations: %v", err)
 	}

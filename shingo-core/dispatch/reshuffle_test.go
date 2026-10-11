@@ -226,7 +226,7 @@ func TestCompoundOrderCreation(t *testing.T) {
 		EdgeUUID:     "uuid-compound",
 		StationID:    "line-1",
 		OrderType:    OrderTypeRetrieve,
-		Status:       StatusSourcing,
+		Status:       StatusPending,
 		DeliveryNode: "LINE1-DEST",
 	}
 	// Create a delivery node so dispatchToFleet can resolve it
@@ -411,9 +411,10 @@ func TestHandleChildOrderFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get parent: %v", err)
 	}
-	if parentGot.Status != StatusQueued {
+	// (C1: the dissolved parent resumes `reshuffling → pending`; no acquirer is wired here.)
+	if parentGot.Status != StatusPending {
 		t.Errorf("parent status = %q, want %q — a robot breaking down mid-dig must not take the "+
-			"demand out of the plant with it", parentGot.Status, StatusQueued)
+			"demand out of the plant with it", parentGot.Status, StatusPending)
 	}
 
 	// AND NOTHING WAS FAILED AT ALL. The emit is asserted rather than assumed
@@ -575,9 +576,10 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 	// a unit test — see TestHandleChildOrderFailure for why the two are split.
 	testutil.MustNoErr(t, d.AdvanceCompoundOrder(parentOrder.ID), "dispose of the closed chapter")
 	parentGot, _ := db.GetOrder(parentOrder.ID)
-	if parentGot.Status != StatusQueued {
+	// (C1: the dissolved parent resumes `reshuffling → pending`.)
+	if parentGot.Status != StatusPending {
 		t.Errorf("parent status = %q, want %q — the legs stopped, the demand re-plans",
-			parentGot.Status, StatusQueued)
+			parentGot.Status, StatusPending)
 	}
 
 	// VERIFY: lane lock released, by the disposition rather than by the cancel
@@ -729,8 +731,9 @@ func TestAdvanceCompoundOrder_FailedParentEmitsOrderFailed(t *testing.T) {
 		}
 	}
 	liveGot, _ := db.GetOrder(live.ID)
-	if liveGot.Status != StatusQueued {
-		t.Errorf("parent status = %q, want %q", liveGot.Status, StatusQueued)
+	// (C1: resumed to `pending`.)
+	if liveGot.Status != StatusPending {
+		t.Errorf("parent status = %q, want %q", liveGot.Status, StatusPending)
 	}
 }
 
@@ -760,7 +763,7 @@ func TestPlanReshuffleUnburyOnly_NoRetrieveNoRestock(t *testing.T) {
 
 // TestCreateCompoundOrder_StillCallsBeginReshuffle: belt-and-suspenders
 // that the existing CreateCompoundOrder path still fires the
-// transition for parents in Pending/Sourcing/Queued.
+// transition for parents in Pending/Queued.
 func TestCreateCompoundOrder_StillCallsBeginReshuffle(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -770,13 +773,12 @@ func TestCreateCompoundOrder_StillCallsBeginReshuffle(t *testing.T) {
 		EdgeUUID:     "uuid-co-still",
 		StationID:    "line-1",
 		OrderType:    OrderTypeRetrieve,
-		Status:       StatusSourcing, // BeginReshuffle accepts Sourcing→Reshuffling
+		Status:       StatusPending, // BeginReshuffle accepts Pending→Reshuffling
 		DeliveryNode: "LINE1-DEST-STILL",
 	}
 	destNode := &nodes.Node{Name: "LINE1-DEST-STILL", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(destNode), "create dest")
 	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(parent.ID, string(StatusSourcing), "fixture"), "set Sourcing")
 
 	createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-CO-S-BLK")
 	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-CO-S-TGT")
@@ -787,7 +789,7 @@ func TestCreateCompoundOrder_StillCallsBeginReshuffle(t *testing.T) {
 
 	got, _ := db.GetOrder(parent.ID)
 	if got.Status != StatusReshuffling {
-		t.Errorf("parent status = %q, want %q (BeginReshuffle should have fired Sourcing→Reshuffling)", got.Status, StatusReshuffling)
+		t.Errorf("parent status = %q, want %q (BeginReshuffle should have fired Pending→Reshuffling)", got.Status, StatusReshuffling)
 	}
 }
 
@@ -815,7 +817,7 @@ func TestCreateCompoundOrder_RetrieveInheritsParentDeliveryNode(t *testing.T) {
 		EdgeUUID:     "uuid-inherit",
 		StationID:    "line-1",
 		OrderType:    OrderTypeRetrieve,
-		Status:       StatusSourcing,
+		Status:       StatusPending,
 		DeliveryNode: "LINE1-DEST-INH",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(parentOrder), "create parent")

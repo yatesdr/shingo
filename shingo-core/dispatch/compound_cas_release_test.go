@@ -22,9 +22,9 @@ import (
 //
 // So the winner is played by a trigger that fires ON the occupancy insert, which
 // is precisely where a winning caller's status write lands: after this caller
-// took the row (dispatch.TakeLaneOccupancy) and before it CASes
-// (LifecycleService.MoveToSourcing). The trigger moves the child pending →
-// sourcing, so the CAS finds no `pending` row and returns ConcurrentTransition.
+// took the row (dispatch.TakeLaneOccupancy) and before it CASes (the hand's
+// status write, pending → dispatched). The trigger moves the child pending →
+// dispatched, so the CAS finds no `pending` row and returns ConcurrentTransition.
 // That is the loser's arm, entered on demand.
 //
 // Scoped to occupancy inserts so setup reservations are untouched.
@@ -33,7 +33,7 @@ func stealChildAtOccupancyInsert(t *testing.T, db *store.DB) {
 	stmts := []string{
 		`CREATE OR REPLACE FUNCTION test_steal_child() RETURNS trigger AS $$
 		 BEGIN
-		   UPDATE orders SET status='sourcing' WHERE id = NEW.order_id AND status='pending';
+		   UPDATE orders SET status='dispatched' WHERE id = NEW.order_id AND status='pending';
 		   RETURN NEW;
 		 END; $$ LANGUAGE plpgsql`,
 		`CREATE TRIGGER test_steal_child AFTER INSERT ON reservations
@@ -102,8 +102,10 @@ func TestAdvanceCompound_CASLoserDoesNotClearWinnersOccupancy(t *testing.T) {
 // and no re-drive can clear it. AdvanceCompoundOrder's own comment (compound.go)
 // states the rule: a hold is only fail-closed if the thing held can be released.
 //
-// The trigger here raises on the status write itself, so MoveToSourcing returns a
-// plain DB error rather than ConcurrentTransition.
+// The trigger here raises on the status write itself, so the claim returns a
+// plain DB error rather than ConcurrentTransition. (C1: the claim is the hand's
+// `pending → dispatched` CAS, so the trigger fires on `dispatched`; it fired on
+// MoveToSourcing's `sourcing` write before.)
 //
 // MUTATION: widen the guard to `if false` (never release) and this fails — the
 // lane stays occupied by a child that was never dispatched.
@@ -119,7 +121,7 @@ func TestAdvanceCompound_StatusWriteFailureStillReleasesOccupancy(t *testing.T) 
 		   RAISE EXCEPTION 'injected status-write failure';
 		 END; $$ LANGUAGE plpgsql`,
 		`CREATE TRIGGER test_block_sourcing BEFORE UPDATE ON orders
-		 FOR EACH ROW WHEN (NEW.status='sourcing')
+		 FOR EACH ROW WHEN (NEW.status='dispatched')
 		 EXECUTE FUNCTION test_block_sourcing()`,
 	}
 	for _, s := range stmts {

@@ -24,8 +24,9 @@ func TestWaitEndsWhenTheOrderMoves(t *testing.T) {
 	d := testdb.Open(t)
 	db := d.DB
 
+	// (C1: the waiting-to-waiting move is pending → queued, the park; queued →
+	// sourcing is no longer an edge.)
 	o := newPendingOrder("uuid-wait-ends-on-move")
-	o.Status = protocol.StatusQueued
 	testutil.MustNoErr(t, orders.Create(db, o), "create")
 	testutil.MustNoErr(t, orders.SetQueueDetail(db, o.ID,
 		"Waiting for an empty bin in AMR Supermarket", string(protocol.QueueWaitingForMaterial), "finder-group-empty"),
@@ -38,21 +39,22 @@ func TestWaitEndsWhenTheOrderMoves(t *testing.T) {
 		return got.QueueReason, got.QueueCode, got.QueueCause
 	}
 
-	// Still waiting: queued→sourcing keeps the wait.
-	moved, err := orders.UpdateStatusFrom(db, o.ID, string(protocol.StatusQueued), string(protocol.StatusSourcing), "reserving")
-	testutil.MustNoErr(t, err, "queued→sourcing")
+	// Still waiting: pending→queued keeps the wait.
+	moved, err := orders.UpdateStatusFromWithReason(db, o.ID, string(protocol.StatusPending), string(protocol.StatusQueued),
+		"Waiting for an empty bin in AMR Supermarket", string(protocol.QueueWaitingForMaterial), "", nil)
+	testutil.MustNoErr(t, err, "pending→queued")
 	if !moved {
-		t.Fatal("queued→sourcing was refused")
+		t.Fatal("pending→queued was refused")
 	}
-	if r, _, _ := wait("sourcing"); r == "" {
-		t.Error("queued→sourcing cleared the wait — the order is still waiting")
+	if r, _, _ := wait("queued"); r == "" {
+		t.Error("pending→queued cleared the wait — the order is still waiting")
 	}
 
-	// Moving: sourcing→dispatched ends it.
-	moved, err = orders.UpdateStatusFrom(db, o.ID, string(protocol.StatusSourcing), string(protocol.StatusDispatched), "dispatched")
-	testutil.MustNoErr(t, err, "sourcing→dispatched")
+	// Moving: queued→dispatched ends it.
+	moved, err = orders.UpdateStatusFrom(db, o.ID, string(protocol.StatusQueued), string(protocol.StatusDispatched), "dispatched")
+	testutil.MustNoErr(t, err, "queued→dispatched")
 	if !moved {
-		t.Fatal("sourcing→dispatched was refused")
+		t.Fatal("queued→dispatched was refused")
 	}
 	if r, c, k := wait("dispatched"); r != "" || c != "" || k != "" {
 		t.Errorf("dispatched order still carries its wait: reason=%q code=%q cause=%q", r, c, k)

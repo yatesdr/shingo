@@ -72,11 +72,11 @@ func TestStage2_RetrieveEmptyPlanDifferential_Dispatch(t *testing.T) {
 	if perr != nil {
 		t.Fatalf("planTransport: %s", perr.Detail)
 	}
-	// The claim-move to the scanner: planTransport emits the shadow plan and QUEUES
-	// — the scanner is the single claimer, so intake no longer claims or dispatches
-	// inline.
-	if !result.Queued {
-		t.Fatal("retrieve_empty must queue for the scanner (claim-moved), not dispatch inline")
+	// The claim-move to the scanner: planTransport emits the shadow plan and does
+	// not claim or dispatch inline — the scanner is the single claimer. A found
+	// pick is not a wait: it goes to the door's one acquire, not to a park (C1).
+	if result.Queued {
+		t.Fatal("retrieve_empty with a found pick must go to the acquire, not park")
 	}
 	want := []resolvedStep{
 		{Action: protocol.ActionPickup, Node: result.SourceNode.Name, Empty: true},
@@ -132,9 +132,10 @@ func TestStage2_MovePlanDifferential_Dispatch(t *testing.T) {
 	if perr != nil {
 		t.Fatalf("planTransport: %s", perr.Detail)
 	}
-	// The claim-move to the scanner: planTransport emits the shadow plan and QUEUES.
-	if !result.Queued {
-		t.Fatal("move with source + free dest must queue for the scanner (claim-moved)")
+	// The claim-move to the scanner: planTransport emits the shadow plan; a found
+	// pick goes to the door's one acquire, not to a park (C1).
+	if result.Queued {
+		t.Fatal("move with source + free dest must go to the acquire, not park")
 	}
 	want := []resolvedStep{
 		{Action: protocol.ActionPickup, Node: result.SourceNode.Name},
@@ -224,12 +225,13 @@ func TestStage2_MovePlanDifferential_NGRPDest(t *testing.T) {
 	if perr != nil {
 		t.Fatalf("planTransport (NGRP dest): %s", perr.Detail)
 	}
-	// The claim-move to the scanner: planTransport queues. The move's synthetic-
-	// NGRP-dest resolution stays at intake (the scanner dispatches to
-	// order.DeliveryNode verbatim), so the concrete child must already be on the
-	// shadow plan + the order's delivery node.
-	if !result.Queued {
-		t.Fatal("move to an NGRP with a free child must queue for the scanner (claim-moved)")
+	// The claim-move to the scanner: a found pick goes to the door's one acquire,
+	// not to a park (C1). The move's synthetic-NGRP-dest resolution stays at
+	// intake (the scanner dispatches to order.DeliveryNode verbatim), so the
+	// concrete child must already be on the shadow plan + the order's delivery
+	// node.
+	if result.Queued {
+		t.Fatal("move to an NGRP with a free child must go to the acquire, not park")
 	}
 	if result.DestNode.Name != child.Name {
 		t.Fatalf("dest resolved to %s, want concrete child %s", result.DestNode.Name, child.Name)

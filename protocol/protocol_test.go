@@ -576,7 +576,8 @@ func TestValidForwardTransitions(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ from, to Status }{
 		{StatusPending, StatusSubmitted},
-		{StatusPending, StatusSourcing},
+		{StatusPending, StatusDispatched},
+		{StatusPending, StatusQueued},
 		{StatusSubmitted, StatusAcknowledged},
 		{StatusAcknowledged, StatusInTransit},
 		{StatusInTransit, StatusDelivered},
@@ -586,7 +587,8 @@ func TestValidForwardTransitions(t *testing.T) {
 		{StatusDelivered, StatusCancelled},
 		{StatusQueued, StatusInTransit},
 		{StatusDispatched, StatusInTransit},
-		{StatusSourcing, StatusQueued},
+		{StatusDispatched, StatusQueued},
+		{StatusReshuffling, StatusPending},
 	}
 	for _, tt := range tests {
 		if !IsValidTransition(tt.from, tt.to) {
@@ -623,7 +625,7 @@ func TestTerminalStatesCannotTransition(t *testing.T) {
 }
 
 // TestSkippedTransitions verifies that the dispatcher-side path (Pending,
-// Sourcing, Submitted, Queued) can move to Skipped, while in-flight states
+// Submitted, Queued, and Sourcing while it is history) can move to Skipped, while in-flight states
 // (Acknowledged, Dispatched, InTransit, Staged) cannot — by then the fleet
 // owns the order and the resolution is fail or cancel, not skip.
 func TestSkippedTransitions(t *testing.T) {
@@ -702,12 +704,12 @@ func TestReshufflingTransitions(t *testing.T) {
 	if !IsValidTransition(StatusQueued, StatusReshuffling) {
 		t.Error("Queued → Reshuffling must be valid (complex-order intake reshuffle pivot)")
 	}
-	for _, to := range []Status{StatusConfirmed, StatusFailed, StatusCancelled, StatusQueued} {
+	for _, to := range []Status{StatusConfirmed, StatusFailed, StatusCancelled, StatusPending} {
 		if !IsValidTransition(StatusReshuffling, to) {
-			t.Errorf("Reshuffling → %s must be valid (compound parent terminal or requeue)", to)
+			t.Errorf("Reshuffling → %s must be valid (compound parent terminal, or back to the ladder's start)", to)
 		}
 	}
-	for _, to := range []Status{StatusSourcing, StatusInTransit, StatusDelivered, StatusStaged} {
+	for _, to := range []Status{StatusSourcing, StatusQueued, StatusInTransit, StatusDelivered, StatusStaged} {
 		if IsValidTransition(StatusReshuffling, to) {
 			t.Errorf("Reshuffling → %s must NOT be valid (parent never enters in-flight)", to)
 		}
@@ -736,7 +738,7 @@ func TestAllValidTransitionsIsCopy(t *testing.T) {
 	t.Parallel()
 	dup := AllValidTransitions()
 	dup[StatusPending] = []Status{"some-bogus-status"}
-	if !IsValidTransition(StatusPending, StatusSourcing) {
+	if !IsValidTransition(StatusPending, StatusDispatched) {
 		t.Error("AllValidTransitions returned a reference, not a copy — canonical table was mutated")
 	}
 }

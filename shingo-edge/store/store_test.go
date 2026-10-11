@@ -1999,7 +1999,7 @@ func TestReconciliationAnomalies_MaterialWaitGetsTheLongerBound(t *testing.T) {
 	oldMaterial := mk("m-old", "queued", material, 3*time.Hour)     // over 2h  — must be flagged
 	submitted := mk("s-old", "submitted", "", 1*time.Hour)          // 30m bound still applies
 	// The two the rung-keyed bound got wrong, one in each direction.
-	sourcingMaterial := mk("s-mat", "sourcing", material, 1*time.Hour)
+	pendingMaterial := mk("p-mat", "pending", material, 1*time.Hour)
 	queuedNoCode := mk("q-bare", "queued", "", 1*time.Hour)
 
 	anomalies, err := db.ListReconciliationAnomalies()
@@ -2022,10 +2022,10 @@ func TestReconciliationAnomalies_MaterialWaitGetsTheLongerBound(t *testing.T) {
 	if !flagged[submitted] {
 		t.Error("a non-waiting order stale for 1h was not flagged; the longer bound must apply to material waits ONLY, not widen to every row")
 	}
-	if flagged[sourcingMaterial] {
-		t.Error("a SOURCING order waiting an hour on material was flagged. The bound used to key on " +
-			"the rung and gave `sourcing` the 30-minute alarm on the grounds that it is transient — " +
-			"which is false of complex orders, which rest there while re-shopping and are now born there")
+	if flagged[pendingMaterial] {
+		t.Error("a PENDING order carrying a material code was flagged at an hour. The bound used to " +
+			"key on the rung and gave the non-queued rung the 30-minute alarm on the grounds that it " +
+			"is transient; the code, not the rung, says it is a material wait")
 	}
 	if !flagged[queuedNoCode] {
 		t.Error("a QUEUED order with no queue_code sat an hour and was not flagged. Keyed on the rung " +

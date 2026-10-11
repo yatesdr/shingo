@@ -269,9 +269,9 @@ func ListChildren(db *sql.DB, parentOrderID int64) ([]*Order, error) {
 // other two used a STATUS as a proxy for it, and the proxy was exact only
 // because nothing ever left `pending` without reaching the fleet.
 //
-// A leg whose fleet CREATE is refused breaks that. It has been claimed
-// (pending → sourcing) and rolled back out of `dispatched`, so it sits at
-// `sourcing` holding no vendor order — not yet with the fleet, and invisible to
+// A leg whose fleet CREATE is refused breaks that. Its hand took it to
+// `dispatched` and the refusal rolled it back to `queued`, so it sits there
+// holding no vendor order — not yet with the fleet, and invisible to
 // both status-keyed queries. Terminating it was the old answer (the demand died
 // on a robot-system blip); parking it is the new one, and parking only works if
 // the re-drives can still see it.
@@ -374,7 +374,7 @@ func annotateEpisodeRow(tx *sql.Tx, id int64, status, reason, code string) error
 //
 // So the column is made true instead: a transition into a moving status clears
 // it, in the same write as the status. A transition between waiting statuses
-// (queued→sourcing, a demote back to sourcing) keeps it — that wait is still on.
+// (pending→queued) keeps it — that wait is still on.
 // The history row that opened the episode keeps its code either way.
 func waitEndsSQL(to string) string {
 	if protocol.CanHoldWait(protocol.Status(to)) {
@@ -572,10 +572,10 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 	// discovers the reason on a later pass), so each park writes a row of its
 	// own, dated when the cause was written (see the default arm below).
 	//
-	// IT USED TO NAME 'queued', which missed in both directions: a complex order
-	// born `queued` matched no row at all, and a `sourcing` park landed its cause
-	// on an earlier queued episode. Fixed by "a wait's cause lands on that
-	// wait's own history row".
+	// IT USED TO NAME 'queued' as a literal, which missed in both directions on
+	// the old ladder (a complex order born `queued` matched no row at all, and a
+	// `sourcing` park landed its cause on an earlier queued episode). Fixed by "a
+	// wait's cause lands on that wait's own history row".
 	//
 	// The order's own status is the discriminator, read inside this transaction
 	// FOR UPDATE ahead of the column write, so a concurrent transition cannot
@@ -604,7 +604,7 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 	//   cause is written ALONGSIDE the status rather than instead of it. Nothing
 	//   ever carries that code onto a later row: the admitted path CLEARS it
 	//   (compound.go, right after the admission verdict) before the transition, so
-	//   historyReason reads an empty code and the leg's `sourcing` row is born
+	//   historyReason reads an empty code and the leg's next row is born
 	//   blank by construction. Under the plain guard a leg's wait therefore
 	//   reached history NOWHERE — it lived only in queue_cause, a live column
 	//   overwritten in place, so a leg that parked three times left a record of
@@ -655,12 +655,12 @@ func SetQueueDetail(db *sql.DB, id int64, reason, code, cause string) error {
 			// per pass.
 			//
 			// A PARK, NOT A LABEL. The ruling is about the waits shingo holds an
-			// order in (the acquiring statuses). A status the fleet reported — a
+			// order in (`queued`, IsWaiting). A status the fleet reported — a
 			// `staged` order labelled with its station wait the moment it lands
 			// (MarkStationWaitIfOwned) — is not a park: its cause annotates the row
 			// that opened it, as every cause did before the ruling, so one staging
 			// is one `staged` row.
-			if !protocol.IsAcquiring(s) {
+			if !protocol.IsWaiting(s) {
 				if err := annotateEpisodeRow(tx, id, status, reason, code); err != nil {
 					return err
 				}
@@ -1540,7 +1540,7 @@ func ListTrackedVendorOrderIDs(db *sql.DB) ([]string, error) {
 }
 
 // ListActiveBySourceRef returns orders in pre-dispatch states (pending,
-// sourcing, queued) whose source_node matches any of the provided names.
+// queued) whose source_node matches any of the provided names.
 // Used by reparent/delete guards to detect orders that would break.
 func ListActiveBySourceRef(db *sql.DB, names []string) ([]*Order, error) {
 	if len(names) == 0 {
@@ -1562,8 +1562,8 @@ func ListActiveBySourceRef(db *sql.DB, names []string) ([]*Order, error) {
 	return ScanOrders(rows)
 }
 
-// ListAcquiring returns all orders in an "acquiring" status (queued or
-// sourcing) — the fulfillment scanner's retry set — IN THE PLANT'S RANKED
+// ListAcquiring returns all top-level orders in an "acquiring" status (pending
+// or queued) — the fulfillment scanner's population — IN THE PLANT'S RANKED
 // ORDER. orders.priority is INTEGER NOT NULL DEFAULT 0, so unset orders fall to
 // FIFO naturally.
 //
@@ -1575,11 +1575,12 @@ func ListActiveBySourceRef(db *sql.DB, names []string) ([]*Order, error) {
 // first-come-first-served, and that is a one-spot change only while it is
 // spelled once.
 //
-// Widened from queued-only: the scanner also retries orders sitting in
-// `sourcing`. Once MoveToSourcing moved to the start of the reserve
-// attempt few orders rest there, but the scan set must see them when they do.
+// `pending` is in it because every order is born there (v4 §2.6, C1). A
+// compound child is NOT: a dig leg rests `pending` for its whole pre-dispatch
+// life and is dispatched by the compound machinery, never the scanner (S7). The
+// scanner used to skip legs in Go; the clause moves that skip into the query.
 func ListAcquiring(db *sql.DB) ([]*Order, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status IN (%s) ORDER BY %s`,
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status IN (%s) AND parent_order_id IS NULL ORDER BY %s`,
 		SelectCols, protocol.AcquiringStatusSQLList(), DemandRankOrderBySQL()))
 	if err != nil {
 		return nil, err
@@ -1602,7 +1603,8 @@ func UpdatePayloadCode(db *sql.DB, orderID int64, payloadCode string) error {
 //
 // It was a status boundary — not terminal, and not `queued` — and the queued
 // exclusion was the tie-break while orders were born `queued` and left it only
-// once they had something. Complex intake is born `sourcing` now, so two orders
+// once they had something. Complex intake was born `sourcing` then (and every
+// order is born `pending` since C1), so two orders
 // shopping for one exclusive dropoff each counted the other as already on its
 // way, and both parked on dropoff-inflight with nothing that would ever release
 // either (TestDropoffGate_TwoShoppersForOneExclusiveDropoffOneGoes). A status
@@ -1900,7 +1902,7 @@ func ClearBinID(db *sql.DB, orderID int64) error {
 //
 // `AND bin_id IS DISTINCT FROM $1` is the same guard SetFaultClock carries, for
 // the same reason. confirmComplexPlan calls this on EVERY confirm, and a complex
-// order that re-enters `sourcing` re-confirms every scanner tick — so without
+// order that waits re-confirms every scanner tick — so without
 // the guard an order parked on a wait rewrote bin_id to the value it already
 // held and bumped updated_at for it, once per tick, for as long as the wait
 // lasted.

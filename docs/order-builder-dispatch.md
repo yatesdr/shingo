@@ -77,28 +77,39 @@ machine. Branching on data (intent, `len(distinct needs)`, `hasWait`,
 `SiblingOrderUUID`) rather than on `OrderType` is what makes the eventual
 simple↔complex unification a migration rather than a rewrite.
 
-## The acquiring set — `{queued, sourcing}`
+## The acquiring set — `{pending, queued}`
 
-The fulfillment scanner retries orders whose status is in the **acquiring**
-set: `queued` and `sourcing`, exactly. `protocol/status.go`:
+Every order is born `pending`. **Acquiring** is the act between `pending` and
+`dispatched` — asking for the order's whole hand and taking it in one
+transaction — never a stored status. An order whose hand is not whole parks in
+`queued` with its cause on the row. The fulfillment scanner asks orders whose
+status is in the **acquiring** set: `pending` and `queued`, exactly.
+`protocol/status.go`:
 
-- `IsAcquiring(s)` — true for `queued`, `sourcing`.
-- `AcquiringStatusSQLList()` — the SQL literal `('queued','sourcing')`, built by
+- `IsAcquiring(s)` — true for `pending`, `queued`.
+- `IsWaiting(s)` — true for `queued` alone: a cause on the order describes a
+  wait going on now. Readers that tell, keep or show a wait ask this, never
+  `IsAcquiring`.
+- `AcquiringStatusSQLList()` — the SQL literal `('pending','queued')`, built by
   the same `buildStatusSQLList` factory that produces the terminal and
-  pre-dispatch lists. One source of truth for "retryable state."
+  pre-dispatch lists. One source of truth for "may still be asked."
+  `ListAcquiring` also requires `parent_order_id IS NULL`: a compound child is
+  dispatched by the compound machinery, never the scanner.
 
 This set is **exactly** those two, not a loose "non-terminal":
 
 - `tryFulfill`'s re-check and the complex dispatch entry guard use this set for
   *other* load-bearing reasons (catch a cancelled-mid-process order; block
   re-dispatching a reshuffling parent). Widening past the two would break those.
-- A `sourcing` order holds its sources as **reservations** (`[[reservations]]`)
+- A `queued` order holds its sources as **reservations** (`[[reservations]]`)
   and retries by **reconciling** those holds, not by re-shopping from scratch.
 
-So the scan-set widening to `{queued, sourcing}` is what lets an incomplete
-complex order make progress tick-by-tick: it sits in `sourcing` holding
-revocable reservations, the Allocator reconciles on each tick, and it completes
-the moment the missing source appears.
+So an incomplete complex order makes progress tick-by-tick: it sits in
+`queued` holding revocable reservations, the Allocator reconciles on each tick,
+and it is dispatched the moment the missing source appears.
+
+`sourcing` was in this set before C1, as a stored status; it is history now
+(no edge enters it; see `[[order-lifecycle]]`).
 
 ## Plan-shape intake
 

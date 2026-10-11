@@ -31,10 +31,12 @@ import (
 // the same: make the DB dependency explicit and make the scanner
 // unit-testable in isolation.
 type Store interface {
-	// Order reads. ListAcquiringOrders is the scanner's scan set — orders in
-	// {queued, sourcing} (the acquiring set, widened from queued-only).
+	// Order reads. ListAcquiringOrders is the scanner's scan set — top-level
+	// orders in {pending, queued} (the acquiring set).
 	ListAcquiringOrders() ([]*orders.Order, error)
 	GetOrder(id int64) (*orders.Order, error)
+	// GetOrderByUUID finds a pair leg's partner (orders.sibling_order_uuid).
+	GetOrderByUUID(uuid string) (*orders.Order, error)
 	// PlannedPickStands is how acquiring reads a birth pick (orders.plan): the
 	// planned bin's node while the pick stands for this asker, nil when it is
 	// stale and the scanner picks again (SYNTH F4).

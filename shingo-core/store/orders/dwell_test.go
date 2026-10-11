@@ -42,7 +42,8 @@ func TestDwellStats_PercentilesAndCounts(t *testing.T) {
 		var id int64
 		testutil.MustNoErr(t, db.QueryRow(`SELECT id FROM orders WHERE edge_uuid=$1`, uuid).Scan(&id), "id "+uuid)
 		for _, e := range evs {
-			_, err := db.Exec(`INSERT INTO order_history (order_id, status, created_at) VALUES ($1,$2,$3)`,
+			_, err := db.Exec(`INSERT INTO order_history (order_id, status, created_at, code)
+				VALUES ($1,$2,$3, CASE WHEN $2 = 'queued' THEN 'waiting_for_material' END)`,
 				id, e.status, base.Add(e.off))
 			testutil.MustNoErr(t, err, "hist "+uuid+" "+e.status)
 		}
@@ -148,7 +149,8 @@ func TestDwellStats_FiltersScopeTheResult(t *testing.T) {
 			status string
 			off    time.Duration
 		}{{"queued", 0}, {"acknowledged", gap}} {
-			_, err := db.Exec(`INSERT INTO order_history (order_id, status, created_at) VALUES ($1,$2,$3)`,
+			_, err := db.Exec(`INSERT INTO order_history (order_id, status, created_at, code)
+				VALUES ($1,$2,$3, CASE WHEN $2 = 'queued' THEN 'waiting_for_material' END)`,
 				id, e.status, base.Add(e.off))
 			testutil.MustNoErr(t, err, "hist "+uuid)
 		}

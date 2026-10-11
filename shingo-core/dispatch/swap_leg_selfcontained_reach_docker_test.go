@@ -95,7 +95,7 @@ func selfContainedOrderAt(t *testing.T, db *store.DB, process, source *nodes.Nod
 	t.Helper()
 	return testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.OrderType = OrderTypeComplex
-		o.Status = "sourcing"
+		o.Status = "pending"
 		o.ProcessNode = process.Name
 		o.SourceNode = source.Name
 	})

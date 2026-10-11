@@ -116,7 +116,7 @@ func setupDriftFixture(t *testing.T, db *store.DB, prefix string, ch driftChoose
 	fx.claimant = testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = prefix + "-CLAIMANT"
 		o.OrderType = OrderTypeStore
-		o.Status = protocol.StatusSourcing
+		o.Status = protocol.StatusPending
 		o.PayloadCode = fx.bp.Code
 	})
 	if ch.setup != nil {
@@ -132,7 +132,7 @@ func driftHolder(t *testing.T, db *store.DB, fx *driftFixture, mutate ...func(*o
 	return testdb.CreateOrder(t, db, append([]func(*orders.Order){func(o *orders.Order) {
 		o.EdgeUUID = fx.prefix + "-HOLDER"
 		o.OrderType = OrderTypeComplex
-		o.Status = protocol.StatusSourcing
+		o.Status = protocol.StatusPending
 	}}, mutate...)...)
 }
 
@@ -297,7 +297,7 @@ func loaderDriftChoice(t *testing.T, db *store.DB, d *Dispatcher, fx *driftFixtu
 	staging := &nodes.Node{Name: fx.prefix + "-STG", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(staging), "staging")
 	leg := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType, o.Status = fx.prefix+"-LEG", "test", OrderTypeComplex, protocol.StatusSourcing
+		o.EdgeUUID, o.StationID, o.OrderType, o.Status = fx.prefix+"-LEG", "test", OrderTypeComplex, protocol.StatusPending
 		o.SourceNode, o.DeliveryNode, o.PayloadCode = staging.Name, home.Name, fx.bp.Code
 	})
 	steps := []resolvedStep{vsWait(staging.Name), vsPick(staging.Name), vsDrop(home.Name)}

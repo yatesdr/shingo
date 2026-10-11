@@ -47,20 +47,15 @@ const (
 	// cycle regardless of change; this event deliberately does NOT follow that,
 	// or an idle plant would pulse the page on a timer.
 	EventSourcingUpdated
-	// EventOrderResumed — a compound finished and its complex parent went back
-	// to Queued (Reshuffling → Queued, lifecycle.go's actionMap).
+	// EventOrderResumed — a compound parent went back to the ladder's start
+	// (Reshuffling → Pending, lifecycle.go's actionMap): its dig finished
+	// (ResumeCompound) or was dissolved (Restart). Its handler (wiring.go) runs
+	// the parent's one acquire and tells the Edge where it landed.
 	//
-	// IT EXISTS TO TELL THE EDGE, and EventOrderQueued could not. That event's
-	// Edge-facing subscriber is the QUEUE-REASON push: it returns early unless
-	// the order still IsAcquiring AND carries a non-empty QueueReason, because
-	// its job is delivering a block sentence, not mirroring a status. A resumed
-	// parent has no block reason (ResumeCompound clears it — the wait is over)
-	// and is usually dispatched again by the in-band scanner within the same
-	// millisecond, so both halves of that gate are false and nothing was sent.
-	//
-	// The Edge therefore never learned the order left `reshuffling`, and every
-	// later push was an illegal jump it rejected — three robots per run, held
-	// from the first minute of the soak to the end. See §12.49.
+	// IT EXISTS TO TELL THE EDGE as well as to acquire. The Edge's mirror sits
+	// at `reshuffling`; never told the parent left it, every later push was an
+	// illegal jump it rejected — three robots per run, held from the first minute
+	// of the soak to the end. See §12.49.
 	EventOrderResumed
 )
 
@@ -112,7 +107,7 @@ type OrderCompletedEvent struct {
 	RecoversOrderID *int64
 }
 
-// OrderResumedEvent carries a compound's parent going back to Queued. Same
+// OrderResumedEvent carries a compound's parent going back to Pending. Same
 // three fields as OrderCompletedEvent because it drives the same thing — one
 // TypeOrderUpdate to the station that owns the order.
 type OrderResumedEvent struct {

@@ -30,8 +30,9 @@ import (
 // terminal fail (no_bin). Each test below pins one leg of the triad.
 
 // TestPhase0_DispositionTriad_ClaimFailed pins claim_failed as TRANSIENT:
-// a TOCTOU race between Find and Claim must QUEUE the order for retry, not
-// fail it terminally. The postFindHook injects a competing claim to make the
+// a TOCTOU race between Find and Claim must leave the order alive for retry, not
+// fail it terminally (C1: with no acquirer wired the door leaves a found pick
+// `pending`, in the scanner's population). The postFindHook injects a competing claim to make the
 // race deterministic.
 //
 // If this test flips to emitter.failed != 0, claim_failed was accidentally
@@ -70,12 +71,12 @@ func TestPhase0_DispositionTriad_ClaimFailed(t *testing.T) {
 		t.Fatalf("claim_failed must QUEUE (transient), not FAIL: got errorCode=%q",
 			emitter.failed[0].errorCode)
 	}
-	order := testdb.AssertOrderStatus(t, db, "char-claim-failed", StatusQueued)
+	order := testdb.AssertOrderStatus(t, db, "char-claim-failed", StatusPending)
 
 	// CHANGE-DETECTOR: simple intake does NOT set a queue reason on a transient
-	// claim_failed. HandleOrderRequest calls queueOrder() (no queue-reason
-	// parameter) when planErr.Transient() is true; only the complex path writes
-	// one explicitly (via setQueueReason in complex_dispatch.go). If this
+	// claim_failed. With no acquirer wired the door leaves the order pending for
+	// the scanner (dispatch/door.go acquireBorn) and writes no queue reason; only
+	// a park writes one, with its code. If this
 	// assertion starts failing it means a queue reason is now being set at simple
 	// intake — update the comment and the want.
 	if order.QueueReason != "" {
@@ -264,6 +265,9 @@ func testEnvelopeWithUOP(t *testing.T, uop *int) *protocol.Envelope {
 // If Phase 1 normalises the ordering (e.g. MoveToSourcing before claim on the
 // complex path too), this test will break and should be removed or updated to
 // reflect the new invariant.
+//
+// (C1: MoveToSourcing is gone. Both paths are pending or queued at claim time;
+// the hand's CAS writes dispatched. The simple subtest now pins `pending`.)
 
 func TestPhase0_StatusAtClaimTime(t *testing.T) {
 	// Simple path: capture order status inside postFindHook.
@@ -279,10 +283,9 @@ func TestPhase0_StatusAtClaimTime(t *testing.T) {
 		d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 		d.SetPostFindHook(func() {
 			// The claim-move to the scanner: the postFindHook now fires in the
-			// fulfillment scanner (the single claim point), between MoveToSourcing and
-			// ClaimForDispatch — mirrored by dispatchSimpleViaScanner. The order is in
-			// `sourcing` at
-			// claim time, as before, but the claim moved OFF intake.
+			// fulfillment scanner (the single claim point), between the find and
+			// ClaimForDispatch — mirrored by dispatchSimpleViaScanner. The claim
+			// moved OFF intake.
 			if o, err := db.GetOrderByUUID(uuid); err == nil {
 				capturedStatus = string(o.Status)
 			}
@@ -301,11 +304,11 @@ func TestPhase0_StatusAtClaimTime(t *testing.T) {
 
 		testdb.AssertOrderStatus(t, db, uuid, StatusDispatched) // succeeded overall
 
-		// The simple path is in "sourcing" at claim time because MoveToSourcing fires
-		// before ClaimForDispatch — now at the SCANNER (the claim-move), not intake.
-		if capturedStatus != string(StatusSourcing) {
-			t.Errorf("status at claim time (simple path) = %q, want %q (MoveToSourcing before claim, now at the scanner)",
-				capturedStatus, string(StatusSourcing))
+		// The simple path is still `pending` at claim time: acquiring writes no
+		// status of its own (C1), and the hand's CAS writes `dispatched`.
+		if capturedStatus != string(StatusPending) {
+			t.Errorf("status at claim time (simple path) = %q, want %q (acquiring writes no status; the hand writes dispatched)",
+				capturedStatus, string(StatusPending))
 		}
 	})
 

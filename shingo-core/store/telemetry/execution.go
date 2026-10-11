@@ -17,7 +17,7 @@ import "fmt"
 // sim, SEER states in prod), not our canonical acknowledged/in_transit.
 //
 //   - Assignment = earliest acknowledged/in_transit transition (robot started).
-//     Excludes the pre-dispatch queue (pending/sourcing/queued) and 'dispatched'
+//     Excludes the pre-dispatch queue (pending/queued) and 'dispatched'
 //     (Core→vendor handoff, which can sit in the vendor's queue).
 //   - Completion = earliest terminal-ish transition; for a confirmed mission
 //     that's 'delivered' (robot dropped the load), NOT 'confirmed' — so the

@@ -204,7 +204,7 @@ func TestFences_F7_AtLevelPushParksWithItsOwnCause(t *testing.T) {
 	pusher := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "f7-pusher"
 		o.OrderType = dispatch.OrderTypeMove
-		o.Status = protocol.StatusSourcing
+		o.Status = protocol.StatusPending
 		o.SourceNode = dock.Name
 		o.DeliveryNode = "F7-GRP"
 		o.BinID = &carrier

@@ -74,10 +74,11 @@ func TestContrastMathMatchesWCAGReference(t *testing.T) {
 // somebody computed once, by hand, off to the side, and which nothing has
 // re-checked since.
 //
-// The margin is thinner than the comment suggests. Light `sourcing` sits at
-// 4.63:1 — thirteen hundredths above the floor. A half-step darkening of that
-// sand background to make it read as "warmer" would put it under, and there is
-// no eyeball that catches 4.4 versus 4.6 on a shop-floor LCD.
+// The margin is thinner than the comment suggests. Light `sourcing` sat at
+// 4.63:1 — thirteen hundredths above the floor — before C1 made its badge an
+// alias of queued's. A half-step darkening of a pill like that to make it read
+// as "warmer" would put it under, and there is no eyeball that catches 4.4
+// versus 4.6 on a shop-floor LCD.
 //
 // Statuses are enumerated from protocol.AllStatuses() rather than from the
 // stylesheet, so a status added to the protocol whose rule is missing fails

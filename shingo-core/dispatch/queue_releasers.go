@@ -49,7 +49,8 @@ package dispatch
 type WaitPopulation string
 
 const (
-	// PopAcquiring is {queued, sourcing}: pre-dispatch, no robot committed. The
+	// PopAcquiring is the waiting orders (`queued`; {queued, sourcing} before C1):
+	// pre-dispatch, no robot committed. The
 	// fulfillment scanner is both its event consumer and its floor.
 	PopAcquiring WaitPopulation = "acquiring"
 	// PopGateStaged is an order waiting at a lane wait (waitingAtLane): a robot
@@ -900,8 +901,8 @@ var causeReleasers = []causeReleaser{
 		// The swap-hold gate and its filler arm, which this row used to describe,
 		// are deleted, and a releaser naming a dead mechanism sends the reader
 		// looking for a gate that is not there.
-		what: "the partner's order reaches Core — its intake emits EventOrderQueued and the two legs go " +
-			"together — or a partner digging its own bin out finishes and resumes through queued. If Core " +
+		what: "the partner's order reaches Core — its intake's acquire asks this pair's leader and the two " +
+			"legs go together — or a partner digging its own bin out finishes and resumes through pending. If Core " +
 			"refuses the partner at intake instead, nothing can arrive and the wait ends in failure: this " +
 			"leg fails carrying the partner's reason, at the refusal or on its own first pass after it",
 	},

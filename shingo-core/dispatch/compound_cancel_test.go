@@ -69,11 +69,12 @@ func TestAdvanceCompoundOrder_CancelledChildRequeuesParent(t *testing.T) {
 
 	got, err := db.GetOrder(parent.ID)
 	testutil.MustNoErr(t, err, "reload parent")
-	if got.Status != StatusQueued {
+	// (C1: the dissolved parent resumes `reshuffling → pending`.)
+	if got.Status != StatusPending {
 		t.Fatalf("parent status = %q, want %q. A leg stopping is congestion, not the demand's own work "+
 			"failing: the chapter closes and the demand goes back to be re-planned against the lane as "+
 			"it now stands. %q would take a live demand out of the plant because a robot broke down",
-			got.Status, StatusQueued, StatusFailed)
+			got.Status, StatusPending, StatusFailed)
 	}
 }
 
@@ -182,10 +183,11 @@ func TestGate1_TheDemandSurvivesItsDigsFailure(t *testing.T) {
 
 	// (a) THE DEMAND IS BACK IN THE ACQUIRING SET, not dead.
 	got, err := db.GetOrder(demand.ID)
+	// (C1: the dissolved parent resumes `reshuffling → pending`.)
 	testutil.MustNoErr(t, err, "reload the demand")
-	if got.Status != StatusQueued {
+	if got.Status != StatusPending {
 		t.Fatalf("the demand is %q after its dig lost a leg, want %q. A dig failing is the plant "+
-			"being congested; only the demand's OWN work failing fails the demand", got.Status, StatusQueued)
+			"being congested; only the demand's OWN work failing fails the demand", got.Status, StatusPending)
 	}
 
 	// (b) AND IT IS TOLD WHY, in words that match what happened. Telling a demand

@@ -317,7 +317,16 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 			return res, err
 		}
 		res.Created = append(res.Created, order)
-		d.queueOrderInternal(order, req.StationID, req.PayloadCode)
+		// The part the loader asked for goes on the row before its acquire, as
+		// the queue tail wrote it: the empty is generic, but the order is the
+		// loader's demand for this part, and the lead-time readers
+		// (AvgL1QueueSeconds) select on it.
+		if req.PayloadCode != "" && order.PayloadCode == "" {
+			if err := d.db.UpdateOrderPayloadCode(order.ID, req.PayloadCode); err != nil {
+				d.dbg("loader_replenish: payload code for order %d: %v", order.ID, err)
+			}
+		}
+		d.acquireCoreAsk(order)
 	}
 
 	// The decision record. want= is what the loop needed, targets= how many places
@@ -448,10 +457,16 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 	return order, nil
 }
 
-// QueueCoreAsk puts an admitted Core ask into the fulfillment scanner's retry
-// set. Separate from AdmitCoreAsk because the loader loop queues per window
-// inside its own loop and wants the admit failure and the queue failure
-// distinguishable.
-func (d *Dispatcher) QueueCoreAsk(order *orders.Order, stationID string) {
-	d.queueOrderInternal(order, stationID, "")
+// AcquireCoreAsk asks for an admitted Core ask's whole hand, once, under the
+// scan lock (door.go): it dispatches, or parks with its cause and its station is
+// told. Separate from AdmitCoreAsk because the loader loop acquires per window
+// inside its own loop and wants the admit failure and the acquire distinguishable.
+func (d *Dispatcher) AcquireCoreAsk(order *orders.Order) {
+	d.acquireCoreAsk(order)
+}
+
+// acquireCoreAsk is AcquireCoreAsk. The ask's row is whole at its birth (no apply
+// follows the INSERT), so only the acquire is under the lock.
+func (d *Dispatcher) acquireCoreAsk(order *orders.Order) {
+	d.door(func() { d.acquireBorn(order, nil) })
 }

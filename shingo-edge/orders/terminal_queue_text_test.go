@@ -35,7 +35,7 @@ func TestCancelledRowDropsItsQueueText(t *testing.T) {
 
 // TestNonTerminalStatusKeepsQueueText pins the other side: a status write that
 // is not terminal leaves Core's reason where it is. The reason is owned by the
-// queue-reason write, and a sourcing/queued bounce must not erase it.
+// queue-reason write, and a non-terminal step on from queued must not erase it.
 func TestNonTerminalStatusKeepsQueueText(t *testing.T) {
 	t.Parallel()
 	db := testManagerDB(t)
@@ -44,7 +44,7 @@ func TestNonTerminalStatusKeepsQueueText(t *testing.T) {
 	testutil.MustNoErr(t, err, "create order")
 	testutil.MustNoErr(t, db.UpdateOrderStatus(oid, string(StatusQueued)), "queue it")
 	testutil.MustNoErr(t, db.SetOrderQueueReason("uuid-q-keep", "Waiting for a slot at SYN-LANE-1", "waiting_for_slot"), "set reason")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(oid, string(StatusSourcing)), "re-source")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(oid, string(StatusDispatched)), "dispatch")
 
 	o, err := db.GetOrder(oid)
 	testutil.MustNoErr(t, err, "reload")

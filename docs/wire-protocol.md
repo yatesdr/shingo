@@ -1117,9 +1117,9 @@ The `error_code` field in `order.error` messages uses the following values:
 
 ## Order Lifecycle
 
-**There is one status vocabulary, not two.** Core and Edge share the full set, and the canonical state machine is one table: `validTransitions` in `protocol/types.go:460-509`. Edge mirrors Core's vocabulary because `orders.ApplyCoreStatus` (`shingo-edge/orders/lifecycle_service.go:84`) writes Core's status onto the Edge row, so the operator sees the truth of whichever machine owns the order (`protocol/types.go:451-454`). The statuses below are the fifteen constants in `protocol/status.go:58-79`.
+**There is one status vocabulary, not two.** Core and Edge share the full set, and the canonical state machine is one table: `validTransitions` in `protocol/types.go:484-533`. Edge mirrors Core's vocabulary because `orders.ApplyCoreStatus` (`shingo-edge/orders/lifecycle_service.go:122`) writes Core's status onto the Edge row, so the operator sees the truth of whichever machine owns the order (`protocol/types.go:471-474`). The statuses below are the fifteen constants in `protocol/status.go:56-85`; one of them, `sourcing`, is history only since C1.
 
-**There is no `completed` status.** Terminal completion is `confirmed`. Terminal is *derived*, never hand-maintained — a status is terminal iff it has no outgoing edges in `validTransitions` (`protocol.IsTerminal`, `protocol/types.go:515-518`). That makes exactly four terminal statuses: `confirmed`, `failed`, `cancelled`, `skipped`.
+**There is no `completed` status.** Terminal completion is `confirmed`. Terminal is *derived*, never hand-maintained — a status is terminal iff it has no outgoing edges in `validTransitions` (`protocol.IsTerminal`, `protocol/types.go:539-542`). That makes exactly four terminal statuses: `confirmed`, `failed`, `cancelled`, `skipped`.
 
 See [order-lifecycle.md](order-lifecycle.md) for the per-status table of scope, writer and operator-facing meaning. What follows is the wire view: which message drives which transition.
 
@@ -1128,16 +1128,22 @@ See [order-lifecycle.md](order-lifecycle.md) for the per-status table of scope, 
 The full graph is `validTransitions`; this is the path an order normally walks.
 
 ```
-  intake            resolution          transport              receipt
-  ------            ----------          ---------              -------
-  pending  ──▶  sourcing ──▶ queued ──▶ dispatched ──▶ in_transit ──▶ delivered ──▶ confirmed
-      └──▶ submitted ──▶ acknowledged ──┘                 └─▶ staged ─┘
-                                                        (dwelling at a wait step)
+  intake       (acquiring)          transport              receipt
+  ------       -----------          ---------              -------
+  pending  ───────────────────▶  dispatched ──▶ in_transit ──▶ delivered ──▶ confirmed
+     │                            ▲    │              └─▶ staged ─┘
+     ├──▶ queued (a cause) ───────┘    │        (dwelling at a wait step)
+     │       ▲                         │
+     │       └──── fleet refusal ──────┘
+     └──▶ submitted ──▶ acknowledged    (Edge's own submission words)
+
+  Acquiring is the act between pending and dispatched, never a stored status.
+  queued is the one resting place short of the fleet, and always carries a cause.
 
   off the spine:
     faulted      from acknowledged / dispatched / in_transit / staged — RECOVERABLE
-    reshuffling  from pending / sourcing / queued — a compound digs the source out, then resumes
-    skipped      from pending / sourcing / submitted / queued — terminal
+    reshuffling  from pending / queued — a compound digs the source out, then resumes to pending
+    skipped      from pending / submitted / queued — terminal
     failed       from any active state — terminal
     cancelled    from any active state — terminal
 ```
@@ -1145,8 +1151,8 @@ The full graph is `validTransitions`; this is the path an order normally walks.
 | State | Terminal | Meaning | Driven by |
 |---|---|---|---|
 | `pending` | no | Order received / created, not yet resolved | Edge: operator submits. Core: intake INSERT |
-| `sourcing` | no | Locating source material, validating nodes | Core, internal |
-| `queued` | no | Resolution parked — see the `queue_code` on the update | Core sends `order.update` with `queue_code` |
+| `sourcing` | no | History only (C1): no order can be in it. An Edge translates an older Core's `sourcing` push or snapshot to `queued` (its `queue_code`, else `waiting_for_material`), for one release | an older Core only |
+| `queued` | no | Asked and parked — always carries a `queue_code`. Sent once per park, with the reason; an order that never waited is not told `queued` | Core sends `order.update` with `queue_code` |
 | `submitted` | no | Published to Kafka, not yet acknowledged | Edge: outbox drainer publishes `order.request` |
 | `acknowledged` | no | Core accepted, source located | Core sends `order.ack` |
 | `dispatched` | no | Transport order created with the fleet backend | Core, internal |

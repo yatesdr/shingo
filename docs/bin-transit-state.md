@@ -122,11 +122,11 @@ existed.
 ### Reservation layer
 
 `claimed_by` is the **confirmed-claim mirror** of a reservation, not the
-whole ownership story. A bin a `sourcing` order intends to pick up is held by a
+whole ownership story. A bin a not-yet-dispatched order intends to pick up is held by a
 **reservation** (a soft, revocable row) *before* `claimed_by` is set; the claim
 is written atomically with the reservation's `pending → confirmed` flip. So:
 
-- While an order is `sourcing`/`queued`, its sources are held as `pending`
+- While an order is `pending`/`queued`, its sources are held as `pending`
   reservations — `claimed_by` may still be NULL, but the bin is not free.
 - `claimed_by` and the reservation move together (one transaction); they never
   drift apart. Clearing `claimed_by` releases the reservation in the same write.
@@ -223,20 +223,21 @@ on saturation; queueing-on-saturation requires gating before resolution.
 
 ## Status-First Queueing
 
-Complex orders are born `sourcing` by intake — the rung a complex order
-rests in while it shops — not `pending` and not `queued`. The fulfillment
-scanner is the single sync point that runs the capacity gate and moves
-sourcing → dispatched.
+Every order is born `pending` (complex orders included, since C1). The
+fulfillment scanner is the single sync point that runs the capacity gate and
+moves `pending`/`queued` → `dispatched`. Each door holds the scanner's lock
+(`scan-mu`) across its birth, its apply and one acquire (`dispatch/door.go`),
+so the door's own acquire and a periodic pass never run side by side.
 
 ```
-HandleComplexOrderRequest:                  Scanner.tryFulfill:
-  resolve steps                                (scan-mu serialized)
-  create order (status=sourcing)               capacity gate
-  ack edge                                     ├─ blocked: set queue_reason, stay sourcing
-  emit EventOrderQueued ───────synchronous───▶ └─ green: DispatchPreparedComplex
-                                                         claim bins
-                                                         status → dispatched
-                                                         ship blocks to fleet
+HandleComplexOrderRequest (under scan-mu):   Scanner.AcquireLocked:
+  resolve steps                                 capacity gate
+  create order (status=pending)                 ├─ blocked: queue_code + reason on the row,
+  ack edge                                      │           pending → queued, station told once
+  already a wait? park with its cause           └─ green: DispatchPreparedComplex
+  else one acquire ────────same lock──────────▶            claim bins
+                                                           pending → dispatched
+                                                           ship blocks to fleet
 ```
 
 `scan-mu` makes the claim the single point of serialization. Two
@@ -245,10 +246,10 @@ in-flight tally counts an order that HOLDS a claimed bin bound for the
 dropoff (`orders.InFlightForDropoffSQL` — a holder, not a status), so
 the first to claim is counted and the second sees in-flight=1 and waits.
 
-Simple retrieves and moves use the existing planner-returns-`Queued`
-path — they aren't routed through the scanner because their
-single-pickup shape doesn't need the same serialization (the
-self-exclusion in the in-flight count is enough).
+Simple retrieves and moves take the same shape through
+`HandleOrderRequest`: a planner decision that is already a wait parks the
+order with its cause (`ParkAndTell`); otherwise the door asks for its one
+acquire under the same lock. A door does not emit `EventOrderQueued`.
 
 ---
 
@@ -332,7 +333,7 @@ A few load-bearing predicates that govern this surface:
 ```
 "this order still owns the bin"     bin.claimed_by == order.id
                                     (was: bin.NodeID == sourceNode.ID — broke under transit)
-                                    Note: a sourcing order may own the bin as a
+                                    Note: a pending/queued order may own the bin as a
                                     pending RESERVATION before claimed_by is set.
 
 "bin is in flight"                  bin.NodeID == _TRANSIT_id

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"shingo/protocol"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
@@ -86,7 +87,9 @@ func TestBurialGuard_SoftHoldIsBuriable(t *testing.T) {
 	laneID, _, slot2ID, slot3ID := laneFixture(t, db, "BG-SOFT")
 
 	deep := testdb.CreateBinAtNode(t, db, "BIN-BG-SOFT", slot3ID, "BIN-BG-SOFT")
-	parked := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = "sourcing" })
+	parked := testdb.CreateOrder(t, db, func(o *orders.Order) {
+		o.Status, o.QueueCode = protocol.StatusQueued, string(protocol.QueueStorageRearranging)
+	})
 	if err := reservations.Acquire(db.DB, parked.ID, parked.ID, deep.ID, "test"); err != nil {
 		t.Fatalf("acquire soft hold: %v", err)
 	}

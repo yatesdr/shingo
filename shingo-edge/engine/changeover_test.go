@@ -1251,7 +1251,6 @@ func TestStartChangeover_PassesNonBlockingStatuses(t *testing.T) {
 	for _, status := range []protocol.Status{
 		orders.StatusPending,
 		orders.StatusQueued,
-		orders.StatusSourcing,
 		orders.StatusSubmitted,
 		orders.StatusAcknowledged,
 		orders.StatusDelivered,

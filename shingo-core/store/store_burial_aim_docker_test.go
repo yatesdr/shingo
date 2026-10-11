@@ -69,10 +69,14 @@ func TestBurialGuard_RefusesInFrontOfABinAnOrderHasResolvedOnto(t *testing.T) {
 		t.Fatalf("read the deep slot: %v", err)
 	}
 	demand := testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.Status = protocol.StatusSourcing
+		o.Status = protocol.StatusPending
 		o.BinID = &bin.ID
 		o.SourceNode = slot3.Name
 	})
+	// The soft hold a resolve stamps bin_id with. A reservation alone does not
+	// close the lane (TestBurialGuard_SoftHoldIsBuriable), so the aim is still
+	// the only thing that can refuse here.
+	testdb.ReserveBin(t, db, demand.ID, bin.ID)
 
 	// FindStoreSlotInLane is owner-BLIND (excludeOrderID 0), so nothing here is
 	// exempt and the burial clause is the only thing that can refuse.

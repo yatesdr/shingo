@@ -173,31 +173,71 @@ func (s *Scanner) scan() int {
 // §2.6, and a demand's arrival is a scheduling event, Rule 2). The periodic
 // pass stays the re-asker for whatever this parks.
 //
-// It takes the scan lock, so it never runs beside a pass. A `pending` order it
-// cannot dispatch is moved to `queued` with the cause the park wrote (pending ->
-// queued has no action, so nothing re-enters the scanner under the lock), which
-// puts it in the set the periodic pass asks again. Reports whether the order
-// was dispatched.
+// It takes the scan lock, so it never runs beside a pass. Reports whether the
+// order was dispatched.
 func (s *Scanner) AcquireOne(orderID int64) bool {
 	s.scanMu.Lock()
 	defer s.scanMu.Unlock()
+	return s.acquireLocked(orderID, nil)
+}
+
+// Door runs a door's birth, apply and acquire under the scan lock, so a pass
+// never sees a born row its door has not finished (RULINGS-C1-P0 F1;
+// dispatch/door.go). Its fn calls AcquireLocked, never AcquireOne.
+func (s *Scanner) Door(fn func()) {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	fn()
+}
+
+// AcquireLocked is AcquireOne for a caller inside Door. pick, when not nil, is
+// the source the door chose before its INSERT, used in place of finding one.
+func (s *Scanner) AcquireLocked(orderID int64, pick *dispatch.SourceResult) bool {
+	return s.acquireLocked(orderID, pick)
+}
+
+func (s *Scanner) acquireLocked(orderID int64, pick *dispatch.SourceResult) bool {
 	order, err := s.db.GetOrder(orderID)
-	if err != nil || (order.Status != protocol.StatusPending && !protocol.IsAcquiring(order.Status)) {
+	if err != nil || !protocol.IsAcquiring(order.Status) {
 		return false
 	}
-	if s.fulfill(order) {
+	if s.fulfill(order, pick) {
 		return true
 	}
-	if order.Status == protocol.StatusPending {
-		if err := s.lifecycle.Queue(order, "fulfillment", order.QueueReason); err != nil {
-			s.logTransition(order.ID, "pending → queued after its first acquire", err)
+	// A PAIR IS ONE UNIT OF WORK. The pair rule elects the lowest acquiring leg
+	// to lead (dispatch.dispatchPairInOnePass), and a leg that is not the leader
+	// defers and writes nothing. A pass reaches the leader on its own; a door's
+	// one acquire does not, so it asks the leader here, under the same lock, and
+	// the leader dispatches both legs or parks them. Without this a pair's second
+	// leg waited for the next periodic pass (up to a minute) with no cause on it.
+	if leader := s.pairLeaderToAsk(order); leader != nil {
+		if !s.fulfill(leader, nil) {
+			s.park(leader)
 		}
+	}
+	s.park(order)
+	if fresh, err := s.db.GetOrder(orderID); err == nil {
+		return fresh.Status == protocol.StatusDispatched
 	}
 	return false
 }
 
+// pairLeaderToAsk returns the order's pair partner when it is the leg that leads
+// this pair's pass — top-level, still acquiring, and the lower id — else nil.
+func (s *Scanner) pairLeaderToAsk(order *orders.Order) *orders.Order {
+	if order.SiblingOrderUUID == "" {
+		return nil
+	}
+	sib, err := s.db.GetOrderByUUID(order.SiblingOrderUUID)
+	if err != nil || sib == nil || sib.ParentOrderID != nil || sib.ID >= order.ID ||
+		!protocol.IsAcquiring(sib.Status) {
+		return nil
+	}
+	return sib
+}
+
 func (s *Scanner) tryFulfill(order *orders.Order) bool {
-	// Re-check status. The scan set is {queued, sourcing} (the acquiring set),
+	// Re-check status. The scan set is {pending, queued} (the acquiring set),
 	// so re-verify the order is still acquiring (not cancelled/failed/dispatched
 	// between listing and processing).
 	current, err := s.db.GetOrder(order.ID)
@@ -205,12 +245,56 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 		return false
 	}
 	// Use the fresh copy for all subsequent operations.
-	return s.fulfill(current)
+	if s.fulfill(current, nil) {
+		return true
+	}
+	s.park(current)
+	return false
+}
+
+// park is the tail of an acquire that did not dispatch: a `pending` order whose
+// arm wrote its cause moves to `queued`, and its station is told once, with
+// that cause (dispatch.ParkAndTell's rule; the station hears a later change of
+// cause through the wait-change notify). A `queued` order is already where it
+// waits.
+//
+// AN ORDER LEFT `pending` WITH NO CAUSE IS NOT MOVED. `queued` always says why
+// (C1.1.5): an arm that wrote nothing leaves the order where it was, to be asked
+// on the next pass, and this says so loudly — it is a gap in that arm.
+//
+// The copy in hand may be stale when it still says `pending`: an arm that ended
+// the order, planned its dig or lost it to another caller did so on its own
+// read. So a `pending` copy is read again, and only an order still `pending` is
+// parked.
+func (s *Scanner) park(order *orders.Order) {
+	if order.Status != protocol.StatusPending {
+		return
+	}
+	fresh, err := s.db.GetOrder(order.ID)
+	if err != nil || fresh.Status != protocol.StatusPending {
+		return
+	}
+	if fresh.QueueCode == "" {
+		s.logFn("fulfillment: order %d was asked and not dispatched, and no cause was written — "+
+			"left pending for the next pass (find the arm that parks without a cause)", fresh.ID)
+		return
+	}
+	if err := s.lifecycle.Park(fresh, "fulfillment"); err != nil {
+		s.logTransition(fresh.ID, "pending → queued after its acquire", err)
+		return
+	}
+	if s.dispatcher != nil {
+		s.dispatcher.NotifyWaitChanged(fresh)
+	}
 }
 
 // fulfill is one acquire attempt on an order already read fresh: a pass's
-// acquiring order, or AcquireOne's just-born one.
-func (s *Scanner) fulfill(order *orders.Order) bool {
+// acquiring order, or a door's just-born one. pick, when not nil, is the door's
+// pre-INSERT source.
+func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool {
+	// The wait the station holds, before the hand's `dispatched` write clears it:
+	// a fleet refusal re-parks against it (DemoteAfterFleetRefusal).
+	told := dispatch.WaitOf(order)
 
 	// Stage-3 tripwire: a simple-family order must never be classified coordinated,
 	// or the IsCoordinated discriminator below inverts (a plain order routed to the
@@ -219,10 +303,8 @@ func (s *Scanner) fulfill(order *orders.Order) bool {
 	// it from a coordinated leg. Loud construction-bug log; the OrderType read is a
 	// legitimate assertion (Stage-5 forbidigo carve-out).
 	//
-	// The old sourcing-reentry guard that lived here (scope sourcing re-attempts
-	// to complex only, since simple re-sourcing could double-claim) is GONE: plain
-	// orders now re-enter idempotently — a held bin is reused, never re-found (see
-	// the BinID branch below) — so a `sourcing` plain order safely re-dispatches.
+	// Plain orders re-enter idempotently — a held bin is reused, never re-found
+	// (see the BinID branch below) — so a waiting plain order safely re-dispatches.
 	dispatch.AssertSimpleNotCoordinated(order)
 
 	// Compound children (reshuffle legs) are dispatched by the compound machinery
@@ -234,20 +316,10 @@ func (s *Scanner) fulfill(order *orders.Order) bool {
 		return false
 	}
 
-	// The old re-entrancy guard here — skip a PLAIN order in `sourcing` with no
-	// claimed bin — is RETIRED by the single-claimer change. It existed only
-	// because simple had TWO bin-claimers (the intake planner AND this scanner), so
-	// the scanner had to avoid pouncing while intake was mid-claim. Now intake
-	// never claims (planTransport validates/resolves + queues; the scanner is the
-	// single claimer, the model complex has always used), so that race is gone —
-	// simple and complex carry the SAME guards here (none), the symmetry that
-	// proves the
-	// two-claimer smell is gone. Keeping the guard would be actively WRONG: the only
-	// way a plain order now reaches `sourcing` with no bin is a crash between this
-	// scanner's own MoveToSourcing and its claim, and skipping it forever would wedge
-	// a recoverable order. sourcing→queued and queued→sourcing are both legal
-	// (protocol/types.go) and IsAcquiring={queued,sourcing}, so a crashed-in-sourcing
-	// order is re-scanned and the scanner's own claim is idempotent.
+	// No re-entrancy guard: intake never claims (the scanner is the single
+	// claimer, the model complex has always used), and a door's half-applied
+	// birth cannot be reached because the door holds the scan lock across it
+	// (dispatch/door.go). Simple and complex carry the same guards here (none).
 
 	// ── Dispatch discriminator (Stage 3) ──
 	// Dispatch no longer branches on OrderType; it keys on plan provenance.
@@ -300,9 +372,8 @@ func (s *Scanner) fulfill(order *orders.Order) bool {
 	}
 
 	// Source: an order already holding its bin — a store (claimed at intake) or a
-	// retrieve/move re-entered from `sourcing` — dispatches the held bin and never
-	// re-finds. This is the length-1 idempotency that let the sourcing-reentry
-	// guard dissolve: re-entry reuses the claimed bin (FindSource is not consulted,
+	// retrieve/move that soft-held its bin on an earlier pass — dispatches the held
+	// bin and never re-finds. This is the length-1 idempotency: re-entry reuses the claimed bin (FindSource is not consulted,
 	// no second bin). Otherwise fall through to find + claim via the shared
 	// SourceFinder. The node-driven destination reserve happens just before each
 	// dispatch (in dispatchHeldBin here, and after the source claim in the finder
@@ -346,7 +417,13 @@ func (s *Scanner) fulfill(order *orders.Order) bool {
 	if order.SourceIntent == dispatch.SourceIntentEmpty {
 		intent = dispatch.IntentEmpty
 	}
-	res, planned := s.plannedSource(order)
+	var res dispatch.SourceResult
+	planned := false
+	if pick != nil {
+		res, planned = *pick, true
+	} else {
+		res, planned = s.plannedSource(order)
+	}
 	if !planned {
 		res = s.finder.FindSource(order, intent)
 	}
@@ -375,7 +452,7 @@ func (s *Scanner) fulfill(order *orders.Order) bool {
 		//
 		// Return false and never advance the compound: createCompound already
 		// dispatched the first child, and the parent has left the acquiring set
-		// (queued → reshuffling, IsAcquiring={queued,sourcing}), so no later pass
+		// (→ reshuffling, IsAcquiring={pending,queued}), so no later pass
 		// re-plans it. Two orders buried in the SAME lane in one pass are serialized by
 		// planBuriedReshuffle's lane lock — the second gets ErrReshuffleWait.
 		//
@@ -437,24 +514,15 @@ func (s *Scanner) fulfill(order *orders.Order) bool {
 	// OutcomeFound.
 	bin, sourceNode := res.Bin, res.Node
 
-	// MoveToSourcing BEFORE acquiring anything (the normalized timing — the intake
-	// planners and the complex path both move-before-hold). A soft-holding order
-	// lives in `sourcing` while it waits; the requeue paths below retarget to
-	// `sourcing` (NEVER `queued`) so the order stays in the acquiring set and the
-	// scanner retries it, holding its soft reservations across ticks.
-	if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "bin found, soft-holding"); err != nil {
-		// Refused CAS = the order moved under us. Everything below this point
-		// acquires and then DISPATCHES; continuing would commit a robot for an
-		// order we no longer own (and may be terminal). Yield the tick.
-		if dispatch.IsConcurrentTransition(err) {
-			s.logTransition(order.ID, "acquiring", err)
-			return false
-		}
-		s.logTransition(order.ID, "→ sourcing", err)
-	}
+	// ACQUIRING WRITES NO STATUS (v4 §2.6: an act, not a rung). An order that
+	// waits after this point parks in `queued` with its cause, keeping its soft
+	// reservations across passes (park, after fulfill returns). An order that ends
+	// or is taken by another caller meanwhile is caught by the owner test in every
+	// hold statement (reservations.OwnerLiveSQL) and by the hand's status CAS,
+	// before any robot is asked.
 
-	// Test seam: the deterministic claim-race hook fires at acquire time (order now
-	// in `sourcing`), between Find and the soft reserve. Post the claim-move the
+	// Test seam: the deterministic claim-race hook fires at acquire time, between
+	// Find and the soft reserve. Post the claim-move the
 	// intake planner no longer claims, so this is the ONE find→acquire window — a
 	// no-op in production, injected by concurrency tests to prove a race re-queues
 	// (never drops).
@@ -469,13 +537,13 @@ func (s *Scanner) fulfill(order *orders.Order) bool {
 	// (complex_dispatch slots → bins → confirm→fleet). Both are SOFT here (pending
 	// reservations, no hard claimed_by); the hard claim for BOTH lands at dispatch,
 	// in one confirm step, immediately before the fleet call. A soft-holding order
-	// that hits any of the requeue branches below parks in `sourcing`, KEEPS its
+	// that hits any of the requeue branches below parks in `queued`, KEEPS its
 	// soft holds, and is retried next tick (re-entering via the BinID branch, which
 	// reuses — never re-finds — its own held bin).
 
 	// Resolve destination BEFORE the slot reserve so the reserve targets a real
 	// node. A storage dropoff reserves its slot soft (ReserveStorageDropoff); a line
-	// dest is a no-op. On conflict, park in sourcing under waiting_for_slot — no
+	// dest is a no-op. On conflict, park under waiting_for_slot — no
 	// bin has been acquired yet, so there is nothing to release.
 	// The node value is deliberately discarded: ReserveStorageDropoff below SETTLES
 	// the destination (group resolve, dug-lane re-aim) and returns the authoritative
@@ -492,9 +560,6 @@ func (s *Scanner) fulfill(order *orders.Order) bool {
 		// failure (F6 in the 2026-07-20 queue-reason study).
 		s.setQueueReason(order, protocol.QueueWaitingForSlot, dispatch.CauseDestNodeUnresolved,
 			dispatch.QueueParams{Destination: order.DeliveryNode, DestUnresolved: true})
-		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "dest unresolved, retrying"); err != nil {
-			s.logTransition(order.ID, "→ sourcing after dest resolve fail", err)
-		}
 		return false
 	}
 	// destNode comes from the settle, not from a read taken before it.
@@ -506,9 +571,6 @@ func (s *Scanner) fulfill(order *orders.Order) bool {
 	if dest.Refused() {
 		s.setQueueReason(order, protocol.QueueWaitingForSlot, dest.Cause,
 			dispatch.QueueParams{Destination: order.DeliveryNode})
-		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "destination not secured"); qerr != nil {
-			s.logTransition(order.ID, "→ sourcing after reserve refusal", qerr)
-		}
 		return false
 	}
 	destNode := dest.Node
@@ -522,6 +584,9 @@ func (s *Scanner) fulfill(order *orders.Order) bool {
 	// release-correction count, persisted at intake; it is threaded through the
 	// confirm at dispatch (nil for retrieve/retrieve_empty = a plain claim).
 	if err := s.claimer.ReserveForDispatch(bin.ID, order.ID); err != nil {
+		if errors.Is(err, reservations.ErrOwnerEnded) {
+			return false // the order ended after this pass read it: nothing held, nothing to park
+		}
 		if errors.Is(err, reservations.ErrNotTheNamedBin) {
 			s.skipForNamedBin(order, bin.ID, sourceNode.Name)
 			return false
@@ -535,9 +600,6 @@ func (s *Scanner) fulfill(order *orders.Order) bool {
 		// owner-aware and harmless to hold across the retry.
 		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseBinLockRace,
 			dispatch.QueueParams{Payload: order.PayloadCode})
-		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "bin race, retrying"); qerr != nil {
-			s.logTransition(order.ID, "→ sourcing after reserve fail", qerr)
-		}
 		return false
 	}
 
@@ -578,6 +640,9 @@ func (s *Scanner) fulfill(order *orders.Order) bool {
 			s.parkRefusedHand(order, r)
 			return false
 		}
+		if s.statusWriteFailed(order, err) {
+			return false
+		}
 		// A fleet that will not take an order right now is a transient
 		// robot-system issue, not a permanent failure, so the refusal goes through
 		// the one demote door: armor off, paper DEMOTED rather than deleted,
@@ -591,7 +656,7 @@ func (s *Scanner) fulfill(order *orders.Order) bool {
 		// which confirms by id and never re-acquires, and parked under
 		// claim-failed forever. Armor off, paper demoted, pointer kept.
 		code, cause, params := dispatch.FleetRefusalCause(err, order.DeliveryNode)
-		s.dispatcher.DemoteAfterFleetRefusal(order, code, cause, params)
+		s.dispatcher.DemoteAfterFleetRefusal(order, told, code, cause, params)
 		return false
 	}
 
@@ -661,13 +726,14 @@ func (s *Scanner) plannedSource(order *orders.Order) (dispatch.SourceResult, boo
 
 // dispatchHeldBin dispatches a plain order that already holds its source bin —
 // a retrieve/move that soft-acquired its bin on a prior tick and parked in
-// `sourcing`. It never re-finds or re-acquires (re-finding would shop a second
+// `queued`. It never re-finds or re-acquires (re-finding would shop a second
 // bin — the finders exclude pending-reserved bins owner-blind, so the held bin's
 // own reservation hides it). This is the owner-aware keep arm: the order's OWN
-// held bin is reused. On a transient fleet failure it parks in `sourcing`,
+// held bin is reused. On a transient fleet failure it parks in `queued`,
 // KEEPS its soft hold, and retries next tick (the same bin re-confirms and
 // re-dispatches, owner-idempotent).
 func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
+	told := dispatch.WaitOf(order) // as in fulfill: what the station holds before the hand
 	// ── THE THREE ARMS BELOW ALL USED TO RETURN WITH A BLANK ROW ─────────
 	//
 	// This is the highest-probability blank-cause producer in the system, and the
@@ -728,22 +794,8 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		return false
 	}
 	destNode := dest.Node
-	// PENDING -> DISPATCHED (SYNTH F8; the orc's Stop 2 ruling, 2026-09-26) for
-	// an order no station knows: it goes straight from its birth to the hand,
-	// so its history never says it waited when it did not. Every other order
-	// keeps its sourcing step until C1 flips them with the Edge shipped first; a
-	// projected or station-sent order's mirror has not learned the new edge.
-	if !(order.Status == protocol.StatusPending && order.StationUnaware) {
-		if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "dispatching held bin"); err != nil {
-			// Same yield as the fresh-bin path: ConfirmForDispatch and
-			// DispatchDirect follow, and DispatchDirect commits a robot.
-			if dispatch.IsConcurrentTransition(err) {
-				s.logTransition(order.ID, "dispatching held bin", err)
-				return false
-			}
-			s.logTransition(order.ID, "held-bin → sourcing", err)
-		}
-	}
+	// PENDING → DISPATCHED for every order (SYNTH F8, C1.1.2): it goes from its
+	// birth to the hand, so its history never says it waited when it did not.
 	// Lane admission (P4): same as the fresh path — the physical question with no
 	// row written; the mouth rows are taken in the hand. EntryHeldBin: this caller
 	// skips nothing, because it never called the finder and so has no answer to
@@ -777,7 +829,7 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		// the seatbelt on every tick, forever, and never shops for another bin —
 		// dispatchHeldBin never re-finds, by design.
 		//
-		// SIM 2026-08-31, order 22. Fifty-two sim-minutes in `sourcing` under
+		// SIM 2026-08-31, order 22. Fifty-two sim-minutes waiting (then `sourcing`) under
 		// claim-failed, logging this line several times a second:
 		//
 		//	confirm bin 4 for order 22: bin 4 is locked, already claimed,
@@ -812,13 +864,13 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 			}
 			s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseHeldBinMissing,
 				dispatch.QueueParams{Payload: order.PayloadCode})
-			if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "held bin lost, re-finding"); qerr != nil {
-				s.logTransition(order.ID, "held-bin → sourcing after losing the hold", qerr)
-			}
 			return false
 		}
 		s.logFn("fulfillment: held-bin order %d hand refused, re-queuing (hold kept): %v", order.ID, err)
 		s.parkRefusedHand(order, r)
+		return false
+	}
+	if s.statusWriteFailed(order, err) {
 		return false
 	}
 	if err != nil {
@@ -827,12 +879,27 @@ func (s *Scanner) dispatchHeldBin(order *orders.Order) bool {
 		// more: an order that is ALREADY holding its bin is the exact shape the
 		// pointer wedge traps, because dispatchHeldBin is where it comes back to.
 		code, cause, params := dispatch.FleetRefusalCause(err, order.DeliveryNode)
-		s.dispatcher.DemoteAfterFleetRefusal(order, code, cause, params)
+		s.dispatcher.DemoteAfterFleetRefusal(order, told, code, cause, params)
 		return false
 	}
 	s.logFn("fulfillment: held-bin order %d fulfilled — bin %d (%s -> %s) vendor=%s",
 		order.ID, *order.BinID, sourceNode.Name, destNode.Name, vendorOrderID)
 	s.notifyEdgeDispatched(order, sourceNode, vendorOrderID)
+	return true
+}
+
+// statusWriteFailed answers a hand whose `→ dispatched` write failed with a
+// database error (dispatch.StatusWriteFailed): nothing was taken and the fleet
+// was never asked, so it is not a fleet refusal. The order waits under
+// read-failed, keeping its soft holds, and the next pass asks again.
+func (s *Scanner) statusWriteFailed(order *orders.Order, err error) bool {
+	var swf *dispatch.StatusWriteFailed
+	if !errors.As(err, &swf) {
+		return false
+	}
+	s.logFn("fulfillment: order %d: %v — waiting (soft holds kept)", order.ID, err)
+	s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseReadFailed,
+		dispatch.QueueParams{Payload: order.PayloadCode})
 	return true
 }
 
@@ -869,23 +936,14 @@ func (s *Scanner) stillHoldsBin(order *orders.Order) bool {
 // parkRefusedHand parks an order whose hand refused. The hand held nothing —
 // its transaction rolled back — so the order keeps exactly its soft holds and
 // waits under the refusing leg's code and cause, which are the ones the split
-// confirm and the lane acquire wrote for the same refusals.
+// confirm and the lane acquire wrote for the same refusals. The acquire's tail
+// parks it (park).
 func (s *Scanner) parkRefusedHand(order *orders.Order, r *dispatch.HandRefusal) {
 	s.setQueueReason(order, r.Code, r.Cause, r.ParkParams(order))
-	reason := "confirm failed, retrying"
-	switch {
-	case r.Leg == dispatch.HandLegLane && r.Cause == dispatch.CauseLaneAcquireError:
-		reason = "lane acquire error, retrying"
-	case r.Leg == dispatch.HandLegLane:
-		reason = "lane contended"
-	}
-	if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", reason); qerr != nil {
-		s.logTransition(order.ID, "→ sourcing after a refused hand", qerr)
-	}
 }
 
 // admitLanes takes the order's lane mouth holds before dispatch (P4). Returns
-// true to proceed; false when the order was parked in sourcing (lane contended,
+// true to proceed; false when the order waits (lane contended,
 // or a transient error) so the caller returns false too. A no-op that returns
 // true when no mouth-enforced lane group is on the order's path — byte-identical
 // when the gate is off.
@@ -903,9 +961,6 @@ func (s *Scanner) admitLanes(order *orders.Order, sourceNode, destNode *nodes.No
 		s.logFn("fulfillment: lane acquire for order %d errored: %v (retrying)", order.ID, err)
 		s.setQueueReason(order, protocol.QueueWaitingForMaterial, dispatch.CauseLaneAcquireError,
 			dispatch.QueueParams{Payload: order.PayloadCode})
-		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "lane acquire error, retrying"); qerr != nil {
-			s.logFn("fulfillment: order %d → sourcing after lane acquire error: %v", order.ID, qerr)
-		}
 		return false, dispatch.CauseLaneAcquireError
 	}
 	if !admitted {
@@ -918,9 +973,6 @@ func (s *Scanner) admitLanes(order *orders.Order, sourceNode, destNode *nodes.No
 		// Lane and Payload because rearrangingSentence reads those.
 		s.setQueueReason(order, protocol.QueueStorageRearranging, cause,
 			dispatch.QueueParams{Lane: lane, Payload: order.PayloadCode})
-		if qerr := s.lifecycle.MoveToSourcing(order, "fulfillment", "lane contended"); qerr != nil {
-			s.logFn("fulfillment: order %d → sourcing after lane conflict: %v", order.ID, qerr)
-		}
 		return false, cause
 	}
 	return true, ""
@@ -949,10 +1001,9 @@ func (s *Scanner) admitLanes(order *orders.Order, sourceNode, destNode *nodes.No
 //
 // THE PARENT TRANSITION IS LEGAL, and this is worth stating so nobody "fixes"
 // it: CreateCompoundOrder moves the parent into Reshuffling via BeginReshuffle
-// and requires a status that has Reshuffling as a legal next state — Pending,
-// Sourcing or Queued (dispatch/compound.go). A held-bin order is in `sourcing`
-// by the time it reaches here (dispatchHeldBin calls MoveToSourcing before the
-// lane admit), which is in that set.
+// and requires a status that has Reshuffling as a legal next state — Pending or
+// Queued (dispatch/compound.go). A held-bin order is one of the two: acquiring
+// writes no status of its own.
 //
 // THE HELD BIN STAYS HELD, and the dig cannot collide with what this order
 // already holds:

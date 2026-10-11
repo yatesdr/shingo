@@ -178,3 +178,22 @@ func readShared(t *testing.T, name string) string {
 	}
 	return string(body)
 }
+
+// TestSourcingBadgeIsQueuedsAlias: `sourcing` has no badge of its own (C1). It
+// left the order ladder, and an old history row that still says it renders as
+// the wait it was: .badge-sourcing is a selector in .badge-queued's rule, in
+// both themes, for one release, and is deleted with the alias.
+func TestSourcingBadgeIsQueuedsAlias(t *testing.T) {
+	src := readShared(t, "status-classes.css")
+	for _, pair := range []string{
+		".badge-queued,\n.badge-sourcing ",
+		"[data-theme=\"dark\"] .badge-queued,\n[data-theme=\"dark\"] .badge-sourcing ",
+	} {
+		if !strings.Contains(src, pair) {
+			t.Errorf("status-classes.css: .badge-sourcing is not an alias in queued's rule (want %q)", pair)
+		}
+	}
+	if n := strings.Count(src, ".badge-sourcing"); n != 3 {
+		t.Errorf(".badge-sourcing appears %d times, want 3 (the note and the two aliases): a rule of its own is a second colour for a status that has none", n)
+	}
+}

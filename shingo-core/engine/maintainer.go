@@ -392,7 +392,7 @@ func (m *Maintainer) createAsks(g *nodes.Node, lv store.MaintainLevel, station s
 				g.Name, lv.BinTypeCode, res.Node.Name, aerr)
 			return created, "admit refused"
 		}
-		m.eng.dispatcher.QueueCoreAsk(order, station)
+		m.eng.dispatcher.AcquireCoreAsk(order)
 		created++
 		m.eng.logFn("maintainer: ASK order=%d uuid=%s group=%s type=%s slot=%s origin=%s",
 			order.ID, order.EdgeUUID, g.Name, lv.BinTypeCode, res.Node.Name, episode.OriginID)

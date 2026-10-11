@@ -304,51 +304,16 @@ func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequ
 			"so this attempt can be created; the earlier attempt(s) failed and their rows are kept",
 			binID, freed, need.Ref)
 	}
-	order, err := e.dispatcher.Birth(need, plan.Plan{Outcome: plan.OutcomeFound, Bin: bin, Node: carrierNode, Dest: dest})
-	if err != nil {
-		return nil, "", fmt.Errorf("create recovery order for bin %d: %w", binID, err)
-	}
-	order.RobotID = robotID
-	// ── PERSIST THE PIN, BECAUSE THE INSERT DOES NOT ──────────────────────
-	//
-	// orders.Create's column list has no robot_id (store/orders/orders.go): the
-	// column is written by the vendor-dispatch update, where it records the robot
-	// the FLEET assigned. On this door RobotID means the opposite thing — this
-	// robot and no other, set by the creator — and it was being carried only on
-	// the in-memory struct.
-	//
-	// That was invisible while every path dispatched inside this call:
-	// pinnedVehicleFor read the struct in hand and the pin worked. It stops being
-	// invisible the moment the order can PARK, because whatever re-drives it reads
-	// the order back from the database — and an unpinned unload-only plan tells
-	// some other robot to put down a bin it is not carrying. Measured: the parked
-	// order came back from the scanner with robot_id="".
-	//
-	// Through the existing narrow writer rather than by widening the shared INSERT,
-	// which is a different question and not this door's to answer.
-	//
-	// A FAILED PIN FAILS THE ROW. Returning with the row still pending left an
-	// order holding this pair's one uuid that no scanner pass selects and whose
-	// every re-read would come back unpinned.
-	if err := e.db.UpdateOrderRobotID(order.ID, robotID); err != nil {
-		e.failOrderAndEmit(order.ID, "pin_failed", fmt.Sprintf("could not pin the order to %s: %v", robotID, err))
-		return nil, "", fmt.Errorf("pin recovery order %d to robot %s: %w", order.ID, robotID, err)
-	}
-
-	// ── DISPATCHED HERE, NOT LEFT FOR THE SCANNER ───────────────────────
-	//
-	// The scanner would never pick this up: it sources a move order by FINDING
-	// a bin at the source node, and every finder excludes synthetic nodes —
-	// which is the property that makes a carrier node safe in the first place
-	// (a bin riding a deck must not be sourceable). An order that waits for a
-	// find that cannot happen is an order that sits in sourcing forever,
-	// holding the bin.
-	//
-	// So this door dispatches, in the same shape as the bin-move door: reserve,
-	// ask the lanes, confirm, hand over — with the same rollback on refusal,
-	// because there is a person waiting on the answer either way.
-	if derr := e.dispatchRecoveryOrder(order, bin.ID, carrierNode, dest); derr != nil {
-		return nil, "", derr
+	// THE BIRTH, THE PIN AND THE DISPATCH ARE ONE UNIT UNDER THE SCAN LOCK
+	// (dispatch/door.go; RULINGS-C1-P0 F1). The order is born `pending` with its
+	// bin named and no hold yet, and `pending` is in the scanner's population: a
+	// pass in between would take an unpinned order with no reservation into the
+	// held-bin arm.
+	var order *orders.Order
+	var unitErr error
+	e.door(func() { order, unitErr = e.birthAndDispatchRecovery(need, bin, carrierNode, dest, robotID) })
+	if unitErr != nil {
+		return nil, "", unitErr
 	}
 	// A REAL ORDER NOW OWNS THE QUESTION. Whatever the jack watch had frozen
 	// about where this bin might have been set down is superseded: this order
@@ -383,10 +348,64 @@ func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequ
 	return order, detail, nil
 }
 
-// isParkedOnDeckOrder: waiting in the acquiring set and never handed to the
-// fleet, so no robot is acting on it.
+// birthAndDispatchRecovery is the recovery door's unit under the scan lock: the
+// birth, the robot pin, and the dispatch or the park.
+func (e *Engine) birthAndDispatchRecovery(need dispatch.Need, bin *bins.Bin, carrierNode, dest *nodes.Node, robotID string) (*orders.Order, error) {
+	binID := bin.ID
+	order, err := e.dispatcher.Birth(need, plan.Plan{Outcome: plan.OutcomeFound, Bin: bin, Node: carrierNode, Dest: dest})
+	if err != nil {
+		return nil, fmt.Errorf("create recovery order for bin %d: %w", binID, err)
+	}
+	order.RobotID = robotID
+	// ── PERSIST THE PIN, BECAUSE THE INSERT DOES NOT ──────────────────────
+	//
+	// orders.Create's column list has no robot_id (store/orders/orders.go): the
+	// column is written by the vendor-dispatch update, where it records the robot
+	// the FLEET assigned. On this door RobotID means the opposite thing — this
+	// robot and no other, set by the creator — and it was being carried only on
+	// the in-memory struct.
+	//
+	// That was invisible while every path dispatched inside this call:
+	// pinnedVehicleFor read the struct in hand and the pin worked. It stops being
+	// invisible the moment the order can PARK, because whatever re-drives it reads
+	// the order back from the database — and an unpinned unload-only plan tells
+	// some other robot to put down a bin it is not carrying. Measured: the parked
+	// order came back from the scanner with robot_id="".
+	//
+	// Through the existing narrow writer rather than by widening the shared INSERT,
+	// which is a different question and not this door's to answer.
+	//
+	// A FAILED PIN FAILS THE ROW. Returning with the row still pending left an
+	// order holding this pair's one uuid that no scanner pass selects and whose
+	// every re-read would come back unpinned.
+	if err := e.db.UpdateOrderRobotID(order.ID, robotID); err != nil {
+		e.failOrderAndEmit(order.ID, "pin_failed", fmt.Sprintf("could not pin the order to %s: %v", robotID, err))
+		return nil, fmt.Errorf("pin recovery order %d to robot %s: %w", order.ID, robotID, err)
+	}
+
+	// ── DISPATCHED HERE, NOT LEFT FOR THE SCANNER ───────────────────────
+	//
+	// The scanner would never pick this up: it sources a move order by FINDING
+	// a bin at the source node, and every finder excludes synthetic nodes —
+	// which is the property that makes a carrier node safe in the first place
+	// (a bin riding a deck must not be sourceable). An order that waits for a
+	// find that cannot happen is an order that sits in sourcing forever,
+	// holding the bin.
+	//
+	// So this door dispatches, in the same shape as the bin-move door: reserve,
+	// ask the lanes, confirm, hand over — with the same rollback on refusal,
+	// because there is a person waiting on the answer either way.
+	if derr := e.dispatchRecoveryOrder(order, bin.ID, carrierNode, dest); derr != nil {
+		return nil, derr
+	}
+	return order, nil
+}
+
+// isParkedOnDeckOrder: waiting (`queued`) and never handed to the fleet, so no
+// robot is acting on it. A `pending` one is mid-door, about to be asked, and is
+// not parked (census delta §2).
 func isParkedOnDeckOrder(o *orders.Order) bool {
-	return protocol.IsAcquiring(o.Status) && o.VendorOrderID == ""
+	return protocol.IsWaiting(o.Status) && o.VendorOrderID == ""
 }
 
 // cancelParkedOnDeckOrder cancels a parked on-deck order on the caller's behalf
@@ -521,7 +540,7 @@ func (e *Engine) dispatchRecoveryOrder(order *orders.Order, binID int64, sourceN
 // branch) — the arm that reuses a held bin and never consults a finder. The
 // chain, end to end:
 //
-//   - ListAcquiring selects {queued, sourcing}, so a parked recovery order is in
+//   - ListAcquiring selects {pending, queued}, so a parked recovery order is in
 //     the scan set (store/orders/orders.go).
 //   - It carries no StepsJSON and no parent, so it takes the plain path.
 //   - dispatchHeldBin resolves the SOURCE by name. The carrier node is a real
@@ -560,9 +579,10 @@ func (e *Engine) queueRecoveryForLane(order *orders.Order, destNode *nodes.Node,
 	// come from one computation — see queueBinMoveForLane for what a direct store
 	// write costs here.
 	e.dispatcher.SetQueueReason(order, code, cause, params)
-	if err := e.dispatcher.Lifecycle().Queue(order, "carried-bin-recovery", order.QueueReason); err != nil {
-		// Stuck at `pending`, which no scanner pass selects. Say so loudly and
-		// fail it rather than hand back a row nothing will ever drive.
+	if err := e.dispatcher.Lifecycle().Park(order, "carried-bin-recovery"); err != nil {
+		// The park was refused (the order moved under us, or the cause did not
+		// land). Say so loudly and fail it rather than hand back a row whose wait
+		// nobody can read.
 		e.logFn("engine: parked recovery order %d could not be queued: %v", order.ID, err)
 		e.failOrderAndEmit(order.ID, "lane_park_failed", "the route was not clear and the order could not be queued")
 		if rerr := e.db.ReleaseReservation(order.ID, *order.BinID); rerr != nil {
@@ -571,14 +591,9 @@ func (e *Engine) queueRecoveryForLane(order *orders.Order, destNode *nodes.Node,
 		return &CarriedBinNotRecoverable{BinID: *order.BinID,
 			Reason: fmt.Sprintf("the route to %s was not clear and the order could not be queued: %v", destNode.Name, err)}
 	}
-	// The scanner trigger. Synchronous on this goroutine (wiring.go), so a lane
-	// that is already free dispatches before this call returns.
-	e.Events.Emit(Event{Type: EventOrderQueued, Payload: OrderQueuedEvent{
-		OrderID:     order.ID,
-		EdgeUUID:    order.EdgeUUID,
-		StationID:   order.StationID,
-		PayloadCode: order.PayloadCode,
-	}})
+	// No scan trigger here: this park runs under the scan lock the door holds
+	// (a synchronous pass would deadlock on it), and the lane admission just said
+	// no. The periodic pass and the lane-clearing events re-ask it.
 	return nil
 }
 

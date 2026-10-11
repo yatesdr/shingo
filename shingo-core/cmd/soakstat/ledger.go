@@ -226,7 +226,7 @@ var movedNode = regexp.MustCompile(`node=(\d+)`)
 //
 // ONE SNAPSHOT. The six reads run in one read-only REPEATABLE READ transaction,
 // so a sample cannot straddle another transaction's commit. Read as separate
-// statements, a sample could see an order still `sourcing` (the orders read)
+// statements, a sample could see an order still pre-dispatch (the orders read)
 // and the holds its hand committed a moment later (the reservations read), and
 // the classifier then filed a coordinated pair inside its dispatch as
 // holds-at-rest (Stage A certification, 2026-09-26: four hits, all of that

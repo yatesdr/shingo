@@ -72,8 +72,8 @@
                      and those are different days on a line.
 
                      Its instant is a LOCAL fact: this Edge appends an
-                     order_history row on every transition it applies, Core's
-                     sourcing pushes included, so WaitSince (service.OrderService)
+                     order_history row on every transition it applies, so
+                     WaitSince (service.OrderService)
                      answers it without anything new crossing the wire. Absent for
                      anything not waiting, which keeps a ticking duration off an
                      order the fleet is already carrying. data-since is the same

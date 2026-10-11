@@ -133,7 +133,7 @@ eq(headerModel(entry('consume', null, [])).text, 'AWAITING FULL', 'consume idle:
 
 // ─────────────────────────── acknowledged de-aliased from in_transit ───────────────────────────
 // acknowledged used to be bucketed with in_transit ("IN TRANSIT") while Core
-// ACKs at intake, pre-sourcing — the operator saw a moving robot for an order
+// ACKs at intake, pre-dispatch — the operator saw a moving robot for an order
 // still hunting bins. acknowledged must render as its OWN step, never as IN
 // TRANSIT, in both the card and the header.
 

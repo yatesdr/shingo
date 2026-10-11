@@ -69,7 +69,8 @@ func TestStatusCanTransitionTo(t *testing.T) {
 		from, to Status
 		want     bool
 	}{
-		{StatusPending, StatusSourcing, true},
+		{StatusPending, StatusDispatched, true},
+		{StatusPending, StatusSourcing, false}, // history only (C1)
 		{StatusSourcing, StatusDispatched, true},
 		{StatusDelivered, StatusConfirmed, true},
 		{StatusConfirmed, StatusPending, false}, // terminal
@@ -166,6 +167,7 @@ var predicateProjectorPairs = []struct {
 	{"IsVendorTracked", IsVendorTracked, VendorTrackedStatusSQLList},
 	{"IsPreDispatch", IsPreDispatch, PreDispatchStatusSQLList},
 	{"IsAcquiring", IsAcquiring, AcquiringStatusSQLList},
+	{"IsWaiting", IsWaiting, WaitingStatusSQLList},
 	{"CanHoldWait", CanHoldWait, CanHoldWaitStatusSQLList},
 	{"IsRuntimeStuckCandidate", IsRuntimeStuckCandidate, RuntimeStuckCandidateStatusSQLList},
 	{"IsStuckSweepCandidate", IsStuckSweepCandidate, StuckSweepStatusSQLList},
@@ -506,13 +508,17 @@ func TestAcquiringStatusesRaiseAnAnomalyButAreNeverSwept(t *testing.T) {
 // what acquiring IS. A page that wants a broader set widens LOCALLY, and
 // handlers_orders.go's orderIsWaiting does.
 //
+// It moved once, by ruling: C1 made it the ladder's {pending, queued} (v4 §2.6,
+// BRIEF C1.1.4), since every order is born pending and the scanner must see it.
+// A cause that describes a wait going on now is IsWaiting's, not this.
+//
 // The pair table above already asserts that the projector and the predicate
 // agree. That catches a drift between them; it cannot catch both being widened
 // together, which is exactly the change this exists to refuse. So the string is
 // spelled out here, and a genuine widening has to come and delete a paragraph.
 func TestAcquiringStatusSQLListIsByteUnchanged(t *testing.T) {
 	t.Parallel()
-	const want = `'queued','sourcing'`
+	const want = `'pending','queued'`
 	if got := AcquiringStatusSQLList(); got != want {
 		t.Errorf("AcquiringStatusSQLList() = %s, want %s.\n"+
 			"Acquiring means PRE-DISPATCH, NO ROBOT COMMITTED, and four readers depend on that "+

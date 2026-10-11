@@ -278,7 +278,7 @@ func templateFuncs(namer stationNamer) template.FuncMap {
 		},
 		"statusColor": func(status string) string {
 			switch protocol.Status(status) {
-			case protocol.StatusPending, protocol.StatusSourcing:
+			case protocol.StatusPending:
 				return "bg-yellow-100 text-yellow-800"
 			case protocol.StatusDispatched:
 				return "bg-blue-100 text-blue-800"

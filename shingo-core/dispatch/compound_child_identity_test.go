@@ -63,7 +63,8 @@ func TestCompoundChild_IdentityIsMintedNotDerived(t *testing.T) {
 	// deleted, and driving the door production drives is what makes the collision
 	// this test pins a collision that can actually happen.
 	testutil.MustNoErr(t, d.CreateCompoundOrder(parent, plan), "first plan")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(parent.ID, string(StatusQueued), "dissolved; re-planning"), "requeue for the re-plan")
+	// (C1: a dissolve resumes the parent `reshuffling → pending`.)
+	testutil.MustNoErr(t, db.UpdateOrderStatus(parent.ID, string(StatusPending), "dissolved; re-planning"), "resume for the re-plan")
 	parent, _ = db.GetOrder(parent.ID)
 	if err := d.CreateCompoundOrder(parent, plan); err != nil {
 		t.Fatalf("re-planning the same parent failed: %v\n"+

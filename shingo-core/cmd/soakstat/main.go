@@ -358,7 +358,7 @@ func pairMeasures(db *store.DB, u *unrun, violations []string, lanes []laneShape
 	}
 	p.dispatches = count(`SELECT COUNT(*) FROM order_history WHERE status = $1`, string(protocol.StatusDispatched))
 	p.parks = count(fmt.Sprintf(`SELECT COUNT(*) FROM order_history WHERE status IN (%s)`,
-		protocol.StatusSQLList(protocol.IsAcquiring)))
+		protocol.WaitingStatusSQLList()))
 	for _, v := range violations {
 		if strings.HasPrefix(v, stalledPrefix) {
 			p.wedges++
@@ -479,9 +479,9 @@ func orderCounts(db *store.DB, u *unrun) counts {
 	c.completed = u.read(db, measureOrders+" completed", `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusConfirmed))
 	c.failed = u.read(db, measureOrders+" failed", `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusFailed))
 	c.cancelled = u.read(db, measureOrders+" cancelled", `SELECT COUNT(*) FROM orders WHERE status = $1`, string(protocol.StatusCancelled))
-	// Pre-dispatch, from the predicate rather than typed out: {pending, queued,
-	// sourcing} is IsPreDispatch, and a status joining that family must join this
-	// count with it.
+	// Pre-dispatch, from the predicate rather than typed out: {pending, queued} is
+	// IsPreDispatch, and a status joining that family must join this count with
+	// it.
 	c.queued = u.read(db, measureOrders+" queued", fmt.Sprintf(
 		`SELECT COUNT(*) FROM orders WHERE status IN (%s)`, protocol.PreDispatchStatusSQLList()))
 	c.inFlight = u.read(db, measureOrders+" in-flight", fmt.Sprintf(
@@ -528,8 +528,8 @@ func (p stallPopulation) clause() string {
 //     decision, so the threshold is the length of somebody else's lane transit.
 //   - PARKED is pre-dispatch: no robot is committed, the order is waiting for
 //     material, a slot, a lane or the fleet. Long waits here are legitimate.
-//     IsPreDispatch is exactly this set — {pending, sourcing, queued} — and using
-//     the predicate rather than naming `queued` is the fix.
+//     IsPreDispatch is exactly this set — {pending, queued} — and using the
+//     predicate rather than naming `queued` is the fix.
 //   - IN FLIGHT is everything else non-terminal: handed over, moving, or waiting
 //     on a human (delivered), plus the compound parent's own `reshuffling`.
 var stallPopulations = []stallPopulation{
@@ -1621,12 +1621,10 @@ func checkTerminalOrderReservations(db *store.DB) []string {
 // checkQueuedWithoutCause reports an order waiting five minutes with no cause on
 // the row.
 //
-// THE WHOLE ACQUIRING SET, not the `queued` literal it used to name. The fleet
-// demote door parks its refusals in `sourcing` — deliberately, and for the whole
-// of the meaning migration — and its undo-only arm writes no cause at all,
-// leaving the caller to choose one. So the one instrument that asks "is anybody
-// parked with nothing to explain it" was blind to the population most likely to
-// be in that state, and to every other sourcing park besides.
+// THE WAITING SET (IsWaiting, `queued`): the plant twin of C1.1.5's pin, that no
+// `queued` write is made without a code. It read the whole acquiring set while
+// the old ladder parked in `sourcing` too; `pending` is not a wait (an order is
+// born there and asked at once), so it reads `queued` now.
 func checkQueuedWithoutCause(db *store.DB) []string {
 	var out []string
 
@@ -1638,7 +1636,7 @@ func checkQueuedWithoutCause(db *store.DB) []string {
 		WHERE status IN (%s)
 		  AND (queue_cause IS NULL OR queue_cause = '')
 		  AND created_at < now() - interval '5 minutes'`,
-		protocol.AcquiringStatusSQLList()))
+		protocol.WaitingStatusSQLList()))
 	if err != nil {
 		return append(out, failedToRun("waiting with no cause", err))
 	}

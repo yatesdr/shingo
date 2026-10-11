@@ -76,7 +76,7 @@ func prResolved(steps ...protocol.ComplexOrderStep) []resolvedStep {
 }
 
 // prLegRow inserts one leg of a coordinated pair as intake leaves it: born
-// `sourcing`, coordinated, naming its partner. Used where the pass, not intake,
+// `pending` (C1), coordinated, naming its partner. Used where the pass, not intake,
 // has to be what meets the condition under test.
 func prLegRow(t *testing.T, db *store.DB, uuid, sibling, processNode, deliveryNode, sourceNode, payload string,
 	steps []resolvedStep) *orders.Order {
@@ -84,7 +84,7 @@ func prLegRow(t *testing.T, db *store.DB, uuid, sibling, processNode, deliveryNo
 	j, err := json.Marshal(steps)
 	testutil.MustNoErr(t, err, "marshal steps "+uuid)
 	o := &orders.Order{
-		EdgeUUID: uuid, StationID: "line-1", OrderType: OrderTypeComplex, Status: StatusSourcing,
+		EdgeUUID: uuid, StationID: "line-1", OrderType: OrderTypeComplex, Status: StatusPending,
 		Quantity: 1, PayloadCode: payload, SourceNode: sourceNode, DeliveryNode: deliveryNode,
 		ProcessNode: processNode, SiblingOrderUUID: sibling, Coordinated: true, StepsJSON: string(j),
 	}

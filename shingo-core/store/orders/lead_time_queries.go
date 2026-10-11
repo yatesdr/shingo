@@ -53,8 +53,9 @@ type LeadTimeRange struct {
 //
 // AND IT STARTS AT domain.AcquiringEntryStatuses, THE SAME SEAM THE DWELL PAIR
 // USES. It began at `queued` alone, which is a rung an order need not ever stand
-// on: a complex order is born `sourcing`, writes no queued row, and vanished
-// from this mean without appearing as a gap. The whole reason this helper is
+// on: an order its first hand takes goes pending → dispatched and writes no
+// queued row (and complex orders, born `sourcing` before C1, wrote none either),
+// so it would vanish from this mean without appearing as a gap. The whole reason this helper is
 // worth getting right is that its answer becomes a reorder point, and a reorder
 // point computed from a silently-narrowed population is wrong in the direction
 // that under-replenishes.

@@ -485,16 +485,12 @@ func (e *Engine) wireEventHandlers() {
 	// further down, immediately after the handleBlockCompleted subscription,
 	// because it must observe the mouth row that handler releases. See there.
 
-	// Sync trigger for fresh-intake (Phase 4b): EventOrderQueued.
-	// HandleComplexOrderRequest creates new complex orders (born `sourcing`)
-	// and fires this event; the scanner is the single sync point that calls
-	// DispatchPreparedComplex, so capacity decisions are serialized via
-	// scan-mu (no TOCTOU between two concurrent fresh intakes for the
-	// same dropoff). Synchronous so the dispatched-status transition is
-	// observable on return from HandleComplexOrderRequest — the existing
-	// test fixtures rely on that ordering, and operator-facing latency
-	// expectations don't tolerate "queued for ~1ms while a goroutine
-	// gets scheduled." Untyped subscribe — handler doesn't read payload.
+	// Sync trigger on EventOrderQueued. The doors no longer emit it — each asks
+	// for its order's one acquire under the scan lock it holds (dispatch/door.go)
+	// — so what emits it is a caller outside any door that parked an order and
+	// wants the waiting set asked again at once (the carried-bin recovery's lane
+	// park). Synchronous, so its effect is observable on return. Untyped
+	// subscribe — handler doesn't read payload.
 	e.Events.SubscribeTypes(func(Event) {
 		if e.fulfillment != nil {
 			e.fulfillment.RunOnce()
@@ -575,11 +571,9 @@ func (e *Engine) wireEventHandlers() {
 	// Runs third for EventOrderQueued — after the sync scanner (1st) and
 	// the audit handler (2nd) above — so the scanner's latest
 	// SetOrderQueueDetail call is visible when we read the order back.
-	// Only pushes if the order is still acquiring (queued or sourcing — the
-	// scanner didn't dispatch) and carries a non-empty blocking reason; orders
-	// the scanner dispatched transition out of the acquiring set, suppressing
-	// the push. Widened from queued-only to the acquiring set so a `sourcing`
-	// order's block reason still reaches Edge (its actual status rides along).
+	// Only pushes if the order is waiting (queued) and carries a non-empty
+	// blocking reason; an order the scanner dispatched is not waiting, which
+	// suppresses the push.
 	// The event carries the wait the order was announced with, so a change the
 	// scan already told the station is not sent again (pushQueueReason).
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderQueuedEvent]) {
@@ -587,32 +581,42 @@ func (e *Engine) wireEventHandlers() {
 		e.pushQueueReason(ev.OrderID, ev.EdgeUUID, ev.StationID, &ev.Announced)
 	}, EventOrderQueued)
 
-	// ── Resume push: the parent left `reshuffling` ────────────────────────
+	// ── Resume: the parent left `reshuffling` for `pending` (F2) ──────────
 	//
-	// UNCONDITIONAL, WHICH IS THE POINT. The queue-reason push above returns
-	// early without a block sentence and without an acquiring status; a resumed
-	// parent has neither, so it fell through both and the Edge never learned the
-	// order had left `reshuffling`. Its mirror then rejected every later push as
-	// an illegal jump and the order became unreleasable — three robots a run.
+	// The parent is not waiting on anything, so it gets its one acquire at once,
+	// and then its station is told where it LANDED. Both are needed: the periodic
+	// pass is up to a minute away, and the Edge's mirror sits at `reshuffling`
+	// until told — a mirror never told the parent left it refused every later
+	// push as an illegal jump (three robots a run, lane-stress 2026-08-11).
 	//
-	// Status is written as `queued` rather than read back off the row: by the
-	// time this runs the in-band scanner may already have dispatched the order,
-	// and the Edge needs the step it MISSED, not the one Core is on now.
-	// reshuffling → queued is the only legal edge out of reshuffling toward the
-	// live path, so it is the one the mirror has to be walked through.
+	// WHAT THE STATION IS TOLD:
+	//   - `queued`: the acquire parked it, and its park told the station, with
+	//     the cause (the scanner's park tail). Nothing more here.
+	//   - `dispatched`, coordinated: complex dispatch sends the station nothing
+	//     of its own, so this says it.
+	//   - `dispatched`, plain: the acquire's own ack and waybill already said it.
+	//     A `dispatched` push after them would walk the mirror backwards
+	//     (in_transit → dispatched); the ack walks it forward from `reshuffling`.
+	//   - `pending` never (an old Edge has no arm for it; PREDICTIONS-C1 §1.5).
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderResumedEvent]) {
 		ev := evt.Payload
-		if ev.EdgeUUID == "" || ev.StationID == "" || e.stationUnaware(ev.OrderID) {
+		if e.fulfillment == nil {
+			return
+		}
+		e.fulfillment.AcquireOne(ev.OrderID)
+		if ev.EdgeUUID == "" || ev.StationID == "" {
+			return
+		}
+		order, err := e.db.GetOrder(ev.OrderID)
+		if err != nil || order.StationUnaware || order.Status != protocol.StatusDispatched || !order.Coordinated {
 			return
 		}
 		if err := e.sendToEdge(protocol.TypeOrderUpdate, ev.StationID, &protocol.OrderUpdate{
 			OrderUUID: ev.EdgeUUID,
-			Status:    string(protocol.StatusQueued),
-			Detail:    "reshuffle complete; parent requeued",
+			Status:    string(protocol.StatusDispatched),
+			Detail:    "reshuffle complete; parent dispatched",
 		}); err != nil {
 			e.logFn("engine: resume notification to edge for order %d: %v", ev.OrderID, err)
-		} else {
-			e.dbg("resume notification sent to edge: station=%s uuid=%s", ev.StationID, ev.EdgeUUID)
 		}
 	}, EventOrderResumed)
 
@@ -868,7 +872,7 @@ func (e *Engine) pushQueueReason(orderID int64, edgeUUID, stationID string, anno
 	}
 	// An order its station has no row for is sent nothing (the orc's Stop 1
 	// ruling).
-	if order.StationUnaware || !protocol.IsAcquiring(order.Status) || order.QueueReason == "" {
+	if order.StationUnaware || !protocol.IsWaiting(order.Status) || order.QueueReason == "" {
 		return
 	}
 	if announced != nil && dispatch.WaitTold(*announced, dispatch.WaitOf(order)) {

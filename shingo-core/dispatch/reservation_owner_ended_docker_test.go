@@ -135,7 +135,7 @@ func TestReservations_NoneWrittenForAnOrderEndedBeforeThePass(t *testing.T) {
 func TestReservations_NoneWrittenAlongsideAnOpenTerminalize(t *testing.T) {
 	t.Parallel()
 	f := seedEndedOwner(t, "ROE2")
-	other := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = StatusSourcing })
+	other := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = StatusPending })
 	bins, err := f.db.ListBinsByNode(f.src.ID)
 	testutil.MustNoErr(t, err, "bins")
 	binID := bins[0].ID
@@ -173,7 +173,7 @@ func TestReservations_NoneWrittenAlongsideAnOpenTerminalize(t *testing.T) {
 			if form.setup != nil {
 				form.setup()
 			}
-			owner := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = StatusSourcing })
+			owner := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = StatusPending })
 			tx, err := f.db.DB.Begin()
 			testutil.MustNoErr(t, err, "begin the terminalize")
 			defer tx.Rollback()

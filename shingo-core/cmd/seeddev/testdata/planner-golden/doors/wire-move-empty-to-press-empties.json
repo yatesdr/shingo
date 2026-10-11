@@ -8,8 +8,7 @@
   "decision": {
     "events": [
       "received",
-      "dispatched",
-      "queued"
+      "dispatched"
     ],
     "fleet": [
       {
@@ -51,8 +50,7 @@
     "replies": [
       "data.order.projected status=pending",
       "order.ack",
-      "order.waybill",
-      "order.update status=queued"
+      "order.waybill"
     ]
   }
 }

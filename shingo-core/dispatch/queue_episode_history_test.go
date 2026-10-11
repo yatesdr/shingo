@@ -34,10 +34,11 @@ func historyPairs(t *testing.T, db *store.DB, orderID int64) [][2]string {
 // changeover leg's wait history was never recorded at all.
 //
 // The source bin here is present but taken by another order — sourceable once
-// that order finishes, so the reserve HOLDS. That is the reserve-holding park,
-// and it happens after MoveToSourcing, so the order rests in `sourcing`: the
-// cause must land on the SOURCING row, the wait it describes, and the queued
-// birth row it left must be untouched, which is the mis-attribution half.
+// that order finishes, so the reserve HOLDS. That is the reserve-holding park.
+// The order rests in `queued` (C1: a waiting order is `queued`; there is no
+// `sourcing` rung), so the cause must land on a `queued` row of its own, the
+// wait it describes, and the birth row must be untouched, which is the
+// mis-attribution half.
 func TestComplexPark_TheWaitLandsOnItsOwnEpisode(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
@@ -48,7 +49,7 @@ func TestComplexPark_TheWaitLandsOnItsOwnEpisode(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(nodeA), "node A")
 	binA := testdb.CreateBinAtNode(t, db, bp.Code, nodeA.ID, "QEH-BIN-A")
 	other := &orders.Order{EdgeUUID: "qeh-other", StationID: "s", OrderType: OrderTypeRetrieve,
-		Status: StatusSourcing, Quantity: 1}
+		Status: StatusDispatched, Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(other), "create the holding order")
 	testdb.ClaimBinForTest(t, db, binA.ID, other.ID)
 
@@ -57,7 +58,8 @@ func TestComplexPark_TheWaitLandsOnItsOwnEpisode(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: lineNode.Name},
 	}
 	order := mkComplexOrder(t, db, "qeh-partial", nodeA.Name, nodeA.Name, lineNode.Name, bp.Code, steps)
-	// Born `queued` by the INSERT, exactly as complex intake writes it.
+	// Born `queued` by the INSERT, as complex intake wrote it before C1 (now it is
+	// born `pending`): the state of an order already parked, asked again.
 	_, err := db.DB.Exec(`UPDATE orders SET status=$1 WHERE id=$2`, string(StatusQueued), order.ID)
 	testutil.MustNoErr(t, err, "born queued")
 	_, err = db.DB.Exec(`UPDATE order_history SET status=$1 WHERE order_id=$2`, string(StatusQueued), order.ID)
@@ -78,17 +80,20 @@ func TestComplexPark_TheWaitLandsOnItsOwnEpisode(t *testing.T) {
 		t.Fatal("the order has no history at all")
 	}
 	last := pairs[len(pairs)-1]
-	if last[0] != string(StatusSourcing) || last[1] != string(protocol.QueueWaitingForMaterial) {
-		t.Errorf("the wait's own row = %v, want [sourcing %s].\n"+
-			"A complex order parks in sourcing, so that is the episode its cause describes. Full history: %v",
+	if last[0] != string(StatusQueued) || last[1] != string(protocol.QueueWaitingForMaterial) {
+		t.Errorf("the wait's own row = %v, want [queued %s].\n"+
+			"A complex order waits in queued, and its cause opens a row of its own. Full history: %v",
 			last, protocol.QueueWaitingForMaterial, pairs)
+	}
+	if len(pairs) < 2 {
+		t.Fatalf("the wait wrote no row of its own. Full history: %v", pairs)
 	}
 	if pairs[0][0] != string(StatusQueued) {
 		t.Fatalf("history[0] = %v, want the queued birth row. Full history: %v", pairs[0], pairs)
 	}
 	if pairs[0][1] != "" {
 		t.Errorf("the birth row carries code %q. It is a PREVIOUS episode: nothing was waiting when the "+
-			"order was created, and a cause written for the sourcing wait must not be attributed to it. Full history: %v",
+			"order was created, and a cause written for the later wait must not be attributed to it. Full history: %v",
 			pairs[0][1], pairs)
 	}
 }
@@ -99,7 +104,8 @@ func TestComplexPark_TheWaitLandsOnItsOwnEpisode(t *testing.T) {
 // It is the case round 6 found and it is the worse one: an order parked in
 // `sourcing` had its cause written onto its last QUEUED row — a different,
 // earlier wait, minutes old — so the time series carried the new reason at the
-// old moment, on the old rung.
+// old moment, on the old rung. (C1: there is no `sourcing` rung; the second wait
+// is a changed cause on the same `queued` rest, which opens its own row.)
 func TestOrders_ASecondWaitDoesNotRewriteTheFirst(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
@@ -114,12 +120,6 @@ func TestOrders_ASecondWaitDoesNotRewriteTheFirst(t *testing.T) {
 	testutil.MustNoErr(t, db.SetOrderQueueDetail(o.ID,
 		"Storage is being rearranged", protocol.QueueStorageRearranging, string(CauseLaneHeldTraffic)), "first wait")
 
-	moved, err := db.UpdateOrderStatusFromWithReason(o.ID,
-		string(StatusQueued), string(StatusSourcing), "reserving source bins", store.HistoryReason{})
-	testutil.MustNoErr(t, err, "queued→sourcing")
-	if !moved {
-		t.Fatal("queued→sourcing refused")
-	}
 	testutil.MustNoErr(t, db.SetOrderQueueDetail(o.ID,
 		"Waiting for material: PART-A", protocol.QueueWaitingForMaterial, string(CauseReserveHolding)), "second wait")
 
@@ -128,8 +128,7 @@ func TestOrders_ASecondWaitDoesNotRewriteTheFirst(t *testing.T) {
 	want := [][2]string{
 		{string(StatusQueued), ""},
 		{string(StatusQueued), string(protocol.QueueStorageRearranging)},
-		{string(StatusSourcing), ""},
-		{string(StatusSourcing), string(protocol.QueueWaitingForMaterial)},
+		{string(StatusQueued), string(protocol.QueueWaitingForMaterial)},
 	}
 	got := historyPairs(t, db, o.ID)
 	if len(got) != len(want) {

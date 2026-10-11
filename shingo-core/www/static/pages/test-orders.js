@@ -108,7 +108,9 @@ function renderOrdersTable(orders, containerId, isKafka) {
   html += '</tr></thead><tbody>';
   for (var i = 0; i < orders.length; i++) {
     var o = orders[i];
-    var isActive = ['pending','sourcing','dispatched','in_transit','delivered'].indexOf(o.status) >= 0;
+    // The orders a person might still act on: pre-fleet (pending, and queued,
+    // which is where the old `sourcing` rows rest since C1) and in flight.
+    var isActive = ['pending','queued','dispatched','in_transit','delivered'].indexOf(o.status) >= 0;
     var isDelivered = o.status === 'delivered';
     html += '<tr>';
     html += '<td>' + o.id + '</td>';

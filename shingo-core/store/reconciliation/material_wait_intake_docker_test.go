@@ -36,7 +36,7 @@ func TestListAnomalies_AMaterialWaitParkedByTheResolverKeepsTheLongerBound(t *te
 
 	mk := func(uuid, code, cause string, ageSeconds int) int64 {
 		o := &orders.Order{EdgeUUID: uuid, StationID: "edge.1", OrderType: "complex",
-			Status: "sourcing", Quantity: 1, DeliveryNode: node.Name}
+			Status: "queued", Quantity: 1, DeliveryNode: node.Name}
 		if err := orders.Create(db.DB, o); err != nil {
 			t.Fatalf("create %s: %v", uuid, err)
 		}

@@ -95,16 +95,21 @@ func TestLaneEntry_MotionlessWitnessStopsBlocking(t *testing.T) {
 	}
 
 	// ── leg 3: the FLAPPING witness still parks ────────────────────────────
-	// The aged witness transitions (queued → sourcing → queued): a real
-	// status change writes fresh rows, the clock restarts, and the witness is
-	// live again no matter how old its earlier rows are.
-	for _, status := range []string{"sourcing", "queued"} {
-		if _, err := db.Exec(`UPDATE orders SET status=$1 WHERE id=$2`, status, aged.ID); err != nil {
-			t.Fatalf("flap to %s: %v", status, err)
+	// The aged witness transitions (queued → dispatched → queued, a fleet refusal
+	// and its park): a real status change writes fresh rows, the clock restarts,
+	// and the witness is live again no matter how old its earlier rows are. (C1:
+	// the flap was queued → sourcing → queued, and `sourcing` is no longer a
+	// status; a park into `queued` carries its cause on its row.)
+	for _, flap := range []struct{ status, code string }{
+		{"dispatched", ""},
+		{"queued", "fleet_unavailable"},
+	} {
+		if _, err := db.Exec(`UPDATE orders SET status=$1 WHERE id=$2`, flap.status, aged.ID); err != nil {
+			t.Fatalf("flap to %s: %v", flap.status, err)
 		}
-		if _, err := db.Exec(`INSERT INTO order_history (order_id, status, detail, created_at)
-			VALUES ($1, $2, 'fixture flap', $3)`, aged.ID, status, clock.Now().UTC()); err != nil {
-			t.Fatalf("flap history %s: %v", status, err)
+		if _, err := db.Exec(`INSERT INTO order_history (order_id, status, detail, code, created_at)
+			VALUES ($1, $2, 'fixture flap', $3, $4)`, aged.ID, flap.status, flap.code, clock.Now().UTC()); err != nil {
+			t.Fatalf("flap history %s: %v", flap.status, err)
 		}
 	}
 	v, err = d.laneEntryCause(laneNode, shallow, s0)

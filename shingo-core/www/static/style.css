@@ -958,7 +958,6 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .ofilter-dot { width:7px; height:7px; border-radius:50%; background:var(--text-muted); flex-shrink:0; }
 .ofilter.is-active .ofilter-dot { background:#fff; }
 .ofilter-dot[data-status="pending"]     { background:var(--status-pending-dot); }
-.ofilter-dot[data-status="sourcing"]    { background:var(--status-sourcing-dot); }
 .ofilter-dot[data-status="queued"]      { background:var(--status-queued-dot); }
 .ofilter-dot[data-status="dispatched"]  { background:var(--status-dispatched-dot); }
 .ofilter-dot[data-status="in_transit"]  { background:var(--status-in-transit-dot); }
@@ -1049,7 +1048,6 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 }
 .to-status { display:inline-block; padding:2px 8px; border-radius:3px; font-size:.8rem; font-weight:600; }
 .to-status-pending { background:#eef0f2; color:#4b5563; }
-.to-status-sourcing { background:#eef0f2; color:#4b5563; }
 .to-status-dispatched { background:#bfdbfe; color:#1d4ed8; }
 .to-status-in_transit { background:#a5f3fc; color:#0e7490; }
 .to-status-delivered { background:#bbf7d0; color:#166534; }

@@ -25,7 +25,7 @@ import (
 //
 // ── The live way in, and the ruling ───────────────────────────────────────
 // HandleOrderRedirect → PrepareRedirect (cancels the vendor order, rewrites
-// delivery_node, moves to sourcing — no coordinated check) → dispatchToFleet.
+// delivery_node, back to the acquiring ladder — no coordinated check) → dispatchToFleet.
 //
 // THE FIX IS TO REFUSE THE REDIRECT, not merely to guard the valve, and the
 // reason is that the guard alone silently picks the worse of two failures:
@@ -127,7 +127,7 @@ func TestRedirect_CoordinatedOrderIsRefused(t *testing.T) {
 	// order into the same slot must take the valve and ship UNSEALED.
 	plain := testdb.CreateOrder(t, db, func(po *orders.Order) {
 		po.DeliveryNode = s1.Name
-		po.Status = "sourcing"
+		po.Status = "pending"
 	})
 	before := len(backend.CreateRequests())
 	if _, err := d.DispatchDirect(plain, lineNode, s1); err != nil {

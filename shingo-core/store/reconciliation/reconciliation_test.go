@@ -171,8 +171,8 @@ func TestListAnomalies_MaterialWaitGetsTheLongerBound(t *testing.T) {
 	oldMaterial := mk("m-old", "queued", "finder-pool-empty", 10800)    // 3h — over it
 	staleDispatched := mk("d-old", "dispatched", "", 3600)              // 1h — 30m bound applies
 	// The two the rung-keyed version got wrong, one in each direction.
-	restingClaimFailed := mk("q-claim", "queued", "claim-failed", 3600)    // 1h queued — used to be silent
-	sourcingShortage := mk("s-mat", "sourcing", "finder-pool-empty", 3600) // 1h sourcing — used to alarm
+	restingClaimFailed := mk("q-claim", "queued", "claim-failed", 3600)  // 1h queued — used to be silent
+	pendingShortage := mk("s-mat", "pending", "finder-pool-empty", 3600) // 1h pending — a rung, not the cause (it was `sourcing`, which used to alarm, before C1)
 
 	anomalies, err := reconciliation.ListAnomalies(db.DB)
 	if err != nil {
@@ -205,10 +205,9 @@ func TestListAnomalies_MaterialWaitGetsTheLongerBound(t *testing.T) {
 			"rung it got two hours of silence, and claim-failed has no releaser that arrives on " +
 			"its own — the record names a resting claim-failed as the anomaly, not the wait.")
 	}
-	if flagged[sourcingShortage] {
-		t.Error("a SOURCING order waiting an hour on an empty pool was flagged. Keyed on the rung " +
-			"it got the 30-minute alarm on the grounds that `sourcing` is transient — which is " +
-			"false of complex orders, which rest there while re-shopping and are now born there.")
+	if flagged[pendingShortage] {
+		t.Error("a PENDING order waiting an hour on an empty pool was flagged. Keyed on the rung " +
+			"it would get the 30-minute alarm (as `sourcing` once did); the bound keys on the cause.")
 	}
 }
 
@@ -322,7 +321,8 @@ func TestCompletionAnomalies_ACompoundParentIsNotAMissingBin(t *testing.T) {
 // against a bound it would never reach.
 //
 // The fixture below is that order: a fresh updated_at over an old last
-// transition. Under the updated_at clock it raises nothing.
+// transition. Under the updated_at clock it raises nothing. (C1: it rests in
+// `queued` under the lane hold's code; `sourcing` is no longer a status.)
 func TestListAnomalies_ARetryingOrderCannotRefreshItsOwnStalenessTimer(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -345,15 +345,15 @@ func TestListAnomalies_ARetryingOrderCannotRefreshItsOwnStalenessTimer(t *testin
 		o.ID); err != nil {
 		t.Fatalf("backdate the birth row: %v", err)
 	}
-	// Parked in `sourcing` an hour ago — that is the last thing that HAPPENED.
+	// Parked in `queued` an hour ago — that is the last thing that HAPPENED.
 	if _, err := db.DB.Exec(
-		`INSERT INTO order_history (order_id, status, detail, created_at)
-		 VALUES ($1, 'sourcing', 'reserving source bins', NOW() - INTERVAL '1 hour')`, o.ID); err != nil {
+		`INSERT INTO order_history (order_id, status, detail, code, created_at)
+		 VALUES ($1, 'queued', 'Storage is being rearranged', 'storage_rearranging', NOW() - INTERVAL '1 hour')`, o.ID); err != nil {
 		t.Fatalf("seed the last real transition: %v", err)
 	}
 	// ...and touched one second ago by the retry loop, over and over since.
 	if _, err := db.DB.Exec(
-		`UPDATE orders SET status='sourcing',
+		`UPDATE orders SET status='queued',
 		        created_at = NOW() - INTERVAL '1 hour',
 		        updated_at = NOW() - INTERVAL '1 second'
 		 WHERE id=$1`, o.ID); err != nil {

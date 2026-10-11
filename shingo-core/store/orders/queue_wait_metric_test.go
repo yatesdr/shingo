@@ -55,7 +55,8 @@ func TestQueueWaitMetrics_MeasureATransitionCoreActuallyWrites(t *testing.T) {
 		}
 		testutil.MustNoErr(t, orders.Create(db, o), "create "+uuid)
 		for _, e := range evs {
-			_, err := db.Exec(`INSERT INTO order_history (order_id, status, created_at) VALUES ($1,$2,$3)`,
+			_, err := db.Exec(`INSERT INTO order_history (order_id, status, created_at, code)
+				VALUES ($1,$2,$3, CASE WHEN $2 = 'queued' THEN 'waiting_for_material' END)`,
 				o.ID, string(e.status), base.Add(e.off))
 			testutil.MustNoErr(t, err, "hist "+uuid+" "+string(e.status))
 		}
@@ -132,14 +133,16 @@ func TestAcquiringEntrySeamIsSpelledOnce(t *testing.T) {
 	}
 }
 
-// TestQueueWaitMetrics_CountAnOrderBornSourcing is the population the birth-rung
-// move would otherwise have deleted from both instruments.
+// TestQueueWaitMetrics_CountAnOrderThatNeverQueued is the population the
+// birth-rung move would otherwise have deleted from both instruments.
 //
-// A complex order is born `sourcing` and writes no `queued` history row. Keyed
-// on `queued` alone, every one of them left time_to_dispatch and
-// AvgL1QueueSeconds without appearing as a gap — and a mean computed over a
-// silently narrowed population becomes a reorder point that under-replenishes.
-func TestQueueWaitMetrics_CountAnOrderBornSourcing(t *testing.T) {
+// An order its first hand takes writes no `queued` history row (C1: born
+// `pending`, pending → dispatched; before C1 the same family was the complex
+// order born `sourcing`). Keyed on `queued` alone, every one of them left
+// time_to_dispatch and AvgL1QueueSeconds without appearing as a gap — and a mean
+// computed over a silently narrowed population becomes a reorder point that
+// under-replenishes.
+func TestQueueWaitMetrics_CountAnOrderThatNeverQueued(t *testing.T) {
 	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
@@ -148,10 +151,10 @@ func TestQueueWaitMetrics_CountAnOrderBornSourcing(t *testing.T) {
 	win := orders.LeadTimeRange{Start: base.Add(-time.Hour), End: base.Add(2 * time.Hour)}
 	s := time.Second
 
-	// Born sourcing: no queued row anywhere in its history.
+	// Born pending and taken by its first hand: no queued row anywhere in its history.
 	o := &domain.Order{
-		EdgeUUID: "born-sourcing", StationID: "line-1", OrderType: protocol.OrderTypeRetrieveEmpty,
-		Status: protocol.StatusSourcing, Quantity: 1, PayloadCode: "PART-BS",
+		EdgeUUID: "never-queued", StationID: "line-1", OrderType: protocol.OrderTypeRetrieveEmpty,
+		Status: protocol.StatusPending, Quantity: 1, PayloadCode: "PART-BS",
 		DeliveryNode: "D", SourceNode: "S",
 	}
 	testutil.MustNoErr(t, orders.Create(db, o), "create")
@@ -160,7 +163,7 @@ func TestQueueWaitMetrics_CountAnOrderBornSourcing(t *testing.T) {
 	for _, e := range []struct {
 		status protocol.Status
 		off    time.Duration
-	}{{protocol.StatusSourcing, 0}, {protocol.StatusDispatched, 30 * s}} {
+	}{{protocol.StatusPending, 0}, {protocol.StatusDispatched, 30 * s}} {
 		_, err := db.Exec(`INSERT INTO order_history (order_id, status, created_at) VALUES ($1,$2,$3)`,
 			o.ID, string(e.status), base.Add(e.off))
 		testutil.MustNoErr(t, err, "hist "+string(e.status))
@@ -170,7 +173,7 @@ func TestQueueWaitMetrics_CountAnOrderBornSourcing(t *testing.T) {
 	testutil.MustNoErr(t, err, "AvgL1QueueSeconds")
 	if math.Abs(q-30) > 0.01 {
 		t.Errorf("AvgL1QueueSeconds = %v, want 30.\n"+
-			"An order born `sourcing` waited 30 seconds in the line and reached a robot. Measured "+
+			"An order born `pending` waited 30 seconds in the line and reached a robot. Measured "+
 			"from `queued` alone it contributes NOTHING — not a zero, an absence — and the reorder "+
 			"point computed from this mean is set as if that family never waits.", q)
 	}
@@ -182,7 +185,7 @@ func TestQueueWaitMetrics_CountAnOrderBornSourcing(t *testing.T) {
 			continue
 		}
 		if r.Count != 1 {
-			t.Errorf("time_to_dispatch count = %d, want 1 — the born-sourcing order is missing "+
+			t.Errorf("time_to_dispatch count = %d, want 1 — the never-queued order is missing "+
 				"from the dwell board as well", r.Count)
 		}
 	}

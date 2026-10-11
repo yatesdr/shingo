@@ -48,9 +48,11 @@ func TestGolden_DigReaders(t *testing.T) {
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
 
+	// `dispatched` with a fleet id: see TestGolden_EligibilitySQL's seed order.
 	var orderID int64
 	if err := db.DB.QueryRow(
-		`INSERT INTO orders (edge_uuid) VALUES ('dig-golden') RETURNING id`,
+		`INSERT INTO orders (edge_uuid, status, vendor_order_id)
+		 VALUES ('dig-golden', 'dispatched', 'dig-golden-fleet') RETURNING id`,
 	).Scan(&orderID); err != nil {
 		t.Fatalf("seed order for reservations: %v", err)
 	}

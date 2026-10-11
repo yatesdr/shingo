@@ -1002,7 +1002,7 @@ func (db *DB) ListTrackedVendorOrderIDs() ([]string, error) {
 }
 
 // ListActiveOrdersBySourceRef returns orders in pre-dispatch states (pending,
-// sourcing, queued) whose source_node matches any of the provided names.
+// queued) whose source_node matches any of the provided names.
 func (db *DB) ListActiveOrdersBySourceRef(names []string) ([]*orders.Order, error) {
 	return orders.ListActiveBySourceRef(db.DB, names)
 }
@@ -1260,7 +1260,7 @@ func releaseOrderHoldingsTx(tx *sql.Tx, orderID int64) error {
 // stay parked holding them. Rule 1's relay reading applied to the pair — the
 // unit of work is the pair, and an incomplete pair holds nothing.
 //
-// The order stays exactly where it is (queued or sourcing) and the scanner
+// The order stays exactly where it is (pending or queued) and the scanner
 // replays it; this only drops what it was holding.
 //
 // ── AND THE POINTER GOES WITH THE HOLD ────────────────────────────────────

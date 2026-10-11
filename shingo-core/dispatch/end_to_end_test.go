@@ -331,9 +331,10 @@ func TestDispatcher_ComplexOrder_QueuesOnSaturatedNGRP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get order: %v — capacity-shaped resolution failure should create the order waiting, not reject it", err)
 	}
-	// Parked in its entry status, which is `sourcing` from birth onwards.
-	if order.Status != StatusSourcing {
-		t.Errorf("status = %q, want %q (capacity-blocked complex order must wait, not fail)", order.Status, StatusSourcing)
+	// Parked at the door: the intake already knows it waits, so it is `queued`
+	// with its cause (C1).
+	if order.Status != StatusQueued {
+		t.Errorf("status = %q, want %q (capacity-blocked complex order must wait, not fail)", order.Status, StatusQueued)
 	}
 	if order.QueueReason == "" {
 		t.Errorf("queue_reason empty; expected a sentence so the operator sees why the order is waiting")
@@ -1177,7 +1178,8 @@ func TestDispatcher_FleetFailure(t *testing.T) {
 		t.Fatalf("failed events = %d, want 0 — a fleet refusal must not terminate demand", len(emitter.failed))
 	}
 
-	testdb.AssertOrderStatus(t, db, "fleet-fail-1", StatusSourcing)
+	// (C1: the scanner parks a refusal `dispatched → queued` under fleet_unavailable.)
+	testdb.AssertOrderStatus(t, db, "fleet-fail-1", StatusQueued)
 
 	// The bin is released either way, and that half is unchanged: the robot never
 	// committed, so nothing may keep holding the bin while the order waits — it
@@ -1557,10 +1559,13 @@ func TestDispatcher_MoveOrder_NGRPSource_BuriedBin(t *testing.T) {
 		Quantity:     1.0,
 	})
 
+	// The door hands a buried pick to its one acquire, which plans the dig (C1).
+	// No acquirer is wired here, so the order stays `pending` with no cause, in the
+	// scanner's population, and the dig is planned below by hand.
 	order := testdb.RequireOrder(t, db, "move-buried-1")
-	if order.Status != StatusQueued || order.QueueCause != string(CauseIntakeBuried) {
-		t.Fatalf("after intake: status %q cause %q, want %q under %q — intake names the burial and queues",
-			order.Status, order.QueueCause, StatusQueued, CauseIntakeBuried)
+	if order.Status != StatusPending || order.QueueCause != "" {
+		t.Fatalf("after intake: status %q cause %q, want %q with no cause — the door's acquire plans the dig",
+			order.Status, order.QueueCause, StatusPending)
 	}
 	if len(backend.Orders()) != 0 {
 		t.Fatalf("intake dispatched %d fleet orders — intake plans no dig", len(backend.Orders()))

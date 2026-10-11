@@ -808,6 +808,11 @@ func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 		// It rides the wedge sweep's opt-out because a test whose order rows are
 		// not a plant state is not a plant state for either assertion.
 		AssertArmorMatchesStatus(t, db)
+		// A wait says why (C1.1.5): no row into `queued` without its code. Behind
+		// its own probe, for a test that drops order_history's code on purpose.
+		if _, err := db.DB.Exec(`SELECT id, order_id, status, code FROM order_history LIMIT 1`); err == nil {
+			AssertQueuedCarriesACause(t, db)
+		}
 	})
 	return db, cfg
 }

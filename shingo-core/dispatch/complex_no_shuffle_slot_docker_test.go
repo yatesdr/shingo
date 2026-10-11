@@ -63,13 +63,13 @@ import (
 
 // complexBuriedFixture builds a group whose only shuffle slot is occupied, a
 // buried target behind one blocker, and a complex parent in the state each site's
-// own caller hands it: `queued`.
+// own caller hands it: `pending` at intake (born there, C1), `queued` on replay.
 //
 // The fixture is the simple-path test's, deliberately: two lane slots and exactly
 // one shuffle slot with a squatter in it. Identical congestion, so the only
 // variable between the two paths is which planner is asking. squatter is returned
 // for the liveness half of the wait tests (see the file header).
-func complexBuriedFixture(t *testing.T, db *store.DB, prefix string) (
+func complexBuriedFixture(t *testing.T, db *store.DB, prefix string, status protocol.Status) (
 	sc *testdb.CompoundScenario, parent *orders.Order, buried *BuriedError, squatter *bins.Bin,
 ) {
 	t.Helper()
@@ -91,7 +91,7 @@ func complexBuriedFixture(t *testing.T, db *store.DB, prefix string) (
 	parent = testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = prefix + "-complex"
 		o.OrderType = OrderTypeComplex
-		o.Status = StatusQueued
+		o.Status = status
 		o.PayloadCode = sc.Payload.Code
 		o.DeliveryNode = sc.LineNode.Name
 	})
@@ -192,7 +192,7 @@ func assertDugAfterSlotFreed(t *testing.T, db *store.DB, parent *orders.Order) {
 func TestComplexIntake_NoShuffleSlot_WaitsThenReshuffles(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	sc, parent, buried, squatter := complexBuriedFixture(t, db, "CXNOSHUF")
+	sc, parent, buried, squatter := complexBuriedFixture(t, db, "CXNOSHUF", StatusPending)
 	d, emitter := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	d.planBuriedReshuffleAtIntake(parent, sc.Payload.Code, "line-1", buried)
@@ -203,9 +203,10 @@ func TestComplexIntake_NoShuffleSlot_WaitsThenReshuffles(t *testing.T) {
 	// detail: intake is answering a request that just arrived, so an operator is
 	// looking at the station now. Its own neighbouring arms (targets-occupied,
 	// lane-locked, lane-lock-race, blocker-claimed) all announce the park, and a
-	// silent fifth would be the one wait the surface cannot show.
-	if len(emitter.queued) != 1 {
-		t.Errorf("queued events = %d, want 1 — the intake site announces its parks", len(emitter.queued))
+	// silent fifth would be the one wait the surface cannot show. (C1: the park
+	// tells the station once, through the wait-change notify, not EventOrderQueued.)
+	if len(emitter.waitChanged) != 1 {
+		t.Errorf("wait-changed tells = %d, want 1 — the intake site announces its parks", len(emitter.waitChanged))
 	}
 	if len(emitter.failed) != 0 {
 		t.Errorf("failed events = %d, want 0 — a failure event against a parked order raises an "+
@@ -235,7 +236,7 @@ func TestComplexIntake_NoShuffleSlot_WaitsThenReshuffles(t *testing.T) {
 func TestComplexReplay_NoShuffleSlot_WaitsThenReshuffles(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	sc, parent, buried, squatter := complexBuriedFixture(t, db, "CXRPNOSHUF")
+	sc, parent, buried, squatter := complexBuriedFixture(t, db, "CXRPNOSHUF", StatusQueued)
 	d, emitter := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	d.handleComplexBuriedOnReplay(parent, buried)
@@ -246,9 +247,9 @@ func TestComplexReplay_NoShuffleSlot_WaitsThenReshuffles(t *testing.T) {
 	// handleComplexBuriedOnReplay writes the row and emits nothing: the parent was
 	// already queued and already announced, and re-announcing it on every scan
 	// would put one event per tick on the station for an order that has not moved.
-	if len(emitter.queued) != 0 {
-		t.Errorf("queued events = %d, want 0 — the replay site parks silently, so a scan loop over a "+
-			"crowded group does not become an event storm", len(emitter.queued))
+	if len(emitter.queued)+len(emitter.waitChanged) != 0 {
+		t.Errorf("queued events + wait-changed tells = %d, want 0 — the replay site parks silently, so a scan loop over a "+
+			"crowded group does not become an event storm", len(emitter.queued)+len(emitter.waitChanged))
 	}
 	if len(emitter.failed) != 0 {
 		t.Errorf("failed events = %d, want 0", len(emitter.failed))
@@ -275,7 +276,7 @@ func TestComplexReplay_NoShuffleSlot_WaitsThenReshuffles(t *testing.T) {
 func TestComplexIntake_PlannerFaultStillFails(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	sc, parent, buried, _ := complexBuriedFixture(t, db, "CXFAULT")
+	sc, parent, buried, _ := complexBuriedFixture(t, db, "CXFAULT", StatusPending)
 	d, emitter := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	// A target slot detached from its lane: planUnbury refuses on geometry before
@@ -305,7 +306,7 @@ func TestComplexIntake_PlannerFaultStillFails(t *testing.T) {
 func TestComplexReplay_PlannerFaultStillFails(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
-	sc, parent, buried, _ := complexBuriedFixture(t, db, "CXRPFAULT")
+	sc, parent, buried, _ := complexBuriedFixture(t, db, "CXRPFAULT", StatusQueued)
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	buried.Slot = detachedSlot(t, db, sc.Slots[1].ID)

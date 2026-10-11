@@ -1379,7 +1379,7 @@ import {
     //    nothing is driving that leg yet.
     var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     var MOVING_PHASE = { dispatched: 1, in_transit: 1, reshuffling: 1 };
-    var INTENT_PHASE = { pending: 1, sourcing: 1, queued: 1, acknowledged: 1, submitted: 1, staged: 1 };
+    var INTENT_PHASE = { pending: 1, queued: 1, acknowledged: 1, submitted: 1, staged: 1 };
 
     // Prune pickup latches for orders that have left the active set.
     var liveOrderIds = {};

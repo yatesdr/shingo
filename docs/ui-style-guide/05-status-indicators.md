@@ -11,8 +11,8 @@ a crowded table. Grey is reserved for `cancelled` alone.
 **The lifecycle:**
 
 ```
-EARLY (3 graduated calm tints:           →  SUBMITTED (steel blue)
-  pending slate · sourcing sand · queued periwinkle)
+EARLY (2 graduated calm tints:           →  SUBMITTED (steel blue)
+  pending slate · queued periwinkle)
 →  ACTIVE (per-phase hue, calm weight)   →  SUCCESS (green)
 →  ATTENTION (amber, loud)  →  FAILURE (red, loud)  ·  cancelled (grey)
 ```
@@ -125,6 +125,12 @@ The real conclusion is about the palette rather than about `sourcing`: **13
 statuses at one calm weight is at capacity.** The next status added cannot be
 given a hue; it will have to be given a weight, or something has to leave.
 
+**Since C1, `sourcing` is no longer a status an order can be in**, and its sand
+pill is gone: `.badge-sourcing` is an alias of `.badge-queued` for one release,
+so an old history row renders as the wait it was, and `--status-sourcing-dot`
+is deleted. The two paragraphs above are kept as the record of why the warm
+ramp looks the way it does.
+
 **Per-phase hues in the active band:**
 
 Each active phase has its own color so it's distinguishable at a glance:
@@ -141,8 +147,7 @@ Each active phase has its own color so it's distinguishable at a glance:
 | Signal | Statuses | Background | Text |
 |---|---|---|---|
 | Early: pending | pending | `#e2e8f0` | `#475569` |
-| Early: sourcing | sourcing | `#fef3e2` | `#92660c` |
-| Early: queued | queued | `#dde6fb` | `#3457b0` |
+| Early: queued | queued (and the `sourcing` alias, history rows only) | `#dde6fb` | `#3457b0` |
 | Submitted | submitted, acknowledged | `#dbeafe` | `#1e40af` |
 | Active: dispatched | dispatched | `#cfe0fd` | `#1d4ed8` |
 | Active: in_transit | in_transit | `#c5edf6` | `#155e75` |

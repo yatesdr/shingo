@@ -75,6 +75,15 @@ type Dispatcher struct {
 	// (commitToFleet → acquireHand), with the order's id. Nil in production; set
 	// via SetPreHandHook to put a second dispatcher inside the window deterministically.
 	preHandHook func(orderID int64)
+	// postBirthHook is a test-only seam the wire door fires between its INSERT and
+	// its apply (remaining_uop, the resolved destination), with the born order's
+	// id: the window in which a row exists that its door has not finished. Nil in
+	// production; set via SetPostBirthHook.
+	postBirthHook func(orderID int64)
+
+	// acquirer is the fulfillment scanner, wired by the engine (SetAcquirer):
+	// the lock a door holds and the one acquire it asks for (door.go).
+	acquirer Acquirer
 }
 
 func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, stationID, dispatchTopic string, resolver NodeResolver) *Dispatcher {
@@ -126,10 +135,17 @@ func (d *Dispatcher) RegisterPlanner(orderType protocol.OrderType, handler Plann
 
 // HandleOrderRequest processes a new order from ShinGo Edge.
 func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.OrderRequest) {
-	stationID := env.Src.Station
 	d.dbg("order request: station=%s uuid=%s type=%s payload=%s delivery=%s source=%s",
-		stationID, p.OrderUUID, p.OrderType, p.PayloadCode, p.DeliveryNode, p.SourceNode)
+		env.Src.Station, p.OrderUUID, p.OrderType, p.PayloadCode, p.DeliveryNode, p.SourceNode)
+	// ONE UNIT UNDER THE SCAN LOCK (door.go, F1): the decision, the birth, the
+	// apply and the one acquire. The lock is taken before the decision, so the
+	// dropoff gate the door decides with and the claim its acquire takes are
+	// under one hold.
+	d.door(func() { d.handleOrderRequest(env, p) })
+}
 
+func (d *Dispatcher) handleOrderRequest(env *protocol.Envelope, p *protocol.OrderRequest) {
+	stationID := env.Src.Station
 	// The planner decides before the row is born, so the pick rides the INSERT
 	// (orders.plan) and the scanner does not pick again (B3's first item). The
 	// decision is applied to the born row below, as planTransport applied it.
@@ -150,6 +166,9 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 		d.replies.SendError(env, p.OrderUUID, lifecycleErr.Code, lifecycleErr.Detail)
 		return
 	}
+	if d.postBirthHook != nil {
+		d.postBirthHook(order.ID)
+	}
 
 	var result *PlanningResult
 	var planErr *planningError
@@ -164,14 +183,14 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 		} else {
 			d.dbg("plan order %s (%s): %s", p.OrderUUID, p.OrderType, planErr.Detail)
 		}
-		// Transient contention clears on its own — a source bin claimed by a
-		// concurrent order in the TOCTOU gap (claim_failed), or a buried bin whose
-		// lane is mid-reshuffle for another order (lane_locked). Queue the order so
-		// the fulfillment scanner retries instead of terminally failing it; multi-
-		// window loaders pulling empties in parallel make this contention routine.
+		// Transient contention clears on its own, so the order waits rather than
+		// failing — under the cause the planner wrote. One that wrote none is left
+		// `pending` for the next pass: a wait with no cause is never written.
 		if planErr.Transient() {
-			d.dbg("dispatch: %s for order %s — transient contention, queuing for retry", planErr.Code, p.OrderUUID)
-			d.queueOrder(order, env, payloadCode)
+			d.dbg("dispatch: %s for order %s — transient contention, waiting", planErr.Code, p.OrderUUID)
+			if order.QueueCode != "" {
+				d.parkBorn(order)
+			}
 			return
 		}
 		d.failOrder(order, env, planErr.Code, planErr.Detail)
@@ -180,14 +199,25 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 	if result == nil || result.Handled {
 		return
 	}
-	// The claim-move to the scanner: every simple order is status-first queued —
-	// the scanner is the single claim point (planTransport validated + resolved but
-	// never claimed or dispatched inline). queueOrder emits EmitOrderQueued, which
-	// synchronously runs the fulfillment scanner (wiring.go), so an immediately-
-	// sourceable order still acks dispatched on return and an unsourceable one waits
-	// — exactly complex's existing shape. The shadow plan + endpoints on result are
-	// substrate for the unified-create follow-up, not consumed here.
-	d.queueOrder(order, env, payloadCode)
+	if payloadCode != "" && order.PayloadCode == "" {
+		if err := d.db.UpdateOrderPayloadCode(order.ID, payloadCode); err != nil {
+			d.dbg("update payload code order %d: %v", order.ID, err)
+		}
+		order.PayloadCode = payloadCode
+	}
+	// The order goes from its birth to its hand. A decision that is already a
+	// wait parks with its cause; a buried pick goes to the acquire, which plans
+	// the dig from it; a found one is asked for its whole hand once. Either way
+	// the scanner is the single claimer, and an order that dispatches now is
+	// never told `queued` (C1.1.2).
+	switch {
+	case result.Queued:
+		d.parkBorn(order)
+	case result.Buried != nil:
+		d.acquireBorn(order, &SourceResult{Outcome: OutcomeReshuffle, Buried: result.Buried})
+	default:
+		d.acquireBorn(order, nil)
+	}
 }
 
 // ErrParentGone is a dig refused because the order it was for had already
@@ -197,10 +227,10 @@ var ErrParentGone = store.ErrParentGone
 
 // PlanBuriedReshuffle plans and dispatches the reshuffle compound for an order
 // whose source resolved BURIED in the fulfillment scanner. It is the only place a
-// plain order's dig is planned: intake queues a buried source (parkBuried) and
-// the scanner's pass on the queued event plans it before HandleOrderRequest
-// returns. Burial also arises over TIME — an order that queued with an
-// accessible source can be buried by a later store while it waits — and the same
+// plain order's dig is planned: the wire door hands its buried pick to its one
+// acquire, which plans it under the scan lock the door holds, before
+// HandleOrderRequest returns (C1.1). Burial also arises over TIME — an order that
+// waits with an accessible source can be buried by a later store — and the same
 // arm serves both.
 //
 // PRECONDITION: the caller must have cleared the dropoff-capacity gate. A
@@ -210,9 +240,9 @@ var ErrParentGone = store.ErrParentGone
 // re-checks capacity. So planning a reshuffle COMMITS the delivery, and may only
 // be done against a destination already known clear. Scanner.tryFulfill checks
 // CheckDropoffCapacity before it resolves the source, under scanMu, which is
-// exactly that — and since intake stopped planning digs, every plain dig is
-// planned there, so the precondition holds for every compound AdvanceCompoundOrder
-// will ever dispatch (TestTwoHoldersThroughIntakeBuriedArm).
+// exactly that — and every plain dig is planned there, the door's included, so
+// the precondition holds for every compound AdvanceCompoundOrder will ever
+// dispatch (TestTwoHoldersThroughIntakeBuriedArm).
 //
 // Do NOT advance the compound after this returns: createCompound already
 // dispatched the first child. Stacking a second advance is the 2026-05-27
@@ -408,39 +438,6 @@ func promisedHolder(err error) int64 {
 // planningError) so callers outside the package — and their tests — can both
 // match it with errors.Is and construct it.
 var ErrReshuffleWait = errors.New("reshuffle not plannable yet")
-
-// queueOrder is the wire adapter: queue the order, then tell the Edge station
-// that asked for it what happened. Everything except that last sentence is in
-// queueOrderInternal.
-func (d *Dispatcher) queueOrder(order *orders.Order, env *protocol.Envelope, payloadCode string) {
-	d.queueOrderInternal(order, env.Src.Station, payloadCode)
-	d.replies.SendUpdate(env, order.EdgeUUID, string(StatusQueued), "awaiting inventory")
-}
-
-// queueOrderInternal is the queue tail with no wire envelope in it: mark the
-// order queued, write its payload code, and emit the queued event — which
-// synchronously runs the fulfillment scanner (wiring.go), so an immediately
-// sourceable order is claimed and dispatched before this returns.
-//
-// Split out from queueOrder because an order Core originates itself has no
-// envelope. There is no request to correlate to and nobody waiting on a reply;
-// the station is a routing label the emitter needs, not the sender's return
-// address. Sending an update against a synthesized envelope would be Core
-// answering a question nobody asked, addressed to a correlation ID no Edge is
-// tracking — so the reply stays in the adapter above and the queue tail stays
-// callable without one.
-func (d *Dispatcher) queueOrderInternal(order *orders.Order, stationID, payloadCode string) {
-	if err := d.lifecycle.Queue(order, "dispatcher", "awaiting inventory"); err != nil {
-		d.dbg("queue order %d: %v", order.ID, err)
-	}
-	if payloadCode != "" && order.PayloadCode == "" {
-		if err := d.db.UpdateOrderPayloadCode(order.ID, payloadCode); err != nil {
-			d.dbg("update payload code order %d: %v", order.ID, err)
-		}
-	}
-	d.dbg("queued: order=%d uuid=%s payload=%s delivery=%s", order.ID, order.EdgeUUID, payloadCode, order.DeliveryNode)
-	d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode, WaitOf(order))
-}
 
 // dispatchToFleet sends the order and acks the station that asked. IT RETURNS
 // THE REFUSAL RATHER THAN DISPOSING OF IT, and that is the same rule
@@ -785,55 +782,74 @@ func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNo
 // holds would describe the loser's failure on the winner's live row. Same rule,
 // same reason, as the occupancy release in commitToFleet.
 //
-// STATUS FIRST, THEN THE BOOKS, and the order matters. A crash between them
-// leaves an order in `sourcing` still holding its armor and its confirmed paper
-// — legal (a hard claim beside its own live reservation) and re-dispatchable.
-// The other order leaves `dispatched` with no armor at all, which is the state
-// the two-clause assertion exists to call a violation.
+// THE CAUSE, THEN THE STATUS, THEN THE BOOKS. The cause goes on the row first
+// because `queued` refuses a row without one (WaitWithoutCause, C1.1.5). The
+// status before the books: a crash between them leaves a `queued` order still
+// holding its armor and its confirmed paper — legal (a hard claim beside its own
+// live reservation) and re-dispatchable. The other order leaves `dispatched`
+// with no armor at all, which is the state the two-clause assertion exists to
+// call a violation.
 //
-// PARKS IN `sourcing`, NOT `queued`: the order still holds its paper and its bin
-// pointer, which is what that rung is for. It holds no claim, so the dropoff gate
-// counts it for nothing (orders.InFlightForDropoffSQL reads holders) and it
-// re-competes for its node. What stops a refusal burst double-booking a node when
-// the fleet comes back is the gate re-run: tryFulfill runs the dropoff gate
-// before it routes a held-bin order to dispatchHeldBin, and ConfirmForDispatch
-// takes the claim before the fleet call, so the first order to re-dispatch
-// claims and every other order bound there parks behind it. Pinned by
+// PARKS IN `queued` (dispatched → queued, C1.1.3; SYNTH §2.4). The order keeps
+// its paper and its bin pointer, holds no claim, so the dropoff gate counts it
+// for nothing (orders.InFlightForDropoffSQL reads holders) and it re-competes for
+// its node. What stops a refusal burst double-booking a node when the fleet comes
+// back is the gate re-run: the scanner runs the dropoff gate before it routes a
+// held-bin order to dispatchHeldBin, and the hand takes the claim before the
+// fleet call, so the first order to re-dispatch claims and every other order
+// bound there parks behind it. Pinned by
 // TestFleetRecovery_TwoDemotedOrdersToOneLineOnlyOneGoes (engine).
 //
-// IDEMPOTENT, because the plain path invokes it TWICE per refusal —
-// DispatchDirect undoes its own CAS, then the caller parks. MoveToSourcing
-// self-skips on sourcing→sourcing, the store half is idempotent by construction,
-// and setQueueReason short-circuits an unchanged cause. So the second call is a
-// no-op rather than a second wait in the record.
+// THE CAUSE IS THE CALLER'S, AND THERE ALWAYS IS ONE (F5). The callers differ —
+// the scanner parks under fleet_unavailable or its ngrp-resolve carve-out, a
+// compound leg under fleet_unavailable — but every one of them waits, so every
+// one names why. A door with a person waiting does not come here: it fails the
+// row from `dispatched` (a legal edge). An empty code is refused and nothing is
+// undone; dispatchDirect returns the refusal to its caller and undoes nothing
+// itself.
 //
-// THE CAUSE IS THE CALLER'S. An EMPTY cause means "write none", which is what
-// the undo-only caller passes: whether this refusal is a wait or the end of a
-// request is not the undo's to say — the scanner parks and retries, the bin-move
-// door has a person waiting and fails the row itself. A caller that parks passes
-// its own; the scanner's synthetic-destination carve-out passes ngrp-resolve,
-// because a destination that was never resolved must not report a robot-system
-// outage that is not happening.
+// THE STATION IS TOLD A WAIT IT DOES NOT ALREADY HOLD. told is the wait the
+// caller's order carried before its hand ran — what the station was last told,
+// since the hand's `dispatched` write clears the row's wait and the station hears
+// nothing of it. A first park (told is empty) or a new code is told, once; a
+// re-park under the wait the station already shows is not. The scanner retries a
+// parked order on every pass, and a fleet that refuses every create re-parks it
+// under the same fleet_unavailable each time: telling each one was a station
+// message per pass, on the Pi, for as long as the fleet was down.
 //
 // The cause is FLOORED, NOT EVENTED. causeReleasers records a reasoned absence
 // for fleet-error — "the fleet became willing" is not an event — so nothing here
 // subscribes anything, and the releaser is the ordinary scanner pass.
-func (d *Dispatcher) DemoteAfterFleetRefusal(order *orders.Order, code protocol.QueueCode, cause QueueCause, params QueueParams) {
+func (d *Dispatcher) DemoteAfterFleetRefusal(order *orders.Order, told QueueWait, code protocol.QueueCode, cause QueueCause, params QueueParams) {
 	if order == nil {
 		return
 	}
+	if code == "" || cause == "" {
+		log.Printf("dispatch: order %d — a fleet refusal with no cause was not demoted: every caller "+
+			"that waits names why (F5); a door that does not wait fails the row itself", order.ID)
+		return
+	}
+	parked := false
 	if order.Status == protocol.StatusDispatched {
-		if err := d.lifecycle.MoveToSourcing(order, "dispatcher", "fleet refused the create"); err != nil {
+		// The write runs while the order is still `dispatched`, so its own tell is
+		// withheld (WriteQueueDetail tells waiting orders only); the park's tell
+		// is below, against told.
+		d.setQueueReason(order, code, cause, params)
+		if err := d.lifecycle.Park(order, "dispatcher"); err != nil {
 			if IsConcurrentTransition(err) {
 				// Another caller owns it now. Nothing of ours to undo.
 				log.Printf("dispatch: order %d — fleet refusal lost the CAS: %v (another caller owns "+
 					"this order; leaving it alone)", order.ID, err)
 				return
 			}
-			log.Printf("dispatch: order %d could not be moved back to sourcing after a fleet refusal: "+
+			log.Printf("dispatch: order %d could not be moved back to queued after a fleet refusal: "+
 				"%v (it is `dispatched` with no vendor order; the armor is dropped below and the "+
 				"crash-sliver assertion is the backstop)", order.ID, err)
+		} else {
+			parked = true
 		}
+	} else {
+		d.setQueueReason(order, code, cause, params)
 	}
 	// The books, after the status, and only the armor.
 	// FAIL CLOSED ON AN UNREADABLE PARENT. This flag gates a DELETE of the order's
@@ -845,8 +861,8 @@ func (d *Dispatcher) DemoteAfterFleetRefusal(order *orders.Order, code protocol.
 		log.Printf("dispatch: order %d — could not demote its holds after a fleet refusal: %v "+
 			"(it keeps armor it has no robot for; the acquiring-claim backstop sweeps it)", order.ID, err)
 	}
-	if cause != "" {
-		d.setQueueReason(order, code, cause, params)
+	if next := WaitOf(order); parked && (told.Code == "" || WaitTold(told, next)) {
+		d.NotifyWaitChanged(order)
 	}
 }
 
@@ -871,14 +887,9 @@ func FleetRefusalCause(err error, destination string) (protocol.QueueCode, Queue
 	return protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{}
 }
 
-// Callers reach this function with the order in one of three states:
-//   - pending  — direct creation paths (engine.CreateBinMove, reached from the
-//     operator's manual-order screen and the /test-orders direct tab) jump
-//     straight from intake to dispatch.
-//     We bridge through queued to satisfy the state machine.
-//   - sourcing — fulfillment.Scanner moves the order to sourcing once a bin
-//     is found; sourcing → dispatched is a valid edge.
-//   - queued   — pre-dispatch holding state for a fully-resolved order.
+// Callers reach this function with the order `pending` (its first hand) or
+// `queued` (a parked order asked again); both go straight to `dispatched` in the
+// hand (v4 §2.6).
 //
 // Returns the vendor order ID on success.
 //
@@ -896,7 +907,7 @@ func (d *Dispatcher) DispatchDirect(order *orders.Order, sourceNode, destNode *n
 // ConfirmForDispatch-then-DispatchDirect pair, whose two confirms committed
 // separately and left a slot held when the bin's confirm failed.
 //
-// A *HandRefusal means nothing is held and the order is where it was (sourcing,
+// A *HandRefusal means nothing is held and the order is where it was (pending,
 // or queued): park it under the refusal's Code/Cause — it is a wait, not a fleet
 // refusal, and must not go through DemoteAfterFleetRefusal.
 func (d *Dispatcher) DispatchHand(order *orders.Order, binID int64, sourceNode, destNode *nodes.Node) (string, error) {
@@ -916,79 +927,23 @@ func (d *Dispatcher) DispatchHand(order *orders.Order, binID int64, sourceNode, 
 }
 
 func (d *Dispatcher) dispatchDirect(order *orders.Order, sourceNode, destNode *nodes.Node, hand Hand) (string, error) {
-	// Bridge pending → queued before dispatching. The lifecycle's Dispatch
-	// method only accepts queued/sourcing as source states; direct-creation
-	// callers leave the order in pending. validTransitions allows
-	// pending → queued explicitly as the fast-path edge for callers that
-	// already know the destination.
+	// IT DOES NOT TERMINALIZE ON A FLEET REFUSAL, AND IT DOES NOT UNDO ITS OWN
+	// MOVE EITHER: it returns the refusal, and the caller disposes (F5). The hand
+	// CASes the order to `dispatched` before the fleet create, deliberately, so a
+	// refused create leaves it `dispatched` with no vendor order — a state nothing
+	// tracks — until the caller moves it. The callers differ, which is why it is
+	// theirs: the scanner and a compound leg wait (DemoteAfterFleetRefusal, under a
+	// cause they name, `dispatched → queued`); a door with a person waiting fails
+	// the row from `dispatched`, a legal edge. Undoing here used to mean an undo
+	// with no cause on it — a `sourcing` row nobody could explain for a moment,
+	// which under C1 would be a cause-less `queued`.
 	//
-	// An order no station knows goes pending → dispatched instead (SYNTH F8; the
-	// orc's Stop 2 ruling, 2026-09-26): a queued row would say it waited when it
-	// did not, and no Edge mirror reads its statuses.
-	if order.Status == protocol.StatusPending && !order.StationUnaware {
-		if err := d.lifecycle.Queue(order, "dispatcher", "direct dispatch"); err != nil {
-			d.dbg("order %d → queued: %v", order.ID, err)
-		}
-	}
-
-	// IT DOES NOT TERMINALIZE ON A FLEET REFUSAL, and that is the fix rather than
-	// an omission. This used to call lifecycle.Fail here, which made the caller's
-	// disposition unreachable: `failed` has no outgoing edges
-	// (protocol.validTransitions), so the fulfillment scanner's documented
-	// rollback — "override back to sourcing since this is a transient fleet issue,
-	// not a permanent failure" — was an illegal transition, logged and swallowed.
-	// Every fleet rejection on the highest-traffic dispatch path killed the order
-	// while two call sites read as though they had re-queued it, and a rejection
-	// on a compound leg took the whole dig and its parent down with it through the
-	// sibling cascade.
-	//
-	// A fleet that will not take an order right now is congestion — the vocabulary
-	// already says so (protocol.QueueFleetUnavailable, "Robot system not
-	// responding — retrying"). Whether THIS caller can wait is the caller's to
-	// know: the scanner parks and retries, the bin-move door has a person waiting
-	// and fails the row itself. Returning the error is what lets them differ.
-	vendorOrderID, err := d.dispatchToFleetCore(order, sourceNode, destNode, hand)
-	if err != nil {
-		// A REFUSED HAND IS NOT A FLEET REFUSAL. It held nothing — the hand rolled
-		// back — and the order never left sourcing/queued, so there is no armor to
-		// take off and no `dispatched` to undo. It goes back to the caller to park.
-		// An ended order or a gone named bin (NotAWait) held nothing either; it
-		// goes back to the caller to stop or skip.
-		if _, refused := AsHandRefusal(err); refused || NotAWait(err) {
-			return "", err
-		}
-		// IT DOES UNDO ITS OWN MOVE, THOUGH. handoverToFleet's CAS claims the order
-		// by transitioning it to `dispatched` BEFORE the create, and documents that
-		// it leaves it there for "its caller to fail". This IS that caller, and not
-		// terminalizing cannot mean walking away: `dispatched` with no vendor id is
-		// an order nothing tracks (loadActiveOrders selects on a non-empty
-		// vendor_order_id) until the stuck sweep finds it.
-		//
-		// So the disposition becomes `sourcing` — live, re-dispatchable, and in the
-		// acquiring set — and the caller decides from there. The scanner's
-		// MoveToSourcing then lands as an idempotent no-op rather than the illegal
-		// transition it used to be, and the bin-move door's explicit fail still
-		// works, because sourcing → failed is legal and dispatched → failed was too.
-		//
-		// NOT ON A LOST CAS. IsConcurrentTransition means another caller owns this
-		// order now; rolling back its status would clobber whatever it is doing.
-		// Same rule, for the same reason, as the occupancy release in
-		// dispatchToFleetCore.
-		//
-		// THROUGH THE ONE DOOR, AND WITH NO CAUSE. The undo is this function's;
-		// the disposition is the caller's, and the callers differ — the scanner
-		// parks and retries under a cause it chooses, the bin-move door has a
-		// person waiting and fails the row itself. Writing a cause here would put
-		// "robot system not responding" on a row that is about to go terminal for
-		// a person, and would overwrite the scanner's carve-out a moment before it
-		// is written. So: armor off, paper kept, no sentence.
-		if !IsConcurrentTransition(err) {
-			d.DemoteAfterFleetRefusal(order, "", "", QueueParams{})
-		}
-		return "", err
-	}
-
-	return vendorOrderID, nil
+	// A REFUSED HAND IS NOT A FLEET REFUSAL. It held nothing — the hand rolled
+	// back — and the order never left pending/queued. It goes back to the caller
+	// to park. An ended order or a gone named bin (NotAWait) held nothing either;
+	// it goes back to the caller to stop or skip. A lost CAS (another caller owns
+	// the order) likewise goes back untouched.
+	return d.dispatchToFleetCore(order, sourceNode, destNode, hand)
 }
 
 // checkOwnership verifies the envelope sender owns the order.
@@ -1196,8 +1151,8 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 	}
 
 	// A COORDINATED ORDER CANNOT BE REDIRECTED, and this is not a lane rule.
-	// PrepareRedirect below is destructive — it cancels the vendor order and moves
-	// the row to sourcing — and what follows it is dispatchToFleetCore, which builds
+	// PrepareRedirect below is destructive — it rewrites the destination and drops
+	// the old slot's hold — and what follows it is dispatchToFleetCore, which builds
 	// a two-block transport from the source/delivery COLUMNS. An Edge-authored step
 	// plan does not survive that trip whether or not a lane is involved; its waits,
 	// its intermediate legs and its ordering are simply not read.
@@ -1254,12 +1209,11 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 	// EntryHeldBin: a redirected order is in flight, so it holds its bin and never
 	// called the finder for it. Same caller shape as the scanner's held-bin path.
 	//
-	// The park is safe here BECAUSE PrepareRedirect already left the order in
-	// `sourcing`: that is in the acquiring set, the order still holds its bin, and
-	// the scanner's held-bin path re-asks this question on every lane-clearing
-	// event. The redirect is not lost, it is queued — which is the only honest
-	// answer available, since PrepareRedirect has already cancelled the vendor
-	// order and there is no un-redirecting.
+	// The park is safe here BECAUSE the order is pre-dispatch (the gate above):
+	// it parks in `queued` under the lane's cause, still holding its bin, and the
+	// scanner's held-bin path re-asks this question on every lane-clearing event.
+	// The redirect is not lost, it waits — the only honest answer available, since
+	// PrepareRedirect has already rewritten the destination.
 	if admitted, cause, laneName, aerr := d.AcquireLanesForOrder(order, sourceNode, newDest, EntryHeldBin); aerr != nil || !admitted {
 		if aerr != nil {
 			log.Printf("dispatch: redirect for order %d — lane admission could not be read: %v (holding)", order.ID, aerr)
@@ -1269,6 +1223,9 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 			log.Printf("dispatch: release lanes for held redirect %d: %v", order.ID, lerr)
 		}
 		d.setQueueReason(order, protocol.QueueWaitingForSlot, cause, QueueParams{Destination: laneName})
+		if perr := d.lifecycle.Park(order, "dispatcher"); perr != nil {
+			log.Printf("dispatch: park redirected order %d: %v", order.ID, perr)
+		}
 		d.dbg("redirect: order %d held at its new destination (%s)", order.ID, cause)
 		d.replies.SendUpdate(env, order.EdgeUUID, string(StatusQueued), order.QueueReason)
 		return
@@ -1339,6 +1296,12 @@ func (d *Dispatcher) PostFindHook() {
 // this one lose the status CAS. Nil in production.
 func (d *Dispatcher) SetPreHandHook(fn func(orderID int64)) {
 	d.preHandHook = fn
+}
+
+// SetPostBirthHook installs a test-only hook the wire door fires between its
+// INSERT and its apply. Nil in production.
+func (d *Dispatcher) SetPostBirthHook(fn func(orderID int64)) {
+	d.postBirthHook = fn
 }
 
 // LaneLock returns the dispatcher's lane lock for external use.

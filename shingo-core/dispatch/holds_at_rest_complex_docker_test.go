@@ -51,7 +51,7 @@ func TestHoldsAtRest_ComplexLaneWaitParksHoldingItsBins(t *testing.T) {
 
 	cplx := &orders.Order{
 		EdgeUUID: "har-cplx", StationID: "line-1", OrderType: OrderTypeComplex,
-		Status: StatusSourcing, Quantity: 1, PayloadCode: bp.Code,
+		Status: StatusPending, Quantity: 1, PayloadCode: bp.Code,
 		SourceNode: mouth.Name, DeliveryNode: line.Name, ProcessNode: line.Name,
 		StepsJSON: `[{"action":"pickup","node":"` + mouth.Name + `"},` +
 			`{"action":"dropoff","node":"` + line.Name + `"}]`,
@@ -108,7 +108,7 @@ func TestDropoffGate_ALaneWaiterNoLongerCountsAtItsDestination(t *testing.T) {
 
 	waiter := &orders.Order{
 		EdgeUUID: "har-gate-waiter", StationID: "line-1", OrderType: OrderTypeComplex,
-		Status: StatusSourcing, Quantity: 1, PayloadCode: bp.Code,
+		Status: StatusPending, Quantity: 1, PayloadCode: bp.Code,
 		SourceNode: mouth.Name, DeliveryNode: line.Name, ProcessNode: line.Name,
 		StepsJSON: `[{"action":"pickup","node":"` + mouth.Name + `"},` +
 			`{"action":"dropoff","node":"` + line.Name + `"}]`,

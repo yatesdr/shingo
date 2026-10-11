@@ -38,6 +38,8 @@ func episodeCodes(t *testing.T, db *sql.DB, orderID int64) [][2]string {
 //
 // So: two waits, two causes. Each lands on a row of its own, at the status the
 // order was resting in, and the first wait's row is not rewritten by the second.
+// (C1: sourcing is no longer a status; the second wait is the fleet refusal's
+// dispatched → queued, the one way back into a wait after a dispatch.)
 // Since the orc's Stop 3 ruling (2026-09-26) a park INSERTS its row rather than
 // stamping the row the transition wrote, so the transition rows stay blank and
 // each cause is its own dated row.
@@ -55,11 +57,18 @@ func TestSetQueueDetail_StampsTheEpisodeTheOrderIsRestingIn(t *testing.T) {
 		"Storage is being rearranged", string(protocol.QueueStorageRearranging), "lane-held-traffic"),
 		"stamp episode 1")
 
-	// Episode 2: it went shopping, and the hunt is what is now failing.
-	moved, err := orders.UpdateStatusFrom(db, o.ID, string(protocol.StatusQueued), string(protocol.StatusSourcing), "reserving source bins")
-	testutil.MustNoErr(t, err, "queued→sourcing")
+	// Episode 2: it dispatched, the fleet refused it back into a wait under the
+	// refusal's code, and the next hunt is what is now failing.
+	moved, err := orders.UpdateStatusFrom(db, o.ID, string(protocol.StatusQueued), string(protocol.StatusDispatched), "dispatched")
+	testutil.MustNoErr(t, err, "queued→dispatched")
 	if !moved {
-		t.Fatal("queued→sourcing was refused")
+		t.Fatal("queued→dispatched was refused")
+	}
+	moved, err = orders.UpdateStatusFromWithReason(db, o.ID, string(protocol.StatusDispatched), string(protocol.StatusQueued),
+		"fleet refused", string(protocol.QueueFleetUnavailable), "", nil)
+	testutil.MustNoErr(t, err, "dispatched→queued")
+	if !moved {
+		t.Fatal("dispatched→queued was refused")
 	}
 	testutil.MustNoErr(t, orders.SetQueueDetail(db, o.ID,
 		"Waiting for material: PART-A", string(protocol.QueueWaitingForMaterial), "reserve-holding"),
@@ -69,8 +78,9 @@ func TestSetQueueDetail_StampsTheEpisodeTheOrderIsRestingIn(t *testing.T) {
 	want := [][2]string{
 		{string(protocol.StatusQueued), ""},
 		{string(protocol.StatusQueued), string(protocol.QueueStorageRearranging)},
-		{string(protocol.StatusSourcing), ""},
-		{string(protocol.StatusSourcing), string(protocol.QueueWaitingForMaterial)},
+		{string(protocol.StatusDispatched), ""},
+		{string(protocol.StatusQueued), string(protocol.QueueFleetUnavailable)},
+		{string(protocol.StatusQueued), string(protocol.QueueWaitingForMaterial)},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("history = %v, want each status row and each cause's own row %v", got, want)
@@ -96,7 +106,7 @@ func TestSetQueueDetail_EachCauseChangeIsItsOwnRow(t *testing.T) {
 	db := d.DB
 
 	o := newPendingOrder("uuid-episode-repeat")
-	o.Status = protocol.StatusSourcing
+	o.Status = protocol.StatusQueued // (C1: was sourcing, no longer a status)
 	testutil.MustNoErr(t, orders.Create(db, o), "create")
 
 	testutil.MustNoErr(t, orders.SetQueueDetail(db, o.ID,
@@ -106,9 +116,9 @@ func TestSetQueueDetail_EachCauseChangeIsItsOwnRow(t *testing.T) {
 
 	got := episodeCodes(t, db, o.ID)
 	want := [][2]string{
-		{string(protocol.StatusSourcing), ""},
-		{string(protocol.StatusSourcing), string(protocol.QueueStorageRearranging)},
-		{string(protocol.StatusSourcing), string(protocol.QueueWaitingForMaterial)},
+		{string(protocol.StatusQueued), ""},
+		{string(protocol.StatusQueued), string(protocol.QueueStorageRearranging)},
+		{string(protocol.StatusQueued), string(protocol.QueueWaitingForMaterial)},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("history = %v, want %v — each cause change is its own row", got, want)
@@ -138,7 +148,7 @@ func TestSetQueueDetail_ALegacyEpisodeWithNoRowGetsOne(t *testing.T) {
 	db := d.DB
 
 	o := newPendingOrder("uuid-episode-legacy")
-	o.Status = protocol.StatusSourcing
+	o.Status = protocol.StatusQueued
 	testutil.MustNoErr(t, orders.Create(db, o), "create")
 	// The pre-birth-row world: an order resting in an episode with no row.
 	_, err := db.Exec(`DELETE FROM order_history WHERE order_id=$1`, o.ID)
@@ -148,7 +158,7 @@ func TestSetQueueDetail_ALegacyEpisodeWithNoRowGetsOne(t *testing.T) {
 		"Waiting for material: PART-A", string(protocol.QueueWaitingForMaterial), "reserve-holding"), "stamp")
 
 	got := episodeCodes(t, db, o.ID)
-	want := [][2]string{{string(protocol.StatusSourcing), string(protocol.QueueWaitingForMaterial)}}
+	want := [][2]string{{string(protocol.StatusQueued), string(protocol.QueueWaitingForMaterial)}}
 	if len(got) != 1 || got[0] != want[0] {
 		t.Errorf("history = %v, want %v — a cause with no episode row to land on gets one written for it, not dropped", got, want)
 	}

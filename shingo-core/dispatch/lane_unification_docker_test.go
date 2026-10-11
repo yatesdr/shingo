@@ -111,7 +111,7 @@ func TestUnification_PlainDispatchRecordsItsOwnPresence(t *testing.T) {
 		o.StationID = "line-1"
 		o.SourceNode = line.Name
 		o.DeliveryNode = shallow.Name
-		o.Status = "sourcing"
+		o.Status = "pending"
 	})
 	if _, err := d.DispatchDirect(store, line, shallow); err != nil {
 		t.Fatalf("DispatchDirect: %v", err)
@@ -146,7 +146,7 @@ func TestUnification_TwoPlainStoresIntoOneLaneSerialize(t *testing.T) {
 		o.StationID = "line-1"
 		o.SourceNode = line.Name
 		o.DeliveryNode = deep.Name
-		o.Status = "sourcing"
+		o.Status = "pending"
 	})
 	// The first store passes the gate and goes in.
 	if adm, cause, _, err := d.AcquireLanesForOrder(first, line, deep, EntryFreshBin); err != nil || !adm {
@@ -265,7 +265,7 @@ func TestUnification_FailedDispatchLeavesNoOccupancy(t *testing.T) {
 		o.StationID = "line-1"
 		o.SourceNode = line.Name
 		o.DeliveryNode = shallow.Name
-		o.Status = "sourcing"
+		o.Status = "pending"
 	})
 	if _, err := d.DispatchDirect(store, line, shallow); err == nil {
 		t.Fatal("fixture: the failing backend must refuse the create")

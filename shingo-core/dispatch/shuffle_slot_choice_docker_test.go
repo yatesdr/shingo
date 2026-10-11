@@ -113,7 +113,7 @@ func strangerOrder(t *testing.T, db *store.DB, uuid string, mutate ...func(*orde
 	return testdb.CreateOrder(t, db, append([]func(*orders.Order){func(o *orders.Order) {
 		o.EdgeUUID = uuid
 		o.OrderType = OrderTypeRetrieve
-		o.Status = protocol.StatusSourcing
+		o.Status = protocol.StatusPending
 	}}, mutate...)...)
 }
 

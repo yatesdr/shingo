@@ -153,7 +153,7 @@ func AssertBinClaimedBy(t *testing.T, db *store.DB, binID, wantOrderID int64) {
 // Orphaned means the OWNER is terminal or gone, which is the same test
 // reservations.ReapOrphaned applies (store/reservations). Deliberately not "the
 // table is empty": a hold under a live order is sacred no matter how long it has
-// been held — an order in sourcing legitimately waits hours for its source — so
+// been held — a queued order legitimately waits hours for its source — so
 // a sweep that demanded an empty ledger would fail every scenario that ends with
 // work still in flight, and would therefore be wired into none of them.
 //
@@ -258,11 +258,12 @@ func assertNoOrphanedClaims(t *testing.T, db *store.DB, table, dead string) {
 //
 // ── SCOPE ─────────────────────────────────────────────
 //
-// The ACQUIRING set only (queued, sourcing) — the population the scanner retries,
-// and the only one for which "has not got its bin yet" is a live claim about the
-// future. A dispatched order legitimately points at a bin it has already handed
-// to a robot; a pending one has not reached intake; a terminal one is finished
-// and AssertNoOrphanedHolds covers what it left behind.
+// The ACQUIRING set only (pending, queued), top-level — the population the
+// scanner asks, and the only one for which "has not got its bin yet" is a live
+// claim about the future. A dispatched order legitimately points at a bin it has
+// already handed to a robot; a compound child is the compound's to hold (its
+// claims are written per step, and the last step's write stands); a terminal one
+// is finished and AssertNoOrphanedHolds covers what it left behind.
 //
 // EITHER book clears it. A confirmed hold coincides with a hard claim and the
 // claim can outlive the row (the dig's supersede rewrites the ledger under a
@@ -278,6 +279,7 @@ func AssertNoPointerWedge(t testing.TB, db *store.DB) {
 		  LEFT JOIN bins b ON b.id = o.bin_id
 		 WHERE o.bin_id IS NOT NULL
 		   AND o.status IN (` + protocol.AcquiringStatusSQLList() + `)
+		   AND o.parent_order_id IS NULL
 		   AND (b.claimed_by IS NULL OR b.claimed_by <> o.id)
 		   AND NOT EXISTS (
 		       SELECT 1 FROM reservations r

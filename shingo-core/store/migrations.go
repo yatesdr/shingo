@@ -4386,6 +4386,16 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "orders", "plan")
 			}},
+
+		{148, "orders.status sourcing → queued, with a cause — sourcing is no longer a status an order can be in",
+			v148SourcingToQueued,
+			func(q schema.Querier) bool {
+				var n int
+				if err := q.QueryRow(`SELECT COUNT(*) FROM orders WHERE status = 'sourcing'`).Scan(&n); err != nil {
+					return false
+				}
+				return n == 0
+			}},
 	}
 }
 
@@ -4502,6 +4512,31 @@ func v131LinesideBucketLevel(tx *sql.Tx) error {
 func v132DropUsedEdgeReports(tx *sql.Tx) error {
 	if _, err := tx.Exec(`ALTER TABLE demand_origins DROP COLUMN IF EXISTS used_edge_reports`); err != nil {
 		return fmt.Errorf("v132 drop demand_origins.used_edge_reports: %w", err)
+	}
+	return nil
+}
+
+// v148SourcingToQueued moves every order still `sourcing` to `queued` (C1; v4
+// §2.6: `sourcing` left the order ladder). Orders only: order_history keeps the
+// word it recorded, and its rows render through the history-only constant.
+//
+// `queued` always carries a cause (C1.1.5). A row that names its own keeps it; a
+// row with none takes waiting_for_material, which is what `sourcing` meant, and
+// the sentence the formatter writes for it — the same translation the Edge makes
+// at its door for an old Core's push. Idempotent: a second run finds no
+// `sourcing` row and updates nothing.
+func v148SourcingToQueued(tx *sql.Tx) error {
+	if _, err := tx.Exec(`
+		UPDATE orders SET
+		  status = 'queued',
+		  queue_code = CASE WHEN COALESCE(queue_code, '') = '' THEN 'waiting_for_material' ELSE queue_code END,
+		  queue_reason = CASE
+		    WHEN COALESCE(queue_reason, '') <> '' THEN queue_reason
+		    WHEN COALESCE(payload_code, '') <> '' THEN 'Waiting for material: ' || payload_code
+		    ELSE 'Waiting for material' END,
+		  updated_at = NOW()
+		WHERE status = 'sourcing'`); err != nil {
+		return fmt.Errorf("v148 sourcing → queued: %w", err)
 	}
 	return nil
 }

@@ -342,12 +342,12 @@ func chapterEndedInFailure(children []*orders.Order) bool {
 // All children and bin claims are created in a single transaction. The parent
 // is transitioned into StatusReshuffling via lifecycle.BeginReshuffle, so the
 // caller must pass a parent in a status that has Reshuffling as a legal next
-// state (Pending, Sourcing, Queued). It is the ONLY compound-creation path.
+// state (Pending, Queued). It is the ONLY compound-creation path.
 //
 // THE CHILDREN ARE WRITTEN BEFORE THE PARENT MOVES, and the order is
 // load-bearing. BeginReshuffle used to run first, so a refused claim left the
 // parent sitting in `reshuffling` with no compound under it — a status outside
-// the acquiring set (IsAcquiring = queued|sourcing), which means the fulfillment
+// the acquiring set (IsAcquiring = pending|queued), which means the fulfillment
 // scanner never looks at that order again. That was survivable only while every
 // creation failure was terminal anyway. It stops being survivable the moment one
 // of them becomes a WAIT (a blocker bin claimed by another order — see
@@ -359,7 +359,7 @@ func chapterEndedInFailure(children []*orders.Order) bool {
 // order left it reshuffling and childless, which nothing recovers.
 //
 // The parent must NOT be moved back out of reshuffling as a repair instead:
-// {Reshuffling → Queued} fires fireRequeued, which runs the scanner
+// {Reshuffling → Pending} fires fireResumed, which runs the parent's acquire
 // synchronously, and the scanner is where this refusal is discovered on the
 // replay path — it holds a non-reentrant scanMu, so the "repair" would deadlock.
 //
@@ -1022,24 +1022,10 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 	// row, it is whether THIS DISPATCH is the moment the robot goes in. Only the
 	// seam knows that, so only the seam can answer it.
 	//
-	// AND BEFORE THE STATUS MOVE — for what the row would SAY, not for whether
-	// the leg survives.
-	//
-	// This justification used to read "a child can only be held while it is still
-	// `pending`, because GetNextChildOrder selects `status='pending'`, so a child
-	// parked at `sourcing` is invisible to every re-drive". That mechanism is
-	// gone: the baton is orders.AwaitingFleetSQL — pre-dispatch AND no vendor id —
-	// so {pending, sourcing} are BOTH selected, and a leg held one line further
-	// down would be found by the next advance and by RedriveHeldCompoundLegs
-	// exactly as it is found here. The ordering is not what keeps the leg alive.
-	//
-	// It is kept because the STATUS IS THE RECORD OF HOW FAR THIS LEG GOT, and
-	// this failure means it got nowhere. Every fail-closed arm above holds the
-	// leg at `pending` with a named cause; moving it to `sourcing` first and then
-	// refusing would file a leg that could not even record its own presence in a
-	// lane under the rung that means the material hunt is under way. Same
-	// disposition, one honest word for it — and the arm below stays a park rather
-	// than becoming a demote.
+	// A leg held here rests at `pending` with a named cause, like every
+	// fail-closed arm above: the baton (orders.AwaitingFleetSQL — pre-dispatch
+	// AND no vendor id) finds it on the next advance and RedriveHeldCompoundLegs
+	// on a lane event.
 	if err := d.TakeLaneOccupancy(next.ID, d.enteredAtDispatch(sourceNode, destNode)...); err != nil {
 		// AND THE CAUSE GOES ON THE ROW, like every other arm in this function. This
 		// one was missed: the leg holds at `pending` with nothing written, so a leg
@@ -1056,78 +1042,20 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		return nil
 	}
 
-	// THE VERDICT IS THE POINT. transition() compare-and-swaps on the status this
-	// caller loaded (lifecycle.go), so `pending → sourcing` is an ATOMIC CLAIM on
-	// this child: GetNextChildOrder takes the FIRST leg by sequence that is still
-	// awaiting the fleet (orders.AwaitingFleetSQL … LIMIT 1 — not `status='pending'`,
-	// which is what this line used to say), two concurrent callers therefore
-	// resolve to the SAME child, and exactly one of their CASes matches a row. The database has been answering this correctly
-	// all along. This line logged the answer and dispatched anyway.
+	// THE CLAIM ON THIS CHILD IS THE HAND'S STATUS CAS. GetNextChildOrder takes
+	// the FIRST leg by sequence still awaiting the fleet (orders.AwaitingFleetSQL
+	// … LIMIT 1), so two concurrent callers resolve to the SAME child, and the
+	// hand's `→ dispatched` compare-and-swap (acquireHand, before the fleet call)
+	// lets exactly one of them through. The loser gets ConcurrentTransition and
+	// leaves quietly (parkLegOnFleetRefusal's first arm), holding nothing: the
+	// occupancy row taken above is keyed on this child's id and so is the
+	// winner's too — AcquireOccupancy de-duplicates on (order_id, node_id) — and
+	// commitToFleet releases it only on a non-CAS failure. Releasing it on a lost
+	// CAS would let the next leg read the winner's lane as empty: the collision
+	// Hold B exists to prevent.
 	//
-	// Nothing downstream catches it. The loser's struct still reads `pending`, so
-	// Dispatch fails with IllegalTransition (pending → dispatched is not a legal
-	// edge) — while the orphan-mission guard that would cancel the vendor order is
-	// scoped to IsConcurrentTransition (dispatcher.go). Wrong error type, so it
-	// falls through to log-only, having already created a second real fleet order
-	// and overwritten vendor_order_id with it. Two robots, one row, and the first
-	// mission flying untracked: the 2026-05-27 shape, through a door the exactly-
-	// once re-read cannot cover because vendor_order_id is written AFTER the fleet
-	// call, not before.
-	//
-	// No serializer is needed here and one would be the wrong instrument — the
-	// atomic operation already ran. Read its result.
-	//
-	// RELEASING IS SCOPED TO THE ARM THAT CAN WEDGE. Occupancy was taken above,
-	// keyed on this child, and admission's occupancy arm (admitLane,
-	// admission.go) refuses a lane held by any occupant other than the asker.
-	// Return while that row stands and every OTHER leg reads the lane as "busy" --
-	// busy with a leg that was never sent. So a FAILED STATUS WRITE must release:
-	// nothing else clears it.
-	//
-	// A LOST CAS MUST NOT, and this used to get it backwards. The reasoning was
-	// "the CAS-loss arm survives regardless (the winner consumes the row)". That
-	// is false. AcquireOccupancy de-duplicates on (order_id, node_id)
-	// (store/reservations/mouth.go), and two callers contending for one child
-	// carry the SAME order_id — so there is exactly ONE occupancy row, inserted by
-	// whichever caller arrived first, and it is the WINNER'S. There is no second
-	// row for the winner to consume. ReleaseLaneOccupancy is order-keyed and drops
-	// every occupancy row the order holds, so the loser deletes the winner's row
-	// and the winner dispatches into a lane that reads EMPTY to the next leg's
-	// admission check. That is precisely the collision Hold B exists to prevent,
-	// and it is load-bearing now rather than belt-and-braces: 488729e0 retired the
-	// sibling-in-flight guard, so this row is what keeps two legs out of one lane.
-	//
-	// The loser owns nothing at this point. The winner holds the row, the child,
-	// and the dispatch; the loser's only correct action is to leave quietly.
-	//
-	// Fail/cancel/skip are unaffected: a terminalized child releases by order in
-	// TerminalizeOrder. A hold is only fail-closed if the thing held can be
-	// released — the same rule that put the take above this line, applied to the
-	// take itself.
-	//
-	// THE CLAIM IS TAKEN ONCE, NOT ONCE PER ATTEMPT. A leg being re-driven after a
-	// refused fleet create is ALREADY `sourcing` — it never gave the claim up, only
-	// its create failed — and `sourcing → sourcing` is not a legal edge. Claiming
-	// again would land in the arm below as an IllegalTransition, release the
-	// occupancy taken above and return, so the leg would never retry: the park
-	// would be a wedge wearing a cause. The claim is skipped, and the CAS in
-	// handoverToFleet (`sourcing → dispatched`, before the fleet call) is what
-	// arbitrates two callers over an already-claimed leg — which is the job it
-	// already does for every other arm.
-	if next.Status == StatusPending {
-		if err = d.lifecycle.MoveToSourcing(next, "dispatcher", "dispatching reshuffle step"); err != nil {
-			if IsConcurrentTransition(err) {
-				log.Printf("dispatch: child order %d → sourcing lost the CAS: %v — NOT dispatching "+
-					"(another caller won this child); its occupancy row is the winner's, leaving it in place",
-					next.ID, err)
-				return nil
-			}
-			log.Printf("dispatch: child order %d → sourcing refused: %v — NOT dispatching (the status "+
-				"write failed); releasing its lane occupancy", next.ID, err)
-			d.ReleaseLaneOccupancy(next.ID)
-			return nil
-		}
-	}
+	// It used to be a separate `pending → sourcing` claim ahead of the hand. C1
+	// took the rung out of the ladder; the hand's CAS was always the last word.
 	log.Printf("dispatch: advancing compound order %d, step %d (seq %d)", parentOrderID, next.ID, next.Sequence)
 
 	// Build a synthetic envelope for the child dispatch
@@ -1148,6 +1076,20 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			}
 			return d.AdvanceCompoundOrder(parentOrderID)
 		}
+		var swf *StatusWriteFailed
+		if errors.As(err, &swf) {
+			// THE CLAIM COULD NOT BE WRITTEN, which is not the fleet saying no: the
+			// fleet was never asked. The leg's occupancy was taken above, before
+			// the hand, so it goes now (release on every failure except a lost
+			// CAS), and the leg rests `pending` under a read-failed cause for the
+			// re-drive. It used to be the separate `pending → sourcing` claim's
+			// refusal arm that did this.
+			log.Printf("dispatch: child order %d → dispatched could not be written: %v — NOT dispatching; "+
+				"releasing its lane occupancy", next.ID, err)
+			d.ReleaseLaneOccupancy(next.ID)
+			d.setQueueReason(next, protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{Destination: destName})
+			return nil
+		}
 		d.parkLegOnFleetRefusal(parentOrderID, next, destNode, err)
 	}
 	return nil
@@ -1160,7 +1102,7 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 //
 // It said "no PENDING children left", which names a predicate the baton stopped
 // using: GetNextChildOrder selects orders.AwaitingFleetSQL — pre-dispatch AND no
-// vendor id — so a leg resting in `sourcing` and unsent is still a child this
+// vendor id — so a leg resting pre-dispatch and unsent is still a child this
 // half must NOT be reached for.
 //
 // Moved out verbatim, not rewritten. It never touched the dispatch half's
@@ -1574,14 +1516,12 @@ func (d *Dispatcher) advanceCompoundChapterEnd(parentOrderID int64) error {
 // child an hour later, which fails the parent anyway, just slower and with no
 // trace of why.
 //
-// `sourcing` is the rollback, and it is the same edge and the same helper the
-// plain path uses (DispatchDirect). It is NOT `pending`: {sourcing → pending} is
-// not in the transition table, and the entry-point write that would force it is
-// the shape lifecycle.go refuses by name ("an entry-point write that skips the
-// state machine is exactly what a future caller reaches for when a transition is
-// refused, and the refusal is usually right"). The re-drive was taught to see a
-// claimed-but-unsent leg instead — orders.AwaitingFleetSQL — which is where the
-// question belonged, since vendor_order_id was always the authority on it.
+// `queued` under fleet_unavailable is the rollback: the fleet-refusal edge
+// (dispatched → queued, C1.1.3) and the same door the plain path uses
+// (DemoteAfterFleetRefusal). It is NOT `pending`: {dispatched → pending} is not
+// in the transition table. The re-drive sees the queued, unsent leg through
+// orders.AwaitingFleetSQL (pre-dispatch AND no vendor id), which is where the
+// question belongs, since vendor_order_id is the authority on it.
 //
 // ── THE RELEASERS ARE THE ONES THAT ALREADY EXIST ─────────────────────────
 //
@@ -1624,7 +1564,7 @@ func (d *Dispatcher) parkLegOnFleetRefusal(parentOrderID int64, leg *orders.Orde
 	// out from under the dig — its other legs lose their admission and anybody may
 	// walk into the lane being worked. The door asks laneOwnerFor and releases
 	// nothing here.
-	d.DemoteAfterFleetRefusal(leg, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate,
+	d.DemoteAfterFleetRefusal(leg, QueueWait{}, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate,
 		QueueParams{Destination: dest})
 }
 
@@ -1940,8 +1880,8 @@ func (d *Dispatcher) splitLiftedLegs(parentOrderID int64, live []*orders.Order) 
 //
 // IT DOES NOT TRANSITION THE PARENT, and that is a hard constraint rather than a
 // simplification. The parent's way back into the acquiring set is
-// {Reshuffling → Queued}, which fires fireRequeued → EventOrderQueued → the
-// SYNCHRONOUS fulfillment scanner. This function is reachable from inside that
+// {Reshuffling → Pending}, which fires fireResumed → the parent's SYNCHRONOUS
+// acquire on the fulfillment scanner. This function is reachable from inside that
 // scanner: tryFulfill → PlanBuriedReshuffle → CreateCompoundOrder →
 // AdvanceCompoundOrder, all under a non-reentrant scanMu. Transitioning here
 // would self-deadlock the process on the first leg of a freshly planned dig. So
@@ -2235,7 +2175,7 @@ func (d *Dispatcher) CancelOrderWithCascade(order *orders.Order, stationID, reas
 }
 
 // cancelCompoundChildren cancels all non-terminal children of a compound order.
-// Unlike HandleChildOrderFailure (which only cancels pending/sourcing children),
+// Unlike HandleChildOrderFailure (which only cancels pre-dispatch children),
 // this method also cancels in-flight children (dispatched, in_transit, staged)
 // and their fleet orders. Called when an operator cancels a compound parent directly.
 //
@@ -2538,11 +2478,11 @@ func (d *Dispatcher) chapterStoppedShort(
 		// ── A STAGED PARENT HAS NO DISPOSITION TO TAKE (§R.104/§R.104a) ──
 		//
 		// The arms above write transitions OUT of `reshuffling`, and the
-		// old code below offered this parent two: Queue and Cancel. BOTH
-		// ARE ILLEGAL HERE, and for different reasons.
+		// old code below offered this parent two: a requeue and a Cancel.
+		// BOTH ARE ILLEGAL HERE, and for different reasons.
 		//
-		// Queue is refused by the state machine: `{staged → queued}` is
-		// not among staged's successors (protocol/types.go), so the old
+		// The requeue is refused by the state machine: `{staged → pending}`
+		// (once `{staged → queued}`) is not among staged's successors (protocol/types.go), so the old
 		// arm's every run on this shape logged "could not return its
 		// parent to the acquiring set" and stranded the demand at the
 		// mark. Cancel is worse than illegal — it is wrong: the demand's
@@ -2576,9 +2516,9 @@ func (d *Dispatcher) chapterStoppedShort(
 				"no transition (staged has no path to queued; the demand is not what failed, "+
 				"§R.91); the lane is re-asked on the next pass and the resume stays the "+
 				"splice-append", parentOrderID)
-		} else if err := d.lifecycle.Queue(parent, "dispatcher", demandDetail); err != nil {
-			log.Printf("dispatch: dissolved compound %d could not return its parent to the "+
-				"acquiring set: %v (the demand is stranded in reshuffling; the reconciliation "+
+		} else if err := d.lifecycle.Restart(parent, demandDetail); err != nil {
+			log.Printf("dispatch: dissolved compound %d could not return its parent to "+
+				"pending: %v (the demand is stranded in reshuffling; the reconciliation "+
 				"sweep is the backstop)", parentOrderID, err)
 		}
 	}

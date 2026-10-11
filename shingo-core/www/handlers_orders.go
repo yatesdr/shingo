@@ -264,17 +264,17 @@ type orderStatusFilter struct {
 // status an order can hold. The list is the board's, so a status cannot get a
 // badge in the table and no way to filter for it.
 //
-// Two protocol statuses have no chip because Core never writes them:
+// Three protocol statuses have no chip because Core never writes them:
 // `submitted` has no writer in shingo-core at all, and `acknowledged` has one
 // caller (engine/wiring_vendor_status.go) whose arm is dead — fleet.MapState
-// never yields it. Both are Edge lifecycle words. Guarded by
+// never yields it; both are Edge lifecycle words. `sourcing` is history only
+// since C1 (v148 moved every live row to `queued`). Guarded by
 // TestOrderStatusFilters_CoverEveryStatusCoreWrites.
 var orderStatusFilters = []orderStatusFilter{
 	{protocol.StatusPending, "Pending"},
-	// THE TWO WAITING RUNGS. Sourcing is the material hunt — the hand is short —
-	// and queued is the line, where the hand is complete and only the turn is
-	// missing; different questions, different answers, two chips.
-	{protocol.StatusSourcing, "Sourcing"},
+	// THE WAITING RUNG. Since C1 `queued` is the one place an order rests short of
+	// the fleet, and the row always says why. (Sourcing had its own chip while it
+	// was a status; it left the ladder in C1 and is history only.)
 	{protocol.StatusQueued, "Queued"},
 	{protocol.StatusDispatched, "Dispatched"},
 	{protocol.StatusInTransit, "In Transit"},
@@ -288,7 +288,7 @@ var orderStatusFilters = []orderStatusFilter{
 	{protocol.StatusFailed, "Failed"},
 	{protocol.StatusCancelled, "Cancelled"},
 	{protocol.StatusSkipped, "Skipped"},
-	// A compound parent that entered its dig from pending, sourcing or queued
+	// A compound parent that entered its dig from pending or queued
 	// (dispatch.LifecycleService.BeginReshuffle).
 	{protocol.StatusReshuffling, "Reshuffling"},
 }
@@ -390,10 +390,10 @@ func (h *Handlers) waitSinceFor(orders []*domain.Order) map[int64]string {
 // orderIsWaiting reports whether an order is waiting RIGHT NOW, for the two
 // display seams on this page.
 //
-// ── IT IS NOT protocol.IsAcquiring, AND THAT WAS A LIVE HOLE ──────────────
+// ── IT IS NOT protocol.IsWaiting ALONE, AND THAT WAS A LIVE HOLE ──────────
 //
-// Both seams asked IsAcquiring, which is {queued, sourcing}: pre-dispatch, no
-// robot committed. Three of the five wait populations in dispatch's mechanism
+// Both seams asked the protocol's waiting set ({queued, sourcing} then; `queued`
+// since C1): pre-dispatch, no robot committed. Three of the five wait populations in dispatch's mechanism
 // table sit OUTSIDE that set — PopGateStaged and PopStationWait are `staged`,
 // PopCompoundParent is `reshuffling` — and eight causes can land ONLY there
 // (the staged dig-blocker refusals, the four gate causes, station-wait). Every
@@ -420,13 +420,13 @@ func (h *Handlers) waitSinceFor(orders []*domain.Order) map[int64]string {
 // where it is: seven sites in dispatch/compound.go (five in AdvanceCompoundOrder,
 // two in handleStaleDigLeg) park it and deliberately leave the status alone,
 // because being unsent is what the re-drive selects. Under
-// IsAcquiring alone every one of those showed no wait at all — while the
+// the protocol's set alone every one of those showed no wait at all — while the
 // 30-minute anomaly board flagged the same legs as stuck. Two instruments
 // looking at one row and disagreeing, and the one an operator reads was the one
 // saying nothing.
 //
 // It is admitted on THE CAUSE, not on the status word — which is what makes it
-// safe here and would not be safe as a widening of IsAcquiring. A pending order
+// safe here and would not be safe as a widening of IsWaiting. A pending order
 // with no cause is a birth certificate and stays invisible; a pending order with
 // one is resting, and the causes are cleared when a leg is admitted
 // (compound.go, right after the admission verdict) so an admitted leg stops
@@ -434,8 +434,8 @@ func (h *Handlers) waitSinceFor(orders []*domain.Order) map[int64]string {
 //
 // So it is BOTH: a cause on the row, AND a status in which a cause means a
 // present wait. The status list is LOCAL to this page on purpose —
-// protocol.IsAcquiring feeds live order queries, soakstat and a drift pin, and
-// widening it there would change what "acquiring" means for machinery that has
+// protocol.IsWaiting feeds the station pushes, soakstat and a drift pin, and
+// widening it there would change what "waiting" means for machinery that has
 // nothing to do with rendering a page.
 func orderIsWaiting(o *domain.Order) bool {
 	if o.QueueCause == "" {
@@ -450,7 +450,7 @@ func orderIsWaiting(o *domain.Order) bool {
 		// A dig leg holding where it is, under a named cause.
 		return true
 	default:
-		return protocol.IsAcquiring(o.Status)
+		return protocol.IsWaiting(o.Status)
 	}
 }
 

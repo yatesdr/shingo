@@ -81,8 +81,8 @@ func reloadStatus(t *testing.T, db *store.DB, orderID int64) protocol.Status {
 
 // TestChangeoverStart_CancelsPreDispatchAtParticipant is the floor complaint,
 // stated as a test. Every status in protocol.IsPreDispatch gets its own subtest:
-// `queued` is the one operators hit, but pending and sourcing are the same fact
-// one step earlier and a cancel that missed them would leave the same stale
+// `queued` is the one operators hit, but pending is the same fact
+// one step earlier and a cancel that missed it would leave the same stale
 // order behind for a narrower reason.
 //
 // The order is a SIMPLE move on purpose. BuildConsumePlan downgrades a swap to a
@@ -94,7 +94,6 @@ func TestChangeoverStart_CancelsPreDispatchAtParticipant(t *testing.T) {
 	for _, status := range []protocol.Status{
 		orders.StatusQueued,
 		orders.StatusPending,
-		orders.StatusSourcing,
 	} {
 		t.Run(string(status), func(t *testing.T) {
 			t.Parallel()

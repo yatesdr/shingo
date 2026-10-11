@@ -156,8 +156,9 @@ func TestCollision_PlainStoreIsRefusedFromACorridorAComplexOrderOccupies(t *test
 		o.PayloadCode = bp.Code
 		o.SourceNode = srcNode.Name
 		o.DeliveryNode = mouth.Name
-		o.Status = StatusSourcing
+		o.Status = StatusPending
 	})
+	testdb.ReserveBin(t, db, plain.ID, bin.ID) // the soft hold the pointer is stamped with
 	testutil.MustNoErr(t, db.UpdateOrderBinID(plain.ID, bin.ID), "stamp the bin")
 	plainRaw, err := db.GetOrder(plain.ID)
 	plain = testutil.Must(t, plainRaw, err, "db.GetOrder(plain.ID)")
@@ -202,7 +203,7 @@ func TestCollision_ComplexIsRefusedFromACorridorAPlainStoreOccupies(t *testing.T
 		o.PayloadCode = bp.Code
 		o.SourceNode = srcNode.Name
 		o.DeliveryNode = mouth.Name
-		o.Status = StatusSourcing
+		o.Status = StatusPending
 	})
 	testutil.MustNoErr(t, db.UpdateOrderBinID(plain.ID, bin.ID), "stamp the bin")
 	// And hold it, as dispatch's claim leaves a store it sends: the dropoff count
@@ -294,8 +295,9 @@ func TestSeamGuard_UnderDeclaringALaneRefusesTheDispatch(t *testing.T) {
 		o.PayloadCode = bp.Code
 		o.SourceNode = srcNode.Name
 		o.DeliveryNode = mouth.Name
-		o.Status = StatusSourcing
+		o.Status = StatusPending
 	})
+	testdb.ReserveBin(t, db, order.ID, bin.ID) // the soft hold the pointer is stamped with
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
@@ -366,8 +368,9 @@ func TestSeamGuard_ASyntheticDestinationNeverReachesTheFleet(t *testing.T) {
 		o.PayloadCode = bp.Code
 		o.SourceNode = srcNode.Name
 		o.DeliveryNode = grp.Name // the group name, as intake leaves it
-		o.Status = StatusSourcing
+		o.Status = StatusPending
 	})
+	testdb.ReserveBin(t, db, order.ID, bin.ID) // the soft hold the pointer is stamped with
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
@@ -417,8 +420,9 @@ func TestSeamGuard_AConcreteDestinationIsUntouched(t *testing.T) {
 		o.PayloadCode = bp.Code
 		o.SourceNode = srcNode.Name
 		o.DeliveryNode = lineNode.Name
-		o.Status = StatusSourcing
+		o.Status = StatusPending
 	})
+	testdb.ReserveBin(t, db, order.ID, bin.ID) // the soft hold the pointer is stamped with
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")

@@ -26,19 +26,18 @@ import (
 // re-queue, dispatch, and the store short-circuit.
 
 // stubLifecycle implements the narrow Lifecycle interface for tests by writing
-// transition calls through to the fake store's UpdateOrderStatus (kept on the
-// fake though it's no longer a Store method) so test expectations like "expected
-// Sourcing then Queued" keep asserting against statusUpdates.
+// the park through to the fake store's UpdateOrderStatus (kept on the fake though
+// it's no longer a Store method), so tests assert against statusUpdates.
 type stubLifecycle struct {
 	db *fakeStore
 }
 
-func (s stubLifecycle) MoveToSourcing(ord *orders.Order, _, reason string) error {
-	return s.db.UpdateOrderStatus(ord.ID, string(protocol.StatusSourcing), reason)
-}
-
-func (s stubLifecycle) Queue(ord *orders.Order, _, reason string) error {
-	return s.db.UpdateOrderStatus(ord.ID, string(protocol.StatusQueued), reason)
+func (s stubLifecycle) Park(ord *orders.Order, _ string) error {
+	if err := s.db.UpdateOrderStatus(ord.ID, string(protocol.StatusQueued), ord.QueueReason); err != nil {
+		return err
+	}
+	ord.Status = protocol.StatusQueued
+	return nil
 }
 
 // fakeFinder stubs BinFinder: it records each call and returns a canned outcome.
@@ -203,9 +202,9 @@ func (d *recordingDispatcher) ReleaseLanesForOrder(int64) error { d.releaseLaneC
 // DemoteAfterFleetRefusal records the one door a fleet refusal goes through. The
 // scanner carries no release logic of its own any more, so what these tests can
 // assert about a refusal is that the door was called, with which cause.
-func (d *recordingDispatcher) DemoteAfterFleetRefusal(o *orders.Order, code protocol.QueueCode, cause dispatch.QueueCause, _ dispatch.QueueParams) {
+func (d *recordingDispatcher) DemoteAfterFleetRefusal(o *orders.Order, _ dispatch.QueueWait, code protocol.QueueCode, cause dispatch.QueueCause, _ dispatch.QueueParams) {
 	d.demoteCalls = append(d.demoteCalls, demoteCall{orderID: o.ID, code: string(code), cause: string(cause)})
-	o.Status = protocol.StatusSourcing
+	o.Status = protocol.StatusQueued
 	o.QueueCode, o.QueueCause = string(code), string(cause)
 }
 func (d *recordingDispatcher) PostFindHook() {}
@@ -471,11 +470,10 @@ func TestScanner_TryFulfill_Retrieve_FinderWaits_Skipped(t *testing.T) {
 }
 
 // Under Rule 1 (soft until complete), a simple order whose bin SOFT-ACQUIRE fails
-// (a lost reservation race) requeues to SOURCING — never queued — and records NO
-// hard claim. Status trail: Sourcing (before acquire) then Sourcing (race requeue,
-// idempotent self-transition recorded). The queue code is waiting_for_material
+// (a lost reservation race) waits and records NO hard claim. Status trail: none
+// (the order was queued and stays queued). The queue code is waiting_for_material
 // (lock-race). This is the soft-reserve analog of the old claim-fail requeue.
-func TestScannerSimpleSoftReserveFailRequeuesToSourcing(t *testing.T) {
+func TestScannerSimpleSoftReserveFailStaysQueued(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
 	seedQueuedRetrieve(f, 7, "dest-07")
@@ -496,16 +494,16 @@ func TestScannerSimpleSoftReserveFailRequeuesToSourcing(t *testing.T) {
 		t.Fatalf("queue_code on soft-reserve fail = %v, want waiting_for_material (lock-race)", f.queueReasons)
 	}
 	for _, u := range f.statusUpdates {
-		if u.Status != string(protocol.StatusSourcing) {
-			t.Fatalf("status trail on soft-reserve fail must stay in sourcing, got %v", f.statusUpdates)
+		if u.Status != string(protocol.StatusQueued) {
+			t.Fatalf("status trail on soft-reserve fail must stay in queued, got %v", f.statusUpdates)
 		}
 	}
 }
 
 // Under Rule 1, destination is resolved BEFORE the bin is acquired (slot-first).
 // So an unresolvable destination requeues WITHOUT acquiring or claiming a bin — no
-// hard claim is stranded while the order waits. Status trail: Sourcing (entry) then
-// Sourcing (requeue). Queue code: waiting_for_material (dest-node-unresolved).
+// hard claim is stranded while the order waits. Status trail: none (it stays
+// queued). Queue code: waiting_for_slot (dest-node-unresolved).
 func TestScanner_TryFulfill_DestNodeLookupFails_RequeuesNoBinAcquired(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
@@ -549,8 +547,8 @@ func TestScanner_TryFulfill_DestNodeLookupFails_RequeuesNoBinAcquired(t *testing
 		t.Errorf("dest-fail sentence must not point the operator at material, got %q", last.Reason)
 	}
 	for _, u := range f.statusUpdates {
-		if u.Status != string(protocol.StatusSourcing) {
-			t.Fatalf("status trail on dest-fail must stay in sourcing, got %v", f.statusUpdates)
+		if u.Status != string(protocol.StatusQueued) {
+			t.Fatalf("status trail on dest-fail must stay in queued, got %v", f.statusUpdates)
 		}
 	}
 }
@@ -597,22 +595,21 @@ func TestStoreReplayDispatchesOwnClaimedBin(t *testing.T) {
 	}
 }
 
-// ── widened scan set {queued, sourcing} ──────────────────
+// ── the scan set {pending, queued} ──────────────────
 
-// A complex order sitting in `sourcing` (the widened scan set) is re-attempted —
-// DispatchPreparedComplex's entry guard accepts IsAcquiring. A SIMPLE order in
-// sourcing is scoped out (not re-sourced) to avoid a double-claim / the intake
-// race until commit 4's reserve-reconcile lands.
-func TestScannerRetriesSourcingOrder(t *testing.T) {
+// The scan set is the acquiring set, {pending, queued} (C1). A complex order born
+// `pending` is asked — DispatchPreparedComplex's entry guard accepts IsAcquiring —
+// and a simple order waiting in `queued` with a held bin reuses it.
+func TestScannerRetriesAnAcquiringOrder(t *testing.T) {
 	t.Parallel()
 
-	t.Run("complex sourcing order is retried", func(t *testing.T) {
+	t.Run("complex pending order is asked", func(t *testing.T) {
 		f := newFakeStore()
 		dispatcher := &stubDispatcher{}
 		s := newTestScannerWithDispatcher(t, f, dispatcher)
 		f.nodesByDot["LINE_01"] = &nodes.Node{ID: 7, Name: "LINE_01"}
 		order := &orders.Order{
-			ID: 42, Status: protocol.StatusSourcing, OrderType: protocol.OrderTypeComplex,
+			ID: 42, Status: protocol.StatusPending, OrderType: protocol.OrderTypeComplex,
 			// Production complex orders are stamped coordinated at intake (IsCoordinated
 			// reads the Coordinated column, not StepsJSON).
 			Coordinated:  true,
@@ -623,19 +620,19 @@ func TestScannerRetriesSourcingOrder(t *testing.T) {
 		f.ordersByID[42] = order
 
 		if got := s.RunOnce(); got != 1 {
-			t.Fatalf("RunOnce: got %d, want 1 (sourcing complex order retried)", got)
+			t.Fatalf("RunOnce: got %d, want 1 (pending complex order asked)", got)
 		}
 		if len(dispatcher.preparedCalls) != 1 || dispatcher.preparedCalls[0] != 42 {
 			t.Errorf("DispatchPreparedComplex calls = %v, want [42]", dispatcher.preparedCalls)
 		}
 	})
 
-	// Stage 3: the old :175 guard scoped simple `sourcing` orders OUT (they could
+	// Stage 3: the old :175 guard scoped simple re-sourcing orders OUT (they could
 	// double-claim on re-source). That guard is gone; a simple order re-entered
-	// from `sourcing` while HOLDING its bin now reuses it — the finder is never
+	// while HOLDING its bin reuses it — the finder is never
 	// consulted, no second bin is claimed (the length-1 idempotency). This is the
 	// fake-level companion to the docker length-1 test.
-	t.Run("simple sourcing order with a held bin reuses it (idempotent, no re-find)", func(t *testing.T) {
+	t.Run("simple queued order with a held bin reuses it (idempotent, no re-find)", func(t *testing.T) {
 		f := newFakeStore()
 		finder := foundFinder(88, "src-x") // must NOT be consulted — the bin is already held
 		dispatcher := &recordingDispatcher{}
@@ -644,7 +641,7 @@ func TestScannerRetriesSourcingOrder(t *testing.T) {
 		f.nodesByDot["src-held"] = &nodes.Node{ID: 101, Name: "src-held"}
 		heldBin := int64(55)
 		order := &orders.Order{
-			ID: 43, Status: protocol.StatusSourcing, OrderType: protocol.OrderTypeRetrieve,
+			ID: 43, Status: protocol.StatusQueued, OrderType: protocol.OrderTypeRetrieve,
 			BinID:      &heldBin, // already holds its bin — must be reused, never re-found
 			SourceNode: "src-held", DeliveryNode: "dest-x", PayloadCode: "PN-X",
 		}
@@ -652,7 +649,7 @@ func TestScannerRetriesSourcingOrder(t *testing.T) {
 		f.ordersByID[43] = order
 
 		if got := s.RunOnce(); got != 1 {
-			t.Fatalf("RunOnce: got %d, want 1 (held-bin sourcing order dispatches, no re-find)", got)
+			t.Fatalf("RunOnce: got %d, want 1 (held-bin queued order dispatches, no re-find)", got)
 		}
 		if len(finder.calls) != 0 {
 			t.Errorf("a held-bin order must NOT consult the finder (length-1 idempotency): %+v", finder.calls)
@@ -669,10 +666,8 @@ func TestScannerRetriesSourcingOrder(t *testing.T) {
 // A7: the scanner's capacity gate self-excludes — it passes order.ID, not 0, so
 // the in-flight count (orders holding a claimed bin) can't count the order's own
 // row once it has claimed.
-// With the widened set, simple sourcing orders are scoped out before the gate,
-// so this pins the mechanism a QUEUED order threads; the reserve/confirm split
-// makes it load-bearing once sourcing
-// orders reach the gate.
+// This pins the mechanism a QUEUED order threads; the reserve/confirm split
+// makes it load-bearing once a waiting order that holds its bin reaches the gate.
 func TestScannerCapacityGatePassesOrderID(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()

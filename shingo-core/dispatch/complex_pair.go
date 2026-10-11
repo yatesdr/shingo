@@ -106,9 +106,8 @@ import (
 // every Edge door that makes one mints both uuids before it creates either (a
 // relay goes unpaired by design; Edge engine/relay_pair.go) — so the pointer is
 // never the thing that is missing. What IS missing, for the leg created first,
-// is its partner's ORDER ROW: complex_intake emits EventOrderQueued, the scanner
-// runs SYNCHRONOUSLY on that goroutine, and the partner has not been ingested
-// yet.
+// is its partner's ORDER ROW: the first leg's door runs its one acquire under
+// the scan lock, synchronously, and the partner has not been ingested yet.
 //
 // The swap-hold gate handled that asymmetrically and on purpose — fail CLOSED
 // for an evac ("hold rather than strand the line"), fail OPEN for a filler — so
@@ -118,8 +117,9 @@ import (
 // the window is real, not theoretical.
 //
 // Under the pair rule that fail-open is a half-dispatched pair, so it goes. The
-// releaser is the partner's own intake: it emits EventOrderQueued, the scanner
-// re-runs, the pair is complete, both legs go. Bounded, and no new subscription.
+// releaser is the partner's own intake: its door's acquire asks the pair's
+// leader (the lower id, fulfillment Scanner.acquireLocked), the pair is
+// complete, both legs go. Bounded, and no new subscription.
 // If that intake REFUSES the partner there is no row to wait for: intake records
 // the refusal (orders.IntakeRefusal), this function hands it to the caller, and
 // the leg fails with the partner's reason.
@@ -477,8 +477,9 @@ func (d *Dispatcher) releaseLegHoldings(leg *orders.Order, why string) {
 // waiting on the sibling itself. The sentence says which of the two waits it is,
 // because they end at different events.
 //
-// The releasers are the partner's own transitions: its intake emits
-// EventOrderQueued, and a finished dig resumes it through `queued`. A partner
+// The releasers are the partner's own transitions: its intake's acquire asks
+// the pair's leader, and a finished dig resumes it through `pending` and its
+// one acquire. A partner
 // refused at intake never lands, and failForRefusedPartner ends the wait.
 func (d *Dispatcher) parkPairAwaitingPartner(order, partner *orders.Order) error {
 	var partnerStatus protocol.Status

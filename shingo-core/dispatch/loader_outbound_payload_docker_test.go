@@ -87,14 +87,18 @@ func TestPayloadForDispatch_ReadsTheBinOnlyForABlankNeed(t *testing.T) {
 	t.Parallel()
 	db, cfg := testdb.OpenWithConfig(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
-	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-PFD")
 
 	cdb, counter, err := store.OpenCounting(cfg)
 	testutil.MustNoErr(t, err, "open counting db")
 	t.Cleanup(func() { cdb.Close() })
 	d, _ := newTestDispatcher(t, cdb, testdb.NewTrackingBackend())
 
+	// Each order points at a bin of its own and holds its reservation: a pending
+	// order pointing at a bin it holds nothing on is a pointer wedge (C1 sweeps
+	// top-level pending orders too), and the pointer is what payloadForDispatch
+	// reads, so it stays.
 	mk := func(uuid, payload, intent string) *orders.Order {
+		bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-"+uuid)
 		o := &orders.Order{
 			EdgeUUID: uuid, StationID: "test-station", OrderType: protocol.OrderTypeMove,
 			Status: protocol.StatusPending, Quantity: 1, SourceNode: storageNode.Name,
@@ -102,6 +106,7 @@ func TestPayloadForDispatch_ReadsTheBinOnlyForABlankNeed(t *testing.T) {
 			OriginClass: protocol.OriginClassNoDemand,
 		}
 		testutil.MustNoErr(t, db.CreateOrder(o), "create "+uuid)
+		testdb.ReserveBin(t, db, o.ID, bin.ID)
 		return o
 	}
 	for _, tc := range []struct {

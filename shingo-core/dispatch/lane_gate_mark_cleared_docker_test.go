@@ -30,7 +30,7 @@ import (
 //     tail. The mark decides where an order WAITS; it does not decide whether a
 //     robot that is already waiting is ever let go.
 //   - the next order into the now-unmarked lane must go back to deciding
-//     BEFORE dispatch — parked in sourcing with a cause, no robot committed —
+//     BEFORE dispatch — parked queued with a cause, no robot committed —
 //     rather than being sent out to a mark that is no longer there.
 //
 // Both are driven through the same fixture and the same contention (a dig), so
@@ -88,7 +88,7 @@ func TestGateMark_ClearedMidDwellStillReleasesTheDweller(t *testing.T) {
 
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.DeliveryNode = s0.Name
-		o.Status = "sourcing"
+		o.Status = "pending"
 	})
 	if _, err := d.DispatchDirect(order, line, s0); err != nil {
 		t.Fatalf("DispatchDirect: %v", err)
@@ -163,7 +163,7 @@ func TestGateMark_ClearedMidDwellStillReleasesTheDweller(t *testing.T) {
 //     the corridor. Who is inside is not this moment's question; the gate asks
 //     it later, when the robot actually goes in.
 //   - unmarked: there is no gate to defer to, so the occupancy arm runs and the
-//     order is refused with lane-occupied. The scanner parks it in sourcing
+//     order is refused with lane-occupied. The scanner parks it queued
 //     holding its soft reservations and NO robot is committed.
 //
 // That is the whole of "parks pre-dispatch instead of taking the gate", and it
@@ -197,7 +197,7 @@ func TestGateMark_ClearedLaneParksTheNextOrderPreDispatch(t *testing.T) {
 	// admitted and will be shipped out to dwell.
 	marked := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.DeliveryNode = s0.Name
-		o.Status = "sourcing"
+		o.Status = "pending"
 	})
 	admitted, cause, _, err := d.AcquireLanesForOrder(marked, line, s0, EntryFreshBin)
 	if err != nil {
@@ -217,7 +217,7 @@ func TestGateMark_ClearedLaneParksTheNextOrderPreDispatch(t *testing.T) {
 	// UNMARKED: nothing to defer to, so the occupancy arm refuses here and now.
 	next := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.DeliveryNode = s0.Name
-		o.Status = "sourcing"
+		o.Status = "pending"
 	})
 	admitted, cause, laneName, err := d.AcquireLanesForOrder(next, line, s0, EntryFreshBin)
 	if err != nil {
@@ -273,7 +273,7 @@ func TestGateDwell_CarriesItsCauseAndClearsItOnEntry(t *testing.T) {
 		o.PayloadCode = bp.Code
 		o.SourceNode = srcNode.Name
 		o.DeliveryNode = mouth.Name
-		o.Status = StatusSourcing
+		o.Status = StatusPending
 	})
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, bin.ID), "stamp the bin")
 	orderRaw, err := db.GetOrder(order.ID)

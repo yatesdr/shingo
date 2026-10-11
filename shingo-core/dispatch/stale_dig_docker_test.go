@@ -416,7 +416,7 @@ func TestStaleDig_Window2Dig_DissolvesReplansAndCompletes(t *testing.T) {
 		o.PayloadCode = bp.Code
 		o.SourceNode = slots[2].Name
 		o.DeliveryNode = line.Name
-		o.Status = protocol.StatusSourcing
+		o.Status = protocol.StatusPending
 	})
 	testdb.ReserveBin(t, db, order.ID, held.ID)
 	testutil.MustNoErr(t, db.UpdateOrderBinID(order.ID, held.ID), "stamp the held bin")
@@ -481,7 +481,7 @@ func TestStaleDig_Window2Dig_DissolvesReplansAndCompletes(t *testing.T) {
 	}
 	if !protocol.IsAcquiring(replanning.Status) {
 		t.Fatalf("the demand is %q, want an acquiring status — the scanner never looks at an order "+
-			"outside {queued, sourcing} again", replanning.Status)
+			"outside {pending, queued} again", replanning.Status)
 	}
 	// IT STILL HOLDS ITS BIN, which is what makes the second pass a HELD-BIN pass
 	// rather than a fresh find. Losing the hold here would send the order back

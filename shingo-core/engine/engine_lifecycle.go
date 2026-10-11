@@ -48,11 +48,7 @@ func (e *Engine) Start() {
 		e.tracker = tb.Tracker()
 	}
 
-	// Create fulfillment scanner for queued orders. The scanner shares the ONE
-	// SourceFinder seam with intake planning (same resolver + DB) so replay can't
-	// drift its source scoping from intake.
-	sourceFinder := dispatch.NewSourceFinder(e.db, resolver, e.debugLog)
-	e.fulfillment = fulfillment.NewScanner(e.db, e.dispatcher, e.dispatcher.Lifecycle(), sourceFinder, e.binManifest, e.sendToEdge, e.failOrderAndEmit, e.logFn, e.debugLog)
+	e.startFulfillment(resolver)
 
 	// Wire event handlers
 	e.wireEventHandlers()
@@ -245,6 +241,17 @@ func (e *Engine) Start() {
 // The credentials were already validated at config load — a base_url without
 // keys, or one that will not parse, refuses to boot — so a non-nil return means
 // the integration can actually run.
+// startFulfillment creates the fulfillment scanner for acquiring orders and
+// hands it to the dispatcher as the doors' lock and their one acquire
+// (dispatch/door.go, F1). The scanner shares the ONE SourceFinder seam with
+// intake planning (same resolver + DB) so replay can't drift its source
+// scoping from intake.
+func (e *Engine) startFulfillment(resolver dispatch.NodeResolver) {
+	sourceFinder := dispatch.NewSourceFinder(e.db, resolver, e.debugLog)
+	e.fulfillment = fulfillment.NewScanner(e.db, e.dispatcher, e.dispatcher.Lifecycle(), sourceFinder, e.binManifest, e.sendToEdge, e.failOrderAndEmit, e.logFn, e.debugLog)
+	e.dispatcher.SetAcquirer(e.fulfillment)
+}
+
 func newCMSPoster(cfg *config.Config, db *store.DB, logFn func(string, ...any)) *poster.Poster {
 	if !cfg.CMS.Enabled() {
 		return nil

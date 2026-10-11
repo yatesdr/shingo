@@ -85,17 +85,17 @@ func TestDispatchDirect_FleetRefusalIsNotTerminal(t *testing.T) {
 	t.Parallel()
 
 	// The state machine is the whole subject, so assert against it directly
-	// rather than against a comment: `failed` is terminal and the scanner's
-	// recovery edge does not exist from there.
-	if protocol.IsValidTransition(protocol.StatusFailed, protocol.StatusSourcing) {
-		t.Fatal("failed → sourcing is a legal transition now; this test's premise is gone and the " +
+	// rather than against a comment: `failed` is terminal and the recovery edge
+	// does not exist from there.
+	if protocol.IsValidTransition(protocol.StatusFailed, protocol.StatusQueued) {
+		t.Fatal("failed → queued is a legal transition now; this test's premise is gone and the " +
 			"scanner's rollback would have worked all along — re-derive the finding before deleting it")
 	}
-	for _, from := range []protocol.Status{protocol.StatusQueued, protocol.StatusSourcing, protocol.StatusPending} {
-		if !protocol.IsValidTransition(from, protocol.StatusSourcing) && from != protocol.StatusSourcing {
-			t.Errorf("%s → sourcing must be legal: it is the fleet-refusal recovery edge the scanner "+
-				"takes after DispatchDirect returns an error", from)
-		}
+	// The recovery edge (C1.1.3): a fleet refusal queues the order under
+	// fleet_unavailable, from the `dispatched` its hand wrote.
+	if !protocol.IsValidTransition(protocol.StatusDispatched, protocol.StatusQueued) {
+		t.Error("dispatched → queued must be legal: it is the fleet-refusal recovery edge the caller " +
+			"takes after DispatchDirect returns an error")
 	}
 }
 

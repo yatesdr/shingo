@@ -84,7 +84,7 @@ func TestSwapLegCommittedToFleet_CoversEveryStatusDeliberately(t *testing.T) {
 	}{
 		{StatusPending, "not yet acquiring"},
 		{StatusQueued, "acquiring — the state a leg is held FROM"},
-		{StatusSourcing, "acquiring"},
+		{StatusSourcing, "history only since C1; a row still saying it is not the fleet's"},
 		{StatusReshuffling, "mid-dig; has not begun this swap's own work"},
 		{StatusFailed, "will not do its part; a recovery may still come"},
 		{StatusCancelled, "will not do its part"},

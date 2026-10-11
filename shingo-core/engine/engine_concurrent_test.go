@@ -39,7 +39,7 @@ import (
 // force with a PostFindHook: that race is architecturally gone because intake no
 // longer claims (only the scanner does, serialized). The deterministic
 // claim-fail→requeue path is now covered at the scanner by its soft-reserve
-// analog, fulfillment.TestScannerSimpleSoftReserveFailRequeuesToSourcing.
+// analog, fulfillment.TestScannerSimpleSoftReserveFailStaysQueued.
 func TestConcurrent_ClaimSerialized_NoDoubleClaim(t *testing.T) {
 	t.Parallel()
 

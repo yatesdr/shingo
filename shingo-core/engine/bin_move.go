@@ -249,15 +249,23 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 	return e.binMoveAsItStands(order, p)
 }
 
+// door runs a door's unit under the scan lock (dispatch/door.go), or directly in
+// an engine built without a scanner (some tests).
+func (e *Engine) door(fn func()) {
+	if e.fulfillment != nil {
+		e.fulfillment.Door(fn)
+		return
+	}
+	fn()
+}
+
 // acquireOne hands a just-born order to acquiring. An engine built without a
-// scanner (some tests) queues it for whoever scans.
+// scanner (some tests) leaves it `pending`, in the scanner's population, for
+// whoever scans: nothing writes a wait without a cause in place of a scan that
+// is not there.
 func (e *Engine) acquireOne(order *orders.Order) {
 	if e.fulfillment != nil {
 		e.fulfillment.AcquireOne(order.ID)
-		return
-	}
-	if err := e.dispatcher.Lifecycle().Queue(order, "bin-move", "awaiting acquire"); err != nil {
-		e.logFn("engine: queue bin move %d with no scanner: %v", order.ID, err)
 	}
 }
 

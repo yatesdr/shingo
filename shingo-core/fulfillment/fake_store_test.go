@@ -117,6 +117,15 @@ func (f *fakeStore) PlannedPickStands(*domain.PlannedPick, domain.DigAsker) (*no
 	return nil, nil
 }
 
+func (f *fakeStore) GetOrderByUUID(uuid string) (*orders.Order, error) {
+	for _, o := range f.ordersByID {
+		if o.EdgeUUID == uuid {
+			return o, nil
+		}
+	}
+	return nil, errors.New("order not found")
+}
+
 func (f *fakeStore) GetOrder(id int64) (*orders.Order, error) {
 	if f.errGetOrder != nil {
 		return nil, f.errGetOrder

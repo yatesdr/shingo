@@ -664,9 +664,8 @@ func (s *LifecycleService) PrepareRedirect(order *orders.Order, newDeliveryNode 
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := s.MoveToSourcing(order, "system", fmt.Sprintf("redirecting to %s", newDeliveryNode)); err != nil {
-		log.Printf("dispatch: redirect order %d to sourcing: %v", order.ID, err)
-	}
+	// No status write: the redirect gate admits only a pre-dispatch order, which
+	// is already `pending` or `queued`, and its hand takes it to `dispatched`.
 	return sourceNode, newDest, nil
 }
 

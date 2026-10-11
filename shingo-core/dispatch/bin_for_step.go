@@ -178,7 +178,7 @@ func (d *Dispatcher) binForStep(order *orders.Order, steps []resolvedStep, stepI
 //
 // laneEntryAfterWait, asked with a bare 0, answers for wait 0 either way: it
 // finds the first wait in the plan and returns the work AFTER it. On a two-robot
-// swap that is the far side of the exchange, so a demand sitting in `sourcing`
+// swap that is the far side of the exchange, so a demand waiting pre-dispatch
 // waiting to fetch a bin OUT OF STORAGE was asked about the bin at the MACHINE.
 // That bin is at a station, no station is inside a lane, and the answer is
 // ErrPickupNotInLane — CauseGatePickupElsewhere, re-asked and re-refused on every

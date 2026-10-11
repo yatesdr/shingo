@@ -22,7 +22,7 @@ import (
 func namedMove(t *testing.T, f *endedOwnerFixture, source string, bin int64) *orders.Order {
 	t.Helper()
 	return testdb.CreateOrder(t, f.db, func(o *orders.Order) {
-		o.OrderType, o.Status, o.SourceNode, o.DeliveryNode = OrderTypeMove, StatusSourcing, source, f.slot.Name
+		o.OrderType, o.Status, o.SourceNode, o.DeliveryNode = OrderTypeMove, StatusPending, source, f.slot.Name
 		o.NamedBinID = &bin
 	})
 }

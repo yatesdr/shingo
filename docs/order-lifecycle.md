@@ -41,30 +41,57 @@ at the destination, period). Two are Edge-lifecycle words in practice:
   `submitted`, is an Edge-lifecycle word in practice.
 
 Edge mirrors Core's **full** status vocabulary: a status Core pushes that Edge
-previously discarded (`sourcing`, `dispatched`, `faulted`) is now stored on the
-Edge row by a single mapping function (`orders.ApplyCoreStatus`), so the
-operator is shown the truth of whichever machine owns the order at that moment.
+previously discarded (`dispatched`, `faulted`) is now stored on the Edge row by
+a single mapping function (`orders.ApplyCoreStatus`), so the operator is shown
+the truth of whichever machine owns the order at that moment.
+
+---
+
+## The ladder (C1)
+
+Every order is born `pending`. Its first hand takes it `pending → dispatched`
+in one transaction when the whole hand is had; otherwise it parks
+`pending → queued`, with the cause written on the row first. `queued` is the
+one place an order rests short of the fleet, and it always carries a cause
+(`transition` refuses `→ queued` with an empty `queue_code`:
+`WaitWithoutCause`).
+
+**Acquiring** is the act between `pending` and `dispatched` — asking for the
+whole hand — never a stored status. `protocol.IsAcquiring` = {`pending`,
+`queued`} is the scanner's population; `IsWaiting` = {`queued`}.
+
+**`sourcing` is not a status an order can be in.** `protocol.StatusSourcing`
+stays as a constant so old `order_history` rows still render; no edge enters
+it, and its row in `validTransitions` is `queued`'s outgoing edges, so a row
+that still says it is not terminal. Migration v148 moved every `sourcing` order
+to `queued`, keeping its own cause or else `waiting_for_material`;
+`order_history` is not rewritten. An Edge talking to an older Core translates a
+`sourcing` push or snapshot to `queued` at the door (`HandleOrderUpdate`,
+`ApplyCoreStatusSnapshot`), keeping the push's code or else
+`waiting_for_material`. That translation, the constant and the
+`.badge-sourcing` alias go together after one release.
 
 ---
 
 ## The lifecycle table
 
-**Status roster** (`protocol/status.go`): `pending`, `sourcing`, `queued`,
+**Status roster** (`protocol/status.go`): `pending`, `queued`,
 `submitted`, `dispatched`, `acknowledged`, `in_transit`, `delivered`,
 `confirmed`, `staged`, `faulted`, `failed`, `cancelled`, `reshuffling`,
-`skipped` — 15 values.
+`skipped` — 14 live values, plus `sourcing`, which `AllStatuses()` still lists
+for history rows only (see the ladder above).
 
 **Terminal** = no outgoing edge in `validTransitions` (`protocol.IsTerminal`,
 derived, not hand-maintained): **confirmed, failed, cancelled, skipped**.
 
 | Status | Scope | Terminal | Core writes | Edge writes | Crosses wire? | What the operator sees |
 |---|---|---|---|---|---|---|
-| `pending` | shared | no | intake — the INSERT (`orders.Create`) sets it | local create | no (each side's own zero value) | Submit button on Edge list; Core UI badge |
-| `sourcing` | shared | no | `MoveToSourcing` (reserve start, held-bin re-dispatch, redirect re-shop, fleet-refusal demote) | **`ApplyCoreStatus`** (live push + snapshot) | yes (`order.update` + snapshot) | HMI: "SOURCING: \<reason\>" (same family as IN QUEUE) |
-| `queued` | shared | no | `Queue`, `ResumeCompound` | `ApplyCoreStatus` (Core's `order.update`) | yes (`order.update`) | "IN QUEUE: \<queue_reason\>"; badge on both lists |
+| `pending` | shared | no | every door — the INSERT (`orders.Create`) sets it; `ResumeCompound` / `Restart` (reshuffling → pending) | local create | no (each side's own zero value) | Submit button on Edge list; Core UI badge |
+| `sourcing` | history only | no (its row is `queued`'s) | nothing since C1 (v148 moved live rows to `queued`) | nothing — translated to `queued` at the door | an older Core's push or snapshot only | old history rows render as the `queued` badge (`.badge-sourcing` alias) |
+| `queued` | shared | no | `Park` (cause first; via `ParkAndTell` at a door, the scanner's park, `DemoteAfterFleetRefusal`) | `ApplyCoreStatus` (Core's `order.update`) | yes (`order.update`, once per park, with the reason) | "IN QUEUE: \<queue_reason\>"; badge on both lists |
 | `submitted` | Edge-only (in practice) | no | not produced by the dispatcher | local create auto-submit, `SubmitOrder` | no (Edge-local) | Edge UI badge; absent from window cards |
 | `dispatched` | shared | no | `Dispatch` (the CAS claim, taken before the fleet create) | **`ApplyCoreStatus`** (live push + snapshot) | yes (`order.update` + snapshot) | Core filter chip; Edge mirrors when Core pushes it |
-| `acknowledged` | Edge-only (in practice) | no | defensive `Acknowledge` arm — never fires (`MapState` doesn't return it) | `ReplyAck` (Core's intake ACK, pre-sourcing) | yes (`order.ack`) | HMI: **"ACKNOWLEDGED"** — its own step, NOT "IN TRANSIT" |
+| `acknowledged` | Edge-only (in practice) | no | defensive `Acknowledge` arm — never fires (`MapState` doesn't return it) | `ReplyAck` (Core's intake ACK, before the acquire) | yes (`order.ack`) | HMI: **"ACKNOWLEDGED"** — its own step, NOT "IN TRANSIT" |
 | `in_transit` | shared | no | `MarkInTransit`, `Release`, `MarkFaultedRecovered` | `ReplyWaybill` (waybill + ETA) + `ApplyCoreStatus` | yes (waybill + `order.update`) | "IN TRANSIT" + ETA pill |
 | `staged` | shared | no | `MarkStaged` | `ReplyStaged` (`order.staged` envelope) | yes (`order.staged`) | Release button + expiry countdown |
 | `delivered` | shared | no | `MarkDelivered` | `HandleDelivered` (`order.delivered` w/ bin snapshot) | yes (`order.delivered`) | Confirm button; HMI "DELIVERED" |
@@ -85,39 +112,38 @@ row in that status.
 ## Core's planning machine
 
 Core owns the order from intake through fleet handoff and terminal resolution.
-Pre-fleet it plans (`pending` → `queued` / `sourcing`); at dispatch it hands
-off to the fleet (`dispatched` → `in_transit` → `staged` / `delivered`);
-faulted is a grace-period branch; reshuffling is the compound-parent loop.
-Every edge below is a row in `protocol.validTransitions`.
+Pre-fleet it acquires: `pending` → `dispatched` when the whole hand is had, or
+`pending` → `queued` to wait with a cause; at dispatch it hands off to the
+fleet (`dispatched` → `in_transit` → `staged` / `delivered`); faulted is a
+grace-period branch; reshuffling is the compound-parent loop. Every edge below
+is a row in `protocol.validTransitions` (the full table, under a drift test, is
+in [order-state-machine/transitions.md](order-state-machine/transitions.md)).
 
 ```mermaid
 stateDiagram-v2
-    [*] --> pending: Create*Order (the INSERT sets it)
+    [*] --> pending: every door (the INSERT sets it)
 
-    pending --> sourcing: MoveToSourcing
-    pending --> queued: Queue (status-first intake queueing)
-    pending --> reshuffling: BeginReshuffle (buried bin)
+    pending --> dispatched: the hand's CAS (every order's first hand)
+    pending --> queued: Park (hand not whole; cause on the row first)
+    pending --> reshuffling: BeginReshuffle (buried source; dig pivot)
     pending --> cancelled: CancelOrder
     pending --> failed: Fail
     pending --> skipped: Skip
 
-    sourcing --> queued: Queue (retry)
-    sourcing --> dispatched: Dispatch (inventory ready)
-    sourcing --> reshuffling: BeginReshuffle
-    sourcing --> cancelled: CancelOrder
-    sourcing --> failed: Fail
-    sourcing --> skipped: Skip
+    note right of pending
+        sourcing is history: no edge enters it.
+        v148 moved live rows to queued.
+    end note
 
-    queued --> sourcing: scanner re-resolve
-    queued --> dispatched: Dispatch (claim, then fleet CreateOrder)
-    queued --> reshuffling: BeginReshuffle (complex parent)
+    queued --> dispatched: the hand's CAS (a later acquire)
+    queued --> reshuffling: BeginReshuffle (buried source; dig pivot)
     queued --> cancelled: CancelOrder
     queued --> failed: Fail
     queued --> skipped: Skip (no source bins)
 
     dispatched --> in_transit: MarkInTransit (fleet RUNNING)
     dispatched --> delivered: MarkDelivered
-    dispatched --> sourcing: DemoteAfterFleetRefusal (fleet refused the create; PrepareRedirect is now refused past pre-dispatch)
+    dispatched --> queued: DemoteAfterFleetRefusal (fleet refused the create; fleet_unavailable or the ngrp carve-out)
     dispatched --> faulted: MarkFaulted (RDS FAILED)
     dispatched --> cancelled: CancelOrder
     dispatched --> failed: Fail
@@ -140,7 +166,7 @@ stateDiagram-v2
     faulted --> cancelled: CancelOrder
 
     reshuffling --> confirmed: CompleteCompound (simple-retrieve)
-    reshuffling --> queued: ResumeCompound (complex parent re-enters scanner)
+    reshuffling --> pending: ResumeCompound / Restart (dig finished or dissolved; then one acquire)
     reshuffling --> cancelled: CancelOrder
     reshuffling --> failed: Fail
 
@@ -160,13 +186,26 @@ Notes on the Core machine:
   ladder starts at `dispatched`. The `acknowledged → {...}` edges exist in the
   shared table (Edge uses them) but Core never enters the state.
 - **`submitted` is not drawn** — Edge's word; Core never writes it.
-- **Reshuffle loop:** `reshuffling → queued (ResumeCompound)` is the complex
-  parent re-entering the scanner after its children complete; simple-retrieve
-  compounds terminate at `confirmed`.
-- **`dispatched → sourcing` is the refusal door** — `DemoteAfterFleetRefusal`
-  ("armor off, paper kept") is its live writer. `HandleOrderRedirect` now
-  refuses anything not pre-dispatch, so `PrepareRedirect` no longer produces
-  this edge.
+- **Reshuffle loop:** `reshuffling → pending` (`ResumeCompound`, `Restart`) is a
+  complex parent going back to the ladder's start when its dig finished or was
+  dissolved. It is not waiting on anything, so it does not say `queued`:
+  `Restart` clears the old cause, and `fireResumed` hands the parent to engine
+  wiring, which runs its one acquire and tells the station where it landed
+  (`queued` through its park, or `dispatched`). Simple-retrieve compounds
+  terminate at `confirmed`. `reshuffling → queued` is not an edge.
+- **`dispatched → queued` is the refusal door** — `DemoteAfterFleetRefusal`
+  ("armor off, paper kept") is its live writer. The caller names the cause
+  (`fleet_unavailable`, or the scanner's ngrp-resolve carve-out); an empty code
+  is refused and nothing is undone. A redirect writes no status:
+  `HandleOrderRedirect` refuses anything not pre-dispatch.
+- **Doors.** Each door (`HandleOrderRequest`, complex intake, loader
+  replenishment, carried-bin recovery) holds the scanner's lock across its birth, its apply
+  and one acquire (`dispatch/door.go`), so a periodic pass never acquires a
+  half-applied row. A door whose decision is already a wait (dropoff gate,
+  finder wait, unresolved group) parks the order itself (`ParkAndTell`). The
+  station is not told `queued` for an order that never waited; a park sends one
+  `order.update` `queued` with the reason, and a door never emits
+  `EventOrderQueued`.
 
 ---
 
@@ -176,9 +215,9 @@ Edge owns the order envelope from local creation through operator confirmation.
 It mirrors Core's planning status when Core pushes it (via `ApplyCoreStatus`),
 and independently tracks its own submission lifecycle
 (`pending` → `submitted` → `acknowledged`). The statuses the mapping newly
-lets Edge store — `sourcing`, `dispatched`, `faulted` — appear here because
-Core pushes them over `order.update`; Edge transitions through them exactly as
-the shared table permits.
+lets Edge store — `dispatched`, `faulted` — appear here because Core pushes
+them over `order.update`. Edge never stores `sourcing`: an older Core's
+`sourcing` is `queued` by the time it reaches `ApplyCoreStatus`.
 
 ```mermaid
 stateDiagram-v2
@@ -186,7 +225,7 @@ stateDiagram-v2
 
     pending --> submitted: auto-submit at creation / SubmitOrder
     pending --> queued: ApplyCoreStatus (Core push)
-    pending --> sourcing: ApplyCoreStatus
+    pending --> dispatched: ApplyCoreStatus
     pending --> reshuffling: snapshot reconcile
     pending --> cancelled: AbortOrder
     pending --> failed: ReplyError
@@ -200,7 +239,6 @@ stateDiagram-v2
 
     acknowledged --> in_transit: ReplyWaybill (waybill + ETA)
     acknowledged --> dispatched: ApplyCoreStatus (Core push)
-    acknowledged --> sourcing: ApplyCoreStatus
     acknowledged --> faulted: ApplyCoreStatus
     acknowledged --> cancelled: ReplyCancelled / AbortOrder
     acknowledged --> failed: ReplyError
@@ -208,7 +246,6 @@ stateDiagram-v2
     queued --> acknowledged: ReplyAck (order.ack)
     queued --> dispatched: ApplyCoreStatus
     queued --> in_transit: ApplyCoreStatus
-    queued --> sourcing: ApplyCoreStatus
     queued --> reshuffling: snapshot reconcile
     queued --> cancelled: ReplyCancelled / AbortOrder
     queued --> failed: ReplyError
@@ -216,7 +253,7 @@ stateDiagram-v2
 
     dispatched --> in_transit: ApplyCoreStatus / ReplyWaybill
     dispatched --> delivered: ReplyDelivered
-    dispatched --> sourcing: ApplyCoreStatus
+    dispatched --> queued: ApplyCoreStatus (fleet refusal)
     dispatched --> faulted: ApplyCoreStatus
     dispatched --> cancelled: ReplyCancelled
     dispatched --> failed: ReplyError
@@ -243,7 +280,7 @@ stateDiagram-v2
     delivered --> failed: ReplyError
 
     reshuffling --> confirmed: snapshot reconcile
-    reshuffling --> queued: snapshot reconcile
+    reshuffling --> pending: snapshot reconcile
     reshuffling --> cancelled: snapshot reconcile
     reshuffling --> failed: snapshot reconcile
 
@@ -257,7 +294,7 @@ Notes on the Edge machine:
 
 - **`ApplyCoreStatus`** (`shingo-edge/orders/lifecycle_service.go`) maps Core's
   pushed status onto the Edge row. It is a MIRROR, not a gate: its arms are
-  `queued` / `sourcing` / `dispatched` / `in_transit` / `faulted` →
+  `queued` / `dispatched` / `in_transit` / `faulted` →
   `ForceTransition` — Core owns the status, Edge adopts it, including backward
   moves like `in_transit → queued`. The one guard: a stale fleet push onto an
   already-terminal Edge row is ignored, never resurrects a finished order.
@@ -267,7 +304,14 @@ Notes on the Edge machine:
   are **no-ops here** — they are owned by dedicated envelopes (`order.staged`,
   `order.delivered`, `order.error`, `order.skipped`, `order.cancelled`) that
   carry the extra fields (bin snapshot, expiry, reason) this generic mapping
-  does not have.
+  does not have. An older Core's `sourcing` is translated to `queued` before
+  this mapping (`HandleOrderUpdate`, `ApplyCoreStatusSnapshot`), for one
+  release.
+- **A resumed parent** leaves `reshuffling` on Core for `pending`, and Core
+  never pushes `pending`. The Edge hears where its acquire landed instead:
+  `queued` through the park's one update, or `dispatched` (pushed for a
+  coordinated parent through the forced `ApplyCoreStatus` arm; for a plain one
+  the acquire's own ack and waybill walk the mirror forward on the reply path).
 - **Validation lives on the reply path, not the push.** The dedicated-reply
   path (`HandleDispatchReply` → `mirrorTransition`) validates against
   `validTransitions`; when the mirror has skipped steps it catches up in one
@@ -401,9 +445,12 @@ reconcile.
   the waybill after a successful create. Edge writes `acknowledged`.
 - `order.update` — carries `status` + `detail` + `queue_reason` (+ ETA into
   `in_transit`). Edge routes the status through `ApplyCoreStatus`
-  (`HandleOrderUpdate` → `HandleCoreStatusPush`); `queued` / `sourcing` /
+  (`HandleOrderUpdate` → `HandleCoreStatusPush`); `queued` /
   `dispatched` / `in_transit` / `faulted` now update the Edge row, while ETA
-  and `queue_reason` are side-written regardless.
+  and `queue_reason` are side-written regardless. A park sends one `queued`
+  update with the reason; an order that never waited is not told `queued`. An
+  older Core's `sourcing` is rewritten to `queued` (its code, or
+  `waiting_for_material`) at the top of `HandleOrderUpdate`.
 - Dedicated envelopes for the statuses the generic mapping does NOT own:
   `order.waybill` (waybill id + ETA → `in_transit`), `order.staged` (→
   `staged`), `order.delivered` (→ `delivered`, with bin snapshot),
@@ -423,12 +470,12 @@ reconcile.
 ```mermaid
 flowDiagram LR
     subgraph Core[Core - planning machine]
-        CPlan[queued / sourcing]
+        CPlan[pending / queued]
         CFleet[dispatched -> in_transit -> staged / delivered]
     end
     subgraph Edge[Edge - submission machine]
         ESub[submitted -> acknowledged]
-        EMirror[mirrors sourcing / dispatched / faulted / in_transit]
+        EMirror[mirrors queued / dispatched / faulted / in_transit]
         ETerm[staged / delivered / confirmed]
     end
 

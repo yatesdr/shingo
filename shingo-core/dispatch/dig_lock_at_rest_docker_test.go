@@ -64,8 +64,9 @@ func TestDigParent_TakesTheLaneAtPlanTimeAndWaitsHoldingIt(t *testing.T) {
 	driveDigToCompletion(t, db, d, laneClearFor(t, db, demand))
 	afterRaw, err := db.GetOrder(demand.ID)
 	after := testutil.Must(t, afterRaw, err, "db.GetOrder(demand.ID) after the dig")
-	if after.Status != StatusQueued {
-		t.Fatalf("demand status = %q after its dig, want %q", after.Status, StatusQueued)
+	// (C1: the resumed demand rests in `pending`, still holding the lane.)
+	if after.Status != StatusPending {
+		t.Fatalf("demand status = %q after its dig, want %q", after.Status, StatusPending)
 	}
 	dugRaw, err := orders.ListDigLocksAtRest(db.DB)
 	dug := testutil.Must(t, dugRaw, err, "orders.ListDigLocksAtRest")

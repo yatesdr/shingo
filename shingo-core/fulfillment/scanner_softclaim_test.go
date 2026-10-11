@@ -47,7 +47,7 @@ func TestRule1_NoHardClaimWhileWaitingForSlot(t *testing.T) {
 	order := seedQueuedRetrieve(f, 200, "STOR-01")
 	order.PayloadCode = "PN-R1"
 	storageDest(f, "STOR-01", 2000)
-	// Slot reserve fails (another order holds the slot) → the order parks in sourcing.
+	// Slot reserve fails (another order holds the slot) → the order waits in queued.
 	dispatcher := &recordingDispatcher{reserveErr: errors.New("slot held by order 999")}
 	s := newScannerWith(t, f, foundFinderFor(201, "SRC-01"), dispatcher, func(int64, string, string) {
 		t.Errorf("soft-holding must not fail the order")
@@ -62,14 +62,14 @@ func TestRule1_NoHardClaimWhileWaitingForSlot(t *testing.T) {
 	if len(dispatcher.confirmCalls) != 0 {
 		t.Errorf("confirm-at-dispatch must not run while waiting on a slot: %+v", dispatcher.confirmCalls)
 	}
-	// The order parks in SOURCING (never queued), under waiting_for_slot.
+	// The order rests in `queued`, under waiting_for_slot.
 	last := f.queueReasons[len(f.queueReasons)-1]
 	if last.Code != string(protocol.QueueWaitingForSlot) {
 		t.Errorf("queue_code = %q, want waiting_for_slot", last.Code)
 	}
 	for _, u := range f.statusUpdates {
-		if u.Status != string(protocol.StatusSourcing) {
-			t.Fatalf("a soft-holding order parks in sourcing, got trail %v", f.statusUpdates)
+		if u.Status != string(protocol.StatusQueued) {
+			t.Fatalf("a soft-holding order rests in queued, got trail %v", f.statusUpdates)
 		}
 	}
 }
@@ -106,7 +106,7 @@ func TestRule1_ConfirmAtDispatchHardClaimsBoth(t *testing.T) {
 }
 
 // TestRule1_ReentryReusesOwnBin: a soft-holding order re-entered on a later tick
-// (still sourcing, BinID set at soft-acquire) reuses ITS OWN bin — the finder is
+// (still queued, BinID set at soft-acquire) reuses ITS OWN bin — the finder is
 // never consulted again, no second bin is reserved. This is the owner-aware keep
 // arm: the SQL finders exclude pending-reserved bins owner-blind, so re-finding
 // would shop a second bin and double-source.
@@ -115,7 +115,7 @@ func TestRule1_ReentryReusesOwnBin(t *testing.T) {
 	f := newFakeStore()
 	heldBin := int64(203)
 	order := &orders.Order{
-		ID: 202, Status: protocol.StatusSourcing, OrderType: protocol.OrderTypeRetrieve,
+		ID: 202, Status: protocol.StatusQueued, OrderType: protocol.OrderTypeRetrieve,
 		BinID: &heldBin, SourceNode: "SRC-03", DeliveryNode: "STOR-03", PayloadCode: "PN-R1C",
 	}
 	f.queued = append(f.queued, order)
@@ -143,7 +143,7 @@ func TestRule1_ReentryReusesOwnBin(t *testing.T) {
 }
 
 // TestRule1_ConfirmFailKeepsSoftHold: a confirm-at-dispatch failure (e.g. the pending
-// reservation was reaped) parks the order in sourcing under claim_failed and KEEPS
+// reservation was reaped) parks the order under claim_failed and KEEPS
 // the soft hold — next tick re-enters via BinID and re-confirms (owner-idempotent).
 // No hard claim is left stranded on a non-dispatched order.
 func TestRule1_ConfirmFailKeepsSoftHold(t *testing.T) {
@@ -151,7 +151,7 @@ func TestRule1_ConfirmFailKeepsSoftHold(t *testing.T) {
 	f := newFakeStore()
 	heldBin := int64(204)
 	order := &orders.Order{
-		ID: 203, Status: protocol.StatusSourcing, OrderType: protocol.OrderTypeRetrieve,
+		ID: 203, Status: protocol.StatusQueued, OrderType: protocol.OrderTypeRetrieve,
 		BinID: &heldBin, SourceNode: "SRC-04", DeliveryNode: "STOR-04", PayloadCode: "PN-R1D",
 	}
 	f.queued = append(f.queued, order)
@@ -183,8 +183,8 @@ func TestRule1_ConfirmFailKeepsSoftHold(t *testing.T) {
 		t.Errorf("queue on confirm fail = %+v, want waiting_for_material/claim-failed", last)
 	}
 	for _, u := range f.statusUpdates {
-		if u.Status != string(protocol.StatusSourcing) {
-			t.Fatalf("a confirm-failed order stays in sourcing, got %v", f.statusUpdates)
+		if u.Status != string(protocol.StatusQueued) {
+			t.Fatalf("a confirm-failed order rests in queued, got %v", f.statusUpdates)
 		}
 	}
 }
@@ -212,7 +212,7 @@ func TestRule1_ConfirmFailWithNoHoldForgetsTheBin(t *testing.T) {
 	f := newFakeStore()
 	heldBin := int64(304)
 	order := &orders.Order{
-		ID: 303, Status: protocol.StatusSourcing, OrderType: protocol.OrderTypeRetrieve,
+		ID: 303, Status: protocol.StatusQueued, OrderType: protocol.OrderTypeRetrieve,
 		BinID: &heldBin, SourceNode: "SRC-05", DeliveryNode: "STOR-05", PayloadCode: "PN-R1E",
 	}
 	f.queued = append(f.queued, order)
@@ -249,7 +249,7 @@ func TestRule1_ConfirmFailUnreadableReservationsKeepsTheHold(t *testing.T) {
 	f := newFakeStore()
 	heldBin := int64(404)
 	order := &orders.Order{
-		ID: 403, Status: protocol.StatusSourcing, OrderType: protocol.OrderTypeRetrieve,
+		ID: 403, Status: protocol.StatusQueued, OrderType: protocol.OrderTypeRetrieve,
 		BinID: &heldBin, SourceNode: "SRC-06", DeliveryNode: "STOR-06", PayloadCode: "PN-R1F",
 	}
 	f.queued = append(f.queued, order)

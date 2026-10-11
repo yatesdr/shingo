@@ -72,7 +72,7 @@ func ledgerSlotByName(t *testing.T, l *ledgerRows, name string) ledgerSlot {
 //   - a pending order with a pending slot reservation: soft only, not at rest;
 //     the slot is spoken for (pending) and the two in front of it entomb it;
 //   - a dispatched order with a claimed bin and a fleet id: the claimed book;
-//   - a dig parent, still sourcing, holding a confirmed `lanelock` mouth: the
+//   - a dig parent, still pending, holding a confirmed `lanelock` mouth: the
 //     committed book's dig lock, dig-lock-at-rest and not holds-at-rest.
 //
 // It also reads a lifted bin (in _TRANSIT, last set down in the middle slot).
@@ -95,7 +95,8 @@ func TestLedger_BooksAndClasses(t *testing.T) {
 	_, err = db.Exec(`UPDATE bins SET claimed_by = $1 WHERE id = $2`, moving.ID, b.ID)
 	testutil.MustNoErr(t, err, "claim the bin")
 
-	dig := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusSourcing })
+	// (C1: was sourcing; the planner locks the lane inside the acquire, from `pending`.)
+	dig := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusPending })
 	seedRes(t, db, dig.ID, "mouth", "confirmed", orders.DigLockTags[0], lane)
 
 	var transit int64
@@ -182,12 +183,13 @@ func TestLedger_ReadingsEqualTheSQL(t *testing.T) {
 		testutil.MustNoErr(t, err, "claim a bin")
 	}
 
-	holdBin(order(protocol.StatusSourcing, nil), "LP-WAIT-BIN")
+	// (C1: the waiting holders rest in `queued`; `sourcing` is no longer a status.)
+	holdBin(order(protocol.StatusQueued, nil), "LP-WAIT-BIN")
 	claimer := order(protocol.StatusQueued, nil)
 	_, err := db.Exec(`UPDATE nodes SET claimed_by = $1 WHERE id = $2`, claimer, a[3])
 	testutil.MustNoErr(t, err, "claim a slot")
 	seedRes(t, db, order(protocol.StatusQueued, nil), "slot", "confirmed", "", bSlots[3])
-	seedRes(t, db, order(protocol.StatusSourcing, nil), "mouth", "confirmed", "lanegate", laneA)
+	seedRes(t, db, order(protocol.StatusQueued, nil), "mouth", "confirmed", "lanegate", laneA)
 	seedRes(t, db, order(protocol.StatusPending, nil), "occupancy", "confirmed", "", laneA)
 	seedRes(t, db, order(protocol.StatusQueued, nil), "mouth", "confirmed", orders.DigLockTags[1], laneA)
 	holdBin(order(protocol.StatusDispatched, nil), "LP-DISPATCHED")
@@ -195,7 +197,7 @@ func TestLedger_ReadingsEqualTheSQL(t *testing.T) {
 	holdBin(order(protocol.StatusPending, &parent), "LP-LEG")
 	holdBin(order(protocol.StatusConfirmed, nil), "LP-TERMINAL")
 	seedRes(t, db, order(protocol.StatusQueued, nil), "slot", "pending", "", bSlots[2])
-	bare := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusSourcing })
+	bare := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusQueued })
 	var bName string
 	testutil.MustNoErr(t, db.QueryRow(`SELECT name FROM nodes WHERE id = $1`, a[2]).Scan(&bName), "slot name")
 	_, err = db.Exec(`UPDATE orders SET delivery_node = $1 WHERE id = $2`, bName, bare.ID)

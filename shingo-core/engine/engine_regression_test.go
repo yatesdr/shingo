@@ -170,6 +170,8 @@ func TestRegression_CancelEmptyEdgeUUID(t *testing.T) {
 		PayloadDesc:  "auto_return",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(autoReturn), "create auto-return order")
+	// (C1: a top-level pending order pointing at a bin holds its reservation.)
+	testdb.ReserveBin(t, db, autoReturn.ID, bin.ID)
 
 	// Cancel via event — should NOT send to Edge or panic
 	eng.Events.Emit(Event{Type: EventOrderCancelled, Payload: OrderCancelledEvent{

@@ -292,13 +292,12 @@ func dispatchSimpleViaScanner(t *testing.T, d *Dispatcher, db *store.DB, orderUU
 		return o // wait / reshuffle / structural — leave acquiring for the caller to assert
 	}
 	bin, sourceNode := res.Bin, res.Node
-	if err := d.lifecycle.MoveToSourcing(o, "test-scanner", "bin found, claiming"); err != nil {
-		t.Fatalf("scanner-mirror move-to-sourcing %s: %v", orderUUID, err)
-	}
+	// Acquiring writes no status (C1): the scanner goes from the find to the
+	// claim, and the hand writes `dispatched`.
 	d.PostFindHook() // fire the claim-race seam at the same point the scanner does
 	o, err = db.GetOrderByUUID(orderUUID)
 	if err != nil {
-		t.Fatalf("scanner-mirror re-get after sourcing %s: %v", orderUUID, err)
+		t.Fatalf("scanner-mirror re-get after find %s: %v", orderUUID, err)
 	}
 	// Claim with the persisted RemainingUOP — the operator's release-correction
 	// count the scanner seeds the manifest sync from (nil for retrieve/empty).
@@ -335,7 +334,7 @@ func dispatchSimpleViaScanner(t *testing.T, d *Dispatcher, db *store.DB, orderUU
 		// asserting a disposition production no longer produced. Calling the door
 		// means it cannot drift again.
 		code, cause, params := FleetRefusalCause(err, o.DeliveryNode)
-		d.DemoteAfterFleetRefusal(o, code, cause, params)
+		d.DemoteAfterFleetRefusal(o, QueueWait{}, code, cause, params)
 		o, _ = db.GetOrderByUUID(orderUUID)
 		return o
 	}
@@ -374,9 +373,14 @@ func TestHandleOrderRequest_Retrieve_NoSource(t *testing.T) {
 		t.Fatalf("received events = %d, want 1", len(emitter.received))
 	}
 
-	// Should queue because no available payloads exist (queued fulfillment)
-	if len(emitter.queued) != 1 {
-		t.Fatalf("queued events = %d, want 1", len(emitter.queued))
+	// Should park because no available payloads exist: `queued` with its cause,
+	// and its station told once (C1: the door parks and tells; it emits no
+	// EventOrderQueued).
+	if o := testdb.AssertOrderStatus(t, db, "uuid-1", StatusQueued); o != nil && o.QueueCode == "" {
+		t.Errorf("parked with no cause on the row")
+	}
+	if len(emitter.waitChanged) != 1 {
+		t.Fatalf("wait-changed tells = %d, want 1", len(emitter.waitChanged))
 	}
 }
 
@@ -454,8 +458,12 @@ func TestHandleOrderRequest_Move_NoPayloadAtPickup(t *testing.T) {
 	if len(emitter.failed) != 0 {
 		t.Fatalf("failed events = %d, want 0 (a move with no source bin now queues, not fails)", len(emitter.failed))
 	}
-	if len(emitter.queued) != 1 {
-		t.Fatalf("queued events = %d, want 1 (move held for scanner retry)", len(emitter.queued))
+	// (C1: the door parks it `queued` with its cause and tells its station once.)
+	if o := testdb.AssertOrderStatus(t, db, "uuid-4", StatusQueued); o != nil && o.QueueCode == "" {
+		t.Errorf("parked with no cause on the row")
+	}
+	if len(emitter.waitChanged) != 1 {
+		t.Fatalf("wait-changed tells = %d, want 1 (move held for scanner retry)", len(emitter.waitChanged))
 	}
 }
 
@@ -559,9 +567,9 @@ func TestHandleOrderRequest_UsesRegisteredPlanner(t *testing.T) {
 		t.Fatalf("received events = %d, want 1", len(emitter.received))
 	}
 	// The registered custom planner ran — its side effect (source_node → storage)
-	// proves HandleOrderRequest routed to it. The claim-move to the scanner: intake
-	// QUEUES the planner's result (the scanner is the single dispatch point), so
-	// there is no inline fleet dispatch and thus no fleet_failed here.
+	// proves HandleOrderRequest routed to it. The scanner is the single dispatch
+	// point: with no acquirer wired the door leaves the found order `pending` (C1),
+	// so there is no inline fleet dispatch and thus no fleet_failed here.
 	order, err := db.GetOrderByUUID("uuid-custom")
 	if err != nil {
 		t.Fatalf("get order: %v", err)
@@ -569,8 +577,8 @@ func TestHandleOrderRequest_UsesRegisteredPlanner(t *testing.T) {
 	if order.SourceNode != storageNode.Name {
 		t.Fatalf("custom planner did not run: source_node = %q, want %q", order.SourceNode, storageNode.Name)
 	}
-	if order.Status != StatusQueued {
-		t.Fatalf("status = %q, want %q (intake queues; scanner dispatches)", order.Status, StatusQueued)
+	if order.Status != StatusPending {
+		t.Fatalf("status = %q, want %q (intake leaves it for the scanner; scanner dispatches)", order.Status, StatusPending)
 	}
 	if len(emitter.failed) != 0 {
 		t.Fatalf("failed events = %d, want 0 (no inline dispatch at intake post claim-move)", len(emitter.failed))
@@ -1243,10 +1251,12 @@ func TestDispatchDirect_FleetFailure(t *testing.T) {
 	// and its parent with it through the sibling cascade.
 	//
 	// What DispatchDirect owes its caller is an error and an order in a state the
-	// caller can act on. It undoes its own move (handoverToFleet's CAS claimed the
-	// order into `dispatched` before the create) and stops there. The scanner then
-	// parks under fleet_unavailable and retries; the bin-move door, which has a
-	// person waiting, fails the row itself — see engine.CreateBinMove, and
+	// caller can act on. It does not undo its own move (C1): the hand CAS'd the
+	// order into `dispatched` before the create, and it is left there, with no
+	// vendor id, for the caller to dispose of. The scanner parks it under
+	// fleet_unavailable (dispatched → queued) and retries; the bin-move door,
+	// which has a person waiting, fails the row itself — see
+	// engine.CreateBinMove, and
 	// TestSubmitSpotRetrieveSpecific_DispatchFailureRollsBackClaim, which still
 	// pins `failed` for that door.
 	persisted, _ := db.GetOrder(order.ID)
@@ -1254,10 +1264,9 @@ func TestDispatchDirect_FleetFailure(t *testing.T) {
 		t.Errorf("status = %q — DispatchDirect terminalized, so no caller can dispose of the order "+
 			"and a transient fleet refusal is permanent", persisted.Status)
 	}
-	if persisted.Status != StatusSourcing {
-		t.Errorf("status = %q, want %q — the order must come back out of `dispatched`, which it was "+
-			"CAS'd into before the create; left there it has no vendor id and nothing tracks it",
-			persisted.Status, StatusSourcing)
+	if persisted.Status != StatusDispatched {
+		t.Errorf("status = %q, want %q — the disposition is the caller's; DispatchDirect leaves the "+
+			"hand's `dispatched` for it", persisted.Status, StatusDispatched)
 	}
 	if persisted.VendorOrderID != "" {
 		t.Errorf("vendor order ID = %q, want empty — the fleet never accepted it", persisted.VendorOrderID)
@@ -1265,6 +1274,66 @@ func TestDispatchDirect_FleetFailure(t *testing.T) {
 	if len(emitter.failed) != 0 {
 		t.Errorf("failed events = %d, want 0 — failing is the caller's decision, not this function's",
 			len(emitter.failed))
+	}
+
+	// The waiting caller's disposition brings it back out of `dispatched`, where it
+	// has no vendor id and nothing tracks it, into `queued` under its cause.
+	order.Status = persisted.Status
+	code, cause, params := FleetRefusalCause(err, order.DeliveryNode)
+	d.DemoteAfterFleetRefusal(order, QueueWait{}, code, cause, params)
+	after, err := db.GetOrder(order.ID)
+	testutil.MustNoErr(t, err, "reload order")
+	if after.Status != StatusQueued || after.QueueCode != string(protocol.QueueFleetUnavailable) {
+		t.Errorf("after the caller's demote: status %q code %q, want %q under %q",
+			after.Status, after.QueueCode, StatusQueued, protocol.QueueFleetUnavailable)
+	}
+}
+
+// TestDemoteAfterFleetRefusal_RepeatedRefusalTellsOnce: a fleet that refuses the
+// same order on every pass tells its station once. The scanner retries a parked
+// order on each pass; each retry is queued → dispatched → (refused) → queued under
+// the same fleet_unavailable wait. The first park changes the wait and is told;
+// the retries change nothing the station sees, so they send nothing. A station
+// message per retry is a Pi write per scanner pass for as long as the fleet is
+// down (the C1 rig's long refusal window: 300 for one held-bin order).
+func TestDemoteAfterFleetRefusal_RepeatedRefusalTellsOnce(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storageNode, lineNode, _ := setupTestData(t, db)
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
+
+	order := &orders.Order{
+		EdgeUUID:     "direct-fail-repeat",
+		StationID:    "edge.line1",
+		OrderType:    OrderTypeRetrieve,
+		Status:       StatusPending,
+		Quantity:     1,
+		DeliveryNode: lineNode.Name,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusPending), "test fixture"), "set pending")
+	order.Status = StatusPending
+
+	for pass := 1; pass <= 3; pass++ {
+		told := WaitOf(order) // the caller's snapshot, before the hand clears the row's wait
+		_, err := d.DispatchDirect(order, storageNode, lineNode)
+		if err == nil {
+			t.Fatalf("pass %d: expected a fleet refusal", pass)
+		}
+		order.Status = StatusDispatched
+		code, cause, params := FleetRefusalCause(err, order.DeliveryNode)
+		d.DemoteAfterFleetRefusal(order, told, code, cause, params)
+		after, err := db.GetOrder(order.ID)
+		testutil.MustNoErr(t, err, "reload order")
+		if after.Status != StatusQueued || after.QueueCode != string(protocol.QueueFleetUnavailable) {
+			t.Fatalf("pass %d: status %q code %q, want %q under %q", pass,
+				after.Status, after.QueueCode, StatusQueued, protocol.QueueFleetUnavailable)
+		}
+		order.Status = after.Status
+	}
+	if len(emitter.waitChanged) != 1 {
+		t.Errorf("wait-changed tells = %d over 3 refusals, want 1 — only the first park changed the "+
+			"wait the station sees", len(emitter.waitChanged))
 	}
 }
 

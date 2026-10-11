@@ -60,7 +60,7 @@ func TestGateChoreo_RetrieveOpenValveCreatesUnsealedThenAppends(t *testing.T) {
 		o.OrderType = OrderTypeRetrieve
 		o.SourceNode = s1.Name
 		o.DeliveryNode = line.Name
-		o.Status = "sourcing"
+		o.Status = "pending"
 	})
 
 	vendorID, err := d.DispatchDirect(order, s1, line)
@@ -172,7 +172,7 @@ func TestGateChoreo_RetrieveContendedHoldsThenEvaluatorReleases(t *testing.T) {
 		o.OrderType = OrderTypeRetrieve
 		o.SourceNode = s1.Name
 		o.DeliveryNode = line.Name
-		o.Status = "sourcing"
+		o.Status = "pending"
 	})
 	if _, err := d.DispatchDirect(order, s1, line); err != nil {
 		t.Fatalf("DispatchDirect: %v", err)
@@ -274,7 +274,7 @@ func TestGateChoreo_RetrieveOwnDigLegIsNotParked(t *testing.T) {
 		o.DeliveryNode = line.Name
 		o.ParentOrderID = &parent.ID
 		o.Sequence = 1
-		o.Status = "sourcing"
+		o.Status = "pending"
 	})
 
 	if _, err := d.DispatchDirect(leg, s1, line); err != nil {
@@ -363,7 +363,7 @@ func TestGateChoreo_RetrieveRebindsWhenItsBinMoved(t *testing.T) {
 		o.OrderType = OrderTypeRetrieve
 		o.SourceNode = s1.Name
 		o.DeliveryNode = line.Name
-		o.Status = "sourcing"
+		o.Status = "pending"
 	})
 	// The claim + bin_id stamp the scanner writes before it dispatches a plain
 	// order (fulfillment/scanner.go). The rebind resolves through bin_id, so an

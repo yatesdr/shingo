@@ -287,14 +287,13 @@ export function renderModal(entry) {
             const delivered = activeOrders.find(o => o.status === 'delivered');
             // Keep acknowledged separate from in_transit: a robot actually en
             // route is "IN TRANSIT"; an acknowledged order (fleet accepted,
-            // pre-sourcing) is NOT in transit and gets its own summary line.
+            // pre-dispatch) is NOT in transit and gets its own summary line.
             const inTransit = activeOrders.find(o => o.status === 'in_transit');
             const acknowledged = activeOrders.find(o => o.status === 'acknowledged');
-            // PRE-DISPATCH, not two literals. This read `'queued' || 'pending'`
-            // and so left SOURCING out — an order out hunting for material showed
-            // no demand card and no cause here, on the one screen a floor
-            // operator actually uses. The boards were fixed for the acquiring set
-            // and this was the screen after them.
+            // PRE-DISPATCH, not literals. This read `'queued' || 'pending'` and
+            // so left a waiting rung out (`sourcing`, while it was one) — an order
+            // out hunting for material showed no demand card and no cause here,
+            // on the one screen a floor operator actually uses.
             const queued = activeOrders.filter(o => isPreDispatch(o.status));
             // Loader can fill a parked empty bin even without a delivered L1
             // order. Post-2026-05-12, L1 retrieve_empty IS created when demand
@@ -344,8 +343,8 @@ export function renderModal(entry) {
                 // row. One line per distinct cause so a pair parked for the
                 // same reason does not print it twice.
                 //
-                // WAITING, NOT QUEUED: this set is isPreDispatch — pending,
-                // sourcing and queued — so naming one rung mislabels the other two.
+                // WAITING, NOT QUEUED: this set is isPreDispatch — pending and
+                // queued — so naming one rung mislabels the other.
                 var causes = distinctQueueCauses(queued);
                 html += '<div style="color:#999;font-size:12px;margin-bottom:10px">' + queued.length + ' order' + (queued.length > 1 ? 's' : '') + ' waiting</div>';
                 causes.forEach(function(c) {
@@ -806,17 +805,10 @@ function cellCardAction(entry, claim, remaining) {
                 cls: 'close', enabled: false, action: '' };
         }
         if (inFlight.status === 'acknowledged') {
-            // acknowledged is Core's intake ack, pre-sourcing — not a
+            // acknowledged is Core's intake ack, pre-dispatch — not a
             // moving robot. Show its own label instead of pretending a
             // robot is in transit.
             return { label: 'ACKNOWLEDGED', cls: 'close', enabled: false, action: '' };
-        }
-        if (inFlight.status === 'sourcing') {
-            // Core is acquiring reservations/confirmations — same
-            // pre-fleet family as queued; surface the queue_reason when
-            // Core sent one.
-            return { label: inFlight.queue_reason ? 'SOURCING: ' + inFlight.queue_reason : 'SOURCING',
-                cls: 'close', enabled: false, action: '' };
         }
         // ROBOT IN TRANSIT is a cell WAITING on a delivery. Its opposite
         // number is TO MARKET — a cell already balanced, with a robot taking
@@ -883,7 +875,7 @@ function swapPair(active) {
 //
 // THE BRANCH THIS SERVES USED TO SAY NOTHING. The two-robot "waiting" arm sits
 // ABOVE the inFlight arm in renderModal's if/else chain, and inFlight is the
-// only place that renders queue_reason / ACKNOWLEDGED / SOURCING / ROBOT IN
+// only place that renders queue_reason / ACKNOWLEDGED / IN QUEUE / ROBOT IN
 // TRANSIT. So for a two-robot swap — the one case where the operator cannot act
 // and most needs to know why — the chain terminated on a bare "WAITING FOR
 // OTHER ROBOT" and every explanatory label below was unreachable.
@@ -955,8 +947,6 @@ function blockerPhrase(blocker) {
             return 'faulted, recovering';
         case 'queued':
             return 'queued';
-        case 'sourcing':
-            return 'sourcing';
         case 'acknowledged':
             return 'acknowledged, not yet dispatched';
         case 'in_transit': {

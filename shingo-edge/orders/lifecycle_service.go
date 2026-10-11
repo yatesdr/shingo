@@ -88,9 +88,9 @@ func (s *LifecycleService) ForceTransition(orderID int64, newStatus protocol.Sta
 // that branched on `queued` alone and discarded every other status.
 //
 // The operator is shown the truth of whichever machine owns the order at that
-// moment: pre-fleet statuses (queued/sourcing) reflect Core's planning, fleet
+// moment: the pre-fleet status (queued) reflects Core's planning, fleet
 // statuses (dispatched/in_transit/faulted) reflect the fleet. Mapping them all
-// here means Edge no longer discards sourcing/dispatched/faulted pushes while a
+// here means Edge no longer discards dispatched/faulted pushes while a
 // stale prior status (usually acknowledged) keeps rendering as "IN TRANSIT".
 //
 // Arms:
@@ -98,16 +98,16 @@ func (s *LifecycleService) ForceTransition(orderID int64, newStatus protocol.Sta
 //     boot-reconcile path does. The fleet (via Core) is authoritative on these;
 //     the edge adopts, it does not gate. Validating them here is what permanently
 //     desynced the mirror: when Core coalesces a fast dispatched→in_transit burst
-//     and drops the intermediate `dispatched` push, sourcing→in_transit is not a
-//     legal edge, so a validated transition is rejected and silently swallowed —
+//     and drops the intermediate `dispatched` push, the jump to in_transit is
+//     not a legal edge, so a validated transition is rejected and silently swallowed —
 //     and every later push (staged) is rejected in turn, freezing the order on a
 //     stale status while the robot is already staged (SPR order 2399, 2026-07). A
 //     stale/out-of-order fleet push onto an already-TERMINAL edge row is ignored
 //     rather than forced, so it can never resurrect a finished order.
-//   - queued/sourcing (pre-fleet PLANNING statuses) → validated Transition. The
-//     shared table already permits the legal re-plan edges (e.g. Dispatched→
-//     Sourcing for redirect); an arbitrary backward force is not warranted, since
-//     Core owns the fleet truth and the planner's queued/sourcing is advisory.
+//   - queued (the pre-fleet wait) → forced, like the fleet statuses (see the
+//     paragraph inside). An old Core's `sourcing` never reaches here: the order
+//     update handler and the boot snapshot translate it to `queued` at the door
+//     (C1, F3).
 //   - staged/delivered/confirmed/failed/cancelled/skipped → NO-OP here. Those
 //     statuses are owned by DEDICATED envelopes (order.staged, order.delivered,
 //     order.error, order.skipped, order.cancelled) that carry extra fields
@@ -120,8 +120,13 @@ func (s *LifecycleService) ForceTransition(orderID int64, newStatus protocol.Sta
 // error; both callers log-and-swallow it, a graceful no-op. The fleet arm no
 // longer rejects — a dropped intermediate can no longer freeze the mirror.
 func (s *LifecycleService) ApplyCoreStatus(order *orders.Order, coreStatus protocol.Status, detail string) error {
+	// An old Core's `sourcing` is `queued` here (C1, F3); the order update
+	// handler gives it its code. This Edge never stores the word.
+	if coreStatus == StatusSourcing {
+		coreStatus = StatusQueued
+	}
 	switch coreStatus {
-	case StatusDispatched, StatusInTransit, StatusFaulted, StatusQueued, StatusSourcing:
+	case StatusDispatched, StatusInTransit, StatusFaulted, StatusQueued:
 		if IsTerminal(order.Status) {
 			// A late/stale fleet push after the edge already reached a terminal
 			// state — never resurrect it; Core's terminal envelopes own that edge.
@@ -133,7 +138,7 @@ func (s *LifecycleService) ApplyCoreStatus(order *orders.Order, coreStatus proto
 		// exactly this reason ("Core is authoritative at boot") — the live path
 		// disagreeing is the bug.
 		//
-		// Queued/sourcing used to take the validated path, which silently
+		// Queued (and `sourcing`, before C1) used to take the validated path, which silently
 		// dropped every BACKWARD move Core makes: `acknowledged -> queued` and
 		// `in_transit -> queued` are not in protocol.validTransitions, so a
 		// swap-hold or a waiting_for_material re-queue never reached the board.
@@ -274,6 +279,15 @@ func (s *LifecycleService) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatus
 		return err
 	}
 	snapStatus := protocol.Status(snapshot.Status)
+	// An old Core's `sourcing` is `queued` here, with the cause the snapshot
+	// carries or else waiting_for_material (C1, F3) — the boot snapshot is the
+	// one restart that rewrites a row an older Edge left saying `sourcing`.
+	if snapStatus == StatusSourcing {
+		snapStatus = StatusQueued
+		if snapshot.QueueCode == "" {
+			snapshot.QueueCode = string(protocol.QueueWaitingForMaterial)
+		}
+	}
 
 	// The fault clock is written BEFORE the unchanged-status early return, and
 	// that placement is the point. The case this reconcile exists for is an Edge
@@ -336,11 +350,11 @@ func (s *LifecycleService) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatus
 		return s.ForceTransition(order.ID, StatusAcknowledged, detail)
 	case StatusQueued:
 		return s.ForceTransition(order.ID, StatusQueued, detail)
-	case StatusSourcing, StatusDispatched, StatusFaulted:
+	case StatusDispatched, StatusFaulted:
 		// The live-push mapping (ApplyCoreStatus) stores these, so a boot
 		// snapshot must reconcile them too — an edge restart while Core reports
-		// sourcing/faulted/dispatched would otherwise leave the mirror stuck on
-		// a stale status. Force, matching the other non-terminal snapshot arms
+		// faulted/dispatched would otherwise leave the mirror stuck on a stale
+		// status. Force, matching the other non-terminal snapshot arms
 		// (Core is authoritative at boot).
 		return s.ForceTransition(order.ID, snapStatus, detail)
 	case StatusReshuffling:

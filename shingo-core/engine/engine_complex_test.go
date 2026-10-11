@@ -384,7 +384,7 @@ func TestComplexOrder_GhostRobotNoBin(t *testing.T) {
 	// Source genuinely empty → PARK, not a terminal. The order waits for
 	// material with the scoped queue code; the scanner retries it every
 	// tick and the operator can abandon a changeover-linked one.
-	// `sourcing` is the rung a complex order is born on and parks in: the hand is
+	// A complex order is born `pending` and parks `queued` when the hand is
 	// short, which is exactly what a dry source means. What this test is about is
 	// that it PARKED rather than terminalized, and under which code.
 	if !protocol.IsAcquiring(order.Status) {
@@ -468,11 +468,11 @@ func TestComplexOrder_ConcurrentSameNodeDoubleClaimRace(t *testing.T) {
 	// invariant this test guards (no ghost robot, no double-claim). The parking
 	// SHAPE has evolved: Phase 4 queued order2 at the dropoff-capacity gate;
 	// the reserve/confirm split makes the reserve find the sole bin already taken
-	// and hold order2 in `sourcing` (hold-and-retry — the contested bin frees when order1
-	// completes). Any of failed / queued / sourcing is acceptable — what matters
+	// and park order2 `queued` (hold-and-retry — the contested bin frees when order1
+	// completes). Either failed or queued is acceptable — what matters
 	// is that the bin and order2 are NOT double-claimed.
-	if order2.Status != dispatch.StatusFailed && order2.Status != dispatch.StatusQueued && order2.Status != dispatch.StatusSourcing {
-		t.Errorf("order2 status = %q, want failed/queued/sourcing (no bin available after order1 claimed it)", order2.Status)
+	if order2.Status != dispatch.StatusFailed && order2.Status != dispatch.StatusQueued {
+		t.Errorf("order2 status = %q, want failed/queued (no bin available after order1 claimed it)", order2.Status)
 	}
 	if order2.BinID != nil {
 		t.Errorf("order2 should have BinID=nil, got %d", *order2.BinID)

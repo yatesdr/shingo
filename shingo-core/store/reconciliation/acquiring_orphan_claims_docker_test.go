@@ -87,7 +87,7 @@ func claimedBy(t *testing.T, db *store.DB, binID int64) *int64 {
 func TestAcquiringOrphanClaims_OneSweepFreesTheBinAndTheDemandEscapes(t *testing.T) {
 	t.Parallel()
 
-	for _, status := range []string{"queued", "sourcing"} {
+	for _, status := range []string{"queued", "pending"} { // (C1: the acquiring set is {pending, queued})
 		t.Run(status, func(t *testing.T) {
 			t.Parallel()
 			db := testdb.Open(t)
@@ -137,7 +137,7 @@ func TestAcquiringOrphanClaims_AHealthyClaimSurvives(t *testing.T) {
 	bin := testdb.CreateBinAtNode(t, db, "ORPHAN-PART-OK", node.ID, "ORPH-OK-BIN")
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "orph-ok-order"
-		o.Status = "sourcing"
+		o.Status = "pending" // (C1: an acquiring status; sourcing is history only)
 	})
 	testdb.ClaimBinForTest(t, db, bin.ID, order.ID) // reservation left in place
 
@@ -239,7 +239,7 @@ func TestAcquiringOrphanClaims_SweepsTheSlotDual(t *testing.T) {
 	}
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = "orph-slot-order"
-		o.Status = "sourcing"
+		o.Status = "pending" // (C1: an acquiring status; sourcing is history only)
 	})
 	// Orphan: a slot claim with nothing behind it.
 	testdb.ClaimSlotForTest(t, db, slot.ID, order.ID)

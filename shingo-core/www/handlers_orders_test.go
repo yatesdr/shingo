@@ -661,10 +661,14 @@ func TestOrdersBoard_StatusChips(t *testing.T) {
 	t.Parallel()
 	h, _ := testHandlersForRendering(t)
 	body := renderOrdersPage(t, h, "")
-	for _, s := range []string{"pending", "sourcing", "queued", "dispatched", "in_transit", "staged",
+	for _, s := range []string{"pending", "queued", "dispatched", "in_transit", "staged",
 		"faulted", "delivered", "confirmed", "failed", "cancelled", "skipped", "reshuffling"} {
 		if !strings.Contains(body, `href="/orders?status=`+s+`"`) {
 			t.Errorf("there is no %s chip", s)
 		}
+	}
+	// Sourcing is history only since C1: no order can hold it, so no chip filters for it.
+	if strings.Contains(body, `href="/orders?status=sourcing"`) {
+		t.Error("there is a sourcing chip; sourcing left the ladder in C1")
 	}
 }

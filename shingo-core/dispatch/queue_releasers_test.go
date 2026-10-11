@@ -222,8 +222,10 @@ var statusWaitClasses = map[protocol.Status]struct {
 	population WaitPopulation
 	why        string
 }{
-	protocol.StatusQueued:   {classCoreWait, PopAcquiring, "the scanner re-resolves it on events and on its own 60s sweep"},
-	protocol.StatusSourcing: {classCoreWait, PopAcquiring, "same as queued — IsAcquiring is the scanner's set"},
+	protocol.StatusQueued: {classCoreWait, PopAcquiring, "the scanner re-resolves it on events and on its own 60s sweep"},
+	protocol.StatusSourcing: {classTransient, "",
+		"history only since C1: no transition enters it and v148 moved every live row to queued, " +
+			"so no order waits in it"},
 	protocol.StatusStaged: {classCoreWait, PopGateStaged,
 		"a robot parked at a wait point. A LANE wait is Core's and is floored here; an OPERATOR " +
 			"wait on the same status is human-owned and bounded by AbandonStuckOrders' longer timeout. " +

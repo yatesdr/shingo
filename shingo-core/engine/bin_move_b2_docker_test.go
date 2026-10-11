@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"slices"
 	"testing"
 
 	"shingo/protocol"
@@ -198,11 +199,11 @@ func TestBinMove_ProjectionDecidesWhoHearsTheDelivery(t *testing.T) {
 	})
 }
 
-// TestAcquire_AStationKnownOrderKeepsItsAckAndItsSourcingStep: an order its
-// station knows (every door but Build's so far) is acked and waybilled at
-// dispatch, and does not take pending -> dispatched before C1: the Edge mirror
-// has not learned the edge.
-func TestAcquire_AStationKnownOrderKeepsItsAckAndItsSourcingStep(t *testing.T) {
+// TestAcquire_AStationKnownOrderKeepsItsAckAndWalksPendingToDispatched: an
+// order its station knows (every door but Build's so far) is acked and
+// waybilled at dispatch, and walks pending -> dispatched with no sourcing step
+// between (C1: the Edge mirror accepts the edge).
+func TestAcquire_AStationKnownOrderKeepsItsAckAndWalksPendingToDispatched(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
@@ -224,14 +225,8 @@ func TestAcquire_AStationKnownOrderKeepsItsAckAndItsSourcingStep(t *testing.T) {
 		t.Fatalf("the known order did not dispatch; history %v", historyStatuses(t, db, known.ID))
 	}
 	got := historyStatuses(t, db, known.ID)
-	sawSourcing := false
-	for _, s := range got {
-		if s == protocol.StatusSourcing {
-			sawSourcing = true
-		}
-	}
-	if !sawSourcing {
-		t.Errorf("history %v: a station-known order took pending -> dispatched, which its mirror does not accept yet", got)
+	if want := []protocol.Status{protocol.StatusPending, protocol.StatusDispatched}; !slices.Equal(got, want) {
+		t.Errorf("history %v, want %v: a station-known order takes pending -> dispatched", got, want)
 	}
 	var acks int
 	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT COUNT(*) FROM outbox WHERE station_id='b2-known'

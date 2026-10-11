@@ -230,13 +230,12 @@ func TestHistory_AppendAndList(t *testing.T) {
 
 	// The first entry is the BIRTH row, written by the INSERT itself
 	// (orders.Create) so an order created directly at a status still has a start
-	// to its timeline. The four that follow are the transitions.
+	// to its timeline. The three that follow are the transitions.
 	events := []struct {
 		status string
 		detail string
 	}{
 		{"pending", "order created"},
-		{"sourcing", "picking bin"},
 		{"dispatched", "sent to RDS"},
 		{"in_transit", "robot moving"},
 		{"delivered", "arrived at line"}, // non-terminal; UpdateStatus refuses terminals now
@@ -829,7 +828,7 @@ func TestListActiveBySourceRef(t *testing.T) {
 		return o.ID
 	}
 	mk("p", "pending", "STORAGE-A1")
-	mk("s", "sourcing", "STORAGE-A1")
+	mk("s", "sourcing", "STORAGE-A1") // excluded: not pre-dispatch since C1 (history only)
 	mk("q", "queued", "STORAGE-A1")
 	mk("d", "dispatched", "STORAGE-A1") // excluded: past pre-dispatch
 	mk("p2", "pending", "STORAGE-B2")
@@ -839,11 +838,11 @@ func TestListActiveBySourceRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActiveBySourceRef: %v", err)
 	}
-	if len(got) != 4 {
-		t.Errorf("len = %d, want 4", len(got))
+	if len(got) != 3 {
+		t.Errorf("len = %d, want 3", len(got))
 	}
 	for _, o := range got {
-		if o.Status != "pending" && o.Status != "sourcing" && o.Status != "queued" {
+		if o.Status != "pending" && o.Status != "queued" {
 			t.Errorf("unexpected status %q", o.Status)
 		}
 		if o.SourceNode != "STORAGE-A1" && o.SourceNode != "STORAGE-B2" {
@@ -861,7 +860,7 @@ func TestListActiveBySourceRef(t *testing.T) {
 	}
 }
 
-// -------- ListAcquiring (queued + sourcing, FIFO within priority) --------
+// -------- ListAcquiring (pending + queued, top-level, FIFO within priority) --------
 
 func TestListAcquiring(t *testing.T) {
 	t.Parallel()
@@ -881,16 +880,16 @@ func TestListAcquiring(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	id2 := mk("q2", "queued")
 	time.Sleep(10 * time.Millisecond)
-	id3 := mk("s1", "sourcing") // acquiring set includes sourcing
-	mk("p", "pending")          // not acquiring
-	mk("c", "confirmed")        // not acquiring
+	mk("s1", "sourcing")      // not acquiring: not a status since C1 (history only)
+	id3 := mk("p", "pending") // acquiring since C1: every order is born here
+	mk("c", "confirmed")      // not acquiring
 
 	got, err := orders.ListAcquiring(db)
 	if err != nil {
 		t.Fatalf("ListAcquiring: %v", err)
 	}
 	if len(got) != 3 {
-		t.Fatalf("len = %d, want 3 (2 queued + 1 sourcing; pending/confirmed excluded)", len(got))
+		t.Fatalf("len = %d, want 3 (2 queued + 1 pending; sourcing/confirmed excluded)", len(got))
 	}
 	if got[0].ID != id1 || got[1].ID != id2 || got[2].ID != id3 {
 		t.Errorf("FIFO order wrong: got [%d, %d, %d], want [%d, %d, %d]",
@@ -911,6 +910,9 @@ func TestUpdateBinIDAndListByBinID(t *testing.T) {
 	o := newPendingOrder("bin-owner")
 	testutil.MustNoErr(t, orders.Create(db, o), "Create order")
 
+	// (C1: a top-level pending order pointing at a bin holds its reservation, or
+	// the teardown reads a pointer wedge; the pointer is incidental here.)
+	testdb.ReserveBin(t, d, o.ID, bin.ID)
 	testutil.MustNoErr(t, orders.UpdateBinID(db, o.ID, bin.ID), "UpdateBinID")
 	got, _ := orders.Get(db, o.ID)
 	if got.BinID == nil || *got.BinID != bin.ID {

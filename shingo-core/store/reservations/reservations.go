@@ -16,7 +16,7 @@
 //
 // REAPING IS OWNER-LIVENESS, NOT AGE. An earlier reaper used expires_at
 // (a short ~60s TTL) as a proxy for "orphaned", valid only because Acquire→Confirm was
-// milliseconds then. Once reserve-at-plan-time landed, an order in 'sourcing' legitimately
+// milliseconds then. Once reserve-at-plan-time landed, a waiting order legitimately
 // holds its reservations for minutes-to-hours (or days) while it waits for a source to
 // appear — so age is no longer a proxy for orphaned. ReapOrphaned keys on the OWNING
 // ORDER's liveness instead: a hold is reclaimed only when its order is terminal or gone,

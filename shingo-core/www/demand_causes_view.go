@@ -52,7 +52,7 @@ import (
 // "Cancelled PRE-DISPATCH" is not recordable from the ORDERS ROW. It carries no
 // dispatched_at, no cancelled_at and no cancel_reason, and a cancelled order's
 // CURRENT status is `cancelled`, so protocol.IsPreDispatch (which classifies
-// pending/sourcing/queued) cannot answer it either: by the time we look, the
+// pending/queued) cannot answer it either: by the time we look, the
 // order has left every state that predicate names.
 //
 // AN EARLIER VERSION OF THIS PARAGRAPH ALSO SAID THERE IS NO STATUS-HISTORY

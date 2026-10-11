@@ -73,17 +73,18 @@ type dispatchStep struct {
 
 // DispatchPreparedComplex performs the side-effecting tail of complex-
 // order dispatch: claim bins per pickup step, send blocks to the fleet,
-// transition → dispatched. A complex order is born `sourcing` and rests
-// there while it shops, so there is no queued → sourcing step to take.
+// transition → dispatched. A complex order is born `pending` like every order;
+// a pass that cannot take its whole hand writes the cause and the scanner parks
+// it in `queued`.
 //
 // Idempotent prerequisites: the order must have StepsJSON populated
-// (intake side stores it on creation) and be acquiring (queued or
-// sourcing). Caller is responsible for the capacity gate — this method
+// (intake side stores it on creation) and be acquiring (pending or
+// queued). Caller is responsible for the capacity gate — this method
 // assumes green-light and proceeds with the atomic claim + dispatch.
 //
 // Called from:
-//   - fulfillment.Scanner.tryFulfill on EventOrderQueued (fresh intake
-//     just called HandleComplexOrderRequest)
+//   - fulfillment.Scanner's one acquire for a door (complex intake, under
+//     the door's scan lock)
 //   - fulfillment.Scanner.tryFulfill on EventBinUpdated /
 //     EventBinEnteredTransit / EventOrderCompleted etc. (slot vacancy
 //     unblocks a previously-blocked order)
@@ -94,18 +95,15 @@ type dispatchStep struct {
 // fleet rejection, a partner Core refused at intake — fails it through
 // lifecycle.Fail.
 func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
-	// Defense-in-depth: the fulfillment scanner's tryFulfill already gates on
-	// IsAcquiring ({queued, sourcing}) before calling here, so a parent in
-	// Reshuffling (with a compound in flight), or one already dispatched or
-	// terminal, won't reach us through the scanner. Anything calling this
-	// directly (engine recovery, future call sites) must still respect the
+	// Defense-in-depth: the fulfillment scanner already gates on IsAcquiring
+	// ({pending, queued}) before calling here, so a parent in Reshuffling (with a
+	// compound in flight), or one already dispatched or terminal, won't reach us
+	// through the scanner. Anything calling this directly must still respect the
 	// invariant — proceeding on a non-acquiring order would re-dispatch a parent
-	// mid-reshuffle or race a post-resume. The acquiring set was widened
-	// from queued-only to {queued, sourcing} so a complex order that reached
-	// `sourcing` but didn't finish dispatching is retried. Return nil so the caller treats a
+	// mid-reshuffle or race a post-resume. Return nil so the caller treats a
 	// non-acquiring order as a no-op, not an error.
 	if !protocol.IsAcquiring(order.Status) {
-		d.dbg("complex: DispatchPreparedComplex called with status=%s (want queued/sourcing); skipping", order.Status)
+		d.dbg("complex: DispatchPreparedComplex called with status=%s (want pending/queued); skipping", order.Status)
 		return nil
 	}
 
@@ -598,14 +596,12 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass) ([]r
 	return resolvedSteps, dispatchStep{}
 }
 
-// acquireComplexSources secures the source bins (Phase D): transition the order
-// queued → sourcing, build the plan, reserve the distinct source needs, then
-// confirm the complete reserved set to hard claims. done=true means the order was
-// moved-concurrently, skipped moot, parked holding partials, held on claim_failed,
-// or failed on a malformed order; the orchestrator returns st.err verbatim. The
-// MoveToSourcing status side effect is intentional and stays first, inside this
-// phase. plan and assigned are locals — nothing downstream needs them. Reads the
-// resolved steps read-only.
+// acquireComplexSources secures the source bins (Phase D): build the plan,
+// reserve the distinct source needs, then confirm the complete reserved set to
+// hard claims. done=true means the order ended, was skipped moot, parked holding
+// partials, held on claim_failed, or failed on a malformed order; the
+// orchestrator returns st.err verbatim. plan and assigned are locals — nothing
+// downstream needs them. Reads the resolved steps read-only.
 func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []resolvedStep) ([]reservedPickup, dispatchStep) {
 	plan, assigned, st := d.reserveComplexSources(order, resolvedSteps)
 	if st.done {
@@ -618,45 +614,15 @@ func (d *Dispatcher) acquireComplexSources(order *orders.Order, resolvedSteps []
 }
 
 // reserveComplexSources is the sources' SOFT half, shared by the solo order and
-// the pair: the move to sourcing, the plan, and a pending reservation on every
+// the pair: the plan, and a pending reservation on every
 // pickup bin. The solo order stops here and confirms in its hand; the pair goes
 // on to confirmComplexSources.
 func (d *Dispatcher) reserveComplexSources(order *orders.Order, resolvedSteps []resolvedStep) (*ComplexPlan, []reservedPickup, dispatchStep) {
-	// Reserve/confirm. MoveToSourcing at the START of the reserve attempt: the
-	// order stays `sourcing` while it holds partials and the scanner retries it
-	// (the acquiring-set widening, complex scope). Idempotent — a retried order
-	// re-enters sourcing→sourcing every tick, which MoveToSourcing skips, and a
-	// complex order is now BORN `sourcing` (complex_intake.go), so the very first
-	// tick self-skips too.
-	//
-	// The phases above (the swap peer-terminal unwind, the destination's capacity
-	// gate and slot reserve) run first and park a blocked order in its entry
-	// status — which is `sourcing` on every pass now.
-	// It used to be "queued first pass, sourcing on retry": one wait filed under
-	// two different rungs depending on which pass caught it, which is the
-	// inconsistency the birth-rung move ended rather than created. Both are
-	// retried by the complex-scoped scanner, and each wrote queue_reason for the
-	// Edge push.
-	// THIS IS NOT THE GUARD AGAINST A CANCELLED ORDER. MoveToSourcing skips a
-	// sourcing→sourcing move without touching the row, and a complex order is born
-	// sourcing, so for these orders the CAS below never runs and a cancel that
-	// landed after the scanner read the order is not seen here. The guard is in
-	// the reservation statements: every insert takes the owner's row and refuses
-	// a terminal one (reservations.OwnerLiveSQL), and the refusal stops this pass
-	// (ownerEnded). The fleet handover's own CAS (handoverToFleet) is the last
-	// one before a robot moves.
-	if err := d.lifecycle.MoveToSourcing(order, "scanner", "reserving source bins"); err != nil {
-		// Refused CAS = another actor moved this order out of queued while we
-		// held a stale snapshot. Everything below reserves bins and ends in a
-		// fleet dispatch, so yield rather than commit robots for an order that
-		// is no longer ours.
-		if IsConcurrentTransition(err) {
-			log.Printf("dispatch: complex order %d moved under us — another actor owns it now: %v", order.ID, err)
-			return nil, nil, dispatchStep{done: true, err: fmt.Errorf("complex order %d moved concurrently: %w", order.ID, err)}
-		}
-		log.Printf("dispatch: complex order %d → sourcing: %v", order.ID, err)
-	}
-
+	// THE GUARD AGAINST A CANCELLED ORDER is in the reservation statements: every
+	// insert takes the owner's row and refuses a terminal one
+	// (reservations.OwnerLiveSQL), and the refusal stops this pass (ownerEnded).
+	// The hand's status CAS (acquireHand) is the last one before a robot moves.
+	// Acquiring writes no status of its own (C1: acquiring is an act, not a rung).
 	// Plan = the resolved steps. The reserve selects against live state from the
 	// steps alone and reads the carrier rule itself (reserveComplexPlan), so no
 	// snapshot or rule is read here any more — they fed plan fields nothing read.
@@ -667,19 +633,18 @@ func (d *Dispatcher) reserveComplexSources(order *orders.Order, resolvedSteps []
 	// never interleaved with it (slots-before-bins) — one claim class fully ordered
 	// before the next is what prevents a slot↔bin cross-type deadlock cycle. Dispatch
 	// is gated on a COMPLETE distinct-bin set (the relay rule): an incomplete order
-	// holds its partials and stays `sourcing` for the scanner to retry — a robot never
-	// starts a job it can't finish, and give-up is operator-driven, never a timer.
-	// There is no orphaned-hold window now: the order is already `sourcing` before it
-	// holds anything, so a crash leaves a `sourcing` order whose pending holds the
-	// owner-liveness reaper reclaims — not a `queued` order stranded with claimed bins.
+	// holds its partials and parks for the scanner to retry — a robot never starts a
+	// job it can't finish, and give-up is operator-driven, never a timer. A crash
+	// leaves a pre-dispatch order whose pending holds the owner-liveness reaper
+	// reclaims, never one with claimed bins: the hard claims are the hand's.
 	assigned, outcome, rerr := d.allocator.reserveComplexPlan(order, plan)
 	if ownerEnded(rerr) {
 		d.dbg("complex: order %d ended before its source reserve: nothing held", order.ID)
 		return nil, nil, dispatchStep{done: true, err: rerr}
 	}
 	if rerr != nil {
-		// A DATABASE ERROR, AND THE ROW SAYS SO. This arm parked the order in
-		// `sourcing` and wrote nothing, so an order stuck behind a database that
+		// A DATABASE ERROR, AND THE ROW SAYS SO. This arm parked the order and
+		// wrote nothing, so an order stuck behind a database that
 		// was not answering looked exactly like one nobody had reached yet — the
 		// blank-cause residue the liveness floor kept reporting as "(none)".
 		// reserveComplexPlan's errors are all reads and reservation writes; they
@@ -702,7 +667,7 @@ func (d *Dispatcher) reserveComplexSources(order *orders.Order, resolvedSteps []
 		// Only claim "partial set already held" when the order actually holds part
 		// of its set. Holding NOTHING (zero reserved, blocked on every need) is a
 		// different operator situation and must not render as a partial hold — that
-		// was the SPR ALN_006 lie: "sourcing / partial set already held" while the
+		// was the SPR ALN_006 lie: "partial set already held" while the
 		// order held zero reservations and made no progress.
 		holdingPartials := len(assigned) > 0
 		d.setQueueReason(order, protocol.QueueWaitingForMaterial, CauseReserveHolding,
@@ -1208,8 +1173,8 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	// bin reserve (slots-before-bins + the relay rule: a slot must be held before
 	// the bin leg reads its emptiness). A fungible NGRP slot conflict
 	// reverts-and-re-resolves (the escape valve, preserved); a fixed-concrete
-	// conflict holds (Wait) — both requeue in the order's entry status, which is
-	// `sourcing` from birth onwards (complex_intake.go).
+	// conflict holds (Wait) — both write the cause and the scanner parks the order
+	// in `queued`.
 	//
 	// The canonical node-ID sort is gone WITH the loop: the ABBA class dissolves at
 	// the soft-acquire layer, where a loser backs off holding only revocable slot
@@ -1218,7 +1183,7 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	// a sweep for slot-wedged orders.
 	if slotOutcome, serr := d.allocator.reserveComplexSlots(order, resolvedSteps); serr != nil {
 		// The same blank-cause gap as the bin reserve below it, one phase earlier
-		// and on an order that is still `queued`. The sibling arm (an incomplete
+		// and on an order that has not dispatched. The sibling arm (an incomplete
 		// but error-free reserve) has always written CauseComplexSlotReserve; this
 		// one wrote nothing, so two branches of one if/else disagreed about whether
 		// a wait gets a sentence. A reserve error is a database error: it resolves

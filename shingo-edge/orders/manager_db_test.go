@@ -772,7 +772,7 @@ func TestApplyCoreStatusSnapshot_MissingOrder(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 // TestApplyCoreStatus_Sourcing_TransitionsRow asserts the central case: a
-// sourcing push from Core updates the Edge row to StatusSourcing. Previously
+// sourcing push from an old Core moves the Edge row (to queued since C1). Previously
 // the push was discarded and the row stayed on acknowledged, so the HMI kept
 // showing a moving robot for an order still hunting bins.
 func TestApplyCoreStatus_Sourcing_TransitionsRow(t *testing.T) {
@@ -783,7 +783,7 @@ func TestApplyCoreStatus_Sourcing_TransitionsRow(t *testing.T) {
 	oid, err := db.CreateOrder("uuid-src", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "", "", "")
 	testutil.MustNoErr(t, err, "create")
 	// Edge's typical pre-dispatch lifecycle: pending → submitted → acknowledged
-	// (Core's intake ACK). acknowledged → sourcing is a valid shared-table edge.
+	// (Core's intake ACK). The push is translated to queued before any transition.
 	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
 	_ = db.UpdateOrderStatus(oid, string(StatusAcknowledged))
 
@@ -791,9 +791,10 @@ func TestApplyCoreStatus_Sourcing_TransitionsRow(t *testing.T) {
 	testutil.MustNoErr(t, err, "get order")
 	testutil.MustNoErr(t, mgr.ApplyCoreStatus(order, StatusSourcing, "reserving"), "ApplyCoreStatus sourcing")
 
+	// An old Core's `sourcing` is stored as `queued` (C1, F3).
 	got, _ := db.GetOrder(oid)
-	if got.Status != StatusSourcing {
-		t.Errorf("sourcing push: status got %q, want %q", got.Status, StatusSourcing)
+	if got.Status != StatusQueued {
+		t.Errorf("sourcing push: status got %q, want %q", got.Status, StatusQueued)
 	}
 }
 
@@ -996,8 +997,8 @@ func TestHandleCoreStatusPush_Sourcing_LivePush(t *testing.T) {
 	testutil.MustNoErr(t, mgr.HandleCoreStatusPush("uuid-live-src", StatusSourcing, "reserving"), "HandleCoreStatusPush sourcing")
 
 	got, _ := db.GetOrder(oid)
-	if got.Status != StatusSourcing {
-		t.Errorf("live sourcing push: status got %q, want sourcing", got.Status)
+	if got.Status != StatusQueued {
+		t.Errorf("live sourcing push: status got %q, want queued (C1, F3: translated at the door)", got.Status)
 	}
 }
 
@@ -1009,9 +1010,10 @@ func TestApplyCoreStatusSnapshot_SourcingAndFaulted(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		target protocol.Status
+		want   protocol.Status
 	}{
-		{"sourcing", StatusSourcing},
-		{"faulted", StatusFaulted},
+		{"sourcing", StatusSourcing, StatusQueued}, // C1, F3: an old Core's word, translated
+		{"faulted", StatusFaulted, StatusFaulted},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := testManagerDB(t)
@@ -1028,8 +1030,8 @@ func TestApplyCoreStatusSnapshot_SourcingAndFaulted(t *testing.T) {
 				t.Fatalf("ApplyCoreStatusSnapshot %s: %v", tc.name, err)
 			}
 			got, _ := db.GetOrder(oid)
-			if got.Status != tc.target {
-				t.Errorf("snapshot %s: got %q, want %q", tc.name, got.Status, tc.target)
+			if got.Status != tc.want {
+				t.Errorf("snapshot %s: got %q, want %q", tc.name, got.Status, tc.want)
 			}
 		})
 	}
@@ -1037,8 +1039,8 @@ func TestApplyCoreStatusSnapshot_SourcingAndFaulted(t *testing.T) {
 
 // TestApplyCoreStatus_ForcesFleetStatusOverSkippedIntermediate pins the SPR 2399
 // fix: a live fleet-status push force-adopts even when Core coalesced the burst
-// and dropped the intermediate step. The edge, still at `sourcing`, must adopt
-// in_transit — sourcing→in_transit is not a legal validated edge, and the old
+// and dropped the intermediate steps. The edge, still at `pending`, must adopt
+// in_transit — pending→in_transit is not a legal validated edge, and the old
 // validated path rejected it and silently froze the mirror behind a stale status
 // (which then hid the two-robot RELEASE, since swap_ready reads the stale status).
 func TestApplyCoreStatus_ForcesFleetStatusOverSkippedIntermediate(t *testing.T) {
@@ -1046,12 +1048,11 @@ func TestApplyCoreStatus_ForcesFleetStatusOverSkippedIntermediate(t *testing.T) 
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
+	// Born pending. (C1: queued→in_transit is a legal edge, so a row at queued
+	// would pass through the validated path too and prove nothing.)
 	oid, _ := db.CreateOrder("uuid-2399", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "", "", "")
-	if err := db.UpdateOrderStatus(oid, string(StatusSourcing)); err != nil {
-		t.Fatalf("seed sourcing: %v", err)
-	}
 
-	// Core dropped `dispatched` and pushes in_transit straight from sourcing.
+	// Core dropped `dispatched` and pushes in_transit straight from pending.
 	if err := mgr.HandleCoreStatusPush("uuid-2399", StatusInTransit, "fleet state: RUNNING"); err != nil {
 		t.Fatalf("HandleCoreStatusPush in_transit: %v", err)
 	}

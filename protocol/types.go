@@ -485,59 +485,54 @@ const Version = 1
 
 // validTransitions defines the canonical state machine for order status transitions.
 // Core and Edge both use the full set. Edge mirrors Core's full status vocabulary:
-// sourcing/dispatched/faulted are stored on the Edge row by the orders.ApplyCoreStatus
+// dispatched/faulted are stored on the Edge row by the orders.ApplyCoreStatus
 // mapping, so the operator sees the truth of whichever machine owns the order.
+//
+// THE LADDER (v4 §2.6, C1): every order is born `pending`; its hand takes it to
+// `dispatched` in one transaction, or it rests in `queued` with the cause on its
+// row. Acquiring is the act between the two, never a stored status.
 //
 // IsTerminal is derived from this table: a status is terminal iff it has no
 // outgoing edges (no key in this map). Adding a new non-terminal status
 // requires adding a key with at least one outgoing edge here; the
 // TestEveryKeyHasOutgoingEdge test enforces that invariant.
 var validTransitions = map[Status][]Status{
-	// Pending → Queued is a fast-path used by fulfillment/scanner.go when
-	// the bin is already known and resolution can be skipped.
-	//
-	// Pending → Dispatched is SYNTH F8's edge (orc, 2026-09-26): an order goes
-	// from its birth to the hand without a history row saying it waited. Only a
-	// Core-born order no station knows takes it before C1 (fulfillment
-	// dispatchHeldBin); an Edge mirror never sees such an order.
-	StatusPending: {StatusSourcing, StatusSubmitted, StatusQueued, StatusDispatched, StatusReshuffling, StatusCancelled, StatusFailed, StatusSkipped},
-
-	// Sourcing → Dispatched is the order's hand committing (dispatch.acquireHand):
+	// Pending → Dispatched is the order's hand committing (dispatch.acquireHand):
 	// the status is written with the slot, bin and lane claims in one transaction,
-	// BEFORE the fleet is asked to create — never after, so a lost race never
-	// commits a robot. Sourcing → Reshuffling is the planning-time pivot when
-	// the resolver detects a buried bin and creates a compound parent.
-	StatusSourcing: {StatusQueued, StatusSubmitted, StatusDispatched, StatusReshuffling, StatusCancelled, StatusFailed, StatusSkipped},
+	// BEFORE the fleet is asked to create, so a lost race never commits a robot.
+	// Every order takes it when its first hand is whole (SYNTH F8, C1.1.2).
+	// Pending → Queued is the park: the hand was not whole, and the cause is on
+	// the row first (dispatch's Park refuses a row with none). Pending →
+	// Reshuffling is the pivot when the order's source is buried and its dig is
+	// planned in its acquire.
+	StatusPending: {StatusSubmitted, StatusQueued, StatusDispatched, StatusReshuffling, StatusCancelled, StatusFailed, StatusSkipped},
+
+	// SOURCING IS HISTORY (C1). Nothing enters it (TestTransitions_NothingEntersSourcing).
+	// Its key stays, with exactly queued's way out, so a row that still says it
+	// is not terminal and can move on; it goes with the one-release alias.
+	StatusSourcing: {StatusAcknowledged, StatusDispatched, StatusInTransit, StatusReshuffling, StatusCancelled, StatusFailed, StatusSkipped},
 
 	StatusSubmitted: {StatusAcknowledged, StatusQueued, StatusCancelled, StatusFailed, StatusSkipped},
 
-	// Queued → Dispatched is the hand's status write, committed before the fleet
-	// create (as Sourcing → Dispatched above); Acknowledged is reported
-	// asynchronously by the vendor later.
-	// Queued → Sourcing supports the scanner's re-resolve path when an
-	// inflight bin claim becomes invalid.
-	// Queued → Skipped is fired by DispatchPreparedComplex when the complex
-	// reserve finds no bin at any pickup node (reserveMoot) — the work was never
-	// needed.
-	// Queued → Reshuffling supports the complex-order buried-source path:
-	// complex intake creates the parent at Queued, then pivots to
-	// Reshuffling when the resolver returns *BuriedError. (Simple
-	// retrieves take Pending → Reshuffling instead; the parent is still
-	// in pending when planning sees the burial.)
-	StatusQueued: {StatusAcknowledged, StatusDispatched, StatusInTransit, StatusSourcing, StatusReshuffling, StatusCancelled, StatusFailed, StatusSkipped},
+	// Queued → Dispatched is a parked order's hand, committed before the fleet
+	// create as from pending; Acknowledged is reported asynchronously by the
+	// vendor later. Queued → Skipped is the end of an order whose work is gone
+	// (a complex reserve with no bin at any pickup, a move whose named bin has
+	// left). Queued → Reshuffling is a parked order whose source is buried
+	// getting its dig.
+	StatusQueued: {StatusAcknowledged, StatusDispatched, StatusInTransit, StatusReshuffling, StatusCancelled, StatusFailed, StatusSkipped},
 
-	// Acknowledged|Dispatched → Sourcing supports PrepareRedirect: the order
-	// is re-resolved against a new delivery node after the vendor leg is
-	// cancelled.
-	//
 	// Acknowledged|Dispatched → Staged is a robot already standing on its wait
 	// node: the fleet finishes the Wait block within a poll and reports
 	// CREATED -> WAITING with no RUNNING between. Refused, the order stayed
 	// dispatched while the station was told it was staged, and every release
 	// was rejected (SPR order 7664, 2026-10-08: the supply robot had just
 	// dropped the spare it was sent to lift).
-	StatusAcknowledged: {StatusDispatched, StatusInTransit, StatusStaged, StatusSourcing, StatusCancelled, StatusFaulted, StatusFailed},
-	StatusDispatched:   {StatusInTransit, StatusStaged, StatusDelivered, StatusSourcing, StatusCancelled, StatusFaulted, StatusFailed},
+	StatusAcknowledged: {StatusDispatched, StatusInTransit, StatusStaged, StatusCancelled, StatusFaulted, StatusFailed},
+	// Dispatched → Queued is a fleet refusal: the robot system would not take the
+	// order, so it waits under fleet_unavailable and is asked again (C1.1.3,
+	// SYNTH §2.4). The refusal's caller writes the cause before the move.
+	StatusDispatched: {StatusInTransit, StatusStaged, StatusDelivered, StatusQueued, StatusCancelled, StatusFaulted, StatusFailed},
 
 	StatusInTransit: {StatusDelivered, StatusStaged, StatusCancelled, StatusFaulted, StatusFailed},
 	StatusStaged:    {StatusInTransit, StatusDelivered, StatusCancelled, StatusFaulted, StatusFailed},
@@ -549,13 +544,13 @@ var validTransitions = map[Status][]Status{
 	// gives up (faulted→failed) or the operator cancels (faulted→cancelled).
 	StatusFaulted:   {StatusInTransit, StatusDelivered, StatusFailed, StatusCancelled},
 	StatusDelivered: {StatusConfirmed, StatusCancelled, StatusFailed},
-	// Reshuffling → Queued is the complex-order resume edge: after a
-	// compound completes successfully, the complex parent transitions
-	// back to Queued so the fulfillment scanner picks it up and
-	// re-resolves its original pickup step against the now-accessible
-	// slot. Simple-retrieve compounds still terminate at Confirmed —
-	// see dispatch/compound.go AdvanceCompoundOrder routing.
-	StatusReshuffling: {StatusConfirmed, StatusQueued, StatusCancelled, StatusFailed},
+	// Reshuffling → Pending is a parent going back to the ladder's start: a
+	// complex parent whose dig finished (ResumeCompound), or a parent whose dig
+	// was dissolved. Neither is waiting on anything, so neither says `queued`
+	// (F2); the parent gets its one acquire at once and lands on `dispatched`, or
+	// on `queued` with the cause its park writes. Simple-retrieve compounds still
+	// terminate at Confirmed — see dispatch/compound.go AdvanceCompoundOrder.
+	StatusReshuffling: {StatusConfirmed, StatusPending, StatusCancelled, StatusFailed},
 }
 
 // IsTerminal returns true if the status has no outgoing transitions in
@@ -609,7 +604,7 @@ func IsValidTransition(from, to Status) bool {
 // ── WHAT IT IS FOR: A MIRROR THAT LOST A MESSAGE ──────────────────────────
 //
 // Core owns order state; the Edge reflects it. When Core walks
-// reshuffling → queued → sourcing → dispatched → staged and the Edge is told
+// reshuffling → queued → sourcing → dispatched → staged (the old ladder) and the Edge is told
 // only about the last one, the Edge is asked for reshuffling → staged, which is
 // not a legal STEP but is a legal DESTINATION — every state in between exists
 // and Core has already passed through them. Rejecting it strands the mirror at a

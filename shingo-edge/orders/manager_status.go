@@ -123,18 +123,23 @@ const mirrorJumpDetail = "MIRROR JUMP"
 //
 // The judgment, per transition:
 //
-//	pending -> acknowledged (x28). The step between is pending->queued, which
-//	  has no actionMap entry. dispatch/lifecycle.go's transition() applies ONLY
-//	  actionMap actions — there is no general per-status push — and that map's
-//	  own header states pure transitions (status write + audit, no side effects)
-//	  deliberately have none. `queued` is an internal scheduling state Core
-//	  passes through on its way to acknowledging; the Edge learns the outcome,
-//	  not the scheduling. Nothing durable is wrong at the Edge afterwards.
+//	pending -> acknowledged (x28). The step between is pending->dispatched (the
+//	  hand), which has no actionMap entry. dispatch/lifecycle.go's transition()
+//	  applies ONLY actionMap actions — there is no general per-status push — and
+//	  that map's own header states pure transitions (status write + audit, no
+//	  side effects) deliberately have none. The Edge learns the outcome, the ack,
+//	  not the scheduling. (An order that waits first is told `queued` by its park;
+//	  this jump is the one that never waited.) Nothing durable is wrong at the
+//	  Edge afterwards.
 //
-//	sourcing -> in_transit (x3). Same shape, one state along: the step between
-//	  is sourcing->dispatched (or ->queued), equally pure. Dispatch is Core
-//	  handing the job to the fleet; the Edge's board cares that the robot is
-//	  moving, which is exactly the status it receives.
+//	(sourcing -> in_transit was here for an old Core's shape; since C1 it is an
+//	  edge — sourcing's way out is queued's — so the mirror takes it directly.)
+//
+//	reshuffling -> acknowledged (C1, F2). A plain parent whose dig was dissolved
+//	  goes reshuffling -> pending -> dispatched in Core: back to the ladder's
+//	  start, then its one acquire. The acquire's own ack is the news; a push of
+//	  `dispatched` after the ack and waybill would walk the mirror backwards, so
+//	  none is sent for this shape. Nothing durable is wrong afterwards.
 //
 // NOT a licence to silence future jumps. A jump that is NOT on this list still
 // tickets, loudly, with the instruction to find the transition that does not
@@ -146,8 +151,8 @@ const mirrorJumpDetail = "MIRROR JUMP"
 // stuck AT reshuffling and would never have moved again. Silence is expected on
 // a state Core passes THROUGH, not on one the Edge is parked in.
 var expectedMirrorJumps = map[[2]protocol.Status]string{
-	{protocol.StatusPending, protocol.StatusAcknowledged}: "the step between is pending->queued, a pure transition with no actionMap entry: `queued` is Core's internal scheduling state, and the Edge is told the outcome rather than the scheduling",
-	{protocol.StatusSourcing, protocol.StatusInTransit}:   "the step between is sourcing->dispatched, a pure transition with no actionMap entry: dispatch is Core handing the job to the fleet, and the Edge's board cares that the robot is moving",
+	{protocol.StatusPending, protocol.StatusAcknowledged}:     "the steps between are pending->dispatched (or pending->queued->dispatched, with the park told by its own push), pure transitions with no actionMap entry: the Edge is told the outcome, the ack, rather than the scheduling",
+	{protocol.StatusReshuffling, protocol.StatusAcknowledged}: "the steps between are reshuffling->pending->dispatched: a parent whose dig was dissolved goes back to the ladder's start and gets its one acquire, and its ack is the news",
 }
 
 // mirrorTransition applies a status CORE has already reached.

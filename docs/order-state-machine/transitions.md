@@ -12,7 +12,7 @@ Where the machine actually lives:
 | the statuses | `protocol/status.go` — the const block, and `AllStatuses()` |
 | the transitions | `protocol/types.go` — `validTransitions` |
 | terminality | derived: a status is terminal iff it has no outgoing edges |
-| the status set predicates | `protocol/status.go` — `IsTerminal`, `IsVendorActive`, `IsVendorTracked`, `IsAcquiring`, `IsPreDispatch`, `IsStuckSweepCandidate`, `IsRuntimeStuckCandidate`, `IsFailureTerminal`, `BlocksChangeoverStart` |
+| the status set predicates | `protocol/status.go` — `IsTerminal`, `IsVendorActive`, `IsVendorTracked`, `IsAcquiring`, `IsWaiting`, `IsPreDispatch`, `IsStuckSweepCandidate`, `IsRuntimeStuckCandidate`, `IsFailureTerminal`, `BlocksChangeoverStart` |
 | the side effects per edge | `shingo-core/dispatch/lifecycle.go` — `actionMap` |
 | the typed writer methods | `shingo-core/dispatch/lifecycle.go` |
 | a readable diagram | [`docs/order-lifecycle.md`](../order-lifecycle.md) |
@@ -23,8 +23,8 @@ It carried hand-copied renderings of the status list, the transition table, the
 action map and the lifecycle API. All four drifted, and the drift was not small:
 two whole statuses missing, thirteen transitions, seven action-map rows, seven
 methods, and one terminal status. It also stated that a compound parent has
-"terminal-only exits" when `reshuffling → queued` is a live, action-bearing
-resume edge with its own method.
+"terminal-only exits" when its resume was a live, action-bearing edge with its
+own method (`reshuffling → pending` since C1).
 
 That mattered more than an ordinary stale doc, because the `forbidigo` failure
 message points developers here (`.golangci.yml`). Someone arriving to add a
@@ -47,21 +47,24 @@ and `AllStatuses()`.
 
 | from | to |
 |---|---|
-| `pending` | `sourcing`, `submitted`, `dispatched`, `queued`, `reshuffling`, `cancelled`, `failed`, `skipped` |
-| `sourcing` | `queued`, `submitted`, `dispatched`, `reshuffling`, `cancelled`, `failed`, `skipped` |
-| `queued` | `acknowledged`, `dispatched`, `in_transit`, `sourcing`, `reshuffling`, `cancelled`, `failed`, `skipped` |
+| `pending` | `submitted`, `dispatched`, `queued`, `reshuffling`, `cancelled`, `failed`, `skipped` |
+| `sourcing` | `acknowledged`, `dispatched`, `in_transit`, `reshuffling`, `cancelled`, `failed`, `skipped` |
+| `queued` | `acknowledged`, `dispatched`, `in_transit`, `reshuffling`, `cancelled`, `failed`, `skipped` |
 | `submitted` | `acknowledged`, `queued`, `cancelled`, `failed`, `skipped` |
-| `dispatched` | `in_transit`, `staged`, `delivered`, `sourcing`, `cancelled`, `faulted`, `failed` |
-| `acknowledged` | `dispatched`, `in_transit`, `staged`, `sourcing`, `cancelled`, `faulted`, `failed` |
+| `dispatched` | `in_transit`, `staged`, `delivered`, `queued`, `cancelled`, `faulted`, `failed` |
+| `acknowledged` | `dispatched`, `in_transit`, `staged`, `cancelled`, `faulted`, `failed` |
 | `in_transit` | `delivered`, `staged`, `cancelled`, `faulted`, `failed` |
 | `staged` | `in_transit`, `delivered`, `cancelled`, `faulted`, `failed` |
 | `delivered` | `confirmed`, `cancelled`, `failed` |
 | `faulted` | `in_transit`, `delivered`, `failed`, `cancelled` |
-| `reshuffling` | `confirmed`, `queued`, `cancelled`, `failed` |
+| `reshuffling` | `confirmed`, `pending`, `cancelled`, `failed` |
 | `confirmed` | *(terminal)* |
 | `failed` | *(terminal)* |
 | `cancelled` | *(terminal)* |
 | `skipped` | *(terminal)* |
+
+`sourcing` is history (C1): no edge enters it, and its row is `queued`'s, so an
+old row that still says it is not terminal. It goes with the one-release alias.
 
 What remains below the table is the part that is only here.
 
@@ -84,15 +87,14 @@ matching `'pending'` under `store/` is the reservation enum, not the order one.
 
 The couplings worth knowing:
 
-- A `sourcing` or `queued` order holds its sources as `pending` reservations and
-  **reconciles** them each scanner tick — keep held, release moved, acquire newly
-  needed — rather than re-shopping from scratch. The `queued ↔ sourcing` edges
-  are what make that retry possible.
+- A `queued` order holds its sources as `pending` reservations and **reconciles**
+  them each scanner tick — keep held, release moved, acquire newly needed — rather
+  than re-shopping from scratch.
 - `ReleaseByOrder` fires from the terminal chokepoint, so no reservation outlives
   its owning order.
 - `ReapOrphaned` is the owner-liveness backstop: a hold is reclaimed when its
   order is terminal or gone, **never on age**. A waiting order may legitimately
-  hold for hours, which is why `queued` and `sourcing` are exempt from the
+  hold for hours, which is why `pending` and `queued` are exempt from the
   stuck-order sweep.
 
 ## What bypasses `transition()`
@@ -112,10 +114,8 @@ the other half of why this document rotted.
 There is no CHECK constraint on `orders.status` in either schema, `Scan`
 deliberately does not validate on read, and the lint guard matches selector
 expressions like `db.UpdateOrderStatus` — it cannot see `Status:` in a struct
-literal. Two statuses are used at creation today — `pending` (intake, bin-move,
-carried-bin recovery, compound children, loader replenishment) and `queued`
-(complex intake, which births status-first so the scanner picks the order up).
-That is convention, not enforcement.
+literal. One status is used at creation: `pending`, at every door (v4 §2.6,
+C1). That is convention, not enforcement.
 
 Related: the plain `UpdateStatus` write has no compare-and-swap — it writes by id
 alone. There is a recorded incident — a stale scanner snapshot wrote

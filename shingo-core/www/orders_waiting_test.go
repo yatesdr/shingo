@@ -21,7 +21,8 @@ func waitingOrder(status protocol.Status, cause string) *domain.Order {
 // A STAGED ORDER IS A PARKED ROBOT, and it was the one the page said least
 // about. PopGateStaged and PopStationWait are both `staged`, and eight causes can
 // land ONLY on them — the staged dig-blocker refusals, the four gate causes,
-// station-wait. IsAcquiring is {queued, sourcing}, so every one of those rendered
+// station-wait. The protocol's waiting set ({queued, sourcing} then, `queued`
+// since C1) holds none of them, so every one of those rendered
 // with no duration and was absent from the summary chips entirely.
 func TestOrderIsWaiting_IncludesStagedAndReshuffling(t *testing.T) {
 	t.Parallel()
@@ -41,9 +42,6 @@ func TestOrderIsWaiting_IncludesStagedAndReshuffling(t *testing.T) {
 	if !orderIsWaiting(waitingOrder(protocol.StatusQueued, "ngrp-full")) {
 		t.Error("a queued order carrying a cause stopped reading as waiting — the widening must " +
 			"ADD populations, never trade one for another")
-	}
-	if !orderIsWaiting(waitingOrder(protocol.StatusSourcing, "ngrp-full")) {
-		t.Error("a sourcing order carrying a cause stopped reading as waiting")
 	}
 }
 
@@ -72,7 +70,7 @@ func TestOrderIsWaiting_ExcludesADispatchedOrderCarryingAStaleCause(t *testing.T
 func TestOrderIsWaiting_ExcludesAnOrderWithNoCause(t *testing.T) {
 	t.Parallel()
 	for _, s := range []protocol.Status{
-		protocol.StatusQueued, protocol.StatusSourcing,
+		protocol.StatusQueued,
 		protocol.StatusStaged, protocol.StatusReshuffling,
 	} {
 		if orderIsWaiting(waitingOrder(s, "")) {

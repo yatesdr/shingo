@@ -108,7 +108,7 @@ never a permanently wedged resource.
   the aggregate question; reservations handle the per-resource ownership
   question.
 - **Not time-boxed.** There is **no TTL** and **no age-based give-up** (see
-  *Reaping* below). A sourcing order legitimately holds its reservations for as
+  *Reaping* below). A waiting (`queued`) order legitimately holds its reservations for as
   long as it takes to find a source; demand is operator-driven and does not
   evaporate on a timer.
 
@@ -237,8 +237,9 @@ shape as a decision against it.
 
 **Simple path** (`shingo-core/fulfillment/scanner.go`, `dispatch/store_slot.go`):
 
-1. The scanner finds a source bin (the shared `SourceFinder`) and moves the
-   order to `sourcing`.
+1. The scanner finds a source bin (the shared `SourceFinder`). No status is
+   written for this: acquiring is the act between `pending` and `dispatched`,
+   not a stored status (C1).
 2. It resolves the destination node and soft-reserves the slot
    (`ReserveStorageDropoff` — a no-op for a line/consume destination, which has
    no slot to reserve).
@@ -248,9 +249,9 @@ shape as a decision against it.
    dropoff) and the bin, then `DispatchDirect` creates the fleet order.
 
 If any step before confirm fails — the slot is contended, the bin loses a race,
-the destination can't be resolved — the order parks in `sourcing` (never
-`queued`), **keeps its soft reservations**, and the scanner retries it next
-tick. Because `BinID` was stamped at soft-acquire, a re-entering order reuses
+the destination can't be resolved — the order parks `pending → queued` under
+the cause that arm wrote (an order already `queued` stays there), **keeps its
+soft reservations**, and the scanner retries it next tick. Because `BinID` was stamped at soft-acquire, a re-entering order reuses
 its own bin instead of shopping for a new one.
 
 **Coordinated path** (`shingo-core/dispatch/allocator.go`, `complex_dispatch.go`).
@@ -264,7 +265,7 @@ shopping — they:
    `confirmComplexPlan` flips each row pending→confirmed and writes the claims.
    The scanner drives this via `DispatchPreparedComplex`.
 
-Between reserve and confirm the order sits in `sourcing`, holding its sources as
+Between reserve and confirm the order sits in `pending` or `queued`, holding its sources as
 revocable reservations. This is what lets an **incomplete** order retry: on each
 scanner tick the Allocator **reconciles** rather than re-shopping from scratch —
 
@@ -282,9 +283,9 @@ holds, because the unique index is on `bin_id` alone — re-Acquiring a bin this
 order already holds would read as a conflict and falsely report the order's own
 bins as "missing" every tick.
 
-See `[[order-builder-dispatch]]` for how `MoveToSourcing` is positioned at the
-start of the reserve attempt and how the `AcquiringStatusSQLList = {queued,
-sourcing}` set widens which orders the scanner retries.
+See `[[order-builder-dispatch]]` for the `AcquiringStatusSQLList = {pending,
+queued}` set — the orders the scanner may ask. (`MoveToSourcing` is deleted:
+`sourcing` left the ladder in C1.)
 
 **Synchronous manual orders** (`engine.CreateBinMove`, reached from the operator's
 manual-order screen via `www.submitSpotRetrieveSpecific` and from the
@@ -368,8 +369,9 @@ only order that carries a `parent_order_id`.
 
 ### The invariant, and the fence that enforces it
 
-**No non-compound order that is still acquiring (`pending`, `queued`, or
-`sourcing`) holds a hard bin or slot claim.** A compound child
+**No non-compound order that is still acquiring (`pending` or `queued`) holds
+a hard bin or slot claim.** (The sweep also covers `sourcing`, which only an
+old history row can still say.) A compound child
 (`parent_order_id IS NOT NULL`) is the exempted case above.
 
 The fence is a SQL sweep run as a docker integration test
@@ -377,7 +379,7 @@ The fence is a SQL sweep run as a docker integration test
 above is useful but is *selector-match only*: it cannot see a bare
 `UPDATE bins SET claimed_by` written inside a transaction, and it cannot see a
 new caller that bypasses the reserve/confirm pair. The invariant sweep can. It
-populates a real database with an order parked in `sourcing`, asserts the sweep
+populates a real database with an order parked in `queued`, asserts the sweep
 finds zero hard claims on it, and separately asserts that a compound child's raw
 claim is correctly exempted.
 
@@ -409,15 +411,15 @@ because with no hold there is nothing to double-source over.
 ## Reaping — owner-liveness, not age
 
 `ReapOrphaned` reclaims reservation rows whose **owning order is terminal or
-gone** — never on age. An order in `sourcing` may legitimately hold its
+gone** — never on age. An order in `queued` may legitimately hold its
 reservations for minutes, hours, or days while waiting for a source; that is not
 "stuck," it is working as designed. A hold becomes reclaimable only when its
 order reaches a terminal status (`confirmed`/`failed`/`cancelled`) or no longer
 exists.
 
-Consequently pre-dispatch orders (`queued`, `sourcing`) are **exempt** from the
+Consequently pre-dispatch orders (`pending`, `queued`) are **exempt** from the
 stuck-order sweep — `AbandonStuckOrders` is restricted to the runtime states
-(`dispatched`, `staged`). There is no timer that abandons a sourcing order. (An older
+(`dispatched`, `staged`). There is no timer that abandons a waiting order. (An older
 age-based reaper was retired when reserve-at-plan-time made the soft window
 long; do not reintroduce one.)
 

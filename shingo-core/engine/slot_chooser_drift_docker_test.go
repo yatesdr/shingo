@@ -51,7 +51,7 @@ func engDriftHolder(t *testing.T, db *store.DB, fx *engDriftFixture, mutate ...f
 	return testdb.CreateOrder(t, db, append([]func(*orders.Order){func(o *orders.Order) {
 		o.EdgeUUID = fx.prefix + "-HOLDER"
 		o.OrderType = dispatch.OrderTypeComplex
-		o.Status = protocol.StatusSourcing
+		o.Status = protocol.StatusPending
 	}}, mutate...)...)
 }
 
@@ -186,7 +186,7 @@ func TestEngineSlotChoosers_NeverOfferWhatTheClaimDoorRefuses(t *testing.T) {
 				claimant := testdb.CreateOrder(t, db, func(o *orders.Order) {
 					o.EdgeUUID = prefix + "-CLAIMANT"
 					o.OrderType = dispatch.OrderTypeMove
-					o.Status = protocol.StatusSourcing
+					o.Status = protocol.StatusPending
 					o.DeliveryNode = got.Name
 				})
 				if dest := eng.dispatcher.ReserveStorageDropoff(claimant); dest.Refused() {

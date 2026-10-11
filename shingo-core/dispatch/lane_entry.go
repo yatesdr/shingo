@@ -231,7 +231,7 @@ func (d *Dispatcher) laneEntryCause(lane *nodes.Node, order *orders.Order, destN
 //
 //   - NOT yet dispatched (vendor_order_id == "") → KEEP. It has not reached the
 //     fleet, so it is certainly still coming. Dropping it would silently stop a
-//     queued/sourcing deeper store from holding its place — a behaviour change
+//     pending/queued deeper store from holding its place — a behaviour change
 //     well outside placement-release, and one that would widen the one-sided
 //     deeper-later residual (F2). Unchanged from the old first half.
 //

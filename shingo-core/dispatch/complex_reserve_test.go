@@ -51,7 +51,7 @@ func mkComplexOrder(t *testing.T, db complexOrderStore, uuid, source, process, d
 	t.Helper()
 	j, _ := json.Marshal(steps)
 	o := &orders.Order{
-		EdgeUUID: uuid, StationID: "line-1", OrderType: OrderTypeComplex, Status: StatusSourcing,
+		EdgeUUID: uuid, StationID: "line-1", OrderType: OrderTypeComplex, Status: StatusPending,
 		Quantity: 1, PayloadCode: payload, SourceNode: source, ProcessNode: process,
 		DeliveryNode: delivery, StepsJSON: string(j),
 	}
@@ -496,7 +496,7 @@ func TestReservePresentButTakenHoldsNotMoot(t *testing.T) {
 	binA := testdb.CreateBinAtNode(t, db, bp.Code, nodeA.ID, "PBT-BIN")
 
 	// Another order claims the sole bin at the source — present, but taken.
-	other := &orders.Order{EdgeUUID: "pbt-other", StationID: "s", OrderType: OrderTypeRetrieve, Status: StatusSourcing, Quantity: 1}
+	other := &orders.Order{EdgeUUID: "pbt-other", StationID: "s", OrderType: OrderTypeRetrieve, Status: StatusPending, Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(other), "create other order")
 	testdb.ClaimBinForTest(t, db, binA.ID, other.ID)
 
@@ -557,40 +557,11 @@ func TestStagingRegrabsNotTreatedAsMissing(t *testing.T) {
 	}
 }
 
-// TestMoveToSourcingIdempotent pins the commit-4 helper change: sourcing→sourcing
-// is a no-op (the reserve-retry loop re-enters it every tick), while a genuinely
-// illegal transition is still rejected.
-func TestMoveToSourcingIdempotent(t *testing.T) {
-	t.Parallel()
-	db := testDBShared(t)
-	setupTestData(t, db)
-	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
-
-	srcing := &orders.Order{EdgeUUID: "mts-sourcing", StationID: "s", OrderType: OrderTypeRetrieve, Status: StatusSourcing, Quantity: 1}
-	testutil.MustNoErr(t, db.CreateOrder(srcing), "create sourcing order")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(srcing.ID, string(StatusSourcing), "setup"), "force sourcing")
-	srcing.Status = StatusSourcing
-	if err := d.lifecycle.MoveToSourcing(srcing, "test", "retry"); err != nil {
-		t.Fatalf("MoveToSourcing(sourcing→sourcing) must be a no-op, got %v", err)
-	}
-	if srcing.Status != StatusSourcing {
-		t.Errorf("status after idempotent MoveToSourcing = %q, want sourcing", srcing.Status)
-	}
-
-	// A terminal order → sourcing is still rejected.
-	term := &orders.Order{EdgeUUID: "mts-terminal", StationID: "s", OrderType: OrderTypeRetrieve, Status: StatusConfirmed, Quantity: 1}
-	testutil.MustNoErr(t, db.CreateOrder(term), "create terminal order")
-	term.Status = StatusConfirmed
-	if err := d.lifecycle.MoveToSourcing(term, "test", "x"); err == nil {
-		t.Error("MoveToSourcing(confirmed→sourcing) must be rejected as illegal, got nil")
-	}
-}
-
 // ── the reconcile wire (the split-brain fix) ─────────────────────────
 
 // TestComplexHoldingSlotsAsReservationsAcrossTicks is the split-brain PIN. An
 // incomplete complex order (its source bin not yet available) holds its destination
-// slot as a revocable RESERVATION while it sits in `sourcing` — NOT as a hard
+// slot as a revocable RESERVATION while it waits pre-dispatch — NOT as a hard
 // nodes.claimed_by. Before the slot substrate the hard-claim slot loop set
 // nodes.claimed_by at dispatch
 // even while the order held bins only as reservations across ticks: bins soft, slots
@@ -613,7 +584,7 @@ func TestComplexHoldingSlotsAsReservationsAcrossTicks(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateNode(src), "create src")
 	// A bin at src that is already TAKEN by another order — the bin need is
 	// present-but-taken, so the order HOLDS and retries (not moot-skips, which would
-	// correctly release the slot). This exercises the sourcing-with-partials state.
+	// correctly release the slot). This exercises the waiting-with-partials state.
 	takenBin := testdb.CreateBinAtNode(t, db, bp.Code, src.ID, "SBR-TAKEN")
 	other := testdb.CreateOrder(t, db)
 	testdb.ClaimBinForTest(t, db, takenBin.ID, other.ID)
@@ -625,15 +596,15 @@ func TestComplexHoldingSlotsAsReservationsAcrossTicks(t *testing.T) {
 	order := mkComplexOrder(t, db, "split-brain-1", src.Name, src.Name, slot.Name, bp.Code, steps)
 
 	// Dispatch: the slot reserve completes, the bin reserve is incomplete (empty
-	// source) → the order HOLDS in sourcing.
+	// source) → the order HOLDS (`pending` here; no scanner parks it, C1).
 	if derr := d.DispatchPreparedComplex(order); derr == nil {
 		t.Fatal("order dispatched; expected a hold (bin source empty)")
 	}
 
-	// THE PIN: the slot is held as a RESERVATION, not a hard claim, while sourcing.
+	// THE PIN: the slot is held as a RESERVATION, not a hard claim, while waiting.
 	slotN, _ := db.GetNode(slot.ID)
 	if slotN.ClaimedBy != nil {
-		t.Fatalf("slot claimed_by=%d while SOURCING — the split-brain: an incomplete order must hold slots as RESERVATIONS, not hard nodes.claimed_by", *slotN.ClaimedBy)
+		t.Fatalf("slot claimed_by=%d while acquiring — the split-brain: an incomplete order must hold slots as RESERVATIONS, not hard nodes.claimed_by", *slotN.ClaimedBy)
 	}
 	held, _ := db.ListReservationsByOrder(order.ID)
 	slotReserved := false
@@ -643,10 +614,10 @@ func TestComplexHoldingSlotsAsReservationsAcrossTicks(t *testing.T) {
 		}
 	}
 	if !slotReserved {
-		t.Fatalf("order holds no slot reservation on %s while sourcing; held=%+v", slot.Name, held)
+		t.Fatalf("order holds no slot reservation on %s while waiting; held=%+v", slot.Name, held)
 	}
-	if got, _ := db.GetOrder(order.ID); got.Status != StatusSourcing {
-		t.Errorf("order status=%q, want sourcing (holding partials)", got.Status)
+	if got, _ := db.GetOrder(order.ID); got.Status != StatusPending {
+		t.Errorf("order status=%q, want pending (holding partials)", got.Status)
 	}
 }
 
@@ -703,7 +674,7 @@ func TestDeclaredStagingDropoffIsReserved(t *testing.T) {
 		src := &nodes.Node{Name: tag + "-SRC", Enabled: true}
 		testutil.MustNoErr(t, db.CreateNode(src), "create src")
 
-		// A bin already taken at the source, so the order HOLDS in sourcing rather
+		// A bin already taken at the source, so the order HOLDS acquiring rather
 		// than completing — the slot reserve runs first and its result stays
 		// observable. Same device as TestComplexHoldingSlotsAsReservationsAcrossTicks.
 		takenBin := testdb.CreateBinAtNode(t, db, bp.Code, src.ID, tag+"-TAKEN")

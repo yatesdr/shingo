@@ -60,7 +60,7 @@ func TestStore_ALostSlotGoesBackToItsGroup(t *testing.T) {
 		o.DeliveryNode, o.PayloadCode = grp.Name, sd.Payload.Code
 	})
 	winner := testdb.CreateOrder(t, db, func(w *orders.Order) {
-		w.EdgeUUID, w.OrderType, w.Status = "SLC-winner", OrderTypeStore, protocol.StatusSourcing
+		w.EdgeUUID, w.OrderType, w.Status = "SLC-winner", OrderTypeStore, protocol.StatusPending
 		w.DeliveryNode, w.PayloadCode = s1.Name, sd.Payload.Code
 	})
 

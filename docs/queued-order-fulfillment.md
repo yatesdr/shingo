@@ -15,20 +15,31 @@ All order types, not just retrieve_empty. A retrieve for payload "NF1-Knockdown"
 ## Order Lifecycle
 
 ```
-pending -> sourcing -> [found] -> dispatched -> in_transit -> delivered -> confirmed
-        -> [not found] -> QUEUED -> [bin available] -> sourcing -> dispatched -> ...
-                      -> [cancelled by operator] -> cancelled
+pending -> (acquiring) -> [whole hand] -> dispatched -> in_transit -> delivered -> confirmed
+                       -> [not whole]  -> QUEUED (with a cause) -> [hand whole] -> dispatched -> ...
+                                                                -> [cancelled by operator] -> cancelled
+dispatched -> [fleet refused the create] -> QUEUED (fleet_unavailable) -> ...
 ```
 
-`queued` and `sourcing` together form the **acquiring** set — the statuses the
-fulfillment scanner retries. `IsAcquiring(s)` / `AcquiringStatusSQLList()` in
+Every order is born `pending`. **Acquiring** is the act between `pending` and
+`dispatched` — asking for the whole hand — never a stored status. When the hand
+is whole the order goes `pending → dispatched` in one transaction; otherwise it
+parks `pending → queued`, with its cause written on the row first. `queued` is
+the one place an order rests short of the fleet, and it always carries a cause.
+(`sourcing` was a status before C1; it is history now — see
+`[[order-lifecycle]]`.)
+
+`pending` and `queued` together form the **acquiring** set — the orders the
+fulfillment scanner may ask. `IsAcquiring(s)` / `AcquiringStatusSQLList()` in
 `protocol/status.go` define it; the scanner's re-check and the complex dispatch
-entry guard both gate on it. See `[[order-builder-dispatch]]`.
+entry guard both gate on it. `IsWaiting(s)` is `queued` alone. See
+`[[order-builder-dispatch]]`.
 
 ## New Status: `queued`
 
 - Protocol: `StatusQueued = "queued"` in `protocol/status.go`
-- Meaning: Core accepted the order, cannot fulfill it now, will fulfill it when inventory is available
+- Meaning: Core asked for the order's whole hand and could not have it; it waits, with the cause on its row (`queue_code`, `queue_reason`), and is asked again
+- Always carries a cause: `LifecycleService.transition` refuses `→ queued` on a row with an empty code (`WaitWithoutCause`)
 - Persistence: stored in orders table, survives Core restarts
 
 ## Core Changes
@@ -47,15 +58,24 @@ Does NOT apply to:
 - Node not found errors (bad delivery/source node -- config errors, should still fail)
 - Claim failures (race condition on bin claim)
 
-### 2. Dispatcher -- Handle Queued Result
+### 2. Doors -- Birth, Apply, One Acquire
 
-File: `dispatch/dispatcher.go`
+Files: `dispatch/door.go`, `fulfillment/scanner.go`
 
-`queueOrder` method:
-1. `db.UpdateOrderStatus(order.ID, "queued", "awaiting inventory")`
-2. `db.UpdateOrderPayloadCode(order.ID, payloadCode)` -- persist for scanner
-3. Send `OrderUpdate{Status: "queued", Detail: "awaiting inventory"}` reply to Edge
-4. Emit `EventOrderQueued` for SSE/logging
+Each door (`HandleOrderRequest`, complex intake, loader replenishment, carried-bin
+recovery) holds the scanner's lock across the order's birth, its apply and one
+acquire, so a periodic pass never acquires a half-applied row:
+
+1. Birth: the INSERT writes `pending`.
+2. Apply: the door's own writes (remaining UOP, resolved destination).
+3. One acquire (`AcquireLocked`): the order is dispatched, or parked
+   `pending → queued` under the cause its arm wrote, and its station is told
+   once with that cause.
+
+A door whose decision is already a wait (dropoff gate, finder wait, unresolved
+group) parks the order itself (`ParkAndTell`) instead of asking again. The
+station is not told `queued` for an order that never waited, and a door never
+emits `EventOrderQueued`.
 
 ### 3. Payload Code on Orders (New Column)
 
@@ -76,7 +96,7 @@ File: `fulfillment/scanner.go`
 - `EventOrderFailed` -- reservation released
 - `EventOrderSkipped` -- reservation released
 - `EventBinEnteredTransit` -- a move committed, freeing upstream state
-- plus the synchronous `EventOrderQueued` trigger at queue time
+- plus the synchronous `EventOrderQueued` trigger, emitted by a caller outside any door that parked an order (the doors acquire their own order instead)
 
 **Safety sweep:** Every 60 seconds, full scan. Catches anything events missed.
 
@@ -90,19 +110,19 @@ scanner replay call the shared `dispatch.SourceFinder` (`source_finder.go`),
 which runs the same tier cascade for both paths so replay cannot drift from
 intake (see `[[order-builder-dispatch]]`). The actual hold on a source is a
 **reservation**, set via `Acquire` at plan time and `Confirm` at dispatch time;
-a `sourcing` order retries by **reconciling** its existing reservations
+a `queued` order retries by **reconciling** its existing reservations
 (keep held, release moved, acquire newly needed) rather than re-claiming from
 scratch. See `[[reservations]]`.
 
 ```
-1. List acquiring orders ({queued, sourcing}), sorted by priority DESC, created_at ASC
+1. List acquiring orders ({pending, queued}, top-level only), sorted by priority DESC, created_at ASC
 2. For each order:
    a. Resolve source via SourceFinder (shared with intake)
    b. Allocator.reconcile: keep/release/acquire reservations vs the plan's needs
-   c. If a source can't be secured: skip (stays queued/sourcing; retry next tick)
+   c. If a source can't be secured: park (`pending → queued` under the cause the arm wrote; a `queued` order stays); retry next tick
    d. Confirm reservations + hard-claim via the reservation-guarded seatbelt (ConfirmForDispatch)
    e. Dispatch to fleet
-   f. If fleet dispatch fails: take the claims off, demote the reservations to pending, keep the bin pointer, park in `sourcing` (DemoteAfterFleetRefusal); the next tick re-confirms
+   f. If fleet dispatch fails: take the claims off, demote the reservations to pending, keep the bin pointer, park `dispatched → queued` under `fleet_unavailable` or the ngrp carve-out (DemoteAfterFleetRefusal); the next tick re-confirms
 3. Return count fulfilled
 ```
 
@@ -110,7 +130,7 @@ scratch. See `[[reservations]]`.
 
 ### 5. Reply to Edge on Queue
 
-Core sends `OrderUpdate{Status: "queued", Detail: "awaiting inventory"}`.
+A park sends one `OrderUpdate{Status: "queued"}` carrying the reason (`ParkAndTell` / `NotifyWaitChanged`); a later change of cause goes through the wait-change notify. An order the door dispatched is never told `queued`.
 
 When fulfilled and dispatched, Edge receives the normal `order.ack` -> `order.waybill` -> `order.update(in_transit)` -> `order.delivered` flow.
 
@@ -184,7 +204,7 @@ scanner retries it next tick.
 
 **Delivery node occupied:** Scanner skips, order stays queued. Next scan after delivery completes picks it up.
 
-**Fleet dispatch fails:** Unclaim bin, set back to queued. Next scan retries.
+**Fleet dispatch fails:** Claims off, reservations demoted to pending, bin pointer kept, `dispatched → queued` under `fleet_unavailable`. Next scan retries.
 
 **No bins ever available:** Order stays queued indefinitely. Operator sees "Awaiting Stock", can cancel.
 

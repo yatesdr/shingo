@@ -719,7 +719,7 @@ func (d *Dispatcher) legStillNeedsLane(leg *orders.Order, laneID int64) (bool, s
 // the store unclaimed the bin (2026-08-11, orders 21/22). Anything added here
 // must read dispatch state, not a claim.
 //
-// The acquiring states (queued/sourcing) read as not-committed, and so do the
+// The acquiring states (pending/queued) read as not-committed, and so do the
 // failure states where the order will not do its part; a faulted order may
 // recover.
 //

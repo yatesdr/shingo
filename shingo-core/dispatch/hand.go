@@ -169,8 +169,9 @@ func (d *Dispatcher) acquireHand(order *orders.Order, h Hand, entering []*nodes.
 		if IsConcurrentTransition(err) {
 			log.Printf("dispatch: order %d moved under us before the fleet order was created — "+
 				"NOT dispatching (another caller owns it now): %v", order.ID, err)
+			return err
 		}
-		return err
+		return &StatusWriteFailed{OrderID: order.ID, Err: err}
 	}
 
 	for _, s := range h.Slots {
@@ -223,6 +224,22 @@ func (d *Dispatcher) acquireHand(order *orders.Order, h Hand, entering []*nodes.
 	}
 	return nil
 }
+
+// StatusWriteFailed is a hand whose `→ dispatched` write failed for a reason
+// that is not a lost CAS (a database error). Nothing was taken and the fleet was
+// never asked: it is not a fleet refusal, and a caller that took anything before
+// the hand (a dig leg's lane occupancy) releases it — the rule is "release on
+// every failure except a lost CAS" (commitToFleet).
+type StatusWriteFailed struct {
+	OrderID int64
+	Err     error
+}
+
+func (e *StatusWriteFailed) Error() string {
+	return fmt.Sprintf("hand: order %d → dispatched could not be written: %v", e.OrderID, e.Err)
+}
+
+func (e *StatusWriteFailed) Unwrap() error { return e.Err }
 
 // NotAWait reports a hand refused because the order has ended or the bin it names
 // has gone: the hand returns it as itself, not as a HandRefusal (see the header).

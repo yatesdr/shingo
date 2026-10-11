@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -513,7 +514,8 @@ func TestSpringfieldIncident_20260805_AWaitingReturnNamingTheHomeHoldsNothing(t 
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType, o.Status = "spr-0805-evac", "test", OrderTypeComplex, StatusSourcing
+		o.EdgeUUID, o.StationID, o.OrderType, o.Status = "spr-0805-evac", "test", OrderTypeComplex, StatusQueued
+		o.QueueCode = string(protocol.QueueWaitingForPartner)
 		o.DeliveryNode, o.ProcessNode, o.PayloadCode = home.Name, "SPR-0805-LINE", "PART-X"
 	})
 

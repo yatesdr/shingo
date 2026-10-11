@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -285,7 +286,14 @@ func TestOrderService_ListOrderHistory_ReturnsTransitions(t *testing.T) {
 	svc, _ := newOrderSvc(db, false)
 
 	o := makeOrder(t, db, sd.LineNode.Name)
-	testutil.MustNoErr(t, db.UpdateOrderStatus(o.ID, "queued", "ready"), "UpdateOrderStatus queued")
+	// (C1: a park carries its code on the row; a bare →queued write is a wait
+	// nobody can explain, and the teardown sweep reports it.)
+	moved, err := db.UpdateOrderStatusFromWithReason(o.ID, "pending", "queued", "ready",
+		store.HistoryReason{Code: string(protocol.QueueWaitingForMaterial)})
+	testutil.MustNoErr(t, err, "park pending→queued")
+	if !moved {
+		t.Fatal("pending→queued was refused")
+	}
 	testutil.MustNoErr(t, db.UpdateOrderStatus(o.ID, "dispatched", "assigned"), "UpdateOrderStatus dispatched")
 
 	history, err := svc.ListOrderHistory(o.ID)

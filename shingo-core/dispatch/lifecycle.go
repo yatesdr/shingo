@@ -1,8 +1,8 @@
 // lifecycle.go — Order state machine driver.
 //
 // LifecycleService gains typed methods (CancelOrder, ConfirmReceipt,
-// Release, MarkInTransit, MarkStaged, MarkDelivered, Queue,
-// MoveToSourcing, Dispatch, Fail, BeginReshuffle) that
+// Release, MarkInTransit, MarkStaged, MarkDelivered, Park,
+// Dispatch, Fail, BeginReshuffle) that
 // follow Derek's existing parameter pattern: caller supplies the loaded
 // *orders.Order; the lifecycle validates the transition against
 // protocol.validTransitions, persists atomically, then fires actions
@@ -39,6 +39,19 @@ type IllegalTransition struct {
 
 func (e IllegalTransition) Error() string {
 	return fmt.Sprintf("illegal transition: %s → %s", e.From, e.To)
+}
+
+// WaitWithoutCause is returned when a write would move an order to `queued`
+// with no code on its row. `queued` is the one place an order rests short of the
+// fleet, and the row says why (v4 §2.6; C1.1.5): the caller writes the cause
+// first (WriteQueueDetail), then parks.
+type WaitWithoutCause struct {
+	OrderID int64
+	From    protocol.Status
+}
+
+func (e WaitWithoutCause) Error() string {
+	return fmt.Sprintf("order %d: %s → queued refused: no cause on the row", e.OrderID, e.From)
 }
 
 // IsIllegalTransition is a convenience for callers that want to branch on
@@ -133,32 +146,17 @@ var actionMap = map[transitionKey][]Action{
 	// unlock the lane and clean up.
 	{from: StatusReshuffling, to: StatusConfirmed}: {fireCompleted},
 
-	// Complex-order resume: a compound that ran a buried-bin reshuffle
-	// for a complex parent transitions the parent back to Queued (not
-	// Confirmed) so the fulfillment scanner picks it up and re-resolves
-	// its original pickup step against the now-accessible slot. The
-	// scanner trigger is wired against EventOrderQueued
-	// (engine/wiring.go:258-262, RunOnce synchronously); without this
-	// emit the parent would sit Queued until the next periodic sweep.
+	// A parent back at the ladder's start: a complex parent whose dig finished
+	// (ResumeCompound), or a parent whose dig was dissolved (Restart). Neither is
+	// waiting on anything, so neither says `queued` (F2). fireResumed hands the
+	// parent to engine wiring, which runs its one acquire at once and tells the
+	// station where it landed: `queued` with the cause its park wrote, or
+	// `dispatched`. The station is never told `pending`.
 	//
-	// fireRequeued, NOT fireCompleted: fireCompleted runs the delivered/
-	// bin-arrival handler in engine.handleOrderCompleted, which doesn't
-	// apply to a parent that hasn't yet picked anything up.
-	//
-	// Sequencing dependency: this assumes fulfillment.RunOnce() is
-	// invoked synchronously from the EventOrderQueued subscription. A
-	// future async-scanner refactor that changes that contract would
-	// silently break the in-band resume — see compound.go's
-	// AdvanceCompoundOrder routing for the matching note.
-	// AND fireResumed, WHICH IS THE HALF THAT TELLS THE EDGE. Ordered FIRST
-	// deliberately: fireRequeued runs the fulfillment scanner in-band and the
-	// order is frequently dispatched again inside that call, so a push queued
-	// after it would race the statuses that follow. The Edge must learn
-	// `queued` before anything later can be legal for it.
-	//
-	// Without it the Edge's mirror stayed at `reshuffling` — see fireResumed
-	// for why EventOrderQueued's own Edge push cannot cover this.
-	{from: StatusReshuffling, to: StatusQueued}: {fireResumed, fireRequeued},
+	// The Edge's mirror sits at `reshuffling` and is walked out of it by that
+	// push. Without it the mirror stayed there and refused every later push as
+	// an illegal jump (lane-stress 2026-08-11: three robots for a whole soak).
+	{from: StatusReshuffling, to: StatusPending}: {fireResumed},
 
 	// Cancel paths from any non-terminal status notify engine wiring
 	// via the EventBus cancellation event.
@@ -220,6 +218,9 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 	from := ord.Status
 	if !protocol.IsValidTransition(from, to) {
 		return IllegalTransition{From: from, To: to}
+	}
+	if to == StatusQueued && ord.QueueCode == "" {
+		return WaitWithoutCause{OrderID: ord.ID, From: from}
 	}
 	ev.PreviousStatus = from
 
@@ -284,6 +285,9 @@ func (s *LifecycleService) transitionTx(tx *sql.Tx, ord *orders.Order, to protoc
 	if protocol.IsTerminal(to) {
 		return nil, fmt.Errorf("transitionTx: %s→%s is terminal; terminal writes go through transition", from, to)
 	}
+	if to == StatusQueued && ord.QueueCode == "" {
+		return nil, WaitWithoutCause{OrderID: ord.ID, From: from}
+	}
 	ev.PreviousStatus = from
 	detail := ev.Reason
 	if detail == "" {
@@ -308,7 +312,7 @@ func (s *LifecycleService) afterTransition(ord *orders.Order, from, to protocol.
 	// always). Mirror it, or the copy in hand still holds the old sentence and
 	// setQueueReason's unchanged-cause short-circuit would refuse to re-write it
 	// when the order parks again under the same cause — a fleet refusal demoting
-	// dispatched→sourcing is exactly that — leaving a waiting order blank.
+	// dispatched→queued is exactly that — leaving a waiting order blank.
 	if !protocol.CanHoldWait(protocol.Status(to)) {
 		ord.QueueReason, ord.QueueCode, ord.QueueCause = "", "", ""
 	}
@@ -336,18 +340,13 @@ func (s *LifecycleService) afterTransition(ord *orders.Order, from, to protocol.
 // detail to the store, so the categories existed in memory and never reached
 // disk. This is the thread-through.
 //
-// On a row into the ACQUIRING set the code is the QUEUE code, not a terminal
+// On a row into `queued` (IsWaiting) the code is the QUEUE code, not a terminal
 // one: the order is not ending, it is waiting, and orders.queue_code is
 // overwritten in place so the history row is the only place that reason becomes
-// a time series.
-//
-// KEYED ON THE PREDICATE, NOT ON `queued`. It was queued-only, which left the
-// other half of the acquiring set uncovered: a door that writes a reason while
-// the order is still `pending` and then moves it to `sourcing` (planning's
-// reserve path) had its code carried nowhere — the fresh sourcing row was born
-// blank, and SetQueueDetail does not stamp a pending row precisely because this
-// carry is supposed to do it. No arm loses anything: MoveToSourcing's Event
-// carries no ErrorCode, so there is nothing here for the queue code to displace.
+// a time series. A door writes the reason while the order is still `pending`
+// (SetQueueDetail does not stamp a pending row), and this carries it onto the
+// park's row. The park refuses a row with no code (WaitWithoutCause), so a
+// `queued` row always has one.
 //
 // The reference defaults to the order's own node and payload when the call
 // site did not set one. That is not a guess — it is the node and payload the
@@ -355,7 +354,7 @@ func (s *LifecycleService) afterTransition(ord *orders.Order, from, to protocol.
 func (s *LifecycleService) historyReason(ord *orders.Order, to protocol.Status, ev Event) store.HistoryReason {
 	r := store.HistoryReason{Code: ev.ErrorCode, Actor: ev.Actor, Ref: ev.Ref}
 
-	if protocol.IsAcquiring(to) {
+	if protocol.IsWaiting(to) {
 		// A terminal code on a waiting row would be a category error.
 		r.Code = ord.QueueCode
 	}
@@ -563,37 +562,26 @@ func (s *LifecycleService) MarkDelivered(ord *orders.Order, actor string) error 
 	})
 }
 
-// Queue transitions {Pending, Sourcing} → Queued. Used by the fulfillment
-// scanner when an order is awaiting inventory.
-func (s *LifecycleService) Queue(ord *orders.Order, actor, reason string) error {
-	if reason == "" {
-		reason = "awaiting inventory"
+// Park moves an order its hand could not take into `queued`: the one place an
+// order rests short of the fleet (v4 §2.6). The cause goes on the row FIRST
+// (WriteQueueDetail); Park refuses a row with none (WaitWithoutCause), and its
+// history row carries the code (historyReason). An order already `queued` is
+// left where it is: its new cause, if any, was written by the same door that
+// called this, and a wait re-asserted every pass writes nothing.
+//
+// No action fires on pending → queued: the station is told by whoever parked
+// (a door's one queued push, or the wait-change notify), never by the edge.
+func (s *LifecycleService) Park(ord *orders.Order, actor string) error {
+	if ord.Status == StatusQueued {
+		return nil
 	}
 	return s.transition(ord, StatusQueued, Event{
 		Actor:  actor,
-		Reason: reason,
+		Reason: ord.QueueReason,
 	})
 }
 
-// MoveToSourcing transitions {Pending, Queued, Acknowledged, Dispatched}
-// → Sourcing. Used by planning, redirect, and scanner re-resolve paths.
-//
-// Idempotent for the reserve-retry loop: with MoveToSourcing-at-start, a complex
-// order re-enters DispatchPreparedComplex every tick while it
-// sources partials, firing sourcing→sourcing repeatedly. Skip that self-transition
-// (rather than adding a self-edge to the transition table) so its action hooks
-// don't re-run; genuinely illegal from-states are still rejected by transition().
-func (s *LifecycleService) MoveToSourcing(ord *orders.Order, actor, reason string) error {
-	if ord.Status == StatusSourcing {
-		return nil
-	}
-	return s.transition(ord, StatusSourcing, Event{
-		Actor:  actor,
-		Reason: reason,
-	})
-}
-
-// Dispatch transitions Queued|Acknowledged|Sourcing → Dispatched after
+// Dispatch transitions Pending|Queued|Acknowledged → Dispatched after
 // the bin is resolved and the fleet order is created. Bin resolution and
 // vendor order creation MUST complete before this is called.
 func (s *LifecycleService) Dispatch(ord *orders.Order, vendorOrderID, actor string) error {
@@ -652,11 +640,9 @@ func (s *LifecycleService) Skip(ord *orders.Order, stationID, errorCode, detail 
 	})
 }
 
-// BeginReshuffle transitions {Pending, Sourcing} → Reshuffling for a
-// compound parent order. Called from Pending when planning detects a
-// buried bin at order intake; called from Sourcing when the planner has
-// already moved the order through MoveToSourcing before discovering the
-// buried bin via the resolver.
+// BeginReshuffle transitions {Pending, Queued} → Reshuffling for a compound
+// parent order: the order whose source is buried becomes its dig's parent, in
+// the acquire that found the burial (at birth, or on a later pass).
 func (s *LifecycleService) BeginReshuffle(ord *orders.Order, reason string) error {
 	return s.transition(ord, StatusReshuffling, Event{
 		Actor:  "system",
@@ -677,48 +663,47 @@ func (s *LifecycleService) CompleteCompound(ord *orders.Order) error {
 	})
 }
 
-// ResumeCompound transitions Reshuffling → Queued for a complex
-// parent whose buried-bin reshuffle compound finished successfully.
-// The parent then sits at Queued so the fulfillment scanner runs the
-// original complex-order resolve+dispatch against the now-accessible
-// source slot.
+// ResumeCompound transitions Reshuffling → Pending for a complex parent whose
+// buried-bin reshuffle compound finished successfully. The parent is back at
+// the ladder's start and gets its one acquire at once (fireResumed): it runs the
+// original complex-order resolve+dispatch against the now-accessible source
+// slot, and lands on `dispatched` or on `queued` with the cause its park writes.
 //
 // Distinct method (not parameterized CompleteCompound) because the two
 // have different downstream semantics: CompleteCompound terminates the
 // parent (lane unlock + EmitOrderCompleted); ResumeCompound hands the
 // parent back into the dispatch pipeline. AdvanceCompoundOrder routes
 // by OrderType to pick the right one.
+func (s *LifecycleService) ResumeCompound(ord *orders.Order) error {
+	return s.Restart(ord, "reshuffle complete; parent back to pending for its acquire")
+}
+
+// Restart moves a compound parent from `reshuffling` back to `pending`: its dig
+// finished (ResumeCompound) or was dissolved. It is not waiting on anything, so
+// it does not say `queued` (F2); the transition's action runs its one acquire.
+//
 // ── IT CLEARS THE CAUSE, AND CLEARING IS THE RIGHT WRITE HERE ─────────────
 //
-// A resumed parent carries whatever cause parked it before the dig — "storage is
+// The parent carries whatever cause parked it before the dig — "storage is
 // being rearranged", lane-locked, intake-buried. Every one of those describes a
-// wait that has now ENDED: the excavation it named is finished, which is why
-// this function is being called. Leaving it puts a stale sentence on an order
-// that is ready to dispatch, which is the same lie a blank row tells, told the
-// other way round — the evaluator states the rule at its own release ("CLEARED
-// ON ENTRY. The cause described a wait that is over").
+// wait that has now ENDED. Leaving it puts a stale sentence on an order that is
+// about to be asked, which is the same lie a blank row tells, told the other way
+// round. If the acquire parks the parent again, it writes the real reason.
 //
-// So this does NOT get a cause of its own. A resumed parent is not waiting on
-// anything; it is queued and next in line for the scanner. If it turns out to be
-// blocked, the very next pass writes the real reason. That makes a blank row on
-// a resumed parent MEANINGFUL rather than ambient: one that persists past a
-// scanner tick is an order nothing picked up, which is a finding.
-//
-// IT CLEARS BEFORE THE TRANSITION. The transition announces the parent queued,
-// and that runs the fulfillment scanner on this goroutine; if the scan parks
-// the parent again, the wait it writes is the parent's real reason. Clearing
-// afterwards erased it, and the parent sat queued with a blank row.
-func (s *LifecycleService) ResumeCompound(ord *orders.Order) error {
+// IT CLEARS BEFORE THE TRANSITION. The transition runs the acquire on this
+// goroutine; if it parks the parent, the wait it writes is the parent's real
+// reason. Clearing afterwards erased it.
+func (s *LifecycleService) Restart(ord *orders.Order, reason string) error {
 	if err := s.db.SetOrderQueueDetail(ord.ID, "", "", ""); err != nil {
 		// Best-effort, like every other queue-detail write: a stale sentence is
-		// worth a log line, never worth failing a completed reshuffle's resume.
-		log.Printf("dispatch: clear queue_reason on resume for order %d: %v", ord.ID, err)
+		// worth a log line, never worth failing the restart.
+		log.Printf("dispatch: clear queue_reason on restart for order %d: %v", ord.ID, err)
 	} else {
 		ord.QueueReason, ord.QueueCode, ord.QueueCause = "", "", ""
 	}
-	return s.transition(ord, StatusQueued, Event{
+	return s.transition(ord, StatusPending, Event{
 		Actor:     "system",
-		Reason:    "reshuffle complete; parent requeued for re-resolution",
+		Reason:    reason,
 		StationID: ord.StationID,
 	})
 }
@@ -748,38 +733,17 @@ func fireCancelled(s *LifecycleService, ord *orders.Order, ev Event) error {
 	return nil
 }
 
-// fireRequeued emits EventOrderQueued so engine wiring runs the
-// fulfillment scanner in-band. Wired into actionMap for
-// {Reshuffling, Queued} — see ResumeCompound. PayloadCode is empty
-// because the requeued parent's payload context is already on the
-// order row; the scanner reads it from there.
-func fireRequeued(s *LifecycleService, ord *orders.Order, ev Event) error {
-	s.emitter.EmitOrderQueued(ord.ID, ord.EdgeUUID, ev.StationID, "", WaitOf(ord))
-	return nil
-}
-
-// fireResumed tells the EDGE that the parent left `reshuffling`.
+// fireResumed hands a parent that left `reshuffling` for `pending` to engine
+// wiring, which runs its one acquire and tells the EDGE where it landed
+// (engine/wiring.go, the resume handler). Both halves matter:
 //
-// ── WHY fireRequeued COULD NOT DO IT ──────────────────────────────────────
-//
-// EventOrderQueued has an Edge-facing subscriber, and it is the QUEUE-REASON
-// push (engine/wiring.go): it returns early unless the order still IsAcquiring
-// AND carries a non-empty QueueReason, because its job is delivering a block
-// sentence to the board, not mirroring a status. A resumed parent fails both
-// halves — ResumeCompound clears the reason (the wait it named is over) and the
-// in-band scanner usually dispatches it out of the acquiring set in the same
-// millisecond. So nothing was ever sent.
-//
-// WHAT THAT COST, MEASURED. lane-stress 2026-08-11: Core walked
-// reshuffling → queued → sourcing → dispatched → in_transit → staged while the
-// Edge's mirror sat at `reshuffling`. Both later pushes were illegal jumps
-// under the shared transition table (protocol/types.go) and were rejected, so
-// the board never showed the order staged, never offered Release, and three
-// robots stood still from the first minute of the run to the end of the soak.
-// Core refused nothing; nobody ever asked it to.
-//
-// It is a plain status push, not a new mechanism: the same TypeOrderUpdate the
-// completion path already sends, on the transition that had none.
+//   - the acquire: the parent is not waiting on anything, and the periodic pass
+//     is up to a minute away;
+//   - the push: the Edge's mirror sits at `reshuffling`, and a mirror never told
+//     the parent left it refused every later push as an illegal jump.
+//     lane-stress 2026-08-11: Core walked the parent on to `staged` while the
+//     Edge sat at `reshuffling`; the board never offered Release and three robots
+//     stood still for the whole soak.
 func fireResumed(s *LifecycleService, ord *orders.Order, ev Event) error {
 	s.emitter.EmitOrderResumed(ord.ID, ord.EdgeUUID, ev.StationID)
 	return nil

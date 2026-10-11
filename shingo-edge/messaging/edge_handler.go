@@ -54,6 +54,18 @@ func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.Orde
 	h.DebugLog.Log("order_update uuid=%s status=%s", p.OrderUUID, p.Status)
 	log.Printf("edge_handler: order update: uuid=%s status=%s", p.OrderUUID, p.Status)
 
+	// AN OLD CORE STILL SAYS `sourcing`, and this Edge never stores it (C1; F3):
+	// it is `queued` with a cause, translated here at the door, before the status
+	// write and the reason below read it. The code the push carries is kept; a
+	// push with none waits for material, which is what `sourcing` meant. One
+	// release: the line goes with the alias.
+	if protocol.Status(p.Status) == protocol.StatusSourcing {
+		p.Status = string(protocol.StatusQueued)
+		if p.QueueCode == "" {
+			p.QueueCode = string(protocol.QueueWaitingForMaterial)
+		}
+	}
+
 	// ETA side-write (into in_transit Core stamps an ETA on the update; Edge
 	// stores it and the HMI renders an ETA pill). Preserved exactly from the
 	// legacy ReplyUpdate arm — independent of the status write below.
@@ -98,10 +110,10 @@ func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.Orde
 	// (Go's zero value, `omitempty`), so "trust the pushed value" would let any
 	// unrelated status update wipe a LIVE reason — the same bug pointed the
 	// other way. Derive it instead. A reason explains why an order is waiting,
-	// so it is meaningful exactly while the order is waiting, and IsAcquiring
-	// (queued|sourcing) is that set — the same predicate Core gates the push on
+	// so it is meaningful exactly while the order is waiting, and IsWaiting
+	// (`queued`) is that set — the same predicate Core gates the push on
 	// (engine/wiring.go, queue-reason push). Symmetric by construction: Core
-	// only sends one while acquiring, Edge only keeps one while acquiring.
+	// only sends one while waiting, Edge only keeps one while waiting.
 	//
 	// Once cleared, waitingLabel falls through from the stale sentence to the
 	// live status word ("in transit", an ETA) — which is worse-looking and
@@ -111,7 +123,7 @@ func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.Orde
 	// is the defect being fixed, only harder to spot. A wedged order reading
 	// "Released" is the same lie in a nicer font. The moment belongs in
 	// order_history, which is already timestamped and already recorded.
-	if protocol.IsAcquiring(protocol.Status(p.Status)) {
+	if protocol.IsWaiting(protocol.Status(p.Status)) {
 		if p.QueueReason != "" {
 			if err := h.orderMgr.SetOrderQueueReason(p.OrderUUID, p.QueueReason, p.QueueCode); err != nil {
 				log.Printf("edge_handler: set queue_reason for %s: %v", p.OrderUUID, err)

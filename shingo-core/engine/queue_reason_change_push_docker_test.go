@@ -89,11 +89,12 @@ func TestQueueReason_AChangedCauseIsPushedOnce(t *testing.T) {
 	}
 }
 
-// ONE MESSAGE PER CHANGE, DRIVEN THROUGH THE BUS. Each row is a request as the
-// station sends it: the intake parks the order, announces it queued, the queued
-// event runs the scanner on this goroutine, and the push after the scan tells the
-// station. Every order.update Core queued for the order is counted, whichever
-// door sent it.
+// ONE MESSAGE PER CHANGE. Each row is a request as the station sends it: the
+// intake parks the order (or acquires it once under the scan lock) and tells the
+// station, and where the intake parked its own wait the next scan re-asks it and
+// tells the station only of a change (C1: the door parks a wait decision without
+// an acquire, so the re-park is the next pass's, run here by hand). Every
+// order.update Core queued for the order is counted, whichever path sent it.
 func TestQueueReason_EachIntakePathSendsOneMessage(t *testing.T) {
 	t.Parallel()
 
@@ -141,6 +142,7 @@ func TestQueueReason_EachIntakePathSendsOneMessage(t *testing.T) {
 		eng := newTestEngine(t, db, simulator.New())
 
 		eng.Dispatcher().HandleComplexOrderRequest(testEnvelope(), closedGroupStore("qr-same", sd, grp))
+		eng.RunFulfillmentScan()
 
 		o := testdb.RequireOrder(t, db, "qr-same")
 		if o.QueueCause != string(dispatch.CauseNGRPResolve) {
@@ -161,28 +163,30 @@ func TestQueueReason_EachIntakePathSendsOneMessage(t *testing.T) {
 		eng := newTestEngine(t, db, simulator.New())
 
 		// A first request gives the plan its stored shape; the second order is
-		// that row as intake writes it, parked under a wait the scan will not
-		// agree with (the world moved between intake and the scan).
+		// that row as intake parks it, queued under a wait the scan will not
+		// agree with (the world moved between intake and the scan). The park
+		// tells the station its sentence; only what the scan sends is counted.
 		eng.Dispatcher().HandleComplexOrderRequest(testEnvelope(), closedGroupStore("qr-vis-shape", sd, grp))
 		shape := testdb.RequireOrder(t, db, "qr-vis-shape")
 		o := &orders.Order{EdgeUUID: "qr-vis", StationID: shape.StationID, OrderType: shape.OrderType,
-			Status: protocol.StatusSourcing, Quantity: 1, PayloadCode: shape.PayloadCode,
+			Status: protocol.StatusQueued, Quantity: 1, PayloadCode: shape.PayloadCode,
 			SourceNode: shape.SourceNode, DeliveryNode: shape.DeliveryNode, StepsJSON: shape.StepsJSON,
 			Coordinated: true}
 		testutil.MustNoErr(t, db.CreateOrder(o), "the intake row")
 		eng.Dispatcher().SetQueueReason(o, protocol.QueueWaitingForMaterial, dispatch.CauseIntakeResolve,
 			dispatch.QueueParams{Payload: sd.Payload.Code})
 		intakeSentence := o.QueueReason
+		before := len(queueUpdates(t, db, "qr-vis"))
 
-		announceQueued(eng, o)
+		eng.RunFulfillmentScan()
 
 		after := testdb.RequireOrder(t, db, "qr-vis")
 		if after.QueueReason == intakeSentence || after.QueueCode == string(protocol.QueueWaitingForMaterial) {
 			t.Fatalf("the scan left the intake wait (%s, %q) — the fixture made no visible change",
 				after.QueueCode, after.QueueReason)
 		}
-		if got := queueUpdates(t, db, "qr-vis"); len(got) != 1 || got[0] != after.QueueReason {
-			t.Errorf("order.update messages = %q, want one carrying %q", got, after.QueueReason)
+		if got := queueUpdates(t, db, "qr-vis")[before:]; len(got) != 1 || got[0] != after.QueueReason {
+			t.Errorf("order.update messages after the scan = %q, want one carrying %q", got, after.QueueReason)
 		}
 	})
 }
@@ -198,11 +202,4 @@ func closedGroupStore(uuid string, sd *testdb.StandardData, grp *nodes.Node) *pr
 			{Action: "dropoff", Node: grp.Name},
 		},
 	}
-}
-
-// announceQueued is the last line of complex intake: the order is announced
-// queued through the engine's own emitter.
-func announceQueued(eng *Engine, o *orders.Order) {
-	(&dispatchEmitter{bus: eng.Events, engine: eng}).EmitOrderQueued(o.ID, o.EdgeUUID, o.StationID, o.PayloadCode,
-		dispatch.WaitOf(o))
 }

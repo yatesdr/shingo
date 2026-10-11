@@ -675,7 +675,8 @@ func TestDispatchPreparedComplex_QueuesOnFullConcreteStorageDropoff(t *testing.T
 			`{"action":"dropoff","node":"` + slot.Name + `"}]`,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
-	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusQueued), "test: queued"), "set queued")
+	// Born `queued` (the birth row is exempt from the cause sweep); a second
+	// cause-less `→ queued` row is a write the ladder refuses (C1).
 	order, _ = db.GetOrder(order.ID)
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
@@ -1053,9 +1054,9 @@ func TestDispatchPreparedComplex_NoSourceBinSkipsNotFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get order: %v", err)
 	}
-	// Born `sourcing`: a complex order's hand is not whole at birth.
-	if order.Status != StatusSourcing {
-		t.Fatalf("pre-dispatch status = %q, want %q", order.Status, StatusSourcing)
+	// Born `pending`, like every order (C1).
+	if order.Status != StatusPending {
+		t.Fatalf("pre-dispatch status = %q, want %q", order.Status, StatusPending)
 	}
 
 	// Now drive the dispatcher. Source is empty → no_source_bin → Skip.
@@ -1118,13 +1119,13 @@ func TestDispatchPreparedComplex_BinClaimedElsewhereHolds(t *testing.T) {
 	_ = d.DispatchPreparedComplex(order)
 
 	// Behavior change: a bin present but claimed by another order
-	// is no longer a terminal Fail — the reserve holds the order in `sourcing` and
+	// is no longer a terminal Fail — the reserve holds the order acquiring (`pending` here, with no scanner to park it; C1) and
 	// the scanner retries it, because the contested bin frees when the other order
 	// completes (operator-driven hold-and-retry). A claimer that is actually dead/gone
 	// (like the bogus 999999 here) is cleared by the orphan-claim reaper, which
 	// then lets the retry through. Was: StatusFailed.
 	got, _ := db.GetOrderByUUID("uuid-evac-claimed")
-	if got.Status != StatusSourcing {
-		t.Errorf("status = %q, want %q (bin present but claimed elsewhere now HOLDS for retry, not Fail)", got.Status, StatusSourcing)
+	if got.Status != StatusPending {
+		t.Errorf("status = %q, want %q (bin present but claimed elsewhere now HOLDS for retry, not Fail)", got.Status, StatusPending)
 	}
 }

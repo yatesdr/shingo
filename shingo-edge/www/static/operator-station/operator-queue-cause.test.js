@@ -6,9 +6,9 @@
 // word beside it. "retrieve: queued" cannot tell a capacity gate from a missing
 // bin. The sentence can, and it was already on the row.
 //
-// THE STATUS WORD STAYS. `queued` and `sourcing` are distinct lifecycles and
-// are not merged, renamed or collapsed. Every assertion below keeps the label
-// it was handed and only appends — a helper that ever REPLACED the status would
+// THE STATUS WORD STAYS. Distinct statuses are not merged, renamed or collapsed
+// (`queued` and `staged` below). Every assertion below keeps the label it was
+// handed and only appends — a helper that ever REPLACED the status would
 // be the collapse this work is explicitly not doing, so it is pinned here.
 //
 // Runs under plain Node (no npm). Exit 0 = pass, 1 = any failure. Run via the
@@ -58,15 +58,15 @@ eq(withQueueCause('retrieve: queued', { queue_reason: REASON }),
     'retrieve: queued' + DASH + REASON,
     'cause is appended to the label, not substituted for it');
 
-// The status word survives for BOTH parked lifecycles, separately. These two
-// are not merged, and a helper that normalised them would show up here.
+// The status word survives for two waiting statuses, separately. They are not
+// merged, and a helper that normalised them would show up here.
 eq(withQueueCause('retrieve: queued', { queue_reason: REASON }),
     'retrieve: queued' + DASH + REASON, 'queued keeps its own word');
-eq(withQueueCause('retrieve: sourcing', { queue_reason: REASON }),
-    'retrieve: sourcing' + DASH + REASON, 'sourcing keeps its own word');
+eq(withQueueCause('retrieve: staged', { queue_reason: REASON }),
+    'retrieve: staged' + DASH + REASON, 'staged keeps its own word');
 eq(withQueueCause('retrieve: queued', { queue_reason: REASON })
-    === withQueueCause('retrieve: sourcing', { queue_reason: REASON }),
-    false, 'queued and sourcing do not render identically');
+    === withQueueCause('retrieve: staged', { queue_reason: REASON }),
+    false, 'queued and staged do not render identically');
 
 // No cause: the label comes back untouched. No dangling dash on an order Core
 // said nothing about.

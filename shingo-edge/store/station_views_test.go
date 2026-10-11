@@ -149,7 +149,7 @@ func TestComputeSwapReady_OnlyOneStaged(t *testing.T) {
 func TestComputeSwapReady_SupplyStatusIrrelevant(t *testing.T) {
 	t.Parallel()
 	for _, supplyStatus := range []string{
-		"staged", "in_transit", "acknowledged", "sourcing", "queued", "faulted",
+		"staged", "in_transit", "acknowledged", "pending", "queued", "faulted",
 	} {
 		t.Run(supplyStatus, func(t *testing.T) {
 			db, claim, runtime, aID, bID := seedSwapReadyFixture(t)
@@ -172,7 +172,7 @@ func TestComputeSwapReady_SupplyStatusIrrelevant(t *testing.T) {
 // through to the single-leg per-order RELEASE, which has no pair coordination.
 func TestComputeSwapReady_PressIndexSurvivesSupplyStatus(t *testing.T) {
 	t.Parallel()
-	for _, otherStatus := range []string{"sourcing", "queued", "acknowledged", "faulted", "in_transit"} {
+	for _, otherStatus := range []string{"pending", "queued", "acknowledged", "faulted", "in_transit"} {
 		t.Run(otherStatus, func(t *testing.T) {
 			db, claim, runtime, aID, bID := seedSwapReadyFixture(t)
 			claim.SwapMode = protocol.SwapModeTwoRobotPressIndex

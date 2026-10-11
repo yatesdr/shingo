@@ -158,10 +158,15 @@ func TestPairRule_APartnerWhoseWaitChangesIsToldOnce(t *testing.T) {
 	prSubmitLeg(d, "pr4t-evac", "pr4t-supply", sd.Payload.Code, sd.LineNode.Name,
 		prWait(sd.LineNode.Name), prPick(sd.LineNode.Name), prDrop(full.Slots[0].Name))
 
-	// The supply's station already reads a wait of its own.
+	// The supply's station already reads a wait of its own: it is parked, `queued`
+	// under its cause (C1: a born order is `pending`, and a waiting one is
+	// `queued`; only a waiting order's station is told of a changed wait).
 	supply := prReloadUUID(t, db, "pr4t-supply")
 	d.SetQueueReason(supply, protocol.QueueWaitingForMaterial, CauseReserveHolding,
 		QueueParams{Payload: sd.Payload.Code})
+	if err := d.ParkAndTell(supply, "test"); err != nil {
+		t.Fatalf("park the supply under its own wait: %v", err)
+	}
 	told := func() int {
 		n := 0
 		for _, id := range emitter.waitChanged {

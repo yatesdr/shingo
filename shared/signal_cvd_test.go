@@ -52,7 +52,7 @@ const distinctionFloor = 5.0
 // exact colour twins of submitted and delivered, so a separation check on
 // them would measure 0.0 and mean nothing.
 var signalRamp = []string{
-	"pending", "sourcing", "queued", "submitted", "dispatched", "in_transit",
+	"pending", "queued", "submitted", "dispatched", "in_transit",
 	"staged", "reshuffling", "delivered", "skipped", "faulted", "failed", "cancelled",
 }
 
@@ -60,32 +60,9 @@ var signalRamp = []string{
 // family, so a collapse between them is just as expensive. Adjacency in a
 // ramp is not the same thing as adjacency in colour space.
 var signalConcernPairs = [][2]string{
-	// The warm ramp's two ends. status-classes.css moved faulted off amber
-	// to orange precisely so "quietly looking for material" could not be
-	// confused with "a robot is stuck"; this asks whether the ramp's ENDS
-	// stayed apart too, which is the question the adjacent check misses.
-	//
-	// It was the headline B2 result, and it is FIXED as of 2026-07-26.
-	//
-	// What it found: on the BACKGROUND channel alone — the channel the
-	// palette header promises operators can read "without reading the label"
-	// — the dark warm ramp flattened. sourcing #2b2410 and failed #450a0a
-	// measured 22.5 apart for normal vision and 2.70 / 3.32 under protanopia
-	// / deuteranopia, and they also REORDERED: the three simulated to
-	// #252510 (sourcing), #2e2e05 (faulted) and #1e1e09 (failed), putting the
-	// benign end beside the failure end with the attention state outside
-	// them. It was never a knownCollapses entry because the pill's TEXT
-	// rescued it (16.7 / 10.0) and the floor passes a pair on its best
-	// channel — which is precisely how a background-channel defect hides
-	// from a best-channel floor.
-	//
-	// Fixed by lifting dark sourcing to #3e3a1e — on lightness, not hue,
-	// because measurement said the hue move the style guide asks for has
-	// nowhere to go. Now 9.79 protanopia and 6.15 deuteranopia on the
-	// background alone. The pair stays listed: it is the ends of a
-	// three-step ramp, so it has to keep being measured, and a pair that
-	// stops being checked once it passes is a pair that quietly regresses.
-	{"sourcing", "failed"},
+	// (The warm ramp's two ends, sourcing against failed, stood here until C1:
+	// `sourcing` left the order ladder and its badge became an alias of
+	// queued's, so it has no colour of its own to separate.)
 	// teal vs green: "bin is at the destination, waiting for the next step"
 	// against "this order is finished". The most expensive confusion on the
 	// board — one means go and do something, the other means do nothing.
@@ -146,7 +123,7 @@ var knownCollapses = []knownCollapse{
 	{"light", "staged", "reshuffling", "deuteranopia", 4.962, "teal vs pink; backgrounds 1.76 apart"},
 
 	// ── The warm ramp. Its ADJACENT steps hold up; what does not is the
-	// pair below plus the dark sourcing/failed case in signalConcernPairs.
+	// pair below.
 	{"light", "faulted", "failed", "tritanopia", 4.910, "orange vs red; backgrounds 2.28 apart — tritanopia flattens the warm end"},
 
 	// ── The blue early/submitted boundary.

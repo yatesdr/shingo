@@ -89,7 +89,7 @@ func TestMultiGate_EachLaneIsEnteredThroughItsOwnGate(t *testing.T) {
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.SourceNode = a0.Name
 		o.DeliveryNode = b0.Name
-		o.Status = "sourcing"
+		o.Status = "pending"
 		o.PayloadCode = bp.Code
 	})
 	aNode, err := db.GetNode(a0.ID)
@@ -225,7 +225,7 @@ func TestMultiGate_SecondGateGetsWindow3sRescue(t *testing.T) {
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.SourceNode = a0.Name
 		o.DeliveryNode = w[1].Name
-		o.Status = "sourcing"
+		o.Status = "pending"
 		o.PayloadCode = bp.Code
 	})
 	aNode, err := db.GetNode(a0.ID)
@@ -340,7 +340,7 @@ func TestGatedCreate_DeclaresTheLaneItWorksBeforeTheGate(t *testing.T) {
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.SourceNode = pick0.Name
 		o.DeliveryNode = park0.Name
-		o.Status = "sourcing"
+		o.Status = "pending"
 		o.PayloadCode = bp.Code
 	})
 	src, err2 := db.GetNode(pick0.ID)

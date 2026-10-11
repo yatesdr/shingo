@@ -111,7 +111,7 @@ func (h DigLockAtRest) Line() string {
 //
 // A parent in `reshuffling` is not in the population, for either query: it has
 // been re-parented onto its dig and is not pre-dispatch. What this sees is the
-// lock held by an order still in `pending`, `sourcing` or `queued` — the moment
+// lock held by an order still in `pending` or `queued` — the moment
 // between the planner's lock and the re-parent, and the requeued demand that
 // kept its lane after its own dig.
 func DigLocksAtRestSQL() string {

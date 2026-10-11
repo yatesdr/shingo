@@ -174,7 +174,7 @@ func TestArmorAssertion_CatchesTheHalfConfirmedPark(t *testing.T) {
 	testdb.DisableWedgeSweep(t, "this test MANUFACTURES the violating states so the assertions have something to catch")
 	db := testdb.Open(t)
 
-	o, binID := armorFixture(t, db, "halfpark", protocol.StatusSourcing)
+	o, binID := armorFixture(t, db, "halfpark", protocol.StatusQueued) // (C1: the converse covers top-level pending and queued)
 	testdb.ClaimBinForTest(t, db, binID, o.ID)
 	// The reservation goes; the claim stands. That is the shape.
 	testutil.MustNoErr(t, reservations.Release(db.DB, o.ID, binID), "drop the paper under the claim")
@@ -197,7 +197,7 @@ func TestArmorAssertion_APaperedAcquiringClaimIsFine(t *testing.T) {
 	testdb.DisableWedgeSweep(t, "this test MANUFACTURES the violating states so the assertions have something to catch")
 	db := testdb.Open(t)
 
-	o, binID := armorFixture(t, db, "papered", protocol.StatusSourcing)
+	o, binID := armorFixture(t, db, "papered", protocol.StatusQueued) // (C1: as above)
 	testdb.ClaimBinForTest(t, db, binID, o.ID)
 
 	s := &spy{TB: t}

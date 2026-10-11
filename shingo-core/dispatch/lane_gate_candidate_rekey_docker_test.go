@@ -151,7 +151,7 @@ func TestRekey_RefusedCandidateStaysInTheSet(t *testing.T) {
 		o.OrderType = OrderTypeRetrieve
 		o.SourceNode = s1.Name
 		o.DeliveryNode = line.Name
-		o.Status = "sourcing"
+		o.Status = "pending"
 	})
 	if _, err := d.DispatchDirect(order, s1, line); err != nil {
 		t.Fatalf("DispatchDirect: %v", err)

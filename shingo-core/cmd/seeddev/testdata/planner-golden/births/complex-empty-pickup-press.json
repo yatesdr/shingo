@@ -7,7 +7,7 @@
     {
       "index": 1,
       "type": "complex",
-      "status": "sourcing",
+      "status": "pending",
       "station": "line-1",
       "quantity": 1,
       "payload": "PANEL-A",

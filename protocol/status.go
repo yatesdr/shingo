@@ -55,7 +55,12 @@ const (
 
 // Canonical order status constants shared by core and edge.
 const (
-	StatusPending      Status = "pending"
+	StatusPending Status = "pending"
+	// StatusSourcing is history only (C1, v4 §2.6: `sourcing` left the order
+	// ladder; the word is the forecast's). No edge enters it. It stays so old
+	// order_history rows render, and so a row that still says it (an old Core's
+	// push, before the Edge translates it; a row v148 has not reached) is not
+	// terminal and can move on. It goes with the one-release alias.
 	StatusSourcing     Status = "sourcing"
 	StatusQueued       Status = "queued"
 	StatusSubmitted    Status = "submitted"
@@ -562,26 +567,41 @@ func (s Status) IsVendorTracked() bool { return IsVendorTracked(s) }
 // space and has not yet been sent to the fleet vendor. Used by
 // source-reference guards that need to know "would re-parenting this
 // node break a not-yet-dispatched order."
+//
+// Pending and queued: the two places an order rests before the fleet (v4 §2.6).
+// `sourcing` left the ladder in C1; a row that still says it is history.
 func IsPreDispatch(s Status) bool {
-	return s == StatusPending || s == StatusSourcing || s == StatusQueued
+	return s == StatusPending || s == StatusQueued
 }
 
 // IsPreDispatch is the method form.
 func (s Status) IsPreDispatch() bool { return IsPreDispatch(s) }
 
-// IsAcquiring reports whether the order is actively trying to acquire its source
-// bin — either queued (waiting for the fulfillment scanner to pick it up) or
-// sourcing (mid-reserve; the scanner retries it once commit 4 moves
-// MoveToSourcing to the start of the reserve attempt). The scanner's scan set and
-// re-check, and DispatchPreparedComplex's entry guard, all key on this so
-// "retryable pre-dispatch state" has one definition. Narrower than IsPreDispatch,
-// which also includes `pending` (pre-intake, not yet a scanner-retry candidate).
+// IsAcquiring reports whether the order may be asked to acquire: born and not yet
+// tried (`pending`), or tried and waiting (`queued`). It is the fulfillment
+// scanner's population and the question "may I still try this order" at every
+// door that dispatches one (v4 §2.6: every order is born pending; acquiring is
+// the act between pending and dispatched, never a stored status).
+//
+// Not "is it waiting": a `pending` order is about to be asked, and a cause on it
+// describes nothing yet. That is IsWaiting.
 func IsAcquiring(s Status) bool {
-	return s == StatusQueued || s == StatusSourcing
+	return s == StatusPending || s == StatusQueued
 }
 
 // IsAcquiring is the method form.
 func (s Status) IsAcquiring() bool { return IsAcquiring(s) }
+
+// IsWaiting reports whether a cause on the order describes a wait going on now:
+// the order was asked, could not get its whole hand, and rests in `queued` with
+// the cause on its row (v4 §2.6). Readers that decide whether a wait is told,
+// kept or shown ask this, never IsAcquiring.
+func IsWaiting(s Status) bool {
+	return s == StatusQueued
+}
+
+// IsWaiting is the method form.
+func (s Status) IsWaiting() bool { return IsWaiting(s) }
 
 // CanHoldWait reports whether an order in this status can be WAITING on
 // something right now — whether a queue reason on it can still be true.
@@ -599,7 +619,7 @@ func (s Status) IsAcquiring() bool { return IsAcquiring(s) }
 // history row keeps each wait's code; ending a wait does not unmake it.
 func CanHoldWait(s Status) bool {
 	switch s {
-	case StatusQueued, StatusSourcing, StatusPending, StatusStaged, StatusReshuffling:
+	case StatusQueued, StatusPending, StatusStaged, StatusReshuffling:
 		return true
 	}
 	return false
@@ -627,8 +647,7 @@ func CanHoldWait(s Status) bool {
 // observable state in the system — no sweep, no anomaly, nothing. Springfield
 // accumulated 290 duplicate orders at one window over three and a half hours
 // and raised nothing, and the pile was found by a person reading the board.
-// `sourcing` was already here; `queued` is its other half in IsAcquiring, and
-// its absence was an omission rather than a decision — the exclusion list above
+// Its absence was an omission rather than a decision — the exclusion list above
 // never named it.
 //
 // This matters MORE now that duplicates are bounded, not less. A demand that
@@ -637,7 +656,7 @@ func CanHoldWait(s Status) bool {
 // says so.
 func IsRuntimeStuckCandidate(s Status) bool {
 	switch s {
-	case StatusPending, StatusQueued, StatusSourcing, StatusSubmitted,
+	case StatusPending, StatusQueued, StatusSubmitted,
 		StatusAcknowledged, StatusDispatched, StatusInTransit, StatusStaged:
 		return true
 	}
@@ -652,7 +671,7 @@ func (s Status) IsRuntimeStuckCandidate() bool { return IsRuntimeStuckCandidate(
 // has-it-but-nothing-is-moving set: dispatched (handed to the fleet, the robot may never
 // have started) and staged (a robot parked holding a bin). It deliberately EXCLUDES
 // in_transit (an actively moving robot is not stuck) and ALL pre-dispatch waiting states
-// (pending/sourcing/queued) — demand is operator-driven and never evaporates, so
+// (pending/queued) — demand is operator-driven and never evaporates, so
 // a waiting order holds INDEFINITELY and is never abandoned on a timer.
 //
 // Narrower than both IsVendorActive (which also includes in_transit) and the informational
@@ -710,7 +729,7 @@ func (s Status) IsStuckSweepCandidate() bool { return IsStuckSweepCandidate(s) }
 // because "does not block" is only half a decision and getting the other half
 // wrong is what broke SNF2 on 30 July:
 //
-//   - pending / sourcing / queued: no carrier has been assigned, so cancelling
+//   - pending / queued: no carrier has been assigned, so cancelling
 //     them provably cannot strand one. That is the entire difference between
 //     this gate and the sweep that was removed. THEY ARE CANCELLED.
 //   - submitted / acknowledged: Edge-lifecycle words, not fleet states. RDS
@@ -795,9 +814,9 @@ func (a ChangeoverStartAction) String() string {
 // SUBMITTED AND ACKNOWLEDGED ARE CANCELLED, NOT PASSED. They were passed, and it
 // was wrong. The lifecycle runs
 //
-//	pending → submitted → acknowledged → sourcing/queued → dispatched → in_transit
+//	pending → submitted → acknowledged → queued → dispatched → in_transit
 //
-// so those two sit BETWEEN pending and sourcing, all four of which are before a
+// so those two sit BETWEEN pending and queued, all four of which are before a
 // robot holds anything. Passing them punched a two-status hole in the middle of
 // a contiguous pre-fleet region, and an order that happened to be sitting in the
 // hole at the moment a changeover started survived it.
@@ -831,7 +850,8 @@ func ChangeoverStartActionFor(s Status) ChangeoverStartAction {
 	case StatusPending, StatusSubmitted, StatusAcknowledged, StatusSourcing, StatusQueued, StatusReshuffling:
 		// Pre-fleet for the order's own carrier. Nothing is carrying a bin for
 		// any of these, so cancelling cannot strand a changeover the way the
-		// Hopkinsville case did — that hazard begins at dispatched.
+		// Hopkinsville case did — that hazard begins at dispatched. `sourcing`
+		// stays for the one release an Edge row can still say it (C1).
 		return ChangeoverStartCancel
 	case StatusDispatched, StatusInTransit, StatusStaged, StatusFaulted:
 		return ChangeoverStartBlock
@@ -868,6 +888,7 @@ var (
 	vendorTrackedStatusSQLList         = buildStatusSQLList(IsVendorTracked)
 	preDispatchStatusSQLList           = buildStatusSQLList(IsPreDispatch)
 	acquiringStatusSQLList             = buildStatusSQLList(IsAcquiring)
+	waitingStatusSQLList               = buildStatusSQLList(IsWaiting)
 	canHoldWaitStatusSQLList           = buildStatusSQLList(CanHoldWait)
 	runtimeStuckCandidateStatusSQLList = buildStatusSQLList(IsRuntimeStuckCandidate)
 	stuckSweepStatusSQLList            = buildStatusSQLList(IsStuckSweepCandidate)
@@ -930,17 +951,21 @@ func VendorActiveStatusSQLList() string { return vendorActiveStatusSQLList }
 // — the orders the fleet still holds, which the poller must keep watching.
 func VendorTrackedStatusSQLList() string { return vendorTrackedStatusSQLList }
 
-// PreDispatchStatusSQLList returns 'pending','queued','sourcing'.
+// PreDispatchStatusSQLList returns 'pending','queued'.
 // Use for source-reference guards (re-parent, delete, rename a node
 // referenced by not-yet-dispatched orders).
 func PreDispatchStatusSQLList() string { return preDispatchStatusSQLList }
 
-// AcquiringStatusSQLList returns 'queued','sourcing' — the fulfillment scanner's
-// retry set. Use in `status IN (AcquiringStatusSQLList())`.
+// AcquiringStatusSQLList returns 'pending','queued' — the fulfillment scanner's
+// population. Use in `status IN (AcquiringStatusSQLList())`.
 func AcquiringStatusSQLList() string { return acquiringStatusSQLList }
 
-// CanHoldWaitStatusSQLList returns 'pending','queued','reshuffling','sourcing',
-// 'staged' — the statuses in which a queue reason can still be live.
+// WaitingStatusSQLList returns 'queued' — the orders whose cause describes a wait
+// going on now.
+func WaitingStatusSQLList() string { return waitingStatusSQLList }
+
+// CanHoldWaitStatusSQLList returns 'pending','queued','reshuffling','staged' —
+// the statuses in which a queue reason can still be live.
 func CanHoldWaitStatusSQLList() string { return canHoldWaitStatusSQLList }
 
 // RuntimeStuckCandidateStatusSQLList returns the non-terminal subset

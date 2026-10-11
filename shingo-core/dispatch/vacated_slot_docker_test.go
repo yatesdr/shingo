@@ -62,14 +62,14 @@ func vsPairRows(t *testing.T, db *store.DB, prefix, line, supplySrc, home string
 	supplySteps := vsSupply(supplySrc)
 	sj := mustJSON(t, supplySteps)
 	supply = testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType, o.Status = prefix+"-supply", "line-1", OrderTypeComplex, StatusSourcing
+		o.EdgeUUID, o.StationID, o.OrderType, o.Status = prefix+"-supply", "line-1", OrderTypeComplex, StatusPending
 		o.SourceNode, o.DeliveryNode, o.ProcessNode, o.PayloadCode = supplySrc, line, line, "PART-X"
 		o.SiblingOrderUUID, o.Coordinated, o.StepsJSON = prefix+"-return", true, string(sj)
 	})
 	retSteps = []resolvedStep{vsWait(line), vsPick(line), vsDrop(home)}
 	rj := mustJSON(t, retSteps)
 	ret = testdb.CreateOrder(t, db, func(o *orders.Order) {
-		o.EdgeUUID, o.StationID, o.OrderType, o.Status = prefix+"-return", "line-1", OrderTypeComplex, StatusSourcing
+		o.EdgeUUID, o.StationID, o.OrderType, o.Status = prefix+"-return", "line-1", OrderTypeComplex, StatusPending
 		o.SourceNode, o.DeliveryNode, o.ProcessNode, o.PayloadCode = line, home, line, "PART-X"
 		o.SiblingOrderUUID, o.Coordinated, o.StepsJSON = prefix+"-supply", true, string(rj)
 	})

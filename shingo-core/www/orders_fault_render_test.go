@@ -167,6 +167,7 @@ func TestOrderStatusFilters_CoverEveryStatusCoreWrites(t *testing.T) {
 	noCoreWriter := map[protocol.Status]bool{
 		protocol.StatusSubmitted:    true,
 		protocol.StatusAcknowledged: true,
+		protocol.StatusSourcing:     true, // history only since C1
 	}
 	chips := map[protocol.Status]int{}
 	for _, f := range orderStatusFilters {

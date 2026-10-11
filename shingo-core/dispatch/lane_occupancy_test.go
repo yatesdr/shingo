@@ -293,8 +293,10 @@ func TestCompound_UnrecordableOccupancyHoldsTheChild(t *testing.T) {
 	}
 }
 
-// blockSourcingFor makes the pending→sourcing status write fail for exactly one
-// order, through the production CAS, and restores the table on cleanup. Scoped
+// blockSourcingFor makes the leg's claim write fail for exactly one order,
+// through the production CAS, and restores the table on cleanup. (C1: the claim
+// is the hand's `pending → dispatched` CAS, so that is the write blocked; the
+// name is the old `pending → sourcing` claim's.) Scoped
 // to one id for the reason blockOccupancyFor is: these tests share a database.
 func blockSourcingFor(t *testing.T, db *store.DB, orderID int64) func() {
 	t.Helper()
@@ -306,7 +308,7 @@ func blockSourcingFor(t *testing.T, db *store.DB, orderID int64) func() {
 	}
 	_, err := db.Exec(fmt.Sprintf(
 		`ALTER TABLE orders ADD CONSTRAINT %s
-		 CHECK (NOT (id = %d AND status = 'sourcing')) NOT VALID`, name, orderID))
+		 CHECK (NOT (id = %d AND status = 'dispatched')) NOT VALID`, name, orderID))
 	if err != nil {
 		t.Fatalf("install sourcing block for order %d: %v", orderID, err)
 	}
@@ -314,7 +316,7 @@ func blockSourcingFor(t *testing.T, db *store.DB, orderID int64) func() {
 	return drop
 }
 
-// TestCompound_RefusedSourcingClaimDoesNotDispatch is F1: the compare-and-set
+// TestCompound_RefusedStatusClaimDoesNotDispatch is F1: the compare-and-set
 // that decides which caller owns this child already exists, and its verdict was
 // being discarded.
 //
@@ -322,8 +324,9 @@ func blockSourcingFor(t *testing.T, db *store.DB, orderID int64) func() {
 // It does not need one. transition() compare-and-swaps on the status the caller
 // loaded, and GetNextChildOrder selects `status='pending' … LIMIT 1` — so two
 // concurrent callers resolve to the SAME child and exactly one CAS matches a
-// row. pending→sourcing IS the claim. This line used to log the refusal and
-// dispatch regardless, and nothing downstream caught it: the loser's struct
+// row. pending→sourcing IS the claim (C1: the hand's pending→dispatched CAS
+// is now the claim, and the constraint below blocks that). This line used to
+// log the refusal and dispatch regardless, and nothing downstream caught it: the loser's struct
 // still reads `pending`, so Dispatch fails IllegalTransition, while the
 // orphan-mission guard that cancels the vendor order is scoped to
 // IsConcurrentTransition. Two real fleet orders, one row, one untracked robot.
@@ -372,7 +375,7 @@ func blockSourcingFor(t *testing.T, db *store.DB, orderID int64) func() {
 // lane and waits on a leg that was never sent. That is what makes the release a
 // separate claim rather than tidying up after the return: nothing this leg does
 // later will ever notice it, so no re-drive will ever clear it.
-func TestCompound_RefusedSourcingClaimDoesNotDispatch(t *testing.T) {
+func TestCompound_RefusedStatusClaimDoesNotDispatch(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	parent, children, lane, _ := twoLegCompound(t, db, "CASREFUSE")

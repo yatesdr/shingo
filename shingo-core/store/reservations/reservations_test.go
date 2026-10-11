@@ -116,7 +116,7 @@ func TestReservations_ConcurrentAcquire(t *testing.T) {
 
 // TestReapOrphaned_OwnerLiveness pins the owner-liveness reaper contract: holds are
 // reaped on OWNER LIVENESS, never age. A hold aged far past the retired 60s TTL SURVIVES
-// while its order is non-terminal (sourcing) — the reaping churn window is closed. Once
+// while its order is non-terminal (pending) — the reaping churn window is closed. Once
 // the order goes terminal, BOTH its pending and confirmed holds are reaped on the next
 // sweep — the backstop behind TerminalizeOrder (which releases in-tx) for crashed/bypassed
 // paths.
@@ -132,9 +132,9 @@ func TestReapOrphaned_OwnerLiveness(t *testing.T) {
 	binPending := testdb.CreateBinAtNode(t, db, "PART-A", sd.StorageNode.ID, "BIN-REAP-P")
 	binConfirmed := testdb.CreateBinAtNode(t, db, "PART-A", sd.StorageNode.ID, "BIN-REAP-C")
 
-	// An order legitimately in sourcing, holding one pending + one confirmed bin, both
+	// An order legitimately pending (acquiring), holding one pending + one confirmed bin, both
 	// stamped with an expiry an hour in the PAST — far beyond the retired 60s TTL.
-	o := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusSourcing })
+	o := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusPending })
 	if err := reservations.Acquire(db, o.ID, o.ID, binPending.ID, "test"); err != nil {
 		t.Fatalf("acquire pending: %v", err)
 	}
@@ -145,13 +145,13 @@ func TestReapOrphaned_OwnerLiveness(t *testing.T) {
 		t.Fatalf("confirm: %v", err)
 	}
 
-	// Sweep 1 — the order is alive (sourcing). Age is irrelevant: NOTHING is reaped.
+	// Sweep 1 — the order is alive (pending). Age is irrelevant: NOTHING is reaped.
 	n, err := reservations.ReapOrphaned(db)
 	if err != nil {
 		t.Fatalf("ReapOrphaned (live order): %v", err)
 	}
 	if n != 0 {
-		t.Fatalf("reaped %d rows under a live sourcing order — holds are sacred no matter how old (owner-liveness, not age)", n)
+		t.Fatalf("reaped %d rows under a live pending order — holds are sacred no matter how old (owner-liveness, not age)", n)
 	}
 	if held, _ := reservations.ListByOrder(db, o.ID); len(held) != 2 {
 		t.Fatalf("held = %d after live sweep, want 2 (both survive)", len(held))

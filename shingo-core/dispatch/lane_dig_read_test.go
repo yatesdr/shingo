@@ -30,7 +30,7 @@ func plainOrderIntoLane(t *testing.T, db *store.DB, prefix string) (*orders.Orde
 
 	o := &orders.Order{
 		EdgeUUID: prefix + "-plain", StationID: "line-1",
-		OrderType: OrderTypeRetrieve, Status: StatusSourcing, Quantity: 1,
+		OrderType: OrderTypeRetrieve, Status: StatusPending, Quantity: 1,
 		SourceNode: slots[0].Name, DeliveryNode: sd.LineNode.Name,
 	}
 	testutil.MustNoErr(t, db.CreateOrder(o), "create plain order")

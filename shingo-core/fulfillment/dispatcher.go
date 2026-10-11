@@ -21,11 +21,11 @@ type Dispatcher interface {
 	// (dispatch.WriteQueueDetail decides when).
 	NotifyWaitChanged(order *orders.Order)
 
-	// DispatchPreparedComplex is the scanner-replay entrypoint for
-	// complex orders queued via HandleComplexOrderRequest. The dispatcher
-	// already has the resolved steps stored on the order (StepsJSON);
-	// this call claims bins, transitions queued → sourcing → dispatched,
-	// and ships blocks to the fleet. Phase 4b of bin-transit-state.
+	// DispatchPreparedComplex is the scanner's entrypoint for complex orders
+	// born through HandleComplexOrderRequest. The dispatcher already has the
+	// resolved steps stored on the order (StepsJSON); this call claims bins,
+	// takes the order to `dispatched` in its hand, and ships blocks to the
+	// fleet, or writes the cause it waits under.
 	//
 	// On failure, the dispatcher transitions the order to terminal
 	// `failed` (via lifecycle.Fail) and emits EventOrderFailed —
@@ -67,21 +67,21 @@ type Dispatcher interface {
 
 	// DemoteAfterFleetRefusal is the ONE door every fleet refusal goes through —
 	// armor off, paper demoted confirmed→pending, pointer and junction rows kept,
-	// back to `sourcing` under the caller's cause. See dispatch/dispatcher.go for
+	// back to `queued` under the caller's cause (which it requires). See dispatch/dispatcher.go for
 	// the ruling and the clauses; the scanner's part is only to name the wait.
 	//
 	// The scanner used to release the claim and the lanes here itself, through a
 	// primitive that also deleted the reservations — the pointer wedge. It carries
 	// no release logic of its own now, which is the point of there being a door.
-	DemoteAfterFleetRefusal(order *orders.Order, code protocol.QueueCode, cause dispatch.QueueCause, params dispatch.QueueParams)
+	DemoteAfterFleetRefusal(order *orders.Order, told dispatch.QueueWait, code protocol.QueueCode, cause dispatch.QueueCause, params dispatch.QueueParams)
 
 	// PlanBuriedReshuffle plans the reshuffle compound for a source that resolved
 	// BURIED on replay, making the order its own compound parent (→ reshuffling).
 	//
-	// This is on the scanner's surface because reshuffle planning cannot live at
-	// intake alone: planTransport runs once, but a queued order's lane can be buried
-	// by a later store while it waits, and the scanner is the only thing that looks
-	// at the order again. The scanner must clear the dropoff gate first — the
+	// This is on the scanner's surface because the scanner is the one reshuffle
+	// planner: a door hands it a buried pick, and a waiting order's lane can be
+	// buried by a later store while it waits, and the scanner is the only thing
+	// that looks at the order again. The scanner must clear the dropoff gate first — the
 	// compound carries the delivery leg, so planning one commits the delivery.
 	//
 	// A transient error (lane locked by another reshuffle) means requeue and retry;
@@ -106,13 +106,11 @@ type Dispatcher interface {
 // Lifecycle is the narrow lifecycle surface the scanner depends on.
 //
 // Declared consumer-side so *dispatch.LifecycleService satisfies it for
-// free (structural). The scanner only invokes MoveToSourcing and Queue;
-// declaring the interface at the call site lets scanner_test.go stub
-// lifecycle with a two-method fake and keeps the dependency surface
-// minimal.
+// free (structural). The scanner only parks: an order it asked and could not
+// dispatch moves `pending → queued`, under the cause its arm wrote. Acquiring
+// writes no status of its own (v4 §2.6); the hand writes `dispatched`.
 type Lifecycle interface {
-	MoveToSourcing(ord *orders.Order, actor, reason string) error
-	Queue(ord *orders.Order, actor, reason string) error
+	Park(ord *orders.Order, actor string) error
 }
 
 // BinFinder is the narrow source-finding surface the scanner depends on — the

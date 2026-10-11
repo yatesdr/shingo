@@ -50,8 +50,8 @@ func junctionRows(t *testing.T, db *store.DB, orderID int64) int {
 }
 
 // armedOrderAwaitingFleet builds the state an order is in the instant before the
-// fleet is asked: sourcing, its bin pointed at and hard-claimed, its bin
-// reservation confirmed. That is what a fleet refusal has to undo.
+// fleet is asked: pending (its first hand, C1), its bin pointed at and
+// hard-claimed, its bin reservation confirmed. That is what a fleet refusal has to undo.
 func armedOrderAwaitingFleet(t *testing.T, db *store.DB, d *Dispatcher, uuid string) (*orders.Order, int64) {
 	t.Helper()
 	srcNode, lineNode, bp := setupTestData(t, db)
@@ -62,7 +62,7 @@ func armedOrderAwaitingFleet(t *testing.T, db *store.DB, d *Dispatcher, uuid str
 		o.PayloadCode = bp.Code
 		o.SourceNode = srcNode.Name
 		o.DeliveryNode = lineNode.Name
-		o.Status = StatusSourcing
+		o.Status = StatusPending
 	})
 	// The soft hold the scanner takes, then the pointer, then the confirm — the
 	// same order the plain path runs them in.
@@ -111,20 +111,20 @@ func TestFleetRefusal_TheOrderKeepsItsPaperAndRetries(t *testing.T) {
 	if derr == nil {
 		t.Fatal("the fleet refused the create; DispatchDirect must report it")
 	}
-	// The plain path in full: DispatchDirect undoes its own CAS with no sentence,
+	// The plain path in full: DispatchDirect leaves the hand's `dispatched` (C1),
 	// and the caller — which is what knows whether this is a wait or the end of a
-	// request — names it. This is the scanner's half.
+	// request — names it and parks it. This is the scanner's half.
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
 	code, cause, params := FleetRefusalCause(derr, order.DeliveryNode)
-	refusing.DemoteAfterFleetRefusal(order, code, cause, params)
+	refusing.DemoteAfterFleetRefusal(order, QueueWait{}, code, cause, params)
 
 	got, gerr := db.GetOrder(order.ID)
 	testutil.MustNoErr(t, gerr, "re-read the order")
 
-	if got.Status != StatusSourcing {
+	if got.Status != StatusQueued {
 		t.Errorf("status = %q, want %q — a fleet refusal is congestion, and the order stays alive "+
-			"to be retried", got.Status, StatusSourcing)
+			"to be retried", got.Status, StatusQueued)
 	}
 	if got.QueueCause != string(CauseFleetRefusedCreate) {
 		t.Errorf("queue_cause = %q, want %q", got.QueueCause, CauseFleetRefusedCreate)
@@ -223,7 +223,7 @@ func TestFleetRefusal_ACompoundLegLeavesItsParentsCorridorAlone(t *testing.T) {
 	testutil.MustNoErr(t, execErr, "force the leg row to dispatched")
 	legRow.Status = StatusDispatched
 
-	d.DemoteAfterFleetRefusal(legRow, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
+	d.DemoteAfterFleetRefusal(legRow, QueueWait{}, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
 
 	mouthRows := func(owner int64) int {
 		t.Helper()
@@ -268,7 +268,7 @@ func TestFleetRefusal_ASecondRefusalStillNamesItsWait(t *testing.T) {
 	if _, err := d.DispatchDirect(order, srcNode, lineNode); err == nil {
 		t.Fatal("the fleet refused the create; DispatchDirect must report it")
 	}
-	d.DemoteAfterFleetRefusal(order, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
+	d.DemoteAfterFleetRefusal(order, QueueWait{}, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
 
 	got, err := db.GetOrder(order.ID)
 	got = testutil.Must(t, got, err, "db.GetOrder(order.ID)")
@@ -284,8 +284,10 @@ func TestFleetRefusal_ASecondRefusalStillNamesItsWait(t *testing.T) {
 
 // TestFleetRefusal_TheDoubleInvocationIsANoOp pins clause 6.
 //
-// The plain path invokes the rollback TWICE per refusal: DispatchDirect's own
-// undo of the CAS it made, and then the caller's park. At SPR fleet failures
+// The plain path used to invoke the rollback TWICE per refusal: DispatchDirect's
+// own undo of the CAS it made, and then the caller's park. DispatchDirect no
+// longer undoes (C1), so the second invocation here is the caller's park asked
+// again of an order already parked. At SPR fleet failures
 // arrive in bursts of 23-41, so a second call that logged an illegal transition
 // would print that burst twice over — and worse, a second call that wrote the
 // cause again would put two waits in the record where one happened.
@@ -296,23 +298,28 @@ func TestFleetRefusal_TheDoubleInvocationIsANoOp(t *testing.T) {
 	order, _ := armedOrderAwaitingFleet(t, db, d, "demote-twice")
 
 	srcNode, lineNode, _ := setupTestData(t, db)
-	// The inner undo (inside DispatchDirect) fires first...
+	// The refused create leaves the order `dispatched` for its caller...
 	if _, err := d.DispatchDirect(order, srcNode, lineNode); err == nil {
 		t.Fatal("the fleet refused the create; DispatchDirect must report it")
 	}
 	// ...and then the caller's park, exactly as the scanner does it.
 	orderRaw, err := db.GetOrder(order.ID)
 	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID)")
-	d.DemoteAfterFleetRefusal(order, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
+	d.DemoteAfterFleetRefusal(order, QueueWait{}, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
+	// ...and asked again, of an order already parked.
+	orderRaw, err = db.GetOrder(order.ID)
+	order = testutil.Must(t, orderRaw, err, "db.GetOrder(order.ID) after the park")
+	d.DemoteAfterFleetRefusal(order, QueueWait{}, protocol.QueueFleetUnavailable, CauseFleetRefusedCreate, QueueParams{})
 
-	// One refusal is one WAIT, so one sourcing row carrying the fleet cause. The
-	// order's birth row is `sourcing` too — it was created there — which is why
-	// this counts the coded rows rather than every row of that status.
+	// One refusal is one WAIT, so one `queued` row carrying the fleet cause. It
+	// counts the waiting rows only: the cause is written while the order is
+	// still `dispatched`, so the hand's `dispatched` row carries the code too, as
+	// an annotation of that episode rather than a wait.
 	rows, err := db.ListOrderHistory(order.ID)
 	testutil.MustNoErr(t, err, "list order history")
 	parks := 0
 	for _, h := range rows {
-		if h.Status == StatusSourcing && h.Code == string(protocol.QueueFleetUnavailable) {
+		if h.Status == StatusQueued && h.Code == string(protocol.QueueFleetUnavailable) {
 			parks++
 		}
 	}

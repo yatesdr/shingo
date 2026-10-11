@@ -28,7 +28,7 @@ func promiseHolder(t *testing.T, db *store.DB, uuid string, priority int, binID 
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = uuid
 		o.OrderType = OrderTypeRetrieve
-		o.Status = StatusSourcing
+		o.Status = StatusPending
 		o.Priority = priority
 	})
 	testutil.MustNoErr(t, reservations.Acquire(db.DB, o.ID, o.ID, binID, "test-promise"), "the holder's promise")

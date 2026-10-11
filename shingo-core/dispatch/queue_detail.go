@@ -99,7 +99,8 @@ func WaitTold(prev, next QueueWait) bool { return orders.WaitTold(prev, next) }
 // after the three copies became one.
 //
 // A CHANGED WAIT IS TOLD TO THE STATION, ONCE. notify is called when the write
-// is one WaitTold tells and the order is still acquiring (queued or sourcing).
+// is one WaitTold tells and the order is waiting (`queued`, IsWaiting). A
+// `pending` order's first cause is told by whoever parks it (ParkAndTell).
 // A wait that changed later used to stay in Core: a refill that waited for
 // material and then for its slot went on reading "waiting for material" at the
 // station. Writes that repeat the row write nothing, so a wait re-asserted on
@@ -124,7 +125,7 @@ func writeQueueWait(db QueueDetailStore, logf func(string, ...any), who string,
 		return false
 	}
 	order.QueueReason, order.QueueCode, order.QueueCause = next.Reason, next.Code, next.Cause
-	if notify != nil && WaitTold(prev, next) && protocol.IsAcquiring(order.Status) {
+	if notify != nil && WaitTold(prev, next) && protocol.IsWaiting(order.Status) {
 		notify(order)
 	}
 	return true

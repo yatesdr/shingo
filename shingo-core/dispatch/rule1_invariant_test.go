@@ -12,11 +12,11 @@ import (
 	"shingocore/store/orders"
 )
 
-// rule1_invariant_test.go — the sourcing/queued hard-claim invariant, as a CI
+// rule1_invariant_test.go — the pending/queued hard-claim invariant, as a CI
 // fence. The forbidigo lint guard is selector-match only and blind to raw SQL
 // (a bare `UPDATE bins SET claimed_by` writer would slip past it), so this sweep
 // is the real fence: it asserts that NO non-compound order still acquiring
-// (pending/queued/sourcing) holds a HARD bin or slot claim. Under Rule 1 the
+// (pending/queued) holds a HARD bin or slot claim. Under Rule 1 the
 // simple path soft-holds its bin and slot (pending reservations) while it waits
 // and hard-claims both only at dispatch — so a non-dispatched simple order must
 // never carry a hard claim.
@@ -27,7 +27,7 @@ import (
 // sweep keys the exemption on parent_order_id IS NOT NULL.
 
 // acquiringHardBinClaims returns non-compound orders (parent_order_id IS NULL) that
-// are still acquiring (pending/queued/sourcing) yet hold a HARD bin claim. Under
+// are still acquiring (pending/queued) yet hold a HARD bin claim. Under
 // Rule 1 this set must be empty: the confirm-at-dispatch step is the only writer of
 // bins.claimed_by for a simple order, and it runs at dispatch (status → dispatched,
 // which leaves the acquiring set).
@@ -36,7 +36,7 @@ func acquiringHardBinClaims(db *store.DB) ([]int64, error) {
 		SELECT o.id
 		FROM orders o
 		JOIN bins b ON b.claimed_by = o.id
-		WHERE o.status IN ('pending','queued','sourcing')
+		WHERE o.status IN ('pending','queued')
 		  AND o.parent_order_id IS NULL`)
 	if err != nil {
 		return nil, err
@@ -60,7 +60,7 @@ func acquiringHardSlotClaims(db *store.DB) ([]int64, error) {
 		SELECT o.id
 		FROM orders o
 		JOIN nodes n ON n.claimed_by = o.id
-		WHERE o.status IN ('pending','queued','sourcing')
+		WHERE o.status IN ('pending','queued')
 		  AND o.parent_order_id IS NULL`)
 	if err != nil {
 		return nil, err
@@ -78,7 +78,7 @@ func acquiringHardSlotClaims(db *store.DB) ([]int64, error) {
 }
 
 // TestRule1_NoHardClaimWhileSourcing_Sweep runs the invariant against a live DB
-// populated with a simple retrieve that parks in sourcing (its slot contended),
+// populated with a simple retrieve that parks queued (its slot contended),
 // and asserts the sweep finds zero hard bin/slot claims on that order. This is the
 // fence that catches any future path that hard-claims before dispatch.
 func TestRule1_NoHardClaimWhileSourcing_Sweep(t *testing.T) {
@@ -98,7 +98,7 @@ func TestRule1_NoHardClaimWhileSourcing_Sweep(t *testing.T) {
 	srcBin := testdb.CreateBinAtNode(t, db, bp.Code, src.ID, "R1INV-BIN")
 
 	// Contend the slot: another order hard-claims it so the simple order's slot
-	// soft-reserve will conflict and the order parks in sourcing.
+	// soft-reserve will conflict and the order parks queued.
 	other := testdb.CreateOrder(t, db)
 	testdb.ClaimSlotForTest(t, db, slot.ID, other.ID)
 
@@ -116,24 +116,24 @@ func TestRule1_NoHardClaimWhileSourcing_Sweep(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(order), "create simple order")
 
 	// Run the scanner-style reserve + soft-acquire + slot-conflict-requeue by hand,
-	// the way the scanner plain path would: MoveToSourcing, slot reserve (fails),
-	// so the order is sourcing with NO hard claim.
+	// the way the scanner plain path would: slot reserve (fails), so the order
+	// waits with NO hard claim.
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
-	_ = d.lifecycle.MoveToSourcing(order, "test", "slot contended")
+	_ = d
 	// The bin is NOT hard-claimed (Rule 1: soft until complete). Confirm the sweep
-	// sees no hard claim on this sourcing order.
+	// sees no hard claim on this acquiring order.
 	binViolations, err := acquiringHardBinClaims(db)
 	testutil.MustNoErr(t, err, "bin sweep")
 	for _, v := range binViolations {
 		if v == order.ID {
-			t.Fatalf("Rule 1 violated: sourcing simple order %d holds a HARD bin claim (should be soft until dispatch)", order.ID)
+			t.Fatalf("Rule 1 violated: acquiring simple order %d holds a HARD bin claim (should be soft until dispatch)", order.ID)
 		}
 	}
 	slotViolations, err := acquiringHardSlotClaims(db)
 	testutil.MustNoErr(t, err, "slot sweep")
 	for _, v := range slotViolations {
 		if v == order.ID {
-			t.Fatalf("Rule 1 violated: sourcing simple order %d holds a HARD slot claim (should be soft until dispatch)", order.ID)
+			t.Fatalf("Rule 1 violated: acquiring simple order %d holds a HARD slot claim (should be soft until dispatch)", order.ID)
 		}
 	}
 
@@ -182,7 +182,7 @@ func TestRule1_CompoundChildRawClaimIsExempted(t *testing.T) {
 	testutil.MustNoErr(t, err, "bin sweep")
 	for _, v := range binViolations {
 		if v == child.ID {
-			t.Fatalf("compound child %d should be EXEMPTED from the sourcing hard-claim sweep (parent_order_id IS NOT NULL)", child.ID)
+			t.Fatalf("compound child %d should be EXEMPTED from the acquiring hard-claim sweep (parent_order_id IS NOT NULL)", child.ID)
 		}
 	}
 }

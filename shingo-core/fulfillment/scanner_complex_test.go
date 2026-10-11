@@ -36,7 +36,7 @@ func (s *stubDispatcher) AdmitLanesForOrder(*orders.Order, *nodes.Node, *nodes.N
 }
 func (s *stubDispatcher) ReleaseLanesForOrder(int64) error        { return nil }
 func (s *stubDispatcher) SkipOrder(*orders.Order, string, string) {}
-func (s *stubDispatcher) DemoteAfterFleetRefusal(*orders.Order, protocol.QueueCode, dispatch.QueueCause, dispatch.QueueParams) {
+func (s *stubDispatcher) DemoteAfterFleetRefusal(*orders.Order, dispatch.QueueWait, protocol.QueueCode, dispatch.QueueCause, dispatch.QueueParams) {
 	panic("scanner complex-order branch never reaches the fleet, so it never demotes")
 }
 func (s *stubDispatcher) PostFindHook() {}

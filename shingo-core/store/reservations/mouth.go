@@ -655,7 +655,7 @@ func ListDigHolds(q Queryer) ([]DigHold, error) {
 // KEYED ON THE ROW, NOT ON WHO IS WAITING, and that is the whole reason it
 // exists rather than the floor reusing its own waiter set. The wedge a stranded
 // handoff produces is a corridor that refuses every inbound comer: the orders
-// queued behind it are `sourcing` demands the resolver turned away, not gate
+// queued behind it are waiting demands the resolver turned away, not gate
 // dwellers or held legs, so a waiter-derived lane set does not contain the lane
 // and the floor never looks at it. A row-derived one always does.
 //

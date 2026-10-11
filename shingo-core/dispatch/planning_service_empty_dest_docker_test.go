@@ -65,8 +65,9 @@ func TestPlanTransport_EmptyToAGroupLeavesWithAConcreteSlot(t *testing.T) {
 	if perr != nil {
 		t.Fatalf("planTransport: %s", perr.Detail)
 	}
-	if !result.Queued {
-		t.Fatal("the claim-move contract: planning queues and the scanner claims")
+	// (C1: a found pick is not a wait; the door hands it to its one acquire.)
+	if result.Queued {
+		t.Fatal("the claim-move contract: planning does not park a found pick, and the scanner claims")
 	}
 
 	if order.DeliveryNode == grp.Name {

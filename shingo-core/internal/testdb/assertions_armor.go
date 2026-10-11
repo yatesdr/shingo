@@ -187,6 +187,7 @@ func assertAcquiringClaimHasItsPaper(t testing.TB, db *store.DB) {
 		  FROM bins b
 		  JOIN orders o ON o.id = b.claimed_by
 		 WHERE o.status IN (%s)
+		   AND o.parent_order_id IS NULL
 		   AND NOT EXISTS (
 		       SELECT 1 FROM reservations r
 		        WHERE r.order_id = o.id AND r.resource_kind = 'bin' AND r.bin_id = b.id

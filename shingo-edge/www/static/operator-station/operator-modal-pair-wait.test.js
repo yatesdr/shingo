@@ -93,10 +93,10 @@ eq(pairWaitingLabel([{ status: 'faulted' }]), BASE + ' — faulted, recovering',
 // one dropped.
 const twoCauses = [
     { id: 3994, status: 'staged', queue_reason: 'Holding this leg until partner order 4023cd47 secures a bin' },
-    { id: 3993, status: 'sourcing', queue_reason: 'Waiting for material: SYN-PART07A.06' },
+    { id: 3993, status: 'queued', queue_reason: 'Waiting for material: SYN-PART07A.06' },
 ];
 eq(pairWaitingLabel(twoCauses),
-    BASE + ' — 1 of 2 parked; order 3993 sourcing'
+    BASE + ' — 1 of 2 parked; order 3993 queued'
     + ' — Holding this leg until partner order 4023cd47 secures a bin; Waiting for material: SYN-PART07A.06',
     'both causes reach the operator, with the position and the leg to watch');
 
@@ -112,7 +112,7 @@ eq(pairWaitingLabel(sameCause),
 // Two legs moving → no single releaser to name. Naming two names none.
 eq(pairWaitingLabel([
     { id: 10, status: 'queued' },
-    { id: 11, status: 'sourcing' },
+    { id: 11, status: 'pending' },
 ]), BASE + ' — 0 of 2 parked', 'two movers: position only, no releaser named');
 
 // ── The ordinary live pair: one parked, one on its way ─────────────────
@@ -158,7 +158,7 @@ function pairArm(pair) {
 // A pair held on two different causes: one leg waiting for its partner, the
 // partner digging its own bin out. Neither leg is parked.
 const digPair = [
-    { id: 601, status: 'sourcing', sibling_order_id: 602,
+    { id: 601, status: 'queued', sibling_order_id: 602,
         queue_reason: 'Waiting for partner order 4023cd47 to dig out its bin — the two legs go together' },
     { id: 602, status: 'reshuffling', sibling_order_id: 601,
         queue_reason: 'Rearranging lane L12 to reach SYN-PART07A.06' },

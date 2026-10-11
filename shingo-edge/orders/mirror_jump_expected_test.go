@@ -23,8 +23,8 @@ func TestExpectedMirrorJumps_OnlySilenceWhatCoreNeverAnnounced(t *testing.T) {
 	// and dispatch/lifecycle.go's transition() applies only actionMap actions, so
 	// there is no general per-status push that could have told the Edge.
 	for _, tc := range []struct{ from, to protocol.Status }{
-		{protocol.StatusPending, protocol.StatusAcknowledged}, // via pending->queued
-		{protocol.StatusSourcing, protocol.StatusInTransit},   // via sourcing->dispatched
+		{protocol.StatusPending, protocol.StatusAcknowledged},     // via pending->queued
+		{protocol.StatusReshuffling, protocol.StatusAcknowledged}, // via reshuffling->pending->dispatched (C1, F2)
 	} {
 		why, ok := expectedMirrorJumps[[2]protocol.Status{tc.from, tc.to}]
 		if !ok {

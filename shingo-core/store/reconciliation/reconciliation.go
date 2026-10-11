@@ -872,6 +872,11 @@ func ReleaseOrphanedClaims(db *sql.DB) (int, error) {
 //
 //	orders.bin_id IS NEVER TOUCHED. A third book, already ruled: different fix.
 //
+//	A COMPOUND CHILD IS NOT AN ACQUIRING ORDER here. A dig leg rests `pending`
+//	(in the acquiring set since C1) and holds its part of the parent's hand by
+//	design: CreateCompoundChildren claims for it. The sweep's population is the
+//	top-level orders the scanner asks (S7), as the scan set's is.
+//
 //	TERMINAL ORDERS stay with ReleaseOrphanedClaims. Two sweeps, two
 //	populations, two log lines — a merged count could not tell a leak past a
 //	terminal transition from ownership drift on a live order, and they send the
@@ -891,7 +896,7 @@ func ReleaseAcquiringOrphanClaims(db *sql.DB) (int, error) {
 		  WHERE b.claimed_by IS NOT NULL
 		    AND EXISTS (
 		      SELECT 1 FROM orders o
-		      WHERE o.id = b.claimed_by AND o.status IN (%s)
+		      WHERE o.id = b.claimed_by AND o.status IN (%s) AND o.parent_order_id IS NULL
 		    )
 		    AND NOT `+reservations.OnTheBooksSQL(reservations.KindBin, "b.id")+`
 		), swept AS (
@@ -933,7 +938,7 @@ func ReleaseAcquiringOrphanClaims(db *sql.DB) (int, error) {
 		  WHERE nd.claimed_by IS NOT NULL
 		    AND EXISTS (
 		      SELECT 1 FROM orders o
-		      WHERE o.id = nd.claimed_by AND o.status IN (%s)
+		      WHERE o.id = nd.claimed_by AND o.status IN (%s) AND o.parent_order_id IS NULL
 		    )
 		    AND NOT `+reservations.OnTheBooksSQL(reservations.KindSlot, "nd.id")+`
 		), swept AS (

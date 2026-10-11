@@ -103,7 +103,7 @@ func TestClaims_NoneWrittenAlongsideAnOpenTerminalize(t *testing.T) {
 		t.Run(w.name, func(t *testing.T) {
 			t.Parallel()
 			f := seedEndedOwner(t, "COE-"+strings.ToUpper(w.name[:4]))
-			owner := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = StatusSourcing })
+			owner := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = StatusPending })
 			if w.setup != nil {
 				w.setup(t, f, owner.ID)
 			}
@@ -131,7 +131,7 @@ func TestClaims_NoJunctionWrittenForAnOrderAlreadyEnded(t *testing.T) {
 	t.Parallel()
 	f := seedEndedOwner(t, "COE-SEQ")
 	for _, w := range claimWriters()[4:] {
-		owner := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = StatusSourcing })
+		owner := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = StatusPending })
 		_, err := f.db.TerminalizeOrder(owner.ID, protocol.StatusCancelled, "test: ended between its claims and its junction")
 		testutil.MustNoErr(t, err, "cancel")
 		if err := w.write(f, owner.ID); !errors.Is(err, reservations.ErrOwnerEnded) {
@@ -150,7 +150,7 @@ func TestClaims_NoDeadlockAgainstTerminalize(t *testing.T) {
 			t.Parallel()
 			f := seedEndedOwner(t, "COD-"+strings.ToUpper(w.name[:4]))
 			for i := 0; i < 25; i++ {
-				owner := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = StatusSourcing })
+				owner := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = StatusPending })
 				if w.setup != nil {
 					w.setup(t, f, owner.ID)
 				}

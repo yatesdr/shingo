@@ -75,6 +75,11 @@ func TestLifecycle_LegalTransitions_AllPersist(t *testing.T) {
 		for _, to := range allowed {
 			i++
 			ord := makeOrderAt(t, db, fmt.Sprintf("legal-%d", i), from)
+			if to == StatusQueued {
+				// `queued` always carries a code (C1): the lifecycle refuses a
+				// park whose cause is not on the order.
+				ord.QueueCode = string(protocol.QueueWaitingForMaterial)
+			}
 			err := lc.transition(ord, to, Event{Actor: "test", Reason: "matrix"})
 			if err != nil {
 				t.Errorf("legal %s→%s rejected: %v", from, to, err)
@@ -264,9 +269,10 @@ func TestLifecycle_StaleCallerCannotResurrectTerminal(t *testing.T) {
 	}
 
 	// The stale caller now tries the transition that was legal when it loaded.
-	err = lc.MoveToSourcing(&stale, "fulfillment", "dispatching held bin")
+	stale.QueueCode = string(protocol.QueueWaitingForMaterial)
+	err = lc.Dispatch(&stale, "vendor-stale", "fulfillment")
 	if err == nil {
-		t.Fatal("stale queued→sourcing was accepted; a cancelled order must not be resurrectable")
+		t.Fatal("stale queued→dispatched was accepted; a cancelled order must not be resurrectable")
 	}
 	if !IsConcurrentTransition(err) {
 		t.Errorf("err = %v, want ConcurrentTransition", err)
@@ -435,12 +441,15 @@ func TestLifecycle_TypedMethods_CorrectTargets(t *testing.T) {
 		{"MarkDelivered_InTransitToDelivered", StatusInTransit,
 			func(o *orders.Order) error { return lc.MarkDelivered(o, "fleet") },
 			StatusDelivered},
-		{"Queue_PendingToQueued", StatusPending,
-			func(o *orders.Order) error { return lc.Queue(o, "scanner", "") },
+		{"Park_PendingToQueued", StatusPending,
+			func(o *orders.Order) error {
+				o.QueueCode = string(protocol.QueueWaitingForMaterial)
+				return lc.Park(o, "scanner")
+			},
 			StatusQueued},
-		{"MoveToSourcing_PendingToSourcing", StatusPending,
-			func(o *orders.Order) error { return lc.MoveToSourcing(o, "planner", "finding source") },
-			StatusSourcing},
+		{"Dispatch_PendingToDispatched", StatusPending,
+			func(o *orders.Order) error { return lc.Dispatch(o, "vendor-id-0", "hand") },
+			StatusDispatched},
 		{"Dispatch_QueuedToDispatched", StatusQueued,
 			func(o *orders.Order) error { return lc.Dispatch(o, "vendor-id-1", "dispatcher") },
 			StatusDispatched},
@@ -453,9 +462,9 @@ func TestLifecycle_TypedMethods_CorrectTargets(t *testing.T) {
 		{"CompleteCompound_ReshufflingToConfirmed", StatusReshuffling,
 			func(o *orders.Order) error { return lc.CompleteCompound(o) },
 			StatusConfirmed},
-		{"ResumeCompound_ReshufflingToQueued", StatusReshuffling,
+		{"ResumeCompound_ReshufflingToPending", StatusReshuffling,
 			func(o *orders.Order) error { return lc.ResumeCompound(o) },
-			StatusQueued},
+			StatusPending},
 	}
 	for i, c := range cases {
 		c := c
@@ -475,11 +484,13 @@ func TestLifecycle_TypedMethods_CorrectTargets(t *testing.T) {
 // ── Action firing semantics ──────────────────────────────────────────────
 
 // TestActionMap_ReshufflingToQueued_FiresRequeued locks in the §12.2
-// Surface 4 contract: the {Reshuffling, Queued} actionMap entry must
-// fire EmitOrderQueued (so the fulfillment scanner re-runs in-band)
-// and must NOT fire EmitOrderCompleted (which would re-enter the
-// delivered/bin-arrival pipeline for an order that hasn't picked
-// anything up yet).
+// Surface 4 contract, as C1 left it: the resume is `reshuffling → pending`
+// (`reshuffling → queued` is no longer an edge), and it fires NO
+// EmitOrderQueued — the engine wiring runs the one acquire that follows a
+// resume, so the scanner re-run in-band is not an event's to ask for. It must
+// NOT fire EmitOrderCompleted (which would re-enter the delivered/bin-arrival
+// pipeline for an order that hasn't picked anything up yet), and it must fire
+// EmitOrderResumed. (The name is the old edge's.)
 func TestActionMap_ReshufflingToQueued_FiresRequeued(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
@@ -490,11 +501,14 @@ func TestActionMap_ReshufflingToQueued_FiresRequeued(t *testing.T) {
 		t.Fatalf("ResumeCompound: %v", err)
 	}
 
-	if len(emitter.queued) != 1 {
-		t.Fatalf("EmitOrderQueued calls = %d, want 1", len(emitter.queued))
+	persisted, err := db.GetOrder(ord.ID)
+	testutil.MustNoErr(t, err, "reload order")
+	if persisted.Status != StatusPending {
+		t.Fatalf("resumed parent is not `pending`: %+v", persisted)
 	}
-	if emitter.queued[0].orderID != ord.ID {
-		t.Errorf("EmitOrderQueued orderID = %d, want %d", emitter.queued[0].orderID, ord.ID)
+	if len(emitter.queued) != 0 {
+		t.Fatalf("EmitOrderQueued calls = %d, want 0 — the resume is not a park, and the acquire that "+
+			"follows it is the engine's, not an event's", len(emitter.queued))
 	}
 	if len(emitter.completed) != 0 {
 		t.Errorf("EmitOrderCompleted calls = %d, want 0 (parent has not picked up yet)", len(emitter.completed))
@@ -502,8 +516,8 @@ func TestActionMap_ReshufflingToQueued_FiresRequeued(t *testing.T) {
 
 	// ── AND IT TELLS THE EDGE, which is the half that was missing ────────
 	//
-	// EmitOrderQueued above drives Core's own scanner. It does NOT reach the
-	// Edge: EventOrderQueued's Edge-facing subscriber is the queue-REASON push
+	// EmitOrderQueued (which the resume once fired) drove Core's own scanner. It
+	// did NOT reach the Edge: EventOrderQueued's Edge-facing subscriber is the queue-REASON push
 	// and returns early without a block sentence and without an acquiring
 	// status, and a resumed parent has neither — the reason is cleared because
 	// the wait it described is over, and the in-band scanner usually dispatches

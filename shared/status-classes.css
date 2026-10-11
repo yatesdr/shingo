@@ -19,8 +19,8 @@
  * and failed (red) — they must out-weigh everything else on a crowded
  * table. Grey is reserved for cancelled alone.
  *
- *   EARLY (3 graduated calm tints:           →  SUBMITTED (steel blue)
- *     pending slate · sourcing sand · queued periwinkle)
+ *   EARLY (2 graduated calm tints:           →  SUBMITTED (steel blue)
+ *     pending slate · queued periwinkle)
  *   →  ACTIVE (per-phase hue, calm weight)   →  SUCCESS (green)
  *   →  ATTENTION (amber, loud) → FAILURE (red, loud) · cancelled (grey)
  *
@@ -74,13 +74,16 @@
 /* ─── Order lifecycle (protocol.Status) ─────────────────────────────── */
 
 /* ── Early lifecycle ──────────────────────────────────────────────────
- * Order exists but nothing is moving yet. Three graduated calm tints —
- * quiet and clearly "waiting", but each stage distinct: pending is the
- * coolest slate, sourcing warms to sand ("actively looking for material"),
- * queued shifts to periwinkle, leading into the submitted steel blue. */
+ * Order exists but nothing is moving yet. Two graduated calm tints — quiet
+ * and clearly "waiting", but each stage distinct: pending is the coolest
+ * slate, queued shifts to periwinkle, leading into the submitted steel blue.
+ *
+ * .badge-sourcing is an ALIAS of .badge-queued for one release (C1): `sourcing`
+ * is no longer a status an order can be in, and an old history row that still
+ * says it renders as the wait it was. It is deleted with the alias. */
 .badge-pending      { background: #eef2f7; color: #475569; border-color: #dbe2ea; }
-.badge-sourcing     { background: #fef3e2; color: #92660c; border-color: #fce0b8; }
-.badge-queued       { background: #dde6fb; color: #3457b0; border-color: #c4cff5; }
+.badge-queued,
+.badge-sourcing     { background: #dde6fb; color: #3457b0; border-color: #c4cff5; }
 
 /* ── Submitted / acknowledged ─────────────────────────────────────────
  * The system has accepted the order. Cool steel blue — slightly more
@@ -163,36 +166,10 @@
  * contrast on dark surfaces. Shop-floor LCDs under fluorescent lights
  * benefit from the higher saturation. */
 
-/* Early lifecycle — dark (three graduated calm tints, matching light) */
+/* Early lifecycle — dark (two graduated calm tints, matching light) */
 [data-theme="dark"] .badge-pending      { background: #1a1f2b; color: #94a3b8; border-color: #2b323f; }
-/* Sourcing — dark. LIFTED off the warm ramp's dark end, and the hue stays.
- *
- * The defect: at #2b2410 this pill and failed's #450a0a simulated to near
- * neighbours under protanopia (2.70) and deuteranopia (3.34), with faulted
- * landing BETWEEN them — so the ramp did not merely flatten, it reordered,
- * and the benign end sat next to the dead-order end. warn was 0.93 away
- * under tritanopia and confirmed 1.58 under protanopia.
- *
- * The obvious fix was to take sourcing off the warm hue entirely, which the
- * style guide's own rule asks for. Measured, and it is not available: every
- * cool candidate lands 0.77-1.2 from in_transit, pending or queued, because
- * the cool band already carries eight statuses; and violet is barred by P13,
- * which vacated it deliberately for the UI accent. A 13-status palette at one
- * flat weight has no free hue left.
- *
- * So the separation is taken on LIGHTNESS instead — the axis all three
- * dichromacies preserve, and the same move that fixed pending/skipped. At
- * #3e3a1e nothing sourcing touches is below the floor: failed 9.79 protanopia
- * and 6.15 deuteranopia, faulted 5.11, confirmed 6.10, warn 6.66, and the
- * reorder is gone because the three warm steps now separate by weight in the
- * order they mean. Text is unchanged at #d8a531 and still clears AA (5.11:1).
- *
- * The cost is honest: this is a heavier pill than its band-mates in dark, and
- * "early states are quiet" gives up a little to "benign is never confusable
- * with dead". Light is deliberately NOT changed — the same deepening there
- * drops delivered to 0.52 under protanopia, i.e. strictly worse. */
-[data-theme="dark"] .badge-sourcing     { background: #3e3a1e; color: #d8a531; border-color: #5a5430; }
-[data-theme="dark"] .badge-queued       { background: #181d39; color: #9fb0ff; border-color: #283058; }
+[data-theme="dark"] .badge-queued,
+[data-theme="dark"] .badge-sourcing     { background: #181d39; color: #9fb0ff; border-color: #283058; }
 
 /* Submitted / acknowledged — dark */
 [data-theme="dark"] .badge-submitted,

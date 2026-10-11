@@ -267,7 +267,6 @@ func TestStoreBurst_DivertedOntoAMarkedLane_StagesInsteadOfParking(t *testing.T)
 				"refusing here parks the order whole and puts the lane's congestion back on the press",
 				i, cause)
 		}
-		testutil.MustNoErr(t, d.lifecycle.MoveToSourcing(after, "test", "dispatching the burst"), "to sourcing")
 		if _, err := d.DispatchDirect(after, press, dest); err != nil {
 			t.Fatalf("store %d could not be dispatched: %v", i, err)
 		}

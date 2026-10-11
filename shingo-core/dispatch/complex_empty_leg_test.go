@@ -170,10 +170,10 @@ func TestDispatcher_ComplexOrder_QueuesOnDryEmptyPool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get order: %v — a dry empty pool must create the order waiting, not reject it at intake", err)
 	}
-	// `sourcing` is the rung: a dry pool is a hand that is short, which is what
-	// that word means, and it is where complex is born.
-	if order.Status != StatusSourcing {
-		t.Errorf("status = %q, want %q (a dry empty pool is sourceable-eventually — it must wait, not fail)", order.Status, StatusSourcing)
+	// `queued` is the rung: a dry pool is a hand that is short, and the intake
+	// already knows it waits, so it parks with its cause (C1).
+	if order.Status != StatusQueued {
+		t.Errorf("status = %q, want %q (a dry empty pool is sourceable-eventually — it must wait, not fail)", order.Status, StatusQueued)
 	}
 	// A dry empty pool queues under the structured material-wait code (the resolver
 	// message is captured as the engineer-only cause, not the operator sentence).

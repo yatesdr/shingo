@@ -387,7 +387,7 @@ func (d *Dispatcher) widenSupplyPickups(order *orders.Order, steps []resolvedSte
 	if d.finder == nil {
 		return steps, false, nil
 	}
-	// Owner-aware guard: a `sourcing` order HOLDS partial reservations across
+	// Owner-aware guard: a waiting order HOLDS partial reservations across
 	// scanner retries by design (reserveComplexPlan's landmine doc). The
 	// finder is owner-blind — it would reject the order's own held bin as
 	// unavailable and park the order on the exact resource it already holds,

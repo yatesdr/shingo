@@ -121,7 +121,7 @@ func TestGatePair_SameOriginPairSerializesAtTheMouth(t *testing.T) {
 			ord.DeliveryNode = slot.Name
 			ord.ProcessNode = press.Name
 			ord.SourceNode = press.Name
-			ord.Status = "sourcing"
+			ord.Status = "pending"
 		})
 		if adm, cause, _, aErr := d.AcquireLanesForOrder(o, press, slot, EntryFreshBin); aErr != nil || !adm {
 			t.Fatalf("%s refused pre-dispatch (%q, %v) — nothing is inside this lane yet", uuid, cause, aErr)
@@ -228,7 +228,7 @@ func TestGatePair_NeitherPartnerIsHeldBeforeTheFleetCreate(t *testing.T) {
 			ord.DeliveryNode = slot.Name
 			ord.ProcessNode = press.Name
 			ord.SourceNode = press.Name
-			ord.Status = "sourcing"
+			ord.Status = "pending"
 		})
 	}
 	// Deepest first, which is the order the press pair is dispatched in anyway.

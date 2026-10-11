@@ -40,7 +40,7 @@ func stageGatedStore(t *testing.T, db *store.DB, d *Dispatcher, line, slot *node
 	t.Helper()
 	o := testdb.CreateOrder(t, db, func(ord *orders.Order) {
 		ord.DeliveryNode = slot.Name
-		ord.Status = "sourcing"
+		ord.Status = "pending"
 		if apply != nil {
 			apply(ord)
 		}
@@ -368,7 +368,7 @@ func TestGateRelease_DoubleFireAppendsOnce(t *testing.T) {
 	// is the only thing that can append.
 	o := testdb.CreateOrder(t, db, func(ord *orders.Order) {
 		ord.DeliveryNode = s0.Name
-		ord.Status = "sourcing"
+		ord.Status = "pending"
 	})
 	blocker := testdb.CreateOrder(t, db, func(ord *orders.Order) {
 		ord.DeliveryNode = laneSlotsByDepth(t, db, laneID)[1].Name
@@ -511,7 +511,7 @@ func TestGateRelease_RebindKeepsItsOwnSlot(t *testing.T) {
 
 	deep := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.DeliveryNode = slots[1].Name
-		o.Status = "sourcing"
+		o.Status = "pending"
 	})
 	// Give it the real holds a dispatched store carries, so the resolver has
 	// something to be confused by.
@@ -649,7 +649,7 @@ func TestGateRelease_IgnoresNonGatedLanes(t *testing.T) {
 		line := lineNode(t, db, name+"-LINE")
 		o := testdb.CreateOrder(t, db, func(ord *orders.Order) {
 			ord.DeliveryNode = s0.Name
-			ord.Status = "sourcing"
+			ord.Status = "pending"
 		})
 		if _, err := d.DispatchDirect(o, line, s0); err != nil {
 			t.Fatalf("[%s] DispatchDirect: %v", name, err)

@@ -63,7 +63,11 @@ func TestDashboardActiveOrders_RefreshedCardIsTheReloadedCard(t *testing.T) {
 		DeliveryNode: "UTN_013", PayloadCode: "SHIM",
 	}
 	testutil.MustNoErr(t, db.CreateOrder(moving), "create moving order")
-	parked := parkOrder(t, db, "w4-parked", protocol.StatusSourcing,
+	// Queued, not sourcing: C1 retired sourcing as a status (v148), so on this
+	// stream a parked order waits as queued with its cause, and its wait clock
+	// reads that episode. CONVERTED at rebase 7 (main's 68a5293a parked it
+	// sourcing).
+	parked := parkOrder(t, db, "w4-parked", protocol.StatusQueued,
 		protocol.QueueWaitingForMaterial, "Waiting for material: PART-A")
 	_, err := db.DB.Exec(`UPDATE order_history SET created_at = NOW() - INTERVAL '20 minutes' WHERE order_id=$1`, parked.ID)
 	testutil.MustNoErr(t, err, "backdate the episode")

@@ -129,7 +129,7 @@ type TelemetryStatsV2 struct {
 	Skipped           int64   `json:"skipped"`            // excluded from everything; reported for visibility
 	SuccessRate       float64 `json:"success_rate"`       // Confirmed/(Confirmed+Failed)*100, 0 when denom 0
 	// AvgExecutionMS is assignment→terminal (what the robot actually spent);
-	// AvgDurationMS is created→terminal (lead time, includes queue/sourcing). The
+	// AvgDurationMS is created→terminal (lead time, includes the wait). The
 	// Avg Duration tile headlines execution and shows lead as the sub-stat (Q-031).
 	AvgExecutionMS int64 `json:"avg_execution_ms"`
 	AvgDurationMS  int64 `json:"avg_duration_ms"`
@@ -218,12 +218,15 @@ type DwellPair struct {
 // before a robot was committed to it": the rungs an order can be standing on
 // while it is still in Core's hands and has no armor.
 //
-// IT IS A SET BECAUSE BIRTH IS NOT ALWAYS `queued`. A complex order is born
-// `sourcing` (dispatch/complex_intake.go) — its hand is not whole at birth —
-// so it writes no `queued` history row at all. Measured from `queued` alone,
-// every complex order silently left time_to_dispatch AND AvgL1QueueSeconds:
-// not a wrong number, no number, and a metric that drops a population without
-// saying so reads as "these were fast" rather than "these were not counted".
+// THE WAIT STARTS AT BIRTH (v4 §2.6; C1). Every order is born `pending`, and an
+// order its first hand takes goes `pending → dispatched` with no `queued` row
+// at all. Measured from `queued` alone, every such order would silently leave
+// time_to_dispatch AND AvgL1QueueSeconds: not a wrong number, no number, and a
+// metric that drops a population without saying so reads as "these were fast"
+// rather than "these were not counted". (It was {queued, sourcing}, for the
+// complex orders born `sourcing`; the anchor moved to the birth row with C1 and
+// the measure rose by each order's door-apply gap: RULINGS-C1-P0, the
+// telemetry prediction.)
 //
 // That is not cosmetic. AvgL1QueueSeconds feeds the reorder-point calculator
 // (service/threshold_calculator.go), so a queue segment that omits a family
@@ -232,7 +235,7 @@ type DwellPair struct {
 // ONE SPELLING, TWO READERS. The dwell pair and the lead-time helper both take
 // their from-side from here, pinned by TestAcquiringEntrySeamIsSpelledOnce —
 // two copies is how one of them silently keeps measuring the old population.
-func AcquiringEntryStatuses() []string { return []string{"queued", "sourcing"} }
+func AcquiringEntryStatuses() []string { return []string{"pending", "queued"} }
 
 // DwellStat is the p50/p95 of one DwellPair over a window, in seconds.
 //
@@ -270,9 +273,9 @@ type DwellStat struct {
 // age out.
 //
 // A SECOND POPULATION MOVED WITH §8's DEMOTE DOOR, and it moved INTO this number
-// rather than out of it: a fleet-refused order parks in `sourcing`, so it writes
-// no new `queued` row, and the pair takes MAX(queued) → MAX(dispatched). Its
-// re-dispatch therefore pairs against its ORIGINAL queued row and the whole
+// rather than out of it: a fleet-refused order parks again (`queued` since C1),
+// and the pair anchors on the order's FIRST acquiring row and ends at its LAST
+// `dispatched`. Its re-dispatch therefore pairs against its birth and the whole
 // outage lands inside time_to_dispatch. That is the honest reading — the order
 // really did wait that long for a robot — but a refusal burst (SPR's run 23-41)
 // shows up here as a lead-time spike, not as a separate fault count.

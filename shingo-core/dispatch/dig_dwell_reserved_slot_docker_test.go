@@ -115,7 +115,8 @@ func reserveHoldingSwap(t *testing.T, db *store.DB, uuid string, slot *nodes.Nod
 	o := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.EdgeUUID = uuid
 		o.OrderType = OrderTypeComplex
-		o.Status = protocol.StatusSourcing
+		o.Status = protocol.StatusQueued
+		o.QueueCode = string(protocol.QueueWaitingForMaterial)
 		o.DeliveryNode = slot.Name
 	})
 	testutil.MustNoErr(t, db.ReserveSlot(slot.ID, o.ID), "the swap reserves its destination slot")

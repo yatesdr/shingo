@@ -34,12 +34,12 @@ func newPartnerFixture(t *testing.T, name string) partnerFixture {
 	db := testdb.Open(t)
 	sd := testdb.SetupStandardData(t, db)
 	slot := mkSlotNode(t, db.DB, name+"-SLOT")
-	p := &orders.Order{EdgeUUID: name + "-p", StationID: "edge.1", OrderType: "complex", Status: "sourcing",
+	p := &orders.Order{EdgeUUID: name + "-p", StationID: "edge.1", OrderType: "complex", Status: "pending",
 		Quantity: 1, SiblingOrderUUID: name + "-l"}
 	if err := orders.Create(db.DB, p); err != nil {
 		t.Fatalf("create partner: %v", err)
 	}
-	l := &orders.Order{EdgeUUID: name + "-l", StationID: "edge.1", OrderType: "complex", Status: "sourcing",
+	l := &orders.Order{EdgeUUID: name + "-l", StationID: "edge.1", OrderType: "complex", Status: "pending",
 		Quantity: 1, SiblingOrderUUID: name + "-p"}
 	if err := orders.Create(db.DB, l); err != nil {
 		t.Fatalf("create order: %v", err)

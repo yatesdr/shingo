@@ -24,7 +24,7 @@ import (
 // other way: an empty string on the wire is indistinguishable from an absent one
 // (Go zero value + omitempty), so any unrelated status update would wipe a LIVE
 // reason. So the Edge derives it from the status it is already being told — a
-// reason explains a wait, and IsAcquiring (queued|sourcing) is exactly when an
+// reason explains a wait, and IsWaiting (queued) is exactly when an
 // order is waiting. Same predicate Core gates the push on, so the two agree by
 // construction rather than by protocol.
 
@@ -126,8 +126,9 @@ func TestHandleOrderUpdate_KeepsQueueReasonWhileStillWaiting(t *testing.T) {
 	}
 }
 
-// sourcing is the other half of IsAcquiring, and the one that regressed at
-// Springfield on 2026-07-31 when it was left out of a related predicate.
+// An old Core's sourcing push is queued here (C1, F3) and keeps its reason; it
+// regressed at Springfield on 2026-07-31 when sourcing was left out of a related
+// predicate.
 func TestHandleOrderUpdate_KeepsQueueReasonWhileSourcing(t *testing.T) {
 	t.Parallel()
 	db := testHandlerDB(t)
@@ -144,8 +145,8 @@ func TestHandleOrderUpdate_KeepsQueueReasonWhileSourcing(t *testing.T) {
 
 	o, _ := db.GetOrder(id)
 	if o.QueueReason == "" {
-		t.Error("queue_reason was cleared on a sourcing push — sourcing is an acquiring " +
-			"status and still owes the operator an explanation")
+		t.Error("queue_reason was cleared on a sourcing push — an old Core's sourcing is " +
+			"queued here and still owes the operator an explanation")
 	}
 }
 

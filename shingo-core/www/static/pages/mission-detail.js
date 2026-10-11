@@ -32,6 +32,7 @@ import { relevantNotices } from '/static/pages/fleet-notices.js';
   //             the order any more, so it is not held; it draws neutral.
   var STAGE_CLASS = {
     'pending': 'waiting',
+    // sourcing is history rows only since C1 (the .badge-sourcing alias)
     'sourcing': 'waiting',
     'queued': 'waiting',
     'submitted': 'waiting',

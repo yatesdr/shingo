@@ -63,7 +63,7 @@ func TestCharSeam_PlainStore_TakesOccupancyBeforeTheCreate(t *testing.T) {
 		o.PayloadCode = bp.Code
 		o.SourceNode = srcNode.Name
 		o.DeliveryNode = mouth.Name
-		o.Status = StatusSourcing
+		o.Status = StatusPending
 	})
 	// ARMED, NOT JUST POINTED. Production reserves the bin, stamps the pointer and
 	// CONFIRMS (which writes the hard claim) before it asks the fleet — so a
@@ -106,7 +106,7 @@ func TestCharSeam_PlainStore_ReleasesOccupancyWhenTheCreateFails(t *testing.T) {
 		o.PayloadCode = bp.Code
 		o.SourceNode = srcNode.Name
 		o.DeliveryNode = mouth.Name
-		o.Status = StatusSourcing
+		o.Status = StatusPending
 	})
 	// THE HOLD GOES WITH THE POINTER, and this line is a finding rather than a
 	// fixture tidy-up. The fixture stamped orders.bin_id and took nothing at all,
@@ -187,7 +187,7 @@ func TestCharSeam_GatedCreate_TakesNoOccupancyUntilTheTail(t *testing.T) {
 		o.PayloadCode = bp.Code
 		o.SourceNode = srcNode.Name
 		o.DeliveryNode = mouth.Name
-		o.Status = StatusSourcing
+		o.Status = StatusPending
 	})
 	// ARMED, NOT JUST POINTED. Production reserves the bin, stamps the pointer and
 	// CONFIRMS (which writes the hard claim) before it asks the fleet — so a

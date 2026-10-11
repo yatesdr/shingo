@@ -9,8 +9,7 @@
   },
   "decision": {
     "events": [
-      "received",
-      "queued"
+      "received"
     ],
     "fleet": null,
     "orders": [
@@ -28,7 +27,6 @@
     "refusals": null,
     "replies": [
       "data.order.projected status=pending",
-      "order.update status=queued",
       "order.update status=queued"
     ]
   }

@@ -25,7 +25,7 @@ import (
 //	3 pickup ALN_005   ← take the spent bin off the machine
 //	...
 //
-// It sat in `sourcing`, never dispatched, wait_index 0 — the column's zero value,
+// It sat in `sourcing` (now `queued`, C1), never dispatched, wait_index 0 — the column's zero value,
 // because it had not reached any wait. laneEntryAfterWait read that 0 as "parked
 // at wait number 0", found the first wait at step 2, and answered with step 3.
 // So the gate asked "is order 32's pickup inside LS_C7" about the bin AT THE
@@ -72,7 +72,7 @@ func TestWantedBin_PreDispatchSwapWantsItsFirstStepNotThePostWaitPickup(t *testi
 		o.EdgeUUID = "entrystep-swap"
 		o.OrderType = OrderTypeComplex
 		o.PayloadCode = bp.Code
-		o.Status = protocol.StatusSourcing
+		o.Status = protocol.StatusQueued // waiting pre-dispatch (C1: was `sourcing`)
 		o.SourceNode = slots[0].Name
 		o.BinID = &spent.ID
 		o.WaitIndex = 0

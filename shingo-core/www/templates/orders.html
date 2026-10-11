@@ -37,10 +37,10 @@
   {{$labels := .QueueCodeLabels}}
   {{if or .QueueCodeCounts .FaultedNoticeCount}}
   <div class="queue-why">
-    {{/* "Why waiting", not "Why queued": countQueueCodes tallies the whole
-         ACQUIRING set (protocol.IsAcquiring — queued and sourcing), so a label
-         naming one rung describes the wrong number. An operator asking what is
-         sourcing and why reads these chips. */}}
+    {{/* "Why waiting", not "Why queued": countQueueCodes tallies every order
+         waiting under a cause (orderIsWaiting — queued, plus staged, reshuffling
+         and a resting dig leg), so a label naming one rung describes the wrong
+         number. An operator asking what is waiting and why reads these chips. */}}
     {{if .QueueCodeCounts}}<span class="text-muted-xs">Why waiting:</span>{{end}}
     {{range $code, $count := .QueueCodeCounts}}
       {{if and $code (gt $count 0)}}

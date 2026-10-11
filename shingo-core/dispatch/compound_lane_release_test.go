@@ -84,8 +84,9 @@ func TestHandleChildOrderFailure_ReleasesTheLane(t *testing.T) {
 	}
 	after, err := db.GetOrder(parent.ID)
 	testutil.MustNoErr(t, err, "reload parent")
-	if after.Status != StatusQueued {
+	// (C1: the dissolved parent resumes `reshuffling → pending`.)
+	if after.Status != StatusPending {
 		t.Errorf("parent status = %q, want %q — the demand survives its dig's failure",
-			after.Status, StatusQueued)
+			after.Status, StatusPending)
 	}
 }

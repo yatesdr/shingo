@@ -17,8 +17,8 @@ import (
 // holders rather than statuses.
 //
 // A fleet refusal demotes an order: its armor comes off (claimed_by cleared), its
-// paper is demoted to pending, it keeps its bin pointer and parks in `sourcing`
-// (DemoteAfterFleetRefusal). A demoted order therefore holds no claimed bin and
+// paper is demoted to pending, it keeps its bin pointer and parks in `queued`
+// under the fleet cause (DemoteAfterFleetRefusal). A demoted order therefore holds no claimed bin and
 // counts for nothing at the dropoff gate (orders.InFlightForDropoffSQL), so a
 // second order to the same line is admitted while the first is parked — both
 // re-compete when the fleet comes back.
@@ -64,10 +64,10 @@ func TestFleetRecovery_TwoDemotedOrdersToOneLineOnlyOneGoes(t *testing.T) {
 	// ── A: the fleet refuses it, and it is demoted ─────────────────────────
 	submit("fdr-a")
 	a := testdb.RequireOrder(t, db, "fdr-a")
-	if a.VendorOrderID != "" || a.Status != protocol.StatusSourcing ||
+	if a.VendorOrderID != "" || a.Status != protocol.StatusQueued ||
 		a.QueueCause != string(dispatch.CauseFleetRefusedCreate) || a.BinID == nil {
 		t.Fatalf("fixture: order A is %q, cause %q, bin %v, vendor %q — want it demoted by the fleet "+
-			"refusal: sourcing, %s, holding its bin pointer, with no vendor order",
+			"refusal: queued, %s, holding its bin pointer, with no vendor order",
 			a.Status, a.QueueCause, a.BinID, a.VendorOrderID, dispatch.CauseFleetRefusedCreate)
 	}
 	assertHoldsNoClaim(t, eng, a, "order A after the fleet refused it")

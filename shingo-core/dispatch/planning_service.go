@@ -19,8 +19,11 @@ type PlanningResult struct {
 	SourceNode *nodes.Node
 	DestNode   *nodes.Node
 	Handled    bool
-	Queued     bool // order should be queued — inventory not available
-
+	// Queued: the order waits, and its cause is on the row; the door parks it.
+	Queued bool
+	// Buried: the source the door picked is buried; the door's acquire plans
+	// the dig from this pick (C1.1, under the door's scan lock).
+	Buried *BuriedError
 }
 
 type planningError struct {
@@ -136,14 +139,14 @@ func (e *planningError) Transient() bool {
 
 type PlanningHandler func(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError)
 
-// PlanningService validates + resolves a simple order at intake and QUEUES it —
-// the claim-move to the fulfillment scanner made the scanner the single bin
-// claimer, so the planner no longer claims, syncs manifests, or transitions the
-// order to sourcing. Its remaining intake-only jobs are the shared capacity gate,
-// move's named-source validations + concrete-dest resolution, and naming a
-// buried source on the row before it queues. It plans no dig: the scanner does,
-// under scanMu (parkBuried). It therefore no longer depends on the bin-manifest
-// or lifecycle services.
+// PlanningService validates + resolves a simple order at intake and hands it to
+// its acquire — the fulfillment scanner is the single bin claimer, so the
+// planner never claims, syncs manifests, or transitions the order. Its
+// intake-only jobs are the shared capacity gate, move's named-source validations
+// + concrete-dest resolution, and the wait's cause when the door's decision is a
+// wait. It plans no dig: the door's acquire does, from the door's pick, under the
+// scan lock the door holds (door.go). It therefore does not depend on the
+// bin-manifest or lifecycle services.
 type PlanningService struct {
 	db       *store.DB
 	resolver NodeResolver
@@ -273,8 +276,7 @@ func (s *PlanningService) disposeSource(order *orders.Order, res SourceResult) (
 	case OutcomeFound:
 		return res.Bin, res.Node, nil, nil, true
 	case OutcomeReshuffle:
-		s.parkBuried(order, res.Buried)
-		return nil, nil, &PlanningResult{Queued: true}, nil, false
+		return nil, nil, &PlanningResult{Buried: res.Buried}, nil, false
 	case OutcomeStructural:
 		s.dbg("plan: order %d structural — %s: %s", order.ID, res.TermCode, res.Err)
 		return nil, nil, nil, &planningError{Code: res.TermCode, Detail: res.Err.Error(), Err: res.Err}, false
@@ -282,33 +284,6 @@ func (s *PlanningService) disposeSource(order *orders.Order, res SourceResult) (
 		s.setQueueReason(order, res.QueueCode, res.QueueCause, res.QueueParams)
 		return nil, nil, &PlanningResult{Queued: true}, nil, false
 	}
-}
-
-// parkBuried is intake's whole answer to a buried source: name the burial on the
-// row and queue the order. The dig is planned by the fulfillment scanner, which
-// the queued event runs before HandleOrderRequest returns (engine/wiring.go,
-// EventOrderQueued → RunOnce).
-//
-// INTAKE DOES NOT DIG. It did, and that put a claim outside scanMu: planning a
-// dig creates the compound, and CreateCompoundChildren claims the retrieve
-// child's bin for the parent's delivery node in its own transaction. A scanner
-// pass for another order to the same node could sit between its gate and its
-// claim while intake's gate passed and the compound claimed, and both carriers
-// went (TestTwoHoldersThroughIntakeBuriedArm). The scanner plans a burial
-// behind the dropoff gate under scanMu, which is the precondition
-// PlanBuriedReshuffle states, and the only place it now holds.
-//
-// The cause is the one complex intake writes for the same fact
-// (complex_reshuffle.go). The scanner's park overwrites it with the narrower
-// cause when the dig cannot start; a lane that cannot be read leaves the row
-// naming the payload alone, which is still not blank.
-func (s *PlanningService) parkBuried(order *orders.Order, buried *BuriedError) {
-	params := QueueParams{Payload: order.PayloadCode}
-	if lane, err := s.db.GetNode(buried.LaneID); err == nil && lane != nil {
-		params.Lane = lane.Name
-	}
-	s.dbg("transport: order %d source buried in lane %d — queued for the scanner to plan the dig", order.ID, buried.LaneID)
-	s.setQueueReason(order, protocol.QueueStorageRearranging, CauseIntakeBuried, params)
 }
 
 // setQueueReason is the planning side's door onto the queue-reason columns —
@@ -330,13 +305,12 @@ func (s *PlanningService) setQueueReason(order *orders.Order, code protocol.Queu
 // resolution); SourceIntentFull is a payload-matched retrieve.
 //
 // The claim-move to the scanner: intake does NOT claim the bin — the fulfillment
-// scanner is the SINGLE claim point (the model complex has run since birth:
-// status-first queued → scanner claims at dispatch). planTransport validates,
-// resolves the source, gates capacity, resolves a move's concrete dest, then
-// QUEUES; the scanner claims + reserves + dispatches. Source resolution stays at
-// intake so a WAIT/STRUCTURAL outcome sets the queue reason / terminal error at
-// submit time, and a BURIED source queues under a cause naming the lane — the
-// scanner plans its dig (parkBuried). On Found the wire door writes the pick
+// scanner is the SINGLE claim point. planTransport validates, resolves the
+// source, gates capacity and resolves a move's concrete dest; the door's acquire
+// claims, reserves and dispatches. Source resolution stays at intake so a
+// WAIT/STRUCTURAL outcome sets the queue reason / terminal error at submit time,
+// and a BURIED source comes back to the door, whose acquire plans its dig from
+// this pick (C1.1). On Found the wire door writes the pick
 // onto the row at birth (orders.plan, v147), and the scanner takes it instead of
 // picking again while it still stands (SYNTH F4). The one datum the scanner
 // cannot recompute — the operator's declared release-correction count
@@ -518,9 +492,10 @@ func (s *PlanningService) applyTransport(order *orders.Order, env *protocol.Enve
 	}
 
 	// The source's dispositions live in disposeSource so intake and scanner-replay
-	// cannot drift on them. A buried source comes back Queued like any wait: the
-	// scanner is the one reshuffle planner, behind its own copy of this gate and
-	// under scanMu (parkBuried, Scanner.tryFulfill's OutcomeReshuffle arm).
+	// cannot drift on them. A buried source comes back as Buried: the scanner is
+	// the one reshuffle planner, and the door's acquire plans the dig from this
+	// pick, behind the scanner's own copy of this gate and under the scan lock the
+	// door holds (door.go; Scanner's OutcomeReshuffle arm).
 	_, sourceNode, pr, pe, ok := s.disposeSource(order, d.pick)
 	if !ok {
 		return pr, pe
@@ -570,13 +545,10 @@ func (s *PlanningService) applyTransport(order *orders.Order, env *protocol.Enve
 		}
 	}
 
-	// The claim-move to the scanner: status-first queued. The scanner claims (with
-	// the persisted RemainingUOP), reserves the dropoff, and dispatches — the single
-	// claim point. The reserve asymmetry (only move reserved at intake) closes here
-	// by DELETION: intake reserves nothing; the scanner reserves for every plain
-	// family.
+	// The claim-move to the scanner: the door's acquire claims (with the persisted
+	// RemainingUOP), reserves the dropoff, and dispatches — the single claim point.
+	// Intake reserves nothing; the scanner reserves for every plain family.
 	return &PlanningResult{
-		Queued:     true,
 		SourceNode: sourceNode,
 		DestNode:   destNode,
 	}, nil

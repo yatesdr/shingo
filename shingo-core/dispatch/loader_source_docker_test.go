@@ -288,8 +288,13 @@ func TestPlanRetrieve_DedicatedLoaderPool_NoPartInPoolQueues(t *testing.T) {
 		Quantity:     1.0,
 	})
 
-	if len(emitter.queued) != 1 {
-		t.Fatalf("queued events = %d, want 1 (loader pool empty must queue, not pull globally)", len(emitter.queued))
+	// (C1: the door parks a finder wait `queued` with its cause and tells the
+	// station once; it emits no EventOrderQueued.)
+	if o := testdb.AssertOrderStatus(t, db, "loader-empty-pool-1", StatusQueued); o != nil && o.QueueCode == "" {
+		t.Errorf("parked with no cause on the row")
+	}
+	if len(emitter.waitChanged) != 1 {
+		t.Fatalf("wait-changed tells = %d, want 1 (loader pool empty must queue, not pull globally)", len(emitter.waitChanged))
 	}
 	order := dispatchSimpleViaScanner(t, d, db, "loader-empty-pool-1")
 	if order.BinID != nil {

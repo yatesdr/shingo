@@ -115,7 +115,7 @@ export function cardModel(entry, code) {
     const payloadActive = hasPayloadDemand || (f.binEmpty && f.hasDemand);
     const payloadDelivered = payloadOrders.some(function (o) { return o.status === 'delivered'; });
     // acknowledged is Core's intake ack (the fleet accepted the order,
-    // pre-sourcing) — it is NOT a moving robot. Keep it separate from in_transit
+    // pre-dispatch) — it is NOT a moving robot. Keep it separate from in_transit
     // so it renders as its own step, not "IN TRANSIT"; in_transit alone is the
     // real transit bucket.
     const payloadInTransit = payloadOrders.some(function (o) { return o.status === 'in_transit'; });
@@ -178,7 +178,7 @@ export function cardModel(entry, code) {
     // already rendered verbatim by the operator modal — the BOARD threw it away, so
     // an operator had to tap a card to find out why nothing was coming. Read from
     // whichever order carries one: Core populates it only while status == queued, so
-    // a payload with a queued order and a sourcing one has the reason on the former.
+    // a payload with a queued order and a moving one has the reason on the former.
     const reasoned = payloadOrders.find(function (o) { return !!o.queue_reason; });
     // waitingSince is the OLDEST order for the payload, not badgeOrder's timestamp:
     // the question a downtime alert answers is "how long has this cell been waiting",

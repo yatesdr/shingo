@@ -43,7 +43,7 @@ import (
 // finish fails.
 //
 // NO GOROUTINES, and that is deliberate — the same argument
-// TestCompound_RefusedSourcingClaimDoesNotDispatch makes (lane_occupancy_test.go).
+// TestCompound_RefusedStatusClaimDoesNotDispatch makes (lane_occupancy_test.go).
 // The interleaving is DRIVEN: dig B plans and dispatches, then dig A plans against
 // the lane B has already taken. That is the state real concurrency produces, and it
 // is the state the guards are written against. A raced version would reproduce it

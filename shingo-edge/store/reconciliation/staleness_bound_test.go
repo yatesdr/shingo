@@ -48,9 +48,9 @@ CREATE TABLE outbox (
 // fail-closed family, so an outage on an Edge order gets the long bound where
 // Core would raise it at thirty minutes. Coarse is the accepted cost; SILENT
 // would not be, and the previous rung-keyed spelling was about to become silent
-// in the other direction — complex orders rest in `sourcing`, and are now born
+// in the other direction — complex orders rested in `sourcing` and were born
 // there, so every ordinary complex material wait would have alarmed at 30
-// minutes.
+// minutes. (Since C1 every wait rests in `queued`; the rows below say so.)
 func TestListAnomalies_MaterialWaitGetsTheLongerBound(t *testing.T) {
 	t.Parallel()
 	db := openAnomalyDB(t)
@@ -63,14 +63,14 @@ func TestListAnomalies_MaterialWaitGetsTheLongerBound(t *testing.T) {
 	}
 
 	// An hour old, waiting on material: under the two-hour bound either way.
-	mk("m-young", string(protocol.StatusSourcing), string(protocol.QueueWaitingForMaterial), "-1 hours")
+	mk("m-young", string(protocol.StatusQueued), string(protocol.QueueWaitingForMaterial), "-1 hours")
 	// Three hours on material: over it.
 	mk("m-old", string(protocol.StatusQueued), string(protocol.QueueWaitingForMaterial), "-3 hours")
 	// An hour dispatched with no code: the 30-minute bound applies.
 	mk("d-old", string(protocol.StatusDispatched), "", "-1 hours")
-	// An hour in `sourcing` on a LANE wait — the case the rung-keyed spelling
-	// got wrong. `sourcing` used to take the short bound unconditionally.
-	mk("s-lane", string(protocol.StatusSourcing), string(protocol.QueueStorageRearranging), "-1 hours")
+	// An hour waiting on a LANE — the case the rung-keyed spelling got wrong
+	// (it was a `sourcing` row then, and took the short bound unconditionally).
+	mk("s-lane", string(protocol.StatusQueued), string(protocol.QueueStorageRearranging), "-1 hours")
 
 	anomalies, err := ListAnomalies(db)
 	testutil.MustNoErr(t, err, "ListAnomalies")
@@ -95,7 +95,7 @@ func TestListAnomalies_MaterialWaitGetsTheLongerBound(t *testing.T) {
 			"to material waits ONLY, not widen to every row")
 	}
 	if !flagged["s-lane"] {
-		t.Error("a `sourcing` order waiting an hour on a LANE was not flagged. The bound reads the " +
+		t.Error("an order waiting an hour on a LANE was not flagged. The bound reads the " +
 			"code, not the rung: a corridor that has not cleared in half an hour is a throughput " +
 			"problem somebody should see, whatever rung the order is standing on.")
 	}

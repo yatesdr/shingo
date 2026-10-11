@@ -143,7 +143,7 @@ func TestChar_DispatchPreparedComplex_NonAcquiringStatus_NoOp(t *testing.T) {
 		EdgeUUID:  "char-nonacquiring",
 		StationID: "line-1",
 		OrderType: OrderTypeComplex,
-		Status:    StatusDispatched, // not in the acquiring set {queued, sourcing}
+		Status:    StatusDispatched, // not in the acquiring set {pending, queued}
 		StepsJSON: `[{"action":"pickup","node":"X"},{"action":"dropoff","node":"Y"}]`,
 	}
 
@@ -343,7 +343,7 @@ func TestChar_DispatchPreparedComplex_ContendedConcreteSlot_QueuesWaitingForSlot
 	// native stand-in for "it got there first"). Give it a delivery node OTHER than
 	// the slot so it never counts as inbound to the slot.
 	other := &orders.Order{EdgeUUID: "char-slot-other", StationID: "line-1",
-		OrderType: OrderTypeComplex, Status: StatusSourcing, Quantity: 1}
+		OrderType: OrderTypeComplex, Status: StatusPending, Quantity: 1}
 	testutil.MustNoErr(t, db.CreateOrder(other), "create contending order")
 	testutil.MustNoErr(t, db.ReserveSlot(slot.ID, other.ID), "other reserves the slot")
 
@@ -377,7 +377,7 @@ func TestChar_DispatchPreparedComplex_ContendedConcreteSlot_QueuesWaitingForSlot
 		t.Errorf("queue_code = %q, want %q (parked on the contended slot)",
 			got.QueueCode, string(protocol.QueueWaitingForSlot))
 	}
-	if got.Status != StatusQueued && got.Status != StatusSourcing {
-		t.Errorf("status = %q, want queued/sourcing (requeued to retry)", got.Status)
+	if got.Status != StatusQueued {
+		t.Errorf("status = %q, want queued (requeued to retry)", got.Status)
 	}
 }

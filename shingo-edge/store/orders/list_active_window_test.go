@@ -172,7 +172,6 @@ func TestListActiveWindow(t *testing.T) {
 		{protocol.StatusQueued, 8 * 24 * time.Hour, true},
 		{protocol.StatusInTransit, 8 * 24 * time.Hour, true},
 		{protocol.StatusStaged, 8 * 24 * time.Hour, true},
-		{protocol.StatusSourcing, 8 * 24 * time.Hour, true},
 		{protocol.StatusPending, 8 * 24 * time.Hour, true},
 		// Never shown, at any age — terminal with nothing for the operator.
 		{protocol.StatusCancelled, 6 * 24 * time.Hour, false},

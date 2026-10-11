@@ -24,8 +24,8 @@ import (
 // The reserve/confirm split: the old ApplyComplexPlan claimed a complex order's bins
 // in one live re-walk. Now the plan is durable across ticks —
 // reserveComplexPlan/reserveComplexSlots soft-hold the order's distinct source bins
-// and destination slots (reconciling against what it already holds), the order stays
-// `sourcing` while any distinct need is still missing, and confirmComplexPlan commits
+// and destination slots (reconciling against what it already holds), the order waits
+// (`queued`) while any distinct need is still missing, and confirmComplexPlan commits
 // the COMPLETE reserved set to hard claims (apply-as-confirm — no live re-walk).
 // Dispatch is gated on a complete set (the relay rule): a robot never starts a job it
 // can't finish; give-up is operator-driven (demand never evaporates), never a timer.
@@ -177,8 +177,8 @@ func (a *Allocator) slotNeeds(steps []resolvedStep) []slotNeed {
 // on its own row (see reservations.Acquire's doc, THE landmine). Occupancy (one
 // bin per node) keeps the (node, empty-status) match key unambiguous.
 //
-// On incomplete, the order holds its partial reservations and the caller keeps it
-// in `sourcing` for the scanner to retry. Pure of transitions/claims — the hard
+// On incomplete, the order holds its partial reservations and waits, parked, for
+// the scanner to retry. Pure of transitions/claims — the hard
 // claim happens later, in confirmComplexPlan.
 func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (assigned []reservedPickup, outcome reserveOutcome, err error) {
 	pickups := complexPickups(plan.ResolvedSteps)

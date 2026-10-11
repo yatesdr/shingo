@@ -185,7 +185,7 @@ func (d *Dispatcher) SweepLaneWaiters() int {
 // firing, which assumes a next firing exists" — asked of one more mechanism.
 //
 // THE LANE SET IS DERIVED FROM THE ROWS, not from laneWaiters. The population
-// queued behind a stranded handoff is `sourcing` demands the resolver turned
+// queued behind a stranded handoff is waiting demands the resolver turned
 // away, which are neither gate-staged dwellers nor held legs; a waiter-derived
 // set would miss the lane and the pass would return before its loop on a plant
 // where nothing else is waiting at all. See reservations.LanesHeldByHandoff.

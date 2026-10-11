@@ -18,18 +18,18 @@ import (
 // between two concurrent fresh intakes + scanner targeting the same
 // dropoff would otherwise have a TOCTOU window).
 //
-// Flow:
+// Flow, one unit under the scan lock (door.go, F1):
 //  1. Validate + resolve steps.
-//  2. Create the order born `sourcing` (was: pending + immediate dispatch).
+//  2. Create the order born `pending`, like every order (v4 §2.6).
 //  3. Ack to edge.
-//  4. Emit EventOrderQueued — scanner subscribes and runs immediately.
-//     Scanner.tryFulfill calls Dispatcher.DispatchPreparedComplex when
-//     capacity is green; the order stays `sourcing`, with a queue reason,
-//     otherwise.
-//
-// The latency cost on the happy path is ~milliseconds (event-driven
-// scanner trigger, runs synchronously on the emitter goroutine).
+//  4. One acquire: the scanner calls Dispatcher.DispatchPreparedComplex, and
+//     the order dispatches, or parks in `queued` with its cause and its station
+//     is told. An intake that already knows it waits parks at once.
 func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protocol.ComplexOrderRequest) {
+	d.door(func() { d.handleComplexOrderRequest(env, p) })
+}
+
+func (d *Dispatcher) handleComplexOrderRequest(env *protocol.Envelope, p *protocol.ComplexOrderRequest) {
 	stationID := env.Src.Station
 	d.dbg("complex order request: station=%s uuid=%s steps=%d", stationID, p.OrderUUID, len(p.Steps))
 
@@ -49,7 +49,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	// ("no available slot in node group X", "no bin of requested
 	// payload in node group X") used to terminal-reject the order at
 	// intake — Edge got an error, no Core-side row created, no retry.
-	// Now they create the order as queued with the resolver message as
+	// Now they create the order and park it with the resolver message as
 	// queue_reason, and DispatchPreparedComplex re-resolves on each
 	// scanner tick. Structural / unknown-action / unknown-node errors
 	// still reject synchronously — those aren't fixable by waiting.
@@ -73,18 +73,18 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		switch class {
 		case ResolutionBuried:
 			// The source bin is behind another bin. The parent is still an
-			// ordinary complex parent — created Queued from this envelope,
+			// ordinary complex parent — born pending from this envelope,
 			// same as every other one — so it takes the same path down to
 			// the persist as the capacity case beside it. What differs is
 			// what happens AFTER: instead of handing off to the scanner,
 			// the tail plans and dispatches an unbury (or unbury+retrieve)
 			// compound and pivots the parent to Reshuffling. When that
-			// compound completes the parent resumes back to Queued and the
-			// fulfillment scanner runs the original first pickup against
+			// compound completes the parent resumes back to pending and its
+			// one acquire runs the original first pickup against
 			// the now-accessible slot.
 			//
 			// Preserve the original NGRP-bearing step shape so the resume
-			// path (parent -> Queued -> scanner -> reResolveComplexSteps)
+			// path (parent -> pending -> acquire -> reResolveComplexSteps)
 			// has the input it needs to re-resolve — the same reason the
 			// capacity case below does it.
 			buried = payload.(*BuriedError)
@@ -127,34 +127,15 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		EdgeUUID:  p.OrderUUID,
 		StationID: stationID,
 		OrderType: OrderTypeComplex,
-		// BORN SHOPPING. A complex order's hand is not whole at birth: it has
-		// resolved steps and no bins, and the first thing the scanner does with it
-		// is go looking (acquireComplexSources). `sourcing` is the rung the record's
-		// split test assigns to exactly that — the hand is short — and it is the
-		// rung a complex order actually RESTS in while it re-shops.
+		// BORN PENDING, like every order (v4 §2.6; C1.1.1). A complex order's hand
+		// is not whole at birth — resolved steps and no bins — and its one acquire
+		// (the door's, below) is what goes looking. It rests in `queued` with its
+		// cause when the hand cannot be had, the same rung every order rests in.
 		//
-		// It was born `queued`, which was visibility doing lifecycle's job: what the
-		// literal bought was the scanner picking the order up, and the scanner keys
-		// on IsAcquiring = {queued, sourcing}, so `sourcing` buys it just the same.
-		// Birth-`queued` was never a state anything observed — MoveToSourcing runs at
-		// the start of the first tick and EmitOrderQueued runs the scanner
-		// synchronously, so it lasted milliseconds — and the ladder was already
-		// inconsistent BELOW it: a gate-blocked complex order parked in its entry
-		// status, which meant `queued` on the first pass and `sourcing` on every
-		// retry. One wait, two rungs, depending on which pass caught it.
-		//
-		// No transition edge is needed for this: birth is the INSERT, and every
-		// edge the flow uses out of `sourcing` is already legal (protocol/types.go)
-		// — including sourcing→reshuffling, which the buried-source pivot takes.
-		// The first tick's MoveToSourcing now no-ops on sourcing→sourcing.
-		//
-		// THE ONE MEASURED CONSEQUENCE was the dropoff-capacity gate, which counted
-		// everything non-terminal EXCEPT `queued` — so a born-shopping order entered
-		// the in-flight count before it held anything, and two of them bound for one
-		// exclusive dropoff each counted the other and neither went. The gate now
-		// counts HOLDERS, not statuses (orders.InFlightForDropoffSQL): an order is in
-		// flight to a node when it holds a claimed bin bound there, whatever its rung.
-		Status:       StatusSourcing,
+		// The dropoff-capacity gate counts HOLDERS, not statuses
+		// (orders.InFlightForDropoffSQL): an order is in flight to a node when it
+		// holds a claimed bin bound there, whatever its rung.
+		Status:       StatusPending,
 		Quantity:     p.Quantity,
 		Priority:     p.Priority,
 		PayloadCode:  payloadCode,
@@ -222,7 +203,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	// now decides whether dispatch sees a pair at all (complex_pair.go). This call
 	// additionally records the supply's back-link (supply→evac) — bidirectional
 	// via LinkSiblingsByEdgeUUID's CASE — so either leg can find its peer, which
-	// the peer-death handler needs. Runs before EmitOrderQueued triggers the
+	// the peer-death handler needs. Runs before the acquire triggers the
 	// synchronous scanner. The supply row already exists (supply is created
 	// first). Best-effort on the BACK-link only: a failure here leaves the
 	// durable forward link intact and is healed on-read next tick.
@@ -241,15 +222,15 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	}
 	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, OrderTypeComplex, payloadCode, deliveryNode)
 
-	// Ack to edge before triggering the scanner so the edge's order-table
-	// row exists when the dispatched-event fires (if scanner dispatches
-	// synchronously, the edge needs to have already recorded the order ID).
+	// Ack to edge before the acquire so the edge's order-table row exists when
+	// the dispatched-event fires (the acquire dispatches synchronously, and the
+	// edge needs to have already recorded the order ID).
 	d.sendAck(env, order.EdgeUUID, order.ID, sourceNode)
 
 	// A buried parent does not go to the scanner: it has nothing the scanner
 	// could act on until the blocking bin has been moved. The reshuffle tail
-	// takes it from here and either dispatches the unbury compound or leaves
-	// the parent queued for a later replay.
+	// takes it from here and either dispatches the unbury compound or parks the
+	// parent for a later replay.
 	if buried != nil {
 		d.dbg("complex: order %s buried at intake — bin %d in lane %d (slot %s)",
 			p.OrderUUID, buried.Bin.ID, buried.LaneID, buried.Slot.Name)
@@ -257,12 +238,14 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		return
 	}
 
-	// EventOrderQueued is the scanner trigger — wired in engine/wiring.go.
-	// Scanner.RunOnce is invoked synchronously on this goroutine via the
-	// EventBus; if capacity is green and bins claimable, dispatch happens
-	// before this function returns. Otherwise the order sits queued with
-	// queue_reason set to the blocking signal.
-	d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode, WaitOf(order))
+	// An intake that already knows it waits parks with its cause; otherwise the
+	// one acquire, under the lock this door holds: dispatched before this
+	// returns, or parked with the blocking signal on the row.
+	if queueCode != "" {
+		d.parkBorn(order)
+		return
+	}
+	d.acquireBorn(order, nil)
 }
 
 // refuseComplexIntake answers a complex request Core will not ingest.

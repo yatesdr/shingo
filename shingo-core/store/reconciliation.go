@@ -26,7 +26,7 @@ func (db *DB) ReleaseOrphanedClaims() (int, error) {
 }
 
 // ReleaseAcquiringOrphanClaims is the same backstop's live-order arm — a claim
-// held by a queued/sourcing order with no reservation behind it. See
+// held by a top-level pending/queued order with no reservation behind it. See
 // reconciliation.ReleaseAcquiringOrphanClaims for why it is a separate sweep
 // with a separate count.
 func (db *DB) ReleaseAcquiringOrphanClaims() (int, error) {

@@ -62,18 +62,19 @@ func parkOrder(t *testing.T, db *store.DB, uuid string, status protocol.Status, 
 // TestOrdersPage_ASourcingOrderSaysWhyItIsWaiting is the owner requirement on
 // the Core board: "I want the shingo operators to see what's sourcing and why."
 //
-// The facts have always been there — every sourcing park writes a cause through
-// the same one writer a queued park does — so what this asserts is the
-// RENDERING: a sourcing order reads on the page exactly as a queued one does,
-// its own wait sentence and its own clock, and the summary that counts both does
-// not describe itself as being about only one of them.
+// The facts have always been there — every park writes a cause through the one
+// writer — so what this asserts is the RENDERING: an order waiting for material
+// reads on the page with its own wait sentence and its own clock, and the
+// summary that counts the waits does not describe itself as being about one
+// rung. (It seeded a `sourcing` order beside the queued one until C1, when every
+// wait came to rest in `queued`.)
 func TestOrdersPage_ASourcingOrderSaysWhyItIsWaiting(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlersForRendering(t)
 
 	parkOrder(t, db, "sv-queued", protocol.StatusQueued,
 		protocol.QueueStorageRearranging, "Storage is being rearranged at ALN_001")
-	parkOrder(t, db, "sv-sourcing", protocol.StatusSourcing,
+	parkOrder(t, db, "sv-material", protocol.StatusQueued,
 		protocol.QueueWaitingForMaterial, "Waiting for material: PART-A")
 
 	body := renderOrdersPage(t, h, "?status=all")
@@ -82,16 +83,16 @@ func TestOrdersPage_ASourcingOrderSaysWhyItIsWaiting(t *testing.T) {
 		t.Error("the queued order's wait sentence is not on the page at all")
 	}
 	if !strings.Contains(body, "Waiting for material: PART-A") {
-		t.Error("a SOURCING order's wait sentence is not on the page. It is written by the same " +
-			"writer as a queued order's, and the operator has no way to see what is sourcing or why")
+		t.Error("an order waiting for material has no wait sentence on the page, and the operator " +
+			"has no way to see what is being sourced or why")
 	}
 
 	// The summary chips count every order that is WAITING (countQueueCodes keys on
 	// orderIsWaiting — a live cause, in a status where a cause means a present
 	// wait), so a label naming one rung of that set describes the wrong number.
 	if strings.Contains(body, "Why queued:") {
-		t.Error("the wait summary still calls itself \"Why queued\" while counting sourcing orders " +
-			"too — the label names one rung of the set it is a summary of")
+		t.Error("the wait summary calls itself \"Why queued\" while counting staged and reshuffling " +
+			"waits too — the label names one rung of the set it is a summary of")
 	}
 }
 
@@ -108,7 +109,7 @@ func TestOrdersPage_AWaitCarriesItsOwnClock(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlersForRendering(t)
 
-	o := parkOrder(t, db, "sv-clock", protocol.StatusSourcing,
+	o := parkOrder(t, db, "sv-clock", protocol.StatusQueued,
 		protocol.QueueWaitingForMaterial, "Waiting for material: PART-A")
 	// Resting in this episode for twenty minutes.
 	_, err := db.DB.Exec(

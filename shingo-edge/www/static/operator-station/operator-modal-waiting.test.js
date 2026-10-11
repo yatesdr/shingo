@@ -3,7 +3,7 @@
 //
 // WHY THIS IS PINNED. The two-robot waiting arm sits ABOVE the inFlight arm in
 // renderModal's if/else chain, and inFlight is the only other place that renders
-// queue_reason / ACKNOWLEDGED / SOURCING / ROBOT IN TRANSIT. Before this label
+// queue_reason / ACKNOWLEDGED / IN QUEUE / ROBOT IN TRANSIT. Before this label
 // existed the chain terminated on a bare "WAITING FOR OTHER ROBOT" for exactly
 // the case where the operator cannot act and most needs to know why. Springfield
 // ALN_003 2026-07-31: 32 minutes of that bare label while the supply leg fought
@@ -102,7 +102,6 @@ eq(waitingLabel({ status: 'faulted' }), BASE + ' — faulted, recovering',
 eq(waitingLabel({ status: 'acknowledged' }), BASE + ' — acknowledged, not yet dispatched',
     'acknowledged is distinguished from in transit');
 eq(waitingLabel({ status: 'queued' }), BASE + ' — queued', 'queued without a reason');
-eq(waitingLabel({ status: 'sourcing' }), BASE + ' — sourcing', 'sourcing without a reason');
 
 // in_transit: ETA when Core stamped one, plain wording when it did not. Absent
 // and unparseable ETAs must both degrade to the plain phrase, never "undefined".

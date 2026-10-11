@@ -25,12 +25,12 @@ export const TERMINAL_STATUSES = ['cancelled', 'confirmed', 'failed', 'skipped']
 // protocol.IsPreDispatch / PreDispatchStatusSQLList, and the Go drift test pins
 // it like the two lists above.
 //
-// It exists because the operator station was asking this question with literals
-// — `status === 'queued' || status === 'pending'` — which silently EXCLUDED
-// `sourcing`. So a station whose order was out hunting for material showed no
-// demand card and no cause on the one screen a floor operator actually uses,
-// which is the screen the visibility requirement is about.
-export const PRE_DISPATCH_STATUSES = ['pending', 'queued', 'sourcing'];
+// It exists because the operator station was asking this question with literals,
+// which silently excluded a waiting rung (`sourcing`, while it was one). So a
+// station whose order was out hunting for material showed no demand card and no
+// cause on the one screen a floor operator actually uses, which is the screen
+// the visibility requirement is about. Since C1 the set is pending and queued.
+export const PRE_DISPATCH_STATUSES = ['pending', 'queued'];
 
 export function isTerminal(status) {
     return TERMINAL_STATUSES.includes(status);

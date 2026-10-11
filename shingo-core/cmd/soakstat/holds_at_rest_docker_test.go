@@ -50,14 +50,15 @@ func TestHoldsAtRest_TheInstrumentIsSelective(t *testing.T) {
 		testutil.MustNoErr(t, err, "seed a "+state+" "+kind+" reservation")
 	}
 
-	waitingBin := order(protocol.StatusSourcing, nil)
+	// (C1: the waiting holders rest in `queued`; `sourcing` is no longer a status.)
+	waitingBin := order(protocol.StatusQueued, nil)
 	holdBin(waitingBin, "HAR-SOAK-WAIT-BIN")
 	waitingSlot := order(protocol.StatusQueued, nil)
 	_, err := db.Exec(`UPDATE nodes SET claimed_by = $1 WHERE id = $2`, waitingSlot, sd.StorageNode.ID)
 	testutil.MustNoErr(t, err, "seed a slot claim")
 	waitingSlotRes := order(protocol.StatusQueued, nil)
 	nodeRes(waitingSlotRes, "slot", "confirmed", sd.StorageNode.ID)
-	waitingMouth := order(protocol.StatusSourcing, nil)
+	waitingMouth := order(protocol.StatusQueued, nil)
 	nodeRes(waitingMouth, "mouth", "confirmed", sd.StorageNode.ID)
 	waitingOcc := order(protocol.StatusPending, nil)
 	nodeRes(waitingOcc, "occupancy", "confirmed", sd.StorageNode.ID)
@@ -69,10 +70,10 @@ func TestHoldsAtRest_TheInstrumentIsSelective(t *testing.T) {
 	nodeRes(order(protocol.StatusQueued, nil), "slot", "pending", sd.LineNode.ID)
 
 	want := map[int64]string{
-		waitingBin:     "is sourcing holding 1 bin(s), 0 slot(s), 0 confirmed slot reservation(s), 0 confirmed mouth(s), 0 confirmed occupancy row(s)",
+		waitingBin:     "is queued holding 1 bin(s), 0 slot(s), 0 confirmed slot reservation(s), 0 confirmed mouth(s), 0 confirmed occupancy row(s)",
 		waitingSlot:    "is queued holding 0 bin(s), 1 slot(s), 0 confirmed slot reservation(s), 0 confirmed mouth(s), 0 confirmed occupancy row(s)",
 		waitingSlotRes: "is queued holding 0 bin(s), 0 slot(s), 1 confirmed slot reservation(s), 0 confirmed mouth(s), 0 confirmed occupancy row(s)",
-		waitingMouth:   "is sourcing holding 0 bin(s), 0 slot(s), 0 confirmed slot reservation(s), 1 confirmed mouth(s), 0 confirmed occupancy row(s)",
+		waitingMouth:   "is queued holding 0 bin(s), 0 slot(s), 0 confirmed slot reservation(s), 1 confirmed mouth(s), 0 confirmed occupancy row(s)",
 		waitingOcc:     "is pending holding 0 bin(s), 0 slot(s), 0 confirmed slot reservation(s), 0 confirmed mouth(s), 1 confirmed occupancy row(s)",
 	}
 	v := checkHoldsAtRest(db)
@@ -111,7 +112,7 @@ func TestPair_HistoryWedgesAgeFromTheLastHistoryRow(t *testing.T) {
 		testutil.MustNoErr(t, err, "freshen updated_at")
 	}
 	seed(protocol.StatusQueued, 40*time.Minute)    // parked past its 15-min budget: counted
-	seed(protocol.StatusSourcing, 5*time.Minute)   // parked, within budget: not counted
+	seed(protocol.StatusPending, 5*time.Minute)    // parked, within budget: not counted
 	seed(protocol.StatusInTransit, 25*time.Minute) // in flight past its 20-min budget: counted
 	seed(protocol.StatusConfirmed, 90*time.Minute) // terminal: in no population
 	seed(protocol.StatusDispatched, 0)             // the newest row: sets the sim clock

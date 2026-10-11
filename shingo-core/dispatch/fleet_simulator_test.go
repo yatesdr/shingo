@@ -297,11 +297,11 @@ func TestSimulator_FleetFailure_NoVendorOrderID(t *testing.T) {
 	// The order PARKS, it does not die. A fleet that refuses a create is a
 	// transient robot-system issue, which is what the scanner's rollback has
 	// always said it is — it just could not run while DispatchDirect terminalized
-	// first (`failed` has no outgoing edges). The order goes back to sourcing
-	// under fleet_unavailable and the next tick retries.
-	if order.Status != StatusSourcing {
+	// first (`failed` has no outgoing edges). The order parks `dispatched →
+	// queued` under fleet_unavailable (C1) and the next tick retries.
+	if order.Status != StatusQueued {
 		t.Errorf("order status = %q, want %q — a fleet refusal is congestion, and the order has to "+
-			"stay alive to be retried", order.Status, StatusSourcing)
+			"stay alive to be retried", order.Status, StatusQueued)
 	}
 	if order.QueueCode != string(protocol.QueueFleetUnavailable) {
 		t.Errorf("queue_code = %q, want %q — the row has to say what it is waiting for",

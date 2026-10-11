@@ -111,7 +111,7 @@ func (db *DB) ListLaneHeldLegs() ([]LaneHeldLeg, error) {
 //
 // THE POPULATION IS orders.AwaitingFleetSQL, NOT `status='pending'`, and the
 // difference is a second leg with no witness: one whose fleet create was refused
-// is rolled back to `sourcing` and parked, holding no vendor order. It is
+// is rolled back to `queued` and parked, holding no vendor order. It is
 // waiting on this lane in exactly the same sense and was invisible here for
 // exactly the same reason. One spelling, shared with GetNextChild — see that
 // function for why vendor_order_id is the authority and a status was the proxy.

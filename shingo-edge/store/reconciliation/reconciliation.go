@@ -58,9 +58,9 @@ type Summary struct {
 func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 	var anomalies []*Anomaly
 
-	// Edge mirrors Core's full status vocabulary: sourcing/dispatched/faulted
-	// are stored on the Edge row, so the IN list matches what edge data actually
-	// carries. Safe to splice the shared predicate.
+	// Edge mirrors Core's full status vocabulary: dispatched/faulted are stored on
+	// the Edge row, so the IN list matches what edge data actually carries. Safe
+	// to splice the shared predicate.
 	//
 	// ── TWO THRESHOLDS, PICKED PER ROW BY QUEUE CODE ─────────────────────
 	//
@@ -72,10 +72,10 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 	//
 	// It was keyed on `status = 'queued'`, with `sourcing` deliberately kept on the
 	// short bound "because it is meant to be transient, so resting there IS the
-	// anomaly". That stopped being true: complex orders rest in `sourcing` while
-	// they re-shop, and are now BORN there. Keyed on the rung, this board would
-	// have started calling every ordinary complex material wait an anomaly at
-	// thirty minutes.
+	// anomaly". That stopped being true when complex orders rested in `sourcing`
+	// while they re-shopped (before C1 moved every wait to `queued`). Keyed on the
+	// rung, this board would have called every ordinary complex material wait an
+	// anomaly at thirty minutes.
 	//
 	// ── AND IT KEYS ON THE CODE, NOT THE CAUSE, BECAUSE THE CAUSE DOES NOT
 	//    CROSS THE WIRE ─────────────────────────────────────────────────────

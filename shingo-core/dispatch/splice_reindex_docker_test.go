@@ -102,7 +102,7 @@ func TestReindexFailure_ParksTheDemandInsteadOfKillingIt(t *testing.T) {
 
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.OrderType = OrderTypeComplex
-		o.Status = StatusSourcing
+		o.Status = StatusPending
 		o.SourceNode = w[0].Name
 		o.DeliveryNode = cell.Name
 	})

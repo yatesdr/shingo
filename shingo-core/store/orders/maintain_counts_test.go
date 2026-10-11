@@ -131,6 +131,9 @@ func TestCountTypedInboundToGroup_FourShapes(t *testing.T) {
 	plain.DeliveryNode = "INB-SLOT"
 	plain.BinID = &binA
 	testutil.MustNoErr(t, orders.Create(db, plain), "create plain")
+	// (C1: a top-level pending order pointing at a bin holds its reservation, or
+	// the teardown reads a pointer wedge; the pointer is incidental here.)
+	testdb.ReserveBin(t, d, plain.ID, binA)
 	if got := count(t, "plain"); got != 1 {
 		t.Fatalf("plain inbound = %d, want 1", got)
 	}
@@ -182,6 +185,7 @@ func TestCountTypedInboundToGroup_FourShapes(t *testing.T) {
 	own.BinID = &binD
 	own.OriginID = mntOrigin
 	testutil.MustNoErr(t, orders.Create(db, own), "create own-origin order")
+	testdb.ReserveBin(t, d, own.ID, binD) // (C1: as shape 1's)
 	if got := count(t, "own maintain origin"); got != 3 {
 		t.Errorf("with the keeper's own ask inbound = %d, want 3 — it is already counted as asked", got)
 	}

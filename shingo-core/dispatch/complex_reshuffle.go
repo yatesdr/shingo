@@ -23,11 +23,11 @@ import (
 //   - WHERE THE PAYLOAD CODE COMES FROM. Intake is handed it with the request,
 //     before the row is necessarily readable for it; the replay reads it off the
 //     order. A parameter.
-//   - WHETHER A PARK IS ANNOUNCED. Intake announces, because the station is
-//     waiting on an answer to a request it just made. The replay does not: it is
-//     entered from the scanner with the demand already acquiring, so leaving it
-//     queued with a cause IS the retry and there is nothing new to tell anyone.
-//     A callback, nil for silence.
+//   - WHO PARKS. Intake parks the demand itself (`pending → queued`, and its
+//     station is told), because the station is waiting on an answer to a request
+//     it just made. The replay does not: it is entered from the scanner, which
+//     parks what it could not dispatch, so writing the cause IS the retry. A
+//     callback, nil for the replay.
 //
 // Everything else — the read split, the cause, all seven dispositions — is one
 // body now, so a fix lands at both sites or neither.
@@ -39,7 +39,8 @@ import (
 // demand; see the service-dig note on proposeLaneClearDig for why." The cause is
 // still written before the demand moves and still stands on the row — an
 // operator reading the board while the dig runs needs it — but the demand is
-// re-parented, wears `reshuffling`, and comes back through `queued`.
+// re-parented, wears `reshuffling`, and comes back through `pending` and its
+// one acquire.
 //
 // announce may be nil.
 func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string, buried *BuriedError, announce func()) {
@@ -51,8 +52,8 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 	}
 
 	// A READ THAT FAILED IS NOT A LANE THAT IS MISSING — see read_vs_missing.go.
-	// Releaser for the park: the demand stays `queued`, which is in the acquiring
-	// set, so the fulfillment scanner's ordinary retry brings it back here.
+	// Releaser for the park: the demand waits in `queued`, which is in the
+	// acquiring set, so the fulfillment scanner's ordinary retry brings it back.
 	lane, err := d.db.GetNode(buried.LaneID)
 	if readFailed(err) {
 		d.dbg("complex: could not read buried lane %d for demand %d (%v) — holding", buried.LaneID, order.ID, err)
@@ -64,7 +65,7 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 		return
 	}
 
-	// The demand is queued because its bin is buried. That is written only where
+	// The demand waits because its bin is buried. That is written only where
 	// no outcome records a cause of its own: when the dig is written (after its
 	// legs exist and before the demand moves into `reshuffling`, so the wait is
 	// on the row, and told, while the demand is still acquiring), and when
@@ -91,7 +92,7 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 	//
 	// The owner's ruling restates the rule the other way round: a dig is owned by
 	// the demand that caused it, UNLESS a vehicle is already committed to that
-	// demand. Nothing is committed here — this order is `queued`, no vendor
+	// demand. Nothing is committed here — this order is pre-dispatch, no vendor
 	// order, no robot — so it takes its own excavation. It comes back through
 	// ResumeCompound exactly as the quoted paragraph describes, and that path was
 	// never deleted.
@@ -210,14 +211,12 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 // planBuriedReshuffleAtIntake is the intake entry: the station is waiting on an
 // answer to the request it just made, so every park is announced.
 func (d *Dispatcher) planBuriedReshuffleAtIntake(order *orders.Order, payloadCode, stationID string, buried *BuriedError) {
-	d.handleComplexBurial(order, payloadCode, buried, func() {
-		d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode, WaitOf(order))
-	})
+	d.handleComplexBurial(order, payloadCode, buried, func() { d.parkBorn(order) })
 }
 
 // handleComplexBuriedOnReplay is the scanner entry: the demand is already
-// acquiring, so leaving it queued with a cause IS the retry and there is nothing
-// new to announce.
+// acquiring, so writing the cause IS the retry (the scanner parks it) and there
+// is nothing new to announce.
 func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *BuriedError) {
 	d.handleComplexBurial(order, order.PayloadCode, buried, nil)
 }

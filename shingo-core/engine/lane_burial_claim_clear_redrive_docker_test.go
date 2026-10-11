@@ -158,8 +158,9 @@ func TestBurialGuard_ClaimClearEventRedrivesAParkedStore(t *testing.T) {
 	testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.LineNode.ID, "BGRD-STORED")
 
 	eng := newTestEngine(t, db, simulator.New())
-	// Intake runs the scanner synchronously (EventOrderQueued → RunOnce), so the
-	// order has already been offered the group once by the time this returns.
+	// Intake parks its own wait decision (intake-resolve) without an acquire; the
+	// scan that follows offers the order the group and re-parks it under the
+	// resolver's cause (C1: that scan is the next pass, not one inside the door).
 	eng.Dispatcher().HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
 		OrderUUID:   "bgrd-store",
 		PayloadCode: sd.Payload.Code,
@@ -169,6 +170,7 @@ func TestBurialGuard_ClaimClearEventRedrivesAParkedStore(t *testing.T) {
 			{Action: "dropoff", Node: grp.Name},
 		},
 	})
+	eng.RunFulfillmentScan()
 
 	parked, err := db.GetOrderByUUID("bgrd-store")
 	if err != nil || parked == nil {

@@ -66,7 +66,7 @@ func (e *Engine) AbandonChangeoverSupply(processID, processNodeID int64, acceptH
 	}
 	// The stamp does not revert when Core un-parks the order, so re-check the
 	// live status: material already in motion should ARRIVE, not be abandoned.
-	if !orders.IsTerminal(supply.Status) && !protocol.IsAcquiring(supply.Status) {
+	if !orders.IsTerminal(supply.Status) && !protocol.IsWaiting(supply.Status) {
 		return fmt.Errorf("supply order %d is now in motion (%s) — material is on its way", supply.ID, supply.Status)
 	}
 

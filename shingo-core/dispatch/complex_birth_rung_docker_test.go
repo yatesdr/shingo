@@ -11,21 +11,20 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// COMPLEX IS BORN SHOPPING.
+// COMPLEX IS BORN PENDING, LIKE EVERY ORDER (C1).
 //
-// Every family climbs the same ladder, and `sourcing` is the rung the record's
-// split test assigns to a hand that is not whole: a complex order has resolved
-// steps and no bins, and the first thing the scanner does with it is go looking.
+// Every family climbs the same ladder: born `pending`, `pending → dispatched`
+// when the whole hand is had, otherwise parked `pending → queued` with a cause.
+// A complex order has resolved steps and no bins at birth, and the first thing
+// its one acquire does with it is go looking.
 //
-// Birth-`queued` was visibility doing lifecycle's job. What the literal bought
-// was the scanner picking the order up, and the scanner keys on IsAcquiring =
-// {queued, sourcing}, so it buys the same thing either way — which is exactly
-// why this move is safe and why nothing observed the old rung: MoveToSourcing
-// runs at the top of the first tick, and EmitOrderQueued runs that tick
-// synchronously.
+// What the birth rung must buy is the scanner picking the order up, and the
+// scanner keys on IsAcquiring = {pending, queued}. (Before C1 complex was born
+// `sourcing`, a rung no order can now be in.)
 // ---------------------------------------------------------------------------
 
-// TestComplexIntake_IsBornSourcing pins the literal.
+// TestComplexIntake_IsBornSourcing pins the literal (now `pending`; the name is
+// the old rung's).
 func TestComplexIntake_IsBornSourcing(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -47,23 +46,22 @@ func TestComplexIntake_IsBornSourcing(t *testing.T) {
 
 	got, err := db.GetOrderByUUID("complex-born-sourcing")
 	testutil.MustNoErr(t, err, "get the order intake created")
-	if got.Status != StatusSourcing {
+	if got.Status != StatusPending {
 		t.Errorf("a complex order was born %q, want %q.\n"+
-			"Its hand is not whole at birth — it holds resolved steps and no bins — and `sourcing` "+
-			"is the rung that means the material hunt. Born `queued` it claimed a complete paper "+
-			"hand waiting only for its turn, which was never true of it for a single tick.",
-			got.Status, StatusSourcing)
+			"Every order is born `pending`; its one acquire takes the whole hand or parks it "+
+			"`queued` with a cause. Born `queued` it would claim a wait with no cause, which was "+
+			"never true of it for a single tick.",
+			got.Status, StatusPending)
 	}
 }
 
 // TestComplexIntake_BornSourcingIsScannedAllocatedAndDispatched is the
 // anti-wedge proof, and it is the assertion that matters more than the literal.
 //
-// A birth rung that nothing picks up is a wedge, and the caution is real — it is
-// exactly what born-`pending` would have been, since `pending` is outside
-// IsAcquiring and no scanner pass selects it. `sourcing` is inside, so the claim
-// is that the ordinary machinery carries a born-sourcing order the whole way.
-// Asserted end to end rather than argued.
+// A birth rung that nothing picks up is a wedge, and the caution is real.
+// `pending` is inside IsAcquiring (C1), so the claim is that the ordinary
+// machinery carries a born-pending order the whole way. Asserted end to end
+// rather than argued.
 func TestComplexIntake_BornSourcingIsScannedAllocatedAndDispatched(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -84,19 +82,18 @@ func TestComplexIntake_BornSourcingIsScannedAllocatedAndDispatched(t *testing.T)
 
 	order, err := db.GetOrderByUUID("complex-born-sourcing-e2e")
 	testutil.MustNoErr(t, err, "get the order")
-	if order.Status != StatusSourcing {
-		t.Fatalf("fixture: born %q, not %q — this test proves nothing about the new rung",
-			order.Status, StatusSourcing)
+	if order.Status != StatusPending {
+		t.Fatalf("fixture: born %q, not %q — this test proves nothing about the birth rung",
+			order.Status, StatusPending)
 	}
 
 	// THE ORDINARY MACHINERY, entered exactly as the scanner enters it. The
-	// scanner's own gate is IsAcquiring, which `sourcing` satisfies; this is the
+	// scanner's own gate is IsAcquiring, which `pending` satisfies; this is the
 	// call it makes next.
 	if derr := d.DispatchPreparedComplex(order); derr != nil {
-		t.Fatalf("a born-`sourcing` complex order did not dispatch: %v\n"+
+		t.Fatalf("a born-`pending` complex order did not dispatch: %v\n"+
 			"If the rung it is born on is not one the scanner drives, the order is a wedge from "+
-			"the moment it exists — the caution the born-`pending` question raised, arriving "+
-			"through the door it was not asked about.", derr)
+			"the moment it exists.", derr)
 	}
 
 	final, err := db.GetOrder(order.ID)
@@ -108,21 +105,19 @@ func TestComplexIntake_BornSourcingIsScannedAllocatedAndDispatched(t *testing.T)
 		t.Errorf("status = %q — still acquiring after a successful dispatch", final.Status)
 	}
 	if final.BinID == nil {
-		t.Error("the order dispatched holding no bin — the hunt is what `sourcing` names, " +
+		t.Error("the order dispatched holding no bin — the hunt is what its acquire does, " +
 			"and it has to have finished")
 	}
 }
 
 // TestComplexIntake_TheBirthRowIsTheEpisodeTheCauseLandsOn is the seam between
-// this move and the queue-detail stamp.
+// the birth rung and the queue-detail stamp.
 //
-// Intake writes a queue cause immediately after CreateOrder for a capacity-
-// blocked order, and SetQueueDetail aims that cause at the row of the episode the
-// order is RESTING in. The birth row is now `sourcing`, so the cause lands there.
-// The old spelling of that stamp named 'queued' explicitly and, by its own note,
-// "a complex order born `queued` matched no row at all" — this is the same class
-// of mis-aim, and the reason the rung move needs an assertion here rather than an
-// argument.
+// SetQueueDetail aims a cause at the row of the episode the order is RESTING in.
+// The birth row is `pending` (C1), a birth certificate and not a wait, so the
+// stamp writes no row there: the cause rides the park onto the `queued` row it
+// opens. One wait, one row, and it is the wait's own. (The name is the old
+// rung's, when the birth row itself took the cause.)
 func TestComplexIntake_TheBirthRowIsTheEpisodeTheCauseLandsOn(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -142,22 +137,21 @@ func TestComplexIntake_TheBirthRowIsTheEpisodeTheCauseLandsOn(t *testing.T) {
 	order, err := db.GetOrderByUUID("complex-birth-episode")
 	testutil.MustNoErr(t, err, "get the order")
 
-	// Park it under a cause the way the gates do, then read the history back.
-	testutil.MustNoErr(t, db.SetOrderQueueDetail(order.ID,
-		"Waiting for material: "+bp.Code, protocol.QueueWaitingForMaterial, string(CauseReserveHolding)),
-		"stamp a wait")
+	// Park it under a cause the way the scanner does: the cause on the row, then
+	// the park.
+	d.setQueueReason(order, protocol.QueueWaitingForMaterial, CauseReserveHolding, QueueParams{Payload: bp.Code})
+	testutil.MustNoErr(t, d.ParkAndTell(order, "test"), "park")
 
-	// Since the orc's Stop 3 ruling (2026-09-26) the park is a row of its own,
-	// at the status the order rests in: after the `sourcing` birth row.
 	history, err := db.ListOrderHistory(order.ID)
 	testutil.MustNoErr(t, err, "list history")
 	if len(history) != 2 {
 		t.Fatalf("history has %d rows, want 2 (the birth row, then the park's own row)", len(history))
 	}
-	for i, h := range history {
-		if h.Status != protocol.StatusSourcing {
-			t.Errorf("history[%d] says %q, want %q: the order rests in its birth rung", i, h.Status, protocol.StatusSourcing)
-		}
+	if history[0].Status != protocol.StatusPending || history[0].Code != "" {
+		t.Errorf("history[0] = %q/%q, want the bare `pending` birth row", history[0].Status, history[0].Code)
+	}
+	if history[1].Status != protocol.StatusQueued {
+		t.Errorf("history[1] says %q, want %q: the park opens the wait's own row", history[1].Status, protocol.StatusQueued)
 	}
 	if history[1].Code != string(protocol.QueueWaitingForMaterial) {
 		t.Errorf("the park's row carries code %q, want %q — orders.queue_code is overwritten in "+

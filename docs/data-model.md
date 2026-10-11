@@ -249,19 +249,21 @@ such index. Rows are reaped when their owning order is terminal or gone
 
 | Status | Description |
 |--------|-------------|
-| `pending` | Created, awaiting dispatch |
-| `sourcing` | Resolver is finding source or destination; an order in `sourcing` holds its sources as soft **reservations** and retries each scanner tick |
-| `queued` | Awaiting inventory — Core accepted the order but cannot fulfill it yet; retried by the fulfillment scanner when inventory appears |
+| `pending` | Born; every order starts here and is asked for its whole hand (acquiring) |
+| `sourcing` | History only (C1): no order can be in it and no transition enters it; old `order_history` rows still say it. Migration v148 moved live rows to `queued` |
+| `queued` | Asked and could not have its whole hand; waits with its cause on the row (`queue_code`, `queue_reason` — never empty), holds its sources as soft **reservations**, and is asked again each scanner tick |
 | `dispatched` | Sent to fleet backend |
 | `in_transit` | Robot is moving the bin |
 | `delivered` | Robot has placed the bin at destination |
 | `confirmed` | Edge station has confirmed physical receipt |
-| `completed` | Fully done |
+| `reshuffling` | A dig is moving the bins that bury this order's source; it returns to `pending` when the dig finishes or is dissolved |
 | `failed` | Fleet or system error |
 | `cancelled` | Cancelled by station or operator |
+| `skipped` | Never needed (its source was already gone); terminal, not an error |
 
-`queued` and `sourcing` together form the **acquiring** set — the statuses the
-fulfillment scanner retries (`IsAcquiring` in `protocol/status.go`).
+`pending` and `queued` together form the **acquiring** set — the orders the
+fulfillment scanner may ask (`IsAcquiring` in `protocol/status.go`). Acquiring
+is the act between `pending` and `dispatched`, not a stored status.
 
 ### Manifest Confirmation
 

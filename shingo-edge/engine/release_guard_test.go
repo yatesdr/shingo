@@ -47,9 +47,9 @@ func TestReleaseChangeoverWait_HeldLegIsNotReleasedAndCountsPending(t *testing.T
 	}
 	evacID := *task.OldMaterialReleaseOrderID
 
-	// Hold the evac at sourcing — Core has it but it has not reached a wait.
+	// Hold the evac at queued — Core has it but it has not reached a wait.
 	// This is the exact state the old code released into.
-	testutil.MustNoErr(t, db.UpdateOrderStatus(evacID, string(orders.StatusSourcing)), "hold evac at sourcing")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(evacID, string(orders.StatusQueued)), "hold evac at queued")
 
 	// Drain the changeover-start envelopes so the assertion below is exact.
 	pending, _ := db.ListPendingOutbox(100)
@@ -75,21 +75,21 @@ func TestReleaseChangeoverWait_HeldLegIsNotReleasedAndCountsPending(t *testing.T
 	}
 
 	// THE DESYNC ASSERTION. The old path transitioned the Edge row to
-	// in_transit while Core still held it at sourcing, and no later
+	// in_transit while Core still held it at queued, and no later
 	// re-release could heal it.
 	got, err := db.GetOrder(evacID)
 	if err != nil {
 		t.Fatalf("re-read evac: %v", err)
 	}
-	if got.Status != orders.StatusSourcing {
+	if got.Status != orders.StatusQueued {
 		t.Errorf("evac status = %q, want %q — the Edge row must not move when the release was never sent",
-			got.Status, orders.StatusSourcing)
+			got.Status, orders.StatusQueued)
 	}
 }
 
 // TestReleaseChangeoverWait_StagedLegStillReleases is the over-blocking guard:
 // the fix must not make the normal release a no-op. Companion to the test
-// above — same scenario, staged instead of sourcing.
+// above — same scenario, staged instead of queued.
 func TestReleaseChangeoverWait_StagedLegStillReleases(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)

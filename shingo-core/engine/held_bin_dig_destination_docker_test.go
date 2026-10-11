@@ -59,7 +59,7 @@ func TestHeldBinDig_NeverParksOnTheOrdersOwnDestination(t *testing.T) {
 		o.PayloadCode = sc.Payload.Code
 		o.SourceNode = sc.Slots[1].Name
 		o.DeliveryNode = dest.Name
-		o.Status = protocol.StatusSourcing
+		o.Status = protocol.StatusPending // (C1: born pending; was sourcing)
 	})
 	testdb.ReserveBin(t, db, move.ID, sc.TargetBin.ID)
 	testutil.MustNoErr(t, db.UpdateOrderBinID(move.ID, sc.TargetBin.ID), "stamp the held bin")

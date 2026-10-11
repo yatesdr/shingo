@@ -67,19 +67,23 @@ A transport request to move a bin between nodes. Orders flow from Shingo Edge to
 | 6 River Systems | Task |
 | VDA 5050 | Order (same) |
 
-Order statuses: `pending`, `sourcing`, `queued`, `dispatched`, `in_transit`, `delivered`, `confirmed`, `failed`, `cancelled`. (There is no `completed` status — terminal completion is `confirmed`.)
+Order statuses: `pending`, `queued`, `dispatched`, `in_transit`, `delivered`, `confirmed`, `failed`, `cancelled` (plus `submitted`, `acknowledged`, `staged`, `faulted`, `reshuffling`, `skipped`; the full set is in [order-lifecycle.md](order-lifecycle.md)). (There is no `completed` status — terminal completion is `confirmed`.) Every order is born `pending`, goes to `dispatched` when its whole hand is had, or rests in `queued` with a cause until it is.
 
 ### Reservation
 
-A soft, revocable hold recording that an order intends to use a resource — a source **bin** or a destination **slot** — set *before* the bin is claimed. Reservations are what let Core hold an unfulfillable order (`queued`/`sourcing`) and retry as inventory appears, rather than failing the order. Reclaimed when the owning order ends; never time-based. See [reservations.md](reservations.md).
+A soft, revocable hold recording that an order intends to use a resource — a source **bin** or a destination **slot** — set *before* the bin is claimed. Reservations are what let Core hold an unfulfillable order (`queued`) and retry as inventory appears, rather than failing the order. Reclaimed when the owning order ends; never time-based. See [reservations.md](reservations.md).
 
 ### Slot
 
 A physical destination node a bin can be delivered to (a storage slot, staging location, or line-side position). A **slot reservation** is the destination-side mirror of a bin reservation: a soft hold on a node, confirmed atomically with the slot claim.
 
+### Acquiring
+
+The act between `pending` and `dispatched`: asking for an order's whole hand (source bins, destination slot, lanes) and taking it in one transaction, or parking the order in `queued` with the cause on its row. It is never a stored status. The **acquiring set** — the orders the fulfillment scanner may ask — is `pending` and `queued` (`protocol.IsAcquiring`); a `queued` order holds its sources as reservations and is asked again each scanner tick, and is not "stuck" — demand is operator-driven.
+
 ### Sourcing
 
-The order status while Core is locating a source bin or destination. An order in `sourcing` holds its sources as reservations and is retried each scanner tick; `sourcing` is not "stuck" — demand is operator-driven. Together `queued` and `sourcing` are the **acquiring** set.
+Two meanings, only one live. As an **order status**, `sourcing` is history: since C1 no order can be in it, no transition enters it, and the constant stays only so old `order_history` rows render (migration v148 moved any live `sourcing` order to `queued`). As the **forecast's** word — the Sourcing page, `sourcing_state`, `StrictSourcing`, the sourcing verdicts and feed — it is current: whether a (process, style) can be supplied.
 
 ### Zone
 

@@ -58,7 +58,7 @@ func TestGateChoreo_OpenValveCreatesUnsealedThenAppends(t *testing.T) {
 	line := lineNode(t, db, "GCOPEN-LINE")
 	order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.DeliveryNode = s0.Name
-		o.Status = "sourcing"
+		o.Status = "pending"
 	})
 
 	vendorID, err := d.DispatchDirect(order, line, s0)
@@ -161,7 +161,7 @@ func TestGateChoreo_ContendedCreatesUnsealedAndHolds(t *testing.T) {
 
 	shallow := testdb.CreateOrder(t, db, func(o *orders.Order) {
 		o.DeliveryNode = s0.Name
-		o.Status = "sourcing"
+		o.Status = "pending"
 	})
 	if _, err := d.DispatchDirect(shallow, line, s0); err != nil {
 		t.Fatalf("DispatchDirect: %v", err)
@@ -221,7 +221,7 @@ func TestGateChoreo_NonGatedLaneIsUnchanged(t *testing.T) {
 		line := lineNode(t, db, name+"-LINE")
 		order := testdb.CreateOrder(t, db, func(o *orders.Order) {
 			o.DeliveryNode = s0.Name
-			o.Status = "sourcing"
+			o.Status = "pending"
 		})
 		if _, err := d.DispatchDirect(order, line, s0); err != nil {
 			t.Fatalf("[%s] DispatchDirect: %v", name, err)
