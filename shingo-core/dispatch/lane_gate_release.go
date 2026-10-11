@@ -165,19 +165,27 @@ func (d *Dispatcher) RedriveHeldCompoundLegs(laneID int64) {
 }
 
 // redriveHeldCompoundLegs is RedriveHeldCompoundLegs reporting the compounds
-// THIS CALL advanced, for the floor (C2b F6).
+// THIS CALL advanced, for the floor (C2b F6): a parent whose advance handed a
+// leg to the fleet. Not every parent it tried: a lost dispatch CAS is another
+// caller's dispatch, not a floor release (order 263; DECISIONS D27 F2,
+// TestF2Pin_TheFloorRecordsACompoundItAdvancedNotOneItTried).
 func (d *Dispatcher) redriveHeldCompoundLegs(laneID int64) []int64 {
 	parents, err := d.db.ListHeldLegParentsInLane(laneID)
 	if err != nil {
 		log.Printf("lanegate: list held legs in lane %d: %v", laneID, err)
 		return nil
 	}
+	var advanced []int64
 	for _, parentID := range parents {
-		if err := d.AdvanceCompoundOrder(parentID); err != nil {
+		dispatched := false
+		if err := d.advanceCompound(parentID, &dispatched); err != nil {
 			log.Printf("lanegate: re-drive compound %d after lane %d cleared: %v", parentID, laneID, err)
 		}
+		if dispatched {
+			advanced = append(advanced, parentID)
+		}
 	}
-	return parents
+	return advanced
 }
 
 // EvaluateLaneReleases runs one release pass over the GROUP the lane stands in

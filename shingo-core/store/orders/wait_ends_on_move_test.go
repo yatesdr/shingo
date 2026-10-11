@@ -85,3 +85,35 @@ func TestWaitEndsWhenTheOrderMoves(t *testing.T) {
 		t.Errorf("released order still carries its station wait: reason=%q code=%q cause=%q", r, c, k)
 	}
 }
+
+// TestF1Pin_AWaitIndexAdvanceEndsTheWaitItLeft — DECISIONS D27 F1
+// (TRACE-floor-releases.md (a)). Leaving a wait ends it as much as a status move
+// does (waitEndsSQL's rule), and the wait_index write is what leaves it.
+// appendSegmentAndAdvance writes wait_index one statement before
+// lifecycle.Release clears the cause, so for that one write a lane waiter
+// carried the station wait's `station-wait` and a floor pass in the gap
+// recorded it under that cause (c2b orders 451 and 514; c-after 220 and 753).
+// The advance clears the columns in the same statement, +0.
+func TestF1Pin_AWaitIndexAdvanceEndsTheWaitItLeft(t *testing.T) {
+	t.Parallel()
+	d := testdb.Open(t)
+	db := d.DB
+
+	o := newPendingOrder("uuid-f1-wait-index")
+	testutil.MustNoErr(t, orders.Create(db, o), "create")
+	testutil.MustNoErr(t, orders.UpdateStatus(db, o.ID, string(protocol.StatusStaged), "at the station"), "→staged")
+	testutil.MustNoErr(t, orders.SetQueueDetail(db, o.ID,
+		"Waiting for partner robot", string(protocol.QueueWaitingForPartner), "station-wait"), "the station wait")
+
+	testutil.MustNoErr(t, orders.UpdateWaitIndex(db, o.ID, 1), "advance to the lane wait")
+
+	got, err := orders.Get(db, o.ID)
+	testutil.MustNoErr(t, err, "reload")
+	if got.WaitIndex != 1 {
+		t.Fatalf("wait_index = %d, want 1", got.WaitIndex)
+	}
+	if got.QueueReason != "" || got.QueueCode != "" || got.QueueCause != "" {
+		t.Errorf("the order left wait 0 still carrying its wait: reason=%q code=%q cause=%q — a lane "+
+			"waiter labelled with the station wait it already left", got.QueueReason, got.QueueCode, got.QueueCause)
+	}
+}

@@ -77,14 +77,24 @@ func TestFloor_LeavesADigLegThatHasNotLiftedAlone(t *testing.T) {
 	after, err = db.GetOrder(leg.ID)
 	testutil.MustNoErr(t, err, "reload the leg")
 	// The pass frees the leg and then the dig's next leg, which the first leg's
-	// drive-out lets in; one record each.
-	if freed == 0 || after.DeliveryNode != park.Name || appendsTo(backend, leg.VendorOrderID) != base+1 {
+	// drive-out lets in.
+	//
+	// CONVERTED (DECISIONS D27 R1): the freeing is asserted on the leg's state,
+	// not on the record. The leg became a waiter at the lift, after the previous
+	// pass (which rightly left the driving leg out), so the floor frees it
+	// unrecorded: born this interval. It records only a waiter the previous pass
+	// already left waiting.
+	if after.DeliveryNode != park.Name || appendsTo(backend, leg.VendorOrderID) != base+1 {
 		t.Fatalf("a lifted dig leg whose release went missing was not freed by the floor: freed %d, "+
 			"destination %q (want %s), %d tail append(s)", freed, after.DeliveryNode, park.Name,
 			appendsTo(backend, leg.VendorOrderID)-base)
 	}
-	if recs := floorReleaseRecords(t, db); len(recs) != freed {
-		t.Errorf("floor records = %d, want one for each of the %d order(s) it freed", len(recs), freed)
+	recs := floorReleaseRecords(t, db)
+	if len(recs) != freed {
+		t.Errorf("floor records = %d, want one for each of the %d it reported", len(recs), freed)
+	}
+	if n := floorRecords(t, db, leg.ID); n != 0 {
+		t.Errorf("the floor recorded %d release(s) of the leg no previous pass saw waiting (R1)", n)
 	}
 }
 

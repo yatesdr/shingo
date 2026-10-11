@@ -91,6 +91,14 @@ func TestFloor_WakesAQuiescedPlantAndRecordsTheDefect(t *testing.T) {
 		t.Fatalf("the dweller already has %d tail append(s) — it is not dwelling", n)
 	}
 
+	// CONVERTED (DECISIONS D27 R1): a floor pass while the dig still holds the
+	// lane, so the dweller is in the previous pass's snapshot when the lock
+	// drops. The floor records only a waiter a pass already left waiting; one it
+	// first sees releasable is freed unrecorded (born this interval).
+	if freed := d.SweepLaneWaiters(); freed != 0 {
+		t.Fatalf("the held pass reported %d release(s); the dig still holds the lane", freed)
+	}
+
 	// ── THE PLANT QUIESCES. The lock drops and NOTHING is emitted. ──
 	d.laneLock.Unlock(lane.ID, digger.ID)
 
@@ -255,5 +263,32 @@ func TestFloorRefreshesCauseBeforeRedrive(t *testing.T) {
 	if other[0].cause != CauseStationWait {
 		t.Errorf("cause = %q for a waiter on another lane, want it untouched (%q)",
 			other[0].cause, CauseStationWait)
+	}
+}
+
+// TestF1Pin_AFloorRecordChecksTheCauseBelongsToTheWaitersPopulation — DECISIONS
+// D27 F1's belt (TRACE-floor-releases.md (a)). The floor can only reach a lane
+// wait (waitingAtLane), yet it printed station-wait's releaser sentence ("Core
+// does not advance this one ... a floor here would send a robot into a working
+// cell") for a gate-staged waiter carrying the stale cause of the station wait
+// it had just left. A cause whose releaser row does not list the waiter's
+// population is named as such, not explained by the wrong sentence.
+func TestF1Pin_AFloorRecordChecksTheCauseBelongsToTheWaitersPopulation(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
+	order := testdb.CreateOrder(t, db)
+
+	d.recordFloorRelease(floorWaiter{orderID: order.ID, laneID: 7, pop: PopGateStaged, cause: CauseStationWait})
+
+	records := floorReleaseRecords(t, db)
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want 1", len(records))
+	}
+	if strings.Contains(records[0], "Core does not advance this one") {
+		t.Errorf("a gate-staged waiter's record carries the station wait's releaser sentence:\n  %s", records[0])
+	}
+	if !strings.Contains(records[0], "cause from another population") {
+		t.Errorf("the record does not name the population mismatch:\n  %s", records[0])
 	}
 }

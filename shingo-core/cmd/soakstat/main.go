@@ -1940,11 +1940,22 @@ func checkFloorReleaseHistogram(db *store.DB) []string {
 			// refusals logged against it while the same line fired 77 times for
 			// others), and the old wording sent the reader hunting an arm that did
 			// not exist. Same split the floor's own record now makes.
+			//
+			// AND A THIRD READING, NOT A DEFECT (DECISIONS D27 R1;
+			// TRACE-floor-releases.md): the waiter was born this interval and the
+			// event that made it one was in flight, milliseconds behind the floor's
+			// tick (orders 62, 263, 581). Since R1 the floor records only a waiter
+			// the previous pass already left waiting, so a row from an R1 Core is
+			// not this; a row from an older Core may be.
 			out = append(out, fmt.Sprintf("FLOOR-RELEASE (blank cause): %d order(s) freed by the "+
-				"floor with NO cause on the row. TWO possible defects: an arm refused them "+
-				"without calling setQueueReason, OR nothing ever evaluated them and the missing "+
-				"EVENT is the defect. Check the log for a refusal naming the order — no refusal "+
-				"means the second. Not an inventory gap either way", n))
+				"floor with NO cause on the row. Three readings: (a) an arm refused them "+
+				"without calling setQueueReason; (b) nothing ever evaluated them and the missing "+
+				"EVENT is the defect; (c) born this interval, event in flight: the waiter was "+
+				"milliseconds old and its event was behind the floor's tick (not a defect; an R1 "+
+				"Core no longer records these). Check the log for a refusal naming the order — no "+
+				"refusal means (b) or (c); a second \"advancing compound … step N\", a `complex "+
+				"release` or a `transit:` line within ~100 ms before the floor line means (c). Not "+
+				"an inventory gap either way", n))
 		default:
 			out = append(out, fmt.Sprintf("FLOOR-RELEASE: %d order(s) freed by the periodic floor "+
 				"under cause %s — an event should have done this; see causeReleasers for which",

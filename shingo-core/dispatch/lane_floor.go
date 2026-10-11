@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"slices"
 
 	"shingo/protocol"
 	"shingocore/store/orders"
@@ -72,6 +73,9 @@ type floorWaiter struct {
 	// whole rather than field by field because any one of them moving means the
 	// pass did something.
 	state string
+	// key is the waiting state as the snapshot read it, before any cause
+	// refresh: what the next pass compares against (R1).
+	key floorKey
 }
 
 func waiterState(o *orders.Order) string {
@@ -101,8 +105,9 @@ func (d *Dispatcher) refreshWaiterCauses(waiters []floorWaiter, laneID int64) {
 	}
 }
 
-// SweepLaneWaiters is one floor pass. Returns the number of orders it FREED,
-// which is the number of defect records it wrote.
+// SweepLaneWaiters is one floor pass. Returns the number of defect records it
+// wrote: the orders it freed that the previous pass had already left waiting
+// (R1, below). It frees every waiter it can either way.
 //
 // A pass that frees nobody is the expected outcome and says nothing at all —
 // see recordFloorRelease for why that silence is load-bearing.
@@ -120,6 +125,9 @@ func (d *Dispatcher) SweepLaneWaiters() int {
 		return 0
 	}
 	if len(before) == 0 {
+		d.floorSeenMu.Lock()
+		d.floorSeen = nil // nothing waits, so nothing waited across this pass
+		d.floorSeenMu.Unlock()
 		return 0
 	}
 
@@ -181,6 +189,25 @@ func (d *Dispatcher) SweepLaneWaiters() int {
 		}
 	}
 
+	// A WAITER BORN SINCE THE PREVIOUS PASS IS NOT A MISSED EVENT (DECISIONS D27
+	// R1, ruled 2026-10-10). All seven traced floor releases (TRACE-floor-
+	// releases.md) were this tick landing 5-60 ms after an order became a waiter,
+	// ahead of the event that made it one and was already on its way; the event
+	// and the floor run the same evaluator, so whoever goes first is right and
+	// only the record was wrong. So the floor still frees every waiter it finds
+	// (liveness unchanged, and no age threshold: it decides nothing), and writes
+	// the defect row only for a waiter whose same waiting state (order, its
+	// status|wait index|vendor tuple, cause) the previous pass left waiting: it
+	// waited a whole interval and nothing freed it. Cost: a missed event on a
+	// waiter that was releasable at first sight is freed unrecorded, and one on
+	// a waiter that was held shows one tick later. +0 statements (the previous
+	// pass's after-reads, kept in memory). Pin:
+	// TestR1Pin_AWaiterBornSinceThePreviousPassIsNotAMissedEvent.
+	d.floorSeenMu.Lock()
+	seen := d.floorSeen
+	d.floorSeenMu.Unlock()
+	still := make(map[floorKey]bool, len(before))
+
 	freed := 0
 	for _, w := range before {
 		after, gErr := d.db.GetOrder(w.orderID)
@@ -191,7 +218,10 @@ func (d *Dispatcher) SweepLaneWaiters() int {
 			continue
 		}
 		if waiterState(after) == w.state {
-			continue // still waiting — the ordinary case, and it is silent
+			// still waiting — the ordinary case, and it is silent. Remembered under
+			// the cause it carries now, the one the next pass's snapshot reads.
+			still[floorKey{w.orderID, w.state, QueueCause(after.QueueCause)}] = true
+			continue
 		}
 		owned := mine[w.orderID]
 		if w.pop == PopCompoundLeg && after.ParentOrderID != nil {
@@ -200,10 +230,25 @@ func (d *Dispatcher) SweepLaneWaiters() int {
 		if !owned {
 			continue // an event released it while this pass ran: not the floor's
 		}
+		if !seen[w.key] {
+			continue // born since the previous pass: its event was in flight (R1)
+		}
 		d.recordFloorRelease(w)
 		freed++
 	}
+	d.floorSeenMu.Lock()
+	d.floorSeen = still
+	d.floorSeenMu.Unlock()
 	return freed
+}
+
+// floorKey is one waiter's waiting state as a floor pass saw it (R1): the
+// order, its waiterState tuple (status, wait index, vendor order) and its
+// cause.
+type floorKey struct {
+	orderID int64
+	state   string
+	cause   QueueCause
 }
 
 // sweepStrandedHandoffs gives maybeReleaseStrandedHandoff the level-triggered
@@ -266,6 +311,7 @@ func (d *Dispatcher) laneWaiters() ([]floorWaiter, error) {
 		out = append(out, floorWaiter{
 			orderID: c.ID, laneID: w.WaitLane, pop: PopGateStaged,
 			cause: QueueCause(c.QueueCause), state: waiterState(c.Order),
+			key: floorKey{c.ID, waiterState(c.Order), QueueCause(c.QueueCause)},
 		})
 	}
 
@@ -278,6 +324,7 @@ func (d *Dispatcher) laneWaiters() ([]floorWaiter, error) {
 		out = append(out, floorWaiter{
 			orderID: l.OrderID, laneID: l.LaneID, pop: PopCompoundLeg,
 			cause: QueueCause(l.QueueCause), state: l.State,
+			key: floorKey{l.OrderID, l.State, QueueCause(l.QueueCause)},
 		})
 	}
 	return out, nil
@@ -475,6 +522,17 @@ func (d *Dispatcher) recordFloorRelease(w floorWaiter) {
 	case !ok:
 		should = "no releaser is on file for this cause — the releaser inventory has no row for it, " +
 			"which is itself the defect"
+	case !slices.Contains(r.populations, w.pop):
+		// A CAUSE FROM ANOTHER POPULATION IS A STALE LABEL, not this wait's
+		// reason, and its releaser sentence would describe a different wait. The
+		// floor reaches only lane waits (waitingAtLane, held legs), yet it printed
+		// station-wait's "Core does not advance this one ... a robot into a
+		// working cell" for a gate-staged waiter still carrying the station wait
+		// it had just left (DECISIONS D27 F1; the wait_index write now clears it,
+		// this is the belt).
+		should = fmt.Sprintf("the row carried a cause from another population (%q is a wait of %v, "+
+			"this waiter is %s): a stale label left by the wait before this one, not why this one "+
+			"waited. Read it as a blank cause", w.cause, r.populations, w.pop)
 	case r.finding != "":
 		should = r.finding
 	case r.what != "":

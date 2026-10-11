@@ -461,8 +461,17 @@ func UpdateStatusFromWithReasonTx(tx *sql.Tx, id int64, from, to, detail, code, 
 
 // UpdateWaitIndex increments the wait_index for a complex order after
 // releasing one wait segment.
+//
+// LEAVING A WAIT ENDS IT, so the advance clears the live wait columns in the
+// same statement (waitEndsSQL's rule: the columns say what the order waits for
+// NOW). appendSegmentAndAdvance writes this one statement before
+// lifecycle.Release clears the cause, and for that one write a lane waiter
+// read as the station wait it had left: a floor pass in the gap recorded it
+// under `station-wait` (DECISIONS D27 F1; TestF1Pin_AWaitIndexAdvanceEndsTheWaitItLeft).
+// The next wait's own refusal writes its own cause. +0 statements.
 func UpdateWaitIndex(db *sql.DB, id int64, waitIndex int) error {
-	_, err := db.Exec(`UPDATE orders SET wait_index=$1, updated_at=$3 WHERE id=$2`,
+	_, err := db.Exec(`UPDATE orders SET wait_index=$1, updated_at=$3,
+		queue_reason='', queue_code=NULL, queue_cause=NULL WHERE id=$2`,
 		waitIndex, id, clock.Now().UTC())
 	return err
 }

@@ -781,6 +781,16 @@ func (d *Dispatcher) failDisplacedByHand(displaced []store.DisplacedByHand) {
 
 // AdvanceCompoundOrder dispatches the next pending child order in a compound sequence.
 func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
+	return d.advanceCompound(parentOrderID, nil)
+}
+
+// advanceCompound is AdvanceCompoundOrder reporting, through dispatched (nil
+// for a caller that does not ask), whether THIS call handed a leg to the
+// fleet. A lost status CAS, a refusal, a hold and a chapter end all leave it
+// false. The floor asks (redriveHeldCompoundLegs): it records a held leg as
+// its own release only when its own call dispatched one, and order 263 lost
+// the CAS and was recorded anyway (DECISIONS D27 F2).
+func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) error {
 	// THE SIBLING-IN-FLIGHT GUARD IS GONE. It used to refuse to advance while any
 	// sibling was non-pending and non-terminal, and it was carrying two
 	// properties fused into one condition:
@@ -855,7 +865,7 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		if err := d.db.FailOrderAtomic(next.ID, "missing source node"); err != nil {
 			log.Printf("dispatch: atomic fail child order %d: %v", next.ID, err)
 		}
-		return d.AdvanceCompoundOrder(parentOrderID)
+		return d.advanceCompound(parentOrderID, dispatched)
 	}
 
 	// THE SAME THREE-WAY SPLIT the reshuffle planners make (read_vs_missing.go),
@@ -878,7 +888,7 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		if dbErr := d.db.FailOrderAtomic(next.ID, configFailure("source node", next.SourceNode)); dbErr != nil {
 			log.Printf("dispatch: atomic fail child order %d: %v", next.ID, dbErr)
 		}
-		return d.AdvanceCompoundOrder(parentOrderID)
+		return d.advanceCompound(parentOrderID, dispatched)
 	}
 
 	// THE DESTINATION READ IS SKIPPED WHEN THERE IS NO DESTINATION YET. A
@@ -901,7 +911,7 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			if dbErr := d.db.FailOrderAtomic(next.ID, configFailure("delivery node", next.DeliveryNode)); dbErr != nil {
 				log.Printf("dispatch: atomic fail child order %d: %v", next.ID, dbErr)
 			}
-			return d.AdvanceCompoundOrder(parentOrderID)
+			return d.advanceCompound(parentOrderID, dispatched)
 		}
 	}
 	destName := ""
@@ -1098,7 +1108,7 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			if dbErr := d.db.FailOrderAtomic(next.ID, configFailure("dwell slot", next.SourceNode)); dbErr != nil {
 				log.Printf("dispatch: atomic fail child order %d: %v", next.ID, dbErr)
 			}
-			return d.AdvanceCompoundOrder(parentOrderID)
+			return d.advanceCompound(parentOrderID, dispatched)
 		}
 		var swf *StatusWriteFailed
 		if errors.As(err, &swf) {
@@ -1124,6 +1134,10 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			return nil
 		}
 		d.parkLegOnFleetRefusal(parentOrderID, next, destNode, err)
+		return nil
+	}
+	if dispatched != nil {
+		*dispatched = true
 	}
 	return nil
 }

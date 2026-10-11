@@ -483,14 +483,17 @@ linters:
         text: "Function 'Pick' has too many statements"
         linters:
           - funlen
-      # AdvanceCompoundOrder: permanent until the north-star unification (owner decision D6)
+      # advanceCompound: permanent until the north-star unification (owner decision D6)
+      # (AdvanceCompoundOrder's body, renamed 2026-10-11 so the floor's re-drive can
+      # ask whether its own call dispatched a leg: C2c DECISIONS D27 F2, +4
+      # statements, 74 to 78. The exemption moved with the body by name, on purpose.)
       # Owner decision D6 funds the chapter-close extraction only; the dispatch
       # half waits for the north-star unification. That cut landed on
       # 2026-08-19 and took this function from 136 statements to 74. The rest
       # is the dispatch half and its four recursion sites, which are deferred
       # by D6 — do not clear this entry by refactoring on your own judgement.
       - path: "shingo-core/dispatch/compound\\.go"
-        text: "Function 'AdvanceCompoundOrder' has too many statements"
+        text: "Function 'advanceCompound' has too many statements"
         linters:
           - funlen
       # computeCarriers: pinnable

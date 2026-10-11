@@ -77,6 +77,13 @@ type Dispatcher struct {
 	// production; set directly by tests in this package.
 	floorPassHook func()
 
+	// floorSeen is what the previous lane floor pass left waiting (DECISIONS D27
+	// R1): the floor records a release only for a waiter whose same waiting
+	// state was already in it. In memory, so +0 statements; a restart forgets
+	// it and the first pass after records nothing. See SweepLaneWaiters.
+	floorSeenMu sync.Mutex
+	floorSeen   map[floorKey]bool
+
 	// preHandHook is a test-only seam fired just before a hand is acquired
 	// (commitToFleet → acquireHand), with the order's id. Nil in production; set
 	// via SetPreHandHook to put a second dispatcher inside the window deterministically.
