@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/lockcheck"
+	"shingoedge/internal/lockorder"
 	"shingoedge/release"
 	storeorders "shingoedge/store/orders"
 )
@@ -279,7 +281,7 @@ func (e *Engine) heldIntentLegs(nodeID int64) []heldIntent {
 
 // intentQueue is the worker's deduplicated node queue.
 type intentQueue struct {
-	mu      sync.Mutex
+	mu      lockcheck.Mutex[lockorder.IntentQueue]
 	order   []int64
 	why     map[int64]string
 	running bool          // a worker goroutine drains it
@@ -290,20 +292,20 @@ type intentQueue struct {
 // and the count of acts in flight on this goroutine's behalf: a wake raised
 // inside an act is drained when the act ends, never under its lock.
 type nodeLocks struct {
-	mu       sync.Mutex
-	locks    map[int64]*sync.Mutex
+	mu       lockcheck.Mutex[lockorder.NodeLocks]
+	locks    map[int64]*lockcheck.Mutex[lockorder.Node]
 	inFlight int
 }
 
-func (e *Engine) nodeLock(nodeID int64) *sync.Mutex {
+func (e *Engine) nodeLock(nodeID int64) *lockcheck.Mutex[lockorder.Node] {
 	e.relLocks.mu.Lock()
 	defer e.relLocks.mu.Unlock()
 	if e.relLocks.locks == nil {
-		e.relLocks.locks = map[int64]*sync.Mutex{}
+		e.relLocks.locks = map[int64]*lockcheck.Mutex[lockorder.Node]{}
 	}
 	l := e.relLocks.locks[nodeID]
 	if l == nil {
-		l = &sync.Mutex{}
+		l = &lockcheck.Mutex[lockorder.Node]{}
 		e.relLocks.locks[nodeID] = l
 	}
 	return l
@@ -314,7 +316,7 @@ func (e *Engine) nodeLock(nodeID int64) *sync.Mutex {
 func (e *Engine) lockNodes(nodeIDs []int64) func() {
 	ids := append([]int64(nil), nodeIDs...)
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	var held []*sync.Mutex
+	var held []*lockcheck.Mutex[lockorder.Node]
 	seen := map[int64]bool{}
 	for _, id := range ids {
 		if seen[id] {
@@ -325,20 +327,31 @@ func (e *Engine) lockNodes(nodeIDs []int64) func() {
 		l.Lock()
 		held = append(held, l)
 	}
-	e.relLocks.mu.Lock()
-	e.relLocks.inFlight++
-	e.relLocks.mu.Unlock()
+	e.sectionBegins()
 	return func() {
 		for i := len(held) - 1; i >= 0; i-- {
 			held[i].Unlock()
 		}
-		e.relLocks.mu.Lock()
-		e.relLocks.inFlight--
-		idle := e.relLocks.inFlight == 0
-		e.relLocks.mu.Unlock()
-		if idle {
-			e.drainIntentsInline()
-		}
+		e.sectionEnds()
+	}
+}
+
+// sectionBegins counts a section under node or cell locks in flight, so a wake
+// raised inside it is not drained on its goroutine (wakeIntents).
+func (e *Engine) sectionBegins() {
+	e.relLocks.mu.Lock()
+	e.relLocks.inFlight++
+	e.relLocks.mu.Unlock()
+}
+
+// sectionEnds ends one, and drains the wakes it held back once none is left.
+func (e *Engine) sectionEnds() {
+	e.relLocks.mu.Lock()
+	e.relLocks.inFlight--
+	idle := e.relLocks.inFlight == 0
+	e.relLocks.mu.Unlock()
+	if idle {
+		e.drainIntentsInline()
 	}
 }
 

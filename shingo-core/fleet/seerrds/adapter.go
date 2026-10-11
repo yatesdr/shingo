@@ -4,13 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingocore/fleet"
 	"shingocore/rds"
 
 	"github.com/google/uuid"
+	"shingo/protocol/lockcheck"
+	"shingocore/internal/lockorder"
 )
 
 // Config holds the configuration for creating a Seer RDS adapter.
@@ -35,7 +37,7 @@ type Adapter struct {
 	// GetRobotsStatus. Read by any goroutine via GetSceneState, written only
 	// by the robot poll — a mutex rather than the poll's own goroutine
 	// discipline, because the readers are HTTP handlers.
-	sceneMu    sync.RWMutex
+	sceneMu    lockcheck.RWMutex[lockorder.SeerScene]
 	sceneState fleet.SceneState
 	// sceneSeen is false until the first envelope lands. Kept as its own
 	// flag rather than inferred from a zero value, because every field of

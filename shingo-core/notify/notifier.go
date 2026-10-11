@@ -3,13 +3,15 @@ package notify
 import (
 	"fmt"
 	"log"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 
+	"shingo/protocol/lockcheck"
 	"shingocore/config"
+	"shingocore/internal/lockorder"
 )
 
 type Notifier struct {
-	mu  sync.RWMutex
+	mu  lockcheck.RWMutex[lockorder.Notifier]
 	cfg *config.NotificationsConfig
 }
 

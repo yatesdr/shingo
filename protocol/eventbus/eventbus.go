@@ -3,7 +3,8 @@ package eventbus
 import (
 	"log"
 	"runtime/debug"
-	"sync"
+	"shingo/protocol/lockcheck"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 )
 
@@ -32,7 +33,7 @@ type subscriber[T comparable] struct {
 // Panics in subscribers are recovered and logged, preventing one misbehaving
 // subscriber from crashing the process.
 type Bus[T comparable] struct {
-	mu          sync.RWMutex
+	mu          lockcheck.RWMutex[lockcheck.EventBus]
 	subscribers []subscriber[T]
 	nextID      SubscriberID
 }

@@ -55,7 +55,9 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
 	"shingocore/config"
+	"shingocore/internal/lockorder"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -819,7 +821,7 @@ func OpenWithConfig(t testing.TB) (*store.DB, *config.DatabaseConfig) {
 
 // wedgeSweepOff records the tests that build the pointer wedge on purpose.
 var (
-	wedgeSweepMu  sync.Mutex
+	wedgeSweepMu  lockcheck.Mutex[lockorder.TestWedgeSweep]
 	wedgeSweepOff = map[string]bool{}
 )
 
@@ -889,7 +891,7 @@ func wedgeSweepDisabled(t testing.TB) bool {
 // on the same *store.DB. The entry is retired when the last test using it
 // finishes (see releaseShared), so a file's database never outlives the run.
 var (
-	sharedMu    sync.Mutex
+	sharedMu    lockcheck.Mutex[lockorder.TestShared]
 	sharedDBs   = map[string]*store.DB{}
 	sharedNames = map[string]string{} // key -> database name, for the drop
 	sharedCfgs  = map[string]*config.DatabaseConfig{}

@@ -592,11 +592,16 @@ func TakeSoftHolds(tx *sql.Tx, binID, takerID int64, note HolderNote) (handPlace
 		handPlaced bool
 		pointsHere bool
 	}
+	// The holders' order rows are locked here, before their promises are deleted
+	// below: a terminalize takes an order row, then its reservations, and a take
+	// that deleted the promise first and wrote the order after deadlocked with it
+	// (LOCKS.md §3). Ordered by id, so two takes lock holders in one order too.
 	rows, err := tx.Query(`SELECT r.order_id, o.status, COALESCE(o.origin_class,''), COALESCE(o.bin_id,0)
 		FROM reservations r
 		JOIN orders o ON o.id = r.order_id
 		WHERE r.bin_id=$1 AND r.resource_kind='bin' AND r.state=$2 AND r.order_id <> $3
-		ORDER BY r.order_id`, binID, string(reservations.StatePending), takerID)
+		ORDER BY r.order_id
+		FOR UPDATE OF o`, binID, string(reservations.StatePending), takerID)
 	if err != nil {
 		return nil, fmt.Errorf("read soft holds on bin %d: %w", binID, err)
 	}
@@ -837,11 +842,17 @@ func takeSlotTx(tx *sql.Tx, nodeID, takerID, named int64, note HolderNote, mode 
 	onlyTag, reservedBy string) (int64, error) {
 	var holder int64
 	var status string
+	// THE HOLDER'S ORDER ROW IS LOCKED BEFORE ITS SLOT ROW (OF o, r: Postgres
+	// takes a statement's row locks in the order its FOR UPDATE list names them).
+	// The take writes that order row below, and a terminalize takes the same two
+	// rows order first (TerminalizeOrderWithReason, then ReleaseByOrder): locked
+	// the other way round, a take and a terminalize of one holder each waited for
+	// the other until Postgres aborted one (LOCKS.md §3).
 	err := tx.QueryRow(`SELECT r.order_id, o.status FROM reservations r JOIN orders o ON o.id = r.order_id
 		WHERE r.node_id = $1 AND r.resource_kind = 'slot' AND r.state = $2 AND r.order_id <> $3
 		  AND `+orders.AwaitingFleetSQL("o")+`
 		  AND ($4::text = '' OR COALESCE(r.reserved_by, '') = $4::text)
-		FOR UPDATE OF r`, nodeID, string(reservations.StatePending), takerID, onlyTag).Scan(&holder, &status)
+		FOR UPDATE OF o, r`, nodeID, string(reservations.StatePending), takerID, onlyTag).Scan(&holder, &status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNoSlotTake
 	}

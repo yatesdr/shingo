@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
 	"shingo/protocol/types"
 	"shingoedge/config"
+	"shingoedge/internal/lockorder"
 	"shingoedge/store"
 	"shingoedge/store/counters"
 )
@@ -52,7 +54,7 @@ type ManagedPLC struct {
 	Vendor      string // from status-change
 	Values      map[string]TagValue
 	Health      *PLCHealth // nil until first health event
-	mu          sync.RWMutex
+	mu          lockcheck.RWMutex[lockorder.ManagedPLC]
 }
 
 // newManagedPLC builds a PLC entry with a SAFE DEFAULT STATUS.
@@ -82,7 +84,7 @@ type DebugLogFunc = types.DebugLogFunc
 
 // Manager manages PLC data via WarLink HTTP polling or SSE and counter polling.
 type Manager struct {
-	mu      sync.RWMutex
+	mu      lockcheck.RWMutex[lockorder.PLCManager]
 	db      *store.DB
 	cfg     *config.Config
 	emitter EventEmitter

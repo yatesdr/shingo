@@ -22,10 +22,12 @@ import (
 	"context"
 	"database/sql"
 	"log"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
+	"shingocore/internal/lockorder"
 )
 
 const (
@@ -65,7 +67,7 @@ type routeKey struct {
 type Cache struct {
 	db *sql.DB
 
-	mu        sync.RWMutex
+	mu        lockcheck.RWMutex[lockorder.ETACache]
 	routes    map[routeKey]time.Duration
 	globalP70 time.Duration
 	updatedAt time.Time

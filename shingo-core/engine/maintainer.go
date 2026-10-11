@@ -3,14 +3,16 @@ package engine
 import (
 	"context"
 	"sort"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"github.com/google/uuid"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
 	"shingocore/dispatch"
+	"shingocore/internal/lockorder"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -113,7 +115,7 @@ type Maintainer struct {
 	interval time.Duration
 
 	// mu guards the snapshot ONLY. There is no episode state to guard.
-	mu       sync.Mutex
+	mu       lockcheck.Mutex[lockorder.Maintainer]
 	snapshot []MaintainerGroupState
 	ticks    int
 }

@@ -75,10 +75,12 @@ package dispatch
 
 import (
 	"fmt"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
+	"shingocore/internal/lockorder"
 )
 
 // FutilityKey is the tuple the detector counts on: the unit of work that
@@ -131,7 +133,7 @@ type FutilityDetector struct {
 	// default clock out from under a parallel test.
 	now func() time.Time
 
-	mu sync.Mutex
+	mu lockcheck.Mutex[lockorder.Futility]
 	// terminals holds the futile-terminal instants inside the window, per
 	// tuple. Bounded by (rate x window): the 07-21 cascade would hold ~484
 	// timestamps on one key. Keys are deleted when they empty.

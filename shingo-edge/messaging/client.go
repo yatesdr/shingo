@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 	"runtime/debug"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"sync/atomic"
 	"time"
 
@@ -13,8 +13,10 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/backoff"
+	"shingo/protocol/lockcheck"
 	"shingo/protocol/types"
 	"shingoedge/config"
+	"shingoedge/internal/lockorder"
 )
 
 // DebugLogFunc is a nil-safe debug logging function.
@@ -39,7 +41,7 @@ const writerBatchTimeout = 10 * time.Millisecond
 
 // Client is the Kafka messaging client.
 type Client struct {
-	mu         sync.RWMutex
+	mu         lockcheck.RWMutex[lockorder.MessagingClient]
 	cfg        *config.MessagingConfig
 	kafkaW     *kafkago.Writer
 	kafkaR     *kafkago.Reader

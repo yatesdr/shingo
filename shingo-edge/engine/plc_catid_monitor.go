@@ -7,10 +7,12 @@ import (
 	"log"
 	"strconv"
 	"strings"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
+	"shingo/protocol/lockcheck"
 	"shingoedge/domain"
+	"shingoedge/internal/lockorder"
 )
 
 // Auto-arm stability guard (B1). Before the monitor auto-STARTS a changeover on a
@@ -107,7 +109,7 @@ type catidMonitor struct {
 	// verify holds the open post-cutover verification watch per process (nil until
 	// the first cutover opens one). Guarded by mu, like states.
 	verify map[int64]*postCutoverVerify
-	mu     sync.Mutex
+	mu     lockcheck.Mutex[lockorder.CATIDMonitor]
 	// completeCutover is the seam for the auto-cutover fire, defaulting to
 	// eng.completeCutover (wired in startCatidMonitor); tests inject a spy.
 	// Invoked OUTSIDE cm.mu — gate/DB/Core work must not run under the tick lock.

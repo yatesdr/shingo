@@ -3,10 +3,12 @@ package engine
 import (
 	"fmt"
 	"sort"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/lockcheck"
+	"shingoedge/internal/lockorder"
 	"shingoedge/store"
 )
 
@@ -50,7 +52,7 @@ type feedHold struct {
 
 // feedBook is every held feed plus what the last ack said about Core.
 type feedBook struct {
-	mu   sync.Mutex
+	mu   lockcheck.Mutex[lockorder.Feeds]
 	held map[string]*feedHold
 	// coreSpeaksFeeds is true once an ack carried a Feeds map. Until then,
 	// and whenever an older Core answers, the Edge keeps its own timers.

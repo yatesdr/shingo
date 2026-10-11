@@ -2,8 +2,10 @@ package dispatch
 
 import (
 	"log"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 
+	"shingo/protocol/lockcheck"
+	"shingocore/internal/lockorder"
 	"shingocore/store/orders"
 )
 
@@ -63,7 +65,7 @@ const UngatedDigMarker = "dig proposal not gated by episode"
 // tallies: a tripwire reading, not a fact anything recovers from. The durable
 // evidence is the per-requester line.
 var ungatedDigTally struct {
-	mu sync.Mutex
+	mu lockcheck.Mutex[lockorder.UngatedDigTally]
 	n  int
 }
 

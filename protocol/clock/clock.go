@@ -5,7 +5,9 @@
 package clock
 
 import (
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
+
+	"shingo/protocol/lockcheck"
 	"time"
 )
 
@@ -62,7 +64,7 @@ func (r realTicker) Reset(d time.Duration) { r.t.Reset(d) }
 // wired through their constructors.
 
 var (
-	defaultMu sync.RWMutex
+	defaultMu lockcheck.RWMutex[lockcheck.ClockDefault]
 	defaultCl Clock = realClock{}
 )
 

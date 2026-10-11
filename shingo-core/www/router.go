@@ -6,16 +6,18 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/gorilla/sessions"
 
 	"shingo/protocol/debuglog"
+	"shingo/protocol/lockcheck"
 	"shingo/shared"
 	"shingocore/config"
 	"shingocore/engine"
+	"shingocore/internal/lockorder"
 )
 
 // Handlers holds dependencies for HTTP handlers.
@@ -55,7 +57,7 @@ type Handlers struct {
 	// configMu is the config page's one save mutex: held across the whole
 	// save (copy, validate, ping, write, swap). The save door is the only
 	// place Core writes its config file.
-	configMu sync.Mutex
+	configMu lockcheck.Mutex[lockorder.ConfigSave]
 	// pingDB checks a changed database section before the save writes it.
 	// nil (production) means HealthService().TestDatabase; the pins stub it.
 	pingDB func(config.DatabaseConfig) error

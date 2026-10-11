@@ -506,11 +506,22 @@ func waitParkedOnCellLock(t *testing.T, gid string, done <-chan error) {
 			if !strings.HasPrefix(g, header) {
 				continue
 			}
+			// The first function frame above the mutex is the request, past the
+			// lock's own wrappers (protocol/lockcheck in a guard build, cellLock).
 			lines := strings.Split(g, "\n")
-			for i := 0; i+2 < len(lines); i++ {
-				if strings.HasPrefix(lines[i], "sync.(*Mutex).Lock(") &&
-					strings.HasPrefix(lines[i+2], "shingoedge/engine.(*Engine).requestNodeFromClaim(") {
-					return
+			for i := range lines {
+				if !strings.HasPrefix(lines[i], "sync.(*Mutex).Lock(") {
+					continue
+				}
+				for _, l := range lines[i+1:] {
+					if strings.HasPrefix(l, "\t") || strings.HasPrefix(l, "shingo/protocol/lockcheck.") ||
+						strings.HasPrefix(l, "shingoedge/engine.cellLock.") {
+						continue
+					}
+					if strings.HasPrefix(l, "shingoedge/engine.(*Engine).requestNodeFromClaim(") {
+						return
+					}
+					break
 				}
 			}
 		}

@@ -1,6 +1,7 @@
 package clock
 
 import (
+	"shingo/protocol/lockcheck"
 	"sync"
 	"time"
 )
@@ -17,7 +18,7 @@ import (
 //
 // When speed = 1 a running clock behaves like Real(). Thread-safe.
 type SimClock struct {
-	mu          sync.Mutex
+	mu          lockcheck.Mutex[lockcheck.SimClock]
 	epoch       time.Time        // simulated start time
 	speed       float64          // EFFECTIVE time multiplier (the rate the clock actually advances; clamped to maxSpeed)
 	requested   float64          // last requested multiplier before clamping — for an honest "asked N×, running M×" readout
@@ -362,7 +363,7 @@ func (s *SimClock) NewTicker(d time.Duration) Ticker {
 
 type simTicker struct {
 	clk      *SimClock
-	mu       sync.Mutex
+	mu       lockcheck.Mutex[lockcheck.SimTimer]
 	baseDur  time.Duration // simulated interval between ticks; guarded by mu (Reset)
 	ch       chan time.Time
 	stop     chan struct{}

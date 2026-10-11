@@ -6,22 +6,24 @@ import (
 	"os"
 	"reflect"
 	"slices"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"gopkg.in/yaml.v3"
+	"shingo/protocol/lockcheck"
+	"shingoedge/internal/lockorder"
 )
 
 // Config is the top-level application configuration.
 type Config struct {
-	mu sync.RWMutex `yaml:"-"`
+	mu lockcheck.RWMutex[lockorder.Config] `yaml:"-"`
 
 	// saveMu is the ONE SAVE PATH's mutex (see LockSave). It is a different
 	// lock from mu: mu guards each read and write of a field, saveMu guards a
 	// whole copy → apply → validate → write → swap sequence, so two writers
 	// cannot interleave and write each other's old values back. Always taken
 	// BEFORE mu, never while holding it.
-	saveMu sync.Mutex `yaml:"-"`
+	saveMu lockcheck.Mutex[lockorder.ConfigSave] `yaml:"-"`
 
 	// StationUID is this edge's identity, minted by Core at enrollment. It is
 	// opaque, it never changes, and it is the value that travels as

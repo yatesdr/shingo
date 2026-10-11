@@ -3,10 +3,12 @@ package service
 import (
 	"fmt"
 	"log"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
+	"shingocore/internal/lockorder"
 	"shingocore/store"
 )
 
@@ -166,7 +168,7 @@ type BurialTally struct {
 // purpose: it is a reading aid, not a fact. The facts are the log lines, which
 // survive a restart because the journal does.
 type burialShadow struct {
-	mu    sync.Mutex
+	mu    lockcheck.Mutex[lockorder.BurialShadow]
 	tally BurialTally
 }
 

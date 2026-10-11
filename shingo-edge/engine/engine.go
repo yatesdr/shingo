@@ -27,9 +27,11 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingo/protocol/debuglog"
+	"shingo/protocol/lockcheck"
 	"shingo/protocol/types"
 	"shingoedge/config"
 	"shingoedge/domain"
+	"shingoedge/internal/lockorder"
 	"shingoedge/orders"
 	"shingoedge/plc"
 	"shingoedge/service"
@@ -72,7 +74,7 @@ type Engine struct {
 	// guards no data of its own and is held for a local write or one SELECT,
 	// never across a network call. Order: countMu before the accumulator's
 	// flush lock, everywhere.
-	countMu sync.Mutex
+	countMu lockcheck.Mutex[lockorder.Count]
 	// unheldTickLogged is the once-per-episode memory for a tick that is
 	// neither charged nor held because the seat holds another part's ticks
 	// (applyHoldAndReplay, DECISIONS D12): node -> "held|tick" parts already
@@ -132,24 +134,24 @@ type Engine struct {
 
 	coreClient  *CoreClient
 	coreNodes   map[string]protocol.NodeInfo
-	coreNodesMu sync.RWMutex
+	coreNodesMu lockcheck.RWMutex[lockorder.CoreNodes]
 	// coreNodeGroups is NGRP name → bare member names, retained from the
 	// "Group.Child" form Core qualifies group children with before
 	// SetCoreNodes strips it (see there). Rebuilt on every sync; read by the
 	// cell picture's dock strip. Guarded by coreNodesMu.
 	coreNodeGroups    map[string][]string
 	payloadBinTypes   []protocol.PayloadBinTypeInfo
-	payloadBinTypesMu sync.RWMutex
+	payloadBinTypesMu lockcheck.RWMutex[lockorder.PayloadBinTypes]
 	// The vendor map's own universe — see scene_graph.go. In-memory only and
 	// re-delivered on every node-list sync, like the catalog above.
 	scenePoints  []protocol.ScenePointInfo
 	sceneEdges   []protocol.SceneEdgeInfo
-	sceneGraphMu sync.RWMutex
+	sceneGraphMu lockcheck.RWMutex[lockorder.SceneGraph]
 	// The map's geometry — see scene_geometry.go. Replaced only by a complete
 	// response, unlike the two slices above; its own lock because the two
 	// caches change on different responses.
 	sceneGeometry   *domain.SceneGeometry
-	sceneGeometryMu sync.RWMutex
+	sceneGeometryMu lockcheck.RWMutex[lockorder.SceneGeometry]
 	// plantGeneration changes whenever a node-list response replaces the scene
 	// geometry or the NGRP membership. Read on every station poll to build the
 	// cell picture's version; see scene_geometry.go's PlantGeneration.

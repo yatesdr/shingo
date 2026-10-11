@@ -5,8 +5,10 @@ package simulator
 import (
 	"fmt"
 	"log"
+	"shingo/protocol/lockcheck"
+	"shingocore/internal/lockorder"
 	"strings"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"sync/atomic"
 )
 
@@ -43,7 +45,7 @@ const simLiftHeightLoaded = 0.06
 // position, the HTTP routes write fault and (by hand) deck, and status readers
 // read all of it.
 type robotState struct {
-	mu     sync.Mutex
+	mu     lockcheck.Mutex[lockorder.SimDeck]
 	known  map[string]bool   // every robot name ever minted — the set the toggles may name
 	loaded map[string]bool   // true = a bin is on the deck
 	fault  map[string]bool   // true = injected fault: IsError, takes no new order

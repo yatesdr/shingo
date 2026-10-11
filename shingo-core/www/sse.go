@@ -11,8 +11,10 @@ import (
 
 	"shingo/protocol/clock"
 	"shingo/protocol/eventbus"
+	"shingo/protocol/lockcheck"
 	"shingocore/dispatch/eta"
 	"shingocore/engine"
+	"shingocore/internal/lockorder"
 )
 
 // serverInstance is a per-process identifier emitted on the SSE
@@ -61,7 +63,7 @@ type sseClient struct {
 	// topics is the client's event-name filter; nil means "all events".
 	topics map[string]bool
 
-	mu sync.Mutex
+	mu lockcheck.Mutex[lockorder.SSEClient]
 	// coalesced holds the newest pending frame per coalescing topic. Writing
 	// an entry that already exists overwrites it, which is the coalescing.
 	coalesced map[string]SSEEvent
@@ -71,7 +73,7 @@ type sseClient struct {
 }
 
 type EventHub struct {
-	mu sync.RWMutex
+	mu lockcheck.RWMutex[lockorder.SSEHub]
 	// clients holds every subscriber. Each carries its own topic filter: a
 	// set of event names the client wants, nil meaning "all events". Topic
 	// filtering lets the dashboard SSE bus (shared/utils.js onSSE) request

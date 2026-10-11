@@ -3,9 +3,11 @@ package dispatch
 import (
 	"fmt"
 	"log"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 
 	"shingo/protocol"
+	"shingo/protocol/lockcheck"
+	"shingocore/internal/lockorder"
 	"shingocore/store"
 )
 
@@ -18,7 +20,7 @@ type ReplySender struct {
 	// watched collects the order.error replies sent for an envelope an
 	// in-process caller is waiting on (see Dispatcher.RefusalsFor). Keyed by
 	// envelope ID, the reply's correlation ID. Nothing on the wire changes.
-	watchMu sync.Mutex
+	watchMu lockcheck.Mutex[lockorder.ReplyWatch]
 	watched map[string]*[]protocol.OrderError
 }
 

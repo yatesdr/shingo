@@ -16,6 +16,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"shingo/protocol/lockcheck"
+	"shingoedge/internal/lockorder"
 )
 
 // buildVer is kept for any non-favicon cache-busting that wants a stable per-restart value.
@@ -75,7 +77,7 @@ type Handlers struct {
 	// Named claimSync* until 2026-07-21, when the retired SendClaimSync()
 	// no-op it also drove was deleted. Publishing plant-claims reports is now
 	// the only work on this signal.
-	specChangeMu      sync.Mutex
+	specChangeMu      lockcheck.Mutex[lockorder.SpecChange]
 	specChangePending map[int64]struct{}
 	specChangeAll     bool
 	// specChangeRefresh asks the loop to broadcast one material-refresh for

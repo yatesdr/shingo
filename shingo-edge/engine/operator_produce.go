@@ -3,9 +3,11 @@ package engine
 import (
 	"fmt"
 	"log"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 
 	"shingo/protocol"
+	"shingo/protocol/lockcheck"
+	"shingoedge/internal/lockorder"
 	ordermgr "shingoedge/orders"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -277,13 +279,41 @@ func (e *PrimeInFlightError) Advisory() bool { return true }
 // one physical cell serialises against the same lock — the in-flight count it
 // protects is itself scoped by delivery node, and a shared core node carries
 // many process_node rows for one slot.
-func (e *Engine) primeNodeLock(claim *processes.NodeClaim) *sync.Mutex {
+func (e *Engine) primeNodeLock(claim *processes.NodeClaim) cellLock {
 	key := ""
 	if claim != nil {
 		key = claim.CoreNodeName
 	}
-	m, _ := e.primeResv.LoadOrStore(key, &sync.Mutex{})
-	return m.(*sync.Mutex)
+	m, _ := e.primeResv.LoadOrStore(key, &lockcheck.Mutex[lockorder.Prime]{})
+	return cellLock{mu: m.(*lockcheck.Mutex[lockorder.Prime]), e: e}
+}
+
+// cellLock is a cell's prime lock. A section under it may create orders, and a
+// release wake raised there runs a release act, which takes node locks: nodes
+// rank before cells (internal/lockorder), so the wake is never drained under
+// the cell's lock. The section counts in flight, as a release act's does
+// (lockNodes); on a started Edge the intent worker drains every wake anyway.
+type cellLock struct {
+	mu *lockcheck.Mutex[lockorder.Prime]
+	e  *Engine
+}
+
+func (c cellLock) Lock() {
+	c.mu.Lock()
+	c.e.sectionBegins()
+}
+
+func (c cellLock) TryLock() bool {
+	if !c.mu.TryLock() {
+		return false
+	}
+	c.e.sectionBegins()
+	return true
+}
+
+func (c cellLock) Unlock() {
+	c.mu.Unlock()
+	c.e.sectionEnds()
 }
 
 // pairedPositionsInbound reports which of the claim's paired positions already

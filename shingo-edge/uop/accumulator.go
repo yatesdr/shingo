@@ -45,6 +45,8 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
+	"shingoedge/internal/lockorder"
 	"shingoedge/store"
 )
 
@@ -67,7 +69,7 @@ const (
 // only under mu; the running delta is read-and-zeroed atomically by
 // the flush goroutine and incremented in place by the record path.
 type binDeltaEntry struct {
-	mu          sync.Mutex
+	mu          lockcheck.Mutex[lockorder.UOPBin]
 	binID       int64
 	delta       int
 	payloadCode string
@@ -137,7 +139,7 @@ const flushedWindowsKeep = 24 * time.Hour
 // drains of the flush window, keyed by (core node, payload, state). It holds
 // no qty of its own; the flush reads the level (see flushBuckets).
 type bucketLevelEntry struct {
-	mu sync.Mutex
+	mu lockcheck.Mutex[lockorder.UOPBucket]
 	// nodeID is a local process node carrying the key, kept so a flush can
 	// resolve a core_node_name the mark did not carry.
 	nodeID       int64
@@ -185,7 +187,7 @@ type accumulator struct {
 	// flushMu serializes flush passes against each other (stop's final
 	// flush must not race with the periodic loop). recordBin /
 	// markBucket do not take this lock.
-	flushMu sync.Mutex
+	flushMu lockcheck.Mutex[lockorder.UOPFlush]
 
 	stopOnce sync.Once
 	stopCh   chan struct{}

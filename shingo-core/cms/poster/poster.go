@@ -40,11 +40,13 @@ import (
 	"fmt"
 	"math"
 	"runtime/debug"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
+	"shingo/protocol/lockcheck"
 	"shingocore/cms/client"
 	"shingocore/cms/wire"
+	"shingocore/internal/lockorder"
 	"shingocore/store/cms"
 )
 
@@ -102,7 +104,7 @@ type Poster struct {
 
 	wake chan struct{}
 
-	mu sync.Mutex
+	mu lockcheck.Mutex[lockorder.CMSPoster]
 	// muted stops the drain until a configuration change or a restart. Set on
 	// a credential fault ONLY: with a bad key every queued posting fails
 	// identically, and letting them all burn their attempts turns a five-minute

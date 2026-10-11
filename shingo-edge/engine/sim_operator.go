@@ -5,12 +5,14 @@ package engine
 import (
 	"context"
 	"errors"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
 	"shingoedge/config"
+	"shingoedge/internal/lockorder"
 	"shingoedge/release"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -61,7 +63,7 @@ type simOperator struct {
 	// field so tests can inject a stub (the default reads the node's claim).
 	classify func(nodeID int64) (delay time.Duration, label string, action func() error, ok bool)
 
-	mu         sync.Mutex
+	mu         lockcheck.Mutex[lockorder.SimOperator]
 	pending    map[int64]bool // nodes with a LOAD/CLEAR scheduled/in-flight (idempotence)
 	releasing  map[int64]bool // orders with a swap-ready release scheduled/in-flight
 	confirming map[int64]bool // delivered swap legs with a confirm scheduled/in-flight

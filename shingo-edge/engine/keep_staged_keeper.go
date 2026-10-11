@@ -320,7 +320,9 @@ func (e *Engine) keepSpotOnPickup(order *domain.Order, location string) {
 //
 // Under the cell's prime lock, taken with a wait: a refill lands from Core's
 // confirm on the messaging goroutine, never inside a section that holds a
-// cell's lock (those abort orders; they do not confirm them).
+// cell's lock. Those abort orders and do not confirm them, and a changeover
+// cancel's aborts do not reach the changeover's completion, which confirms
+// (handleOrphanedTaskOrderCompleted leaves the cancel's tasks alone).
 func (e *Engine) returnUnwantedLanding(ctx *orderCompletionCtx) {
 	o := ctx.order
 	keeper := ctx.Claim()

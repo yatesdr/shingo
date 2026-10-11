@@ -72,12 +72,14 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
 	"shingocore/dispatch"
+	"shingocore/internal/lockorder"
 	"shingocore/store/demands"
 )
 
@@ -156,7 +158,7 @@ type ThresholdMonitor struct {
 	// this order belong to" is half of what a fire decides.
 	fireHook func(b thresholdEntry, total int, reason, originID string)
 
-	mu sync.Mutex
+	mu lockcheck.Mutex[lockorder.ThresholdMonitor]
 	// debounce is the last-fired timestamp per place. An order batch is only
 	// created when now > debounce[key] + thresholdDebounceWindow.
 	debounce map[string]time.Time

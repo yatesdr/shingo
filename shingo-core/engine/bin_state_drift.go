@@ -1,9 +1,11 @@
 package engine
 
 import (
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 
+	"shingo/protocol/lockcheck"
 	"shingocore/dispatch"
+	"shingocore/internal/lockorder"
 	"shingocore/store/orders"
 )
 
@@ -56,7 +58,7 @@ const (
 // tripwire reading, not a fact anything recovers from. The durable evidence is
 // the per-order line, which carries the order, the bin, and both nodes.
 var destNodeDriftTally = struct {
-	mu     sync.Mutex
+	mu     lockcheck.Mutex[lockorder.DriftTally]
 	bySite map[string]int
 }{bySite: map[string]int{}}
 

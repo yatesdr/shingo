@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 
+	"shingo/protocol/lockcheck"
 	"shingoedge/domain"
+	"shingoedge/internal/lockorder"
 	"shingoedge/orders"
 	storeorders "shingoedge/store/orders"
 )
@@ -50,9 +52,9 @@ const manualSwapWindowSlots = 1
 // loaderBudgetLock returns the per-loader reservation mutex, creating it on first
 // use. Keyed by loader id so two loaders never
 // block each other — a slow burst on loader X can't stall loader Y.
-func (e *Engine) loaderBudgetLock(loaderID string) *sync.Mutex {
-	m, _ := e.loaderResv.LoadOrStore(loaderID, &sync.Mutex{})
-	return m.(*sync.Mutex)
+func (e *Engine) loaderBudgetLock(loaderID string) *lockcheck.Mutex[lockorder.LoaderBudget] {
+	m, _ := e.loaderResv.LoadOrStore(loaderID, &lockcheck.Mutex[lockorder.LoaderBudget]{})
+	return m.(*lockcheck.Mutex[lockorder.LoaderBudget])
 }
 
 // withLoaderBudget makes count→fire atomic for a loader. Under the loader's

@@ -3,6 +3,8 @@ package rds
 import (
 	"fmt"
 	"log"
+	"shingo/protocol/lockcheck"
+	"shingocore/internal/lockorder"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,7 +39,7 @@ type Poller struct {
 	interval time.Duration
 	DebugLog func(string, ...any)
 
-	mu     sync.Mutex
+	mu     lockcheck.Mutex[lockorder.RDSPoller]
 	active map[string]OrderState // rdsOrderID -> last known state
 	// blockStates tracks per-block state per active RDS order so we can
 	// fire EmitBlockCompleted on the FIRST transition into FINISHED for

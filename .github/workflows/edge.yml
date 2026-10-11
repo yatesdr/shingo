@@ -141,7 +141,7 @@ jobs:
 
       - name: Test (Docker integration)
         working-directory: shingo-edge
-        run: go test -tags=docker -timeout=10m -count=1 ./...
+        run: go test -tags=docker,lockcheck -timeout=10m -count=1 ./...
 
   docker-race:
     uses: ./.github/workflows/sharded-suite.yml

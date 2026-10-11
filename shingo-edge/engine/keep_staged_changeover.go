@@ -2,7 +2,6 @@ package engine
 
 import (
 	"sort"
-	"sync"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -178,7 +177,7 @@ func spotFlows(live []domain.Order, changes []spotChange, aborted map[int64]bool
 func (e *Engine) lockKeepStagedCells(lines []string) func() {
 	sorted := append([]string(nil), lines...)
 	sort.Strings(sorted)
-	var held []*sync.Mutex
+	var held []cellLock
 	for i, line := range sorted {
 		if i > 0 && line == sorted[i-1] {
 			continue

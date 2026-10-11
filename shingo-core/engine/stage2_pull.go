@@ -29,7 +29,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"shingo/protocol/lockcheck"
 	"shingocore/dispatch"
+	"shingocore/internal/lockorder"
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
@@ -47,21 +49,21 @@ const stage2Receipt = "core_s2_landed"
 // stage2Puller serializes pulls per pair and tracks the trigger goroutines so
 // Stop can wait for them. The zero value is ready.
 type stage2Puller struct {
-	mu      sync.Mutex
-	locks   map[int64]*sync.Mutex // keyed by stage-1 loader id
+	mu      lockcheck.Mutex[lockorder.Stage2Pulls]
+	locks   map[int64]*lockcheck.Mutex[lockorder.Stage2Pair] // keyed by stage-1 loader id
 	stopped bool
 	wg      sync.WaitGroup
 }
 
-func (p *stage2Puller) pairLock(stage1ID int64) *sync.Mutex {
+func (p *stage2Puller) pairLock(stage1ID int64) *lockcheck.Mutex[lockorder.Stage2Pair] {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.locks == nil {
-		p.locks = map[int64]*sync.Mutex{}
+		p.locks = map[int64]*lockcheck.Mutex[lockorder.Stage2Pair]{}
 	}
 	lk, ok := p.locks[stage1ID]
 	if !ok {
-		lk = &sync.Mutex{}
+		lk = &lockcheck.Mutex[lockorder.Stage2Pair]{}
 		p.locks[stage1ID] = lk
 	}
 	return lk

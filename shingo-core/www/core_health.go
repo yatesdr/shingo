@@ -24,11 +24,13 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
+	"shingocore/internal/lockorder"
 )
 
 // buildInfo is stamped once at boot by the composition root. Version and
@@ -36,7 +38,7 @@ import (
 // left at their defaults a binary cannot say which commit it is, which is what
 // made the five Springfield restarts on 2026-07-24 impossible to attribute.
 var buildInfo = struct {
-	mu      sync.RWMutex
+	mu      lockcheck.RWMutex[lockorder.BuildInfo]
 	version string
 	commit  string
 	bootAt  time.Time
@@ -56,7 +58,7 @@ func SetBuildInfo(version, commit string, bootAt time.Time) {
 // signal, and twelve samples is enough to see a slope. Persisting it would buy
 // nothing a restart-surviving trend could act on.
 var goroutineRing = struct {
-	mu     sync.Mutex
+	mu     lockcheck.Mutex[lockorder.GoroutineRing]
 	points []int
 }{}
 
@@ -75,7 +77,7 @@ const goroutineRingSize = 12
 // one wait across however many dashboards happen to be open, so two operators
 // watching the same Core would see different verdicts.
 var dbWaitGauge = struct {
-	mu         sync.Mutex
+	mu         lockcheck.Mutex[lockorder.DBWaitGauge]
 	started    bool
 	baseline   int64
 	baselineAt time.Time
@@ -90,7 +92,7 @@ const dbWaitWindow = 15 * time.Second
 // is a process-lifetime total, so reporting it raw would latch the verdict
 // degraded forever after a single bad afternoon.
 var expiredDropGauge = struct {
-	mu         sync.Mutex
+	mu         lockcheck.Mutex[lockorder.ExpiredDropGauge]
 	started    bool
 	baseline   int64
 	baselineAt time.Time

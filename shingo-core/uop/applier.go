@@ -7,13 +7,15 @@ import (
 	"fmt"
 	"log"
 	"strconv"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"sync/atomic"
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
 
+	"shingo/protocol/lockcheck"
+	"shingocore/internal/lockorder"
 	"shingocore/store"
 	"shingocore/store/audit"
 	"shingocore/store/bins"
@@ -136,7 +138,7 @@ type InventoryDeltaService struct {
 	// NOT keyed off bins.anomaly_at. That column is a latch: it is set on the
 	// first drop and stays set, so using it as the gate would suppress the
 	// repair forever after the first one.
-	repairedMu sync.Mutex
+	repairedMu lockcheck.Mutex[lockorder.UOPRepaired]
 	repaired   map[int64]repairedReply
 }
 

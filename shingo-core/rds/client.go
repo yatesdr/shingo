@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sync"
+	"shingo/protocol/lockcheck"
+	"shingocore/internal/lockorder"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 )
 
 type Client struct {
-	mu         sync.RWMutex
+	mu         lockcheck.RWMutex[lockorder.RDSClient]
 	baseURL    string
 	httpClient *http.Client
 	DebugLog   func(string, ...any)

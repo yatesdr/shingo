@@ -29,12 +29,14 @@ package engine
 
 import (
 	"fmt"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/eventbus"
+	"shingo/protocol/lockcheck"
 	"shingocore/dispatch"
+	"shingocore/internal/lockorder"
 	"shingocore/notify"
 	"shingocore/store/cms"
 )
@@ -485,15 +487,13 @@ func (e *Engine) wireEventHandlers() {
 	// further down, immediately after the handleBlockCompleted subscription,
 	// because it must observe the mouth row that handler releases. See there.
 
-	// Sync trigger on EventOrderQueued. The doors no longer emit it — each asks
-	// for its order's one acquire under the scan lock it holds (dispatch/door.go)
-	// — so what emits it is a caller outside any door that parked an order and
-	// wants the waiting set asked again at once (the carried-bin recovery's lane
-	// park). Synchronous, so its effect is observable on return. Untyped
-	// subscribe — handler doesn't read payload.
+	// A scan on EventOrderQueued. Nothing emits it today: the doors ask for their
+	// order's one acquire under the scan lock they hold (dispatch/door.go). A pass
+	// takes the scan lock, so it runs after the emitter, never on its goroutine
+	// (after.go): an emit under that lock would otherwise wait for itself.
 	e.Events.SubscribeTypes(func(Event) {
 		if e.fulfillment != nil {
-			e.fulfillment.RunOnce()
+			e.after.later(func() { e.fulfillment.RunOnce() })
 		}
 	}, EventOrderQueued)
 
@@ -598,26 +598,15 @@ func (e *Engine) wireEventHandlers() {
 	//     A `dispatched` push after them would walk the mirror backwards
 	//     (in_transit → dispatched); the ack walks it forward from `reshuffling`.
 	//   - `pending` never (an old Edge has no arm for it; PREDICTIONS-C1 §1.5).
+	// The acquire takes the scan lock, and a resume can be emitted under it (a lane
+	// gate's chapter end inside a pass), so the whole of it runs after the
+	// emitter (after.go).
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderResumedEvent]) {
-		ev := evt.Payload
 		if e.fulfillment == nil {
 			return
 		}
-		e.fulfillment.AcquireOne(ev.OrderID)
-		if ev.EdgeUUID == "" || ev.StationID == "" {
-			return
-		}
-		order, err := e.db.GetOrder(ev.OrderID)
-		if err != nil || order.StationUnaware || order.Status != protocol.StatusDispatched || !order.Coordinated {
-			return
-		}
-		if err := e.sendToEdge(protocol.TypeOrderUpdate, ev.StationID, &protocol.OrderUpdate{
-			OrderUUID: ev.EdgeUUID,
-			Status:    string(protocol.StatusDispatched),
-			Detail:    "reshuffle complete; parent dispatched",
-		}); err != nil {
-			e.logFn("engine: resume notification to edge for order %d: %v", ev.OrderID, err)
-		}
+		ev := evt.Payload
+		e.after.later(func() { e.resumeAcquire(ev) })
 	}, EventOrderResumed)
 
 	// ── UOP-threshold replenishment monitor ─────────────────────────────
@@ -627,8 +616,13 @@ func (e *Engine) wireEventHandlers() {
 	// messaging layer; bin updates land via this subscription so cell-side
 	// consume ticks and loader-side bin moves both re-evaluate.
 	if e.thresholdMonitor != nil {
+		// Both checks can fire a loader's refill, whose acquire takes the scan
+		// lock; a bin update or a complex door's OrderReceived can be emitted
+		// under it (a door, a pass's terminal event). So each runs after the
+		// emitter (after.go). The incident: carry-edge2, 21:29:34.
 		eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinUpdatedEvent]) {
-			e.thresholdMonitor.handleBinUpdated(evt.Payload)
+			ev := evt.Payload
+			e.after.later(func() { e.thresholdMonitor.handleBinUpdated(ev) })
 		}, EventBinUpdated)
 
 		// P2-C9 contradiction check: a manual swap request (a complex order —
@@ -638,7 +632,8 @@ func (e *Engine) wireEventHandlers() {
 		// stocked-ledger gate + per-payload throttle keep it quiet in normal ops.
 		eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderReceivedEvent]) {
 			if evt.Payload.OrderType == protocol.OrderTypeComplex {
-				e.thresholdMonitor.NoteSwapRequestContradiction(evt.Payload.PayloadCode)
+				payload := evt.Payload.PayloadCode
+				e.after.later(func() { e.thresholdMonitor.NoteSwapRequestContradiction(payload) })
 			}
 		}, EventOrderReceived)
 	}
@@ -688,10 +683,10 @@ func (e *Engine) wireEventHandlers() {
 		stationID string
 	}
 
-	var faultTimersMu sync.Mutex
+	var faultTimersMu lockcheck.Mutex[lockorder.FaultTimers]
 	faultTimers := make(map[int64]*time.Timer)
 
-	var faultSentMu sync.Mutex
+	var faultSentMu lockcheck.Mutex[lockorder.FaultSent]
 	faultSent := make(map[int64]faultSentInfo)
 
 	// 3 minutes = the buffer the comment below has described all along; the
@@ -797,11 +792,8 @@ func (e *Engine) wireEventHandlers() {
 			return
 		}
 
-		_ = e.notifier.SendWithHeaders(
-			subject,
-			notify.FaultClearedAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, robotID, timeFaulted),
-			opts...,
-		)
+		body := notify.FaultClearedAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, robotID, timeFaulted)
+		go func() { _ = e.notifier.SendWithHeaders(subject, body, opts...) }()
 	}, EventOrderFaultedRecovered)
 
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFailedEvent]) {
@@ -810,10 +802,8 @@ func (e *Engine) wireEventHandlers() {
 		}
 		ev := evt.Payload
 		robotID := lookupRobotID(e, ev.OrderID)
-		_ = e.notifier.Send(
-			notify.FailSubject(robotID),
-			notify.FailAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, ev.ErrorCode, ev.Detail, robotID),
-		)
+		subject, body := notify.FailSubject(robotID), notify.FailAlert(ev.OrderID, ev.EdgeUUID, ev.StationID, ev.ErrorCode, ev.Detail, robotID)
+		go func() { _ = e.notifier.Send(subject, body) }()
 	}, EventOrderFailed)
 
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, GraceExpiredEvent]) {
@@ -822,10 +812,8 @@ func (e *Engine) wireEventHandlers() {
 		}
 		ev := evt.Payload
 		robotID := lookupRobotID(e, ev.OrderID)
-		_ = e.notifier.Send(
-			notify.GraceExpiredSubject(),
-			notify.GraceExpiredAlert(ev.OrderID, ev.VendorOrderID, robotID),
-		)
+		body := notify.GraceExpiredAlert(ev.OrderID, ev.VendorOrderID, robotID)
+		go func() { _ = e.notifier.Send(notify.GraceExpiredSubject(), body) }()
 	}, EventGraceExpired)
 
 	// ── Lane-gate release evaluator ─────────────────────────────────────
@@ -885,5 +873,25 @@ func (e *Engine) pushQueueReason(orderID int64, edgeUUID, stationID string, anno
 		QueueCode:   order.QueueCode,
 	}); err != nil {
 		e.logFn("engine: queue_reason update to edge: %v", err)
+	}
+}
+
+// resumeAcquire is a resumed compound parent's one acquire, and its station's
+// word when it dispatched coordinated (the rules above its subscription).
+func (e *Engine) resumeAcquire(ev OrderResumedEvent) {
+	e.fulfillment.AcquireOne(ev.OrderID)
+	if ev.EdgeUUID == "" || ev.StationID == "" {
+		return
+	}
+	order, err := e.db.GetOrder(ev.OrderID)
+	if err != nil || order.StationUnaware || order.Status != protocol.StatusDispatched || !order.Coordinated {
+		return
+	}
+	if err := e.sendToEdge(protocol.TypeOrderUpdate, ev.StationID, &protocol.OrderUpdate{
+		OrderUUID: ev.EdgeUUID,
+		Status:    string(protocol.StatusDispatched),
+		Detail:    "reshuffle complete; parent dispatched",
+	}); err != nil {
+		e.logFn("engine: resume notification to edge for order %d: %v", ev.OrderID, err)
 	}
 }

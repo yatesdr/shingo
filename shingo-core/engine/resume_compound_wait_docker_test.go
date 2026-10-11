@@ -64,6 +64,8 @@ func TestResumeCompound_KeepsTheWaitTheScanWrites(t *testing.T) {
 	before := len(queueUpdates(t, db, parent.EdgeUUID))
 
 	testutil.MustNoErr(t, eng.Dispatcher().Lifecycle().ResumeCompound(parent), "resume the parent")
+	// The resumed parent's acquire runs after the emitter (engine/after.go).
+	eng.after.settle()
 
 	after := testdb.RequireOrder(t, db, "resume-parent")
 	t.Logf("after resume: status %s, code %q, cause %q, wait writes %d, order.update messages %d",

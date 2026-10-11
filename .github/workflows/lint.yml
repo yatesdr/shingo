@@ -125,7 +125,11 @@ jobs:
           # shadows — at that point add a second default-config pass.
           # (Run `grep -rn '//go:build !docker' --include='*.go' .` to
           # re-verify the invariant when changing this.)
-          args: --build-tags docker --config=${{ github.workspace }}/.golangci.yml --issues-exit-code=1 ./...
+          #
+          # lockcheck rides the same pass: it swaps protocol/lockcheck's
+          # plain.go (three type aliases, nothing to lint) for guard.go,
+          # which is the code worth linting, and adds the guard-only pins.
+          args: --build-tags docker,lockcheck --config=${{ github.workspace }}/.golangci.yml --issues-exit-code=1 ./...
           # GOMODCACHE + analysis cache are enabled by default in v7.
           # The opt-out switches are skip-cache / skip-save-cache; we
           # leave both at default (caching on).

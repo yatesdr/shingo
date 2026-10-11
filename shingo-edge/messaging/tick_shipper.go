@@ -10,6 +10,8 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
+	"shingoedge/internal/lockorder"
 	"shingoedge/store/counters"
 )
 
@@ -66,7 +68,7 @@ type TickShipper struct {
 	cursor    atomic.Int64
 	persisted int64
 	// shipMu serialises ShipPending (the loop, and tests that drive it).
-	shipMu sync.Mutex
+	shipMu lockcheck.Mutex[lockorder.TickShipper]
 
 	wake     chan struct{}
 	stop     chan struct{}

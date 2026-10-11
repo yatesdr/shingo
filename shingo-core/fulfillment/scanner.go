@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"log"
 	"shingocore/store/reservations"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
 	"shingocore/dispatch"
 	"shingocore/domain"
+	"shingocore/internal/lockorder"
 	"shingocore/service"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -45,12 +47,12 @@ type Scanner struct {
 	logFn    func(string, ...any)
 	debugLog func(string, ...any)
 
-	scanMu sync.Mutex // serializes scan() calls
+	scanMu lockcheck.Mutex[lockorder.Scan] // serializes scan() calls
 	// askedThisPass is the orders this RunOnce has asked and not dispatched,
 	// guarded by scanMu; nil outside a RunOnce (AcquireOne asks once anyway).
 	askedThisPass map[int64]bool
 
-	triggerMu sync.Mutex
+	triggerMu lockcheck.Mutex[lockorder.ScanTrigger]
 	pending   bool // coalesce triggers during a scan
 	stopChan  chan struct{}
 }

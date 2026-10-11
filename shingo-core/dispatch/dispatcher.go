@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"log"
 	"shingocore/dispatch/plan"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 
 	"shingo/protocol"
+	"shingo/protocol/lockcheck"
 	"shingocore/fleet"
+	"shingocore/internal/lockorder"
 	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/nodes"
@@ -41,19 +43,19 @@ type Dispatcher struct {
 	// debounces the operator-facing queue code for repeated append failures. Both
 	// are in-process and crash-volatile by design — see lane_gate_release.go.
 	laneGates       *laneGateSerializer
-	gateFailMu      sync.Mutex
+	gateFailMu      lockcheck.Mutex[lockorder.GateFail]
 	gateAppendFails map[int64]int
 
 	// dissolving names the compound parents a dissolve pass is deciding right now,
 	// so a second pass on the same parent returns instead of deciding again.
 	// In-process and crash-volatile, like laneGates — see dissolveCompound.
-	dissolveMu sync.Mutex
+	dissolveMu lockcheck.Mutex[lockorder.Dissolve]
 	dissolving map[int64]bool
 
 	// summoning names the gate-staged orders whose own dig a lane-gate pass has
 	// decided and not yet written. In-process and crash-volatile, like dissolving
 	// — see summonOwnDigs.
-	summonMu  sync.Mutex
+	summonMu  lockcheck.Mutex[lockorder.Summon]
 	summoning map[int64]bool
 
 	// postFindHook is a test-only seam fired by the fulfillment scanner between
@@ -81,7 +83,7 @@ type Dispatcher struct {
 	// R1): the floor records a release only for a waiter whose same waiting
 	// state was already in it. In memory, so +0 statements; a restart forgets
 	// it and the first pass after records nothing. See SweepLaneWaiters.
-	floorSeenMu sync.Mutex
+	floorSeenMu lockcheck.Mutex[lockorder.FloorSeen]
 	floorSeen   map[floorKey]bool
 
 	// preHandHook is a test-only seam fired just before a hand is acquired

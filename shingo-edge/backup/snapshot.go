@@ -37,9 +37,7 @@ func createSnapshotArchive(db *store.DB, cfg *config.Config, configPath, appVers
 		return "", nil, 0, nil, err
 	}
 
-	cfg.RLock()
-	stationID := cfg.StationID()
-	cfg.RUnlock()
+	stationID := cfg.StationID() // takes the config's read lock itself
 
 	createdAt := time.Now().UTC()
 	manifest := &Manifest{

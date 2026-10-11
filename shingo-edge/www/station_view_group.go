@@ -2,9 +2,11 @@ package www
 
 import (
 	"context"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 
+	"shingo/protocol/lockcheck"
 	"shingoedge/domain"
+	"shingoedge/internal/lockorder"
 )
 
 // stationViewGroup coalesces concurrent builds of the SAME operator-station
@@ -33,7 +35,7 @@ import (
 // wants any more is abandoned — the point being that it is holding the one DB
 // connection while it runs.
 type stationViewGroup struct {
-	mu    sync.Mutex
+	mu    lockcheck.Mutex[lockorder.StationView]
 	calls map[int64]*stationViewCall
 }
 

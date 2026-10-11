@@ -11,10 +11,27 @@ import (
 	"time"
 )
 
-func PlainSend(addr, user, password, from string, to []string, subject, body string, opts ...SendOption) error {
-	conn, err := net.Dial("tcp", addr)
+// smtpTimeout bounds one alert's whole conversation with the mail server: the
+// dial and every exchange after it. A server that accepts and never answers
+// gives up the sender's goroutine after this, not never.
+const smtpTimeout = 30 * time.Second
+
+func dialSMTP(addr string) (net.Conn, error) {
+	conn, err := net.DialTimeout("tcp", addr, smtpTimeout)
 	if err != nil {
-		return fmt.Errorf("dial %s: %w", addr, err)
+		return nil, fmt.Errorf("dial %s: %w", addr, err)
+	}
+	if err := conn.SetDeadline(time.Now().Add(smtpTimeout)); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("deadline %s: %w", addr, err)
+	}
+	return conn, nil
+}
+
+func PlainSend(addr, user, password, from string, to []string, subject, body string, opts ...SendOption) error {
+	conn, err := dialSMTP(addr)
+	if err != nil {
+		return err
 	}
 	defer conn.Close()
 
@@ -53,9 +70,9 @@ func PlainSend(addr, user, password, from string, to []string, subject, body str
 }
 
 func TLSSend(addr, user, password, from string, to []string, subject, body string, opts ...SendOption) error {
-	conn, err := net.Dial("tcp", addr)
+	conn, err := dialSMTP(addr)
 	if err != nil {
-		return fmt.Errorf("dial %s: %w", addr, err)
+		return err
 	}
 	defer conn.Close()
 

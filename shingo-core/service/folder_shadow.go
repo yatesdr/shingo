@@ -2,8 +2,10 @@ package service
 
 import (
 	"log"
+	"shingo/protocol/lockcheck"
+	"shingocore/internal/lockorder"
 	"sort"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 )
 
 // ── THE SHADOW WINDOW FOR "DOES THIS ORDER MOVE A BIN OF ITS OWN?" ────────
@@ -75,7 +77,7 @@ const FolderShadowMarker = "folder-recognition disagreement at"
 // In-process and reset-on-restart, like the arrival-refusal and bin-state-drift
 // tallies: a window reading, not a fact anything recovers from.
 var folderShadowTally = struct {
-	mu          sync.Mutex
+	mu          lockcheck.Mutex[lockorder.FolderShadow]
 	coordinator map[string]int
 	ordinary    map[string]int
 	seen        map[string]int

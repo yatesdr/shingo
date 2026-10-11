@@ -8,12 +8,14 @@ import (
 	"log"
 	"math"
 	"math/rand"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
 	"shingoedge/config"
+	"shingoedge/internal/lockorder"
 )
 
 // MachineDowntime tracks the state of one machine's downtime cycle.
@@ -21,7 +23,7 @@ import (
 // exponential time-between-failures + bounded-random repair duration,
 // constrained so MTBF / (MTBF + MTTR) = target availability.
 type MachineDowntime struct {
-	mu           sync.Mutex
+	mu           lockcheck.Mutex[lockorder.MachineDowntime]
 	plcName      string
 	availability float64 // target availability (0-1)
 	mttrMin      time.Duration
@@ -45,7 +47,7 @@ type MachineDowntime struct {
 
 // DowntimeModel manages per-machine downtime cycles for all configured machines.
 type DowntimeModel struct {
-	mu       sync.Mutex
+	mu       lockcheck.Mutex[lockorder.SimDowntime]
 	machines map[string]*MachineDowntime // plcName → state
 }
 

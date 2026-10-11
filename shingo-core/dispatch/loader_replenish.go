@@ -466,16 +466,19 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 	return order, nil
 }
 
-// AcquireCoreAsk asks for an admitted Core ask's whole hand, once, under the
-// scan lock (door.go): it dispatches, or parks with its cause and its station is
-// told. Separate from AdmitCoreAsk because the loader loop acquires per window
+// AcquireCoreAsk asks for an admitted Core ask's whole hand, once: it
+// dispatches, or parks with its cause and its station is told. Separate from AdmitCoreAsk because the loader loop acquires per window
 // inside its own loop and wants the admit failure and the acquire distinguishable.
 func (d *Dispatcher) AcquireCoreAsk(order *orders.Order) {
 	d.acquireCoreAsk(order)
 }
 
 // acquireCoreAsk is AcquireCoreAsk. The ask's row is whole at its birth (no apply
-// follows the INSERT), so only the acquire is under the lock.
+// follows the INSERT), so it needs no door: the acquire takes the scan lock
+// itself (door.go). A dispatcher with no scanner leaves the ask pending.
 func (d *Dispatcher) acquireCoreAsk(order *orders.Order) {
-	d.door(func() { d.acquireBorn(order, nil) })
+	if d.acquirer == nil {
+		return
+	}
+	d.acquirer.AcquireOne(order.ID)
 }

@@ -22,12 +22,14 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
 	"shingocore/domain"
+	"shingocore/internal/lockorder"
 	"shingocore/store/plantclaims"
 	"shingocore/store/sourceability"
 )
@@ -71,7 +73,7 @@ type SourceabilityMonitor struct {
 	// snapshotEvery is the full-snapshot backstop (sourceabilitySnapshotInterval).
 	snapshotEvery time.Duration
 
-	mu sync.Mutex
+	mu lockcheck.Mutex[lockorder.SourceabilityMonitor]
 	// dirty is the set of (process, style) awaiting recompute; drained per window.
 	dirty map[plantclaims.ProcessKey]struct{}
 	// state is the latest verdict per (process, style).

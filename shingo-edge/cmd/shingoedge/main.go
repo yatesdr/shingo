@@ -309,8 +309,8 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// signal.
 	hb.TimezoneFn = func() string {
 		if cfg := eng.AppConfig(); cfg != nil {
-			cfg.Lock()
-			defer cfg.Unlock()
+			cfg.RLock()
+			defer cfg.RUnlock()
 			return cfg.Timezone
 		}
 		return ""

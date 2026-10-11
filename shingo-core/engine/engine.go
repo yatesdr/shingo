@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"shingo/protocol/lockcheck"
 	"shingo/protocol/types"
 	"shingocore/cms/poster"
 	"shingocore/config"
@@ -32,6 +33,7 @@ import (
 	"shingocore/dispatch/eta"
 	"shingocore/fleet"
 	"shingocore/fulfillment"
+	"shingocore/internal/lockorder"
 	"shingocore/messaging"
 	"shingocore/notify"
 	"shingocore/service"
@@ -68,7 +70,7 @@ type Engine struct {
 	// See strandedAnomaly. Bounded by the bins that have been stranded and
 	// pruned on placement.
 	strandedNotes   map[int64]string
-	strandedNotesMu sync.Mutex
+	strandedNotesMu lockcheck.Mutex[lockorder.StrandedNotes]
 	// dropObs is the FIRST at-rest, empty-deck sample per carried bin — the
 	// one reading that describes where the bin was actually set down.
 	// Everything after it describes where the robot went NEXT: on 2026-08-24
@@ -94,8 +96,8 @@ type Engine struct {
 	// onDeckMu serializes the on-deck door (orderCarriedBinDown) across the
 	// button and both hosts of the watch, so one caller's chosen slot is
 	// reserved before the next caller chooses. See the door.
-	onDeckMu              sync.Mutex
-	dropObsMu             sync.Mutex
+	onDeckMu              lockcheck.Mutex[lockorder.OnDeck]
+	dropObsMu             lockcheck.Mutex[lockorder.DropObs]
 	reconciliation        *ReconciliationService
 	recovery              *RecoveryService
 	fulfillment           *fulfillment.Scanner
@@ -157,6 +159,10 @@ type Engine struct {
 	notifier         *notify.Notifier
 	stopChan         chan struct{}
 	stopOnce         sync.Once
+	// after runs what a synchronous subscriber must not do on the emitter's
+	// goroutine: acquire an order, or create one that is then acquired
+	// (after.go). Built in New; its goroutine starts in Start.
+	after *afterQueue
 	// stage2 serializes the two-stage pull per pair and tracks its trigger
 	// goroutines (stage2_pull.go).
 	stage2         stage2Puller
@@ -164,7 +170,7 @@ type Engine struct {
 	fleetConnected atomic.Bool
 	msgConnected   atomic.Bool
 	dbConnected    atomic.Bool
-	robotsMu       sync.RWMutex
+	robotsMu       lockcheck.RWMutex[lockorder.Robots]
 	robotsCache    map[string]fleet.RobotStatus
 
 	// preDisconnectAvailability captures per-robot Available state at the
@@ -211,7 +217,7 @@ type Engine struct {
 	// handleSceneSync, and the reconnect goroutine in checkConnectionStatus. A
 	// comment promising a guarantee the code does not make is worse than no
 	// comment, because it is the reason nobody looked.
-	sceneGateMu   sync.Mutex
+	sceneGateMu   lockcheck.Mutex[lockorder.SceneGate]
 	lastSceneSync *time.Time
 	// lastSceneHash is the RDS scene hash the most recent sync was taken
 	// against, so the gate can tell an EDIT from a tick. Deliberately not
@@ -249,6 +255,7 @@ func New(c Config) *Engine {
 		logFn:       logFn,
 		debugLog:    c.DebugLog,
 		stopChan:    make(chan struct{}),
+		after:       newAfterQueue(logFn),
 		robotsCache: make(map[string]fleet.RobotStatus),
 		// Built here, before any goroutine or handler exists. Its LOOP starts
 		// in Start(); see the field's comment.

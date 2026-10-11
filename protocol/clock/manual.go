@@ -1,7 +1,9 @@
 package clock
 
 import (
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
+
+	"shingo/protocol/lockcheck"
 	"time"
 )
 
@@ -9,7 +11,7 @@ import (
 // fires — synchronously, before returning — every pending After channel and
 // ticker tick whose deadline falls within (now, now+d].
 type Manual struct {
-	mu      sync.Mutex
+	mu      lockcheck.Mutex[lockcheck.ManualClock]
 	now     time.Time
 	waiters []*waiter
 	tickers []*manualTicker

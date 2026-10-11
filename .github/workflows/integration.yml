@@ -74,7 +74,7 @@ jobs:
         # Currently a thin slice — most integration logic is docker-
         # gated. This step protects against drift in the harness/ pkg
         # and any non-tagged tests added in the future.
-        run: go test -count=1 ./...
+        run: go test -tags lockcheck -count=1 ./...
 
       - name: Test (Docker integration)
         working-directory: integration
@@ -82,10 +82,10 @@ jobs:
         # ubuntu-latest runner provides Docker. -count=1 prevents
         # stale-cache false positives; -timeout=10m accommodates
         # cold-runner container startup. Tighten once observed.
-        run: go test -tags=docker -timeout=10m -count=1 ./...
+        run: go test -tags=docker,lockcheck -timeout=10m -count=1 ./...
 
       - name: Test (Docker integration, race)
         working-directory: integration
         # Promoted to gating in Phase 2 (2026-05-22), matching
         # core.yml / edge.yml.
-        run: go test -tags=docker -race -timeout=25m -count=1 ./...
+        run: go test -tags=docker,lockcheck -race -timeout=25m -count=1 ./...

@@ -2,7 +2,9 @@ package service
 
 import (
 	"maps"
-	"sync"
+	"shingo/protocol/lockcheck"
+	"shingocore/internal/lockorder"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 )
 
 // Station display names — the read side of the identity/label split v66 made.
@@ -65,7 +67,7 @@ import (
 // A nil map means "not loaded", which is distinct from an empty non-nil map
 // meaning "loaded, no enrolled stations". Only the first triggers a read.
 type stationNameCache struct {
-	mu     sync.RWMutex
+	mu     lockcheck.RWMutex[lockorder.StationNames]
 	byUID  map[string]string
 	loaded bool
 }

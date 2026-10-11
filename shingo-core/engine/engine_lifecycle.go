@@ -50,7 +50,9 @@ func (e *Engine) Start() {
 
 	e.startFulfillment(resolver)
 
-	// Wire event handlers
+	// Wire event handlers, and start the goroutine the ones that acquire hand
+	// their work to.
+	go e.after.run(e.stopChan)
 	e.wireEventHandlers()
 
 	// Teach the fleet backend the plant's one-bin-per-node invariant. Only the

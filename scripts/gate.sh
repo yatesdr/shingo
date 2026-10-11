@@ -206,7 +206,7 @@ step_modbuild() {
 step_vet() {
   local m failed=0
   for m in $MODULES; do
-    ( cd "$ROOT/$m" && go vet ./... ) || failed=1
+    ( cd "$ROOT/$m" && go vet ./... && go vet -tags lockcheck ./... ) || failed=1
   done
   [ "$failed" -eq 0 ] && echo "ok   vet" || echo "FAIL vet"
   return $failed
@@ -253,7 +253,7 @@ step_lint() {
   # the code. A gate that can fail for a reason outside the diff is not a gate.
   local m failed=0
   for m in $MODULES; do
-    ( cd "$ROOT/$m" && golangci-lint run --allow-serial-runners --build-tags docker \
+    ( cd "$ROOT/$m" && golangci-lint run --allow-serial-runners --build-tags docker,lockcheck \
         --config="$ROOT/.golangci.yml" --issues-exit-code=1 ./... ) || failed=1
   done
   [ "$failed" -eq 0 ] && echo "ok   lint" || echo "FAIL lint"
@@ -519,7 +519,9 @@ step_test() {
   # Each job records its own exit code: the verdict is go test's, not a guess
   # read back out of the log text.
   for m in $mods; do
-    ( cd "$ROOT/$m" && go test -count=1 $(unit_packages "$m") >"$logdir/test-$m.log" 2>&1
+    # -tags lockcheck: every lock goes through protocol/lockcheck's guard, which fails a
+    # re-entry or a backwards take loudly (LOCKS.md). The docker and race steps carry it too.
+    ( cd "$ROOT/$m" && go test -tags lockcheck -count=1 $(unit_packages "$m") >"$logdir/test-$m.log" 2>&1
       echo $? >"$logdir/test-$m.rc" ) &
   done
   wait
@@ -929,7 +931,7 @@ step_docker() {
   for m in $mods; do
     echo "  docker: $m"
     rm -f "$logdir/docker-$m.rc"
-    ( cd "$ROOT/$m" && go test -tags=docker -timeout=20m -count=1 -p "$p" ./... >"$logdir/docker-$m.log" 2>&1
+    ( cd "$ROOT/$m" && go test -tags=docker,lockcheck -timeout=20m -count=1 -p "$p" ./... >"$logdir/docker-$m.log" 2>&1
       echo $? >"$logdir/docker-$m.rc" ) &
     pids="$pids $!"
   done
@@ -1002,7 +1004,7 @@ RACE_PKGS="./engine/... ./www/..."
 
 step_race() {
   local rcmd rrc
-  rcmd="cd \"$ROOT/shingo-core\" && CGO_ENABLED=1 go test -race -count=1 -timeout=15m $RACE_PKGS"
+  rcmd="cd \"$ROOT/shingo-core\" && CGO_ENABLED=1 go test -race -tags lockcheck -count=1 -timeout=15m $RACE_PKGS"
 
   if [ -n "${WSL_DISTRO_NAME:-}" ]; then
     # Already inside WSL — run directly.
@@ -1020,7 +1022,7 @@ step_race() {
       echo "FAIL race — could not translate $ROOT into a WSL path"
       return 1
     fi
-    ( wsl.exe -d Ubuntu -- bash -lc "cd '$wslroot/shingo-core' && CGO_ENABLED=1 go test -race -count=1 -timeout=15m $RACE_PKGS" \
+    ( wsl.exe -d Ubuntu -- bash -lc "cd '$wslroot/shingo-core' && CGO_ENABLED=1 go test -race -tags lockcheck -count=1 -timeout=15m $RACE_PKGS" \
         >"$ROOT/.gate/race.log" 2>&1 ); rrc=$?
   else
     echo "FAIL race — no cgo toolchain and no WSL to borrow one from"

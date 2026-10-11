@@ -45,14 +45,16 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 
+	"shingo/protocol/lockcheck"
 	"shingocore/config"
+	"shingocore/internal/lockorder"
 )
 
 // QueryCounter counts the statements a DB opened by OpenCounting has sent to
@@ -61,7 +63,7 @@ import (
 type QueryCounter struct {
 	n atomic.Int64
 
-	mu    sync.Mutex
+	mu    lockcheck.Mutex[lockorder.QueryCount]
 	stmts []string // the SQL of each counted statement, for a breakdown by kind
 }
 

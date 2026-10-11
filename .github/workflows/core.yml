@@ -204,7 +204,7 @@ jobs:
         working-directory: shingo-core
         # -p 1: the runner has 2-4 cores and in-package parallelism already
         # uses them. On a 20-core dev host the best setting measured nproc/4.
-        run: go test -tags=docker -timeout=10m -count=1 -p 1 ./...
+        run: go test -tags=docker,lockcheck -timeout=10m -count=1 -p 1 ./...
 
   docker-race:
     uses: ./.github/workflows/sharded-suite.yml

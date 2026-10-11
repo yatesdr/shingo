@@ -9,7 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"shingo/protocol/lockcheck"
 	"shingoedge/engine"
+	"shingoedge/internal/lockorder"
 )
 
 // SSEEvent is the typed envelope sent to SSE clients.
@@ -91,7 +93,7 @@ const MaxConsecutiveDrops = 10
 
 // EventHub manages SSE client connections and broadcasts.
 type EventHub struct {
-	mu        sync.RWMutex
+	mu        lockcheck.RWMutex[lockorder.SSEHub]
 	clients   map[*sseClient]struct{}
 	broadcast chan SSEEvent
 	stopChan  chan struct{}

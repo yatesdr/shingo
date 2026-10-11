@@ -5,7 +5,8 @@ import (
 	"io"
 	"log"
 	"os"
-	"sync"
+	"shingo/protocol/lockcheck"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 )
 
@@ -18,7 +19,7 @@ type Entry struct {
 
 // Logger provides an always-active ring buffer and optional file output for debug logging.
 type Logger struct {
-	mu      sync.Mutex
+	mu      lockcheck.Mutex[lockcheck.DebugLog]
 	entries []Entry
 	pos     int
 	full    bool

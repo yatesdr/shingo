@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/lockcheck"
 	"shingoedge/domain"
+	"shingoedge/internal/lockorder"
 	"shingoedge/store"
 	"shingoedge/store/lineside"
 	"shingoedge/store/orders"
@@ -189,20 +191,20 @@ type StationService struct {
 	// geometry cache rather than per request; sceneMemoFor is the cache it
 	// was derived from. Guarded because one service serves every board's
 	// poll. See composerScene.
-	sceneMu      sync.Mutex
+	sceneMu      lockcheck.Mutex[lockorder.StationScene]
 	sceneMemoFor *domain.SceneGeometry
 	sceneMemo    *domain.ComposerScene
 
 	// curtained is every live node with the curtain interlock on, keyed by
 	// (process, core node), as of process_nodes generation curtainedGen. See
 	// curtainedNodes for why it is held rather than read per poll.
-	curtainMu     sync.Mutex
+	curtainMu     lockcheck.Mutex[lockorder.StationCurtain]
 	curtained     map[curtainKey]processes.Node
 	curtainedGen  uint64
 	curtainLoaded bool
 
 	// touched throttles the liveness write — see Touch.
-	touchMu sync.Mutex
+	touchMu lockcheck.Mutex[lockorder.StationTouch]
 	touched map[int64]touchState
 }
 

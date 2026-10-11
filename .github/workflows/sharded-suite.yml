@@ -152,7 +152,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p ../.shard
-          go test -tags=docker -count=1 -p 1 ${{ inputs.test-flags }} \
+          go test -tags=docker,lockcheck -count=1 -p 1 ${{ inputs.test-flags }} \
             ${{ matrix.shard.pkgs }} \
             | tee ../.shard/results-${{ matrix.shard.id }}.log
 

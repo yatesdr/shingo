@@ -94,3 +94,12 @@ func newUnstartedEngineWith(t *testing.T, db *store.DB, flt fleet.Backend, tune 
 		LogFunc:   t.Logf,
 	})
 }
+
+// settle waits until the work handed to the after-queue before it has run: the
+// queue is FIFO and one goroutine serves it (after.go). A test that asserts what
+// an acquiring subscriber did (a resume's acquire, a refill) settles first.
+func (q *afterQueue) settle() {
+	done := make(chan struct{})
+	q.later(func() { close(done) })
+	<-done
+}

@@ -14,7 +14,9 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/backoff"
+	"shingo/protocol/lockcheck"
 	"shingocore/config"
+	"shingocore/internal/lockorder"
 )
 
 type MessageHandler func(topic string, payload []byte)
@@ -45,7 +47,7 @@ type MessageHandler func(topic string, payload []byte)
 const writerBatchTimeout = 10 * time.Millisecond
 
 type Client struct {
-	mu         sync.RWMutex
+	mu         lockcheck.RWMutex[lockorder.MessagingClient]
 	cfg        *config.MessagingConfig
 	kafka      *kafkaState
 	handlers   map[string]MessageHandler

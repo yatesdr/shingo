@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
+	"shingo/protocol/lockcheck"
+	"shingoedge/internal/lockorder"
 	"shingoedge/store"
 )
 
@@ -60,7 +62,7 @@ type stmtName struct{ verb, table string }
 // second, well under one percent of a core. Memory is one entry per distinct
 // stack and per distinct SQL text.
 type stmtObserver struct {
-	mu     sync.Mutex
+	mu     lockcheck.Mutex[lockorder.SimStatements]
 	stacks map[[stackDepth]uintptr]callerClass
 	names  map[string]stmtName
 	totals map[stmtRow]int64

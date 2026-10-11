@@ -2,8 +2,10 @@ package engine
 
 import (
 	"fmt"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 
+	"shingo/protocol/lockcheck"
+	"shingocore/internal/lockorder"
 	"shingocore/store/bins"
 	"shingocore/store/orders"
 )
@@ -227,7 +229,7 @@ const (
 // In-process and reset-on-restart ON PURPOSE — it is a tripwire reading, not a
 // fact anything recovers from. The durable evidence is the log line.
 var arrivalRefusalTally = struct {
-	mu     sync.Mutex
+	mu     lockcheck.Mutex[lockorder.ArrivalTally]
 	bySite map[string]int
 }{bySite: map[string]int{}}
 

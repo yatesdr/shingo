@@ -13,11 +13,13 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
 	"shingoedge/config"
+	"shingoedge/internal/lockorder"
 	"shingoedge/plc"
 )
 
@@ -33,7 +35,7 @@ type ReadinessFunc func(plcName string) bool
 // process list), each with counter tags that climb on a clock ticker — standing
 // in for presses/lines whose PLCs WarLink would normally poll.
 type FakeClient struct {
-	mu   sync.RWMutex
+	mu   lockcheck.RWMutex[lockorder.SimPLC]
 	plcs []string                    // distinct PLC names, sorted (stable output)
 	vals map[string]map[string]int64 // plcName → tagName → counter
 	// bools are writable BOOL tags: a light curtain's state, standing in for

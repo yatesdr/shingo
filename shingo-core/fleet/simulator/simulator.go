@@ -18,13 +18,15 @@ package simulator
 
 import (
 	"fmt"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"sync/atomic"
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
 	"shingocore/fleet"
+	"shingocore/internal/lockorder"
 	"shingocore/rds"
 )
 
@@ -72,7 +74,7 @@ type simulatedBlock struct {
 // When wired into an Engine via InitTracker, DriveState emits events
 // automatically through the event pipeline.
 type SimulatorBackend struct {
-	mu       sync.RWMutex
+	mu       lockcheck.RWMutex[lockorder.Simulator]
 	orders   map[string]*simulatedOrder // vendorOrderID → order
 	orderSeq []string                   // creation order
 	// settled is the tombstone set: every vendorOrderID this backend once held

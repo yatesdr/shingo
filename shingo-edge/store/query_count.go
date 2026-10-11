@@ -25,7 +25,9 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
-	"sync"
+	"shingo/protocol/lockcheck"
+	"shingoedge/internal/lockorder"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"sync/atomic"
 )
 
@@ -35,7 +37,7 @@ type QueryCounter struct {
 	n atomic.Int64
 	q atomic.Int64 // of n, the ones sent as a query (rows back): the reads
 
-	mu    sync.Mutex
+	mu    lockcheck.Mutex[lockorder.QueryCount]
 	stmts []string // the SQL of each counted statement, for a breakdown by kind
 }
 

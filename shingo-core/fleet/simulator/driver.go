@@ -8,11 +8,13 @@ import (
 	"log"
 	"math/rand"
 	"sort"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
 	"shingocore/config"
+	"shingocore/internal/lockorder"
 )
 
 // defaultRetention is how long a terminal order lingers before the eviction
@@ -114,7 +116,7 @@ type Driver struct {
 	// So step() PUBLISHES a snapshot at the end of each tick and readers take
 	// a copy under this lock. One writer, many readers, and the driver stays
 	// single-threaded.
-	fleetMu   sync.RWMutex
+	fleetMu   lockcheck.RWMutex[lockorder.SimFleet]
 	fleetSnap []FleetRobot
 
 	// robots is each named robot's physical state — deck, position, injected

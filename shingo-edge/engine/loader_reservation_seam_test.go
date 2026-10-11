@@ -528,29 +528,26 @@ func TestCreateUnloaderFullIn_FiresWhenCoreNotConfigured(t *testing.T) {
 
 // TestWithLoaderBudget_EmitDuringReservation_NoDeadlock pins the re-entrancy
 // rule. `fire` runs while the loader's mutex is held and CreateRetrieveOrder
-// fires EmitOrderCreated synchronously on the in-process bus; a subscriber that
-// re-enters the seam for a DIFFERENT loader (a distinct lock) must proceed, and
-// the whole reservation must complete — never self-deadlock. (Same-loader
-// re-entry is the forbidden case the rule documents; it cannot be unit-tested
-// without hanging, which is the point of the rule.)
+// fires EmitOrderCreated synchronously on the in-process bus; a subscriber runs
+// inside the locked region, and the whole reservation must complete.
+//
+// CONVERTED (D2 Lane 0, LOCKS.md). It pinned that a subscriber re-entering the
+// seam for a DIFFERENT loader proceeds. Two loaders' locks taken in no fixed
+// order are two goroutines away from waiting on each other (one holds A and
+// wants B, the other the reverse), and no production subscriber re-enters the
+// seam at all (LOCKS.md, E C2). The lock order now forbids any second loader
+// lock under one; the guard enforces it, and
+// TestWithLoaderBudget_ASecondLoaderLockUnderOneIsRefused pins that.
 func TestWithLoaderBudget_EmitDuringReservation_NoDeadlock(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
-	var reentered bool
+	var ran bool
 	eng.Events.Subscribe(func(evt Event) {
-		if evt.Type != EventOrderCreated {
-			return
+		if evt.Type == EventOrderCreated {
+			ran = true // the subscriber runs inside the locked region
 		}
-		// Re-enter the seam for a DIFFERENT loader from inside the synchronous
-		// emit — a separate lock, so it must not deadlock. (eventbus.Emit
-		// dispatches subscribers inline on the emitting goroutine, so this runs
-		// while DLK-A's lock is still held.)
-		_, _ = eng.withLoaderBudget(mustSharedLoader(t, "DLK-B", "P1"), "P1", 1, "", true, func([]string) (int, error) {
-			reentered = true
-			return 0, nil // no fire — we exercise the lock, not order creation
-		})
 	})
 
 	done := make(chan struct{})
@@ -559,7 +556,7 @@ func TestWithLoaderBudget_EmitDuringReservation_NoDeadlock(t *testing.T) {
 			// In production CreateRetrieveOrder fires EmitOrderCreated synchronously
 			// here, under the lock. The test order-emitter is a no-op, so emit it
 			// directly to exercise a synchronous subscriber callback in the locked
-			// region — the exact re-entrancy hazard the pinned rule governs.
+			// region.
 			eng.Events.Emit(Event{Type: EventOrderCreated, Payload: OrderCreatedEvent{OrderID: 1, OrderType: protocol.OrderTypeRetrieve}})
 			return len(deliveryNodes), nil
 		})
@@ -568,7 +565,7 @@ func TestWithLoaderBudget_EmitDuringReservation_NoDeadlock(t *testing.T) {
 
 	select {
 	case <-done:
-		if !reentered {
+		if !ran {
 			t.Fatal("subscriber did not run — the emit-during-reservation path was not exercised")
 		}
 	case <-time.After(5 * time.Second):

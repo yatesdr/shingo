@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log"
 	"sort"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
+	"shingocore/internal/lockorder"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -112,12 +114,12 @@ const laneGateRetryQueueThreshold = 3
 // reload-and-recheck inside the critical section (see releaseStoreCandidate), which is
 // what actually makes a double-append impossible rather than merely unlikely.
 type laneGateSerializer struct {
-	mu    sync.Mutex
-	locks map[int64]*sync.Mutex
+	mu    lockcheck.Mutex[lockorder.LaneGateMap]
+	locks map[int64]*lockcheck.Mutex[lockorder.LaneGate]
 }
 
 func newLaneGateSerializer() *laneGateSerializer {
-	return &laneGateSerializer{locks: make(map[int64]*sync.Mutex)}
+	return &laneGateSerializer{locks: make(map[int64]*lockcheck.Mutex[lockorder.LaneGate])}
 }
 
 // lock takes the per-lane mutex and returns its release func.
@@ -125,7 +127,7 @@ func (s *laneGateSerializer) lock(laneID int64) func() {
 	s.mu.Lock()
 	m, ok := s.locks[laneID]
 	if !ok {
-		m = &sync.Mutex{}
+		m = &lockcheck.Mutex[lockorder.LaneGate]{}
 		s.locks[laneID] = m
 	}
 	s.mu.Unlock()

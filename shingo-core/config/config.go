@@ -7,14 +7,16 @@ import (
 	"os"
 	"reflect"
 	"slices"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"gopkg.in/yaml.v3"
 
+	"shingo/protocol/lockcheck"
 	"shingocore/cms/client"
 	"shingocore/cms/poster"
 	"shingocore/cms/wire"
+	"shingocore/internal/lockorder"
 )
 
 // defaultFaultNoticeAfter is the shipped fault-notice threshold, named because
@@ -38,7 +40,7 @@ const (
 )
 
 type Config struct {
-	mu sync.RWMutex `yaml:"-"`
+	mu lockcheck.RWMutex[lockorder.Config] `yaml:"-"`
 
 	Database      DatabaseConfig      `yaml:"database"`
 	RDS           RDSConfig           `yaml:"rds"`

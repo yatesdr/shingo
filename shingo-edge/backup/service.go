@@ -12,7 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"shingo/protocol/lockcheck"
 	"shingoedge/config"
+	"shingoedge/internal/lockorder"
 	"shingoedge/store"
 )
 
@@ -23,7 +25,7 @@ type Service struct {
 	appVersion string
 	logf       func(string, ...any)
 
-	mu             sync.RWMutex
+	mu             lockcheck.RWMutex[lockorder.Backup]
 	status         Status
 	triggerCh      chan string
 	stopCh         chan struct{}
@@ -122,10 +124,7 @@ func (s *Service) TestConfig(ctx context.Context, s3Cfg config.BackupS3Config) e
 	if err != nil {
 		return err
 	}
-	s.cfg.RLock()
-	stationID := s.cfg.StationID()
-	s.cfg.RUnlock()
-	return storage.Test(ctx, stationID)
+	return storage.Test(ctx, s.cfg.StationID())
 }
 
 func (s *Service) RunNow(ctx context.Context, reason string) error {
@@ -371,8 +370,10 @@ func storageComplete(s3 config.BackupS3Config) bool {
 }
 
 func (s *Service) storageFromConfig() (Storage, string, config.BackupConfig, error) {
-	s.cfg.RLock()
+	// StationID takes the config's read lock itself; taken again inside this
+	// one, a config write arriving between the two left both waiting for ever.
 	stationID := s.cfg.StationID()
+	s.cfg.RLock()
 	backupCfg := s.cfg.Backup
 	s.cfg.RUnlock()
 	storage, err := s.storageFactory(backupCfg.S3)

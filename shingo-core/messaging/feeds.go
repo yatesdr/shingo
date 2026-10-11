@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"log"
 	"sort"
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingo/protocol/lockcheck"
+	"shingocore/internal/lockorder"
 )
 
 // feeds.go — Core's half of the feed digests (protocol/feeds.go has the rule).
@@ -57,7 +59,7 @@ type feedSendRecord struct {
 // access is a map lookup or a small write, and heartbeats arrive one per
 // station per minute.
 type feedState struct {
-	mu    sync.Mutex
+	mu    lockcheck.Mutex[lockorder.MessagingFeeds]
 	memo  map[string]feedMemoEntry
 	sent  map[[2]string]*feedSendRecord
 	flags map[string]map[string]string

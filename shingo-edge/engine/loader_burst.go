@@ -1,7 +1,10 @@
 package engine
 
 import (
-	"sync"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
+
+	"shingo/protocol/lockcheck"
+	"shingoedge/internal/lockorder"
 	"time"
 )
 
@@ -22,7 +25,7 @@ const (
 // usable; the map is lazily initialized under the mutex. Held by value on
 // Engine (never copied — Engine is always used through a pointer).
 type loaderBurstTracker struct {
-	mu     sync.Mutex
+	mu     lockcheck.Mutex[lockorder.LoaderBurst]
 	events map[string][]time.Time
 }
 

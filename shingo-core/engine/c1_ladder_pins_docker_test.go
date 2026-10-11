@@ -209,6 +209,8 @@ func TestResume_TheParentGoesBackToPendingAndAcquiresOnce(t *testing.T) {
 	testutil.MustNoErr(t, db.CreateOrder(parent), "the parent in reshuffling")
 
 	testutil.MustNoErr(t, eng.Dispatcher().Lifecycle().ResumeCompound(parent), "resume the parent")
+	// The resumed parent's acquire runs after the emitter (engine/after.go).
+	eng.after.settle()
 
 	after := testdb.RequireOrder(t, db, "c1res-parent")
 	walk := historyOf(t, db, parent.ID)
