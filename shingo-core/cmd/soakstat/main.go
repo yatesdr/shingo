@@ -379,6 +379,11 @@ type logStats struct {
 	// choosing it and claiming it"): the race the slot book cannot close at
 	// plan time, measured per leg (C2a A.4).
 	lostSlots map[string]int
+	// lastArmLandings counts the landings sent by the last arm (no claiming
+	// station, no order station: RULINGS-C2c-run-through §4), one
+	// "bin_landing: last arm" line each, and lastArmRows the outbox rows they
+	// wrote (one per Edge addressed). Expected about 0 a run.
+	lastArmLandings, lastArmRows int
 }
 
 var (
@@ -386,6 +391,7 @@ var (
 	setDownRe  = regexp.MustCompile(`transit: bin \d+ stored at \S+ on dropoff \(order (\d+)`)
 	dissolveRe = regexp.MustCompile(`order (\d+) cancelled: reshuffle dissolved`)
 	lostSlotRe = regexp.MustCompile(`dig dwell: leg (\d+) lost \S+ between choosing it and claiming it`)
+	lastArmRe  = regexp.MustCompile(`bin_landing: last arm .* sent to (\d+) Edge`)
 )
 
 func collect(db *store.DB, logSource, pullPath string, simNow *time.Time) *report {
@@ -1105,6 +1111,10 @@ func readLog(source string) *logStats {
 			setDown[m[1]] = true
 		} else if m := lostSlotRe.FindStringSubmatch(line); m != nil {
 			s.lostSlots[m[1]]++
+		} else if m := lastArmRe.FindStringSubmatch(line); m != nil {
+			s.lastArmLandings++
+			n, _ := strconv.Atoi(m[1])
+			s.lastArmRows += n
 		} else if m := dissolveRe.FindStringSubmatch(line); m != nil {
 			if lifted[m[1]] && !setDown[m[1]] && !counted[m[1]] {
 				counted[m[1]] = true

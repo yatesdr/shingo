@@ -41,6 +41,11 @@ import (
 //	   its next generation (the next EpochBumpOps or manifest_confirmed row on
 //	   the bin): a seat still counting into a carrier it has let go.
 //	g. ticks held and replayed: Edge-only (see edge.go).
+//	h. landings sent by the last arm (no claiming station, no order station):
+//	   the landing's address for a seat nothing names, the plant's only Edge or
+//	   every Edge (RULINGS-C2c-run-through §4). Expected about 0 a run. Counted
+//	   from core.log ("bin_landing: last arm", one line per landing), so n/a
+//	   without -log: no outbox row says which arm addressed it.
 //
 // THE OUTBOX IS PURGED 24 h (wall) after a row is sent
 // (outbox.MessageRetentionPeriod), so a and d are the run's whole count only for
@@ -424,7 +429,7 @@ func nodeText(cs []nodeCount, limit int) string {
 }
 
 // printHandoff writes the section.
-func printHandoff(h *handoffCore, edges []*edgeReading, unrun bool) {
+func printHandoff(h *handoffCore, edges []*edgeReading, logs *logStats, unrun bool) {
 	fmt.Printf("\n%s", measureHandoff)
 	if unrun || h == nil {
 		fmt.Println("  FAILED-TO-RUN")
@@ -478,12 +483,13 @@ func printHandoff(h *handoffCore, edges []*edgeReading, unrun bool) {
 	if len(a.byStation) > 0 {
 		fmt.Printf("           by counting station: %s\n", classText(a.byStation))
 	}
+	printLastArm(logs)
 	printHeldTicks(edges)
 }
 
 // printHandoffSections prints [S.4] and, when an Edge was named, [S.5].
 func (r *report) printHandoffSections() {
-	printHandoff(r.handoff, r.edges, r.unrunMeasures[measureHandoff])
+	printHandoff(r.handoff, r.edges, r.logCounts, r.unrunMeasures[measureHandoff])
 	printEdgeStarvation(r.edges, r.pulls, r.unrunMeasures[measureEdgeStarve])
 }
 
@@ -501,4 +507,14 @@ func printHeldTicks(edges []*edgeReading) {
 		}
 		fmt.Printf("           %-14s %d unit(s)  (%s)\n", e.station, sumCounts(e.pending), nodeText(e.pending, 8))
 	}
+}
+
+// printLastArm is item h: from the log only.
+func printLastArm(logs *logStats) {
+	if logs == nil {
+		fmt.Println("        h. landings sent by the last arm (no claiming station, no order station): n/a (no -log)")
+		return
+	}
+	fmt.Printf("        h. landings sent by the last arm (no claiming station, no order station): %d (%d outbox row(s))"+
+		"   <- expected about 0 a run\n", logs.lastArmLandings, logs.lastArmRows)
 }

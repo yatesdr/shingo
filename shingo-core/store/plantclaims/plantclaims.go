@@ -318,7 +318,8 @@ const claimsNodeSQL = `$1 IN (sc.core_node_name, sc.paired_core_node, sc.second_
 //
 // Loader, unloader and FG positions are not in the mirror at all (the Edge's
 // publisher skips manual_swap claims), so they list none here; the landing
-// reaches them by its order's station (D9). That gap is recorded, not closed.
+// reaches them by its order's station (D9), and with no order station by its
+// last arm, every Edge (LandingAddress.Plant; RULINGS-C2c-run-through §4).
 func StationsClaimingNode(db *sql.DB, nodeName string) ([]string, error) {
 	rows, err := db.Query(`SELECT DISTINCT ps.station_id FROM style_claims sc
 		JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
@@ -356,33 +357,46 @@ type AddressedStation struct {
 // (Lane H, H.3): the stations whose processes claim the node, and the order's
 // own material station (its station, or the one a station-unaware order
 // projects to; empty when it has none), each with its schema version (H.7).
+//
+// Plant is the last arm's address (RULINGS-C2c-run-through §4, D19's reach
+// gap): every registered Edge (edge_registry), filled ONLY when no station
+// claims the node and the order has no station, and nil otherwise, so a
+// landing that has an address pays nothing for it.
 type LandingAddress struct {
 	Claiming  []AddressedStation
 	Order     AddressedStation
 	OrderUUID string
+	Plant     []AddressedStation
 }
 
 // ResolveLandingAddress reads LandingAddress for a carrier placed at nodeName
 // by orderID (0 for a placement with no order). ONE statement, the "+1 mirror
 // read per arrival at a non-storage node" the brief names: the claims mirror,
 // the order's station and both stations' schema versions together, so the
-// version check (H.7) and the fallback cost nothing more.
+// version check (H.7) and the fallback cost nothing more. The last arm's
+// Edges (Plant) come in the same statement, so it costs nothing either.
 //
 // The order's station is spelled as engine.materialStation spells it: the
 // order's own station unless it is station-unaware, then the station it
 // projects to.
 func ResolveLandingAddress(q Querier, nodeName string, orderID int64) (LandingAddress, error) {
 	rows, err := q.Query(`
+		WITH c AS (SELECT DISTINCT ps.station_id FROM style_claims sc
+		             JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
+		            WHERE `+claimsNodeSQL+` AND ps.station_id IS NOT NULL),
+		     o AS (SELECT CASE WHEN station_unaware THEN projects_to ELSE station_id END AS st, edge_uuid
+		             FROM orders WHERE id = $2)
 		SELECT 'claim', c.station_id, COALESCE(er.schema_version, 0), ''
-		  FROM (SELECT DISTINCT ps.station_id FROM style_claims sc
-		          JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
-		         WHERE `+claimsNodeSQL+` AND ps.station_id IS NOT NULL) c
-		  LEFT JOIN edge_registry er ON er.station_id = c.station_id
+		  FROM c LEFT JOIN edge_registry er ON er.station_id = c.station_id
 		UNION ALL
 		SELECT 'order', o.st, COALESCE(er.schema_version, 0), o.edge_uuid
-		  FROM (SELECT CASE WHEN station_unaware THEN projects_to ELSE station_id END AS st, edge_uuid
-		          FROM orders WHERE id = $2) o
-		  LEFT JOIN edge_registry er ON er.station_id = o.st AND o.st <> ''
+		  FROM o LEFT JOIN edge_registry er ON er.station_id = o.st AND o.st <> ''
+		UNION ALL
+		SELECT 'plant', er.station_id, COALESCE(er.schema_version, 0), ''
+		  FROM edge_registry er
+		 WHERE er.station_id <> ''
+		   AND NOT EXISTS (SELECT 1 FROM c)
+		   AND NOT EXISTS (SELECT 1 FROM o WHERE COALESCE(o.st, '') <> '')
 		ORDER BY 1, 2`, nodeName, orderID)
 	if err != nil {
 		return LandingAddress{}, fmt.Errorf("plantclaims landing address %s: %w", nodeName, err)
@@ -395,11 +409,14 @@ func ResolveLandingAddress(q Querier, nodeName string, orderID int64) (LandingAd
 		if err := rows.Scan(&kind, &st.StationID, &st.SchemaVersion, &uuid); err != nil {
 			return LandingAddress{}, fmt.Errorf("plantclaims landing address %s: scan: %w", nodeName, err)
 		}
-		if kind == "order" {
+		switch kind {
+		case "order":
 			out.Order, out.OrderUUID = st, uuid
-			continue
+		case "plant":
+			out.Plant = append(out.Plant, st)
+		default:
+			out.Claiming = append(out.Claiming, st)
 		}
-		out.Claiming = append(out.Claiming, st)
 	}
 	return out, rows.Err()
 }

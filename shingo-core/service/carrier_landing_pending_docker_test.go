@@ -4,12 +4,14 @@ package service
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/nodes"
 	"shingocore/store/plantclaims"
 )
 
@@ -72,7 +74,7 @@ func landingsFor(t *testing.T, db *store.DB, binID int64) []struct {
 
 // TestPinH2_AFinalDropAtAClaimedSeatEnqueuesOneLandingToTheClaimingStation —
 // H.2 (one outbox row in the move's tx) and H.3 (addressed by the claims
-// mirror, never broadcast).
+// mirror, not every Edge).
 func TestPinH2_AFinalDropAtAClaimedSeatEnqueuesOneLandingToTheClaimingStation(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -248,5 +250,126 @@ func TestPinH7_AnOldEdgeGetsTodaysWireAddressed(t *testing.T) {
 	}
 	if got := boundsFor(t, db, final.ID); len(got) != 0 {
 		t.Errorf("Bounds on a final drop = %v, want none (today's wire is order.delivered)", got)
+	}
+}
+
+// ── THE LAST ARM (RULINGS-C2c-run-through §4; DECISIONS D19's reach gap) ──
+//
+// A seat that no station's mirror row claims, reached with no order station:
+// an admin move onto a loader or FG seat (the Edge's publisher skips
+// manual_swap claims, so those seats are not in the mirror). Before the
+// landing, the admin Move's broadcast Bound reached it; the landing as built
+// reached nobody, and order.delivered no longer binds. The ruling: the plant's
+// only Edge, or every Edge when there are several, each under its own version
+// rule. "Never broadcast" was the brief's error.
+
+// unclaimedSeat is a parentless, untyped node no mirror row names: a loader or
+// FG seat as Core's tables see it (a seat, not storage).
+func unclaimedSeat(t *testing.T, db *store.DB, name string) *nodes.Node {
+	t.Helper()
+	n := &nodes.Node{Name: name, Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(n), "create the seat")
+	return n
+}
+
+// TestPinD19_AnAdminMoveOntoAnUnclaimedSeatReachesThePlantsOnlyEdge — one
+// Edge: exactly one landing, addressed to it.
+func TestPinD19_AnAdminMoveOntoAnUnclaimedSeatReachesThePlantsOnlyEdge(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	binSvc := NewBinService(db, announcingService(db))
+	const edge = "edge-d19a.line"
+	registerEdgeSchema(t, db, edge, protocol.EdgeSchemaBinLanded)
+	seat := unclaimedSeat(t, db, "LDR-D19A-SEAT")
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-D19A", "PART-A", 60)
+	_, err := binSvc.MoveByHand(bin, seat.ID)
+	testutil.MustNoErr(t, err, "the admin move onto the loader seat")
+
+	got := landingsFor(t, db, bin.ID)
+	if len(got) != 1 || got[0].Dst != edge {
+		dsts := make([]string, len(got))
+		for i, g := range got {
+			dsts[i] = g.Dst
+		}
+		t.Fatalf("landings = %v, want exactly one, to the plant's only Edge %q: a seat no station "+
+			"claims, reached with no order station, reached nobody", dsts, edge)
+	}
+	if got[0].L.CoreNodeName != seat.Name || got[0].L.Count != 60 {
+		t.Errorf("landing = node %q count %d, want %q/60", got[0].L.CoreNodeName, got[0].L.Count, seat.Name)
+	}
+}
+
+// TestPinD19_AnAdminMoveOntoAnUnclaimedSeatReachesEveryEdge — two Edges: a
+// landing to each.
+func TestPinD19_AnAdminMoveOntoAnUnclaimedSeatReachesEveryEdge(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	binSvc := NewBinService(db, announcingService(db))
+	edges := []string{"edge-d19b.line1", "edge-d19b.line2"}
+	for _, e := range edges {
+		registerEdgeSchema(t, db, e, protocol.EdgeSchemaBinLanded)
+	}
+	seat := unclaimedSeat(t, db, "FG-D19B-SEAT")
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-D19B", "PART-A", 60)
+	_, err := binSvc.MoveByHand(bin, seat.ID)
+	testutil.MustNoErr(t, err, "the admin move onto the FG seat")
+
+	var dsts []string
+	for _, g := range landingsFor(t, db, bin.ID) {
+		dsts = append(dsts, g.Dst)
+	}
+	if len(dsts) != 2 || dsts[0] == dsts[1] || !slices.Contains(dsts, edges[0]) || !slices.Contains(dsts, edges[1]) {
+		t.Fatalf("landings to %v, want one to each of %v", dsts, edges)
+	}
+}
+
+// TestPinD19_AnOldEdgeAmongSeveralGetsItsBoundAddressed — the per-Edge
+// version rule holds on the last arm: the new Edge gets the landing, the old
+// one the Bound the admin move always sent it, addressed.
+func TestPinD19_AnOldEdgeAmongSeveralGetsItsBoundAddressed(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	binSvc := NewBinService(db, announcingService(db))
+	const newEdge, oldEdge = "edge-d19c.new", "edge-d19c.old"
+	registerEdgeSchema(t, db, newEdge, protocol.EdgeSchemaBinLanded)
+	registerEdgeSchema(t, db, oldEdge, protocol.EdgeSchemaBinLanded-1)
+	seat := unclaimedSeat(t, db, "LDR-D19C-SEAT")
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-D19C", "PART-A", 60)
+	_, err := binSvc.MoveByHand(bin, seat.ID)
+	testutil.MustNoErr(t, err, "the admin move")
+
+	if got := landingsFor(t, db, bin.ID); len(got) != 1 || got[0].Dst != newEdge {
+		t.Errorf("landings = %v, want one, to %q", got, newEdge)
+	}
+	if got := boundsFor(t, db, bin.ID); len(got) != 1 || got[0] != oldEdge {
+		t.Errorf("Bounds = %v, want one, to %q", got, oldEdge)
+	}
+}
+
+// TestPinD19_AnAdminMoveOntoStorageStillReachesNobody — the last arm is for
+// seats: a storage slot is still not sent (a guard; green before and after).
+func TestPinD19_AnAdminMoveOntoStorageStillReachesNobody(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	binSvc := NewBinService(db, announcingService(db))
+	registerEdgeSchema(t, db, "edge-d19d.line", protocol.EdgeSchemaBinLanded)
+	registerEdgeSchema(t, db, "edge-d19d.old", protocol.EdgeSchemaBinLanded-1)
+
+	bin := createTestBin(t, db, sd.LineNode.ID, "BIN-D19D", "PART-A", 60)
+	_, err := binSvc.MoveByHand(bin, sd.StorageNode.ID)
+	testutil.MustNoErr(t, err, "the admin move onto storage")
+
+	if got := landingsFor(t, db, bin.ID); len(got) != 0 {
+		t.Errorf("landings at a storage slot = %d, want 0", len(got))
+	}
+	if got := boundsFor(t, db, bin.ID); len(got) != 0 {
+		t.Errorf("Bounds at a storage slot = %v, want none", got)
 	}
 }
