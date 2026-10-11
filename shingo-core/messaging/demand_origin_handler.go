@@ -4,6 +4,7 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/store"
 )
 
@@ -52,8 +53,10 @@ func (s *CoreDataService) HandleDemandOrigin(env *protocol.Envelope, st *protoco
 	// NEWER episode is the one lost.
 	//
 	// A CLOSE says nothing about any other episode, so it never supersedes —
-	// and it needs no room in the index anyway.
-	if st.ClosedAt == nil {
+	// and it needs no room in the index anyway. "Not settled" rather than
+	// "open": the Edge never sends a forecast, so the two are the same set
+	// here, and this spelling keeps the decision exactly what it was.
+	if domain.DemandTenseOf(st.OpenedAt, st.ClosedAt) != domain.DemandSettled {
 		n, err := s.db.SupersedeOpenEpisode(st.EpisodeKey, st.OriginID, st.OpenedAt)
 		if err != nil {
 			log.Printf("core_handler: supersede open episode key=%s for origin=%s: %v",

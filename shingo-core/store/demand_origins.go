@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/domain"
+	"shingocore/store/internal/helpers"
 )
 
 // ErrEpisodeAlreadyOpen is what OpenCoreEpisode wraps when the partial unique
@@ -157,26 +158,55 @@ func (db *DB) UpsertDemandOrigin(o DemandOrigin) error {
 // out there at a higher revision; leaving A's revision alone means that close
 // still wins when it lands and replaces this placeholder with the true reason.
 // Bumping would make Core's own guess outrank the truth.
+//
+// A FORECAST AT THE KEY IS PROMOTED, NOT SUPERSEDED. A forecast (opened_at and
+// closed_at both NULL) is Core's record of this place's demand before it opens;
+// the Edge's open is that record changing tense, so closing it would sever the
+// record from its own opening. The same statement re-keys the forecast to the
+// Edge's origin_id at revision 0, and the UpsertDemandOrigin that follows lands
+// on it through ON CONFLICT (origin_id): the Edge's first message carries
+// revision 1, so the guard lets every Edge-authored column through, and the
+// Core-owned columns the upsert never sets (signal_count, uop_delivered) stay
+// the forecast's. The Edge never learns the forecast's id and needs no reply.
+// Only OPEN other rows are superseded. The index allows one unsettled row per
+// key, so at most one of the two arms finds a row. The re-key is skipped when
+// the Edge's origin_id already names a row (a redelivered open for an episode
+// that has since ended): that message says nothing about the forecast, and the
+// revision guard settles it against its own row. Nothing references origin_id
+// by foreign key and a forecast has no orders, so the re-key moves nothing
+// else. A data-modifying CTE runs whether or not the outer SELECT reads it;
+// the count returned is the superseded rows only.
 func (db *DB) SupersedeOpenEpisode(episodeKey, newOriginID string, at time.Time) (int64, error) {
-	res, err := db.Exec(`
-		UPDATE demand_origins
-		   SET closed_at = $1, close_reason = $2
-		 WHERE episode_key = $3
-		   AND origin_id <> $4
-		   AND closed_at IS NULL`,
-		at, CloseReasonSuperseded, episodeKey, newOriginID)
+	var n int64
+	err := db.QueryRow(`
+		WITH promoted AS (
+		    UPDATE demand_origins
+		       SET origin_id = $4, revision = 0
+		     WHERE episode_key = $3
+		       AND `+helpers.DemandForecastSQL("")+`
+		       AND NOT EXISTS (SELECT 1 FROM demand_origins x WHERE x.origin_id = $4)
+		    RETURNING 1
+		), superseded AS (
+		    UPDATE demand_origins
+		       SET closed_at = $1, close_reason = $2
+		     WHERE episode_key = $3
+		       AND origin_id <> $4
+		       AND `+helpers.DemandOpenSQL("")+`
+		    RETURNING 1
+		)
+		SELECT COUNT(*) FROM superseded`,
+		at, CloseReasonSuperseded, episodeKey, newOriginID).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("supersede open episode %q: %w", episodeKey, err)
 	}
-	n, _ := res.RowsAffected()
 	return n, nil
 }
 
 // OpenThresholdEpisode mints a Core-owned threshold episode at revision 1.
 //
-// A plain INSERT, deliberately, and the partial unique index is the point: if
-// something already holds this place open the write FAILS rather than quietly
-// creating a second demand for one need. "One open episode per place" is the
+// The partial unique index is the point: if something already holds this place
+// open the write FAILS rather than quietly creating a second demand for one
+// need (a forecast at the place is promoted instead; see OpenCoreEpisode). "One open episode per place" is the
 // invariant the whole surface rests on, and a mint race is worth surfacing
 // rather than resolving into whichever wrote last.
 //
@@ -184,7 +214,7 @@ func (db *DB) SupersedeOpenEpisode(episodeKey, newOriginID string, at time.Time)
 // and changeover episodes are authored on Edge and arrive through the
 // state-transfer seam. One line over OpenCoreEpisode; kept as a name because the
 // threshold monitor and its tests read better asking for the thing they mean.
-func (db *DB) OpenThresholdEpisode(o DemandOrigin) error {
+func (db *DB) OpenThresholdEpisode(o DemandOrigin) (string, error) {
 	return db.OpenCoreEpisode(o)
 }
 
@@ -194,33 +224,61 @@ func (db *DB) OpenThresholdEpisode(o DemandOrigin) error {
 // kinds Core mints — the threshold monitor's and the maintained-group keeper's.
 // It was already written that way; only the name said otherwise.
 //
-// THE INSERT IS PLAIN AND THE DUPLICATE GUARD IS THE DATABASE. A partial unique
-// index on demand_origins(episode_key) WHERE closed_at IS NULL makes "one open
-// episode per place" a constraint rather than a convention, so two ticks racing
-// to mint the same episode do not need a lock between them: the loser's INSERT
-// fails, and a failed mint must leave NOTHING stamped so the next tick retries.
-// A failure to record must never look like a recording.
-func (db *DB) OpenCoreEpisode(o DemandOrigin) error {
+// THE DUPLICATE GUARD IS THE DATABASE. A partial unique index on
+// demand_origins(episode_key) WHERE closed_at IS NULL makes "one unsettled
+// record per place" a constraint rather than a convention, so two ticks racing
+// to mint the same episode do not need a lock between them: the loser's write
+// finds the winner's open row and returns nothing, and a failed mint must leave
+// NOTHING stamped so the next tick retries. A failure to record must never look
+// like a recording.
+//
+// A FORECAST AT THE KEY IS PROMOTED. The unsettled row the index allows may be
+// a forecast (opened_at NULL): the record of this place's demand before it
+// opens. Opening is that row changing tense, not a second row, so the conflict
+// arm stamps the opening onto the forecast (opened_at and the facts known at
+// the opening) and keeps the forecast's origin_id. The caller stamps its order
+// or ask with the id RETURNED here, which is the forecast's when one was
+// promoted and o.OriginID otherwise. When the row at the key is already OPEN
+// the arm's WHERE refuses it, no row comes back, and that is
+// ErrEpisodeAlreadyOpen exactly as the plain INSERT's 23505 used to be. One
+// statement either way.
+func (db *DB) OpenCoreEpisode(o DemandOrigin) (string, error) {
 	var expected any
 	if o.ExpectedOrders != nil {
 		expected = *o.ExpectedOrders
 	}
-	_, err := db.Exec(`
+	var id string
+	err := db.QueryRow(`
 		INSERT INTO demand_origins (
 		    origin_id, revision, episode_key, kind, trigger_ref, station_id,
 		    core_node_name, payload_code, opened_at, opened_total, threshold,
 		    expected_orders, expected_reason, signal_count
-		) VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,0)`,
+		) VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,0)
+		ON CONFLICT (episode_key) WHERE `+helpers.DemandUnsettledSQL("")+` DO UPDATE SET
+		    opened_at       = EXCLUDED.opened_at,
+		    opened_total    = EXCLUDED.opened_total,
+		    threshold       = EXCLUDED.threshold,
+		    station_id      = EXCLUDED.station_id,
+		    trigger_ref     = EXCLUDED.trigger_ref,
+		    core_node_name  = EXCLUDED.core_node_name,
+		    payload_code    = EXCLUDED.payload_code,
+		    expected_orders = EXCLUDED.expected_orders,
+		    expected_reason = EXCLUDED.expected_reason
+		  WHERE `+helpers.DemandForecastSQL("demand_origins")+`
+		RETURNING origin_id`,
 		o.OriginID, o.EpisodeKey, o.Kind, o.TriggerRef, o.StationID,
 		o.CoreNodeName, o.PayloadCode, o.OpenedAt, o.OpenedTotal, o.Threshold,
-		expected, o.ExpectedUnknownReason)
+		expected, o.ExpectedUnknownReason).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("open core episode %s (%s): %w", o.OriginID, o.EpisodeKey, ErrEpisodeAlreadyOpen)
+	}
 	if isOpenKeyViolation(err) {
-		return fmt.Errorf("open core episode %s (%s): %w: %w", o.OriginID, o.EpisodeKey, ErrEpisodeAlreadyOpen, err)
+		return "", fmt.Errorf("open core episode %s (%s): %w: %w", o.OriginID, o.EpisodeKey, ErrEpisodeAlreadyOpen, err)
 	}
 	if err != nil {
-		return fmt.Errorf("open core episode %s (%s): %w", o.OriginID, o.EpisodeKey, err)
+		return "", fmt.Errorf("open core episode %s (%s): %w", o.OriginID, o.EpisodeKey, err)
 	}
-	return nil
+	return id, nil
 }
 
 // OpenOriginForKey returns the origin id of the open episode for one episode
@@ -234,7 +292,7 @@ func (db *DB) OpenCoreEpisode(o DemandOrigin) error {
 func (db *DB) OpenOriginForKey(episodeKey string) (string, error) {
 	var id string
 	err := db.QueryRow(`SELECT origin_id FROM demand_origins
-		WHERE episode_key = $1 AND closed_at IS NULL`, episodeKey).Scan(&id)
+		WHERE episode_key = $1 AND `+helpers.DemandOpenSQL(""), episodeKey).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -268,7 +326,7 @@ func (db *DB) CloseDemandOriginByID(originID, reason, closedBy string, at time.T
 	res, err := db.Exec(`
 		UPDATE demand_origins
 		   SET closed_at = $1, close_reason = $2, closed_by = $3
-		 WHERE origin_id = $4 AND closed_at IS NULL`,
+		 WHERE origin_id = $4 AND `+helpers.DemandUnsettledSQL(""),
 		at, reason, nullIfEmpty(closedBy), originID)
 	if err != nil {
 		return false, fmt.Errorf("close demand origin %s: %w", originID, err)
@@ -301,7 +359,7 @@ func (db *DB) CloseDemandOriginInferred(originID, reason, closedBy string, at ti
 	res, err := db.Exec(`
 		UPDATE demand_origins
 		   SET closed_at = $1, close_reason = $2, closed_by = $3
-		 WHERE origin_id = $4 AND closed_at IS NULL`,
+		 WHERE origin_id = $4 AND `+helpers.DemandUnsettledSQL(""),
 		at, reason, nullIfEmpty(closedBy), originID)
 	if err != nil {
 		return false, fmt.Errorf("close demand origin (inferred) %s: %w", originID, err)
@@ -367,7 +425,7 @@ func (db *DB) ListOpenEpisodeStates() ([]OpenEpisodeState, error) {
 		       e.last_heartbeat
 		  FROM demand_origins o
 		  LEFT JOIN edge_registry e ON e.station_id = o.station_id
-		 WHERE o.closed_at IS NULL
+		 WHERE ` + helpers.DemandOpenSQL("o") + `
 		 ORDER BY o.opened_at`)
 	if err != nil {
 		return nil, fmt.Errorf("list open episode states: %w", err)
@@ -495,7 +553,7 @@ func (db *DB) ListOpenEpisodesOfKind(kind string) ([]DemandOrigin, error) {
 		SELECT origin_id, revision, episode_key, station_id, core_node_name,
 		       payload_code, opened_at, opened_total, threshold
 		  FROM demand_origins
-		 WHERE kind = $1 AND closed_at IS NULL`, kind)
+		 WHERE kind = $1 AND `+helpers.DemandOpenSQL(""), kind)
 	if err != nil {
 		return nil, fmt.Errorf("list open %s episodes: %w", kind, err)
 	}
@@ -546,7 +604,7 @@ func (db *DB) MaintainedEpisodeForOrigin(originID string) (groupNode, binType st
 	var key string
 	qerr := db.QueryRow(`
 		SELECT episode_key FROM demand_origins
-		 WHERE origin_id = $1 AND kind = $2 AND closed_at IS NULL`,
+		 WHERE origin_id = $1 AND kind = $2 AND `+helpers.DemandOpenSQL(""),
 		originID, protocol.EpisodeKindMaintain).Scan(&key)
 	if errors.Is(qerr, sql.ErrNoRows) {
 		return "", "", nil
@@ -578,6 +636,7 @@ func (db *DB) GetDemandOrigin(originID string) (*DemandOrigin, error) {
 	var (
 		o        DemandOrigin
 		expected *int
+		openedAt sql.NullTime
 		closedAt *time.Time
 		closedBy sql.NullString
 	)
@@ -590,7 +649,7 @@ func (db *DB) GetDemandOrigin(originID string) (*DemandOrigin, error) {
 		  FROM demand_origins WHERE origin_id = $1`, originID).Scan(
 		&o.OriginID, &o.Revision, &o.EpisodeKey, &o.Kind, &o.Direction, &o.Trigger,
 		&o.TriggerRef, &o.StationID, &o.ProcessID, &o.CoreNodeName, &o.PayloadCode,
-		&o.OpenedAt, &o.OpenedTotal, &o.Threshold, &expected,
+		&openedAt, &o.OpenedTotal, &o.Threshold, &expected,
 		&o.ExpectedUnknownReason, &o.RerequestCount, &o.Discretionary,
 		&closedAt, &o.CloseReason, &closedBy)
 	if err != nil {
@@ -600,6 +659,7 @@ func (db *DB) GetDemandOrigin(originID string) (*DemandOrigin, error) {
 		return nil, fmt.Errorf("get demand origin %s: %w", originID, err)
 	}
 	o.ExpectedOrders = expected
+	o.OpenedAt = openedAt.Time // zero for a forecast, which has not opened
 	o.ClosedAt = closedAt
 	o.ClosedBy = closedBy.String
 	return &o, nil
@@ -650,7 +710,7 @@ func (db *DB) ListDemandEpisodes(since time.Time, limit int) (episodes []DemandE
 		       o.closed_by,
 		       (SELECT COUNT(*) FROM orders c WHERE c.origin_id = o.origin_id)
 		  FROM demand_origins o
-		 WHERE o.closed_at IS NULL OR o.closed_at >= $1
+		 WHERE `+helpers.DemandOpenSQL("o")+` OR (`+helpers.DemandSettledSQL("o")+` AND o.closed_at >= $1)
 		 ORDER BY o.opened_at DESC
 		 LIMIT $2`, since, limit+1)
 	if err != nil {
@@ -661,6 +721,7 @@ func (db *DB) ListDemandEpisodes(since time.Time, limit int) (episodes []DemandE
 	for rows.Next() {
 		var (
 			e        DemandEpisode
+			openedAt sql.NullTime
 			closedAt *time.Time
 			closedBy sql.NullString
 		)
@@ -671,12 +732,13 @@ func (db *DB) ListDemandEpisodes(since time.Time, limit int) (episodes []DemandE
 		// here, before any renderer could tell the two apart.
 		if err := rows.Scan(&e.OriginID, &e.Revision, &e.EpisodeKey, &e.Kind,
 			&e.Direction, &e.Trigger, &e.TriggerRef, &e.StationID, &e.ProcessID,
-			&e.CoreNodeName, &e.PayloadCode, &e.OpenedAt, &e.OpenedTotal,
+			&e.CoreNodeName, &e.PayloadCode, &openedAt, &e.OpenedTotal,
 			&e.Threshold, &e.ExpectedOrders, &e.ExpectedUnknownReason,
 			&e.RerequestCount, &e.Discretionary, &closedAt, &e.CloseReason,
 			&closedBy, &e.Children); err != nil {
 			return nil, false, fmt.Errorf("scan demand episode: %w", err)
 		}
+		e.OpenedAt = openedAt.Time // zero only for a forecast that settled unfired
 		e.ClosedAt = closedAt
 		e.ClosedBy = closedBy.String
 		episodes = append(episodes, e)
@@ -706,7 +768,7 @@ func (db *DB) ListDemandEpisodes(since time.Time, limit int) (episodes []DemandE
 func (db *DB) ListClosedBySince(since time.Time) ([]string, error) {
 	rows, err := db.Query(`
 		SELECT closed_by FROM demand_origins
-		 WHERE closed_at IS NOT NULL AND closed_at >= $1`, since)
+		 WHERE `+helpers.DemandSettledSQL("")+` AND closed_at >= $1`, since)
 	if err != nil {
 		return nil, fmt.Errorf("list closed_by: %w", err)
 	}

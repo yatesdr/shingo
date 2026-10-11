@@ -406,12 +406,17 @@ const (
 func BuildEpisodeRow(e domain.DemandEpisode, now time.Time, c config.DisplayConfig) EpisodeRow {
 	o := e.DemandOrigin
 	children := e.Children
-	open := o.ClosedAt == nil
+	tense := o.Tense()
+	open := tense == domain.DemandOpen
 
+	// A forecast has not opened, so it has no duration; the browser does not
+	// list one (store.ListDemandEpisodes), and this keeps a caller that hands
+	// one in from measuring from the zero time.
 	var d time.Duration
-	if open {
+	switch tense {
+	case domain.DemandOpen:
 		d = now.Sub(o.OpenedAt)
-	} else {
+	case domain.DemandSettled:
 		d = o.ClosedAt.Sub(o.OpenedAt)
 	}
 	if d < 0 {

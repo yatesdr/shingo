@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"shingocore/domain"
+	"shingocore/store/internal/helpers"
 )
 
 // demand_child_outcomes.go — Stage 5.2's read: what became of each episode's
@@ -63,7 +64,7 @@ func (db *DB) CountChildrenByStatus(since time.Time) ([]ChildStatusCount, error)
 		       COUNT(*)
 		  FROM demand_origins o
 		  JOIN orders c ON c.origin_id = o.origin_id
-		 WHERE o.closed_at IS NULL OR o.closed_at >= $1
+		 WHERE `+helpers.DemandOpenSQL("o")+` OR (`+helpers.DemandSettledSQL("o")+` AND o.closed_at >= $1)
 		 GROUP BY o.origin_id, c.status, (c.vendor_order_id <> '')`, since)
 	if err != nil {
 		return nil, fmt.Errorf("count children by status: %w", err)

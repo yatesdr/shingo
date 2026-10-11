@@ -384,7 +384,7 @@ CREATE TABLE public.demand_origins (
     process_id text DEFAULT ''::text NOT NULL,
     core_node_name text DEFAULT ''::text NOT NULL,
     payload_code text DEFAULT ''::text NOT NULL,
-    opened_at timestamp with time zone NOT NULL,
+    opened_at timestamp with time zone,
     opened_total integer DEFAULT 0 NOT NULL,
     threshold integer DEFAULT 0 NOT NULL,
     revision bigint DEFAULT 1 NOT NULL,

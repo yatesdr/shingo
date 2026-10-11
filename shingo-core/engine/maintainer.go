@@ -287,10 +287,14 @@ func (m *Maintainer) tickOne(g *nodes.Node, lv store.MaintainLevel, station, key
 				OpenedTotal:  resident,
 				Threshold:    lv.Want,
 			}
-			if oerr := m.eng.db.OpenCoreEpisode(origin); oerr != nil {
+			id, oerr := m.eng.db.OpenCoreEpisode(origin)
+			if oerr != nil {
 				m.eng.logFn("maintainer: open episode %s: %v", key, oerr)
 				return st
 			}
+			// The row's id: a forecast at the key is promoted in place and keeps
+			// its own origin_id (store.OpenCoreEpisode).
+			origin.OriginID = id
 			episode = origin
 			st.OriginID, st.OpenedAt = origin.OriginID, origin.OpenedAt
 			m.eng.logFn("maintainer: DEMAND OPENED origin=%s group=%s type=%s want=%d resident=%d",

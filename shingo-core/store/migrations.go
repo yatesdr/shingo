@@ -4425,6 +4425,16 @@ func migrationList() []migration {
 		{152, "process_positions — the seats a process binds at that no claim names (loader windows and homes, FG drains), so a landing there is addressed to its station",
 			v152ProcessPositions,
 			func(q schema.Querier) bool { return schema.TableExists(q, "process_positions") }},
+		{153, "demand_origins.opened_at nullable — a forecast is the record before its demand opens, and it has no opened_at",
+			v153DemandOpenedAtNullable,
+			func(q schema.Querier) bool {
+				var nullable string
+				if err := q.QueryRow(`SELECT is_nullable FROM information_schema.columns
+					WHERE table_name = 'demand_origins' AND column_name = 'opened_at'`).Scan(&nullable); err != nil {
+					return false
+				}
+				return nullable == "YES"
+			}},
 		{154, "edge_registry.clock_offset_ms — each edge's clock offset as its last heartbeat implied it",
 			v154EdgeClockOffset,
 			func(q schema.Querier) bool {
@@ -4454,6 +4464,24 @@ func v152ProcessPositions(tx *sql.Tx) error {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v152 process_positions: %w", err)
 		}
+	}
+	return nil
+}
+
+// v153DemandOpenedAtNullable lets demand_origins.opened_at be NULL. The tense
+// of a demand record is derived from its two timestamps (store/internal/
+// helpers/demand_tense.go): forecast = opened_at NULL and closed_at NULL, open
+// = opened_at set and closed_at NULL, settled = closed_at set. A forecast has
+// not opened, so it carries no opened_at rather than an invented one that a
+// scorer would read as a real opening. Metadata only: no rewrite, no backfill;
+// every existing row keeps its opened_at. The partial unique index on
+// (episode_key) WHERE closed_at IS NULL is unchanged: one unsettled record per
+// key, forecast or open. v152 and v154 are
+// Lane 0's. demand_origins is not in the
+// baseline DDL (postgres_ddl.go), so only the snapshot changes.
+func v153DemandOpenedAtNullable(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE demand_origins ALTER COLUMN opened_at DROP NOT NULL`); err != nil {
+		return fmt.Errorf("v153 demand_origins.opened_at nullable: %w", err)
 	}
 	return nil
 }

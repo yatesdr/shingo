@@ -42,11 +42,12 @@ import (
 // that has none open and returns its origin id, or "" when it could not, after
 // logging why.
 //
-// A PLAIN INSERT, and the partial unique index is the arbiter of a race: two
-// evaluations that both read "none open" both try, one wins, and the loser's
-// INSERT fails with store.ErrEpisodeAlreadyOpen. That is "already open, re-read"
-// — the loser joins the winner's episode. It is deliberately not ON CONFLICT DO
-// NOTHING, which would also swallow the failure that is not a race.
+// The partial unique index is the arbiter of a race: two evaluations that both
+// read "none open" both try, one wins, and the loser's write returns
+// store.ErrEpisodeAlreadyOpen. That is "already open, re-read" — the loser
+// joins the winner's episode. It is deliberately not ON CONFLICT DO NOTHING,
+// which would also swallow the failure that is not a race; the store's
+// conflict arm only promotes a forecast at the key (store.OpenCoreEpisode).
 //
 // CALLED WITH m.mu NOT HELD. A mint is a write to Postgres, and holding the
 // monitor's mutex across it would serialise every evaluation behind one INSERT.
@@ -71,7 +72,7 @@ func (m *ThresholdMonitor) openThresholdEpisode(key string, b thresholdEntry, to
 		ExpectedOrders:        expected,
 		ExpectedUnknownReason: reason,
 	}
-	err := m.eng.db.OpenThresholdEpisode(origin)
+	id, err := m.eng.db.OpenThresholdEpisode(origin)
 	if errors.Is(err, store.ErrEpisodeAlreadyOpen) {
 		winner, rerr := m.eng.db.OpenOriginForKey(key)
 		if rerr == nil && winner != "" {
@@ -87,6 +88,9 @@ func (m *ThresholdMonitor) openThresholdEpisode(key string, b thresholdEntry, to
 		m.eng.logFn("threshold_monitor: open demand episode key=%s: %v — NOT FIRING, an order with no episode cannot be subtracted by the next ask", key, err)
 		return ""
 	}
+	// The row's id, not the one proposed: a forecast at the key is promoted in
+	// place and keeps its own origin_id (store.OpenCoreEpisode).
+	origin.OriginID = id
 	m.eng.logFn("threshold_monitor: DEMAND OPENED origin=%s station=%s loader=%s payload=%s total=%d threshold=%d expected_orders=%s",
 		origin.OriginID, b.stationID, b.coreNodeName, b.payloadCode, total, b.threshold,
 		describeExpected(expected, reason))

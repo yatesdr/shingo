@@ -1864,7 +1864,7 @@ func CountTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binT
 		       AND (o.delivery_node = $3 OR dn.id IN (SELECT id FROM descendants))
 		       AND NOT EXISTS (
 		           SELECT 1 FROM demand_origins d
-		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND d.closed_at IS NULL)
+		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND `+helpers.DemandOpenSQL("d")+`)
 		    UNION ALL
 		    SELECT ob.bin_id AS bin_id
 		      FROM order_bins ob
@@ -1878,7 +1878,7 @@ func CountTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binT
 		       AND (ob.dest_node = $3 OR dn.id IN (SELECT id FROM descendants))
 		       AND NOT EXISTS (
 		           SELECT 1 FROM demand_origins d
-		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND d.closed_at IS NULL)
+		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND `+helpers.DemandOpenSQL("d")+`)
 		) AS inbound`, protocol.NonTerminalStatusSQLList()),
 		groupNodeID, binTypeCode, groupNodeName, protocol.EpisodeKindMaintain).Scan(&count)
 	if err != nil {

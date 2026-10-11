@@ -222,8 +222,10 @@ func TestListOpenEpisodesOfKind_SeparatesKinds(t *testing.T) {
 		Kind: protocol.EpisodeKindMaintain, StationID: "PLANT.LINE1",
 		CoreNodeName: "SYN_EMPTIES", OpenedAt: now,
 	}
-	testutil.MustNoErr(t, db.OpenCoreEpisode(thr), "mint threshold")
-	testutil.MustNoErr(t, db.OpenCoreEpisode(mnt), "mint maintain")
+	_, err := db.OpenCoreEpisode(thr)
+	testutil.MustNoErr(t, err, "mint threshold")
+	_, err = db.OpenCoreEpisode(mnt)
+	testutil.MustNoErr(t, err, "mint maintain")
 
 	gotMnt, err := db.ListOpenEpisodesOfKind(protocol.EpisodeKindMaintain)
 	testutil.MustNoErr(t, err, "ListOpenEpisodesOfKind maintain")
@@ -271,12 +273,12 @@ func TestMaintainedEpisodeForOrigin(t *testing.T) {
 	db := testdb.Open(t)
 	now := time.Now().UTC()
 
-	testutil.MustNoErr(t, db.OpenCoreEpisode(store.DemandOrigin{
+	mustOpenCore(t, db, store.DemandOrigin{
 		OriginID:   "11111111-2222-3333-4444-555555555555",
 		EpisodeKey: protocol.MaintainEpisodeKey("SYN_EMPTIES", "45x58x32"),
 		Kind:       protocol.EpisodeKindMaintain, StationID: "PLANT.LINE1",
 		CoreNodeName: "SYN_EMPTIES", OpenedAt: now,
-	}), "mint maintain")
+	}, "mint maintain")
 
 	group, got, err := db.MaintainedEpisodeForOrigin("11111111-2222-3333-4444-555555555555")
 	testutil.MustNoErr(t, err, "MaintainedEpisodeForOrigin")
@@ -299,12 +301,12 @@ func TestMaintainedEpisodeForOrigin(t *testing.T) {
 
 	// An origin that is not a maintain episode is not an error — it is the
 	// ordinary answer for every other order in the plant.
-	testutil.MustNoErr(t, db.OpenCoreEpisode(store.DemandOrigin{
+	mustOpenCore(t, db, store.DemandOrigin{
 		OriginID:   "99999999-8888-7777-6666-555555555555",
 		EpisodeKey: protocol.ThresholdEpisodeKey("SLN_002", "PANEL-A"),
 		Kind:       protocol.EpisodeKindThreshold, StationID: "PLANT.LINE1",
 		CoreNodeName: "SLN_002", PayloadCode: "PANEL-A", OpenedAt: now,
-	}), "mint threshold")
+	}, "mint threshold")
 	group, got, err = db.MaintainedEpisodeForOrigin("99999999-8888-7777-6666-555555555555")
 	testutil.MustNoErr(t, err, "MaintainedEpisodeForOrigin threshold origin")
 	if got != "" || group != "" {
