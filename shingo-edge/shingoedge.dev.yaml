@@ -101,6 +101,11 @@ sim:
   # once the welds drew at the pull (C2c D17); 24s is 27 x 350/400, the
   # measured shortfall taken back out.
   #
+  # PRESS-1 23s, PRESS-2 22s (D1 carry, 2026-10-11): set from the welds' draw
+  # measured at 20x (trial20x-demo-d7fb18f0-8m, 3.0 plant-hours at 24s):
+  # PANEL-A made 330, drawn 345 -> 24 x 330/345 = 23.0s; PANEL-B made 366,
+  # drawn 397 -> 24 x 366/397 = 22.1s. The rig runs at 20x by default now.
+  #
   # Nameplate parity (press 6/min = weld 6/min) does not hold in this rig, because a
   # weld cycles only while every carrier it needs is in place (engine
   # SimMachineReady): WELD-2 needs PANEL-B, BRKT and an ASSY carrier with room,
@@ -126,7 +131,7 @@ sim:
   processes:
     - plc_name: PRESS-1
       tag_name: PRESS-1_COUNTER
-      tick_interval: 24s
+      tick_interval: 23s
       uop_per_tick: 1
     # PRESS-2 IS SLOWER THAN PARITY, ON PURPOSE (acceptance run 2026-09-07).
     #
@@ -156,7 +161,7 @@ sim:
     # (dev-rates' second half) is the one that bit before.
     - plc_name: PRESS-2
       tag_name: PRESS-2_COUNTER
-      tick_interval: 24s
+      tick_interval: 22s
       uop_per_tick: 1
     # WELD-1 IS BACK TO THE LINE RATE, and the halving it carried was compensation
     # for a drain that no longer exists.
