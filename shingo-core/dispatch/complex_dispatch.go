@@ -597,6 +597,9 @@ func (d *Dispatcher) reserveComplexSources(order *orders.Order, resolvedSteps []
 	// leaves a pre-dispatch order whose pending holds the owner-liveness reaper
 	// reclaims, never one with claimed bins: the hard claims are the hand's.
 	assigned, outcome, rerr := d.allocator.reserveComplexPlan(order, plan)
+	if plan.Reanchored {
+		d.persistWidenedPlan(order, plan.ResolvedSteps)
+	}
 	if ownerEnded(rerr) {
 		d.dbg("complex: order %d ended before its source reserve: nothing held", order.ID)
 		return nil, nil, dispatchStep{done: true, err: rerr}

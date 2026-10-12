@@ -70,3 +70,9 @@ func (db *DB) DeletePlantClaimsReport(processID string) (string, error) {
 func (db *DB) PlantClaimsReportDigests(stationID string) (map[string]string, error) {
 	return plantclaims.ReportDigests(db.DB, stationID)
 }
+
+// ClaimInboundSource is where the active claim at a station's core node draws
+// from. See plantclaims.ClaimInboundSource.
+func (db *DB) ClaimInboundSource(stationID, coreNodeName string) (string, error) {
+	return plantclaims.ClaimInboundSource(db.DB, stationID, coreNodeName)
+}

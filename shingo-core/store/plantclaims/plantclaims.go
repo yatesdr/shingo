@@ -15,6 +15,7 @@ package plantclaims
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -470,4 +471,22 @@ func ResolveLandingAddress(q Querier, nodeName string, orderID int64) (LandingAd
 		}
 	}
 	return out, rows.Err()
+}
+
+// ClaimInboundSource is where the active claim at a station's core node draws
+// from (style_claims.inbound_source): for a produce claim, its empties. Blank
+// when the station's active style has no claim at the node, or the claim names
+// no source. One read.
+func ClaimInboundSource(db *sql.DB, stationID, coreNodeName string) (string, error) {
+	var src string
+	err := db.QueryRow(`SELECT sc.inbound_source
+		FROM style_claims sc
+		JOIN process_styles ps ON ps.process_id = sc.process_id AND ps.style_id = sc.style_id
+		WHERE ps.is_active AND ps.station_id = $1 AND sc.core_node_name = $2 AND sc.inbound_source <> ''
+		ORDER BY sc.process_id, sc.seq
+		LIMIT 1`, stationID, coreNodeName).Scan(&src)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return src, err
 }

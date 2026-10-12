@@ -273,6 +273,22 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 					continue
 				}
 			}
+			// A BARE ON-DECK EMPTY IS FETCHED FROM WHERE ITS CLAIM DRAWS EMPTIES.
+			// The Edge names a press-index leg's empty by its on-deck node, and an
+			// empty taken from there while the pair waited left a node nothing
+			// re-plans: widenSupplyPickups skips empty pickups, replay re-resolves
+			// only steps still naming a group, and this reserve held the partial
+			// set for good (carry-edge2's order 346). An empty supply pickup at a
+			// concrete node with no bins, not a removal and not a relay target,
+			// asks the planner for an empty from the claim's inbound source, as
+			// widening does for a full; the step moves there and the caller
+			// persists it. Nothing is read on a pass with no bare pickup.
+			if !nodeHadBins && pk.step.Empty && !removal && !pk.potentialRelay {
+				if got := a.reanchorBareEmpty(order, plan, pk.stepIndex); got != nil {
+					assigned = append(assigned, *got)
+					continue
+				}
+			}
 			missing++
 			if nodeHadBins {
 				anyMissWithBins = true // bins present but unavailable — sourceable eventually
@@ -415,6 +431,55 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 	default:
 		return assigned, reserveHolding, nil
 	}
+}
+
+// reanchorBareEmpty fetches a bare on-deck empty from its claim's inbound
+// source: one read for the source, one empty pick, one reservation. On a find
+// the step is moved to the empty's node and the plan is marked for the caller
+// to persist (ComplexPlan.Reanchored). Nil when the claim names no source,
+// nothing is found, or another order took the empty first: the need is then a
+// miss as before, and the next pass asks again.
+func (a *Allocator) reanchorBareEmpty(order *orders.Order, plan *ComplexPlan, stepIndex int) *reservedPickup {
+	if a.finder == nil || order.ProcessNode == "" {
+		return nil
+	}
+	src, err := a.db.ClaimInboundSource(order.StationID, order.ProcessNode)
+	if err != nil || src == "" {
+		if err != nil {
+			a.dbg("reserve: order %d bare empty pickup: read the claim's inbound source: %v", order.ID, err)
+		}
+		return nil
+	}
+	step := plan.ResolvedSteps[stepIndex]
+	nextDrop := ""
+	for _, s := range plan.ResolvedSteps[stepIndex+1:] {
+		if s.Action == protocol.ActionDropoff {
+			nextDrop = s.Node
+			break
+		}
+	}
+	res := a.finder.FindSourceForNeed(SourceNeed{
+		SourceNode:  src,
+		PayloadCode: resolvedStepPayload(step, order.PayloadCode),
+		ProcessNode: nextDrop,
+		Intent:      IntentEmpty,
+		Asker:       digAskerFor(order),
+	})
+	if MapFinderOutcome(res) != OutcomeFound || res.Bin == nil || res.Node == nil {
+		a.dbg("reserve: order %d bare empty pickup at %s: no empty at its inbound source %s", order.ID, step.Node, src)
+		return nil
+	}
+	if err := a.binManifest.ReserveForDispatch(res.Bin.ID, order.ID); err != nil {
+		a.dbg("reserve: order %d bare empty pickup: empty %d at %s taken first: %v", order.ID, res.Bin.ID, res.Node.Name, err)
+		return nil
+	}
+	a.dbg("reserve: order %d bare empty pickup at %s re-anchored to empty %d at %s (inbound source %s)",
+		order.ID, step.Node, res.Bin.ID, res.Node.Name, src)
+	a.db.AppendAudit("bin", res.Bin.ID, "reserved", "",
+		fmt.Sprintf("complex order %d reserve at %s (its on-deck %s was bare)", order.ID, res.Node.Name, step.Node), "system")
+	plan.ResolvedSteps[stepIndex].Node = res.Node.Name
+	plan.Reanchored = true
+	return &reservedPickup{stepIndex: stepIndex, nodeName: res.Node.Name, binID: res.Bin.ID}
 }
 
 // reserveComplexSlots is the destination-slot reconcile — the reservation dual of
