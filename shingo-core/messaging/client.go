@@ -194,6 +194,11 @@ func (c *Client) ensureTopics(conn *kafka.Conn, topics ...string) {
 		return
 	}
 
+	// Every step is bounded by the broker-probe timeout: Connect holds the
+	// client's lock across this, and a controller that accepts and never
+	// answers would otherwise hold it, and every reader of it, for good.
+	timeout := c.cfg.Kafka.DialTimeoutOr()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
 	controller, err := conn.Controller()
 	if err != nil {
 		log.Printf("messaging: cannot find controller for topic creation: %v", err)
@@ -201,12 +206,15 @@ func (c *Client) ensureTopics(conn *kafka.Conn, topics ...string) {
 	}
 
 	controllerAddr := net.JoinHostPort(controller.Host, strconv.Itoa(controller.Port))
-	controllerConn, err := kafka.Dial("tcp", controllerAddr)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	controllerConn, err := kafka.DialContext(ctx, "tcp", controllerAddr)
+	cancel()
 	if err != nil {
 		log.Printf("messaging: cannot connect to controller: %v", err)
 		return
 	}
 	defer controllerConn.Close()
+	_ = controllerConn.SetDeadline(time.Now().Add(timeout))
 
 	configs := make([]kafka.TopicConfig, len(topics))
 	for i, t := range topics {

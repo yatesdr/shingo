@@ -62,12 +62,20 @@ func (c *Client) url(path string) string {
 	return c.baseURL + path
 }
 
+// http is the current HTTP client, read under the lock Reconfigure swaps it
+// under.
+func (c *Client) http() *http.Client {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.httpClient
+}
+
 func (c *Client) get(path string, result any) error {
 	fullURL := c.url(path)
 	c.dbg("-> GET %s", fullURL)
 	start := time.Now()
 
-	resp, err := c.httpClient.Get(fullURL)
+	resp, err := c.http().Get(fullURL)
 	if err != nil {
 		c.dbg("<- GET %s error after %dms: %v", path, time.Since(start).Milliseconds(), err)
 		return fmt.Errorf("rds GET %s: %w", path, err)
@@ -99,7 +107,7 @@ func (c *Client) post(path string, body any, result any) error {
 	c.dbg("-> POST %s body=%s", fullURL, truncate(bodyData, 2048))
 	start := time.Now()
 
-	resp, err := c.httpClient.Post(fullURL, "application/json", bodyReader)
+	resp, err := c.http().Post(fullURL, "application/json", bodyReader)
 	if err != nil {
 		c.dbg("<- POST %s error after %dms: %v", path, time.Since(start).Milliseconds(), err)
 		return fmt.Errorf("rds POST %s: %w", path, err)
@@ -132,7 +140,7 @@ func (c *Client) getRaw(path string) ([]byte, error) {
 	c.dbg("-> GET %s", fullURL)
 	start := time.Now()
 
-	resp, err := c.httpClient.Get(fullURL)
+	resp, err := c.http().Get(fullURL)
 	if err != nil {
 		c.dbg("<- GET %s error after %dms: %v", path, time.Since(start).Milliseconds(), err)
 		return nil, fmt.Errorf("rds GET %s: %w", path, err)
@@ -155,7 +163,7 @@ func (c *Client) postRaw(path string, contentType string, body io.Reader, result
 	c.dbg("-> POST %s (raw)", fullURL)
 	start := time.Now()
 
-	resp, err := c.httpClient.Post(fullURL, contentType, body)
+	resp, err := c.http().Post(fullURL, contentType, body)
 	if err != nil {
 		c.dbg("<- POST %s error after %dms: %v", path, time.Since(start).Milliseconds(), err)
 		return fmt.Errorf("rds POST %s: %w", path, err)
