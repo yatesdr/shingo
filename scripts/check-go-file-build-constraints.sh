@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# check-test-file-build-constraints.sh — a test file whose NAME excludes it
-# from the build.
+# check-go-file-build-constraints.sh — a Go file whose NAME excludes it from
+# the build.
 #
 # Go treats a trailing _<GOOS> or _<GOARCH> in a filename as an implicit build
 # constraint. So `changeover_staged_arm_test.go` is a GOARCH=arm file and
@@ -18,7 +18,13 @@
 # family from AGENTS.md, at the file level: an excluded test and a passing one
 # both produce no failure.
 #
-# Exit 0 = clean, exit 1 = at least one test file is name-excluded.
+# NOT ONLY TESTS. A non-test file fails the other way round: the platform that
+# drops it stops compiling, but only that platform. A planner file named
+# `plan/loader_windows.go` (2026-09-27) built on every Windows step, fast gate
+# and docker suites included, and failed every Linux build (WSL race, CI, the
+# sim images, a Pi) on `undefined: LoaderWindowsDB`. So every .go file is read.
+#
+# Exit 0 = clean, exit 1 = at least one Go file is name-excluded.
 
 set -euo pipefail
 
@@ -45,9 +51,10 @@ fail = False
 for dirpath, dirnames, filenames in os.walk(root):
     dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
     for name in filenames:
-        if not name.endswith('_test.go'):
+        if not name.endswith('.go'):
             continue
-        stem = name[:-len('_test.go')]
+        test = name.endswith('_test.go')
+        stem = name[:-len('_test.go')] if test else name[:-len('.go')]
         # Go also honours _<GOOS>_<GOARCH>; checking the last segment catches
         # both, because the GOARCH half is what trails.
         last = stem.rsplit('_', 1)[-1] if '_' in stem else ''
@@ -63,12 +70,16 @@ for dirpath, dirnames, filenames in os.walk(root):
         rel = os.path.relpath(path, root).replace(os.sep, '/')
         print('FAIL %s' % rel)
         print('     ends in _%s, which Go reads as a GOOS/GOARCH build constraint, so this file is' % last)
-        print('     NOT COMPILED on other platforms and its tests silently do not exist there.')
-        print('     Rename it (%s_test.go -> %s_gate_test.go), or add a //go:build line naming' % (stem, stem))
+        if test:
+            print('     NOT COMPILED on other platforms and its tests silently do not exist there.')
+            print('     Rename it (%s_test.go -> %s_gate_test.go), or add a //go:build line naming' % (stem, stem))
+        else:
+            print('     NOT COMPILED on other platforms: what it declares is missing there.')
+            print('     Rename it (%s.go -> %s_choice.go, say), or add a //go:build line naming' % (stem, stem))
         print('     %s if the constraint is intended.' % last)
         fail = True
 
 if not fail:
-    print('ok   test filenames (no accidental GOOS/GOARCH build constraints)')
+    print('ok   Go filenames (no accidental GOOS/GOARCH build constraints)')
 sys.exit(1 if fail else 0)
 PY
