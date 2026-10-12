@@ -183,6 +183,10 @@ func (r *report) addEdges(sources []edgeSource) {
 	u := &unrun{}
 	r.edges = readEdges(sources, u)
 	r.failedToRun = append(r.failedToRun, u.lines...)
+	// A LINE THAT STOPPED IS A FINDING, at the top and among the violations.
+	for _, s := range stoppedLines(r.edges) {
+		r.violations = append(r.violations, stoppedText(s))
+	}
 	if r.unrunMeasures == nil {
 		r.unrunMeasures = map[string]bool{}
 	}
@@ -1183,6 +1187,11 @@ func readLog(source string) *logStats {
 // ── output ────────────────────────────────────────────────────────────────────
 
 func (r *report) report() {
+	// A STOPPED LINE FIRST: a line that stopped before the end is the jam the
+	// stranded table can miss (its waiters can each look released).
+	for _, s := range stoppedLines(r.edges) {
+		fmt.Println(stoppedText(s))
+	}
 	// THE JAM CHECK FIRST. Throughput is read only after it, never before.
 	r.printStranded()
 	fmt.Println("SOAK MEASURES")
@@ -1333,6 +1342,7 @@ func (r *report) printStranded() {
 	} else {
 		r.stranded.print()
 	}
+	printLineTicks(r.edges)
 	printBalance(r.balance, r.unrunMeasures[measureBalance])
 }
 

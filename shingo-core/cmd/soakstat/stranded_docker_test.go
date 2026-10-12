@@ -104,39 +104,85 @@ func TestStranded_AFrozenPlantFails(t *testing.T) {
 		}
 	})
 
-	t.Run("a material wait: work progressing at its node, not elsewhere", func(t *testing.T) {
+	// A wait for a resource has a releaser only when something live will put
+	// that resource there (the orc's ruling on the D2 after, §2.3): work moving
+	// at the waiter's node is not enough. Line 2 of that run stopped with three
+	// orders waiting for an empty in its market, beside orders shuttling partial
+	// bins through the same market, and the old rule read them as pending.
+	// Converted from "work progressing at its node": RED at 9a34f135 on the
+	// first read.
+	t.Run("a wait for an empty: only an order bringing an empty releases it", func(t *testing.T) {
 		t.Parallel()
 		db := testdb.Open(t)
 		simNow := time.Now().UTC().Add(48 * time.Hour)
-		waiter := testdb.CreateOrder(t, db, func(o *orders.Order) {
-			o.Status, o.DeliveryNode = protocol.StatusQueued, "STR-MKT"
-		})
+		waiter := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusQueued })
+		_, err := db.Exec(`UPDATE orders SET order_type = 'retrieve_empty', source_node = 'STR-MKT', delivery_node = 'STR-LOADER', payload_code = '' WHERE id = $1`, waiter.ID)
+		testutil.MustNoErr(t, err, "a retrieve_empty from the market")
 		withCause(t, db, waiter.ID, "finder-no-empty-of-type")
-		shuttle := testdb.CreateOrder(t, db, func(o *orders.Order) {
-			o.Status, o.SourceNode, o.DeliveryNode = protocol.StatusInTransit, "STR-H1", "STR-ALN"
-		})
 		historyAt(t, db, waiter.ID, protocol.StatusQueued, simNow.Add(-30*time.Minute))
+
+		shuttle := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusInTransit })
+		_, err = db.Exec(`UPDATE orders SET source_node = 'STR-MKT', delivery_node = 'STR-PRESS', payload_code = 'STR-PART' WHERE id = $1`, shuttle.ID)
+		testutil.MustNoErr(t, err, "a full leaving the market")
 		historyAt(t, db, shuttle.ID, protocol.StatusInTransit, simNow.Add(-2*time.Minute))
+		returning := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusInTransit })
+		_, err = db.Exec(`UPDATE orders SET source_node = 'STR-PRESS', delivery_node = 'STR-MKT', payload_code = 'STR-PART' WHERE id = $1`, returning.ID)
+		testutil.MustNoErr(t, err, "a partial coming back to the market")
+		historyAt(t, db, returning.ID, protocol.StatusInTransit, simNow.Add(-1*time.Minute))
 
 		r, err := readStranded(db.DB, &simNow)
 		testutil.MustNoErr(t, err, "read the run end")
 		if len(r.stranded) != 1 || r.noRel != 1 {
-			t.Fatalf("stranded %d, with no releaser %d; want the waiter with none: a shuttle elsewhere is "+
-				"not its releaser", len(r.stranded), r.noRel)
+			t.Fatalf("stranded %d, with no releaser %d; want the waiter with none: a full leaving and a part "+
+				"coming back are work at its market, not an empty", len(r.stranded), r.noRel)
 		}
 		if !strings.Contains(r.clock, "live sim clock") {
 			t.Errorf("clock %q, want the live sim clock", r.clock)
 		}
 
-		supply := testdb.CreateOrder(t, db, func(o *orders.Order) {
-			o.Status, o.SourceNode = protocol.StatusInTransit, "STR-MKT"
-		})
-		historyAt(t, db, supply.ID, protocol.StatusDispatched, simNow.Add(-1*time.Minute))
+		empty := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusInTransit })
+		_, err = db.Exec(`UPDATE orders SET order_type = 'move', source_node = 'STR-DRAIN', delivery_node = 'STR-MKT', payload_code = '' WHERE id = $1`, empty.ID)
+		testutil.MustNoErr(t, err, "an empty on its way to the market")
+		historyAt(t, db, empty.ID, protocol.StatusInTransit, simNow.Add(-1*time.Minute))
 		r, err = readStranded(db.DB, &simNow)
 		testutil.MustNoErr(t, err, "read the run end again")
 		if len(r.stranded) != 1 || r.noRel != 0 {
-			t.Fatalf("stranded %d, with no releaser %d; want the waiter's releaser pending, work progressing "+
-				"at its node", len(r.stranded), r.noRel)
+			t.Fatalf("stranded %d, with no releaser %d; want the waiter's releaser pending: an empty is on its "+
+				"way to its market", len(r.stranded), r.noRel)
+		}
+	})
+
+	// A swap pair waits as one: the evac leg's wait is its supply leg's empty.
+	// Line 2's 552 (an empty from the market) and 553 (the weld's full, waiting
+	// on it). RED at 9a34f135: both read as pending beside the market's work.
+	t.Run("a swap pair waits for its supply leg's empty", func(t *testing.T) {
+		t.Parallel()
+		db := testdb.Open(t)
+		simNow := time.Now().UTC().Add(48 * time.Hour)
+		supply := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusQueued })
+		evac := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusQueued })
+		_, err := db.Exec(`UPDATE orders SET order_type = 'complex', source_node = 'STR-MKT', delivery_node = 'STR-WELD', payload_code = 'STR-Y',
+			sibling_order_uuid = $2, steps_json = '[{"action":"pickup","node":"STR-MKT","empty":true},{"action":"dropoff","node":"STR-WELD"}]' WHERE id = $1`,
+			supply.ID, evac.EdgeUUID)
+		testutil.MustNoErr(t, err, "the supply leg")
+		_, err = db.Exec(`UPDATE orders SET order_type = 'complex', source_node = 'STR-WELD', delivery_node = 'STR-MKT-9', payload_code = 'STR-Y',
+			sibling_order_uuid = $2, steps_json = '[{"action":"wait","node":"STR-WELD","wait_kind":"station"},{"action":"pickup","node":"STR-WELD"},{"action":"dropoff","node":"STR-MKT-9","group":"STR-MKT"}]' WHERE id = $1`,
+			evac.ID, supply.EdgeUUID)
+		testutil.MustNoErr(t, err, "the evac leg")
+		for _, id := range []int64{supply.ID, evac.ID} {
+			withCause(t, db, id, "ngrp-resolve")
+			historyAt(t, db, id, protocol.StatusQueued, simNow.Add(-30*time.Minute))
+		}
+		busy := testdb.CreateOrder(t, db, func(o *orders.Order) { o.Status = protocol.StatusInTransit })
+		_, err = db.Exec(`UPDATE orders SET source_node = 'STR-MKT', delivery_node = 'STR-PRESS', payload_code = 'STR-W' WHERE id = $1`, busy.ID)
+		testutil.MustNoErr(t, err, "work at the market")
+		historyAt(t, db, busy.ID, protocol.StatusInTransit, simNow.Add(-1*time.Minute))
+
+		r, err := readStranded(db.DB, &simNow)
+		testutil.MustNoErr(t, err, "read the run end")
+		if len(r.stranded) != 2 || r.noRel != 2 {
+			t.Fatalf("stranded %d, with no releaser %d; want both legs with none: nothing brings the supply leg an empty",
+				len(r.stranded), r.noRel)
 		}
 	})
 }

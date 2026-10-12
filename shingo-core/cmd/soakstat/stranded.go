@@ -36,16 +36,21 @@ import (
 // THE VERDICT. A stranded order has a releaser pending when its chain reaches
 // a LIVE order (not stranded itself, so an event of its is still to come), or
 // ends in a wait nobody holds whose cause has an EVENT releaser in the
-// inventory (dispatch.ReleaserOf: material appears, a slot frees) while work
-// is progressing where that event would come from: an order dispatched or
-// later in the last strandedQuiet sim-minutes at the waiter's own nodes, their
-// lane or their group. A cycle, a chain that ends in a floored cause, or an end
-// with no work progressing near it has none, and the run FAILS on it, whatever
-// its completed count. A material wait beside a working supply is not a jam;
-// a market cluster beside a shuttle loop elsewhere is one. The looser first cut
-// (any order moving anywhere in the plant) passed main's 2026-10-05 jam, whose
-// market cluster stood a day beside a shuttle completing every two minutes; that
-// is the reason the refinement to the waiter's own nodes, lane and group exists.
+// inventory (dispatch.ReleaserOf: material appears, a slot frees) AND something
+// live will put that resource there: an order in flight (dispatched or later,
+// not stranded) delivering an empty, or a bin of the part, into the place the
+// waiter draws from, or picking one up out of the group it needs room in. A
+// cycle, a chain that ends in a floored cause, or an end nothing is bringing
+// its resource to has none, and the run FAILS on it, whatever its completed
+// count.
+//
+// WORK NEAR IT IS NOT A RELEASER. The rule before this one credited any order
+// that moved at the waiter's nodes, lane or group, and D2's after read line 2's
+// three empty-waiters as pending beside a market busy shuttling partial bins
+// (TRACE-line2-empties). A swap pair waits as one: a leg whose steps open on a
+// wait takes its sibling's resource. A wait whose resource the tool cannot read
+// (no steps, an order type it does not know) falls back to work near it, and
+// its chain says so.
 //
 // THE CLOCK. Run against a live Core with its config, "now" is the sim clock
 // itself, so a frozen plant ages. Read from a dump, it is the newest history
@@ -73,6 +78,8 @@ type activeOrder struct {
 	children                                 []int64  // non-terminal legs
 	waitLane                                 int64    // the lane its current wait is on, 0 if none
 	waitLaneName                             string
+	uuid, sibling                            string // edge_uuid, and the paired leg's
+	carries                                  string // the payload it carries: its bin's, else its own; "" is an empty
 }
 
 type strandedReport struct {
@@ -127,7 +134,7 @@ func readStranded(db *sql.DB, simNow *time.Time) (*strandedReport, error) {
 		}
 		by, what := re.waitsOn(o)
 		row := strandedRow{o: o, waitsOn: what, holders: holderText(by, re.byID)}
-		row.chain, row.releaser = followChain(o, re.byID, re.waitsOn, near.moved)
+		row.chain, row.releaser = followChain(o, re.byID, re.waitsOn, re.bringer(near))
 		if !row.releaser {
 			rep.noRel++
 		}
@@ -163,6 +170,8 @@ func readActive(db *sql.DB, now any) (*runEnd, error) {
 		SELECT o.id, COALESCE(o.parent_order_id, 0), o.order_type, o.status, o.source_node, o.delivery_node,
 		       o.station_id, o.payload_code, o.robot_id, o.vendor_state,
 		       COALESCE(o.queue_cause, ''), o.queue_reason, o.steps_json, o.wait_index,
+		       o.edge_uuid, COALESCE(o.sibling_order_uuid, ''),
+		       COALESCE((SELECT b.payload_code FROM bins b WHERE b.id = o.bin_id), o.payload_code),
 		       COALESCE(EXTRACT(EPOCH FROM ((SELECT t FROM now_sim) - COALESCE(h.first_at, o.created_at))) / 60.0, 0),
 		       COALESCE(EXTRACT(EPOCH FROM ((SELECT t FROM now_sim) - COALESCE(h.last_at, o.updated_at))) / 60.0, 0)
 		FROM orders o LEFT JOIN h ON h.order_id = o.id
@@ -175,7 +184,8 @@ func readActive(db *sql.DB, now any) (*runEnd, error) {
 	for rows.Next() {
 		o := &activeOrder{}
 		if err := rows.Scan(&o.id, &o.parent, &o.typ, &o.status, &o.src, &o.dst, &o.station, &o.payload,
-			&o.robot, &o.vendorState, &o.cause, &o.reason, &o.steps, &o.waitIndex, &o.ageMin, &o.quietMin); err != nil {
+			&o.robot, &o.vendorState, &o.cause, &o.reason, &o.steps, &o.waitIndex,
+			&o.uuid, &o.sibling, &o.carries, &o.ageMin, &o.quietMin); err != nil {
 			return nil, fmt.Errorf("active orders: %w", err)
 		}
 		o.stranded = o.ageMin > strandedAge || o.quietMin > strandedQuiet
@@ -285,7 +295,7 @@ func (re *runEnd) waitsOn(o *activeOrder) ([]int64, string) {
 // releaser and work progressed near it), a cycle or chainMax steps (none is).
 // Every branch is followed; the order has a releaser if any branch has one.
 func followChain(o *activeOrder, byID map[int64]*activeOrder,
-	waitsOn func(*activeOrder) ([]int64, string), movedNear func(*activeOrder) bool) (string, bool) {
+	waitsOn func(*activeOrder) ([]int64, string), bringing func(*activeOrder) (string, bool)) (string, bool) {
 	end := func(cur *activeOrder) (string, bool) {
 		what, evented := dispatch.ReleaserOf(cur.cause)
 		switch {
@@ -293,11 +303,9 @@ func followChain(o *activeOrder, byID map[int64]*activeOrder,
 			return fmt.Sprintf("%d nobody holds it, and it carries no cause: nothing is coming", cur.id), false
 		case !evented:
 			return fmt.Sprintf("%d nobody holds it; %s is floored, not evented: nothing is coming", cur.id, cur.cause), false
-		case !movedNear(cur):
-			return fmt.Sprintf("%d nobody holds it; releaser %q, but no work progressed at its nodes or their groups in %d sim-min",
-				cur.id, what, strandedQuiet), false
 		}
-		return fmt.Sprintf("%d nobody holds it; releaser %q, work progressing at its nodes or groups", cur.id, what), true
+		source, ok := bringing(cur)
+		return fmt.Sprintf("%d nobody holds it; releaser %q, %s", cur.id, what, source), ok
 	}
 	if by, _ := waitsOn(o); len(by) == 0 {
 		return end(o)

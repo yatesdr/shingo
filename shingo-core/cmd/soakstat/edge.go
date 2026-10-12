@@ -162,6 +162,8 @@ type edgeReading struct {
 	logNotFound, logBound int
 
 	work *edgeWork // [S.6], edge_work.go
+
+	lines []lineTick // each line's last PLC tick, line_ticks.go
 }
 
 // linesideSample is one decoded lineside report.
@@ -216,6 +218,10 @@ func readEdge(src edgeSource) (*edgeReading, error) {
 	// failing the Edge's other sections.
 	if n, err := readPLCTicks(db); err == nil {
 		e.work.ticks, e.work.ticksRead = n, true
+	}
+	// Same rule: no counter table, no lines, and the LINES table says so.
+	if lines, err := readLineTicks(db); err == nil {
+		e.lines = lines
 	}
 	return e, nil
 }
