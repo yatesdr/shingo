@@ -24,6 +24,8 @@ import (
 	"database/sql"
 	"fmt"
 	"slices"
+	"sort"
+	"strings"
 
 	"shingo/protocol"
 )
@@ -154,29 +156,86 @@ func WalkClaims(db *sql.DB, opts WalkOpts, visit func(WalkCtx) (stop bool)) erro
 // Both are sorted for a deterministic wire/HMI shape. A loader with no
 // matching claim returns empty slices and "".
 func PayloadsForLoader(db *sql.DB, coreNodeName string, role protocol.ClaimRole) (active, all []string, outboundDest string, err error) {
+	// TWO READS, THE WALK'S ORDER. It was WalkClaims: the process list, one read
+	// per process for its styles and one per style for its claims (21 reads a LOAD
+	// press on demo-sim, D2 Lane 0 item 4). The live styles with their process's
+	// active flag and name, then the claims at this node, ordered in Go as the walk
+	// visited them (process name, style name, claim sequence), so the active
+	// claim that wins OutboundDestination is the one the walk saw first.
+	type styleKey struct {
+		active      bool
+		proc, style string
+	}
+	styles := map[int64]styleKey{}
+	rows, err := db.Query(`SELECT s.id, CASE WHEN p.active_style_id = s.id THEN 1 ELSE 0 END, p.name, s.name
+		FROM styles s JOIN processes p ON p.id = s.process_id WHERE s.` + strings.TrimSpace(liveStyles))
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("loader payloads: styles: %w", err)
+	}
+	for rows.Next() {
+		var id int64
+		var isActive int
+		var k styleKey
+		if err := rows.Scan(&id, &isActive, &k.proc, &k.style); err != nil {
+			rows.Close()
+			return nil, nil, "", fmt.Errorf("loader payloads: scan style: %w", err)
+		}
+		k.active = isActive != 0
+		styles[id] = k
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, nil, "", fmt.Errorf("loader payloads: styles: %w", err)
+	}
+
+	claimRows, err := db.Query(`SELECT `+claimSelect+` FROM style_node_claims
+		WHERE core_node_name = ? AND swap_mode = ? AND role = ? AND`+liveClaims,
+		coreNodeName, string(protocol.SwapModeManualSwap), string(role))
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("loader payloads: claims: %w", err)
+	}
+	var claims []NodeClaim
+	for claimRows.Next() {
+		c, err := scanNodeClaim(claimRows)
+		if err != nil {
+			claimRows.Close()
+			return nil, nil, "", fmt.Errorf("loader payloads: scan claim: %w", err)
+		}
+		if _, reachable := styles[c.StyleID]; reachable {
+			claims = append(claims, c)
+		}
+	}
+	claimRows.Close()
+	if err := claimRows.Err(); err != nil {
+		return nil, nil, "", fmt.Errorf("loader payloads: claims: %w", err)
+	}
+	sort.SliceStable(claims, func(i, j int) bool {
+		a, b := styles[claims[i].StyleID], styles[claims[j].StyleID]
+		if a.proc != b.proc {
+			return a.proc < b.proc
+		}
+		if a.style != b.style {
+			return a.style < b.style
+		}
+		return claims[i].Sequence < claims[j].Sequence
+	})
+
 	activeSet := map[string]bool{}
 	allSet := map[string]bool{}
 	activeKnown := false
-	err = WalkClaims(db, WalkOpts{
-		Role:         role,
-		SwapMode:     protocol.SwapModeManualSwap,
-		CoreNodeName: coreNodeName,
-	}, func(ctx WalkCtx) bool {
-		for _, p := range ctx.Claim.AllowedPayloads() {
+	for _, c := range claims {
+		isActive := styles[c.StyleID].active
+		for _, p := range c.AllowedPayloads() {
 			allSet[p] = true
-			if ctx.Active {
+			if isActive {
 				activeSet[p] = true
 			}
 		}
 		// Active-style claim wins for OutboundDestination, first one seen.
-		if ctx.Active && !activeKnown {
-			outboundDest = ctx.Claim.OutboundDestination
+		if isActive && !activeKnown {
+			outboundDest = c.OutboundDestination
 			activeKnown = true
 		}
-		return false
-	})
-	if err != nil {
-		return nil, nil, "", err
 	}
 	return sortedKeys(activeSet), sortedKeys(allSet), outboundDest, nil
 }
