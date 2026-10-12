@@ -440,11 +440,11 @@ func (s *BinManifestService) resolveTemplateManifest(payloadCode string, uopOver
 // new delta_epoch so callers can ship it to Edge in the response that
 // triggered the load (typically the BinLoad handler).
 //
-// `by` also decides what the CARRIER RULE does here — see
-// judgeBinTypeCarriesPayload. Its live caller is the telemetry bin-load
-// endpoint, which passes DeclaredByLifecycle because it is Edge reporting what
-// a cell physically put in the carrier; the operator's Load Payload reaches the
-// same write through SetFromTemplate with DeclaredByPerson and is refused.
+// `by` also decides what the CARRIER RULE does here (carrierNoFor, see
+// judgeBinTypeCarriesPayload). The operator's Load Payload reaches it through
+// SetFromTemplate with DeclaredByPerson and is refused. The loader's LOAD (the
+// telemetry bin-load) does not come through here: it writes through LoadAtLine,
+// refused like a person and announced as lifecycle.
 func (s *BinManifestService) SetForProduction(binID int64, manifestJSON, payloadCode string, uop int, by protocol.Declarer) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -462,12 +462,45 @@ func (s *BinManifestService) SetForProduction(binID int64, manifestJSON, payload
 	return newEpoch, nil
 }
 
+// carrierNo is what a write door does with the carrier rule's "no": land the
+// write and flag the carrier, or refuse it. See judgeBinTypeCarriesPayload.
+type carrierNo uint8
+
+const (
+	// flagUndeclared: the parts are already in the carrier (a press, a tick, an
+	// ingest); the write lands and the carrier carries the finding.
+	flagUndeclared carrierNo = iota
+	// refuseUndeclared: a person declared the load; it is refused and nothing
+	// is written.
+	refuseUndeclared
+)
+
+// carrierNoFor is the consequence a door's Declarer implies: a person's
+// declaration is refused, anything else is flagged. Written as "== person" so
+// a third Declarer value, if one is ever added, lands on the flagging side and
+// keeps the record of a load that physically happened.
+func carrierNoFor(by protocol.Declarer) carrierNo {
+	if by == protocol.DeclaredByPerson {
+		return refuseUndeclared
+	}
+	return flagUndeclared
+}
+
 // setForProductionTx is SetForProduction's body against a caller-provided tx, so
 // the manifest write can commit in the SAME transaction as the confirm (see
 // RecordProducedBin). Writes the OpSetForProduction audit row and bumps the
-// delta_epoch; returns the new epoch.
+// delta_epoch; returns the new epoch. The carrier verdict follows `by`.
 func (s *BinManifestService) setForProductionTx(tx *sql.Tx, binID int64, manifestJSON, payloadCode string, uop int, by protocol.Declarer) (int64, error) {
-	undeclared, err := judgeBinTypeCarriesPayload(tx, binID, payloadCode, by)
+	return s.writeProductionTx(tx, binID, manifestJSON, payloadCode, uop, by, carrierNoFor(by))
+}
+
+// writeProductionTx is the write itself, with the announcement's declarer and
+// the carrier verdict's consequence asked separately. They agree at every door
+// but one: the loader's LOAD (LoadAtLine) is a person's declaration for the
+// carrier rule and a lifecycle announcement on the wire, because the Edge
+// applied that act from the LOAD's own reply (see LoadAtLine).
+func (s *BinManifestService) writeProductionTx(tx *sql.Tx, binID int64, manifestJSON, payloadCode string, uop int, by protocol.Declarer, no carrierNo) (int64, error) {
+	undeclared, err := judgeBinTypeCarriesPayload(tx, binID, payloadCode, no)
 	if err != nil {
 		return 0, err
 	}
@@ -508,7 +541,7 @@ func (s *BinManifestService) setForProductionTx(tx *sql.Tx, binID int64, manifes
 
 // judgeBinTypeCarriesPayload is the bin-type rule at the WRITE end. It returns
 // whether the bin is in an UNDECLARED carrier for this payload, refusing
-// outright when a PERSON declared the load.
+// outright when a PERSON declared the load (refuseUndeclared).
 //
 // ── THE VERDICT IS ONE RULE; THE CONSEQUENCE DEPENDS ON WHO DECLARED ──────
 //
@@ -517,8 +550,10 @@ func (s *BinManifestService) setForProductionTx(tx *sql.Tx, binID int64, manifes
 // it. What differs is what a "no" MEANS at the place it is said:
 //
 //   - DeclaredByPerson is somebody at an admin door typing an assignment
-//     before anything physical has happened. Refusing costs nothing and stops
-//     the bad row being written at all.
+//     before anything physical has happened, or an operator's LOAD at a loader
+//     window. Refusing costs nothing and stops the bad row being written at
+//     all; at the window the refusal says which carriers the part rides and
+//     that this one has to leave, before it waits there as unfetchable stock.
 //   - DeclaredByLifecycle is Core's own bookkeeping recording what a cell,
 //     a tick or an ingest ALREADY DID. The parts are in the carrier by the
 //     time the message arrives. Refusing does not un-fill the bin; it writes
@@ -526,16 +561,18 @@ func (s *BinManifestService) setForProductionTx(tx *sql.Tx, binID int64, manifes
 //     wrong in the direction nothing downstream can detect. So the write lands
 //     and the carrier carries a finding (owner, 2026-09-20).
 //
-// ── AND IT IS protocol.Declarer, NOT A SECOND ENUM ────────────────────────
+// ── DERIVED FROM protocol.Declarer AT EVERY DOOR BUT ONE ──────────────────
 //
-// This started as a private `payloadWriteDoor` (since removed) with two values. It encoded
-// exactly the split Declarer already carries — every produce/tick/ingest call
-// site passes DeclaredByLifecycle and the one admin door passes
-// DeclaredByPerson — so it was a second enum whose values had to be kept in
-// lockstep with the first by hand, forever, with nothing checking. Two names
-// for one distinction is how the third value gets added to one of them.
-// Collapsed onto Declarer; protocol/constants.go names this reader so the next
-// person to touch that type sees both.
+// This started as a private `payloadWriteDoor` with two values, collapsed onto
+// Declarer because every produce/tick/ingest call site passed lifecycle and the
+// one admin door passed person: a second enum kept in lockstep by hand. It is a
+// separate value again (carrierNo) because the loader's LOAD made the two
+// questions differ on one call: a person declared the load, so the rule refuses
+// it, and the announcement still says lifecycle, because the Edge applied the
+// LOAD from its own reply and ignores a lifecycle echo of the generation it
+// holds, where a person's would rewrite the count and invite a bind. Every
+// other door derives it from its Declarer in one place (carrierNoFor), so the
+// lockstep is not by hand; protocol/constants.go names this reader.
 //
 // Sourcing is untouched either way: an undeclared carrier stays unfetchable
 // through helpers.BinSourceableSQL, which is precisely why the finding has to
@@ -545,9 +582,9 @@ func (s *BinManifestService) setForProductionTx(tx *sql.Tx, binID int64, manifes
 //
 // setForProductionTx is the one statement that writes payload_code onto a bin,
 // and every door that loads a bin reaches it: the operator's Load Payload
-// (BinService.LoadPayload -> SetFromTemplate) and produce finalize
-// (RecordProducedBin, and RecordProducedBinFromTemplate through it, plus the
-// telemetry bin-load through SetForProduction). Only the operator door checked
+// (BinService.LoadPayload -> SetFromTemplate), the loader's LOAD (the telemetry
+// bin-load, LoadAtLine, a person's declaration) and produce finalize
+// (RecordProducedBin, and RecordProducedBinFromTemplate through it). Only the operator door checked
 // before 523c6a3b. Produce wrote whatever Edge reported, so a cell finalizing a
 // bin of the wrong carrier for its part created exactly the row the sourcing
 // readers have refused to source since 493a8062 — a bin that counts as stock
@@ -573,7 +610,7 @@ func (s *BinManifestService) setForProductionTx(tx *sql.Tx, binID int64, manifes
 //
 // An empty payloadCode is a CLEAR, not a load: no rule to check, and no finding
 // to carry — the caller's UPDATE clears any standing stamp.
-func judgeBinTypeCarriesPayload(tx *sql.Tx, binID int64, payloadCode string, by protocol.Declarer) (bool, error) {
+func judgeBinTypeCarriesPayload(tx *sql.Tx, binID int64, payloadCode string, no carrierNo) (bool, error) {
 	if payloadCode == "" {
 		return false, nil
 	}
@@ -608,7 +645,7 @@ func judgeBinTypeCarriesPayload(tx *sql.Tx, binID int64, payloadCode string, by 
 	if !hasRules || permitted {
 		return false, nil
 	}
-	if by != protocol.DeclaredByPerson {
+	if no != refuseUndeclared {
 		// Core's own bookkeeping, recording something that already happened: the
 		// parts are in the bin. Land the write and let the carrier hold the
 		// finding; every sourcing reader still refuses it.
@@ -622,10 +659,27 @@ func judgeBinTypeCarriesPayload(tx *sql.Tx, binID int64, payloadCode string, by 
 
 	allowed, aErr := listPayloadBinTypeCodesTx(tx, payloadCode)
 	if aErr != nil {
-		return false, fmt.Errorf("payload %q may not be loaded into bin type %q", payloadCode, binTypeCode)
+		allowed = nil
 	}
-	return false, fmt.Errorf("payload %q not compatible with bin type %q (allowed: %v)",
-		payloadCode, binTypeCode, allowed)
+	return false, &CarrierRefusedError{Payload: payloadCode, BinType: binTypeCode, Allowed: allowed}
+}
+
+// CarrierRefusedError is the carrier rule's "no" to a person's declaration: the
+// payload, the carrier it was declared onto, and the carriers it may ride (nil
+// when that list could not be read). Typed so a door can answer it as a
+// conflict with its own instructions rather than as a server failure; Error()
+// is the sentence both person doors have always returned.
+type CarrierRefusedError struct {
+	Payload string
+	BinType string
+	Allowed []string
+}
+
+func (e *CarrierRefusedError) Error() string {
+	if e.Allowed == nil {
+		return fmt.Sprintf("payload %q may not be loaded into bin type %q", e.Payload, e.BinType)
+	}
+	return fmt.Sprintf("payload %q not compatible with bin type %q (allowed: %v)", e.Payload, e.BinType, e.Allowed)
 }
 
 // listPayloadBinTypeCodesTx names the carriers a payload IS allowed in, for the
@@ -713,22 +767,25 @@ func (s *BinManifestService) confirmTx(tx *sql.Tx, binID int64, producedAt strin
 // the same DeclaredByLifecycle that keeps the announcement from inviting a
 // bind, reused: see judgeBinTypeCarriesPayload.
 func (s *BinManifestService) RecordProducedBin(binID int64, manifestJSON, payloadCode string, uop int, producedAt string) error {
-	_, err := s.recordProduced(binID, manifestJSON, payloadCode, uop, producedAt)
+	// A press finishing a carrier. This announcement is the one that routinely
+	// lands after a robot has already lifted what it names, so it must never
+	// invite a bind.
+	_, err := s.recordProduced(binID, manifestJSON, payloadCode, uop, producedAt, flagUndeclared)
 	return err
 }
 
-// recordProduced is RecordProducedBin's one transaction, returning the new
-// delta_epoch for the caller that has to hand it back to the Edge.
-func (s *BinManifestService) recordProduced(binID int64, manifestJSON, payloadCode string, uop int, producedAt string) (int64, error) {
+// recordProduced is the set-and-confirm in one transaction, returning the new
+// delta_epoch for the caller that has to hand it back to the Edge. Its
+// announcement is always lifecycle; `no` is what the carrier rule does with a
+// "no" (see judgeBinTypeCarriesPayload): the press door flags, the loader's
+// LOAD refuses.
+func (s *BinManifestService) recordProduced(binID int64, manifestJSON, payloadCode string, uop int, producedAt string, no carrierNo) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
-	// A press finishing a carrier. This announcement is the one that routinely
-	// lands after a robot has already lifted what it names, so it must never
-	// invite a bind.
-	epoch, err := s.setForProductionTx(tx, binID, manifestJSON, payloadCode, uop, protocol.DeclaredByLifecycle)
+	epoch, err := s.writeProductionTx(tx, binID, manifestJSON, payloadCode, uop, protocol.DeclaredByLifecycle, no)
 	if err != nil {
 		return 0, err
 	}
@@ -745,9 +802,24 @@ func (s *BinManifestService) recordProduced(binID int64, manifestJSON, payloadCo
 // payload code, so a handler can answer the caller's error rather than 500.
 var ErrUnknownPayload = errors.New("unknown payload")
 
-// LoadAtLine is the bin-load telemetry door's write: the Edge reporting what a
-// cell physically put in a carrier, with the parts it named (manifestJSON) and
+// LoadAtLine is the bin-load telemetry door's write: an operator's LOAD at a
+// loader window, relayed by the Edge, with the parts it named (manifestJSON) and
 // the count it declared, if any.
+//
+// A PERSON DECLARED IT, so the carrier rule refuses rather than flags
+// (refuseUndeclared, as BinService.LoadPayload is refused): a LOAD onto a
+// carrier the part may not ride is answered with a *CarrierRefusedError and
+// nothing is written. It used to flag like the press door, which landed the
+// load; every sourcing reader then refused that carrier as a source for good
+// while its parts held the reorder level (D33). The press finishing a carrier
+// (RecordProducedBin) still flags.
+//
+// THE ANNOUNCEMENT STAYS LIFECYCLE. The Edge seats the LOAD from this call's
+// reply (BindActiveBin with the returned epoch) and ignores a lifecycle echo of
+// the generation it already holds (handler_uop_adjustment.go). A person's echo
+// would be applied again: a second write on the Pi per LOAD, the count rewritten
+// over any tick taken since, and an invitation to bind a carrier the L2 may
+// already have lifted. Only the carrier verdict is a person's here.
 //
 // It is RecordProducedBin with the two questions the door used to answer for
 // itself answered here instead:
@@ -774,7 +846,7 @@ func (s *BinManifestService) LoadAtLine(binID int64, manifestJSON, payloadCode s
 		d = &v
 	}
 	uop := standardPackUOP(p.UOPCapacity, d)
-	epoch, err := s.recordProduced(binID, manifestJSON, payloadCode, uop, "")
+	epoch, err := s.recordProduced(binID, manifestJSON, payloadCode, uop, "", refuseUndeclared)
 	if err != nil {
 		return 0, 0, err
 	}

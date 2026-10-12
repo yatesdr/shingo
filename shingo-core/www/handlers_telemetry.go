@@ -256,11 +256,18 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 	// the set and the confirm now share, are BinManifestService.LoadAtLine's.
 	newEpoch, written, err := h.engine.BinManifest().LoadAtLine(bin.ID, string(manifestJSON), req.PayloadCode, req.UOPCount)
 	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, service.ErrUnknownPayload) {
-			status = http.StatusBadRequest
+		var refused *service.CarrierRefusedError
+		switch {
+		case errors.As(err, &refused):
+			// A conflict between the part and the carrier standing at the
+			// window, answered with what the operator does about it. The Edge
+			// shows this sentence as the LOAD's refusal.
+			h.jsonError(w, loaderCarrierRefusal(refused), http.StatusConflict)
+		case errors.Is(err, service.ErrUnknownPayload):
+			h.jsonError(w, err.Error(), http.StatusBadRequest)
+		default:
+			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		}
-		h.jsonError(w, err.Error(), status)
 		return
 	}
 	uop := int64(written)
@@ -277,6 +284,18 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 		UOPRemaining: int(uop),
 		DeltaEpoch:   newEpoch,
 	})
+}
+
+// loaderCarrierRefusal is the sentence an operator reads when the carrier rule
+// refuses their LOAD at a loader window: the carrier, the carriers the part may
+// ride, and that nothing was written (owner, 2026-10-12: it names the carriers
+// the part may ride, and nothing else).
+func loaderCarrierRefusal(r *service.CarrierRefusedError) string {
+	allowed := "its allowed carriers could not be read"
+	if len(r.Allowed) > 0 {
+		allowed = "allowed: " + strings.Join(r.Allowed, ", ")
+	}
+	return fmt.Sprintf("%s may not ride a %s carrier (%s). Nothing was loaded.", r.Payload, r.BinType, allowed)
 }
 
 // apiBinCount records a count an operator made at the LINE, against the bin at

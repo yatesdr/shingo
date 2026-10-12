@@ -396,3 +396,46 @@ func TestPayloadBinTypes_EditingTheRuleRecomputesEveryCarrier(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadAtLine_RefusesACarrierThePartMayNotRide — the loader window's LOAD is
+// a person's declaration, so it answers the rule the way the operator's Load
+// Payload does: refused, the allowed carriers named, nothing written (D1 item 8).
+//
+// It went through recordProduced as DeclaredByLifecycle: the load landed and the
+// carrier was flagged, every sourcing reader then refused it as a source for
+// good, and its parts still counted toward the loader's reorder level (D33).
+// The press finishing a carrier keeps accept-and-flag; that door is pinned by
+// TestProduceFinalize_LandsAndFlagsACarrierThePartMayNotTravelIn above.
+func TestLoadAtLine_RefusesACarrierThePartMayNotRide(t *testing.T) {
+	t.Parallel()
+	f := setupBinTypeFixture(t)
+	svc := service.NewBinManifestService(f.db, service.EpochAnnounce{})
+	binID := f.bin(t, "BTW-LOADER-WRONG", f.foreignID)
+
+	uop := int64(40)
+	_, _, err := svc.LoadAtLine(binID, `{"items":[{"part_number":"P1"}]}`, f.payload, &uop)
+	if err == nil {
+		t.Fatal("the loader's LOAD accepted a carrier the part may not ride; it is a person's " +
+			"declaration, refused like the operator's Load Payload")
+	}
+	if !strings.Contains(err.Error(), "BT-FOREIGN") || !strings.Contains(err.Error(), "BT-FITS") {
+		t.Errorf("the refusal does not name the carrier and the allowed types: %v", err)
+	}
+	b, gErr := f.db.GetBin(binID)
+	if gErr != nil {
+		t.Fatalf("re-read bin: %v", gErr)
+	}
+	if b.PayloadCode != "" || b.UOPRemaining != 0 || b.ManifestConfirmed {
+		t.Errorf("a refused LOAD wrote the bin: payload=%q uop=%d confirmed=%v",
+			b.PayloadCode, b.UOPRemaining, b.ManifestConfirmed)
+	}
+	if at := f.flaggedAt(t, binID); at != nil {
+		t.Errorf("a refused LOAD flagged the carrier at %v", *at)
+	}
+
+	// The carrier the part rides loads as before.
+	okID := f.bin(t, "BTW-LOADER-RIGHT", f.fitsID)
+	if _, _, err := svc.LoadAtLine(okID, `{"items":[{"part_number":"P1"}]}`, f.payload, &uop); err != nil {
+		t.Fatalf("the loader's LOAD refused the carrier the part rides: %v", err)
+	}
+}

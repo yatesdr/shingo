@@ -122,13 +122,14 @@ func IsLifecycleActor(actor string) bool {
 //
 // ── A SECOND READER, AND IT IS NOT THE WIRE ───────────────────────────────
 //
-// service.judgeBinTypeCarriesPayload reads this too, to decide whether a
-// payload written into a carrier its payload_bin_types rows exclude is REFUSED
-// or ACCEPTED-AND-FLAGGED. A person declaring ahead of anything physical is
-// refused; Core's own bookkeeping recording what a cell already did is flagged,
-// because the parts are in the bin and a refusal would record that something
-// which happened did not. It briefly had its own two-valued enum for exactly
-// that split before the two were collapsed here.
+// service.carrierNoFor reads this too, to decide whether a payload written into
+// a carrier its payload_bin_types rows exclude is REFUSED or
+// ACCEPTED-AND-FLAGGED (service.judgeBinTypeCarriesPayload). A person declaring
+// ahead of anything physical is refused; Core's own bookkeeping recording what
+// a cell already did is flagged, because the parts are in the bin and a refusal
+// would record that something which happened did not. One door answers the two
+// questions differently: the loader's LOAD is refused as a person and announced
+// as lifecycle (service.LoadAtLine).
 //
 // So a third value added to this type changes two things, not one: what goes on
 // the wire, and whether a write door refuses. Read both before adding one.

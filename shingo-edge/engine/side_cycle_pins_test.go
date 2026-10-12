@@ -51,6 +51,10 @@ type scCore struct {
 	loadBinIDs []int64
 	// clears counts the bin-clear requests Core accepted.
 	clears int
+	// refuseLoad, when set, is the refusal Core answers every bin-load with
+	// (409, {"error": refuseLoad}), as its carrier rule answers a LOAD onto a
+	// carrier the part may not ride.
+	refuseLoad string
 }
 
 // nodeBinReads is how many node-bins requests Core has served so far.
@@ -108,6 +112,11 @@ func (c *scCore) serve(w http.ResponseWriter, r *http.Request) {
 		var req BinLoadRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		c.loadBinIDs = append(c.loadBinIDs, req.BinID)
+		if c.refuseLoad != "" {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": c.refuseLoad})
+			return
+		}
 		if win := c.windows[req.NodeName]; win != nil {
 			win.payload = req.PayloadCode
 			win.uop = 40

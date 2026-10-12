@@ -195,3 +195,29 @@ func TestBumpWithNoNodeAnnouncesNothing(t *testing.T) {
 		t.Errorf("outbox holds %d announcements for a carrier at no node, want 0", len(msgs))
 	}
 }
+
+// TestLoadAtLine_AnnouncesAsLifecycle: the loader's LOAD is refused like a
+// person on a carrier the part may not ride (D1 item 8), and its announcement
+// still says lifecycle. The Edge seats the LOAD from the call's reply and
+// ignores a lifecycle echo of the generation it already holds; a person's echo
+// would be applied again (a second Pi write per LOAD, the count rewritten over
+// ticks taken since, a bind invited after the L2 may have lifted the carrier).
+func TestLoadAtLine_AnnouncesAsLifecycle(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := announcingService(db)
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-ANN-LOAD", "", 0)
+
+	uop := int64(12)
+	if _, _, err := svc.LoadAtLine(bin.ID, `{"items":[{"part_number":"P1"}]}`, sd.Payload.Code, &uop); err != nil {
+		t.Fatalf("LoadAtLine: %v", err)
+	}
+	msgs := outboxAdjustments(t, db, bin.ID)
+	if len(msgs) != 1 {
+		t.Fatalf("outbox holds %d announcements for the LOAD, want 1", len(msgs))
+	}
+	if !protocol.IsLifecycleActor(msgs[0].Actor) {
+		t.Errorf("the LOAD announced as %q, want a lifecycle actor: the Edge applied the LOAD from its reply", msgs[0].Actor)
+	}
+}

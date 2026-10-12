@@ -4,10 +4,12 @@ package www
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"shingocore/internal/testdb"
 	"shingocore/store/audit"
+	"shingocore/store/bins"
 )
 
 // bin_load_door_test.go — the bin-load telemetry door answers like its
@@ -123,5 +125,62 @@ func TestApiBinLoad_WritesBothLedgerRowsOnce(t *testing.T) {
 	if count[audit.OpSetForProduction] != 1 || count[audit.OpManifestConfirmed] != 1 {
 		t.Errorf("ledger ops = %v, want exactly one %s and one %s", count,
 			audit.OpSetForProduction, audit.OpManifestConfirmed)
+	}
+}
+
+// TestApiBinLoad_ACarrierThePartMayNotRideIsRefused — the loader window's LOAD
+// is a person's declaration (D1 item 8): on a carrier the part may not ride it
+// is refused, 409, with the carrier, the allowed types and what to do with the
+// carrier in the sentence the Edge shows. The bin is left as it was: no payload,
+// no finding. It used to land and flag, and the flagged carrier was then
+// unsourceable for good while its parts held the loader's reorder level (D33).
+func TestApiBinLoad_ACarrierThePartMayNotRideIsRefused(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+	fits := &bins.BinType{Code: "LD-FITS"}
+	foreign := &bins.BinType{Code: "LD-FOREIGN"}
+	for _, bt := range []*bins.BinType{fits, foreign} {
+		if err := db.CreateBinType(bt); err != nil {
+			t.Fatalf("create bin type %s: %v", bt.Code, err)
+		}
+	}
+	if err := db.SetPayloadBinTypes(sd.Payload.ID, []int64{fits.ID}); err != nil {
+		t.Fatalf("the part rides LD-FITS only: %v", err)
+	}
+	bin := testdb.CreateBinAtNode(t, db, "", sd.StorageNode.ID, "BIN-LD-FOREIGN")
+	if _, err := db.DB.Exec(`UPDATE bins SET bin_type_id=$1 WHERE id=$2`, foreign.ID, bin.ID); err != nil {
+		t.Fatalf("put the bin on the foreign carrier: %v", err)
+	}
+
+	rec := postJSON(t, h.apiBinLoad, "/api/telemetry/bin-load", map[string]any{
+		"node_name": sd.StorageNode.Name, "bin_id": bin.ID, "payload_code": sd.Payload.Code,
+		"uop_count": 12, "manifest": []map[string]any{{"part_number": "P1"}},
+	})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status: got %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	// The sentence names the carrier, the carriers the part may ride and that
+	// nothing was loaded, and nothing else (owner, 2026-10-12).
+	for _, want := range []string{"LD-FOREIGN", "LD-FITS", "Nothing was loaded"} {
+		assertJSONError(t, rec.Body.Bytes(), want)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "has to leave") || strings.Contains(body, "Orders page") {
+		t.Errorf("the refusal tells the operator what to do with the carrier: %s", body)
+	}
+	got, err := db.GetBin(bin.ID)
+	if err != nil {
+		t.Fatalf("re-read bin: %v", err)
+	}
+	if got.PayloadCode != bin.PayloadCode || got.UOPRemaining != bin.UOPRemaining {
+		t.Errorf("a refused LOAD wrote the bin: payload %q uop %d, was %q uop %d",
+			got.PayloadCode, got.UOPRemaining, bin.PayloadCode, bin.UOPRemaining)
+	}
+	var flagged bool
+	if err := db.DB.QueryRow(`SELECT undeclared_carrier_at IS NOT NULL FROM bins WHERE id=$1`, bin.ID).Scan(&flagged); err != nil {
+		t.Fatalf("read the finding: %v", err)
+	}
+	if flagged {
+		t.Error("a refused LOAD flagged the carrier")
 	}
 }
