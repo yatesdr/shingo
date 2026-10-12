@@ -4,7 +4,9 @@ import (
 	"log"
 	"runtime/debug"
 	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
+	"sync/atomic"
 
+	"shingo/protocol/liveness"
 	"shingo/protocol/lockcheck"
 	"shingocore/internal/lockorder"
 )
@@ -25,11 +27,19 @@ import (
 // emitter held the scan lock, the work waits for it like any caller. Handing
 // over never blocks and takes only this queue's own leaf lock, so it is safe
 // under any lock. Zero statements: the same work runs, on another goroutine.
+//
+// The freeze alarm watches the drain: each piece of work is one turn, so a
+// piece that waits 30 s (for the scan lock, say) is reported. depth is the
+// work handed over and not yet finished, on the Core Health page. Atomic
+// stores only.
 type afterQueue struct {
 	mu    lockcheck.Mutex[lockorder.AfterQueue]
 	work  []func()
 	wake  chan struct{}
 	logFn func(string, ...any)
+
+	turnover atomic.Pointer[liveness.Loop]
+	depth    atomic.Int64
 }
 
 func newAfterQueue(logFn func(string, ...any)) *afterQueue {
@@ -38,6 +48,7 @@ func newAfterQueue(logFn func(string, ...any)) *afterQueue {
 
 // later hands fn to the queue's goroutine.
 func (q *afterQueue) later(fn func()) {
+	q.depth.Add(1)
 	q.mu.Lock()
 	q.work = append(q.work, fn)
 	q.mu.Unlock()
@@ -47,9 +58,15 @@ func (q *afterQueue) later(fn func()) {
 	}
 }
 
-// run serves the queue until stop closes. Work still queued at stop is dropped:
-// the engine is going down, and every piece of it is a recheck a periodic pass
-// or the next event repeats.
+// run serves the queue until stop closes. Work still queued at stop is dropped;
+// the engine is going down. What a restart does about each kind:
+//   - a scan pass (OrderQueued): the boot pass and the 60 s sweep run one;
+//   - a threshold recheck (BinUpdated): the monitor's startup sweep evaluates
+//     every binding;
+//   - a swap request's contradiction note: lost; it is a log line and a chip;
+//   - a resumed parent's acquire: the boot pass and the sweep ask it, but its
+//     station notice ("dispatched", resumeAcquire) is not sent again by
+//     anything here.
 func (q *afterQueue) run(stop <-chan struct{}) {
 	for {
 		select {
@@ -66,7 +83,8 @@ func (q *afterQueue) run(stop <-chan struct{}) {
 			fn := q.work[0]
 			q.work = q.work[1:]
 			q.mu.Unlock()
-			q.do(fn)
+			q.turnover.Load().Turn(func() { q.do(fn) })
+			q.depth.Add(-1)
 		}
 	}
 }
@@ -84,3 +102,9 @@ func (q *afterQueue) do(fn func()) {
 	}()
 	fn()
 }
+
+// WatchAfterQueue marks the after-queue's drain for the freeze alarm.
+func (e *Engine) WatchAfterQueue(l *liveness.Loop) { e.after.turnover.Store(l) }
+
+// AfterQueueDepth is the after-emit work handed over and not yet finished.
+func (e *Engine) AfterQueueDepth() int64 { return e.after.depth.Load() }

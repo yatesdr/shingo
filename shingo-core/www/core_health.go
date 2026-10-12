@@ -182,6 +182,10 @@ type CoreHealth struct {
 	// alarm's limit (protocol/liveness): Core is up but has stopped working.
 	// First among the reasons when present.
 	Frozen []string `json:"frozen,omitempty"`
+	// AfterQueueDepth is the after-emit work handed over and not yet finished
+	// (engine/after.go). It drains in milliseconds; a depth that stays up
+	// means its one goroutine is waiting, which the freeze alarm names.
+	AfterQueueDepth int64 `json:"after_queue_depth"`
 	// DepsDown names the dependencies that are down, and ONLY those.
 	//
 	// The strip used to print all four dots permanently beside a verdict that
@@ -341,6 +345,10 @@ func (h *Handlers) coreHealth(depsOK bool, depReasons []string) CoreHealth {
 		c.DepsDown = depReasons
 	}
 	c.Frozen = liveness.Sentences(livenessWatch.Load().Frozen())
+	// Read through an optional method, so the engine interface keeps its width.
+	if q, ok := h.engine.(interface{ AfterQueueDepth() int64 }); ok {
+		c.AfterQueueDepth = q.AfterQueueDepth()
+	}
 	c.Reasons = deriveReasons(c, c.DepsDown)
 	if len(c.Reasons) > 0 {
 		c.Verdict = verdictDegraded

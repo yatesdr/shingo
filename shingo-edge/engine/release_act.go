@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/liveness"
 	"shingo/protocol/lockcheck"
 	"shingoedge/internal/lockorder"
 	"shingoedge/release"
@@ -434,9 +435,15 @@ func (e *Engine) startIntentWorker() {
 	q.mu.Lock()
 	q.running, q.signal = true, make(chan struct{}, 1)
 	q.mu.Unlock()
+	// The freeze alarm: each drain is one turn; a drain inside one turn past
+	// 30 s is reported (liveness). Two atomic stores per drain.
+	var turnover *liveness.Loop
+	if e.watch != nil {
+		turnover = e.watch.Loop("the release intent worker")
+	}
 	go func() {
 		for range q.signal {
-			e.drainIntents()
+			turnover.Turn(e.drainIntents)
 		}
 	}()
 	go func() {
