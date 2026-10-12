@@ -160,8 +160,16 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 	segment, moreWaits, blockOffset := splitSegment(steps, order.WaitIndex)
 	if segment == nil {
 		if order.Status == StatusInTransit {
-			// The past-final-wait no-op keeps the manifest sync until S5 removes
-			// the zero-disposition releases that arrive here carrying a count.
+			// Past the final wait. A leg the station already released past one
+			// of its waits declares nothing again: that release carried the
+			// bin's count, and a second one (a repeat press, a second screen)
+			// would write a count onto a bin the first emptied. An order the
+			// station never released (no station wait at all) keeps the sync.
+			if stationReleased(steps, order.WaitIndex) {
+				log.Printf("dispatch: release ignored: order %d is in transit past its final wait, which the station "+
+					"already released — a second release declares nothing", order.ID)
+				return
+			}
 			_ = d.syncManifestForRelease(env, order, p)
 			d.dbg("complex release: order %d already in_transit with wait_index %d past final wait — no-op",
 				order.ID, order.WaitIndex)
@@ -241,6 +249,17 @@ func releasedPastStationWait(order *orders.Order) bool {
 	}
 	prev, ok := waitAt(steps, order.WaitIndex-1)
 	return ok && protocol.IsStationWaitKind(prev.WaitKind)
+}
+
+// stationReleased reports whether any wait before waitIndex is a station's:
+// the station has released this order at least once.
+func stationReleased(steps []resolvedStep, waitIndex int) bool {
+	for i := 0; i < waitIndex; i++ {
+		if w, ok := waitAt(steps, i); ok && protocol.IsStationWaitKind(w.WaitKind) {
+			return true
+		}
+	}
+	return false
 }
 
 // syncManifestForRelease performs the late-bind bin manifest sync at release

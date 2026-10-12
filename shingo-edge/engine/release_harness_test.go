@@ -461,6 +461,8 @@ func errClass(err error) string {
 		return "refuse:no-claim"
 	case strings.Contains(msg, "supply-leg check"):
 		return "refuse:unclassifiable"
+	case strings.Contains(msg, "was released already"):
+		return "refuse:released"
 	case strings.Contains(msg, "already on its way"):
 		return "refuse:in-flight"
 	case strings.Contains(msg, "not a coordinated pair"), strings.Contains(msg, "no tracked orders"):

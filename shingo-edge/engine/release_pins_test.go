@@ -305,10 +305,16 @@ func releasePinCells() []relCell {
 			build: withBinAt(pairAt(twoRobotConsume, "evac", S, "supply", S)),
 			act:   seq(pairClick(dispPull(5)), refuse("evac", "invalid_state"), pairClick(dispPull(5))),
 			probe: probes(pPile)},
+		// Converted (certification of D2, §3.1): a second release of a leg past
+		// its station wait declares nothing; the click is refused and no second
+		// envelope goes. The capture is not repeated either way.
 		{name: "L2/repeat with no refusal: per-order click on an in_transit evac",
-			want:  "ok | evac=in_transit supply=dispatched | rel=evac,evac | ingest=0 capred=-5 | pile=5",
-			build: withBinAt(pairAt(twoRobotConsume, "evac", S, "supply", D)),
-			act:   seq(orderClick("evac", dispPull(5)), orderClick("evac", dispPull(5))),
+			want: "refuse:released | evac=in_transit supply=dispatched | rel=- | ingest=0 capred=0 | pile=5",
+			build: func(h *relHarness) {
+				withBinAt(pairAt(twoRobotConsume, "evac", S, "supply", D))(h)
+				testutil.MustNoErr(h.t, orderClick("evac", dispPull(5))(h), "the first release")
+			},
+			act:   orderClick("evac", dispPull(5)),
 			probe: probes(pPile)},
 		{name: "L2/P-E5 refused Z with a deferred Y: one extra Y round trip, then nothing",
 			want:  "ok | evac=staged supply=staged | rel=evac | ingest=0 capred=-5",

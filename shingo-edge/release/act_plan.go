@@ -244,6 +244,12 @@ func PlanAct(a Act, f ActFacts, legs []ActLeg) ActPlan {
 			decisions[i] = d
 			continue
 		}
+		if l.Leg.ReadErr == nil && releasedPastLastWait(l.Point) && !a.passesOverUnreleasable() && !a.Reevaluation {
+			// Its release is out and carried the bin's count; a second one
+			// declares nothing, so the click that names it is told so.
+			return ActPlan{Purpose: purpose, NeedLeg: -1, Gate: G1, Refusal: fmt.Errorf(
+				"order %d was released already: the robot is moving, and a second release would declare nothing", l.Leg.OrderID)}
+		}
 		if l.Leg.ReadErr == nil && !covered(a, purpose, explicit, l) {
 			d.Verdict, d.Gate = Out, G1
 			decisions[i] = d
@@ -360,10 +366,8 @@ func covered(a Act, purpose Purpose, explicit bool, l ActLeg) bool {
 		return a.Origin == OriginStationOrder || a.Origin == OriginStationPair
 	}
 	if !l.Point.HasWait {
-		// Released past its last station wait: nothing an act can release,
-		// except the per-order click aimed at it (Core no-ops a release past a
-		// leg's last wait).
-		return a.Origin == OriginStationOrder
+		// Released past its last station wait: nothing an act can release.
+		return false
 	}
 	if l.Point.Purpose == "" {
 		// A wait written before purposes (an order in flight at the upgrade):
@@ -374,6 +378,12 @@ func covered(a Act, purpose Purpose, explicit bool, l ActLeg) bool {
 		return false
 	}
 	return purpose != "" && l.Point.Purpose == purpose
+}
+
+// releasedPastLastWait reports a leg driving on after the release of its last
+// station wait.
+func releasedPastLastWait(p StaticPoint) bool {
+	return p.Driving && !p.HasWait && !p.NoWaits
 }
 
 // nominates reports whether a leg can give a purposeless act its purpose: it
