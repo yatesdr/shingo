@@ -86,12 +86,18 @@
 namespace: edge2
 line_id: line1
 
-bin_types: [STANDARD]
+# LINE 2'S OWN CARRIER TYPE. This plant shares one Core with demo-sim, and Core's
+# empties keeper sources plant-wide by carrier type (by design). While both named
+# their carrier STANDARD the two pools were one, and line 1's press-empties keeper
+# took line 2's empty (TRACE-line2-empties, 2026-10-11). The arithmetic above
+# counts this loop as closed; its own type name is what makes it closed.
+# TestEdge2Fixture_LineTwoCarriesItsOwnCarrierType holds it.
+bin_types: [STANDARD-L2]
 
 payloads:
-  - {code: PART-W, uop_capacity: 20, bin_type: STANDARD}
-  - {code: PART-X, uop_capacity: 20, bin_type: STANDARD}
-  - {code: PART-Y, uop_capacity: 20, bin_type: STANDARD}
+  - {code: PART-W, uop_capacity: 20, bin_type: STANDARD-L2}
+  - {code: PART-X, uop_capacity: 20, bin_type: STANDARD-L2}
+  - {code: PART-Y, uop_capacity: 20, bin_type: STANDARD-L2}
 
 zones:
   # One market, self-segregating by payload under LKND.
@@ -257,12 +263,18 @@ claims:
     operator_station: LINE-2-OPS
 
   # ── WLD_010 — produce PART-Y under all three styles (continuity). ──
+  # IT ASKS AHEAD: reorder point 14 of 20. A produce bin is exchanged when it is
+  # full (the owner's rule), and a claim with no reorder point asks only then, so
+  # the line stood still for the whole delivery leg every bin. At 1 part per tick
+  # 14 gives the empty about six ticks to arrive, the round trip on this stack.
+  # TestEdge2Fixture_ProduceClaimsAskAhead holds it.
   - core_node: WLD_010
     style: L2-A
     role: produce
     swap_mode: two_robot
     payload: PART-Y
     uop_capacity: 20
+    reorder_point: 14
     auto_reorder: true
     inbound_source: SMN_L2
     inbound_staging: SLN_L2_02
@@ -274,6 +286,7 @@ claims:
     swap_mode: two_robot
     payload: PART-Y
     uop_capacity: 20
+    reorder_point: 14
     auto_reorder: true
     inbound_source: SMN_L2
     inbound_staging: SLN_L2_02
@@ -285,6 +298,7 @@ claims:
     swap_mode: two_robot
     payload: PART-Y
     uop_capacity: 20
+    reorder_point: 14
     auto_reorder: true
     inbound_source: SMN_L2
     inbound_staging: SLN_L2_02

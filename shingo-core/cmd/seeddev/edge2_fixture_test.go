@@ -57,3 +57,61 @@ func TestEdge2Fixture_ThresholdCoversSeatStock(t *testing.T) {
 		}
 	}
 }
+
+// TestEdge2Fixture_LineTwoCarriesItsOwnCarrierType: line 2's loop is closed only
+// if no other plant on the same Core draws its carriers. Core's empties keeper
+// sources plant-wide by carrier type (by design), so while both plants named
+// their carrier STANDARD, line 1's press-empties keeper took line 2's empty
+// (TRACE-line2-empties §3). RED while
+// edge2.yaml names STANDARD.
+func TestEdge2Fixture_LineTwoCarriesItsOwnCarrierType(t *testing.T) {
+	t.Parallel()
+	load := func(name string) *plantspec.Plant {
+		t.Helper()
+		p, err := plantspec.Load(filepath.Join("..", "..", "..", "plants", name))
+		if err != nil {
+			t.Fatalf("load plants/%s: %v", name, err)
+		}
+		return p
+	}
+	demo := map[string]bool{}
+	for _, bt := range load("demo-sim.yaml").BinTypes {
+		demo[bt] = true
+	}
+	for _, bt := range load("edge2.yaml").BinTypes {
+		if demo[bt] {
+			t.Errorf("edge2.yaml's carrier type %q is also demo-sim.yaml's: on one Core the two lines' carriers are one pool", bt)
+		}
+	}
+}
+
+// TestEdge2Fixture_ProduceClaimsAskAhead: a produce claim with no reorder point
+// asks only at full, and the line then waits out the whole delivery leg of its
+// empty with the bin full, every bin. The fixture's
+// weld asks ahead: every produce claim that is not a loader sets a reorder point
+// below its capacity, so the empty is staged before the bin is full
+// (RULINGS-D2-run2-and-the-pair §2.6). RED while WLD_010's claims set none.
+func TestEdge2Fixture_ProduceClaimsAskAhead(t *testing.T) {
+	t.Parallel()
+	p, err := plantspec.Load(filepath.Join("..", "..", "..", "plants", "edge2.yaml"))
+	if err != nil {
+		t.Fatalf("load plants/edge2.yaml: %v", err)
+	}
+	capacity := map[string]int64{}
+	for _, pl := range p.Payloads {
+		capacity[pl.Code] = pl.UOPCapacity
+	}
+	for _, c := range p.Claims {
+		if c.Role != "produce" || c.IsLoader() {
+			continue
+		}
+		limit := c.UOPCapacity
+		if limit == 0 {
+			limit = capacity[c.Payload]
+		}
+		if c.ReorderPoint <= 0 || c.ReorderPoint >= limit {
+			t.Errorf("produce claim %s/%s: reorder point %d against capacity %d; want one below capacity, so its empty is asked for ahead",
+				c.CoreNode, c.Style, c.ReorderPoint, limit)
+		}
+	}
+}
