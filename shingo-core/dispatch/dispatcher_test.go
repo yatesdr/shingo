@@ -27,7 +27,6 @@ type mockEmitter struct {
 	skipped          []emitSkipped
 	cancelled        []emitCancelled
 	completed        []emitCompleted
-	queued           []emitQueued
 	resumed          []int64
 	faulted          []emitFaulted
 	faultedRecovered []emitFaultedRecovered
@@ -56,9 +55,6 @@ type emitCancelled struct {
 	reason  string
 }
 type emitCompleted struct {
-	orderID int64
-}
-type emitQueued struct {
 	orderID int64
 }
 type emitFaulted struct {
@@ -91,9 +87,6 @@ func (m *mockEmitter) EmitOrderCancelled(orderID int64, _, _, reason, _ string, 
 }
 func (m *mockEmitter) EmitOrderCompleted(orderID int64, _, _ string, _ *int64) {
 	m.completed = append(m.completed, emitCompleted{orderID})
-}
-func (m *mockEmitter) EmitOrderQueued(orderID int64, _, _, _ string, _ QueueWait) {
-	m.queued = append(m.queued, emitQueued{orderID})
 }
 func (m *mockEmitter) EmitOrderResumed(orderID int64, _, _ string) {
 	m.resumed = append(m.resumed, orderID)
@@ -217,7 +210,7 @@ func testDebugLog(t *testing.T) func(string, ...any) {
 // stand-in for the production scanner. Phase 4b of bin-transit-state
 // moved complex-order dispatch off the synchronous HandleComplexOrderRequest
 // path: orders are now created in `queued` state and the fulfillment
-// scanner picks them up via EventOrderQueued. Tests that don't wire an
+// scanner picks them up. Tests that don't wire an
 // engine (i.e., newTestDispatcher) need to drive the dispatch step
 // manually; this helper does both submit and dispatch so test bodies
 // stay focused on what they're asserting.
@@ -374,8 +367,7 @@ func TestHandleOrderRequest_Retrieve_NoSource(t *testing.T) {
 	}
 
 	// Should park because no available payloads exist: `queued` with its cause,
-	// and its station told once (C1: the door parks and tells; it emits no
-	// EventOrderQueued).
+	// and its station told once (C1: the door parks and tells).
 	if o := testdb.AssertOrderStatus(t, db, "uuid-1", StatusQueued); o != nil && o.QueueCode == "" {
 		t.Errorf("parked with no cause on the row")
 	}

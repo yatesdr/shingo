@@ -29,7 +29,7 @@ import (
 
 // --- TestConcurrent_ClaimSerialized_NoDoubleClaim ---
 // Post the claim-move to the scanner the bin claim happens in the fulfillment
-// scanner under scanMu, driven by the synchronous EmitOrderQueued→scan. So two
+// scanner under scanMu (a door's acquire, or a pass). So two
 // concurrent orders for the SAME bin can never both be in the find→claim window:
 // scanMu serializes
 // their scans. Exactly one claims + dispatches; the other scans, finds no bin, and

@@ -199,7 +199,7 @@ engine.Events.Emit(Event{
 })
 ```
 
-Event types are the `Event*` constants in `engine/events.go:13-32` — `EventOrderReceived`, `EventOrderDispatched`, `EventOrderStatusChanged`, `EventOrderCompleted`, `EventOrderFailed`, `EventOrderSkipped`, `EventOrderCancelled`, `EventOrderQueued`, `EventBinUpdated`, `EventNodeUpdated`, the four connectivity pairs, `EventRobotsUpdated`, `EventCMSTransaction`, `EventBlockCompleted`, `EventBinEnteredTransit` and the rest. Read the file rather than this list — it is the one that compiles.
+Event types are the `Event*` constants in `engine/events.go:13-32` — `EventOrderReceived`, `EventOrderDispatched`, `EventOrderStatusChanged`, `EventOrderCompleted`, `EventOrderFailed`, `EventOrderSkipped`, `EventOrderCancelled`, `EventBinUpdated`, `EventNodeUpdated`, the four connectivity pairs, `EventRobotsUpdated`, `EventCMSTransaction`, `EventBlockCompleted`, `EventBinEnteredTransit` and the rest. Read the file rather than this list — it is the one that compiles.
 
 Event handlers are wired in `engine/wiring.go`.
 

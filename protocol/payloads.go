@@ -288,8 +288,8 @@ type OrderUpdate struct {
 	// QueueReason carries the blocking signal from Core's orders.queue_reason when
 	// Status is "queued" — e.g. "no bin of requested payload in node group AMR
 	// Supermarket". Omitted (not cleared) for non-queued updates; omitempty means
-	// an absent field signals "leave unchanged", not "clear". Core emits this from
-	// the EventOrderQueued handler after the fulfillment scanner completes its pass.
+	// an absent field signals "leave unchanged", not "clear". Core sends it when an
+	// order's wait changes while it waits (dispatch.WriteQueueDetail).
 	QueueReason string `json:"queue_reason,omitempty"`
 	// QueueCode is the structured category behind QueueReason (protocol.QueueCode).
 	// Additive: old Edge ignores it; new Edge with old Core sees "" and falls back

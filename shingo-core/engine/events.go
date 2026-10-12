@@ -5,7 +5,6 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/eventbus"
-	"shingocore/dispatch"
 	"shingocore/fleet"
 	"shingocore/store/cms"
 )
@@ -18,7 +17,6 @@ const (
 	EventOrderFailed
 	EventOrderSkipped
 	EventOrderCancelled
-	EventOrderQueued
 	EventBinUpdated
 	EventNodeUpdated
 	EventFleetConnected
@@ -157,17 +155,6 @@ type OrderCancelledEvent struct {
 	// every other order. Carried so a subscriber that cares about returns can
 	// tell from the payload, with no read, that this order is not one.
 	RecoversOrderID *int64
-}
-
-type OrderQueuedEvent struct {
-	eventbus.PayloadBase
-	OrderID     int64
-	EdgeUUID    string
-	StationID   string
-	PayloadCode string
-	// Announced is the wait the order carried when it was announced; the push
-	// after the scan compares the row against it (dispatch.WaitTold).
-	Announced dispatch.QueueWait
 }
 
 // BinAction is the closed vocabulary of BinUpdatedEvent.Action. String-valued

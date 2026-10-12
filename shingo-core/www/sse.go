@@ -347,11 +347,6 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		h.Broadcast("order-update", sseJSON(map[string]any{"type": "skipped", "order_id": ev.OrderID, "detail": ev.Detail}))
 	}, engine.EventOrderSkipped)
 
-	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.OrderQueuedEvent]) {
-		ev := evt.Payload
-		h.Broadcast("order-update", sseJSON(map[string]any{"type": "queued", "order_id": ev.OrderID, "payload_code": ev.PayloadCode}))
-	}, engine.EventOrderQueued)
-
 	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.BinUpdatedEvent]) {
 		ev := evt.Payload
 		h.Broadcast("bin-update", sseJSON(map[string]any{"node_id": ev.NodeID, "action": ev.Action, "bin_id": ev.BinID, "actor": ev.Actor, "detail": ev.Detail}))

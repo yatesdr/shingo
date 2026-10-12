@@ -204,7 +204,7 @@ func TestComplexIntake_NoShuffleSlot_WaitsThenReshuffles(t *testing.T) {
 	// looking at the station now. Its own neighbouring arms (targets-occupied,
 	// lane-locked, lane-lock-race, blocker-claimed) all announce the park, and a
 	// silent fifth would be the one wait the surface cannot show. (C1: the park
-	// tells the station once, through the wait-change notify, not EventOrderQueued.)
+	// tells the station once, through the wait-change notify.)
 	if len(emitter.waitChanged) != 1 {
 		t.Errorf("wait-changed tells = %d, want 1 — the intake site announces its parks", len(emitter.waitChanged))
 	}
@@ -247,9 +247,9 @@ func TestComplexReplay_NoShuffleSlot_WaitsThenReshuffles(t *testing.T) {
 	// handleComplexBuriedOnReplay writes the row and emits nothing: the parent was
 	// already queued and already announced, and re-announcing it on every scan
 	// would put one event per tick on the station for an order that has not moved.
-	if len(emitter.queued)+len(emitter.waitChanged) != 0 {
-		t.Errorf("queued events + wait-changed tells = %d, want 0 — the replay site parks silently, so a scan loop over a "+
-			"crowded group does not become an event storm", len(emitter.queued)+len(emitter.waitChanged))
+	if len(emitter.waitChanged) != 0 {
+		t.Errorf("wait-changed tells = %d, want 0 — the replay site parks silently, so a scan loop over a "+
+			"crowded group does not become an event storm", len(emitter.waitChanged))
 	}
 	if len(emitter.failed) != 0 {
 		t.Errorf("failed events = %d, want 0", len(emitter.failed))

@@ -54,9 +54,6 @@ func TestChar_HandleComplexOrderRequest_EmptySteps_RejectsAtIntake(t *testing.T)
 	if len(emitter.received) != 0 {
 		t.Errorf("received events = %d, want 0 (rejected before order creation)", len(emitter.received))
 	}
-	if len(emitter.queued) != 0 {
-		t.Errorf("queued events = %d, want 0", len(emitter.queued))
-	}
 }
 
 // TestChar_HandleComplexOrderRequest_UnresolvableNode_RejectsAtIntake pins the
@@ -121,9 +118,6 @@ func TestComplexIntake_RefusesAPayloadCoreDoesNotHave(t *testing.T) {
 	}
 	if len(emitter.received) != 0 {
 		t.Errorf("received events = %d, want 0", len(emitter.received))
-	}
-	if len(emitter.queued) != 0 {
-		t.Errorf("queued events = %d, want 0 — queueing it means waiting for something that does not exist", len(emitter.queued))
 	}
 }
 

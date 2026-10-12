@@ -485,9 +485,8 @@ func TestLifecycle_TypedMethods_CorrectTargets(t *testing.T) {
 
 // TestActionMap_ReshufflingToQueued_FiresRequeued locks in the §12.2
 // Surface 4 contract, as C1 left it: the resume is `reshuffling → pending`
-// (`reshuffling → queued` is no longer an edge), and it fires NO
-// EmitOrderQueued — the engine wiring runs the one acquire that follows a
-// resume, so the scanner re-run in-band is not an event's to ask for. It must
+// (`reshuffling → queued` is no longer an edge); the engine wiring runs the one
+// acquire that follows a resume (there is no queued event to ask for it). It must
 // NOT fire EmitOrderCompleted (which would re-enter the delivered/bin-arrival
 // pipeline for an order that hasn't picked anything up yet), and it must fire
 // EmitOrderResumed. (The name is the old edge's.)
@@ -505,10 +504,6 @@ func TestActionMap_ReshufflingToQueued_FiresRequeued(t *testing.T) {
 	testutil.MustNoErr(t, err, "reload order")
 	if persisted.Status != StatusPending {
 		t.Fatalf("resumed parent is not `pending`: %+v", persisted)
-	}
-	if len(emitter.queued) != 0 {
-		t.Fatalf("EmitOrderQueued calls = %d, want 0 — the resume is not a park, and the acquire that "+
-			"follows it is the engine's, not an event's", len(emitter.queued))
 	}
 	if len(emitter.completed) != 0 {
 		t.Errorf("EmitOrderCompleted calls = %d, want 0 (parent has not picked up yet)", len(emitter.completed))

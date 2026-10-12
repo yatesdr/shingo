@@ -35,7 +35,6 @@ func TestEventTypes_AllDistinctAndNonZero(t *testing.T) {
 		EventOrderCompleted,
 		EventOrderFailed,
 		EventOrderCancelled,
-		EventOrderQueued,
 		EventBinUpdated,
 		EventNodeUpdated,
 		EventFleetConnected,
@@ -152,17 +151,6 @@ func TestEventPayloads_RoundTripAllShapes(t *testing.T) {
 			check: func(t *testing.T, got any) {
 				p := got.(OrderCancelledEvent)
 				if p.Reason != "user" || p.PreviousStatus != "dispatched" || p.RecoversOrderID == nil || *p.RecoversOrderID != 3 {
-					t.Errorf("payload = %+v", p)
-				}
-			},
-		},
-		{
-			name:    "OrderQueued",
-			evtType: EventOrderQueued,
-			payload: OrderQueuedEvent{OrderID: 7, EdgeUUID: "uq", StationID: "sq", PayloadCode: "PC"},
-			check: func(t *testing.T, got any) {
-				p := got.(OrderQueuedEvent)
-				if p.OrderID != 7 || p.PayloadCode != "PC" {
 					t.Errorf("payload = %+v", p)
 				}
 			},
@@ -315,7 +303,7 @@ func TestEvent_TimestampAutofill(t *testing.T) {
 	var got Event
 	bus.Subscribe(func(evt Event) { got = evt })
 	before := time.Now()
-	bus.Emit(Event{Type: EventOrderQueued, Payload: OrderQueuedEvent{OrderID: 99}})
+	bus.Emit(Event{Type: EventOrderCompleted, Payload: OrderCompletedEvent{OrderID: 99}})
 	after := time.Now()
 	if got.Timestamp.IsZero() {
 		t.Fatal("Event.Timestamp was not auto-filled")
@@ -324,7 +312,7 @@ func TestEvent_TimestampAutofill(t *testing.T) {
 		t.Errorf("Timestamp %v outside [%v, %v]", got.Timestamp, before, after)
 	}
 	// Payload survives the roundtrip.
-	if p := got.Payload.(OrderQueuedEvent); p.OrderID != 99 {
+	if p := got.Payload.(OrderCompletedEvent); p.OrderID != 99 {
 		t.Errorf("payload lost: %+v", p)
 	}
 }

@@ -289,7 +289,7 @@ func TestPlanRetrieve_DedicatedLoaderPool_NoPartInPoolQueues(t *testing.T) {
 	})
 
 	// (C1: the door parks a finder wait `queued` with its cause and tells the
-	// station once; it emits no EventOrderQueued.)
+	// station once.)
 	if o := testdb.AssertOrderStatus(t, db, "loader-empty-pool-1", StatusQueued); o != nil && o.QueueCode == "" {
 		t.Errorf("parked with no cause on the row")
 	}

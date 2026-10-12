@@ -147,8 +147,7 @@ var waitPopulations = []populationReleaser{
 		redriver:   "fulfillment.Scanner.RunOnce",
 		events: []string{
 			"EventBinUpdated", "EventOrderCompleted", "EventOrderCancelled",
-			"EventOrderFailed", "EventOrderSkipped", "EventOrderQueued",
-			"EventBlockCompleted",
+			"EventOrderFailed", "EventOrderSkipped", "EventBlockCompleted",
 		},
 		floor: "fulfillment.Scanner.StartPeriodicSweep (60s)",
 	},
@@ -504,11 +503,11 @@ var causeReleasers = []causeReleaser{
 	{
 		cause:       CauseBinTaken,
 		populations: []WaitPopulation{PopAcquiring},
-		// The take is the releaser's own trigger: the person's move is queued with
-		// EmitOrderQueued in the same request, and that runs the scanner, which
-		// re-finds the un-pointed holder on the same pass.
-		what: "the scanner pass the taking move's own queue event runs, on which the un-pointed " +
-			"holder re-finds through the finder; the periodic floor if that pass is missed",
+		// The take is the releaser's own trigger: the bin-move door runs one scan
+		// pass after the taking move's acquire (engine/bin_move.go), and on it the
+		// un-pointed holder re-finds through the finder.
+		what: "the scan pass the bin-move door runs after the taking move's acquire, on which the " +
+			"un-pointed holder re-finds through the finder; the periodic floor if that pass is missed",
 	},
 	{
 		cause: CauseDigBlockerStopped,

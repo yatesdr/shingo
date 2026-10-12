@@ -2,7 +2,6 @@ package engine
 
 import (
 	"shingo/protocol"
-	"shingocore/dispatch"
 	"shingocore/fleet"
 	"shingocore/store"
 )
@@ -97,16 +96,6 @@ func (e *dispatchEmitter) EmitOrderCompleted(orderID int64, edgeUUID, stationID 
 	}})
 }
 
-func (e *dispatchEmitter) EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string, announced dispatch.QueueWait) {
-	e.bus.Emit(Event{Type: EventOrderQueued, Payload: OrderQueuedEvent{
-		OrderID:     orderID,
-		EdgeUUID:    edgeUUID,
-		StationID:   stationID,
-		PayloadCode: payloadCode,
-		Announced:   announced,
-	}})
-}
-
 func (e *dispatchEmitter) EmitOrderResumed(orderID int64, edgeUUID, stationID string) {
 	e.bus.Emit(Event{Type: EventOrderResumed, Payload: OrderResumedEvent{
 		OrderID:   orderID,
@@ -118,7 +107,7 @@ func (e *dispatchEmitter) EmitOrderResumed(orderID int64, edgeUUID, stationID st
 // EmitOrderWaitChanged pushes the order's new wait to its station directly:
 // the push is the whole of it, and nothing else in Core listens for it.
 func (e *dispatchEmitter) EmitOrderWaitChanged(orderID int64, edgeUUID, stationID string) {
-	e.engine.pushQueueReason(orderID, edgeUUID, stationID, nil)
+	e.engine.pushQueueReason(orderID, edgeUUID, stationID)
 }
 
 func (e *dispatchEmitter) EmitOrderFaulted(orderID int64, edgeUUID, stationID, reason string) {

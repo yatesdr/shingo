@@ -487,16 +487,6 @@ func (e *Engine) wireEventHandlers() {
 	// further down, immediately after the handleBlockCompleted subscription,
 	// because it must observe the mouth row that handler releases. See there.
 
-	// A scan on EventOrderQueued. Nothing emits it today: the doors ask for their
-	// order's one acquire under the scan lock they hold (dispatch/door.go). A pass
-	// takes the scan lock, so it runs after the emitter, never on its goroutine
-	// (after.go): an emit under that lock would otherwise wait for itself.
-	e.Events.SubscribeTypes(func(Event) {
-		if e.fulfillment != nil {
-			e.after.later(func() { e.fulfillment.RunOnce() })
-		}
-	}, EventOrderQueued)
-
 	// ── Per-block completion → transit transition ───────────────────
 	// Phase 2 of the bin-transit-state project: pickup blocks (BinTask=Load
 	// or "pickup"-flavoured operations) drive the bin claimed at that step
@@ -559,27 +549,6 @@ func (e *Engine) wireEventHandlers() {
 		// left, as soon as the bin physically clears (a no-op when the gate is off).
 		e.dispatcher.HandleTransitForLaneGate(evt.Payload.OrderID, evt.Payload.FromNodeID)
 	}, EventBinEnteredTransit)
-
-	// ── Queued order audit ─────────────────────────────────────────
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderQueuedEvent]) {
-		ev := evt.Payload
-		e.logFn("engine: order %d queued for payload %s", ev.OrderID, ev.PayloadCode)
-		e.db.AppendAudit("order", ev.OrderID, "queued", "", fmt.Sprintf("payload=%s from %s", ev.PayloadCode, ev.StationID), "system")
-	}, EventOrderQueued)
-
-	// ── Queue-reason push ─────────────────────────────────────────
-	// Runs third for EventOrderQueued — after the sync scanner (1st) and
-	// the audit handler (2nd) above — so the scanner's latest
-	// SetOrderQueueDetail call is visible when we read the order back.
-	// Only pushes if the order is waiting (queued) and carries a non-empty
-	// blocking reason; an order the scanner dispatched is not waiting, which
-	// suppresses the push.
-	// The event carries the wait the order was announced with, so a change the
-	// scan already told the station is not sent again (pushQueueReason).
-	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderQueuedEvent]) {
-		ev := evt.Payload
-		e.pushQueueReason(ev.OrderID, ev.EdgeUUID, ev.StationID, &ev.Announced)
-	}, EventOrderQueued)
 
 	// ── Resume: the parent left `reshuffling` for `pending` (F2) ──────────
 	//
@@ -652,9 +621,6 @@ func (e *Engine) wireEventHandlers() {
 		eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderReceivedEvent]) {
 			e.sourceabilityMonitor.onPayloadChanged(evt.Payload.PayloadCode)
 		}, EventOrderReceived)
-		eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderQueuedEvent]) {
-			e.sourceabilityMonitor.onPayloadChanged(evt.Payload.PayloadCode)
-		}, EventOrderQueued)
 	}
 	// Grace-expiry: poller detected a faulted order whose grace period expired
 	// without fleet recovery. Best-effort cancel at RDS, then local fail.
@@ -836,20 +802,12 @@ func (e *Engine) wireEventHandlers() {
 	}, EventOrderCompleted)
 }
 
-// pushQueueReason sends the order's current wait to its station: the queued
-// event's push, and a wait that changed while the order stayed queued or
-// sourcing (dispatch.WriteQueueDetail). One order read and one outbox message.
-// Only while the order is acquiring and has a sentence; the Edge keeps a reason
-// only while acquiring, on the same predicate.
-//
-// EACH CHANGE IS SENT ONCE, AND NOTHING IS REMEMBERED. announced is the wait the
-// order carried when it was announced queued, nil for a changed wait. The scan
-// that the announcement ran sits between the two: when the row now differs from
-// the announced wait in a way dispatch.WaitTold tells, the write that made the
-// change already told the station, and this push would repeat it. A change the
-// predicate does not tell (a cause alone, or nothing at all) is sent here, once,
-// as the order's announced wait.
-func (e *Engine) pushQueueReason(orderID int64, edgeUUID, stationID string, announced *dispatch.QueueWait) {
+// pushQueueReason sends the order's current wait to its station: a wait that
+// changed while the order stayed waiting (dispatch.WriteQueueDetail, through
+// EmitOrderWaitChanged). One order read and one outbox message. Only while the
+// order is acquiring and has a sentence; the Edge keeps a reason only while
+// acquiring, on the same predicate.
+func (e *Engine) pushQueueReason(orderID int64, edgeUUID, stationID string) {
 	if edgeUUID == "" || stationID == "" {
 		return
 	}
@@ -861,9 +819,6 @@ func (e *Engine) pushQueueReason(orderID int64, edgeUUID, stationID string, anno
 	// An order its station has no row for is sent nothing (the orc's Stop 1
 	// ruling).
 	if order.StationUnaware || !protocol.IsWaiting(order.Status) || order.QueueReason == "" {
-		return
-	}
-	if announced != nil && dispatch.WaitTold(*announced, dispatch.WaitOf(order)) {
 		return
 	}
 	if err := e.sendToEdge(protocol.TypeOrderUpdate, stationID, &protocol.OrderUpdate{

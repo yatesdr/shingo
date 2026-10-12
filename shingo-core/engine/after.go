@@ -60,7 +60,6 @@ func (q *afterQueue) later(fn func()) {
 
 // run serves the queue until stop closes. Work still queued at stop is dropped;
 // the engine is going down. What a restart does about each kind:
-//   - a scan pass (OrderQueued): the boot pass and the 60 s sweep run one;
 //   - a threshold recheck (BinUpdated): the monitor's startup sweep evaluates
 //     every binding;
 //   - a swap request's contradiction note: lost; it is a log line and a chip;

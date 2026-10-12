@@ -95,8 +95,8 @@ func TestUnification_LaneClearingEventRedrivesAParkedPlainOrder(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 	d := eng.Dispatcher()
 
-	// Intake runs the scanner synchronously (EventOrderQueued → RunOnce), so by
-	// the time this returns the order has already been offered its lane once.
+	// The intake door acquires the order synchronously, so by the time this
+	// returns the order has already been offered its lane once.
 	d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
 		OrderUUID:    "redrive-1",
 		OrderType:    dispatch.OrderTypeRetrieve,

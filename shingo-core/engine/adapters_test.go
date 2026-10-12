@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
-	"shingocore/dispatch"
 	"shingocore/fleet"
 	"shingocore/store/orders"
 )
@@ -146,25 +145,6 @@ func TestDispatchEmitter_EmitOrderCompleted(t *testing.T) {
 	}
 }
 
-func TestDispatchEmitter_EmitOrderQueued(t *testing.T) {
-	t.Parallel()
-	bus, mu, got := captureBus()
-	em := &dispatchEmitter{bus: bus}
-	announced := dispatch.QueueWait{Code: "waiting_for_material", Cause: "intake-resolve", Reason: "Waiting for material"}
-	em.EmitOrderQueued(14, "euid-q", "st-q", "PART-A", announced)
-
-	mu.Lock()
-	defer mu.Unlock()
-	evt, ok := got[EventOrderQueued]
-	if !ok {
-		t.Fatal("EventOrderQueued not emitted")
-	}
-	p := evt.Payload.(OrderQueuedEvent)
-	if p.OrderID != 14 || p.EdgeUUID != "euid-q" || p.PayloadCode != "PART-A" || p.Announced != announced {
-		t.Errorf("OrderQueuedEvent fields = %+v", p)
-	}
-}
-
 // TestDispatchEmitter_AllMethodsCovered is a belt-and-suspenders check
 // that emitting every method of the dispatchEmitter fires exactly one
 // matching event type and doesn't leak crosstalk.
@@ -177,13 +157,12 @@ func TestDispatchEmitter_AllMethodsCovered(t *testing.T) {
 	em.EmitOrderFailed(1, "", "", "", "", nil)
 	em.EmitOrderCancelled(1, "", "", "", "", nil)
 	em.EmitOrderCompleted(1, "", "", nil)
-	em.EmitOrderQueued(1, "", "", "", dispatch.QueueWait{})
 
 	mu.Lock()
 	defer mu.Unlock()
 	want := []EventType{
 		EventOrderReceived, EventOrderDispatched, EventOrderFailed,
-		EventOrderCancelled, EventOrderCompleted, EventOrderQueued,
+		EventOrderCancelled, EventOrderCompleted,
 	}
 	for _, tp := range want {
 		if _, ok := got[tp]; !ok {

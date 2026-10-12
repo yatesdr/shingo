@@ -47,7 +47,6 @@ func TestSetupEngineListeners_TypedBroadcast(t *testing.T) {
 		{"failed", engine.EventOrderFailed, engine.OrderFailedEvent{OrderID: 5, Detail: "x"}, "order-update", `"type":"failed"`},
 		{"cancelled", engine.EventOrderCancelled, engine.OrderCancelledEvent{OrderID: 6, Reason: "x"}, "order-update", `"type":"cancelled"`},
 		{"skipped", engine.EventOrderSkipped, engine.OrderSkippedEvent{OrderID: 7, Detail: "x"}, "order-update", `"type":"skipped"`},
-		{"queued", engine.EventOrderQueued, engine.OrderQueuedEvent{OrderID: 8, PayloadCode: "P8"}, "order-update", `"type":"queued"`},
 		{"bin", engine.EventBinUpdated, engine.BinUpdatedEvent{NodeID: 9, Action: engine.BinActionMoved, BinID: 1}, "bin-update", ""},
 
 		{"node", engine.EventNodeUpdated, engine.NodeUpdatedEvent{NodeID: 11, Action: "updated"}, "node-update", ""},

@@ -33,9 +33,8 @@ import (
 // is told by the dispatch's own messages; one it parks is `queued` with its
 // cause on the row, and its station is told once, with that cause, by the
 // scanner's park. A door that parks by itself, because its decision was already
-// a wait, tells the same way (parkBorn). A door never emits EventOrderQueued:
-// the pass its subscriber asks for would be the second pass the door's own
-// acquire replaces.
+// a wait, tells the same way (parkBorn). A door asks for no scan pass: it would
+// be a second pass where the door's own acquire is the one.
 //
 // NOTHING UNDER THIS LOCK MAY TAKE IT AGAIN. It is a plain mutex: a door, an
 // acquire or a pass that reaches Door, AcquireOne or RunOnce on its own

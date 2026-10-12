@@ -13,18 +13,10 @@ type Emitter interface {
 	EmitOrderSkipped(orderID int64, edgeUUID, stationID, errorCode, detail string)
 	EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason, previousStatus string, recovers *int64)
 	EmitOrderCompleted(orderID int64, edgeUUID, stationID string, recovers *int64)
-	// announced is the wait the order carries as it is announced (WaitOf), or
-	// the zero value for none. The push that follows the scan reads it to skip a
-	// change of wait the scan already told the station (WaitTold).
-	EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string, announced QueueWait)
 	// EmitOrderResumed announces Reshuffling → Queued — a compound finished and
-	// its complex parent is live again.
-	//
-	// SEPARATE FROM EmitOrderQueued BECAUSE THE EDGE PUSH IS. EventOrderQueued's
-	// Edge-facing subscriber is the queue-REASON push and returns early without
-	// one; a resumed parent has none, by design, because the wait it describes
-	// is over. So the status never reached the Edge and its mirror stayed at
-	// `reshuffling`, rejecting everything after it.
+	// its complex parent is live again. Its subscriber tells the station: a
+	// resumed parent has no wait sentence, so the queue-reason push never would,
+	// and its mirror stayed at `reshuffling`, rejecting everything after it.
 	EmitOrderResumed(orderID int64, edgeUUID, stationID string)
 	// EmitOrderWaitChanged: an order still waiting has a new reason for it, and
 	// its station should read the new sentence (see WriteQueueDetail).

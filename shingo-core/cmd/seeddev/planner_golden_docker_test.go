@@ -505,8 +505,6 @@ func eventName(t engine.EventType) string {
 		return "dispatched"
 	case engine.EventOrderFailed:
 		return "failed"
-	case engine.EventOrderQueued:
-		return "queued"
 	case engine.EventOrderCancelled:
 		return "cancelled"
 	}
