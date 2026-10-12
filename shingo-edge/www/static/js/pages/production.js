@@ -238,6 +238,19 @@ async function clearLinesideBucket() {
     }
     try {
         await api.post('/api/lineside/buckets/' + encodeURIComponent(bucketID) + '/clear');
+        // THE ROW LEAVES ON THE CLICK, not on the next reload. This table sits
+        // OUTSIDE the page's htmx swap region (#production-content wraps the
+        // production-body partial only), so the SSE-driven refreshes never
+        // re-render it - before this, a cleared bucket stayed on screen until
+        // a full page load, and the toast was promising something the screen
+        // denied. When the last bucket goes, the server's empty-state row
+        // takes its place.
+        var tbody = tr.closest('tbody');
+        tr.remove();
+        if (tbody && !tbody.querySelector('tr[data-bucket-id]')) {
+            tbody.insertAdjacentHTML('beforeend',
+                '<tr><td colspan="7" class="empty-cell" style="text-align:center;padding:1rem;">No lineside buckets - no parts currently kitted at any node.</td></tr>');
+        }
         toast('Lineside bucket cleared', 'success');
     } catch(e) {
         toast('Error: ' + e, 'error');
