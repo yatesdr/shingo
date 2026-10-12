@@ -114,8 +114,8 @@ func TestPinH2_AFinalDropAtAClaimedSeatEnqueuesOneLandingToTheClaimingStation(t 
 	if l.L.Epoch != binEpoch(t, db, bin.ID) {
 		t.Errorf("landing generation = %d, want the bin's %d", l.L.Epoch, binEpoch(t, db, bin.ID))
 	}
-	if l.L.PlacedSeq <= 0 || l.L.PlacedAt.IsZero() {
-		t.Errorf("landing placement = seq %d at %v, want a stamp (D10)", l.L.PlacedSeq, l.L.PlacedAt)
+	if l.L.PlacedSeq <= 0 {
+		t.Errorf("landing placement = seq %d, want a stamp (D10)", l.L.PlacedSeq)
 	}
 	if l.L.OrderUUID == "" {
 		t.Error("landing carries no order uuid")

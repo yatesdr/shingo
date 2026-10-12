@@ -146,7 +146,7 @@ func TestScenario_H_R4_ALateLiftMovesTheTicksAfterTheLiftToTheNextBin(t *testing
 	}
 	w.edge.Engine.HandleBinLanded(protocol.BinLanded{
 		BinID: next.ID, CoreNodeName: nodeName, Count: bigM, Epoch: nextEpoch,
-		PayloadCode: w.payload, PayloadKnown: true, PlacedAt: time.Now().UTC(), PlacedSeq: 1,
+		PayloadCode: w.payload, PayloadKnown: true, PlacedSeq: 1,
 	})
 	tickEdge()
 	acc.Flush()

@@ -5,7 +5,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -258,7 +257,7 @@ func emitOrderCompletedWithEnvelopeUOP(eng *Engine, orderID int64, orderUUID str
 			}
 			eng.HandleBinLanded(protocol.BinLanded{
 				BinID: *binID, CoreNodeName: node.CoreNodeName, Count: count,
-				OrderUUID: orderUUID, PlacedAt: time.Now().UTC(), PlacedSeq: testPlacedSeq.Add(1),
+				OrderUUID: orderUUID, PlacedSeq: testPlacedSeq.Add(1),
 			})
 		}
 		eng.Events.Emit(Event{Type: EventOrderDelivered, Payload: ev})

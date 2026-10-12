@@ -104,7 +104,6 @@ func (s *BinService) sendLanding(tx *sql.Tx, st plantclaims.AddressedStation, p 
 			PayloadCode:  p.PayloadCode,
 			PayloadKnown: p.PayloadCode != "",
 			OrderUUID:    orderUUID,
-			PlacedAt:     clock.Now().UTC(),
 			PlacedSeq:    p.PlacedSeq,
 		}); err != nil {
 			return fmt.Errorf("landing bin %d at %s: %w", p.BinID, p.NodeName, err)

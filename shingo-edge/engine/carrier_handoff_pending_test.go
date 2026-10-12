@@ -2,7 +2,6 @@ package engine
 
 import (
 	"testing"
-	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -14,14 +13,14 @@ import (
 // "transit.bin_landed"; D10: its placement stamp). None of that existed at the
 // base. It was behind the laneh_pending tag until the source landed; the
 // names it assumed — protocol.BinLanded{BinID, CoreNodeName, Count, Epoch,
-// PayloadCode, PayloadKnown, OrderUUID, PlacedAt, PlacedSeq} and
+// PayloadCode, PayloadKnown, OrderUUID, PlacedSeq} and
 // Engine.HandleBinLanded — are the names the source uses.
 
 func landing(node string, binID, epoch int64, count int, part string, seq int64) protocol.BinLanded {
 	return protocol.BinLanded{
 		BinID: binID, CoreNodeName: node, Count: count, Epoch: epoch,
 		PayloadCode: part, PayloadKnown: part != "", OrderUUID: "uuid-landing",
-		PlacedAt: time.Now().UTC(), PlacedSeq: seq,
+		PlacedSeq: seq,
 	}
 }
 

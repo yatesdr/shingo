@@ -493,8 +493,8 @@ type BinPickedUp struct {
 // placement Core records. The seat keeps the stamp of the landing it last
 // bound and refuses one not newer, which is what makes a redelivered or
 // overtaken landing harmless (the Edge has no inbound dedup, and this subject
-// never expires). PlacedAt is Core's clock at the move, for the time-ordered
-// readers; the bind orders on PlacedSeq alone, because a clock can step.
+// never expires). It orders on the stamp, not a clock, because a clock can
+// step.
 // EdgeSchemaBinLanded is the first Edge schema version (its applied
 // schema_migrations version, EdgeRegister.SchemaVersion) that can bind a
 // landing: the migration that adds process_node_runtime_states.placed_seq
@@ -504,15 +504,14 @@ type BinPickedUp struct {
 const EdgeSchemaBinLanded = 20
 
 type BinLanded struct {
-	BinID        int64     `json:"bin_id"`
-	CoreNodeName string    `json:"core_node_name"`
-	Count        int       `json:"count"`
-	Epoch        int64     `json:"epoch"`
-	PayloadCode  string    `json:"payload_code,omitempty"`
-	PayloadKnown bool      `json:"payload_known"`
-	OrderUUID    string    `json:"order_uuid,omitempty"`
-	PlacedAt     time.Time `json:"placed_at"`
-	PlacedSeq    int64     `json:"placed_seq"`
+	BinID        int64  `json:"bin_id"`
+	CoreNodeName string `json:"core_node_name"`
+	Count        int    `json:"count"`
+	Epoch        int64  `json:"epoch"`
+	PayloadCode  string `json:"payload_code,omitempty"`
+	PayloadKnown bool   `json:"payload_known"`
+	OrderUUID    string `json:"order_uuid,omitempty"`
+	PlacedSeq    int64  `json:"placed_seq"`
 }
 
 // BinReturn tells a station what became of the bin its cancelled order left
