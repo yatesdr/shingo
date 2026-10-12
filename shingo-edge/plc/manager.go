@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"shingo/protocol/clock"
+	"shingo/protocol/liveness"
 	"shingo/protocol/lockcheck"
 	"shingo/protocol/types"
 	"shingoedge/config"
@@ -84,6 +85,10 @@ type DebugLogFunc = types.DebugLogFunc
 
 // Manager manages PLC data via WarLink HTTP polling or SSE and counter polling.
 type Manager struct {
+	// Turnover marks each poll pass as one turn of the Edge's main loop (the
+	// freeze alarm). Set before StartPolling; nil marks nothing.
+	Turnover *liveness.Loop
+
 	mu      lockcheck.RWMutex[lockorder.PLCManager]
 	db      *store.DB
 	cfg     *config.Config
@@ -615,7 +620,7 @@ func (m *Manager) pollLoop() {
 		case <-m.stopChan:
 			return
 		case <-ticker.C():
-			m.pollAllReportingPoints()
+			m.Turnover.Turn(m.pollAllReportingPoints)
 		}
 	}
 }

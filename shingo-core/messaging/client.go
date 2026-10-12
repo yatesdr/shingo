@@ -14,6 +14,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/backoff"
+	"shingo/protocol/liveness"
 	"shingo/protocol/lockcheck"
 	"shingocore/config"
 	"shingocore/internal/lockorder"
@@ -55,6 +56,9 @@ type Client struct {
 	closeOnce  sync.Once
 	SigningKey []byte // optional HMAC key; when set, outbound messages are signed
 	DebugLog   func(string, ...any)
+	// Turnover marks each handled message as one turn of the inbound consumer
+	// (the freeze alarm). Set before Subscribe; nil marks nothing.
+	Turnover *liveness.Loop
 
 	// PartitionKey is stamped on every outbound message as the Kafka record
 	// key. On the Edge it is the station uid; on Core it is the destination
@@ -309,7 +313,7 @@ func (c *Client) readLoop(topic string, reader kafkaReader, handler MessageHandl
 					log.Printf("kafka handler panic: topic=%s: %v\n%s", topic, r, debug.Stack())
 				}
 			}()
-			handler(msg.Topic, msg.Value)
+			c.Turnover.Turn(func() { handler(msg.Topic, msg.Value) })
 		}()
 		// Committed whether the handler returned or panicked: MessageHandler
 		// reports no error, and a message that panics every time must not

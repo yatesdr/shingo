@@ -33,6 +33,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/debuglog"
+	"shingo/protocol/liveness"
 	"shingocore/config"
 	"shingocore/dispatch"
 	"shingocore/engine"
@@ -353,8 +354,17 @@ func main() {
 	}
 
 	// ── Messaging (Kafka) ───────────────────────────────────────────────
+	// The freeze alarm (plant build): the inbound consumer's handler and the
+	// scan lock each mark their turns; a turn past 30 s logs one entry with the
+	// goroutine dump and shows on the Core Health strip. Alarm only.
+	watch := liveness.New(log.Printf)
+	watchStop := make(chan struct{})
+	defer close(watchStop)
+	www.SetLiveness(watch)
+
 	msgClient := messaging.NewClient(&cfg.Messaging)
 	msgClient.DebugLog = dbg.Func("kafka")
+	msgClient.Turnover = watch.Loop("the inbound consumer")
 	if cfg.Messaging.SigningKey != "" {
 		msgClient.SigningKey = []byte(cfg.Messaging.SigningKey)
 	}
@@ -382,6 +392,8 @@ func main() {
 
 	eng.Start()
 	defer eng.Stop()
+	eng.StartScanProbe(watch.Loop("the scan pass"))
+	go watch.Run(watchStop)
 	if cfg.Sim.Enabled {
 		simWatch(eng) // sim_watch_*.go (sim build) / sim_disabled.go (!sim build)
 	}

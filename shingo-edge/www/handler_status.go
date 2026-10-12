@@ -59,6 +59,10 @@ type statusResponse struct {
 	// The Core link: last ack, clock offset, expired drops, feed ages and
 	// flags (core_link_status.go). Inlined into the top-level object.
 	coreLinkStatus
+
+	// Frozen names each loop the freeze alarm reports (a loop inside one turn
+	// past 30 s): the Edge is up but has stopped working. Empty when none.
+	Frozen []string `json:"frozen,omitempty"`
 }
 
 // statusEngine is the narrow interface the /status handler needs.
@@ -81,6 +85,12 @@ type statusEngine interface {
 	FeedFlags() []string
 }
 
+// frozenReporter is the freeze alarm's read, asked of the engine apart from
+// statusEngine so a status fake need not carry it.
+type frozenReporter interface {
+	Frozen() []string
+}
+
 func (h *Handlers) apiStatus(w http.ResponseWriter, r *http.Request) {
 	eng, ok := h.orchestration.(statusEngine)
 	if !ok {
@@ -95,6 +105,9 @@ func (h *Handlers) apiStatus(w http.ResponseWriter, r *http.Request) {
 		SubscribersWired: eng.SubscribersWired(),
 		StationID:        eng.StationID(),
 		coreLinkStatus:   readCoreLink(eng, time.Now()),
+	}
+	if f, ok := h.orchestration.(frozenReporter); ok {
+		resp.Frozen = f.Frozen()
 	}
 	if depth, err := eng.CountPendingOutbox(); err != nil {
 		resp.OutboxDepthError = err.Error()

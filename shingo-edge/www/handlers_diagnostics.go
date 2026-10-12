@@ -27,6 +27,9 @@ func (h *Handlers) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 		"Deadletters":    deadletters,
 		"CoreLink":       h.diagnosticsCoreLink(),
 	}
+	if f, ok := h.orchestration.(frozenReporter); ok {
+		data["Frozen"] = f.Frozen()
+	}
 	h.renderTemplate(w, r, "diagnostics.html", data)
 }
 

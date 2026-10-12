@@ -27,6 +27,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingo/protocol/debuglog"
+	"shingo/protocol/liveness"
 	"shingo/protocol/lockcheck"
 	"shingo/protocol/types"
 	"shingoedge/config"
@@ -174,6 +175,11 @@ type Engine struct {
 	// root via SetInventoryDeltaSink. Nil in test contexts that don't
 	// care about delta emission; every call site nil-guards.
 	inventoryDelta InventoryDeltaSink
+
+	// watch is the freeze alarm (protocol/liveness): the PLC poll marks its
+	// passes, and a pass past 30 s logs one entry with the goroutine dump and
+	// shows on /status and Diagnostics. Alarm only.
+	watch *liveness.Watch
 
 	Events           *EventBus
 	stopChan         chan struct{}
@@ -388,7 +394,10 @@ func (e *Engine) Start() {
 	if e.cfg.WarLink.Enabled {
 		e.plcMgr.StartWarLinkPoller()
 	}
+	e.watch = liveness.New(e.logFn)
+	e.plcMgr.Turnover = e.watch.Loop("the PLC poll")
 	e.plcMgr.StartPolling()
+	go e.watch.Run(e.stopChan)
 
 	// Parked-ticks monitor (P2-C7): watches every consume node for
 	// pending_uop_delta growing across consecutive flush intervals while
@@ -421,6 +430,11 @@ func (e *Engine) Start() {
 }
 
 // ── Accessors ───────────────────────────────────────────────────────
+
+// Frozen names each loop the freeze alarm reports now; nil when none.
+func (e *Engine) Frozen() []string {
+	return liveness.Sentences(e.watch.Frozen())
+}
 
 // Uptime returns the number of seconds since the engine started.
 func (e *Engine) Uptime() int64 {

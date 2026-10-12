@@ -25,10 +25,12 @@ import (
 	"strconv"
 	"strings"
 	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
+	"sync/atomic"
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/clock"
+	"shingo/protocol/liveness"
 	"shingo/protocol/lockcheck"
 	"shingocore/internal/lockorder"
 )
@@ -43,6 +45,13 @@ var buildInfo = struct {
 	commit  string
 	bootAt  time.Time
 }{version: "dev", commit: "unknown", bootAt: time.Now()}
+
+// livenessWatch is the process's freeze alarm, set once from main; nil in a
+// test that builds handlers without one.
+var livenessWatch atomic.Pointer[liveness.Watch]
+
+// SetLiveness records the freeze alarm the strip reads. Called once from main.
+func SetLiveness(w *liveness.Watch) { livenessWatch.Store(w) }
 
 // SetBuildInfo records the running build. Called once from main.
 func SetBuildInfo(version, commit string, bootAt time.Time) {
@@ -169,6 +178,10 @@ type CoreHealth struct {
 	Verdict string `json:"verdict"`
 	// Reasons is why it is degraded, in the order found. Empty when ok.
 	Reasons []string `json:"reasons"`
+	// Frozen names each loop that has stayed inside one turn past the freeze
+	// alarm's limit (protocol/liveness): Core is up but has stopped working.
+	// First among the reasons when present.
+	Frozen []string `json:"frozen,omitempty"`
 	// DepsDown names the dependencies that are down, and ONLY those.
 	//
 	// The strip used to print all four dots permanently beside a verdict that
@@ -327,6 +340,7 @@ func (h *Handlers) coreHealth(depsOK bool, depReasons []string) CoreHealth {
 	if !depsOK {
 		c.DepsDown = depReasons
 	}
+	c.Frozen = liveness.Sentences(livenessWatch.Load().Frozen())
 	c.Reasons = deriveReasons(c, c.DepsDown)
 	if len(c.Reasons) > 0 {
 		c.Verdict = verdictDegraded
@@ -345,6 +359,7 @@ func (h *Handlers) coreHealth(depsOK bool, depReasons []string) CoreHealth {
 // engine — the plumbing that gathers the numbers is not what can be wrong here.
 func deriveReasons(c CoreHealth, depsDown []string) []string {
 	var reasons []string
+	reasons = append(reasons, c.Frozen...)
 	reasons = append(reasons, depsDown...)
 
 	// A wait means a request QUEUED for a connection: the pool is the

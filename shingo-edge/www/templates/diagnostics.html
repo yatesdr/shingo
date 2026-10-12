@@ -47,6 +47,14 @@
 </div>
 {{end}}
 
+{{with .Frozen}}
+<div class="card mt-2" data-frozen>
+  <h2 style="margin:0 0 0.5rem 0;">Frozen</h2>
+  {{range .}}<div style="font-size:0.9rem;">{{.}}</div>{{end}}
+  <div class="text-muted" style="font-size:0.9rem;">The log has one entry with every goroutine's stack. Nothing is restarted.</div>
+</div>
+{{end}}
+
 {{with .CoreLink}}
 <div class="card mt-2" data-core-link>
   <h2 style="margin:0 0 0.5rem 0;">Core link</h2>

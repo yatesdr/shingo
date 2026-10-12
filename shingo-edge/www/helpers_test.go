@@ -115,6 +115,7 @@ type stubEngine struct {
 	statusLastPublishOK    bool
 	statusLastPublishAt    time.Time
 	statusLastPublishEver  bool
+	statusFrozen           []string
 	statusTickPending      int64
 	statusTickOldestMS     int64
 	// statusCoreLink is what the Core-link reads answer (core_link_status_test.go).
@@ -712,6 +713,9 @@ func seedOrder(t *testing.T, orderType protocol.OrderType, status protocol.Statu
 func (s *stubEngine) Uptime() int64 { return 42 }
 
 func (s *stubEngine) StationID() string { return "test.station" }
+
+// Frozen is the freeze alarm's read (frozenReporter).
+func (s *stubEngine) Frozen() []string { return s.statusFrozen }
 
 func (s *stubEngine) StartedAt() time.Time {
 	return time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
