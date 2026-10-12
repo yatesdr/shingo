@@ -54,3 +54,15 @@ func DemandUnsettledSQL(alias string) string {
 func DemandSettledSQL(alias string) string {
 	return "(" + demandCol(alias, "closed_at") + " IS NOT NULL)"
 }
+
+// DemandOpenedSQL — the demand opened, whether or not it has settled since: the
+// forecast score's "hit". Not a tense of the record now; a fact of its history.
+func DemandOpenedSQL(alias string) string {
+	return "(" + demandCol(alias, "opened_at") + " IS NOT NULL)"
+}
+
+// DemandNeverOpenedSQL — the record never opened: a forecast, or one the
+// forecaster closed before it could.
+func DemandNeverOpenedSQL(alias string) string {
+	return "(" + demandCol(alias, "opened_at") + " IS NULL)"
+}

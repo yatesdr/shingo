@@ -275,3 +275,27 @@ func TestRate_HonestCaseStable(t *testing.T) {
 		t.Errorf("TTEs = %v/%v, want 3600s/900s", s1.Line.TimeToEmpty, s2.Line.TimeToEmpty)
 	}
 }
+
+// F6 (a) · produce ticks are a rate of their own, read in the same statement:
+// they fill the produce maps at both grains and never move a consumption rate.
+func TestRates_ProduceTicksAreTheirOwnRate(t *testing.T) {
+	t.Parallel()
+	w := setupRateWorld(t, 4, 0)
+	seedRateDelta(t, w.db, w.bin1ID, w.std.LineNode.ID, "BIN-A", "produce_tick", 0, 360)
+	seedRateDelta(t, w.db, w.bin2ID, *w.line2, "BIN-A", "consume_tick", 900, 0)
+	in, err := sourceability.BuildInputs(w.db, 30*time.Minute)
+	testutil.MustNoErr(t, err, "build inputs")
+	line := plantclaims.ClaimRow{CoreNodeName: w.std.LineNode.Name, PayloadCode: "BIN-A"}
+	if got := sourceability.ProduceLineRate(line, in); got != 0.2 {
+		t.Errorf("produce rate at the line = %v, want 0.2 (360 over 1800 s)", got)
+	}
+	if got := in.ProduceRatePerSec["BIN-A"]; got != 0.2 {
+		t.Errorf("produce rate for the payload = %v, want 0.2", got)
+	}
+	if got := in.RatePerSec["BIN-A"]; got != 0.5 {
+		t.Errorf("consumption rate = %v, want 0.5 (the consume row alone)", got)
+	}
+	if got := sourceability.LineRate(line, in); got != 0.5 {
+		t.Errorf("consumption at the producing line = %v, want the payload's 0.5 (no consumption rows at the node)", got)
+	}
+}

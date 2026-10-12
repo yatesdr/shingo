@@ -30,6 +30,7 @@ import (
 	"shingo/protocol/lockcheck"
 	"shingocore/domain"
 	"shingocore/internal/lockorder"
+	"shingocore/store/demands"
 	"shingocore/store/plantclaims"
 	"shingocore/store/sourceability"
 )
@@ -411,14 +412,17 @@ func (m *SourceabilityMonitor) recomputeKeys(keys []plantclaims.ProcessKey) {
 //
 // BEST-EFFORT. A failed read logs and returns nothing: the verdict publish and
 // the cell samples are not this function's to lose.
-func (m *SourceabilityMonitor) loaderSamples(in sourceability.Inputs) []sourceability.TTESample {
+//
+// It returns the bindings and the in-loop totals it read too: the forecaster
+// plans the same loader places from them, for no statement of its own.
+func (m *SourceabilityMonitor) loaderSamples(in sourceability.Inputs) ([]sourceability.TTESample, []demands.RegistryEntry, map[string]int) {
 	bindings, err := m.eng.db.ListDemandThresholds()
 	if err != nil {
 		m.eng.logFn("sourceability: loader samples: list monitored bindings: %v — none this pass", err)
-		return nil
+		return nil, nil, nil
 	}
 	if len(bindings) == 0 {
-		return nil
+		return nil, nil, nil
 	}
 
 	seen := make(map[string]struct{}, len(bindings))
@@ -437,13 +441,13 @@ func (m *SourceabilityMonitor) loaderSamples(in sourceability.Inputs) []sourceab
 		payloads = append(payloads, b.PayloadCode)
 	}
 	if len(payloads) == 0 {
-		return nil
+		return nil, bindings, nil
 	}
 
 	totals, err := m.eng.InventoryService().SystemUOPForPayload(context.Background(), payloads)
 	if err != nil {
 		m.eng.logFn("sourceability: loader samples: system UOP: %v — none this pass", err)
-		return nil
+		return nil, bindings, nil
 	}
 	total := make(map[string]int, len(totals.Counts))
 	for _, c := range totals.Counts {
@@ -459,7 +463,7 @@ func (m *SourceabilityMonitor) loaderSamples(in sourceability.Inputs) []sourceab
 			b.CoreNodeName, b.PayloadCode, total[b.PayloadCode],
 			in.RatePerSec[b.PayloadCode], b.ReplenishUOPThreshold))
 	}
-	return out
+	return out, bindings, total
 }
 
 // verdictChange is one persisted verdict movement, collected under the
@@ -551,7 +555,8 @@ func (m *SourceabilityMonitor) recomputeAll() {
 	// A sample that is not taken cannot be recovered. A scorer can be fixed
 	// later against kept rows, so this takes the sample and leaves the scoring
 	// arithmetic alone.
-	samples = append(samples, m.loaderSamples(in)...)
+	loaderRows, bindings, totals := m.loaderSamples(in)
+	samples = append(samples, loaderRows...)
 
 	// KEEP THE PROJECTION THIS PASS ALREADY MADE. lineTTE has run on every full
 	// pass since the monitor was written and the number has been discarded every
@@ -572,6 +577,10 @@ func (m *SourceabilityMonitor) recomputeAll() {
 			m.eng.logFn("sourceability: record tte samples: %v", err)
 		}
 	}
+
+	// THE FORECAST, on this pass only and from what it already read
+	// (forecaster.go): the places, their stock and their rates.
+	m.forecast(in, stations, bindings, totals)
 
 	newState := make(map[plantclaims.ProcessKey]sourceability.StyleState, len(states))
 	for _, s := range states {

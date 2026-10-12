@@ -147,3 +147,76 @@ type DemandEpisode struct {
 	// against a real demand is the thing this surface exists to show.
 	Children int
 }
+
+// Close reasons only the forecaster writes (D2, DESIGN-D2 §4), on a forecast
+// that will not open. Core-only: they never cross the wire. A forecast that
+// opens is not closed at all; it changes tense and goes on to settle.
+const (
+	// CloseReasonExpired: the place's projected need passed, plus grace, and it
+	// never opened. A miss.
+	CloseReasonExpired = "expired"
+	// CloseReasonRecoveredUnattributed: the place's stock rose with no demand
+	// open, so its projected need moved later past the band. A hit by another
+	// hand.
+	CloseReasonRecoveredUnattributed = "recovered_unattributed"
+	// CloseReasonWithdrawn: the place left the population (claim retired, style
+	// changed, binding removed or zeroed). Neither hit nor miss.
+	CloseReasonWithdrawn = "withdrawn"
+)
+
+// ForecastRecord is an unsettled threshold or cell record as the forecaster
+// reads it: forecast or open, with its plan and projection.
+type ForecastRecord struct {
+	OriginID        string
+	EpisodeKey      string
+	Kind            string
+	Open            bool
+	Plan            *PlannedPick
+	PlanVerdict     string
+	NeedAt          *time.Time
+	PredictedNeedAt *time.Time
+}
+
+// ForecastBirth is a place's first forecast record.
+type ForecastBirth struct {
+	OriginID     string
+	EpisodeKey   string
+	Kind         string
+	Direction    protocol.ClaimRole
+	StationID    string
+	ProcessID    string
+	CoreNodeName string
+	PayloadCode  string
+	Threshold    int
+	Plan         *PlannedPick
+	PlanVerdict  string
+	NeedAt       *time.Time
+}
+
+// ForecastView is one forecast as the ahead view shows it: the place, the bin
+// the firing door would take (nil when none), why not when none, and when the
+// place will need it.
+type ForecastView struct {
+	EpisodeKey      string
+	Kind            string
+	StationID       string
+	CoreNodeName    string
+	PayloadCode     string
+	Plan            *PlannedPick
+	PlanVerdict     string
+	NeedAt          *time.Time
+	PredictedNeedAt *time.Time
+}
+
+// ForecastScore is the forecasts' record since a moment (D2.3): opened (a hit;
+// OpenedProjected of them carried a projection, MedianLateness is opened −
+// predicted over those, positive = opened after the forecast said), expired
+// (a miss), recovered by another hand, and withdrawn (neither).
+//
+// Born is every record ever born a forecast and Forecasting those still
+// forecasts now; neither is limited by the moment.
+type ForecastScore struct {
+	Born, Forecasting                                      int
+	Opened, OpenedProjected, Expired, Recovered, Withdrawn int
+	MedianLateness                                         *time.Duration
+}

@@ -33,12 +33,13 @@ func BuildInputs(db *sql.DB, rateWindow time.Duration) (Inputs, error) {
 	if err != nil {
 		return Inputs{}, err
 	}
-	rate, rateByNode, err := consumptionRates(db, rateWindow)
+	rates, err := consumptionRates(db, rateWindow)
 	if err != nil {
 		return Inputs{}, err
 	}
 	return Inputs{Styles: styles, Claims: claims, Pool: pool, UndeclaredCarrier: undeclared, Present: present,
-		OnLine: onLine, LineUOP: lineUOP, RatePerSec: rate, RatePerNode: rateByNode}, nil
+		OnLine: onLine, LineUOP: lineUOP, RatePerSec: rates.consume, RatePerNode: rates.consumeByNode,
+		ProduceRatePerSec: rates.produce, ProduceRatePerNode: rates.produceByNode}, nil
 }
 
 // ACTIVESTYLES IS NOT READ HERE, and that is the correction. B6 put it in this
@@ -74,7 +75,8 @@ func loadStylesAndClaims(db *sql.DB) ([]plantclaims.ProcessKey, map[plantclaims.
 	}
 
 	claimRows, err := db.Query(
-		`SELECT process_id, style_id, core_node_name, payload_code, allowed_payload_codes, seq, reorder_point
+		`SELECT process_id, style_id, core_node_name, payload_code, allowed_payload_codes, seq, reorder_point,
+		        role, swap_mode, inbound_source, uop_capacity
 		 FROM style_claims`)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sourceability: load claims: %w", err)
@@ -86,7 +88,12 @@ func loadStylesAndClaims(db *sql.DB) ([]plantclaims.ProcessKey, map[plantclaims.
 			c           plantclaims.ClaimRow
 			allowedJSON string
 		)
-		if err := claimRows.Scan(&c.ProcessID, &c.StyleID, &c.CoreNodeName, &c.PayloadCode, &allowedJSON, &c.Seq, &c.ReorderPoint); err != nil {
+		// role, swap_mode, inbound_source and uop_capacity are the forecaster's
+		// (D2): which claims are places, their level (ClaimRow.DemandLevel) and
+		// where their supply comes from. More columns on the statement both
+		// paths share, no statement more.
+		if err := claimRows.Scan(&c.ProcessID, &c.StyleID, &c.CoreNodeName, &c.PayloadCode, &allowedJSON, &c.Seq, &c.ReorderPoint,
+			&c.Role, &c.SwapMode, &c.InboundSource, &c.UOPCapacity); err != nil {
 			return nil, nil, fmt.Errorf("sourceability: scan claim: %w", err)
 		}
 		if allowedJSON != "" {
@@ -314,14 +321,22 @@ type nodePayload struct {
 //
 // This feeds the at-risk tier and B6's tte_samples; byPayload is also the
 // number a loader place's velocity will read when that surface moves over.
-func consumptionRates(db *sql.DB, window time.Duration) (byPayload map[string]float64, byNode map[nodePayload]float64, err error) {
+//
+// A THIRD ARM, PRODUCTION (F6 a): produce_tick rows, a positive delta, summed
+// into rates of their own at both grains, which project a produce cell's need
+// (its bin filling to its level). They never fold into a consumption rate.
+// Same statement: +0 on both recompute paths.
+func consumptionRates(db *sql.DB, window time.Duration) (ledgerRates, error) {
+	r := ledgerRates{consume: map[string]float64{}, consumeByNode: map[nodePayload]float64{},
+		produce: map[string]float64{}, produceByNode: map[nodePayload]float64{}}
 	secs := window.Seconds()
 	if secs <= 0 {
-		return map[string]float64{}, map[nodePayload]float64{}, nil
+		return r, nil
 	}
-	// TWO ARMS, ONE STATEMENT (v120): the bin ledger arm covers ticks and
-	// fallthrough; the drain-ledger arm covers lineside drains, keyed on the
-	// node the pile sits at — never NULL, so its byNode fold is unconditional.
+	// THREE ARMS, ONE STATEMENT (v120, F6 a): the bin ledger arm covers ticks
+	// and fallthrough; the production arm covers produce ticks; the drain-ledger
+	// arm covers lineside drains, keyed on the node the pile sits at — never
+	// NULL, so its byNode fold is unconditional.
 	// The two idiom groups (UOP vs qty) are summed in their own arm and
 	// unified by the UNION, so the Go fold below stays one spelling.
 	rows, err := db.Query(`
@@ -337,6 +352,17 @@ func consumptionRates(db *sql.DB, window time.Duration) (byPayload map[string]fl
 			  AND l.applied_at >= NOW() - make_interval(secs => $1)
 			GROUP BY l.payload_code, n.name, l.reason
 			UNION ALL
+			SELECT l.payload_code, COALESCE(n.name, ''), l.reason,
+			       COALESCE(SUM(l.after_uop - l.before_uop), 0)
+			FROM bin_uop_ledger l
+			LEFT JOIN nodes n ON n.id = l.node_id
+			WHERE l.op = 'bin_uop_delta'
+			  AND l.reason = 'produce_tick'
+			  AND l.after_uop > l.before_uop
+			  AND l.payload_code <> ''
+			  AND l.applied_at >= NOW() - make_interval(secs => $1)
+			GROUP BY l.payload_code, n.name, l.reason
+			UNION ALL
 			SELECT d.payload_code, n.name, 'consume_drain',
 			       COALESCE(SUM(d.before_qty - d.after_qty), 0)
 			FROM lineside_drain_ledger d
@@ -347,30 +373,42 @@ func consumptionRates(db *sql.DB, window time.Duration) (byPayload map[string]fl
 			GROUP BY d.payload_code, n.name
 		) u`, secs)
 	if err != nil {
-		return nil, nil, fmt.Errorf("sourceability: consumption rates: %w", err)
+		return r, fmt.Errorf("sourceability: consumption rates: %w", err)
 	}
 	defer rows.Close()
-	byPayload = make(map[string]float64)
-	byNode = make(map[nodePayload]float64)
 	for rows.Next() {
 		var (
 			payload, node, reason string
 			consumed              int64
 		)
 		if err := rows.Scan(&payload, &node, &reason, &consumed); err != nil {
-			return nil, nil, fmt.Errorf("sourceability: scan rates: %w", err)
+			return r, fmt.Errorf("sourceability: scan rates: %w", err)
 		}
 		if consumed <= 0 {
 			continue
 		}
-		byPayload[payload] += float64(consumed) / secs
+		if reason == "produce_tick" {
+			r.produce[payload] += float64(consumed) / secs
+			if node != "" {
+				r.produceByNode[nodePayload{Node: node, Payload: payload}] += float64(consumed) / secs
+			}
+			continue
+		}
+		r.consume[payload] += float64(consumed) / secs
 		// The A/B rule above: fallthrough rows sum plant-wide, never per-node.
 		// Drain rows (node never NULL from their arm) fold per-node always.
 		if node != "" && reason != "ab_fallthrough" {
-			byNode[nodePayload{Node: node, Payload: payload}] += float64(consumed) / secs
+			r.consumeByNode[nodePayload{Node: node, Payload: payload}] += float64(consumed) / secs
 		}
 	}
-	return byPayload, byNode, rows.Err()
+	return r, rows.Err()
+}
+
+// ledgerRates is consumptionRates' four maps: consumption and production, each
+// plant-wide per payload and per (node, payload), UOP per second.
+type ledgerRates struct {
+	consume, produce             map[string]float64
+	consumeByNode, produceByNode map[nodePayload]float64
 }
 
 // ActiveStyles returns the style each process is currently running, keyed by

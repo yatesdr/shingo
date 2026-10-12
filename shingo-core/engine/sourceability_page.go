@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"shingocore/domain"
 	"shingocore/store/plantclaims"
 	"shingocore/store/sourceability"
 )
@@ -226,6 +227,12 @@ func formatTTE(sec float64) string {
 // SourceabilityPageView is everything the Core sourcing page renders.
 type SourceabilityPageView struct {
 	Processes []SourcingProcessView
+	// Ahead is every place's forecast (D2): the bin its firing door would take,
+	// or why there is none, and when it will need it. Soonest first.
+	Ahead []domain.ForecastView
+	// Score is the forecasts' record over the last day (D2.3): opened, expired,
+	// recovered by another hand, withdrawn.
+	Score domain.ForecastScore
 	// Queue is the at-risk lines ordered by time-to-empty ascending (fill first).
 	// Empty when the at-risk tier is disabled.
 	Queue []SourcingQueueRow
@@ -272,6 +279,16 @@ func (e *Engine) SourceabilityPage() (SourceabilityPageView, error) {
 	}
 
 	snapshot := e.sourceabilityMonitor.Snapshot()
+	ahead, err := e.db.ListForecasts()
+	if err != nil {
+		return view, err
+	}
+	view.Ahead = ahead
+	score, err := e.db.ForecastScore(time.Now().Add(-24 * time.Hour))
+	if err != nil {
+		return view, err
+	}
+	view.Score = score
 	claims, err := sourceability.LoadClaims(e.db.DB)
 	if err != nil {
 		return view, err

@@ -46,28 +46,41 @@ func TestLegColumnsAreNotReadByTheSourceabilityPath(t *testing.T) {
 
 	// The sourceability package never writes style_claims — it only reads the
 	// mirror — so there its whole files are the right grain.
-	for what, path := range map[string]string{
-		"the recompute's claim load (sourceability.loadStylesAndClaims)": filepath.Join("..", "sourceability", "read.go"),
-		"the sourcing page's per-process read":                           filepath.Join("..", "sourceability", "read_page.go"),
+	//
+	// RULED IN D2.1 (DECISIONS D17): the recompute's claim load also carries
+	// inbound_source, because the forecaster on the same two-minute pass plans a
+	// cell's supply from it and a read of its own would cost a statement the
+	// brief did not name. What this test protects is the verdict and the dirty
+	// index, and neither reads it: the verdict's file (sourceability.go) must not
+	// name the field, checked below. Every other leg stays out of the load.
+	for what, c := range map[string]struct {
+		path  string
+		allow string
+	}{
+		"the recompute's claim load (sourceability.loadStylesAndClaims)": {filepath.Join("..", "sourceability", "read.go"), "inbound_source"},
+		"the sourcing page's per-process read":                           {filepath.Join("..", "sourceability", "read_page.go"), ""},
 	} {
-		b, err := os.ReadFile(filepath.Clean(path))
+		b, err := os.ReadFile(filepath.Clean(c.path))
 		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
+			t.Fatalf("read %s: %v", c.path, err)
 		}
-		assertNoLegColumns(t, what+" ("+path+")", string(b))
+		assertNoLegColumnsBut(t, what+" ("+c.path+")", string(b), c.allow)
+	}
+	verdict, err := os.ReadFile(filepath.Clean(filepath.Join("..", "sourceability", "sourceability.go")))
+	if err != nil {
+		t.Fatalf("read the verdict: %v", err)
+	}
+	if strings.Contains(string(verdict), "InboundSource") {
+		t.Error("the sourceability verdict (sourceability.go) names InboundSource: a leg now moves a verdict")
 	}
 }
 
-func assertNoLegColumns(t *testing.T, what, src string) {
+func assertNoLegColumnsBut(t *testing.T, what, src, allow string) {
 	t.Helper()
 	for _, col := range legColumns {
-		if strings.Contains(src, col) {
-			t.Errorf("%s now names style_claims.%s.\n"+
-				"The legs are the loop compiler's input, not the sourceability verdict's. A leg "+
-				"projected here makes a changeover-position edit move a sourcing verdict or mark "+
-				"styles dirty, neither of which has anything to do with whether the parts are "+
-				"there. If a leg genuinely belongs in the verdict, that is a ruling — write it "+
-				"down and change this test with it.", what, col)
+		if col != allow && strings.Contains(src, col) {
+			t.Errorf("%s now names style_claims.%s: the legs are the loop compiler's input, not the "+
+				"sourceability verdict's. A ruling changes this test.", what, col)
 		}
 	}
 }
@@ -81,6 +94,7 @@ var sanctionedLegReaders = map[string]string{
 	"store/containment.go":             "the containment divert scopes itself to the claim's own outbound flow",
 	"store/migrations.go":              "the schema",
 	"store/bins/bins.go":               "the empty scan leaves a cell's own positions alone, a press-index cell's paired positions included",
+	"store/sourceability/read.go":      "the two-minute pass's claim load carries inbound_source for the forecaster (D2.1); the verdict does not read it",
 }
 
 // TestLegColumnsHaveOnlySanctionedReaders walks shingo-core for any file that

@@ -396,7 +396,12 @@ CREATE TABLE public.demand_origins (
     discretionary boolean DEFAULT false NOT NULL,
     closed_at timestamp with time zone,
     close_reason text DEFAULT ''::text NOT NULL,
-    closed_by text
+    closed_by text,
+    plan text DEFAULT ''::text NOT NULL,
+    plan_verdict text DEFAULT ''::text NOT NULL,
+    need_at timestamp with time zone,
+    predicted_need_at timestamp with time zone,
+    provenance text DEFAULT ''::text NOT NULL
 );
 
 CREATE TABLE public.demand_registry (

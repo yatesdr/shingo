@@ -445,6 +445,23 @@ const (
 	ClaimRoleProduce ClaimRole = "produce" // node produces a material payload for downstream
 )
 
+// ClaimDemandLevel is a claim's demand level: the count a consume cell asks at
+// on the way down, or a produce cell on the way up. 0 is no level. Consume: the
+// reorder point, its zero the opt-out. Produce: the reorder point only when it
+// is strictly earlier than full, else the capacity, whose zero (a payload the
+// catalog has no capacity for) is no level. The reasoning is on the Edge's
+// NodeClaim.DemandLevel; this is the one spelling of the rule, so Core's
+// forecast places and the Edge's trigger cannot disagree about a level.
+func ClaimDemandLevel(role ClaimRole, reorderPoint, uopCapacity int) int {
+	if role != ClaimRoleProduce {
+		return reorderPoint
+	}
+	if reorderPoint > 0 && reorderPoint < uopCapacity {
+		return reorderPoint
+	}
+	return uopCapacity
+}
+
 // scope_kind values for the inventory-delta dedup partition.
 //
 // These DO cross the wire, which core's copy used to deny: its comment said

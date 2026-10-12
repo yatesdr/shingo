@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"shingo/protocol"
+	"shingocore/plantspec"
 )
 
 // StyleRow is one (process, style) Edge reports in a plant-claims message.
@@ -65,6 +66,20 @@ type ClaimRow struct {
 	OutboundDestination    string
 	PairedCoreNode         string
 	SecondPairedCoreNode   string
+}
+
+// IsLoader is the loader question for a mirrored claim, asked through the one
+// Core derivation (plantspec.Claim.IsLoader) rather than by mode name: the mode
+// field is the storage for the fact, not the question.
+func (c ClaimRow) IsLoader() bool {
+	return plantspec.Claim{SwapMode: string(c.SwapMode)}.IsLoader()
+}
+
+// DemandLevel is the claim's level, the Edge's rule (protocol.ClaimDemandLevel):
+// a consume claim's reorder point, a produce claim's capacity unless its reorder
+// point is earlier than full. 0 is no level.
+func (c ClaimRow) DemandLevel() int {
+	return protocol.ClaimDemandLevel(c.Role, c.ReorderPoint, c.UOPCapacity)
 }
 
 // ReplaceProcess replaces the mirror for one process in a single transaction.

@@ -857,13 +857,7 @@ func (c *NodeClaim) DemandLevel() int {
 	if c == nil {
 		return 0
 	}
-	if c.Role != protocol.ClaimRoleProduce {
-		return c.ReorderPoint
-	}
-	if c.ReorderPoint > 0 && c.ReorderPoint < c.UOPCapacity {
-		return c.ReorderPoint
-	}
-	return c.UOPCapacity
+	return protocol.ClaimDemandLevel(c.Role, c.ReorderPoint, c.UOPCapacity)
 }
 
 // Ptr returns a pointer to v. It exists for the absent-means-untouched fields

@@ -14,15 +14,18 @@ import (
 	"shingocore/store"
 )
 
-// demand_tense_writers_test.go — no production path writes a forecast.
+// demand_tense_writers_test.go — only the forecaster writes a forecast.
 //
 // A forecast is a demand_origins row with opened_at NULL and closed_at NULL.
-// Migration v153 makes such a row legal; nothing in this phase may write one.
-// The claim is about source text plus one type, so no database is needed:
+// Migration v153 made such a row legal (D1, when nothing could write one); D2's
+// forecaster writes them, through one INSERT. CONVERTED in D2.1 from "no
+// production path writes a forecast": the claim is now that the forecaster's
+// BirthForecast is the only writer that does. Source text plus one type, so no
+// database is needed:
 //
-//   - the only INSERT INTO demand_origins sites are UpsertDemandOrigin and
-//     OpenCoreEpisode, and
-//   - both bind DemandOrigin.OpenedAt, a non-pointer time.Time, which
+//   - the only INSERT INTO demand_origins sites are UpsertDemandOrigin,
+//     OpenCoreEpisode and BirthForecast (the forecaster's, D2), and
+//   - the first two bind DemandOrigin.OpenedAt, a non-pointer time.Time, which
 //     database/sql never sends as NULL (a zero time binds as year 1), and
 //   - no statement anywhere sets opened_at to NULL.
 //
@@ -64,7 +67,7 @@ func TestDemandTense_NoProductionWriterWritesAForecast(t *testing.T) {
 			"so the two writers below could write a forecast", f.Type)
 	}
 
-	want := []string{"demand_origins.go:OpenCoreEpisode", "demand_origins.go:UpsertDemandOrigin"}
+	want := []string{"demand_forecast.go:BirthForecast", "demand_origins.go:OpenCoreEpisode", "demand_origins.go:UpsertDemandOrigin"}
 	var got []string
 	root := ".." // shingo-core
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {

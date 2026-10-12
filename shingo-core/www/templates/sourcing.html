@@ -179,6 +179,29 @@
 </div>
 {{end}}
 
+{{/* Ahead: every place's forecast (D2). The bin its firing door would take
+     now, or why there is none, and when the place will need it. Holds nothing. */}}
+{{if .View.Ahead}}
+<div class="card src-ahead">
+  <h3>Ahead</h3>
+  <p class="text-muted">What each place will need next, and the bin it would be sent today. A forecast holds nothing.</p>
+  <p class="text-muted">Last 24 h: {{.View.Score.Opened}} opened as forecast{{if .View.Score.MedianLateness}} (median {{.View.Score.MedianLateness}} after the forecast){{end}} &middot; {{.View.Score.Expired}} expired unopened &middot; {{.View.Score.Recovered}} restocked by another hand &middot; {{.View.Score.Withdrawn}} withdrawn.</p>
+  <table class="src-tbl">
+    <thead><tr><th>Place</th><th>Payload</th><th>Needs at</th><th>Would take</th></tr></thead>
+    <tbody>
+    {{range .View.Ahead}}
+      <tr>
+        <td>{{.CoreNodeName}}{{if eq .Kind "threshold"}} <span class="src-rmeta">loader</span>{{end}}</td>
+        <td>{{.PayloadCode}}</td>
+        <td>{{if .NeedAt}}{{.NeedAt.Format "15:04"}}{{else}}<span class="src-none">no rate yet</span>{{end}}</td>
+        <td>{{if .Plan}}{{.Plan.Node}}{{else}}<span class="src-none">{{if .PlanVerdict}}{{.PlanVerdict}}{{else}}nothing to take{{end}}</span>{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
 <div class="src-two" id="src-root">
   <div class="src-rail" role="tablist" aria-label="Processes">
     {{/* Configured processes first, already severity-sorted by the builder. */}}

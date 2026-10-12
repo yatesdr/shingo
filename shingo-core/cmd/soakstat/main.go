@@ -43,6 +43,7 @@ import (
 	"shingo/protocol"
 	"shingocore/config"
 	"shingocore/dispatch"
+	"shingocore/domain"
 	"shingocore/engine"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -162,6 +163,8 @@ type report struct {
 	balance []payloadBalance
 	// divergences is the run's lineside report episodes (divergences.go).
 	divergences []divergenceClass
+	// forecast is the forecasts' record over the run (forecast.go).
+	forecast domain.ForecastScore
 	// handoff is the carrier-handoff before-numbers (handoff.go); nil when its
 	// reads failed.
 	handoff *handoffCore
@@ -401,6 +404,11 @@ func collect(db *store.DB, logSource, pullPath string, simNow *time.Time) *repor
 		u.fail(measureDivergence, err)
 	} else {
 		r.divergences = dv
+	}
+	if fs, err := readForecast(db); err != nil {
+		u.fail(measureForecast, err)
+	} else {
+		r.forecast = fs
 	}
 	if sr, err := readStranded(db.DB, simNow); err != nil {
 		u.fail(measureStranded, err)
@@ -1284,6 +1292,7 @@ func (r *report) report() {
 	r.printPullSection()
 	printDivergences(r.divergences, r.unrunMeasures[measureDivergence])
 	r.printHandoffSections()
+	printForecast(os.Stdout, r.forecast, r.unrunMeasures[measureForecast])
 
 	fmt.Printf("\nINVARIANTS\n")
 	switch {

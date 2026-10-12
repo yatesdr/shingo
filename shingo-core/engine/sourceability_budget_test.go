@@ -55,21 +55,24 @@ type recomputeBudget struct {
 // moving ActiveStyles to the pass that actually reads it.
 var (
 	budgetRecomputeAll = recomputeBudget{
-		path: "recomputeAll", want: 15,
+		path: "recomputeAll", want: 16,
 		formula: "BuildInputs 6 + ActiveStyles 1 (read here now, not in BuildInputs) " +
 			"+ ProcessStations 1 (Stage A2: where each process's verdicts are sent) " +
 			"+ ListDemandThresholds 1 + SystemUOPForPayload 2 (bins sum, buckets sum — two " +
 			"whatever the payload count) + samples INSERT 1 + prunes 2 (samples, drain ledger) " +
-			"+ 1 verdict-history write, this being the first observation of the style",
+			"+ 1 verdict-history write, this being the first observation of the style " +
+			"+ 1 forecaster read of the unsettled demand records (D2.1; this fixture has no " +
+			"place to forecast, so no stale check, pick or write: 15 -> 16)",
 	}
 	budgetRecomputeAllRunning = recomputeBudget{
-		path: "recomputeAll (running style)", want: 15,
+		path: "recomputeAll (running style)", want: 16,
 		formula: "IDENTICAL to the pass with no running style: the cell samples join the " +
 			"loader samples in the SAME multi-row INSERT, so they are more rows and not one " +
 			"more statement. At base this shape cost 11 (the 8 plus the INSERT and two prunes " +
 			"that a no-running-style pass never reached), so B8's production cost is +3: " +
 			"ListDemandThresholds 1 + SystemUOPForPayload 2, and no extra write. Stage A2 adds " +
-			"ProcessStations 1 to both shapes (14 -> 15)",
+			"ProcessStations 1 to both shapes (14 -> 15). D2.1 adds the forecaster's read of the " +
+			"unsettled demand records to both (15 -> 16)",
 	}
 	budgetRecomputeKeys = recomputeBudget{
 		path: "recomputeKeys", want: 6,

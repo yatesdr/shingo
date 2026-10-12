@@ -4,6 +4,7 @@ package engine
 
 import (
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingocore/fleet/simulator"
@@ -310,5 +311,28 @@ func TestThresholdEpisode_NegativeTotalClampsTheDenominator(t *testing.T) {
 	if got.ExpectedOrders == nil || *got.ExpectedOrders != 6 {
 		t.Errorf("expected_orders = %v, want 6 — opened_total must clamp at 0 before the division",
 			got.ExpectedOrders)
+	}
+}
+
+// The demand record's time is the wall clock, as every other writer of the
+// table stamps it (the Edge's opens, the keeper, the forecaster's projections,
+// the TTE samples). The monitor's own intervals (the debounce, the log windows)
+// run on the process clock, which a sim runs ahead; its episode stamps must not.
+// The D2 run at 1f623a65 scored threshold places +7,577 s late against
+// projections made in wall time (TIME-COLUMNS in the D2 records). RED at
+// 1f623a65: the open is stamped with the monitor's clock.
+func TestThresholdEpisode_StampedInWallTime(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	m, _ := loggingMonitor(t, db)
+	m.now = func() time.Time { return time.Now().Add(10 * time.Hour) } // a sim clock ten hours ahead
+	b := episodeBinding(t, m.eng, "PANEL-EPW", 18)
+	m.checkBindings([]thresholdEntry{b}, 40, "below_threshold")
+	open, err := db.ListOpenThresholdEpisodes()
+	if err != nil || len(open) != 1 {
+		t.Fatalf("open episodes: %v (%d), want 1", err, len(open))
+	}
+	if d := time.Since(open[0].OpenedAt); d < -time.Hour || d > time.Hour {
+		t.Fatalf("opened_at %v is %v from wall time under a process clock ten hours ahead; want the wall clock", open[0].OpenedAt, -d)
 	}
 }

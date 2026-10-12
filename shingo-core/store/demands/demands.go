@@ -38,6 +38,10 @@ type RegistryEntry struct {
 	OutboundDest          string             `json:"outbound_dest"`
 	ReplenishUOPThreshold int                `json:"replenish_uop_threshold"`
 	UpdatedAt             time.Time          `json:"updated_at"`
+	// InboundSource is the owning loader's inbound source (where its empties
+	// come from). Filled by ListThresholds only; blank elsewhere and for a
+	// legacy row with no loader.
+	InboundSource string `json:"-"`
 }
 
 // registrySelectCols is the canonical column list for demand_registry
@@ -247,11 +251,16 @@ func LookupThresholdsByPayload(db *sql.DB, payloadCode string) ([]RegistryEntry,
 // replenish_uop_threshold across all payloads. Used by the threshold-
 // monitor startup sweep, which iterates every active binding once on
 // startup bypassing debounce.
+//
+// Each entry carries its loader's inbound source (InboundSource), joined on the
+// loader's primary key in the same statement: the forecaster plans a loader
+// place's refill from it (D2), and the join costs no statement.
 func ListThresholds(db *sql.DB) ([]RegistryEntry, error) {
-	rows, err := db.Query(`SELECT ` + registrySelectCols + `
-		FROM demand_registry
-		WHERE replenish_uop_threshold > 0
-		ORDER BY station_id, core_node_name, payload_code`)
+	rows, err := db.Query(`SELECT ` + prefixed("r", registrySelectCols) + `, COALESCE(l.inbound_source, '')
+		FROM demand_registry r
+		LEFT JOIN bin_loaders l ON l.id = r.loader_id
+		WHERE r.replenish_uop_threshold > 0
+		ORDER BY r.station_id, r.core_node_name, r.payload_code`)
 	if err != nil {
 		return nil, err
 	}
@@ -259,13 +268,27 @@ func ListThresholds(db *sql.DB) ([]RegistryEntry, error) {
 
 	var entries []RegistryEntry
 	for rows.Next() {
-		e, err := scanRegistryEntry(rows)
-		if err != nil {
+		var e RegistryEntry
+		var loaderID sql.NullInt64
+		if err := rows.Scan(&e.ID, &e.StationID, &e.CoreNodeName, &e.Role, &e.PayloadCode, &e.OutboundDest,
+			&e.ReplenishUOPThreshold, &loaderID, &e.UpdatedAt, &e.InboundSource); err != nil {
 			return nil, err
+		}
+		if loaderID.Valid {
+			e.LoaderID = loaderID.Int64
 		}
 		entries = append(entries, e)
 	}
 	return entries, rows.Err()
+}
+
+// prefixed qualifies a comma-separated column list with a table alias.
+func prefixed(alias, cols string) string {
+	parts := strings.Split(cols, ",")
+	for i, c := range parts {
+		parts[i] = alias + "." + strings.TrimSpace(c)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ListRegistry returns every demand_registry entry.

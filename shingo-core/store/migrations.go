@@ -4440,6 +4440,11 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "edge_registry", "clock_offset_ms")
 			}},
+		{155, "demand_origins plan, plan_verdict, need_at, predicted_need_at, provenance — the forecaster's record of a place before its demand opens",
+			v155DemandForecastPlan,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "demand_origins", "provenance")
+			}},
 	}
 }
 
@@ -4496,6 +4501,33 @@ func v153DemandOpenedAtNullable(tx *sql.Tx) error {
 func v154EdgeClockOffset(tx *sql.Tx) error {
 	if _, err := tx.Exec(`ALTER TABLE edge_registry ADD COLUMN IF NOT EXISTS clock_offset_ms BIGINT`); err != nil {
 		return fmt.Errorf("v154 edge_registry.clock_offset_ms: %w", err)
+	}
+	return nil
+}
+
+// v155DemandForecastPlan gives the demand record the forecaster's columns (D2,
+// DESIGN-D2 §2.2). plan is the planned pick in orders.plan's encoding
+// (domain.PlannedPick JSON, ” when none); plan_verdict is ” when the place's
+// need is satisfiable, else the planner's cause; need_at is the current
+// projection of when the place will need material (NULL: unprojectable);
+// predicted_need_at is the first projection, written once when the forecast is
+// born and never moved, so the score reads the forecast as it was made;
+// provenance names the forecast's writer ('arithmetic', D2's one) and is ”
+// on a record the forecaster did not birth, which is how the score tells a
+// forecast that opened from a demand that opened unforecast. Additive, defaults on
+// every existing row; demand_origins is not in the baseline DDL, so only the
+// snapshot changes.
+func v155DemandForecastPlan(tx *sql.Tx) error {
+	for _, s := range []string{
+		`ALTER TABLE demand_origins ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE demand_origins ADD COLUMN IF NOT EXISTS plan_verdict TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE demand_origins ADD COLUMN IF NOT EXISTS need_at TIMESTAMPTZ`,
+		`ALTER TABLE demand_origins ADD COLUMN IF NOT EXISTS predicted_need_at TIMESTAMPTZ`,
+		`ALTER TABLE demand_origins ADD COLUMN IF NOT EXISTS provenance TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v155 demand_origins forecast plan: %w", err)
+		}
 	}
 	return nil
 }

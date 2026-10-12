@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -62,11 +63,17 @@ func (m *ThresholdMonitor) openThresholdEpisode(key string, b thresholdEntry, to
 		Kind:       protocol.EpisodeKindThreshold,
 		// The binding that decided it, station included — the station is data
 		// on the episode, not part of the place.
-		TriggerRef:            "binding:" + b.stationID + "|" + b.coreNodeName + "|" + b.payloadCode,
-		StationID:             b.stationID,
-		CoreNodeName:          b.coreNodeName,
-		PayloadCode:           b.payloadCode,
-		OpenedAt:              m.nowFn().UTC(),
+		TriggerRef:   "binding:" + b.stationID + "|" + b.coreNodeName + "|" + b.payloadCode,
+		StationID:    b.stationID,
+		CoreNodeName: b.coreNodeName,
+		PayloadCode:  b.payloadCode,
+		// THE RECORD'S CLOCK, NOT THE MONITOR'S. demand_origins is stamped in
+		// wall time by every other writer (the Edge's opens, the keeper, the
+		// forecaster's projections), and its readers measure against it. The
+		// monitor's intervals run on the process clock, which a sim runs ahead;
+		// stamping the record with it scored threshold places hours late (the D2
+		// run at 1f623a65). In production the two clocks are the same.
+		OpenedAt:              time.Now().UTC(),
 		OpenedTotal:           total,
 		Threshold:             b.threshold,
 		ExpectedOrders:        expected,
@@ -120,7 +127,7 @@ func (m *ThresholdMonitor) closeThresholdEpisode(key, reason, closedBy string) {
 // holding a stale candidate — read before a concurrent close-and-reopen —
 // cannot close the newer episode for the same place.
 func (m *ThresholdMonitor) closeThresholdEpisodeByID(originID, key, reason, closedBy string) bool {
-	closed, err := m.eng.db.CloseDemandOriginByID(originID, reason, closedBy, m.nowFn().UTC())
+	closed, err := m.eng.db.CloseDemandOriginByID(originID, reason, closedBy, time.Now().UTC()) // the record's clock (openThresholdEpisode)
 	if err != nil {
 		// The row stays open, which is the truth: the next rising edge, or the
 		// reconciling sweep, closes it.

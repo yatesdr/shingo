@@ -171,6 +171,11 @@ type Inputs struct {
 	// rows in the window (first cycle after a changeover). Absent key = no
 	// per-node history, not a zero rate.
 	RatePerNode map[nodePayload]float64
+	// ProduceRatePerSec and ProduceRatePerNode are the production velocities
+	// (produce_tick rows, UOP/sec, positive) at the same two grains, from the
+	// same scan (F6 a). They project a produce cell's need and nothing else.
+	ProduceRatePerSec  map[string]float64
+	ProduceRatePerNode map[nodePayload]float64
 	// ActiveStyles is the style each process is currently RUNNING, keyed by
 	// process ID — the same map ActiveStyles() returns. It scopes the kept TTE
 	// samples and nothing else: no verdict reads it, because every configured
@@ -468,12 +473,7 @@ func pendingSamples(key plantclaims.ProcessKey, claims []plantclaims.ClaimRow, i
 // RateGrain is empty alongside it: no rate, no grain.
 func lineTTE(c plantclaims.ClaimRow, in Inputs) LineTTE {
 	uop, staged := in.LineUOP[c.CoreNodeName]
-	nodeRate := in.RatePerNode[nodePayload{Node: c.CoreNodeName, Payload: c.PayloadCode}]
-	payloadRate := in.RatePerSec[c.PayloadCode]
-	rate, grain := payloadRate, "payload"
-	if nodeRate > 0 {
-		rate, grain = nodeRate, "node"
-	}
+	rate, grain := lineRate(c, in)
 	lt := LineTTE{NodeName: c.CoreNodeName, PayloadCode: c.PayloadCode, UOPRemaining: uop,
 		RatePerSec: rate, RateGrain: grain}
 	if !staged || uop <= 0 || rate <= 0 {
@@ -492,4 +492,28 @@ func sortedKeys(set map[string]struct{}) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// lineRate is the rate a line burns at: its node's when the node has rows in
+// the window, else the payload's plant-wide rate (lineTTE's rule).
+func lineRate(c plantclaims.ClaimRow, in Inputs) (float64, string) {
+	if nodeRate := in.RatePerNode[nodePayload{Node: c.CoreNodeName, Payload: c.PayloadCode}]; nodeRate > 0 {
+		return nodeRate, "node"
+	}
+	return in.RatePerSec[c.PayloadCode], "payload"
+}
+
+// ProduceLineRate is the rate a produce line fills at: its node's when the node
+// has produce rows in the window, else the payload's plant-wide production.
+func ProduceLineRate(c plantclaims.ClaimRow, in Inputs) float64 {
+	if nodeRate := in.ProduceRatePerNode[nodePayload{Node: c.CoreNodeName, Payload: c.PayloadCode}]; nodeRate > 0 {
+		return nodeRate
+	}
+	return in.ProduceRatePerSec[c.PayloadCode]
+}
+
+// LineRate is lineRate's figure, for the forecaster's projection (D2).
+func LineRate(c plantclaims.ClaimRow, in Inputs) float64 {
+	r, _ := lineRate(c, in)
+	return r
 }
