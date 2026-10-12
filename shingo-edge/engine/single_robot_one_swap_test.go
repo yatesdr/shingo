@@ -63,18 +63,17 @@ func oneSwapCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, 
 				}
 			}
 			_ = json.NewEncoder(w).Encode(out)
-		case "/api/inventory/preflight":
-			absent := []string{}
-			if dry {
-				absent = []string{osPart}
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"missing": absent, "absent": absent})
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	t.Cleanup(srv.Close)
 	eng.coreClient = stubCoreClient(srv.URL)
+	if dry {
+		// Core's feed names the part absent: no bin of it anywhere.
+		testutil.MustNoErr(t, db.ReplaceSourcingState([]protocol.SourcingState{{ProcessID: "OS-PROC", StyleID: "OS-STYLE",
+			Status: "red", Missing: []string{osPart}, Absent: []string{osPart}}}), "the feed")
+	}
 	return eng, nodeID
 }
 

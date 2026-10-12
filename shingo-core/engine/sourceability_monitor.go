@@ -673,6 +673,11 @@ func wireChanged(a, b sourceability.StyleState) bool {
 	if !equalStrings(a.Missing, b.Missing) {
 		return true
 	}
+	// Absent decides the Edge's dry-source guard, so its flip goes out now and
+	// not at the next snapshot.
+	if !equalStrings(a.Absent, b.Absent) {
+		return true
+	}
 	// THE FLAGGED PAYLOAD LIST, NOT THE COUNTS. Whether a missing payload has
 	// stock in an undeclared carrier changes the operator's ACTION, so it is an
 	// operator-visible change. How MANY such bins there are is magnitude — the
@@ -734,6 +739,7 @@ func toWire(s sourceability.StyleState) protocol.SourcingState {
 		StyleID:    s.StyleID,
 		Status:     string(s.Status),
 		Missing:    s.Missing,
+		Absent:     s.Absent,
 		Reason:     reasonFor(s),
 		ComputedAt: s.ComputedAt,
 	}

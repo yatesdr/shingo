@@ -135,19 +135,30 @@ func (e *Engine) guardLineRequest(node *processes.Node, runtime *processes.Runti
 // refusing it dead-ended the floor with idle robots — Springfield NF SPOT 3,
 // 2026-06-03. A level-keeper tick has no operator standing at it to dead-end.)
 //
+// ── IT READS THE FEED, NOT CORE (D2.5) ────────────────────────────────────
+//
+// It asked Core one synchronous question per pair arm (POST /api/inventory/
+// preflight). Core's sourcing feed, which this Edge already holds, now carries
+// the one answer it may refuse on: a red verdict's Absent, the payloads with no
+// bin anywhere, free or spoken for. Missing alone is "no FREE bin", and a market
+// whose every bin was reserved or claimed by other pairs is congestion, not dry:
+// the pair is created and waits for it. The guard is one local read now, and
+// the feed's age is the answer's age: a delta goes out within the 300 ms debounce
+// of the bin that made the payload absent (or present again), and the snapshot
+// re-states it every two minutes.
+//
 // ── IT FAILS OPEN, EVERYWHERE, ON PURPOSE ─────────────────────────────────
 //
-// Core unreachable, the call erroring, a payload Core cannot count — every one
-// of those passes. This guard exists to stop a KNOWN-dry source, and "we could
-// not find out" is not knowing. A guard that shut the line down when the Core
-// API blipped would be a worse failure than the churn it prevents.
+// No feed yet, an older Core that sends no Absent, the read erroring: every one
+// of those passes. This guard exists to stop a KNOWN-dry source, and "we do not
+// know" is not knowing. A guard that shut the line down on a missing answer
+// would be a worse failure than the churn it prevents.
 //
 // THE EMPTY-CARRIER CASE IS ONE OF THOSE, and it is worth naming because it is
 // not an edge case: a PRODUCE swap's supply leg fetches an empty carrier, not a
-// payload (BuildSwapDispatch marks the inbound pickup Empty), and the preflight
-// endpoint counts bins OF a payload. It cannot answer "are there empty carriers"
-// and this guard does not pretend it can. Produce-direction pairs are not
-// covered; the consume direction, which is where 07-21 happened, is.
+// payload (BuildSwapDispatch marks the inbound pickup Empty), and Absent is
+// about bins OF a payload. Produce-direction pairs are not covered and never
+// asked; the consume direction, which is where 07-21 happened, is.
 //
 // NO MODE NAME. The caller gates on the dispatch shape — a second leg (StepsB)
 // — so this reads "is a pair about to be armed", never "is this two_robot". A
@@ -162,36 +173,20 @@ func (e *Engine) guardSourceKnownDry(node *processes.Node, claim *processes.Node
 	if payload == "" || payload == "__empty__" {
 		return nil // nothing Core can be asked about; see the empty-carrier note
 	}
-	if e.coreClient == nil || !e.coreClient.Available() {
+	absent, err := e.db.PayloadKnownAbsent(payload)
+	if err != nil {
+		log.Printf("[request-material] node %s: could not read Core's answer for %s (%v) — arming the pair anyway; "+
+			"this guard refuses a KNOWN-dry source, and an unread answer is not knowing", node.Name, payload, err)
 		return nil
 	}
-	result, err := e.coreClient.PreflightInventory(e.cfg.StationID(), []string{payload})
-	if err != nil || result == nil {
-		log.Printf("[request-material] node %s: could not check stock for %s (%v) — arming the pair anyway; "+
-			"this guard refuses a KNOWN-dry source, and an unanswered question is not knowing", node.Name, payload, err)
+	if !absent {
 		return nil
 	}
-	// ABSENT, NOT MISSING. This read Missing, which is "no bin FREE right now":
-	// a market whose every bin was reserved or claimed by other pairs read as
-	// dry, and the REQUEST was refused for what was only congestion. Stock that
-	// is spoken for comes free; the pair should be created and wait for it. Only
-	// a payload Core has no bin of at all has nothing to wait for.
-	if !result.AbsentKnown {
-		log.Printf("[request-material] node %s: core does not say whether it has any %s at all (an older core) — "+
-			"arming the pair; not knowing is not knowing it is dry", node.Name, payload)
-		return nil
-	}
-	for _, absent := range result.Absent {
-		if absent != payload {
-			continue
-		}
-		log.Printf("[request-material] node %s: NOT arming a swap pair for %s — core has no bin of it anywhere, free "+
-			"or spoken for. Two legs that cannot source would be created and cancelled together; the level keeper "+
-			"re-asks once stock lands", node.Name, payload)
-		return fmt.Errorf("node %s: core has no %s bin anywhere — the swap needs a replacement bin before both robots "+
-			"can be committed; load the payload and this will arm itself", node.Name, payload)
-	}
-	return nil
+	log.Printf("[request-material] node %s: NOT arming a swap pair for %s — core has no bin of it anywhere, free "+
+		"or spoken for. Two legs that cannot source would be created and cancelled together; the level keeper "+
+		"re-asks once stock lands", node.Name, payload)
+	return fmt.Errorf("node %s: core has no %s bin anywhere — the swap needs a replacement bin before both robots "+
+		"can be committed; load the payload and this will arm itself", node.Name, payload)
 }
 
 // gateLineRows is the bare-line gate, the same for both roles, over one read of

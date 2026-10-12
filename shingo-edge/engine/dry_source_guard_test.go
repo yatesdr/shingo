@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 )
 
 // dry_source_guard_test.go — census 11: guardSourceKnownDry, three answers.
@@ -17,18 +18,15 @@ import (
 // wait-not-fail when there is genuinely nothing to wait FOR:
 //
 //	(a) Core has no bin of the payload anywhere     → refuse; create nothing.
-//	(b) Core cannot be asked                         → arm; "could not find out"
-//	                                                   is not knowing.
+//	(b) Core has not said                            → arm; not knowing is not
+//	                                                   knowing it is dry.
 //	(c) Core has stock, all of it spoken for         → arm; that is congestion,
 //	                                                   and the pair waits for it.
 //
-// Core's preflight answers two different questions and says so in two fields:
-// `missing` (no FREE bin right now — the changeover preflight's advisory question)
-// and `absent` (no bin at all). The guard asks the second.
-//
-// (a) and (b) are COVERAGE: they pass at bcbde0d2. (c) is a DEFECT PIN: it fails
-// at bcbde0d2, because the guard refuses on `missing`, which counts a busy market
-// as a dry one (ochre-marten F6).
+// D2.5: the guard reads Core's answer from the sourcing feed it already holds
+// (a red verdict's `absent`, "no bin at all", beside `missing`, "no FREE bin"),
+// not from a preflight round trip. The stub's preflight answers "absent" in
+// every case, so a guard that still asked refuses (b) and (c): RED at 5f3d673f.
 
 // preflightStub answers node-bins with "occupied" (no node-empty downgrade, so the
 // REQUEST really builds a pair) and preflight with the given body, or 500 when
@@ -70,21 +68,22 @@ func TestDrySourceGuard_RefusesOnlyTrueAbsence(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		prefix  string
-		body    string
+		feed    []protocol.SourcingState
 		refused bool
 	}{
-		{"no bin of the payload anywhere", "DRYA",
-			`{"missing":["PART-C"],"absent":["PART-C"],"available":[{"payload_code":"PART-C","bin_count":0}]}`, true},
-		{"core cannot be asked", "DRYB", "", false},
-		{"stock present, all of it spoken for", "DRYC",
-			`{"missing":["PART-C"],"absent":[],"available":[{"payload_code":"PART-C","bin_count":0}]}`, false},
+		{"no bin of the payload anywhere", "DRYA", []protocol.SourcingState{{ProcessID: "DRYA-PROC", StyleID: "DRYA-STYLE",
+			Status: "red", Missing: []string{"PART-C"}, Absent: []string{"PART-C"}}}, true},
+		{"core has not said", "DRYB", nil, false},
+		{"stock present, all of it spoken for", "DRYC", []protocol.SourcingState{{ProcessID: "DRYC-PROC", StyleID: "DRYC-STYLE",
+			Status: "red", Missing: []string{"PART-C"}}}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			db := testEngineDB(t)
 			nodeID := seedLineSwapClaim(t, db, tc.prefix, protocol.SwapModeTwoRobot)
 			eng := testEngine(t, db)
-			eng.coreClient = stubCoreClient(preflightStub(t, tc.body).URL)
+			testutil.MustNoErr(t, db.ReplaceSourcingState(tc.feed), "the feed Core sent")
+			eng.coreClient = stubCoreClient(preflightStub(t, `{"missing":["PART-C"],"absent":["PART-C"],"available":[]}`).URL)
 
 			res, err := eng.RequestNodeMaterial(nodeID, 1)
 			reqs := complexRequestsOnTheWire(t, db)

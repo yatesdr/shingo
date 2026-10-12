@@ -10,6 +10,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -62,7 +63,7 @@ type sourcingKey struct{ process, style string }
 
 // sourcingVerdict is the part of a row a snapshot compares: everything but
 // computed_at and synced_at, with the lists in their stored JSON form.
-type sourcingVerdict struct{ status, missing, atRisk, reason string }
+type sourcingVerdict struct{ status, missing, absent, atRisk, reason string }
 
 // sourcingVerdictOf encodes a state exactly as upsertSourcingRow stores it, so
 // an unchanged verdict compares equal to its row.
@@ -71,16 +72,20 @@ func sourcingVerdictOf(s protocol.SourcingState) (sourcingVerdict, error) {
 	if err != nil {
 		return sourcingVerdict{}, fmt.Errorf("marshal missing %s/%s: %w", s.ProcessID, s.StyleID, err)
 	}
+	absent, err := json.Marshal(nonEmptyStrings(s.Absent))
+	if err != nil {
+		return sourcingVerdict{}, fmt.Errorf("marshal absent %s/%s: %w", s.ProcessID, s.StyleID, err)
+	}
 	atRisk, err := json.Marshal(nonEmptyAtRisk(s.AtRisk))
 	if err != nil {
 		return sourcingVerdict{}, fmt.Errorf("marshal at_risk %s/%s: %w", s.ProcessID, s.StyleID, err)
 	}
-	return sourcingVerdict{s.Status, string(missing), string(atRisk), s.Reason}, nil
+	return sourcingVerdict{s.Status, string(missing), string(absent), string(atRisk), s.Reason}, nil
 }
 
 // heldSourcingVerdicts reads every cached verdict inside the snapshot's tx.
 func heldSourcingVerdicts(tx *sql.Tx) (map[sourcingKey]sourcingVerdict, error) {
-	rows, err := tx.Query(`SELECT process_id, style_id, status, missing, at_risk, reason FROM sourcing_state`)
+	rows, err := tx.Query(`SELECT process_id, style_id, status, missing, absent, at_risk, reason FROM sourcing_state`)
 	if err != nil {
 		return nil, fmt.Errorf("read sourcing_state: %w", err)
 	}
@@ -89,7 +94,7 @@ func heldSourcingVerdicts(tx *sql.Tx) (map[sourcingKey]sourcingVerdict, error) {
 	for rows.Next() {
 		var k sourcingKey
 		var v sourcingVerdict
-		if err := rows.Scan(&k.process, &k.style, &v.status, &v.missing, &v.atRisk, &v.reason); err != nil {
+		if err := rows.Scan(&k.process, &k.style, &v.status, &v.missing, &v.absent, &v.atRisk, &v.reason); err != nil {
 			return nil, fmt.Errorf("scan sourcing_state: %w", err)
 		}
 		held[k] = v
@@ -123,12 +128,12 @@ func upsertSourcingRow(tx *sql.Tx, s protocol.SourcingState) error {
 		computedAt = s.ComputedAt.UTC().Format(time.RFC3339)
 	}
 	_, err = tx.Exec(`
-		INSERT INTO sourcing_state (process_id, style_id, status, missing, at_risk, reason, computed_at, synced_at)
-		VALUES (?,?,?,?,?,?,?,datetime('now'))
+		INSERT INTO sourcing_state (process_id, style_id, status, missing, absent, at_risk, reason, computed_at, synced_at)
+		VALUES (?,?,?,?,?,?,?,?,datetime('now'))
 		ON CONFLICT(process_id, style_id) DO UPDATE SET
-			status=excluded.status, missing=excluded.missing, at_risk=excluded.at_risk,
+			status=excluded.status, missing=excluded.missing, absent=excluded.absent, at_risk=excluded.at_risk,
 			reason=excluded.reason, computed_at=excluded.computed_at, synced_at=datetime('now')`,
-		s.ProcessID, s.StyleID, v.status, v.missing, v.atRisk, v.reason, computedAt,
+		s.ProcessID, s.StyleID, v.status, v.missing, v.absent, v.atRisk, v.reason, computedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert sourcing_state %s/%s: %w", s.ProcessID, s.StyleID, err)
@@ -138,14 +143,14 @@ func upsertSourcingRow(tx *sql.Tx, s protocol.SourcingState) error {
 
 // ListSourcingState returns every cached verdict, ordered by (process, style).
 func (db *DB) ListSourcingState() ([]protocol.SourcingState, error) {
-	return db.querySourcingState(`SELECT process_id, style_id, status, missing, at_risk, reason, computed_at
+	return db.querySourcingState(`SELECT process_id, style_id, status, missing, absent, at_risk, reason, computed_at
 		FROM sourcing_state ORDER BY process_id, style_id`)
 }
 
 // ListSourcingStateForProcess returns the verdicts for one process — the HMI
 // changeover picker's source.
 func (db *DB) ListSourcingStateForProcess(processID string) ([]protocol.SourcingState, error) {
-	return db.querySourcingState(`SELECT process_id, style_id, status, missing, at_risk, reason, computed_at
+	return db.querySourcingState(`SELECT process_id, style_id, status, missing, absent, at_risk, reason, computed_at
 		FROM sourcing_state WHERE process_id=? ORDER BY style_id`, processID)
 }
 
@@ -158,13 +163,14 @@ func (db *DB) querySourcingState(query string, args ...any) ([]protocol.Sourcing
 	var out []protocol.SourcingState
 	for rows.Next() {
 		var (
-			s                    protocol.SourcingState
-			missing, atRisk, cat string
+			s                            protocol.SourcingState
+			missing, absent, atRisk, cat string
 		)
-		if err := rows.Scan(&s.ProcessID, &s.StyleID, &s.Status, &missing, &atRisk, &s.Reason, &cat); err != nil {
+		if err := rows.Scan(&s.ProcessID, &s.StyleID, &s.Status, &missing, &absent, &atRisk, &s.Reason, &cat); err != nil {
 			return nil, fmt.Errorf("scan sourcing_state: %w", err)
 		}
 		_ = json.Unmarshal([]byte(missing), &s.Missing)
+		_ = json.Unmarshal([]byte(absent), &s.Absent)
 		_ = json.Unmarshal([]byte(atRisk), &s.AtRisk)
 		if cat != "" {
 			if t, err := time.Parse(time.RFC3339, cat); err == nil {
@@ -174,6 +180,25 @@ func (db *DB) querySourcingState(query string, args ...any) ([]protocol.Sourcing
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// PayloadKnownAbsent reports whether Core's feed names the payload absent: no bin
+// of it anywhere, free or spoken for. Absent is a plant-wide fact about the
+// payload, carried on every red verdict that misses it, so any row answers; no
+// row naming it (no feed yet, an older Core, or stock that is only spoken for)
+// is false, the side that arms. One local read: the dry-source guard's whole
+// cost, where it was a round trip to Core.
+func (db *DB) PayloadKnownAbsent(payload string) (bool, error) {
+	var hit int
+	err := db.QueryRow(`SELECT 1 FROM sourcing_state, json_each(sourcing_state.absent)
+		WHERE json_each.value = ? LIMIT 1`, payload).Scan(&hit)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("sourcing_state absent %s: %w", payload, err)
+	}
+	return true, nil
 }
 
 // nonEmptyStrings normalizes a nil slice to an empty one so it marshals as [].

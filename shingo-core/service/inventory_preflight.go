@@ -148,8 +148,7 @@ func (s *InventoryService) presentCounts(ctx context.Context, placeholders strin
 		FROM bins b
 		JOIN nodes n ON n.id = b.node_id
 		WHERE b.payload_code IN (`+placeholders+`)
-		  AND `+bins.SourceableStatusSQL+`
-		  AND `+bins.NodeEnabledSQL+`
+		  AND `+bins.BinPresentSQL+`
 		GROUP BY b.payload_code`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("preflight: presence query: %w", err)

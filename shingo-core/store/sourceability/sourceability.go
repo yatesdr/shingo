@@ -109,6 +109,10 @@ type StyleState struct {
 	// listed on /material-flags and counted on /inventory, which are the
 	// surfaces that belong to the person who fixes it.
 	UndeclaredCarriers []PayloadCount
+
+	// Absent is the Missing payloads with no bin anywhere, free or spoken for
+	// (Inputs.Present zero). Sorted, a subset of Missing, nil unless RED.
+	Absent []string
 	// AtRisk is every line projecting empty within the horizon. It is part of
 	// the GATED output: populated only when the yellow tier is enabled, empty
 	// otherwise — so a dark plant emits GREEN with no at-risk anywhere.
@@ -144,6 +148,10 @@ type Inputs struct {
 	// bins. A payload with no findings is ABSENT from the map rather than
 	// present with a zero.
 	UndeclaredCarrier map[string]int
+	// Present is the count of bins per payload that exist as stock at all
+	// (helpers.BinPresentSQL): free, spoken for, or riding a robot. A superset
+	// of Pool, OnLine and UndeclaredCarrier. Zero (or no key) is Absent.
+	Present map[string]int
 	// OnLine is the count of bins ALREADY INSIDE a process carrying what it needs
 	// but which dispatch cannot fetch (status='staged'), keyed process → payload.
 	// Disjoint from Pool by construction. A claim draws from here FIRST — a bin
@@ -371,6 +379,15 @@ func ComputeWithSamples(in Inputs, cfg Config, now time.Time) ([]StyleState, []T
 				if n := in.UndeclaredCarrier[p]; n > 0 {
 					st.UndeclaredCarriers = append(st.UndeclaredCarriers,
 						PayloadCount{PayloadCode: p, Bins: n})
+				}
+			}
+			// THE THIRD FACT: which missing payloads have no bin at all. Missing
+			// is "no free bin", which is congestion as often as it is dry; only
+			// Absent has nothing to wait for, and the Edge's dry-source guard
+			// refuses a REQUEST on it alone.
+			for _, p := range st.Missing {
+				if in.Present[p] == 0 {
+					st.Absent = append(st.Absent, p)
 				}
 			}
 			keep(StatusRed)

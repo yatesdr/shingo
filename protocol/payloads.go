@@ -1940,6 +1940,13 @@ type SourcingState struct {
 	Status string `json:"status"`
 	// Missing lists the payloads no available bin could satisfy (RED only).
 	Missing []string `json:"missing,omitempty"`
+	// Absent lists the Missing payloads Core has no bin of at all: none free,
+	// none spoken for, none riding a robot (RED only; a subset of Missing). It
+	// is the only "dry" an Edge may refuse a REQUEST on, because it is the only
+	// one with nothing to wait for; a payload in Missing and not here is
+	// congestion. An older Core never sends it, which reads as nothing absent,
+	// the safe side.
+	Absent []string `json:"absent,omitempty"`
 	// AtRisk lists lines projecting empty within the horizon (yellow tier only).
 	AtRisk []SourcingAtRisk `json:"at_risk,omitempty"`
 	// Reason is the operator-facing generated sentence (Core owns the wording;

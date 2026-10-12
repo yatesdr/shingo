@@ -742,6 +742,7 @@ CREATE TABLE sourcing_state (
     style_id    TEXT NOT NULL,
     status      TEXT NOT NULL DEFAULT 'green',
     missing     TEXT NOT NULL DEFAULT '[]',
+    absent      TEXT NOT NULL DEFAULT '[]',
     at_risk     TEXT NOT NULL DEFAULT '[]',
     reason      TEXT NOT NULL DEFAULT '',
     computed_at TEXT NOT NULL DEFAULT '',

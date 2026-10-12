@@ -683,6 +683,7 @@ var EmptyOfTypeInGroupWhere = EmptyCarrierWhereInGroup(3, 2) +
 const (
 	SourceableStatusSQL          = helpers.SourceableStatusSQL
 	NodeEnabledSQL               = helpers.NodeEnabledSQL
+	BinPresentSQL                = helpers.BinPresentSQL
 	BinAtLiveNodeSQL             = helpers.BinAtLiveNodeSQL
 	BinUnheldSQL                 = helpers.BinUnheldSQL
 	BinUnclaimedSQL              = helpers.BinUnclaimedSQL

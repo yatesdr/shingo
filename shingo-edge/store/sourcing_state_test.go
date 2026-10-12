@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 )
 
 func srcState(process, style, status string, missing ...string) protocol.SourcingState {
@@ -183,6 +184,32 @@ func TestSourcingState_SnapshotWritesOnlyDifferences(t *testing.T) {
 		}
 		if !s.ComputedAt.Equal(ts) {
 			t.Errorf("style %s computed_at = %v, want %v", style, s.ComputedAt, ts)
+		}
+	}
+}
+
+// D2.5 · the absent fact is cached with the verdict, a snapshot whose only
+// change is it rewrites the row, and the guard's question reads it from any row.
+func TestSourcingState_AbsentIsCachedAndAnswersTheGuard(t *testing.T) {
+	t.Parallel()
+	db := coverageDB(t)
+	busy := srcState("SNF2", "A", "red", "BIN-X")
+	testutil.MustNoErr(t, db.ReplaceSourcingState([]protocol.SourcingState{busy}), "busy")
+	if absent, err := db.PayloadKnownAbsent("BIN-X"); err != nil || absent {
+		t.Fatalf("missing but spoken for: absent=%v (%v), want false", absent, err)
+	}
+
+	dry := busy
+	dry.Absent = []string{"BIN-X"}
+	testutil.MustNoErr(t, db.ReplaceSourcingState([]protocol.SourcingState{dry}), "dry")
+	got, err := db.ListSourcingStateForProcess("SNF2")
+	testutil.MustNoErr(t, err, "list")
+	if len(got) != 1 || len(got[0].Absent) != 1 || got[0].Absent[0] != "BIN-X" {
+		t.Fatalf("absent did not round-trip through a snapshot that changed only it: %+v", got)
+	}
+	for payload, want := range map[string]bool{"BIN-X": true, "BIN-Y": false} {
+		if absent, err := db.PayloadKnownAbsent(payload); err != nil || absent != want {
+			t.Errorf("PayloadKnownAbsent(%s) = %v (%v), want %v", payload, absent, err, want)
 		}
 	}
 }

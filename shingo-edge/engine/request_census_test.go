@@ -210,11 +210,11 @@ func TestRequestCensus(t *testing.T) {
 		{consume, sr, doorMaterial, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}},
 		{consume, sr, doorMaterial, lineOccupied, 30, censusResult{legs: 1, trips: 1, expected: 1}},
 		{consume, tr, doorMaterial, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}},
-		{consume, tr, doorMaterial, lineOccupied, 30, censusResult{legs: 2, trips: 2, expected: 2}},
+		{consume, tr, doorMaterial, lineOccupied, 30, censusResult{legs: 2, trips: 1, expected: 2}},
 		{consume, seq, doorMaterial, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}},
 		{consume, seq, doorMaterial, lineOccupied, 30, censusResult{legs: 1, trips: 1, expected: 1}},
 		{consume, pi, doorMaterial, lineBare, 30, censusResult{toHead: 1, toDeck: 1, trips: 1, expected: 2}},
-		{consume, pi, doorMaterial, lineOccupied, 30, censusResult{legs: 2, trips: 2, expected: 2}},
+		{consume, pi, doorMaterial, lineOccupied, 30, censusResult{legs: 2, trips: 1, expected: 2}},
 		{consume, pi, doorMaterial, lineDeckBare, 30, censusResult{toDeck: 1, trips: 1, expected: 1}},
 
 		// The produce request.
@@ -270,10 +270,9 @@ func TestRequestCensus(t *testing.T) {
 // delivery and no swap is built while one is bare; only what the bin carries
 // differs, a full for consume and an empty for produce.
 //
-// THE ONE DIFFERENCE LEFT is the dry-source check on a swap pair: a consume
-// request asks Core whether the part has any stock before it arms the two legs,
-// and a produce request cannot ask that about empties. So on a press with every
-// position full the consume row makes one more Core call, and only there.
+// The dry-source check on a consume pair made the one difference: a Core call
+// the produce row did not make. It reads Core's sourcing feed now (D2.5), so the
+// rows are equal as they stand, on a press with every position full too.
 func TestRequestCensus_BareLineIsTheSameForBothRoles(t *testing.T) {
 	t.Parallel()
 	for _, mode := range protocol.ConfigurableSwapModes() {
@@ -313,10 +312,6 @@ func TestRequestCensus_BareLineIsTheSameForBothRoles(t *testing.T) {
 				consume := runCensusPress(t, protocol.ClaimRoleConsume, pi, doorMaterial, 30, threePos, occupied...)
 				produce := runCensusPress(t, protocol.ClaimRoleProduce, pi, doorProduce, 30, threePos, occupied...)
 				emptyBin := runCensusPress(t, protocol.ClaimRoleProduce, pi, doorEmptyBin, 0, threePos, occupied...)
-				if len(bare) == 0 {
-					// The pair's dry-source check: see above.
-					consume.trips--
-				}
 				if produce != consume || emptyBin != consume {
 					t.Errorf("material %+v, produce %+v, empty-bin %+v: want one row", consume, produce, emptyBin)
 				}

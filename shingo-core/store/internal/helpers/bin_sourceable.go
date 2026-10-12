@@ -56,6 +56,14 @@ const SourceableStatusSQL = `b.status IN ('available','staged')`
 // changeover preflight's presence count deliberately sees bins riding a robot.
 const NodeEnabledSQL = `n.enabled = true`
 
+// BinPresentSQL — the bin exists as stock at all: free, reserved, claimed,
+// locked or staged, wherever it stands, a robot included. Only bins out of
+// service and bins on disabled nodes are left out. A payload with none is
+// ABSENT, the one "dry" with nothing to wait for. Two readers must agree on it,
+// so it is spelled once: the changeover preflight's Absent and the sourcing
+// verdict's (the feed the Edge's dry-source guard reads).
+const BinPresentSQL = SourceableStatusSQL + ` AND ` + NodeEnabledSQL
+
 // BinAtLiveNodeSQL — the node is one automation may drive to. A synthetic node
 // is a robot deck or _TRANSIT, not a place.
 const BinAtLiveNodeSQL = NodeEnabledSQL + ` AND COALESCE(n.is_synthetic, false) = false`

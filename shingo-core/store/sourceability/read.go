@@ -21,7 +21,7 @@ func BuildInputs(db *sql.DB, rateWindow time.Duration) (Inputs, error) {
 	if err != nil {
 		return Inputs{}, err
 	}
-	pool, undeclared, err := availablePoolByPayload(db)
+	pool, undeclared, present, err := availablePoolByPayload(db)
 	if err != nil {
 		return Inputs{}, err
 	}
@@ -37,7 +37,7 @@ func BuildInputs(db *sql.DB, rateWindow time.Duration) (Inputs, error) {
 	if err != nil {
 		return Inputs{}, err
 	}
-	return Inputs{Styles: styles, Claims: claims, Pool: pool, UndeclaredCarrier: undeclared,
+	return Inputs{Styles: styles, Claims: claims, Pool: pool, UndeclaredCarrier: undeclared, Present: present,
 		OnLine: onLine, LineUOP: lineUOP, RatePerSec: rate, RatePerNode: rateByNode}, nil
 }
 
@@ -130,30 +130,39 @@ func loadStylesAndClaims(db *sql.DB) ([]plantclaims.ProcessKey, map[plantclaims.
 // IT READS THE STAMP, not the rule (helpers.BinInUndeclaredCarrierSQL). Every
 // surface that counts findings reads that one fragment, so this sentence and
 // the inventory page cannot report different numbers.
-func availablePoolByPayload(db *sql.DB) (pool, undeclared map[string]int, err error) {
+//
+// AND A THIRD (D2.5): presence, helpers.BinPresentSQL, the bins of the payload
+// that exist as stock at all. Zero is Absent, which the verdict carries to the
+// Edge's dry-source guard. Same rows, same statement; the LEFT JOIN leaves a bin
+// at no node out of it as NodeEnabledSQL's NULL, exactly as the preflight's
+// inner join does.
+func availablePoolByPayload(db *sql.DB) (pool, undeclared, present map[string]int, err error) {
 	rows, err := db.Query(`
 		SELECT b.payload_code,
 		       COUNT(*) FILTER (WHERE ` + helpers.BinSourceableSQL("b.payload_code") + `),
-		       COUNT(*) FILTER (WHERE ` + helpers.BinInUndeclaredCarrierSQL + `)
+		       COUNT(*) FILTER (WHERE ` + helpers.BinInUndeclaredCarrierSQL + `),
+		       COUNT(*) FILTER (WHERE ` + helpers.BinPresentSQL + `)
 		FROM bins b
 		LEFT JOIN nodes n ON n.id = b.node_id
 		WHERE b.payload_code <> ''
 		GROUP BY b.payload_code`)
 	if err != nil {
-		return nil, nil, fmt.Errorf("sourceability: available pool: %w", err)
+		return nil, nil, nil, fmt.Errorf("sourceability: available pool: %w", err)
 	}
 	defer rows.Close()
 	pool = make(map[string]int)
 	undeclared = make(map[string]int)
+	present = make(map[string]int)
 	for rows.Next() {
 		var (
-			payload    string
-			n, flagged int
+			payload          string
+			n, flagged, here int
 		)
-		if err := rows.Scan(&payload, &n, &flagged); err != nil {
-			return nil, nil, fmt.Errorf("sourceability: scan pool: %w", err)
+		if err := rows.Scan(&payload, &n, &flagged, &here); err != nil {
+			return nil, nil, nil, fmt.Errorf("sourceability: scan pool: %w", err)
 		}
 		pool[payload] = n
+		present[payload] = here
 		// Absent, not zero: a payload with no findings must not seed the map,
 		// because Compute uses presence to decide whether the sentence has a
 		// second half at all.
@@ -161,7 +170,7 @@ func availablePoolByPayload(db *sql.DB) (pool, undeclared map[string]int, err er
 			undeclared[payload] = flagged
 		}
 	}
-	return pool, undeclared, rows.Err()
+	return pool, undeclared, present, rows.Err()
 }
 
 // onLinePoolByProcess counts bins that are ALREADY INSIDE a process and carrying

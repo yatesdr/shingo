@@ -154,12 +154,8 @@ func (w *buttonWorld) press(door string) buttonAnswer {
 			got.toLine++
 		}
 	}
-	// The one difference left between the roles: a consume request asks Core
-	// whether the part has any stock before it arms a pair, and a produce
-	// request cannot ask that about empties (guardSourceKnownDry).
-	if door == doorMaterial && got.legs == 2 {
-		got.trips--
-	}
+	// No correction for the consume door: its dry-source guard reads Core's
+	// feed (D2.5) and makes no trip, so the roles' trips agree as they stand.
 	return got
 }
 
