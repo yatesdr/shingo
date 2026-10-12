@@ -4,6 +4,7 @@ package lockcheck
 
 import (
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -28,10 +29,8 @@ func TestGuard_InOrderPasses(t *testing.T) {
 	var b RWMutex[high]
 	rep := catch(t, func() {
 		a.Lock()
-		b.RLock()
-		b.RUnlock()
-		b.Lock()
-		b.Unlock()
+		through(b.RLock, b.RUnlock)
+		through(b.Lock, b.Unlock)
 		a.Unlock()
 	})
 	if rep != "" {
@@ -86,7 +85,7 @@ func TestGuard_OtherGoroutinesDoNotCount(t *testing.T) {
 	var b Mutex[high]
 	b.Lock()
 	done := make(chan string)
-	go func() { done <- catch(t, func() { a.Lock(); a.Unlock() }) }()
+	go func() { done <- catch(t, func() { through(a.Lock, a.Unlock) }) }()
 	if rep := <-done; rep != "" {
 		t.Fatalf("a lock held on another goroutine counted:\n%s", rep)
 	}
@@ -99,7 +98,7 @@ func TestGuard_UnlockOnAnotherGoroutineForgetsTheHold(t *testing.T) {
 	done := make(chan struct{})
 	go func() { a.Unlock(); close(done) }()
 	<-done
-	if rep := catch(t, func() { a.Lock(); a.Unlock() }); rep != "" {
+	if rep := catch(t, func() { through(a.Lock, a.Unlock) }); rep != "" {
 		t.Fatalf("a lock released elsewhere still counted as held:\n%s", rep)
 	}
 }
@@ -126,10 +125,21 @@ func TestGuard_ANestingClassHoldsInstancesTogetherButNotOneTwice(t *testing.T) {
 	var a, b Mutex[keyed]
 	a.Lock()
 	defer a.Unlock()
-	if rep := catch(t, func() { b.Lock(); b.Unlock() }); rep != "" {
+	if rep := catch(t, func() { through(b.Lock, b.Unlock) }); rep != "" {
 		t.Fatalf("two instances of a nesting class failed:\n%s", rep)
 	}
 	if rep := catch(t, func() { a.Lock() }); !strings.Contains(rep, "re-entry") {
 		t.Fatalf("a second take of one instance passed:\n%s", rep)
 	}
+}
+
+// held counts critical sections entered, so a take-and-release the guard is
+// asked about has a body (staticcheck SA2001) and the tests say what they do.
+var held atomic.Int64
+
+// through takes a lock, holds it for one statement, and releases it.
+func through(lock, unlock func()) {
+	lock()
+	held.Add(1)
+	unlock()
 }

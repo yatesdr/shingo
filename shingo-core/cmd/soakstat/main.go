@@ -1294,6 +1294,12 @@ func (r *report) report() {
 	r.printHandoffSections()
 	printForecast(os.Stdout, r.forecast, r.unrunMeasures[measureForecast])
 
+	r.printInvariants()
+}
+
+// printInvariants is the report's last section: every violation found, or all
+// clear only when every instrument ran.
+func (r *report) printInvariants() {
 	fmt.Printf("\nINVARIANTS\n")
 	switch {
 	case len(r.violations) == 0 && len(r.failedToRun) == 0:

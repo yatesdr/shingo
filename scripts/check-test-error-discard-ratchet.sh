@@ -104,7 +104,9 @@ cd "$(dirname "$0")/.."
 # 1416 → 1415: the store wrapper db.PlantClaimsDirtyIndex went as dead output,
 # and the messaging test that discarded its error now checks it through the
 # test's own helper.
-FROZEN=1408
+# 1408 → 1407: D2 Lane 0 item 1 (the Edge's changeover cancel and config lock)
+# rewrote a test whose discarded read became a checked one.
+FROZEN=1407
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"

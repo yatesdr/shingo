@@ -170,6 +170,31 @@ func (a *Allocator) slotNeeds(steps []resolvedStep) []slotNeed {
 	return out
 }
 
+// heldReservations is the order's own holds, resolved for matching to its needs.
+func (a *Allocator) heldReservations(orderID int64) ([]*heldReservation, error) {
+	rows, err := a.db.ListReservationsByOrder(orderID)
+	if err != nil {
+		return nil, fmt.Errorf("list reservations for order %d: %w", orderID, err)
+	}
+	return a.resolveHeldReservations(rows), nil
+}
+
+// logReserveMiss names a reserve miss. The caller only sees len(assigned) and
+// logs "holding N partial(s)", which says an order is stuck but never why — at
+// HK on 2026-07-28 two changeover legs sat on "holding 0 partial(s)" for minutes
+// and the reason (their carriers were still in transit on a prior order) had to
+// be reconstructed afterwards from the bin audit trail. The two cases read very
+// differently to an operator: an empty node needs material, a node WITH bins
+// needs whoever holds them to finish.
+func (a *Allocator) logReserveMiss(orderID int64, stepIndex int, node string, nodeHadBins bool) {
+	if nodeHadBins {
+		a.dbg("reserve miss: order %d step %d at %s — bins present but none available (claimed/reserved/locked elsewhere)",
+			orderID, stepIndex, node)
+		return
+	}
+	a.dbg("reserve miss: order %d step %d at %s — no bins at node", orderID, stepIndex, node)
+}
+
 // reserveComplexPlan reconciles the order's held reservations against its distinct
 // source needs (the relay rule) and returns the per-need bin assignment plus
 // complete=true iff EVERY distinct need is covered.
@@ -192,11 +217,10 @@ func (a *Allocator) slotNeeds(steps []resolvedStep) []slotNeed {
 func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (assigned []reservedPickup, outcome reserveOutcome, err error) {
 	pickups := complexPickups(plan.ResolvedSteps)
 
-	rows, err := a.db.ListReservationsByOrder(order.ID)
+	held, err := a.heldReservations(order.ID)
 	if err != nil {
-		return nil, reserveHolding, fmt.Errorf("list reservations for order %d: %w", order.ID, err)
+		return nil, reserveHolding, err
 	}
-	held := a.resolveHeldReservations(rows)
 
 	missing := 0
 	anyMissWithBins := false // a missing need whose node had bins (present-but-taken → sourceable)
@@ -297,21 +321,7 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 				// someone", not "not staged yet" — nothing is there.
 				lineBinGone = true
 			}
-			// Name the miss. The caller only sees len(assigned) and logs "holding N
-			// partial(s)", which says an order is stuck but never why — at HK on
-			// 2026-07-28 two changeover legs sat on "holding 0 partial(s)" for
-			// minutes and the reason (their carriers were still in transit on a
-			// prior order) had to be reconstructed afterwards from the bin audit
-			// trail. The two cases read very differently to an operator: an empty
-			// node needs material, a node WITH bins needs whoever holds them to
-			// finish.
-			if nodeHadBins {
-				a.dbg("reserve miss: order %d step %d at %s — bins present but none available (claimed/reserved/locked elsewhere)",
-					order.ID, pk.stepIndex, pk.step.Node)
-			} else {
-				a.dbg("reserve miss: order %d step %d at %s — no bins at node",
-					order.ID, pk.stepIndex, pk.step.Node)
-			}
+			a.logReserveMiss(order.ID, pk.stepIndex, pk.step.Node, nodeHadBins)
 			continue
 		}
 		aerr := a.binManifest.ReserveForDispatch(bin.ID, order.ID)

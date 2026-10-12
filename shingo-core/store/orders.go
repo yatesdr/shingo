@@ -335,6 +335,13 @@ func compoundParentID(children []CompoundChild) int64 {
 	return 0
 }
 
+// victim is one foreign soft holder of a dig's blocker.
+type victim struct {
+	orderID    int64
+	handPlaced bool
+	pointsHere bool
+}
+
 // stealSoftHolds releases the FOREIGN soft holds on a bin a dig is about to
 // claim, and clears each holder's pointer to it, so the holders recalculate
 // instead of following a plan that is no longer true.
@@ -379,11 +386,6 @@ func compoundParentID(children []CompoundChild) int64 {
 // usually worked, and nothing anywhere said a dig had taken somebody's bin. Now
 // it says so, by name, once per victim, at the moment it happens.
 func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string) ([]DisplacedByHand, []stolenBin, error) {
-	type victim struct {
-		orderID    int64
-		handPlaced bool
-		pointsHere bool
-	}
 	// ONE READ, THE BIN'S CLAIM AND ITS FOREIGN SOFT HOLDS. The bin row leads, so
 	// the claim is read even when nobody has a soft hold; a row per soft holder
 	// follows it (r.order_id NULL when there is none). The claim is the birth's
@@ -467,42 +469,8 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 	// as a dig planned from scratch. A gate-staged dig that yields parks under
 	// dig-blocker-promised and KEEPS its lane lock, which §R.104 requires: a
 	// corridor with a robot in its mouth is not released.
-	digRank, err := orders.LoadDemandRank(tx, childID)
-	if err != nil {
+	if err := yieldToOutrankingHolder(tx, victims, binID, childID, parentID); err != nil {
 		return nil, nil, err
-	}
-	for _, v := range victims {
-		// THE HOLDER'S ROW IS LOCKED HERE, in the read the take already makes.
-		// The hand claiming this bin for the holder takes that row first (its
-		// status CAS), so whichever of the two reaches it second waits for the
-		// other and then sees what it did: a hand that confirmed leaves no
-		// pending row for the DELETE below, and a steal that took the row leaves
-		// the hand's claim no reservation to stand on. No bin row is locked here:
-		// the hand holds its order row before the bin, and a bin lock in this
-		// read would take them the other way round (LOCKS.md §3).
-		holderRank, rerr := orders.LoadDemandRankLocked(tx, v.orderID)
-		if rerr != nil {
-			return nil, nil, rerr
-		}
-		if digRank.Outranks(holderRank) {
-			continue
-		}
-		// Outranked, or tied and younger: the incumbent keeps the bin. A tie going
-		// to the challenger would let two demands at one priority take the bin from
-		// each other on alternate passes.
-		log.Printf("dispatch: dig %d YIELDED bin %d to order %d — the holder's demand outranks it "+
-			"(holder priority %d since %s, dig priority %d since %s). Digs are not special: the dig "+
-			"backs out whole and waits, and the holder taking that bin out is what clears the lane "+
-			"for it", parentID, binID, v.orderID,
-			holderRank.Priority, holderRank.CreatedAt.Format(time.RFC3339),
-			digRank.Priority, digRank.CreatedAt.Format(time.RFC3339))
-		return nil, nil, &BlockerClaimedError{
-			BinID:    binID,
-			ChildID:  childID,
-			ParentID: parentID,
-			HolderID: v.orderID,
-			Promised: true,
-		}
 	}
 
 	// A HARD CLAIM OUTSIDE THE COMPOUND REFUSES THE DIG, after the ranked take
@@ -578,6 +546,49 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 		stolen = append(stolen, stolenBin{binID: binID, holderID: v.orderID, digID: parentID})
 	}
 	return displaced, stolen, nil
+}
+
+// yieldToOutrankingHolder is the ranked take (§7, stealSoftHolds): a holder whose
+// demand the dig does not outrank keeps the bin, and the dig is refused naming it.
+func yieldToOutrankingHolder(tx *sql.Tx, victims []victim, binID, childID, parentID int64) error {
+	digRank, err := orders.LoadDemandRank(tx, childID)
+	if err != nil {
+		return err
+	}
+	for _, v := range victims {
+		// THE HOLDER'S ROW IS LOCKED HERE, in the read the take already makes.
+		// The hand claiming this bin for the holder takes that row first (its
+		// status CAS), so whichever of the two reaches it second waits for the
+		// other and then sees what it did: a hand that confirmed leaves no
+		// pending row for the DELETE below, and a steal that took the row leaves
+		// the hand's claim no reservation to stand on. No bin row is locked here:
+		// the hand holds its order row before the bin, and a bin lock in this
+		// read would take them the other way round (LOCKS.md §3).
+		holderRank, rerr := orders.LoadDemandRankLocked(tx, v.orderID)
+		if rerr != nil {
+			return rerr
+		}
+		if digRank.Outranks(holderRank) {
+			continue
+		}
+		// Outranked, or tied and younger: the incumbent keeps the bin. A tie going
+		// to the challenger would let two demands at one priority take the bin from
+		// each other on alternate passes.
+		log.Printf("dispatch: dig %d YIELDED bin %d to order %d — the holder's demand outranks it "+
+			"(holder priority %d since %s, dig priority %d since %s). Digs are not special: the dig "+
+			"backs out whole and waits, and the holder taking that bin out is what clears the lane "+
+			"for it", parentID, binID, v.orderID,
+			holderRank.Priority, holderRank.CreatedAt.Format(time.RFC3339),
+			digRank.Priority, digRank.CreatedAt.Format(time.RFC3339))
+		return &BlockerClaimedError{
+			BinID:    binID,
+			ChildID:  childID,
+			ParentID: parentID,
+			HolderID: v.orderID,
+			Promised: true,
+		}
+	}
+	return nil
 }
 
 // refuseIfConfirmed is the steal's answer when the holder's pending row was not
