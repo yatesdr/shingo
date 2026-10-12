@@ -75,23 +75,3 @@ func partPermitsCarrier(catalog []protocol.PayloadBinTypeInfo, part, carrier str
 	}
 	return !listed
 }
-
-// payloadDunnageCodes returns the distinct bin_type_codes that appear in
-// catalog for the given payloadCodes. If payloadCodes is empty, all distinct
-// bin_type_codes from the catalog are returned (no-restriction fallback).
-// Exported for tests only; the JS side inlines the same logic.
-func payloadDunnageCodes(catalog []protocol.PayloadBinTypeInfo, payloadCodes []string) []string {
-	allowed := make(map[string]bool, len(payloadCodes))
-	for _, c := range payloadCodes {
-		allowed[c] = true
-	}
-	seen := make(map[string]bool)
-	var codes []string
-	for _, e := range catalog {
-		if !seen[e.BinTypeCode] && (len(allowed) == 0 || allowed[e.PayloadCode]) {
-			seen[e.BinTypeCode] = true
-			codes = append(codes, e.BinTypeCode)
-		}
-	}
-	return codes
-}

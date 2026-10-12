@@ -34,26 +34,12 @@ var ErrBuried = binresolver.ErrBuried
 // shingocore/store (planner-purity, B1).
 var _ binresolver.Store = (*store.DB)(nil)
 
-// Retrieval and storage algorithm codes. Exported as untyped string
-// constants so they behave identically to the originals at call sites.
-const (
-	RetrieveFIFO = binresolver.RetrieveFIFO
-	RetrieveCOST = binresolver.RetrieveCOST
-	RetrieveFAVL = binresolver.RetrieveFAVL
-	StoreLKND    = binresolver.StoreLKND
-	StoreDPTH    = binresolver.StoreDPTH
-)
-
-// IsAvailableAtConcreteNode mirrors binresolver.IsAvailableAtConcreteNode.
-// Re-exported so dispatch/ code can call it without a direct sub-package import.
-var IsAvailableAtConcreteNode = binresolver.IsAvailableAtConcreteNode
+// The storage algorithm code, exported as an untyped string constant so it
+// behaves identically to the original at call sites.
+const StoreDPTH = binresolver.StoreDPTH
 
 // BinUnavailableReason mirrors binresolver.BinUnavailableReason. Returns ""
 // when the bin is available; otherwise a short string explaining the reject
 // (already claimed by which order, status reject, payload mismatch). Used by
 // claim-loop logging so silent rejections become visible in production logs.
 var BinUnavailableReason = binresolver.BinUnavailableReason
-
-// BinUnavailableReasonFor mirrors binresolver.BinUnavailableReasonFor: the
-// PickableAt question asked by a particular order (owner-aware reservations).
-var BinUnavailableReasonFor = binresolver.BinUnavailableReasonFor

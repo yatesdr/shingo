@@ -37,7 +37,6 @@ import (
 // per matching node. Active reports whether Style is the process's active
 // style (always evaluated, regardless of WalkOpts.ActiveOnly).
 type WalkCtx struct {
-	Proc   Process
 	Style  Style
 	Claim  NodeClaim
 	Node   Node
@@ -109,7 +108,7 @@ func WalkClaims(db *sql.DB, opts WalkOpts, visit func(WalkCtx) (stop bool)) erro
 				if opts.PayloadCode != "" && !slices.Contains(claim.AllowedPayloads(), opts.PayloadCode) {
 					continue
 				}
-				ctx := WalkCtx{Proc: proc, Style: st, Claim: claim, Active: active}
+				ctx := WalkCtx{Style: st, Claim: claim, Active: active}
 				if !opts.ResolveNode {
 					if visit(ctx) {
 						return nil

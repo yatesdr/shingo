@@ -93,7 +93,7 @@ func curtainGateFixture(t *testing.T, client plc.WarlinkClient) (*Engine, *proce
 // gateNode runs the gate the way a door does for the node a bin leaves, in a
 // fresh act.
 func gateNode(eng *Engine, node *processes.Node) error {
-	return eng.curtainForNode(newReleaseAct(), node.CoreNodeName)
+	return eng.curtainForNode(&releaseAct{}, node.CoreNodeName)
 }
 
 // TestCurtainGate walks the refusal ladder. Each case names what the
@@ -210,7 +210,7 @@ func TestCurtainGate(t *testing.T) {
 		wl := &scriptedWarLink{seq: []any{true, false}}
 		eng, _ := curtainGateFixture(t, wl)
 		node := curtainSeedNode(t, eng, true, "PRESS-PLC", "FG_CURTAIN", boolPtr(true))
-		act := newReleaseAct()
+		act := &releaseAct{}
 		for i := 0; i < 3; i++ {
 			if err := eng.curtainForNode(act, node.CoreNodeName); err != nil {
 				t.Fatalf("read %d: %v", i, err)

@@ -8,6 +8,7 @@ import (
 	"reflect"
 
 	"shingo/protocol"
+	"shingocore/dispatch/plan"
 	"shingocore/fleet"
 	"shingocore/store"
 	"shingocore/store/nodes"
@@ -583,8 +584,7 @@ func (d *Dispatcher) reserveComplexSources(order *orders.Order, resolvedSteps []
 	// The hand's status CAS (acquireHand) is the last one before a robot moves.
 	// Acquiring writes no status of its own (C1: acquiring is an act, not a rung).
 	// Plan = the resolved steps. The reserve selects against live state from the
-	// steps alone and reads the carrier rule itself (reserveComplexPlan), so no
-	// snapshot or rule is read here any more — they fed plan fields nothing read.
+	// steps alone and reads the carrier rule itself (reserveComplexPlan).
 	plan := BuildComplexPlan(resolvedSteps)
 
 	// Reserve = reconcile held reservations against the distinct source needs and
@@ -952,7 +952,7 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 	// occupied slot. Gate by node role (storage slot = child of LANE/NGRP), NOT
 	// by same-order pickup: gating the line case would re-create the deadlock
 	// 2b05dce fixed. NGRP dropoffs are already covered above by
-	// reResolveComplexSteps / ResolutionCapacity. Stay queued by returning an
+	// reResolveComplexStepsFor / ResolutionCapacity. Stay queued by returning an
 	// error — the scanner keeps the order queued and replays it on the next
 	// slot-vacancy tick (same contract as the claim_failed branch below).
 	//
@@ -1015,7 +1015,7 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 		if blocked && cap.Cause == CauseDropoffOccupied {
 			if f := lastDropIndex(resolvedSteps); f >= 0 && resolvedSteps[f].Node == order.DeliveryNode {
 				fungible := resolvedSteps[f].Group != "" && resolvedSteps[f].Group != resolvedSteps[f].Node
-				if stampHonoured(resolvedSteps[f]) != nil || !fungible {
+				if plan.StampHonoured(resolvedSteps[f]) != nil || !fungible {
 					if st := d.vacatedFor(order, resolvedSteps, f, order.DeliveryNode, pc); st != nil &&
 						d.noOtherInFlight(order.DeliveryNode, order) {
 						if prev := resolvedSteps[f].Vacate; prev == nil || *prev != *st {
@@ -1048,7 +1048,7 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 			//
 			// Reverting the node to its group is not a new destination-picking path; it
 			// is handing the question back to the one that already exists. If the whole
-			// group is genuinely full, reResolveComplexSteps parks the order on
+			// group is genuinely full, reResolveComplexStepsFor parks the order on
 			// ngrp-resolve next tick — a wait whose releaser is "any slot in the group
 			// frees", which is true, instead of "this one slot frees", which was not.
 			if reverted := d.revertFungibleDropoffToGroup(order, resolvedSteps); reverted {
@@ -1339,7 +1339,7 @@ func (d *Dispatcher) revertFungibleDropoffToGroup(order *orders.Order, steps []r
 	log.Printf("dispatch: complex order %d dropoff %s is occupied — reverting to group %s so the next "+
 		"tick picks a slot that can take it", order.ID, steps[idx].Node, group)
 	steps[idx].Node = group
-	steps[idx].Vacate = nil // housekeeping; stampHonoured would ignore it anyway
+	steps[idx].Vacate = nil // housekeeping; plan.StampHonoured would ignore it anyway
 	d.persistWidenedPlan(order, steps)
 	return true
 }

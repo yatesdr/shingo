@@ -144,7 +144,6 @@ func (h *Heartbeater) sendRegister() {
 		log.Printf("heartbeater: build register: %v", err)
 		return
 	}
-	h.sender.DebugLog = h.DebugLog
 	if err := h.sender.PublishEnvelope(env, "register"); err != nil {
 		log.Printf("heartbeater: send register failed after retries: %v", err)
 	} else {
@@ -173,7 +172,6 @@ func (h *Heartbeater) sendNodeListRequest() {
 		log.Printf("heartbeater: build node list request: %v", err)
 		return
 	}
-	h.sender.DebugLog = h.DebugLog
 	if err := h.sender.PublishEnvelope(env, "node list request"); err != nil {
 		log.Printf("heartbeater: send node list request failed after retries: %v", err)
 	} else {
@@ -203,7 +201,6 @@ func (h *Heartbeater) sendCatalogRequest() {
 		log.Printf("heartbeater: build catalog request: %v", err)
 		return
 	}
-	h.sender.DebugLog = h.DebugLog
 	if err := h.sender.PublishEnvelope(env, "catalog request"); err != nil {
 		log.Printf("heartbeater: send catalog request failed after retries: %v", err)
 	} else {
@@ -241,7 +238,6 @@ func (h *Heartbeater) sendHeartbeat() {
 		log.Printf("heartbeater: build heartbeat: %v", err)
 		return
 	}
-	h.sender.DebugLog = h.DebugLog
 	if err := h.sender.PublishEnvelope(env, "heartbeat"); err != nil {
 		log.Printf("heartbeater: send heartbeat failed after retries: %v", err)
 	} else {

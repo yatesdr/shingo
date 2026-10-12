@@ -15,7 +15,7 @@ import (
 // ExclusiveSlot is read off the PERSISTED steps by slotNeeds, on the intake pass
 // AND on every scanner replay. So it has to survive: wire → resolvedStep →
 // steps_json → resolvedStep → slotNeeds. There are five construction points that
-// rebuild a step (resolveComplexSteps' two arms, reResolveComplexSteps' two, and
+// rebuild a step (resolveComplexSteps' two arms, reResolveComplexStepsFor' two, and
 // stepsAsResolved), and a step rebuilt without the field carries false.
 //
 // FALSE IS NOT AN ERROR ANYWHERE. It is exactly the pre-fix behaviour: the node

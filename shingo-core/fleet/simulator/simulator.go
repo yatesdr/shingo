@@ -22,7 +22,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingo/protocol/lockcheck"
 	"shingocore/fleet"
@@ -33,7 +32,6 @@ import (
 // simulatedOrder is the in-memory representation of a fleet order.
 type simulatedOrder struct {
 	vendorOrderID string
-	externalID    string
 	state         string // vendor state: CREATED, RUNNING, WAITING, FINISHED, FAILED, STOPPED
 	priority      int
 	complete      bool // false for staged orders until ReleaseOrder
@@ -184,7 +182,6 @@ func (s *SimulatorBackend) CreateOrder(req fleet.CreateOrderRequest) (fleet.Tran
 
 	order := &simulatedOrder{
 		vendorOrderID: vendorID,
-		externalID:    req.ExternalID,
 		state:         "CREATED",
 		priority:      req.Priority,
 		complete:      req.Complete,
@@ -291,11 +288,8 @@ func (s *SimulatorBackend) SetOrderPriority(vendorOrderID string, priority int) 
 	return fmt.Errorf("simulator: order %s not found", vendorOrderID)
 }
 
-// Ping returns nil unless WithPingFailure was set.
+// Ping always succeeds.
 func (s *SimulatorBackend) Ping() error {
-	if s.opts.failOnPing {
-		return fmt.Errorf("simulator: ping failure injected")
-	}
 	return nil
 }
 
@@ -398,11 +392,3 @@ func (t *simTracker) Start()                       {}
 func (t *simTracker) Stop()                        {}
 
 // --- Convenience: expose protocol.Envelope for tests ---
-
-// TestEnvelope creates a minimal protocol.Envelope suitable for test dispatch calls.
-func TestEnvelope() *protocol.Envelope {
-	return &protocol.Envelope{
-		Src: protocol.Address{Role: protocol.RoleEdge, Station: "sim-edge"},
-		Dst: protocol.Address{Role: protocol.RoleCore},
-	}
-}

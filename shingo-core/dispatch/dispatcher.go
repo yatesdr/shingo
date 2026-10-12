@@ -18,18 +18,17 @@ import (
 )
 
 type Dispatcher struct {
-	db            *store.DB
-	backend       fleet.Backend
-	emitter       Emitter
-	resolver      NodeResolver
-	laneLock      *LaneLock
-	stationID     string
-	dispatchTopic string
-	lifecycle     *LifecycleService
-	replies       *ReplySender
-	planner       *PlanningService
-	binManifest   *service.BinManifestService
-	allocator     *Allocator
+	db          *store.DB
+	backend     fleet.Backend
+	emitter     Emitter
+	resolver    NodeResolver
+	laneLock    *LaneLock
+	stationID   string
+	lifecycle   *LifecycleService
+	replies     *ReplySender
+	planner     *PlanningService
+	binManifest *service.BinManifestService
+	allocator   *Allocator
 	// finder is the shared source-finding seam (see source_finder.go). Owned
 	// here so every sourcing consumer resolves through the SAME instance.
 	finder *SourceFinder
@@ -107,14 +106,13 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 		CoreStation: stationID,
 	})
 	d := &Dispatcher{
-		db:            db,
-		backend:       backend,
-		emitter:       emitter,
-		resolver:      resolver,
-		laneLock:      NewLaneLockWithDB(db.DB),
-		stationID:     stationID,
-		dispatchTopic: dispatchTopic,
-		binManifest:   binManifest,
+		db:          db,
+		backend:     backend,
+		emitter:     emitter,
+		resolver:    resolver,
+		laneLock:    NewLaneLockWithDB(db.DB),
+		stationID:   stationID,
+		binManifest: binManifest,
 
 		laneGates:       newLaneGateSerializer(),
 		gateAppendFails: make(map[int64]int),

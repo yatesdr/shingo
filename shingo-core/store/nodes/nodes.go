@@ -20,7 +20,6 @@ import (
 
 	"shingocore/domain"
 	"shingocore/store/internal/helpers"
-	"shingocore/store/internal/nodetree"
 	"shingocore/store/reservations"
 )
 
@@ -325,21 +324,6 @@ func GetByDotName(db *sql.DB, name string) (*Node, error) {
 		return GetByName(db, name)
 	}
 	row := db.QueryRow(fmt.Sprintf(`SELECT %s %s WHERE n.name=$1 AND n.parent_id IN (SELECT id FROM nodes WHERE name=$2)`, SelectCols, FromClause), parts[1], parts[0])
-	return ScanNode(row)
-}
-
-// GetRoot walks the parent_id chain from the given node up to the
-// top-level ancestor (where parent_id IS NULL) and returns it.
-// If the node has no parent, it returns the node itself.
-//
-// Composes the same AncestorsOf walk the inheritance lookups use, and reads a
-// different row out of it: they want the NEAREST ancestor carrying rows
-// (ORDER BY depth), this wants the one with no parent. The walk's `depth` column
-// goes unread here — an unused derived column changes no row and no result,
-// which is cheaper than a second spelling of the same recursion.
-func GetRoot(db *sql.DB, nodeID int64) (*Node, error) {
-	row := db.QueryRow(fmt.Sprintf(nodetree.AncestorsOf(1)+`
-		SELECT %s %s WHERE n.id = (SELECT id FROM ancestors WHERE parent_id IS NULL)`, SelectCols, FromClause), nodeID)
 	return ScanNode(row)
 }
 

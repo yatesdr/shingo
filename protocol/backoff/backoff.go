@@ -42,9 +42,3 @@ func (b *Exponential) Next() time.Duration {
 func (b *Exponential) Reset() {
 	b.current = b.base
 }
-
-// Base returns the configured base duration.
-func (b *Exponential) Base() time.Duration { return b.base }
-
-// Max returns the configured max duration.
-func (b *Exponential) Max() time.Duration { return b.max }

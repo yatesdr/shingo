@@ -8,14 +8,13 @@ import (
 	"shingoedge/store/processes"
 )
 
-// NodeBinState, StationNodeView, and OperatorStationView are the
+// StationNodeView and OperatorStationView are the
 // HMI-facing view types rendered by the operator-station page. The
 // structs live in shingoedge/domain (Stage 2A.2) so www handlers
 // can build response shapes without importing this persistence
 // package; these aliases keep the existing store.X names that
 // service code and the operator-station handlers reference.
 type (
-	NodeBinState        = domain.NodeBinState
 	StationNodeView     = domain.StationNodeView
 	OperatorStationView = domain.OperatorStationView
 )

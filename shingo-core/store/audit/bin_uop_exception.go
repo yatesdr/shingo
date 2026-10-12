@@ -1,7 +1,6 @@
 package audit
 
 import (
-	"database/sql"
 	"fmt"
 	"time"
 )
@@ -142,81 +141,4 @@ func RecoverBinUOPOpenCrossing(execer BinUOPExecer, binID int64, recoveredAt tim
 		return fmt.Errorf("recover open crossing bin=%d: %w", binID, err)
 	}
 	return nil
-}
-
-// ListOpenNegativeCrossings returns every negative_crossing with
-// recovered_at IS NULL, oldest first — the permanent behind-the-window half of
-// OpenNegativeBins' negative_since. Rows whose bin no longer exists are still
-// returned: the crossing is a fact about history, not about a live row.
-func ListOpenNegativeCrossings(db *sql.DB) ([]ExceptionRow, error) {
-	return listExceptions(db, `SELECT `+exceptionSelectCols+`
-		FROM bin_uop_exception
-		WHERE kind = $1 AND recovered_at IS NULL
-		ORDER BY occurred_at ASC`, ExcNegativeCrossing)
-}
-
-// exceptionSelectCols mirrors binUOPSelectCols for the exceptions table.
-const exceptionSelectCols = `id, kind, bin_id, payload_code, actor, epoch_seq, occurred_at, before_uop, after_uop, deepest_uop, recovered_at, op, detail`
-
-// ExceptionRow is one bin_uop_exception row. Nullable columns surface as
-// pointers, same doctrine as BinUOPRow; detail stays a raw JSON string.
-type ExceptionRow struct {
-	ID          int64      `json:"id"`
-	Kind        string     `json:"kind"`
-	BinID       int64      `json:"bin_id"`
-	PayloadCode string     `json:"payload_code"`
-	Actor       string     `json:"actor"`
-	EpochSeq    *int64     `json:"epoch_seq,omitempty"`
-	OccurredAt  string     `json:"occurred_at"`
-	BeforeUOP   *int       `json:"before_uop,omitempty"`
-	AfterUOP    *int       `json:"after_uop,omitempty"`
-	DeepestUOP  *int       `json:"deepest_uop,omitempty"`
-	RecoveredAt *time.Time `json:"recovered_at,omitempty"`
-	Op          string     `json:"op"`
-	Detail      *string    `json:"detail,omitempty"`
-}
-
-func listExceptions(db *sql.DB, q string, args ...any) ([]ExceptionRow, error) {
-	rows, err := db.Query(q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list bin_uop_exception: %w", err)
-	}
-	defer rows.Close()
-	var out []ExceptionRow
-	for rows.Next() {
-		var r ExceptionRow
-		var epoch, before, after, deepest sql.NullInt64
-		var recovered sql.NullTime
-		var detail sql.NullString
-		if err := rows.Scan(&r.ID, &r.Kind, &r.BinID, &r.PayloadCode, &r.Actor,
-			&epoch, &r.OccurredAt, &before, &after, &deepest, &recovered, &r.Op, &detail); err != nil {
-			return nil, fmt.Errorf("scan bin_uop_exception: %w", err)
-		}
-		if epoch.Valid {
-			v := epoch.Int64
-			r.EpochSeq = &v
-		}
-		if before.Valid {
-			v := int(before.Int64)
-			r.BeforeUOP = &v
-		}
-		if after.Valid {
-			v := int(after.Int64)
-			r.AfterUOP = &v
-		}
-		if deepest.Valid {
-			v := int(deepest.Int64)
-			r.DeepestUOP = &v
-		}
-		if recovered.Valid {
-			t := recovered.Time
-			r.RecoveredAt = &t
-		}
-		if detail.Valid {
-			s := detail.String
-			r.Detail = &s
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
 }

@@ -70,7 +70,6 @@ type Cache struct {
 	mu        lockcheck.RWMutex[lockorder.ETACache]
 	routes    map[routeKey]time.Duration
 	globalP70 time.Duration
-	updatedAt time.Time
 }
 
 // NewCache returns an empty cache. Call Refresh before first Lookup, or
@@ -144,7 +143,6 @@ func (c *Cache) Refresh(ctx context.Context) error {
 	c.mu.Lock()
 	c.routes = routes
 	c.globalP70 = global
-	c.updatedAt = time.Now()
 	c.mu.Unlock()
 	return nil
 }

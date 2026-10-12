@@ -67,19 +67,6 @@ func TestClient_IsConnected(t *testing.T) {
 	// This test verifies the state tracking logic
 }
 
-func TestClient_Close(t *testing.T) {
-	t.Parallel()
-	cfg := &config.MessagingConfig{
-		Kafka:         config.KafkaConfig{Brokers: []string{"localhost:9092"}},
-		OrdersTopic:   "shingo.orders",
-		DispatchTopic: "shingo.dispatch",
-	}
-	client := NewClient(cfg)
-
-	// Close should not panic even if not connected
-	client.Close()
-}
-
 func TestClient_CloseIdempotent(t *testing.T) {
 	t.Parallel()
 	cfg := &config.MessagingConfig{

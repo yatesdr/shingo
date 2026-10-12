@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"shingocore/dispatch/plan"
 	"shingocore/domain"
 
 	"shingo/protocol"
@@ -254,7 +255,7 @@ func (a *Allocator) reserveComplexPlan(order *orders.Order, plan *ComplexPlan) (
 		removal := isRemovalPickup(pk.step, order.ProcessNode)
 		// THE STEP'S PAYLOAD WINS, and the two halves of this decision used to
 		// disagree. resolveStepNode already resolves WHICH NODE a leg goes to
-		// through stepPayload (step's if set, else the order's); this passed the
+		// through plan.StepPayload (step's if set, else the order's); this passed the
 		// order's payload straight through, so node resolution and bin selection
 		// answered different questions about the same step.
 		//
@@ -560,7 +561,7 @@ func (a *Allocator) reserveComplexSlots(order *orders.Order, resolvedSteps []res
 		if errors.Is(aerr, reservations.ErrReservationConflict) {
 			missing++
 			if sn.group != "" {
-				// Fungible NGRP dropoff — revert to the group so reResolveComplexSteps
+				// Fungible NGRP dropoff — revert to the group so reResolveComplexStepsFor
 				// re-picks a free slot next tick (the escape valve). A fixed-concrete
 				// dropoff (group=="") just holds and retries.
 				resolvedSteps[sn.stepIndex].Node = sn.group
@@ -768,7 +769,7 @@ func (a *Allocator) findAvailableForNeed(step resolvedStep, payloadCode string, 
 	case step.Empty:
 		// Empty pickup leg (produce's "bring an empty to fill"): an empty carrier,
 		// dropping the payload context — same filter as the old claim path.
-		candidates = emptyBinsOnly(bins)
+		candidates = plan.EmptyBinsOnly(bins)
 		claimPayload = ""
 	}
 	// The carrier rule for the part being fetched, read ONCE for this node's

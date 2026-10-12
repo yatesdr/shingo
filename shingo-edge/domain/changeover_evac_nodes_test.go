@@ -54,22 +54,6 @@ func TestMarkedEvacNodes(t *testing.T) {
 	}
 }
 
-func TestEvacNodeMarked(t *testing.T) {
-	t.Parallel()
-	c := markedClaim()
-	c.ChangeoverEvacNodes = []string{"PRESS_B"}
-
-	if !EvacNodeMarked(c, "PRESS_B") {
-		t.Error("a marked node reads as unmarked")
-	}
-	if EvacNodeMarked(c, "PRESS_A") {
-		t.Error("an unmarked node reads as marked")
-	}
-	if EvacNodeMarked(nil, "PRESS_B") || EvacNodeMarked(c, "") {
-		t.Error("nil claim / empty node must be false, not a panic")
-	}
-}
-
 // A cell with more nodes than a press has positions is the point of the model:
 // nothing counts to three.
 func TestMarkedEvacNodes_IsNotPressShaped(t *testing.T) {

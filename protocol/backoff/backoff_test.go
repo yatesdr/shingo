@@ -5,17 +5,6 @@ import (
 	"time"
 )
 
-func TestNew(t *testing.T) {
-	t.Parallel()
-	b := New(100*time.Millisecond, 5*time.Second)
-	if b.Base() != 100*time.Millisecond {
-		t.Errorf("Base() = %v, want 100ms", b.Base())
-	}
-	if b.Max() != 5*time.Second {
-		t.Errorf("Max() = %v, want 5s", b.Max())
-	}
-}
-
 func TestNext_Doubles(t *testing.T) {
 	t.Parallel()
 	b := New(100*time.Millisecond, 10*time.Second)

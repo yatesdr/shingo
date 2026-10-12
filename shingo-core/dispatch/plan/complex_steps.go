@@ -13,10 +13,6 @@ import (
 // complex_steps.go — the leg shape of a complex order: every step's node
 // resolved to a concrete one (a group to a child, a blank pickup to a plant-wide
 // source), with the carrier each dropoff puts down carried forward.
-//
-// Moved from dispatch/complex_steps.go unchanged (B1). The Dispatcher's
-// resolveComplexSteps and reResolveComplexSteps are now one-line faces over
-// these, and read nothing the planner does not.
 
 // stepReader is what BinTypeAtNode reads: a node by name, and what stands on it.
 type stepReader interface {
@@ -72,7 +68,7 @@ func (p *Planner) ComplexSteps(steps []protocol.ComplexOrderStep, payloadCode st
 		switch step.Action {
 		case protocol.ActionPickup, protocol.ActionDropoff:
 			// Blank dropoff = deferred destination (placeForDedicatedLoader resolves it
-			// after intake). Pass it through unchanged, same as reResolveComplexSteps.
+			// after intake). Pass it through unchanged, same as reResolveComplexStepsFor.
 			if step.Action == protocol.ActionDropoff && step.Node == "" {
 				resolved = append(resolved, Step{Action: protocol.ActionDropoff, Empty: step.Empty,
 					PayloadCode: step.PayloadCode, ExclusiveSlot: step.ExclusiveSlot})
@@ -436,7 +432,7 @@ func (p *Planner) StepNode(step protocol.ComplexOrderStep, orderPayload string,
 			// for exactly that reason), so the resolver's own derivation has no id
 			// to work from and the per-node Allowed Bin Types fence would be
 			// skipped — on a destination choice that is then LOCKED IN, because
-			// reResolveComplexSteps only re-resolves steps still naming a group.
+			// reResolveComplexStepsFor only re-resolves steps still naming a group.
 			//
 			// The pickup that precedes it is the answer: it resolves to a slot
 			// holding a specific carrier, and that carrier is the one this leg puts

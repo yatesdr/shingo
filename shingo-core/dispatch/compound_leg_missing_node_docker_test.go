@@ -16,7 +16,7 @@ import (
 // compound_leg_missing_node_docker_test.go — an ORDER that names a node which is
 // not there, and what the demand behind it is told.
 //
-// The wording of configFailure is pinned in read_vs_missing_test.go and the
+// The wording of plan.ConfigFailure is pinned in read_vs_missing_test.go and the
 // finder's arm is driven there too. Neither is this: those are a formatter and a
 // SOURCE SELECTION, and a finder that declines a source has not yet decided
 // anything about the order. The two sites here are the order-level ones —
@@ -66,7 +66,7 @@ func legWithNodeNames(t *testing.T, db *store.DB, prefix, sourceNode, deliveryNo
 // TestCompoundLeg_SourceNodeDoesNotExist_TerminalWithTheConfigMessage is
 // compound.go's first node read.
 //
-// MUTATION (verified): replace configFailure("source node", next.SourceNode) in
+// MUTATION (verified): replace dplan.ConfigFailure("source node", next.SourceNode) in
 // compound.go with a bare string — "invalid source node", say, or the
 // reshuffle_error the sites used to carry. The status assertions stay green
 // because the disposition is unchanged; the error_detail assertions fire. That
@@ -118,7 +118,7 @@ func TestCompoundLeg_SourceNodeDoesNotExist_TerminalWithTheConfigMessage(t *test
 // "config failure: node X does not exist" would not say which end.
 //
 // MUTATION (verified): change compound.go's delivery arm to
-// configFailure("source node", next.DeliveryNode) — a copy-paste of its
+// dplan.ConfigFailure("source node", next.DeliveryNode) — a copy-paste of its
 // neighbour, and the likeliest way this actually breaks. Only the "delivery
 // node" assertion fires; every other assertion here, and every existing test
 // over this path, stays green.

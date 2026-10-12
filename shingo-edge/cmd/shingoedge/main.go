@@ -778,7 +778,6 @@ func main() {
 
 	// ── Data sender & outbox drainer ────────────────────────────────────
 	dataSender := messaging.NewDataSender(msgClient, cfg.Messaging.OrdersTopic, nil)
-	dataSender.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
 	eng.SetSendFunc(func(env *protocol.Envelope) error {
 		return dataSender.PublishEnvelope(env, "core data sync")
 	})

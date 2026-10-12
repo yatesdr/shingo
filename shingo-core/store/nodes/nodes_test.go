@@ -128,36 +128,6 @@ func TestNodeGetByDotName(t *testing.T) {
 	}
 }
 
-func TestNodeGetRoot(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	sdb := db.DB
-
-	root := &nodes.Node{Name: "ROOT", Enabled: true}
-	testutil.MustNoErr(t, nodes.Create(sdb, root), "nodes.Create root")
-	mid := &nodes.Node{Name: "MID", Enabled: true, ParentID: &root.ID}
-	testutil.MustNoErr(t, nodes.Create(sdb, mid), "nodes.Create mid")
-	leaf := &nodes.Node{Name: "LEAF", Enabled: true, ParentID: &mid.ID}
-	testutil.MustNoErr(t, nodes.Create(sdb, leaf), "nodes.Create leaf")
-
-	got, err := nodes.GetRoot(sdb, leaf.ID)
-	if err != nil {
-		t.Fatalf("nodes.GetRoot from leaf: %v", err)
-	}
-	if got.ID != root.ID {
-		t.Errorf("nodes.GetRoot(leaf) ID = %d, want %d", got.ID, root.ID)
-	}
-
-	// Root of a root is itself.
-	got2, err := nodes.GetRoot(sdb, root.ID)
-	if err != nil {
-		t.Fatalf("nodes.GetRoot from root: %v", err)
-	}
-	if got2.ID != root.ID {
-		t.Errorf("nodes.GetRoot(root) ID = %d, want %d", got2.ID, root.ID)
-	}
-}
-
 func TestNodeList(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)

@@ -161,7 +161,6 @@ type BurialTally struct {
 	// direction; this says how many of that number are a missing date rather
 	// than a found bypass.
 	BypassUndated int64
-	LastBuriedAt  time.Time
 }
 
 // burialShadow holds the since-boot tally. In-process and crash-volatile on
@@ -179,7 +178,6 @@ func (b *burialShadow) recordSoft(heldFor time.Duration, at time.Time) {
 	if heldFor > b.tally.SoftLongestHeld {
 		b.tally.SoftLongestHeld = heldFor
 	}
-	b.tally.LastBuriedAt = at
 }
 
 // hardBurialKind is which of the three things a hard-claim burial actually is.
@@ -226,7 +224,6 @@ func (b *burialShadow) recordHard(kind hardBurialKind, at time.Time) {
 		b.tally.Bypass++
 		b.tally.BypassUndated++
 	}
-	b.tally.LastBuriedAt = at
 }
 
 func (b *burialShadow) snapshot() BurialTally {

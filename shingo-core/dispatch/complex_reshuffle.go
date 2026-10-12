@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+	"shingocore/dispatch/plan"
 	"shingocore/store/orders"
 )
 
@@ -61,7 +62,7 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 		return
 	}
 	if err != nil || lane == nil {
-		d.failOrderInternal(order, codeInvalidNode, configFailureID("lane node", buried.LaneID))
+		d.failOrderInternal(order, codeInvalidNode, plan.ConfigFailureID("lane node", buried.LaneID))
 		return
 	}
 

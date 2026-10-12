@@ -88,11 +88,10 @@ type DropChoice struct {
 	Alternatives []DropChoice
 }
 
-// PaperTake names the stranger whose groupRoom paper the chosen slot is, and the
-// right the asker takes it under: by commitment (a committed robot and an unsent
+// PaperTake says the chosen slot is a stranger's groupRoom paper, and the right
+// the asker takes it under: by commitment (a committed robot and an unsent
 // holder) or, when that is false, by rank (the asker outranks the holder).
 type PaperTake struct {
-	Holder       int64
 	ByCommitment bool
 }
 
@@ -287,7 +286,7 @@ func (p *Planner) paperChoice(group *nodes.Node, need DropNeed, exclude map[int6
 		if lane == nil || exclude[ps.LaneID] || ps.HolderSent {
 			continue
 		}
-		take := &PaperTake{Holder: ps.Holder, ByCommitment: need.Committed}
+		take := &PaperTake{ByCommitment: need.Committed}
 		if !need.Committed {
 			if !rankRead {
 				if rank, err = p.db.LoadDemandRank(need.Asker.OrderID); err != nil {

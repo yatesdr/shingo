@@ -46,10 +46,6 @@ func Releasable(s protocol.Status) bool {
 	return s == protocol.StatusStaged || s == protocol.StatusInTransit
 }
 
-// TerminalSuccess reports whether a terminal order ran its half
-// (orders.IsTerminalSuccess).
-func TerminalSuccess(s protocol.Status) bool { return s == protocol.StatusConfirmed }
-
 // ── The trunk ─────────────────────────────────────────────────────────────
 
 // LegPlan is the decision for one leg.

@@ -80,7 +80,7 @@ func seedTwoRobotPair(t *testing.T, db *store.DB, nodeID int64, prefix string, s
 	}
 
 	// A DELIVERS to the node (supply); B carries the spent bin away (evac).
-	// isSupplyOrderInTwoRobotSwap reads the STEPS to tell them apart — it used to
+	// isSupplyLeg reads the STEPS to tell them apart — it used to
 	// read delivery_node, which is wrong in both directions for press-index (the evac
 	// leg stored the process node, and the real supply leg is auto-confirmed so its
 	// delivery_node is blanked).

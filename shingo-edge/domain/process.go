@@ -1054,19 +1054,6 @@ func MarkedEvacNodes(c *NodeClaim) []string {
 	return out
 }
 
-// EvacNodeMarked reports whether this claim marks the given core node.
-func EvacNodeMarked(c *NodeClaim, coreNode string) bool {
-	if c == nil || coreNode == "" {
-		return false
-	}
-	for _, n := range c.ChangeoverEvacNodes {
-		if n == coreNode {
-			return true
-		}
-	}
-	return false
-}
-
 // StagedToolingChangeover reports whether this OUTGOING claim puts the cell
 // into the staged tooling-evacuation mode: a press-index cell with at least
 // one position marked as holding bins that block the tool change.

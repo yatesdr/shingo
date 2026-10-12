@@ -17,7 +17,6 @@ import (
 	"shingoedge/engine"
 	"shingoedge/engine/releasefake"
 	"shingoedge/messaging"
-	"shingoedge/orders"
 	"shingoedge/store"
 )
 
@@ -44,10 +43,9 @@ func OpenDB(t *testing.T) *store.DB {
 // (StartProcessChangeover, ReleaseChangeoverWait, etc). DB is the same
 // store the engine reads/writes, exposed for direct seeding/assertion.
 type Edge struct {
-	Engine      *engine.Engine
-	EdgeHandler *messaging.EdgeHandler
-	Ingestor    *protocol.Ingestor
-	DB          *store.DB
+	Engine   *engine.Engine
+	Ingestor *protocol.Ingestor
+	DB       *store.DB
 }
 
 // NewEdge constructs a real Edge engine + EdgeHandler + Ingestor with
@@ -171,15 +169,8 @@ func NewEdgeWithCoreAPI(t *testing.T, stationID, coreAPI string) *Edge {
 	}
 
 	return &Edge{
-		Engine:      eng,
-		EdgeHandler: edgeHandler,
-		Ingestor:    ingestor,
-		DB:          db,
+		Engine:   eng,
+		Ingestor: ingestor,
+		DB:       db,
 	}
 }
-
-// Re-export commonly-needed types so integration callers don't have to
-// import deeper Edge packages just for type declarations.
-type (
-	OrderManager = orders.Manager
-)

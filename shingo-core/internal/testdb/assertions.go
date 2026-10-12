@@ -88,15 +88,6 @@ func AssertBinAtNode(t *testing.T, db *store.DB, binID, wantNodeID int64) {
 
 // --- Bin claim helpers ---
 
-// RequireBinUnclaimed fetches a bin and fatals if it has an active claim.
-func RequireBinUnclaimed(t *testing.T, db *store.DB, binID int64) {
-	t.Helper()
-	bin := RequireBin(t, db, binID)
-	if bin.ClaimedBy != nil {
-		t.Fatalf("bin %d: still claimed by order %d, want unclaimed", binID, *bin.ClaimedBy)
-	}
-}
-
 // AssertBinUnclaimed fetches a bin and logs an error (non-fatal) if it has an
 // active claim.
 func AssertBinUnclaimed(t *testing.T, db *store.DB, binID int64) {
@@ -116,18 +107,6 @@ func RequireBinClaimedBy(t *testing.T, db *store.DB, binID, wantOrderID int64) {
 		t.Fatalf("bin %d: not claimed, want claimed by order %d", binID, wantOrderID)
 	} else if *bin.ClaimedBy != wantOrderID {
 		t.Fatalf("bin %d: claimed by %d, want %d", binID, *bin.ClaimedBy, wantOrderID)
-	}
-}
-
-// AssertBinClaimedBy fetches a bin and logs an error (non-fatal) if it is not
-// claimed by the expected order.
-func AssertBinClaimedBy(t *testing.T, db *store.DB, binID, wantOrderID int64) {
-	t.Helper()
-	bin := RequireBin(t, db, binID)
-	if bin.ClaimedBy == nil {
-		t.Errorf("bin %d: not claimed, want claimed by order %d", binID, wantOrderID)
-	} else if *bin.ClaimedBy != wantOrderID {
-		t.Errorf("bin %d: claimed by %d, want %d", binID, *bin.ClaimedBy, wantOrderID)
 	}
 }
 

@@ -75,7 +75,7 @@ func TestSimOperator_PairReleaseDrivesTheNodeDoor(t *testing.T) {
 // produce node's operator is declaring a full bin.
 func TestSimOperator_PairReleaseSendsCaptureLinesideOnProduce(t *testing.T) {
 	t.Parallel()
-	// Real steps: isSupplyOrderInTwoRobotSwap refuses a leg it cannot classify,
+	// Real steps: isSupplyLeg refuses a leg it cannot classify,
 	// so a stepless fixture would exercise the refusal instead of the path.
 	eng, nodeID, evacID, _ := seedStagedPressIndexPair(t, "uuid-simpair")
 

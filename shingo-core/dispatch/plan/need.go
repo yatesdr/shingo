@@ -13,11 +13,8 @@ import (
 // Given), what it GETS BACK (Plan, Outcome and the verdict), and the store surface
 // the picker is allowed to read (FinderDB, part of Reader).
 //
-// Moved from dispatch/source_finder_types.go (B1). The need and the verdict were
-// already need-shaped: SourceNeed carried no order, and SourceResult was the
-// closed "satisfiable, or missing X" answer. They are the planner's types now,
-// and dispatch keeps its names as aliases (SourceNeed) or as a translation of the
-// verdict into its queue vocabulary (SourceResult).
+// Dispatch keeps its names for them as aliases (SourceNeed) or as a translation of
+// the verdict into its queue vocabulary (SourceResult).
 //
 // WHAT A PLAN DOES NOT CARRY YET, AND WHY (v4 §2.9 law 5: every new fact names
 // its reader in the same change). Contention ("who else wants it") arrives with

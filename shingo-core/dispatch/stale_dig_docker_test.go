@@ -10,6 +10,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingo/protocol/testutil"
+	"shingocore/dispatch/plan"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
@@ -348,7 +349,7 @@ func TestStaleDig_DissolveMarkerIsWhatSeparatesItFromAFailure(t *testing.T) {
 	// re-plan can do invents a node nobody configured, so there is no next
 	// chapter to open and the demand has to say so and stop.
 	if digWasDissolved([]*orders.Order{
-		{Status: protocol.StatusFailed, ErrorDetail: configFailure("source node", "NOT-A-NODE")},
+		{Status: protocol.StatusFailed, ErrorDetail: plan.ConfigFailure("source node", "NOT-A-NODE")},
 	}) {
 		t.Error("a leg that could not be BUILT must not read as a chapter that can be re-planned — " +
 			"the demand would loop forever against configuration nobody has fixed")

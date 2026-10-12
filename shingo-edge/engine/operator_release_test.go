@@ -37,7 +37,7 @@ func stageOrderForConsumeNode(t *testing.T, db *store.DB, nodeID int64, uuid str
 
 // redirectLegAway turns a staged leg into an EVAC: it picks the spent bin up FROM
 // the node and carries it to dest. Sets delivery_node and steps together — they
-// must agree, because isSupplyOrderInTwoRobotSwap and the delivered gate both read
+// must agree, because isSupplyLeg and the delivered gate both read
 // the steps to decide where a leg ends.
 func redirectLegAway(t *testing.T, db *store.DB, orderID int64, coreNodeName, dest string) {
 	t.Helper()

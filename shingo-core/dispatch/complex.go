@@ -3,7 +3,6 @@ package dispatch
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"shingocore/dispatch/plan"
 	"strconv"
 	"strings"
@@ -51,17 +50,6 @@ type claimedBin struct {
 	binID     int64
 	stepIndex int
 	nodeName  string
-}
-
-// joinRejects formats per-bin reject reasons into a single log line. Caps at
-// the first 6 entries so a node with many bins doesn't blow up the log; the
-// summary still notes the count even if entries are truncated.
-func joinRejects(rejects []string) string {
-	const maxEntries = 6
-	if len(rejects) <= maxEntries {
-		return strings.Join(rejects, "; ")
-	}
-	return strings.Join(rejects[:maxEntries], "; ") + fmt.Sprintf("; ... +%d more", len(rejects)-maxEntries)
 }
 
 // ResolutionErrorClass tags every resolver-error shape with the

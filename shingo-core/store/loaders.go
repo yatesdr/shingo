@@ -14,7 +14,6 @@ type (
 	Loader        = loaders.Loader
 	LoaderHome    = loaders.Home
 	LoaderPayload = loaders.Payload
-	LoaderConfig  = loaders.Config
 )
 
 func (db *DB) CreateLoader(l loaders.Loader) (int64, error) { return loaders.CreateLoader(db.DB, l) }

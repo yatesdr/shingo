@@ -126,13 +126,6 @@ func (b *Bus) PumpEdgeOutbox() int {
 	return pump(b.edgeOut, b.edgePub, "edge→core")
 }
 
-// PumpCoreOutbox is the symmetric drain for Core → Edge. Returns count
-// delivered.
-func (b *Bus) PumpCoreOutbox() int {
-	b.t.Helper()
-	return pump(b.coreOut, b.corePub, "core→edge")
-}
-
 // PumpAll drains both directions until both outboxes are empty in the
 // same iteration. Catches reply chains: if Core enqueues a reply while
 // processing an inbound message, that reply gets delivered in the next
@@ -149,13 +142,6 @@ func (b *Bus) PumpAll() int {
 func (b *Bus) EdgeFailNext(err error) {
 	b.t.Helper()
 	b.edgePub.FailNext(err)
-}
-
-// CoreFailNext is the symmetric failure-injection knob for the
-// Core → Edge direction.
-func (b *Bus) CoreFailNext(err error) {
-	b.t.Helper()
-	b.corePub.FailNext(err)
 }
 
 // =============================================================================

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingocore/dispatch/plan"
 	"shingocore/internal/testdb"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -23,7 +24,7 @@ import (
 // TestReResolve_LaneWaitIsExemptEvenWhenItsNameCollides is the sharp half.
 //
 // A gate point is an RDS map point, not a Core node, so the lookup in
-// reResolveComplexSteps cannot find it and a lane wait would ride the "node
+// reResolveComplexStepsFor cannot find it and a lane wait would ride the "node
 // vanished — unrecoverable" arm. That reaches the right OUTCOME by a branch that
 // means something else, which is worth fixing on its own; but it also leaves a
 // real hazard, which is what this pins.
@@ -61,9 +62,9 @@ func TestReResolve_LaneWaitIsExemptEvenWhenItsNameCollides(t *testing.T) {
 		{Action: protocol.ActionWait, Node: grp.Name, WaitKind: WaitKindLane, WaitLane: 41},
 		{Action: protocol.ActionDropoff, Node: sd.LineNode.Name},
 	}
-	out, _, err := d.reResolveComplexSteps(steps, sd.Payload.Code, reservations.Anyone)
+	out, _, err := d.pure.ReComplexSteps(steps, plan.Need{PayloadCode: sd.Payload.Code, Asker: reservations.Anyone})
 	if err != nil {
-		t.Fatalf("reResolveComplexSteps: %v", err)
+		t.Fatalf("ReComplexSteps: %v", err)
 	}
 	if out[1].Node != grp.Name {
 		t.Fatalf("the lane wait's node was re-resolved from %q to %q. A gate point is an RDS map "+
@@ -90,9 +91,9 @@ func TestReResolve_OperatorWaitStillPassesThrough(t *testing.T) {
 		{Action: protocol.ActionWait, Node: sd.LineNode.Name}, // drive-to-and-hold
 		{Action: protocol.ActionDropoff, Node: sd.LineNode.Name},
 	}
-	out, changed, err := d.reResolveComplexSteps(steps, sd.Payload.Code, reservations.Anyone)
+	out, changed, err := d.pure.ReComplexSteps(steps, plan.Need{PayloadCode: sd.Payload.Code, Asker: reservations.Anyone})
 	if err != nil {
-		t.Fatalf("reResolveComplexSteps: %v", err)
+		t.Fatalf("ReComplexSteps: %v", err)
 	}
 	if changed {
 		t.Error("a plan of concrete nodes reported changed; nothing here references an NGRP")
@@ -223,9 +224,9 @@ func TestReResolve_StationWaitAtAGroupKeepsItsKind(t *testing.T) {
 		{Action: protocol.ActionWait, Node: grp.Name, WaitKind: WaitKindStation},
 		{Action: protocol.ActionDropoff, Node: sd.LineNode.Name},
 	}
-	out, _, err := d.reResolveComplexSteps(steps, sd.Payload.Code, reservations.Anyone)
+	out, _, err := d.pure.ReComplexSteps(steps, plan.Need{PayloadCode: sd.Payload.Code, Asker: reservations.Anyone})
 	if err != nil {
-		t.Fatalf("reResolveComplexSteps: %v", err)
+		t.Fatalf("ReComplexSteps: %v", err)
 	}
 	if out[1].WaitKind != WaitKindStation {
 		t.Errorf("the station wait lost its kind in re-resolution: %+v", out[1])

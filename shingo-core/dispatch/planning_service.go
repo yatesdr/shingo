@@ -64,9 +64,7 @@ const (
 	codeMissingSource = string(protocol.TermMissingSource)
 	codeInvalidNode   = string(protocol.TermInvalidNode)
 	codeSameNode      = string(protocol.TermSameNode)
-	codeNoPayload     = string(protocol.TermNoPayload)
 	codeNoBin         = string(protocol.TermNoBin)
-	codeNoStorage     = string(protocol.TermNoStorage)
 	codeNoSourceBin   = string(protocol.TermNoSourceBin)
 	// codeNoShuffleSlot is TRANSIENT: the reshuffle has nowhere to park blockers
 	// right now. See ErrNoShuffleSlot.
@@ -632,7 +630,7 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 	if err != nil || lane == nil {
 		return nil, &planningError{
 			Code:   codeInvalidNode,
-			Detail: configFailureID("lane node", buried.LaneID),
+			Detail: plan.ConfigFailureID("lane node", buried.LaneID),
 			Err:    err,
 		}
 	}

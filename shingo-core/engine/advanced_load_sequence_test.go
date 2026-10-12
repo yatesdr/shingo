@@ -33,7 +33,6 @@ func (f *fakeBinCheckBackend) CheckLocationTasks(locations []string) ([]fleet.Lo
 		out = append(out, fleet.LocationTasks{
 			Location:  loc,
 			Exists:    ok,
-			Valid:     ok,
 			TaskNames: names,
 		})
 	}

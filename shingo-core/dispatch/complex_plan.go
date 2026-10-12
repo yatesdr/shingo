@@ -6,15 +6,9 @@ import (
 
 // ComplexPlan is a complex order's resolved step sequence, as the reserve and the
 // confirm take it: reserveComplexPlan soft-holds a distinct source bin per pickup
-// (reconciling against what the order already holds), and the solo order's hand
-// (handFromComplexPlan) or the pair's confirmComplexPlan makes them hard.
-//
-// It used to carry a whole preview — endpoints, a bin chosen per pickup, the
-// skips, per-bin destinations, the wait split — computed from a snapshot of the
-// bins at every pickup node. Nothing outside this file and its own test read any
-// of it: the reserve selects against live state from the steps alone. The fields,
-// the snapshot and the carrier-rule read that fed them were removed in Stage A's
-// dead-output sweep.
+// (reconciling against what the order already holds), and the order's hand
+// (handFromComplexPlan) makes them hard. The reserve selects against live state
+// from the steps alone.
 type ComplexPlan struct {
 	// ResolvedSteps is the full step sequence after node resolution. The
 	// dispatcher persists this as StepsJSON so HandleOrderRelease can replay

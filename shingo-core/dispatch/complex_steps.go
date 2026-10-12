@@ -10,22 +10,9 @@ import (
 	"shingo/protocol"
 	"shingocore/fleet"
 	"shingocore/fleet/seerrds"
-	"shingocore/store"
 	"shingocore/store/orders"
 	"shingocore/store/reservations"
 )
-
-// resolveComplexSteps validates and resolves all steps, returning concrete node
-// names: the planner's leg shape for a complex order (plan.Planner.ComplexSteps).
-func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payloadCode string, asker reservations.DigAsker) ([]resolvedStep, error) {
-	return d.pure.ComplexSteps(steps, payloadCode, asker)
-}
-
-// reResolveComplexSteps re-resolves the steps still naming a group
-// (plan.Planner.ReComplexSteps).
-func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode string, asker reservations.DigAsker) (newSteps []resolvedStep, changed bool, err error) {
-	return d.pure.ReComplexSteps(steps, plan.Need{PayloadCode: payloadCode, Asker: asker})
-}
 
 // reResolveComplexStepsFor is the dispatch pass's re-resolve: the same walk, with
 // the order in hand so a group drop that finds no free child can ask the
@@ -61,21 +48,11 @@ func stepsAsResolved(steps []protocol.ComplexOrderStep) []resolvedStep {
 	return out
 }
 
-// stepPayload is the payload THIS step's bin selection resolves against
-// (plan.StepPayload).
-func stepPayload(step protocol.ComplexOrderStep, orderPayload string) string {
-	return plan.StepPayload(step, orderPayload)
-}
-
-// resolvedStepPayload is stepPayload for the resolved form
+// resolvedStepPayload is plan.StepPayload for the resolved form
 // (plan.ResolvedStepPayload).
 func resolvedStepPayload(step resolvedStep, orderPayload string) string {
 	return plan.ResolvedStepPayload(step, orderPayload)
 }
-
-// binTypeAtNode names the carrier standing at a node, exactly one or nothing
-// (plan.BinTypeAtNode).
-func binTypeAtNode(db *store.DB, nodeName string) *int64 { return plan.BinTypeAtNode(db, nodeName) }
 
 // extractEndpoints returns the pickup (first actionable) and delivery (last
 // actionable) nodes. "Actionable" means pickup or dropoff — a wait is skipped.
@@ -371,7 +348,7 @@ func stepsToBlocks(vendorOrderID string, steps []resolvedStep, blockOffset int, 
 // Anchor = step.Group if set, else step.Node — RE-DERIVED per tick from the
 // persisted anchor, so a widened step stays re-derivable after restarts and
 // the pool choice can move as bins move. Synthetic nodes are skipped (NGRP
-// resolution is reResolveComplexSteps' job, which runs before this).
+// resolution is reResolveComplexStepsFor' job, which runs before this).
 //
 // The Group stamp on a rewrite is what keeps the reservation reconcile sane:
 // matchHeldToNeed keys held reservations by the step's CURRENT node, so the
@@ -603,7 +580,7 @@ func (d *Dispatcher) recalcBuriedNeed(order *orders.Order, hb *heldReservation, 
 
 	// THE ANCHOR MAY BE A GROUP, and here that is the point rather than something
 	// to skip. The widen loop above skips synthetic anchors because NGRP
-	// resolution is reResolveComplexSteps' job; this is a different question —
+	// resolution is reResolveComplexStepsFor' job; this is a different question —
 	// "is there another bin that would do" — and for a need anchored on a
 	// supermarket the answer is the whole group. The finder handles both shapes:
 	// its tier 1 resolves a synthetic NGRP through the group resolver, which
@@ -651,12 +628,6 @@ func (d *Dispatcher) recalcBuriedNeed(order *orders.Order, hb *heldReservation, 
 
 	// No substitute: the bin this order needs is the buried one, so dig for it.
 	return false, &SourceResult{Outcome: OutcomeReshuffle, Buried: buried}
-}
-
-// nextDropoffNode names where the carrier a leg is picking up is going next
-// (plan.NextDropoffNode).
-func nextDropoffNode(steps []protocol.ComplexOrderStep, from int) string {
-	return plan.NextDropoffNode(steps, from)
 }
 
 // asIntent is a not-yet-sent plan with every choice made from a group put back

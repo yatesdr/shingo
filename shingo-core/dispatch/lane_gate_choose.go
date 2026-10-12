@@ -90,8 +90,7 @@ func aPersonNamedTheDrop(order *orders.Order) bool {
 // a write the path already made: the slot row's tag (claimStoreSlot reserves it
 // as reservations.GroupRoomTag, the group's paper, in the INSERT it always
 // made) and the drop step's Group in the plan the gated create persists
-// (dispatchToFleetCore, in the UPDATE buildGatedCreate always made). +0
-// statements; the hand's storage read went from three to one.
+// (dispatchToFleetCore, in the UPDATE buildGatedCreate always made).
 func plainGroupDrop(order *orders.Order, lane *nodes.Node) bool {
 	return lane != nil && lane.NodeTypeCode == protocol.NodeClassLANE && lane.ParentName != "" &&
 		order != nil && order.ParentOrderID == nil && !order.Coordinated && !aPersonNamedTheDrop(order)

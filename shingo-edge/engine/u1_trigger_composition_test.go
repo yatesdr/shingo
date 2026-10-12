@@ -55,7 +55,7 @@ func mustNode(t *testing.T, db *store.DB, nodeID int64) *processes.Node {
 // seedStagedPressIndexPair builds a press-index produce pair from the REAL step
 // builder and stages both legs, with the runtime slots pointed at them.
 //
-// Steps matter: isSupplyOrderInTwoRobotSwap refuses a release it cannot
+// Steps matter: isSupplyLeg refuses a release it cannot
 // classify, and a leg with no steps cannot be classified — so a stepless
 // fixture exercises the refusal rather than the path.
 func seedStagedPressIndexPair(t *testing.T, uuidPrefix string) (*Engine, int64, int64, int64) {

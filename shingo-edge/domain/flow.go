@@ -179,11 +179,6 @@ func AdvancedOf(c *NodeClaim) *FlowAdvanced {
 	return a
 }
 
-// Flow is the composer's whole picture of one style.
-type Flow struct {
-	Cells []FlowCell `json:"cells"`
-}
-
 // THE CELL IS NOT LOCKABLE, AND THERE IS NO LOCK.
 //
 // LockingFields used to name the columns of a claim that the composer does not

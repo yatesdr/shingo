@@ -129,8 +129,6 @@ const WaitKindStation = protocol.WaitKindStation
 // intent survives as STEP DATA (Step.Empty) — the property that replaced the
 // OrderType==RetrieveEmpty scanner fork — rather than as the order's type. It
 // does not change the fleet block shape.
-//
-// Moved from dispatch/plan_simple.go unchanged (B1, buildTransportPlan).
 func TransportLegs(sourceNode, deliveryNode string, emptyPickup bool) []Step {
 	return []Step{
 		{Action: protocol.ActionPickup, Node: sourceNode, Empty: emptyPickup},
@@ -150,8 +148,6 @@ func TransportLegs(sourceNode, deliveryNode string, emptyPickup bool) []Step {
 // One block out of this, a JackUnload at deliveryNode, and the order completes
 // the moment the deck reports empty there — which is also how Core learns where
 // the bin ended up, through the ordinary arrival path rather than an inference.
-//
-// Moved from dispatch/plan_simple.go unchanged (B3, buildUnloadOnlyPlan).
 func UnloadOnlyLegs(deliveryNode string) []Step {
 	return []Step{
 		{Action: protocol.ActionDropoff, Node: deliveryNode},

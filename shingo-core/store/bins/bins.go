@@ -444,7 +444,7 @@ func NotFencedArm() string {
 // predicate.
 //
 // Two Go-side pickers never composed it and carry the rule themselves: the
-// complex allocator's emptyBinsOnly (TestTier4_NeverOffersABareCart) and the
+// complex allocator's plan.EmptyBinsOnly (TestTier4_NeverOffersABareCart) and the
 // dedicated-loader pool's binsource.RejectReason
 // (TestDedicatedPool_NeverDrawsABareCart). Those three pins are the whole of
 // the claim; a new empty reader that neither composes this nor carries the rule
@@ -564,24 +564,6 @@ func InGroupArm() string {
 	  AND b.node_id IN (SELECT id FROM descendants)`
 }
 
-// OutsideGroupArm is InGroupArm's inverse: everywhere EXCEPT a subtree.
-//
-// It takes the SUBTREE walk (nodetree.SubtreeOf), not the descendants one, and
-// the difference is load-bearing in the direction of exclusion. Excluding only
-// the descendants would leave the root itself eligible; the root is synthetic
-// and holds no carriers today, so the two are equivalent now and stop being
-// equivalent the moment a group node can hold one. An exclusion that is
-// accidentally correct is the kind that stops being correct silently.
-//
-// Both walks name their CTE `descendants` — deliberately, so they are drop-in
-// for one another and the FUNCTION names carry the difference. That naming is
-// also how MG2-11 first shipped broken: the query said `FROM subtree`, threw on
-// every call, and every caller read the throw as "no empty found".
-func OutsideGroupArm() string {
-	return `
-	  AND b.node_id NOT IN (SELECT id FROM descendants)`
-}
-
 // InZoneArm narrows to one zone. See the note on FindEmptyOfType for why a zone
 // PREFERENCE exists at all.
 func InZoneArm(zoneParam int) string {
@@ -687,7 +669,6 @@ const (
 	BinAtLiveNodeSQL             = helpers.BinAtLiveNodeSQL
 	BinUnheldSQL                 = helpers.BinUnheldSQL
 	BinUnclaimedSQL              = helpers.BinUnclaimedSQL
-	BinNotReservedSQL            = helpers.BinNotReservedSQL
 	BinCarriesSourceableStockSQL = helpers.BinCarriesSourceableStockSQL
 	BinInUndeclaredCarrierSQL    = helpers.BinInUndeclaredCarrierSQL
 )
@@ -1121,7 +1102,7 @@ func move(db *sql.DB, binID, toNodeID int64, clearStaging, clearAnomaly bool, on
 
 	// The landing's fields come back from the move's own statement
 	// (helpers.ArrivalReturningSQL), so announcing it costs no read.
-	placed := helpers.Placed{BinID: binID, NodeID: toNodeID}
+	placed := helpers.Placed{BinID: binID}
 	err = helpers.ScanPlaced(tx.QueryRow(`UPDATE bins SET node_id=$1, lifted_at=NULL, updated_at=$3 WHERE id=$2 AND (node_id IS NULL OR node_id != $1) `+
 		helpers.ArrivalReturningSQL, toNodeID, binID, clock.Now().UTC()), &placed)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1810,7 +1791,7 @@ func ClearAnomaly(db *sql.DB, binID int64) error {
 // runs the one statement alone, as it always did.
 func RecoverToNode(db *sql.DB, binID, toNodeID int64, onPlaced helpers.OnPlaced) error {
 	const q = `UPDATE bins SET node_id=$1, lifted_at=NULL, anomaly_at=NULL, anomaly_note='', updated_at=$3 WHERE id=$2 ` + helpers.ArrivalReturningSQL
-	placed := helpers.Placed{BinID: binID, NodeID: toNodeID}
+	placed := helpers.Placed{BinID: binID}
 	if onPlaced == nil {
 		return helpers.ScanPlaced(db.QueryRow(q, toNodeID, binID, clock.Now().UTC()), &placed)
 	}

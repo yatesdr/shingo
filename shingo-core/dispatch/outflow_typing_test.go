@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingocore/dispatch/plan"
 	"shingocore/store/bins"
 )
 
@@ -12,7 +13,7 @@ import (
 
 // ── The wire: the next dropoff reaches the need ─────────────────────────────
 
-// nextDropoffNode names where a pickup's carrier is set down next — the FIRST
+// plan.NextDropoffNode names where a pickup's carrier is set down next — the FIRST
 // dropoff at or after the step, because a multi-leg plan drops at several
 // places and only the next one is about this carrier.
 func TestOutflowTyping_NextDropoffIsTheNextOne(t *testing.T) {
@@ -32,13 +33,13 @@ func TestOutflowTyping_NextDropoffIsTheNextOne(t *testing.T) {
 		{2, "D2"},
 		{3, "D2"},
 	} {
-		if got := nextDropoffNode(steps, tc.from); got != tc.want {
-			t.Errorf("nextDropoffNode(from %d) = %q, want %q", tc.from, got, tc.want)
+		if got := plan.NextDropoffNode(steps, tc.from); got != tc.want {
+			t.Errorf("plan.NextDropoffNode(from %d) = %q, want %q", tc.from, got, tc.want)
 		}
 	}
 	// A plan whose tail has no dropoff yields blank, which every consumer reads
 	// as "no destination fact" rather than as an error.
-	if got := nextDropoffNode(steps[:1], 0); got != "" {
+	if got := plan.NextDropoffNode(steps[:1], 0); got != "" {
 		t.Errorf("a pickup with no dropoff after it = %q, want blank", got)
 	}
 	// A DEFERRED dropoff — blank node, resolved after intake — is skipped rather
@@ -48,7 +49,7 @@ func TestOutflowTyping_NextDropoffIsTheNextOne(t *testing.T) {
 		{Action: protocol.ActionDropoff, Node: ""},
 		{Action: protocol.ActionDropoff, Node: "D-REAL"},
 	}
-	if got := nextDropoffNode(deferred, 0); got != "D-REAL" {
+	if got := plan.NextDropoffNode(deferred, 0); got != "D-REAL" {
 		t.Errorf("with a deferred dropoff in the way = %q, want D-REAL", got)
 	}
 }

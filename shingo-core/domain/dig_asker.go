@@ -2,8 +2,8 @@ package domain
 
 // dig_asker.go — the order a dig-lock question is asked on behalf of.
 //
-// MOVED FROM store/reservations (B1). The planner and its parts (binresolver,
-// binsource, the source finder) carry the asker through every question and must
+// IT LIVES HERE, NOT IN store/reservations. The planner and its parts
+// (binresolver, binsource, the source finder) carry the asker through every question and must
 // not import store/reservations, which holds the writers (the planner-purity
 // depguard rule). The type and its Go answers live here; reservations keeps
 // aliases for every caller, and DigExclusionSQL, the SQL twin of ExcludedBy,

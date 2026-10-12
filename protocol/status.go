@@ -141,21 +141,6 @@ func AllQueueCodes() []QueueCode {
 	}
 }
 
-// ValidQueueCode reports whether c is one of the defined queue codes. The empty
-// string is valid (it means "uncoded" — a pre-schema row or a cleared reason);
-// any other unknown value is not.
-func ValidQueueCode(c QueueCode) bool {
-	if c == "" {
-		return true
-	}
-	for _, v := range AllQueueCodes() {
-		if c == v {
-			return true
-		}
-	}
-	return false
-}
-
 // TermCode is the typed reason an order reached a terminal status — the
 // terminal-side counterpart to QueueCode.
 //

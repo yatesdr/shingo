@@ -367,19 +367,6 @@ type CATIDCandidate struct {
 	StyleName string `json:"style_name"`
 }
 
-// CATIDAutoArmedEvent announces an auto-started changeover: the press's part
-// changed to NewCATID, which maps to TargetStyle, and the monitor started the
-// changeover automatically (changeover_auto_arm=auto). Purely a notification for
-// the operator station — the changeover itself is already under way.
-type CATIDAutoArmedEvent struct {
-	eventbus.PayloadBase
-	ProcessID       int64  `json:"process_id"`
-	ProcessName     string `json:"process_name"`
-	TargetStyleID   int64  `json:"target_style_id"`
-	TargetStyleName string `json:"target_style_name"`
-	NewCATID        string `json:"new_catid"`
-}
-
 // CATIDAutoCutoverEvent reports that the monitor pressed CUTOVER on an
 // in-progress changeover because the press's live part id had stably left the
 // outgoing style — i.e. the press had already cut over and the operator had not

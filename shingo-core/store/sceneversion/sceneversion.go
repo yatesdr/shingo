@@ -271,28 +271,6 @@ func loadOpenLanes(tx *sql.Tx, areas []string) (map[string]openLane, error) {
 	return out, nil
 }
 
-// LaneVersionAt returns the version id in force on a lane at an instant, or
-// nil when the lane had no version then.
-//
-// NIL IS A REAL ANSWER AND MUST NOT BECOME ZERO. A sample taken before the
-// first sync, or on a lane that did not exist yet, has no version — writing 0
-// would point at nothing while looking like a foreign key.
-func LaneVersionAt(db *sql.DB, area, lane string, at time.Time) (*int64, error) {
-	var id int64
-	err := db.QueryRow(
-		`SELECT id FROM scene_lane_versions
-		  WHERE area_name=$1 AND lane=$2
-		    AND valid_from <= $3 AND (valid_to IS NULL OR valid_to > $3)
-		  ORDER BY valid_from DESC LIMIT 1`, area, lane, at).Scan(&id)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("sceneversion: lane version at: %w", err)
-	}
-	return &id, nil
-}
-
 // LaneVersionIndex is the whole plant's version history, for a roll-up that
 // resolves a version per sample and must not issue one query per row.
 type LaneVersionIndex struct {

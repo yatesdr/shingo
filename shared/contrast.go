@@ -119,8 +119,6 @@ const (
 	// at weight 600 — under the large-text cut-off, so 4.5 is the floor
 	// that applies, not 3.0.
 	AANormalText = 4.5
-	// AALargeText is SC 1.4.3 for large text.
-	AALargeText = 3.0
 	// AANonText is SC 1.4.11 Non-text Contrast: graphical objects required
 	// to understand the content — chart series marks, tick marks, the
 	// structural steps of the substrate ramp.

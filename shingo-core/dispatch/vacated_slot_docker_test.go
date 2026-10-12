@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/dispatch/plan"
 	"shingocore/fleet"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -357,7 +358,7 @@ func TestVacatedSlot_P5_SingleRobotIntoItsOwnSourceMarket(t *testing.T) {
 		t.Fatalf("step 1 lifts %s, step 9 drops %s — step 9 must land on the slot step 1 frees (%s)",
 			steps[0].Node, steps[8].Node, c1.Name)
 	}
-	if st := stampHonoured(steps[8]); st == nil || st.Partner != 0 {
+	if st := plan.StampHonoured(steps[8]); st == nil || st.Partner != 0 {
 		t.Errorf("step 9's stamp = %+v, want an own-lift grant (no partner, so no release fence)", steps[8].Vacate)
 	}
 }

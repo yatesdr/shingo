@@ -84,7 +84,7 @@ func TestQueueWaitMetrics_MeasureATransitionCoreActuallyWrites(t *testing.T) {
 			"reorder point as if the queue took no time at all.", q)
 	}
 
-	rows, err := orders.DwellStats(db, orders.FlowDwellPairs(), "PART-QW", "", win)
+	rows, err := orders.DwellStats(db, domain.FlowDwellPairs(), "PART-QW", "", win)
 	testutil.MustNoErr(t, err, "DwellStats")
 	var ttd orders.DwellStat
 	for _, r := range rows {
@@ -112,7 +112,7 @@ func TestQueueWaitMetrics_MeasureATransitionCoreActuallyWrites(t *testing.T) {
 func TestAcquiringEntrySeamIsSpelledOnce(t *testing.T) {
 	t.Parallel()
 	var ttd domain.DwellPair
-	for _, p := range orders.FlowDwellPairs() {
+	for _, p := range domain.FlowDwellPairs() {
 		if p.Key == "time_to_dispatch" {
 			ttd = p
 		}
@@ -178,7 +178,7 @@ func TestQueueWaitMetrics_CountAnOrderThatNeverQueued(t *testing.T) {
 			"point computed from this mean is set as if that family never waits.", q)
 	}
 
-	rows, err := orders.DwellStats(db, orders.FlowDwellPairs(), "PART-BS", "", win)
+	rows, err := orders.DwellStats(db, domain.FlowDwellPairs(), "PART-BS", "", win)
 	testutil.MustNoErr(t, err, "DwellStats")
 	for _, r := range rows {
 		if r.Key != "time_to_dispatch" {

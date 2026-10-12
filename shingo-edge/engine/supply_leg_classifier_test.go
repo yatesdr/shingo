@@ -205,7 +205,7 @@ func TestIsSupplyOrderInTwoRobotSwap_ClassifiesByPlacedBin(t *testing.T) {
 			testutil.MustNoErr(t, db.LinkOrderSiblings(leg.ID, sibling.ID), "link siblings")
 			leg, _ = db.GetOrder(leg.ID)
 
-			got, err := eng.isSupplyOrderInTwoRobotSwap(leg, node, claim)
+			got, err := eng.isSupplyLeg(nil, leg, node, claim)
 			testutil.MustNoErr(t, err, "classify leg")
 			if got != tc.wantSupply {
 				t.Errorf("isSupply = %v, want %v — %s\nsteps: %v", got, tc.wantSupply, tc.why, steps)
@@ -224,7 +224,7 @@ func TestIsSupplyOrderInTwoRobotSwap_RequiresSibling(t *testing.T) {
 		{Action: protocol.ActionPickup, Node: "INDEX-B"},
 		{Action: protocol.ActionDropoff, Node: "PRESS"},
 	}, "PRESS")
-	got, err := eng.isSupplyOrderInTwoRobotSwap(lone, node, claim)
+	got, err := eng.isSupplyLeg(nil, lone, node, claim)
 	testutil.MustNoErr(t, err, "classify lone leg")
 	if got {
 		t.Error("a leg with no sibling classified as supply — the swap pair is the precondition")
@@ -248,7 +248,7 @@ func TestIsSupplyOrderInTwoRobotSwap_UnreadableStepsError(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(leg.ID, `{"not":"a step list"}`), "corrupt steps")
 	leg, _ = db.GetOrder(leg.ID)
 
-	if _, err := eng.isSupplyOrderInTwoRobotSwap(leg, node, claim); err == nil {
+	if _, err := eng.isSupplyLeg(nil, leg, node, claim); err == nil {
 		t.Error("undecodable steps classified silently — an unclassifiable leg must refuse, not guess evac")
 	}
 }

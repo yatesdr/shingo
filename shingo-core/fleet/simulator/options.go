@@ -5,7 +5,6 @@ import "shingo/protocol/clock"
 // Options controls simulated backend behavior.
 type Options struct {
 	failOnCreate bool        // inject fleet creation failures
-	failOnPing   bool        // inject ping failures
 	clk          clock.Clock // clock for terminal-order timestamps + eviction
 }
 
@@ -23,9 +22,4 @@ func WithClock(c clock.Clock) Option {
 // calls to return an error. Use this to test fleet-outage scenarios.
 func WithCreateFailure() Option {
 	return func(o *Options) { o.failOnCreate = true }
-}
-
-// WithPingFailure causes Ping to return an error.
-func WithPingFailure() Option {
-	return func(o *Options) { o.failOnPing = true }
 }

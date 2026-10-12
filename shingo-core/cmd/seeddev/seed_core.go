@@ -410,8 +410,8 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 	}
 	type lkey struct{ node, role string }
 	type pcfg struct {
-		code             string
-		minStock, thresh int
+		code   string
+		thresh int
 	}
 	first := map[lkey]plantspec.Claim{}
 	pls := map[lkey][]pcfg{}
@@ -455,7 +455,7 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 					continue // windows share the loader's payload set — count it once
 				}
 				windowPlSeen[c.WindowOf+"|"+code] = true
-				windowPls[c.WindowOf] = append(windowPls[c.WindowOf], pcfg{code, int(c.ReorderPoint), threshold[c.WindowOf+"|"+code]})
+				windowPls[c.WindowOf] = append(windowPls[c.WindowOf], pcfg{code, threshold[c.WindowOf+"|"+code]})
 			}
 			continue
 		}
@@ -476,7 +476,7 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 			codes = []string{c.Payload}
 		}
 		for _, code := range codes {
-			pls[k] = append(pls[k], pcfg{code, int(c.ReorderPoint), threshold[c.CoreNode+"|"+code]})
+			pls[k] = append(pls[k], pcfg{code, threshold[c.CoreNode+"|"+code]})
 		}
 	}
 

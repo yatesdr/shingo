@@ -71,8 +71,7 @@ func (p *Planner) StoreDrop(group *nodes.Node, payloadCode string, stated binres
 // never a chain; a group naming itself, an overflow that does not exist and an
 // overflow with no room all answer false, and the push parks.
 //
-// Moved from dispatch's LifecycleService.tryOverflow (B1); the door keeps the
-// log line and the stamp.
+// The door (LifecycleService.tryOverflow) keeps the log line and the stamp.
 //
 // stated is asked only once an overflow group is found: working out the carrier
 // costs reads (the intake door's binTypeAtIntake), and a group with no overflow
@@ -112,7 +111,7 @@ type OverflowReader interface {
 // unusable.
 //
 // THE LOOKUP HALF OF OverflowDestination, and the only copy. The cancel-return
-// policy (engine/cancel_return.go, through dispatch.OverflowGroupOf) follows the
+// policy (engine/cancel_return.go) follows the
 // same overflow for a bin it is returning to a group at its level, and two
 // lookups would be two answers the first time either grows a rule.
 func OverflowGroupOf(db OverflowReader, group *nodes.Node) (*nodes.Node, string) {
@@ -143,8 +142,6 @@ func OverflowGroupOf(db OverflowReader, group *nodes.Node) (*nodes.Node, string)
 // general resolver makes before delegating would be a read the keeper never
 // made. The resolver's per-child count + inflight >= 1 check is what bounds the
 // keeper's loop, which is why the keeper births each ask before asking again.
-//
-// Moved from engine (Maintainer.createAsks' ResolveStore) unchanged (B3).
 func (p *Planner) MaintainedSlot(group *nodes.Node, binTypeID int64) (*binresolver.ResolveResult, error) {
 	defer observe(p.db, "maintained-slot")()
 	return p.groupStore(group, "", binresolver.KnownBinType(binTypeID))

@@ -234,7 +234,7 @@ func TestPlanGolden(t *testing.T) {
 	}
 	b.WriteString("\n## PlanMaterial — doors 3 and 4\n")
 	allM := NeedActive | NeedCurtain | NeedInFlight
-	okM := Material{Loaded: allM, NodeName: "Press 1", Qty: 1, ClaimResolved: true, ClaimNode: "SYN-PRESS", OutboundDest: "SYN-OUT"}
+	okM := Material{Loaded: allM, NodeName: "Press 1", Qty: 1, ClaimResolved: true, OutboundDest: "SYN-OUT"}
 	withM := func(f func(*Material)) Material { m := okM; f(&m); return m }
 	for _, c := range []struct {
 		name string

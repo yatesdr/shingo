@@ -65,12 +65,7 @@ func ClaimBinForTest(t *testing.T, db *store.DB, binID, orderID int64) {
 	testdb.ClaimBinForTest(t, db, binID, orderID)
 }
 
-// MockBackend is the fleet.Backend stub used by Core dispatch tests.
-// Re-exported so the integration harness can construct dispatchers
-// without touching internal/testdb directly.
-type MockBackend = testdb.MockBackend
-
-// NewTrackingBackend returns a MockBackend that records every fleet
+// NewTrackingBackend returns the fleet.Backend stub that records every fleet
 // call (create, release, cancel) for assertion. All calls succeed.
 func NewTrackingBackend() *testdb.MockTrackingBackend {
 	return testdb.NewTrackingBackend()
@@ -84,7 +79,6 @@ func NewTrackingBackend() *testdb.MockTrackingBackend {
 // transitively just to declare variables. These aliases keep the harness API surface
 // self-contained.
 type (
-	Bin     = bins.Bin
 	Node    = nodes.Node
 	Payload = payloads.Payload
 )

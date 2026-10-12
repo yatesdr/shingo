@@ -33,9 +33,6 @@ const (
 	PurposeToolingDone Purpose = "tooling_done"
 )
 
-// Purposes is the closed set, in the order a cell meets them.
-var Purposes = []Purpose{PurposeSwap, PurposeReady, PurposeToolingDone}
-
 // Act is one decision to let robots go: an operator click or a system rule.
 type Act struct {
 	Origin   Origin

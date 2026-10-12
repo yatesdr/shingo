@@ -71,14 +71,14 @@ func TestDwellStats_PercentilesAndCounts(t *testing.T) {
 		{"in_transit", 3 * time.Hour}, {"staged", 3*time.Hour + 10*s}, {"delivered", 3*time.Hour + 40*s},
 	})
 
-	rows, err := orders.DwellStats(db, orders.FlowDwellPairs(), "PART-A", "", win)
+	rows, err := orders.DwellStats(db, domain.FlowDwellPairs(), "PART-A", "", win)
 	testutil.MustNoErr(t, err, "DwellStats")
 
 	got := map[string]domain.DwellStat{}
 	for _, r := range rows {
 		got[r.Key] = r
 	}
-	if len(rows) != len(orders.FlowDwellPairs()) {
+	if len(rows) != len(domain.FlowDwellPairs()) {
 		t.Fatalf("want one row per pair, got %d: %+v", len(rows), rows)
 	}
 
@@ -116,7 +116,7 @@ func TestDwellStats_EmptyWindowIsZeroNotError(t *testing.T) {
 		Start: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC),
 		End:   time.Date(2030, 1, 2, 0, 0, 0, 0, time.UTC),
 	}
-	rows, err := orders.DwellStats(d.DB, orders.FlowDwellPairs(), "", "", far)
+	rows, err := orders.DwellStats(d.DB, domain.FlowDwellPairs(), "", "", far)
 	testutil.MustNoErr(t, err, "DwellStats on an empty window")
 
 	for _, r := range rows {

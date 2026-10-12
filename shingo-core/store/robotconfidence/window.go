@@ -255,8 +255,7 @@ type AreaWindow struct {
 	// Class is the last non-empty class seen across the window's days. Empty
 	// when the map sync has never run, which is a real state and different
 	// from a zone with no class.
-	Class          string
-	HistIncomplete bool
+	Class string
 }
 
 // PercentileEstimate is the zone's p-th percentile over every tick, counting a
@@ -313,8 +312,6 @@ func AreaWindows(db *sql.DB, from, to time.Time) (map[string]*AreaWindow, error)
 		days[name][day.Format("2006-01-02")] = true
 		if h, ok := HistFromSlice(parsePGInt32Array(hist)); ok {
 			w.Hist.Merge(h)
-		} else {
-			w.HistIncomplete = true
 		}
 	}
 	if err := rows.Err(); err != nil {

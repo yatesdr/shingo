@@ -252,7 +252,7 @@ func compoundGenerations(children []*orders.Order) (open []*orders.Order, supers
 // buildable.
 func endsItsChapter(c *orders.Order) bool {
 	if c.Status == StatusFailed {
-		return !IsConfigFailure(c.ErrorDetail)
+		return !dplan.IsConfigFailure(c.ErrorDetail)
 	}
 	return c.Status == StatusCancelled && IsChapterEndCancel(c.ErrorDetail)
 }
@@ -304,7 +304,7 @@ func digWasDissolved(children []*orders.Order) bool {
 // configured is a person's to fix and the demand has to say so and stop.
 func configFailedLeg(open []*orders.Order) *orders.Order {
 	for _, c := range open {
-		if c.Status == StatusFailed && IsConfigFailure(c.ErrorDetail) {
+		if c.Status == StatusFailed && dplan.IsConfigFailure(c.ErrorDetail) {
 			return c
 		}
 	}
@@ -885,7 +885,7 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 		return nil
 	}
 	if err != nil || sourceNode == nil {
-		if dbErr := d.db.FailOrderAtomic(next.ID, configFailure("source node", next.SourceNode)); dbErr != nil {
+		if dbErr := d.db.FailOrderAtomic(next.ID, dplan.ConfigFailure("source node", next.SourceNode)); dbErr != nil {
 			log.Printf("dispatch: atomic fail child order %d: %v", next.ID, dbErr)
 		}
 		return d.advanceCompound(parentOrderID, dispatched)
@@ -908,7 +908,7 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 			return nil
 		}
 		if err != nil || destNode == nil {
-			if dbErr := d.db.FailOrderAtomic(next.ID, configFailure("delivery node", next.DeliveryNode)); dbErr != nil {
+			if dbErr := d.db.FailOrderAtomic(next.ID, dplan.ConfigFailure("delivery node", next.DeliveryNode)); dbErr != nil {
 				log.Printf("dispatch: atomic fail child order %d: %v", next.ID, dbErr)
 			}
 			return d.advanceCompound(parentOrderID, dispatched)
@@ -1087,9 +1087,6 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 	// hand rolled back, and the occupancy row is the winner's (commitToFleet
 	// releases it only on a non-CAS failure, so a lost CAS cannot let the next
 	// leg read the winner's lane as empty).
-	//
-	// It used to be a separate `pending → sourcing` claim ahead of the hand. C1
-	// took the rung out of the ladder; the hand's CAS was always the last word.
 	log.Printf("dispatch: advancing compound order %d, step %d (seq %d)", parentOrderID, next.ID, next.Sequence)
 
 	// Build a synthetic envelope for the child dispatch
@@ -1105,7 +1102,7 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 		// split exists to avoid — so it takes the config-fault disposition every
 		// other unresolvable node on this path takes, naming the lane.
 		if errors.Is(err, ErrNoDwellSlot) {
-			if dbErr := d.db.FailOrderAtomic(next.ID, configFailure("dwell slot", next.SourceNode)); dbErr != nil {
+			if dbErr := d.db.FailOrderAtomic(next.ID, dplan.ConfigFailure("dwell slot", next.SourceNode)); dbErr != nil {
 				log.Printf("dispatch: atomic fail child order %d: %v", next.ID, dbErr)
 			}
 			return d.advanceCompound(parentOrderID, dispatched)

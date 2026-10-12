@@ -48,14 +48,13 @@ type PLCHealth struct {
 
 // ManagedPLC tracks per-PLC state from WarLink discovery.
 type ManagedPLC struct {
-	Name        string
-	Status      string
-	Error       string
-	ProductName string // from status-change
-	Vendor      string // from status-change
-	Values      map[string]TagValue
-	Health      *PLCHealth // nil until first health event
-	mu          lockcheck.RWMutex[lockorder.ManagedPLC]
+	Name   string
+	Status string
+	Error  string
+	Vendor string // from status-change
+	Values map[string]TagValue
+	Health *PLCHealth // nil until first health event
+	mu     lockcheck.RWMutex[lockorder.ManagedPLC]
 }
 
 // newManagedPLC builds a PLC entry with a SAFE DEFAULT STATUS.

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingocore/dispatch/plan"
 )
 
 // N1-c — a leg may name the payload its bin selection resolves against.
@@ -25,8 +26,8 @@ func TestStepPayload_StepOverridesTheOrder(t *testing.T) {
 		Empty:       true,
 		PayloadCode: "PANEL-C",
 	}
-	if got := stepPayload(step, "PANEL-A"); got != "PANEL-C" {
-		t.Errorf("stepPayload = %q, want the STEP's PANEL-C.\n"+
+	if got := plan.StepPayload(step, "PANEL-A"); got != "PANEL-C" {
+		t.Errorf("plan.StepPayload = %q, want the STEP's PANEL-C.\n"+
 			"The order carries the outgoing style's payload by necessity; the refill leg has to "+
 			"be able to say it is for the incoming one, or the press gets the carrier type it is "+
 			"leaving.", got)
@@ -38,12 +39,12 @@ func TestStepPayload_StepOverridesTheOrder(t *testing.T) {
 func TestStepPayload_SilentStepUsesTheOrder(t *testing.T) {
 	t.Parallel()
 	step := protocol.ComplexOrderStep{Action: protocol.ActionPickup, Node: "MARKET"}
-	if got := stepPayload(step, "PANEL-A"); got != "PANEL-A" {
-		t.Errorf("stepPayload = %q, want the order's PANEL-A — a step that names no payload "+
+	if got := plan.StepPayload(step, "PANEL-A"); got != "PANEL-A" {
+		t.Errorf("plan.StepPayload = %q, want the order's PANEL-A — a step that names no payload "+
 			"must resolve exactly as it did before this field existed", got)
 	}
-	if got := stepPayload(step, ""); got != "" {
-		t.Errorf("stepPayload = %q, want empty — an order with no payload and a step with none "+
+	if got := plan.StepPayload(step, ""); got != "" {
+		t.Errorf("plan.StepPayload = %q, want empty — an order with no payload and a step with none "+
 			"has nothing to resolve against, and inventing one here would be a guess", got)
 	}
 }
@@ -88,9 +89,9 @@ func TestResolvedStep_CarriesPayloadThroughReplay(t *testing.T) {
 		Action: got[0].Action, Node: got[0].Node, Empty: got[0].Empty,
 		PayloadCode: got[0].PayloadCode, ExclusiveSlot: got[0].ExclusiveSlot,
 	}
-	if stepPayload(replayed, "PANEL-A") != "PANEL-C" {
+	if plan.StepPayload(replayed, "PANEL-A") != "PANEL-C" {
 		t.Errorf("after a replay the leg resolves against the order's payload again — "+
-			"got %q, want the leg's PANEL-C", stepPayload(replayed, "PANEL-A"))
+			"got %q, want the leg's PANEL-C", plan.StepPayload(replayed, "PANEL-A"))
 	}
 }
 
@@ -128,8 +129,8 @@ func TestResolvedStepPayload_TheStepWinsOverTheOrder(t *testing.T) {
 	// The two spellings of this rule must not drift: the wire form and the
 	// resolved form are the same decision on either side of a replay.
 	wire := protocol.ComplexOrderStep{Node: "MARKET", PayloadCode: "INCOMING"}
-	if stepPayload(wire, "OUTGOING") != resolvedStepPayload(withOwn, "OUTGOING") {
-		t.Error("stepPayload and resolvedStepPayload disagree — they are one rule written twice, " +
+	if plan.StepPayload(wire, "OUTGOING") != resolvedStepPayload(withOwn, "OUTGOING") {
+		t.Error("plan.StepPayload and resolvedStepPayload disagree — they are one rule written twice, " +
 			"and a replay crosses between them")
 	}
 }

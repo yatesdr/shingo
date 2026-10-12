@@ -4,18 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"shingocore/dispatch/plan"
 
 	"shingo/protocol"
-	binsstore "shingocore/store/bins"
 	"shingocore/store/orders"
 )
-
-// emptyBinsOnly is the planner's EmptyBinsOnly (plan/verdict.go), kept under
-// its dispatch name for the complex allocator.
-func emptyBinsOnly(candidates []*binsstore.Bin) []*binsstore.Bin {
-	return plan.EmptyBinsOnly(candidates)
-}
 
 // PlannedBinDestinations is the ONE derivation of "where is each of this order's
 // bins due to end up", exported for callers outside this package.

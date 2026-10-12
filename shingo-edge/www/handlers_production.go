@@ -320,7 +320,6 @@ func buildLinesideRows(eng ServiceAccess) []linesideBucketRow {
 		for _, b := range buckets {
 			row := linesideBucketRow{
 				BucketID:    b.ID,
-				NodeID:      n.ID,
 				NodeName:    n.Name,
 				ProcessName: processName[n.ProcessID],
 				PayloadCode: b.PayloadCode,

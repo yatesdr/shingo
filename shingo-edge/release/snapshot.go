@@ -184,7 +184,6 @@ type Material struct {
 	NodeName      string
 	Qty           int64
 	ClaimResolved bool // the node's claim, or the door's fallback
-	ClaimNode     string
 	OutboundDest  string
 
 	// NeedCurtain

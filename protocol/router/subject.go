@@ -100,16 +100,6 @@ func (r *SubjectRouter) Dispatch(env *protocol.Envelope, data *protocol.Data) {
 	invokeSubjectChain(env, data, handler, chain)
 }
 
-// Subjects returns the set of registered subjects in arbitrary order.
-// Used by startup assertions.
-func (r *SubjectRouter) Subjects() []string {
-	keys := make([]string, 0, len(r.routes))
-	for k := range r.routes {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
 // Has reports whether a handler is registered for the given subject.
 func (r *SubjectRouter) Has(subject string) bool {
 	_, ok := r.routes[subject]

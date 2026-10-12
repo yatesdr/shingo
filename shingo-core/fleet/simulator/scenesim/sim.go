@@ -250,12 +250,6 @@ func (s *Sim) SetRobotApproach(robotID string, hops int) {
 	}
 }
 
-// SetFlags overrides the vendor-unknown flag defaults (for the soak matrix).
-func (s *Sim) SetFlags(f Flags) { s.flags = f }
-
-// Flags returns the current vendor-unknown flag settings.
-func (s *Sim) Flags() Flags { return s.flags }
-
 // PlaceBin marks a slot as already holding a bin at scene setup (pre-seeded
 // inventory), so reachability/packing start from a real lane state.
 func (s *Sim) PlaceBin(slot string) { s.bins[slot] = true }
@@ -265,16 +259,6 @@ func (s *Sim) PlaceBin(slot string) { s.bins[slot] = true }
 // PLACEMENT signal — the physical event Core observes as a dropoff block reaching
 // FINISHED, and therefore the moment a store stops blocking the lane behind it.
 func (s *Sim) HasBin(slot string) bool { return s.bins[slot] }
-
-// Carrying reports whether a robot is holding a bin between its pickup and
-// dropoff — the harness's outbound state. A retrieve robot is carrying from the
-// tick it picks up at the lane slot until it sets the bin down at its destination.
-func (s *Sim) Carrying(robotID string) bool {
-	if r := s.robots[robotID]; r != nil {
-		return r.carrying
-	}
-	return false
-}
 
 // OrderActive reports whether an order is still being executed by some robot —
 // the harness's COMPLETION signal, and the counterpart to HasBin. The gap between

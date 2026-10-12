@@ -19,23 +19,12 @@ import (
 // a decision: the pair's pass and the leg it hands the planner (pairPass), the
 // stage-1 order, the in-flight half each asker asks of its own predicate, the
 // stamp written onto the persisted plan, the INFO line the deploy check counts,
-// and the release fence (U5). The spellings below that name a planner function
-// are its callers' names for it, one line each.
+// and the release fence (U5).
 
 // vacateStamp is the planner's grant record (plan.Vacate).
 type vacateStamp = plan.Vacate
 
-func stampHonoured(s resolvedStep) *vacateStamp { return plan.StampHonoured(s) }
-func partnerStamp(s resolvedStep) *vacateStamp  { return plan.PartnerStamp(s) }
-
-func committedAtDispatch(steps []resolvedStep, i int, isLaneNode func(string) bool) bool {
-	return plan.CommittedAtDispatch(steps, i, isLaneNode)
-}
-func heldForRelease(steps []resolvedStep, i int) bool { return plan.HeldForRelease(steps, i) }
-func liftsBeforeFirstWait(steps []resolvedStep) bool  { return plan.LiftsBeforeFirstWait(steps) }
-func partnerLiftsResident(steps []resolvedStep, k int, node string) bool {
-	return plan.PartnerLiftsResident(steps, k, node)
-}
+func partnerStamp(s resolvedStep) *vacateStamp { return plan.PartnerStamp(s) }
 
 // pairPass is what the leg that ran first in stage 1 hands the leg after it:
 // its THIS-PASS resolved steps and the bins it claimed. Never re-read from the
@@ -67,7 +56,7 @@ func stageOneOrder(legs []*orders.Order) []*orders.Order {
 	lifts := make(map[int64]bool, len(out))
 	for _, l := range out {
 		if steps, ok := decodeSteps(l.StepsJSON); ok {
-			lifts[l.ID] = liftsBeforeFirstWait(steps)
+			lifts[l.ID] = plan.LiftsBeforeFirstWait(steps)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return lifts[out[i].ID] && !lifts[out[j].ID] })

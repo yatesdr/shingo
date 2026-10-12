@@ -1641,8 +1641,7 @@ func ListActiveBySourceRef(db *sql.DB, names []string) ([]*Order, error) {
 //
 // `pending` is in it because every order is born there (v4 §2.6, C1). A
 // compound child is NOT: a dig leg rests `pending` for its whole pre-dispatch
-// life and is dispatched by the compound machinery, never the scanner (S7). The
-// scanner used to skip legs in Go; the clause moves that skip into the query.
+// life and is dispatched by the compound machinery, never the scanner (S7).
 func ListAcquiring(db *sql.DB) ([]*Order, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status IN (%s) AND parent_order_id IS NULL ORDER BY %s`,
 		SelectCols, protocol.AcquiringStatusSQLList(), DemandRankOrderBySQL()))

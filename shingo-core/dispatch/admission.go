@@ -238,7 +238,7 @@ func (v GateVerdict) Cause() QueueCause { return v.cause }
 // the name reachable, and a refusal that cannot say WHERE is a worse refusal.
 func (v GateVerdict) Lane() string { return v.lane }
 
-// Admitted, Refused and RefusedAt are the only ways to build a verdict, so
+// Admitted, RefusedAt and RefusedBy are the only ways to build a verdict, so
 // "admitted" is never spelled as a bare struct literal at a call site where a
 // future field would silently default. The zero value stays a valid
 // refusal-without-cause, which is what makes forgetting safe.
@@ -246,16 +246,15 @@ func (v GateVerdict) Lane() string { return v.lane }
 // Exported because the fulfillment Dispatcher interface returns this type, so
 // anything implementing that interface — including its test doubles — has to be
 // able to build one. That is a requirement of the boundary, not a concession.
-func Admitted() GateVerdict            { return GateVerdict{admitted: true} }
-func Refused(c QueueCause) GateVerdict { return GateVerdict{cause: c} }
+func Admitted() GateVerdict { return GateVerdict{admitted: true} }
 
-// RefusedAt is Refused plus the lane that did the refusing.
+// RefusedAt is a refusal with its cause and the lane that did the refusing.
 func RefusedAt(c QueueCause, laneName string) GateVerdict {
 	return GateVerdict{cause: c, lane: laneName}
 }
 
-// RefusedBy is Refused plus the order the refusal waits behind (C2b F5): the
-// one whose own event releases it.
+// RefusedBy is a refusal with its cause and the order it waits behind: the one
+// whose own event releases it.
 func RefusedBy(c QueueCause, blocker int64) GateVerdict {
 	return GateVerdict{cause: c, blocker: blocker}
 }

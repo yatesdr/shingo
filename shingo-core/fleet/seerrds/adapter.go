@@ -318,7 +318,6 @@ func (a *Adapter) GetNodeOccupancy(groups ...string) ([]fleet.OccupancyDetail, e
 		result[i] = fleet.OccupancyDetail{
 			ID:       b.ID,
 			Occupied: b.Filled,
-			Holder:   b.Holder,
 			Status:   b.Status,
 		}
 	}
@@ -445,7 +444,6 @@ func (a *Adapter) CheckLocationTasks(locations []string) ([]fleet.LocationTasks,
 		out = append(out, fleet.LocationTasks{
 			Location:  r.ID,
 			Exists:    r.Exist,
-			Valid:     r.Valid,
 			TaskNames: r.Status.TaskNames(), // nil-safe: Status is nil when the bin doesn't exist
 		})
 	}

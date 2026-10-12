@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingocore/dispatch/plan"
 	"shingocore/store/orders"
 )
 
@@ -62,7 +63,7 @@ func TestCommittedAtDispatch(t *testing.T) {
 		{"out of range", vsSupply("B1"), 9, noLane, false},
 	}
 	for _, c := range cases {
-		if got := committedAtDispatch(c.steps, c.i, c.lane); got != c.want {
+		if got := plan.CommittedAtDispatch(c.steps, c.i, c.lane); got != c.want {
 			t.Errorf("%s: committedAtDispatch = %v, want %v", c.name, got, c.want)
 		}
 	}
@@ -72,17 +73,17 @@ func TestCommittedAtDispatch(t *testing.T) {
 func TestHeldForRelease(t *testing.T) {
 	t.Parallel()
 	evac := []resolvedStep{vsStation("LINE"), vsPick("LINE"), vsDrop("B1")}
-	if !heldForRelease(evac, 2) {
+	if !plan.HeldForRelease(evac, 2) {
 		t.Error("an evac's drop after its station wait must be held for release")
 	}
 	// P6 / P16: L has no station wait before its drop.
-	if heldForRelease([]resolvedStep{vsPick("LINE"), vsDrop("B1")}, 1) {
+	if plan.HeldForRelease([]resolvedStep{vsPick("LINE"), vsDrop("B1")}, 1) {
 		t.Error("a leg with no wait is never a (b) dropper — nothing holds its drop for the fence")
 	}
-	if heldForRelease([]resolvedStep{vsLane("G"), vsPick("LINE"), vsDrop("B1")}, 2) {
+	if plan.HeldForRelease([]resolvedStep{vsLane("G"), vsPick("LINE"), vsDrop("B1")}, 2) {
 		t.Error("a LANE wait is Core's, not the station's: it does not hold the drop for a release")
 	}
-	if heldForRelease([]resolvedStep{vsPick("LINE"), vsDrop("B1"), vsStation("X")}, 1) {
+	if plan.HeldForRelease([]resolvedStep{vsPick("LINE"), vsDrop("B1"), vsStation("X")}, 1) {
 		t.Error("a station wait AFTER the drop does not hold it")
 	}
 }
@@ -93,7 +94,7 @@ func TestHeldForRelease(t *testing.T) {
 // a (b) dropper, and that change must be seen, not discovered.
 func TestHeldForRelease_UntaggedWait(t *testing.T) {
 	t.Parallel()
-	if !heldForRelease([]resolvedStep{vsWait("LINE"), vsPick("LINE"), vsDrop("B1")}, 2) {
+	if !plan.HeldForRelease([]resolvedStep{vsWait("LINE"), vsPick("LINE"), vsDrop("B1")}, 2) {
 		t.Fatal("an UNTAGGED wait no longer holds a drop for release. If the drain window closed on " +
 			"purpose, every pre-ruling plan just stopped qualifying for the vacated-slot rule — decide " +
 			"that, then update this pin")
@@ -105,18 +106,18 @@ func TestStampHonoured_OnlyWhileTheStepStillDropsThere(t *testing.T) {
 	t.Parallel()
 	st := &vacateStamp{Node: "B1", Bin: 7, Partner: 3}
 	s := resolvedStep{Action: protocol.ActionDropoff, Node: "B1", Vacate: st}
-	if stampHonoured(s) == nil || partnerStamp(s) == nil {
+	if plan.StampHonoured(s) == nil || partnerStamp(s) == nil {
 		t.Fatal("a stamp on the drop it was granted for must count")
 	}
 	s.Node = "B2" // re-pointed by a writer that forgot to clear it
-	if stampHonoured(s) != nil || partnerStamp(s) != nil {
+	if plan.StampHonoured(s) != nil || partnerStamp(s) != nil {
 		t.Fatal("a stamp left on a re-pointed drop still counted — the self-check is the guarantee")
 	}
 	own := resolvedStep{Action: protocol.ActionDropoff, Node: "B1", Vacate: &vacateStamp{Node: "B1", Bin: 7}}
-	if stampHonoured(own) == nil || partnerStamp(own) != nil {
+	if plan.StampHonoured(own) == nil || partnerStamp(own) != nil {
 		t.Fatal("an own-lift stamp counts for the gates but never for the release fence")
 	}
-	if stampHonoured(resolvedStep{Action: protocol.ActionPickup, Node: "B1", Vacate: st}) != nil {
+	if plan.StampHonoured(resolvedStep{Action: protocol.ActionPickup, Node: "B1", Vacate: st}) != nil {
 		t.Fatal("a stamp only means something on a dropoff")
 	}
 }
@@ -150,10 +151,10 @@ func mustJSON(t *testing.T, v any) []byte {
 func TestPartnerLiftsResident_ReCollectIsNotAVacate(t *testing.T) {
 	t.Parallel()
 	recollect := []resolvedStep{vsPick("SRC"), vsDrop("N"), vsPick("N"), vsDrop("S"), vsWait("S")}
-	if partnerLiftsResident(recollect, 2, "N") {
+	if plan.PartnerLiftsResident(recollect, 2, "N") {
 		t.Fatal("a re-collect of the partner's own carrier was counted as emptying N")
 	}
-	if !partnerLiftsResident(vsSupply("N"), 0, "N") {
+	if !plan.PartnerLiftsResident(vsSupply("N"), 0, "N") {
 		t.Fatal("a plain lift of N's resident must count")
 	}
 }
@@ -194,13 +195,6 @@ func TestVacatedSlotBoundaryPredicatesStayNamed(t *testing.T) {
 	for _, call := range []string{"CommittedAtDispatch(", "HeldForRelease("} {
 		if !strings.Contains(rule, call) {
 			t.Errorf("Planner.Vacated no longer asks %s — the rule has grown a second spelling of its boundary", call)
-		}
-	}
-	disp := readRepoFile(t, filepath.Join("shingo-core", "dispatch", "vacated_slot.go"))
-	for _, name := range []string{"committedAtDispatch", "heldForRelease"} {
-		body := funcBody(t, disp, "func "+name+"(")
-		if !strings.Contains(body, "plan."+strings.ToUpper(name[:1])+name[1:]+"(") {
-			t.Errorf("dispatch's %s is not the planner's — a second spelling of the boundary", name)
 		}
 	}
 }

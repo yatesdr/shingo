@@ -141,10 +141,6 @@ func GenerateMessageID(prefix string) string {
 	return fmt.Sprintf("<%s-%s-%s@shingo>", prefix, ts, hex.EncodeToString(b))
 }
 
-func FormatMessage(from string, to []string, subject, body string) string {
-	return formatMessage(from, to, subject, body)
-}
-
 func formatMessage(from string, to []string, subject, body string, opts ...SendOption) string {
 	var o sendOptions
 	for _, fn := range opts {

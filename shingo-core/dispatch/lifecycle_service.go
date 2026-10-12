@@ -374,7 +374,7 @@ func (s *LifecycleService) binTypeAtIntake(order *orders.Order) binresolver.BinT
 			return binresolver.KnownBinType(bin.BinTypeID)
 		}
 	}
-	if id := binTypeAtNode(s.db, order.SourceNode); id != nil {
+	if id := plan.BinTypeAtNode(s.db, order.SourceNode); id != nil {
 		return binresolver.KnownBinType(*id)
 	}
 	return binresolver.UnknownBinType(fmt.Sprintf(
@@ -681,12 +681,6 @@ func (s *LifecycleService) PrepareRedirect(order *orders.Order, newDeliveryNode 
 	// No status write: the redirect gate admits only a pre-dispatch order, which
 	// is already `pending` or `queued`, and its hand takes it to `dispatched`.
 	return sourceNode, newDest, nil
-}
-
-// OverflowGroupOf is plan.OverflowGroupOf, the one lookup of a group's overflow,
-// for the engine's cancel-return policy.
-func OverflowGroupOf(db plan.OverflowReader, group *nodes.Node) (*nodes.Node, string) {
-	return plan.OverflowGroupOf(db, group)
 }
 
 // tryOverflow resolves a maintained group's configured overflow destination.

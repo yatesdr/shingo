@@ -90,8 +90,6 @@ type releaseAct struct {
 	departs         map[int64]bool             // by order id: releasing it takes a produce bin away
 }
 
-func newReleaseAct() *releaseAct { return &releaseAct{} }
-
 func (e *Engine) newAct(origin release.Origin, node int64, calledBy string) *releaseAct {
 	return &releaseAct{Act: release.Act{Origin: origin, Node: node, CalledBy: calledBy}}
 }
@@ -349,7 +347,7 @@ func (e *Engine) resolveReleaseClaim(node *processes.Node, runtime *processes.Ru
 	return claim, nil
 }
 
-// isSupplyOrderInTwoRobotSwap reports whether the given order is the supply
+// isSupplyLeg reports whether the given order is the supply
 // leg of a two-robot swap pair: a durable sibling link, a two-robot mode, and
 // a leg that LEAVES A BIN at this node (release.Facts.PlacesBinAt) — the bin's
 // resting place, not the robot's, and never order.DeliveryNode (press-index R1
@@ -357,10 +355,6 @@ func (e *Engine) resolveReleaseClaim(node *processes.Node, runtime *processes.Ru
 //
 // An unreadable leg is an error, not a guess: false means EVAC, the branch
 // that wipes the manifest, and that is the ALN_002 incident class.
-func (e *Engine) isSupplyOrderInTwoRobotSwap(order *storeorders.Order, node *processes.Node, claim *processes.NodeClaim) (bool, error) {
-	return e.isSupplyLeg(nil, order, node, claim)
-}
-
 func (e *Engine) isSupplyLeg(act *releaseAct, order *storeorders.Order, node *processes.Node, claim *processes.NodeClaim) (bool, error) {
 	if order == nil || node == nil || claim == nil {
 		return false, nil
@@ -894,7 +888,7 @@ func (e *Engine) loadMaterial(act *releaseAct, ml *materialLoad, need release.Ne
 		}
 		ml.claim = claim
 		if claim != nil {
-			s.ClaimResolved, s.ClaimNode, s.OutboundDest = true, claim.CoreNodeName, claim.OutboundDestination
+			s.ClaimResolved, s.OutboundDest = true, claim.OutboundDestination
 		}
 	case release.NeedCurtain:
 		s.Curtain = e.curtainForNode(act, ml.claim.CoreNodeName)

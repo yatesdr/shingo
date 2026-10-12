@@ -231,12 +231,10 @@ type BindingRow struct {
 	Payload string
 	Node    Cell
 
-	// Age is the binding's measured age; AgeKnown says whether it is knowable.
-	// AgeCell carries the rendering: a value when known, no-data when the audit
-	// trail holds no boundary for this carrier.
-	Age      time.Duration
-	AgeKnown bool
-	AgeCell  Cell
+	// Age is the binding's measured age. AgeCell carries the rendering: a value
+	// when known, no-data when the audit trail holds no boundary for this carrier.
+	Age     time.Duration
+	AgeCell Cell
 
 	// BoundAt is the boundary row's timestamp, printed beside the age so the
 	// reading is checkable against bin_uop_ledger rather than merely asserted.
@@ -376,12 +374,11 @@ func BuildBindingRows(cs []domain.CarrierBinding, now time.Time, k config.Displa
 
 func buildBindingRow(c domain.CarrierBinding, age time.Duration, known bool, k config.DisplayConfig) BindingRow {
 	r := BindingRow{
-		BinID:    c.BinID,
-		Label:    c.Label,
-		Payload:  c.PayloadCode,
-		Age:      age,
-		AgeKnown: known,
-		Ledger:   c.UOPRemaining,
+		BinID:   c.BinID,
+		Label:   c.Label,
+		Payload: c.PayloadCode,
+		Age:     age,
+		Ledger:  c.UOPRemaining,
 		// The ledger is NOT NULL on every carrier, so it is always a measurement.
 		// Zero prints as zero and a negative prints with its sign — the doctrine's
 		// "a real measured zero stays 0, plainly".

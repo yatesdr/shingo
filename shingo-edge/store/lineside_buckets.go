@@ -6,12 +6,6 @@ package store
 
 import "shingoedge/store/lineside"
 
-// Pile states re-exported for callers outside the store package.
-const (
-	LinesideStateActive   = lineside.StateActive
-	LinesideStateStranded = lineside.StateStranded
-)
-
 // GetLinesideBucket returns one pile by id.
 func (db *DB) GetLinesideBucket(id int64) (*lineside.Bucket, error) {
 	return lineside.GetByID(db.DB, id)

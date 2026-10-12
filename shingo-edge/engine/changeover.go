@@ -581,17 +581,6 @@ const (
 	NotDrained
 )
 
-func (d DrainState) String() string {
-	switch d {
-	case Drained:
-		return "drained"
-	case NotDrained:
-		return "not drained"
-	default:
-		return "unknown"
-	}
-}
-
 // ApplyReuseCompatibleBinsShortcut rewrites Swap / Evacuate diffs to
 // Unchanged when the from-claim is press-index, both claims are PRODUCE, the
 // to-claim shares the same payload, AND the physical bin at the node is

@@ -353,7 +353,6 @@ func (m *Manager) handleSSEStatusChange(data string) {
 	oldStatus := mp.Status
 	mp.Status = normalized
 	mp.Error = status.Error
-	mp.ProductName = status.ProductName
 	mp.Vendor = status.Vendor
 	mp.mu.Unlock()
 

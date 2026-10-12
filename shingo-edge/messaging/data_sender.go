@@ -11,8 +11,6 @@ type DataSender struct {
 	client *Client
 	topic  string
 	stopCh <-chan struct{}
-
-	DebugLog DebugLogFunc
 }
 
 func NewDataSender(client *Client, topic string, stopCh <-chan struct{}) *DataSender {

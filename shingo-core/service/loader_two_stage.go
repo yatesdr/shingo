@@ -38,10 +38,6 @@ import (
 // BareMarkerSuffix names the bare marker derived from a carrier type.
 const BareMarkerSuffix = bins.BareMarkerSuffix
 
-// ErrBareMarkerTaken refuses a derived marker code that already names a type
-// that is not bare, which would make stage 1 stamp an ordinary empty.
-var ErrBareMarkerTaken = bins.ErrBareMarkerTaken
-
 // ErrWindowInAnotherGroup refuses a window Core would have to take out of the
 // group it already stands in: a stage-1 window, or a stage-2 window of a direct
 // pair. Core parents those into a group of its own, and a node has one parent:

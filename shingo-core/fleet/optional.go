@@ -39,13 +39,12 @@ type RobotGroupLister interface {
 // LocationTasks reports the binTask actions configured at one storage location,
 // as returned by a fleet backend's location/bin check (SEER /binCheck). TaskNames
 // is the set of binTask action names valid at Location — empty when the location
-// exists but has none, or when it doesn't exist. Exists/Valid mirror the vendor's
-// per-location existence + validity flags so callers can tell "no such location"
+// exists but has none, or when it doesn't exist. Exists mirrors the vendor's
+// per-location existence flag so callers can tell "no such location"
 // (couldn't verify) apart from "location present but missing a key" (a hard fail).
 type LocationTasks struct {
 	Location  string
 	Exists    bool
-	Valid     bool
 	TaskNames []string
 }
 
@@ -332,7 +331,6 @@ func (r RobotStatus) State() string {
 type OccupancyDetail struct {
 	ID       string
 	Occupied bool
-	Holder   int
 	Status   int
 }
 

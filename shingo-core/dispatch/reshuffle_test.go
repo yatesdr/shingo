@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingocore/dispatch/plan"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
@@ -633,7 +634,7 @@ func TestAdvanceCompoundOrder_FailedParentEmitsOrderFailed(t *testing.T) {
 		StationID:     parent.StationID,
 		OrderType:     OrderTypeMove,
 		Status:        StatusFailed,
-		ErrorDetail:   configFailure("source node", "NOBODY-CONFIGURED-THIS"),
+		ErrorDetail:   plan.ConfigFailure("source node", "NOBODY-CONFIGURED-THIS"),
 		ParentOrderID: &parent.ID,
 		Sequence:      1,
 		SourceNode:    lineNode.Name,

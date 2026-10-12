@@ -1035,7 +1035,6 @@ type DeclaredWaitPopulation struct {
 	Population string
 	Redriver   string
 	Events     []string
-	Floor      string
 	// Owner lets the subscription cross-check skip the station-owned population
 	// honestly rather than by name. Its releaser is a WIRE message the station
 	// sends, handled in the messaging layer — there is no eventbus subscription
@@ -1053,7 +1052,6 @@ func DeclaredWaitPopulations() []DeclaredWaitPopulation {
 			Population: string(p.population),
 			Redriver:   p.redriver,
 			Events:     append([]string(nil), p.events...),
-			Floor:      p.floor,
 			Owner:      string(p.owner),
 		})
 	}

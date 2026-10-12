@@ -145,7 +145,6 @@ const NodeNotASeatSQL = `COALESCE((SELECT n.is_synthetic OR left(n.name, 1) = '_
 // place no station binds at, where no landing is sent.
 type Placed struct {
 	BinID       int64
-	NodeID      int64
 	NodeName    string
 	NotASeat    bool
 	PlacedSeq   int64
@@ -192,7 +191,7 @@ func PlaceBinTx(tx *sql.Tx, p BinPlacement) (Placed, error) {
 	//    the placement stamp rides this statement, +0). An arrival ends the
 	//    lift's window: lifted_at clears here (Lane H, D11 (ii)), so a late
 	//    window of the lifted generation is judged by the stale guard again.
-	placed := Placed{BinID: p.BinID, NodeID: p.ToNodeID, Evicted: evicted}
+	placed := Placed{BinID: p.BinID, Evicted: evicted}
 	if err := ScanPlaced(tx.QueryRow(
 		`UPDATE bins SET node_id=$1, lifted_at=NULL, updated_at=NOW() WHERE id=$2 `+ArrivalReturningSQL, p.ToNodeID, p.BinID), &placed); err != nil {
 		return Placed{}, fmt.Errorf("move bin %d: %w", p.BinID, err)

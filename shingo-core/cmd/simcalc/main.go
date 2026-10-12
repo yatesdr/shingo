@@ -100,7 +100,6 @@ type flow struct {
 type procClass struct {
 	hasProduce bool
 	hasConsume bool
-	hasTick    bool     // has any non-manual claim (carries a counter)
 	produces   []string // payloads it produces (tick, active-pull)
 }
 
@@ -271,7 +270,6 @@ func classify(plant *plantspec.Plant) map[string]*procClass {
 			pc = &procClass{}
 			cls[proc] = pc
 		}
-		pc.hasTick = true
 		if !c.IsActivePull() {
 			continue
 		}

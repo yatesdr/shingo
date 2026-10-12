@@ -413,9 +413,6 @@ func NewSegmentIndex(segments []Segment) *SegmentIndex {
 	return ix
 }
 
-// Len reports how many segments the index holds.
-func (ix *SegmentIndex) Len() int { return len(ix.segments) }
-
 // MaxDeviation is the scene's worst curve-to-chord departure, in metres. It
 // is the number that says how wrong a chord-based snap would be: 1.302 m at
 // Springfield, on LM10-LM113.

@@ -25,7 +25,7 @@ import (
 //     other type holds the leg; a bin stamped with another part holds it;
 //   - an Empty pickup drops the part (allocator.go: claimPayload = "") and with
 //     it the carrier rule, so it takes an empty of ANY type — and it still
-//     refuses a stamped empty, because emptyBinsOnly keeps only a blank
+//     refuses a stamped empty, because plan.EmptyBinsOnly keeps only a blank
 //     payload code. Empty does not rescue a stamped carrier.
 //
 // A payload that declares no carrier types states no bin-type intent, so every

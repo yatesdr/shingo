@@ -480,7 +480,7 @@ func TestReserveFillerLegWithEmptySourceHoldsNotMoot(t *testing.T) {
 // This is the exact contrast to TestReserveMootWhenAllSourcesEmpty (empty node → moot).
 //
 // The sibling hold case — a group/NGRP-scoped need that can't resolve (a momentarily-
-// empty supermarket) — is structurally UNREACHABLE at the reserve: reResolveComplexSteps
+// empty supermarket) — is structurally UNREACHABLE at the reserve: reResolveComplexStepsFor
 // runs first (complex_dispatch.go:269) and returns on ResolutionCapacity
 // (complex_dispatch.go:281-289) BEFORE reserveComplexPlan (complex_dispatch.go:453),
 // so the reserve only ever sees concrete nodes. Pinning (a) alone covers the reserve's

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingocore/dispatch/plan"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -43,14 +44,14 @@ func TestReadFailed_SeparatesAbsenceFromFailure(t *testing.T) {
 func TestConfigFailure_SaysWhatToGoAndFix(t *testing.T) {
 	t.Parallel()
 
-	got := configFailure("lane node", "SMN_008")
+	got := plan.ConfigFailure("lane node", "SMN_008")
 	for _, want := range []string{"config failure", "lane node", "SMN_008", "does not exist"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("message %q is missing %q — it has to say whose problem it is, what sort of "+
 				"thing is missing, and which one", got, want)
 		}
 	}
-	if id := configFailureID("lane node", 47); !strings.Contains(id, "47") {
+	if id := plan.ConfigFailureID("lane node", 47); !strings.Contains(id, "47") {
 		t.Errorf("id form %q does not name the id; a message that cannot answer \"which lane?\" "+
 			"sends someone to read logs instead of fixing the configuration", id)
 	}
@@ -80,7 +81,7 @@ func TestReadFailure_IsTransientAndCarriesItsOwnCause(t *testing.T) {
 
 	// The genuinely-missing arm stays terminal, and terminal it must be: no retry
 	// invents a node that was never configured.
-	missing := &planningError{Code: codeInvalidNode, Detail: configFailure("lane node", "NOPE")}
+	missing := &planningError{Code: codeInvalidNode, Detail: plan.ConfigFailure("lane node", "NOPE")}
 	if missing.Transient() {
 		t.Error("a nonexistent node parks and retries forever — the config is wrong and nothing but " +
 			"a human will change it")

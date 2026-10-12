@@ -18,10 +18,6 @@ import (
 // directly.
 type InventoryDeltaService = uop.InventoryDeltaService
 
-// InventoryInvariant: the same alias re-export for the value type
-// SumInvariant returns.
-type InventoryInvariant = uop.InventoryInvariant
-
 // ErrInventoryDeltaSkipped re-exports the canonical sentinel error
 // from uop. Callers comparing via errors.Is keep working unchanged.
 var ErrInventoryDeltaSkipped = uop.ErrInventoryDeltaSkipped

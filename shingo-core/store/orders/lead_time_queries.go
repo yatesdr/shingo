@@ -102,15 +102,11 @@ func CountCompletedOrdersInWindow(db *sql.DB, orderType, terminalStatus, payload
 	return n, nil
 }
 
-// DwellPair / DwellStat / FlowDwellPairs: see domain/telemetry.go.
+// DwellPair / DwellStat: see domain/telemetry.go.
 type (
 	DwellPair = domain.DwellPair
 	DwellStat = domain.DwellStat
 )
-
-// FlowDwellPairs is the standard dwell set — re-exported so callers of this
-// package don't need to import domain for the common case.
-func FlowDwellPairs() []DwellPair { return domain.FlowDwellPairs() }
 
 // DwellStats returns p50, p95 and a sample count for each requested transition
 // over the window. payloadCode / orderType "" mean "all".

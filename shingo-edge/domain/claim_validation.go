@@ -331,15 +331,6 @@ func NewClaimContextSet(in ClaimContextInput) ClaimContextSet {
 // store writes that follow the validation.
 func (s ClaimContextSet) Kinds() CoreNodeKinds { return s.kinds }
 
-// Checked reports whether the set resolved. Callers log the empty-plant-map
-// case off this plus KnownScenePoints.
-func (s ClaimContextSet) Checked() bool { return s.checked }
-
-// KnownScenePoints is the vendor map's point set, so a caller can say when it
-// was empty — the one thing worth a line, because a key route saved against
-// no map is saved unverified.
-func (s ClaimContextSet) KnownScenePoints() map[string]bool { return s.scenePoints }
-
 // ForNode is the per-cell context ValidateNodeClaim takes.
 func (s ClaimContextSet) ForNode(coreNodeName string) ClaimNodeContext {
 	if !s.checked || coreNodeName == "" {

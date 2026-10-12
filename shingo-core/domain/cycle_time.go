@@ -260,8 +260,7 @@ type CycleStats struct {
 
 	// Spread is P90 - Median: a ROBUST dispersion estimate taken from the key's
 	// own history, with no mean anywhere in it. See CycleTailCut.
-	Spread     time.Duration
-	HaveSpread bool
+	Spread time.Duration
 
 	// TailCut is where a gap stops being a slow cycle and starts being a stop.
 	// TailCount and TailShare are the gaps at or past it.
@@ -427,7 +426,6 @@ func SummarizeCycles(s CycleSeries, minSamples int, spreadMultiple, bandWidth fl
 		st.HaveTailQuantiles = true
 
 		st.Spread = st.P90 - st.Median
-		st.HaveSpread = st.Spread > 0
 
 		st.TailCut, st.HaveTail, st.TailReason = CycleTailCut(st.Median, st.P90, spreadMultiple)
 		if st.HaveTail {

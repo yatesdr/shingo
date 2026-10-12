@@ -16,23 +16,20 @@ import "fmt"
 //
 // WHY THIS EXISTS. Seven queries across six files hand-rolled a recursive CTE
 // over nodes.parent_id, and a reader checking whether two of them agreed had to
-// diff SQL by eye. They did not all agree — see the THREE walks below, which are
-// three different questions that were all being spelled "WITH RECURSIVE
-// descendants" or "WITH RECURSIVE ancestors". Naming them separately is most of
-// the value here; the deduplication is the smaller half.
+// diff SQL by eye. They did not all agree: different questions were all being
+// spelled "WITH RECURSIVE descendants" or "WITH RECURSIVE ancestors". Naming them
+// separately is most of the value here; the deduplication is the smaller half.
 //
-// THREE WALKS, NOT ONE, AND THE DIFFERENCE IS LOAD-BEARING:
+// THE WALKS ARE DIFFERENT QUESTIONS, AND THE DIFFERENCE IS LOAD-BEARING:
 //
 //	DescendantsOf   everything BELOW a node.        Self EXCLUDED.
-//	SubtreeOf       a node AND everything below it. Self INCLUDED.
 //	AncestorsOf     a node and its parent chain.    Self INCLUDED, carries depth.
 //
-// Descendants-vs-subtree is exactly the divergence this extraction found: the
-// group-scoped empty finders exclude the group node itself (it is synthetic and
-// holds no carriers), while the CATID boundary sum includes it (a boundary node
-// can hold bins, and its own contents are part of the total). Both were called
-// "descendants". If they had ever been unified under one name, one of them would
-// have quietly changed its answer.
+// Below-a-node versus a-node-and-below is the divergence this extraction found:
+// the group-scoped empty finders exclude the group node itself (it is synthetic
+// and holds no carriers), while another query included it, and both were called
+// "descendants". A walk that includes the node needs its own name; unified under
+// one, one of them would quietly change its answer.
 //
 // THE PARAMETER IS AN INDEX, NOT A STRING, so a caller cannot splice anything
 // into the SQL but a positional placeholder. These fragments are concatenated
@@ -62,30 +59,12 @@ func DescendantsOf(nodeParam int) string {
 		)`, nodeParam)
 }
 
-// SubtreeOf names the node at the given parameter index AND every node below it.
-// THE NODE ITSELF IS INCLUDED — that is the whole difference from DescendantsOf,
-// and it is why they are two functions instead of a flag.
-//
-// The CTE is named `descendants` and exposes one column, `id`, so the two walks
-// are drop-in for one another at the point of use. Which is precisely why the
-// NAMES have to carry the difference: nothing in the query body downstream will.
-func SubtreeOf(nodeParam int) string {
-	return fmt.Sprintf(`WITH RECURSIVE descendants(id) AS (
-			SELECT id FROM nodes WHERE id = $%d
-			UNION ALL
-			SELECT n.id FROM nodes n JOIN descendants d ON n.parent_id = d.id
-		)`, nodeParam)
-}
-
 // AncestorsOf names the node at the given parameter index and its parent chain
 // up to the root. Self is included at depth 0.
 //
 // The CTE is named `ancestors` and exposes `id`, `parent_id`, `depth`. Depth is
 // what the inheritance lookups order by — "the nearest ancestor that has any
-// rows" is `ORDER BY depth ASC LIMIT 1` — and it is carried even for the one
-// caller that does not read it (GetRoot, which wants the row with a NULL
-// parent_id). An unused derived column changes no row and no result; a second
-// spelling of the walk to avoid it would.
+// rows" is `ORDER BY depth ASC LIMIT 1`.
 func AncestorsOf(nodeParam int) string {
 	return fmt.Sprintf(`WITH RECURSIVE ancestors AS (
 			SELECT id, parent_id, 0 AS depth FROM nodes WHERE id = $%d

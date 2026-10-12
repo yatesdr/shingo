@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingocore/dispatch/binresolver"
+	"shingocore/dispatch/plan"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
@@ -248,21 +249,21 @@ func TestEmptyBinsOnly(t *testing.T) {
 	empty1 := &bins.Bin{ID: 2, Label: "EMPTY-1", PayloadCode: ""}
 	empty2 := &bins.Bin{ID: 3, Label: "EMPTY-2", PayloadCode: ""}
 
-	got := emptyBinsOnly([]*bins.Bin{full, empty1, full, empty2})
+	got := plan.EmptyBinsOnly([]*bins.Bin{full, empty1, full, empty2})
 	if len(got) != 2 {
-		t.Fatalf("emptyBinsOnly returned %d bins, want 2 (the empties)", len(got))
+		t.Fatalf("plan.EmptyBinsOnly returned %d bins, want 2 (the empties)", len(got))
 	}
 	for _, b := range got {
 		if b.PayloadCode != "" {
-			t.Errorf("emptyBinsOnly returned a payload-bearing bin %d (%s)", b.ID, b.Label)
+			t.Errorf("plan.EmptyBinsOnly returned a payload-bearing bin %d (%s)", b.ID, b.Label)
 		}
 	}
 
-	if n := len(emptyBinsOnly([]*bins.Bin{full})); n != 0 {
-		t.Errorf("emptyBinsOnly([full]) returned %d, want 0", n)
+	if n := len(plan.EmptyBinsOnly([]*bins.Bin{full})); n != 0 {
+		t.Errorf("plan.EmptyBinsOnly([full]) returned %d, want 0", n)
 	}
-	if n := len(emptyBinsOnly(nil)); n != 0 {
-		t.Errorf("emptyBinsOnly(nil) returned %d, want 0", n)
+	if n := len(plan.EmptyBinsOnly(nil)); n != 0 {
+		t.Errorf("plan.EmptyBinsOnly(nil) returned %d, want 0", n)
 	}
 }
 

@@ -16,7 +16,6 @@ import "net/http"
 // routed (router.go, "embedded on Production page").
 type linesideBucketRow struct {
 	BucketID    int64
-	NodeID      int64
 	NodeName    string
 	StationName string
 	ProcessName string

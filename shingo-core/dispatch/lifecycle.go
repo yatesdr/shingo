@@ -97,8 +97,6 @@ type Event struct {
 	PreviousStatus protocol.Status // populated by transition() before action dispatch
 	StationID      string          // for emitter calls that need station context
 	RobotID        string
-	ReceiptType    string
-	FinalCount     int64
 	ErrorCode      string
 	ErrorDetail    string
 	// Ref is what the reason CONCERNS — node / payload / peer. Persisted to
@@ -498,11 +496,9 @@ func (s *LifecycleService) ConfirmReceipt(ord *orders.Order, stationID, receiptT
 		return false, nil
 	}
 	if err := s.transition(ord, StatusConfirmed, Event{
-		Actor:       "edge:" + stationID,
-		Reason:      fmt.Sprintf("receipt: %s, count: %d", receiptType, finalCount),
-		ReceiptType: receiptType,
-		FinalCount:  finalCount,
-		StationID:   stationID,
+		Actor:     "edge:" + stationID,
+		Reason:    fmt.Sprintf("receipt: %s, count: %d", receiptType, finalCount),
+		StationID: stationID,
 	}); err != nil {
 		return false, err
 	}

@@ -480,8 +480,7 @@ func (d *Dispatcher) evaluateGroupReleasesPass(groupID int64) groupPass {
 
 // releaseRetrieveCandidate is a gate-staged RETRIEVE's turn in its group's pass:
 // its lane is the lane its bin stands in, which no choice changes, so it asks
-// its own lane's admission and nothing else — the per-lane evaluator's arm,
-// unchanged by C2c (DESIGN-C2c §7.3.3).
+// its own lane's admission and nothing else — the per-lane evaluator's arm.
 func (d *Dispatcher) releaseRetrieveCandidate(c gateCandidate,
 	propose func(gateCandidate, *nodes.Node, QueueCause)) (in bool, next int64, failed bool) {
 	v, cErr := d.gateEntryVerdict(c.lane, c.order, c.node, true)

@@ -1,9 +1,7 @@
 package testutil
 
 import (
-	"context"
 	"testing"
-	"time"
 )
 
 // MustNoErr fails the test if err is non-nil. The message is appended
@@ -56,15 +54,4 @@ func Must[T any](t *testing.T, v T, err error, msg string) T {
 	t.Helper()
 	MustNoErr(t, err, msg)
 	return v
-}
-
-// Context returns a context that expires at the given timeout and
-// is cancelled at test cleanup. Use to give async operations a
-// per-test deadline — without this, flakes show up as CI-timeout
-// hangs instead of clean failures.
-func Context(t *testing.T, timeout time.Duration) context.Context {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	t.Cleanup(cancel)
-	return ctx
 }
