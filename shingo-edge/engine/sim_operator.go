@@ -441,7 +441,8 @@ func (op *simOperator) swapReleaseDelay() time.Duration {
 // at a "wait" leg until the operator confirms the swap, at which point the order
 // is "staged" and the HMI lights a Release button. The sim has no human, so when
 // an order reaches "staged" we fire that same release after a short delay — the
-// headless equivalent of the click. Simple moves and ingest-only modes never
+// headless equivalent of the click — once the bin is done (binNotDone); until
+// then the reconcile sweep looks again. Simple moves and ingest-only modes never
 // stage, so they're untouched. Must not block (synchronous bus): it dedupes and
 // spawns a delayed worker, then returns.
 func (op *simOperator) onStatusChanged(ev Event) {
@@ -838,6 +839,14 @@ func (op *simOperator) runRelease(orderID int64) {
 	// PIN: TestPinSimOperator_LaneHeldChildIsNotReleased
 	if o, err := op.e.db.GetOrder(orderID); err == nil && o.LaneHeld {
 		return
+	}
+	// A same-part swap waits for its bin to be done; the sweep looks again.
+	// PIN: TestSimOperator_ReleasesASamePartSwapWhenTheBinIsDone
+	if o, err := op.e.db.GetOrder(orderID); err == nil && o.ProcessNodeID != nil {
+		if why := op.binNotDone(*o.ProcessNodeID); why != "" {
+			op.e.debugFn("[sim] operator leaves order %d staged: %s", orderID, why)
+			return
+		}
 	}
 	if op.ops.PairRelease {
 		op.releaseAsPair(orderID)
