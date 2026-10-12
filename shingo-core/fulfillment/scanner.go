@@ -604,7 +604,9 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 	// would shop a second bin and double-source). RemainingUOP is the operator's
 	// release-correction count, persisted at intake; it is threaded through the
 	// confirm at dispatch (nil for retrieve/retrieve_empty = a plain claim).
-	if err := s.claimer.ReserveForDispatch(bin.ID, order.ID); err != nil {
+	// The reserve and the pointer are ONE statement (ReserveForDispatchAndPoint):
+	// a steal between two would leave a pointer on a bin with no row on it.
+	if err := s.claimer.ReserveForDispatchAndPoint(bin.ID, order.ID); err != nil {
 		if errors.Is(err, reservations.ErrOwnerEnded) {
 			return false // the order ended after this pass read it: nothing held, nothing to park
 		}
@@ -625,9 +627,6 @@ func (s *Scanner) fulfill(order *orders.Order, pick *dispatch.SourceResult) bool
 	}
 
 	// Error handling policy: log and continue. Do not add early returns without understanding the caller contract. See 2567plandiscussion.md.
-	if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
-		s.logFn("fulfillment: update bin_id for order %d: %v", order.ID, err)
-	}
 	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
 		s.logFn("fulfillment: update source_node for order %d: %v", order.ID, err)
 	}

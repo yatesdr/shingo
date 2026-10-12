@@ -124,11 +124,12 @@ type BinFinder interface {
 // *service.BinManifestService satisfies this structurally; scanner_test.go stubs it
 // via the fakeStore.
 type Claimer interface {
-	// ReserveForDispatch places a pending reservation on binID for orderID — the
-	// soft hold the plain path takes once it has found a bin and secured the slot.
+	// ReserveForDispatchAndPoint places a pending reservation on binID for
+	// orderID and points the order at the bin in the same statement — the soft
+	// hold the plain path takes once it has found a bin and secured the slot.
 	// Returns reservations.ErrReservationConflict on a lost race (another order
 	// reserved the bin); the scanner parks the order in sourcing and retries.
-	ReserveForDispatch(binID, orderID int64) error
+	ReserveForDispatchAndPoint(binID, orderID int64) error
 	// (The hard half — confirming the reservation into a claim — is not the
 	// scanner's any more: it is a leg of the order's hand, DispatchHand.)
 }

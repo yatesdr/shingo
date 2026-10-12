@@ -472,7 +472,15 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 		return nil, nil, err
 	}
 	for _, v := range victims {
-		holderRank, rerr := orders.LoadDemandRank(tx, v.orderID)
+		// THE HOLDER'S ROW IS LOCKED HERE, in the read the take already makes.
+		// The hand claiming this bin for the holder takes that row first (its
+		// status CAS), so whichever of the two reaches it second waits for the
+		// other and then sees what it did: a hand that confirmed leaves no
+		// pending row for the DELETE below, and a steal that took the row leaves
+		// the hand's claim no reservation to stand on. No bin row is locked here:
+		// the hand holds its order row before the bin, and a bin lock in this
+		// read would take them the other way round (LOCKS.md §3).
+		holderRank, rerr := orders.LoadDemandRankLocked(tx, v.orderID)
 		if rerr != nil {
 			return nil, nil, rerr
 		}
@@ -510,10 +518,18 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 	var stolen []stolenBin
 	for _, v := range victims {
 		if v.handPlaced && v.pointsHere {
-			// The person's order keeps its pointer and loses its row, as below.
-			if _, err := tx.Exec(`DELETE FROM reservations WHERE bin_id=$1 AND order_id=$2 AND resource_kind='bin'`,
-				binID, v.orderID); err != nil {
+			// The person's order keeps its pointer and loses its row, as below,
+			// and only a pending row is taken.
+			res, err := tx.Exec(`DELETE FROM reservations WHERE bin_id=$1 AND order_id=$2 AND resource_kind='bin' AND state=$3`,
+				binID, v.orderID, string(reservations.StatePending))
+			if err != nil {
 				return nil, nil, fmt.Errorf("release bin %d from hand-placed holder %d: %w", binID, v.orderID, err)
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				if err := refuseIfConfirmed(tx, binID, childID, parentID, v.orderID); err != nil {
+					return nil, nil, err
+				}
+				continue // the holder let go first: nothing of its was taken
 			}
 			stolen = append(stolen, stolenBin{
 				binID: binID, holderID: v.orderID, digID: parentID, handPlaced: true,
@@ -541,15 +557,45 @@ func stealSoftHolds(tx *sql.Tx, binID, childID, parentID int64, parkedAt string)
 		// ahead they do not, and this row's staleness reads as fresh forever. Two
 		// readers now care: ListAnomalies' runtime-stuck detector, and the stale-dig
 		// disposition's liveness test.
-		if _, err := tx.Exec(
-			`WITH released AS (DELETE FROM reservations WHERE bin_id=$2 AND order_id=$1 AND resource_kind='bin')
-			 UPDATE orders SET bin_id=NULL, updated_at=$3 WHERE id=$1 AND bin_id=$2`,
-			v.orderID, binID, clock.Now().UTC()); err != nil {
+		//
+		// ONLY A PENDING ROW IS TAKEN, AND THE POINTER GOES ONLY WITH A ROW TAKEN.
+		// A confirmed row is a hand's claim: the robot is coming for this bin,
+		// and the dig backs out naming the holder. The count is what tells.
+		var taken int
+		if err := tx.QueryRow(
+			`WITH released AS (DELETE FROM reservations WHERE bin_id=$2 AND order_id=$1 AND resource_kind='bin' AND state=$4 RETURNING 1),
+			 unpointed AS (UPDATE orders SET bin_id=NULL, updated_at=$3 WHERE id=$1 AND bin_id=$2 AND EXISTS (SELECT 1 FROM released))
+			 SELECT COUNT(*) FROM released`,
+			v.orderID, binID, clock.Now().UTC(), string(reservations.StatePending)).Scan(&taken); err != nil {
 			return nil, nil, fmt.Errorf("clear bin %d off holder %d: %w", binID, v.orderID, err)
+		}
+		if taken == 0 {
+			if err := refuseIfConfirmed(tx, binID, childID, parentID, v.orderID); err != nil {
+				return nil, nil, err
+			}
+			continue // the holder let go first (ended, released): nothing was taken
 		}
 		stolen = append(stolen, stolenBin{binID: binID, holderID: v.orderID, digID: parentID})
 	}
 	return displaced, stolen, nil
+}
+
+// refuseIfConfirmed is the steal's answer when the holder's pending row was not
+// there to take. Read after the holder's order row is held, so it is settled:
+// a confirmed row is a hand's claim (a robot is coming for the bin) and the dig
+// backs out naming the holder; no row at all is a holder that let go first,
+// and there is nothing to take. One read, on that path only.
+func refuseIfConfirmed(tx *sql.Tx, binID, childID, parentID, holderID int64) error {
+	var confirmed bool
+	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM reservations
+		WHERE bin_id=$1 AND order_id=$2 AND resource_kind='bin' AND state=$3)`,
+		binID, holderID, string(reservations.StateConfirmed)).Scan(&confirmed); err != nil {
+		return fmt.Errorf("read holder %d's row on bin %d: %w", holderID, binID, err)
+	}
+	if confirmed {
+		return &BlockerClaimedError{BinID: binID, ChildID: childID, ParentID: parentID, HolderID: holderID}
+	}
+	return nil
 }
 
 // HolderNote is what a taken holder's row says afterwards: the queue detail
@@ -627,10 +673,27 @@ func TakeSoftHolds(tx *sql.Tx, binID, takerID int64, note HolderNote) (handPlace
 	now := clock.Now().UTC()
 	ref, _ := json.Marshal(map[string]int64{"taken_by": takerID})
 	for _, h := range holders {
-		if _, err := tx.Exec(`DELETE FROM reservations
+		// COUNTED. The holder's row was read pending, but its hand may have
+		// confirmed while this take waited on the holder's order row: a confirmed
+		// row is a robot coming for the bin, and the take is refused. A row gone
+		// is a holder that let go: nothing taken, nobody un-pointed or told.
+		res, err := tx.Exec(`DELETE FROM reservations
 			WHERE order_id=$1 AND bin_id=$2 AND resource_kind='bin' AND state=$3`,
-			h.orderID, binID, string(reservations.StatePending)); err != nil {
+			h.orderID, binID, string(reservations.StatePending))
+		if err != nil {
 			return nil, fmt.Errorf("release order %d's hold on bin %d: %w", h.orderID, binID, err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			var confirmed bool
+			if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM reservations
+				WHERE order_id=$1 AND bin_id=$2 AND resource_kind='bin' AND state=$3)`,
+				h.orderID, binID, string(reservations.StateConfirmed)).Scan(&confirmed); err != nil {
+				return nil, fmt.Errorf("read order %d's row on bin %d: %w", h.orderID, binID, err)
+			}
+			if confirmed {
+				return nil, fmt.Errorf("bin %d: order %d's claim was confirmed first: %w", binID, h.orderID, reservations.ErrReservationConflict)
+			}
+			continue
 		}
 		if !h.pointsHere {
 			continue
@@ -949,8 +1012,20 @@ func logSteals(stolen []stolenBin) {
 // The ledger row follows the claim (supersedeBinLedger): the last leg to claim
 // the bin holds its one active row.
 func ClaimCompoundLegBinTx(tx *sql.Tx, binID, legID, parentID int64) error {
-	res, err := tx.Exec(`UPDATE bins SET claimed_by=$1
+	// THE STRANGERS' ORDER ROWS FIRST. A hold that landed on this bin after the
+	// dig was born (its insert raced the birth's victim read) is a stranger's,
+	// and supersedeBinLedger below takes its row and un-points it. Their order
+	// rows are locked by the subquery this UPDATE's WHERE evaluates before it
+	// reaches the bin row, so the order is the hand's: order rows, then the bin,
+	// then reservations (LOCKS.md §3). Same statement.
+	res, err := tx.Exec(`WITH strangers AS (
+		    SELECT o.id FROM orders o JOIN reservations r ON r.order_id = o.id
+		     WHERE r.bin_id = $2 AND r.resource_kind = 'bin'
+		       AND o.id <> $3 AND o.parent_order_id IS DISTINCT FROM $3
+		     ORDER BY o.id FOR UPDATE OF o)
+		UPDATE bins SET claimed_by=$1
 		WHERE id=$2
+		  AND (SELECT COUNT(*) FROM strangers) >= 0
 		  AND (claimed_by IS NULL
 		       OR claimed_by = $3
 		       OR claimed_by IN (SELECT id FROM orders WHERE parent_order_id = $3))`,
@@ -965,7 +1040,7 @@ func ClaimCompoundLegBinTx(tx *sql.Tx, binID, legID, parentID int64) error {
 		}
 		return &BlockerClaimedError{BinID: binID, ChildID: legID, ParentID: parentID, HolderID: holder.Int64}
 	}
-	return supersedeBinLedger(tx, binID, legID)
+	return supersedeBinLedger(tx, binID, legID, parentID)
 }
 
 // supersedeBinLedger makes the reservation books say what the claim says: one
@@ -976,9 +1051,19 @@ func ClaimCompoundLegBinTx(tx *sql.Tx, binID, legID, parentID int64) error {
 // the BIN — there is no (order, bin) row to update into place. Written CONFIRMED
 // because the claim it records is already a hard claim, not a plan: a pending row
 // would say the dig is still deciding.
-func supersedeBinLedger(tx *sql.Tx, binID, childID int64) error {
+//
+// A STRANGER WHOSE ROW GOES IS UN-POINTED WITH IT, in the same statement: a row
+// owned by neither the parent nor one of its children is a hold that landed
+// after the dig was born, and leaving its pointer would have the stranger
+// confirm a bin it holds no row on (the pointer wedge). Its order row is
+// already held (ClaimCompoundLegBinTx).
+func supersedeBinLedger(tx *sql.Tx, binID, childID, parentID int64) error {
 	if _, err := tx.Exec(
-		`DELETE FROM reservations WHERE bin_id=$1 AND resource_kind='bin'`, binID); err != nil {
+		`WITH gone AS (DELETE FROM reservations WHERE bin_id=$1 AND resource_kind='bin' RETURNING order_id)
+		 UPDATE orders SET bin_id = NULL, updated_at = $3
+		  WHERE id IN (SELECT order_id FROM gone) AND bin_id = $1
+		    AND id <> $2 AND parent_order_id IS DISTINCT FROM $2`,
+		binID, parentID, clock.Now().UTC()); err != nil {
 		return fmt.Errorf("clear bin ledger for bin %d: %w", binID, err)
 	}
 	if _, err := tx.Exec(

@@ -1208,6 +1208,13 @@ func (s *BinManifestService) ReserveForDispatch(binID, orderID int64) error {
 	return reservations.Acquire(s.db, orderID, s.laneOwnerOf(orderID), binID, "reserveForDispatch")
 }
 
+// ReserveForDispatchAndPoint is ReserveForDispatch that also points the order at
+// the bin in the same statement (reservations.AcquireAndPoint): a pointer is
+// never stamped on a bin the order holds no row on.
+func (s *BinManifestService) ReserveForDispatchAndPoint(binID, orderID int64) error {
+	return reservations.AcquireAndPoint(s.db, orderID, s.laneOwnerOf(orderID), binID, "reserveForDispatch")
+}
+
 // laneOwnerOf resolves the order that would hold a lane mouth row on orderID's
 // behalf: its compound parent, or orderID itself when it has none. It mirrors
 // dispatch.laneOwnerFor — children never own rows, so a child working inside its

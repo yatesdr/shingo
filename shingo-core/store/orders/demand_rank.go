@@ -105,3 +105,23 @@ func LoadDemandRank(db helpers.QueryRower, orderID int64) (DemandRank, error) {
 	}
 	return r, nil
 }
+
+// LoadDemandRankLocked is LoadDemandRank holding the order's row (FOR UPDATE OF
+// o), for a writer about to change that order's holds: a dig's steal reads the
+// holder's rank and then deletes its reservation. The hand takes the same order
+// row first (its status CAS), so a steal and a hand on one holder serialise on
+// the row both reach first, in the order LOCKS.md §3 writes down: the holder's
+// order row, then its reservation.
+func LoadDemandRankLocked(db helpers.QueryRower, orderID int64) (DemandRank, error) {
+	var r DemandRank
+	err := db.QueryRow(`
+		SELECT `+helpers.DemandRankColumnsSQL("o", "p")+`
+		  FROM orders o
+		  LEFT JOIN orders p ON p.id = o.parent_order_id
+		 WHERE o.id = $1
+		 FOR UPDATE OF o`, orderID).Scan(&r.Priority, &r.CreatedAt, &r.ID)
+	if err != nil {
+		return DemandRank{}, fmt.Errorf("load demand rank for order %d: %w", orderID, err)
+	}
+	return r, nil
+}

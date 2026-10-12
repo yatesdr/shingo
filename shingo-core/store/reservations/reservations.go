@@ -27,6 +27,7 @@ package reservations
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"shingo/protocol"
@@ -318,7 +319,16 @@ func NamedBinSQL(orderParam, binParam int) string {
 // would refuse them and wedge every excavation. Callers with no compound context
 // pass orderID twice, which is the correct answer for them.
 func Acquire(db RowExecer, orderID, laneOwner, binID int64, reservedBy string) error {
-	return acquire(db, orderID, laneOwner, BinRef(binID), reservedBy)
+	return acquire(db, orderID, laneOwner, BinRef(binID), reservedBy, false)
+}
+
+// AcquireAndPoint is Acquire that also points the order at the bin
+// (orders.bin_id), in the same statement and only when the row was inserted.
+// The scanner reserved and then stamped the pointer in a second statement; a
+// steal landing between the two left a pointer on a bin the order held no row
+// on (LOCKS.md §3, the claim sweep's F3). One statement: there is no between.
+func AcquireAndPoint(db RowExecer, orderID, laneOwner, binID int64, reservedBy string) error {
+	return acquire(db, orderID, laneOwner, BinRef(binID), reservedBy, true)
 }
 
 // AcquireSlot is Acquire for a destination slot: a pending slot reservation on
@@ -352,7 +362,7 @@ func Acquire(db RowExecer, orderID, laneOwner, binID int64, reservedBy string) e
 // So the half-guard is CORRECT rather than merely unfinished, and the asymmetry
 // is a statement about bins and slots rather than about how far the work got.
 func AcquireSlot(db RowExecer, orderID, nodeID int64, reservedBy string) error {
-	return acquire(db, orderID, orderID, SlotRef(nodeID), reservedBy)
+	return acquire(db, orderID, orderID, SlotRef(nodeID), reservedBy, false)
 }
 
 // GroupRoomTag is the reserved_by of a planned group drop's PAPER: one pending
@@ -427,7 +437,7 @@ const GroupRoomTag = "groupRoom"
 // (bin_claimed_in_foreign_dug_lane), and with this arm in place ANY non-zero
 // reading is by definition a mutual miss — which is the only way left to reach
 // the state. One confirmed occurrence is what earns the advisory lock.
-func acquire(db RowExecer, orderID, laneOwner int64, ref Ref, reservedBy string) error {
+func acquire(db RowExecer, orderID, laneOwner int64, ref Ref, reservedBy string, point bool) error {
 	var ownerLive, named, dugByAnother bool
 	var inserted int
 	err := db.QueryRow(
@@ -458,10 +468,14 @@ func acquire(db RowExecer, orderID, laneOwner int64, ref Ref, reservedBy string)
 		   FROM dug, live, named WHERE NOT dug.blocked AND live.ok AND named.ok
 		   ON CONFLICT DO NOTHING
 		   RETURNING 1
+		 ),
+		 ptr AS (
+		   UPDATE orders SET bin_id = $3, updated_at = $5
+		    WHERE $8 AND $2 = 'bin' AND id = $1 AND EXISTS (SELECT 1 FROM ins)
 		 )
 		 SELECT (SELECT ok FROM live), (SELECT ok FROM named), (SELECT blocked FROM dug), (SELECT count(*) FROM ins)`,
 		orderID, string(ref.Kind), ref.ID, reservedBy, clock.Now().UTC(),
-		string(ModeDig), laneOwner,
+		string(ModeDig), laneOwner, point,
 	).Scan(&ownerLive, &named, &dugByAnother, &inserted)
 	if err != nil {
 		return fmt.Errorf("reservations acquire: %w", err)
@@ -489,9 +503,30 @@ func acquire(db RowExecer, orderID, laneOwner int64, ref Ref, reservedBy string)
 // Confirm transitions the (orderID, binID) bin reservation from "pending" to
 // "confirmed", recording that the physical bin claim succeeded. A no-op if the
 // row is already confirmed (idempotent for retry safety).
+//
+// CHECKED: a bin row that is neither pending nor confirmed is gone (a dig's
+// steal took it, LOCKS.md §3), and confirming nothing would leave a hard claim
+// standing on no reservation. ErrReservationGone, and the caller's transaction
+// rolls the claim back. The same statement; only the row count is read.
 func Confirm(db Execer, orderID, binID int64) error {
-	return confirm(db, orderID, BinRef(binID))
+	res, err := db.Exec(
+		`UPDATE reservations SET state='confirmed'
+		 WHERE order_id=$1 AND resource_kind=$2 AND state IN ('pending', 'confirmed')
+		   AND bin_id=$3`,
+		orderID, string(KindBin), binID,
+	)
+	if err != nil {
+		return fmt.Errorf("reservations confirm: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("confirm bin %d for order %d: %w", binID, orderID, ErrReservationGone)
+	}
+	return nil
 }
+
+// ErrReservationGone is a confirm that found the order's row for the resource
+// neither pending nor confirmed: taken by someone else before the confirm.
+var ErrReservationGone = errors.New("reservation gone")
 
 // ConfirmSlot is Confirm for a slot reservation (pending → confirmed on nodeID).
 func ConfirmSlot(db Execer, orderID, nodeID int64) error {

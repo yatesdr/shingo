@@ -194,11 +194,12 @@ func (f *fakeStore) ClaimForDispatch(binID, orderID int64, _ *int) error {
 // (no hard claimed_by). The scanner plain path calls this once it has found a bin
 // and secured the slot, BEFORE dispatch. Records to reservedBins and honors
 // errReserveBin (inject ErrReservationConflict to simulate a lost race).
-func (f *fakeStore) ReserveForDispatch(binID, orderID int64) error {
+func (f *fakeStore) ReserveForDispatchAndPoint(binID, orderID int64) error {
 	if f.errReserveBin != nil {
 		return f.errReserveBin
 	}
 	f.reservedBins = append(f.reservedBins, [2]int64{binID, orderID})
+	f.binIDUpdates = append(f.binIDUpdates, [2]int64{orderID, binID})
 	return nil
 }
 

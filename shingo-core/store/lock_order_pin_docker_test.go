@@ -39,7 +39,7 @@ func terminalizeAround(t *testing.T, db *store.DB, holder int64, take func() err
 	defer tx.Rollback()
 	var pid int
 	testutil.MustNoErr(t, tx.QueryRow(`SELECT pg_backend_pid()`).Scan(&pid), "its backend")
-	_, err = tx.Exec(`UPDATE orders SET updated_at = NOW() WHERE id = $1`, holder)
+	_, err = tx.Exec(`UPDATE orders SET status = 'cancelled', updated_at = NOW() WHERE id = $1`, holder)
 	testutil.MustNoErr(t, err, "the terminalize's order row")
 
 	done := make(chan error, 1)

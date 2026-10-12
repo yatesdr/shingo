@@ -1,5 +1,7 @@
 package store
 
+import "database/sql"
+
 // MigrateForTest re-exports the unexported migrate() so tests in package
 // store_test can force a second migration pass (the self-heal) — e.g. to prove a
 // retired table is not resurrected. It compiles only into the test binary and is
@@ -18,4 +20,11 @@ func (db *DB) StealSoftHoldsForTest(binID, childID, parentID int64) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// StealSoftHoldsInTx is stealSoftHolds in the caller's transaction, so a test
+// can hold it open at its writes (LOCKS.md §3, the dig race).
+func StealSoftHoldsInTx(tx *sql.Tx, binID, childID, parentID int64) error {
+	_, _, err := stealSoftHolds(tx, binID, childID, parentID, "")
+	return err
 }
