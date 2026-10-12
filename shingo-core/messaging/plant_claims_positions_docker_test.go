@@ -11,6 +11,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/service"
+	"shingocore/store/loaders"
 	"shingocore/store/plantclaims"
 )
 
@@ -68,5 +69,48 @@ func TestPlantClaims_ALoaderPositionResolvesToItsStation(t *testing.T) {
 	testutil.MustNoErr(t, err, "stations claiming after the replace")
 	if len(sts) != 0 {
 		t.Errorf("after a report with no positions, PLK-POS-W1 still resolves to %v", sts)
+	}
+}
+
+// A loader's registry rows move to the station that owns its position as soon
+// as that station's plant.claims names it (RULINGS-D2-exchange-at-empty §3.3).
+// Before it arrives both registered stations hold the loader (no owner yet, as
+// before); after it, only the owner. RED at 7a341f92: the other station keeps
+// the row until something else re-derives it.
+func TestPlantClaims_ALoaderPositionMovesItsRegistryRowsToItsStation(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
+	const a, b = "edge-own-a.line", "edge-own-b.line"
+	for _, st := range []string{a, b} {
+		_, err := db.Exec(`INSERT INTO edge_registry (station_id, schema_version) VALUES ($1, $2)`,
+			st, protocol.EdgeSchemaBinLanded)
+		testutil.MustNoErr(t, err, "register "+st)
+	}
+	var ntID, nodeID int64
+	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO node_types (code, name) VALUES ('NT-OWN-M', 't') RETURNING id`).Scan(&ntID), "node type")
+	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO nodes (name, is_synthetic, node_type_id, enabled) VALUES ('OWN-M-W', false, $1, true) RETURNING id`, ntID).Scan(&nodeID), "node")
+	id, err := db.CreateLoader(loaders.Loader{Name: "OWN-M", Role: loaders.RoleProduce,
+		Layout: loaders.LayoutDedicatedPositions, Replenishment: loaders.ReplenishmentThreshold})
+	testutil.MustNoErr(t, err, "loader")
+	testutil.MustNoErr(t, db.UpsertLoaderHome(loaders.Home{LoaderID: id, PositionNodeID: nodeID, PayloadCode: "P-M", UOPThreshold: 10}), "home")
+	rows := func(st string) int {
+		var n int
+		testutil.MustNoErr(t, db.QueryRow(`SELECT count(*) FROM demand_registry WHERE station_id = $1 AND core_node_name = 'OWN-M-W'`, st).Scan(&n), "rows")
+		return n
+	}
+	for _, st := range []string{a, b} {
+		_, _, err := db.DeriveDemandRegistry(st)
+		testutil.MustNoErr(t, err, "derive "+st)
+	}
+	if rows(a) != 1 || rows(b) != 1 {
+		t.Fatalf("before any station owns the position: rows %d and %d, want 1 and 1", rows(a), rows(b))
+	}
+
+	env := &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: b}}
+	svc.HandlePlantClaims(env, positionsReport(t,
+		`{"process_id":"OWN-M-PROC","styles":[{"style_id":"OWN-M-RUN","claims":[],"active":true}],"positions":["OWN-M-W"]}`))
+	if rows(a) != 0 || rows(b) != 1 {
+		t.Fatalf("after %s's plant.claims names the position: rows %d (%s) and %d (%s), want 0 and 1", b, rows(a), a, rows(b), b)
 	}
 }

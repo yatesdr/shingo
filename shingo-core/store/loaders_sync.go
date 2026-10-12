@@ -15,6 +15,7 @@ import (
 	"shingo/protocol"
 	"shingocore/store/demands"
 	"shingocore/store/loaders"
+	"shingocore/store/plantclaims"
 )
 
 // DemandRegistryStations returns the distinct station_ids present in
@@ -266,7 +267,18 @@ func (db *DB) BuildDemandRegistryFromAggregate(stationID string) ([]demands.Regi
 }
 
 // buildDemandRegistry is the derivation, with its counts. ListLoaders is
-// plant-wide, so every station derives every active loader.
+// plant-wide; each entry is kept for the station that owns its position.
+//
+// A LOADER BELONGS TO THE STATION THAT OWNS ITS POSITION (RULINGS-D2-exchange-
+// at-empty §3.3). Every station used to derive every loader, so on a two-Edge
+// plant each loader had a binding under both stations and its replenishment went
+// out addressed to whichever fired, the Edge that does not own the node included
+// (TRACE-line2-empties §7.1: all 13 of line 2's PART-W loader orders under
+// edge1.line1). The owner is plantclaims.ClaimingStationsSQL's, the one reading
+// the landings and announcements use. A position no station owns yet (an Edge
+// that reports no positions, or before its first plant.claims) is kept for
+// every station, as it always was, so no plant loses a threshold; the
+// plant.claims handler re-derives once ownership is known.
 func (db *DB) buildDemandRegistry(stationID string) ([]demands.RegistryEntry, DemandDeriveReport, error) {
 	rep := DemandDeriveReport{Station: stationID}
 	ls, err := db.ListLoaders()
@@ -281,6 +293,10 @@ func (db *DB) buildDemandRegistry(stationID string) ([]demands.RegistryEntry, De
 			return nil, rep, err
 		}
 		out = append(out, entries...)
+	}
+	out, err = db.keepOwnedEntries(stationID, out)
+	if err != nil {
+		return nil, rep, err
 	}
 	rep.RowsOut = len(out)
 	for _, e := range out {
@@ -407,4 +423,44 @@ func (db *DB) deriveLoaderEntries(stationID string, l loaders.Loader, skips *Dem
 		})
 	}
 	return out, nil
+}
+
+// keepOwnedEntries drops the entries whose position another station owns. One
+// read for the whole derivation: each entry node's owning stations, none for a
+// node no station claims.
+func (db *DB) keepOwnedEntries(stationID string, entries []demands.RegistryEntry) ([]demands.RegistryEntry, error) {
+	if len(entries) == 0 {
+		return entries, nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.CoreNodeName)
+	}
+	rows, err := db.Query(`SELECT n.name, c.station_id FROM unnest($1::text[]) AS n(name)
+		JOIN LATERAL (`+plantclaims.ClaimingStationsSQL("n.name")+`) c(station_id) ON true`, names)
+	if err != nil {
+		return nil, fmt.Errorf("demand registry owners: %w", err)
+	}
+	defer rows.Close()
+	owners := map[string]map[string]bool{}
+	for rows.Next() {
+		var name, station string
+		if err := rows.Scan(&name, &station); err != nil {
+			return nil, fmt.Errorf("demand registry owners: %w", err)
+		}
+		if owners[name] == nil {
+			owners[name] = map[string]bool{}
+		}
+		owners[name][station] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("demand registry owners: %w", err)
+	}
+	kept := entries[:0]
+	for _, e := range entries {
+		if o := owners[e.CoreNodeName]; o == nil || o[stationID] {
+			kept = append(kept, e)
+		}
+	}
+	return kept, nil
 }

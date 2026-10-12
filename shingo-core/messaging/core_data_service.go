@@ -777,6 +777,39 @@ func (s *CoreDataService) HandlePlantClaims(env *protocol.Envelope, report *prot
 	}
 	log.Printf("core_handler: plant.claims mirrored %s: %d styles, %d claims, %d positions (config_gen=%d)",
 		report.ProcessID, len(styles), len(claims), len(report.Positions), report.ConfigGen)
+	if len(report.Positions) > 0 {
+		s.rederiveLoaderOwners()
+	}
+}
+
+// rederiveLoaderOwners re-derives every station's loader rows after a report
+// that names positions. A loader's rows belong to the station that owns its
+// position (store.buildDemandRegistry), and the registry is derived when an Edge
+// registers, before its first plant.claims: until the positions arrive no
+// station owns the loader and every station holds it. Every station, not only
+// the publisher: the row a position moves AWAY from is another station's.
+// A station whose rows changed is re-engaged in the threshold monitor.
+func (s *CoreDataService) rederiveLoaderOwners() {
+	stations := map[string]bool{}
+	if sts, err := s.db.DemandRegistryStations(); err == nil {
+		for _, st := range sts {
+			stations[st] = true
+		}
+	}
+	if edges, err := s.db.ListEdges(); err == nil {
+		for _, e := range edges {
+			stations[e.StationID] = true
+		}
+	}
+	for st := range stations {
+		if st == "" {
+			continue
+		}
+		_, changes, err := s.db.DeriveDemandRegistry(st)
+		if err == nil && len(changes) > 0 && s.thresholdMonitor != nil {
+			s.thresholdMonitor.Resync(st)
+		}
+	}
 }
 
 // StartDowntimeProjection launches the async downtime_events projection worker
