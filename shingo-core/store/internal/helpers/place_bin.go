@@ -244,11 +244,21 @@ func PlaceBinTx(tx *sql.Tx, p BinPlacement) (Placed, error) {
 		//    fulfilled and the slot frees for re-reservation now rather than at
 		//    the owning order's terminal transition. Both are no-ops for a LINE
 		//    delivery, which is never slot-claimed or slot-reserved.
-		if _, err := tx.Exec(
-			`UPDATE nodes SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, p.ToNodeID); err != nil {
+		//
+		//    THE PLACER'S OWN, OR ITS COMPOUND FAMILY'S, as the bin's claim above:
+		//    a leg's arrival frees a slot its parent or a sibling took for it.
+		//    Another order's claim and row stand. Whether a bin can be set down
+		//    at a slot a stranger holds rests on every storage drop holding its
+		//    own slot row first, which no one place enforces; this does not
+		//    depend on it.
+		if _, err := tx.Exec(`UPDATE nodes SET claimed_by=NULL, updated_at=NOW()
+			 WHERE id=$1 AND (claimed_by IS NULL OR `+familyOfSQL("nodes.claimed_by", "$2")+`)`,
+			p.ToNodeID, p.PlacedByOrder); err != nil {
 			return Placed{}, fmt.Errorf("release destination slot claim node %d: %w", p.ToNodeID, err)
 		}
-		if err := reservations.ReleaseByNode(tx, p.ToNodeID); err != nil {
+		if _, err := tx.Exec(`DELETE FROM reservations
+			 WHERE node_id=$1 AND `+familyOfSQL("reservations.order_id", "$2"),
+			p.ToNodeID, p.PlacedByOrder); err != nil {
 			return Placed{}, fmt.Errorf("release slot reservation on node %d: %w", p.ToNodeID, err)
 		}
 	}
@@ -300,4 +310,15 @@ func PlaceBinTx(tx *sql.Tx, p BinPlacement) (Placed, error) {
 	}
 
 	return placed, nil
+}
+
+// familyOfSQL is the predicate "holder is placer, the placer's parent, or a
+// sibling under the same parent", for a holder column and the placer's
+// parameter. Parenthesised whole, so it can stand beside AND.
+func familyOfSQL(holder, placer string) string {
+	return `(` + holder + ` = ` + placer + ` OR EXISTS (
+			SELECT 1 FROM orders pl, orders h
+			 WHERE pl.id = ` + placer + ` AND h.id = ` + holder + `
+			   AND pl.parent_order_id IS NOT NULL
+			   AND (h.id = pl.parent_order_id OR h.parent_order_id = pl.parent_order_id)))`
 }
