@@ -73,7 +73,12 @@ func (e *Engine) landCarrier(node *processes.Node, l processes.LandingBind, carr
 		log.Printf("bin_landed: bind bin %d — ensure runtime for node %s: %v", l.BinID, node.CoreNodeName, err)
 		return false
 	}
+	// Under countMu, as every write of a seat's count: a tick that read the
+	// seat before the bind is refused by its own WHERE and re-applied to the
+	// carrier that landed (applyHoldAndReplay).
+	e.countMu.Lock()
 	landed, err := e.inventoryDelta.Land(node.ID, l)
+	e.countMu.Unlock()
 	if err != nil {
 		log.Printf("bin_landed: bind bin %d at %s (%s): %v", l.BinID, node.CoreNodeName, why, err)
 		return false

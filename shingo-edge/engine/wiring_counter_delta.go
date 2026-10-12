@@ -266,10 +266,24 @@ func (a tickAttribution) skipReport() string {
 // of being lost or charged to a departed bin.
 //
 // sign is +1 for produce (fill) and -1 for consume / fallthrough (drain).
-// Returns whether a bin was charged, binAttributed (the amount charged to the
-// bin this tick, including any replayed pending; 0 when nothing was charged,
-// so no bin delta is recorded), and newRemaining (the resulting cached counter
-// — unchanged from the prior cached value when nothing was charged).
+// Returns the seat the tick was applied to, whether a bin was charged, and
+// binAttributed (the amount charged to the bin this tick, including any
+// replayed pending; 0 when nothing was charged, so no bin delta is recorded).
+// The caller records its bin delta against the returned seat.
+//
+// ── THE SEAT IS WRITTEN AS IT WAS READ ───────────────────────────────────
+//
+// The caller read the runtime row before it took countMu (counterDeltaRows,
+// once per tick for every node). A release's count, a pickup's leave, an
+// operator's count or a landing can be written under countMu in between. The
+// tick's write therefore names the seat it read in its WHERE (carrier,
+// generation, released-empty, hold: processes.SeatAsRead) and moves the count
+// by a delta, never to a value computed from the old row. A seat that changed
+// refuses the write; the tick re-reads it once, under the lock, and applies
+// itself to the seat as it now is (charged to the new carrier, or held). The
+// re-read runs only on a refusal: +0 statements on every other tick. partsOf
+// gives the tick's parts for a seat, since the carrier's part and the
+// released-empty flag are the seat's.
 //
 // ── THE HOLD HAS A PART (Lane H R2/R3, DECISIONS D12) ────────────────────
 //
@@ -294,41 +308,72 @@ func (a tickAttribution) skipReport() string {
 //     hold.
 //
 // A hold written before the part existed reads "" and replays as it always
-// did. Every branch is the statement it was, or none: +0 per tick.
-func (e *Engine) applyHoldAndReplay(node *processes.Node, runtime *processes.RuntimeState, input, sign int, parts tickParts) (bound bool, binAttributed, newRemaining int) {
-	newRemaining = runtime.RemainingUOPCached
-	held := int(runtime.PendingUOPDelta)
+// did.
+func (e *Engine) applyHoldAndReplay(node *processes.Node, runtime *processes.RuntimeState, input, sign int,
+	partsOf func(*processes.RuntimeState) tickParts) (rt *processes.RuntimeState, bound bool, binAttributed int) {
+	rt = runtime
+	for attempt := 0; ; attempt++ {
+		var written bool
+		bound, binAttributed, written = e.chargeOrHold(node, rt, input, sign, partsOf(rt))
+		if written {
+			return rt, bound, binAttributed
+		}
+		if attempt == 1 {
+			log.Printf("counter delta: node %s: the seat changed twice under the count lock; %d not charged or held",
+				node.CoreNodeName, input)
+			return rt, false, 0
+		}
+		fresh, err := e.db.GetProcessNodeRuntime(node.ID)
+		if err != nil || fresh == nil {
+			log.Printf("counter delta: node %s: the seat changed since the tick read it and cannot be re-read (%v); %d not charged or held",
+				node.CoreNodeName, err, input)
+			return rt, false, 0
+		}
+		rt = fresh
+	}
+}
+
+// chargeOrHold is one attempt of applyHoldAndReplay on the seat as rt holds
+// it. written is false only when the seat refused the write (it changed since
+// rt was read); a failed statement is logged and counts as written, as before.
+func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, input, sign int, parts tickParts) (bound bool, binAttributed int, written bool) {
+	seat := processes.SeatAsReadOf(rt)
+	held := int(rt.PendingUOPDelta)
 	if held == 0 {
 		e.endUnheldEpisode(node.ID)
 	}
-	if runtime.ActiveBinID != nil && !parts.notCharged {
+	if rt.ActiveBinID != nil && !parts.notCharged {
 		binAttributed = input
-		if held != 0 && holdIsOf(runtime.PendingUOPPayload, parts.carrier) {
+		replay := held != 0 && holdIsOf(rt.PendingUOPPayload, parts.carrier)
+		if replay {
 			binAttributed = input + held
-			newRemaining = runtime.RemainingUOPCached + sign*binAttributed
-			if err := e.db.SetProcessNodeUOPClearPending(node.ID, newRemaining); err != nil {
-				log.Printf("update UOP (replay pending) for node %d: %v", node.ID, err)
-			}
+		}
+		ok, err := e.db.ChargeProcessNodeSeat(node.ID, sign*binAttributed, replay, seat)
+		if err != nil {
+			log.Printf("update UOP for node %d (replay %t): %v", node.ID, replay, err)
+			return true, binAttributed, true
+		}
+		if !ok {
+			return false, 0, false
+		}
+		if replay {
 			e.endUnheldEpisode(node.ID)
-			return true, binAttributed, newRemaining
 		}
-		newRemaining = runtime.RemainingUOPCached + sign*binAttributed
-		if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
-			log.Printf("update UOP for node %d: %v", node.ID, err)
-		}
-		return true, binAttributed, newRemaining
+		return true, binAttributed, true
 	}
 	if input == 0 {
-		return false, 0, newRemaining
+		return false, 0, true
 	}
-	if held == 0 || holdIsOf(runtime.PendingUOPPayload, parts.tick) {
-		if err := e.db.HoldPendingUOP(node.ID, input, parts.tick); err != nil {
+	if held == 0 || holdIsOf(rt.PendingUOPPayload, parts.tick) {
+		ok, err := e.db.HoldProcessNodeSeat(node.ID, input, parts.tick, seat)
+		if err != nil {
 			log.Printf("hold pending UOP for node %d: %v", node.ID, err)
+			return false, 0, true
 		}
-		return false, 0, newRemaining
+		return false, 0, ok
 	}
-	e.noteUnheldTick(node, runtime.PendingUOPPayload, parts.tick, held, input)
-	return false, 0, newRemaining
+	e.noteUnheldTick(node, rt.PendingUOPPayload, parts.tick, held, input)
+	return false, 0, true
 }
 
 // tickParts is what applyHoldAndReplay compares for one tick (D12).
@@ -384,7 +429,7 @@ func (e *Engine) endUnheldEpisode(nodeID int64) {
 // reconciler's sweep, not here.
 //
 // Post-May-4 (commit 6d226d1) Edge is authoritative for the count of
-// any bin physically at one of its nodes. The local UpdateProcessNodeUOP
+// any bin physically at one of its nodes. The local count write
 // write is the durable truth for at-node bins, not a write-through
 // cache — there is no reconciler healing back from Core. Core mirrors
 // the bin via the deltas published below and the piles via their levels.
@@ -426,9 +471,9 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 	// TestPinR3_ReleasedEmptyIsNotChargedThenTheNextBinOfThePartTakesTheHold).
 	// A count release leaves the flag clear and keeps charging until the
 	// lift (R1).
-	_, carrierPart, _ := e.binAtNode(runtime, claim)
-	_, binAttributed, _ := e.applyHoldAndReplay(node, runtime, binRemainder, -1, tickParts{
-		tick: claim.PayloadCode, carrier: carrierPart, notCharged: runtime.ReleasedEmpty,
+	runtime, _, binAttributed := e.applyHoldAndReplay(node, runtime, binRemainder, -1, func(rt *processes.RuntimeState) tickParts {
+		_, carrierPart, _ := e.binAtNode(rt, claim)
+		return tickParts{tick: claim.PayloadCode, carrier: carrierPart, notCharged: rt.ReleasedEmpty}
 	})
 
 	// emitConsumeTickDeltas marks the drained piles always, and records a
@@ -460,7 +505,9 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 	// (producedPayload): an empty arrives known-empty, so its resident part
 	// would never match the hold.
 	part := producedPayload(claim)
-	_, binAttributed, _ := e.applyHoldAndReplay(node, runtime, delta, +1, tickParts{tick: part, carrier: part})
+	runtime, _, binAttributed := e.applyHoldAndReplay(node, runtime, delta, +1, func(*processes.RuntimeState) tickParts {
+		return tickParts{tick: part, carrier: part}
+	})
 
 	if e.inventoryDelta != nil && binAttributed > 0 {
 		binID, _, epoch := e.binAtNode(runtime, claim)
@@ -518,18 +565,22 @@ func (e *Engine) handleABFallthrough(processID int64, node *processes.Node, runt
 	// (R43-1).
 	var drains map[string]int
 	binRemainder := delta
-	var parts tickParts
 	if claim != nil {
 		drains, binRemainder = e.drainLinesideFirst(node.ID, claim, delta)
-		_, carrierPart, _ := e.binAtNode(runtime, claim)
-		parts = tickParts{tick: claim.PayloadCode, carrier: carrierPart}
+	}
+	partsOf := func(rt *processes.RuntimeState) tickParts {
+		if claim == nil {
+			return tickParts{}
+		}
+		_, carrierPart, _ := e.binAtNode(rt, claim)
+		return tickParts{tick: claim.PayloadCode, carrier: carrierPart}
 	}
 
 	// Hold-and-replay, mirror of handleConsumeTick: decrement the bound
 	// bin (this tick + any held pending of its part), or hold when no bin is
 	// bound. The released-empty flag is the consume tick's rule (D12), not
 	// this safety net's.
-	_, binAttributed, _ := e.applyHoldAndReplay(node, runtime, binRemainder, -1, parts)
+	runtime, _, binAttributed := e.applyHoldAndReplay(node, runtime, binRemainder, -1, partsOf)
 
 	if claim != nil {
 		e.emitFallthroughDeltas(node, runtime, claim, drains, binAttributed)

@@ -1283,11 +1283,7 @@ func SetRuntimeReleaseCount(db *sql.DB, processNodeID int64, remainingUOPCached 
 // AddPendingUOPDelta accumulates count change held while no bin is bound
 // at the slot (hold-and-replay). Signed: consume holds positive magnitude
 // to subtract on bind, produce holds positive to add. Atomic increment.
-//
-// part is the part the held ticks are of, written in the same statement: the
-// hold replays only onto a carrier of that part (Lane H R2, DECISIONS D12).
-// The caller adds to a hold only when it is empty or already of this part;
-// "" is a hold of no known part, which replays as holds always did.
+// Test fixtures seed holds with it; the tick holds through HoldSeatUOP.
 func AddPendingUOPDelta(db *sql.DB, processNodeID int64, delta int, part string) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
 		pending_uop_delta = pending_uop_delta + ?, pending_uop_payload=?, updated_at=datetime('now')
@@ -1296,16 +1292,80 @@ func AddPendingUOPDelta(db *sql.DB, processNodeID int64, delta int, part string)
 	return err
 }
 
-// SetRuntimeUOPClearPending writes the cached UOP and resets pending to 0
-// in one statement — used when a tick finds a bound bin and has applied
-// (current + pending) to the count, so the held delta is consumed exactly
-// once. Clearing the hold clears its part.
-func SetRuntimeUOPClearPending(db *sql.DB, processNodeID int64, remainingUOPCached int) error {
-	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		remaining_uop_cached=?, pending_uop_delta=0, pending_uop_payload='', updated_at=datetime('now')
-		WHERE process_node_id=?`,
-		remainingUOPCached, processNodeID)
-	return err
+// SeatAsRead is the seat a PLC tick read before it took the Edge's count lock:
+// the carrier bound (nil for none) and its generation, whether it was released
+// empty, and the hold. The tick's write names it in its WHERE, so a release, a
+// pickup, a landing or a replayed hold written between the read and the write
+// refuses the write instead of being overwritten.
+type SeatAsRead struct {
+	BinID         *int64
+	Epoch         int64
+	ReleasedEmpty bool
+	Pending       int64
+}
+
+// SeatAsReadOf is the seat as rt holds it.
+func SeatAsReadOf(rt *RuntimeState) SeatAsRead {
+	return SeatAsRead{BinID: rt.ActiveBinID, Epoch: rt.ActiveBinEpoch, ReleasedEmpty: rt.ReleasedEmpty, Pending: rt.PendingUOPDelta}
+}
+
+// seatUnchangedSQL is the WHERE that refuses a seat changed since it was read
+// (its args are seatArgs).
+const seatUnchangedSQL = `process_node_id=? AND active_bin_id IS ? AND active_bin_epoch=?
+		AND released_empty=? AND pending_uop_delta=?`
+
+func seatArgs(processNodeID int64, seat SeatAsRead) []any {
+	var bin any
+	if seat.BinID != nil {
+		bin = *seat.BinID
+	}
+	return []any{processNodeID, bin, seat.Epoch, boolInt(seat.ReleasedEmpty), seat.Pending}
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// ChargeSeatUOP adds delta to the bound carrier's count, and with clearPending
+// clears the hold the delta replays, in one statement, on the seat as the tick
+// read it. A delta, not a count: an operator's count written under the lock
+// before it stands, and the tick is charged on top. Reports whether the seat
+// was still as read; false writes nothing.
+func ChargeSeatUOP(db *sql.DB, processNodeID int64, delta int, clearPending bool, seat SeatAsRead) (bool, error) {
+	res, err := db.Exec(`UPDATE process_node_runtime_states SET
+		remaining_uop_cached = remaining_uop_cached + ?,
+		pending_uop_delta = CASE WHEN ? = 1 THEN 0 ELSE pending_uop_delta END,
+		pending_uop_payload = CASE WHEN ? = 1 THEN '' ELSE pending_uop_payload END,
+		updated_at=datetime('now')
+		WHERE `+seatUnchangedSQL,
+		append([]any{delta, boolInt(clearPending), boolInt(clearPending)}, seatArgs(processNodeID, seat)...)...)
+	return oneRow(res, err)
+}
+
+// HoldSeatUOP adds delta to the seat's hold and records its part (Lane H R2,
+// DECISIONS D12), on the seat as the tick read it: with no carrier chargeable,
+// or one released empty. A carrier bound since refuses it, and the tick charges
+// that carrier instead. Reports whether the seat was still as read.
+func HoldSeatUOP(db *sql.DB, processNodeID int64, delta int, part string, seat SeatAsRead) (bool, error) {
+	res, err := db.Exec(`UPDATE process_node_runtime_states SET
+		pending_uop_delta = pending_uop_delta + ?, pending_uop_payload=?, updated_at=datetime('now')
+		WHERE `+seatUnchangedSQL,
+		append([]any{delta, part}, seatArgs(processNodeID, seat)...)...)
+	return oneRow(res, err)
+}
+
+func oneRow(res sql.Result, err error) (bool, error) {
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
 }
 
 // DBTX is what a reader or writer in this package needs from database/sql,

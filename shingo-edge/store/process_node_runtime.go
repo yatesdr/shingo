@@ -165,13 +165,6 @@ func (db *DB) SetProcessNodeReleaseCount(processNodeID int64, remainingUOP int) 
 	return processes.SetRuntimeReleaseCount(db.DB, processNodeID, remainingUOP)
 }
 
-// HoldPendingUOP accumulates a tick count held for the next carrier of part
-// (hold-and-replay), writing the part in the same statement. The tick path's
-// hold (applyHoldAndReplay).
-func (db *DB) HoldPendingUOP(processNodeID int64, delta int, part string) error {
-	return processes.AddPendingUOPDelta(db.DB, processNodeID, delta, part)
-}
-
 // AddPendingUOPDelta seeds a hold of no known part. NO PRODUCTION CALLER:
 // the tick path holds through HoldPendingUOP, which records the part; test
 // fixtures seed holds with this.
@@ -179,11 +172,18 @@ func (db *DB) AddPendingUOPDelta(processNodeID int64, delta int) error {
 	return processes.AddPendingUOPDelta(db.DB, processNodeID, delta, "")
 }
 
-// SetProcessNodeUOPClearPending writes the cached UOP and zeroes the
-// pending hold-pile in one statement (used when a tick binds the held
-// delta onto a now-present bin).
-func (db *DB) SetProcessNodeUOPClearPending(processNodeID int64, remainingUOP int) error {
-	return processes.SetRuntimeUOPClearPending(db.DB, processNodeID, remainingUOP)
+// ChargeProcessNodeSeat adds a tick's delta to the bound carrier's count, and
+// with clearPending clears the hold it replays, on the seat as the tick read
+// it (processes.ChargeSeatUOP). False: the seat changed, nothing written.
+func (db *DB) ChargeProcessNodeSeat(processNodeID int64, delta int, clearPending bool, seat processes.SeatAsRead) (bool, error) {
+	return processes.ChargeSeatUOP(db.DB, processNodeID, delta, clearPending, seat)
+}
+
+// HoldProcessNodeSeat adds a tick's count to the seat's hold for the next
+// carrier of part, on the seat as the tick read it (processes.HoldSeatUOP).
+// False: the seat changed, nothing written.
+func (db *DB) HoldProcessNodeSeat(processNodeID int64, delta int, part string, seat processes.SeatAsRead) (bool, error) {
+	return processes.HoldSeatUOP(db.DB, processNodeID, delta, part, seat)
 }
 
 // SetActivePull marks a node as the active pull point for A/B cycling.

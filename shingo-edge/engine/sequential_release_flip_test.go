@@ -189,7 +189,7 @@ func TestSequentialReleaseFlip_PartnerWithNoBinTakesTheLineAndHoldsItsCount(t *t
 	testutil.MustNoErr(t, err, "get SS-B")
 	rt, err := db.GetProcessNodeRuntime(bNodeID)
 	testutil.MustNoErr(t, err, "get SS-B runtime")
-	eng.applyHoldAndReplay(node, rt, 3, +1, tickParts{})
+	eng.applyHoldAndReplay(node, rt, 3, +1, func(*processes.RuntimeState) tickParts { return tickParts{} })
 	rt, err = db.GetProcessNodeRuntime(bNodeID)
 	testutil.MustNoErr(t, err, "re-read SS-B runtime")
 	if rt.PendingUOPDelta != 3 {
