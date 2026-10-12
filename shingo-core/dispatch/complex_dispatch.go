@@ -1219,12 +1219,15 @@ func (d *Dispatcher) SetQueueReason(order *orders.Order, code protocol.QueueCode
 func (d *Dispatcher) failOrderInternal(order *orders.Order, code, detail string) {
 	if err := d.lifecycle.Fail(order, order.StationID, code, detail); err != nil {
 		log.Printf("dispatch: fail order %d: %v", order.ID, err)
-		// The transition failed, so its fireFailed actionMap hook did NOT emit
-		// EmitOrderFailed. Fall back to an explicit emit so the failure still
-		// reaches the edge. On the success path fireFailed is the single
-		// authoritative emit — emitting again here would double it (the defect
-		// this dedup removed).
-		d.emitter.EmitOrderFailed(order.ID, order.EdgeUUID, order.StationID, code, detail, order.RecoversOrderID)
+		// A refused transition (the order already finished, or another writer
+		// moved it first) emits nothing: that order's own transition told the
+		// Edge, and "failed" here would contradict a confirm or a cancel. A
+		// write error left the order live and unannounced, so the failure is
+		// sent explicitly. On the success path fireFailed is the single
+		// authoritative emit.
+		if !transitionRefused(err) {
+			d.emitter.EmitOrderFailed(order.ID, order.EdgeUUID, order.StationID, code, detail, order.RecoversOrderID)
+		}
 	}
 }
 
@@ -1237,13 +1240,22 @@ func (d *Dispatcher) failOrderInternal(order *orders.Order, code, detail string)
 func (d *Dispatcher) skipOrderInternal(order *orders.Order, code, detail string) {
 	if err := d.lifecycle.Skip(order, order.StationID, code, detail); err != nil {
 		log.Printf("dispatch: skip order %d: %v", order.ID, err)
-		// The transition failed, so its fireSkipped actionMap hook did NOT emit
-		// EmitOrderSkipped. Fall back to an explicit emit so the skip still
-		// reaches the edge. On the success path fireSkipped is the single
-		// authoritative emit — emitting again here would double it (the defect
-		// this dedup removed, mirroring the failOrderInternal fix above).
-		d.emitter.EmitOrderSkipped(order.ID, order.EdgeUUID, order.StationID, code, detail)
+		// As failOrderInternal: only a write error falls back to an explicit
+		// emit; a refused transition emits nothing.
+		if !transitionRefused(err) {
+			d.emitter.EmitOrderSkipped(order.ID, order.EdgeUUID, order.StationID, code, detail)
+		}
 	}
+}
+
+// transitionRefused reports a lifecycle error that refused the move rather
+// than failing to write it: an illegal or concurrent transition, or a wait
+// without a cause.
+func transitionRefused(err error) bool {
+	var illegal IllegalTransition
+	var concurrent ConcurrentTransition
+	var noCause WaitWithoutCause
+	return errors.As(err, &illegal) || errors.As(err, &concurrent) || errors.As(err, &noCause)
 }
 
 // SkipOrder is skipOrderInternal for the scanner: a plain move whose named bin

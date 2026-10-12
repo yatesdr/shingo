@@ -205,68 +205,41 @@ func TestChar_DispatchPreparedComplex_InvalidStoredSteps_Fails(t *testing.T) {
 	}
 }
 
-// TestChar_FailOrderInternal_TransitionErrorFallback pins the ERROR-path half of
-// the EmitOrderFailed dedup: when lifecycle.Fail returns an error, its fireFailed
-// actionMap hook never ran, so failOrderInternal's fallback emit must fire EXACTLY
-// ONCE — the failure still has to reach the edge. Here the order is already
-// terminal, so Fail short-circuits to IllegalTransition (no state write, no
-// fireFailed) and drives the fallback branch directly. Together with the two
-// success-path cases (want 1) this pins the invariant: exactly one EmitOrderFailed
-// on BOTH paths.
-func TestChar_FailOrderInternal_TransitionErrorFallback(t *testing.T) {
+// TestChar_FailOrderInternal_ARefusedFailTellsTheEdgeNothing: when lifecycle.Fail
+// refuses the transition (the order already finished, or another writer moved
+// it first), the order's own transition told the Edge what happened; a fallback
+// emit here would tell it "failed" for an order that confirmed or was
+// cancelled. Converted (plant-ready R1.3, F1): it pinned the fallback firing on
+// a refused transition. The fallback stays for a write error, which is the case
+// it was for.
+func TestChar_FailOrderInternal_ARefusedFailTellsTheEdgeNothing(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
 	setupTestData(t, db)
-	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
-
-	// In-memory order only: Fail's IsTerminal guard returns before touching the DB.
-	order := &orders.Order{
-		EdgeUUID:  "char-fail-fallback",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusFailed, // terminal → Fail returns IllegalTransition, fireFailed does not run
-	}
-
-	d.failOrderInternal(order, "invalid_steps", "transition-error fallback")
-
-	if len(emitter.failed) != 1 {
-		t.Fatalf("failed events = %d, want 1 (transition-error fallback emit)", len(emitter.failed))
-	}
-	if emitter.failed[0].errorCode != "invalid_steps" {
-		t.Errorf("failed[0] code = %q, want %q", emitter.failed[0].errorCode, "invalid_steps")
+	for _, st := range []protocol.Status{StatusConfirmed, StatusCancelled, StatusFailed} {
+		d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+		// In-memory order only: Fail's IsTerminal guard returns before touching the DB.
+		order := &orders.Order{EdgeUUID: "char-fail-refused-" + string(st), StationID: "line-1", OrderType: OrderTypeComplex, Status: st}
+		d.failOrderInternal(order, "invalid_steps", "a refused fail")
+		if len(emitter.failed) != 0 {
+			t.Errorf("%s order: failed events = %d, want 0 (the Edge is not told an order failed that %s)", st, len(emitter.failed), st)
+		}
 	}
 }
 
-// TestChar_SkipOrderInternal_TransitionErrorFallback pins the ERROR-path half of
-// the EmitOrderSkipped dedup (mirror of the failOrderInternal case above): when
-// lifecycle.Skip returns an error, its fireSkipped actionMap hook never ran, so
-// skipOrderInternal's fallback emit must fire EXACTLY ONCE — the skip still has to
-// reach the edge. Here the order is already terminal, so Skip short-circuits to
-// IllegalTransition (no state write, no fireSkipped) and drives the fallback branch
-// directly. Together with TestPhase0_DispositionTriad_NoSourceBin_Complex (the
-// success-path case, want 1) this pins the invariant: exactly one EmitOrderSkipped
-// on BOTH paths.
-func TestChar_SkipOrderInternal_TransitionErrorFallback(t *testing.T) {
+// TestChar_SkipOrderInternal_ARefusedSkipTellsTheEdgeNothing mirrors the fail
+// case: a refused skip tells the Edge nothing. Converted with it (F1).
+func TestChar_SkipOrderInternal_ARefusedSkipTellsTheEdgeNothing(t *testing.T) {
 	t.Parallel()
 	db := testDBShared(t)
 	setupTestData(t, db)
-	d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
-
-	// In-memory order only: Skip's IsTerminal guard returns before touching the DB.
-	order := &orders.Order{
-		EdgeUUID:  "char-skip-fallback",
-		StationID: "line-1",
-		OrderType: OrderTypeComplex,
-		Status:    StatusSkipped, // terminal → Skip returns IllegalTransition, fireSkipped does not run
-	}
-
-	d.skipOrderInternal(order, "no_source_bin", "transition-error fallback")
-
-	if len(emitter.skipped) != 1 {
-		t.Fatalf("skipped events = %d, want 1 (transition-error fallback emit)", len(emitter.skipped))
-	}
-	if emitter.skipped[0].errorCode != "no_source_bin" {
-		t.Errorf("skipped[0] code = %q, want %q", emitter.skipped[0].errorCode, "no_source_bin")
+	for _, st := range []protocol.Status{StatusConfirmed, StatusCancelled, StatusSkipped} {
+		d, emitter := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+		order := &orders.Order{EdgeUUID: "char-skip-refused-" + string(st), StationID: "line-1", OrderType: OrderTypeComplex, Status: st}
+		d.skipOrderInternal(order, "no_source_bin", "a refused skip")
+		if len(emitter.skipped) != 0 {
+			t.Errorf("%s order: skipped events = %d, want 0", st, len(emitter.skipped))
+		}
 	}
 }
 
