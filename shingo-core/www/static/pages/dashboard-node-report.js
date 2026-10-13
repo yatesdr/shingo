@@ -17,15 +17,15 @@ import { escapeHtml, formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '
     if (el) el.className = 'dash-conn ' + (ok ? 'dash-conn-ok' : 'dash-conn-down');
   }
 
-  function headerHTML(layout) {
-    if (layout === 'shared_window') {
+  function headerHTML(grain) {
+    if (grain === 'payloads') {
       return '<th>Payload</th><th>Status</th><th>Node</th><th>UoP</th>';
     }
     return '<th>Node</th><th>Node Group</th><th>Status</th><th>Payload</th><th>UoP</th>';
   }
 
-  function rowHTML(r, layout) {
-    var isShared = layout === 'shared_window';
+  function rowHTML(r, grain) {
+    var isShared = grain === 'payloads';
     var statusHTML = r.occupied
       ? '<span class="nr-dot nr-dot-filled"></span> FILLED'
       : '<span class="nr-dot nr-dot-empty nr-dot-pulse"></span> EMPTY';
@@ -52,7 +52,7 @@ import { escapeHtml, formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '
       '<td class="nr-uop">' + escapeHtml(uopText) + '</td>';
   }
 
-  function render(layout, rows) {
+  function render(grain, rows) {
     var container = document.getElementById('nr-columns');
     var empty = document.getElementById('nr-empty');
     var stats = document.getElementById('nr-stats');
@@ -70,7 +70,7 @@ import { escapeHtml, formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '
     if (numCols < 1) numCols = 1;
     var fontSize = Math.max(0.65, Math.min(1.15, 1.15 - (numCols - 1) * 0.12));
     var filled = 0;
-    var thead = headerHTML(layout);
+    var thead = headerHTML(grain);
     var html = '';
     for (var start = 0; start < rows.length; start += MAX_ROWS) {
       var chunk = rows.slice(start, start + MAX_ROWS);
@@ -81,9 +81,9 @@ import { escapeHtml, formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '
         var r = chunk[i];
         if (r.occupied) filled++;
         html += '<tr class="' + (r.occupied ? 'nr-row-filled' : 'nr-row-empty') + (r.is_active_style ? ' nr-row-active' : '') + '">' +
-          rowHTML(r, layout) + '</tr>';
+          rowHTML(r, grain) + '</tr>';
       }
-        var colSpan = layout === 'shared_window' ? 4 : 5;
+        var colSpan = grain === 'payloads' ? 4 : 5;
         for (var pad = chunk.length; pad < MAX_ROWS; pad++) {
           html += '<tr class="nr-row-empty"><td colspan="' + colSpan + '">&nbsp;</td></tr>';
         }
@@ -150,13 +150,20 @@ import { escapeHtml, formatClock, onSSE, serverNow, setSSEReloadOnBuild } from '
       .then(function (data) {
         var titleEl = document.getElementById('nr-title');
         var subEl = document.getElementById('nr-subtitle');
+        // THE ROW GRAIN, not the loader's layout string. The server now
+        // decides the grain itself (the dashboard config's override, else
+        // the layout's natural answer) and ships it as data.rows; this used
+        // to re-derive the shape from data.layout, which disagreed with the
+        // rows the server actually built the moment a dashboard overrode.
+        // The layout string stays only for the subtitle's vocabulary.
+        var grain = data.rows || (data.layout === 'shared_window' ? 'payloads' : 'positions');
         if (data.loader_name) {
           if (titleEl) titleEl.textContent = data.loader_name;
           var count = data.homes_count || data.payloads_count || 0;
-          var label = data.layout === 'shared_window' ? 'payload' : 'position';
+          var label = grain === 'payloads' ? 'payload' : 'position';
           if (subEl) subEl.textContent = data.layout + ' \u00b7 ' + count + ' ' + label + (count !== 1 ? 's' : '');
         }
-        render(data.layout, data.rows || []);
+        render(grain, data.rows || []);
         renderTransit(data.transit || []);
       })
       .catch(function (e) {

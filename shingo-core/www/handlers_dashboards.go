@@ -11,6 +11,7 @@ import (
 	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/service"
+	"shingocore/store/loaders"
 )
 
 // dashboardTemplates maps a wall-display kind to the chromeless template that
@@ -390,7 +391,19 @@ type transitRow struct {
 // configured payload list in shared-window mode, the payloads on its home rows
 // in dedicated-positions mode. That difference is the only thing that ever
 // varied between the two copies.
-func (h *Handlers) transitRows(allBins []*domain.Bin, payloadSet map[string]bool) []transitRow {
+//
+// loaderNodes is the SCOPING half: the names of the loader's own nodes (its
+// homes/windows). The payload filter alone made the banner plant-wide - a full
+// bin of a bound payload showed wherever it was going, and the return-trip arm
+// (empty/partial) had no payload check at all, so every empty in the plant
+// appeared on every node-report wall (SPR 2026-10-12: a stage-1 FG dashboard
+// banner-popping a UTN node it had never claimed). The claiming order's
+// destination was already in hand - it is what the row PRINTS - it was just
+// never asked the scoping question. Now it is: a trip shows only when its
+// destination or its source is one of the loader's own nodes. Bins with no
+// claiming order are scoped out with everything else: a transit bin nobody
+// claims is a ghost, and a ghost has no destination to attribute to anyone.
+func (h *Handlers) transitRows(allBins []*domain.Bin, payloadSet map[string]bool, loaderNodes map[string]bool) []transitRow {
 	activeOrders, _ := h.engine.OrderService().ListActiveOrders()
 	// KEYED BY ORDER ID, which is what reads it -- see the note above.
 	orderDest := make(map[int64]string, len(activeOrders))
@@ -432,6 +445,16 @@ func (h *Handlers) transitRows(allBins []*domain.Bin, payloadSet map[string]bool
 		if !outbound && !returnTrip {
 			continue
 		}
+		// THE SCOPING QUESTION, asked after the content filters: is this trip
+		// one of this loader's? A destination or source naming one of the
+		// loader's own nodes is what makes it so - full bins ARRIVING
+		// (unloader) or DEPARTING (a produce loader's windows), and the
+		// empty/partial returns either way.
+		inbound := dest != "" && loaderNodes[dest]
+		outgoing := source != "" && loaderNodes[source]
+		if !inbound && !outgoing {
+			continue
+		}
 		transit = append(transit, transitRow{
 			PayloadCode:  b.PayloadCode,
 			DestNode:     dest,
@@ -463,6 +486,18 @@ func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request
 
 	var cfg struct {
 		LoaderID int64 `json:"loader_id"`
+		// Rows overrides WHAT EACH ROW IS: "positions" (one row per loader
+		// home) or "payloads" (one row per bound payload). Empty - the stored
+		// default for every dashboard that predates the field - means FOLLOW
+		// THE LOADER'S LAYOUT, which is what the branch below used to be keyed
+		// on alone: the grain was a consequence of a config row nobody was
+		// asked about. A stage-1 FG unloader is created shared_window whether
+		// or not the wall wants a per-position grid, and the operator
+		// configuring the dashboard knows which view their floor reads - so
+		// the choice is theirs now. An unrecognised value falls back to the
+		// layout default rather than erroring: a stale hand-edited config
+		// renders the ordinary view, not a broken kiosk.
+		Rows string `json:"rows"`
 	}
 	if err := json.Unmarshal(d.Config, &cfg); err != nil || cfg.LoaderID == 0 {
 		h.jsonError(w, "dashboard config missing loader_id", http.StatusBadRequest)
@@ -484,13 +519,27 @@ func (h *Handlers) apiDashboardNodeReport(w http.ResponseWriter, r *http.Request
 
 	activeStylePayloads := h.activeStylePayloads()
 
+	// The EFFECTIVE grain: the config's override, else the layout's natural
+	// answer (shared_window thinks in parts, dedicated_positions in places).
+	// Shipped to the kiosk as "rows" so the JS's column shapes key on what
+	// actually rendered rather than re-deriving it from the layout string.
+	grain := cfg.Rows
+	if grain != "positions" && grain != "payloads" {
+		if loader.Layout == "shared_window" {
+			grain = "payloads"
+		} else {
+			grain = "positions"
+		}
+	}
+
 	resp := map[string]any{
 		"loader_name": loader.Name,
 		"layout":      loader.Layout,
+		"rows":        grain,
 	}
 
 	var ok bool
-	if loader.Layout == "shared_window" {
+	if grain == "payloads" {
 		ok = h.nodeReportSharedWindow(w, resp, svc, nodeSvc, cfg.LoaderID, activeStylePayloads)
 	} else {
 		ok = h.nodeReportPositions(w, resp, svc, nodeSvc, cfg.LoaderID, activeStylePayloads)
@@ -514,6 +563,27 @@ func (h *Handlers) nodeReportSharedWindow(
 	if pErr != nil {
 		h.jsonError(w, pErr.Error(), http.StatusInternalServerError)
 		return false
+	}
+	// A DEDICATED LOADER NAMES ITS PARTS ON ITS HOMES, not in the payload
+	// bindings (the pinned home IS the binding). This branch is reachable for
+	// one now - the dashboard's rows override - so an empty binding set on a
+	// dedicated loader is not an empty wall: the homes' pinned payload codes
+	// are the loader's part list, read once here. Without this the reverse
+	// override renders "no payloads configured" against a loader whose whole
+	// layout is a payload map.
+	if len(payloads) == 0 {
+		homes, hErr := svc.Homes(loaderID)
+		if hErr != nil {
+			h.jsonError(w, hErr.Error(), http.StatusInternalServerError)
+			return false
+		}
+		seen := map[string]bool{}
+		for _, hm := range homes {
+			if hm.PayloadCode != "" && !seen[hm.PayloadCode] {
+				seen[hm.PayloadCode] = true
+				payloads = append(payloads, loaders.Payload{LoaderID: loaderID, PayloadCode: hm.PayloadCode})
+			}
+		}
 	}
 	resp["payloads_count"] = len(payloads)
 	allBins, bErr := h.engine.BinService().ListBins()
@@ -558,7 +628,25 @@ func (h *Handlers) nodeReportSharedWindow(
 	for _, p := range payloads {
 		payloadSet[p.PayloadCode] = true
 	}
-	resp["transit"] = h.transitRows(allBins, payloadSet)
+	// The loader's own nodes, for the transit bar's scoping: the windows
+	// (homes) this loader serves, by name - the same set in either grain,
+	// because scoping is about PLACES, not about what a row is.
+	homes, hErr := svc.Homes(loaderID)
+	if hErr != nil {
+		h.jsonError(w, hErr.Error(), http.StatusInternalServerError)
+		return false
+	}
+	nodeNameByID := make(map[int64]string, len(allNodes))
+	for _, n := range allNodes {
+		nodeNameByID[n.ID] = n.Name
+	}
+	loaderNodes := make(map[string]bool, len(homes))
+	for _, hm := range homes {
+		if name := nodeNameByID[hm.PositionNodeID]; name != "" {
+			loaderNodes[name] = true
+		}
+	}
+	resp["transit"] = h.transitRows(allBins, payloadSet, loaderNodes)
 	return true
 }
 
@@ -645,6 +733,12 @@ func (h *Handlers) nodeReportPositions(
 			payloadSet[r.PayloadCode] = true
 		}
 	}
-	resp["transit"] = h.transitRows(allBins, payloadSet)
+	loaderNodes := make(map[string]bool, len(homes))
+	for _, hm := range homes {
+		if node := nodeByID[hm.PositionNodeID]; node != nil {
+			loaderNodes[node.Name] = true
+		}
+	}
+	resp["transit"] = h.transitRows(allBins, payloadSet, loaderNodes)
 	return true
 }

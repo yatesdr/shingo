@@ -219,3 +219,50 @@ func TestApiDashboardNodeReport_TransitReadsTheClaimingOrder(t *testing.T) {
 		t.Error("is_empty = true for a bin carrying a payload")
 	}
 }
+
+// THE SCOPING PIN. A trip whose destination names none of the loader's own
+// nodes is somebody else's material, whatever its payload says: the old
+// payload-only filter put every full bin of a bound payload on the wall
+// wherever it was going, and every empty in the plant on every wall, so a
+// stage-1 FG dashboard banner-popped an unrelated utility node (SPR
+// 2026-10-12). Same payload, same fullness, same claiming shape - only the
+// destination differs, and that alone must keep it off the board.
+func TestApiDashboardNodeReport_TransitScopesToTheLoadersOwnNodes(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+
+	// The fixture's own transit bin heads to POS-B - a loader node - so it
+	// stays on the board. A second bin, same payload, claims an order whose
+	// delivery is a node this loader has never heard of.
+	id, wantDest, _ := nodeReportFixture(t, h, db, "NRS")
+
+	stranger := &nodes.Node{Name: "NRS-UNRELATED-UTN", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(stranger), "create the unrelated node")
+	strayOrder := &orders.Order{
+		EdgeUUID: "NRS-STRAY", StationID: "st-1", OrderType: "retrieve",
+		Status: "in_transit", PayloadCode: "NRS-PART",
+		DeliveryNode: stranger.Name, SourceNode: "NRS-MKT",
+		Quantity: 1,
+	}
+	testutil.MustNoErr(t, db.CreateOrder(strayOrder), "create the stray order")
+	transitNode, err := db.GetNodeByName(domain.TransitNodeName)
+	testutil.MustNoErr(t, err, "lookup _TRANSIT")
+	strayBin := &bins.Bin{
+		BinTypeID: 1, Label: "NRS-STRAY-FLYING", NodeID: &transitNode.ID,
+		Status: "available",
+	}
+	testutil.MustNoErr(t, db.CreateBin(strayBin), "create the stray transit bin")
+	_, cerr := db.DB.Exec(
+		`UPDATE bins SET claimed_by=$1, payload_code=$2, uop_remaining=100 WHERE id=$3`,
+		strayOrder.ID, "NRS-PART", strayBin.ID)
+	testutil.MustNoErr(t, cerr, "seed the stray bin's claim and contents")
+
+	got := getNodeReport(t, h, id)
+	if len(got.Transit) != 1 {
+		t.Fatalf("got %d transit rows, want exactly the loader's own trip: %+v", len(got.Transit), got.Transit)
+	}
+	if got.Transit[0].DestNode != wantDest {
+		t.Fatalf("the surviving row is not the loader's own trip: dest = %q, want %q",
+			got.Transit[0].DestNode, wantDest)
+	}
+}

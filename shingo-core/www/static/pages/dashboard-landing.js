@@ -232,6 +232,22 @@ function openModal(d) {
     const loaderSelect = el('select', { className: 'form-input' },
         [el('option', { value: '' }, 'Loading loaders\u2026')]);
     const loaderField = field('Loader', loaderSelect);
+    // Row grain — what each ROW of the kiosk is. A loader's layout decides
+    // this naturally (shared_window thinks in parts, dedicated_positions in
+    // places), but the layout is a property the operator configuring the
+    // dashboard did not choose - a two-stage unloader's stage 1 is created
+    // shared_window whether or not the wall should read as a per-position
+    // grid. Three states, so a select and not a checkbox: follow the layout
+    // (the default, what every dashboard did before the field existed),
+    // force positions, or force payloads. Stored in config_json.rows; the
+    // kiosk renders the row shape from what the server says it built.
+    const grainSelect = el('select', { className: 'form-input' }, [
+        el('option', { value: '' }, 'Follow the loader\u2019s layout'),
+        el('option', { value: 'positions' }, 'One row per position (the spot grid)'),
+        el('option', { value: 'payloads' }, 'One row per payload (the part list)'),
+    ]);
+    grainSelect.value = savedConfig.rows || '';
+    const grainField = field('Rows \u2014 what each row is', grainSelect);
     apiGet('/api/loader/list').then((resp) => {
         loaderSelect.innerHTML = '';
         const items = (resp && resp.loaders) ? resp.loaders : [];
@@ -254,6 +270,7 @@ function openModal(d) {
             field('Type', kindSelect),
             field('Area \u2014 stations (none selected = whole plant)', pickerBox),
             loaderField,
+            grainField,
             cellsField,
             el('label', { style: { display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' } }, [enabledInput, 'Enabled']),
             el('div', { style: { display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' } }, [
@@ -269,6 +286,7 @@ function openModal(d) {
         cellsField.style.display = kindSelect.value === 'heartbeat' ? '' : 'none';
         pickerBox.parentElement.style.display = isNodeReport ? 'none' : '';
         loaderField.style.display = isNodeReport ? '' : 'none';
+        grainField.style.display = isNodeReport ? '' : 'none';
     }
     kindSelect.addEventListener('change', syncKindUI);
     syncKindUI();
@@ -285,7 +303,7 @@ function openModal(d) {
         if (kind === 'node-report') {
             const lid = parseInt(loaderSelect.value, 10);
             if (!lid) { toast('Select a loader', 'error'); return; }
-            payload.config = { loader_id: lid };
+            payload.config = { loader_id: lid, rows: grainSelect.value || '' };
         }
         const req = isEdit ? apiPut('/api/dashboards/' + d.id, payload) : apiPost('/api/dashboards', payload);
         req.then(() => { toast(isEdit ? 'Saved' : 'Created', 'success'); close(); load(); })
@@ -303,7 +321,7 @@ function openModal(d) {
         if (kind === 'node-report') {
             const lid = parseInt(loaderSelect.value, 10);
             if (!lid) { toast('Select a loader', 'error'); return; }
-            payload.config = { loader_id: lid };
+            payload.config = { loader_id: lid, rows: grainSelect.value || '' };
         }
         const req = isEdit ? apiPut('/api/dashboards/' + d.id, payload) : apiPost('/api/dashboards', payload);
         req.then(() => { toast(isEdit ? 'Saved' : 'Created', 'success'); close(); load(); })
