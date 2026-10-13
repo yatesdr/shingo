@@ -114,7 +114,7 @@ var releaseTrunkCallers = map[string]string{
 	"release_doors.go:ReleaseStagedOrders":         "operator: the pair click's two legs, one act (door 1)",
 	"release_doors.go:releaseChangeoverWaitScoped": "operator: the changeover sweep and per-node click, one act (doors 5 and 6)",
 	"release_doors.go:fireIntents":                 "the intent worker: a node's held intents, re-planned on a wake",
-	"sim_operator.go:runRelease":                   "sim: the auto-operator's per-order arm (-tags sim)",
+	"sim_operator.go:release":                      "sim: the auto-operator's per-order arm, and the changeover's purposed release where the tile shows one (-tags sim)",
 }
 
 // releasePlanCallers are the callers of the gate table's plans. Every one is a

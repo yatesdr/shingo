@@ -30,10 +30,10 @@ import (
 // for no production benefit. Being //go:build sim, it is absent from every
 // non-sim build (so it can't affect the production engine or its test suites).
 //
-// IT DOES NOT CUT A CHANGEOVER OVER, and nothing in the sim does. A changeover
-// reaches `{"can_complete":true,"blockers":[]}` and then waits for somebody to
-// press the button: POST /api/processes/{id}/changeover/cutover. Drive it from
-// the harness.
+// IT RUNS A SCHEDULED CHANGEOVER (sim.operators.changeovers; sim_changeover.go)
+// as a person at the station does: START, the RELEASEs the screen offers, and
+// CUTOVER once the gate reads `{"can_complete":true,"blockers":[]}`. Nothing
+// else in the sim starts or cuts over a changeover.
 //
 // This note used to say auto-cutover was "deferred within T3.2", beside TWO
 // config keys that agreed with it: operators.changeover_auto_cutover, which
@@ -68,6 +68,12 @@ type simOperator struct {
 	releasing  map[int64]bool // orders with a swap-ready release scheduled/in-flight
 	confirming map[int64]bool // delivered swap legs with a confirm scheduled/in-flight
 
+	// changeovers are the scheduled changeovers (sim_changeover.go), counted
+	// from startedAt on the sim clock. Read and written by the reconcile
+	// goroutine only.
+	changeovers []changeoverRun
+	startedAt   time.Time
+
 	// marketSlots caches the combined market's storage-slot node names for the
 	// negative-bin sweep (clearNegativeBins). Populated lazily; read only by the
 	// single reconcile goroutine, so no lock is needed.
@@ -80,20 +86,21 @@ type simOperator struct {
 // shared clock for a manual-clock integration harness is deferred (J16).
 func (e *Engine) StartSimOperator(ctx context.Context, simCfg config.SimConfig, clk clock.Clock) {
 	op := &simOperator{
-		e:          e,
-		ops:        simCfg.Operators,
-		clk:        clk,
-		ctx:        ctx,
-		pending:    make(map[int64]bool),
-		releasing:  make(map[int64]bool),
-		confirming: make(map[int64]bool),
+		e:           e,
+		ops:         simCfg.Operators,
+		clk:         clk,
+		ctx:         ctx,
+		pending:     make(map[int64]bool),
+		releasing:   make(map[int64]bool),
+		confirming:  make(map[int64]bool),
+		startedAt:   clk.Now(),
+		changeovers: newChangeoverRuns(simCfg.Operators.Changeovers),
 	}
 	op.classify = op.classifyFromClaim
 	// The bus is synchronous (D4): handlers must not block — they dedupe and
 	// spawn a delayed worker, then return. onDelivered drives the post-delivery
-	// LOAD/CLEAR; onStatusChanged drives the swap-ready release. There is no
-	// cutover handler: the sim has no PLC bit to stand in for, because the
-	// release trunk flips the pair itself (2026-09-27, fact-owners Lane G).
+	// LOAD/CLEAR; onStatusChanged drives the swap-ready release. A scheduled
+	// changeover is driven from the reconcile sweep (driveChangeovers).
 	e.Events.SubscribeTypes(op.onDelivered, EventOrderDelivered)
 	e.Events.SubscribeTypes(op.onStatusChanged, EventOrderStatusChanged)
 	e.logFn("[sim] sim operator started (loader_auto_load=%s unloader_auto_clear=%s swap_release=%s)",
@@ -546,6 +553,8 @@ func (op *simOperator) reconcile() {
 	op.clearNegativeBins()
 	// And the NODE sweep, which is the other half of restart-safety. See below.
 	op.sweepManualSwapNodes()
+	// The scheduled changeovers: START, and CUTOVER when the gate allows.
+	op.driveChangeovers()
 }
 
 // sweepManualSwapNodes drives any manual_swap node that is holding a bin it
@@ -806,8 +815,25 @@ func (op *simOperator) collectMarketSlots() []string {
 	return slots
 }
 
-// runRelease dwells for the operator-reaction delay, then pushes the release.
-func (op *simOperator) runRelease(orderID int64) {
+// runRelease dwells for the operator-reaction delay, then pushes the release
+// once the bin is done (binNotDone).
+func (op *simOperator) runRelease(orderID int64) { op.release(orderID, true) }
+
+// pressReleaseNow presses an order's RELEASE after the reaction delay whatever
+// the bin holds: the changeover START's refusal asked for it ("Release the
+// wait"). Deduped with the swap-ready release.
+func (op *simOperator) pressReleaseNow(orderID int64) {
+	op.mu.Lock()
+	if op.releasing[orderID] {
+		op.mu.Unlock()
+		return
+	}
+	op.releasing[orderID] = true
+	op.mu.Unlock()
+	go op.release(orderID, false)
+}
+
+func (op *simOperator) release(orderID int64, whenDone bool) {
 	defer func() {
 		op.mu.Lock()
 		delete(op.releasing, orderID)
@@ -842,10 +868,26 @@ func (op *simOperator) runRelease(orderID int64) {
 	}
 	// A same-part swap waits for its bin to be done; the sweep looks again.
 	// PIN: TestSimOperator_ReleasesASamePartSwapWhenTheBinIsDone
-	if o, err := op.e.db.GetOrder(orderID); err == nil && o.ProcessNodeID != nil {
+	if o, err := op.e.db.GetOrder(orderID); whenDone && err == nil && o.ProcessNodeID != nil {
 		if why := op.binNotDone(*o.ProcessNodeID); why != "" {
 			op.e.debugFn("[sim] operator leaves order %d staged: %s", orderID, why)
 			return
+		}
+	}
+	// THE TILE'S CHANGEOVER RELEASE, where the screen shows one: RELEASE:
+	// TOOLING DONE or RELEASE: READY, through the changeover's release door.
+	if o, err := op.e.db.GetOrder(orderID); err == nil && o.ProcessNodeID != nil {
+		if node, nerr := op.e.db.GetProcessNode(*o.ProcessNodeID); nerr == nil && node != nil {
+			if purpose := op.changeoverReleasePurpose(node); purpose != "" {
+				disp, _ := op.consumeDisposition(node.ID)
+				disp.CalledBy = "sim-operator"
+				if _, err := op.e.ReleaseChangeoverWaitFor(node.ProcessID, node.ID, purpose, disp); err != nil {
+					op.e.debugFn("[sim] operator changeover release (%s) at node %d rejected: %v", purpose, node.ID, err)
+					return
+				}
+				op.e.logFn("[sim] operator changeover release (%s) at node %s (order %d)", purpose, node.CoreNodeName, orderID)
+				return
+			}
 		}
 	}
 	if op.ops.PairRelease {

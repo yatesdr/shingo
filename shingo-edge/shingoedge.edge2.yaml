@@ -132,28 +132,30 @@ sim:
     # edge rather than one gate.
     #
     # The shape being bought, in sim time:
-    #   changeover starts        t+0
+    #   changeover starts        at its scheduled time (changeovers below)
     #   material delivered       t+1-2 min   (AMR round trip, observed)
     #   operator releases        t+1 min     (swap_release below)
-    #   changeover cuts over     when the harness presses it
+    #   changeover cuts over     swap_release after the gate first reads
+    #                            can_complete with no blockers
     #
-    # THE LAST LINE USED TO READ "t+4 min (cutover_delay below)", and there was a
-    # cutover_delay of 4m set under it. Nothing read it. The sim does not cut a
-    # changeover over at all — the gate opens and waits for
-    # POST /api/processes/{id}/changeover/cutover — so the delay bought no window
-    # and the timeline promised a step that never came. Key deleted 2026-09-10;
-    # a scenario that needs the gap between delivery and cutover holds the
-    # changeover open by not pressing the button, which is the same several
-    # minutes and is under the scenario's control rather than a config file's.
+    # The sim operator runs the changeover as a person at the station does:
+    # START, the RELEASEs the screen offers, CUTOVER (simOperator.driveChangeovers).
+    # A scenario that needs the gap between delivery and cutover holds it open by
+    # leaving the changeover off this list and driving it itself.
     #
-    # The three below ARE read — simOperator.loaderDelay, unloaderDelay and
-    # swapReleaseDelay. Named by symbol, not line: the line numbers this comment
-    # first carried had already drifted by its next rebase.
+    # Every key below is read: loader_auto_load (simOperator.loaderDelay),
+    # unloader_auto_clear (unloaderDelay), swap_release (swapReleaseDelay, and
+    # the cutover's reaction time), lineside_pull_percent (consumeDisposition),
+    # changeovers (driveChangeovers).
     loader_auto_load: 30s
     unloader_auto_clear: 30s
     swap_release: 60s
     # The floor's pull, as EDGE 1 (simOperator.consumeDisposition).
     lineside_pull_percent: 5
+    # LINE-2 to L2-B, then back to L2-A, in sim time after the operator starts.
+    changeovers:
+      - {process: LINE-2, to_style: L2-B, at: 40m}
+      - {process: LINE-2, to_style: L2-A, at: 120m}
 
   # Downtime OFF, deliberately. EDGE 1 runs it for OEE realism; here a random
   # outage inside the observation window would be indistinguishable from the

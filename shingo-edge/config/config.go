@@ -373,18 +373,18 @@ type SimProcessConfig struct {
 }
 
 // SimOperatorsConfig configures the auto-operator (loader auto-LOAD, unloader
-// auto-CLEAR, swap release). Global enable only; per-node override is v2 (Q6).
+// auto-CLEAR, swap release, the scheduled changeovers). Global enable only;
+// per-node override is v2 (Q6).
 //
-// It does NOT cut a changeover over, and TWO keys used to say otherwise.
-// changeover_auto_cutover lived here from T3.2 until 2026-09-10 with a default
-// of true and a `true` in both dev yamls; cutover_delay went with it the same
-// day, a duration nothing read that EDGE 2 set to 4m under a comment promising
-// a cutover at t+4. Neither had a reader anywhere in the tree, and two agents
-// in two days waited on the cutover the pair described. Every remaining field
-// below has a reader in simOperator — loader_auto_load in loaderDelay,
-// unloader_auto_clear in unloaderDelay, swap_release in swapReleaseDelay. Check
-// that before adding a third. See simOperator's header for what does cut a
-// changeover over.
+// EVERY FIELD HAS A READER, and two keys once did not. changeover_auto_cutover
+// lived here from T3.2 until 2026-09-10 with a default of true and a `true` in
+// both dev yamls; cutover_delay went with it the same day, a duration nothing
+// read that EDGE 2 set to 4m under a comment promising a cutover at t+4. Two
+// agents in two days waited on the cutover the pair described. The readers, in
+// simOperator: loader_auto_load in loaderDelay, unloader_auto_clear in
+// unloaderDelay, swap_release in swapReleaseDelay, lineside_pull_percent in
+// consumeDisposition, pair_release in runRelease, changeovers in
+// driveChangeovers. Check that before adding another.
 type SimOperatorsConfig struct {
 	Enabled           bool          `yaml:"enabled"`
 	LoaderAutoLoad    time.Duration `yaml:"loader_auto_load"`    // default 5s
@@ -421,6 +421,21 @@ type SimOperatorsConfig struct {
 	// pair path would find nothing to release, which reads as the pair path
 	// being broken.
 	PairRelease bool `yaml:"pair_release"`
+	// Changeovers are the changeovers the sim operator runs as a person at the
+	// station does: when the sim clock reaches At after the operator started,
+	// it presses START for Process to ToStyle, then each RELEASE the screen
+	// offers, and CUTOVER once the changeover's own gate says can_complete with
+	// no blockers. Read by simOperator.driveChangeovers. Empty: none.
+	Changeovers []SimChangeover `yaml:"changeovers"`
+}
+
+// SimChangeover is one scheduled changeover (SimOperatorsConfig.Changeovers):
+// the process and the style to change it to, by name, and the sim time after
+// the sim operator starts at which the operator presses START.
+type SimChangeover struct {
+	Process string        `yaml:"process"`
+	ToStyle string        `yaml:"to_style"`
+	At      time.Duration `yaml:"at"`
 }
 
 // Defaults returns a Config with sane defaults.
@@ -677,6 +692,7 @@ func (c *Config) Clone() *Config {
 	}
 	out.Sim.Downtime.Machines = cloneSlice(c.Sim.Downtime.Machines)
 	out.Sim.Processes = cloneSlice(c.Sim.Processes)
+	out.Sim.Operators.Changeovers = cloneSlice(c.Sim.Operators.Changeovers)
 	out.Logging.StderrSubsystems = cloneSlice(c.Logging.StderrSubsystems)
 	if c.LoadersMultiWindow != nil {
 		v := *c.LoadersMultiWindow
