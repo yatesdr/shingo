@@ -89,6 +89,28 @@ func (s *LoaderService) Homes(loaderID int64) ([]loaders.Home, error) {
 	return s.db.ListLoaderHomes(loaderID)
 }
 
+// PayloadsOrHomes is a loader's part list: its configured payloads, or for a
+// dedicated loader with none, the payload codes pinned on its homes, once each
+// (the pinned home is the binding).
+func (s *LoaderService) PayloadsOrHomes(loaderID int64) ([]loaders.Payload, error) {
+	payloads, err := s.Payloads(loaderID)
+	if err != nil || len(payloads) > 0 {
+		return payloads, err
+	}
+	homes, err := s.Homes(loaderID)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	for _, hm := range homes {
+		if hm.PayloadCode != "" && !seen[hm.PayloadCode] {
+			seen[hm.PayloadCode] = true
+			payloads = append(payloads, loaders.Payload{LoaderID: loaderID, PayloadCode: hm.PayloadCode})
+		}
+	}
+	return payloads, nil
+}
+
 // Quotas is how many carriers of each type the loader wants on hand.
 func (s *LoaderService) Quotas(loaderID int64) ([]loaders.Quota, error) {
 	return s.db.ListLoaderQuotas(loaderID)

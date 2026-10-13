@@ -11,7 +11,6 @@ import (
 	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/service"
-	"shingocore/store/loaders"
 )
 
 // dashboardTemplates maps a wall-display kind to the chromeless template that
@@ -559,31 +558,17 @@ func (h *Handlers) nodeReportSharedWindow(
 	w http.ResponseWriter, resp map[string]any, svc *service.LoaderService,
 	nodeSvc *service.NodeService, loaderID int64, activeStylePayloads map[string]bool,
 ) bool {
-	payloads, pErr := svc.Payloads(loaderID)
-	if pErr != nil {
-		h.jsonError(w, pErr.Error(), http.StatusInternalServerError)
-		return false
-	}
 	// A DEDICATED LOADER NAMES ITS PARTS ON ITS HOMES, not in the payload
 	// bindings (the pinned home IS the binding). This branch is reachable for
 	// one now - the dashboard's rows override - so an empty binding set on a
-	// dedicated loader is not an empty wall: the homes' pinned payload codes
-	// are the loader's part list, read once here. Without this the reverse
-	// override renders "no payloads configured" against a loader whose whole
-	// layout is a payload map.
-	if len(payloads) == 0 {
-		homes, hErr := svc.Homes(loaderID)
-		if hErr != nil {
-			h.jsonError(w, hErr.Error(), http.StatusInternalServerError)
-			return false
-		}
-		seen := map[string]bool{}
-		for _, hm := range homes {
-			if hm.PayloadCode != "" && !seen[hm.PayloadCode] {
-				seen[hm.PayloadCode] = true
-				payloads = append(payloads, loaders.Payload{LoaderID: loaderID, PayloadCode: hm.PayloadCode})
-			}
-		}
+	// dedicated loader is not an empty wall: the service falls back to the
+	// homes' pinned payload codes. Without this the reverse override renders
+	// "no payloads configured" against a loader whose whole layout is a
+	// payload map.
+	payloads, pErr := svc.PayloadsOrHomes(loaderID)
+	if pErr != nil {
+		h.jsonError(w, pErr.Error(), http.StatusInternalServerError)
+		return false
 	}
 	resp["payloads_count"] = len(payloads)
 	allBins, bErr := h.engine.BinService().ListBins()
