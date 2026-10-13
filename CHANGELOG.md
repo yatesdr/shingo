@@ -3,6 +3,75 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-13 — One planner, one order ladder, lanes and drops by one rule, changeovers that finish
+
+Core and Edge (Core 155, Edge v21). Local main; not pushed or deployed.
+
+- An order's slots, bins, lane and status are taken in one transaction
+- Each Edge gets its own sourcing feed: a snapshot at registration, a backstop every 30 min
+- No door cancels a leg carrying a bin; one dig per lane wall
+- One planner decides every pick; every Core door births its order through one builder
+- The wire door picks once; acquiring reads that pick
+- The level keeper never takes a cell's paired position as an empty
+- A loader's outbound move is filed at LOAD, carrying its part
+- A parent cancel lets a leg carrying its bin finish its store
+- Orders are born pending and wait as queued, with the cause they wait on
+- A fleet refusal queues the order again; it no longer fails it or its partner
+- `sourcing` is gone from the statuses; shown as queued with its reason (148)
+- A dig starts only where its group can still park its blockers, never under a granted mouth
+- A store aimed at a lane by name takes the lane's slot selector
+- A full on a carrier its part may not ride is stored held, with the reason
+- A gate re-bind of an interior drop keeps the order's destination
+- A dig takes its lane in its parent's hand; a swap pair is one hand
+- The lane gate serves a waiter on its own event; a refusal names who it waits behind
+- A swap never drops a bin in front of one it will pick up in the same lane
+- A drop asks its group with what it carries; acquiring makes every group choice again
+- Every lane has a waiting spot; a lane is added only to a group with one
+- A person's bin move with nowhere to park the bins in its way is refused at once
+- An unsent order holds no slot it only names; its store choices are made again when acquired
+- A plan never blocks a committed robot or its leg's parking
+- A carrier's landing is announced once, in its move's transaction, to the station that binds there
+- Ticks counted after the lift are not charged to the carrier that left
+- A LOAD whose reply was lost files its outbound move when pressed again
+- The lineside report compares only rows that flushed; six unread columns dropped (149)
+- A labelled carrier at 0 at a loader asks to be cleared first; the window offers CLEAR
+- Every drop in a group is chosen by one chooser, at every release
+- The nodes page renders its groups and lanes again
+- An admin move onto a seat no station claims reaches every Edge of the plant
+- The lane floor records only the waits it ended
+- A no-mix loader's replenishing empty rides a carrier its parts may ride
+- With two Edges, load, clear and count messages go only to the Edge that owns the seat (152)
+- LOAD refuses a carrier the part may not ride and names the carriers it may
+- A carrier flagged as the wrong type no longer counts toward the reorder level
+- A wait on a full its part may not ride names the carrier rule
+- The drop-changeover release writes its count and carries the fence
+- A loader's Core-born order carries its part from birth
+- The Edges page shows each Edge's clock offset; one more than 5 s out is flagged (154)
+- A demand record carries its tense; a forecast row is legal (153)
+- Bins page: Request move files a move (it filed nothing)
+- Six ways Core could freeze are closed; every lock has a rank the test build checks
+- A changeover cancel no longer confirms a leg while it holds the cell's locks
+- A bare on-deck empty pickup is fetched from its claim's inbound source
+- A loader's payload union is two reads
+- A dig's steal and a hand's claim of one bin serialise; three claim-sweep findings fixed
+- The dry-source guard reads "absent" from the sourcing feed: one round trip less per pair
+- The sourcing page forecasts each place's next need and scores the forecasts; nothing is reserved
+- A loader's top-up goes to the Edge that owns the loader
+- A second RELEASE of a swap that has already gone is refused; Core declares nothing twice
+- A frozen Core or Edge says so on Health, /status and Diagnostics; nothing restarts by itself
+- An order that confirmed or was cancelled is never reported failed afterwards
+- A fleet settings save while robots are polled is safe; a silent Kafka broker no longer hangs start
+- A press stroke counted while a release, a pickup or a count is written is not lost
+- A person's move that takes a promised bin re-finds the waiting order at once
+- An arrival frees its own slot, not a stranger's
+- Changeover START cancels an order still on its way to lift a changing node's bin
+- A changeover at a position already empty just brings the new bin
+- The node report reads a loader's part list through the loader service; the lineside seeder reads only live claims
+- Code nothing calls removed; comments say what the code does
+- Gate: the lock guard on in every step; merge-conflict marker lines refused
+- Sim builds: the operator clears a carrier at 0, pulls a pack's last parts lineside, and runs a scheduled changeover START to CUTOVER
+- Rig: soakstat prints the stranded-orders table first, fixture balance, lineside divergences and the Edge's statements per order
+
 ## 2026-10-10 — UI cleanup and versioned feeds land
 
 Core and Edge (Core 143, Edge v18). Local main; not pushed or deployed.
