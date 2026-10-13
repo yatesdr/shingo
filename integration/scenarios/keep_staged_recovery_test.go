@@ -138,6 +138,7 @@ const (
 	ksrPartB  = "KSR-PB"
 	ksrPartC  = "KSR-PC"   // the blocker in B's lane (case e)
 	ksrDeck   = "KSR-DECK" // a press's paired position (plain press cells)
+	ksrPair   = "KSR-PAIR" // a sequential line's partner position (pair cells)
 )
 
 // ksrCell is one keep-staged cell, Core and Edge, on style A with an A spare
@@ -158,6 +159,9 @@ type ksrCell struct {
 	styleA    int64
 	styleB    int64
 	claimA    int64
+	// pair cells only: the partner position's process node and A claim.
+	pairID     int64
+	pairClaimA int64
 
 	typeA, typeB *corebins.BinType
 	mktA, mktB   *corenodes.Node
@@ -220,6 +224,9 @@ type ksrOpts struct {
 	// kicks is a clock already installed as the default, shared by cells
 	// running in parallel. Nil: the cell installs its own for its test.
 	kicks *kickClock
+	// pair: a sequential line of two positions, the line and its partner
+	// (KSR-PAIR), each holding an A bin; the line pulls from KSR-LINE.
+	pair bool
 }
 
 func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
@@ -257,7 +264,10 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	line := node(&corenodes.Node{Name: ksrLine})
 	spot := node(&corenodes.Node{Name: ksrSpot})
 	node(&corenodes.Node{Name: ksrOutStg})
-	var deck *corenodes.Node
+	var deck, pair *corenodes.Node
+	if o.pair {
+		pair = node(&corenodes.Node{Name: ksrPair})
+	}
 	if o.mode == protocol.SwapModeTwoRobotPressIndex {
 		deck = node(&corenodes.Node{Name: ksrDeck})
 	}
@@ -309,6 +319,9 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	mustNil(t, coreDB.ConfirmBinManifest(lb.ID, ""), "line confirm")
 
 	stock("KSR-A-SPARE", ksrPartA, c.typeA, spot)
+	if o.pair {
+		stock("KSR-PAIR-BIN", ksrPartA, c.typeA, pair)
+	}
 	if o.mode == protocol.SwapModeTwoRobotPressIndex && !o.plain {
 		// A running press holds its next bin on deck, as the line holds its
 		// own: the swap indexes it forward and refills the deck behind it.
@@ -392,49 +405,73 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	mustNil(t, err, "process node")
 	_, err = edge.DB.EnsureProcessNodeRuntime(c.nodeID)
 	mustNil(t, err, "runtime")
+	positions := []string{ksrLine}
+	if o.pair {
+		c.pairID, err = edge.DB.CreateProcessNode(processes.NodeInput{
+			ProcessID: c.processID, CoreNodeName: ksrPair, Code: "KSR2", Name: ksrPair, Sequence: 2, Enabled: true,
+		})
+		mustNil(t, err, "partner process node")
+		_, err = edge.DB.EnsureProcessNodeRuntime(c.pairID)
+		mustNil(t, err, "partner runtime")
+		positions = append(positions, ksrPair)
+	}
 	c.styleA, err = edge.DB.CreateStyle("KSR-A", "", c.processID)
 	mustNil(t, err, "style A")
 	c.styleB, err = edge.DB.CreateStyle("KSR-B", "", c.processID)
 	mustNil(t, err, "style B")
 	mustNil(t, edge.DB.SetActiveStyle(c.processID, &c.styleA), "active style")
-	for _, s := range []struct {
-		style      int64
-		part, mkt  string
-		claimIDOut *int64
-	}{{c.styleA, ksrPartA, ksrMktA, &c.claimA}, {c.styleB, ksrPartB, ksrMktB, nil}} {
-		in := processes.NodeClaimInput{
-			StyleID: s.style, CoreNodeName: ksrLine, Role: o.role, SwapMode: o.mode,
-			PayloadCode: s.part, UOPCapacity: 40, ReorderPoint: 10,
-			InboundSource: s.mkt, InboundStaging: ksrSpot, OutboundStaging: ksrOutStg,
-			OutboundDestination: ksrDest, KeepStagedNode: domain.Ptr(""), AutoReorder: domain.Ptr(true),
-		}
-		if !o.plain {
-			// The spot is the keep-staged node. On the two staging modes it is
-			// also the inbound staging, the robot waiting under the spare; the
-			// other two have no staging hop, so it is a node of its own.
-			in.KeepStagedNode = domain.Ptr(ksrSpot)
-			if o.mode == protocol.SwapModeSequential || o.mode == protocol.SwapModeTwoRobotPressIndex {
-				in.InboundStaging = ""
+	for _, pos := range positions {
+		for _, s := range []struct {
+			style      int64
+			part, mkt  string
+			claimIDOut *int64
+		}{{c.styleA, ksrPartA, ksrMktA, &c.claimA}, {c.styleB, ksrPartB, ksrMktB, nil}} {
+			in := processes.NodeClaimInput{
+				StyleID: s.style, CoreNodeName: pos, Role: o.role, SwapMode: o.mode,
+				PayloadCode: s.part, UOPCapacity: 40, ReorderPoint: 10,
+				InboundSource: s.mkt, InboundStaging: ksrSpot, OutboundStaging: ksrOutStg,
+				OutboundDestination: ksrDest, KeepStagedNode: domain.Ptr(""), AutoReorder: domain.Ptr(true),
 			}
-			// A sequential cell here is one position with no partner, as the
-			// sequential line scenarios run it. Its changeover leg is not
-			// planned (the planner asks for the partner and leaves the line to
-			// the operator), so its rows prove the spot's own decisions at the
-			// start and the cancel, and the recovery after; the leg fetching
-			// from the spot is pinned in the Edge's changeover tests.
-		}
-		if o.mode == protocol.SwapModeTwoRobotPressIndex {
-			in.PairedCoreNode = ksrDeck
-		}
-		id, err := edge.DB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
-		mustNil(t, err, "claim "+s.part)
-		if s.claimIDOut != nil {
-			*s.claimIDOut = id
+			if !o.plain {
+				// The spot is the keep-staged node. On the two staging modes it is
+				// also the inbound staging, the robot waiting under the spare; the
+				// other two have no staging hop, so it is a node of its own.
+				in.KeepStagedNode = domain.Ptr(ksrSpot)
+				if o.mode == protocol.SwapModeSequential || o.mode == protocol.SwapModeTwoRobotPressIndex {
+					in.InboundStaging = ""
+				}
+				// A sequential cell here, unless pair, is one position with no partner, as the
+				// sequential line scenarios run it. Its changeover leg is not
+				// planned (the planner asks for the partner and leaves the line to
+				// the operator), so its rows prove the spot's own decisions at the
+				// start and the cancel, and the recovery after; the leg fetching
+				// from the spot is pinned in the Edge's changeover tests.
+			}
+			if o.mode == protocol.SwapModeTwoRobotPressIndex {
+				in.PairedCoreNode = ksrDeck
+			}
+			if o.pair {
+				in.PairedCoreNode = map[string]string{ksrLine: ksrPair, ksrPair: ksrLine}[pos]
+			}
+			id, err := edge.DB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
+			mustNil(t, err, "claim "+s.part+" at "+pos)
+			switch {
+			case s.claimIDOut == nil:
+			case pos == ksrLine:
+				*s.claimIDOut = id
+			default:
+				c.pairClaimA = id
+			}
 		}
 	}
 	// Mid-run, nowhere near the level: the keeper asks for nothing until a
 	// case sets the level breached.
 	mustNil(t, edge.DB.SetProcessNodeRuntime(c.nodeID, &c.claimA, c.unbreached()), "runtime claim")
+	if o.pair {
+		mustNil(t, edge.DB.SetProcessNodeRuntime(c.pairID, &c.pairClaimA, c.unbreached()), "partner runtime claim")
+		mustNil(t, edge.DB.SetActivePull(c.nodeID, true), "the line pulls from KSR-LINE")
+		mustNil(t, edge.DB.SetActivePull(c.pairID, false), "KSR-PAIR stands by")
+	}
 
 	coreHandler := coremessaging.NewCoreHandler(coreDB, nil, "core", "shingo.dispatch", c.core.eng.Dispatcher())
 	coreIngestor := protocol.NewIngestor(nil)

@@ -4,6 +4,7 @@ package engine
 
 import (
 	"shingoedge/domain"
+	"shingoedge/store/processes"
 )
 
 // carrierLeft is THE verb for a carrier leaving a slot: the pointer and the
@@ -42,6 +43,14 @@ func (e *Engine) carrierLeft(nodeID int64, nodeName string) error {
 	err := e.inventoryDelta.ClearActiveBin(nodeID)
 	e.recordLinesideCarrier(nodeID, nodeName, domain.UnknownCarrier(), domain.CarrierDeparted)
 	return err
+}
+
+// carrierGone reads what carrierLeft writes: no bin bound to the seat, and the
+// last carrier recorded as departed. A seat that is merely unbound (a carrier
+// placed by a path that sent no landing) is not gone; it cannot say. The one
+// reader is seatAt (swap_leg_role.go).
+func carrierGone(rt *processes.RuntimeState) bool {
+	return rt != nil && rt.ActiveBinID == nil && rt.LinesideSource == string(domain.CarrierDeparted)
 }
 
 // carrierLeftAtPickup is carrierLeft at the robot's pickup (Lane H, DECISIONS

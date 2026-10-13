@@ -36,9 +36,15 @@ func changeoverBlockerFor(nodeName string, orderID int64, status protocol.Status
 		// dispatched / in_transit: a carrier really is on its way. This is the
 		// only case where "wait and press again" is the whole answer, and it is
 		// the case the old blanket wording was written for.
-		return fmt.Sprintf("%s: order %d is %s — a carrier is on its way. "+
-			"Wait for it to land, then start the changeover", nodeName, orderID, status)
+		return carrierOnItsWay(nodeName, orderID, status)
 	}
+}
+
+// carrierOnItsWay is the sentence for an order whose carrier is moving: one on
+// its way to land, or one released to lift the node's bin, which is leaving.
+func carrierOnItsWay(nodeName string, orderID int64, status protocol.Status) string {
+	return fmt.Sprintf("%s: order %d is %s — a carrier is on its way. "+
+		"Wait for it to land, then start the changeover", nodeName, orderID, status)
 }
 
 // blockNodeSet is every node the changeover physically ACTS ON: the CHANGED diff
@@ -109,6 +115,18 @@ func blockNodeSet(plan *changeoverPlan) []string {
 //
 // One shared variable here would be one edit away from either.
 func cancelNodeSet(plan *changeoverPlan) []string {
+	// And the keep-staged spots: a refill not yet with the fleet is cancelled
+	// rather than left to land a spare for the outgoing style, and to be counted
+	// as coming for the incoming one.
+	return append(changingNodeSet(plan), keepStagedSpotNames(plan.fromClaims, plan.toClaims)...)
+}
+
+// changingNodeSet is the CHANGED diff nodes alone: the nodes whose bin the
+// changeover's own swaps lift. An order with a lift still ahead at one of them
+// wants the same bin (orderLiftAheadAt). Not the press-index positions, whose
+// orders are never cancelled, and not the keep-staged spots, whose reconcile
+// already counts a return with the fleet (spotFlows).
+func changingNodeSet(plan *changeoverPlan) []string {
 	out := make([]string, 0, len(plan.diffs))
 	for _, diff := range plan.diffs {
 		if diff.Situation == SituationUnchanged || diff.CoreNodeName == "" {
@@ -116,10 +134,7 @@ func cancelNodeSet(plan *changeoverPlan) []string {
 		}
 		out = append(out, diff.CoreNodeName)
 	}
-	// And the keep-staged spots: a refill not yet with the fleet is cancelled
-	// rather than left to land a spare for the outgoing style, and to be counted
-	// as coming for the incoming one.
-	return append(out, keepStagedSpotNames(plan.fromClaims, plan.toClaims)...)
+	return out
 }
 
 // cancelPreDispatchAtParticipants cancels every PRE-DISPATCH order sitting at a
@@ -163,25 +178,6 @@ func cancelNodeSet(plan *changeoverPlan) []string {
 // half-cleared is not worse than one not cleared at all, and refusing to start
 // over a single stuck abort would put the operator back where they were.
 func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64, []domain.Order, error) {
-	var cancelled []int64
-	seen := map[int64]bool{}
-
-	abort := func(orderID int64, why string) {
-		if seen[orderID] {
-			return
-		}
-		seen[orderID] = true
-		order, err := e.db.GetOrder(orderID)
-		if err != nil || order == nil || protocol.IsTerminal(order.Status) {
-			return
-		}
-		if err := e.orderMgr.AbortOrderWithReason(orderID, why); err != nil {
-			e.logFn("changeover: cancel %s order %d at start: %v", order.Status, orderID, err)
-			return
-		}
-		cancelled = append(cancelled, orderID)
-	}
-
 	nodes := cancelNodeSet(plan)
 	if len(nodes) == 0 {
 		return nil, nil, nil
@@ -190,7 +186,7 @@ func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64,
 	if err != nil {
 		return nil, nil, err
 	}
-	reason := "cancelled at changeover start — the line is changing over"
+	c := e.newStartCancel()
 	for i := range live {
 		o := live[i]
 		if protocol.ChangeoverStartActionFor(o.Status) != protocol.ChangeoverStartCancel {
@@ -199,22 +195,112 @@ func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64,
 		if !e.orderPlacesBinAtAny(o.ID, o.DeliveryNode, nodes) {
 			continue
 		}
-		abort(o.ID, reason)
+		c.abort(o.ID, changeoverStartCancelReason)
 		// BOTH LEGS OR NEITHER. A complex consume request is created as a linked
 		// pair; cancelling one leg leaves the survivor parked on
 		// waiting_for_partner for a partner that will never claim a bin, which is
 		// a worse state than the one being cleared. The sibling is aborted even
 		// when its own destination is not in the set.
 		if o.SiblingOrderID != nil {
-			abort(*o.SiblingOrderID, reason+" (sibling of order "+itoa64(o.ID)+")")
+			c.abort(*o.SiblingOrderID, changeoverStartCancelReason+" (sibling of order "+itoa64(o.ID)+")")
 		}
 	}
+	e.clearCancelledRuntimeSlots(plan, c.seen)
+	return c.cancelled, live, nil
+}
 
-	// Clear only the runtime pointers whose orders we terminated. A stale pointer
-	// to a cancelled order is the phantom-badge family; clearing slots
-	// unconditionally would drop a live order's pointer alongside the dead one.
-	// Walked separately from the cancel because the destination surface finds
-	// orders that were never in a slot — the pointer is UI state, not truth.
+// changeoverStartCancelReason is the one reason every order cancelled at a
+// changeover's start carries.
+const changeoverStartCancelReason = "cancelled at changeover start — the line is changing over"
+
+// startCancel aborts orders at a changeover's start, each once, and keeps the
+// ids it terminated. Best-effort per order: one failure is logged and the rest
+// proceed.
+type startCancel struct {
+	e         *Engine
+	seen      map[int64]bool
+	cancelled []int64
+}
+
+func (e *Engine) newStartCancel() *startCancel {
+	return &startCancel{e: e, seen: map[int64]bool{}}
+}
+
+func (c *startCancel) abort(orderID int64, why string) {
+	if c.seen[orderID] {
+		return
+	}
+	c.seen[orderID] = true
+	order, err := c.e.db.GetOrder(orderID)
+	if err != nil || order == nil || protocol.IsTerminal(order.Status) {
+		return
+	}
+	if err := c.e.orderMgr.AbortOrderWithReason(orderID, why); err != nil {
+		c.e.logFn("changeover: cancel %s order %d at start: %v", order.Status, orderID, err)
+		return
+	}
+	c.cancelled = append(c.cancelled, orderID)
+}
+
+// cancelHeldLiftsAtChangingNodes cancels every live order that places no bin
+// at a node the changeover acts on and still has a lift ahead of it at a
+// changing node it has not been released towards (liftHeld), at any status up
+// to that release: not yet dispatched, dispatched, in transit, staged at its
+// wait. Its bin is still on the node, and the changeover's own swap there lifts
+// it; left alive, the two would lift one bin and the second would wait for
+// good. No robot holds that bin, so the cancel strands nothing. It returns the
+// ids it terminated.
+//
+// It runs after the gate has passed, so a START the gate refuses cancels none
+// of them: a robot waiting at a wait is not sent away for a changeover that
+// did not start. An order released towards its lift, or faulted before it, is
+// the gate's (nodesWithOrdersInFlight), and one whose lift is behind it is
+// neither's.
+//
+// A linked sibling goes with it only while the sibling is itself not yet
+// dispatched (BOTH LEGS OR NEITHER, as above). A sibling that places at a node
+// the changeover acts on and is with the fleet has refused START already.
+func (e *Engine) cancelHeldLiftsAtChangingNodes(plan *changeoverPlan) ([]int64, error) {
+	changing, seat := changingNodeSet(plan), e.seatAt(plan.process.ID)
+	if len(changing) == 0 {
+		return nil, nil
+	}
+	live, err := e.db.ListActiveOrders()
+	if err != nil {
+		return nil, err
+	}
+	block := blockNodeSet(plan)
+	c := e.newStartCancel()
+	for i := range live {
+		o := live[i]
+		if o.Status == protocol.StatusFaulted || protocol.ChangeoverStartActionFor(o.Status) == protocol.ChangeoverStartPass {
+			continue
+		}
+		if e.orderPlacesBinAtAny(o.ID, o.DeliveryNode, block) {
+			continue
+		}
+		if ahead, _ := e.orderLiftAheadAt(&o, changing, seat); ahead != liftHeld {
+			continue
+		}
+		c.abort(o.ID, changeoverStartCancelReason)
+		if o.SiblingOrderID != nil {
+			if sib, serr := e.db.GetOrder(*o.SiblingOrderID); serr == nil && sib != nil &&
+				protocol.ChangeoverStartActionFor(sib.Status) == protocol.ChangeoverStartCancel {
+				c.abort(sib.ID, changeoverStartCancelReason+" (sibling of order "+itoa64(o.ID)+")")
+			}
+		}
+	}
+	e.clearCancelledRuntimeSlots(plan, c.seen)
+	return c.cancelled, nil
+}
+
+// clearCancelledRuntimeSlots clears only the runtime pointers whose orders the
+// start terminated. A stale pointer to a cancelled order is the phantom-badge
+// family; clearing slots unconditionally would drop a live order's pointer
+// alongside the dead one. Walked separately from the cancel because the
+// destination surface finds orders that were never in a slot — the pointer is
+// UI state, not truth.
+func (e *Engine) clearCancelledRuntimeSlots(plan *changeoverPlan, seen map[int64]bool) {
 	for _, diff := range plan.diffs {
 		node := findNodeByCoreName(plan.nodes, diff.CoreNodeName)
 		if node == nil {
@@ -237,7 +323,6 @@ func (e *Engine) cancelPreDispatchAtParticipants(plan *changeoverPlan) ([]int64,
 			}
 		}
 	}
-	return cancelled, live, nil
 }
 
 // nodesWithOrdersInFlight returns an operator-readable blocker per participating
@@ -278,25 +363,41 @@ func (e *Engine) nodesWithOrdersInFlight(plan *changeoverPlan) []string {
 		e.logFn("changeover: list active orders for the start gate: %v", err)
 		return nil
 	}
+	// Name the place the way the operator's board does. The destination
+	// surface matches on core node names, but those are wiring identifiers —
+	// resolve back to the process node's display name when we have one, and
+	// fall back to the raw name for a node this process does not own (an
+	// indexed_over position on another station, say).
+	nameOf := func(coreName string) string {
+		if node := findNodeByCoreName(plan.nodes, coreName); node != nil && node.Name != "" {
+			return node.Name
+		}
+		return coreName
+	}
+	changing, seat := changingNodeSet(plan), e.seatAt(plan.process.ID)
 	var blockers []string
 	for i := range live {
 		o := live[i]
 		if !protocol.BlocksChangeoverStart(o.Status) {
 			continue
 		}
-		if !e.orderPlacesBinAtAny(o.ID, o.DeliveryNode, nodes) {
+		if e.orderPlacesBinAtAny(o.ID, o.DeliveryNode, nodes) {
+			blockers = append(blockers, changeoverBlockerFor(nameOf(o.DeliveryNode), o.ID, o.Status))
 			continue
 		}
-		// Name the place the way the operator's board does. The destination
-		// surface matches on core node names, but those are wiring identifiers —
-		// resolve back to the process node's display name when we have one, and
-		// fall back to the raw name for a node this process does not own (an
-		// indexed_over position on another station, say).
-		where := o.DeliveryNode
-		if node := findNodeByCoreName(plan.nodes, o.DeliveryNode); node != nil && node.Name != "" {
-			where = node.Name
+		// An order that only lifts a changing node's bin. Released towards the
+		// lift, the bin is leaving: not yet, the carrier's sentence. Faulted
+		// before it, the robot's state is unknown: the faulted sentence. Not
+		// released, it is cancelled once the gate passes
+		// (cancelHeldLiftsAtChangingNodes); lifted, it is neither.
+		ahead, at := e.orderLiftAheadAt(&o, changing, seat)
+		switch {
+		case ahead == liftNone:
+		case o.Status == protocol.StatusFaulted:
+			blockers = append(blockers, changeoverBlockerFor(nameOf(at), o.ID, o.Status))
+		case ahead == liftLeaving:
+			blockers = append(blockers, carrierOnItsWay(nameOf(at), o.ID, o.Status))
 		}
-		blockers = append(blockers, changeoverBlockerFor(where, o.ID, o.Status))
 	}
 	return blockers
 }
@@ -405,6 +506,15 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 
 	if blockers := e.nodesWithOrdersInFlight(plan); len(blockers) > 0 {
 		return nil, fmt.Errorf("cannot start changeover — %s", strings.Join(blockers, "; "))
+	}
+	lifts, lerr := e.cancelHeldLiftsAtChangingNodes(plan)
+	if lerr != nil {
+		return nil, lerr
+	}
+	if len(lifts) > 0 {
+		e.logFn("changeover: process %d → style %d cancelled %d order(s) on their way to lift a changing node's bin at start: %v",
+			processID, toStyleID, len(lifts), lifts)
+		cancelled = append(cancelled, lifts...)
 	}
 
 	if _, err := e.changeoverService.Create(processID, plan.process.ActiveStyleID, toStyleID,
