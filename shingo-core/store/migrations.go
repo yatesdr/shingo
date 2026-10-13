@@ -4362,7 +4362,21 @@ func migrationList() []migration {
 		{143, "plant_claims_reports — per process, the station whose plant-claims report the mirror holds and the digest it carried, quoted back on the heartbeat ack",
 			v143PlantClaimsReports,
 			func(q schema.Querier) bool { return schema.TableExists(q, "plant_claims_reports") }},
+
+		{144, "nodes.display_name — the name a person reads, editable on the Nodes page. The node's own name is the FLEET's identity (scenesync matches the fleet's location set by name and deletes a physical node the scene does not carry), so the cosmetic rename rides a column of its own; empty renders the node's name as always",
+			v144NodeDisplayName,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "nodes", "display_name") }},
 	}
+}
+
+// v144NodeDisplayName adds nodes.display_name. DEFAULT ” is the whole
+// design: an unset display name renders the node's name, so every existing
+// row and every screen reads exactly as it did the moment this lands.
+func v144NodeDisplayName(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v144 nodes.display_name: %w", err)
+	}
+	return nil
 }
 
 // LinesideBucketsUniqueConstraintV131 is the uniqueness constraint v131 puts on

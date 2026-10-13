@@ -32,7 +32,7 @@ type Node = domain.Node
 
 // SelectCols and FromClause are exported so cross-aggregate readers
 // at the outer store/ level can compose their own WHERE clauses.
-const SelectCols = `n.id, n.name, n.is_synthetic, n.zone, n.enabled, n.depth, n.created_at, n.updated_at, n.node_type_id, n.parent_id, COALESCE(nt.code, ''), COALESCE(pn.name, ''), n.claimed_by`
+const SelectCols = `n.id, n.name, COALESCE(n.display_name, ''), n.is_synthetic, n.zone, n.enabled, n.depth, n.created_at, n.updated_at, n.node_type_id, n.parent_id, COALESCE(nt.code, ''), COALESCE(pn.name, ''), n.claimed_by`
 const FromClause = `FROM nodes n LEFT JOIN node_types nt ON nt.id = n.node_type_id LEFT JOIN nodes pn ON pn.id = n.parent_id`
 
 // ScanNode reads a single nodes row (with joined node_type and parent name).
@@ -41,7 +41,7 @@ func ScanNode(row interface{ Scan(...any) error }) (*Node, error) {
 	var n Node
 	var depth sql.NullInt32
 	var nodeTypeID, parentID, claimedBy sql.NullInt64
-	err := row.Scan(&n.ID, &n.Name, &n.IsSynthetic, &n.Zone, &n.Enabled, &depth, &n.CreatedAt, &n.UpdatedAt,
+	err := row.Scan(&n.ID, &n.Name, &n.DisplayName, &n.IsSynthetic, &n.Zone, &n.Enabled, &depth, &n.CreatedAt, &n.UpdatedAt,
 		&nodeTypeID, &parentID, &n.NodeTypeCode, &n.ParentName, &claimedBy)
 	if err != nil {
 		return nil, err
@@ -412,6 +412,16 @@ func SetParent(db *sql.DB, nodeID, parentID int64) error {
 		return err
 	}
 	_, err := db.Exec(`UPDATE nodes SET parent_id=$1, updated_at=NOW() WHERE id=$2`, parentID, nodeID)
+	return err
+}
+
+// SetDisplayName writes the node's person-readable name (domain.Node's doc
+// carries the design: the node's own Name is the fleet's identity and is not
+// editable from shingo - scenesync deletes a physical node whose name the
+// current scene does not carry). Empty clears, which renders the fleet's
+// name again. The fleet's name is never touched here, and that is the point.
+func SetDisplayName(db *sql.DB, nodeID int64, displayName string) error {
+	_, err := db.Exec(`UPDATE nodes SET display_name=$1, updated_at=NOW() WHERE id=$2`, displayName, nodeID)
 	return err
 }
 

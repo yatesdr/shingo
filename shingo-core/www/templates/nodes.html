@@ -40,6 +40,7 @@
     <div class="node-tile{{if not .Enabled}} tile-disabled{{end}}{{if .IsSynthetic}} tile-synthetic{{end}}{{if $ts.Maintenance}} tile-maintenance{{else if $ts.Staged}} tile-staged{{else if $ts.HasPayload}} tile-has-payload{{else if $ts.HasEmptyBin}} tile-empty-bin{{end}}{{if $ts.Claimed}} tile-claimed{{end}}"
          data-id="{{.ID}}"
          data-name="{{.Name}}"
+         data-display-name="{{.DisplayName}}"
          data-type-code="{{.NodeTypeCode}}"
          data-zone="{{.Zone}}"
          data-enabled="{{.Enabled}}"
@@ -58,7 +59,10 @@
          data-action="openNodeModal"
          title="{{.Name}}{{if $count}} ({{$count}} items){{end}}{{if .IsSynthetic}} [synthetic, {{$childCount}} children]{{end}}">
       <div class="tile-text">
-        <span class="tile-loc">{{.Name}}</span>
+        <!-- The DISPLAY name when one is set (v144) - the fleet's name stays
+             in data-name, because everything that keys on the node keys on
+             it; the tile only changes what a person reads. -->
+        <span class="tile-loc">{{if .DisplayName}}{{.DisplayName}}{{else}}{{.Name}}{{end}}</span>
         {{with index $.NodeLabels .Name}}
         <span class="tile-label">{{.}}</span>
         {{end}}
@@ -131,6 +135,19 @@
       <input type="hidden" name="id" id="nf-id">
       <input type="hidden" name="node_type_id" id="nf-node-type-id">
       <input type="hidden" name="parent_id" id="nf-parent-id">
+      <!-- THE DISPLAY NAME, and why it is not the node's name field: the
+           node's name is the FLEET's identity - scene sync matches the
+           fleet's location set against nodes by name and DELETES a physical
+           node whose name the scene does not carry - so a renamed node
+           survives exactly one sync before it (and every claim, order and
+           loader config keyed on it) is stranded. This label is the column
+           built to be edited: empty means the node renders its fleet name,
+           and nothing about identity moves when it changes. -->
+      <div class="form-group mb-1">
+        <label for="nf-display-name">Display name <span class="text-muted">(what screens show; empty = the node's name)</span></label>
+        <input type="text" name="display_name" id="nf-display-name" class="form-input" maxlength="120" autocomplete="off">
+        <div class="form-hint" id="nf-display-name-hint"></div>
+      </div>
       <div class="mb-1">
         <label><input type="checkbox" name="enabled" id="nf-enabled" checked> Enabled</label>
       </div>

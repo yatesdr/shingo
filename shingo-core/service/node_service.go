@@ -3,6 +3,8 @@ package service
 import (
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -10,7 +12,6 @@ import (
 	"shingocore/store/registry"
 	"shingocore/store/scene"
 	"shingocore/store/sceneversion"
-	"time"
 )
 
 // NodeService centralizes the node-assignment composite flow that used
@@ -118,6 +119,32 @@ func (s *NodeService) CreateNode(n *nodes.Node) error {
 // (PR 3a.1b).
 func (s *NodeService) UpdateNode(n *nodes.Node) error {
 	return s.db.UpdateNode(n)
+}
+
+// SetDisplayName writes the node's person-readable name and audits it.
+//
+// THE NAME IS NOT THE THING BEING EDITED, and the audit says so: the node's
+// own Name is the fleet's identity (scenesync matches the fleet's location
+// set by name and deletes a physical node the scene does not carry - the
+// whole reason this is a column and not an edit of Name), so the record
+// names the display rename and BOTH names, because the useful question an
+// auditor asks later is "which fleet location does this label belong to".
+// Trimmed to 120 chars: a display label longer than that is a sentence,
+// and a sentence belongs in the node's notes, not on a tile.
+func (s *NodeService) SetDisplayName(nodeID int64, displayName, by string) error {
+	displayName = strings.TrimSpace(displayName)
+	if len(displayName) > 120 {
+		return fmt.Errorf("display name is %d characters; 120 is the most a label can carry", len(displayName))
+	}
+	node, err := s.db.GetNode(nodeID)
+	if err != nil || node == nil {
+		return fmt.Errorf("node %d not found", nodeID)
+	}
+	if err := s.db.SetNodeDisplayName(nodeID, displayName); err != nil {
+		return err
+	}
+	s.db.AppendAudit("node", nodeID, "display_name_set", node.DisplayName, displayName, by)
+	return nil
 }
 
 // DeleteNode removes a node row. Absorbed from engine_db_methods.go

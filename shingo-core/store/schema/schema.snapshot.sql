@@ -737,6 +737,7 @@ ALTER SEQUENCE public.node_types_id_seq OWNED BY public.node_types.id;
 CREATE TABLE public.nodes (
     id bigint NOT NULL,
     name text NOT NULL,
+    display_name text DEFAULT ''::text NOT NULL,
     is_synthetic boolean DEFAULT false NOT NULL,
     zone text DEFAULT ''::text NOT NULL,
     enabled boolean DEFAULT true NOT NULL,

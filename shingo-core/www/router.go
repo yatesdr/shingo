@@ -434,6 +434,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				// Node management
 				r.Post("/nodes/bin-types", h.apiSetNodeBinTypes)
 				r.Post("/nodes/properties/set", h.apiNodePropertySet)
+				// The display name: the person-readable label, the only name
+				// an edit box may touch (handlers_nodes.go) - the node's own
+				// name is the fleet's identity and scenesync owns it.
+				r.Post("/nodes/{id}/display-name", h.apiNodeDisplayNameSet)
 				// Maintained groups: one endpoint per thing an operator edits.
 				// A single save-everything call would have to decide what an
 				// omitted field means, and both answers are wrong — one deletes

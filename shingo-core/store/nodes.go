@@ -29,6 +29,12 @@ func (db *DB) SetNodeParent(nodeID, parentID int64) error {
 	return nodes.SetParent(db.DB, nodeID, parentID)
 }
 
+// SetNodeDisplayName writes the node's person-readable name. See
+// nodes.SetDisplayName.
+func (db *DB) SetNodeDisplayName(nodeID int64, displayName string) error {
+	return nodes.SetDisplayName(db.DB, nodeID, displayName)
+}
+
 // db.ClaimSlot deleted with nodes.ClaimSlot — the live slot-claim path is
 // ConfirmSlotClaim below (reserve → guarded claim → confirm, one tx).
 

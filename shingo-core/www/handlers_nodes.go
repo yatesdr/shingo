@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	"shingo/protocol"
 
 	"shingocore/dispatch"
@@ -298,6 +300,21 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		log.Printf("node update: apply assignments for node %d: %v", node.ID, err)
 	}
 
+	// THE DISPLAY NAME: the only name this form may actually change. The
+	// `name` field above is round-tripped from a HIDDEN input - the node's
+	// name is the fleet's identity, and scenesync deletes a physical node
+	// whose name the current scene does not carry, so a crafted rename would
+	// be saved by UpdateNode and destroyed by the next sync. The display
+	// name is where a person's label goes, audited like every other write
+	// here. Absent field = untouched, so callers that predate the input are
+	// exactly as they were.
+	if _, sent := r.Form["display_name"]; sent {
+		if err := h.engine.NodeService().SetDisplayName(node.ID, r.FormValue("display_name"), h.getUsername(r)); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
 	// AUDITED — and this is a bigger hole than the one phase 1 set out to close.
 	// apiSetNodeBinTypes was named as "the one unaudited write in the modal", but
 	// the modal's Allowed Bins and Allowed Stations controls do not go through
@@ -494,6 +511,35 @@ func (h *Handlers) apiNodePropertySet(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.setNodePropertyAudited(req.NodeID, req.Key, req.Value); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonSuccess(w)
+}
+
+// apiNodeDisplayNameSet is the Nodes page's display-name write. The node's
+// own Name is deliberately unreachable from here: it is the fleet's identity
+// (scenesync matches the fleet's location set by name and deletes a physical
+// node the scene does not carry), so the editable thing is the display label
+// alone - empty clears it, which renders the fleet's name again. The audit
+// and the length rule live on the service.
+func (h *Handlers) apiNodeDisplayNameSet(w http.ResponseWriter, r *http.Request) {
+	nodeID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		h.jsonError(w, "invalid node id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		DisplayName string `json:"display_name"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	by := h.getUsername(r)
+	if by == "" {
+		by = protocol.AuditActorUI
+	}
+	if err := h.engine.NodeService().SetDisplayName(nodeID, req.DisplayName, by); err != nil {
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	h.jsonSuccess(w)
