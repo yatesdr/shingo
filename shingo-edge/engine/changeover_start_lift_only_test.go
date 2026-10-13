@@ -13,6 +13,7 @@ import (
 	"shingoedge/orders"
 	"shingoedge/release"
 	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // changeover_start_lift_only_test.go — an order that only LIFTS the bin of a
@@ -174,6 +175,32 @@ func TestChangeoverStart_LeavesALiftOnlyOrderAloneAfterItsLift(t *testing.T) {
 	}
 	if got := reloadStatus(t, db, id); got != orders.StatusInTransit {
 		t.Errorf("lifted order = %s after START, want in_transit, left alone", got)
+	}
+}
+
+// TestApplyEmptyNodeIsAdd_ThreeAnswers: a Swap whose seat says its carrier has
+// gone is planned as a refill only; a seat holding a bin, or one that cannot
+// say, leaves the swap as it is. Nothing but a Swap is touched.
+func TestApplyEmptyNodeIsAdd_ThreeAnswers(t *testing.T) {
+	t.Parallel()
+	to := &processes.NodeClaim{CoreNodeName: "N", PayloadCode: "NEW"}
+	for _, tc := range []struct {
+		name      string
+		situation ChangeoverSituation
+		seat      Seat
+		want      ChangeoverSituation
+	}{
+		{"swap, no bin", SituationSwap, SeatEmpty, SituationAdd},
+		{"swap, a bin", SituationSwap, SeatBin, SituationSwap},
+		{"swap, unknown", SituationSwap, SeatUnknown, SituationSwap},
+		{"evacuate, no bin", SituationEvacuate, SeatEmpty, SituationEvacuate},
+		{"drop, no bin", SituationDrop, SeatEmpty, SituationDrop},
+	} {
+		diffs := []ChangeoverNodeDiff{{CoreNodeName: "N", Situation: tc.situation, ToClaim: to}}
+		got := ApplyEmptyNodeIsAdd(diffs, func(string) Seat { return tc.seat })[0].Situation
+		if got != tc.want {
+			t.Errorf("%s: situation %s, want %s", tc.name, got, tc.want)
+		}
 	}
 }
 

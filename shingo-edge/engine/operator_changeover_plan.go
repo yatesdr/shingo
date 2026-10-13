@@ -260,7 +260,12 @@ func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toCl
 //  1. Reuse-compatible-bins shortcut. Rewrites Swap/Evacuate to
 //     Unchanged when a press-index claim opts into reuse_compatible_bins,
 //     payloads match, and the physical bin is empty. Runs first so
-//     downstream post-processors see the reduced diff list.
+//     downstream post-processors see the reduced diff list. Beside it,
+//     reading the same runtime, the empty-node rule (ApplyEmptyNodeIsAdd)
+//     rewrites a Swap to Add when the node's seat says its carrier has
+//     gone: nothing to lift, only the new bin to bring. Before the
+//     fan-outs, so an empty press-index position is not fanned out as a
+//     swap.
 //
 //  2. Press-index Core-availability gate. Refuses the changeover when
 //     Core is unavailable and any remaining diff is a press-index
@@ -293,6 +298,7 @@ func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toCl
 // output does not need a slot in this ordering.
 func (e *Engine) applyChangeoverDiffPostProcessors(processID int64, diffs []ChangeoverNodeDiff) ([]ChangeoverNodeDiff, error) {
 	diffs = ApplyReuseCompatibleBinsShortcut(diffs, e.binDrainedAtCoreNode(processID))
+	diffs = ApplyEmptyNodeIsAdd(diffs, e.seatAt(processID))
 	if err := e.refusePressIndexWhenCoreUnavailable(diffs); err != nil {
 		return nil, err
 	}

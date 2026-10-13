@@ -1,5 +1,6 @@
 // A changeover started while an order is on its way to lift a changing node's
-// bin, carried end to end across the two modules on a sequential pair.
+// bin, and one started with a changing node already empty, carried end to end
+// across the two modules.
 //
 //go:build docker
 
@@ -14,6 +15,9 @@ import (
 
 	"shingoedge/domain"
 	edgeengine "shingoedge/engine"
+	edgeuop "shingoedge/uop"
+
+	corebins "shingocore/store/bins"
 )
 
 // pairRemoval presses the standby position's material request and returns the
@@ -42,6 +46,82 @@ func (c *ksrCell) pairRemoval(label string) domain.Order {
 		return c.coreOf(removal).VendorOrderID != ""
 	})
 	return removal
+}
+
+// emptyByRelease takes the bin off a position the way the floor does: the
+// position's seat holds the bin standing there, as a landing leaves it; the
+// Material page's RELEASE sends it to the outbound destination; the fleet lifts
+// it (the seat records the carrier's departure) and sets it down; the operator
+// confirms. It ends with nothing at the position at Core and the seat empty.
+func (c *ksrCell) emptyByRelease(label string, nodeID int64, coreNode string) {
+	c.t.Helper()
+	bins, err := c.core.eng.DB().ListBins()
+	mustNil(c.t, err, "bins")
+	bound := false
+	for _, b := range bins {
+		if c.nodeName(b.NodeID) == coreNode {
+			id := b.ID
+			mustNil(c.t, c.edge.DB.SetProcessNodeActiveBinID(nodeID, &id), label+": the seat holds "+b.Label)
+			bound = true
+		}
+	}
+	if !bound {
+		c.notReached(label + ": no bin at " + coreNode + " to release")
+	}
+	// The Edge's inventory sink, as a plant runs it: the pickup clears the seat
+	// through it (the test Edge leaves it unwired).
+	c.edge.Engine.SetInventoryDeltaSink(edgeuop.New(c.edge.DB, "edge.test", c.edge.DB, c.edge.DB))
+	o, err := c.edge.Engine.ReleaseNodeEmpty(nodeID)
+	if err != nil || o == nil {
+		c.dump(label)
+		c.t.Fatalf("%s: the Material page's RELEASE at %s was refused: %v", label, coreNode, err)
+	}
+	rel := *o
+	c.eventually(label+": the release with the fleet", func() bool {
+		return c.coreOf(rel).VendorOrderID != ""
+	})
+	c.drive(c.coreOf(rel), "RUNNING")
+	if !c.liftAt(c.coreOf(rel), coreNode, true) {
+		c.notReached(label + ": the release has no pickup block at " + coreNode)
+	}
+	c.drive(c.coreOf(rel), "FINISHED")
+	c.eventually(label+": the release done at both ends", func() bool {
+		if c.edgeRow(rel.ID).Status == protocol.StatusDelivered {
+			mustNil(c.t, c.edge.Engine.OrderManager().ConfirmDelivery(rel.ID, 1), "confirm the release")
+		}
+		return protocol.IsTerminal(c.edgeRow(rel.ID).Status) && protocol.IsTerminal(c.coreOf(rel).Status)
+	})
+	rt, err := c.edge.DB.GetProcessNodeRuntime(nodeID)
+	mustNil(c.t, err, "runtime")
+	if rt.ActiveBinID != nil {
+		c.notReached(label + ": the seat at " + coreNode + " still holds a bin after its lift")
+	}
+}
+
+// runningCell is a plain cell as a running line holds it: the inbound staging
+// spot clear (the plain cell parks A's spare there), and a press's deck
+// holding its next A bin.
+func (c *ksrCell) runningCell(label string) {
+	c.t.Helper()
+	coreDB := c.core.eng.DB()
+	free, err := coreDB.GetNodeByName(ksrMktA + "-8")
+	mustNil(c.t, err, label+": a free slot in A's market")
+	bins, err := coreDB.ListBins()
+	mustNil(c.t, err, "bins")
+	for _, b := range bins {
+		if c.nodeName(b.NodeID) == ksrSpot {
+			mustNil(c.t, coreDB.MoveBinClearingStaging(b.ID, free.ID, true), label+": "+b.Label+" off the spot")
+		}
+	}
+	if c.mode != protocol.SwapModeTwoRobotPressIndex {
+		return
+	}
+	deck, err := coreDB.GetNodeByName(ksrDeck)
+	mustNil(c.t, err, "deck")
+	b := &corebins.Bin{BinTypeID: c.typeA.ID, Label: "KSR-A-DECK", NodeID: &deck.ID, Status: "available"}
+	mustNil(c.t, coreDB.CreateBin(b), label+": the deck's bin")
+	mustNil(c.t, coreDB.SetBinManifest(b.ID, `{"items":[]}`, ksrPartA, 40), "deck manifest")
+	mustNil(c.t, coreDB.ConfirmBinManifest(b.ID, ""), "deck confirm")
 }
 
 // runChangeover is the operator running a started changeover to its end at
@@ -168,6 +248,42 @@ func TestScenario_ChangeoverStart_CancelsALiftOnlyOrderAtAChangingNode(t *testin
 					protocol.IsTerminal(c.coreOf(removal).Status)
 			})
 			c.runChangeover(m.name, before, ksrLine, ksrPair)
+		})
+	}
+}
+
+// A changeover started with a changing position already empty, one case per
+// swap type: the bin was released off the position from the Material page and
+// lifted before START. The position needs the new style's bin and has nothing
+// to take away, and the changeover runs to CUTOVER with a B bin on it.
+func TestScenario_ChangeoverStart_WithAChangingPositionAlreadyEmpty(t *testing.T) {
+	for _, m := range []struct {
+		name string
+		opts ksrOpts
+	}{
+		{"sequential, the standby position", ksrOpts{mode: protocol.SwapModeSequential, pair: true}},
+		{"single_robot", ksrOpts{mode: protocol.SwapModeSingleRobot}},
+		{"two_robot", ksrOpts{mode: protocol.SwapModeTwoRobot}},
+		{"two_robot_press_index", ksrOpts{mode: protocol.SwapModeTwoRobotPressIndex}},
+	} {
+		t.Run(m.name, func(t *testing.T) {
+			opts := m.opts
+			opts.role, opts.plain = protocol.ClaimRoleConsume, true
+			c := newKsrCell(t, opts)
+			nodeID, pos, positions := c.nodeID, ksrLine, []string{ksrLine}
+			if opts.pair {
+				nodeID, pos, positions = c.pairID, ksrPair, []string{ksrLine, ksrPair}
+			}
+			c.runningCell(m.name)
+			c.emptyByRelease(m.name, nodeID, pos)
+
+			before := c.lastID()
+			if _, err := c.edge.Engine.StartProcessChangeover(c.processID, c.styleB, "ksr", ""); err != nil {
+				c.dump(m.name)
+				t.Fatalf("%s: START refused with %s empty: %v", m.name, pos, err)
+			}
+			c.tick()
+			c.runChangeover(m.name, before, positions...)
 		})
 	}
 }

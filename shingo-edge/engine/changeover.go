@@ -645,3 +645,31 @@ func ApplyReuseCompatibleBinsShortcut(diffs []ChangeoverNodeDiff, drainState fun
 	}
 	return diffs
 }
+
+// ApplyEmptyNodeIsAdd plans a changing node with no bin on it as a refill only:
+// a Swap whose seat says its carrier has gone becomes SituationAdd. A swap's
+// legs lift the node's bin before they set the new one down, and a leg that
+// lifts at an empty node and places there waits at Core for a bin that is not
+// coming (the allocator holds it, with no limit). There is nothing to take
+// away, so the new style's bin is simply brought.
+//
+// Three answers from the seat (seatAt): a bin, no bin, unknown. Only "no bin"
+// changes the plan; a seat that cannot say plans the swap as before.
+//
+// Swap only. Evacuate is the tooling choreography, whose wait rides the
+// evacuation leg (changeover_tooling.go); an empty node there is left as it is.
+func ApplyEmptyNodeIsAdd(diffs []ChangeoverNodeDiff, seat func(coreNodeName string) Seat) []ChangeoverNodeDiff {
+	if seat == nil {
+		return diffs
+	}
+	for i := range diffs {
+		d := &diffs[i]
+		if d.Situation != SituationSwap || d.ToClaim == nil {
+			continue
+		}
+		if seat(d.CoreNodeName) == SeatEmpty {
+			d.Situation = SituationAdd
+		}
+	}
+	return diffs
+}
