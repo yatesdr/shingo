@@ -46,7 +46,7 @@ func main() {
 	rows, err := db.Query(`SELECT n.id, n.core_node_name, c.payload_code
 		FROM process_nodes n
 		JOIN style_node_claims c ON c.core_node_name = n.core_node_name
-		WHERE c.payload_code <> '' AND c.style_id IN (SELECT id FROM styles WHERE deleted_at IS NULL)
+		WHERE c.payload_code <> '' AND c.retired_at IS NULL AND c.style_id IN (SELECT id FROM styles WHERE deleted_at IS NULL)
 		GROUP BY n.id
 		ORDER BY n.id LIMIT ?`, count)
 	if err != nil {

@@ -94,6 +94,8 @@ func TestArch_PileWritersAreKnown(t *testing.T) {
 		filepath.Join("store", "processes", "processes.go"):    true, // Delete (engine sends the levels)
 		filepath.Join("store", "migrations.go"):                true, // collapseDuplicateProcessNodes
 		filepath.Join("store", "migrations_lineside_piles.go"): true, // the rebuild
+		// dev only: run on a stopped Edge's database; the boot resend sends every pile row
+		filepath.Join("cmd", "seedlineside", "main.go"): true,
 	}
 	var bad []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
