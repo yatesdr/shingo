@@ -559,9 +559,11 @@ func (d *Dispatcher) redirectStoreOffDugLane(order *orders.Order) {
 		return
 	}
 
-	// Drop the hold on the slot we are no longer going to, so it is available to
-	// whoever can use it. PENDING only — a confirmed slot means this order is
-	// already dispatching and is not re-aimable.
+	// Drop this order's row on the slot it is no longer going to, so whoever can
+	// use the slot may. The delete names the order and the slot, whatever the
+	// row's state. It meets only a pending row: this runs inside the order's
+	// acquire, before the dispatch that confirms the slot, and every acquire and
+	// pass holds the scan lock (fulfillment.Scanner's scanMu).
 	if rErr := d.db.ReleaseSlotReservation(node.ID, order.ID); rErr != nil {
 		d.dbg("store: order %d could not release its hold on %s (%v) — leaving it aimed there",
 			order.ID, node.Name, rErr)

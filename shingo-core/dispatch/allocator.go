@@ -19,7 +19,7 @@ import (
 
 // allocator.go — the reservation Allocator. It owns the plan-time reserve/confirm
 // reconcile for BOTH resource kinds (bin pickups + destination slots). The Dispatcher
-// keeps the gates, re-resolution, lifecycle/MoveToSourcing, fleet dispatch, compound
+// keeps the gates, re-resolution, the lifecycle, fleet dispatch, compound
 // orchestration, and queue_reason; it delegates the reserve/confirm to d.allocator.
 // Pure lift from the Dispatcher — no behavior change.
 //

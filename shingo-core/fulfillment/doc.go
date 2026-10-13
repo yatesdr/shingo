@@ -1,8 +1,10 @@
 // Package fulfillment contains the queued-order fulfillment scanner.
 //
-// The Scanner monitors orders sitting in the "queued" status and
-// promotes them to "sourcing" when matching inventory becomes
-// available. It runs in two modes:
+// The Scanner acquires the orders in the acquiring set (pending and
+// queued, protocol.IsAcquiring): a pass asks each one once, dispatches
+// one it can source and parks one it cannot, queued with its cause.
+// ("sourcing" is a status only history rows still carry.) It runs in
+// two modes:
 //
 //   - event-driven: callers invoke Trigger() from event handlers and
 //     then RunOnce() from a goroutine — useful for reacting to

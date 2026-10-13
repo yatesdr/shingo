@@ -16,7 +16,7 @@ package plan
 //
 // The finder is PURE: it finds a bin, it never claims, transitions, or writes an
 // order. The caller owns the capacity gate, the claim (ClaimForDispatch), the
-// MoveToSourcing transition, result assembly, and fleet dispatch. Disposition
+// status transition, result assembly, and fleet dispatch. Disposition
 // (queue vs reshuffle vs terminal) lives INSIDE the finder as a closed outcome
 // enum — that is deliberate: the NGRP error-path drift lived in the caller's
 // error handling, so the classifier must live in the seam.

@@ -110,8 +110,8 @@ type Wake string
 const (
 	WakeStaged  Wake = "staged"  // the leg's OrderStaged
 	WakeLift    Wake = "lift"    // the lifter's BinPickedUp (any location)
-	WakeCurtain Wake = "curtain" // the tag's change; the floor
-	WakeCore    Wake = "core"    // Core reachable again; the floor
+	WakeCurtain Wake = "curtain" // the 15 s floor; nothing wakes on the tag's change
+	WakeCore    Wake = "core"    // the 15 s floor; nothing wakes on Core's return
 	WakeClick   Wake = "click"   // an operator's next act
 	WakePartner Wake = "partner" // the partner's release
 )

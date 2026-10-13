@@ -73,7 +73,7 @@ func TestPlantClaims_ALoaderPositionResolvesToItsStation(t *testing.T) {
 }
 
 // A loader's registry rows move to the station that owns its position as soon
-// as that station's plant.claims names it (RULINGS-D2-exchange-at-empty §3.3).
+// as that station's plant.claims names it.
 // Before it arrives both registered stations hold the loader (no owner yet, as
 // before); after it, only the owner. RED at 7a341f92: the other station keeps
 // the row until something else re-derives it.

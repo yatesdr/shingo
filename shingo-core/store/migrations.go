@@ -63,7 +63,7 @@ func (db *DB) migrate() error {
 	// Versioned migrations run through the shared runner (protocol/migrate).
 	// migrationList's entries have Verify taking schema.Querier; migrate.Querier
 	// has the identical method set, so the wrap below is a closure, not a
-	// rewrite — all 136 verify predicates move unchanged. Baseline 0: Core has
+	// rewrite — every verify predicate moves unchanged. Baseline 0: Core has
 	// owned schema_migrations since v1, so there is nothing to seed.
 	wrapped := make([]migrate.Migration, 0, len(migrationList()))
 	for _, m := range migrationList() {

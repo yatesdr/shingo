@@ -269,10 +269,10 @@ func (db *DB) BuildDemandRegistryFromAggregate(stationID string) ([]demands.Regi
 // buildDemandRegistry is the derivation, with its counts. ListLoaders is
 // plant-wide; each entry is kept for the station that owns its position.
 //
-// A LOADER BELONGS TO THE STATION THAT OWNS ITS POSITION (RULINGS-D2-exchange-
-// at-empty §3.3). Every station used to derive every loader, so on a two-Edge
-// plant each loader had a binding under both stations and its replenishment went
-// out addressed to whichever fired, the Edge that does not own the node included
+// A LOADER BELONGS TO THE STATION THAT OWNS ITS POSITION. Every station used to
+// derive every loader, so on a two-Edge plant each loader had a binding under
+// both stations and its replenishment went out addressed to whichever fired,
+// the Edge that does not own the node included
 // (TRACE-line2-empties §7.1: all 13 of line 2's PART-W loader orders under
 // edge1.line1). The owner is plantclaims.ClaimingStationsSQL's, the one reading
 // the landings and announcements use. A position no station owns yet (an Edge

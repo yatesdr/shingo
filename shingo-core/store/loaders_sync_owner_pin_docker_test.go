@@ -11,7 +11,7 @@ import (
 )
 
 // A loader's registry rows belong to the station that owns its position
-// (RULINGS-D2-exchange-at-empty §3.3; TRACE-line2-empties §7.1). Every station
+// (TRACE-line2-empties §7.1). Every station
 // used to derive every loader, so on the two-Edge plant line 2's loaders had
 // rows under edge1.line1 too, and all 13 of its PART-W loader orders went out
 // addressed to the Edge that does not own the node. A position no station owns
