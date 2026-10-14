@@ -16,8 +16,8 @@
 // The cat id now has its own column and goes where it belongs — onto the PART,
 // beside its number, which is the row the wrong-part guard reads. A sheet
 // authored against the old four-column layout still imports: its third column
-// is read as the part number and its fourth as the ratio, which is what those
-// cells have always meant to this importer.
+// is read as the part number AND its cat id (what every author typed there), and
+// its fourth as the ratio.
 //
 // Per-row results, never abort-on-first-error: the response reports
 // created / skipped / failed / warning rows so a 200-row file with one
@@ -202,9 +202,15 @@ func groupImportRows(rows [][]string, report *importReport) []*importGroup {
 		// (part, cat id, ratio). A four-column one is the old layout, whose
 		// last cell is the ratio — reading it as a cat id would silently drop
 		// every ratio in the file and replace it with a validation failure.
+		//
+		// The old layout's third column asked for a cat id, and every author
+		// typed one, so it is the part AND its cat id. Leaving the cat id blank
+		// made a linked part whose only identity was a part number, which the
+		// catalog no longer reads as a cat id, and the wrong-part guard went
+		// inert for a style that had one.
 		catid, qty := cell(3), cell(4)
 		if qty == "" {
-			catid, qty = "", cell(3)
+			catid, qty = cell(2), cell(3)
 		}
 		g.entries = append(g.entries, importEntry{
 			line: line, uop: cell(1), part: cell(2), catid: catid, qty: qty,

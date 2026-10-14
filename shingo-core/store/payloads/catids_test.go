@@ -102,3 +102,40 @@ func TestPayloadCATIDs_ReadsAnUnrepointedLine(t *testing.T) {
 			"cell that runs this payload, silently.", catids[p.ID])
 	}
 }
+
+// TestPayloadCATIDs_LinkedPartWithNoCATIDContributesNothing: a line whose part
+// is linked but carries no cat id is "not configured", not "the part number".
+// Read as its part number, the Edge armed the wrong-part guard with a value the
+// process could never report, refused every request on it, and flagged every
+// changeover as a mismatch (SPR SNF3, 2026-10-14). Omitted, the set is empty
+// and the guard stands down.
+func TestPayloadCATIDs_LinkedPartWithNoCATIDContributesNothing(t *testing.T) {
+	t.Parallel()
+	sdb := testdb.Open(t)
+	db := sdb.DB
+
+	blank := &payloads.Payload{Code: "CID-BLANK", UOPCapacity: 1}
+	testutil.MustNoErr(t, payloads.Create(db, blank), "create blank")
+	mixed := &payloads.Payload{Code: "CID-MIXED", UOPCapacity: 1}
+	testutil.MustNoErr(t, payloads.Create(db, mixed), "create mixed")
+	line := func(pid int64, partNumber, catid string) {
+		t.Helper()
+		testutil.MustNoErr(t, payloads.CreateItem(db, &payloads.ManifestItem{
+			PayloadID: pid, PartNumber: partNumber, PartsPerCycle: 1,
+		}, catid), "create manifest item "+partNumber)
+	}
+	line(blank.ID, "767A4-6SA0A.95", "")
+	line(mixed.ID, "CID-P-F", "70000021")
+	line(mixed.ID, "CID-P-G", "")
+
+	catids, err := payloads.PayloadCATIDs(db)
+	testutil.MustNoErr(t, err, "PayloadCATIDs")
+	if v, ok := catids[blank.ID]; ok {
+		t.Errorf("a payload whose only part has no cat id derived %q; want it omitted — its part "+
+			"number is not a cat id, and as one it arms the guard against a value the process "+
+			"can never report", v)
+	}
+	if got := catids[mixed.ID]; got != "70000021" {
+		t.Errorf("kit with one configured part = %q, want 70000021 — the blank part adds nothing", got)
+	}
+}

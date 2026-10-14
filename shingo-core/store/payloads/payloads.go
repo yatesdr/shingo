@@ -65,20 +65,29 @@ func ScanPayloads(rows *sql.Rows) ([]*Payload, error) {
 // on the parts row beside the part number. This used to read the manifest
 // line's own value, which held a cat id because the entry form asked for one.
 //
-// THE COALESCE IS THE CORRECTION WINDOW, NOT A FALLBACK THAT INVENTS ANYTHING.
+// THE PART NUMBER ARM IS THE CORRECTION WINDOW, AND ONLY FOR AN UNLINKED LINE.
 // v108 re-points every single-line payload; a KIT's lines are typed in by hand
-// afterwards, and until they are, the line still carries the cat id it always
-// did. Reading through both states is what makes the re-point a no-op for the
-// guard at every cell, which is the property v108's own predicate refuses to
-// ship without. The second arm retires itself: when the last kit line has a
-// part, nothing reaches it.
+// afterwards, and until they are, the line (part_id NULL) still carries the cat
+// id it always did, so its part_number is read as the cat id. The arm retires
+// itself: when the last kit line has a part, nothing reaches it.
+//
+// A LINKED part with a blank cat id contributes NOTHING. It used to fall
+// through to its part number, which is a part number, not a cat id: the Edge
+// took it as the style's identity, and the process's numeric cat id could never
+// match it, so the wrong-part guard refused every request on that process and
+// the post-cutover check flagged a mismatch on every changeover (SPR SNF3,
+// 2026-10-14, 767A4-6SA0A.95). An empty set leaves the guard inert, which is
+// what "no cat id configured" means.
+// lineCATID is one manifest line's cat id: the linked part's, or for an
+// unlinked line (the v108 window) the line's own part_number.
+const lineCATID = `CASE WHEN pm.part_id IS NULL THEN pm.part_number ELSE COALESCE(pt.catid, '') END`
+
 func PayloadCATIDs(db *sql.DB) (map[int64]string, error) {
 	rows, err := db.Query(`SELECT pm.payload_id,
-			string_agg(DISTINCT COALESCE(NULLIF(pt.catid, ''), pm.part_number), ','
-				ORDER BY COALESCE(NULLIF(pt.catid, ''), pm.part_number))
+			string_agg(DISTINCT ` + lineCATID + `, ',' ORDER BY ` + lineCATID + `)
 		FROM payload_manifest pm
 		LEFT JOIN parts pt ON pt.id = pm.part_id
-		WHERE COALESCE(NULLIF(pt.catid, ''), pm.part_number) <> ''
+		WHERE ` + lineCATID + ` <> ''
 		GROUP BY pm.payload_id`)
 	if err != nil {
 		return nil, fmt.Errorf("payload catids: %w", err)

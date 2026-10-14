@@ -6171,9 +6171,11 @@ func scanCodeValuePairs(rows *sql.Rows, qErr error) ([]codeValuePair, error) {
 // derivedCATIDsByPayload reads what the Edge's guard would derive: per payload
 // code, the DISTINCT cat ids its manifest lines resolve to, comma-joined in
 // order. It reads through BOTH states of a line — the part's catid once the
-// line is re-pointed, the line's own value while it is not — which is the same
-// expression payloads.PayloadCATIDs ships, so this measures the thing that
-// actually runs rather than a second opinion about it.
+// line is re-pointed, the line's own value while it is not — which is the
+// expression payloads.PayloadCATIDs shipped when v108 ran. It is frozen with the
+// migration: PayloadCATIDs has since stopped reading a linked part's blank cat
+// id as its part number (2026-10-14), and this check measures v108's own
+// re-point, not the catalog of today.
 func derivedCATIDsByPayload(tx *sql.Tx) (map[string]string, error) {
 	rows, err := tx.Query(`SELECT p.code,
 			string_agg(DISTINCT COALESCE(NULLIF(pt.catid, ''), pm.part_number), ','
