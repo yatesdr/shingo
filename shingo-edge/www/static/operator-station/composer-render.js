@@ -1256,7 +1256,8 @@ async function openConfirm(runAsIs) {
     // plan would also be missing one (engine.FlowPreview.Running says exactly
     // this). It goes to S4, where the bar's own running heading — "saved changes
     // take effect on the next trip" — says why nothing is starting.
-    if (!pv || pv.error || pv.running || !pv.orderCount) { screen = 'S4'; drawComposer(); return; }
+    const allDone = pv && pv.orderCount === 0 && pv.alreadyDone && pv.alreadyDone.length;
+    if (!pv || pv.error || pv.running || (!pv.orderCount && !allDone)) { screen = 'S4'; drawComposer(); return; }
     screen = 'S9';
     const cells = M().toCells(model);
     const labels = M().modeLabels();

@@ -258,14 +258,16 @@ func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toCl
 // Order matters and is enforced here:
 //
 //  1. Reuse-compatible-bins shortcut. Rewrites Swap/Evacuate to
-//     Unchanged when a press-index claim opts into reuse_compatible_bins,
-//     payloads match, and the physical bin is empty. Runs first so
+//     Unchanged when a press-index claim is produce on both sides, the
+//     payloads match, and the counter says the bin is DRAINED (there is no
+//     opt-in any more; see ApplyReuseCompatibleBinsShortcut). Runs first so
 //     downstream post-processors see the reduced diff list. Beside it,
-//     reading the same runtime, the empty-node rule (ApplyEmptyNodeIsAdd)
-//     rewrites a Swap to Add when the node's seat says its carrier has
-//     gone: nothing to lift, only the new bin to bring. Before the
-//     fan-outs, so an empty press-index position is not fanned out as a
-//     swap.
+//     reading the same node state, ApplyNodeState: a Swap whose seat says
+//     its carrier has gone becomes Add (nothing to lift, only the new bin to
+//     bring), and a one-position consume node already holding the incoming
+//     part becomes Unchanged and AlreadyDone (a restarted changeover does not
+//     swap a node the first attempt finished). Before the fan-outs, so an
+//     empty press-index position is not fanned out as a swap.
 //
 //  2. Press-index Core-availability gate. Refuses the changeover when
 //     Core is unavailable and any remaining diff is a press-index
@@ -284,9 +286,17 @@ func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toCl
 //     type position-count deltas. Acts only on positions not already
 //     covered, so step 3 always wins for positions it touched.
 //
+//  5. The old carrier's destination. Each Swap and Drop is aimed where the
+//     carrier actually standing on its node belongs (residentEvacDest), the
+//     same call REQUEST, produce and the Material release make, so a node
+//     holding a foreign part sends it home rather than to the outgoing
+//     style's destination. LAST, after the fan-outs, so each position is
+//     aimed by its own node's carrier, never its front's. Not Evacuate: the
+//     tooling choreography owns where a cleared carrier waits.
+//
 // Add new diff post-processors to this function so the ordering
 // invariants stay in one place. Any new processor needs to declare
-// where it sits in the pipeline relative to the existing four.
+// where it sits in the pipeline relative to the existing five.
 //
 // TOOLING IS NOT IN THIS LIST, and that is its declaration: it is not a
 // diff post-processor at all. It runs LAST, over the FINISHED PLAN, and
@@ -297,8 +307,9 @@ func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toCl
 // no tooling at all. A pass that cannot be reached by another pass's
 // output does not need a slot in this ordering.
 func (e *Engine) applyChangeoverDiffPostProcessors(processID int64, diffs []ChangeoverNodeDiff) ([]ChangeoverNodeDiff, error) {
-	diffs = ApplyReuseCompatibleBinsShortcut(diffs, e.binDrainedAtCoreNode(processID))
-	diffs = ApplyEmptyNodeIsAdd(diffs, e.seatAt(processID))
+	state := e.nodeStateAt(processID)
+	diffs = ApplyReuseCompatibleBinsShortcut(diffs, func(n string) DrainState { return state(n).Drain })
+	diffs = ApplyNodeState(diffs, state)
 	if err := e.refusePressIndexWhenCoreUnavailable(diffs); err != nil {
 		return nil, err
 	}
@@ -311,7 +322,31 @@ func (e *Engine) applyChangeoverDiffPostProcessors(processID int64, diffs []Chan
 	diffs = ApplySequentialReuseShortcut(diffs, binTypes, e.activePullForDiffs(processID))
 	diffs = FanOutPressIndexDifferentBinType(diffs, binTypes)
 	diffs = FanOutPressIndexCrossMode(diffs, binTypes)
+	e.aimEvacsAtResidentHome(diffs, state)
 	return diffs, nil
+}
+
+// aimEvacsAtResidentHome is step 5: each Swap and Drop's outgoing carrier goes
+// where the carrier on its node belongs. residentEvacDest answers "" when the
+// carrier is the outgoing style's own or cannot be read, and the claim's
+// destination then stands, exactly as on REQUEST.
+func (e *Engine) aimEvacsAtResidentHome(diffs []ChangeoverNodeDiff, state func(coreNode string) NodeState) {
+	for i := range diffs {
+		d := &diffs[i]
+		if d.FromClaim == nil || (d.Situation != SituationSwap && d.Situation != SituationDrop) {
+			continue
+		}
+		// A drop marked for tool-change evacuation is the tooling choreography's
+		// (the station's evacuate ladder), like Evacuate itself.
+		if d.Situation == SituationDrop && d.FromClaim.EvacuateOnChangeover {
+			continue
+		}
+		rt := state(d.CoreNodeName).runtime
+		if rt == nil {
+			continue
+		}
+		d.FromClaim = withResidentEvacDest(d.FromClaim, e.residentEvacDest(rt, d.FromClaim))
+	}
 }
 
 // refusePressIndexWhenCoreUnavailable returns an operator-readable error

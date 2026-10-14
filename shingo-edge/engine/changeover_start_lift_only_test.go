@@ -178,10 +178,10 @@ func TestChangeoverStart_LeavesALiftOnlyOrderAloneAfterItsLift(t *testing.T) {
 	}
 }
 
-// TestApplyEmptyNodeIsAdd_ThreeAnswers: a Swap whose seat says its carrier has
+// TestApplyNodeState_EmptyIsAdd_ThreeAnswers: a Swap whose seat says its carrier has
 // gone is planned as a refill only; a seat holding a bin, or one that cannot
 // say, leaves the swap as it is. Nothing but a Swap is touched.
-func TestApplyEmptyNodeIsAdd_ThreeAnswers(t *testing.T) {
+func TestApplyNodeState_EmptyIsAdd_ThreeAnswers(t *testing.T) {
 	t.Parallel()
 	to := &processes.NodeClaim{CoreNodeName: "N", PayloadCode: "NEW"}
 	for _, tc := range []struct {
@@ -197,7 +197,7 @@ func TestApplyEmptyNodeIsAdd_ThreeAnswers(t *testing.T) {
 		{"drop, no bin", SituationDrop, SeatEmpty, SituationDrop},
 	} {
 		diffs := []ChangeoverNodeDiff{{CoreNodeName: "N", Situation: tc.situation, ToClaim: to}}
-		got := ApplyEmptyNodeIsAdd(diffs, func(string) Seat { return tc.seat })[0].Situation
+		got := ApplyNodeState(diffs, func(string) NodeState { return NodeState{Seat: tc.seat} })[0].Situation
 		if got != tc.want {
 			t.Errorf("%s: situation %s, want %s", tc.name, got, tc.want)
 		}

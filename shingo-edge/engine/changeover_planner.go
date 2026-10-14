@@ -229,16 +229,23 @@ func changeoverDispatch(fromClaim, toClaim *processes.NodeClaim, tooling bool, i
 // processNode is the line node both legs belong to (CoreNodeName); empty
 // DeliveryNode for the evac order lets Core resolve from the steps.
 //
-// evacPayloadCode is the FROM-style payload — the payload of the OUTGOING bin
-// the removal leg must pick up. It MUST be stamped explicitly: the evac leg is
-// otherwise created with an empty payload, which lookupPayloadMeta
-// (orders/manager.go) then backfills with the TARGET (new) style's payload
-// during a changeover. The removal would then filter for the new payload and
-// fail to claim the old bin still at the line (payload mismatch → no_bin →
-// "no bin present at the node"), even though the bin is physically there — and
-// the supply leg proceeds, leaving two bins on the line. Plant incident
-// 2026-06-01 ALN_001. Mirrors the SituationDrop path, which already passes
-// FromClaim.PayloadCode for the same reason.
+// evacPayloadCode is the FROM-style payload, stamped on the outgoing order
+// explicitly. Left blank, lookupPayloadMeta (orders/manager.go) backfills it
+// with the TARGET style's payload during a changeover.
+//
+// WHAT THE STAMP STILL DOES, AND WHAT IT NO LONGER DOES. When ALN_001
+// (2026-06-01) happened, Core filtered the line pickup by the order's payload,
+// so a blank-then-backfilled tag failed to claim the old bin at the line. It no
+// longer does: a removal pickup at the order's own line node binds whatever bin
+// is resident, payload-agnostic (shingo-core dispatch/allocator.go, the ALN_006
+// fix), and Core places the carrier by the BIN's payload (carrierPayloadFor).
+// The stamp still matters where a pickup is filtered — press-index R2 indexing
+// an old tote through carriesFromPayload below — and it is the order's part for
+// the containment divert and the audit (evac_payload_mismatch fires when the
+// resident differs). Where the old carrier GOES is not this tag's job: the
+// FROM claim's OutboundDestination is aimed at the resident carrier's home
+// upstream (aimEvacsAtResidentHome). Mirrors the SituationDrop path, which
+// passes FromClaim.PayloadCode the same way.
 func assignDispatch(action *changeover.NodeAction, processNode, evacPayloadCode string, d ChangeoverDispatch) {
 	if d.Roles != nil {
 		// Role-declared two-leg swap: the builder told us which leg clears the

@@ -984,6 +984,9 @@ function applyPreview(state, res, opts) {
         // zero is a real and different answer the bar blocks on.
         orderCount: (res && typeof res.order_count === 'number') ? res.order_count : null,
         running: !!(res && res.running),
+        // Nodes the styles change that already hold the incoming part (a
+        // changeover planned again after a cancel). They move nothing.
+        alreadyDone: (res && res.already_done) || [],
         findings: (res && res.findings) || [],
         unresolved: (res && res.unresolved) || [],
         preflight: (asked && res && res.preflight) || null,
@@ -1705,7 +1708,12 @@ function bar(state) {
             button: { label: 'Save flow', enabled: !state.previewStale },
         };
     }
-    if (pv && (pv.error || pv.orderCount === 0)) {
+    // ALREADY DONE IS NOT "CHANGES NOTHING". A changeover planned again after a
+    // cancel can find every changing node already holding the new part: no
+    // order fires, and the style still has to flip at cutover. The server says
+    // which nodes (already_done) and answers it as a preview, not a refusal.
+    const allDone = !!(pv && pv.orderCount === 0 && pv.alreadyDone && pv.alreadyDone.length);
+    if (pv && (pv.error || (pv.orderCount === 0 && !allDone))) {
         return {
             heading: pv.error || 'This flow fires no orders',
             detail: (pv.error
@@ -1724,6 +1732,9 @@ function bar(state) {
         (via.length ? ' · key route ' + via.join(', ') : '');
     if (pv && pv.preflight && pv.preflight.state === 'unchecked') {
         detail = 'Inventory not checked — Core is unreachable';
+    }
+    if (pv && pv.alreadyDone && pv.alreadyDone.length) {
+        detail = 'Already has the new part: ' + pv.alreadyDone.join(', ') + ' · ' + detail;
     }
     return {
         // NO ROBOT COUNT (owner ruling R1, 2026-09-12). It read `· 2 robots`,

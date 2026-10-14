@@ -86,6 +86,12 @@ type FlowPreview struct {
 	// and not planned. The bar reads it rather than inferring it from a missing
 	// count, which would also be true of a preview that failed to plan.
 	Running bool `json:"running,omitempty"`
+	// AlreadyDone names the nodes the styles change that already hold the
+	// incoming part (ApplyNodeState): a changeover planned again after a
+	// cancel. They move nothing, so a flow whose every change is already done
+	// fires no orders and is still a changeover to start — the style flips at
+	// cutover — not a flow that "changes nothing".
+	AlreadyDone []string `json:"already_done,omitempty"`
 }
 
 // Orders is the count for a preview that planned, and 0 for one that did not.
@@ -477,7 +483,12 @@ func (e *Engine) PreviewFlow(ctx context.Context, processID int64, req FlowPrevi
 	for _, a := range orderPlan.Actions {
 		preview.Actions = append(preview.Actions, changeover.ToPreviewAction(a))
 	}
-	if count == 0 {
+	for _, d := range plan.diffs {
+		if d.AlreadyDone {
+			preview.AlreadyDone = append(preview.AlreadyDone, d.CoreNodeName)
+		}
+	}
+	if count == 0 && len(preview.AlreadyDone) == 0 {
 		return preview, &FlowNoOrdersError{Preview: preview}
 	}
 	return preview, nil

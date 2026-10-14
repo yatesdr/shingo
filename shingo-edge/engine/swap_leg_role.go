@@ -217,29 +217,47 @@ const (
 	SeatEmpty
 )
 
-// seatAt reads the seats of a process's nodes by core node name, for the two
-// changeover readers that ask whether a bin is on a node: the planner
-// (ApplyEmptyNodeIsAdd) and the start gate (orderLiftAheadAt). A node the
-// process does not own answers SeatUnknown.
-func (e *Engine) seatAt(processID int64) func(coreNode string) Seat {
+// nodeStateAt reads what stands on each of a process's nodes, by core node
+// name: the seat, the carrier's part and the counter's drain answer, all from
+// the node's one runtime row. It is the one reader behind the changeover
+// planner's passes (the reuse shortcut's drain, ApplyNodeState, the old
+// carrier's aim) and the start gate's seat read (seatAt): the process and its
+// nodes are read once, and each node's row at most once, however many passes
+// ask. A node the process does not own answers the zero NodeState: seat
+// unknown, part unknown, drain unknown.
+func (e *Engine) nodeStateAt(processID int64) func(coreNode string) NodeState {
+	process, _ := e.db.GetProcess(processID)
+	wired := counterWired(process)
 	nodes, err := e.db.ListProcessNodesByProcess(processID)
 	if err != nil {
-		return func(string) Seat { return SeatUnknown }
+		return func(string) NodeState { return NodeState{} }
 	}
-	return func(coreNode string) Seat {
-		node := findNodeByCoreName(nodes, coreNode)
-		if node == nil {
-			return SeatUnknown
+	read := map[string]NodeState{}
+	return func(coreNode string) NodeState {
+		if st, ok := read[coreNode]; ok {
+			return st
 		}
-		rt, err := e.db.GetProcessNodeRuntime(node.ID)
-		switch {
-		case err != nil || rt == nil:
-			return SeatUnknown
-		case rt.ActiveBinID != nil:
-			return SeatBin
-		case carrierGone(rt):
-			return SeatEmpty
+		var st NodeState
+		if node := findNodeByCoreName(nodes, coreNode); node != nil {
+			if rt, err := e.db.GetProcessNodeRuntime(node.ID); err == nil && rt != nil {
+				st = NodeState{Part: string(rt.LinesidePayloadCode), PartKnown: rt.LinesidePayloadKnown,
+					Drain: drainOf(rt, wired), runtime: rt}
+				switch {
+				case rt.ActiveBinID != nil:
+					st.Seat = SeatBin
+				case carrierGone(rt):
+					st.Seat = SeatEmpty
+				}
+			}
 		}
-		return SeatUnknown
+		read[coreNode] = st
+		return st
 	}
+}
+
+// seatAt is nodeStateAt's seat alone, for the start gate (orderLiftAheadAt),
+// which asks only whether a bin is on a node.
+func (e *Engine) seatAt(processID int64) func(coreNode string) Seat {
+	state := e.nodeStateAt(processID)
+	return func(coreNode string) Seat { return state(coreNode).Seat }
 }

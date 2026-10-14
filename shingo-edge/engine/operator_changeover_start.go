@@ -79,7 +79,7 @@ func carrierOnItsWay(nodeName string, orderID int64, status protocol.Status) str
 func blockNodeSet(plan *changeoverPlan) []string {
 	changed := make(map[string]bool, len(plan.diffs))
 	for _, d := range plan.diffs {
-		if d.CoreNodeName == "" || d.Situation == SituationUnchanged {
+		if d.CoreNodeName == "" || !changesNode(d) {
 			continue
 		}
 		changed[d.CoreNodeName] = true
@@ -129,12 +129,23 @@ func cancelNodeSet(plan *changeoverPlan) []string {
 func changingNodeSet(plan *changeoverPlan) []string {
 	out := make([]string, 0, len(plan.diffs))
 	for _, diff := range plan.diffs {
-		if diff.Situation == SituationUnchanged || diff.CoreNodeName == "" {
+		if !changesNode(diff) || diff.CoreNodeName == "" {
 			continue
 		}
 		out = append(out, diff.CoreNodeName)
 	}
 	return out
+}
+
+// changesNode is whether the changeover changes what a node runs: every diff
+// but an Unchanged one, AND an AlreadyDone one. A node that already holds the
+// incoming part moves nothing, but the styles still differ there, so an order
+// the outgoing style left at it is exactly the order the start must cancel or
+// wait for — left alone, it would deliver the old part onto a node the new
+// style runs. The "still wanted" reasoning above holds only for a node whose
+// claims are the same.
+func changesNode(d ChangeoverNodeDiff) bool {
+	return d.Situation != SituationUnchanged || d.AlreadyDone
 }
 
 // cancelPreDispatchAtParticipants cancels every PRE-DISPATCH order sitting at a
@@ -603,47 +614,37 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 // caveat instead: an unwired counter answers DrainUnknown, and unknown never
 // skips a swap.
 func (e *Engine) binDrainedAtCoreNode(processID int64) func(coreNodeName string) DrainState {
-	// IS THERE A COUNTER AT ALL. Asked once, for the process, because that is
-	// where the counter is configured: SyncProcessCounter creates no reporting
-	// point unless both names are set, and leaves it disabled unless the
-	// checkbox is on, so any of the three missing means nothing is polling and
-	// RemainingUOPCached is 0 for want of a tick rather than for want of parts.
-	//
-	// This is the strongest signal Edge has, and it is not perfect: the
-	// reporting-point checkbox is decoupled from what actually polls, so a
-	// process whose tag is wrong still reads as counting. What it does do is
-	// separate the case that exists at a plant today — a press with no counter
-	// tag at all — from a genuine zero, which a bool could not do.
-	process, err := e.db.GetProcess(processID)
-	if err != nil || process == nil ||
-		process.CounterPLCName == "" || process.CounterTagName == "" || !process.CounterEnabled {
-		return func(string) DrainState { return DrainUnknown }
+	state := e.nodeStateAt(processID)
+	return func(name string) DrainState { return state(name).Drain }
+}
+
+// counterWired is whether anything polls the process's counter.
+//
+// IS THERE A COUNTER AT ALL. Asked once, for the process, because that is
+// where the counter is configured: SyncProcessCounter creates no reporting
+// point unless both names are set, and leaves it disabled unless the
+// checkbox is on, so any of the three missing means nothing is polling and
+// RemainingUOPCached is 0 for want of a tick rather than for want of parts.
+//
+// This is the strongest signal Edge has, and it is not perfect: the
+// reporting-point checkbox is decoupled from what actually polls, so a
+// process whose tag is wrong still reads as counting. What it does do is
+// separate the case that exists at a plant today — a press with no counter
+// tag at all — from a genuine zero, which a bool could not do.
+func counterWired(process *processes.Process) bool {
+	return process != nil && process.CounterPLCName != "" && process.CounterTagName != "" && process.CounterEnabled
+}
+
+// drainOf is the counter's word on the bin a runtime row has bound.
+func drainOf(rt *processes.RuntimeState, wired bool) DrainState {
+	if !wired || rt == nil || rt.ActiveBinID == nil {
+		// No counter, no row, or no bin at the position, so "is the bin
+		// drained" has no subject. Not the same as an empty one, and not a
+		// bin to reuse.
+		return DrainUnknown
 	}
-	nodes, err := e.db.ListProcessNodesByProcess(processID)
-	if err != nil {
-		return func(string) DrainState { return DrainUnknown }
+	if rt.RemainingUOPCached == 0 {
+		return Drained
 	}
-	idByName := make(map[string]int64, len(nodes))
-	for _, n := range nodes {
-		idByName[n.CoreNodeName] = n.ID
-	}
-	return func(name string) DrainState {
-		id, ok := idByName[name]
-		if !ok {
-			return DrainUnknown
-		}
-		rt, err := e.db.GetProcessNodeRuntime(id)
-		if err != nil || rt == nil {
-			return DrainUnknown
-		}
-		if rt.ActiveBinID == nil {
-			// No bin at the position, so "is the bin drained" has no subject.
-			// Not the same as an empty one, and not a bin to reuse.
-			return DrainUnknown
-		}
-		if rt.RemainingUOPCached == 0 {
-			return Drained
-		}
-		return NotDrained
-	}
+	return NotDrained
 }

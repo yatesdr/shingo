@@ -27,6 +27,12 @@ type ChangeoverNodeDiff struct {
 	Situation    ChangeoverSituation
 	FromClaim    *processes.NodeClaim // nil for "add" situations
 	ToClaim      *processes.NodeClaim // nil for "drop" situations
+	// AlreadyDone marks a node the claims say changes but which already holds
+	// the incoming style's part (ApplyNodeState): planned Unchanged, so it
+	// moves nothing, yet still a CHANGING node to the start's gates, so an
+	// order the outgoing style left at it is cancelled or blocks the start
+	// rather than delivering the old part onto a node the new style runs.
+	AlreadyDone bool
 }
 
 // DiffStyleClaims computes the material changes needed at each physical node
@@ -646,30 +652,80 @@ func ApplyReuseCompatibleBinsShortcut(diffs []ChangeoverNodeDiff, drainState fun
 	return diffs
 }
 
-// ApplyEmptyNodeIsAdd plans a changing node with no bin on it as a refill only:
-// a Swap whose seat says its carrier has gone becomes SituationAdd. A swap's
-// legs lift the node's bin before they set the new one down, and a leg that
-// lifts at an empty node and places there waits at Core for a bin that is not
-// coming (the allocator holds it, with no limit). There is nothing to take
-// away, so the new style's bin is simply brought.
+// NodeState is what the changeover planner reads about a node before it
+// plans it: the seat (a bin bound, none, or unknown), the part the carrier on
+// it is (the lineside identity, written only through recordLinesideCarrier),
+// and the counter's word on whether that carrier is drained. One reader
+// (Engine.nodeStateAt) serves every rule below and the start gate's seat read.
+type NodeState struct {
+	Seat      Seat
+	Part      string
+	PartKnown bool
+	Drain     DrainState
+	// runtime is the row the rest was read from, for the old carrier's aim
+	// (residentEvacDest), which asks of the same row.
+	runtime *processes.RuntimeState
+}
+
+// ApplyNodeState plans each changing node from what stands on it. Two rules,
+// one pass, one reader:
 //
-// Three answers from the seat (seatAt): a bin, no bin, unknown. Only "no bin"
-// changes the plan; a seat that cannot say plans the swap as before.
+//   - EMPTY IS ADD. A Swap whose seat says its carrier has gone becomes
+//     SituationAdd. A swap's legs lift the node's bin before they set the new
+//     one down, and a leg that lifts at an empty node waits at Core for a bin
+//     that is not coming (the allocator holds it, with no limit). There is
+//     nothing to take away, so the new style's bin is simply brought.
 //
-// Swap only. Evacuate is the tooling choreography, whose wait rides the
-// evacuation leg (changeover_tooling.go); an empty node there is left as it is.
-func ApplyEmptyNodeIsAdd(diffs []ChangeoverNodeDiff, seat func(coreNodeName string) Seat) []ChangeoverNodeDiff {
-	if seat == nil {
+//   - ALREADY THE NEW PART IS DONE. A Swap or Add whose node already holds the
+//     incoming style's part is planned Unchanged and marked AlreadyDone. The
+//     style only flips at cutover, so a changeover planned again before it —
+//     the restart after a cancel — used to swap again every node the first
+//     attempt finished, pulling a carrier that had just been delivered (SPR
+//     2026-10-14, ALN_003, a 767D2 carrier 42 minutes on the line).
+//
+// THE DONE RULE IS NARROW ON PURPOSE, and every arm of it is a reason:
+//
+//   - CONSUME ON BOTH SIDES. A consume carrier is labelled with its part on
+//     delivery, so "holds the new part" is a fact. A produce position holds an
+//     empty, and an empty is not the new style's more than the old one's.
+//   - ONE POSITION. A claim with paired positions (sequential A/B, indexing
+//     positions) is decided for the cell, and one node's carrier says nothing
+//     about the others; those plan exactly as before.
+//   - KNOWN, AND NOT DRAINED. An unknown carrier plans the swap (one redundant
+//     trip, never a wrong one). A drained consume carrier is a starved line,
+//     the same ruling as the reuse shortcut's.
+//
+// Evacuate is the tooling choreography, whose clearance does not depend on
+// what the carrier is; it is never touched. A nil state changes nothing.
+func ApplyNodeState(diffs []ChangeoverNodeDiff, state func(coreNodeName string) NodeState) []ChangeoverNodeDiff {
+	if state == nil {
 		return diffs
 	}
 	for i := range diffs {
 		d := &diffs[i]
-		if d.Situation != SituationSwap || d.ToClaim == nil {
+		if d.ToClaim == nil || (d.Situation != SituationSwap && d.Situation != SituationAdd) {
 			continue
 		}
-		if seat(d.CoreNodeName) == SeatEmpty {
+		st := state(d.CoreNodeName)
+		if d.Situation == SituationSwap && st.Seat == SeatEmpty {
 			d.Situation = SituationAdd
+			continue
+		}
+		if holdsTheIncomingPart(*d, st) {
+			d.Situation = SituationUnchanged
+			d.AlreadyDone = true
 		}
 	}
 	return diffs
+}
+
+func holdsTheIncomingPart(d ChangeoverNodeDiff, st NodeState) bool {
+	onePositionConsume := func(c *processes.NodeClaim) bool {
+		return c.Role == protocol.ClaimRoleConsume && c.PairedCoreNode == "" && c.SecondPairedCoreNode == ""
+	}
+	if !onePositionConsume(d.ToClaim) || (d.FromClaim != nil && !onePositionConsume(d.FromClaim)) {
+		return false
+	}
+	return st.Seat == SeatBin && st.PartKnown && st.Part != "" &&
+		st.Part == d.ToClaim.PayloadCode && st.Drain != Drained
 }

@@ -189,8 +189,14 @@ func (e *Engine) residentEvacDest(runtime *processes.RuntimeState, claim *proces
 // copy keeps every existing signature and every existing test honest, and the
 // override is named at the one place it happens.
 //
+// THE CHANGEOVER PLANNER TAKES THE SAME COPY for a Swap or Drop's outgoing
+// claim (aimEvacsAtResidentHome). There, too, every builder that reads the
+// FROM claim's OutboundDestination reads it as the old carrier's dropoff
+// (material_orders.go's changeover builders, planDropAction).
+//
 // The claim is never persisted from here and the copy does not escape the
-// dispatch call, so no caller can observe a claim that disagrees with its row.
+// plan or dispatch it was made for, so no caller can observe a claim that
+// disagrees with its row.
 func withResidentEvacDest(claim *processes.NodeClaim, dest string) *processes.NodeClaim {
 	if dest == "" || claim == nil {
 		return claim
