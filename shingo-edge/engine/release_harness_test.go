@@ -315,10 +315,20 @@ func (h *relHarness) order(name string) *storeorders.Order {
 // armCurtain enables the front node's curtain interlock with the plant polarity
 // and sets the tag's reading. The front node is the produce node, which is
 // where the migration carried each process's live setting.
+//
+// THE BIN DICTATES, so arming a curtain also flags this node's live claims as
+// curtain-required: the harness models a plant that wired the curtain AND
+// flagged the styles whose exits wait for it. Without the flag the gate never
+// fires and every "curtain live" pin renders as a pass.
 func (h *relHarness) armCurtain(reading bool) {
 	h.t.Helper()
 	safe := curtainSafe
 	testutil.MustNoErr(h.t, h.db.SetProcessNodeCurtain(h.nodeID, true, "CURTAIN-PLC", "CURTAIN-TAG", &safe), "arm curtain")
+	node, err := h.db.GetProcessNode(h.nodeID)
+	testutil.MustNoErr(h.t, err, "read node for the curtain flag")
+	_, uerr := h.db.DB.Exec(`UPDATE style_node_claims SET curtain_required = 1
+		WHERE core_node_name = ? AND retired_at IS NULL`, node.CoreNodeName)
+	testutil.MustNoErr(h.t, uerr, "flag the node's claims curtain-required")
 	h.wl.set(reading)
 }
 

@@ -1579,6 +1579,43 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// style_node_claims.curtain_required: the light-curtain release
+			// interlock's style tie. The claim is the (style, node) pair, and
+			// the plant's rule is THE BIN DICTATES: a full bin leaving a node
+			// carries the claim that filled it, and that claim's flag - not
+			// the node's curtain enable, not the style the line is becoming
+			// during a changeover - decides whether that release waits for
+			// the tag. Certain finished-goods parts need the conveyor
+			// un-stopped: their styles' claims leave the flag off, and their
+			// releases cross a curtained node without asking it. Default 0 =
+			// no requirement, so every existing claim and every style reads
+			// as it did.
+			Version: 19,
+			Name:    "style_node_claims_curtain_required",
+			Fn: func(tx *sql.Tx) error {
+				// GUARDED, and it has to be: schema.Apply's DDL carries the
+				// column on a fresh install, and a versioned ALTER would die
+				// on the duplicate before the boot finished. Add only where
+				// the column is absent.
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('style_node_claims')
+					WHERE name = 'curtain_required'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE style_node_claims ADD COLUMN curtain_required INTEGER NOT NULL DEFAULT 0`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('style_node_claims')
+					WHERE name = 'curtain_required'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

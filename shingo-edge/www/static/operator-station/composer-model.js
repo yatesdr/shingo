@@ -260,6 +260,13 @@ const ADVANCED_DEFAULTS = {
     changeover_carryover_disposition: 'replace',
     index_robot_supplies: false,
     auto_confirm: false,
+    // The light-curtain style tie: whether THIS style's full-bin releases at
+    // this node wait for the node's curtain tag. The claim is the
+    // (style, node) pair and the rule is THE BIN DICTATES - the departing
+    // bin's own claim decides, so a part whose exit must not stop the
+    // conveyor leaves this off and its releases cross a curtained node
+    // without asking it. Default false = no requirement.
+    curtain_required: false,
     // The loader board's draw order. Zero is "the store's order", not
     // position zero — Expand speaks the column only when this block exists at
     // all, so a save that never opened the sheet leaves it alone.

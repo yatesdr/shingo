@@ -90,7 +90,11 @@ type fingerprintClaim struct {
 	// that changed it changed what a plan would do (the divert is a routing
 	// fact Core reads), which is exactly what the staleness check exists to
 	// catch.
-	ContainmentDestination         string               `json:"containment_destination"`
+	ContainmentDestination string `json:"containment_destination"`
+	// CurtainRequired is IN the fingerprint: it decides whether a release
+	// waits for a tag - a save that flipped it changed what a release would
+	// do, which is exactly what the staleness check exists to catch.
+	CurtainRequired                bool                 `json:"curtain_required"`
 	AllowedPayloadCodes            []string             `json:"allowed_payload_codes"`
 	AutoRequestPayload             string               `json:"auto_request_payload"`
 	KeepStagedNode                 string               `json:"keep_staged_node"`
@@ -153,6 +157,7 @@ func fingerprintClaims(claims []NodeClaim) []fingerprintClaim {
 			InboundStaging: c.InboundStaging, OutboundStaging: c.OutboundStaging,
 			InboundSource: c.InboundSource, OutboundDestination: c.OutboundDestination,
 			ContainmentDestination: c.ContainmentDestination,
+			CurtainRequired:        c.CurtainRequired,
 			AllowedPayloadCodes:    cloneStrings(c.AllowedPayloadCodes), AutoRequestPayload: c.AutoRequestPayload,
 			KeepStagedNode: c.KeepStagedNode, EvacuateOnChangeover: c.EvacuateOnChangeover, PairedCoreNode: c.PairedCoreNode,
 			AutoConfirm: c.AutoConfirm, Sequence: c.Sequence,

@@ -660,6 +660,16 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     -- Core-side at dispatch (the single-authority dropoff rule) against
     -- Core's authoritative containment state; the Edge never enforces it.
     containment_destination TEXT NOT NULL DEFAULT '',
+    -- The light-curtain release interlock's style tie (v19): whether THIS
+    -- style's releases at THIS node wait for the node's curtain. The claim is
+    -- the (style, node) pair, and the rule the plant chose is THE BIN
+    -- DICTATES: a full bin leaving carries the claim that filled it, and that
+    -- claim's flag - not the node's blanket enable, not the style the line is
+    -- becoming during a changeover - decides whether the release gates on
+    -- the tag. An empty carrier carries no claim, so empty placements never
+    -- gate (they never pass the curtain; an empty that does is the
+    -- operator's fault, not the robot's).
+    curtain_required        INTEGER NOT NULL DEFAULT 0,
     allowed_payload_codes   TEXT NOT NULL DEFAULT '',
     auto_request_payload    TEXT NOT NULL DEFAULT '',
     -- The keep-staged node: one more node this line's full or empty comes
