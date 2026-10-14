@@ -730,6 +730,14 @@ type curtainKey struct {
 // when the active one has no claim here (store.ActiveStyleFirst, the
 // resolution the release verbs use). Nil when none of them is curtained.
 //
+// THE BIN DICTATES, render half: the tile's release lifts the bin its claim
+// filled, so the claim's OWN flag decides whether the tile is gated at all -
+// a style that does not require the curtain renders UNGATED (no points, so
+// CurtainOK stays nil and the button stays normal) whatever the node's
+// curtain says, and a tile with no claim at all is likewise ungated, exactly
+// as the gate reads it (a resident bin with no claim gates nothing). The
+// points are only resolved for a claim that requires the curtain.
+//
 // NO QUERY OF ITS OWN ON AN ORDINARY POLL. The tile's node and any paired
 // position on the same board come from rows the build already read. A
 // paired position off the board - a press-index back position has no
@@ -737,6 +745,13 @@ type curtainKey struct {
 // process_nodes has been written since it last did.
 func (s *StationService) curtainPoints(node processes.Node, b *boardData, board map[curtainKey]processes.Node) []domain.CurtainPoint {
 	var out []domain.CurtainPoint
+	claim, ok := b.activeClaims[node.CoreNodeName]
+	if !ok {
+		claim, ok = b.targetClaims[node.CoreNodeName]
+	}
+	if !ok || !claim.CurtainRequired {
+		return nil
+	}
 	add := func(n processes.Node) {
 		if n.CurtainEnabled {
 			out = append(out, domain.CurtainPoint{
@@ -746,13 +761,6 @@ func (s *StationService) curtainPoints(node processes.Node, b *boardData, board 
 	}
 	add(node)
 	if node.CoreNodeName == "" {
-		return out
-	}
-	claim, ok := b.activeClaims[node.CoreNodeName]
-	if !ok {
-		claim, ok = b.targetClaims[node.CoreNodeName]
-	}
-	if !ok {
 		return out
 	}
 	seen := map[string]bool{node.CoreNodeName: true}

@@ -286,7 +286,15 @@ func TestStationView_BuildsInOnePass(t *testing.T) {
 // press has a paired position off the board and a curtain there holds the
 // front's RELEASE. The set is held until process_nodes is next written, so the
 // steady poll below does not pay it.
-const stationPollQueryBudget = 32
+//
+// 31 SINCE THE BIN DICTATES. The style tie made the curtain's render
+// claim-gated: a tile whose claim does not REQUIRE the curtain resolves no
+// points and never reaches the curtained-nodes read at all - the fixture's
+// press is curtained but its claims are unflagged (the default state, and the
+// state a real plant's non-curtain styles are in), so the read the "32" note
+// describes is skipped. A plant that flags its styles pays it again on the
+// first poll; the hold still covers the steady ones.
+const stationPollQueryBudget = 31
 
 // stationSteadyPollQueryBudget is every poll after the first at the same
 // fixture: the first also materialises runtime rows and reads the curtained
