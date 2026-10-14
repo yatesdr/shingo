@@ -358,12 +358,19 @@ func GetClaim(db *sql.DB, id int64) (*NodeClaim, error) {
 // would send a carrier to a position the current flow does not use. Worse, a
 // live claim and its own retired predecessor at the same node would count as
 // two matches and the resolver would answer nothing at all.
+//
+// OF LIVE STYLES, like the list reads above. Deleting a process soft-deletes its
+// styles and keeps their claims for a restore (processes.Delete), so a deleted
+// process's claim at this node was still a candidate: it could be the one match
+// and aim a carrier at a dead process's destination, or make a second match and
+// silence the answer (SPR: a deleted process's claim at SLN_001).
 func ClaimForLinesidePayload(db *sql.DB, coreNodeName, payloadCode string) (*NodeClaim, error) {
 	if coreNodeName == "" || payloadCode == "" {
 		return nil, nil
 	}
 	rows, err := db.Query(`SELECT `+claimSelect+`
-		FROM style_node_claims WHERE core_node_name=? AND payload_code=? AND`+liveClaims, coreNodeName, payloadCode)
+		FROM style_node_claims WHERE core_node_name=? AND payload_code=?
+		AND style_id IN (SELECT id FROM styles WHERE deleted_at IS NULL) AND`+liveClaims, coreNodeName, payloadCode)
 	if err != nil {
 		return nil, err
 	}

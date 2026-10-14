@@ -171,8 +171,17 @@ func (e *Engine) reconcileActiveBinAfterCancel(processNodeID int64, activeClaimI
 		if e.inventoryDelta != nil {
 			if err := e.inventoryDelta.BindFromCore(processNodeID, activeClaimID, &binID, bin.DeltaEpoch, bin.UOPRemaining); err != nil {
 				log.Printf("changeover cancel: rebind active bin %d for node %s: %v", bin.BinID, node.Name, err)
+				return
 			}
 		}
+		// And the identity, through the doorway, from the same Core row. The
+		// bind writes no identity, so a rebind onto a DIFFERENT carrier (a hand
+		// swap, or an evac whose pickup never reached the Edge) used to leave
+		// the previous carrier's part on the node as a confident answer, and
+		// every reader of it — the evacuation aim, a changeover planned from
+		// what stands on the node — acted on the wrong carrier.
+		e.recordLinesideCarrier(processNodeID, node.CoreNodeName,
+			domain.KnownCarrier(domain.LinesidePayloadCode(bin.PayloadCode)), domain.CarrierFromReconcile)
 		return
 	}
 	// Confirmed empty: the carrier left. Pointer, count and identity go

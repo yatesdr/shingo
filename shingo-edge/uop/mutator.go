@@ -161,9 +161,10 @@ func (m *Mutator) BindActiveBin(nodeID, binID int64, deltaEpoch int64) error {
 //     cancelled changeover rebinds the slot).
 //
 // Same statement as ManualLoad; a different plant event, so a different name
-// at the call site. The identity is not written here: a Core announcement
-// carries no payload, and the callers record UNKNOWN through the doorway
-// where a new carrier arrived.
+// at the call site. The identity is not written here; each caller records it
+// through the doorway (recordLinesideCarrier): the uop-adjustment arms record
+// UNKNOWN where a new carrier arrived (an announcement carries no payload), and
+// the cancel reconcile records the payload Core's bin row names.
 func (m *Mutator) BindFromCore(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error {
 	return m.rw.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, activeClaimID, binID, deltaEpoch, uop)
 }

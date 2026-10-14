@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/orders"
 )
 
@@ -238,5 +239,43 @@ func TestRegression_ConfirmedCompletionDoesNotReconcile(t *testing.T) {
 	}
 	if post.RemainingUOPCached == 77 {
 		t.Errorf("RemainingUOPCached = 77: the reconcile fired on a confirmed completion (should not)")
+	}
+}
+
+// TestCancelReconcile_RecordsTheReboundCarriersIdentity: the reconcile rebinds
+// the slot to the carrier Core says is there, and records THAT carrier's part
+// through the doorway. The bind writes no identity, so a rebind onto a
+// different carrier used to leave the previous carrier's part standing as a
+// confident answer — and a changeover planned from what stands on the node, or
+// the evacuation aim, acted on the wrong carrier.
+func TestCancelReconcile_RecordsTheReboundCarriersIdentity(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	_, nodeID, _, _ := seedPhase3SwapScenario(t, db)
+	node, _ := db.GetProcessNode(nodeID)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]NodeBinInfo{{
+			NodeName: node.CoreNodeName, BinID: 555, PayloadCode: "PART-NEW",
+			UOPRemaining: 40, DeltaEpoch: 3, Occupied: true,
+		}})
+	}))
+	defer srv.Close()
+	eng := testEngine(t, db)
+	eng.coreClient = stubCoreClient(srv.URL)
+
+	// The previous carrier, known, as its landing recorded it.
+	eng.recordLinesideCarrier(nodeID, node.CoreNodeName, domain.KnownCarrier("PART-OLD"), domain.CarrierFromLanding)
+	rt, _ := db.GetProcessNodeRuntime(nodeID)
+
+	eng.reconcileActiveBinAfterCancel(nodeID, rt.ActiveClaimID)
+
+	post, _ := db.GetProcessNodeRuntime(nodeID)
+	if !post.LinesidePayloadKnown || string(post.LinesidePayloadCode) != "PART-NEW" {
+		t.Errorf("identity after the rebind = %q (known %v), want PART-NEW — the rebound carrier's part, "+
+			"not the previous occupant's", post.LinesidePayloadCode, post.LinesidePayloadKnown)
+	}
+	if post.LinesideSource != string(domain.CarrierFromReconcile) {
+		t.Errorf("identity source = %q, want %q", post.LinesideSource, domain.CarrierFromReconcile)
 	}
 }

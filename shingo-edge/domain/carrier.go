@@ -132,6 +132,11 @@ const (
 	// answer. Their assertion is first-class, not a fallback.
 	CarrierFromOperator CarrierSource = "operator"
 
+	// CarrierFromReconcile: Core named the carrier when the Edge re-read a node
+	// against Core's bin row after an aborted order (the cancel reconcile), off
+	// the same row it rebinds the count from.
+	CarrierFromReconcile CarrierSource = "reconcile"
+
 	// CarrierDeparted: the carrier left. Its identity leaves with it, or the
 	// next occupant inherits it and it is read as a fact about them.
 	CarrierDeparted CarrierSource = "departed"

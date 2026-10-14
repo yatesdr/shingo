@@ -133,11 +133,18 @@ func Update(db *sql.DB, id int64, name, description string, counterPLC, counterT
 //     ListNodesByProcess filters on liveNodes, so a retired row can no longer be
 //     adopted by name.
 //
+// THE CLAIMS ARE RETIRED WITH THE STYLES, not deleted: changeover history still
+// names them by id (GetClaim reads retired rows), so they stay readable, and a
+// retired claim reads as absent to everything live. They used to be left live
+// "so restoring the style is still a restore", but a deleted process has no
+// restore — its row goes below — and a live claim of a dead process was still a
+// candidate for "where does this bin belong" (SPR: a deleted process's claim at
+// a staging spot).
+//
 // DELIBERATELY NOT TOUCHED: hourly_counts (the permanent production record —
 // a config action must not be able to reach it, and since the daily roll-up was
-// dropped this is the only copy), process_changeovers and orders (history
-// that stays readable), and style_node_claims (owned by their now-retired style,
-// and kept so that restoring the style is still a restore).
+// dropped this is the only copy), and process_changeovers and orders (history
+// that stays readable).
 func Delete(db *sql.DB, id int64) error {
 	// sourcing_state and demand_origins_open key on the process NAME, not its id,
 	// so the name must be read before the row goes.
@@ -177,6 +184,8 @@ func Delete(db *sql.DB, id int64) error {
 		q   string
 		arg any
 	}{
+		{`UPDATE style_node_claims SET retired_at = datetime('now'), updated_at = datetime('now')
+			WHERE retired_at IS NULL AND style_id IN (SELECT id FROM styles WHERE process_id=?)`, id},
 		{`UPDATE styles SET deleted_at = datetime('now') WHERE process_id=? AND` + liveStyles, id},
 		{`UPDATE reporting_points SET enabled = 0 WHERE style_id IN (SELECT id FROM styles WHERE process_id=?)`, id},
 		{`DELETE FROM process_node_runtime_states WHERE process_node_id IN (SELECT id FROM process_nodes WHERE process_id=?)`, id},
