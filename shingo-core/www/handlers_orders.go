@@ -31,6 +31,7 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Page":               "orders",
 		"Orders":             orders,
+		"OrderProcess":       h.processLabelsFor().orders(orders),
 		"FilterStatus":       view.status,
 		"Search":             view.filter.Search,
 		"PickedIDs":          len(view.filter.IDs),
@@ -83,6 +84,7 @@ func (h *Handlers) handleOrdersRows(w http.ResponseWriter, r *http.Request) {
 	shared.SetHTMLContentType(w)
 	if err := tmpl.ExecuteTemplate(w, "orders-rows", map[string]any{
 		"Orders":        orders,
+		"OrderProcess":  h.processLabelsFor().orders(orders),
 		"FaultLines":    faultLines,
 		"WaitSince":     h.waitSinceFor(orders),
 		"Authenticated": h.isAuthenticated(r),

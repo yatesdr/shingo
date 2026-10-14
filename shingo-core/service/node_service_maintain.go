@@ -257,3 +257,9 @@ func (s *NodeService) ListMaintainSupports(groupNodeID int64) ([]store.MaintainS
 func (s *NodeService) ListProcessNodeOptions() ([]plantclaims.ProcessNodeOption, error) {
 	return s.db.ListProcessNodeOptions()
 }
+
+// ProcessesByNode maps each Core node name to the processes whose setup names
+// it, for the boards' Process column. See plantclaims.ProcessesByNode.
+func (s *NodeService) ProcessesByNode() (map[string][]string, error) {
+	return s.db.ProcessesByNode()
+}

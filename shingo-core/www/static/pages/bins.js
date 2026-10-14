@@ -821,17 +821,19 @@ function paintBinRow(detail) {
     td.innerHTML = html;
     if (sort !== undefined) td.setAttribute('data-sort-value', sort);
   }
-  // Label, Type, Location, Payload, UoP, Status, Flags
+  // Label, Type, Location, Process, Payload, UoP, Status, Flags. Process (3)
+  // is the server's (the mirror's node -> process lookup); the detail API does
+  // not carry it, so the refresh leaves the painted value.
   cell(0, v.label.html, v.label.sort);
   if (tds[off + 1]) tds[off + 1].textContent = v.type.text;
   cell(2, v.location.html, v.location.sort);
-  cell(3, v.payload.html, v.payload.sort);
-  cell(4, v.uop.html, v.uop.sort);
-  cell(5, v.status.html, v.status.sort);
+  cell(4, v.payload.html, v.payload.sort);
+  cell(5, v.uop.html, v.uop.sort);
+  cell(6, v.status.html, v.status.sort);
   // The detail API does not carry the notes flag; keep the one the server
   // painted rather than dropping it on every refresh.
-  var notes = tds[off + 6] && tds[off + 6].querySelector('[title="Has notes"]');
-  cell(6, v.flags.html + (notes ? notes.outerHTML : '') + v.flags.returnHTML);
+  var notes = tds[off + 7] && tds[off + 7].querySelector('[title="Has notes"]');
+  cell(7, v.flags.html + (notes ? notes.outerHTML : '') + v.flags.returnHTML);
 }
 
 function clearSelection() {

@@ -68,6 +68,7 @@ func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		// from it instead of asking /api/core/health again at load (LC10).
 		"HealthJSON":   sseJSON(health),
 		"ActiveOrders": activeOrders,
+		"OrderProcess": h.processLabelsFor().orders(activeOrders),
 		"WaitSince":    waitSince,
 		"StatusCounts": statusCounts,
 		"TotalOrders":  len(activeOrders),
@@ -136,6 +137,7 @@ func (h *Handlers) handleDashboardActiveOrders(w http.ResponseWriter, r *http.Re
 	shared.SetHTMLContentType(w)
 	if err := tmpl.ExecuteTemplate(w, "dashboard-active-orders", map[string]any{
 		"ActiveOrders": activeOrders,
+		"OrderProcess": h.processLabelsFor().orders(activeOrders),
 		"WaitSince":    h.waitSinceFor(activeOrders),
 	}); err != nil {
 		log.Printf("dashboard active orders: %v", err)

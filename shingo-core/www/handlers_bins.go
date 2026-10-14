@@ -42,6 +42,10 @@ type binRow struct {
 	TransitOrderStatus string
 	// CarriedBy is the robot whose deck this bin is riding (_ROBOT:<vehicle>).
 	CarriedBy string
+	// Process is the process the bin belongs to where it is: the one whose setup
+	// names its node, or, in transit, the one its carrying order serves
+	// (processLabels). Empty in a supermarket slot no process names.
+	Process string
 }
 
 // carrierNodePrefix names the per-robot synthetic nodes a bin rides on.
@@ -99,9 +103,10 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 	// table shows what's on the carrier and where it's headed instead of a bare
 	// "_TRANSIT" row. Only the handful of bins actually in flight take the extra
 	// order lookup; everything else passes through untouched.
+	labels := h.processLabelsFor()
 	rows := make([]binRow, len(bins))
 	for i, b := range bins {
-		row := binRow{Bin: b}
+		row := binRow{Bin: b, Process: labels.node(b.NodeName)}
 		switch {
 		case b.NodeName == domain.TransitNodeName:
 			row.InTransit = true
@@ -115,6 +120,7 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 			// claim left — that release is what stranded it — so its history is
 			// the only way back to what it was carrying and where it was going.
 			if o := h.transitOrderFor(b); o != nil {
+				row.Process = labels.order(o)
 				row.TransitPayload = o.PayloadCode
 				row.TransitSource = o.SourceNode
 				row.TransitDest = o.DeliveryNode

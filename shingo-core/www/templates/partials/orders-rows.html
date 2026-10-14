@@ -24,6 +24,7 @@
       is intercepted (see openOrderModal). */}}
   <td class="tnum" data-sort-value="{{.ID}}"><a href="/orders?open={{.ID}}" data-action="openOrderModal:{{.ID}}">{{.ID}}</a></td>
   <td class="orders-route">{{template "order-route" .}}</td>
+  <td>{{if $.OrderProcess}}{{index $.OrderProcess .ID}}{{end}}</td>
   <td>{{if .RecoversOrderID}}{{coreRecoveryLabel}}{{else}}{{stationName .StationID}}{{end}}</td>
   <td>{{.OrderType}}</td>
   <td data-sort-value="{{.PayloadCode}}">{{template "order-payload" .}}</td>
@@ -71,14 +72,14 @@
   {{end}}
 </tr>
 {{else}}
-<tr class="orders-empty" data-no-sort><td colspan="{{if $.Authenticated}}9{{else}}8{{end}}" class="dash-empty">No orders found.</td></tr>
+<tr class="orders-empty" data-no-sort><td colspan="{{if $.Authenticated}}10{{else}}9{{end}}" class="dash-empty">No orders found.</td></tr>
 {{end}}
 {{/* The pager: what this page is of the whole view, and the pages either
      side. Rendered with the rows so a search (which re-fetches the rows)
      moves it too; data-no-sort pins it below the rows when a header is
      clicked (shared/utils.js installTableSort). */}}
 {{with .Pager}}{{if or .Summary .PrevURL .NextURL}}
-<tr class="orders-pager" data-no-sort data-summary="{{.Summary}}"><td colspan="{{if $.Authenticated}}9{{else}}8{{end}}">
+<tr class="orders-pager" data-no-sort data-summary="{{.Summary}}"><td colspan="{{if $.Authenticated}}10{{else}}9{{end}}">
   {{if .PrevURL}}<a class="btn btn-sm" href="{{.PrevURL}}" rel="prev">&larr; Newer</a>{{end}}
   <span class="text-muted-xs tnum">{{.Summary}}</span>
   {{if .NextURL}}<a class="btn btn-sm" href="{{.NextURL}}" rel="next">Older &rarr;</a>{{end}}

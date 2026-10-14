@@ -104,6 +104,7 @@
         <th data-sort>Label</th>
         <th data-sort>Type</th>
         <th data-sort>Location</th>
+        <th data-sort>Process</th>
         <th data-sort>Payload</th>
         <th data-sort>UoP</th>
         <th data-sort>Status</th>
@@ -147,6 +148,7 @@
           {{end}}
           {{if .Stranded}}<div class="text-muted-xs">stranded{{if .AnomalyNote}} &mdash; {{.AnomalyNote}}{{end}}</div>{{end}}
         </td>
+        <td>{{.Process}}</td>
         <td data-sort-value="{{if .PayloadCode}}{{.PayloadCode}}{{else}}{{.TransitPayload}}{{end}}">
           {{if .PayloadCode}}<code>{{.PayloadCode}}</code>
           {{else if .TransitPayload}}<code>{{.TransitPayload}}</code> <span class="text-muted" style="font-size:0.85em">{{if .Stranded}}(last order){{else}}(in transit){{end}}</span>

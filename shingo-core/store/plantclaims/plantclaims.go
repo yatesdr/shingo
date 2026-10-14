@@ -336,6 +336,33 @@ func ListProcessNodeOptions(db *sql.DB) ([]ProcessNodeOption, error) {
 	return out, nil
 }
 
+// ProcessesByNode maps each Core node name to the processes whose setup names
+// it — the claims' own nodes (style_claims) and the positions no claim names,
+// such as loader windows (process_positions) — sorted, each once. The inverse
+// of ListProcessNodeOptions, for the boards that label a node, an order or a
+// carrier with the process it belongs to. A node shared by two processes maps
+// to both; a node no process names is absent.
+func ProcessesByNode(db *sql.DB) (map[string][]string, error) {
+	rows, err := db.Query(`
+		SELECT core_node_name, process_id FROM style_claims
+		UNION
+		SELECT core_node_name, process_id FROM process_positions
+		ORDER BY 1, 2`)
+	if err != nil {
+		return nil, fmt.Errorf("plantclaims processes by node: %w", err)
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var node, process string
+		if err := rows.Scan(&node, &process); err != nil {
+			return nil, fmt.Errorf("plantclaims processes by node: scan: %w", err)
+		}
+		out[node] = append(out[node], process)
+	}
+	return out, rows.Err()
+}
+
 // ProcessStations maps each process to the station that published it
 // (process_styles.station_id). A process with no recorded station is absent:
 // the sourceability feed sends those to every station.

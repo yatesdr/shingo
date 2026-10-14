@@ -53,6 +53,12 @@ func (db *DB) ListProcessNodeOptions() ([]plantclaims.ProcessNodeOption, error) 
 	return plantclaims.ListProcessNodeOptions(db.DB)
 }
 
+// ProcessesByNode maps each Core node name to the processes whose setup names
+// it. See plantclaims.ProcessesByNode.
+func (db *DB) ProcessesByNode() (map[string][]string, error) {
+	return plantclaims.ProcessesByNode(db.DB)
+}
+
 // RecordPlantClaimsReport writes a process's report row (station, digest) and
 // returns the station that held it before. See plantclaims.RecordReport.
 func (db *DB) RecordPlantClaimsReport(processID, stationID, digest string, at time.Time) (string, error) {

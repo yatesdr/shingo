@@ -11,6 +11,7 @@
         <tr>
           <th>ID</th>
           <th title="From &rarr; Line &rarr; To">Route</th>
+          <th>Process</th>
           <th>Station</th>
           <th>Type</th>
           <th>Payload</th>
@@ -24,6 +25,7 @@
         <tr>
           <td><a href="/orders?open={{.ID}}">{{.ID}}</a></td>
           <td class="orders-route">{{template "order-route" .}}</td>
+          <td>{{if $.OrderProcess}}{{index $.OrderProcess .ID}}{{end}}</td>
           <td>{{stationName .StationID}}</td>
           <td>{{.OrderType}}</td>
           <td>{{template "order-payload" .}}</td>
