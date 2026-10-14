@@ -998,3 +998,48 @@ func TestNodeService_ListEdges_ReturnsRegisteredStation(t *testing.T) {
 		t.Errorf("registered station edge-svc-1 not in ListEdges result (len=%d)", len(edges))
 	}
 }
+
+// TestNodeService_SetDisplayName pins the display-name write: the label lands,
+// the audit carries old and new beside the node's own (fleet) name, clearing
+// works, and a label that cannot be a label is refused rather than stored.
+func TestNodeService_SetDisplayName(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := &NodeService{db: db}
+	n := makeNode(t, db, "DN-TEST-ST")
+
+	testutil.MustNoErr(t, svc.SetDisplayName(n.ID, "SNF2 Dock", "admin"), "set")
+
+	got, err := db.GetNode(n.ID)
+	testutil.MustNoErr(t, err, "reload")
+	if got.DisplayName != "SNF2 Dock" {
+		t.Fatalf("display_name = %q, want SNF2 Dock", got.DisplayName)
+	}
+	if got.Name != "DN-TEST-ST" {
+		t.Fatalf("the node's own name moved to %q - the fleet identity must never change through this door", got.Name)
+	}
+	entries, err := db.ListEntityAudit("node", n.ID)
+	testutil.MustNoErr(t, err, "read audit")
+	var found bool
+	for _, a := range entries {
+		if a.Action == "display_name_set" && a.OldValue == "" && a.NewValue == "SNF2 Dock" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no display_name_set audit row (old=%q new=%q) among %d entries", "", "SNF2 Dock", len(entries))
+	}
+
+	// Clearing: empty is a legitimate write (render the fleet's name again).
+	testutil.MustNoErr(t, svc.SetDisplayName(n.ID, "  ", "admin"), "clear with whitespace")
+	got, err = db.GetNode(n.ID)
+	testutil.MustNoErr(t, err, "reload after clear")
+	if got.DisplayName != "" {
+		t.Fatalf("display_name = %q, want empty after the clear", got.DisplayName)
+	}
+
+	// A sentence is not a label: refused, nothing written.
+	if err := svc.SetDisplayName(n.ID, string(make([]byte, 121)), "admin"); err == nil {
+		t.Fatal("a 121-character display name was accepted")
+	}
+}

@@ -92,6 +92,11 @@ export function openNodeModal(el, opts) {
     document.getElementById('nf-node-type-id').value = d.nodeTypeId || '';
     document.getElementById('nf-parent-id').value = d.parentId || '';
     document.getElementById('nf-name').value = d.name;
+    document.getElementById('nf-display-name').value = d.displayName || '';
+    // The hint says what the tile will show, so an empty display name is
+    // visibly "still named" rather than "unnamed".
+    var dnHint = document.getElementById('nf-display-name-hint');
+    if (dnHint) dnHint.textContent = 'Shows now: ' + (d.displayName || d.name) + (d.displayName ? ' \u00b7 fleet name: ' + d.name : '');
     document.getElementById('nf-enabled').checked = d.enabled === 'true';
   } else {
     document.getElementById('ro-enabled').textContent = d.enabled === 'true' ? 'Yes' : 'No';

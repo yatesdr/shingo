@@ -321,7 +321,11 @@ func InputFromClaim(c NodeClaim) NodeClaimInput {
 		// wipes a field the composer does not render yet — the exact disease
 		// the pointer-typed contract documents for the other editor-less
 		// columns. The process-settings stamp sets it explicitly on top.
-		ContainmentDestination:         c.ContainmentDestination,
+		ContainmentDestination: c.ContainmentDestination,
+		// Echo-faithful on the curtain tie too: the claim carries the flag,
+		// so a composer claim-save echoes it instead of wiping it (the same
+		// editor-less-column disease, one line of prevention).
+		CurtainRequired:                c.CurtainRequired,
 		AllowedPayloadCodes:            cloneStrings(c.AllowedPayloadCodes),
 		AutoRequestPayload:             c.AutoRequestPayload,
 		EvacuateOnChangeover:           c.EvacuateOnChangeover,

@@ -694,7 +694,7 @@ await (async function settingsSaveThroughTheApi() {
         html.indexOf('Order empties') < 0 && html.indexOf('During a changeover') < 0);
     check('settings: gone — "Leaves carriers bare as", the layout dropdown',
         html.indexOf('Leaves carriers bare as') < 0 && html.indexOf('Multi window') < 0 && html.indexOf('Single window') < 0);
-    check('settings: every row saves as ticked', (html.match(/data-action-change="saveStationSetting"/g) || []).length === 5);
+    check('settings: every row saves as ticked', (html.match(/data-action-change="saveStationSetting"/g) || []).length === 6);
     check('settings: the window-type picker never offers a bare type',
         html.indexOf('>CART<') >= 0 && html.indexOf('CART-BARE') < 0);
     check('binTypeOptions(set, false) leaves bare out', h.ctx.binTypeOptions([], false).indexOf('CART-BARE') < 0);

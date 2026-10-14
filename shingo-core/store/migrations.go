@@ -4445,6 +4445,10 @@ func migrationList() []migration {
 			func(q schema.Querier) bool {
 				return schema.ColumnExists(q, "demand_origins", "provenance")
 			}},
+
+		{156, "nodes.display_name - the name a person reads, editable on the Nodes page. The node's own name is the FLEET's identity (scenesync matches the fleet's location set by name and deletes a physical node the scene does not carry), so the cosmetic rename rides a column of its own; empty renders the node's name as always. (Renumbered 144 -> 156: the team's Lane H/Lane 0 batches claimed 144 through 155 while this was parked.)",
+			v156NodeDisplayName,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "nodes", "display_name") }},
 	}
 }
 
@@ -4555,6 +4559,16 @@ func v151BinLiftedAt(tx *sql.Tx) error {
 func v150BinPlacementSeq(tx *sql.Tx) error {
 	if _, err := tx.Exec(`CREATE SEQUENCE IF NOT EXISTS bin_placement_seq`); err != nil {
 		return fmt.Errorf("v150 bin_placement_seq: %w", err)
+	}
+	return nil
+}
+
+// v156NodeDisplayName adds nodes.display_name. DEFAULT '' is the whole
+// design: an unset display name renders the node's name, so every existing
+// row and every screen reads exactly as it did the moment this lands.
+func v156NodeDisplayName(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v156 nodes.display_name: %w", err)
 	}
 	return nil
 }

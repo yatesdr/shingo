@@ -248,6 +248,7 @@ CREATE TABLE style_node_claims (
     inbound_source          TEXT NOT NULL DEFAULT '',
     outbound_destination    TEXT NOT NULL DEFAULT '',
     containment_destination TEXT NOT NULL DEFAULT '',
+    curtain_required        INTEGER NOT NULL DEFAULT 0,
     allowed_payload_codes   TEXT NOT NULL DEFAULT '',
     auto_request_payload    TEXT NOT NULL DEFAULT '',
     keep_staged_node        TEXT NOT NULL DEFAULT '',
