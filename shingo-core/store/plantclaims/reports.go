@@ -51,8 +51,24 @@ func DeleteReport(db *sql.DB, processID string) (string, error) {
 
 // ReportDigests returns process → digest for every report row one station
 // holds. Never nil on success: an empty map is "Core holds none".
+//
+// AND EVERY MIRRORED PROCESS WITH NO REPORT ROW, quoted with an empty digest:
+// those whose mirror names this station, and those whose mirror names none (rows
+// written before the station was recorded). The ack quoted report rows only, so
+// a mirror with no report row was never quoted and never reconciled — a process
+// deleted on its Edge kept its claims in Core for good (SPR: "Test Route",
+// "Bin Unloader"). Quoted, the Edge answers it like any other name: it re-sends a
+// process it has (the empty digest never matches) and sends an empty report for
+// one it does not, which clears the mirror. A no-station process quoted to an
+// Edge that does not own it is emptied and then re-sent by the Edge that does on
+// its next heartbeat (it re-publishes any process whose digest Core lacks), so
+// the cost of the guess is one heartbeat, never a lost mirror.
 func ReportDigests(db *sql.DB, stationID string) (map[string]string, error) {
-	rows, err := db.Query(`SELECT process_id, digest FROM plant_claims_reports WHERE station_id = $1`, stationID)
+	rows, err := db.Query(`SELECT process_id, digest FROM plant_claims_reports WHERE station_id = $1
+		UNION
+		SELECT DISTINCT ps.process_id, '' FROM process_styles ps
+		 WHERE (ps.station_id = $1 OR ps.station_id IS NULL)
+		   AND NOT EXISTS (SELECT 1 FROM plant_claims_reports r WHERE r.process_id = ps.process_id)`, stationID)
 	if err != nil {
 		return nil, fmt.Errorf("plantclaims report digests %s: %w", stationID, err)
 	}

@@ -147,3 +147,40 @@ func TestHandleEdgeHeartbeat_Claims(t *testing.T) {
 		})
 	}
 }
+
+// A mirrored process with no report row is quoted with an empty digest, so the
+// Edge answers it: rows written before the station was recorded (NULL station)
+// and rows naming this station. Without the quote such a mirror was never
+// reconciled — a process deleted on its Edge kept its claims in Core for good
+// (SPR "Test Route"). Another station's mirror is not quoted here.
+func TestReportDigests_QuotesAnUnreportedMirror(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := NewCoreDataService(db, &feedsPinResponder{}, service.EpochAnnounce{})
+	svc.HandlePlantClaims(feedsPinEnv("edge.test"), digestedReport("LIVE", "d1", oneStyle))
+	svc.HandlePlantClaims(feedsPinEnv("edge.other"), digestedReport("OTHERS", "o1", oneStyle))
+	for _, q := range []string{
+		`INSERT INTO process_styles (process_id, style_id, station_id) VALUES ('LEGACY', 'S1', NULL)`,
+		`INSERT INTO process_styles (process_id, style_id, station_id) VALUES ('MINE', 'S1', 'edge.test')`,
+		`INSERT INTO process_styles (process_id, style_id, station_id) VALUES ('THEIRS', 'S1', 'edge.other')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("seed mirror: %v", err)
+		}
+	}
+
+	got, err := db.PlantClaimsReportDigests("edge.test")
+	testutil.MustNoErr(t, err, "digests")
+	want := map[string]string{"LIVE": "d1", "LEGACY": "", "MINE": ""}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("quote for edge.test = %v, want %v", got, want)
+	}
+
+	// The Edge does not have LEGACY: its empty report clears the mirror.
+	svc.HandlePlantClaims(feedsPinEnv("edge.test"), digestedReport("LEGACY", "", nil))
+	var n int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM process_styles WHERE process_id = 'LEGACY'`).Scan(&n), "count")
+	if n != 0 {
+		t.Errorf("LEGACY mirror rows after the empty report = %d, want 0", n)
+	}
+}
