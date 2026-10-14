@@ -116,6 +116,27 @@ export function confirmResumeKeepStaged(nodeID, line, onDone) {
     );
 }
 
+// confirmSkipChangeoverStep is the board's ABANDON - SKIP THIS STEP on a
+// changeover node waiting for material that is not coming (the server offers it
+// only then: entry.can_skip). It abandons that one node's waiting supply and
+// lets the rest of the changeover finish; the whole-changeover cancel is a
+// different button. The detail says what the skip leaves at the node, because
+// that differs: a node new in this style gets nothing, a swapped node keeps the
+// part it has.
+export function confirmSkipChangeoverStep(processID, nodeID, nodeName, situation, onDone) {
+    const leaves = situation === 'add'
+        ? 'Nothing is delivered to ' + nodeName + '. The rest of the changeover carries on.'
+        : nodeName + ' keeps the part it has now. The rest of the changeover carries on.';
+    askConfirm(
+        'SKIP ' + nodeName + ' IN THIS CHANGEOVER?',
+        leaves,
+        'YES — SKIP THIS STEP',
+        function () {
+            postAction('/api/processes/' + processID + '/changeover/abandon-node/' + nodeID, undefined, onDone);
+        },
+    );
+}
+
 function doUndo(nodeID, code, onDone) {
     // DELETE carries a body because the key is (node, part) and a part number
     // cannot ride the path without inventing an encoding for the ones with a

@@ -1606,6 +1606,7 @@ func (s *StationService) buildNodeTile(
 	// orders went silent on the loader UI after the kanban-spam guard
 	// stopped firing process-node-tracked orders here.
 	nodeView.Orders = b.boardOrders[node.ID]
+	nodeView.CanSkip = canSkipChangeoverStep(nodeView.ChangeoverTask, nodeView.Orders)
 	nodeView.SwapReady = store.ComputeSwapReady(s.db, nodeView.ActiveClaim, runtime, nodeView.ChangeoverTask)
 	nodeView.ReleasesAsPair = store.ReleasesAsPair(nodeView.ActiveClaim)
 	// Lineside piles power the active-bar and count-anomaly chip UI on
@@ -1738,4 +1739,25 @@ func countWaits(coreNode string, claim *processes.NodeClaim, rt *processes.Runti
 		return ""
 	}
 	return fmt.Sprintf("The line is on %s; its parts wait for %s's bin.", coreNode, coreNode)
+}
+
+// canSkipChangeoverStep is domain.AbandonRefusal over the orders the board
+// already holds for the node. An order the board does not list is not live,
+// which is how the abandon reads a terminal one: nothing left to cancel.
+func canSkipChangeoverStep(task *domain.NodeTask, nodeOrders []domain.Order) bool {
+	if task == nil {
+		return false
+	}
+	find := func(id *int64) *domain.Order {
+		if id == nil {
+			return nil
+		}
+		for i := range nodeOrders {
+			if nodeOrders[i].ID == *id {
+				return &nodeOrders[i]
+			}
+		}
+		return nil
+	}
+	return domain.AbandonRefusal(*task, find(task.NextMaterialOrderID), find(task.OldMaterialReleaseOrderID), false) == nil
 }

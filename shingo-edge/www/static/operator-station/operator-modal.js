@@ -1,6 +1,6 @@
 import { esc, fillColor, postAction, formatETA, withQueueCause, distinctQueueCauses, primeNoticeText, showToast, stationID } from './operator-util.js';
 import {
-    confirmRefuseSupply, confirmUndoSupplyRefusal, REFUSE_LABEL, UNDO_LABEL,
+    confirmRefuseSupply, confirmUndoSupplyRefusal, confirmSkipChangeoverStep, REFUSE_LABEL, UNDO_LABEL,
 } from './operator-supply-refusal.js';
 import {
     getView, getSelectedNodeID, setSelectedNodeID,
@@ -587,6 +587,17 @@ export function renderModal(entry) {
             '/api/processes/' + pid + '/changeover/switch-node/' + nid);
     }
 
+    // ABANDON - SKIP THIS STEP: the per-node exit from a changeover stuck on
+    // material that is not coming. The server decides when it is offered
+    // (can_skip — domain.AbandonRefusal, the rule the abandon itself refuses on),
+    // so it is never shown with a delivery on its way or a robot moving at the
+    // node. Its own verb with a confirm, not the toast exit: that one re-sends
+    // the refused REQUEST, which a skip must not do.
+    if (task && entry.can_skip) {
+        html += '<div class="modal-divider"></div>';
+        html += actionBtn('ABANDON - SKIP THIS STEP', 'empty-tools', true, 'skip-step:' + entry.node.id);
+    }
+
     html += '</div>'; // close actions
 
     html += '<div class="modal-actions" style="margin-top:12px">';
@@ -1117,6 +1128,14 @@ const ACTION_HANDLERS = {
         const entry = sid !== null ? findNodeByID(sid) : null;
         if (!entry) return;
         confirmRefuseSupply(entry.node.id, code, () => { closeModal(); if (loadViewRef) loadViewRef(); });
+    },
+
+    'skip-step': () => {
+        const sid = getSelectedNodeID();
+        const entry = sid !== null ? findNodeByID(sid) : null;
+        if (!entry || !entry.changeover_task) return;
+        confirmSkipChangeoverStep(getView().process.id, entry.node.id, entry.node.name,
+            entry.changeover_task.situation, () => { closeModal(); if (loadViewRef) loadViewRef(); });
     },
 
     'supply-undo': (code) => {

@@ -41,8 +41,14 @@ type StationNodeView struct {
 	ActiveClaim    *NodeClaim    `json:"active_claim,omitempty"`
 	TargetClaim    *NodeClaim    `json:"target_claim,omitempty"`
 	ChangeoverTask *NodeTask     `json:"changeover_task,omitempty"`
-	Orders         []Order       `json:"orders"`
-	BinState       *NodeBinState `json:"bin_state,omitempty"`
+	// CanSkip offers the operator's ABANDON - SKIP THIS STEP on this node: its
+	// changeover task is waiting for material, its supply is still queued, and
+	// nothing is moving at the node. Decided by domain.AbandonRefusal, the same
+	// rule the abandon refuses on, so the button is never offered for a step
+	// the server would refuse.
+	CanSkip  bool          `json:"can_skip"`
+	Orders   []Order       `json:"orders"`
+	BinState *NodeBinState `json:"bin_state,omitempty"`
 	// SwapReady is true when both tracked orders for a two-robot swap are
 	// in "staged" status — i.e. both robots are holding at their wait
 	// points and a single coordinated release can move both forward.

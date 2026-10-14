@@ -76,6 +76,7 @@
         "updated_at": "<ts>",
         "node_name": "Press G1"
       },
+      "can_skip": false,
       "orders": [
         {
           "id": 1,
@@ -142,6 +143,7 @@
         "active_pull": true,
         "updated_at": "<ts>"
       },
+      "can_skip": false,
       "orders": null,
       "swap_ready": false,
       "releases_as_pair": false
@@ -171,6 +173,7 @@
         "active_pull": true,
         "updated_at": "<ts>"
       },
+      "can_skip": false,
       "orders": null,
       "swap_ready": false,
       "releases_as_pair": false,

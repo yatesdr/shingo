@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"errors"
 	"fmt"
 	"log"
 
@@ -10,12 +9,9 @@ import (
 	"shingoedge/orders"
 )
 
-// ErrPartnerInFlight rejects a plain abandon while the partner evacuation is
-// already executing on the fleet. Cancelling the supply would cascade a cancel
-// onto an evac the robot is mid-move on — the divergence family the faulted-
-// release fix closed. The operator's ways out are to wait, or to accept the
-// half-swap (evac completes, supply alone is cancelled).
-var ErrPartnerInFlight = errors.New("partner evacuation is already executing on the fleet; wait for it to finish or accept the half-swap")
+// ErrPartnerInFlight is domain.ErrPartnerInFlight, kept here for the callers
+// that test for it by this name.
+var ErrPartnerInFlight = domain.ErrPartnerInFlight
 
 // AbandonChangeoverSupply is the operator exit from awaiting_material — the
 // C(ii) park where a changeover supply order sits queued because the material
@@ -24,8 +20,9 @@ var ErrPartnerInFlight = errors.New("partner evacuation is already executing on 
 //   - plain abandon (acceptHalf=false): the supply is cancelled with an
 //     ordinary reason, so Core's swap-peer arm cascades the cancel onto the
 //     partner evac fail-closed. Refused with ErrPartnerInFlight while the evac
-//     is fleet-active (see above). Edge cancels ONLY the supply — the evac's
-//     cancel arrives back as Core's push, keeping a single cancel writer.
+//     is with the fleet, faulted included (domain.AbandonRefusal). Edge
+//     cancels ONLY the supply — the evac's cancel arrives back as Core's
+//     push, keeping a single cancel writer.
 //
 //   - accept half-swap (acceptHalf=true): the supply is cancelled with
 //     protocol.CancelReasonAcceptHalfSwap, which Core maps to its abandoned
@@ -53,29 +50,21 @@ func (e *Engine) AbandonChangeoverSupply(processID, processNodeID int64, acceptH
 	if task == nil {
 		return fmt.Errorf("no changeover task for node %d", processNodeID)
 	}
-	if task.State != domain.NodeTaskAwaitingMaterial {
-		return fmt.Errorf("node %s is not awaiting material (state %s)", task.NodeName, task.State)
-	}
 	if task.NextMaterialOrderID == nil {
-		return fmt.Errorf("node %s has no supply order to abandon", task.NodeName)
+		return domain.AbandonRefusal(*task, nil, nil, acceptHalf)
 	}
-
 	supply, err := e.db.GetOrder(*task.NextMaterialOrderID)
 	if err != nil {
 		return fmt.Errorf("get supply order %d: %w", *task.NextMaterialOrderID, err)
 	}
-	// The stamp does not revert when Core un-parks the order, so re-check the
-	// live status: material already in motion should ARRIVE, not be abandoned.
-	if !orders.IsTerminal(supply.Status) && !protocol.IsWaiting(supply.Status) {
-		return fmt.Errorf("supply order %d is now in motion (%s) — material is on its way", supply.ID, supply.Status)
-	}
-
-	if !acceptHalf {
-		if evacID := task.OldMaterialReleaseOrderID; evacID != nil {
-			if evac, gerr := e.db.GetOrder(*evacID); gerr == nil && protocol.IsVendorActive(evac.Status) {
-				return ErrPartnerInFlight
-			}
+	var evac *domain.Order
+	if evacID := task.OldMaterialReleaseOrderID; evacID != nil {
+		if o, gerr := e.db.GetOrder(*evacID); gerr == nil {
+			evac = o
 		}
+	}
+	if err := domain.AbandonRefusal(*task, supply, evac, acceptHalf); err != nil {
+		return err
 	}
 
 	// A terminal supply (e.g. cancelled out-of-band while the task stayed
