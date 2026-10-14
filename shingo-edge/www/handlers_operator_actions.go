@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 
 	"shingoedge/engine"
@@ -18,16 +19,27 @@ import (
 
 // writeMaterialRequestError turns a material-request refusal into a response the
 // operator station can act on. An armed-changeover block (ChangeoverArmedError)
-// ships an inline "abandon changeover" exit carrying the process's cancel URL,
-// so the operator can clear it and retry without a refresh; every other refusal
-// is a plain error (2026-07-24).
-func writeMaterialRequestError(w http.ResponseWriter, err error) {
+// ships an inline exit carrying the process's cancel URL, so the operator can
+// clear it and retry without a refresh; every other refusal is a plain error
+// (2026-07-24).
+//
+// The exit cancels the WHOLE changeover, and its label says so. It used to read
+// "Abandon changeover", which reads like skipping one node; the per-node exit is
+// the node's own skip, not this.
+//
+// Every refusal is logged here, the one door both operator REQUESTs (consume and
+// produce) answer through. The refusal otherwise lived only in the HTTP response,
+// so a line that never got material left no record of why (SPR 2026-10-14). The
+// auto-reorder sweep logs its own refusals (demand_reconciler.go), so this logs
+// the operator's alone.
+func writeMaterialRequestError(w http.ResponseWriter, nodeID int64, kind string, err error) {
+	log.Printf("operator %s request refused: node %d: %v", kind, nodeID, err)
 	var armed *engine.ChangeoverArmedError
 	if errors.As(err, &armed) {
 		writeErrorWithExit(w, http.StatusBadRequest, armed.Error(), actionExit{
-			Kind:  "abandon_changeover",
+			Kind:  "cancel_changeover",
 			URL:   fmt.Sprintf("/api/processes/%d/changeover/cancel", armed.ProcessID),
-			Label: "Abandon changeover to " + armed.ToStyleName,
+			Label: "Cancel changeover to " + armed.ToStyleName,
 		})
 		return
 	}
@@ -52,7 +64,7 @@ func (h *Handlers) apiRequestNodeMaterial(w http.ResponseWriter, r *http.Request
 	}
 	result, err := h.orchestration.RequestNodeMaterial(id, 1)
 	if err != nil {
-		writeMaterialRequestError(w, err)
+		writeMaterialRequestError(w, id, "material", err)
 		return
 	}
 	writeJSONWithTrigger(w, r, result, "refreshMaterial")
@@ -176,7 +188,7 @@ func (h *Handlers) apiRequestProduceSwap(w http.ResponseWriter, r *http.Request)
 	}
 	result, err := h.orchestration.RequestProduceSwap(id)
 	if err != nil {
-		writeMaterialRequestError(w, err)
+		writeMaterialRequestError(w, id, "produce", err)
 		return
 	}
 	writeJSONWithTrigger(w, r, result, "refreshMaterial")

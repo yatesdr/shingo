@@ -1103,7 +1103,7 @@ func (f *Finder) auditSourcedOutsideItsGroup(need Need, binNode *nodes.Node) {
 		return
 	}
 	f.debug("MAINTAINED GROUP MISSED: process %s sourced an empty from %s, which is outside "+
-		"the %d maintained group(s) that serve it. The group was short of what this press "+
+		"the %d maintained group(s) that serve it. The group was short of what this process "+
 		"needed when it asked — level too low, mix wrong, or the keeper had not caught up. "+
-		"Nothing failed; the press is running.", need.ProcessNode, binNode.Name, len(groups))
+		"Nothing failed; the process is running.", need.ProcessNode, binNode.Name, len(groups))
 }

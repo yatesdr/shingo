@@ -171,7 +171,7 @@ func RenameFlowPreset(db *sql.DB, id int64, name string) error {
 		return err
 	}
 	if clash > 0 {
-		return fmt.Errorf("this press already has a preset called %q", name)
+		return fmt.Errorf("this process already has a preset called %q", name)
 	}
 	_, err = db.Exec(`UPDATE flow_presets SET name = ? WHERE process_id = ? AND name = ?`,
 		name, p.ProcessID, p.Name)

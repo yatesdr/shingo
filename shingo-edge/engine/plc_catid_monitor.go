@@ -270,7 +270,7 @@ func (cm *catidMonitor) checkPostCutoverVerify(processID int64, st *catidState, 
 		if err := cm.eng.db.SetChangeoverVerifyMismatch(pv.changeoverID, st.lastConfirmed); err != nil {
 			log.Printf("plc-catid: flag post-cutover mismatch on changeover %d: %v", pv.changeoverID, err)
 		} else {
-			log.Printf("CATID post-cutover mismatch: press %s (process %d) reports %q after cutover to style %d (parts {%s}) — flagged for operator confirmation",
+			log.Printf("CATID post-cutover mismatch: process %s (process %d) reports %q after cutover to style %d (parts {%s}) — flagged for operator confirmation",
 				st.processName, processID, st.lastConfirmed, pv.styleID, formatCATIDSet(set))
 			cm.eng.Events.Emit(Event{Type: EventChangeoverVerifyMismatch, Payload: CATIDVerifyMismatchEvent{
 				ProcessID:     processID,
@@ -361,7 +361,7 @@ func (cm *catidMonitor) onConfirmedCATID(processID int64, st *catidState, isChan
 	// part is NONE of them (not just != a single value — a two-position style runs
 	// two parts, and either side is fine). Empty set = inert (never alert).
 	if ok && len(set) > 0 && !catidSetHas(set, st.lastConfirmed) {
-		log.Printf("CATID mismatch: press %s (process %d) live CATID %q not among active style %q parts {%s} — outgoing-style relief is blocked",
+		log.Printf("CATID mismatch: process %s (process %d) live CATID %q not among active style %q parts {%s} — outgoing-style relief is blocked",
 			st.processName, processID, st.lastConfirmed, styleName, formatCATIDSet(set))
 		cm.eng.Events.Emit(Event{Type: EventCATIDMismatch, Payload: CATIDMismatchEvent{
 			ProcessID:     processID,
@@ -417,7 +417,7 @@ func (cm *catidMonitor) emitCATIDPrompt(processID int64, st *catidState, newCATI
 	if hasTarget {
 		targetID, targetName = matches[0].ID, matches[0].Name
 	}
-	log.Printf("CATID change: press %s (process %d) part is now CATID %q — %d candidate style(s): %s",
+	log.Printf("CATID change: process %s (process %d) part is now CATID %q — %d candidate style(s): %s",
 		st.processName, processID, newCATID, len(matches), strings.Join(matchNames(matches), ", "))
 	cm.eng.Events.Emit(Event{Type: EventCATIDChangePrompt, Payload: CATIDChangePromptEvent{
 		ProcessID:       processID,
@@ -544,7 +544,7 @@ func (cm *catidMonitor) fireAutoCutover(in autoCutoverIntent) {
 			in.processID, in.changeoverID, in.catid, err)
 		return
 	}
-	log.Printf("auto-cutover: completed changeover %d at %s from CATID %s — the press had already cut over",
+	log.Printf("auto-cutover: completed changeover %d at %s from CATID %s — the process had already cut over",
 		in.changeoverID, in.processName, in.catid)
 	cm.eng.Events.Emit(Event{Type: EventCATIDAutoCutover, Payload: CATIDAutoCutoverEvent{
 		ProcessID:    in.processID,

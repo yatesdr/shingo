@@ -835,9 +835,9 @@ func warnIndexRobotSuppliesDrift(db DBTX, in NodeClaimInput) {
 		}
 	}
 	if len(disagree) > 0 {
-		log.Printf("claim %s: index_robot_supplies=%v disagrees with style(s) %s on the same press. "+
+		log.Printf("claim %s: index_robot_supplies=%v disagrees with style(s) %s on the same process. "+
 			"This flag describes which robot can reach the supermarket — a fact about the cell, not "+
-			"about a style — so the press will choreograph differently depending on what it runs. "+
+			"about a style — so the process will choreograph differently depending on what it runs. "+
 			"Set it the same on every style for this node.",
 			in.CoreNodeName, want, strings.Join(disagree, ", "))
 	}
@@ -1035,7 +1035,7 @@ func refuseStrandingARunningBin(db DBTX, id int64) error {
 	case err != nil:
 		return fmt.Errorf("claim %d: running-bin check: %w", id, err)
 	}
-	return fmt.Errorf("%w: %s is on the style this press is running and has a bin on it — take it off the flow after the next changeover",
+	return fmt.Errorf("%w: %s is on the style this process is running and has a bin on it — take it off the flow after the next changeover",
 		domain.ErrRunningPositionMove, node)
 }
 

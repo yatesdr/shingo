@@ -79,8 +79,8 @@ func TestGuardCatidMismatch_InertAndBlocking(t *testing.T) {
 	if err == nil {
 		t.Fatal("divergent CATID must block outgoing-style relief")
 	}
-	// "Press reports CATID 50029999; active style is PROD-STYLE (runs CATID 70000001) — ..."
-	for _, want := range []string{"Press reports", "50029999", "70000001", "PROD-STYLE", "changeover"} {
+	// "The process reports CATID 50029999; active style is PROD-STYLE (runs CATID 70000001) — ..."
+	for _, want := range []string{"process reports", "50029999", "70000001", "PROD-STYLE", "changeover"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("block message %q missing %q", err.Error(), want)
 		}

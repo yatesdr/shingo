@@ -353,7 +353,7 @@ function renderPostCutoverFlag(pid, flag) {
     // Resolution 2 — review the style's expected part-id config.
     actions.appendChild(el('a', { href: '/processes', target: '_blank', style: btnStyle, textContent: 'Review part-id config' }));
     // Confirm the press is correct → clear the flag.
-    const confirmBtn = el('button', { type: 'button', style: btnStyle, textContent: 'Confirm — press is correct' });
+    const confirmBtn = el('button', { type: 'button', style: btnStyle, textContent: 'Confirm — process is correct' });
     confirmBtn.addEventListener('click', async () => {
         confirmBtn.disabled = true;
         const ok = await postAction('/api/processes/' + pid + '/post-cutover-flag/confirm', {}, loadView);

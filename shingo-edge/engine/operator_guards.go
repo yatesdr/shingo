@@ -325,7 +325,7 @@ type ChangeoverArmedError struct {
 }
 
 func (e *ChangeoverArmedError) Error() string {
-	return fmt.Sprintf("A changeover to %s is armed on this press — abandon it to request %s material.",
+	return fmt.Sprintf("A changeover to %s is armed on this process — cancel it to request %s material.",
 		e.ToStyleName, e.OutgoingStyle)
 }
 
@@ -416,7 +416,7 @@ func (e *Engine) guardCatidMismatch(node *processes.Node, claim *processes.NodeC
 	// The live part must be ONE OF the style's parts — whichever side the press is
 	// reporting. It only blocks when the live part belongs to none of them.
 	if !catidSetHas(set, live) {
-		return fmt.Errorf("Press reports CATID %s; active style is %s (runs CATID %s) — the wrong part is on the press. %s",
+		return fmt.Errorf("The process reports CATID %s; active style is %s (runs CATID %s) — the wrong part is on the process. %s",
 			live, style.Name, formatCATIDSet(set), e.catidResolutionHint(node.ProcessID))
 	}
 	return nil

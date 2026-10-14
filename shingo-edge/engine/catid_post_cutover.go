@@ -80,7 +80,7 @@ func (e *Engine) PostCutoverFlag(processID int64) (*PostCutoverFlag, bool) {
 		ExpectedStyleName: expectedName,
 		LiveCATID:         co.VerifyLiveCATID,
 	}
-	msg := fmt.Sprintf("This changeover was set to %s, but the press is reporting %s",
+	msg := fmt.Sprintf("This changeover was set to %s, but the process is reporting %s",
 		expectedName, co.VerifyLiveCATID)
 	switch len(matches) {
 	case 1:

@@ -351,6 +351,6 @@ func (e *Engine) clearActivePullForEvacuate(nodeID int64) {
 	// doors are gone). Until a release lands, the guard has nothing to protect
 	// here, which is the honest reading of a stopped press.
 	log.Printf("changeover: tooling evacuate at node %s — active_pull cleared on %d position(s); the "+
-		"press is down, so the line is pulling from nothing. It stays dark until the flip or an "+
+		"process is down, so the line is pulling from nothing. It stays dark until the flip or an "+
 		"operator says otherwise", node.CoreNodeName, len(ids))
 }

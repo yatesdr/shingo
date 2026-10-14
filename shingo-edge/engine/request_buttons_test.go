@@ -256,7 +256,7 @@ type lineState struct {
 
 const (
 	swapBusy    = "a swap is already in progress — wait for the current cycle to complete or abort it before requesting more material"
-	armed       = "A changeover to EX-TO is armed on this press — abandon it to request EX-FROM material."
+	armed       = "A changeover to EX-TO is armed on this process — cancel it to request EX-FROM material."
 	onItsWay    = "order 1 is already bringing a bin to KS-LINE — wait for it to land"
 	noClaimText = "has no active claim"
 )

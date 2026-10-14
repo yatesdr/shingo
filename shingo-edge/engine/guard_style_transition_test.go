@@ -58,7 +58,7 @@ func TestGuardStyleTransition_ExemptsLoaderAndNonOutgoingStyle(t *testing.T) {
 	}
 	// Message names the changeover target (OTHER-STYLE) and offers the exit for
 	// the outgoing style (PROD-STYLE, seeded by seedProduceNode).
-	for _, want := range []string{"changeover to OTHER-STYLE", "abandon", "PROD-STYLE material"} {
+	for _, want := range []string{"changeover to OTHER-STYLE", "cancel it", "PROD-STYLE material"} {
 		if !strings.Contains(armed.Error(), want) {
 			t.Errorf("refusal %q missing %q", armed.Error(), want)
 		}
@@ -82,7 +82,7 @@ func TestRequestProduceSwap_BlockedForOutgoingStyleDuringChangeover(t *testing.T
 
 	if _, err := eng.RequestProduceSwap(nodeID); err == nil {
 		t.Fatal("expected RequestProduceSwap to be refused for the outgoing style during a changeover")
-	} else if !strings.Contains(err.Error(), "abandon") || !strings.Contains(err.Error(), "CO-TARGET") {
+	} else if !strings.Contains(err.Error(), "cancel it") || !strings.Contains(err.Error(), "CO-TARGET") {
 		t.Errorf("error = %q, want the armed-changeover exit message naming the target", err.Error())
 	}
 }

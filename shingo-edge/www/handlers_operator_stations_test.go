@@ -726,11 +726,11 @@ func TestOperatorStations_RequestProduceSwap_ArmedChangeoverOffersExit(t *testin
 	}
 	testutil.MustNoErr(t, json.NewDecoder(resp.Body).Decode(&body), "decode exit response")
 
-	if !strings.Contains(body.Error, "abandon") || !strings.Contains(body.Error, "KK21") {
+	if !strings.Contains(body.Error, "cancel it") || !strings.Contains(body.Error, "KK21") {
 		t.Errorf("error = %q, want the armed-changeover message naming the target", body.Error)
 	}
-	if body.Exit.Kind != "abandon_changeover" {
-		t.Errorf("exit.kind = %q, want abandon_changeover", body.Exit.Kind)
+	if body.Exit.Kind != "cancel_changeover" {
+		t.Errorf("exit.kind = %q, want cancel_changeover", body.Exit.Kind)
 	}
 	if body.Exit.URL != "/api/processes/7/changeover/cancel" {
 		t.Errorf("exit.url = %q, want the process cancel URL", body.Exit.URL)
