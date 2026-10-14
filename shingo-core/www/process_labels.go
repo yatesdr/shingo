@@ -4,7 +4,7 @@ import (
 	"log"
 	"strings"
 
-	"shingocore/store/orders"
+	"shingocore/domain"
 )
 
 // processLabels names the process an order or a carrier belongs to, for the
@@ -33,7 +33,7 @@ func (p processLabels) node(name string) string {
 // order is the process an order serves: its line node when it has one, else
 // where it delivers, else where it picks up. A loader refill to a window names
 // the loader's process; an order between two supermarket slots names none.
-func (p processLabels) order(o *orders.Order) string {
+func (p processLabels) order(o *domain.Order) string {
 	for _, n := range []string{o.ProcessNode, o.DeliveryNode, o.SourceNode} {
 		if label := p.node(n); label != "" {
 			return label
@@ -43,7 +43,7 @@ func (p processLabels) order(o *orders.Order) string {
 }
 
 // orders labels a page's orders by id, for a template's {{index $.OrderProcess .ID}}.
-func (p processLabels) orders(list []*orders.Order) map[int64]string {
+func (p processLabels) orders(list []*domain.Order) map[int64]string {
 	out := make(map[int64]string, len(list))
 	for _, o := range list {
 		out[o.ID] = p.order(o)

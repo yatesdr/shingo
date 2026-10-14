@@ -3,7 +3,7 @@ package www
 import (
 	"testing"
 
-	"shingocore/store/orders"
+	"shingocore/domain"
 )
 
 // TestProcessLabels: one rule for every board's Process column. An order
@@ -18,14 +18,14 @@ func TestProcessLabels(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name string
-		o    orders.Order
+		o    domain.Order
 		want string
 	}{
-		{"line order", orders.Order{ProcessNode: "ALN_001", SourceNode: "SMN_015", DeliveryNode: "ALN_001"}, "SNF2"},
-		{"evac to a loader window", orders.Order{ProcessNode: "ALN_001", SourceNode: "ALN_001", DeliveryNode: "SMN_015"}, "SNF2"},
-		{"loader refill, no line node", orders.Order{SourceNode: "AMR Supermarket", DeliveryNode: "SMN_015"}, "Bin Loader"},
-		{"shared node", orders.Order{DeliveryNode: "SMN_001"}, "SNF3 / SNF4"},
-		{"supermarket to supermarket", orders.Order{SourceNode: "SMN_005", DeliveryNode: "SMN_008"}, ""},
+		{"line order", domain.Order{ProcessNode: "ALN_001", SourceNode: "SMN_015", DeliveryNode: "ALN_001"}, "SNF2"},
+		{"evac to a loader window", domain.Order{ProcessNode: "ALN_001", SourceNode: "ALN_001", DeliveryNode: "SMN_015"}, "SNF2"},
+		{"loader refill, no line node", domain.Order{SourceNode: "AMR Supermarket", DeliveryNode: "SMN_015"}, "Bin Loader"},
+		{"shared node", domain.Order{DeliveryNode: "SMN_001"}, "SNF3 / SNF4"},
+		{"supermarket to supermarket", domain.Order{SourceNode: "SMN_005", DeliveryNode: "SMN_008"}, ""},
 	} {
 		if got := p.order(&tc.o); got != tc.want {
 			t.Errorf("%s: process %q, want %q", tc.name, got, tc.want)

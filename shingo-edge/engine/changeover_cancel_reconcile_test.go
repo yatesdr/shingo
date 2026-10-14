@@ -252,7 +252,8 @@ func TestCancelReconcile_RecordsTheReboundCarriersIdentity(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedPhase3SwapScenario(t, db)
-	node, _ := db.GetProcessNode(nodeID)
+	node, err := db.GetProcessNode(nodeID)
+	testutil.MustNoErr(t, err, "process node")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode([]NodeBinInfo{{
@@ -266,11 +267,13 @@ func TestCancelReconcile_RecordsTheReboundCarriersIdentity(t *testing.T) {
 
 	// The previous carrier, known, as its landing recorded it.
 	eng.recordLinesideCarrier(nodeID, node.CoreNodeName, domain.KnownCarrier("PART-OLD"), domain.CarrierFromLanding)
-	rt, _ := db.GetProcessNodeRuntime(nodeID)
+	rt, err := db.GetProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "runtime before")
 
 	eng.reconcileActiveBinAfterCancel(nodeID, rt.ActiveClaimID)
 
-	post, _ := db.GetProcessNodeRuntime(nodeID)
+	post, err := db.GetProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "runtime after")
 	if !post.LinesidePayloadKnown || string(post.LinesidePayloadCode) != "PART-NEW" {
 		t.Errorf("identity after the rebind = %q (known %v), want PART-NEW — the rebound carrier's part, "+
 			"not the previous occupant's", post.LinesidePayloadCode, post.LinesidePayloadKnown)
