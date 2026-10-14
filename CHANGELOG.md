@@ -3,6 +3,26 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-14 — Restarted changeovers leave finished nodes alone; stranded staging carriers go home
+
+Core and Edge, no migrations. Local main; not pushed or deployed.
+
+- A changeover planned again skips a node already holding the new part
+- A done node still cancels or waits on the outgoing style's orders at start
+- A changeover with every change done can be started from the composer
+- A changeover sends the old carrier to its real home, as REQUEST does
+- The cancel reconcile records the rebound carrier's part
+- A deleted process's claims are retired and no longer answer
+- ABANDON - SKIP THIS STEP on the station node popup, offered by the abandon's own rule
+- The whole-changeover exit is labelled Cancel changeover
+- A carrier set down at staging and then cancelled goes back where it came from
+- A linked part with no cat id no longer arms the wrong-part check
+- Old four-column payload sheets import column 3 as the part's cat id too
+- Core quotes unreported mirror processes so their Edge can clear them
+- Process column on Core orders, home active orders and bins
+- Operator REQUEST refusals are logged
+- Text says "process", not "press"
+
 ## 2026-10-13 — One planner, one order ladder, lanes and drops by one rule, changeovers that finish
 
 Core and Edge (Core 155, Edge v21). Local main; not pushed or deployed.
