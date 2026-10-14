@@ -75,26 +75,63 @@ func parkDestination(rest []protocol.ComplexOrderStep, node string) (park, dest 
 	return "", "", false
 }
 
-// stagedTrip reads a stage order's steps for the bin it set down to wait: a
-// pickup somewhere other than the line, an exclusive dropoff on a staging node
-// straight after it, and no later pickup there in the same order. The bin waits
-// for another order to collect it, and dest is where it was fetched from. A
-// two-robot supply collects its own staged bin, so it is not a stage.
-func stagedTrip(steps []protocol.ComplexOrderStep, line string) (stage, dest string, ok bool) {
-	for i := 1; i < len(steps); i++ {
+// setDownAtStaging finds, in an order's steps, a carrier fetched from away from
+// the line and set down on a staging node: a pickup somewhere other than the
+// line and an exclusive dropoff on a staging node straight after it. i is the
+// dropoff's index, stage the staging node, dest the place it was fetched from.
+// The one reading of that shape: a stage order (stagedTrip) ends there and
+// leaves the carrier for another order; a two-robot supply (waitingAtStage)
+// waits there and collects it itself.
+func setDownAtStaging(steps []protocol.ComplexOrderStep, line string) (i int, stage, dest string, ok bool) {
+	for i = 1; i < len(steps); i++ {
 		s, prev := steps[i], steps[i-1]
 		if s.Action != protocol.ActionDropoff || !s.ExclusiveSlot || s.Node == "" ||
 			prev.Action != protocol.ActionPickup || prev.Node == "" || prev.Node == line {
 			continue
 		}
-		for _, later := range steps[i+1:] {
-			if later.Action == protocol.ActionPickup && later.Node == s.Node {
-				return "", "", false
-			}
-		}
-		return s.Node, prev.Node, true
+		return i, s.Node, prev.Node, true
 	}
-	return "", "", false
+	return 0, "", "", false
+}
+
+// stagedTrip reads a stage order's steps for the bin it set down to wait: a
+// carrier set down at staging (setDownAtStaging) and no later pickup there in
+// the same order. The bin waits for another order to collect it, and dest is
+// where it was fetched from. A two-robot supply collects its own staged bin, so
+// it is not a stage; waitingAtStage is its reading.
+func stagedTrip(steps []protocol.ComplexOrderStep, line string) (stage, dest string, ok bool) {
+	i, stage, dest, ok := setDownAtStaging(steps, line)
+	if !ok {
+		return "", "", false
+	}
+	for _, later := range steps[i+1:] {
+		if later.Action == protocol.ActionPickup && later.Node == stage {
+			return "", "", false
+		}
+	}
+	return stage, dest, true
+}
+
+// waitingAtStage reads a supply leg's steps for the carrier it sets down at
+// staging to WAIT with: a carrier set down at staging (setDownAtStaging) and a
+// station wait on that node straight after the drop. waitOrdinal is that wait's
+// number among the order's station waits, the number Core reports an order
+// staged at (Order.StationWait).
+func waitingAtStage(steps []protocol.ComplexOrderStep, line string) (stage, dest string, waitOrdinal int, ok bool) {
+	i, stage, dest, ok := setDownAtStaging(steps, line)
+	if !ok || i+1 >= len(steps) {
+		return "", "", 0, false
+	}
+	next := steps[i+1]
+	if next.Action != protocol.ActionWait || next.Node != stage || next.WaitKind != protocol.WaitKindStation {
+		return "", "", 0, false
+	}
+	for _, s := range steps[:i+1] {
+		if s.Action == protocol.ActionWait && s.WaitKind == protocol.WaitKindStation {
+			waitOrdinal++
+		}
+	}
+	return stage, dest, waitOrdinal, true
 }
 
 // leftOnStaging is parkedTrip and stagedTrip for one changeover order: one
@@ -195,10 +232,10 @@ func (e *Engine) finishParkedTrips(parks []parkedBin, rows map[string]NodeBinInf
 		_, err := e.orderMgr.CreateMoveOrderCarrying(&nodeID, p.park, p.dest, row.PayloadCode, origin)
 		mu.Unlock()
 		if err != nil {
-			e.logFn("changeover cancel: %s: send the bin left on %s on to %s: %v", p.line, p.park, p.dest, err)
+			e.logFn("cancel: %s: send the bin left on %s on to %s: %v", p.line, p.park, p.dest, err)
 			continue
 		}
-		e.logFn("changeover cancel: %s: the bin left on %s goes on to %s", p.line, p.park, p.dest)
+		e.logFn("cancel: %s: the bin left on %s goes on to %s", p.line, p.park, p.dest)
 	}
 }
 
@@ -263,4 +300,69 @@ func (e *Engine) clearStrandedPark(node *processes.Node, claim *processes.NodeCl
 		return
 	}
 	e.logFn("request: %s: the bin left on %s goes on to %s", node.Name, claim.OutboundStaging, claim.OutboundDestination)
+}
+
+// carrierLeftWaiting is a cancelled order's carrier left standing at staging:
+// the order was cancelled while staged at the station wait that follows its own
+// drop at staging (waitingAtStage), so the carrier is down on that node, and
+// nothing will collect it — the order that would have is the one cancelled. A
+// two-robot supply cancelled at its wait is the case (SPR 2026-10-14: CARRIER-0026
+// with 350 of 76682 left on SLN_001, which then blocked the next swap's
+// dropoff). ok is false for any other order or moment.
+func (e *Engine) carrierLeftWaiting(changed OrderStatusChangedEvent) (parkedBin, bool) {
+	if changed.NewStatus != string(protocol.StatusCancelled) || changed.OldStatus != string(protocol.StatusStaged) {
+		return parkedBin{}, false
+	}
+	order, err := e.db.GetOrder(changed.OrderID)
+	if err != nil || order == nil || order.OrderType != ordermgr.TypeComplex ||
+		order.ProcessNodeID == nil || order.StationWait == nil {
+		return parkedBin{}, false
+	}
+	raw, err := e.db.GetOrderStepsJSON(order.ID)
+	if err != nil {
+		return parkedBin{}, false
+	}
+	steps, err := decodeSteps(raw)
+	if err != nil {
+		return parkedBin{}, false
+	}
+	node, err := e.db.GetProcessNode(*order.ProcessNodeID)
+	if err != nil || node == nil {
+		return parkedBin{}, false
+	}
+	stage, dest, ordinal, ok := waitingAtStage(steps, node.CoreNodeName)
+	if !ok || *order.StationWait != ordinal {
+		return parkedBin{}, false
+	}
+	// A keep-staged spot is the keeper's: a carrier standing there is the spare
+	// it wants, and the changeover cancel leaves spots to it too (withoutSpots).
+	// Unreadable claims leave the carrier where it is rather than guess.
+	claims, err := processes.ListLiveClaimsByProcess(e.db.DB, node.ProcessID)
+	if err != nil || slices.Contains(keepStagedSpotNames(claims), stage) {
+		return parkedBin{}, false
+	}
+	return parkedBin{nodeID: node.ID, line: node.CoreNodeName, park: stage, dest: dest}, true
+}
+
+// returnCarrierLeftWaiting sends a cancelled order's waiting carrier back to
+// where it was fetched from — the same plain move the changeover cancel makes
+// for a stage it leaves behind (finishParkedTrips), so one move, one rule, for
+// every cancel: Core's admin terminate, an Edge abort, a changeover cancel. Only
+// a carrier Core reports on the node moves.
+//
+// OFF THE CANCELLING GOROUTINE. A status change is handled on the goroutine
+// that made it, and a changeover cancel aborts its orders under the cells'
+// locks; the move takes the line's prime lock and asks Core first, so it runs
+// after the cancel has let go, as the changeover cancel's own park does.
+func (e *Engine) returnCarrierLeftWaiting(changed OrderStatusChangedEvent) {
+	p, ok := e.carrierLeftWaiting(changed)
+	if !ok {
+		return
+	}
+	go e.sendCarrierBack(p)
+}
+
+func (e *Engine) sendCarrierBack(p parkedBin) {
+	_, rows := e.readSpotsAnd(nil, []string{p.park})
+	e.finishParkedTrips([]parkedBin{p}, rows, ordermgr.NoDemand())
 }

@@ -64,6 +64,7 @@ func (e *Engine) wireEventHandlers() {
 		e.handleSequentialBackfill(evt.Payload)
 		e.onReleaseStatusChanged(evt.Payload)
 		e.handleRelayPartnerDeath(evt.Payload)
+		e.returnCarrierLeftWaiting(evt.Payload)
 	}, EventOrderStatusChanged)
 }
 
