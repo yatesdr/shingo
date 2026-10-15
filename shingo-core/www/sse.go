@@ -398,24 +398,26 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 	eventbus.SubscribeTyped(eng.Events, func(evt eventbus.TypedEvent[engine.EventType, engine.RobotsUpdatedEvent]) {
 		ev := evt.Payload
 		type robotJSON struct {
-			VehicleID      string  `json:"vehicle_id"`
-			State          string  `json:"state"`
-			IP             string  `json:"ip"`
-			Model          string  `json:"model"`
-			CurrentMap     string  `json:"map"`
-			Battery        string  `json:"battery"`
-			Charging       bool    `json:"charging"`
-			CurrentStation string  `json:"station"`
-			LastStation    string  `json:"last_station"`
-			Available      bool    `json:"available"`
-			Connected      bool    `json:"connected"`
-			Blocked        bool    `json:"blocked"`
-			Emergency      bool    `json:"emergency"`
-			Busy           bool    `json:"processing"`
-			IsError        bool    `json:"error"`
-			X              float64 `json:"x"`
-			Y              float64 `json:"y"`
-			Angle          float64 `json:"angle"`
+			VehicleID      string `json:"vehicle_id"`
+			State          string `json:"state"`
+			IP             string `json:"ip"`
+			Model          string `json:"model"`
+			CurrentMap     string `json:"map"`
+			Battery        string `json:"battery"`
+			Charging       bool   `json:"charging"`
+			CurrentStation string `json:"station"`
+			LastStation    string `json:"last_station"`
+			Available      bool   `json:"available"`
+			// Why the fleet will not dispatch it, "" when it will.
+			NotDispatchable string  `json:"not_dispatchable"`
+			Connected       bool    `json:"connected"`
+			Blocked         bool    `json:"blocked"`
+			Emergency       bool    `json:"emergency"`
+			Busy            bool    `json:"processing"`
+			IsError         bool    `json:"error"`
+			X               float64 `json:"x"`
+			Y               float64 `json:"y"`
+			Angle           float64 `json:"angle"`
 			// The order this robot is on. See RobotOrderLine — no alarms.
 			RobotOrderLine
 		}
@@ -434,25 +436,26 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		out := make([]robotJSON, len(ev.Robots))
 		for i, r := range ev.Robots {
 			out[i] = robotJSON{
-				VehicleID:      r.VehicleID,
-				State:          r.State(),
-				IP:             r.IP,
-				Model:          r.Model,
-				CurrentMap:     r.CurrentMap,
-				Battery:        fmt.Sprintf("%.0f", r.BatteryLevel),
-				Charging:       r.Charging,
-				CurrentStation: r.CurrentStation,
-				LastStation:    r.LastStation,
-				Available:      r.Available,
-				Connected:      r.Connected,
-				Blocked:        r.Blocked,
-				Emergency:      r.Emergency,
-				Busy:           r.Busy,
-				IsError:        r.IsError,
-				X:              r.X,
-				Y:              r.Y,
-				Angle:          r.Angle,
-				RobotOrderLine: orderLines[r.VehicleID],
+				VehicleID:       r.VehicleID,
+				State:           r.State(),
+				IP:              r.IP,
+				Model:           r.Model,
+				CurrentMap:      r.CurrentMap,
+				Battery:         fmt.Sprintf("%.0f", r.BatteryLevel),
+				Charging:        r.Charging,
+				CurrentStation:  r.CurrentStation,
+				LastStation:     r.LastStation,
+				Available:       r.Available,
+				NotDispatchable: r.NotDispatchableWhy(),
+				Connected:       r.Connected,
+				Blocked:         r.Blocked,
+				Emergency:       r.Emergency,
+				Busy:            r.Busy,
+				IsError:         r.IsError,
+				X:               r.X,
+				Y:               r.Y,
+				Angle:           r.Angle,
+				RobotOrderLine:  orderLines[r.VehicleID],
 			}
 		}
 		h.Broadcast("robot-update", sseJSON(out))

@@ -59,6 +59,20 @@ type RobotStatus struct {
 	// field: a drop looks like never-having-had-it, a constant looks like an
 	// answer.
 	UndispatchableReason UndispatchableReason `json:"undispatchable_reason"`
+	// LockInfo is who holds control of the robot. It was dropped as
+	// bookkeeping, and it is the reason a robot stays undispatchable after
+	// being set dispatchable: Hopkinsville 2026-10-15, AMR-13 sat with
+	// undispatchable_reason.unlock = 1 while "this"@127.0.0.1 held the lock,
+	// and went dispatchable the moment control was released and RDS took it
+	// back.
+	LockInfo LockInfo `json:"lock_info"`
+}
+
+// LockInfo is RDS's per-robot control lock: whether one is held, and by whom.
+type LockInfo struct {
+	Locked   bool   `json:"locked"`
+	NickName string `json:"nick_name"`
+	IP       string `json:"ip"`
 }
 
 // UndispatchableReason is the seven-field struct RDS publishes per robot.

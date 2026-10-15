@@ -42,6 +42,7 @@
          data-station="{{.CurrentStation}}"
          data-last-station="{{.LastStation}}"
          data-available="{{.Available}}"
+         data-not-dispatchable="{{.NotDispatchableWhy}}"
          data-connected="{{.Connected}}"
          data-blocked="{{.Blocked}}"
          data-emergency="{{.Emergency}}"
@@ -113,7 +114,7 @@
       <div><strong>Charging:</strong> <span id="rm-charging"></span></div>
       <div><strong>Station:</strong> <span id="rm-station"></span></div>
       <div><strong>Last Station:</strong> <span id="rm-last-station"></span></div>
-      <div><strong>Available:</strong> <span id="rm-available"></span></div>
+      <div><strong>Dispatchable:</strong> <span id="rm-available"></span></div>
       <div><strong>Connected:</strong> <span id="rm-connected"></span></div>
       <div><strong>Blocked:</strong> <span id="rm-blocked"></span></div>
       <div><strong>Emergency:</strong> <span id="rm-emergency"></span></div>
@@ -127,10 +128,12 @@
       <strong>Controls</strong>
       <div id="rm-status-msg" style="font-size:0.8rem;margin:0.25rem 0;min-height:1.2em" class="text-muted"></div>
       <div class="flex gap-1 flex-wrap" style="margin-top:0.5rem">
-        <button class="btn btn-sm" id="rm-btn-pause" data-action="robotSetAvailability:false">Pause</button>
-        <button class="btn btn-sm btn-primary" id="rm-btn-resume" data-action="robotSetAvailability:true">Resume</button>
-        <button class="btn btn-sm" data-action="robotRetryFailed">Retry Failed</button>
-        <button class="btn btn-sm btn-danger" data-action="robotForceComplete">Force Complete</button>
+        <button class="btn btn-sm" id="rm-btn-pause" data-action="robotSetAvailability:false">Take out of dispatch</button>
+        <button class="btn btn-sm btn-primary" id="rm-btn-resume" data-action="robotSetAvailability:true">Make dispatchable</button>
+        <button class="btn btn-sm" data-action="robotControl:true">Take control</button>
+        <button class="btn btn-sm" data-action="robotControl:false">Release control</button>
+        <button class="btn btn-sm" data-action="robotRetryFailed">Retry failed step</button>
+        <button class="btn btn-sm btn-danger" data-action="robotForceComplete">Force complete</button>
       </div>
     </div>
     {{end}}

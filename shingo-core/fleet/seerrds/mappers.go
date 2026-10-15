@@ -129,9 +129,26 @@ func mapRobotStatus(r rds.RobotStatus) fleet.RobotStatus {
 			Suspended:        r.UndispatchableReason.Suspended,
 			Status:           r.UndispatchableReason.DispatchableStatus,
 			Unlock:           r.UndispatchableReason.Unlock,
+			LockHolder:       lockHolder(r.LockInfo),
 		},
 		Alarms: mapRobotAlarms(r.RbkReport.Alarms),
 	}
+}
+
+// lockHolder names who holds a robot's control lock, as RDS reports it:
+// "nick@ip", or "" when no lock is held.
+func lockHolder(l rds.LockInfo) string {
+	if !l.Locked {
+		return ""
+	}
+	who := l.NickName
+	if who == "" {
+		who = "unnamed"
+	}
+	if l.IP != "" {
+		who += "@" + l.IP
+	}
+	return who
 }
 
 // mapSceneState lifts the fleet-wide fields off the /robotsStatus envelope.

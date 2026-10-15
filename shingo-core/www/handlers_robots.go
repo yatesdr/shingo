@@ -87,6 +87,38 @@ func (h *Handlers) apiRobotForceComplete(w http.ResponseWriter, r *http.Request)
 	h.jsonSuccess(w)
 }
 
+// apiRobotControl takes or releases the fleet manager's control lock on a
+// robot. A robot whose lock someone else holds (a handheld, RoboShop) stays
+// undispatchable however often it is set dispatchable; releasing control is
+// what put Hopkinsville's AMR-13 back to work (2026-10-15).
+func (h *Handlers) apiRobotControl(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		VehicleID string `json:"vehicle_id"`
+		Take      bool   `json:"take"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	if req.VehicleID == "" {
+		h.jsonError(w, "vehicle_id is required", http.StatusBadRequest)
+		return
+	}
+	vc, ok := h.engine.Fleet().(fleet.VendorCommander)
+	if !ok {
+		h.jsonError(w, "fleet backend does not support robot control", http.StatusNotImplemented)
+		return
+	}
+	cmd := "release"
+	if req.Take {
+		cmd = "preempt"
+	}
+	if _, err := vc.ExecuteVendorCommand(fleet.VendorCommand{Type: cmd, RobotID: req.VehicleID}); err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonSuccess(w)
+}
+
 // apiRobotMoveTo sends a robot to a location. That is the whole feature: no bin
 // is picked up, nothing is delivered, and no order is created.
 //

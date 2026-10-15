@@ -50,7 +50,10 @@ function openRobotModal(el) {
   document.getElementById('rm-charging').textContent = d.charging === 'true' ? 'Yes' : 'No';
   document.getElementById('rm-station').textContent = d.station || '-';
   document.getElementById('rm-last-station').textContent = d.lastStation || '-';
-  document.getElementById('rm-available').textContent = d.available === 'true' ? 'Yes' : 'No';
+  // Dispatchable, and when it is not, the fleet's own reasons. "No" alone left
+  // the floor guessing which of seven things was wrong.
+  document.getElementById('rm-available').textContent = d.available === 'true'
+    ? 'Yes' : 'No' + (d.notDispatchable ? ' — ' + d.notDispatchable : '');
   document.getElementById('rm-connected').textContent = d.connected === 'true' ? 'Yes' : 'No';
   document.getElementById('rm-blocked').textContent = d.blocked === 'true' ? 'Yes' : 'No';
   document.getElementById('rm-emergency').textContent = d.emergency === 'true' ? 'Yes' : 'No';
@@ -89,12 +92,38 @@ function robotSetAvailability(available) {
   robotControlPost('/api/robots/availability', {vehicle_id: currentRobotVehicle, available: avail});
 }
 
-function robotRetryFailed() {
+// robotControl takes (true) or releases (false) the fleet manager's control
+// lock. A robot someone else holds control of stays undispatchable however
+// often it is made dispatchable.
+function robotControl(take) {
+  var t = take === true || take === 'true';
+  robotControlPost('/api/robots/control', {vehicle_id: currentRobotVehicle, take: t});
+}
+
+// currentOrderID is the Shingo order the open robot is on, '' when none.
+function currentOrderID() {
+  var tile = document.querySelector('.robot-tile[data-name="' + CSS.escape(currentRobotVehicle) + '"]');
+  return (tile && tile.dataset.orderId) || '';
+}
+
+// Retry re-runs only the failed step. If the robot dropped its load before it,
+// the retry finishes on an empty deck and Shingo records a delivery that did
+// not happen, so on a Shingo order it asks first.
+async function robotRetryFailed() {
+  var order = currentOrderID();
+  if (order && !await uiConfirm(currentRobotVehicle + ' is on order #' + order +
+      '. Retry re-runs only the failed step. If the robot dropped its load, Shingo will record a delivery that did not happen. Retry?')) return;
   robotControlPost('/api/robots/retry', {vehicle_id: currentRobotVehicle});
 }
 
+// Force complete ends the robot's task at the fleet. Core reads that the same
+// as a real finish, so on a Shingo order the order is recorded as done.
 async function robotForceComplete() {
-  if (!await uiConfirm('Force complete current task for ' + currentRobotVehicle + '?')) return;
+  var order = currentOrderID();
+  var msg = order
+    ? currentRobotVehicle + ' is on order #' + order + '. Force complete ends its task, and Shingo will record the order as done whether or not the bin moved. Force complete?'
+    : 'Force complete current task for ' + currentRobotVehicle + '?';
+  if (!await uiConfirm(msg)) return;
   robotControlPost('/api/robots/force-complete', {vehicle_id: currentRobotVehicle});
 }
 
@@ -113,6 +142,7 @@ delegateActions(document.body, {
     closeRobotModal,
     filterRobots,
     openRobotModal,
+    robotControl,
     robotForceComplete,
     robotRetryFailed,
     robotSetAvailability

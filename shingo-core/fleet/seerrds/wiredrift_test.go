@@ -74,7 +74,6 @@ var notCarried = map[string]map[string]string{
 	},
 	"report[]": {
 		"chassis":                 "static polygon per robot model",
-		"lock_info":               "RDS resource bookkeeping, not robot state",
 		"labels":                  "RDS grouping metadata",
 		"changes":                 "RDS internal diff bookkeeping",
 		"src_release":             "RDS build string",

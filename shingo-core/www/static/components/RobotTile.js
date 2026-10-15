@@ -84,6 +84,7 @@ function setRobotDataset(tile, r) {
     d.station = r.station || '';
     d.lastStation = r.last_station || '';
     d.available = r.available;
+    d.notDispatchable = r.not_dispatchable || '';
     d.connected = r.connected;
     d.blocked = r.blocked;
     d.emergency = r.emergency;

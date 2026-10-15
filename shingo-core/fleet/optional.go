@@ -1,6 +1,9 @@
 package fleet
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // RobotLister provides robot status and control capabilities.
 // Web handlers type-assert Backend to this interface.
@@ -236,6 +239,11 @@ type Undispatchable struct {
 	Suspended        bool
 	Status           int
 	Unlock           int
+	// LockHolder is who holds control of the robot ("nick@ip"), "" when no
+	// one does. Unlock != 0 with a holder that is not the fleet manager is a
+	// robot someone else is driving: setting it dispatchable changes nothing
+	// until control is released.
+	LockHolder string
 }
 
 // SceneState carries the fleet-wide facts that arrive on the /robotsStatus
@@ -325,6 +333,46 @@ func (r RobotStatus) State() string {
 		return "paused"
 	}
 	return "ready"
+}
+
+// NotDispatchableWhy is the fleet's own reasons a robot is not taking work, in
+// words for the robot pop-up; "" when it is dispatchable. When the fleet gives
+// no reason the sentence says so rather than guessing.
+func (r RobotStatus) NotDispatchableWhy() string {
+	if r.Available {
+		return ""
+	}
+	u := r.Undispatchable
+	var why []string
+	if u.Disconnect || !r.Connected {
+		why = append(why, "disconnected")
+	}
+	if u.Unlock != 0 {
+		s := "the fleet manager does not hold control"
+		if u.LockHolder != "" {
+			s += " (held by " + u.LockHolder + ")"
+		}
+		why = append(why, s)
+	}
+	if u.MapInvalid {
+		why = append(why, "on a map the fleet manager is not using")
+	}
+	if u.UnconfirmedReloc {
+		why = append(why, "relocalization not confirmed")
+	}
+	if u.LowBattery {
+		why = append(why, "low battery")
+	}
+	if u.Suspended {
+		why = append(why, "suspended")
+	}
+	if u.Status != 0 {
+		why = append(why, "taken out of dispatch")
+	}
+	if len(why) == 0 {
+		return "the fleet manager gives no reason"
+	}
+	return strings.Join(why, "; ")
 }
 
 // OccupancyDetail is a vendor-neutral representation of a location's occupancy status.
