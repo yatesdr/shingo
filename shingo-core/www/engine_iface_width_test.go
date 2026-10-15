@@ -112,8 +112,12 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Core's wide surface at 63 methods —
-// ServiceAccess's 50 embedded, plus 13 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Core's wide surface at 65 methods —
+// ServiceAccess's 50 embedded, plus 15 orchestration verbs of its own.
+// (CleanNow and SaveCleaningSetup joined at v158: one sends a pinned vendor
+// order, the other checks the cleaning points against the scene and the lanes
+// before saving. The cleaning opt-out did not: it is a one-row write and went
+// on NodeService, so ServiceAccess stayed at 50.)
 // (PrepareDatabase left it in R27: Core's database settings apply after a
 // restart, so the save door only pings the draft, through HealthService.)
 //
@@ -142,6 +146,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"CMSTransactionService",
 		"CalculatorService",
 		"CarrierBindings",
+		"CleanNow",
 		"ClearForReuseStampAndBookDeparture",
 		"ConfigPath",
 		"CreateBinMove",
@@ -183,6 +188,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"ReplenishmentHealth",
 		"RequestEdgeReregister",
 		"RobotGroups",
+		"SaveCleaningSetup",
 		"SceneSync",
 		"SendDataToEdge",
 		"SourceabilityEvents",

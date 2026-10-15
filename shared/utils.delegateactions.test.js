@@ -67,7 +67,7 @@ function loadUtils() {
         EventSource: function () {},
         location: { reload: () => {} },
     });
-    vm.runInContext(transformed + '; this.delegateActions = delegateActions;', ctx);
+    vm.runInContext(transformed + '; this.delegateActions = delegateActions; this.switchTab = switchTab;', ctx);
     return ctx;
 }
 
@@ -241,6 +241,60 @@ function makeTimeNode(utc, text) {
     const swapListeners = bodyListeners['htmx:afterSwap'] || [];
     assert(swapListeners.length === 1,
         'repeated install calls register only one listener');
+})();
+
+// A tab bar for the shared switchTab (§22): nodes with a class list, so
+// closest('.tabs') and querySelectorAll('.tab') resolve the way the page's do.
+function makeTabNode(cls, opts) {
+    const n = makeNode(opts);
+    const set = new Set((cls || '').split(' ').filter(Boolean));
+    n.id = (opts && opts.id) || '';
+    n.classList = {
+        contains: (c) => set.has(c),
+        toggle: (c, on) => { if (on === undefined ? !set.has(c) : on) set.add(c); else set.delete(c); },
+    };
+    Object.defineProperty(n, 'children', { get: () => n._children });
+    Object.defineProperty(n, 'parentNode', { get: () => n._parent });
+    const plain = n.closest;
+    n.closest = (sel) => {
+        if (!sel.startsWith('.')) return plain(sel);
+        let cur = n;
+        while (cur) { if (cur.classList && cur.classList.contains(sel.slice(1))) return cur; cur = cur._parent; }
+        return null;
+    };
+    n.querySelectorAll = (sel) => {
+        const out = [];
+        const walk = (x) => x._children.forEach((c) => { if (c.classList && c.classList.contains(sel.slice(1))) out.push(c); walk(c); });
+        walk(n);
+        return out;
+    };
+    return n;
+}
+
+(function testSwitchTabIsTheClickThroughDelegateActions() {
+    const ctx = loadUtils();
+    const page = makeTabNode('');
+    const bar = makeTabNode('tabs');
+    const tabs = ['robots', 'fleet', 'cleaning'].map((k, i) =>
+        makeTabNode(i === 0 ? 'tab active' : 'tab', { tag: 'button', dataset: { tab: k, action: 'switchTab:' + k } }));
+    tabs.forEach((t) => bar.appendChild(t));
+    page.appendChild(bar);
+    const panels = ['robots', 'fleet', 'cleaning'].map((k, i) =>
+        makeTabNode(i === 0 ? 'tab-panel active' : 'tab-panel', { id: 'tab-' + k }));
+    panels.forEach((p) => page.appendChild(p));
+    const other = makeTabNode('card', { id: 'tab-fleet-lookalike' });
+    page.appendChild(other);
+
+    let loaded = '';
+    ctx.delegateActions(page, {
+        switchTab: (key, el) => { ctx.switchTab(key, el); loaded = key; },
+    });
+    fireClick(page, tabs[1]);
+    assert(tabs[1].classList.contains('active') && !tabs[0].classList.contains('active'), 'clicked tab is the active one');
+    assert(panels[1].classList.contains('active') && !panels[0].classList.contains('active') &&
+        !panels[2].classList.contains('active'), 'only the clicked tab\'s panel shows');
+    assert(!other.classList.contains('active'), 'a sibling that is not a .tab-panel is left alone');
+    assert(loaded === 'fleet', 'the page\'s wrapper saw the key');
 })();
 
 if (failed > 0) {

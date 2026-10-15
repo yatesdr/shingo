@@ -17,6 +17,7 @@ import (
 	"shingo/protocol"
 
 	"shingocore/domain"
+	"shingocore/fleet"
 	"shingocore/service"
 )
 
@@ -569,9 +570,14 @@ func (h *Handlers) apiEMaintRobotTelemetryDownload(w http.ResponseWriter, r *htt
 }
 
 func (h *Handlers) buildEMaintReport() map[string]any {
-	robots := h.engine.GetAllCachedRobots()
-	now := time.Now().UTC()
+	return eMaintReport(h.engine.GetAllCachedRobots(), time.Now().UTC(), uuid.New().String())
+}
 
+// eMaintReport is the E-Maint report's shape, apart from the clock and the id.
+// THE SHAPE IS A CONTRACT: the downloaded file is read outside Core, so every
+// key here is pinned by TestEMaintReport_ShapeIsPinned. The report moved from
+// Diagnostics to the Robots page's Fleet tab without changing a byte of it.
+func eMaintReport(robots []fleet.RobotStatus, now time.Time, reportID string) map[string]any {
 	entries := make([]map[string]any, 0, len(robots))
 	for _, r := range robots {
 		entry := map[string]any{
@@ -623,7 +629,7 @@ func (h *Handlers) buildEMaintReport() map[string]any {
 	}
 
 	return map[string]any{
-		"report_id":    uuid.New().String(),
+		"report_id":    reportID,
 		"generated_at": now.Format(time.RFC3339),
 		"source":       "shingo-core",
 		"robot_count":  len(robots),

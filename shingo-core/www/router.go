@@ -305,6 +305,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			// The change annotation for one lane, on demand -- most lanes have
 			// never been edited, so it is not folded into the board payload.
 			r.Get("/robots/lane-change", h.apiLaneChange)
+			// The Fleet tab's history and the Cleaning tab (setup, record,
+			// and each robot's Clean refusal for the pop-up).
+			r.Get("/robots/hours", h.apiRobotHours)
+			r.Get("/robots/cleaning", h.apiRobotCleaning)
 
 			// Operations Overview (plant footprint)
 			r.Get("/footprint", h.apiFootprint)
@@ -539,6 +543,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				r.Post("/robots/force-complete", h.apiRobotForceComplete)
 				r.Post("/robots/control", h.apiRobotControl)
 				r.Post("/robots/move", h.apiRobotMoveTo)
+				r.Post("/robots/cleaning/setup", h.apiRobotCleaningSetup)
+				r.Post("/robots/cleaning/clean-now", h.apiRobotCleanNow)
+				r.Post("/robots/cleaning/opt-out", h.apiRobotCleaningOptOut)
 
 				// Orders
 				r.Post("/orders/terminate", h.apiTerminateOrder)

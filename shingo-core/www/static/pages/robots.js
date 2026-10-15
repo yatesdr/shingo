@@ -1,7 +1,9 @@
-import { api, debounce, delegateActions, el, hideModal, openFromQuery, showModal, uiConfirm } from '/static/app.js';
-import { installLiveDurations, reconcileList, onSSE } from '/static/shared/utils.js';
+import { api, debounce, delegateActions, el, hideModal, openFromQuery, showModal, toast, uiConfirm } from '/static/app.js';
+import { installLiveDurations, reconcileList, onSSE, switchTab as showTab } from '/static/shared/utils.js';
 import { createRobotTile, updateRobotTile } from '/static/components/RobotTile.js';
 import { createBoard } from '/static/components/localization-board.js';
+import { loadEMaintReport, loadRobotHours } from '/static/components/robot-fleet-tab.js';
+import { addCleaningPoint, loadCleaning, removeCleaningPoint, suggestPoints } from '/static/components/robot-cleaning-tab.js';
 
 var currentRobotVehicle = '';
 
@@ -20,7 +22,15 @@ function filterRobots() {
   document.getElementById('robot-count').textContent = shown + ' robots';
 }
 
+// openRobotModal is the click: draw the pop-up from the tile and ask the
+// server whether the robot can be cleaned now. fillRobotModal alone is the
+// SSE refresh of an open pop-up, which must not re-ask every 2 seconds.
 function openRobotModal(el) {
+  fillRobotModal(el);
+  loadRobotCleanState(el.dataset.name);
+}
+
+function fillRobotModal(el) {
   var d = el.dataset;
   currentRobotVehicle = d.name;
   document.getElementById('rm-title').textContent = d.name;
@@ -88,16 +98,19 @@ function closeRobotModal() {
   hideModal('robot-modal');
 }
 
-function robotControlPost(url, body) {
-  var msg = document.getElementById('rm-status-msg');
-  if (msg) msg.textContent = 'Sending...';
-  fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+// robotControlPost sends one robot control and says how it went in a toast
+// (§11), for every control in the pop-up. Resolves to whether it went through.
+function robotControlPost(url, body, okText) {
+  return fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
     .then(function(r) { return r.json().then(function(d) { return {ok:r.ok, data:d}; }); })
     .then(function(r) {
-      if (msg) msg.textContent = r.ok ? 'OK' : (r.data.error || 'Error');
+      if (r.ok) toast(okText || 'Done', 'success');
+      else toast((r.data && r.data.error) || 'Refused', 'error');
+      return r.ok;
     })
-    .catch(function(e) {
-      if (msg) msg.textContent = 'Network error';
+    .catch(function() {
+      toast('Network error', 'error');
+      return false;
     });
 }
 
@@ -109,7 +122,8 @@ function robotSetAvailability(available) {
   // "cannot unmarshal string into ... .available of type bool".
   // Coerce to a real boolean before posting.
   var avail = available === true || available === 'true';
-  robotControlPost('/api/robots/availability', {vehicle_id: currentRobotVehicle, available: avail});
+  robotControlPost('/api/robots/availability', {vehicle_id: currentRobotVehicle, available: avail},
+    currentRobotVehicle + (avail ? ' is dispatchable' : ' is out of dispatch'));
 }
 
 // robotControl takes (true) or releases (false) the fleet manager's control
@@ -117,7 +131,8 @@ function robotSetAvailability(available) {
 // often it is made dispatchable.
 function robotControl(take) {
   var t = take === true || take === 'true';
-  robotControlPost('/api/robots/control', {vehicle_id: currentRobotVehicle, take: t});
+  robotControlPost('/api/robots/control', {vehicle_id: currentRobotVehicle, take: t},
+    t ? 'Took control of ' + currentRobotVehicle : 'Released control of ' + currentRobotVehicle);
 }
 
 // currentOrderID is the Shingo order the open robot is on, '' when none.
@@ -133,7 +148,7 @@ async function robotRetryFailed() {
   var order = currentOrderID();
   if (order && !await uiConfirm(currentRobotVehicle + ' is on order #' + order +
       '. Retry re-runs only the failed step. If the robot dropped its load, Shingo will record a delivery that did not happen. Retry?')) return;
-  robotControlPost('/api/robots/retry', {vehicle_id: currentRobotVehicle});
+  robotControlPost('/api/robots/retry', {vehicle_id: currentRobotVehicle}, 'Retry sent to ' + currentRobotVehicle);
 }
 
 // Force complete ends the robot's task at the fleet: for its own parking and
@@ -141,7 +156,74 @@ async function robotRetryFailed() {
 // and the server refuses.
 async function robotForceComplete() {
   if (!await uiConfirm('Force complete current task for ' + currentRobotVehicle + '?')) return;
-  robotControlPost('/api/robots/force-complete', {vehicle_id: currentRobotVehicle});
+  robotControlPost('/api/robots/force-complete', {vehicle_id: currentRobotVehicle}, 'Force complete sent to ' + currentRobotVehicle);
+}
+
+// ── Air-knife cleaning, per robot ─────────────────────────────────────────
+//
+// Clean sends the robot through the knife now. No confirmation (§11: nothing is
+// deleted or lost, and its peers in this block do not ask). It is disabled with
+// the server's reason as its title, the same sentence the POST refuses with
+// (engine.CleanNowRefusal), so the button never offers what the server refuses.
+// The switch is the robot's opt-out, saved the moment it is flipped.
+function setCleanState(line) {
+  var btn = document.getElementById('rm-btn-clean');
+  var sw = document.getElementById('rm-clean-optin');
+  if (btn) {
+    var why = line ? line.refusal : 'not known to the cleaning record';
+    btn.disabled = !!why;
+    btn.title = why || 'Send ' + currentRobotVehicle + ' through the air knife now';
+  }
+  if (sw) {
+    var on = !line || !line.opted_out;
+    sw.disabled = !line;
+    sw.classList.toggle('on', on);
+    sw.setAttribute('aria-checked', on ? 'true' : 'false');
+  }
+}
+
+function loadRobotCleanState(vehicle) {
+  setCleanState(null);
+  if (!document.getElementById('rm-btn-clean')) return; // not signed in
+  fetch('/api/robots/cleaning')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (vehicle !== currentRobotVehicle) return;
+      setCleanState((d.robots || []).find(function(l) { return l.vehicle_id === vehicle; }) || null);
+    })
+    .catch(function() {});
+}
+
+function robotClean() {
+  var vehicle = currentRobotVehicle;
+  robotControlPost('/api/robots/cleaning/clean-now', {vehicle_id: vehicle}, vehicle + ' sent to the air knife')
+    .then(function() { loadRobotCleanState(vehicle); refreshCleaningTab(); });
+}
+
+function robotCleanOptIn(sw) {
+  var vehicle = currentRobotVehicle;
+  var on = !sw.classList.contains('on');
+  sw.classList.toggle('on', on);
+  sw.setAttribute('aria-checked', on ? 'true' : 'false');
+  robotControlPost('/api/robots/cleaning/opt-out', {vehicle_id: vehicle, out: !on},
+    vehicle + (on ? ' will be cleaned on the interval' : ' will not be cleaned'))
+    .then(function() { loadRobotCleanState(vehicle); refreshCleaningTab(); });
+}
+
+// ── Tabs ──────────────────────────────────────────────────────────────────
+//
+// The shared switchTab (§22) shows the panel; this loads a panel the first
+// time it is shown, and again on every later visit since both are snapshots.
+var cleaningShown = false;
+
+function switchTab(key, el) {
+  showTab(key, el);
+  if (key === 'fleet') { loadEMaintReport(); loadRobotHours(); }
+  if (key === 'cleaning') { cleaningShown = true; loadCleaning(); }
+}
+
+function refreshCleaningTab() {
+  if (cleaningShown) loadCleaning();
 }
 
 document.addEventListener('keydown', function(e) {
@@ -156,13 +238,20 @@ document.addEventListener('keydown', function(e) {
 // so binding the map across every event type keeps the page wiring
 // single-source.
 delegateActions(document.body, {
+    addCleaningPoint,
     closeRobotModal,
     filterRobots,
+    loadEMaintReport,
     openRobotModal,
+    removeCleaningPoint,
+    robotClean,
+    robotCleanOptIn,
     robotControl,
     robotForceComplete,
     robotRetryFailed,
-    robotSetAvailability
+    robotSetAvailability,
+    suggestPoints,
+    switchTab
 }, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });
 
 // ─── live robot-grid rebuild ──────────────────────────
@@ -191,7 +280,7 @@ onSSE('robot-update', debounce(function(robots) {
       // Keep an open detail modal in sync with live updates.
       if (currentRobotVehicle === r.vehicle_id) {
         var modal = document.getElementById('robot-modal');
-        if (modal && modal.classList.contains('active')) openRobotModal(node);
+        if (modal && modal.classList.contains('active')) fillRobotModal(node);
       }
     },
     nodeKey: function(node) { return node.dataset.name; },

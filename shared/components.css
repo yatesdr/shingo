@@ -1250,3 +1250,19 @@ nav {
     .set-ui .set-note, .set-ui .set-err { margin-left: 0; }
     .set-ui .set-inp.wide { min-width: 0; width: 100%; }
 }
+
+/* TABS (style guide §22) — the first implementation of the one tab pattern.
+ * A row of .tab buttons in a .tabs bar switches .tab-panel siblings by
+ * data-tab, through the shared switchTab handler in utils.js. A panel shows
+ * only with .active, so a page that used bare .tab-panel with .hide (Core's
+ * bin detail) was moved to .active in the same change. The older .tab-bar,
+ * .diag-tab and .to-tab families are not migrated here. */
+.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; }
+.tab {
+    padding: 0.5rem 1rem; cursor: pointer; border: none; background: none;
+    color: var(--text-muted); font: inherit; border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }

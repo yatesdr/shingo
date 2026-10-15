@@ -5,6 +5,17 @@
     <span class="text-muted text-sm" id="robot-count">{{len .Robots}} robots</span>
   </div>
 
+  {{/* §22 tabs, the first Core implementation (shared/components.css, the
+       shared switchTab). Both added tabs always show: the Cleaning tab is
+       where the knife is set up, and with no points it reads off. */}}
+  <div class="tabs" role="tablist">
+    <button type="button" class="tab active" data-tab="robots" data-action="switchTab:robots">Robots</button>
+    <button type="button" class="tab" data-tab="fleet" data-action="switchTab:fleet">Fleet</button>
+    <button type="button" class="tab" data-tab="cleaning" data-action="switchTab:cleaning">Cleaning</button>
+  </div>
+
+  <div class="tab-panel active" id="tab-robots">
+
   <!-- The localization board. This page was a stub: a tile grid answering
        "which robots are there". The map answers the question the same reader
        actually arrives with — WHERE does localization fail, and what changed on
@@ -95,6 +106,123 @@
     <p class="text-muted">No robots found. Check that fleet backend is reachable.</p>
   </div>
   {{end}}
+  </div>
+
+  <div class="tab-panel" id="tab-fleet">
+    {{/* The live half: the E-Maint snapshot of the robot status cache, moved
+         here from Diagnostics. /api/telemetry/e-maint and its download are
+         unchanged. */}}
+    <div class="flex flex-between mb-1">
+      <h2>Now</h2>
+      <div class="flex gap-1">
+        <button type="button" class="btn btn-sm" data-action="loadEMaintReport">Refresh</button>
+        <a id="emaint-download" href="/api/telemetry/e-maint/download" class="btn btn-sm" hidden>Download JSON</a>
+      </div>
+    </div>
+    <p class="text-muted text-sm mb-1">The robot status cache as of the last poll, not a history. <span id="emaint-summary"></span></p>
+    <div class="card p-0 mb-2">
+      <div class="table-scroll-y">
+        <table class="table-compact">
+          <thead>
+            <tr>
+              <th>Robot</th><th>Status</th>
+              <th class="col-num">Battery</th><th class="col-num">Voltage</th>
+              <th class="col-num">Odo total (m)</th><th class="col-num">Odo today (m)</th>
+              <th class="col-num">Runtime (h)</th><th class="col-num">Lifts</th>
+              <th class="col-num">Ctrl temp (°C)</th><th>Station</th>
+            </tr>
+          </thead>
+          <tbody id="emaint-body">
+            <tr><td colspan="10" class="text-muted">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {{/* The history half: robot_hours and robot_alarm_onsets, per robot, today
+         and the 7 plant days before it, summed on the server in the plant's
+         zone. Numbers only; a span with no record is a dash, never 0. */}}
+    <div class="flex flex-between mb-1">
+      <h2>History</h2>
+      <span class="text-muted text-sm" id="hours-window"></span>
+    </div>
+    <div class="card p-0">
+      <div class="table-scroll-y">
+        <table class="table-compact">
+          <thead>
+            <tr>
+              <th>Robot</th><th>Span</th>
+              <th class="col-num" title="Recognition camera found no target (54901): onsets">54901</th>
+              <th class="col-num" title="Every laser point in a frame invalid (52101): onsets">52101</th>
+              <th class="col-num" title="Battery too low, robot will shut down (50401): onsets">Battery fatal</th>
+              <th class="col-num">km</th>
+              <th class="col-num">Charging (min)</th><th class="col-num">Charge starts</th>
+              <th class="col-num">Battery min (%)</th><th class="col-num">Lifts</th>
+              <th class="col-num">Blocked (min)</th><th class="col-num">Connected (min)</th>
+            </tr>
+          </thead>
+          <tbody id="hours-body">
+            <tr><td colspan="12" class="text-muted">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-cleaning">
+    {{/* The knife is floor data: set up here and stored in Postgres, never in
+         yaml. One block, drafted and saved together (§33.10's exception to
+         save-on-change), because a half-typed point must never be applied. */}}
+    <div class="set-page set-ui" id="cleaning-setup">
+      <div class="set-sect"><h2>Clean mission</h2><span class="set-cnt" id="cleaning-words"><i></i><span></span></span></div>
+      <div class="set-fld">
+        <label>Move points<small>in order · the robot drives through each and the fleet returns it to park</small></label>
+        <div class="v col" id="cleaning-points">
+          <div class="v"><button type="button" class="set-btn" data-action="addCleaningPoint">Add point</button></div>
+        </div>
+      </div>
+      <datalist id="scene-points"></datalist>
+      <div class="set-fld" data-needs-points>
+        <label id="cleaning-freq-l">Frequency<small>each robot at most once per this, counted from when it was last sent</small></label>
+        <div class="v"><div class="set-seg" role="group" aria-labelledby="cleaning-freq-l" data-seg="frequency" data-field="frequency">
+          <button type="button" data-val="1h">1 h</button><button type="button" data-val="2h">2 h</button><button type="button" data-val="4h">4 h</button><button type="button" data-val="8h">8 h</button>
+        </div></div>
+      </div>
+      <div class="set-fld" data-needs-points>
+        <label for="cleaning-from">Active hours<small>plant-local · from equal to to is all day · from after to runs across midnight</small></label>
+        <div class="v"><input class="set-inp" id="cleaning-from" type="text" size="5" data-field="active_from" placeholder="05:00" aria-label="From">
+          <span class="set-dim">to</span>
+          <input class="set-inp" id="cleaning-to" type="text" size="5" data-field="active_to" placeholder="23:00" aria-label="To"></div>
+      </div>
+      <div class="set-fld" data-needs-points>
+        <label for="cleaning-battery">Minimum battery<small>percent · a robot below it is not sent</small></label>
+        <div class="v"><input class="set-inp" id="cleaning-battery" type="text" size="4" data-field="min_battery" placeholder="25"></div>
+      </div>
+    </div>
+
+    <div class="flex flex-between mb-1 mt-2">
+      <h2>Robots</h2>
+    </div>
+    <div class="card p-0 mb-2">
+      <table class="table-compact">
+        <thead><tr><th>Robot</th><th>Last cleaned</th><th class="col-num">Missions today</th><th>Last reason</th><th>Cleaning</th></tr></thead>
+        <tbody id="cleaning-robots"><tr><td colspan="5" class="text-muted">Loading…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="flex flex-between mb-1">
+      <h2>Missions</h2>
+      <span class="text-muted text-sm" id="cleaning-since"></span>
+    </div>
+    <div class="card p-0">
+      <div class="table-scroll-y">
+        <table class="table-compact">
+          <thead><tr><th>Sent</th><th>Robot</th><th>Reason</th><th>State</th><th>Ended</th><th>Fleet order</th></tr></thead>
+          <tbody id="cleaning-missions"><tr><td colspan="6" class="text-muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Robot Detail Modal -->
@@ -127,14 +255,18 @@
     <div class="text-sm">
       <strong>Controls</strong>
       <div id="rm-force-note" class="text-muted" style="font-size:0.8rem;margin:0.25rem 0" hidden></div>
-      <div id="rm-status-msg" style="font-size:0.8rem;margin:0.25rem 0;min-height:1.2em" class="text-muted"></div>
       <div class="flex gap-1 flex-wrap" style="margin-top:0.5rem">
         <button class="btn btn-sm" id="rm-btn-pause" data-action="robotSetAvailability:false">Take out of dispatch</button>
         <button class="btn btn-sm btn-primary" id="rm-btn-resume" data-action="robotSetAvailability:true">Make dispatchable</button>
         <button class="btn btn-sm" data-action="robotControl:true">Take control</button>
         <button class="btn btn-sm" data-action="robotControl:false">Release control</button>
+        <button class="btn btn-sm" id="rm-btn-clean" data-action="robotClean" disabled>Clean</button>
         <button class="btn btn-sm" data-action="robotRetryFailed">Retry failed step</button>
         <button class="btn btn-sm btn-danger" id="rm-btn-force" data-action="robotForceComplete">Force complete</button>
+      </div>
+      <div class="set-ui flex gap-1 mt-1">
+        <button type="button" class="set-chk" id="rm-clean-optin" role="switch" aria-checked="false" aria-labelledby="rm-clean-optin-l" data-action="robotCleanOptIn" disabled></button>
+        <span id="rm-clean-optin-l">Air-knife cleaning</span>
       </div>
     </div>
     {{end}}

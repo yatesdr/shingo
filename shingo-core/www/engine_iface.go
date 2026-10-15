@@ -195,6 +195,16 @@ type EngineOrchestration interface {
 	// ── Messaging ──────────────────────────────────────────────────
 	SendDataToEdge(subject string, stationID string, payload any) error
 
+	// ── Air-knife cleaning ─────────────────────────────────────────
+	// CleanNow sends one robot through the saved cleaning points now: a pinned
+	// vendor order, refused with engine.CleanNowRefusal's words (the same the
+	// robot pop-up shows). SaveCleaningSetup validates the points against the
+	// scene and the lanes and saves the one mission; a refusal is an
+	// *engine.CleaningSetupRefusal keyed by field. Both write an audit row. The
+	// opt-out is a one-row write with no fleet call and is NodeService's.
+	CleanNow(vehicleID, actor string) error
+	SaveCleaningSetup(in engine.CleaningSetupInput, actor string) error
+
 	// ── Live reconfiguration ───────────────────────────────────────
 	// The config page's save door applies the live config after the swap,
 	// and an error lands in the answer's `failed` list. The database has no

@@ -894,6 +894,24 @@ export function delegateActions(root, handlerMap, opts) {
     });
 }
 
+// switchTab is the one tab handler (style guide §22). Bound as a delegated
+// action, data-action="switchTab:<key>" on a .tab inside a .tabs bar: it marks
+// the bar's tab whose data-tab is key active, and shows the .tab-panel sibling
+// of the bar whose id is "tab-<key>", hiding the others. A page that loads a
+// panel on first view wraps it rather than copying it:
+//     switchTab: (key, el) => { switchTab(key, el); if (key === 'fleet') loadFleet(); }
+// Returns key.
+export function switchTab(key, el) {
+    const bar = el && el.closest ? el.closest('.tabs') : null;
+    if (!bar) return key;
+    bar.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === key));
+    const kids = bar.parentNode ? bar.parentNode.children : [];
+    for (let i = 0; i < kids.length; i++) {
+        if (kids[i].classList.contains('tab-panel')) kids[i].classList.toggle('active', kids[i].id === 'tab-' + key);
+    }
+    return key;
+}
+
 // installBackdropClose registers a single document-level click
 // listener that closes any .modal-overlay element marked
 // `data-backdrop-close` when the click target IS the overlay (not

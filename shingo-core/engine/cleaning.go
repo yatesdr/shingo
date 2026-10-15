@@ -75,9 +75,18 @@ func (e *Engine) cleaningSeam() vendorOrderReader {
 	return nil
 }
 
+// CanReportCleaningMissions reports whether a fleet backend can say what
+// became of a cleaning order, which is the condition for ever sending one. The
+// Cleaning tab asks it of the same backend the loop does, so the page never
+// carries a second copy of the seam.
+func CanReportCleaningMissions(b fleet.Backend) bool {
+	_, ok := b.(vendorOrderReader)
+	return ok
+}
+
 // cleaningLoop runs the cleaning tick every minute until the engine stops.
 func (e *Engine) cleaningLoop() {
-	c := &cleaningRunner{e: e, seam: e.cleaningSeam()}
+	c := &cleaningRunner{e: e, seam: e.cleaningSeam(), zone: e.plantZone()}
 	ticker := clock.Default().NewTicker(cleaningTickInterval)
 	defer ticker.Stop()
 	for {
@@ -97,6 +106,11 @@ func (e *Engine) cleaningLoop() {
 type cleaningRunner struct {
 	e    *Engine
 	seam vendorOrderReader
+	// zone is the plant's, resolved once when the loop starts: www resolves
+	// its own once at router construction, and a timezone saved on the config
+	// page applies after a restart, so the window and every screen move
+	// together. A runner built without one (a test) resolves per tick.
+	zone planttime.Zone
 
 	memoAt   time.Time
 	memo     map[string]string
@@ -155,7 +169,7 @@ func (c *cleaningRunner) tick(now time.Time, robots []fleet.RobotStatus) {
 	// 4. Stop conditions. One robot at the knife at a time: an open row is
 	// that fact, so nothing is sent while one is.
 	if stillOpen || !e.fleetConnected.Load() || len(c.pointProblems(setup)) > 0 ||
-		!inCleaningWindow(now, setup.ActiveFrom, setup.ActiveTo, e.plantZone()) {
+		!inCleaningWindow(now, setup.ActiveFrom, setup.ActiveTo, c.plantZone()) {
 		return
 	}
 
@@ -176,9 +190,16 @@ func (c *cleaningRunner) tick(now time.Time, robots []fleet.RobotStatus) {
 	}
 }
 
-// plantZone is the plant's zone by the one resolver every screen uses.
-// Timezone applies after a restart, but it is read under the config lock
-// because the config page writes the struct.
+// plantZone is the runner's zone, or the config's now when it has none.
+func (c *cleaningRunner) plantZone() planttime.Zone {
+	if c.zone.Loc != nil {
+		return c.zone
+	}
+	return c.e.plantZone()
+}
+
+// plantZone is the plant's zone by the one resolver every screen uses. Read
+// under the config lock because the config page writes the struct.
 func (e *Engine) plantZone() planttime.Zone {
 	e.cfg.Lock()
 	tz := e.cfg.Timezone
@@ -671,7 +692,6 @@ type CleaningWordsFacts struct {
 	Points        []string
 	PointProblems map[string]string
 	CanReport     bool
-	FleetUp       bool
 	Zone          planttime.Zone
 	ActiveFrom    string
 	ActiveTo      string
@@ -681,7 +701,9 @@ type CleaningWordsFacts struct {
 // CleaningWords is the §33.2 live words for the clean mission's title:
 // "off" with no points, "stopped: <reason>" when the loop cannot send, else
 // "running" (with the active hours' state). The reasons are the tick's own
-// stop conditions in the tick's order.
+// stop conditions in the tick's order, except the fleet's connection: the page
+// cannot see it without asking the fleet on every read, and the header's
+// connection status already says it.
 func CleaningWords(f CleaningWordsFacts) string {
 	switch {
 	case len(f.Points) == 0:
@@ -690,8 +712,6 @@ func CleaningWords(f CleaningWordsFacts) string {
 		return "stopped: " + firstPointProblem(f.PointProblems)
 	case !f.CanReport:
 		return "stopped: the fleet cannot report a mission's state"
-	case !f.FleetUp:
-		return "stopped: the fleet is not connected"
 	case !f.Zone.Set():
 		return "running · active hours ignored: no plant timezone is set"
 	case !inCleaningWindow(f.Now, f.ActiveFrom, f.ActiveTo, f.Zone):

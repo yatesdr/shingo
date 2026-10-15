@@ -303,13 +303,9 @@ function switchTab(name) {
   tabs.forEach(function(t) {
     var panel = document.getElementById('bd-' + t);
     var btn = document.querySelector('.tab-btn[data-action="switchTab:' + t + '"]');
-    if (t === name) {
-      if (panel) { panel.classList.remove('hide'); panel.style.display = ''; }
-      if (btn) btn.classList.add('active');
-    } else {
-      if (panel) { panel.classList.add('hide'); panel.style.display = 'none'; }
-      if (btn) btn.classList.remove('active');
-    }
+    // A .tab-panel shows only with .active (shared/components.css, §22).
+    if (panel) panel.classList.toggle('active', t === name);
+    if (btn) btn.classList.toggle('active', t === name);
   });
 }
 

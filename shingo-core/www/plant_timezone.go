@@ -49,6 +49,11 @@ import (
 // day truncation, and the formatTime template helper all read this var.
 var plantLocation = loadPlantLocation()
 
+// plantZone is plantLocation with where it came from, so a screen can say
+// whether the plant's zone was ever set (the Cleaning tab's active hours mean
+// nothing on a default UTC). Written beside plantLocation, never apart.
+var plantZone = planttime.ResolveZone("")
+
 func loadPlantLocation() *time.Location {
 	z := planttime.ResolveZone("")
 	if z.Invalid != "" {
@@ -75,7 +80,7 @@ func applyPlantTimezoneConfig(cfgTimezone string) {
 	default:
 		log.Printf("www: plant timezone %s (from config)", z.Loc)
 	}
-	plantLocation = z.Loc
+	plantLocation, plantZone = z.Loc, z
 }
 
 // OfferedPlantTimezone is the plant zone Core offers its Edges on every

@@ -228,7 +228,7 @@ func TestCleanNowRefusal(t *testing.T) {
 func TestCleaningWords(t *testing.T) {
 	t.Parallel()
 	set := planttime.Zone{Loc: time.UTC, Source: planttime.SourceConfig}
-	base := CleaningWordsFacts{Points: []string{"LM513"}, CanReport: true, FleetUp: true, Zone: set,
+	base := CleaningWordsFacts{Points: []string{"LM513"}, CanReport: true, Zone: set,
 		ActiveFrom: "00:00", ActiveTo: "00:00", Now: time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)}
 	cases := []struct {
 		name string
@@ -241,7 +241,6 @@ func TestCleaningWords(t *testing.T) {
 			f.PointProblems = map[string]string{"points.0": "LM513 is not in the scene"}
 		}, "stopped: LM513 is not in the scene"},
 		{"no seam", func(f *CleaningWordsFacts) { f.CanReport = false }, "stopped: the fleet cannot report a mission's state"},
-		{"fleet down", func(f *CleaningWordsFacts) { f.FleetUp = false }, "stopped: the fleet is not connected"},
 		{"zone unset", func(f *CleaningWordsFacts) { f.Zone = planttime.Zone{Loc: time.UTC, Source: planttime.SourceDefault} }, "running · active hours ignored: no plant timezone is set"},
 		{"outside hours", func(f *CleaningWordsFacts) { f.ActiveFrom, f.ActiveTo = "13:00", "14:00" }, "running · outside active hours"},
 	}
