@@ -387,9 +387,19 @@ type NodeClaim struct {
 	// no containment route = the divert is inert for this claim. Resolved
 	// Core-side at dispatch against Core's containment state; the Edge
 	// configures it and never enforces it.
-	ContainmentDestination string   `json:"containment_destination"`
-	AllowedPayloadCodes    []string `json:"allowed_payload_codes"`
-	AutoRequestPayload     string   `json:"auto_request_payload"`
+	ContainmentDestination string `json:"containment_destination"`
+	// CurtainRequired is the light-curtain interlock's style tie: whether THIS
+	// style's full-bin releases at THIS node wait for the node's curtain tag.
+	// The claim is the (style, node) pair, and the plant's rule is THE BIN
+	// DICTATES: a departing bin carries the claim that filled it, and that
+	// claim's flag - not the node's curtain enable, not the style the line is
+	// becoming during a changeover - decides the gate. A part whose exit must
+	// not stop the conveyor leaves the flag off and its releases cross a
+	// curtained node without asking it. An empty carrier carries no claim, so
+	// empty placements never gate.
+	CurtainRequired     bool     `json:"curtain_required"`
+	AllowedPayloadCodes []string `json:"allowed_payload_codes"`
+	AutoRequestPayload  string   `json:"auto_request_payload"`
 	// KeepStagedNode is the claim's keep-staged node (the spot): one more node
 	// the full or the empty for this line comes from, instead of the inbound
 	// source, with one spare kept standing on it. Naming one is what turns
@@ -1159,12 +1169,16 @@ type NodeClaimInput struct {
 	// ContainmentDestination mirrors NodeClaim's field: where a contained
 	// payload's bins divert instead of OutboundDestination. Editor-owned
 	// value type (the editor always renders the control), blank = inert.
-	ContainmentDestination string   `json:"containment_destination"`
-	AllowedPayloadCodes    []string `json:"allowed_payload_codes"`
-	AutoRequestPayload     string   `json:"auto_request_payload"`
-	EvacuateOnChangeover   bool     `json:"evacuate_on_changeover"`
-	PairedCoreNode         string   `json:"paired_core_node"`
-	SecondPairedCoreNode   string   `json:"second_paired_core_node"`
+	ContainmentDestination string `json:"containment_destination"`
+	// CurtainRequired is the input side of the light-curtain style tie
+	// (NodeClaim's field carries the rule): whether this style's full-bin
+	// releases at this node wait for the curtain tag. Editor-owned bool.
+	CurtainRequired      bool     `json:"curtain_required"`
+	AllowedPayloadCodes  []string `json:"allowed_payload_codes"`
+	AutoRequestPayload   string   `json:"auto_request_payload"`
+	EvacuateOnChangeover bool     `json:"evacuate_on_changeover"`
+	PairedCoreNode       string   `json:"paired_core_node"`
+	SecondPairedCoreNode string   `json:"second_paired_core_node"`
 	// ALL SIX ARE POINTER-TYPED — absent means leave the stored value alone.
 	// See the contract block below, and the same-named fields on NodeClaim for
 	// what each one means.

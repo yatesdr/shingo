@@ -48,8 +48,10 @@ package engine
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"shingo/protocol"
@@ -85,9 +87,12 @@ type releaseAct struct {
 	curtainedLoaded bool
 	curtainedErr    error
 	curtained       map[string]*processes.Node // by core node name
-	verdict         map[int64]error            // by node id; nil = clear
-	facts           map[int64]legFacts         // by order id
-	departs         map[int64]bool             // by order id: releasing it takes a produce bin away
+	// required caches the bin-dictates resolution per (node, order): the
+	// crossing bin's claim's curtain flag, resolved once per act.
+	required map[string]bool
+	verdict  map[int64]error    // by node id; nil = clear
+	facts    map[int64]legFacts // by order id
+	departs  map[int64]bool     // by order id: releasing it takes a produce bin away
 }
 
 func (e *Engine) newAct(origin release.Origin, node int64, calledBy string) *releaseAct {
@@ -230,7 +235,7 @@ func (e *Engine) loadLeg(act *releaseAct, ll *legLoad, need release.Need) {
 		ll.point = release.PointOf(order.Status, order.StationWait, order.WaitKind, in, e.legFactsOf(act, order).facts.Purposes)
 	case release.NeedCurtain:
 		if pt, ok := act.actFacts.Points[s.OrderID]; ok && pt.Found {
-			s.Curtain = e.curtainForNodes(act, pt.Enters)
+			s.Curtain = e.curtainForNodes(act, ll.order, pt.Enters)
 		} else {
 			s.Curtain = e.curtainForLeg(act, ll.order)
 		}
@@ -477,9 +482,16 @@ func (e *Engine) curtainedNodes(act *releaseAct) (map[string]*processes.Node, er
 	return act.curtained, nil
 }
 
-// curtainForLeg checks every curtained node the leg's next move picks up or
-// drops a bin at. An order with no steps (a plain retrieve or move) is gated on
-// its own process node, the only node it can be said to touch.
+// curtainForLeg checks every node the leg's next move crosses, in step order,
+// THE BIN DICTATES: the gate applies at a node only when the bin crossing
+// there carries a claim that REQUIRES the curtain. A node's curtain enable
+// says the curtain exists there; the crossing bin's claim - the claim that
+// filled the bin being lifted, or the running style's claim for a full bin
+// being placed - says whether THIS trip waits for it. An empty placement
+// carries no claim and never gates; the plant's curtain stands where full
+// bins leave, and an empty that crosses one anyway is the operator's fault,
+// not the robot's. An order with no steps (a plain retrieve or move) is
+// judged on its own process node, the only node it can be said to touch.
 func (e *Engine) curtainForLeg(act *releaseAct, order *storeorders.Order) error {
 	curtained, err := e.curtainedNodes(act)
 	if err != nil {
@@ -492,28 +504,106 @@ func (e *Engine) curtainForLeg(act *releaseAct, order *storeorders.Order) error 
 	if err != nil {
 		return err
 	}
+	lf := e.legFactsOf(act, order)
 	for _, name := range touch {
-		if n := curtained[name]; n != nil {
-			if err := e.curtainClear(act, n); err != nil {
-				return err
-			}
+		n := curtained[name]
+		if n == nil {
+			continue
+		}
+		required, rerr := e.curtainRequiredAt(act, n, order, lf)
+		if rerr != nil {
+			return rerr
+		}
+		if !required {
+			continue
+		}
+		if err := e.curtainClear(act, n); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-// curtainForNodes checks the curtained nodes among the ones Core says the
-// leg's next segment enters, in that order.
-func (e *Engine) curtainForNodes(act *releaseAct, nodes []string) error {
+// curtainRequiredAt resolves whether the bin crossing node requires the
+// curtain, from the leg's facts and the claim that bin carries:
+//
+//   - the leg LIFTS a bin here (the segment's pickup): the bin is the one
+//     standing at the node, so the claim that filled it - the resident claim -
+//     decides. This is the case that matters: a full bin leaving is the trip
+//     the bypass exists for, and its own style's flag gates it even mid-
+//     changeover, when the line is becoming a style that does not require
+//     anything.
+//   - the leg PLACES a bin here (the Places dropoff): the arriving bin's own
+//     fact decides. An empty placement (no payload on the order) carries no
+//     claim and never gates. A full placement rides the node's current claim
+//   - the style the line is running is the style the placed bin joins.
+//   - a touch that is neither (the facts cannot say): the resident's
+//     requirement, because a claim that cannot be resolved must not unlock a
+//     curtain by confusion.
+//
+// An unreadable resident claim is an error, not a no: the caller holds the
+// release (fail-closed), and the sentence says the claim read failed.
+func (e *Engine) curtainRequiredAt(act *releaseAct, node *processes.Node, order *storeorders.Order, lf legFacts) (bool, error) {
+	if act.required == nil {
+		act.required = map[string]bool{}
+	}
+	key := fmt.Sprintf("%d|%d", node.ID, order.ID)
+	if v, ok := act.required[key]; ok {
+		return v, nil
+	}
+	lifts := false
+	if lf.facts.Departs != nil {
+		_, lifts = lf.facts.Departs[node.CoreNodeName]
+	}
+	places := slices.Contains(lf.facts.Places, node.CoreNodeName)
+	var required bool
+	switch {
+	case lifts:
+		runtime, rerr := e.db.GetProcessNodeRuntime(node.ID)
+		if rerr != nil && !errors.Is(rerr, sql.ErrNoRows) {
+			// A runtime read that failed is a question the gate cannot answer;
+			// fail closed with the reason.
+			return false, &CurtainHeldError{Node: node.CoreNodeName, Sentence: fmt.Sprintf(
+				"the light-curtain check at %s could not read the node's runtime (%v) - release held",
+				node.CoreNodeName, rerr)}
+		}
+		resident, cerr := e.residentClaim(node, runtime)
+		if cerr != nil {
+			return false, &CurtainHeldError{Node: node.CoreNodeName, Sentence: fmt.Sprintf(
+				"the light-curtain check at %s could not read the standing bin's claim (%v) - release held",
+				node.CoreNodeName, cerr)}
+		}
+		required = resident != nil && resident.CurtainRequired
+	case places && order.PayloadCode != "":
+		claim := e.claimAtNode(node)
+		required = claim != nil && claim.CurtainRequired
+	}
+	act.required[key] = required
+	return required, nil
+}
+
+// curtainForNodes checks the nodes Core says the leg's next segment enters, in
+// that order, under the same bin-dictates rule curtainForLeg applies.
+func (e *Engine) curtainForNodes(act *releaseAct, order *storeorders.Order, nodes []string) error {
 	curtained, err := e.curtainedNodes(act)
 	if err != nil {
 		return &CurtainHeldError{Sentence: err.Error()}
 	}
+	lf := e.legFactsOf(act, order)
 	for _, name := range nodes {
-		if n := curtained[name]; n != nil {
-			if err := e.curtainClear(act, n); err != nil {
-				return err
-			}
+		n := curtained[name]
+		if n == nil {
+			continue
+		}
+		required, rerr := e.curtainRequiredAt(act, n, order, lf)
+		if rerr != nil {
+			return rerr
+		}
+		if !required {
+			continue
+		}
+		if err := e.curtainClear(act, n); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -891,7 +981,14 @@ func (e *Engine) loadMaterial(act *releaseAct, ml *materialLoad, need release.Ne
 			s.ClaimResolved, s.OutboundDest = true, claim.OutboundDestination
 		}
 	case release.NeedCurtain:
-		s.Curtain = e.curtainForNode(act, ml.claim.CoreNodeName)
+		// THE BIN DICTATES: this door lifts the bin the claim filled, so the
+		// claim's own flag decides - no claim (nothing to lift against) means
+		// no requirement, exactly as the leg path reads it.
+		if ml.claim == nil || !ml.claim.CurtainRequired {
+			s.Curtain = nil
+		} else {
+			s.Curtain = e.curtainForNode(act, ml.claim.CoreNodeName)
+		}
 	case release.NeedInFlight:
 		if ml.runtime == nil || ml.runtime.ActiveOrderID == nil {
 			break

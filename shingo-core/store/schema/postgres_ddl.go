@@ -11,6 +11,11 @@ const postgresDDL = `
 CREATE TABLE IF NOT EXISTS nodes (
     id           BIGSERIAL PRIMARY KEY,
     name         TEXT NOT NULL UNIQUE,
+    -- The person-readable label (v144). The node's own name is the FLEET's
+    -- identity - scenesync matches the fleet's location set by name and
+    -- deletes a physical node the scene does not carry - so the cosmetic
+    -- rename rides a column of its own; empty renders the name as always.
+    display_name TEXT NOT NULL DEFAULT '',
     is_synthetic BOOLEAN NOT NULL DEFAULT false,
     zone         TEXT NOT NULL DEFAULT '',
     enabled      BOOLEAN NOT NULL DEFAULT true,

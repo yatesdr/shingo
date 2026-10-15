@@ -755,6 +755,21 @@ function settingCheck(loaderID, field, on, text) {
   return h`<label class="form-check loader-setting" for="${id}"><input type="checkbox" id="${id}" data-action-change="saveStationSetting" data-loader-id="${loaderID}" data-field="${field}"${raw(on ? ' checked' : '')}> ${text}</label>`;
 }
 
+// settingName is the Settings card's name row. THE NAME IS SAFE TO EDIT HERE,
+// and that is a property of the aggregate, not a courtesy: a loader is
+// Shingo-owned and keyed on its id everywhere (homes, payloads, the stage
+// link, the downward sync to Edge), so the name appears on the board card,
+// the dashboards' picker and subtitle, and in log lines - all display. This
+// is unlike the NODES page's name, which is the fleet's identity and can only
+// be relabeled through a display name (scenesync deletes a renamed node).
+// Saved as-typed on change (blur/Enter); an emptied field is refused here and
+// the server refuses it again behind the toast. On a two-stage pair, each
+// stage's card names its own station; the pair link is by id.
+function settingName(loaderID, name) {
+  const id = 'loader-set-' + loaderID + '-name';
+  return h`<div class="form-group loader-setting"><label for="${id}">Station name <span class="loader-setting-aside">${'the board, the dashboards and the floor all say this'}</span></label><input type="text" id="${id}" class="form-input" value="${name}" maxlength="120" autocomplete="off" data-action-change="saveStationSetting" data-loader-id="${loaderID}" data-field="name"></div>`;
+}
+
 const SUPPLY_OPTIONS = [
   ['operator', 'When the operator asks'],
   ['threshold', 'Automatically when parts run low'],
@@ -774,6 +789,7 @@ function settingsHtml(item, s2) {
   const lid = state.id;
   const pair = !!s2;
   let first = '';
+  first += settingName(lid, state.name);
   if (shape.supply) first += supplyHtml(state);
   if (shape.partials) first += settingCheck(lid, 'acceptPartials', state.acceptPartials, 'Accept partly used bins, not only full ones');
   if (shape.autoPush) first += settingCheck(lid, 'autoPush', state.autoPush, 'Pull the next full automatically when a window frees');
@@ -963,6 +979,13 @@ async function saveStationSetting(el) {
   const item = loaderItem(lid);
   if (!item || !field) return;
   const value = el.type === 'checkbox' ? !!el.checked : el.value;
+  // A station without a name is not a save the server should have to refuse:
+  // put the field back the way it was and say so here.
+  if (field === 'name' && !String(value).trim()) {
+    el.value = item.loader.name;
+    toast('A station needs a name', 'error');
+    return;
+  }
   const body = settingUpdate(item.loader, field, value);
   // Changing the layout would orphan the members: windows and dedicated
   // positions cannot carry across. Say so, and drop them first on a yes.

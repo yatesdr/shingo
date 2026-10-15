@@ -37,8 +37,11 @@ func TestOperatorStationView_CarriesCurtainState(t *testing.T) {
 	}
 	// A press-index front whose back position has its own curtain and no
 	// station; an ordinary FG node with its own curtain; a node with neither.
-	claim(processes.NodeClaimInput{CoreNodeName: "SYN-CV-PLN-1", SwapMode: protocol.SwapModeTwoRobotPressIndex, PairedCoreNode: "SYN-CV-PLN-2"})
-	claim(processes.NodeClaimInput{CoreNodeName: "SYN-CV-PLN-3", SwapMode: protocol.SwapModeTwoRobot, InboundStaging: "SYN-STG-1"})
+	// THE BIN DICTATES, so the fixture flags both claims curtain-required:
+	// the render is claim-gated now, and a plant that wired curtains flags
+	// the styles whose exits wait for them.
+	claim(processes.NodeClaimInput{CoreNodeName: "SYN-CV-PLN-1", SwapMode: protocol.SwapModeTwoRobotPressIndex, PairedCoreNode: "SYN-CV-PLN-2", CurtainRequired: true})
+	claim(processes.NodeClaimInput{CoreNodeName: "SYN-CV-PLN-3", SwapMode: protocol.SwapModeTwoRobot, InboundStaging: "SYN-STG-1", CurtainRequired: true})
 	front := seedProcessNode(t, pid, sid, "SYN-CV-PLN-1")
 	back := seedProcessNode(t, pid, 0, "SYN-CV-PLN-2")
 	own := seedProcessNode(t, pid, sid, "SYN-CV-PLN-3")

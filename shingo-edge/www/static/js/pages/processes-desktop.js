@@ -2772,6 +2772,7 @@ const ADV_COPY = {
     index_robot_supplies: ['index_robot_supplies', 'the same for every part on this press'],
     auto_confirm: ['auto_confirm', 'the plant setting applies unless set here'],
     sequence: ['sequence', 'where this position sits on the loader board'],
+    curtain_required: ['curtain_required', 'this part\'s full-bin releases wait for the node\'s light curtain - the bin leaving decides, so a part whose exit must not stop the conveyor leaves this off'],
 };
 
 // The reorder point's source stamps that are worth a pill: the word drawn and
@@ -2871,6 +2872,7 @@ function advField(key) {
             break;
         }
         case 'lineside_soft_threshold': case 'sequence': control = advNumber(key); break;
+        case 'curtain_required': control = advToggle(key); break;
         case 'auto_request_payload': {
             const v = S.adv.a.auto_request_payload;
             control = advPick(key, esc(v ? M().shortPart(v) : 'off'), v ? '' : 'dflt');

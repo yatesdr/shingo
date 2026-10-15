@@ -38,6 +38,12 @@ var composerSpeaks = map[string]bool{
 	// section of the claim editor) exactly like its sibling
 	// outbound_destination; carried through a flow copy for the same reason.
 	"containment_destination": true,
+	// The light-curtain style tie: composer-authored (the Advanced sheet's
+	// toggle). The claim is the (style, node) pair, and the departing bin's
+	// own claim decides whether its release waits for the tag - so the flag
+	// rides the claim a save writes, and a flow copy carries it like any
+	// other authored field.
+	"curtain_required": true,
 }
 
 // composerRestamps is what a save is expected to change without being asked:

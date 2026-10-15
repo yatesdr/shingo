@@ -7,9 +7,10 @@
 // Usage: go run ./cmd/seedlineside <db path> [<count>]
 //
 // Rows reference REAL nodes and payloads read from the same database (the
-// first N consume/produce nodes with a claim's payload), so nothing dangles.
-// Idempotent per (node, payload, state) via the table's UNIQUE - re-runs
-// refresh qty instead of erroring (INSERT OR REPLACE).
+// first N nodes with a live claim's payload), so nothing dangles. Writes go
+// through lineside.Capture, the pile table's one sanctioned write door, which
+// ADDS to an existing pile's qty - so a re-run grows the piles rather than
+// resetting them; clear them on the Production page between runs.
 package main
 
 import (
@@ -17,6 +18,8 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+
+	"shingoedge/store/lineside"
 
 	_ "modernc.org/sqlite"
 )
@@ -77,12 +80,12 @@ func main() {
 	}
 
 	for _, t := range targets {
-		_, err := db.Exec(`INSERT INTO node_lineside_bucket (node_id, payload_code, qty, state)
-			VALUES (?, ?, ?, 'active')
-			ON CONFLICT (node_id, payload_code, state)
-			DO UPDATE SET qty = excluded.qty, updated_at = excluded.updated_at`,
-			t.id, t.payload, 37)
-		if err != nil {
+		// THROUGH THE SANCTIONED VERB, not a raw INSERT: Capture is the pile
+		// table's one write door (uop's pile-writer arch test pins the set),
+		// and a capture-shaped write is what the row is anyway. The level's
+		// dirty-marking stays the engine verbs' business - a dev seed does
+		// not need Core's mirror to follow it.
+		if _, err := lineside.Capture(db, t.id, t.payload, 37); err != nil {
 			fmt.Fprintf(os.Stderr, "seed %s/%s: %v\n", t.name, t.payload, err)
 			os.Exit(1)
 		}

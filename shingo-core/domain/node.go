@@ -23,8 +23,18 @@ const TransitNodeName = "_TRANSIT"
 // rendering path uses at least one of them and materialising them into
 // the struct keeps call sites flat.
 type Node struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	// DisplayName is the name a PERSON reads, editable on the Nodes page.
+	// The node's own Name is NOT editable from shingo, ever: it is the
+	// fleet's identity - scenesync matches the fleet's location set against
+	// nodes by name, and a physical node whose name the current scene does
+	// not carry is DELETED on the next sync, stranding every claim, order
+	// and loader config that keyed on it. So the cosmetic rename rides a
+	// column of its own: empty (the default) means "render Name as always",
+	// and setting it changes what screens say without touching what the
+	// fleet knows.
+	DisplayName string    `json:"display_name"`
 	IsSynthetic bool      `json:"is_synthetic"`
 	Zone        string    `json:"zone"`
 	Enabled     bool      `json:"enabled"`
@@ -42,4 +52,14 @@ type Node struct {
 	// Joined fields
 	NodeTypeCode string `json:"node_type_code,omitempty"`
 	ParentName   string `json:"parent_name,omitempty"`
+}
+
+// RenderName is what a screen shows for this node: the display name when
+// someone has set one, the fleet's name otherwise. One spelling, so every
+// surface that renders a node says the same thing about it.
+func (n *Node) RenderName() string {
+	if n.DisplayName != "" {
+		return n.DisplayName
+	}
+	return n.Name
 }
