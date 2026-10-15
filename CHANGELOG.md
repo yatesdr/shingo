@@ -5,7 +5,7 @@ belongs in the commit message or in `docs/` — this file is the index.
 
 ## 2026-10-14 — Restarted changeovers leave finished nodes alone; stranded staging carriers go home
 
-Core and Edge, no migrations. Local main; not pushed or deployed.
+Core and Edge (Core 156, Edge v22). Local main; not deployed.
 
 - A changeover planned again skips a node already holding the new part
 - A done node still cancels or waits on the outgoing style's orders at start
@@ -18,10 +18,15 @@ Core and Edge, no migrations. Local main; not pushed or deployed.
 - A carrier set down at staging and then cancelled goes back where it came from
 - A linked part with no cat id no longer arms the wrong-part check
 - Old four-column payload sheets import column 3 as the part's cat id too
+- The curtain's release gate is the crossing bin's own claim, not the node alone (Edge v22)
+- The curtain's render half obeys the bin-dictates rule too
+- A loader's Settings card names the station
+- The Nodes page can edit a display name; the fleet's name is never touched (Core 156)
 - Core quotes unreported mirror processes so their Edge can clear them
 - Process column on Core orders, home active orders and bins
 - Operator REQUEST refusals are logged
 - Text says "process", not "press"
+- A press changeover with a bare position plans each position on its own, as REQUEST does
 
 ## 2026-10-13 — One planner, one order ladder, lanes and drops by one rule, changeovers that finish
 
