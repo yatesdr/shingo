@@ -36,6 +36,25 @@ type bareLine struct {
 // already has a bin on its way).
 func (b *bareLine) lineHeld() bool { return b.dest == "" }
 
+// barePositions is the one answer to "which of this claim's positions hold no
+// bin": the line's own, and a press's paired positions. A name missing from
+// occupancy reads occupied. REQUEST and produce plan their deliveries from it
+// (planBareLine); a changeover splits a press per position on it
+// (FanOutPressIndex), so a press with a bare position is planned position by
+// position on both paths.
+func barePositions(claim *processes.NodeClaim, occupancy map[string]bool) (lineBare bool, paired []string) {
+	lineBare = !isOccupied(occupancy, claim.CoreNodeName)
+	if claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
+		return lineBare, nil
+	}
+	for _, pos := range claim.ExtensionPositions() {
+		if !isOccupied(occupancy, pos) {
+			paired = append(paired, pos)
+		}
+	}
+	return lineBare, paired
+}
+
 // planBareLine answers "this line has a bare position": nil when Core reports a
 // bin at the line and at every paired position (or did not answer for one; a
 // missing entry reads occupied), else the deliveries the bare positions need.
@@ -66,21 +85,15 @@ func (b *bareLine) lineHeld() bool { return b.dest == "" }
 // asked about reads occupied, but a stale paired node on another mode is not a
 // position that cell has, so it is not looked at.
 func planBareLine(node *processes.Node, claim *processes.NodeClaim, occupancy, inbound map[string]bool) (*bareLine, error) {
-	lineBare := !isOccupied(occupancy, claim.CoreNodeName)
-	var bare, needPrime []string
-	if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex {
-		for _, pos := range claim.ExtensionPositions() {
-			if isOccupied(occupancy, pos) {
-				continue
-			}
-			bare = append(bare, pos)
-			if !inbound[pos] {
-				needPrime = append(needPrime, pos)
-			}
-		}
-	}
+	lineBare, bare := barePositions(claim, occupancy)
 	if !lineBare && len(bare) == 0 {
 		return nil, nil
+	}
+	var needPrime []string
+	for _, pos := range bare {
+		if !inbound[pos] {
+			needPrime = append(needPrime, pos)
+		}
 	}
 	if (lineBare || len(needPrime) > 0) && claim.InboundSource == "" {
 		return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)

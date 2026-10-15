@@ -261,13 +261,7 @@ func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toCl
 //     Unchanged when a press-index claim is produce on both sides, the
 //     payloads match, and the counter says the bin is DRAINED (there is no
 //     opt-in any more; see ApplyReuseCompatibleBinsShortcut). Runs first so
-//     downstream post-processors see the reduced diff list. Beside it,
-//     reading the same node state, ApplyNodeState: a Swap whose seat says
-//     its carrier has gone becomes Add (nothing to lift, only the new bin to
-//     bring), and a one-position consume node already holding the incoming
-//     part becomes Unchanged and AlreadyDone (a restarted changeover does not
-//     swap a node the first attempt finished). Before the fan-outs, so an
-//     empty press-index position is not fanned out as a swap.
+//     downstream post-processors see the reduced diff list.
 //
 //  2. Press-index Core-availability gate. Refuses the changeover when
 //     Core is unavailable and any remaining diff is a press-index
@@ -275,9 +269,10 @@ func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toCl
 //     fan-out silently degrades to "same bin type" and would route a
 //     real different-bin-type changeover through the wrong choreography.
 //
-//  3. Same-mode different-bin-type fan-out. Expands a press-index
-//     parent diff into per-position diffs when the from- and to-claim
-//     payloads have different bin type codes.
+//  3. Same-mode fan-out (FanOutPressIndex). Expands a press-index parent
+//     diff into per-position diffs when the from- and to-claim payloads
+//     have different bin type codes, or when a position holds no bin
+//     (barePositions, the answer REQUEST's planBareLine reads).
 //
 //  4. Cross-mode / extension-position fan-out. Picks up press-index
 //     extension positions (PairedCoreNode / SecondPairedCoreNode)
@@ -286,7 +281,16 @@ func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toCl
 //     type position-count deltas. Acts only on positions not already
 //     covered, so step 3 always wins for positions it touched.
 //
-//  5. The old carrier's destination. Each Swap and Drop is aimed where the
+//  5. ApplyNodeState, reading the same node state as step 1: a Swap whose
+//     seat says its carrier has gone becomes Add (nothing to lift, only the
+//     new bin to bring), and a one-position consume node already holding the
+//     incoming part becomes Unchanged and AlreadyDone (a restarted
+//     changeover does not swap a node the first attempt finished). After the
+//     fan-outs, so each press position is judged by its own seat, never its
+//     front's. Then the sequential reuse shortcut, which skips a parked
+//     side's Swap and so must see an empty parked side already made Add.
+//
+//  6. The old carrier's destination. Each Swap and Drop is aimed where the
 //     carrier actually standing on its node belongs (residentEvacDest), the
 //     same call REQUEST, produce and the Material release make, so a node
 //     holding a foreign part sends it home rather than to the outgoing
@@ -296,7 +300,7 @@ func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toCl
 //
 // Add new diff post-processors to this function so the ordering
 // invariants stay in one place. Any new processor needs to declare
-// where it sits in the pipeline relative to the existing five.
+// where it sits in the pipeline relative to the existing six.
 //
 // TOOLING IS NOT IN THIS LIST, and that is its declaration: it is not a
 // diff post-processor at all. It runs LAST, over the FINISHED PLAN, and
@@ -309,19 +313,19 @@ func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toCl
 func (e *Engine) applyChangeoverDiffPostProcessors(processID int64, diffs []ChangeoverNodeDiff) ([]ChangeoverNodeDiff, error) {
 	state := e.nodeStateAt(processID)
 	diffs = ApplyReuseCompatibleBinsShortcut(diffs, func(n string) DrainState { return state(n).Drain })
-	diffs = ApplyNodeState(diffs, state)
 	if err := e.refusePressIndexWhenCoreUnavailable(diffs); err != nil {
 		return nil, err
 	}
 	binTypes := e.binTypeSnapshot(diffs)
+	diffs = FanOutPressIndex(diffs, binTypes, state)
+	diffs = FanOutPressIndexCrossMode(diffs, binTypes)
+	diffs = ApplyNodeState(diffs, state)
 	// AFTER the snapshot, because it reads the same catalog map the press-index
 	// fan-outs do — one lookup, one answer about what a style rides, so the two
-	// shortcuts cannot disagree. Before the fan-outs only for readability; a
-	// sequential diff is not a press-index diff, so neither pass can see the
-	// other's output.
+	// shortcuts cannot disagree. After ApplyNodeState, so a parked side with no
+	// bin is brought one (Add) rather than skipped as a reusable empty; a
+	// sequential diff is not a press-index diff, so the fan-outs cannot see it.
 	diffs = ApplySequentialReuseShortcut(diffs, binTypes, e.activePullForDiffs(processID))
-	diffs = FanOutPressIndexDifferentBinType(diffs, binTypes)
-	diffs = FanOutPressIndexCrossMode(diffs, binTypes)
 	e.aimEvacsAtResidentHome(diffs, state)
 	return diffs, nil
 }

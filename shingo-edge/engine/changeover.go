@@ -180,15 +180,45 @@ const pressPositionSwapMode = domain.SwapModePressPosition
 // parent diff stays untouched. The existing same-bin-type press-index
 // dispatch handles those.
 func FanOutPressIndexDifferentBinType(diffs []ChangeoverNodeDiff, binTypes map[string]string) []ChangeoverNodeDiff {
+	return FanOutPressIndex(diffs, binTypes, nil)
+}
+
+// FanOutPressIndex is the same-mode fan-out with the second reason to split a
+// press: a position holds no bin. The press's own swap indexes every position
+// as one motion, and its legs lift at each position before setting down, so
+// one bare position stalls the whole swap at Core. REQUEST answers that with
+// planBareLine (a plain delivery to each bare position, no swap); the
+// changeover answers it the same way, from the same barePositions: split per
+// position, and ApplyNodeState, which runs after, turns each bare position's
+// Swap into Add (just deliver) and leaves each held one a per-position swap.
+//
+// A Swap only. An Evacuate is the tooling choreography's. state nil (no node
+// read) splits on bin type alone.
+func FanOutPressIndex(diffs []ChangeoverNodeDiff, binTypes map[string]string, state func(coreNode string) NodeState) []ChangeoverNodeDiff {
 	out := make([]ChangeoverNodeDiff, 0, len(diffs))
 	for _, d := range diffs {
-		if !shouldFanOutPressIndex(d, binTypes) {
+		if !shouldFanOutPressIndex(d, binTypes) && !pressHasBarePosition(d, state) {
 			out = append(out, d)
 			continue
 		}
 		out = append(out, fanOutPositions(d)...)
 	}
 	return out
+}
+
+// pressHasBarePosition reports whether a press-index Swap's outgoing positions
+// include one whose seat says its carrier has gone. An unknown seat reads
+// occupied, as a missing occupancy answer does on REQUEST.
+func pressHasBarePosition(d ChangeoverNodeDiff, state func(coreNode string) NodeState) bool {
+	if state == nil || d.Situation != SituationSwap || !isPressIndexClaim(d.FromClaim) || !isPressIndexClaim(d.ToClaim) {
+		return false
+	}
+	occupancy := map[string]bool{}
+	for _, n := range append([]string{d.FromClaim.CoreNodeName}, d.FromClaim.ExtensionPositions()...) {
+		occupancy[n] = state(n).Seat != SeatEmpty
+	}
+	lineBare, paired := barePositions(d.FromClaim, occupancy)
+	return lineBare || len(paired) > 0
 }
 
 // binTypesDiffer reports whether two claims' payloads resolve to different bin
@@ -688,9 +718,10 @@ type NodeState struct {
 //   - CONSUME ON BOTH SIDES. A consume carrier is labelled with its part on
 //     delivery, so "holds the new part" is a fact. A produce position holds an
 //     empty, and an empty is not the new style's more than the old one's.
-//   - ONE POSITION. A claim with paired positions (sequential A/B, indexing
-//     positions) is decided for the cell, and one node's carrier says nothing
-//     about the others; those plan exactly as before.
+//   - ONE POSITION. A claim with paired positions (sequential A/B, an unsplit
+//     indexing press) is decided for the cell, and one node's carrier says
+//     nothing about the others; those plan exactly as before. A press the
+//     fan-out split is one-position claims, each judged by its own seat.
 //   - KNOWN, AND NOT DRAINED. An unknown carrier plans the swap (one redundant
 //     trip, never a wrong one). A drained consume carrier is a starved line,
 //     the same ruling as the reuse shortcut's.
