@@ -61,7 +61,27 @@ function openRobotModal(el) {
   document.getElementById('rm-error').textContent = d.error === 'true' ? 'Yes' : 'No';
   document.getElementById('rm-position').textContent = d.x + ', ' + d.y + ' (' + d.angle + '\u00B0)';
 
+  showForceComplete(d.orderId || '');
   showModal('robot-modal');
+}
+
+// showForceComplete offers Force complete only when the robot is not on a
+// Shingo order. Core reads a forced finish as a real one and would record the
+// bin delivered; that order is ended from the order (Terminate) instead.
+// The server refuses it too, for a pop-up opened before the order started.
+function showForceComplete(orderID) {
+  var btn = document.getElementById('rm-btn-force');
+  var note = document.getElementById('rm-force-note');
+  if (btn) btn.hidden = !!orderID;
+  if (!note) return;
+  note.hidden = !orderID;
+  note.textContent = '';
+  if (!orderID) return;
+  note.appendChild(document.createTextNode('On order #' + orderID + '. To end it, open the order and Terminate it: '));
+  var a = document.createElement('a');
+  a.href = '/orders?open=' + encodeURIComponent(orderID);
+  a.textContent = 'open #' + orderID;
+  note.appendChild(a);
 }
 
 function closeRobotModal() {
@@ -116,14 +136,11 @@ async function robotRetryFailed() {
   robotControlPost('/api/robots/retry', {vehicle_id: currentRobotVehicle});
 }
 
-// Force complete ends the robot's task at the fleet. Core reads that the same
-// as a real finish, so on a Shingo order the order is recorded as done.
+// Force complete ends the robot's task at the fleet: for its own parking and
+// charging orders. On a Shingo order the button is hidden (showForceComplete)
+// and the server refuses.
 async function robotForceComplete() {
-  var order = currentOrderID();
-  var msg = order
-    ? currentRobotVehicle + ' is on order #' + order + '. Force complete ends its task, and Shingo will record the order as done whether or not the bin moved. Force complete?'
-    : 'Force complete current task for ' + currentRobotVehicle + '?';
-  if (!await uiConfirm(msg)) return;
+  if (!await uiConfirm('Force complete current task for ' + currentRobotVehicle + '?')) return;
   robotControlPost('/api/robots/force-complete', {vehicle_id: currentRobotVehicle});
 }
 

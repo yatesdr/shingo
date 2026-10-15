@@ -19,6 +19,7 @@ import (
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // Characterization tests for handlers_robots.go — renders /robots, returns
@@ -338,4 +339,32 @@ func TestApiRobotForceComplete_BackendError(t *testing.T) {
 		t.Fatalf("status: got %d, want 500; body=%s", rec.Code, rec.Body.String())
 	}
 	assertJSONError(t, rec.Body.Bytes(), "stuck")
+}
+
+// TestApiRobotForceComplete_RefusedOnAShingoOrder: Core reads a forced finish
+// as a real one (FINISHED maps to delivered), so on a Shingo order it would
+// record the bin at the destination whether or not it moved. Refused, naming
+// the order, and the fleet is never asked.
+func TestApiRobotForceComplete_RefusedOnAShingoOrder(t *testing.T) {
+	t.Parallel()
+	h, db, sim := testHandlersWithRobotFleet(t)
+	live := &orders.Order{EdgeUUID: "force-complete-live", StationID: "line-x", OrderType: "retrieve",
+		Status: "in_transit", Quantity: 1, SourceNode: "SRC_1", DeliveryNode: "DST_1", RobotID: "R4"}
+	testutil.MustNoErr(t, db.CreateOrder(live), "create in-flight order")
+	// CreateOrder does not write robot_id; dispatch assigns it afterwards.
+	testutil.MustNoErr(t, db.UpdateOrderRobotID(live.ID, "R4"), "assign the robot")
+
+	rec := postJSON(t, h.apiRobotForceComplete, "/api/robots/force-complete",
+		map[string]any{"vehicle_id": "R4"})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status: got %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Terminate the order") {
+		t.Errorf("the refusal must say what to do instead; body=%s", rec.Body.String())
+	}
+	sim.mu.Lock()
+	defer sim.mu.Unlock()
+	if len(sim.forceCompleteCalls) != 0 {
+		t.Errorf("the fleet was asked to force complete: %v", sim.forceCompleteCalls)
+	}
 }
