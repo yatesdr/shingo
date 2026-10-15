@@ -22,9 +22,7 @@ import (
 type CleaningSetupView struct {
 	Saved      bool       `json:"saved"`
 	Points     []string   `json:"points"`
-	Frequency  string     `json:"frequency"` // "1h" | "2h" | "4h" | "8h"; "" before any save
-	ActiveFrom string     `json:"active_from"`
-	ActiveTo   string     `json:"active_to"`
+	Frequency  string     `json:"frequency"` // "4h" | "8h" | "12h" | "24h"; "" before any save
 	MinBattery int        `json:"min_battery"`
 	UpdatedAt  *time.Time `json:"updated_at"`
 }
@@ -65,9 +63,9 @@ type CleaningRecord struct {
 // window, inside the record's 90-day retention.
 const cleaningHistoryDays = 60
 
-// cleaningHistoryLimit caps the list. At the loop's ceiling (one robot per
-// tick, 1 h minimum frequency, a 24-hour window) a fleet of 12 sends at most a
-// few hundred a week; the cap keeps a mistake from rendering thousands.
+// cleaningHistoryLimit caps the list. At the loop's ceiling (4 h minimum
+// frequency, around the clock) a fleet of 12 sends at most 72 a day, about 500
+// a week; the cap keeps a mistake from rendering thousands.
 const cleaningHistoryLimit = 500
 
 // CleaningRecordAt reads the Cleaning tab's record as of now, counting
@@ -142,7 +140,7 @@ func cleaningSetupView(setup cleaning.Setup, ok bool) CleaningSetupView {
 	}
 	v.Points = setup.Points
 	v.Frequency = fmt.Sprintf("%dh", int(setup.Frequency/time.Hour))
-	v.ActiveFrom, v.ActiveTo, v.MinBattery = setup.ActiveFrom, setup.ActiveTo, setup.MinBattery
+	v.MinBattery = setup.MinBattery
 	at := setup.UpdatedAt
 	v.UpdatedAt = &at
 	return v

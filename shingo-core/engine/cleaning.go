@@ -33,7 +33,6 @@ import (
 	"github.com/google/uuid"
 
 	"shingo/protocol/clock"
-	"shingo/shared/planttime"
 	"shingocore/dispatch"
 	"shingocore/domain"
 	"shingocore/fleet"
@@ -56,8 +55,10 @@ const (
 )
 
 // cleaningFrequencies are the only intervals the setup accepts: the Cleaning
-// tab offers them as a segment, and the server refuses anything else.
-var cleaningFrequencies = []time.Duration{time.Hour, 2 * time.Hour, 4 * time.Hour, 8 * time.Hour}
+// tab offers them as a segment, and the server refuses anything else. There are
+// no active hours: the loop runs around the clock (owner, 2026-10-15), and a
+// robot is sent at most once per frequency counted from its last dispatch.
+var cleaningFrequencies = []time.Duration{4 * time.Hour, 8 * time.Hour, 12 * time.Hour, 24 * time.Hour}
 
 // vendorOrderReader is the one fleet call the loop needs to finalize a
 // mission. seerrds implements it; the simulator does not, and a fleet that
@@ -86,7 +87,7 @@ func CanReportCleaningMissions(b fleet.Backend) bool {
 
 // cleaningLoop runs the cleaning tick every minute until the engine stops.
 func (e *Engine) cleaningLoop() {
-	c := &cleaningRunner{e: e, seam: e.cleaningSeam(), zone: e.plantZone()}
+	c := &cleaningRunner{e: e, seam: e.cleaningSeam()}
 	ticker := clock.Default().NewTicker(cleaningTickInterval)
 	defer ticker.Stop()
 	for {
@@ -106,11 +107,6 @@ func (e *Engine) cleaningLoop() {
 type cleaningRunner struct {
 	e    *Engine
 	seam vendorOrderReader
-	// zone is the plant's, resolved once when the loop starts: www resolves
-	// its own once at router construction, and a timezone saved on the config
-	// page applies after a restart, so the window and every screen move
-	// together. A runner built without one (a test) resolves per tick.
-	zone planttime.Zone
 
 	memoAt   time.Time
 	memo     map[string]string
@@ -168,8 +164,7 @@ func (c *cleaningRunner) tick(now time.Time, robots []fleet.RobotStatus) {
 
 	// 4. Stop conditions. One robot at the knife at a time: an open row is
 	// that fact, so nothing is sent while one is.
-	if stillOpen || !e.fleetConnected.Load() || len(c.pointProblems(setup)) > 0 ||
-		!inCleaningWindow(now, setup.ActiveFrom, setup.ActiveTo, c.plantZone()) {
+	if stillOpen || !e.fleetConnected.Load() || len(c.pointProblems(setup)) > 0 {
 		return
 	}
 
@@ -188,23 +183,6 @@ func (c *cleaningRunner) tick(now time.Time, robots []fleet.RobotStatus) {
 	if err := e.dispatchCleaning(vehicle, setup.Points, cleaning.ReasonInterval, now); err != nil {
 		e.logFn("cleaning: %s not sent: %v", vehicle, err)
 	}
-}
-
-// plantZone is the runner's zone, or the config's now when it has none.
-func (c *cleaningRunner) plantZone() planttime.Zone {
-	if c.zone.Loc != nil {
-		return c.zone
-	}
-	return c.e.plantZone()
-}
-
-// plantZone is the plant's zone by the one resolver every screen uses. Read
-// under the config lock because the config page writes the struct.
-func (e *Engine) plantZone() planttime.Zone {
-	e.cfg.Lock()
-	tz := e.cfg.Timezone
-	e.cfg.Unlock()
-	return planttime.ResolveZone(tz)
 }
 
 // finalizeCleaningMission reads one open mission at the vendor and closes it
@@ -536,8 +514,8 @@ func CleaningPointProblems(points []string, pts CleaningPointLookup, lanes LaneL
 }
 
 // CleaningSetupRefusal is a setup the server would not save, field by field,
-// keyed the way the settings page draws errors ("frequency", "active_from",
-// "active_to", "min_battery", "points.<i>").
+// keyed the way the settings page draws errors ("frequency", "min_battery",
+// "points.<i>").
 type CleaningSetupRefusal struct {
 	Fields map[string]string
 }
@@ -557,13 +535,10 @@ func (r *CleaningSetupRefusal) Error() string {
 
 // CleaningSetupInput is a setup as the Cleaning tab sends it. Engine-owned
 // rather than the store's type because www may not import the store.
-// Frequency is text as typed ("4h", "4 h", or a Go duration string); the
-// active hours are plant-local "HH:MM".
+// Frequency is text as typed ("4h", "4 h", or a Go duration string).
 type CleaningSetupInput struct {
 	Points     []string
 	Frequency  string
-	ActiveFrom string
-	ActiveTo   string
 	MinBattery int
 }
 
@@ -572,8 +547,7 @@ type CleaningSetupInput struct {
 // numbered for errors; an empty list is a valid save and turns the loop off.
 // A refusal is a *CleaningSetupRefusal and nothing is saved.
 func (e *Engine) SaveCleaningSetup(in CleaningSetupInput, actor string) error {
-	s := cleaning.Setup{Points: []string{}, ActiveFrom: strings.TrimSpace(in.ActiveFrom),
-		ActiveTo: strings.TrimSpace(in.ActiveTo), MinBattery: in.MinBattery}
+	s := cleaning.Setup{Points: []string{}, MinBattery: in.MinBattery}
 	for _, p := range in.Points {
 		if p = strings.TrimSpace(p); p != "" {
 			s.Points = append(s.Points, p)
@@ -608,7 +582,7 @@ func (e *Engine) SaveCleaningSetup(in CleaningSetupInput, actor string) error {
 	return nil
 }
 
-const cleaningFrequencyWords = "Choose 1 h, 2 h, 4 h or 8 h."
+const cleaningFrequencyWords = "Choose 4 h, 8 h, 12 h or 24 h."
 
 // parseCleaningFrequency reads the frequency as typed, spaces allowed ("4 h"),
 // and reports whether it is one of cleaningFrequencies.
@@ -638,12 +612,6 @@ func validateCleaningSetup(s cleaning.Setup) map[string]string {
 	if !okFreq {
 		fields["frequency"] = cleaningFrequencyWords
 	}
-	if _, ok := parseClock(s.ActiveFrom); !ok {
-		fields["active_from"] = "A time of day, HH:MM."
-	}
-	if _, ok := parseClock(s.ActiveTo); !ok {
-		fields["active_to"] = "A time of day, HH:MM."
-	}
 	if s.MinBattery < 0 || s.MinBattery > 100 {
 		fields["min_battery"] = "A percent, 0 to 100."
 	}
@@ -652,39 +620,8 @@ func validateCleaningSetup(s cleaning.Setup) map[string]string {
 
 // cleaningSetupText is the audit row's rendering of a setup.
 func cleaningSetupText(s cleaning.Setup) string {
-	return fmt.Sprintf("points=%s every=%s hours=%s-%s min_battery=%d%%",
-		strings.Join(s.Points, ","), s.Frequency, s.ActiveFrom, s.ActiveTo, s.MinBattery)
-}
-
-// parseClock reads "HH:MM" as minutes past midnight.
-func parseClock(s string) (int, bool) {
-	t, err := time.Parse("15:04", s)
-	if err != nil {
-		return 0, false
-	}
-	return t.Hour()*60 + t.Minute(), true
-}
-
-// inCleaningWindow reports whether now is inside the plant-local active hours.
-// from == to is the whole day; from > to wraps midnight (22:00–06:00). A zone
-// nobody set is UTC, nobody's wall clock, so the hours would mean nothing:
-// the window is then always open and CleaningWords says so. Hours that do not
-// parse (only possible by a hand-written row) also leave it open.
-func inCleaningWindow(now time.Time, from, to string, z planttime.Zone) bool {
-	if !z.Set() {
-		return true
-	}
-	f, ok1 := parseClock(from)
-	t, ok2 := parseClock(to)
-	if !ok1 || !ok2 || f == t {
-		return true
-	}
-	l := now.In(z.Loc)
-	m := l.Hour()*60 + l.Minute()
-	if f < t {
-		return m >= f && m < t
-	}
-	return m >= f || m < t
+	return fmt.Sprintf("points=%s every=%s min_battery=%d%%",
+		strings.Join(s.Points, ","), s.Frequency, s.MinBattery)
 }
 
 // CleaningWordsFacts is what the Cleaning tab's live words are computed from.
@@ -692,15 +629,11 @@ type CleaningWordsFacts struct {
 	Points        []string
 	PointProblems map[string]string
 	CanReport     bool
-	Zone          planttime.Zone
-	ActiveFrom    string
-	ActiveTo      string
-	Now           time.Time
 }
 
 // CleaningWords is the §33.2 live words for the clean mission's title:
 // "off" with no points, "stopped: <reason>" when the loop cannot send, else
-// "running" (with the active hours' state). The reasons are the tick's own
+// "running". The reasons are the tick's own
 // stop conditions in the tick's order, except the fleet's connection: the page
 // cannot see it without asking the fleet on every read, and the header's
 // connection status already says it.
@@ -712,10 +645,6 @@ func CleaningWords(f CleaningWordsFacts) string {
 		return "stopped: " + firstPointProblem(f.PointProblems)
 	case !f.CanReport:
 		return "stopped: the fleet cannot report a mission's state"
-	case !f.Zone.Set():
-		return "running · active hours ignored: no plant timezone is set"
-	case !inCleaningWindow(f.Now, f.ActiveFrom, f.ActiveTo, f.Zone):
-		return "running · outside active hours"
 	}
 	return "running"
 }

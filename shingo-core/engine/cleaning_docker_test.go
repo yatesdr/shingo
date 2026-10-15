@@ -65,8 +65,7 @@ func seedKnife(t *testing.T, db *store.DB) {
 }
 
 func knifeSetup() CleaningSetupInput {
-	return CleaningSetupInput{Points: []string{"LM513", "LM514"}, Frequency: "4 h",
-		ActiveFrom: "00:00", ActiveTo: "00:00", MinBattery: 25}
+	return CleaningSetupInput{Points: []string{"LM513", "LM514"}, Frequency: "4 h", MinBattery: 25}
 }
 
 func countOrders(t *testing.T, db *store.DB) int {

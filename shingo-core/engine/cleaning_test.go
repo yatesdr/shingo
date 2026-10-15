@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"shingo/shared/planttime"
 	"shingocore/fleet"
 	"shingocore/store/cleaning"
 )
@@ -128,66 +127,30 @@ func TestCleaningFinalState(t *testing.T) {
 	}
 }
 
-// TestInCleaningWindow pins the active hours: plain, wrapping midnight,
-// from == to as the whole day, plant-local (not UTC), and a zone nobody set
-// leaving the window open.
-func TestInCleaningWindow(t *testing.T) {
-	loc, err := time.LoadLocation("America/Chicago")
-	if err != nil {
-		t.Skipf("tzdata: %v", err)
-	}
-	set := planttime.Zone{Loc: loc, Source: planttime.SourceConfig}
-	unset := planttime.Zone{Loc: time.UTC, Source: planttime.SourceDefault}
-	// 2026-10-15 22:30 CDT = 03:30Z on the 16th.
-	late := time.Date(2026, 10, 16, 3, 30, 0, 0, time.UTC)
-	// 2026-10-15 09:00 CDT = 14:00Z.
-	morning := time.Date(2026, 10, 15, 14, 0, 0, 0, time.UTC)
-	cases := []struct {
-		name     string
-		now      time.Time
-		from, to string
-		z        planttime.Zone
-		want     bool
-	}{
-		{"inside a day window", morning, "05:00", "17:00", set, true},
-		{"outside a day window", late, "05:00", "17:00", set, false},
-		{"to is exclusive", time.Date(2026, 10, 15, 22, 0, 0, 0, time.UTC), "05:00", "17:00", set, false},
-		{"wrap: late is inside", late, "22:00", "06:00", set, true},
-		{"wrap: morning is outside", morning, "22:00", "06:00", set, false},
-		{"from == to is all day", late, "05:00", "05:00", set, true},
-		{"plant-local, not UTC: 14:00Z is 09:00 CDT", morning, "13:00", "15:00", set, false},
-		{"zone unset: always open", late, "05:00", "17:00", unset, true},
-	}
-	for _, c := range cases {
-		if got := inCleaningWindow(c.now, c.from, c.to, c.z); got != c.want {
-			t.Errorf("%s: = %v, want %v", c.name, got, c.want)
-		}
-	}
-}
-
-// TestParseCleaningFrequency pins the segment's four answers, typed with or
-// without a space or as a Go duration, and that 3 h is not one of them.
+// TestParseCleaningFrequency pins the segment's four answers (4, 8, 12, 24 h),
+// typed with or without a space or as a Go duration, and that the old short
+// ones and 3 h are not among them.
 func TestParseCleaningFrequency(t *testing.T) {
 	t.Parallel()
-	for in, want := range map[string]bool{"1h": true, "2 h": true, "4h0m0s": true, " 8 h ": true,
-		"3h": false, "30m": false, "": false, "soon": false} {
+	for in, want := range map[string]bool{"4h": true, "8 h": true, "12h0m0s": true, " 24 h ": true,
+		"1h": false, "2h": false, "3h": false, "30m": false, "": false, "soon": false} {
 		if _, ok := parseCleaningFrequency(in); ok != want {
 			t.Errorf("parseCleaningFrequency(%q) ok = %v, want %v", in, ok, want)
 		}
 	}
 }
 
-// TestValidateCleaningSetup pins the field errors: only 1/2/4/8 h, HH:MM
-// hours, a percent battery floor.
+// TestValidateCleaningSetup pins the field errors: only 4/8/12/24 h and a
+// percent battery floor. There are no active hours to check.
 func TestValidateCleaningSetup(t *testing.T) {
 	t.Parallel()
-	ok := cleaning.Setup{Frequency: 4 * time.Hour, ActiveFrom: "05:00", ActiveTo: "23:00", MinBattery: 25}
+	ok := cleaning.Setup{Frequency: 24 * time.Hour, MinBattery: 25}
 	if f := validateCleaningSetup(ok); len(f) != 0 {
 		t.Errorf("valid setup refused: %v", f)
 	}
-	bad := cleaning.Setup{Frequency: 3 * time.Hour, ActiveFrom: "5am", ActiveTo: "25:00", MinBattery: 101}
+	bad := cleaning.Setup{Frequency: 2 * time.Hour, MinBattery: 101}
 	f := validateCleaningSetup(bad)
-	for _, k := range []string{"frequency", "active_from", "active_to", "min_battery"} {
+	for _, k := range []string{"frequency", "min_battery"} {
 		if f[k] == "" {
 			t.Errorf("%s not refused: %v", k, f)
 		}
@@ -227,9 +190,7 @@ func TestCleanNowRefusal(t *testing.T) {
 // TestCleaningWords pins the live words for the setup block's title.
 func TestCleaningWords(t *testing.T) {
 	t.Parallel()
-	set := planttime.Zone{Loc: time.UTC, Source: planttime.SourceConfig}
-	base := CleaningWordsFacts{Points: []string{"LM513"}, CanReport: true, Zone: set,
-		ActiveFrom: "00:00", ActiveTo: "00:00", Now: time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)}
+	base := CleaningWordsFacts{Points: []string{"LM513"}, CanReport: true}
 	cases := []struct {
 		name string
 		mut  func(*CleaningWordsFacts)
@@ -241,8 +202,6 @@ func TestCleaningWords(t *testing.T) {
 			f.PointProblems = map[string]string{"points.0": "LM513 is not in the scene"}
 		}, "stopped: LM513 is not in the scene"},
 		{"no seam", func(f *CleaningWordsFacts) { f.CanReport = false }, "stopped: the fleet cannot report a mission's state"},
-		{"zone unset", func(f *CleaningWordsFacts) { f.Zone = planttime.Zone{Loc: time.UTC, Source: planttime.SourceDefault} }, "running · active hours ignored: no plant timezone is set"},
-		{"outside hours", func(f *CleaningWordsFacts) { f.ActiveFrom, f.ActiveTo = "13:00", "14:00" }, "running · outside active hours"},
 	}
 	for _, c := range cases {
 		f := base

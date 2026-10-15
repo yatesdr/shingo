@@ -33,13 +33,15 @@ const (
 // Retention is how long a mission row is kept.
 const Retention = 90 * 24 * time.Hour
 
-// Setup is the one cleaning mission a plant has. ActiveFrom and ActiveTo are
-// plant-local wall-clock times "HH:MM"; the zone is planttime's, not stored.
+// Setup is the one cleaning mission a plant has.
+//
+// The table's active_from and active_to are not on it: the loop runs around the
+// clock (owner, 2026-10-15). SaveSetup writes them as 00:00-00:00, the whole
+// day, and nothing reads them; they stay only so v158 is unchanged on the two
+// plants it already ran at.
 type Setup struct {
 	Points     []string
 	Frequency  time.Duration
-	ActiveFrom string
-	ActiveTo   string
 	MinBattery int
 	UpdatedAt  time.Time
 }
@@ -57,11 +59,9 @@ func GetSetup(db *sql.DB) (Setup, bool, error) {
 		secs   int64
 	)
 	err := db.QueryRow(`SELECT array_to_json(points)::text,
-			EXTRACT(EPOCH FROM frequency)::bigint,
-			to_char(active_from, 'HH24:MI'), to_char(active_to, 'HH24:MI'),
-			min_battery, updated_at
+			EXTRACT(EPOCH FROM frequency)::bigint, min_battery, updated_at
 		FROM cleaning_mission_setup WHERE id = 1`).
-		Scan(&points, &secs, &s.ActiveFrom, &s.ActiveTo, &s.MinBattery, &s.UpdatedAt)
+		Scan(&points, &secs, &s.MinBattery, &s.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Setup{}, false, nil
 	}
@@ -88,12 +88,12 @@ func SaveSetup(db *sql.DB, s Setup) error {
 	}
 	_, err := db.Exec(`INSERT INTO cleaning_mission_setup
 			(id, points, frequency, active_from, active_to, min_battery, updated_at)
-		VALUES (1, $1, make_interval(secs => $2), $3::time, $4::time, $5, now())
+		VALUES (1, $1, make_interval(secs => $2), '00:00', '00:00', $3, now())
 		ON CONFLICT (id) DO UPDATE SET
 			points = EXCLUDED.points, frequency = EXCLUDED.frequency,
 			active_from = EXCLUDED.active_from, active_to = EXCLUDED.active_to,
 			min_battery = EXCLUDED.min_battery, updated_at = EXCLUDED.updated_at`,
-		points, s.Frequency.Seconds(), s.ActiveFrom, s.ActiveTo, s.MinBattery)
+		points, s.Frequency.Seconds(), s.MinBattery)
 	if err != nil {
 		return fmt.Errorf("cleaning setup save: %w", err)
 	}

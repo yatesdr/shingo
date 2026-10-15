@@ -38,7 +38,7 @@ func refusalOf(p cleaningPage, vehicle string) (string, bool) {
 }
 
 // TestCleaningSetup_SaveAndFieldErrors pins the setup door: a 3 h frequency,
-// a point the scene does not have and a bad clock are refused in the config
+// a point the scene does not have and a bad battery floor are refused in the config
 // page's shape with each error keyed by its field (points.<i> by the point's
 // place); LocationMarks that are not Core nodes save; the saved setup reads
 // back; and an empty list is a saved setup with the loop off.
@@ -52,7 +52,7 @@ func TestCleaningSetup_SaveAndFieldErrors(t *testing.T) {
 
 	rec := postJSON(t, h.apiRobotCleaningSetup, "/api/robots/cleaning/setup", map[string]any{
 		"points": []string{"LM513", "LM999"}, "frequency": "3h",
-		"active_from": "5am", "active_to": "23:00", "min_battery": 25,
+		"min_battery": 125,
 	})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("refused save: %d %s", rec.Code, rec.Body.String())
@@ -62,7 +62,7 @@ func TestCleaningSetup_SaveAndFieldErrors(t *testing.T) {
 		Errors map[string]string `json:"errors"`
 	}
 	testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &refused), "decode refusal")
-	for _, k := range []string{"frequency", "points.1", "active_from"} {
+	for _, k := range []string{"frequency", "points.1", "min_battery"} {
 		if refused.Errors[k] == "" {
 			t.Errorf("no field error for %s: %v", k, refused.Errors)
 		}
@@ -75,15 +75,14 @@ func TestCleaningSetup_SaveAndFieldErrors(t *testing.T) {
 	}
 
 	rec = postJSON(t, h.apiRobotCleaningSetup, "/api/robots/cleaning/setup", map[string]any{
-		"points": []string{"LM513", " LM514 ", ""}, "frequency": "4h",
-		"active_from": "05:00", "active_to": "23:00", "min_battery": 30,
+		"points": []string{"LM513", " LM514 ", ""}, "frequency": "24 h", "min_battery": 30,
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("good save: %d %s", rec.Code, rec.Body.String())
 	}
 	p := cleaningGet(t, h)
-	if !p.Setup.Saved || strings.Join(p.Setup.Points, ",") != "LM513,LM514" || p.Setup.Frequency != "4h" ||
-		p.Setup.ActiveFrom != "05:00" || p.Setup.MinBattery != 30 {
+	if !p.Setup.Saved || strings.Join(p.Setup.Points, ",") != "LM513,LM514" || p.Setup.Frequency != "24h" ||
+		p.Setup.MinBattery != 30 {
 		t.Errorf("saved setup = %+v", p.Setup)
 	}
 	// The test engine runs the simulator, which cannot report a mission's
@@ -93,7 +92,7 @@ func TestCleaningSetup_SaveAndFieldErrors(t *testing.T) {
 	}
 
 	rec = postJSON(t, h.apiRobotCleaningSetup, "/api/robots/cleaning/setup", map[string]any{
-		"points": []string{}, "frequency": "4h", "active_from": "05:00", "active_to": "23:00", "min_battery": 30,
+		"points": []string{}, "frequency": "24h", "min_battery": 30,
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("empty save: %d %s", rec.Code, rec.Body.String())
@@ -138,7 +137,7 @@ func TestCleaning_RefusalIsThePostsWords(t *testing.T) {
 	testutil.MustNoErr(t, db.UpsertScenePoint(&scene.Point{AreaName: "default", InstanceName: "LM513",
 		ClassName: "LocationMark", PropertiesJSON: "{}"}), "seed LM513")
 	if rec := postJSON(t, h.apiRobotCleaningSetup, "/api/robots/cleaning/setup", map[string]any{
-		"points": []string{"LM513"}, "frequency": "4h", "active_from": "00:00", "active_to": "00:00", "min_battery": 25,
+		"points": []string{"LM513"}, "frequency": "4h", "min_battery": 25,
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
 	}

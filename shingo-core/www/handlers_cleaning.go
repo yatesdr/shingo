@@ -56,7 +56,6 @@ type cleaningPage struct {
 	Setup    service.CleaningSetupView     `json:"setup"`
 	Words    string                        `json:"words"`
 	Problems map[string]string             `json:"problems"`
-	ZoneSet  bool                          `json:"zone_set"`
 	Robots   []cleaningRobotLine           `json:"robots"`
 	Missions []service.CleaningMissionView `json:"missions"`
 	Since    time.Time                     `json:"since"`
@@ -94,11 +93,10 @@ func (h *Handlers) apiRobotCleaning(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out := cleaningPage{
-		Setup: setup, Problems: problems, ZoneSet: plantZone.Set(),
+		Setup: setup, Problems: problems,
 		Missions: rec.Missions, Since: rec.Since,
 		Words: engine.CleaningWords(engine.CleaningWordsFacts{
 			Points: setup.Points, PointProblems: problems, CanReport: canReport,
-			Zone: plantZone, ActiveFrom: setup.ActiveFrom, ActiveTo: setup.ActiveTo, Now: now,
 		}),
 	}
 	for vid, l := range lines {
@@ -122,21 +120,18 @@ func (h *Handlers) apiRobotCleaning(w http.ResponseWriter, r *http.Request) {
 // apiRobotCleaningSetup saves the plant's one cleaning mission. A refusal is
 // the config page's shape, {ok: false, error, errors: {field: msg}}, so the
 // setup block draws each message under its row (points.<i> under point i).
-// POST /api/robots/cleaning/setup {points[], frequency, active_from, active_to, min_battery}
+// POST /api/robots/cleaning/setup {points[], frequency, min_battery}
 func (h *Handlers) apiRobotCleaningSetup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Points     []string `json:"points"`
 		Frequency  string   `json:"frequency"`
-		ActiveFrom string   `json:"active_from"`
-		ActiveTo   string   `json:"active_to"`
 		MinBattery int      `json:"min_battery"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
 	}
 	err := h.orchestration.SaveCleaningSetup(engine.CleaningSetupInput{
-		Points: req.Points, Frequency: req.Frequency,
-		ActiveFrom: req.ActiveFrom, ActiveTo: req.ActiveTo, MinBattery: req.MinBattery,
+		Points: req.Points, Frequency: req.Frequency, MinBattery: req.MinBattery,
 	}, h.getUsername(r))
 	var refusal *engine.CleaningSetupRefusal
 	switch {

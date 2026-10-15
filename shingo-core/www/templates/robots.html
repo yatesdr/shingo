@@ -183,16 +183,10 @@
       </div>
       <datalist id="scene-points"></datalist>
       <div class="set-fld" data-needs-points>
-        <label id="cleaning-freq-l">Frequency<small>each robot at most once per this, counted from when it was last sent</small></label>
+        <label id="cleaning-freq-l">Frequency<small>each robot at most once per this, counted from when it was last sent · around the clock</small></label>
         <div class="v"><div class="set-seg" role="group" aria-labelledby="cleaning-freq-l" data-seg="frequency" data-field="frequency">
-          <button type="button" data-val="1h">1 h</button><button type="button" data-val="2h">2 h</button><button type="button" data-val="4h">4 h</button><button type="button" data-val="8h">8 h</button>
+          <button type="button" data-val="4h">4 h</button><button type="button" data-val="8h">8 h</button><button type="button" data-val="12h">12 h</button><button type="button" data-val="24h">24 h</button>
         </div></div>
-      </div>
-      <div class="set-fld" data-needs-points>
-        <label for="cleaning-from">Active hours<small>plant-local · from equal to to is all day · from after to runs across midnight</small></label>
-        <div class="v"><input class="set-inp" id="cleaning-from" type="text" size="5" data-field="active_from" placeholder="05:00" aria-label="From">
-          <span class="set-dim">to</span>
-          <input class="set-inp" id="cleaning-to" type="text" size="5" data-field="active_to" placeholder="23:00" aria-label="To"></div>
       </div>
       <div class="set-fld" data-needs-points>
         <label for="cleaning-battery">Minimum battery<small>percent · a robot below it is not sent</small></label>

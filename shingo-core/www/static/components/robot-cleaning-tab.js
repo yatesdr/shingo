@@ -17,9 +17,9 @@ import { apiResult, collectList, debounce, escapeHtml, formatTime, settingsPage 
 const root = () => document.getElementById('cleaning-setup');
 const pointsBox = () => document.getElementById('cleaning-points');
 
-// A setup never saved starts all day at the column's 25 % floor; frequency is
-// left for the person to choose.
-const NEVER_SAVED = { points: [], frequency: '', active_from: '00:00', active_to: '00:00', min_battery: '25' };
+// A setup never saved starts at the column's 25 % floor; frequency is left for
+// the person to choose. There are no active hours: the loop runs around the clock.
+const NEVER_SAVED = { points: [], frequency: '', min_battery: '25' };
 
 let page = null;
 
@@ -113,7 +113,7 @@ function setSeg(value) {
   });
 }
 
-// §33.7: frequency, hours and battery hide while there is no point.
+// §33.7: frequency and battery hide while there is no point.
 function refreshShown() {
   const none = readPoints().length === 0;
   root().querySelectorAll('[data-needs-points]').forEach((row) => { row.hidden = none; });
@@ -123,8 +123,6 @@ function read() {
   return {
     points: readPoints(),
     frequency: segValue(),
-    active_from: document.getElementById('cleaning-from').value.trim(),
-    active_to: document.getElementById('cleaning-to').value.trim(),
     min_battery: document.getElementById('cleaning-battery').value.trim(),
   };
 }
@@ -132,8 +130,6 @@ function read() {
 function write(v) {
   writePoints(v.points);
   setSeg(v.frequency);
-  document.getElementById('cleaning-from').value = v.active_from;
-  document.getElementById('cleaning-to').value = v.active_to;
   document.getElementById('cleaning-battery').value = v.min_battery;
   refreshShown();
 }
@@ -146,8 +142,7 @@ function validate(d) {
 
 function save(d) {
   return apiResult('POST', '/api/robots/cleaning/setup', {
-    points: d.points, frequency: d.frequency, active_from: d.active_from, active_to: d.active_to,
-    min_battery: parseInt(d.min_battery, 10),
+    points: d.points, frequency: d.frequency, min_battery: parseInt(d.min_battery, 10),
   }).then((r) => {
     const b = (r.body && typeof r.body === 'object') ? r.body : {};
     if (r.ok && b.ok !== false) loadCleaning();
@@ -207,8 +202,7 @@ export function loadCleaning() {
       if (!page && root()) {
         const s = d.setup;
         write(s.saved ? {
-          points: s.points, frequency: s.frequency, active_from: s.active_from,
-          active_to: s.active_to, min_battery: String(s.min_battery),
+          points: s.points, frequency: s.frequency, min_battery: String(s.min_battery),
         } : NEVER_SAVED);
         page = settingsPage(root(), { sections: { mission: { label: 'clean mission', read, write, validate, save } } });
         root().addEventListener('click', (e) => {

@@ -24,7 +24,7 @@ func TestSetup_RoundTrip(t *testing.T) {
 	}
 	in := cleaning.Setup{
 		Points: []string{"LM513", "LM514"}, Frequency: 4 * time.Hour,
-		ActiveFrom: "05:00", ActiveTo: "23:30", MinBattery: 25,
+		MinBattery: 25,
 	}
 	if err := cleaning.SaveSetup(db.DB, in); err != nil {
 		t.Fatalf("SaveSetup: %v", err)
@@ -34,7 +34,7 @@ func TestSetup_RoundTrip(t *testing.T) {
 		t.Fatalf("GetSetup: ok=%v err=%v", ok, err)
 	}
 	if !reflect.DeepEqual(got.Points, in.Points) || got.Frequency != in.Frequency ||
-		got.ActiveFrom != in.ActiveFrom || got.ActiveTo != in.ActiveTo || got.MinBattery != in.MinBattery {
+		got.MinBattery != in.MinBattery {
 		t.Errorf("GetSetup = %+v, want %+v", got, in)
 	}
 	if got.UpdatedAt.IsZero() {
@@ -42,7 +42,7 @@ func TestSetup_RoundTrip(t *testing.T) {
 	}
 
 	// Empty points is a saved setup with the loop off, not an absent row.
-	if err := cleaning.SaveSetup(db.DB, cleaning.Setup{Frequency: time.Hour, ActiveFrom: "00:00", ActiveTo: "00:00", MinBattery: 30}); err != nil {
+	if err := cleaning.SaveSetup(db.DB, cleaning.Setup{Frequency: 24 * time.Hour, MinBattery: 30}); err != nil {
 		t.Fatalf("SaveSetup empty: %v", err)
 	}
 	got, ok, err = cleaning.GetSetup(db.DB)

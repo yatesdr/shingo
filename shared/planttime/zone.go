@@ -24,11 +24,12 @@ const (
 
 // Zone is Core's resolved plant timezone and the knob that produced it.
 //
-// It lives here, not in www, because the engine needs the same answer: the
-// cleaning loop's active hours are plant-local, and a second resolver in the
-// engine would be a second authority that disagrees with every screen the
-// first time someone sets PLANT_TIMEZONE. www's plantLocation and the engine
-// both call ResolveZone.
+// It lives here, not in www, so that anything outside www that needs the
+// plant's clock asks the same resolver instead of writing a second one that
+// disagrees with every screen the first time someone sets PLANT_TIMEZONE. It
+// moved for the cleaning loop's active hours; those were withdrawn the same day
+// (owner, 2026-10-15: the loop runs around the clock), so www's plantLocation
+// is today's only caller.
 type Zone struct {
 	Loc    *time.Location
 	Source string // SourceEnv, SourceConfig or SourceDefault
