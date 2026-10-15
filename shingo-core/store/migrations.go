@@ -4563,7 +4563,7 @@ func v150BinPlacementSeq(tx *sql.Tx) error {
 	return nil
 }
 
-// v156NodeDisplayName adds nodes.display_name. DEFAULT '' is the whole
+// v156NodeDisplayName adds nodes.display_name. The empty-string default is the whole
 // design: an unset display name renders the node's name, so every existing
 // row and every screen reads exactly as it did the moment this lands.
 func v156NodeDisplayName(tx *sql.Tx) error {

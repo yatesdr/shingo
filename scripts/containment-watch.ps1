@@ -1,6 +1,8 @@
 param(
   [string]$CoreUrl = "http://localhost:8083",
-  [string]$EdgeUrl = "http://10.222.111.245:8081",
+  # Doc default (TEST-NET-1); pass the real edge at run time:
+  #   .\containment-watch.ps1 -EdgeUrl http://<edge-host>:8081
+  [string]$EdgeUrl = "http://192.0.2.10:8081",
   [int]$DurationMin = 120,
   [int]$PollSec = 5,
   [string]$Report = "$env:TEMP\opencode\containment-watch-report.txt"
