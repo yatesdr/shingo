@@ -1365,12 +1365,14 @@ func (d *Dispatcher) LaneLock() *LaneLock { return d.laneLock }
 // lane slot. A read error is returned, never swallowed — a caller that cannot
 // tell whether a node is in a lane must fail closed, not assume it is not.
 //
-// Exported for the ONE caller that must answer this question WITHOUT admission:
-// the manual robot-move command (www/handlers_robots.go), which creates no order
-// and so has nothing to park, nothing to release, and nothing to wake. Its rule
-// is geometry rather than state — a lane destination is refused outright — and
-// that rule needs the lane fact and nothing else. Any caller that has an order
-// should be asking admission instead.
+// Exported for the callers that must answer this question WITHOUT admission,
+// because they create no Core order and so have nothing to park, nothing to
+// release, and nothing to wake: the manual robot-move command
+// (www/handlers_robots.go) and the cleaning mission's points check
+// (engine.CleaningPointProblems, at save, in the cleaning tick, and on the
+// Cleaning tab). Their rule is geometry rather than state — a lane point is
+// refused outright — and that rule needs the lane fact and nothing else. Any
+// caller that has an order should be asking admission instead.
 func (d *Dispatcher) LaneForNode(nodeID int64) (*nodes.Node, error) {
 	return d.db.LaneForNode(nodeID)
 }

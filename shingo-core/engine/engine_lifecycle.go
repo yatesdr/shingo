@@ -147,8 +147,8 @@ func (e *Engine) Start() {
 	// Start periodic connection health check
 	go e.connectionHealthLoop()
 
-	// Start robot status refresh loop (2s)
-	go e.robotRefreshLoop()
+	// Start robot status refresh loop (2s), and the loops that read its poll.
+	e.startRobotPollLoops()
 
 	// Start the orphaned-claim sweep.
 	go e.claimSweepLoop()
@@ -229,6 +229,20 @@ func (e *Engine) Start() {
 	e.runCMSPoster()
 
 	e.logFn("engine: started")
+}
+
+// startRobotPollLoops starts the 2-second robot poll and the two loops that
+// act on what it last saw: the air-knife cleaning tick and the hourly lidar
+// round. Both read e.latestPolledRobots and need the dispatcher, which Start
+// has built by the time this runs; the cleaning tick's first pass is a minute
+// out and the lidar round waits for HH:05 UTC, so the poll is well under way
+// before either acts. Neither does anything until the plant has a cleaning
+// mission set up (cleaning) or a fleet that can relay a laser frame (lidar),
+// and each says so once.
+func (e *Engine) startRobotPollLoops() {
+	go e.robotRefreshLoop()
+	go e.cleaningLoop()
+	go e.lidarHoursLoop()
 }
 
 // newCMSPoster builds the middleware poster when the site has one, and returns

@@ -225,6 +225,7 @@ func TestCensus_FleetTransportCreateIsNotADoor(t *testing.T) {
 	got := callSitesExcept(t, fleetCallers, "db", "CreateOrder")
 	sameSites(t, "the fleet CreateOrder callers", got, map[string]string{
 		"dispatch/fleet_handover.go:handoverToFleet":   "the handover: an order row that already exists goes to the fleet — the one sanctioned call",
+		"engine/cleaning.go:dispatchCleaning":          "the air-knife cleaning order: a pinned vendor transport with NO order row, recorded only in cleaning_missions — not a door, and invisible to every order reader by design",
 		"fleet/seerrds/adapter.go:CreateOrder":         "the adapter's own implementation, calling the RDS client",
 		"fleet/seerrds/adapter.go:executeOrderCommand": "the adapter's command path, calling the RDS client",
 		"www/handlers_robots.go:apiRobotMoveTo":        "a person drives a robot to a point: a vendor transport with NO order row — not a door, and invisible to every order reader by design",

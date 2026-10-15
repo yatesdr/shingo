@@ -20,10 +20,14 @@ import (
 // staging sweep interval. (It also released staged bins whose staging had
 // expired; staging no longer expires, resolveNodeStaging.)
 
+// robotPollInterval is robotRefreshLoop's cadence. The hourly robot record
+// caps the time one poll may credit at twice this (robot_hours.go).
+const robotPollInterval = 2 * time.Second
+
 // robotRefreshLoop polls robot status every 2 seconds and emits EventRobotsUpdated
 // only when the robot state has actually changed.
 func (e *Engine) robotRefreshLoop() {
-	ticker := clock.Default().NewTicker(2 * time.Second)
+	ticker := clock.Default().NewTicker(robotPollInterval)
 	defer ticker.Stop()
 	var prevHash [sha256.Size]byte
 	for {
@@ -44,7 +48,9 @@ func (e *Engine) robotRefreshLoop() {
 				continue
 			}
 			// Update robot position cache (used for telemetry snapshots)
+			now := time.Now()
 			e.robotsMu.Lock()
+			e.latestPoll, e.latestPollAt = robots, now
 			for _, r := range robots {
 				// The fleet (SEER RDS) occasionally lists an unprovisioned slot
 				// with no vehicle id; don't cache a keyless ghost — it renders as
@@ -61,7 +67,12 @@ func (e *Engine) robotRefreshLoop() {
 			// short-circuit below: the readings worth keeping while a robot
 			// sits still — degrading in place, stuck on a job, or lost —
 			// are exactly the ones that leave the fleet hash untouched.
-			e.sampleRobotConfidence(robots, time.Now())
+			e.sampleRobotConfidence(robots, now)
+
+			// The hourly robot record taps the same poll, before the hash
+			// short-circuit for the same reason: time connected and charging
+			// accrues on the polls where nothing changed.
+			e.tapRobotHours(robots, now)
 
 			data, _ := json.Marshal(robots)
 			hash := sha256.Sum256(data)

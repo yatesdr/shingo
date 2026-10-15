@@ -339,17 +339,18 @@ func TestMapRobotStatus_DisconnectedZeroStatus(t *testing.T) {
 
 // TestMapRobotAlarms pins the Q-026 severity flattening: the four SEER
 // rbk_report.alarms buckets collapse into one list, each tagged with its
-// severity, fatal→error→warning→notice so the most severe lead.
+// severity, fatal→error→warning→notice so the most severe lead, and the
+// vendor's times and timestamp ride along (the hourly onset rule reads them).
 func TestMapRobotAlarms(t *testing.T) {
 	t.Parallel()
 	got := mapRobotAlarms(rds.RbkAlarms{
-		Errors:   []rds.RbkAlarm{{Code: 52200, Desc: "robot is blocked"}},
+		Errors:   []rds.RbkAlarm{{Code: 52200, Desc: "robot is blocked", Times: 3, Timestamp: 1760540000}},
 		Fatals:   []rds.RbkAlarm{{Code: 50401, Desc: "battery too low"}},
 		Warnings: []rds.RbkAlarm{{Code: 54211, Desc: "low battery"}},
 	})
 	want := []fleet.RobotAlarm{
 		{Code: 50401, Severity: "fatal", Desc: "battery too low"},
-		{Code: 52200, Severity: "error", Desc: "robot is blocked"},
+		{Code: 52200, Severity: "error", Desc: "robot is blocked", Times: 3, Timestamp: 1760540000},
 		{Code: 54211, Severity: "warning", Desc: "low battery"},
 	}
 	if !reflect.DeepEqual(got, want) {

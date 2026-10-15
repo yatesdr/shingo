@@ -193,6 +193,19 @@ type Engine struct {
 	// one extra row per robot to re-establish.
 	confidence *robotConfidenceSampler
 
+	// robotHours carries the hourly robot record's running totals
+	// (robot_hours.go). Single-writer like confidence: created and used only
+	// by tapRobotHours, from robotRefreshLoop's goroutine.
+	robotHours *robotHoursTap
+
+	// latestPoll is the robots of the most recent successful poll and when it
+	// landed. robotsCache is never pruned, so a robot RDS stopped listing stays
+	// in it forever; the loops that act on "the fleet now" (the hourly record,
+	// cleaning, lidar hours) read this instead. Guarded by robotsMu, written
+	// only by robotRefreshLoop.
+	latestPoll   []fleet.RobotStatus
+	latestPollAt time.Time
+
 	// lastSceneSync is when the previous scene observation landed, so a diff
 	// row can record the WINDOW an edit happened in rather than only the
 	// moment it was noticed. A diff row is one observed edit, and two edits
@@ -367,6 +380,16 @@ func (e *Engine) GetCachedRobotStatus(vehicleID string) (fleet.RobotStatus, bool
 	defer e.robotsMu.RUnlock()
 	r, ok := e.robotsCache[vehicleID]
 	return r, ok
+}
+
+// latestPolledRobots returns the robots of the most recent successful poll
+// and when it landed; nil and the zero time before the first. The slice is the
+// poll's own and is never written after it is stored, so callers may range it
+// without the lock but must not modify it.
+func (e *Engine) latestPolledRobots() ([]fleet.RobotStatus, time.Time) {
+	e.robotsMu.RLock()
+	defer e.robotsMu.RUnlock()
+	return e.latestPoll, e.latestPollAt
 }
 
 // GetAllCachedRobots returns a snapshot of all cached robot statuses.

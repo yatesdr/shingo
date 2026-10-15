@@ -182,7 +182,8 @@ func mapRobotAlarms(a rds.RbkAlarms) []fleet.RobotAlarm {
 	out := make([]fleet.RobotAlarm, 0, n)
 	add := func(severity string, alarms []rds.RbkAlarm) {
 		for _, al := range alarms {
-			out = append(out, fleet.RobotAlarm{Code: al.Code, Severity: severity, Desc: al.Desc})
+			out = append(out, fleet.RobotAlarm{Code: al.Code, Severity: severity, Desc: al.Desc,
+				Times: al.Times, Timestamp: al.Timestamp})
 		}
 	}
 	add("fatal", a.Fatals)

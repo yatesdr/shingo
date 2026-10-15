@@ -81,6 +81,11 @@ import (
 //     PASS would put an unrecorded robot in a corridor the next order's
 //     occupancy read cannot see. The genuine ungoverned move for maintenance is
 //     the vendor's own console, outside Core.
+//   - the air-knife cleaning order (engine/cleaning.go dispatchCleaning) refuses
+//     the same way: a cleaning point that is a Core lane slot is refused when
+//     the mission is saved and re-checked on every tick before anything is sent
+//     (engine.CleaningPointProblems). Like the manual move it has no order row,
+//     so nothing to park and nothing to wake it.
 //
 // THE EXCEPTION LIST IS EMPTY. Every path that can put a robot in a lane either
 // asks admission or cannot reach a lane by construction. A path that is neither

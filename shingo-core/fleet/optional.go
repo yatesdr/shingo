@@ -312,10 +312,18 @@ type RobotMapDownloader interface {
 // RobotAlarm is a vendor-neutral active robot alarm (Q-026). JSON tags match
 // domain.PrimaryFailureReason's seerRobotAlarm so a marshaled []RobotAlarm
 // feeds the failure classifier directly when snapshotted onto a mission.
+//
+// Times and Timestamp are the vendor's repeat count and last-raised time (unix
+// seconds), carried as OrderMessage already carries them. The hourly onset
+// count (engine/robot_hours.go) reads Timestamp: a code that stays in the list
+// but whose Timestamp moved was raised again, which a present/absent diff of
+// two polls cannot see. Zero means the vendor did not say.
 type RobotAlarm struct {
-	Code     int    `json:"code"`
-	Severity string `json:"severity"` // fatal | error | warning | notice
-	Desc     string `json:"desc"`
+	Code      int    `json:"code"`
+	Severity  string `json:"severity"` // fatal | error | warning | notice
+	Desc      string `json:"desc"`
+	Times     int    `json:"times,omitempty"`
+	Timestamp int64  `json:"timestamp,omitempty"`
 }
 
 // State returns a computed state string for the robot: offline, error, busy, paused, or ready.
@@ -433,4 +441,39 @@ type ScenePoint struct {
 	PosY           float64
 	PosZ           float64
 	PropertiesJSON string // raw JSON of vendor properties
+}
+
+// LidarFrameReader reads one laser frame from one named robot, reduced to a
+// few numbers per lidar.
+//
+// Optional, and separate from every other fleet call for the same reason as
+// RobotMapDownloader: a different SHAPE of call — tens of kilobytes from one
+// named robot, rather than the fleet-wide poll everything else here does. A
+// backend without it (the simulator) simply has no lidar data.
+//
+// THIS IS NOT A POLL AND MUST NOT BECOME ONE beyond a frame per parked robot
+// per hour (engine/robot_lidar.go). The frame comes through the fleet
+// manager's relay to the robot, never a connection from Core to a robot: RDS
+// already aggregates, and asking it to relay one call to one robot keeps that.
+//
+// The beams are reduced and discarded inside the backend; nothing above it
+// sees one.
+type LidarFrameReader interface {
+	ReadLidarFrames(vehicleID string) ([]LidarStats, error)
+}
+
+// LidarStats is one lidar's frame reduced. The rssi quartiles are over VALID
+// beams only (by the robot's own valid flag, never by the rssi value) and nil
+// when no beam was valid. NearValid counts valid beams closer than 0.3 m. It is
+// data collection only: nothing reads it as a dirt signal, and nothing
+// compares one robot's frame with another's.
+type LidarStats struct {
+	Lidar        string // device_name as the robot reports it
+	UseForLoc    bool
+	Beams        int
+	Valid        int
+	RSSIMedValid *float64
+	RSSIP25Valid *float64
+	RSSIP75Valid *float64
+	NearValid    int
 }

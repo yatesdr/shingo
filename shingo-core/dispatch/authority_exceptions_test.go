@@ -20,21 +20,26 @@ import (
 // fleet order can be created from, and who asks admission — rather than on a
 // count of call sites.
 
-// TestFleetCreate_HasExactlyTwoDoors is the load-bearing one.
+// TestFleetCreate_HasExactlyThreeDoors is the load-bearing one.
 //
-// A robot moves because a fleet order was created. There are two places in Core
-// that can create one:
+// A robot moves because a fleet order was created. There are three places in
+// Core that can create one:
 //
 //   - handoverToFleet (dispatch/fleet_handover.go), which every order-backed
 //     dispatch funnels through — plain, complex, gated. Admission is asked by
 //     each of its callers' paths, which is what the rest of this file checks.
 //   - apiRobotMoveTo (www/handlers_robots.go), the manual robot move, which has
 //     no order and is therefore refused a lane destination outright.
+//   - dispatchCleaning (engine/cleaning.go), the air-knife cleaning order,
+//     which has no order row either and is refused a lane the same way: a
+//     cleaning point that is a Core lane slot is refused when the mission is
+//     saved and re-checked on every tick before anything is sent
+//     (engine.CleaningPointProblems; pinned by TestSaveCleaningSetup_Refusals).
 //
-// A THIRD would be a path with no established relationship to admission at all,
+// A FOURTH would be a path with no established relationship to admission at all,
 // and it would be invisible in a review of dispatch/ alone — the second door is
 // in www/. That is exactly how the manual robot move stayed off the map.
-func TestFleetCreate_HasExactlyTwoDoors(t *testing.T) {
+func TestFleetCreate_HasExactlyThreeDoors(t *testing.T) {
 	t.Parallel()
 
 	root := repoRootFor(t)
@@ -44,6 +49,7 @@ func TestFleetCreate_HasExactlyTwoDoors(t *testing.T) {
 	known := map[string]string{
 		filepath.Join("shingo-core", "dispatch", "fleet_handover.go"): "the one order-backed door",
 		filepath.Join("shingo-core", "www", "handlers_robots.go"):     "the manual robot move; refuses lane destinations statically",
+		filepath.Join("shingo-core", "engine", "cleaning.go"):         "the air-knife cleaning order; refuses a lane-slot point at save and every tick",
 	}
 
 	var found []string
@@ -81,7 +87,7 @@ func TestFleetCreate_HasExactlyTwoDoors(t *testing.T) {
 
 	for _, f := range found {
 		if _, ok := known[f]; !ok {
-			t.Errorf("%s creates a fleet order and is not one of the two known doors.\n"+
+			t.Errorf("%s creates a fleet order and is not one of the three known doors.\n"+
 				"A new way to send a robot has to say how it answers the lane question: ask admission "+
 				"(and have something to park and something to wake it), or refuse a lane destination "+
 				"the way the manual robot move does. Add it to the map in admission.go and to this test.", f)

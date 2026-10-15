@@ -9,7 +9,8 @@ import (
 	"time"
 )
 
-// The Robokit proxy — how Core reaches a robot's own map.
+// The Robokit proxy — how Core reaches a robot's own map, and once an hour a
+// parked robot's laser frame (rds/lidar.go).
 //
 // RDS's own HTTP surface has no area or reflector endpoint at all: its /scene
 // returns advancedAreaList: [] and there is not one hit for "reflector" across
@@ -22,10 +23,12 @@ import (
 // which reaches the ports Core cannot. Verified read-only at Springfield
 // 2026-08-06: #4011 on port 19207 returned the whole 7.3 MB map.
 //
-// THIS IS NOT A SECOND POLL AND MUST NOT BECOME ONE. It is an on-change fetch,
-// gated by a hash that arrives on the /robotsStatus poll Core already makes.
-// The original design deliberately refused a second connection to every robot
-// because RDS already aggregates; this keeps that property by talking to RDS.
+// THIS IS NOT A SECOND POLL AND MUST NOT BECOME ONE. The map is an on-change
+// fetch, gated by a hash that arrives on the /robotsStatus poll Core already
+// makes; the laser frame is one call per parked robot per hour, from its own
+// loop (engine/robot_lidar.go), never the 2-second poll. The original design
+// deliberately refused a second connection to every robot because RDS already
+// aggregates; both keep that property by talking to RDS.
 
 // Robokit port numbers. Only the status port is reachable directly from the
 // Core box; the rest are why the proxy exists.
@@ -138,15 +141,23 @@ func (c *Client) GeneralRobokitAPI(req GeneralRobokitRequest, timeout time.Durat
 	// A RELAY THAT SUCCEEDS AND RETURNS NOTHING IS ALSO A FAILURE.
 	//
 	// Measured at Springfield 2026-08-07: every valid call -- #1000, #1300,
-	// #4011 -- returns the same 56-byte {"code":0,"msg":"ok"} after a uniform
-	// ~3.07 s. RDS accepts the request, does not reach the robot, and reports
+	// #4011 -- returned the same 56-byte {"code":0,"msg":"ok"} after a uniform
+	// ~3.07 s. RDS accepted the request, did not reach the robot, and reported
 	// success. A status field cannot catch that; only the size can.
+	//
+	// That was a state of Springfield's RDS, not a property of the relay.
+	// Re-measured 2026-10-15 at both plants (#1009, the laser frame): every
+	// call relayed a full ~37 KB frame in 44-81 ms, equal to a direct call to
+	// the robot within one beam (airknife-cleaning-2026-10-13/DATA-laser-frame-
+	// gauge.md §10). What changed on Springfield's RDS in between was not
+	// investigated, which is why the guard stays: if the empty envelope comes
+	// back, this is where it is caught instead of being stored as "no beams".
 	//
 	// The threshold is deliberately crude. Every Robokit response this package
 	// asks for carries a payload orders of magnitude larger than an envelope --
-	// a map list, or a 7.3 MB map -- so "smaller than a plausible envelope plus
-	// a little" separates "relayed nothing" from "relayed something" without
-	// needing to know the shape of each response.
+	// a map list, a 37 KB laser frame, or a 7.3 MB map -- so "smaller than a
+	// plausible envelope plus a little" separates "relayed nothing" from
+	// "relayed something" without needing to know the shape of each response.
 	if len(data) < minRelayedBody {
 		return nil, fmt.Errorf(
 			"rds robokit: vehicle %s port %d code %d relayed no payload (%d bytes, status ok) -- "+

@@ -3,6 +3,7 @@
 package robothours_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -24,17 +25,17 @@ func TestFlush_ReplaceAcrossTwoFlushes(t *testing.T) {
 
 	first := robothours.Hour{Hour: h, VehicleID: "AMR-01", ConnectedS: 300, ChargingS: 60, Metres: 12.5,
 		ChargeStarts: 1, BatteryMin: fptr(80), LiftCount: iptr(1000)}
-	if err := robothours.Flush(db.DB, []robothours.Hour{first}, nil); err != nil {
+	if err := robothours.Flush(context.Background(), db.DB, []robothours.Hour{first}, nil); err != nil {
 		t.Fatalf("flush 1: %v", err)
 	}
 	second := first
 	second.ConnectedS, second.Metres, second.BatteryMin, second.LiftCount = 600, 30, fptr(72), iptr(1004)
 	for i := 0; i < 2; i++ { // the second pass is a retry of the same totals
-		if err := robothours.Flush(db.DB, []robothours.Hour{second}, nil); err != nil {
+		if err := robothours.Flush(context.Background(), db.DB, []robothours.Hour{second}, nil); err != nil {
 			t.Fatalf("flush 2 (pass %d): %v", i, err)
 		}
 	}
-	hours, _, err := robothours.LoadHour(db.DB, h)
+	hours, _, err := robothours.LoadHour(context.Background(), db.DB, h)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,10 +47,10 @@ func TestFlush_ReplaceAcrossTwoFlushes(t *testing.T) {
 
 	// A robot never connected in the hour has no battery or lift reading:
 	// NULL, not 0.
-	if err := robothours.Flush(db.DB, []robothours.Hour{{Hour: h, VehicleID: "AMR-02"}}, nil); err != nil {
+	if err := robothours.Flush(context.Background(), db.DB, []robothours.Hour{{Hour: h, VehicleID: "AMR-02"}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	hours, _, err = robothours.LoadHour(db.DB, h)
+	hours, _, err = robothours.LoadHour(context.Background(), db.DB, h)
 	testutil.MustNoErr(t, err, "robothours.LoadHour")
 	if r := hours["AMR-02"]; r.BatteryMin != nil || r.LiftCount != nil {
 		t.Errorf("AMR-02 = %+v, want NULL battery and lift count", r)
@@ -66,16 +67,16 @@ func TestFlush_OnsetsAccumulateAcrossFlushes(t *testing.T) {
 	t1 := h.Add(5 * time.Minute)
 	hr := []robothours.Hour{{Hour: h, VehicleID: "AMR-11", ConnectedS: 300}}
 
-	if err := robothours.Flush(db.DB, hr, []robothours.Onset{{Hour: h, VehicleID: "AMR-11", Code: 54901, Onsets: 1, FirstAt: t1}}); err != nil {
+	if err := robothours.Flush(context.Background(), db.DB, hr, []robothours.Onset{{Hour: h, VehicleID: "AMR-11", Code: 54901, Onsets: 1, FirstAt: t1}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := robothours.Flush(db.DB, hr, []robothours.Onset{
+	if err := robothours.Flush(context.Background(), db.DB, hr, []robothours.Onset{
 		{Hour: h, VehicleID: "AMR-11", Code: 54901, Onsets: 2, FirstAt: t1},
 		{Hour: h, VehicleID: "AMR-11", Code: 52101, Onsets: 1, FirstAt: h.Add(20 * time.Minute)},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, onsets, err := robothours.LoadHour(db.DB, h)
+	_, onsets, err := robothours.LoadHour(context.Background(), db.DB, h)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +118,7 @@ func TestDayRows_PlantLocalAcrossDST(t *testing.T) {
 		{Hour: end.Add(-time.Hour), VehicleID: "AMR-01", Code: 54901, Onsets: 2, FirstAt: end.Add(-time.Hour)},
 		{Hour: end, VehicleID: "AMR-01", Code: 54901, Onsets: 7, FirstAt: end}, // Nov 2
 	}
-	if err := robothours.Flush(db.DB, hours, onsets); err != nil {
+	if err := robothours.Flush(context.Background(), db.DB, hours, onsets); err != nil {
 		t.Fatal(err)
 	}
 

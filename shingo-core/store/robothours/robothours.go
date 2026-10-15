@@ -11,6 +11,7 @@
 package robothours
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -58,12 +59,13 @@ type Onset struct {
 // replacing them with a fresh count.
 //
 // Keys must be unique within one call: Postgres refuses a multi-row upsert
-// that touches the same row twice.
-func Flush(db *sql.DB, hours []Hour, onsets []Onset) error {
+// that touches the same row twice. ctx bounds the whole transaction: the
+// caller is the 2-second robot poll, which a slow database must not stall.
+func Flush(ctx context.Context, db *sql.DB, hours []Hour, onsets []Onset) error {
 	if len(hours) == 0 && len(onsets) == 0 {
 		return nil
 	}
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("robot hours: begin: %w", err)
 	}
@@ -81,7 +83,7 @@ func Flush(db *sql.DB, hours []Hour, onsets []Onset) error {
 			args = append(args, h.Hour.UTC(), h.VehicleID, h.ConnectedS, h.ChargingS, h.BlockedS,
 				h.Metres, h.ChargeStarts, h.BatteryMin, h.LiftCount)
 		}
-		if _, err := tx.Exec(`INSERT INTO robot_hours
+		if _, err := tx.ExecContext(ctx, `INSERT INTO robot_hours
 				(hour, vehicle_id, connected_s, charging_s, blocked_s, metres, charge_starts, battery_min, lift_count)
 			VALUES `+strings.Join(vals, ",")+`
 			ON CONFLICT (hour, vehicle_id) DO UPDATE SET
@@ -102,7 +104,7 @@ func Flush(db *sql.DB, hours []Hour, onsets []Onset) error {
 			vals = append(vals, fmt.Sprintf("($%d,$%d,$%d,$%d,$%d)", n+1, n+2, n+3, n+4, n+5))
 			args = append(args, o.Hour.UTC(), o.VehicleID, o.Code, o.Onsets, o.FirstAt.UTC())
 		}
-		if _, err := tx.Exec(`INSERT INTO robot_alarm_onsets (hour, vehicle_id, code, onsets, first_at)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO robot_alarm_onsets (hour, vehicle_id, code, onsets, first_at)
 			VALUES `+strings.Join(vals, ",")+`
 			ON CONFLICT (hour, vehicle_id, code) DO UPDATE SET
 				onsets = EXCLUDED.onsets, first_at = EXCLUDED.first_at`, args...); err != nil {
@@ -115,10 +117,10 @@ func Flush(db *sql.DB, hours []Hour, onsets []Onset) error {
 // LoadHour reads every stored row for one UTC hour: what a writer seeds its
 // totals from the first time it touches that hour, so a restart mid-hour adds
 // to the record instead of overwriting it. Two queries, once per hour per
-// process.
-func LoadHour(db *sql.DB, hour time.Time) (map[string]Hour, map[string][]Onset, error) {
+// process. ctx bounds both, for the same reason as Flush.
+func LoadHour(ctx context.Context, db *sql.DB, hour time.Time) (map[string]Hour, map[string][]Onset, error) {
 	hour = hour.UTC()
-	rows, err := db.Query(`SELECT vehicle_id, connected_s, charging_s, blocked_s, metres,
+	rows, err := db.QueryContext(ctx, `SELECT vehicle_id, connected_s, charging_s, blocked_s, metres,
 			charge_starts, battery_min, lift_count
 		FROM robot_hours WHERE hour = $1`, hour)
 	if err != nil {
@@ -139,7 +141,7 @@ func LoadHour(db *sql.DB, hour time.Time) (map[string]Hour, map[string][]Onset, 
 		return nil, nil, err
 	}
 
-	rows, err = db.Query(`SELECT vehicle_id, code, onsets, first_at
+	rows, err = db.QueryContext(ctx, `SELECT vehicle_id, code, onsets, first_at
 		FROM robot_alarm_onsets WHERE hour = $1`, hour)
 	if err != nil {
 		return nil, nil, fmt.Errorf("robot hours: load onsets: %w", err)
