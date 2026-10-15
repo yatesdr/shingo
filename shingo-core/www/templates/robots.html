@@ -200,7 +200,9 @@
     <div class="card p-0 mb-2">
       <table class="table-compact">
         <thead><tr><th>Robot</th><th>Last cleaned</th><th class="col-num">Missions today</th><th>Last reason</th><th>Cleaning</th></tr></thead>
-        <tbody id="cleaning-robots"><tr><td colspan="5" class="text-muted">Loading…</td></tr></tbody>
+        {{/* data-can-edit: the Cleaned switch on each row saves through the
+             opt-out door, which is behind sign-in; signed out it only shows. */}}
+        <tbody id="cleaning-robots" class="set-ui"{{if .Authenticated}} data-can-edit="1"{{end}}><tr><td colspan="5" class="text-muted">Loading…</td></tr></tbody>
       </table>
     </div>
 

@@ -200,14 +200,19 @@ function robotClean() {
     .then(function() { loadRobotCleanState(vehicle); refreshCleaningTab(); });
 }
 
+// robotCleanOptIn is the opt-out switch, in the pop-up (the open robot) and on
+// each row of the Cleaning tab's table (the row's data-vehicle).
 function robotCleanOptIn(sw) {
-  var vehicle = currentRobotVehicle;
+  var vehicle = sw.dataset.vehicle || currentRobotVehicle;
   var on = !sw.classList.contains('on');
   sw.classList.toggle('on', on);
   sw.setAttribute('aria-checked', on ? 'true' : 'false');
   robotControlPost('/api/robots/cleaning/opt-out', {vehicle_id: vehicle, out: !on},
     vehicle + (on ? ' will be cleaned on the interval' : ' will not be cleaned'))
-    .then(function() { loadRobotCleanState(vehicle); refreshCleaningTab(); });
+    .then(function() {
+      if (vehicle === currentRobotVehicle) loadRobotCleanState(vehicle);
+      refreshCleaningTab();
+    });
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────

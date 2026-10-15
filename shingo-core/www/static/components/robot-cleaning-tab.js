@@ -166,12 +166,20 @@ function drawRobots(robots) {
     body.innerHTML = '<tr><td colspan="5" class="text-muted">No robots known yet.</td></tr>';
     return;
   }
-  body.innerHTML = robots.map((r) =>
-    '<tr><td><strong>' + escapeHtml(r.vehicle_id) + '</strong></td>' +
-    '<td>' + timeHTML(r.last_cleaned) + '</td>' +
-    '<td class="col-num tnum">' + r.missions_today + '</td>' +
-    '<td>' + escapeHtml(r.last_reason || '—') + '</td>' +
-    '<td>' + (r.opted_out ? 'never' : 'on interval') + '</td></tr>').join('');
+  // The Cleaning column is the robot's opt-out as a switch, saved the moment
+  // it is flipped (§11), through the same door as the pop-up's switch
+  // (robots.js robotCleanOptIn). Signed out it is shown and disabled.
+  const canEdit = body.dataset.canEdit === '1';
+  body.innerHTML = robots.map((r) => {
+    const on = !r.opted_out;
+    return '<tr><td><strong>' + escapeHtml(r.vehicle_id) + '</strong></td>' +
+      '<td>' + timeHTML(r.last_cleaned) + '</td>' +
+      '<td class="col-num tnum">' + r.missions_today + '</td>' +
+      '<td>' + escapeHtml(r.last_reason || '—') + '</td>' +
+      '<td><button type="button" class="set-chk' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on +
+      '" aria-label="Clean ' + escapeHtml(r.vehicle_id) + ' on the interval" data-action="robotCleanOptIn" data-vehicle="' +
+      escapeHtml(r.vehicle_id) + '"' + (canEdit ? '' : ' disabled') + '></button></td></tr>';
+  }).join('');
 }
 
 function drawMissions(missions, since) {
