@@ -370,13 +370,14 @@ type CleanNowFacts struct {
 	CanReport     bool              // the fleet implements vendorOrderReader
 	AnyOpen       bool              // a mission is open, fleet-wide
 	Robot         *fleet.RobotStatus
-	OptedOut      bool
 	MinBattery    int
 }
 
 // CleanNowRefusal is why a person may not send this robot through the knife
-// now, "" when they may. Manual cleaning skips the frequency and the active
-// hours (a person decided) and nothing else.
+// now, "" when they may. Manual cleaning skips the frequency and the robot's
+// opt-out, because a person decided: the opt-out says which robots the
+// interval sends, not which ones a person may (owner, 2026-10-15). Every
+// guard on the robot itself still holds.
 func CleanNowRefusal(f CleanNowFacts) string {
 	switch {
 	case !f.SetUp:
@@ -390,7 +391,7 @@ func CleanNowRefusal(f CleanNowFacts) string {
 	case f.Robot == nil:
 		return "not in the fleet's latest report"
 	}
-	return CleanRefusal(*f.Robot, f.OptedOut, f.MinBattery)
+	return CleanRefusal(*f.Robot, false, f.MinBattery)
 }
 
 // firstPointProblem is the problem on the lowest-numbered point, so the words
@@ -434,11 +435,6 @@ func (e *Engine) CleanNow(vehicleID, actor string) error {
 			break
 		}
 	}
-	views, err := cleaning.Views(e.db.DB)
-	if err != nil {
-		return err
-	}
-	f.OptedOut = views[vehicleID].OptedOut
 	if why := CleanNowRefusal(f); why != "" {
 		return errors.New(why)
 	}

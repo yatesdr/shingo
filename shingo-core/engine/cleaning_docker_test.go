@@ -257,6 +257,10 @@ func TestCleanNow_SendsManualAndAudits(t *testing.T) {
 	if err := eng.CleanNow("AMR-09", "alice"); err == nil || err.Error() != "not in the fleet's latest report" {
 		t.Errorf("CleanNow unknown robot = %v", err)
 	}
+	// The opt-out keeps a robot off the interval, not away from a person's
+	// Clean: AMR-01 is opted out and is still sent.
+	_, err := cleaning.SetOptOut(db.DB, "AMR-01", true)
+	testutil.MustNoErr(t, err, "cleaning.SetOptOut")
 	testutil.MustNoErr(t, eng.CleanNow("AMR-01", "alice"), "CleanNow")
 	open, err := cleaning.OpenMissions(db.DB)
 	testutil.MustNoErr(t, err, "cleaning.OpenMissions")

@@ -176,7 +176,7 @@ func TestCleanNowRefusal(t *testing.T) {
 		{"no seam", func(f *CleanNowFacts) { f.CanReport = false }, "the fleet cannot report a mission's state"},
 		{"another open", func(f *CleanNowFacts) { f.AnyOpen = true }, "another robot is at the knife"},
 		{"not in poll", func(f *CleanNowFacts) { f.Robot = nil }, "not in the fleet's latest report"},
-		{"guard words", func(f *CleanNowFacts) { f.OptedOut = true }, "opted out of cleaning"},
+		{"guard words", func(f *CleanNowFacts) { rc := *f.Robot; rc.Charging = true; f.Robot = &rc }, "charging"},
 	}
 	for _, c := range cases {
 		f := full

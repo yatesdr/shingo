@@ -199,10 +199,11 @@
     </div>
     <div class="card p-0 mb-2">
       <table class="table-compact">
-        <thead><tr><th>Robot</th><th>Last cleaned</th><th class="col-num">Missions today</th><th>Last reason</th><th>Cleaning</th></tr></thead>
-        {{/* data-can-edit: the Cleaned switch on each row saves through the
-             opt-out door, which is behind sign-in; signed out it only shows. */}}
-        <tbody id="cleaning-robots" class="set-ui"{{if .Authenticated}} data-can-edit="1"{{end}}><tr><td colspan="5" class="text-muted">Loading…</td></tr></tbody>
+        <thead><tr><th>Robot</th><th>Last cleaned</th><th class="col-num">Missions today</th><th>Last reason</th><th title="Sent through the knife on the interval">On schedule</th><th></th></tr></thead>
+        {{/* The robots' cleaning controls live here and only here: the
+             schedule switch and Clean on each row. Both doors are behind
+             sign-in (data-can-edit); signed out they show, disabled. */}}
+        <tbody id="cleaning-robots" class="set-ui"{{if .Authenticated}} data-can-edit="1"{{end}}><tr><td colspan="6" class="text-muted">Loading…</td></tr></tbody>
       </table>
     </div>
 
@@ -256,13 +257,8 @@
         <button class="btn btn-sm btn-primary" id="rm-btn-resume" data-action="robotSetAvailability:true">Make dispatchable</button>
         <button class="btn btn-sm" data-action="robotControl:true">Take control</button>
         <button class="btn btn-sm" data-action="robotControl:false">Release control</button>
-        <button class="btn btn-sm" id="rm-btn-clean" data-action="robotClean" disabled>Clean</button>
         <button class="btn btn-sm" data-action="robotRetryFailed">Retry failed step</button>
         <button class="btn btn-sm btn-danger" id="rm-btn-force" data-action="robotForceComplete">Force complete</button>
-      </div>
-      <div class="set-ui flex gap-1 mt-1">
-        <button type="button" class="set-chk" id="rm-clean-optin" role="switch" aria-checked="false" aria-labelledby="rm-clean-optin-l" data-action="robotCleanOptIn" disabled></button>
-        <span id="rm-clean-optin-l">Air-knife cleaning</span>
       </div>
     </div>
     {{end}}

@@ -22,12 +22,10 @@ function filterRobots() {
   document.getElementById('robot-count').textContent = shown + ' robots';
 }
 
-// openRobotModal is the click: draw the pop-up from the tile and ask the
-// server whether the robot can be cleaned now. fillRobotModal alone is the
-// SSE refresh of an open pop-up, which must not re-ask every 2 seconds.
+// openRobotModal is the click; fillRobotModal alone is the SSE refresh of an
+// open pop-up.
 function openRobotModal(el) {
   fillRobotModal(el);
-  loadRobotCleanState(el.dataset.name);
 }
 
 function fillRobotModal(el) {
@@ -159,60 +157,29 @@ async function robotForceComplete() {
   robotControlPost('/api/robots/force-complete', {vehicle_id: currentRobotVehicle}, 'Force complete sent to ' + currentRobotVehicle);
 }
 
-// ── Air-knife cleaning, per robot ─────────────────────────────────────────
+// ── Air-knife cleaning, per robot (the Cleaning tab's table) ──────────────
 //
-// Clean sends the robot through the knife now. No confirmation (§11: nothing is
-// deleted or lost, and its peers in this block do not ask). It is disabled with
-// the server's reason as its title, the same sentence the POST refuses with
-// (engine.CleanNowRefusal), so the button never offers what the server refuses.
-// The switch is the robot's opt-out, saved the moment it is flipped.
-function setCleanState(line) {
-  var btn = document.getElementById('rm-btn-clean');
-  var sw = document.getElementById('rm-clean-optin');
-  if (btn) {
-    var why = line ? line.refusal : 'not known to the cleaning record';
-    btn.disabled = !!why;
-    btn.title = why || 'Send ' + currentRobotVehicle + ' through the air knife now';
-  }
-  if (sw) {
-    var on = !line || !line.opted_out;
-    sw.disabled = !line;
-    sw.classList.toggle('on', on);
-    sw.setAttribute('aria-checked', on ? 'true' : 'false');
-  }
-}
-
-function loadRobotCleanState(vehicle) {
-  setCleanState(null);
-  if (!document.getElementById('rm-btn-clean')) return; // not signed in
-  fetch('/api/robots/cleaning')
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      if (vehicle !== currentRobotVehicle) return;
-      setCleanState((d.robots || []).find(function(l) { return l.vehicle_id === vehicle; }) || null);
-    })
-    .catch(function() {});
-}
-
-function robotClean() {
-  var vehicle = currentRobotVehicle;
+// Each row has the robot's schedule switch and Clean. Clean sends the robot
+// through the knife now, with no confirmation (§11: nothing is deleted or
+// lost). It is disabled with the server's reason as its title, the same
+// sentence the POST refuses with (engine.CleanNowRefusal), so the button never
+// offers what the server refuses. The switch is the robot's opt-out, saved the
+// moment it is flipped; it decides what the interval sends, not what Clean may.
+function robotClean(btn) {
+  var vehicle = btn.dataset.vehicle;
+  btn.disabled = true;
   robotControlPost('/api/robots/cleaning/clean-now', {vehicle_id: vehicle}, vehicle + ' sent to the air knife')
-    .then(function() { loadRobotCleanState(vehicle); refreshCleaningTab(); });
+    .then(refreshCleaningTab);
 }
 
-// robotCleanOptIn is the opt-out switch, in the pop-up (the open robot) and on
-// each row of the Cleaning tab's table (the row's data-vehicle).
 function robotCleanOptIn(sw) {
-  var vehicle = sw.dataset.vehicle || currentRobotVehicle;
+  var vehicle = sw.dataset.vehicle;
   var on = !sw.classList.contains('on');
   sw.classList.toggle('on', on);
   sw.setAttribute('aria-checked', on ? 'true' : 'false');
   robotControlPost('/api/robots/cleaning/opt-out', {vehicle_id: vehicle, out: !on},
-    vehicle + (on ? ' will be cleaned on the interval' : ' will not be cleaned'))
-    .then(function() {
-      if (vehicle === currentRobotVehicle) loadRobotCleanState(vehicle);
-      refreshCleaningTab();
-    });
+    vehicle + (on ? ' is on the cleaning schedule' : ' is off the cleaning schedule'))
+    .then(refreshCleaningTab);
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────

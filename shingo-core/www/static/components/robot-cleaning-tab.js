@@ -163,12 +163,13 @@ function drawRobots(robots) {
   const body = document.getElementById('cleaning-robots');
   if (!body) return;
   if (!robots.length) {
-    body.innerHTML = '<tr><td colspan="5" class="text-muted">No robots known yet.</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="text-muted">No robots known yet.</td></tr>';
     return;
   }
-  // The Cleaning column is the robot's opt-out as a switch, saved the moment
-  // it is flipped (§11), through the same door as the pop-up's switch
-  // (robots.js robotCleanOptIn). Signed out it is shown and disabled.
+  // Each row carries the robot's controls (robots.js robotCleanOptIn,
+  // robotClean): the schedule switch, saved the moment it is flipped (§11), and
+  // Clean, disabled with the server's refusal as its title. Signed out both are
+  // shown and disabled.
   const canEdit = body.dataset.canEdit === '1';
   body.innerHTML = robots.map((r) => {
     const on = !r.opted_out;
@@ -178,7 +179,11 @@ function drawRobots(robots) {
       '<td>' + escapeHtml(r.last_reason || '—') + '</td>' +
       '<td><button type="button" class="set-chk' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on +
       '" aria-label="Clean ' + escapeHtml(r.vehicle_id) + ' on the interval" data-action="robotCleanOptIn" data-vehicle="' +
-      escapeHtml(r.vehicle_id) + '"' + (canEdit ? '' : ' disabled') + '></button></td></tr>';
+      escapeHtml(r.vehicle_id) + '"' + (canEdit ? '' : ' disabled') + '></button></td>' +
+      '<td><button type="button" class="btn btn-sm" data-action="robotClean" data-vehicle="' +
+      escapeHtml(r.vehicle_id) + '" title="' + escapeHtml(r.refusal || 'Send ' + r.vehicle_id + ' through the air knife now') +
+      '"' + (canEdit && !r.refusal ? '' : ' disabled') + '>Clean</button>' +
+      (r.refusal ? ' <span class="text-muted text-sm">' + escapeHtml(r.refusal) + '</span>' : '') + '</td></tr>';
   }).join('');
 }
 

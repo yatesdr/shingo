@@ -102,7 +102,7 @@ func (h *Handlers) apiRobotCleaning(w http.ResponseWriter, r *http.Request) {
 	for vid, l := range lines {
 		f := engine.CleanNowFacts{
 			SetUp: len(setup.Points) > 0, PointProblems: problems, CanReport: canReport,
-			AnyOpen: rec.AnyOpen, OptedOut: l.OptedOut, MinBattery: setup.MinBattery,
+			AnyOpen: rec.AnyOpen, MinBattery: setup.MinBattery,
 		}
 		if rs, ok := cached[vid]; ok {
 			f.Robot = &rs
