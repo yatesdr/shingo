@@ -23,8 +23,8 @@ func projectedByKey(t *testing.T, eng *Engine, key string, role domain.LoaderRol
 
 // TestProjectCoreLoader_OptionsByBranch: the shared_window branch carries
 // inbound, outbound, funnel_windows, changeover_load_directive, leaves_bare
-// and auto_push; the dedicated_positions branch carries all of those
-// except funnel_windows.
+// auto_push and the two board settings; the dedicated_positions branch
+// carries all of those except funnel_windows.
 func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 	t.Parallel()
 	eng := testEngine(t, testEngineDB(t))
@@ -34,6 +34,7 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 			Replenishment: protocol.LoaderReplenishmentOperator, ConfigGen: 1,
 			InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES",
 			FunnelWindows: true, ChangeoverLoadDirective: true, LeavesBare: true, AutoPush: true,
+			BoardHidesIdle: true, BoardShowsAllParts: true,
 			Positions: []protocol.LoaderPosition{{CoreNodeName: "OPT-SW-W1", Kind: "window"}},
 			Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
 		},
@@ -42,6 +43,7 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 			Replenishment: protocol.LoaderReplenishmentOperator, ConfigGen: 1,
 			InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES",
 			FunnelWindows: true, ChangeoverLoadDirective: true, LeavesBare: true, AutoPush: true,
+			BoardHidesIdle: true, BoardShowsAllParts: true,
 			Positions: []protocol.LoaderPosition{{CoreNodeName: "OPT-DP-P1", PayloadCode: "PART-A", Kind: "position"}},
 		},
 	)
@@ -59,6 +61,9 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 	if !sw.AutoPush() {
 		t.Error("shared AutoPush = false, want true")
 	}
+	if !sw.BoardHidesIdle() || !sw.BoardShowsAllParts() {
+		t.Errorf("shared board hides/all = %v/%v, want true/true", sw.BoardHidesIdle(), sw.BoardShowsAllParts())
+	}
 
 	dp := projectedByKey(t, eng, "loader:OPT-DP", domain.RoleConsume)
 	if dp.InboundSource() != "FG-SUPER" || dp.OutboundDest() != "EMPTY-TOTES" {
@@ -69,6 +74,9 @@ func TestProjectCoreLoader_OptionsByBranch(t *testing.T) {
 	}
 	if !dp.AutoPush() {
 		t.Error("dedicated AutoPush = false, want true")
+	}
+	if !dp.BoardHidesIdle() || !dp.BoardShowsAllParts() {
+		t.Errorf("dedicated board hides/all = %v/%v, want true/true", dp.BoardHidesIdle(), dp.BoardShowsAllParts())
 	}
 	// Not passed by the dedicated branch: funnel_windows is meaningless there
 	// (positions never share a budget). The directive used to be dropped too.

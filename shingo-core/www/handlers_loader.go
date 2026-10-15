@@ -128,6 +128,10 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		// PulledDirectly: a stage 2's finished carts are pulled straight off
 		// its windows by the process; the outbound is stored blank.
 		PulledDirectly bool `json:"pulled_directly"`
+		// BoardHidesIdle / BoardShowsAllParts: how the station's Edge board
+		// draws. A full-row write like the rest: absent reads as false.
+		BoardHidesIdle     bool `json:"board_hides_idle"`
+		BoardShowsAllParts bool `json:"board_shows_all_parts"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -141,6 +145,7 @@ func (h *Handlers) apiUpdateLoader(w http.ResponseWriter, r *http.Request) {
 		OutboundDest: req.OutboundDest, InboundSource: req.InboundSource,
 		FunnelWindows: req.FunnelWindows, ChangeoverLoadDirective: req.ChangeoverLoadDirective,
 		AcceptPartials: req.AcceptPartials, AutoPush: req.AutoPush, FedDirectly: req.FedDirectly, PulledDirectly: req.PulledDirectly,
+		BoardHidesIdle: req.BoardHidesIdle, BoardShowsAllParts: req.BoardShowsAllParts,
 	}); err != nil {
 		h.jsonError(w, "update loader: "+err.Error(), loaderWriteStatus(err))
 		return

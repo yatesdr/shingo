@@ -4449,6 +4449,13 @@ func migrationList() []migration {
 		{156, "nodes.display_name - the name a person reads, editable on the Nodes page. The node's own name is the FLEET's identity (scenesync matches the fleet's location set by name and deletes a physical node the scene does not carry), so the cosmetic rename rides a column of its own; empty renders the node's name as always. (Renumbered 144 -> 156: the team's Lane H/Lane 0 batches claimed 144 through 155 while this was parked.)",
 			v156NodeDisplayName,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "nodes", "display_name") }},
+
+		{157, "bin_loaders.board_hides_idle, board_shows_all_parts - how the station's Edge board draws, as settings of their own; both used to follow replenishment = operator",
+			v157LoaderBoardSettings,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "bin_loaders", "board_hides_idle") &&
+					schema.ColumnExists(q, "bin_loaders", "board_shows_all_parts")
+			}},
 	}
 }
 
@@ -4569,6 +4576,26 @@ func v150BinPlacementSeq(tx *sql.Tx) error {
 func v156NodeDisplayName(tx *sql.Tx) error {
 	if _, err := tx.Exec(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT ''`); err != nil {
 		return fmt.Errorf("v156 nodes.display_name: %w", err)
+	}
+	return nil
+}
+
+// v157LoaderBoardSettings gives the Edge board's two display choices columns
+// of their own. Both used to follow replenishment: an operator-ordered station
+// never hid a card and listed every part it takes, a threshold station hid its
+// idle cards and listed only what a running style needs. The backfill writes
+// exactly that, so no board changes until someone ticks a box. ROLLBACK is the
+// previous binary plus DROP COLUMN on both; nothing else reads them.
+func v157LoaderBoardSettings(tx *sql.Tx) error {
+	for _, s := range []string{
+		`ALTER TABLE bin_loaders ADD COLUMN IF NOT EXISTS board_hides_idle BOOLEAN NOT NULL DEFAULT false`,
+		`ALTER TABLE bin_loaders ADD COLUMN IF NOT EXISTS board_shows_all_parts BOOLEAN NOT NULL DEFAULT false`,
+		`UPDATE bin_loaders SET board_hides_idle = (replenishment = 'threshold'),
+			board_shows_all_parts = (replenishment = 'operator')`,
+	} {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v157 bin_loaders board settings: %w", err)
+		}
 	}
 	return nil
 }

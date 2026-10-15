@@ -708,6 +708,29 @@ await (async function settingsSaveThroughTheApi() {
         ph.indexOf('>Stage 1<') >= 0 && ph.indexOf('One spot per part') < 0 && ph.indexOf('Accept partly used bins') >= 0);
 })();
 
+// The board's two settings. They used to follow "Order empties", so an
+// operator-ordered dedicated loader could never hide a loaded home.
+(function boardSettings() {
+    const h = load({ auth: true });
+    h.set("binTypeCatalog = []");
+    const hide = 'Hide spots with nothing to do', all = 'Show every part this station takes';
+    const ld = h.ctx.settingsHtml({ loader: loader({ replenishment: 'operator', layout: 'dedicated_positions' }), homes: [], payloads: [] }, null);
+    check('settings, loader: a Board section with both rows', ld.indexOf('>Board<') >= 0 && ld.indexOf(hide) >= 0 && ld.indexOf(all) >= 0);
+    const ud = h.ctx.settingsHtml({ loader: unloader({ layout: 'dedicated_positions' }), homes: [], payloads: [] }, null);
+    check('settings, unloader with one spot per part: the board rows', ud.indexOf(hide) >= 0 && ud.indexOf(all) >= 0);
+    const us = h.ctx.settingsHtml({ loader: unloader(), homes: [], payloads: [], window_bin_types: {} }, null);
+    check('settings, unloader with shared windows: no board rows, its windows draw as slots', us.indexOf('>Board<') < 0 && us.indexOf(hide) < 0);
+    const on = h.ctx.settingsHtml({ loader: loader({ board_hides_idle: true }), homes: [], payloads: [], window_bin_types: {} }, null);
+    check('settings: a stored board_hides_idle draws ticked', /data-field="boardHidesIdle" checked/.test(on));
+
+    const body = h.ctx.settingUpdate(loader({ replenishment: 'operator', board_shows_all_parts: true }), 'boardHidesIdle', true);
+    check('ticking "Hide" sends board_hides_idle:true and leaves Order empties alone',
+        body.board_hides_idle === true && body.replenishment === 'operator');
+    check('the update carries the other board setting through', body.board_shows_all_parts === true);
+    const off = h.ctx.settingUpdate(loader({ board_hides_idle: true }), 'name', 'LDR-B');
+    check('a rename carries board_hides_idle through, not flattened', off.board_hides_idle === true && off.board_shows_all_parts === false);
+})();
+
 (function binsPageBareCheckboxGone() {
     check('bins page: the bare checkbox is gone from both forms',
         binsHtml.indexOf('name="bare"') < 0 && binsHtml.indexOf('bt-edit-bare') < 0);

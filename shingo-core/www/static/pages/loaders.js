@@ -142,6 +142,10 @@ function formShape(state) {
     // window SET; a dedicated station is already one part per spot.
     mix: saved && !dedicated,
     windows: saved && !dedicated,
+    // How the Edge board draws. An unloader's shared windows draw as slots,
+    // not cards, so the board questions are asked of every loader and of an
+    // unloader only with one spot per part.
+    board: saved && (!unloader || dedicated),
     remove: saved,
   };
 }
@@ -288,6 +292,8 @@ function formStateFromLoader(l) {
     replenishment: l.replenishment || 'operator',
     fedDirectly: fedDirectlyOf(l),
     pulledDirectly: !!l.pulled_directly,
+    boardHidesIdle: !!l.board_hides_idle,
+    boardShowsAllParts: !!l.board_shows_all_parts,
     inbound: l.inbound_source || '',
     outbound: l.outbound_dest || '',
   };
@@ -311,6 +317,8 @@ function loaderPayload(state) {
     fed_directly: !!state.fedDirectly,
     // A pair's stage 2 only; the server refuses it anywhere else.
     pulled_directly: !!state.pulledDirectly,
+    board_hides_idle: !!state.boardHidesIdle,
+    board_shows_all_parts: !!state.boardShowsAllParts,
     inbound_source: state.inbound,
     outbound_dest: state.outbound,
   };
@@ -810,12 +818,20 @@ function settingsHtml(item, s2) {
     const caps = windowCapHtml(item, pair ? 'Stage 1' : '') + (pair ? windowCapHtml(s2, 'Stage 2') : '');
     win += h`<div class="loader-setting loader-setting-block"><div class="loader-setting-label">What each window can take <span class="loader-setting-aside">${'nothing set = any ' + noun}</span></div><div id="loader-windows-editor">${raw(caps)}</div></div>`;
   }
+  // The board rows are display only. They used to follow "Order empties", so
+  // an operator-ordered station could never hide a loaded home.
+  let board = '';
+  if (shape.board) {
+    board += settingCheck(lid, 'boardHidesIdle', state.boardHidesIdle, 'Hide spots with nothing to do (an empty spot still shows when the operator orders empties)');
+    board += settingCheck(lid, 'boardShowsAllParts', state.boardShowsAllParts, 'Show every part this station takes, not only what a running style needs');
+  }
   const stageHead = pair ? h`<div class="loader-stage-title">Stage 1</div>` : '';
   const winSection = win ? h`<div class="loader-settings-section"><div class="loader-stage-title">Windows</div>${raw(win)}</div>` : '';
+  const boardSection = board ? h`<div class="loader-settings-section"><div class="loader-stage-title">Board</div>${raw(board)}</div>` : '';
   const del = shape.remove
     ? h`<button type="button" class="btn btn-sm btn-danger" data-action="deleteStation" data-loader-id="${lid}">Delete station</button>`
     : '';
-  return h`<div class="loader-settings"><div class="loader-settings-section">${raw(stageHead)}${raw(first)}</div>${raw(winSection)}`
+  return h`<div class="loader-settings"><div class="loader-settings-section">${raw(stageHead)}${raw(first)}</div>${raw(winSection)}${raw(boardSection)}`
     + h`<div class="loader-settings-foot">${raw(del)}<span class="loader-settings-note">Changes save as you tick them.</span></div></div>`;
 }
 

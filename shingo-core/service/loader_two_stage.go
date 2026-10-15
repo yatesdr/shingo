@@ -76,14 +76,14 @@ func (s *LoaderService) CreateTwoStage(in TwoStageCreate) (stage1, stage2 int64,
 	}
 	stage2, err = s.db.CreateLoader(loaders.Loader{
 		Name: in.Name + stage2Suffix, Role: loaders.RoleConsume, Layout: loaders.LayoutSharedWindow,
-		Replenishment: loaders.ReplenishmentOperator,
+		Replenishment: loaders.ReplenishmentOperator, BoardShowsAllParts: true,
 	})
 	if err != nil {
 		return 0, 0, err
 	}
 	stage1, err = s.db.CreateLoader(loaders.Loader{
 		Name: in.Name + stage1Suffix, Role: loaders.RoleConsume, Layout: loaders.LayoutSharedWindow,
-		Replenishment:  loaders.ReplenishmentOperator,
+		Replenishment: loaders.ReplenishmentOperator, BoardShowsAllParts: true,
 		AcceptPartials: in.AcceptPartials, AutoPush: in.AutoPush, SecondStageLoaderID: &stage2,
 	})
 	if err != nil {

@@ -1125,9 +1125,16 @@ type LoaderInfo struct {
 	// the cart nowhere, quietly, and the board says it waits for the line.
 	// False, also what a Core predating this field sends, is today's: the
 	// empty-out to OutboundDest.
-	PulledDirectly bool                `json:"pulled_directly,omitempty"`
-	Positions      []LoaderPosition    `json:"positions,omitempty"`
-	Payloads       []LoaderPayloadInfo `json:"payloads,omitempty"`
+	PulledDirectly bool `json:"pulled_directly,omitempty"`
+	// BoardHidesIdle: the station's board leaves off cards and homes with
+	// nothing to do (an operator-ordered station still shows an empty spot).
+	// BoardShowsAllParts: the board lists every part the station takes, not
+	// only what a running style needs. Display only. A Core predating these
+	// fields sends both false, so deploy Core first.
+	BoardHidesIdle     bool                `json:"board_hides_idle,omitempty"`
+	BoardShowsAllParts bool                `json:"board_shows_all_parts,omitempty"`
+	Positions          []LoaderPosition    `json:"positions,omitempty"`
+	Payloads           []LoaderPayloadInfo `json:"payloads,omitempty"`
 	// Quota is the declared carrier mix — how many of each bin type this loader
 	// wants on hand. Empty means none declared, which is today's behaviour.
 	Quota []LoaderQuota `json:"quota,omitempty"`

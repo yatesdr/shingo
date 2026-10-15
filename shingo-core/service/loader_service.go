@@ -205,6 +205,7 @@ func (s *LoaderService) CreateLoader(in LoaderCreate) (int64, error) {
 	if err := s.checkFlowEndpoints(in.Role, inbound, in.OutboundDest); err != nil {
 		return 0, err
 	}
+	hidesIdle, showsAll := boardDefaults(replenishment)
 	id, err := s.db.CreateLoader(loaders.Loader{
 		Name: in.Name, Role: in.Role, Layout: layout,
 		Replenishment: replenishment, OutboundDest: in.OutboundDest,
@@ -212,12 +213,21 @@ func (s *LoaderService) CreateLoader(in LoaderCreate) (int64, error) {
 		ChangeoverLoadDirective: in.ChangeoverLoadDirective,
 		AcceptPartials:          in.AcceptPartials, AutoPush: in.AutoPush, FedDirectly: in.FedDirectly,
 		PulledDirectly: in.PulledDirectly,
+		BoardHidesIdle: hidesIdle, BoardShowsAllParts: showsAll,
 	})
 	if err != nil {
 		return 0, err
 	}
 	s.rederive()
 	return id, nil
+}
+
+// boardDefaults is a new station's board settings: what the board did before
+// they were settings, when both followed replenishment (v157 backfilled the
+// same rule). A threshold station hides its idle cards and lists only what a
+// running style needs; an operator-ordered one shows every card and every part.
+func boardDefaults(replenishment string) (hidesIdle, showsAllParts bool) {
+	return replenishment == loaders.ReplenishmentThreshold, replenishment == loaders.ReplenishmentOperator
 }
 
 // Update changes a loader's editable fields and re-derives. role + the surrogate id
@@ -257,6 +267,12 @@ type LoaderUpdate struct {
 	// windows by the process. When set, OutboundDest is stored blank whatever
 	// was sent. A pair's stage 2 only.
 	PulledDirectly bool
+	// BoardHidesIdle: the Edge board leaves off cards and homes with nothing
+	// to do. Display only; any station.
+	BoardHidesIdle bool
+	// BoardShowsAllParts: the Edge board lists every part the station takes,
+	// not only what a running style needs. Display only; any station.
+	BoardShowsAllParts bool
 }
 
 func (s *LoaderService) Update(in LoaderUpdate) error {
@@ -314,6 +330,8 @@ func (s *LoaderService) Update(in LoaderUpdate) error {
 		return ErrAutoPushProduce
 	}
 	cur.AutoPush = in.AutoPush
+	cur.BoardHidesIdle = in.BoardHidesIdle
+	cur.BoardShowsAllParts = in.BoardShowsAllParts
 	// The groups Core made for a pair are named after stage 1, and syncPair
 	// finds them by that name. Find them under the OLD name before the rename
 	// lands and carry them over, or the sync would make second, empty groups and

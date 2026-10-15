@@ -68,6 +68,9 @@ func (db *DB) BuildLoaderInfos() ([]protocol.LoaderInfo, error) {
 			AutoPush:   l.AutoPush,
 			// Stage 2's finished carts stay on its windows for the process.
 			PulledDirectly: l.PulledDirectly,
+			// How the station's board draws; display only.
+			BoardHidesIdle:     l.BoardHidesIdle,
+			BoardShowsAllParts: l.BoardShowsAllParts,
 		}
 
 		// A home's kind is fully determined by the parent loader's layout: a

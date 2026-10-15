@@ -203,6 +203,8 @@ type Loader struct {
 	leavesBare              bool                // stage 1 of a two-stage unloader: its CLEAR leaves the cart bare (see LeavesBare)
 	autoPush                bool                // a freed window re-pulls this unloader's next full (see AutoPush)
 	pulledDirectly          bool                // stage 2 whose finished carts the process pulls off its windows (see PulledDirectly)
+	boardHidesIdle          bool                // the board leaves off spots with nothing to do (see BoardHidesIdle)
+	boardShowsAllParts      bool                // the board lists every part, not only the running style's (see BoardShowsAllParts)
 }
 
 // LoaderOption sets optional runtime config on a constructed Loader. Variadic, so
@@ -509,6 +511,21 @@ func WithPulledDirectly(on bool) LoaderOption {
 // windows for the process to pull: its CLEAR sends the cart nowhere, and the
 // board says the cart waits for the line.
 func (l *Loader) PulledDirectly() bool { return l.pulledDirectly }
+
+// WithBoardSettings carries how the station's board draws (CoreLoader's
+// BoardHidesIdle and BoardShowsAllParts, owned by Core's bin_loaders). Display
+// only: nothing on the engine side reads either.
+func WithBoardSettings(hidesIdle, showsAllParts bool) LoaderOption {
+	return func(l *Loader) { l.boardHidesIdle, l.boardShowsAllParts = hidesIdle, showsAllParts }
+}
+
+// BoardHidesIdle reports whether the board leaves off a card or home with
+// nothing to do.
+func (l *Loader) BoardHidesIdle() bool { return l.boardHidesIdle }
+
+// BoardShowsAllParts reports whether the board lists every part the station
+// takes, rather than only what a running style needs.
+func (l *Loader) BoardShowsAllParts() bool { return l.boardShowsAllParts }
 
 // AutoPush reports whether a freed window re-pulls this unloader's next full.
 // SynthClaim carries it onto the claim the operator doors and the completion

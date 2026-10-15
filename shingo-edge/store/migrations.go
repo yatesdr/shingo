@@ -1728,6 +1728,35 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// core_loaders.board_hides_idle, board_shows_all_parts: how the
+			// station's board draws (LoaderInfo, Core v157). core_loaders is
+			// a cache rewritten on every node-list sync, so DEFAULT 0 only
+			// matters until the next one. Guarded per column, like v22.
+			Version: 23,
+			Name:    "core_loaders_board_settings",
+			Fn: func(tx *sql.Tx) error {
+				for _, col := range []string{"board_hides_idle", "board_shows_all_parts"} {
+					var n int
+					if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('core_loaders') WHERE name = ?`, col).Scan(&n); err != nil {
+						return err
+					}
+					if n > 0 {
+						continue
+					}
+					if _, err := tx.Exec(`ALTER TABLE core_loaders ADD COLUMN ` + col + ` INTEGER NOT NULL DEFAULT 0`); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('core_loaders')
+					WHERE name IN ('board_hides_idle', 'board_shows_all_parts')`).Scan(&n)
+				return err == nil && n == 2
+			},
+		},
 	}
 }
 

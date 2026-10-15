@@ -138,6 +138,19 @@ type Loader struct {
 	// request naming it. FALSE for every loader until a plant turns it on.
 	PulledDirectly bool `json:"pulled_directly"`
 
+	// BoardHidesIdle: the station's Edge board leaves off a card or home
+	// with nothing to do, and says how many it left off. An operator-ordered
+	// station still shows an empty spot, since that is where the operator orders
+	// the next empty. v157 backfilled replenishment = threshold, which is what
+	// the board did before this was a setting.
+	BoardHidesIdle bool `json:"board_hides_idle"`
+
+	// BoardShowsAllParts: the board lists every part the station takes, with
+	// the ones a running style needs marked ACTIVE and sorted first, rather
+	// than only the running style's parts. v157 backfilled replenishment =
+	// operator, which is what the board did before this was a setting.
+	BoardShowsAllParts bool `json:"board_shows_all_parts"`
+
 	// SecondStageLoaderID links the stage-1 half of a two-stage unloader to its
 	// stage 2, so the two are set up, shown and edited as one unloader. Set on the
 	// stage-1 row only; NULL on every other loader. Each stage still runs as its
@@ -189,7 +202,7 @@ type Config struct {
 }
 
 // loaderCols is every loader read's column list.
-const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, config_gen, archived_at, funnel_windows, changeover_load_directive, accept_partials, auto_push, second_stage_loader_id, fed_directly, pulled_directly`
+const loaderCols = `id, name, role, layout, replenishment, outbound_dest, inbound_source, config_gen, archived_at, funnel_windows, changeover_load_directive, accept_partials, auto_push, second_stage_loader_id, fed_directly, pulled_directly, board_hides_idle, board_shows_all_parts`
 
 type scanner interface{ Scan(...any) error }
 
@@ -199,7 +212,8 @@ func scanLoader(s scanner) (Loader, error) {
 	var secondStageID sql.NullInt64
 	err := s.Scan(&l.ID, &l.Name, &l.Role, &l.Layout, &l.Replenishment,
 		&l.OutboundDest, &l.InboundSource, &l.ConfigGen, &archivedAt, &l.FunnelWindows,
-		&l.ChangeoverLoadDirective, &l.AcceptPartials, &l.AutoPush, &secondStageID, &l.FedDirectly, &l.PulledDirectly)
+		&l.ChangeoverLoadDirective, &l.AcceptPartials, &l.AutoPush, &secondStageID, &l.FedDirectly, &l.PulledDirectly,
+		&l.BoardHidesIdle, &l.BoardShowsAllParts)
 	if archivedAt.Valid {
 		l.ArchivedAt = &archivedAt.Time
 	}
@@ -217,11 +231,12 @@ func CreateLoader(db *sql.DB, l Loader) (int64, error) {
 	err := db.QueryRow(`
 		INSERT INTO bin_loaders (name, role, layout, replenishment, outbound_dest, inbound_source,
 			funnel_windows, changeover_load_directive, accept_partials, auto_push,
-			second_stage_loader_id, fed_directly, pulled_directly)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+			second_stage_loader_id, fed_directly, pulled_directly, board_hides_idle, board_shows_all_parts)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
 		l.Name, l.Role, l.Layout, l.Replenishment, outboundUnlessPulledDirectly(l), inboundUnlessFedDirectly(l), l.FunnelWindows,
 		l.ChangeoverLoadDirective, l.AcceptPartials, l.AutoPush,
 		helpers.NullableInt64(l.SecondStageLoaderID), l.FedDirectly, l.PulledDirectly,
+		l.BoardHidesIdle, l.BoardShowsAllParts,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("create loader %q: %w", l.Name, err)
@@ -305,11 +320,13 @@ func UpdateLoader(db *sql.DB, l Loader) error {
 		UPDATE bin_loaders SET name=$1, layout=$2, replenishment=$3,
 			outbound_dest=$4, inbound_source=$5, funnel_windows=$6,
 			changeover_load_directive=$7, accept_partials=$8, auto_push=$9,
-			second_stage_loader_id=$10, fed_directly=$11, pulled_directly=$12, config_gen=config_gen+1, updated_at=NOW()
-		WHERE id=$13`,
+			second_stage_loader_id=$10, fed_directly=$11, pulled_directly=$12,
+			board_hides_idle=$13, board_shows_all_parts=$14, config_gen=config_gen+1, updated_at=NOW()
+		WHERE id=$15`,
 		l.Name, l.Layout, l.Replenishment, outboundUnlessPulledDirectly(l), inboundUnlessFedDirectly(l), l.FunnelWindows,
 		l.ChangeoverLoadDirective, l.AcceptPartials, l.AutoPush,
-		helpers.NullableInt64(l.SecondStageLoaderID), l.FedDirectly, l.PulledDirectly, l.ID)
+		helpers.NullableInt64(l.SecondStageLoaderID), l.FedDirectly, l.PulledDirectly,
+		l.BoardHidesIdle, l.BoardShowsAllParts, l.ID)
 	if err != nil {
 		return fmt.Errorf("update loader %d: %w", l.ID, err)
 	}

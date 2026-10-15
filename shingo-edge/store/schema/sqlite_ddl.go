@@ -869,6 +869,10 @@ CREATE TABLE IF NOT EXISTS core_loaders (
     -- 1 = a stage 2 whose finished carts the process pulls straight off its
     -- windows: the CLEAR sends the cart nowhere (Edge v10). Core owns it.
     pulled_directly INTEGER NOT NULL DEFAULT 0,
+    -- How the station's board draws (Edge v23). Core owns both
+    -- (bin_loaders.board_hides_idle, board_shows_all_parts).
+    board_hides_idle      INTEGER NOT NULL DEFAULT 0,
+    board_shows_all_parts INTEGER NOT NULL DEFAULT 0,
     synced_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (loader_key)
 );

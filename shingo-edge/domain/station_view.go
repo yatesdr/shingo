@@ -186,6 +186,14 @@ type StationNodeView struct {
 	// Core-owned): its CLEAR sends the cart nowhere, and the board says the
 	// cart waits for the line.
 	PulledDirectly bool `json:"pulled_directly,omitempty"`
+	// BoardHidesIdle and BoardShowsAllParts are how the station's board draws,
+	// Core-owned settings on the loader (Loader.BoardHidesIdle,
+	// Loader.BoardShowsAllParts). Both used to be read off OperatorDriven, so
+	// an operator-ordered station could never hide a loaded home. OperatorDriven
+	// still keeps an empty spot on screen when idle cards are hidden, because
+	// that is where the operator orders the next empty.
+	BoardHidesIdle     bool `json:"board_hides_idle,omitempty"`
+	BoardShowsAllParts bool `json:"board_shows_all_parts,omitempty"`
 	// HasBufferPartial is true when this is a dedicated home position with a
 	// tracked bin (UOP > 0) AND the loader's buffer slot holds a partial with
 	// the same payload. When set, the HMI shows the "Clear Bin" button so the

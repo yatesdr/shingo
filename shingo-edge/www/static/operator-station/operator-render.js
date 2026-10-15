@@ -803,22 +803,34 @@ function waitedLabel(created) {
     return hrs + 'h' + (mins % 60) + 'm';
 }
 
+// idleCardHidden reports whether a card is left off the board: the station
+// hides what has nothing to do (board_hides_idle) and this card is idle. On an
+// operator-ordered station an EMPTY spot is not idle in that sense. It is where
+// the operator orders the next empty (the card opens the modal with REQUEST
+// EMPTY), so it stays. A loaded spot with nothing ordered has nothing to do.
+function idleCardHidden(entry, cs) {
+    if (!entry.board_hides_idle || cs.cls !== 'os-board-nodemand') return false;
+    var occupied = !!(entry.bin_state && entry.bin_state.occupied);
+    if (entry.operator_driven && !occupied) return false;
+    return true;
+}
+
 // buildLoaderCard renders ONE (position × payload) card — the atomic unit of the
-// loader board. Returns the card element, or null when a normal kanban loader's
-// idle card should be hidden. counters.queuePos tracks the per-payload queue badge
+// loader board. Returns the card element, or null when the station hides idle
+// cards and this one is (idleCardHidden). counters.queuePos tracks the per-payload queue badge
 // across cards. The card's STATE (status/detail/action/badge facts) comes from
 // cardModel (operator-window-state.js); this function is presentation only — DOM,
-// the transitional coverage badge, and idle-card hiding.
+// the coverage badge, and idle-card hiding.
 function buildLoaderCard(entry, code, counters, opts) {
     var claim = entry.active_claim;
     var card = el('div', { className: 'os-board-card' });
     var cs = cardModel(entry, code);
 
     // Coverage (ACTIVE = a running style needs this now; PRELOAD = covered only
-    // by an inactive style) — drives the badge + the transitional idle override.
-    // NOT gated on operator_driven: every consumer below carries its own
-    // operator_driven gate, and the downtime escalation needs the same fact on a
-    // normal board, where the ACTIVE/PRELOAD badge is deliberately not drawn.
+    // by an inactive style) — drives the badge + the all-parts idle override.
+    // NOT gated on board_shows_all_parts: every consumer below carries its own
+    // gate, and the downtime escalation needs the same fact on a board that
+    // lists only the running style's parts, where PRELOAD is never drawn.
     var activeStylePayloads = entry.active_style_payloads || [];
     var isActiveStylePayload = activeStylePayloads.indexOf(code) !== -1;
 
@@ -828,9 +840,9 @@ function buildLoaderCard(entry, code, counters, opts) {
     // hide real downtime behind missing style data, so an unscoped board escalates.
     var downtimeInScope = isActiveStylePayload || activeStylePayloads.length === 0;
 
-    // Transitional board: "NO DEMAND" is meaningless (operator-driven). On an
-    // idle card show the coverage meaning instead.
-    if (entry.operator_driven && cs.cls === 'os-board-nodemand') {
+    // A board listing every part: on an idle card, "NO DEMAND" says less than
+    // whether a running style needs the part. Show that instead.
+    if (entry.board_shows_all_parts && cs.cls === 'os-board-nodemand') {
         if (isActiveStylePayload) {
             cs.statusText = 'ACTIVE'; cs.statusClass = 'os-board-tag-lineside'; cs.detail = '';
         } else {
@@ -838,17 +850,12 @@ function buildLoaderCard(entry, code, counters, opts) {
         }
     }
 
-    // Normal (non-transitional) loader hides idle produce cards so the operator
-    // sees only what's called for. Transitional keeps every card (its idle cards
-    // were just relabelled ACTIVE/PRELOAD above, which IS actionable information);
-    // keepIdle forces every card to stay on screen.
-    if (!entry.operator_driven && claim.role === 'produce' && cs.cls === 'os-board-nodemand' && !(opts && opts.keepIdle)) return null;
-
-    // hideIdle extends that to BOTH roles, for the home-location board: a wall of
-    // grey "NO DEMAND" homes buries the handful the operator can actually act on.
-    // Gated on !operator_driven for the same reason as above — a transitional
-    // board's "idle" cards carry coverage meaning and must survive.
-    if (opts && opts.hideIdle && !entry.operator_driven && cs.cls === 'os-board-nodemand') return null;
+    // Hide what has nothing to do, when the station is set to: a wall of grey
+    // idle cards buries the handful the operator can act on. It is a setting
+    // of its own (Core: bin_loaders.board_hides_idle). It used to be read off
+    // operator_driven, so an operator-ordered station could never hide a loaded
+    // home. The home board counts what this hides in its subtitle.
+    if (idleCardHidden(entry, cs)) return null;
 
     card.classList.add(cs.cls);
     if (cs.loadNow) card.classList.add('os-board-load-now');
@@ -857,19 +864,19 @@ function buildLoaderCard(entry, code, counters, opts) {
     // normal board renders only active-style payloads so the label adds nothing — but
     // redundant to the code is not redundant to a driver reading a wall of part numbers
     // from a forklift position, who otherwise has to KNOW that rule to trust the board. Say
-    // it on the card. PRELOAD stays transitional-only: a normal board has no preload
-    // cards to contrast against, so an unpaired PRELOAD badge would be noise.
-    if (isActiveStylePayload || entry.operator_driven) {
+    // it on the card. PRELOAD only where every part is listed: a board of the running
+    // style's parts has no preload cards to contrast against, so an unpaired PRELOAD
+    // badge would be noise.
+    if (isActiveStylePayload || entry.board_shows_all_parts) {
         card.appendChild(el('span', {
             className: 'os-board-cov ' + (isActiveStylePayload ? 'os-board-cov-active' : 'os-board-cov-preload'),
             textContent: isActiveStylePayload ? 'ACTIVE' : 'PRELOAD',
         }));
     }
-    // The coverage TINT stays operator_driven-only. It exists to make a transitional
-    // board's IDLE cards read as actionable (.os-board-nodemand.os-board-cov-on-*), and
-    // a normal board hides its idle cards instead of tinting them — applying it there
-    // would repaint consume-side NO DEMAND cards blue for no reason.
-    if (entry.operator_driven) {
+    // The coverage TINT goes with listing every part. It exists to make that board's
+    // IDLE cards read as actionable (.os-board-nodemand.os-board-cov-on-*); on a board
+    // of the running style's parts it would repaint NO DEMAND cards blue for no reason.
+    if (entry.board_shows_all_parts) {
         card.classList.add(isActiveStylePayload ? 'os-board-cov-on-active' : 'os-board-cov-on-preload');
     }
 
@@ -1004,15 +1011,15 @@ function buildLoaderCard(entry, code, counters, opts) {
 // active), falling back to the single claim's list.
 function allowedPayloadsFor(entry) {
     var claim = entry.active_claim;
-    var modeList = entry.operator_driven ? entry.all_style_payloads : entry.active_style_payloads;
+    var modeList = entry.board_shows_all_parts ? entry.all_style_payloads : entry.active_style_payloads;
     var allowed = (modeList && modeList.length > 0)
         ? modeList
         : ((claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
             ? claim.allowed_payload_codes
             : (claim.payload_code ? [claim.payload_code] : []));
-    // Transitional: sort ACTIVE-style payloads ahead of PRELOAD-only, alpha
+    // Every part listed: sort ACTIVE-style payloads ahead of PRELOAD-only, alpha
     // tiebreak (deterministic — some field kiosks predate V8 stable sort).
-    if (entry.operator_driven) {
+    if (entry.board_shows_all_parts) {
         var activeSet = entry.active_style_payloads || [];
         allowed = allowed.slice().sort(function(a, b) {
             var aRank = activeSet.indexOf(a) !== -1 ? 0 : 1;
@@ -1175,8 +1182,8 @@ function renderPayloadBoard(entry) {
     var cardGrid = el('div', { className: 'os-board-cards' });
 
     // One card per payload, via the shared Card builder (also used by the
-    // home-location board). buildLoaderCard returns null for an idle card a
-    // normal kanban loader hides.
+    // home-location board). buildLoaderCard returns null for an idle card the
+    // station hides.
     var counters = { queuePos: 1 };
     var rendered = 0;
     allowed.forEach(function(code) {
@@ -1206,8 +1213,9 @@ function renderPayloadBoard(entry) {
 // (node) is a dedicated home for one payload, so we show one card per
 // (home × its payload) across all the station's loader nodes — N homes on one
 // screen, the whole loader at a glance. Each card is backed by its own node's
-// bin state + actions and carries a home label. keepIdle keeps every physical
-// home on screen even with no current demand.
+// bin state + actions and carries a home label. Idle homes stay on screen
+// unless the station hides them (idleCardHidden), and then the subtitle counts
+// them.
 function renderHomeLocationBoard(nodes) {
     // Home-location is a role-neutral layout: produce loaders OR consume unloaders
     // (dedicated finished-goods exits). Title reflects whichever this station is.
@@ -1227,7 +1235,7 @@ function renderHomeLocationBoard(nodes) {
     nodes.forEach(function(node) {
         if (!node.active_claim) return;
         allowedPayloadsFor(node).forEach(function(code) {
-            var card = buildLoaderCard(node, code, counters, { hideIdle: true, sourceBadge: true });
+            var card = buildLoaderCard(node, code, counters, { sourceBadge: true });
             if (!card) { idle++; return; }
             // Home label (physical position) + its own bin state, prepended so a
             // wall of cards stays scannable by home.
