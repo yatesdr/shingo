@@ -299,6 +299,40 @@ CREATE TABLE public.cell_targets (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+CREATE TABLE public.cleaning_mission_setup (
+    id smallint DEFAULT 1 NOT NULL,
+    points text[] NOT NULL,
+    frequency interval NOT NULL,
+    active_from time without time zone NOT NULL,
+    active_to time without time zone NOT NULL,
+    min_battery smallint DEFAULT 25 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT cleaning_mission_setup_id_check CHECK ((id = 1))
+);
+
+CREATE TABLE public.cleaning_missions (
+    id bigint NOT NULL,
+    vehicle_id text NOT NULL,
+    vendor_order_id text NOT NULL,
+    state text NOT NULL,
+    reason text NOT NULL,
+    dispatched_at timestamp with time zone DEFAULT now() NOT NULL,
+    finished_at timestamp with time zone
+);
+
+CREATE SEQUENCE public.cleaning_missions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.cleaning_missions_id_seq OWNED BY public.cleaning_missions.id;
+
+CREATE TABLE public.cleaning_opt_outs (
+    vehicle_id text NOT NULL
+);
+
 CREATE TABLE public.cms_postings (
     id bigint NOT NULL,
     body_sha text NOT NULL,
@@ -1052,6 +1086,14 @@ CREATE SEQUENCE public.reservations_id_seq
 
 ALTER SEQUENCE public.reservations_id_seq OWNED BY public.reservations.id;
 
+CREATE TABLE public.robot_alarm_onsets (
+    hour timestamp with time zone NOT NULL,
+    vehicle_id text NOT NULL,
+    code integer NOT NULL,
+    onsets integer NOT NULL,
+    first_at timestamp with time zone NOT NULL
+);
+
 CREATE TABLE public.robot_confidence_daily (
     day date NOT NULL,
     vehicle_id text NOT NULL,
@@ -1120,6 +1162,32 @@ CREATE SEQUENCE public.robot_confidence_samples_id_seq
     CACHE 1;
 
 ALTER SEQUENCE public.robot_confidence_samples_id_seq OWNED BY public.robot_confidence_samples.id;
+
+CREATE TABLE public.robot_hours (
+    hour timestamp with time zone NOT NULL,
+    vehicle_id text NOT NULL,
+    connected_s integer DEFAULT 0 NOT NULL,
+    charging_s integer DEFAULT 0 NOT NULL,
+    blocked_s integer DEFAULT 0 NOT NULL,
+    metres double precision DEFAULT 0 NOT NULL,
+    charge_starts integer DEFAULT 0 NOT NULL,
+    battery_min double precision,
+    lift_count integer
+);
+
+CREATE TABLE public.robot_lidar_hours (
+    hour timestamp with time zone NOT NULL,
+    vehicle_id text NOT NULL,
+    lidar text NOT NULL,
+    station text NOT NULL,
+    use_for_loc boolean NOT NULL,
+    beams integer NOT NULL,
+    valid integer NOT NULL,
+    rssi_med_valid double precision,
+    rssi_p25_valid double precision,
+    rssi_p75_valid double precision,
+    near_valid integer NOT NULL
+);
 
 CREATE TABLE public.scene_areas (
     id bigint NOT NULL,
@@ -1432,6 +1500,8 @@ ALTER TABLE ONLY public.bins ALTER COLUMN id SET DEFAULT nextval('public.bins_id
 
 ALTER TABLE ONLY public.cell_part_events ALTER COLUMN id SET DEFAULT nextval('public.cell_part_events_id_seq'::regclass);
 
+ALTER TABLE ONLY public.cleaning_missions ALTER COLUMN id SET DEFAULT nextval('public.cleaning_missions_id_seq'::regclass);
+
 ALTER TABLE ONLY public.cms_postings ALTER COLUMN id SET DEFAULT nextval('public.cms_postings_id_seq'::regclass);
 
 ALTER TABLE ONLY public.cms_transactions ALTER COLUMN id SET DEFAULT nextval('public.cms_transactions_id_seq'::regclass);
@@ -1555,6 +1625,15 @@ ALTER TABLE ONLY public.cell_config
 
 ALTER TABLE ONLY public.cell_targets
     ADD CONSTRAINT cell_targets_pkey PRIMARY KEY (cell_id, payload_code);
+
+ALTER TABLE ONLY public.cleaning_mission_setup
+    ADD CONSTRAINT cleaning_mission_setup_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.cleaning_missions
+    ADD CONSTRAINT cleaning_missions_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.cleaning_opt_outs
+    ADD CONSTRAINT cleaning_opt_outs_pkey PRIMARY KEY (vehicle_id);
 
 ALTER TABLE ONLY public.cms_postings
     ADD CONSTRAINT cms_postings_pkey PRIMARY KEY (id);
@@ -1709,8 +1788,17 @@ ALTER TABLE ONLY public.recovery_actions
 ALTER TABLE ONLY public.reservations
     ADD CONSTRAINT reservations_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.robot_alarm_onsets
+    ADD CONSTRAINT robot_alarm_onsets_pkey PRIMARY KEY (hour, vehicle_id, code);
+
 ALTER TABLE ONLY public.robot_confidence_daily
     ADD CONSTRAINT robot_confidence_daily_pkey PRIMARY KEY (day, vehicle_id);
+
+ALTER TABLE ONLY public.robot_hours
+    ADD CONSTRAINT robot_hours_pkey PRIMARY KEY (hour, vehicle_id);
+
+ALTER TABLE ONLY public.robot_lidar_hours
+    ADD CONSTRAINT robot_lidar_hours_pkey PRIMARY KEY (hour, vehicle_id, lidar);
 
 ALTER TABLE ONLY public.scene_areas
     ADD CONSTRAINT scene_areas_pkey PRIMARY KEY (id);
@@ -1797,6 +1885,10 @@ CREATE INDEX idx_bins_undeclared_carrier ON public.bins USING btree (id) WHERE (
 
 CREATE INDEX idx_cell_part_events_cell_time ON ONLY public.cell_part_events USING btree (cell_id, recorded_at);
 
+CREATE INDEX idx_cleaning_missions_time ON public.cleaning_missions USING btree (dispatched_at);
+
+CREATE INDEX idx_cleaning_missions_vehicle_time ON public.cleaning_missions USING btree (vehicle_id, dispatched_at DESC);
+
 CREATE INDEX idx_cms_postings_inflight ON public.cms_postings USING btree (id) WHERE (status = 'inflight'::text);
 
 CREATE INDEX idx_cms_postings_pending ON public.cms_postings USING btree (next_retry_at) WHERE (status = 'pending'::text);
@@ -1881,6 +1973,8 @@ CREATE INDEX idx_reservations_kind_node ON public.reservations USING btree (reso
 
 CREATE INDEX idx_reservations_order ON public.reservations USING btree (order_id);
 
+CREATE INDEX idx_robot_alarm_onsets_code_hour ON public.robot_alarm_onsets USING btree (code, hour);
+
 CREATE INDEX idx_robot_confidence_low_time ON ONLY public.robot_confidence_low USING btree (sampled_at);
 
 CREATE INDEX idx_robot_confidence_low_vehicle_time ON ONLY public.robot_confidence_low USING btree (vehicle_id, sampled_at);
@@ -1888,6 +1982,8 @@ CREATE INDEX idx_robot_confidence_low_vehicle_time ON ONLY public.robot_confiden
 CREATE INDEX idx_robot_confidence_samples_time ON ONLY public.robot_confidence_samples USING btree (sampled_at);
 
 CREATE INDEX idx_robot_confidence_samples_vehicle_time ON ONLY public.robot_confidence_samples USING btree (vehicle_id, sampled_at);
+
+CREATE INDEX idx_robot_lidar_hours_hour ON public.robot_lidar_hours USING btree (hour);
 
 CREATE INDEX idx_scene_areas_current ON public.scene_areas USING btree (area_name, valid_from DESC);
 

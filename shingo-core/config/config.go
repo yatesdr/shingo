@@ -72,7 +72,7 @@ type Config struct {
 	// Timezone is the plant's IANA zone for DISPLAY rendering (plant-local
 	// timestamps on every core page, via shared/planttime) and for the
 	// plant-local date-filter resolution (Q-004). Empty resolves to UTC
-	// (www/plant_timezone.go defaultPlantTimezone): visibly foreign rather than
+	// (planttime.DefaultZone, resolved by planttime.ResolveZone): visibly foreign rather than
 	// plausibly local, so an unset zone shows. Storage and the wire stay UTC
 	// regardless; this field never touches either. PLANT_TIMEZONE env still
 	// overrides it, so existing deployments don't move on upgrade; Edges are

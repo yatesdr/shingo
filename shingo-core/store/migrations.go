@@ -4456,6 +4456,16 @@ func migrationList() []migration {
 				return schema.ColumnExists(q, "bin_loaders", "board_hides_idle") &&
 					schema.ColumnExists(q, "bin_loaders", "board_shows_all_parts")
 			}},
+
+		{158, "cleaning_mission_setup, cleaning_missions, cleaning_opt_outs, robot_hours, robot_alarm_onsets, robot_lidar_hours - the air-knife cleaning loop's setup and record, and the robot poll kept as one row per robot per hour",
+			v158CleaningAndRobotHours,
+			func(q schema.Querier) bool {
+				all := true
+				for _, t := range v158Tables {
+					all = all && schema.TableExists(q, t)
+				}
+				return all
+			}},
 	}
 }
 
@@ -4595,6 +4605,102 @@ func v157LoaderBoardSettings(tx *sql.Tx) error {
 	} {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v157 bin_loaders board settings: %w", err)
+		}
+	}
+	return nil
+}
+
+// v158Tables are the tables v158 creates, in creation order; the verify closure
+// checks each one.
+var v158Tables = []string{
+	"cleaning_mission_setup", "cleaning_missions", "cleaning_opt_outs",
+	"robot_hours", "robot_alarm_onsets", "robot_lidar_hours",
+}
+
+// v158CleaningAndRobotHours creates the air-knife cleaning loop's tables and
+// the hourly robot record.
+//
+// cleaning_mission_setup is one row (id = 1): the knife is floor data, set up
+// on the Robots page and never in yaml. No row, or no points, and the cleaning
+// loop does nothing, which is every plant until someone saves a mission.
+// cleaning_missions holds one row per pinned vendor order the loop or a person
+// sent; it is the only record of them, because a cleaning order never gets a
+// Core orders row (engine/cleaning.go says why). cleaning_opt_outs is a row per
+// robot never to clean.
+//
+// robot_hours and robot_alarm_onsets keep the 2-second robot poll as totals per
+// robot per UTC hour, read as plant-local days at read time. Permanent: RDS
+// keeps five weeks of alarms and nothing kept the poll at all. robot_lidar_hours
+// is one laser frame per parked robot per hour, reduced to a few numbers per
+// lidar, pruned at 90 days by its own loop.
+//
+// ROLLBACK is the previous binary plus DROP TABLE on all six; nothing else
+// reads them.
+func v158CleaningAndRobotHours(tx *sql.Tx) error {
+	for _, s := range []string{
+		`CREATE TABLE IF NOT EXISTS cleaning_mission_setup (
+			id          SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+			points      TEXT[] NOT NULL,
+			frequency   INTERVAL NOT NULL,
+			active_from TIME NOT NULL,
+			active_to   TIME NOT NULL,
+			min_battery SMALLINT NOT NULL DEFAULT 25,
+			updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+		`CREATE TABLE IF NOT EXISTS cleaning_missions (
+			id              BIGSERIAL PRIMARY KEY,
+			vehicle_id      TEXT NOT NULL,
+			vendor_order_id TEXT NOT NULL,
+			state           TEXT NOT NULL,
+			reason          TEXT NOT NULL,
+			dispatched_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+			finished_at     TIMESTAMPTZ
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_cleaning_missions_vehicle_time
+			ON cleaning_missions (vehicle_id, dispatched_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_cleaning_missions_time ON cleaning_missions (dispatched_at)`,
+		`CREATE TABLE IF NOT EXISTS cleaning_opt_outs (
+			vehicle_id TEXT PRIMARY KEY
+		)`,
+		`CREATE TABLE IF NOT EXISTS robot_hours (
+			hour          TIMESTAMPTZ NOT NULL,
+			vehicle_id    TEXT NOT NULL,
+			connected_s   INTEGER NOT NULL DEFAULT 0,
+			charging_s    INTEGER NOT NULL DEFAULT 0,
+			blocked_s     INTEGER NOT NULL DEFAULT 0,
+			metres        DOUBLE PRECISION NOT NULL DEFAULT 0,
+			charge_starts INTEGER NOT NULL DEFAULT 0,
+			battery_min   DOUBLE PRECISION,
+			lift_count    INTEGER,
+			PRIMARY KEY (hour, vehicle_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS robot_alarm_onsets (
+			hour       TIMESTAMPTZ NOT NULL,
+			vehicle_id TEXT NOT NULL,
+			code       INTEGER NOT NULL,
+			onsets     INTEGER NOT NULL,
+			first_at   TIMESTAMPTZ NOT NULL,
+			PRIMARY KEY (hour, vehicle_id, code)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_robot_alarm_onsets_code_hour ON robot_alarm_onsets (code, hour)`,
+		`CREATE TABLE IF NOT EXISTS robot_lidar_hours (
+			hour           TIMESTAMPTZ NOT NULL,
+			vehicle_id     TEXT NOT NULL,
+			lidar          TEXT NOT NULL,
+			station        TEXT NOT NULL,
+			use_for_loc    BOOLEAN NOT NULL,
+			beams          INTEGER NOT NULL,
+			valid          INTEGER NOT NULL,
+			rssi_med_valid DOUBLE PRECISION,
+			rssi_p25_valid DOUBLE PRECISION,
+			rssi_p75_valid DOUBLE PRECISION,
+			near_valid     INTEGER NOT NULL,
+			PRIMARY KEY (hour, vehicle_id, lidar)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_robot_lidar_hours_hour ON robot_lidar_hours (hour)`,
+	} {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v158 cleaning and robot hours: %w", err)
 		}
 	}
 	return nil

@@ -67,6 +67,12 @@ var migrationOnlyTables = map[string]string{
 	"style_claims":                "added by a numbered migration after the baseline was frozen",
 	"supply_refusals":             "added by a numbered migration after the baseline was frozen",
 	"bin_uop_exception":           "added by v93 — the permanent exceptions ledger (owner decision D2: no retention, ever). Migration-created rather than baseline because it carries a one-shot backfill from bin_uop_ledger that must run while the raw rows still exist",
+	"cleaning_mission_setup":      "added by v158 — the one air-knife mission set up on the Robots page's Cleaning tab (floor data, never yaml); read by the cleaning loop every tick and by the tab",
+	"cleaning_missions":           "added by v158 — one row per pinned cleaning order sent to the fleet, the only record of it (no Core orders row is ever written); read by the cleaning loop (open rows, last dispatch per robot) and the Cleaning tab's history",
+	"cleaning_opt_outs":           "added by v158 — a row per robot never to clean; read by the cleaning loop's guard and the robot pop-up's switch",
+	"robot_hours":                 "added by v158 — the 2-second robot poll kept as totals per robot per UTC hour, permanent; read by the Robots page's Fleet tab and the cleaning trial (robot-days, km)",
+	"robot_alarm_onsets":          "added by v158 — alarm onsets per robot per hour per code, permanent; read by the Fleet tab and the cleaning trial (54901 per robot-day and per km), past RDS's five-week alarm retention",
+	"robot_lidar_hours":           "added by v158 — one laser frame per parked robot per hour reduced per lidar, 90-day retention; read per robot against itself by the cleaning trial's before/after time join",
 	"bin_uop_delta_daily":         "added by v94 — the permanent daily roll-up of the raw delta stream (owner decision D3: growth accepted). Migration-created for the same reason as v93: the backfill must run while the raw rows still exist",
 }
 

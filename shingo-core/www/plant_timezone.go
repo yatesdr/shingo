@@ -6,9 +6,13 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"shingo/shared/planttime"
 )
 
-// defaultPlantTimezone is what an unconfigured core resolves to.
+// An unconfigured core resolves to planttime.DefaultZone. The resolution itself
+// is planttime.ResolveZone, which the engine reads too, so the cleaning loop's
+// plant-local active hours and every screen here are on one clock.
 //
 // IT IS UTC BECAUSE VISIBLY WRONG BEATS PLAUSIBLY RIGHT. It used to be
 // America/Chicago, which kept both existing plants correct BY ACCIDENT — their
@@ -31,10 +35,9 @@ import (
 // Status 2026-09-08: Hopkinsville is set (America/Chicago). SPRINGFIELD IS NOT
 // — it is still running on the old default and is Central, so it needs the key
 // before a core deploy carries this there.
-const defaultPlantTimezone = "UTC"
 
 // plantLocation is the plant's IANA timezone, resolved once from the
-// PLANT_TIMEZONE env var (default UTC, defaultPlantTimezone above), then from
+// PLANT_TIMEZONE env var (default UTC, planttime.DefaultZone above), then from
 // the yaml `timezone:` at router construction. The dashboards follow a
 // plant-local-at-server convention (Q-004): timestamps are stored UTC, but
 // bare YYYY-MM-DD date filters from the URL resolve in THIS zone — so "Today"
@@ -47,16 +50,11 @@ const defaultPlantTimezone = "UTC"
 var plantLocation = loadPlantLocation()
 
 func loadPlantLocation() *time.Location {
-	name := os.Getenv("PLANT_TIMEZONE")
-	if name == "" {
-		name = defaultPlantTimezone
+	z := planttime.ResolveZone("")
+	if z.Invalid != "" {
+		log.Printf("www: PLANT_TIMEZONE %q invalid; falling back to UTC", z.Invalid)
 	}
-	loc, err := time.LoadLocation(name)
-	if err != nil {
-		log.Printf("www: PLANT_TIMEZONE %q invalid (%v); falling back to UTC", name, err)
-		return time.UTC
-	}
-	return loc
+	return z.Loc
 }
 
 // applyPlantTimezoneConfig folds the yaml `timezone:` field in at router
@@ -66,28 +64,25 @@ func loadPlantLocation() *time.Location {
 // names the SOURCE so a wrong zone is diagnosable from the journal —
 // "which knob made this clock" is the first question at a plant.
 func applyPlantTimezoneConfig(cfgTimezone string) {
-	if env := os.Getenv("PLANT_TIMEZONE"); env != "" {
-		log.Printf("www: plant timezone %s (from PLANT_TIMEZONE env)", plantLocation)
-		return
+	z := planttime.ResolveZone(cfgTimezone)
+	switch {
+	case z.Source == planttime.SourceEnv || os.Getenv(planttime.EnvZone) != "":
+		log.Printf("www: plant timezone %s (from PLANT_TIMEZONE env)", z.Loc)
+	case z.Invalid != "":
+		log.Printf("www: config timezone %q invalid; keeping %s", z.Invalid, z.Loc)
+	case z.Source == planttime.SourceDefault:
+		log.Printf("www: plant timezone %s (default; set timezone: in shingocore.yaml)", z.Loc)
+	default:
+		log.Printf("www: plant timezone %s (from config)", z.Loc)
 	}
-	if cfgTimezone == "" {
-		log.Printf("www: plant timezone %s (default; set timezone: in shingocore.yaml)", plantLocation)
-		return
-	}
-	loc, err := time.LoadLocation(cfgTimezone)
-	if err != nil {
-		log.Printf("www: config timezone %q invalid (%v); keeping %s", cfgTimezone, err, plantLocation)
-		return
-	}
-	plantLocation = loc
-	log.Printf("www: plant timezone %s (from config)", plantLocation)
+	plantLocation = z.Loc
 }
 
 // OfferedPlantTimezone is the plant zone Core offers its Edges on every
 // heartbeat ack (main.go → CoreDataService.SetPlantTimezone): the zone Core was
 // EXPLICITLY told, by the same precedence applyPlantTimezoneConfig uses for
 // Core's own screens. PLANT_TIMEZONE when set, else the yaml `timezone:`, else
-// "" — never defaultPlantTimezone, which is nobody's answer
+// "" — never planttime.DefaultZone, which is nobody's answer
 // (protocol.EdgeHeartbeatAck.Timezone says why). So Core's screens and the
 // Edges with no zone of their own show the same clock (C9).
 //
