@@ -11,8 +11,7 @@ import (
 )
 
 // An unconfigured core resolves to planttime.DefaultZone. The resolution itself
-// is planttime.ResolveZone, which the engine reads too, so the cleaning loop's
-// plant-local active hours and every screen here are on one clock.
+// is planttime.ResolveZone.
 //
 // IT IS UTC BECAUSE VISIBLY WRONG BEATS PLAUSIBLY RIGHT. It used to be
 // America/Chicago, which kept both existing plants correct BY ACCIDENT — their
@@ -49,11 +48,6 @@ import (
 // day truncation, and the formatTime template helper all read this var.
 var plantLocation = loadPlantLocation()
 
-// plantZone is plantLocation with where it came from, so a screen can say
-// whether the plant's zone was ever set (the Cleaning tab's active hours mean
-// nothing on a default UTC). Written beside plantLocation, never apart.
-var plantZone = planttime.ResolveZone("")
-
 func loadPlantLocation() *time.Location {
 	z := planttime.ResolveZone("")
 	if z.Invalid != "" {
@@ -79,8 +73,12 @@ func applyPlantTimezoneConfig(cfgTimezone string) {
 		log.Printf("www: plant timezone %s (default; set timezone: in shingocore.yaml)", z.Loc)
 	default:
 		log.Printf("www: plant timezone %s (from config)", z.Loc)
+		// Written ONLY here, as before the resolver moved to planttime: the
+		// env and default answers were settled at package init, and a router
+		// built without a yaml zone (every parallel test) must not write the
+		// package var other requests are reading.
+		plantLocation = z.Loc
 	}
-	plantLocation, plantZone = z.Loc, z
 }
 
 // OfferedPlantTimezone is the plant zone Core offers its Edges on every
