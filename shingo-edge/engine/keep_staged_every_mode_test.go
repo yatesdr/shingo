@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/engine/changeover"
 	"shingoedge/store/processes"
 )
 
@@ -190,6 +191,100 @@ func TestKeepStagedNode_TheSpotCostsNoRoundTrip(t *testing.T) {
 						t.Errorf("Core round trips: %d with a spot, %d without", trips[true], trips[false])
 					}
 				})
+			}
+		}
+	}
+}
+
+// takesFromSpot reports whether a set of legs takes the spare standing on the
+// spot: a pickup there with no leg of the set setting a carrier down there
+// first. A pickup of what a leg parked there (a relay, or a single-robot swap
+// collecting its stage order's carrier) does not.
+func takesFromSpot(legs ...[]protocol.ComplexOrderStep) bool {
+	var lift, drop bool
+	for _, steps := range legs {
+		d, l := spotSteps(steps, everyModeSpot)
+		drop, lift = drop || d, lift || l
+	}
+	return lift && !drop
+}
+
+// ONE LEG DOOR. For the same read of the spot, a changeover's incoming leg is
+// built from the claim requestClaim gives a REQUEST (legDiffs), and takes the
+// spare standing there exactly when the REQUEST's swap does: a right spare
+// that is not leaving, and nothing otherwise. Every configurable mode, every
+// press geometry, both roles, the spot as inbound staging and not. The
+// changeover leg never picks up at the spot unless requestClaim took the spare.
+func TestKeepStagedNode_TheChangeoverLegTakesTheSpareAsRequestDoes(t *testing.T) {
+	t.Parallel()
+	node := &processes.Node{ID: 1, Name: "LINE", CoreNodeName: "LINE"}
+	nodes := []processes.Node{*node}
+	for _, role := range []protocol.ClaimRole{protocol.ClaimRoleConsume, protocol.ClaimRoleProduce} {
+		reads := map[string]spotRead{
+			"bare":  {known: true},
+			"wrong": {known: true, occupied: true, payload: "P-OTHER"},
+		}
+		if role == protocol.ClaimRoleConsume {
+			reads["right"] = spotRead{known: true, occupied: true, payload: "P-TO"}
+		} else {
+			reads["right"] = spotRead{known: true, occupied: true}
+		}
+		for _, mode := range protocol.ConfigurableSwapModes() {
+			noHop := mode == protocol.SwapModeSequential || mode == protocol.SwapModeTwoRobotPressIndex
+			for _, v := range goldenVariants(mode) {
+				for _, staging := range []bool{false, true} {
+					if staging && noHop {
+						continue // no staging hop in these modes
+					}
+					for name, read := range reads {
+						what := string(role) + "/" + string(mode) + "/" + v.name + "/" + name
+						if staging {
+							what += "/spot==staging"
+						}
+						from := goldenClaim(role, mode, "P-FROM", v.secondPaired, v.flip)
+						to := withSpot(goldenClaim(role, mode, "P-TO", v.secondPaired, v.flip))
+						if noHop {
+							from.InboundStaging, from.OutboundStaging = "", ""
+							to.InboundStaging, to.OutboundStaging = "", ""
+						}
+						if staging {
+							to.InboundStaging = everyModeSpot
+						}
+
+						planClaim, takes := requestClaim(to, to, spotAtRequest{read: read})
+						d, err := BuildSwapDispatch(node, planClaim)
+						if err != nil {
+							t.Fatalf("%s: request: %v", what, err)
+						}
+						// A sequential line fetches in its backfill, not in the removal.
+						reqLegs := [][]protocol.ComplexOrderStep{d.StepsA, d.StepsB}
+						if mode == protocol.SwapModeSequential {
+							reqLegs = append(reqLegs, BuildSequentialBackfillSteps(planClaim))
+						}
+						if got := takesFromSpot(reqLegs...); got != takes {
+							t.Errorf("%s: the request's swap takes the spare = %v, its decision says %v", what, got, takes)
+						}
+
+						diffs := legDiffs([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationSwap,
+							FromClaim: from, ToClaim: to}}, map[string]spotRead{everyModeSpot: read})
+						if !reflect.DeepEqual(diffs[0].ToClaim, planClaim) {
+							t.Errorf("%s: the changeover leg's claim %+v, the request's %+v", what, diffs[0].ToClaim, planClaim)
+						}
+						plan := BuildChangeoverPlan(diffs, nodes, false, nil, toolingChangeover{})
+						var legs [][]protocol.ComplexOrderStep
+						for _, a := range plan.Actions {
+							if a.Err != nil {
+								t.Fatalf("%s: changeover: %v", what, a.Err)
+							}
+							for _, spec := range []*changeover.OrderSpec{a.SupplyOrder, a.EvacOrder} {
+								legs = append(legs, specSteps(spec))
+							}
+						}
+						if got := takesFromSpot(legs...); got != takes {
+							t.Errorf("%s: the changeover's legs take the spare = %v, the request's door says %v", what, got, takes)
+						}
+					}
+				}
 			}
 		}
 	}
