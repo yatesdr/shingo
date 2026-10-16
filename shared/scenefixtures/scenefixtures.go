@@ -12,7 +12,7 @@
 // DegenerateBezier and only the handles say which of them bow — so a test that
 // draws the scene needs the handles a vendor actually stores.
 //
-// So these are DERIVED: scripts/anonymise-plant-pull.py reads a real pull held
+// So these are DERIVED: shared/scripts/anonymiseplantpull reads a real pull held
 // outside the repo and emits the fixture, keeping row counts, every id and
 // structural relation, which points carry a label, the vendor's class strings
 // and handles, the dirty rows (orphan claims, claims on soft-deleted styles,
@@ -20,10 +20,10 @@
 // part numbers, payload codes, style/process/station names, PLC and tag names,
 // CATIDs, every timestamp, and the floor plan itself, which moves under one
 // rigid motion per plant so distances survive and the map is not the map.
-// scene_points.properties_json is dropped rather than rewritten; the script
-// says why. The script is deterministic, so a re-derivation is a no-op diff.
+// scene_points.properties_json is dropped rather than rewritten; the program
+// says why. The program is deterministic, so a re-derivation is a no-op diff.
 //
-// PROVENANCE is the script and nothing else. No hosts, no pull dates, no
+// PROVENANCE is the program and nothing else. No hosts, no pull dates, no
 // plant names: A is not Hopkinsville and B is not Springfield, they are the
 // two SHAPES those plants have. Row counts: A 383 points / 635 edges, B 350 /
 // 588, full-table. Column names are verbatim from the source schema and every

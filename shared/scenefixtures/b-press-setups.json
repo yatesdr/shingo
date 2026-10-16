@@ -1,6 +1,6 @@
 {
 "plant": "B",
-"note": "Synthetic. Derived from a real plant pull by scripts/anonymise-plant-pull.py; the pull is held outside the repo. Structure, counts, joins, label sparsity, bezier handles and dirty rows are the plant's; part numbers, names, PLC tags, timestamps and the map are not.",
+"note": "Synthetic. Derived from a real plant pull by shared/scripts/anonymiseplantpull; the pull is held outside the repo. Structure, counts, joins, label sparsity, bezier handles and dirty rows are the plant's; part numbers, names, PLC tags, timestamps and the map are not.",
 "processes": [
   {"id":2,"name":"Press B1","description":"Press B1","active_style_id":19,"target_style_id":null,"production_state":"active_production","created_at":"2026-01-05T00:08:00Z","counter_plc_name":"PLC-Press-B1","counter_tag_name":"MES_Press_B1.Prod_Counter_01","counter_enabled":1,"auto_cutover_enabled":0,"changeover_auto_arm":"auto","group_id":2},
   {"id":3,"name":"Press B2","description":"Press B2","active_style_id":14,"target_style_id":null,"production_state":"active_production","created_at":"2026-01-05T00:47:00Z","counter_plc_name":"PLC-Press-B2","counter_tag_name":"MES_Press_B2.Prod_Counter_01","counter_enabled":1,"auto_cutover_enabled":0,"changeover_auto_arm":"auto","group_id":2},

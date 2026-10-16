@@ -89,7 +89,7 @@ func ReduceLaserFrame(f *LaserFrame) []LaserStats {
 // quantile is linear interpolation between closest ranks over sorted xs — the
 // pct() of the wipe probes that produced the DATA tables, so a stored number
 // and a number in those tables mean the same thing. At p = 0.5 it equals
-// Python's statistics.median (the mean of the middle two for an even count).
+// the ordinary median (the mean of the middle two for an even count).
 func quantile(sorted []float64, p float64) float64 {
 	k := float64(len(sorted)-1) * p
 	f := int(k)

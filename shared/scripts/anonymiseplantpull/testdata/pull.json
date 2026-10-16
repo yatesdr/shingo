@@ -1,0 +1,57 @@
+{
+  "pulled_at": "2031-07-04 09:15:00",
+  "edge": {
+    "processes": [
+      {"id": 1, "name": "Invented Line 7", "description": "Invented Line 7 desc", "counter_plc_name": "PLCX.Struct", "counter_tag_name": "Tag.Count", "created_at": "2031-07-01 08:00:00", "updated_at": null},
+      {"id": 2, "name": "Invented Line 8", "description": "", "counter_plc_name": "", "created_at": "2031-06-30 08:00:00", "extra": {"nested": [1, 2.5, "x"], "deep": {"k": true}}},
+      {"id": 3, "description": "no name here", "created_at": ""}
+    ],
+    "operator_stations": [
+      {"id": 10, "name": "Invented Screen Ünïcode", "code": "inv-scr", "note": "typed at the floor", "last_seen_at": "2031-07-04 09:14:59", "process_id": 1},
+      {"id": 11, "name": "Invented Screen Two", "code": "", "note": null, "last_seen_at": "2031-07-04 09:14:59"}
+    ],
+    "process_nodes": [
+      {"id": 100, "process_id": 1, "core_node_name": "PLN_01", "name": "PLN_01", "kind": "front"},
+      {"id": 101, "process_id": 2, "core_node_name": "SMN_BUF_100", "name": "SMN_BUF_100", "kind": "back", "deleted_at": "2031-05-05 05:05:05"}
+    ],
+    "styles": [
+      {"id": 20, "process_id": 1, "name": "INV-0001-AB", "description": "INV-0001-AB", "expected_catid": "4321", "deleted_at": null},
+      {"id": 21, "process_id": 1, "name": "Word Style", "description": "", "expected_catid": 77, "deleted_at": "2031-06-01 00:00:00"},
+      {"id": 22, "process_id": 9, "name": "", "expected_catid": 0}
+    ],
+    "style_node_claims": [
+      {"id": 30, "style_id": 20, "core_node_name": "PLN_01", "payload_code": "INV-PART-ONE", "allowed_payload_codes": ["INV-PART-ONE", "INV-PART-TWO", "__ANY"], "inbound_staging": "STG_IN_1"},
+      {"id": 31, "style_id": 99, "core_node_name": "PLN_02", "payload_code": "Test-Payload", "allowed_payload_codes": "[\"INV-PART-TWO\", \"INV-PART-THREE\"]"},
+      {"id": 32, "style_id": 21, "core_node_name": "PLN_03", "payload_code": "", "allowed_payload_codes": "not-a-list", "started_at": "2031-07-02 10:00:00", "completed_at": "2031-07-02 10:30:00"},
+      {"id": 33, "style_id": 21, "core_node_name": "PLN_03", "allowed_payload_codes": null}
+    ],
+    "payload_catalog": [
+      {"id": 40, "code": "INV-PART-ONE", "name": "INV-PART-ONE", "description": "BRACKET-INVENTED LH", "catid": 1234, "synced_at": "2031-07-03 01:00:00"},
+      {"id": 41, "code": "INV-PART-FOUR", "description": "tab\there \"quoted\" back\\slash \u0001   😀", "catid": ""},
+      {"id": 42, "code": "Core_Test", "catid": null, "below_reorder_since": "2031-07-03 01:00:00"}
+    ]
+  },
+  "core": {
+    "payloads": [
+      {"id": 50, "code": "INV-PART-TWO", "name": "INV-PART-TWO", "description": "Invented part two ☃", "created_at": "2031-01-01 00:00:00"},
+      {"id": 51, "code": "INV-PART-FIVE", "archived_at": "2031-02-02 02:02:02"}
+    ],
+    "scene_points": [
+      {"id": 60, "instance_name": "LM1", "class_name": "LocationMark", "label": "", "pos_x": 12, "pos_y": -3, "dir": 0, "properties_json": [{"key": "bindRobotMap", "stringValue": "invented-site.smap"}, {"key": "label", "stringValue": "PLN_01"}]},
+      {"id": 61, "instance_name": "AP2", "class_name": "ActionPoint", "label": "PLN_01", "pos_x": 1.0005, "pos_y": 2.25, "dir": 1.5707963267948966},
+      {"id": 62, "instance_name": "AP3", "class_name": "ActionPoint", "label": "PLN_02", "pos_x": -0.0004, "pos_y": 1e-05, "dir": -3.14159},
+      {"id": 63, "instance_name": "AP4", "class_name": "GeneralLocation", "label": "", "pos_x": null, "pos_y": 4.5},
+      {"id": 64, "instance_name": "AP5", "class_name": "GeneralLocation", "pos_x": 123456789012.125, "pos_y": 1e16, "dir": 6.283185307179586},
+      {"id": 65, "instance_name": "AP6", "class_name": "GeneralLocation", "label": "Supermarket Area", "pos_x": 0.0005, "pos_y": 0.0015, "dir": 1e-7}
+    ],
+    "scene_edges": [
+      {"id": 70, "class_name": "DegenerateBezier", "from_name": "LM1", "to_name": "AP2", "from_x": 12, "from_y": -3, "to_x": 1.0005, "to_y": 2.25, "ctrl1_x": 5.5, "ctrl1_y": 0.1, "ctrl2_x": 6.6, "ctrl2_y": 0.2},
+      {"id": 71, "class_name": "StraightPath", "from_name": "AP2", "to_name": "AP3", "from_x": 1.0005, "from_y": 2.25, "to_x": -0.0004, "to_y": 1e-05}
+    ],
+    "nodes": [
+      {"id": 80, "name": "PLN_01", "parent_name": "Supermarket Area", "node_type_code": "LANE", "created_at": "2031-01-01 00:00:00", "big": 123456789012345678901234567890, "neg0": -0, "flt": -0.0, "exp": 2E3, "esc": "tab\there \"q\" back\\slash nl\nend \u0001 \u001f é ☃ 😀", "dup": 1, "dup": 2}
+    ],
+    "payload_bin_types": [],
+    "unused_table": [{"updated_at": "2030-12-31 23:59:59"}]
+  }
+}

@@ -77,7 +77,7 @@ func TestScanFixturesForPrivateAddresses(t *testing.T) {
 		}
 		if h := privateHits(string(data)); len(h) != 0 {
 			t.Errorf("%s carries private IPv4 addresses %q — derive fixtures with "+
-				"scripts/anonymise-robotsstatus-fixture.py (TEST-NET only); this scan is the CI twin "+
+				"shared/scripts/anonymiserobotsstatus (TEST-NET only); this scan is the CI twin "+
 				"of scripts/check-plant-addresses.sh", filepath.Base(f), h)
 		}
 	}

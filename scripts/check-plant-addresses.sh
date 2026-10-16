@@ -13,7 +13,7 @@
 # in on that trust. Test literals and fixtures use the documentation ranges,
 # TEST-NET-1/2/3 (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24, RFC 5737),
 # which are none of the above. To derive a committable /robotsStatus fixture
-# from a capture, see scripts/anonymise-robotsstatus-fixture.py.
+# from a capture, see shared/scripts/anonymiserobotsstatus.
 #
 # The Go twin is shingo-core/fleet/seerrds/testdata_scan_test.go (same rule,
 # over that package's fixtures, in the default test suite).

@@ -79,10 +79,6 @@ vendor/
 # API reference docs (scraped, not source)
 seer-docs/
 
-# Python artifacts (for any utility scripts)
-__pycache__/
-*.pyc
-
 # Debug logs
 shingo-debug*.log
 **/shingo-debug*.log

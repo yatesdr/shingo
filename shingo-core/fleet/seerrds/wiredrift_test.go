@@ -10,7 +10,7 @@
 //
 // These tests are written against the WIRE instead. The fixtures are real
 // captures, one per plant, taken 2026-08-06, with their key structure kept
-// verbatim and every value anonymised (scripts/anonymise-robotsstatus-fixture.py):
+// verbatim and every value anonymised (shared/scripts/anonymiserobotsstatus):
 // the tests read which keys the vendor sends, never a plant's own values.
 //
 // Two rules, both learned the expensive way:

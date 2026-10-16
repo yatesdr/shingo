@@ -117,10 +117,6 @@ if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "  go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4"
   exit 1
 fi
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "FAIL test-error-discard ratchet — python3 not on PATH"
-  exit 1
-fi
 
 ROOT="$(pwd)"
 MODULES="protocol shared shingo-core shingo-edge integration"
@@ -206,45 +202,9 @@ for m in $MODULES; do
   sed "s|^|$m/|" "$TMPD/out.txt" >>"$RAW"
 done
 
-# The findings arrive as an ARGUMENT, not on stdin: stdin is already carrying
-# the heredoc that is this program.
-count="$(python3 - "$ROOT" "$RAW" <<'PY'
-import os
-import re
-import sys
-
-root = sys.argv[1]
-# `<module>/<module-relative path>:<line>:<col>: <message>`
-LOC = re.compile(r'^(.+\.go):(\d+):\d+: ')
-# The blank sits in a multi-value assignment: `v, _ :=` / `v, _ =` / `a, _, _ =`.
-SHAPE = re.compile(r',\s*_\s*:?=')
-
-sites = set()
-cache = {}
-for raw in open(sys.argv[2], encoding='utf-8', errors='replace'):
-    m = LOC.match(raw.strip())
-    if not m:
-        continue
-    rel = m.group(1).replace('\\', '/')
-    if not rel.endswith('_test.go'):
-        continue
-    line = int(m.group(2))
-    path = os.path.join(root, rel)
-    if path not in cache:
-        try:
-            with open(path, encoding='utf-8', errors='replace') as fh:
-                cache[path] = fh.read().replace('\r\n', '\n').split('\n')
-        except OSError:
-            cache[path] = []
-    src = cache[path]
-    if line - 1 >= len(src):
-        continue
-    if SHAPE.search(src[line - 1]):
-        # A file is linted once per package it belongs to; dedupe by site.
-        sites.add((rel, line))
-print(len(sites))
-PY
-)"
+# The counting rule (WHAT IS COUNTED, above) and its pins live in
+# shared/scripts/discardcount.
+count="$(cd "$ROOT/shared" && go run ./scripts/discardcount -root "$ROOT" "$RAW")"
 
 if [ "$count" -gt "$FROZEN" ]; then
   echo "FAIL test-error-discard ratchet: $count silent error discards in tests, frozen at $FROZEN."

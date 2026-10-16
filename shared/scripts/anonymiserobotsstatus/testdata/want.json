@@ -1,0 +1,118 @@
+{
+ "code": 0,
+ "create_on": "2000-01-01T00:00:00Z",
+ "msg": "",
+ "report": [
+  {
+   "area": {
+    "disable_paths": [
+     {
+      "id": "LM1-LM2"
+     },
+     {
+      "id": "LM2-LM1"
+     },
+     {
+      "id": ""
+     }
+    ],
+    "disable_points": [
+     {
+      "id": "LM3"
+     },
+     {
+      "id": "LM1"
+     }
+    ],
+    "id": "id-1"
+   },
+   "basic_info": {
+    "current_map": "current_map-1",
+    "ip": "192.0.2.1",
+    "model_md5": "7a9cb0a3e4d0d777e8161f04ce6a10a9",
+    "serial": "0",
+    "version": "version-1"
+   },
+   "connection_status": 0,
+   "current_order": null,
+   "dispatchable": true,
+   "is_error": false,
+   "lock_info": {
+    "locked": true,
+    "owner": "192.0.2.2",
+    "since": "2000-01-01T00:00:00Z"
+   },
+   "notes": [
+    "",
+    "notes-1",
+    "notes-1",
+    "192.0.2.3",
+    "notes-2"
+   ],
+   "rbk_report": {
+    "alarms": {
+     "errors": [
+      {
+       "52100": 0,
+       "desc": "desc-1",
+       "times": 0
+      }
+     ],
+     "fatals": [],
+     "warnings": [
+      {
+       "54001": 0
+      }
+     ]
+    },
+    "angle": 0.0,
+    "battery_level": 0.0,
+    "blocked": false,
+    "temp": 0,
+    "x": 0.0,
+    "y": 0
+   },
+   "vehicle_id": "vehicle_id-1"
+  },
+  {
+   "area": {
+    "disable_paths": [],
+    "disable_points": []
+   },
+   "basic_info": {
+    "current_map": "current_map-1",
+    "ip": "192.0.2.4",
+    "model_md5": "7a9cb0a3e4d0d777e8161f04ce6a10a9",
+    "serial": "0",
+    "version": "version-1"
+   },
+   "big": 0,
+   "connection_status": 0,
+   "current_order": "current_order-1",
+   "dispatchable": false,
+   "empty_obj": {},
+   "is_error": true,
+   "lock_info": {
+    "locked": false,
+    "owner": "192.0.2.2",
+    "since": ""
+   },
+   "notes": [],
+   "rbk_report": {
+    "alarms": {
+     "errors": [],
+     "fatals": [],
+     "warnings": []
+    },
+    "angle": 0.0,
+    "battery_level": 0,
+    "blocked": true,
+    "temp": 0.0,
+    "x": 0.0,
+    "y": 0.0
+   },
+   "vehicle_id": "vehicle_id-2"
+  }
+ ],
+ "scene_md5": "6fc15c19aab294329b2463d2d59cf778"
+}

@@ -1,0 +1,34 @@
+{
+  "code": 0,
+  "create_on": "2031-07-04T09:15:00.123+08:00",
+  "msg": "",
+  "scene_md5": "0123456789abcdef0123456789ABCDEF",
+  "report": [
+    {
+      "vehicle_id": "INV-AMR-01",
+      "connection_status": 1,
+      "dispatchable": true,
+      "is_error": false,
+      "current_order": null,
+      "basic_info": {"ip": "198.51.100.41", "model_md5": "fedcba9876543210fedcba9876543210", "version": "v3.4.1", "current_map": "invented-floor", "serial": "000123"},
+      "rbk_report": {"x": 12.345, "y": -3, "angle": 1.57, "battery_level": 0.87, "temp": 41, "blocked": false, "alarms": {"fatals": [], "errors": [{"52100": 3, "desc": "Invented ☃ alarm", "times": 2}], "warnings": [{"54001": 1}]}},
+      "lock_info": {"owner": "203.0.113.2", "locked": true, "since": "2031-07-04T09:00:00Z"},
+      "area": {"disable_paths": [{"id": "LM7-LM9"}, {"id": "LM9-LM7"}, {"id": ""}], "disable_points": [{"id": "AP12"}, {"id": "LM7"}], "id": "outside-the-id-lists"},
+      "notes": ["", "same", "same", "203.0.113.9", "x.y"]
+    },
+    {
+      "vehicle_id": "INV-AMR-02",
+      "connection_status": 0,
+      "dispatchable": false,
+      "is_error": true,
+      "current_order": "ORDER-77",
+      "basic_info": {"ip": "198.51.100.42", "model_md5": "fedcba9876543210fedcba9876543210", "version": "v3.4.1", "current_map": "invented-floor", "serial": "000124"},
+      "rbk_report": {"x": 0.0, "y": 1e-05, "angle": -0.0, "battery_level": 1, "temp": 39.5, "blocked": true, "alarms": {"fatals": [], "errors": [], "warnings": []}},
+      "lock_info": {"owner": "203.0.113.2", "locked": false, "since": ""},
+      "area": {"disable_paths": [], "disable_points": []},
+      "notes": [],
+      "empty_obj": {},
+      "big": 123456789012345678901234567890
+    }
+  ]
+}

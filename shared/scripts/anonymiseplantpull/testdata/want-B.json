@@ -1,0 +1,53 @@
+{
+"plant": "B",
+"note": "Synthetic. Derived from a real plant pull by shared/scripts/anonymiseplantpull; the pull is held outside the repo. Structure, counts, joins, label sparsity, bezier handles and dirty rows are the plant's; part numbers, names, PLC tags, timestamps and the map are not.",
+"processes": [
+  {"id":1,"name":"Press B1","description":"Press B1","counter_plc_name":"PLC-Press-B1","counter_tag_name":"MES_Press_B1.Prod_Counter_01","created_at":"2026-01-05T00:06:00Z","updated_at":null},
+  {"id":2,"name":"Press B2","description":"","counter_plc_name":"","created_at":"2026-01-05T00:05:00Z","extra":{"nested":[1,2.5,"x"],"deep":{"k":true}}},
+  {"id":3,"description":null,"created_at":"","name":null}
+],
+"operator_stations": [
+  {"id":10,"name":"Screen B3","code":"screen-b3","note":"","last_seen_at":"2026-01-05T00:10:00Z","process_id":1},
+  {"id":11,"name":"Screen B4","code":"","note":null,"last_seen_at":"2026-01-05T00:10:00Z"}
+],
+"process_nodes": [
+  {"id":100,"process_id":1,"core_node_name":"PLN_01","name":"PLN_01","kind":"front"},
+  {"id":101,"process_id":2,"core_node_name":"SMN_BUF_100","name":"SMN_BUF_100","kind":"back","deleted_at":"2026-01-05T00:03:00Z"}
+],
+"styles": [
+  {"id":20,"process_id":1,"name":"PART SYN-B-S001","description":"PART SYN-B-S001","expected_catid":"6668","deleted_at":null},
+  {"id":21,"process_id":1,"name":"PART SYN-B-S002","description":"","expected_catid":"1793","deleted_at":"2026-01-05T00:04:00Z"},
+  {"id":22,"process_id":9,"name":"","expected_catid":0}
+],
+"style_node_claims": [
+  {"id":30,"style_id":20,"core_node_name":"PLN_01","payload_code":"SYN-B-P001","allowed_payload_codes":["SYN-B-P001","SYN-B-P002","__ANY"],"inbound_staging":"STG_IN_1"},
+  {"id":31,"style_id":99,"core_node_name":"PLN_02","payload_code":"Test-Payload","allowed_payload_codes":"[\"SYN-B-P002\", \"SYN-B-P003\"]"},
+  {"id":32,"style_id":21,"core_node_name":"PLN_03","payload_code":"","allowed_payload_codes":"not-a-list","started_at":"2026-01-05T00:07:00Z","completed_at":"2026-01-05T00:08:00Z"},
+  {"id":33,"style_id":21,"core_node_name":"PLN_03","allowed_payload_codes":null,"payload_code":null}
+],
+"payload_catalog": [
+  {"id":40,"code":"SYN-B-P001","name":"SYN-B-P001","description":"SYN-B-P001","catid":"5885","synced_at":"2026-01-05T00:09:00Z"},
+  {"id":41,"code":"SYN-B-P004","description":"SYN-B-P004","catid":""},
+  {"id":42,"code":"Core_Test","catid":null,"below_reorder_since":"2026-01-05T00:09:00Z"}
+],
+"scene_points": [
+  {"id":60,"instance_name":"LM1","class_name":"LocationMark","label":"","pos_x":-72.0,"pos_y":207.0,"dir":3.141593},
+  {"id":61,"instance_name":"AP2","class_name":"ActionPoint","label":"PLN_01","pos_x":-61.001,"pos_y":212.25,"dir":1.570796},
+  {"id":62,"instance_name":"AP3","class_name":"ActionPoint","label":"PLN_02","pos_x":-60.0,"pos_y":210.0,"dir":6.283183},
+  {"id":63,"instance_name":"AP4","class_name":"GeneralLocation","label":"","pos_x":null,"pos_y":4.5,"dir":null},
+  {"id":64,"instance_name":"AP5","class_name":"GeneralLocation","pos_x":-123456789072.125,"pos_y":1.000000000000021e+16,"dir":3.141593},
+  {"id":65,"instance_name":"AP6","class_name":"GeneralLocation","label":"Supermarket Area","pos_x":-60.001,"pos_y":210.001,"dir":3.141593}
+],
+"scene_edges": [
+  {"id":70,"class_name":"DegenerateBezier","from_name":"LM1","to_name":"AP2","from_x":-72.0,"from_y":207.0,"to_x":-61.001,"to_y":212.25,"ctrl1_x":-65.5,"ctrl1_y":210.1,"ctrl2_x":-66.6,"ctrl2_y":210.2},
+  {"id":71,"class_name":"StraightPath","from_name":"AP2","to_name":"AP3","from_x":-61.001,"from_y":212.25,"to_x":-60.0,"to_y":210.0,"ctrl1_x":null,"ctrl1_y":null,"ctrl2_x":null,"ctrl2_y":null}
+],
+"nodes": [
+  {"id":80,"name":"PLN_01","parent_name":"Supermarket Area","node_type_code":"LANE","created_at":"2026-01-05T00:01:00Z","big":123456789012345678901234567890,"neg0":0,"flt":-0.0,"exp":2000.0,"esc":"tab\there \"q\" back\\slash nl\nend \u0001 \u001f é ☃ 😀","dup":2}
+],
+"payloads": [
+  {"id":50,"code":"SYN-B-P002","name":"SYN-B-P002","description":"SYN-B-P002","created_at":"2026-01-05T00:01:00Z"},
+  {"id":51,"code":"SYN-B-P005","archived_at":"2026-01-05T00:02:00Z"}
+],
+"payload_bin_types": []
+}

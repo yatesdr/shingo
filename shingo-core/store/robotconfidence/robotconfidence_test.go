@@ -298,7 +298,7 @@ func TestSegmentIndex_CurvedLaneIsMeasuredAlongItsCurve(t *testing.T) {
 	ix := NewSegmentIndex([]Segment{curved})
 
 	// The scene's worst chord departure. dashboard-map.js documents 1.30 m
-	// for this lane and an independent Python recomputation gave 1.302; both
+	// for this lane and an independent recomputation gave 1.302; both
 	// must keep agreeing or the drawn lane and the snapped lane have parted.
 	if dev := ix.MaxDeviation(); math.Abs(dev-1.302) > 0.01 {
 		t.Errorf("MaxDeviation = %.4f m, want ~1.302 m for LM10-LM113", dev)
