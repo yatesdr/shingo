@@ -110,7 +110,10 @@ cd "$(dirname "$0")/.."
 # rewritten for it (the stage-order lifecycle pins, the relay-pair end-to-end
 # pins replaced by a census) dropped seven discard sites. Conversion and
 # deletion together.
-FROZEN=1400
+# 1400 → 1397: the remaining-count fix rewrote its planning tests to build
+# the envelope production sends: five discarded marshals went with the old
+# hand-built bodies, two came with the new one.
+FROZEN=1397
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"

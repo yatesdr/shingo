@@ -221,19 +221,16 @@ func TestPhase0_UOPBranch_PostState(t *testing.T) {
 }
 
 // testEnvelopeWithUOP builds an envelope carrying a RemainingUOP value in the
-// protocol payload, exercising the extractRemainingUOP path.
+// protocol payload as the Edge builds it (the OrderRequest is the payload),
+// exercising the extractRemainingUOP path.
 func testEnvelopeWithUOP(t *testing.T, uop *int) *protocol.Envelope {
 	t.Helper()
 	body, err := json.Marshal(&protocol.OrderRequest{RemainingUOP: uop})
 	if err != nil {
 		t.Fatalf("marshal order request: %v", err)
 	}
-	payload, err := json.Marshal(protocol.Data{Body: body})
-	if err != nil {
-		t.Fatalf("marshal data wrapper: %v", err)
-	}
 	env := testEnvelope()
-	env.Payload = payload
+	env.Payload = body
 	return env
 }
 

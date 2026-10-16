@@ -28,6 +28,7 @@ import (
 	corepayloads "shingocore/store/payloads"
 
 	edgeengine "shingoedge/engine"
+	storeorders "shingoedge/store/orders"
 	edgeuop "shingoedge/uop"
 )
 
@@ -182,8 +183,12 @@ func ppRun(t *testing.T, r ppRow) string {
 			c.disp = &edgeengine.ReleaseDisposition{Mode: edgeuop.DispositionSendPartialBack, PartialCount: &nine, CalledBy: "pp"}
 		}
 		c.swap(r.name(), c.operatorRequest)
-	case "material":
-		o, err := c.edge.Engine.ReleaseNodeEmpty(c.nodeID)
+	case "material", "material-count9":
+		release := func() (*storeorders.Order, error) { return c.edge.Engine.ReleaseNodeEmpty(c.nodeID) }
+		if r.door == "material-count9" {
+			release = func() (*storeorders.Order, error) { return c.edge.Engine.ReleaseNodeWithRemainingUOP(c.nodeID, 1, 9) }
+		}
+		o, err := release()
 		if err != nil || o == nil {
 			return fmt.Sprintf("refused (%v)", err)
 		}
@@ -266,14 +271,23 @@ func ppRows() []ppRow {
 		// a departing produce leg releases with no count (the ingest is the
 		// bin's manifest), so Core keeps the line's 17.
 		ppRow{door: "request-spb9", mode: tr, class: ppPartial, today: ppAt17, after: ppAt17},
-		// The Material page: the Edge sends the line's count on the move and
-		// Core's extractRemainingUOP reads it from a wrapper the envelope does
-		// not have, so the claim is a plain one, no sync and no clear, and the
-		// carrier lands with whatever count the stream left, unconfirmed.
-		ppRow{door: "material", mode: tr, class: ppFull, today: ppNoIngest40, after: ppNoIngest40},
-		ppRow{door: "material", mode: tr, class: ppPartial, today: ppNoIngest17, after: ppNoIngest17},
-		ppRow{door: "material", mode: tr, class: ppEmpty, today: ppAt0, after: ppAt0},
-		ppRow{door: "material", mode: tr, class: ppBare, today: ppAtBare, after: ppAtBare},
+		// The Material page: the Edge sends the line's count on the move. Today
+		// Core's extractRemainingUOP read it from a Data wrapper an order
+		// request's envelope does not have, so the claim was a plain one, no
+		// sync and no clear (FLAT BUG). After: the count lands, synced onto the
+		// carrier at its claim, and a count of 0 clears it.
+		ppRow{door: "material", mode: tr, class: ppFull, today: ppNoIngest40,
+			after: "at=KSR-DEST uop=40 part=KSR-PA ledger=sync_uop_and_claim cms=80"},
+		ppRow{door: "material", mode: tr, class: ppPartial, today: ppNoIngest17,
+			after: "at=KSR-DEST uop=17 part=KSR-PA ledger=sync_uop_and_claim cms=34"},
+		ppRow{door: "material", mode: tr, class: ppEmpty, today: ppAt0,
+			after: "at=KSR-DEST uop=0 part=- ledger=clear_and_claim cms=0"},
+		ppRow{door: "material", mode: tr, class: ppBare, today: ppAtBare,
+			after: "at=KSR-DEST uop=0 part=- ledger=clear_and_claim cms=0"},
+		// The operator types 9 at the Material page: today Core kept the
+		// stream's 17; after, the operator's count lands.
+		ppRow{door: "material-count9", mode: tr, class: ppPartial, today: ppNoIngest17,
+			after: "at=KSR-DEST uop=9 part=KSR-PA ledger=sync_uop_and_claim cms=18"},
 	)
 	return rows
 }
@@ -288,5 +302,41 @@ func TestProducePartialsPin_LiftDoors(t *testing.T) {
 				t.Errorf("%s\n got  %s\n want %s\n (today %s)", r.name(), got, r.after, r.today)
 			}
 		})
+	}
+}
+
+// The Material page's count on a CONSUME line: the operator releases the
+// line's bin as empty. Today Core never read the count (the Data-wrapper bug)
+// and the bin landed still holding 40 of its part; after, a count of 0 clears
+// it at its claim.
+func TestProducePartialsPin_MaterialPageCountOnAConsumeLine(t *testing.T) {
+	c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeTwoRobot, plain: true})
+	c.runningCell("setup")
+	lb := c.lineBin()
+	mustNil(t, c.edge.DB.SetProcessNodeActiveBinID(c.nodeID, &lb), "the seat holds the line's bin")
+	c.edge.Engine.SetInventoryDeltaSink(edgeuop.New(c.edge.DB, "edge.test", c.edge.DB, c.edge.DB))
+	m := c.ppMark()
+	o, err := c.edge.Engine.ReleaseNodeWithRemainingUOP(c.nodeID, 1, 0)
+	if err != nil || o == nil {
+		t.Fatalf("release refused: %v", err)
+	}
+	rel := *o
+	c.eventually("the release with the fleet", func() bool { return c.coreOf(rel).VendorOrderID != "" })
+	c.drive(c.coreOf(rel), "RUNNING")
+	c.liftAt(c.coreOf(rel), ksrLine, true)
+	c.drive(c.coreOf(rel), "FINISHED")
+	c.eventually("the release done at both ends", func() bool {
+		if c.edgeRow(rel.ID).Status == protocol.StatusDelivered {
+			mustNil(c.t, c.edge.Engine.OrderManager().ConfirmDelivery(rel.ID, 1), "confirm")
+		}
+		return protocol.IsTerminal(c.edgeRow(rel.ID).Status) && protocol.IsTerminal(c.coreOf(rel).Status)
+	})
+	c.quiet()
+	got := c.ppSeen(m)
+	today := "at=KSR-DEST uop=40 part=KSR-PA ledger=- cms=0"
+	after := "at=KSR-DEST uop=0 part=- ledger=clear_and_claim cms=0"
+	t.Logf("PIN material/consume/released-empty %s", got)
+	if got != after {
+		t.Errorf("got  %s\nwant %s (today %s)", got, after, today)
 	}
 }

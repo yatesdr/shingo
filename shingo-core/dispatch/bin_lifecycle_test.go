@@ -111,7 +111,7 @@ func TestFullDepletion_ClearsManifest(t *testing.T) {
 	}
 	body, _ := json.Marshal(orderReq)
 	env := testEnvelope()
-	env.Payload, _ = json.Marshal(protocol.Data{Body: body})
+	env.Payload = body // an order request's payload is the request itself
 
 	d.HandleOrderRequest(env, orderReq)
 	// The claim-move to the scanner: the scanner (mirrored) is the single claim
@@ -167,7 +167,7 @@ func TestPartialConsumption_SyncsUOP(t *testing.T) {
 	}
 	body, _ := json.Marshal(orderReq)
 	env := testEnvelope()
-	env.Payload, _ = json.Marshal(protocol.Data{Body: body})
+	env.Payload = body // an order request's payload is the request itself
 
 	d.HandleOrderRequest(env, orderReq)
 	// The claim-move to the scanner: intake persists remaining_uop and queues; the

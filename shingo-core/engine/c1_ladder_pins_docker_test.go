@@ -42,10 +42,8 @@ func envelopeWithUOP(t *testing.T, uop int) *protocol.Envelope {
 	t.Helper()
 	body, err := json.Marshal(&protocol.OrderRequest{RemainingUOP: &uop})
 	testutil.MustNoErr(t, err, "marshal request body")
-	payload, err := json.Marshal(protocol.Data{Body: body})
-	testutil.MustNoErr(t, err, "marshal data wrapper")
 	env := testEnvelope()
-	env.Payload = payload
+	env.Payload = body // an order request's payload is the request itself
 	return env
 }
 

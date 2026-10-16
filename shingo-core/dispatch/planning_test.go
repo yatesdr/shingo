@@ -34,8 +34,7 @@ func TestExtractRemainingUOP_NoField(t *testing.T) {
 		OrderType: "move",
 		Quantity:  1,
 	})
-	payload, _ := json.Marshal(protocol.Data{Body: body})
-	env := &protocol.Envelope{Payload: payload}
+	env := orderRequestEnvelope(t, body)
 
 	got := extractRemainingUOP(env)
 	if got != nil {
@@ -53,8 +52,7 @@ func TestExtractRemainingUOP_Zero(t *testing.T) {
 		Quantity:     1,
 		RemainingUOP: &zero,
 	})
-	payload, _ := json.Marshal(protocol.Data{Body: body})
-	env := &protocol.Envelope{Payload: payload}
+	env := orderRequestEnvelope(t, body)
 
 	got := extractRemainingUOP(env)
 	if got == nil {
@@ -75,8 +73,7 @@ func TestExtractRemainingUOP_Positive(t *testing.T) {
 		Quantity:     1,
 		RemainingUOP: &partial,
 	})
-	payload, _ := json.Marshal(protocol.Data{Body: body})
-	env := &protocol.Envelope{Payload: payload}
+	env := orderRequestEnvelope(t, body)
 
 	got := extractRemainingUOP(env)
 	if got == nil {
@@ -94,5 +91,30 @@ func TestExtractRemainingUOP_MalformedJSON(t *testing.T) {
 	got := extractRemainingUOP(env)
 	if got != nil {
 		t.Errorf("expected nil for malformed JSON, got %v", *got)
+	}
+}
+
+// orderRequestEnvelope is an order request's envelope as the Edge builds it:
+// protocol.NewEnvelope marshals the OrderRequest straight into the payload.
+func orderRequestEnvelope(t *testing.T, body []byte) *protocol.Envelope {
+	t.Helper()
+	env, err := protocol.NewEnvelope(protocol.TypeOrderRequest, protocol.Address{Station: "edge.test"},
+		protocol.Address{Station: "core"}, json.RawMessage(body))
+	if err != nil {
+		t.Fatalf("envelope: %v", err)
+	}
+	return env
+}
+
+// TestExtractRemainingUOP_ADataWrapperIsNotAnOrderRequest: the shape this used
+// to read (an order request inside a data-channel wrapper) is not one the Edge
+// sends, and its count is not taken for an order request's.
+func TestExtractRemainingUOP_ADataWrapperIsNotAnOrderRequest(t *testing.T) {
+	t.Parallel()
+	n := 7
+	body, _ := json.Marshal(&protocol.OrderRequest{OrderUUID: "wrapped", RemainingUOP: &n})
+	payload, _ := json.Marshal(protocol.Data{Body: body})
+	if got := extractRemainingUOP(&protocol.Envelope{Payload: payload}); got != nil {
+		t.Errorf("a Data-wrapped body read as the request's count: %d", *got)
 	}
 }

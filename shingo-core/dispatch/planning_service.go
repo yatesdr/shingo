@@ -188,24 +188,24 @@ func newPlanningService(db *store.DB, resolver NodeResolver, finder *SourceFinde
 	return s
 }
 
-// extractRemainingUOP parses the envelope payload to extract the remaining_uop
-// field from an OrderRequest. Returns nil if the field is absent or unparseable.
+// extractRemainingUOP reads the remaining_uop field of the OrderRequest the
+// envelope carries. Returns nil if the field is absent or unparseable.
+//
+// An order request's payload IS the OrderRequest (protocol.NewEnvelope marshals
+// it directly); only a data-channel envelope wraps its body in protocol.Data.
+// This used to unwrap a Data first, found an empty body on every real request,
+// and so dropped the Material page's count on every move.
 func extractRemainingUOP(env *protocol.Envelope) *int {
 	if env == nil || len(env.Payload) == 0 {
 		return nil
 	}
-	// Decode the Data wrapper first, then the body
-	var data protocol.Data
-	if err := json.Unmarshal(env.Payload, &data); err != nil {
-		return nil
-	}
-	var partial struct {
+	var req struct {
 		RemainingUOP *int `json:"remaining_uop,omitempty"`
 	}
-	if err := json.Unmarshal(data.Body, &partial); err != nil {
+	if err := json.Unmarshal(env.Payload, &req); err != nil {
 		return nil
 	}
-	return partial.RemainingUOP
+	return req.RemainingUOP
 }
 
 func (s *PlanningService) dbg(format string, args ...any) {

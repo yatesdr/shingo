@@ -57,8 +57,7 @@ func TestLoaderOutbound_CoreAcceptsBothEdges(t *testing.T) {
 			body, err := json.Marshal(req)
 			body = testutil.Must(t, body, err, "marshal request")
 			env := testEnvelope()
-			data, err := json.Marshal(protocol.Data{Body: body})
-			env.Payload = testutil.Must(t, data, err, "marshal envelope")
+			env.Payload = body // an order request's payload is the request itself
 			d.HandleOrderRequest(env, req)
 			o := dispatchSimpleViaScanner(t, d, db, req.OrderUUID)
 
