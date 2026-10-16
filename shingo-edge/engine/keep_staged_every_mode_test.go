@@ -289,3 +289,93 @@ func TestKeepStagedNode_TheChangeoverLegTakesTheSpareAsRequestDoes(t *testing.T)
 		}
 	}
 }
+
+// A RIGHT SPARE STARTS THE SWAP MID-ORDER, IN EVERY MODE (owner, 2026-10-16:
+// "keep staged basically just makes robot swap modes start mid-order"). With a
+// right spare standing, the fresh carrier is already where the swap would have
+// staged it, so no leg sets a carrier down on the spot: there is one pickup
+// there, naming the part, and the next step sets that carrier on the line side.
+// The single robot lifts the line's bin first — old out, then spot to line.
+// Steady swap and changeover, both roles, every press geometry; the spot is
+// the inbound staging in the two modes that stage, a node of its own in the
+// two that do not.
+func TestKeepStagedNode_ARightSpareStartsMidOrder(t *testing.T) {
+	t.Parallel()
+	node := &processes.Node{ID: 1, Name: "LINE", CoreNodeName: "LINE"}
+	nodes := []processes.Node{*node}
+	for _, role := range []protocol.ClaimRole{protocol.ClaimRoleConsume, protocol.ClaimRoleProduce} {
+		for _, mode := range protocol.ConfigurableSwapModes() {
+			noHop := mode == protocol.SwapModeSequential || mode == protocol.SwapModeTwoRobotPressIndex
+			for _, v := range goldenVariants(mode) {
+				what := string(role) + "/" + string(mode) + "/" + v.name
+				kept := func(payload string) *processes.NodeClaim {
+					c := withSpot(goldenClaim(role, mode, payload, v.secondPaired, v.flip))
+					if noHop {
+						c.InboundStaging, c.OutboundStaging = "", ""
+					} else {
+						c.InboundStaging = everyModeSpot
+					}
+					return c
+				}
+				run := kept("P-RUN")
+				d, err := BuildSwapDispatch(node, run)
+				if err != nil {
+					t.Fatalf("%s: %v", what, err)
+				}
+				steady := [][]protocol.ComplexOrderStep{d.StepsA, d.StepsB}
+				if mode == protocol.SwapModeSequential {
+					steady = append(steady, BuildSequentialBackfillSteps(run))
+				}
+				assertMidOrder(t, what+" steady", steady, run.PayloadCode, mode)
+
+				from := goldenClaim(role, mode, "P-FROM", v.secondPaired, v.flip)
+				if noHop {
+					from.InboundStaging, from.OutboundStaging = "", ""
+				}
+				to := kept("P-TO")
+				plan := BuildChangeoverPlan([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: SituationSwap,
+					FromClaim: from, ToClaim: to}}, nodes, false, nil, toolingChangeover{})
+				var legs [][]protocol.ComplexOrderStep
+				for _, a := range plan.Actions {
+					legs = append(legs, specSteps(a.SupplyOrder), specSteps(a.EvacOrder))
+				}
+				assertMidOrder(t, what+" changeover", legs, to.PayloadCode, mode)
+			}
+		}
+	}
+}
+
+func assertMidOrder(t *testing.T, what string, legs [][]protocol.ComplexOrderStep, part string, mode protocol.SwapMode) {
+	t.Helper()
+	pickups := 0
+	for _, steps := range legs {
+		liftedLine := false
+		for i, s := range steps {
+			if s.Action == protocol.ActionPickup && s.Node == "LINE" {
+				liftedLine = true
+			}
+			if s.Node != everyModeSpot {
+				continue
+			}
+			switch s.Action {
+			case protocol.ActionDropoff:
+				t.Errorf("%s: a leg sets a carrier down on the spot (step %d): the spare is already there", what, i)
+			case protocol.ActionPickup:
+				pickups++
+				if s.PayloadCode != part || s.Empty {
+					t.Errorf("%s: the spot pickup is %+v, want it naming %s", what, s, part)
+				}
+				if i+1 >= len(steps) || steps[i+1].Action != protocol.ActionDropoff ||
+					steps[i+1].Node == "STG-IN" || steps[i+1].Node == "STG-OUT" {
+					t.Errorf("%s: after the spot pickup comes %+v, want the set-down on the line side", what, steps[i+1:])
+				}
+				if mode == protocol.SwapModeSingleRobot && !liftedLine {
+					t.Errorf("%s: the single robot lifts the spare before the line's bin: old out first", what)
+				}
+			}
+		}
+	}
+	if pickups != 1 {
+		t.Errorf("%s: %d pickups at the spot, want 1", what, pickups)
+	}
+}
