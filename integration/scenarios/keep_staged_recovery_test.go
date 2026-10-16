@@ -25,6 +25,7 @@
 package scenarios
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"runtime"
@@ -1084,9 +1085,12 @@ func (c *ksrCell) fill(label string, trigger func()) {
 
 // ── the changeover and its moments ──────────────────────────────────────────
 
-// ksrCO is what the changeover start made.
+// ksrCO is what the changeover start made: its legs and the return of A's
+// spare. It makes no refill. B reaches the spot on the orders bringingB names:
+// the keeper's refill, or a leg that parks its carrier there.
 type ksrCO struct {
-	legs, refills, returns []domain.Order
+	since         int64
+	legs, returns []domain.Order
 }
 
 func (c *ksrCell) startChangeover() ksrCO {
@@ -1096,23 +1100,114 @@ func (c *ksrCell) startChangeover() ksrCO {
 		c.t.Fatalf("changeover to B: %v", err)
 	}
 	c.tick()
-	var co ksrCO
+	co := ksrCO{since: before}
+	refills := 0
 	for _, o := range c.newRows(before) {
 		switch {
 		case o.OrderType == protocol.OrderTypeComplex:
 			co.legs = append(co.legs, o)
 		case ksrIsRetrieve(o.OrderType) && o.DeliveryNode == ksrSpot:
-			co.refills = append(co.refills, o)
+			refills++
 		case o.OrderType == protocol.OrderTypeMove && o.SourceNode == ksrSpot:
 			co.returns = append(co.returns, o)
 		}
 	}
-	if len(co.returns) != 1 || len(co.refills) == 0 {
+	if len(co.returns) != 1 || refills != 0 {
 		c.dump("changeover start")
-		c.t.Fatalf("NOT REACHED: the changeover made returns=%d refills=%d, want A's spare sent back and B refills",
-			len(co.returns), len(co.refills))
+		c.t.Fatalf("the changeover made returns=%d refills=%d, want A's spare sent back and no refill: "+
+			"the keeper refills the spot", len(co.returns), refills)
 	}
 	return co
+}
+
+// bringingB is every order of the line that brings a B carrier to the spot
+// since the start: the keeper's refill, where no leg sets a carrier down there,
+// or a changeover leg parking its carrier on the spot as its inbound staging.
+func (c *ksrCell) bringingB(co ksrCO) []domain.Order {
+	c.t.Helper()
+	var out []domain.Order
+	for _, o := range c.newRows(co.since) {
+		switch {
+		case ksrIsRetrieve(o.OrderType) && o.DeliveryNode == ksrSpot && o.PayloadCode == ksrPartB:
+			out = append(out, o)
+		case o.OrderType == protocol.OrderTypeComplex && c.dropsOnSpot(o):
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// legSteps is an Edge order's steps.
+func (c *ksrCell) legSteps(o domain.Order) []protocol.ComplexOrderStep {
+	c.t.Helper()
+	raw, err := c.edge.DB.GetOrderStepsJSON(o.ID)
+	mustNil(c.t, err, "steps")
+	var steps []protocol.ComplexOrderStep
+	if raw != "" {
+		mustNil(c.t, json.Unmarshal([]byte(raw), &steps), "decode steps")
+	}
+	return steps
+}
+
+func (c *ksrCell) dropsOnSpot(o domain.Order) bool {
+	for _, s := range c.legSteps(o) {
+		if s.Action == protocol.ActionDropoff && s.Node == ksrSpot {
+			return true
+		}
+	}
+	return false
+}
+
+// lastDropAt is where an order's last set-down is: its delivery node for a
+// plain order.
+func (c *ksrCell) lastDropAt(o domain.Order) string {
+	steps := c.legSteps(o)
+	for i := len(steps) - 1; i >= 0; i-- {
+		if steps[i].Action == protocol.ActionDropoff {
+			return steps[i].Node
+		}
+	}
+	return o.DeliveryNode
+}
+
+// landOnSpot runs an order bringing B until its carrier stands on the spot: a
+// refill or a stage order to its end, a leg that goes on from the spot to its
+// set-down there.
+func (c *ksrCell) landOnSpot(e domain.Order, o *coreorders.Order) {
+	c.t.Helper()
+	if c.lastDropAt(e) == ksrSpot {
+		c.drive(o, "FINISHED")
+		return
+	}
+	v := c.core.sim.GetOrder(o.VendorOrderID)
+	if v == nil {
+		c.notReached(fmt.Sprintf("leg %d has no vendor order", e.ID))
+	}
+	// The fleet reports each block up to the set-down, in order, as the poller
+	// does: the fetch's lift, then the set-down on the spot.
+	for _, b := range v.Blocks {
+		if !c.core.sim.CompleteBlock(o.VendorOrderID, b.BlockID, b.Location, b.BinTask, 0, 0) {
+			c.notReached(fmt.Sprintf("leg %d: block %s at %s did not complete", e.ID, b.BinTask, b.Location))
+		}
+		c.settle()
+		if b.Location == ksrSpot && b.BinTask == "JackUnload" {
+			return
+		}
+	}
+	c.notReached(fmt.Sprintf("leg %d has no set-down at the spot", e.ID))
+}
+
+// swapLegs is the changeover's legs that work the line: every leg but a stage
+// order, whose last set-down is the spot (a single-robot changeover parking B
+// on the spot as its inbound staging).
+func (c *ksrCell) swapLegs(co ksrCO) []domain.Order {
+	var out []domain.Order
+	for _, l := range co.legs {
+		if c.lastDropAt(l) != ksrSpot {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // notReached stops a case whose moment could not be set up.
@@ -1136,22 +1231,23 @@ func (c *ksrCell) spareLeaves(co ksrCO) {
 	}
 }
 
-// refillFlying waits for a B refill to go to the fleet and puts a robot on
-// it: from here a cancel cannot withdraw it.
-func (c *ksrCell) refillFlying(co ksrCO) *coreorders.Order {
+// bFlying waits for an order bringing B to the spot to go to the fleet and
+// puts a robot on it: from here a cancel cannot withdraw it.
+func (c *ksrCell) bFlying(co ksrCO) (domain.Order, *coreorders.Order) {
 	c.t.Helper()
+	var edgeRow domain.Order
 	var flying *coreorders.Order
-	c.eventually("a B refill with the fleet", func() bool {
-		for _, r := range co.refills {
+	c.eventually("an order bringing B to the spot with the fleet", func() bool {
+		for _, r := range c.bringingB(co) {
 			if o := c.coreOf(r); o.VendorOrderID != "" {
-				flying = o
+				edgeRow, flying = r, o
 				return true
 			}
 		}
 		return false
 	})
 	c.drive(flying, "RUNNING")
-	return flying
+	return edgeRow, flying
 }
 
 func (c *ksrCell) bOnSpot() bool {
@@ -1193,14 +1289,16 @@ var ksrMoments = []ksrMoment{
 			c.notReached("A's spare is not on the spot")
 		}
 	}},
-	{name: "b", what: "after A's spare left, before B's refill is dispatched", at: func(c *ksrCell, co ksrCO) {
+	{name: "b", what: "after A's spare left, before B is dispatched to the spot", at: func(c *ksrCell, co ksrCO) {
 		// The spot freeing (a bin-moved event) kicks Core's fulfillment scanner
-		// on its own goroutine, which dispatches the waiting refill. There is no
-		// pause between the two to cancel in. So the moment is taken as the
+		// on its own goroutine, which dispatches what waits for the spot. There
+		// is no pause between the two to cancel in. So the moment is taken as the
 		// station sees it: the robot lifts the spare (its pickup block completes
 		// and Core moves the bin to transit) and the cancel follows at once,
 		// before any message from Core reaches Edge, while Edge still holds
-		// every B refill as not yet with the fleet.
+		// every order bringing B as not yet with the fleet. Where no leg parks on
+		// the spot the keeper has not been told of the lift yet, so there is no
+		// such order at all.
 		ret := c.coreOf(co.returns[0])
 		if ret.VendorOrderID == "" {
 			c.notReached("A's spare's return never went to the fleet")
@@ -1209,55 +1307,54 @@ var ksrMoments = []ksrMoment{
 		if !c.liftAt(ret, ksrSpot, false) || c.spareOnSpot() != nil {
 			c.notReached("the return's robot lifted A's spare but Core still has it on the spot")
 		}
-		for _, r := range co.refills {
+		for _, r := range c.bringingB(co) {
 			if s := c.edgeRow(r.ID).Status; protocol.ChangeoverStartActionFor(s) != protocol.ChangeoverStartCancel {
-				c.notReached(fmt.Sprintf("B refill %d reads %s at Edge: already with the fleet", r.ID, s))
+				c.notReached(fmt.Sprintf("order %d bringing B reads %s at Edge: already with the fleet", r.ID, s))
 			}
 			if o := c.coreOf(r); o.VendorOrderID != "" {
-				c.t.Logf("moment b: Core's scanner had already handed B refill %d to the fleet (%s, no robot yet)",
+				c.t.Logf("moment b: Core's scanner had already handed order %d bringing B to the fleet (%s, no robot yet)",
 					r.ID, c.vendorState(o.VendorOrderID))
 			}
 		}
 	}},
-	{name: "c", what: "while B's refill is in flight", at: func(c *ksrCell, co ksrCO) {
+	{name: "c", what: "while B is in flight to the spot", at: func(c *ksrCell, co ksrCO) {
 		c.spareLeaves(co)
-		r := c.refillFlying(co)
+		_, r := c.bFlying(co)
 		c.settle()
 		e, err := c.edge.DB.GetOrderByUUID(r.EdgeUUID)
-		mustNil(c.t, err, "the flying refill at Edge")
+		mustNil(c.t, err, "the flying order at Edge")
 		if e == nil || protocol.ChangeoverStartActionFor(e.Status) == protocol.ChangeoverStartCancel {
-			c.notReached("the flying B refill still reads cancellable at Edge")
+			c.notReached("the order flying B to the spot still reads cancellable at Edge")
 		}
 	}},
-	{name: "d", what: "after B's spare has landed on the spot", at: func(c *ksrCell, co ksrCO) {
+	{name: "d", what: "after B has landed on the spot", at: func(c *ksrCell, co ksrCO) {
 		c.spareLeaves(co)
-		r := c.refillFlying(co)
-		c.drive(r, "FINISHED")
+		c.landOnSpot(c.bFlying(co))
 		if !c.bOnSpot() {
-			c.notReached("B's refill finished but no B bin is on the spot")
+			c.notReached("the order bringing B set it down but no B bin is on the spot")
 		}
 	}},
-	{name: "e", what: "while B's refill is a dig", buriedB: true, claimC: true, at: ksrDigMoment},
-	{name: "e-held", what: "while B's refill is a dig, its blocker's part named by no claim", buriedB: true,
+	{name: "e", what: "while B's fetch is a dig", buriedB: true, claimC: true, at: ksrDigMoment},
+	{name: "e-held", what: "while B's fetch is a dig, its blocker's part named by no claim", buriedB: true,
 		at: ksrDigMoment},
 	{name: "f", what: "with the changeover's swap robots at their waits", at: func(c *ksrCell, co ksrCO) {
 		c.spareLeaves(co)
-		r := c.refillFlying(co)
-		c.drive(r, "FINISHED")
+		c.landOnSpot(c.bFlying(co))
+		legs := c.swapLegs(co)
 		c.eventually("the changeover's legs with the fleet", func() bool {
 			c.fleetStep()
-			for _, l := range co.legs {
+			for _, l := range legs {
 				if c.coreOf(l).VendorOrderID == "" {
 					return false
 				}
 			}
 			return true
 		})
-		for _, l := range co.legs {
+		for _, l := range legs {
 			c.drive(c.coreOf(l), "RUNNING", "WAITING")
 		}
 		c.eventually("the changeover's legs staged at Edge", func() bool {
-			for _, l := range co.legs {
+			for _, l := range legs {
 				if c.edgeRow(l.ID).Status != protocol.StatusStaged {
 					return false
 				}
@@ -1297,12 +1394,12 @@ func (c *ksrCell) takeLineBinOff() {
 // outbound staging, and the cancel comes before it collects the B spare.
 func ksrParkedMoment(c *ksrCell, co ksrCO) {
 	c.spareLeaves(co)
-	r := c.refillFlying(co)
-	c.drive(r, "FINISHED")
-	if len(co.legs) != 1 {
-		c.notReached(fmt.Sprintf("the single-robot changeover made %d legs, want 1", len(co.legs)))
+	c.landOnSpot(c.bFlying(co))
+	swaps := c.swapLegs(co)
+	if len(swaps) != 1 {
+		c.notReached(fmt.Sprintf("the single-robot changeover made %d swap legs, want 1", len(swaps)))
 	}
-	leg := co.legs[0]
+	leg := swaps[0]
 	c.eventually("the changeover's leg with the fleet", func() bool {
 		c.fleetStep()
 		return c.coreOf(leg).VendorOrderID != ""
@@ -1347,13 +1444,13 @@ func (c *ksrCell) blockDone(o *coreorders.Order, node, task string) bool {
 	return false
 }
 
-// ksrDigMoment runs the changeover until B's refill is a dig whose first leg
-// has lifted the blocker and waits at the lane with it.
+// ksrDigMoment runs the changeover until B's fetch to the spot is a dig whose
+// first leg has lifted the blocker and waits at the lane with it.
 func ksrDigMoment(c *ksrCell, co ksrCO) {
 	c.spareLeaves(co)
 	var child *coreorders.Order
-	c.eventually("B's refill digging, its first leg with the fleet", func() bool {
-		for _, r := range co.refills {
+	c.eventually("B's fetch digging, its first leg with the fleet", func() bool {
+		for _, r := range c.bringingB(co) {
 			parent := c.coreOf(r)
 			kids, err := c.core.eng.DB().ListChildOrders(parent.ID)
 			mustNil(c.t, err, "children")
@@ -1564,6 +1661,17 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 					// never the dig this moment cancels at. The produce press,
 					// whose refill steps are empties, reaches it.
 					t.Skip("the consume press's own changeover leg digs B's lane (Core judges it by the order's payload)")
+				}
+				if m.buriedB && (cl.mode == protocol.SwapModeTwoRobot || cl.mode == protocol.SwapModeSingleRobot) {
+					// NOT REACHED, since the start stopped refilling the spot
+					// (2026-10-16). The spot is these cells' inbound staging, so
+					// B reaches it on the changeover's own leg, parked there,
+					// and the keeper refills only behind that leg. A buried B is
+					// that leg's own dig, which Core runs from the leg's intake,
+					// not the plain refill's dig this moment cancels at. The
+					// cancel of a changeover leg mid-dig is not covered here,
+					// as for the consume press above.
+					t.Skip("B comes on the changeover's own leg, whose dig is the leg's intake, not a refill's")
 				}
 				started := time.Now()
 				defer func() { t.Logf("case %s ran %s", m.name, time.Since(started).Round(time.Second)) }()

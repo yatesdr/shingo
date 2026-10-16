@@ -6,8 +6,9 @@
 // The orders Edge decides travel the Bus to Core's real handler, and Core's
 // replies travel back. The Edge engine tests count what each decision creates;
 // this case asserts that Core takes each of them for what it is: the short
-// swap's spot pickup lifts the spare, a refill and a return are plain orders,
-// and the cancel reaches the ones not yet with the fleet.
+// swap's spot pickup lifts the spare, a return is a plain order, the
+// changeover's market swap waits behind the return, the cancel reaches what has
+// not flown, and the keeper refills the spot when the flown return lands.
 //
 //go:build docker
 
@@ -276,14 +277,16 @@ func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
 	}
 	step()
 
-	// ── 2. The payload changeover: the spare goes back, the new part comes ──
+	// ── 2. The payload changeover: the spare goes back, and the new part comes
+	// on the market swap, staging on the spot behind the return. The start
+	// orders no refill: the keeper's, behind the leg. ──
 	if _, err := edge.Engine.StartProcessChangeover(processID, styleB, "scenario", ""); err != nil {
 		t.Fatalf("changeover: %v", err)
 	}
 	settle()
 	co := step()
-	if len(co.legs) != 2 || len(co.refills) != 2 || len(co.returns) != 1 {
-		t.Fatalf("changeover made legs=%d refills=%d returns=%d, want 2, 2, 1",
+	if len(co.legs) != 2 || len(co.refills) != 0 || len(co.returns) != 1 {
+		t.Fatalf("changeover made legs=%d refills=%d returns=%d, want 2, 0, 1",
 			len(co.legs), len(co.refills), len(co.returns))
 	}
 	ret := co.returns[0]
@@ -292,16 +295,10 @@ func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
 		t.Fatalf("return: Core holds bin %d vendor %q, Edge to %q carrying %q; want the spare %d with the fleet, "+
 			"to %s carrying %s", holds(c), c.VendorOrderID, ret.DeliveryNode, ret.PayloadCode, spare.ID, kscMarket, kscPartA)
 	}
-	for _, r := range co.refills {
-		if c := coreOf(r); c.PayloadCode != kscPartB || c.VendorOrderID != "" {
-			t.Fatalf("changeover refill %d at Core: payload %q vendor %q, want %s held for the spot",
-				r.ID, c.PayloadCode, c.VendorOrderID, kscPartB)
-		}
-	}
 	for _, leg := range co.legs {
 		if c := coreOf(leg); c.VendorOrderID != "" || holds(c) == spare.ID {
-			t.Fatalf("changeover leg %s went with Core holding bin %d: the supply must wait for a %s spare",
-				leg.UUID, holds(c), kscPartB)
+			t.Fatalf("changeover leg %s went with Core holding bin %d: the supply must wait behind the return "+
+				"for the spot, never take the spare", leg.UUID, holds(c))
 		}
 	}
 	// A robot takes the return. Edge learns an order is with the fleet at its
@@ -313,10 +310,10 @@ func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
 	}
 
 	// ── 3. The cancel: what had not flown is cancelled at Core, the flown
-	// return lands, and the spare standing is the staying part's, kept. ──
+	// return lands, and the keeper refills the spot for the staying part. ──
 	mustNil(t, edge.Engine.CancelProcessChangeover(processID), "cancel")
 	settle()
-	for _, o := range append(append([]domain.Order{}, co.legs...), co.refills...) {
+	for _, o := range co.legs {
 		if c := coreOf(o); c.Status != protocol.StatusCancelled {
 			t.Errorf("after cancel, %s %d reads %q at Core, want cancelled", o.OrderType, o.ID, c.Status)
 		}
@@ -325,15 +322,24 @@ func TestScenario_KeepStagedCell_CallChangeoverCancel(t *testing.T) {
 		t.Errorf("the flown return reads %q at Core after the cancel, want it still landing", c.Status)
 	}
 	// Core still has the spare on the spot and it is the staying part, but its
-	// return is already with the fleet: the spare is leaving. The reverted
-	// reconcile decides the spot as bare, so it sends nothing back a second time
-	// and orders one refill of the staying part to stand behind it.
-	after := step()
-	if len(after.legs) != 0 || len(after.returns) != 0 || len(after.refills) != 1 {
-		t.Fatalf("the cancel made legs=%d refills=%d returns=%d, want one refill and nothing else: "+
-			"the spare on the spot is leaving", len(after.legs), len(after.refills), len(after.returns))
+	// return is already with the fleet: the spare is leaving. The cancel decides
+	// the spot as bare, so it sends nothing back a second time, and it orders
+	// nothing: the spot is the keeper's.
+	if after := step(); len(after.legs) != 0 || len(after.returns) != 0 || len(after.refills) != 0 {
+		t.Fatalf("the cancel made legs=%d refills=%d returns=%d, want nothing: the spare on the spot is leaving "+
+			"and the keeper refills the spot", len(after.legs), len(after.refills), len(after.returns))
 	}
-	if r := after.refills[0]; r.PayloadCode != kscPartA {
-		t.Errorf("the cancel's refill carries %q, want the staying part %s", r.PayloadCode, kscPartA)
+
+	// The return lands. Its end is a decision point of the keeper, which now
+	// keeps the spot for the staying part and finds it bare.
+	sim.DriveStateWithRobot(coreOf(ret).VendorOrderID, "FINISHED", "KSC-AMR")
+	settle()
+	kept := step()
+	if len(kept.legs) != 0 || len(kept.returns) != 0 || len(kept.refills) != 1 {
+		t.Fatalf("after the return landed: legs=%d refills=%d returns=%d, want the keeper's one refill",
+			len(kept.legs), len(kept.refills), len(kept.returns))
+	}
+	if r := kept.refills[0]; r.PayloadCode != kscPartA {
+		t.Errorf("the keeper's refill carries %q, want the staying part %s", r.PayloadCode, kscPartA)
 	}
 }
