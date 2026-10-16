@@ -20,9 +20,9 @@ import (
 // Each spot is decided once across the whole plan (changeoverSpots): a spare
 // is kept when the incoming claim keeps that spot and the spare suits it (a
 // full one by the part Core reads on it; an empty, for produce, by the claims'
-// role and part), sent back to whatever supplied it otherwise, and the incoming claim's spot is
-// filled with plain refills — one for the changeover's own supply to lift, one
-// to stand after it. These count what lands in the order table.
+// role and part), and sent back to whatever supplied it otherwise. The
+// changeover orders no refill: the keeper fills the spot behind the leg's lift
+// (keptFor). These count what lands in the order table.
 
 type coClaim struct {
 	line, spot, source, part string
@@ -144,11 +144,8 @@ func startKSChangeover(t *testing.T, fx *coFixture) int64 {
 
 // S5: the line keeps its spot and the part changes. The spare standing there is
 // the outgoing part: it goes back to the outgoing claim's source carrying its
-// own part, and two refills of the incoming part come — one the changeover's
-// supply lifts, one to stand after it.
-//
-// PREDICTED UNDER ONE REFILL OWNER (brief A2.3): the return stays, the start
-// orders no refills, and the supply leg fetches from the market.
+// own part, the supply leg fetches from the market, and the start orders no
+// refill. (It ordered two until 2026-10-15, one behind an assumed lift.)
 func TestKeepStagedChangeover_PartChangeSendsTheSpareBack(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []protocol.SwapMode{protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot,
@@ -165,8 +162,8 @@ func TestKeepStagedChangeover_PartChangeSendsTheSpareBack(t *testing.T) {
 			if len(got.returns) != 1 || got.returns[0].DeliveryNode != "SRC-OLD" || got.returns[0].PayloadCode != "PART-OLD" {
 				t.Fatalf("returns = %+v, want one to SRC-OLD carrying PART-OLD", got.returns)
 			}
-			if got.refills["L1"] != 2 {
-				t.Fatalf("refills for L1 = %d, want 2", got.refills["L1"])
+			if got.refills["L1"] != 0 {
+				t.Fatalf("refills for L1 = %d, want none: the keeper refills, not the start", got.refills["L1"])
 			}
 			assertNoTaskLink(t, fx, coID, "L1")
 		})
@@ -174,12 +171,10 @@ func TestKeepStagedChangeover_PartChangeSendsTheSpareBack(t *testing.T) {
 }
 
 // S6: the line changes over and its spare does not — same part, same role, an
-// evacuation (the line's own bin goes out and back). The spare stays; the
-// changeover's supply lifts it, and one refill comes to stand after it. A line
-// that does not change over at all orders nothing for its spot.
-//
-// PREDICTED UNDER ONE REFILL OWNER (brief A2.3): both rows order nothing at
-// start; the evacuated line's refill is the keeper's, at the lift.
+// evacuation (the line's own bin goes out and back). The spare stays and the
+// changeover's supply lifts it; the refill after it is the keeper's, at the
+// lift, so the start orders nothing. A line that does not change over at all
+// orders nothing for its spot either.
 func TestKeepStagedChangeover_SameSpareStays(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -187,7 +182,7 @@ func TestKeepStagedChangeover_SameSpareStays(t *testing.T) {
 		evacuate    bool
 		wantRefills int
 	}{
-		{"evacuated line: the supply lifts the spare, one comes", true, 1},
+		{"evacuated line: the supply lifts the spare, nothing from the start", true, 0},
 		{"unchanged line: nothing", false, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -207,10 +202,7 @@ func TestKeepStagedChangeover_SameSpareStays(t *testing.T) {
 
 // S7: a keep-staged line dropped from the incoming style leaves its spare with
 // nobody to keep it, so it goes back and nothing comes; a line added in the
-// incoming style keeps a spot that is filled.
-//
-// PREDICTED UNDER ONE REFILL OWNER (brief A2.3): the dropped line's return
-// stays; the added line's spot gets no refill from the start (the keeper's).
+// incoming style keeps a spot the keeper fills, not the start.
 func TestKeepStagedChangeover_DroppedAndAddedLines(t *testing.T) {
 	t.Parallel()
 	fx := seedKeepStagedChangeover(t,
@@ -225,19 +217,17 @@ func TestKeepStagedChangeover_DroppedAndAddedLines(t *testing.T) {
 			dropped.returns, dropped.refills)
 	}
 	added := readSpotTraffic(t, fx, "SPOT-2")
-	// The added line is supplied straight to the line (planAddAction), so
-	// nothing lifts its spare: one refill fills the spot.
-	if len(added.returns) != 0 || added.refills["L2"] != 1 {
-		t.Fatalf("added line's spot: returns=%d refills=%v, want none and 1 for L2", len(added.returns), added.refills)
+	// The added line is supplied straight to the line (planAddAction), and its
+	// bare spot is the keeper's to fill.
+	if len(added.returns) != 0 || len(added.refills) != 0 {
+		t.Fatalf("added line's spot: returns=%d refills=%v, want none from the start", len(added.returns), added.refills)
 	}
 }
 
 // TWO LINE NODES HAND ONE SPOT BETWEEN THE STYLES OF ONE PROCESS. Decided per
 // spot, not per line: with the same part the spare stays for the incoming
-// line; with another part it goes back to the outgoing line's source.
-//
-// PREDICTED UNDER ONE REFILL OWNER (brief A2.3): unchanged, but another part
-// orders no refill at start.
+// line; with another part it goes back to the outgoing line's source, and the
+// keeper refills the spot for the incoming line.
 func TestKeepStagedChangeover_TwoLinesHandOneSpot(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -247,7 +237,7 @@ func TestKeepStagedChangeover_TwoLinesHandOneSpot(t *testing.T) {
 		wantRefills int
 	}{
 		{"same part: the spare stays for the incoming line", "PART-A", 0, 0},
-		{"another part: the spare goes back, one comes", "PART-B", 1, 1},
+		{"another part: the spare goes back, nothing from the start", "PART-B", 1, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -269,16 +259,11 @@ func TestKeepStagedChangeover_TwoLinesHandOneSpot(t *testing.T) {
 	}
 }
 
-// S8: a changeover cancelled after its return lifted the outgoing spare and a
-// spare of the incoming part landed. The refills not yet with the fleet are
-// cancelled; the incoming part's spare is sent back to its source; the outgoing
-// style, which stays, gets a refill of its own part.
-//
-// PREDICTED UNDER ONE REFILL OWNER (brief A2.1, A2.3): the start makes the
-// return and no refills, so the incoming part's spare is a keeper refill that
-// flew during the changeover. The cancel sends it back to SRC-NEW
-// (returnUnwantedLanding's case) and orders no refill for the outgoing style;
-// the keeper does, at its next pass, without a kick.
+// S8: a changeover cancelled after its return lifted the outgoing spare and the
+// keeper's refill of the incoming part landed. The cancel sends the incoming
+// part's spare back to its source and orders nothing else; the keeper's next
+// pass, for the style that stays, refills the spot behind the leaving spare,
+// with nothing kicking it.
 func TestKeepStagedChangeover_CancelPutsTheSpotBack(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []protocol.SwapMode{protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot,
@@ -292,39 +277,29 @@ func TestKeepStagedChangeover_CancelPutsTheSpotBack(t *testing.T) {
 				[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleConsume, mode, true, false}},
 				rows)
 			startKSChangeover(t, fx)
-			if got := readSpotTraffic(t, fx, "SPOT"); got.refills["L1"] != 2 || len(got.returns) != 1 {
-				t.Fatalf("fixture: start made refills=%v returns=%d, want 2 and 1", got.refills, len(got.returns))
+			got := readSpotTraffic(t, fx, "SPOT")
+			if len(got.returns) != 1 || len(got.refills) != 0 {
+				t.Fatalf("fixture: start made refills=%v returns=%d, want none and 1", got.refills, len(got.returns))
 			}
-			// The return went, and a spare of the incoming part landed.
+			// The return went, and the keeper's refill of the incoming part landed.
+			testutil.MustNoErr(t, fx.db.UpdateOrderStatus(got.returns[0].ID, string(protocol.StatusConfirmed)), "the return went")
 			rows["SPOT"] = NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW"}
 			fx.eng.coreClient = stubCoreClient(ksNodeBinsStub(t, rows).URL)
-			markSpotOrdersFlown(t, fx, "SPOT", 1)
 
 			testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
 
-			got := readSpotTraffic(t, fx, "SPOT")
-			var back *domain.Order
-			for i := range got.returns {
-				if got.returns[i].PayloadCode == "PART-NEW" {
-					back = &got.returns[i]
-				}
+			refills, returns := liveSpot(t, fx, "SPOT")
+			if len(returns) != 1 || returns[0].PayloadCode != "PART-NEW" || returns[0].DeliveryNode != "SRC-NEW" {
+				t.Fatalf("returns = %+v, want the incoming part's spare sent back to SRC-NEW", returns)
 			}
-			if back == nil || back.DeliveryNode != "SRC-NEW" {
-				t.Fatalf("returns = %+v, want the incoming part's spare sent back to SRC-NEW", got.returns)
+			if len(refills) != 0 {
+				t.Fatalf("the cancel ordered %d refill(s): the keeper refills the spot, not the cancel", len(refills))
 			}
-			// One refill was with the fleet when the cancel came and lands; the other
-			// was cancelled. The outgoing style gets one of its own part.
-			oldRefills := 0
-			live, err := fx.db.ListActiveOrders()
-			testutil.MustNoErr(t, err, "orders")
-			for _, o := range live {
-				if o.OrderType == orders.TypeRetrieve && o.DeliveryNode == "SPOT" && o.PayloadCode == "PART-OLD" {
-					oldRefills++
-				}
-			}
-			if oldRefills != 1 || got.refills["L1"] != 2 {
-				t.Fatalf("after cancel: PART-OLD refills=%d, all refills=%v; want 1 of the outgoing part plus the one "+
-					"already flown", oldRefills, got.refills)
+
+			fx.eng.sweepCellLevels()
+			refills, _ = liveSpot(t, fx, "SPOT")
+			if len(refills) != 1 || refills[0].PayloadCode != "PART-OLD" {
+				t.Fatalf("refills after the keeper's pass = %+v, want one of PART-OLD behind the spare that is leaving", refills)
 			}
 		})
 	}
@@ -575,5 +550,45 @@ func TestKeepStagedChangeover_TheStageButtonStagesNothing(t *testing.T) {
 	testutil.MustNoErr(t, err, "orders after")
 	if len(after) != len(before) {
 		t.Errorf("the stage button made %d order(s), want none", len(after)-len(before))
+	}
+}
+
+// NOTHING IS COMING TO A SPOT WHEN START DECIDES IT, and the gate is what holds
+// that, not any reconcile. A keeper refill already with the fleet refuses
+// START (blockNodeSet): let through, the incoming leg would be a market swap
+// staging on a spot that refill is about to land on, and the keeper waits for
+// a leg that drops there, so the two would hold each other for good.
+func TestKeepStagedChangeover_AFlyingRefillRefusesStart(t *testing.T) {
+	t.Parallel()
+	fx := seedKeepStagedChangeover(t,
+		[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot, true, false}},
+		[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot, true, false}},
+		map[string]NodeBinInfo{"L1": {Occupied: true}, "SPOT": {}})
+	queueKeeperRefill(t, fx)
+	markSpotOrdersFlown(t, fx, "SPOT", 1)
+
+	co, err := fx.eng.StartProcessChangeover(fx.processID, fx.toStyleID, "test", "keep-staged")
+	if err == nil || co != nil {
+		t.Fatalf("START with a keeper refill flying to the spot = %+v, %v; want a refusal", co, err)
+	}
+	if !strings.Contains(err.Error(), "SPOT") {
+		t.Errorf("the refusal %q does not name the spot", err)
+	}
+}
+
+// The other half: a keeper refill not yet with the fleet is cancelled at START
+// (cancelNodeSet), so the start decides the spot with nothing coming to it.
+func TestKeepStagedChangeover_AQueuedRefillIsCancelledAtStart(t *testing.T) {
+	t.Parallel()
+	fx := seedKeepStagedChangeover(t,
+		[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot, true, false}},
+		[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot, true, false}},
+		map[string]NodeBinInfo{"L1": {Occupied: true}, "SPOT": {}})
+	queueKeeperRefill(t, fx)
+
+	startKSChangeover(t, fx)
+
+	if got := readSpotTraffic(t, fx, "SPOT"); len(got.refills) != 0 {
+		t.Fatalf("live refills after START = %v, want the queued one cancelled and none made", got.refills)
 	}
 }

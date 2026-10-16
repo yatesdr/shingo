@@ -25,10 +25,11 @@ import (
 // not a spare is left where it is, and the board says so; a swap that stages
 // its carrier on the spot is held by Core's staging check (waiting for slot,
 // dropoff occupied) until a person moves it, as on any line whose staging node
-// is occupied. Only a changeover's start and cancel, and the save that clears
-// the flag, send a spare back (reconcileSpot): those change what the spot is
-// kept for. So does a refill a cancel left flying, when it lands
-// (returnUnwantedLanding): that is the cancel's own bin.
+// is occupied. Only a changeover's start and cancel (spotChange.sendsBack), and
+// the save that clears the flag, send a spare back: those change what the spot
+// is kept for. So does a refill a cancel left flying, when it lands
+// (returnUnwantedLanding): it was ordered for a claim the spot is no longer
+// kept for.
 
 // spotNode is the claim's keep-staged node (its spot), blank when it keeps no
 // spare. Nil-safe, for the callers that hold an optional claim.
@@ -134,58 +135,43 @@ func decideSpot(c *processes.NodeClaim, f spotFacts) (spotPlan, string) {
 		return spotPlan{}, fmt.Sprintf("Keep-staged waits: the bin on %s is not a spare for %s. Move it by hand.",
 			spot, c.PayloadCode)
 	}
-	plan := reconcileSpot(c, f.read.occupied, right, f.coming, 0, 1)
-	if room := 1 - f.coming; plan.refills > room {
-		plan.refills = max(room, 0)
-	}
-	return plan, ""
+	return reconcileSpot(c, f.read.occupied, right, f.coming), ""
 }
 
-// spotPlan is the orders one decision point makes for the spot.
+// spotPlan is the orders the keeper makes for the spot.
 type spotPlan struct {
-	// returnSpare sends the bin standing on the spot back to the claim's
-	// inbound source, by a plain move.
-	returnSpare bool
 	// refills is how many plain retrieves to the spot to create.
 	refills int
 }
 
-// orders is how many orders the plan creates.
-func (p spotPlan) orders() int {
-	n := p.refills
-	if p.returnSpare {
-		n++
-	}
-	return n
-}
-
-// reconcileSpot is the arithmetic of what the spot needs. It is pure, and every
-// caller asks it the same question under the cell's prime lock: decideSpot (the
-// keeper: the sweep, a lift at the spot and an order's end), changeover start
-// and cancel, and the save that clears the flag:
+// reconcileSpot is the arithmetic of what the spot needs: one spare, standing or
+// on its way. It is pure, and its one caller is the keeper's decision
+// (decideSpot), under the cell's prime lock:
 //
 //   - present: a bin stands on the spot (spotRead.occupied, known);
 //   - right:   that bin suits this claim (spareIsRight): a full by its part,
 //     an empty by its carrier, asked as Core asks it at the pickup;
 //   - coming:  this line's non-terminal plain orders bound for the spot, for the
-//     claim's part and role (spotComing);
-//   - consumes: 1 when the plan being applied lifts the spare — a changeover's
-//     legs, planned and created together; the keeper passes 0, because it
-//     orders behind a lift only once the lift has happened;
-//   - target:  1, or 0 when the claim no longer keeps a spare.
-func reconcileSpot(c *processes.NodeClaim, present, right bool, coming, consumes, target int) spotPlan {
+//     claim's part and role (spotComing).
+//
+// NOTHING IS ORDERED BEHIND A LIFT THAT HAS NOT HAPPENED. A spare a leg is about
+// to take counts as standing; the refill behind it is ordered when it is lifted
+// (keepSpotOnPickup). A changeover's start once ordered behind its own legs'
+// assumed lift as well, and at SPR ALN_011 (2026-10-15 08:31) the leg lifted the
+// spare the start had just sent back, leaving a return with nothing to carry and
+// two refills bound for a one-bin spot.
+func reconcileSpot(c *processes.NodeClaim, present, right bool, coming int) spotPlan {
 	if spotNode(c) == "" {
 		return spotPlan{}
 	}
-	plan := spotPlan{returnSpare: present && (!right || target == 0)}
 	standing := 0
 	if present && right {
 		standing = 1
 	}
-	if n := target + consumes - coming - standing; n > 0 {
-		plan.refills = n
+	if n := 1 - coming - standing; n > 0 {
+		return spotPlan{refills: n}
 	}
-	return plan
+	return spotPlan{}
 }
 
 // spareIsRight reports whether the bin on the spot suits the claim: a carrier

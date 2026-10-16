@@ -158,15 +158,32 @@ func (e *Engine) sweepProcessLevels(process *processes.Process) {
 			continue
 		}
 		// THE KEEP-STAGED KEEPER, ahead of the level: a spot is kept whether or
-		// not the line auto-reorders, and whether or not a swap is in flight. Not
-		// while a changeover is armed: its legs fill the slots, and the claim
-		// resolved here is the outgoing style's, which would judge the incoming
-		// spare wrong. The changeover's own start and cancel reconcile the spots.
-		if spotNode(claim) != "" && process.TargetStyleID == nil {
-			e.keepSpot(node, claim)
+		// not the line auto-reorders, whether or not a swap is in flight, and
+		// through a changeover, for the claim the line is changing to (keptFor).
+		// The claim resolved above is the active style's, which would judge the
+		// incoming spare wrong, so the spot's claim is resolved on its own.
+		if kept := sweptSpotClaim(process, node, claim, claims); spotNode(kept) != "" {
+			e.keepSpot(node, kept)
 		}
 		e.sweepNodeLevel(node, runtime, claim)
 	}
+}
+
+// sweptSpotClaim is keptFor for the sweep, from the claim rows it has already
+// read: active, or while a changeover is armed the target style's claim on the
+// node and nothing else (TargetStyleFirst falls back to the active claim where
+// the target claims nothing, and that is a spot nobody keeps now).
+func sweptSpotClaim(process *processes.Process, node *processes.Node, active *processes.NodeClaim, claims *store.NodeClaimSet) *processes.NodeClaim {
+	var target int64
+	if process.TargetStyleID != nil {
+		target = *process.TargetStyleID
+	}
+	return keptFor(active, target, func(styleID int64) *processes.NodeClaim {
+		if c := claims.Resolve(process, node, store.TargetStyleFirst); c != nil && c.StyleID == styleID {
+			return c
+		}
+		return nil
+	})
 }
 
 // nodeIDsOf is the id list the batched runtime read takes, in the walk's own

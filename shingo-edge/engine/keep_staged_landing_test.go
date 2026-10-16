@@ -70,6 +70,21 @@ func lineRows(role protocol.ClaimRole) map[string]NodeBinInfo {
 
 var bothRoles = []protocol.ClaimRole{protocol.ClaimRoleConsume, protocol.ClaimRoleProduce}
 
+// keeperRefillsBehindTheLegs finishes the changeover's legs and runs the keeper,
+// which refills the spot for the claim it is kept for (keptFor): the incoming
+// style's, until cutover. The changeover itself orders no refill.
+func keeperRefillsBehindTheLegs(t *testing.T, fx *coFixture) {
+	t.Helper()
+	for _, o := range mustActive(t, fx) {
+		if o.OrderType == orders.TypeComplex {
+			testutil.MustNoErr(t, fx.db.UpdateOrderStatus(o.ID, string(protocol.StatusConfirmed)), "the leg is done")
+		}
+	}
+	node, err := fx.db.GetProcessNode(fx.nodeIDs["L1"])
+	testutil.MustNoErr(t, err, "node")
+	fx.eng.keepSpot(node, fx.eng.spotClaimAt(node))
+}
+
 // (a) A changeover is armed and the incoming style's refill lands before
 // cutover: it is what the spot is being kept for, and it stays.
 func TestKeepStagedLanding_IncomingRefillBeforeCutoverStays(t *testing.T) {
@@ -79,9 +94,10 @@ func TestKeepStagedLanding_IncomingRefillBeforeCutoverStays(t *testing.T) {
 			t.Parallel()
 			fx := seedLanding(t, role, lineRows(role))
 			startKSChangeover(t, fx)
+			keeperRefillsBehindTheLegs(t, fx)
 			refills, _ := liveSpot(t, fx, "SPOT")
-			if len(refills) == 0 {
-				t.Fatal("fixture: the start ordered no refill for the incoming style")
+			if len(refills) != 1 || refills[0].PayloadCode != "PART-NEW" {
+				t.Fatalf("fixture: the keeper's refills for the incoming style = %+v, want one of PART-NEW", refills)
 			}
 			land(t, fx, refills[0].ID)
 			if _, returns := liveSpot(t, fx, "SPOT"); len(returns) != 0 {
@@ -101,6 +117,7 @@ func TestKeepStagedLanding_FlownIncomingRefillAfterCancelGoesBack(t *testing.T) 
 			t.Parallel()
 			fx := seedLanding(t, role, lineRows(role))
 			startKSChangeover(t, fx)
+			keeperRefillsBehindTheLegs(t, fx)
 			markSpotOrdersFlown(t, fx, "SPOT", 1)
 			testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
 			var flown *domain.Order
@@ -141,6 +158,7 @@ func TestKeepStagedLanding_OneReturnPerBin_AndAReturnOrdersNothing(t *testing.T)
 	rows := lineRows(protocol.ClaimRoleConsume)
 	fx := seedLanding(t, protocol.ClaimRoleConsume, rows)
 	startKSChangeover(t, fx)
+	keeperRefillsBehindTheLegs(t, fx)
 	markSpotOrdersFlown(t, fx, "SPOT", 1)
 	testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
 	refills, _ := liveSpot(t, fx, "SPOT")
@@ -171,8 +189,9 @@ func TestKeepStagedLanding_OneReturnPerBin_AndAReturnOrdersNothing(t *testing.T)
 }
 
 // F5: a cancel with the staying style's spare already leaving on a flown return
-// decides the spot as bare: no second return, and a refill of the staying part
-// to stand behind it.
+// decides the spot as bare: no second return, and nothing ordered by the cancel.
+// The keeper's next pass, for the staying claim and with nothing kicking it,
+// orders the refill of the staying part to stand behind it.
 func TestKeepStagedChangeover_CancelCountsAReturnAlreadyFlying(t *testing.T) {
 	t.Parallel()
 	rows := map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
@@ -191,6 +210,11 @@ func TestKeepStagedChangeover_CancelCountsAReturnAlreadyFlying(t *testing.T) {
 	if len(returns) != 1 {
 		t.Errorf("returns after the cancel = %d, want only the one already flying", len(returns))
 	}
+	if len(refills) != 0 {
+		t.Fatalf("the cancel ordered %d refill(s), want none: the keeper refills the spot", len(refills))
+	}
+	fx.eng.sweepCellLevels()
+	refills, _ = liveSpot(t, fx, "SPOT")
 	old := 0
 	for _, r := range refills {
 		if r.PayloadCode == "PART-OLD" {
@@ -198,7 +222,7 @@ func TestKeepStagedChangeover_CancelCountsAReturnAlreadyFlying(t *testing.T) {
 		}
 	}
 	if old != 1 {
-		t.Fatalf("PART-OLD refills after the cancel = %d, want 1 to stand behind the spare that is leaving", old)
+		t.Fatalf("PART-OLD refills after the keeper's pass = %d, want 1 to stand behind the spare that is leaving", old)
 	}
 }
 

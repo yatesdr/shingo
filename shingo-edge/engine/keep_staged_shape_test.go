@@ -117,7 +117,7 @@ func TestKeepStagedSwap_LiftsTheSpareOnceAfterTheWait(t *testing.T) {
 
 // A keep-staged FROM claim changing over to a claim that keeps no spare is
 // planned like any other changeover: the full shape for the to-claim. The spare
-// left on the spot is the changeover-start reconcile's to return.
+// left on the spot is the changeover start's to return (spotChange.sendsBack).
 func TestPlanNodeAction_KeepStagedFromClaimIsPlanned(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []protocol.SwapMode{protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot} {

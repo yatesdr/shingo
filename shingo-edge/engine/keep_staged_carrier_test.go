@@ -34,7 +34,8 @@ func ksCatalog(rides map[string]string) []protocol.PayloadBinTypeInfo {
 
 // An empty of a carrier the part does not ride is wrong at every decision point.
 // A changeover's start and cancel, which change what the spot is kept for, send
-// it back and refill the spot. A running line leaves it standing: the keeper
+// it back; the keeper refills the spot behind it. A running line leaves it
+// standing: the keeper
 // orders nothing, and a request builds its market swap, which Core holds while
 // the wrong empty occupies the staging spot.
 func TestKeepStagedCarrier_AWrongCarrierAtEveryDecision(t *testing.T) {
@@ -81,8 +82,9 @@ func TestKeepStagedCarrier_AWrongCarrierAtEveryDecision(t *testing.T) {
 		fx.eng.SetPayloadBinTypes(ksCatalog(map[string]string{"PART-A": ksTypeA}))
 		startKSChangeover(t, fx)
 		got := readSpotTraffic(t, fx, "SPOT")
-		if len(got.returns) != 1 || got.returns[0].DeliveryNode != "SRC" || got.refills["L1"] != 2 {
-			t.Fatalf("returns=%+v refills=%v, want the wrong empty back to SRC and 2 refills", got.returns, got.refills)
+		if len(got.returns) != 1 || got.returns[0].DeliveryNode != "SRC" || len(got.refills) != 0 {
+			t.Fatalf("returns=%+v refills=%v, want the wrong empty back to SRC and no refill from the start",
+				got.returns, got.refills)
 		}
 	})
 
@@ -101,8 +103,8 @@ func TestKeepStagedCarrier_AWrongCarrierAtEveryDecision(t *testing.T) {
 		testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
 		// It goes back where the leaving style's spares come from (returnTo).
 		got := readSpotTraffic(t, fx, "SPOT")
-		if len(got.returns) != 1 || got.returns[0].DeliveryNode != "SRC-NEW" || got.refills["L1"] != 1 {
-			t.Fatalf("returns=%+v refills=%v, want the wrong empty back to SRC-NEW and 1 refill of PART-OLD",
+		if len(got.returns) != 1 || got.returns[0].DeliveryNode != "SRC-NEW" || len(got.refills) != 0 {
+			t.Fatalf("returns=%+v refills=%v, want the wrong empty back to SRC-NEW and no refill from the cancel",
 				got.returns, got.refills)
 		}
 	})
@@ -131,10 +133,12 @@ func TestKeepStagedCarrier_ACancelDecidesTheSameAtAnyClock(t *testing.T) {
 				rows)
 			fx.eng.SetPayloadBinTypes(ksCatalog(map[string]string{"PART-OLD": ksTypeA, "PART-NEW": ksTypeB}))
 			coID := startKSChangeover(t, fx)
-			if got := readSpotTraffic(t, fx, "SPOT"); len(got.returns) != 1 || got.refills["L1"] != 2 {
-				t.Fatalf("fixture: start made returns=%d refills=%v, want 1 and 2", len(got.returns), got.refills)
+			if got := readSpotTraffic(t, fx, "SPOT"); len(got.returns) != 1 || len(got.refills) != 0 {
+				t.Fatalf("fixture: start made returns=%d refills=%v, want 1 and none", len(got.returns), got.refills)
 			}
-			// The return went, and one PART-NEW refill landed: an empty of TYPE-B.
+			// The keeper refills behind the leaving empty, for the incoming style.
+			keeperRefillsBehindTheLegs(t, fx)
+			// The return went, and that PART-NEW refill landed: an empty of TYPE-B.
 			landed := int64(0)
 			live, err := fx.db.ListActiveOrders()
 			testutil.MustNoErr(t, err, "orders")
@@ -159,6 +163,8 @@ func TestKeepStagedCarrier_ACancelDecidesTheSameAtAnyClock(t *testing.T) {
 			if len(got.returns) != 1 || got.returns[0].DeliveryNode != "SRC-NEW" {
 				t.Fatalf("returns = %+v, want the incoming style's empty back to SRC-NEW", got.returns)
 			}
+			// The cancel orders nothing for the staying style; the keeper does.
+			fx.eng.sweepCellLevels()
 			old := 0
 			for _, o := range mustActive(t, fx) {
 				if o.OrderType == orders.TypeRetrieve && o.DeliveryNode == "SPOT" && o.PayloadCode == "PART-OLD" {
@@ -166,15 +172,16 @@ func TestKeepStagedCarrier_ACancelDecidesTheSameAtAnyClock(t *testing.T) {
 				}
 			}
 			if old != 1 {
-				t.Fatalf("PART-OLD refills after the cancel = %d, want 1", old)
+				t.Fatalf("PART-OLD refills after the cancel and the keeper's pass = %d, want 1", old)
 			}
 		})
 	}
 }
 
 // A PART CHANGE BETWEEN PARTS THAT RIDE THE SAME CARRIER KEEPS THE EMPTY. The
-// empty standing on the spot serves the incoming part; nothing goes back, and
-// the spot is refilled only for what the changeover's own leg lifts from it.
+// empty standing on the spot serves the incoming part: nothing goes back, the
+// changeover's own leg lifts it, and the start orders no refill (the keeper's,
+// at the lift).
 func TestKeepStagedCarrier_ASameCarrierPartChangeKeepsTheEmpty(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []protocol.SwapMode{protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot,
@@ -188,13 +195,12 @@ func TestKeepStagedCarrier_ASameCarrierPartChangeKeepsTheEmpty(t *testing.T) {
 			fx.eng.SetPayloadBinTypes(ksCatalog(map[string]string{"PART-OLD": ksTypeA, "PART-NEW": ksTypeA}))
 			startKSChangeover(t, fx)
 			got := readSpotTraffic(t, fx, "SPOT")
-			lifts := 0
-			if planLiftsSpotFor(t, fx) {
-				lifts = 1
+			if len(got.returns) != 0 || len(got.refills) != 0 {
+				t.Fatalf("returns=%d refills=%v, want none back and no refill from the start",
+					len(got.returns), got.refills)
 			}
-			if len(got.returns) != 0 || got.refills["L1"] != lifts {
-				t.Fatalf("returns=%d refills=%v, want none back and %d refill(s) for what the leg lifts",
-					len(got.returns), got.refills, lifts)
+			if !planLiftsSpotFor(t, fx) {
+				t.Errorf("no leg takes the empty standing on the spot, which suits the incoming part")
 			}
 		})
 	}

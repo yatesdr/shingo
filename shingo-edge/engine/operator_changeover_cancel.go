@@ -33,8 +33,9 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	// and not the changeover-cancel's business to terminate.
 	// The keep-staged spots, put back for the style that stays. Decided with the
 	// styles reversed — the outgoing style keeps its spots again, the incoming
-	// one's are to be left empty — and the changeover's plan left out, since
-	// nothing lifts a spare now.
+	// one's are to be left empty. The cancel sends back a spare the staying style
+	// does not want and orders nothing for the spot: the keeper refills it for the
+	// staying claim once the changeover is gone (keptFor).
 	origin := e.changeoverOrigin(changeover.ID)
 	spots := e.cancelledChangeoverSpots(processID, changeover)
 	// Under the spots' cell locks from the abort to the reconcile: the target
@@ -63,7 +64,7 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 			log.Printf("changeover: update node task %d state to cancelled: %v", task.ID, err)
 		}
 	}
-	flows := e.abortSpotOrdersNotFlown(spots)
+	live, aborted := e.abortSpotOrdersNotFlown(spots)
 
 	// The line's bin an aborted leg left parked on its way out, and the incoming
 	// bin its stage left waiting for it (changeover_cancel_park.go). A keep-staged
@@ -104,8 +105,8 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	}
 
 	// Redirect — start new changeover immediately to a different target style
-	// A redirect starts the next changeover at once, and its start reconciles
-	// every spot itself; the style being reverted to is not staying.
+	// A redirect starts the next changeover at once, and its start decides every
+	// spot itself; the style being reverted to is not staying.
 	//
 	// The parks ride the spots' read; a redirect, which reads no spots here,
 	// reads the parks alone, and only when there are any.
@@ -113,7 +114,8 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	if nextStyleID == nil || *nextStyleID == 0 {
 		var reads map[string]spotRead
 		reads, parkRows = e.readSpotsAnd(spots, parkNames(parks))
-		e.applyChangeoverSpots(spots, reads, flows, origin)
+		reads = readsLessLeaving(reads, live, spots, aborted)
+		e.applyChangeoverSpots(spotReturns(spots, reads), reads, origin)
 	} else {
 		_, parkRows = e.readSpotsAnd(nil, parkNames(parks))
 	}

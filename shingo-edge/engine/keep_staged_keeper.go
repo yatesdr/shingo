@@ -147,10 +147,12 @@ func isSpotReturn(o *domain.Order, c *processes.NodeClaim) bool {
 // ANY CANCEL STOPS IT. Core fails a plain order for a structural reason
 // (congestion waits), so re-creating it each sweep would be a failure on a
 // timer, and a cancel is someone saying stop; the Edge does not record who
-// cancelled, and does not need to. What re-arms it: a changeover start (it
-// creates an order of the line, read here as newer than the end), a save of the
-// claim, or the line's resume stamp (resumed), which the board's RESUME and a
-// REQUEST both write. The pause itself is not stored; it survives a restart
+// cancelled, and does not need to. What re-arms it: an order of the line created
+// after the end, a save of the claim, or the line's resume stamp (resumed),
+// which the board's RESUME, a REQUEST and a changeover START all write. A START
+// writes it because its own orders cannot be relied on to: they are created in
+// the second its aborts were written, and read as neither before nor after
+// (rearmKeptLines). The pause itself is not stored; it survives a restart
 // because the rows do.
 //
 // A RESUME IN THE CANCEL'S OWN SECOND RE-ARMS; NOTHING ELSE DOES. The Edge
@@ -246,20 +248,41 @@ func (e *Engine) KeepStagedNote(line string) string {
 	return ""
 }
 
+// keptFor is the claim a line's keep-staged spot is kept for: from a
+// changeover's START to its cutover, the incoming style's claim on the line (nil
+// when the incoming style does not claim it, and the start sent its spare
+// back); the active claim otherwise. targetStyleID is the changeover's incoming
+// style, 0 when none is armed; incoming reads that style's claim on the line.
+//
+// ONE OWNER THROUGH A CHANGEOVER. The keeper is the only thing that refills a
+// spot, and it keeps doing so while a changeover runs, for the claim the line
+// is changing to. Its own guards cover the window: a leg still bringing a
+// carrier to the spot holds it (legDropsOnSpot), nothing is ordered ahead of a
+// lift, and it only tries the cell's lock, which a start or a cancel holds while
+// it decides. The changeover row exists only from START, so a changeover that
+// is armed has started.
+func keptFor(active *processes.NodeClaim, targetStyleID int64, incoming func(styleID int64) *processes.NodeClaim) *processes.NodeClaim {
+	if targetStyleID == 0 {
+		return active
+	}
+	return incoming(targetStyleID)
+}
+
+// SpotClaim is keptFor for the line an order completion names.
+func (c *orderCompletionCtx) SpotClaim() *processes.NodeClaim {
+	return keptFor(c.Claim(), c.toStyleID, func(int64) *processes.NodeClaim { return c.ToClaim() })
+}
+
 // kickKeepSpot runs the keeper at once when an order of a keep-staged line ends,
 // instead of at the next sweep. A refill a changeover cancel left flying, landing
-// on a spot no longer kept for it, goes back first (returnUnwantedLanding): that
-// is the cancel finishing its own work, not the keeper deciding a bin.
+// on a spot no longer kept for it, goes back first (returnUnwantedLanding).
 func (e *Engine) kickKeepSpot(ctx *orderCompletionCtx) {
 	o := ctx.order
 	if isRetrieve(o.OrderType) && o.DeliveryNode != "" && o.DeliveryNode != ctx.node.CoreNodeName &&
 		o.Status == ordermgr.StatusConfirmed {
 		e.returnUnwantedLanding(ctx)
 	}
-	if ctx.toStyleID != 0 {
-		return // a changeover is armed: its start and cancel own the spots (see sweepProcessLevels)
-	}
-	claim := ctx.Claim()
+	claim := ctx.SpotClaim()
 	if claim == nil || spotNode(claim) == "" {
 		return
 	}
@@ -278,24 +301,43 @@ func (e *Engine) keepSpotOnPickup(order *domain.Order, location string) {
 	if err != nil || node == nil {
 		return
 	}
-	claim := e.claimAtNode(node)
+	claim := e.spotClaimAt(node)
 	if claim == nil || spotNode(claim) != location {
 		return
 	}
-	if p, perr := e.db.GetProcess(node.ProcessID); perr == nil && p != nil && p.TargetStyleID != nil {
-		return // a changeover is armed: its start and cancel own the spots
-	}
 	e.keepSpot(node, claim)
+}
+
+// spotClaimAt is keptFor for a line read on its own: the process's armed target
+// and, when there is one, the target style's claim on the line. A read that
+// fails answers nil, and the keeper does nothing until the next pass.
+func (e *Engine) spotClaimAt(node *processes.Node) *processes.NodeClaim {
+	p, err := e.db.GetProcess(node.ProcessID)
+	if err != nil || p == nil {
+		return nil
+	}
+	var target int64
+	if p.TargetStyleID != nil {
+		target = *p.TargetStyleID
+	}
+	return keptFor(e.claimAtNode(node), target, func(styleID int64) *processes.NodeClaim {
+		c, cerr := e.db.GetStyleNodeClaimByNode(styleID, node.CoreNodeName)
+		if cerr != nil {
+			return nil
+		}
+		return c
+	})
 }
 
 // returnUnwantedLanding sends a refill's bin straight back when it lands on a
 // spot nobody keeps it for.
 //
-// THE CHANGEOVER'S OWN BIN, NOT A JUDGEMENT ABOUT A STRANGER. It acts only on a
-// refill this line ordered, judged by what the Edge ordered and not by a read;
-// a bin that reached the spot any other way is left where it stands
-// (decideSpot). A running line orders refills only for the part it keeps, so in
-// practice this is a changeover's refill outliving the changeover's cancel.
+// THE LINE'S OWN BIN, NOT A JUDGEMENT ABOUT A STRANGER. It acts only on a refill
+// this line ordered, judged by what the Edge ordered and not by a read; a bin
+// that reached the spot any other way is left where it stands (decideSpot). The
+// keeper orders refills only for the claim the spot is kept for (keptFor), so in
+// practice this is a keeper refill for a changeover's incoming claim, ordered
+// behind a leg's lift, that outlived the changeover's cancel.
 //
 // A refill already with the fleet cannot be cancelled, so it lands, possibly
 // after the last decision about its spot: a changeover cancelled while the
@@ -305,13 +347,12 @@ func (e *Engine) keepSpotOnPickup(order *domain.Order, location string) {
 // no read, what it ordered. It judges the landing by the refill's part and
 // role, not by the carrier: it has no read of the bin to judge a carrier by.
 //
-// "Wanted" is judged against the claim the spot is kept for now: the armed
-// changeover's incoming claim if one is armed, else the active claim. The bin
-// is wanted when that claim keeps this spot for the refill's part and role; a
-// refill for the incoming style landing before cutover stays. Otherwise it goes
-// back by a plain move to the refill's own source, carrying the refill's part,
-// an empty untagged. Only on a keep-staged spot of this line: a plain retrieve
-// to any other node is not this code's to undo.
+// "Wanted" is judged against the claim the spot is kept for now (keptFor). The
+// bin is wanted when that claim keeps this spot for the refill's part and role;
+// a refill for the incoming style landing before cutover stays. Otherwise it
+// goes back by a plain move to the refill's own source, carrying the refill's
+// part, an empty untagged. Only on a keep-staged spot of this line: a plain
+// retrieve to any other node is not this code's to undo.
 //
 // One return per bin: none is made while a live return from the spot exists,
 // and the request, floor and changeover reconciles count a live return as the
@@ -325,10 +366,7 @@ func (e *Engine) keepSpotOnPickup(order *domain.Order, location string) {
 // (handleOrphanedTaskOrderCompleted leaves the cancel's tasks alone).
 func (e *Engine) returnUnwantedLanding(ctx *orderCompletionCtx) {
 	o := ctx.order
-	keeper := ctx.Claim()
-	if ctx.toStyleID != 0 {
-		keeper = ctx.ToClaim()
-	}
+	keeper := ctx.SpotClaim()
 	if landingWanted(keeper, o) {
 		return
 	}

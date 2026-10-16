@@ -93,19 +93,25 @@ func blockNodeSet(plan *changeoverPlan) []string {
 			out = append(out, p.CoreNodeName)
 		}
 	}
-	// Every keep-staged spot either style names: a refill already with the
-	// fleet would land a spare the start reconcile cannot see coming.
+	// Every keep-staged spot either style names: a refill already with the fleet
+	// refuses START. It is the half of "nothing is coming to the spot when START
+	// decides it" that the cancel below cannot give (cancelNodeSet aborts the
+	// half not yet flown). A start that let one through would build its leg as a
+	// market swap staging on a spot a refill is about to land on, and the keeper
+	// waits for a leg that drops there: the two would hold each other for good.
+	// Pinned by TestKeepStagedChangeover_AFlyingRefillRefusesStart.
 	return append(out, keepStagedSpotNames(plan.fromClaims, plan.toClaims)...)
 }
 
 // cancelNodeSet is the CHANGED diff nodes and the keep-staged spots — deliberately
 // narrower than blockNodeSet, and they must stay two separately named functions.
 //
-// A spot is in it whether or not its line changes: the start reconcile decides
-// every spot from what stands there and what is already with the fleet
-// (spotFlows), so a refill still wanted by an unchanged keep-staged claim that is
-// not yet with the fleet is cancelled here and made again by the reconcile a
-// moment later, never lost.
+// A spot is in it whether or not its line changes: a refill not yet with the
+// fleet is cancelled here, so that when START decides the spot nothing is
+// coming to it (blockNodeSet refuses one already flown). A refill still wanted
+// by a keep-staged claim is not lost: the keeper orders it again for the claim
+// the spot is kept for (keptFor), once START lets go of the cell's lock. Pinned
+// by TestKeepStagedChangeover_AQueuedRefillIsCancelledAtStart.
 //
 // Widening the BLOCK to a position is safe: it says "not yet", the operator presses
 // again. Widening the CANCEL to one is the Hopkinsville deadlock — and widening
@@ -124,8 +130,8 @@ func cancelNodeSet(plan *changeoverPlan) []string {
 // changingNodeSet is the CHANGED diff nodes alone: the nodes whose bin the
 // changeover's own swaps lift. An order with a lift still ahead at one of them
 // wants the same bin (orderLiftAheadAt). Not the press-index positions, whose
-// orders are never cancelled, and not the keep-staged spots, whose reconcile
-// already counts a return with the fleet (spotFlows).
+// orders are never cancelled, and not the keep-staged spots, whose decision
+// already counts a return with the fleet as the spare leaving (readsLessLeaving).
 func changingNodeSet(plan *changeoverPlan) []string {
 	out := make([]string, 0, len(plan.diffs))
 	for _, diff := range plan.diffs {
@@ -470,6 +476,15 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	// below, which clears their spots of orders not yet flown, to the last spot
 	// order, so a request on one of those lines cannot add to a spot between.
 	defer e.lockKeepStagedCells(keepStagedLines(plan.fromClaims, plan.toClaims))()
+	// Every keep-staged spot either style names, read in ONE call under those
+	// locks and before anything is cancelled. A start that cannot tell what stands
+	// on a spot cannot decide whether its leg takes the spare, so it refuses, as a
+	// REQUEST does (readSpotAtRequest), and a refused start cancels nothing.
+	spots := changeoverSpots(plan.fromClaims, plan.toClaims, plan.nodes)
+	spotReads := e.readSpots(spots)
+	if unknown := unknownSpots(spots, spotReads); len(unknown) > 0 {
+		return nil, errUnknownSpots(unknown)
+	}
 
 	// Refuse while a participating node still has an order in flight.
 	//
@@ -539,30 +554,32 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 		return nil, err
 	}
 
-	// Create ALL robot orders up front with embedded wait steps.
-	// Operator controls flow by releasing waits, not by triggering individual orders.
-	orderPlan := BuildChangeoverPlan(plan.diffs, plan.nodes, e.cfg.Web.AutoConfirm, e.activePullSnapshot(plan.nodes), plan.tooling)
-	// The changeover's demand episode, opened once the sourcing plan exists —
-	// its order count IS expected_orders — and before any order does. Unlike
-	// the cell kinds this is an EVENT trigger: the changeover arming is the
-	// edge, so there is no level and no hysteresis.
-	//
-	// The keep-staged spots are decided once each across the whole plan, from ONE
-	// node-bins read for all of them, before the episode opens so its expected
-	// order count includes them; their orders go after the plan's own.
-	spots := changeoverSpots(plan.fromClaims, plan.toClaims, plan.nodes, orderPlan)
-	spotReads := e.readSpots(spots)
-	// What is already moving at each spot, from the rows the pre-dispatch cancel
-	// read: what it cancelled is gone, and a return already with the fleet means
-	// the spare there is leaving.
+	// The keep-staged spots, decided once each across the whole plan from the read
+	// above and the rows the pre-dispatch cancel read: what it cancelled is gone,
+	// and a return already with the fleet means the spare there is leaving. Each
+	// spot's wrong or unwanted spare goes back (spotReturns), and each incoming
+	// leg takes the spare only where requestClaim says it would (legDiffs). The
+	// start orders no refill: the keeper fills the spot behind the leg's lift.
 	gone := make(map[int64]bool, len(cancelled))
 	for _, id := range cancelled {
 		gone[id] = true
 	}
-	flows := spotFlows(live, spots, gone)
-	e.openChangeoverEpisode(changeover, orderPlan.OrderCount()+spotOrderCount(spots, spotReads, flows))
+	spotReads = readsLessLeaving(spotReads, live, spots, gone)
+	returns := spotReturns(spots, spotReads)
+
+	// Create ALL robot orders up front with embedded wait steps.
+	// Operator controls flow by releasing waits, not by triggering individual orders.
+	orderPlan := BuildChangeoverPlan(legDiffs(plan.diffs, spotReads), plan.nodes, e.cfg.Web.AutoConfirm, e.activePullSnapshot(plan.nodes), plan.tooling)
+	// The changeover's demand episode, opened once the sourcing plan exists —
+	// its order count IS expected_orders — and before any order does. Unlike
+	// the cell kinds this is an EVENT trigger: the changeover arming is the
+	// edge, so there is no level and no hysteresis. It counts the legs and the
+	// returns; a keeper refill behind a leg's lift joins the leg's episode
+	// (liftingOrigin) without being counted here.
+	e.openChangeoverEpisode(changeover, orderPlan.OrderCount()+len(returns))
+	e.rearmKeptLines(plan.toClaims, plan.nodes)
 	e.applyChangeoverPlan(changeover, orderPlan)
-	e.applyChangeoverSpots(spots, spotReads, flows, e.changeoverOrigin(changeover.ID))
+	e.applyChangeoverSpots(returns, spotReads, e.changeoverOrigin(changeover.ID))
 
 	final, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {

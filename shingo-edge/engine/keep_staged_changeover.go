@@ -1,11 +1,12 @@
 package engine
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 
 	"shingo/protocol"
 	"shingoedge/domain"
-	"shingoedge/engine/changeover"
 	ordermgr "shingoedge/orders"
 	"shingoedge/store/processes"
 )
@@ -18,6 +19,16 @@ import (
 // one style leaves there may be exactly what the other wants. Deciding per line
 // node, the outgoing claim's view would send away a spare the incoming one was
 // about to use.
+//
+// A CHANGEOVER DECIDES TWO THINGS AT A SPOT, AND REFILLS IT NEVER. Whether the
+// spare standing there goes back (sendsBack), and whether each incoming leg
+// takes it (legDiffs, through requestClaim, the REQUEST's own door). The refill
+// is the keeper's, during the changeover as at any other time: it reads the
+// spot for the incoming claim from START to cutover (keptFor) and orders behind
+// the leg's lift, not ahead of it. The start once ordered refills itself, behind
+// a lift it assumed, and at SPR ALN_011 (2026-10-15 08:31) the leg lifted the
+// spare the start had judged wrong and sent back: a return with nothing to carry
+// and two refills bound for a one-bin spot.
 
 // spotChange is one spot through a changeover.
 type spotChange struct {
@@ -29,15 +40,12 @@ type spotChange struct {
 	// leaver is the outgoing claim that kept a spare there; nil when none did.
 	leaver     *processes.NodeClaim
 	leaverNode *processes.Node
-	// consumes is 1 when the changeover's own supply leg lifts the spare.
-	consumes int
 }
 
 // changeoverSpots lists every keep-staged spot the outgoing or the incoming
-// claims name, with who keeps it, who kept it and whether the changeover's plan
-// lifts it. Pure. Called with the styles reversed to put a cancelled
-// changeover's spots back (an empty plan: nothing lifts them then).
-func changeoverSpots(outgoing, incoming []processes.NodeClaim, nodes []processes.Node, plan changeover.Plan) []spotChange {
+// claims name, with who keeps it and who kept it. Pure. Called with the styles
+// reversed to put a cancelled changeover's spots back.
+func changeoverSpots(outgoing, incoming []processes.NodeClaim, nodes []processes.Node) []spotChange {
 	byNode := make(map[string]*processes.Node, len(nodes))
 	for i := range nodes {
 		byNode[nodes[i].CoreNodeName] = &nodes[i]
@@ -67,61 +75,26 @@ func changeoverSpots(outgoing, incoming []processes.NodeClaim, nodes []processes
 	}
 	out := make([]spotChange, 0, len(changes))
 	for _, ch := range changes {
-		if ch.keeper != nil && planLiftsSpot(plan, ch.keeper.CoreNodeName, ch.spot) {
-			ch.consumes = 1
-		}
 		out = append(out, *ch)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].spot < out[j].spot })
 	return out
 }
 
-// planLiftsSpot reports whether the plan's action for a line node picks up at
-// the spot: a keep-staged incoming claim's changeover leg fetches its carrier
-// there (refillPickup), in whatever mode the line changes over in.
-func planLiftsSpot(plan changeover.Plan, coreNode, spot string) bool {
-	for _, a := range plan.Actions {
-		if a.CoreNodeName != coreNode || a.Err != nil {
-			continue
-		}
-		for _, spec := range []*changeover.OrderSpec{a.SupplyOrder, a.EvacOrder} {
-			for _, s := range specSteps(spec) {
-				if s.Action == protocol.ActionPickup && s.Node == spot {
-					return true
-				}
-			}
-		}
+// sendsBack is the changeover's decision for one spot, from Core's read with a
+// spare already leaving taken off it (readsLessLeaving): the bin standing there
+// goes back when no incoming claim keeps the spot, or it does not suit the
+// incoming claim (spareIsRight): a full by its part, an empty by whether the
+// incoming part may ride its carrier. The bin is judged by what it is, not by
+// who left it there or when: an empty one style left serves the other when both
+// parts ride its carrier, and at a cancel the empty standing is judged the same
+// whichever style it came from. Nothing is decided on an unknown read; a start
+// refuses one (unknownSpots).
+func (ch spotChange) sendsBack(read spotRead) bool {
+	if !read.known || !read.occupied {
+		return false
 	}
-	return false
-}
-
-// decide is the reconcile for one spot through a changeover, from Core's read.
-//
-// A spare is unwanted when no incoming claim keeps the spot, or it does not suit
-// the incoming claim (spareIsRight): a full by its part, an empty by whether
-// the incoming part may ride its carrier. The bin is judged by what it is, not
-// by who left it there or when: an empty one style left serves the other when
-// both parts ride its carrier, and at a cancel the empty standing is judged
-// the same whichever style it came from.
-//
-// What is already with the fleet is counted (flow): start and cancel abort
-// every spot order not yet with it, but one that has flown lands. A refill on
-// its way for the keeper's part counts as coming. A spare with a live return
-// is already going, so the spot is decided as bare: kept as standing, nothing
-// would be ordered behind it and the return would leave the spot empty; judged
-// again, it would be sent back twice.
-func (ch spotChange) decide(read spotRead, flow spotFlow) spotPlan {
-	if !read.known {
-		return spotPlan{}
-	}
-	read = read.lessLeaving(flow.leaving)
-	judge := ch.keeper
-	target := 1
-	if judge == nil {
-		judge, target = ch.leaver, 0
-	}
-	right := ch.keeper != nil && spareIsRight(ch.keeper, read)
-	return reconcileSpot(judge, read.occupied, right, flow.coming, ch.consumes, target)
+	return ch.keeper == nil || !spareIsRight(ch.keeper, read)
 }
 
 // returnTo is where an unwanted spare goes: back to whatever supplied it, the
@@ -134,16 +107,27 @@ func (ch spotChange) returnTo() (*processes.NodeClaim, *processes.Node) {
 	return ch.keeper, ch.keeperNode
 }
 
-// spotFlow is what is already moving at a spot when a changeover decides it:
-// refills on their way for the keeper's part and role, and live returns off it.
-type spotFlow struct {
-	coming, leaving int
+// spotReturns is the spots whose spare goes back, each decided once: the start
+// and the cancel count them and create them from this one list.
+func spotReturns(changes []spotChange, reads map[string]spotRead) []spotChange {
+	var out []spotChange
+	for _, ch := range changes {
+		if ch.sendsBack(reads[ch.spot]) {
+			out = append(out, ch)
+		}
+	}
+	return out
 }
 
-// spotFlows counts each spot's flow from the live rows the decision point has
-// already read, leaving out the orders it has just aborted.
-func spotFlows(live []domain.Order, changes []spotChange, aborted map[int64]bool) map[string]spotFlow {
-	flows := make(map[string]spotFlow, len(changes))
+// readsLessLeaving takes a spare that already has a live return off its spot's
+// read (lessLeaving), from the live rows the decision point has read, leaving
+// out the orders it has just aborted. A return is a plain move off the spot to
+// anywhere but a line that keeps or kept it.
+func readsLessLeaving(reads map[string]spotRead, live []domain.Order, changes []spotChange, aborted map[int64]bool) map[string]spotRead {
+	out := make(map[string]spotRead, len(reads))
+	for spot, r := range reads {
+		out[spot] = r
+	}
 	for _, ch := range changes {
 		lines := map[string]bool{}
 		for _, c := range []*processes.NodeClaim{ch.keeper, ch.leaver} {
@@ -151,23 +135,78 @@ func spotFlows(live []domain.Order, changes []spotChange, aborted map[int64]bool
 				lines[c.CoreNodeName] = true
 			}
 		}
-		var f spotFlow
+		leaving := 0
 		for i := range live {
 			o := &live[i]
 			if aborted[o.ID] || ordermgr.IsTerminal(o.Status) {
 				continue
 			}
-			switch {
-			case o.OrderType == protocol.OrderTypeMove && o.SourceNode == ch.spot && !lines[o.DeliveryNode]:
-				f.leaving++
-			case ch.keeper != nil && isSpotRefill(o, ch.keeper) && o.PayloadCode == ch.keeper.PayloadCode &&
-				o.RetrieveEmpty == carriesEmpty(ch.keeper):
-				f.coming++
+			if o.OrderType == protocol.OrderTypeMove && o.SourceNode == ch.spot && !lines[o.DeliveryNode] {
+				leaving++
 			}
 		}
-		flows[ch.spot] = f
+		if r, ok := out[ch.spot]; ok {
+			out[ch.spot] = r.lessLeaving(leaving)
+		}
 	}
-	return flows
+	return out
+}
+
+// legDiffs is the diffs the changeover's legs are built from: the supply of
+// each incoming claim that keeps a spot decided by requestClaim, the REQUEST's
+// door, from the same read. A leg takes the spare standing there when it is
+// right and not leaving, and is otherwise the market swap a line with no spot
+// runs (withoutSpot); the keeper fills the spot behind it.
+//
+// A copy: plan.diffs and plan.toClaims keep the claim as saved, which is what
+// the node tasks record and StageNodeChangeoverMaterial's refusal reads. An Add
+// is left as it is: its carrier goes straight to the line and never touches the
+// spot (planAddAction).
+func legDiffs(diffs []ChangeoverNodeDiff, reads map[string]spotRead) []ChangeoverNodeDiff {
+	out := make([]ChangeoverNodeDiff, len(diffs))
+	copy(out, diffs)
+	for i := range out {
+		d := &out[i]
+		spot := spotNode(d.ToClaim)
+		if spot == "" || d.Situation == SituationAdd {
+			continue
+		}
+		d.ToClaim, _ = requestClaim(d.ToClaim, d.ToClaim, spotAtRequest{read: reads[spot]})
+	}
+	return out
+}
+
+// unknownSpots names every spot Core did not answer for, sorted.
+func unknownSpots(changes []spotChange, reads map[string]spotRead) []string {
+	var out []string
+	for _, ch := range changes {
+		if !reads[ch.spot].known {
+			out = append(out, ch.spot)
+		}
+	}
+	return out
+}
+
+// rearmKeptLines is a START re-arming the keeper on every line the incoming
+// style keeps a spot for, after the start's aborts: pressing START is a person
+// saying go, as REQUEST and the board's RESUME are (rearmKeepStaged). Without
+// it, a start that aborted a queued keeper refill leaves the keeper paused: the
+// legs are written in the abort's own second, and spotPause re-arms only on an
+// order strictly newer than the abort.
+func (e *Engine) rearmKeptLines(claims []processes.NodeClaim, nodes []processes.Node) {
+	for i := range claims {
+		if node := findNodeByCoreName(nodes, claims[i].CoreNodeName); node != nil {
+			e.rearmKeepStaged(node, &claims[i])
+		}
+	}
+}
+
+// errUnknownSpots is the refusal a changeover's start and preview give when Core
+// did not say what stands on a keep-staged spot: the leg cannot be decided, as a
+// REQUEST's cannot (readSpotAtRequest fails closed), and the next press re-asks.
+func errUnknownSpots(spots []string) error {
+	return fmt.Errorf("cannot start changeover — Core did not say what stands on keep-staged spot %s; press again",
+		strings.Join(spots, ", "))
 }
 
 // lockKeepStagedCells takes the prime lock of every line in lines, in name
@@ -238,7 +277,7 @@ func keepStagedSpotNames(claimSets ...[]processes.NodeClaim) []string {
 }
 
 // readSpots asks Core about every spot in ONE call. A spot Core does not
-// answer for, or does not have, reads unknown and gets nothing.
+// answer for, or does not have, reads unknown.
 func (e *Engine) readSpots(changes []spotChange) map[string]spotRead {
 	reads, _ := e.readSpotsAnd(changes, nil)
 	return reads
@@ -282,40 +321,22 @@ func (e *Engine) readSpotsAnd(changes []spotChange, also []string) (map[string]s
 	return reads, extra
 }
 
-// spotOrderCount is how many orders the spot decisions create, for the episode's
-// expected count.
-func spotOrderCount(changes []spotChange, reads map[string]spotRead, flows map[string]spotFlow) int {
-	n := 0
-	for _, ch := range changes {
-		n += ch.decide(reads[ch.spot], flows[ch.spot]).orders()
-	}
-	return n
-}
-
-// applyChangeoverSpots creates the spot orders: each wrong or unwanted spare's
-// return, then the refills. They carry the changeover's origin and no task link
-// (a task-linked refill would be read as the changeover's own next material).
-func (e *Engine) applyChangeoverSpots(changes []spotChange, reads map[string]spotRead, flows map[string]spotFlow, origin ordermgr.Origin) {
-	for _, ch := range changes {
+// applyChangeoverSpots sends back each spare the decision sent back
+// (spotReturns). The returns carry the changeover's origin and no task link (a
+// task-linked return would be read as the changeover's own material).
+func (e *Engine) applyChangeoverSpots(returns []spotChange, reads map[string]spotRead, origin ordermgr.Origin) {
+	for _, ch := range returns {
 		read := reads[ch.spot]
-		plan := ch.decide(read, flows[ch.spot])
-		if plan.returnSpare {
-			if c, n := ch.returnTo(); c != nil && n != nil {
-				e.returnSpare(n, ch.spot, c.InboundSource, read.payload, read.binID, origin)
-			}
-		}
-		if plan.refills > 0 && ch.keeper != nil && ch.keeperNode != nil {
-			e.refillSpot(ch.keeperNode, ch.keeper, plan.refills, origin)
-		}
-		if plan.orders() > 0 {
-			e.logFn("keep-staged: changeover spot %s: return=%v refills=%d", ch.spot, plan.returnSpare, plan.refills)
+		if c, n := ch.returnTo(); c != nil && n != nil {
+			e.returnSpare(n, ch.spot, c.InboundSource, read.payload, read.binID, origin)
+			e.logFn("keep-staged: changeover spot %s: the spare goes back to %s", ch.spot, c.InboundSource)
 		}
 	}
 }
 
 // cancelledChangeoverSpots is changeoverSpots for a changeover being cancelled:
 // the incoming style's claims are the ones leaving, the outgoing style's the
-// ones keeping, and no plan lifts anything.
+// ones keeping.
 func (e *Engine) cancelledChangeoverSpots(processID int64, co *processes.Changeover) []spotChange {
 	var staying, leaving []processes.NodeClaim
 	if co.FromStyleID != nil {
@@ -337,17 +358,20 @@ func (e *Engine) cancelledChangeoverSpots(processID int64, co *processes.Changeo
 		e.logFn("keep-staged: changeover %d cancel: read the process's nodes: %v — spots left as they are", co.ID, err)
 		return nil
 	}
-	return changeoverSpots(leaving, staying, nodes, changeover.Plan{})
+	return changeoverSpots(leaving, staying, nodes)
 }
 
 // abortSpotOrdersNotFlown cancels every plain order to or from a spot that is
-// not yet with the fleet: refills bound for it and returns leaving it. They were
-// made for the changeover being cancelled, and left alive they would land the
-// incoming style's spare or carry away the outgoing style's. An order already
-// flown lands; the reconcile after it, or the next one, sends back what is wrong.
-func (e *Engine) abortSpotOrdersNotFlown(spots []spotChange) map[string]spotFlow {
+// not yet with the fleet: refills bound for it and returns leaving it. A refill
+// was the keeper's for the incoming style, and left alive it would land that
+// style's spare; a return was the start's, and would carry away a spare the
+// style that stays may want. An order already flown lands: a refill the cancel
+// could not stop goes back when it does (returnUnwantedLanding), and a return
+// with the fleet counts as the spare leaving. It returns the live rows it read
+// and the ids it aborted, for readsLessLeaving.
+func (e *Engine) abortSpotOrdersNotFlown(spots []spotChange) ([]domain.Order, map[int64]bool) {
 	if len(spots) == 0 {
-		return nil
+		return nil, nil
 	}
 	isSpot := make(map[string]bool, len(spots))
 	for _, ch := range spots {
@@ -356,7 +380,7 @@ func (e *Engine) abortSpotOrdersNotFlown(spots []spotChange) map[string]spotFlow
 	live, err := e.db.ListActiveOrders()
 	if err != nil {
 		e.logFn("keep-staged: list orders to cancel at the spots: %v", err)
-		return nil
+		return nil, nil
 	}
 	aborted := map[int64]bool{}
 	for _, o := range live {
@@ -375,7 +399,7 @@ func (e *Engine) abortSpotOrdersNotFlown(spots []spotChange) map[string]spotFlow
 		}
 		aborted[o.ID] = true
 	}
-	return spotFlows(live, spots, aborted)
+	return live, aborted
 }
 
 // spotsCleared is the save that clears a keep-staged flag, moves a spot or

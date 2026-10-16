@@ -28,24 +28,23 @@ func TestDecideSpot_TheRule(t *testing.T) {
 		name        string
 		f           spotFacts
 		wantRefills int
-		wantReturn  bool
 		wantNote    string
 	}{
-		{"idle, spare standing: nothing", spotFacts{read: right}, 0, false, ""},
-		{"idle, bare: one", spotFacts{read: bare}, 1, false, ""},
-		{"bare, one coming: nothing more, never two in flight", spotFacts{read: bare, coming: 1}, 0, false, ""},
-		{"wrong spare: it stays, nothing comes, and the board says to move it", spotFacts{read: wrong}, 0, false, "Move it by hand"},
-		{"an empty on a consume spot is wrong: the same", spotFacts{read: spotRead{known: true, occupied: true}}, 0, false, "Move it by hand"},
-		{"a leg still drops onto the spot: nothing", spotFacts{read: wrong, drops: true}, 0, false, "still bringing a bin"},
-		{"paused: nothing, and the board says so", spotFacts{read: bare, paused: "Keep-staged is paused: x"}, 0, false, "paused"},
-		{"unknown spot: nothing", spotFacts{}, 0, false, ""},
+		{"idle, spare standing: nothing", spotFacts{read: right}, 0, ""},
+		{"idle, bare: one", spotFacts{read: bare}, 1, ""},
+		{"bare, one coming: nothing more, never two in flight", spotFacts{read: bare, coming: 1}, 0, ""},
+		{"wrong spare: it stays, nothing comes, and the board says to move it", spotFacts{read: wrong}, 0, "Move it by hand"},
+		{"an empty on a consume spot is wrong: the same", spotFacts{read: spotRead{known: true, occupied: true}}, 0, "Move it by hand"},
+		{"a leg still drops onto the spot: nothing", spotFacts{read: wrong, drops: true}, 0, "still bringing a bin"},
+		{"paused: nothing, and the board says so", spotFacts{read: bare, paused: "Keep-staged is paused: x"}, 0, "paused"},
+		{"unknown spot: nothing", spotFacts{}, 0, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			plan, note := decideSpot(decideClaim(), c.f)
-			if plan.refills != c.wantRefills || plan.returnSpare != c.wantReturn {
-				t.Errorf("plan = %+v, want refills=%d return=%v", plan, c.wantRefills, c.wantReturn)
+			if plan.refills != c.wantRefills {
+				t.Errorf("plan = %+v, want refills=%d", plan, c.wantRefills)
 			}
 			if (c.wantNote == "") != (note == "") || !strings.Contains(note, c.wantNote) {
 				t.Errorf("note = %q, want one containing %q", note, c.wantNote)

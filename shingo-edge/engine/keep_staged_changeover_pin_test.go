@@ -149,21 +149,21 @@ func (c pinCase) seed(t *testing.T) *coFixture {
 
 // pinLegs is what a set of legs does at the spot, as tokens in a fixed order:
 //
-//	S  takes the spare: a pickup at the spot that names a part (spotPickup)
+//	S  takes the spare: a pickup at the spot when no leg sets a carrier down there
 //	D  sets a carrier down on the spot
-//	R  collects again from the spot what it set down there (a relay, names nothing)
+//	R  collects from the spot what a leg set down there: in the same order (a
+//	   relay, naming nothing) or, single robot, the swap collecting what its
+//	   stage order parked (naming the part, because it is another order)
 //	M  fetches from the incoming claim's inbound source (the market)
 //
 // "-" when the legs neither touch the spot nor fetch from the market.
 func pinLegs(steps [][]protocol.ComplexOrderStep) string {
-	var take, drop, relay, market bool
+	var lift, drop, market bool
 	for _, legSteps := range steps {
 		for _, st := range legSteps {
 			switch {
-			case st.Node == pinSpot && st.Action == protocol.ActionPickup && st.PayloadCode != "":
-				take = true
 			case st.Node == pinSpot && st.Action == protocol.ActionPickup:
-				relay = true
+				lift = true
 			case st.Node == pinSpot && st.Action == protocol.ActionDropoff:
 				drop = true
 			case st.Node == "SRC-NEW" && st.Action == protocol.ActionPickup:
@@ -175,7 +175,7 @@ func pinLegs(steps [][]protocol.ComplexOrderStep) string {
 	for _, tok := range []struct {
 		on bool
 		s  string
-	}{{take, "S"}, {drop, "D"}, {relay, "R"}, {market, "M"}} {
+	}{{lift && !drop, "S"}, {drop, "D"}, {lift && drop, "R"}, {market, "M"}} {
 		if tok.on {
 			out = append(out, tok.s)
 		}
@@ -388,7 +388,7 @@ func TestKeepStagedChangeover_EveryShapePin(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if got := c.observe(t); got != row.today {
+			if got := c.observe(t); got != row.after {
 				t.Errorf("\n got  %s\n want %s", got, row.today)
 			}
 		})

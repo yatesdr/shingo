@@ -394,12 +394,32 @@ func isPressIndexClaim(c *processes.NodeClaim) bool {
 // Validation errors (active changeover already running, wrong style, etc.) are
 // returned verbatim — the operator should see the same gating reason a Start
 // would surface.
+//
+// THE KEEP-STAGED SPOTS ARE READ AS START READS THEM, so the legs shown are the
+// legs Start builds: the same read, the same refusal on a spot Core did not
+// answer for, and each leg's claim decided by requestClaim (legDiffs). Start
+// decides from the rows its pre-dispatch cancel read, less what it cancelled;
+// that cancel never touches a return off a spot (it places its bin at the
+// source, not at a node the changeover acts on), so the live rows read here
+// count the same spares leaving.
 func (e *Engine) PreviewChangeoverPlan(processID, toStyleID int64) (changeover.Plan, error) {
 	plan, err := e.planChangeover(processID, toStyleID, false)
 	if err != nil {
 		return changeover.Plan{}, err
 	}
-	return BuildChangeoverPlan(plan.diffs, plan.nodes, e.cfg.Web.AutoConfirm, e.activePullSnapshot(plan.nodes), plan.tooling), nil
+	diffs := plan.diffs
+	if spots := changeoverSpots(plan.fromClaims, plan.toClaims, plan.nodes); len(spots) > 0 {
+		reads := e.readSpots(spots)
+		if unknown := unknownSpots(spots, reads); len(unknown) > 0 {
+			return changeover.Plan{}, errUnknownSpots(unknown)
+		}
+		live, err := e.db.ListActiveOrders()
+		if err != nil {
+			return changeover.Plan{}, err
+		}
+		diffs = legDiffs(plan.diffs, readsLessLeaving(reads, live, spots, nil))
+	}
+	return BuildChangeoverPlan(diffs, plan.nodes, e.cfg.Web.AutoConfirm, e.activePullSnapshot(plan.nodes), plan.tooling), nil
 }
 
 // binTypeSnapshot pre-resolves canonical bin type codes for every
