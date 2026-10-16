@@ -15,7 +15,10 @@
 package plantspec
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -489,13 +492,22 @@ type CellConfig struct {
 
 // Load reads and parses a plant spec YAML file. It does NOT validate — call
 // Validate separately so callers can choose how to surface errors.
+//
+// AN UNKNOWN KEY REFUSES THE FILE, NAMED. A key the spec does not have used to
+// be dropped without a word, so a plant written for a renamed field loaded as
+// if the field were unset: the 2026-10-03 keep-staged sim plant's
+// `keep_staged: true` seeded no spot at all on 2026-10-16, and the run looked
+// like a plain line. yaml.v3's error names the key, its line and the struct it
+// was not found in.
 func Load(path string) (*Plant, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("plantspec: read %s: %w", path, err)
 	}
 	var p Plant
-	if err := yaml.Unmarshal(data, &p); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&p); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("plantspec: parse %s: %w", path, err)
 	}
 	return &p, nil

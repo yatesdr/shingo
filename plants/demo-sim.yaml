@@ -182,7 +182,6 @@ zones:
   - name: SYN_MARKET
     retrieve_algorithm: FIFO
     store_algorithm: LKND
-    reshuffle_restore_blockers: on
     # ── THE WAITING SPOTS, AND WHY THEY ARE THE ZONE'S AND NOT EACH LANE'S ──
     #
     # A robot standing at one of these owns NOTHING — no lane, no slot, no row

@@ -329,3 +329,17 @@ func TestValidate_SourceKindRefusals(t *testing.T) {
 		t.Errorf("a producer drawing empties from a maintained group was refused: %v", err)
 	}
 }
+
+// AN UNKNOWN KEY REFUSES THE PLANT, NAMED. A renamed field's old key used to
+// load as if the field were unset (the 2026-10-03 sim plant's keep_staged).
+func TestLoad_UnknownKeyRefusesNamed(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "plant.yaml")
+	if err := os.WriteFile(path, []byte("namespace: x\nzones:\n  - name: Z\n    no_such_key: on\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "no_such_key") {
+		t.Fatalf("Load = %v, want a refusal naming no_such_key", err)
+	}
+}
