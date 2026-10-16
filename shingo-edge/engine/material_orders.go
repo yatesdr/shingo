@@ -122,9 +122,9 @@ func BuildReleaseSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 // Used by the drop planner so a partial bin removed during a changeover gets
 // the same release-with-count gate the swap-evac path uses, rather than
 // silently disappearing. EvacuateNode (the manual EMPTY FOR TOOL CHANGE path)
-// still uses BuildReleaseSteps directly because the operator has already
-// confirmed the partial count at the EMPTY click; no second confirmation
-// needed.
+// needs no second confirmation: the operator entered the count at the EMPTY
+// click, and it travels with the order — on the move's remaining count, or on
+// the curtain wait's release where the position is curtained.
 func BuildStagedReleaseSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
 		stationWait(claim.CoreNodeName, release.PurposeReady),
@@ -601,9 +601,10 @@ type ChangeoverDispatch struct {
 	StepsA        []protocol.ComplexOrderStep
 	DeliveryNodeA string
 	AutoConfirmA  bool
-	// CurtainWaitsA: StepsA lifts the old bin off its position with no station
-	// wait, so at a curtained position the creation puts one in front of that
-	// pickup (S7, createComplexFromSpec). Its return drop gets none.
+	// CurtainWaitsA: StepsA lifts the old bin off its position behind its own
+	// ready wait; at a curtained position the creation's standing intent rides
+	// that wait (S7, createComplexFromSpec), and at any other position the
+	// operator's RELEASE does. Its return drop gets none.
 	CurtainWaitsA bool
 
 	// CarriesFromPayloadA stamps StepsA with the from-style payload code. Set it
@@ -960,8 +961,10 @@ func buildPressIndexChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tool
 
 // buildPressIndexPerPositionSwap is the per-position dispatch for a
 // synthesized press-index different-bin-type fan-out claim. Single
-// complex order, 4 steps, no operator gate inside the order:
+// complex order, 5 steps, released at the position like every lift off a
+// line position:
 //
+//	wait(my position)         ready: the release (the ingest ships; Core chooses the drop)
 //	pickup(my position)       evac old bin
 //	dropoff(OutboundDestination)
 //	pickup(InboundSource)     fetch new bin
@@ -992,6 +995,10 @@ func buildPressIndexPerPositionSwap(fromClaim, toClaim *processes.NodeClaim) Cha
 	}
 	pos := fromClaim.CoreNodeName
 	steps := []protocol.ComplexOrderStep{
+		// Every lift off a line position goes through its release: the one
+		// place the count is final, the produce ingest ships and Core chooses
+		// the drop. The same ready wait the press's R1 lift opens with.
+		stationWait(pos, release.PurposeReady),
 		{Action: "pickup", Node: pos},                       // evac old bin
 		buildStep("dropoff", fromClaim.OutboundDestination), // old bin to destination
 		// The opening pickup lifts the OLD bin off the position, so the order

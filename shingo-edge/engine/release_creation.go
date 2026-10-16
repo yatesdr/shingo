@@ -33,7 +33,8 @@ func (e *Engine) curtainedCoreNodes() map[string]bool {
 
 // withCurtainWaits puts wait(node) in front of each pickup at a curtained node
 // that no wait at that node already precedes, and reports the ordinal (among
-// the result's station waits) of the first wait it added, or -1.
+// the result's station waits) of the first wait guarding a curtained pickup,
+// whether it added that wait or the builder did, or -1.
 // wait names the purpose at the call, as the purpose census requires.
 func withCurtainWaits(steps []protocol.ComplexOrderStep, curtained map[string]bool,
 	wait func(node string) protocol.ComplexOrderStep) ([]protocol.ComplexOrderStep, int) {
@@ -51,6 +52,10 @@ func withCurtainWaits(steps []protocol.ComplexOrderStep, curtained map[string]bo
 			}
 			out = append(out, wait(s.Node))
 			waits++
+		} else if crossing && first < 0 {
+			// The builder put the wait there itself; it is still the wait
+			// guarding a curtained pickup, and the creation's intent rides it.
+			first = waits - 1
 		} else if s.Action == protocol.ActionWait && protocol.IsStationWaitKind(s.WaitKind) {
 			waits++
 		}

@@ -39,15 +39,15 @@ func TestWithCurtainWaits(t *testing.T) {
 		want  string
 		first int
 	}{
-		{"the per-position swap: one wait, before it lifts the old bin; the return drop finishes",
+		{"a pickup with no wait gets one, before it lifts the old bin; the return drop finishes",
 			[]protocol.ComplexOrderStep{pick("SYN-FG"), drop("SYN-OUT"), pick("SYN-MKT"), drop("SYN-FG")},
 			"wait SYN-FG(ready), pickup SYN-FG, dropoff SYN-OUT, pickup SYN-MKT, dropoff SYN-FG", 0},
 		{"a delivery: no wait in front of the drop",
 			[]protocol.ComplexOrderStep{pick("SYN-STAGE"), drop("SYN-FG")},
 			"pickup SYN-STAGE, dropoff SYN-FG", -1},
-		{"a crossing a wait already guards is left alone",
-			[]protocol.ComplexOrderStep{stationWait("SYN-FG", release.PurposeSwap), pick("SYN-FG"), drop("SYN-OUT")},
-			"wait SYN-FG(swap), pickup SYN-FG, dropoff SYN-OUT", -1},
+		{"a crossing a wait already guards gets no second one, and the creation's intent rides that wait",
+			[]protocol.ComplexOrderStep{stationWait("SYN-FG", release.PurposeReady), pick("SYN-FG"), drop("SYN-OUT"), pick("SYN-MKT"), drop("SYN-FG")},
+			"wait SYN-FG(ready), pickup SYN-FG, dropoff SYN-OUT, pickup SYN-MKT, dropoff SYN-FG", 0},
 		{"an earlier station wait counts toward the ordinal",
 			[]protocol.ComplexOrderStep{stationWait("SYN-STAGE", release.PurposeToolingDone), pick("SYN-STAGE"), drop("SYN-OUT"),
 				pick("SYN-FG"), drop("SYN-OUT")},

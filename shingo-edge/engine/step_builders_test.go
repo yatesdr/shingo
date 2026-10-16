@@ -386,8 +386,9 @@ func TestBuildEvacuateChangeoverSteps_PressIndex_2Pos(t *testing.T) {
 
 // Per-position press-index swap dispatch. Each synthesized per-position
 // diff routes to this builder via the SwapMode == pressPositionSwapMode
-// case. Single complex order, 4 steps, no operator gate inside.
-func TestBuildPressIndexPerPositionSwap_FourStepSequence(t *testing.T) {
+// case. Single complex order, 5 steps: released at the position, like every
+// lift off a line position, then lift, drop, fetch, deliver.
+func TestBuildPressIndexPerPositionSwap_FiveStepSequence(t *testing.T) {
 	t.Parallel()
 	// THE ROLE IS SET, and it was not. A press-index position is a produce
 	// shape, but this fixture left Role at its zero value, so it exercised the
@@ -417,6 +418,7 @@ func TestBuildPressIndexPerPositionSwap_FourStepSequence(t *testing.T) {
 	// carries the FROM payload, and a blank refill step inherits that and goes
 	// looking for the outgoing part to restock a position that has changed over.
 	want := []protocol.ComplexOrderStep{
+		stationWait("POS-A", release.PurposeReady),
 		{Action: "pickup", Node: "POS-A"},
 		{Action: "dropoff", Node: "DEST"},
 		{Action: "pickup", Node: "MARKET", Empty: true, PayloadCode: "PART-B"},
@@ -433,8 +435,8 @@ func TestBuildPressIndexPerPositionSwap_FourStepSequence(t *testing.T) {
 	if disp.StepsB != nil {
 		t.Errorf("StepsB must be nil (single-order shape), got %+v", disp.StepsB)
 	}
-	if w := countWaits(disp.StepsA); w != 0 {
-		t.Errorf("expected 0 waits (auto-confirm, no operator gate), got %d", w)
+	if w := countWaits(disp.StepsA); w != 1 {
+		t.Errorf("expected 1 wait (the release at the position), got %d", w)
 	}
 	if !disp.AutoConfirmA {
 		t.Error("expected AutoConfirmA=true")

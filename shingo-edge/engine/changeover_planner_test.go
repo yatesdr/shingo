@@ -791,14 +791,15 @@ func TestPlanNodeAction_PressPosition_SwapRoutesToPerPositionBuilder(t *testing.
 		t.Fatalf("unexpected NodeAction.Err: %v", action.Err)
 	}
 	if action.SupplyOrder == nil || action.SupplyOrder.Complex == nil {
-		t.Fatal("expected supply order with the per-position 4-step list")
+		t.Fatal("expected supply order with the per-position 5-step list")
 	}
 	if action.EvacOrder != nil {
 		t.Error("evac order must be nil — per-position is single-order shape")
 	}
 	steps := action.SupplyOrder.Complex.Steps
-	if len(steps) != 4 {
-		t.Fatalf("expected 4 steps, got %d", len(steps))
+	// Released at the position (ready), then lift, drop, fetch, deliver.
+	if len(steps) != 5 {
+		t.Fatalf("expected 5 steps, got %d", len(steps))
 	}
 }
 
@@ -837,8 +838,8 @@ func TestPlanNodeAction_PressPosition_EvacuateRoutesToPerPositionBuilder(t *test
 	if action.SupplyOrder == nil || action.SupplyOrder.Complex == nil {
 		t.Fatal("expected supply order with the per-position 4-step list")
 	}
-	if len(action.SupplyOrder.Complex.Steps) != 4 {
-		t.Errorf("expected 4 steps, got %d", len(action.SupplyOrder.Complex.Steps))
+	if len(action.SupplyOrder.Complex.Steps) != 5 {
+		t.Errorf("expected 5 steps, got %d", len(action.SupplyOrder.Complex.Steps))
 	}
 }
 

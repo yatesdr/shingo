@@ -179,6 +179,7 @@ var stationWaitSites = map[string]string{
 	"material_orders.go:twoRobotEvac":                     "two_robot: the evac holds at the node",
 	"material_orders.go:singleRobotTail":                  "single_robot swap: hold at the node",
 	"material_orders.go:buildPressIndexChangeoverSwap":    "press-index changeover: ready, and tooling done on R1",
+	"material_orders.go:buildPressIndexPerPositionSwap":   "press-index per-position changeover: ready at the position, before its lift",
 	"material_orders.go:buildSequentialPerPositionSwap":   "sequential changeover: hold at the position",
 	"material_orders.go:singleRobotChangeoverTail":        "single_robot changeover: ready, and tooling done",
 	"material_orders.go:buildToolingEvacSteps":            "tooling evac: the tooling-done gate",

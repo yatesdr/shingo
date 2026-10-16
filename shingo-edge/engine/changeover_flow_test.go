@@ -522,10 +522,13 @@ func TestChangeoverFlow_OrderBFails(t *testing.T) {
 	emitOrderCompleted(eng, emptyOrder.ID, emptyOrder.UUID, emptyOrder.OrderType, &nodeID)
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	// The manual empty order is complex; wiring handler matches it as a
-	// swap/evacuate completion and advances directly to "released".
-	if task.State != domain.NodeTaskReleased {
-		t.Errorf("expected released after manual empty (complex order on swap situation), got %s", task.State)
+	// The manual empty on an uncurtained node is the Material page's move,
+	// carrying the operator's count. It only lifts: the line is clear and the
+	// incoming material is still owed, so the task reads line_cleared, not
+	// released. (Until 2026-10-16 a node with outbound staging took a complex
+	// shape here and read released, a terminal state with nothing delivered.)
+	if task.State != domain.NodeTaskLineCleared {
+		t.Errorf("expected line_cleared after the manual empty (a move that only lifts), got %s", task.State)
 	}
 }
 

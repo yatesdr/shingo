@@ -152,12 +152,11 @@ func (e *Engine) EvacuateNode(processID, nodeID int64, partialQty int64) (*order
 	// name; changeoverFromClaim resolves it through the parent the position's task
 	// was planned from.
 	fromClaim := e.changeoverFromClaim(ctx.node, ctx.nodeTask)
-	// A curtained node takes the complex shape whatever its staging, so the
-	// pickup gets a station wait in front (S7); this button is the operator's
-	// press, remembered at the wait, with the count they entered.
+	// A curtained node takes the complex shape, so the pickup gets a station
+	// wait in front (S7); this button is the operator's press, remembered at
+	// the wait, with the count they entered.
 	curtained := e.curtainedCoreNodes()
-	if fromClaim != nil && (fromClaim.OutboundStaging != "" ||
-		(curtained[fromClaim.CoreNodeName] && fromClaim.OutboundDestination != "")) {
+	if fromClaim != nil && curtained[fromClaim.CoreNodeName] && fromClaim.OutboundDestination != "" {
 		steps, firstWait := withCurtainWaits(BuildReleaseSteps(fromClaim), curtained,
 			func(n string) protocol.ComplexOrderStep { return stationWait(n, release.PurposeReady) })
 		order, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&ctx.node.ID, 1, "", fromClaim.CoreNodeName, steps,
@@ -175,15 +174,18 @@ func (e *Engine) EvacuateNode(processID, nodeID int64, partialQty int64) (*order
 		return order, nil
 	}
 
-	// Fallback: simple release via move order. The position claim is passed through
-	// because the release path resolves claims by node name too, and would
-	// otherwise refuse the same position for the same reason.
-	var order *orders.Order
-	qty := partialQty
-	if qty <= 0 {
-		qty = 1
+	// Anywhere else the click is the release: a move, the Material page's door,
+	// carrying the count the operator entered (the cache when none), so Core
+	// reads it at the claim and chooses the drop from it at dispatch. The
+	// position claim is passed through because the release path resolves
+	// claims by node name too, and would otherwise refuse the same position for
+	// the same reason.
+	var count *int
+	if partialQty > 0 {
+		n := int(partialQty)
+		count = &n
 	}
-	order, err = e.releaseNodeWithClaim(nodeID, qty, nil, fromClaim)
+	order, err := e.releaseNodeWithClaim(nodeID, 1, count, fromClaim)
 	if err != nil {
 		return nil, err
 	}

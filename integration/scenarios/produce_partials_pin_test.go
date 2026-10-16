@@ -203,7 +203,11 @@ func ppRun(t *testing.T, r ppRow) string {
 			}
 			return protocol.IsTerminal(c.edgeRow(rel.ID).Status) && protocol.IsTerminal(c.coreOf(rel).Status)
 		})
-	case "changeover":
+	case "changeover", "changeover-curtained":
+		if r.door == "changeover-curtained" {
+			_, err := c.edge.DB.Exec(`UPDATE process_nodes SET curtain_enabled = 1 WHERE id = ?`, c.nodeID)
+			mustNil(t, err, "a curtained line")
+		}
 		before := c.lastID()
 		if _, err := c.edge.Engine.StartProcessChangeover(c.processID, c.styleB, "pp", ""); err != nil {
 			return fmt.Sprintf("refused (%v)", err)
@@ -252,16 +256,21 @@ func ppRows() []ppRow {
 			// pinned in the Edge's changeover tests.
 			continue
 		}
-		at40, at17 := ppAt40, ppAt17
+		today40, today17 := ppAt40, ppAt17
 		if mode == protocol.SwapModeTwoRobotPressIndex {
-			// The press's changeover evac leaves the line on a leg that is
-			// never station-released, so no ingest ships.
-			at40, at17 = ppNoIngest40, ppNoIngest17
+			// Today a press changing carrier type lifts each position on a leg
+			// that is never station-released, so no ingest ships. After: every
+			// lift off a line position goes through its release (the one door).
+			today40, today17 = ppNoIngest40, ppNoIngest17
 		}
 		rows = append(rows,
-			ppRow{door: "changeover", mode: mode, class: ppFull, today: at40, after: at40},
-			ppRow{door: "changeover", mode: mode, class: ppPartial, today: at17, after: at17},
+			ppRow{door: "changeover", mode: mode, class: ppFull, today: today40, after: ppAt40},
+			ppRow{door: "changeover", mode: mode, class: ppPartial, today: today17, after: ppAt17},
 		)
+		if mode == protocol.SwapModeTwoRobotPressIndex {
+			// A curtained press: the curtain's wait was the release already.
+			rows = append(rows, ppRow{door: "changeover-curtained", mode: mode, class: ppPartial, today: ppAt17, after: ppAt17})
+		}
 	}
 	tr := protocol.SwapModeTwoRobot
 	rows = append(rows,
