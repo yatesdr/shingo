@@ -1453,8 +1453,14 @@ func (c *ksrCell) blockDone(o *coreorders.Order, node, task string) bool {
 }
 
 // ksrDigMoment runs the changeover until B's fetch to the spot is a dig whose
-// first leg has lifted the blocker and waits at the lane with it.
-func ksrDigMoment(c *ksrCell, co ksrCO) {
+// first leg has lifted the blocker and waits at the lane with it. The keeper's
+// refill is a plain retrieve, and its dig holds B's lane.
+func ksrDigMoment(c *ksrCell, co ksrCO) { ksrDigMomentOf(c, co, true) }
+
+// ksrDigMomentOf is ksrDigMoment; laneHeld says whether the dig must hold B's
+// lane, which only a plain retrieve's dig is asked to. A changeover leg digging
+// for itself is logged instead.
+func ksrDigMomentOf(c *ksrCell, co ksrCO, laneHeld bool) {
 	c.spareLeaves(co)
 	var child *coreorders.Order
 	c.eventually("B's fetch digging, its first leg with the fleet", func() bool {
@@ -1485,7 +1491,9 @@ func ksrDigMoment(c *ksrCell, co ksrCO) {
 		return ok && r.JackState == 1
 	})
 	c.drive(child, "WAITING")
-	if !c.core.eng.Dispatcher().LaneLock().IsLocked(c.laneB.ID) {
+	held := c.core.eng.Dispatcher().LaneLock().IsLocked(c.laneB.ID)
+	c.t.Logf("dig moment: B's lane held=%v", held)
+	if laneHeld && !held {
 		c.notReached("B's lane is not held by the dig")
 	}
 	child = c.mustOrder(child.ID)
