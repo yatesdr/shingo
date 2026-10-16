@@ -146,6 +146,9 @@ func startKSChangeover(t *testing.T, fx *coFixture) int64 {
 // the outgoing part: it goes back to the outgoing claim's source carrying its
 // own part, and two refills of the incoming part come — one the changeover's
 // supply lifts, one to stand after it.
+//
+// PREDICTED UNDER ONE REFILL OWNER (brief A2.3): the return stays, the start
+// orders no refills, and the supply leg fetches from the market.
 func TestKeepStagedChangeover_PartChangeSendsTheSpareBack(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []protocol.SwapMode{protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot,
@@ -174,6 +177,9 @@ func TestKeepStagedChangeover_PartChangeSendsTheSpareBack(t *testing.T) {
 // evacuation (the line's own bin goes out and back). The spare stays; the
 // changeover's supply lifts it, and one refill comes to stand after it. A line
 // that does not change over at all orders nothing for its spot.
+//
+// PREDICTED UNDER ONE REFILL OWNER (brief A2.3): both rows order nothing at
+// start; the evacuated line's refill is the keeper's, at the lift.
 func TestKeepStagedChangeover_SameSpareStays(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -202,6 +208,9 @@ func TestKeepStagedChangeover_SameSpareStays(t *testing.T) {
 // S7: a keep-staged line dropped from the incoming style leaves its spare with
 // nobody to keep it, so it goes back and nothing comes; a line added in the
 // incoming style keeps a spot that is filled.
+//
+// PREDICTED UNDER ONE REFILL OWNER (brief A2.3): the dropped line's return
+// stays; the added line's spot gets no refill from the start (the keeper's).
 func TestKeepStagedChangeover_DroppedAndAddedLines(t *testing.T) {
 	t.Parallel()
 	fx := seedKeepStagedChangeover(t,
@@ -226,6 +235,9 @@ func TestKeepStagedChangeover_DroppedAndAddedLines(t *testing.T) {
 // TWO LINE NODES HAND ONE SPOT BETWEEN THE STYLES OF ONE PROCESS. Decided per
 // spot, not per line: with the same part the spare stays for the incoming
 // line; with another part it goes back to the outgoing line's source.
+//
+// PREDICTED UNDER ONE REFILL OWNER (brief A2.3): unchanged, but another part
+// orders no refill at start.
 func TestKeepStagedChangeover_TwoLinesHandOneSpot(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -261,6 +273,12 @@ func TestKeepStagedChangeover_TwoLinesHandOneSpot(t *testing.T) {
 // spare of the incoming part landed. The refills not yet with the fleet are
 // cancelled; the incoming part's spare is sent back to its source; the outgoing
 // style, which stays, gets a refill of its own part.
+//
+// PREDICTED UNDER ONE REFILL OWNER (brief A2.1, A2.3): the start makes the
+// return and no refills, so the incoming part's spare is a keeper refill that
+// flew during the changeover. The cancel sends it back to SRC-NEW
+// (returnUnwantedLanding's case) and orders no refill for the outgoing style;
+// the keeper does, at its next pass, without a kick.
 func TestKeepStagedChangeover_CancelPutsTheSpotBack(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []protocol.SwapMode{protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot,
