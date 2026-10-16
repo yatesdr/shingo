@@ -503,7 +503,7 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 	if dispatch.StepsB != nil {
 		uuidB = ordermgr.NewOrderUUID()
 	}
-	sibA, sibB := coreSiblings(dispatch.StepsA, dispatch.StepsB, uuidA, uuidB)
+	sibA, sibB := uuidB, uuidA
 	orderA, err := e.dispatchPairedLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, sibA, uuidA, origin)
 	if err != nil {
 		return nil, err

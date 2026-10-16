@@ -379,7 +379,7 @@ func (e *Engine) applyConsumePlan(node *processes.Node, claim *processes.NodeCla
 	if dispatch.StepsB != nil {
 		uuidB = orders.NewOrderUUID()
 	}
-	sibA, sibB := coreSiblings(dispatch.StepsA, dispatch.StepsB, uuidA, uuidB)
+	sibA, sibB := uuidB, uuidA
 	orderA, err := e.dispatchPairedLeg(nodeID, plan.Quantity, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA, sibA, uuidA, origin)
 	if err != nil {
 		return nil, err

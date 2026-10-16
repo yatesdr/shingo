@@ -261,3 +261,12 @@ func (e *Engine) seatAt(processID int64) func(coreNode string) Seat {
 	state := e.nodeStateAt(processID)
 	return func(coreNode string) Seat { return state(coreNode).Seat }
 }
+
+// storedStepsOf is a stored order's steps.
+func (e *Engine) storedStepsOf(orderID int64) ([]protocol.ComplexOrderStep, error) {
+	raw, err := e.db.GetOrderStepsJSON(orderID)
+	if err != nil {
+		return nil, err
+	}
+	return decodeSteps(raw)
+}

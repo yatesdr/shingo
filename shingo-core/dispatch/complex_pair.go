@@ -104,8 +104,8 @@ import (
 // ── THE POINTER IS PRESENT BEFORE THE ROW IS, AND THAT IS THE WHOLE POINT ─
 //
 // protocol.ComplexOrderRequest.SiblingOrderUUID rides BOTH legs of a Core pair —
-// every Edge door that makes one mints both uuids before it creates either (a
-// relay goes unpaired by design; Edge engine/relay_pair.go) — so the pointer is
+// every Edge door that makes one mints both uuids before it creates either —
+// so the pointer is
 // never the thing that is missing. What IS missing, for the leg created first,
 // is its partner's ORDER ROW: the first leg's door runs its one acquire under
 // the scan lock, synchronously, and the partner has not been ingested yet.

@@ -92,11 +92,7 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 	// unaffected either way: LinkOrderSiblings below works on row ids, and it
 	// is what supply_bin_guard and ComputeSwapReady read.
 	supplyUUID, evacUUID := mintPairableLegUUID(action.SupplyOrder), mintPairableLegUUID(action.EvacOrder)
-	// A RELAY GOES TO CORE UNPAIRED. When one leg collects what the other
-	// delivers (legsRelay), naming each other would have Core hold the feeder for
-	// a collector that cannot source until the feeder has gone. Both uuids are
-	// still minted here; only the pointer each leg sends changes.
-	supplySib, evacSib := coreSiblings(specSteps(action.SupplyOrder), specSteps(action.EvacOrder), supplyUUID, evacUUID)
+	supplySib, evacSib := evacUUID, supplyUUID
 
 	var supplyID, evacID *int64
 	if action.SupplyOrder != nil {
