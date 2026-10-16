@@ -1,0 +1,45 @@
+package engine
+
+import (
+	"fmt"
+	"testing"
+
+	"shingo/protocol"
+	"shingoedge/store/processes"
+)
+
+// A PARTIAL ON A PRODUCE SPOT: is it the spare the keeper keeps there?
+//
+// A produce cell's spare is a carrier to fill. A partial of the cell's own part
+// is one (finishing it is the point of a partial home); a partial of another
+// part is not. Each row reads the spot from the node-bins row the keeper reads
+// it from and asks spareIsRight. Rows carry today (the tree before produce
+// partials) and after (under it); the test asserts after, and a row whose
+// after differs names its ruling.
+func TestProducePartialsPin_KeeperReadsAPartialOnTheSpot(t *testing.T) {
+	claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce, PayloadCode: "PP-X"}
+	catalog := []protocol.PayloadBinTypeInfo{{PayloadCode: "PP-X", BinTypeCode: "PP-T"}, {PayloadCode: "PP-Y", BinTypeCode: "PP-T"}}
+	rows := []struct {
+		name         string
+		row          NodeBinInfo
+		today, after bool
+	}{
+		{"an unstamped empty of a permitted carrier",
+			NodeBinInfo{Occupied: true, BinTypeCode: "PP-T", BinID: 1}, true, true},
+		// The produce arm wants payload '' and nothing else: a partial of the
+		// claim's own part reads "not a spare", and the keeper asks for a hand.
+		{"a partial of the claim's part (17 of 40)",
+			NodeBinInfo{Occupied: true, BinTypeCode: "PP-T", BinID: 2, PayloadCode: "PP-X", UOPRemaining: 17}, false, false},
+		{"a partial of another part",
+			NodeBinInfo{Occupied: true, BinTypeCode: "PP-T", BinID: 3, PayloadCode: "PP-Y", UOPRemaining: 17}, false, false},
+		{"a full of the claim's part",
+			NodeBinInfo{Occupied: true, BinTypeCode: "PP-T", BinID: 4, PayloadCode: "PP-X", UOPRemaining: 40}, false, false},
+	}
+	for _, r := range rows {
+		got := spareIsRight(claim, readOfRow(r.row, catalog))
+		t.Logf("PIN %-45s %v", r.name, got)
+		if got != r.after {
+			t.Errorf("%s: spareIsRight = %v, want %v (today %v)", r.name, got, r.after, fmt.Sprint(r.today))
+		}
+	}
+}

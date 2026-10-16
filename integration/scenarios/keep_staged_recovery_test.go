@@ -178,6 +178,9 @@ type ksrCell struct {
 	// leg stores it (caseEStore) wherever the dwell put it, which the end checks
 	// leave to caseEStore.
 	heldBlocker bool
+	// disp, when set, is the disposition swap releases with (the release
+	// modal's choice); unset, a plain release.
+	disp *edgeengine.ReleaseDisposition
 }
 
 // ksrDig is what case e's moment saw at the cancel: the dig leg carrying the
@@ -490,6 +493,9 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	router.Register(coreRouter, protocol.TypeOrderCancel, coreHandler.HandleOrderCancel)
 	router.Register(coreRouter, protocol.TypeOrderReceipt, coreHandler.HandleOrderReceipt)
 	router.Register(coreRouter, protocol.TypeOrderRelease, coreHandler.HandleOrderRelease)
+	// A produce release ships its count as an ingest, as the plant's router
+	// takes it (cmd/shingocore/routers.go).
+	router.Register(coreRouter, protocol.TypeOrderIngest, coreHandler.HandleOrderIngest)
 	if o.buriedB {
 		// The Edge's claims reach Core's mirror as in the plant: the publisher's
 		// report over the wire. The cancel-return policy reads that mirror.
@@ -990,6 +996,9 @@ func (c *ksrCell) swap(label string, trigger func()) (legs []domain.Order, fast 
 		return true
 	})
 	disp := edgeengine.ReleaseDisposition{CalledBy: "ksr-operator"}
+	if c.disp != nil {
+		disp = *c.disp
+	}
 	if c.mode == protocol.SwapModeSingleRobot {
 		mustNil(c.t, c.edge.Engine.ReleaseOrderWithLineside(legs[0].ID, disp), label+": release")
 	} else {
