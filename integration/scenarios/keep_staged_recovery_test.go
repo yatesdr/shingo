@@ -1617,6 +1617,25 @@ func (c *ksrCell) assertRecovered() {
 
 // ── the table ───────────────────────────────────────────────────────────────
 
+// ksrDigOnTheSpotsRefill reports whether a buried B is dug by the keeper's
+// refill of the spot, which is the dig moment e cancels at. Only the sequential
+// and the produce press cells have it. In the two staging modes the spot is the
+// inbound staging, so B reaches it on the changeover's own leg (since
+// 2026-10-16 the start orders no refill), and that leg's fetch is not a
+// refill's dig: a produce leg's Empty pickup never digs, and a consume leg digs
+// through its own intake. A consume press changing carrier type sends each
+// position its own leg from B's market, which Core judges by the order's
+// payload and digs ahead of the spot's refill.
+func ksrDigOnTheSpotsRefill(role protocol.ClaimRole, mode protocol.SwapMode) bool {
+	switch mode {
+	case protocol.SwapModeTwoRobot, protocol.SwapModeSingleRobot:
+		return false
+	case protocol.SwapModeTwoRobotPressIndex:
+		return role == protocol.ClaimRoleProduce
+	}
+	return true
+}
+
 // TestScenario_KeepStagedRecovery_AfterCancelledChangeover cancels a
 // changeover from A to B at each moment of the keep-staged spot's handover and
 // then leaves the cell alone. It must come back by itself: an operator REQUEST
@@ -1655,32 +1674,11 @@ func TestScenario_KeepStagedRecovery_AfterCancelledChangeover(t *testing.T) {
 			if m.singleRobot && cl.mode != protocol.SwapModeSingleRobot {
 				continue
 			}
+			if m.buriedB && !ksrDigOnTheSpotsRefill(cl.role, cl.mode) {
+				continue // the moment does not exist in this cell: see ksrDigOnTheSpotsRefill
+			}
 			t.Run(fmt.Sprintf("%s/%s/%s", cl.role, cl.mode, m.name), func(t *testing.T) {
 				t.Parallel()
-				if m.buriedB && cl.mode == protocol.SwapModeTwoRobotPressIndex && cl.role == protocol.ClaimRoleConsume {
-					// NOT REACHED, and not for the spot. A consume press
-					// changing carrier type sends each position its own leg
-					// from B's market, and Core's intake judges the line
-					// position's leg by the order's payload (the outgoing
-					// part, which it lifts off the line) rather than its
-					// refill step's: it finds no reachable A full in B's
-					// market and digs B's lane for one, while the spot's
-					// refill takes a reachable B bin. So the spot's refill is
-					// never the dig this moment cancels at. The produce press,
-					// whose refill steps are empties, reaches it.
-					t.Skip("the consume press's own changeover leg digs B's lane (Core judges it by the order's payload)")
-				}
-				if m.buriedB && (cl.mode == protocol.SwapModeTwoRobot || cl.mode == protocol.SwapModeSingleRobot) {
-					// NOT REACHED, since the start stopped refilling the spot
-					// (2026-10-16). The spot is these cells' inbound staging, so
-					// B reaches it on the changeover's own leg, parked there,
-					// and the keeper refills only behind that leg. A buried B is
-					// that leg's own dig, which Core runs from the leg's intake,
-					// not the plain refill's dig this moment cancels at. The
-					// cancel of a changeover leg mid-dig is not covered here,
-					// as for the consume press above.
-					t.Skip("B comes on the changeover's own leg, whose dig is the leg's intake, not a refill's")
-				}
 				started := time.Now()
 				defer func() { t.Logf("case %s ran %s", m.name, time.Since(started).Round(time.Second)) }()
 				c := newKsrCell(t, ksrOpts{role: cl.role, mode: cl.mode, buriedB: m.buriedB, claimC: m.claimC, kicks: kicks})
