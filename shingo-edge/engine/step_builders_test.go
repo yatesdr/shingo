@@ -30,11 +30,14 @@ func stepActions(steps []protocol.ComplexOrderStep) []string {
 }
 
 // ---------------------------------------------------------------------------
-// BuildSwapChangeoverSteps — single_robot: 7-step Order B + stage Order A
+// BuildSwapChangeoverSteps — single_robot: ONE 9-step order
 // ---------------------------------------------------------------------------
 
-// Single-robot legacy choreography: line-side Order B sequence + stage
-// Order A.
+// The single-robot changeover is one order since 2026-10-16: fetch the new
+// carrier and park it on inbound staging, wait, park the old one on outbound
+// staging, collect the new one by relay (it names nothing: the carrier this
+// order parked), deliver it, clear the old one. It was a stage order plus this
+// order with a part-naming collect, which Core could satisfy with a stray bin.
 func TestBuildSwapChangeoverSteps_SingleRobot(t *testing.T) {
 	t.Parallel()
 	from := &processes.NodeClaim{
@@ -51,23 +54,15 @@ func TestBuildSwapChangeoverSteps_SingleRobot(t *testing.T) {
 
 	disp := BuildSwapChangeoverSteps(from, to, "", "")
 
-	if len(disp.StepsB) != 7 {
-		t.Fatalf("Order B: expected 7 steps, got %d", len(disp.StepsB))
-	}
-	if w := countWaits(disp.StepsB); w != 1 {
-		t.Errorf("Order B: expected 1 wait, got %d", w)
+	if disp.StepsA != nil || disp.DeliveryNodeA != "" {
+		t.Fatalf("a stage order was built: %+v to %q", disp.StepsA, disp.DeliveryNodeA)
 	}
 	if !disp.AutoConfirmB {
-		t.Error("Order B: expected AutoConfirmB=true")
+		t.Error("expected AutoConfirmB=true")
 	}
-	if disp.AutoConfirmA {
-		t.Error("Order A (stage): expected AutoConfirmA=false (operator confirms staging)")
-	}
-	if disp.DeliveryNodeA != "IN-STAGE" {
-		t.Errorf("Order A delivery node: got %q, want IN-STAGE", disp.DeliveryNodeA)
-	}
-
-	wantB := []protocol.ComplexOrderStep{
+	want := []protocol.ComplexOrderStep{
+		{Action: "pickup", Node: "MARKET"},
+		{Action: "dropoff", Node: "IN-STAGE", ExclusiveSlot: true},
 		stationWait("CORE-A", release.PurposeReady),
 		{Action: "pickup", Node: "CORE-A"},
 		{Action: "dropoff", Node: "OUT-STAGE", ExclusiveSlot: true},
@@ -76,22 +71,12 @@ func TestBuildSwapChangeoverSteps_SingleRobot(t *testing.T) {
 		{Action: "pickup", Node: "OUT-STAGE"},
 		{Action: "dropoff", Node: "DEST-FINAL"},
 	}
+	if len(disp.StepsB) != len(want) {
+		t.Fatalf("expected %d steps, got %d: %+v", len(want), len(disp.StepsB), disp.StepsB)
+	}
 	for i, s := range disp.StepsB {
-		if s != wantB[i] {
-			t.Errorf("Order B step %d: got %+v, want %+v", i, s, wantB[i])
-		}
-	}
-
-	wantA := []protocol.ComplexOrderStep{
-		{Action: "pickup", Node: "MARKET"},
-		{Action: "dropoff", Node: "IN-STAGE", ExclusiveSlot: true},
-	}
-	if len(disp.StepsA) != len(wantA) {
-		t.Fatalf("Order A: expected %d steps, got %d", len(wantA), len(disp.StepsA))
-	}
-	for i, s := range disp.StepsA {
-		if s != wantA[i] {
-			t.Errorf("Order A step %d: got %+v, want %+v", i, s, wantA[i])
+		if s != want[i] {
+			t.Errorf("step %d: got %+v, want %+v", i, s, want[i])
 		}
 	}
 }
@@ -116,20 +101,23 @@ func TestBuildEvacuateChangeoverSteps_SingleRobot(t *testing.T) {
 
 	disp := BuildEvacuateChangeoverSteps(from, to, "", "")
 
-	if len(disp.StepsB) != 8 {
-		t.Fatalf("Order B: expected 8 steps, got %d", len(disp.StepsB))
+	if disp.StepsA != nil {
+		t.Fatalf("a stage order was built: %+v", disp.StepsA)
+	}
+	if len(disp.StepsB) != 10 {
+		t.Fatalf("expected 10 steps, got %d", len(disp.StepsB))
 	}
 	if w := countWaits(disp.StepsB); w != 2 {
-		t.Errorf("Order B: expected 2 waits, got %d", w)
+		t.Errorf("expected 2 waits, got %d", w)
 	}
-	if disp.StepsB[0].Action != "wait" || disp.StepsB[0].Node != "CORE-A" {
-		t.Errorf("step 0: expected wait at CORE-A, got %q at %q", disp.StepsB[0].Action, disp.StepsB[0].Node)
+	if disp.StepsB[2].Action != "wait" || disp.StepsB[2].Node != "CORE-A" {
+		t.Errorf("step 2: expected wait at CORE-A, got %q at %q", disp.StepsB[2].Action, disp.StepsB[2].Node)
 	}
-	if disp.StepsB[3].Action != "wait" {
-		t.Errorf("step 3: expected wait (tooling done), got %q", disp.StepsB[3].Action)
+	if disp.StepsB[5].Action != "wait" {
+		t.Errorf("step 5: expected wait (tooling done), got %q", disp.StepsB[5].Action)
 	}
 
-	wantActions := []string{"wait", "pickup", "dropoff", "wait", "pickup", "dropoff", "pickup", "dropoff"}
+	wantActions := []string{"pickup", "dropoff", "wait", "pickup", "dropoff", "wait", "pickup", "dropoff", "pickup", "dropoff"}
 	for i, a := range stepActions(disp.StepsB) {
 		if a != wantActions[i] {
 			t.Errorf("step %d action: got %q, want %q", i, a, wantActions[i])

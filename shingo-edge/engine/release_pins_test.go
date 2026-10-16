@@ -198,8 +198,8 @@ func releasePinCells() []relCell {
 		// the envelope goes, through a second sweep (which the page's toast
 		// invited until it reported deferred supply apart from pending).
 		{name: "N-a/sweep twice on a single_robot tooling evac",
-			want:  "ok | evac=in_transit supply=staged | rel=evac | ingest=1 capred=0 | sweep released=1 pending=0 deferred=0 flip=[] | sweep released=0 pending=0 deferred=0 flip=[] | uop=0",
-			build: coAt(coSRTooling, "evac", S, "supply", S),
+			want:  "ok | evac=in_transit | rel=evac | ingest=1 capred=0 | sweep released=1 pending=0 deferred=0 flip=[] | sweep released=0 pending=0 deferred=0 flip=[] | uop=0",
+			build: coAt(coSRTooling, "evac", S),
 			act:   seq(sweepClick(dispNone), sweepClick(dispNone)), probe: probes(pUOP)},
 		{name: "N-a/station button twice on a press-index tooling pair",
 			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | uop=0",
@@ -218,21 +218,21 @@ func releasePinCells() []relCell {
 		// purpose-scoped act is the fix; until then the plant instruction
 		// stands (no second RELEASE on a tooling node before tooling is done).
 		{name: "N-a(ii)/ready clicked again after the evac staged at tooling done",
-			want:  "ok | evac=staged supply=staged | rel=evac | ingest=1 capred=0 | sweep released=1 pending=0 deferred=0 flip=[] | sweep released=0 pending=0 deferred=0 flip=[]",
-			build: coAt(coSRTooling, "evac", S, "supply", S),
+			want:  "ok | evac=staged | rel=evac | ingest=1 capred=0 | sweep released=1 pending=0 deferred=0 flip=[] | sweep released=0 pending=0 deferred=0 flip=[]",
+			build: coAt(coSRTooling, "evac", S),
 			act: seq(sweepClickAs(release.PurposeReady, dispNone), stagesAt("evac", 1),
 				sweepClickAs(release.PurposeReady, dispNone))},
 
 		// ── §6.4: the station button on a single_robot changeover node ────────
-		// Its relay task carries both legs, and the pair path refuses any mode
-		// but a two-robot swap. The adapters route a changeover node's click
+		// Its task carries one order (since 2026-10-16), and the pair path
+		// refuses any mode but a two-robot swap. The adapters route a changeover node's click
 		// to the changeover act unless its work is a two-robot swap (S4), which
 		// releases the evac and defers the supply, as the sweep and the
 		// per-node click do. The ingest is S1b's rule: a changeover produce
 		// evac ships its bin's count at RELEASE.
 		{name: "6.4/station RELEASE on a single_robot changeover node",
-			want:  "ok | evac=in_transit supply=staged | rel=evac | ingest=1 capred=0",
-			build: coAt(coSRTooling, "evac", S, "supply", S),
+			want:  "ok | evac=in_transit | rel=evac | ingest=1 capred=0",
+			build: coAt(coSRTooling, "evac", S),
 			act:   pairClick(dispNone)},
 
 		// ── N-a′: the pickup chain releases a supply the pair click released ─
@@ -255,10 +255,9 @@ func releasePinCells() []relCell {
 			act:   seq(sweepClick(dispNone), picks("evac"))},
 
 		// ── L1: no release goes for a wait nobody pressed ──────────────────
-		{name: "L1/single_robot relay: stage leg confirms, swap leg at ready", gate: release.G2,
-			want:  "ok | evac=staged supply=confirmed | rel=- | ingest=0 capred=0",
-			build: coAt(coSRTooling, "evac", S, "supply", T),
-			act:   confirms("supply")},
+		// (The single_robot relay row, "stage leg confirms, swap leg at ready",
+		// is gone: since 2026-10-16 the single-robot changeover is one order,
+		// and there is no stage leg to confirm.)
 		{name: "L1/press-index tooling: R2 confirms, R1 at tooling done", gate: release.G2,
 			want:  "ok | evac=staged supply=confirmed | rel=- | ingest=0 capred=0",
 			build: coAt(coPITooling, "evac", S, "supply", T),

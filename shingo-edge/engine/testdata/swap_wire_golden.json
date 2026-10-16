@@ -273,6 +273,16 @@
               "ProcessNode": "LINE",
               "Steps": [
                 {
+                  "action": "pickup",
+                  "node": "SRC",
+                  "payload_code": "P-TO"
+                },
+                {
+                  "action": "dropoff",
+                  "node": "STG-IN",
+                  "exclusive_slot": true
+                },
+                {
                   "action": "wait",
                   "node": "LINE",
                   "wait_kind": "station",
@@ -294,8 +304,7 @@
                 },
                 {
                   "action": "pickup",
-                  "node": "STG-IN",
-                  "payload_code": "P-TO"
+                  "node": "STG-IN"
                 },
                 {
                   "action": "dropoff",
@@ -319,27 +328,7 @@
           "LogTag": "evacuate",
           "NextState": "staging_requested",
           "Situation": "evacuate",
-          "SupplyOrder": {
-            "Complex": {
-              "DeliveryNode": "STG-IN",
-              "ProcessNode": "LINE",
-              "Steps": [
-                {
-                  "action": "pickup",
-                  "node": "SRC"
-                },
-                {
-                  "action": "dropoff",
-                  "node": "STG-IN",
-                  "exclusive_slot": true
-                }
-              ],
-              "AutoConfirm": false,
-              "PayloadCode": "",
-              "CurtainWaits": false
-            },
-            "Retrieve": null
-          }
+          "SupplyOrder": null
         }
       ],
       "swap": [
@@ -350,6 +339,16 @@
               "DeliveryNode": "",
               "ProcessNode": "LINE",
               "Steps": [
+                {
+                  "action": "pickup",
+                  "node": "SRC",
+                  "payload_code": "P-TO"
+                },
+                {
+                  "action": "dropoff",
+                  "node": "STG-IN",
+                  "exclusive_slot": true
+                },
                 {
                   "action": "wait",
                   "node": "LINE",
@@ -367,8 +366,7 @@
                 },
                 {
                   "action": "pickup",
-                  "node": "STG-IN",
-                  "payload_code": "P-TO"
+                  "node": "STG-IN"
                 },
                 {
                   "action": "dropoff",
@@ -392,27 +390,7 @@
           "LogTag": "swap",
           "NextState": "staging_requested",
           "Situation": "swap",
-          "SupplyOrder": {
-            "Complex": {
-              "DeliveryNode": "STG-IN",
-              "ProcessNode": "LINE",
-              "Steps": [
-                {
-                  "action": "pickup",
-                  "node": "SRC"
-                },
-                {
-                  "action": "dropoff",
-                  "node": "STG-IN",
-                  "exclusive_slot": true
-                }
-              ],
-              "AutoConfirm": false,
-              "PayloadCode": "",
-              "CurtainWaits": false
-            },
-            "Retrieve": null
-          }
+          "SupplyOrder": null
         }
       ]
     },
@@ -421,19 +399,19 @@
       "AutoConfirmB": true,
       "CarriesFromPayloadA": false,
       "CurtainWaitsA": false,
-      "DeliveryNodeA": "STG-IN",
-      "StepsA": [
+      "DeliveryNodeA": "",
+      "StepsA": null,
+      "StepsB": [
         {
           "action": "pickup",
-          "node": "SRC"
+          "node": "SRC",
+          "payload_code": "P-TO"
         },
         {
           "action": "dropoff",
           "node": "STG-IN",
           "exclusive_slot": true
-        }
-      ],
-      "StepsB": [
+        },
         {
           "action": "wait",
           "node": "LINE",
@@ -456,8 +434,7 @@
         },
         {
           "action": "pickup",
-          "node": "STG-IN",
-          "payload_code": "P-TO"
+          "node": "STG-IN"
         },
         {
           "action": "dropoff",
@@ -478,8 +455,9 @@
       "AutoConfirmB": true,
       "CarriesFromPayloadA": false,
       "CurtainWaitsA": false,
-      "DeliveryNodeA": "STG-IN",
-      "StepsA": [
+      "DeliveryNodeA": "",
+      "StepsA": null,
+      "StepsB": [
         {
           "action": "pickup",
           "node": "SRC"
@@ -488,9 +466,7 @@
           "action": "dropoff",
           "node": "STG-IN",
           "exclusive_slot": true
-        }
-      ],
-      "StepsB": [
+        },
         {
           "action": "wait",
           "node": "LINE",
@@ -534,19 +510,19 @@
       "AutoConfirmB": true,
       "CarriesFromPayloadA": false,
       "CurtainWaitsA": false,
-      "DeliveryNodeA": "STG-IN",
-      "StepsA": [
+      "DeliveryNodeA": "",
+      "StepsA": null,
+      "StepsB": [
         {
           "action": "pickup",
-          "node": "SRC"
+          "node": "SRC",
+          "payload_code": "P-TO"
         },
         {
           "action": "dropoff",
           "node": "STG-IN",
           "exclusive_slot": true
-        }
-      ],
-      "StepsB": [
+        },
         {
           "action": "wait",
           "node": "LINE",
@@ -564,8 +540,7 @@
         },
         {
           "action": "pickup",
-          "node": "STG-IN",
-          "payload_code": "P-TO"
+          "node": "STG-IN"
         },
         {
           "action": "dropoff",
@@ -586,8 +561,9 @@
       "AutoConfirmB": true,
       "CarriesFromPayloadA": false,
       "CurtainWaitsA": false,
-      "DeliveryNodeA": "STG-IN",
-      "StepsA": [
+      "DeliveryNodeA": "",
+      "StepsA": null,
+      "StepsB": [
         {
           "action": "pickup",
           "node": "SRC"
@@ -596,9 +572,7 @@
           "action": "dropoff",
           "node": "STG-IN",
           "exclusive_slot": true
-        }
-      ],
-      "StepsB": [
+        },
         {
           "action": "wait",
           "node": "LINE",
@@ -3595,6 +3569,17 @@
               "ProcessNode": "LINE",
               "Steps": [
                 {
+                  "action": "pickup",
+                  "node": "SRC",
+                  "empty": true,
+                  "payload_code": "P-TO"
+                },
+                {
+                  "action": "dropoff",
+                  "node": "STG-IN",
+                  "exclusive_slot": true
+                },
+                {
                   "action": "wait",
                   "node": "LINE",
                   "wait_kind": "station",
@@ -3616,8 +3601,7 @@
                 },
                 {
                   "action": "pickup",
-                  "node": "STG-IN",
-                  "payload_code": "P-TO"
+                  "node": "STG-IN"
                 },
                 {
                   "action": "dropoff",
@@ -3641,9 +3625,15 @@
           "LogTag": "evacuate",
           "NextState": "staging_requested",
           "Situation": "evacuate",
-          "SupplyOrder": {
+          "SupplyOrder": null
+        }
+      ],
+      "swap": [
+        {
+          "Err": "",
+          "EvacOrder": {
             "Complex": {
-              "DeliveryNode": "STG-IN",
+              "DeliveryNode": "",
               "ProcessNode": "LINE",
               "Steps": [
                 {
@@ -3656,24 +3646,7 @@
                   "action": "dropoff",
                   "node": "STG-IN",
                   "exclusive_slot": true
-                }
-              ],
-              "AutoConfirm": false,
-              "PayloadCode": "",
-              "CurtainWaits": false
-            },
-            "Retrieve": null
-          }
-        }
-      ],
-      "swap": [
-        {
-          "Err": "",
-          "EvacOrder": {
-            "Complex": {
-              "DeliveryNode": "",
-              "ProcessNode": "LINE",
-              "Steps": [
+                },
                 {
                   "action": "wait",
                   "node": "LINE",
@@ -3691,8 +3664,7 @@
                 },
                 {
                   "action": "pickup",
-                  "node": "STG-IN",
-                  "payload_code": "P-TO"
+                  "node": "STG-IN"
                 },
                 {
                   "action": "dropoff",
@@ -3716,29 +3688,7 @@
           "LogTag": "swap",
           "NextState": "staging_requested",
           "Situation": "swap",
-          "SupplyOrder": {
-            "Complex": {
-              "DeliveryNode": "STG-IN",
-              "ProcessNode": "LINE",
-              "Steps": [
-                {
-                  "action": "pickup",
-                  "node": "SRC",
-                  "empty": true,
-                  "payload_code": "P-TO"
-                },
-                {
-                  "action": "dropoff",
-                  "node": "STG-IN",
-                  "exclusive_slot": true
-                }
-              ],
-              "AutoConfirm": false,
-              "PayloadCode": "",
-              "CurtainWaits": false
-            },
-            "Retrieve": null
-          }
+          "SupplyOrder": null
         }
       ]
     },
@@ -3747,20 +3697,20 @@
       "AutoConfirmB": true,
       "CarriesFromPayloadA": false,
       "CurtainWaitsA": false,
-      "DeliveryNodeA": "STG-IN",
-      "StepsA": [
+      "DeliveryNodeA": "",
+      "StepsA": null,
+      "StepsB": [
         {
           "action": "pickup",
           "node": "SRC",
-          "empty": true
+          "empty": true,
+          "payload_code": "P-TO"
         },
         {
           "action": "dropoff",
           "node": "STG-IN",
           "exclusive_slot": true
-        }
-      ],
-      "StepsB": [
+        },
         {
           "action": "wait",
           "node": "LINE",
@@ -3783,8 +3733,7 @@
         },
         {
           "action": "pickup",
-          "node": "STG-IN",
-          "payload_code": "P-TO"
+          "node": "STG-IN"
         },
         {
           "action": "dropoff",
@@ -3805,8 +3754,9 @@
       "AutoConfirmB": true,
       "CarriesFromPayloadA": false,
       "CurtainWaitsA": false,
-      "DeliveryNodeA": "STG-IN",
-      "StepsA": [
+      "DeliveryNodeA": "",
+      "StepsA": null,
+      "StepsB": [
         {
           "action": "pickup",
           "node": "SRC",
@@ -3816,9 +3766,7 @@
           "action": "dropoff",
           "node": "STG-IN",
           "exclusive_slot": true
-        }
-      ],
-      "StepsB": [
+        },
         {
           "action": "wait",
           "node": "LINE",
@@ -3862,20 +3810,20 @@
       "AutoConfirmB": true,
       "CarriesFromPayloadA": false,
       "CurtainWaitsA": false,
-      "DeliveryNodeA": "STG-IN",
-      "StepsA": [
+      "DeliveryNodeA": "",
+      "StepsA": null,
+      "StepsB": [
         {
           "action": "pickup",
           "node": "SRC",
-          "empty": true
+          "empty": true,
+          "payload_code": "P-TO"
         },
         {
           "action": "dropoff",
           "node": "STG-IN",
           "exclusive_slot": true
-        }
-      ],
-      "StepsB": [
+        },
         {
           "action": "wait",
           "node": "LINE",
@@ -3893,8 +3841,7 @@
         },
         {
           "action": "pickup",
-          "node": "STG-IN",
-          "payload_code": "P-TO"
+          "node": "STG-IN"
         },
         {
           "action": "dropoff",
@@ -3915,8 +3862,9 @@
       "AutoConfirmB": true,
       "CarriesFromPayloadA": false,
       "CurtainWaitsA": false,
-      "DeliveryNodeA": "STG-IN",
-      "StepsA": [
+      "DeliveryNodeA": "",
+      "StepsA": null,
+      "StepsB": [
         {
           "action": "pickup",
           "node": "SRC",
@@ -3926,9 +3874,7 @@
           "action": "dropoff",
           "node": "STG-IN",
           "exclusive_slot": true
-        }
-      ],
-      "StepsB": [
+        },
         {
           "action": "wait",
           "node": "LINE",

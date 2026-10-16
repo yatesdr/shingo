@@ -328,7 +328,7 @@ func contains(s, substr string) bool {
 func TestReleaseChangeoverWait_SupplyManifestPreserved(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
@@ -380,20 +380,25 @@ func TestReleaseChangeoverWait_SupplyManifestPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReleaseChangeoverWait: %v", err)
 	}
-	if result.Released != 1 {
-		t.Errorf("result.Released = %d, want 1 (the evac; the supply here is a stage leg with no wait to release)", result.Released)
+	if result.Released != 2 {
+		t.Errorf("result.Released = %d, want 2: the evac and the supply each wait at the ready release", result.Released)
 	}
 	if result.Pending != 0 || result.Deferred != 0 {
 		t.Errorf("result pending=%d deferred=%d, want 0 and 0", result.Pending, result.Deferred)
 	}
 
-	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
-	if len(releases) != 1 {
-		t.Fatalf("OrderRelease envelopes after click: got %d, want 1 (evac only)", len(releases))
+	var evacRel, supplyRel *protocol.OrderRelease
+	for _, m := range findOutboxByType(t, db, protocol.TypeOrderRelease) {
+		rel := decodeOrderRelease(t, m)
+		switch rel.OrderUUID {
+		case evacOrder.UUID:
+			evacRel = &rel
+		case supplyOrder.UUID:
+			supplyRel = &rel
+		}
 	}
-	evacRel := decodeOrderRelease(t, releases[0])
-	if evacRel.OrderUUID != evacOrder.UUID {
-		t.Errorf("first OrderRelease UUID = %q, want %q (evac)", evacRel.OrderUUID, evacOrder.UUID)
+	if evacRel == nil || supplyRel == nil {
+		t.Fatalf("OrderRelease envelopes after click: evac %v supply %v, want one each", evacRel != nil, supplyRel != nil)
 	}
 
 	// Evac leg: disposition flows through with operator's partial count.
@@ -409,15 +414,11 @@ func TestReleaseChangeoverWait_SupplyManifestPreserved(t *testing.T) {
 			evacRel.Disposition.Count, partial)
 	}
 
-	// The supply leg carries no station wait (it stages its bin and stops), so
-	// no act releases it and its evac's lift sends nothing for it (S5): the
-	// manifest-preservation contract (order 682, 2026-05-06) holds by
-	// construction — no envelope ever carries a disposition for it.
-	eng.HandleBinPickedUp(evacOrder.UUID, 9999, "P3-NODE")
-	for _, m := range findOutboxByType(t, db, protocol.TypeOrderRelease) {
-		if rel := decodeOrderRelease(t, m); rel.OrderUUID == supplyOrder.UUID && (rel.Disposition != nil || rel.RemainingUOP != nil) {
-			t.Errorf("supply OrderRelease carries disposition %+v / remaining %v, want neither", rel.Disposition, rel.RemainingUOP)
-		}
+	// Supply leg: the manifest-preservation contract (order 682, 2026-05-06).
+	// Its release advances the wait and touches nothing at Core.
+	if supplyRel.Disposition != nil || supplyRel.RemainingUOP != nil {
+		t.Errorf("supply OrderRelease carries disposition %+v / remaining %v, want neither",
+			supplyRel.Disposition, supplyRel.RemainingUOP)
 	}
 }
 
@@ -436,7 +437,7 @@ func TestReleaseChangeoverWait_SupplyManifestPreserved(t *testing.T) {
 func TestReleaseChangeoverWait_FiresEvacOnly_OnNonStagedNonTerminal(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
@@ -470,8 +471,8 @@ func TestReleaseChangeoverWait_FiresEvacOnly_OnNonStagedNonTerminal(t *testing.T
 	if result.Released != 1 {
 		t.Errorf("result.Released = %d, want 1 (evac fires from in_transit, not just from staged)", result.Released)
 	}
-	if result.Pending != 0 || result.Deferred != 0 {
-		t.Errorf("result pending=%d deferred=%d, want 0 and 0 (the supply is a stage leg with no wait)", result.Pending, result.Deferred)
+	if result.Pending != 0 || result.Deferred != 1 {
+		t.Errorf("result pending=%d deferred=%d, want 0 and 1 (the supply waits for the evac's pickup)", result.Pending, result.Deferred)
 	}
 	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
 	if len(releases) != 1 {
@@ -525,7 +526,7 @@ func TestHandleBinPickedUp_NoOpForNonChangeoverOrder(t *testing.T) {
 func TestHandleBinPickedUp_DoesNotReleaseTerminalSupply(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 

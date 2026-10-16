@@ -42,20 +42,21 @@ func TestPlanNodeAction_Swap(t *testing.T) {
 	if action.Err != nil {
 		t.Fatalf("unexpected planning error: %v", action.Err)
 	}
-	if action.SupplyOrder == nil || action.SupplyOrder.Complex == nil {
-		t.Fatal("expected supply order complex spec")
-	}
-	if action.SupplyOrder.Complex.DeliveryNode != "ISTG_N1" {
-		t.Errorf("supply order delivery = %q, want ISTG_N1", action.SupplyOrder.Complex.DeliveryNode)
-	}
-	if action.SupplyOrder.Complex.AutoConfirm {
-		t.Error("supply order must not auto-confirm (operator stages)")
+	// The single robot's changeover is ONE order: it parks the new carrier on
+	// inbound staging and collects it by relay (buildSingleRobotChangeoverSwap).
+	if action.SupplyOrder != nil {
+		t.Fatalf("a separate stage order was planned: %+v", action.SupplyOrder)
 	}
 	if action.EvacOrder == nil || action.EvacOrder.Complex == nil {
-		t.Fatal("expected evac order complex spec")
+		t.Fatal("expected the swap order's complex spec")
+	}
+	steps := action.EvacOrder.Complex.Steps
+	if len(steps) < 2 || steps[0].Action != protocol.ActionPickup || steps[0].Node != "SRC_N1" ||
+		steps[0].PayloadCode != "PART-B" || steps[1].Action != protocol.ActionDropoff || steps[1].Node != "ISTG_N1" {
+		t.Errorf("the order opens %+v, want the fetch of PART-B from SRC_N1 parked on ISTG_N1", steps)
 	}
 	if !action.EvacOrder.Complex.AutoConfirm {
-		t.Error("evac order must auto-confirm (robot completes)")
+		t.Error("the swap order must auto-confirm (robot completes)")
 	}
 	// Regression (plant 2026-06-01 ALN_001): the evac/removal leg must carry the
 	// FROM-style payload (the outgoing bin), not the new/target style. Left empty

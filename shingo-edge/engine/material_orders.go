@@ -758,31 +758,31 @@ func BuildEvacuateChangeoverSteps(fromClaim, toClaim *processes.NodeClaim, inact
 	}
 }
 
-// buildSingleRobotChangeoverSwap is the legacy single-robot 7- or
-// 8-step pattern. Order A pre-stages at InboundStaging (operator
-// confirms staging); Order B does the line-side swap on operator
-// release.
+// buildSingleRobotChangeoverSwap is the single-robot changeover: ONE order.
+// It fetches the incoming carrier and parks it on inbound staging, waits for
+// the line, evacuates the old bin to outbound staging, collects the new one
+// from inbound staging and delivers it, then clears the old one. A carrier that
+// already stands on inbound staging (a keep-staged to-claim's right spare) is
+// collected by the fetch itself, and there is nothing to park (stageSteps).
+//
+// THE COLLECT TAKES WHAT THIS ORDER PARKED (relayPickup), the two-robot
+// supply's rule. It was a second order until 2026-10-16: a stage order parked
+// the carrier and the swap order collected it with a pickup naming the
+// incoming part, which Core sources like any pickup, so it took whatever bin
+// of a carrier the part may ride stood on the node. With a stray empty on
+// inbound staging, Core reserved it for the collect at the swap's dispatch,
+// before the stage order could park there: the 08:31 shape (SPR ALN_011,
+// 2026-10-15) in single-robot form, pinned by
+// TestScenario_KeepStagedSingleRobot_TheCollectNeverTakesAStray. A relay names
+// nothing and Core reads it as the carrier this plan set down. The fetch names
+// the incoming part (stageSteps with fromClaim, as the two-robot supply does),
+// because the order carries the outgoing payload for its lift off the line.
 func buildSingleRobotChangeoverSwap(fromClaim, toClaim *processes.NodeClaim, tooling bool) ChangeoverDispatch {
-	// THE COLLECT NAMES THE INCOMING PART. This order carries the FROM payload,
-	// because its first pickup lifts the outgoing bin off the line, and Core judges
-	// a step that names nothing against the order's payload. The bin waiting on
-	// inbound staging is the TO part, so on a payload change it was never collected
-	// and the changeover held for ever. Blank when the payloads agree, so the wire
-	// is unchanged for every changeover that keeps its part.
-	//
-	// A carrier that already stands on inbound staging (a keep-staged to-claim
-	// whose spot is its inbound staging) needs no stage order: order B collects
-	// it with the fetch itself.
-	stage, collect := stageSteps(nil, toClaim, protocol.ComplexOrderStep{Action: "pickup", Node: toClaim.InboundStaging,
-		PayloadCode: refillCarrierPayload(fromClaim, toClaim)})
-	d := ChangeoverDispatch{
-		StepsB:       singleRobotChangeoverTail(fromClaim, toClaim, tooling, collect),
+	stage, collect := stageSteps(fromClaim, toClaim, relayPickup(toClaim))
+	return ChangeoverDispatch{
+		StepsB:       append(stage, singleRobotChangeoverTail(fromClaim, toClaim, tooling, collect)...),
 		AutoConfirmB: true,
 	}
-	if stage != nil {
-		d.StepsA, d.DeliveryNodeA = stage, toClaim.InboundStaging
-	}
-	return d
 }
 
 // singleRobotChangeoverTail is order B of a single-robot changeover from the

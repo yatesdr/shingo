@@ -123,9 +123,9 @@ func TestTwoRobotCancel_MovesNothingOffStaging(t *testing.T) {
 }
 
 // THE INCOMING BIN LEFT ON INBOUND STAGING. A single-robot changeover onto a
-// claim that keeps no spare stages the incoming bin first, by an order of its
-// own, and its leg collects it from there after parking the line's bin.
-// Cancelled after the stage landed and before the leg collected it, the bin
+// claim that keeps no spare is one order: it parks the incoming bin on inbound
+// staging first, and collects it from there itself after parking the line's
+// bin. Cancelled with the robot past the park and before the collect, the bin
 // stands on inbound staging, where every later swap at the line sets its own
 // incoming bin down. The cancel sends it back to the incoming claim's inbound
 // source, by the same plain move as the park, carrying its own payload.
@@ -136,10 +136,10 @@ func TestSingleRobotCancel_SendsTheStagedBinBack(t *testing.T) {
 		role   protocol.ClaimRole
 		status protocol.Status
 	}{
-		{"consume, stage delivered", protocol.ClaimRoleConsume, protocol.StatusDelivered},
-		{"consume, stage confirmed", protocol.ClaimRoleConsume, protocol.StatusConfirmed},
-		{"produce, stage delivered", protocol.ClaimRoleProduce, protocol.StatusDelivered},
-		{"produce, stage confirmed", protocol.ClaimRoleProduce, protocol.StatusConfirmed},
+		{"consume, at the line's wait", protocol.ClaimRoleConsume, protocol.StatusStaged},
+		{"consume, past the wait", protocol.ClaimRoleConsume, protocol.StatusInTransit},
+		{"produce, at the line's wait", protocol.ClaimRoleProduce, protocol.StatusStaged},
+		{"produce, past the wait", protocol.ClaimRoleProduce, protocol.StatusInTransit},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -153,8 +153,8 @@ func TestSingleRobotCancel_SendsTheStagedBinBack(t *testing.T) {
 				[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", c.role, protocol.SwapModeSingleRobot, false, false}},
 				rows)
 			coID := startKSChangeover(t, fx)
-			stage := stageOrderOf(t, fx, coID)
-			testutil.MustNoErr(t, fx.db.UpdateOrderStatus(stage, string(c.status)), "the stage landed")
+			leg := singleRobotLegOf(t, fx, coID)
+			testutil.MustNoErr(t, fx.db.UpdateOrderStatus(leg, string(c.status)), "the robot is past the park")
 
 			testutil.MustNoErr(t, fx.eng.CancelProcessChangeover(fx.processID), "cancel")
 
@@ -174,7 +174,7 @@ func TestSingleRobotCancel_SendsTheStagedBinBack(t *testing.T) {
 	}
 }
 
-// A stage that never reached a robot staged nothing: a bin Core reports on
+// An order that never reached a robot parked nothing: a bin Core reports on
 // inbound staging then is not the changeover's, and the cancel leaves it.
 func TestSingleRobotCancel_StageNotYetFlownMovesNothing(t *testing.T) {
 	t.Parallel()
@@ -191,21 +191,20 @@ func TestSingleRobotCancel_StageNotYetFlownMovesNothing(t *testing.T) {
 	}
 }
 
-// stageOrderOf is the changeover's stage order: its one task's supply.
-func stageOrderOf(t *testing.T, fx *coFixture, coID int64) int64 {
+// singleRobotLegOf is the single-robot changeover's one order: its one task's
+// swap, which parks the incoming bin on inbound staging (SPOT) itself.
+func singleRobotLegOf(t *testing.T, fx *coFixture, coID int64) int64 {
 	t.Helper()
 	tasks, err := fx.db.ListChangeoverNodeTasks(coID)
 	testutil.MustNoErr(t, err, "tasks")
 	for _, task := range tasks {
 		if task.NextMaterialOrderID != nil {
-			o, err := fx.db.GetOrder(*task.NextMaterialOrderID)
-			testutil.MustNoErr(t, err, "stage order")
-			if o.DeliveryNode != "SPOT" {
-				t.Fatalf("the supply order %d goes to %q, want the stage to SPOT", o.ID, o.DeliveryNode)
-			}
-			return o.ID
+			t.Fatalf("task %d links a stage order %d: the single robot's changeover is one order", task.ID, *task.NextMaterialOrderID)
+		}
+		if task.OldMaterialReleaseOrderID != nil {
+			return *task.OldMaterialReleaseOrderID
 		}
 	}
-	t.Fatalf("no stage order on the changeover's tasks")
+	t.Fatalf("no order on the changeover's tasks")
 	return 0
 }

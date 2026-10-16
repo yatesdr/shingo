@@ -1,17 +1,15 @@
 // F' Phase 3 — multi-node changeover release scenario.
 //
 // Two two-robot nodes simultaneously mid-changeover. Each node has its
-// own paired evac+supply orders; releasing one node's evac must fire
-// only that node's supply on pickup-confirm — never the other node's.
-// This is the regression lock against crosstalk in
-// GetChangeoverNodeTaskByEvacOrderID's lookup or in HandleBinPickedUp's
-// per-event dispatch.
+// own paired evac+supply orders; a per-node release goes to that node's evac
+// only, and a pickup on either evac sends nothing for either node's supply
+// (S5 deleted the supply-at-pickup chain). This is the regression lock against
+// crosstalk in GetChangeoverNodeTaskByEvacOrderID's lookup or in
+// HandleBinPickedUp's per-event dispatch.
 //
-// S5: a pickup no longer releases a supply. These supplies are stage-only
-// legs (the claims' "simple" mode has no swap builder, so the changeover
-// falls back to fetch-and-stage with no station wait), and the deleted chain
-// sent each one an OrderRelease Core could only no-op. The lock now reads:
-// neither pickup sends a release for either supply.
+// Until 2026-10-16 the claims ran the "simple" mode, whose single-robot
+// changeover had a stage leg; that changeover is one order now, with no supply
+// leg, so the nodes are two-robot as this scenario always said.
 //
 //go:build docker
 
@@ -30,10 +28,9 @@ import (
 	edgeengine "shingoedge/engine"
 )
 
-// TestScenario_MultiNodeChangeover_DeferredSupplyChainsAreIsolated
-// validates that two simultaneous Phase-3 swap pairs don't crosstalk:
-// pickup on node-A's evac releases node-A's supply only, pickup on
-// node-B's evac releases node-B's supply only. No mixing.
+// TestScenario_MultiNodeChangeover_ReleasesStayOnTheirNode validates that
+// two simultaneous Phase-3 swap pairs don't crosstalk: each per-node release
+// reaches its own evac, and neither evac's pickup releases either supply.
 //
 // What this catches that unit tests miss:
 //   - GetChangeoverNodeTaskByEvacOrderID's `WHERE old_material_release_order_id=? LIMIT 1`
@@ -43,7 +40,7 @@ import (
 //     for distinct evacs — verifies no shared state leaks between
 //     invocations.
 //   - End-to-end through the wire on both pickup deliveries.
-func TestScenario_MultiNodeChangeover_DeferredSupplyChainsAreIsolated(t *testing.T) {
+func TestScenario_MultiNodeChangeover_ReleasesStayOnTheirNode(t *testing.T) {
 	const stationID = "edge.test"
 	edge := edgeharness.NewEdge(t, stationID)
 
@@ -80,20 +77,21 @@ func TestScenario_MultiNodeChangeover_DeferredSupplyChainsAreIsolated(t *testing
 	for _, nodeName := range []string{"NODE-A", "NODE-B"} {
 		if _, err := upsertClaimLegacySimple(edge.DB, processes.NodeClaimInput{
 			StyleID: fromStyleID, CoreNodeName: nodeName,
-			Role: "consume", SwapMode: "simple",
+			Role: "consume", SwapMode: protocol.SwapModeTwoRobot,
 			PayloadCode: "OLD-" + nodeName, UOPCapacity: 100,
 			InboundSource:       "SRC-OLD-" + nodeName,
-			OutboundStaging:     "OUT-STG-" + nodeName,
+			InboundStaging:      "IN-STG-" + nodeName,
 			OutboundDestination: "DST-OLD-" + nodeName,
 		}); err != nil {
 			t.Fatalf("upsert from claim %s: %v", nodeName, err)
 		}
 		if _, err := upsertClaimLegacySimple(edge.DB, processes.NodeClaimInput{
 			StyleID: toStyleID, CoreNodeName: nodeName,
-			Role: "consume", SwapMode: "simple",
+			Role: "consume", SwapMode: protocol.SwapModeTwoRobot,
 			PayloadCode: "NEW-" + nodeName, UOPCapacity: 200,
-			InboundSource:  "SRC-NEW-" + nodeName,
-			InboundStaging: "IN-STG-" + nodeName,
+			InboundSource:       "SRC-NEW-" + nodeName,
+			InboundStaging:      "IN-STG-" + nodeName,
+			OutboundDestination: "DST-NEW-" + nodeName,
 		}); err != nil {
 			t.Fatalf("upsert to claim %s: %v", nodeName, err)
 		}
@@ -196,8 +194,8 @@ func TestScenario_MultiNodeChangeover_DeferredSupplyChainsAreIsolated(t *testing
 	edge.Ingestor.HandleRaw(encoded)
 
 	if releases = pendingReleases(t, edge); len(releases) != 0 {
-		t.Fatalf("after evac A pickup: got %d envelopes, want 0 — supply A (%s) is a stage leg with no "+
-			"wait to release, and supply B (%s) must not cross-fire", len(releases), supplyA.UUID, supplyB.UUID)
+		t.Fatalf("after evac A pickup: got %d envelopes, want 0 — the pickup releases no supply, and "+
+			"supply A (%s) and B (%s) wait for their own release", len(releases), supplyA.UUID, supplyB.UUID)
 	}
 
 	// ── Now evac B picks up. Still nothing. ──
@@ -217,7 +215,7 @@ func TestScenario_MultiNodeChangeover_DeferredSupplyChainsAreIsolated(t *testing
 	edge.Ingestor.HandleRaw(encoded)
 
 	if releases = pendingReleases(t, edge); len(releases) != 0 {
-		t.Fatalf("after evac B pickup: got %d envelopes, want 0 — supply B (%s) is a stage leg with no "+
-			"wait to release", len(releases), supplyB.UUID)
+		t.Fatalf("after evac B pickup: got %d envelopes, want 0 — the pickup releases no supply (%s)",
+			len(releases), supplyB.UUID)
 	}
 }

@@ -228,6 +228,9 @@ type ksrOpts struct {
 	// pair: a sequential line of two positions, the line and its partner
 	// (KSR-PAIR), each holding an A bin; the line pulls from KSR-LINE.
 	pair bool
+	// strayEmptyB: the spot holds an unstamped empty of B's carrier instead of
+	// A's spare, which the consume claims judge wrong and B's part may ride.
+	strayEmptyB bool
 }
 
 func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
@@ -319,7 +322,12 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	mustNil(t, coreDB.SetBinManifest(lb.ID, `{"items":[]}`, ksrPartA, 40), "line manifest")
 	mustNil(t, coreDB.ConfirmBinManifest(lb.ID, ""), "line confirm")
 
-	stock("KSR-A-SPARE", ksrPartA, c.typeA, spot)
+	if o.strayEmptyB {
+		stray := &corebins.Bin{BinTypeID: c.typeB.ID, Label: "KSR-STRAY", NodeID: &spot.ID, Status: "available"}
+		mustNil(t, coreDB.CreateBin(stray), "stray empty")
+	} else {
+		stock("KSR-A-SPARE", ksrPartA, c.typeA, spot)
+	}
 	if o.pair {
 		stock("KSR-PAIR-BIN", ksrPartA, c.typeA, pair)
 	}

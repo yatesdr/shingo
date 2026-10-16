@@ -20,11 +20,12 @@ import (
 // behind it for good. So the cancel finishes that bin's trip, with one plain
 // move to where the aborted leg was taking it.
 //
-// On a claim that keeps no spare, the changeover stages the incoming bin on
-// inbound staging first, by an order of its own, for the leg to collect. A
-// cancel after the stage landed leaves that bin where every later swap sets its
-// own incoming bin down, so it goes back to where the stage fetched it from, by
-// the same plain move and in the same read.
+// On a claim that keeps no spare, the leg parks the incoming bin on inbound
+// staging first, and collects it itself after parking the line's bin
+// (relayedTrip; a separate stage order did this until 2026-10-16, stagedTrip).
+// A cancel in between leaves that bin where every later swap sets its own
+// incoming bin down, so it goes back to where it was fetched from, by the same
+// plain move and in the same read.
 
 // parkedBin is one bin a changeover order left standing: the line's bin a leg
 // parked, bound for dest later in the same leg, or the incoming bin a stage set
@@ -112,6 +113,26 @@ func stagedTrip(steps []protocol.ComplexOrderStep, line string) (stage, dest str
 	return stage, dest, true
 }
 
+// relayedTrip reads an order's steps for the carrier it parks on staging and
+// collects again itself (relayPickup): a carrier set down at staging
+// (setDownAtStaging) and a later pickup there in the same order. The
+// single-robot changeover is that order since 2026-10-16: aborted before its
+// collect, the carrier it parked waits on staging with nothing to collect it,
+// exactly as a stage order's did, and goes back the same way.
+// TestSingleRobotCancel_SendsTheStagedBinBack pins it.
+func relayedTrip(steps []protocol.ComplexOrderStep, line string) (stage, dest string, ok bool) {
+	i, stage, dest, ok := setDownAtStaging(steps, line)
+	if !ok {
+		return "", "", false
+	}
+	for _, later := range steps[i+1:] {
+		if later.Action == protocol.ActionPickup && later.Node == stage {
+			return stage, dest, true
+		}
+	}
+	return "", "", false
+}
+
 // waitingAtStage reads a supply leg's steps for the carrier it sets down at
 // staging to WAIT with: a carrier set down at staging (setDownAtStaging) and a
 // station wait on that node straight after the drop. waitOrdinal is that wait's
@@ -158,6 +179,9 @@ func (e *Engine) leftOnStaging(order *domain.Order, processNodeID int64, aborted
 		park, parked = parkedBin{nodeID: node.ID, line: node.CoreNodeName, park: p, dest: dest}, true
 	}
 	if s, dest, ok := stagedTrip(steps, node.CoreNodeName); ok && flown {
+		stage, staged = parkedBin{nodeID: node.ID, line: node.CoreNodeName, park: s, dest: dest}, true
+	}
+	if s, dest, ok := relayedTrip(steps, node.CoreNodeName); ok && flown && aborted {
 		stage, staged = parkedBin{nodeID: node.ID, line: node.CoreNodeName, park: s, dest: dest}, true
 	}
 	return

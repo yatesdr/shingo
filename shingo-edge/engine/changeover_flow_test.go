@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"shingo/protocol"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -251,10 +252,11 @@ func TestChangeoverFlow_MultiNode(t *testing.T) {
 		t.Error("NODE-UNCHANGED should have no orders")
 	}
 
-	// Swap should have Order A + Order B
+	// Swap (single robot) has its one order, which parks and collects the new
+	// carrier itself: no separate stage order.
 	swap := findTaskByNode(tasks, "NODE-SWAP")
-	if swap.NextMaterialOrderID == nil || swap.OldMaterialReleaseOrderID == nil {
-		t.Error("NODE-SWAP should have both orders (Phase 3)")
+	if swap.NextMaterialOrderID != nil || swap.OldMaterialReleaseOrderID == nil {
+		t.Error("NODE-SWAP should have the single robot's one order (Phase 3)")
 	}
 
 	// Drop should have only Order B
@@ -314,7 +316,7 @@ func TestChangeoverFlow_MultiNode(t *testing.T) {
 func TestChangeoverFlow_DoubleChangeover(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, nodeID, fromStyleID, toStyleID := seedPhase3SwapScenario(t, db)
+	processID, nodeID, fromStyleID, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 	_ = fromStyleID
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -412,7 +414,7 @@ func TestChangeoverFlow_NoClaimChanges(t *testing.T) {
 func TestChangeoverFlow_CancelMidRelease(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
@@ -455,7 +457,7 @@ func TestChangeoverFlow_CancelMidRelease(t *testing.T) {
 func TestChangeoverFlow_OrderAFails(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
@@ -500,17 +502,7 @@ func TestChangeoverFlow_OrderBFails(t *testing.T) {
 	changeover, _ := startChangeover(t, eng, db, processID, toStyleID)
 	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
 
-	// Complete Order A first
-	orderA, _ := db.GetOrder(*task.NextMaterialOrderID)
-	markOrderTerminal(db, orderA.ID)
-	emitOrderCompleted(eng, orderA.ID, orderA.UUID, orderA.OrderType, &nodeID)
-
-	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != domain.NodeTaskStaged {
-		t.Fatalf("expected staged after Order A, got %s", task.State)
-	}
-
-	// Fail Order B (swap)
+	// The single robot's one order (park on staging, then swap) fails.
 	orderB, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
 	db.UpdateOrderStatus(orderB.ID, string(orders.StatusSubmitted))
 	db.UpdateOrderStatus(orderB.ID, string(orders.StatusFailed))
@@ -631,12 +623,13 @@ func TestChangeoverFlow_CutoverCompletion(t *testing.T) {
 
 	changeover, _ := startChangeover(t, eng, db, processID, toStyleID)
 
-	// Complete both orders
+	// Complete the single robot's one order (park, swap, collect, deliver).
 	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	orderA, _ := db.GetOrder(*task.NextMaterialOrderID)
-	orderB, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
-	markOrderTerminal(db, orderA.ID)
-	emitOrderCompleted(eng, orderA.ID, orderA.UUID, orderA.OrderType, &nodeID)
+	if task.NextMaterialOrderID != nil || task.OldMaterialReleaseOrderID == nil {
+		t.Fatalf("task links next=%v old=%v, want only the one order", task.NextMaterialOrderID, task.OldMaterialReleaseOrderID)
+	}
+	orderB, err := db.GetOrder(*task.OldMaterialReleaseOrderID)
+	testutil.MustNoErr(t, err, "the order")
 	markOrderTerminal(db, orderB.ID)
 	emitOrderCompleted(eng, orderB.ID, orderB.UUID, orderB.OrderType, &nodeID)
 

@@ -6,6 +6,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // relay_pair_test.go — census 24 (the Edge half) and census 27, after the ruling
@@ -70,87 +71,41 @@ func cancelSentFor(t *testing.T, db *store.DB, uuid string) bool {
 	return false
 }
 
-// TestChangeoverApplier_ARelayPairGoesOutUnpairedAtCore is census 24, the Edge
-// half: a single-robot changeover's two legs reach Core naming no sibling, and
-// stay linked to each other at the Edge.
-//
-// DEFECT PIN. Fails at bcbde0d2: the applier pre-mints both uuids and sends each
-// leg naming the other, so Core's pair rule holds the stage leg for a swap leg
-// that cannot source until the stage leg has gone.
-func TestChangeoverApplier_ARelayPairGoesOutUnpairedAtCore(t *testing.T) {
+// NO BUILDER MAKES A RELAY PAIR (since 2026-10-16). The single-robot
+// changeover was the only one: a stage leg and a swap leg collecting what the
+// stage leg parked, census 24's pair. It is one order now, which parks and
+// collects its own carrier (buildSingleRobotChangeoverSwap), because a second
+// order's part-naming collect took a stray bin standing on staging. With it went
+// every producer of a relay, so coreSiblings and handleRelayPartnerDeath have no
+// sender today. This census keeps that true, or says when it stops: a builder
+// that makes a relay pair again needs the end-to-end pins this file had
+// (unpaired at Core, the partner's death taken at the Edge), which are in its
+// history at b07919aa.
+func TestRelayPair_NoBuilderMakesOne(t *testing.T) {
 	t.Parallel()
-	_, db, stageID, swapID := startSwapChangeover(t, protocol.SwapModeSimple)
-
-	reqs := complexRequestsOnTheWire(t, db)
-	if len(reqs) != 2 {
-		t.Fatalf("want the stage leg and the swap leg on the wire, got %d request(s)", len(reqs))
-	}
-	for _, r := range reqs {
-		if r.SiblingOrderUUID != "" {
-			t.Errorf("leg %s went to Core naming sibling %s. One leg collects what the other delivers, and Core "+
-				"runs siblings as one job, so as siblings the two can never go", r.OrderUUID, r.SiblingOrderUUID)
+	node := &processes.Node{ID: 1, Name: "LINE", CoreNodeName: "LINE"}
+	nodes := []processes.Node{*node}
+	for _, role := range []protocol.ClaimRole{protocol.ClaimRoleConsume, protocol.ClaimRoleProduce} {
+		for _, mode := range protocol.ConfigurableSwapModes() {
+			for _, v := range goldenVariants(mode) {
+				what := string(role) + "/" + string(mode) + "/" + v.name
+				claim := goldenClaim(role, mode, "P-RUN", v.secondPaired, v.flip)
+				if d, err := BuildSwapDispatch(node, claim); err == nil && legsRelay(d.StepsA, d.StepsB) {
+					t.Errorf("%s: the steady swap's legs are a relay", what)
+				}
+				from := goldenClaim(role, mode, "P-FROM", v.secondPaired, v.flip)
+				to := goldenClaim(role, mode, "P-TO", v.secondPaired, v.flip)
+				for _, sit := range []ChangeoverSituation{SituationSwap, SituationEvacuate} {
+					plan := BuildChangeoverPlan([]ChangeoverNodeDiff{{CoreNodeName: "LINE", Situation: sit,
+						FromClaim: from, ToClaim: to}}, nodes, false, nil, toolingChangeover{})
+					for _, a := range plan.Actions {
+						if legsRelay(specSteps(a.SupplyOrder), specSteps(a.EvacOrder)) {
+							t.Errorf("%s %s: the changeover's legs are a relay", what, sit)
+						}
+					}
+				}
+			}
 		}
-	}
-	stage, err := db.GetOrder(stageID)
-	testutil.MustNoErr(t, err, "get the stage leg")
-	swap, err := db.GetOrder(swapID)
-	testutil.MustNoErr(t, err, "get the swap leg")
-	if stage.SiblingOrderID == nil || *stage.SiblingOrderID != swapID ||
-		swap.SiblingOrderID == nil || *swap.SiblingOrderID != stageID {
-		t.Errorf("the legs are not linked at the Edge (stage → %v, swap → %v). The RELEASE button, the "+
-			"supply-bin guard and the relay death rule all read that link", stage.SiblingOrderID, swap.SiblingOrderID)
-	}
-}
-
-// TestRelayPartnerDeath_TakesThePartner is census 27, re-homed from Core: when
-// either leg of a relay pair dies, the other is cancelled — at the Edge, and at
-// Core.
-//
-//   - The stage leg dies: the swap leg's only source for the new carrier was the
-//     one the stage leg was bringing. Left alone it waits for material that is
-//     not coming, and the anomaly board is the only thing that ever notices.
-//   - The swap leg dies: the stage leg stages a carrier nobody will collect.
-//
-// Accept-half-swap gets no exception, unlike Core's arm for a paired swap: a
-// relay's collector cannot finish without its feeder's carrier, so there is no
-// half to keep.
-//
-// DEFECT PIN. Fails at bcbde0d2: the Edge has no death rule, and Core's covered
-// this pair only because the pair was sent as siblings (census 24).
-func TestRelayPartnerDeath_TakesThePartner(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name   string
-		dead   string // "stage" or "swap"
-		status protocol.Status
-	}{
-		{"stage leg fails", "stage", protocol.StatusFailed},
-		{"stage leg skipped", "stage", protocol.StatusSkipped},
-		{"stage leg cancelled", "stage", protocol.StatusCancelled},
-		{"swap leg fails", "swap", protocol.StatusFailed},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			eng, db, stageID, swapID := startSwapChangeover(t, protocol.SwapModeSimple)
-			drainAbandonOutbox(t, db)
-			dead, live := stageID, swapID
-			if tc.dead == "swap" {
-				dead, live = swapID, stageID
-			}
-
-			driveOrderTo(t, eng, dead, tc.status)
-
-			got, err := db.GetOrder(live)
-			testutil.MustNoErr(t, err, "reload the partner")
-			if got.Status != protocol.StatusCancelled {
-				t.Fatalf("the %s leg's partner is %q after it went %s, want cancelled — Core cannot see this "+
-					"pair, so nothing else will end it", tc.dead, got.Status, tc.status)
-			}
-			if !cancelSentFor(t, db, got.UUID) {
-				t.Errorf("the partner was cancelled at the Edge but no OrderCancel for %s went to Core, which "+
-					"is still holding its order", got.UUID)
-			}
-		})
 	}
 }
 

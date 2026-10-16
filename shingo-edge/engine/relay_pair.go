@@ -16,8 +16,11 @@ import (
 // collector cannot source until the feeder has delivered, the feeder may not go
 // without the collector, and the pair waits on itself for ever.
 //
-// buildSingleRobotChangeoverSwap is the relay today — its stage leg brings the
-// new carrier to inbound staging, and its swap leg collects it from there.
+// NO BUILDER MAKES ONE TODAY (TestRelayPair_NoBuilderMakesOne). The
+// single-robot changeover was the relay until 2026-10-16 — a stage leg brought
+// the new carrier to inbound staging and a swap leg collected it from there —
+// and is one order now, which parks and collects its own carrier. What follows
+// stays for the next builder that hands a carrier from one leg to another.
 //
 // legsRelay reads the steps, not the mode. A leg FEEDS the other when it sets a
 // carrier down at a one-bin node before its first wait, and the other leg picks

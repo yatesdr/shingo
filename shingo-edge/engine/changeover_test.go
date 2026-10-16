@@ -91,16 +91,18 @@ func seedChangeoverScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 
 // seedPhase3SwapScenario creates a swap changeover scenario with full staging
 // config on both claims (InboundStaging + OutboundStaging + OutboundDestination).
-// This triggers Phase 3 orders-up-front: Order A (staging) and Order B (swap
-// with embedded wait step) are both created at changeover start.
+// This triggers Phase 3 orders-up-front: the single-robot changeover's one order
+// (fetch and park on staging, then the swap with its embedded wait) is created
+// at changeover start.
 func seedPhase3SwapScenario(t *testing.T, db *store.DB) (processID, nodeID, fromStyleID, toStyleID int64) {
 	t.Helper()
 	return seedPhase3SwapScenarioMode(t, db, "simple")
 }
 
 // seedPhase3SwapScenarioMode is seedPhase3SwapScenario with the claims' swap mode
-// chosen. "simple" falls through to buildSingleRobotChangeoverSwap (a stage leg
-// and a swap leg — a relay); two_robot builds the clear-then-fill pair.
+// chosen. "simple" falls through to buildSingleRobotChangeoverSwap (one order
+// that parks the new carrier on staging and collects it by relay); two_robot
+// builds the clear-then-fill pair.
 func seedPhase3SwapScenarioMode(t *testing.T, db *store.DB, mode protocol.SwapMode) (processID, nodeID, fromStyleID, toStyleID int64) {
 	t.Helper()
 
@@ -689,9 +691,12 @@ func seedAddNodeScenario(t *testing.T, db *store.DB) (processID, addNodeID, from
 }
 
 // TestChangeover_Phase3SwapLifecycle verifies the Phase 3 orders-up-front swap
-// flow: StartProcessChangeover creates both Order A (staging) and Order B (swap
-// with embedded wait) upfront. Order A completion → "staged". Order B completion
-// → "released" (skips the manual empty → line_cleared → release path entirely).
+// flow for a single robot: StartProcessChangeover creates ONE order, which
+// fetches the new carrier, parks it on inbound staging, waits, swaps, and
+// collects the parked carrier by relay. Its completion → "released" (skips the
+// manual empty → line_cleared → release path entirely). Until 2026-10-16 this
+// was two orders, a stage order and a swap order collecting by a part-naming
+// pickup that Core could satisfy with a stray bin on staging.
 func TestChangeover_Phase3SwapLifecycle(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -699,13 +704,11 @@ func TestChangeover_Phase3SwapLifecycle(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
-	// Start changeover — Phase 3 should create Order A + Order B upfront
 	changeover, err := eng.StartProcessChangeover(processID, toStyleID, "test", "phase3 swap")
 	if err != nil {
 		t.Fatalf("start changeover: %v", err)
 	}
 
-	// Verify node task has both orders linked and situation is swap
 	task, err := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
 	if err != nil {
 		t.Fatalf("get node task: %v", err)
@@ -713,64 +716,50 @@ func TestChangeover_Phase3SwapLifecycle(t *testing.T) {
 	if task.Situation != "swap" {
 		t.Fatalf("expected situation=swap, got %s", task.Situation)
 	}
-	if task.State != domain.NodeTaskStagingRequested {
-		t.Fatalf("expected staging_requested, got %s", task.State)
-	}
-	if task.NextMaterialOrderID == nil {
-		t.Fatal("expected Order A (NextMaterialOrderID) to be set")
+	if task.NextMaterialOrderID != nil {
+		t.Fatalf("a stage order %d was made: the single robot's one order parks its own carrier", *task.NextMaterialOrderID)
 	}
 	if task.OldMaterialReleaseOrderID == nil {
-		t.Fatal("expected Order B (OldMaterialReleaseOrderID) to be set")
+		t.Fatal("expected the swap order (OldMaterialReleaseOrderID) to be set")
+	}
+	order, err := db.GetOrder(*task.OldMaterialReleaseOrderID)
+	testutil.MustNoErr(t, err, "the swap order")
+	if order.OrderType != orders.TypeComplex {
+		t.Errorf("order type: expected complex, got %s", order.OrderType)
+	}
+	steps, err := eng.storedStepsOf(order.ID)
+	testutil.MustNoErr(t, err, "steps")
+	var parked, collected bool
+	for _, st := range steps {
+		if st.Node != "IN-STAGING" {
+			continue
+		}
+		switch {
+		case st.Action == protocol.ActionDropoff:
+			parked = true
+		case st.Action == protocol.ActionPickup && parked:
+			collected = true
+			if st.PayloadCode != "" || st.Empty {
+				t.Errorf("the collect at IN-STAGING names %q (empty=%v): it must be the relay, naming nothing", st.PayloadCode, st.Empty)
+			}
+		}
+	}
+	if !parked || !collected {
+		t.Errorf("steps %+v: want a set-down on IN-STAGING and the relay collect from it", steps)
 	}
 
-	// Verify Order A is a complex order targeting inbound staging
-	orderA, err := db.GetOrder(*task.NextMaterialOrderID)
-	if err != nil {
-		t.Fatalf("get order A: %v", err)
-	}
-	if orderA.OrderType != orders.TypeComplex {
-		t.Errorf("Order A type: expected complex, got %s", orderA.OrderType)
-	}
-	if orderA.DeliveryNode != "IN-STAGING" {
-		t.Errorf("Order A delivery: expected IN-STAGING, got %s", orderA.DeliveryNode)
-	}
-
-	// Verify Order B is a complex order (swap steps with wait)
-	orderB, err := db.GetOrder(*task.OldMaterialReleaseOrderID)
-	if err != nil {
-		t.Fatalf("get order B: %v", err)
-	}
-	if orderB.OrderType != orders.TypeComplex {
-		t.Errorf("Order B type: expected complex, got %s", orderB.OrderType)
-	}
-
-	// === Order A completes (staging delivery to IN-STAGING) ===
-	markOrderTerminal(db, orderA.ID)
-	emitOrderCompleted(eng, orderA.ID, orderA.UUID, orderA.OrderType, &nodeID)
-
-	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != domain.NodeTaskStaged {
-		t.Fatalf("after Order A: expected staged, got %s", task.State)
-	}
-
-	// === Order B completes (full swap: evacuate old + deliver new) ===
-	markOrderTerminal(db, orderB.ID)
-	emitOrderCompleted(eng, orderB.ID, orderB.UUID, orderB.OrderType, &nodeID)
+	// === The order completes (fetch, park, swap, collect, deliver) ===
+	markOrderTerminal(db, order.ID)
+	emitOrderCompleted(eng, order.ID, order.UUID, order.OrderType, &nodeID)
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
 	if task.State != domain.NodeTaskReleased {
-		t.Fatalf("after Order B: expected released, got %s", task.State)
+		t.Fatalf("after the order: expected released, got %s", task.State)
 	}
-
-	// Verify runtime switched to new claim with correct UOP
 	runtime, err := db.GetProcessNodeRuntime(nodeID)
 	if err != nil {
 		t.Fatalf("get runtime: %v", err)
 	}
-	// RemainingUOPCached no longer asserted at confirm — the cache
-	// contract moved to delivered/release-click; coverage is in the
-	// runtime-binding regression suite.
-	// Verify active claim switched to to-claim
 	if runtime.ActiveClaimID == nil {
 		t.Fatal("expected active claim to be set after release")
 	}
@@ -781,8 +770,8 @@ func TestChangeover_Phase3SwapLifecycle(t *testing.T) {
 }
 
 // TestChangeover_Phase3EvacuateLifecycle verifies the Phase 3 orders-up-front
-// evacuate flow. Same as swap but Order B has 2 waits (ready + tooling done).
-// When Order B completes, node goes directly to "released".
+// evacuate flow. Same as swap but the one order has 2 waits (ready + tooling
+// done). When it completes, node goes directly to "released".
 func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -872,18 +861,9 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 	if task.Situation != "evacuate" {
 		t.Fatalf("expected situation=evacuate, got %s", task.Situation)
 	}
-	if task.NextMaterialOrderID == nil || task.OldMaterialReleaseOrderID == nil {
-		t.Fatal("expected both Order A and Order B to be created for evacuate")
-	}
-
-	// Order A completion → staged
-	orderA, _ := db.GetOrder(*task.NextMaterialOrderID)
-	markOrderTerminal(db, orderA.ID)
-	emitOrderCompleted(eng, orderA.ID, orderA.UUID, orderA.OrderType, &nodeID)
-
-	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != domain.NodeTaskStaged {
-		t.Fatalf("after Order A: expected staged, got %s", task.State)
+	// One order: it parks the new carrier on staging, and collects it itself.
+	if task.NextMaterialOrderID != nil || task.OldMaterialReleaseOrderID == nil {
+		t.Fatal("expected the single-robot evacuate's one order, and no stage order")
 	}
 
 	// Order B completion (evacuate with 2 waits — when fully complete) → released
@@ -896,8 +876,15 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 		t.Fatalf("after Order B: expected released, got %s", task.State)
 	}
 
-	// Runtime cache no longer asserted at confirm.
-	_ = nodeID
+	// The one order brought the incoming carrier, so its end points the line at
+	// the incoming claim (applyOrderBComplex).
+	runtime, err := db.GetProcessNodeRuntime(nodeID)
+	testutil.MustNoErr(t, err, "runtime")
+	toClaim, err := db.GetStyleNodeClaimByNode(toStyleID, "P3E-NODE")
+	testutil.MustNoErr(t, err, "incoming claim")
+	if runtime.ActiveClaimID == nil || *runtime.ActiveClaimID != toClaim.ID {
+		t.Errorf("active claim = %v after the order, want the incoming claim %d", runtime.ActiveClaimID, toClaim.ID)
+	}
 }
 
 // TestChangeover_Phase3FallbackToManual verifies that when a swap node is

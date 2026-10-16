@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"shingo/protocol"
 	"testing"
 
 	"shingo/protocol/testutil"
@@ -90,7 +91,7 @@ func TestRegression_ChangeoverCancelReconcilesActiveBinFromPhysical(t *testing.T
 func TestRegression_PlainAbortReconcilesActiveBinFromPhysical(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 
 	node, _ := db.GetProcessNode(nodeID)
 	const physicalBinID = int64(555)
@@ -155,7 +156,7 @@ func TestRegression_PlainAbortReconcilesActiveBinFromPhysical(t *testing.T) {
 func TestRegression_TerminalOrderReleasesRuntimeOrderSlot(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 
 	node, _ := db.GetProcessNode(nodeID)
 	srv := physicalBinCoreServer(node.CoreNodeName, 555, 77, 9)
@@ -205,7 +206,7 @@ func TestRegression_TerminalOrderReleasesRuntimeOrderSlot(t *testing.T) {
 func TestRegression_ConfirmedCompletionDoesNotReconcile(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 
 	node, _ := db.GetProcessNode(nodeID)
 	srv := physicalBinCoreServer(node.CoreNodeName, 555, 77, 9)

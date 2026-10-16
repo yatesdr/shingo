@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
 	"shingoedge/orders"
@@ -156,7 +157,7 @@ func TestChangeover_AutoCompleteFiresOnTerminalTransition(t *testing.T) {
 func TestChangeover_OrphanCancelStampsTask(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
@@ -209,7 +210,7 @@ func TestChangeover_OrphanCancelStampsTask(t *testing.T) {
 func TestChangeover_OrphanFailStampsTask(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
@@ -246,7 +247,7 @@ func TestChangeover_OrphanFailStampsTask(t *testing.T) {
 func TestChangeover_FailedTaskInCompletedChangeover_NotStamped(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 

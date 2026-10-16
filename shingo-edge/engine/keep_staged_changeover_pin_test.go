@@ -38,7 +38,8 @@ import (
 // Each row carries two answers. today is the tree before one refill owner (brief
 // A2: the keeper the only refill owner, requestClaim the one leg door, an unknown
 // spot read refused at START); after is the prediction under it, written before
-// the source changed. The test asserts today until that change lands, and
+// the source changed. The single-robot swap rows' after lost one leg on
+// 2026-10-16, when that changeover became one order (no stage order). The test asserts today until that change lands, and
 // after from then on; every row whose after differs from today is a ruling.
 
 const pinSpot = "SPOT"
@@ -389,7 +390,7 @@ func TestKeepStagedChangeover_EveryShapePin(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			if got := c.observe(t); got != row.after {
-				t.Errorf("\n got  %s\n want %s", got, row.today)
+				t.Errorf("\n got  %s\n want %s", got, row.after)
 			}
 		})
 	}
@@ -448,19 +449,19 @@ var keepStagedChangeoverPin = map[string]pinRow{
 		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
 	"consume/single_robot/bare/spot!=staging/swap": {
 		"legs=S ret=0 ref=2 exp=4 n=2 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
+		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
 	"consume/single_robot/bare/spot==staging/add": {
 		"legs=M ret=0 ref=1 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
 		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
 	"consume/single_robot/bare/spot==staging/swap": {
 		"legs=S ret=0 ref=2 exp=3 n=1 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=D+R+M ret=0 ref=0 exp=2 n=2 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n"},
+		"legs=D+R+M ret=0 ref=0 exp=1 n=1 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n"},
 	"consume/single_robot/right/spot!=staging/add": {
 		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
 		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
 	"consume/single_robot/right/spot!=staging/swap": {
 		"legs=S ret=0 ref=1 exp=3 n=2 | prev S | cancel ret=1 ref=1 | paused start=n cut=n",
-		"legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=1 ref=0 | paused start=n cut=n"},
+		"legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=1 ref=0 | paused start=n cut=n"},
 	"consume/single_robot/right/spot==staging/add": {
 		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
 		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
@@ -484,13 +485,13 @@ var keepStagedChangeoverPin = map[string]pinRow{
 		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
 	"consume/single_robot/wrong/spot!=staging/swap": {
 		"legs=S ret=1 ref=2 exp=5 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=3 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
+		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
 	"consume/single_robot/wrong/spot==staging/add": {
 		"legs=M ret=1 ref=1 exp=3 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
 		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
 	"consume/single_robot/wrong/spot==staging/swap": {
 		"legs=S ret=1 ref=2 exp=4 n=1 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=D+R+M ret=1 ref=0 exp=3 n=2 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n"},
+		"legs=D+R+M ret=1 ref=0 exp=2 n=1 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n"},
 	"consume/two_robot/bare/spot!=staging/add": {
 		"legs=M ret=0 ref=1 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
 		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
@@ -598,22 +599,22 @@ var keepStagedChangeoverPin = map[string]pinRow{
 		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
 	"produce/single_robot/bare/spot!=staging/swap": {
 		"legs=S ret=0 ref=2 exp=4 n=2 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=M ret=0 ref=0 exp=2 n=2 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
+		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
 	"produce/single_robot/bare/spot==staging/add": {
 		"legs=M ret=0 ref=1 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
 		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},
 	"produce/single_robot/bare/spot==staging/swap": {
 		"legs=S ret=0 ref=2 exp=3 n=1 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=D+R+M ret=0 ref=0 exp=2 n=2 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n"},
+		"legs=D+R+M ret=0 ref=0 exp=1 n=1 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n"},
 	"produce/single_robot/bare/spot==staging/swap/queued-refill": {
 		"legs=S ret=0 ref=2 exp=3 n=1 | prev S | cancel ret=0 ref=1 | paused start=n cut=n",
-		"legs=D+R+M ret=0 ref=0 exp=2 n=2 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n"},
+		"legs=D+R+M ret=0 ref=0 exp=1 n=1 | prev D+R+M | cancel ret=0 ref=0 | paused start=n cut=n"},
 	"produce/single_robot/right/spot!=staging/add": {
 		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
 		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
 	"produce/single_robot/right/spot!=staging/swap": {
 		"legs=S ret=0 ref=1 exp=3 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n",
-		"legs=S ret=0 ref=0 exp=2 n=2 | prev S | cancel ret=0 ref=0 | paused start=n cut=n"},
+		"legs=S ret=0 ref=0 exp=1 n=1 | prev S | cancel ret=0 ref=0 | paused start=n cut=n"},
 	"produce/single_robot/right/spot==staging/add": {
 		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
 		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
@@ -637,13 +638,13 @@ var keepStagedChangeoverPin = map[string]pinRow{
 		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
 	"produce/single_robot/wrong/spot!=staging/swap": {
 		"legs=S ret=1 ref=2 exp=5 n=2 | prev S | cancel ret=1 ref=1 | paused start=n cut=n",
-		"legs=M ret=1 ref=0 exp=3 n=2 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
+		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
 	"produce/single_robot/wrong/spot==staging/add": {
 		"legs=M ret=1 ref=1 exp=3 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n",
 		"legs=M ret=1 ref=0 exp=2 n=1 | prev M | cancel ret=1 ref=0 | paused start=n cut=n"},
 	"produce/single_robot/wrong/spot==staging/swap": {
 		"legs=S ret=1 ref=2 exp=4 n=1 | prev S | cancel ret=1 ref=1 | paused start=n cut=n",
-		"legs=D+R+M ret=1 ref=0 exp=3 n=2 | prev D+R+M | cancel ret=1 ref=0 | paused start=n cut=n"},
+		"legs=D+R+M ret=1 ref=0 exp=2 n=1 | prev D+R+M | cancel ret=1 ref=0 | paused start=n cut=n"},
 	"produce/two_robot/bare/spot!=staging/add": {
 		"legs=M ret=0 ref=1 exp=2 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n",
 		"legs=M ret=0 ref=0 exp=1 n=1 | prev M | cancel ret=0 ref=0 | paused start=n cut=n"},

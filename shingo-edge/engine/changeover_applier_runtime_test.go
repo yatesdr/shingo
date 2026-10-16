@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"shingo/protocol"
 	"testing"
 )
 
@@ -24,7 +25,7 @@ import (
 func TestChangeoverApplier_RepointsRuntimeAtNewLegs(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 

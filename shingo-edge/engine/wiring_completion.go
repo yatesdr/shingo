@@ -279,6 +279,17 @@ func matchOrderBComplex(ctx *orderCompletionCtx) bool {
 // from handleNodeOrderDelivered for each leg of a sequential SWAP
 // terminal step; applyOrderBComplex only advances the state machine.
 func applyOrderBComplex(e *Engine, ctx *orderCompletionCtx) bool {
+	// A TASK WITH NO NEXT-MATERIAL ORDER GETS ITS CARRIER FROM THIS ONE. The
+	// single-robot changeover is one order that fetches the incoming carrier
+	// (or takes a keep-staged right spare) and sets it down on the line, so no
+	// other completion advances the claim (applyStagedDelivery, applyChangeover-
+	// Release). Left alone, the node stayed on the outgoing claim after the
+	// swap: the ALN_007 stale pointer. Pinned by TestChangeover_Phase3SwapLifecycle.
+	if ctx.nodeTask.NextMaterialOrderID == nil {
+		if steps, err := e.storedStepsOf(ctx.order.ID); err == nil && legPlacesBinAt(steps, ctx.node.CoreNodeName) {
+			advanceClaimOnRelease(e, ctx)
+		}
+	}
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, domain.NodeTaskReleased); err != nil {
 		log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
 	}

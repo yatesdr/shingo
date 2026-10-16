@@ -14,6 +14,7 @@ import (
 	"shingoedge/domain"
 	"shingoedge/engine/changeover"
 	"shingoedge/orders"
+	"shingoedge/store/processes"
 )
 
 // ONE REFILL OWNER, THROUGH A CHANGEOVER. The keeper is the only thing that
@@ -306,5 +307,81 @@ func TestArch_RefillSpotHasOneCaller(t *testing.T) {
 	if len(sites) != 1 || !strings.Contains(sites[0], "engine/keep_staged_spot.go") ||
 		!strings.Contains(sites[0], "e.refillSpot(node, c, plan.refills, origin)") {
 		t.Errorf("refillSpot is called from:\n  %s\nwant one call, the keeper's applySpotPlan", strings.Join(sites, "\n  "))
+	}
+}
+
+// WHICH SHAPES ADVANCE THE CLAIM AT THE SWAP ORDER'S END. applyOrderBComplex
+// re-points the line's claim when the task has no next-material order and the
+// order sets a carrier down on the line. That is the single-robot changeover,
+// Swap and Evacuate, both roles, with or without a right spare on the spot:
+// one order (since 2026-10-16) that brings the incoming carrier itself. Every
+// other mode links a next-material order (whose completion advances the claim),
+// and a Drop sets nothing down on the line. A builder that adds a shape to this
+// set has to say what the pointer does for it.
+func TestClaimAdvance_OnlyTheSingleRobotOrderReachesTheSwapArm(t *testing.T) {
+	t.Parallel()
+	node := processes.Node{ID: 1, Name: "LINE", CoreNodeName: "LINE"}
+	for _, role := range []protocol.ClaimRole{protocol.ClaimRoleConsume, protocol.ClaimRoleProduce} {
+		for _, mode := range protocol.ConfigurableSwapModes() {
+			noHop := mode == protocol.SwapModeSequential || mode == protocol.SwapModeTwoRobotPressIndex
+			for _, v := range goldenVariants(mode) {
+				for _, spare := range []bool{false, true} {
+					for _, sit := range []ChangeoverSituation{SituationSwap, SituationEvacuate, SituationDrop, SituationAdd} {
+						from := goldenClaim(role, mode, "P-FROM", v.secondPaired, v.flip)
+						to := goldenClaim(role, mode, "P-TO", v.secondPaired, v.flip)
+						if noHop {
+							from.InboundStaging, from.OutboundStaging, to.InboundStaging, to.OutboundStaging = "", "", "", ""
+						}
+						if spare {
+							to.KeepStagedNode = "KS-SPOT"
+							if !noHop {
+								to.KeepStagedNode = to.InboundStaging
+							}
+						}
+						d := ChangeoverNodeDiff{CoreNodeName: "LINE", Situation: sit, FromClaim: from, ToClaim: to}
+						switch sit {
+						case SituationDrop:
+							d.ToClaim = nil
+						case SituationAdd:
+							d.FromClaim = nil
+						}
+						plan := BuildChangeoverPlan([]ChangeoverNodeDiff{d}, []processes.Node{node}, false, nil, toolingChangeover{})
+						for _, a := range plan.Actions {
+							reaches := a.SupplyOrder == nil && a.EvacOrder != nil && legPlacesBinAt(specSteps(a.EvacOrder), "LINE")
+							want := mode == protocol.SwapModeSingleRobot && (sit == SituationSwap || sit == SituationEvacuate)
+							if reaches != want {
+								t.Errorf("%s/%s/%s spare=%v %s: reaches the swap order's claim advance = %v, want %v",
+									role, mode, v.name, spare, sit, reaches, want)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// The single-robot changeover with a right spare standing: the one order lifts
+// the spare off the spot and sets it on the line, and its end points the
+// line's claim at the incoming claim. Before 2026-10-16 nothing did: no
+// next-material order was linked, so the node stayed on the outgoing claim
+// (the ALN_007 stale pointer).
+func TestClaimAdvance_SingleRobotRightSpare(t *testing.T) {
+	t.Parallel()
+	c := pinCase{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeSingleRobot, read: readRight, staging: true}
+	fx := c.seed(t)
+	withCascade(fx)
+	startKSChangeover(t, fx)
+	legs := changeoverLegs(t, fx)
+	if len(legs) != 1 {
+		t.Fatalf("legs = %d, want the one order", len(legs))
+	}
+	land(t, fx, legs[0].ID)
+	rt, err := fx.db.GetProcessNodeRuntime(fx.nodeIDs["L1"])
+	testutil.MustNoErr(t, err, "runtime")
+	to, err := fx.db.GetStyleNodeClaimByNode(fx.toStyleID, "L1")
+	testutil.MustNoErr(t, err, "incoming claim")
+	if rt.ActiveClaimID == nil || *rt.ActiveClaimID != to.ID {
+		t.Fatalf("the line's claim is %v after the order ended, want the incoming claim %d", rt.ActiveClaimID, to.ID)
 	}
 }

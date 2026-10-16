@@ -27,7 +27,7 @@ func seedAwaitingScenario(t *testing.T) (eng *Engine, db *store.DB, processID in
 	db = testEngineDB(t)
 	eng = testEngine(t, db)
 	var toStyleID int64
-	processID, nodeID, _, toStyleID = seedPhase3SwapScenario(t, db)
+	processID, nodeID, _, toStyleID = seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 	eng.wireEventHandlers()
 	changeover, tk := startChangeover(t, eng, db, processID, toStyleID)
 	if tk.NextMaterialOrderID == nil || tk.OldMaterialReleaseOrderID == nil {
@@ -73,7 +73,7 @@ func TestAwaitingMaterial_EntryFromQueueReasonPush(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	processID, _, _, toStyleID := seedPhase3SwapScenario(t, db)
+	processID, _, _, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 	eng.wireEventHandlers()
 	_, task := startChangeover(t, eng, db, processID, toStyleID)
 	if task.NextMaterialOrderID == nil || task.OldMaterialReleaseOrderID == nil {

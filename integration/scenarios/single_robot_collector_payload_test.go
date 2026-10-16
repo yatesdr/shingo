@@ -1,12 +1,13 @@
-// The single-robot changeover collector, end to end across the two modules.
+// The single-robot changeover's fetch, end to end across the two modules.
 //
-// A single_robot changeover is two orders. Order A stages the incoming bin on
-// the to-claim's inbound staging; order B evacuates the line and then collects
-// that staged bin to deliver it. Order B carries the FROM payload — its first
-// pickup lifts the outgoing bin off the line, and filtering that for the
-// incoming part is ALN_001 — so its staging pickup, which names nothing, is
-// judged by Core against the FROM part. On a payload change the staged bin is
-// the TO part and is never collected.
+// A single_robot changeover is one order (since 2026-10-16): it fetches the
+// incoming bin and parks it on the to-claim's inbound staging, evacuates the
+// line, and collects the parked bin by relay to deliver it. The order carries
+// the FROM payload — a pickup lifts the outgoing bin off the line, and
+// filtering that for the incoming part is ALN_001 — so its fetch must name the
+// TO part or Core judges it against the FROM part and finds nothing on a
+// payload change. (Until 2026-10-16 the same question sat on a second order's
+// collect at staging, which named the TO part and so could be given a stray.)
 //
 // This drives the Edge builder's real step list through Core's real complex
 // intake and the dispatch the scanner runs, so neither side's half can drift
@@ -48,13 +49,13 @@ func TestScenario_SingleRobotCollectorCollectsTheIncomingPart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stgIn, err := coreDB.GetNodeByDotName("SRC-STG-IN")
+	src, err := coreDB.GetNodeByDotName("SRC-SRC")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The outgoing bin on the line, and the incoming bin order A staged.
+	// The outgoing bin on the line, and the incoming bin at its source.
 	coreharness.CreateBinAtNode(t, coreDB, "SRC-P-FROM", line.ID, "SRC-OUTGOING")
-	incoming := coreharness.CreateBinAtNode(t, coreDB, "SRC-P-TO", stgIn.ID, "SRC-INCOMING")
+	incoming := coreharness.CreateBinAtNode(t, coreDB, "SRC-P-TO", src.ID, "SRC-INCOMING")
 
 	claim := func(payload string) *processes.NodeClaim {
 		return &processes.NodeClaim{
@@ -66,7 +67,7 @@ func TestScenario_SingleRobotCollectorCollectsTheIncomingPart(t *testing.T) {
 	from, to := claim("SRC-P-FROM"), claim("SRC-P-TO")
 	collector := edgeengine.BuildSwapChangeoverSteps(from, to, "", "").StepsB
 	if len(collector) == 0 {
-		t.Fatal("fixture drift: the single_robot changeover built no collector")
+		t.Fatal("fixture drift: the single_robot changeover built no order")
 	}
 
 	backend := coreharness.NewTrackingBackend()
@@ -83,11 +84,11 @@ func TestScenario_SingleRobotCollectorCollectsTheIncomingPart(t *testing.T) {
 		t.Fatalf("collector order not created: %v", err)
 	}
 	if err := d.DispatchPreparedComplex(order); err != nil {
-		t.Fatalf("the collector did not dispatch: %v\n"+
-			"Its staging pickup is judged against the order's FROM payload while the bin it came for is "+
+		t.Fatalf("the order did not dispatch: %v\n"+
+			"Its fetch is judged against the order's FROM payload while the bin it came for is "+
 			"the TO part, so it holds for ever on every payload-changing single_robot changeover", err)
 	}
 	if b, err := coreDB.GetBin(incoming.ID); err != nil || b.ClaimedBy == nil || *b.ClaimedBy != order.ID {
-		t.Errorf("the incoming bin is not claimed by the collector (bin=%+v err=%v)", b, err)
+		t.Errorf("the incoming bin at its source is not claimed by the order (bin=%+v err=%v)", b, err)
 	}
 }

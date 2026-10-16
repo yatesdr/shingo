@@ -392,31 +392,36 @@ func assertIndexPickupsEmpty(t *testing.T, label string, steps []protocol.Comple
 	}
 }
 
-// TestSingleRobotCollector_NamesTheIncomingPart pins P1 at the builder: the
-// single_robot changeover order B carries the FROM payload (its first pickup
-// lifts the outgoing bin), so its collect at inbound staging must name the TO
-// part or Core judges the staged bin against the outgoing one and never takes
-// it. When the part does not change the step says nothing, and the wire is
-// what it always was. The Core half is integration's
-// TestScenario_SingleRobotCollectorCollectsTheIncomingPart.
-func TestSingleRobotCollector_NamesTheIncomingPart(t *testing.T) {
+// TestSingleRobotChangeover_TheFetchNamesTheIncomingPart pins P1 at the
+// builder: the single_robot changeover order carries the FROM payload (it lifts
+// the outgoing bin), so the step that fetches the new carrier must name the TO
+// part or Core judges it against the outgoing one. The collect at inbound
+// staging is the relay of the carrier this order parked, and names nothing:
+// Core reads a pickup at a node its own plan set down on as that carrier, never
+// as a source (since 2026-10-16; a part-naming collect could be given a stray
+// bin standing on staging). When the part does not change, the fetch says
+// nothing.
+func TestSingleRobotChangeover_TheFetchNamesTheIncomingPart(t *testing.T) {
 	t.Parallel()
 	for _, tooling := range []bool{false, true} {
 		for _, c := range []struct{ to, want string }{{"P-TO", "P-TO"}, {"P-FROM", ""}} {
 			from := goldenClaim(protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot, "P-FROM", "", false)
 			to := goldenClaim(protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot, c.to, "", false)
 			d := buildSingleRobotChangeoverSwap(from, to, tooling)
-			var collects []protocol.ComplexOrderStep
+			var fetches, collects []protocol.ComplexOrderStep
 			for _, s := range d.StepsB {
-				if s.Action == protocol.ActionPickup && s.Node == to.InboundStaging {
+				switch {
+				case s.Action == protocol.ActionPickup && s.Node == to.InboundSource:
+					fetches = append(fetches, s)
+				case s.Action == protocol.ActionPickup && s.Node == to.InboundStaging:
 					collects = append(collects, s)
 				}
 			}
-			if len(collects) != 1 {
-				t.Fatalf("tooling=%v to=%s: %d collects at inbound staging, want 1", tooling, c.to, len(collects))
+			if len(fetches) != 1 || fetches[0].PayloadCode != c.want || fetches[0].Empty {
+				t.Errorf("tooling=%v to=%s: fetches %+v, want one naming %q, not Empty", tooling, c.to, fetches, c.want)
 			}
-			if collects[0].PayloadCode != c.want || collects[0].Empty {
-				t.Errorf("tooling=%v to=%s: collect = %+v, want payload %q and not Empty", tooling, c.to, collects[0], c.want)
+			if len(collects) != 1 || collects[0] != relayPickup(to) {
+				t.Errorf("tooling=%v to=%s: collects %+v, want the one relay %+v", tooling, c.to, collects, relayPickup(to))
 			}
 		}
 	}

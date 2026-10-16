@@ -106,7 +106,11 @@ cd "$(dirname "$0")/.."
 # test's own helper.
 # 1408 → 1407: D2 Lane 0 item 1 (the Edge's changeover cancel and config lock)
 # rewrote a test whose discarded read became a checked one.
-FROZEN=1407
+# 1407 → 1400: the single-robot changeover became one order; the tests
+# rewritten for it (the stage-order lifecycle pins, the relay-pair end-to-end
+# pins replaced by a census) dropped seven discard sites. Conversion and
+# deletion together.
+FROZEN=1400
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"

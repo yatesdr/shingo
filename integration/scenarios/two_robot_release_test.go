@@ -1,17 +1,17 @@
 // F' Phase 3 — two-robot changeover release scenario.
 //
-// Exercises the deferred-supply chain end-to-end through Edge's wire
+// Exercises a changeover node's release end-to-end through Edge's wire
 // encoding / decoding / dispatch surfaces. The unit tests in shingo-edge
 // already cover the engine logic; this scenario adds the layer they
 // miss: envelope marshal/unmarshal, ingestor routing, and handler
 // dispatch through the EdgeHandler the production binary wires.
 //
-// S5: the supply is no longer released at the evac's pickup. In this shape
-// it is a stage-only leg (the claims' "simple" mode has no swap builder, so
-// the changeover falls back to fetch-and-stage with no station wait), and
-// the deleted chain sent it an OrderRelease Core could only no-op. The
-// scenario now pins that the pickup sends nothing for it, which also keeps
-// the manifest-preservation contract (order 682) by construction.
+// A two-robot changeover's release goes to both legs at the click: the evac
+// carries the operator's disposition, the supply carries none (the
+// manifest-preservation contract, order 682), and the evac's pickup sends
+// nothing more (S5 deleted the supply-at-pickup chain). Until 2026-10-16 this
+// ran on the "simple" mode, whose single-robot changeover then had a stage
+// leg; that changeover is one order now, with no supply leg to release.
 //
 // Doesn't drive Core. The picked-up signal that production gets from
 // Core's RDS poller is synthesized inline as a BinPickedUp envelope and
@@ -37,22 +37,19 @@ import (
 	edgeengine "shingoedge/engine"
 )
 
-// TestScenario_TwoRobotChangeoverRelease_EvacFirstThenSupplyOnPickup is
-// the wire-level regression for a changeover node's release.
+// TestScenario_TwoRobotChangeoverRelease_BothLegsOnTheWire is the
+// wire-level regression for a changeover node's release.
 //
-//	Step 1: operator clicks Release Wait. Edge enqueues exactly ONE
-//	        OrderRelease envelope — for the evac leg, with the auto-
-//	        detected disposition (release_partial / release_empty).
-//	        The supply is a stage leg with no wait: nothing to release.
+//	Step 1: operator clicks Release Wait. Edge enqueues one OrderRelease
+//	        envelope per leg: the evac's with the auto-detected disposition
+//	        (release_partial / release_empty), the supply's with none.
 //
 //	Step 2: Core's RDS poller observes the evac robot finish its
 //	        pickup block. Core sends a BinPickedUp envelope to Edge. We
 //	        synthesize that envelope inline and feed it to Edge's
 //	        ingestor — same path as production.
 //
-//	Step 3: the pickup sends nothing for the supply, so no envelope can
-//	        carry a disposition for it (manifest preservation — the bug
-//	        fingerprint from order 682 / 2026-05-06).
+//	Step 3: the pickup sends nothing more.
 //
 // Failure modes this catches that unit tests miss:
 //   - JSON round-trip on BinPickedUp (a type-shape change on the
@@ -63,7 +60,7 @@ import (
 //     updating both, this scenario surfaces it.
 //   - End-to-end manifest contract on the supply leg through the wire,
 //     not just at the engine boundary.
-func TestScenario_TwoRobotChangeoverRelease_EvacFirstThenSupplyOnPickup(t *testing.T) {
+func TestScenario_TwoRobotChangeoverRelease_BothLegsOnTheWire(t *testing.T) {
 	const stationID = "edge.test"
 	edge := edgeharness.NewEdge(t, stationID)
 
@@ -98,25 +95,26 @@ func TestScenario_TwoRobotChangeoverRelease_EvacFirstThenSupplyOnPickup(t *testi
 		StyleID:             fromStyleID,
 		CoreNodeName:        "P3-NODE",
 		Role:                "consume",
-		SwapMode:            "simple",
+		SwapMode:            protocol.SwapModeTwoRobot,
 		PayloadCode:         "PART-OLD",
 		UOPCapacity:         100,
 		InboundSource:       "SOURCE-OLD",
-		OutboundStaging:     "OUT-STAGING",
+		InboundStaging:      "IN-STAGING",
 		OutboundDestination: "DEST-OLD",
 	})
 	if err != nil {
 		t.Fatalf("upsert from claim: %v", err)
 	}
 	if _, err := upsertClaimLegacySimple(edge.DB, processes.NodeClaimInput{
-		StyleID:        toStyleID,
-		CoreNodeName:   "P3-NODE",
-		Role:           "consume",
-		SwapMode:       "simple",
-		PayloadCode:    "PART-NEW",
-		UOPCapacity:    200,
-		InboundSource:  "SOURCE-NEW",
-		InboundStaging: "IN-STAGING",
+		StyleID:             toStyleID,
+		CoreNodeName:        "P3-NODE",
+		Role:                "consume",
+		SwapMode:            protocol.SwapModeTwoRobot,
+		PayloadCode:         "PART-NEW",
+		UOPCapacity:         200,
+		InboundSource:       "SOURCE-NEW",
+		InboundStaging:      "IN-STAGING",
+		OutboundDestination: "DEST-NEW",
 	}); err != nil {
 		t.Fatalf("upsert to claim: %v", err)
 	}
@@ -150,8 +148,8 @@ func TestScenario_TwoRobotChangeoverRelease_EvacFirstThenSupplyOnPickup(t *testi
 	if err := edge.DB.UpdateOrderStatus(evacOrder.ID, string(orders.StatusStaged)); err != nil {
 		t.Fatalf("force evac staged: %v", err)
 	}
-	if err := edge.DB.UpdateOrderStatus(supplyOrder.ID, string(orders.StatusStaged)); err != nil {
-		t.Fatalf("force supply staged: %v", err)
+	if err := edge.DB.UpdateOrderStatus(supplyOrder.ID, string(orders.StatusInTransit)); err != nil {
+		t.Fatalf("force supply in transit: %v", err)
 	}
 
 	// Drain outbox so we count exactly what Step 1 emits.
@@ -168,23 +166,28 @@ func TestScenario_TwoRobotChangeoverRelease_EvacFirstThenSupplyOnPickup(t *testi
 	if err != nil {
 		t.Fatalf("ReleaseChangeoverWait: %v", err)
 	}
-	if result.Released != 1 {
-		t.Errorf("step 1 result.Released = %d, want 1 (evac only)", result.Released)
-	}
-	// The supply waits on the evac's pickup, which releases it with no click:
-	// Deferred, not Pending (Pending is a click the operator still owes).
-	if result.Deferred != 0 || result.Pending != 0 {
-		t.Errorf("step 1 result Deferred=%d Pending=%d, want 0 and 0 (the supply is a stage leg with no wait)",
-			result.Deferred, result.Pending)
+	if result.Released != 2 || result.Deferred != 0 || result.Pending != 0 {
+		t.Errorf("step 1 result Released=%d Deferred=%d Pending=%d, want 2, 0 and 0: one click releases both legs",
+			result.Released, result.Deferred, result.Pending)
 	}
 
-	releases := pendingReleases(t, edge)
-	if len(releases) != 1 {
-		t.Fatalf("step 1: OrderRelease envelopes = %d, want 1 (evac only)", len(releases))
+	var evacRel, supplyRel *protocol.OrderRelease
+	for _, rel := range pendingReleases(t, edge) {
+		switch rel.OrderUUID {
+		case evacOrder.UUID:
+			evacRel = &rel
+		case supplyOrder.UUID:
+			supplyRel = &rel
+		}
 	}
-	evacRel := releases[0]
-	if evacRel.OrderUUID != evacOrder.UUID {
-		t.Errorf("step 1 OrderRelease UUID = %q, want evac %q", evacRel.OrderUUID, evacOrder.UUID)
+	if evacRel == nil || supplyRel == nil {
+		t.Fatalf("step 1: OrderRelease envelopes evac=%v supply=%v, want one each", evacRel != nil, supplyRel != nil)
+	}
+	// The supply's release advances its wait and touches nothing at Core
+	// (order 682, 2026-05-06): no disposition, no count, through the wire.
+	if supplyRel.Disposition != nil || supplyRel.RemainingUOP != nil {
+		t.Errorf("step 1 supply OrderRelease carries disposition %+v / remaining %v, want neither",
+			supplyRel.Disposition, supplyRel.RemainingUOP)
 	}
 	// Evac carries the operator's partial count; this end-to-end through
 	// the wire (envelope encode → outbox row → decode) must preserve it.
@@ -229,12 +232,10 @@ func TestScenario_TwoRobotChangeoverRelease_EvacFirstThenSupplyOnPickup(t *testi
 	}
 	edge.Ingestor.HandleRaw(encoded)
 
-	// ── Step 3: the pickup sends nothing for the supply. ──
-	// No envelope can carry a disposition for it, so Core's bin manifest is
-	// left alone (order 682, 2026-05-06).
-	if releases = pendingReleases(t, edge); len(releases) != 0 {
-		t.Fatalf("step 3: OrderRelease envelopes after BinPickedUp = %d, want 0 — supply %s is a stage "+
-			"leg with no wait to release", len(releases), supplyOrder.UUID)
+	// ── Step 3: the pickup sends nothing more. ──
+	if releases := pendingReleases(t, edge); len(releases) != 0 {
+		t.Fatalf("step 3: OrderRelease envelopes after BinPickedUp = %d, want 0: both legs went at the click",
+			len(releases))
 	}
 }
 
