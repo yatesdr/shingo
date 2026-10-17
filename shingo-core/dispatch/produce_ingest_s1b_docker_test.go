@@ -104,3 +104,33 @@ func TestS1bIngest_AbsentEpochApplies(t *testing.T) {
 		t.Errorf("absent-epoch ingest: uop=%d confirmed=%v, want 12 true", got.UOPRemaining, got.ManifestConfirmed)
 	}
 }
+
+// The part is what the bin was counted as. Strokes between a changeover's swap
+// and its cutover count under the outgoing style onto the carrier fetched for
+// the incoming one; that carrier then leaves on an order of the incoming part.
+// The release ships the incoming part's name with the count, and the bin, bound
+// to the counted part by its first tick, keeps it: the count applies, the label
+// does not change.
+func TestS1bIngest_ABinKeepsThePartItWasCountedAs(t *testing.T) {
+	t.Parallel()
+	d, bin, bp := s1bIngestFixture(t)
+	counted := &payloads.Payload{Code: "SYN-S1B-COUNTED", UOPCapacity: 100}
+	testutil.MustNoErr(t, d.db.CreatePayload(counted), "the counted part")
+	testutil.MustNoErr(t, d.db.CreatePayloadManifestItem(&payloads.ManifestItem{
+		PayloadID: counted.ID, PartNumber: "PART-COUNTED-TEMPLATE", PartsPerCycle: 1,
+	}, ""), "its template line")
+	testutil.MustNoErr(t, d.db.SetBinManifest(bin.ID, `{"items":[{"part_number":"PART-COUNTED-TEMPLATE"}]}`, counted.Code, 3),
+		"the first tick binds the counted part")
+	bound, err := d.db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "read bin")
+	d.HandleOrderIngest(testEnvelope(), &protocol.OrderIngestRequest{
+		OrderUUID: "uuid-s1b-counted", PayloadCode: bp.Code, BinID: bin.ID, BinEpoch: bound.DeltaEpoch,
+		SourceNode: "SYN-PRESS-S1B", Quantity: 20,
+	})
+	got, err := d.db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "read bin")
+	if got.PayloadCode != counted.Code || got.UOPRemaining != 20 || !got.ManifestConfirmed {
+		t.Errorf("after the release: part=%s uop=%d confirmed=%v, want %s 20 true (the counted part, the shipped count)",
+			got.PayloadCode, got.UOPRemaining, got.ManifestConfirmed, counted.Code)
+	}
+}

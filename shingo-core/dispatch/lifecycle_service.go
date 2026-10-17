@@ -559,6 +559,24 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 		return lifecycleErr("stale_epoch", fmt.Sprintf("ingest for bin %d counted epoch %d; the bin is at epoch %d",
 			bin.ID, p.BinEpoch, bin.DeltaEpoch), nil)
 	}
+	// THE PART IS WHAT THE BIN WAS COUNTED AS. A release ships the count of the
+	// life it fenced and names the departing order's part, which on a
+	// changeover evac is the outgoing style's. That is not always the part the
+	// count was made under: strokes between a changeover's swap and its cutover
+	// count under the outgoing style (the reporting point moves at the cutover)
+	// onto the carrier fetched for the incoming one, and that carrier leaves on
+	// a later order of another part. The first produce tick of this life bound
+	// the bin to the part it counted, so a bound bin keeps it and the count
+	// applies; an unbound one takes the ingest's part, as before.
+	part := p.PayloadCode
+	if countedEpoch != 0 && bin.PayloadCode != "" && bin.PayloadCode != p.PayloadCode {
+		log.Printf("dispatch: ingest for bin %d names %s, but the bin was counted as %s this life — it keeps %s, count %d applies",
+			bin.ID, p.PayloadCode, bin.PayloadCode, bin.PayloadCode, p.Quantity)
+		part = bin.PayloadCode
+		if tmpl, err = s.db.GetPayloadByCode(part); err != nil {
+			return lifecycleErr("payload_error", fmt.Sprintf("payload %q not found", part), err)
+		}
+	}
 	// Set the manifest AND confirm it in ONE transaction: a confirm failure must
 	// not leave a counted-but-unconfirmed bin. manifest_confirmed is a hard gate
 	// for a full bin to be a drain/retrieve source, so a stranded unconfirmed bin
@@ -588,7 +606,7 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 		if uop <= 0 {
 			uop = tmpl.UOPCapacity
 		}
-		if err := s.binManifest.RecordProducedBin(bin.ID, string(manifestJSON), p.PayloadCode, uop, p.ProducedAt); err != nil {
+		if err := s.binManifest.RecordProducedBin(bin.ID, string(manifestJSON), part, uop, p.ProducedAt); err != nil {
 			return lifecycleErr("internal_error", err.Error(), err)
 		}
 	} else {
@@ -606,7 +624,7 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 			q := int(p.Quantity)
 			uopOverride = &q
 		}
-		if err := s.binManifest.RecordProducedBinFromTemplate(bin.ID, p.PayloadCode, uopOverride, p.ProducedAt); err != nil {
+		if err := s.binManifest.RecordProducedBinFromTemplate(bin.ID, part, uopOverride, p.ProducedAt); err != nil {
 			return lifecycleErr("internal_error", err.Error(), err)
 		}
 	}
@@ -616,7 +634,7 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 		loadedAtLabel = "(server time)"
 	}
 	s.dbg("ingest: manifest recorded + confirmed bin=%d payload=%s at %s loaded_at=%s",
-		bin.ID, p.PayloadCode, p.SourceNode, loadedAtLabel)
+		bin.ID, part, p.SourceNode, loadedAtLabel)
 	return nil
 }
 
