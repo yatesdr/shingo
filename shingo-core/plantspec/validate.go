@@ -105,6 +105,13 @@ func (p *Plant) Validate() error {
 	for _, z := range p.Zones {
 		addNode(z.Name, "zone")
 		zoneLanes[z.Name] = len(z.Lanes)
+		// A lane is never without a mark: the store refuses a lane whose group
+		// has no wait point (nodes.ErrLaneUnmarked), so a plant that has one
+		// would validate and then fail its seed. A zone of positions only needs
+		// none.
+		if len(z.Lanes) > 0 && !hasWaitPoint(z.WaitPoints) {
+			add("zone %q has %d lane(s) and no wait_points; a lane needs a waiting spot beside its group", z.Name, len(z.Lanes))
+		}
 		for _, ln := range z.Lanes {
 			addNode(ln.Name, "lane")
 			laneCount++
@@ -633,4 +640,15 @@ func toSet(xs []string) map[string]bool {
 		}
 	}
 	return m
+}
+
+// hasWaitPoint reports whether points names at least one point, blanks
+// dropped as the store's parse drops them (nodes.ParseWaitPoints).
+func hasWaitPoint(points []string) bool {
+	for _, pt := range points {
+		if strings.TrimSpace(pt) != "" {
+			return true
+		}
+	}
+	return false
 }

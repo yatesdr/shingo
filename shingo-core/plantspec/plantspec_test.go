@@ -19,6 +19,7 @@ func validPlant() *Plant {
 		},
 		Zones: []Zone{{
 			Name: "SM-A", RetrieveAlgorithm: "FIFO", StoreAlgorithm: "DPTH",
+			WaitPoints: []string{"SM-A-WAIT"},
 			Lanes: []Lane{{Name: "SM-A-LANE-1", Slots: []Slot{
 				{Name: "SM-A01", Depth: 1}, {Name: "SM-A02", Depth: 2},
 			}}},
@@ -341,5 +342,36 @@ func TestLoad_UnknownKeyRefusesNamed(t *testing.T) {
 	_, err := Load(path)
 	if err == nil || !strings.Contains(err.Error(), "no_such_key") {
 		t.Fatalf("Load = %v, want a refusal naming no_such_key", err)
+	}
+}
+
+// A lane is never without a mark: a zone with lanes and no wait point is
+// refused at validation, as the store refuses its first lane at seed. A blank
+// point is no point; a zone of positions only needs none.
+func TestValidate_ALaneZoneNeedsAWaitPoint(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name   string
+		points []string
+		lanes  bool
+		refuse bool
+	}{
+		{"marked", []string{"SM-A-WAIT"}, true, false},
+		{"none", nil, true, true},
+		{"blank", []string{" "}, true, true},
+		{"positions only", nil, false, false},
+	} {
+		p := validPlant()
+		p.Zones[0].WaitPoints = c.points
+		if !c.lanes {
+			p.Zones = append(p.Zones, Zone{Name: "SM-POS", RetrieveAlgorithm: "FIFO", StoreAlgorithm: "DPTH",
+				Positions: []Slot{{Name: "SM-POS-01", Depth: 1}}})
+			p.Zones[0].WaitPoints = []string{"SM-A-WAIT"}
+		}
+		err := p.Validate()
+		refused := err != nil && strings.Contains(err.Error(), "no wait_points")
+		if refused != c.refuse {
+			t.Errorf("%s: refused = %v, want %v (%v)", c.name, refused, c.refuse, err)
+		}
 	}
 }

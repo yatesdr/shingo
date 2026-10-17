@@ -168,9 +168,9 @@ type Zone struct {
 	//
 	// The values are handed to the fleet as block locations verbatim and are
 	// never resolved against nodes, so on a real plant they must exist in the RDS
-	// map. Empty means an ungated zone, which is a POSITION rather than an
-	// oversight: a rig that gates every zone cannot show the two dispositions
-	// side by side, and that is most of what a lane-stress seed is for.
+	// map. A zone with lanes needs at least one: the store refuses a lane whose
+	// group has none (nodes.ErrLaneUnmarked), and Validate refuses the plant
+	// first. A zone of positions only may leave it empty.
 	//
 	// A point may not be shared with another zone — seeding refuses it, naming
 	// both zones. The spot is a physical place beside ONE block of lanes.
