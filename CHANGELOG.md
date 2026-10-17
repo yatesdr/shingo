@@ -3,6 +3,47 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-16 — A produce line's partials go home and come back; one door off every line position
+
+Core and Edge (Core 159–160, Edge v24). Deploy Core before Edge. Not deployed.
+
+- A produce claim may name a partial home; an unfinished carrier off the line waits there (159)
+- The line's next fetch takes the oldest held partial of its part before a fresh empty
+- A held partial records when it entered its home (160); the board shows it
+- REQUEST on a finish-later cell lists the held partials; the one tapped is the one fetched
+- A held partial is not cleared by mistake: UNLOAD and COUNT replace CLEAR at its window
+- A load at a partial home needs its count; a bare cart takes its carrier's type first
+- A loader that takes partials to unload cannot be a partial home, refused from either side
+- Containment goes first: a contained part's carrier keeps containment's drop
+- The keeper takes a partial of its own part as a right spare
+- Every lift off a line position goes through its release, press-index changeovers included
+- The Material page's count reaches Core; it was dropped on every move
+- A release keeps the part a carrier was counted as; it no longer relabels it
+- A changeover evac whose count cannot be read is refused, not emptied
+- The keeper is a keep-staged spot's only refill owner, through a changeover too
+- A single-robot changeover collects the carrier it parked, never a stray
+- A plant spec with an unknown key refuses to load, naming it
+- The plant validator refuses a lane zone with no wait point
+- The relay-pair handling no builder reaches is gone
+- The gate checks and fixture anonymisers are Go programs, not python
+- The sim PLC carries a part-identity tag a run can set (`POST /api/sim/catid`)
+- The integration cell's Edge registers like a plant's and gets landings
+- Pins: every door off a produce line, keep-staged changeover shapes, the recovery table
+
+## 2026-10-15 — Air-knife cleaning on the Robots page; board display settings; robot dispatchability
+
+Core and Edge (Core 157–158, Edge v23). Not deployed.
+
+- A station board's hide-idle and all-parts choices are settings of their own (157, Edge v23)
+- The robot pop-up says why a robot is not dispatchable, and can release control
+- Force complete is refused on a robot carrying a Shingo order
+- Cleaning and robot-hours tables, their stores, and one plant-zone resolver (158)
+- The hourly robot record, the air-knife cleaning tick, and lidar hours via the RDS relay
+- The Robots page has Fleet and Cleaning tabs; Clean is in the robot pop-up
+- The cleaning loop runs around the clock, every 4, 8, 12 or 24 hours
+- Each robot's cleaning is a switch on the Cleaning tab's table; Clean ignores the schedule
+- Only a yaml timezone writes the plant location, as before
+
 ## 2026-10-14 — Restarted changeovers leave finished nodes alone; stranded staging carriers go home
 
 Core and Edge (Core 156, Edge v22). Local main; not deployed.
@@ -27,6 +68,7 @@ Core and Edge (Core 156, Edge v22). Local main; not deployed.
 - Operator REQUEST refusals are logged
 - Text says "process", not "press"
 - A press changeover with a bare position plans each position on its own, as REQUEST does
+- The three CI failures on the last push are fixed
 
 ## 2026-10-13 — One planner, one order ladder, lanes and drops by one rule, changeovers that finish
 
