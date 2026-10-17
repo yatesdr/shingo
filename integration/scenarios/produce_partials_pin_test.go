@@ -459,8 +459,8 @@ func (c *ksrCell) ppHeldPartial(label string, n int) {
 // partial of its part in its home. A REQUEST swap, in every mode, sends the
 // line's unfinished carrier home and brings the held one back to be finished:
 // the carrier that lands on the line is the home's partial with its count, not
-// a fresh empty. (The station counting from its count is the landing's, which
-// this harness's Edge is not sent: TestProducePartials_AReturnedPartialCountsFromItsCount.)
+// a fresh empty, and the station counts from that count: the landing's, as the
+// Edge unit pins it too (TestProducePartials_AReturnedPartialCountsFromItsCount).
 func TestProducePartials_TheLineFinishesItsPartial(t *testing.T) {
 	for _, mode := range protocol.ConfigurableSwapModes() {
 		if mode == protocol.SwapModeManualSwap {
@@ -484,14 +484,21 @@ func TestProducePartials_TheLineFinishesItsPartial(t *testing.T) {
 			}
 			got := fmt.Sprintf("line=%v old=%s", onLine, c.ppSeen(m))
 			want := "line=[KSR-HELD:22] old=at=KSR-HOME uop=17 part=KSR-PA ledger=set_for_production,manifest_confirmed cms=0"
+			wantCount := 22
 			if mode == protocol.SwapModeTwoRobotPressIndex {
 				// The press indexes its deck forward: the deck's empty goes to the
 				// line and the fetched carrier refills the deck behind it.
 				want = "line=[KSR-A-DECK:0] old=at=KSR-HOME uop=17 part=KSR-PA ledger=set_for_production,manifest_confirmed cms=0"
+				wantCount = 0
 			}
 			t.Logf("PIN finish/%s %s", mode, got)
 			if got != want {
 				t.Errorf("got  %s\nwant %s", got, want)
+			}
+			rt, err := c.edge.DB.GetProcessNodeRuntime(c.nodeID)
+			mustNil(t, err, "the line's seat")
+			if rt.RemainingUOPCached != wantCount {
+				t.Errorf("the station counts %d on the line's carrier, want %d", rt.RemainingUOPCached, wantCount)
 			}
 		})
 	}

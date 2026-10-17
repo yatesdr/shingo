@@ -499,23 +499,28 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	// A produce release ships its count as an ingest, as the plant's router
 	// takes it (cmd/shingocore/routers.go).
 	router.Register(coreRouter, protocol.TypeOrderIngest, coreHandler.HandleOrderIngest)
+	dataSvc := coremessaging.NewCoreDataService(coreDB, coreHandler, service.EpochAnnounce{
+		Topic: "shingo.dispatch", CoreStation: "core",
+	})
+	subjects := router.NewSubject()
+	// The Edge registers as a plant's does, so Core addresses it by the schema
+	// version it reports (service/bin_landing.go: a landing, not the legacy
+	// Bound).
+	router.RegisterSubject(subjects, protocol.SubjectEdgeRegister, dataSvc.HandleEdgeRegister)
 	if o.buriedB || o.mirror {
 		// The Edge's claims reach Core's mirror as in the plant: the publisher's
 		// report over the wire. The cancel-return policy reads that mirror.
-		dataSvc := coremessaging.NewCoreDataService(coreDB, coreHandler, service.EpochAnnounce{
-			Topic: "shingo.dispatch", CoreStation: "core",
-		})
-		subjects := router.NewSubject()
 		router.RegisterSubject(subjects, protocol.SubjectPlantClaims, dataSvc.HandlePlantClaims)
-		router.Register(coreRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) {
-			subjects.Dispatch(env, p)
-		})
 	}
+	router.Register(coreRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) {
+		subjects.Dispatch(env, p)
+	})
 	coreIngestor.Dispatch = func(env *protocol.Envelope) { coreRouter.Dispatch(env, env.Type) }
 	c.bus = harness.NewBus(t,
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor},
 	)
+	c.registerEdge()
 	if o.buriedB || o.mirror {
 		mustNil(t, edgemessaging.NewPlantClaimsPublisher(edge.DB, "edge.test", 0).PublishChanged(c.processID),
 			"publish plant claims")
@@ -1914,4 +1919,19 @@ func (c *ksrCell) caseEStore() {
 	c.tick()
 	c.assertNothingCarried("after the store")
 	c.assertNoTerminalReservations("after the store")
+}
+
+// registerEdge sends the Edge's edge.register with the schema version its
+// migrations left, the message a plant's heartbeater sends at startup
+// (messaging.Heartbeater), over the cell's bus.
+func (c *ksrCell) registerEdge() {
+	c.t.Helper()
+	env, err := protocol.NewDataEnvelope(protocol.SubjectEdgeRegister,
+		protocol.Address{Role: protocol.RoleEdge, Station: "edge.test"}, protocol.Address{Role: protocol.RoleCore},
+		&protocol.EdgeRegister{StationID: "edge.test", SchemaVersion: c.edge.DB.AppliedSchemaVersion()})
+	mustNil(c.t, err, "edge.register")
+	raw, err := env.Encode()
+	mustNil(c.t, err, "encode edge.register")
+	_, err = c.edge.DB.EnqueueOutbox(raw, protocol.SubjectEdgeRegister)
+	mustNil(c.t, err, "send edge.register")
 }
