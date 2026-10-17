@@ -911,7 +911,10 @@ func (e *Engine) loadChangeover(processID, onlyNodeID int64, disp ReleaseDisposi
 				}
 			}
 			if onlyNodeID != 0 || (t.PullErr == nil && !t.Pulling) {
-				cl.evacDisp[i] = evacDispositionForTask(e, task, disp)
+				if cl.evacDisp[i], err = evacDispositionForTask(e, task, disp); err != nil {
+					cl.snap.ReadErr = err
+					return cl
+				}
 			}
 		}
 		cl.snap.Tasks = append(cl.snap.Tasks, t)
@@ -931,23 +934,24 @@ func coreNameOf(e *Engine, task processes.NodeTask) string {
 // evacDispositionForTask picks the evac leg's disposition. The operator's
 // override wins; otherwise the line's runtime cache decides: parts left →
 // send_partial_back with that count, drained → release_empty (the ALN_001 fix:
-// a bin can't land at its outbound destination tagged with a stale payload). A
-// failed runtime read defaults to release_empty — better to clear than to
-// silently no-op.
-func evacDispositionForTask(e *Engine, task processes.NodeTask, override ReleaseDisposition) ReleaseDisposition {
+// a bin can't land at its outbound destination tagged with a stale payload).
+//
+// A FAILED RUNTIME READ REFUSES THE RELEASE. The count is then unknown, and
+// release_empty would clear a carrier that may be full; the read error goes
+// back as the changeover's, so the release is refused and can be retried.
+func evacDispositionForTask(e *Engine, task processes.NodeTask, override ReleaseDisposition) (ReleaseDisposition, error) {
 	if override.Mode != "" {
-		return override
+		return override, nil
 	}
 	runtime, err := e.db.GetProcessNodeRuntime(task.ProcessNodeID)
 	if err != nil {
-		e.logFn("release changeover wait node %s: runtime lookup failed (%v); defaulting evac to release_empty", task.NodeName, err)
-		return ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: override.CalledBy}
+		return ReleaseDisposition{}, fmt.Errorf("node %s: read its count: %w", task.NodeName, err)
 	}
 	if runtime != nil && runtime.RemainingUOPCached > 0 {
 		count := runtime.RemainingUOPCached
-		return ReleaseDisposition{Mode: DispositionSendPartialBack, PartialCount: &count, CalledBy: override.CalledBy}
+		return ReleaseDisposition{Mode: DispositionSendPartialBack, PartialCount: &count, CalledBy: override.CalledBy}, nil
 	}
-	return ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: override.CalledBy}
+	return ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: override.CalledBy}, nil
 }
 
 // ── Doors 3 and 4's loads ─────────────────────────────────────────────────
