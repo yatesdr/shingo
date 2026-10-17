@@ -4,6 +4,7 @@ import (
 	"database/sql"
 
 	"shingocore/store"
+	"shingocore/store/bins"
 	"shingocore/store/payloads"
 )
 
@@ -55,6 +56,16 @@ type BinManifestStore interface {
 	// keeps the interface method-only (no embedded-field access).
 	GetPayloadByCode(code string) (*payloads.Payload, error)
 	ListPayloadManifest(payloadID int64) ([]*payloads.ManifestItem, error)
+
+	// Partial homes, for LoadAtLine: a load at a window inside a partial home
+	// of its part must declare its count, and the declaration is when the
+	// carrier is held from.
+	GetBin(id int64) (*bins.Bin, error)
+	InPartialHomeOf(nodeID int64, payloadCode string) (bool, error)
+	StampHeldSince(binID int64) error
+	// A LOAD onto a bare cart judges and writes the carrier it now carries.
+	StampCarrierForLoad(binID int64) (*int64, error)
+	RestoreBinType(binID, typeID int64) error
 }
 
 // Compile-time check that *store.DB satisfies BinManifestStore. If the

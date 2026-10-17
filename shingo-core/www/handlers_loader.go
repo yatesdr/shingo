@@ -13,6 +13,7 @@ import (
 // server broke", which is the opposite of what the rejection is for.
 func loaderWriteStatus(err error) int {
 	if errors.Is(err, service.ErrConsumeThreshold) || errors.Is(err, service.ErrAcceptPartialsProduce) ||
+		errors.Is(err, service.ErrAcceptPartialsPartialHome) ||
 		errors.Is(err, service.ErrAutoPushProduce) || errors.Is(err, service.ErrWindowInAnotherGroup) ||
 		errors.Is(err, service.ErrQuotaBare) || errors.Is(err, service.ErrInboundSourceUnresolved) {
 		return http.StatusBadRequest

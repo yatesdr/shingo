@@ -357,8 +357,12 @@ type Claim struct {
 	// empty comes from instead of InboundSource, with a spare kept standing on
 	// it. Blank is off. Any swap mode; it may be the claim's InboundStaging,
 	// and is otherwise dedicated to this line (Validate's keep-staged check).
-	KeepStagedNode  string   `yaml:"keep_staged_node,omitempty"`
-	AllowedPayloads []string `yaml:"allowed_payloads,omitempty"`
+	KeepStagedNode string `yaml:"keep_staged_node,omitempty"`
+	// PartialDestination is where this claim's carrier goes when it leaves the
+	// line unfinished, to wait and be called back (a node or a group). Blank =
+	// where a full goes. Produce claims only.
+	PartialDestination string   `yaml:"partial_destination,omitempty"`
+	AllowedPayloads    []string `yaml:"allowed_payloads,omitempty"`
 	// ── THE ROUND-3/4 CLAIM CONFIG, SEEDABLE FOR THE SAME REASON THE FLIP IS ──
 	//
 	// These five were added to style_node_claims and to the claim editor, and

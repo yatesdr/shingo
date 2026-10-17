@@ -8,10 +8,12 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/dispatch/binresolver"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 // containmentFixture builds the smallest plant the divert speaks: a producing
@@ -203,5 +205,29 @@ func TestPlaceForContainment_FlagOff_NoDivert(t *testing.T) {
 	testutil.MustNoErr(t, err, "reload order")
 	if got.DeliveryNode != fgn.Name {
 		t.Fatalf("DeliveryNode = %q, want untouched %q", got.DeliveryNode, fgn.Name)
+	}
+}
+
+// TestPartialHome_ContainmentGoesFirst: an unfinished carrier of a contained
+// part keeps containment's drop, though its line's claim names a partial
+// home; the home takes it once containment is lifted.
+func TestPartialHome_ContainmentGoesFirst(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, fgn, _ := containmentFixture(t, db)
+	testutil.MustNoErr(t, db.CreatePayload(&payloads.Payload{Code: "PART-QC", UOPCapacity: 10}), "create the part")
+	home := &nodes.Node{Name: "QC-PARTIAL-HOME", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(home), "create the partial home")
+	_, err := db.DB.Exec(`UPDATE style_claims SET partial_destination = 'QC-PARTIAL-HOME' WHERE core_node_name = 'PROD-QC'`)
+	testutil.MustNoErr(t, err, "name the partial home")
+
+	b := makeLoaderBin(t, db, "PART-QC", fgn.ID, "qc-partial", 4, time.Now().UTC())
+	o := containmentOrder(t, db, "qc-partial-1", fgn.Name, "PROD-QC", &b.ID)
+	if got := partialHomeSlot(db, nil, o, b, 4, "PROD-QC", fgn.Name, binresolver.NoBinType); got != "" {
+		t.Errorf("contained: the partial goes to %q, want containment's drop kept", got)
+	}
+	testutil.MustNoErr(t, db.SetPayloadContainment("PART-QC", "", "tester", false), "lift containment")
+	if got := partialHomeSlot(db, nil, o, b, 4, "PROD-QC", fgn.Name, binresolver.NoBinType); got != home.Name {
+		t.Errorf("not contained: the partial goes to %q, want its home %s", got, home.Name)
 	}
 }

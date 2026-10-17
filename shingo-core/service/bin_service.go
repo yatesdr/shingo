@@ -510,6 +510,12 @@ func (s *BinService) RecordCount(b *bins.Bin, actualUOP int, actor string) (*Cou
 	if err := s.announceCount(tx, b.ID, nodeName, addr, actualUOP, epoch, actor, fence); err != nil {
 		return nil, err
 	}
+	// A count declared at a partial home makes the carrier held from now (or
+	// keeps its place, if it already was): the person's declaration at the
+	// station is one of the two moments a partial enters its home.
+	if err := store.StampHeldSinceDeclaredTx(tx, b.ID); err != nil {
+		return nil, fmt.Errorf("held-since bin %d: %w", b.ID, err)
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit cycle count bin %d: %w", b.ID, err)
 	}
@@ -1188,4 +1194,21 @@ func (s *BinService) RecoverTransitAnomaly(binID, toNodeID int64, actor string) 
 		return fmt.Errorf("record recovery action: %w", err)
 	}
 	return nil
+}
+
+// IsHeldPartial reports whether a bin is held: an unfinished carrier standing in
+// a partial home of its own part, waiting to be called back. The clear refuses
+// one unless the person says unload.
+func (s *BinService) IsHeldPartial(binID int64) (bool, error) {
+	return s.db.IsHeldPartial(binID)
+}
+
+// HeldPartialInfo is a held carrier's board line (store.DB.HeldPartialInfo).
+func (s *BinService) HeldPartialInfo(binID int64) (time.Time, string, bool, error) {
+	return s.db.HeldPartialInfo(binID)
+}
+
+// ListHeldPartials is every held partial of a part, oldest held first.
+func (s *BinService) ListHeldPartials(payloadCode string) ([]protocol.HeldPartial, error) {
+	return s.db.ListHeldPartials(payloadCode)
 }

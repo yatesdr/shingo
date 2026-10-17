@@ -185,6 +185,16 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
+	// The count is final now: an unfinished carrier this segment lifts off the
+	// line goes to its claim's partial home (place_by_contents.go). A re-point
+	// rewrites the stored plan, so the segment is split again from it.
+	if d.placePartialAtRelease(order, steps, order.WaitIndex) {
+		if again, ok := decodeSteps(order.StepsJSON); ok {
+			steps = again
+			segment, moreWaits, blockOffset = splitSegment(steps, order.WaitIndex)
+		}
+	}
+
 	d.patchRedirectSegments(segment, order, moreWaits)
 	d.dispatchFleetRelease(env, order, segment, moreWaits, blockOffset)
 }

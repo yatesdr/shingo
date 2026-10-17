@@ -6,8 +6,11 @@ import (
 	"errors"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/store/loaders"
+	"shingocore/store/nodes"
+	"shingocore/store/plantclaims"
 )
 
 // TestLoaderService_AcceptPartials pins the accept_partials door: stored and
@@ -83,5 +86,39 @@ func TestLoaderService_AutoPush(t *testing.T) {
 	testutil.MustNoErr(t, err, "re-read loader")
 	if got.AutoPush {
 		t.Errorf("refused update landed: %+v", got)
+	}
+}
+
+// TestLoaderService_AcceptPartialsRefusedAtAPartialHome: an unloader whose
+// window stands in a produce claim's partial home may not take partials — the
+// home keeps unfinished carriers to finish, accept_partials would unload them.
+// A loader whose windows are no home keeps the setting as ever.
+func TestLoaderService_AcceptPartialsRefusedAtAPartialHome(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	svc := NewLoaderService(db, nil)
+	window := &nodes.Node{Name: "APH-WIN", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(window), "window")
+	id, err := svc.Create("APH-UNLOADER", loaders.RoleConsume, loaders.LayoutSharedWindow, "", "", "", false)
+	testutil.MustNoErr(t, err, "create unloader")
+	testutil.MustNoErr(t, svc.SetHome(id, window.ID, "", "", 0), "the window")
+	testutil.MustNoErr(t, svc.Update(LoaderUpdate{ID: id, Name: "APH-UNLOADER", Layout: loaders.LayoutSharedWindow,
+		AcceptPartials: true}), "no claim names the window yet: accept_partials saves")
+	testutil.MustNoErr(t, svc.Update(LoaderUpdate{ID: id, Name: "APH-UNLOADER", Layout: loaders.LayoutSharedWindow}),
+		"turn it off again")
+
+	testutil.MustNoErr(t, db.ReplacePlantClaims("APH-PROC",
+		[]plantclaims.StyleRow{{ProcessID: "APH-PROC", StyleID: "APH-STY", ConfigGen: 1, IsActive: true}},
+		[]plantclaims.ClaimRow{{ProcessID: "APH-PROC", StyleID: "APH-STY", CoreNodeName: "APH-LINE",
+			Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "APH-P",
+			PartialDestination: window.Name}}, 0), "a claim keeps its partials on the window")
+	err = svc.Update(LoaderUpdate{ID: id, Name: "APH-UNLOADER", Layout: loaders.LayoutSharedWindow, AcceptPartials: true})
+	if !errors.Is(err, ErrAcceptPartialsPartialHome) {
+		t.Fatalf("accept_partials on a partial home's window: err = %v, want ErrAcceptPartialsPartialHome", err)
+	}
+	got, err := db.GetLoader(id)
+	testutil.MustNoErr(t, err, "re-read")
+	if got.AcceptPartials {
+		t.Error("the refused setting landed")
 	}
 }

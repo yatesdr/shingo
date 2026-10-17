@@ -253,6 +253,12 @@ func (p *Plant) Validate() error {
 		if c.OutboundDestination != "" && !ref(c.OutboundDestination) {
 			add("%s: unknown outbound_destination %q", where, c.OutboundDestination)
 		}
+		if c.PartialDestination != "" && !ref(c.PartialDestination) {
+			add("%s: unknown partial_destination %q", where, c.PartialDestination)
+		}
+		if c.PartialDestination != "" && c.Role != "produce" {
+			add("%s: partial_destination is a produce claim's; a %s claim has no unfinished carrier to route", where, c.Role)
+		}
 		// A SOURCE IS A GROUP OR A LOADER POSITION, NEVER A LANE (owner,
 		// 2026-10-03). A need that names a lane searches that lane only, so a bin
 		// put back anywhere else in its group is one that need never finds. The

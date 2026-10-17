@@ -513,6 +513,20 @@ func EmptyCarrierWhereInGroup(destParam, groupParam int) string {
 	return emptyCarrierWhere(fmt.Sprintf("$%d", destParam), fmt.Sprintf("$%d", groupParam))
 }
 
+// cellPositionSQL is true when the node aliased n is a claim's own position:
+// its line, paired or second paired node. A carrier there belongs to that cell
+// (the rule above).
+const cellPositionSQL = `EXISTS (SELECT 1 FROM style_claims sc
+	                  WHERE n.name IN (sc.core_node_name, sc.paired_core_node, sc.second_paired_core_node))`
+
+// IsCellPosition reports whether nodeName is a claim's own position, by the
+// predicate the empty scan and the partial fetch exclude a carrier with.
+func IsCellPosition(db *sql.DB, nodeName string) (bool, error) {
+	var is bool
+	err := db.QueryRow(`SELECT `+cellPositionSQL+` FROM (SELECT $1::text AS name) n`, nodeName).Scan(&is)
+	return is, err
+}
+
 func emptyCarrierWhere(destExpr, groupExpr string) string {
 	return `
 	WHERE ` + SourceableStatusSQL + ` AND b.status <> 'staged'
@@ -520,8 +534,7 @@ func emptyCarrierWhere(destExpr, groupExpr string) string {
 	  AND b.node_id IS NOT NULL
 	  AND ` + BinAtLiveNodeSQL + `
 	  AND COALESCE(b.payload_code, '') = ''
-	  AND NOT EXISTS (SELECT 1 FROM style_claims sc
-	                  WHERE n.name IN (sc.core_node_name, sc.paired_core_node, sc.second_paired_core_node))
+	  AND NOT ` + cellPositionSQL + `
 	  AND b.node_id NOT IN (SELECT h.position_node_id FROM bin_loader_homes h
 	                        JOIN bin_loaders l ON l.id = h.loader_id WHERE l.archived_at IS NULL
 	                          AND NOT (h.home_kind = 'buffer' AND h.loader_id IN (
@@ -1903,4 +1916,47 @@ func HasNotes(db *sql.DB, binIDs []int64) (map[int64]bool, error) {
 		}
 	}
 	return result, rows.Err()
+}
+
+// FindPartialToFinish is the oldest-held UNFINISHED carrier of payloadCode —
+// its part set, its count above 0 and below the part's capacity — standing in
+// any of the named places or under them: a refill that would fill a carrier of
+// the part takes one of these to finish before a fresh empty. Oldest by when it
+// entered its home (held_since), its original load and creation after; never a
+// carrier buried in a lane, held by an order, on hold, or in another order's
+// dig. sql.ErrNoRows when there is none.
+func FindPartialToFinish(db *sql.DB, payloadCode string, places []string, excludeNodeID int64,
+	asker reservations.DigAsker) (*Bin, error) {
+	if payloadCode == "" || len(places) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	a := &emptyQueryArgs{}
+	payloadP := a.add(payloadCode)
+	names := make([]string, 0, len(places))
+	for _, p := range places {
+		names = append(names, fmt.Sprintf("$%d", a.add(p)))
+	}
+	excludeP := a.add(excludeNodeID)
+	q := `WITH RECURSIVE places(id) AS (
+			SELECT id FROM nodes WHERE name IN (` + strings.Join(names, ", ") + `)
+			UNION ALL
+			SELECT n2.id FROM nodes n2 JOIN places pl ON n2.parent_id = pl.id
+		) ` + BinJoinQuery + `
+	WHERE ` + SourceableStatusSQL + ` AND b.status <> 'staged'
+	  AND ` + BinUnheldSQL + `
+	  AND b.node_id IS NOT NULL
+	  AND ` + BinAtLiveNodeSQL + fmt.Sprintf(`
+	  AND b.payload_code = $%d
+	  AND b.uop_remaining > 0
+	  AND b.uop_remaining < COALESCE((SELECT p.uop_capacity FROM payloads p WHERE p.code = b.payload_code), 0)
+	  AND b.node_id IN (SELECT id FROM places)
+	  AND NOT `+cellPositionSQL+`
+	  AND NOT bt.bare
+	  AND NOT COALESCE(b.quality_hold, false)
+	  AND (n.parent_id IS NULL OR n.depth IS NULL OR `+helpers.ReachableSQL("n")+`)`, payloadP) +
+		ExcludeNodeArm(excludeP) +
+		NotForeignDugArm(a.add(string(reservations.ModeDig)), a.add(asker.OrderID), a.add(asker.LaneOwner)) + `
+	ORDER BY COALESCE(b.held_since, b.loaded_at, b.created_at) ASC, b.id ASC
+	LIMIT 1`
+	return ScanBin(db.QueryRow(q, a.vals...))
 }

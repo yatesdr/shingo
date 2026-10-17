@@ -29,6 +29,11 @@ type Step struct {
 	// payload, fell back to the order's — the outgoing style's — and delivered
 	// the carrier the press was leaving. Right until it retried.
 	PayloadCode string `json:"payload_code,omitempty"`
+	// BinID mirrors protocol.ComplexOrderStep.BinID: the one bin this pickup
+	// takes (an operator's pick of a held partial). Threaded through for the
+	// same reason as PayloadCode: a replay that dropped it would source the leg
+	// afresh and give the operator a carrier they did not choose.
+	BinID int64 `json:"bin_id,omitempty"`
 	// ExclusiveSlot mirrors protocol.ComplexOrderStep.ExclusiveSlot: this dropoff
 	// lands on a node holding one bin at a time (a staging node), which Core's
 	// role test cannot recognise on its own. Threaded through resolution for the

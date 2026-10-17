@@ -59,6 +59,13 @@ func checkReplenishment(role, replenishment string) error {
 // on a produce loader it would be stored, shown, and do nothing.
 var ErrAcceptPartialsProduce = errors.New("only an unloader can accept partial carriers: the full-carrier rule it relaxes applies to consume loaders only")
 
+// ErrAcceptPartialsPartialHome refuses accept_partials on a loader whose windows
+// are a produce claim's partial home. The home holds unfinished carriers to be
+// called back and finished; accept_partials would have the same windows unload
+// them. The two cannot both hold, so the setting is refused rather than one
+// quietly winning.
+var ErrAcceptPartialsPartialHome = errors.New("this loader's windows are a partial home: a claim keeps unfinished carriers there to finish them, so its windows cannot also take partials to unload")
+
 // ErrAutoPushProduce refuses auto_push on a produce loader. It re-pulls an
 // unloader's next full when a window frees; a produce loader pulls no fulls, so
 // it would be stored, shown, and do nothing.
@@ -275,6 +282,29 @@ type LoaderUpdate struct {
 	BoardShowsAllParts bool
 }
 
+// checkAcceptPartials refuses accept_partials where it cannot hold: a produce
+// loader has no partly filled carriers to unload, and a loader whose windows
+// are a partial home keeps them there to be finished.
+func (s *LoaderService) checkAcceptPartials(cur *loaders.Loader, want bool) error {
+	if !want {
+		return nil
+	}
+	if cur.Role != loaders.RoleConsume {
+		return ErrAcceptPartialsProduce
+	}
+	if cur.AcceptPartials {
+		return nil
+	}
+	home, err := s.db.LoaderWindowIsPartialHome(cur.ID)
+	if err != nil {
+		return fmt.Errorf("read whether loader %d's windows are a partial home: %w", cur.ID, err)
+	}
+	if home {
+		return ErrAcceptPartialsPartialHome
+	}
+	return nil
+}
+
 func (s *LoaderService) Update(in LoaderUpdate) error {
 	id, name, layout, replenishment := in.ID, in.Name, in.Layout, in.Replenishment
 	outboundDest, inboundSource, funnelWindows := in.OutboundDest, in.InboundSource, in.FunnelWindows
@@ -322,8 +352,8 @@ func (s *LoaderService) Update(in LoaderUpdate) error {
 	cur.PulledDirectly = in.PulledDirectly
 	cur.FunnelWindows = funnelWindows
 	cur.ChangeoverLoadDirective = in.ChangeoverLoadDirective
-	if in.AcceptPartials && cur.Role != loaders.RoleConsume {
-		return ErrAcceptPartialsProduce
+	if err := s.checkAcceptPartials(cur, in.AcceptPartials); err != nil {
+		return err
 	}
 	cur.AcceptPartials = in.AcceptPartials
 	if in.AutoPush && cur.Role != loaders.RoleConsume {

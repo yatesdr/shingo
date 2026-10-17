@@ -43,6 +43,9 @@ type StyleRow struct {
 // contained payload's bins divert instead of the claim's ordinary FG outbound
 // destination; blank = unconfigured.
 //
+// PartialDestination mirrors PlantClaim.PartialDestination: where the claim's
+// carrier goes when it leaves the line unfinished; blank = where a full goes.
+//
 // The last four are the claim's LEGS — the nodes it draws from, ships to, and
 // is paired with. They are mirrored for the demand loop compiler, which needs
 // the edges between nodes and not just the nodes; the sourceability recompute
@@ -58,6 +61,7 @@ type ClaimRow struct {
 	SwapMode               protocol.SwapMode
 	PayloadCode            string
 	ContainmentDestination string
+	PartialDestination     string
 	AllowedPayloadCodes    []string
 	UOPCapacity            int
 	ReorderPoint           int
@@ -192,8 +196,9 @@ func ReplaceProcessFromStation(db *sql.DB, processID, stationID string, styles [
 		`INSERT INTO style_claims
 		 (process_id, style_id, core_node_name, role, swap_mode, payload_code,
 		  containment_destination, allowed_payload_codes, uop_capacity, reorder_point, seq,
-		  inbound_source, outbound_destination, paired_core_node, second_paired_core_node)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`)
+		  inbound_source, outbound_destination, paired_core_node, second_paired_core_node,
+		  partial_destination)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`)
 	if err != nil {
 		return previousStation, fmt.Errorf("plantclaims replace %s: prepare claim insert: %w", processID, err)
 	}
@@ -211,6 +216,7 @@ func ReplaceProcessFromStation(db *sql.DB, processID, stationID string, styles [
 			c.ProcessID, c.StyleID, c.CoreNodeName, string(c.Role), string(c.SwapMode),
 			c.PayloadCode, c.ContainmentDestination, string(allowed), c.UOPCapacity, c.ReorderPoint, c.Seq,
 			c.InboundSource, c.OutboundDestination, c.PairedCoreNode, c.SecondPairedCoreNode,
+			c.PartialDestination,
 		); err != nil {
 			return previousStation, fmt.Errorf("plantclaims replace %s: insert claim %s: %w", processID, c.CoreNodeName, err)
 		}

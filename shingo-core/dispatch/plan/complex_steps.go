@@ -95,7 +95,7 @@ func (p *Planner) ComplexSteps(steps []protocol.ComplexOrderStep, payloadCode st
 				carrier = BinTypeAtNode(p.db, nodeName)
 			}
 			resolved = append(resolved, Step{Action: step.Action, Node: nodeName, Group: group, Empty: step.Empty,
-				PayloadCode: step.PayloadCode, ExclusiveSlot: step.ExclusiveSlot})
+				PayloadCode: step.PayloadCode, BinID: step.BinID, ExclusiveSlot: step.ExclusiveSlot})
 		case protocol.ActionWait:
 			// Wait may optionally include a node (drive-to-and-hold).
 			// If present, resolve it; otherwise it's a bare wait (split point only).
@@ -189,7 +189,7 @@ func (p *Planner) ReComplexSteps(steps []Step, need Need) (newSteps []Step, chan
 		// Step still references an NGRP; re-attempt resolution. Carry Empty so
 		// the produce empty-leg distinction survives replay re-resolution.
 		ps := protocol.ComplexOrderStep{Action: step.Action, Node: step.Node, Empty: step.Empty,
-			PayloadCode: step.PayloadCode, ExclusiveSlot: step.ExclusiveSlot}
+			PayloadCode: step.PayloadCode, BinID: step.BinID, ExclusiveSlot: step.ExclusiveSlot}
 		// Same carrier question as intake, asked of the already-resolved list.
 		// The resolver would derive one from the asker here (this path has a real
 		// order), but a complex PARENT owns legs rather than cargo — its bin_id is
@@ -236,6 +236,7 @@ func (p *Planner) ReComplexSteps(steps []Step, need Need) (newSteps []Step, chan
 		// is re-resolved.
 		newSteps = append(newSteps, Step{Action: step.Action, Node: newName, Group: group, Empty: step.Empty,
 			PayloadCode:   step.PayloadCode,
+			BinID:         step.BinID,
 			ExclusiveSlot: step.ExclusiveSlot,
 			WaitKind:      step.WaitKind,
 			WaitLane:      step.WaitLane,
@@ -374,6 +375,15 @@ func (p *Planner) StepNode(step protocol.ComplexOrderStep, orderPayload string,
 	asker domain.DigAsker, nextDropoff string, carrierTypeID *int64) (string, string, error) {
 	defer observe(p.db, "step-node")()
 	payloadCode := StepPayload(step, orderPayload)
+	// A pickup that names its bin goes to wherever that bin stands: the
+	// operator chose it (a held partial to finish), so no other is sought.
+	if step.Action == protocol.ActionPickup && step.BinID != 0 && p.finder != nil {
+		b, err := p.finder.db.GetBin(step.BinID)
+		if err != nil || b == nil || b.NodeName == "" {
+			return "", "", fmt.Errorf("the bin the pickup names (%d) is not standing anywhere", step.BinID)
+		}
+		return b.NodeName, "", nil
+	}
 	if step.Node != "" {
 		node, err := p.db.GetNodeByDotName(step.Node)
 		if err != nil {
@@ -456,6 +466,17 @@ func (p *Planner) StepNode(step protocol.ComplexOrderStep, orderPayload string,
 				return "", "", fmt.Errorf("cannot resolve group %s: %w", step.Node, err)
 			}
 			return result.Node.Name, step.Node, nil
+		}
+		// A concrete source for an empty: a partial of the part to finish, in
+		// its home or standing here, comes first (Finder.PartialToFinish), as it
+		// does at a group source (tier 2b).
+		// Not at a line position: a press's deck pickup is the index move of the
+		// deck's own carrier, not a refill to finish a partial with.
+		if step.Action == protocol.ActionPickup && step.Empty && payloadCode != "" && p.finder != nil &&
+			!p.finder.isLinePosition(node.Name) {
+			if pb := p.finder.PartialToFinish(payloadCode, node.Name, 0, asker); pb != nil && pb.NodeName != "" {
+				return pb.NodeName, "", nil
+			}
 		}
 		return node.Name, "", nil
 	}

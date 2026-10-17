@@ -736,6 +736,7 @@ func (s *CoreDataService) HandlePlantClaims(env *protocol.Envelope, report *prot
 				SwapMode:               c.SwapMode,
 				PayloadCode:            c.PayloadCode,
 				ContainmentDestination: c.ContainmentDestination,
+				PartialDestination:     c.PartialDestination,
 				AllowedPayloadCodes:    c.AllowedPayloadCodes,
 				UOPCapacity:            c.UOPCapacity,
 				ReorderPoint:           c.ReorderPoint,

@@ -40,6 +40,22 @@ import (
 // The whole request fails rather than the one node, deliberately: a caller
 // asking about five windows and getting four honest rows plus one invented one
 // has no way to know which is which.
+// apiTelemetryHeldPartials lists the held partials of one part, oldest held
+// first: a finish-later claim's REQUEST shows them for the operator to pick.
+func (h *Handlers) apiTelemetryHeldPartials(w http.ResponseWriter, r *http.Request) {
+	payload := strings.TrimSpace(r.URL.Query().Get("payload"))
+	if payload == "" {
+		h.jsonError(w, "payload is required", http.StatusBadRequest)
+		return
+	}
+	list, err := h.engine.BinService().ListHeldPartials(payload)
+	if err != nil {
+		h.jsonError(w, fmt.Sprintf("held partials of %s: %v", payload, err), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, list)
+}
+
 func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) {
 	nodesParam := r.URL.Query().Get("nodes")
 	if nodesParam == "" {
@@ -88,6 +104,18 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 		entry.DeltaEpoch = bin.DeltaEpoch
 		entry.Manifest = bin.Manifest
 		entry.ManifestConfirmed = bin.ManifestConfirmed
+		if bin.PayloadCode != "" {
+			entry.UOPCapacity = bin.UOPCapacity
+		}
+		// A held partial says so, and since when: the board shows it as held for
+		// its line rather than as a carrier to clear. A failed read costs the
+		// board its line, never the answer.
+		if since, line, held, herr := h.engine.BinService().HeldPartialInfo(bin.ID); herr != nil {
+			log.Printf("node-bins: held-partial read for bin %d: %v", bin.ID, herr)
+		} else if held {
+			entry.HeldSince = since.UTC().Format(time.RFC3339)
+			entry.HeldFor = line
+		}
 		result = append(result, entry)
 	}
 	h.jsonOK(w, result)
@@ -264,6 +292,8 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 			// window, answered with what the operator does about it. The Edge
 			// shows this sentence as the LOAD's refusal.
 			h.jsonError(w, loaderCarrierRefusal(refused), http.StatusConflict)
+		case errors.Is(err, service.ErrCountRequired):
+			h.jsonError(w, err.Error()+" — enter the count on the LOAD", http.StatusConflict)
 		case errors.Is(err, service.ErrUnknownPayload):
 			h.jsonError(w, err.Error(), http.StatusBadRequest)
 		default:
@@ -464,6 +494,24 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A HELD PARTIAL IS NOT CLEARED ON ONE TAP. An unfinished carrier standing in
+	// a partial home of its own part waits there to be called back to its line
+	// and finished; the clear would zero the count that makes it worth calling.
+	// The person's second tap (unload) clears it, booked as any clear. A carrier
+	// that is full, empty, or not in a home of its part clears as it always did.
+	if !req.Unload {
+		held, herr := h.engine.BinService().IsHeldPartial(bin.ID)
+		if herr != nil {
+			h.jsonError(w, fmt.Sprintf("could not read whether bin %s is a held partial: %v", bin.Label, herr), http.StatusInternalServerError)
+			return
+		}
+		if held {
+			h.jsonError(w, fmt.Sprintf("bin %s holds %d of %s, unfinished and held here to be called back to its line; "+
+				"UNLOAD to clear it anyway", bin.Label, bin.UOPRemaining, bin.PayloadCode), http.StatusConflict)
+			return
+		}
+	}
+
 	stamp, ok := h.binClearStamp(w, node.ID, req.NodeName, bin.BinTypeBare)
 	if !ok {
 		return
@@ -518,6 +566,7 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 		BinLabel:           bin.Label,
 		DeltaEpoch:         newEpoch,
 		ClearedPayloadCode: bin.PayloadCode,
+		ClearedUOP:         bin.UOPRemaining,
 		// The cart's type as an operator knows it — the carrier, never a
 		// marker — for the board's CLEAR line.
 		ClearedBinTypeCode: clearedType,

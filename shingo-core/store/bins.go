@@ -85,6 +85,13 @@ func (db *DB) FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, exc
 	return bins.FindEmptyCompatibleInGroup(db.DB, payloadCode, groupNodeID, excludeNodeID, asker)
 }
 
+// FindPartialToFinish is bins.FindPartialToFinish on this store (sql.ErrNoRows
+// when there is none, as the empty finders answer).
+func (db *DB) FindPartialToFinish(payloadCode string, places []string, excludeNodeID int64,
+	asker reservations.DigAsker) (*bins.Bin, error) {
+	return bins.FindPartialToFinish(db.DB, payloadCode, places, excludeNodeID, asker)
+}
+
 // UpdateBinStatus sets the status on a bin.
 func (db *DB) UpdateBinStatus(binID int64, status domain.BinStatus) error {
 	return bins.UpdateStatus(db.DB, binID, status)

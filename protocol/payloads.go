@@ -614,6 +614,11 @@ type ComplexOrderStep struct {
 	// TestComplexOrderStep_PayloadCode_MixedVersion, which asserts what an old
 	// Core does rather than leaving it to be discovered on a floor.
 	PayloadCode string `json:"payload_code,omitempty"`
+	// BinID names the one bin a pickup takes: the operator's pick of a held
+	// partial to finish, from the list a finish-later claim's REQUEST shows.
+	// Core lifts that bin where it stands, or the leg waits. 0 for every other
+	// pickup, which Core sources as before.
+	BinID int64 `json:"bin_id,omitempty"`
 	// WaitKind declares WHO MAY ADVANCE a wait step, carried across the wire so
 	// the far side does not have to guess.
 	//
@@ -969,6 +974,11 @@ type NodeInfo struct {
 	Name       string `json:"name"`
 	NodeType   string `json:"node_type"`
 	Maintained bool   `json:"maintained,omitempty"`
+	// AcceptsPartials marks a window of a loader whose windows take partly
+	// filled carriers (accept_partials), and every group above one. A claim's
+	// partial home may not be one: the two say opposite things about the same
+	// carriers. False for every other node, and from a Core predating the field.
+	AcceptsPartials bool `json:"accepts_partials,omitempty"`
 }
 
 // PayloadBinTypeInfo maps one payload code to one bin-type code.
@@ -1856,6 +1866,12 @@ type PlantClaim struct {
 	// claim. Core resolves the divert at dispatch against its own
 	// authoritative containment state; this field only names WHERE.
 	ContainmentDestination string `json:"containment_destination,omitempty"`
+	// PartialDestination is where the claim's carrier goes when it leaves the
+	// line unfinished: its part set, its count above 0 and below capacity (a
+	// node or a group). Blank = it goes where a full goes. Core judges
+	// "unfinished" from its own count and chooses the drop; this field only
+	// names WHERE.
+	PartialDestination string `json:"partial_destination,omitempty"`
 	// AllowedPayloadCodes is the effective payload set this claim accepts
 	// (ClaimAllowedPayloads on Edge). For most claims this is just
 	// [PayloadCode]; carried as the canonical set the netting reads.

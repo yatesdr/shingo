@@ -4466,6 +4466,14 @@ func migrationList() []migration {
 				}
 				return all
 			}},
+
+		{159, "style_claims.partial_destination - where a claim's carrier goes when it leaves the line unfinished (a node or a group), to wait and be called back; blank = where a full goes",
+			v159StyleClaimsPartialDestination,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "style_claims", "partial_destination") }},
+
+		{160, "bins.held_since - when an unfinished carrier entered a partial home of its own part (an arrival there, or a count declared there); the order a refill calls partials back in. NULL anywhere else",
+			v160BinsHeldSince,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bins", "held_since") }},
 	}
 }
 
@@ -6563,6 +6571,31 @@ func v133StyleClaimsContainmentDestination(tx *sql.Tx) error {
 	if _, err := tx.Exec(`ALTER TABLE style_claims
 		ADD COLUMN IF NOT EXISTS containment_destination TEXT NOT NULL DEFAULT ''`); err != nil {
 		return fmt.Errorf("v133 style_claims.containment_destination: %w", err)
+	}
+	return nil
+}
+
+// v159StyleClaimsPartialDestination adds the plant-claims mirror's partial
+// route: where a claim's carrier goes when it leaves the line unfinished. Blank
+// = where a full goes, so every existing mirrored claim reads exactly as it did
+// before the column existed. The mirror is owned by the plant.claims feed, so
+// there is no backfill and nothing to preserve.
+func v159StyleClaimsPartialDestination(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE style_claims
+		ADD COLUMN IF NOT EXISTS partial_destination TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("v159 style_claims.partial_destination: %w", err)
+	}
+	return nil
+}
+
+// v160BinsHeldSince adds the time an unfinished carrier entered a partial home of
+// its own part. It is written at those two moments only (an arrival in the home,
+// a count declared there) and cleared by any other arrival; loaded_at stays the
+// carrier's original load and is not the call-back order. NULL on every
+// existing bin: nothing is held until the feature runs.
+func v160BinsHeldSince(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE bins ADD COLUMN IF NOT EXISTS held_since TIMESTAMPTZ`); err != nil {
+		return fmt.Errorf("v160 bins.held_since: %w", err)
 	}
 	return nil
 }

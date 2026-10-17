@@ -308,6 +308,12 @@ func PlaceBinTx(tx *sql.Tx, p BinPlacement) (Placed, error) {
 			return Placed{}, fmt.Errorf("set available bin %d: %w", p.BinID, err)
 		}
 	}
+	// Where it now stands decides whether it is held: an unfinished carrier
+	// landing in a partial home of its part is held from now; any other landing
+	// is not held.
+	if err := StampHeldSinceTx(tx, p.BinID); err != nil {
+		return Placed{}, fmt.Errorf("held-since bin %d: %w", p.BinID, err)
+	}
 
 	return placed, nil
 }

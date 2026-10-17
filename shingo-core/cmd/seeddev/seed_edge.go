@@ -229,8 +229,8 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 			   changeover_evac_nodes, changeover_evac_destination,
 			   changeover_carryover_disposition,
 			   key_route, key_task,
-			   auto_push, auto_confirm, keep_staged_node)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			   auto_push, auto_confirm, keep_staged_node, partial_destination)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			sid, c.CoreNode, c.Role, c.SwapMode, c.Payload, c.UOPCapacity,
 			c.ReorderPoint, b2i(c.AutoReorder), c.InboundStaging, c.OutboundStaging,
 			c.InboundSource, c.OutboundDestination, jsonList(c.AllowedPayloads),
@@ -238,7 +238,7 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 			jsonList(c.ChangeoverEvacNodes), c.ChangeoverEvacDestination,
 			carryoverOrReplace(c.ChangeoverCarryoverDisposition),
 			jsonList(c.KeyRoute), c.KeyTask,
-			b2i(c.AutoPush), b2i(c.AutoConfirm), c.KeepStagedNode); err != nil {
+			b2i(c.AutoPush), b2i(c.AutoConfirm), c.KeepStagedNode, c.PartialDestination); err != nil {
 			return fmt.Errorf("claim %s/%s: %w", c.CoreNode, c.Style, err)
 		}
 		var claimID int64

@@ -488,6 +488,23 @@ func (f *Finder) Pick(need Need) Plan {
 	// typed cause. nil is any carrier; several are searched as one set.
 	wantTypes := f.wantedBinTypes(need)
 
+	// ── Tier 2b: a partial to finish (empty intent naming a part) ─────────
+	// A carrier to fill can be one already part-filled with the same part:
+	// finishing it is what a partial home is for. When the part has a home, the
+	// oldest-held partial of it standing there — or in the need's own source
+	// group — is taken before a fresh empty. REQUEST, a changeover's fetch and
+	// the keeper's refill all ask here, as every empty-intent need does. A part
+	// with no home asks nothing new.
+	if bin == nil && intent == IntentEmpty && payloadCode != "" {
+		also := ""
+		if srcNode != nil && srcNode.IsSynthetic {
+			also = srcNode.Name
+		}
+		if pb := f.PartialToFinish(payloadCode, also, excludeID, need.Asker); pb != nil {
+			bin = pb
+		}
+	}
+
 	// ── Tier 3: group/lane-scoped empty (empty intent, synthetic source) ──
 	// Restricts empties to descendants of the SourceNode NGRP/LANE so a
 	// multi-supermarket setup doesn't pull from the wrong supermarket or the
@@ -1106,4 +1123,45 @@ func (f *Finder) auditSourcedOutsideItsGroup(need Need, binNode *nodes.Node) {
 		"the %d maintained group(s) that serve it. The group was short of what this process "+
 		"needed when it asked — level too low, mix wrong, or the keeper had not caught up. "+
 		"Nothing failed; the process is running.", need.ProcessNode, binNode.Name, len(groups))
+}
+
+// PartialToFinish is the oldest-held unfinished carrier of payloadCode standing
+// in one of the part's partial homes, or in also (the need's own source) when
+// named: tier 2b's answer, and the complex Empty pickup's at a concrete source.
+// nil when the part has no home, there is none, or the search did not answer
+// (a fresh empty is then sought as before).
+func (f *Finder) PartialToFinish(payloadCode, also string, excludeID int64, asker domain.DigAsker) *bins.Bin {
+	homes, err := f.db.PartialHomesForPayload(payloadCode)
+	if err != nil {
+		f.debug("finder: partial homes for %s unreadable: %v", payloadCode, err)
+		return nil
+	}
+	if len(homes) == 0 {
+		return nil
+	}
+	places := homes
+	if also != "" {
+		places = append(append([]string{}, homes...), also)
+	}
+	pb, err := f.db.FindPartialToFinish(payloadCode, places, excludeID, asker)
+	if sourceSearchFailed(err) {
+		f.debug("finder: partial search for %s unreadable: %v", payloadCode, err)
+		return nil
+	}
+	if pb != nil {
+		f.debug("finder: partial bin %d of %s (%d) in its home — finishing it before a fresh empty",
+			pb.ID, payloadCode, pb.UOPRemaining)
+	}
+	return pb
+}
+
+// isLinePosition reports a claim's line position; an unreadable answer reads
+// as a line position, so a read failure leaves the pickup where it was named.
+func (f *Finder) isLinePosition(name string) bool {
+	is, err := f.db.IsLinePosition(name)
+	if err != nil {
+		f.debug("finder: line-position read for %s failed: %v", name, err)
+		return true
+	}
+	return is
 }

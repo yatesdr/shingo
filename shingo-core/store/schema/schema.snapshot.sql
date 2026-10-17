@@ -248,7 +248,8 @@ CREATE TABLE public.bins (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     lifted_at timestamp with time zone,
     anomaly_note text DEFAULT ''::text NOT NULL,
-    undeclared_carrier_at timestamp with time zone
+    undeclared_carrier_at timestamp with time zone,
+    held_since timestamp with time zone
 );
 
 CREATE SEQUENCE public.bins_id_seq
@@ -1410,7 +1411,8 @@ CREATE TABLE public.style_claims (
     outbound_destination text DEFAULT ''::text NOT NULL,
     paired_core_node text DEFAULT ''::text NOT NULL,
     second_paired_core_node text DEFAULT ''::text NOT NULL,
-    containment_destination text DEFAULT ''::text NOT NULL
+    containment_destination text DEFAULT ''::text NOT NULL,
+    partial_destination text DEFAULT ''::text NOT NULL
 );
 
 CREATE TABLE public.supply_refusals (

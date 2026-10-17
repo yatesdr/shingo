@@ -204,6 +204,16 @@ type FinderDB interface {
 	FindSourceBinFIFO(payloadCode string, excludeNodeID int64) (*bins.Bin, error)
 	FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNodeID int64, fence bins.EmptyFence, asker domain.DigAsker) (*bins.Bin, error)
 	FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, excludeNodeID int64, asker domain.DigAsker) (*bins.Bin, error)
+	// A partial to finish: the homes of a part's partials, and the oldest-held
+	// partial of the part standing in any of the places named (tier 2b).
+	PartialHomesForPayload(payloadCode string) ([]string, error)
+	// IsLinePosition: a carrier standing at a claim's line position is that
+	// position's own (a press's deck), so its Empty pickup is never a refill.
+	IsLinePosition(nodeName string) (bool, error)
+	// GetBin reads one bin: a pickup that names its bin (the operator's pick)
+	// goes to wherever that bin stands.
+	GetBin(id int64) (*bins.Bin, error)
+	FindPartialToFinish(payloadCode string, places []string, excludeNodeID int64, asker domain.DigAsker) (*bins.Bin, error)
 	FindEmptyBinOfType(binTypeCode, preferZone string, excludeNodeID int64, fence bins.EmptyFence, asker domain.DigAsker) (*bins.Bin, error)
 	FindEmptyBinOfTypeInGroup(binTypeCode string, groupNodeID, excludeNodeID int64, asker domain.DigAsker) (*bins.Bin, error)
 	// The typed finders for a SET of types: a no-mix loader whose payloads may

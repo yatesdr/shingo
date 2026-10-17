@@ -802,6 +802,12 @@ func (s *BinManifestService) recordProduced(binID int64, manifestJSON, payloadCo
 // payload code, so a handler can answer the caller's error rather than 500.
 var ErrUnknownPayload = errors.New("unknown payload")
 
+// ErrCountRequired refuses a LOAD that declares no count at a window inside a
+// partial home of the part. The standard pack is the default everywhere else;
+// here a carrier may hold any count, and one written as full would never be
+// called back to be finished.
+var ErrCountRequired = errors.New("a load here must say how many it holds")
+
 // LoadAtLine is the bin-load telemetry door's write: an operator's LOAD at a
 // loader window, relayed by the Edge, with the parts it named (manifestJSON) and
 // the count it declared, if any.
@@ -840,15 +846,47 @@ func (s *BinManifestService) LoadAtLine(binID int64, manifestJSON, payloadCode s
 	if err != nil || p == nil {
 		return 0, 0, fmt.Errorf("%w: payload template %q not found", ErrUnknownPayload, payloadCode)
 	}
+	// A partial home holds carriers of any count, so the default cannot stand
+	// for one there: the person declares it, and the declaration is the moment
+	// the carrier is held from (StampHeldSince, below).
+	bin, err := s.db.GetBin(binID)
+	if err != nil {
+		return 0, 0, err
+	}
+	atHome := false
+	if bin.NodeID != nil {
+		if atHome, err = s.db.InPartialHomeOf(*bin.NodeID, payloadCode); err != nil {
+			return 0, 0, err
+		}
+	}
+	if atHome && declared == nil {
+		return 0, 0, fmt.Errorf("%w: %s is a partial home for %s", ErrCountRequired, bin.NodeName, payloadCode)
+	}
 	var d *int
 	if declared != nil {
 		v := int(*declared)
 		d = &v
 	}
+	// A bare cart a person loads parts onto now carries a carrier: the rule
+	// judges that, and a refused load puts the marker back.
+	marker, err := s.db.StampCarrierForLoad(binID)
+	if err != nil {
+		return 0, 0, err
+	}
 	uop := standardPackUOP(p.UOPCapacity, d)
 	epoch, err := s.recordProduced(binID, manifestJSON, payloadCode, uop, "", refuseUndeclared)
 	if err != nil {
+		if marker != nil {
+			if rErr := s.db.RestoreBinType(binID, *marker); rErr != nil {
+				log.Printf("bin manifest: restore bin %d's cart type after a refused load: %v", binID, rErr)
+			}
+		}
 		return 0, 0, err
+	}
+	if atHome {
+		if err := s.db.StampHeldSince(binID); err != nil {
+			log.Printf("bin manifest: held-since for bin %d after its load: %v", binID, err)
+		}
 	}
 	return epoch, uop, nil
 }

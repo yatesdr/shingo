@@ -64,6 +64,16 @@ type NodeBinInfo struct {
 	Manifest          *string `json:"manifest,omitempty"`
 	ManifestConfirmed bool    `json:"manifest_confirmed"`
 	Occupied          bool    `json:"occupied"`
+	// HeldSince and HeldFor are set for a HELD carrier only: an unfinished one
+	// standing in a partial home of its part, waiting to be called back. When it
+	// entered the home (RFC 3339), and the line whose claim keeps it there.
+	// Blank for every other carrier, and from a Core predating the fields.
+	HeldSince string `json:"held_since,omitempty"`
+	HeldFor   string `json:"held_for,omitempty"`
+	// UOPCapacity is the carrier's part's capacity, so a board can say a
+	// carrier is partial (its part set, its count above 0 and below this)
+	// wherever it stands. 0 when no part is set or the part has none.
+	UOPCapacity int `json:"uop_capacity,omitempty"`
 }
 
 // ManifestItem describes a single line in a payload manifest TEMPLATE.
@@ -192,6 +202,10 @@ type BinClearRequest struct {
 	// clear (dunnage floating). omitempty reproduces the old conditional
 	// map key: absent when empty, present when set.
 	BinTypeCode string `json:"bin_type_code,omitempty"`
+	// Unload is the person's second tap on a carrier Core holds as an
+	// unfinished partial waiting in its home: clear it anyway (the clear is
+	// booked as ever). Without it Core refuses to clear a held partial.
+	Unload bool `json:"unload,omitempty"`
 }
 
 // BinClearResponse is Core's reply to a bin clear.
@@ -218,10 +232,14 @@ type BinClearResponse struct {
 	// Core that predates the field or could not read it.
 	ClearedBinTypeCode string `json:"cleared_bin_type_code"`
 	ClearedPayloadCode string `json:"cleared_payload_code"`
-	DeltaEpoch         int64  `json:"delta_epoch"`
-	Detail             string `json:"detail,omitempty"`
-	Error              string `json:"error,omitempty"`
-	Status             string `json:"status"`
+	// ClearedUOP is the count the carrier held, which the clear zeroed: the
+	// number the Edge logs, Core's and not a cache's. 0 from a Core that
+	// predates the field.
+	ClearedUOP int    `json:"cleared_uop"`
+	DeltaEpoch int64  `json:"delta_epoch"`
+	Detail     string `json:"detail,omitempty"`
+	Error      string `json:"error,omitempty"`
+	Status     string `json:"status"`
 }
 
 // PreflightRequest is the payload list the Edge POSTs to Core's preflight
@@ -306,4 +324,17 @@ type LiftDependency struct {
 	LifterUUID string `json:"lifter_uuid"`
 	Node       string `json:"node"`
 	CoRelease  bool   `json:"co_release"`
+}
+
+// HeldPartial is one held partial of a part: an unfinished carrier waiting in
+// a partial home of its part to be called back and finished. A finish-later
+// claim's REQUEST lists them, oldest held first, for the operator to choose
+// which one the swap fetches.
+type HeldPartial struct {
+	BinID        int64  `json:"bin_id"`
+	BinLabel     string `json:"bin_label"`
+	NodeName     string `json:"node_name"`
+	UOPRemaining int    `json:"uop_remaining"`
+	// HeldSince is when it entered its home, RFC 3339.
+	HeldSince string `json:"held_since"`
 }

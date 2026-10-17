@@ -561,6 +561,17 @@ func (s *PlanningService) applyTransport(order *orders.Order, env *protocol.Enve
 				log.Printf("dispatch: update order %d delivery_node: %v", order.ID, err)
 			}
 		}
+		// An unfinished carrier goes to its claim's partial home instead
+		// (place_by_contents.go): the count is the one this move declares.
+		if isMove {
+			if home := s.placePartialMove(order, d.pick); home != nil {
+				destNode = home
+				order.DeliveryNode = home.Name
+				if err := s.db.UpdateOrderDeliveryNode(order.ID, home.Name); err != nil {
+					log.Printf("dispatch: update order %d delivery_node: %v", order.ID, err)
+				}
+			}
+		}
 		// A same-node move is physically impossible and would waste a fleet order.
 		//
 		// STAYS MOVE-ONLY. The same argument reads as though it applies to an

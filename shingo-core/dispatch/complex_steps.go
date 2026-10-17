@@ -43,7 +43,7 @@ func stepsAsResolved(steps []protocol.ComplexOrderStep) []resolvedStep {
 	out := make([]resolvedStep, 0, len(steps))
 	for _, s := range steps {
 		out = append(out, resolvedStep{Action: s.Action, Node: s.Node, Empty: s.Empty,
-			PayloadCode: s.PayloadCode, ExclusiveSlot: s.ExclusiveSlot, WaitKind: s.WaitKind})
+			PayloadCode: s.PayloadCode, BinID: s.BinID, ExclusiveSlot: s.ExclusiveSlot, WaitKind: s.WaitKind})
 	}
 	return out
 }

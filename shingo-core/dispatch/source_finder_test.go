@@ -326,6 +326,17 @@ func (f *fakeFinderDB) FindEmptyCompatibleBin(_, _ string, _ int64, fence bins.E
 	return f.globalEmpty, nil
 }
 
+// No part has a partial home in this fake: the partial tier asks and finds none.
+func (f *fakeFinderDB) PartialHomesForPayload(string) ([]string, error) { return nil, nil }
+
+func (f *fakeFinderDB) GetBin(int64) (*bins.Bin, error) { return nil, sql.ErrNoRows }
+
+func (f *fakeFinderDB) IsLinePosition(string) (bool, error) { return false, nil }
+
+func (f *fakeFinderDB) FindPartialToFinish(string, []string, int64, reservations.DigAsker) (*bins.Bin, error) {
+	return nil, sql.ErrNoRows
+}
+
 func (f *fakeFinderDB) FindEmptyCompatibleBinInGroup(_ string, _, _ int64, asker reservations.DigAsker) (*bins.Bin, error) {
 	f.groupEmptyCalls++
 	f.lastAsker = asker

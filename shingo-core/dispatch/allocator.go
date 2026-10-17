@@ -686,9 +686,13 @@ func (a *Allocator) resolveHeldReservations(rows []reservations.Reservation) []*
 // bin carries no payload to mismatch, and a removal clears whatever is
 // resident), so a key that demanded equal empty-status read the order's own
 // hold as somebody else's, every pass. An empty leg never keeps a full bin;
-// the acquire rule never takes one for it.
+// the acquire rule never takes one for it. It does take a PARTIAL of the part
+// being made, to finish it (partialToFinishAt), so an empty leg keeps a held
+// bin that is not empty: that is the partial, and reading it as somebody
+// else's dropped the order's hold on it every pass and left the order pointing
+// at a bin it no longer held.
 func matchHeldToNeed(held []*heldReservation, step resolvedStep) *heldReservation {
-	var keptEmpty *heldReservation
+	var kept *heldReservation
 	for _, hb := range held {
 		if hb.used || hb.kind == reservations.KindSlot || hb.nodeName == "" || hb.nodeName != step.Node {
 			continue
@@ -696,11 +700,11 @@ func matchHeldToNeed(held []*heldReservation, step resolvedStep) *heldReservatio
 		if hb.empty == step.Empty {
 			return hb
 		}
-		if keptEmpty == nil && hb.empty && !step.Empty {
-			keptEmpty = hb
+		if kept == nil && hb.empty != step.Empty {
+			kept = hb
 		}
 	}
-	return keptEmpty
+	return kept
 }
 
 // matchHeldSlot returns the first unused held SLOT reservation on nodeName —
@@ -759,6 +763,15 @@ func (a *Allocator) findAvailableForNeed(step resolvedStep, payloadCode string, 
 	candidates := bins
 	claimPayload := payloadCode
 	switch {
+	case step.BinID != 0:
+		// The pickup names its bin (an operator's pick): that one, or none.
+		candidates = nil
+		for _, b := range bins {
+			if b.ID == step.BinID {
+				candidates = append(candidates, b)
+				claimPayload = b.PayloadCode
+			}
+		}
 	case removal:
 		// Evac/removal: clear whatever bin is resident, regardless of its payload.
 		// The line holds exactly one bin, and its style may legitimately differ
@@ -767,6 +780,15 @@ func (a *Allocator) findAvailableForNeed(step resolvedStep, payloadCode string, 
 		// real payload downstream — never rewrite the bin to match the order.
 		claimPayload = ""
 	case step.Empty:
+		// A carrier to fill can be a partial of the part being made, when the
+		// part has a partial home: finishing it comes before a fresh empty, at
+		// this node as at the finder's (tier 2b), which may have sent the step
+		// here for it.
+		if pb, perr := a.partialToFinishAt(bins, payloadCode); perr != nil {
+			return nil, nodeHadBins, perr
+		} else if pb != nil {
+			return pb, nodeHadBins, nil
+		}
 		// Empty pickup leg (produce's "bring an empty to fill"): an empty carrier,
 		// dropping the payload context — same filter as the old claim path.
 		candidates = plan.EmptyBinsOnly(bins)
@@ -979,4 +1001,35 @@ func (a *Allocator) recordClaimedBins(order *orders.Order, steps []resolvedStep,
 			order.ID, len(claimed), claimed[0].binID)
 	}
 	return nil
+}
+
+// partialToFinishAt is the oldest-held unfinished carrier of payloadCode among
+// a node's bins, available to claim, when the part has a partial home — the
+// Empty pickup's first choice. nil when the part has no home (a blank claim
+// fetches no partial), or none stands here.
+func (a *Allocator) partialToFinishAt(atNode []*binsstore.Bin, payloadCode string) (*binsstore.Bin, error) {
+	if payloadCode == "" || len(atNode) == 0 {
+		return nil, nil
+	}
+	homes, err := a.db.PartialHomesForPayload(payloadCode)
+	if err != nil || len(homes) == 0 {
+		return nil, err
+	}
+	pl, err := a.db.GetPayloadByCode(payloadCode)
+	if err != nil || pl == nil {
+		return nil, err
+	}
+	rule, err := a.db.LoadBinTypeRule(payloadCode)
+	if err != nil {
+		return nil, err
+	}
+	for _, b := range atNode {
+		if !isUnfinished(b.PayloadCode, b.UOPRemaining, pl.UOPCapacity) || b.PayloadCode != payloadCode {
+			continue
+		}
+		if BinUnavailableReason(b, payloadCode, rule) == "" {
+			return b, nil
+		}
+	}
+	return nil, nil
 }
