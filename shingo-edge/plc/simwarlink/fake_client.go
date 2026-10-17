@@ -25,6 +25,13 @@ import (
 
 var _ plc.WarlinkClient = (*FakeClient)(nil)
 
+// Identity is a part-identity value, a process's CATID, for a sim run to set
+// through WriteTagValue. A plant's PLC publishes it in the process's MES struct
+// beside the counter; the fake holds it as a DINT that never ticks. It is a type
+// of its own so an ordinary integer write (a zone light, a heartbeat) is still
+// discarded.
+type Identity int64
+
 // ReadinessFunc reports whether the fake PLC should emit a tick for the given
 // plcName. When nil or returns true, the tick proceeds. When it returns false,
 // the tick is suppressed (the machine is not ready — starved input, no output
@@ -42,8 +49,11 @@ type FakeClient struct {
 	// the cell's bypass button (S7). A bool write creates or sets one; the
 	// counters stay unwritable.
 	bools map[string]map[string]bool
-	clk   clock.Clock
-	ready ReadinessFunc // nil = always ready (backward-compatible)
+	// idents are part-identity tags (a process's CATID), set through
+	// WriteTagValue with an Identity and published as a DINT that never ticks.
+	idents map[string]map[string]int64
+	clk    clock.Clock
+	ready  ReadinessFunc // nil = always ready (backward-compatible)
 }
 
 // NewFakeClient builds the fake from the sim process list and starts one ticker
@@ -60,7 +70,7 @@ func (f *FakeClient) SetReadinessFunc(fn ReadinessFunc) {
 }
 
 func NewFakeClient(ctx context.Context, cfg config.SimConfig, clk clock.Clock) *FakeClient {
-	f := &FakeClient{vals: make(map[string]map[string]int64), bools: make(map[string]map[string]bool), clk: clk}
+	f := &FakeClient{vals: make(map[string]map[string]int64), bools: make(map[string]map[string]bool), idents: make(map[string]map[string]int64), clk: clk}
 	seen := make(map[string]bool)
 	for _, p := range cfg.Processes {
 		if f.vals[p.PLCName] == nil {
@@ -141,7 +151,7 @@ func (f *FakeClient) ListTags(ctx context.Context, plcName string) (map[string]p
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	tags := f.vals[plcName]
-	out := make(map[string]plc.WarlinkTag, len(tags)+len(f.bools[plcName]))
+	out := make(map[string]plc.WarlinkTag, len(tags)+len(f.bools[plcName])+len(f.idents[plcName]))
 	for tagName, v := range tags {
 		out[plcName+"."+tagName] = plc.WarlinkTag{
 			PLC:   plcName,
@@ -152,6 +162,9 @@ func (f *FakeClient) ListTags(ctx context.Context, plcName string) (map[string]p
 	}
 	for tagName, v := range f.bools[plcName] {
 		out[plcName+"."+tagName] = plc.WarlinkTag{PLC: plcName, Name: tagName, Type: "BOOL", Value: v}
+	}
+	for tagName, v := range f.idents[plcName] {
+		out[plcName+"."+tagName] = plc.WarlinkTag{PLC: plcName, Name: tagName, Type: "DINT", Value: v}
 	}
 	return out, nil
 }
@@ -191,6 +204,9 @@ func (f *FakeClient) ReadTagValue(ctx context.Context, plcName, tagName string) 
 	if b, ok := f.bools[plcName][tagName]; ok {
 		return b, nil
 	}
+	if v, ok := f.idents[plcName][tagName]; ok {
+		return v, nil
+	}
 	tags, ok := f.vals[plcName]
 	if !ok {
 		return nil, fmt.Errorf("simwarlink: PLC %q not found", plcName)
@@ -202,11 +218,15 @@ func (f *FakeClient) ReadTagValue(ctx context.Context, plcName, tagName string) 
 	return v, nil
 }
 
-// WriteTagValue sets a BOOL tag when the value is a bool (a curtain's state,
-// the sim's bypass button), registering its PLC if new; any other write is
+// WriteTagValue sets a part-identity tag when the value is an Identity, and a
+// BOOL tag when it is a bool (a curtain's state, the sim's bypass button),
+// registering its PLC if new; any other write is
 // discarded (Q4: zone lights / heartbeats have no sim effect) and reports
 // success. A counter is never written.
 func (f *FakeClient) WriteTagValue(ctx context.Context, plcName, tagName string, value any) error {
+	if id, ok := value.(Identity); ok {
+		return f.setIdentity(plcName, tagName, int64(id))
+	}
 	b, ok := value.(bool)
 	if !ok {
 		return nil
@@ -218,7 +238,7 @@ func (f *FakeClient) WriteTagValue(ctx context.Context, plcName, tagName string,
 	}
 	if f.bools[plcName] == nil {
 		f.bools[plcName] = make(map[string]bool)
-		if f.vals[plcName] == nil {
+		if f.vals[plcName] == nil && f.idents[plcName] == nil {
 			f.plcs = append(f.plcs, plcName)
 			sort.Strings(f.plcs)
 		}
@@ -233,4 +253,23 @@ func (f *FakeClient) WriteTagValue(ctx context.Context, plcName, tagName string,
 func (f *FakeClient) OpenEventStream(ctx context.Context) (io.ReadCloser, error) {
 	r, _ := io.Pipe()
 	return r, nil
+}
+
+// setIdentity sets a part-identity tag. A counter is never written: its name
+// is refused, so a run cannot stop a counter by naming it.
+func (f *FakeClient) setIdentity(plcName, tagName string, v int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, counter := f.vals[plcName][tagName]; counter {
+		return fmt.Errorf("simwarlink: %s.%s is a counter, not an identity tag", plcName, tagName)
+	}
+	if f.idents[plcName] == nil {
+		f.idents[plcName] = make(map[string]int64)
+		if f.vals[plcName] == nil && f.bools[plcName] == nil {
+			f.plcs = append(f.plcs, plcName)
+			sort.Strings(f.plcs)
+		}
+	}
+	f.idents[plcName][tagName] = v
+	return nil
 }

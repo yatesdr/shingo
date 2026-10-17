@@ -168,3 +168,30 @@ func TestFakeCurtainIsAWritableBool(t *testing.T) {
 		t.Errorf("a bool write changed a counter: %v", v)
 	}
 }
+
+// TestFakeIdentityIsAWritableDINT: a part-identity tag (a process's CATID)
+// is set with an Identity and polled as a DINT beside the counter, so the
+// CATID monitor reads it as it reads a plant's. A plain integer write stays
+// discarded, and a counter's name is refused.
+func TestFakeIdentityIsAWritableDINT(t *testing.T) {
+	ctx := context.Background()
+	f := NewFakeClient(ctx, twoProcessCfg(), clock.NewManual(time.Unix(0, 0)))
+	if err := f.WriteTagValue(ctx, "PRESS-1", "MES_P1.CATID_01", Identity(11111111)); err != nil {
+		t.Fatalf("set identity: %v", err)
+	}
+	tags, _ := f.ListTags(ctx, "PRESS-1")
+	if tg := tags["PRESS-1.MES_P1.CATID_01"]; tg.Type != "DINT" || tg.Value != int64(11111111) {
+		t.Errorf("polled identity = %+v, want a DINT 11111111", tg)
+	}
+	_ = f.WriteTagValue(ctx, "PRESS-1", "MES_P1.CATID_01", Identity(22222222))
+	if v, _ := f.ReadTagValue(ctx, "PRESS-1", "MES_P1.CATID_01"); v != int64(22222222) {
+		t.Errorf("the tool change did not take: %v", v)
+	}
+	_ = f.WriteTagValue(ctx, "PRESS-1", "ZONE_LIGHT", int64(3))
+	if _, err := f.ReadTagValue(ctx, "PRESS-1", "ZONE_LIGHT"); err == nil {
+		t.Error("a plain integer write was kept; it is discarded")
+	}
+	if err := f.WriteTagValue(ctx, "PRESS-1", "PRESS-1_COUNTER", Identity(5)); err == nil {
+		t.Error("an identity write to a counter was accepted")
+	}
+}
