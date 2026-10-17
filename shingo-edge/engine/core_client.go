@@ -560,12 +560,14 @@ type HeldBinRow = protocol.HeldBinRow
 
 // ClearBin clears the manifest on the bin at a node via Core's HTTP API.
 // binTypeCode is optional: when non-empty Core re-stamps the carrier's
-// bin_type_id atomically with the manifest clear (dunnage float).
-func (c *CoreClient) ClearBin(nodeName, binTypeCode string) (*BinClearResponse, error) {
+// bin_type_id atomically with the manifest clear (dunnage float). unload is the
+// person's second tap on a partial Core holds in its home: without it Core
+// refuses to clear one.
+func (c *CoreClient) ClearBin(nodeName, binTypeCode string, unload bool) (*BinClearResponse, error) {
 	if c.baseURL == "" {
 		return nil, fmt.Errorf("core API not configured")
 	}
-	reqBody := protocol.BinClearRequest{NodeName: nodeName, BinTypeCode: binTypeCode}
+	reqBody := protocol.BinClearRequest{NodeName: nodeName, BinTypeCode: binTypeCode, Unload: unload}
 	body, _ := json.Marshal(reqBody)
 	resp, err := c.http.Post(c.baseURL+"/api/telemetry/bin-clear", "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -580,4 +582,27 @@ func (c *CoreClient) ClearBin(nodeName, binTypeCode string) (*BinClearResponse, 
 		return nil, fmt.Errorf("%s", coreErrorText(result.Detail, result.Error, resp.StatusCode))
 	}
 	return &result, nil
+}
+
+// FetchHeldPartials is Core's list of a part's held partials, oldest held
+// first: the carriers a finish-later claim's REQUEST offers the operator.
+func (c *CoreClient) FetchHeldPartials(payloadCode string) ([]protocol.HeldPartial, error) {
+	if c.baseURL == "" {
+		return nil, ErrCoreNotConfigured
+	}
+	params := url.Values{}
+	params.Set("payload", payloadCode)
+	resp, err := c.http.Get(c.baseURL + "/api/telemetry/held-partials?" + params.Encode())
+	if err != nil {
+		return nil, fmt.Errorf("%w: fetch held partials: %w", ErrCoreUnreachable, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%w: fetch held partials: HTTP %d", ErrCoreHTTPStatus, resp.StatusCode)
+	}
+	var out []protocol.HeldPartial
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("%w: decode held partials: %w", ErrCoreUndecodable, err)
+	}
+	return out, nil
 }

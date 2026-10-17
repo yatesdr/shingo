@@ -28,11 +28,19 @@ import (
 // RequestProduceSwap is the OPERATOR entry point for the evacuate direction —
 // the mirror of RequestNodeMaterial, with the same dual-trigger shape. Tick-
 // driven callers use requestProduceSwapFor with the autoreorder trigger.
-func (e *Engine) RequestProduceSwap(nodeID int64) (*NodeOrderResult, error) {
-	return e.requestProduceSwapFor(nodeID, protocol.EpisodeTriggerOperator)
+//
+// pick is the bin the operator chose from a finish-later claim's held partials
+// (the REQUEST list): the swap's fetch names it, so Core lifts that carrier
+// to finish and no other. 0 lets Core choose, oldest held first.
+func (e *Engine) RequestProduceSwap(nodeID int64, pick int64) (*NodeOrderResult, error) {
+	return e.requestProduceSwapPick(nodeID, protocol.EpisodeTriggerOperator, pick)
 }
 
 func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrderResult, error) {
+	return e.requestProduceSwapPick(nodeID, trigger, 0)
+}
+
+func (e *Engine) requestProduceSwapPick(nodeID int64, trigger string, pick int64) (*NodeOrderResult, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err
@@ -40,7 +48,7 @@ func (e *Engine) requestProduceSwapFor(nodeID int64, trigger string) (*NodeOrder
 	if claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim", node.Name)
 	}
-	return e.produceRequest(node, runtime, claim, produceAsk{trigger: trigger, finalizes: true})
+	return e.produceRequest(node, runtime, claim, produceAsk{trigger: trigger, finalizes: true, pick: pick})
 }
 
 // produceAsk is how the two buttons onto a produce line differ. Everything else
@@ -56,6 +64,9 @@ type produceAsk struct {
 	// The empty-bin request asks for an empty whatever is counted and whatever
 	// part the press reports, and joins the cell's episode as an operator's ask.
 	finalizes bool
+	// pick is the operator's chosen held partial (RequestProduceSwap), named
+	// on the swap's fetch; 0 for none.
+	pick int64
 }
 
 // produceRequest is the one door onto a produce line's plan. The guards that
@@ -120,6 +131,9 @@ func (e *Engine) produceRequest(node *processes.Node, runtime *processes.Runtime
 		if plan, err = BuildProducePlan(node, runtime, swapClaim, occupancy, inbound); err != nil {
 			return nil, err
 		}
+	}
+	if ask.pick > 0 && plan.Dispatch != nil {
+		nameRefillBin(plan.Dispatch, ask.pick)
 	}
 	if takeSpare && plan.SimpleMove {
 		plan.SimpleSource, plan.FromSpot = spotNode(claim), true
@@ -585,4 +599,19 @@ func (e *Engine) refreshOrder(orderID int64) (*orders.Order, error) {
 		return nil, fmt.Errorf("re-read order %d: %w", orderID, err)
 	}
 	return o, nil
+}
+
+// nameRefillBin names the operator's chosen held partial on the swap's fetch:
+// the leg's first pickup of a carrier to fill. Core lifts that bin where it
+// stands, so the carrier the operator chose is the one that comes, and no
+// other is sought.
+func nameRefillBin(d *SwapDispatch, binID int64) {
+	for _, steps := range [][]protocol.ComplexOrderStep{d.StepsA, d.StepsB} {
+		for i := range steps {
+			if steps[i].Action == protocol.ActionPickup && steps[i].Empty {
+				steps[i].BinID = binID
+				return
+			}
+		}
+	}
 }

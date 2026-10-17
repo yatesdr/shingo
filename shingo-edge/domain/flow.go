@@ -57,6 +57,9 @@ type FlowCell struct {
 	// ChangeoverEvacDestination is where a tooling evacuation sends this
 	// cell's bins; blank falls back to OutboundDestination.
 	ChangeoverEvacDestination string `json:"changeover_evac_destination,omitempty"`
+	// PartialDestination is where this cell's carrier goes when it leaves the
+	// line unfinished, to wait and be called back; blank = where a full goes.
+	PartialDestination string `json:"partial_destination,omitempty"`
 	// ChangeoverEvacNodes marks which of this cell's positions hold bins that
 	// are in the way of a setup.
 	ChangeoverEvacNodes []string `json:"changeover_evac_nodes,omitempty"`
@@ -216,6 +219,7 @@ func Collapse(c NodeClaim) FlowCell {
 		OutboundDestination:       c.OutboundDestination,
 		ChangeoverEvacDestination: c.ChangeoverEvacDestination,
 		ChangeoverEvacNodes:       cloneStrings(c.ChangeoverEvacNodes),
+		PartialDestination:        c.PartialDestination,
 		KeyRoute:                  cloneStrings(c.KeyRoute),
 	}
 }
@@ -224,7 +228,7 @@ func Collapse(c NodeClaim) FlowCell {
 //
 // It honours updateClaim's boundary. Of the eighteen columns the store writes
 // unconditionally, the cell supplies role, swap_mode, payload_code, the two
-// paired positions and the four routing fields; the other nine (uop_capacity,
+// paired positions, the four routing fields and the partial destination; the other nine (uop_capacity,
 // reorder_point, allowed_payload_codes, auto_request_payload,
 // evacuate_on_changeover, auto_confirm, lineside_soft_threshold,
 // reuse_compatible_bins, auto_push) are copied from the prior claim — or take
@@ -255,6 +259,7 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 		OutboundStaging:           cell.OutboundStaging,
 		OutboundDestination:       cell.OutboundDestination,
 		ChangeoverEvacDestination: Ptr(cell.ChangeoverEvacDestination),
+		PartialDestination:        cell.PartialDestination,
 		ChangeoverEvacNodes:       Ptr(nonNilStrings(cell.ChangeoverEvacNodes)),
 		KeyRoute:                  Ptr(nonNilStrings(cell.KeyRoute)),
 		Source:                    source,
@@ -322,6 +327,8 @@ func InputFromClaim(c NodeClaim) NodeClaimInput {
 		// the pointer-typed contract documents for the other editor-less
 		// columns. The process-settings stamp sets it explicitly on top.
 		ContainmentDestination: c.ContainmentDestination,
+		// And on the partial route, for the same reason.
+		PartialDestination: c.PartialDestination,
 		// Echo-faithful on the curtain tie too: the claim carries the flag,
 		// so a composer claim-save echoes it instead of wiping it (the same
 		// editor-less-column disease, one line of prevention).
@@ -427,6 +434,7 @@ func MaterializeClaim(in NodeClaimInput, prior *NodeClaim) NodeClaim {
 	c.OutboundStaging = in.OutboundStaging
 	c.InboundSource = in.InboundSource
 	c.OutboundDestination = in.OutboundDestination
+	c.PartialDestination = in.PartialDestination
 	c.AllowedPayloadCodes = cloneStrings(in.AllowedPayloadCodes)
 	c.AutoRequestPayload = in.AutoRequestPayload
 	c.EvacuateOnChangeover = in.EvacuateOnChangeover

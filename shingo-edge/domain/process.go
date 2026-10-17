@@ -388,6 +388,12 @@ type NodeClaim struct {
 	// Core-side at dispatch against Core's containment state; the Edge
 	// configures it and never enforces it.
 	ContainmentDestination string `json:"containment_destination"`
+	// PartialDestination is where this claim's carrier goes when it leaves the
+	// line unfinished — its part set, its count above 0 and below capacity —
+	// to wait there and be called back to finish (a node or a group). Blank =
+	// it goes where a full goes. Core judges "unfinished" from its own count at
+	// the lift and chooses the drop; the Edge configures it and never enforces it.
+	PartialDestination string `json:"partial_destination"`
 	// CurtainRequired is the light-curtain interlock's style tie: whether THIS
 	// style's full-bin releases at THIS node wait for the node's curtain tag.
 	// The claim is the (style, node) pair, and the plant's rule is THE BIN
@@ -1170,6 +1176,9 @@ type NodeClaimInput struct {
 	// payload's bins divert instead of OutboundDestination. Editor-owned
 	// value type (the editor always renders the control), blank = inert.
 	ContainmentDestination string `json:"containment_destination"`
+	// PartialDestination mirrors NodeClaim's field: where an unfinished carrier
+	// of this claim goes to wait. Blank = where a full goes.
+	PartialDestination string `json:"partial_destination"`
 	// CurtainRequired is the input side of the light-curtain style tie
 	// (NodeClaim's field carries the rule): whether this style's full-bin
 	// releases at this node wait for the curtain tag. Editor-owned bool.

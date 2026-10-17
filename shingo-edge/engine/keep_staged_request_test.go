@@ -191,7 +191,7 @@ func TestKeepStagedRequest_AsksOnlyForTheLine(t *testing.T) {
 				map[string]NodeBinInfo{ksLine: occupiedLine, ksPair: occupiedLine, ksSpot: c.spot})
 			var err error
 			if c.role == protocol.ClaimRoleProduce {
-				_, err = eng.RequestProduceSwap(nodeID)
+				_, err = eng.RequestProduceSwap(nodeID, 0)
 			} else {
 				_, err = eng.RequestNodeMaterial(nodeID, 1)
 			}

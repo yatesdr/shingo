@@ -28,9 +28,10 @@ const (
 	// disposition: any pulled parts are captured as lineside buckets and
 	// Core clears the bin's manifest (remaining_uop=0).
 	DispositionCaptureLineside ReleaseDispositionMode = "capture_lineside"
-	// DispositionSendPartialBack returns the partially-consumed bin to the
-	// supermarket with its current UOP count. No bucket capture; Core syncs
-	// uop_remaining and preserves the manifest.
+	// DispositionSendPartialBack releases the partially-consumed bin with its
+	// current UOP count. No bucket capture; Core syncs uop_remaining and
+	// preserves the manifest. Where the bin goes is the leg's, as built: this
+	// names a count, not a destination.
 	DispositionSendPartialBack ReleaseDispositionMode = "send_partial_back"
 	// DispositionReleaseUnderpack — operator declares the bin is
 	// physically empty before the tracked count reaches zero (e.g.

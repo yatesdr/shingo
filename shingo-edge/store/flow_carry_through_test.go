@@ -38,6 +38,9 @@ var composerSpeaks = map[string]bool{
 	// section of the claim editor) exactly like its sibling
 	// outbound_destination; carried through a flow copy for the same reason.
 	"containment_destination": true,
+	// The partial route: composer-authored, a routing field of a produce claim
+	// like outbound_destination beside it; carried through a flow copy.
+	"partial_destination": true,
 	// The light-curtain style tie: composer-authored (the Advanced sheet's
 	// toggle). The claim is the (style, node) pair, and the departing bin's
 	// own claim decides whether its release waits for the tag - so the flag

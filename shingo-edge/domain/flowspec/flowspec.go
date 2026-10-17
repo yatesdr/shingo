@@ -131,6 +131,10 @@ const (
 	// and the only one that had no row here, so its value domain was enforced
 	// in the browser and nowhere else.
 	ReorderPointSource Field = "reorder_point_source"
+	// PartialDestination is where a produce claim's carrier goes when it leaves
+	// the line unfinished, to wait and be called back (a node or a group).
+	// Blank = where a full goes. Offered on produce claims only.
+	PartialDestination Field = "partial_destination"
 
 	// SwapMode and Role are NOT columns the per-mode matrices consult — they
 	// are the two discriminants the matrices are keyed BY, so they are not in
@@ -174,6 +178,7 @@ var fieldLabels = map[Field]string{
 	KeyRoute:                       "Key route",
 	KeyTask:                        "Key task",
 	ReorderPointSource:             "Reorder point source",
+	PartialDestination:             "Partial destination",
 	SwapMode:                       "Swap mode",
 	Role:                           "Role",
 }
@@ -187,7 +192,7 @@ var fieldOrder = []Field{
 	LinesideSoftThreshold, Sequence, KeepStagedNode, EvacuateOnChangeover,
 	ChangeoverEvacNodes, ChangeoverEvacDestination, ChangeoverCarryoverDisposition,
 	ReuseCompatibleBins, IndexRobotSupplies, AutoConfirm, AutoRequestPayload, AutoPush,
-	KeyRoute, KeyTask, ReorderPointSource,
+	KeyRoute, KeyTask, ReorderPointSource, PartialDestination,
 }
 
 // Fields returns every field, in canonical order. A fresh slice each call.
@@ -475,11 +480,16 @@ func Steady(role protocol.ClaimRole, mode protocol.SwapMode) map[Field]Need {
 	if role != protocol.ClaimRoleProduce {
 		role = protocol.ClaimRoleConsume
 	}
+	// A partial is a produce carrier that left unfinished: a consume claim has
+	// none to route, and a loader card's claim is not published to Core.
 	if role == protocol.ClaimRoleProduce {
 		out[LinesideSoftThreshold] = Unused
 		if mode == protocol.SwapModeManualSwap {
 			out[AutoPush] = Forbidden
+			out[PartialDestination] = Unused
 		}
+	} else {
+		out[PartialDestination] = Unused
 	}
 	return out
 }

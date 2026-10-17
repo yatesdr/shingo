@@ -62,6 +62,8 @@ func ClaimHas(c *NodeClaim, f flowspec.Field) bool {
 		return len(c.ChangeoverEvacNodes) > 0
 	case flowspec.ChangeoverEvacDestination:
 		return c.ChangeoverEvacDestination != ""
+	case flowspec.PartialDestination:
+		return c.PartialDestination != ""
 	case flowspec.ChangeoverCarryoverDisposition:
 		return c.ChangeoverCarryoverDisposition != "" && c.ChangeoverCarryoverDisposition != CarryoverReplace
 	case flowspec.ReuseCompatibleBins:
@@ -122,6 +124,8 @@ func ClaimInputHas(in NodeClaimInput, f flowspec.Field) bool {
 		return len(OptValue(in.ChangeoverEvacNodes)) > 0
 	case flowspec.ChangeoverEvacDestination:
 		return OptValue(in.ChangeoverEvacDestination) != ""
+	case flowspec.PartialDestination:
+		return in.PartialDestination != ""
 	case flowspec.ChangeoverCarryoverDisposition:
 		d := OptValue(in.ChangeoverCarryoverDisposition)
 		return d != "" && d != CarryoverReplace

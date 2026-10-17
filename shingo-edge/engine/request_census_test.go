@@ -149,7 +149,7 @@ func runCensusPress(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMod
 	case doorMaterial:
 		_, err = eng.RequestNodeMaterial(nodeID, 1)
 	case doorProduce:
-		_, err = eng.RequestProduceSwap(nodeID)
+		_, err = eng.RequestProduceSwap(nodeID, 0)
 	case doorEmptyBin:
 		_, err = eng.RequestEmptyBin(nodeID, ksPart)
 	}

@@ -638,7 +638,7 @@ func TestPinDoubleTapGuard_ClearAfterPushEmptySkips(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(srv.URL)
 	testutil.MustNoErr(t, eng.PushEmptyOut(nodeID), "PushEmptyOut")
-	testutil.MustNoErr(t, eng.ClearBin(nodeID, ""), "ClearBin after PUSH EMPTY")
+	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false), "ClearBin after PUSH EMPTY")
 	if n, _ := countMovesTo(t, db, nodeID, "EMPTY-TOTES"); n != 1 {
 		t.Errorf("empty-outs after PUSH EMPTY then CLEAR = %d, want 1", n)
 	}

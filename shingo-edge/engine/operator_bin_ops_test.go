@@ -191,7 +191,7 @@ func TestClearBin_FiresEmptyOut_AMRFed(t *testing.T) {
 	eng.coreClient = stubCoreClient(srv.URL)
 	eng.wireEventHandlers()
 
-	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID, ""), "ClearBin")
+	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID, "", false), "ClearBin")
 
 	after, err := db.GetOrder(orderID)
 	if err != nil {
@@ -225,7 +225,7 @@ func TestClearBin_FiresEmptyOut_PressFed(t *testing.T) {
 	eng.coreClient = stubCoreClient(srv.URL)
 
 	// No U1 order exists — the press fed the window directly.
-	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID, ""), "ClearBin")
+	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID, "", false), "ClearBin")
 
 	n, payload := countMovesTo(t, db, unloaderNodeID, "EMPTY-TOTES")
 	if n != 1 {
@@ -251,7 +251,7 @@ func TestClearBin_NoEmptyOut_WhenWindowEmpty(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(srv.URL)
 
-	if err := eng.ClearBin(unloaderNodeID, ""); err == nil || !strings.Contains(err.Error(), "no bin at node") {
+	if err := eng.ClearBin(unloaderNodeID, "", false); err == nil || !strings.Contains(err.Error(), "no bin at node") {
 		t.Errorf("ClearBin on an empty window = %v, want Core's no-bin refusal", err)
 	}
 

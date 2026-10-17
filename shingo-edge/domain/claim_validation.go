@@ -88,6 +88,10 @@ type ClaimNodeContext struct {
 type CoreNodeKinds struct {
 	Lanes      map[string]bool
 	Maintained map[string]bool
+	// AcceptsPartials: windows of a loader that takes partly filled carriers,
+	// and the groups above them (protocol.NodeInfo.AcceptsPartials). A partial
+	// home may not be one.
+	AcceptsPartials map[string]bool
 }
 
 // CoreNodeKindsOf reduces Core's node list, as the engine holds it, to the
@@ -106,6 +110,12 @@ func CoreNodeKindsOf(known map[string]protocol.NodeInfo) CoreNodeKinds {
 				k.Maintained = map[string]bool{}
 			}
 			k.Maintained[name] = true
+		}
+		if n.AcceptsPartials {
+			if k.AcceptsPartials == nil {
+				k.AcceptsPartials = map[string]bool{}
+			}
+			k.AcceptsPartials[name] = true
 		}
 	}
 	return k
@@ -164,6 +174,7 @@ func ClaimLegs(in NodeClaimInput) []ClaimLeg {
 		{"outbound_destination", RoutingRoleDestination, in.OutboundDestination},
 		{"changeover_evac_destination", RoutingRoleDestination, OptValue(in.ChangeoverEvacDestination)},
 		{"containment_destination", RoutingRoleDestination, in.ContainmentDestination},
+		{"partial_destination", RoutingRoleDestination, in.PartialDestination},
 		{"inbound_staging", RoutingRoleStaging, in.InboundStaging},
 		{"outbound_staging", RoutingRoleStaging, in.OutboundStaging},
 		{"keep_staged_node", RoutingRoleStaging, OptValue(in.KeepStagedNode)},
@@ -174,13 +185,21 @@ func ClaimLegs(in NodeClaimInput) []ClaimLeg {
 // sentence, in ClaimLegs order. The claim editor shows one per field; the
 // store refuses on the first (RefuseLaneLegs). Empty kinds find nothing.
 func (k CoreNodeKinds) LaneLegs(in NodeClaimInput) []FieldError {
-	if len(k.Lanes) == 0 {
+	if len(k.Lanes) == 0 && len(k.AcceptsPartials) == 0 {
 		return nil
 	}
 	var out []FieldError
 	for _, leg := range ClaimLegs(in) {
 		if msg := k.LegRefusal(leg.Role, leg.Name); msg != "" {
 			out = append(out, FieldError{Field: leg.Field, Message: msg, Severity: SeverityError})
+			continue
+		}
+		// A partial home keeps unfinished carriers there to finish them; a
+		// loader whose windows take partials would unload them. Both cannot hold.
+		if leg.Field == "partial_destination" && leg.Name != "" && k.AcceptsPartials[leg.Name] {
+			out = append(out, FieldError{Field: leg.Field, Severity: SeverityError, Message: fmt.Sprintf(
+				"%q is a loader whose windows take partial carriers to unload; a partial home keeps them to "+
+					"finish, so name another node or group, or turn accept partials off on that loader", leg.Name)})
 		}
 	}
 	return out

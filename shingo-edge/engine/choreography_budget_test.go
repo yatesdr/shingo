@@ -69,7 +69,7 @@ func TestBudget_EdgeProduceTwoRobot(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, protocol.SwapModeTwoRobot)
 
 	counter.Reset()
-	res, err := eng.RequestProduceSwap(nodeID)
+	res, err := eng.RequestProduceSwap(nodeID, 0)
 	testutil.MustNoErr(t, err, "produce swap")
 	if res.OrderA == nil || res.OrderB == nil {
 		t.Fatalf("fixture: the produce swap did not build two legs (order=%v a=%v b=%v)",

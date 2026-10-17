@@ -17,7 +17,7 @@ import (
 // partials) and after (under it); the test asserts after, and a row whose
 // after differs names its ruling.
 func TestProducePartialsPin_KeeperReadsAPartialOnTheSpot(t *testing.T) {
-	claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce, PayloadCode: "PP-X"}
+	claim := &processes.NodeClaim{Role: protocol.ClaimRoleProduce, PayloadCode: "PP-X", UOPCapacity: 40}
 	catalog := []protocol.PayloadBinTypeInfo{{PayloadCode: "PP-X", BinTypeCode: "PP-T"}, {PayloadCode: "PP-Y", BinTypeCode: "PP-T"}}
 	rows := []struct {
 		name         string
@@ -26,10 +26,11 @@ func TestProducePartialsPin_KeeperReadsAPartialOnTheSpot(t *testing.T) {
 	}{
 		{"an unstamped empty of a permitted carrier",
 			NodeBinInfo{Occupied: true, BinTypeCode: "PP-T", BinID: 1}, true, true},
-		// The produce arm wants payload '' and nothing else: a partial of the
-		// claim's own part reads "not a spare", and the keeper asks for a hand.
+		// Today the produce arm wanted payload '' and nothing else: a partial of
+		// the claim's own part read "not a spare", and the keeper asked for a
+		// hand. Ruling: a partial of the claim's own part is a right spare.
 		{"a partial of the claim's part (17 of 40)",
-			NodeBinInfo{Occupied: true, BinTypeCode: "PP-T", BinID: 2, PayloadCode: "PP-X", UOPRemaining: 17}, false, false},
+			NodeBinInfo{Occupied: true, BinTypeCode: "PP-T", BinID: 2, PayloadCode: "PP-X", UOPRemaining: 17}, false, true},
 		{"a partial of another part",
 			NodeBinInfo{Occupied: true, BinTypeCode: "PP-T", BinID: 3, PayloadCode: "PP-Y", UOPRemaining: 17}, false, false},
 		{"a full of the claim's part",

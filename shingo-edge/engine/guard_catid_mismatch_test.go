@@ -105,7 +105,7 @@ func TestRequestProduceSwap_BlockedOnCatidMismatch(t *testing.T) {
 	testutil.MustNoErr(t, db.SetStyleExpectedCATID(styleID, "70000001"), "set expected_catid")
 	seedCatidMonitor(eng, processID, "PRODUCE-PROC", "50029999") // wrong part on press
 
-	if _, err := eng.RequestProduceSwap(nodeID); err == nil {
+	if _, err := eng.RequestProduceSwap(nodeID, 0); err == nil {
 		t.Fatal("expected RequestProduceSwap to be refused when live CATID mismatches the active style")
 	} else if !strings.Contains(err.Error(), "CATID") {
 		t.Errorf("error = %q, want the CATID mismatch message", err.Error())
@@ -132,7 +132,7 @@ func TestGuardCatidMismatch_NeverFiresWhenExpectedCATIDBlank(t *testing.T) {
 		t.Errorf("blank expected_catid must never block, got: %v", err)
 	}
 	// And through the real relief path, the request is not refused for CATID.
-	if _, err := eng.RequestProduceSwap(nodeID); err != nil && strings.Contains(err.Error(), "CATID") {
+	if _, err := eng.RequestProduceSwap(nodeID, 0); err != nil && strings.Contains(err.Error(), "CATID") {
 		t.Errorf("blank expected_catid must not refuse the request for a CATID mismatch, got: %v", err)
 	}
 }

@@ -139,9 +139,11 @@ func (h *Handlers) apiClearBin(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		BinTypeCode string `json:"bin_type_code"`
+		// Unload is the second tap on a partial Core holds in its home.
+		Unload bool `json:"unload"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	if err := h.orchestration.ClearBin(id, body.BinTypeCode); err != nil {
+	if err := h.orchestration.ClearBin(id, body.BinTypeCode, body.Unload); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -154,10 +156,10 @@ func (h *Handlers) apiClearBin(w http.ResponseWriter, r *http.Request) {
 // hold the same number. A refusal from Core surfaces here rather than being
 // swallowed — an operator who corrected a count has to know it landed.
 //
-// PARKED, NOT DEAD. This is the operator line-count door, and no UI calls it
-// yet by design. It is pinned by TestApiBinCount_* (Core), TestLineCount_* and
-// TestFence_*; the wiring spec is "Operator line count" in
-// PARKED-shingo-features.md. Do not remove it as a dead route.
+// The station card's COUNT on a held partial calls it: a person declaring what
+// a carrier waiting in its partial home holds, which Core records and from
+// which the carrier is held. Pinned by TestApiBinCount_* (Core), TestLineCount_*
+// and TestFence_*.
 func (h *Handlers) apiRecordCount(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {

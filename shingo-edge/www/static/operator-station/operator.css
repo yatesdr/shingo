@@ -416,6 +416,21 @@ body {
     text-overflow: ellipsis;
 }
 
+/* A carrier left unfinished (partialLine): one line above the part, on every
+   tile that draws a carrier. */
+.os-node-partial {
+    position: absolute;
+    bottom: 40px;
+    left: 12px;
+    right: 12px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #ffd27a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .os-node-payload {
     position: absolute;
     bottom: 8px;

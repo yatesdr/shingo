@@ -64,7 +64,7 @@ func seedSequentialPair(t *testing.T, role protocol.ClaimRole) (eng *Engine, db 
 func pressPair(eng *Engine, role protocol.ClaimRole, nodeID int64) error {
 	var err error
 	if role == protocol.ClaimRoleProduce {
-		_, err = eng.RequestProduceSwap(nodeID)
+		_, err = eng.RequestProduceSwap(nodeID, 0)
 	} else {
 		_, err = eng.RequestNodeMaterial(nodeID, 1)
 	}

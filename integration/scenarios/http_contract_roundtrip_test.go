@@ -273,7 +273,7 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 	}
 
 	// ── 8. bin-clear without a code (payload held → cleared_* filled) ──
-	clearPlain, err := client.ClearBin(sd.StorageNode.Name, "")
+	clearPlain, err := client.ClearBin(sd.StorageNode.Name, "", false)
 	if err != nil {
 		t.Fatalf("ClearBin plain: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("LoadBin (re-load for typed clear): %v", err)
 	}
-	clearTyped, err := client.ClearBin(sd.StorageNode.Name, sd.BinType.Code)
+	clearTyped, err := client.ClearBin(sd.StorageNode.Name, sd.BinType.Code, false)
 	if err != nil {
 		t.Fatalf("ClearBin typed: %v", err)
 	}

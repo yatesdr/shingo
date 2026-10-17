@@ -43,7 +43,7 @@ func TestProduceTwoRobot_RequestDefersPaperwork(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
 
-	if _, err := eng.RequestProduceSwap(nodeID); err != nil {
+	if _, err := eng.RequestProduceSwap(nodeID, 0); err != nil {
 		t.Fatalf("RequestProduceSwap: %v", err)
 	}
 
@@ -67,7 +67,7 @@ func TestReleaseStagedOrders_IngestAtRelease(t *testing.T) {
 	_, nodeID, _, claimID := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
 
-	result, err := eng.RequestProduceSwap(nodeID)
+	result, err := eng.RequestProduceSwap(nodeID, 0)
 	testutil.MustNoErr(t, err, "RequestProduceSwap")
 	markStaged(t, db, result.OrderA.ID)
 	markStaged(t, db, result.OrderB.ID)
@@ -133,7 +133,7 @@ func TestReleaseStagedOrders_RetrySkipsSecondIngest(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
 
-	result, err := eng.RequestProduceSwap(nodeID)
+	result, err := eng.RequestProduceSwap(nodeID, 0)
 	testutil.MustNoErr(t, err, "RequestProduceSwap")
 	markStaged(t, db, result.OrderA.ID)
 	markStaged(t, db, result.OrderB.ID)

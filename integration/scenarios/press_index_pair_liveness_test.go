@@ -139,7 +139,7 @@ func TestScenario_PressIndexSwap_BothLegsGoOutMutuallyPaired(t *testing.T) {
 			cell := seedPressIndexCell(t, edge, tc.prefix, protocol.ClaimRoleProduce, tc.flipped)
 			drainOutbox(t, edge)
 
-			if _, err := edge.Engine.RequestProduceSwap(cell.nodeID); err != nil {
+			if _, err := edge.Engine.RequestProduceSwap(cell.nodeID, 0); err != nil {
 				t.Fatalf("request produce swap: %v", err)
 			}
 
@@ -208,7 +208,7 @@ func TestScenario_PressIndexRelease_HoldsThenReleasesBothLegs(t *testing.T) {
 	cell := seedPressIndexCell(t, edge, "PRL", protocol.ClaimRoleProduce, false)
 	drainOutbox(t, edge)
 
-	res, err := edge.Engine.RequestProduceSwap(cell.nodeID)
+	res, err := edge.Engine.RequestProduceSwap(cell.nodeID, 0)
 	if err != nil {
 		t.Fatalf("request produce swap: %v", err)
 	}

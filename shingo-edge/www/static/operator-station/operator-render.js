@@ -6,6 +6,7 @@ import { cardModel, headerModel, nodeFacts, ROLE_WORDS } from './operator-window
 import { mountFlowPanel, openFlowPanel, syncFlowPanel } from './operator-flow.js';
 import { ensureComposer } from './composer-boot.js';
 import { confirmResumeKeepStaged } from './operator-supply-refusal.js';
+import { openKeypad } from './operator-keypad.js';
 
 const grid = document.getElementById('os-grid');
 const headerInfo = document.getElementById('os-header-info');
@@ -431,6 +432,70 @@ export function renderGrid() {
 // unloader's stage 2 pulled directly by the process: its finished cart is not
 // sent anywhere, it waits on the window for the line. Empty for every other
 // window, and while the window holds no cart or a cart still carrying parts.
+// partialLine is the one rendering rule for a carrier left unfinished: its part
+// set, its count above 0 and below the part's capacity, wherever it stands. A
+// held one (waiting in its partial home) says whose and since when; one at its
+// line says it is being finished. Empty for every other carrier. Read from the
+// node-bins row the board already fetches; nothing is inferred from the order
+// that brought it.
+function partialLine(bs, atLine) {
+    if (!bs || !bs.occupied || !bs.payload_code || !(bs.uop_capacity > 0)) return '';
+    var n = bs.uop_remaining;
+    if (!(n > 0 && n < bs.uop_capacity)) return '';
+    var s = 'PARTIAL — ' + n + ' of ' + bs.payload_code;
+    if (bs.held_since) {
+        s += ', held for ' + (bs.held_for || 'its line') + ', since ' + heldSinceText(bs.held_since);
+    } else if (atLine) {
+        s += ', finishing';
+    }
+    return s;
+}
+
+// heldSinceText is a held partial's arrival as the floor reads a time.
+function heldSinceText(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// confirmUnloadHeld is a held partial's tap: no CLEAR, because the count is
+// what makes it worth calling back to its line. UNLOAD is the second tap for a
+// plant that ships it anyway; Core books it as any clear.
+function confirmUnloadHeld(nodeID, line, count) {
+    var overlay = el('div', { className: 'os-co-picker-overlay' });
+    var panel = el('div', { className: 'os-co-picker os-co-picker--one-tap' });
+    panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Partial, held for ' + (line || 'its line') }));
+    panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
+        textContent: 'It waits here until the line calls it back to be finished.' }));
+    // COUNT declares what the carrier holds now (a person counted it, or topped
+    // it up): the number goes to Core, which records it as this carrier's count.
+    var countBtn = el('button', { className: 'os-co-picker-btn', textContent: 'COUNT' });
+    countBtn.addEventListener('click', function() {
+        overlay.remove();
+        openKeypad(nodeID, count || 0, {
+            title: 'Count on this carrier',
+            onOk: function(_n, qty) {
+                return postAction('/api/process-nodes/' + nodeID + '/record-count', { actual_uop: qty }, loadViewRef);
+            },
+        });
+    });
+    panel.appendChild(countBtn);
+    var go = el('button', { className: 'os-co-picker-btn', textContent: 'UNLOAD' });
+    go.addEventListener('click', function() {
+        overlay.remove();
+        postAction('/api/process-nodes/' + nodeID + '/clear-bin', { unload: true }, loadViewRef);
+    });
+    panel.appendChild(go);
+    panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
+        textContent: 'Unload clears it and books what it held.' }));
+    var cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
+    cancel.addEventListener('click', function() { overlay.remove(); });
+    panel.appendChild(cancel);
+    overlay.appendChild(panel);
+    overlay.addEventListener('click', function(evt) { if (evt.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+}
+
 function pulledDirectlyNote(entry) {
     if (!entry || !entry.pulled_directly) return '';
     var b = entry.bin_state;
@@ -993,6 +1058,8 @@ function buildLoaderCard(entry, code, counters, opts) {
     } else if (cs.action === 'unload') {
         card.style.cursor = 'pointer';
         card.addEventListener('click', function() {
+            var held = entry.bin_state && entry.bin_state.held_since;
+            if (held) { confirmUnloadHeld(entry.node.id, entry.bin_state.held_for, entry.bin_state.uop_remaining); return; }
             confirmUnloadSwap(entry.node.id, entry.active_claim && entry.active_claim.allowed_payload_codes,
                 entry.runtime && entry.runtime.remaining_uop_cached, !!entry.leaves_bare);
         });
@@ -1500,6 +1567,8 @@ function createNodeButton(entry) {
             statusText = 'NO BIN';
         }
         btn.appendChild(el('span', { className: 'os-node-remaining', textContent: statusText }));
+        const partialHere = partialLine(binState, false);
+        if (partialHere) btn.appendChild(el('span', { className: 'os-node-partial', textContent: partialHere }));
         if (binLabel) {
             const labelEl = el('span', { className: 'os-node-payload', textContent: binLabel });
             labelEl.style.cssText = 'font-size:14px;font-weight:600;color:#fff';
@@ -1527,6 +1596,8 @@ function createNodeButton(entry) {
         }
         const payloadText = claim ? (claim.payload_code || 'Unassigned') : '';
         appendETAPills(btn, inboundOrders, entry.bin_state);
+        const partialAtLine = partialLine(entry.bin_state, true);
+        if (partialAtLine) btn.appendChild(el('span', { className: 'os-node-partial', textContent: partialAtLine }));
         btn.appendChild(el('span', { className: 'os-node-payload', textContent: payloadText }));
     }
 
@@ -1539,6 +1610,7 @@ function createNodeButton(entry) {
             const bs = entry.bin_state;
             const fullPresent = bs && bs.occupied && bs.payload_code;
             const emptyPresent = bs && bs.occupied && !bs.payload_code;
+            if (bs && bs.held_since) { confirmUnloadHeld(entry.node.id, bs.held_for, bs.uop_remaining); return; }
             if (fullPresent) confirmUnloadSwap(entry.node.id, entry.active_claim && entry.active_claim.allowed_payload_codes,
                 entry.runtime && entry.runtime.remaining_uop_cached, !!entry.leaves_bare);
             else if (emptyPresent) confirmPushEmpty(entry.node.id,

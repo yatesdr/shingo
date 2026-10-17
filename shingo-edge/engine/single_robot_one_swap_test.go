@@ -79,7 +79,7 @@ func oneSwapCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, 
 
 func oneSwapRequest(eng *Engine, role protocol.ClaimRole, nodeID int64) error {
 	if role == protocol.ClaimRoleProduce {
-		_, err := eng.RequestProduceSwap(nodeID)
+		_, err := eng.RequestProduceSwap(nodeID, 0)
 		return err
 	}
 	_, err := eng.RequestNodeMaterial(nodeID, 1)

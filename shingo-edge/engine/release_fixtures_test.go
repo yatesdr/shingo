@@ -130,7 +130,7 @@ func (h *relHarness) steadyPair(s pairSpec) {
 	var res *NodeOrderResult
 	var err error
 	if s.claimRole() == protocol.ClaimRoleProduce {
-		res, err = h.eng.RequestProduceSwap(h.nodeID)
+		res, err = h.eng.RequestProduceSwap(h.nodeID, 0)
 	} else {
 		res, err = h.eng.RequestNodeMaterial(h.nodeID, 1)
 	}
@@ -307,7 +307,7 @@ func (h *relHarness) changeover(s coSpec) int64 {
 		// The neighbour's own steady-state pair, requested before the changeover
 		// starts — the pair an operator releases at an unchanged node while
 		// another node of the process is changing over.
-		res, err := h.eng.RequestProduceSwap(nb)
+		res, err := h.eng.RequestProduceSwap(nb, 0)
 		testutil.MustNoErr(h.t, err, "neighbour request swap")
 		ev, sp, ok := h.eng.classifySwapLegsBySteps("SYN-NEIGHBOUR", res.OrderB.ID, res.OrderA.ID)
 		if !ok {
@@ -390,7 +390,7 @@ func (h *relHarness) requestRemoval(role protocol.ClaimRole) {
 	if role == protocol.ClaimRoleConsume {
 		res, err = h.eng.RequestNodeMaterial(h.nodeID, 1)
 	} else {
-		res, err = h.eng.RequestProduceSwap(h.nodeID)
+		res, err = h.eng.RequestProduceSwap(h.nodeID, 0)
 	}
 	testutil.MustNoErr(h.t, err, "request removal")
 	o := res.Order

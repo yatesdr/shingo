@@ -177,7 +177,7 @@ func TestRequest_ColdPressWithFullCell(t *testing.T) {
 		eng := testEngine(t, db)
 		nodeID := seedPressIndexProduce(t, db)
 		eng.coreClient = stubCoreClient(pressIndexBinsStub(t, "PRESS-HEAD", "PRESS-DECK").URL)
-		_, err := eng.RequestProduceSwap(nodeID)
+		_, err := eng.RequestProduceSwap(nodeID, 0)
 		if err == nil || !strings.Contains(err.Error(), "has no parts to finalize") {
 			t.Fatalf("produce request = %v, want the no-parts refusal", err)
 		}
@@ -397,7 +397,7 @@ func TestRequestProduceSwap_PrimesOnceThenHolds(t *testing.T) {
 	eng.coreClient = stubCoreClient(srv.URL)
 	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}})
 
-	res, err := eng.RequestProduceSwap(nodeID)
+	res, err := eng.RequestProduceSwap(nodeID, 0)
 	testutil.MustNoErr(t, err, "first RequestProduceSwap")
 	if len(res.PrimeOrders) != 1 {
 		t.Fatalf("first request: PrimeOrders = %+v, want one prime (and no swap)", res.PrimeOrders)
@@ -408,7 +408,7 @@ func TestRequestProduceSwap_PrimesOnceThenHolds(t *testing.T) {
 
 	// The second click neither primes again nor falls through to the swap: the
 	// position is still bare, so there is nothing to index from yet.
-	res2, err := eng.RequestProduceSwap(nodeID)
+	res2, err := eng.RequestProduceSwap(nodeID, 0)
 	if err == nil {
 		t.Fatalf("second request: want a refusal while the prime is in flight, got %+v", res2)
 	}
@@ -457,7 +457,7 @@ func TestRequestProduceSwap_UnknownPairedNodeIsNotPrimed(t *testing.T) {
 	// prime — the unknown-node read has to be.
 	seedRuntimeUOP(t, db, nodeID)
 
-	res, err := eng.RequestProduceSwap(nodeID)
+	res, err := eng.RequestProduceSwap(nodeID, 0)
 	testutil.MustNoErr(t, err, "RequestProduceSwap")
 	if len(res.PrimeOrders) != 0 {
 		t.Errorf("PrimeOrders = %+v, want none — INDEX-B is not a node Core knows", res.PrimeOrders)
@@ -485,7 +485,7 @@ func TestRequestProduceSwap_EmptyCoreNodeSetStillPrimes(t *testing.T) {
 	eng.coreClient = stubCoreClient(srv.URL)
 	// No SetCoreNodes call at all — Core has not been heard from.
 
-	res, err := eng.RequestProduceSwap(nodeID)
+	res, err := eng.RequestProduceSwap(nodeID, 0)
 	testutil.MustNoErr(t, err, "RequestProduceSwap")
 	if len(res.PrimeOrders) != 1 {
 		t.Errorf("PrimeOrders = %+v, want one — an unheard-from Core must not suppress the prime", res.PrimeOrders)

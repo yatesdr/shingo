@@ -44,7 +44,7 @@ func TestPlacingLegGate_HoldsAPairTheProduceDoorCreated(t *testing.T) {
 	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 50), "seed a produced count")
 	eng := testEngine(t, db)
 
-	res, err := eng.RequestProduceSwap(nodeID)
+	res, err := eng.RequestProduceSwap(nodeID, 0)
 	testutil.MustNoErr(t, err, "REQUEST SWAP on "+node.Name)
 	if res.OrderA == nil || res.OrderB == nil {
 		t.Fatalf("fixture: the produce door did not build a two-leg press-index swap")

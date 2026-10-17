@@ -60,6 +60,9 @@ func enrichViewBinState(coreAPI *engine.CoreClient, views []domain.OperatorStati
 					Manifest:          info.Manifest,
 					ManifestConfirmed: info.ManifestConfirmed,
 					Occupied:          info.Occupied,
+					UOPCapacity:       info.UOPCapacity,
+					HeldSince:         info.HeldSince,
+					HeldFor:           info.HeldFor,
 				}
 			}
 		}

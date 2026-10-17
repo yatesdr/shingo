@@ -838,6 +838,12 @@ function cellCardAction(entry, claim, remaining) {
         return { label: 'ROBOT IN TRANSIT', cls: 'close', enabled: false, action: '' };
     }
     if (claim.role === 'produce' && remaining > 0) {
+        // A finish-later claim offers its held partials first: the operator may
+        // pick which one the swap fetches (pick-partial).
+        if (claim.partial_destination) {
+            return { label: 'REQUEST SWAP', cls: 'finalize', enabled: true,
+                action: 'pick-partial:' + entry.node.id + '|' + (claim.payload_code || '') };
+        }
         return { label: 'REQUEST SWAP', cls: 'finalize', enabled: true,
             action: '/api/process-nodes/' + entry.node.id + '/finalize' };
     }
@@ -1079,6 +1085,28 @@ function actionBtn(label, cls, enabled, action, title) {
 const ACTION_HANDLERS = {
     'close': () => closeModal(),
 
+    // A finish-later claim's REQUEST SWAP: the held partials of its part, oldest
+    // held first and pre-selected, for the operator to pick which one the swap
+    // fetches to finish. With none held it is the plain request.
+    'pick-partial': async (arg) => {
+        const bar = arg.indexOf('|');
+        const nodeID = bar === -1 ? arg : arg.slice(0, bar);
+        const payload = bar === -1 ? '' : arg.slice(bar + 1);
+        const url = '/api/process-nodes/' + nodeID + '/finalize';
+        let list = [];
+        try {
+            const resp = await fetch('/api/held-partials?payload=' + encodeURIComponent(payload));
+            if (resp.ok) list = (await resp.json()) || [];
+        } catch (e) { list = []; }
+        if (!list.length) {
+            if (await postAction(url, undefined, loadViewRef)) closeModal();
+            return;
+        }
+        pickHeldPartial(list, async (binID) => {
+            if (await postAction(url, { bin_id: binID }, loadViewRef)) closeModal();
+        });
+    },
+
     // Quality containment: Verify Good on a containment tile. Posts the
     // release body the endpoint wants (node_name + bin_id) — the default
     // POST branch only knows how to send a payload_code, so this verb is
@@ -1186,3 +1214,46 @@ export async function handleModalAction(evt) {
 nodeModal.addEventListener('click', evt => {
     if (evt.target === nodeModal) closeModal();
 });
+
+// pickHeldPartial lists a part's held partials, oldest held first and that one
+// pre-selected, and calls go with the chosen bin's id. The count and the time
+// it entered its home are shown, as on the home's own board.
+function pickHeldPartial(list, go) {
+    let chosen = list[0].bin_id;
+    const overlay = document.createElement('div');
+    overlay.className = 'os-co-picker-overlay';
+    const panel = document.createElement('div');
+    panel.className = 'os-co-picker';
+    const title = document.createElement('div');
+    title.className = 'os-co-picker-title';
+    title.textContent = 'Finish a partial';
+    panel.appendChild(title);
+    const rows = [];
+    list.forEach(function(p) {
+        const b = document.createElement('button');
+        b.className = 'os-co-picker-btn' + (p.bin_id === chosen ? ' on' : '');
+        const since = new Date(p.held_since);
+        const when = isNaN(since.getTime()) ? p.held_since
+            : since.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        b.textContent = p.bin_label + ' — ' + p.uop_remaining + ' · held since ' + when + ' · ' + p.node_name;
+        b.addEventListener('click', function() {
+            chosen = p.bin_id;
+            rows.forEach(function(r) { r.classList.toggle('on', r === b); });
+        });
+        rows.push(b);
+        panel.appendChild(b);
+    });
+    const send = document.createElement('button');
+    send.className = 'os-co-picker-btn';
+    send.textContent = 'REQUEST SWAP';
+    send.addEventListener('click', function() { overlay.remove(); go(chosen); });
+    panel.appendChild(send);
+    const cancel = document.createElement('button');
+    cancel.className = 'os-co-picker-btn cancel';
+    cancel.textContent = 'CANCEL';
+    cancel.addEventListener('click', function() { overlay.remove(); });
+    panel.appendChild(cancel);
+    overlay.appendChild(panel);
+    overlay.addEventListener('click', function(evt) { if (evt.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+}

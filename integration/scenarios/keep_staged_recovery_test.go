@@ -234,6 +234,9 @@ type ksrOpts struct {
 	// strayEmptyB: the spot holds an unstamped empty of B's carrier instead of
 	// A's spare, which the consume claims judge wrong and B's part may ride.
 	strayEmptyB bool
+	// mirror: the Edge's claims reach Core's mirror over the wire, as in the
+	// plant (the buried cases need it too).
+	mirror bool
 }
 
 func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
@@ -496,7 +499,7 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 	// A produce release ships its count as an ingest, as the plant's router
 	// takes it (cmd/shingocore/routers.go).
 	router.Register(coreRouter, protocol.TypeOrderIngest, coreHandler.HandleOrderIngest)
-	if o.buriedB {
+	if o.buriedB || o.mirror {
 		// The Edge's claims reach Core's mirror as in the plant: the publisher's
 		// report over the wire. The cancel-return policy reads that mirror.
 		dataSvc := coremessaging.NewCoreDataService(coreDB, coreHandler, service.EpochAnnounce{
@@ -513,7 +516,7 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor},
 	)
-	if o.buriedB {
+	if o.buriedB || o.mirror {
 		mustNil(t, edgemessaging.NewPlantClaimsPublisher(edge.DB, "edge.test", 0).PublishChanged(c.processID),
 			"publish plant claims")
 	}
@@ -889,7 +892,7 @@ func (c *ksrCell) operatorRequest() {
 	c.t.Helper()
 	var err error
 	if c.role == protocol.ClaimRoleProduce {
-		_, err = c.edge.Engine.RequestProduceSwap(c.nodeID)
+		_, err = c.edge.Engine.RequestProduceSwap(c.nodeID, 0)
 	} else {
 		_, err = c.edge.Engine.RequestNodeMaterial(c.nodeID, 1)
 	}

@@ -47,7 +47,7 @@ func TestKeepStagedCarrier_AWrongCarrierAtEveryDecision(t *testing.T) {
 		eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot,
 			map[string]NodeBinInfo{ksLine: {Occupied: true}, ksSpot: wrong})
 		eng.SetPayloadBinTypes(ksCatalog(map[string]string{ksPart: ksTypeA}))
-		_, err := eng.RequestProduceSwap(nodeID)
+		_, err := eng.RequestProduceSwap(nodeID, 0)
 		testutil.MustNoErr(t, err, "request")
 		if got := swapFetchesFrom(t, eng, db, nodeID); got != "market" {
 			t.Errorf("the swap fetches from %q, want the market: the wrong empty is not a spare", got)

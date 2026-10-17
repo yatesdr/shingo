@@ -64,6 +64,7 @@ const SHAPE_FIELDS = [
     { field: 'inbound_source', of: c => c.source || '' },
     { field: 'outbound_destination', of: c => c.dest || '' },
     { field: 'changeover_evac_destination', of: c => c.evacDest || '' },
+    { field: 'partial_destination', of: c => c.partialDest || '' },
     { field: 'changeover_evac_nodes', of: c => (c.evacNodes || []).join(',') },
     { field: 'key_route', of: c => (c.keyRoute || []).join(' › ') },
 ];
@@ -233,6 +234,7 @@ const CELL_TO_FIELD = {
     source: 'inbound_source',
     dest: 'outbound_destination',
     evacDest: 'changeover_evac_destination',
+    partialDest: 'partial_destination',
     evacNodes: 'changeover_evac_nodes',
     keyRoute: 'key_route',
 };
@@ -281,7 +283,7 @@ const clone = v => JSON.parse(JSON.stringify(v));
 const blankCell = () => ({
     on: false, mode: null, part: null, source: '', dest: '',
     staging: '', parkOld: '', paired: '', secondPaired: '',
-    keyRoute: [], evacNodes: [], evacDest: '', role: '',
+    keyRoute: [], evacNodes: [], evacDest: '', partialDest: '', role: '',
     // null until an engineer opens the Advanced modal and presses Apply. It is
     // the same nil FlowCell.Advanced carries: untouched means Expand's
     // carry-through keeps the stored row's policy, and there is no way to say
@@ -630,6 +632,7 @@ function init(opts) {
         cell.keyRoute = (c.key_route || []).slice();
         cell.evacNodes = (c.changeover_evac_nodes || []).slice();
         cell.evacDest = c.changeover_evac_destination || '';
+        cell.partialDest = c.partial_destination || '';
         cell.role = c.role || cell.role;
     }
     return state;
@@ -857,6 +860,9 @@ function reduce(state, action) {
         // clears — and a field the picture draws is the cell's.
         case 'setEvacNodes': if (cell) cell.evacNodes = (action.nodes || []).slice(); break;
         case 'setEvacDest': if (cell) cell.evacDest = action.dest || ''; break;
+        // Where this cell's carrier waits when it leaves unfinished (the
+        // Advanced sheet's Unfinished carriers section). Blank = where a full goes.
+        case 'setPartialDest': if (cell) cell.partialDest = action.dest || ''; break;
 
         // Apply on the Advanced modal. The whole block at once — the modal
         // shows every field of it, so there is no half-opinion to express —
@@ -954,6 +960,7 @@ function toCells(state) {
             outbound_staging: c.parkOld,
             outbound_destination: c.dest,
             changeover_evac_destination: c.evacDest,
+            partial_destination: c.partialDest,
         };
         for (const k of Object.keys(optional)) {
             if (optional[k]) cell[k] = optional[k];
@@ -1873,6 +1880,7 @@ function presetCells(preset) {
             paired: r.paired_core_node || r.paired || '',
             secondPaired: r.second_paired_core_node || r.secondPaired || '',
             evacDest: r.changeover_evac_destination || r.evacDest || '',
+            partialDest: r.partial_destination || r.partialDest || '',
             evacNodes: (r.changeover_evac_nodes || r.evacNodes || []).slice(),
             keyRoute: (r.key_route || r.keyRoute || []).slice(),
         };

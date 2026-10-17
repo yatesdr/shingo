@@ -78,7 +78,7 @@ func TestClearBin_EmptyOutIsCreatedAfterTheClearCommits(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(srv.URL)
 
-	testutil.MustNoErr(t, eng.ClearBin(nodeID, ""), "ClearBin")
+	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false), "ClearBin")
 
 	if got := movesAtClear(); got != 0 {
 		t.Errorf("%d empty-out move(s) already existed when Core was asked to clear the bin; "+
@@ -108,13 +108,13 @@ func TestClearBin_DoubleTapCreatesOneEmptyOut(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(srv.URL)
 
-	testutil.MustNoErr(t, eng.ClearBin(nodeID, ""), "ClearBin first tap")
+	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false), "ClearBin first tap")
 	// The second tap must not mint a second move for one physical carrier — and
 	// must NOT report an error either. The clear itself succeeded; telling the
 	// operator their CLEAR failed would be a lie, and a retry would then find no
 	// bin and create nothing at all. That is why this guard SKIPS where
 	// PushEmptyOut's refuses.
-	testutil.MustNoErr(t, eng.ClearBin(nodeID, ""), "ClearBin second tap")
+	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false), "ClearBin second tap")
 
 	if n, _ := countMovesTo(t, db, nodeID, "EMPTY-TOTES"); n != 1 {
 		t.Errorf("empty-out moves after two CLEAR taps = %d, want exactly 1. Two robots "+

@@ -681,6 +681,11 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     -- Core-side at dispatch (the single-authority dropoff rule) against
     -- Core's authoritative containment state; the Edge never enforces it.
     containment_destination TEXT NOT NULL DEFAULT '',
+    -- partial_destination: where this claim's carrier goes when it leaves
+    -- the line unfinished (a node or a group), to be called back and finished.
+    -- Blank = it goes where a full goes. Core judges "unfinished" from its own
+    -- count and chooses the drop; the Edge only authors the route.
+    partial_destination     TEXT NOT NULL DEFAULT '',
     -- The light-curtain release interlock's style tie (v19): whether THIS
     -- style's releases at THIS node wait for the node's curtain. The claim is
     -- the (style, node) pair, and the rule the plant chose is THE BIN

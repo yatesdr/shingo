@@ -1757,6 +1757,53 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 2
 			},
 		},
+		{
+			// style_node_claims.partial_destination: where the claim's carrier
+			// goes when it leaves the line unfinished (a node or a group), to
+			// wait and be called back. Blank = where a full goes, which is
+			// every existing claim. Core reads the mirror and chooses the drop.
+			// The baseline CREATE carries it for a fresh install; guarded. The
+			// claim quarantine mirrors the table column for column and is synced
+			// above the versioned steps, so this step mirrors its own column too:
+			// otherwise the mirror caught up on the next boot and the schema
+			// changed on a startup that changed nothing.
+			Version: 24,
+			Name:    "style_node_claims_partial_destination",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('style_node_claims')
+					WHERE name = 'partial_destination'`).Scan(&n); err != nil {
+					return err
+				}
+				if n == 0 {
+					if _, err := tx.Exec(`ALTER TABLE style_node_claims ADD COLUMN partial_destination TEXT NOT NULL DEFAULT ''`); err != nil {
+						return err
+					}
+				}
+				var q, qn int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '` + ClaimQuarantineTable + `'`).Scan(&q); err != nil {
+					return err
+				}
+				if q == 0 {
+					return nil
+				}
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('` + ClaimQuarantineTable + `')
+					WHERE name = 'partial_destination'`).Scan(&qn); err != nil {
+					return err
+				}
+				if qn > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE ` + ClaimQuarantineTable + ` ADD COLUMN partial_destination TEXT`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('style_node_claims')
+					WHERE name = 'partial_destination'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

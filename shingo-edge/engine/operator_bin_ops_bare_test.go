@@ -112,7 +112,7 @@ func TestClearBin_BinTypeCodeAtACoreOwnedUnloader(t *testing.T) {
 			info.LeavesBare = tc.leavesBare
 			nodeID := coreUnloaderWindow(t, eng, tc.window, info)
 
-			testutil.MustNoErr(t, eng.ClearBin(nodeID, tc.code), "ClearBin")
+			testutil.MustNoErr(t, eng.ClearBin(nodeID, tc.code, false), "ClearBin")
 
 			clears, paths := core.snapshot()
 			if len(clears) != 1 {
@@ -162,7 +162,7 @@ func TestClearBin_LogsClearedBinTypeCode(t *testing.T) {
 	log.SetFlags(0)
 	t.Cleanup(func() { log.SetOutput(prevW); log.SetFlags(prevFlags) })
 
-	testutil.MustNoErr(t, eng.ClearBin(nodeID, ""), "ClearBin")
+	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false), "ClearBin")
 
 	if !strings.Contains(buf.String(), `type="TOTE-XL"`) {
 		t.Errorf("CLEAR log line does not carry the cart type Core sent — want %q in:\n%s", `type="TOTE-XL"`, buf.String())

@@ -272,8 +272,9 @@ func (h *Handlers) apiConfirmDelivery(w http.ResponseWriter, r *http.Request) {
 //
 // Phase 8 (release-time manifest): the body now also carries a disposition
 // so the operator can choose between "bin is empty" (capture_lineside) and
-// "send the partial bin back to supermarket" (send_partial_back). The
-// disposition late-binds the bin's manifest at Core (see OrderRelease and
+// "the bin still holds parts" (send_partial_back, with the count). The
+// disposition is a count, not a route: the leg goes where it was built to go,
+// and it late-binds the bin's manifest at Core (see OrderRelease and
 // BinManifestService.SyncOrClearForReleased).
 //
 // Backward compat: an absent or empty disposition (Mode == "") leaves the

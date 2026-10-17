@@ -224,11 +224,11 @@ func (s *stubEngine) ReleaseChangeoverWaitFor(processID, processNodeID int64, pu
 	s.lastChangeoverReleasePurpose = purpose
 	return s.changeoverReleaseResult, s.changeoverReleaseErr
 }
-func (s *stubEngine) RequestProduceSwap(int64) (*engine.NodeOrderResult, error) {
+func (s *stubEngine) RequestProduceSwap(int64, int64) (*engine.NodeOrderResult, error) {
 	return nil, s.requestProduceSwapErr
 }
 func (s *stubEngine) LoadBin(int64, string, *int64, []protocol.IngestManifestItem) error { return nil }
-func (s *stubEngine) ClearBin(int64, string) error                                       { return nil }
+func (s *stubEngine) ClearBin(int64, string, bool) error                                 { return nil }
 func (s *stubEngine) RecordBinCount(int64, int, string) error                            { return nil }
 func (s *stubEngine) ClearLoaderHome(int64) error                                        { return nil }
 func (s *stubEngine) EnrichHomeBufferPartials([]domain.StationNodeView)                  {}

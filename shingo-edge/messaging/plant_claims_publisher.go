@@ -262,6 +262,7 @@ func (p *PlantClaimsPublisher) reportFor(proc processes.Process) (protocol.Plant
 				SwapMode:               c.SwapMode,
 				PayloadCode:            c.PayloadCode,
 				ContainmentDestination: c.ContainmentDestination,
+				PartialDestination:     c.PartialDestination,
 				AllowedPayloadCodes:    c.AllowedPayloads(),
 				UOPCapacity:            c.UOPCapacity,
 				ReorderPoint:           c.ReorderPoint,

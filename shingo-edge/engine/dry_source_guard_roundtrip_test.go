@@ -84,7 +84,7 @@ func TestDrySourceGuard_NoRoundTripOnAnyRequest(t *testing.T) {
 
 			var err error
 			if tc.produce {
-				_, err = eng.RequestProduceSwap(nodeID)
+				_, err = eng.RequestProduceSwap(nodeID, 0)
 			} else {
 				_, err = eng.RequestNodeMaterial(nodeID, 1)
 			}

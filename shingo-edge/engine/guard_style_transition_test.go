@@ -80,7 +80,7 @@ func TestRequestProduceSwap_BlockedForOutgoingStyleDuringChangeover(t *testing.T
 	_, err = eng.changeoverService.Create(processID, &fromStyle, otherStyleID, "test", "", nil, nil, nil, nil)
 	testutil.MustNoErr(t, err, "create changeover")
 
-	if _, err := eng.RequestProduceSwap(nodeID); err == nil {
+	if _, err := eng.RequestProduceSwap(nodeID, 0); err == nil {
 		t.Fatal("expected RequestProduceSwap to be refused for the outgoing style during a changeover")
 	} else if !strings.Contains(err.Error(), "cancel it") || !strings.Contains(err.Error(), "CO-TARGET") {
 		t.Errorf("error = %q, want the armed-changeover exit message naming the target", err.Error())
@@ -106,7 +106,7 @@ func TestChangeoverAbandonThenRequest_Succeeds(t *testing.T) {
 
 	// 1. Armed changeover ⇒ refused with the actionable typed error carrying the
 	//    process id the UI needs to build the abandon action.
-	_, err = eng.RequestProduceSwap(nodeID)
+	_, err = eng.RequestProduceSwap(nodeID, 0)
 	var armed *ChangeoverArmedError
 	if !errors.As(err, &armed) {
 		t.Fatalf("armed changeover must refuse with *ChangeoverArmedError, got: %v", err)
@@ -119,7 +119,7 @@ func TestChangeoverAbandonThenRequest_Succeeds(t *testing.T) {
 	testutil.MustNoErr(t, eng.CancelProcessChangeover(processID), "abandon changeover")
 
 	// 3. The SAME request now proceeds — the changeover dead-end is gone.
-	if _, err := eng.RequestProduceSwap(nodeID); err != nil {
+	if _, err := eng.RequestProduceSwap(nodeID, 0); err != nil {
 		var stillArmed *ChangeoverArmedError
 		if errors.As(err, &stillArmed) {
 			t.Fatalf("request still blocked by the changeover after abandon: %v", err)

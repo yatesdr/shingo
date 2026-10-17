@@ -64,7 +64,7 @@ func pressAt(c *ksrCell, door string, nodeID int64) error {
 	case "material request":
 		_, err = c.edge.Engine.RequestNodeMaterial(nodeID, 1)
 	case "produce request":
-		_, err = c.edge.Engine.RequestProduceSwap(nodeID)
+		_, err = c.edge.Engine.RequestProduceSwap(nodeID, 0)
 	case "empty-bin request":
 		_, err = c.edge.Engine.RequestEmptyBin(nodeID, ksrPartA)
 	}

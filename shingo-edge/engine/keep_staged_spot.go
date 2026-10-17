@@ -76,6 +76,9 @@ type spotRead struct {
 	// force when the spot was read; nil before the first one arrives. An empty
 	// is judged against it (spareIsRight).
 	catalog []protocol.PayloadBinTypeInfo
+	// count is the bin's count as Core holds it: a partial of the claim's own
+	// part is a produce spare (spareIsRight).
+	count int
 }
 
 // readOfRow is a spot's read from its row in a node-bins answer, with the
@@ -83,7 +86,7 @@ type spotRead struct {
 // through it.
 func readOfRow(b NodeBinInfo, catalog []protocol.PayloadBinTypeInfo) spotRead {
 	return spotRead{known: true, occupied: b.Occupied, payload: b.PayloadCode, bare: b.Bare,
-		binType: b.BinTypeCode, binID: b.BinID, catalog: catalog}
+		binType: b.BinTypeCode, binID: b.BinID, catalog: catalog, count: b.UOPRemaining}
 }
 
 // spotFacts is everything the keeper decides a spot from, read before deciding
@@ -183,7 +186,17 @@ func reconcileSpot(c *processes.NodeClaim, present, right bool, coming int) spot
 // request, the level keeper's sweep, a changeover's start and its cancel.
 // Nothing about who left the bin there, or when, is asked.
 func spareIsRight(c *processes.NodeClaim, read spotRead) bool {
-	if !read.occupied || read.bare || read.payload != spareCarries(c) {
+	if !read.occupied || read.bare {
+		return false
+	}
+	// A produce spare is a carrier to fill, and a partial of the claim's own
+	// part is one: finishing it is what a partial home calls it back for. Core
+	// brings one when the part has a home, and it is the spare once it stands
+	// here. A partial of any other part is not.
+	if carriesEmpty(c) && read.payload != "" {
+		return read.payload == c.PayloadCode && read.count > 0 && read.count < c.UOPCapacity
+	}
+	if read.payload != spareCarries(c) {
 		return false
 	}
 	return !carriesEmpty(c) || partPermitsCarrier(read.catalog, c.PayloadCode, read.binType)

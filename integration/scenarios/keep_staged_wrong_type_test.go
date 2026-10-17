@@ -134,7 +134,7 @@ func TestScenario_KeepStagedWrongTypeEmpty_CoreMoveIsTheExit(t *testing.T) {
 	}
 	settle()
 
-	_, err = edge.Engine.RequestProduceSwap(nodeID)
+	_, err = edge.Engine.RequestProduceSwap(nodeID, 0)
 	mustNil(t, err, "the produce call")
 	settle()
 	all, err := edge.DB.ListOrdersByProcess(processID)

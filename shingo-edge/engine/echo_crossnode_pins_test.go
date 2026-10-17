@@ -232,7 +232,7 @@ func TestPinEcho_CrossNodeMoves(t *testing.T) {
 			create: func(t *testing.T, n *echoNodes) *storeorders.Order {
 				srv := fakeCoreBinServer(t, true, "PART-EC")
 				n.eng.coreClient = stubCoreClient(srv.URL)
-				testutil.MustNoErr(t, n.eng.ClearBin(n.aID, ""), "ClearBin")
+				testutil.MustNoErr(t, n.eng.ClearBin(n.aID, "", false), "ClearBin")
 				return echoOnlyMoveFrom(t, n)
 			},
 			want: moveAfterEcho,
@@ -320,12 +320,12 @@ func TestPinEcho_Stage1DoubleTapSeesItsOwnU2AfterTheEcho(t *testing.T) {
 	srv := fakeCoreBinServer(t, true, "")
 	n.eng.coreClient = stubCoreClient(srv.URL)
 
-	testutil.MustNoErr(t, n.eng.ClearBin(n.aID, ""), "first CLEAR")
+	testutil.MustNoErr(t, n.eng.ClearBin(n.aID, "", false), "first CLEAR")
 	u2 := echoOnlyMoveFrom(t, n)
 	_, err := n.eng.ApplyOrderProjection(echoProjectionOf(u2))
 	testutil.MustNoErr(t, err, "echo")
 
-	testutil.MustNoErr(t, n.eng.ClearBin(n.aID, ""), "second CLEAR")
+	testutil.MustNoErr(t, n.eng.ClearBin(n.aID, "", false), "second CLEAR")
 	if got := len(scMovesFrom(t, n.db, n.aCore)); got != 1 {
 		t.Errorf("U2s leaving stage 1 after CLEAR, echo, CLEAR = %d, want 1 — the second CLEAR "+
 			"must see the first U2 at its own process node", got)

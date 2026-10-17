@@ -48,6 +48,8 @@ func populateClaimField(c *NodeClaim, f flowspec.Field) {
 		c.ChangeoverEvacNodes = []string{v}
 	case flowspec.ChangeoverEvacDestination:
 		c.ChangeoverEvacDestination = v
+	case flowspec.PartialDestination:
+		c.PartialDestination = v
 	case flowspec.ChangeoverCarryoverDisposition:
 		c.ChangeoverCarryoverDisposition = CarryoverKeepLineside
 	case flowspec.ReuseCompatibleBins:
@@ -110,6 +112,8 @@ func populateClaimInputField(in *NodeClaimInput, f flowspec.Field) {
 		in.ChangeoverEvacNodes = &nodes
 	case flowspec.ChangeoverEvacDestination:
 		in.ChangeoverEvacDestination = &v
+	case flowspec.PartialDestination:
+		in.PartialDestination = v
 	case flowspec.ChangeoverCarryoverDisposition:
 		d := CarryoverKeepLineside
 		in.ChangeoverCarryoverDisposition = &d

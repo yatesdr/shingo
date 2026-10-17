@@ -48,7 +48,7 @@ func TestProduceClear_RePushesOnlyItsOwnLoader(t *testing.T) {
 	core.set(wb, false, "")
 
 	before := core.nodeBinReads()
-	testutil.MustNoErr(t, eng.ClearBin(waID, ""), "ClearBin at a produce window")
+	testutil.MustNoErr(t, eng.ClearBin(waID, "", false), "ClearBin at a produce window")
 	if n := scActiveEmptiesTo(t, db, wb); n != 0 {
 		t.Errorf("empties staged at the OTHER loader's window %s = %d, want 0", wb, n)
 	}

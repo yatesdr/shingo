@@ -245,7 +245,7 @@ func TestProduceSwap_FinalizeSendsIngestNoLocalOrder(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, "single_robot")
 	eng := testEngine(t, db)
 
-	res, err := eng.RequestProduceSwap(nodeID)
+	res, err := eng.RequestProduceSwap(nodeID, 0)
 	if err != nil {
 		t.Fatalf("RequestProduceSwap: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestProduceSequential_RemovalThenBackfill(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, "sequential")
 	eng := testEngine(t, db)
 
-	result, err := eng.RequestProduceSwap(nodeID)
+	result, err := eng.RequestProduceSwap(nodeID, 0)
 	if err != nil {
 		t.Fatalf("RequestProduceSwap: %v", err)
 	}
@@ -348,7 +348,7 @@ func TestProduceSingleRobot_TenStepSwap(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, "single_robot")
 	eng := testEngine(t, db)
 
-	result, err := eng.RequestProduceSwap(nodeID)
+	result, err := eng.RequestProduceSwap(nodeID, 0)
 	if err != nil {
 		t.Fatalf("RequestProduceSwap: %v", err)
 	}
@@ -377,7 +377,7 @@ func TestProduceTwoRobot_BothOrdersCreated(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
 
-	result, err := eng.RequestProduceSwap(nodeID)
+	result, err := eng.RequestProduceSwap(nodeID, 0)
 	if err != nil {
 		t.Fatalf("RequestProduceSwap: %v", err)
 	}
@@ -422,7 +422,7 @@ func TestProduceFinalize_RejectsZeroUOP(t *testing.T) {
 	// Set UOP to 0 — nothing to finalize
 	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 0), "set runtime")
 
-	_, err := eng.RequestProduceSwap(nodeID)
+	_, err := eng.RequestProduceSwap(nodeID, 0)
 	if err == nil {
 		t.Fatal("expected error when RemainingUOP is 0")
 	}
@@ -448,7 +448,7 @@ func TestProduceFinalize_RejectsConsumeNode(t *testing.T) {
 	}
 	_ = processID
 
-	_, err = eng.RequestProduceSwap(nodeID)
+	_, err = eng.RequestProduceSwap(nodeID, 0)
 	if err == nil {
 		t.Fatal("expected error for consume node")
 	}
@@ -470,7 +470,7 @@ func TestReleaseStagedOrders_BothStaged(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
 
-	result, err := eng.RequestProduceSwap(nodeID)
+	result, err := eng.RequestProduceSwap(nodeID, 0)
 	if err != nil {
 		t.Fatalf("RequestProduceSwap: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestReleaseStagedOrders_OnlyOneStaged(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
 
-	result, err := eng.RequestProduceSwap(nodeID)
+	result, err := eng.RequestProduceSwap(nodeID, 0)
 	if err != nil {
 		t.Fatalf("RequestProduceSwap: %v", err)
 	}
@@ -555,7 +555,7 @@ func TestReleaseStagedOrders_RejectsNonTwoRobot(t *testing.T) {
 	_, nodeID, styleID, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
 
-	result, err := eng.RequestProduceSwap(nodeID)
+	result, err := eng.RequestProduceSwap(nodeID, 0)
 	if err != nil {
 		t.Fatalf("RequestProduceSwap: %v", err)
 	}
@@ -603,7 +603,7 @@ func TestReleaseStagedOrders_Idempotent(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
 
-	result, err := eng.RequestProduceSwap(nodeID)
+	result, err := eng.RequestProduceSwap(nodeID, 0)
 	if err != nil {
 		t.Fatalf("RequestProduceSwap: %v", err)
 	}

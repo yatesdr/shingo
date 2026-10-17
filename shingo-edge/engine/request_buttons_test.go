@@ -103,7 +103,7 @@ func (w *buttonWorld) request() {
 	w.t.Helper()
 	var err error
 	if w.role == protocol.ClaimRoleProduce {
-		_, err = w.eng.RequestProduceSwap(w.node)
+		_, err = w.eng.RequestProduceSwap(w.node, 0)
 	} else {
 		_, err = w.eng.RequestNodeMaterial(w.node, 1)
 	}
@@ -133,7 +133,7 @@ func (w *buttonWorld) press(door string) buttonAnswer {
 	case doorMaterial:
 		_, err = w.eng.RequestNodeMaterial(w.node, 1)
 	case doorProduce:
-		_, err = w.eng.RequestProduceSwap(w.node)
+		_, err = w.eng.RequestProduceSwap(w.node, 0)
 	case doorEmptyBin:
 		_, err = w.eng.RequestEmptyBin(w.node, ksPart)
 	}

@@ -137,7 +137,7 @@ func TestScenario_SwapFinalizeStampsCoreBinWithoutOrderRow(t *testing.T) {
 
 	// ── The call for parts ships nothing: the produce count splits at the
 	// operator's RELEASE (owner, 2026-09-30), in every mode. ──
-	res, err := edge.Engine.RequestProduceSwap(nodeID)
+	res, err := edge.Engine.RequestProduceSwap(nodeID, 0)
 	if err != nil {
 		t.Fatalf("RequestProduceSwap: %v", err)
 	}

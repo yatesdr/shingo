@@ -129,7 +129,7 @@ func TestSequentialSteadyState_RemovalStillMintsTheBackfill(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
-	if _, err := eng.RequestProduceSwap(nodeID); err != nil {
+	if _, err := eng.RequestProduceSwap(nodeID, 0); err != nil {
 		t.Fatalf("RequestProduceSwap: %v", err)
 	}
 	rt, err := db.GetProcessNodeRuntime(nodeID)

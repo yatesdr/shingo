@@ -93,11 +93,11 @@ func TestFlowspecUnknownModeAnswersAsSimple(t *testing.T) {
 	}
 }
 
-// TestFlowspecRoleMovesExactlyTwoEntries: the role dimension is real but
-// narrow. If a third role-dependent entry appears, this names it — a silent
+// TestFlowspecRoleMovesOnlyTheNamedEntries: the role dimension is real but
+// narrow. If another role-dependent entry appears, this names it — a silent
 // role difference is how "consume and produce show different fields" becomes
 // folklore.
-func TestFlowspecRoleMovesExactlyTwoEntries(t *testing.T) {
+func TestFlowspecRoleMovesOnlyTheNamedEntries(t *testing.T) {
 	t.Parallel()
 	for _, mode := range steadyModes() {
 		consume := flowspec.Steady(protocol.ClaimRoleConsume, mode)
@@ -110,7 +110,8 @@ func TestFlowspecRoleMovesExactlyTwoEntries(t *testing.T) {
 		}
 		// manual_swap hides the lineside threshold for BOTH roles (the loader
 		// board owns the numbers), so its one role-dependent entry is auto-push.
-		want := []flowspec.Field{flowspec.LinesideSoftThreshold}
+		// Every other mode offers a produce claim its partial route.
+		want := []flowspec.Field{flowspec.LinesideSoftThreshold, flowspec.PartialDestination}
 		if mode == protocol.SwapModeManualSwap {
 			want = []flowspec.Field{flowspec.AutoPush}
 		}

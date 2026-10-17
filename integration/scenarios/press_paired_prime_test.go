@@ -31,7 +31,7 @@ func TestScenario_PressBarePairedPosition_EveryButtonPrimesIt(t *testing.T) {
 			return err
 		}},
 		{"produce request", protocol.ClaimRoleProduce, func(c *ksrCell) error {
-			_, err := c.edge.Engine.RequestProduceSwap(c.nodeID)
+			_, err := c.edge.Engine.RequestProduceSwap(c.nodeID, 0)
 			return err
 		}},
 		{"empty-bin request", protocol.ClaimRoleProduce, func(c *ksrCell) error {

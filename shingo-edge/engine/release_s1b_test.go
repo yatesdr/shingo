@@ -45,7 +45,7 @@ func ticks(n int) func(h *relHarness) error {
 func requestProduce(name string) func(h *relHarness) error {
 	return func(h *relHarness) error {
 		h.t.Helper()
-		res, err := h.eng.RequestProduceSwap(h.nodeID)
+		res, err := h.eng.RequestProduceSwap(h.nodeID, 0)
 		testutil.MustNoErr(h.t, err, "request")
 		o := res.Order
 		if o == nil {

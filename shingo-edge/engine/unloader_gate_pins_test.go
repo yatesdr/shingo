@@ -127,7 +127,7 @@ func TestPinUnloaderGate_Clear(t *testing.T) {
 	f := newUGFixture(t, "UGC")
 	f.core.set(f.nCore, true, "PART-UG")
 	before := f.core.nodeBinReads()
-	testutil.MustNoErr(t, f.eng.ClearBin(f.n, ""), "ClearBin")
+	testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false), "ClearBin")
 	f.checkGate(t, "CLEAR", f.core.nodeBinReads()-before, 1, 1, 0) // the gate's read; the clear answers hadBin
 }
 
@@ -182,7 +182,7 @@ func TestPinUnloaderGate_OffAtACoreOwnedWindow(t *testing.T) {
 	f.core.set(f.n2Core, true, "PART-UG")
 	f.core.set(f.nCore, false, "")
 	before := f.core.nodeBinReads()
-	testutil.MustNoErr(t, f.eng.ClearBin(f.n2, ""), "ClearBin at N2 (synthesized claim)")
+	testutil.MustNoErr(t, f.eng.ClearBin(f.n2, "", false), "ClearBin at N2 (synthesized claim)")
 	if got := f.fulls(t, f.nCore) + f.fulls(t, f.w3Core); got != 0 {
 		t.Errorf("U1s after CLEAR at a Core-owned window = %d, want 0 (AutoPush is off on SynthClaim)", got)
 	}

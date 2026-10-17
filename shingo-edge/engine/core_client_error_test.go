@@ -54,7 +54,7 @@ func TestClearBin_SurfacesCoresReason(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	_, err := NewCoreClient(srv.URL).ClearBin("FGN_001", "")
+	_, err := NewCoreClient(srv.URL).ClearBin("FGN_001", "", false)
 	if err == nil {
 		t.Fatal("ClearBin returned no error on a 400")
 	}

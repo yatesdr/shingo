@@ -91,6 +91,10 @@ type fingerprintClaim struct {
 	// fact Core reads), which is exactly what the staleness check exists to
 	// catch.
 	ContainmentDestination string `json:"containment_destination"`
+	// The partial route, IN the fingerprint for the same reason. omitempty: a
+	// blank route (every claim saved before it existed) leaves a stored
+	// fingerprint as it was.
+	PartialDestination string `json:"partial_destination,omitempty"`
 	// CurtainRequired is IN the fingerprint: it decides whether a release
 	// waits for a tag - a save that flipped it changed what a release would
 	// do, which is exactly what the staleness check exists to catch.
@@ -157,6 +161,7 @@ func fingerprintClaims(claims []NodeClaim) []fingerprintClaim {
 			InboundStaging: c.InboundStaging, OutboundStaging: c.OutboundStaging,
 			InboundSource: c.InboundSource, OutboundDestination: c.OutboundDestination,
 			ContainmentDestination: c.ContainmentDestination,
+			PartialDestination:     c.PartialDestination,
 			CurtainRequired:        c.CurtainRequired,
 			AllowedPayloadCodes:    cloneStrings(c.AllowedPayloadCodes), AutoRequestPayload: c.AutoRequestPayload,
 			KeepStagedNode: c.KeepStagedNode, EvacuateOnChangeover: c.EvacuateOnChangeover, PairedCoreNode: c.PairedCoreNode,

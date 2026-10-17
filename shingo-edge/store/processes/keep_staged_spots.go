@@ -79,7 +79,8 @@ func CheckKeepStagedSpots(tx DBTX, before []KeptSpot) ([]KeptSpot, error) {
 var spotColumns = []string{
 	"core_node_name", "inbound_staging", "outbound_staging", "paired_core_node",
 	"second_paired_core_node", "inbound_source", "outbound_destination",
-	"containment_destination", "changeover_evac_destination", "changeover_evac_nodes", "keep_staged_node",
+	"containment_destination", "partial_destination", "changeover_evac_destination", "changeover_evac_nodes",
+	"keep_staged_node",
 }
 
 // spotClaim is one live claim as the check reads it: who it is and every node
@@ -110,7 +111,7 @@ func firstOf(s []string) string {
 // claims, so its spots must stay counted while it is away.
 const spotClaimsSQL = `SELECT s.process_id, c.style_id, s.name, c.core_node_name,
 	c.inbound_staging, c.outbound_staging, c.paired_core_node, c.second_paired_core_node,
-	c.inbound_source, c.outbound_destination, c.containment_destination,
+	c.inbound_source, c.outbound_destination, c.containment_destination, c.partial_destination,
 	c.changeover_evac_destination, c.changeover_evac_nodes, c.keep_staged_node
 	FROM style_node_claims c JOIN styles s ON s.id = c.style_id
 	WHERE c.retired_at IS NULL
@@ -128,7 +129,7 @@ func readSpotClaims(db DBTX) ([]spotClaim, error) {
 		var process sql.NullInt64
 		vals := make([]string, len(spotColumns))
 		if err := rs.Scan(&process, &c.styleID, &c.style, &vals[0],
-			&vals[1], &vals[2], &vals[3], &vals[4], &vals[5], &vals[6], &vals[7], &vals[8], &vals[9], &vals[10]); err != nil {
+			&vals[1], &vals[2], &vals[3], &vals[4], &vals[5], &vals[6], &vals[7], &vals[8], &vals[9], &vals[10], &vals[11]); err != nil {
 			return nil, err
 		}
 		c.processKey = process.Int64

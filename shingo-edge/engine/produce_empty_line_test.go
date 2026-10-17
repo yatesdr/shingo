@@ -63,7 +63,7 @@ func TestProduceEmptyLine_SingleRobotRequestDeliversAnEmpty(t *testing.T) {
 				map[string]NodeBinInfo{ksLine: {}, ksSpot: c.spot})
 			testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claim.ID, c.uop), "count")
 
-			res, err := eng.RequestProduceSwap(nodeID)
+			res, err := eng.RequestProduceSwap(nodeID, 0)
 			testutil.MustNoErr(t, err, "request on an empty line")
 
 			legs, plain := liveLineRows(t, eng, nodeID)
@@ -116,7 +116,7 @@ func TestProduceEmptyLine_PositionStillWorkedRefuses(t *testing.T) {
 		orders.Attached("prior"))
 	testutil.MustNoErr(t, err, "prior order")
 
-	_, err = eng.RequestProduceSwap(nodeID)
+	_, err = eng.RequestProduceSwap(nodeID, 0)
 	if err == nil || !strings.Contains(err.Error(), "still working this position") {
 		t.Fatalf("request = %v, want the still-working refusal", err)
 	}
@@ -143,7 +143,7 @@ func TestProduceEmptyLine_EveryModeDeliversAnEmpty(t *testing.T) {
 				eng, db, nodeID := seedCensusCell(t, protocol.ClaimRoleProduce, mode, uop)
 				var calls atomic.Int32
 				eng.coreClient = stubCoreClient(censusStub(t, &calls).URL) // the line and the deck read bare
-				res, err := eng.RequestProduceSwap(nodeID)
+				res, err := eng.RequestProduceSwap(nodeID, 0)
 				testutil.MustNoErr(t, err, "request on an empty line")
 
 				legs, plain := liveLineRows(t, eng, nodeID)

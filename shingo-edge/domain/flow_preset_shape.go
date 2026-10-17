@@ -58,6 +58,7 @@ var shapeFields = []struct {
 	{flowspec.InboundSource, func(c FlowCell) string { return c.InboundSource }},
 	{flowspec.OutboundDestination, func(c FlowCell) string { return c.OutboundDestination }},
 	{flowspec.ChangeoverEvacDestination, func(c FlowCell) string { return c.ChangeoverEvacDestination }},
+	{flowspec.PartialDestination, func(c FlowCell) string { return c.PartialDestination }},
 	{flowspec.ChangeoverEvacNodes, func(c FlowCell) string { return strings.Join(c.ChangeoverEvacNodes, ",") }},
 	{flowspec.KeyRoute, func(c FlowCell) string { return strings.Join(c.KeyRoute, " › ") }},
 }

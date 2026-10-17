@@ -23,7 +23,7 @@ func (h *relHarness) singleRobot(role protocol.ClaimRole) {
 	if role == protocol.ClaimRoleConsume {
 		res, err = h.eng.RequestNodeMaterial(h.nodeID, 1)
 	} else {
-		res, err = h.eng.RequestProduceSwap(h.nodeID)
+		res, err = h.eng.RequestProduceSwap(h.nodeID, 0)
 	}
 	testutil.MustNoErr(h.t, err, "request single_robot swap")
 	o := res.Order

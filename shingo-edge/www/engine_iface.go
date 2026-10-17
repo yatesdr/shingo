@@ -122,9 +122,9 @@ type EngineOrchestration interface {
 	ReleaseStagedOrders(nodeID int64, disp engine.ReleaseDisposition) error
 	ResumeKeepStaged(nodeID int64) error
 	ReleaseChangeoverWaitFor(processID, processNodeID int64, purpose release.Purpose, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
-	RequestProduceSwap(nodeID int64) (*engine.NodeOrderResult, error)
+	RequestProduceSwap(nodeID int64, pick int64) (*engine.NodeOrderResult, error)
 	LoadBin(nodeID int64, payloadCode string, uopCount *int64, manifest []protocol.IngestManifestItem) error
-	ClearBin(nodeID int64, binTypeCode string) error
+	ClearBin(nodeID int64, binTypeCode string, unload bool) error
 	RecordBinCount(nodeID int64, actualUOP int, actor string) error
 	ClearLoaderHome(nodeID int64) error
 	EnrichHomeBufferPartials(nodes []domain.StationNodeView)

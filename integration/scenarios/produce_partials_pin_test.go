@@ -25,9 +25,12 @@ import (
 
 	corematerial "shingocore/material"
 	"shingocore/store/audit"
+	corebins "shingocore/store/bins"
+	corenodes "shingocore/store/nodes"
 	corepayloads "shingocore/store/payloads"
 
 	edgeengine "shingoedge/engine"
+	edgemessaging "shingoedge/messaging"
 	storeorders "shingoedge/store/orders"
 	edgeuop "shingoedge/uop"
 )
@@ -46,9 +49,20 @@ var ppCount = map[ppClass]int{ppFull: 40, ppPartial: 17, ppEmpty: 0, ppBare: 0}
 
 // ppCell is a plain produce cell running style A, its line's carrier set to a
 // class, the outbound destination a CMS boundary.
-func ppCell(t *testing.T, mode protocol.SwapMode, class ppClass) *ksrCell {
+func ppCell(t *testing.T, mode protocol.SwapMode, class ppClass, finishLater bool) *ksrCell {
 	t.Helper()
-	c := newKsrCell(t, ksrOpts{role: protocol.ClaimRoleProduce, mode: mode, plain: true})
+	return ppCellOf(t, ksrOpts{role: protocol.ClaimRoleProduce, mode: mode, plain: true}, class, finishLater)
+}
+
+// ppCellOf is ppCell for a cell of any shape (a sequential pair, say).
+func ppCellOf(t *testing.T, o ksrOpts, class ppClass, finishLater bool) *ksrCell {
+	t.Helper()
+	mode := o.mode
+	o.mirror = finishLater
+	c := newKsrCell(t, o)
+	if finishLater {
+		c.finishLater()
+	}
 	c.runningCell("setup")
 	db := c.core.eng.DB()
 	dest, err := db.GetNodeByName(ksrDest)
@@ -156,24 +170,32 @@ func ppOps(ops []string) string {
 }
 
 type ppRow struct {
-	door         string
+	door string
+	// finish: claim A names a partial home (KSR-HOME), mirrored to Core.
+	finish       bool
 	mode         protocol.SwapMode
 	class        ppClass
 	today, after string
 }
 
-func (r ppRow) name() string { return fmt.Sprintf("%s/%s/%s", r.door, r.mode, r.class) }
+func (r ppRow) name() string {
+	n := fmt.Sprintf("%s/%s/%s", r.door, r.mode, r.class)
+	if r.finish {
+		n += "/finish-later"
+	}
+	return n
+}
 
 // ppRun runs one row's door on a fresh cell and returns what Core shows.
 func ppRun(t *testing.T, r ppRow) string {
-	c := ppCell(t, r.mode, r.class)
+	c := ppCell(t, r.mode, r.class, r.finish)
 	m := c.ppMark()
 	switch r.door {
 	case "request", "request-spb9":
 		if r.class == ppEmpty || r.class == ppBare {
 			// A line with nothing made: the request is expected refused, and a
 			// request that is not is reported, not driven.
-			if _, err := c.edge.Engine.RequestProduceSwap(c.nodeID); err != nil {
+			if _, err := c.edge.Engine.RequestProduceSwap(c.nodeID, 0); err != nil {
 				return "refused"
 			}
 			return "accepted"
@@ -298,7 +320,46 @@ func ppRows() []ppRow {
 		ppRow{door: "material-count9", mode: tr, class: ppPartial, today: ppNoIngest17,
 			after: "at=KSR-DEST uop=9 part=KSR-PA ledger=sync_uop_and_claim cms=18"},
 	)
+	rows = append(rows, ppFinishLaterRows()...)
 	return rows
+}
+
+// The finish-later claim (ruling: contents decide, in Core). A full leaves for
+// the outbound as it always did; an unfinished carrier goes to the claim's
+// partial home with its count, by every lifting door: the REQUEST swap in every
+// mode, the changeover (curtained or not), the Material page with the count the
+// line holds or the one the operator types. Today each of them sent it to the
+// outbound.
+func ppFinishLaterRows() []ppRow {
+	const (
+		home17     = "at=KSR-HOME uop=17 part=KSR-PA ledger=set_for_production,manifest_confirmed cms=0"
+		homeMove17 = "at=KSR-HOME uop=17 part=KSR-PA ledger=sync_uop_and_claim cms=0"
+		homeMove9  = "at=KSR-HOME uop=9 part=KSR-PA ledger=sync_uop_and_claim cms=0"
+	)
+	var rows []ppRow
+	for _, mode := range protocol.ConfigurableSwapModes() {
+		if mode == protocol.SwapModeManualSwap {
+			continue
+		}
+		rows = append(rows,
+			ppRow{door: "request", mode: mode, class: ppFull, finish: true, today: ppAt40, after: ppAt40},
+			ppRow{door: "request", mode: mode, class: ppPartial, finish: true, today: ppAt17, after: home17},
+		)
+		if mode != protocol.SwapModeSequential {
+			today := ppAt17
+			if mode == protocol.SwapModeTwoRobotPressIndex {
+				today = ppNoIngest17
+			}
+			rows = append(rows, ppRow{door: "changeover", mode: mode, class: ppPartial, finish: true, today: today, after: home17})
+		}
+	}
+	tr := protocol.SwapModeTwoRobot
+	return append(rows,
+		ppRow{door: "changeover-curtained", mode: protocol.SwapModeTwoRobotPressIndex, class: ppPartial, finish: true,
+			today: ppAt17, after: home17},
+		ppRow{door: "material", mode: tr, class: ppPartial, finish: true, today: ppNoIngest17, after: homeMove17},
+		ppRow{door: "material-count9", mode: tr, class: ppPartial, finish: true, today: ppNoIngest17, after: homeMove9},
+	)
 }
 
 func TestProducePartialsPin_LiftDoors(t *testing.T) {
@@ -347,5 +408,124 @@ func TestProducePartialsPin_MaterialPageCountOnAConsumeLine(t *testing.T) {
 	t.Logf("PIN material/consume/released-empty %s", got)
 	if got != after {
 		t.Errorf("got  %s\nwant %s (today %s)", got, after, today)
+	}
+}
+
+// ksrHome is the partial home a finish-later claim names: a group of slots.
+const ksrHome = "KSR-HOME"
+
+// finishLater makes claim A a finish-later claim: Core gets a home group of
+// three slots, the Edge's claim names it as its partial destination, and the
+// claims reach Core's mirror over the wire.
+func (c *ksrCell) finishLater() {
+	c.t.Helper()
+	db := c.core.eng.DB()
+	ngrp, err := db.GetNodeTypeByCode("NGRP")
+	mustNil(c.t, err, "NGRP type")
+	home := &corenodes.Node{Name: ksrHome, IsSynthetic: true, NodeTypeID: &ngrp.ID, Enabled: true}
+	mustNil(c.t, db.CreateNode(home), "the partial home")
+	for i := 1; i <= 3; i++ {
+		mustNil(c.t, db.CreateNode(&corenodes.Node{Name: fmt.Sprintf("%s-%d", ksrHome, i), ParentID: &home.ID, Enabled: true}),
+			"a home slot")
+	}
+	_, err = c.edge.DB.Exec(`UPDATE style_node_claims SET partial_destination = ? WHERE id = ?`, ksrHome, c.claimA)
+	mustNil(c.t, err, "claim A finishes later")
+	mustNil(c.t, edgemessaging.NewPlantClaimsPublisher(c.edge.DB, "edge.test", 0).PublishChanged(c.processID), "publish")
+	c.settle()
+	got, ambiguous, err := db.PartialHomeFor(ksrLine, ksrPartA)
+	mustNil(c.t, err, "the mirror's partial home")
+	if got != ksrHome || ambiguous {
+		c.t.Fatalf("Core's mirror names partial home %q (ambiguous %v), want %s", got, ambiguous, ksrHome)
+	}
+}
+
+// ppHeldPartial stands a held partial of A in the cell's home: n of 40, landed
+// there through the real arrival, so it is held from now.
+func (c *ksrCell) ppHeldPartial(label string, n int) {
+	c.t.Helper()
+	db := c.core.eng.DB()
+	slot, err := db.GetNodeByName(ksrHome + "-1")
+	mustNil(c.t, err, "a home slot")
+	line, err := db.GetNodeByName(ksrLine)
+	mustNil(c.t, err, "the line")
+	b := &corebins.Bin{BinTypeID: c.typeA.ID, Label: label, NodeID: &line.ID, Status: "available"}
+	mustNil(c.t, db.CreateBin(b), "the partial")
+	mustNil(c.t, db.SetBinManifest(b.ID, `{"items":[{"part_number":"KSR-PA-PART"}]}`, ksrPartA, n), "its count")
+	_, err = c.core.eng.BinService().ApplyArrival(b.ID, slot.ID, false, nil, 0)
+	mustNil(c.t, err, "it lands in its home")
+}
+
+// TestProducePartials_TheLineFinishesItsPartial: a finish-later cell holding a
+// partial of its part in its home. A REQUEST swap, in every mode, sends the
+// line's unfinished carrier home and brings the held one back to be finished:
+// the carrier that lands on the line is the home's partial with its count, not
+// a fresh empty. (The station counting from its count is the landing's, which
+// this harness's Edge is not sent: TestProducePartials_AReturnedPartialCountsFromItsCount.)
+func TestProducePartials_TheLineFinishesItsPartial(t *testing.T) {
+	for _, mode := range protocol.ConfigurableSwapModes() {
+		if mode == protocol.SwapModeManualSwap {
+			continue
+		}
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			c := ppCell(t, mode, ppPartial, true)
+			c.ppHeldPartial("KSR-HELD", 22)
+			m := c.ppMark()
+			c.swap("finish the held partial", c.operatorRequest)
+			c.quiet()
+			db := c.core.eng.DB()
+			bins, err := db.ListBins()
+			mustNil(t, err, "bins")
+			var onLine []string
+			for _, b := range bins {
+				if c.nodeName(b.NodeID) == ksrLine {
+					onLine = append(onLine, fmt.Sprintf("%s:%d", b.Label, b.UOPRemaining))
+				}
+			}
+			got := fmt.Sprintf("line=%v old=%s", onLine, c.ppSeen(m))
+			want := "line=[KSR-HELD:22] old=at=KSR-HOME uop=17 part=KSR-PA ledger=set_for_production,manifest_confirmed cms=0"
+			if mode == protocol.SwapModeTwoRobotPressIndex {
+				// The press indexes its deck forward: the deck's empty goes to the
+				// line and the fetched carrier refills the deck behind it.
+				want = "line=[KSR-A-DECK:0] old=at=KSR-HOME uop=17 part=KSR-PA ledger=set_for_production,manifest_confirmed cms=0"
+			}
+			t.Logf("PIN finish/%s %s", mode, got)
+			if got != want {
+				t.Errorf("got  %s\nwant %s", got, want)
+			}
+		})
+	}
+}
+
+// TestProducePartials_ASequentialPairSendsItsPartialHome: a sequential line of
+// two positions, finish-later. A partial lifted off the line goes to the home,
+// by the REQUEST and by the changeover: the one door holds on a multi-position
+// cell too, through Core's divert at the leg's release.
+func TestProducePartials_ASequentialPairSendsItsPartialHome(t *testing.T) {
+	const home17 = "at=KSR-HOME uop=17 part=KSR-PA ledger=set_for_production,manifest_confirmed cms=0"
+	for _, door := range []string{"request", "changeover"} {
+		door := door
+		t.Run(door, func(t *testing.T) {
+			c := ppCellOf(t, ksrOpts{role: protocol.ClaimRoleProduce, mode: protocol.SwapModeSequential, plain: true, pair: true},
+				ppPartial, true)
+			m := c.ppMark()
+			switch door {
+			case "request":
+				c.swap("the pair's swap", c.operatorRequest)
+			case "changeover":
+				before := c.lastID()
+				if _, err := c.edge.Engine.StartProcessChangeover(c.processID, c.styleB, "pp", ""); err != nil {
+					t.Fatalf("changeover: %v", err)
+				}
+				c.tick()
+				c.runChangeover("the pair's changeover", before, ksrLine, ksrPair)
+			}
+			c.quiet()
+			got := c.ppSeen(m)
+			t.Logf("PIN sequential-pair/%s %s", door, got)
+			if got != home17 {
+				t.Errorf("got  %s\nwant %s", got, home17)
+			}
+		})
 	}
 }

@@ -32,7 +32,7 @@ func TestProduceRelease_DepartingBinStillClears(t *testing.T) {
 	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
 
-	result, err := eng.RequestProduceSwap(nodeID)
+	result, err := eng.RequestProduceSwap(nodeID, 0)
 	testutil.MustNoErr(t, err, "RequestProduceSwap")
 	markStaged(t, db, result.OrderA.ID)
 	markStaged(t, db, result.OrderB.ID)

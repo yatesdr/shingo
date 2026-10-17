@@ -186,10 +186,38 @@ func (h *Handlers) apiRequestProduceSwap(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	result, err := h.orchestration.RequestProduceSwap(id)
+	// bin_id: the held partial the operator picked from the REQUEST list (a
+	// finish-later claim); absent lets Core choose, oldest held first.
+	var body struct {
+		BinID int64 `json:"bin_id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	result, err := h.orchestration.RequestProduceSwap(id, body.BinID)
 	if err != nil {
 		writeMaterialRequestError(w, id, "produce", err)
 		return
 	}
 	writeJSONWithTrigger(w, r, result, "refreshMaterial")
+}
+
+// apiHeldPartials is Core's list of a part's held partials, oldest held first,
+// for a finish-later claim's REQUEST: the operator may pick which one the
+// swap fetches (its bin_id rides the request).
+func (h *Handlers) apiHeldPartials(w http.ResponseWriter, r *http.Request) {
+	payload := r.URL.Query().Get("payload")
+	if payload == "" {
+		writeError(w, http.StatusBadRequest, "payload is required")
+		return
+	}
+	core := h.engine.CoreAPI()
+	if core == nil {
+		writeError(w, http.StatusServiceUnavailable, "core API not configured")
+		return
+	}
+	list, err := core.FetchHeldPartials(payload)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, list)
 }

@@ -1201,13 +1201,14 @@ function syncPosHead(e) {
 
 // The row's `N set` badge. The model counts it, by domain.ClaimHas's rule, so
 // the badge and the server agree on what "set" means; the two evacuation
-// fields are the cell's own and are counted here beside them because the modal
-// draws all fourteen in one sheet.
+// fields and the partial home are the cell's own and are counted here beside
+// them because the modal draws all fifteen in one sheet.
 function advancedCount(node) {
     const c = S.model.cells[node];
     let n = M().advancedSet(S.model, node).length;
     if ((c.evacNodes || []).length) n++;
     if (c.evacDest) n++;
+    if (c.partialDest) n++;
     return n;
 }
 
@@ -2720,9 +2721,9 @@ async function openSettings() {
 // ── D2 · Advanced (SPEC §2 D2) ───────────────────────────────────────────────
 //
 // The modal is the ONLY place these columns appear (ruling R2). Twelve of the
-// fourteen fields are the model's advanced block; the other two — evacuation
-// positions and evacuation destination — are on the cell already, because the
-// picture draws what they do. Apply dispatches both and marks the flow dirty;
+// fifteen fields are the model's advanced block; the other three — evacuation
+// positions, evacuation destination and the partial home — are on the cell, a
+// routing fact the flow carries like the destination beside it. Apply dispatches both and marks the flow dirty;
 // nothing is written until Save flow.
 //
 // WHAT IS DRAWN IS flowspec's DECISION, not a list here. A field this
@@ -2735,6 +2736,9 @@ const ADV_SECTIONS = [
     ['Part identity', ['allowed_payload_codes']],
     ['Replenishment', ['reorder_point', 'auto_reorder', 'lineside_soft_threshold', 'auto_request_payload', 'auto_push', 'keep_staged_node']],
     ['Changeover specials', ['evacuate_on_changeover', 'evac_nodes', 'evac_dest', 'changeover_carryover_disposition']],
+    // A carrier that leaves this position before it is full: where it waits to
+    // be called back and finished. Offered on a produce position only.
+    ['Unfinished carriers', ['partial_dest']],
     ['Press hardware', ['index_robot_supplies']],
     ['Station policy', ['auto_confirm']],
     // BOARD is one field, and it earns a section rather than a corner of
@@ -2744,7 +2748,7 @@ const ADV_SECTIONS = [
     ['Board', ['sequence']],
 ];
 
-// ADV_COPY — the sheet's fourteen rows: which CLAIM FIELD each one edits, and
+// ADV_COPY — the sheet's fifteen rows: which CLAIM FIELD each one edits, and
 // the one-line help under it.
 //
 // THE HELP IS THIS PAGE'S; THE NAME IS NOT. This used to carry both, so it was
@@ -2768,6 +2772,7 @@ const ADV_COPY = {
     evacuate_on_changeover: ['evacuate_on_changeover', 'clear this position before the new style'],
     evac_nodes: ['changeover_evac_nodes', 'tooling change — which positions get cleared'],
     evac_dest: ['changeover_evac_destination', ''],
+    partial_dest: ['partial_destination', 'where a bin that leaves this position unfinished waits to be called back and finished; blank sends it where full bins go'],
     changeover_carryover_disposition: ['changeover_carryover_disposition', 'what happens to a part-full bin'],
     index_robot_supplies: ['index_robot_supplies', 'the same for every part on this press'],
     auto_confirm: ['auto_confirm', 'the plant setting applies unless set here'],
@@ -2800,6 +2805,7 @@ function openAdvanced(node) {
         was: Object.assign({}, a),
         evacNodes: (c.evacNodes || []).slice(),
         evacDest: c.evacDest || '',
+        partialDest: c.partialDest || '',
     };
     drawAdvanced();
 }
@@ -2808,12 +2814,14 @@ function advShows(key) {
     if (key === 'evac_nodes' || key === 'evac_dest') {
         return M().advancedShows(S.model, S.adv.node, 'evacuate_on_changeover');
     }
+    if (key === 'partial_dest') return M().advancedShows(S.model, S.adv.node, 'partial_destination');
     return M().advancedShows(S.model, S.adv.node, key);
 }
 
 function advValue(key) {
     if (key === 'evac_nodes') return S.adv.evacNodes;
     if (key === 'evac_dest') return S.adv.evacDest;
+    if (key === 'partial_dest') return S.adv.partialDest;
     return S.adv.a[key];
 }
 
@@ -2898,6 +2906,12 @@ function advField(key) {
             control = advPick(key, v ? esc(v) : '<span class="k">' + esc(W('outbound_destination')) + ' ·</span> ' + esc(fallback), v ? '' : 'dflt');
             break;
         }
+        case 'partial_dest': {
+            const v = S.adv.partialDest;
+            const fallback = S.model.cells[S.adv.node].dest || '';
+            control = advPick(key, v ? esc(v) : '<span class="k">' + esc(W('outbound_destination')) + ' ·</span> ' + esc(fallback || '—'), v ? '' : 'dflt');
+            break;
+        }
         case 'changeover_carryover_disposition': {
             const v = S.adv.a.changeover_carryover_disposition || 'replace';
             control = advPick(key, esc(CARRYOVER[v] || v), v === 'replace' ? 'dflt' : '');
@@ -2969,6 +2983,7 @@ function applyAdvanced() {
     let m = M().reduce(S.model, { type: 'setAdvanced', node: node, advanced: S.adv.a });
     m = M().reduce(m, { type: 'setEvacNodes', node: node, nodes: S.adv.evacNodes });
     m = M().reduce(m, { type: 'setEvacDest', node: node, dest: S.adv.evacDest });
+    m = M().reduce(m, { type: 'setPartialDest', node: node, dest: S.adv.partialDest });
     S.model = m;
     closeAdvanced();
     drawFlows();
@@ -3029,6 +3044,14 @@ function advOptions(key) {
             }].concat(routing.filter(r => r.role === 'destination').map(r => ({
                 label: r.label || r.core_node_name, on: S.adv.evacDest === r.core_node_name,
                 run: () => { S.adv.evacDest = r.core_node_name; },
+            })));
+        case 'partial_dest':
+            return [{
+                label: W('outbound_destination') + ' · ' + (c.dest || '—'), on: !S.adv.partialDest,
+                run: () => { S.adv.partialDest = ''; },
+            }].concat(routing.filter(r => r.role === 'destination').map(r => ({
+                label: r.label || r.core_node_name, on: S.adv.partialDest === r.core_node_name,
+                run: () => { S.adv.partialDest = r.core_node_name; },
             })));
         default: return [];
     }

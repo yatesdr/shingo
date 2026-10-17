@@ -19,6 +19,12 @@ type NodeBinState struct {
 	Manifest          *string `json:"manifest,omitempty"`
 	ManifestConfirmed bool    `json:"manifest_confirmed"`
 	Occupied          bool    `json:"occupied"`
+	// UOPCapacity, HeldSince and HeldFor are Core's (protocol.NodeBinInfo):
+	// the board labels a carrier PARTIAL from the count and the capacity, and
+	// a held one with its line and when it entered its home.
+	UOPCapacity int    `json:"uop_capacity,omitempty"`
+	HeldSince   string `json:"held_since,omitempty"`
+	HeldFor     string `json:"held_for,omitempty"`
 }
 
 // CurtainPoint is one curtained node's interlock settings, as the view

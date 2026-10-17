@@ -504,8 +504,12 @@ func (e *Engine) seatManuallyLoadedBin(node *processes.Node, claimIDPtr, activeB
 // and ClearBin returns an error that says the bin WAS cleared: the operator has
 // to learn the carrier is staying, and a retry is not the fix
 // (TestClearBin_NoOutboundTellsTheOperator).
-func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
-	node, runtime, claim, err := e.loadActiveNode(nodeID)
+//
+// unload is the person's second tap on a carrier Core holds as an unfinished
+// partial in its home: it is cleared anyway, booked as any clear. Without it
+// Core refuses to clear one.
+func (e *Engine) ClearBin(nodeID int64, binTypeCode string, unload bool) error {
+	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return err
 	}
@@ -520,7 +524,7 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 			log.Printf("bin_ops: confirmed U1 order %d on operator clear at node %s", u1ID, node.CoreNodeName)
 		}
 	}
-	cleared, err := e.coreClient.ClearBin(node.CoreNodeName, binTypeCode)
+	cleared, err := e.coreClient.ClearBin(node.CoreNodeName, binTypeCode, unload)
 	if err != nil {
 		return fmt.Errorf("clear bin: %w", err)
 	}
@@ -592,15 +596,12 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string) error {
 	// binAtNode's claim fallback and put the claim's part number straight back
 	// on the carrier, which is the cross product this pair was split to end.
 	e.recordLinesideCarrier(nodeID, node.CoreNodeName, domain.KnownCarrier(""), domain.CarrierFromOperator)
-	// The count that just went away, on the Edge side of the wire. Core records
-	// it durably (ClearForReuseTx writes a bin_uop_ledger row with before->0 and
-	// op clear_for_reuse, in the clear's own transaction); this line is what
-	// lets somebody reading the Edge log find that row, and it names the number
-	// so a clear of a bin that was not empty is visible from either end.
-	discarded := 0
-	if runtime != nil {
-		discarded = runtime.RemainingUOPCached
-	}
+	// The count that just went away, as Core counted it. Core records it durably
+	// (ClearForReuseTx writes a bin_uop_ledger row with before->0 and op
+	// clear_for_reuse, in the clear's own transaction); this line is what lets
+	// somebody reading the Edge log find that row. It used to print this Edge's
+	// runtime cache, which a window never learns, so every clear read 0.
+	discarded := cleared.ClearedUOP
 	log.Printf("bin_ops: CLEAR at node %s discarded %d parts on bin %d (payload=%q, type=%q, new epoch=%d) — "+
 		"Core holds the ledger row (clear_for_reuse)",
 		node.CoreNodeName, discarded, cleared.BinID, clearedPayload, cleared.ClearedBinTypeCode, cleared.DeltaEpoch)
