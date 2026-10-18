@@ -38,6 +38,10 @@ import (
 type FlowPreviewRequest struct {
 	ToStyleID int64
 	Cells     []domain.FlowCell
+	// Mint is flow/preview's mint form (pick-a-part U3): a recipe and parts
+	// instead of cells. Set, it is the whole request — ToStyleID and Cells are
+	// decided by the mint plan (engine.previewMint).
+	Mint *MintRequest
 	// Preflight asks Core whether the draft's parts exist. Off by default:
 	// this is a network call, the edit loop makes a preview every 400 ms, and
 	// only the HMI's confirm sheet reads the answer. See flowPreflight.
@@ -92,6 +96,9 @@ type FlowPreview struct {
 	// fires no orders and is still a changeover to start — the style flips at
 	// cutover — not a flow that "changes nothing".
 	AlreadyDone []string `json:"already_done,omitempty"`
+	// Mint is set on a mint preview: the style the parts resolve to or would
+	// mint, and where each part lands.
+	Mint *MintFacts `json:"mint,omitempty"`
 }
 
 // Orders is the count for a preview that planned, and 0 for one that did not.
@@ -136,6 +143,14 @@ type FlowSaveRequest struct {
 	// with nothing would turn every manual edit into a lost lineage.
 	SourcePresetID      *int64
 	SourcePresetVersion *int
+
+	// moved and stamp are the mint's (engine.MintStyle), never a handler's.
+	// moved says the mint carries the Positions screen's moves (R-K), which
+	// gateRefusal refuses on a gated-off cell; stamp is applied to every
+	// draft input before validation — the minted claim's cell facts
+	// (containment route, curtain) that no other style lends it.
+	moved bool
+	stamp func(*domain.NodeClaimInput)
 }
 
 // FlowSaveResult is what a save returns: the NEW fingerprint (post-save),
@@ -394,6 +409,9 @@ func (e *Engine) flowPreflight(ctx context.Context, claims []processes.NodeClaim
 // nothing, ErrStyleAlreadyRunning / ErrChangeoverActive when the seam's gates
 // refuse — the same words the desktop preview has always used.
 func (e *Engine) PreviewFlow(ctx context.Context, processID int64, req FlowPreviewRequest) (*FlowPreview, error) {
+	if req.Mint != nil {
+		return e.previewMint(ctx, processID, req)
+	}
 	// ONE READ OF EACH THING. GetProcess ran three times per preview (here,
 	// inside the fingerprint, and again inside the planner) and the process
 	// nodes three times; the pull snapshot was walked twice. They are all
@@ -680,7 +698,11 @@ func gateRefusal(process *processes.Process, req FlowSaveRequest, stored []proce
 	if req.Source != domain.ClaimSourceHMI || process.FlowComposerEnabled {
 		return nil
 	}
-	if len(stored) == 0 && req.SourcePresetID != nil {
+	// The R3 carve-out's exact shape is the mint (pick-a-part U3, error row
+	// 12): a flow being BORN, from an engineer's recipe. The one thing it may
+	// not carry on a gated-off cell is the Positions screen's moves — moving a
+	// recipe's slot is the floor editing a flow, and the switch says it may not.
+	if len(stored) == 0 && req.SourcePresetID != nil && !req.moved {
 		return nil
 	}
 	return ErrFlowComposerDisabled
@@ -755,77 +777,11 @@ func (e *Engine) SaveFlow(processID int64, req FlowSaveRequest) (*FlowSaveResult
 	//     had already read exactly those rows.
 	//   - The NEW fingerprint is computed from the rows the transaction holds
 	//     and returned, rather than re-reading the whole flow after commit.
-	var result FlowSaveResult
+	var result *FlowSaveResult
 	var cleared []processes.KeptSpot
 	err = e.db.Transaction(func(tx *sql.Tx) error {
-		fromClaims, stored, current, err := flowRowsAndFingerprint(tx, processID, req.ToStyleID)
-		if err != nil {
-			return err
-		}
-		if current != req.Fingerprint {
-			return ErrFlowStale
-		}
-		if err := gateRefusal(process, req, stored); err != nil {
-			return err
-		}
-		draft := draftFlow(req.ToStyleID, stored, req.Cells, req.Source, req.CalledBy,
-			req.SourcePresetID, req.SourcePresetVersion)
-		if running := process.ActiveStyleID != nil && *process.ActiveStyleID == req.ToStyleID; running {
-			if err := refuseRunningPositionMove(style.Name, stored, draft); err != nil {
-				return err
-			}
-		}
-		cellInputs := make([]domain.NodeClaimInput, 0, len(draft.cells))
-		for _, c := range draft.cells {
-			cellInputs = append(cellInputs, c.input)
-		}
-		if findings := validateFlowInputs(claimCtx, cellInputs); len(findings) > 0 {
-			return &FlowValidationError{Findings: sortFindings(findings)}
-		}
-		for _, c := range draft.cells {
-			if _, err := processes.UpsertClaim(tx, claimCtx.Kinds(), c.input); err != nil {
-				return fmt.Errorf("%s: %w", c.cell.CoreNodeName, err)
-			}
-			result.Written++
-		}
-		for _, c := range draft.removed {
-			if err := processes.DeleteClaim(tx, c.ID); err != nil {
-				return fmt.Errorf("%s: %w", c.CoreNodeName, err)
-			}
-			result.Deleted++
-		}
-		// The dedicated-spot check, AFTER the deletes: the upserts above run
-		// first, so a spot moved from one cell to another in this save is named
-		// by both until the old cell's row goes. The spots the style kept
-		// before the save are the stored rows already in hand.
-		moved, err := processes.CheckKeepStagedSpots(tx, keptSpots(stored))
-		if err != nil {
-			return err
-		}
-		cleared = moved
-		// The new fingerprint, computed INSIDE the transaction and returned.
-		//
-		// ONE READ, NOT FOUR. It used to be recomputed after the commit, which
-		// re-read the process, both sides' claims and the routing set on the
-		// pool the boards were queued on. Here the process and the from-side
-		// are already in hand, so only the side that was just written is read
-		// back.
-		//
-		// READ BACK RATHER THAN DERIVED FROM THE DRAFT, and this is the part
-		// that has to be a read: the fingerprint covers id and sequence, and
-		// both are assigned by the store on insert. A fingerprint built from
-		// the draft would carry id 0 for every new row, match nothing a later
-		// check computes, and turn the caller's next save into ErrFlowStale.
-		written, err := processes.ListClaims(tx, req.ToStyleID)
-		if err != nil {
-			return fmt.Errorf("read back to-style claims: %w", err)
-		}
-		// A save cannot move the running style's claims unless the running
-		// style IS the target, and then the side just read is both sides.
-		if process.ActiveStyleID != nil && *process.ActiveStyleID == req.ToStyleID {
-			fromClaims = written
-		}
-		result.Fingerprint, err = domain.FlowFingerprint(processID, process.ActiveStyleID, fromClaims, req.ToStyleID, written)
+		var err error
+		result, cleared, err = e.saveFlowTx(tx, process, *style, claimCtx, req)
 		return err
 	})
 	if err != nil {
@@ -834,5 +790,92 @@ func (e *Engine) SaveFlow(processID int64, req FlowSaveRequest) (*FlowSaveResult
 	// A spot this save moved or cleared may still hold a spare nothing keeps
 	// now; it goes back, after the commit (spotsCleared).
 	e.spotsCleared(cleared)
-	return &result, nil
+	return result, nil
+}
+
+// saveFlowTx is SaveFlow's transaction body, and MintStyle's: the fingerprint
+// check, the gate, the running-position refusal, the validator, the writes,
+// the dedicated-spot check and the new fingerprint, all on tx. One engine
+// write for both requests (pick-a-part O-7) — the mint creates the style row
+// first, in the same transaction, and then saves through here.
+func (e *Engine) saveFlowTx(tx *sql.Tx, process *processes.Process, style processes.Style,
+	claimCtx domain.ClaimContextSet, req FlowSaveRequest) (*FlowSaveResult, []processes.KeptSpot, error) {
+	processID := process.ID
+	var result FlowSaveResult
+	fromClaims, stored, current, err := flowRowsAndFingerprint(tx, processID, req.ToStyleID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if current != req.Fingerprint {
+		return nil, nil, ErrFlowStale
+	}
+	if err := gateRefusal(process, req, stored); err != nil {
+		return nil, nil, err
+	}
+	draft := draftFlow(req.ToStyleID, stored, req.Cells, req.Source, req.CalledBy,
+		req.SourcePresetID, req.SourcePresetVersion)
+	if req.stamp != nil {
+		for i := range draft.cells {
+			req.stamp(&draft.cells[i].input)
+		}
+	}
+	if running := process.ActiveStyleID != nil && *process.ActiveStyleID == req.ToStyleID; running {
+		if err := refuseRunningPositionMove(style.Name, stored, draft); err != nil {
+			return nil, nil, err
+		}
+	}
+	cellInputs := make([]domain.NodeClaimInput, 0, len(draft.cells))
+	for _, c := range draft.cells {
+		cellInputs = append(cellInputs, c.input)
+	}
+	if findings := validateFlowInputs(claimCtx, cellInputs); len(findings) > 0 {
+		return nil, nil, &FlowValidationError{Findings: sortFindings(findings)}
+	}
+	for _, c := range draft.cells {
+		if _, err := processes.UpsertClaim(tx, claimCtx.Kinds(), c.input); err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", c.cell.CoreNodeName, err)
+		}
+		result.Written++
+	}
+	for _, c := range draft.removed {
+		if err := processes.DeleteClaim(tx, c.ID); err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", c.CoreNodeName, err)
+		}
+		result.Deleted++
+	}
+	// The dedicated-spot check, AFTER the deletes: the upserts above run
+	// first, so a spot moved from one cell to another in this save is named
+	// by both until the old cell's row goes. The spots the style kept
+	// before the save are the stored rows already in hand.
+	cleared, err := processes.CheckKeepStagedSpots(tx, keptSpots(stored))
+	if err != nil {
+		return nil, nil, err
+	}
+	// The new fingerprint, computed INSIDE the transaction and returned.
+	//
+	// ONE READ, NOT FOUR. It used to be recomputed after the commit, which
+	// re-read the process, both sides' claims and the routing set on the
+	// pool the boards were queued on. Here the process and the from-side
+	// are already in hand, so only the side that was just written is read
+	// back.
+	//
+	// READ BACK RATHER THAN DERIVED FROM THE DRAFT, and this is the part
+	// that has to be a read: the fingerprint covers id and sequence, and
+	// both are assigned by the store on insert. A fingerprint built from
+	// the draft would carry id 0 for every new row, match nothing a later
+	// check computes, and turn the caller's next save into ErrFlowStale.
+	written, err := processes.ListClaims(tx, req.ToStyleID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read back to-style claims: %w", err)
+	}
+	// A save cannot move the running style's claims unless the running
+	// style IS the target, and then the side just read is both sides.
+	if process.ActiveStyleID != nil && *process.ActiveStyleID == req.ToStyleID {
+		fromClaims = written
+	}
+	result.Fingerprint, err = domain.FlowFingerprint(processID, process.ActiveStyleID, fromClaims, req.ToStyleID, written)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &result, cleared, nil
 }

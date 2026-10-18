@@ -326,6 +326,10 @@ type ComposerPreset struct {
 	// Cells is the preset's flow, keyed by position, in the composer's own
 	// cell shape.
 	Cells map[string]FlowCell `json:"cells,omitempty"`
+	// Slots is the parts this recipe takes (domain.PayloadSlots), in picture
+	// order: the station's "two off?" question reads how many make parts, and
+	// its fit rule reads how many there are (pick-a-part U3, O-12).
+	Slots []Slot `json:"slots,omitempty"`
 }
 
 // ComposerScene is the travel graph, reduced to what a waypoint search needs.

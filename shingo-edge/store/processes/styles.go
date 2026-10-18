@@ -197,7 +197,7 @@ func GetStyle(db DBTX, id int64) (*Style, error) {
 }
 
 // CreateStyle inserts a new style and returns the new row id.
-func CreateStyle(db *sql.DB, name, description string, processID int64) (int64, error) {
+func CreateStyle(db DBTX, name, description string, processID int64) (int64, error) {
 	res, err := db.Exec(`INSERT INTO styles (name, description, process_id) VALUES (?, ?, ?)`, name, description, processID)
 	if err != nil {
 		return 0, err

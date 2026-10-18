@@ -343,6 +343,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			// composer is enabled). Shop floor, like the changeover routes.
 			r.Post("/processes/{id}/flow/preview", h.apiPreviewFlow)
 			r.Post("/processes/{id}/flow/save", h.apiSaveFlow)
+			// The mint: a style from (recipe, parts), resolved or minted — the
+			// floor's one write (pick-a-part U3). Shop floor, beside save.
+			r.Post("/processes/{id}/flow/mint", h.apiMintFlow)
 			r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)
 			r.Post("/processes/{id}/changeover/cancel", h.apiCancelProcessChangeover)
 			r.Get("/processes/{id}/post-cutover-flag", h.apiGetPostCutoverFlag)

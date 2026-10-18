@@ -3,6 +3,7 @@ package service
 import (
 	"log"
 	"math"
+	"sort"
 	"strconv"
 	"time"
 
@@ -584,9 +585,21 @@ func (s *StationService) composerPresets(processID int64, claims map[int64][]pro
 		return nil
 	}
 	pressOrder := cellOrder(nodes())
+	at := map[string]int{}
+	for i, n := range pressOrder {
+		at[n] = i
+	}
 	members := presetMemberCounts(claims)
 	var out []domain.ComposerPreset
+	// THE LATEST VERSION OF EACH NAME, AND ONLY IT (pick-a-part O-4): an
+	// enabled recipe is the newest non-archived version of its name. The
+	// rows arrive name, version DESC, so the first of a name is the one.
+	seenName := map[string]bool{}
 	for _, p := range rows {
+		if seenName[p.Name] {
+			continue
+		}
+		seenName[p.Name] = true
 		cells, err := domain.ParsePresetShape(p.FlowJSON)
 		if err != nil {
 			// A preset that does not parse is not a card to offer. It also
@@ -607,6 +620,8 @@ func (s *StationService) composerPresets(processID int64, claims map[int64][]pro
 		card.Mode = oneMode(cells)
 		card.Where = domain.PresetShapeNodeWord(cells, pressOrder)
 		card.Use = presetUse(members[p.ID])
+		card.Slots = domain.PayloadSlots(cells)
+		sort.SliceStable(card.Slots, func(i, j int) bool { return slotAt(at, card.Slots[i]) < slotAt(at, card.Slots[j]) })
 		out = append(out, card)
 	}
 	return out
@@ -722,4 +737,13 @@ func routingFromBlock(out *domain.ComposerData) []domain.RoutingNode {
 		})
 	}
 	return rows
+}
+
+// slotAt is a slot's place in picture order: its first position's index, and
+// after every known position when the press no longer has it.
+func slotAt(at map[string]int, s domain.Slot) int {
+	if i, ok := at[s.Nodes[0]]; ok {
+		return i
+	}
+	return len(at)
 }

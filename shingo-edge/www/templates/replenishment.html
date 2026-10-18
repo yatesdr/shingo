@@ -47,7 +47,7 @@
           <input type="number" min="0" value="{{.ReorderPoint}}" class="reorder-point-input" style="width:80px; text-align:right;">
         </td>
         <td>
-          <span class="badge {{if eq .Source "calculated"}}badge-info{{else if eq .Source "manual"}}badge-warn{{else}}badge-muted{{end}}">{{.Source}}</span>
+          <span class="badge {{if eq .Source "calculated"}}badge-info{{else if eq .Source "manual"}}badge-warn{{else}}badge-muted{{end}}"{{if eq .Source "unset"}} title="not set — a minted style; set its reorder here"{{end}}>{{if eq .Source "unset"}}not set{{else}}{{.Source}}{{end}}</span>
         </td>
         <td>
           <input type="checkbox" class="auto-reorder-input" {{if .AutoReorder}}checked{{end}}>

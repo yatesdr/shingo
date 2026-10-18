@@ -173,6 +173,11 @@ type EngineOrchestration interface {
 	// (station_service.go).
 	PreviewFlow(ctx context.Context, processID int64, req engine.FlowPreviewRequest) (*engine.FlowPreview, error)
 	SaveFlow(processID int64, req engine.FlowSaveRequest) (*engine.FlowSaveResult, error)
+	// MintStyle is the floor's one write and the desktop's New part flow: a
+	// style from (recipe, parts), resolved or minted (pick-a-part U3). Its
+	// preview rides PreviewFlow (FlowPreviewRequest.Mint), so the width grows
+	// by this one verb.
+	MintStyle(processID int64, req engine.MintRequest) (*engine.MintResult, error)
 	FlowFingerprint(processID, toStyleID int64) (string, error)
 	CompleteProcessProductionCutover(processID int64) error
 	CancelProcessChangeover(processID int64) error

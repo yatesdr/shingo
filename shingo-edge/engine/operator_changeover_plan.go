@@ -154,12 +154,17 @@ func (e *Engine) planChangeoverFrom(processID, toStyleID int64, fromClaims, toCl
 	} else if err != sql.ErrNoRows {
 		return nil, err
 	}
-	style, err := e.db.GetStyle(toStyleID)
-	if err != nil {
-		return nil, err
-	}
-	if style.ProcessID != processID {
-		return nil, fmt.Errorf("target style %d does not belong to process %d", toStyleID, processID)
+	// toStyleID 0 is the style a mint is about to create (engine.previewMint):
+	// its claims are the toClaims handed in and there is no row to check yet.
+	// Only the preview passes 0; a changeover start always names a real style.
+	var style *processes.Style
+	if toStyleID != 0 {
+		if style, err = e.db.GetStyle(toStyleID); err != nil {
+			return nil, err
+		}
+		if style.ProcessID != processID {
+			return nil, fmt.Errorf("target style %d does not belong to process %d", toStyleID, processID)
+		}
 	}
 
 	// Pre-fetch all data before opening transaction (SQLite deadlock prevention)

@@ -146,6 +146,9 @@ type stubEngine struct {
 	flowSaveResult     *engine.FlowSaveResult
 	flowSaveErr        error
 	flowSaveCalls      []engine.FlowSaveRequest
+	mintResult         *engine.MintResult
+	mintErr            error
+	mintCalls          []engine.MintRequest
 	flowFingerprint    string
 	flowFingerprintErr error
 	startCalls         int
@@ -289,6 +292,10 @@ func (s *stubEngine) PreviewFlow(_ context.Context, _ int64, req engine.FlowPrev
 func (s *stubEngine) SaveFlow(_ int64, req engine.FlowSaveRequest) (*engine.FlowSaveResult, error) {
 	s.flowSaveCalls = append(s.flowSaveCalls, req)
 	return s.flowSaveResult, s.flowSaveErr
+}
+func (s *stubEngine) MintStyle(_ int64, req engine.MintRequest) (*engine.MintResult, error) {
+	s.mintCalls = append(s.mintCalls, req)
+	return s.mintResult, s.mintErr
 }
 func (s *stubEngine) FlowFingerprint(int64, int64) (string, error) {
 	return s.flowFingerprint, s.flowFingerprintErr
@@ -464,6 +471,9 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 			// engine/flow_compose_test.go.
 			r.Post("/processes/{id}/flow/preview", h.apiPreviewFlow)
 			r.Post("/processes/{id}/flow/save", h.apiSaveFlow)
+			// The mint: a style from (recipe, parts), resolved or minted — the
+			// floor's one write (pick-a-part U3). Shop floor, beside save.
+			r.Post("/processes/{id}/flow/mint", h.apiMintFlow)
 
 			r.Get("/processes/{id}/presets", h.apiListFlowPresets)
 			r.Post("/processes/{id}/presets", h.apiCreateFlowPreset)

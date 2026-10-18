@@ -312,6 +312,18 @@ function flowPresetCreate(name, from) {
     return body;
 }
 
+// flowMint — POST /api/processes/{id}/flow/mint, the desktop's New part
+// flow (pick-a-part U3). The desktop names a node per part; the station's
+// builder (composer-model.js mintBody) sends codes only. Never cells, never
+// an author: the handler decides both.
+function flowMint(presetID, picks, stationID) {
+    return {
+        preset_id: Number(presetID) || 0,
+        parts: (picks || []).map(p => (p.node ? { code: String(p.code), node: String(p.node) } : { code: String(p.code) })),
+        station_id: Number(stationID) || 0,
+    };
+}
+
 // flowPresetApplySave — POST /api/processes/{id}/flow/save, one row of the
 // apply modal.
 //
@@ -451,7 +463,7 @@ function saveOutcome(status, body) {
 // again.
 (function () {
     const api = {
-        processCreate, processSettings, processGate, processContainment, nodeCurtain, processGroupCreate,
+        processCreate, processSettings, processGate, flowMint, processContainment, nodeCurtain, processGroupCreate,
         styleCreate, styleWrite, styleClone,
         processActiveStyle, stationWrite, stationNodes, routingEnable, routingAdd,
         routingSet, processPayloads,

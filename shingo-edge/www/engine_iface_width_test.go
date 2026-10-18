@@ -206,6 +206,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"RequestProduceSwap",
 		"RecallContainedPayload",
 		"SaveFlow",
+		"MintStyle",
 		"ScenePointNames",
 		"SendBinToQualityHold",
 		"SendEnvelope",

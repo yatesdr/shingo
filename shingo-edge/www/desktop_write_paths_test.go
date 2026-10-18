@@ -93,6 +93,7 @@ process.stdout.write(JSON.stringify({
   'name a flow':         B.flowPresetCreate('Two up, index', { styleID: f.style.id }),
   'name a found shape':  B.flowPresetCreate('Two up, index', { shapeKey: f.shapeKey }),
   'name a drawn shape':  B.flowPresetCreate('Two up, index', { cells: f.drawnCells }),
+  'mint a part flow':    B.flowMint(7, [{ code: 'P-ONE', node: 'PLN_01' }, { code: 'P-TWO', node: '' }], f.station.id),
   'apply a preset':      B.flowPresetApplySave(f.style.id, f.cells, 'FP', f.station.id, { id: 7, version: 3 }),
   'save with no preset': B.flowPresetApplySave(f.style.id, f.cells, 'FP', f.station.id, null),
 }));
@@ -109,8 +110,8 @@ process.stdout.write(JSON.stringify({
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("decode bodies (%s): %v", raw, err)
 	}
-	if len(out) != 19 {
-		t.Fatalf("the harness emitted %d bodies, want 19 — a write lost its builder", len(out))
+	if len(out) != 20 {
+		t.Fatalf("the harness emitted %d bodies, want 20 — a write lost its builder", len(out))
 	}
 	return out
 }
@@ -612,6 +613,28 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		}
 		if c, _ := cells[0].(map[string]any); c["payload_code"] != "" {
 			t.Errorf("naming a drawn shape sent payload_code %v; a preset carries no part", c["payload_code"])
+		}
+		// U3: the desktop's mint names the recipe, the parts with their nodes
+		// where the engineer chose one, and the station — never cells, never an
+		// author (the handler decides both, R1).
+		mint := bodies["mint a part flow"]
+		if mint["preset_id"] != float64(7) || mint["station_id"] == nil {
+			t.Errorf("mint body = %v, want preset 7 and the station", mint)
+		}
+		for _, banned := range []string{"cells", "source", "called_by", "to_style_id"} {
+			if _, ok := mint[banned]; ok {
+				t.Errorf("mint body names %q", banned)
+			}
+		}
+		parts, _ := mint["parts"].([]any)
+		if len(parts) != 2 {
+			t.Fatalf("mint parts = %v, want two", mint["parts"])
+		}
+		if p0, _ := parts[0].(map[string]any); p0["node"] != "PLN_01" {
+			t.Errorf("first part = %v, want its node", p0)
+		}
+		if p1, _ := parts[1].(map[string]any); p1["node"] != nil {
+			t.Errorf("second part = %v, want no node (the server places it)", p1)
 		}
 	})
 

@@ -3,15 +3,20 @@ package www
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/shared/scenefixtures"
 	"shingoedge/domain"
 	"shingoedge/internal/testdb"
+	"shingoedge/service"
 	"shingoedge/store"
 )
 
@@ -145,30 +150,112 @@ func TestFlowSave_GatedOffStationBodyIsRefused(t *testing.T) {
 }
 
 // TestFlowMint_GatedOffStationBodyPassesTheGate is the door U3 builds and the
-// reason U0 leaves engine.gateRefusal alone (brief O-10, error row 12): the
+// reason U0 left engine.gateRefusal alone (brief O-10, error row 12): the
 // station's mint body — a recipe and the parts the operator picked, no cells,
 // no moves — is the floor's one write on a gated-off cell. It must not be a
-// 403. Red until U3 lands POST /flow/mint.
+// 403, and it must mint. The same body with a move IS refused: moving a
+// recipe's slot is the floor editing a flow, and the switch is off.
 func TestFlowMint_GatedOffStationBodyPassesTheGate(t *testing.T) {
-	t.Skip("red until U3 lands POST /processes/{id}/flow/mint (brief O-10); U3 removes this skip")
 	db, seeded := gatedOffPlant(t)
 	_, router := realFlowRouter(t, db)
-	presetID, code := firstRecipeAndPart(t, db, seeded)
+	presetID, codes := recipeAndNewPair(t, db, seeded)
+	pid := itoa(seeded.ProcessID)
 	bodies := stationBodies(t, map[string]any{
-		"presetID": presetID, "codes": []string{code},
-		"stationID": seeded.Stations["screen-a4"],
+		"presetID": presetID, "codes": codes, "stationID": seeded.Stations["screen-a4"],
 	})
 	if _, has := bodies["mint"]["cells"]; has {
 		t.Fatal("the station's mint body carries cells; the mint is its own request type (brief O-7)")
 	}
-	resp := doRequest(t, router, "POST", "/api/processes/"+itoa(seeded.ProcessID)+"/flow/mint", bodies["mint"], nil)
+
+	moved := map[string]any{}
+	for k, v := range bodies["mint"] {
+		moved[k] = v
+	}
+	moved["overrides"] = map[string]string{"PLN_01": "PLN_03"}
+	resp := doRequest(t, router, "POST", "/api/processes/"+pid+"/flow/mint", moved, nil)
+	assertStatus(t, resp, http.StatusForbidden)
+
+	resp = doRequest(t, router, "POST", "/api/processes/"+pid+"/flow/mint", bodies["mint"], nil)
 	assertStatus(t, resp, http.StatusOK)
+	got := flowBody(t, resp)
+	if got["minted"] != true || got["fingerprint"] == "" {
+		t.Fatalf("mint answer = %v, want a minted style with a fingerprint", got)
+	}
+	// The R-D name: two parts, shared prefix collapsed.
+	if name, _ := got["style_name"].(string); !strings.Contains(name, "/") {
+		t.Errorf("minted style name %q, want the two codes collapsed (R-D)", name)
+	}
+
+	// The same body again RESOLVES to that style and writes nothing.
+	resp = doRequest(t, router, "POST", "/api/processes/"+pid+"/flow/mint", bodies["mint"], nil)
+	assertStatus(t, resp, http.StatusOK)
+	again := flowBody(t, resp)
+	if again["minted"] == true || again["style_id"] != got["style_id"] {
+		t.Errorf("second mint = %v, want the first style resolved, nothing minted", again)
+	}
 }
 
-// firstRecipeAndPart names plant A's offered shapes as recipes and returns the
-// first one with a part the press already runs on it.
-func firstRecipeAndPart(t *testing.T, db *store.DB, seeded testdb.SeededPlant) (int64, string) {
+// recipeAndNewPair names plant A's offered press-index shape as a recipe
+// (stamping the styles that run it) and returns it with a pair of parts no
+// live style runs together: the first part of one member, the second of
+// another.
+func recipeAndNewPair(t *testing.T, db *store.DB, seeded testdb.SeededPlant) (int64, []string) {
 	t.Helper()
-	t.Fatal("written in U3, beside the mint")
-	return 0, ""
+	svc := service.NewProcessService(db)
+	offer, err := svc.PresetsFor(seeded.ProcessID)
+	if err != nil {
+		t.Fatalf("PresetsFor: %v", err)
+	}
+	for _, c := range offer.Candidates {
+		if c.Mode != string(protocol.SwapModeTwoRobotPressIndex) || len(c.Members) < 2 {
+			continue
+		}
+		id, err := svc.CreateFromCandidate(seeded.ProcessID, "Standard", c.ShapeKey, "test")
+		if err != nil {
+			t.Fatalf("name the recipe: %v", err)
+		}
+		partsOf := func(styleID int64) []string {
+			claims, err := db.ListStyleNodeClaims(styleID)
+			if err != nil {
+				t.Fatalf("claims: %v", err)
+			}
+			sort.Slice(claims, func(i, j int) bool { return claims[i].CoreNodeName < claims[j].CoreNodeName })
+			var out []string
+			for _, cl := range claims {
+				out = append(out, cl.PayloadCode)
+			}
+			return out
+		}
+		a, b := partsOf(c.Members[0]), partsOf(c.Members[1])
+		if len(a) != 2 || len(b) != 2 || a[0] == b[1] {
+			continue
+		}
+		return id, []string{a[0], b[1]}
+	}
+	t.Fatal("plant A offers no press-index shape with two two-part members")
+	return 0, nil
+}
+
+// TestReplenishmentPage_AMintedStyleReadsNotSet (pick-a-part U3, R-L): the
+// stamp a mint leaves is read where an engineer goes to set reorder — the
+// replenishment page names those claims "not set", not "legacy".
+func TestReplenishmentPage_AMintedStyleReadsNotSet(t *testing.T) {
+	db, seeded := gatedOffPlant(t)
+	h, router := realFlowRouter(t, db)
+	presetID, codes := recipeAndNewPair(t, db, seeded)
+	bodies := stationBodies(t, map[string]any{
+		"presetID": presetID, "codes": codes, "stationID": seeded.Stations["screen-a4"],
+	})
+	resp := doRequest(t, router, "POST", "/api/processes/"+itoa(seeded.ProcessID)+"/flow/mint", bodies["mint"], nil)
+	assertStatus(t, resp, http.StatusOK)
+
+	resp = doRequest(t, router, "GET", "/replenishment", nil, authCookie(t, h))
+	assertStatus(t, resp, http.StatusOK)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read page: %v", err)
+	}
+	if !strings.Contains(string(raw), "a minted style; set its reorder here") {
+		t.Error("the replenishment page does not name the minted style's claims as not set")
+	}
 }

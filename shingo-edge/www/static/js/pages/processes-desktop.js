@@ -2830,6 +2830,9 @@ const ADV_COPY = {
 const REORDER_SOURCE = {
     manual: ['typed', 'typed in by an engineer, not calculated'],
     calculated: ['calculated', 'set by the reorder calculator, not typed'],
+    // A MINTED STYLE (pick-a-part U3, R-L): no reorder point has been set by
+    // anybody, and nothing reorders until an engineer sets one here.
+    unset: ['not set', 'not set — a minted style; set its reorder here'],
 };
 
 const CARRYOVER = {
@@ -4511,17 +4514,48 @@ async function refreshProcess() {
 // "+ New part flow": a part this press runs, with the CATID the PLC calls it.
 // The flow itself is drawn afterwards on D1 — a style arrives with no claims
 // and the rail marks it `build`, which is the state the picture is for.
+// NEW PART FLOW IS PICK A RECIPE, FILL EVERY SLOT (pick-a-part U3). The style
+// is minted server-side (POST /flow/mint, the floor's own door): the recipe's
+// cells with these parts on their slots, named per R-D, the recipe stamped as
+// provenance, no reorder until somebody sets one. The desktop names a node per
+// part; the station names none and the server places them.
+//
+// A TYPED NAME STAYS POSSIBLE for an engineer's one-off — "— none, I'll draw
+// it —" is the old sheet: a named style with no flow, drawn next on this
+// screen.
 function openNewStyle() {
-    openSheet('New part flow', 'a part this process runs. Its flow is drawn next, on this screen.',
-        sheetField('Name', 'what this part is called here', 'name', '') +
+    const presets = S.composer.presets || [];
+    const palette = S.composer.palette || [];
+    const recipeOpts = '<option value="">— none, I’ll name it and draw it —</option>' +
+        presets.map(p => '<option value="' + esc(p.id) + '">' + esc(p.name) +
+            (p.where ? ' · ' + esc(p.where) : '') + '</option>').join('');
+    const slotsHTML = id => {
+        const p = presets.find(x => String(x.id) === String(id));
+        if (!p) return '';
+        const opts = '<option value="">pick a part</option>' +
+            palette.map(c => '<option value="' + esc(c) + '">' + esc(c) + '</option>').join('');
+        return (p.slots || []).map((s, i) =>
+            '<div class="pd-fld"><label>' + esc(s.nodes.join(' / ')) + '<small>' + esc(s.role) + '</small></label>' +
+            '<div class="v"><select class="pd-inp wide" data-f="slot' + i + '" data-node="' + esc(s.nodes[0]) + '">' +
+            opts + '</select></div></div>').join('') +
+            (palette.length ? '' : '<p class="pd-note">This process has no parts yet — add them in Settings › ' +
+                'Parts this process runs.</p>');
+    };
+    openSheet('New part flow', 'a part this process runs: pick the recipe its cell runs, and the part for each slot.',
+        '<div class="pd-fld"><label>Recipe<small>the engineer-named shapes of this cell</small></label>' +
+        '<div class="v"><select class="pd-inp wide" data-f="recipe" id="pd-newrecipe">' + recipeOpts + '</select></div></div>' +
+        '<div id="pd-newslots"></div>' +
+        '<div id="pd-newname">' + sheetField('Name', 'what this part is called here', 'name', '') + '</div>' +
         sheetField('Expected CATID', 'what the PLC calls it — blank means shingo never matches it to a scan',
             'catid', '') +
         '<p class="pd-note">A confirmed change to the CATID is what arms a changeover cutover, so a ' +
         'part with none can be run but never recognised. It can be set later from the part’s own ' +
         'row menu.</p>',
         'Create', async () => {
+            const recipe = sheetValue('recipe');
+            if (recipe) { await mintNewStyle(recipe); return; }
             const name = String(sheetValue('name') || '').trim();
-            if (!name) { sheetStatus('A part needs a name.', true); return; }
+            if (!name) { sheetStatus('A part needs a name, or pick a recipe.', true); return; }
             const made = await postJSON('POST', '/api/styles',
                 B().styleCreate(name, S.processID, sheetValue('catid')));
             if (!made.ok) { sheetStatus(made.error, true); return; }
@@ -4531,6 +4565,40 @@ function openNewStyle() {
             S.styleID = Number(made.body.id) || S.styleID;
             await refreshProcess();
         }, false);
+    const sel = $('pd-newrecipe');
+    if (sel) {
+        sel.addEventListener('change', () => {
+            $('pd-newslots').innerHTML = slotsHTML(sel.value);
+            // A recipe names the style (R-D); the name field is the one-off's.
+            $('pd-newname').hidden = !!sel.value;
+        });
+    }
+}
+
+// mintNewStyle posts the sheet's recipe and parts to flow/mint, then the CATID
+// to the minted style if one was typed, and opens it.
+async function mintNewStyle(recipe) {
+    const p = (S.composer.presets || []).find(x => String(x.id) === String(recipe));
+    const picks = [];
+    for (let i = 0; i < ((p && p.slots) || []).length; i++) {
+        const code = sheetValue('slot' + i);
+        if (!code) { sheetStatus('Every slot needs a part.', true); return; }
+        const el = $('pd-scrim').querySelector('[data-f="slot' + i + '"]');
+        picks.push({ code: code, node: el ? el.dataset.node : '' });
+    }
+    const made = await postJSON('POST', '/api/processes/' + S.processID + '/flow/mint',
+        B().flowMint(recipe, picks, stationIDForSave()));
+    if (!made.ok) { sheetStatus(made.error, true); return; }
+    const catid = String(sheetValue('catid') || '').trim();
+    if (catid) {
+        const st = { id: made.body.style_id, name: made.body.style_name, process_id: S.processID };
+        const set = await postJSON('PUT', '/api/styles/' + st.id, B().styleWrite(st, S.processID, { expected_catid: catid }));
+        if (!set.ok) { sheetStatus('Minted ' + st.name + ', but its CATID did not save: ' + set.error, true); return; }
+    }
+    closeSheet();
+    S.notice = (made.body.minted ? 'Minted ' : 'Already runs as ') + made.body.style_name + '.';
+    S.styleID = Number(made.body.style_id) || S.styleID;
+    await refreshProcess();
 }
 
 // P0's "Add group". Taxonomy for the list and nothing else reads it, which the

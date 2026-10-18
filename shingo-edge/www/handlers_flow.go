@@ -32,6 +32,13 @@ type flowPreviewBody struct {
 	ToStyleID int64             `json:"to_style_id"`
 	Cells     []domain.FlowCell `json:"cells"`
 	TakenOff  []string          `json:"taken_off"`
+	// THE MINT FORM (pick-a-part U3): a recipe and parts instead of a style
+	// and cells — the same body flow/mint takes (composer-model.js
+	// mintBody). preset_id set means this form, and the other three are
+	// ignored: the mint plan decides the style and the cells.
+	PresetID  int64             `json:"preset_id"`
+	Parts     []engine.PartPick `json:"parts"`
+	Overrides map[string]string `json:"overrides"`
 }
 
 // flowSaveBody is POST /api/processes/{id}/flow/save. station_id names the
@@ -104,10 +111,19 @@ func (h *Handlers) apiPreviewFlow(w http.ResponseWriter, r *http.Request) {
 	// r.Context() travels, so a preview whose operator has left the screen
 	// stops at the next phase boundary instead of finishing a plan and a Core
 	// call for nobody.
-	preview, err := h.orchestration.PreviewFlow(r.Context(), processID, engine.FlowPreviewRequest{
+	preq := engine.FlowPreviewRequest{
 		ToStyleID: body.ToStyleID, Cells: body.Cells, TakenOff: body.TakenOff,
 		Preflight: r.URL.Query().Get("preflight") == "1",
-	})
+	}
+	if body.PresetID != 0 {
+		preq = engine.FlowPreviewRequest{Preflight: preq.Preflight, Mint: &engine.MintRequest{
+			PresetID: body.PresetID, Parts: body.Parts, Overrides: body.Overrides,
+		}}
+	}
+	preview, err := h.orchestration.PreviewFlow(r.Context(), processID, preq)
+	if writeMintRefusal(w, err) {
+		return
+	}
 	if err != nil {
 		var noOrders *engine.FlowNoOrdersError
 		if errors.As(err, &noOrders) && noOrders.Preview != nil {
@@ -122,6 +138,7 @@ func (h *Handlers) apiPreviewFlow(w http.ResponseWriter, r *http.Request) {
 				"unresolved":  noOrders.Preview.Unresolved,
 				"preflight":   noOrders.Preview.Preflight,
 				"fingerprint": noOrders.Preview.Fingerprint,
+				"mint":        noOrders.Preview.Mint,
 			})
 			return
 		}
@@ -221,5 +238,85 @@ func (h *Handlers) apiSaveFlow(w http.ResponseWriter, r *http.Request) {
 	// Coalesced, the burst is one broadcast and one publish.
 	h.requestBackup("flow-saved")
 	h.requestSpecChangePublishAndRefresh(processID)
+	writeJSON(w, result)
+}
+
+// writeMintRefusal maps the mint's own refusals: a recipe that is not this
+// process's is 404, a request the recipe cannot take (parts that do not fit
+// its slots, a part on a node no slot has, a move off the routing set) is 422
+// with the sentence. Reports whether it wrote.
+func writeMintRefusal(w http.ResponseWriter, err error) bool {
+	var refused *engine.MintRefusal
+	switch {
+	case errors.Is(err, engine.ErrMintRecipe):
+		writeError(w, http.StatusNotFound, err.Error())
+	case errors.As(err, &refused):
+		writeError(w, http.StatusUnprocessableEntity, refused.Reason)
+	default:
+		return false
+	}
+	return true
+}
+
+// apiMintFlow is POST /api/processes/{id}/flow/mint: a style from (recipe,
+// parts), resolved or minted (pick-a-part U3). The body is
+// composer-model.js's mintBody — recipe, parts in tap order, station, and the
+// Positions screen's moves if any. Never cells.
+//
+// The station resolves the same way flow/save does, and the source and
+// called_by come from the caller, never the body (owner ruling R1). A gated-off
+// cell is admitted by engine.gateRefusal for a mint with no moves — that is
+// the R3 carve-out's exact shape — and refused (403) for one with moves.
+func (h *Handlers) apiMintFlow(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	var body engine.MintRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if body.StationID == 0 {
+		writeError(w, http.StatusBadRequest, "station_id is required: a style is minted at a station")
+		return
+	}
+	station, err := h.engine.StationService().Get(body.StationID)
+	if err != nil || station == nil {
+		writeError(w, http.StatusBadRequest, "unknown station")
+		return
+	}
+	if station.ProcessID != processID {
+		writeError(w, http.StatusBadRequest, "station "+station.Name+" is not a station of this process")
+		return
+	}
+	body.Source, body.CalledBy = domain.ClaimSourceHMI, station.Name
+	if user, ok := h.sessions.getUser(r); ok && user != "" {
+		body.Source, body.CalledBy = domain.ClaimSourceAdmin, user
+	}
+	result, err := h.orchestration.MintStyle(processID, body)
+	if err != nil {
+		var invalid *engine.FlowValidationError
+		switch {
+		case writeMintRefusal(w, err):
+		case errors.Is(err, engine.ErrFlowComposerDisabled):
+			writeError(w, http.StatusForbidden, err.Error())
+		case errors.As(err, &invalid):
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			json.NewEncoder(w).Encode(map[string]any{"error": err.Error(), "findings": invalid.Findings})
+		case writeFlowRefusal(w, err):
+		default:
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	// A minted style is a new flow: the same backup, boards and one publish a
+	// save fires. A resolved one changed nothing, so nothing is announced.
+	if result.Minted {
+		h.requestBackup("flow-minted")
+		h.requestSpecChangePublishAndRefresh(processID)
+	}
 	writeJSON(w, result)
 }

@@ -326,3 +326,53 @@ func TestComposerDataCarriesWhatThePickerDraws(t *testing.T) {
 		t.Error("composer.scene has no edges; the HK pull has a travel graph and the waypoint row needs it")
 	}
 }
+
+// TestComposerPresets_OnlyTheLatestVersionOfANameIsACardAndItCarriesSlots
+// (pick-a-part U3, O-4): an enabled recipe is the newest non-archived version
+// of its name, so naming the same shape twice leaves one card — the second
+// version — and the card says how many parts the recipe takes.
+func TestComposerPresets_OnlyTheLatestVersionOfANameIsACardAndItCarriesSlots(t *testing.T) {
+	t.Parallel()
+	fx := scenefixtures.A()
+	db := testdb.Open(t)
+	seeded := testdb.SeedPlant(t, db, fx, "Press A1")
+	testdb.SeedRoutingSet(t, db, seeded.ProcessID, "test")
+	presets := NewProcessService(db)
+	view, err := presets.PresetsFor(seeded.ProcessID)
+	if err != nil {
+		t.Fatalf("PresetsFor: %v", err)
+	}
+	var key string
+	for _, c := range view.Candidates {
+		if c.Mode == "two_robot_press_index" {
+			key = c.ShapeKey
+		}
+	}
+	if _, err := presets.CreateFromCandidate(seeded.ProcessID, "Standard", key, "s.brown"); err != nil {
+		t.Fatalf("v1: %v", err)
+	}
+	v1, err := db.ListFlowPresets(seeded.ProcessID, false)
+	if err != nil || len(v1) != 1 {
+		t.Fatalf("after v1: %d presets, %v", len(v1), err)
+	}
+	// The same shape under the same name is version 2 (owner ruling F2).
+	cells, err := domain.ParsePresetShape(v1[0].FlowJSON)
+	if err != nil {
+		t.Fatalf("parse v1: %v", err)
+	}
+	second, err := presets.CreateFromCells(seeded.ProcessID, "Standard", "s.brown", cells)
+	if err != nil {
+		t.Fatalf("v2: %v", err)
+	}
+
+	data, err := NewStationService(db).ComposerForProcess(seeded.ProcessID)
+	if err != nil {
+		t.Fatalf("ComposerForProcess: %v", err)
+	}
+	if len(data.Presets) != 1 || data.Presets[0].ID != strconv.FormatInt(second, 10) {
+		t.Fatalf("cards = %+v, want one: the latest version (%d)", data.Presets, second)
+	}
+	if len(data.Presets[0].Slots) != 2 || domain.ProduceSlots(data.Presets[0].Slots) != 2 {
+		t.Errorf("slots = %+v, want two produce slots (one per press-index pair)", data.Presets[0].Slots)
+	}
+}
