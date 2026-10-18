@@ -42,7 +42,6 @@ let countdown = null;
 
 const $ = id => document.getElementById(id);
 
-function gate() { return !!(view && view.process && view.process.flow_composer_enabled); }
 function processID() { return view && view.process ? view.process.id : 0; }
 function stationID() { return view && view.station ? view.station.id : 0; }
 // THE PICKER'S FACTS RIDE THE VIEW; THE COMPOSER'S ARE FETCHED ON OPEN.
@@ -381,46 +380,24 @@ function setupProvenance(s) {
     return parts.join(' · ');
 }
 
-// THE SET-UP CARD WITH NO FLOW TO SET UP (§3 C1).
+// THE SET-UP CARD WITH NO FLOW TO SET UP.
 //
-// The card's ordinary job is "here is what will happen, press Start". A style
-// nobody has configured has nothing to start, so the same card becomes the
-// place a flow is CHOSEN: the cell's named shapes, full size, one tap each.
-//
-// "START BLANK" ONLY WITH THE GATE ON. Applying a named shape to a part with no
-// flow is the one write R3 opens a gated-off cell for; authoring one from
-// nothing is not, and an operator offered a button the server will refuse is
-// an operator sent to find out the hard way.
-//
-// AN EMPTY STRIP SAYS WHO MAKES THESE. A cell with no presets and the gate off
-// has nothing on this card at all, and a card with nothing on it is the dead
-// end the disabled row used to be — one sentence further in.
+// A style nobody has configured has nothing to start, and nothing the floor
+// can do on this card gives it one. The preset cards it used to draw applied a
+// shape through a save the gated-off server always refused — the station body
+// never carried a source_preset_id, which engine.gateRefusal's carve-out needs
+// — and "Start blank" was authoring, which the floor no longer does. So the
+// card says who sets it up.
 function drawSetupNoFlow(s) {
-    const presets = flow().presets || [];
-    const cards = presets.map(p =>
-        '<button class="os-comp-preset lg" data-act="preset-apply" data-preset="' + esc(p.id) + '"' +
-        ' title="' + esc(p.name) + (p.where ? ' · ' + esc(p.where) : '') + '">' +
-        gl(p.mode, 40, {}) +
-        '<span><span class="nm">' + esc(p.name) + '</span>' +
-        (p.where ? '<span class="where">' + esc(p.where) + '</span>' : '') +
-        '<span class="use">' + esc(p.use || '') + '</span></span></button>').join('');
-    const blank = gate()
-        ? '<button class="os-comp-quiet" data-act="compose-blank">Start blank</button>'
-        : '';
-    const empty = presets.length ? ''
-        : '<div class="os-comp-note">This cell has no named shapes yet. An engineer names one on the ' +
-          'desktop — Processes › Presets — from a flow that already runs here, and it appears on this card.</div>';
     show().innerHTML =
         '<div class="os-comp-scrim on"></div>' +
         '<div class="os-comp-setup on"><div class="os-comp-card">' +
         '<div class="top"><div>' +
         '<span class="os-lbl">Change over to</span>' +
         '<h2>' + esc(s.name) + '</h2>' +
-        '<div class="desc">' + esc('No flow yet · pick the shape this part runs') + '</div>' +
+        '<div class="desc">No flow yet</div>' +
         '</div><button class="x" data-act="topick" aria-label="Back to the part list">&#10005;</button></div>' +
-        '<div class="os-comp-presets-lg">' + cards + '</div>' +
-        empty +
-        '<div class="actions">' + blank + '</div></div></div>';
+        '<div class="os-comp-note">An engineer sets this up on the desktop.</div></div></div>';
 }
 
 function drawSetup(s) {
@@ -429,15 +406,11 @@ function drawSetup(s) {
     const parts = (s.parts || []).map(p =>
         '<span class="os-chip part">' + esc(M().shortPart(p.payload_code || p)) +
         (p.node ? ' <small>→ ' + esc(p.node) + '</small>' : '') + '</span>').join('');
-    // A running style keeps its sentence; the gate's absence never gets one.
-    // `+ Add a part` is gone from here: a part is added ON the picture, where
-    // the position it lands on is visible (owner ruling, F6).
-    let secondary = '';
-    if (running) {
-        secondary = '<div class="os-comp-note">This part is running — change its flow from the desktop, or after the next changeover</div>';
-    } else if (gate()) {
-        secondary = '<button class="os-comp-quiet" data-act="compose">Edit the flow first</button>';
-    }
+    // A running style keeps its sentence. There is no second button: the floor
+    // does not edit a flow from this card (brief R-G, 2026-10-17).
+    const secondary = running
+        ? '<div class="os-comp-note">This part is running — change its flow from the desktop, or after the next changeover</div>'
+        : '';
     const glyphFor = model ? firstMode(s) : '';
     // A PART WITH NO POSITION STOPS THE START (owner ruling R8, 2026-09-12).
     // Not the save — the flow can be half-built and kept — but a changeover
@@ -540,9 +513,6 @@ function buildModel(s) {
         processClaims: (flow().styles || []).reduce((all, st) => all.concat(st.claims || []), []),
     });
     savedFingerprint = '';
-    // A fresh model is a fresh session with this style; the self-opening panel
-    // is armed again for the first apply made in it. See openFirstUnanswered.
-    firstUnansweredArmed = true;
 }
 
 function openComposer(styleID, blank) {
@@ -593,13 +563,6 @@ const ADDPART_EMPTY_TITLE = 'This process has no parts yet. An engineer adds the
 function drawStrip() {
     const presets = flow().presets || [];
     let h = '<span class="os-lbl">Flow</span>';
-    // START BLANK IS FIRST WHEN THERE IS NOTHING TO PICK, and after the cards
-    // when there is (§1b). With presets on the strip it is the fallback and
-    // reads as one; with none it is the only thing to do, and a fallback drawn
-    // after nothing is a strip that looks empty.
-    const blank = '<button class="os-comp-preset" data-act="blank">' + gl('', 32, {}) +
-        '<span><span class="nm">Start blank</span><span class="use">tap positions</span></span></button>';
-    if (!presets.length) h += blank;
     for (const p of presets) {
         // THE CARD'S SECOND LINE IS THE SERVER'S, WHOLE (owner rulings R2 and
         // R5, 2026-09-12): `PLN_01 / PLN_04 · used by 7 parts`. The positions
@@ -627,7 +590,6 @@ function drawStrip() {
             (p.where ? '<span class="where">' + esc(p.where) + '</span>' : '') +
             '<span class="use">' + esc(p.use || '') + '</span></span></button>';
     }
-    if (presets.length) h += blank;
     h += '<span class="sp"></span><span class="os-lbl">Parts</span>';
     for (const p of model.parts) {
         const used = Object.keys(model.cells).some(n => model.cells[n].part === p);
@@ -1201,27 +1163,6 @@ function reportPanelFit(pop) {
     }
 }
 
-// THE PANEL OPENS ITSELF ONCE, AFTER A SHAPE IS APPLIED (owner ruling 3,
-// 2026-09-17: "it directs them to what's important").
-//
-// A preset carries a shape and no part, by construction — so the moment after
-// an apply, every position in the new flow is asking the same question and the
-// operator has no way of knowing which one to tap first. This opens the first
-// one that has not been answered.
-//
-// ONCE, AND ONLY AFTER AN APPLY. It is not a mode: answering it closes it and
-// nothing opens itself again, because a panel that reappears is a panel
-// fighting the operator. `armed` is reset when the composer is built, which is
-// once per style per session.
-let firstUnansweredArmed = true;
-
-function openFirstUnanswered() {
-    if (!firstUnansweredArmed || !model) return;
-    firstUnansweredArmed = false;
-    const f = M().findings(model).find(x => x.node);
-    if (f) openPositionPanel(f.node);
-}
-
 function closePop() {
     const pop = $('os-comp-pop');
     if (pop) { pop.hidden = true; pop.innerHTML = ''; }
@@ -1281,9 +1222,27 @@ async function openConfirm(runAsIs) {
     const orders = M().orderSentences(model).map(o =>
         '<tr><td class="r' + o.robot + '">Robot ' + o.robot + '</td>' +
         '<td>' + esc(M().orderTrip(o)) + '</td></tr>').join('');
+    // ONE SENTENCE IS THE BODY; THE TABLES ARE THE RECEIPT (brief U0,
+    // 2026-10-18). The operator reads who moves and how many trips, then
+    // presses Start; the rows and the orders stay one tap away under
+    // <details> for whoever wants to check them.
+    //
+    // THE WORD IS CELL (owner, 2026-09-17): this is read at a 4x2 weld cell as
+    // often as at a press. The second "press" is the verb.
+    //
+    // The inventory clause says only the two things the preflight can say. A
+    // preview that did not ask carries no preflight (applyPreview drops it),
+    // so it says nothing here either.
+    const robots = M().robotWords(model);
+    const one = robots === 'Robot 1';
+    const trips = pv.orderCount ? pv.orderCount + ' trip' + (pv.orderCount === 1 ? '' : 's') : '';
+    const sentence = robots + (trips ? (one ? ' makes ' : ' make ') + trips + ' and' : '') +
+        (one ? ' waits' : ' wait') + ' at the cell until you press Release.' +
+        (!pv.preflight ? ''
+            : pv.preflight.state === 'unchecked' ? ' Inventory not checked — Core is unreachable.'
+                : ' Inventory checked.');
     // Appended over the picture rather than replacing the root: SPEC S9 is a
-    // bottom sheet over S4, and the operator checking rows against the flow they
-    // just drew should be able to see it behind the sheet.
+    // bottom sheet over S4.
     const host = document.createElement('div');
     host.className = 'os-comp-layer';
     host.innerHTML =
@@ -1291,23 +1250,13 @@ async function openConfirm(runAsIs) {
         '<div class="os-comp-confirm on"><h2>' +
         (runAsIs ? 'Start the changeover to ' + esc(model.styleName) + '?'
             : 'Save this flow to ' + esc(model.styleName) + ' and start the changeover?') + '</h2>' +
+        '<p class="os-comp-sentence">' + esc(sentence) + '</p>' +
+        '<details class="os-comp-receipt"><summary>Positions and orders</summary>' +
         '<div class="cols"><div><div class="os-lbl">Rows written to the part</div>' +
         '<table><tr><th>Position</th><th>Swap</th><th>Part</th><th>From → to</th></tr>' + rows +
         '<tr class="muted"><td colspan="4">— back positions, no row, paired</td></tr></table></div>' +
         '<div><div class="os-lbl">Orders that fire now</div>' +
-        '<table><tr><th>Robot</th><th>From → to</th></tr>' + orders + '</table></div></div>' +
-        // THE WORD IS CELL (owner, 2026-09-17). An operator reading this is
-        // standing at whatever this process is — a 4x2 weld cell as often as a
-        // press — and "the robots wait at the press" is wrong on the floor it
-        // is most often read on. The second "press" is the verb and stays.
-        '<div class="foot">Robots wait at the cell until you press Release.' +
-        // Only the two things the preflight can actually say. "Inventory
-        // checked." with no preflight at all was the sheet asserting a check
-        // nobody ran. A preview that did not ask carries no preflight
-        // (applyPreview drops it), so it says nothing here either.
-        (!pv.preflight ? ''
-            : pv.preflight.state === 'unchecked' ? ' Inventory not checked — Core is unreachable.'
-                : ' Inventory checked.') + '</div>' +
+        '<table><tr><th>Robot</th><th>From → to</th></tr>' + orders + '</table></div></div></details>' +
         '<div class="acts"><button class="os-btn os-btn-quiet os-btn-lg" data-act="back">Back</button>' +
         '<button class="os-btn os-btn-primary os-btn-lg" data-act="start" data-runasis="' + (runAsIs ? '1' : '') + '">Start changeover</button></div></div>';
     const r = show();
@@ -1326,12 +1275,8 @@ async function start(runAsIs) {
         // is nothing to write — and with the gate off a save is a 403.
         const res = await fetch('/api/processes/' + processID() + '/flow/save', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                to_style_id: model.styleId, cells: M().toCells(model),
-                fingerprint: fingerprint,
-                station_id: stationID(),
-                taken_off: M().takenOff(model),
-            }),
+            body: JSON.stringify(M().flowSaveBody(model.styleId, M().toCells(model),
+                fingerprint, stationID(), M().takenOff(model))),
         });
         const json = await res.json().catch(() => ({}));
         if (res.status === 409) { onStale(json); return; }
@@ -1525,25 +1470,11 @@ function onClick(e) {
             }
             break;
         }
-        case 'compose': openComposer(model.styleId, false); break;
-        case 'blank': send({ type: 'startBlank' }); break;
         case 'preset': {
             const p = (flow().presets || []).find(x => x.id === btn.dataset.preset);
-            if (p) { send({ type: 'applyPreset', preset: p }); openFirstUnanswered(); }
+            if (p) send({ type: 'applyPreset', preset: p });
             break;
         }
-        // From the no-flow card: apply the shape, then open the composer on it.
-        // The card is the only screen the operator has seen, so the shape has
-        // to arrive somewhere they can look at it before anything is saved.
-        case 'preset-apply': {
-            const p = (flow().presets || []).find(x => x.id === btn.dataset.preset);
-            if (!p) break;
-            openComposer(model ? model.styleId : 0, false);
-            send({ type: 'applyPreset', preset: p });
-            openFirstUnanswered();
-            break;
-        }
-        case 'compose-blank': openComposer(model ? model.styleId : 0, true); break;
         case 'mode': sendQuiet({ type: 'setMode', node: node, mode: btn.dataset.mode }); openPositionPanel(node); break;
         case 'part': sendQuiet({ type: 'setPart', node: node, payloadCode: btn.dataset.part }); openPositionPanel(node); break;
         // The strip's unplaced chip and the panel's "take off this position"

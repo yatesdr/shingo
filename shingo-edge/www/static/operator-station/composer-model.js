@@ -2080,6 +2080,40 @@ function fieldLabel(state, field) { return fieldWord(state, field); }
 
 function advancedDefaults() { return clone(ADVANCED_DEFAULTS); }
 
+// ── the station's request bodies ─────────────────────────────────────────────
+//
+// BUILT HERE, NOT INLINE IN composer-render.js, so a Go test can send exactly
+// what the station sends (www/handlers_flow_mint_test.go runs these under
+// node). A pin written from a hand-built Go struct is a second copy of the
+// body that agrees with the server by construction — error rows 11 and 12 of
+// the pick-a-part brief.
+
+// flowSaveBody is POST /processes/{id}/flow/save as the station sends it. No
+// source_preset_id: the station has never sent one, which is why a gated-off
+// HMI save is refused (engine.gateRefusal).
+function flowSaveBody(styleId, cells, fingerprint, stationId, takenOff) {
+    return {
+        to_style_id: styleId, cells: cells, fingerprint: fingerprint,
+        station_id: stationId, taken_off: takenOff || [],
+    };
+}
+
+// mintBody is POST /processes/{id}/flow/mint (and flow/preview's mint form):
+// the engineer's recipe and the parts the operator picked, in tap order. The
+// station sends codes only; the server places them (brief U3, R-M). overrides
+// is the Positions screen's moves, recipe node → the node it should use
+// instead; absent when there are none, which is what lets a gated-off cell
+// mint at all (engine.gateRefusal refuses only the moves).
+function mintBody(presetId, codes, stationId, overrides) {
+    const body = {
+        preset_id: presetId,
+        parts: (codes || []).map(code => ({ code: code })),
+        station_id: stationId,
+    };
+    if (overrides && Object.keys(overrides).length) body.overrides = Object.assign({}, overrides);
+    return body;
+}
+
 // EXPORTED WITHOUT A GLOBAL LEXICAL NAME. Two classic scripts on one page
 // share one global lexical environment, so a top-level `const api` in each is
 // a redeclaration: the SECOND script dies before its last line and its global
@@ -2099,6 +2133,7 @@ function advancedDefaults() { return clone(ADVANCED_DEFAULTS); }
         routingNote, routingRoleOf, stagingFieldUsed,
         presetCells, shapeDiff, orderSentences, orderSentence, orderTrip, viaWaypoints,
         advancedFor, advancedShows, advancedSet, advancedDefaults,
+        flowSaveBody, mintBody,
     };
 
     if (typeof module !== 'undefined' && module.exports) module.exports = api;

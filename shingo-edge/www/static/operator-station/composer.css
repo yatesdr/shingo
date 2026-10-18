@@ -348,7 +348,10 @@ button.os-chip.part.free { font: inherit; font-size: 14px; background: none; }
 .os-comp-confirm tr.muted td { color: var(--os-text-dim); }
 .os-comp-confirm td.r1 { color: var(--robot-1); }
 .os-comp-confirm td.r2 { color: var(--robot-2); }
-.os-comp-confirm .foot { font-size: 14px; color: var(--os-text-muted); }
+/* The sentence is the sheet's body; the tables are the receipt under it. */
+.os-comp-confirm .os-comp-sentence { margin: 0; font-size: 18px; line-height: 1.4; }
+.os-comp-confirm .os-comp-receipt summary { min-height: var(--os-touch-min, 56px); display: flex;
+    align-items: center; font-size: 14px; color: var(--os-text-muted); cursor: pointer; }
 /* THE START'S REFUSAL, ON THE SHEET THAT ASKED FOR IT. The start used to treat
  * every non-409 as success and draw the green tick over a refused changeover;
  * it now shows the server's own sentence here, between the foot and the

@@ -549,11 +549,11 @@ func TestComposerShots(t *testing.T) {
 
 	// ── S3: the set-up card, and the gate's one button ───────────────────
 	//
-	// THE GATE-OFF CARD HAS EXACTLY ONE BUTTON (owner ruling, F6). A locked-down
-	// press has no alternative flow to offer, so a second control — or a
-	// sentence explaining a door that is locked — tells the floor there is a
-	// half of the system they are not allowed to understand. With the gate on
-	// there are two: the verb, and the quiet `Edit the flow first` under it.
+	// THE CARD HAS EXACTLY ONE BUTTON, GATE ON OR OFF (owner ruling F6; brief
+	// R-G, 2026-10-17). A second control — or a sentence explaining a door that
+	// is locked — tells the floor there is a half of the system they are not
+	// allowed to understand. Until U0 the gate-on card also drew a quiet `Edit
+	// the flow first`; the floor no longer edits a flow from here.
 	//
 	// Counted off the DOM rather than eyeballed in the PNG, because "one
 	// button" is exactly the kind of thing a screenshot shows and no test
@@ -573,8 +573,8 @@ func TestComposerShots(t *testing.T) {
 		if card == nil {
 			t.Fatal("S3: no set-up card in the DOM — the shot is of some other screen")
 		}
-		if got := cardBtnRe.FindAllString(card[1], -1); len(got) != 2 {
-			t.Errorf("S3 with the gate ON has %d buttons (%v), want the verb and the quiet edit", len(got), got)
+		if got := cardBtnRe.FindAllString(card[1], -1); len(got) != 1 {
+			t.Errorf("S3 with the gate ON has %d buttons (%v), want exactly one: the verb — the floor does not edit a flow from this card (brief R-G)", len(got), got)
 		}
 		// THE COUNT AND THE VERB, not the wording. This also required three exact
 		// strings to be present and four to be absent — the F6 turnover's before
@@ -1790,8 +1790,8 @@ func TestComposerShots(t *testing.T) {
 	// ── THE SECOND REAL CLICK: Add process, end to end ──────────────────
 	//
 	// U10 gave this page back the ability to create a process, and that
-	// ability is FIVE WRITES IN ORDER — process, operator screen, the
-	// positions it claims, the routing set, the gate — each posted from a
+	// ability is FOUR WRITES IN ORDER — process, operator screen, the
+	// positions it claims, the routing set — each posted from a
 	// desktop-bodies.js body against an id the write before it returned.
 	// Every shot above renders; none of them writes. A page whose
 	// window.DesktopBodies is undefined draws this sheet perfectly and
@@ -1803,9 +1803,9 @@ func TestComposerShots(t *testing.T) {
 	// Create — and then the STORE is read, because a page that redrew from
 	// its own optimistic state would satisfy the browser half alone.
 	//
-	// TWICE, because the gate is a decision and not a side effect: a set with
-	// a source in it opens the flow composer (the engineer just reviewed the
-	// set — they wrote it), and one with no routing rows leaves it shut.
+	// TWICE, with a routing set and without one, and the gate stays shut both
+	// times: writing the set is not the decision to open the cell to the floor
+	// (brief U0, 2026-10-18 — until then a set with a source opened it).
 	for _, tc := range []struct {
 		name     string
 		process  string
@@ -1813,7 +1813,7 @@ func TestComposerShots(t *testing.T) {
 		source   string
 		wantGate bool
 	}{
-		{"with a routing set", "Press Made A", "SMN_011", "Supermarket Empty Totes", true},
+		{"with a routing set", "Press Made A", "SMN_011", "Supermarket Empty Totes", false},
 		{"with none", "Press Made B", "SMN_012", "", false},
 	} {
 		profile := t.TempDir()
@@ -1864,7 +1864,7 @@ func TestComposerShots(t *testing.T) {
 		}
 		if made.FlowComposerEnabled != tc.wantGate {
 			t.Errorf("Add process %s: flow_composer_enabled = %v, want %v — the gate opens on a "+
-				"routing set the engineer wrote and on nothing else",
+				"an engineer turns it on in Settings (brief U0, 2026-10-18)",
 				tc.name, made.FlowComposerEnabled, tc.wantGate)
 		}
 		stations, err := db.ListOperatorStationsByProcess(made.ID)
@@ -2584,17 +2584,12 @@ const until = (step, fn, ms = 10000) => new Promise((resolve, reject) => {
     out.dataset.drawn = String(d.querySelectorAll('#os-comp-svg g.node[data-pos]').length);
     out.dataset.before = live().join(' ');
 
-    // START BLANK FIRST, so what the picture shows afterwards is the preset's
-    // doing and not the style's own saved flow.
-    out.dataset.step = 'start blank';
-    const blank = d.querySelector('#os-comp-strip [data-act="blank"]');
-    if (!blank) return fail('find Start blank', 'the strip has no blank card');
-    blank.click();
-    await until('the picture empties', () => { threw(); return live().length === 0; });
-
+    // NO START BLANK FIRST: the strip lost it in U0 (brief, 2026-10-18), so
+    // the tap lands over the style's own flow and the check below is that the
+    // preset's positions are live afterwards.
     out.dataset.step = 'tap the preset';
     const card = cardNow();
-    if (!card) return fail('tap the preset', 'the strip lost card ' + presetID + ' after Start blank');
+    if (!card) return fail('tap the preset', 'the strip has no card ' + presetID);
     card.click();
 
     // THE SHAPE LANDED: the card names its positions, and after the tap those

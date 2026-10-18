@@ -4806,15 +4806,10 @@ async function submitAddProcess() {
         done.push('its part set written');
     }
 
-    // THE GATE OPENS ON A REVIEWED ROUTING SET, and the engineer just reviewed
-    // one — they wrote it. The flag exists to wait for that (domain/process.go,
-    // and D5's own note says so); a process created with none stays shut, and
-    // Settings turns it either way afterwards.
-    if (routed) {
-        done.push('its routing set written');
-        const gate = await postJSON('PATCH', '/api/processes/' + processID, B().processGate(true));
-        if (!gate.ok) { stop('The flow-composer gate', gate.error); return; }
-    }
+    // THE GATE STAYS SHUT (brief U0, 2026-10-18). A new process opens to the
+    // floor only when an engineer turns it on in Settings; writing the routing
+    // set is not that decision.
+    if (routed) done.push('its routing set written');
 
     closeSheet();
     await reloadProcesses();
