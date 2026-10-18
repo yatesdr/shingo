@@ -92,6 +92,7 @@ process.stdout.write(JSON.stringify({
   'add-to-set':          B.routingAdd('Supermarket Area', 'destination'),
   'name a flow':         B.flowPresetCreate('Two up, index', { styleID: f.style.id }),
   'name a found shape':  B.flowPresetCreate('Two up, index', { shapeKey: f.shapeKey }),
+  'name a drawn shape':  B.flowPresetCreate('Two up, index', { cells: f.drawnCells }),
   'apply a preset':      B.flowPresetApplySave(f.style.id, f.cells, 'FP', f.station.id, { id: 7, version: 3 }),
   'save with no preset': B.flowPresetApplySave(f.style.id, f.cells, 'FP', f.station.id, null),
 }));
@@ -108,8 +109,8 @@ process.stdout.write(JSON.stringify({
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("decode bodies (%s): %v", raw, err)
 	}
-	if len(out) != 18 {
-		t.Fatalf("the harness emitted %d bodies, want 18 — a write lost its builder", len(out))
+	if len(out) != 19 {
+		t.Fatalf("the harness emitted %d bodies, want 19 — a write lost its builder", len(out))
 	}
 	return out
 }
@@ -204,6 +205,10 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		// pinned below against the real preview's own fingerprint.
 		"shapeKey": "SHAPE-KEY",
 		"cells":    []any{},
+		// U2: a drawn shape — the New shape draft's cells, part and all, so
+		// the pin below can see the builder strip it.
+		"drawnCells": []any{map[string]any{"core_node_name": "PLN_01", "role": "produce",
+			"swap_mode": "two_robot_press_index", "payload_code": "LEFT-BEHIND", "paired_core_node": "PLN_04"}},
 		// U10: the Add-process sheet's own two inputs — the group it picked,
 		// and the positions its operator screen claims. The blank and the
 		// duplicate are deliberate: the builder is what keeps the body saying
@@ -592,6 +597,21 @@ func TestDesktopWritePaths_EveryBodyNamesEveryColumnItsHandlerWrites(t *testing.
 		}
 		if _, ok := fromShape["from_style_id"]; ok {
 			t.Error("naming a found shape also named a style; the handler refuses both")
+		}
+		// U2: a DRAWN shape names cells and nothing else, and carries no part —
+		// the builder strips it, so the store's refusal stays a pin.
+		drawn := bodies["name a drawn shape"]
+		for _, banned := range []string{"from_style_id", "from_candidate_shape", "created_by"} {
+			if _, ok := drawn[banned]; ok {
+				t.Errorf("naming a drawn shape also named %q", banned)
+			}
+		}
+		cells, _ := drawn["cells"].([]any)
+		if len(cells) != 1 {
+			t.Fatalf("naming a drawn shape: cells = %v, want the one drawn cell", drawn["cells"])
+		}
+		if c, _ := cells[0].(map[string]any); c["payload_code"] != "" {
+			t.Errorf("naming a drawn shape sent payload_code %v; a preset carries no part", c["payload_code"])
 		}
 	})
 

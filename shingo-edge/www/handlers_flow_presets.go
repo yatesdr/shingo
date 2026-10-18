@@ -17,6 +17,8 @@ package www
 import (
 	"encoding/json"
 	"net/http"
+
+	"shingoedge/domain"
 )
 
 func (h *Handlers) apiListFlowPresets(w http.ResponseWriter, r *http.Request) {
@@ -33,8 +35,8 @@ func (h *Handlers) apiListFlowPresets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, view)
 }
 
-// apiCreateFlowPreset names a shape: either one style's flow, or one of the
-// migration offer's candidate shapes.
+// apiCreateFlowPreset names a shape: one style's flow, one of the
+// migration offer's candidate shapes, or a shape the engineer drew.
 //
 // The part is stripped by the service before the store sees it, so the store's
 // refusal of a payload is a PIN on this path rather than an error a user can
@@ -48,11 +50,15 @@ func (h *Handlers) apiCreateFlowPreset(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Name string `json:"name"`
-		// Exactly one of the two. from_style_id names the shape of a style's
+		// Exactly one of the three. from_style_id names the shape of a style's
 		// flow (D1's `Save as preset…`); from_candidate_shape names one of the
 		// offered shapes and stamps the styles that run it.
 		FromStyleID        int64  `json:"from_style_id"`
 		FromCandidateShape string `json:"from_candidate_shape"`
+		// Cells is a shape the engineer drew: a "New shape" draft from the
+		// positions table (pick-a-part U2), or a reviewed import (U7). The
+		// third of the three, and like the others the part is stripped.
+		Cells []domain.FlowCell `json:"cells"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -62,9 +68,15 @@ func (h *Handlers) apiCreateFlowPreset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "a preset needs a name")
 		return
 	}
-	if (req.FromStyleID == 0) == (req.FromCandidateShape == "") {
+	froms := 0
+	for _, set := range []bool{req.FromStyleID != 0, req.FromCandidateShape != "", len(req.Cells) > 0} {
+		if set {
+			froms++
+		}
+	}
+	if froms != 1 {
 		writeError(w, http.StatusBadRequest,
-			"name exactly one of from_style_id or from_candidate_shape")
+			"name exactly one of from_style_id, from_candidate_shape or cells")
 		return
 	}
 	// THE SESSION IS THE AUTHOR. A body that named one would be a page
@@ -73,9 +85,12 @@ func (h *Handlers) apiCreateFlowPreset(w http.ResponseWriter, r *http.Request) {
 	createdBy, _ := h.sessions.getUser(r)
 
 	var newID int64
-	if req.FromStyleID != 0 {
+	switch {
+	case len(req.Cells) > 0:
+		newID, err = h.engine.ProcessService().CreateFromCells(id, req.Name, createdBy, req.Cells)
+	case req.FromStyleID != 0:
 		newID, err = h.engine.ProcessService().CreateFromStyle(id, req.FromStyleID, req.Name, createdBy)
-	} else {
+	default:
 		newID, err = h.engine.ProcessService().CreateFromCandidate(id, req.Name, req.FromCandidateShape, createdBy)
 	}
 	if err != nil {

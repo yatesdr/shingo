@@ -1,7 +1,12 @@
 package www
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -272,5 +277,88 @@ func TestFlowPresets_ThereIsNoApplyEndpoint(t *testing.T) {
 		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
 			t.Errorf("%s answered %d — there is no apply endpoint, and a preset applies through flow/save", path, resp.StatusCode)
 		}
+	}
+}
+
+// desktopBuilder runs one expression over desktop-bodies.js (bound as B) and a
+// fixture (bound as f) under node and returns what it built — the body the
+// page sends, never a hand-built one (pick-a-part brief §8, rows 11 and 12).
+func desktopBuilder(t *testing.T, expr string, fixture map[string]any) map[string]any {
+	t.Helper()
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skipf("node not on PATH; skipping a pin written from the desktop's builder")
+	}
+	blob, err := json.Marshal(fixture)
+	testutil.MustNoErr(t, err, "marshal fixture")
+	dir := t.TempDir()
+	fixturePath := filepath.Join(dir, "fixture.json")
+	testutil.MustNoErr(t, os.WriteFile(fixturePath, blob, 0o644), "write fixture")
+	modulePath, err := filepath.Abs(filepath.Join("static", "js", "pages", "desktop-bodies.js"))
+	testutil.MustNoErr(t, err, "resolve desktop-bodies.js")
+	harness := fmt.Sprintf("'use strict';\nconst B = require(%q);\nconst f = require(%q);\nprocess.stdout.write(JSON.stringify(%s));\n",
+		filepath.ToSlash(modulePath), filepath.ToSlash(fixturePath), expr)
+	harnessPath := filepath.Join(dir, "emit.js")
+	testutil.MustNoErr(t, os.WriteFile(harnessPath, []byte(harness), 0o644), "write harness")
+	raw, err := exec.Command(nodePath, harnessPath).Output()
+	if err != nil {
+		t.Fatalf("run desktop-bodies.js: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode body (%s): %v", raw, err)
+	}
+	return out
+}
+
+// TestFlowPresets_NewShapeIsOfferedAndNamedFromTheDraft (pick-a-part U2): the
+// Presets read offers a generated recipe for a mode the cell can satisfy, and
+// the desktop's create body for that recipe's cells — built by the page's own
+// builder — names a preset whose shape is the recipe, authored by the session.
+func TestFlowPresets_NewShapeIsOfferedAndNamedFromTheDraft(t *testing.T) {
+	h, router := newAdminRouter(t)
+	cookie := authCookie(t, h)
+	pid, _ := presetProcess(t, "PRESET-NEW")
+	if _, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
+		ProcessID: pid, CoreNodeName: "PP-STG", Role: domain.RoutingRoleStaging, Enabled: true,
+	}); err != nil {
+		t.Fatalf("routing staging: %v", err)
+	}
+
+	resp := doRequest(t, router, "GET", "/api/processes/"+itoa(pid)+"/presets", nil, cookie)
+	assertStatus(t, resp, http.StatusOK)
+	var view struct {
+		Generated []struct {
+			Mode  string            `json:"mode"`
+			Shape []domain.FlowCell `json:"shape"`
+		} `json:"generated"`
+		Presets []struct {
+			Name      string            `json:"name"`
+			CreatedBy string            `json:"created_by"`
+			Shape     []domain.FlowCell `json:"shape"`
+		} `json:"presets"`
+	}
+	decodeJSON(t, resp, &view)
+	var shape []domain.FlowCell
+	for _, g := range view.Generated {
+		if g.Mode == "two_robot" {
+			shape = g.Shape
+		}
+	}
+	if len(shape) != 1 || shape[0].InboundStaging != "PP-STG" || shape[0].OutboundDestination != "PP-DST" {
+		t.Fatalf("generated two_robot shape = %+v, want PP_01 staged at PP-STG to PP-DST", shape)
+	}
+
+	body := desktopBuilder(t, "B.flowPresetCreate('Standard', { cells: f.cells })", map[string]any{"cells": shape})
+	resp = doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/presets", body, cookie)
+	assertStatus(t, resp, http.StatusOK)
+
+	resp = doRequest(t, router, "GET", "/api/processes/"+itoa(pid)+"/presets", nil, cookie)
+	decodeJSON(t, resp, &view)
+	if len(view.Presets) != 1 || view.Presets[0].Name != "Standard" || view.Presets[0].CreatedBy != "testadmin" {
+		t.Fatalf("presets = %+v, want one named Standard by the session user", view.Presets)
+	}
+	if domain.FlowShapeKey(view.Presets[0].Shape) != domain.FlowShapeKey(shape) {
+		t.Errorf("stored shape %+v, want the drawn one %+v", view.Presets[0].Shape, shape)
 	}
 }

@@ -295,10 +295,11 @@ function processPayloads(codes) {
 
 // flowPresetCreate — POST /api/processes/{id}/presets, the naming modal.
 //
-// EXACTLY ONE SOURCE, and the handler refuses both or neither: a shape comes
-// from a style's saved flow (D1's `Save as preset…`) or from one of the offered
-// candidate shapes, and those are different acts. Naming a candidate also
-// stamps the styles that already run it.
+// EXACTLY ONE SOURCE, and the handler refuses more or fewer: a shape comes from
+// a style's saved flow (D1's `Save as preset…`), from one of the offered
+// candidate shapes, or from cells the engineer drew (a "New shape" draft —
+// pick-a-part U2), and those are different acts. Naming a candidate also
+// stamps the styles that already run it; the other two stamp nothing.
 //
 // created_by is NOT here and never becomes a field: the session is the author,
 // the same rule the routing set's origin and the flow save's source are held
@@ -307,6 +308,7 @@ function flowPresetCreate(name, from) {
     const body = { name: name || '' };
     if (from && from.styleID) body.from_style_id = Number(from.styleID);
     else if (from && from.shapeKey) body.from_candidate_shape = String(from.shapeKey);
+    else if (from && Array.isArray(from.cells)) body.cells = from.cells.map(c => Object.assign({}, c, { payload_code: '' }));
     return body;
 }
 

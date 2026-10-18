@@ -311,17 +311,20 @@ function freeBackPosition(state, exclude) {
     return backPositions(state).find(n => !taken.has(n)) || '';
 }
 
-// ROLE IS DERIVED, NEVER ASKED (brief R2). Four sources, in order: the prior
-// claim on this very node; the majority role of THIS style's other claims; the
-// majority role of the PROCESS's other styles' claims; then consume.
+// ROLE IS DERIVED (brief R2), and on the desktop it is also ASKED: a recipe
+// carries the role the engineer gave each cell (pick-a-part O-3), and the
+// positions table's Role chip sets it. Five sources, in order: the prior claim
+// on this very node; the process's other styles' claims ON THIS NODE; the
+// majority role of THIS style's other claims; the majority of the PROCESS's
+// claims; then consume.
 //
-// The third source is the one that matters at Springfield (owner ruling
-// 2026-09-10). A style with no claims at all — the "Build" row — used to fall
-// straight to consume, and on SPR that is 635 of the 713 (style x position)
-// pairs the composer can open. It happened to be right there, because 33 of
-// SPR's 41 claims are consume, but it was right by coincidence: the same
-// default on a press cell would have said consume about a produce position. The
-// press already knows what it does, from every other style that runs on it.
+// THE NODE COMES BEFORE THE MAJORITIES (2026-10-18). A mixed-role cell — a
+// weld cell with four consume positions and one produce — has a consume
+// majority, so the majority sources said consume about its produce position on
+// every new style, forever. What that position does is written on the claims
+// other styles keep on it. The majorities stay for a position no style has
+// used yet; whether that is right is a guess, not something "the press already
+// knows".
 //
 // Consume survives as the floor for a process with no claims anywhere — a cell
 // nobody has ever configured — where there is nothing to read and the server's
@@ -334,6 +337,8 @@ function deriveRole(claims, processClaims, node) {
         for (const c of rows || []) if (c.role) tally[c.role] = (tally[c.role] || 0) + 1;
         return Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0] || '';
     };
+    const here = majority((processClaims || []).filter(c => c.core_node_name === node));
+    if (here) return { role: here, source: "the process's other styles on this position" };
     const mine = majority(claims);
     if (mine) return { role: mine, source: 'majority of sibling claims' };
     const theirs = majority(processClaims);
@@ -601,6 +606,9 @@ function init(opts) {
         // only — the draft's copy lives on the cell and starts null.
         priorAdvanced: opts.advanced || {},
         roleSources: {},
+        // SHAPE is a recipe being drawn on the desktop (pick-a-part U2): no
+        // style, no parts, so "which part runs here?" is not a finding.
+        shape: !!opts.shape,
         // The positions the last applied preset named and this cell does not
         // have. See applyPreset and findings.
         presetDropped: [],
@@ -824,11 +832,15 @@ function reduce(state, action) {
             // One parser for both shapes, which is what presetCells was
             // written for; the diff and the apply now read the same cells.
             const built = presetCells(action.preset);
+            // THE PRESET'S ROLE WINS WHEN IT HAS ONE (pick-a-part O-3, named
+            // behaviour change 2026-10-18). Role lives in the recipe cell — the
+            // engineer answered it once when the recipe was generated — so a
+            // blank preset role is the only case that keeps the target's.
             for (const n of Object.keys(s.cells)) {
                 const role = s.cells[n].role;
                 const part = s.cells[n].part;
                 s.cells[n] = built[n]
-                    ? Object.assign(blankCell(), built[n], { on: true, part: part, role: role })
+                    ? Object.assign(blankCell(), built[n], { on: true, part: part, role: built[n].role || role })
                     : Object.assign(blankCell(), { role: role });
             }
             // A PRESET CELL THIS PICTURE HAS NO POSITION FOR IS A FINDING, NOT
@@ -1031,7 +1043,7 @@ function findings(state) {
                 message: n + ' · how does it swap?',
                 detail: 'Tap the position and pick a choreography.',
             });
-        } else if (!c.part) {
+        } else if (!c.part && !state.shape) {
             out.push({
                 local: true, node: n, field: 'payload_code', short: FINDING_SHORT.payload_code,
                 message: n + ' · which part runs here?',

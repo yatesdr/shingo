@@ -990,7 +990,9 @@ test('role: a style with no claims of its own reads the process, not consume', (
     });
     assert.strictEqual(blank.cells.PLN_01.role, 'produce',
         'the press produces under every other style; a blank style says so too');
-    assert.strictEqual(blank.roleSources.PLN_01, "majority of the process's other styles");
+    // The node-scoped source answers first now (pick-a-part U2): PLN_01 is
+    // claimed by those styles, so the answer is read off PLN_01's own claims.
+    assert.strictEqual(blank.roleSources.PLN_01, "the process's other styles on this position");
     // and with nothing to read anywhere, consume is still the floor
     const nothing = M.init({
         styleId: 998, styleName: 'empty process', positions: POSITIONS, routing: ROUTING,
@@ -998,6 +1000,47 @@ test('role: a style with no claims of its own reads the process, not consume', (
     });
     assert.strictEqual(nothing.cells.PLN_01.role, 'consume');
     assert.strictEqual(nothing.roleSources.PLN_01, 'default');
+});
+
+// A MIXED-ROLE CELL (pick-a-part U2, O-3). Four consume positions and one
+// produce: the process majority says consume, and the produce position's own
+// claims on other styles say produce. The node answers.
+test('role: a mixed cell reads each position off its own claims, not the majority', () => {
+    const consume = n => ({ core_node_name: n, role: 'consume', swap_mode: 'two_robot' });
+    const processClaims = [consume('PLN_02'), consume('PLN_03'), consume('PLN_05'), consume('PLN_06'),
+        { core_node_name: 'PLN_01', role: 'produce', swap_mode: 'two_robot' }];
+    const s = M.init({
+        styleId: 997, styleName: 'new on a mixed cell', positions: POSITIONS, routing: ROUTING,
+        claims: [], parts: [], flowspec: FLOWSPEC, groups: GROUPS, processClaims: processClaims,
+    });
+    assert.strictEqual(s.cells.PLN_01.role, 'produce');
+    assert.strictEqual(s.cells.PLN_02.role, 'consume');
+});
+
+// THE PRESET'S ROLE WINS (pick-a-part O-3, named behaviour change): a recipe
+// cell that says produce makes the position produce, whatever the target had.
+test('applyPreset honours a non-blank preset role and keeps the target\'s when blank', () => {
+    const s0 = M.init({
+        styleId: 996, styleName: 'x', positions: POSITIONS, routing: ROUTING,
+        claims: [], parts: [], flowspec: FLOWSPEC, groups: GROUPS, processClaims: [],
+    });
+    assert.strictEqual(s0.cells.PLN_01.role, 'consume');
+    const s1 = M.reduce(s0, { type: 'applyPreset', preset: { cells: [
+        { core_node_name: 'PLN_01', role: 'produce', swap_mode: 'two_robot' },
+        { core_node_name: 'PLN_02', role: '', swap_mode: 'two_robot' },
+    ] } });
+    assert.strictEqual(s1.cells.PLN_01.role, 'produce');
+    assert.strictEqual(s1.cells.PLN_02.role, 'consume');
+});
+
+// A SHAPE DRAFT ASKS NO PART (pick-a-part U2): a recipe never carries one.
+test('a shape draft does not raise "which part runs here?"', () => {
+    const draft = M.reduce(M.init({
+        styleId: 0, styleName: 'New shape', positions: POSITIONS, routing: ROUTING,
+        claims: [], parts: [], flowspec: FLOWSPEC, groups: GROUPS, processClaims: [], shape: true,
+    }), { type: 'applyPreset', preset: { cells: [{ core_node_name: 'PLN_01', role: 'produce', swap_mode: 'two_robot' }] } });
+    assert.ok(!M.findings(draft).some(f => f.field === 'payload_code'),
+        JSON.stringify(M.findings(draft)));
 });
 
 test('role: the style s own claim still wins over the process', () => {
