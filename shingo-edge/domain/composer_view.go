@@ -101,21 +101,17 @@ type ComposerData struct {
 	// which the board's picture does not — the board draws what the flow IS,
 	// the composer draws what it could be.
 	Cell *CellPicture `json:"cell,omitempty"`
-	// Scene is the adjacency the "Robot drives via" row walks to find the LM
-	// waypoints along a position's supply path. Nil when the geometry cache has
-	// no scene, and then the row offers "shortest way" alone — a waypoint list
-	// invented without a map is a route the robot cannot drive.
-	//
-	// THE STATION'S HALF. Scene and Map are the same network — Scene is Map
-	// with the coordinates collapsed into one length per edge — so a payload
-	// carrying both carries it twice. The station read carries Scene and no
-	// Map; the desktop read carries Map, whose edges carry Len, and no Scene.
-	Scene *ComposerScene `json:"scene,omitempty"`
+	// PartRows is the station's part list (pick-a-part U4): every part the
+	// process may run — its part set and the parts its live styles carry
+	// (ProcessPalette) — with the catalog's name and the CATID a one-part
+	// style expects, so a scan of either finds it. The station's composer read
+	// only; fetched on CHANGEOVER, never on the poll.
+	PartRows []ComposerPartRow `json:"part_rows,omitempty"`
 	// Map is the plant as the routing-set screen (D3) draws it: placed points
 	// and the shape of every drivable segment, each with its length.
 	//
-	// THE DESKTOP'S HALF, and a superset of Scene: anything that walks the
-	// network for waypoints can walk these edges by Len. Nil when the
+	// THE DESKTOP'S ONLY: the station's composer no longer edits a flow, so it
+	// walks no network (pick-a-part U4 took its Scene away). Nil when the
 	// geometry cache is empty, and then D3 says the map has not arrived
 	// rather than drawing an invented one.
 	Map *ComposerMap `json:"map,omitempty"`
@@ -350,4 +346,13 @@ type ComposerEdge struct {
 	From string  `json:"from"`
 	To   string  `json:"to"`
 	Len  float64 `json:"len,omitempty"`
+}
+
+// ComposerPartRow is one row of the station's part list: the code, the
+// catalog's name for it, and the CATID a scan of it carries when a one-part
+// style expects one.
+type ComposerPartRow struct {
+	Code  string `json:"code"`
+	Name  string `json:"name,omitempty"`
+	CATID string `json:"catid,omitempty"`
 }

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/shared/scenefixtures"
+	"shingoedge/domain"
 	"shingoedge/internal/testdb"
 	"shingoedge/store/processes"
 )
@@ -33,9 +34,10 @@ func TestComposerPalette_ReachesBothComposerReadsAndNotThePoll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ComposerForStation: %v", err)
 	}
-	if !slices.Contains(station.Palette, "TYPED-PART") {
-		t.Errorf("the station's composer read carries palette %v, without the typed part — "+
-			"the HMI's part picker offers this list and nothing else", station.Palette)
+	// The station reads it as part rows now (pick-a-part U4): code, name, CATID.
+	if !slices.Contains(partRowCodes(station.PartRows), "TYPED-PART") {
+		t.Errorf("the station's composer read carries part rows %v, without the typed part — "+
+			"the HMI's part list offers this and nothing else", station.PartRows)
 	}
 
 	desktop, err := svc.ComposerForProcess(seeded.ProcessID)
@@ -86,8 +88,8 @@ func TestComposerPalette_CostsTheStationReadOneQuery(t *testing.T) {
 		t.Fatalf("ComposerForStation: %v", err)
 	}
 	baseline := fx.counter.Count()
-	if before.Palette == nil {
-		t.Fatal("the station's composer read carries no palette at all")
+	if before.PartRows == nil {
+		t.Fatal("the station's composer read carries no part rows at all")
 	}
 
 	// Ten typed rows, and the read must cost exactly what it cost with none.
@@ -151,11 +153,22 @@ func TestComposerStyleFields_TheDerivableOnesRideOnlyThePickerScope(t *testing.T
 		t.Fatal("the fixture seeded no style with claims; this test proves nothing")
 	}
 
-	// AND THE COMPOSER SCOPES DROP THEM, because they carry Claims.
+	// THE STATION SCOPE CARRIES NEITHER (pick-a-part U4): it edits no flow, so
+	// it has no cells, and it reads parts off the picker block and its own
+	// part rows.
+	station := svc.buildComposerData(seeded.ProcessID, styles, claims, composerStation,
+		func() []processes.Node { return nil })
+	for _, s := range station.Styles {
+		if len(s.Claims) != 0 || s.Nodes != nil || s.Parts != nil {
+			t.Errorf("station scope: style %q carries cells=%d nodes=%v parts=%v", s.Name, len(s.Claims), s.Nodes, s.Parts)
+		}
+	}
+
+	// AND THE DESKTOP DROPS THEM, because it carries Claims.
 	for _, tc := range []struct {
 		name  string
 		scope composerScope
-	}{{"station", composerStation}, {"desktop", composerDesktop}} {
+	}{{"desktop", composerDesktop}} {
 		block := svc.buildComposerData(seeded.ProcessID, styles, claims, tc.scope,
 			func() []processes.Node { return nil })
 		carried := 0
@@ -173,4 +186,12 @@ func TestComposerStyleFields_TheDerivableOnesRideOnlyThePickerScope(t *testing.T
 			t.Errorf("%s scope: no style carried cells, so the drop is untested", tc.name)
 		}
 	}
+}
+
+func partRowCodes(rows []domain.ComposerPartRow) []string {
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.Code)
+	}
+	return out
 }

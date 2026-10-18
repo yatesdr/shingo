@@ -204,14 +204,9 @@ func TestComposerForProcess_CarriesTheMapAndTheStationDoesNot(t *testing.T) {
 		}
 	}
 
-	// SCENE OR MAP, NEVER BOTH. They are the same network — Scene is Map with
-	// the coordinates collapsed into one length per edge — so the desktop
-	// read, which has Map, must not also carry Scene, and every Map edge has
-	// to carry the length a waypoint walk would otherwise have needed Scene
-	// for.
-	if got.Scene != nil {
-		t.Error("the desktop read carries Scene beside Map — the same network twice")
-	}
+	// Every Map edge carries the length a waypoint walk needs (the station's
+	// collapsed Scene went in pick-a-part U4: the station no longer edits a
+	// flow, so Map is the one copy of the network).
 	for _, e := range got.Map.Edges {
 		// A degenerate segment has length 0 honestly. The endpoints are read
 		// from Points now — an edge carries names, not places
@@ -231,20 +226,9 @@ func TestComposerForProcess_CarriesTheMapAndTheStationDoesNot(t *testing.T) {
 	if station.Composer.Map != nil {
 		t.Errorf("the station view carries the whole plant map; no screen on it draws one")
 	}
-	// THE POLL CARRIES NEITHER (S8). The board reads the composer's half once,
-	// on a tap; the scene rode every 500 ms poll to be discarded.
-	if station.Composer.Scene != nil {
-		t.Error("the station VIEW carries the travel graph — it belongs on the composer's own read")
-	}
-
-	// And the station's own composer read has it, which is where the waypoint
-	// walk gets it from.
 	stn, err := svc.ComposerForStation(seeded.ProcessID)
 	if err != nil {
 		t.Fatalf("ComposerForStation: %v", err)
-	}
-	if stn.Scene == nil || len(stn.Scene.Edges) == 0 {
-		t.Error("the station lost the scene adjacency it walks for waypoints")
 	}
 	if stn.Map != nil {
 		t.Error("the station read carries the whole plant map; no screen on it draws one")

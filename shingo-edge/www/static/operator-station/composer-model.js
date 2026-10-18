@@ -1509,6 +1509,33 @@ function cardLines(state, node) {
     // fallback and it is right in a refusal — on a shop-floor card it is worse
     // than the "staging for PLN_03" it would be replacing. F3 forbids a SECOND
     // NAME for a field; this is the same name, in sentence case.
+    //
+    // PRESS WORDS ONLY ON A PRESS-INDEX CELL (R-C): "on deck" and front/back
+    // are a press's words, and an A/B pair or any other cell gets the generic
+    // ones. pressIndexRow reads the mode's flowspec row, never its name.
+    //
+    // WITHOUT FLOWSPEC THE WORDS STAY AS THEY WERE. The board's read-only
+    // picture (sentencesFromView; operator-display.html loads no
+    // flowspec-data.js) cannot read a row, and the cell view marks every
+    // partner "deck", so there it keeps the press words rather than guess.
+    if (!state.flowspec) return legacyCardWords(state, node);
+    let press = false;
+    for (const p of state.positions) {
+        const o = state.cells[p.core_node_name];
+        if (!o || !o.on || !o.mode) continue;
+        const pi = pressIndexRow(state, o);
+        press = press || pi;
+        if (o.paired === node) return [(pi ? 'on deck for ' : 'paired with ') + p.core_node_name];
+        if (o.staging === node) return ['Inbound staging', 'for ' + p.core_node_name];
+        if (o.parkOld === node) return ['Outbound staging', 'for ' + p.core_node_name];
+    }
+    if (!press) return ['position'];
+    const pos = state.positions.find(p => p.core_node_name === node);
+    return [(pos && pos.kind === 'back') ? 'back position' : 'front position'];
+}
+
+// legacyCardWords is cardLines' caption for a model with no flowspec.
+function legacyCardWords(state, node) {
     for (const p of state.positions) {
         const o = state.cells[p.core_node_name];
         if (!o || !o.on || !o.mode) continue;
@@ -1518,6 +1545,15 @@ function cardLines(state, node) {
     }
     const pos = state.positions.find(p => p.core_node_name === node);
     return [(pos && pos.kind === 'back') ? 'back position' : 'front position'];
+}
+
+// pressIndexRow says whether a cell's choreography is a press index: its
+// flowspec row allows a third position (second_paired_core_node), which only
+// the press index has.
+function pressIndexRow(state, cell) {
+    const row = steadyRow(state, cell.role, cell.mode);
+    const need = row && row.second_paired_core_node;
+    return !!need && need !== 'forbidden' && need !== 'unused';
 }
 
 // pictureCells is model state in the shape renderFlowPicture draws: the

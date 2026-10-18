@@ -47,19 +47,20 @@ import (
 // THE RULE: what a surface already has decides what it is sent. Nothing is
 // carried twice on one payload.
 //
-// The two forks, and the pin for each:
+// The forks, and the pin for each:
 //
-//   - Scene (station) vs Map (desktop): the same network, one collapsed.
+//   - Map rides the desktop read only; the station draws no plant map.
 //     TestComposerRead_DesktopByteBudget holds that the station read has no Map.
-//   - ComposerStyle.Nodes and .Parts ride the PICKER scope only. They are the
-//     core node of every claim and the distinct payloads with their positions
-//     — which is what Claims says, on the same object, and the composer scopes
-//     carry Claims. composer-model's styleFacts derives them for any surface
-//     that has cells and no summary.
+//     (The station's collapsed Scene went with its flow editor, pick-a-part U4.)
+//   - ComposerStyle.Nodes and .Parts ride the PICKER scope only, and per-style
+//     Claims the DESKTOP scope only: the desktop derives nodes and parts from
+//     the cells (composer-model's styleFacts); the station reads them off the
+//     picker block it already polls.
 //     TestComposerStyleFields_TheDerivableOnesRideOnlyThePickerScope is the pin.
 //
-// What styleFor() then merges is still safe: the picker block is the only place
-// those two exist, so a merge cannot find two answers to one field.
+// The station's modal reads styles-by-parts off the picker block (the view) and
+// the part rows and recipes off its own read (pick-a-part U4), so the two
+// blocks never have to be merged.
 type composerScope int
 
 const (
@@ -67,10 +68,10 @@ const (
 	// and the set-up card's header. No cells, no routing set, no presets, no
 	// travel graph.
 	composerPicker composerScope = iota
-	// composerStation is the station's own composer fetch: the picker block
-	// plus the stored cells, the routing set, the preset cards and the scene.
-	// No Map, no Advanced — the HMI has no Advanced modal, and the map is a
-	// hundred kilobytes of coordinates for a screen the station never opens.
+	// composerStation is the station's own composer fetch, made on CHANGEOVER:
+	// the recipe cards (with their slots), the part rows and the cell picture.
+	// No cells, no routing lists, no Map, no Advanced — the station picks parts
+	// and runs recipes; it edits no flow (pick-a-part U4).
 	composerStation
 	// composerDesktop is the admin read: everything, plus the press as a
 	// picture, the Advanced blocks and the plant map.
@@ -127,9 +128,8 @@ func (s *StationService) ComposerForProcess(processID int64) (*domain.ComposerDa
 	return out, nil
 }
 
-// ComposerForStation is the STATION's read, made once when the composer opens
-// and held for the session (S8). Station-shaped: the scene, no Map, no
-// Advanced blocks.
+// ComposerForStation is the STATION's read, made once when CHANGEOVER opens
+// the modal and held for the session (S8): recipes, part rows, the picture.
 //
 // IT CARRIES ITS OWN PICTURE NOW, station-scoped (SYNTH §3 B2). The HMI's
 // composer used to draw the POLLED view's picture, which is the board's: the
@@ -182,7 +182,55 @@ func (s *StationService) ComposerForStation(stationID int64) (*domain.ComposerDa
 	out.Cell = s.cellPicture(stationID, process, active, live, nodes(), cellPictureOptions{
 		stagingOffers: stagingOffers(routingFromBlock(out)),
 	})
+	// THE STATION NO LONGER EDITS A FLOW (pick-a-part U4), so what only an
+	// editor read goes: the routing lists (the picture above already took the
+	// staging lanes it draws) and the bare palette, which the part rows
+	// replace. The cells per style went in buildComposerData.
+	out.PartRows = s.partRows(out.Palette, styles, byStyle)
+	out.Palette, out.Routing, out.RoutingOff = nil, nil, nil
 	return out, nil
+}
+
+// partRows is the station's part list: each code of the palette with the
+// catalog's name and the CATID of a style that runs that part alone. One
+// catalog read; a code the catalog does not know keeps its code as the name.
+func (s *StationService) partRows(palette []string, styles []processes.Style, byStyle map[int64][]processes.NodeClaim) []domain.ComposerPartRow {
+	if len(palette) == 0 {
+		return nil
+	}
+	names := map[string]string{}
+	if cat, err := s.db.ListPayloadCatalog(); err == nil {
+		for _, e := range cat {
+			names[e.Code] = e.Name
+		}
+	} else {
+		log.Printf("composer: payload catalog for part rows: %v", err)
+	}
+	catid := map[string]string{}
+	for _, st := range styles {
+		if st.ExpectedCATID == "" {
+			continue
+		}
+		parts := map[string]bool{}
+		for _, c := range byStyle[st.ID] {
+			if c.PayloadCode != "" {
+				parts[c.PayloadCode] = true
+			}
+		}
+		if len(parts) != 1 {
+			continue
+		}
+		for code := range parts {
+			if catid[code] == "" {
+				catid[code] = st.ExpectedCATID
+			}
+		}
+	}
+	out := make([]domain.ComposerPartRow, 0, len(palette))
+	for _, code := range palette {
+		out = append(out, domain.ComposerPartRow{Code: code, Name: names[code], CATID: catid[code]})
+	}
+	return out
 }
 
 // memoNodes makes a node-list reader that reads at most once, however many
@@ -273,7 +321,7 @@ func (s *StationService) buildComposerData(processID int64, styles []processes.S
 				})
 			}
 		}
-		if scope.carriesFlows() {
+		if scope == composerDesktop {
 			// The cells, the provenance and the Advanced blocks are the
 			// COMPOSER's, not the picker's: the set-up card that reads the
 			// provenance line opens after the composer fetch, and a board
@@ -328,12 +376,6 @@ func (s *StationService) buildComposerData(processID int64, styles []processes.S
 	}
 
 	out.Presets = s.composerPresets(processID, claims, nodes)
-	// SCENE OR MAP, NEVER BOTH — they are the same network. The desktop gets
-	// Map (whose edges carry Len) in ComposerForProcess; the station gets the
-	// collapsed form here.
-	if scope == composerStation {
-		out.Scene = s.composerScene()
-	}
 	return out
 }
 
@@ -675,21 +717,6 @@ func presetUse(members int) string {
 		return "used by 1 part"
 	}
 	return "used by " + strconv.Itoa(members) + " parts"
-}
-
-// composerScene reduces the geometry cache to the adjacency a waypoint search
-// walks. Nil when there is no scene: the "Robot drives via" row then offers
-// "shortest way" alone, because a waypoint list invented without a map is a
-// route the robot cannot drive.
-//
-// COMPUTED ONCE PER CACHE, NOT PER REQUEST. The lengths are a pure function of
-// the geometry, and the geometry is replaced only by a complete node-list
-// response — so this is 840 square roots on a cache swap instead of 840 on
-// every read. Keyed by the cache's identity rather than its revision: two
-// caches can share a revision string, and the pointer cannot be wrong.
-func (s *StationService) composerScene() *domain.ComposerScene {
-	_, memo := s.sceneDerived()
-	return memo
 }
 
 // sceneDerived returns the geometry cache and the adjacency derived from it,

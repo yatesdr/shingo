@@ -596,6 +596,20 @@ test('nothing the model writes is derived from what a part travels in', () => {
     assert.ok(carried.toLowerCase().indexOf('tote') < 0, carried);
 });
 
+// PRESS WORDS ONLY ON A PRESS-INDEX CELL (R-C). "On deck", "back position"
+// and "front position" are a press's words; a sequential A/B pair or any other
+// cell gets the generic ones. Which is which comes from the mode's flowspec row
+// (a row that allows second_paired_core_node is a press index), never its name.
+test('the picture says press words only on a press-index cell', () => {
+    let s = initStyle(7);
+    assert.deepStrictEqual(M.cardLines(s, 'PLN_02'), ['on deck for PLN_01'], 'press index: the back slot is on deck');
+    assert.deepStrictEqual(M.cardLines(s, 'PLN_03'), ['front position'], 'press index: a free front keeps its word');
+    s = M.reduce(s, { type: 'setMode', node: 'PLN_01', mode: 'sequential' });
+    s = M.reduce(s, { type: 'setMode', node: 'PLN_04', mode: 'sequential' });
+    assert.deepStrictEqual(M.cardLines(s, 'PLN_02'), ['paired with PLN_01'], 'sequential: a partner, not on deck');
+    assert.deepStrictEqual(M.cardLines(s, 'PLN_03'), ['position'], 'no press-index cell: no front/back word');
+});
+
 test('cardLines are the reference CARDLINE, verbatim', () => {
     const s = initStyle(7);
     assert.deepStrictEqual(M.cardLines(s, 'PLN_01'),

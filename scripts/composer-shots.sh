@@ -12,18 +12,15 @@
 # picture, and while they carried 04/05/06 the folder looked complete with four
 # of its names showing a screen the reference puts something else under.
 #
-# and U8's composer states, reached through the page's hash entry
-# (#compose=<styleId>;state=<S2..S10>[;node=..]), which sets local UI state only
-# and never writes:
+# and the station's changeover modal (pick-a-part U4), reached through the
+# page's hash entry (#compose=<screen>;parts=..;recipe=..), which sets local UI
+# state only and never writes:
 #
-#   02-picker.png   03-setup-card.png   04-composer-press-index.png
-#   05-composer-two-robot-swap.png   06-position-panel.png   07-dock-panel.png
-#   08-new-part-blank.png   09-finding-on-node-and-bar.png
-#   10-confirm-rows-and-orders.png   11-started-auto-return.png (;hold=1)
-#   12-part-picker.png (;addpart=1)  13-part-picker-on-position.png
+#   02-part-list.png   03-two-off.png   04-which-one.png   05-positions.png
+#   05b-go-no-positions.png   06-go-mint.png   07-go-existing.png
+#   08-go-running.png   09-none.png   10-started.png (;hold=1)
 #   14-route-strip.png   15-two-route-strips.png
 #   16-route-strip-schematic.png   17-route-strip-synthetic-band.png
-#   18-route-strip-composer.png
 #
 # and the DESKTOP Processes page at 1440x900, which this header did not list
 # for three rounds while the harness took them:
@@ -32,7 +29,7 @@
 #   D1-flows-running.png   D2-advanced.png   D3-routing-set.png
 #   D4-operator-screens.png   D5-settings.png   D6-presets.png
 #   D6-presets-member-expanded.png   D6-apply-modal.png
-#   D6-apply-modal-answered.png
+#   D6-apply-modal-answered.png   D7-new-shape-draft.png
 #
 # 32 PNGs, and they are NOT committed — composer-shots/ is in .gitignore. They
 # are a handoff artefact, they weigh ~2 MB, and they carry the fixture on

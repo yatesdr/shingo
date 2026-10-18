@@ -52,24 +52,21 @@ import (
 // photographed at all: the folder looked complete and four of its names showed a
 // different screen than the one the reference puts under them.
 //
-// U8 adds the composer's own states, reached through the page's hash entry
-// (#compose=<styleId>;state=<S2…S10>[;node=…]) rather than by driving the DOM:
-// the hash sets LOCAL UI STATE ONLY and never writes, so a shot cannot leave a
-// changeover behind it.
+// The station's changeover modal (pick-a-part U4) is reached through the
+// page's hash entry (#compose=<screen>[;parts=…][;recipe=…][;hold=1]) rather
+// than by driving the DOM: the hash sets LOCAL UI STATE ONLY and never writes,
+// so a shot cannot leave a style or a changeover behind it.
 //
-//	02-picker.png                    S2, the picker sheet
-//	03-setup-card.png                S3, set-up card (was 03-setup-card-run-as-is.png:
-//	                                 F6 replaced the button the name described)
-//	04-composer-press-index.png      S4, the composer's picture (press-index)
-//	05-composer-two-robot-swap.png   S4, two-robot
-//	06-position-panel.png            S5, PLN_01's panel over the picture
-//	07-dock-panel.png                S6, the IN half
-//	08-new-part-blank.png            S7, every card dashed
-//	09-finding-on-node-and-bar.png   S8, a position with no choreography
-//	10-confirm-rows-and-orders.png   S9, the confirm sheet
-//	11-started-auto-return.png       S10, the started screen
-//	12-part-picker.png               S4 with the part picker open
-//	13-part-picker-on-position.png   S5 with it opened from a position
+//	02-part-list.png          the part list
+//	03-two-off.png            "two off?"
+//	04-which-one.png          two recipes fit a new pair
+//	05-positions.png          the Positions screen (the floor's edit switched on)
+//	05b-go-no-positions.png   switched off: straight to Go
+//	06-go-mint.png            Go for a pair no style runs — names the placement
+//	07-go-existing.png        Go for parts that run in a style — resolves to it
+//	08-go-running.png         the running style's parts — nothing to change over
+//	09-none.png               no recipe takes the part
+//	10-started.png            the started screen (;hold=1)
 //
 // and the route strip, which needs a key route written onto a claim because no
 // claim in this plant carries one:
@@ -79,7 +76,6 @@ import (
 //	16-route-strip-schematic.png       the same strip with no scene cached
 //	17-route-strip-synthetic-band.png  under a staging BAND card (see
 //	                                   syntheticCellDriver: this plant has none)
-//	18-route-strip-composer.png        the same strip inside the composer
 //
 // Behind the `shots` tag because it needs a Chrome binary; run it through
 // scripts/composer-shots.sh, which sets the two environment variables:
@@ -220,11 +216,6 @@ func TestComposerShots(t *testing.T) {
 		_, _ = w.Write([]byte(clickStagingDriver(r.URL.Query().Get("process"),
 			r.URL.Query().Get("style"), r.URL.Query().Get("node"))))
 	})
-	// The station's preset strip, tapped. See clickPresetDriver.
-	mux.HandleFunc("/__shots/tap-preset", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(clickPresetDriver(r.URL.Query().Get("station"), r.URL.Query().Get("compose"))))
-	})
 	// The apply modal's pickers, answered by clicking. See clickApplyDriver.
 	mux.HandleFunc("/__shots/click-apply", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -325,72 +316,10 @@ func TestComposerShots(t *testing.T) {
 		return string(out)
 	}
 
-	// THE PANEL'S OWN GEOMETRY, READ BACK. SPEC S5 says never off-screen and
-	// never over the bar, and the page publishes whether that held into
-	// data-composer-fit (composer-render.js reportPanelFit). This is the guard
-	// that fails the old layout; the console.error it replaces could not,
-	// because the page's console never leaves the renderer.
-	fitRe := regexp.MustCompile(`data-composer-fit="([^"]*)"`)
+	// A page that throws renders the board underneath and photographs as a
+	// plausible shot; composer-render.js writes the error to a data attribute
+	// the DOM checks read.
 	errRe := regexp.MustCompile(`data-composer-error="([^"]*)"`)
-	checkPanelFits := func(label, hash string) {
-		t.Helper()
-		dom := dumpDOM(hash)
-		if m := errRe.FindStringSubmatch(dom); m != nil {
-			t.Errorf("%s: the page threw: %s", label, html.UnescapeString(m[1]))
-		}
-		// THE CHOREOGRAPHY CONTROL HAS TO SAY WHICH CHOREOGRAPHY. SPEC S5 is
-		// glyph AND name; an operator cannot read a choreography off a 26 px
-		// picture, and the spec never asked them to. This is measured because
-		// the way it broke was invisible to every test and plausible in a
-		// screenshot: `.os-comp-stage svg { width: 100% }`, meant for the press,
-		// also matched the glyphs inside the popover and stretched one to 171 px,
-		// which squeezed the label to zero width.
-		if sm := regexp.MustCompile(`data-composer-seg="([^"]*)"`).FindStringSubmatch(dom); sm != nil {
-			var seg struct {
-				BtnW     int    `json:"btnW"`
-				SpanW    int    `json:"spanW"`
-				SpanText string `json:"spanText"`
-				GlyphW   int    `json:"glyphW"`
-			}
-			if err := json.Unmarshal([]byte(html.UnescapeString(sm[1])), &seg); err == nil {
-				if seg.GlyphW != 26 {
-					t.Errorf("%s: the swap-mode glyph renders %d px, want 26 (R6, GLYPHS-swap-mode-LOCKED)", label, seg.GlyphW)
-				}
-				if strings.TrimSpace(seg.SpanText) == "" {
-					t.Errorf("%s: the segmented button has no name — SPEC S5 is glyph AND name", label)
-				}
-				if seg.SpanW < 40 {
-					t.Errorf("%s: the segmented button's name is %d px wide (%q) — it is being squeezed out",
-						label, seg.SpanW, seg.SpanText)
-				}
-			}
-		}
-		m := fitRe.FindStringSubmatch(dom)
-		if m == nil {
-			t.Errorf("%s: the page published no data-composer-fit — the panel never reported its geometry, so nothing is checking SPEC S5", label)
-			return
-		}
-		var fit struct {
-			Panel           []int `json:"panel"`
-			OverlapsBar     bool  `json:"overlapsBar"`
-			OverlapsPrimary bool  `json:"overlapsPrimary"`
-			OutsidePicture  bool  `json:"outsidePicture"`
-		}
-		raw := html.UnescapeString(m[1])
-		if err := json.Unmarshal([]byte(raw), &fit); err != nil {
-			t.Errorf("%s: data-composer-fit is not JSON (%q): %v", label, raw, err)
-			return
-		}
-		if fit.OverlapsBar {
-			t.Errorf("%s: the panel %v covers the bottom bar — SPEC S5 says never over the bar", label, fit.Panel)
-		}
-		if fit.OverlapsPrimary {
-			t.Errorf("%s: the panel %v covers the primary button — the one control SPEC 0.5 spends the screen's saturated colour on", label, fit.Panel)
-		}
-		if fit.OutsidePicture {
-			t.Errorf("%s: the panel %v leaves the picture — SPEC S5 says never off-screen", label, fit.Panel)
-		}
-	}
 
 	shot := func(file, styleName string) {
 		t.Helper()
@@ -402,28 +331,6 @@ func TestComposerShots(t *testing.T) {
 			t.Fatalf("set active style: %v", err)
 		}
 		shotAt(file, "#flow")
-	}
-	// The composer's states, by style id rather than by name: the hash entry
-	// takes the id the picker would have passed.
-	composerShot := func(file, styleName, state, node string) {
-		t.Helper()
-		styleID, ok := seeded.Styles[styleName]
-		if !ok {
-			t.Fatalf("style %q not seeded", styleName)
-		}
-		h := fmt.Sprintf("#compose=%d;state=%s", styleID, state)
-		if node != "" {
-			h += ";node=" + node
-		}
-		shotAt(file, h)
-	}
-	composerShotHeld := func(file, styleName, state string) {
-		t.Helper()
-		styleID, ok := seeded.Styles[styleName]
-		if !ok {
-			t.Fatalf("style %q not seeded", styleName)
-		}
-		shotAt(file, fmt.Sprintf("#compose=%d;state=%s;hold=1", styleID, state))
 	}
 	// THE TWO STYLES EVERY SHOT NAMES: the index pair and the two-robot swap.
 	const idx, swap = "PART SYN-A-S003", "PART SYN-A-S007"
@@ -547,301 +454,72 @@ func TestComposerShots(t *testing.T) {
 		}
 	}
 
-	// ── S3: the set-up card, and the gate's one button ───────────────────
+	// ── THE PICK-A-PART MODAL (pick-a-part U4) ─────────────────────────
 	//
-	// THE CARD HAS EXACTLY ONE BUTTON, GATE ON OR OFF (owner ruling F6; brief
-	// R-G, 2026-10-17). A second control — or a sentence explaining a door that
-	// is locked — tells the floor there is a half of the system they are not
-	// allowed to understand. Until U0 the gate-on card also drew a quiet `Edit
-	// the flow first`; the floor no longer edits a flow from here.
+	// The station's changeover is part-first now: the part list, "two off?",
+	// "which one?", Positions (with the switch on), Go, none, started. Each is
+	// reached by the page's hash entry (#compose=<screen>;parts=…;recipe=…),
+	// which sets local UI state only and never writes — Go renders flow/preview's
+	// mint form, which plans a style that does not exist yet.
 	//
-	// Counted off the DOM rather than eyeballed in the PNG, because "one
-	// button" is exactly the kind of thing a screenshot shows and no test
-	// asserts. The ✕ is not counted: it is the way back, not a choice about
-	// the changeover.
-	cardRe := regexp.MustCompile(`(?s)<div class="os-comp-card">(.*)</div></div>`)
-	cardBtnRe := regexp.MustCompile(`data-act="(runasis|compose)"`)
-	checkSetupCard := func(styleID int64) {
-		t.Helper()
-		hash := fmt.Sprintf("#compose=%d;state=S3", styleID)
-
-		dom := dumpDOM(hash)
-		if m := errRe.FindStringSubmatch(dom); m != nil {
-			t.Errorf("S3 with the gate on: the page threw: %s", html.UnescapeString(m[1]))
-		}
-		card := cardRe.FindStringSubmatch(dom)
-		if card == nil {
-			t.Fatal("S3: no set-up card in the DOM — the shot is of some other screen")
-		}
-		if got := cardBtnRe.FindAllString(card[1], -1); len(got) != 1 {
-			t.Errorf("S3 with the gate ON has %d buttons (%v), want exactly one: the verb — the floor does not edit a flow from this card (brief R-G)", len(got), got)
-		}
-		// THE COUNT AND THE VERB, not the wording. This also required three exact
-		// strings to be present and four to be absent — the F6 turnover's before
-		// and after. The gone-list has already turned over once, so what it holds
-		// now is that nobody re-words a button, which is not what F6 ruled: F6 is
-		// about how many choices the card offers, and that is the count above.
-		// The verb itself is checked because "one button" and "the button that
-		// starts the changeover" are different facts.
-		if !strings.Contains(card[1], ">Start changeover<") {
-			t.Error("S3 with the gate ON has lost its verb")
-		}
-
-		// And again with the gate off.
-		if err := db.SetFlowComposerEnabled(seeded.ProcessID, false); err != nil {
-			t.Fatalf("close the gate: %v", err)
-		}
-		defer func() {
-			if err := db.SetFlowComposerEnabled(seeded.ProcessID, true); err != nil {
-				t.Fatalf("re-open the gate: %v", err)
-			}
-		}()
-		dom = dumpDOM(hash)
-		card = cardRe.FindStringSubmatch(dom)
-		if card == nil {
-			t.Fatal("S3 with the gate off: no set-up card — the gate removes a button, not a screen")
-		}
-		if got := cardBtnRe.FindAllString(card[1], -1); len(got) != 1 {
-			t.Errorf("S3 with the gate OFF has %d buttons (%v), want exactly one: the verb", len(got), got)
-		}
-		if !strings.Contains(card[1], ">Start changeover<") {
-			t.Error("S3 with the gate off has lost its one button")
-		}
-	}
-
-	// A CHANGEOVER IS FROM ONE STYLE TO ANOTHER, and the seam refuses a preview
-	// of the style already on the press ("process is already running style N").
-	// So each composer shot runs with the OTHER style active: from-something, and
-	// never from-itself.
-	runFrom := func(styleName string) {
-		t.Helper()
-		id, ok := seeded.Styles[styleName]
-		if !ok {
-			t.Fatalf("style %q not seeded", styleName)
-		}
-		if err := db.SetActiveStyle(seeded.ProcessID, &id); err != nil {
+	// The fixture: plant A's press with both offered shapes named (above) — two
+	// recipes, each with two produce slots — the swap style running, and three
+	// parts in the part set that no style runs.
+	if swapID, ok := seeded.Styles[swap]; ok {
+		if err := db.SetActiveStyle(seeded.ProcessID, &swapID); err != nil {
 			t.Fatalf("set active style: %v", err)
 		}
 	}
-	runFrom(swap)
-	composerShot("02-picker.png", idx, "S2", "")
-	composerShot("03-setup-card.png", idx, "S3", "")
-	checkSetupCard(seeded.Styles[idx])
-	composerShot("04-composer-press-index.png", idx, "S4", "")
-	// THE STRIP CARD IS LOCKED AT 200x56 WITH A 32 PX GLYPH (U8 brief §A S4),
-	// and neither line of it may ellipsise. Measured off the rendered card
-	// (composer-render.js's reportStripFit), because both of those are exactly
-	// what a screenshot shows and no test asserts: a glyph is written with
-	// inline width/height and the way it goes wrong is a CSS rule reaching it
-	// from elsewhere, which already happened once to the popover's 26 px one.
-	//
-	// The second line was `PLN_01 / PLN_04 · used by 7 parts` and ellipsised to
-	// `PLN_01 / PLN_04 · use…` in 118 px — cutting off the half that says why
-	// the card is worth tapping. It abbreviates the way a picker row does now.
-	{
-		dom := dumpDOM(fmt.Sprintf("#compose=%d;state=S4", seeded.Styles[idx]))
-		m := regexp.MustCompile(`data-composer-strip="([^"]*)"`).FindStringSubmatch(dom)
-		if m == nil {
-			t.Error("04: the strip published no geometry — nothing is checking the card's lock")
-		} else {
-			var fit struct {
-				CardW, CardH, GlyphW                  int
-				NameText, WhereText, UseText          string
-				NameClipped, WhereClipped, UseClipped bool
-			}
-			raw := html.UnescapeString(m[1])
-			if err := json.Unmarshal([]byte(raw), &fit); err != nil {
-				t.Errorf("04: data-composer-strip is not JSON (%q): %v", raw, err)
-			} else {
-				t.Logf("04 strip card: %dx%d, glyph %d px, name %q%s, where %q%s, use %q%s",
-					fit.CardW, fit.CardH, fit.GlyphW, fit.NameText, clippedWord(fit.NameClipped),
-					fit.WhereText, clippedWord(fit.WhereClipped),
-					fit.UseText, clippedWord(fit.UseClipped))
-				if fit.CardW != 200 || fit.CardH != 56 {
-					t.Errorf("04: the card renders %dx%d, want 200x56 (U8 §A S4)", fit.CardW, fit.CardH)
-				}
-				if fit.GlyphW != 32 {
-					t.Errorf("04: the card's glyph renders %d px, want 32 (U8 §A S4)", fit.GlyphW)
-				}
-				if fit.WhereText == "" {
-					t.Error("04: the card names no positions; two cards of one mode would be one word apart")
-				}
-				if fit.WhereClipped || fit.UseClipped {
-					t.Errorf("04: the card ellipsises (%q%s / %q%s) — the positions tell two cards apart and the count says why either is worth tapping",
-						fit.WhereText, clippedWord(fit.WhereClipped), fit.UseText, clippedWord(fit.UseClipped))
-				}
-			}
-		}
-	}
-	// ── THE STRIP IS TAPPED, not only measured ──────────────────────────
-	//
-	// The check above proves a preset CARD renders and fits. Whether tapping
-	// one applies its shape was covered at both ends and nowhere in between:
-	// composerPresets builds the cards (station_composer_test.go) and
-	// applyPreset lands either payload shape (composer-model.test.js, four
-	// tests), with one line of composer-render.js between them that nothing
-	// had ever pressed. That is precisely where the apply modal's dead
-	// controls lived for three rounds — every shot came out right, and a
-	// screenshot never clicks.
-	{
-		profile := t.TempDir()
-		u := fmt.Sprintf("%s/__shots/tap-preset?station=%d&compose=%d", srv.URL, stationID, seeded.Styles[idx])
-		cmd := exec.Command(chrome,
-			"--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
-			"--user-data-dir="+profile, "--window-size=1280,800",
-			"--virtual-time-budget=30000", "--dump-dom", u)
-		cmd.Dir = out
-		raw, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("chrome --dump-dom tap-preset: %v", err)
-		}
-		attr := func(name string) string {
-			m := regexp.MustCompile(`data-` + name + `="([^"]*)"`).FindStringSubmatch(string(raw))
-			if m == nil {
-				return ""
-			}
-			return html.UnescapeString(m[1])
-		}
-		if got := attr("result"); got != "OK" {
-			t.Errorf("04 tap a preset: %q (step %q, card %q over %q; %s cards drawn, live before %q, after %q).\n"+
-				"  The operator can see the card. This is whether tapping it lands the flow.",
-				got, attr("step"), attr("name"), attr("where"), attr("drawn"), attr("before"), attr("live"))
-		} else {
-			t.Logf("04 tap a preset: %s cards on the strip; tapped %q and the picture drew %s (its %s)",
-				attr("cards"), attr("name"), attr("live"), attr("where"))
-		}
-	}
-	runFrom(idx)
-	composerShot("05-composer-two-robot-swap.png", swap, "S4", "")
-	runFrom(swap)
-	composerShot("06-position-panel.png", idx, "S5", "PLN_01")
-	checkPanelFits("06 position panel", fmt.Sprintf("#compose=%d;state=S5;node=PLN_01", seeded.Styles[idx]))
-	// V2 (2026-09-12): THE PANEL'S SUB-LINE IS THE PICTURE'S ROW, NOT THE
-	// CLAIM'S KIND. In plant A, PLN_01 is Kind `front` and is DRAWN in the
-	// BACK row; U9 fixed the desktop's positions table to read the row and the
-	// station's panel kept the old read, so 06 captioned PLN_01 `front` under a
-	// picture that said BACK and beside a desktop table that said `back`.
-	// F2's rule, one source, checked here because the PNG is where it showed.
-	{
-		dom := dumpDOM(fmt.Sprintf("#compose=%d;state=S5;node=PLN_01", seeded.Styles[idx]))
-		h3 := regexp.MustCompile(`(?s)<h3>PLN_01<span>([^<]*)</span>`).FindStringSubmatch(dom)
-		if h3 == nil {
-			t.Error("06: no PLN_01 panel heading in the DOM")
-		} else if !strings.HasPrefix(strings.TrimSpace(h3[1]), "back") {
-			t.Errorf("06: the panel says %q for PLN_01; the picture and the desktop table both say back (F2)",
-				strings.TrimSpace(h3[1]))
-		}
-		// F3 (2026-09-12): the panel's rows are the claim's own field names —
-		// and from ONE table. These are flowspec.Label's words, which is what
-		// a refusal about the same field says; the panel used to spell its own
-		// ("Paired position" for paired_core_node), which is the second name
-		// F3 exists to remove.
-		for _, want := range []string{
-			">" + flowspec.Label(flowspec.InboundSource) + "<",
-			">" + flowspec.Label(flowspec.OutboundDestination) + "<",
-			">" + flowspec.Label(flowspec.KeyRoute) + "<",
-			">" + flowspec.Label(flowspec.PairedCoreNode) + "<",
-		} {
-			if !strings.Contains(dom, want) {
-				t.Errorf("06: the position panel has no row %q — F3: a field is called what the claim calls it", want)
-			}
-		}
-		for _, gone := range []string{"New bin comes from", "Old bin goes to", "Paired back position"} {
-			if strings.Contains(dom, gone) {
-				t.Errorf("06: the panel still says %q", gone)
-			}
-		}
-	}
-	composerShot("07-dock-panel.png", idx, "S6", "")
-	checkPanelFits("07 dock panel", fmt.Sprintf("#compose=%d;state=S6", seeded.Styles[idx]))
-
-	// ── A ROLE WITH NOTHING TO OFFER SAYS WHY ───────────────────────────
-	//
-	// Amendment A, from Hopkinsville. The composer offers a process only its
-	// routing set, so a role with no enabled rows drew its heading and no
-	// chips — and the engineer looking at four of those read it as the
-	// derivation being broken. It was not broken; the set was empty, and the
-	// card said nothing, which from where they stood is the same thing.
-	//
-	// The state is MADE rather than waited for: plant A's press has both roles
-	// filled, which is why nothing here had ever drawn the empty. Every source
-	// row is switched off, the card is read, and the rows go back — the shots
-	// after this one are taken against the fixture as it was.
-	{
-		rows, err := db.ListRoutingNodes(seeded.ProcessID)
-		if err != nil {
-			t.Fatalf("read the routing set: %v", err)
-		}
-		var turnedOff []int64
-		for _, r := range rows {
-			if r.Role != domain.RoutingRoleSource || !r.Enabled {
-				continue
-			}
-			if err := db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, seeded.ProcessID, r.ID, false, "shots"); err != nil {
-				t.Fatalf("switch off %s: %v", r.CoreNodeName, err)
-			}
-			turnedOff = append(turnedOff, r.ID)
-		}
-		if len(turnedOff) == 0 {
-			t.Fatal("plant A's press has no enabled source rows; this check was written against the two it has")
-		}
-		dom := dumpDOM(fmt.Sprintf("#compose=%d;state=S5;node=PLN_01", seeded.Styles[idx]))
-		// THE COUNT IS WHY THE VIEW CARRIES ONE. These rows exist and are
-		// switched off, so the sentence is the one about a switch — not the
-		// one about an empty set, which would send the engineer to add names
-		// they already have.
-		want := fmt.Sprintf("%d inbound source node", len(turnedOff))
-		if !strings.Contains(dom, want) {
-			t.Errorf("S5 with no enabled source: the card does not say %q.\n"+
-				"  A heading over nothing is what an engineer reads as a broken derivation.", want)
-		}
-		if !strings.Contains(dom, "switched off") || !strings.Contains(dom, "Settings") {
-			t.Error("S5 with no enabled source: the sentence does not say what is wrong or where to go")
-		}
-		// And the heading is still drawn — the row is not hidden, it is
-		// answered. A hidden row is a field an engineer concludes does not
-		// exist.
-		if !strings.Contains(dom, flowspec.Label(flowspec.InboundSource)) {
-			t.Errorf("S5 with no enabled source: the %q heading went away; the row is answered, not removed",
-				flowspec.Label(flowspec.InboundSource))
-		}
-		for _, id := range turnedOff {
-			if err := db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, seeded.ProcessID, id, true, "shots"); err != nil {
-				t.Fatalf("switch %d back on: %v", id, err)
-			}
-		}
-		t.Logf("S5 with no enabled source: the card names the %d switched-off row(s) and where to turn them on", len(turnedOff))
-	}
-	composerShot("08-new-part-blank.png", idx, "S7", "")
-	// S8 is S7 with a position added and no choreography chosen — the finding
-	// the server cannot raise before a preview, on the card AND in the bar.
-	composerShot("09-finding-on-node-and-bar.png", idx, "S7", "PLN_03")
-	checkPanelFits("09 finding", fmt.Sprintf("#compose=%d;state=S7;node=PLN_03", seeded.Styles[idx]))
-	composerShot("10-confirm-rows-and-orders.png", idx, "S9", "")
-	// ;hold=1 stops the 4 s countdown: without it S10 is back on the board long
-	// before the 15 s virtual-time budget fires and the shot is of the board.
-	composerShotHeld("11-started-auto-return.png", idx, "S10")
-
-	// ── the part picker (Unit A) ─────────────────────────────────────────
-	//
-	// THE PART SET IS SEEDED HERE AND NOT IN THE FIXTURE. The palette is the
-	// UNION of the typed rows and what the process's live claims run, so a
-	// plant seed already fills it — which would photograph the case that
-	// needed no work. The rows below are the half an engineer types: parts
-	// this cell may run and no flow has claimed yet, which is exactly the
-	// state a new cell is in and the reason the table exists.
-	//
-	// SYNTHETIC CODES, not plant part numbers: nothing in a committed file
-	// carries a real one.
 	if err := db.ReplaceProcessPayloads(seeded.ProcessID,
 		[]string{"SHOT-PART-01", "SHOT-PART-02", "SHOT-PART-03"}); err != nil {
 		t.Fatalf("seed the part set: %v", err)
 	}
-	// Over the strip, where a part arrives loose, and over a position panel,
-	// where it lands on the position the picker was opened from.
-	shotAt("12-part-picker.png", fmt.Sprintf("#compose=%d;state=S4;addpart=1", seeded.Styles[idx]))
-	shotAt("13-part-picker-on-position.png",
-		fmt.Sprintf("#compose=%d;state=S5;node=PLN_01;addpart=1", seeded.Styles[idx]))
+	if len(presetIDs) < 2 {
+		t.Fatalf("named %d recipes; the which-one shot needs two", len(presetIDs))
+	}
+	partsOf := func(styleName string) string {
+		claims, err := db.ListStyleNodeClaims(seeded.Styles[styleName])
+		if err != nil {
+			t.Fatalf("claims of %s: %v", styleName, err)
+		}
+		var codes []string
+		for _, c := range claims {
+			codes = append(codes, c.PayloadCode)
+		}
+		sort.Strings(codes)
+		return strings.Join(codes, ",")
+	}
+	newPair := "SHOT-PART-01,SHOT-PART-02"
+	modal := func(file, hash string, want ...string) {
+		t.Helper()
+		shotAt(file, hash)
+		dom := dumpDOM(hash)
+		if m := errRe.FindStringSubmatch(dom); m != nil {
+			t.Errorf("%s: the page threw: %s", file, html.UnescapeString(m[1]))
+		}
+		for _, w := range want {
+			if !strings.Contains(dom, w) {
+				t.Errorf("%s: the modal does not show %q — the shot is of some other screen", file, w)
+			}
+		}
+	}
+	modal("02-part-list.png", "#compose=part", "SHOT-PART-01", "data-act=\"part\"")
+	modal("03-two-off.png", "#compose=two;parts=SHOT-PART-01", "Just this part", "+ second part")
+	modal("04-which-one.png", "#compose=which;parts="+newPair, "Which one?")
+	if err := db.SetFlowComposerEnabled(seeded.ProcessID, true); err != nil {
+		t.Fatalf("switch the floor's edit on: %v", err)
+	}
+	modal("05-positions.png", fmt.Sprintf("#compose=positions;parts=%s;recipe=%d", newPair, presetIDs[0]), "Positions · ")
+	modal("06-go-mint.png", fmt.Sprintf("#compose=go;parts=%s;recipe=%d", newPair, presetIDs[0]),
+		"Change over to", "Start changeover", " on PLN_")
+	modal("07-go-existing.png", "#compose=go;parts="+partsOf(idx), "Change over to "+idx, "Start changeover")
+	modal("08-go-running.png", "#compose=go;parts="+partsOf(swap), "already running")
+	modal("09-none.png", "#compose=none;parts=SHOT-PART-01", "An engineer sets this up on the desktop.")
+	modal("10-started.png", fmt.Sprintf("#compose=started;parts=%s;recipe=%d;hold=1", newPair, presetIDs[0]), "Changeover started")
+	if err := db.SetFlowComposerEnabled(seeded.ProcessID, false); err != nil {
+		t.Fatalf("switch the floor's edit off: %v", err)
+	}
+	modal("05b-go-no-positions.png", fmt.Sprintf("#compose=go;parts=%s;recipe=%d", newPair, presetIDs[0]), "Start changeover")
 
 	// ── the route strip ─────────────────────────────────────────────────
 	//
@@ -873,8 +551,6 @@ func TestComposerShots(t *testing.T) {
 		// bar around it (SPEC §0.1: one drawing of this cell on this station).
 		// The strip is read-back there too — the key route is chosen in the
 		// position's panel, and tapping the strip does nothing.
-		shotAt("18-route-strip-composer.png",
-			fmt.Sprintf("#compose=%d;state=S4", seeded.Styles[swap]))
 	}
 
 	// ONE NAME GOES BACK TO WAITING, so D3 photographs the state Q5's whole
@@ -2526,96 +2202,6 @@ const until = (step, fn, ms = 8000) => new Promise((resolve, reject) => {
     // contents without navigating, so location never moves and reporting it
     // reported an empty string.
     out.dataset.opened = d.querySelector('.pd-crumb b').textContent;
-    out.dataset.step = 'done';
-    out.dataset.result = 'OK';
-  } catch (e) {
-    fail(out.dataset.step || 'driver', String(e));
-  }
-})();
-</script>`
-}
-
-// clickPresetDriver taps a preset card on the STATION's flow strip.
-//
-// THE HALF NOTHING WAS CHECKING. composerPresets builds the cards (service),
-// and applyPreset lands the shape from either payload shape (composer-model's
-// own suite, four tests). Between them sits one line of composer-render.js —
-// the card's data-act="preset", looked up against flow().presets and sent to
-// the reducer — and nothing had ever pressed it. That is the exact gap the
-// apply modal's controls sat in for three rounds while every shot came out
-// looking right, and this file's own rule for it is that a screenshot never
-// clicks.
-//
-// WHAT IT ASSERTS IS THAT THE FLOW MOVED, not that a handler ran: the strip is
-// tapped and the PICTURE is read back — a card per position with the shape's
-// choreography on it. Applying a preset is local to the draft (the desktop and
-// the station both save separately), so nothing is written and the fixture is
-// left as it was found.
-func clickPresetDriver(stationID, compose string) string {
-	return `<!doctype html><meta charset="utf-8"><title>tap-preset</title>
-<body data-step="starting" data-result="">
-<iframe id="f" style="width:1280px;height:800px;border:0"
-        src="/operator/station/` + template.HTMLEscapeString(stationID) +
-		`#compose=` + template.HTMLEscapeString(compose) + `;state=S4"></iframe>
-<script>
-const out = document.body;
-const fail = (step, why) => { out.dataset.step = step; out.dataset.result = 'FAILED: ' + why; };
-const until = (step, fn, ms = 10000) => new Promise((resolve, reject) => {
-    const t0 = Date.now();
-    (function poll() {
-        let v = null;
-        try { v = fn(); } catch (e) { return reject(step + ': threw ' + e.message); }
-        if (v) return resolve(v);
-        if (Date.now() - t0 > ms) return reject(step + ': never happened within ' + ms + 'ms');
-        setTimeout(poll, 50);
-    })();
-});
-(async () => {
-  try {
-    const d = await until('the composer opens on its strip', () => {
-        const doc = document.getElementById('f').contentDocument;
-        return doc && doc.querySelector('#os-comp-strip .os-comp-preset[data-preset]') ? doc : null;
-    });
-    const threw = () => {
-        if (d.body.dataset.pdError) throw new Error('the page threw: ' + d.body.dataset.pdError);
-    };
-    threw();
-
-    const cards = [...d.querySelectorAll('#os-comp-strip .os-comp-preset[data-preset]')];
-    out.dataset.cards = String(cards.length);
-    // BY ID, NOT BY REFERENCE. Every tap on the strip redraws it — drawStrip
-    // replaces #os-comp-strip's innerHTML — so a card held across a click is a
-    // detached element, and clicking one of those does nothing at all. Which
-    // is exactly what this driver reported on its first run.
-    const presetID = cards[0].dataset.preset;
-    const cardNow = () => d.querySelector('#os-comp-strip .os-comp-preset[data-preset="' + presetID + '"]');
-    out.dataset.name = (cards[0].querySelector('.nm') || {}).textContent || '';
-    out.dataset.where = (cards[0].querySelector('.where') || {}).textContent || '';
-    const live = () => [...d.querySelectorAll('#os-comp-svg g.node.on[data-pos]')].map(el => el.dataset.pos);
-    // Both counts, so a failure says whether the picture is empty or missing.
-    out.dataset.drawn = String(d.querySelectorAll('#os-comp-svg g.node[data-pos]').length);
-    out.dataset.before = live().join(' ');
-
-    // NO START BLANK FIRST: the strip lost it in U0 (brief, 2026-10-18), so
-    // the tap lands over the style's own flow and the check below is that the
-    // preset's positions are live afterwards.
-    out.dataset.step = 'tap the preset';
-    const card = cardNow();
-    if (!card) return fail('tap the preset', 'the strip has no card ' + presetID);
-    card.click();
-
-    // THE SHAPE LANDED: the card names its positions, and after the tap those
-    // positions are the ones the picture draws as live. Reading the model's
-    // own state would be reading the thing under test; the drawing is what an
-    // operator sees.
-    const want = out.dataset.where.split(/[^A-Za-z0-9_]+/).filter(Boolean);
-    await until('the picture draws the preset\u2019s positions', () => {
-        threw();
-        const now = live();
-        out.dataset.live = now.join(' ');
-        return want.length > 0 && want.every(n => now.indexOf(n) >= 0);
-    });
-
     out.dataset.step = 'done';
     out.dataset.result = 'OK';
   } catch (e) {

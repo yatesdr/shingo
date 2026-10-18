@@ -283,47 +283,32 @@ func TestComposerDataCarriesWhatThePickerDraws(t *testing.T) {
 	if len(seven.Claims) != 0 {
 		t.Errorf("the view carries %d stored cells for one style; they belong on the composer's own read", len(seven.Claims))
 	}
-	if c.Routing != nil || c.Presets != nil || c.Scene != nil {
-		t.Errorf("the view carries routing=%v presets=%v scene=%v — all three are the composer's read",
-			c.Routing != nil, c.Presets != nil, c.Scene != nil)
+	if c.Routing != nil || c.Presets != nil || c.PartRows != nil {
+		t.Errorf("the view carries routing=%v presets=%v part_rows=%v — all three are the composer's read",
+			c.Routing != nil, c.Presets != nil, c.PartRows != nil)
 	}
 
-	// And the station's own composer read carries every one of them.
+	// And the station's own composer read carries what the pick-a-part modal
+	// reads (U4): the part rows, the recipe cards and the picture — and none
+	// of an editor's read: no cells, no routing lists, no travel graph.
 	stn, err := svc.ComposerForStation(seeded.ProcessID)
 	if err != nil {
 		t.Fatalf("ComposerForStation: %v", err)
 	}
-	var sevenFlow *domain.ComposerStyle
-	for i := range stn.Styles {
-		if stn.Styles[i].Name == "PART SYN-A-S003" {
-			sevenFlow = &stn.Styles[i]
+	if len(stn.PartRows) == 0 {
+		t.Error("the station read carries no part rows; the modal's part list would be empty")
+	}
+	for _, s := range stn.Styles {
+		if len(s.Claims) != 0 {
+			t.Errorf("style %q rides the station read with %d cells; the station edits no flow", s.Name, len(s.Claims))
 		}
 	}
-	if sevenFlow == nil {
-		t.Fatal("the press-index style is not in the composer read's styles")
+	if stn.Routing != nil || stn.RoutingOff != nil || stn.Palette != nil {
+		t.Errorf("the station read carries routing=%v routing_off=%v palette=%v — an editor's read",
+			stn.Routing != nil, stn.RoutingOff != nil, stn.Palette != nil)
 	}
-	if len(sevenFlow.Claims) != sevenFlow.ClaimCount {
-		t.Errorf("claims = %d rows but claim_count = %d; the composer opens a flow from these without a second read",
-			len(sevenFlow.Claims), sevenFlow.ClaimCount)
-	}
-	// The routing set feeds every option list in the position panel, and only
-	// its ENABLED members: a retired lane is not an option to offer.
-	if len(stn.Routing) == 0 {
-		t.Error("composer.routing is empty — the position panel would offer no source and no destination")
-	}
-	roles := map[string]int{}
-	for _, r := range stn.Routing {
-		roles[r.Role]++
-	}
-	if roles["source"] == 0 || roles["destination"] == 0 {
-		t.Errorf("routing roles = %v, want at least one source and one destination", roles)
-	}
-
-	// The scene is what "Robot drives via" walks. Absent is legal (the row then
-	// offers "shortest way" alone) but the HK pull has one, so this asserts the
-	// reduction actually happened rather than that nil is tolerated.
-	if stn.Scene == nil || len(stn.Scene.Edges) == 0 {
-		t.Error("composer.scene has no edges; the HK pull has a travel graph and the waypoint row needs it")
+	if stn.Cell == nil || len(stn.Cell.Positions) == 0 {
+		t.Error("the station read carries no picture; the recipe cards and Positions screen draw on it")
 	}
 }
 

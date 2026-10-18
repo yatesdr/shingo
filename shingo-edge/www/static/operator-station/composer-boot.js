@@ -1,5 +1,6 @@
-// composer-boot.js — the composer's own assets, loaded when it is first
-// opened rather than at every board's boot.
+// composer-boot.js — the changeover modal's own assets (composer-render.js,
+// composer.css, flowspec-data.js), loaded when it is first opened rather than
+// at every board's boot.
 //
 // WHAT THIS SAVES AND WHY IT MATTERS. The station is a Pi on plant WiFi, and
 // the board is the screen an operator looks at all shift; the composer is two
@@ -76,11 +77,12 @@ export function ensureComposer() {
         .then(() => import('/static/operator-station/composer-render.js' + VERSION))
         .then(() => window.ComposerUI)
         .catch(err => {
-            // A failed load leaves ComposerUI undefined, and the caller falls
-            // back to the board's own flat picker — which is a worse screen
-            // and is still a screen. Clearing `loading` lets the next tap try
-            // again: a Pi that lost its connection for one request should not
-            // be left without a changeover picker until it is rebooted.
+            // A failed load leaves ComposerUI undefined and the caller says
+            // "tap again" (operator-render's openComposerPicker) — there is no
+            // second picker to fall back to any more (pick-a-part U4).
+            // Clearing `loading` is what makes the next tap try again: a Pi
+            // that lost one request is not left without a changeover until it
+            // is rebooted.
             loading = null;
             console.error('composer assets', err);
             return null;
@@ -89,7 +91,7 @@ export function ensureComposer() {
 }
 
 // THE SHOTS HARNESS ARRIVES BY URL, not by tap. scripts/composer-shots.sh
-// opens /operator/station/N#compose=<style>;state=S7 cold, and
+// opens /operator/station/N#compose=<screen>;parts=… cold, and
 // composer-render.js's own bootFromHash reads it once the module evaluates —
 // so the hash has to pull the module in the same way a tap does.
 if (/#compose=/.test((window.location && window.location.hash) || '')) ensureComposer();

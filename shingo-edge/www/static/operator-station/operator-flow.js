@@ -879,7 +879,10 @@ export function renderFlowPicture(view, opts) {
             let ux = FIT + 250;
             for (const n of chips) {
                 if (ux + SLOT_W > width - FIT) { ux = FIT; y += CHIP_H + 6; }
-                s += '<g class="stage off chip" transform="translate(' + ux + ',' + y + ')">' +
+                // EDITABLE, A CHIP NAMES ITS LANE: the station's Positions screen
+                // (pick-a-part U4) moves a recipe's slot onto an unused lane.
+                s += '<g class="stage off chip"' + (opts.editable ? ' data-staging="' + esc(n) + '"' : '') +
+                    ' transform="translate(' + ux + ',' + y + ')">' +
                     nameTip(n, SLOT_W - 24, 12) +
                     '<rect class="box" width="' + SLOT_W + '" height="' + CHIP_H + '" rx="8"/>' +
                     txt('nm', 12, 16, n, SLOT_W - 24, 12) + '</g>';

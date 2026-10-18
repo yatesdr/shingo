@@ -260,11 +260,12 @@ function composerOnClick(calls) {
         if (src[i] === '{') depth++;
         else if (src[i] === '}' && --depth === 0) { end = i + 1; break; }
     }
+    // THE POSITIONS SCREEN (pick-a-part U4) is the station's one tappable
+    // picture: a card taps its position, a staging slot or lane taps the LANE
+    // (so a slot can be moved onto it), and the dock is not a target.
     const ctx = {
-        panelFor: null,
-        openPositionPanel(n) { calls.push('pos:' + n); },
-        openDockPanel(h) { calls.push('dock:' + h); },
-        closePop() { calls.push('close'); },
+        screen: 'positions',
+        onPositionsTap(n) { calls.push('tap:' + n); },
     };
     vm.createContext(ctx);
     vm.runInContext(src.slice(at, end) + '\n__h = onClick;', ctx);
@@ -280,19 +281,21 @@ console.log('composer taps');
     const box = g => g.children.find(c => c.tagName === 'rect' && c.attrs.class === 'box');
     const cards = root.all(n => n.tagName === 'g' && /^(node|stage) /.test(n.attrs.class || ''));
     const want = {
-        'node:PLN_003': 'pos:PLN_003', 'node:PLN_001': 'pos:PLN_001', 'node:PLN_002': 'pos:PLN_002',
-        'node:PLN_006': 'pos:PLN_006', 'node:PLN_004': 'pos:PLN_004',
+        'node:PLN_003': 'tap:PLN_003', 'node:PLN_001': 'tap:PLN_001', 'node:PLN_002': 'tap:PLN_002',
+        'node:PLN_006': 'tap:PLN_006', 'node:PLN_004': 'tap:PLN_004',
     };
     for (const g of cards) {
         const kind = g.attrs.class.split(' ')[0];
-        if (/\bchip\b/.test(g.attrs.class)) continue;   // an unused lane serves no position
+        // An unused lane in the band is a chip with no lane name on it, so it
+        // is not a target: a slot moves onto a lane the picture names.
+        if (/chip/.test(g.attrs.class)) continue;
         calls.length = 0;
         click(box(g));
         const key = kind + ':' + (kind === 'node' ? g.attrs['data-pos'] : g.attrs['data-staging']);
         if (kind === 'node') {
-            check('tap ' + key + ' opens its position', JSON.stringify(calls) === JSON.stringify([want[key]]), JSON.stringify(calls));
+            check('tap ' + key + ' taps its position', JSON.stringify(calls) === JSON.stringify([want[key]]), JSON.stringify(calls));
         } else {
-            check('tap ' + key + ' opens the position it serves', calls.length === 1 && /^pos:PLN_00[26]$/.test(calls[0]), JSON.stringify(calls));
+            check('tap ' + key + ' taps the lane', JSON.stringify(calls) === JSON.stringify(['tap:' + g.attrs['data-staging']]), JSON.stringify(calls));
         }
     }
     check('tap: every position card was reached', Object.keys(want).every(k =>
@@ -301,7 +304,7 @@ console.log('composer taps');
         const h = root.all(n => n.attrs['data-dock'] === half)[0];
         calls.length = 0;
         click(h.children.find(c => c.tagName === 'text'));
-        check('tap the dock ' + half + ' half opens the dock', JSON.stringify(calls) === JSON.stringify(['dock:' + half]), JSON.stringify(calls));
+        check('tap the dock ' + half + ' half does nothing on the Positions screen', calls.length === 0, JSON.stringify(calls));
     }
     // ONE data-pos PER ELEMENT. A card that carried it twice relied on the
     // parser dropping the second.
@@ -309,70 +312,6 @@ console.log('composer taps');
         (svg.match(/<g [^>]*data-pos="[^"]*"[^>]*data-pos=[^>]*>/g) || []).join('\n'));
     // THE STATION BOARD'S PICTURE IS READ-ONLY: nothing on it is tappable.
     check('read-only: no tap target', !/data-tap=/.test(draw(cell, {})));
-}
-
-// ── a tap on the composer's problem line ────────────────────────────────────
-//
-// The bar's problem line is the control: when the flow is blocked and the
-// first finding that names a position names one in the cell, a tap on the
-// line opens that position's panel — through the same click handler and the
-// same door a card tap uses. A finding with no position (an unplaced part)
-// leaves the line plain text. composer-render.js's drawBar and onClick are
-// lifted out of the file and run as written; the tap is dispatched at the
-// finding's own line and bubbles up to the composer's root.
-console.log('composer problem line');
-{
-    const src = fs.readFileSync(path.join(__dirname, 'composer-render.js'), 'utf8');
-    const at = src.indexOf('function drawBar(');
-    if (at < 0) throw new Error('composer-render.js has no drawBar; update this pin');
-    let depth = 0, end = -1;
-    for (let i = src.indexOf('{', at); i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) { end = i + 1; break; }
-    }
-    const barEl = { innerHTML: '' };
-    const run = (fs_, tone) => {
-        const ctx = {
-            $(id) { return id === 'os-comp-bar' ? barEl : null; },
-            esc(s) { return String(s); },
-            model: { cells: { PLN_002: { on: true }, PLN_006: { on: false } } },
-            M() {
-                return {
-                    findings() { return fs_; },
-                    bar() {
-                        return { heading: fs_.length + ' to fix', detail: fs_[0].message, tone: tone,
-                            button: { label: 'Fix the flow to continue', enabled: false } };
-                    },
-                };
-            },
-        };
-        vm.createContext(ctx);
-        vm.runInContext(src.slice(at, end) + '\n__d = drawBar;', ctx);
-        ctx.__d();
-        const root = parse(barEl.innerHTML.replace(/ disabled>/g, '>'), new Node('div', { id: 'os-comp-root' }));
-        const calls = [];
-        root.addEventListener('click', composerOnClick(calls));
-        return { root: root, calls: calls, html: barEl.innerHTML };
-    };
-    const line = r => r.root.all(n => n.attrs.class === 'l2')[0];
-
-    const named = run([{ message: 'PLN_002 needs a part', node: 'PLN_002' }], 'blocked');
-    click(line(named));
-    check('problem line: a tap opens the position the finding names',
-        JSON.stringify(named.calls) === JSON.stringify(['pos:PLN_002']), JSON.stringify(named.calls) + ' ' + named.html);
-
-    const skip = run([{ message: 'A part is not placed' }, { message: 'PLN_006 needs a mode', node: 'PLN_006' }], 'blocked');
-    click(line(skip));
-    check('problem line: the first finding that names a position is the one it opens',
-        JSON.stringify(skip.calls) === JSON.stringify(['pos:PLN_006']), JSON.stringify(skip.calls) + ' ' + skip.html);
-
-    const bare = run([{ message: 'A part is not placed' }], 'blocked');
-    click(line(bare));
-    check('problem line: a finding with no position is not tappable',
-        !/data-tap=/.test(bare.html) && bare.calls.length === 0, JSON.stringify(bare.calls) + ' ' + bare.html);
-
-    const ok = run([{ message: 'note', node: 'PLN_002', severity: 'warning' }], 'ok');
-    check('problem line: a bar that is not blocked is not tappable', !/data-tap=/.test(ok.html), ok.html);
 }
 
 // ── colour is the robot ─────────────────────────────────────────────────────
@@ -449,11 +388,13 @@ function fakeElement() {
     check('station css: the picture is not stretched to the stage',
         !/(width|height):\s*100%/.test(ruleFor(opCss, '.os-flow-stage svg')), ruleFor(opCss, '.os-flow-stage svg'));
 
-    // THE COMPOSER: its drawPicture, run as written against stubs, sizes the
-    // svg to the height the picture reports; its stylesheet scrolls it.
+    // THE STATION'S POSITIONS SCREEN (pick-a-part U4) is the one picture the
+    // modal draws editable: its drawPositions, run as written against stubs,
+    // sizes the svg to the height the picture reports; its stylesheet scrolls it.
     const src = fs.readFileSync(path.join(__dirname, 'composer-render.js'), 'utf8');
     const fn = name => {
         const at = src.indexOf('function ' + name + '(');
+        if (at < 0) throw new Error('no ' + name + ' in composer-render.js; update this pin');
         let depth = 0;
         for (let i = src.indexOf('{', at); i < src.length; i++) {
             if (src[i] === '{') depth++;
@@ -461,27 +402,20 @@ function fakeElement() {
         }
         throw new Error('no ' + name + ' in composer-render.js');
     };
-    const csvg = fakeElement();
     const shown = { innerHTML: '' };
     const cctx = {
-        $(id) { return id === 'os-comp-svg' ? csvg : null; },
-        M() { return { findings() { return []; } }; },
-        model: { selected: null, styleName: 'S', styleId: 1 }, view: { station: { name: 'PIN' } },
-        cellFromModel() { return {}; }, pictureRows() { return {}; }, sentencesFromModel() { return null; },
-        renderFlowPicture(v, oo) { oo.height = 1234; return ''; },
-        styleFor() { return { name: 'S', claims: [] }; }, show() { return shown; }, esc(s) { return String(s); },
-        drawStrip() {}, drawBar() {},
-        pictureRowOf: {},
+        recipe: { name: 'Standard' }, picks: ['PART-A'], moves: {}, selected: '',
+        recipePicture() { return { svg: '', height: 1234 }; },
+        M() { return { shortPart(p) { return p; } }; },
+        show() { return shown; }, esc(s) { return String(s); },
     };
     vm.createContext(cctx);
-    vm.runInContext('var pictureRowOf = {};\n' + fn('drawPicture') + '\n' + fn('drawComposer') + '\n__p = drawPicture; __c = drawComposer;', cctx);
-    cctx.__p();
-    check('composer: the svg is drawn at the picture\'s own size',
-        csvg.attrs.viewBox === '0 0 1280 1234' && csvg.attrs.width === '1280' && csvg.attrs.height === '1234', JSON.stringify(csvg.attrs));
-    const compCss = fs.readFileSync(path.join(__dirname, 'composer.css'), 'utf8');
-    cctx.drawPicture = () => {};
-    vm.runInContext('drawPicture = function () {};', cctx);
+    vm.runInContext(fn('drawPositions') + '\n__c = drawPositions;', cctx);
     cctx.__c();
+    check('positions: the svg is drawn at the picture\'s own size',
+        /<svg id="os-comp-svg"[^>]*viewBox="0 0 1280 1234" width="1280" height="1234"/.test(shown.innerHTML),
+        shown.innerHTML.slice(0, 400));
+    const compCss = fs.readFileSync(path.join(__dirname, 'composer.css'), 'utf8');
     // The svg's own box — whatever element holds it — scrolls, and nothing
     // stretches the svg to that box.
     const holder = /<div class="([\w-]+)"[^>]*><svg id="os-comp-svg"/.exec(shown.innerHTML);
@@ -665,66 +599,9 @@ console.log('staging a mode forbids');
     check('picture: a drawn inbound slot is not listed', !listed('SLN_020'), line.slice(0, 300));
 }
 
-// ── the preview keeps Core's inventory word only when it asked ──────────────
-//
-// The server answers preflight "unchecked" both when Core could not be asked
-// and when the request never asked (no ?preflight=1 — every edit-loop preview).
-// The confirm sheet's foot reads model.preview.preflight: null says nothing,
-// "unchecked" says Core is unreachable. composer-render.js's runPreview is
-// lifted out and run as written against a fetch that always answers
-// "unchecked"; only the preview that asked may keep it.
-console.log('composer preview: inventory asked vs not asked');
+// The station modal's preview is pinned in composer-modal.test.js (pick-a-part
+// U4): Go always asks Core, and the body is the mint body.
 const pending = [];
-{
-    const src = fs.readFileSync(path.join(__dirname, 'composer-render.js'), 'utf8');
-    const at = src.indexOf('async function runPreview(');
-    if (at < 0) throw new Error('composer-render.js has no runPreview; update this pin');
-    let depth = 0, end = -1;
-    for (let i = src.indexOf('{', at); i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) { end = i + 1; break; }
-    }
-    const modelMod = { exports: {} };
-    vm.runInThisContext('(function(module){' + fs.readFileSync(path.join(__dirname, 'composer-model.js'), 'utf8') + '\n})',
-        { filename: 'composer-model.js' })(modelMod);
-    const real = modelMod.exports;
-    const run = async opts => {
-        const urls = [];
-        const bodies = [];
-        const ctx = {
-            JSON: JSON, AbortController: AbortController,
-            model: { styleId: 7, takenOff: ['PART-B'] }, previewAbort: null, screen: 'S9',
-            processID() { return 5; },
-            M() { return { toCells() { return []; }, takenOff: real.takenOff, applyPreview: real.applyPreview }; },
-            async fetch(url, init) {
-                urls.push(url);
-                bodies.push(JSON.parse(init.body));
-                return { status: 200, async json() {
-                    return { order_count: 4, findings: [], fingerprint: 'f', actions: [],
-                        preflight: { state: 'unchecked', missing: [] } };
-                } };
-            },
-        };
-        vm.createContext(ctx);
-        vm.runInContext(src.slice(at, end) +
-            '\n__r = async o => { await runPreview(o); return model; };', ctx);
-        const m = await ctx.__r(opts);
-        return { urls: urls, bodies: bodies, preflight: m.preview && m.preview.preflight };
-    };
-    pending.push(run(undefined).then(r => {
-        check('preview: the edit loop does not ask Core', r.urls[0] === '/api/processes/5/flow/preview', r.urls.join());
-        check('preview: an unasked "unchecked" is not kept, so the sheet says nothing about inventory',
-            r.preflight === null, JSON.stringify(r.preflight));
-        check('preview: the body names the parts taken off this draft',
-            JSON.stringify(r.bodies[0]) === '{"to_style_id":7,"cells":[],"taken_off":["PART-B"]}',
-            JSON.stringify(r.bodies[0]));
-    }));
-    pending.push(run({ preflight: true }).then(r => {
-        check('preview: the confirm sheet asks Core', r.urls[0] === '/api/processes/5/flow/preview?preflight=1', r.urls.join());
-        check('preview: an asked "unchecked" is kept, so the sheet says Core is unreachable',
-            r.preflight && r.preflight.state === 'unchecked', JSON.stringify(r.preflight));
-    }));
-}
 
 Promise.all(pending).then(() => {
     if (failures) { console.log(failures + ' FAILED'); process.exit(1); }

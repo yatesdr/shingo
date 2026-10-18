@@ -59,9 +59,7 @@
 .os-comp-row .id { font-size: 17px; font-weight: 600; min-width: 210px; }
 .os-comp-row .meta { color: var(--os-text-muted); font-size: 13px; flex: 1; }
 .os-comp-row .meta b { color: var(--os-text); font-weight: 500; }
-/* R7: with the gate off a zero-claim row is shown and not tappable. */
-.os-comp-row.dead { cursor: default; opacity: .7; }
-.os-comp-row.dead:hover { border-color: var(--sub-1); }
+
 
 .vd { font-size: 12px; padding: 4px 10px; border-radius: 999px;
     border: 1px solid var(--sub-2); color: var(--os-text-muted); white-space: nowrap; }
@@ -70,18 +68,15 @@
 .vd.build { color: var(--os-accent); border-color: var(--os-accent); }
 .vd.unv { color: var(--os-amber); border-color: var(--os-amber); }
 
-/* ── S3 set-up card ──────────────────────────────────────────────────────
-   THE MINIMAL CARD (S3-setup-card-v2, card A). One label, one name, one line
-   of what it is, the part chips, one dim line of what will happen, and the
-   verb. The secondary is quiet and UNDER the primary, not beside it: it is the
-   rare path, and two buttons on one row read as two equal choices. */
+/* ── the centred card: "two off?" and "no recipe here" ──────────────────
+   One label, one name, one line of what it is, and the question's buttons. */
 .os-comp-setup { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 .os-comp-card { width: 640px; background: var(--os-surface); border: 1px solid var(--sub-2);
     border-radius: 18px; padding: 28px 32px 30px; display: flex; flex-direction: column; gap: 0; }
 .os-comp-card .top { display: flex; align-items: flex-start; gap: 16px; }
 .os-comp-card .top > div { min-width: 0; }
 /* --os-touch-min, BOTH WAYS. This is the only way back to the part list from the
- * set-up card, and 6x10 px of padding around a 15 px ✕ made it 31x27 — half the
+ * card, and 6x10 px of padding around a 15 px ✕ made it 31x27 — half the
  * 56 px floor operator.css sets (§0.11, "touch targets never smaller than
  * this"), on a glove-and-touchscreen surface, for the control an operator
  * reaches for when they picked the wrong part. The box grows; the glyph does
@@ -96,30 +91,6 @@
 }
 .os-comp-card h2 { margin: 6px 0 4px; font-size: 28px; font-weight: 600; letter-spacing: -.01em; }
 .os-comp-card .desc { display: flex; align-items: center; gap: 10px; color: var(--os-text-muted); font-size: 14px; }
-.os-comp-card .os-chips { margin-top: 16px; }
-.os-comp-card .os-chip.part small { color: var(--os-text-muted); font-weight: 500; }
-.os-comp-prov { margin-top: 14px; color: var(--os-text-dim); font-size: 12.5px; }
-/* The primary fills the card; the quiet secondary is a full-width line under
-   it. `flex-direction: column` is what puts it there, and it is also why the
-   gate-off card — which renders no secondary at all — simply ends. */
-.os-comp-card .actions { display: flex; flex-direction: column; align-items: stretch; gap: 0; margin-top: 22px; }
-/* NOT an .os-btn: the quiet path is a line of text, not a second button
-   shape. Given .os-btn it inherited the border and read as an equal choice
-   under the primary, which is the thing putting it underneath was meant to
-   stop.
-   QUIET IS NOT SMALL. `Edit the flow first` is the ONLY door into the composer
-   from S3, and 12 px of padding around a 15 px line came to ~42 px — under the
-   56 px floor (--os-touch-min). It keeps the borderless look and gets the height
-   every other control on the station has; the padding stays for the case where
-   the text ever wraps. */
-.os-comp-quiet {
-    display: block; width: 100%; margin-top: 12px; padding: 12px; background: none; border: 0;
-    min-height: var(--os-touch-min, 56px);
-    color: var(--os-text-muted); font: inherit; font-weight: 600; font-size: 15px; text-align: center; cursor: pointer;
-}
-/* R8: a part with no position, on the set-up card. Amber, centred under the
-   provenance line, immediately above the button it disables. */
-.os-comp-need { margin-top: 12px; color: var(--os-amber); font-size: 14px; text-align: center; font-weight: 600; }
 .os-comp-note { margin-top: 12px; color: var(--os-text-muted); font-size: 14px; text-align: center; }
 
 /* ── chips ─────────────────────────────────────────────────────────────── */
@@ -138,41 +109,13 @@
     background: var(--os-bg); border-color: var(--os-gray-light); }
 .os-chip.btn.on { border-color: var(--os-accent-solid); color: var(--os-text);
     box-shadow: inset 0 0 0 1px var(--os-accent-solid); }
-.os-chip.part { border-color: var(--os-green); color: var(--os-green); }
-.os-chip.part.free { border-style: dashed; color: var(--os-amber); border-color: var(--os-amber); }
-/* THE UNPLACED CHIP IS A BUTTON NOW, and a button's default font and background
- * must not reshade the pill the span drew; `font: inherit` over the strip's own
- * ground keeps it the same chip until tapped. */
-button.os-chip.part.free { font: inherit; font-size: 14px; background: none; }
-.os-chip.add { color: var(--os-accent); border-style: dashed; cursor: pointer; font: inherit; font-size: 14px; }
-.os-chip.need { border-style: dashed; color: var(--os-amber); border-color: var(--os-amber); }
-/* A DISABLED CHIP HAS TO LOOK DISABLED. Both `+ Add a part` buttons are drawn
- * with their reason in the title and no palette behind them (composer-render's
- * ADDPART_TITLE); left at full strength with a pointer cursor they would be the
- * same live-looking control that answered a tap with nothing. The values are the
- * ones the disabled primary already uses below. */
-.os-chip[disabled] { opacity: .45; cursor: default; }
-
-/* ── S4 the picture ────────────────────────────────────────────────────── */
+/* ── the picture: Positions (and the recipe cards' small copies) ─────── */
 .os-comp-full { position: absolute; inset: 0; background: var(--os-bg); display: flex; flex-direction: column; }
 .os-comp-hdr { height: 64px; display: flex; align-items: center; gap: 16px; padding: 0 20px;
     background: var(--os-header-bg); border-bottom: 1px solid var(--sub-1); flex: 0 0 auto; }
 .os-comp-hdr h1 { font-size: 22px; font-weight: 600; margin: 0; white-space: nowrap; }
 .os-comp-hdr .sub { color: var(--os-text-muted); font-size: 14px; }
-.os-comp-hdr .sp, .os-comp-bar .sp, .os-comp-strip .sp { flex: 1; }
-
-.os-comp-strip { display: flex; align-items: center; gap: 10px; padding: 10px 20px;
-    border-bottom: 1px solid var(--sub-1); flex: 0 0 auto; }
-.os-comp-preset { display: flex; align-items: center; gap: 10px; height: 56px; width: 200px; padding: 0 10px;
-    border: 1px solid var(--sub-1); border-radius: 12px; background: var(--os-surface);
-    text-align: left; color: inherit; font: inherit; cursor: pointer; }
-.os-comp-preset .nm { font-size: 13px; font-weight: 600; line-height: 1.15; display: block;
-    max-width: 138px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.os-comp-preset .where, .os-comp-preset .use { font-size: 11px; color: var(--os-text-muted); display: block;
-    line-height: 1.2; max-width: 138px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The positions are the line that tells two cards of one mode apart, so they
- * carry the card's own text colour at the dim tier rather than the muted one. */
-.os-comp-preset .where { color: var(--os-text-dim); }
+.os-comp-hdr .sp, .os-comp-bar .sp, .os-comp-sheet-h .sp { flex: 1; }
 
 .os-comp-stage { flex: 1; position: relative; min-height: 0; display: flex; flex-direction: column; }
 /* THE PICTURE ONLY — `> svg`, not `svg`. The popover is a child of the stage, so
@@ -204,134 +147,7 @@ button.os-chip.part.free { font: inherit; font-size: 14px; background: none; }
 .os-comp-bar .status[data-tap] { cursor: pointer; }
 .os-comp-bar .status[data-tap] .l1 { text-decoration: underline; }
 .os-comp-bar .os-btn-primary { min-width: 300px; min-height: 60px; font-size: 19px; }
-/* ── S5/S6 popover ─────────────────────────────────────────────────────── */
-/* 520, NOT 420 AND NOT 720 (owner, Amendment A 2026-09-16, corrected).
- *
- * The ask was that the mode row fit four buttons without the labels shrinking
- * and that the description stop wrapping to three lines. 720 with a 4-across
- * row achieved neither: four columns of 686 px content gives 165 px a button
- * and about 113 px of label, which is NARROWER than the 137 px the 2x2 at 420
- * had. It also made the panel wider than it may ever be — placePop puts the
- * panel to one side of the card it was opened from, and at 720 on a 1280 stage
- * there is a ~390 px band of card positions where NEITHER side fits, so the
- * clamp drops the panel on top of its own anchor. The operator taps a position
- * and the position disappears under the panel editing it.
- *
- * 520 keeps the 2x2 and gives each button 243 px — a label box of ~187 px,
- * half again what it had — and the description two lines instead of three. The
- * panel can never cover its anchor while it is 524 px or narrower, which is
- * the constraint a one-row-of-four cannot satisfy at any readable label size.
- *
- * SPEC S5 still holds: never off-screen, never over the bar. placePop enforces
- * it and composer_shots_test's checkPanelFits proves it at 1280x800. */
-.os-comp-pop { position: absolute; width: 520px; background: var(--os-surface);
-    border: 1px solid var(--sub-3); border-radius: 14px; padding: 16px;
-    display: flex; flex-direction: column; gap: 12px; z-index: var(--z-popover);
-    box-shadow: 0 20px 50px rgba(0, 0, 0, .45);
-    /* SPEC S5: never off-screen, never over the bar. A panel with more rows than
-     * the picture is tall scrolls INSIDE the picture rather than growing past its
-     * bottom edge onto the bar — max-height is set from the real stage height by
-     * placePop(), and this is the floor for when JS has not run yet. */
-    max-height: 100%; overflow-y: auto; overscroll-behavior: contain; }
-.os-comp-pop[hidden] { display: none; }
-/* P2 · THE BOTTOM FADE. The panel scrolls internally (fix-up 2), and a label
- * cut in half by a hard edge reads as a rendering bug rather than as "there is
- * more below" — shot 06 showed OLD BIN GOES TO sliced through its cap-height
- * with nothing to say why.
- *
- * A STICKY PSEUDO-ELEMENT over the panel's OWN surface token, not a mask: mask
- * fades the element itself, so the bottom border and the 14 px corners would
- * dissolve with the content and the panel would look like it was failing to
- * paint. This paints the panel's own colour over the content instead, which is
- * what "the content runs under the edge" looks like.
- *
- * ONLY WHILE THERE IS MORE TO SEE: the class is put on by JS (reportPanelFit)
- * whenever the panel can still scroll down, and taken off at the bottom. A fade
- * that never leaves is a panel that always looks unfinished.
- *
- * The geometry cancels the panel's own box: -12px for its own height and -12px
- * for the flex gap above it, so it adds nothing to the scroll height, and
- * bottom:-16px puts it over the panel's 16 px bottom padding rather than above
- * it. 12 px is the SPEC's smallest vertical step. */
-/* NO z-index. It had one, and the z-layer tripwire was right to refuse it: the
- * page's scale is for page layers, and this is a pseudo-element that needs to
- * paint over its own siblings and nothing else. Being the LAST positioned child
- * is what does that — painting order among positioned elements at z-index auto
- * is DOM order — so the declaration bought nothing and spent a rung of a scale
- * that exists to be legible. */
-.os-comp-pop::after {
-    content: ''; position: sticky; bottom: -16px;
-    flex: 0 0 auto; height: 12px; margin: -24px -16px 0; pointer-events: none;
-    opacity: 0; transition: opacity 120ms linear;
-    background: linear-gradient(to top, var(--os-surface), transparent);
-}
-.os-comp-pop.more-below::after { opacity: 1; }
-@media (prefers-reduced-motion: reduce) { .os-comp-pop::after { transition: none; } }
-.os-comp-pop h3 { margin: 0; font-size: 17px; font-weight: 600; display: flex; flex-direction: column; gap: 2px; }
-.os-comp-pop h3 span { font-size: 12px; font-weight: 500; color: var(--os-text-muted); }
-.os-comp-pop .help { font-size: 12px; color: var(--os-text-muted); }
-/* A FULL STEP ABOVE THE HELPER TEXT (owner, Amendment A). The section headings
- * are how an operator navigates this card, and at --os-text-muted they were the
- * same value as the sentences under them and within a step of the panel — the
- * quietest thing on a card they are supposed to lead. The helper text keeps the
- * muted token, which is what makes this a step and not a wash. */
-.os-comp-pop .os-lbl { color: var(--os-text); }
-/* A ROLE WITH NOTHING TO OFFER, in the row where its chips would have been.
- * Never a heading over nothing — see composer-model's routingNote. */
-.os-comp-none { font-size: 13px; line-height: 1.45; color: var(--os-text-muted); max-width: 60ch; }
-/* EVERY CHIP IN THIS PANEL IS A CONTROL, AT THE FLOOR (--os-touch-min).
- * .os-chip is the reference's 38 px mouse-sized pill, and on S5/S6 that is every
- * part, pair, staging, source, destination and via option — most of the tapping
- * this screen asks of an operator wearing gloves, 18 px under the floor
- * operator.css sets for the whole station.
- *
- * SCOPED TO THE PANEL, not put on .os-chip itself: the strip's part chips and
- * the set-up card's are <span>s saying what the style runs, and a 56 px pill
- * around a label is a control that is not there. The `need` chip ("pick one")
- * comes along because it shares the row with the buttons and a 38 px gap in a
- * row of 56s reads as a broken chip.
- *
- * `height: auto` first, or the 38 px above stays the used height. The panel gets
- * taller and SCROLLS — placePop caps it at the picture's height and the width is
- * untouched at 520, so nothing about where the panel can be placed changes
- * (SPEC S5, measured by reportPanelFit). */
-.os-comp-pop .os-chip { height: auto; min-height: var(--os-touch-min, 56px); }
-.os-comp-row-l { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.os-comp-row-l .os-lbl { width: 100%; }
-.os-comp-seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-/* 48 px, SPEC S5 — and height:48 rather than min-height:48, because the label is
- * what broke it: "2-robot index" wrapping to two lines took the button to ~100 px,
- * four of those took the panel past the bar and over the dock, and the shot showed
- * ROBOT DRIVES VIA at the screen edge with OLD BIN GOES TO gone entirely. The glyph
- * is 26 px (R6) and the name does not wrap. */
-.os-comp-seg button { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 8px;
-    border: 1px solid var(--sub-2); border-radius: 10px; background: var(--os-bg);
-    color: var(--os-text); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer;
-    text-align: left; white-space: nowrap; overflow: hidden; }
-/* flex + min-width:0 or the label is not merely clipped, it is GONE: an
- * overflow:hidden child of a flex row with no basis computes to zero width, and
- * the control renders as four unlabelled glyphs. */
-.os-comp-seg button > span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-/* 26 px and not a pixel more (R6, GLYPHS-swap-mode-LOCKED "Where they appear"). */
-.os-comp-seg .gl { flex: 0 0 auto; width: 26px; height: 26px; }
-.os-comp-seg button.on { border-color: var(--os-accent-solid); box-shadow: inset 0 0 0 1px var(--os-accent-solid); }
-/* REMOVE IS A DESTRUCTIVE ACTION AND READS AS ONE (owner, Amendment A). It was
- * a borderless dim link at the foot of the card — the same shape as the helper
- * sentences around it — for the one control that takes a position out of the
- * flow. A quiet button: bordered, padded, its own width rather than the card's,
- * and the red only on the press, because a red line sitting under every panel
- * would be a warning nobody reads by the end of a shift. */
-/* --os-touch-min, because this is a touch screen and this is the one control
- * that takes a position out of the flow. The redesign that made it look like a
- * button left it 39 px tall, under the 56 px floor operator.css sets and every
- * other primary control on the station respects. */
-.os-comp-rm { border: 1px solid var(--os-gray-light); background: none; color: var(--os-text-muted);
-    font: inherit; font-size: 14px; font-weight: 600; text-align: left; cursor: pointer;
-    align-self: flex-start; min-height: var(--os-touch-min, 56px); padding: 0 18px; border-radius: 10px; }
-.os-comp-rm:hover { color: var(--os-text); }
-.os-comp-rm:active { border-color: var(--os-red); color: var(--os-red); }
-
-/* ── S9 confirm ────────────────────────────────────────────────────────── */
+/* ── Go ──────────────────────────────────────────────────────────────── */
 .os-comp-confirm { position: absolute; left: 0; right: 0; bottom: 0; background: var(--os-bg);
     border-top: 1px solid var(--sub-2); border-radius: 18px 18px 0 0; padding: 24px 28px;
     display: flex; flex-direction: column; gap: 14px; }
@@ -364,7 +180,7 @@ button.os-chip.part.free { font: inherit; font-size: 14px; background: none; }
  * link floating beside a 72 px primary. */
 .os-comp-confirm .acts .os-btn-quiet { border-color: var(--sub-3); }
 
-/* ── S10 started ───────────────────────────────────────────────────────── */
+/* ── started ─────────────────────────────────────────────────────────── */
 .os-comp-started { position: absolute; inset: 0; background: var(--os-bg);
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
 .os-comp-started .ring { width: 76px; height: 76px; border-radius: 50%;
@@ -389,17 +205,29 @@ button.os-chip.part.free { font: inherit; font-size: 14px; background: none; }
     color: var(--os-text-muted); font-weight: 600; }
 .os-comp-root :focus-visible { outline: 2px solid var(--os-accent); outline-offset: 2px; }
 
-/* ── the set-up card with no flow to set up (U10 §3 C1) ────────────────────
- *
- * The preset cards are FULL SIZE here, and that is the difference from the
- * strip. On the strip a card is one of several things on a toolbar, locked at
- * 200x56; on this card it IS the screen — the operator has nothing else to do
- * with this part until one is picked — so it gets a touch target the size of
- * the decision. */
-.os-comp-presets-lg { display: flex; flex-wrap: wrap; gap: 12px; margin: 14px 0 6px; }
-.os-comp-presets-lg .os-comp-preset.lg {
-    width: 300px; height: 84px; gap: 14px; padding: 0 16px;
-}
-.os-comp-presets-lg .os-comp-preset.lg .nm { font-size: 16px; }
-.os-comp-presets-lg .os-comp-preset.lg .where,
-.os-comp-presets-lg .os-comp-preset.lg .use { font-size: 12px; }
+
+/* ── the part list ─────────────────────────────────────────────────────
+ * A part's row, and under it the styles that run it WITH other parts, as
+ * chips: tapping one picks that style whole (a weld cell, a two-off press). */
+.os-comp-part { display: flex; flex-direction: column; gap: 6px; }
+.os-comp-part .os-chips { padding-left: 14px; }
+
+/* "two off?": two full-width answers, the size of the decision. */
+.os-comp-two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 22px; }
+
+/* "which one?": the recipes that fit, by the engineer's name, each with this
+ * cell's picture of it. A card is the tap target. */
+.os-comp-which { flex: 1; overflow: auto; padding: 0 24px 16px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 14px; align-content: start; }
+.os-comp-recipe { display: flex; flex-direction: column; gap: 6px; padding: 14px; text-align: left;
+    border: 1px solid var(--sub-1); border-radius: 14px; background: var(--os-surface);
+    color: inherit; font: inherit; cursor: pointer; }
+.os-comp-recipe:hover { border-color: var(--sub-3); }
+.os-comp-recipe .nm { font-size: 18px; font-weight: 600; }
+.os-comp-recipe .where { font-size: 13px; color: var(--os-text-dim); }
+.os-comp-recipe svg { width: 100%; height: auto; pointer-events: none; }
+
+/* THE RECEIPT'S TOGGLE SAYS IT OPENS. display:flex on <summary> drops the
+ * native disclosure marker, so the arrow is drawn here. */
+.os-comp-confirm .os-comp-receipt summary::before { content: '▸'; margin-right: 8px; }
+.os-comp-confirm .os-comp-receipt[open] summary::before { content: '▾'; }

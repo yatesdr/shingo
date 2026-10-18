@@ -13,7 +13,8 @@ import (
 // station_composer_staging_test.go — the composer's own picture, and what it
 // costs.
 //
-// THE COMPOSER DREW THE BOARD'S PICTURE. `buildModel` read the POLLED view's
+// THE COMPOSER DREW THE BOARD'S PICTURE. The old station composer (torn out in
+// pick-a-part U4) read the POLLED view's
 // cell, which is the board's: the staging the RUNNING flow parks at, and
 // nothing the cell merely could park at. So the one screen whose job is
 // choosing where a bin goes was the surface with no options drawn on it —

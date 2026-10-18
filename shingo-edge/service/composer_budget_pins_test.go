@@ -133,12 +133,12 @@ func TestStationView_QueryCountAndBytes(t *testing.T) {
 			"what the Pi marshals and the HMI parses", len(raw), composerBlockByteBudget)
 	}
 
-	// AND THE BLOCK IS THE PICKER'S, not the composer's. These four are the
-	// payload S8 moved to its own fetch; a nil check is what stops one of them
-	// drifting back onto the poll.
-	if block.Routing != nil || block.Presets != nil || block.Scene != nil || block.Map != nil {
-		t.Errorf("the poll carries routing=%v presets=%v scene=%v map=%v; all four belong to the "+
-			"composer's own read", block.Routing != nil, block.Presets != nil, block.Scene != nil, block.Map != nil)
+	// AND THE BLOCK IS THE PICKER'S, not the composer's. These are the payload
+	// S8 moved to its own fetch (the scene went altogether in pick-a-part U4); a
+	// nil check is what stops one of them drifting back onto the poll.
+	if block.Routing != nil || block.Presets != nil || block.PartRows != nil || block.Map != nil {
+		t.Errorf("the poll carries routing=%v presets=%v part_rows=%v map=%v; all four belong to the "+
+			"composer's own read", block.Routing != nil, block.Presets != nil, block.PartRows != nil, block.Map != nil)
 	}
 	for _, s := range block.Styles {
 		if len(s.Claims) != 0 || s.Advanced != nil {

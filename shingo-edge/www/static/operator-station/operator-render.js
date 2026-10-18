@@ -130,122 +130,18 @@ function isBoardMode() {
         && nodes[0].active_claim.swap_mode === 'manual_swap';
 }
 
-// pickerVerdictClass / pickerVerdictLabel turn Core's sourceability verdict into the
-// changeover button's colour and sub-label. They switch on `code` (the raw verdict),
-// never on `status` — status is display text, so not_configured arrives as the words
-// "not set up" and switching on it would be switching on a label.
+// CHANGEOVER OPENS THE PICK-A-PART MODAL on every station (pick-a-part U4):
+// tap the part, say one off or two, Start. It is the only changeover entry —
+// the flat style list that used to be its load fallback went with it.
 //
-// Only green and red get a colour. yellow (at-risk) ships DARK from Core today
-// (EnableAtRisk false), so it is mapped but should not be seen; not_configured and any
-// verdict this Edge doesn't recognise get NO colour at all, because "we have no verdict"
-// must never read as either a green light or an accusation of no parts. Their note still
-// renders, so the operator sees "not set up" rather than an unexplained plain button.
-function pickerVerdictClass(src) {
-    if (!src) return '';
-    switch (src.code) {
-        case 'green': return 'sourceable';
-        case 'red': return 'unsourceable';
-        case 'yellow': return 'at-risk';
-        default: return '';
-    }
-}
-
-function pickerVerdictLabel(src) {
-    if (!src) return '';
-    var head;
-    switch (src.code) {
-        case 'green': head = 'PARTS AVAILABLE'; break;
-        case 'red': head = 'NO PARTS AVAILABLE'; break;
-        case 'yellow': head = 'RUNNING LOW'; break;
-        // Core's own words for the unverdicted cases — "not set up" / the
-        // unrecognised-verdict sentence. Better than inventing a phrase here.
-        default: head = src.status || '';
-    }
-    // The note names the payloads (missing for red, low for yellow). Core computes it;
-    // the operator's first question after "no parts" is "which parts".
-    if (src.note) return head ? head + ' — ' + src.note : src.note;
-    return head;
-}
-
-function openChangeoverPicker() {
-    const view = getView();
-    const styles = view.available_styles || [];
-    const currentID = view.current_style ? view.current_style.id : null;
-    const others = styles.filter(s => s.id !== currentID);
-    if (others.length === 0) {
-        showToast('No other styles available', 'error');
-        return;
-    }
-
-    const overlay = el('div', { className: 'os-co-picker-overlay' });
-    const panel = el('div', { className: 'os-co-picker' });
-    panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Change over to:' }));
-
-    // The style buttons live in their own scrolling region. A plant can
-    // configure far more styles than fit a screen at 70px a button; the
-    // panel used to grow unbounded, the centered overlay pushed both ends
-    // off-screen, and nothing could scroll — styles past ~13 were simply
-    // unreachable, and CANCEL with them. The list scrolls; the title and
-    // CANCEL stay put.
-    const list = el('div', { className: 'os-co-picker-list' });
-    panel.appendChild(list);
-
-    const sourcing = view.sourcing_by_style || {};
-    for (const s of others) {
-        // Core's sourceability verdict for this style, keyed by style NAME (that is
-        // what SourcingState.StyleID carries). Absent = the feed has no verdict for
-        // it, which is NOT the same as "no parts" — an unannotated style renders
-        // exactly as it always did rather than being accused of anything.
-        const src = sourcing[s.name] || null;
-        const btn = el('button', { className: 'os-co-picker-btn ' + pickerVerdictClass(src) });
-        btn.appendChild(el('div', { className: 'os-co-picker-style', textContent: s.name }));
-        const sub = pickerVerdictLabel(src);
-        if (sub) btn.appendChild(el('div', { className: 'os-co-picker-verdict', textContent: sub }));
-        // Red is SELECTABLE on purpose. The admin changeover page blocks it
-        // (styleSourcingView.Blocked), but the operator is allowed to change over
-        // onto a style Core can't source yet and let the orders queue until parts
-        // arrive — the colour is information, not a gate. Owner's call, 2026-07-29.
-        btn.addEventListener('click', () => {
-            overlay.remove();
-            startChangeover(s.id, s.name);
-        });
-        list.appendChild(btn);
-    }
-
-    const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
-    cancel.addEventListener('click', () => overlay.remove());
-    panel.appendChild(cancel);
-
-    overlay.appendChild(panel);
-    overlay.addEventListener('click', evt => { if (evt.target === overlay) overlay.remove(); });
-    document.body.appendChild(overlay);
-}
-
-// THE ONE BOARD CHANGE (brief §3.2). CHANGEOVER opens the Flow Composer's
-// picker sheet on every station — today's flat list is replaced, not kept
-// behind the gate, because the gate removes a BUTTON and not a screen (brief
-// R7): with flow_composer_enabled off the operator still gets the picker and
-// the set-up card, and only `Change the flow` is missing.
-//
-// openChangeoverPicker below is left in place and unreferenced by the header:
-// it is the cancel/confirm overlay's sibling and still reachable from there.
-// The composer's own JS and CSS are not in the boot payload; the first tap
-// fetches them and every tap after that is synchronous. See composer-boot.js.
+// The modal's JS and CSS are not in the boot payload; the first tap fetches
+// them and every tap after that is synchronous (composer-boot.js). A load
+// that failed says so and the next tap tries again — a Pi that lost one
+// request is not left without a changeover until it is rebooted.
 async function openComposerPicker() {
     const ui = await ensureComposer();
     if (ui) ui.openPicker(getView());
-    else openChangeoverPicker();
-}
-
-async function startChangeover(toStyleID, styleName) {
-    const view = getView();
-    const pid = view.process.id;
-    const ok = await postAction('/api/processes/' + pid + '/changeover/start', {
-        to_style_id: toStyleID,
-        called_by: (view.station.name && view.station.name.trim()) || 'operator',
-        notes: ''
-    }, loadViewRef);
-    if (ok) showToast('Changeover to ' + styleName + ' started', 'success');
+    else showToast('The changeover screen did not load — tap CHANGEOVER again', 'error');
 }
 
 
@@ -1799,12 +1695,12 @@ function maybeShowRefusalModal() {
     wait.addEventListener('click', function () { answer('wait'); });
     panel.appendChild(wait);
 
-    // CHANGE OVER records the decision, then opens the picker — the operator
-    // still has to say which style. The ack is the decision; the picker is the
+    // CHANGE OVER records the decision, then opens the pick-a-part modal — the
+    // operator still has to say which part. The ack is the decision; the picker is the
     // destination. The cancel of the outstanding order is NOT special-cased here:
     // StartProcessChangeover cancels pre-dispatch orders as a general property.
     const co = el('button', { className: 'os-co-picker-btn danger', textContent: 'CHANGE OVER' });
-    co.addEventListener('click', function () { answer('changeover', openChangeoverPicker); });
+    co.addEventListener('click', function () { answer('changeover', openComposerPicker); });
     panel.appendChild(co);
 
     overlay.appendChild(panel);

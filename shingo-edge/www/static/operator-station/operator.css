@@ -240,25 +240,13 @@ body {
     position: fixed; inset: 0; background: rgba(0,0,0,0.7);
     display: flex; align-items: center; justify-content: center; z-index: var(--z-modal);
 }
-/* A PICKER MUST FIT THE SCREEN IT OPENS ON. This panel once had no
- * max-height while its overlay is position:fixed and centered, so a plant
- * with many styles grew it past the viewport — both ends bled off-screen
- * with nothing able to scroll, and styles past ~thirteen (and the CANCEL
- * button) were unreachable. The title and CANCEL hold their size; the
- * .os-co-picker-list between them takes the remainder and scrolls.
- * min-height:0 on the list is load-bearing: a flex item defaults to
- * min-height:auto, which refuses to shrink below its content and would
- * reinstate the overflow this is removing. */
+/* A PANEL MUST FIT THE SCREEN IT OPENS ON: max-height, and a column whose
+ * title and buttons hold their size. (The flat changeover picker whose style
+ * list scrolled inside it went with pick-a-part U4.) */
 .os-co-picker {
     background: var(--os-surface, #1a1f2e); border-radius: 16px; padding: 24px;
     min-width: 300px; max-width: 90vw; max-height: 85vh;
     display: flex; flex-direction: column; gap: 12px;
-}
-.os-co-picker-list {
-    display: flex; flex-direction: column; gap: 12px;
-    overflow-y: auto; flex: 1 1 auto; min-height: 0;
-    -webkit-overflow-scrolling: touch; /* momentum scroll on shop tablets */
-    padding-right: 2px; /* keep button focus rings off the scrollbar */
 }
 .os-co-picker-title {
     font-size: 18px; font-weight: 700; text-align: center; color: #fff; margin-bottom: 4px;
@@ -288,22 +276,9 @@ body {
    class. Scoped to these panels only; the older pickers are not in this change. */
 .os-co-picker--one-tap .os-co-picker-btn { min-height: var(--os-touch-min, 56px); }
 
-/* Sourceability on the changeover picker. GREEN = Core can source every payload the
-   style needs; RED = it cannot. Red stays fully enabled — the operator may change over
-   onto it and let the orders queue — so it must NOT be dimmed the way a disabled control
-   is, or the colour reads as "you can't" instead of "you can, but it will wait".
-   Unverdicted styles (not_configured, or a verdict this Edge doesn't know) keep the
-   default button and carry only their note: no colour is the honest rendering of no
-   verdict. */
-.os-co-picker-btn.sourceable { background: var(--os-green-bright); color: #04220f; }
-.os-co-picker-btn.unsourceable { background: var(--os-red); color: #fff; }
-.os-co-picker-btn.at-risk { background: var(--os-amber); color: #1a1400; }
-
-/* Style name over its verdict, inside the button. The name keeps the button's own
-   weight; the verdict line is smaller and slightly translucent so it reads as an
-   annotation rather than competing with what the operator is tapping. Wraps, because
-   the note names payload codes. */
-.os-co-picker-style { font-size: 16px; font-weight: 700; }
+/* An annotation line under a button's label (the supply refusal's payload
+   note): smaller and slightly translucent, so it reads as a note rather than
+   competing with what the operator is tapping. */
 .os-co-picker-verdict {
     font-size: 12px;
     font-weight: 700;

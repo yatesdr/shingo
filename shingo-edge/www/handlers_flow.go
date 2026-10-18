@@ -34,8 +34,10 @@ type flowPreviewBody struct {
 	TakenOff  []string          `json:"taken_off"`
 	// THE MINT FORM (pick-a-part U3): a recipe and parts instead of a style
 	// and cells — the same body flow/mint takes (composer-model.js
-	// mintBody). preset_id set means this form, and the other three are
-	// ignored: the mint plan decides the style and the cells.
+	// mintBody). preset_id or parts set means this form, and the other three
+	// are ignored: the mint plan decides the style and the cells. preset_id 0
+	// with parts is the station asking about parts that already run in a style
+	// (the plan resolves them before it needs a recipe).
 	PresetID  int64             `json:"preset_id"`
 	Parts     []engine.PartPick `json:"parts"`
 	Overrides map[string]string `json:"overrides"`
@@ -115,7 +117,7 @@ func (h *Handlers) apiPreviewFlow(w http.ResponseWriter, r *http.Request) {
 		ToStyleID: body.ToStyleID, Cells: body.Cells, TakenOff: body.TakenOff,
 		Preflight: r.URL.Query().Get("preflight") == "1",
 	}
-	if body.PresetID != 0 {
+	if body.PresetID != 0 || len(body.Parts) > 0 {
 		preq = engine.FlowPreviewRequest{Preflight: preq.Preflight, Mint: &engine.MintRequest{
 			PresetID: body.PresetID, Parts: body.Parts, Overrides: body.Overrides,
 		}}
