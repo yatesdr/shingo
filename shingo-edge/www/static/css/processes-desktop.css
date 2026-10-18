@@ -632,25 +632,6 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .mp-key { fill: var(--accent); stroke: var(--bg); stroke-width: 1.5; }
 .mp-keyt { font-size: 9px; font-weight: 600; fill: var(--accent); font-family: var(--font-mono, monospace); }
 
-/* ── Generate variants (Q2) ───────────────────────────────────────────────
-   The same modal shell as the Advanced sheet, and the one sheet wider than the
-   field width, because its body is a TABLE whose column count is the base
-   style's produce claims rather than a fixed two. Everything inside it — the chips, the section rule, the field
-   shape, the footer — is the sheet's, so the desktop still has one modal. */
-.pd-modal.pd-wide { width: 920px; }
-.pd-gentbl { width: 100%; border-collapse: collapse; }
-.pd-gentbl th {
-    text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--sub-1);
-    font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted);
-    white-space: nowrap;
-}
-.pd-gentbl td { padding: 4px 8px; border-bottom: 1px solid var(--sub-1); white-space: nowrap; }
-.pd-geninput {
-    height: 30px; min-width: 15rem; padding: 0 9px; background: var(--surface);
-    border: 1px solid var(--sub-2); border-radius: 8px; color: var(--text); font: inherit; font-size: 13px;
-}
-.pd-gentbl + .pd-chip.add { margin-top: 10px; }
-
 /* ── D4 · Operator screens, D5 · Settings ─────────────────────────────────
    One sheet shape for both: a section rule, a 230 px label column and the
    value beside it — the same grid the Advanced modal uses, so the desktop has

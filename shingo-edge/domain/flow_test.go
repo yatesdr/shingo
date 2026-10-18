@@ -262,3 +262,21 @@ func TestFlowInputFromClaim_IsTotal(t *testing.T) {
 		t.Errorf("InputFromClaim left a pointer-gated column silent: %+v", in)
 	}
 }
+
+// TestExpand_CarriesContainmentAndCurtainFromThePrior (pick-a-part U5): no
+// FlowCell field names the containment route or the curtain tie, and both are
+// columns the store writes unconditionally — so a save must carry them from
+// the prior claim, or every flow save takes a produce claim out of the quality
+// hold and switches off a node's curtain. The Advanced sheet, when applied,
+// decides the curtain.
+func TestExpand_CarriesContainmentAndCurtainFromThePrior(t *testing.T) {
+	prior := &NodeClaim{CoreNodeName: "PLN_01", ContainmentDestination: "QA_HOLD", CurtainRequired: true}
+	in := Expand(FlowCell{CoreNodeName: "PLN_01"}, prior, ClaimSourceHMI, "Screen")
+	if in.ContainmentDestination != "QA_HOLD" || !in.CurtainRequired {
+		t.Fatalf("expand dropped containment %q / curtain %v", in.ContainmentDestination, in.CurtainRequired)
+	}
+	in = Expand(FlowCell{CoreNodeName: "PLN_01", Advanced: &FlowAdvanced{CurtainRequired: false}}, prior, ClaimSourceAdmin, "eng")
+	if in.CurtainRequired || in.ContainmentDestination != "QA_HOLD" {
+		t.Fatalf("an applied Advanced sheet: curtain %v containment %q, want false and kept", in.CurtainRequired, in.ContainmentDestination)
+	}
+}

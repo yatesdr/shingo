@@ -72,7 +72,6 @@ const S = {
     flowSaved: null,     // {styleID, at}: the last Save flow, which the bar names until the next edit
     sheet: null,         // the open confirm/edit sheet: {run}
     escapeHold: null,    // the sheet an Escape is holding: {sheet, html} — see onEscape
-    gen: null,           // the Generate-variants dialog: {baseID, cols, rows, error}
     mapZoom: 1,
     presets: null,       // D6's read: {view, error, expanded}
     papply: null,        // the apply modal: {id, rows:{styleID:{ticked,diff,cells,fingerprint,…}}, running}
@@ -816,8 +815,7 @@ function noStyleYet() {
         '<div class="sub">this process runs nothing until one of its parts has a flow</div></div></div>' +
         '<div class="pd-empty"><p>A flow is drawn for a part: which positions the process works, ' +
         'how each one swaps, and where its bins come from and go. Add the first part from ' +
-        '<b>+ New part flow</b> in the rail, or stamp out a family of them from ' +
-        'Settings › Generate variants.</p>' +
+        '<b>+ New part flow</b> in the rail, which mints it from one of this cell’s recipes.</p>' +
         '<p class="pd-dim">Everything else about this process is edited from its tabs: its name, ' +
         'group, counter and routing set in <b>Settings</b>, and the positions it works in ' +
         '<b>Operator screens › Edit</b> — a position belongs to the screen that claims it.</p></div></div>';
@@ -1674,7 +1672,7 @@ function closePop() {
     // scrolled, until a group was picked or the tab redrew.
     const stpop = $('pd-stpop');
     if (stpop) { stpop.hidden = true; stpop.innerHTML = ''; }
-    // AND SO IS THE DIALOGS' OWN. Advanced and Generate open their pickers
+    // AND SO IS THE DIALOGS' OWN. the Advanced sheet opens its pickers
     // into #pd-advpop, inside the scrim; Escape closes it before the dialog.
     const advpop = $('pd-advpop');
     if (advpop) { advpop.hidden = true; advpop.innerHTML = ''; }
@@ -2759,14 +2757,35 @@ function clearSelected() {
 async function openSettings() {
     S.settings = S.settings || settingsDraft();
     if (!S.routing) await loadRouting();
-    await loadCurtainNodes();
+    await Promise.all([loadCurtainNodes(), loadPayloadCatalog(), loadPartSet()]);
+    // THE PART SET'S POST-CREATION EDITOR (pick-a-part U5). The engineer
+    // declares which parts a process may run (R-I) and the floor's part list
+    // reads it; Add-process wrote it once and, until this, the only other
+    // editor was the Part chip on a position row. Write-through, like the
+    // routing set below it: a pick is a PUT, and the list re-reads the palette.
+    pickerInit(PART_SET_PICKER, {
+        source: 'payloads', selected: S.partSet || [],
+        onPick: code => setPartSetMember(code, true),
+        onDrop: code => setPartSetMember(code, false),
+    });
+    drawSettings();
+}
+
+// setPartSetMember adds or removes one part from the stored part set, through
+// the same PUT the Part chip's popover uses (writePartSet), and redraws.
+async function setPartSetMember(code, on) {
+    if (!S.partSet) { S.settingsError = 'This process’s part list could not be read, so it cannot be changed here. Reload the page.'; drawSettings(); return; }
+    const next = on ? [...new Set(S.partSet.concat([code]))] : S.partSet.filter(c => c !== code);
+    const out = await writePartSet(next);
+    S.settingsError = out.ok ? '' : out.error;
+    if (out.ok && S.pickers[PART_SET_PICKER]) S.pickers[PART_SET_PICKER].sel = next.slice();
     drawSettings();
 }
 
 // ── D2 · Advanced (SPEC §2 D2) ───────────────────────────────────────────────
 //
-// The modal is the ONLY place these columns appear (ruling R2). Twelve of the
-// fifteen fields are the model's advanced block; the other three — evacuation
+// The modal is the ONLY place these columns appear (ruling R2). Thirteen of the
+// sixteen fields are the model's advanced block; the other three — evacuation
 // positions, evacuation destination and the partial home — are on the cell, a
 // routing fact the flow carries like the destination beside it. Apply dispatches both and marks the flow dirty;
 // nothing is written until Save flow.
@@ -2785,6 +2804,10 @@ const ADV_SECTIONS = [
     // be called back and finished. Offered on a produce position only.
     ['Unfinished carriers', ['partial_dest']],
     ['Press hardware', ['index_robot_supplies']],
+    // THE LIGHT CURTAIN'S STYLE TIE (pick-a-part U5). It had copy and a control
+    // and no section, so nothing drew it: the claim had readers
+    // (engine/release_load.go) and no UI writer.
+    ['Light curtain', ['curtain_required']],
     ['Station policy', ['auto_confirm']],
     // BOARD is one field, and it earns a section rather than a corner of
     // another: the loader board's draw order is not replenishment, not a
@@ -2793,7 +2816,7 @@ const ADV_SECTIONS = [
     ['Board', ['sequence']],
 ];
 
-// ADV_COPY — the sheet's fifteen rows: which CLAIM FIELD each one edits, and
+// ADV_COPY — the sheet's sixteen rows: which CLAIM FIELD each one edits, and
 // the one-line help under it.
 //
 // THE HELP IS THIS PAGE'S; THE NAME IS NOT. This used to carry both, so it was
@@ -3208,25 +3231,6 @@ function onAdvClick(e) {
     }
     if (act && act.dataset.act === 'sheet-cancel') { closeSheet(); return; }
     if (act && act.dataset.act === 'sheet-ok') { runSheet(); return; }
-    // And so does the Generate-variants dialog.
-    if (act && act.dataset.act === 'gen-cancel') { closeGenerate(); return; }
-    if (act && act.dataset.act === 'gen-run') { runGenerate(); return; }
-    if (act && act.dataset.act === 'gen-add') { addGenRow(); drawGenerate(); return; }
-    if (act && act.dataset.act === 'gen-drop') {
-        S.gen.rows.splice(Number(act.dataset.i), 1);
-        if (!S.gen.rows.length) addGenRow();
-        drawGenerate();
-        return;
-    }
-    // Its pickers are the page's pickers, and they live inside the scrim, so
-    // they open against the dialog's own popover rather than the page's.
-    const genPick = e.target.closest && e.target.closest('.pd-modal [data-act="pick"]');
-    if (S.gen && genPick) { e.stopPropagation(); openGenPicker(genPick); return; }
-    if (S.gen) {
-        const pop = $('pd-advpop');
-        if (pop && !(e.target.closest && e.target.closest('.pd-pop'))) { pop.hidden = true; pop.innerHTML = ''; }
-        return;
-    }
     if (!S.adv) return;
     const f = e.target.closest && e.target.closest('[data-advkind]');
     if (!f) {
@@ -3538,13 +3542,26 @@ function drawSettings() {
             '<div class="pd-seg">' + seg + '</div>') +
         '<p class="pd-note">' + esc(AUTO_ARM_NOTE) + '</p>';
 
+    // THE SWITCH LOCKS THE FLOOR'S ONE EDIT (owner ruling R-K, 2026-10-18).
+    // Off, the operator picks parts and Shingo runs the engineer's recipe as
+    // set up. On, one more screen lets them move a recipe's slot to another
+    // position or staging lane — never a mode, a pairing or a role — and the
+    // result is saved as a style with the recipe as its provenance.
     const hmi = '<div class="pd-sect"><h2>HMI</h2></div>' +
-        stField('Operators may change the flow on the HMI',
-            'off: the operator picks a part and runs it as set up · on: they may also change how it flows',
+        stField('Operators may move a recipe’s positions on the HMI',
+            'off: the operator picks a part and runs the recipe as set up · on: they may move a slot to another position or lane',
             stToggle('flow_composer_enabled')) +
-        '<p class="pd-note">Turn this on once the routing set below has been reviewed — it is the ' +
-        'list an operator would be choosing from. Off is right for a process whose flows are hammered ' +
-        'out.</p>';
+        '<p class="pd-note">For a conveyor that moved or a cell in development. The choreography — mode, ' +
+        'pairing, role — stays the recipe’s; the moves are checked against the routing set below.</p>';
+
+    // PARTS THIS PROCESS RUNS (pick-a-part U5, R-I): the part set the floor
+    // picks from. Write-through, so it is outside the save bar's draft.
+    const partsSect = '<div class="pd-sect"><h2>Parts this process runs</h2>' +
+        '<span class="pd-dim">the operator’s part list on CHANGEOVER</span></div>' +
+        (S.partSet === null
+            ? '<p class="pd-note">This process’s part list could not be read. Reload the page to change it.</p>'
+            : pickerField(PART_SET_PICKER, 'Parts', 'what this process may run — the catalog is Core’s')) +
+        '<p class="pd-note">' + esc(PART_SET_NOTE) + '</p>';
 
     // QUALITY HOLD — a per-process opt-in. Off (the default) means every
     // finished-goods delivery goes to its outbound destination as always; on,
@@ -3567,18 +3584,12 @@ function drawSettings() {
 
     const stylesSect = '<div class="pd-sect"><h2>Styles</h2><span class="pd-dim">' + styles +
         ' live · every part this process runs</span><span class="pd-spacer"></span>' +
-        // GENERATE VARIANTS, PORTED. The dialog is not new design: the retired
-        // admin page had one (base style, a column per produce claim, a row
-        // per variant, Generate) and the owner ruled it is the same dialog
-        // behind this button. What changed is the mechanism, not the shape:
-        // the desktop's own modal and its own chip pickers, because the old
-        // one was built from native <select>, which the style guide refuses.
-        // POST /api/styles/{id}/generate is untouched.
-        '<button class="pd-btn" data-act="st-generate">Generate variants…</button>' +
+        // NO GENERATE VARIANTS (pick-a-part U5): a style for a new part is minted
+        // from a recipe — + New part flow on Flows, or the operator's CHANGEOVER.
         '<button class="pd-btn" data-act="st-sync">Sync catalog</button></div>' +
-        '<p class="pd-note">Styles are managed from Flows — each row in its left rail is a style. Rename, ' +
-        'expected CATID, clone and delete are on the row’s menu; "Mark as running" is there too, for when ' +
-        'the plant changed parts without shingo.</p>';
+        '<p class="pd-note">Styles are managed from Flows — each row in its left rail is a style, and ' +
+        '+ New part flow mints one from a recipe. Rename, expected CATID, clone and delete are on the ' +
+        'row’s menu; "Mark as running" is there too, for when the plant changed parts without shingo.</p>';
 
     const danger = '<div class="pd-sect danger"><h2>Danger</h2></div>' +
         stField('Delete this process', 'its styles, flows, routing set and screens go with it',
@@ -3590,7 +3601,7 @@ function drawSettings() {
     // sheet twice the viewport — back off the top of the screen.
     const wasAt = (() => { const b = root().querySelector('.pd-sheet'); return b ? b.scrollTop : 0; })();
     root().innerHTML = appbar() + '<div class="pd-sheet pd-settings">' +
-        general + counter + curtain + changeover + hmi + hold + routingSection() + stylesSect + danger +
+        general + counter + curtain + changeover + hmi + partsSect + hold + routingSection() + stylesSect + danger +
         '<div class="pd-savebar"><span class="prov' + (settingsDirty() ? ' dirty' : '') + '">' +
         (settingsDirty() ? 'Unsaved changes' : 'No unsaved changes') + '</span>' +
         '<button class="pd-btn" data-act="st-discard">Discard</button>' +
@@ -3854,7 +3865,7 @@ async function refreshStationNodes(stationID) {
 // would be work done on fields about to stop existing.
 //
 // ONE OPEN AND ONE CLOSE. There were four of the first and three of the
-// second — Advanced, Generate, the sheets and the apply modal each did their
+// second — Advanced, the sheets and the apply modal each did their
 // own `scrim.hidden = false`, so a fix to what opening means had four places
 // to land in and reached whichever the author remembered.
 function showSheet(html) {
@@ -4204,8 +4215,7 @@ function onPickerClick(el) {
 // A second modal shape would be a second set of paddings to keep in step.
 // One width, too: .pd-modal is sized in CSS from the label column and the
 // wide input that sheetField draws, so every field fits every sheet and no
-// sheet picks a width of its own. Generate variants, whose body is a table,
-// draws its own pd-wide shell and is the one exception.
+// sheet picks a width of its own.
 //
 // #pd-advpop RIDES ON THE SHELL rather than on the sheets that want a popover.
 // It is the Advanced sheet's answer to #pd-pop living inside #pd-root, which
@@ -4276,19 +4286,19 @@ function closeSheet() {
 // ── one Escape rule, innermost first ─────────────────────────────────────────
 //
 // THE RULE THE PAGE HAD, PLUS THE DOOR IT FORGOT. The boot handler closed
-// Advanced, then Generate, then the sheet — but the open popover outlived all
+// Advanced, then the sheet — but the open popover outlived all
 // three arms, so Escape over a part menu closed the sheet under it and left
 // the menu floating. Innermost first, one order for every layer this page
-// stacks: popover, then Advanced, then Generate, then the sheet.
+// stacks: popover, then Advanced, then the sheet.
 //
 // A SHEET ASKS BEFORE IT DISCARDS TYPED WORK, every sheet: the openSheet
-// layer, Advanced and Generate. An Escape on a sheet with nothing typed still
+// layer, Advanced. An Escape on a sheet with nothing typed still
 // closes it — a sheet's Cancel is a click away and Escape has always meant
 // "back out". But a sheet the engineer has typed into is work, and work does
 // not vanish on a key that elsewhere only closes menus. A typed field is one
 // marked data-f, and the test is attribute-vs-property: the markup carries the
 // value the sheet OPENED with — value="…" / checked, or data-was="…" on
-// Advanced and Generate, which redraw themselves from their own state and so
+// Advanced, which redraws itself from its own state and so
 // write a typed value back into value="…" — and the DOM property is what
 // typing moves, so a mismatch IS the edit: no dirty ledger to keep, no state
 // to drift. The question is drawn as its own sheet, so the typed work is
@@ -4296,7 +4306,7 @@ function closeSheet() {
 // again.
 function onEscape() {
     // THE INNERMOST POPOVER FIRST: the page's, Settings' group list, or the
-    // picker an Advanced or Generate dialog opened over itself.
+    // picker the Advanced sheet opened over itself.
     if (['pd-pop', 'pd-stpop', 'pd-advpop'].some(id => { const p = $(id); return p && !p.hidden; })) {
         closePop();
         return;
@@ -4304,8 +4314,7 @@ function onEscape() {
     // The question is up: only its own two buttons answer it.
     if (S.escapeHold) return;
     const layer = S.adv ? { close: closeAdvanced, rebind: bindAdvInputs }
-        : S.gen ? { close: closeGenerate, rebind: bindGenInputs }
-            : S.sheet ? { close: closeSheet, rebind: bindPickers } : null;
+        : S.sheet ? { close: closeSheet, rebind: bindPickers } : null;
     // The selection is the outermost thing Escape can let go of: only with no
     // popover and no sheet open does it clear the selected position.
     if (!layer) {
@@ -4340,7 +4349,7 @@ function askBeforeDiscard(layer) {
         fields[name] = el.type === 'checkbox' ? el.checked : (el.value || '');
     }
     // THE HOLD IS THE WHOLE SHEET, not a summary of it: restoring the markup
-    // restores the sheet, its own state (S.sheet.run, S.adv, S.gen) never
+    // restores the sheet, its own state (S.sheet.run, S.adv) never
     // left, and Keep editing binds the layer's own listeners again. Discard
     // closes the layer the way its own Cancel does.
     S.escapeHold = { sheet: S.sheet, html: scrim.innerHTML, fields: fields, close: layer.close, rebind: layer.rebind };
@@ -5142,242 +5151,6 @@ function openDeleteProcess() {
                 drawList();
             });
         }, true);
-}
-
-// ── Generate variants (Q2, ported from the retired admin page) ──────────────
-//
-// Stamp out a family of styles from one base: the base's PRODUCE claims become
-// the grid's columns, and each variant row is a name plus one payload per
-// column. Capacity and the allowed set derive from the payload, so a variant
-// is one value per produce node and nothing else. The whole batch goes in one
-// POST, which the handler applies atomically.
-//
-// WHAT WAS PORTED AND WHAT WAS NOT. The shape, the column rule (produce
-// claims, falling back to every claim when the base has none), the
-// manual_swap exception — a manual-swap claim stores '' in payload_code and
-// drives off the allowed set, so an override there sets the list and leaves
-// the code blank — and the endpoint. NOT ported: the native <select> elements
-// it was built from. Every choice here is the page's own chip picker, which is
-// what the rest of this screen uses and what the style guide allows.
-
-async function openGenerate() {
-    const all = stylesOf(S.processID);
-    if (!all.length) {
-        S.settingsError = 'This process has no style to generate a family from yet. Add one from Flows first.';
-        drawSettings();
-        return;
-    }
-    const p = process();
-    const base = (p && p.active_style_id) || all[0].id;
-    S.gen = { baseID: base, cols: [], rows: [], error: '', seq: 0, catalog: [] };
-    await loadGenCatalog();
-    await loadGenColumns();
-    addGenRow();
-    drawGenerate();
-}
-
-async function loadGenCatalog() {
-    try {
-        const res = await fetch('/api/payload-catalog');
-        const rows = res.ok ? await res.json() : [];
-        S.gen.catalog = Array.isArray(rows) ? rows : [];
-    } catch (_) {
-        S.gen.catalog = [];
-    }
-}
-
-// The base's produce claims are the columns. A base with no produce claim
-// takes every claim instead — a consume-only press still has payloads worth
-// stamping out, and an empty grid would say the base was unusable when it is
-// only differently shaped.
-async function loadGenColumns() {
-    S.gen.cols = [];
-    if (!S.gen.baseID) return;
-    try {
-        const res = await fetch('/api/styles/' + S.gen.baseID + '/node-claims');
-        let claims = res.ok ? await res.json() : [];
-        if (!Array.isArray(claims)) claims = [];
-        // EVERY CLAIMED POSITION IS A VARIANT COLUMN, not just the produce
-        // ones. A staging or destination position is part of what the flow
-        // does — a variant that keeps the produce positions and loses the
-        // back positions' staging names a shape that cannot run — and the
-        // produce-only filter meant the sheet offered a two-column variant
-        // editor over a four-position flow whenever any claim carried a
-        // produce role and the rest did not. A column per claim is the same
-        // list the positions table draws.
-        S.gen.cols = claims.map(c => ({
-            node: c.core_node_name, swapMode: c.swap_mode, base: c.payload_code || '',
-        }));
-    } catch (e) {
-        S.gen.error = 'Could not read the base flow: ' + e;
-    }
-}
-
-// A row starts with every cell on the base's part, so an untouched
-// cell is "the same part as the base" rather than a blank the server refuses.
-function addGenRow() {
-    S.gen.rows.push({
-        id: 'g' + (S.gen.seq++), name: '',
-        payloads: S.gen.cols.map(c => c.base),
-    });
-}
-
-function drawGenerate() {
-    const scrim = $('pd-scrim');
-    if (!scrim || !S.gen) return;
-    const styles = stylesOf(S.processID);
-    const baseName = (styles.find(s => s.id === S.gen.baseID) || {}).name || 'pick one';
-    const grid = S.gen.cols.length
-        ? '<table class="pd-gentbl"><thead><tr><th>New style name</th>' +
-        S.gen.cols.map(c => '<th>' + esc(c.node) + '</th>').join('') + '<th></th></tr></thead><tbody>' +
-        S.gen.rows.map((r, i) =>
-            '<tr><td><input class="pd-geninput" data-genrow="' + i + '" data-f="gen:' + i + '" data-was="" ' +
-            'type="text" autocomplete="off" ' +
-            'placeholder="e.g. SYN-PART-01" value="' + esc(r.name) + '"></td>' +
-            S.gen.cols.map((c, j) => '<td>' + picker('', 'gen:' + i + ':' + j,
-                esc(M().shortPart(r.payloads[j]) || 'same as base'), r.payloads[j] ? '' : 'dflt',
-                r.payloads[j] || 'the base part') + '</td>').join('') +
-            '<td><button class="pd-mv" data-act="gen-drop" data-i="' + i + '" title="remove this variant">&times;</button></td></tr>').join('') +
-        '</tbody></table>' +
-        '<button class="pd-chip add" data-act="gen-add">+ Add variant</button>'
-        : '<p class="pd-note">' + esc(baseName) + ' has no flow yet, so there is nothing to set a part on. ' +
-        'Build its flow in Flows first — a family is stamped out of a base that already works.</p>';
-
-    scrim.innerHTML = '<div class="pd-modal pd-wide" role="dialog" aria-modal="true" aria-label="Generate variants">' +
-        '<div class="mh"><h2>Generate variants</h2><p>One new style per row, stamped out of a base ' +
-        'that already runs. Every cell starts on the base style’s part; change the ones that differ.</p></div>' +
-        '<div class="mb">' +
-        '<div class="pd-fld"><label>Base style<small>its flow is the shape every variant gets</small></label>' +
-        '<div class="v">' + picker('', 'gen-base', esc(baseName)) + '</div></div>' +
-        '<div class="pd-sec"><div class="pd-lbl">The family</div>' + grid + '</div>' +
-        (S.gen.error ? '<div class="pd-refusal">' + esc(S.gen.error) + '</div>' : '') +
-        '</div>' +
-        '<div class="mf"><span class="st">Nothing is written until Generate.</span>' +
-        '<button class="pd-btn" data-act="gen-cancel">Cancel</button>' +
-        '<button class="pd-btn primary" data-act="gen-run">Generate</button></div>' +
-        '<div class="pd-pop" id="pd-advpop" hidden></div></div>';
-    showSheet();
-    bindGenInputs();
-}
-
-// The name fields write through to S.gen as they are typed; bound after every
-// write of the dialog's markup, as bindAdvInputs is.
-function bindGenInputs() {
-    $('pd-scrim').querySelectorAll('[data-genrow]').forEach(el => {
-        el.addEventListener('input', () => { S.gen.rows[Number(el.dataset.genrow)].name = el.value; });
-    });
-}
-
-// The dialog's two picker kinds: the base style, and one payload cell.
-//
-// THE POPOVER IS THE DIALOG'S, not the page's: #pd-pop lives inside #pd-root,
-// which the scrim covers, so a list opened from here would draw behind the
-// modal. The Advanced sheet solved this with its own #pd-advpop and this
-// reuses it — one popover per scrim, whichever sheet is open.
-function genOptions(kind) {
-    const parts = String(kind).split(':');
-    if (parts[0] === 'gen-base') {
-        return stylesOf(S.processID).map(st => ({
-            label: st.name, on: st.id === S.gen.baseID,
-            run: async () => {
-                S.gen.baseID = st.id;
-                S.gen.rows = [];
-                S.gen.error = '';
-                await loadGenColumns();
-                addGenRow();
-                drawGenerate();
-            },
-        }));
-    }
-    const i = Number(parts[1]), j = Number(parts[2]);
-    const set = code => () => { S.gen.rows[i].payloads[j] = code; drawGenerate(); };
-    // "same as base" is the base's part, sent as no override at all; it is the
-    // first option because it is the part every cell opens on.
-    const head = [{ label: 'same as base · ' + (M().shortPart(S.gen.cols[j].base) || 'nothing'), on: !S.gen.rows[i].payloads[j], run: set('') }];
-    return head.concat(S.gen.catalog.map(c => ({
-        label: c.code + (c.uop_capacity ? ' · ' + c.uop_capacity + ' UOP' : ''),
-        on: S.gen.rows[i].payloads[j] === c.code,
-        run: set(c.code),
-    })));
-}
-
-function openGenPicker(btn) {
-    const opts = genOptions(btn.dataset.kind);
-    const pop = $('pd-advpop');
-    if (!pop) return;
-    pop.innerHTML = opts.length
-        ? opts.map((o, i) => '<button data-genopt="' + i + '" class="' + (o.on ? 'on' : '') + '">' + esc(o.label) + '</button>').join('')
-        : '<div class="none">Nothing to choose here yet.</div>';
-    pop.hidden = false;
-    placePopover(pop, btn);
-    pop.querySelectorAll('[data-genopt]').forEach(b => b.addEventListener('click', () => {
-        pop.hidden = true;
-        pop.innerHTML = '';
-        opts[Number(b.dataset.genopt)].run();
-    }));
-}
-
-function closeGenerate() {
-    hideSheet();
-    S.gen = null;
-}
-
-// The variants, exactly as the retired page built them — including the
-// manual_swap exception, which is the one rule in here that is not obvious.
-function genVariants() {
-    const out = [];
-    for (const r of S.gen.rows) {
-        const name = String(r.name || '').trim();
-        if (!name) continue;                     // a blank row is not a variant
-        const overrides = [];
-        S.gen.cols.forEach((c, j) => {
-            const code = r.payloads[j];
-            if (!code) return;                   // same as base: leave this claim alone
-            overrides.push({
-                core_node_name: c.node,
-                // manual_swap stores '' in payload_code and drives off the
-                // allowed set; every other mode binds payload_code directly.
-                payload_code: c.swapMode === 'manual_swap' ? '' : code,
-                allowed_payload_codes: [code],
-            });
-        });
-        out.push({ name: name, description: '', overrides: overrides });
-    }
-    return out;
-}
-
-async function runGenerate() {
-    const variants = genVariants();
-    if (!variants.length) {
-        S.gen.error = 'Give at least one variant a name.';
-        drawGenerate();
-        return;
-    }
-    const res = await fetch('/api/styles/' + S.gen.baseID + '/generate', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ variants: variants }),
-    });
-    if (!res.ok) {
-        let why = 'The server refused that (' + res.status + ').';
-        try { const j = await res.json(); why = j.error || j.message || why; } catch (_) { /* status only */ }
-        S.gen.error = why;
-        drawGenerate();
-        return;
-    }
-    const n = variants.length;
-    closeGenerate();
-    await reloadProcesses();
-    // A SUCCESS IS NOT A REFUSAL. This and the catalog sync below reported
-    // themselves through S.settingsError, which renders in .pd-refusal — a
-    // coral border in the warning ink. "Generated 3 styles" arrived looking
-    // like something had gone wrong.
-    S.settingsNotice = 'Generated ' + n + ' style' + (n === 1 ? '' : 's') + '. They are in the Flows rail, with no flow until you build one.';
-    // AND THE RAIL HAS TO ACTUALLY HAVE THEM. This reloaded the process list
-    // alone, so S.styles and S.composer.styles kept their pre-generate
-    // contents: the Styles count on this very section, and the Flows rail the
-    // sentence points at, both stayed stale until the process was re-opened.
-    await refreshProcess();
-    drawSettings();
 }
 
 async function syncCatalog() {
@@ -6316,7 +6089,6 @@ function onClick(e) {
         case 'st-holddest': openContainmentPicker(btn); return;
             case 'st-discard': S.settings = settingsDraft(); S.curtain = curtainDraft(); S.settingsError = ''; drawSettings(); return;
             case 'st-save': saveSettings(); return;
-            case 'st-generate': openGenerate(); return;
             case 'st-sync': syncCatalog(); return;
             case 'st-delete': openDeleteProcess(); return;
             case 'bind-loader': bindLoaderBoard(btn.dataset.loader); return;

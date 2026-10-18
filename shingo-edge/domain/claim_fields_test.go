@@ -42,6 +42,8 @@ func populateClaimField(c *NodeClaim, f flowspec.Field) {
 		c.Sequence = 7
 	case flowspec.KeepStagedNode:
 		c.KeepStagedNode = v
+	case flowspec.CurtainRequired:
+		c.CurtainRequired = true
 	case flowspec.EvacuateOnChangeover:
 		c.EvacuateOnChangeover = true
 	case flowspec.ChangeoverEvacNodes:
@@ -105,6 +107,8 @@ func populateClaimInputField(in *NodeClaimInput, f flowspec.Field) {
 		in.Sequence = &seven
 	case flowspec.KeepStagedNode:
 		in.KeepStagedNode = &v
+	case flowspec.CurtainRequired:
+		in.CurtainRequired = true
 	case flowspec.EvacuateOnChangeover:
 		in.EvacuateOnChangeover = true
 	case flowspec.ChangeoverEvacNodes:

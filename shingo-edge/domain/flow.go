@@ -154,6 +154,11 @@ type FlowAdvanced struct {
 	// only when the cell carries an Advanced at all, so the store's own
 	// next-free-slot assignment survives every save nobody opened the sheet on.
 	Sequence int `json:"sequence,omitempty"`
+	// CurtainRequired is the light-curtain interlock's style tie: this part's
+	// full-bin releases at this node wait for the node's curtain tag. It had
+	// readers (engine/release_load.go) and no UI writer until it joined the
+	// sheet (pick-a-part U5).
+	CurtainRequired bool `json:"curtain_required,omitempty"`
 }
 
 // AdvancedOf is the claim's advanced columns as the modal shows them. Nil in,
@@ -178,6 +183,7 @@ func AdvancedOf(c *NodeClaim) *FlowAdvanced {
 		IndexRobotSupplies:    c.IndexRobotSupplies,
 		AutoConfirm:           c.AutoConfirm,
 		Sequence:              c.Sequence,
+		CurtainRequired:       c.CurtainRequired,
 	}
 	return a
 }
@@ -278,6 +284,13 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 		in.LinesideSoftThreshold = prior.LinesideSoftThreshold
 		in.ReuseCompatibleBins = prior.ReuseCompatibleBins
 		in.AutoPush = prior.AutoPush
+		// THE CELL'S FACTS A CELL DOES NOT CARRY, CARRIED (pick-a-part U5,
+		// 2026-10-18). Both are unconditional columns and no FlowCell field
+		// names either, so every flow save wrote them blank: a desktop save
+		// took a produce claim out of the process's quality hold
+		// (SetContainment's route) and switched off a node's curtain tie.
+		in.ContainmentDestination = prior.ContainmentDestination
+		in.CurtainRequired = prior.CurtainRequired
 	}
 	// The Advanced modal, LAST, so an engineer's opinion beats both the
 	// carry-through above and the degenerate-list guess inside it. Nil is the
@@ -302,6 +315,7 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 		in.IndexRobotSupplies = Ptr(a.IndexRobotSupplies)
 		in.ChangeoverCarryoverDisposition = Ptr(a.CarryoverDisposition)
 		in.Sequence = Ptr(a.Sequence)
+		in.CurtainRequired = a.CurtainRequired
 	}
 	return in
 }

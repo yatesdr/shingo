@@ -1807,14 +1807,14 @@ async function mainAsync() {
             'the discarded draft\'s take-off rode into the next preview');
     });
 
-    // ── the Advanced sheet, Presets and Generate say what they do ───────────
+    // ── the Advanced sheet and Presets say what they do ─────────────────────
     //
     // The field's name is the flowspec table's; the help under it is this
     // page's and says part. The reorder point's source pill is drawn only for
     // a source that tells the engineer something: a number nobody stamped is
     // just a number. Presets count the parts a preset was applied to, and say
     // so; a shape whose positions run different modes has a mark of its own.
-    // Generate's help says what the cells open on.
+
     const advComposer = src => {
         const c = savedComposer();
         c.styles[0].advanced = { PLN_01: { reorder_point: 5, reorder_point_source: src } };
@@ -1909,44 +1909,9 @@ async function mainAsync() {
         }
     });
 
-    const genPage = (claims, extraIds) => loadPage({
-        allowSheet: true, composer: savedComposer(), hash: '#tab=settings', extraIds,
-        fetch: url => {
-            if (url === '/api/payload-catalog') return okJSON([{ code: 'PART-B' }]);
-            if (url === '/api/styles/1/node-claims') return okJSON(claims);
-            return null;
-        },
-    });
-
-    await pin('Generate says every cell starts on the base part', async () => {
-        const { root, doc, scrim } = genPage([
-            { core_node_name: 'PLN_01', swap_mode: 'single_robot', payload_code: 'PART-A' },
-            { core_node_name: 'PLN_02', swap_mode: 'single_robot', payload_code: 'PART-A' },
-        ]);
-        await settle();
-        click(root, doc, { act: 'st-generate' });
-        await settle();
-        if (!scrim.classList.contains('active')) throw new Error('setup: the generate dialog did not open');
-        const want = '<p>One new style per row, stamped out of a base that already runs. Every cell ' +
-            'starts on the base style’s part; change the ones that differ.</p>';
-        if (scrim.innerHTML.indexOf(want) < 0) {
-            throw new Error('the generate help reads ' + JSON.stringify((scrim.innerHTML.match(/<div class="mh">.*?<\/div>/) || [''])[0]));
-        }
-        if (/inherit/.test(scrim.innerHTML)) throw new Error('the generate dialog still says "inherit"');
-    });
-
-    await pin('Generate over a base with no flow says there is no part to set', async () => {
-        const { root, doc, scrim } = genPage([]);
-        await settle();
-        click(root, doc, { act: 'st-generate' });
-        await settle();
-        const want = 'Style A has no flow yet, so there is nothing to set a part on.';
-        if (scrim.innerHTML.indexOf(want) < 0) throw new Error('the empty-base note does not say ' + JSON.stringify(want));
-    });
-
-    // ── Escape on Advanced and Generate asks before it discards typing ──────
+    // ── Escape on Advanced asks before it discards typing ───────────────────
     //
-    // The sheet's question, on the two dialogs that draw their own markup into
+    // The sheet's question, on the dialog that draws its own markup into
     // the scrim. The scrim's inputs are parsed out of the markup the page
     // wrote, the way a browser would: one element per <input>, attributes as
     // written, `value` a property typing moves, and a fresh set on every
@@ -2007,30 +1972,12 @@ async function mainAsync() {
         page.pop.hidden = true;
         return Object.assign(page, { live });
     };
-    const openGen = async () => {
-        const page = genPage([{ core_node_name: 'PLN_01', swap_mode: 'single_robot', payload_code: 'PART-A' }],
-            { 'pd-advpop': advpopStub() });
-        await settle();
-        const live = liveInputs(page.scrim);
-        click(page.root, page.doc, { act: 'st-generate' });
-        await settle();
-        if (!page.scrim.classList.contains('active')) throw new Error('setup: the generate dialog did not open');
-        return Object.assign(page, { live });
-    };
     // The dialogs' pickers, opened by a real click: Advanced's carry-over
-    // picker, and Generate's base-style picker inside its .pd-modal.
+    // picker (Generate variants went in pick-a-part U5).
     const openAdvPick = (scrim, doc) => click(scrim, doc, { advkind: 'pick', adv: 'changeover_carryover_disposition' });
-    const openGenPick = (scrim, doc) => {
-        const modal = makeElement('');
-        modal.classList.add('pd-modal');
-        scrim.appendChild(modal);
-        click(modal, doc, { act: 'pick', kind: 'gen-base' });
-    };
     const dialogs = [
         ['Advanced', openAdv, 'PLN_01 · Advanced', l => l.find('data-adv', 'reorder_point'), '40',
             (scrim, doc) => click(scrim, doc, { advkind: 'toggle', adv: 'evacuate_on_changeover' })],
-        ['Generate', openGen, '<h2>Generate variants</h2>', l => l.find('data-genrow', '0'), 'SYN-PART-09',
-            (scrim, doc) => click(scrim, doc, { act: 'gen-add' })],
     ];
     for (const [name, open, heading, field, typed, redraw] of dialogs) {
         await pin(name + ': Escape over typed input asks, and Keep editing keeps the value', async () => {
@@ -2070,11 +2017,10 @@ async function mainAsync() {
     // ── Escape closes the dialog's own popover first ────────────────────────
     //
     // The innermost popover, then the sheet: with a picker open over Advanced
-    // or Generate, the first Escape closes only the picker — the dialog and
+    // the first Escape closes only the picker — the dialog and
     // anything typed into it stay — and the second follows the dialog's rule.
     for (const [name, open, pick, field, typed] of [
         ['Advanced', openAdv, openAdvPick, l => l.find('data-adv', 'reorder_point'), '40'],
-        ['Generate', openGen, openGenPick, l => l.find('data-genrow', '0'), 'SYN-PART-09'],
     ]) {
         for (const withTyping of [true, false]) {
             await pin(name + ': Escape closes its open picker first, then ' +

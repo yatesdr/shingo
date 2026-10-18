@@ -27,26 +27,22 @@ import (
 
 // composerSpeaks is every column a FlowCell carries, so a save is expected to
 // write it. Everything else in style_node_claims must survive untouched.
+//
+// NOT containment_destination OR curtain_required (pick-a-part U5,
+// 2026-10-18). Both used to be listed here as "composer-authored", which no
+// FlowCell field was — so a flow save wrote them blank and this test, by
+// exempting them, said that was expected. Expand now carries both from the
+// prior claim (curtain_required is also the Advanced sheet's, when an engineer
+// applies it), and they are held to "must survive" like every unspoken column.
 var composerSpeaks = map[string]bool{
 	"core_node_name": true, "role": true, "swap_mode": true, "payload_code": true,
 	"paired_core_node": true, "second_paired_core_node": true,
 	"inbound_source": true, "inbound_staging": true, "outbound_staging": true,
 	"outbound_destination": true, "changeover_evac_destination": true,
 	"changeover_evac_nodes": true, "key_route": true,
-	// Quality containment: the claim's divert destination when containment is
-	// active for its payload. Composer-authored (the Quality Containment
-	// section of the claim editor) exactly like its sibling
-	// outbound_destination; carried through a flow copy for the same reason.
-	"containment_destination": true,
 	// The partial route: composer-authored, a routing field of a produce claim
 	// like outbound_destination beside it; carried through a flow copy.
 	"partial_destination": true,
-	// The light-curtain style tie: composer-authored (the Advanced sheet's
-	// toggle). The claim is the (style, node) pair, and the departing bin's
-	// own claim decides whether its release waits for the tag - so the flag
-	// rides the claim a save writes, and a flow copy carries it like any
-	// other authored field.
-	"curtain_required": true,
 }
 
 // composerRestamps is what a save is expected to change without being asked:
@@ -111,6 +107,9 @@ var unspokenColumns = []struct {
 	{"changeover_carryover_disposition", func(c processes.NodeClaim) any { return c.ChangeoverCarryoverDisposition }},
 	{"source_preset_id", func(c processes.NodeClaim) any { return c.SourcePresetID }},
 	{"source_preset_version", func(c processes.NodeClaim) any { return c.SourcePresetVersion }},
+	// Carried by Expand since pick-a-part U5; they were wiped on every save.
+	{"containment_destination", func(c processes.NodeClaim) any { return c.ContainmentDestination }},
+	{"curtain_required", func(c processes.NodeClaim) any { return c.CurtainRequired }},
 }
 
 // TestFlowCarryThrough_EveryUnspokenColumnIsAccountedFor holds the table above

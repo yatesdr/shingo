@@ -135,6 +135,10 @@ const (
 	// the line unfinished, to wait and be called back (a node or a group).
 	// Blank = where a full goes. Offered on produce claims only.
 	PartialDestination Field = "partial_destination"
+	// CurtainRequired is the light-curtain style tie: this part's full-bin
+	// releases at the node wait for the node's curtain tag. A FlowAdvanced
+	// column since pick-a-part U5; Used in every mode (steadyBase).
+	CurtainRequired Field = "curtain_required"
 
 	// SwapMode and Role are NOT columns the per-mode matrices consult — they
 	// are the two discriminants the matrices are keyed BY, so they are not in
@@ -179,6 +183,7 @@ var fieldLabels = map[Field]string{
 	KeyTask:                        "Key task",
 	ReorderPointSource:             "Reorder point source",
 	PartialDestination:             "Partial destination",
+	CurtainRequired:                "Curtain required",
 	SwapMode:                       "Swap mode",
 	Role:                           "Role",
 }
@@ -192,7 +197,7 @@ var fieldOrder = []Field{
 	LinesideSoftThreshold, Sequence, KeepStagedNode, EvacuateOnChangeover,
 	ChangeoverEvacNodes, ChangeoverEvacDestination, ChangeoverCarryoverDisposition,
 	ReuseCompatibleBins, IndexRobotSupplies, AutoConfirm, AutoRequestPayload, AutoPush,
-	KeyRoute, KeyTask, ReorderPointSource, PartialDestination,
+	KeyRoute, KeyTask, ReorderPointSource, PartialDestination, CurtainRequired,
 }
 
 // Fields returns every field, in canonical order. A fresh slice each call.
