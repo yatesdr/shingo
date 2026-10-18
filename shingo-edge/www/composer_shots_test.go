@@ -1777,6 +1777,15 @@ func TestComposerShots(t *testing.T) {
 	desktopDOM("D7 shape draft header", d7, `New shape · `)
 	desktopDOM("D7 shape draft save", d7, `data-act="shape-save"`)
 
+	// U7 · IMPORT FROM… (pick-a-part brief): a recipe laid onto this process
+	// opens as the same draft, titled for where it came from. `;import=` is the
+	// popover's last step; the fixture's own preset stands in for another
+	// cell's, which remaps position for position.
+	desktopDOM("D8 import button", d6, `data-act="import-from"`)
+	d8 := fmt.Sprintf("/processes?process=%d#tab=presets;import=%d", seeded.ProcessID, presetID)
+	desktopShot("D8-import-draft.png", d8)
+	desktopDOM("D8 import draft header", d8, `Import · `)
+
 	// THE APPLY MODAL, with one part ticked and its previewed diff on screen.
 	// `;tick=` previews that row, which is the whole rule this modal exists to
 	// enforce: never a save without its preview drawn.

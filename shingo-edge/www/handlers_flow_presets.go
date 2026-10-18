@@ -1,4 +1,6 @@
-// handlers_flow_presets.go — the desktop Presets tab's four endpoints.
+// handlers_flow_presets.go — the desktop Presets tab's four endpoints. The
+// list also answers ?import= (pick-a-part U7): another cell's recipe, laid onto
+// this one and not stored.
 //
 // FOUR, AND APPLY IS NOT ONE OF THEM. A preset is applied to one style at a
 // time through the doors that already exist — `flow/preview` with the preset's
@@ -15,8 +17,11 @@
 package www
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strconv"
 
 	"shingoedge/domain"
 )
@@ -25,6 +30,26 @@ func (h *Handlers) apiListFlowPresets(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	// ?import=<presetID> is "Import from…": that recipe laid onto this
+	// process, unsaved (service.ImportCandidate).
+	if raw := r.URL.Query().Get("import"); raw != "" {
+		presetID, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || presetID <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid import preset id")
+			return
+		}
+		shape, err := h.engine.ProcessService().ImportCandidate(id, presetID)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "no such preset")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, shape)
 		return
 	}
 	view, err := h.engine.ProcessService().PresetsFor(id)

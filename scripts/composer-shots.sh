@@ -29,7 +29,7 @@
 #   D1-flows-running.png   D2-advanced.png   D3-routing-set.png
 #   D4-operator-screens.png   D5-settings.png   D6-presets.png
 #   D6-presets-member-expanded.png   D6-apply-modal.png
-#   D6-apply-modal-answered.png   D7-new-shape-draft.png
+#   D6-apply-modal-answered.png   D7-new-shape-draft.png   D8-import-draft.png
 #
 # 32 PNGs, and they are NOT committed — composer-shots/ is in .gitignore. They
 # are a handoff artefact, they weigh ~2 MB, and they carry the fixture on

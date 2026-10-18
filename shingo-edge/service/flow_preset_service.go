@@ -290,6 +290,64 @@ func (s *ProcessService) CreateFromCells(processID int64, name, createdBy string
 	return s.create(processID, name, createdBy, cells, nil)
 }
 
+// ImportedShape is "Import from…": another cell's recipe laid onto this one,
+// with the positions to check before it is named (domain.RemapShape). It is
+// not stored; naming it goes through CreateFromCells like a drawn shape.
+type ImportedShape struct {
+	FromPresetID int64             `json:"from_preset_id"`
+	FromName     string            `json:"from_name"`
+	Mode         string            `json:"mode"`
+	Shape        []domain.FlowCell `json:"shape"`
+	Where        string            `json:"where"`
+	Unmapped     []string          `json:"unmapped"`
+}
+
+// ImportCandidate remaps preset presetID — usually another process's — onto
+// processID. Four reads: the preset, then each cell's positions and routing
+// set.
+func (s *ProcessService) ImportCandidate(processID, presetID int64) (*ImportedShape, error) {
+	p, err := s.db.GetFlowPreset(presetID)
+	if err != nil {
+		return nil, err
+	}
+	src, err := domain.ParsePresetShape(p.FlowJSON)
+	if err != nil {
+		return nil, err
+	}
+	from, err := s.shapeFrame(p.ProcessID)
+	if err != nil {
+		return nil, err
+	}
+	to, err := s.shapeFrame(processID)
+	if err != nil {
+		return nil, err
+	}
+	cells, unmapped := domain.RemapShape(src, from, to)
+	if cells == nil {
+		cells = []domain.FlowCell{}
+	}
+	if unmapped == nil {
+		unmapped = []string{}
+	}
+	return &ImportedShape{
+		FromPresetID: p.ID, FromName: p.Name, Mode: oneMode(cells), Shape: cells,
+		Where: domain.PresetShapeNodeWord(cells, to.Positions), Unmapped: unmapped,
+	}, nil
+}
+
+// shapeFrame is one process's positions in picture order and its routing set.
+func (s *ProcessService) shapeFrame(processID int64) (domain.ShapeFrame, error) {
+	positions, err := s.pressOrder(processID)
+	if err != nil {
+		return domain.ShapeFrame{}, err
+	}
+	routing, err := s.db.ListRoutingNodes(processID)
+	if err != nil {
+		return domain.ShapeFrame{}, err
+	}
+	return domain.ShapeFrame{Positions: positions, Routing: routing}, nil
+}
+
 // CreateFromStyle names the shape of one style's flow. The part is stripped
 // here, so the store's refusal of a payload is a pin on this function rather
 // than a path a user can reach.
