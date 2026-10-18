@@ -58,7 +58,7 @@ func stationBodies(t *testing.T, fixture map[string]any) map[string]map[string]a
 const M = require(%q);
 const f = require(%q);
 process.stdout.write(JSON.stringify({
-  'save': M.flowSaveBody(f.styleID, f.cells, f.fingerprint, f.stationID, []),
+  'save': M.flowSaveBody(f.styleID, f.cells, f.fingerprint, f.stationID),
   'mint': M.mintBody(f.presetID, f.codes, f.stationID),
 }));
 `, filepath.ToSlash(modulePath), filepath.ToSlash(fixturePath))

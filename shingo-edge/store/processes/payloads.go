@@ -37,12 +37,15 @@ func ListProcessPayloads(db DBTX, processID int64) ([]string, error) {
 // ReplaceProcessPayloads sets the stored half to exactly this list.
 //
 // A SET-TO, AND ONE ROUND TRIP. The page sends the whole list because that is
-// what the picker holds; a per-name POST would be the routing set's shape,
-// which costs Add Process a round trip per part. Blanks and duplicates are
-// dropped rather than written: the list comes from a picker, and a payload
-// code of "" is a nameless part every screen would then offer.
+// what the picker holds; a POST per name would cost Add Process a round trip
+// per part (the routing set's PUT is the same shape for the same reason).
+// Blanks and duplicates are dropped rather than written: the list comes from
+// a picker, and a payload code of "" is a nameless part every screen would
+// then offer.
 //
-// A DELETE-AND-INSERT INSIDE ONE TRANSACTION rather than a diff. The table has
+// A DELETE-AND-INSERT rather than a diff. NOT IN A TRANSACTION: the one
+// caller (store.DB.ReplaceProcessPayloads) passes the bare handle, so a write
+// that fails part way leaves the set partly written. The table has
 // no dependants — nothing references a process_payloads row, which is the
 // difference between this and the routing set, whose delete is refused while a
 // live claim routes through the name. A part taken out of the set stops being

@@ -422,9 +422,16 @@ func stagingCards(in CellPictureInput, positions []CellPosition) []CellStaging {
 		}
 		byName[name] = card
 	}
-	for front, c := range in.Claims {
-		add(c.InboundStaging, front, "inbound_staging")
-		add(c.OutboundStaging, front, "outbound_staging")
+	// In picture order, so "first" is the same position on every read: a map
+	// range over the claims captioned a shared lane for a different position
+	// each time.
+	for _, p := range positions {
+		c, ok := in.Claims[p.CoreNodeName]
+		if !ok {
+			continue
+		}
+		add(c.InboundStaging, p.CoreNodeName, "inbound_staging")
+		add(c.OutboundStaging, p.CoreNodeName, "outbound_staging")
 	}
 	for _, name := range in.StagingOffers {
 		add(name, "", "")

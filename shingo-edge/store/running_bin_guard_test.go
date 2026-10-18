@@ -14,7 +14,7 @@ import (
 // door.
 //
 // SaveFlow refuses a position move on the running style, and it was the ONLY
-// door that did: the legacy POST/DELETE /api/style-node-claims and the
+// door that did: the retired POST/DELETE /api/style-node-claims and the
 // replenishment page's write both reach DeleteStyleNodeClaim without passing
 // it. A rule enforced at one of three doors is a rule the other two break.
 //

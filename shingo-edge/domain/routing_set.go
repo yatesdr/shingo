@@ -9,8 +9,8 @@ import (
 //
 // A process's routing set is the list of nodes it may route material through
 // that are not its own positions: where bins come from (source), where they
-// wait on the way (staging) and where they go (destination). The HMI flow
-// composer offers a press only these, never the plant. Positions stay in
+// wait on the way (staging) and where they go (destination). The composer
+// offers a press only these, never the plant. Positions stay in
 // process_nodes; the effective routing picture is the union of the two.
 //
 // It is a TABLE (process_routing_nodes), not a role column on process_nodes,
@@ -36,7 +36,8 @@ const (
 	// RoutingOriginEngineer: typed on the desktop Processes page.
 	RoutingOriginEngineer = "engineer"
 	// RoutingOriginBackfill: derived from live claims' source / staging /
-	// destination fields. Lands DISABLED until an engineer adopts it.
+	// destination fields, once, by migration v25. Lands enabled: the press
+	// already routes material through every one of them.
 	RoutingOriginBackfill = "backfill"
 )
 
@@ -67,10 +68,9 @@ type RoutingNode struct {
 	CalledBy     string    `json:"called_by"`
 	CreatedAt    time.Time `json:"created_at"`
 	// StyleCount is how many of the process's LIVE styles name this node in
-	// THIS role — the evidence the Routing panel puts under a backfilled name
-	// ("inbound source on 10 styles"). It is a read-side count and no column:
-	// the derivation already reads exactly these claims, and this is that read
-	// exposed rather than a second one.
+	// THIS role — the evidence the Routing picker puts beside a backfilled name
+	// ("inbound source on 10 styles"). It is a read-side count and no column,
+	// taken from the live claims the routing read already holds.
 	//
 	// PER ROLE, not per name, and by the same predicate the delete guard
 	// matches on: a node that is a live source may be nobody's destination,

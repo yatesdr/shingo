@@ -66,7 +66,7 @@ func scanRoutingNode(scanner interface{ Scan(...any) error }) (RoutingNode, erro
 // carry a correlated COUNT(DISTINCT) over every claim of the process, with
 // TRIM() on both sides of every comparison, which no index can serve: 1.23 ms
 // at 40 styles and 2.65 ms at 90, on every poll of every station, for a number
-// the station discards. ListRoutingNodesWithCounts is the panel's read.
+// the station discards. RoutingSet is the panel's read.
 func ListRoutingNodes(db DBTX, processID int64) ([]RoutingNode, error) {
 	rows, err := db.Query(`SELECT `+routingSelect+` FROM process_routing_nodes
 		WHERE process_id = ? ORDER BY `+routingRoleOrder+`, sequence, core_node_name`, processID)
@@ -114,7 +114,7 @@ func ListRoutingNodesWithCounts(db *sql.DB, processID int64) ([]RoutingNode, err
 // universe a flow preset is validated against.
 //
 // ADOPTED OR NOT, by owner ruling R4 (2026-09-12). The `enabled` switch is the
-// engineer filtering what OPERATORS see as options on the HMI; it says nothing
+// engineer filtering what the composer offers as options; it says nothing
 // about what a flow may name. With the filter here, a press whose routing set
 // had been backfilled but not adopted could RUN a flow — `flow/save` validates
 // against the process's nodes and the scene, not against this — and could not
@@ -220,9 +220,10 @@ func UpsertRoutingNode(db *sql.DB, kinds domain.CoreNodeKinds, in RoutingNodeInp
 // The row must belong to processID.
 //
 // SWITCHING A LANE ON IS REFUSED. A row naming a lane can be in the table from
-// before the saves refused one, or derived from a claim stored before; it stays
-// off. The check reads the row first (one SELECT), only when switching on with
-// a lane known; switching off is never refused.
+// before the saves refused one, or from migration v25, which does not filter
+// lanes; once switched off it stays off. The check reads the row first (one
+// SELECT), only when switching on with a lane known; switching off is never
+// refused.
 func SetRoutingNodeEnabled(db *sql.DB, kinds domain.CoreNodeKinds, processID, id int64, enabled bool, calledBy string) error {
 	if enabled && len(kinds.Lanes) > 0 {
 		var name, role string

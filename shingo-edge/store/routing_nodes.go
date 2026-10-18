@@ -15,7 +15,8 @@ func (db *DB) ListRoutingNodes(processID int64) ([]processes.RoutingNode, error)
 }
 
 // ListRoutingNodesWithCounts is ListRoutingNodes with the Routing panel's
-// per-role style counts filled in. The panel's read, and only the panel's.
+// per-role style counts filled in. Unused: the panel reads RoutingSet, which
+// makes the same two reads.
 func (db *DB) ListRoutingNodesWithCounts(processID int64) ([]processes.RoutingNode, error) {
 	return processes.ListRoutingNodesWithCounts(db.DB, processID)
 }

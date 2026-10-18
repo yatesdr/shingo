@@ -92,9 +92,6 @@ func TestDeleteStyle_RetiresWithoutRemoving(t *testing.T) {
 			t.Error("ListStylesByProcess dropped the live style too")
 		}
 
-		if s, err := db.GetStyleByName("RETIRE-ME"); err == nil && s != nil {
-			t.Errorf("GetStyleByName resolved a retired style (id %d) — name is an ingress key", s.ID)
-		}
 	})
 
 	t.Run("still resolves by id for display", func(t *testing.T) {

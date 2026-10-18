@@ -449,8 +449,8 @@ CREATE TABLE IF NOT EXISTS process_nodes (
 -- the map, not against this list.
 --
 -- origin records where a row came from: 'engineer' (typed on the desktop) or
--- 'backfill' (derived from live claims' source / staging / destination fields,
--- landing DISABLED until an engineer adopts it).
+-- 'backfill' (derived once from live claims' source / staging / destination
+-- fields by migration v25, landing enabled).
 CREATE TABLE IF NOT EXISTS process_routing_nodes (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     process_id     INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
@@ -777,9 +777,9 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     -- are SERVER-STAMPED — the client never sends them.
     --
     -- source is the writer: 'admin' (the desktop claim editor), 'hmi' (the
-    -- station's flow composer), 'generated' (GenerateStyles), 'cloned'
-    -- (CloneStyle). DEFAULT 'admin' is right for every row that already
-    -- exists: the desktop was the only writer there was.
+    -- station's flow composer), 'generated' (the retired Generate
+    -- variants), 'cloned' (CloneStyle). DEFAULT 'admin' is right for every
+    -- row that already exists: the desktop was the only writer there was.
     source                  TEXT NOT NULL DEFAULT 'admin',
     -- called_by is the session user (admin) or the station (hmi); '' on
     -- rows that predate attribution and on generated/cloned rows made by

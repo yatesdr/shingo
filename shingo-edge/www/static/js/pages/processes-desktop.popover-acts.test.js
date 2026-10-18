@@ -1794,9 +1794,8 @@ async function mainAsync() {
         click(main, doc, { act: 'save' });
         await settle();
         if (saves.length !== 1) throw new Error('the save was not posted once: ' + saves.length);
-        assert.deepStrictEqual(Object.keys(saves[0]), ['to_style_id', 'cells', 'fingerprint', 'station_id', 'taken_off'],
-            'the save body gains taken_off and nothing else');
-        assert.deepStrictEqual(saves[0].taken_off, ['PART-A'], 'the save does not name the part taken off');
+        assert.deepStrictEqual(Object.keys(saves[0]), ['to_style_id', 'cells', 'fingerprint', 'station_id'],
+            'the save body carries no taken_off: the preview read it, the save never did');
     });
 
     await pin('discarding the draft forgets the part taken off', async () => {

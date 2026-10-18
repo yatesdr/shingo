@@ -15,10 +15,9 @@ import (
 // claimToBody, expressed in Go so the round-trip is testable without a browser.
 //
 // THE EDITOR IS GONE (U9d took the three-tab page and processes.js with it).
-// What survives it is the SHAPE: this is still what the legacy
-// /api/style-node-claims routes accept, those routes are still mounted and
-// guarded (www/router.go), and the body a caller sends them is this one. So the
-// round-trip below is about the door, not about a page.
+// The /api/style-node-claims routes went with Generate (pick-a-part U6). What
+// survives is the store's write: these pin what UpsertStyleNodeClaim does with
+// a body of this shape, which is the store's door, not a page's.
 //
 // The four columns it does NOT carry — sequence, reorder_point_source,
 // keep_staged_node, auto_reorder — are the point. The editor has no control for any

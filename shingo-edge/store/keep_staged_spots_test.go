@@ -92,31 +92,6 @@ func TestKeepStagedSpot_LinePositionAcrossStylesIsRefused(t *testing.T) {
 	wantSpotRefusal(t, err, "SPOT-L", "core_node_name", "same process")
 }
 
-// TestKeepStagedSpot_CopyIntoAnotherProcessIsRefused: a copy carries
-// keep_staged_node, so copying a kept spare into a style of another process would
-// put one spot on two processes' lines. The whole copy rolls back.
-func TestKeepStagedSpot_CopyIntoAnotherProcessIsRefused(t *testing.T) {
-	t.Parallel()
-	db := coverageDB(t)
-	_, src := seedProcessStyle(t, db, "KS-P1", "KS-SRC")
-	_, dst := seedProcessStyle(t, db, "KS-P2", "KS-DST")
-	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, spotClaim(src, "LINE-1", "SPOT-C", true)); err != nil {
-		t.Fatalf("keep-staged claim: %v", err)
-	}
-	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, spotClaim(dst, "LINE-9", "STG-9", false)); err != nil {
-		t.Fatalf("target claim: %v", err)
-	}
-	_, err := db.CopyStyleClaims(domain.CoreNodeKinds{}, src, dst, true, nil)
-	wantSpotRefusal(t, err, "SPOT-C", "another process")
-	claims, err := db.ListStyleNodeClaims(dst)
-	if err != nil {
-		t.Fatalf("list target: %v", err)
-	}
-	if len(claims) != 1 || claims[0].CoreNodeName != "LINE-9" {
-		t.Errorf("a refused copy changed the target: %+v", claims)
-	}
-}
-
 // TestKeepStagedSpot_MovingABusySpotIsRefused: an order still delivering to
 // the spot holds it in place; once that order is terminal the move lands.
 func TestKeepStagedSpot_MovingABusySpotIsRefused(t *testing.T) {

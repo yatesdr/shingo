@@ -495,16 +495,10 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 			r.Put("/styles/{id}", h.apiUpdateStyle)
 			r.Delete("/styles/{id}", h.apiDeleteStyle)
 			r.Post("/styles/{id}/clone", h.apiCloneStyle)
-			r.Post("/styles/{id}/generate", h.apiGenerateStyles)
-			r.Post("/styles/{id}/claims/copy-to", h.apiCopyStyleClaims)
 			// The Quality Hold settings write (the toggle's stamp/clear).
 			r.Post("/processes/{id}/containment-setting", h.apiProcessContainmentSetting)
 			// The FG light-curtain interlock's per-node settings write.
 			r.Post("/process-nodes/{id}/curtain-setting", h.apiProcessNodeCurtainSetting)
-
-			r.Get("/styles/{id}/node-claims", h.apiListStyleNodeClaims)
-			r.Post("/style-node-claims", h.apiUpsertStyleNodeClaim)
-			r.Delete("/style-node-claims/{id}", h.apiDeleteStyleNodeClaim)
 
 			// Operator stations — the desktop's D4 writes to these, and this
 			// router had neither, so a test of the page's screen sheet got a

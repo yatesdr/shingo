@@ -1067,7 +1067,7 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	//      survives startup, migration and every operator tap until a node-list
 	//      RESPONSE arrives. Unbounded when Core never answers — which is a
 	//      condition this plant has been in.
-	//   2. CloneStyle / GenerateStyles. cloneStyleTx copies swap_mode with a raw
+	//   2. CloneStyle. cloneStyleTx copies swap_mode with a raw
 	//      INSERT that never sees the upsert allowlist, so cloning a style that
 	//      still carries a loader claim mints another one. See styles.go.
 	//

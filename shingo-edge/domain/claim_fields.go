@@ -42,8 +42,6 @@ func ClaimHas(c *NodeClaim, f flowspec.Field) bool {
 		return c.PayloadCode != ""
 	case flowspec.AllowedPayloadCodes:
 		return len(c.AllowedPayloadCodes) > 0
-	case flowspec.UOPCapacity:
-		return c.UOPCapacity != 0
 	case flowspec.ReorderPoint:
 		return c.ReorderPoint != 0
 	case flowspec.ReorderPointSource:
@@ -106,8 +104,6 @@ func ClaimInputHas(in NodeClaimInput, f flowspec.Field) bool {
 		return in.PayloadCode != ""
 	case flowspec.AllowedPayloadCodes:
 		return len(in.AllowedPayloadCodes) > 0
-	case flowspec.UOPCapacity:
-		return in.UOPCapacity != 0
 	case flowspec.ReorderPoint:
 		return in.ReorderPoint != 0
 	case flowspec.ReorderPointSource:

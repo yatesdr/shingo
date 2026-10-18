@@ -95,6 +95,13 @@ const ROUTING = [
     { core_node_name: 'Retired Lane', role: 'source', label: 'Retired Lane', enabled: false, sequence: 5 },
 ];
 
+// advancedDefaults is the block a position with no claim opens on: PLN_06 is
+// free on style 7, so it has no stored block and reads the INSERT defaults.
+function advancedDefaults() {
+    const s = M.reduce(initStyle(7), { type: 'addPosition', node: 'PLN_06', mode: 'two_robot' });
+    return M.advancedFor(s, 'PLN_06');
+}
+
 function initStyle(styleId) {
     const f = FIXTURES.styles[String(styleId)];
     return M.init({
@@ -267,26 +274,6 @@ test('a blank CATID reorders nothing', () => {
     assert.deepStrictEqual(M.partOffers(s).map(r => r.code), ['AA', 'ZZ']);
 });
 
-// A MODE THAT FORBIDS payload_code HAS NO PART ROW. Every (role, mode) row of
-// the real flowspec is walked, so this cannot drift from the table the server
-// refuses a save with.
-test('partAllowed answers flowspec, for every (role, mode) the spec has', () => {
-    for (const role of Object.keys(FLOWSPEC.steady)) {
-        for (const mode of Object.keys(FLOWSPEC.steady[role])) {
-            let s = M.init({
-                styleId: 7, positions: POSITIONS, routing: ROUTING,
-                claims: [], parts: [], flowspec: FLOWSPEC, groups: GROUPS, palette: [],
-            });
-            s = M.reduce(s, { type: 'addPosition', node: 'PLN_01', mode: mode });
-            s.cells.PLN_01.role = role;
-            s = M.reduce(s, { type: 'setMode', node: 'PLN_01', mode: mode });
-            const forbidden = FLOWSPEC.steady[role][mode].payload_code === 'forbidden';
-            assert.strictEqual(M.partAllowed(s, 'PLN_01'), !forbidden,
-                role + '/' + mode + ': the part row disagrees with flowspec');
-        }
-    }
-});
-
 // A LEGACY MODE IS A CARD, NOT A CRASH. style_node_claims carries `simple` and
 // `manual_swap` as well as the four MODES names, and CARDLINE[mode](cell) on
 // one of those threw — on the BOARD's own read-only flow panel, which draws
@@ -370,10 +357,8 @@ test('the route the model holds is a copy, not the callers array', () => {
 
 // ── the two mode-dependent columns ──────────────────────────────────────────
 //
-// FLOWSPEC IS THE ORACLE FOR BOTH SURFACES. The desktop draws Partner and
-// Staging from rowColumns; the HMI's S5 draws its mode-dependent row from
-// ROW_FIELDS. These pin that neither invents a field the spec forbids, and
-// that every field S5 writes has a home on the desktop.
+// FLOWSPEC IS THE ORACLE. The desktop draws Partner and Staging from
+// rowColumns; these pin that it invents no field the spec forbids.
 test('rowColumns draws exactly the fields flowspec marks used or required', () => {
     for (const mode of MODES) {
         let s = initStyle(7);
@@ -391,43 +376,6 @@ test('rowColumns draws exactly the fields flowspec marks used or required', () =
             }
         }
     }
-});
-
-// ONE FIELD, ONE ANSWER, WHICHEVER SURFACE ASKS (SYNTH §3 B5).
-//
-// This used to compare the HMI's per-mode LITERAL against the desktop's
-// flowspec-derived columns, and it passed while the two disagreed: the literal
-// gave a press index `paired_core_node` and nothing else, so there was no
-// staging field to find a home for — and the desktop drew a Staging chip there
-// the whole time, because flowspec marks `inbound_staging` used on that row.
-// The set the test walked was the one the defect had already shrunk.
-//
-// Both sides read flowspec now, so this is an equality rather than a
-// containment, and it is the assertion that would have been red.
-test('the HMI offers exactly what the desktop offers, for every mode', () => {
-    for (const mode of MODES) {
-        let s = initStyle(7);
-        s = M.reduce(s, { type: 'setMode', node: 'PLN_01', mode: mode });
-        const hmi = M.rowFields(s, 'PLN_01').slice().sort();
-        const desktop = M.rowColumns(s, 'PLN_01', 'partner')
-            .concat(M.rowColumns(s, 'PLN_01', 'staging'))
-            .map(c => c.field).sort();
-        assert.deepStrictEqual(hmi, desktop,
-            mode + ': the HMI writes ' + JSON.stringify(hmi) +
-            ' and the desktop draws ' + JSON.stringify(desktop));
-    }
-});
-
-// THE ROWS OF A CELL WITH NO CHOREOGRAPHY ARE NONE. A mode the spec has no row
-// for — a legacy `simple`, a cell nobody has answered yet — draws no
-// mode-dependent row rather than guessing one, which is what the literal did.
-test('rowFields draws nothing where flowspec has no row', () => {
-    let s = initStyle(7);
-    s = M.reduce(s, { type: 'removePosition', node: 'PLN_01' });
-    assert.deepStrictEqual(M.rowFields(s, 'PLN_01'), []);
-    s = M.reduce(s, { type: 'addPosition', node: 'PLN_01', mode: 'simple' });
-    assert.deepStrictEqual(M.rowFields(s, 'PLN_01'), [],
-        'a legacy mode drew rows flowspec has no opinion about');
 });
 
 test('the press index carries a staging pair and a third position — the five that had no home', () => {
@@ -507,7 +455,6 @@ test('changing mode clears every field Steady marks Forbidden — every mode, ev
                 (Array.isArray(v) && v.length === 0);
             assert.ok(empty, mode + ': ' + field + ' is forbidden but the cell carries ' + JSON.stringify(v));
         }
-        assert.ok(M.rowFields(s, 'PLN_01'), 'rowFields names the rows for ' + mode);
     }
 });
 
@@ -987,7 +934,7 @@ test('no operator-visible string says R1 or R2', () => {
         said.push(b.heading, b.detail, b.button.label);
         for (const f of M.findings(s)) said.push(f.short, f.message, f.detail);
     }
-    said.push(...Object.values(M.modeLabels()), ...Object.values(M.modeHelp()));
+    said.push(...Object.values(M.modeLabels()));
     for (const lit of said.filter(Boolean)) {
         assert.ok(!/\bR[12]\b/.test(lit), 'operator-visible string says R1/R2: ' + lit);
     }
@@ -1084,13 +1031,10 @@ test('the modal opens on the stored claim, and on the defaults for a position wi
     // one translation the wire needs: Go writes an empty list as null and the
     // model reads null as the default.
     const stored = FIXTURES.styles['7'].advanced.PLN_01;
-    const want = M.advancedDefaults();
+    const want = advancedDefaults();
     for (const k of Object.keys(want)) if (stored[k] !== null && stored[k] !== undefined) want[k] = stored[k];
     assert.deepStrictEqual(M.advancedFor(s, 'PLN_01'), want);
 
-    // PLN_06 is free on style 7 — no claim, so no stored block.
-    const added = M.reduce(s, { type: 'addPosition', node: 'PLN_06', mode: 'two_robot' });
-    assert.deepStrictEqual(M.advancedFor(added, 'PLN_06'), M.advancedDefaults());
 });
 
 test('a null list on the wire reads as the empty default, not as null', () => {
@@ -1160,7 +1104,7 @@ test('the modal draws a field only when flowspec neither forbids it nor ignores 
 
 test('"N set" counts what ClaimHas counts, and nothing flowspec hides', () => {
     const s = initStyle(7);
-    const base = M.advancedDefaults();
+    const base = advancedDefaults();
     assert.deepStrictEqual(M.advancedSet(s, 'PLN_01', base), []);
 
     // replace is the absence of an opinion; the other two are opinions.
@@ -1328,6 +1272,11 @@ test('toCells after an apply is the same on the desktop as on the station', () =
 // operator reads at the press, not what a test author thought the planner
 // would say.
 
+// sentence is one order as a single line, robot included.
+function sentence(o) {
+    return 'Robot ' + o.robot + ' · ' + M.orderTrip(o);
+}
+
 function previewed(styleId) {
     const s = initStyle(styleId);
     return M.applyPreview(s, {
@@ -1340,7 +1289,7 @@ function previewed(styleId) {
 
 test('the press index reads as four orders: two for Robot 1, two for Robot 2', () => {
     const s = previewed(7);
-    const got = M.orderSentences(s).map(M.orderSentence);
+    const got = M.orderSentences(s).map(sentence);
     assert.deepStrictEqual(got, [
         'Robot 1 · PLN_02 → PLN_01',
         'Robot 2 · PLN_01 → PLN_02',
@@ -1360,7 +1309,7 @@ test('the press index reads as four orders: two for Robot 1, two for Robot 2', (
 
 test('the two-robot swap names the supermarket at both ends, and the part on the way in', () => {
     const s = previewed(11);
-    const got = M.orderSentences(s).map(M.orderSentence);
+    const got = M.orderSentences(s).map(sentence);
     assert.deepStrictEqual(got, [
         'Robot 2 · PLN_01 → Supermarket Area',
         'Robot 1 · Supermarket Empty Totes → PLN_03 · SYN-A-P010',
@@ -1377,7 +1326,7 @@ test('the two-robot swap names the supermarket at both ends, and the part on the
 // end on is gone from every surface).
 test('every sentence is Robot N · from → to, and a part only when there is one', () => {
     for (const id of [7, 11]) {
-        for (const line of M.orderSentences(previewed(id)).map(M.orderSentence)) {
+        for (const line of M.orderSentences(previewed(id)).map(sentence)) {
             assert.ok(/^Robot [12] · [^→]+ → [^·]+( · .+)?$/.test(line), id + ': ' + line);
         }
     }
@@ -1386,7 +1335,7 @@ test('every sentence is Robot N · from → to, and a part only when there is on
     // it is "the part, when a part is what is moving".
     for (const o of M.orderSentences(previewed(11))) {
         if (o.robot === 2 && o.what !== '') {
-            assert.fail('an evacuation named what it carries: ' + M.orderSentence(o));
+            assert.fail('an evacuation named what it carries: ' + sentence(o));
         }
     }
 });
@@ -1405,7 +1354,7 @@ test('a leg with only one end is left out rather than half-printed', () => {
             { core_node_name: 'PLN_04', supply_order: { kind: 'complex', from: 'PLN_05', to: 'PLN_04' } },
         ],
     });
-    const got = M.orderSentences(s).map(M.orderSentence);
+    const got = M.orderSentences(s).map(sentence);
     assert.deepStrictEqual(got, ['Robot 1 · PLN_05 → PLN_04']);
 });
 

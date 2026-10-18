@@ -188,9 +188,9 @@ var (
 // destination order, with the per-role style counts the Routing panel shows
 // as evidence under a backfilled name.
 //
-// THE COUNTING VARIANT IS THIS ONE because this method has exactly one
-// caller, the panel's GET. Everything else on this path — the composer block,
-// the preview, the save — goes to the store's plain read.
+// IT HAS NO CALLER: the panel's GET goes through RoutingSet below, which
+// makes the same two reads. Everything else on this path — the composer
+// block, the preview, the save — goes to the store's plain read.
 func (s *ProcessService) ListRoutingNodes(processID int64) ([]domain.RoutingNode, error) {
 	return s.db.ListRoutingNodesWithCounts(processID)
 }

@@ -124,57 +124,6 @@ type Style struct {
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
-// StyleVariant describes one style to scaffold by cloning a base style
-// (copying its node-claim choreography verbatim) and then overriding only
-// the per-payload fields on selected claims. Used by GenerateStyles to
-// stamp out a family of near-identical styles — e.g. the 8 part numbers a
-// press runs, which share node layout, swap mode, staging, and pairing and
-// differ only in which payload each produce node carries.
-type StyleVariant struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Overrides   []ClaimOverride `json:"overrides"`
-}
-
-// ClaimOverride sets the per-payload fields on one cloned claim, matched by
-// CoreNodeName. Every other claim field (role, swap_mode, staging, pairing,
-// flags) is inherited from the base clone and never touched here, so the
-// override can't break a swap-mode invariant the base already satisfied.
-// For manual_swap claims PayloadCode is empty and AllowedPayloadCodes holds
-// the switchable set; for every other mode PayloadCode is the binding and
-// AllowedPayloadCodes is usually just that one code.
-type ClaimOverride struct {
-	CoreNodeName        string   `json:"core_node_name"`
-	PayloadCode         string   `json:"payload_code"`
-	UOPCapacity         int      `json:"uop_capacity"`
-	AllowedPayloadCodes []string `json:"allowed_payload_codes"`
-}
-
-// CopiedClaimOverride is one per-claim adjustment for a CopyStyleClaims batch,
-// matched by the SOURCE claim's core_node_name — the copied rows carry the
-// source's node names until a rename changes them, which is what makes the
-// key stable for the span this struct is used over. Every other field is
-// optional: blank inherits the copied claim's value, so a row names only
-// what it changes. Shared verbatim with the copy modal, which renders one
-// row per source claim with these same fields as inputs.
-//
-// Distinct from ClaimOverride above, which is the style-variant generator's
-// payload-only override: this one is the copy-claims modal's row and can
-// also re-point routing, staging and pairing. The store/processes name for it
-// is ClaimOverride, through an alias.
-type CopiedClaimOverride struct {
-	Node                 string `json:"node"` // match key; the one required field
-	CoreNodeName         string `json:"core_node"`
-	Role                 string `json:"role"`
-	PayloadCode          string `json:"payload_code"`
-	InboundSource        string `json:"inbound_source"`
-	OutboundDestination  string `json:"outbound_destination"`
-	InboundStaging       string `json:"inbound_staging"`
-	OutboundStaging      string `json:"outbound_staging"`
-	PairedCoreNode       string `json:"paired_core_node"`
-	SecondPairedCoreNode string `json:"second_paired_core_node"`
-}
-
 // Node is a process node — one slot in a Process at which material
 // is consumed or produced. ProcessNodeID in other tables refers to
 // this row's ID. Joined fields (StationName, ProcessName) ride along
@@ -582,7 +531,7 @@ type NodeClaim struct {
 const (
 	ClaimSourceAdmin     = "admin"     // the desktop claim editor
 	ClaimSourceHMI       = "hmi"       // the station's flow composer
-	ClaimSourceGenerated = "generated" // GenerateStyles
+	ClaimSourceGenerated = "generated" // the retired Generate variants; old rows only
 	ClaimSourceCloned    = "cloned"    // CloneStyle
 )
 
@@ -1162,11 +1111,10 @@ type NodeClaimInput struct {
 	PayloadCode  string             `json:"payload_code"`
 	// UOPCapacity IS NOT A WRITE. The store never writes the column: the
 	// value is resolved from the payload catalog on every read, keyed on the
-	// payload code above. It stays on the decode shape so the API can REFUSE
-	// a body that carries one — deleting the field would have json silently
-	// drop the key, which is the same silence in different clothes — and
-	// Expand and InputFromClaim no longer echo it, because echoing a number
-	// nothing reads is how a dead column looks alive.
+	// payload code above, and Expand and InputFromClaim do not echo it. What
+	// still sets it is the engine tests' seed seam, which writes it into the
+	// catalog (engine/legacy_claim_seed_test.go seedClaimCapacity). No API
+	// decodes this shape any more (the claim editor routes went, pick-a-part U6).
 	UOPCapacity         int    `json:"uop_capacity"`
 	ReorderPoint        int    `json:"reorder_point"`
 	InboundStaging      string `json:"inbound_staging"`

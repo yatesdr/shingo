@@ -238,3 +238,25 @@ func TestBuildCellPicture_CarriesTheKeyRouteAndNoCoordinates(t *testing.T) {
 // never opens, so without LMs on the picture the HMI could draw a robot's path
 // only as a straight line between two cards. They ride the PICTURE — once per
 // fetch, when its version moves — and never the poll.
+
+// TWO FLOWS PARKING AT ONE LANE ARE CAPTIONED FOR THE FIRST POSITION IN THE
+// PICTURE, every time. The cards were built off a map range over the claims,
+// so which position a shared lane was captioned for changed from one read to
+// the next (pick-a-part U6).
+func TestBuildCellPicture_ASharedLaneIsCaptionedInPictureOrder(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		pic := BuildCellPicture(CellPictureInput{
+			StationID: 5,
+			Nodes:     stagingNodes("PLN_01", "PLN_02", "PLN_03", "PLN_04"),
+			Claims: map[string]NodeClaim{
+				"PLN_01": {CoreNodeName: "PLN_01", SwapMode: protocol.SwapModeTwoRobot, InboundStaging: "SLN_07"},
+				"PLN_02": {CoreNodeName: "PLN_02", SwapMode: protocol.SwapModeTwoRobot, InboundStaging: "SLN_07"},
+				"PLN_03": {CoreNodeName: "PLN_03", SwapMode: protocol.SwapModeTwoRobot, InboundStaging: "SLN_07"},
+				"PLN_04": {CoreNodeName: "PLN_04", SwapMode: protocol.SwapModeTwoRobot, InboundStaging: "SLN_07"},
+			},
+		})
+		if len(pic.Staging) != 1 || pic.Staging[0].PartnerOf != "PLN_01" {
+			t.Fatalf("read %d: staging %+v, want one SLN_07 card for PLN_01", i, pic.Staging)
+		}
+	}
+}

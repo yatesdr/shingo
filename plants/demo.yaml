@@ -295,7 +295,7 @@ stations:
   - {name: ALN_002, kind: weld}      # WELD-1 produce ASSY
   - {name: SLN_001, kind: staging}   # WELD-1 ALN_001 inbound stage
   - {name: SLN_002, kind: staging}   # WELD-1 ALN_002 inbound stage
-  - {name: SLN_011, kind: staging}   # WELD-1 ALN_001 OUTBOUND stage (two_robot removal leg)
+  - {name: SLN_011, kind: staging}   # WELD-1 ALN_001 OUTBOUND stage — unused: no two_robot leg reads it, Robot 2 takes the old bin straight to outbound_destination
   # ── WELD-2: single_robot (consume PANEL-B + BRKT, produce ASSY) ──
   - {name: ALN_003, kind: weld}      # WELD-2 consume PANEL-B
   - {name: ALN_004, kind: weld}      # WELD-2 consume BRKT
@@ -309,11 +309,11 @@ stations:
   # ── WELD-3: two_robot consume CLIP (single-window loader leg's drain) ──
   - {name: ALN_006, kind: weld}      # WELD-3 consume CLIP
   - {name: SLN_009, kind: staging}   # WELD-3 ALN_006 inbound stage
-  - {name: SLN_012, kind: staging}   # WELD-3 ALN_006 OUTBOUND stage (two_robot removal leg)
+  - {name: SLN_012, kind: staging}   # WELD-3 ALN_006 OUTBOUND stage — unused: no two_robot leg reads it, Robot 2 takes the old bin straight to outbound_destination
   # ── WELD-4: two_robot consume STUD (second single-window loader leg's drain) ──
   - {name: ALN_007, kind: weld}      # WELD-4 consume STUD
   - {name: SLN_010, kind: staging}   # WELD-4 ALN_007 inbound stage
-  - {name: SLN_013, kind: staging}   # WELD-4 ALN_007 OUTBOUND stage (two_robot removal leg)
+  - {name: SLN_013, kind: staging}   # WELD-4 ALN_007 OUTBOUND stage — unused: no two_robot leg reads it, Robot 2 takes the old bin straight to outbound_destination
   # ── WELD-5 / PLK_HOMES: the HOME-RETURN rig ───────────────────────────
   #
   # THE ONLY DEDICATED_POSITIONS LOADER IN THIS PLANT, and the only leg that
@@ -371,7 +371,7 @@ stations:
   - {name: PLK_B2, kind: loader}     # PLK_HOMES buffer 2
   - {name: ALN_008, kind: weld}      # WELD-5 consume SHIM, swaps against PLK_H1
   - {name: SLN_016, kind: staging}   # WELD-5 ALN_008 inbound stage
-  - {name: SLN_017, kind: staging}   # WELD-5 ALN_008 OUTBOUND stage (two_robot removal leg)
+  - {name: SLN_017, kind: staging}   # WELD-5 ALN_008 OUTBOUND stage — unused: no two_robot leg reads it, Robot 2 takes the old bin straight to outbound_destination
   # ── Loaders (manual_swap): one multi-window + two single-window ──
   # PLK_LOADER is a SHARED MULTI-WINDOW BRKT loader (synthetic identity — not a node; its
   # two windows below are its only physical nodes, each a delivery target + its own HMI).

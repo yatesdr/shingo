@@ -20,11 +20,6 @@ func (db *DB) ListStylesByProcess(processID int64) ([]processes.Style, error) {
 	return processes.ListStylesByProcess(db.DB, processID)
 }
 
-// GetStyleByName looks up a single style by name.
-func (db *DB) GetStyleByName(name string) (*processes.Style, error) {
-	return processes.GetStyleByName(db.DB, name)
-}
-
 // GetStyle looks up a single style by id.
 func (db *DB) GetStyle(id int64) (*processes.Style, error) {
 	return processes.GetStyle(db.DB, id)
@@ -66,23 +61,6 @@ func (db *DB) StyleDeleteImpact(id int64) (*processes.StyleImpact, error) {
 // style_node_claims verbatim. Returns the new style id.
 func (db *DB) CloneStyle(kinds domain.CoreNodeKinds, srcID int64, name, description, calledBy string) (int64, error) {
 	return processes.CloneStyle(db.DB, kinds, srcID, name, description, calledBy)
-}
-
-// CopyStyleClaims replaces target's node claims with src's (the clone
-// column list, verbatim). includePayloads=false keeps the target's own
-// payloads on the nodes the two styles share; overrides is the optional
-// per-claim adjust layer applied on top of the copy (see
-// processes.ClaimOverride). Returns the notes the override layer produced.
-// Callers own the active-style and same-process rules.
-func (db *DB) CopyStyleClaims(kinds domain.CoreNodeKinds, srcID, targetID int64, includePayloads bool, overrides []processes.ClaimOverride) ([]string, error) {
-	notes, _, err := processes.CopyStyleClaims(db.DB, kinds, srcID, targetID, includePayloads, overrides)
-	return notes, err
-}
-
-// GenerateStyles scaffolds a family of styles from one base style, each a
-// clone of base with per-claim payload overrides applied, in one transaction.
-func (db *DB) GenerateStyles(kinds domain.CoreNodeKinds, baseID int64, variants []domain.StyleVariant, calledBy string) ([]int64, error) {
-	return processes.GenerateStyles(db.DB, kinds, baseID, variants, calledBy)
 }
 
 // ListClaimsByContainmentDest returns every live claim whose containment

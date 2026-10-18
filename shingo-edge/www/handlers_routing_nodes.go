@@ -3,8 +3,9 @@
 //
 // The routing set is the list of nodes a process may route material through
 // that are not its own positions (domain/routing_set.go). The Processes page's
-// Routing panel reads and edits it here; the HMI flow composer's pickers will
-// offer exactly its enabled members. Admin-gated like every other spec write.
+// Routing panel reads and edits it here; the composer offers only its enabled
+// members (the desktop's pickers, the staging lanes on the station's
+// picture). Admin-gated like every other spec write.
 
 package www
 
@@ -20,7 +21,7 @@ import (
 
 // routingSetView is the Routing panel's read: the rows.
 //
-// It also carried a summary line and the gate, both from the boot-time
+// It also carried the gate and a summary line built from the boot-time
 // backfill's report; the panel read neither, and both went with the backfill
 // (pick-a-part brief, unit A). The object stays an object so a field can be
 // added without breaking the one reader (processes-desktop.js loadRouting).

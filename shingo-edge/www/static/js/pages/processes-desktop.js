@@ -704,7 +704,7 @@ function rail() {
         '<div class="pd-grp pd-lbl">All parts · ' + all.length + ' live styles</div>' +
         rest.map(s => styleRow(s, false)).join('') +
         '</div><div class="pd-railfoot"><button class="pd-btn" data-act="new-style">+ New part flow</button>' +
-        '<span class="pd-dim">or generate variants from Settings</span></div></div>';
+        '<span class="pd-dim">a part on a recipe — the recipes are on Presets</span></div></div>';
 }
 
 // The model's own cell shape, in the shape renderFlowPicture draws — the same
@@ -1386,7 +1386,6 @@ async function saveFlow() {
             to_style_id: S.model.styleId, cells: M().toCells(S.model),
             fingerprint: pv.fingerprint || '',
             station_id: stationIDForSave(),
-            taken_off: M().takenOff(S.model),
         }),
     });
     const json = await res.json().catch(() => ({}));
@@ -2384,12 +2383,9 @@ function isPositionRow(name) {
 // process put the name there, not which of their own flows did. And Adopt was
 // a second control for what the switch already does.
 //
-// So: no pills. A name the backfill found carries one dim sub-line that says
-// exactly where it came from, with the evidence — the role it plays in a claim
-// and how many live styles play it. A name an engineer typed says so and when.
-// The switch IS the approval, so a backfilled row arrives off with its
-// sub-line in amber and the sentence that says what turning it on does; once
-// on, the same sentence, dim. The server stamps the authorship.
+// So: no pills. Where a name the backfill found came from, with the evidence
+// — the role it plays in a claim and how many live styles play it — is said
+// in words (below). The server stamps the authorship.
 const ROLE_EVIDENCE = {
     source: 'inbound source',
     staging: 'staging',
@@ -2442,9 +2438,9 @@ function mapSubject() {
 // OUT MEANS SWITCHED OFF, NOT DELETED. `enabled` is the column that already
 // carries this and the store refuses a DELETE while a live claim still routes
 // through the name (ErrRoutingNodeInUse) — so a chip's × would be a control
-// that sometimes fails. Disabling always works, keeps the row's provenance and
-// author, and is what the backfill's own "arrives off" state already means.
-// The row is still there to be picked again, and the picker says so.
+// that sometimes fails. Disabling always works and keeps the row's provenance
+// and author. The row is still there to be picked again, and the picker says
+// so.
 //
 // THE EVIDENCE MOVED INTO THE PICKER rather than being deleted. Q5's sub-line
 // — where a name came from and how many styles use it — is what an engineer
@@ -2510,7 +2506,8 @@ function routingPickersReady() {
 }
 
 // switchedOffIn is the rows of a role the process HAS and has not switched on
-// — the backfill's leftovers, which are invisible to the picker above (it
+// — names taken out with a chip's ×, or landed off by the backfill before
+// 2026-09-16 — which are invisible to the picker above (it
 // draws the enabled rows) and to the HMI (the composer filters to them).
 function switchedOffIn(role) {
     return (S.routing || []).filter(r => r.role === role && !r.enabled);
@@ -2529,9 +2526,10 @@ function routingRole(g) {
     }
     // TURN ALL ON, PER ROLE (SYNTH §3 B6).
     //
-    // The backfill lands a derived name DISABLED and is `INSERT OR IGNORE`, so
-    // it never runs again once the gate is open: a row nobody switched on stays
-    // off forever, and the only way back is one PATCH per row by hand. The 4x2
+    // The backfill landed derived names DISABLED until 2026-09-16, and nothing
+    // re-derives now (migration v25 runs once, only for a process with no
+    // rows): a row nobody switched on stays off forever, and the only way back
+    // is one PATCH per row by hand. The 4x2
     // arrived with seven staging names in exactly that state — the composer's
     // own card said so, by name — and there was nowhere on this screen to say
     // yes to all seven.
@@ -3567,8 +3565,9 @@ function drawSettings() {
     // finished-goods delivery goes to its outbound destination as always; on,
     // a payload flagged for quality containment diverts its bins to the
     // destination picked here instead. The toggle stamps or clears the
-    // containment route on this process's produce claims (all live styles —
-    // a changeover inherits the route), and Core's divert reads those claims;
+    // containment route on the produce claims of every style live at toggle
+    // time; a style minted later copies the current route (engine mintStamp).
+    // Core's divert reads those claims;
     // the claim is the one storage, this screen is its batch editor.
     const holdOn = !!S.settings.quality_hold_enabled;
     const hold = '<div class="pd-sect"><h2>Quality hold</h2></div>' +
@@ -4456,7 +4455,7 @@ function styleAction(act, id) {
         case 'catid':
             openSheet('Expected CATID · ' + st.name,
                 'what the PLC calls this part. A confirmed change to it is what arms a changeover cutover.',
-                sheetField('Expected CATID', 'blank means shingo never matches this style to a scan', 'catid', st.expected_catid),
+                sheetField('Expected CATID', 'blank means the CATIDs come from its parts in the catalog', 'catid', st.expected_catid),
                 'Save', () => sheetSubmit('PUT', '/api/styles/' + id,
                     styleBody(st, { expected_catid: sheetValue('catid') }), refreshProcess));
             return;
@@ -4521,8 +4520,7 @@ async function refreshProcess() {
 // ── the rail's and the list's own creates ────────────────────────────────────
 
 // "+ New part flow": a part this press runs, with the CATID the PLC calls it.
-// The flow itself is drawn afterwards on D1 — a style arrives with no claims
-// and the rail marks it `build`, which is the state the picture is for.
+//
 // NEW PART FLOW IS PICK A RECIPE, FILL EVERY SLOT (pick-a-part U3). The style
 // is minted server-side (POST /flow/mint, the floor's own door): the recipe's
 // cells with these parts on their slots, named per R-D, the recipe stamped as
@@ -4555,10 +4553,10 @@ function openNewStyle() {
         '<div class="v"><select class="pd-inp wide" data-f="recipe" id="pd-newrecipe">' + recipeOpts + '</select></div></div>' +
         '<div id="pd-newslots"></div>' +
         '<div id="pd-newname">' + sheetField('Name', 'what this part is called here', 'name', '') + '</div>' +
-        sheetField('Expected CATID', 'what the PLC calls it — blank means shingo never matches it to a scan',
+        sheetField('Expected CATID', 'what the PLC calls it — blank means the CATIDs come from its parts in the catalog',
             'catid', '') +
-        '<p class="pd-note">A confirmed change to the CATID is what arms a changeover cutover, so a ' +
-        'part with none can be run but never recognised. It can be set later from the part’s own ' +
+        '<p class="pd-note">A confirmed change to the CATID is what arms a changeover cutover. Set one ' +
+        'only when the catalog’s is wrong for this part; it can be set later from the part’s own ' +
         'row menu.</p>',
         'Create', async () => {
             const recipe = sheetValue('recipe');
@@ -4644,9 +4642,8 @@ function openNewGroup() {
 // position and pick a choreography" against a row that did not exist. Save was
 // disabled by the finding, so the only way out was Discard.
 //
-// The station gets away with passing no mode because tapping a card opens the
-// panel that asks for one; the desktop's editor IS the row. So the row arrives
-// with a mode and the engineer changes it from the row's own Swaps picker.
+// The desktop's editor IS the row. So the row arrives with a mode and the
+// engineer changes it from the row's own swap-mode picker.
 //
 // WHICH MODE: the one this flow already uses. A press runs one choreography
 // on almost every position, so the common case is right and the odd one out is
@@ -4715,12 +4712,13 @@ function addFreePosition(btn) {
 function routingPickerKey(role) { return 'rs_' + role; }
 
 // The part set's picker. Its own key for the same reason, and its own constant
-// because both sheets and both submits name it.
+// because the Add-process sheet and Settings' "Parts this process runs" both
+// name it.
 const PART_SET_PICKER = 'parts';
 
-// THE FOURTH SECTION, AND THE SAME WORDS ON BOTH SHEETS. Making a cell and
-// changing a cell ask the same four questions; a sentence written twice is a
-// sentence that will be edited once.
+// THE SAME WORDS IN BOTH PLACES. Making a cell (Add process) and changing one
+// (Settings) ask the same question about its parts; a sentence written twice
+// is a sentence that will be edited once.
 const PART_SET_NOTE = 'The parts this process can run. A part used by a flow stays ' +
     'available until it is removed from that flow.';
 
@@ -5442,9 +5440,9 @@ function openUsePreset(btn) {
 //
 // NOTHING IS WRITTEN HERE. It changes the draft, exactly as every picker on
 // this page does, and Save flow is still the only door onto the server. That
-// is what makes this a third CALLER rather than a third apply: the write path
-// is unchanged, so the provenance the apply modal stamps is stamped by the
-// same save.
+// is what makes this a CALLER rather than a second apply: the write path is
+// unchanged. It stamps NO provenance — saveFlow sends no source_preset_id;
+// only the apply modal's rows do (desktop-bodies flowPresetApplySave).
 function usePreset(id) {
     const p = (S.composer.presets || []).find(x => String(x.id) === String(id));
     if (!p || !S.model) return;

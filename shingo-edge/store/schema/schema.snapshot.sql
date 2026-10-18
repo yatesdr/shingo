@@ -890,9 +890,9 @@ CREATE TABLE style_node_claims (
     -- are SERVER-STAMPED — the client never sends them.
     --
     -- source is the writer: 'admin' (the desktop claim editor), 'hmi' (the
-    -- station's flow composer), 'generated' (GenerateStyles), 'cloned'
-    -- (CloneStyle). DEFAULT 'admin' is right for every row that already
-    -- exists: the desktop was the only writer there was.
+    -- station's flow composer), 'generated' (the retired Generate
+    -- variants), 'cloned' (CloneStyle). DEFAULT 'admin' is right for every
+    -- row that already exists: the desktop was the only writer there was.
     source                  TEXT NOT NULL DEFAULT 'admin',
     -- called_by is the session user (admin) or the station (hmi); '' on
     -- rows that predate attribution and on generated/cloned rows made by

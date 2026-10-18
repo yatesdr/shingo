@@ -1272,8 +1272,6 @@ func setClaimFieldForTest(c *processes.NodeClaim, f flowspec.Field) {
 		c.PayloadCode = v
 	case flowspec.AllowedPayloadCodes:
 		c.AllowedPayloadCodes = []string{v}
-	case flowspec.UOPCapacity:
-		c.UOPCapacity = 7
 	case flowspec.ReorderPoint:
 		c.ReorderPoint = 7
 	case flowspec.AutoReorder:

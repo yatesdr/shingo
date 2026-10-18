@@ -109,7 +109,6 @@ const (
 
 	PayloadCode                    Field = "payload_code"
 	AllowedPayloadCodes            Field = "allowed_payload_codes"
-	UOPCapacity                    Field = "uop_capacity"
 	ReorderPoint                   Field = "reorder_point"
 	AutoReorder                    Field = "auto_reorder"
 	LinesideSoftThreshold          Field = "lineside_soft_threshold"
@@ -164,7 +163,6 @@ var fieldLabels = map[Field]string{
 	SecondPairedCoreNode:           "Second paired core node",
 	PayloadCode:                    "Part",
 	AllowedPayloadCodes:            "Allowed parts",
-	UOPCapacity:                    "UOP capacity",
 	ReorderPoint:                   "Reorder point",
 	AutoReorder:                    "Auto reorder",
 	LinesideSoftThreshold:          "Lineside soft threshold",
@@ -193,7 +191,7 @@ var fieldLabels = map[Field]string{
 var fieldOrder = []Field{
 	InboundStaging, OutboundStaging, PairedCoreNode, OutboundDestination, InboundSource,
 	SecondPairedCoreNode,
-	PayloadCode, AllowedPayloadCodes, UOPCapacity, ReorderPoint, AutoReorder,
+	PayloadCode, AllowedPayloadCodes, ReorderPoint, AutoReorder,
 	LinesideSoftThreshold, Sequence, KeepStagedNode, EvacuateOnChangeover,
 	ChangeoverEvacNodes, ChangeoverEvacDestination, ChangeoverCarryoverDisposition,
 	ReuseCompatibleBins, IndexRobotSupplies, AutoConfirm, AutoRequestPayload, AutoPush,
@@ -264,13 +262,6 @@ func steadyBase() map[Field]Need {
 	for _, f := range fieldOrder {
 		out[f] = Used
 	}
-	// UOPCapacity is Unused in EVERY mode. It is not a claim field any more:
-	// the column is dead and the number is resolved from payload_catalog on
-	// read, keyed on payload_code, so an editor control over it would take an
-	// entry, save without complaint, and change nothing. Unused rather than
-	// Forbidden because the stored value is left alone rather than cleared —
-	// the old numbers are the only record of how far the copies had drifted.
-	out[UOPCapacity] = Unused
 	// KeepStagedNode is the node the full or the empty comes from instead of
 	// the inbound source, with a spare kept standing on it. Every swap fetches
 	// a fresh carrier, so the four swap modes override this to Used below; it
@@ -286,9 +277,8 @@ func steadyBase() map[Field]Need {
 	// arrived at. A control over it would let an engineer claim a number was
 	// calculated when it was typed.
 	//
-	// Unused rather than Forbidden, like UOPCapacity above: stored values are
-	// left exactly as they are, and they are the record of where each
-	// press's numbers came from.
+	// Unused rather than Forbidden: stored values are left exactly as they
+	// are, and they are the record of where each press's numbers came from.
 	out[ReorderPointSource] = Unused
 	return out
 }
@@ -423,7 +413,7 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	ms[KeyTask] = Forbidden
 	ms[AutoPush] = Used // consume only; produce is overridden in Steady
 	for _, f := range []Field{
-		UOPCapacity, ReorderPoint, AutoReorder, LinesideSoftThreshold,
+		ReorderPoint, AutoReorder, LinesideSoftThreshold,
 		InboundStaging, OutboundStaging, InboundSource,
 		EvacuateOnChangeover, ChangeoverEvacDestination,
 		AutoConfirm, AutoRequestPayload,

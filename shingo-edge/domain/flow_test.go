@@ -143,11 +143,6 @@ func TestFlowExpand_HonoursTheUpdateBoundary(t *testing.T) {
 		t.Errorf("cell fields not taken from the cell: %+v", in)
 	}
 	// From the prior: the unconditional columns the cell has no field for.
-	// UOPCapacity is NOT among them and must not be: the store does not write
-	// the column, so carrying it forward was echoing a number nothing reads.
-	if in.UOPCapacity != 0 {
-		t.Errorf("Expand carried uop_capacity (%d) from the prior; the store does not write it", in.UOPCapacity)
-	}
 	if in.ReorderPoint != 100 || in.LinesideSoftThreshold != 7 ||
 		!reflect.DeepEqual(in.AllowedPayloadCodes, []string{"P1", "P2"}) || in.AutoRequestPayload != "P1" ||
 		!in.EvacuateOnChangeover || !in.AutoConfirm || !in.ReuseCompatibleBins || !in.AutoPush {
@@ -172,7 +167,7 @@ func TestFlowExpand_HonoursTheUpdateBoundary(t *testing.T) {
 
 	// No prior: the INSERT defaults.
 	fresh := Expand(cell, nil, ClaimSourceHMI, "Press 400")
-	if fresh.UOPCapacity != 0 || fresh.ReorderPoint != 0 || fresh.AllowedPayloadCodes != nil || fresh.AutoRequestPayload != "" ||
+	if fresh.ReorderPoint != 0 || fresh.AllowedPayloadCodes != nil || fresh.AutoRequestPayload != "" ||
 		fresh.EvacuateOnChangeover || fresh.AutoConfirm || fresh.LinesideSoftThreshold != 0 || fresh.ReuseCompatibleBins || fresh.AutoPush {
 		t.Errorf("with no prior the unconditional columns must be the INSERT defaults: %+v", fresh)
 	}

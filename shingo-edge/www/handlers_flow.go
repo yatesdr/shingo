@@ -51,11 +51,6 @@ type flowSaveBody struct {
 	Cells       []domain.FlowCell `json:"cells"`
 	Fingerprint string            `json:"fingerprint"`
 	StationID   int64             `json:"station_id"`
-	// TakenOff is the same list the preview carried. The save never refused
-	// an unplaced part — the finding blocks the start, not the save — so it
-	// is accepted and not read: the cells are the whole flow, and a part on
-	// none of them leaves the style with the claim that carried it.
-	TakenOff []string `json:"taken_off"`
 	// SourcePresetID / SourcePresetVersion mark this save as an APPLY of a
 	// preset (U10). Both or neither. The SHAPE still arrives as cells like any
 	// other save — there is no apply endpoint, and this is the only way a

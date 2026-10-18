@@ -145,19 +145,6 @@ func TestClaim_CloneAndGenerateStampTheirOwnSource(t *testing.T) {
 		t.Fatalf("clone did not carry preset provenance: %v/%v", cl.SourcePresetID, cl.SourcePresetVersion)
 	}
 
-	ids, err := db.GenerateStyles(domain.CoreNodeKinds{}, base, []domain.StyleVariant{{Name: "GEN-A"}, {Name: "GEN-B"}}, "bob")
-	if err != nil {
-		t.Fatalf("generate: %v", err)
-	}
-	for _, id := range ids {
-		g, err := db.GetStyleNodeClaimByNode(id, "PLN_01")
-		if err != nil {
-			t.Fatalf("get generated claim: %v", err)
-		}
-		if g.Source != domain.ClaimSourceGenerated || g.CalledBy != "bob" {
-			t.Fatalf("generated = source %q called_by %q; want generated/bob", g.Source, g.CalledBy)
-		}
-	}
 }
 
 // TestClaim_DeleteRetiresWhenHistoryReferencesIt: a claim that a

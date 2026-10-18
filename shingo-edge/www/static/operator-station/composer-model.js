@@ -119,13 +119,6 @@ const CARDLINE = {
     sequential: c => 'One robot, A/B flip' + (c.paired ? ' · with ' + c.paired : ''),
 };
 
-const MODEHELP = {
-    two_robot_press_index: 'Two robots: Robot 1 brings the new bin to the back position; Robot 2 takes the old one out and indexes the new one forward.',
-    two_robot: 'Two robots: Robot 1 stages the new bin beside the line while Robot 2 pulls the old bin; then Robot 1 moves the new one in.',
-    single_robot: 'One robot, one trip: park the new bin, clear the old one to a second park, put the new one in, come back for the old one.',
-    sequential: 'A/B positions, one robot: fills the parked side while the other side runs, then you flip.',
-};
-
 // The four short texts of SPEC S8, keyed by the claim field the server names.
 // The short pill a card carries when a field is missing. F3 reaches these
 // too: `nowhere to send old bin` was a sentence about `outbound_destination`
@@ -140,50 +133,6 @@ const FINDING_SHORT = {
     preset_position_missing: 'shape needs a position this cell lacks',
     shared_staging: 'staging shared by several positions',
 };
-
-// ROW_FIELDS — which claim field each S5 row writes, in the order the rows are
-// drawn. THE ORDER IS HERE; WHICH ONES APPEAR COMES FROM FLOWSPEC.
-//
-// FIELDS, NO WORDS. Its keys used to be the row headings — `STAGE THE NEW BIN
-// AT`, `PARK OLD AT`, `A/B PARTNER`, `PAIRED BACK POSITION` — five names for
-// four claim columns, which is exactly what owner ruling F3 took off the
-// desktop. And nothing read them: the panel had its own hardcoded list of
-// rows, so the two said the same thing twice and only a test read this one.
-//
-// IT WAS A PER-MODE LITERAL, AND THE LITERAL DISAGREED WITH THE DESKTOP. A
-// comment beside it claimed "the two surfaces cannot disagree about what a
-// mode has"; they could and they did. `two_robot_press_index: ['paired']` gave
-// the HMI no staging row on a press index while the desktop's rowColumns —
-// which reads flowspec — drew a Staging chip there, because flowspec marks
-// `inbound_staging` USED on that row for keep-staged tooling. One field, two
-// answers, by which screen you asked from (SYNTH failure row 6, live at
-// Hopkinsville).
-//
-// So the list of CANDIDATE fields is fixed here, in drawing order, and
-// rowFieldsFor filters it through the same steadyRow the desktop reads. The
-// HMI offers what the desktop offers, by construction.
-const ROW_FIELD_ORDER = [
-    'paired_core_node',
-    'second_paired_core_node',
-    'inbound_staging',
-    'outbound_staging',
-];
-
-// rowFieldsFor is the S5 rows for one position: the candidates above that this
-// (role, mode) actually has, in drawing order.
-//
-// Forbidden and Unused are dropped for the same reason rowColumns drops them
-// on the desktop — a row whose value the validator refuses is a control the
-// operator finds out about at the preview — and a cell with no flowspec row at
-// all (no mode yet, or a legacy mode the spec has no row for) draws none,
-// because guessing is what the literal was doing.
-function rowFieldsFor(state, node) {
-    const cell = state.cells[node];
-    if (!cell || !cell.mode) return [];
-    const row = steadyRow(state, cell.role, cell.mode);
-    if (!row) return [];
-    return ROW_FIELD_ORDER.filter(f => row[f] !== 'forbidden' && row[f] !== 'unused');
-}
 
 // ROW_COLUMNS — the two mode-dependent columns the desktop's positions table
 // draws, and the fields each one owns. ONE ROW OF FLOWSPEC DECIDES BOTH.
@@ -1408,20 +1357,6 @@ function partOffers(state) {
     return rows;
 }
 
-// partAllowed says whether this position may carry a part at all, from
-// flowspec — the same question advancedShows asks of an Advanced control.
-//
-// A CHOREOGRAPHY THAT FORBIDS payload_code HAS NO PART ROW. Drawing one there
-// is offering a control whose value the validator refuses, and the operator
-// finds out at the preview rather than at the tap. A cell with no mode yet
-// keeps its row: the part is how most operators start.
-function partAllowed(state, node) {
-    const cell = state.cells[node];
-    if (!cell || !cell.mode) return true;
-    const row = steadyRow(state, cell.role, cell.mode);
-    return !row || row.payload_code !== 'forbidden';
-}
-
 // membersOf names the routing group's nodes — SMN_05, SMN_06 — which is what
 // the strip's third line shows under the group name. The note above it already
 // names the POSITIONS, so repeating them here said the same thing twice and
@@ -1893,14 +1828,6 @@ function orderTrip(o) {
     return o.what ? o.from + ' → ' + o.to + ' · ' + o.what : o.from + ' → ' + o.to;
 }
 
-// orderSentence is the whole line, robot included, for a surface that prints
-// one string. The confirm sheet gives the robot its own table cell — the hue
-// is an identity there and a whole line in it reads as a warning — so it takes
-// orderTrip and names the robot itself.
-function orderSentence(o) {
-    return 'Robot ' + o.robot + ' · ' + orderTrip(o);
-}
-
 // ── presets: the shape, and what an apply would change (U10) ─────────────────
 
 // presetCells turns a preset's shape — the server's array of FlowCells, or the
@@ -2122,11 +2049,7 @@ function routingNote(state, field, offered, node) {
 
 // ── exported constants the render layer needs (it invents no copy) ───────────
 function modeLabels() { return Object.assign({}, MODES); }
-function modeHelp() { return Object.assign({}, MODEHELP); }
-function rowFields(state, node) { return rowFieldsFor(state, node); }
 function fieldLabel(state, field) { return fieldWord(state, field); }
-
-function advancedDefaults() { return clone(ADVANCED_DEFAULTS); }
 
 // ── the station's request bodies ─────────────────────────────────────────────
 //
@@ -2139,10 +2062,10 @@ function advancedDefaults() { return clone(ADVANCED_DEFAULTS); }
 // flowSaveBody is POST /processes/{id}/flow/save as the station sends it. No
 // source_preset_id: the station has never sent one, which is why a gated-off
 // HMI save is refused (engine.gateRefusal).
-function flowSaveBody(styleId, cells, fingerprint, stationId, takenOff) {
+function flowSaveBody(styleId, cells, fingerprint, stationId) {
     return {
         to_style_id: styleId, cells: cells, fingerprint: fingerprint,
-        station_id: stationId, taken_off: takenOff || [],
+        station_id: stationId,
     };
 }
 
@@ -2176,11 +2099,11 @@ function mintBody(presetId, codes, stationId, overrides) {
         init, reduce, toCells, takenOff, applyPreview,
         legs, dockNotes, cellRobots, cardLines, pictureCells, bar,
         findings, findingShort,
-        modeLabels, modeHelp, rowFields, rowColumns, fieldRequired, fieldLabel, shortPart, robotWords,
-        partOffers, partAllowed, styleFacts,
+        modeLabels, rowColumns, fieldRequired, fieldLabel, shortPart, robotWords,
+        partOffers, styleFacts,
         routingNote, routingRoleOf, stagingFieldUsed,
-        presetCells, shapeDiff, orderSentences, orderSentence, orderTrip, viaWaypoints,
-        advancedFor, advancedShows, advancedSet, advancedDefaults,
+        presetCells, shapeDiff, orderSentences, orderTrip, viaWaypoints,
+        advancedFor, advancedShows, advancedSet,
         flowSaveBody, mintBody,
     };
 

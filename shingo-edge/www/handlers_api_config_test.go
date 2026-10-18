@@ -3,11 +3,9 @@ package www
 import (
 	"net/http"
 	"strconv"
-	"strings"
 	"testing"
 
 	"shingo/protocol"
-	"shingoedge/domain"
 	"shingoedge/store/catalog"
 	"shingoedge/store/processes"
 )
@@ -345,148 +343,6 @@ func TestApiConfig_UpdateStyle_MissingProcessID(t *testing.T) {
 //                DeleteStyleNodeClaim
 // ═══════════════════════════════════════════════════════════════════════
 
-func TestApiConfig_StyleNodeClaimsCRUD(t *testing.T) {
-	h, router := newAdminRouter(t)
-	cookie := authCookie(t, h)
-	pid := seedProcess(t, "ClaimLine")
-	sid := seedStyle(t, "ClaimStyle", pid)
-
-	// --- Upsert (insert) ---
-	// single_robot needs both staging nodes. This fixture used to omit them
-	// and the API stored it: the requirement lived only in the browser, so
-	// every non-browser writer bypassed it. ValidateNodeClaim now refuses it
-	// server-side, which is what makes this fixture have to be valid. The
-	// outbound destination joined the list with flowspec D1: the planner had
-	// always required it on the outgoing claim, and the save path caught up.
-	body := processes.NodeClaimInput{
-		StyleID:             sid,
-		CoreNodeName:        "node-1",
-		Role:                "consume",
-		SwapMode:            "single_robot",
-		PayloadCode:         "BIN-A",
-		ReorderPoint:        10,
-		InboundStaging:      "node-1-in",
-		OutboundStaging:     "node-1-out",
-		OutboundDestination: "node-1-dest",
-		AutoReorder:         domain.Ptr(true),
-	}
-	// A CAPACITY IS REFUSED, NOT IGNORED. The column is dead — the value is
-	// resolved from the payload catalog on every read, keyed on payload_code
-	// — so a body that set one used to be accepted and discarded, and the
-	// caller read a different number back and concluded the READ was broken.
-	withCapacity := body
-	withCapacity.UOPCapacity = 100
-	refused := doRequest(t, router, "POST", "/api/style-node-claims", withCapacity, cookie)
-	assertStatus(t, refused, http.StatusBadRequest)
-	if why, _ := decodeBody(t, refused)["error"].(string); !strings.Contains(why, "payload catalog") {
-		t.Errorf("the refusal reads %q; it should say where the capacity actually comes from", why)
-	}
-
-	resp := doRequest(t, router, "POST", "/api/style-node-claims", body, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	var createResult map[string]int64
-	decodeJSON(t, resp, &createResult)
-	claimID := createResult["id"]
-	if claimID == 0 {
-		t.Fatal("expected non-zero claim id")
-	}
-
-	// Verify DB
-	claim, err := testDB.GetStyleNodeClaim(claimID)
-	if err != nil {
-		t.Fatalf("GetStyleNodeClaim: %v", err)
-	}
-	if claim.CoreNodeName != "node-1" {
-		t.Errorf("claim core_node_name: got %q, want %q", claim.CoreNodeName, "node-1")
-	}
-
-	// --- List ---
-	resp = doRequest(t, router, "GET", "/api/styles/"+itoa(sid)+"/node-claims", nil, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	var claims []processes.NodeClaim
-	decodeJSON(t, resp, &claims)
-	if len(claims) != 1 || claims[0].ID != claimID {
-		t.Errorf("expected 1 claim with id %d, got %v", claimID, claims)
-	}
-
-	// --- Upsert (update same style_id+core_node_name) ---
-	updateBody := processes.NodeClaimInput{
-		StyleID:             sid,
-		CoreNodeName:        "node-1",
-		Role:                "consume",
-		SwapMode:            "single_robot",
-		PayloadCode:         "BIN-B",
-		ReorderPoint:        20,
-		InboundStaging:      "node-1-in",
-		OutboundStaging:     "node-1-out",
-		OutboundDestination: "node-1-dest",
-		AutoReorder:         domain.Ptr(true),
-	}
-	resp = doRequest(t, router, "POST", "/api/style-node-claims", updateBody, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	var updateResult map[string]int64
-	decodeJSON(t, resp, &updateResult)
-	if updateResult["id"] != claimID {
-		t.Errorf("upsert should return same id: got %d, want %d", updateResult["id"], claimID)
-	}
-
-	// Verify updated DB state
-	claim, _ = testDB.GetStyleNodeClaim(claimID)
-	if claim.PayloadCode != "BIN-B" {
-		t.Errorf("updated payload_code: got %q, want %q", claim.PayloadCode, "BIN-B")
-	}
-
-	// --- Delete ---
-	resp = doRequest(t, router, "DELETE", "/api/style-node-claims/"+itoa(claimID), nil, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	assertJSONPath(t, resp, "status", "ok")
-
-	_, err = testDB.GetStyleNodeClaim(claimID)
-	if err == nil {
-		t.Error("expected error getting deleted claim")
-	}
-}
-
-func TestApiConfig_UpsertStyleNodeClaim_MissingStyleID(t *testing.T) {
-	h, router := newAdminRouter(t)
-	cookie := authCookie(t, h)
-
-	body := processes.NodeClaimInput{CoreNodeName: "node-x"}
-	resp := doRequest(t, router, "POST", "/api/style-node-claims", body, cookie)
-	assertStatus(t, resp, http.StatusBadRequest)
-	assertJSONPath(t, resp, "error", "style_id is required")
-}
-
-func TestApiConfig_UpsertStyleNodeClaim_MissingCoreNodeName(t *testing.T) {
-	h, router := newAdminRouter(t)
-	cookie := authCookie(t, h)
-
-	pid := seedProcess(t, "ClaimValidationLine")
-	sid := seedStyle(t, "ClaimValStyle", pid)
-
-	body := processes.NodeClaimInput{StyleID: sid}
-	resp := doRequest(t, router, "POST", "/api/style-node-claims", body, cookie)
-	assertStatus(t, resp, http.StatusBadRequest)
-	assertJSONPath(t, resp, "error", "core_node_name is required")
-}
-
-func TestApiConfig_UpsertStyleNodeClaim_RejectsRetiredSimple(t *testing.T) {
-	h, router := newAdminRouter(t)
-	cookie := authCookie(t, h)
-
-	pid := seedProcess(t, "SimpleRejectLine")
-	sid := seedStyle(t, "SimpleRejectStyle", pid)
-
-	// The retired "simple" mode is no longer configurable — the store allowlist
-	// rejects it and the handler maps that rejection to 400 (not a raw 500).
-	body := processes.NodeClaimInput{
-		StyleID: sid, CoreNodeName: "node-x", Role: "consume",
-		SwapMode: "simple", PayloadCode: "BIN-Z",
-	}
-	resp := doRequest(t, router, "POST", "/api/style-node-claims", body, cookie)
-	assertStatus(t, resp, http.StatusBadRequest)
-}
-
 // ═══════════════════════════════════════════════════════════════════════
 // Payload Catalog — List
 // DB call site: ListPayloadCatalog
@@ -800,8 +656,6 @@ func TestApiConfig_BadPathParams(t *testing.T) {
 		{"process_styles_bad_id", "GET", "/api/processes/abc/styles"},
 		{"update_style_bad_id", "PUT", "/api/styles/abc"},
 		{"delete_style_bad_id", "DELETE", "/api/styles/abc"},
-		{"list_claims_bad_id", "GET", "/api/styles/abc/node-claims"},
-		{"delete_claim_bad_id", "DELETE", "/api/style-node-claims/abc"},
 	}
 
 	for _, tc := range cases {

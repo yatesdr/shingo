@@ -280,11 +280,6 @@ func TestStyles_CRUDAndListing(t *testing.T) {
 		t.Errorf("get by id: %v name=%q", err, got.Name)
 	}
 
-	gotByName, err := db.GetStyleByName("WIDGET-B")
-	if err != nil || gotByName.ID != s2 {
-		t.Errorf("get by name: %v id=%d", err, gotByName.ID)
-	}
-
 	testutil.MustNoErr(t, db.UpdateStyle(s1, "WIDGET-A-v2", "renamed", pid), "update")
 	got2, _ := db.GetStyle(s1)
 	if got2.Name != "WIDGET-A-v2" {
@@ -324,10 +319,6 @@ func TestStyles_ExpectedCATIDRoundTrip(t *testing.T) {
 	if got.ExpectedCATID != "70000001" {
 		t.Errorf("GetStyle expected_catid = %q, want 70000001", got.ExpectedCATID)
 	}
-	byName, _ := db.GetStyleByName("CATID-STYLE")
-	if byName.ExpectedCATID != "70000001" {
-		t.Errorf("GetStyleByName expected_catid = %q, want 70000001", byName.ExpectedCATID)
-	}
 	list, _ := db.ListStylesByProcess(pid)
 	if len(list) != 1 || list[0].ExpectedCATID != "70000001" {
 		t.Errorf("ListStylesByProcess expected_catid = %+v, want [70000001]", list)
@@ -353,9 +344,6 @@ func TestStyles_GetMissingReturnsError(t *testing.T) {
 	db := coverageDB(t)
 	if _, err := db.GetStyle(9999); err == nil {
 		t.Fatal("expected error for missing id")
-	}
-	if _, err := db.GetStyleByName("missing"); err == nil {
-		t.Fatal("expected error for missing name")
 	}
 }
 
@@ -1708,7 +1696,7 @@ func TestStoreStillAcceptsWhatFlowspecRefuses(t *testing.T) {
 }
 
 // ============================================================================
-// styles.go — CloneStyle / GenerateStyles
+// styles.go — CloneStyle
 // ============================================================================
 
 func TestCloneStyle_CopiesClaimsVerbatim(t *testing.T) {
@@ -1828,92 +1816,6 @@ func TestCloneStyle_LeavesWithheldConfigurationBehind(t *testing.T) {
 	}
 	if !foundLine {
 		t.Fatal("the clone lost its LINE claim — only the loader claim is to be left behind")
-	}
-}
-
-func TestGenerateStyles_BatchAppliesPerNodeOverrides(t *testing.T) {
-	t.Parallel()
-	db := coverageDB(t)
-	_, baseID := seedProcessStyle(t, db, "PRESS", "BASE")
-	// A press-index cell: the one mode whose row lets a claim carry a
-	// carry-over disposition (single_robot is strict and refuses it at the
-	// store since flowspec D4).
-	keep := domain.CarryoverKeepLineside
-	for _, n := range []string{"OUT_L", "OUT_R"} {
-		if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
-			StyleID: baseID, CoreNodeName: n, Role: "produce", SwapMode: "two_robot_press_index", PayloadCode: "BASE-" + n, UOPCapacity: 1,
-			PairedCoreNode: n + "_B", OutboundDestination: "SMN",
-			ChangeoverCarryoverDisposition: &keep,
-		}); err != nil {
-			t.Fatalf("seed %s: %v", n, err)
-		}
-	}
-
-	variants := []domain.StyleVariant{
-		{Name: "2001-DOOR", Overrides: []domain.ClaimOverride{ // L/R mirror pair
-			{CoreNodeName: "OUT_L", PayloadCode: "2001-L", UOPCapacity: 40, AllowedPayloadCodes: []string{"2001-L"}},
-			{CoreNodeName: "OUT_R", PayloadCode: "2001-R", UOPCapacity: 40},
-		}},
-		{Name: "2002-HOOD", Overrides: []domain.ClaimOverride{ // two-out: same payload both nodes
-			{CoreNodeName: "OUT_L", PayloadCode: "2002", UOPCapacity: 60},
-			{CoreNodeName: "OUT_R", PayloadCode: "2002", UOPCapacity: 60},
-		}},
-	}
-	ids, err := db.GenerateStyles(domain.CoreNodeKinds{}, baseID, variants, "tester")
-	if err != nil {
-		t.Fatalf("generate: %v", err)
-	}
-	if len(ids) != 2 {
-		t.Fatalf("returned %d ids, want 2", len(ids))
-	}
-
-	l, _ := db.GetStyleNodeClaimByNode(ids[0], "OUT_L")
-	if l.PayloadCode != "2001-L" {
-		t.Errorf("2001 OUT_L override not applied: %+v", l)
-	}
-	if len(l.AllowedPayloadCodes) != 1 || l.AllowedPayloadCodes[0] != "2001-L" {
-		t.Errorf("2001 OUT_L allowed codes = %v", l.AllowedPayloadCodes)
-	}
-	r, _ := db.GetStyleNodeClaimByNode(ids[0], "OUT_R")
-	if r.PayloadCode != "2001-R" {
-		t.Errorf("2001 OUT_R override not applied: %+v", r)
-	}
-	// The choreography the override does not touch is cloned whole — including
-	// the carry-over disposition, on every variant, not only the first.
-	for _, id := range ids {
-		c, err := db.GetStyleNodeClaimByNode(id, "OUT_L")
-		testutil.MustNoErr(t, err, "db.GetStyleNodeClaimByNode")
-		if c == nil || c.ChangeoverCarryoverDisposition != domain.CarryoverKeepLineside {
-			t.Errorf("variant %d: changeover_carryover_disposition = %q, want %q (generate reset the cell's carry-over)",
-				id, c.ChangeoverCarryoverDisposition, domain.CarryoverKeepLineside)
-		}
-	}
-	// Base style must be untouched by generation.
-	bl, _ := db.GetStyleNodeClaimByNode(baseID, "OUT_L")
-	if bl.PayloadCode != "BASE-OUT_L" {
-		t.Errorf("base style mutated by generate: %+v", bl)
-	}
-}
-
-func TestGenerateStyles_DuplicateNameRollsBackBatch(t *testing.T) {
-	t.Parallel()
-	db := coverageDB(t)
-	pid, baseID := seedProcessStyle(t, db, "PRESS", "BASE")
-
-	// Second variant collides with the existing "BASE" (UNIQUE(process_id,
-	// name)); the whole batch must roll back, leaving OK-1 uncreated.
-	variants := []domain.StyleVariant{
-		{Name: "OK-1"},
-		{Name: "BASE"},
-	}
-	if _, err := db.GenerateStyles(domain.CoreNodeKinds{}, baseID, variants, "tester"); err == nil {
-		t.Fatal("expected duplicate-name error, got nil")
-	}
-	styles, _ := db.ListStylesByProcess(pid)
-	for _, s := range styles {
-		if s.Name == "OK-1" {
-			t.Fatal("OK-1 leaked despite a rolled-back batch — generation is not atomic")
-		}
 	}
 }
 

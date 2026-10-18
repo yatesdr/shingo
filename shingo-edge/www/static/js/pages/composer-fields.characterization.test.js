@@ -147,6 +147,12 @@ function stateFor(role, swap, node) {
     return s;
 }
 
+// advancedDefaults is the block a position with no claim opens on: the
+// INSERT defaults.
+function advancedDefaults() {
+    return M.advancedFor(stateFor('produce', 'two_robot', 'PLN_01'), 'PLN_01');
+}
+
 // ── 1. WHICH ADVANCED FIELDS THE SHEET DRAWS ────────────────────────────────
 //
 // The old suite's expectedVisibility table, for the twelve that moved into the
@@ -183,7 +189,7 @@ function runForbiddenClearing() {
         changeover_carryover_disposition: 'keep_lineside',
         index_robot_supplies: true, auto_confirm: true,
     };
-    const blank = M.advancedDefaults();
+    const blank = advancedDefaults();
     for (const role of ROLES) {
         for (const swap of SWAPS) {
             // Set every advanced field on a press-index cell (the mode that
@@ -339,12 +345,12 @@ function runSaveShapeCase() {
     // draw.
     const applied = M.reduce(s, {
         type: 'setAdvanced', node: 'PLN_01',
-        advanced: Object.assign(M.advancedDefaults(), { reorder_point: 12 }),
+        advanced: Object.assign(advancedDefaults(), { reorder_point: 12 }),
     });
     const withAdv = M.toCells(applied).find(c => c.core_node_name === 'PLN_01');
     check('save shape advanced present after Apply', 'advanced' in withAdv, true);
     check('save shape advanced keys', Object.keys(withAdv.advanced).sort(),
-        Object.keys(M.advancedDefaults()).sort());
+        Object.keys(advancedDefaults()).sort());
     check('save shape advanced value', withAdv.advanced.reorder_point, 12);
 }
 

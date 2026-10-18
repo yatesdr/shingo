@@ -531,8 +531,7 @@ func UpsertClaimChecked(tx DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) 
 // this write when it was a keep-staged claim (nil otherwise), read by the
 // same statement that finds the row: the check needs it to see a spot move.
 func upsertClaim(db DBTX, kinds domain.CoreNodeKinds, in NodeClaimInput) (int64, *KeptSpot, error) {
-	// Defense-in-depth: API ingress (apiUpsertStyleNodeClaim) trims
-	// these. Trim again here so a non-API caller can't bypass it.
+	// Trimmed here so no caller can bypass it.
 	// Internal write path; silent trim, no warning log.
 	in.CoreNodeName = strings.TrimSpace(in.CoreNodeName)
 	in.PairedCoreNode = strings.TrimSpace(in.PairedCoreNode)
@@ -979,7 +978,7 @@ func DeleteClaimChecked(tx DBTX, id int64) ([]KeptSpot, error) {
 // delete costs no extra read to know whether it cleared a spot.
 func deleteClaim(db DBTX, id int64) (*KeptSpot, error) {
 	// THE FLOOR EVERY DOOR STANDS ON. SaveFlow refuses a position move on the
-	// running style, but it was the only door that did — the legacy
+	// running style, but it was the only door that did — the retired
 	// POST/DELETE /api/style-node-claims and the replenishment page's write
 	// walked straight past it.
 	//

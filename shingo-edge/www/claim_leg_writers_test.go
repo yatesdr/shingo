@@ -1,7 +1,6 @@
 package www
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -180,17 +179,8 @@ type legCensusRow struct {
 
 // claimWriterCensus is every claim-leg writer reachable from the admin API and
 // the store, per leg. Every one refuses a lane on every leg: the store's claim
-// write and the copy paths ask domain.CoreNodeKinds.LaneLegs, and the editor's
-// validator asks the same function first.
+// write and the clone's copy ask domain.CoreNodeKinds.LaneLegs.
 var claimWriterCensus = []legCensusRow{
-	{"editor", "inbound_source", legRefused},
-	{"editor", "outbound_destination", legRefused},
-	{"editor", "changeover_evac_destination", legRefused},
-	{"editor", "containment_destination", legRefused},
-	{"editor", "inbound_staging", legRefused},
-	{"editor", "outbound_staging", legRefused},
-	{"editor", "keep_staged_node", legRefused},
-
 	{"containment stamp", "containment_destination", legRefused},
 	// The stamp echoes every other leg of the claim it writes. A claim that
 	// already names a lane on staging, stamped with a plain destination.
@@ -206,28 +196,6 @@ var claimWriterCensus = []legCensusRow{
 	{"clone", "inbound_staging", legRefused},
 	{"clone", "outbound_staging", legRefused},
 	{"clone", "keep_staged_node", legRefused},
-
-	{"generate", "inbound_source", legRefused},
-	{"generate", "outbound_destination", legRefused},
-	{"generate", "changeover_evac_destination", legRefused},
-	{"generate", "containment_destination", legRefused},
-	{"generate", "inbound_staging", legRefused},
-	{"generate", "outbound_staging", legRefused},
-	{"generate", "keep_staged_node", legRefused},
-
-	{"copy", "inbound_source", legRefused},
-	{"copy", "outbound_destination", legRefused},
-	{"copy", "changeover_evac_destination", legRefused},
-	{"copy", "containment_destination", legRefused},
-	{"copy", "inbound_staging", legRefused},
-	{"copy", "outbound_staging", legRefused},
-	{"copy", "keep_staged_node", legRefused},
-
-	// The overrides carry four of the six legs.
-	{"copy with overrides", "inbound_source", legRefused},
-	{"copy with overrides", "outbound_destination", legRefused},
-	{"copy with overrides", "inbound_staging", legRefused},
-	{"copy with overrides", "outbound_staging", legRefused},
 }
 
 // TestClaimLegWriters_ALaneOnEachLeg is the census of claim writers.
@@ -243,8 +211,6 @@ func TestClaimLegWriters_ALaneOnEachLeg(t *testing.T) {
 			sid := seedStyle(t, tag+"-Src", pid)
 			var got string
 			switch row.writer {
-			case "editor":
-				got = editorOutcome(t, router, cookie, sid, row.leg)
 			case "containment stamp":
 				got = containmentOutcome(t, router, cookie, pid, sid)
 			case "containment stamp, echo":
@@ -253,12 +219,6 @@ func TestClaimLegWriters_ALaneOnEachLeg(t *testing.T) {
 				got = containmentTwoStylesOutcome(t, router, cookie, pid, sid, row.leg)
 			case "clone":
 				got = cloneOutcome(t, router, cookie, sid, row.leg)
-			case "generate":
-				got = generateOutcome(t, router, cookie, sid, row.leg)
-			case "copy":
-				got = copyOutcome(t, router, cookie, pid, sid, row.leg, false)
-			case "copy with overrides":
-				got = copyOutcome(t, router, cookie, pid, sid, row.leg, true)
 			default:
 				t.Fatalf("no driver for writer %q", row.writer)
 			}
@@ -267,19 +227,6 @@ func TestClaimLegWriters_ALaneOnEachLeg(t *testing.T) {
 			}
 		})
 	}
-}
-
-func editorOutcome(t *testing.T, router *chi.Mux, cookie *http.Cookie, sid int64, leg string) string {
-	t.Helper()
-	resp := doRequest(t, router, "POST", "/api/style-node-claims", withLaneOn(cleanLegClaim(sid), leg), cookie)
-	switch {
-	case resp.StatusCode == http.StatusOK && storedLane(t, sid, leg):
-		return legSaved
-	case resp.StatusCode == http.StatusBadRequest && !storedLane(t, sid, leg):
-		return legRefused
-	}
-	t.Fatalf("editor: status %d, body %+v", resp.StatusCode, decodeBody(t, resp))
-	return ""
 }
 
 func containmentOutcome(t *testing.T, router *chi.Mux, cookie *http.Cookie, pid, sid int64) string {
@@ -361,60 +308,6 @@ func cloneOutcome(t *testing.T, router *chi.Mux, cookie *http.Cookie, sid int64,
 		return legRefused
 	}
 	t.Fatalf("clone: status %d, body %+v", resp.StatusCode, body)
-	return ""
-}
-
-func generateOutcome(t *testing.T, router *chi.Mux, cookie *http.Cookie, sid int64, leg string) string {
-	t.Helper()
-	seedLegacyLaneClaim(t, sid, leg)
-	resp := doRequest(t, router, "POST", "/api/styles/"+itoa(sid)+"/generate",
-		map[string]any{"variants": []map[string]any{{"name": fmt.Sprintf("CW-gen-%d", sid)}}}, cookie)
-	body := decodeBody(t, resp)
-	if resp.StatusCode == http.StatusOK {
-		ids, _ := body["ids"].([]any)
-		if len(ids) == 1 && storedLane(t, int64(ids[0].(float64)), leg) {
-			return legSaved
-		}
-	} else if resp.StatusCode == http.StatusBadRequest {
-		return legRefused
-	}
-	t.Fatalf("generate: status %d, body %+v", resp.StatusCode, body)
-	return ""
-}
-
-// copyOutcome copies the source onto a sibling. Plain, the source carries the
-// lane; with overrides, the source is clean and the override names the lane.
-func copyOutcome(t *testing.T, router *chi.Mux, cookie *http.Cookie, pid, sid int64, leg string, override bool) string {
-	t.Helper()
-	tgt := seedStyle(t, fmt.Sprintf("CW-tgt-%d", sid), pid)
-	body := map[string]any{"target_style_ids": []int64{tgt}, "include_payloads": true}
-	if override {
-		_, err := testDB.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, cleanLegClaim(sid))
-		testutil.MustNoErr(t, err, "seed a clean claim")
-		body["overrides"] = []map[string]string{{"node": "LL-PRESS", leg: "LL-LANE",
-			"payload_code": fmt.Sprintf("PART-LL-%d", tgt)}}
-	} else {
-		seedLegacyLaneClaim(t, sid, leg)
-	}
-	resp := doRequest(t, router, "POST", "/api/styles/"+itoa(sid)+"/claims/copy-to", body, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	var out struct {
-		Results []struct {
-			Status string `json:"status"`
-			Reason string `json:"reason"`
-		} `json:"results"`
-	}
-	testutil.MustNoErr(t, json.NewDecoder(resp.Body).Decode(&out), "decode copy results")
-	if len(out.Results) != 1 {
-		t.Fatalf("copy: %d results, want 1", len(out.Results))
-	}
-	switch {
-	case out.Results[0].Status == "copied" && storedLane(t, tgt, leg):
-		return legSaved
-	case out.Results[0].Status == "failed" && !storedLane(t, tgt, leg):
-		return legRefused
-	}
-	t.Fatalf("copy: result %+v", out.Results[0])
 	return ""
 }
 
@@ -532,9 +425,8 @@ func TestRoutingDerive_ALaneOnEachLeg(t *testing.T) {
 }
 
 // TestLaneLegRefusals_NameTheStyleNodeAndLeg pins the sentences a person reads
-// when a lane is refused: on the editor's field, and in the clone, generate,
-// copy and containment answers, which name the style, the claim's node and
-// the leg so the one claim to fix can be found.
+// when a lane is refused: the clone and containment answers name the style,
+// the claim's node and the leg so the one claim to fix can be found.
 func TestLaneLegRefusals_NameTheStyleNodeAndLeg(t *testing.T) {
 	h, router := newAdminRouter(t)
 	h.engine.(*stubEngine).core = writersCore()
@@ -551,43 +443,10 @@ func TestLaneLegRefusals_NameTheStyleNodeAndLeg(t *testing.T) {
 		t.Errorf("clone:\n got  %q\n want %q", got, want)
 	}
 
-	resp = doRequest(t, router, "POST", "/api/styles/"+itoa(sid)+"/generate",
-		map[string]any{"variants": []map[string]any{{"name": "LT-Gen"}}}, cookie)
-	assertStatus(t, resp, http.StatusBadRequest)
-	if got, want := decodeBody(t, resp)["error"], `clone variant "LT-Gen": style "LT-Src", claim at LL-PRESS: inbound_staging: `+staging; got != want {
-		t.Errorf("generate:\n got  %q\n want %q", got, want)
-	}
-
-	tgt := seedStyle(t, "LT-Tgt", pid)
-	resp = doRequest(t, router, "POST", "/api/styles/"+itoa(sid)+"/claims/copy-to",
-		map[string]any{"target_style_ids": []int64{tgt}, "include_payloads": true}, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	results, _ := decodeBody(t, resp)["results"].([]any)
-	if len(results) != 1 {
-		t.Fatalf("copy: %d results", len(results))
-	}
-	if got, want := results[0].(map[string]any)["reason"], `copying style "LT-Src" onto "LT-Tgt", claim at LL-PRESS: inbound_staging: `+staging; got != want {
-		t.Errorf("copy:\n got  %q\n want %q", got, want)
-	}
-
 	resp = doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/containment-setting",
 		map[string]any{"enabled": true, "destination": "LL-SUP"}, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 	if got, want := decodeBody(t, resp)["error"], `stamp containment on LL-PRESS (style LT-Src): inbound_staging: `+staging; got != want {
 		t.Errorf("containment stamp:\n got  %q\n want %q", got, want)
-	}
-
-	resp = doRequest(t, router, "POST", "/api/style-node-claims", withLaneOn(cleanLegClaim(tgt), "outbound_staging"), cookie)
-	assertStatus(t, resp, http.StatusBadRequest)
-	raw, _ := decodeBody(t, resp)["field_errors"].([]any)
-	found := false
-	for _, r := range raw {
-		m := r.(map[string]any)
-		if m["field"] == "outbound_staging" && m["message"] == staging {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("editor: no error on outbound_staging reading %q: %+v", staging, raw)
 	}
 }

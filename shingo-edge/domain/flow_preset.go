@@ -22,8 +22,6 @@ import (
 // reference has to keep meaning what it meant. Drift is computed from the
 // claim rows themselves, never from the stored version — the preset is not
 // a drift oracle.
-//
-// Store and validation only for now; the UI and endpoints are a later unit.
 
 // FlowPreset is one row of flow_presets.
 type FlowPreset struct {
@@ -52,8 +50,8 @@ type FlowPresetInput struct {
 var ErrFlowPresetHasPayload = errors.New("a preset carries no payload — the part is chosen when the preset is applied")
 
 // ErrFlowPresetUnknownNode refuses a preset naming a node the process may not
-// route through: anything outside its positions and the enabled members of
-// its routing set.
+// route through: anything outside its positions and the members of its
+// routing set, switched on or off (RoutingSetNames, owner ruling R4).
 var ErrFlowPresetUnknownNode = errors.New("not a position or a routing-set member of this process")
 
 // ErrFlowPresetNameIsAnotherShape refuses a name a DIFFERENT shape already
@@ -96,10 +94,10 @@ var flowPresetNodeKeys = []string{
 var flowPresetNodeListKeys = []string{"changeover_evac_nodes"}
 
 // ValidateFlowPreset checks a preset's flow_json against the nodes the
-// process may route through (its positions plus the enabled members of its
-// routing set): it must parse into at least one cell, no cell may carry a
-// payload, and every node named must be in allowed. Pure — the store resolves
-// allowed and calls this.
+// process may route through (its positions plus every member of its routing
+// set, switched on or off): it must parse into at least one cell, no cell may
+// carry a payload, and every node named must be in allowed. Pure — the store
+// resolves allowed and calls this.
 func ValidateFlowPreset(flowJSON string, allowed map[string]bool) error {
 	var flow struct {
 		Cells []map[string]json.RawMessage `json:"cells"`
