@@ -16,15 +16,13 @@ import (
 //
 // The store pins (store/routing_set_test.go) cover the derivation; these
 // cover what the HTTP layer adds: server-stamped attribution, the Core-name
-// guard reused from the process-node write, the summary line the Routing
-// panel shows first, and the status codes an engineer's browser branches on.
+// guard reused from the process-node write, and the status codes an engineer's browser branches on.
 
-// The GET's shape. No raw report: it shipped the whole RoutingDeriveReport
-// beside the sentence built from it and the panel read neither.
+// The GET's shape: the rows. The summary line and the gate that rode beside
+// them came from the boot-time backfill's report and went with it (pick-a-part
+// unit A); the panel read neither.
 type routingSetResponse struct {
-	Summary             string               `json:"summary"`
-	Rows                []domain.RoutingNode `json:"rows"`
-	FlowComposerEnabled bool                 `json:"flow_composer_enabled"`
+	Rows []domain.RoutingNode `json:"rows"`
 }
 
 func seedRoutingClaim(t *testing.T, pid int64, styleName string) int64 {
@@ -40,71 +38,51 @@ func seedRoutingClaim(t *testing.T, pid int64, styleName string) int64 {
 	return sid
 }
 
-// TestRoutingNodes_DeriveReportsAgainstCore pins the derive endpoint and the
-// bare-name rule in one go. Core lists the buffer as a group child,
-// "Supermarket Area.SMN_BUF_100", and the claim names it bare; the guard
-// (coreNodeNameIsUnknown, reused verbatim) resolves it, so the only name
-// needing a decision is the staging spot Core does not have. SMN_BUF_100
-// itself lands intact — nothing splits on its underscores.
-func TestRoutingNodes_DeriveReportsAgainstCore(t *testing.T) {
+// seedBackfilledRows writes the rows the one-time backfill (migration v25)
+// would have written for seedRoutingClaim's claim: origin backfill, enabled.
+func seedBackfilledRows(t *testing.T, pid int64) {
+	t.Helper()
+	for _, r := range []struct{ name, role string }{
+		{"SMN_BUF_100", domain.RoutingRoleSource},
+		{"RT_STG_01", domain.RoutingRoleStaging},
+		{"Supermarket Area", domain.RoutingRoleDestination},
+	} {
+		if _, err := testDB.UpsertRoutingNode(domain.CoreNodeKinds{}, domain.RoutingNodeInput{
+			ProcessID: pid, CoreNodeName: r.name, Role: r.role, Enabled: true, Origin: domain.RoutingOriginBackfill,
+		}); err != nil {
+			t.Fatalf("seed backfilled row %s: %v", r.name, err)
+		}
+	}
+}
+
+// TestRoutingNodes_GetIsTheRowsAndTheDeriveRouteIsGone: the GET answers the
+// rows in the set, and POST …/derive — the re-derive no screen ever called —
+// is no longer routed (pick-a-part unit A).
+func TestRoutingNodes_GetIsTheRowsAndTheDeriveRouteIsGone(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 	pid := seedProcess(t, "RT-Derive")
 	seedRoutingClaim(t, pid, "RT-Derive-Style")
-	h.engine.(*stubEngine).core = map[string]protocol.NodeInfo{
-		"Supermarket Area.SMN_BUF_100": {},
-		"Supermarket Area":             {},
-		"RT-PRESS":                     {},
-	}
+	seedBackfilledRows(t, pid)
 
-	resp := doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/routing-nodes/derive", nil, cookie)
+	resp := doRequest(t, router, "GET", "/api/processes/"+itoa(pid)+"/routing-nodes", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
 	var got routingSetResponse
 	decodeJSON(t, resp, &got)
-
-	if got.Summary != "routing set: RT-Derive — derived 3 nodes from 1 claims; 1 need a decision" {
-		t.Fatalf("summary = %q", got.Summary)
-	}
-	// THE COUNT IS IN THE SENTENCE, which is the one the panel prints. The
-	// raw report used to ship beside it and nothing read it; WHICH names need
-	// a decision is pinned where the derivation lives
-	// (store/routing_set_test.go, and the plant fixtures beside it).
-	//
-	// The rows arrive backfilled and IN THE SET (owner ruling 2026-09-16,
-	// reversing Q5): they are read off live claims, so the press is already
-	// routing through them, and the switch is about what operators are offered
-	// rather than about whether the engineer is finished.
 	keys := make([]string, 0, len(got.Rows))
 	for _, r := range got.Rows {
 		keys = append(keys, r.CoreNodeName+":"+r.Role)
-		if r.Origin != domain.RoutingOriginBackfill || !r.Enabled {
-			t.Errorf("%s: origin=%q enabled=%v, want backfill and in the set", r.CoreNodeName, r.Origin, r.Enabled)
+		if r.StyleCount != 1 {
+			t.Errorf("%s: style count %d, want 1 — the evidence the panel shows under a name", r.CoreNodeName, r.StyleCount)
 		}
 	}
 	if strings.Join(keys, ",") != "SMN_BUF_100:source,RT_STG_01:staging,Supermarket Area:destination" {
 		t.Fatalf("rows = %v", keys)
 	}
-	if got.FlowComposerEnabled {
-		t.Fatal("gate reads enabled on a fresh process")
-	}
 
-	// GET returns the same picture without deriving.
-	resp = doRequest(t, router, "GET", "/api/processes/"+itoa(pid)+"/routing-nodes", nil, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	var again routingSetResponse
-	decodeJSON(t, resp, &again)
-	if again.Summary != got.Summary || len(again.Rows) != 3 {
-		t.Fatalf("GET = %+v, want the derive picture", again)
-	}
-
-	// An EMPTY Core list is not evidence: nothing needs a decision.
-	h.engine.(*stubEngine).core = nil
-	resp = doRequest(t, router, "GET", "/api/processes/"+itoa(pid)+"/routing-nodes", nil, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	var empty routingSetResponse
-	decodeJSON(t, resp, &empty)
-	if !strings.Contains(empty.Summary, "0 need a decision") {
-		t.Fatalf("with no Core list the summary reads %q — absence is never a finding", empty.Summary)
+	resp = doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/routing-nodes/derive", nil, cookie)
+	if resp.StatusCode == http.StatusOK {
+		t.Fatal("POST …/routing-nodes/derive still answers 200; the backfill and its door were deleted")
 	}
 }
 
@@ -167,9 +145,7 @@ func TestRoutingNodes_AdoptAndDelete(t *testing.T) {
 	cookie := authCookie(t, h)
 	pid := seedProcess(t, "RT-Adopt")
 	sid := seedRoutingClaim(t, pid, "RT-Adopt-Style")
-	if _, err := testDB.DeriveRoutingNodesForProcess(domain.CoreNodeKinds{}, pid, nil); err != nil {
-		t.Fatalf("derive: %v", err)
-	}
+	seedBackfilledRows(t, pid)
 	rows, err := testDB.ListRoutingNodes(pid)
 	testutil.MustNoErr(t, err, "testDB.ListRoutingNodes")
 	var source, staging domain.RoutingNode
@@ -229,8 +205,7 @@ func TestRoutingNodes_AdoptAndDelete(t *testing.T) {
 }
 
 // TestProcess_PatchFlowComposerEnabled: the gate is its own PATCH on the
-// process, and once it is on a re-derive is reported as skipped and changes
-// nothing.
+// process, and it persists both ways.
 func TestProcess_PatchFlowComposerEnabled(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
@@ -246,17 +221,6 @@ func TestProcess_PatchFlowComposerEnabled(t *testing.T) {
 	testutil.MustNoErr(t, err, "testDB.GetProcess")
 	if !p.FlowComposerEnabled {
 		t.Fatal("PATCH flow_composer_enabled=true did not persist")
-	}
-
-	resp = doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/routing-nodes/derive", nil, cookie)
-	assertStatus(t, resp, http.StatusOK)
-	var got routingSetResponse
-	decodeJSON(t, resp, &got)
-	if !got.FlowComposerEnabled || len(got.Rows) != 0 {
-		t.Fatalf("derive with the gate on = %+v, want nothing derived", got)
-	}
-	if !strings.Contains(got.Summary, "not re-derived") {
-		t.Fatalf("summary does not say the set was left alone: %q", got.Summary)
 	}
 
 	resp = doRequest(t, router, "PATCH", "/api/processes/"+itoa(pid), map[string]any{"flow_composer_enabled": false}, cookie)

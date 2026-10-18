@@ -75,16 +75,18 @@ type setNodesBudget struct {
 // TestSetNodes_StatementsPerSaveAddingNames pins a save that adds N names no
 // process holds.
 //
-// total = 4 + 5N, reads = 4 + 3N. The flat 4 reads include the one read of
+// total = 5 + 5N, reads = 4 + 3N. The flat 4 reads include the one read of
 // every live process node for the cross-process check. Read once per new name,
 // as it first was, this was total = 3 + 6N, reads = 3 + 4N: the slope moving
-// from 4 reads per name down to 3 is that read leaving the loop.
+// from 4 reads per name down to 3 is that read leaving the loop. The flat
+// write went from 0 to 1 on 2026-10-18: the routing-row DELETE for the names
+// new to the process (pick-a-part unit A; one statement whatever N is).
 func TestSetNodes_StatementsPerSaveAddingNames(t *testing.T) {
 	t.Parallel()
 	for _, size := range []setNodesBudget{
-		{names: 1, total: 9, reads: 7},
-		{names: 3, total: 19, reads: 13},
-		{names: 5, total: 29, reads: 19},
+		{names: 1, total: 10, reads: 7},
+		{names: 3, total: 20, reads: 13},
+		{names: 5, total: 30, reads: 19},
 	} {
 		svc, id, counter := countingSetNodesFixture(t)
 		counter.Reset()
@@ -92,7 +94,7 @@ func TestSetNodes_StatementsPerSaveAddingNames(t *testing.T) {
 			t.Fatalf("%d new names: SetNodes: %v", size.names, err)
 		}
 		if got := counter.Count(); got != size.total {
-			t.Errorf("%d new names: %d statements, pinned at %d (4 + 5N)", size.names, got, size.total)
+			t.Errorf("%d new names: %d statements, pinned at %d (5 + 5N)", size.names, got, size.total)
 		}
 		if got := counter.Reads(); got != size.reads {
 			t.Errorf("%d new names: %d reads, pinned at %d (4 + 3N)", size.names, got, size.reads)

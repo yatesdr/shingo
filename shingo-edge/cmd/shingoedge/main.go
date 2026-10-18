@@ -39,7 +39,6 @@ import (
 	"shingo/protocol/router"
 	"shingoedge/backup"
 	"shingoedge/config"
-	"shingoedge/domain"
 	"shingoedge/engine"
 	"shingoedge/messaging"
 	"shingoedge/store"
@@ -695,19 +694,6 @@ func main() {
 	// ── Database ────────────────────────────────────────────────────────
 	db := mustOpenDatabase(cfg.DatabasePath)
 	defer db.Close()
-
-	// Routing-set backfill: derive each process's sources / staging /
-	// destinations from its live claims, once, after migrate, and only while
-	// that process's flow composer is still off. Core has not been heard from
-	// yet, so no name can be checked against the plant here — the log line's
-	// "need a decision" count reads 0, which is the absence of a check and not
-	// a clean bill; the Processes page re-derives against the live Core list.
-	// For the same reason no lane is known yet, so none is skipped here; the
-	// re-derive skips them.
-	// A failure is logged, not fatal: this is a derivation, not a migration.
-	if _, err := db.DeriveRoutingNodes(domain.CoreNodeKinds{}, nil); err != nil {
-		log.Printf("routing set backfill: %v", err)
-	}
 
 	// ── Engine ──────────────────────────────────────────────────────────
 	eng := engine.New(engine.Config{

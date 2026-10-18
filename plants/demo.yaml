@@ -93,6 +93,10 @@ payloads:
   # the press asks the maintained group for — which is the whole wrong-type and
   # mix-churn scenario, and it cannot be staged with one type per process.
   - {code: PANEL-C, uop_capacity: 30, bin_type: STANDARD-SM, robot_group: HEAVY-1500}
+  # PANEL-D is in PRESS-1's part set and in no style: the part a station mints a
+  # style for from a recipe (pick-a-part). No bins and no demand — it is a part
+  # to pick, not one the loop moves.
+  - {code: PANEL-D, uop_capacity: 30, bin_type: STANDARD-SM, robot_group: HEAVY-1500}
   - {code: BRKT,     uop_capacity: 40, bin_type: STANDARD}
   - {code: CLIP,     uop_capacity: 40, bin_type: STANDARD}
   - {code: STUD,     uop_capacity: 40, bin_type: STANDARD}
@@ -543,7 +547,8 @@ bins:
   - {name: BIN-MT-17, slot: SMN_036, bin_type: STANDARD-SM}
 
 processes:
-  - {name: PRESS-1, active_style: PRESS-1-RUN}        # two_robot_press_index → PANEL-A
+  - {name: PRESS-1, active_style: PRESS-1-RUN,        # two_robot_press_index → PANEL-A
+     parts: [PANEL-D]}                                  # a part with no style yet (pick-a-part)
   - {name: PRESS-2, active_style: PRESS-2-RUN}        # A/B sequential → PANEL-B
   - {name: WELD-1,  active_style: WELD-1-RUN}         # two_robot: PANEL-A → ASSY
   - {name: WELD-2,  active_style: WELD-2-RUN}         # single_robot: PANEL-B + BRKT → ASSY

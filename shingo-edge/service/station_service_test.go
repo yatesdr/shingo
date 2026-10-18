@@ -218,9 +218,13 @@ func TestStation_SetNodes_AdoptsOrphanInsteadOfDuplicating(t *testing.T) {
 // routing set was put in its own table for. SetNodes re-points, re-sequences,
 // disables and deletes process_nodes rows with no role concept; a routing
 // row that lived on process_nodes would die on an unrelated board edit. So
-// the routing set must survive every SetNodes pass byte-for-byte — including
-// the pass that adds one of ITS names as a station position, which is a
-// cleanup the engineer makes, never a side effect.
+// the routing set survives every SetNodes pass byte-for-byte — EXCEPT the
+// pass that makes one of its names a station position, which drops that one
+// row (a name in both halves is offered twice). That exception is new on
+// 2026-10-18 (pick-a-part unit A): it used to be "a cleanup the engineer
+// makes, never a side effect", and the boot-time backfill made it anyway for
+// every gated-off process on every boot. The backfill is gone; the drop moved
+// here, where the collision is born.
 func TestStation_SetNodes_LeavesRoutingRowsUntouched(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -246,8 +250,8 @@ func TestStation_SetNodes_LeavesRoutingRowsUntouched(t *testing.T) {
 
 	testutil.MustNoErr(t, setNodesErr(svc, stID, []string{"N1", "N2"}), "set 1")
 	testutil.MustNoErr(t, setNodesErr(svc, stID, []string{"N2"}), "set 2 (deletes N1)")
-	// A routing name becoming a station position: SetNodes still leaves the
-	// routing row alone.
+	// A routing name becoming a station position: SetNodes drops exactly that
+	// routing row.
 	testutil.MustNoErr(t, setNodesErr(svc, stID, []string{"N2", "STG_01"}), "set 3 (adds a routing name)")
 	testutil.MustNoErr(t, setNodesErr(svc, stID, nil), "set 4 (clears the station)")
 
@@ -255,8 +259,15 @@ func TestStation_SetNodes_LeavesRoutingRowsUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list routing after: %v", err)
 	}
+	var kept []domain.RoutingNode
+	for _, r := range before {
+		if r.CoreNodeName != "STG_01" {
+			kept = append(kept, r)
+		}
+	}
+	before = kept
 	if len(after) != len(before) {
-		t.Fatalf("routing rows: %d before SetNodes, %d after", len(before), len(after))
+		t.Fatalf("routing rows: %d expected after SetNodes (STG_01 dropped), %d after", len(before), len(after))
 	}
 	for i := range before {
 		if before[i] != after[i] {

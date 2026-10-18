@@ -1,6 +1,7 @@
 package testdb
 
 import (
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -169,28 +170,49 @@ func BinTypeOf(fx scenefixtures.Plant) func(string) string {
 	}
 }
 
-// SeedRoutingSet derives a process's routing set and adopts every row, which
-// is the state a plant is in once an engineer has been through the backfill's
-// offer.
+// SeedRoutingSet writes a process's routing set the way an engineer would:
+// every name the process's live claims route through, in its role, through
+// the one write the desktop uses (store.DB.PutRoutingNodes — origin engineer,
+// enabled, sequence in first-seen order). A process's own positions are left
+// out, as the write refuses them. `by` is the author's name, as the rows
+// record it.
 //
-// SIX TESTS WROTE THIS PREAMBLE BY HAND, nine lines apiece, because the
-// derived rows arrive DISABLED — the backfill proposes, the engineer adopts —
-// and an un-adopted routing set leaves every option list in the position panel
-// empty. A test that forgets it does not fail loudly; it quietly asks its
-// question of a flow with no destinations to name, which is the one shape none
-// of them meant to test. `by` is the adopter's name, as the row records it.
+// IT USED TO RUN THE BOOT-TIME BACKFILL and adopt what it derived. The
+// backfill was deleted (pick-a-part brief, unit A); a test that forgets this
+// helper does not fail loudly, it asks its question of a flow with no
+// destinations to name.
 func SeedRoutingSet(t *testing.T, db *store.DB, processID int64, by string) {
 	t.Helper()
-	if _, err := db.DeriveRoutingNodesForProcess(domain.CoreNodeKinds{}, processID, func(string) bool { return false }); err != nil {
-		t.Fatalf("SeedRoutingSet: derive: %v", err)
-	}
-	rows, err := db.ListRoutingNodes(processID)
+	claims, err := processes.ListLiveClaimsByProcess(db.DB, processID)
 	if err != nil {
-		t.Fatalf("SeedRoutingSet: list: %v", err)
+		t.Fatalf("SeedRoutingSet: claims: %v", err)
 	}
-	for _, r := range rows {
-		if err := db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, processID, r.ID, true, by); err != nil {
-			t.Fatalf("SeedRoutingSet: adopt %s: %v", r.CoreNodeName, err)
+	nodes, err := db.ListProcessNodesByProcess(processID)
+	if err != nil {
+		t.Fatalf("SeedRoutingSet: positions: %v", err)
+	}
+	position := map[string]bool{}
+	for _, n := range nodes {
+		position[n.CoreNodeName] = true
+	}
+	var rows []domain.RoutingNodeInput
+	seen := map[string]bool{}
+	add := func(name, role string) {
+		name = strings.TrimSpace(name)
+		if name == "" || position[name] || seen[role+"\x00"+name] {
+			return
 		}
+		seen[role+"\x00"+name] = true
+		rows = append(rows, domain.RoutingNodeInput{CoreNodeName: name, Role: role})
+	}
+	for _, c := range claims {
+		add(c.InboundSource, domain.RoutingRoleSource)
+		add(c.OutboundDestination, domain.RoutingRoleDestination)
+		add(c.ChangeoverEvacDestination, domain.RoutingRoleDestination)
+		add(c.InboundStaging, domain.RoutingRoleStaging)
+		add(c.OutboundStaging, domain.RoutingRoleStaging)
+	}
+	if err := db.PutRoutingNodes(domain.CoreNodeKinds{}, processID, rows, by); err != nil {
+		t.Fatalf("SeedRoutingSet: put: %v", err)
 	}
 }

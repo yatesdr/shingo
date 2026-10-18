@@ -237,14 +237,11 @@ func TestClaim_DeleteRetiresWhenHistoryReferencesIt(t *testing.T) {
 	}
 	// The routing backfill ignores it, and the delete guard no longer holds
 	// its source.
-	rep, err := db.DeriveRoutingNodesForProcess(domain.CoreNodeKinds{}, pid, nil)
-	if err != nil {
-		t.Fatalf("derive: %v", err)
-	}
+	runBackfillOnce(t, db)
 	rows, err := db.ListRoutingNodes(pid)
 	testutil.MustNoErr(t, err, "db.ListRoutingNodes")
-	if len(rows) != 0 || rep.Claims != 0 {
-		t.Fatalf("derive after retire: rows %v, claims %d; want nothing derived from a retired claim", routingKeys(rows), rep.Claims)
+	if len(rows) != 0 {
+		t.Fatalf("backfill after retire: rows %v; want nothing derived from a retired claim", routingKeys(rows))
 	}
 
 	// Re-adding the same claim revives the row: same id, live again.

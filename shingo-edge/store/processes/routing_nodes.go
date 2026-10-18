@@ -9,21 +9,17 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
-	"slices"
-	"sort"
 	"strings"
 
 	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
 
-// RoutingNode, RoutingNodeInput and RoutingDeriveReport are the routing-set
-// data types; the structs live in shingoedge/domain.
+// RoutingNode and RoutingNodeInput are the routing-set data types; the structs
+// live in shingoedge/domain.
 type (
-	RoutingNode         = domain.RoutingNode
-	RoutingNodeInput    = domain.RoutingNodeInput
-	RoutingDeriveReport = domain.RoutingDeriveReport
+	RoutingNode      = domain.RoutingNode
+	RoutingNodeInput = domain.RoutingNodeInput
 )
 
 // ErrInvalidRoutingRole refuses a role outside source / staging / destination.
@@ -159,8 +155,8 @@ func isLivePosition(db *sql.DB, processID int64, name string) (bool, error) {
 // for the same (process, node, role). A second role for the same node is a
 // second row — a buffer can be a source and a destination. Returns the row id.
 //
-// Origin defaults to engineer: the backfill is the only writer that says
-// otherwise, and it does not come through here.
+// Origin defaults to engineer: the one-time backfill (migration v25) is the
+// only writer that says otherwise, and it does not come through here.
 //
 // kinds is Core's lane set, and a row naming a lane is refused in every role
 // (domain.CoreNodeKinds.RefuseLaneRow): the composer offers these rows on a
@@ -205,28 +201,15 @@ func UpsertRoutingNode(db *sql.DB, kinds domain.CoreNodeKinds, in RoutingNodeInp
 // SetRoutingNodeEnabled flips one row's enabled flag.
 //
 // THE SWITCH IS THE APPROVAL (owner ruling 2026-09-10). A backfilled row is a
-// name the derivation read out of a live claim and nobody has agreed to; it
-// arrives off, and switching it on is an engineer saying operators may pick
-// it. That is a change of AUTHORSHIP and not only of a flag, so the origin
-// becomes 'engineer' and called_by records who. It used to keep saying
-// backfill, which left the panel unable to tell an approved name from one
-// still waiting except by the flag it had just set, and left the summary line
-// counting it forever.
+// name the one-time backfill (migration v25, and the boot call before it) read
+// out of a live claim; switching it on is an engineer saying operators may
+// pick it. That is a change of AUTHORSHIP and not only of a flag, so the
+// origin becomes 'engineer' and called_by records who.
 //
 // SWITCHING ONE OFF DOES NOT FLIP IT BACK. Where a name came from is history,
 // and a row an engineer approved and then withdrew is still a row an engineer
-// touched. Re-deriving does NOT put a backfill origin back: the backfill is
-// INSERT OR IGNORE and skips any row that already exists, so origin is never
-// rewritten by it — and that is load-bearing, not an oversight.
-// DeriveRoutingNodes runs at every Edge boot (cmd/shingoedge/main.go), so if it
-// reset origin, every approval on the box would be silently un-approved on
-// every restart, since the switch IS the approval.
-//
-// Nor does deleting and re-deriving: DeleteRoutingNode refuses while a live
-// claim still names the node in the row's role field, and derivation reads
-// THAT SAME predicate, so every row the backfill created is a row the delete
-// guard must refuse for as long as the claim lives. The two paths are exact
-// complements, which is why the dead end is total and not a gap to plug.
+// touched. Nothing re-derives any more (the boot-time backfill was deleted
+// 2026-10-18), so nothing writes 'backfill' over an approval either.
 //
 // UpsertRoutingNode is the one writer that CAN set backfill — its validation
 // accepts the value — but its only non-test caller stamps engineer
@@ -320,228 +303,23 @@ func DeleteRoutingNode(db *sql.DB, processID, id int64) error {
 	return err
 }
 
-// routingDeriveStatements are the five INSERT OR IGNOREs of the backfill: one
-// per claim field, over the LIVE claims of LIVE styles of the process. A style
-// whose process row is gone is never visited (the caller iterates processes),
-// a claim whose style row is gone joins to nothing, and a retired claim is
-// skipped — both plants carry such rows and none is an error here.
-var routingDeriveStatements = []struct{ field, role string }{
-	{"inbound_source", domain.RoutingRoleSource},
-	{"outbound_destination", domain.RoutingRoleDestination},
-	{"changeover_evac_destination", domain.RoutingRoleDestination},
-	{"inbound_staging", domain.RoutingRoleStaging},
-	{"outbound_staging", domain.RoutingRoleStaging},
-}
-
-// DeriveRoutingNodes runs the routing-set backfill for every process and
-// returns one report per process, in process-list order. It is the boot-time
-// call; the desktop's re-derive is DeriveRoutingNodesForProcess.
+// RoutingSet is the Routing tab's answer in one pass: the rows, each with the
+// count of live styles whose claims name it in its role.
 //
-// isUnknown answers whether Core does not know a name. Nil means the caller
-// could not check — at boot, before Core has been heard from — and every
-// name then counts as known: absence of data is never a finding.
-//
-// kinds is Core's lane set: a claim leg naming a lane is not derived into a
-// row, and the skip is logged (deriveRoutingNodes). At boot it is empty, for
-// the same reason isUnknown is nil, and nothing is skipped.
-func DeriveRoutingNodes(db *sql.DB, kinds domain.CoreNodeKinds, isUnknown func(name string) bool) ([]RoutingDeriveReport, error) {
-	procs, err := List(db)
+// TWO READS. The rows, and the process's live claims for the per-row counts —
+// the rule for which claim field names a row lives in domain, so the count and
+// the delete guard cannot answer differently. (It also returned a report of
+// the boot-time backfill — counts, a summary line, the gate — which went with
+// the backfill; the desktop read only the rows.)
+func RoutingSet(db *sql.DB, processID int64) ([]RoutingNode, error) {
+	rows, err := ListRoutingNodes(db, processID)
 	if err != nil {
-		return nil, fmt.Errorf("routing set backfill: list processes: %w", err)
+		return nil, err
 	}
-	out := make([]RoutingDeriveReport, 0, len(procs))
-	for _, p := range procs {
-		rep, err := deriveRoutingNodes(db, p, kinds, isUnknown)
-		if err != nil {
-			return out, err
-		}
-		out = append(out, rep)
-	}
-	return out, nil
-}
-
-// DeriveRoutingNodesForProcess is the backfill for one process — the
-// desktop's "re-derive". A no-op, reported as Skipped, once the flow composer
-// is enabled for the process.
-func DeriveRoutingNodesForProcess(db *sql.DB, kinds domain.CoreNodeKinds, processID int64, isUnknown func(name string) bool) (RoutingDeriveReport, error) {
-	p, err := Get(db, processID)
+	claims, err := ListLiveClaimsByProcess(db, processID)
 	if err != nil {
-		return RoutingDeriveReport{}, err
+		return nil, err
 	}
-	return deriveRoutingNodes(db, *p, kinds, isUnknown)
-}
-
-// laneLegsOnClaims is the names the process's live claims put on a derived
-// leg that are lanes, each logged once with its sentence. One SELECT, and
-// none when no lane is known. A backfill that refused would abort the boot
-// it runs in, so the row is skipped instead and the claim is left for its
-// next save to refuse.
-func laneLegsOnClaims(db *sql.DB, p Process, kinds domain.CoreNodeKinds) ([]string, error) {
-	if len(kinds.Lanes) == 0 {
-		return nil, nil
-	}
-	rows, err := db.Query(`SELECT c.inbound_source, c.outbound_destination, c.changeover_evac_destination,
-			c.inbound_staging, c.outbound_staging
-		FROM style_node_claims c JOIN styles s ON s.id = c.style_id
-		WHERE s.process_id = ? AND s.deleted_at IS NULL AND c.retired_at IS NULL`, p.ID)
-	if err != nil {
-		return nil, fmt.Errorf("routing set backfill: process %d lane check: %w", p.ID, err)
-	}
-	defer rows.Close()
-	seen := map[string]bool{}
-	var lanes []string
-	for rows.Next() {
-		vals := make([]string, len(routingDeriveStatements))
-		ptrs := make([]any, len(vals))
-		for i := range vals {
-			ptrs[i] = &vals[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
-			return nil, err
-		}
-		for i, st := range routingDeriveStatements {
-			name := strings.TrimSpace(vals[i])
-			msg := kinds.LegRefusal(st.role, name)
-			if msg == "" || seen[st.field+"\x00"+name] {
-				continue
-			}
-			seen[st.field+"\x00"+name] = true
-			log.Printf("routing set backfill: %s — not derived from %s: %s", p.Name, st.field, msg)
-			if !slices.Contains(lanes, name) {
-				lanes = append(lanes, name)
-			}
-		}
-	}
-	return lanes, rows.Err()
-}
-
-func deriveRoutingNodes(db *sql.DB, p Process, kinds domain.CoreNodeKinds, isUnknown func(name string) bool) (RoutingDeriveReport, error) {
-	if !p.FlowComposerEnabled {
-		lanes, err := laneLegsOnClaims(db, p, kinds)
-		if err != nil {
-			return RoutingDeriveReport{}, err
-		}
-		notLane := ""
-		if len(lanes) > 0 {
-			notLane = " NOT IN (" + strings.TrimSuffix(strings.Repeat("?, ", len(lanes)), ", ") + ")"
-		}
-		for _, st := range routingDeriveStatements {
-			args := []any{st.role, domain.RoutingOriginBackfill, p.ID}
-			skip := ""
-			if notLane != "" {
-				skip = ` AND TRIM(c.` + st.field + `)` + notLane
-				for _, l := range lanes {
-					args = append(args, l)
-				}
-			}
-			// ENABLED, NOT DISABLED (owner ruling 2026-09-16, reversing Q5).
-			//
-			// These names are read off LIVE claims: the press is already
-			// routing material through every one of them, right now. Landing
-			// them switched off never stopped that — the claim still names the
-			// node and the runtime reads the claim — it only stopped the flow
-			// composer OFFERING them, so a press demonstrably drawing from
-			// SMN_015 could not offer SMN_015 to the operator working it.
-			//
-			// "The engineer should be able to set up as is; it is kind of
-			// stupid he has to switch it on — that's for the HMI." The switch
-			// is about what OPERATORS are offered, and a name the flows
-			// already use is not a question anybody needs to answer twice. At
-			// Hopkinsville this left all 21 rows off across four processes and
-			// the composer with nothing to offer on any of them.
-			if _, err := db.Exec(`INSERT OR IGNORE INTO process_routing_nodes
-				(process_id, core_node_name, role, origin, enabled)
-				SELECT DISTINCT s.process_id, TRIM(c.`+st.field+`), ?, ?, 1
-				FROM style_node_claims c JOIN styles s ON s.id = c.style_id
-				WHERE s.process_id = ? AND s.deleted_at IS NULL AND c.retired_at IS NULL AND TRIM(c.`+st.field+`) != ''`+skip,
-				args...); err != nil {
-				return RoutingDeriveReport{}, fmt.Errorf("routing set backfill: process %d %s: %w", p.ID, st.field, err)
-			}
-		}
-		// Positions stay in process_nodes. A staging spot that is also one of
-		// the process's own positions (HK P400's PLN_02 / PLN_05) is derived by
-		// the statements above and dropped here.
-		if _, err := db.Exec(`DELETE FROM process_routing_nodes WHERE process_id = ?1 AND core_node_name IN (
-			SELECT core_node_name FROM process_nodes WHERE process_id = ?1 AND deleted_at IS NULL)`, p.ID); err != nil {
-			return RoutingDeriveReport{}, fmt.Errorf("routing set backfill: process %d drop positions: %w", p.ID, err)
-		}
-	}
-	rep, err := RoutingSetReport(db, p, isUnknown)
-	if err != nil {
-		return rep, err
-	}
-	log.Print(rep.Line())
-	return rep, nil
-}
-
-// RoutingSetReport counts a process's routing set as it stands: backfilled
-// rows, the live claims behind them, and the names Core does not know. It is
-// the derive report without the derivation — what the Routing panel shows on
-// load.
-func RoutingSetReport(db *sql.DB, p Process, isUnknown func(name string) bool) (RoutingDeriveReport, error) {
-	rep, _, err := RoutingSet(db, p, isUnknown)
-	return rep, err
-}
-
-// RoutingSet is the Routing tab's whole answer in one pass: the rows with
-// their style counts, and the report that describes them.
-//
-// THREE READS, AND EVERY ONE FEEDS THE RESPONSE. The route took six. The
-// report re-read process_routing_nodes twice — once as COUNT(*) WHERE origin =
-// backfill and once as SELECT DISTINCT core_node_name — beside the list the
-// response was already carrying, and counted the live claims a third time with
-// its own COUNT(*) beside the claims ListRoutingNodesWithCounts reads to fill
-// StyleCount. Four facts, three of them already in hand.
-//
-// The two table re-reads are the same set as ListRoutingNodes (neither
-// filtered on anything the list does not), and the claim COUNT's predicate is
-// ListLiveClaimsByProcess's exactly — process's live styles, unretired claims.
-// So all three are answered from the two reads, in Go.
-//
-// The Routing tab is a tab: it is opened and re-opened while an engineer works
-// through a plant's names, on the one SQLite connection the whole Edge shares.
-func RoutingSet(db *sql.DB, p Process, isUnknown func(name string) bool) (RoutingDeriveReport, []RoutingNode, error) {
-	rows, err := ListRoutingNodes(db, p.ID)
-	if err != nil {
-		return RoutingDeriveReport{ProcessID: p.ID, ProcessName: p.Name}, nil, err
-	}
-	claims, err := ListLiveClaimsByProcess(db, p.ID)
-	if err != nil {
-		return RoutingDeriveReport{ProcessID: p.ID, ProcessName: p.Name}, nil, err
-	}
-	// The per-row evidence the Routing panel puts under a backfilled name,
-	// from the claims just read — the rule lives in domain so the count and
-	// the delete guard cannot answer differently.
 	domain.CountRoutingStyles(rows, claims)
-	return routingSetReportFrom(p, rows, len(claims), isUnknown), rows, nil
-}
-
-// routingSetReportFrom is the report as a pure function of what was read.
-func routingSetReportFrom(p Process, rows []RoutingNode, liveClaims int, isUnknown func(name string) bool) RoutingDeriveReport {
-	rep := RoutingDeriveReport{
-		ProcessID: p.ID, ProcessName: p.Name,
-		FlowComposerEnabled: p.FlowComposerEnabled,
-		Claims:              liveClaims,
-	}
-	for _, r := range rows {
-		if r.Origin == domain.RoutingOriginBackfill {
-			rep.Nodes++
-		}
-	}
-	if isUnknown == nil {
-		return rep
-	}
-	// DISTINCT, ORDER BY core_node_name — what the query said, kept, because
-	// two rows for one name (a source and a destination) are one decision.
-	seen := make(map[string]bool, len(rows))
-	for _, r := range rows {
-		if seen[r.CoreNodeName] || !isUnknown(r.CoreNodeName) {
-			continue
-		}
-		seen[r.CoreNodeName] = true
-		rep.Unknown = append(rep.Unknown, r.CoreNodeName)
-	}
-	sort.Strings(rep.Unknown)
-	rep.NeedDecision = len(rep.Unknown)
-	return rep
+	return rows, nil
 }

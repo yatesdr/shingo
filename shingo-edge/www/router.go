@@ -461,7 +461,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 				// routing set from scratch. The POST above stays: the Routing
 				// tab adds one name at a time and wants one refusal about it.
 				r.Put("/processes/{id}/routing-nodes", h.apiPutRoutingNodes)
-				r.Post("/processes/{id}/routing-nodes/derive", h.apiDeriveRoutingNodes)
 				r.Patch("/processes/{id}/routing-nodes/{rowID}", h.apiPatchRoutingNode)
 				r.Delete("/processes/{id}/routing-nodes/{rowID}", h.apiDeleteRoutingNode)
 

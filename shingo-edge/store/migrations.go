@@ -1804,7 +1804,77 @@ func edgeMigrations() []migrate.Migration {
 				return err == nil && n == 1
 			},
 		},
+		{
+			// The routing-set backfill, run ONCE (pick-a-part brief, unit A).
+			// Until 2026-10-18 it ran at every boot for every process whose
+			// flow-composer gate was off, which gave the gate a second meaning
+			// ("this set is reviewed, stop filling it"). The boot call is gone;
+			// this step fills a pre-routing-set database exactly as the boot
+			// call did, and only a process that has live claims and NO routing
+			// rows at all — so it is a no-op wherever a set was ever written.
+			// No Verify: it is data, and an empty set afterwards is a process
+			// with no claims, which is a fact, not a failed step.
+			Version: 25,
+			Name:    "process_routing_nodes_backfill_once",
+			Fn:      backfillRoutingSetsOnce,
+		},
 	}
+}
+
+// backfillRoutingSetsOnce is migration v25's body: for every live process
+// with at least one live claim and zero process_routing_nodes rows, insert
+// every name a live claim puts on a leg field, enabled, origin 'backfill' (the
+// picker still annotates those), then drop any row naming one of the
+// process's own positions — the five INSERT OR IGNOREs and the DELETE the
+// boot-time backfill ran, unchanged. Lanes are not filtered: the boot call ran
+// before Core's lane list arrived and did not filter them either. The role and
+// origin words are literals, not the domain constants: a migration is a frozen
+// copy of what it did on the day it ran.
+func backfillRoutingSetsOnce(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT p.id FROM processes p
+		WHERE EXISTS (SELECT 1 FROM style_node_claims c JOIN styles s ON s.id = c.style_id
+			WHERE s.process_id = p.id AND s.deleted_at IS NULL AND c.retired_at IS NULL)
+		AND NOT EXISTS (SELECT 1 FROM process_routing_nodes r WHERE r.process_id = p.id)`)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	legs := []struct{ field, role string }{
+		{"inbound_source", "source"},
+		{"outbound_destination", "destination"},
+		{"changeover_evac_destination", "destination"},
+		{"inbound_staging", "staging"},
+		{"outbound_staging", "staging"},
+	}
+	for _, id := range ids {
+		for _, l := range legs {
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO process_routing_nodes
+				(process_id, core_node_name, role, origin, enabled)
+				SELECT DISTINCT s.process_id, TRIM(c.`+l.field+`), ?, ?, 1
+				FROM style_node_claims c JOIN styles s ON s.id = c.style_id
+				WHERE s.process_id = ? AND s.deleted_at IS NULL AND c.retired_at IS NULL AND TRIM(c.`+l.field+`) != ''`,
+				l.role, "backfill", id); err != nil {
+				return fmt.Errorf("routing set backfill: process %d %s: %w", id, l.field, err)
+			}
+		}
+		if _, err := tx.Exec(`DELETE FROM process_routing_nodes WHERE process_id = ?1 AND core_node_name IN (
+			SELECT core_node_name FROM process_nodes WHERE process_id = ?1 AND deleted_at IS NULL)`, id); err != nil {
+			return fmt.Errorf("routing set backfill: process %d drop positions: %w", id, err)
+		}
+	}
+	return nil
 }
 
 // runVersioned is the seam versioned_migration_test.go drives directly; the

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/internal/testdb"
 	"shingoedge/store/stations"
 )
@@ -147,5 +148,32 @@ func TestSetNodes_ExpandsAGroupToItsNodes(t *testing.T) {
 	got := strings.Join(nodeNames(t, svc, id), ",")
 	if got != "FGN_002,FGN_001,ULN_009" {
 		t.Errorf("station nodes = %s, want the group's nodes in its place, deduplicated: FGN_002,FGN_001,ULN_009", got)
+	}
+}
+
+// TestSetNodes_DropsARoutingRowThatBecomesAPosition: a name in the routing set
+// that the station now claims as a position leaves the set, in the same save.
+// The boot-time backfill used to sweep this up after the fact; it was deleted
+// (pick-a-part unit A), and the collision is resolved where it is born.
+func TestSetNodes_DropsARoutingRowThatBecomesAPosition(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := NewStationService(db)
+	pid, err := db.CreateProcess("Press R", "", "", "", false)
+	testutil.MustNoErr(t, err, "CreateProcess")
+	id, err := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "Screen R"})
+	testutil.MustNoErr(t, err, "CreateOperatorStation")
+	testutil.MustNoErr(t, db.PutRoutingNodes(domain.CoreNodeKinds{}, pid, []domain.RoutingNodeInput{
+		{CoreNodeName: "PLN_02", Role: domain.RoutingRoleStaging},
+		{CoreNodeName: "STG_KEEP", Role: domain.RoutingRoleStaging},
+	}, "eng"), "PutRoutingNodes")
+
+	if _, err := svc.SetNodes(id, []string{"PLN_01", "PLN_02"}); err != nil {
+		t.Fatalf("SetNodes: %v", err)
+	}
+	rows, err := db.ListRoutingNodes(pid)
+	testutil.MustNoErr(t, err, "ListRoutingNodes")
+	if len(rows) != 1 || rows[0].CoreNodeName != "STG_KEEP" {
+		t.Fatalf("routing set after PLN_02 became a position = %+v, want only STG_KEEP", rows)
 	}
 }

@@ -33,7 +33,7 @@ const edgeSchemaSnapshot = "../../../shingo-edge/store/schema/schema.snapshot.sq
 //
 // style_node_claims is here because it is the table the seeder's coverage gap
 // was found in and the one that grows every round.
-var guardedTables = []string{"style_node_claims"}
+var guardedTables = []string{"style_node_claims", "process_routing_nodes", "process_payloads"}
 
 func TestEdgeDDLMatchesTheSchemaSnapshot(t *testing.T) {
 	t.Parallel()

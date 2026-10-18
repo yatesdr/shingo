@@ -217,6 +217,13 @@ func (p *Plant) Validate() error {
 			add("process %q active_style %q belongs to process %q", pr.Name, pr.ActiveStyle, styleProcess[pr.ActiveStyle])
 		}
 	}
+	for _, pr := range p.Processes {
+		for _, code := range pr.Parts {
+			if !payloads[code] {
+				add("process %q parts names unknown payload %q", pr.Name, code)
+			}
+		}
+	}
 
 	// --- bins ---
 	for _, b := range p.Bins {

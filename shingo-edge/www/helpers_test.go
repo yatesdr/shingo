@@ -472,7 +472,6 @@ func newAdminRouter(t *testing.T) (*Handlers, *chi.Mux) {
 			r.Get("/processes/{id}/routing-nodes", h.apiListRoutingNodes)
 			r.Post("/processes/{id}/routing-nodes", h.apiUpsertRoutingNode)
 			r.Put("/processes/{id}/routing-nodes", h.apiPutRoutingNodes)
-			r.Post("/processes/{id}/routing-nodes/derive", h.apiDeriveRoutingNodes)
 			r.Patch("/processes/{id}/routing-nodes/{rowID}", h.apiPatchRoutingNode)
 			r.Delete("/processes/{id}/routing-nodes/{rowID}", h.apiDeleteRoutingNode)
 			r.Get("/processes/{id}/payloads", h.apiListProcessPayloads)

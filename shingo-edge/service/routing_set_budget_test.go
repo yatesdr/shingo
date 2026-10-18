@@ -3,8 +3,6 @@ package service
 import (
 	"reflect"
 	"testing"
-
-	"shingoedge/store/processes"
 )
 
 // routing_set_budget_test.go — S0's routing-nodes row.
@@ -21,12 +19,10 @@ import (
 // nothing the other reads could not answer, so the floor is 6 - 3 = 3, not
 // 5 - 3 = 2.
 //
-// The three that stay are four facts from three reads: the process row (name,
-// composer flag), the routing rows (the response, plus the backfill count and
-// the unknown-name list read off them in Go), and the process's live claims
-// (the per-row StyleCount evidence, and their length IS the report's claim
-// count — the predicates are identical). Reaching two would mean dropping one
-// of those facts from the response, not reading one of them better.
+// The three that stay: the process row (the 404 for a missing process), the
+// routing rows (the response), and the process's live claims (the per-row
+// StyleCount evidence). The backfill report that used to ride on the same
+// reads went with the backfill (pick-a-part brief, unit A, 2026-10-18).
 const routingSetQueryBudget = 3
 
 func TestRoutingSet_QueryCount(t *testing.T) {
@@ -35,7 +31,7 @@ func TestRoutingSet_QueryCount(t *testing.T) {
 	svc := NewProcessService(fx.db)
 
 	fx.counter.Reset()
-	report, rows, err := svc.RoutingSet(fx.processID, func(string) bool { return false })
+	rows, err := svc.RoutingSet(fx.processID)
 	if err != nil {
 		t.Fatalf("RoutingSet: %v", err)
 	}
@@ -63,26 +59,11 @@ func TestRoutingSet_QueryCount(t *testing.T) {
 		t.Errorf("the one-pass read returned different rows from ListRoutingNodesWithCounts.\n"+
 			" one pass: %+v\n two pass: %+v", rows, want)
 	}
-	if report.Claims != len(claimsOf(t, fx)) {
-		t.Errorf("the report counts %d live claims and the process has %d — "+
-			"the count is read off the claims now, and the two predicates have to be the same one",
-			report.Claims, len(claimsOf(t, fx)))
-	}
 	if got > routingSetQueryBudget {
 		t.Errorf("the routing-nodes route issued %d queries for %d rows; the budget is %d.\n"+
 			"  A query that feeds nothing into the response is a query on the one SQLite "+
-			"connection the whole Edge shares. (report: %q)",
-			got, len(rows), routingSetQueryBudget, report.Line())
+			"connection the whole Edge shares.",
+			got, len(rows), routingSetQueryBudget)
 	}
 	t.Logf("routing-nodes: %d queries, %d rows", got, len(rows))
-}
-
-// claimsOf is the process's live claims, read the way the route reads them.
-func claimsOf(t *testing.T, fx budgetFixture) []processes.NodeClaim {
-	t.Helper()
-	claims, err := processes.ListLiveClaimsByProcess(fx.db.DB, fx.processID)
-	if err != nil {
-		t.Fatalf("ListLiveClaimsByProcess: %v", err)
-	}
-	return claims
 }

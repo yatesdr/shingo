@@ -248,30 +248,6 @@ func expectedRoutingSets(f plantFixture) map[int64]map[string]bool {
 	return out
 }
 
-// coreNameChecker builds the same test coreNodeNameIsUnknown applies: a name
-// is known if Core lists it bare, or as a group child ("Group.CHILD") whose
-// bare name matches. Absent on Core ⇒ needs a decision.
-func coreNameChecker(f plantFixture) func(string) bool {
-	known := map[string]bool{}
-	for _, n := range f.Nodes {
-		known[n.Name] = true
-		if n.ParentName != nil && *n.ParentName != "" {
-			known[*n.ParentName+"."+n.Name] = true
-		}
-	}
-	return func(name string) bool {
-		if known[name] {
-			return false
-		}
-		for full := range known {
-			if i := strings.LastIndex(full, "."); i >= 0 && full[i+1:] == name {
-				return false
-			}
-		}
-		return true
-	}
-}
-
 func setOf(rows []domain.RoutingNode) map[string]bool {
 	out := map[string]bool{}
 	for _, r := range rows {
@@ -289,12 +265,30 @@ func sortedKeys(m map[string]bool) []string {
 	return out
 }
 
-// TestRoutingBackfill_PlantA is the brief's exact pin: on plant A, process 1
-// derives {Supermarket Empty Totes: source, Supermarket Area: destination,
-// PLN_02: staging, PLN_05: staging} from its 20 live claims — and then drops
-// PLN_02 and PLN_05 because both are positions of the process — so the final
-// set is the two groups. Four of A's 29 claims point at deleted style rows;
-// they contribute nothing and break nothing.
+// runBackfillOnce runs migration v25's body (backfillRoutingSetsOnce) in its
+// own transaction over whatever the test loaded — the same call the migration
+// runner makes, after the fixture rows are in.
+func runBackfillOnce(t *testing.T, db *DB) {
+	t.Helper()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if err := backfillRoutingSetsOnce(tx); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("migration v25 threw on the plant's rows: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+}
+
+// TestRoutingBackfill_PlantA is the brief's exact pin, now over migration v25:
+// on plant A, process 1 derives {Supermarket Empty Totes: source, Supermarket
+// Area: destination, PLN_02: staging, PLN_05: staging} from its 20 live claims
+// — and then drops PLN_02 and PLN_05 because both are positions of the process
+// — so the final set is the two groups. Four of A's 29 claims point at deleted
+// style rows; they contribute nothing and break nothing.
 func TestRoutingBackfill_PlantA(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -304,20 +298,8 @@ func TestRoutingBackfill_PlantA(t *testing.T) {
 		t.Fatalf("plant A: %d orphan claims loaded, want 4 — the test does not have its dirty input", dirty.orphanClaims)
 	}
 
-	reports, err := db.DeriveRoutingNodes(domain.CoreNodeKinds{}, coreNameChecker(f))
-	if err != nil {
-		t.Fatalf("DeriveRoutingNodes threw on plant A's rows: %v", err)
-	}
-	byName := map[string]domain.RoutingDeriveReport{}
-	for _, r := range reports {
-		t.Log(r.Line())
-		byName[r.ProcessName] = r
-	}
+	runBackfillOnce(t, db)
 
-	p400 := byName["Press A1"]
-	if p400.ProcessID != 1 || p400.Claims != 20 {
-		t.Fatalf("Press A1 report = %+v, want process 1 with 20 live claims", p400)
-	}
 	rows, err := db.ListRoutingNodes(1)
 	if err != nil {
 		t.Fatalf("ListRoutingNodes(1): %v", err)
@@ -333,18 +315,6 @@ func TestRoutingBackfill_PlantA(t *testing.T) {
 			t.Errorf("%s: origin=%q enabled=%v, want backfill and in the set", r.CoreNodeName, r.Origin, r.Enabled)
 		}
 	}
-	if p400.Nodes != 2 || p400.NeedDecision != 0 {
-		t.Fatalf("Press A1 report = %+v, want 2 nodes and 0 needing a decision (every name resolves in A's node table)", p400)
-	}
-	// THE NUMBERS, NOT THE SENTENCE. This asserted the line verbatim, so the
-	// next wording change to a log message failed a test about a backfill. All
-	// three numbers are already asserted above; what is left worth holding is
-	// that the line the operator reads carries them.
-	for _, want := range []string{"Press A1", "2 nodes", "20 claims", "0 need a decision"} {
-		if !strings.Contains(p400.Line(), want) {
-			t.Errorf("Press A1 line %q does not carry %q", p400.Line(), want)
-		}
-	}
 
 	// The rest of the plant, by the independent derivation.
 	expected := expectedRoutingSets(f)
@@ -356,30 +326,22 @@ func TestRoutingBackfill_PlantA(t *testing.T) {
 		}
 	}
 
-	// Once the gate is on, a re-derive is a no-op — even after a claim edit
-	// that would otherwise add a name.
-	if err := db.SetFlowComposerEnabled(1, true); err != nil {
-		t.Fatalf("enable gate: %v", err)
-	}
+	// ONCE: a process with any routing row is never touched again — even after
+	// a claim edit that would otherwise add a name. This is what replaced the
+	// gate as the backfill's stop (the gate has one meaning again).
 	if _, err := db.Exec(`UPDATE style_node_claims SET inbound_source = 'NEW_SRC' WHERE id = (
 		SELECT c.id FROM style_node_claims c JOIN styles s ON s.id = c.style_id WHERE s.process_id = 1 AND s.deleted_at IS NULL LIMIT 1)`); err != nil {
 		t.Fatalf("edit a live P400 claim: %v", err)
 	}
-	rep, err := db.DeriveRoutingNodesForProcess(domain.CoreNodeKinds{}, 1, nil)
-	if err != nil {
-		t.Fatalf("re-derive with gate on: %v", err)
-	}
-	if !rep.FlowComposerEnabled {
-		t.Fatalf("re-derive ran with the gate on: %+v", rep)
-	}
+	runBackfillOnce(t, db)
 	after, err := db.ListRoutingNodes(1)
 	testutil.MustNoErr(t, err, "db.ListRoutingNodes")
 	if got := routingKeys(after); strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("gate on, yet P400's set changed: %v", got)
+		t.Fatalf("a second run changed P400's set, which already had rows: %v", got)
 	}
 }
 
-// TestRoutingBackfill_PlantB: on plant B the backfill yields, for every
+// TestRoutingBackfill_PlantB: on plant B migration v25 yields, for every
 // process, exactly the sources / staging / destinations its live claims use
 // (minus positions), and throws on none of the dirty rows — 8 claims whose
 // style is gone, 2 on soft-deleted styles, 1 on a style whose process row is
@@ -394,24 +356,13 @@ func TestRoutingBackfill_PlantB(t *testing.T) {
 		t.Fatalf("plant B dirty rows = %+v, want 8 orphan / 2 deleted-style / 1 missing-process — the test does not have its dirty input", dirty)
 	}
 
-	reports, err := db.DeriveRoutingNodes(domain.CoreNodeKinds{}, coreNameChecker(f))
-	if err != nil {
-		t.Fatalf("DeriveRoutingNodes threw on plant B's rows: %v", err)
-	}
-	if len(reports) != len(f.Processes) {
-		t.Fatalf("%d reports for %d processes", len(reports), len(f.Processes))
-	}
-	byName := map[string]domain.RoutingDeriveReport{}
-	for _, r := range reports {
-		t.Log(r.Line())
-		byName[r.ProcessName] = r
-		if r.NeedDecision != 0 {
-			t.Errorf("%s: %d names need a decision (%v) — every claim name resolves in B's node table", r.ProcessName, r.NeedDecision, r.Unknown)
-		}
-	}
+	runBackfillOnce(t, db)
 
+	byName := map[string]int64{}
+	for _, p := range f.Processes {
+		byName[fixtureStr(p["name"])] = fixtureInt(p["id"])
+	}
 	expected := expectedRoutingSets(f)
-	totalClaims := 0
 	for pid, exp := range expected {
 		got, err := db.ListRoutingNodes(pid)
 		if err != nil {
@@ -426,21 +377,14 @@ func TestRoutingBackfill_PlantB(t *testing.T) {
 			}
 		}
 	}
-	for _, r := range reports {
-		totalClaims += r.Claims
-	}
-	if totalClaims != len(f.StyleNodeClaims)-dirty.orphanClaims-dirty.deletedStyleClaims-dirty.missingProcessClaim {
-		t.Errorf("reports read %d claims in total, want the %d live ones (41 minus the dirty rows)", totalClaims,
-			len(f.StyleNodeClaims)-dirty.orphanClaims-dirty.deletedStyleClaims-dirty.missingProcessClaim)
-	}
 
 	// SMN_BUF_100, intact, as a source at both presses.
 	for _, press := range []string{"Press B13", "Press B14"} {
-		rep, ok := byName[press]
+		pid, ok := byName[press]
 		if !ok {
-			t.Fatalf("no report for %s", press)
+			t.Fatalf("no process %s in plant B", press)
 		}
-		rows, err := db.ListRoutingNodes(rep.ProcessID)
+		rows, err := db.ListRoutingNodes(pid)
 		testutil.MustNoErr(t, err, "db.ListRoutingNodes")
 		if !setOf(rows)["SMN_BUF_100:source"] {
 			t.Errorf("%s: SMN_BUF_100 is the live claims' inbound_source and is not in the set: %v", press, routingKeys(rows))
@@ -455,11 +399,11 @@ func TestRoutingBackfill_PlantB(t *testing.T) {
 	// Delete refusal names the style, on real rows: SMN_BUF_100 is Press 4's
 	// source on style "testpayload".
 	p4 := byName["Press 4"]
-	rows, err := db.ListRoutingNodes(p4.ProcessID)
+	rows, err := db.ListRoutingNodes(p4)
 	testutil.MustNoErr(t, err, "db.ListRoutingNodes")
 	for _, r := range rows {
 		if r.CoreNodeName == "SMN_BUF_100" && r.Role == domain.RoutingRoleSource {
-			err := db.DeleteRoutingNode(p4.ProcessID, r.ID)
+			err := db.DeleteRoutingNode(p4, r.ID)
 			if !errors.Is(err, processes.ErrRoutingNodeInUse) || !strings.Contains(err.Error(), "testpayload") {
 				t.Errorf("deleting Press 4's live source: err = %v, want ErrRoutingNodeInUse naming style testpayload", err)
 			}

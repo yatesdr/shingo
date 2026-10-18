@@ -156,7 +156,11 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 		claimStationByNode[c.CoreNode] = id
 	}
 
-	// process_nodes: one per distinct (process, core_node) drawn from claims.
+	// process_nodes: one per distinct (process, core_node) drawn from claims —
+	// the claimed node and the positions paired with it. A press-index back slot
+	// has no claim of its own, but it is a position of the cell, as at a plant:
+	// a recipe names it, and a preset may name only positions and routing-set
+	// members (pick-a-part sim, 2026-10-18). It takes the claim's station.
 	pnIDByNode := make(map[string]int64) // core_node → process_node id (for runtime seeding)
 	seenPN := make(map[string]bool)
 	for _, c := range p.Claims {
@@ -165,25 +169,39 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 		if !ok {
 			continue
 		}
-		key := proc + "|" + c.CoreNode
-		if seenPN[key] {
-			continue
-		}
-		seenPN[key] = true
 		opStation := sql.NullInt64{}
 		if sid, ok := claimStationByNode[c.CoreNode]; ok {
 			opStation = sql.NullInt64{Int64: sid, Valid: true} // per-window station
 		} else if sid, ok := procStation[proc]; ok {
 			opStation = sql.NullInt64{Int64: sid, Valid: true}
 		}
-		pnID, err := edgeUpsert(db,
-			`INSERT OR IGNORE INTO process_nodes(process_id, operator_station_id, core_node_name, code, name) VALUES(?, ?, ?, ?, ?)`,
-			`SELECT id FROM process_nodes WHERE process_id=? AND code=?`,
-			[]any{pid, opStation, c.CoreNode, c.CoreNode, c.CoreNode}, []any{pid, c.CoreNode})
-		if err != nil {
-			return fmt.Errorf("process_node %s/%s: %w", proc, c.CoreNode, err)
+		// One node at a time, by its field: the claimed node, then the two
+		// positions paired with it.
+		addNode := func(node string) error {
+			key := proc + "|" + node
+			if node == "" || seenPN[key] {
+				return nil
+			}
+			seenPN[key] = true
+			pnID, err := edgeUpsert(db,
+				`INSERT OR IGNORE INTO process_nodes(process_id, operator_station_id, core_node_name, code, name) VALUES(?, ?, ?, ?, ?)`,
+				`SELECT id FROM process_nodes WHERE process_id=? AND code=?`,
+				[]any{pid, opStation, node, node, node}, []any{pid, node})
+			if err != nil {
+				return fmt.Errorf("process_node %s/%s: %w", proc, node, err)
+			}
+			pnIDByNode[node] = pnID
+			return nil
 		}
-		pnIDByNode[c.CoreNode] = pnID
+		if err := addNode(c.CoreNode); err != nil {
+			return err
+		}
+		if err := addNode(c.PairedCoreNode); err != nil {
+			return err
+		}
+		if err := addNode(c.SecondPairedCoreNode); err != nil {
+			return err
+		}
 	}
 
 	// style_node_claims (the full claim row)
@@ -246,6 +264,75 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 			return fmt.Errorf("claim %s/%s id: %w", c.CoreNode, c.Style, err)
 		}
 		claimIDByStyleNode[c.Style+"|"+c.CoreNode] = claimID
+	}
+
+	// THE ROUTING SET AND THE PART SET, written as an engineer would write them
+	// (pick-a-part brief, unit A). The sim's routing sets used to exist only
+	// because the Edge's boot-time backfill derived them from these claims; that
+	// backfill is gone, so the seeder writes them: every name a process's claims
+	// route through, in its role, origin 'engineer', enabled, sequence in the
+	// order the spec first names it — minus the process's own positions, which
+	// stay in process_nodes. The part set is every payload the claims name plus
+	// the process's declared extra parts (plantspec.Process.Parts).
+	routingRows, routingParts := 0, 0
+	routingSeq := map[string]int{}
+	seenRouting := map[string]bool{}
+	seenPart := map[string]bool{}
+	addRouting := func(proc, name, role string) error {
+		name = strings.TrimSpace(name)
+		key := proc + "|" + role + "|" + name
+		if name == "" || seenPN[proc+"|"+name] || seenRouting[key] {
+			return nil
+		}
+		seenRouting[key] = true
+		seq := routingSeq[proc+"|"+role]
+		routingSeq[proc+"|"+role]++
+		if _, err := db.Exec(`INSERT OR IGNORE INTO process_routing_nodes
+			(process_id, core_node_name, role, sequence, enabled, origin, called_by)
+			VALUES (?, ?, ?, ?, 1, 'engineer', 'seeddev')`, procIDs[proc], name, role, seq); err != nil {
+			return fmt.Errorf("routing node %s/%s (%s): %w", proc, name, role, err)
+		}
+		routingRows++
+		return nil
+	}
+	addPart := func(proc, code string) error {
+		if code == "" || seenPart[proc+"|"+code] {
+			return nil
+		}
+		seenPart[proc+"|"+code] = true
+		if _, err := db.Exec(`INSERT OR IGNORE INTO process_payloads(process_id, payload_code) VALUES(?, ?)`,
+			procIDs[proc], code); err != nil {
+			return fmt.Errorf("part set %s/%s: %w", proc, code, err)
+		}
+		routingParts++
+		return nil
+	}
+	for _, c := range p.Claims {
+		proc := styleProc[c.Style]
+		if _, ok := procIDs[proc]; !ok || c.IsLoader() {
+			continue
+		}
+		for _, leg := range []struct{ name, role string }{
+			{c.InboundSource, "source"},
+			{c.OutboundDestination, "destination"},
+			{c.ChangeoverEvacDestination, "destination"},
+			{c.InboundStaging, "staging"},
+			{c.OutboundStaging, "staging"},
+		} {
+			if err := addRouting(proc, leg.name, leg.role); err != nil {
+				return err
+			}
+		}
+		if err := addPart(proc, c.Payload); err != nil {
+			return err
+		}
+	}
+	for _, pr := range p.Processes {
+		for _, code := range pr.Parts {
+			if err := addPart(pr.Name, code); err != nil {
+				return err
+			}
+		}
 	}
 
 	// reporting points (style_id + plc/tag), and the counter the owning PROCESS
@@ -363,8 +450,8 @@ func seedEdgeDB(db sqlExec, p *plantspec.Plant, binIDByNode map[string]int64) er
 		runtimeSeeded++
 	}
 
-	log.Printf("edge: %d processes, %d styles, %d operator stations, %d claims, %d reporting points, %d catalog payloads, %d runtime states",
-		len(procIDs), len(styleIDs), len(stationIDs), len(p.Claims), len(p.ReportingPoints), len(p.Payloads), runtimeSeeded)
+	log.Printf("edge: %d processes, %d styles, %d operator stations, %d claims, %d routing rows, %d part-set rows, %d reporting points, %d catalog payloads, %d runtime states",
+		len(procIDs), len(styleIDs), len(stationIDs), len(p.Claims), routingRows, routingParts, len(p.ReportingPoints), len(p.Payloads), runtimeSeeded)
 	return nil
 }
 

@@ -305,6 +305,11 @@ type MaintainLevel struct {
 type Process struct {
 	Name        string `yaml:"name"`
 	ActiveStyle string `yaml:"active_style"` // the running style (drives active_style_id)
+	// Parts is the engineer's part set beyond what the claims already name:
+	// parts the process may run with no style yet (pick-a-part brief R-I). The
+	// seeder writes the union of these and the claims' payloads into the Edge's
+	// process_payloads; the station's part list reads it.
+	Parts []string `yaml:"parts,omitempty"`
 }
 
 // Style is a per-payload configuration on a process.

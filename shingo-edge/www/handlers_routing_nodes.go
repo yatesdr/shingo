@@ -11,7 +11,6 @@ package www
 import (
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 
@@ -19,58 +18,14 @@ import (
 	"shingoedge/service"
 )
 
-// routingSetView is the Routing panel's whole picture: the summary line it
-// shows first, the rows, and the gate.
+// routingSetView is the Routing panel's read: the rows.
 //
-// NO RAW REPORT. It shipped the whole RoutingDeriveReport beside the sentence
-// built from it, and the panel read neither — it recomputed its own sentence
-// from the rows, with different numbers. One sentence, the server's, because
-// the counts in it (claims read, names still waiting for a decision) are the
-// derivation's own and the page cannot see them.
+// It also carried a summary line and the gate, both from the boot-time
+// backfill's report; the panel read neither, and both went with the backfill
+// (pick-a-part brief, unit A). The object stays an object so a field can be
+// added without breaking the one reader (processes-desktop.js loadRouting).
 type routingSetView struct {
-	Summary             string               `json:"summary"`
-	Rows                []domain.RoutingNode `json:"rows"`
-	FlowComposerEnabled bool                 `json:"flow_composer_enabled"`
-}
-
-// routingNameChecker is the "needs a decision" test the backfill report
-// applies to each derived name: coreNodeNameIsUnknown, reused verbatim, so
-// the routing panel and the process-node write agree on what an unknown
-// name is — including the bare-name rule for group children.
-//
-// Nil when Core's list is EMPTY. An empty list is not evidence that a name
-// is wrong; it means Core has not been heard from, and the report then says
-// nothing needs a decision — the absence of a check, not a clean bill. One
-// log line rather than one per name.
-func (h *Handlers) routingNameChecker() func(string) bool {
-	if len(h.engine.CoreNodes()) == 0 {
-		log.Printf("routing set: core node list is EMPTY, so no derived name could be checked against Core's plant — reporting 0 needing a decision. This is not a pass: Core has not been heard from.")
-		return nil
-	}
-	return func(name string) bool {
-		_, unknown := h.coreNodeNameIsUnknown(name)
-		return unknown
-	}
-}
-
-func (h *Handlers) writeRoutingSet(w http.ResponseWriter, processID int64, report domain.RoutingDeriveReport) {
-	rows, err := h.engine.ProcessService().ListRoutingNodes(processID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeRoutingSetRows(w, report, rows)
-}
-
-func writeRoutingSetRows(w http.ResponseWriter, report domain.RoutingDeriveReport, rows []domain.RoutingNode) {
-	if rows == nil {
-		rows = []domain.RoutingNode{}
-	}
-	writeJSON(w, routingSetView{
-		Summary:             report.Line(),
-		Rows:                rows,
-		FlowComposerEnabled: report.FlowComposerEnabled,
-	})
+	Rows []domain.RoutingNode `json:"rows"`
 }
 
 func (h *Handlers) apiListRoutingNodes(w http.ResponseWriter, r *http.Request) {
@@ -79,35 +34,15 @@ func (h *Handlers) apiListRoutingNodes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid process id")
 		return
 	}
-	// ONE PASS. The response is the rows and a line describing them, and the
-	// route used to compute those apart — the report re-read the same table
-	// twice beside the list it was about (store/processes/routing_nodes.go,
-	// RoutingSetReportFrom). The Routing tab is a tab: it is opened and
-	// re-opened while an engineer works through a plant's names.
-	report, rows, err := h.engine.ProcessService().RoutingSet(id, h.routingNameChecker())
+	rows, err := h.engine.ProcessService().RoutingSet(id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	writeRoutingSetRows(w, report, rows)
-}
-
-// apiDeriveRoutingNodes re-runs the backfill for one process against the
-// live Core list. A no-op once the flow composer is enabled; the response
-// says so.
-func (h *Handlers) apiDeriveRoutingNodes(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid process id")
-		return
+	if rows == nil {
+		rows = []domain.RoutingNode{}
 	}
-	report, err := h.engine.ProcessService().DeriveRoutingNodes(h.coreNodeKinds(), id, h.routingNameChecker())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	h.requestBackup("routing-set-derived")
-	h.writeRoutingSet(w, id, report)
+	writeJSON(w, routingSetView{Rows: rows})
 }
 
 // apiUpsertRoutingNode adds an engineer's row. origin and called_by are

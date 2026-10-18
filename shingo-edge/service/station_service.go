@@ -604,6 +604,28 @@ func (s *StationService) SetNodes(stationID int64, nodeNames []string) (kept []s
 		}
 	}
 
+	// A POSITION IS NOT ALSO A ROUTING ROW. Positions stay in process_nodes and
+	// the routing picture is the union of the two, so a name in both halves is
+	// offered twice (processes.ErrRoutingNodeIsPosition refuses the routing
+	// write; this is the other direction). The collision is born here, when a
+	// name the set already holds becomes a position, so it is resolved here —
+	// the boot-time backfill used to sweep it up after the fact (pick-a-part
+	// unit A, 2026-10-18). Only names NEW to the process can collide: one that
+	// was already a position could not have been written as a routing row
+	// (processes.ErrRoutingNodeIsPosition), so a re-save issues nothing here.
+	args := []any{station.ProcessID}
+	for _, name := range clean {
+		if _, ours := byCoreName[name]; !ours {
+			args = append(args, name)
+		}
+	}
+	if len(args) > 1 {
+		if _, err := s.db.Exec(`DELETE FROM process_routing_nodes WHERE process_id = ? AND core_node_name IN (`+
+			strings.TrimSuffix(strings.Repeat("?, ", len(args)-1), ", ")+`)`, args...); err != nil {
+			return nil, err
+		}
+	}
+
 	return s.releaseRemovedPositions(stationNodes, desired)
 }
 

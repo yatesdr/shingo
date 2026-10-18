@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"fmt"
 	"strings"
 	"time"
 )
@@ -150,41 +149,4 @@ type RoutingNodeInput struct {
 	Enabled      bool   `json:"enabled"`
 	Origin       string `json:"-"`
 	CalledBy     string `json:"-"`
-}
-
-// RoutingDeriveReport is one process's line of the routing-set backfill: what
-// the derivation read, what it produced, and how many names still need an
-// engineer's decision.
-type RoutingDeriveReport struct {
-	ProcessID   int64  `json:"process_id"`
-	ProcessName string `json:"process_name"`
-	// FlowComposerEnabled is the process's gate, and it is why nothing was
-	// derived when it is set: a reviewed set is never re-seeded from claims.
-	//
-	// IT WAS CALLED Skipped, which named the CONSEQUENCE and not the fact —
-	// so the routing panel's `flow_composer_enabled` was assigned from a
-	// field called "skipped", and a reader had to know the two were the same
-	// thing. A field is called what it is.
-	FlowComposerEnabled bool `json:"flow_composer_enabled"`
-	// Nodes is the number of backfill-origin rows in the set after the run —
-	// what the derivation produced, positions already dropped.
-	Nodes int `json:"nodes"`
-	// Claims is the number of live claims the derivation read.
-	Claims int `json:"claims"`
-	// NeedDecision counts the distinct names in the set that Core does not
-	// know. It is 0, not a finding, when Core's list was not available —
-	// absence of data is never evidence.
-	NeedDecision int      `json:"need_decision"`
-	Unknown      []string `json:"unknown,omitempty"`
-}
-
-// Line renders the report as the one log line the backfill emits per process
-// and the Routing panel shows as its first line.
-func (r RoutingDeriveReport) Line() string {
-	if r.FlowComposerEnabled {
-		return fmt.Sprintf("routing set: %s — flow composer enabled, not re-derived (%d nodes from %d claims; %d need a decision)",
-			r.ProcessName, r.Nodes, r.Claims, r.NeedDecision)
-	}
-	return fmt.Sprintf("routing set: %s — derived %d nodes from %d claims; %d need a decision",
-		r.ProcessName, r.Nodes, r.Claims, r.NeedDecision)
 }

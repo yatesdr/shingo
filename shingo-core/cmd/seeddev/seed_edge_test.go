@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -91,6 +92,21 @@ CREATE TABLE process_node_runtime_states (
   remaining_uop_cached INTEGER NOT NULL DEFAULT 0, pending_uop_delta INTEGER NOT NULL DEFAULT 0,
   active_order_id INTEGER, staged_order_id INTEGER, active_pull INTEGER NOT NULL DEFAULT 1,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+CREATE TABLE process_routing_nodes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  process_id INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
+  core_node_name TEXT NOT NULL,
+  role TEXT NOT NULL CHECK(role IN ('source','staging','destination')),
+  label TEXT NOT NULL DEFAULT '', sequence INTEGER NOT NULL DEFAULT 0,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  origin TEXT NOT NULL DEFAULT 'engineer' CHECK(origin IN ('engineer','backfill')),
+  called_by TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(process_id, core_node_name, role));
+CREATE TABLE process_payloads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  process_id INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
+  payload_code TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(process_id, payload_code));
 `
 
 func openSeededEdge(t *testing.T) (*sql.DB, string, *plantspec.Plant) {
@@ -233,9 +249,12 @@ func TestSeedEdge_DemoPlant(t *testing.T) {
 	if n := count(`SELECT COUNT(*) FROM process_nodes WHERE core_node_name IN ('ALN_001','ALN_002')`); n != 2 {
 		t.Fatalf("WELD-1 process_nodes: want 2, got %d", n)
 	}
-	// PRESS-1 has 1 process_node (front; the paired back node has no claim).
-	if n := count(`SELECT COUNT(*) FROM process_nodes WHERE core_node_name IN ('PLN_001','PLN_002')`); n != 1 {
-		t.Fatalf("PRESS-1 process_nodes: want 1, got %d", n)
+	// PRESS-1 has 2 process_nodes: the front, and the paired back slot, which
+	// has no claim of its own but is a position of the cell, as at a plant. A
+	// recipe names it as paired_core_node, and a preset may name only positions
+	// and routing-set members (pick-a-part sim, 2026-10-18).
+	if n := count(`SELECT COUNT(*) FROM process_nodes WHERE process_id=(SELECT id FROM processes WHERE name='PRESS-1') AND core_node_name IN ('PLN_001','PLN_002')`); n != 2 {
+		t.Fatalf("PRESS-1 process_nodes: want 2, got %d", n)
 	}
 
 	// Consume node's cached count = its seeded bin's UOP (BIN-ACT-W1-LH, uop:15
@@ -291,5 +310,81 @@ func TestCrossValidate(t *testing.T) {
 	}
 	if err := crossValidate(fakeChecker{resolve: false}, path); err == nil {
 		t.Fatal("crossValidate (none resolve) should report mismatches")
+	}
+}
+
+// TestSeedEdge_WritesRoutingAndPartSets: the sim's routing sets and part sets
+// are the seeder's now, not the Edge boot backfill's (pick-a-part unit A). For
+// every non-loader claim, each leg it names is a routing row of its process in
+// that leg's role, origin engineer and enabled, and its payload is in the
+// process's part set; no routing row names one of the process's positions.
+func TestSeedEdge_WritesRoutingAndPartSets(t *testing.T) {
+	t.Parallel()
+	db, _, plant := openSeededEdge(t)
+
+	rows, err := db.Query(`SELECT p.name, r.core_node_name, r.role, r.origin, r.enabled
+		FROM process_routing_nodes r JOIN processes p ON p.id = r.process_id`)
+	if err != nil {
+		t.Fatalf("read routing rows: %v", err)
+	}
+	have := map[string]bool{}
+	for rows.Next() {
+		var proc, name, role, origin string
+		var enabled int
+		if err := rows.Scan(&proc, &name, &role, &origin, &enabled); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if origin != "engineer" || enabled != 1 {
+			t.Errorf("%s %s (%s): origin %q enabled %d, want engineer and on", proc, name, role, origin, enabled)
+		}
+		have[proc+"|"+name+"|"+role] = true
+	}
+	rows.Close()
+	if len(have) == 0 {
+		t.Fatal("the seeder wrote no routing rows — every leg picker on the sim would be empty")
+	}
+
+	styleProc := map[string]string{}
+	for _, s := range plant.Styles {
+		styleProc[s.Name] = s.Process
+	}
+	positions := map[string]bool{}
+	for _, c := range plant.Claims {
+		positions[styleProc[c.Style]+"|"+c.CoreNode] = true
+	}
+	for k := range have {
+		parts := strings.SplitN(k, "|", 3)
+		if positions[parts[0]+"|"+parts[1]] {
+			t.Errorf("routing row %s names a position of its own process", k)
+		}
+	}
+	for _, c := range plant.Claims {
+		if c.IsLoader() {
+			continue
+		}
+		proc := styleProc[c.Style]
+		for _, leg := range []struct{ name, role string }{
+			{c.InboundSource, "source"}, {c.OutboundDestination, "destination"},
+			{c.ChangeoverEvacDestination, "destination"},
+			{c.InboundStaging, "staging"}, {c.OutboundStaging, "staging"},
+		} {
+			if leg.name == "" || positions[proc+"|"+leg.name] {
+				continue
+			}
+			if !have[proc+"|"+leg.name+"|"+leg.role] {
+				t.Errorf("claim %s/%s routes through %s as %s and the routing set lacks it", c.Style, c.CoreNode, leg.name, leg.role)
+			}
+		}
+		if c.Payload == "" {
+			continue
+		}
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM process_payloads pp JOIN processes p ON p.id = pp.process_id
+			WHERE p.name = ? AND pp.payload_code = ?`, proc, c.Payload).Scan(&n); err != nil {
+			t.Fatalf("read part set: %v", err)
+		}
+		if n != 1 {
+			t.Errorf("claim %s/%s runs %s and %s's part set lacks it", c.Style, c.CoreNode, c.Payload, proc)
+		}
 	}
 }

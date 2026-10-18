@@ -311,9 +311,7 @@ func TestRoutingNodes_ListCountsTheStylesBehindEachName(t *testing.T) {
 		{style: "B", source: "Supermarket Empty Totes", dest: "Supermarket Area", staging: "STG_01"},
 		{style: "C", source: "Line Buffer", dest: "Supermarket Area", staging: "STG_02"},
 	})
-	if _, err := db.DeriveRoutingNodesForProcess(domain.CoreNodeKinds{}, pid, nil); err != nil {
-		t.Fatalf("derive: %v", err)
-	}
+	runBackfillOnce(t, db)
 	rows, err := db.ListRoutingNodesWithCounts(pid)
 	if err != nil {
 		t.Fatalf("ListRoutingNodesWithCounts: %v", err)
@@ -438,11 +436,10 @@ func TestRoutingNodes_DeleteRefusesWhileALiveClaimReferencesTheName(t *testing.T
 	}
 }
 
-// TestRoutingNodes_DeriveFromClaims pins the backfill on a synthetic process:
-// five fields → three roles, backfill origin, DISABLED; a name that is a
-// position is derived and then dropped; running it again is a no-op; and once
-// the flow composer is enabled the derivation does not run at all — a reviewed
-// set is never re-seeded from claims.
+// TestRoutingNodes_DeriveFromClaims pins migration v25 (the one-time routing
+// backfill) on a synthetic process: five fields → three roles, backfill origin,
+// enabled; a name that is a position is derived and then dropped; and a
+// process that already has rows is never re-derived.
 func TestRoutingNodes_DeriveFromClaims(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -473,73 +470,28 @@ func TestRoutingNodes_DeriveFromClaims(t *testing.T) {
 		t.Fatalf("retire dead style: %v", err)
 	}
 
-	reports, err := db.DeriveRoutingNodes(domain.CoreNodeKinds{}, nil)
-	if err != nil {
-		t.Fatalf("DeriveRoutingNodes: %v", err)
-	}
-	if len(reports) != 1 {
-		t.Fatalf("reports = %+v, want one per process", reports)
-	}
-	rep := reports[0]
+	runBackfillOnce(t, db)
 	rows, err := db.ListRoutingNodes(pid)
 	testutil.MustNoErr(t, err, "db.ListRoutingNodes")
 	want := []string{"Supermarket Empty Totes:source", "PLN_05:staging", "Supermarket Area:destination"}
 	if got := routingKeys(rows); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("derived set = %v, want %v (PLN_02 is a position and must drop; OLD_* belong to a retired style)", got, want)
 	}
-	// BACKFILLED AND ENABLED (owner ruling 2026-09-16, reversing Q5).
-	//
-	// These names come off LIVE claims — the press is already routing material
-	// through every one of them. Landing them switched off never stopped that;
-	// it only stopped the flow composer OFFERING them, so a press drawing from
-	// a node could not offer that node to the operator working it. The switch
-	// is about what operators are shown, not about whether the engineer has
-	// finished: "the engineer should be able to set up as is; it is kind of
-	// stupid he has to switch it on, that's for the HMI."
-	//
-	// The ORIGIN still says backfill, because who put the name there is a fact
-	// and is what the picker annotates with.
+	// BACKFILLED AND ENABLED (owner ruling 2026-09-16, reversing Q5): these
+	// names come off LIVE claims, so the press already routes through every
+	// one of them. The ORIGIN still says backfill, because who put the name
+	// there is a fact and is what the picker annotates with.
 	for _, r := range rows {
 		if r.Origin != domain.RoutingOriginBackfill || !r.Enabled {
 			t.Errorf("%s: origin=%q enabled=%v, want backfill and IN the set: a name read off a "+
 				"live claim is one the press already routes through", r.CoreNodeName, r.Origin, r.Enabled)
 		}
 	}
-	if rep.FlowComposerEnabled || rep.Nodes != 3 || rep.Claims != 1 || rep.NeedDecision != 0 {
-		t.Fatalf("report = %+v, want nodes=3 claims=1 need_decision=0 not skipped", rep)
-	}
-	if rep.Line() != "routing set: P400 — derived 3 nodes from 1 claims; 0 need a decision" {
-		t.Fatalf("log line = %q", rep.Line())
-	}
 
-	// Idempotent: a second run changes nothing, and an adopted row stays adopted.
+	// ONCE: a process that has rows is never re-derived, even for a brand-new
+	// claim field — and an adopted row stays adopted.
 	if err := db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, pid, rows[0].ID, true, "eng"); err != nil {
 		t.Fatalf("adopt: %v", err)
-	}
-	if _, err := db.DeriveRoutingNodes(domain.CoreNodeKinds{}, nil); err != nil {
-		t.Fatalf("second derive: %v", err)
-	}
-	again, err := db.ListRoutingNodes(pid)
-	testutil.MustNoErr(t, err, "db.ListRoutingNodes")
-	if got := routingKeys(again); strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("second derive changed the set: %v", got)
-	}
-	if !again[0].Enabled {
-		t.Fatal("re-derive reset an adopted row to disabled — INSERT OR IGNORE must leave existing rows alone")
-	}
-
-	// Unknown-name count: only when the caller could check.
-	rep, err = db.DeriveRoutingNodesForProcess(domain.CoreNodeKinds{}, pid, func(name string) bool { return name == "PLN_05" })
-	if err != nil {
-		t.Fatalf("derive with checker: %v", err)
-	}
-	if rep.NeedDecision != 1 || len(rep.Unknown) != 1 || rep.Unknown[0] != "PLN_05" {
-		t.Fatalf("report with checker = %+v, want PLN_05 as the one name needing a decision", rep)
-	}
-
-	// Gate on ⇒ nothing derived, even for a brand-new claim field.
-	if err := db.SetFlowComposerEnabled(pid, true); err != nil {
-		t.Fatalf("enable gate: %v", err)
 	}
 	if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "PLN_01", Role: "consume", SwapMode: "two_robot",
@@ -547,19 +499,13 @@ func TestRoutingNodes_DeriveFromClaims(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("edit claim: %v", err)
 	}
-	rep, err = db.DeriveRoutingNodesForProcess(domain.CoreNodeKinds{}, pid, nil)
-	if err != nil {
-		t.Fatalf("derive with gate on: %v", err)
-	}
-	if !rep.FlowComposerEnabled {
-		t.Fatalf("derive ran with the gate on: %+v", rep)
-	}
-	after, err := db.ListRoutingNodes(pid)
+	runBackfillOnce(t, db)
+	again, err := db.ListRoutingNodes(pid)
 	testutil.MustNoErr(t, err, "db.ListRoutingNodes")
-	if got := routingKeys(after); strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("gate on, yet the set changed: %v", got)
+	if got := routingKeys(again); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("a second run changed a set that already had rows: %v", got)
 	}
-	if !strings.Contains(rep.Line(), "not re-derived") {
-		t.Fatalf("skipped line does not say so: %q", rep.Line())
+	if again[0].Origin != domain.RoutingOriginEngineer {
+		t.Fatal("a second run touched an adopted row")
 	}
 }

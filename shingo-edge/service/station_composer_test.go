@@ -227,30 +227,12 @@ func TestComposerDataCarriesWhatThePickerDraws(t *testing.T) {
 	svc.SetCoreNodeGroupResolver(func() map[string][]string { return testdb.GroupsOf(fx) })
 	geom := testdb.SceneGeometryOf(fx)
 	svc.SetSceneGeometryResolver(func() *domain.SceneGeometry { return geom })
-	// The routing set is DERIVED, not seeded: U5's backfill is what turns a
-	// plant's claims into the source/staging/destination options, and it runs
-	// at migration on a real edge. SeedPlant stops at the claims, so deriving
-	// here is what makes this the same set the position panel would offer.
-	if _, err := db.DeriveRoutingNodesForProcess(domain.CoreNodeKinds{}, seeded.ProcessID, func(string) bool { return false }); err != nil {
-		t.Fatalf("derive routing set: %v", err)
-	}
-	// AND THEN ADOPTED. The backfill inserts every derived name DISABLED — it
-	// is a suggestion, and an engineer adopts it (store/processes:
-	// SetRoutingNodeEnabled, "switching on stamps origin='engineer'; switching
-	// off does not flip it back"). Until that
-	// happens the position panel offers nothing, which is right: a name Core
-	// may not know is not an option to put in front of an operator. This test
-	// walks the whole path — derive, adopt, open the gate — because that is
-	// the only state in which the panel is reachable at all.
-	derived, err := db.ListRoutingNodes(seeded.ProcessID)
-	if err != nil {
-		t.Fatalf("list routing set: %v", err)
-	}
-	for _, r := range derived {
-		if err := db.SetRoutingNodeEnabled(domain.CoreNodeKinds{}, seeded.ProcessID, r.ID, true, "test"); err != nil {
-			t.Fatalf("adopt %s: %v", r.CoreNodeName, err)
-		}
-	}
+	// THE ROUTING SET, WRITTEN AS AN ENGINEER WOULD, and the gate opened — the
+	// only state in which the position panel is reachable at all. SeedPlant
+	// stops at the claims; testdb.SeedRoutingSet writes every name they route
+	// through via PutRoutingNodes (the boot-time backfill that used to derive
+	// it was deleted in pick-a-part unit A).
+	testdb.SeedRoutingSet(t, db, seeded.ProcessID, "test")
 	if err := db.SetFlowComposerEnabled(seeded.ProcessID, true); err != nil {
 		t.Fatalf("open the gate: %v", err)
 	}

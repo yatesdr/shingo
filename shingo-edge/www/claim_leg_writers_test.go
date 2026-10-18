@@ -485,57 +485,41 @@ func TestRoutingWriters_ALaneInEachRole(t *testing.T) {
 	}
 }
 
-// deriveWriterCensus is the routing backfill, per claim leg it reads. "boot"
-// is the call cmd/shingoedge makes before Core has been heard from, so no lane
-// is known and the lane is derived as before; "HTTP" is the Processes page's
-// re-derive, with Core's node list in hand, which skips the lane and logs it.
+// deriveWriterCensus is the routing backfill, per claim leg it reads. Since
+// pick-a-part unit A the only backfill is migration v25, which runs at open
+// before Core has been heard from: no lane is known, so a lane on a stored
+// claim is derived as the boot call used to derive it. (The Processes page's
+// re-derive, which skipped lanes, had no client and was deleted with it.)
 var deriveWriterCensus = []legCensusRow{
-	{"derive at boot", "inbound_source", legSaved},
-	{"derive at boot", "outbound_destination", legSaved},
-	{"derive at boot", "changeover_evac_destination", legSaved},
-	{"derive at boot", "inbound_staging", legSaved},
-	{"derive at boot", "outbound_staging", legSaved},
-	{"derive over HTTP", "inbound_source", legSkipped},
-	{"derive over HTTP", "outbound_destination", legSkipped},
-	{"derive over HTTP", "changeover_evac_destination", legSkipped},
-	{"derive over HTTP", "inbound_staging", legSkipped},
-	{"derive over HTTP", "outbound_staging", legSkipped},
+	{"migration v25", "inbound_source", legSaved},
+	{"migration v25", "outbound_destination", legSaved},
+	{"migration v25", "changeover_evac_destination", legSaved},
+	{"migration v25", "inbound_staging", legSaved},
+	{"migration v25", "outbound_staging", legSaved},
 }
 
-// TestRoutingDerive_ALaneOnEachLeg is the census of the two derives. The boot
-// derive runs over every process in the database, so it gets one of its own.
+// TestRoutingDerive_ALaneOnEachLeg is the census of the backfill. A database
+// that predates the routing set is made by seeding the claim, forgetting v25
+// ran, and opening it again — which is what an aged plant DB looks like to the
+// migration runner.
 func TestRoutingDerive_ALaneOnEachLeg(t *testing.T) {
-	h, router := newAdminRouter(t)
-	h.engine.(*stubEngine).core = writersCore()
-	cookie := authCookie(t, h)
-
-	for i, row := range deriveWriterCensus {
+	for _, row := range deriveWriterCensus {
 		t.Run(row.writer+"/"+row.leg, func(t *testing.T) {
-			var db *store.DB
-			var pid int64
-			switch row.writer {
-			case "derive at boot":
-				var err error
-				db, err = store.Open(filepath.Join(t.TempDir(), "boot.db"))
-				testutil.MustNoErr(t, err, "open a boot database")
-				t.Cleanup(func() { db.Close() })
-				pid, err = db.CreateProcess("DW-Line", "", "", "", false)
-				testutil.MustNoErr(t, err, "create process")
-				sid, err := db.CreateStyle("DW-Style", "", pid)
-				testutil.MustNoErr(t, err, "create style")
-				_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, withLaneOn(cleanLegClaim(sid), row.leg))
-				testutil.MustNoErr(t, err, "seed a stored lane claim")
-				_, err = db.DeriveRoutingNodes(domain.CoreNodeKinds{}, nil)
-				testutil.MustNoErr(t, err, "boot derive")
-			case "derive over HTTP":
-				db = testDB
-				pid = seedProcess(t, fmt.Sprintf("DW%02d-Line", i))
-				seedLegacyLaneClaim(t, seedStyle(t, fmt.Sprintf("DW%02d-Style", i), pid), row.leg)
-				resp := doRequest(t, router, "POST", "/api/processes/"+itoa(pid)+"/routing-nodes/derive", nil, cookie)
-				assertStatus(t, resp, http.StatusOK)
-			default:
-				t.Fatalf("no driver for writer %q", row.writer)
-			}
+			path := filepath.Join(t.TempDir(), "aged.db")
+			db, err := store.Open(path)
+			testutil.MustNoErr(t, err, "open a database")
+			pid, err := db.CreateProcess("DW-Line", "", "", "", false)
+			testutil.MustNoErr(t, err, "create process")
+			sid, err := db.CreateStyle("DW-Style", "", pid)
+			testutil.MustNoErr(t, err, "create style")
+			_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, withLaneOn(cleanLegClaim(sid), row.leg))
+			testutil.MustNoErr(t, err, "seed a stored lane claim")
+			_, err = db.Exec(`DELETE FROM schema_migrations WHERE version = 25`)
+			testutil.MustNoErr(t, err, "forget v25")
+			testutil.MustNoErr(t, db.Close(), "close")
+			db, err = store.Open(path)
+			testutil.MustNoErr(t, err, "reopen: migration v25 runs")
+			t.Cleanup(func() { db.Close() })
 			got := legSkipped
 			if routingHasLane(t, db, pid) {
 				got = legSaved
