@@ -253,12 +253,21 @@ func (s *ProcessService) PresetsFor(processID int64) (*PresetsView, error) {
 		return out.Candidates[a].SuggestedName < out.Candidates[b].SuggestedName
 	})
 
-	// ── New shape: what this cell COULD run ──────────────────────────────
-	//
-	// ONE MORE READ, the routing set. The positions are pressOrder (already
-	// read, in picture order) and the role evidence is the claims styleFlows
-	// already collapsed — role and position are all the generator takes from
-	// them.
+	generated, err := s.generatedShapes(processID, pressOrder, flows)
+	if err != nil {
+		return nil, err
+	}
+	out.Generated = generated
+	return out, nil
+}
+
+// generatedShapes is "New shape": what this cell COULD run.
+//
+// ONE MORE READ, the routing set. The positions are pressOrder (already read,
+// in picture order) and the role and back-position evidence is the claims
+// styleFlows already collapsed — role, position and the spots a claim uses as
+// a partner or staging place are all the generator takes from them.
+func (s *ProcessService) generatedShapes(processID int64, pressOrder []string, flows []styleFlow) ([]GeneratedShape, error) {
 	routing, err := s.db.ListRoutingNodes(processID)
 	if err != nil {
 		return nil, err
@@ -272,10 +281,10 @@ func (s *ProcessService) PresetsFor(processID int64) (*PresetsView, error) {
 				InboundStaging: c.InboundStaging, OutboundStaging: c.OutboundStaging})
 		}
 	}
-	out.Generated = []GeneratedShape{}
+	out := []GeneratedShape{}
 	picks := domain.ShapePicks{Back: domain.BackPositionNames(shapes)}
 	for _, g := range domain.GenerateShapes(pressOrder, routing, prior, picks) {
-		out.Generated = append(out.Generated, GeneratedShape{
+		out = append(out, GeneratedShape{
 			Mode: string(g.Mode), Shape: g.Cells, Notes: g.Notes,
 			Where: domain.PresetShapeNodeWord(g.Cells, pressOrder),
 		})
