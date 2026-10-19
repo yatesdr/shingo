@@ -334,9 +334,9 @@ type OperatorStationView struct {
 	// Composer is everything U8's Flow Composer reads — the picker's rows, the
 	// routing set, the presets and the travel graph. One block rather than seven
 	// loose fields; see domain/composer_view.go. Present on every station,
-	// because the picker and the set-up card are on every station: the
-	// flow_composer_enabled gate on Process decides whether the operator may
-	// also CHANGE a flow, not whether they get the screen.
+	// because the changeover screen is on every station: the
+	// flow_composer_enabled gate on Process ("HMI setup") decides whether it
+	// offers setting a Saved Recipe up or only the ones already made.
 	Composer *ComposerData `json:"composer,omitempty"`
 }
 

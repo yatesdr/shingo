@@ -89,9 +89,9 @@ test('applyOutcome: the second 409 is a refusal, not another retry', () => {
 // said "refused (403)" would make the engineer go looking in the console for
 // something the response already said.
 test('applyOutcome: a named refusal keeps its name', () => {
-    const o = B.applyOutcome(403, { error: 'flow composer is not enabled for this process' }, 1);
+    const o = B.applyOutcome(403, { error: 'HMI setup is off for this process: an engineer sets up its Saved Recipes on the desktop' }, 1);
     assert.strictEqual(o.ok, false);
-    assert.strictEqual(o.text, 'flow composer is not enabled for this process');
+    assert.strictEqual(o.text, 'HMI setup is off for this process: an engineer sets up its Saved Recipes on the desktop');
 });
 
 test('applyOutcome: an unnamed refusal still says what happened', () => {

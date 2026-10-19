@@ -41,6 +41,10 @@ type flowPreviewBody struct {
 	PresetID  int64             `json:"preset_id"`
 	Parts     []engine.PartPick `json:"parts"`
 	Overrides map[string]string `json:"overrides"`
+	// StyleID previews a Saved Recipe tapped in the list; Split previews One
+	// Part, Two Spots. Both are engine.MintRequest's.
+	StyleID int64 `json:"style_id"`
+	Split   bool  `json:"split"`
 }
 
 // flowSaveBody is POST /api/processes/{id}/flow/save. station_id names the
@@ -112,9 +116,10 @@ func (h *Handlers) apiPreviewFlow(w http.ResponseWriter, r *http.Request) {
 		ToStyleID: body.ToStyleID, Cells: body.Cells, TakenOff: body.TakenOff,
 		Preflight: r.URL.Query().Get("preflight") == "1",
 	}
-	if body.PresetID != 0 || len(body.Parts) > 0 {
+	if body.PresetID != 0 || len(body.Parts) > 0 || body.StyleID != 0 {
 		preq = engine.FlowPreviewRequest{Preflight: preq.Preflight, Mint: &engine.MintRequest{
 			PresetID: body.PresetID, Parts: body.Parts, Overrides: body.Overrides,
+			StyleID: body.StyleID, Split: body.Split,
 		}}
 	}
 	preview, err := h.orchestration.PreviewFlow(r.Context(), processID, preq)
@@ -261,9 +266,10 @@ func writeMintRefusal(w http.ResponseWriter, err error) bool {
 // Positions screen's moves if any. Never cells.
 //
 // The station resolves the same way flow/save does, and the source and
-// called_by come from the caller, never the body (owner ruling R1). A gated-off
-// cell is admitted by engine.gateRefusal for a mint with no moves — that is
-// the R3 carve-out's exact shape — and refused (403) for one with moves.
+// called_by come from the caller, never the body (owner ruling R1). A station
+// on a cell whose HMI setup is off is refused (403) any mint that would write
+// — engine.gateRefusal; opening a Saved Recipe by style_id writes nothing and
+// is not gated.
 func (h *Handlers) apiMintFlow(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {

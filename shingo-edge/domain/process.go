@@ -65,10 +65,11 @@ type Process struct {
 	// nil = "Ungrouped" on the Processes admin page. Pure UI taxonomy —
 	// nothing in the runtime reads this column.
 	GroupID *int64 `json:"group_id,omitempty"`
-	// FlowComposerEnabled is the per-process switch an engineer turns on to let
-	// the floor edit flows on the HMI (engine.gateRefusal is its reader). It has
-	// one meaning: the routing backfill that also read it was deleted
-	// (pick-a-part unit A, 2026-10-18), and Add-process no longer turns it on.
+	// FlowComposerEnabled is "HMI setup": the per-process switch an engineer
+	// turns on to let the floor set Saved Recipes up on the HMI (pick a part,
+	// pick a recipe, move its spots). Off, the station offers the Saved Recipes
+	// and nothing else, and engine.gateRefusal refuses any flow write from it.
+	// Add-process does not turn it on.
 	FlowComposerEnabled bool      `json:"flow_composer_enabled"`
 	CreatedAt           time.Time `json:"created_at"`
 }

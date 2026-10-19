@@ -50,6 +50,13 @@ type MintRequest struct {
 	PresetID  int64      `json:"preset_id"`
 	Parts     []PartPick `json:"parts"`
 	StationID int64      `json:"station_id"`
+	// StyleID names a Saved Recipe outright: the operator tapped it in the
+	// list, so nothing is resolved, placed or minted — the answer is that
+	// style. Parts and PresetID are ignored when it is set.
+	StyleID int64 `json:"style_id,omitempty"`
+	// Split is One Part, Two Spots: the one part picked goes on both produce
+	// slots of a two-slot recipe, each stroke's two parts to two bins.
+	Split bool `json:"split,omitempty"`
 	// Overrides are the Positions screen's moves (R-K): a node the recipe
 	// names → the position or lane it should use instead. Same choreography,
 	// different core node. engine.gateRefusal refuses them while the
@@ -100,6 +107,9 @@ const MintedReorderSource = "unset"
 
 // planMint resolves, places and expands. It writes nothing.
 func (e *Engine) planMint(processID int64, req MintRequest) (*mintPlan, error) {
+	if req.StyleID != 0 {
+		return e.planSaved(processID, req.StyleID)
+	}
 	process, err := e.db.GetProcess(processID)
 	if err != nil {
 		return nil, err
@@ -117,21 +127,29 @@ func (e *Engine) planMint(processID int64, req MintRequest) (*mintPlan, error) {
 	if err != nil {
 		return nil, err
 	}
+	if req.Split && len(codes) != 1 {
+		return nil, &MintRefusal{Reason: "One Part, Two Spots takes one part"}
+	}
+	spots := len(codes)
+	if req.Split {
+		// The one part fills both slots: placed and expanded as the same code
+		// twice.
+		spots = 2
+		codes = []string{codes[0], codes[0]}
+		req.Parts = []PartPick{{Code: codes[0]}, {Code: codes[0]}}
+	}
 	if !plan.moved {
-		if st := e.resolveByParts(process, styles, live, codes); st != nil {
-			plan.existing, plan.name = st, st.Name
-			plan.placement = map[string]string{}
-			for _, c := range live {
-				if c.StyleID == st.ID && c.PayloadCode != "" {
-					plan.placement[c.CoreNodeName] = c.PayloadCode
-				}
-			}
+		if st := e.resolveByParts(process, styles, live, codes, spots); st != nil {
+			plan.resolved(st, live)
 			return plan, nil
 		}
 	}
-	cells, slots, err := e.recipeSlots(processID, req.PresetID, len(codes), plan)
+	cells, slots, err := e.recipeSlots(processID, req.PresetID, spots, plan)
 	if err != nil {
 		return nil, err
+	}
+	if req.Split && countRole(slots, protocol.ClaimRoleProduce) != 2 {
+		return nil, &MintRefusal{Reason: "recipe " + plan.preset.Name + " has no two spots the press makes parts into"}
 	}
 	slotOf, err := placeParts(req.Parts, codes, slots, live)
 	if err != nil {
@@ -155,8 +173,60 @@ func (e *Engine) planMint(processID int64, req MintRequest) (*mintPlan, error) {
 		ordered[slotOf[i]] = codes[i]
 		roles[slotOf[i]] = slots[slotOf[i]].Role
 	}
-	plan.name = uniqueStyleName(domain.MintedStyleName(ordered, roles), plan.preset.Name, styles)
+	base := domain.MintedStyleName(ordered, roles)
+	if req.Split {
+		base = codes[0] + " (two spots)"
+	}
+	plan.name = uniqueStyleName(base, plan.preset.Name, styles)
 	return plan, nil
+}
+
+// resolved makes the plan the existing style st: nothing to write, the
+// placement read off its live claims.
+func (plan *mintPlan) resolved(st *processes.Style, live []processes.NodeClaim) {
+	plan.existing, plan.name = st, st.Name
+	plan.placement = map[string]string{}
+	for _, c := range live {
+		if c.StyleID == st.ID && c.PayloadCode != "" {
+			plan.placement[c.CoreNodeName] = c.PayloadCode
+		}
+	}
+}
+
+// planSaved is the plan for a Saved Recipe named by id: that style, live and
+// this process's, as it is.
+func (e *Engine) planSaved(processID, styleID int64) (*mintPlan, error) {
+	process, err := e.db.GetProcess(processID)
+	if err != nil {
+		return nil, err
+	}
+	styles, err := e.db.ListStylesByProcess(processID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range styles {
+		if styles[i].ID != styleID {
+			continue
+		}
+		live, err := processes.ListLiveClaimsByProcess(e.db.DB, processID)
+		if err != nil {
+			return nil, err
+		}
+		plan := &mintPlan{process: process}
+		plan.resolved(&styles[i], live)
+		return plan, nil
+	}
+	return nil, &MintRefusal{Reason: "that Saved Recipe is not on this process"}
+}
+
+func countRole(slots []domain.Slot, role protocol.ClaimRole) int {
+	n := 0
+	for _, s := range slots {
+		if s.Role == role {
+			n++
+		}
+	}
+	return n
 }
 
 // pickedCodes is the request's part codes, trimmed, in tap order: each named,
@@ -233,16 +303,21 @@ func expandRecipe(cells []domain.FlowCell, slots []domain.Slot, codes []string, 
 	return out, placement
 }
 
-// resolveByParts is the live style whose claims carry exactly these parts.
-// Several can (a retool runs the same part on the same press): the one on the
-// press first, then the one changed over to most recently, then the oldest.
-func (e *Engine) resolveByParts(process *processes.Process, styles []processes.Style, live []processes.NodeClaim, codes []string) *processes.Style {
+// resolveByParts is the live style whose claims carry exactly these parts on
+// this many spots (payload slots). The spot count is what tells One Part, One
+// Spot from One Part, Two Spots: both run the one part, on one slot or two.
+// Several can match (a retool runs the same part on the same press): the one
+// on the press first, then the one changed over to most recently, then the
+// oldest.
+func (e *Engine) resolveByParts(process *processes.Process, styles []processes.Style, live []processes.NodeClaim, codes []string, spots int) *processes.Style {
 	want := map[string]bool{}
 	for _, c := range codes {
 		want[c] = true
 	}
 	parts := map[int64]map[string]bool{}
+	cells := map[int64][]domain.FlowCell{}
 	for _, c := range live {
+		cells[c.StyleID] = append(cells[c.StyleID], domain.Collapse(c))
 		if c.PayloadCode == "" {
 			continue
 		}
@@ -254,7 +329,7 @@ func (e *Engine) resolveByParts(process *processes.Process, styles []processes.S
 	var fits []processes.Style
 	for _, st := range styles {
 		have := parts[st.ID]
-		if len(have) != len(want) {
+		if len(have) != len(want) || len(domain.PayloadSlots(cells[st.ID])) != spots {
 			continue
 		}
 		same := true
@@ -538,6 +613,10 @@ type MintFacts struct {
 	Minted    bool              `json:"minted"`
 	Placement map[string]string `json:"placement"`
 	Running   bool              `json:"running,omitempty"`
+	// Cells is the flow the changeover goes to — the Saved Recipe's claims, or
+	// the recipe with the parts on it — so the confirm sheet draws the press
+	// it is about to make rather than describing it.
+	Cells []domain.FlowCell `json:"cells,omitempty"`
 }
 
 // previewMint plans the mint and previews it (PreviewFlow with req.Mint set).
@@ -566,6 +645,7 @@ func (e *Engine) previewMint(ctx context.Context, processID int64, req FlowPrevi
 		facts.Minted = true
 		pr.Cells = plan.cells
 	}
+	facts.Cells = pr.Cells
 	preview, err := e.PreviewFlow(ctx, processID, pr)
 	if preview != nil {
 		preview.Mint = facts

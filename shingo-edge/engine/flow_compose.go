@@ -167,8 +167,9 @@ var (
 	// ErrFlowStale: the stored rows no longer match the fingerprint the
 	// caller carries. Preview again.
 	ErrFlowStale = errors.New("the flow changed since it was previewed — preview again")
-	// ErrFlowComposerDisabled: the process has not been opened to the floor.
-	ErrFlowComposerDisabled = errors.New("flow composer is not enabled for this process")
+	// ErrFlowComposerDisabled: the process's HMI setup is off, so the floor
+	// may not write a flow. The sentence is shown to the operator as is.
+	ErrFlowComposerDisabled = errors.New("HMI setup is off for this process: an engineer sets up its Saved Recipes on the desktop")
 
 	// ErrFlowSourceUnset refuses a save whose caller did not say which surface
 	// made it.
@@ -661,48 +662,23 @@ func refuseRunningPositionMove(styleName string, stored []processes.NodeClaim, d
 	}
 }
 
-// gateRefusal is the flow-composer gate, and the one carve-out R3 makes in it.
+// gateRefusal is the HMI setup gate.
 //
-// THE GATE IS OPERATORS-ONLY (owner, 2026-09-13). flow_composer_enabled is the
-// switch that opens this cell TO THE FLOOR, and its refusal sentence says so.
-// Applying it to the desktop as well made the rollout impossible — set the
-// flows up on the desktop, then open the gate — and gave an engineer a 403
-// about operators on a screen whose Save button was enabled.
+// THE GATE IS OPERATORS-ONLY. flow_composer_enabled is the switch that opens
+// this cell's setup TO THE FLOOR ("HMI setup" on the desktop). The desktop is
+// never gated: an engineer sets a cell's Saved Recipes up there whether or not
+// the floor may.
 //
-// R3, 2026-09-17: A CELL WITH NO FLOW AT ALL MAY BE GIVEN ONE FROM A PRESET,
-// gate or no gate. The case is the one the whole unit is about: a part nobody
-// has set up, on a cell an engineer has not opened to the floor yet, and an
-// operator who can see the shape that every other part on it runs. Refusing
-// that leaves them standing at a cell that cannot be started, with the answer
-// on screen and no way to press it.
+// OFF MEANS THE FLOOR WRITES NO FLOW AT ALL, a first one from a recipe
+// included. With setup off the station offers the Saved Recipes an engineer
+// made and nothing else, so a write arriving from the HMI is a station that
+// should not be setting this cell up; refusing it is what keeps a cell that
+// is not set up from collecting a style per experiment.
 //
-// TWO CONDITIONS, AND BOTH ARE NECESSARY:
-//
-//   - len(stored) == 0. This is a flow being BORN, not one being edited. With
-//     this condition alone an operator could re-shape an existing flow from a
-//     preset on a gated-off cell, which is the edit the gate exists to refuse.
-//   - a source_preset_id. The operator is applying a shape an ENGINEER named,
-//     not building one. Without this the carve-out would be "the floor may
-//     author any first flow", which is a different and much larger ruling.
-//
-// (argent's version was the carve without the first condition. It was rejected
-// for exactly the case above.)
-//
-// INSIDE THE TRANSACTION, and that is the point of moving it: `stored` is the
-// fingerprint pass's own read of the to-side claims, taken under the same hold
-// that decides the save. Checked outside, "this style has no flow" would be a
-// read that another save could invalidate between the check and the write —
-// and the window it opens is precisely the one where a gated-off cell gets its
-// first flow. It costs ZERO queries: the rows are already in hand.
-func gateRefusal(process *processes.Process, req FlowSaveRequest, stored []processes.NodeClaim) error {
+// INSIDE THE TRANSACTION, where the save's other refusals are, so the order
+// an operator meets them in stays the same.
+func gateRefusal(process *processes.Process, req FlowSaveRequest, _ []processes.NodeClaim) error {
 	if req.Source != domain.ClaimSourceHMI || process.FlowComposerEnabled {
-		return nil
-	}
-	// The R3 carve-out's exact shape is the mint (pick-a-part U3, error row
-	// 12): a flow being BORN, from an engineer's recipe. The one thing it may
-	// not carry on a gated-off cell is the Positions screen's moves — moving a
-	// recipe's slot is the floor editing a flow, and the switch says it may not.
-	if len(stored) == 0 && req.SourcePresetID != nil && !req.moved {
 		return nil
 	}
 	return ErrFlowComposerDisabled
@@ -711,8 +687,8 @@ func gateRefusal(process *processes.Process, req FlowSaveRequest, stored []proce
 // SaveFlow writes a flow to the target style in ONE transaction.
 //
 // Refused before anything is written: a changeover is active (the seam's
-// words), the process's flow composer is off and this is not a first flow
-// arriving from a preset (ErrFlowComposerDisabled — see gateRefusal), the
+// words), the save comes from the HMI and the process's HMI setup is off
+// (ErrFlowComposerDisabled — see gateRefusal), the
 // target is the RUNNING style and the draft moves a position
 // (ErrRunningPositionMove — see refuseRunningPositionMove for the readers that
 // makes it unsafe), the recomputed fingerprint — re-read inside the

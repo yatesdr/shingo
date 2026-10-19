@@ -1122,68 +1122,43 @@ func TestPreviewFlow_EveryOrderNamesBothEnds(t *testing.T) {
 	t.Logf("%d previewed orders, every one naming both ends", orders)
 }
 
-// ── R3: a cell with no flow may be given one from a preset ───────────────────
+// ── HMI setup off: the floor writes no flow, a first one included ────────────
 //
-// THE CASE THE RULING IS ABOUT. A part nobody has set up, on a cell an engineer
-// has not opened to the floor yet, and an operator who can see on screen the
-// shape every other part on that cell runs. Refusing that leaves them standing
-// at a cell that cannot be started with the answer in front of them.
-//
-// TWO CONDITIONS AND BOTH ARE LOAD-BEARING: no stored flow (this is a flow
-// being BORN, not one being edited) and a source_preset_id (the shape is one an
-// ENGINEER named, not one the floor authored). The table walks all four
-// corners, because the carve is only right in one of them.
-func TestSaveFlow_R3_TheGateOffDoorIsAFirstFlowFromAPreset(t *testing.T) {
+// A first flow from a recipe used to be let through a gated-off cell. With
+// setup off the station offers only the Saved Recipes an engineer made, so a
+// first flow arriving from the HMI is refused like any other floor write —
+// that is what stops a cell that is not set up from collecting a style per
+// experiment. The desktop (admin) is never gated.
+func TestSaveFlow_SetupOffRefusesAFirstFlowFromARecipe(t *testing.T) {
 	t.Parallel()
-
-	presetID := int64(7)
-	presetVer := 1
-
+	presetID, presetVer := int64(7), 1
 	for _, tc := range []struct {
-		name       string
-		hasStored  bool
-		fromPreset bool
-		wantErr    bool
+		name    string
+		source  string
+		wantErr bool
 	}{
-		{"a first flow from a preset — the door", false, true, false},
-		{"a first flow the operator authored", false, false, true},
-		{"an EXISTING flow re-shaped from a preset", true, true, true},
-		{"an existing flow edited by hand", true, false, true},
+		{"from the HMI", domain.ClaimSourceHMI, true},
+		{"from the desktop", domain.ClaimSourceAdmin, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			db := testEngineDB(t)
 			processID, _, toStyleID := seedFlowScenario(t, db)
 			eng := testEngine(t, db)
-
-			// seedFlowScenario gives the target a stored flow; the "no stored
-			// flow" corners start from a style that has none.
-			styleID := toStyleID
 			cells := cellsOf(t, db, toStyleID)
-			if !tc.hasStored {
-				fresh, err := db.CreateStyle("R3-FRESH-"+tc.name, "", processID)
-				testutil.MustNoErr(t, err, "CreateStyle")
-				styleID = fresh
-			}
-
-			fp, err := eng.FlowFingerprint(processID, styleID)
+			fresh, err := db.CreateStyle("FRESH-"+tc.name, "", processID)
+			testutil.MustNoErr(t, err, "CreateStyle")
+			fp, err := eng.FlowFingerprint(processID, fresh)
 			testutil.MustNoErr(t, err, "fingerprint")
-
-			req := FlowSaveRequest{
-				Source: domain.ClaimSourceHMI, ToStyleID: styleID, Cells: cells,
-				Fingerprint: fp, CalledBy: "Press 400",
-			}
-			if tc.fromPreset {
-				req.SourcePresetID, req.SourcePresetVersion = &presetID, &presetVer
-			}
-
-			_, err = eng.SaveFlow(processID, req)
-			gated := errors.Is(err, ErrFlowComposerDisabled)
-			if gated != tc.wantErr {
+			_, err = eng.SaveFlow(processID, FlowSaveRequest{
+				Source: tc.source, ToStyleID: fresh, Cells: cells, Fingerprint: fp, CalledBy: "Press 400",
+				SourcePresetID: &presetID, SourcePresetVersion: &presetVer,
+			})
+			if gated := errors.Is(err, ErrFlowComposerDisabled); gated != tc.wantErr {
 				t.Fatalf("err = %v; gate refusal = %v, want %v", err, gated, tc.wantErr)
 			}
 			if !tc.wantErr && err != nil {
-				t.Fatalf("the door refused for another reason: %v", err)
+				t.Fatalf("refused for another reason: %v", err)
 			}
 		})
 	}

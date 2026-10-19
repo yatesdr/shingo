@@ -127,6 +127,7 @@ func seedMintCell(t *testing.T, cell mintCell) mintCellFixture {
 		testutil.MustNoErr(t, err, "name the generated recipe")
 		eng := testEngine(t, db)
 		eng.coreClient = stubCoreClient(testCoreURL)
+		enableComposer(t, db, pid)
 		return mintCellFixture{db: db, eng: eng, process: pid, running: run, preset: id}
 	}
 	t.Fatalf("%s: the generator offers no %s recipe (got %d)", cell.name, cell.mode, len(view.Generated))

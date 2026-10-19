@@ -149,13 +149,12 @@ func TestFlowSave_GatedOffStationBodyIsRefused(t *testing.T) {
 	}
 }
 
-// TestFlowMint_GatedOffStationBodyPassesTheGate is the door U3 builds and the
-// reason U0 left engine.gateRefusal alone (brief O-10, error row 12): the
-// station's mint body — a recipe and the parts the operator picked, no cells,
-// no moves — is the floor's one write on a gated-off cell. It must not be a
-// 403, and it must mint. The same body with a move IS refused: moving a
-// recipe's slot is the floor editing a flow, and the switch is off.
-func TestFlowMint_GatedOffStationBodyPassesTheGate(t *testing.T) {
+// TestFlowMint_SetupGatesTheStationsMint: the station's mint body — a recipe
+// and the parts the operator picked, no cells — is refused (403) where HMI
+// setup is off, and mints once it is on. With setup off the station offers
+// only Saved Recipes, so a mint from it is a station setting up a cell nobody
+// opened to the floor.
+func TestFlowMint_SetupGatesTheStationsMint(t *testing.T) {
 	db, seeded := gatedOffPlant(t)
 	_, router := realFlowRouter(t, db)
 	presetID, codes := recipeAndNewPair(t, db, seeded)
@@ -166,14 +165,11 @@ func TestFlowMint_GatedOffStationBodyPassesTheGate(t *testing.T) {
 	if _, has := bodies["mint"]["cells"]; has {
 		t.Fatal("the station's mint body carries cells; the mint is its own request type (brief O-7)")
 	}
-
-	moved := map[string]any{}
-	for k, v := range bodies["mint"] {
-		moved[k] = v
-	}
-	moved["overrides"] = map[string]string{"PLN_01": "PLN_03"}
-	resp := doRequest(t, router, "POST", "/api/processes/"+pid+"/flow/mint", moved, nil)
+	resp := doRequest(t, router, "POST", "/api/processes/"+pid+"/flow/mint", bodies["mint"], nil)
 	assertStatus(t, resp, http.StatusForbidden)
+	if err := db.SetFlowComposerEnabled(seeded.ProcessID, true); err != nil {
+		t.Fatalf("turn HMI setup on: %v", err)
+	}
 
 	resp = doRequest(t, router, "POST", "/api/processes/"+pid+"/flow/mint", bodies["mint"], nil)
 	assertStatus(t, resp, http.StatusOK)
@@ -246,6 +242,9 @@ func TestReplenishmentPage_AMintedStyleReadsNotSet(t *testing.T) {
 	bodies := stationBodies(t, map[string]any{
 		"presetID": presetID, "codes": codes, "stationID": seeded.Stations["screen-a4"],
 	})
+	if err := db.SetFlowComposerEnabled(seeded.ProcessID, true); err != nil {
+		t.Fatalf("turn HMI setup on: %v", err)
+	}
 	resp := doRequest(t, router, "POST", "/api/processes/"+itoa(seeded.ProcessID)+"/flow/mint", bodies["mint"], nil)
 	assertStatus(t, resp, http.StatusOK)
 

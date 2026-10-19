@@ -47,6 +47,8 @@ func newMintFixture(t *testing.T) mintFixture {
 		testutil.MustNoErr(t, err, "name the recipe")
 		eng := testEngine(t, db)
 		eng.coreClient = stubCoreClient(testCoreURL)
+		// The station mints only where HMI setup is on.
+		enableComposer(t, db, plant.ProcessID)
 		return mintFixture{db: db, eng: eng, plant: plant, preset: id, members: c.Members}
 	}
 	t.Fatal("plant A offers no press-index shape with two members")
@@ -237,4 +239,55 @@ func TestPreviewFlow_TheMintFormPlansAStyleThatDoesNotExistYet(t *testing.T) {
 		t.Errorf("styles %d → %d: a preview wrote", len(before), len(after))
 	}
 	_ = processes.Style{}
+}
+
+// One Part, Two Spots: the one part on both produce slots of the two-slot
+// recipe, named apart from the same part on one spot, and found again by its
+// part AND its spot count — the one-spot question does not resolve to it.
+func TestMintStyle_OnePartTwoSpotsFillsBothSlotsAndResolvesBySpots(t *testing.T) {
+	t.Parallel()
+	f := newMintFixture(t)
+	nodes := sortedNodes(f.partsByNode(t, f.members[0]))
+	split := func() (*MintResult, error) {
+		return f.eng.MintStyle(f.plant.ProcessID, MintRequest{PresetID: f.preset, Parts: []PartPick{{Code: "SYN-A-SPLIT"}},
+			Split: true, Source: domain.ClaimSourceHMI, CalledBy: "Screen A4"})
+	}
+	res, err := split()
+	testutil.MustNoErr(t, err, "split mint")
+	if !res.Minted || res.StyleName != "SYN-A-SPLIT (two spots)" {
+		t.Fatalf("result = %+v, want a minted style named for its two spots", res)
+	}
+	if got := f.partsByNode(t, res.StyleID); got[nodes[0]] != "SYN-A-SPLIT" || got[nodes[1]] != "SYN-A-SPLIT" {
+		t.Errorf("claims = %v, want the part on %v", got, nodes)
+	}
+	again, err := split()
+	testutil.MustNoErr(t, err, "split mint again")
+	if again.Minted || again.StyleID != res.StyleID {
+		t.Errorf("second split = %+v, want style %d resolved", again, res.StyleID)
+	}
+	// The same part on one spot is a different Saved Recipe: the two-slot
+	// recipe cannot take it, so it is refused rather than resolved.
+	if _, err := f.mint(t, PartPick{Code: "SYN-A-SPLIT"}); err == nil {
+		t.Error("one part with no split resolved to the two-spot style")
+	}
+	if _, err := f.eng.MintStyle(f.plant.ProcessID, MintRequest{PresetID: f.preset, Split: true,
+		Parts: []PartPick{{Code: "X"}, {Code: "Y"}}, Source: domain.ClaimSourceHMI}); err == nil {
+		t.Error("a split of two parts was accepted")
+	}
+}
+
+// A Saved Recipe tapped in the list is that style: nothing resolved or
+// minted. Another process's style is refused by name.
+func TestMintStyle_ASavedRecipeByIDIsThatStyle(t *testing.T) {
+	t.Parallel()
+	f := newMintFixture(t)
+	res, err := f.eng.MintStyle(f.plant.ProcessID, MintRequest{StyleID: f.members[1], Source: domain.ClaimSourceHMI})
+	testutil.MustNoErr(t, err, "open by id")
+	if res.Minted || res.StyleID != f.members[1] || len(res.Placement) == 0 {
+		t.Errorf("result = %+v, want style %d as it is", res, f.members[1])
+	}
+	var refused *MintRefusal
+	if _, err := f.eng.MintStyle(f.plant.ProcessID, MintRequest{StyleID: 99999, Source: domain.ClaimSourceHMI}); !errors.As(err, &refused) {
+		t.Errorf("err = %v, want a refusal for a style that is not this process's", err)
+	}
 }
