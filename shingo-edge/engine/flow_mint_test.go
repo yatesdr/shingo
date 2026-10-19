@@ -299,3 +299,20 @@ func TestMintStyle_ASavedRecipeByIDIsThatStyle(t *testing.T) {
 		t.Errorf("err = %v, want a refusal for a style that is not this process's", err)
 	}
 }
+
+// The spots screen's swap is two moves naming each other's spot; each cell
+// takes the other's node, and neither is refused as "already in this recipe".
+func TestApplyMoves_ASwapTradesTwoSpots(t *testing.T) {
+	t.Parallel()
+	cells := []domain.FlowCell{
+		{CoreNodeName: "PLN_06", PairedCoreNode: "PLN_05", PayloadCode: "A"},
+		{CoreNodeName: "PLN_07", PairedCoreNode: "PLN_08", PayloadCode: "B"},
+	}
+	allowed := map[string]bool{"PLN_05": true, "PLN_06": true, "PLN_07": true, "PLN_08": true}
+	out, placement, err := applyMoves(cells, map[string]string{"PLN_06": "A", "PLN_07": "B"},
+		map[string]string{"PLN_06": "PLN_07", "PLN_07": "PLN_06"}, allowed)
+	testutil.MustNoErr(t, err, "swap")
+	if out[0].CoreNodeName != "PLN_07" || out[1].CoreNodeName != "PLN_06" || placement["PLN_07"] != "A" || placement["PLN_06"] != "B" {
+		t.Errorf("cells = %+v placement = %v, want A on PLN_07 and B on PLN_06", out, placement)
+	}
+}

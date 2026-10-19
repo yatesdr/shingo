@@ -498,8 +498,10 @@ function drawPositions() {
         '<span class="sp"></span><button class="os-btn os-btn-quiet" data-act="topart">Back</button></div>' +
         '<div class="os-comp-stage">' +
         '<div class="os-comp-hint">' + (selected
-            ? 'Now tap the <b>spot or lane</b> ' + esc(selected) + ' should use instead — or tap it again to keep it'
-            : 'This is where the parts go. Tap a <b>spot</b> to move it to another position or lane · as it is? <b>Next</b>') +
+            ? 'Now tap where ' + esc(moves[selected] || selected) + ' goes: a <b>free position or lane</b> moves it, ' +
+                '<b>another spot</b> swaps them' + (moves[selected] ? ', <b>' + esc(selected) + '</b> puts it back' : '') +
+                ' · tap it again to leave it'
+            : 'This is where the parts go. Tap a <b>spot</b>, then where it should go · as it is? <b>Next</b>') +
         '</div>' +
         '<div class="os-comp-scroll"><svg id="os-comp-svg" class="os-flow-picture" viewBox="0 0 1280 ' + pic.height +
         '" width="1280" height="' + pic.height + '">' + pic.svg + '</svg></div></div>' +
@@ -519,17 +521,36 @@ function recipeNodes() {
     return out;
 }
 
+// TAP A SPOT, THEN WHERE IT GOES. `selected` is the recipe's own name for the
+// spot (a move is kept as recipe node → where it is now):
+//
+//   - a free position or lane moves it there;
+//   - another spot of the recipe swaps the two;
+//   - its own first place puts it back;
+//   - where it is now again cancels.
+//
+// A move back to where it started is no move, so it leaves the list.
 function onPositionsTap(node) {
     if (!node) return;
     const original = n => Object.keys(moves).find(k => moves[k] === n) || n;
+    const at = n => moves[n] || n;
     if (!selected) {
         if (recipeNodes().has(node)) selected = original(node);
-    } else if (node === selected || node === moves[selected]) {
-        selected = '';
-    } else if (!recipeNodes().has(node)) {
-        moves[selected] = node;
-        selected = '';
+        drawPositions();
+        return;
     }
+    const a = selected;
+    selected = '';
+    if (node === at(a)) { drawPositions(); return; }
+    if (recipeNodes().has(node)) {
+        const b = original(node);
+        const aAt = at(a), bAt = at(b);
+        moves[a] = bAt;
+        moves[b] = aAt;
+    } else {
+        moves[a] = node;
+    }
+    for (const k of Object.keys(moves)) if (moves[k] === k) delete moves[k];
     drawPositions();
 }
 

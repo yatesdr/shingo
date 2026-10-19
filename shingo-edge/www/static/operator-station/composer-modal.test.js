@@ -273,6 +273,36 @@ test('One Part, Two Spots mints the one part with split', async () => {
     if (b.split !== true || b.preset_id !== 3 || b.parts.length !== 1) throw new Error('split body ' + JSON.stringify(b));
 });
 
+// ── spots: move, put back, swap ──────────────────────────────────────────────
+function tapPos(node) {
+    root().handlers.click({
+        target: { closest: sel => (sel === '[data-pos]' ? { dataset: { pos: node } } : null) },
+        stopPropagation() {},
+    });
+}
+function chips() { return (html().match(/data-act="unmove" data-node="[^"]*">[^<]*/g) || []).map(c => c.split('>')[1]); }
+test('spots: a spot moves to a free place, goes back to its own, and swaps with another', async () => {
+    const two = recipe(3, 'Two spot', ['produce', 'produce']);
+    two.cells = {
+        PLN_06: { core_node_name: 'PLN_06', role: 'produce', swap_mode: 'two_robot_press_index', paired_core_node: 'PLN_05' },
+        PLN_07: { core_node_name: 'PLN_07', role: 'produce', swap_mode: 'two_robot_press_index', paired_core_node: 'PLN_08' },
+    };
+    two.slots = [{ nodes: ['PLN_06'], role: 'produce' }, { nodes: ['PLN_07'], role: 'produce' }];
+    await open({ part_rows: ROWS, presets: [two] });
+    tap('part', { part: 'PART-C' });
+    tap('split');
+    tapPos('PLN_06'); tapPos('PLN_09');
+    if (JSON.stringify(chips()) !== '["PLN_06 → PLN_09 ✕"]') throw new Error('move: ' + JSON.stringify(chips()));
+    tapPos('PLN_09'); tapPos('PLN_06');
+    if (chips().length !== 0) throw new Error('put back: ' + JSON.stringify(chips()));
+    tapPos('PLN_06'); tapPos('PLN_07');
+    if (JSON.stringify(chips().sort()) !== '["PLN_06 → PLN_07 ✕","PLN_07 → PLN_06 ✕"]') throw new Error('swap: ' + JSON.stringify(chips()));
+    tapPos('PLN_06'); tapPos('PLN_07');
+    if (chips().length !== 0) throw new Error('swap back: ' + JSON.stringify(chips()));
+    tapPos('PLN_06'); tapPos('PLN_06');
+    if (chips().length !== 0) throw new Error('tap twice moved it: ' + JSON.stringify(chips()));
+});
+
 // ── Go says what happens and draws the press ─────────────────────────────────
 test('Go says what comes off, what comes on, and Core\'s word, and draws the press', async () => {
     await open({ part_rows: ROWS, presets: [ONE] }, false);
