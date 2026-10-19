@@ -265,6 +265,14 @@ func TestMintStyle_OnePartTwoSpotsFillsBothSlotsAndResolvesBySpots(t *testing.T)
 	if again.Minted || again.StyleID != res.StyleID {
 		t.Errorf("second split = %+v, want style %d resolved", again, res.StyleID)
 	}
+	// Set up new: the same request with New mints another rather than
+	// resolving, named apart by the recipe.
+	fresh, err := f.eng.MintStyle(f.plant.ProcessID, MintRequest{PresetID: f.preset, Parts: []PartPick{{Code: "SYN-A-SPLIT"}},
+		Split: true, New: true, Source: domain.ClaimSourceHMI, CalledBy: "Screen A4"})
+	testutil.MustNoErr(t, err, "set up new")
+	if !fresh.Minted || fresh.StyleID == res.StyleID || fresh.StyleName == res.StyleName {
+		t.Errorf("set up new = %+v, want a second style with its own name", fresh)
+	}
 	// The same part on one spot is a different Saved Recipe: the two-slot
 	// recipe cannot take it, so it is refused rather than resolved.
 	if _, err := f.mint(t, PartPick{Code: "SYN-A-SPLIT"}); err == nil {

@@ -57,6 +57,10 @@ type MintRequest struct {
 	// Split is One Part, Two Spots: the one part picked goes on both produce
 	// slots of a two-slot recipe, each stroke's two parts to two bins.
 	Split bool `json:"split,omitempty"`
+	// New is "Set up new": the operator saw the Saved Recipes these parts
+	// already run in and chose to set up another, so the parts are not
+	// resolved to one of them. The name takes the recipe's on a collision.
+	New bool `json:"new,omitempty"`
 	// Overrides are the Positions screen's moves (R-K): a node the recipe
 	// names → the position or lane it should use instead. Same choreography,
 	// different core node. engine.gateRefusal refuses them while the
@@ -138,7 +142,7 @@ func (e *Engine) planMint(processID int64, req MintRequest) (*mintPlan, error) {
 		codes = []string{codes[0], codes[0]}
 		req.Parts = []PartPick{{Code: codes[0]}, {Code: codes[0]}}
 	}
-	if !plan.moved {
+	if !plan.moved && !req.New {
 		if st := e.resolveByParts(process, styles, live, codes, spots); st != nil {
 			plan.resolved(st, live)
 			return plan, nil

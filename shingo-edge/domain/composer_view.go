@@ -195,6 +195,11 @@ type ComposerStyle struct {
 	// surface that has them; see station_composer.go's composerScope for the
 	// rule and the pin.
 	Parts []ComposerPart `json:"parts,omitempty"`
+	// Spots is how many payload slots the style fills — one part on one spot,
+	// two parts on two, or one part on two (One Part, Two Spots). With Parts
+	// it is what the station matches a pick against to offer "Use Saved
+	// Recipe". The picker scope only, like Parts.
+	Spots int `json:"spots,omitempty"`
 	// LastRun is the day this style was last changed over to, already
 	// formatted — the row says "ran 08-29" and nothing computes a date in JS.
 	LastRun string `json:"last_run,omitempty"`

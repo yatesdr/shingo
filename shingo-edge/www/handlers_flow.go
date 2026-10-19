@@ -45,6 +45,7 @@ type flowPreviewBody struct {
 	// Part, Two Spots. Both are engine.MintRequest's.
 	StyleID int64 `json:"style_id"`
 	Split   bool  `json:"split"`
+	New     bool  `json:"new"`
 }
 
 // flowSaveBody is POST /api/processes/{id}/flow/save. station_id names the
@@ -119,7 +120,7 @@ func (h *Handlers) apiPreviewFlow(w http.ResponseWriter, r *http.Request) {
 	if body.PresetID != 0 || len(body.Parts) > 0 || body.StyleID != 0 {
 		preq = engine.FlowPreviewRequest{Preflight: preq.Preflight, Mint: &engine.MintRequest{
 			PresetID: body.PresetID, Parts: body.Parts, Overrides: body.Overrides,
-			StyleID: body.StyleID, Split: body.Split,
+			StyleID: body.StyleID, Split: body.Split, New: body.New,
 		}}
 	}
 	preview, err := h.orchestration.PreviewFlow(r.Context(), processID, preq)

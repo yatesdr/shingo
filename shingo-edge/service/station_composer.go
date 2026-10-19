@@ -321,6 +321,13 @@ func (s *StationService) buildComposerData(processID int64, styles []processes.S
 				})
 			}
 		}
+		if scope == composerPicker {
+			cells := make([]domain.FlowCell, 0, len(rows))
+			for _, c := range rows {
+				cells = append(cells, domain.Collapse(c))
+			}
+			cs.Spots = len(domain.PayloadSlots(cells))
+		}
 		if scope == composerDesktop {
 			// The cells, the provenance and the Advanced blocks are the
 			// COMPOSER's, not the picker's: the set-up card that reads the
