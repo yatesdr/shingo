@@ -45,6 +45,11 @@ func TestMintedStyleName(t *testing.T) {
 		{[]string{"ABC", "XYZ"}, []protocol.ClaimRole{p, p}, "ABC/XYZ"},
 		{[]string{"IN-1", "IN-2", "OUT-9"}, []protocol.ClaimRole{c, c, p}, "OUT-9"},
 		{[]string{"IN-1", "OUT-8", "OUT-9"}, []protocol.ClaimRole{c, p, p}, "OUT-8/9"},
+		// A one-character pair reads as the plant's part lists write it, and
+		// the same whichever half is on the first slot.
+		{[]string{"63144-6TA0A.06", "63145-6TA0A.06"}, []protocol.ClaimRole{p, p}, "63144/5-6TA0A.06"},
+		{[]string{"63145-6TA0A.06", "63144-6TA0A.06"}, []protocol.ClaimRole{p, p}, "63144/5-6TA0A.06"},
+		{[]string{"748B5-6RR2A.06", "748B5-6RR3A.06"}, []protocol.ClaimRole{p, p}, "748B5-6RR2/3A.06"},
 	} {
 		if got := MintedStyleName(tc.codes, tc.roles); got != tc.want {
 			t.Errorf("MintedStyleName(%v) = %q, want %q", tc.codes, got, tc.want)

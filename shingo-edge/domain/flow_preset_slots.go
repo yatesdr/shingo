@@ -94,9 +94,22 @@ func MintedStyleName(codes []string, roles []protocol.ClaimRole) string {
 // prefix they share, `1234-567` + `1234-568` → `1234-567/8`. Codes that share
 // nothing are joined whole, `A/B`, and so is a pair where one is a prefix of
 // the other — a tail is never empty.
+//
+// A PAIR THAT DIFFERS IN ONE CHARACTER is written the way the plant's part
+// lists write a left/right pair: the one character as `x/y` in place, the rest
+// once, `63144-6TA0A.06` + `63145-6TA0A.06` → `63144/5-6TA0A.06`. The lower
+// character goes first, so the name is the same whichever half sits on the
+// first slot.
 func collapsePair(a, b string) string {
 	if a == b {
 		return a
+	}
+	if at := oneCharDiff(a, b); at >= 0 {
+		x, y := a[at], b[at]
+		if y < x {
+			x, y = y, x
+		}
+		return a[:at] + string(x) + "/" + string(y) + a[at+1:]
 	}
 	i := 0
 	for i < len(a) && i < len(b) && a[i] == b[i] {
@@ -110,4 +123,23 @@ func collapsePair(a, b string) string {
 		return a + "/" + b
 	}
 	return a + "/" + b[i:]
+}
+
+// oneCharDiff is the index of the one byte two equal-length codes differ in,
+// or -1 when they differ in none or in more than one.
+func oneCharDiff(a, b string) int {
+	if len(a) != len(b) {
+		return -1
+	}
+	at := -1
+	for i := 0; i < len(a); i++ {
+		if a[i] == b[i] {
+			continue
+		}
+		if at >= 0 {
+			return -1
+		}
+		at = i
+	}
+	return at
 }
