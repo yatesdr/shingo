@@ -11,14 +11,25 @@ Edge v25; Core binary (seeder and plantspec) only, no Core migration. Deploy Edg
 - A part with no style mints one from the engineer's recipe (`POST /flow/mint`); a part that runs in a style uses it
 - A minted style is named for its parts: the code, a shared prefix for two (`1234-567/8`), the made parts for more
 - A minted style has manual reorder (source "unset"), the process's containment route and the node's light curtain
-- The desktop generates a cell's recipes (Presets › New shape) and imports one from another cell (Import from…)
-- Add-process no longer switches on the floor's editing; the switch now unlocks the Positions screen only
+- The desktop suggests a cell's recipes and imports one from another cell
+- Add-process no longer switches on HMI setup
 - The boot-time routing backfill is gone; Edge v25 fills a process with no routing set once, and the seeder writes them
 - The demo seeder writes routing sets, part sets and a press's back positions; a plant file may list extra parts
 - Settings edits the parts a process runs; light curtain is in the Advanced sheet
 - A desktop flow save keeps containment and light curtain (they were cleared on every save)
 - The claim editor endpoints, Generate variants, claims copy-to, `GetStyleByName` and the flat picker are deleted
 - The cell picture says press words only on a press-index cell
+- HMI setup (the per-process switch) decides the station's changeover: off lists the styles only; on sets one up
+- With HMI setup off the HMI writes no flow at all, a first one from a recipe included; every other cell starts off
+- A part asks One Part, One Spot / Two Parts, Two Spots / One Part, Two Spots; the last splits one part to both spots
+- Parts that already run in a style ask Use saved style or Set up new; setting up always passes the spots screen
+- The second part's list leads with the codes one character off the first; such a pair is named `SYN44/5-PARTA.06`
+- Go says what comes off, what comes on and from where, and draws the press it makes; no dropdown
+- The station's read-only pictures leave out positions the running flow does not use
+- The desktop rail lists Recipes, then Styles; a recipe opens to change and saves as its next version
+- The desktop rail re-reads its lists, so a style built on an HMI shows without reopening the process
+- A suggested press-index recipe never puts an on-deck spot in front
+- Words: Recipe is spots and robot moves, Style is a recipe with its parts; Presets is now Recipes
 
 ## 2026-10-16 — A produce line's partials go home and come back; one door off every line position
 
