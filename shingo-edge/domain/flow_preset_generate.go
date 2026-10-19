@@ -46,6 +46,12 @@ type ShapePicks struct {
 	Produce map[string]bool
 	// Staging is a position's [inbound, outbound] staging lane.
 	Staging map[string][2]string
+	// Back is the positions the process's claims already use as a partner or
+	// a staging place (BackPositionNames) — the on-deck spots. In a mode whose
+	// partner is a satellite (press index) a back position is proposed only
+	// as a partner, never as the position that owns the row. Nil: nothing
+	// known, and the proposal pairs neighbours.
+	Back map[string]bool
 }
 
 // ShapeCandidate is one generated recipe: the mode, its cells (payload-free),
@@ -90,7 +96,7 @@ func generateOne(mode protocol.SwapMode, positions []string, routing []RoutingNo
 	// satellite of one claim (press-index: the back position has no row).
 	satellite := row[flowspec.SecondPairedCoreNode] != flowspec.Forbidden && row[flowspec.SecondPairedCoreNode] != flowspec.Unused
 
-	owners, partner := rowsFor(positions, picks.Pairs, paired, satellite, &cand.Notes)
+	owners, partner := rowsFor(positions, picks.Pairs, picks.Back, paired, satellite, &cand.Notes)
 	if len(owners) == 0 {
 		return cand, false
 	}
@@ -162,12 +168,15 @@ func generateOne(mode protocol.SwapMode, positions []string, routing []RoutingNo
 }
 
 // rowsFor decides which positions own a cell and who each one's partner is.
-func rowsFor(positions []string, picks map[string]string, paired, satellite bool, notes *[]string) ([]string, map[string]string) {
+func rowsFor(positions []string, picks map[string]string, back map[string]bool, paired, satellite bool, notes *[]string) ([]string, map[string]string) {
 	partner := map[string]string{}
 	if !paired {
 		return append([]string(nil), positions...), partner
 	}
 	pairs := picks
+	if len(pairs) == 0 && satellite {
+		pairs = satellitePairs(positions, back)
+	}
 	if len(pairs) == 0 {
 		// The proposal: neighbours in picture order, first owns the row. The
 		// engineer confirms or re-pairs in the positions table.
@@ -205,6 +214,51 @@ func rowsFor(positions []string, picks map[string]string, paired, satellite bool
 		}
 	}
 	return owners, partner
+}
+
+// satellitePairs proposes a satellite mode's pairs from the known back
+// positions: each front position, in picture order, takes the nearest back
+// position nobody has taken. A back position never owns a row — that is what
+// put an on-deck spot in front of a press. Nil when the cell has no known
+// back position or no front one, and the caller pairs neighbours.
+func satellitePairs(positions []string, back map[string]bool) map[string]string {
+	var fronts, backs []int
+	for i, n := range positions {
+		if back[n] {
+			backs = append(backs, i)
+		} else {
+			fronts = append(fronts, i)
+		}
+	}
+	if len(fronts) == 0 || len(backs) == 0 {
+		return nil
+	}
+	taken := map[int]bool{}
+	out := map[string]string{}
+	for _, f := range fronts {
+		best := -1
+		for _, b := range backs {
+			if taken[b] {
+				continue
+			}
+			if best < 0 || abs(b-f) < abs(best-f) {
+				best = b
+			}
+		}
+		if best < 0 {
+			break
+		}
+		taken[best] = true
+		out[positions[f]] = positions[best]
+	}
+	return out
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 // rolesFor is each owner's role: the engineer's pick, else the role the

@@ -263,14 +263,18 @@ func (s *ProcessService) PresetsFor(processID int64) (*PresetsView, error) {
 	if err != nil {
 		return nil, err
 	}
-	var prior []domain.NodeClaim
+	var prior, shapes []domain.NodeClaim
 	for _, f := range flows {
 		for _, c := range f.cells {
 			prior = append(prior, domain.NodeClaim{CoreNodeName: c.CoreNodeName, Role: c.Role})
+			shapes = append(shapes, domain.NodeClaim{CoreNodeName: c.CoreNodeName, SwapMode: c.SwapMode,
+				PairedCoreNode: c.PairedCoreNode, SecondPairedCoreNode: c.SecondPairedCoreNode,
+				InboundStaging: c.InboundStaging, OutboundStaging: c.OutboundStaging})
 		}
 	}
 	out.Generated = []GeneratedShape{}
-	for _, g := range domain.GenerateShapes(pressOrder, routing, prior, domain.ShapePicks{}) {
+	picks := domain.ShapePicks{Back: domain.BackPositionNames(shapes)}
+	for _, g := range domain.GenerateShapes(pressOrder, routing, prior, picks) {
 		out.Generated = append(out.Generated, GeneratedShape{
 			Mode: string(g.Mode), Shape: g.Cells, Notes: g.Notes,
 			Where: domain.PresetShapeNodeWord(g.Cells, pressOrder),

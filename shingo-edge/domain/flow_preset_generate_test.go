@@ -154,6 +154,19 @@ func TestGenerateShapes_SixCells(t *testing.T) {
 			}
 		}
 	})
+
+	// A back spot listed first is never put in front: with the on-deck spots
+	// known, each front takes its nearest back. Neighbour pairing put PLN_005
+	// in front of PLN_006 at Springfield's Press 6.
+	t.Run("press-index: a known back spot is only ever a partner", func(t *testing.T) {
+		c := only(t, GenerateShapes([]string{"PLN_005", "PLN_006", "PLN_007", "PLN_008", "PLN_009"}, pressRouting,
+			[]NodeClaim{claimAt("PLN_006", protocol.ClaimRoleProduce), claimAt("PLN_007", protocol.ClaimRoleProduce)},
+			ShapePicks{Back: map[string]bool{"PLN_005": true, "PLN_008": true}}), protocol.SwapModeTwoRobotPressIndex)
+		by := cellsByNode(c.Cells)
+		if len(c.Cells) != 2 || by["PLN_006"].PairedCoreNode != "PLN_005" || by["PLN_007"].PairedCoreNode != "PLN_008" {
+			t.Fatalf("cells = %+v, want PLN_006 on PLN_005 and PLN_007 on PLN_008", c.Cells)
+		}
+	})
 }
 
 // TestGenerateShapes_ARequiredFieldNobodyFillsIsNotOffered: the table decides,
