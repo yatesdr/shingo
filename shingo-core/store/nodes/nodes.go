@@ -362,16 +362,21 @@ func DeleteCarrierNodeIfEmpty(db *sql.DB, name string) error {
 // both, and any third way that appears later.
 //
 // Cheap and idempotent: carrier nodes number at most one per robot, and the
-// predicate is the same NOT EXISTS. Nothing else can match — the LIKE is
-// anchored on the carrier prefix and combined with is_synthetic.
-func RetireEmptyCarrierNodes(db *sql.DB, prefix string) (int64, error) {
-	res, err := db.Exec(`DELETE FROM nodes n WHERE n.is_synthetic AND n.name LIKE $1 || '%'
-		AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = n.id)`, prefix)
-	if err != nil {
-		return 0, err
-	}
-	n, _ := res.RowsAffected()
-	return n, nil
+// predicate is the same NOT EXISTS. The name test is starts_with, a literal
+// prefix: a LIKE would read the prefix's `_` as "any one character".
+//
+// It returns how many went and how many carrier nodes are LEFT (each still
+// carrying a bin), in the one statement: the outer SELECT reads the table as
+// it stood before the DELETE, so the deleted rows are subtracted from it.
+func RetireEmptyCarrierNodes(db *sql.DB, prefix string) (deleted, left int64, err error) {
+	err = db.QueryRow(`WITH gone AS (
+			DELETE FROM nodes n WHERE n.is_synthetic AND starts_with(n.name, $1)
+				AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = n.id)
+			RETURNING 1)
+		SELECT (SELECT COUNT(*) FROM gone),
+			(SELECT COUNT(*) FROM nodes n WHERE n.is_synthetic AND starts_with(n.name, $1)) - (SELECT COUNT(*) FROM gone)`,
+		prefix).Scan(&deleted, &left)
+	return deleted, left, err
 }
 
 func List(db *sql.DB) ([]*Node, error) {

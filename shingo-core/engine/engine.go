@@ -165,7 +165,13 @@ type Engine struct {
 	after *afterQueue
 	// stage2 serializes the two-stage pull per pair and tracks its trigger
 	// goroutines (stage2_pull.go).
-	stage2         stage2Puller
+	stage2 stage2Puller
+	// carriersClear is true when the last carrier-node sweep left no
+	// `_ROBOT:` node at all, so the 2 s robot tick has nothing to retire or
+	// walk. False at start (a restart cannot know what the table holds), set
+	// false again whenever a carrier node is made, and re-decided by every
+	// sweep that runs. See sweepCarriedBins.
+	carriersClear  atomic.Bool
 	sceneSyncing   atomic.Bool
 	fleetConnected atomic.Bool
 	msgConnected   atomic.Bool

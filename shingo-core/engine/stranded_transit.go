@@ -531,6 +531,12 @@ func (e *Engine) carrierNode(robotID string) (*nodes.Node, error) {
 	// The row is temporary besides: DeleteCarrierNodeIfEmpty retires it as soon
 	// as the deck is clear, so a carrier node exists only while a bin is on it.
 	node := &nodes.Node{Name: name, IsSynthetic: true, Enabled: true}
+	// The tick sweeps carrier nodes only while one may exist: from here on,
+	// one does. Set before the insert and again after it, so a sweep that
+	// counted none an instant before the insert cannot leave the flag clear
+	// past it (the 5-minute reconciliation sweep re-decides it regardless).
+	e.carriersClear.Store(false)
+	defer e.carriersClear.Store(false)
 	if err := e.db.CreateNode(node); err != nil {
 		// A concurrent sweep may have created it between the read and the
 		// write; re-read rather than failing the placement.
@@ -554,13 +560,23 @@ func (e *Engine) carrierNode(robotID string) (*nodes.Node, error) {
 // order's own arrival places the bin — so that when the order ends without
 // arriving, the inference has the reading of where the deck emptied rather
 // than wherever the robot has driven since.
+//
+// THE CARRIER HALF RUNS ONLY WHILE A CARRIER NODE MAY EXIST (carriersClear).
+// A carrier node is made only when a robot picks up a stranded bin, which is
+// rare, and the half cost a DELETE and a list on every 2 s tick of every plant
+// that had none: some 43,000 no-op statements a day. The live-order half below
+// watches orders, not carrier nodes, and always runs. The reconciliation sweep
+// calls sweepCarriedBinsAll, which runs the carrier half regardless.
 func (e *Engine) sweepCarriedBins() {
-	e.retireEmptyCarrierNodes()
-
-	carried, err := e.db.ListBinsOnCarrierNodes()
-	if err != nil {
-		e.logFn("engine: carried bins: %v", err)
-		return
+	var carried []*bins.Bin
+	if !e.carriersClear.Load() {
+		e.retireEmptyCarrierNodes()
+		var err error
+		carried, err = e.db.ListBinsOnCarrierNodes()
+		if err != nil {
+			e.logFn("engine: carried bins: %v", err)
+			return
+		}
 	}
 	onNode := make(map[string]int, len(carried))
 	for _, bin := range carried {
@@ -597,6 +613,15 @@ func (e *Engine) sweepCarriedBins() {
 		}
 	}
 	e.pruneDropObservations(live)
+}
+
+// sweepCarriedBinsAll is sweepCarriedBins with the carrier half forced: the
+// reconciliation sweep's backstop for a carrier node this engine did not make
+// (a restore, a hand edit, another path) while the tick believed there were
+// none. It re-decides carriersClear from what it finds.
+func (e *Engine) sweepCarriedBinsAll() {
+	e.carriersClear.Store(false)
+	e.sweepCarriedBins()
 }
 
 // watchOrderDeck records what one live order's robot reports about the bin it
@@ -646,14 +671,21 @@ func (e *Engine) watchOrderDeck(binID int64, robotID string) {
 // whole DELETE — and the error used to be debug-level, so five stale carrier
 // nodes could sit on the node list forever while the log said nothing. The
 // per-node fallback retires the ones that CAN go, and the error is now visible.
+//
+// IT ALSO DECIDES carriersClear: the same statement counts the carrier nodes a
+// bin still rides, and none left means the tick can stop sweeping. A failed
+// sweep decides nothing, so the flag stays as it was (and the fallback below
+// keeps it false, since it cannot count).
 func (e *Engine) retireEmptyCarrierNodes() {
-	n, err := e.db.RetireEmptyCarrierNodes(bins.CarrierNodePrefix)
+	n, left, err := e.db.RetireEmptyCarrierNodes(bins.CarrierNodePrefix)
 	if err == nil {
 		if n > 0 {
 			e.dbg("engine: carried bins: retired %d empty carrier node(s)", n)
 		}
+		e.carriersClear.Store(left == 0)
 		return
 	}
+	e.carriersClear.Store(false)
 	e.logFn("engine: carried bins: bulk retire of empty carrier nodes failed (%v) — "+
 		"retrying one at a time, because one row pinned by a foreign key must not "+
 		"leave every other carrier node on the list", err)
@@ -845,7 +877,7 @@ func (e *Engine) placeCarriedBinIfSettled(bin *bins.Bin, robotID string, robot f
 // The window does not apply to carrier bins. The jack is the jack: a deck that
 // reports empty has set its bin down, however long the bin has been riding.
 func (e *Engine) sweepStrandedBins() {
-	e.sweepCarriedBins()
+	e.sweepCarriedBinsAll()
 
 	stranded, err := e.BinService().ListAnomalies()
 	if err != nil {

@@ -175,6 +175,6 @@ func (db *DB) DeleteCarrierNodeIfEmpty(name string) error {
 
 // RetireEmptyCarrierNodes removes every carrier node with no bin on it — see
 // nodes.RetireEmptyCarrierNodes.
-func (db *DB) RetireEmptyCarrierNodes(prefix string) (int64, error) {
+func (db *DB) RetireEmptyCarrierNodes(prefix string) (deleted, left int64, err error) {
 	return nodes.RetireEmptyCarrierNodes(db.DB, prefix)
 }
