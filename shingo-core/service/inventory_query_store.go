@@ -26,7 +26,7 @@ type InventoryQueryStore interface {
 	// where the Edge's lineside report and Core's replica still disagree.
 	ListOpenReportDivergences() ([]store.OpenReportDivergence, error)
 
-	// Raw SQL pass-through for the preflight / system-count / system-uop
+	// Raw SQL pass-through for the preflight / system-uop
 	// queries. Each one builds its own IN (...) placeholder list at
 	// runtime; abstracting that would just hide the actual query logic.
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)

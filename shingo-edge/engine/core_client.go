@@ -399,47 +399,6 @@ func (c *CoreClient) PreflightInventory(station string, payloads []string) (*ser
 	return out, nil
 }
 
-// SystemBinCount POSTs a payload list to Core's /api/inventory/system-count
-// and returns the per-payload total bin count using the "in the kanban
-// loop" inclusion policy (see shingo-core/service/inventory_system_count.go).
-//
-// This intentionally answers a different question than PreflightInventory:
-// total physical bins in circulation regardless of location or pickability,
-// not just bins-available-to-source-right-now. Used by inventory math where a bin staged at the
-// consumer line still counts as in circulation.
-//
-// Returns ([]PayloadSystemCount, true) on success, (nil, false) when Core
-// is unreachable or returns an error. Callers fail OPEN at the use site
-// (treat as zero): a missed signal leaves the loader idle; a redundant
-// signal is dedup'd by the in-flight guard plus Core's dropoff-capacity
-// gate. Idle is the worse outcome.
-func (c *CoreClient) SystemBinCount(payloads []string) ([]PayloadSystemCount, bool) {
-	if c.baseURL == "" || len(payloads) == 0 {
-		return nil, false
-	}
-	reqBody := protocol.SystemCountRequest{Payloads: payloads}
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, false
-	}
-	resp, err := c.http.Post(c.baseURL+"/api/inventory/system-count", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return nil, false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, false
-	}
-	var wire protocol.SystemBinCountResult
-	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
-		return nil, false
-	}
-	return wire.Counts, true
-}
-
-// PayloadSystemCount is the per-payload count of the system-count endpoint.
-type PayloadSystemCount = protocol.PayloadSystemCount
-
 // BinClearResponse is the response after clearing a bin via HTTP.
 type BinClearResponse = protocol.BinClearResponse
 

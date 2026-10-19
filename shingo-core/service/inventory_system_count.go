@@ -1,4 +1,4 @@
-// System-wide bin count for kanban demand math.
+// System-wide in-loop totals for kanban demand math.
 //
 // This is intentionally separate from PreflightAvailability (which has
 // "available for sourcing right now" semantics and excludes staged,
@@ -39,96 +39,14 @@ package service
 import (
 	"context"
 	"fmt"
-
-	"shingo/protocol"
 )
 
 // outOfLoopFilterSQL is the lifecycle filter both system totals compose: the
 // statuses production cannot rely on, so their bins are not loop inventory.
 const outOfLoopFilterSQL = `status NOT IN ('flagged', 'maintenance', 'retired')`
 
-// PayloadSystemCount is the per-payload count returned by SystemBinCount.
-// Distinct from PayloadAvailability (preflight) so callers can't confuse
-// the two semantics at the type level. The wire shape lives in
-// shingo/protocol (http_contract.go); the alias keeps the service name.
-type PayloadSystemCount = protocol.PayloadSystemCount
-
-// SystemBinCountResult carries per-payload counts. Payloads with zero
-// bins are present in the result with BinCount=0 — callers should not
-// assume absence means zero.
-type SystemBinCountResult = protocol.SystemBinCountResult
-
-// SystemBinCount counts bins per payload across the whole plant,
-// excluding states that aren't part of the kanban loop. See file
-// comment for the inclusion policy and reasoning.
-//
-// Empty payload codes in the request are rejected — silently dropping
-// would let a typo become a quiet "zero bins" answer.
-func (s *InventoryService) SystemBinCount(ctx context.Context, payloads []string) (SystemBinCountResult, error) {
-	result := SystemBinCountResult{
-		Counts: make([]PayloadSystemCount, 0, len(payloads)),
-	}
-	if len(payloads) == 0 {
-		return result, nil
-	}
-
-	counts := make(map[string]int, len(payloads))
-	for _, p := range payloads {
-		if p == "" {
-			return result, fmt.Errorf("system-count: empty payload code in request")
-		}
-		counts[p] = 0
-	}
-
-	// Parameterized IN (...) — same pattern as PreflightAvailability.
-	placeholders := make([]byte, 0, len(payloads)*4)
-	args := make([]any, 0, len(payloads))
-	for i, p := range payloads {
-		if i > 0 {
-			placeholders = append(placeholders, ',')
-		}
-		placeholders = append(placeholders, '$')
-		placeholders = append(placeholders, []byte(fmt.Sprintf("%d", i+1))...)
-		args = append(args, p)
-	}
-
-	query := `SELECT payload_code, COUNT(*) AS n
-		FROM bins
-		WHERE payload_code IN (` + string(placeholders) + `)
-		  AND ` + outOfLoopFilterSQL + `
-		GROUP BY payload_code`
-
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return result, fmt.Errorf("system-count: query: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var code string
-		var n int
-		if err := rows.Scan(&code, &n); err != nil {
-			return result, fmt.Errorf("system-count: scan: %w", err)
-		}
-		counts[code] = n
-	}
-	if err := rows.Err(); err != nil {
-		return result, fmt.Errorf("system-count: rows: %w", err)
-	}
-
-	// Preserve request order so the response is stable for callers.
-	for _, p := range payloads {
-		result.Counts = append(result.Counts, PayloadSystemCount{
-			PayloadCode: p,
-			BinCount:    counts[p],
-		})
-	}
-	return result, nil
-}
-
 // PayloadSystemUOP is the per-payload UOP total returned by
-// SystemUOPForPayload. Distinct from PayloadSystemCount (bin-count
-// semantics) — callers can't confuse "I have N bins of WIDGET-A" with
-// "I have N parts of WIDGET-A in the loop" at the type level.
+// SystemUOPForPayload: parts in the loop, not bins.
 type PayloadSystemUOP struct {
 	PayloadCode string `json:"payload_code"`
 	BinUOP      int    `json:"bin_uop"`    // SUM(bins.uop_remaining)
@@ -149,7 +67,7 @@ type SystemUOPForPayloadResult struct {
 // retrieve orders (the wire signal it used to fire,
 // LoopBelowThresholdSignal, is gone — Core owns the whole decision).
 //
-// Lifecycle filter on bins is SystemBinCount's (outOfLoopFilterSQL) — bins in
+// Lifecycle filter on bins is outOfLoopFilterSQL — bins in
 // flagged, maintenance, or retired status are excluded
 // (preserves the 2026-05-11 SNF2 fix semantics: production can't rely
 // on those bins so they don't count as loop inventory). A carrier stamped
@@ -191,12 +109,12 @@ func (s *InventoryService) SystemUOPForPayload(ctx context.Context, payloads []s
 	}
 	in := string(placeholders)
 
-	// Bin sum. Same lifecycle filter as SystemBinCount, and one more predicate:
+	// Bin sum. The lifecycle filter (outOfLoopFilterSQL), and one more predicate:
 	// a carrier stamped undeclared_carrier_at holds parts no sourcing reader
 	// will ever fetch (BinSourceableSQL refuses it), so they are not stock the
 	// reorder level can wait on. Counting them is what held a loader's total at
 	// its threshold while the part left the plant (D33). The carrier still
-	// counts on SystemBinCount and on /material-flags, where a person finds it.
+	// counts on /material-flags, where a person finds it.
 	binQuery := `SELECT payload_code, COALESCE(SUM(uop_remaining), 0) AS total
 		FROM bins
 		WHERE payload_code IN (` + in + `)

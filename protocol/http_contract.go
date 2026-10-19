@@ -267,26 +267,6 @@ type PreflightResponse struct {
 	Available []PreflightAvailability `json:"available"`
 }
 
-// SystemCountRequest is the payload list the Edge POSTs to Core's
-// system-wide bin count.
-type SystemCountRequest struct {
-	Payloads []string `json:"payloads"`
-}
-
-// PayloadSystemCount is the per-payload count returned by SystemBinCount —
-// total bins of one payload in the kanban loop.
-type PayloadSystemCount struct {
-	PayloadCode string `json:"payload_code"`
-	BinCount    int    `json:"bin_count"`
-}
-
-// SystemBinCountResult carries per-payload counts. Payloads with zero
-// bins are present in the result with BinCount=0 — callers should not
-// assume absence means zero.
-type SystemBinCountResult struct {
-	Counts []PayloadSystemCount `json:"counts"`
-}
-
 // ReleasePointsRequest asks Core, for one act, what releasing each order would
 // let its robot do next (POST /api/release/points).
 type ReleasePointsRequest struct {

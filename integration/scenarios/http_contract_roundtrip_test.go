@@ -325,19 +325,9 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 		t.Errorf("preflight available = %+v, want PART-A:1 and PART-NOBIN:0 in request order", preflight.Available)
 	}
 
-	// ── 13. system-count: bins in the kanban loop, request order ──
-	counts, ok := client.SystemBinCount([]string{sd.Payload.Code, "PART-NOBIN"})
-	if !ok {
-		t.Fatalf("SystemBinCount: not ok")
-	}
-	if len(counts) != 2 ||
-		counts[0].PayloadCode != sd.Payload.Code || counts[0].BinCount != 1 ||
-		counts[1].PayloadCode != "PART-NOBIN" || counts[1].BinCount != 0 {
-		t.Errorf("system-count = %+v, want PART-A:1 and PART-NOBIN:0", counts)
-	}
 	_ = loadFinal
 
-	// ── 14. release points: an order Core does not hold for this station ──
+	// ── 13. release points: an order Core does not hold for this station ──
 	points, err := client.ReleasePoints("RT-STATION", []string{"rt-no-such-order"})
 	if err != nil {
 		t.Fatalf("ReleasePoints: %v", err)
@@ -360,7 +350,6 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 		{"bin-clear-typed", http.MethodPost, "/api/telemetry/bin-clear"},
 		{"bin-load-final", http.MethodPost, "/api/telemetry/bin-load"},
 		{"preflight", http.MethodPost, "/api/inventory/preflight"},
-		{"system-count", http.MethodPost, "/api/inventory/system-count"},
 		{"release-points", http.MethodPost, "/api/release/points"},
 	}
 	rec.mu.Lock()
