@@ -336,7 +336,7 @@ type OperatorStationView struct {
 	// loose fields; see domain/composer_view.go. Present on every station,
 	// because the changeover screen is on every station: the
 	// flow_composer_enabled gate on Process ("HMI setup") decides whether it
-	// offers setting a Saved Recipe up or only the ones already made.
+	// offers setting a style up or only the ones already made.
 	Composer *ComposerData `json:"composer,omitempty"`
 }
 

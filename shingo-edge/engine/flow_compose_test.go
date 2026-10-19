@@ -1125,7 +1125,7 @@ func TestPreviewFlow_EveryOrderNamesBothEnds(t *testing.T) {
 // ── HMI setup off: the floor writes no flow, a first one included ────────────
 //
 // A first flow from a recipe used to be let through a gated-off cell. With
-// setup off the station offers only the Saved Recipes an engineer made, so a
+// setup off the station offers only the styles an engineer made, so a
 // first flow arriving from the HMI is refused like any other floor write —
 // that is what stops a cell that is not set up from collecting a style per
 // experiment. The desktop (admin) is never gated.

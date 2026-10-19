@@ -1,9 +1,9 @@
 // composer-modal.test.js — the station's changeover modal's decisions.
 //
 // WHAT IS PINNED: which screen each tap leads to — HMI setup off lists the
-// Saved Recipes and nothing else; on, the Saved Recipes lead the part list, a
+// styles and nothing else; on, the styles lead the part list, a
 // part asks how the press runs it only when the recipes offer more than one
-// way, parts that already run in a Saved Recipe ask Use or Set up new, setting
+// way, parts that already run in a style ask Use or Set up new, setting
 // up always passes the spots screen, the second part's list leads with the
 // matching half — and the bodies Go previews, and what Go says.
 //
@@ -159,17 +159,17 @@ function lastPreview() {
     return pv.body;
 }
 
-// ── HMI setup off: the Saved Recipes and nothing else ────────────────────────
-test('setup off lists the Saved Recipes, the running one first and marked, and no parts', async () => {
+// ── HMI setup off: the styles and nothing else ────────────────────────
+test('setup off lists the styles, the running one first and marked, and no parts', async () => {
     await open({ part_rows: ROWS, presets: [ONE] }, false);
     const b = box();
-    expectIn('saved list', 'Saved Recipes', b);
+    expectIn('saved list', '>Styles<', b);
     expectIn('saved list', 'data-act="saved" data-style="1"', b);
     expectIn('running', '<span class="vd ok">Running</span>', b);
     expectOut('saved list', 'data-act="part"', b);
-    if (b.indexOf('data-style="1"') > b.indexOf('data-style="2"')) throw new Error('the running Saved Recipe is not first');
+    if (b.indexOf('data-style="1"') > b.indexOf('data-style="2"')) throw new Error('the running style is not first');
 });
-test('setup off: a Saved Recipe tapped previews that style, nothing minted', async () => {
+test('setup off: a style tapped previews that style, nothing minted', async () => {
     await open({ part_rows: ROWS, presets: [ONE] }, false);
     CALLS.length = 0;
     tap('saved', { style: '2' });
@@ -178,10 +178,10 @@ test('setup off: a Saved Recipe tapped previews that style, nothing minted', asy
 });
 
 // ── HMI setup on ─────────────────────────────────────────────────────────────
-test('setup on: the Saved Recipes lead, then the parts with Core\'s word and a CATID', async () => {
+test('setup on: the styles lead, then the parts with Core\'s word and a CATID', async () => {
     await open({ part_rows: ROWS, presets: [ONE] });
     const b = box();
-    if (!(b.indexOf('Saved Recipes') < b.indexOf('Set up a part'))) throw new Error('order: ' + b.slice(0, 400));
+    if (!(b.indexOf('>Styles<') < b.indexOf('Set up a part'))) throw new Error('order: ' + b.slice(0, 400));
     for (const want of ['data-part="PART-C"', 'CATID CAT-A', 'in A-RUN', 'No bin at Core',
         '<span class="vd build">Not set up yet</span>']) {
         expectIn('part list', want, b);
@@ -210,16 +210,16 @@ test('setting up always passes the spots screen, then Go previews the mint', asy
         throw new Error('body ' + JSON.stringify(lastPreview()));
     }
 });
-test('parts that already run in a Saved Recipe ask Use Saved Recipe or Set up new', async () => {
+test('parts that already run in a style ask Use style or Set up new', async () => {
     await open({ part_rows: ROWS, presets: [ONE, TWO] });
     tap('part', { part: 'PART-A' });
     tap('one');
-    expectIn('reuse', 'Use Saved Recipe');
+    expectIn('reuse', 'Use saved style');
     expectIn('reuse', 'data-style="1"');
-    expectOut('reuse', 'data-style="6"');   // the two-spot A is a different Saved Recipe
+    expectOut('reuse', 'data-style="6"');   // the two-spot A is a different style
     CALLS.length = 0;
     tap('saved', { style: '1' });
-    if (lastPreview().style_id !== 1) throw new Error('use did not preview the Saved Recipe');
+    if (lastPreview().style_id !== 1) throw new Error('use did not preview the style');
     await open({ part_rows: ROWS, presets: [ONE, TWO] });
     tap('part', { part: 'PART-A' });
     tap('one');

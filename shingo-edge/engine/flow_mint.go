@@ -50,14 +50,14 @@ type MintRequest struct {
 	PresetID  int64      `json:"preset_id"`
 	Parts     []PartPick `json:"parts"`
 	StationID int64      `json:"station_id"`
-	// StyleID names a Saved Recipe outright: the operator tapped it in the
+	// StyleID names a style outright: the operator tapped it in the
 	// list, so nothing is resolved, placed or minted — the answer is that
 	// style. Parts and PresetID are ignored when it is set.
 	StyleID int64 `json:"style_id,omitempty"`
 	// Split is One Part, Two Spots: the one part picked goes on both produce
 	// slots of a two-slot recipe, each stroke's two parts to two bins.
 	Split bool `json:"split,omitempty"`
-	// New is "Set up new": the operator saw the Saved Recipes these parts
+	// New is "Set up new": the operator saw the styles these parts
 	// already run in and chose to set up another, so the parts are not
 	// resolved to one of them. The name takes the recipe's on a collision.
 	New bool `json:"new,omitempty"`
@@ -197,7 +197,7 @@ func (plan *mintPlan) resolved(st *processes.Style, live []processes.NodeClaim) 
 	}
 }
 
-// planSaved is the plan for a Saved Recipe named by id: that style, live and
+// planSaved is the plan for a style named by id: that style, live and
 // this process's, as it is.
 func (e *Engine) planSaved(processID, styleID int64) (*mintPlan, error) {
 	process, err := e.db.GetProcess(processID)
@@ -220,7 +220,7 @@ func (e *Engine) planSaved(processID, styleID int64) (*mintPlan, error) {
 		plan.resolved(&styles[i], live)
 		return plan, nil
 	}
-	return nil, &MintRefusal{Reason: "that Saved Recipe is not on this process"}
+	return nil, &MintRefusal{Reason: "that style is not on this process"}
 }
 
 func countRole(slots []domain.Slot, role protocol.ClaimRole) int {
@@ -617,7 +617,7 @@ type MintFacts struct {
 	Minted    bool              `json:"minted"`
 	Placement map[string]string `json:"placement"`
 	Running   bool              `json:"running,omitempty"`
-	// Cells is the flow the changeover goes to — the Saved Recipe's claims, or
+	// Cells is the flow the changeover goes to — the style's claims, or
 	// the recipe with the parts on it — so the confirm sheet draws the press
 	// it is about to make rather than describing it.
 	Cells []domain.FlowCell `json:"cells,omitempty"`

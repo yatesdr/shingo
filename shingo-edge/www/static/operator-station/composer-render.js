@@ -2,27 +2,27 @@
 //
 // TWO WAYS IN, BY THE PROCESS'S "HMI SETUP" SWITCH (flow_composer_enabled).
 //
-// Off: CHANGEOVER lists the Saved Recipes an engineer made — tap one, check
+// Off: CHANGEOVER lists the styles an engineer made — tap one, check
 // what it does, Start. The floor sets nothing up, and the server refuses a
 // flow write from it (engine.gateRefusal).
 //
-// On: the Saved Recipes first, then every part the process runs. A part leads
+// On: the styles first, then every part the process runs. A part leads
 // to how the press runs it — One Part, One Spot / Two Parts, Two Spots / One
-// Part, Two Spots — then, when the parts already run in a Saved Recipe, Use
-// Saved Recipe or Set up new; setting up picks the engineer's recipe (asked
+// Part, Two Spots — then, when the parts already run in a style, Use
+// style or Set up new; setting up picks the engineer's recipe (asked
 // only when several fit), then the spots screen, then the same check.
 //
 // THE WORDS ARE THE DESKTOP'S: a Recipe is spots and robot moves with no part,
-// a Saved Recipe is a recipe with its parts on it.
+// a style is a recipe with its parts on it.
 //
 // THE SCREENS, each shown only when it has a question to ask:
 //
-//   saved     setup off: the Saved Recipes, searchable by name, part or CATID
-//   part      setup on: the Saved Recipes, then the part list
+//   saved     setup off: the styles, searchable by name, part or CATID
+//   part      setup on: the styles, then the part list
 //   count     One Part, One Spot / Two Parts, Two Spots / One Part, Two Spots —
 //             only the ones a recipe here can run, skipped when that is one
 //   second    the second part, the codes one character off the first leading
-//   reuse     the Saved Recipes these parts already run in: use one, or set up
+//   reuse     the styles these parts already run in: use one, or set up
 //   which     the recipes that fit, by name, each with its picture
 //   positions the recipe's spots on the cell picture; tap one, tap where it
 //             should go instead
@@ -52,8 +52,8 @@ let flowPendingFor = 0;
 let screen = null;
 let picks = [];         // part codes, in tap order
 let split = false;      // One Part, Two Spots: the one pick fills both spots
-let fresh = false;      // Set up new: do not reuse a Saved Recipe these parts run in
-let chosen = 0;         // the Saved Recipe tapped, by style id, or 0
+let fresh = false;      // Set up new: do not reuse a style these parts run in
+let chosen = 0;         // the style tapped, by style id, or 0
 let recipe = null;      // the recipe (preset card) the parts mint from, or null
 let moves = {};         // the Positions screen's moves: recipe node → node
 let selected = '';      // the slot the Positions screen is moving
@@ -67,7 +67,7 @@ const $ = id => document.getElementById(id);
 function processID() { return view && view.process ? view.process.id : 0; }
 function stationID() { return view && view.station ? view.station.id : 0; }
 function stationName() { return (view && view.station && view.station.name) || ''; }
-// HMI setup: the floor may set Saved Recipes up here. Off, the station only
+// HMI setup: the floor may set styles up here. Off, the station only
 // offers the ones that exist.
 function setupOn() { return !!(view && view.process && view.process.flow_composer_enabled); }
 function runningID() { return (view && view.process && view.process.active_style_id) || 0; }
@@ -88,7 +88,7 @@ function produceSlots(p) { return (p.slots || []).filter(s => s.role === 'produc
 // How many spots the picks fill: one per part, or two for One Part, Two Spots.
 function spotsWanted() { return split ? 2 : picks.length; }
 
-// The Saved Recipes that run exactly these parts on this many spots — the
+// The styles that run exactly these parts on this many spots — the
 // server asks the same question at Go (engine.resolveByParts).
 function savedMatches() {
     const want = picks.slice().sort().join('\x1f');
@@ -227,7 +227,7 @@ function verdict(styleName) {
 
 function spotsWord(n) { return n === 1 ? '1 spot' : (n || 0) + ' spots'; }
 
-// One Saved Recipe row: its name, its parts and spots, Core's word on it. The
+// One style row: its name, its parts and spots, Core's word on it. The
 // running one says so.
 function savedRow(s) {
     const running = s.id === runningID();
@@ -241,7 +241,7 @@ function savedRow(s) {
         '<span class="vd ' + v.cls + '"' + (v.note ? ' title="' + esc(v.note) + '"' : '') + '>' + esc(v.text) + '</span></button>';
 }
 
-// One part row. The Saved Recipes it runs in are named in it.
+// One part row. The styles it runs in are named in it.
 function partRow(r) {
     const runs = styles().filter(s => partsOf(s).indexOf(r.code) >= 0);
     const v = runs.length ? verdict(runs[0].name) : { cls: 'build', text: 'Not set up yet' };
@@ -255,7 +255,7 @@ function partRow(r) {
         '</button>';
 }
 
-// The Saved Recipes in the order an operator looks for them: the running one,
+// The styles in the order an operator looks for them: the running one,
 // then the ones changed over to lately, then by name.
 function savedInOrder() {
     const recent = comp().recent_targets || [];
@@ -282,13 +282,13 @@ function drawRows(q) {
     let shown = 0;
     if (screen !== 'second') {
         const saved = savedInOrder().filter(s => !needle || savedHay(s).indexOf(needle) >= 0);
-        if (saved.length || screen === 'saved') h += grp('Saved Recipes', count(saved.length, 'Saved Recipe'));
+        if (saved.length || screen === 'saved') h += grp('Styles', count(saved.length, 'style'));
         h += saved.map(savedRow).join('');
         shown += saved.length;
         if (screen === 'saved') {
             if (!saved.length) {
-                h += grp('', (needle ? 'No Saved Recipe here matches that.' : 'This cell has no Saved Recipes yet.') +
-                    ' An engineer sets them up on the desktop: Processes › ' + processName() + ' › Recipes.');
+                h += grp('', (needle ? 'No style here matches that.' : 'This cell has no styles yet.') +
+                    ' An engineer sets them up on the desktop: Processes › ' + processName() + ' › Styles.');
             }
             box.innerHTML = h;
             return;
@@ -313,7 +313,7 @@ function drawRows(q) {
     box.innerHTML = h;
 }
 
-// ── a Saved Recipe, tapped ───────────────────────────────────────────────────
+// ── a style, tapped ───────────────────────────────────────────────────
 function onSaved(id) {
     const s = styles().find(x => x.id === id);
     if (!s) return;
@@ -351,7 +351,7 @@ function drawCount(offers) {
         '</div></div></div>';
 }
 
-// The parts are known: offer the Saved Recipes they already run in, or set up.
+// The parts are known: offer the styles they already run in, or set up.
 function afterParts() {
     const matches = savedMatches();
     if (matches.length && !fresh) { screen = 'reuse'; drawReuse(matches); return; }
@@ -364,12 +364,12 @@ function drawReuse(matches) {
         '<div class="os-comp-setup on"><div class="os-comp-card">' +
         '<div class="top"><div><span class="os-lbl">Change over to</span>' +
         '<h2>' + esc(picksLabel()) + '</h2>' +
-        '<div class="desc">' + (matches.length === 1 ? 'there is a Saved Recipe for this'
-            : 'there are ' + matches.length + ' Saved Recipes for this') + '</div></div>' +
+        '<div class="desc">' + (matches.length === 1 ? 'there is a saved style for this'
+            : 'there are ' + matches.length + ' saved styles for this') + '</div></div>' +
         '<button class="x" data-act="topart" aria-label="Back to the part list">&#10005;</button></div>' +
         '<div class="os-comp-ways">' +
         matches.map(s => '<button class="os-btn os-btn-lg os-comp-way" data-act="saved" data-style="' + esc(s.id) + '">' +
-            '<span>Use Saved Recipe</span><span class="d">' + esc(s.name + ' · ' + (s.claim_nodes || []).join(', ')) +
+            '<span>Use saved style</span><span class="d">' + esc(s.name + ' · ' + (s.claim_nodes || []).join(', ')) +
             '</span></button>').join('') +
         '<button class="os-btn os-btn-lg os-comp-way" data-act="setupnew"><span>Set up new</span>' +
         '<span class="d">pick a recipe and its spots</span></button>' +
@@ -610,8 +610,8 @@ function goSentences(pv) {
 function goName(pv) { return (pv && pv.mint && pv.mint.style_name) || picksLabel(); }
 
 function goKind(pv) {
-    if (pv && pv.mint && pv.mint.minted) return 'New Saved Recipe' + (recipe ? ' from ' + recipe.name : '');
-    return 'Saved Recipe';
+    if (pv && pv.mint && pv.mint.minted) return 'New style' + (recipe ? ' from ' + recipe.name : '');
+    return 'Saved style';
 }
 
 function drawGo() {
@@ -700,7 +700,7 @@ function showRefusal(json, status, minted) {
         el.className = 'os-comp-refusal';
         say.appendChild(el);
     }
-    el.textContent = (minted ? 'The Saved Recipe was made, and the changeover was refused: ' : '') +
+    el.textContent = (minted ? 'The style was made, and the changeover was refused: ' : '') +
         ((json && json.error) || ('The changeover was refused (' + status + ')'));
     const btn = root().querySelector('[data-act="start"]');
     if (btn) btn.disabled = false;
@@ -714,7 +714,7 @@ function openStarted(res, hold) {
     const n = typeof pv.order_count === 'number' ? ' · ' + pv.order_count + ' order' + (pv.order_count === 1 ? '' : 's') : '';
     const robots = orderRobots(pv);
     const line = ((res && res.style_name) || '') + n + (robots ? ' · ' + robots : '') + '.' +
-        (res && res.minted ? ' New Saved Recipe from ' + (recipe ? recipe.name : 'the recipe') + '.' : '');
+        (res && res.minted ? ' New style from ' + (recipe ? recipe.name : 'the recipe') + '.' : '');
     show().innerHTML =
         '<div class="os-comp-started on"><div class="ring">✓</div>' +
         '<h2>Changeover started</h2><p>' + esc(line) + '</p>' +
@@ -732,7 +732,7 @@ function openStarted(res, hold) {
 }
 
 // Back from Go returns to the screen before it: the spots when setting up,
-// the list when a Saved Recipe was tapped.
+// the list when a style was tapped.
 function back() {
     if (chosen || !recipe) { openPicker(); return; }
     toPositions();

@@ -273,7 +273,7 @@ func TestMintStyle_OnePartTwoSpotsFillsBothSlotsAndResolvesBySpots(t *testing.T)
 	if !fresh.Minted || fresh.StyleID == res.StyleID || fresh.StyleName == res.StyleName {
 		t.Errorf("set up new = %+v, want a second style with its own name", fresh)
 	}
-	// The same part on one spot is a different Saved Recipe: the two-slot
+	// The same part on one spot is a different style: the two-slot
 	// recipe cannot take it, so it is refused rather than resolved.
 	if _, err := f.mint(t, PartPick{Code: "SYN-A-SPLIT"}); err == nil {
 		t.Error("one part with no split resolved to the two-spot style")
@@ -284,7 +284,7 @@ func TestMintStyle_OnePartTwoSpotsFillsBothSlotsAndResolvesBySpots(t *testing.T)
 	}
 }
 
-// A Saved Recipe tapped in the list is that style: nothing resolved or
+// A style tapped in the list is that style: nothing resolved or
 // minted. Another process's style is refused by name.
 func TestMintStyle_ASavedRecipeByIDIsThatStyle(t *testing.T) {
 	t.Parallel()

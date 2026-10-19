@@ -2074,7 +2074,7 @@ function flowSaveBody(styleId, cells, fingerprint, stationId) {
 // station sends codes only; the server places them (brief U3, R-M). overrides
 // is the spots screen's moves, recipe node → the node it should use instead;
 // absent when there are none. opts.split is One Part, Two Spots (the one part
-// on both spots); opts.fresh is Set up new (do not reuse a Saved Recipe the
+// on both spots); opts.fresh is Set up new (do not reuse a style the
 // parts already run in). Both are absent when false.
 function mintBody(presetId, codes, stationId, overrides, opts) {
     const body = {
@@ -2088,7 +2088,7 @@ function mintBody(presetId, codes, stationId, overrides, opts) {
     return body;
 }
 
-// savedBody opens a Saved Recipe the operator tapped: that style as it is,
+// savedBody opens a style the operator tapped: that style as it is,
 // nothing resolved or minted.
 function savedBody(styleId, stationId) {
     return { style_id: styleId, station_id: stationId };

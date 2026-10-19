@@ -41,7 +41,7 @@ type flowPreviewBody struct {
 	PresetID  int64             `json:"preset_id"`
 	Parts     []engine.PartPick `json:"parts"`
 	Overrides map[string]string `json:"overrides"`
-	// StyleID previews a Saved Recipe tapped in the list; Split previews One
+	// StyleID previews a style tapped in the list; Split previews One
 	// Part, Two Spots. Both are engine.MintRequest's.
 	StyleID int64 `json:"style_id"`
 	Split   bool  `json:"split"`
@@ -269,7 +269,7 @@ func writeMintRefusal(w http.ResponseWriter, err error) bool {
 // The station resolves the same way flow/save does, and the source and
 // called_by come from the caller, never the body (owner ruling R1). A station
 // on a cell whose HMI setup is off is refused (403) any mint that would write
-// — engine.gateRefusal; opening a Saved Recipe by style_id writes nothing and
+// — engine.gateRefusal; opening a style by style_id writes nothing and
 // is not gated.
 func (h *Handlers) apiMintFlow(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")

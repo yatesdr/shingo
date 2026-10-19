@@ -169,7 +169,7 @@ var (
 	ErrFlowStale = errors.New("the flow changed since it was previewed — preview again")
 	// ErrFlowComposerDisabled: the process's HMI setup is off, so the floor
 	// may not write a flow. The sentence is shown to the operator as is.
-	ErrFlowComposerDisabled = errors.New("HMI setup is off for this process: an engineer sets up its Saved Recipes on the desktop")
+	ErrFlowComposerDisabled = errors.New("HMI setup is off for this process: an engineer sets up its styles on the desktop")
 
 	// ErrFlowSourceUnset refuses a save whose caller did not say which surface
 	// made it.
@@ -666,11 +666,11 @@ func refuseRunningPositionMove(styleName string, stored []processes.NodeClaim, d
 //
 // THE GATE IS OPERATORS-ONLY. flow_composer_enabled is the switch that opens
 // this cell's setup TO THE FLOOR ("HMI setup" on the desktop). The desktop is
-// never gated: an engineer sets a cell's Saved Recipes up there whether or not
+// never gated: an engineer sets a cell's styles up there whether or not
 // the floor may.
 //
 // OFF MEANS THE FLOOR WRITES NO FLOW AT ALL, a first one from a recipe
-// included. With setup off the station offers the Saved Recipes an engineer
+// included. With setup off the station offers the styles an engineer
 // made and nothing else, so a write arriving from the HMI is a station that
 // should not be setting this cell up; refusing it is what keeps a cell that
 // is not set up from collecting a style per experiment.

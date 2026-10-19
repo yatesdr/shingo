@@ -503,12 +503,12 @@ func TestComposerShots(t *testing.T) {
 			}
 		}
 	}
-	modal("01-saved.png", "#compose=saved", "Saved Recipes", "data-act=\"saved\"")
+	modal("01-saved.png", "#compose=saved", "styles", "data-act=\"saved\"")
 	modal("05b-go-saved.png", fmt.Sprintf("#compose=go;style=%d", seeded.Styles[idx]), "Change over to "+idx, "Start changeover")
 	if err := db.SetFlowComposerEnabled(seeded.ProcessID, true); err != nil {
 		t.Fatalf("turn HMI setup on: %v", err)
 	}
-	modal("02-part-list.png", "#compose=part", "Saved Recipes", "SHOT-PART-01", "data-act=\"part\"")
+	modal("02-part-list.png", "#compose=part", "styles", "SHOT-PART-01", "data-act=\"part\"")
 	modal("03-count.png", "#compose=count;parts=SHOT-PART-01", "how does the press run it?")
 	modal("04-which-one.png", "#compose=which;parts="+newPair, "Which recipe?")
 	modal("05-positions.png", fmt.Sprintf("#compose=positions;parts=%s;recipe=%d", newPair, presetIDs[0]), "Spots · ")

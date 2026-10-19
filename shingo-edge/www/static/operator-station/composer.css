@@ -179,7 +179,7 @@
 .os-comp-part { display: flex; flex-direction: column; gap: 6px; }
 .os-comp-part .os-chips { padding-left: 14px; }
 
-/* "how does the press run it?" and "Use Saved Recipe / Set up new": one
+/* "how does the press run it?" and "Use style / Set up new": one
  * full-width answer per line, the size of the decision, each saying what it
  * means under its name. */
 .os-comp-ways { display: flex; flex-direction: column; gap: 12px; margin-top: 22px; }

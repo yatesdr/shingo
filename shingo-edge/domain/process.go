@@ -66,8 +66,8 @@ type Process struct {
 	// nothing in the runtime reads this column.
 	GroupID *int64 `json:"group_id,omitempty"`
 	// FlowComposerEnabled is "HMI setup": the per-process switch an engineer
-	// turns on to let the floor set Saved Recipes up on the HMI (pick a part,
-	// pick a recipe, move its spots). Off, the station offers the Saved Recipes
+	// turns on to let the floor set styles up on the HMI (pick a part,
+	// pick a recipe, move its spots). Off, the station offers the styles
 	// and nothing else, and engine.gateRefusal refuses any flow write from it.
 	// Add-process does not turn it on.
 	FlowComposerEnabled bool      `json:"flow_composer_enabled"`

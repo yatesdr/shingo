@@ -152,7 +152,7 @@ func TestFlowSave_GatedOffStationBodyIsRefused(t *testing.T) {
 // TestFlowMint_SetupGatesTheStationsMint: the station's mint body — a recipe
 // and the parts the operator picked, no cells — is refused (403) where HMI
 // setup is off, and mints once it is on. With setup off the station offers
-// only Saved Recipes, so a mint from it is a station setting up a cell nobody
+// only styles, so a mint from it is a station setting up a cell nobody
 // opened to the floor.
 func TestFlowMint_SetupGatesTheStationsMint(t *testing.T) {
 	db, seeded := gatedOffPlant(t)

@@ -137,7 +137,7 @@ func TestFlowSave_StatusMappingAndOnePublish(t *testing.T) {
 	stub.flowSaveErr = engine.ErrFlowComposerDisabled
 	resp := doRequest(t, router, "POST", "/api/processes/1/flow/save", body(nil), nil)
 	assertStatus(t, resp, http.StatusForbidden)
-	assertJSONPath(t, resp, "error", "HMI setup is off for this process: an engineer sets up its Saved Recipes on the desktop")
+	assertJSONPath(t, resp, "error", "HMI setup is off for this process: an engineer sets up its styles on the desktop")
 
 	stub.flowSaveErr = engine.ErrChangeoverActive
 	resp = doRequest(t, router, "POST", "/api/processes/1/flow/save", body(nil), nil)
