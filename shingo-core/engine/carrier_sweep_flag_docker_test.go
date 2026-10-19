@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
@@ -52,12 +53,12 @@ func TestSweepCarriedBins_TheTickStopsWhenNoCarrierNodeIsLeft(t *testing.T) {
 	stray := &nodes.Node{Name: bins.CarrierNodePrefix + "STRAY", IsSynthetic: true, Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(stray), "create stray carrier")
 	eng.sweepCarriedBins()
-	if n, _ := db.GetNodeByName(stray.Name); n == nil {
+	if !nodeNamed(t, db, stray.Name) {
 		t.Fatal("the tick swept while the flag was clear")
 	}
 	// The reconciliation's run does, and removes it.
 	eng.sweepCarriedBinsAll()
-	if n, _ := db.GetNodeByName(stray.Name); n != nil {
+	if nodeNamed(t, db, stray.Name) {
 		t.Error("the reconciliation sweep left an empty carrier node")
 	}
 	if !eng.carriersClear.Load() {
@@ -72,7 +73,15 @@ func TestSweepCarriedBins_TheTickStopsWhenNoCarrierNodeIsLeft(t *testing.T) {
 		t.Error("making a carrier node left the flag clear")
 	}
 	eng.sweepCarriedBins()
-	if n, _ := db.GetNodeByName(bins.CarrierNodePrefix + "AMR-FLAG"); n != nil {
+	if nodeNamed(t, db, bins.CarrierNodePrefix+"AMR-FLAG") {
 		t.Error("the tick did not retire the empty carrier node it was told about")
 	}
+}
+
+// nodeNamed reports whether a node of that name exists.
+func nodeNamed(t *testing.T, db *store.DB, name string) bool {
+	t.Helper()
+	var n int
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT COUNT(*) FROM nodes WHERE name=$1`, name).Scan(&n), "count "+name)
+	return n > 0
 }
