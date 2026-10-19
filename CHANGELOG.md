@@ -3,6 +3,23 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-19 — Pick a part: the floor describes, Shingo finds the engineer's recipe
+
+Edge v25; Core binary (seeder and plantspec) only, no Core migration. Deploy Edge; Core at leisure. Not deployed.
+
+- CHANGEOVER is a part-first modal: pick the part (or two off), Go, Start; the station composer is torn out
+- A part with no style mints one from the engineer's recipe (`POST /flow/mint`); a part that runs in a style uses it
+- A minted style is named for its parts: the code, a shared prefix for two (`1234-567/8`), the made parts for more
+- A minted style has manual reorder (source "unset"), the process's containment route and the node's light curtain
+- The desktop generates a cell's recipes (Presets › New shape) and imports one from another cell (Import from…)
+- Add-process no longer switches on the floor's editing; the switch now unlocks the Positions screen only
+- The boot-time routing backfill is gone; Edge v25 fills a process with no routing set once, and the seeder writes them
+- The demo seeder writes routing sets, part sets and a press's back positions; a plant file may list extra parts
+- Settings edits the parts a process runs; light curtain is in the Advanced sheet
+- A desktop flow save keeps containment and light curtain (they were cleared on every save)
+- The claim editor endpoints, Generate variants, claims copy-to, `GetStyleByName` and the flat picker are deleted
+- The cell picture says press words only on a press-index cell
+
 ## 2026-10-16 — A produce line's partials go home and come back; one door off every line position
 
 Core and Edge (Core 159–160, Edge v24). Deploy Core before Edge. Not deployed.
