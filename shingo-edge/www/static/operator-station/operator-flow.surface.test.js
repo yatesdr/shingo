@@ -406,6 +406,7 @@ function fakeElement() {
     const cctx = {
         recipe: { name: 'Standard' }, picks: ['PART-A'], moves: {}, selected: '',
         recipePicture() { return { svg: '', height: 1234 }; },
+        picksLabel() { return 'PART-A'; },
         M() { return { shortPart(p) { return p; } }; },
         show() { return shown; }, esc(s) { return String(s); },
     };
@@ -504,7 +505,9 @@ console.log('cut names');
 // ── the module grammar the other pins do not reach ─────────────────────────
 //
 // A position the flow does not use is a dashed card under a dimmed bar with
-// no move and no in/out mark. Every module carries its line-side bar. A
+// no move and no in/out mark — or left out where the picture asks for used
+// positions only (the station's read-only pictures). Every module carries
+// its line-side bar. A
 // shared lane is drawn in each module that names it, each marked "shared".
 // A row is as tall as its tallest module. The robot words on a card take
 // their robot's colour.
@@ -513,6 +516,10 @@ console.log('module grammar');
     const cell = hardCases();
     const svg = draw(cell, { frame: { w: 833 } });
     const modules = svg.split('<g class="dock"')[0].split('<g class="module"').slice(1);
+    check('no claim: a usedOnly picture leaves the position out',
+        !/data-pos="PLN_004"/.test(draw(cell, { frame: { w: 833 }, usedOnly: true })));
+    check('usedOnly: a press index keeps its on-deck partner',
+        /data-pos="PLN_001"/.test(draw(cell, { frame: { w: 833 }, usedOnly: true })));
     const unused = modules.find(md => md.includes('data-pos="PLN_004"')) || '';
     check('no claim: a dashed card', /<g class="node off"[^>]*data-pos="PLN_004"/.test(unused), unused.slice(0, 200));
     check('no claim: under a dimmed bar', /<path class="press dim"/.test(unused));

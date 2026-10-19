@@ -314,7 +314,13 @@ function swapSlots(c) {
     };
 }
 
-function modulesOf(cell) {
+// usedOnly leaves out a position no claim uses and no module draws. The
+// station's read-only pictures ask for it (opts.usedOnly): they show the press
+// the flow runs, and an idle position drawn as an empty card reads as a spot
+// the operator has to do something about. The editing pictures keep every
+// position, because those are where a spot can be moved to. A cell with no
+// claim at all keeps them too, so its picture is not blank.
+function modulesOf(cell, usedOnly) {
     const positions = (cell && cell.positions) || [];
     const byName = {};
     positions.forEach(p => { byName[p.core_node_name] = p; });
@@ -365,6 +371,7 @@ function modulesOf(cell) {
         if (p.claim && p.claim.swap_mode) continue;
         if (deckOf[n]) continue;   // drawn inside its press's module
         if (slotted.has(n)) continue;   // drawn as a slot in the module that stages there
+        if (usedOnly && claimed.length) continue;   // idle, and this picture is read-only
         mods.push({ kind: 'free', name: n, names: [n], staged: [] });
     }
     for (const mod of mods) {
@@ -819,7 +826,7 @@ export function renderFlowPicture(view, opts) {
     };
     const sel = opts.selected || null;
     const findings = opts.findings || {};
-    const { mods, byName } = modulesOf(cell);
+    const { mods, byName } = modulesOf(cell, !!opts.usedOnly);
     if (!mods.length) {
         const g = { x: ((opts.frame && opts.frame.w) || STATION_FRAME.w) / 2 };
         return '<text class="mlbl" x="' + g.x + '" y="246" text-anchor="middle">No positions on this station yet</text>';
@@ -990,7 +997,7 @@ export function syncFlowPanel(view) {
     if (title) title.textContent = styleName;
     if (sub) sub.textContent = view.target_style ? 'running · changing over to ' + view.target_style.name : (view.current_style ? 'running' : '');
     if (svg) {
-        const o = { frame: { w: STATION_FRAME.w } };
+        const o = { frame: { w: STATION_FRAME.w }, usedOnly: true };
         svg.innerHTML = renderFlowPicture(view, o);
         const h = o.height || STATION_FRAME.h;
         svg.setAttribute('viewBox', '0 0 ' + STATION_FRAME.w + ' ' + h);
