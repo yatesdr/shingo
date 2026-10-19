@@ -147,39 +147,6 @@
 .os-comp-bar .status[data-tap] { cursor: pointer; }
 .os-comp-bar .status[data-tap] .l1 { text-decoration: underline; }
 .os-comp-bar .os-btn-primary { min-width: 300px; min-height: 60px; font-size: 19px; }
-/* ── Go ──────────────────────────────────────────────────────────────── */
-.os-comp-confirm { position: absolute; left: 0; right: 0; bottom: 0; background: var(--os-bg);
-    border-top: 1px solid var(--sub-2); border-radius: 18px 18px 0 0; padding: 24px 28px;
-    display: flex; flex-direction: column; gap: 14px; }
-.os-comp-confirm h2 { margin: 0; font-size: 22px; font-weight: 600; }
-.os-comp-confirm .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-.os-comp-confirm table { width: 100%; border-collapse: collapse; font-size: 15px; }
-.os-comp-confirm th { text-align: left; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
-    color: var(--os-text-muted); font-weight: 600; padding: 6px 10px 6px 0; }
-/* 42 px rows and no wrap: at 13 px with 26 px rows the Swap column broke
- * "2-robot index · pair PLN_02" onto two lines, which is the one column an
- * operator reads across to check the choreography against the position. */
-.os-comp-confirm td { padding: 10px 10px 10px 0; border-top: 1px solid var(--sub-1);
-    white-space: nowrap; }
-.os-comp-confirm tr.muted td { color: var(--os-text-dim); }
-.os-comp-confirm td.r1 { color: var(--robot-1); }
-.os-comp-confirm td.r2 { color: var(--robot-2); }
-/* The sentence is the sheet's body; the tables are the receipt under it. */
-.os-comp-confirm .os-comp-sentence { margin: 0; font-size: 18px; line-height: 1.4; }
-.os-comp-confirm .os-comp-receipt summary { min-height: var(--os-touch-min, 56px); display: flex;
-    align-items: center; font-size: 14px; color: var(--os-text-muted); cursor: pointer; }
-/* THE START'S REFUSAL, ON THE SHEET THAT ASKED FOR IT. The start used to treat
- * every non-409 as success and draw the green tick over a refused changeover;
- * it now shows the server's own sentence here, between the foot and the
- * buttons. Red and at the bar's weight, because it is the same thing the bar's
- * `.l1.bad` says when a refusal lands there — one voice for a refusal on this
- * surface. See composer-render's showStartRefusal. */
-.os-comp-confirm .os-comp-refusal { color: var(--os-red); font-size: 15px; font-weight: 600; }
-.os-comp-confirm .acts { display: flex; justify-content: flex-end; gap: 12px; }
-/* Back is a BOXED quiet button the same height as Start changeover, not a text
- * link floating beside a 72 px primary. */
-.os-comp-confirm .acts .os-btn-quiet { border-color: var(--sub-3); }
-
 /* ── started ─────────────────────────────────────────────────────────── */
 .os-comp-started { position: absolute; inset: 0; background: var(--os-bg);
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
@@ -212,8 +179,13 @@
 .os-comp-part { display: flex; flex-direction: column; gap: 6px; }
 .os-comp-part .os-chips { padding-left: 14px; }
 
-/* "two off?": two full-width answers, the size of the decision. */
-.os-comp-two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 22px; }
+/* "how does the press run it?" and "Use Saved Recipe / Set up new": one
+ * full-width answer per line, the size of the decision, each saying what it
+ * means under its name. */
+.os-comp-ways { display: flex; flex-direction: column; gap: 12px; margin-top: 22px; }
+.os-comp-root .os-comp-way { flex-direction: column; align-items: flex-start; gap: 2px;
+    padding: 10px 22px; text-align: left; }
+.os-comp-way .d { font-size: 14px; font-weight: 400; color: var(--os-text-muted); }
 
 /* "which one?": the recipes that fit, by the engineer's name, each with this
  * cell's picture of it. A card is the tap target. */
@@ -227,7 +199,17 @@
 .os-comp-recipe .where { font-size: 13px; color: var(--os-text-dim); }
 .os-comp-recipe svg { width: 100%; height: auto; pointer-events: none; }
 
-/* THE RECEIPT'S TOGGLE SAYS IT OPENS. display:flex on <summary> drops the
- * native disclosure marker, so the arrow is drawn here. */
-.os-comp-confirm .os-comp-receipt summary::before { content: '▸'; margin-right: 8px; }
-.os-comp-confirm .os-comp-receipt[open] summary::before { content: '▾'; }
+/* ── Go, full screen: what happens, the press it makes, the trips ───── */
+.os-comp-go .os-comp-say { flex: 0 0 auto; padding: 16px 20px 8px; display: flex; flex-direction: column; gap: 6px; }
+.os-comp-go .os-comp-sentence { margin: 0; font-size: 18px; line-height: 1.4; }
+.os-comp-go .os-comp-refusal { color: var(--os-red); font-size: 15px; font-weight: 600; }
+.os-comp-go .os-comp-tripbox { flex: 0 0 auto; max-height: 34%; overflow: auto; padding: 4px 20px 12px;
+    border-top: 1px solid var(--sub-1); }
+.os-comp-trips { width: 100%; border-collapse: collapse; font-size: 15px; }
+.os-comp-trips th { text-align: left; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--os-text-muted); font-weight: 600; padding: 6px 10px 6px 0; }
+.os-comp-trips td { padding: 8px 10px 8px 0; border-top: 1px solid var(--sub-1); white-space: nowrap; }
+.os-comp-trips td.r1 { color: var(--robot-1); }
+.os-comp-trips td.r2 { color: var(--robot-2); }
+.os-comp-go .os-comp-bar { gap: 12px; }
+.os-comp-go .os-comp-bar .os-btn-quiet { border-color: var(--sub-3); }

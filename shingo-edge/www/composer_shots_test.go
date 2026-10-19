@@ -503,23 +503,24 @@ func TestComposerShots(t *testing.T) {
 			}
 		}
 	}
-	modal("02-part-list.png", "#compose=part", "SHOT-PART-01", "data-act=\"part\"")
-	modal("03-two-off.png", "#compose=two;parts=SHOT-PART-01", "Just this part", "+ second part")
-	modal("04-which-one.png", "#compose=which;parts="+newPair, "Which one?")
+	modal("01-saved.png", "#compose=saved", "Saved Recipes", "data-act=\"saved\"")
+	modal("05b-go-saved.png", fmt.Sprintf("#compose=go;style=%d", seeded.Styles[idx]), "Change over to "+idx, "Start changeover")
 	if err := db.SetFlowComposerEnabled(seeded.ProcessID, true); err != nil {
-		t.Fatalf("switch the floor's edit on: %v", err)
+		t.Fatalf("turn HMI setup on: %v", err)
 	}
-	modal("05-positions.png", fmt.Sprintf("#compose=positions;parts=%s;recipe=%d", newPair, presetIDs[0]), "Positions · ")
+	modal("02-part-list.png", "#compose=part", "Saved Recipes", "SHOT-PART-01", "data-act=\"part\"")
+	modal("03-count.png", "#compose=count;parts=SHOT-PART-01", "how does the press run it?")
+	modal("04-which-one.png", "#compose=which;parts="+newPair, "Which recipe?")
+	modal("05-positions.png", fmt.Sprintf("#compose=positions;parts=%s;recipe=%d", newPair, presetIDs[0]), "Spots · ")
 	modal("06-go-mint.png", fmt.Sprintf("#compose=go;parts=%s;recipe=%d", newPair, presetIDs[0]),
-		"Change over to", "Start changeover", " on PLN_")
+		"Change over to", "Start changeover", "Brings ")
 	modal("07-go-existing.png", "#compose=go;parts="+partsOf(idx), "Change over to "+idx, "Start changeover")
 	modal("08-go-running.png", "#compose=go;parts="+partsOf(swap), "already running")
-	modal("09-none.png", "#compose=none;parts=SHOT-PART-01", "An engineer sets this up on the desktop.")
+	modal("09-none.png", "#compose=none;parts=SHOT-PART-01", "An engineer adds the recipe on the desktop")
 	modal("10-started.png", fmt.Sprintf("#compose=started;parts=%s;recipe=%d;hold=1", newPair, presetIDs[0]), "Changeover started")
 	if err := db.SetFlowComposerEnabled(seeded.ProcessID, false); err != nil {
-		t.Fatalf("switch the floor's edit off: %v", err)
+		t.Fatalf("turn HMI setup off: %v", err)
 	}
-	modal("05b-go-no-positions.png", fmt.Sprintf("#compose=go;parts=%s;recipe=%d", newPair, presetIDs[0]), "Start changeover")
 
 	// ── the route strip ─────────────────────────────────────────────────
 	//

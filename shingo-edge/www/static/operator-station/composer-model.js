@@ -2072,17 +2072,26 @@ function flowSaveBody(styleId, cells, fingerprint, stationId) {
 // mintBody is POST /processes/{id}/flow/mint (and flow/preview's mint form):
 // the engineer's recipe and the parts the operator picked, in tap order. The
 // station sends codes only; the server places them (brief U3, R-M). overrides
-// is the Positions screen's moves, recipe node → the node it should use
-// instead; absent when there are none, which is what lets a gated-off cell
-// mint at all (engine.gateRefusal refuses only the moves).
-function mintBody(presetId, codes, stationId, overrides) {
+// is the spots screen's moves, recipe node → the node it should use instead;
+// absent when there are none. opts.split is One Part, Two Spots (the one part
+// on both spots); opts.fresh is Set up new (do not reuse a Saved Recipe the
+// parts already run in). Both are absent when false.
+function mintBody(presetId, codes, stationId, overrides, opts) {
     const body = {
         preset_id: presetId,
         parts: (codes || []).map(code => ({ code: code })),
         station_id: stationId,
     };
     if (overrides && Object.keys(overrides).length) body.overrides = Object.assign({}, overrides);
+    if (opts && opts.split) body.split = true;
+    if (opts && opts.fresh) body.new = true;
     return body;
+}
+
+// savedBody opens a Saved Recipe the operator tapped: that style as it is,
+// nothing resolved or minted.
+function savedBody(styleId, stationId) {
+    return { style_id: styleId, station_id: stationId };
 }
 
 // EXPORTED WITHOUT A GLOBAL LEXICAL NAME. Two classic scripts on one page
@@ -2104,7 +2113,7 @@ function mintBody(presetId, codes, stationId, overrides) {
         routingNote, routingRoleOf, stagingFieldUsed,
         presetCells, shapeDiff, orderSentences, orderTrip, viaWaypoints,
         advancedFor, advancedShows, advancedSet,
-        flowSaveBody, mintBody,
+        flowSaveBody, mintBody, savedBody,
     };
 
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
