@@ -1702,7 +1702,7 @@ function bar(state) {
             heading: 'running — saved changes take effect on the next trip',
             detail: 'not previewed while running · an order already on its way finishes as planned' + warningLine,
             tone: 'ok',
-            button: { label: 'Save flow', enabled: !state.previewStale },
+            button: { label: 'Save style', enabled: !state.previewStale },
         };
     }
     // ALREADY DONE IS NOT "CHANGES NOTHING". A changeover planned again after a

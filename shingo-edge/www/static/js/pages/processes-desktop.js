@@ -131,6 +131,9 @@ function boot() {
     // Scroll does not bubble, so the headings' sideways sync listens in the
     // capture phase on the document: it survives every redraw of the table.
     document.addEventListener('scroll', syncPosHead, true);
+    window.addEventListener('focus', () => { void refreshRail(); });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) void refreshRail(); });
+    setInterval(() => { void refreshRail(); }, 10000);
     if (S.processID) openProcess(S.processID);
     else drawList();
 }
@@ -319,9 +322,9 @@ function appbar() {
         // NO ROUTING TAB. The routing set is REVIEWED, and review is Settings'
         // job — it sits there beside the gate it is the precondition for
         // (owner ruling 2026-09-16). Creation is the Add-process sheet's.
-        '<div class="pd-tabs">' + tab('flows', 'Flows') +
+        '<div class="pd-tabs">' + tab('flows', 'Styles') +
         tab('screens', 'Operator screens') + tab('settings', 'Settings') +
-        tab('presets', 'Presets') + '</div>' +
+        tab('presets', 'Recipes') + '</div>' +
         '<div class="pd-spacer"></div>' +
         // THE GATE IS A SENTENCE, NOT A BADGE, AND THE SETTINGS LINK WAS THE
         // TABS' OWN DOOR DRAWN TWICE: a pill shape claims "status chip" for a
@@ -329,7 +332,7 @@ function appbar() {
         // link beside it opened the tab one glance to the left. The gate stays
         // read-only; the words carry the state, so no border and no tone.
         '<div class="pd-gate">' +
-        (on ? 'Operators may change flows' : 'Operators run flows as set up') + '</div></div>';
+        (on ? 'HMI setup on: operators set up styles' : 'HMI setup off: operators pick from the styles') + '</div></div>';
 }
 
 // ── D1 · Flows ───────────────────────────────────────────────────────────────
@@ -362,7 +365,7 @@ async function openProcess(id) {
     S.settingsNotice = '';
     S.notice = '';
     root().innerHTML = appbar() + '<div class="pd-page"><div class="pd-dim" style="padding:24px">Loading…</div></div>';
-    const res = await fetch('/api/processes/' + id + '/composer');
+    const res = await fetch('/api/processes/' + id + '/composer', { cache: 'no-store' });
     if (!res.ok) {
         root().innerHTML = appbar() + '<div class="pd-list"><p class="pd-dim">Could not read this process.</p></div>';
         return;
@@ -576,13 +579,7 @@ function drawFlows() {
     drawPicture();
     drawBar();
     scrollers.forEach(([sel, axis], i) => { const el = root().querySelector(sel); if (el) el[axis] = wasAt[i]; });
-    const q = $('pd-railq');
-    if (q) q.addEventListener('input', () => {
-        const n = q.value.trim().toLowerCase();
-        for (const r of root().querySelectorAll('.pd-row')) {
-            r.hidden = !!n && r.textContent.toLowerCase().indexOf(n) < 0;
-        }
-    });
+    bindRailSearch();
 }
 
 // reportDesktopFit publishes D1's geometry for the shots harness, the way U8's
@@ -692,6 +689,10 @@ function styleRow(st, isRunning) {
         '<div class="s">' + esc(sub) + '</div></div>';
 }
 
+// THE RAIL IS THE PROCESS'S TWO LISTS, RECIPES FIRST. A recipe is the spots
+// and robot moves with no part; a style is a recipe with its parts on it. An
+// engineer builds a recipe here — open one to change it, or + New recipe —
+// and the styles under it are what the floor changes over to.
 function rail() {
     const p = process();
     const running = p ? p.active_style_id : 0;
@@ -701,13 +702,94 @@ function rail() {
     const all = S.composer.styles.map(st => Object.assign({}, st, M().styleFacts(st)));
     const run = all.find(s => s.id === running);
     const rest = all.filter(s => s.id !== running);
-    return '<div class="pd-rail">' + searchBox('pd-railq', 'find a part, CATID or flow') +
-        '<div class="pd-rail-body">' +
-        (run ? '<div class="pd-grp pd-lbl">Running</div>' + styleRow(run, true) : '') +
-        '<div class="pd-grp pd-lbl">All parts · ' + all.length + ' live styles</div>' +
+    const recipes = S.composer.presets || [];
+    return '<div class="pd-rail" id="pd-rail">' + searchBox('pd-railq', 'find a recipe, part, CATID or style') +
+        '<div class="pd-rail-body" id="pd-rail-body">' +
+        '<div class="pd-grp pd-lbl">Recipes · ' + recipes.length + '</div>' +
+        recipes.map(recipeRow).join('') +
+        '<div class="pd-railadd"><button class="pd-btn" data-act="new-recipe">+ New recipe</button></div>' +
+        '<div class="pd-grp pd-lbl">Styles · ' + all.length + '</div>' +
+        (run ? styleRow(run, true) : '') +
         rest.map(s => styleRow(s, false)).join('') +
-        '</div><div class="pd-railfoot"><button class="pd-btn" data-act="new-style">+ New part flow</button>' +
-        '<span class="pd-dim">a part on a recipe — the recipes are on Presets</span></div></div>';
+        '</div><div class="pd-railfoot"><button class="pd-btn" data-act="new-style">+ New style</button>' +
+        '<span class="pd-dim">parts on one of the recipes above</span></div></div>';
+}
+
+// One recipe in the rail: its name, its swap and its spots. The one open as a
+// draft is marked.
+function recipeRow(r) {
+    const on = !!(S.shapeDraft && S.shapeDraft.recipe && String(S.shapeDraft.recipe.id) === String(r.id));
+    const mode = M().modeLabels()[r.mode] || r.mode || '';
+    return '<div class="pd-row pd-recipe' + (on ? ' on' : '') + '" data-act="recipe-open" data-preset="' + esc(r.id) + '">' +
+        '<div class="n">' + esc(r.name) + '</div>' +
+        '<div class="s">' + esc([mode, r.where || ''].filter(Boolean).join(' · ')) + '</div></div>';
+}
+
+// openRecipe puts a saved recipe in the positions table as a draft. Saving it
+// under the same name makes its next version; the styles minted from the old
+// one keep it as their provenance.
+function openRecipe(id) {
+    const r = (S.composer.presets || []).find(x => String(x.id) === String(id));
+    if (!r) return;
+    startShapeDraft(Object.values(r.cells || {}), { mode: r.mode, recipe: { id: r.id, name: r.name } });
+}
+
+// + New recipe: the shapes this cell could run (the generator's), or one
+// copied from another cell. Each opens as a draft; nothing is stored until it
+// is named.
+async function openNewRecipe(btn) {
+    const pop = $('pd-pop');
+    if (!pop) return;
+    if (!presetsView()) await loadPresets();
+    const gen = (presetsView() && presetsView().generated) || [];
+    pop.innerHTML = gen.map(g => '<button data-act="shape-draft" data-mode="' + esc(g.mode) + '">' +
+        esc(M().modeLabels()[g.mode] || g.mode) + '<small>' + esc(g.where || '') + '</small></button>').join('') +
+        '<button data-act="import-from">From another cell…<small>copy its recipe onto these spots</small></button>';
+    pop.hidden = false;
+    placePopover(pop, btn);
+}
+
+// THE RAIL FOLLOWS THE FLOOR. A style a station builds on its HMI lands in
+// this process's read and nothing tells this page, so the rail re-reads its
+// two lists while the Styles tab is in front — on focus and every ten seconds
+// — and redraws itself alone when they changed: the draft, the table and the
+// picture are the engineer's and are left exactly as they are.
+async function refreshRail() {
+    if (!S.processID || S.tab !== 'flows' || document.hidden) return;
+    let data = null;
+    try {
+        const res = await fetch('/api/processes/' + S.processID + '/composer', { cache: 'no-store' });
+        if (res.ok) data = await res.json();
+    } catch (_) { return; }
+    if (!data || S.tab !== 'flows') return;
+    const key = d => JSON.stringify([((d && d.styles) || []).map(x => [x.id, x.name, x.claim_count, x.last_run]),
+        ((d && d.presets) || []).map(x => [x.id, x.name, x.where])]);
+    if (key(data) === key(S.composer)) return;
+    S.composer.styles = data.styles || [];
+    S.composer.presets = data.presets || [];
+    // THE LISTS ONLY: the search field keeps its text and focus, and the body
+    // keeps where it was scrolled to.
+    const body = $('pd-rail-body');
+    if (!body) return;
+    const scroll = body.scrollTop || 0;
+    const fresh = rail();
+    const at = fresh.indexOf('id="pd-rail-body">') + 'id="pd-rail-body">'.length;
+    body.innerHTML = fresh.slice(at, fresh.lastIndexOf('</div><div class="pd-railfoot">'));
+    body.scrollTop = scroll;
+    const q = $('pd-railq');
+    if (q && q.value) q.dispatchEvent(new Event('input'));
+}
+
+function bindRailSearch() {
+    const q = $('pd-railq');
+    if (!q) return;
+    const filter = () => {
+        const n = q.value.trim().toLowerCase();
+        for (const r of root().querySelectorAll('.pd-row')) {
+            r.hidden = !!n && r.textContent.toLowerCase().indexOf(n) < 0;
+        }
+    };
+    q.addEventListener('input', filter);
 }
 
 // The model's own cell shape, in the shape renderFlowPicture draws — the same
@@ -814,11 +896,11 @@ function drawPicture(pass) {
 // this one has none yet — and points at the button that adds one, which is
 // already in the rail beside it.
 function noStyleYet() {
-    return '<div class="pd-main"><div class="pd-head"><div class="t"><h1>No part yet</h1>' +
-        '<div class="sub">this process runs nothing until one of its parts has a flow</div></div></div>' +
-        '<div class="pd-empty"><p>A flow is drawn for a part: which positions the process works, ' +
-        'how each one swaps, and where its bins come from and go. Add the first part from ' +
-        '<b>+ New part flow</b> in the rail, which mints it from one of this cell’s recipes.</p>' +
+    return '<div class="pd-main"><div class="pd-head"><div class="t"><h1>No style yet</h1>' +
+        '<div class="sub">this process runs nothing until one of its parts has a style</div></div></div>' +
+        '<div class="pd-empty"><p>A recipe is the spots this process works, how each one swaps, and ' +
+        'where its bins come from and go; a style is a recipe with its parts on it. Build a recipe from ' +
+        '<b>+ New recipe</b> in the rail, then add the first style from <b>+ New style</b>.</p>' +
         '<p class="pd-dim">Everything else about this process is edited from its tabs: its name, ' +
         'group, counter and routing set in <b>Settings</b>, and the positions it works in ' +
         '<b>Operator screens › Edit</b> — a position belongs to the screen that claims it.</p></div></div>';
@@ -866,7 +948,7 @@ function main() {
         // the draft is dirty: a preset named from an unsaved draft would be a
         // shape the station does not run, under a name that claims it does.
         // drawBar() enables it on the same measurement that disables Save flow.
-        '<button class="pd-btn" data-act="save-preset" disabled>Save as preset…</button>' +
+        '<button class="pd-btn" data-act="save-preset" disabled>Save as recipe…</button>' +
         // USE A PRESET, ON THE SCREEN THAT EDITS A FLOW (owner: "is presets
         // pickable on both"). The HMI's strip has offered the cell's named
         // shapes since U10 and the desktop had them only on the Presets tab,
@@ -879,8 +961,8 @@ function main() {
         // same reducer the HMI dispatches and the same diff the apply modal
         // draws. A second reducer would be a second answer to "what does this
         // shape do to this flow".
-        '<button class="pd-btn" data-act="use-preset">Use a preset ▾</button>' +
-        '<button class="pd-btn primary" data-act="save" disabled>Save flow</button></div></div>' +
+        '<button class="pd-btn" data-act="use-preset">Use a recipe ▾</button>' +
+        '<button class="pd-btn primary" data-act="save" disabled>Save style</button></div></div>' +
         (S.notice ? '<div class="pd-notice">' + esc(S.notice) + '</div>' : '') +
         '<div class="pd-pic"><svg id="pd-svg" class="os-flow-picture"></svg></div>' +
         positionsTable() +
@@ -906,13 +988,16 @@ function shapeDraftMain() {
     const dropped = unmapped.filter(n => !S.model.cells[n]);
     if (check.length) lines.push('Check ' + check.join(', ') + ' — what the other cell named there has no match here, so it is blank');
     if (dropped.length) lines.push('Not placed: ' + dropped.join(', ') + ' — this cell has fewer positions');
-    const title = S.shapeDraft.from ? 'Import · ' + S.shapeDraft.from : 'New shape · ' + label;
+    const r = S.shapeDraft.recipe;
+    const title = r ? 'Recipe · ' + r.name : S.shapeDraft.from ? 'Import · ' + S.shapeDraft.from : 'New recipe · ' + label;
+    const sub = r ? 'spots, how they swap, where bins come from and go; no part. Saved under the same ' +
+        'name it becomes the next version' :
+        'a recipe — spots, how they swap, where bins come from and go; no part, and nothing is saved until you name it';
     return '<div class="pd-main">' +
         '<div class="pd-head"><div class="t"><h1>' + esc(title) + '</h1>' +
-        '<div class="sub">a recipe — positions, how they swap, where bins come from and go; no part, ' +
-        'and nothing is saved until you name it</div></div>' +
-        '<div class="act"><button class="pd-btn quiet" data-act="shape-cancel">Back to presets</button>' +
-        '<button class="pd-btn primary" data-act="shape-save">Save as preset…</button></div></div>' +
+        '<div class="sub">' + esc(sub) + '</div></div>' +
+        '<div class="act"><button class="pd-btn quiet" data-act="shape-cancel">Back</button>' +
+        '<button class="pd-btn primary" data-act="shape-save">Save recipe…</button></div></div>' +
         (ask ? '<div class="pd-notice">Which positions make parts here? No flow on this process says — ' +
             'set Role on each row before naming it.</div>' : '') +
         (lines.length ? '<div class="pd-notice">' + esc(lines.join(' · ')) + '</div>' : '') +
@@ -3291,7 +3376,7 @@ function drawScreens() {
                 : '<span class="pd-dim">nothing claimed</span>') + '</td>' +
             '<td class="pd-dim">' + esc(st.note || '—') + '</td>' +
             '<td><span class="pd-cnt' + (h.on ? ' ok' : '') + '"><i></i>' + esc(h.text) + '</span></td>' +
-            '<td class="pd-dim">' + (gateOn ? 'may change flows' : 'run as set up') + '</td>' +
+            '<td class="pd-dim">' + (gateOn ? 'on' : 'off') + '</td>' +
             '<td class="pd-acts">' +
             '<button class="pd-dimlink" data-act="screen-edit" data-station="' + st.id + '">Edit</button>' +
             '<a class="pd-dimlink" href="/operator/station/' + st.id + '">Open</a></td></tr>';
@@ -3303,7 +3388,7 @@ function drawScreens() {
         '<button class="pd-btn" data-act="screen-add">Add operator screen</button></div>' +
         (rows
             ? '<table class="pd-tbl"><thead><tr><th>Screen</th><th>Claimed positions</th><th>Note</th>' +
-            '<th>Health</th><th>Flow composer</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>'
+            '<th>Health</th><th>HMI setup</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>'
             : '<p class="pd-dim">No screen works this process yet. An operator cannot reach it until one does.</p>') +
         '<div class="pd-sect"><h2>Loader windows</h2>' +
         '<span class="pd-dim">Core loaders with no screen on this edge</span></div>' +
@@ -3560,11 +3645,12 @@ function drawSettings() {
     // position or staging lane — never a mode, a pairing or a role — and the
     // result is saved as a style with the recipe as its provenance.
     const hmi = '<div class="pd-sect"><h2>HMI</h2></div>' +
-        stField('Operators may move a recipe’s positions on the HMI',
-            'off: the operator picks a part and runs the recipe as set up · on: they may move a slot to another position or lane',
+        stField('HMI setup',
+            'off: the operator changes over to a style an engineer made · on: they may set a style up — ' +
+            'pick a part and a recipe, and move its spots',
             stToggle('flow_composer_enabled')) +
-        '<p class="pd-note">For a conveyor that moved or a cell in development. The choreography — mode, ' +
-        'pairing, role — stays the recipe’s; the moves are checked against the routing set below.</p>';
+        '<p class="pd-note">For a cell being set up. The robot moves — mode, pairing, role — stay the ' +
+        'recipe’s; the spots an operator moves are checked against the routing set below.</p>';
 
     // PARTS THIS PROCESS RUNS (pick-a-part U5, R-I): the part set the floor
     // picks from. Write-through, so it is outside the save bar's draft.
@@ -3598,10 +3684,10 @@ function drawSettings() {
     const stylesSect = '<div class="pd-sect"><h2>Styles</h2><span class="pd-dim">' + styles +
         ' live · every part this process runs</span><span class="pd-spacer"></span>' +
         // NO GENERATE VARIANTS (pick-a-part U5): a style for a new part is minted
-        // from a recipe — + New part flow on Flows, or the operator's CHANGEOVER.
+        // from a recipe — + New style on the Styles tab, or the operator's CHANGEOVER.
         '<button class="pd-btn" data-act="st-sync">Sync catalog</button></div>' +
-        '<p class="pd-note">Styles are managed from Flows — each row in its left rail is a style, and ' +
-        '+ New part flow mints one from a recipe. Rename, expected CATID, clone and delete are on the ' +
+        '<p class="pd-note">Styles are managed from the Styles tab — the rail lists the recipes, then the ' +
+        'styles, and + New style puts parts on a recipe. Rename, expected CATID, clone and delete are on the ' +
         'row’s menu; "Mark as running" is there too, for when the plant changed parts without shingo.</p>';
 
     const danger = '<div class="pd-sect danger"><h2>Danger</h2></div>' +
@@ -4510,7 +4596,7 @@ function styleAction(act, id) {
 // no screen can be left showing what it read before the write.
 async function refreshProcess() {
     await reloadProcesses();
-    const res = await fetch('/api/processes/' + S.processID + '/composer');
+    const res = await fetch('/api/processes/' + S.processID + '/composer', { cache: 'no-store' });
     if (res.ok) {
         takeComposer(await res.json());
         S.graph = null;
@@ -4533,7 +4619,7 @@ async function refreshProcess() {
 
 // ── the rail's and the list's own creates ────────────────────────────────────
 
-// "+ New part flow": a part this press runs, with the CATID the PLC calls it.
+// "+ New style": a part this press runs, with the CATID the PLC calls it.
 //
 // NEW PART FLOW IS PICK A RECIPE, FILL EVERY SLOT (pick-a-part U3). The style
 // is minted server-side (POST /flow/mint, the floor's own door): the recipe's
@@ -4562,7 +4648,7 @@ function openNewStyle() {
             (palette.length ? '' : '<p class="pd-note">This process has no parts yet — add them in Settings › ' +
                 'Parts this process runs.</p>');
     };
-    openSheet('New part flow', 'a part this process runs: pick the recipe its cell runs, and the part for each slot.',
+    openSheet('New style', 'a part this process runs: pick the recipe, and the part for each spot.',
         '<div class="pd-fld"><label>Recipe<small>the engineer-named shapes of this cell</small></label>' +
         '<div class="v"><select class="pd-inp wide" data-f="recipe" id="pd-newrecipe">' + recipeOpts + '</select></div></div>' +
         '<div id="pd-newslots"></div>' +
@@ -4678,7 +4764,7 @@ function addFreePosition(btn) {
     const free = freePositions();
     if (!free.length) return;
     if (!defaultModeFor()) {
-        S.notice = 'This flow has no choreography yet. Start it from a recipe — Use a preset ▾, or Presets › New shape.';
+        S.notice = 'This style has no spots yet. Start it from a recipe — Use a recipe ▾, or + New recipe in the rail.';
         drawFlows();
         return;
     }
@@ -5357,9 +5443,9 @@ function drawPresets() {
     const cands = v.candidates || [];
     const flows = v.styles_with_flow || 0;
     let h = (S.notice ? '<div class="pd-notice">' + esc(S.notice) + '</div>' : '') +
-        '<div class="pd-sect"><h2>Presets</h2><span class="pd-lbl"><span class="cnt">' +
+        '<div class="pd-sect"><h2>Recipes</h2><span class="pd-lbl"><span class="cnt">' +
         presets.length + '</span></span>' +
-        '<span class="pd-dim">named shapes this process can apply to a part</span>' +
+        '<span class="pd-dim">spots and robot moves with no part — a style is one of these with its parts on</span>' +
         '<button class="pd-dimlink" data-act="import-from">Import from…</button></div>';
     // THE COLUMNS ARE SIZED, the way D1's positions table is, and for the same
     // reason: left to itself the browser gave Name a third of what its content
@@ -5377,7 +5463,7 @@ function drawPresets() {
         '<thead><tr><th>Name</th><th>Shape</th><th>Applied to</th>' +
         '<th>Drift</th><th>Saved</th><th></th></tr></thead><tbody>' +
         presets.map(presetRow).join('') + '</tbody></table>'
-        : '<p class="pd-dim">No presets yet — name a flow from the Flows tab, or start from a shape below.</p>';
+        : '<p class="pd-dim">No recipes yet — + New recipe in the Styles tab’s rail, or start from a suggestion below.</p>';
 
     // THE OFFER, while there is one. Once every shape the press runs has a
     // name this section is not empty, it is finished — and a heading over
@@ -5404,7 +5490,7 @@ function drawPresets() {
     // pickers are the override, and nothing is stored until it is named.
     const gen = v.generated || [];
     if (gen.length) {
-        h += '<div class="pd-sect"><h2>New shape</h2><span class="pd-lbl"><span class="cnt">' +
+        h += '<div class="pd-sect"><h2>Suggested</h2><span class="pd-lbl"><span class="cnt">' +
             gen.length + '</span></span>' +
             '<span class="pd-dim">recipes this cell could run, from its positions and routing set — ' +
             'open one to check it, then name it</span></div>' +
@@ -5438,8 +5524,8 @@ function openUsePreset(btn) {
     if (!pop || !S.model) return;
     const presets = S.composer.presets || [];
     if (!presets.length) {
-        pop.innerHTML = '<div class="none">This cell has no named shapes yet. Name one from a flow ' +
-            'that already runs here — Save as preset… — or from the Presets tab.</div>';
+        pop.innerHTML = '<div class="none">This cell has no recipes yet. Build one from + New recipe ' +
+            'in the rail, or save a style as one — Save as recipe….</div>';
     } else {
         pop.innerHTML = presets.map(p =>
             '<button data-act="use-preset-pick" data-preset="' + esc(p.id) + '">' +
@@ -5466,8 +5552,8 @@ function usePreset(id) {
         ? diff.map(d => '<div class="pd-diffrow"><b>' + esc(d.node) + '</b> · ' + esc(d.label) +
             (d.whole ? '' : ': ' + esc(d.from) + ' → ' + esc(d.to)) + '</div>').join('')
         : '<p class="pd-note">This flow already has that shape — applying it changes nothing.</p>';
-    openSheet('Use “' + p.name + '” on this part?',
-        'the shape only — a preset carries no parts, and the parts you have placed stay where they are.',
+    openSheet('Use “' + p.name + '” on this style?',
+        'the spots only — a recipe carries no parts, and the parts you have placed stay where they are.',
         lines, 'Apply to the draft', () => {
             apply({ type: 'applyPreset', preset: p });
             closeSheet();
@@ -5493,6 +5579,7 @@ function openShapeDraft(mode) {
 // {from, unmapped} for an import.
 function startShapeDraft(shape, draft) {
     const back = S.styleID;
+    const from = S.tab;
     S.tab = 'flows';
     S.styleID = 0;
     S.selected = null;
@@ -5500,7 +5587,7 @@ function startShapeDraft(shape, draft) {
     S.model = M().reduce(initModel({ id: 0, name: 'New shape', claims: [], parts: [] }, { shape: true }),
         { type: 'applyPreset', preset: { shape: shape } });
     S.baseline = '';
-    S.shapeDraft = Object.assign({ notes: [], unmapped: [] }, draft, { back: back });
+    S.shapeDraft = Object.assign({ notes: [], unmapped: [] }, draft, { back: back, fromTab: from });
     drawFlows();
 }
 
@@ -5555,9 +5642,14 @@ async function importPreset(presetID) {
 // before the draft re-selected underneath so Flows is where it was.
 async function leaveShapeDraft() {
     const back = S.shapeDraft ? S.shapeDraft.back : S.styleID;
+    const fromTab = S.shapeDraft ? S.shapeDraft.fromTab : '';
     S.shapeDraft = null;
+    try {
+        const res = await fetch('/api/processes/' + S.processID + '/composer', { cache: 'no-store' });
+        if (res.ok) takeComposer(await res.json());
+    } catch (_) { /* the rail catches up on its next read */ }
     selectStyle(back);
-    await openPresets();
+    if (fromTab === 'presets') await openPresets();
 }
 
 function presetByID(id) { return (presetsView() ? presetsView().presets : []).find(p => p.id === id) || null; }
@@ -5613,25 +5705,25 @@ function suggestedPresetName() {
 // invites an engineer to expect the parts to come along.
 function openPresetNaming(title, prefill, from) {
     openSheet(title, '',
-        sheetField('Name', 'what this shape is called on this process', 'name', prefill) +
-        '<p class="pd-note">A preset is the shape of a flow — which positions, how they swap, ' +
+        sheetField('Name', 'what this recipe is called on this process', 'name', prefill) +
+        '<p class="pd-note">A recipe is the spots of a style — which positions, how they swap, ' +
         'where bins come from and go. Parts are never part of it.</p>',
-        'Save preset',
+        'Save recipe',
         () => {
             const name = sheetValue('name');
             return sheetSubmit('POST', '/api/processes/' + S.processID + '/presets',
                 B().flowPresetCreate(name, from), async () => {
                     // A NAMED DRAFT IS DONE: back to the list it now sits in.
                     if (from && from.cells) {
-                        S.notice = 'Saved preset ' + name + '.';
+                        S.notice = 'Saved recipe ' + name + '.';
                         await leaveShapeDraft();
                         return;
                     }
                     // Named from the Flows tab, the preset lands somewhere
                     // else, and the sentence says where; on Presets it is in
                     // the list under the notice.
-                    S.notice = 'Saved preset ' + name + '.' +
-                        (S.tab === 'presets' ? '' : ' It is on the Presets tab.');
+                    S.notice = 'Saved recipe ' + name + '.' +
+                        (S.tab === 'presets' ? '' : ' It is in the rail under Recipes.');
                     await refreshPresets();
                     if (S.tab === 'flows') drawFlows();
                 });
@@ -6079,7 +6171,8 @@ async function runPresetApply() {
 // #pd-stpop, and the document-level closer does not care which popover — a
 // click that does not stop propagating opens the list and hides it before
 // paint, which is the "clickable, nothing happens" report.
-const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1, 'st-group': 1, 'st-holddest': 1, 'use-preset': 1 };
+const POPOVER_ACTS = { pick: 1, 'style-menu': 1, 'preset-menu': 1, 'add-position': 1, 'st-group': 1, 'st-holddest': 1, 'use-preset': 1,
+    'new-recipe': 1, 'import-from': 1 };
 
 function onClick(e) {
     const openRow = e.target.closest && e.target.closest('[data-open]');
@@ -6206,9 +6299,14 @@ function onClick(e) {
             case 'shape-cancel': void leaveShapeDraft(); return;
             // THE NAME IS THE ENGINEER'S (pick-a-part U2): the field opens
             // empty, never on the mode word — "Standard", "Tooling change".
-            case 'shape-save':
-                openPresetNaming('Name this recipe', '', { cells: M().toCells(S.model) });
+            case 'shape-save': {
+                const r = S.shapeDraft && S.shapeDraft.recipe;
+                openPresetNaming(r ? 'Save recipe ' + r.name : 'Name this recipe', r ? r.name : '',
+                    { cells: M().toCells(S.model) });
                 return;
+            }
+            case 'recipe-open': openRecipe(btn.dataset.preset); return;
+            case 'new-recipe': void openNewRecipe(btn); return;
             case 'preset-name-cand': {
                 const c = candidateByKey(btn.dataset.cand);
                 if (c) openPresetNaming('Name this shape', c.suggested_name, { shapeKey: c.shape_key });
@@ -6219,7 +6317,7 @@ function onClick(e) {
             // runs.
             case 'save-preset': {
                 const st = composerStyle(S.styleID);
-                if (st) openPresetNaming('Save ' + st.name + '’s flow as a preset',
+                if (st) openPresetNaming('Save ' + st.name + ' as a recipe',
                     suggestedPresetName(), { styleID: st.id });
                 return;
             }

@@ -287,6 +287,9 @@ function loadPage(loadOpts) {
     // the request on the wire.
     if (loadOpts.timers) global.setTimeout = fn => loadOpts.timers.push(fn);
     global.requestAnimationFrame = () => {};
+    // The rail's re-read runs on an interval; a pin that drives it collects
+    // the callback and runs it when it wants the read on the wire.
+    global.setInterval = fn => { if (loadOpts.intervals) loadOpts.intervals.push(fn); return 0; };
     global.CSS = { escape: s => String(s).replace(/[^a-zA-Z0-9_-]/g, c => '\\' + c) };
     // The picture and the map are stubbed to fail loudly if they ever run: the
     // pin's path draws the bar but never the picture (no #pd-svg exists).
@@ -1619,7 +1622,7 @@ async function mainAsync() {
         if (root.innerHTML.indexOf(want) < 0) throw new Error('Save settings drew no ' + want);
     });
 
-    await pin('Save as preset names the preset it saved and where it is', async () => {
+    await pin('Save as recipe names the recipe it saved and where it is', async () => {
         const posts = [];
         const { root, main, doc, scrim } = loadPage({
             allowSheet: true, composer: savedComposer(),
@@ -1639,7 +1642,7 @@ async function mainAsync() {
         await settle();
         if (posts.length !== 1) throw new Error('setup: the preset was not posted once: ' + posts.length);
         if (scrim.classList.contains('active')) throw new Error('the naming sheet is still open after the save');
-        const want = '<div class="pd-notice">Saved preset Single up. It is on the Presets tab.</div>';
+        const want = '<div class="pd-notice">Saved recipe Single up. It is in the rail under Recipes.</div>';
         if (root.innerHTML.indexOf(want) < 0) throw new Error('the Flows tab drew no ' + want);
     });
 
@@ -2332,11 +2335,47 @@ async function mainAsync() {
         }
     });
 
+    // THE RAIL IS RECIPES, THEN STYLES, each under its own label, and a
+    // recipe row opens that recipe as a draft to change and save again.
+    await pin('the rail lists the recipes, then the styles', async () => {
+        const { root } = loadPage({});
+        await settle();
+        const h = root.innerHTML;
+        const r = h.indexOf('Recipes · 1'), st = h.indexOf('Styles · 1');
+        if (r < 0 || st < 0 || r > st) throw new Error('rail order: ' + h.slice(h.indexOf('pd-rail'), h.indexOf('pd-rail') + 600));
+        if (h.indexOf('data-act="recipe-open" data-preset="7"') < 0) throw new Error('no row for recipe 7');
+        if (h.indexOf('data-act="new-recipe"') < 0) throw new Error('no + New recipe');
+    });
+
+    // A STYLE BUILT ON THE HMI REACHES THE RAIL WITHOUT A RELOAD: the rail's
+    // own re-read redraws its lists and nothing else.
+    await pin('a style built on a station appears in the rail on its next read', async () => {
+        const intervals = [];
+        const body = makeElement('pd-rail-body');
+        let reads = 0;
+        loadPage({
+            intervals, extraIds: { 'pd-rail-body': body },
+            fetch: url => {
+                if (!/\/api\/processes\/1\/composer$/.test(url)) return null;
+                reads++;
+                const styles = [{ id: 1, name: 'Style A', claims: [], parts: [], advanced: {} }];
+                if (reads > 1) styles.push({ id: 2, name: 'Style B', claim_count: 2, claims: [], parts: [], advanced: {} });
+                return Promise.resolve({ ok: true, json: async () => ({ styles: styles, routing: [], presets: [],
+                    palette: [], cell: { positions: [], groups: {} } }) });
+            },
+        });
+        await settle();
+        if (!intervals.length) throw new Error('the page sets no re-read interval');
+        intervals[0]();
+        await settle();
+        if (body.innerHTML.indexOf('Style B') < 0) throw new Error('the rail did not pick up Style B: ' + body.innerHTML.slice(0, 300));
+    });
+
     // THE GATE IS A SENTENCE IN THE HEADER'S OWN TEXT STYLE. It is decided in
     // Settings and only read here, so it is drawn as words — no pill border,
     // no chip, no second door to the Settings tab.
     await pin('the app bar states the gate as plain text', async () => {
-        for (const [off, words] of [[false, 'Operators may change flows'], [true, 'Operators run flows as set up']]) {
+        for (const [off, words] of [[false, 'HMI setup on: operators set up styles'], [true, 'HMI setup off: operators pick from the styles']]) {
             const { root } = loadPage({ gateOff: off });
             await settle();
             const want = '<div class="pd-spacer"></div><div class="pd-gate">' + words + '</div></div>';

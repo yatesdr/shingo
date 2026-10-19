@@ -1775,7 +1775,7 @@ func TestComposerShots(t *testing.T) {
 	desktopDOM("D7 new shape section", d6, `data-act="shape-draft"`)
 	d7 := fmt.Sprintf("/processes?process=%d#tab=presets;draft=%s", seeded.ProcessID, protocol.SwapModeTwoRobotPressIndex)
 	desktopShot("D7-new-shape-draft.png", d7)
-	desktopDOM("D7 shape draft header", d7, `New shape · `)
+	desktopDOM("D7 shape draft header", d7, `New recipe · `)
 	desktopDOM("D7 shape draft save", d7, `data-act="shape-save"`)
 
 	// U7 · IMPORT FROM… (pick-a-part brief): a recipe laid onto this process
@@ -2074,7 +2074,7 @@ const until = (step, fn, ms = 8000) => new Promise((resolve, reject) => {
         threw();
         const gate = d.querySelector('.pd-gate');
         if (!gate) return false;
-        return (gate.textContent === 'Operators may change flows') !== before;
+        return (gate.textContent === 'HMI setup on: operators set up styles') !== before;
     });
 
     out.dataset.after = before ? 'off' : 'on';

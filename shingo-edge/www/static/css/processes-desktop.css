@@ -230,6 +230,9 @@ body.pd-body .pd-sheet { flex: 1 1 auto; min-height: 0; overflow: auto; }
 }
 .pd-row:hover .more, .pd-row.on .more { opacity: 1; }
 .pd-railfoot { border-top: 1px solid var(--sub-1); padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+/* + New recipe sits under the recipes it adds to, before the Styles label. */
+.pd-railadd { padding: 4px 8px 6px; }
+.pd-railadd .pd-btn { width: 100%; }
 
 /* THE MAIN COLUMN IS THE ONE VERTICAL SCROLL. Nothing inside it shrinks to
    make room for anything else: the picture is its own height, the positions
