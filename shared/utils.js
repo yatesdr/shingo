@@ -1037,9 +1037,11 @@ function wireSortableTable(table) {
         th.style.cursor = 'pointer';
         th.style.userSelect = 'none';
         // Reserve space for the indicator so the header doesn't jump
-        // width when it activates.
+        // width when it activates. The space is non-breaking: a plain one
+        // let a narrow column wrap the empty indicator onto a second line,
+        // and that two-line header sat higher than its neighbours.
         if (!th.querySelector('.sort-indicator')) {
-            th.appendChild(document.createTextNode(' '));
+            th.appendChild(document.createTextNode(' '));
             const span = document.createElement('span');
             span.className = 'sort-indicator';
             span.setAttribute('aria-hidden', 'true');

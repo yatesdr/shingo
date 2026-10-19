@@ -345,6 +345,11 @@
 
 /* ─── Sortable tables ────────────────────────────────────────────────── */
 
+/* A header that does wrap still lines up with its neighbours: every
+ * header in a row sits on the same baseline at the bottom of the cell. */
+thead th { vertical-align: bottom; }
+th[data-sort] { white-space: nowrap; }
+
 /* Sortable column indicator. Empty by default; populated by
  * shared/utils.js installTableSort() with ▲ / ▼ on the active column. */
 .sort-indicator {
