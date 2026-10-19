@@ -112,7 +112,7 @@ function countOffers() {
 }
 
 // A code one character off another of the same length — the plant numbers a
-// left/right pair that way (63144 / 63145), but which neighbour is the pair is
+// left/right pair that way (SYN44 / SYN45), but which neighbour is the pair is
 // not assumed: both sides lead the list.
 function oneCharOff(a, b) {
     if (!a || !b || a.length !== b.length || a === b) return false;

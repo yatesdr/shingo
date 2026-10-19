@@ -97,7 +97,7 @@ func MintedStyleName(codes []string, roles []protocol.ClaimRole) string {
 //
 // A PAIR THAT DIFFERS IN ONE CHARACTER is written the way the plant's part
 // lists write a left/right pair: the one character as `x/y` in place, the rest
-// once, `63144-6TA0A.06` + `63145-6TA0A.06` → `63144/5-6TA0A.06`. The lower
+// once, `SYN44-PARTA.06` + `SYN45-PARTA.06` → `SYN44/5-PARTA.06`. The lower
 // character goes first, so the name is the same whichever half sits on the
 // first slot.
 func collapsePair(a, b string) string {

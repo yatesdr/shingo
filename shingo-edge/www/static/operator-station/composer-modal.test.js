@@ -243,22 +243,22 @@ test('no recipe runs it: an engineer adds one on the desktop', async () => {
     expectIn('no recipe', 'An engineer adds the recipe on the desktop: Processes › Press 6 › Recipes.');
 });
 test('Two Parts, Two Spots: the second list leads with the matching half', async () => {
-    const rows = ROWS.concat(['63144-6TA0A.06', '63145-6TA0A.06', '63143-6TA0A.06', '74871-6SA1A.06']
+    const rows = ROWS.concat(['SYN44-PARTA.06', 'SYN45-PARTA.06', 'SYN43-PARTA.06', 'SYN71-PARTB.06']
         .map(c => ({ code: c, name: c })));
     await open({ part_rows: rows, presets: [ONE, TWO] });
-    tap('part', { part: '63144-6TA0A.06' });
+    tap('part', { part: 'SYN44-PARTA.06' });
     tap('two');
     const b = box();
     const near = b.indexOf('Matching half'), all = b.indexOf('All parts');
-    if (near < 0 || !(near < b.indexOf('63145-6TA0A.06') && b.indexOf('63143-6TA0A.06') < all)) {
+    if (near < 0 || !(near < b.indexOf('SYN45-PARTA.06') && b.indexOf('SYN43-PARTA.06') < all)) {
         throw new Error('both neighbours do not lead: ' + b.slice(0, 600));
     }
-    if (b.indexOf('74871-6SA1A.06') < all) throw new Error('an unrelated part is in the matching half');
-    expectOut('second list', 'data-part="63144-6TA0A.06"', b);
+    if (b.indexOf('SYN71-PARTB.06') < all) throw new Error('an unrelated part is in the matching half');
+    expectOut('second list', 'data-part="SYN44-PARTA.06"', b);
     CALLS.length = 0;
-    tap('part', { part: '63145-6TA0A.06' });
+    tap('part', { part: 'SYN45-PARTA.06' });
     tap('next');
-    if (JSON.stringify(lastPreview().parts) !== '[{"code":"63144-6TA0A.06"},{"code":"63145-6TA0A.06"}]') {
+    if (JSON.stringify(lastPreview().parts) !== '[{"code":"SYN44-PARTA.06"},{"code":"SYN45-PARTA.06"}]') {
         throw new Error('pair body ' + JSON.stringify(lastPreview()));
     }
 });
