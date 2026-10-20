@@ -1351,8 +1351,9 @@ func boolInt(b bool) int {
 // clears the hold the delta replays, in one statement, on the seat as the tick
 // read it. A delta, not a count: an operator's count written under the lock
 // before it stands, and the tick is charged on top. Reports whether the seat
-// was still as read; false writes nothing.
-func ChargeSeatUOP(db *sql.DB, processNodeID int64, delta int, clearPending bool, seat SeatAsRead) (bool, error) {
+// was still as read; false writes nothing. db is a DBTX so the write can share
+// a transaction with the hold_dropped rows that end a no-bin episode.
+func ChargeSeatUOP(db DBTX, processNodeID int64, delta int, clearPending bool, seat SeatAsRead) (bool, error) {
 	res, err := db.Exec(`UPDATE process_node_runtime_states SET
 		remaining_uop_cached = remaining_uop_cached + ?,
 		pending_uop_delta = CASE WHEN ? = 1 THEN 0 ELSE pending_uop_delta END,
@@ -1392,12 +1393,29 @@ func ChargeSeatUOPStrict(db DBTX, processNodeID int64, avail, pack, hold int, ho
 // HoldSeatUOP adds delta to the seat's hold and records its part (Lane H R2,
 // DECISIONS D12), on the seat as the tick read it: with no carrier chargeable,
 // or one released empty. A carrier bound since refuses it, and the tick charges
-// that carrier instead. Reports whether the seat was still as read.
-func HoldSeatUOP(db *sql.DB, processNodeID int64, delta int, part string, seat SeatAsRead) (bool, error) {
+// that carrier instead. Reports whether the seat was still as read. db is a
+// DBTX for the same reason as ChargeSeatUOP's.
+func HoldSeatUOP(db DBTX, processNodeID int64, delta int, part string, seat SeatAsRead) (bool, error) {
 	res, err := db.Exec(`UPDATE process_node_runtime_states SET
 		pending_uop_delta = pending_uop_delta + ?, pending_uop_payload=?, updated_at=datetime('now')
 		WHERE `+seatUnchangedSQL,
 		append([]any{delta, part}, seatArgs(processNodeID, seat)...)...)
+	return oneRow(res, err)
+}
+
+// SetSeatHold replaces the seat's hold with hold of part (0 and "" drop it),
+// on the seat as the caller read it: a carrier bound or left, a released-empty
+// flag or a hold written since refuses it (seatUnchangedSQL). It never moves
+// the count. The produce hold's
+// drops write through it (engine writeSeatWithDrops), and a drop that is
+// refused writes no hold_dropped row. db is a DBTX so the write shares a
+// transaction with the rows that describe it. Reports whether the seat was
+// still as read.
+func SetSeatHold(db DBTX, processNodeID int64, hold int, part string, seat SeatAsRead) (bool, error) {
+	res, err := db.Exec(`UPDATE process_node_runtime_states SET
+		pending_uop_delta = ?, pending_uop_payload = ?, updated_at=datetime('now')
+		WHERE `+seatUnchangedSQL,
+		append([]any{hold, part}, seatArgs(processNodeID, seat)...)...)
 	return oneRow(res, err)
 }
 

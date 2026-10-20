@@ -167,24 +167,10 @@ func (db *DB) SetProcessNodeReleaseCount(processNodeID int64, remainingUOP int) 
 }
 
 // AddPendingUOPDelta seeds a hold of no known part. NO PRODUCTION CALLER:
-// the tick path holds through HoldProcessNodeSeat (processes.HoldSeatUOP),
+// the tick path holds through processes.HoldSeatUOP,
 // which records the part; test fixtures seed holds with this.
 func (db *DB) AddPendingUOPDelta(processNodeID int64, delta int) error {
 	return processes.AddPendingUOPDelta(db.DB, processNodeID, delta, "")
-}
-
-// ChargeProcessNodeSeat adds a tick's delta to the bound carrier's count, and
-// with clearPending clears the hold it replays, on the seat as the tick read
-// it (processes.ChargeSeatUOP). False: the seat changed, nothing written.
-func (db *DB) ChargeProcessNodeSeat(processNodeID int64, delta int, clearPending bool, seat processes.SeatAsRead) (bool, error) {
-	return processes.ChargeSeatUOP(db.DB, processNodeID, delta, clearPending, seat)
-}
-
-// HoldProcessNodeSeat adds a tick's count to the seat's hold for the next
-// carrier of part, on the seat as the tick read it (processes.HoldSeatUOP).
-// False: the seat changed, nothing written.
-func (db *DB) HoldProcessNodeSeat(processNodeID int64, delta int, part string, seat processes.SeatAsRead) (bool, error) {
-	return processes.HoldSeatUOP(db.DB, processNodeID, delta, part, seat)
 }
 
 // SetActivePull marks a node as the active pull point for A/B cycling.

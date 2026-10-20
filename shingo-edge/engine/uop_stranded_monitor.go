@@ -9,6 +9,11 @@
 // and it clears the moment a bin binds. Detection only: it raises an alarm
 // (log + EventUOPStranded + tile chip) and NEVER binds, moves, cancels, or
 // re-plans anything.
+//
+// The same scan carries a produce arm, which does write: an unbound produce
+// seat with a hold and no live order placing a carrier at the node has the
+// hold dropped with a hold_dropped row (Engine.sweepProduceHold, produce_hold.go),
+// every scan and once at boot (sweepAtBoot).
 
 package engine
 
@@ -161,6 +166,7 @@ func (e *Engine) startStrandedMonitor() {
 }
 
 func (sm *strandedMonitor) run() {
+	sm.sweepAtBoot()
 	ticker := clock.Default().NewTicker(strandedScanInterval)
 	defer ticker.Stop()
 	for {
@@ -187,18 +193,55 @@ func (sm *strandedMonitor) run() {
 // process_id names no row is absent from the map exactly as Get returned an
 // error for it — and NodeClaimSet.Resolve answers nil for a nil process, which
 // is what requestedClaimAtNode did with that error.
+//
+// THE PRODUCE ARM RUNS FIRST, for every node, before evaluate's consume-only
+// skip: an unbound produce seat with a hold and no carrier coming has its hold
+// dropped (Engine.sweepProduceHold). It reads nothing more for any other seat,
+// so a plant with no standing produce pile still costs the four statements;
+// each unbound holding produce seat adds its one placing read, and a drop.
 func (sm *strandedMonitor) tick(now time.Time) {
-	e := sm.eng
-	nodes, err := e.db.ListProcessNodes()
-	if err != nil {
+	nodes, resolve, runtimes, ok := sm.read()
+	if !ok {
 		return
 	}
-	if len(nodes) == 0 {
+	for i := range nodes {
+		node := &nodes[i]
+		claim, rt := resolve(node), runtimes[node.ID]
+		sm.eng.sweepProduceHold(node, claim, rt)
+		sm.evaluate(node, claim, rt, now)
+	}
+}
+
+// sweepAtBoot is the produce arm alone, once, as the monitor starts (after the
+// engine's managers exist, so a drop's row can be built and queued; the
+// outbox drains it once the drainer runs). It is the write-off of every pile
+// that stood before an unbound produce seat stopped holding without a carrier
+// coming: no migration could write that row, because a migration runs before
+// the engine and the outbox. The consume alarm is not sampled here, so its
+// growth window keeps its cadence.
+func (sm *strandedMonitor) sweepAtBoot() {
+	nodes, resolve, runtimes, ok := sm.read()
+	if !ok {
 		return
+	}
+	for i := range nodes {
+		node := &nodes[i]
+		sm.eng.sweepProduceHold(node, resolve(node), runtimes[node.ID])
+	}
+}
+
+// read is a scan's four statements: every node, every process, the claims of
+// their styles and the nodes' runtime rows. ok is false when there is nothing
+// to scan or a read failed.
+func (sm *strandedMonitor) read() (nodes []processes.Node, resolve func(*processes.Node) *processes.NodeClaim, runtimes map[int64]*processes.RuntimeState, ok bool) {
+	e := sm.eng
+	nodes, err := e.db.ListProcessNodes()
+	if err != nil || len(nodes) == 0 {
+		return nil, nil, nil, false
 	}
 	procs, err := e.db.ListProcesses()
 	if err != nil {
-		return
+		return nil, nil, nil, false
 	}
 	byID := make(map[int64]*processes.Process, len(procs))
 	ptrs := make([]*processes.Process, 0, len(procs))
@@ -208,18 +251,16 @@ func (sm *strandedMonitor) tick(now time.Time) {
 	}
 	claims, err := e.db.NodeClaimsForStyles(store.ClaimStyleIDs(ptrs...))
 	if err != nil {
-		return
+		return nil, nil, nil, false
 	}
-	runtimes, err := e.db.ProcessNodeRuntimes(nodeIDsOf(nodes))
+	runtimes, err = e.db.ProcessNodeRuntimes(nodeIDsOf(nodes))
 	if err != nil {
-		return
+		return nil, nil, nil, false
 	}
-	for i := range nodes {
-		node := &nodes[i]
-		sm.evaluate(node,
-			claims.Resolve(byID[node.ProcessID], node, store.ActiveStyleFirst),
-			runtimes[node.ID], now)
+	resolve = func(node *processes.Node) *processes.NodeClaim {
+		return claims.Resolve(byID[node.ProcessID], node, store.ActiveStyleFirst)
 	}
+	return nodes, resolve, runtimes, true
 }
 
 // evaluate advances one node and publishes/clears its alarm.

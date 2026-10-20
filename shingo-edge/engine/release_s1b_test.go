@@ -140,9 +140,17 @@ func TestReleaseS1bProduceSplit(t *testing.T) {
 				ticks(3)),
 			probe: probes(pIngests, pSlot("A", front), pSlot("B", back))},
 
+		// B's bin is on its way (a live order delivering to B), so the ticks
+		// B counts before it lands are held for it: an unbound produce seat
+		// holds only while a carrier is coming.
 		{name: "S1b/sequential, B has no bin: request, 5 ticks, RELEASE, 3 ticks, B's bin delivered",
-			want:  "ok | removal=in_transit | rel=removal | ingest=1 capred=0 | ingests=[qty=47 bin=9001 payload=PART-X] | A uop=0 pending=0 bin=nil | B uop=0 pending=3 bin=9003",
-			build: func(h *relHarness) { h.sequentialPair(protocol.ClaimRoleProduce, false) },
+			want: "ok | removal=in_transit | rel=removal | ingest=1 capred=0 | ingests=[qty=47 bin=9001 payload=PART-X] | A uop=0 pending=0 bin=nil | B uop=0 pending=3 bin=9003",
+			build: func(h *relHarness) {
+				h.sequentialPair(protocol.ClaimRoleProduce, false)
+				_, err := h.db.CreateOrder("s1b-b-carrier", protocol.OrderTypeRetrieveEmpty, &h.partnerID, true, 1,
+					fxPressB, "", "", "", false, fxPart, "", "")
+				testutil.MustNoErr(h.t, err, "B's carrier coming")
+			},
 			act: seq(requestProduce("removal"), ticks(5), stages("removal"), orderClick("removal", dispEmpty),
 				ticks(3), delivered(back, fxBin+2)),
 			probe: probes(pIngests, pSlot("A", front), pSlot("B", back))},

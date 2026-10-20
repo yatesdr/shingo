@@ -137,19 +137,33 @@ func (e *Engine) applyLeg(p release.LegPlan, ll *legLoad) error {
 
 // commitFlip moves the line to the partner (L3: the release IS the flip):
 // the attribution boundary on the partner (flush the outgoing side's residual
-// deltas before the new active side starts ticking), the atomic pull-side
-// write, then an immediate level sweep of the position that just went dark —
-// the sweep's own decision, taken early for immediacy.
+// deltas before the new active side starts ticking), the carry of the
+// released position's produce hold to the partner (carryFlipBucket), the
+// atomic pull-side write, then an immediate level sweep of the position that
+// just went dark — the sweep's own decision, taken early for immediacy.
+//
+// The boundary, the carry and the pull-side write run under countMu (then the
+// flush lock, inside the boundary, as everywhere), so no tick lands on either
+// seat between the carry and the line moving.
 func (e *Engine) commitFlip(ll *legLoad) error {
 	node, partner, why := ll.node, ll.partner, ll.snap.Flip.NotReady
+	e.countMu.Lock()
 	// MarkAttributionBoundary is synchronous — an error means the flush
 	// failed, and the pull must not move.
 	if e.inventoryDelta != nil {
 		if err := e.inventoryDelta.MarkAttributionBoundary(partner.ID); err != nil {
+			e.countMu.Unlock()
 			return fmt.Errorf("attribution boundary flush failed: %w", err)
 		}
 	}
-	if err := e.writePullSide(partner.ID, node.ID); err != nil {
+	var orderUUID string
+	if ll.order != nil {
+		orderUUID = ll.order.UUID
+	}
+	e.carryFlipBucket(node, partner, orderUUID)
+	err := e.writePullSide(partner.ID, node.ID)
+	e.countMu.Unlock()
+	if err != nil {
 		return err
 	}
 	if why != "" {

@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/store"
@@ -195,4 +196,185 @@ func TestSequentialReleaseFlip_PartnerWithNoBinTakesTheLineAndHoldsItsCount(t *t
 	if rt.PendingUOPDelta != 3 {
 		t.Errorf("SS-B pending_uop_delta = %d, want 3 — the count waits for SS-B's bin", rt.PendingUOPDelta)
 	}
+}
+
+// ── The flip carries A's bucket to B ──
+//
+// A sequential release moves the line from A to B (commitFlip). Between A's bin
+// reaching its pack and the operator's RELEASE the operator was loading B, so
+// A's bucket of the part (the strokes a strict bin at its pack held) moves to B
+// in the flip, under countMu and in one transaction guarded on both seats: B's
+// bound bin takes what fits under B's pack (all of it when B's claim is not
+// strict) as one produce_tick, the rest stays in B's bucket capped at one pack
+// (the excess dropped with a flip_carry_overflow row), and A's bucket goes to
+// 0. An unbound B takes it as its hold, replayed when B's bin binds. The pack is
+// 132; A's bin is at the pack with 5 held, unless a pin says otherwise.
+
+// flipCarryPair seeds a sequential produce pair FC-A / FC-B of WIDGET-C (pack
+// 132, strict_pack on A and as strictB says on B, each seat naming its claim),
+// the line on A with A's bin at 132 and aHeld held of aPart, and B's bin at
+// bCount with bHeld of WIDGET-C held (no bin on B when bBound is false).
+func flipCarryPair(t *testing.T, aHeld int, aPart string, bBound bool, bCount, bHeld int, strictB bool) (eng *Engine, sink *fakeDeltaSink, a, b *processes.Node) {
+	t.Helper()
+	db := testEngineDB(t)
+	pid, err := db.CreateProcess("FC-PROC", "flip carry", "", "", false)
+	testutil.MustNoErr(t, err, "create process")
+	styleID, err := db.CreateStyle("FC-STYLE", "", pid)
+	testutil.MustNoErr(t, err, "create style")
+	testutil.MustNoErr(t, db.SetActiveStyle(pid, &styleID), "set active style")
+	ids := map[string]int64{}
+	for i, c := range []struct {
+		own, partner string
+		strict       bool
+	}{{"FC-A", "FC-B", true}, {"FC-B", "FC-A", strictB}} {
+		nid, err := db.CreateProcessNode(processes.NodeInput{
+			ProcessID: pid, CoreNodeName: c.own, Code: c.own, Name: c.own, Sequence: i + 1, Enabled: true,
+		})
+		testutil.MustNoErr(t, err, "create "+c.own)
+		claimID, err := upsertClaimRetiredMode(db, processes.NodeClaimInput{
+			StyleID: styleID, CoreNodeName: c.own, Role: protocol.ClaimRoleProduce,
+			SwapMode: protocol.SwapModeSequential, PayloadCode: "WIDGET-C", UOPCapacity: 132,
+			InboundSource: "MARKET", OutboundDestination: "DEST", PairedCoreNode: c.partner,
+		})
+		testutil.MustNoErr(t, err, "claim "+c.own)
+		_, err = db.DB.Exec(`UPDATE style_node_claims SET strict_pack=? WHERE id=?`, c.strict, claimID)
+		testutil.MustNoErr(t, err, "strict_pack "+c.own)
+		_, err = db.EnsureProcessNodeRuntime(nid)
+		testutil.MustNoErr(t, err, "runtime "+c.own)
+		testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nid, &claimID, nil, 0), "seat "+c.own)
+		ids[c.own] = nid
+	}
+	binA, binB := int64(7701), int64(7702)
+	testutil.MustNoErr(t, db.SetProcessNodeActiveBinID(ids["FC-A"], &binA), "A's bin")
+	testutil.MustNoErr(t, db.UpdateProcessNodeUOP(ids["FC-A"], 132), "A at its pack")
+	if aHeld != 0 {
+		testutil.MustNoErr(t, processes.AddPendingUOPDelta(db.DB, ids["FC-A"], aHeld, aPart), "A's bucket")
+	}
+	if bBound {
+		testutil.MustNoErr(t, db.SetProcessNodeActiveBinID(ids["FC-B"], &binB), "B's bin")
+		testutil.MustNoErr(t, db.UpdateProcessNodeUOP(ids["FC-B"], bCount), "B's count")
+	}
+	if bHeld != 0 {
+		testutil.MustNoErr(t, processes.AddPendingUOPDelta(db.DB, ids["FC-B"], bHeld, "WIDGET-C"), "B's bucket")
+	}
+	eng = testEngine(t, db)
+	eng.wireEventHandlers()
+	testutil.MustNoErr(t, eng.writePullSide(ids["FC-A"], ids["FC-B"]), "the line on A")
+	sink = &fakeDeltaSink{}
+	eng.SetInventoryDeltaSink(sink)
+	a, err = db.GetProcessNode(ids["FC-A"])
+	testutil.MustNoErr(t, err, "read A")
+	b, err = db.GetProcessNode(ids["FC-B"])
+	testutil.MustNoErr(t, err, "read B")
+	return eng, sink, a, b
+}
+
+// flipDeltas is what was emitted on B's bin, each checked to be a
+// produce_tick of WIDGET-C.
+func flipDeltas(t *testing.T, sink *fakeDeltaSink) []int {
+	t.Helper()
+	var out []int
+	for _, bc := range sink.binCalls {
+		if bc.BinID != 7702 || bc.Reason != protocol.ReasonProduceTick || bc.PayloadCode != "WIDGET-C" {
+			t.Errorf("delta %+v, want a produce_tick of WIDGET-C on B's bin 7702", bc)
+		}
+		out = append(out, bc.Delta)
+	}
+	return out
+}
+
+// TestFlipCarry_ABucketMovesOntoTheBoundPartner — A at its pack with 5 held;
+// B's bin takes the 5 in one produce_tick, A's bucket goes to 0. A strict B at
+// 0 has room for all of it; a non-strict B at 130 takes all 5 (no pack caps
+// it).
+func TestFlipCarry_ABucketMovesOntoTheBoundPartner(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		bCount, after int
+		strictB       bool
+	}{
+		{"strict B at 0", 0, 5, true},
+		{"non-strict B at 130", 130, 135, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			eng, sink, a, b := flipCarryPair(t, 5, "WIDGET-C", true, tc.bCount, 0, tc.strictB)
+			testutil.MustNoErr(t, eng.releaseFlipPartner(a), "release A")
+			assertSeat(t, eng, a.ID, 132, 0, "")
+			assertSeat(t, eng, b.ID, tc.after, 0, "")
+			if d := flipDeltas(t, sink); len(d) != 1 || d[0] != 5 {
+				t.Errorf("B's deltas = %v, want one produce_tick of 5", d)
+			}
+			assertDrops(t, eng.db)
+		})
+	}
+}
+
+// TestFlipCarry_AStrictPartnerTakesOnlyItsRoom — B's bin at 130 has room for
+// 2: it takes 2 (one produce_tick), and the other 3 wait in B's bucket.
+func TestFlipCarry_AStrictPartnerTakesOnlyItsRoom(t *testing.T) {
+	t.Parallel()
+	eng, sink, a, b := flipCarryPair(t, 5, "WIDGET-C", true, 130, 0, true)
+	testutil.MustNoErr(t, eng.releaseFlipPartner(a), "release A")
+	assertSeat(t, eng, a.ID, 132, 0, "")
+	assertSeat(t, eng, b.ID, 132, 3, "WIDGET-C")
+	if d := flipDeltas(t, sink); len(d) != 1 || d[0] != 2 {
+		t.Errorf("B's deltas = %v, want one produce_tick of 2", d)
+	}
+	assertDrops(t, eng.db)
+}
+
+// TestFlipCarry_PastOnePackTheExcessIsDropped — B's bin at its pack already
+// holds 130: the 5 carried would make 135, so B holds one pack and the 3 over
+// it are dropped with one flip_carry_overflow row.
+func TestFlipCarry_PastOnePackTheExcessIsDropped(t *testing.T) {
+	t.Parallel()
+	eng, sink, a, b := flipCarryPair(t, 5, "WIDGET-C", true, 132, 130, true)
+	testutil.MustNoErr(t, eng.releaseFlipPartner(a), "release A")
+	assertSeat(t, eng, a.ID, 132, 0, "")
+	assertSeat(t, eng, b.ID, 132, 132, "WIDGET-C")
+	if len(sink.binCalls) != 0 {
+		t.Errorf("deltas = %+v, want none: B's bin had no room", sink.binCalls)
+	}
+	assertDrops(t, eng.db, protocol.HoldDropped{Reason: protocol.HoldDropFlipCarryOverflow, Qty: 3,
+		PayloadCode: "WIDGET-C", Node: "FC-B", CalledBy: "edge:flip"})
+}
+
+// TestFlipCarry_AnUnboundPartnerHoldsItForItsBin — no bin on B at the flip:
+// the 5 become B's hold, and B's first tick after its bin binds replays them
+// (5 + 1 in one produce_tick).
+func TestFlipCarry_AnUnboundPartnerHoldsItForItsBin(t *testing.T) {
+	t.Parallel()
+	eng, sink, a, b := flipCarryPair(t, 5, "WIDGET-C", false, 0, 0, true)
+	testutil.MustNoErr(t, eng.releaseFlipPartner(a), "release A")
+	assertSeat(t, eng, a.ID, 132, 0, "")
+	assertSeat(t, eng, b.ID, 0, 5, "WIDGET-C")
+	if len(sink.binCalls) != 0 {
+		t.Errorf("deltas = %+v, want none: nothing on B to charge", sink.binCalls)
+	}
+
+	bin := int64(7702)
+	testutil.MustNoErr(t, eng.db.SetProcessNodeActiveBinID(b.ID, &bin), "B's bin binds")
+	proc, err := eng.db.GetProcess(b.ProcessID)
+	testutil.MustNoErr(t, err, "read process")
+	charSPTick(eng, b.ProcessID, *proc.ActiveStyleID, 1)
+	assertSeat(t, eng, b.ID, 6, 0, "")
+	if d := flipDeltas(t, sink); len(d) != 1 || d[0] != 6 {
+		t.Errorf("B's deltas = %v, want one produce_tick of 6", d)
+	}
+}
+
+// TestFlipCarry_AForeignBucketStaysOnA — A's bucket is of another part: it is
+// not carried (B makes WIDGET-C) and stays on A for a bin of its own part.
+func TestFlipCarry_AForeignBucketStaysOnA(t *testing.T) {
+	t.Parallel()
+	eng, sink, a, b := flipCarryPair(t, 5, "OTHER-PART", true, 0, 0, true)
+	testutil.MustNoErr(t, eng.releaseFlipPartner(a), "release A")
+	assertSeat(t, eng, a.ID, 132, 5, "OTHER-PART")
+	assertSeat(t, eng, b.ID, 0, 0, "")
+	if len(sink.binCalls) != 0 {
+		t.Errorf("deltas = %+v, want none", sink.binCalls)
+	}
+	assertDrops(t, eng.db)
 }

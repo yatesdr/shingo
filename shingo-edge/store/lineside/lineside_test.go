@@ -275,7 +275,7 @@ func TestStrandProcess_FoldsEveryActivePileIntoItsStrandedRow(t *testing.T) {
 	}
 	seedStranded(t, db, 100, "P-500", 5) // from an earlier cutover
 
-	stranded, err := StrandProcess(db, 1)
+	stranded, err := StrandProcess(db, 1, nil)
 	testutil.MustNoErr(t, err, "StrandProcess")
 
 	if len(stranded) != 2 {

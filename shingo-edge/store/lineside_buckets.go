@@ -4,7 +4,11 @@ package store
 // file keeps the *store.DB method surface so callers outside the store do not
 // import the sub-package for the common calls.
 
-import "shingoedge/store/lineside"
+import (
+	"database/sql"
+
+	"shingoedge/store/lineside"
+)
 
 // GetLinesideBucket returns one pile by id.
 func (db *DB) GetLinesideBucket(id int64) (*lineside.Bucket, error) {
@@ -35,9 +39,10 @@ func (db *DB) DeleteLinesideBucket(id int64) error {
 }
 
 // StrandLinesidePiles folds every active pile at the process's nodes into
-// its stranded row, in one transaction. See lineside.StrandProcess.
-func (db *DB) StrandLinesidePiles(processID int64) ([]lineside.Stranded, error) {
-	return lineside.StrandProcess(db.DB, processID)
+// its stranded row, in one transaction, and runs also (nil for none) on that
+// transaction before it commits. See lineside.StrandProcess.
+func (db *DB) StrandLinesidePiles(processID int64, also func(tx *sql.Tx) error) ([]lineside.Stranded, error) {
+	return lineside.StrandProcess(db.DB, processID, also)
 }
 
 // ListLinesidePileKeys returns the Key of every pile row (the boot resend).

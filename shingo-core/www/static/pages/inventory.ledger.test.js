@@ -73,6 +73,8 @@ console.log('inventory: the two lists render their rows');
               actor: 'edge:sweep', occurred_at: '2026-10-20T08:15:00Z' },
             { node: 'ALN_<b>', payload_code: 'SYN44-PARTB.06', qty: 1, reason: 'something_new', station: 'stn-a',
               actor: '', occurred_at: '2026-10-20T09:00:00Z' },
+            { node: 'ALN_012', payload_code: 'SYN44-PARTC.06', qty: 37, reason: 'no_bin', station: 'stn-b',
+              actor: 'edge:tick', occurred_at: '2026-10-20T09:30:00Z' },
         ],
         declared_full_stamps: [
             { node: 'ALN_011', bin_id: 812, bin_label: 'SHG:0812', payload_code: 'SYN44-PARTA.06',
@@ -83,11 +85,13 @@ console.log('inventory: the two lists render their rows');
         check('inventory.js defines the two renderers', false, 'missing: ' + out.missing.join(', '));
     } else {
         const d = out.drops;
-        check('drops: head counts the rows', /2 hold drops/.test(d), d);
+        check('drops: head counts the rows', /3 hold drops/.test(d), d);
         check('drops: head names the window', d.includes('T(2026-10-13T08:00:00Z)'), d);
         check('drops: node, part, qty and time on the row', d.includes('ALN_011') && d.includes('SYN44-PARTA.06')
             && d.includes('<b>24</b>') && d.includes('T(2026-10-20T08:15:00Z)'), d);
         check('drops: a known reason reads as words', d.includes('no carrier coming (sweep)'), d);
+        check('drops: strokes with no bin read as words', d.includes('<b>37</b>')
+            && d.includes('made with no bin to count into'), d);
         check('drops: an unknown reason prints as sent', d.includes('something_new'), d);
         check('drops: escaped', d.includes('ALN_&lt;b&gt;') && !d.includes('ALN_<b>'), d);
         check('drops: no red chip', !d.includes('chip-err') && !d.includes('ledger-exceptions"'), d);

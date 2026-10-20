@@ -121,7 +121,7 @@ func TestResendLevels_SendsEveryRow(t *testing.T) {
 		_, err := db.CaptureLinesideBucket(c.node, c.part, c.qty)
 		testutil.MustNoErr(t, err, "seed pile")
 	}
-	_, err := db.StrandLinesidePiles(procID)
+	_, err := db.StrandLinesidePiles(procID, nil)
 	testutil.MustNoErr(t, err, "strand")
 	_, err = db.CaptureLinesideBucket(nodeA, "SYN-PART-1", 5)
 	testutil.MustNoErr(t, err, "seed a new active pile")

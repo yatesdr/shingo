@@ -253,7 +253,12 @@ func DeleteByID(db Execer, id int64) error {
 // folded, so the caller can log each as a count anomaly and send both levels.
 // A node the changeover does not touch is stranded too: the rule is the
 // process's style flip, not the node's swap.
-func StrandProcess(db *sql.DB, processID int64) ([]Stranded, error) {
+//
+// also, when not nil, runs on the same transaction after the piles fold and
+// before the commit: the rest of the cutover's writes (the engine's clear of
+// the departing part's produce holds), so the strand and they commit together
+// or not at all. Its error rolls the strand back.
+func StrandProcess(db *sql.DB, processID int64, also func(tx *sql.Tx) error) ([]Stranded, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("lineside: strand process %d: begin: %w", processID, err)
@@ -300,6 +305,11 @@ func StrandProcess(db *sql.DB, processID int64) ([]Stranded, error) {
 		}
 		if _, err := tx.Exec(`DELETE FROM node_lineside_bucket WHERE id=?`, p.id); err != nil {
 			return nil, fmt.Errorf("lineside: strand pile %d: delete active: %w", p.id, err)
+		}
+	}
+	if also != nil {
+		if err := also(tx); err != nil {
+			return nil, fmt.Errorf("lineside: strand process %d: %w", processID, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

@@ -311,10 +311,22 @@ func (a tickAttribution) skipReport() string {
 //     already drained what it could (drainLinesideFirst runs first), and the
 //     rest is logged once per episode, by part, and not charged (D12: no new
 //     anomaly rows for an over-pull). The stranded monitor (EventUOPStranded)
-//     watches a consume seat's hold as it grows; it skips produce seats.
+//     watches a consume seat's hold as it grows.
 //
 // A hold written before the part existed reads "" and replays as it always
 // did.
+//
+// ── AN UNBOUND PRODUCE SEAT HOLDS ONLY WHILE A CARRIER IS COMING ─────────
+//
+// With nothing chargeable, a produce tick asks one question first: is a live
+// order placing a carrier at the node (carrierComing, store.DB.LiveOrderPlacing)?
+// If one is, the rules above hold it. If none is, nothing will take the hold:
+// the tick is logged and not held, and a standing pile at the seat is dropped
+// with a hold_dropped row (dropPileAndLogTick). The strokes logged are counted
+// in memory and sent as one hold_dropped (no_bin) row when the episode ends,
+// in the transaction of the write that ends it. The stranded monitor's produce
+// arm (sweepProduceHold) drops such a pile between ticks and at boot, and ends
+// an episode whose seat has since bound.
 //
 // ── A STRICT PRODUCE SEAT STOPS AT THE PACK (strictPackApplies) ──────────
 //
@@ -356,6 +368,9 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 	if held == 0 {
 		e.endUnheldEpisode(node.ID)
 	}
+	if parts.produce && rt.ActiveBinID != nil {
+		e.endCarrierNote(node.ID)
+	}
 	if rt.ActiveBinID != nil && !parts.notCharged && parts.pack > 0 {
 		return e.chargeStrict(node, rt, input, parts)
 	}
@@ -365,7 +380,10 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 		if replay {
 			binAttributed = input + held
 		}
-		ok, err := e.db.ChargeProcessNodeSeat(node.ID, sign*binAttributed, replay, seat)
+		noBin := e.noBinRows(node.ID)
+		ok, err := e.writeSeatWithDrops(node, noBin, func(ex processes.DBTX) (bool, error) {
+			return processes.ChargeSeatUOP(ex, node.ID, sign*binAttributed, replay, seat)
+		})
 		if err != nil {
 			log.Printf("update UOP for node %d (replay %t): %v", node.ID, replay, err)
 			return true, binAttributed, true
@@ -373,6 +391,7 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 		if !ok {
 			return false, 0, false
 		}
+		e.endNoBinEpisode(node.ID, noBin)
 		if replay {
 			e.endUnheldEpisode(node.ID)
 		}
@@ -381,14 +400,24 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 	if input == 0 {
 		return false, 0, true
 	}
+	if parts.produce && !e.carrierComing(node) {
+		return e.dropPileAndLogTick(node, rt, input, parts.tick)
+	}
 	if held == 0 || holdIsOf(rt.PendingUOPPayload, parts.tick) {
-		ok, err := e.db.HoldProcessNodeSeat(node.ID, input, parts.tick, seat)
+		noBin := e.noBinRows(node.ID)
+		ok, err := e.writeSeatWithDrops(node, noBin, func(ex processes.DBTX) (bool, error) {
+			return processes.HoldSeatUOP(ex, node.ID, input, parts.tick, seat)
+		})
 		if err != nil {
 			log.Printf("hold pending UOP for node %d: %v", node.ID, err)
 			return false, 0, true
 		}
+		if ok {
+			e.endNoBinEpisode(node.ID, noBin)
+		}
 		return false, 0, ok
 	}
+	e.sendNoBinEpisode(node, holdDropByTick)
 	e.noteUnheldTick(node, rt.PendingUOPPayload, parts.tick, held, input)
 	return false, 0, true
 }
@@ -409,6 +438,9 @@ type tickParts struct {
 	// read (strictPackFor), else 0. Carried per attempt like the parts, so a
 	// retry after a refused write decides it again on the fresh row.
 	pack int
+	// produce: the tick is a produce claim's. With nothing chargeable it is
+	// held only while a carrier is coming (carrierComing, dropPileAndLogTick).
+	produce bool
 }
 
 // holdIsOf reports whether a hold recorded as heldPart may take, or replay
@@ -530,7 +562,7 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 	// would never match the hold.
 	part := producedPayload(claim)
 	runtime, _, binAttributed := e.applyHoldAndReplay(node, runtime, delta, +1, func(rt *processes.RuntimeState) tickParts {
-		return tickParts{tick: part, carrier: part, pack: strictPackFor(claim, rt)}
+		return tickParts{tick: part, carrier: part, pack: strictPackFor(claim, rt), produce: true}
 	})
 
 	if e.inventoryDelta != nil && binAttributed > 0 {
@@ -656,7 +688,8 @@ func splitStrict(count, held int, heldPart, part string, input, pack int) strict
 func (e *Engine) chargeStrict(node *processes.Node, rt *processes.RuntimeState, input int, parts tickParts) (bound bool, binAttributed int, written bool) {
 	s := splitStrict(rt.RemainingUOPCached, int(rt.PendingUOPDelta), rt.PendingUOPPayload, parts.tick, input, parts.pack)
 	seat := processes.SeatAsReadOf(rt)
-	ok, err := e.writeSeatWithDrops(node, s.drops, func(ex processes.DBTX) (bool, error) {
+	noBin := e.noBinRows(node.ID)
+	ok, err := e.writeSeatWithDrops(node, append(s.drops, noBin...), func(ex processes.DBTX) (bool, error) {
 		return processes.ChargeSeatUOPStrict(ex, node.ID, s.avail, parts.pack, s.hold, s.holdPart, seat)
 	})
 	if err != nil {
@@ -666,6 +699,7 @@ func (e *Engine) chargeStrict(node *processes.Node, rt *processes.RuntimeState, 
 	if !ok {
 		return false, 0, false
 	}
+	e.endNoBinEpisode(node.ID, noBin)
 	if s.hold == 0 {
 		e.endUnheldEpisode(node.ID)
 	}
@@ -687,15 +721,59 @@ var errSeatRefused = errors.New("seat changed since it was read")
 // With no drop it is write alone on the store, outside any transaction: the
 // one statement a tick always ran.
 //
-// The drops' only writer at a tick; the sweep, the cutover clear and the flip
-// carry write theirs through it too. Caller holds countMu.
+// The drops' one writer: the tick's and the sweep's (sweepProduceHold) go
+// through it, the flip carry (carryFlipBucket) through writeSeatsInTx, and
+// the cutover clear (cutoverClears), which rides the strand's transaction,
+// through its halves (holdDrops, writeSeatAndDropsIn on that transaction,
+// dropsQueued after the commit). Caller holds countMu.
 func (e *Engine) writeSeatWithDrops(node *processes.Node, drops []protocol.HoldDropped, write func(processes.DBTX) (bool, error)) (bool, error) {
 	if len(drops) == 0 {
 		return write(e.db.DB)
 	}
+	return e.writeSeatsInTx(node, drops, write)
+}
+
+// writeSeatsInTx is writeSeatWithDrops always in one transaction, drops or
+// none: for a write of more than one guarded statement (the flip carry's two
+// seats), which must land together or not at all. write reports false when
+// any of its seats refused, and the transaction rolls back. Caller holds
+// countMu.
+func (e *Engine) writeSeatsInTx(node *processes.Node, drops []protocol.HoldDropped, write func(processes.DBTX) (bool, error)) (bool, error) {
+	q, err := e.holdDrops(node, drops)
+	if err != nil {
+		return false, err
+	}
+	err = e.db.InTx(func(tx *sql.Tx) error {
+		ok, err := writeSeatAndDropsIn(tx, write, q)
+		if err == nil && !ok {
+			err = errSeatRefused
+		}
+		return err
+	})
+	if errors.Is(err, errSeatRefused) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	dropsQueued(q)
+	return true, nil
+}
+
+// queuedDrops is one seat's hold_dropped rows, built and ready to enqueue.
+type queuedDrops struct {
+	node    string
+	drops   []protocol.HoldDropped
+	envs    [][]byte
+	msgType string
+}
+
+// holdDrops stamps each drop with the node, the time and, when it names none,
+// the tick as its actor, and builds its envelope
+// (orders.Manager.HoldDroppedEnvelope). No statement.
+func (e *Engine) holdDrops(node *processes.Node, drops []protocol.HoldDropped) (queuedDrops, error) {
+	q := queuedDrops{node: node.CoreNodeName, drops: drops, envs: make([][]byte, len(drops))}
 	now := time.Now().UTC()
-	envs := make([][]byte, len(drops))
-	var msgType string
 	for i := range drops {
 		drops[i].Node = node.CoreNodeName
 		drops[i].OccurredAt = now
@@ -704,37 +782,39 @@ func (e *Engine) writeSeatWithDrops(node *processes.Node, drops []protocol.HoldD
 		}
 		env, mt, err := e.orderMgr.HoldDroppedEnvelope(drops[i])
 		if err != nil {
-			return false, err
+			return q, err
 		}
-		envs[i], msgType = env, mt
+		q.envs[i], q.msgType = env, mt
 	}
-	err := e.db.InTx(func(tx *sql.Tx) error {
-		ok, err := write(tx)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return errSeatRefused
-		}
-		for _, env := range envs {
-			if _, err := store.EnqueueOutboxIn(tx, env, msgType); err != nil {
-				return fmt.Errorf("queue hold_dropped: %w", err)
-			}
-		}
-		return nil
-	})
-	if errors.Is(err, errSeatRefused) {
-		return false, nil
-	}
-	if err != nil {
+	return q, nil
+}
+
+// writeSeatAndDropsIn runs the seat's guarded write on tx and, when it lands,
+// enqueues the drops' rows on the same tx. A refusal (the seat changed since it
+// was read) wrote nothing and enqueues nothing: false, nil.
+func writeSeatAndDropsIn(tx *sql.Tx, write func(processes.DBTX) (bool, error), q queuedDrops) (bool, error) {
+	ok, err := write(tx)
+	if err != nil || !ok {
 		return false, err
 	}
-	storemsg.NotifyEnqueued()
-	for _, d := range drops {
-		log.Printf("counter delta: node %s: %d of part %q dropped from the hold (%s); hold_dropped queued for Core",
-			node.CoreNodeName, d.Qty, d.PayloadCode, d.Reason)
+	for _, env := range q.envs {
+		if _, err := store.EnqueueOutboxIn(tx, env, q.msgType); err != nil {
+			return false, fmt.Errorf("queue hold_dropped: %w", err)
+		}
 	}
 	return true, nil
+}
+
+// dropsQueued wakes the drainer and logs each drop, after the commit.
+func dropsQueued(q queuedDrops) {
+	if len(q.drops) == 0 {
+		return
+	}
+	storemsg.NotifyEnqueued()
+	for _, d := range q.drops {
+		log.Printf("produce hold: node %s: %d of part %q dropped from the hold (%s, by %s); hold_dropped queued for Core",
+			q.node, d.Qty, d.PayloadCode, d.Reason, d.CalledBy)
+	}
 }
 
 // handleABFallthrough is the safety-net path when no active-pull consume node

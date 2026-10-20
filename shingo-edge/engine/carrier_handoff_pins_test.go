@@ -609,7 +609,8 @@ func uopTick(binID int64, n int) uop.TickEvent {
 }
 
 // TestControlH_ProduceTickWithNoBinIsHeldAndReplayed — CONTROL: a produce tick
-// at a seat with no carrier is held, and replays onto the next carrier.
+// at a seat with no carrier, while the next carrier is coming (a live order
+// placing it), is held, and replays onto that carrier.
 func TestControlH_ProduceTickWithNoBinIsHeldAndReplayed(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -617,6 +618,7 @@ func TestControlH_ProduceTickWithNoBinIsHeldAndReplayed(t *testing.T) {
 	eng.wireEventHandlers()
 	processID, nodeID, styleID, claimID := seedProduceNode(t, db, protocol.SwapModeSimple)
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, nil, 0), "empty the seat")
+	p2Supply(t, eng, claimID)
 
 	tickConsume(eng, processID, styleID, 1)
 	tickConsume(eng, processID, styleID, 1)

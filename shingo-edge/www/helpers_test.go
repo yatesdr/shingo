@@ -341,7 +341,7 @@ func (s *stubEngine) SetProcessActiveStyle(processID int64, styleID *int64) erro
 		return err
 	}
 	if (p.ActiveStyleID == nil) != (styleID == nil) || (styleID != nil && *p.ActiveStyleID != *styleID) {
-		_, err = s.db.StrandLinesidePiles(processID)
+		_, err = s.db.StrandLinesidePiles(processID, nil)
 	}
 	return err
 }

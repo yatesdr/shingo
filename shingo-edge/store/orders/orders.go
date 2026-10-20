@@ -887,6 +887,66 @@ func ListActiveByDeliveryNode(db *sql.DB, deliveryNode string) ([]Order, error) 
 	return scanOrders(rows)
 }
 
+// Placing is PlacingAt's answer.
+type Placing int
+
+const (
+	// PlacingNone: no live order leaves a carrier at the node.
+	PlacingNone Placing = iota
+	// PlacingUnreadable: none does that can be read, and a live leg's release
+	// facts do not parse, so one might. A caller treats it as placing (it
+	// drops nothing) and says so.
+	PlacingUnreadable
+	// PlacingCarrier: a live order leaves a carrier at the node.
+	PlacingCarrier
+)
+
+// placingAtSQL answers PlacingAt in one statement over the live rows. Each live
+// row is read the way the release reads a leg (engine legFacts, release.Facts):
+//
+//   - steps_json empty: a plain order (retrieve, store, move, or a row Core
+//     projected down), which leaves its bin at delivery_node. Only those
+//     rows are read, by the WHERE.
+//   - steps_json "null" or "[]": a leg with no steps, which leaves a bin
+//     nowhere (legFacts.none). Excluded by the WHERE.
+//   - steps and no release_facts: a leg older than the column. Read as
+//     placing: its facts are not stored, and the answer must not drop a hold
+//     a carrier is coming for.
+//   - release_facts that are not JSON: unreadable (1). The CASE keeps
+//     json_each off them, which would fail the whole statement.
+//   - otherwise release.Facts.Places, the nodes the leg leaves a bin at
+//     (PlacesBinAt): a departing leg's places do not name the node it lifts
+//     from, and delivery_node on a complex leg is display only.
+//
+// No part is read: a changeover's and a press-index leg carry the outgoing
+// part on the leg that places the incoming carrier. MAX ranks placing (2) over
+// unreadable (1) over none (0). The status term is spelled as
+// TerminalStatusSQLList renders it, so the read walks the live rows through
+// the partial index idx_orders_live_process_node (pinned by
+// store TestLiveOrderPlacing_ReadsTheLiveRowsThroughTheLiveIndex), a few dozen
+// on a plant, not every order the Edge has held.
+var placingAtSQL = `SELECT COALESCE(MAX(CASE
+		WHEN o.steps_json = '' THEN 2
+		WHEN COALESCE(o.release_facts, '') = '' THEN 2
+		WHEN NOT json_valid(o.release_facts) THEN 1
+		WHEN EXISTS (SELECT 1 FROM json_each(o.release_facts, '$.places') p WHERE p.value = ?1) THEN 2
+		ELSE 0 END), 0)
+	FROM orders o
+	WHERE o.status NOT IN (` + protocol.TerminalStatusSQLList() + `)
+	  AND ((o.steps_json = '' AND o.delivery_node = ?1) OR o.steps_json NOT IN ('', 'null', '[]'))`
+
+// PlacingAt reports whether a live order is placing a carrier at the core
+// node: the produce hold's question (an unbound produce seat holds its ticks
+// only while one is). One statement; see placingAtSQL for how each row is
+// read.
+func PlacingAt(db *sql.DB, coreNode string) (Placing, error) {
+	var p Placing
+	if err := db.QueryRow(placingAtSQL, coreNode).Scan(&p); err != nil {
+		return PlacingNone, fmt.Errorf("live orders placing at %s: %w", coreNode, err)
+	}
+	return p, nil
+}
+
 // ListActiveByDeliveryNodeSet returns non-terminal orders whose delivery_node is
 // in the given set, in a SINGLE query (one snapshot). The multi-window
 // reservation seam counts in-flight empties across a loader's whole delivery-node

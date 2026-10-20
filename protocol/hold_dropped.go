@@ -53,6 +53,12 @@ const (
 	// HoldDropFlipCarryOverflow: a sequential flip carried the departing
 	// seat's hold to its partner and part of it fit nowhere.
 	HoldDropFlipCarryOverflow = "flip_carry_overflow"
+	// HoldDropNoBin: the strokes an unbound seat counted while no live order
+	// was placing a carrier at the node (a fork-truck-fed seat between bins).
+	// Never held, so never a hold on the seat: one row per node per episode,
+	// sent when the episode ends (a bin binds or a carrier is coming), Qty the
+	// strokes of PayloadCode logged in it.
+	HoldDropNoBin = "no_bin"
 )
 
 // HoldDropped is one dropped hold.

@@ -159,7 +159,7 @@ func TestCaptureToLineside_NeverRevivesAStrandedPile(t *testing.T) {
 	t.Parallel()
 	f := newCaptureFixture(t, "CAP-REVIVE")
 	f.capture(t, 906, false, map[string]int{"SYN-PART-1": 30})
-	_, err := f.db.StrandLinesidePiles(f.procID) // the cutover
+	_, err := f.db.StrandLinesidePiles(f.procID, nil) // the cutover
 	testutil.MustNoErr(t, err, "strand")
 	f.flushed(t)
 

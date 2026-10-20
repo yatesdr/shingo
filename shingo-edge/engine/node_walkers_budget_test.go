@@ -135,6 +135,53 @@ func TestStrandedMonitor_StatementsPerPass(t *testing.T) {
 				"node list + process list + claims-for-styles + runtimes-for-nodes = 4")
 		})
 	}
+	// The produce arm (sweepProduceHold) asks its one question, a live order
+	// placing a carrier at the node, only for an UNBOUND produce seat with a
+	// hold: 4 + H for H such seats, here each with a carrier coming so nothing
+	// is dropped. Bound produce seats and empty ones cost nothing, so a plant
+	// with no standing pile stays at 4.
+	for _, tc := range []struct {
+		name          string
+		bound, unheld int // produce seats bound with a hold / unbound with none
+		holding       int // unbound produce seats with a hold and a carrier coming
+		want          int64
+	}{
+		{"produce seats, none holding unbound", 4, 4, 0, 4},
+		{"two unbound produce seats holding", 2, 2, 2, 6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db, counter := testEngineDBCounting(t)
+			bin := int64(1)
+			var specs []walkerNode
+			add := func(n int, kind string, bound *int64, pending int) {
+				for i := 0; i < n; i++ {
+					specs = append(specs, walkerNode{
+						Suffix: fmt.Sprintf("%s%02d", kind, i+1), Role: protocol.ClaimRoleProduce,
+						SwapMode: protocol.SwapModeSingleRobot, PayloadCode: "SYN-PART-P", Capacity: 40,
+						BoundBin: bound, ActivePull: true, Pending: pending,
+					})
+				}
+			}
+			add(tc.bound, "B", &bin, 3)
+			add(tc.unheld, "E", nil, 0)
+			add(tc.holding, "H", nil, 3)
+			f := seedWalkerProcess(t, db, "BUDGETP", specs)
+			for i := 0; i < tc.holding; i++ {
+				_, err := db.CreateOrder(fmt.Sprintf("budget-h%d", i), protocol.OrderTypeRetrieveEmpty, nil, true, 1,
+					f.Names[fmt.Sprintf("H%02d", i+1)], "", "", "", false, "SYN-PART-P", "", "")
+				testutil.MustNoErr(t, err, "a carrier coming")
+			}
+			eng := testEngine(t, db)
+			sm := &strandedMonitor{eng: eng, states: map[int64]*strandedNodeState{}}
+
+			counter.Reset()
+			sm.tick(time.Now())
+			if got := counter.Count(); got != tc.want {
+				t.Errorf("%d statements, pinned at %d (4 + one placing read per unbound holding produce seat)", got, tc.want)
+			}
+		})
+	}
 }
 
 // ── WALKER 3: handleCounterDelta ──────────────────────────────────────────

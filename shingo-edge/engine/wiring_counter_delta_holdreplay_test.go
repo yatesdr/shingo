@@ -2,12 +2,16 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
+	"shingoedge/release"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -84,7 +88,10 @@ func TestHoldAndReplay_BinUOPDeltaLumpsAcrossBinSwapGap(t *testing.T) {
 	}
 
 	// ── finalize/pickup: bin A leaves the slot, new bin not yet delivered ──
+	// The order bringing bin B is live, so the gap's ticks are held for it (an
+	// unbound produce seat holds only while a carrier is coming).
 	testutil.MustNoErr(t, db.SetProcessNodeActiveBinID(nodeID, nil), "clear active bin (open the gap)")
+	p2Supply(t, eng, claimID)
 
 	// ── 3 ticks during the gap: HELD on the runtime row, emit NOTHING ──
 	tick()
@@ -206,16 +213,13 @@ func charSPTick(eng *Engine, processID, styleID, delta int64) {
 	}})
 }
 
-// TestCharSP_UnboundProduceTickIsHeldUncapped — a produce seat with no bin
-// bound and a standing hold of 3,000 of the claim's part (pack 100) takes a
-// tick of 2. Today: held, uncapped. The hold becomes 3,002 with the part
-// recorded, nothing is charged, no produce_tick is emitted, and nothing asks
-// whether any order is placing a carrier here (none exists).
-//
-// P2 changes this: an unbound produce tick that would hold with no live order
-// placing a carrier at the node drops the standing pile with a hold_dropped
-// (no_carrier) row instead of growing it.
-func TestCharSP_UnboundProduceTickIsHeldUncapped(t *testing.T) {
+// TestCharSP_UnboundProduceTickWithNoCarrierDropsThePile — a produce seat with
+// no bin bound and a standing hold of 3,000 of the claim's part (pack 100)
+// takes a tick of 2, with no order placing a carrier at the node (none exists).
+// At the base it was held on top, uncapped (3,002). Now the standing pile is
+// dropped with one hold_dropped (no_carrier) row of 3,000 and the tick is
+// logged, not held: nothing is charged, held or emitted.
+func TestCharSP_UnboundProduceTickWithNoCarrierDropsThePile(t *testing.T) {
 	t.Parallel()
 	const held = 3000
 	eng, sink, processID, nodeID, styleID, _ := charSPProduceSeat(t, held)
@@ -228,18 +232,17 @@ func TestCharSP_UnboundProduceTickIsHeldUncapped(t *testing.T) {
 	charSPTick(eng, processID, styleID, 2)
 
 	rt := runtimeOf(t, eng, nodeID)
-	if rt.PendingUOPDelta != held+2 {
-		t.Errorf("hold = %d, want %d: an unbound produce tick is held on top of the pile, uncapped", rt.PendingUOPDelta, held+2)
-	}
-	if rt.PendingUOPPayload != "WIDGET-A" {
-		t.Errorf("hold part = %q, want WIDGET-A", rt.PendingUOPPayload)
+	if rt.PendingUOPDelta != 0 || rt.PendingUOPPayload != "" {
+		t.Errorf("hold = %d of %q, want none: the pile is dropped and the tick is not held", rt.PendingUOPDelta, rt.PendingUOPPayload)
 	}
 	if rt.RemainingUOPCached != 0 || rt.ActiveBinID != nil {
 		t.Errorf("seat = bin %v count %d, want unbound at 0: nothing is charged", rt.ActiveBinID, rt.RemainingUOPCached)
 	}
 	if len(sink.binCalls) != 0 {
-		t.Errorf("bin deltas = %+v, want none: a held tick emits no produce_tick", sink.binCalls)
+		t.Errorf("bin deltas = %+v, want none", sink.binCalls)
 	}
+	assertDrops(t, eng.db, protocol.HoldDropped{Reason: protocol.HoldDropNoCarrier, Qty: held,
+		PayloadCode: "WIDGET-A", Node: "PRODUCE-NODE", CalledBy: "edge:tick"})
 }
 
 // TestCharSP_FirstBoundTickReplaysTheWholeHold — the first tick after a bin of
@@ -534,7 +537,8 @@ func TestStrictPack_ACountWrittenBetweenReadAndLockRetriesOnce(t *testing.T) {
 func TestStrictPack_TickLedgerOverABinCycleEqualsStrokes(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	eng, sink, processID, nodeID, styleID, _ := strictSeatOn(t, db, 100, 0, 0, "", true)
+	eng, sink, processID, nodeID, styleID, claimID := strictSeatOn(t, db, 100, 0, 0, "", true)
+	p2Supply(t, eng, claimID) // the order bringing bin 2: the gap's strokes are held for it
 	strokes := 0
 	stroke := func(n int) {
 		for i := 0; i < n; i++ {
@@ -671,3 +675,335 @@ func TestStrictPack_ARefusedWriteQueuesNoDrop(t *testing.T) {
 		t.Errorf("drops = %+v, want one foreign_hold of 3 (the refused attempt's row rolled back)", drops)
 	}
 }
+
+// ── The hold on every produce node: an unbound seat holds only while a carrier is coming ──
+//
+// An unbound produce seat holds a tick only while a live order is placing a
+// carrier at the node (store.DB.LiveOrderPlacing: one statement over the live
+// orders' persisted release facts, a plain order's delivery node, and a
+// pre-facts leg read as placing). With none, the tick is logged and not held,
+// and a standing pile at the seat is dropped with one hold_dropped
+// (no_carrier) row. Unless a pin says otherwise the seat is unbound, holds 5 of
+// the claim's part (WIDGET-A), and the tick is 2.
+
+// p2Seat seeds the produce node with its seat unbound and a hold of held parts
+// of heldPart (none when held is 0), and wires an engine with a recording sink.
+func p2Seat(t *testing.T, held int, heldPart string) (eng *Engine, sink *fakeDeltaSink, processID, nodeID, styleID, claimID int64) {
+	t.Helper()
+	db := testEngineDB(t)
+	processID, nodeID, styleID, claimID = seedProduceNode(t, db, protocol.SwapModeTwoRobot)
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, nil, 0), "empty the seat")
+	if held != 0 {
+		testutil.MustNoErr(t, processes.AddPendingUOPDelta(db.DB, nodeID, held, heldPart), "seed the hold")
+	}
+	eng = testEngine(t, db)
+	eng.wireEventHandlers()
+	sink = &fakeDeltaSink{}
+	eng.SetInventoryDeltaSink(sink)
+	return eng, sink, processID, nodeID, styleID, claimID
+}
+
+// p2Order stores an order the way this Edge holds one and returns its id. A leg
+// with steps carries the release facts computed from them (manager_create.go),
+// unless preFacts, which is a row older than the column; a leg with no steps is
+// a plain order, and its delivery node is where it leaves its bin.
+func p2Order(t *testing.T, db *store.DB, status protocol.Status, deliveryNode string, steps []protocol.ComplexOrderStep, preFacts bool) int64 {
+	t.Helper()
+	typ := protocol.OrderTypeComplex
+	if steps == nil {
+		typ = protocol.OrderTypeRetrieveEmpty
+	}
+	id, err := db.CreateOrder(fmt.Sprintf("p2-%s-%d-%d", status, len(steps), time.Now().UnixNano()), typ, nil, steps == nil, 1,
+		deliveryNode, "", "", "", false, "WIDGET-A", "", "")
+	testutil.MustNoErr(t, err, "create order")
+	if steps != nil {
+		raw, err := json.Marshal(steps)
+		testutil.MustNoErr(t, err, "marshal steps")
+		if preFacts {
+			testutil.MustNoErr(t, db.UpdateOrderStepsJSON(id, string(raw)), "store steps")
+		} else {
+			facts, err := release.FactsFromSteps(steps, "PRODUCE-NODE").Encode()
+			testutil.MustNoErr(t, err, "encode facts")
+			testutil.MustNoErr(t, db.UpdateOrderStepsAndFacts(id, string(raw), facts), "store steps and facts")
+		}
+	}
+	_, err = db.DB.Exec(`UPDATE orders SET status=? WHERE id=?`, string(status), id)
+	testutil.MustNoErr(t, err, "set status")
+	return id
+}
+
+// p2Claim is the fixture's claim, for the step builders.
+func p2Claim(t *testing.T, eng *Engine, claimID int64) *processes.NodeClaim {
+	t.Helper()
+	c, err := eng.db.GetStyleNodeClaim(claimID)
+	testutil.MustNoErr(t, err, "read claim")
+	return c
+}
+
+// p2Supply stores a live two_robot supply leg placing a carrier at the
+// fixture's node: the order bringing the next bin.
+func p2Supply(t *testing.T, eng *Engine, claimID int64) int64 {
+	t.Helper()
+	a, _ := BuildTwoRobotSwapSteps(p2Claim(t, eng, claimID))
+	return p2Order(t, eng.db, protocol.StatusInTransit, "", a, false)
+}
+
+// assertDrops checks the queued hold_dropped rows are exactly want, in order.
+func assertDrops(t *testing.T, db *store.DB, want ...protocol.HoldDropped) {
+	t.Helper()
+	got := holdDrops(t, db)
+	if len(got) != len(want) {
+		t.Fatalf("drops = %+v, want %d: %+v", got, len(want), want)
+	}
+	for i, w := range want {
+		g := got[i]
+		if g.Reason != w.Reason || g.Qty != w.Qty || g.PayloadCode != w.PayloadCode || g.Node != w.Node || g.CalledBy != w.CalledBy {
+			t.Errorf("drop %d = %+v, want %+v", i, g, w)
+		}
+	}
+}
+
+// TestUnboundProduceTick_HoldsOnlyWhileAnOrderPlacesACarrier — one row per
+// answer of the predicate. Placing: the tick is held on the pile (7). Not
+// placing: the pile is dropped with one no_carrier row of 5 and the tick is not
+// held (0). No part is tested: a changeover's or a press-index leg carries the
+// outgoing part.
+func TestUnboundProduceTick_HoldsOnlyWhileAnOrderPlacesACarrier(t *testing.T) {
+	t.Parallel()
+	single := func(c *processes.NodeClaim) []protocol.ComplexOrderStep { return BuildSingleSwapSteps(c) }
+	supply := func(c *processes.NodeClaim) []protocol.ComplexOrderStep { a, _ := BuildTwoRobotSwapSteps(c); return a }
+	evac := func(c *processes.NodeClaim) []protocol.ComplexOrderStep { _, b := BuildTwoRobotSwapSteps(c); return b }
+	fromSpot := func(c *processes.NodeClaim) []protocol.ComplexOrderStep {
+		spot := *c
+		spot.KeepStagedNode = "PRODUCE-SPOT"
+		a, _ := BuildTwoRobotSwapSteps(&spot)
+		return a
+	}
+	for _, tc := range []struct {
+		name     string
+		status   protocol.Status
+		delivery string // a plain order's delivery node
+		steps    func(*processes.NodeClaim) []protocol.ComplexOrderStep
+		held     string // release_held: a leg held at a gate
+		preFacts bool
+		placing  bool
+	}{
+		{name: "single_robot in flight", status: protocol.StatusInTransit, steps: single, placing: true},
+		{name: "two_robot supply staged", status: protocol.StatusStaged, steps: supply, placing: true},
+		{name: "two_robot supply held at a gate", status: protocol.StatusStaged, steps: supply, held: "held: the curtain is not safe", placing: true},
+		{name: "cancelled", status: protocol.StatusCancelled, steps: supply},
+		{name: "keeper refill to the spot", status: protocol.StatusInTransit, delivery: "PRODUCE-SPOT"},
+		{name: "spot to line move", status: protocol.StatusInTransit, steps: fromSpot, placing: true},
+		{name: "delivered but unbound", status: protocol.StatusDelivered, steps: single, placing: true},
+		{name: "no orders"},
+		{name: "a pre-facts complex row", status: protocol.StatusInTransit, steps: single, preFacts: true, placing: true},
+		{name: "the evac leg alone", status: protocol.StatusStaged, steps: evac},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			eng, sink, processID, nodeID, styleID, claimID := p2Seat(t, 5, "WIDGET-A")
+			switch {
+			case tc.steps != nil:
+				id := p2Order(t, eng.db, tc.status, "", tc.steps(p2Claim(t, eng, claimID)), tc.preFacts)
+				if tc.held != "" {
+					_, err := eng.db.DB.Exec(`UPDATE orders SET release_held=? WHERE id=?`, tc.held, id)
+					testutil.MustNoErr(t, err, "hold the leg")
+				}
+			case tc.delivery != "":
+				p2Order(t, eng.db, tc.status, tc.delivery, nil, false)
+			}
+
+			charSPTick(eng, processID, styleID, 2)
+
+			if len(sink.binCalls) != 0 {
+				t.Errorf("deltas = %+v, want none: nothing is bound", sink.binCalls)
+			}
+			if tc.placing {
+				assertSeat(t, eng, nodeID, 0, 7, "WIDGET-A")
+				assertDrops(t, eng.db)
+				return
+			}
+			assertSeat(t, eng, nodeID, 0, 0, "")
+			assertDrops(t, eng.db, protocol.HoldDropped{Reason: protocol.HoldDropNoCarrier, Qty: 5,
+				PayloadCode: "WIDGET-A", Node: "PRODUCE-NODE", CalledBy: "edge:tick"})
+		})
+	}
+}
+
+// TestUnboundProduceTick_ForeignHoldWithNoCarrierIsDroppedAndTheTickLogged —
+// an unbound seat holding 5 of ANOTHER part, no live order. Nothing is coming
+// for that hold or for this tick, so the general rule applies to both: the
+// foreign hold is dropped with a no_carrier row and this tick is logged, not
+// held (dropPileAndLogTick, the same branch as a hold of the tick's own part).
+// The following tick finds an empty seat with none coming: logged, no row.
+func TestUnboundProduceTick_ForeignHoldWithNoCarrierIsDroppedAndTheTickLogged(t *testing.T) {
+	t.Parallel()
+	eng, sink, processID, nodeID, styleID, _ := p2Seat(t, 5, "OTHER-PART")
+
+	charSPTick(eng, processID, styleID, 2)
+	assertSeat(t, eng, nodeID, 0, 0, "")
+	foreign := protocol.HoldDropped{Reason: protocol.HoldDropNoCarrier, Qty: 5, PayloadCode: "OTHER-PART",
+		Node: "PRODUCE-NODE", CalledBy: "edge:tick"}
+	assertDrops(t, eng.db, foreign)
+	if got := eng.carrierNoteLogged[nodeID]; got != holdNoteNoCarrier {
+		t.Errorf("episode note = %q, want %q: the tick is logged", got, holdNoteNoCarrier)
+	}
+
+	charSPTick(eng, processID, styleID, 3)
+	assertSeat(t, eng, nodeID, 0, 0, "")
+	assertDrops(t, eng.db, foreign)
+	if len(sink.binCalls) != 0 {
+		t.Errorf("deltas = %+v, want none", sink.binCalls)
+	}
+}
+
+// TestUnboundProduceTick_ForeignHoldWithACarrierComingStays — the predicate's
+// other answer: an unbound seat holding 5 of ANOTHER part while a live order is
+// placing a carrier at the node. The foreign hold stays for its part's next
+// carrier (D12), and this tick is neither held nor charged, noted once for the
+// episode (noteUnheldTick). No row.
+func TestUnboundProduceTick_ForeignHoldWithACarrierComingStays(t *testing.T) {
+	t.Parallel()
+	eng, sink, processID, nodeID, styleID, claimID := p2Seat(t, 5, "OTHER-PART")
+	p2Supply(t, eng, claimID)
+
+	charSPTick(eng, processID, styleID, 2)
+	charSPTick(eng, processID, styleID, 3)
+
+	assertSeat(t, eng, nodeID, 0, 5, "OTHER-PART")
+	assertDrops(t, eng.db)
+	if got := eng.unheldTickLogged[nodeID]; got != "OTHER-PART|WIDGET-A" {
+		t.Errorf("unheld episode = %q, want the pair of parts noted", got)
+	}
+	if len(sink.binCalls) != 0 {
+		t.Errorf("deltas = %+v, want none", sink.binCalls)
+	}
+}
+
+// TestUnboundProduceTick_AnUnreadableOrderKeepsThePile — a live leg whose
+// release facts do not parse might be placing a carrier here, so the predicate
+// fails closed: the tick is held as before and nothing is dropped.
+func TestUnboundProduceTick_AnUnreadableOrderKeepsThePile(t *testing.T) {
+	t.Parallel()
+	eng, _, processID, nodeID, styleID, claimID := p2Seat(t, 5, "WIDGET-A")
+	id := p2Order(t, eng.db, protocol.StatusInTransit, "", BuildSingleSwapSteps(p2Claim(t, eng, claimID)), false)
+	_, err := eng.db.DB.Exec(`UPDATE orders SET release_facts='{"places":' WHERE id=?`, id)
+	testutil.MustNoErr(t, err, "corrupt the facts")
+
+	charSPTick(eng, processID, styleID, 2)
+	assertSeat(t, eng, nodeID, 0, 7, "WIDGET-A")
+	assertDrops(t, eng.db)
+}
+
+// TestUnboundProduceTick_StrokesWithNoBinAreOneRowAtTheNextBind — a
+// fork-truck-fed seat between bins: three ticks (1, 2, 4) on an unbound seat
+// with no live order are logged and not held, and nothing is sent while the
+// episode is open. The next bin binds; its first tick counts +1 and, in the
+// same transaction, the episode goes to Core as one no_bin row of 7. A later
+// tick sends nothing more.
+func TestUnboundProduceTick_StrokesWithNoBinAreOneRowAtTheNextBind(t *testing.T) {
+	t.Parallel()
+	eng, sink, processID, nodeID, styleID, _ := p2Seat(t, 0, "")
+	for _, d := range []int64{1, 2, 4} {
+		charSPTick(eng, processID, styleID, d)
+	}
+	assertSeat(t, eng, nodeID, 0, 0, "")
+	assertDrops(t, eng.db)
+
+	bin := int64(7601)
+	testutil.MustNoErr(t, eng.db.SetProcessNodeActiveBinID(nodeID, &bin), "the next bin binds")
+	assertDrops(t, eng.db)
+	charSPTick(eng, processID, styleID, 1)
+	assertSeat(t, eng, nodeID, 1, 0, "")
+	if len(sink.binCalls) != 1 || emitted(t, sink) != 1 {
+		t.Errorf("deltas = %+v, want one produce_tick of 1", sink.binCalls)
+	}
+	noBin := protocol.HoldDropped{Reason: protocol.HoldDropNoBin, Qty: 7, PayloadCode: "WIDGET-A",
+		Node: "PRODUCE-NODE", CalledBy: "edge:tick"}
+	assertDrops(t, eng.db, noBin)
+
+	charSPTick(eng, processID, styleID, 1)
+	assertSeat(t, eng, nodeID, 2, 0, "")
+	assertDrops(t, eng.db, noBin)
+}
+
+// TestUnboundProduceTick_StrokesWithNoBinEndWhenACarrierIsComing — the other
+// end of the episode: a supply leg starts placing a carrier, and the tick that
+// finds it is held for that carrier while the episode's 3 logged strokes go as
+// one no_bin row in the hold's transaction.
+func TestUnboundProduceTick_StrokesWithNoBinEndWhenACarrierIsComing(t *testing.T) {
+	t.Parallel()
+	eng, _, processID, nodeID, styleID, claimID := p2Seat(t, 0, "")
+	charSPTick(eng, processID, styleID, 3)
+	assertDrops(t, eng.db)
+	p2Supply(t, eng, claimID)
+	charSPTick(eng, processID, styleID, 2)
+	assertSeat(t, eng, nodeID, 0, 2, "WIDGET-A")
+	assertDrops(t, eng.db, protocol.HoldDropped{Reason: protocol.HoldDropNoBin, Qty: 3, PayloadCode: "WIDGET-A",
+		Node: "PRODUCE-NODE", CalledBy: "edge:tick"})
+}
+
+// TestUnboundProduceTick_AnUnreadableOrderReachesTheDiagnosticsPage — the
+// kept pile's journal line also goes to the Edge diagnostics page (debugFn),
+// the same text under the same once-per-episode gate: two ticks, one line.
+func TestUnboundProduceTick_AnUnreadableOrderReachesTheDiagnosticsPage(t *testing.T) {
+	t.Parallel()
+	eng, _, processID, _, styleID, claimID := p2Seat(t, 5, "WIDGET-A")
+	var mu sync.Mutex
+	var debug []string
+	eng.debugFn = func(f string, a ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		debug = append(debug, fmt.Sprintf(f, a...))
+	}
+	id := p2Order(t, eng.db, protocol.StatusInTransit, "", BuildSingleSwapSteps(p2Claim(t, eng, claimID)), false)
+	_, err := eng.db.DB.Exec(`UPDATE orders SET release_facts='{"places":' WHERE id=?`, id)
+	testutil.MustNoErr(t, err, "corrupt the facts")
+
+	charSPTick(eng, processID, styleID, 2)
+	charSPTick(eng, processID, styleID, 2)
+
+	mu.Lock()
+	defer mu.Unlock()
+	n := 0
+	for _, line := range debug {
+		if strings.Contains(line, "node PRODUCE-NODE: a live order's release facts cannot be read") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("diagnostics lines for the unreadable order = %d, want 1; debug: %q", n, debug)
+	}
+}
+
+// TestTakeTicksAfterLift_AProduceHoldCarriesTheClaimsPart — the ticks counted
+// after the robot lifted a produce bin are held for the next bin with the
+// claim's part (producedPayload). The bin's resident payload is "" for the
+// whole fill (a known-empty delivery), and a "" hold is a wildcard that would
+// replay onto any part.
+func TestTakeTicksAfterLift_AProduceHoldCarriesTheClaimsPart(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	_, nodeID, _, claimID := seedProduceNode(t, db, protocol.SwapModeTwoRobot)
+	bin := int64(7401)
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, &claimID, &bin, 3, 40), "bind at generation 3")
+	eng := testEngine(t, db)
+	eng.SetInventoryDeltaSink(&afterLiftSink{sum: 4})
+	eng.recordLinesideCarrier(nodeID, "PRODUCE-NODE", domain.KnownCarrier(""), domain.CarrierFromDelivery)
+	node, err := db.GetProcessNode(nodeID)
+	testutil.MustNoErr(t, err, "read node")
+	rt := runtimeOf(t, eng, nodeID)
+
+	held, part := eng.takeTicksAfterLift(node, rt, protocol.BinPickedUp{BinID: bin, Epoch: 4, PickedUpAt: time.Now()})
+	if held != 4 || part != "WIDGET-A" {
+		t.Errorf("hold = %d of %q, want 4 of WIDGET-A (the claim's part, not the empty carrier's \"\")", held, part)
+	}
+}
+
+// afterLiftSink is a recording sink whose after-lift windows sum to sum.
+type afterLiftSink struct {
+	fakeDeltaSink
+	sum int
+}
+
+func (s *afterLiftSink) TakeAfterLift(int64, int64, time.Time) (int, error) { return s.sum, nil }

@@ -678,6 +678,7 @@ const HOLD_DROP_REASON = {
   cutover: 'cleared at changeover',
   foreign_hold: 'another part beside the bin',
   flip_carry_overflow: 'did not fit the partner bin',
+  no_bin: 'made with no bin to count into',
 };
 
 function renderHoldDrops() {

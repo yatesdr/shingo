@@ -292,7 +292,10 @@ func (e *Engine) takeTicksAfterLift(node *processes.Node, rt *processes.RuntimeS
 	}
 	held := -sum // a draw: the ticks consumed after the lift
 	if claim != nil && claim.Role == protocol.ClaimRoleProduce {
-		held = sum // a fill: the parts made after the lift
+		// A fill: the parts made after the lift, of the part the press makes
+		// (producedPayload). The carrier's resident payload is "" for the
+		// whole fill, and a "" hold replays onto any part.
+		held, part = sum, producedPayload(claim)
 	} else if held > 0 {
 		drains, rest := e.drainLinesideFirst(node.ID, claim, held)
 		if len(drains) > 0 {

@@ -84,6 +84,18 @@ type Engine struct {
 	// (applyHoldAndReplay, DECISIONS D12): node -> "held|tick" parts already
 	// logged. Guarded by countMu; created on first use.
 	unheldTickLogged map[int64]string
+	// carrierNoteLogged is the same memory for an unbound produce seat's
+	// carrier question (carrierComing): node -> the last answer logged
+	// (holdNoteNoCarrier, holdNoteUnreadable), so each is logged once per
+	// episode. Guarded by countMu; created on first use.
+	carrierNoteLogged map[int64]string
+	// noBinStrokes is each unbound produce seat's open no-bin episode: the
+	// strokes logged and not held because no live order was placing a carrier
+	// (dropPileAndLogTick), one row per part, sent to Core as hold_dropped
+	// (no_bin) when the episode ends (endNoBinEpisode's callers). In memory:
+	// an Edge restart mid-episode loses the count. Guarded by countMu; created
+	// on first use.
+	noBinStrokes map[int64][]protocol.HoldDropped
 
 	// feeds is what this Edge holds of each Core feed and what the last
 	// heartbeat ack said about Core (feeds.go).
@@ -404,8 +416,10 @@ func (e *Engine) Start() {
 
 	// Parked-ticks monitor (P2-C7): watches every consume node for
 	// pending_uop_delta growing across consecutive flush intervals while
-	// unbound, and raises a named stranding alarm. Detection only — never
-	// binds or moves anything.
+	// unbound, and raises a named stranding alarm; the consume arm never
+	// binds or moves anything. Its produce arm drops an unbound produce seat's
+	// hold with no carrier coming (sweepProduceHold), once at start and then
+	// every scan; after the order manager above, so a drop's row can be built.
 	e.startStrandedMonitor()
 
 	// Demand-episode reconciler: closes any open cell or changeover episode

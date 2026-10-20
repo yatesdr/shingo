@@ -224,6 +224,12 @@ func (db *DB) ListActiveOrdersByDeliveryNode(deliveryNode string) ([]orders.Orde
 	return orders.ListActiveByDeliveryNode(db.DB, deliveryNode)
 }
 
+// LiveOrderPlacing reports whether a live order is placing a carrier at the
+// core node, in one statement. See orders.PlacingAt.
+func (db *DB) LiveOrderPlacing(coreNode string) (orders.Placing, error) {
+	return orders.PlacingAt(db.DB, coreNode)
+}
+
 // ListActiveOrdersByDeliveryNodeSet returns non-terminal orders whose
 // delivery_node is in the given set, in one query. The multi-window reservation
 // seam counts a loader's in-flight empties across its whole delivery cluster with

@@ -28,8 +28,8 @@ type DebugLogFunc = types.DebugLogFunc
 // IT IS NOT THE ONLY WRITER OF THE RUNTIME ROW, and this used to call itself
 // the engine's chokepoint for UOP state. The engine still writes directly: the
 // order pointers, active_pull, the lineside identity (through its own doorway,
-// recordLinesideCarrier), the per-tick count and hold (ChargeProcessNodeSeat and
-// HoldProcessNodeSeat in wiring_counter_delta.go), the manifest count at
+// recordLinesideCarrier), the per-tick count and hold (processes.ChargeSeatUOP
+// and processes.HoldSeatUOP from wiring_counter_delta.go), the manifest count at
 // release, the record-count fence, and the stamp-only epoch refresh. What IS
 // pinned is the pointer/count/stamp setters: TestArch_ActiveBinPointerWritersAreKnown
 // names every file allowed to call them raw.

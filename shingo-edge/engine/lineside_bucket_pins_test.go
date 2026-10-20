@@ -480,7 +480,7 @@ func TestAdminClearLinesideBucket_WithoutSinkStillDeletesThePile(t *testing.T) {
 func TestDeleteProcess_SendsLevelZeroForItsPiles(t *testing.T) {
 	t.Parallel()
 	f := newCutoverFixture(t, "DEL-PILE")
-	_, err := f.db.StrandLinesidePiles(f.processID) // one stranded row among them
+	_, err := f.db.StrandLinesidePiles(f.processID, nil) // one stranded row among them
 	testutil.MustNoErr(t, err, "strand")
 	_, err = f.db.CaptureLinesideBucket(f.swap, "SYN-PART-1", 2)
 	testutil.MustNoErr(t, err, "a new active pile")
@@ -500,5 +500,109 @@ func TestDeleteProcess_SendsLevelZeroForItsPiles(t *testing.T) {
 		if q, ok := levels[k]; !ok || q != 0 {
 			t.Errorf("level %s = %d (sent %v), want 0 sent", k, q, ok)
 		}
+	}
+}
+
+// ── The cutover clears the departing part's produce hold ──
+//
+// Every active-style flip (the changeover's cutover and the admin's, both
+// through flipActiveStyle) clears, in the strand's transaction, every produce
+// hold at the process whose part is not the part of the node's new active
+// produce claim ("" included), with one hold_dropped (cutover) row per seat. A
+// hold of the incoming claim's own part is kept. The fixture is p2Seat (style
+// PROD-STYLE, WIDGET-A, the seat unbound with 5 held) plus two styles on the
+// same node: SYN-TO-B (WIDGET-B) and SYN-TO-A2 (WIDGET-A).
+
+// cutoverStyle adds a style to the process with a two_robot produce claim of
+// part at PRODUCE-NODE, routed as seedProduceNode routes its own.
+func cutoverStyle(t *testing.T, db *store.DB, processID int64, name, part string) int64 {
+	t.Helper()
+	styleID, err := db.CreateStyle(name, "", processID)
+	testutil.MustNoErr(t, err, "create style "+name)
+	_, err = upsertClaimRetiredMode(db, processes.NodeClaimInput{
+		StyleID: styleID, CoreNodeName: "PRODUCE-NODE", Role: protocol.ClaimRoleProduce,
+		SwapMode: protocol.SwapModeTwoRobot, PayloadCode: part, UOPCapacity: 100,
+		InboundSource: "EMPTY-STORAGE", InboundStaging: "PRODUCE-IN-STAGING",
+		OutboundStaging: "PRODUCE-OUT-STAGING", OutboundDestination: "FILLED-STORAGE",
+	})
+	testutil.MustNoErr(t, err, "claim "+name)
+	return styleID
+}
+
+var cutoverDrop = protocol.HoldDropped{Reason: protocol.HoldDropCutover, Qty: 5, PayloadCode: "WIDGET-A",
+	Node: "PRODUCE-NODE", CalledBy: "edge:cutover"}
+
+// TestCutover_ClearsTheDepartingPartsHoldWithARow — A to B, through the
+// changeover's flip and the admin's, on an unbound seat and beside a bound bin
+// (the bucket a bin at its pack left): the hold is cleared with one cutover row.
+func TestCutover_ClearsTheDepartingPartsHoldWithARow(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		admin bool
+		bound bool
+	}{
+		{"changeover, unbound", false, false},
+		{"changeover, beside a bound bin", false, true},
+		{"admin flip, unbound", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			eng, _, processID, nodeID, _, _ := p2Seat(t, 5, "WIDGET-A")
+			to := cutoverStyle(t, eng.db, processID, "SYN-TO-B", "WIDGET-B")
+			if tc.bound {
+				bin := int64(7601)
+				testutil.MustNoErr(t, eng.db.SetProcessNodeActiveBinID(nodeID, &bin), "a bin at its pack")
+			}
+			flip := eng.flipActiveStyle
+			if tc.admin {
+				flip = eng.SetProcessActiveStyle
+			}
+			testutil.MustNoErr(t, flip(processID, &to), "cutover")
+			assertSeat(t, eng, nodeID, 0, 0, "")
+			assertDrops(t, eng.db, cutoverDrop)
+		})
+	}
+}
+
+// TestCutover_SamePartKeepsItsHold — A to A' (the same part): the hold is the
+// next bin's, and no row is written.
+func TestCutover_SamePartKeepsItsHold(t *testing.T) {
+	t.Parallel()
+	eng, _, processID, nodeID, _, _ := p2Seat(t, 5, "WIDGET-A")
+	to := cutoverStyle(t, eng.db, processID, "SYN-TO-A2", "WIDGET-A")
+	testutil.MustNoErr(t, eng.flipActiveStyle(processID, &to), "cutover")
+	assertSeat(t, eng, nodeID, 0, 5, "WIDGET-A")
+	assertDrops(t, eng.db)
+}
+
+// TestCutover_ABlankHoldIsCleared — a hold recorded before holds had a part
+// ("") replays onto any part, so the cutover clears it even into the same part.
+func TestCutover_ABlankHoldIsCleared(t *testing.T) {
+	t.Parallel()
+	eng, _, processID, nodeID, _, _ := p2Seat(t, 5, "")
+	to := cutoverStyle(t, eng.db, processID, "SYN-TO-A2", "WIDGET-A")
+	testutil.MustNoErr(t, eng.flipActiveStyle(processID, &to), "cutover")
+	assertSeat(t, eng, nodeID, 0, 0, "")
+	blank := cutoverDrop
+	blank.PayloadCode = ""
+	assertDrops(t, eng.db, blank)
+}
+
+// TestCutover_TheIncomingPartsFirstTickIsHeld — the changeover's supply leg is
+// placing the incoming carrier. After the cutover clears A's hold, the first
+// tick of B on the still-empty seat is held for that carrier, not dropped.
+func TestCutover_TheIncomingPartsFirstTickIsHeld(t *testing.T) {
+	t.Parallel()
+	eng, sink, processID, nodeID, _, claimID := p2Seat(t, 5, "WIDGET-A")
+	p2Supply(t, eng, claimID)
+	to := cutoverStyle(t, eng.db, processID, "SYN-TO-B", "WIDGET-B")
+	testutil.MustNoErr(t, eng.flipActiveStyle(processID, &to), "cutover")
+
+	charSPTick(eng, processID, to, 2)
+	assertSeat(t, eng, nodeID, 0, 2, "WIDGET-B")
+	assertDrops(t, eng.db, cutoverDrop)
+	if len(sink.binCalls) != 0 {
+		t.Errorf("deltas = %+v, want none", sink.binCalls)
 	}
 }
