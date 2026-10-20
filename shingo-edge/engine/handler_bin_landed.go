@@ -52,9 +52,10 @@ func (e *Engine) HandleBinLanded(l protocol.BinLanded) {
 }
 
 // landCarrier is the landing verb's engine half: the bind (uop.Mutator.Land,
-// whose refusals are its WHERE), then, only if it landed, the identity
-// through the lineside doorway and the placement's settle. Reports whether it
-// landed.
+// whose refusals are its WHERE), then, only if it landed, the relight of a
+// dark sequential pair (lightDarkSequentialPair, on a seat the bind left
+// dark), the identity through the lineside doorway and the placement's
+// settle. Reports whether it landed.
 //
 // THE SETTLE IS LOAD-BEARING. A bind here is the record that a bin is on the
 // cell, which a leg that has already left the cell's nodes waits on; whichever
@@ -77,7 +78,10 @@ func (e *Engine) landCarrier(node *processes.Node, l processes.LandingBind, carr
 	// seat before the bind is refused by its own WHERE and re-applied to the
 	// carrier that landed (applyHoldAndReplay).
 	e.countMu.Lock()
-	landed, err := e.inventoryDelta.Land(node.ID, l)
+	landed, activePull, err := e.inventoryDelta.Land(node.ID, l)
+	if landed && !activePull {
+		e.lightDarkSequentialPair(node)
+	}
 	e.countMu.Unlock()
 	if err != nil {
 		log.Printf("bin_landed: bind bin %d at %s (%s): %v", l.BinID, node.CoreNodeName, why, err)
@@ -103,4 +107,40 @@ func (e *Engine) landCarrier(node *processes.Node, l processes.LandingBind, carr
 		Actor:         protocol.ActorCoreLifecycle,
 	}})
 	return true
+}
+
+// lightDarkSequentialPair puts the line on the position a carrier just landed
+// on when it is one of a sequential pair with BOTH positions dark: the state
+// a tooling evacuate leaves (clearActivePullForEvacuate), which no release
+// can leave, because the flip moves the line only from a side that is
+// pulling. The landed side takes the line through the pair's one writer
+// (writePullSide); its partner stays dark until a release flips the line to
+// it. A pair with either side lit is never changed: a carrier landing on the
+// parked side of a running pair is the pair working. Press-index pairs never
+// read the bit (isInactivePairedNode) and are not lit here.
+//
+// Cost: nothing on a seat the bind left lit (the bind returns the bit). On a
+// dark seat, the claim and the partner (claimAtNode, pairedNodeOf) and the
+// partner's runtime row; the two-statement write only when both are dark.
+// Caller holds countMu, as the tick that reads the bit does.
+func (e *Engine) lightDarkSequentialPair(node *processes.Node) {
+	claim := e.claimAtNode(node)
+	if claim == nil || claim.PairedCoreNode == "" || claim.SwapMode != protocol.SwapModeSequential {
+		return
+	}
+	partner, err := e.pairedNodeOf(node)
+	if err != nil {
+		log.Printf("bin_landed: node %s landed dark on a sequential pair, and its partner cannot be read: %v",
+			node.CoreNodeName, err)
+		return
+	}
+	prt, err := e.db.GetProcessNodeRuntime(partner.ID)
+	if err != nil || prt == nil || prt.ActivePull {
+		return
+	}
+	if err := e.writePullSide(node.ID, partner.ID); err != nil {
+		return
+	}
+	log.Printf("bin_landed: sequential pair %s/%s was dark on both sides; the line is on %s, where a carrier landed",
+		node.CoreNodeName, partner.CoreNodeName, node.CoreNodeName)
 }

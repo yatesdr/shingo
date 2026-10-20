@@ -66,7 +66,7 @@ type writeActiveBinIDer interface {
 	SetProcessNodeActiveClaim(processNodeID int64, activeClaimID *int64) error
 	SetProcessNodeRuntimeClaimCountAndEpoch(processNodeID int64, activeClaimID *int64, remainingUOP int, binID, deltaEpoch int64) error
 	BindEmptySlotUnlessDeparted(processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOP int) (bool, error)
-	BindLandingAt(processNodeID int64, l processes.LandingBind) (bool, error)
+	BindLandingAt(processNodeID int64, l processes.LandingBind) (bool, bool, error)
 	CaptureLinesideBucket(nodeID int64, payloadCode string, qty int) (int, error)
 }
 
@@ -184,7 +184,7 @@ type fakeLandCall struct {
 
 // Land is the landing verb (Lane H, H.4; uop.Mutator.Land), which replaced
 // OnDelivered: it records the call and binds through the real statement.
-func (s *fakeDeltaSink) Land(nodeID int64, l processes.LandingBind) (bool, error) {
+func (s *fakeDeltaSink) Land(nodeID int64, l processes.LandingBind) (bool, bool, error) {
 	s.mu.Lock()
 	s.landCalls = append(s.landCalls, fakeLandCall{nodeID, l})
 	db := s.db
@@ -192,7 +192,7 @@ func (s *fakeDeltaSink) Land(nodeID int64, l processes.LandingBind) (bool, error
 	if db != nil {
 		return db.BindLandingAt(nodeID, l)
 	}
-	return true, nil
+	return true, true, nil
 }
 
 type fakeManualLoadCall struct {

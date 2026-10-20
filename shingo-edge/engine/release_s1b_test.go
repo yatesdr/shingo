@@ -73,7 +73,7 @@ func delivered(nodeID func(h *relHarness) int64, bin int64) func(h *relHarness) 
 	return func(h *relHarness) error {
 		h.t.Helper()
 		id := nodeID(h)
-		_, err := h.eng.inventoryDelta.Land(id, processes.LandingBind{BinID: bin, Epoch: 1, Count: 0, MayDisplace: true})
+		_, _, err := h.eng.inventoryDelta.Land(id, processes.LandingBind{BinID: bin, Epoch: 1, Count: 0, MayDisplace: true})
 		testutil.MustNoErr(h.t, err, "bind delivered bin")
 		return nil
 	}

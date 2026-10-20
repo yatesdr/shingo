@@ -160,10 +160,12 @@ func (e *Engine) pairedNodeOf(node *processes.Node) (*processes.Node, error) {
 // writePullSide puts the pull bit on one side of a pair and takes it off the
 // other, in one transaction. The canonical writer of active_pull. The one
 // other writer is tooling evacuate's clear (changeover_applier.go), which
-// sets both sides dark deliberately. writePullSide's one production caller is
-// the release trunk's commitFlip — releasing a sequential position is
-// the statement that the line has moved, taken as one atomic fact. (The
-// operator flip door, Engine.FlipABNode, was deleted with its last caller.)
+// sets both sides dark deliberately. writePullSide's production callers are
+// the release trunk's commitFlip — releasing a sequential position is the
+// statement that the line has moved, taken as one atomic fact — and the
+// landing's relight of a pair that evacuate left dark on both sides
+// (lightDarkSequentialPair).
+// (The operator flip door, Engine.FlipABNode, was deleted with its last caller.)
 //
 // Item 5 atomic wrap: a tick firing between the two writes — with both sides
 // momentarily reading inactive, or both active — attributes to the wrong bucket.

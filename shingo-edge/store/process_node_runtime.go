@@ -104,9 +104,9 @@ func (db *DB) BindEmptySlotUnlessDeparted(processNodeID int64, activeClaimID *in
 }
 
 // BindLandingAt binds the carrier a landing names at the slot, its refusals
-// in its WHERE (Lane H, H.4). Reports whether it landed. See
-// processes.BindLanding.
-func (db *DB) BindLandingAt(processNodeID int64, l processes.LandingBind) (bool, error) {
+// in its WHERE (Lane H, H.4). Reports whether it landed, and the seat's
+// active_pull as the bind left it. See processes.BindLanding.
+func (db *DB) BindLandingAt(processNodeID int64, l processes.LandingBind) (landed, activePull bool, err error) {
 	return processes.BindLanding(db.DB, processNodeID, l)
 }
 

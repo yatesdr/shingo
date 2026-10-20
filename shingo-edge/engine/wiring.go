@@ -29,6 +29,7 @@
 package engine
 
 import (
+	"shingo/protocol"
 	"shingo/protocol/eventbus"
 	"shingoedge/store/processes"
 )
@@ -74,6 +75,14 @@ func (e *Engine) wireEventHandlers() {
 // by the dispatcher itself, not by a single sibling — keeping it here
 // avoids circular imports between siblings and makes the helper's
 // audience obvious.
+//
+// NEVER A PRESS-INDEX SEAT. Its claim names the back position too, but the
+// pair has no parked side: the index swaps carriers under the one press seat,
+// which pulls for the pair's whole life, and nothing on the pair ever sets
+// the bit. A press seat whose bit a tooling evacuate once cleared (a state a
+// plant's database can hold) skipped every tick as inactive_produce for good
+// (TestPressIndex_ADarkPressSeatStillCounts). Every other paired claim reads
+// the bit as before.
 func isInactivePairedNode(claim *processes.NodeClaim, runtime *processes.RuntimeState) bool {
-	return claim.PairedCoreNode != "" && !runtime.ActivePull
+	return claim.PairedCoreNode != "" && claim.SwapMode != protocol.SwapModeTwoRobotPressIndex && !runtime.ActivePull
 }

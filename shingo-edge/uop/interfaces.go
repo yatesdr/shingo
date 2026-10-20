@@ -36,7 +36,7 @@ type SlotWriter interface {
 	LeaveAtPickup(nodeID, pickupEpoch int64, hold int, holdPart string) error
 	SetClaim(nodeID int64, activeClaimID *int64) error
 	SetClaimCountAndEpoch(nodeID int64, activeClaimID *int64, uop int, binID, deltaEpoch int64) error
-	Land(nodeID int64, l processes.LandingBind) (bool, error)
+	Land(nodeID int64, l processes.LandingBind) (landed, activePull bool, err error)
 	ManualLoad(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error
 }
 

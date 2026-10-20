@@ -50,6 +50,9 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 	// The honest fix is the model, not an exception in the guard. The line is
 	// genuinely pulling from nothing here, so say so. Both positions, because an
 	// evacuate takes the whole press and only the claimed side gets an action.
+	// The guard reads the bit on a sequential pair alone (loadFlip,
+	// linePullsFrom), and a press-index pair is never cleared: it has no parked
+	// side (clearActivePullForEvacuate).
 	if action.Situation == string(SituationEvacuate) {
 		e.clearActivePullForEvacuate(nodeID)
 	}
@@ -311,6 +314,13 @@ func (e *Engine) changeoverOrigin(processChangeoverID int64) ordermgr.Origin {
 // clearActivePullForEvacuate drops the pull bit on a position being evacuated
 // for tooling, and on its A/B partner.
 //
+// NOT ON A PRESS-INDEX PAIR. Its claim names a back position too, but nothing
+// is parked there: the index swaps carriers under the one press seat, which
+// pulls for the pair's whole life, no release guard reads its bit (loadFlip
+// and linePullsFrom answer for sequential alone), and no flip ever relights
+// it. Cleared, the press seat skipped every produce tick after the tool change
+// as inactive_produce (TestPressIndex_ToolingEvacuateLeavesThePressPulling).
+//
 // Best-effort by design: a failure here must not abort the changeover's order
 // creation, which is the thing the operator is waiting on. A stale bit costs a
 // release warning the operator can confirm through — the guard is a speed bump,
@@ -321,8 +331,10 @@ func (e *Engine) clearActivePullForEvacuate(nodeID int64) {
 		log.Printf("changeover: evacuate could not read node %d to clear active_pull: %v", nodeID, err)
 		return
 	}
+	claim := e.claimAtNode(node)
+	pressIndex := claim != nil && claim.PairedCoreNode != "" && claim.SwapMode == protocol.SwapModeTwoRobotPressIndex
 	ids := []int64{nodeID}
-	if claim := e.claimAtNode(node); claim != nil && claim.PairedCoreNode != "" {
+	if claim != nil && claim.PairedCoreNode != "" {
 		if nodes, lErr := e.db.ListProcessNodesByProcess(node.ProcessID); lErr == nil {
 			for i := range nodes {
 				if nodes[i].CoreNodeName == claim.PairedCoreNode {
@@ -333,20 +345,30 @@ func (e *Engine) clearActivePullForEvacuate(nodeID int64) {
 	}
 	for _, id := range ids {
 		e.db.EnsureProcessNodeRuntime(id)
+		if pressIndex {
+			continue
+		}
 		if err := e.db.SetActivePull(id, false); err != nil {
 			log.Printf("changeover: evacuate could not clear active_pull on node %d: %v", id, err)
 		}
 	}
-	// BOTH SIDES ARE NOW DARK, AND THEY STAY DARK UNTIL SOMEBODY SAYS OTHERWISE.
+	if pressIndex {
+		log.Printf("changeover: tooling evacuate at node %s — a press-index pair has no parked side; active_pull left set",
+			node.CoreNodeName)
+		return
+	}
+	// AN A/B PAIR IS NOW DARK ON BOTH SIDES UNTIL A CARRIER LANDS ON IT.
 	//
 	// That is correct while the press is down — the line really is pulling from
-	// nothing — and it is deliberate that nothing here schedules the bit's return.
-	// The release trunk is the canonical writer of active_pull and lights the
-	// partner side as part of releasing the finished side (owner ruling
-	// 2026-09-27: the flip happens on release; the explicit flip/set-active-pull
-	// doors are gone). Until a release lands, the guard has nothing to protect
-	// here, which is the honest reading of a stopped press.
-	log.Printf("changeover: tooling evacuate at node %s — active_pull cleared on %d position(s); the "+
-		"process is down, so the line is pulling from nothing. It stays dark until the flip or an "+
-		"operator says otherwise", node.CoreNodeName, len(ids))
+	// nothing — and nothing here schedules the bit's return. The release
+	// trunk's flip (commitFlip → writePullSide) flips only from a side that is
+	// pulling (release.withFlip on Flip.OwnPull), so with both sides dark no
+	// release, and no cutover, relights either. The first carrier that lands on
+	// either position of a sequential pair lights that position
+	// (landCarrier → lightDarkSequentialPair); until then every produce tick at
+	// the pair is skipped as inactive_produce
+	// (TestSequential_ADarkPairLightsTheSideTheNextCarrierLandsOn).
+	log.Printf("changeover: tooling evacuate at node %s — active_pull cleared on %d position(s); "+
+		"the process is down, so the line is pulling from nothing; a sequential pair is lit again "+
+		"on the position the next carrier lands on", node.CoreNodeName, len(ids))
 }

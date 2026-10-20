@@ -435,28 +435,37 @@ func TestRefuseToolingChangeoverWithoutStaging_IgnoresUnmarkedPresses(t *testing
 	}
 }
 
-// ── Strict-pack characterisation (step 1): press-index active_pull ────────
+// ── Press-index: the press seat pulls for the pair's life ─────────────────
 //
 // active_pull is written in two places only: writePullSide (from commitFlip,
 // which loadFlip applies to sequential pairs alone) and
-// clearActivePullForEvacuate (false, both positions). The column defaults to 1
-// (store/schema: active_pull INTEGER NOT NULL DEFAULT 1). A press-index pair's
-// claim names its partner, so isInactivePairedNode reads the bit on every
-// produce tick at the press seat.
+// clearActivePullForEvacuate. The column defaults to 1 (store/schema:
+// active_pull INTEGER NOT NULL DEFAULT 1). A press-index pair has no parked
+// side: the index swaps carriers under the one press position, so its front is
+// where the line pulls for the pair's whole life, and nothing has to write the
+// bit there. The tick path skips a dark seat on a sequential pair only
+// (isInactivePairedNode), and a tooling evacuate darkens a sequential pair only
+// (the release guards that read the bit, loadFlip and linePullsFrom, read it on
+// sequential alone).
 
 func charSPActivePull(h *relHarness) bool {
 	h.t.Helper()
 	return runtimeOf(h.t, h.eng, h.nodeID).ActivePull
 }
 
-// TestCharSP_PressIndexSeatHoldsActivePullForThePairsLife — steady state: the
-// press seat of a two_robot_press_index pair holds active_pull by the column
-// default, nothing writes it, a pair click (R1 out, R2 indexes) leaves it set,
-// and produce ticks land before and after the release.
-//
-// Unchanged by the strict-pack lanes; it is the precondition P4 certifies
-// before strict pack may be turned on for a press-index claim.
-func TestCharSP_PressIndexSeatHoldsActivePullForThePairsLife(t *testing.T) {
+// seatSum is a seat's count plus its hold: where a tick lands, bound or held.
+func seatSum(t *testing.T, h *relHarness, nodeID int64) int64 {
+	t.Helper()
+	rt := runtimeOf(t, h.eng, nodeID)
+	return int64(rt.RemainingUOPCached) + rt.PendingUOPDelta
+}
+
+// TestPressIndex_ThePressSeatPullsForThePairsLife — the requirement strict pack
+// rests on at a press-index press: the press seat of a two_robot_press_index
+// pair has active_pull set at steady state, nothing on the pair writes it, a
+// pair click (R1 out, R2 indexes) leaves it set, and produce ticks land before
+// and after the release.
+func TestPressIndex_ThePressSeatPullsForThePairsLife(t *testing.T) {
 	t.Parallel()
 	h := newRelHarness(t)
 	pairAt(pairSpec{mode: protocol.SwapModeTwoRobotPressIndex}, "evac", protocol.StatusStaged, "supply", protocol.StatusStaged)(h)
@@ -479,18 +488,17 @@ func TestCharSP_PressIndexSeatHoldsActivePullForThePairsLife(t *testing.T) {
 	}
 }
 
-// TestCharSP_PressIndexToolingEvacuateLeavesThePressDark — a tooling evacuate
-// on a two_robot_press_index pair: applyNodeAction calls
-// clearActivePullForEvacuate, which clears the press seat's active_pull, and
-// nothing on a press-index pair ever sets it again (no flip). Every produce tick
-// at the press is then skipped as inactive_produce: not charged and not held,
-// only the "counter delta unattributed" log line. It stays dark through the
-// evac's release (door 5) and through the cutover to the incoming style.
+// TestPressIndex_ToolingEvacuateLeavesThePressPulling — a tooling evacuate on a
+// two_robot_press_index pair leaves the press seat pulling: the outgoing
+// style's ticks land on the bound bin while the evacuate is staged, and after
+// the evac's release (door 5) and the cutover the incoming style's ticks land
+// at the press (held for the carrier R2 is placing there).
 //
-// This is a FLAT BUG at the base (the parts the press makes after the tool
-// change are counted nowhere). P4 fixes it with its own pin; this pin then
-// flips (the press seat is lit after the evacuate, by whatever P4 rules).
-func TestCharSP_PressIndexToolingEvacuateLeavesThePressDark(t *testing.T) {
+// At the base the evacuate cleared the bit on the press seat and nothing on a
+// press-index pair ever set it again, so every produce tick at the press was
+// skipped as inactive_produce: the parts made after a tool change were counted
+// nowhere. Step 1 pinned that as the base; this is its flip.
+func TestPressIndex_ToolingEvacuateLeavesThePressPulling(t *testing.T) {
 	t.Parallel()
 	h := newRelHarness(t)
 	coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", protocol.StatusStaged, "supply", protocol.StatusStaged)(h)
@@ -503,26 +511,206 @@ func TestCharSP_PressIndexToolingEvacuateLeavesThePressDark(t *testing.T) {
 	}
 	fromStyle := activeStyleOf(t, h.eng, h.processID)
 
-	if charSPActivePull(h) {
-		t.Fatal("press seat active_pull = true after the tooling evacuate, want false (clearActivePullForEvacuate)")
+	if !charSPActivePull(h) {
+		t.Fatal("press seat active_pull = false after the tooling evacuate, want true: a press-index pair has no parked side")
 	}
 	charSPTick(h.eng, h.processID, fromStyle, 2)
-	if rt := runtimeOf(t, h.eng, h.nodeID); rt.RemainingUOPCached != fxCount || rt.PendingUOPDelta != 0 {
-		t.Errorf("after a tick on the dark press: count %d hold %d, want %d and 0: the tick is skipped as inactive_produce",
-			rt.RemainingUOPCached, rt.PendingUOPDelta, fxCount)
+	if rt := runtimeOf(t, h.eng, h.nodeID); rt.RemainingUOPCached != fxCount+2 || rt.PendingUOPDelta != 0 {
+		t.Errorf("after a tick at the evacuating press: count %d hold %d, want %d and 0: the bound bin takes it",
+			rt.RemainingUOPCached, rt.PendingUOPDelta, fxCount+2)
 	}
 
 	testutil.MustNoErr(t, sweepClick(dispNone)(h), "release the evacuate's legs")
 	toStyle := co.ToStyleID
 	testutil.MustNoErr(t, h.eng.SetProcessActiveStyle(h.processID, &toStyle), "cut over to the incoming style")
-	if charSPActivePull(h) {
-		t.Fatal("press seat active_pull = true after the release and the cutover, want false: nothing relights a press-index seat")
+	if !charSPActivePull(h) {
+		t.Fatal("press seat active_pull = false after the release and the cutover, want true")
 	}
-	before := runtimeOf(t, h.eng, h.nodeID)
+	before := seatSum(t, h, h.nodeID)
 	charSPTick(h.eng, h.processID, toStyle, 5)
-	after := runtimeOf(t, h.eng, h.nodeID)
-	if after.RemainingUOPCached != before.RemainingUOPCached || after.PendingUOPDelta != before.PendingUOPDelta {
-		t.Errorf("incoming style's tick on the dark press: count %d→%d hold %d→%d, want both unchanged (skipped)",
-			before.RemainingUOPCached, after.RemainingUOPCached, before.PendingUOPDelta, after.PendingUOPDelta)
+	if after := seatSum(t, h, h.nodeID); after != before+5 {
+		t.Errorf("incoming style's tick at the press: count+hold %d → %d, want +5 (landed, not skipped)", before, after)
+	}
+}
+
+// TestPressIndex_ADarkPressSeatStillCounts — a press-index seat whose bit a
+// tooling evacuate cleared before this build (a state a plant's database can
+// hold at deploy) counts its ticks: the tick path reads the bit on a
+// sequential pair only.
+func TestPressIndex_ADarkPressSeatStillCounts(t *testing.T) {
+	t.Parallel()
+	h := newRelHarness(t)
+	pairAt(pairSpec{mode: protocol.SwapModeTwoRobotPressIndex}, "evac", protocol.StatusStaged, "supply", protocol.StatusStaged)(h)
+	testutil.MustNoErr(t, h.db.SetActivePull(h.nodeID, false), "a past evacuate's dark bit")
+	charSPTick(h.eng, h.processID, activeStyleOf(t, h.eng, h.processID), 3)
+	if got := remainingUOP(t, h.db, h.nodeID); got != fxCount+3 {
+		t.Errorf("count after a tick on a dark press-index seat = %d, want %d", got, fxCount+3)
+	}
+}
+
+// TestSequential_ADarkPairLightsTheSideTheNextCarrierLandsOn — a tooling
+// evacuate on a sequential A/B pair clears the bit on both positions (so the
+// release guards let the evacuate's legs strip either one), and a tick on the
+// stopped press lands on neither. The evacuate's release flips from no side and
+// the cutover writes no bit, so the pair stays dark through both. The first
+// carrier that lands on either position lights that position (landCarrier,
+// lightDarkSequentialPair); the other stays dark until a release flips the
+// line to it, and a carrier landing there meanwhile changes nothing.
+func TestSequential_ADarkPairLightsTheSideTheNextCarrierLandsOn(t *testing.T) {
+	t.Parallel()
+	h := newRelHarness(t)
+	coAt(coSpec{mode: protocol.SwapModeSequential, tooling: true})(h)
+	co, err := h.db.GetActiveProcessChangeover(h.processID)
+	testutil.MustNoErr(t, err, "read changeover")
+	task, err := h.db.GetChangeoverNodeTaskByNode(co.ID, h.nodeID)
+	testutil.MustNoErr(t, err, "read node task")
+	if task.Situation != string(SituationEvacuate) {
+		t.Fatalf("fixture: situation = %q, want evacuate", task.Situation)
+	}
+	if got := h.activePull(); got != "pull=none" {
+		t.Fatalf("after the tooling evacuate: %s, want pull=none (both positions dark)", got)
+	}
+	tickLandsNowhere := func(when string, style int64) {
+		t.Helper()
+		front, back := seatSum(t, h, h.nodeID), seatSum(t, h, h.partnerID)
+		charSPTick(h.eng, h.processID, style, 4)
+		if f, b := seatSum(t, h, h.nodeID), seatSum(t, h, h.partnerID); f != front || b != back {
+			t.Errorf("%s: a tick on the dark sequential pair moved the seats: front %d→%d back %d→%d, want both unchanged",
+				when, front, f, back, b)
+		}
+	}
+	tickLandsNowhere("after the evacuate", activeStyleOf(t, h.eng, h.processID))
+
+	for _, l := range h.legs {
+		h.setStatus(l.name, protocol.StatusStaged)
+	}
+	testutil.MustNoErr(t, sweepClick(dispNone)(h), "release the changeover's legs")
+	toStyle := co.ToStyleID
+	testutil.MustNoErr(t, h.eng.SetProcessActiveStyle(h.processID, &toStyle), "cut over to the incoming style")
+	if got := h.activePull(); got != "pull=none" {
+		t.Errorf("after the release and the cutover: %s, want pull=none (no landing yet)", got)
+	}
+	tickLandsNowhere("after the cutover", toStyle)
+
+	back, err := h.db.GetProcessNode(h.partnerID)
+	testutil.MustNoErr(t, err, "read the back position")
+	front, err := h.db.GetProcessNode(h.nodeID)
+	testutil.MustNoErr(t, err, "read the front position")
+	h.eng.HandleBinLanded(protocol.BinLanded{BinID: 9701, CoreNodeName: back.CoreNodeName, Epoch: 1, PlacedSeq: 1 << 40})
+	if got := h.activePull(); got != "pull="+back.CoreNodeName {
+		t.Fatalf("after a carrier lands on %s: %s, want pull=%s (the side it landed on)", back.CoreNodeName, got, back.CoreNodeName)
+	}
+	if rt := runtimeOf(t, h.eng, h.nodeID); rt.ActivePull {
+		t.Errorf("the front position %s lit too; want it dark until the flip", front.CoreNodeName)
+	}
+	before := seatSum(t, h, h.partnerID)
+	charSPTick(h.eng, h.processID, toStyle, 4)
+	if got := seatSum(t, h, h.partnerID); got != before+4 {
+		t.Errorf("a tick after the landing: %s's seat %d→%d, want +4 on the lit side", back.CoreNodeName, before, got)
+	}
+	h.eng.HandleBinLanded(protocol.BinLanded{BinID: 9702, CoreNodeName: front.CoreNodeName, Epoch: 1, PlacedSeq: 1<<40 + 1})
+	if got := h.activePull(); got != "pull="+back.CoreNodeName {
+		t.Errorf("after a carrier lands on the dark side of a lit pair: %s, want pull=%s unchanged", got, back.CoreNodeName)
+	}
+	if rt := runtimeOf(t, h.eng, h.nodeID); rt.ActivePull {
+		t.Errorf("a landing on %s lit it beside the lit %s", front.CoreNodeName, back.CoreNodeName)
+	}
+}
+
+// TestSequential_ALandingOnALitPairChangesNothing — a sequential pair pulling
+// from its front position: carriers landing on either position leave the bits
+// as they are, whichever side they land on.
+func TestSequential_ALandingOnALitPairChangesNothing(t *testing.T) {
+	t.Parallel()
+	h := newRelHarness(t)
+	coAt(coSpec{mode: protocol.SwapModeSequential, tooling: true})(h)
+	testutil.MustNoErr(t, h.db.SetActivePull(h.nodeID, true), "the line pulls from the front")
+	front, err := h.db.GetProcessNode(h.nodeID)
+	testutil.MustNoErr(t, err, "read the front position")
+	back, err := h.db.GetProcessNode(h.partnerID)
+	testutil.MustNoErr(t, err, "read the back position")
+	for i, n := range []*processes.Node{back, front} {
+		h.eng.HandleBinLanded(protocol.BinLanded{BinID: int64(9711 + i), CoreNodeName: n.CoreNodeName, Epoch: 1, PlacedSeq: 1<<40 + int64(i)})
+		if rt := runtimeOf(t, h.eng, n.ID); rt.ActiveBinID == nil || *rt.ActiveBinID != int64(9711+i) {
+			t.Fatalf("fixture: the landing on %s bound %v, want bin %d", n.CoreNodeName, rt.ActiveBinID, 9711+i)
+		}
+		if got := h.activePull(); got != "pull="+front.CoreNodeName {
+			t.Errorf("after a carrier lands on %s: %s, want pull=%s unchanged", n.CoreNodeName, got, front.CoreNodeName)
+		}
+		if rt := runtimeOf(t, h.eng, h.partnerID); rt.ActivePull {
+			t.Errorf("after a carrier lands on %s: the back position lit beside the front", n.CoreNodeName)
+		}
+	}
+}
+
+// TestStrictPack_PressIndexPacksHoldsAndReplaysOntoTheNextBin — strict pack on
+// a press-index press through one index: the bound bin is charged to its pack
+// and the rest is held; the pair click ships the pack (no declaration: the bin
+// is at it) and the seat unbinds keeping the hold; a stroke while R2 is placing
+// the next carrier is held with it; the next bin binds at the front and the
+// next stroke replays the hold onto it as one produce_tick.
+func TestStrictPack_PressIndexPacksHoldsAndReplaysOntoTheNextBin(t *testing.T) {
+	t.Parallel()
+	const pack = fxCount + 2
+	h := newRelHarness(t)
+	strictPackAt(pack, true, pairAt(pairSpec{mode: protocol.SwapModeTwoRobotPressIndex}, "evac", protocol.StatusStaged, "supply", protocol.StatusStaged))(h)
+	style := activeStyleOf(t, h.eng, h.processID)
+	produceTicks := func() []string {
+		h.mutator.Flush()
+		out := []string{}
+		for _, m := range h.sinceMark() {
+			if m.MsgType != protocol.SubjectBinUOPDelta {
+				continue
+			}
+			if d := decodeBinUOPDelta(t, m.Payload); d.Reason == protocol.ReasonProduceTick {
+				out = append(out, fmt.Sprintf("bin %d %+d", d.BinID, d.Delta))
+			}
+		}
+		return out
+	}
+	seat := func(want string) {
+		t.Helper()
+		rt := runtimeOf(t, h.eng, h.nodeID)
+		bin := "none"
+		if rt.ActiveBinID != nil {
+			bin = fmt.Sprint(*rt.ActiveBinID)
+		}
+		if got := fmt.Sprintf("bin %s count %d hold %d of %q", bin, rt.RemainingUOPCached, rt.PendingUOPDelta, rt.PendingUOPPayload); got != want {
+			t.Errorf("seat = %s, want %s", got, want)
+		}
+	}
+
+	// The crossing stroke: 42 + 5 on a pack of 44.
+	h.mark()
+	charSPTick(h.eng, h.processID, style, 5)
+	seat(fmt.Sprintf("bin %d count %d hold 3 of %q", fxBin, pack, fxPart))
+	if got, want := produceTicks(), []string{fmt.Sprintf("bin %d +2", fxBin)}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("crossing stroke emitted %v, want %v", got, want)
+	}
+
+	// The pair click: R1 takes the full bin, R2 indexes the next carrier in.
+	h.mark()
+	testutil.MustNoErr(t, h.eng.ReleaseStagedOrders(h.nodeID, dispNone), "pair click")
+	if got, want := pStamp(h), []string{fmt.Sprintf("stamp:q=%d", pack)}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("the release shipped %v, want %v (the pack, no declaration)", got, want)
+	}
+	seat(fmt.Sprintf("bin none count 0 hold 3 of %q", fxPart))
+
+	// A stroke while R2 is placing the next carrier at the front.
+	h.mark()
+	charSPTick(h.eng, h.processID, style, 2)
+	seat(fmt.Sprintf("bin none count 0 hold 5 of %q", fxPart))
+	if got := produceTicks(); len(got) != 0 {
+		t.Errorf("a held stroke emitted %v, want nothing", got)
+	}
+
+	// R2's carrier binds at the front; the next stroke replays the hold onto it.
+	next := fxBin + 50
+	testutil.MustNoErr(t, h.db.SetProcessNodeActiveBinID(h.nodeID, &next), "the next bin binds at the front")
+	h.mark()
+	charSPTick(h.eng, h.processID, style, 1)
+	seat(fmt.Sprintf("bin %d count 6 hold 0 of %q", next, ""))
+	if got, want := produceTicks(), []string{fmt.Sprintf("bin %d +6", next)}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("the replay emitted %v, want %v", got, want)
 	}
 }

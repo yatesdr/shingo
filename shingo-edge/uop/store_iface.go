@@ -64,8 +64,9 @@ type runtimeWriter interface {
 	BindEmptySlotUnlessDeparted(processNodeID int64, activeClaimID *int64, binID, deltaEpoch int64, remainingUOP int) (bool, error)
 
 	// BindLandingAt is the landing's bind (Lane H, H.4): its refusals are
-	// its WHERE. Reports whether it landed. Used by Land.
-	BindLandingAt(processNodeID int64, l processes.LandingBind) (bool, error)
+	// its WHERE. Reports whether it landed, and the seat's active_pull as
+	// the bind left it. Used by Land.
+	BindLandingAt(processNodeID int64, l processes.LandingBind) (landed, activePull bool, err error)
 }
 
 // bucketStore is the lineside pile surface uop verbs need.

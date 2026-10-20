@@ -247,12 +247,13 @@ func (m *Mutator) SetClaimCountAndEpoch(nodeID int64, activeClaimID *int64, uop 
 // H.4). Its one caller is Engine.landCarrier (engine/handler_bin_landed.go),
 // for the landing itself and, for one release, for an older Core's Bound and
 // delivered routed through it (H.7). Its refusals are the statement's WHERE
-// (processes.BindLanding); it reports whether it landed.
+// (processes.BindLanding); it reports whether it landed, and the seat's
+// active_pull as the bind left it.
 //
 // It replaced OnDelivered, which bound from order.delivered with WHERE node
 // only and wrote Core's arrival count over the ticks the line had counted
 // since the carrier landed (H.5; TestPinH5_LandingThenDeliveredKeepsTheTicks).
-func (m *Mutator) Land(nodeID int64, l processes.LandingBind) (bool, error) {
+func (m *Mutator) Land(nodeID int64, l processes.LandingBind) (landed, activePull bool, err error) {
 	return m.rw.BindLandingAt(nodeID, l)
 }
 

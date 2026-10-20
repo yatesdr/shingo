@@ -1055,7 +1055,11 @@ type LandingBind struct {
 // placed_seq is written here and nowhere else. Every leave keeps it; a
 // person's bind (ManualLoad, the count correction, the cancel reconcile)
 // leaves it as it is.
-func BindLanding(db *sql.DB, processNodeID int64, l LandingBind) (bool, error) {
+//
+// activePull is the seat's active_pull as the bind left it (the statement's
+// RETURNING, no read of its own), for the landing's relight of a dark
+// sequential pair (engine lightDarkSequentialPair).
+func BindLanding(db *sql.DB, processNodeID int64, l LandingBind) (landed, activePull bool, err error) {
 	var seq any
 	if l.PlacedSeq != nil {
 		seq = *l.PlacedSeq
@@ -1077,7 +1081,7 @@ func BindLanding(db *sql.DB, processNodeID int64, l LandingBind) (bool, error) {
 		seq, seq,
 		seq, mayDisplace, l.BinID,
 		l.BinID, l.Epoch)
-	res, err := db.Exec(`UPDATE process_node_runtime_states SET
+	err = db.QueryRow(`UPDATE process_node_runtime_states SET
 		released_empty=CASE WHEN active_bin_id IS ? AND active_bin_epoch >= ? THEN released_empty
 		                    ELSE (CASE WHEN active_bin_id IS ? AND ? <= 0 THEN released_empty ELSE 0 END) END,
 		remaining_uop_cached=CASE WHEN active_bin_id IS ? AND active_bin_epoch >= ? THEN remaining_uop_cached ELSE ? END,
@@ -1087,15 +1091,15 @@ func BindLanding(db *sql.DB, processNodeID int64, l LandingBind) (bool, error) {
 		WHERE process_node_id=?
 		  AND (? IS NULL OR placed_seq IS NULL OR placed_seq < ?)
 		  AND (? IS NOT NULL OR ? = 1 OR active_bin_id IS NULL OR active_bin_id = ?)
-		  AND NOT (active_bin_id IS NULL AND last_bin_id IS ? AND last_bin_epoch > ?)`, args...)
-	if err != nil {
-		return false, err
+		  AND NOT (active_bin_id IS NULL AND last_bin_id IS ? AND last_bin_epoch > ?)
+		RETURNING active_pull`, args...).Scan(&activePull)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, false, nil
 	}
-	n, err := res.RowsAffected()
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	return n == 1, nil
+	return true, activePull, nil
 }
 
 // SetActiveBinID writes only the active_bin_id pointer on a runtime
