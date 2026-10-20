@@ -26,6 +26,7 @@ package engine
 // a real defect.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -33,6 +34,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/release"
 	"shingoedge/store/processes"
@@ -610,4 +612,166 @@ func TestCharSP_U1FiresOnAProduceCaptureLinesideRelease(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ── Strict pack (P3): the stamp is a station's alone ─────────────────────
+//
+// A station's RELEASE (doors 1 and 2: the pair click, the per-order click, the
+// sim's auto-operator) of a strict bin counted below its pack ships the count
+// with the pack declared beside it; Core stamps it. Every other door, every
+// changeover's evac (whatever door it goes through), a count at or above the
+// pack, and a claim without strict_pack ship the count alone. The finalize
+// never clamps. stamp: renders each ingest since the mark.
+
+// strictPackAt gives the node's parts a catalog pack (the claim's pack is
+// catalog-resolved) and, when on, sets strict_pack on every live claim at the
+// front node, after the fixture is built.
+func strictPackAt(pack int, on bool, b func(h *relHarness)) func(h *relHarness) {
+	return func(h *relHarness) {
+		b(h)
+		for _, part := range []string{fxPart, fxPartNext} {
+			testutil.MustNoErr(h.t, seedClaimCapacity(h.db, processes.NodeClaimInput{PayloadCode: part, UOPCapacity: pack}), "catalog pack")
+		}
+		flag := 0
+		if on {
+			flag = 1
+		}
+		_, err := h.db.DB.Exec(`UPDATE style_node_claims SET strict_pack = ? WHERE core_node_name = ? AND retired_at IS NULL`, flag, fxPress)
+		testutil.MustNoErr(h.t, err, "strict_pack")
+	}
+}
+
+// tickClaimMoved is a two-robot produce pair whose seat names its claim
+// while the active style moves to another style's claim of the same part at
+// the node, so a tick matches that claim and not the seat's.
+func tickClaimMoved(h *relHarness) {
+	pairAt(pairSpec{mode: protocol.SwapModeTwoRobot}, "evac", protocol.StatusStaged, "supply", protocol.StatusDispatched)(h)
+	other, err := h.db.CreateStyle("SYN-OTHER", "", h.processID)
+	testutil.MustNoErr(h.t, err, "other style")
+	_, err = h.db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, pairSpec{mode: protocol.SwapModeTwoRobot}.claimInput(other, fxPart))
+	testutil.MustNoErr(h.t, err, "other style's claim")
+	testutil.MustNoErr(h.t, h.db.SetActiveStyle(h.processID, &other), "active style moves, the seat's pointer does not")
+}
+
+// atCount puts the front node's bound bin at n.
+func atCount(n int, b func(h *relHarness)) func(h *relHarness) {
+	return func(h *relHarness) {
+		b(h)
+		testutil.MustNoErr(h.t, h.db.UpdateProcessNodeUOP(h.nodeID, n), "count")
+	}
+}
+
+// pStamp renders each ingest since the mark: its count, and the declaration
+// (declared pack, who, which leg) when it carries one.
+func pStamp(h *relHarness) []string {
+	h.t.Helper()
+	byUUID := map[string]string{}
+	for _, l := range h.legs {
+		byUUID[h.order(l.name).UUID] = l.name
+	}
+	var out []string
+	for _, m := range h.sinceMark() {
+		if m.MsgType != protocol.TypeOrderIngest {
+			continue
+		}
+		var env protocol.Envelope
+		testutil.MustNoErr(h.t, json.Unmarshal(m.Payload, &env), "ingest envelope")
+		var req protocol.OrderIngestRequest
+		testutil.MustNoErr(h.t, env.DecodePayload(&req), "ingest")
+		s := fmt.Sprintf("q=%d", req.Quantity)
+		if req.DeclaredQty != 0 || req.CalledBy != "" || req.OrderID != "" {
+			leg := byUUID[req.OrderID]
+			if leg == "" {
+				leg = "?" + req.OrderID
+			}
+			s += fmt.Sprintf(" declared=%d by=%s order=%s", req.DeclaredQty, req.CalledBy, leg)
+		}
+		out = append(out, "stamp:"+s)
+	}
+	if len(out) == 0 {
+		return []string{"stamp:none"}
+	}
+	return out
+}
+
+func TestStrictPack_TheStampIsAStationsAlone(t *testing.T) {
+	t.Parallel()
+	S, D := protocol.StatusStaged, protocol.StatusDispatched
+	twoRobot := pairSpec{mode: protocol.SwapModeTwoRobot}
+	co := coSpec{mode: protocol.SwapModeTwoRobot}
+	drop := coSpec{mode: protocol.SwapModeTwoRobot, drop: true}
+	strict := func(b func(h *relHarness)) func(h *relHarness) { return strictPackAt(100, true, b) }
+	runRelCells(t, []relCell{
+		// ── Station doors, a short strict bin: stamped ──────────────────────
+		{name: "d1/two_robot pair, bare body (the HMI)",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=42 declared=100 by=operator order=evac",
+			build: strict(pairAt(twoRobot, "evac", S, "supply", S)), act: pairClick(dispNone), probe: pStamp},
+		{name: "d1/two_robot pair, curtain live: the press declares while the legs hold",
+			want:  "hold:curtain | evac=staged supply=staged | rel=- | ingest=1 capred=0 | stamp:q=42 declared=100 by=operator order=evac",
+			build: strict(withCurtain(curtainLive, pairAt(twoRobot, "evac", S, "supply", S))), act: pairClick(dispNone), probe: pStamp},
+		{name: "d2/two_robot evac, capture_lineside",
+			want:  "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | stamp:q=42 declared=100 by=operator order=evac",
+			build: strict(pairAt(twoRobot, "evac", S, "supply", D)), act: orderClick("evac", dispEmpty), probe: pStamp},
+		{name: "d2/single_robot swap, bare body",
+			want:  "ok | swap=in_transit | rel=swap | ingest=1 capred=0 | stamp:q=42 declared=100 by=operator order=swap",
+			build: strict(func(h *relHarness) { h.singleRobot(protocol.ClaimRoleProduce); statuses(h, "swap", S) }),
+			act:   orderClick("swap", dispNone), probe: pStamp},
+
+		// ── Station doors, not a short strict bin: the count alone ──────────
+		{name: "d1/two_robot pair, count above the pack ships unclamped",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=130",
+			build: atCount(130, strict(pairAt(twoRobot, "evac", S, "supply", S))), act: pairClick(dispNone), probe: pStamp},
+		{name: "d1/two_robot pair, count at the pack",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=100",
+			build: atCount(100, strict(pairAt(twoRobot, "evac", S, "supply", S))), act: pairClick(dispNone), probe: pStamp},
+		{name: "d1/two_robot pair, claim not strict",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=42",
+			build: strictPackAt(100, false, pairAt(twoRobot, "evac", S, "supply", S)), act: pairClick(dispNone), probe: pStamp},
+		{name: "d1/two_robot pair, empty strict bin ships nothing",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=0 capred=0 | stamp:none",
+			build: atCount(0, strict(pairAt(twoRobot, "evac", S, "supply", S))), act: pairClick(dispNone), probe: pStamp},
+		// The seat names its strict claim, but a tick now matches another
+		// style's claim (the active style moved and the seat's pointer did
+		// not). The cap is the tick's claim's, whatever the seat names, so the
+		// bin is declared at that claim's pack.
+		{name: "d2/two_robot evac, the tick's claim is not the seat's: the tick's claim declares",
+			want:  "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | stamp:q=42 declared=100 by=operator order=evac",
+			build: strict(tickClaimMoved), act: orderClick("evac", dispEmpty), probe: pStamp},
+		// The same, with the seat's own claim not strict: the per-order door
+		// still reads the tick's claim, which is.
+		{name: "d2/two_robot evac, the seat's claim is not strict and the tick's is",
+			want: "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | stamp:q=42 declared=100 by=operator order=evac",
+			build: func(h *relHarness) {
+				strict(tickClaimMoved)(h)
+				_, err := h.db.DB.Exec(`UPDATE style_node_claims SET strict_pack=0 WHERE id=
+					(SELECT active_claim_id FROM process_node_runtime_states WHERE process_node_id=?)`, h.nodeID)
+				testutil.MustNoErr(h.t, err, "the seat's claim not strict")
+			},
+			act: orderClick("evac", dispEmpty), probe: pStamp},
+
+		// ── A changeover's evac, at any door: the real count ────────────────
+		{name: "d1/co two_robot pair (door 1 on a changeover task)",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | stamp:q=42",
+			build: strict(coAt(co, "evac", S, "supply", S)), act: pairClick(dispNone), probe: pStamp},
+		{name: "d2/co two_robot evac",
+			want:  "ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | stamp:q=42",
+			build: strict(coAt(co, "evac", S, "supply", D)), act: orderClick("evac", dispEmpty), probe: pStamp},
+		{name: "d2/co drop evac (door 7's arm)",
+			want:  "ok | evac=in_transit | rel=evac | ingest=1 capred=0 | stamp:q=42",
+			build: strict(coAt(drop, "evac", S)), act: orderClick("evac", dispNone), probe: pStamp},
+		{name: "d5/co two_robot sweep",
+			want:  "ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[] | stamp:q=42",
+			build: strict(coAt(co, "evac", S, "supply", S)), act: sweepClick(dispNone), probe: pStamp},
+		{name: "d6/co drop at the station button (to door 5, the drop arm)",
+			want:  "ok | evac=in_transit | rel=evac | ingest=1 capred=0 | stamp:q=42",
+			build: strict(coAt(drop, "evac", S)), act: pairClick(dispNone), probe: pStamp},
+
+		// ── Doors 3 and 4 never finalize ────────────────────────────────────
+		{name: "d3/material release of a short strict bin",
+			want:  "ok |  | rel=- | ingest=0 capred=0 | stamp:none",
+			build: strict(func(h *relHarness) { h.seedNode(twoRobot) }), act: materialTap(0), probe: pStamp},
+		{name: "d4/position evac of a short strict bin",
+			want:  "ok |  | rel=- | ingest=0 capred=0 | stamp:none",
+			build: strict(func(h *relHarness) { h.seedNode(twoRobot) }), act: positionEvac, probe: pStamp},
+	})
 }

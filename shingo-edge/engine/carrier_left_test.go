@@ -113,10 +113,8 @@ func TestCarrierLeft_EveryDoorClearsTheIdentity(t *testing.T) {
 		testutil.MustNoErr(t, err, "read departing order")
 		node, err := db.GetProcessNode(nodeID)
 		testutil.MustNoErr(t, err, "read node")
-		rt, err := db.GetProcessNodeRuntime(nodeID)
-		testutil.MustNoErr(t, err, "read runtime")
 		eng := testEngine(t, db)
-		testutil.MustNoErr(t, eng.finalizeDepartingProduce(node, rt, departing), "finalize")
+		testutil.MustNoErr(t, eng.finalizeDepartingProduce(node, departing, finalizeBy{}), "finalize")
 		assertCarrierLeft(t, db, nodeID, "produce finalize")
 	})
 }

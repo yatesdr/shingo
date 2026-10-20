@@ -119,7 +119,7 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	if p.Supply != nil {
 		legs = append(legs, actLeg{orderID: *p.Supply, label: "supply", press: press, disp: ReleaseDisposition{CalledBy: disp.CalledBy}})
 	}
-	act.pressPaperwork = func() error { return e.commitPairPaperwork(p, pl) }
+	act.pressPaperwork = func() error { return e.commitPairPaperwork(act, p, pl) }
 	_, _, err := e.runAct(act, legs)
 	return err
 }

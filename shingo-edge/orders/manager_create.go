@@ -336,24 +336,29 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 	return m.db.GetOrder(orderID)
 }
 
-// QueueIngestManifest sends a manifest-only ingest stamp to Core WITHOUT
-// minting a local order. Swap-mode produce finalize uses this: the swap's
-// complex order carries the bin, and the ingest exists only to stamp Core's
-// bin manifest. Creating a local order there made a phantom that the
-// operator-abort fan-out later cancelled, producing the "not_found" error —
-// and Core's manifest-only ingest handler creates no order and sends no reply,
-// so nothing ever matched it back. This mirrors CreateIngestOrder's envelope
-// but ships it through the fire-and-forget Queue path (like ConfirmDelivery's
-// receipt): no order row, no transition, no EmitOrderCreated. The stamp is
-// delivered by the durable outbox: an ingest never expires and never
-// dead-letters (protocol.TypeOrderIngest's TTL, the drainer's exemption), and
-// binEpoch fences a late one to the life of the bin it counted.
-// binID (0 = absent) pins the exact Core bin for the release-time produce
-// manifest — see protocol.OrderIngestRequest.BinID; binEpoch (0 = absent) is
-// OrderIngestRequest.BinEpoch.
-// IngestEnvelope is QueueIngestManifest's envelope, encoded for a caller that
-// writes the outbox row inside its own transaction (the release ledger's).
-func (m *Manager) IngestEnvelope(payloadCode, binLabel string, binID, binEpoch int64, sourceNode string, quantity int64, producedAt string) ([]byte, string, error) {
+// IngestDeclaration is a station's RELEASE FULL on a bin it counted below its
+// pack, carried on the release-time ingest beside the counted Quantity
+// (protocol.OrderIngestRequest.DeclaredQty, CalledBy, OrderID): Core books the
+// count and then stamps the bin to Qty with a row naming who declared it. The
+// zero value is no declaration, and the ingest carries none of the three keys.
+type IngestDeclaration struct {
+	Qty      int64  // the pack declared; 0 = none
+	CalledBy string // who pressed RELEASE
+	OrderID  string // the departing order's Edge UUID
+}
+
+// IngestEnvelope encodes a manifest-only ingest for a caller that writes the
+// outbox row inside its own transaction: the release-time produce finalize,
+// whose ledger row commits with it. No local order is minted (a local order
+// there was a phantom the operator-abort fan-out later cancelled, and Core's
+// manifest-only handler sends no reply to match it back); the swap's own order
+// carries the bin. The row is delivered by the durable outbox: an ingest never
+// expires and never dead-letters (protocol.TypeOrderIngest's TTL, the drainer's
+// exemption). binID (0 = absent) pins the exact Core bin
+// (protocol.OrderIngestRequest.BinID); binEpoch (0 = absent) fences a late
+// ingest to the life of the bin it counted. declared is the station's
+// declaration, when there is one.
+func (m *Manager) IngestEnvelope(payloadCode, binLabel string, binID, binEpoch int64, sourceNode string, quantity int64, producedAt string, declared IngestDeclaration) ([]byte, string, error) {
 	env, err := m.sender.build(protocol.TypeOrderIngest, &protocol.OrderIngestRequest{
 		OrderUUID:   uuid.New().String(),
 		BinID:       binID,
@@ -363,6 +368,9 @@ func (m *Manager) IngestEnvelope(payloadCode, binLabel string, binID, binEpoch i
 		SourceNode:  sourceNode,
 		Quantity:    quantity,
 		ProducedAt:  producedAt,
+		DeclaredQty: declared.Qty,
+		CalledBy:    declared.CalledBy,
+		OrderID:     declared.OrderID,
 	})
 	if err != nil {
 		return nil, "", err
@@ -395,6 +403,10 @@ func (m *Manager) HoldDroppedEnvelope(d protocol.HoldDropped) ([]byte, string, e
 	return data, protocol.SubjectHoldDropped, nil
 }
 
+// QueueIngestManifest sends the same manifest-only ingest through the
+// fire-and-forget Queue path, for a caller with no transaction of its own: the
+// manual ingest door (the www apiCreateIngestOrder handler). It carries no
+// declaration.
 func (m *Manager) QueueIngestManifest(payloadCode, binLabel string, binID, binEpoch int64, sourceNode string, quantity int64, manifest []protocol.IngestManifestItem, producedAt string) error {
 	return m.sender.Queue(protocol.TypeOrderIngest, &protocol.OrderIngestRequest{
 		OrderUUID:   uuid.New().String(),

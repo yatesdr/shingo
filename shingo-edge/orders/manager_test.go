@@ -302,3 +302,51 @@ func TestHoldDroppedEnvelope_IsAnOutboxRowForCore(t *testing.T) {
 		t.Errorf("body = %s %+v, want %s %+v", body.Subject, back, protocol.SubjectHoldDropped, drop)
 	}
 }
+
+// TestIngestEnvelope_CarriesTheDeclaration: the release-time ingest names a
+// station's declaration of a full bin beside its counted Quantity, and an
+// ingest with no declaration carries none of the three keys (the bytes an
+// older Edge sent).
+func TestIngestEnvelope_CarriesTheDeclaration(t *testing.T) {
+	t.Parallel()
+	mgr := NewManager(testManagerDB(t), testEmitter{}, "edge.station")
+	decode := func(data []byte) (protocol.OrderIngestRequest, map[string]json.RawMessage) {
+		t.Helper()
+		var env protocol.Envelope
+		testutil.MustNoErr(t, json.Unmarshal(data, &env), "decode envelope")
+		var req protocol.OrderIngestRequest
+		testutil.MustNoErr(t, env.DecodePayload(&req), "decode ingest")
+		var keys map[string]json.RawMessage
+		testutil.MustNoErr(t, env.DecodePayload(&keys), "decode ingest keys")
+		return req, keys
+	}
+
+	plain, msgType, err := mgr.IngestEnvelope("SYN44-PARTA.06", "", 7201, 3, "ALN_011", 131, "2026-10-20T08:15:00Z", IngestDeclaration{})
+	testutil.MustNoErr(t, err, "build plain")
+	if msgType != protocol.TypeOrderIngest {
+		t.Errorf("msg type = %q, want %q", msgType, protocol.TypeOrderIngest)
+	}
+	req, keys := decode(plain)
+	if req.Quantity != 131 || req.DeclaredQty != 0 {
+		t.Errorf("plain ingest = quantity %d declared %d, want 131 and none", req.Quantity, req.DeclaredQty)
+	}
+	for _, k := range []string{"declared_qty", "called_by", "order_id"} {
+		if _, ok := keys[k]; ok {
+			t.Errorf("plain ingest carries %q, want the key absent", k)
+		}
+	}
+
+	const departing = "0b6d1f7e-3c55-4c3e-9a51-2f4a1b7c9d10"
+	stamped, _, err := mgr.IngestEnvelope("SYN44-PARTA.06", "", 7201, 3, "ALN_011", 131, "2026-10-20T08:15:00Z",
+		IngestDeclaration{Qty: 132, CalledBy: "operator", OrderID: departing})
+	testutil.MustNoErr(t, err, "build stamped")
+	req, _ = decode(stamped)
+	if req.Quantity != 131 || req.DeclaredQty != 132 || req.CalledBy != "operator" || req.OrderID != departing {
+		t.Errorf("stamped ingest = quantity %d declared %d by %q order %q, want 131, 132, operator, %s",
+			req.Quantity, req.DeclaredQty, req.CalledBy, req.OrderID, departing)
+	}
+	if req.OrderUUID == departing || req.OrderUUID == "" {
+		t.Errorf("order_uuid = %q: the message's own id, never the departing order's", req.OrderUUID)
+	}
+	t.Logf("bytes: plain %d, stamped %d (+%d)", len(plain), len(stamped), len(stamped)-len(plain))
+}

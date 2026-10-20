@@ -376,7 +376,7 @@ func (e *Engine) carryFlipBucket(node, partner *processes.Node, orderUUID string
 		return
 	}
 	c := splitFlipCarry(int(a.PendingUOPDelta), b.ActiveBinID != nil, b.RemainingUOPCached,
-		int(b.PendingUOPDelta), b.PendingUOPPayload, part, strictPackFor(bClaim, b))
+		int(b.PendingUOPDelta), b.PendingUOPPayload, part, strictPackFor(bClaim))
 	for i := range c.drops {
 		c.drops[i].CalledBy, c.drops[i].OrderID = holdDropByFlip, orderUUID
 	}

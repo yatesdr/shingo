@@ -26,6 +26,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/domain"
+	ordermgr "shingoedge/orders"
 	"shingoedge/release"
 	"shingoedge/store"
 	storemsg "shingoedge/store/messaging"
@@ -73,7 +74,7 @@ func (e *Engine) commitLeg(act *releaseAct, p release.LegPlan, ll *legLoad) (rel
 	case release.Refuse:
 		return false, p.Refusal
 	}
-	if err := e.applyLeg(p, ll); err != nil {
+	if err := e.applyLeg(act, p, ll); err != nil {
 		failed := release.CommitFailure(act.Act, ll.snap, err)
 		e.emitLogs(failed.Logs)
 		return false, failed.Refusal
@@ -81,7 +82,7 @@ func (e *Engine) commitLeg(act *releaseAct, p release.LegPlan, ll *legLoad) (rel
 	return true, nil
 }
 
-func (e *Engine) applyLeg(p release.LegPlan, ll *legLoad) error {
+func (e *Engine) applyLeg(act *releaseAct, p release.LegPlan, ll *legLoad) error {
 	order, disp := ll.order, ll.disp
 	if p.Arm == release.ArmPlain {
 		// Orders without a process node (pure kanban, generic moves) skip the
@@ -102,7 +103,7 @@ func (e *Engine) applyLeg(p release.LegPlan, ll *legLoad) error {
 		return e.orderMgr.ReleaseOrder(order.ID, nil, disp.CalledBy, ll.echo())
 	case release.ArmDrop:
 		if p.Finalize && !ll.finalized {
-			if err := e.finalizeDepartingProduce(ll.node, ll.runtime, order); err != nil {
+			if err := e.finalizeDepartingProduce(ll.node, order, byLeg(act, ll)); err != nil {
 				return err
 			}
 		}
@@ -111,7 +112,7 @@ func (e *Engine) applyLeg(p release.LegPlan, ll *legLoad) error {
 	// After the flip: on a sequential press the line is already on the
 	// partner, so no tick lands on this bin between its count and its clear.
 	if p.Finalize && !ll.finalized {
-		if err := e.finalizeDepartingProduce(ll.node, ll.runtime, order); err != nil {
+		if err := e.finalizeDepartingProduce(ll.node, order, byLeg(act, ll)); err != nil {
 			return err
 		}
 	}
@@ -430,18 +431,37 @@ func (e *Engine) logCapture(orderID int64, requested, applied ReleaseDisposition
 // before it belong to the departing bin, parts made after it to the next one.
 // It is the operator's declaration, so it stands through a Core refusal.
 //
-// Three steps, in this order:
+// Under countMu, from the seat as it stands when the lock is taken (not the
+// act's earlier read of it), in this order:
 //  1. flush the accumulator, so the ticks of the last window reach Core
 //     before the ingest bumps the bin's epoch (no stale-epoch drops);
 //  2. queue the ingest: the Edge's count, the bin and its epoch, and the
 //     departing ORDER's payload (for a changeover evac, the outgoing style's).
-//     No manifest lines: Core resolves the payload's template;
+//     No manifest lines: Core resolves the payload's template. A station's
+//     RELEASE of a strict bin counted below its pack also declares the pack
+//     (declaredFull), which Core stamps; the count itself is never clamped;
 //  3. clear the slot (carrierLeft), so later ticks hold and replay onto the
 //     next bin.
 //
+// THE COUNT IS READ UNDER THE LOCK THAT CLEARS IT. Every tick's count write
+// takes countMu, so a tick lands either before the read (and ships in this
+// ingest) or after the clear (and is held for the next bin of the part). Read
+// any earlier, a tick between the read and the clear was charged to the seat,
+// left out of the ingest and zeroed by the clear: counted nowhere. Order:
+// countMu, then the accumulator's flush lock (inside Flush). The caller holds
+// neither; a sequential release's flip (commitFlip) takes and drops countMu
+// before this runs.
+//
 // ONCE PER DEPARTING ORDER, through the ledger (release_paperwork, kind
-// ingest). A zero count ships nothing.
-func (e *Engine) finalizeDepartingProduce(node *processes.Node, runtime *processes.RuntimeState, departing *storeorders.Order) error {
+// ingest). A zero count ships nothing, so an empty bin released FULL is
+// neither ingested nor declared.
+func (e *Engine) finalizeDepartingProduce(node *processes.Node, departing *storeorders.Order, by finalizeBy) error {
+	e.countMu.Lock()
+	defer e.countMu.Unlock()
+	runtime, err := e.db.GetProcessNodeRuntime(node.ID)
+	if err != nil {
+		return fmt.Errorf("node %s: read the seat to finalize its bin: %w", node.Name, err)
+	}
 	if runtime == nil || runtime.RemainingUOPCached <= 0 {
 		e.logFn("produce release: node %s remaining=%d — no release-time manifest to stamp",
 			node.Name, runtimeRemaining(runtime))
@@ -467,6 +487,12 @@ func (e *Engine) finalizeDepartingProduce(node *processes.Node, runtime *process
 	if runtime.ActiveBinID != nil {
 		binID = *runtime.ActiveBinID
 	}
+	var declared ordermgr.IngestDeclaration
+	if pack := e.declaredFull(node, runtime, by); pack > 0 {
+		declared = ordermgr.IngestDeclaration{Qty: int64(pack), CalledBy: by.calledBy, OrderID: departing.UUID}
+		e.logRelease("order=%d node=%s — counted %d of a strict pack of %d; declared full by %q",
+			departing.ID, node.Name, qty, pack, by.calledBy)
+	}
 	if e.inventoryDelta != nil {
 		e.inventoryDelta.Flush()
 	}
@@ -475,7 +501,7 @@ func (e *Engine) finalizeDepartingProduce(node *processes.Node, runtime *process
 	// parts_per_cycle. The outbox row and its ledger row commit together:
 	// a crash between them leaves neither, and the release is retried.
 	envelope, msgType, err := e.orderMgr.IngestEnvelope(payload, "", binID, runtime.ActiveBinEpoch, node.CoreNodeName, qty,
-		time.Now().UTC().Format(time.RFC3339))
+		time.Now().UTC().Format(time.RFC3339), declared)
 	if err != nil {
 		return fmt.Errorf("queue release-time ingest for node %s: %w", node.Name, err)
 	}
@@ -497,6 +523,51 @@ func (e *Engine) finalizeDepartingProduce(node *processes.Node, runtime *process
 	return nil
 }
 
+// finalizeBy is what the finalize knows of the act that let the bin go, for
+// the declaration: the door, who pressed it, whether the bin leaves on a
+// changeover's evac, and the claims the door already read.
+type finalizeBy struct {
+	origin   release.Origin
+	calledBy string
+	// changeover: the bin leaves on a changeover's evac (a drop's included),
+	// at whatever door. A changeover ships the real count.
+	changeover bool
+	// claim is the node's claim as a tick resolves it (store.ActiveStyleFirst),
+	// when the door read it (the pair door's). nil: declaredFull reads it.
+	claim *processes.NodeClaim
+}
+
+// byLeg is the finalize's account of a leg's act.
+func byLeg(act *releaseAct, ll *legLoad) finalizeBy {
+	return finalizeBy{origin: act.Origin, calledBy: act.CalledBy,
+		changeover: ll.nodeTask != nil || ll.snap.Drop}
+}
+
+// declaredFull is the pack a release declares the departing bin full at, or
+// 0 for none (the count ships alone). It declares only for a station's RELEASE
+// (doors 1 and 2, the sim's auto-operator among them) that is not a
+// changeover's evac, of a bin counted below the pack of a claim the strict arm
+// applies to. The claim and the test are the cap's own: the node's claim as a
+// tick resolves it, its strictPackFor against the seat's count as the finalize
+// read it, so a bin is declared full exactly when a tick landing now would be capped at
+// that pack. A count at or above the pack is not declared: it ships as counted.
+func (e *Engine) declaredFull(node *processes.Node, rt *processes.RuntimeState, by finalizeBy) int {
+	if (by.origin != release.OriginStationPair && by.origin != release.OriginStationOrder) || by.changeover {
+		return 0
+	}
+	claim := by.claim
+	if claim == nil {
+		// The door's own claim (the per-order door's toClaim, the seat
+		// pointer's) is not the tick's: a tick matches the active style's
+		// claim whatever the seat names, so that is the one read.
+		claim = requestedClaimAtNode(e.db, node)
+	}
+	if pack := strictPackFor(claim); pack > rt.RemainingUOPCached {
+		return pack
+	}
+	return 0
+}
+
 // runtimeRemaining is a nil-safe read for log lines.
 func runtimeRemaining(runtime *processes.RuntimeState) int {
 	if runtime == nil {
@@ -510,10 +581,12 @@ func runtimeRemaining(runtime *processes.RuntimeState) int {
 // commitPairPaperwork is the pair click's press paperwork: the departing bin
 // is finalized FIRST, before either release envelope, whether its legs go on
 // this click or hold — the operator's RELEASE is the declaration that the bin
-// is full (the held press).
-func (e *Engine) commitPairPaperwork(p release.PairPlan, pl *pairLoad) error {
+// is full (the held press). A changeover task at the node makes it a
+// changeover's evac.
+func (e *Engine) commitPairPaperwork(act *releaseAct, p release.PairPlan, pl *pairLoad) error {
 	if p.Finalize {
-		return e.finalizeDepartingProduce(pl.node, pl.runtime, pl.evac)
+		return e.finalizeDepartingProduce(pl.node, pl.evac, finalizeBy{origin: act.Origin, calledBy: act.CalledBy,
+			changeover: pl.task != nil, claim: pl.claim})
 	}
 	return nil
 }

@@ -16,6 +16,7 @@ import (
 	"log"
 	"slices"
 	"strings"
+	"sync"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -128,7 +129,39 @@ func scanNodeClaim(scanner interface{ Scan(...any) error }) (NodeClaim, error) {
 		_ = json.Unmarshal([]byte(keyRouteJSON), &c.KeyRoute)
 	}
 	logUnreachableProduceReorderPoint(c)
+	logStrictPackWithoutPack(c)
 	return c, nil
+}
+
+// strictNoPackLogged keeps logStrictPackWithoutPack to one line per claim and
+// part: the scan runs on every claim read, the counter tick's included.
+var strictNoPackLogged sync.Map
+
+// logStrictPackWithoutPack says so when a produce claim carries strict_pack
+// and its part has no pack (the catalog's capacity is 0, or the catalog has no
+// row for it): the strict arm needs a pack to cap at (engine
+// strictPackApplies), so the claim's bins count on past any pack as if the
+// flag were off. Once per claim and part for the process's life; a claim that
+// later reads a pack and then loses it again is not logged twice. The scan is
+// the seam for the same reason as logUnreachableProduceReorderPoint: it is
+// where a row becomes a claim, and every reader of the flag reads through it.
+func logStrictPackWithoutPack(c NodeClaim) {
+	if !c.StrictPack || c.Role != protocol.ClaimRoleProduce || c.UOPCapacity > 0 {
+		return
+	}
+	if _, seen := strictNoPackLogged.LoadOrStore(strictNoPackKey{c.ID, c.PayloadCode}, struct{}{}); seen {
+		return
+	}
+	log.Printf("claim %d (%s): strict_pack is on but part %q has no pack (catalog capacity %d), so its "+
+		"bins are not capped and count on as if strict_pack were off. Sync the payload's capacity from Core "+
+		"or turn strict_pack off.",
+		c.ID, c.CoreNodeName, c.PayloadCode, c.UOPCapacity)
+}
+
+// strictNoPackKey names one claim's part for logStrictPackWithoutPack.
+type strictNoPackKey struct {
+	id   int64
+	part string
 }
 
 // logUnreachableProduceReorderPoint says so when a produce claim's reorder

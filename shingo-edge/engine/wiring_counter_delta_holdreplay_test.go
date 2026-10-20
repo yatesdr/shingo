@@ -308,8 +308,8 @@ func TestCharSP_FirstBoundTickReplaysTheWholeHold(t *testing.T) {
 //
 // The pack is the tick's matched claim's UOPCapacity (catalog-resolved on every
 // read), the gate is strictPackApplies, and the split is splitStrict. Unless a
-// pin says otherwise the pack is 132, the seat names the claim
-// (active_claim_id), and the claim's part is WIDGET-A.
+// pin says otherwise the pack is 132, the seat names the claim (the gate does
+// not read active_claim_id), and the claim's part is WIDGET-A.
 
 const strictPack = 132
 
@@ -629,22 +629,53 @@ func assertTodaysChargeStatement(t *testing.T, stmts []string) {
 	}
 }
 
-// TestStrictPack_InertWhenTheSeatNamesNoClaim: a runtime row whose
+// TestStrictPack_CapsWhenTheSeatNamesNoClaim: a runtime row whose
 // active_claim_id is NULL (a seat never through a changeover, a Clear or a
-// Record Count) takes today's uncapped charge under the gate as written:
-// strictPackApplies requires the seat to name the tick's claim. STOP S1 is open
-// on that conjunct; this pin states today's answer, so a ruling is one line in
-// strictPackApplies and this pin's expectation.
-func TestStrictPack_InertWhenTheSeatNamesNoClaim(t *testing.T) {
+// Record Count) is capped like any other: the gate reads the tick's matched
+// claim, not the seat's pointer. The bin at 131 takes 1 to the pack and the
+// other 1 is held for the next bin.
+func TestStrictPack_CapsWhenTheSeatNamesNoClaim(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng, sink, processID, nodeID, styleID, _ := strictSeatOn(t, db, strictPack, 131, 0, "", true)
 	_, err := db.DB.Exec(`UPDATE process_node_runtime_states SET active_claim_id=NULL WHERE process_node_id=?`, nodeID)
 	testutil.MustNoErr(t, err, "clear the seat's claim")
 	charSPTick(eng, processID, styleID, 2)
-	assertSeat(t, eng, nodeID, 133, 0, "")
-	if len(sink.binCalls) != 1 || emitted(t, sink) != 2 {
-		t.Errorf("deltas = %+v, want one produce_tick of 2", sink.binCalls)
+	assertSeat(t, eng, nodeID, strictPack, 1, "WIDGET-A")
+	if len(sink.binCalls) != 1 || emitted(t, sink) != 1 {
+		t.Errorf("deltas = %+v, want one produce_tick of 1", sink.binCalls)
+	}
+}
+
+// TestStrictPack_NoPackIsLoggedOncePerClaim: a strict produce claim whose
+// payload has no pack (catalog capacity 0) cannot be capped, and says so once
+// for the claim however many times it is read, while the ticks count on
+// uncapped. Not parallel: it captures the global logger.
+func TestStrictPack_NoPackIsLoggedOncePerClaim(t *testing.T) {
+	db := testEngineDB(t)
+	const part = "SYN-S1-NOPACK"
+	processID, nodeID, styleID, claimID := seedProduceNode(t, db, protocol.SwapModeTwoRobot)
+	_, err := db.DB.Exec(`INSERT INTO payload_catalog (id, name, code, uop_capacity, updated_at)
+		VALUES ((SELECT COALESCE(MAX(id),0)+1 FROM payload_catalog), ?, ?, 0, datetime('now'))`, part, part)
+	testutil.MustNoErr(t, err, "catalog row with no pack")
+	_, err = db.DB.Exec(`UPDATE style_node_claims SET payload_code=?, strict_pack=1 WHERE id=?`, part, claimID)
+	testutil.MustNoErr(t, err, "strict claim of the part")
+	bin := int64(7311)
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bin, 131), "bind the bin")
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+	eng.SetInventoryDeltaSink(&fakeDeltaSink{})
+	buf := captureLog(t)
+
+	charSPTick(eng, processID, styleID, 2)
+	charSPTick(eng, processID, styleID, 2)
+
+	if rt := runtimeOf(t, eng, nodeID); rt.RemainingUOPCached != 135 {
+		t.Errorf("count = %d, want 135: no pack, no cap", rt.RemainingUOPCached)
+	}
+	want := fmt.Sprintf("claim %d (PRODUCE-NODE): strict_pack is on", claimID)
+	if got := strings.Count(buf.String(), want); got != 1 {
+		t.Errorf("lines naming the uncappable strict claim = %d, want 1; log:\n%s", got, buf.String())
 	}
 }
 

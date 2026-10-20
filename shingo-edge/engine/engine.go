@@ -69,7 +69,9 @@ type Engine struct {
 	// countMu serialises every path that moves a seat's count in the
 	// database, and records the same change in the delta accumulator where
 	// there is one (a PLC tick's drain, hold-and-replay and record; a
-	// release's capture and count; a pickup's leave; a landing's bind; an
+	// release's capture and count; a produce bin's finalize, from its read of
+	// the count through the ingest to the clear; a pickup's leave; a
+	// landing's bind; an
 	// operator's fenced count; a pile Clear, strand, node retire or process
 	// delete), against the lineside report's snapshot, which reads the
 	// database and the accumulator's unflushed counts and sent pile levels

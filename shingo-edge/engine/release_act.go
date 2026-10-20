@@ -56,7 +56,7 @@ func (e *Engine) commitAct(act *releaseAct, p release.ActPlan, lls []*legLoad) e
 			ll.flipped = true
 		}
 		if d.Trunk.Finalize && ll.order != nil {
-			if err := e.finalizeDepartingProduce(ll.node, ll.runtime, ll.order); err != nil {
+			if err := e.finalizeDepartingProduce(ll.node, ll.order, byLeg(act, ll)); err != nil {
 				return err
 			}
 			ll.finalized = true

@@ -560,9 +560,9 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 	// A fill's carrier is the part it is being filled with, the claim's
 	// (producedPayload): an empty arrives known-empty, so its resident part
 	// would never match the hold.
-	part := producedPayload(claim)
-	runtime, _, binAttributed := e.applyHoldAndReplay(node, runtime, delta, +1, func(rt *processes.RuntimeState) tickParts {
-		return tickParts{tick: part, carrier: part, pack: strictPackFor(claim, rt), produce: true}
+	part, pack := producedPayload(claim), strictPackFor(claim)
+	runtime, _, binAttributed := e.applyHoldAndReplay(node, runtime, delta, +1, func(*processes.RuntimeState) tickParts {
+		return tickParts{tick: part, carrier: part, pack: pack, produce: true}
 	})
 
 	if e.inventoryDelta != nil && binAttributed > 0 {
@@ -600,21 +600,26 @@ func producedPayload(claim *processes.NodeClaim) string {
 // ── Strict pack ──────────────────────────────────────────────────────────
 
 // strictPackApplies is the gate for the strict arm: the tick's matched claim
-// carries strict_pack, is a produce claim, has a pack (UOPCapacity, resolved
-// from the catalog on every read; the claim's uop_capacity column is dead and a
-// produce bin's resident payload is "" for the whole fill, so neither is read),
-// and the seat names this claim as its active claim, so a bin still bound under
-// an outgoing claim is not capped at another part's pack. The mode is not read:
-// the cap is per seat.
-func strictPackApplies(claim *processes.NodeClaim, rt *processes.RuntimeState) bool {
-	return claim != nil && rt != nil && claim.StrictPack && claim.Role == protocol.ClaimRoleProduce &&
-		claim.UOPCapacity > 0 && rt.ActiveClaimID != nil && *rt.ActiveClaimID == claim.ID
+// carries strict_pack, is a produce claim, and has a pack (UOPCapacity,
+// resolved from the catalog on every read; the claim's uop_capacity column is
+// dead and a produce bin's resident payload is "" for the whole fill, so
+// neither is read). The seat's active_claim_id is not read: it is NULL on a
+// seat never through a changeover, a Clear or a Record Count, which would
+// leave the arm off at exactly the seats it is for. A bin still bound under an
+// outgoing claim after a cutover is the case the pointer could tell apart; the
+// tick matches the active style's claim and the cutover clears the departing
+// part's hold, so that bin is capped at the incoming pack only for the ticks
+// that land on it before it leaves. The mode is not read: the cap is per seat.
+// A strict claim with no pack is logged where the claim is read
+// (processes.logStrictPackWithoutPack), so the arm is never off in silence.
+func strictPackApplies(claim *processes.NodeClaim) bool {
+	return claim != nil && claim.StrictPack && claim.Role == protocol.ClaimRoleProduce && claim.UOPCapacity > 0
 }
 
 // strictPackFor is the pack the strict arm caps the seat's bound bin at, or 0
 // when strictPackApplies says it does not apply.
-func strictPackFor(claim *processes.NodeClaim, rt *processes.RuntimeState) int {
-	if !strictPackApplies(claim, rt) {
+func strictPackFor(claim *processes.NodeClaim) int {
+	if !strictPackApplies(claim) {
 		return 0
 	}
 	return claim.UOPCapacity
