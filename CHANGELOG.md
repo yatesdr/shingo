@@ -3,6 +3,25 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-20 — Strict pack: a produce bin stops counting at its pack
+
+Core and Edge (Edge v26; no Core migration). Deploy Core before Edge. Not deployed.
+
+- A produce claim may set strict pack: its bin is charged to its pack, the rest waits for the next bin (v26)
+- A bin's count is never written down; a count already past the pack takes nothing more
+- An unbound produce seat holds strokes only while a live order is bringing a carrier
+- With nothing coming, a standing pile is dropped with a row and the strokes are reported as one no_bin row
+- A 60 s sweep and a boot pass drop standing piles with no carrier coming; the first boot writes off today's piles
+- A cutover clears the departing part's produce holds with a row
+- A sequential flip carries the released side's held parts onto its partner's bin
+- A station's RELEASE FULL of a short strict bin is stamped by Core to the booked part's pack, with a row
+- A produce release reads its count under the count lock, so a stroke during the release is not lost
+- A tooling evacuate no longer turns off counting on a press-index press
+- A sequential pair a tooling evacuate left dark counts on the side the next carrier lands on
+- Dropped holds and stamps are listed on /inventory's ledger page, node and time on every row
+- Strict pack on with no resolvable pack is logged once per claim
+- Sim builds only: `/api/sim/overrun` lets a sim PLC keep stroking past a full or absent bin (test equipment)
+
 ## 2026-10-19 — Pick a part: the floor describes, Shingo finds the engineer's recipe
 
 Edge v25; Core binary (seeder and plantspec) only, no Core migration. Deploy Edge; Core at leisure. Not deployed.
