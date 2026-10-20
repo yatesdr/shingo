@@ -96,7 +96,7 @@ func TestSimMachineReady_IsTheSameAnswerTheFakePLCGets(t *testing.T) {
 	t.Parallel()
 	f := newMachineFixture(t)
 
-	if !SimMachineReady(f.db.DB, f.processID, f.styleID) {
+	if !SimMachineReady(f.db.DB, f.processID, f.styleID, false) {
 		t.Fatal("a fully bound, mid-count cell read as NOT ready — the fake PLC would refuse to tick it")
 	}
 }
@@ -110,7 +110,76 @@ func TestSimMachineReady_FailsOpen(t *testing.T) {
 
 	// An unknown process has no nodes: nothing refuses, so the machine reads
 	// ready and the PLC keeps ticking.
-	if !SimMachineReady(f.db.DB, 999999, f.styleID) {
+	if !SimMachineReady(f.db.DB, 999999, f.styleID, false) {
 		t.Error("an unknown process read as NOT ready")
 	}
+}
+
+// TestSimMachineReady_OverrunStrokesPastAFullOrAbsentProduceCarrier pins the
+// overrun switch (POST /api/sim/overrun): the cell keeps cycling with its output
+// carrier at the pack, past it, or with no carrier on the seat, where without
+// the switch it stops.
+func TestSimMachineReady_OverrunStrokesPastAFullOrAbsentProduceCarrier(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name  string
+		binID int64
+		count int
+	}{
+		{name: "at the pack", binID: 39, count: 20},
+		{name: "past the pack", binID: 39, count: 27},
+		{name: "no carrier on the seat", binID: 0, count: 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			f := newMachineFixture(t)
+			f.packAssy(t)
+			f.setRuntime(t, f.produceID, produceClaimID(t, f), c.binID, c.count)
+			if SimMachineReady(f.db.DB, f.processID, f.styleID, false) {
+				t.Error("overrun off: the cell cycled; want it stopped")
+			}
+			if !SimMachineReady(f.db.DB, f.processID, f.styleID, true) {
+				t.Error("overrun on: the cell stopped; want it cycling")
+			}
+		})
+	}
+}
+
+// TestSimMachineReady_OverrunStillStopsAStarvedInput: the switch drops the
+// produce stops only. An input at 0 with no pile, or with no carrier, still
+// stops the cell, with the output full beside it so the produce seat is not
+// what decides.
+func TestSimMachineReady_OverrunStillStopsAStarvedInput(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name  string
+		binID int64
+	}{
+		{name: "input at 0", binID: 23},
+		{name: "no input carrier", binID: 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			f := newMachineFixture(t)
+			f.packAssy(t)
+			var consumeClaim int64
+			testutil.MustNoErr(t, f.db.DB.QueryRow(
+				`SELECT id FROM style_node_claims WHERE style_id = ? AND core_node_name = 'ALN_003'`, f.styleID).Scan(&consumeClaim),
+				"consume claim id")
+			f.setRuntime(t, f.consumeID, consumeClaim, c.binID, 0)
+			f.setRuntime(t, f.produceID, produceClaimID(t, f), 39, 20)
+			if SimMachineReady(f.db.DB, f.processID, f.styleID, true) {
+				t.Error("overrun on: a starved cell cycled; want it stopped")
+			}
+		})
+	}
+}
+
+// packAssy gives the produce seat's part its catalog pack of 20. The fixture's
+// claims are written without the seed seam (seedClaimCapacity), so its produce
+// claim resolves a capacity of 0, which never reads full.
+func (f *machineFixture) packAssy(t *testing.T) {
+	t.Helper()
+	testutil.MustNoErr(t, seedClaimCapacity(f.db, processes.NodeClaimInput{PayloadCode: "ASSY", UOPCapacity: 20}),
+		"ASSY's pack")
 }

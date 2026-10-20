@@ -86,12 +86,12 @@ func TestSimMachineReady_ConsumeAtZeroRunsOnThePile(t *testing.T) {
 	t.Parallel()
 	f := newMachineFixture(t)
 	f.setRuntime(t, f.consumeID, consumeClaimID(t, f), 23, 0)
-	if SimMachineReady(f.db.DB, f.processID, f.styleID) {
+	if SimMachineReady(f.db.DB, f.processID, f.styleID, false) {
 		t.Fatal("control: a consume seat at 0 with no pile read as ready")
 	}
 	_, err := f.db.CaptureLinesideBucket(f.consumeID, "PANEL-B", 2)
 	testutil.MustNoErr(t, err, "pile 2 PANEL-B")
-	if !SimMachineReady(f.db.DB, f.processID, f.styleID) {
+	if !SimMachineReady(f.db.DB, f.processID, f.styleID, false) {
 		t.Error("a consume seat at 0 with 2 on the pile read as NOT ready: the weld runs on the bucket")
 	}
 }
@@ -102,7 +102,7 @@ func TestSimMachineReady_ConsumeWithNoCarrierRunsOnThePile(t *testing.T) {
 	f.setRuntime(t, f.consumeID, consumeClaimID(t, f), 0, 0)
 	_, err := f.db.CaptureLinesideBucket(f.consumeID, "PANEL-B", 2)
 	testutil.MustNoErr(t, err, "pile 2 PANEL-B")
-	if !SimMachineReady(f.db.DB, f.processID, f.styleID) {
+	if !SimMachineReady(f.db.DB, f.processID, f.styleID, false) {
 		t.Error("a consume seat with no carrier and 2 on the pile read as NOT ready")
 	}
 }
@@ -113,7 +113,7 @@ func TestSimMachineReady_AnotherPartsPileDoesNotFeedTheSeat(t *testing.T) {
 	f.setRuntime(t, f.consumeID, consumeClaimID(t, f), 0, 0)
 	_, err := f.db.CaptureLinesideBucket(f.consumeID, "OTHER-PART", 2)
 	testutil.MustNoErr(t, err, "pile 2 OTHER-PART")
-	if SimMachineReady(f.db.DB, f.processID, f.styleID) {
+	if SimMachineReady(f.db.DB, f.processID, f.styleID, false) {
 		t.Error("a pile of another part fed a PANEL-B seat")
 	}
 }

@@ -21,7 +21,7 @@ import (
 // no carrier does not. That is where this logic started
 // (cmd/shingoedge/sim_enabled.go, makeReadinessGate).
 //
-// The sim OPERATOR asks it to decide whether to press RELEASE. A carrier is
+// The sim OPERATOR needs it to decide whether to press RELEASE. A carrier is
 // swapped when it is done, and "done" turns out to be the same set of facts:
 //
 //	consume node at remaining <= 0      the carrier is EMPTY      -> swap it
@@ -65,9 +65,23 @@ import (
 // other read path filters it. Without the filter here a retired produce claim
 // at capacity would hold the counter down on a node the style no longer runs.
 //
+// THE OPERATOR DOES NOT CALL THIS TODAY. The process-level operator gate the
+// two deadlocks argue for was taken back out; the sim operator's release gate is
+// binNotDone (sim_operator_bin_done.go), which reads a produce carrier as done at
+// the catalog pack and a seat with no bin as nothing to wait for, per node. The
+// fake PLC's gate (makeReadinessGate) is this function's one caller.
+//
+// OVERRUN drops the two produce stops, no carrier bound and carrier at its pack,
+// and nothing else: the cell an operator keeps running with its parts going to
+// the table while the full carrier waits for its swap, or with no carrier on the
+// seat at all. Consume starvation and every other stop still hold. Only the fake
+// PLC's gate passes it (simwarlink.FakeClient.Overrun, set per PLC by
+// POST /api/sim/overrun); binNotDone does not read it, so the operator still
+// sees a full carrier as done and releases it.
+//
 // Fail-OPEN on any error. A rig that stops swapping is worse than one that swaps
 // a carrier early, and a DB blip must not stop the line.
-func SimMachineReady(db *sql.DB, processID, styleID int64) bool {
+func SimMachineReady(db *sql.DB, processID, styleID int64, overrun bool) bool {
 	rows, err := db.Query(`
 		SELECT c.role, c.swap_mode, `+store.ClaimCapacitySQL("c")+`, r.active_bin_id, r.remaining_uop_cached, r.active_pull,
 			EXISTS (SELECT 1 FROM node_lineside_bucket b WHERE b.node_id = pn.id
@@ -114,6 +128,11 @@ func SimMachineReady(db *sql.DB, processID, styleID int64) bool {
 		// pile counts; another part's parts do not feed this input.
 		empty := !activeBinID.Valid || activeBinID.Int64 == 0
 		if role == "consume" && (empty || remainingUOP <= 0) && onPile {
+			continue
+		}
+		// An overrun cell strokes whatever its output seat holds: full, past
+		// full, or nothing.
+		if role == "produce" && overrun {
 			continue
 		}
 		// Every active non-loader node needs a bound carrier.

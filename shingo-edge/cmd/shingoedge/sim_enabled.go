@@ -121,7 +121,7 @@ func startSimSubsystems(eng *engine.Engine, cfg *config.Config, wlClient plc.War
 	// Wire the readiness gate (G3) into the fake PLC client.
 	// Compose: calendar gate AND machine-readiness gate AND downtime gate.
 	if fake, ok := wlClient.(*simwarlink.FakeClient); ok && eng.DB() != nil {
-		machineGate := makeReadinessGate(eng.DB().DB)
+		machineGate := makeReadinessGate(eng.DB().DB, fake.Overrun)
 		cal := simwarlink.NewProductionCalendar(simwarlink.CalendarConfig{
 			Enabled: cfg.Sim.Calendar.Enabled,
 			Weekend: cfg.Sim.Calendar.Weekend,
@@ -202,14 +202,13 @@ func startSimSubsystems(eng *engine.Engine, cfg *config.Config, wlClient plc.War
 // (produce node), it stops. The fake PLC uses this to suppress ticks that would
 // otherwise produce the -237 starved-line artifact (deep-dive Issue 2).
 //
-// The check: for every process_node of the process identified by plcName,
-//   - consume nodes: need active_bin_id set AND remaining_uop_cached > 0
-//   - produce nodes: need active_bin_id set
-//   - manual_swap nodes: skipped (operator-managed, not PLC-ticked)
+// The per-node conditions are engine.SimMachineReady's. overrun reports the
+// PLC's overrun switch (simwarlink.FakeClient.Overrun, set by
+// POST /api/sim/overrun); with it on, the PLC keeps counting past a full or
+// absent produce carrier, and every other stop still holds.
 //
-// Returns true if ALL non-manual_swap nodes are ready, false otherwise.
 // Returns true on any error (fail-open — a DB glitch shouldn't stop the sim).
-func makeReadinessGate(db *sql.DB) simwarlink.ReadinessFunc {
+func makeReadinessGate(db *sql.DB, overrun func(plcName string) bool) simwarlink.ReadinessFunc {
 	// The process and active style are resolved per-call from reporting_points
 	// (keyed by the PLC name the fake WarLink passes) — no startup cache, so a
 	// changeover that re-points rp.style_id is picked up on the very next tick.
@@ -233,7 +232,7 @@ func makeReadinessGate(db *sql.DB) simwarlink.ReadinessFunc {
 		// carrier is done exactly when the machine has stopped for want of it.
 		// Two copies of that is how the two drift apart, and a drift at the zero
 		// boundary deadlocks the rig. See engine.SimMachineReady.
-		return engine.SimMachineReady(db, processID, styleID)
+		return engine.SimMachineReady(db, processID, styleID, overrun(plcName))
 	}
 }
 

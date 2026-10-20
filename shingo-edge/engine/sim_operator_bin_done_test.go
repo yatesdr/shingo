@@ -116,6 +116,9 @@ func TestSimOperator_ReleasesASamePartSwapWhenTheBinIsDone(t *testing.T) {
 		{name: "consume at 0 goes", tracked: 0, want: true},
 		{name: "produce below capacity waits", produce: true, count: 19, want: false},
 		{name: "produce at capacity goes", produce: true, count: 20, want: true},
+		// An overrun cell (POST /api/sim/overrun) counts past the pack; the
+		// operator's read does not take the switch and still calls it done.
+		{name: "produce past capacity goes", produce: true, count: 27, want: true},
 		// The pair's evac took the full away; the supply bringing the empty
 		// stages on a seat with no bin. Nothing is filling, so nothing waits.
 		{name: "produce with no bin on the seat goes", produce: true, count: 0, noBin: true, want: true},

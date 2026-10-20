@@ -195,3 +195,41 @@ func TestFakeIdentityIsAWritableDINT(t *testing.T) {
 		t.Error("an identity write to a counter was accepted")
 	}
 }
+
+// TestFakeOverrunIsAPerPLCSwitch: the overrun switch is set and cleared per PLC
+// with an Overrun on OverrunTag, read back through ReadTagValue, never published
+// to the poll, and refused on a PLC with no counter, on another tag name, and
+// as a plain bool.
+func TestFakeOverrunIsAPerPLCSwitch(t *testing.T) {
+	ctx := context.Background()
+	f := NewFakeClient(ctx, twoProcessCfg(), clock.NewManual(time.Unix(0, 0)))
+	if f.Overrun("PRESS-1") {
+		t.Fatal("a fresh PLC starts overrun")
+	}
+	if err := f.WriteTagValue(ctx, "PRESS-1", OverrunTag, Overrun(true)); err != nil {
+		t.Fatalf("set overrun: %v", err)
+	}
+	if !f.Overrun("PRESS-1") || f.Overrun("LINE1-IN") {
+		t.Fatalf("overrun PRESS-1=%v LINE1-IN=%v; want true, false", f.Overrun("PRESS-1"), f.Overrun("LINE1-IN"))
+	}
+	if v, err := f.ReadTagValue(ctx, "PRESS-1", OverrunTag); err != nil || v != true {
+		t.Errorf("read overrun = %v, %v; want true", v, err)
+	}
+	tags, _ := f.ListTags(ctx, "PRESS-1")
+	if _, ok := tags["PRESS-1."+OverrunTag]; ok || len(tags) != 1 {
+		t.Errorf("the poll sees %v; want the counter alone", tags)
+	}
+	_ = f.WriteTagValue(ctx, "PRESS-1", OverrunTag, Overrun(false))
+	if f.Overrun("PRESS-1") {
+		t.Error("the switch did not clear")
+	}
+	if err := f.WriteTagValue(ctx, "NO-SUCH-PLC", OverrunTag, Overrun(true)); err == nil {
+		t.Error("overrun on a PLC with no counter was accepted")
+	}
+	if err := f.WriteTagValue(ctx, "PRESS-1", "FG_CURTAIN", Overrun(true)); err == nil {
+		t.Error("an Overrun on another tag name was accepted")
+	}
+	if err := f.WriteTagValue(ctx, "PRESS-1", OverrunTag, true); err == nil || f.Overrun("PRESS-1") {
+		t.Error("a plain bool set the overrun switch")
+	}
+}

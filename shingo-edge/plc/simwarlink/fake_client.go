@@ -32,6 +32,18 @@ var _ plc.WarlinkClient = (*FakeClient)(nil)
 // discarded.
 type Identity int64
 
+// Overrun is the overrun switch of one PLC, for a sim run to set through
+// WriteTagValue on OverrunTag. With it on, the readiness gate lets the PLC keep
+// counting while its process's produce seat is full or holds no carrier (the
+// cell an operator runs parts to the table with); see engine.SimMachineReady.
+// It is a type of its own so no ordinary bool write (a curtain) can set it.
+type Overrun bool
+
+// OverrunTag is the name the overrun switch is written and read under. It is
+// not a published tag: ListTags never returns it, so the Edge's poll does not
+// see it, and only a direct read (plc.Manager.ReadTagDirect) answers it.
+const OverrunTag = "SimOverrun"
+
 // ReadinessFunc reports whether the fake PLC should emit a tick for the given
 // plcName. When nil or returns true, the tick proceeds. When it returns false,
 // the tick is suppressed (the machine is not ready — starved input, no output
@@ -52,8 +64,10 @@ type FakeClient struct {
 	// idents are part-identity tags (a process's CATID), set through
 	// WriteTagValue with an Identity and published as a DINT that never ticks.
 	idents map[string]map[string]int64
-	clk    clock.Clock
-	ready  ReadinessFunc // nil = always ready (backward-compatible)
+	// overrun holds the PLCs whose overrun switch is on (Overrun).
+	overrun map[string]bool
+	clk     clock.Clock
+	ready   ReadinessFunc // nil = always ready (backward-compatible)
 }
 
 // NewFakeClient builds the fake from the sim process list and starts one ticker
@@ -70,7 +84,7 @@ func (f *FakeClient) SetReadinessFunc(fn ReadinessFunc) {
 }
 
 func NewFakeClient(ctx context.Context, cfg config.SimConfig, clk clock.Clock) *FakeClient {
-	f := &FakeClient{vals: make(map[string]map[string]int64), bools: make(map[string]map[string]bool), idents: make(map[string]map[string]int64), clk: clk}
+	f := &FakeClient{vals: make(map[string]map[string]int64), bools: make(map[string]map[string]bool), idents: make(map[string]map[string]int64), overrun: make(map[string]bool), clk: clk}
 	seen := make(map[string]bool)
 	for _, p := range cfg.Processes {
 		if f.vals[p.PLCName] == nil {
@@ -201,6 +215,12 @@ func (f *FakeClient) SetTagPublishing(ctx context.Context, plcName, tagName stri
 func (f *FakeClient) ReadTagValue(ctx context.Context, plcName, tagName string) (any, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
+	if tagName == OverrunTag {
+		if f.vals[plcName] == nil {
+			return nil, fmt.Errorf("simwarlink: PLC %q has no counter to overrun", plcName)
+		}
+		return f.overrun[plcName], nil
+	}
 	if b, ok := f.bools[plcName][tagName]; ok {
 		return b, nil
 	}
@@ -218,14 +238,20 @@ func (f *FakeClient) ReadTagValue(ctx context.Context, plcName, tagName string) 
 	return v, nil
 }
 
-// WriteTagValue sets a part-identity tag when the value is an Identity, and a
-// BOOL tag when it is a bool (a curtain's state, the sim's bypass button),
-// registering its PLC if new; any other write is
-// discarded (Q4: zone lights / heartbeats have no sim effect) and reports
-// success. A counter is never written.
+// WriteTagValue sets a part-identity tag when the value is an Identity, the
+// PLC's overrun switch when it is an Overrun on OverrunTag, and a BOOL tag when
+// it is a bool (a curtain's state, the sim's bypass button), registering its
+// PLC if new; any other write is discarded (Q4: zone lights / heartbeats have no
+// sim effect) and reports success. A counter is never written.
 func (f *FakeClient) WriteTagValue(ctx context.Context, plcName, tagName string, value any) error {
 	if id, ok := value.(Identity); ok {
 		return f.setIdentity(plcName, tagName, int64(id))
+	}
+	if o, ok := value.(Overrun); ok || tagName == OverrunTag {
+		if !ok || tagName != OverrunTag {
+			return fmt.Errorf("simwarlink: the overrun switch is an Overrun written on %s", OverrunTag)
+		}
+		return f.setOverrun(plcName, bool(o))
 	}
 	b, ok := value.(bool)
 	if !ok {
@@ -272,4 +298,29 @@ func (f *FakeClient) setIdentity(plcName, tagName string, v int64) error {
 	}
 	f.idents[plcName][tagName] = v
 	return nil
+}
+
+// setOverrun sets or clears a PLC's overrun switch. Only a PLC with a counter
+// can be switched: on any other the switch would gate nothing, so a misspelt
+// name is refused rather than kept.
+func (f *FakeClient) setOverrun(plcName string, on bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.vals[plcName] == nil {
+		return fmt.Errorf("simwarlink: PLC %q has no counter to overrun", plcName)
+	}
+	if on {
+		f.overrun[plcName] = true
+	} else {
+		delete(f.overrun, plcName)
+	}
+	return nil
+}
+
+// Overrun reports whether a PLC's overrun switch is on. The readiness gate
+// reads it on every tick of that PLC (one map read under the read lock).
+func (f *FakeClient) Overrun(plcName string) bool {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.overrun[plcName]
 }

@@ -26,6 +26,8 @@ func (h *Handlers) registerSimRoutes(r chi.Router) {
 	r.Post("/sim/clear-hourly-counts", h.apiSimClearHourlyCounts)
 	r.Post("/sim/curtain", h.apiSimCurtain)
 	r.Post("/sim/catid", h.apiSimCATID)
+	r.Get("/sim/overrun", h.apiSimOverrunList)
+	r.Post("/sim/overrun", h.apiSimOverrun)
 }
 
 // apiSimStatus reports the edge sim-clock speed + simulated time.
@@ -263,4 +265,47 @@ func (h *Handlers) apiSimCATID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"plc_name": body.PLCName, "tag_name": body.TagName, "value": *body.Value})
+}
+
+// apiSimOverrun sets or clears a PLC's overrun switch in the fake WarLink: with
+// it on, the fake PLC keeps counting while its process's produce seat is full or
+// holds no carrier, the cell an operator runs parts to the table with
+// (engine.SimMachineReady). Body {"plc_name", "on"}; a PLC with no counter is
+// refused.
+func (h *Handlers) apiSimOverrun(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		PLCName string `json:"plc_name"`
+		On      *bool  `json:"on"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.PLCName == "" || body.On == nil {
+		http.Error(w, "want {plc_name, on}", http.StatusBadRequest)
+		return
+	}
+	mgr := h.engine.PLCManager()
+	if mgr == nil {
+		http.Error(w, "no PLC manager", http.StatusServiceUnavailable)
+		return
+	}
+	if err := mgr.WriteTagDirect(r.Context(), body.PLCName, simwarlink.OverrunTag, simwarlink.Overrun(*body.On)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]any{"plc_name": body.PLCName, "on": *body.On})
+}
+
+// apiSimOverrunList lists the PLCs whose overrun switch is on, among the PLCs
+// the Edge has discovered: {"plcs": [names, sorted]}, empty when none.
+func (h *Handlers) apiSimOverrunList(w http.ResponseWriter, r *http.Request) {
+	mgr := h.engine.PLCManager()
+	if mgr == nil {
+		http.Error(w, "no PLC manager", http.StatusServiceUnavailable)
+		return
+	}
+	on := []string{}
+	for _, name := range mgr.PLCNames() {
+		if v, err := mgr.ReadTagDirect(r.Context(), name, simwarlink.OverrunTag); err == nil && v == true {
+			on = append(on, name)
+		}
+	}
+	writeJSON(w, map[string]any{"plcs": on})
 }
