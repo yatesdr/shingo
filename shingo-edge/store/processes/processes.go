@@ -1184,8 +1184,10 @@ func SetActiveBinIDAndEpoch(db *sql.DB, processNodeID int64, activeBinID *int64,
 
 // SetRuntimeLinesidePayload records what the carrier standing at this node is,
 // as told by Core on the delivery envelope. Pass "" to forget it — which the
-// carrier leaving must do, or the next occupant inherits its identity.
-func SetRuntimeLinesidePayload(db *sql.DB, processNodeID int64, payloadCode string, known bool, source string) error {
+// carrier leaving must do, or the next occupant inherits its identity. db is a
+// transaction when the write must land with a seat write (the produce hold's
+// drop at the pack, Engine.recordLinesideCarrierIn).
+func SetRuntimeLinesidePayload(db DBTX, processNodeID int64, payloadCode string, known bool, source string) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
 		lineside_payload_code=?, lineside_payload_known=?, lineside_source=?, lineside_at=datetime('now'),
 		updated_at=datetime('now')

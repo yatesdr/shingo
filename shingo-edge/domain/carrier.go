@@ -140,6 +140,13 @@ const (
 	// CarrierDeparted: the carrier left. Its identity leaves with it, or the
 	// next occupant inherits it and it is read as a fact about them.
 	CarrierDeparted CarrierSource = "departed"
+
+	// CarrierNotSeen: no source has spoken; the column's default, what a seat
+	// that never saw a carrier reads. Written over a departure that no longer
+	// describes the seat: an unbound produce seat whose strokes passed a whole
+	// pack after its carrier left has had a carrier placed some other way, so
+	// the seat cannot say what stands on it (Engine.dropPileAndLogTick).
+	CarrierNotSeen CarrierSource = ""
 )
 
 // NOTE ON CYCLE COUNTING, deliberately absent from the list above.

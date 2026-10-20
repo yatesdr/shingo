@@ -5,6 +5,7 @@ package engine
 
 import (
 	"shingoedge/domain"
+	"shingoedge/store/processes"
 )
 
 // recordLinesideCarrier is THE DOORWAY for the lineside identity. Every write
@@ -63,4 +64,12 @@ func (e *Engine) recordLinesideCarrier(nodeID int64, nodeName string, carrier do
 	default:
 		e.debugFn("lineside carrier: node=%d (%s) is %s, source=%s", nodeID, nodeName, payload, src)
 	}
+}
+
+// recordLinesideCarrierIn is the doorway on a caller's transaction, for an
+// identity write that must land with a seat write or not at all. It logs
+// nothing: the caller logs after its commit.
+func (e *Engine) recordLinesideCarrierIn(ex processes.DBTX, nodeID int64, carrier domain.LinesideCarrier, src domain.CarrierSource) error {
+	payload, known := carrier.Payload()
+	return processes.SetRuntimeLinesidePayload(ex, nodeID, string(payload), known, string(src))
 }

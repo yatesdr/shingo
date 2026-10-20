@@ -324,9 +324,13 @@ func (a tickAttribution) skipReport() string {
 // the tick is logged and not held, and a standing pile at the seat is dropped
 // with a hold_dropped row (dropPileAndLogTick). The strokes logged are counted
 // in memory and sent as one hold_dropped (no_bin) row when the episode ends,
-// in the transaction of the write that ends it. The stranded monitor's produce
-// arm (sweepProduceHold) drops such a pile between ticks and at boot, and ends
-// an episode whose seat has since bound.
+// in the transaction of the write that ends it. The one exception is a seat
+// between bins (betweenBins): its last carrier departed through Shingo, so the
+// tick is held with none coming, up to one pack; the stroke past the pack
+// drops the pile and clears the departure, and the seat logs from there. The
+// stranded monitor's produce arm (sweepProduceHold) drops such a pile between
+// ticks and at boot, except a hold between bins, and ends an episode whose
+// seat has since bound.
 //
 // ── A STRICT PRODUCE SEAT STOPS AT THE PACK (strictPackApplies) ──────────
 //
@@ -401,7 +405,9 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 		return false, 0, true
 	}
 	if parts.produce && !e.carrierComing(node) {
-		return e.dropPileAndLogTick(node, rt, input, parts.tick)
+		if hold, pastPack := betweenBins(rt, parts.tick, parts.binPack, input); !hold {
+			return e.dropPileAndLogTick(node, rt, input, parts.tick, pastPack)
+		}
 	}
 	if held == 0 || holdIsOf(rt.PendingUOPPayload, parts.tick) {
 		noBin := e.noBinRows(node.ID)
@@ -439,8 +445,12 @@ type tickParts struct {
 	// retry after a refused write decides it again on the fresh row.
 	pack int
 	// produce: the tick is a produce claim's. With nothing chargeable it is
-	// held only while a carrier is coming (carrierComing, dropPileAndLogTick).
+	// held only while a carrier is coming (carrierComing, dropPileAndLogTick),
+	// or between bins (betweenBins).
 	produce bool
+	// binPack is a produce tick's pack, the claim's UOPCapacity whether or not
+	// strict_pack is set: the cap on an unbound seat's hold between bins.
+	binPack int
 }
 
 // holdIsOf reports whether a hold recorded as heldPart may take, or replay
@@ -561,8 +571,12 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 	// (producedPayload): an empty arrives known-empty, so its resident part
 	// would never match the hold.
 	part, pack := producedPayload(claim), strictPackFor(claim)
+	binPack := 0
+	if claim != nil {
+		binPack = claim.UOPCapacity
+	}
 	runtime, _, binAttributed := e.applyHoldAndReplay(node, runtime, delta, +1, func(*processes.RuntimeState) tickParts {
-		return tickParts{tick: part, carrier: part, pack: pack, produce: true}
+		return tickParts{tick: part, carrier: part, pack: pack, produce: true, binPack: binPack}
 	})
 
 	if e.inventoryDelta != nil && binAttributed > 0 {
