@@ -477,13 +477,17 @@ func UpdateWaitIndex(db *sql.DB, id int64, waitIndex int) error {
 }
 
 // ClaimAppend is the compare-and-set a fleet append is made under: it touches
-// the row only while the order is non-terminal and still at waitIndex, and
-// reports whether it did. A cancel that wrote first makes it answer false, and
-// the caller appends nothing.
-func ClaimAppend(db *sql.DB, id int64, waitIndex int) (bool, error) {
+// the row only while the order is non-terminal, still at waitIndex, and still
+// carrying stepsJSON, the plan the caller cut its segment from; and it reports
+// whether it did. A cancel that wrote first makes it answer false, and the
+// caller appends nothing. So does a plan rewritten since the caller read it (a
+// claim exchange re-pointing a later pickup, dispatch/claim_exchange.go): the
+// segment would carry the old step. The bump of updated_at is what refuses an
+// exchange that read the row before this claim. Same statement.
+func ClaimAppend(db *sql.DB, id int64, waitIndex int, stepsJSON string) (bool, error) {
 	res, err := db.Exec(fmt.Sprintf(`UPDATE orders SET updated_at=$3
-		WHERE id=$1 AND wait_index=$2 AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()),
-		id, waitIndex, clock.Now().UTC())
+		WHERE id=$1 AND wait_index=$2 AND steps_json=$4 AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()),
+		id, waitIndex, clock.Now().UTC(), stepsJSON)
 	if err != nil {
 		return false, err
 	}

@@ -225,6 +225,20 @@ const (
 	// The wait is shorter than it looks: a promise on a bin is a plan to remove
 	// it, so the dig's lane is cleared by the holder's own drive.
 	CauseDigBlockerPromised QueueCause = "dig-blocker-promised"
+	// CauseDigBlockerHeldAtStation — the fourth fact about the same wall: the bin
+	// the dig must move is hard-claimed by an order whose robot has NOT reached
+	// that pickup. A station wait stands before it, unreleased, so nothing is
+	// carrying the bin anywhere and dig-blocker-claimed's "a robot is carrying it
+	// out" is false (FINDINGS-ab-strand-press10-2026-10-20).
+	//
+	// A SEPARATE CAUSE BECAUSE IT HAS A SEPARATE RELEASER: the holder's STATION
+	// releasing it, a person's act at a press, after which its robot drives out
+	// and lifts the bin. The sentence names the holder.
+	//
+	// It is what a digger waits under when the claim exchange (claim_exchange.go)
+	// is refused: the digger has a station wait of its own, the parts differ, or
+	// a second bin is in the way.
+	CauseDigBlockerHeldAtStation QueueCause = "dig-blocker-held-at-station"
 	// CauseBinTaken — a person's move took the bin this order had only promised
 	// itself (Q1, owner 2026-09-26: the person is authoritative over soft holds).
 	// The take un-points the order, so it re-finds rather than waiting on a bin

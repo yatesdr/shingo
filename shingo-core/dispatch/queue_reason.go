@@ -86,6 +86,10 @@ type QueueParams struct {
 	// the wait is on another order's turn rather than on any machine, so the
 	// operator can look up who it is waiting behind.
 	HolderOrderID int64
+	// StationHolderOrderID names the order hard-claiming the bin in front for a
+	// pickup after a station wait it has not been released from. Set only with
+	// CauseDigBlockerHeldAtStation.
+	StationHolderOrderID int64
 	// BehindOrderID is the order a lane refusal waits behind (C2b F5): the deeper
 	// store or the active group whose own event releases this one. Zero when the
 	// refusal names no order.
@@ -167,6 +171,12 @@ type QueueParams struct {
 // elsewhere and the callers read better for it.
 func (p QueueParams) withHolder(orderID int64) QueueParams {
 	p.HolderOrderID = orderID
+	return p
+}
+
+// withStationHolder returns p with the station-held holder named.
+func (p QueueParams) withStationHolder(orderID int64) QueueParams {
+	p.StationHolderOrderID = orderID
 	return p
 }
 
@@ -322,7 +332,17 @@ func rearrangingSentence(p QueueParams) string {
 	case p.Payload != "":
 		s = fmt.Sprintf("Rearranging storage to reach %s", p.Payload)
 	}
-	return s + digClause(p) + holderClause(p) + stoppedOrderClause(p)
+	return s + digClause(p) + holderClause(p) + stoppedOrderClause(p) + stationHolderClause(p)
+}
+
+// stationHolderClause names the order holding the bin in front for a pickup
+// its robot has not reached, and what it waits for. Empty when none is named.
+func stationHolderClause(p QueueParams) string {
+	if p.StationHolderOrderID == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" — order %d holds the bin in front for a pickup after its station wait; it moves "+
+		"when its station releases it", p.StationHolderOrderID)
 }
 
 // holderClause names the demand that is ahead on the bin.

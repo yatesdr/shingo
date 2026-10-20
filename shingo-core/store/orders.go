@@ -1205,8 +1205,8 @@ func (db *DB) UpdateOrderStatusFromWithReason(id int64, from, to, detail string,
 
 // ClaimAppend is orders.ClaimAppend: the compare-and-set a fleet append is made
 // under.
-func (db *DB) ClaimAppend(id int64, waitIndex int) (bool, error) {
-	return orders.ClaimAppend(db.DB, id, waitIndex)
+func (db *DB) ClaimAppend(id int64, waitIndex int, stepsJSON string) (bool, error) {
+	return orders.ClaimAppend(db.DB, id, waitIndex, stepsJSON)
 }
 
 // UpdateOrderStatusFromWithReasonTx is UpdateOrderStatusFromWithReason on the

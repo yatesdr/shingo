@@ -574,8 +574,21 @@ func appendLanded(err error) error { return AppendLandedError{err: err} }
 //     the leg in_transit, which is true, so nothing is sent; any code would
 //     roll back or fail a moving leg. It is logged and audited on the order,
 //     because the row now disagrees with the robot and someone should see why.
+//
+// A plan rewritten after the release read it (ErrPlanChanged) is re-cut once
+// from the stored plan, so the operator's press is not lost to the exchange.
 func (d *Dispatcher) dispatchFleetRelease(env *protocol.Envelope, order *orders.Order, segment []resolvedStep, moreWaits bool, blockOffset int) {
 	err := d.appendSegmentAndAdvance(order, segment, moreWaits, blockOffset, "complex release")
+	if errors.Is(err, ErrPlanChanged) {
+		if fresh, rErr := d.db.GetOrder(order.ID); rErr == nil && fresh != nil {
+			if steps, ok := decodeSteps(fresh.StepsJSON); ok {
+				*order = *fresh
+				segment, moreWaits, blockOffset = splitSegment(steps, order.WaitIndex)
+				d.patchRedirectSegments(segment, order, moreWaits)
+				err = d.appendSegmentAndAdvance(order, segment, moreWaits, blockOffset, "complex release")
+			}
+		}
+	}
 	if err == nil {
 		// A STATION RELEASE ONTO A LANE WAIT IS THAT LANE'S EVENT (F1): order
 		// 233's shape, which the floor used to free a minute later under "(none)".
@@ -597,6 +610,12 @@ func (d *Dispatcher) dispatchFleetRelease(env *protocol.Envelope, order *orders.
 // nothing is owed: callers stop, writing no wait on the row and proposing
 // nothing.
 var ErrAppendNotOwed = errors.New("the order has ended or its tail was already appended")
+
+// ErrPlanChanged is an append refused because the order's stored plan is no
+// longer the one the segment was cut from: a claim exchange re-pointed a later
+// pickup in between (dispatch/claim_exchange.go). Nothing went to the fleet and
+// the tail is still owed; the caller re-cuts it from the stored plan.
+var ErrPlanChanged = errors.New("the order's plan changed since its segment was cut")
 
 // errTailAppendedElsewhere narrows ErrAppendNotOwed to the reload's answer: the
 // order is live and another pass appended its tail. Unlike the claim's refusal,
@@ -659,9 +678,14 @@ func (d *Dispatcher) appendSegmentAndAdvance(order *orders.Order, segment []reso
 	// this one. What is left is the gap between this write and the fleet call
 	// below; a cancel landing there cancels the vendor order, and the append then
 	// meets a terminated order at the fleet.
-	if owed, err := d.db.ClaimAppend(order.ID, order.WaitIndex); err != nil {
+	if owed, err := d.db.ClaimAppend(order.ID, order.WaitIndex, order.StepsJSON); err != nil {
 		return fmt.Errorf("%s: claim the append for order %d: %w", what, order.ID, err)
 	} else if !owed {
+		if fresh, rErr := d.db.GetOrder(order.ID); rErr == nil && fresh != nil && !protocol.IsTerminal(fresh.Status) &&
+			fresh.WaitIndex == order.WaitIndex && fresh.StepsJSON != order.StepsJSON {
+			log.Printf("dispatch: %s: order %d's plan changed since its segment was cut — nothing appended", what, order.ID)
+			return fmt.Errorf("%s: order %d: %w", what, order.ID, ErrPlanChanged)
+		}
 		log.Printf("dispatch: %s: order %d has ended or its tail at wait %d was already appended — nothing appended",
 			what, order.ID, order.WaitIndex)
 		return fmt.Errorf("%s: order %d: %w", what, order.ID, ErrAppendNotOwed)

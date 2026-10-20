@@ -43,8 +43,10 @@ import (
 // re-parented, wears `reshuffling`, and comes back through `pending` and its
 // one acquire.
 //
-// announce may be nil.
-func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string, buried *BuriedError, announce func()) {
+// announce may be nil. exchanged: a dig refused by a hard claim was answered by a
+// claim exchange instead (claim_exchange.go); nothing was parked and the demand
+// is acquired again.
+func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string, buried *BuriedError, announce func()) (exchanged bool) {
 	park := func(code protocol.QueueCode, cause QueueCause, params QueueParams) {
 		d.setQueueReason(order, code, cause, params)
 		if announce != nil {
@@ -59,11 +61,11 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 	if readFailed(err) {
 		d.dbg("complex: could not read buried lane %d for demand %d (%v) — holding", buried.LaneID, order.ID, err)
 		park(protocol.QueueWaitingForSlot, CauseReadFailed, QueueParams{Payload: payloadCode})
-		return
+		return false
 	}
 	if err != nil || lane == nil {
 		d.failOrderInternal(order, codeInvalidNode, plan.ConfigFailureID("lane node", buried.LaneID))
-		return
+		return false
 	}
 
 	// The demand waits because its bin is buried. That is written only where
@@ -150,12 +152,17 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 			park(protocol.QueueStorageRearranging, res.blockerCause,
 				QueueParams{Lane: lane.Name, Payload: payloadCode,
 					HolderOrderID: res.blockerClaimant})
-			return
+			return false
 		}
 		// The commonest holder is a robot already carrying that bin out of the lane.
-		park(protocol.QueueStorageRearranging, res.blockerCause,
-			QueueParams{Lane: lane.Name, Payload: payloadCode,
-				DigOrderID: digWaitFor(d.laneLock, lane.ID)})
+		// One that has not reached that pickup may hand it over (claim_exchange.go);
+		// refused, the wait names a holder parked at its station as such.
+		swapped, cause, params := d.tryClaimExchange(order, lane, buried, res,
+			QueueParams{Lane: lane.Name, Payload: payloadCode, DigOrderID: digWaitFor(d.laneLock, lane.ID)})
+		if swapped {
+			return true
+		}
+		park(protocol.QueueStorageRearranging, cause, params)
 
 	case laneClearEpisodeAlreadyDigging:
 		// This demand is already being dug for, somewhere else. Not a refusal by
@@ -207,6 +214,7 @@ func (d *Dispatcher) handleComplexBurial(order *orders.Order, payloadCode string
 		d.failOrderInternal(order, "reshuffle_error",
 			fmt.Sprintf("cannot plan reshuffle: %v", res.err))
 	}
+	return false
 }
 
 // planBuriedReshuffleAtIntake is the intake entry: the station is waiting on an
@@ -218,6 +226,6 @@ func (d *Dispatcher) planBuriedReshuffleAtIntake(order *orders.Order, payloadCod
 // handleComplexBuriedOnReplay is the scanner entry: the demand is already
 // acquiring, so writing the cause IS the retry (the scanner parks it) and there
 // is nothing new to announce.
-func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *BuriedError) {
-	d.handleComplexBurial(order, order.PayloadCode, buried, nil)
+func (d *Dispatcher) handleComplexBuriedOnReplay(order *orders.Order, buried *BuriedError) bool {
+	return d.handleComplexBurial(order, order.PayloadCode, buried, nil)
 }

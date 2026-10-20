@@ -76,6 +76,10 @@ type dispatchStep struct {
 	// room for the choice as made), the one preparation stop a re-made choice can
 	// cure (remakeAfter).
 	byChoice bool
+	// exchanged marks a stop where a claim exchange answered a burial
+	// (claim_exchange.go): nothing was parked, and the demand is acquired again
+	// at once, on the plan and the hold the exchange wrote.
+	exchanged bool
 }
 
 // DispatchPreparedComplex performs the side-effecting tail of complex-
@@ -134,6 +138,15 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	}
 
 	resolvedSteps, hand, _, st := d.prepareComplexHand(order, nil)
+	if st.exchanged {
+		// A claim exchange gave this order the mouth bin: acquire it once more
+		// now, on the plan and hold the exchange wrote, rather than at the next
+		// pass.
+		if fresh, err := d.db.GetOrder(order.ID); err == nil && fresh != nil && protocol.IsAcquiring(fresh.Status) {
+			*order = *fresh
+			resolvedSteps, hand, _, st = d.prepareComplexHand(order, nil)
+		}
+	}
 	if st.done {
 		return st.err
 	}
@@ -471,8 +484,8 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass, rema
 			// Same planner the intake path uses.
 			buriedErr := payload.(*BuriedError)
 			d.dbg("complex: order %d buried at replay — bin %d in lane %d", order.ID, buriedErr.Bin.ID, buriedErr.LaneID)
-			d.handleComplexBuriedOnReplay(order, buriedErr)
-			return nil, dispatchStep{done: true, err: rerr}
+			swapped := d.handleComplexBuriedOnReplay(order, buriedErr)
+			return nil, dispatchStep{done: true, err: rerr, exchanged: swapped}
 		case ResolutionCapacity:
 			capDetail := capacityDetailFrom(payload)
 			code := queueCodeForCapacity(capDetail.kindOf())
@@ -519,8 +532,8 @@ func (d *Dispatcher) prepareComplexSteps(order *orders.Order, pc *pairPass, rema
 		case OutcomeReshuffle:
 			d.dbg("complex: order %d supply pickup buried at widen — bin %d in lane %d",
 				order.ID, hold.Buried.Bin.ID, hold.Buried.LaneID)
-			d.handleComplexBuriedOnReplay(order, hold.Buried)
-			return nil, dispatchStep{done: true, err: fmt.Errorf("supply pickup buried; reshuffle planned")}
+			swapped := d.handleComplexBuriedOnReplay(order, hold.Buried)
+			return nil, dispatchStep{done: true, err: fmt.Errorf("supply pickup buried; reshuffle planned"), exchanged: swapped}
 		case OutcomeFound:
 			// Impossible: widenSupplyPickups only holds non-Found results.
 			// Fail structurally rather than silently dispatching a plan whose

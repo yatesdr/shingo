@@ -491,6 +491,16 @@ var causeReleasers = []causeReleaser{
 			"because a holder abandoning a promise emits nothing anyone listens for",
 	},
 	{
+		cause: CauseDigBlockerHeldAtStation,
+		// The complex-burial door alone writes it (claim_exchange.go): the one
+		// place the holder's plan is read against the fleet.
+		populations: []WaitPopulation{PopAcquiring},
+		// The station's release sends the holder's segment; its pickup moves the
+		// bin to _TRANSIT, which the scanner listens on, and the dig then plans.
+		what: "the holder's station releases it, and its robot lifts the bin (pickup → _TRANSIT, a bin event " +
+			"the scanner listens on); or the holder ends and its claim is released",
+	},
+	{
 		cause:       CauseSlotTaken,
 		populations: []WaitPopulation{PopAcquiring},
 		// The take tells the holder it changed (NotifyWaitChanged), and the

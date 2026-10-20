@@ -60,6 +60,11 @@ var rawClaimWriters = []struct {
 		mustContain: "WHERE claimed_by=$1",
 		why:         "The fleet-refusal demote. Order-scoped: this releases only the refusing order's armor, not the corridor's.",
 	},
+	{
+		file: "../claim_exchange.go", fn: "func exchangeHeldPickupTx(",
+		mustContain: "WHERE id=$1 AND claimed_by=$2",
+		why:         "The claim exchange's give-up of the mouth bin: bin-AND-owner scoped like ReleaseClaimForBin, with the coupled reservation release beside it in the exchange's one transaction.",
+	},
 	// ── Core: recovery ──────────────────────────────────────────────────
 	{
 		file: "../recovery/recovery.go", fn: "func ReleaseTerminalBinClaim(",
