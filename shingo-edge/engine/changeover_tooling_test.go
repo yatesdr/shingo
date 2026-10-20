@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/engine/changeover"
 	"shingoedge/store/processes"
 )
@@ -431,5 +432,97 @@ func TestRefuseToolingChangeoverWithoutStaging_IgnoresUnmarkedPresses(t *testing
 	if err := refuseToolingChangeoverWithoutStaging(
 		[]processes.NodeClaim{from}, []processes.NodeClaim{to}); err != nil {
 		t.Errorf("an unmarked changeover was refused: %v", err)
+	}
+}
+
+// ── Strict-pack characterisation (step 1): press-index active_pull ────────
+//
+// active_pull is written in two places only: writePullSide (from commitFlip,
+// which loadFlip applies to sequential pairs alone) and
+// clearActivePullForEvacuate (false, both positions). The column defaults to 1
+// (store/schema: active_pull INTEGER NOT NULL DEFAULT 1). A press-index pair's
+// claim names its partner, so isInactivePairedNode reads the bit on every
+// produce tick at the press seat.
+
+func charSPActivePull(h *relHarness) bool {
+	h.t.Helper()
+	return runtimeOf(h.t, h.eng, h.nodeID).ActivePull
+}
+
+// TestCharSP_PressIndexSeatHoldsActivePullForThePairsLife — steady state: the
+// press seat of a two_robot_press_index pair holds active_pull by the column
+// default, nothing writes it, a pair click (R1 out, R2 indexes) leaves it set,
+// and produce ticks land before and after the release.
+//
+// Unchanged by the strict-pack lanes; it is the precondition P4 certifies
+// before strict pack may be turned on for a press-index claim.
+func TestCharSP_PressIndexSeatHoldsActivePullForThePairsLife(t *testing.T) {
+	t.Parallel()
+	h := newRelHarness(t)
+	pairAt(pairSpec{mode: protocol.SwapModeTwoRobotPressIndex}, "evac", protocol.StatusStaged, "supply", protocol.StatusStaged)(h)
+	style := activeStyleOf(t, h.eng, h.processID)
+	if !charSPActivePull(h) {
+		t.Fatal("press seat active_pull = false at steady state, want the column default (true)")
+	}
+	charSPTick(h.eng, h.processID, style, 1)
+	if got := remainingUOP(t, h.db, h.nodeID); got != fxCount+1 {
+		t.Errorf("count after a tick = %d, want %d: the press seat takes the tick", got, fxCount+1)
+	}
+
+	testutil.MustNoErr(t, h.eng.ReleaseStagedOrders(h.nodeID, dispNone), "pair click")
+	if !charSPActivePull(h) {
+		t.Error("press seat active_pull = false after the pair click, want true: nothing writes it on a press-index pair")
+	}
+	charSPTick(h.eng, h.processID, style, 2)
+	if rt := runtimeOf(t, h.eng, h.nodeID); rt.PendingUOPDelta != 2 {
+		t.Errorf("hold after the release = %d, want 2: the finalize cleared the seat and the next ticks are held for the next bin", rt.PendingUOPDelta)
+	}
+}
+
+// TestCharSP_PressIndexToolingEvacuateLeavesThePressDark — a tooling evacuate
+// on a two_robot_press_index pair: applyNodeAction calls
+// clearActivePullForEvacuate, which clears the press seat's active_pull, and
+// nothing on a press-index pair ever sets it again (no flip). Every produce tick
+// at the press is then skipped as inactive_produce: not charged and not held,
+// only the "counter delta unattributed" log line. It stays dark through the
+// evac's release (door 5) and through the cutover to the incoming style.
+//
+// This is a FLAT BUG at the base (the parts the press makes after the tool
+// change are counted nowhere). P4 fixes it with its own pin; this pin then
+// flips (the press seat is lit after the evacuate, by whatever P4 rules).
+func TestCharSP_PressIndexToolingEvacuateLeavesThePressDark(t *testing.T) {
+	t.Parallel()
+	h := newRelHarness(t)
+	coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, tooling: true}, "evac", protocol.StatusStaged, "supply", protocol.StatusStaged)(h)
+	co, err := h.db.GetActiveProcessChangeover(h.processID)
+	testutil.MustNoErr(t, err, "read changeover")
+	task, err := h.db.GetChangeoverNodeTaskByNode(co.ID, h.nodeID)
+	testutil.MustNoErr(t, err, "read node task")
+	if task.Situation != string(SituationEvacuate) {
+		t.Fatalf("fixture: situation = %q, want evacuate", task.Situation)
+	}
+	fromStyle := activeStyleOf(t, h.eng, h.processID)
+
+	if charSPActivePull(h) {
+		t.Fatal("press seat active_pull = true after the tooling evacuate, want false (clearActivePullForEvacuate)")
+	}
+	charSPTick(h.eng, h.processID, fromStyle, 2)
+	if rt := runtimeOf(t, h.eng, h.nodeID); rt.RemainingUOPCached != fxCount || rt.PendingUOPDelta != 0 {
+		t.Errorf("after a tick on the dark press: count %d hold %d, want %d and 0: the tick is skipped as inactive_produce",
+			rt.RemainingUOPCached, rt.PendingUOPDelta, fxCount)
+	}
+
+	testutil.MustNoErr(t, sweepClick(dispNone)(h), "release the evacuate's legs")
+	toStyle := co.ToStyleID
+	testutil.MustNoErr(t, h.eng.SetProcessActiveStyle(h.processID, &toStyle), "cut over to the incoming style")
+	if charSPActivePull(h) {
+		t.Fatal("press seat active_pull = true after the release and the cutover, want false: nothing relights a press-index seat")
+	}
+	before := runtimeOf(t, h.eng, h.nodeID)
+	charSPTick(h.eng, h.processID, toStyle, 5)
+	after := runtimeOf(t, h.eng, h.nodeID)
+	if after.RemainingUOPCached != before.RemainingUOPCached || after.PendingUOPDelta != before.PendingUOPDelta {
+		t.Errorf("incoming style's tick on the dark press: count %d→%d hold %d→%d, want both unchanged (skipped)",
+			before.RemainingUOPCached, after.RemainingUOPCached, before.PendingUOPDelta, after.PendingUOPDelta)
 	}
 }

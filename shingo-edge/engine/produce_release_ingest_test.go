@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 
 	"shingo/protocol"
@@ -143,5 +144,86 @@ func TestReleaseStagedOrders_RetrySkipsSecondIngest(t *testing.T) {
 
 	if ingests, _ := listIngests(t, db); len(ingests) != 1 {
 		t.Fatalf("ingest stamps after retry = %d, want exactly 1 (zero-count guard)", len(ingests))
+	}
+}
+
+// TestCharSP_FinalizeShipsThePlanTimeCount — strict-pack step 1, at the base:
+// finalizeDepartingProduce ships runtime.RemainingUOPCached as the release's
+// load read it, not the seat at the finalize. Driven through the real door
+// (door 1, the HMI's bare body, on a two_robot produce pair): the act loads the
+// pair's runtime (PlanPair, NeedActive), then asks Core's release points
+// (gatesOnThePoint), then commits. The fake Core's points answer is where a
+// tick is interposed, so it lands after the read and before the finalize.
+//
+// Today: the tick charges the bound bin (42 → 45) and its produce_tick is
+// queued; the ingest ships 42; carrierLeft zeroes the seat. The 3 are in no
+// ingest and not held. At Core the +3 delta drains before the ingest, which
+// then sets the bin to 42, so they are lost there too.
+//
+// P3 makes the finalize read the seat fresh under countMu through flush,
+// enqueue and clear: the ingest ships 45 (or the tick lands in the hold after
+// the clear), and nothing is lost.
+func TestCharSP_FinalizeShipsThePlanTimeCount(t *testing.T) {
+	t.Parallel()
+	h := newRelHarness(t)
+	pairAt(pairSpec{mode: protocol.SwapModeTwoRobot}, "evac", protocol.StatusStaged, "supply", protocol.StatusStaged)(h)
+	styleID := activeStyleOf(t, h.eng, h.processID)
+	const tick = 3
+	var once sync.Once
+	ticked := false
+	h.core.mu.Lock()
+	h.core.points = func(req protocol.ReleasePointsRequest) protocol.ReleasePointsResponse {
+		once.Do(func() {
+			charSPTick(h.eng, h.processID, styleID, tick)
+			ticked = true
+		})
+		return h.fakePoints(req)
+	}
+	h.core.mu.Unlock()
+	h.mark()
+
+	testutil.MustNoErr(t, h.eng.ReleaseStagedOrders(h.nodeID, dispNone), "pair click")
+	if !ticked {
+		t.Fatal("fixture: the act never asked Core's points, so no tick was interposed")
+	}
+
+	h.mutator.Flush()
+	var ingests []protocol.OrderIngestRequest
+	tickDeltaBeforeIngest := false
+	for _, m := range h.sinceMark() {
+		switch m.MsgType {
+		case protocol.TypeOrderIngest:
+			var env protocol.Envelope
+			testutil.MustNoErr(t, json.Unmarshal(m.Payload, &env), "unmarshal ingest envelope")
+			var req protocol.OrderIngestRequest
+			testutil.MustNoErr(t, env.DecodePayload(&req), "decode ingest")
+			ingests = append(ingests, req)
+		case protocol.SubjectBinUOPDelta:
+			var env struct {
+				P struct {
+					Data protocol.BinUOPDelta `json:"data"`
+				} `json:"p"`
+			}
+			testutil.MustNoErr(t, json.Unmarshal(m.Payload, &env), "decode BinUOPDelta envelope")
+			d := env.P.Data
+			if d.Reason == protocol.ReasonProduceTick && d.BinID == fxBin && d.Delta == tick && len(ingests) == 0 {
+				tickDeltaBeforeIngest = true
+			}
+		}
+	}
+	if len(ingests) != 1 {
+		t.Fatalf("ingests = %d, want 1", len(ingests))
+	}
+	if ingests[0].Quantity != fxCount {
+		t.Errorf("ingest quantity = %d, want %d: the finalize ships the count the act read before the tick",
+			ingests[0].Quantity, fxCount)
+	}
+	if !tickDeltaBeforeIngest {
+		t.Errorf("want the interposed tick's produce_tick (+%d on bin %d) queued before the ingest", tick, fxBin)
+	}
+	rt := runtimeOf(t, h.eng, h.nodeID)
+	if rt.RemainingUOPCached != 0 || rt.PendingUOPDelta != 0 || rt.ActiveBinID != nil {
+		t.Errorf("seat after the release = bin %v count %d hold %d, want unbound, 0, 0: the clear zeroed the %d ticks",
+			rt.ActiveBinID, rt.RemainingUOPCached, rt.PendingUOPDelta, tick)
 	}
 }

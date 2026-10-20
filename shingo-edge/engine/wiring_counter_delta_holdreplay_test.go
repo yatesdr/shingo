@@ -6,6 +6,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/domain"
+	"shingoedge/store/processes"
 )
 
 // TestHoldAndReplay_BinUOPDeltaLumpsAcrossBinSwapGap is the gating correctness
@@ -166,5 +167,120 @@ func TestProduceTick_KnownEmptyCarrierStillCarriesTheClaimsPart(t *testing.T) {
 	if got := sink.binCalls[0].PayloadCode; got != claim.PayloadCode {
 		t.Errorf("produce tick payload = %q, want the claim's %q: a blank part on the wire means "+
 			"Core never labels the bin it is filling", got, claim.PayloadCode)
+	}
+}
+
+// ── Strict-pack characterisation (step 1): the produce hold at the base ──
+//
+// These pin what chargeOrHold does to a produce seat today, so the strict-pack
+// lanes flip them deliberately. The pack is the claim's UOPCapacity, which is
+// resolved from payload_catalog on every read; seedProduceNode writes the
+// catalog row (seedClaimCapacity), so WIDGET-A's pack here is 100.
+
+// charSPProduceSeat seeds the produce node, empties its seat, seeds a hold of
+// held parts of the claim's part, and wires an engine with a recording sink.
+func charSPProduceSeat(t *testing.T, held int) (eng *Engine, sink *fakeDeltaSink, processID, nodeID, styleID, claimID int64) {
+	t.Helper()
+	db := testEngineDB(t)
+	processID, nodeID, styleID, claimID = seedProduceNode(t, db, protocol.SwapModeTwoRobot)
+	claim, err := db.GetStyleNodeClaim(claimID)
+	testutil.MustNoErr(t, err, "read claim")
+	if claim.UOPCapacity != 100 {
+		t.Fatalf("fixture: pack = %d, want the catalog's 100", claim.UOPCapacity)
+	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, nil, 0), "empty the seat")
+	testutil.MustNoErr(t, processes.AddPendingUOPDelta(db.DB, nodeID, held, claim.PayloadCode), "seed the hold")
+	eng = testEngine(t, db)
+	eng.wireEventHandlers()
+	sink = &fakeDeltaSink{}
+	eng.SetInventoryDeltaSink(sink)
+	return eng, sink, processID, nodeID, styleID, claimID
+}
+
+func charSPTick(eng *Engine, processID, styleID, delta int64) {
+	eng.Events.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{
+		ProcessID: processID, StyleID: styleID, Delta: delta,
+	}})
+}
+
+// TestCharSP_UnboundProduceTickIsHeldUncapped — a produce seat with no bin
+// bound and a standing hold of 3,000 of the claim's part (pack 100) takes a
+// tick of 2. Today: held, uncapped. The hold becomes 3,002 with the part
+// recorded, nothing is charged, no produce_tick is emitted, and nothing asks
+// whether any order is placing a carrier here (none exists).
+//
+// P2 changes this: an unbound produce tick that would hold with no live order
+// placing a carrier at the node drops the standing pile with a hold_dropped
+// (no_carrier) row instead of growing it.
+func TestCharSP_UnboundProduceTickIsHeldUncapped(t *testing.T) {
+	t.Parallel()
+	const held = 3000
+	eng, sink, processID, nodeID, styleID, _ := charSPProduceSeat(t, held)
+	var orders int
+	testutil.MustNoErr(t, eng.db.DB.QueryRow(`SELECT COUNT(*) FROM orders`).Scan(&orders), "count orders")
+	if orders != 0 {
+		t.Fatalf("fixture: %d orders exist, want none", orders)
+	}
+
+	charSPTick(eng, processID, styleID, 2)
+
+	rt := runtimeOf(t, eng, nodeID)
+	if rt.PendingUOPDelta != held+2 {
+		t.Errorf("hold = %d, want %d: an unbound produce tick is held on top of the pile, uncapped", rt.PendingUOPDelta, held+2)
+	}
+	if rt.PendingUOPPayload != "WIDGET-A" {
+		t.Errorf("hold part = %q, want WIDGET-A", rt.PendingUOPPayload)
+	}
+	if rt.RemainingUOPCached != 0 || rt.ActiveBinID != nil {
+		t.Errorf("seat = bin %v count %d, want unbound at 0: nothing is charged", rt.ActiveBinID, rt.RemainingUOPCached)
+	}
+	if len(sink.binCalls) != 0 {
+		t.Errorf("bin deltas = %+v, want none: a held tick emits no produce_tick", sink.binCalls)
+	}
+}
+
+// TestCharSP_FirstBoundTickReplaysTheWholeHold — the first tick after a bin of
+// the held part binds charges input + held in one write (ChargeSeatUOP with
+// clearPending), clears the hold and its part, and emits ONE produce_tick of
+// input + held against the bin. The second case holds more than the pack: the
+// count passes the pack (3,001 on a pack of 100), because nothing on the
+// produce path reads the pack today.
+//
+// P1's strict arm caps this (charge MIN(avail, pack - count), the rest stays in
+// the hold, the emit is the charged amount); P2's backstop drops a hold above
+// the pack with a hold_dropped (backstop) row and charges the input alone.
+func TestCharSP_FirstBoundTickReplaysTheWholeHold(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		held int
+	}{
+		{"hold under the pack", 5},
+		{"hold over the pack", 3000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			eng, sink, processID, nodeID, styleID, _ := charSPProduceSeat(t, tc.held)
+			const binID int64 = 7201
+			b := binID
+			testutil.MustNoErr(t, eng.db.SetProcessNodeActiveBinID(nodeID, &b), "bind a bin of the part")
+
+			charSPTick(eng, processID, styleID, 1)
+
+			rt := runtimeOf(t, eng, nodeID)
+			if want := tc.held + 1; rt.RemainingUOPCached != want {
+				t.Errorf("bin count = %d, want %d (bound 0 + held %d + tick 1, one write)", rt.RemainingUOPCached, want, tc.held)
+			}
+			if rt.PendingUOPDelta != 0 || rt.PendingUOPPayload != "" {
+				t.Errorf("hold = %d of %q, want cleared", rt.PendingUOPDelta, rt.PendingUOPPayload)
+			}
+			if len(sink.binCalls) != 1 {
+				t.Fatalf("bin deltas = %+v, want exactly one", sink.binCalls)
+			}
+			bc := sink.binCalls[0]
+			if bc.BinID != binID || bc.Delta != tc.held+1 || bc.Reason != protocol.ReasonProduceTick || bc.PayloadCode != "WIDGET-A" {
+				t.Errorf("delta = %+v, want {bin %d, +%d, produce_tick, WIDGET-A}", bc, binID, tc.held+1)
+			}
+		})
 	}
 }

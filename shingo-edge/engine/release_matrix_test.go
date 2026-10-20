@@ -33,7 +33,9 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/orders"
 	"shingoedge/release"
+	"shingoedge/store/processes"
 )
 
 // relCell is one characterised cell.
@@ -492,5 +494,120 @@ func releaseMatrixCells() []relCell {
 		{name: "d6/co pi marked/single leg, curtain live",
 			want: "hold:curtain | supply=staged | rel=- | ingest=0 capred=0 | uop=42", build: withCurtain(curtainLive, coAt(coSpec{mode: protocol.SwapModeTwoRobotPressIndex, marked: true}, "supply", S)),
 			act: pairClick(dispNone), probe: probes(pUOP)},
+	}
+}
+
+// ── Strict-pack characterisation (step 1): U1 at the base ─────────────────
+//
+// U1 is the unloader side-cycle a produce release fires: release.PlanLeg sets
+// LegPlan.U1 when the leg's arm is ArmProduce (the release's to-claim is
+// produce; during a changeover that is the incoming style's claim), the leg is
+// not a supply leg, and its disposition mode is capture_lineside; applyLeg then
+// calls MaybeCreateUnloaderFullIn(order.PayloadCode) after the release. Every
+// door that plans a leg through PlanLeg can set it: door 1 (the evac carries
+// the operator's disposition), door 2, doors 5 and 6 (the evac's disposition is
+// evacDispositionForTask's: with no override and a count of 0 it synthesises
+// capture_lineside), and the intent worker (the held leg's disposition). Doors
+// 3 and 4 plan no leg; door 7 is ArmDrop.
+//
+// P4 deletes U1 (MaybeCreateUnloaderFullIn, LegPlan.U1, the commit's call):
+// every cell below then reads u1=0, and the changeover evac at count 0 keeps
+// its synthesised zero-count disposition but pulls nothing.
+
+const charSPUnloaderNode = "SYN-UNL"
+
+// charSPArmUnloader configures a consume unloader serving fxPart with an AMR
+// inbound source, gives its window a process node on this Edge, and has the
+// fake Core report the window free, so a U1 that fires creates its order.
+func charSPArmUnloader(h *relHarness) {
+	h.t.Helper()
+	seedCoreLoader(h.t, h.eng, protocol.LoaderInfo{
+		Name: charSPUnloaderNode, LoaderKey: "loader:" + charSPUnloaderNode, Role: "consume", Layout: "shared_window",
+		Replenishment: "operator", InboundSource: "SYN-FG-SUPER", OutboundDest: "SYN-EMPTY-OUT", ConfigGen: 1,
+		Positions: []protocol.LoaderPosition{{CoreNodeName: charSPUnloaderNode, Kind: "window"}},
+		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: fxPart}},
+	})
+	pid, err := h.db.CreateProcess("SYN-UNL-PROC", "", "", "", false)
+	testutil.MustNoErr(h.t, err, "create unloader process")
+	_, err = h.db.CreateProcessNode(processes.NodeInput{
+		ProcessID: pid, CoreNodeName: charSPUnloaderNode, Code: charSPUnloaderNode, Name: charSPUnloaderNode, Sequence: 1, Enabled: true,
+	})
+	testutil.MustNoErr(h.t, err, "create unloader window node")
+	h.core.mu.Lock()
+	h.core.binAt = &NodeBinInfo{NodeName: charSPUnloaderNode, Occupied: false}
+	h.core.mu.Unlock()
+}
+
+// pU1 counts the U1 full-ins (retrieve, not retrieve_empty) at the unloader
+// window, by payload.
+func pU1(h *relHarness) []string {
+	active, err := h.db.ListActiveOrdersByDeliveryNodeSet([]string{charSPUnloaderNode})
+	testutil.MustNoErr(h.t, err, "list unloader orders")
+	n, pays := 0, []string{}
+	for _, o := range active {
+		if o.OrderType == orders.TypeRetrieve && !o.RetrieveEmpty {
+			n++
+			pays = append(pays, o.PayloadCode)
+		}
+	}
+	return []string{fmt.Sprintf("u1=%d%v", n, pays)}
+}
+
+// TestCharSP_U1FiresOnAProduceCaptureLinesideRelease pins which releases fire
+// the unloader full-in today. The outcome strings are the release harness's,
+// with u1=N[payloads] appended.
+func TestCharSP_U1FiresOnAProduceCaptureLinesideRelease(t *testing.T) {
+	t.Parallel()
+	twoRobot := pairSpec{mode: protocol.SwapModeTwoRobot}
+	coTwoRobot := coSpec{mode: protocol.SwapModeTwoRobot}
+	S, D := protocol.StatusStaged, protocol.StatusDispatched
+	armed := func(b func(h *relHarness)) func(h *relHarness) {
+		return func(h *relHarness) { b(h); charSPArmUnloader(h) }
+	}
+	atZero := func(b func(h *relHarness)) func(h *relHarness) {
+		return func(h *relHarness) {
+			b(h)
+			testutil.MustNoErr(h.t, h.db.UpdateProcessNodeUOP(h.nodeID, 0), "the evac's bin at 0")
+		}
+	}
+	for _, c := range []struct {
+		name  string
+		build func(h *relHarness)
+		act   func(h *relHarness) error
+		want  string
+	}{
+		// The sim's auto-operator posts capture_lineside at door 2.
+		{"d2/two_robot evac, capture_lineside",
+			armed(pairAt(twoRobot, "evac", S, "supply", D)), orderClick("evac", dispEmpty),
+			"ok | evac=in_transit supply=dispatched | rel=evac | ingest=1 capred=0 | u1=1[PART-X]"},
+		// The HMI's produce release is a bare body.
+		{"d1/two_robot pair, bare body",
+			armed(pairAt(twoRobot, "evac", S, "supply", S)), pairClick(dispNone),
+			"ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | u1=0[]"},
+		{"d1/two_robot pair, capture_lineside",
+			armed(pairAt(twoRobot, "evac", S, "supply", S)), pairClick(dispEmpty),
+			"ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | u1=1[PART-X]"},
+		// A changeover evac of a produce bin at count 0: evacDispositionForTask
+		// synthesises capture_lineside, the to-claim is produce, and U1 fires for
+		// the evac order's (outgoing) part. No ingest: a zero count ships nothing.
+		{"d5/co two_robot evac at 0, bare body",
+			armed(atZero(coAt(coTwoRobot, "evac", S, "supply", S))), sweepClick(dispNone),
+			"ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=0 capred=0 | sweep released=2 pending=0 deferred=0 flip=[] | u1=1[PART-X]"},
+		// The same evac at its count: send_partial_back, no U1.
+		{"d5/co two_robot evac at 42, bare body",
+			armed(coAt(coTwoRobot, "evac", S, "supply", S)), sweepClick(dispNone),
+			"ok | evac=in_transit supply=in_transit | rel=evac,supply | ingest=1 capred=0 | sweep released=2 pending=0 deferred=0 flip=[] | u1=0[]"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			h := newRelHarness(t)
+			c.build(h)
+			h.mark()
+			err := c.act(h)
+			h.extra = append(h.extra, pU1(h)...)
+			if got := h.outcome(err); got != c.want {
+				t.Errorf("\n got  %q\n want %q", got, c.want)
+			}
+		})
 	}
 }
