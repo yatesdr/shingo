@@ -370,11 +370,13 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		// at every loader — unnecessary now that empty-ins are driven by
 		// Core deciding the replenishment itself and pushing down a whole order, or by
 		// operator staging.
-		// Auto-push unloaders: catch any window that became free (or
-		// supply that arrived) while Edge was offline. No-op for kanban-
-		// driven consume manual_swap claims (AutoPush=false). Mirrors
-		// the loader-side reasoning that demand triggers fire while we
-		// were unreachable, so a startup pass keeps the queue current.
+		// Unloaders: catch any window that became free (or supply that
+		// arrived) while Edge was offline. The sweep offers every
+		// operator-replenished consume loader with an inbound source,
+		// AutoPush or not (pushUnloadersViaSeam reads no AutoPush); after it,
+		// only an AutoPush unloader's own gates pull again. Mirrors the
+		// loader-side reasoning that demand triggers fire while we were
+		// unreachable, so a startup pass keeps the queue current.
 		goSafe("engine-SweepPushUnloaders", func() { eng.SweepPushUnloaders() })
 		goSafe("engine-SweepPushLoaders", func() { eng.SweepPushLoaders() })
 	})
@@ -587,7 +589,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// one. The window where somebody reads this line is the Edge-first half of a
 	// deploy, diagnosing a loader that is not being fed — and the answer they need
 	// is "look at Core", which the line this replaced actively argued against.
-	log.Printf("kanban: threshold replenishment is Core-owned — this Edge consumes no below-threshold signal and originates no loader empties from one (operator push and changeover paths unaffected; the kanban demand-signal route is gone entirely — unloader U1 fires from operator release alone)")
+	log.Printf("kanban: threshold replenishment is Core-owned — this Edge consumes no below-threshold signal and originates no loader empties from one (operator push and changeover paths unaffected; the kanban demand-signal route is gone entirely — an unloader U1 comes from its own auto_push gates, the startup sweep, and a produce release posting capture_lineside)")
 
 	if err := eng.StartupReconcile(); err != nil {
 		log.Printf("initial startup reconcile: %v", err)

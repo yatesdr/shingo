@@ -92,7 +92,7 @@ none of them will notice a problem on their own if the path is never taken.
 |---|---|---|---|
 | `SweepPushLoaders` / `rePushOwnLoader` | `engine/operator_demand_loader.go` / `engine/wiring_completion.go` | register ack / window free (CLEAR, L2 landing) | one-shot / per event, own loader only |
 | `SweepPushUnloaders` / `rePushOwnUnloader` | `engine/operator_demand_unloader.go` / `engine/wiring_completion.go` | register ack / window free (CLEAR, PUSH EMPTY, U2 pickup; U2 landing as fallback) | one-shot / per event, own unloader only |
-| `MaybeCreateUnloaderFullIn` | `engine/operator_demand_unloader.go` | produce-role lineside release | per event |
+| `MaybeCreateUnloaderFullIn` | `engine/operator_demand_unloader.go` | produce release carrying `capture_lineside` (changeover evac at 0, sim operator, API client; not the station HMI) | per event |
 | `recordL1Burst` | `engine/loader_burst.go` | every in-bin order | 60s window, >8 warns |
 | stranded-carrier monitor | `engine/uop_stranded_monitor.go` | Start | 60s |
 | demand reconciler | `engine/demand_reconciler.go` | Start | 60s |

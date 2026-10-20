@@ -1566,7 +1566,7 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 		return err
 	}
 	// Capture the part code before the zero-path clears payload_code, so the
-	// release audit row names the part (the discrepancy view reads it).
+	// release audit row names the part (the per-bin audit timeline shows it).
 	// Best-effort: a missing bin surfaces below via the UPDATE's 0-rows guard.
 	// The generation rides the same read (+0): a fence counts only for the
 	// generation it was read under.

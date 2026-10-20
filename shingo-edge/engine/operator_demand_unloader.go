@@ -63,10 +63,17 @@ func occupancyUnverifiable(outcome string) bool {
 // createUnloaderEmptyOut), not off this U1 completing, so a press/forklift-fed
 // drain with no U1 still drains.
 //
-// Caller: the release commit's produce arm (release_commit.go) (produce-role
-// lineside release). The consume DemandSignal caller is gone (2026-08) with
-// the kanban demand-signal route; fulls landing at FG storage no longer
-// auto-trigger a U1. The seam still applies (never-2N).
+// Caller: the release commit's produce arm (release_commit.go), when
+// release.PlanLeg sets LegPlan.U1: a produce, non-supply leg whose disposition
+// mode is capture_lineside. A station's produce RELEASE never reaches it: the
+// HMI posts a bare body there (releasedFullBody in operator-release.js). What
+// does is a changeover evac at count 0, whose disposition evacDispositionForTask
+// synthesises as capture_lineside (it then pulls a full of the evac order's
+// part, the outgoing one), the sim's auto-operator (releaseAsPair), and any API
+// client that posts capture_lineside on a produce node. The consume
+// DemandSignal caller is gone (2026-08) with the kanban demand-signal route;
+// fulls landing at FG storage no longer auto-trigger a U1. The seam still
+// applies (never-2N).
 //
 // LOCAL FIRST. The released payload is usually already covered — in an auto_push
 // unloader the pickup gate pulled its next full before the release arrived — and
@@ -107,6 +114,12 @@ type unloaderOffer struct {
 // What each payload fires is added to the snapshot before the next payload is
 // decided, so the pass sees its own orders exactly as a re-read would
 // (TestUnloaderSweep_FirstFreeWindowAndSeesEarlierPayload).
+//
+// Callers: the unloader's own auto_push gates (rePushOwnUnloader and
+// rePushOwnUnloaderIfUncovered: CLEAR, PUSH EMPTY, the U2's pickup, the U2's
+// landing), the startup sweep (pushUnloadersViaSeam), and, one payload at a
+// time through createUnloaderFullInViaSeam, MaybeCreateUnloaderFullIn on a
+// produce release that carries capture_lineside (never a station's: see it).
 //
 // Cost: one Core node-bins GET per unloader that reaches the read, however many
 // payloads and windows it has (TestUnloaderSweep_NodeBinsCallCount). It used to

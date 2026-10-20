@@ -42,10 +42,10 @@ function calledByFromView() {
     return stationName || 'operator';
 }
 
-// capture_lineside with nothing pulled — the body every no-choice release
-// posts. Produce and consume-at-zero build the SAME request, which is why
-// one helper serves both: the disposition names what was pulled to lineside,
-// and in both shapes the answer is "nothing".
+// capture_lineside with nothing pulled — the body a consume release at zero
+// with no payload chips posts: the disposition names what was pulled to
+// lineside, and the answer is "nothing". A produce release posts
+// releasedFullBody instead.
 function releasedNothingBody(calledBy) {
     return {
         disposition: 'capture_lineside',
@@ -79,11 +79,11 @@ function releasedFullBody(calledBy) {
 // twice for one action" the plants report:
 //
 //   produce role           the engine discards the disposition entirely for
-//                          produce (release_commit.go, the produce arm). The modal's
-//                          lone RELEASE FULL posts a fixed body and the whole
-//                          consume framing — "anything pulled to lineside?",
-//                          "bin returning to supermarket" — is backwards for a
-//                          node pushing a full bin OUT.
+//                          produce (release_commit.go, the produce arm), so
+//                          RELEASE posts releasedFullBody and the prompt never
+//                          opens; its consume framing — "anything pulled to
+//                          lineside?", "bin returning to supermarket" — is
+//                          backwards for a node pushing a full bin OUT.
 //   consume, no payloads,  no chip grid to pick from, and the PARTIAL and
 //   remaining_uop == 0     UNDER COUNT arms are both remaining_uop > 0 only,
 //                          leaving RELEASE EMPTY + CANCEL.

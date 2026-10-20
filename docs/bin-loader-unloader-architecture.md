@@ -119,8 +119,11 @@ What remains, per side:
 - **Produce (loader L1)**: Core's threshold monitor creates the orders directly (no wire
   signal — `LoopBelowThresholdSignal`/`HandleLoopBelowThreshold` were deleted 2026-08-02
   with the Edge's sizing half), plus the operator push. No bin-count trigger exists.
-- **Consume (unloader U1)**: `MaybeCreateUnloaderFullIn` routes a U1 full-in through the
-  reservation seam, fired by operator release and the auto-push sweep — no bin-arrival
+- **Consume (unloader U1)**: `createUnloaderFullIns` routes a U1 full-in through the
+  reservation seam, fired by the unloader's own auto_push gates and the startup sweep, and
+  (one payload, through `MaybeCreateUnloaderFullIn`) by a produce release whose disposition is
+  `capture_lineside` — a changeover evac at count 0, the sim's auto-operator or an API client;
+  a station's HMI posts a bare body on a produce node and never fires it. No bin-arrival
   trigger exists.
 
 `isStorageSlot` (formerly the storage-detection half of the trigger, step 3 below in
@@ -177,7 +180,7 @@ How it works:
 
 **Re-entrancy rule (MUST be honoured by every event-bus subscriber):** `withLoaderBudget` calls its `fire` closure *while the loader's mutex is held*, and `CreateRetrieveOrder` dispatches `EmitOrderCreated` **synchronously** on the in-process bus (`eventbus.Emit` runs subscribers inline). **No `EventOrderCreated` (or any order-event) subscriber may synchronously call back into the reservation seam for the same loader** — `sync.Mutex` is non-reentrant and it would self-deadlock. A subscriber acting on a *different* loader is fine. If a subscriber ever needs to re-enter the same loader, split reserve-from-fire (end the lock after the DB insert; enqueue/emit after release). Guarded by `TestWithLoaderBudget_EmitDuringReservation_NoDeadlock`.
 
-Callers routed through the seam — **loader side:** `RequestEmptyBin` and `RequestFullBin` (operator, manual_swap), `maybeStageLoaderEmpty` (the operator push, from `rePushOwnLoader` and `SweepPushLoaders`), and `CreateRetrieveForAPI` (the HTTP order API). (`fireThresholdL1` is gone — deleted with the Edge's half of loader replenishment, 2026-08-02; the decision it carried is Core's.) **Unloader side:** `createUnloaderFullInViaSeam`, reached from produce-role lineside release (`MaybeCreateUnloaderFullIn`), and `createUnloaderFullIns`, reached from the auto_push re-pull of the node's own unloader (`rePushOwnUnloader`: CLEAR, PUSH EMPTY, the U2's pickup, and the U2's landing as a fallback) and the startup sweep (`SweepPushUnloaders`).
+Callers routed through the seam — **loader side:** `RequestEmptyBin` and `RequestFullBin` (operator, manual_swap), `maybeStageLoaderEmpty` (the operator push, from `rePushOwnLoader` and `SweepPushLoaders`), and `CreateRetrieveForAPI` (the HTTP order API). (`fireThresholdL1` is gone — deleted with the Edge's half of loader replenishment, 2026-08-02; the decision it carried is Core's.) **Unloader side:** `createUnloaderFullInViaSeam`, reached from a produce release carrying `capture_lineside` (`MaybeCreateUnloaderFullIn`: a changeover evac at count 0, the sim's auto-operator, an API client; never a station's produce RELEASE, whose body is bare), and `createUnloaderFullIns`, reached from the auto_push re-pull of the node's own unloader (`rePushOwnUnloader`: CLEAR, PUSH EMPTY, the U2's pickup, and the U2's landing as a fallback) and the startup sweep (`SweepPushUnloaders`).
 
 ---
 

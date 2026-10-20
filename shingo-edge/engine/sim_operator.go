@@ -1053,7 +1053,10 @@ func (op *simOperator) linesidePullAt(payload string, claimCap int) int {
 // dormant — the trigger fires on capture_lineside, so a sim that always sends
 // "" can never observe it. A produce node's operator is declaring a full bin,
 // which is capture_lineside; anything else releases without saying what
-// happened to the material.
+// happened to the material. This is NOT what a station posts: the HMI's
+// produce RELEASE is a bare body (releasedFullBody in operator-release.js),
+// which never fires U1, so a sim run sees full-ins at the unloaders that a
+// plant's station releases do not order.
 func (op *simOperator) releaseAsPair(orderID int64) {
 	order, err := op.e.db.GetOrder(orderID)
 	if err != nil || order == nil || order.ProcessNodeID == nil {

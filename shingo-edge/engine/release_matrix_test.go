@@ -512,9 +512,10 @@ func releaseMatrixCells() []relCell {
 // capture_lineside), and the intent worker (the held leg's disposition). Doors
 // 3 and 4 plan no leg; door 7 is ArmDrop.
 //
-// P4 deletes U1 (MaybeCreateUnloaderFullIn, LegPlan.U1, the commit's call):
-// every cell below then reads u1=0, and the changeover evac at count 0 keeps
-// its synthesised zero-count disposition but pulls nothing.
+// A station's HMI posts a bare body on a produce node, so its RELEASE never
+// sets U1 (the d1 bare-body cell); the cells that fire are the bodies that
+// carry capture_lineside (the sim's auto-operator, an API client) and the
+// changeover evac at count 0, which pulls a full of the outgoing part.
 
 const charSPUnloaderNode = "SYN-UNL"
 

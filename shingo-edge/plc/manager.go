@@ -721,11 +721,15 @@ func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) bool {
 
 	// THE PLC IS THE TRUTH (close-out 2b, owner ruling 2026-09-24). A jump and
 	// a reset are counts like any other, emitted in the pass that read them, so
-	// their units are charged to the carrier bound at the read. They used to
-	// wait: a jump for an operator's Confirm, which charged whatever carrier
-	// was bound by then, and a reset forever, dropped downstream. The anomaly
-	// rides the event and the row as a record of how the counter moved;
-	// nothing gates on it.
+	// their units go where any tick's go when the engine takes it: onto the
+	// carrier bound at that moment (on a strict-pack claim only up to its pack,
+	// the rest held for the next bin), or held for the next carrier when none
+	// is bound — on a produce seat only while an order is placing one; with
+	// nothing coming a produce tick is logged, not held. They used to wait: a
+	// jump for an operator's Confirm, which charged whatever carrier was bound
+	// by then, and a reset forever, dropped downstream. The anomaly rides the
+	// event and the row as a record of how the counter moved; nothing gates on
+	// it.
 	if delta > 0 {
 		m.emitter.EmitCounterDelta(rp.ID, rp.ProcessID, rp.StyleID, delta, newCount, anomaly)
 	}

@@ -495,16 +495,28 @@ type NodeClaim struct {
 	// Default false preserves always-swap.
 	ReuseCompatibleBins bool `json:"reuse_compatible_bins"`
 	// AutoPush opts a consume manual_swap (unloader) claim into push-driven
-	// dispatch: when the unloader window is free and a full bin of an allowed
-	// payload exists in InboundSource, Edge fires a U1 retrieve_full on its
-	// own. Useful for finished-goods unloaders that should drain the FG
-	// supermarket continuously. Default false keeps the unloader event-driven
-	// (fires only on a produce-role lineside release). The gates that read it
-	// (CLEAR, PUSH EMPTY, U2 landed) call rePushOwnUnloader in
-	// engine/wiring_completion.go. The kanban demand signal
-	// this comment used to name was deleted 2026-08. For a Core-owned loader
-	// window it comes from the loader (bin_loaders.auto_push) via
-	// Loader.SynthClaim.
+	// dispatch: when the unloader window frees and a full bin of an allowed
+	// payload exists in InboundSource, Edge orders a U1 full-in on its own.
+	// The gates that read it are the window's own taps and moves (CLEAR, PUSH
+	// EMPTY, the U2's pickup, the U2's landing), through rePushOwnUnloader and
+	// rePushOwnUnloaderIfUncovered (engine/wiring_completion.go). Useful for
+	// finished-goods unloaders that should drain the FG supermarket
+	// continuously.
+	//
+	// Every one of those gates follows a cycle the window already ran, so
+	// AutoPush keeps a running unloader running; it does not start an idle one.
+	// The other full-ins are the startup sweep (SweepPushUnloaders, once per
+	// registration, AutoPush or not) and the U1 a produce release fires
+	// (Engine.MaybeCreateUnloaderFullIn) on a capture_lineside disposition,
+	// which a station's HMI never posts on a produce node: it comes from a
+	// changeover evac at count 0, the sim's auto-operator, or an API client.
+	// With AutoPush off, the unloader pulls only on those and on an operator's
+	// full request. A fork-truck-fed unloader names no inbound source, and
+	// createUnloaderFullIns skips it whatever this says. The kanban demand
+	// signal was deleted 2026-08.
+	//
+	// For a Core-owned loader window it comes from the loader
+	// (bin_loaders.auto_push) via Loader.SynthClaim.
 	AutoPush bool `json:"auto_push"`
 	// PulledDirectly is set by Loader.SynthClaim at a window of a two-stage
 	// unloader's stage 2 whose finished carts the process pulls straight off

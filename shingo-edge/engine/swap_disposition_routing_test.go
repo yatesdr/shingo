@@ -277,15 +277,16 @@ func uopStr(v *int) string {
 	return "&" + strconv.Itoa(*v)
 }
 
-// THE PRODUCE SIDE, which is where the inversion is live today.
+// THE PRODUCE SIDE.
 //
 // The produce branch discards remaining_uop, so the manifest consequence above
 // cannot bite. What it does instead is decide a TRIGGER: ReleaseOrderWithLineside
 // fires MaybeCreateUnloaderFullIn on (not supply) AND capture_lineside. Under the
-// positional labels neither leg of a press-index pair satisfies both — the real
-// evac is handed a disposition with no Mode, and the real supply is caught by
-// isSupply — so a press-index press has never fired the downstream unloader
-// full-in that a two_robot press fires on every swap.
+// positional labels neither leg of a press-index pair satisfied both — the real
+// evac was handed a disposition with no Mode, and the real supply was caught by
+// isSupply — so a press-index pair released with capture_lineside never fired
+// the unloader full-in a two_robot pair fires on the same body. (A station's
+// HMI posts a bare body on a produce node, which fires it on neither.)
 //
 // Asserted through the release breadcrumb rather than the trigger itself: the
 // breadcrumb names the disposition each leg was handed, which is the routing

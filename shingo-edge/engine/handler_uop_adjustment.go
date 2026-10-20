@@ -118,8 +118,16 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		// Those parts belong to the carrier still on its way, not to the one being
 		// corrected.
 		//
-		// A held pile is proof the slot is mid-swap. Waiting costs nothing — the
+		// A held pile on an EMPTY slot is proof the slot is mid-swap (an unbound
+		// produce seat holds only while an order is placing its next carrier, or
+		// may be: Engine.carrierComing). Waiting costs nothing — the
 		// arriving carrier brings its own count and generation on delivery.
+		//
+		// A hold BESIDE A BOUND BIN never reaches this guard, and that is now
+		// routine: a strict-pack bin at its pack holds the next bin's parts in
+		// the same columns. A person's correction there proceeds as for any bound
+		// bin; a count below the pack reopens room, and the next tick replays a
+		// hold of the bin's part into it.
 		log.Printf("uop_adjustment: bin %d at node %s arrived while %d ticks are held for the "+
 			"next carrier — not binding over them",
 			adj.BinID, adj.CoreNodeName, rt.PendingUOPDelta)
