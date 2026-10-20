@@ -54,8 +54,9 @@ func (db *DB) SetProcessNodeRuntimeWithBin(processNodeID int64, activeClaimID, a
 }
 
 // SetProcessNodeActiveBinID writes only the active bin pointer on a
-// runtime row. Used by the bin-pickup handler to clear ownership
-// without disturbing the claim or count.
+// runtime row. No production caller (see processes.SetActiveBinID): the
+// pickup leaves through LeaveProcessNodeAtPickup; test fixtures bind and
+// clear a seat with it.
 func (db *DB) SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64) error {
 	return processes.SetActiveBinID(db.DB, processNodeID, activeBinID)
 }
@@ -166,8 +167,8 @@ func (db *DB) SetProcessNodeReleaseCount(processNodeID int64, remainingUOP int) 
 }
 
 // AddPendingUOPDelta seeds a hold of no known part. NO PRODUCTION CALLER:
-// the tick path holds through HoldPendingUOP, which records the part; test
-// fixtures seed holds with this.
+// the tick path holds through HoldProcessNodeSeat (processes.HoldSeatUOP),
+// which records the part; test fixtures seed holds with this.
 func (db *DB) AddPendingUOPDelta(processNodeID int64, delta int) error {
 	return processes.AddPendingUOPDelta(db.DB, processNodeID, delta, "")
 }

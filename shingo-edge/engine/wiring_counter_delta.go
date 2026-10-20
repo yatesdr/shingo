@@ -16,24 +16,20 @@
 package engine
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"shingo/protocol"
 	"shingoedge/store"
+	storemsg "shingoedge/store/messaging"
 	"shingoedge/store/processes"
 	"shingoedge/uop"
 )
 
-// handleCounterDelta processes a production counter tick:
-// - For consume nodes: decrement remaining UOP
-// - For produce nodes: increment remaining UOP
-//
-// The orchestrator handles validation, per-process node iteration, A/B-pair
-// coordination, and dispatches to role-specific helpers. The UOP arithmetic
-// and the lineside drain live in handleConsumeTick / handleProduceTick /
-// handleABFallthrough.
 // counterDeltaRows reads, once per tick, the three things the walk below needs
 // for every node: the process, the claims of its styles, and the nodes' runtime
 // rows.
@@ -72,6 +68,16 @@ func (e *Engine) counterDeltaRows(processID int64, nodes []processes.Node) (*pro
 	return process, claims, runtimes
 }
 
+// handleCounterDelta processes a production counter tick: a consume node's
+// bound bin is drawn down, a produce node's is filled (up to its pack when the
+// claim's strict_pack applies; strictPackApplies), and with nothing chargeable
+// the tick is held on the seat for the next bin of its part.
+//
+// This walk validates the tick, resolves each node's claim against the tick's
+// style, skips the A/B inactive side, and hands each node to its role's
+// handler: handleConsumeTick (the lineside drain first), handleProduceTick, or
+// the A/B safety net handleABFallthrough. The seat arithmetic every one of them
+// shares is applyHoldAndReplay's.
 func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	if delta.ProcessID == 0 || delta.StyleID == 0 || delta.Delta <= 0 {
 		// A malformed tick is not a quiet no-op: the PLC path only
@@ -304,11 +310,19 @@ func (a tickAttribution) skipReport() string {
 //     is kept and this tick is neither held nor charged: its own pile has
 //     already drained what it could (drainLinesideFirst runs first), and the
 //     rest is logged once per episode, by part, and not charged (D12: no new
-//     anomaly rows for an over-pull). EventUOPStranded still watches a growing
-//     hold.
+//     anomaly rows for an over-pull). The stranded monitor (EventUOPStranded)
+//     watches a consume seat's hold as it grows; it skips produce seats.
 //
 // A hold written before the part existed reads "" and replays as it always
 // did.
+//
+// ── A STRICT PRODUCE SEAT STOPS AT THE PACK (strictPackApplies) ──────────
+//
+// When the tick's claim carries strict_pack (parts.pack > 0), a bound bin
+// takes only what fits under the pack and the rest stays in the hold for the
+// next bin of the part, which it replays onto as room allows. chargeStrict and
+// splitStrict say how; nothing is ever written down, and a hold or a tick that
+// fits nowhere is dropped with a hold_dropped row, never in silence.
 func (e *Engine) applyHoldAndReplay(node *processes.Node, runtime *processes.RuntimeState, input, sign int,
 	partsOf func(*processes.RuntimeState) tickParts) (rt *processes.RuntimeState, bound bool, binAttributed int) {
 	rt = runtime
@@ -341,6 +355,9 @@ func (e *Engine) chargeOrHold(node *processes.Node, rt *processes.RuntimeState, 
 	held := int(rt.PendingUOPDelta)
 	if held == 0 {
 		e.endUnheldEpisode(node.ID)
+	}
+	if rt.ActiveBinID != nil && !parts.notCharged && parts.pack > 0 {
+		return e.chargeStrict(node, rt, input, parts)
 	}
 	if rt.ActiveBinID != nil && !parts.notCharged {
 		binAttributed = input
@@ -388,6 +405,10 @@ type tickParts struct {
 	// notCharged: the bound carrier was released as empty and takes no tick
 	// (R3); the tick is held as if the seat were empty.
 	notCharged bool
+	// pack is the bound bin's cap when the strict arm applies to the seat as
+	// read (strictPackFor), else 0. Carried per attempt like the parts, so a
+	// retry after a refused write decides it again on the fresh row.
+	pack int
 }
 
 // holdIsOf reports whether a hold recorded as heldPart may take, or replay
@@ -485,13 +506,16 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 
 // handleProduceTick applies a delta to one active-pull produce node:
 // increment node UOP. Caller is responsible for the A/B inactive-pair
-// check. Relief at capacity is the demand reconciler's sweep, not this
-// function: a press at capacity STOPS PRESSING, so the tick that would
-// have noticed is the tick that never comes.
+// check. Asking for the next bin is the demand reconciler's sweep, not this
+// function's. A press does not stop at the pack: it keeps making parts until
+// someone swaps the bin, and those ticks arrive here. Without strict_pack they
+// count on past the pack; with it (strictPackApplies) the bin stops at the pack
+// and the rest is held for the next bin of the part.
 //
-// Phase 1: emits BinUOPDelta(produce_tick, +delta) for the bin being
-// filled. No pile is touched — produce nodes don't drain lineside; they
-// fill bins directly via the PLC.
+// Emits BinUOPDelta(produce_tick) for what the bin was charged: the tick plus
+// any replayed hold, or under strict_pack only the part of those that fit
+// (0 charged, nothing emitted). No pile is touched — produce nodes don't drain
+// lineside; they fill bins directly via the PLC.
 func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, delta int) {
 	// Hold-and-replay, mirror of consume. Increment the bin physically at
 	// the slot; when none is bound (finalize→new-empty gap) hold the
@@ -505,8 +529,8 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 	// (producedPayload): an empty arrives known-empty, so its resident part
 	// would never match the hold.
 	part := producedPayload(claim)
-	runtime, _, binAttributed := e.applyHoldAndReplay(node, runtime, delta, +1, func(*processes.RuntimeState) tickParts {
-		return tickParts{tick: part, carrier: part}
+	runtime, _, binAttributed := e.applyHoldAndReplay(node, runtime, delta, +1, func(rt *processes.RuntimeState) tickParts {
+		return tickParts{tick: part, carrier: part, pack: strictPackFor(claim, rt)}
 	})
 
 	if e.inventoryDelta != nil && binAttributed > 0 {
@@ -517,7 +541,7 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 			BinID:        binID,
 			PayloadCode:  payload,
 			BinEpoch:     epoch,
-			BinRemainder: binAttributed, // this tick + any replayed held parts
+			BinRemainder: binAttributed, // what the bin was charged: this tick + any replayed hold, capped by the pack
 		})
 	}
 	e.countMu.Unlock()
@@ -539,6 +563,178 @@ func producedPayload(claim *processes.NodeClaim) string {
 		return ""
 	}
 	return claim.PayloadCode
+}
+
+// ── Strict pack ──────────────────────────────────────────────────────────
+
+// strictPackApplies is the gate for the strict arm: the tick's matched claim
+// carries strict_pack, is a produce claim, has a pack (UOPCapacity, resolved
+// from the catalog on every read; the claim's uop_capacity column is dead and a
+// produce bin's resident payload is "" for the whole fill, so neither is read),
+// and the seat names this claim as its active claim, so a bin still bound under
+// an outgoing claim is not capped at another part's pack. The mode is not read:
+// the cap is per seat.
+func strictPackApplies(claim *processes.NodeClaim, rt *processes.RuntimeState) bool {
+	return claim != nil && rt != nil && claim.StrictPack && claim.Role == protocol.ClaimRoleProduce &&
+		claim.UOPCapacity > 0 && rt.ActiveClaimID != nil && *rt.ActiveClaimID == claim.ID
+}
+
+// strictPackFor is the pack the strict arm caps the seat's bound bin at, or 0
+// when strictPackApplies says it does not apply.
+func strictPackFor(claim *processes.NodeClaim, rt *processes.RuntimeState) int {
+	if !strictPackApplies(claim, rt) {
+		return 0
+	}
+	return claim.UOPCapacity
+}
+
+// holdDropByTick is the actor a tick-time hold_dropped row names.
+const holdDropByTick = "edge:tick"
+
+// strictSplit is one strict tick's division of the seat: what is offered to
+// the bin (avail), what the bin takes (charge), the hold the seat keeps (hold
+// of holdPart), and what fits nowhere (drops, one per reason).
+type strictSplit struct {
+	avail, charge, hold int
+	holdPart            string
+	drops               []protocol.HoldDropped
+}
+
+// splitStrict divides one tick on a bound strict seat, from the seat as read:
+// count is the bin's count, held / heldPart the hold, part the tick's part.
+// Pure. The bin takes MAX(0, MIN(avail, pack - count)), so a count already at
+// or past the pack (a person's, a bin bound before the setting, a pack lowered
+// mid-bin) takes 0 and is never written down.
+//
+//   - A hold of ANOTHER part (held != 0, !holdIsOf) is not offered and not
+//     relabelled: the tick charges to room, and what of the tick does not fit
+//     is dropped (foreign_hold). The hold stays for its own part's bin.
+//   - A hold of the part LARGER THAN THE PACK is the backstop: it is offered
+//     nothing and dropped whole (backstop), and the tick charges to room alone.
+//   - Otherwise the hold is offered with the tick, and what the bin does not
+//     take stays held, its part the tick's. A partial replay keeps its
+//     remainder; the hold clears only when the bin took all of it.
+//
+// In the last two cases the hold left behind is capped at one pack (hold_cap):
+// a bin at its pack with no carrier coming would otherwise grow it without
+// bound.
+func splitStrict(count, held int, heldPart, part string, input, pack int) strictSplit {
+	room := max(0, pack-count)
+	if held != 0 && !holdIsOf(heldPart, part) {
+		s := strictSplit{avail: input, charge: min(input, room), hold: held, holdPart: heldPart}
+		if over := input - s.charge; over > 0 {
+			s.drops = append(s.drops, protocol.HoldDropped{PayloadCode: part, Qty: int64(over), Reason: protocol.HoldDropForeignHold})
+		}
+		return s
+	}
+	s := strictSplit{avail: input + held}
+	if held > pack {
+		s.avail = input
+		s.drops = append(s.drops, protocol.HoldDropped{PayloadCode: heldPart, Qty: int64(held), Reason: protocol.HoldDropBackstop})
+	}
+	s.charge = min(s.avail, room)
+	s.hold = s.avail - s.charge
+	if s.hold > pack {
+		s.drops = append(s.drops, protocol.HoldDropped{PayloadCode: part, Qty: int64(s.hold - pack), Reason: protocol.HoldDropHoldCap})
+		s.hold = pack
+	}
+	if s.hold > 0 {
+		s.holdPart = part
+	}
+	return s
+}
+
+// chargeStrict is chargeOrHold's arm for a bound bin under strict_pack: one
+// guarded statement (processes.ChargeSeatUOPStrict, the count pinned with the
+// seat) and, only when something fits nowhere, its hold_dropped rows in the
+// same transaction (writeSeatWithDrops). It returns the CHARGED amount as
+// binAttributed, so handleProduceTick emits what the bin took and the held
+// ticks are emitted once, on the bin that takes them. A refused write (the
+// seat or its count changed) returns written false and applyHoldAndReplay
+// re-reads once. A failed write is logged and emits nothing: the count did
+// not move.
+func (e *Engine) chargeStrict(node *processes.Node, rt *processes.RuntimeState, input int, parts tickParts) (bound bool, binAttributed int, written bool) {
+	s := splitStrict(rt.RemainingUOPCached, int(rt.PendingUOPDelta), rt.PendingUOPPayload, parts.tick, input, parts.pack)
+	seat := processes.SeatAsReadOf(rt)
+	ok, err := e.writeSeatWithDrops(node, s.drops, func(ex processes.DBTX) (bool, error) {
+		return processes.ChargeSeatUOPStrict(ex, node.ID, s.avail, parts.pack, s.hold, s.holdPart, seat)
+	})
+	if err != nil {
+		log.Printf("counter delta: node %s: strict charge of %d (pack %d): %v", node.CoreNodeName, input, parts.pack, err)
+		return true, 0, true
+	}
+	if !ok {
+		return false, 0, false
+	}
+	if s.hold == 0 {
+		e.endUnheldEpisode(node.ID)
+	}
+	return true, s.charge, true
+}
+
+// errSeatRefused rolls back writeSeatWithDrops's transaction when the seat
+// refused the write: no seat change, so no message.
+var errSeatRefused = errors.New("seat changed since it was read")
+
+// writeSeatWithDrops writes one change to a produce seat and, when it lands,
+// one hold_dropped message per drop (protocol.SubjectHoldDropped, built by
+// orders.Manager.HoldDroppedEnvelope), in ONE SQLite transaction: a crash
+// leaves both or neither. write is the seat's guarded statement, run on the
+// transaction; it reports whether the seat was still as read, and a refusal
+// writes no message. Each drop is stamped with the node, the time and, when it
+// names none, the tick as its actor, and logged once after the commit.
+//
+// With no drop it is write alone on the store, outside any transaction: the
+// one statement a tick always ran.
+//
+// The drops' only writer at a tick; the sweep, the cutover clear and the flip
+// carry write theirs through it too. Caller holds countMu.
+func (e *Engine) writeSeatWithDrops(node *processes.Node, drops []protocol.HoldDropped, write func(processes.DBTX) (bool, error)) (bool, error) {
+	if len(drops) == 0 {
+		return write(e.db.DB)
+	}
+	now := time.Now().UTC()
+	envs := make([][]byte, len(drops))
+	var msgType string
+	for i := range drops {
+		drops[i].Node = node.CoreNodeName
+		drops[i].OccurredAt = now
+		if drops[i].CalledBy == "" {
+			drops[i].CalledBy = holdDropByTick
+		}
+		env, mt, err := e.orderMgr.HoldDroppedEnvelope(drops[i])
+		if err != nil {
+			return false, err
+		}
+		envs[i], msgType = env, mt
+	}
+	err := e.db.InTx(func(tx *sql.Tx) error {
+		ok, err := write(tx)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errSeatRefused
+		}
+		for _, env := range envs {
+			if _, err := store.EnqueueOutboxIn(tx, env, msgType); err != nil {
+				return fmt.Errorf("queue hold_dropped: %w", err)
+			}
+		}
+		return nil
+	})
+	if errors.Is(err, errSeatRefused) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	storemsg.NotifyEnqueued()
+	for _, d := range drops {
+		log.Printf("counter delta: node %s: %d of part %q dropped from the hold (%s); hold_dropped queued for Core",
+			node.CoreNodeName, d.Qty, d.PayloadCode, d.Reason)
+	}
+	return true, nil
 }
 
 // handleABFallthrough is the safety-net path when no active-pull consume node

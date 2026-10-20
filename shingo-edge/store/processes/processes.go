@@ -1099,10 +1099,11 @@ func BindLanding(db *sql.DB, processNodeID int64, l LandingBind) (bool, error) {
 }
 
 // SetActiveBinID writes only the active_bin_id pointer on a runtime
-// row, leaving the claim, UOP, and order pointers untouched. Used by
-// the bin-pickup handler (clear when bin physically leaves) and any
-// path that needs to update the bin pointer without touching the
-// claim or count.
+// row, leaving the claim, UOP, and order pointers untouched. NO PRODUCTION
+// CALLER: a carrier leaves through carrierLeft / carrierLeftAtPickup
+// (ClearActiveBinAndCount, LeaveAtPickup), which clear the count with the
+// pointer, and a carrier binds through the landing and bind writers. Test
+// fixtures bind and clear a seat with it.
 func SetActiveBinID(db *sql.DB, processNodeID int64, activeBinID *int64) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
 		`+releasedEmptyOnPointer+`, active_bin_id=?, `+rememberDepartedBin+`, updated_at=datetime('now')
@@ -1306,16 +1307,24 @@ func AddPendingUOPDelta(db *sql.DB, processNodeID int64, delta int, part string)
 // empty, and the hold. The tick's write names it in its WHERE, so a release, a
 // pickup, a landing or a replayed hold written between the read and the write
 // refuses the write instead of being overwritten.
+//
+// Count is the bound carrier's count as read. Only ChargeSeatUOPStrict names it
+// in its WHERE: its split between the bin and the hold is decided on that
+// count. The other writers move the count by a delta, so a count written in
+// between stands and the tick lands on top of it; seatUnchangedSQL leaves it
+// out for them.
 type SeatAsRead struct {
 	BinID         *int64
 	Epoch         int64
 	ReleasedEmpty bool
 	Pending       int64
+	Count         int
 }
 
 // SeatAsReadOf is the seat as rt holds it.
 func SeatAsReadOf(rt *RuntimeState) SeatAsRead {
-	return SeatAsRead{BinID: rt.ActiveBinID, Epoch: rt.ActiveBinEpoch, ReleasedEmpty: rt.ReleasedEmpty, Pending: rt.PendingUOPDelta}
+	return SeatAsRead{BinID: rt.ActiveBinID, Epoch: rt.ActiveBinEpoch, ReleasedEmpty: rt.ReleasedEmpty,
+		Pending: rt.PendingUOPDelta, Count: rt.RemainingUOPCached}
 }
 
 // seatUnchangedSQL is the WHERE that refuses a seat changed since it was read
@@ -1351,6 +1360,32 @@ func ChargeSeatUOP(db *sql.DB, processNodeID int64, delta int, clearPending bool
 		updated_at=datetime('now')
 		WHERE `+seatUnchangedSQL,
 		append([]any{delta, boolInt(clearPending), boolInt(clearPending)}, seatArgs(processNodeID, seat)...)...)
+	return oneRow(res, err)
+}
+
+// ChargeSeatUOPStrict is the strict-pack charge (engine chargeStrict): the
+// bound carrier takes MAX(0, MIN(avail, pack - count)) of the avail offered to
+// it, and the seat's hold becomes hold of holdPart, in one statement, on the
+// seat as the tick read it AND the count it read. avail is the tick's input,
+// plus the hold when the hold is the tick's part and not over the pack.
+//
+// THE COUNT IS PINNED because the caller split avail between the bin and the
+// hold on the count it read: a count written in between (a person's, a
+// landing's) refuses the write, and the tick re-reads the seat and splits
+// again. The MIN/MAX in the statement is the guard the caller's split mirrors:
+// a count at or past the pack takes 0 and is never written down.
+//
+// db is a DBTX so the write can share a transaction with the hold_dropped
+// outbox rows it describes. Reports whether the seat was still as read; false
+// writes nothing.
+func ChargeSeatUOPStrict(db DBTX, processNodeID int64, avail, pack, hold int, holdPart string, seat SeatAsRead) (bool, error) {
+	args := append([]any{avail, pack, hold, holdPart}, seatArgs(processNodeID, seat)...)
+	res, err := db.Exec(`UPDATE process_node_runtime_states SET
+		remaining_uop_cached = remaining_uop_cached + MAX(0, MIN(?, ? - remaining_uop_cached)),
+		pending_uop_delta = ?, pending_uop_payload = ?,
+		updated_at=datetime('now')
+		WHERE `+seatUnchangedSQL+` AND remaining_uop_cached=?`,
+		append(args, seat.Count)...)
 	return oneRow(res, err)
 }
 
