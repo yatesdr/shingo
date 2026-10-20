@@ -324,6 +324,7 @@ func (h *relHarness) changeover(s coSpec) int64 {
 	}
 	co, err := h.eng.StartProcessChangeover(pid, toID, "harness", "release harness")
 	testutil.MustNoErr(h.t, err, "start changeover")
+	createHeldLeg(h.t, h.eng, co, nid)
 	task, err := db.GetChangeoverNodeTaskByNode(co.ID, nid)
 	testutil.MustNoErr(h.t, err, "front node task")
 	if task.OldMaterialReleaseOrderID != nil {

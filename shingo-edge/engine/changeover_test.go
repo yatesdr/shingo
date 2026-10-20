@@ -1343,6 +1343,16 @@ func TestChangeoverBlockerNeverSaysInFlightAboutAQueuedOrder(t *testing.T) {
 func seedSequentialScenario(t *testing.T, db *store.DB, evacuate bool) (
 	eng *Engine, processID, activeNodeID, parkedNodeID int64, co *processes.Changeover) {
 	t.Helper()
+	eng, processID, activeNodeID, parkedNodeID, co = seedSequentialScenarioRaw(t, db, evacuate)
+	createHeldLeg(t, eng, co, activeNodeID)
+	return eng, processID, activeNodeID, parkedNodeID, co
+}
+
+// seedSequentialScenarioRaw is seedSequentialScenario as the start leaves it:
+// on a swap the pulling side's leg is held for its partner's.
+func seedSequentialScenarioRaw(t *testing.T, db *store.DB, evacuate bool) (
+	eng *Engine, processID, activeNodeID, parkedNodeID int64, co *processes.Changeover) {
+	t.Helper()
 
 	processID, err := db.CreateProcess("SEQ-CUT-PROC", "sequential cutover", "", "", false)
 	if err != nil {
@@ -1413,6 +1423,31 @@ func seedSequentialScenario(t *testing.T, db *store.DB, evacuate bool) (
 		t.Fatalf("start changeover: %v", err)
 	}
 	return eng, processID, activeNodeID, parkedNodeID, co
+}
+
+// createHeldLeg creates the pulling side's leg the start held for its partner
+// (changeover_sequential_order.go), as the partner's leg ending does, so a
+// fixture has both legs with the partner's still out: the state an operator
+// reaches by retrying a partner whose first leg failed. A task that was not
+// held is left alone.
+func createHeldLeg(t *testing.T, eng *Engine, co *processes.Changeover, nodeID int64) {
+	t.Helper()
+	task, err := eng.db.GetChangeoverNodeTaskByNode(co.ID, nodeID)
+	testutil.MustNoErr(t, err, "node task")
+	if task.NextMaterialOrderID != nil || task.OldMaterialReleaseOrderID != nil {
+		return
+	}
+	node, err := eng.db.GetProcessNode(nodeID)
+	testutil.MustNoErr(t, err, "node")
+	claim := eng.claimAtNode(node)
+	if claim == nil || claim.PairedCoreNode == "" {
+		return
+	}
+	action, ok := eng.planHeldPullingLeg(co, task, node.CoreNodeName, claim.PairedCoreNode)
+	if !ok {
+		t.Fatalf("the held leg at %s did not plan", node.CoreNodeName)
+	}
+	eng.applyNodeAction(task, action)
 }
 
 // ── THE RELEASE GUARD: ONE PRESS MOVES THE LINE TO THE PARTNER ─────────────

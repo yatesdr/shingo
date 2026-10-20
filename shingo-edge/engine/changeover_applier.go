@@ -16,23 +16,43 @@ import (
 //
 // Error handling policy: log and continue. A failure on one node must not
 // abort the rest of the changeover. See 2567plandiscussion.md.
+//
+// The pulling side of a sequential pair goes last, and is held while its
+// partner's leg is still to deliver (changeover_sequential_order.go).
 func (e *Engine) applyChangeoverPlan(co *processes.Changeover, plan changeover.Plan) {
+	var pulling []changeover.NodeAction
 	for _, action := range plan.Actions {
-		nodeTask, err := e.db.GetChangeoverNodeTaskByNode(co.ID, action.NodeID)
-		if err != nil {
-			log.Printf("changeover: cannot find node task for %s: %v", action.NodeName, err)
+		if _, ok := e.sequentialPartnerToHoldFor(action); ok {
+			pulling = append(pulling, action)
 			continue
 		}
-		if action.Err != nil {
-			log.Printf("changeover: auto-create orders for %s (%s): %v — operator must handle manually",
-				action.NodeName, action.Situation, action.Err)
-			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, domain.NodeTaskError); err != nil {
-				log.Printf("changeover: update node task %d state to error: %v", nodeTask.ID, err)
-			}
-			continue
-		}
-		e.applyNodeAction(nodeTask, action)
+		e.applyPlannedAction(co, action)
 	}
+	for _, action := range pulling {
+		if e.pullingSideHeld(co, plan, action) {
+			log.Printf("changeover: %s's leg is held until its partner's leg delivers", action.NodeName)
+			continue
+		}
+		e.applyPlannedAction(co, action)
+	}
+}
+
+// applyPlannedAction is one action of applyChangeoverPlan.
+func (e *Engine) applyPlannedAction(co *processes.Changeover, action changeover.NodeAction) {
+	nodeTask, err := e.db.GetChangeoverNodeTaskByNode(co.ID, action.NodeID)
+	if err != nil {
+		log.Printf("changeover: cannot find node task for %s: %v", action.NodeName, err)
+		return
+	}
+	if action.Err != nil {
+		log.Printf("changeover: auto-create orders for %s (%s): %v — operator must handle manually",
+			action.NodeName, action.Situation, action.Err)
+		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, domain.NodeTaskError); err != nil {
+			log.Printf("changeover: update node task %d state to error: %v", nodeTask.ID, err)
+		}
+		return
+	}
+	e.applyNodeAction(nodeTask, action)
 }
 
 func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover.NodeAction) {
