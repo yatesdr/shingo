@@ -3,9 +3,20 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-20 — Between bins, and the A/B strand: strokes wait for the next bin, and a parked leg no longer blocks a dig
+
+Core and Edge; no migration. Not deployed.
+
+- Strokes after a bin leaves through Shingo are held, up to one pack, until the next bin lands
+- A pile that would pass one pack is dropped with a row, and the seat logs until a bin lands
+- A dig refused by a same-part bin held for a later pickup exchanges the bins: the order that can go now takes the mouth, with no dig
+- A dig whose blocker is held behind a station wait says so (dig-blocker-held-at-station), naming the holder
+- A release checks the order's plan before it appends, so a re-pointed pickup is never sent stale
+- On a sequential changeover the pulling side's leg is created when its partner delivers, and held while the partner is in error
+
 ## 2026-10-20 — Strict pack: a produce bin stops counting at its pack
 
-Core and Edge (Edge v26; no Core migration). Deploy Core before Edge. Not deployed.
+Core and Edge (Edge v26; no Core migration). Deploy Core before Edge. Deployed at SPR 2026-10-20.
 
 - A produce claim may set strict pack: its bin is charged to its pack, the rest waits for the next bin (v26)
 - A bin's count is never written down; a count already past the pack takes nothing more
