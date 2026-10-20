@@ -56,6 +56,8 @@ func ClaimHas(c *NodeClaim, f flowspec.Field) bool {
 		return c.KeepStagedNode != ""
 	case flowspec.CurtainRequired:
 		return c.CurtainRequired
+	case flowspec.StrictPack:
+		return c.StrictPack
 	case flowspec.EvacuateOnChangeover:
 		return c.EvacuateOnChangeover
 	case flowspec.ChangeoverEvacNodes:
@@ -118,6 +120,8 @@ func ClaimInputHas(in NodeClaimInput, f flowspec.Field) bool {
 		return OptValue(in.KeepStagedNode) != ""
 	case flowspec.CurtainRequired:
 		return in.CurtainRequired
+	case flowspec.StrictPack:
+		return in.StrictPack
 	case flowspec.EvacuateOnChangeover:
 		return in.EvacuateOnChangeover
 	case flowspec.ChangeoverEvacNodes:

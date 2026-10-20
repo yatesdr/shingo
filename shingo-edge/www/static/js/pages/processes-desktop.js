@@ -2881,8 +2881,8 @@ async function setPartSetMember(code, on) {
 
 // ── D2 · Advanced (SPEC §2 D2) ───────────────────────────────────────────────
 //
-// The modal is the ONLY place these columns appear (ruling R2). Thirteen of the
-// sixteen fields are the model's advanced block; the other three — evacuation
+// The modal is the ONLY place these columns appear (ruling R2). Fourteen of the
+// seventeen fields are the model's advanced block; the other three — evacuation
 // positions, evacuation destination and the partial home — are on the cell, a
 // routing fact the flow carries like the destination beside it. Apply dispatches both and marks the flow dirty;
 // nothing is written until Save flow.
@@ -2905,6 +2905,8 @@ const ADV_SECTIONS = [
     // and no section, so nothing drew it: the claim had readers
     // (engine/release_load.go) and no UI writer.
     ['Light curtain', ['curtain_required']],
+    // The pack cap: a produce position's bin is counted only up to its pack.
+    ['Counting', ['strict_pack']],
     ['Station policy', ['auto_confirm']],
     // BOARD is one field, and it earns a section rather than a corner of
     // another: the loader board's draw order is not replenishment, not a
@@ -2913,7 +2915,7 @@ const ADV_SECTIONS = [
     ['Board', ['sequence']],
 ];
 
-// ADV_COPY — the sheet's sixteen rows: which CLAIM FIELD each one edits, and
+// ADV_COPY — the sheet's seventeen rows: which CLAIM FIELD each one edits, and
 // the one-line help under it.
 //
 // THE HELP IS THIS PAGE'S; THE NAME IS NOT. This used to carry both, so it was
@@ -2943,6 +2945,7 @@ const ADV_COPY = {
     auto_confirm: ['auto_confirm', 'the plant setting applies unless set here'],
     sequence: ['sequence', 'where this position sits on the loader board'],
     curtain_required: ['curtain_required', 'this part\'s full-bin releases wait for the node\'s light curtain - the bin leaving decides, so a part whose exit must not stop the conveyor leaves this off'],
+    strict_pack: ['strict_pack', 'count the bin at this position only up to its pack; parts made past it are held for the next bin of the part'],
 };
 
 // The reorder point's source stamps that are worth a pill: the word drawn and

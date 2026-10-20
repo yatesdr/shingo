@@ -218,6 +218,11 @@ const ADVANCED_DEFAULTS = {
     // conveyor leaves this off and its releases cross a curtained node
     // without asking it. Default false = no requirement.
     curtain_required: false,
+    // The pack cap on a produce position: a tick past the pack is held for
+    // the next bin of the part instead of counted onto this one. Default
+    // false = the count is uncapped. Without this key advancedFor drops a
+    // stored true and an Apply writes the cap off.
+    strict_pack: false,
     // The loader board's draw order. Zero is "the store's order", not
     // position zero — Expand speaks the column only when this block exists at
     // all, so a save that never opened the sheet leaves it alone.

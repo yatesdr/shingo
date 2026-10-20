@@ -98,7 +98,11 @@ type fingerprintClaim struct {
 	// CurtainRequired is IN the fingerprint: it decides whether a release
 	// waits for a tag - a save that flipped it changed what a release would
 	// do, which is exactly what the staleness check exists to catch.
-	CurtainRequired                bool                 `json:"curtain_required"`
+	CurtainRequired bool `json:"curtain_required"`
+	// StrictPack is IN the fingerprint: it decides whether a tick past the pack
+	// charges the bin or is held. omitempty, as PartialDestination: a claim with
+	// the cap off (every claim saved before it existed) hashes as it did.
+	StrictPack                     bool                 `json:"strict_pack,omitempty"`
 	AllowedPayloadCodes            []string             `json:"allowed_payload_codes"`
 	AutoRequestPayload             string               `json:"auto_request_payload"`
 	KeepStagedNode                 string               `json:"keep_staged_node"`
@@ -163,6 +167,7 @@ func fingerprintClaims(claims []NodeClaim) []fingerprintClaim {
 			ContainmentDestination: c.ContainmentDestination,
 			PartialDestination:     c.PartialDestination,
 			CurtainRequired:        c.CurtainRequired,
+			StrictPack:             c.StrictPack,
 			AllowedPayloadCodes:    cloneStrings(c.AllowedPayloadCodes), AutoRequestPayload: c.AutoRequestPayload,
 			KeepStagedNode: c.KeepStagedNode, EvacuateOnChangeover: c.EvacuateOnChangeover, PairedCoreNode: c.PairedCoreNode,
 			AutoConfirm: c.AutoConfirm, Sequence: c.Sequence,

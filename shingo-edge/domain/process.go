@@ -354,7 +354,15 @@ type NodeClaim struct {
 	// not stop the conveyor leaves the flag off and its releases cross a
 	// curtained node without asking it. An empty carrier carries no claim, so
 	// empty placements never gate.
-	CurtainRequired     bool     `json:"curtain_required"`
+	CurtainRequired bool `json:"curtain_required"`
+	// StrictPack caps this produce claim's bound bin at its pack (UOPCapacity,
+	// catalog-resolved): a tick charges the bin only up to the pack and holds
+	// the rest on the seat for the next bin of the part, and a count already
+	// at or above the pack is never written down. The PLC tick reads it from
+	// the claim it matched (engine strictPackApplies). Off by default, which is
+	// today's uncapped count. A produce setting: flowspec forbids it on consume
+	// claims and loader cards. Unrelated to StrictSteadyModes.
+	StrictPack          bool     `json:"strict_pack"`
 	AllowedPayloadCodes []string `json:"allowed_payload_codes"`
 	AutoRequestPayload  string   `json:"auto_request_payload"`
 	// KeepStagedNode is the claim's keep-staged node (the spot): one more node
@@ -1132,7 +1140,11 @@ type NodeClaimInput struct {
 	// CurtainRequired is the input side of the light-curtain style tie
 	// (NodeClaim's field carries the rule): whether this style's full-bin
 	// releases at this node wait for the curtain tag. Editor-owned bool.
-	CurtainRequired      bool     `json:"curtain_required"`
+	CurtainRequired bool `json:"curtain_required"`
+	// StrictPack mirrors NodeClaim's field: the bound bin is charged only up
+	// to its pack. An unconditional column, carried from the prior claim by
+	// Expand and echoed by InputFromClaim like AutoPush.
+	StrictPack           bool     `json:"strict_pack"`
 	AllowedPayloadCodes  []string `json:"allowed_payload_codes"`
 	AutoRequestPayload   string   `json:"auto_request_payload"`
 	EvacuateOnChangeover bool     `json:"evacuate_on_changeover"`

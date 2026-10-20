@@ -1211,3 +1211,52 @@ func TestSaveFlow_R3_RefusalOrder(t *testing.T) {
 		t.Errorf("changeover active + gate off: err = %v, want ErrChangeoverActive", err)
 	}
 }
+
+// TestSaveFlow_StrictPackSurvivesASave: a produce claim with the pack cap on
+// keeps it through both saves the composer makes. A save that never opened the
+// Advanced sheet carries it from the prior (Expand); a save whose sheet was
+// opened and applied sends it in the advanced block (FlowAdvanced, built on the
+// desktop from composer-model.js ADVANCED_DEFAULTS), and a block that did not
+// name it would write it off.
+func TestSaveFlow_StrictPackSurvivesASave(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, _, toStyleID := seedFlowScenario(t, db)
+	eng := testEngine(t, db)
+	enableComposer(t, db, processID)
+
+	same, err := db.GetStyleNodeClaimByNode(toStyleID, "FLOW-SAME")
+	testutil.MustNoErr(t, err, "get FLOW-SAME")
+	in := domain.InputFromClaim(*same)
+	in.Role, in.StrictPack = protocol.ClaimRoleProduce, true
+	_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, in)
+	testutil.MustNoErr(t, err, "turn the cap on at FLOW-SAME")
+
+	for _, tc := range []struct {
+		name   string
+		opened bool
+	}{
+		{"the sheet never opened", false},
+		{"the sheet opened and applied", true},
+	} {
+		fp, err := eng.FlowFingerprint(processID, toStyleID)
+		testutil.MustNoErr(t, err, "fingerprint")
+		cells := cellsOf(t, db, toStyleID)
+		for i := range cells {
+			if cells[i].CoreNodeName != "FLOW-SAME" || !tc.opened {
+				continue
+			}
+			stored, err := db.GetStyleNodeClaimByNode(toStyleID, "FLOW-SAME")
+			testutil.MustNoErr(t, err, "get FLOW-SAME")
+			cells[i].Advanced = domain.AdvancedOf(stored)
+		}
+		_, err = eng.SaveFlow(processID, FlowSaveRequest{Source: domain.ClaimSourceAdmin, ToStyleID: toStyleID,
+			Cells: cells, Fingerprint: fp, CalledBy: "engineer"})
+		testutil.MustNoErr(t, err, tc.name+": save")
+		got, err := db.GetStyleNodeClaimByNode(toStyleID, "FLOW-SAME")
+		testutil.MustNoErr(t, err, "get FLOW-SAME after")
+		if !got.StrictPack {
+			t.Errorf("%s: strict_pack is off after the save; a save must not write the cap off", tc.name)
+		}
+	}
+}

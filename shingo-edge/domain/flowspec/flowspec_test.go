@@ -110,8 +110,9 @@ func TestFlowspecRoleMovesOnlyTheNamedEntries(t *testing.T) {
 		}
 		// manual_swap hides the lineside threshold for BOTH roles (the loader
 		// board owns the numbers), so its one role-dependent entry is auto-push.
-		// Every other mode offers a produce claim its partial route.
-		want := []flowspec.Field{flowspec.LinesideSoftThreshold, flowspec.PartialDestination}
+		// Every other mode offers a produce claim its partial route and the
+		// pack cap, and forbids the cap on a consume claim.
+		want := []flowspec.Field{flowspec.LinesideSoftThreshold, flowspec.PartialDestination, flowspec.StrictPack}
 		if mode == protocol.SwapModeManualSwap {
 			want = []flowspec.Field{flowspec.AutoPush}
 		}
@@ -128,6 +129,25 @@ func TestFlowspecRoleMovesOnlyTheNamedEntries(t *testing.T) {
 	// A blank role reads as consume, as UpsertClaim stores it.
 	if got, want := flowspec.Steady("", protocol.SwapModeTwoRobot), flowspec.Steady(protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot); !reflect.DeepEqual(got, want) {
 		t.Errorf("Steady(\"\", two_robot) differs from consume")
+	}
+}
+
+// TestStrictPack_ForbiddenOnConsumeAndLoaderClaimsOnly: the pack cap is a
+// produce setting and nothing else decides it. Every produce claim outside the
+// loader card may carry it, whatever its swap mode (the cap is per seat and
+// reads no mode); a consume claim and a loader card of either role may not.
+func TestStrictPack_ForbiddenOnConsumeAndLoaderClaimsOnly(t *testing.T) {
+	t.Parallel()
+	for _, mode := range steadyModes() {
+		for _, role := range flowspec.Roles() {
+			want := flowspec.Used
+			if role == protocol.ClaimRoleConsume || mode == protocol.SwapModeManualSwap {
+				want = flowspec.Forbidden
+			}
+			if got := flowspec.Steady(role, mode)[flowspec.StrictPack]; got != want {
+				t.Errorf("%s %s: strict_pack is %v, want %v", role, mode, got, want)
+			}
+		}
 	}
 }
 

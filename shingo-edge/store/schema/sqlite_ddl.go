@@ -696,6 +696,11 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     -- gate (they never pass the curtain; an empty that does is the
     -- operator's fault, not the robot's).
     curtain_required        INTEGER NOT NULL DEFAULT 0,
+    -- strict_pack (v26): a produce claim's bound bin is charged only up to its
+    -- pack (the catalog's uop_capacity for the claim's part); the ticks past it
+    -- are held on the seat for the next bin of the part. 0 = uncapped, today's
+    -- count.
+    strict_pack             INTEGER NOT NULL DEFAULT 0,
     allowed_payload_codes   TEXT NOT NULL DEFAULT '',
     auto_request_payload    TEXT NOT NULL DEFAULT '',
     -- The keep-staged node: one more node this line's full or empty comes

@@ -102,6 +102,7 @@ var unspokenColumns = []struct {
 	{"lineside_soft_threshold", func(c processes.NodeClaim) any { return c.LinesideSoftThreshold }},
 	{"reuse_compatible_bins", func(c processes.NodeClaim) any { return c.ReuseCompatibleBins }},
 	{"auto_push", func(c processes.NodeClaim) any { return c.AutoPush }},
+	{"strict_pack", func(c processes.NodeClaim) any { return c.StrictPack }},
 	{"index_robot_supplies", func(c processes.NodeClaim) any { return c.IndexRobotSupplies }},
 	{"key_task", func(c processes.NodeClaim) any { return c.KeyTask }},
 	{"changeover_carryover_disposition", func(c processes.NodeClaim) any { return c.ChangeoverCarryoverDisposition }},

@@ -159,6 +159,9 @@ type FlowAdvanced struct {
 	// readers (engine/release_load.go) and no UI writer until it joined the
 	// sheet (pick-a-part U5).
 	CurtainRequired bool `json:"curtain_required,omitempty"`
+	// StrictPack caps the position's bound bin at its pack (NodeClaim.StrictPack).
+	// A produce setting; flowspec forbids it on consume claims and loader cards.
+	StrictPack bool `json:"strict_pack,omitempty"`
 }
 
 // AdvancedOf is the claim's advanced columns as the modal shows them. Nil in,
@@ -184,6 +187,7 @@ func AdvancedOf(c *NodeClaim) *FlowAdvanced {
 		AutoConfirm:           c.AutoConfirm,
 		Sequence:              c.Sequence,
 		CurtainRequired:       c.CurtainRequired,
+		StrictPack:            c.StrictPack,
 	}
 	return a
 }
@@ -291,6 +295,9 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 		// (SetContainment's route) and switched off a node's curtain tie.
 		in.ContainmentDestination = prior.ContainmentDestination
 		in.CurtainRequired = prior.CurtainRequired
+		// The pack cap is the same kind of column: no FlowCell field names it,
+		// so a save that never opened the modal keeps it from the prior.
+		in.StrictPack = prior.StrictPack
 	}
 	// The Advanced modal, LAST, so an engineer's opinion beats both the
 	// carry-through above and the degenerate-list guess inside it. Nil is the
@@ -316,6 +323,7 @@ func Expand(cell FlowCell, prior *NodeClaim, source, calledBy string) NodeClaimI
 		in.ChangeoverCarryoverDisposition = Ptr(a.CarryoverDisposition)
 		in.Sequence = Ptr(a.Sequence)
 		in.CurtainRequired = a.CurtainRequired
+		in.StrictPack = a.StrictPack
 	}
 	return in
 }
@@ -347,6 +355,7 @@ func InputFromClaim(c NodeClaim) NodeClaimInput {
 		// so a composer claim-save echoes it instead of wiping it (the same
 		// editor-less-column disease, one line of prevention).
 		CurtainRequired:                c.CurtainRequired,
+		StrictPack:                     c.StrictPack,
 		AllowedPayloadCodes:            cloneStrings(c.AllowedPayloadCodes),
 		AutoRequestPayload:             c.AutoRequestPayload,
 		EvacuateOnChangeover:           c.EvacuateOnChangeover,
@@ -460,8 +469,7 @@ func MaterializeClaim(in NodeClaimInput, prior *NodeClaim) NodeClaim {
 	c.AutoConfirm = in.AutoConfirm || in.IsLoaderNode()
 	c.LinesideSoftThreshold = in.LinesideSoftThreshold
 	c.SecondPairedCoreNode = in.SecondPairedCoreNode
-	c.ReuseCompatibleBins = in.ReuseCompatibleBins
-	c.AutoPush = in.AutoPush
+	c.ReuseCompatibleBins, c.AutoPush, c.StrictPack = in.ReuseCompatibleBins, in.AutoPush, in.StrictPack
 	// The twelve pointer-gated columns: spoken or left alone.
 	if in.ReorderPointSource != nil {
 		c.ReorderPointSource = *in.ReorderPointSource

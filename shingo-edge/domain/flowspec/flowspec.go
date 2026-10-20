@@ -138,6 +138,14 @@ const (
 	// releases at the node wait for the node's curtain tag. A FlowAdvanced
 	// column since pick-a-part U5; Used in every mode (steadyBase).
 	CurtainRequired Field = "curtain_required"
+	// StrictPack caps a produce claim's bound bin at its pack: ticks past the
+	// pack are held on the seat for the next bin of the part instead of
+	// counted onto this one (engine strictPackApplies). Offered on produce
+	// claims; Forbidden on consume claims, which draw a bin down and have no
+	// pack to stop at, and on loader cards, whose counts are a person's. Not
+	// to be confused with StrictSteadyModes (domain/claim_fields.go), which
+	// says how fully a mode's row is enforced at save.
+	StrictPack Field = "strict_pack"
 
 	// SwapMode and Role are NOT columns the per-mode matrices consult — they
 	// are the two discriminants the matrices are keyed BY, so they are not in
@@ -182,6 +190,7 @@ var fieldLabels = map[Field]string{
 	ReorderPointSource:             "Reorder point source",
 	PartialDestination:             "Partial destination",
 	CurtainRequired:                "Curtain required",
+	StrictPack:                     "Strict pack",
 	SwapMode:                       "Swap mode",
 	Role:                           "Role",
 }
@@ -196,6 +205,7 @@ var fieldOrder = []Field{
 	ChangeoverEvacNodes, ChangeoverEvacDestination, ChangeoverCarryoverDisposition,
 	ReuseCompatibleBins, IndexRobotSupplies, AutoConfirm, AutoRequestPayload, AutoPush,
 	KeyRoute, KeyTask, ReorderPointSource, PartialDestination, CurtainRequired,
+	StrictPack,
 }
 
 // Fields returns every field, in canonical order. A fresh slice each call.
@@ -412,6 +422,9 @@ func steadyRows() map[protocol.SwapMode]map[Field]Need {
 	ms[KeyRoute] = Forbidden
 	ms[KeyTask] = Forbidden
 	ms[AutoPush] = Used // consume only; produce is overridden in Steady
+	// A loader card's count is a person's (the PLC tick skips manual_swap
+	// claims), so there is no tick for a pack to stop.
+	ms[StrictPack] = Forbidden
 	for _, f := range []Field{
 		ReorderPoint, AutoReorder, LinesideSoftThreshold,
 		InboundStaging, OutboundStaging, InboundSource,
@@ -485,6 +498,9 @@ func Steady(role protocol.ClaimRole, mode protocol.SwapMode) map[Field]Need {
 		}
 	} else {
 		out[PartialDestination] = Unused
+		// A consume tick draws its bin down: there is no pack for it to stop
+		// at, so the cap is a produce setting.
+		out[StrictPack] = Forbidden
 	}
 	return out
 }

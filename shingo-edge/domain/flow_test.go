@@ -133,7 +133,7 @@ func TestFlowExpand_HonoursTheUpdateBoundary(t *testing.T) {
 	prior.UOPCapacity, prior.ReorderPoint, prior.LinesideSoftThreshold = 1420, 100, 7
 	prior.AllowedPayloadCodes = []string{"P1", "P2"}
 	prior.AutoRequestPayload, prior.EvacuateOnChangeover, prior.AutoConfirm = "P1", true, true
-	prior.ReuseCompatibleBins, prior.AutoPush = true, true
+	prior.ReuseCompatibleBins, prior.AutoPush, prior.StrictPack = true, true, true
 	cell := FlowCell{CoreNodeName: "PLN_01", Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeTwoRobot, PayloadCode: "NEW",
 		InboundStaging: "S", InboundSource: "SRC", OutboundDestination: "D", KeyRoute: []string{"LM1"}}
 	in := Expand(cell, &prior, ClaimSourceHMI, "Press 400")
@@ -145,7 +145,7 @@ func TestFlowExpand_HonoursTheUpdateBoundary(t *testing.T) {
 	// From the prior: the unconditional columns the cell has no field for.
 	if in.ReorderPoint != 100 || in.LinesideSoftThreshold != 7 ||
 		!reflect.DeepEqual(in.AllowedPayloadCodes, []string{"P1", "P2"}) || in.AutoRequestPayload != "P1" ||
-		!in.EvacuateOnChangeover || !in.AutoConfirm || !in.ReuseCompatibleBins || !in.AutoPush {
+		!in.EvacuateOnChangeover || !in.AutoConfirm || !in.ReuseCompatibleBins || !in.AutoPush || !in.StrictPack {
 		t.Errorf("unconditional columns not carried from the prior: %+v", in)
 	}
 	// Spoken: the three pointer-gated fields the cell carries.
@@ -168,7 +168,7 @@ func TestFlowExpand_HonoursTheUpdateBoundary(t *testing.T) {
 	// No prior: the INSERT defaults.
 	fresh := Expand(cell, nil, ClaimSourceHMI, "Press 400")
 	if fresh.ReorderPoint != 0 || fresh.AllowedPayloadCodes != nil || fresh.AutoRequestPayload != "" ||
-		fresh.EvacuateOnChangeover || fresh.AutoConfirm || fresh.LinesideSoftThreshold != 0 || fresh.ReuseCompatibleBins || fresh.AutoPush {
+		fresh.EvacuateOnChangeover || fresh.AutoConfirm || fresh.LinesideSoftThreshold != 0 || fresh.ReuseCompatibleBins || fresh.AutoPush || fresh.StrictPack {
 		t.Errorf("with no prior the unconditional columns must be the INSERT defaults: %+v", fresh)
 	}
 }

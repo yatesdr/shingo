@@ -32,7 +32,8 @@ window.FLOWSPEC = {
     "key_task",
     "reorder_point_source",
     "partial_destination",
-    "curtain_required"
+    "curtain_required",
+    "strict_pack"
   ],
   "routing_fields": [
     "inbound_staging",
@@ -70,6 +71,7 @@ window.FLOWSPEC = {
     "role": "Role",
     "second_paired_core_node": "Second paired core node",
     "sequence": "Board order",
+    "strict_pack": "Strict pack",
     "swap_mode": "Swap mode"
   },
   "roles": [
@@ -111,7 +113,8 @@ window.FLOWSPEC = {
         "reorder_point_source": "unused",
         "reuse_compatible_bins": "forbidden",
         "second_paired_core_node": "forbidden",
-        "sequence": "used"
+        "sequence": "used",
+        "strict_pack": "forbidden"
       },
       "sequential": {
         "allowed_payload_codes": "used",
@@ -140,7 +143,8 @@ window.FLOWSPEC = {
         "reorder_point_source": "unused",
         "reuse_compatible_bins": "forbidden",
         "second_paired_core_node": "forbidden",
-        "sequence": "used"
+        "sequence": "used",
+        "strict_pack": "forbidden"
       },
       "simple": {
         "allowed_payload_codes": "used",
@@ -169,7 +173,8 @@ window.FLOWSPEC = {
         "reorder_point_source": "unused",
         "reuse_compatible_bins": "forbidden",
         "second_paired_core_node": "forbidden",
-        "sequence": "used"
+        "sequence": "used",
+        "strict_pack": "forbidden"
       },
       "single_robot": {
         "allowed_payload_codes": "used",
@@ -198,7 +203,8 @@ window.FLOWSPEC = {
         "reorder_point_source": "unused",
         "reuse_compatible_bins": "forbidden",
         "second_paired_core_node": "forbidden",
-        "sequence": "used"
+        "sequence": "used",
+        "strict_pack": "forbidden"
       },
       "two_robot": {
         "allowed_payload_codes": "used",
@@ -227,7 +233,8 @@ window.FLOWSPEC = {
         "reorder_point_source": "unused",
         "reuse_compatible_bins": "forbidden",
         "second_paired_core_node": "forbidden",
-        "sequence": "used"
+        "sequence": "used",
+        "strict_pack": "forbidden"
       },
       "two_robot_press_index": {
         "allowed_payload_codes": "used",
@@ -256,7 +263,8 @@ window.FLOWSPEC = {
         "reorder_point_source": "unused",
         "reuse_compatible_bins": "unused",
         "second_paired_core_node": "used",
-        "sequence": "used"
+        "sequence": "used",
+        "strict_pack": "forbidden"
       }
     },
     "produce": {
@@ -287,7 +295,8 @@ window.FLOWSPEC = {
         "reorder_point_source": "unused",
         "reuse_compatible_bins": "forbidden",
         "second_paired_core_node": "forbidden",
-        "sequence": "used"
+        "sequence": "used",
+        "strict_pack": "forbidden"
       },
       "sequential": {
         "allowed_payload_codes": "used",
@@ -316,7 +325,8 @@ window.FLOWSPEC = {
         "reorder_point_source": "unused",
         "reuse_compatible_bins": "forbidden",
         "second_paired_core_node": "forbidden",
-        "sequence": "used"
+        "sequence": "used",
+        "strict_pack": "used"
       },
       "simple": {
         "allowed_payload_codes": "used",
@@ -345,7 +355,8 @@ window.FLOWSPEC = {
         "reorder_point_source": "unused",
         "reuse_compatible_bins": "forbidden",
         "second_paired_core_node": "forbidden",
-        "sequence": "used"
+        "sequence": "used",
+        "strict_pack": "used"
       },
       "single_robot": {
         "allowed_payload_codes": "used",
@@ -374,7 +385,8 @@ window.FLOWSPEC = {
         "reorder_point_source": "unused",
         "reuse_compatible_bins": "forbidden",
         "second_paired_core_node": "forbidden",
-        "sequence": "used"
+        "sequence": "used",
+        "strict_pack": "used"
       },
       "two_robot": {
         "allowed_payload_codes": "used",
@@ -403,7 +415,8 @@ window.FLOWSPEC = {
         "reorder_point_source": "unused",
         "reuse_compatible_bins": "forbidden",
         "second_paired_core_node": "forbidden",
-        "sequence": "used"
+        "sequence": "used",
+        "strict_pack": "used"
       },
       "two_robot_press_index": {
         "allowed_payload_codes": "used",
@@ -432,7 +445,8 @@ window.FLOWSPEC = {
         "reorder_point_source": "unused",
         "reuse_compatible_bins": "unused",
         "second_paired_core_node": "used",
-        "sequence": "used"
+        "sequence": "used",
+        "strict_pack": "used"
       }
     }
   },

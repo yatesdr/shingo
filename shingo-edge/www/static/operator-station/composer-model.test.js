@@ -1070,6 +1070,33 @@ test('Apply lands on exactly one cell and travels to the wire', () => {
     assert.strictEqual(M.toCells(after).find(c => c.core_node_name === 'PLN_01').advanced.reorder_point, 12);
 });
 
+test('a stored strict_pack opens on and survives an Apply to the wire', () => {
+    // The sheet's object is ADVANCED_DEFAULTS merged key by key with the stored
+    // block, so a key the defaults do not name is dropped on open, and an Apply
+    // then sends the block without it: Expand writes the cap off.
+    const f = FIXTURES.styles['7'];
+    const advanced = Object.assign({}, f.advanced);
+    advanced.PLN_01 = Object.assign({}, advanced.PLN_01, { strict_pack: true });
+    const s = M.init({
+        styleId: 7, styleName: f.name, positions: POSITIONS, routing: ROUTING,
+        claims: f.claims, parts: f.parts, lastRun: f.last_run || null, flowspec: FLOWSPEC,
+        groups: GROUPS, scene: SCENE, binWord: 'totes', advanced: advanced,
+    });
+    const adv = M.advancedFor(s, 'PLN_01');
+    assert.strictEqual(adv.strict_pack, true, 'the sheet opened with the cap off');
+    const after = M.reduce(s, { type: 'setAdvanced', node: 'PLN_01', advanced: adv });
+    const one = M.toCells(after).find(c => c.core_node_name === 'PLN_01');
+    assert.strictEqual(one.advanced.strict_pack, true, 'the Apply sent the cap off');
+    // The sheet draws the control where flowspec offers it, a produce
+    // position, and a role change to consume clears it (Forbidden there).
+    const produce = M.reduce(after, { type: 'setRole', node: 'PLN_01', role: 'produce' });
+    assert.strictEqual(M.advancedShows(produce, 'PLN_01', 'strict_pack'), true, 'not drawn on a produce position');
+    const consume = M.reduce(produce, { type: 'setRole', node: 'PLN_01', role: 'consume' });
+    assert.strictEqual(M.advancedShows(consume, 'PLN_01', 'strict_pack'), false, 'drawn on a consume position');
+    assert.strictEqual(M.toCells(consume).find(c => c.core_node_name === 'PLN_01').advanced.strict_pack, false,
+        'a consume position kept the cap');
+});
+
 test('Apply with null puts the position back on the carry-through', () => {
     const s = initStyle(7);
     const set = M.reduce(s, { type: 'setAdvanced', node: 'PLN_01', advanced: { reorder_point: 12 } });
