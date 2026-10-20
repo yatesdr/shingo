@@ -716,7 +716,7 @@ func TestThresholdMonitor_AFlaggedCarrierAtTheLoaderDoesNotHoldOffTheRefill(t *t
 	// The wrong carrier at the loader, finished by the press: lands, flagged.
 	b := &bins.Bin{BinTypeID: foreign.ID, Label: "BIN-FC-WRONG", NodeID: &sd.LineNode.ID, Status: "available"}
 	testutil.MustNoErr(t, db.CreateBin(b), "the carrier at the loader")
-	testutil.MustNoErr(t, eng.binManifest.RecordProducedBinFromTemplate(b.ID, payload, nil, ""),
+	testutil.MustNoErr(t, eng.binManifest.RecordProducedBinFromTemplate(b.ID, payload, nil, "", nil),
 		"the press finishes the part onto it")
 	var flagged bool
 	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT undeclared_carrier_at IS NOT NULL FROM bins WHERE id=$1`, b.ID).Scan(&flagged),

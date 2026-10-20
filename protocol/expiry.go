@@ -77,6 +77,10 @@ var subjectTTLs = map[string]time.Duration{
 	SubjectBinUOPDelta:         NoExpiry,
 	SubjectLinesideBucketLevel: NoExpiry,
 	SubjectProductionTicks:     NoExpiry, // keyed on (cell_id, edge_snapshot_id, recorded_at) at Core
+	// A dropped hold's row is the only record that those parts left the
+	// count. A late copy writes it late; a redelivered one writes nothing,
+	// because Core keys the row on the envelope id.
+	SubjectHoldDropped: NoExpiry,
 
 	// Core's count announcements to the Edge. One dropped after an outage
 	// longer than TypeData's 5 minutes leaves the station holding a carrier

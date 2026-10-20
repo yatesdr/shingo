@@ -167,13 +167,43 @@ func TestEpochBumpOpsIsASupersetOfTheReleaseFamily(t *testing.T) {
 	for _, op := range []string{
 		OpCycleCount, OpManifestConfirmed, OpManifestUnconfirmed, OpStaleEpochDropped, OpPayloadMismatchDropped,
 		OpPayloadBoundFirstDelta, OpPayloadReboundWithInventory,
-		OpOperatorOverrideReleasePartial, OpOperatorOverridePullParts, OpAfterLift,
+		OpOperatorOverrideReleasePartial, OpOperatorOverridePullParts, OpAfterLift, OpReleaseDeclaredFull,
 	} {
 		if bump[op] {
 			t.Errorf("%q is in EpochBumpOps and does not bump the epoch. A non-boundary op "+
 				"treated as a boundary SHORTENS every binding it appears in, which hides "+
 				"real stale bindings — the failure that points the reassuring way.", op)
 		}
+	}
+}
+
+// TestReleaseDeclaredFullIsNeitherBumpNorUnload holds the declared-full stamp
+// out of both op sets. The superset test above checks what it names and cannot
+// see a wrong inclusion of an op it does not, so this one names it.
+//
+// It is not a boundary: it corrects the count inside the binding the
+// set_for_production written just before it started, like cycle_count, and an
+// op in EpochBumpOps also writes an ExcBoundary row on every append, which
+// would cut the binding at the release. It is not an unload: the carrier
+// leaves FULL, and ReleaseFamilyOps feeds the footprint chart's unloads.
+func TestReleaseDeclaredFullIsNeitherBumpNorUnload(t *testing.T) {
+	for _, set := range []struct {
+		name string
+		ops  []string
+	}{
+		{"EpochBumpOps", EpochBumpOps},
+		{"ReleaseFamilyOps", ReleaseFamilyOps},
+		{"ReleaseDeclarationOps", ReleaseDeclarationOps},
+	} {
+		for _, op := range set.ops {
+			if op == OpReleaseDeclaredFull {
+				t.Errorf("%q is in %s. A declared-full stamp changes the count inside its binding "+
+					"and the carrier leaves full: it is neither a boundary nor an unload.", op, set.name)
+			}
+		}
+	}
+	if OpReleaseDeclaredFull != "release_declared_full" {
+		t.Errorf("OpReleaseDeclaredFull = %q; historical rows carry \"release_declared_full\"", OpReleaseDeclaredFull)
 	}
 }
 

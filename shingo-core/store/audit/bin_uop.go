@@ -156,6 +156,21 @@ const (
 	// exception row, no anomaly_at, no refresh: it is the rule working, not a
 	// station behind.
 	OpAfterLift = "after_lift"
+
+	// OpReleaseDeclaredFull tags a station's RELEASE FULL on a produce bin
+	// counted below its pack (strict pack): Core books the counted number
+	// (OpSetForProduction) and then this row, before_uop the counted number
+	// and after_uop the pack of the part Core books the bin under, from its
+	// catalog, in the same transaction
+	// (service.BinManifestService.recordProduced). With no pack for that part
+	// the row is written with before_uop == after_uop and reason no_pack, and
+	// the bin keeps its count. actor is who declared it, order_id the departing
+	// order when Core could resolve it; detail carries {counted, pack,
+	// declared_qty, declared_part, reason, node, order_uuid, order_unresolved}.
+	// Not a boundary and not an unload: the count changes inside the binding
+	// the set started, and the carrier leaves full
+	// (TestReleaseDeclaredFullIsNeitherBumpNorUnload).
+	OpReleaseDeclaredFull = "release_declared_full"
 )
 
 // ReleaseFamilyOps is the canonical set of ops that retire a bin's manifest —
@@ -337,7 +352,7 @@ func AppendBinUOP(execer BinUOPExecer, binID int64, beforeUOP *int, afterUOP int
 	// exceptions ledger (v93) — the one structural addition this function
 	// makes to its caller's transaction. Every bump site routes through here
 	// (the set is pinned to them by TestEpochBumpOpsCoversEveryBumpSite), so
-	// hooking the append rather than each caller is what keeps a sixth bump
+	// hooking the append rather than each caller is what keeps a new bump
 	// site from silently missing its boundary row. Same tx, same before/
 	// after, detail verbatim.
 	for _, bump := range EpochBumpOps {

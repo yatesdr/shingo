@@ -766,20 +766,57 @@ func (s *BinManifestService) confirmTx(tx *sql.Tx, binID int64, producedAt strin
 // refused — the parts are in the bin by the time this message arrives. That is
 // the same DeclaredByLifecycle that keeps the announcement from inviting a
 // bind, reused: see judgeBinTypeCarriesPayload.
-func (s *BinManifestService) RecordProducedBin(binID int64, manifestJSON, payloadCode string, uop int, producedAt string) error {
+//
+// full is a station's declaration that the bin left full (nil: none). When
+// the booked part's pack (full.Pack) exceeds uop, the count is booked and then
+// stamped up to the pack in the same transaction; see stampDeclaredFullTx.
+func (s *BinManifestService) RecordProducedBin(binID int64, manifestJSON, payloadCode string, uop int, producedAt string, full *DeclaredFull) error {
 	// A press finishing a carrier. This announcement is the one that routinely
 	// lands after a robot has already lifted what it names, so it must never
 	// invite a bind.
-	_, err := s.recordProduced(binID, manifestJSON, payloadCode, uop, producedAt, flagUndeclared)
+	_, err := s.recordProduced(binID, manifestJSON, payloadCode, uop, producedAt, flagUndeclared, full)
 	return err
 }
+
+// DeclaredFull is a station's RELEASE FULL on a produce bin it counted below
+// its pack, as the ingest carries it (protocol.OrderIngestRequest.DeclaredQty,
+// CalledBy, OrderID), with the pack the caller resolved for the part the bin
+// is booked under. The count is booked as counted and stamped up to Pack with
+// a row; nothing is stamped when Pack does not exceed the count, so a count is
+// never written down.
+type DeclaredFull struct {
+	// Pack is the catalog pack (uop_capacity, cycles) of the part the bin is
+	// booked under: the count a stamp writes. <= 0 is no pack: the count
+	// stands and the row says DeclaredFullNoPack.
+	Pack int
+	// DeclaredQty is what the station declared (the departing order's pack),
+	// kept in the row's detail; it is not the count stamped.
+	DeclaredQty int
+	// DeclaredPart is the part the declaration was made for (the ingest's),
+	// kept in the row's detail beside the booked part, which can differ
+	// (ApplyIngestManifest keeps the part a bin was counted as).
+	DeclaredPart string
+	// CalledBy is who declared it: the stamp row's actor.
+	CalledBy string
+	// OrderUUID is the departing order's Edge UUID; "" names none.
+	OrderUUID string
+	// Node is the seat the bin was counted at (the ingest's source node).
+	Node string
+}
+
+// DeclaredFullNoPack is the release_declared_full row's detail reason when
+// the booked part has no pack to stamp to (no catalog capacity): the row is
+// written from the count to the count, so the declaration is listed with the
+// stamps and the bin leaves at what was counted.
+const DeclaredFullNoPack = "no_pack"
 
 // recordProduced is the set-and-confirm in one transaction, returning the new
 // delta_epoch for the caller that has to hand it back to the Edge. Its
 // announcement is always lifecycle; `no` is what the carrier rule does with a
 // "no" (see judgeBinTypeCarriesPayload): the press door flags, the loader's
-// LOAD refuses.
-func (s *BinManifestService) recordProduced(binID int64, manifestJSON, payloadCode string, uop int, producedAt string, no carrierNo) (int64, error) {
+// LOAD refuses. full is the produce ingest's declared-full stamp; the LOAD
+// passes nil and never writes one.
+func (s *BinManifestService) recordProduced(binID int64, manifestJSON, payloadCode string, uop int, producedAt string, no carrierNo, full *DeclaredFull) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("begin tx: %w", err)
@@ -789,6 +826,9 @@ func (s *BinManifestService) recordProduced(binID int64, manifestJSON, payloadCo
 	if err != nil {
 		return 0, err
 	}
+	if err := stampDeclaredFullTx(tx, binID, payloadCode, uop, full); err != nil {
+		return 0, err
+	}
 	if err := s.confirmTx(tx, binID, producedAt); err != nil {
 		return 0, err
 	}
@@ -796,6 +836,75 @@ func (s *BinManifestService) recordProduced(binID int64, manifestJSON, payloadCo
 		return 0, err
 	}
 	return epoch, nil
+}
+
+// stampDeclaredFullTx writes a station's declaration over the count just
+// booked, on the caller's transaction: when the booked part's pack exceeds the
+// count, the bin's uop_remaining to full.Pack and one release_declared_full
+// row from counted to full.Pack with the declarer as actor; when there is no
+// pack (full.Pack <= 0), the count stands and the row goes from counted to
+// counted with reason DeclaredFullNoPack; when the pack is at or below the
+// count, nothing. The row is written under the booked part and its detail
+// carries the declared part and quantity beside the pack. Its order_id is
+// Core's id for full.OrderUUID, read here and only here (one read on
+// idx_orders_uuid, only when a row is written and an order is named); an
+// order Core cannot find leaves order_id NULL and the detail says so. The
+// stamp does not bump the epoch: it is a count inside the binding the set
+// just started (TestReleaseDeclaredFullIsNeitherBumpNorUnload).
+//
+// Cost when it stamps: the UPDATE, the order read when one is named, the
+// ledger context read and the INSERT; a no_pack row is the same less the
+// UPDATE. Otherwise nothing.
+func stampDeclaredFullTx(tx *sql.Tx, binID int64, payloadCode string, counted int, full *DeclaredFull) error {
+	if full == nil {
+		return nil
+	}
+	noPack := full.Pack <= 0
+	if !noPack && full.Pack <= counted {
+		return nil
+	}
+	after, reason := full.Pack, ""
+	if noPack {
+		after, reason = counted, DeclaredFullNoPack
+	}
+	var orderID *int64
+	unresolved := false
+	if full.OrderUUID != "" {
+		var id int64
+		switch err := tx.QueryRow(`SELECT id FROM orders WHERE edge_uuid = $1`, full.OrderUUID).Scan(&id); {
+		case err == nil:
+			orderID = &id
+		case errors.Is(err, sql.ErrNoRows):
+			unresolved = true
+		default:
+			return fmt.Errorf("resolve order %q for the declared-full stamp on bin %d: %w", full.OrderUUID, binID, err)
+		}
+	}
+	detail, err := json.Marshal(struct {
+		Counted         int    `json:"counted"`
+		Pack            int    `json:"pack,omitempty"`
+		DeclaredQty     int    `json:"declared_qty"`
+		DeclaredPart    string `json:"declared_part,omitempty"`
+		Reason          string `json:"reason,omitempty"`
+		Node            string `json:"node,omitempty"`
+		OrderUUID       string `json:"order_uuid,omitempty"`
+		OrderUnresolved bool   `json:"order_unresolved,omitempty"`
+	}{counted, max(full.Pack, 0), full.DeclaredQty, full.DeclaredPart, reason, full.Node, full.OrderUUID, unresolved})
+	if err != nil {
+		return fmt.Errorf("marshal the declared-full stamp on bin %d: %w", binID, err)
+	}
+	if !noPack {
+		if _, err := tx.Exec(`UPDATE bins SET uop_remaining=$2, updated_at=NOW() WHERE id=$1`, binID, after); err != nil {
+			return fmt.Errorf("stamp bin %d declared full: %w", binID, err)
+		}
+	}
+	uopCtx, err := resolveBinUOPContext(tx, binID, detail)
+	if err != nil {
+		return err
+	}
+	return audit.AppendBinUOP(tx, binID, &counted, after,
+		audit.OpReleaseDeclaredFull, "service/bin_manifest.go:recordProduced",
+		orderID, payloadCode, full.CalledBy, uopCtx)
 }
 
 // ErrUnknownPayload marks a load refused because Core has no template for the
@@ -874,7 +983,7 @@ func (s *BinManifestService) LoadAtLine(binID int64, manifestJSON, payloadCode s
 		return 0, 0, err
 	}
 	uop := standardPackUOP(p.UOPCapacity, d)
-	epoch, err := s.recordProduced(binID, manifestJSON, payloadCode, uop, "", refuseUndeclared)
+	epoch, err := s.recordProduced(binID, manifestJSON, payloadCode, uop, "", refuseUndeclared, nil)
 	if err != nil {
 		if marker != nil {
 			if rErr := s.db.RestoreBinType(binID, *marker); rErr != nil {
@@ -904,13 +1013,14 @@ func standardPackUOP(capacity int, declared *int) int {
 
 // RecordProducedBinFromTemplate is RecordProducedBin for the no-manifest ingest
 // path: it resolves the payload template (like SetFromTemplate) then sets and
-// confirms the bin in one transaction. uopOverride nil = template capacity.
-func (s *BinManifestService) RecordProducedBinFromTemplate(binID int64, payloadCode string, uopOverride *int, producedAt string) error {
+// confirms the bin in one transaction. uopOverride nil = template capacity;
+// full as RecordProducedBin.
+func (s *BinManifestService) RecordProducedBinFromTemplate(binID int64, payloadCode string, uopOverride *int, producedAt string, full *DeclaredFull) error {
 	manifestJSON, uop, err := s.resolveTemplateManifest(payloadCode, uopOverride)
 	if err != nil {
 		return err
 	}
-	return s.RecordProducedBin(binID, manifestJSON, payloadCode, uop, producedAt)
+	return s.RecordProducedBin(binID, manifestJSON, payloadCode, uop, producedAt, full)
 }
 
 // RecordIngestRefused writes the audit row for a produce ingest refused on its

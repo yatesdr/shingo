@@ -940,6 +940,27 @@ type OrderIngestRequest struct {
 	Quantity   int64                `json:"quantity"` // operator-measured produced count (UOP); 0 => payload capacity
 	Manifest   []IngestManifestItem `json:"manifest,omitempty"`
 	ProducedAt string               `json:"produced_at,omitempty"` // RFC3339 timestamp from Edge at cell completion
+	// DeclaredQty is the count a station's RELEASE FULL declared for a bin it
+	// counted below its pack (0 = absent: no declaration, an older Edge, or a
+	// release that is not a station's FULL). Quantity keeps its meaning, the
+	// counted number. A declaration makes Core write the count
+	// (set_for_production) and then stamp the bin to the pack of the part it
+	// books the bin under, from its own catalog (release_declared_full,
+	// counted to that pack), in one transaction, with a row naming who
+	// declared it; the row's detail keeps DeclaredQty and the declared part. A
+	// pack at or below the count stamps nothing; no pack for the part books
+	// the count with a no_pack row. An older Core ignores the field and books
+	// the counted number.
+	DeclaredQty int64 `json:"declared_qty,omitempty"`
+	// CalledBy names who declared the bin full, for the stamp's row.
+	// Meaningful only with DeclaredQty.
+	CalledBy string `json:"called_by,omitempty"`
+	// OrderID is the Edge UUID of the DEPARTING order (the value Core stores
+	// as that order's edge_uuid), not this message's id: OrderUUID above is a
+	// fresh uuid per ingest message. Core resolves it to its own order id only
+	// when it writes a stamp, and when it cannot, writes the row with no order
+	// id and says so in the row's detail.
+	OrderID string `json:"order_id,omitempty"`
 }
 
 // IngestManifestItem describes a single item in an ingest manifest.

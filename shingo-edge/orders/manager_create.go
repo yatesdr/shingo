@@ -374,6 +374,27 @@ func (m *Manager) IngestEnvelope(payloadCode, binLabel string, binID, binEpoch i
 	return data, env.Type, nil
 }
 
+// HoldDroppedEnvelope encodes one dropped produce hold for Core
+// (protocol.SubjectHoldDropped) and returns it with the outbox msg type, for a
+// caller that writes the outbox row inside the transaction that dropped the
+// hold (store.EnqueueOutboxIn), so the drop and its message commit together.
+// The caller rings the drainer after its commit (messaging.NotifyEnqueued).
+//
+// The row never expires and never dead-letters (protocol.SubjectHoldDropped),
+// and Core writes one hold_dropped row per envelope id, so a re-send writes
+// nothing twice.
+func (m *Manager) HoldDroppedEnvelope(d protocol.HoldDropped) ([]byte, string, error) {
+	env, err := protocol.NewDataEnvelope(protocol.SubjectHoldDropped, m.sender.src(), m.sender.dst(), &d)
+	if err != nil {
+		return nil, "", fmt.Errorf("build hold-dropped envelope node %s: %w", d.Node, err)
+	}
+	data, err := env.Encode()
+	if err != nil {
+		return nil, "", fmt.Errorf("encode hold-dropped envelope node %s: %w", d.Node, err)
+	}
+	return data, protocol.SubjectHoldDropped, nil
+}
+
 func (m *Manager) QueueIngestManifest(payloadCode, binLabel string, binID, binEpoch int64, sourceNode string, quantity int64, manifest []protocol.IngestManifestItem, producedAt string) error {
 	return m.sender.Queue(protocol.TypeOrderIngest, &protocol.OrderIngestRequest{
 		OrderUUID:   uuid.New().String(),

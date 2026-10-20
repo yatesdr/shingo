@@ -577,6 +577,7 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 			return lifecycleErr("payload_error", fmt.Sprintf("payload %q not found", part), err)
 		}
 	}
+	full := declaredFull(p, tmpl.UOPCapacity)
 	// Set the manifest AND confirm it in ONE transaction: a confirm failure must
 	// not leave a counted-but-unconfirmed bin. manifest_confirmed is a hard gate
 	// for a full bin to be a drain/retrieve source, so a stranded unconfirmed bin
@@ -606,7 +607,7 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 		if uop <= 0 {
 			uop = tmpl.UOPCapacity
 		}
-		if err := s.binManifest.RecordProducedBin(bin.ID, string(manifestJSON), part, uop, p.ProducedAt); err != nil {
+		if err := s.binManifest.RecordProducedBin(bin.ID, string(manifestJSON), part, uop, p.ProducedAt, full); err != nil {
 			return lifecycleErr("internal_error", err.Error(), err)
 		}
 	} else {
@@ -624,7 +625,7 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 			q := int(p.Quantity)
 			uopOverride = &q
 		}
-		if err := s.binManifest.RecordProducedBinFromTemplate(bin.ID, part, uopOverride, p.ProducedAt); err != nil {
+		if err := s.binManifest.RecordProducedBinFromTemplate(bin.ID, part, uopOverride, p.ProducedAt, full); err != nil {
 			return lifecycleErr("internal_error", err.Error(), err)
 		}
 	}
@@ -636,6 +637,31 @@ func (s *LifecycleService) ApplyIngestManifest(p *protocol.OrderIngestRequest) *
 	s.dbg("ingest: manifest recorded + confirmed bin=%d payload=%s at %s loaded_at=%s",
 		bin.ID, part, p.SourceNode, loadedAtLabel)
 	return nil
+}
+
+// declaredFull is the ingest's declared-full stamp for recordProduced, nil
+// when the ingest declares nothing (an older Edge, or any release that is not
+// a station's FULL). pack is the catalog pack (uop_capacity) of the part the
+// bin is booked under, from the template ApplyIngestManifest already holds
+// (re-read on the rebind), so resolving it costs no statement.
+//
+// THE STAMP IS THE BOOKED PART'S OWN PACK, not the declared quantity. A
+// station's FULL says the bin is full of what it holds, and the bin is booked
+// under the part it was counted as: the part its first produce tick bound this
+// life (the rebind above), else the ingest's. That need not be the departing
+// order's part the declaration was made for, and DeclaredQty is that order's
+// pack, so stamping it would write a count in another part's units. The
+// declared part and quantity ride along for the row's detail; whether the pack
+// stamps (above the count), or is missing and the row says no_pack, is
+// stampDeclaredFullTx's call.
+func declaredFull(p *protocol.OrderIngestRequest, pack int) *service.DeclaredFull {
+	if p.DeclaredQty <= 0 {
+		return nil
+	}
+	return &service.DeclaredFull{
+		Pack: pack, DeclaredQty: int(p.DeclaredQty), DeclaredPart: p.PayloadCode,
+		CalledBy: p.CalledBy, OrderUUID: p.OrderID, Node: p.SourceNode,
+	}
 }
 
 // CancelOrder and ConfirmReceipt now live in lifecycle.go and route

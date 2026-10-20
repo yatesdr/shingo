@@ -1,8 +1,10 @@
 package orders
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -263,3 +265,40 @@ func TestRegression_FailedToFailedIdempotent(t *testing.T) {
 	}
 }
 func (testEmitter) EmitOrderFaulted(orderID int64, orderUUID, reason string) {}
+
+// TestHoldDroppedEnvelope_IsAnOutboxRowForCore pins the Edge half of the
+// hold-drop message (strict pack, lane P0) that the hold lanes enqueue inside
+// their own transaction: a data envelope from this station to Core on
+// protocol.SubjectHoldDropped, with no expiry, whose msg type is the subject —
+// the outbox drainer keys its never-dead-letter treatment on it — and whose
+// body round-trips. Built here, written by the caller with
+// store.EnqueueOutboxIn(tx, ...).
+func TestHoldDroppedEnvelope_IsAnOutboxRowForCore(t *testing.T) {
+	t.Parallel()
+	mgr := NewManager(testManagerDB(t), testEmitter{}, "edge.station")
+	at := time.Date(2026, 10, 20, 8, 15, 0, 0, time.UTC)
+	drop := protocol.HoldDropped{
+		Node: "ALN_011", PayloadCode: "SYN44-PARTA.06", Qty: 24, Reason: protocol.HoldDropSweep,
+		CalledBy: "edge:sweep", OccurredAt: at,
+	}
+	data, msgType, err := mgr.HoldDroppedEnvelope(drop)
+	testutil.MustNoErr(t, err, "build")
+	if msgType != protocol.SubjectHoldDropped {
+		t.Errorf("msg type = %q, want %q", msgType, protocol.SubjectHoldDropped)
+	}
+	var env protocol.Envelope
+	testutil.MustNoErr(t, json.Unmarshal(data, &env), "decode envelope")
+	if env.Type != protocol.TypeData || env.Src.Station != "edge.station" || env.Src.Role != protocol.RoleEdge || env.Dst.Role != protocol.RoleCore {
+		t.Errorf("envelope = type %s src %+v dst %+v, want data from edge.station to core", env.Type, env.Src, env.Dst)
+	}
+	if !env.ExpiresAt.IsZero() || env.ID == "" {
+		t.Errorf("envelope exp = %v id = %q, want no expiry and an id (Core keys the row on it)", env.ExpiresAt, env.ID)
+	}
+	var body protocol.Data
+	testutil.MustNoErr(t, json.Unmarshal(env.Payload, &body), "decode data")
+	var back protocol.HoldDropped
+	testutil.MustNoErr(t, json.Unmarshal(body.Body, &back), "decode body")
+	if body.Subject != protocol.SubjectHoldDropped || back != drop {
+		t.Errorf("body = %s %+v, want %s %+v", body.Subject, back, protocol.SubjectHoldDropped, drop)
+	}
+}

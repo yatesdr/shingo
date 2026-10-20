@@ -1,7 +1,10 @@
 package service
 
 import (
+	"time"
+
 	"shingocore/store"
+	"shingocore/store/audit"
 	"shingocore/store/inventory"
 )
 
@@ -49,4 +52,19 @@ func (s *InventoryService) OpenReportDivergences() ([]store.OpenReportDivergence
 		out = []store.OpenReportDivergence{}
 	}
 	return out, err
+}
+
+// HoldDrops lists the produce holds the Edges dropped since a time, newest
+// first: each a hold_dropped row with its seat, part, quantity and reason.
+// Read by the /inventory ledger panels. Never nil on success.
+func (s *InventoryService) HoldDrops(since time.Time, limit int) ([]audit.HoldDrop, error) {
+	return s.db.ListHoldDrops(since, limit)
+}
+
+// DeclaredFullStamps lists the bins a station declared full below their
+// count since a time, newest first: each a release_declared_full row with its
+// seat, bin, counted and declared counts and who declared it. Read by the
+// /inventory ledger panels. Never nil on success.
+func (s *InventoryService) DeclaredFullStamps(since time.Time, limit int) ([]audit.DeclaredFullStamp, error) {
+	return s.db.ListDeclaredFullStamps(since, limit)
 }

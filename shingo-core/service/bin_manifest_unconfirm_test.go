@@ -20,7 +20,7 @@ func TestBinManifestService_Unconfirm_WritesItsLedgerRow(t *testing.T) {
 	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-UNCONF-1", "", 0)
-	testutil.MustNoErr(t, svc.RecordProducedBin(bin.ID, `{"items":[]}`, sd.Payload.Code, 40, ""), "load")
+	testutil.MustNoErr(t, svc.RecordProducedBin(bin.ID, `{"items":[]}`, sd.Payload.Code, 40, "", nil), "load")
 	testutil.MustNoErr(t, svc.Unconfirm(bin.ID), "Unconfirm")
 
 	got, _ := db.GetBin(bin.ID)

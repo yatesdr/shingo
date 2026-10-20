@@ -134,7 +134,7 @@ func TestProduceFinalize_LandsAndFlagsACarrierThePartMayNotTravelIn(t *testing.T
 	svc := service.NewBinManifestService(f.db, service.EpochAnnounce{})
 	binID := f.bin(t, "BTW-WRONG", f.foreignID)
 
-	if err := svc.RecordProducedBinFromTemplate(binID, f.payload, nil, ""); err != nil {
+	if err := svc.RecordProducedBinFromTemplate(binID, f.payload, nil, "", nil); err != nil {
 		t.Fatalf("produce finalize refused a carrier the payload does not declare: %v\n"+
 			"The parts are already in the bin by the time a cell reports a finalize. "+
 			"Refusing records that something which happened did not, and leaves the "+
@@ -166,7 +166,7 @@ func TestProduceFinalize_TheFlagKeepsItsFirstStamp(t *testing.T) {
 	svc := service.NewBinManifestService(f.db, service.EpochAnnounce{})
 	binID := f.bin(t, "BTW-RESTAMP", f.foreignID)
 
-	if err := svc.RecordProducedBinFromTemplate(binID, f.payload, nil, ""); err != nil {
+	if err := svc.RecordProducedBinFromTemplate(binID, f.payload, nil, "", nil); err != nil {
 		t.Fatalf("first finalize: %v", err)
 	}
 	first := f.flaggedAt(t, binID)
@@ -181,7 +181,7 @@ func TestProduceFinalize_TheFlagKeepsItsFirstStamp(t *testing.T) {
 	if err := f.db.SetPayloadBinTypes(other.ID, []int64{f.fitsID}); err != nil {
 		t.Fatalf("declare second payload bin types: %v", err)
 	}
-	if err := svc.RecordProducedBinFromTemplate(binID, other.Code, nil, ""); err != nil {
+	if err := svc.RecordProducedBinFromTemplate(binID, other.Code, nil, "", nil); err != nil {
 		t.Fatalf("second finalize: %v", err)
 	}
 	second := f.flaggedAt(t, binID)
@@ -203,7 +203,7 @@ func TestProduceFinalize_AcceptsADeclaredCarrier(t *testing.T) {
 	svc := service.NewBinManifestService(f.db, service.EpochAnnounce{})
 	binID := f.bin(t, "BTW-RIGHT", f.fitsID)
 
-	if err := svc.RecordProducedBinFromTemplate(binID, f.payload, nil, ""); err != nil {
+	if err := svc.RecordProducedBinFromTemplate(binID, f.payload, nil, "", nil); err != nil {
 		t.Fatalf("produce finalize refused the carrier the payload declares: %v", err)
 	}
 	b, err := f.db.GetBin(binID)
@@ -234,7 +234,7 @@ func TestProduceFinalize_UndescribedPayloadConstrainsNothing(t *testing.T) {
 
 	svc := service.NewBinManifestService(f.db, service.EpochAnnounce{})
 	binID := f.bin(t, "BTW-ANY", f.foreignID)
-	if err := svc.RecordProducedBinFromTemplate(binID, undescribed.Code, nil, ""); err != nil {
+	if err := svc.RecordProducedBinFromTemplate(binID, undescribed.Code, nil, "", nil); err != nil {
 		t.Fatalf("a payload with no payload_bin_types rows refused a carrier: %v\n"+
 			"Coverage is a gap in the data, not a licence to refuse.", err)
 	}
@@ -293,7 +293,7 @@ func TestOperatorLoadPayload_ADeclaredCarrierClearsAStandingFlag(t *testing.T) {
 	manifest := service.NewBinManifestService(f.db, service.EpochAnnounce{})
 	binID := f.bin(t, "BTW-HEALED", f.foreignID)
 
-	if err := manifest.RecordProducedBinFromTemplate(binID, f.payload, nil, ""); err != nil {
+	if err := manifest.RecordProducedBinFromTemplate(binID, f.payload, nil, "", nil); err != nil {
 		t.Fatalf("seed finalize: %v", err)
 	}
 	if f.flaggedAt(t, binID) == nil {
@@ -325,7 +325,7 @@ func TestClearForReuse_ClearsTheFinding(t *testing.T) {
 	svc := service.NewBinManifestService(f.db, service.EpochAnnounce{})
 	binID := f.bin(t, "BTW-CLEARED", f.foreignID)
 
-	if err := svc.RecordProducedBinFromTemplate(binID, f.payload, nil, ""); err != nil {
+	if err := svc.RecordProducedBinFromTemplate(binID, f.payload, nil, "", nil); err != nil {
 		t.Fatalf("seed finalize: %v", err)
 	}
 	if f.flaggedAt(t, binID) == nil {
@@ -356,7 +356,7 @@ func TestPayloadBinTypes_EditingTheRuleRecomputesEveryCarrier(t *testing.T) {
 	wrong := f.bin(t, "BTW-RULE-WRONG", f.foreignID)
 	right := f.bin(t, "BTW-RULE-RIGHT", f.fitsID)
 	for _, id := range []int64{wrong, right} {
-		if err := svc.RecordProducedBinFromTemplate(id, f.payload, nil, ""); err != nil {
+		if err := svc.RecordProducedBinFromTemplate(id, f.payload, nil, "", nil); err != nil {
 			t.Fatalf("seed finalize bin %d: %v", id, err)
 		}
 	}

@@ -370,6 +370,77 @@ func TestApiInventoryLedgerExceptions_ListsOpenReportDivergences(t *testing.T) {
 	}
 }
 
+// --- apiInventoryLedgerExceptions: hold drops and declared-full stamps ------
+
+// TestApiInventoryLedgerExceptions_ListsHoldDropsAndStamps pins the two
+// strict-pack lists the ledger fetch carries (lane P0): hold_drops, the
+// hold_dropped exceptions in the window with their seat, part, quantity,
+// reason and time; and declared_full_stamps, the release_declared_full ledger
+// rows in the window with their seat, bin, counted and declared counts, who
+// declared it and when. A row older than the window is not listed. Verify-red
+// at the base: the response has neither key.
+func TestApiInventoryLedgerExceptions_ListsHoldDropsAndStamps(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.LineNode.ID, "BIN-STAMPED")
+	for _, age := range []string{"1 hour", "30 days"} {
+		_, err := db.Exec(`INSERT INTO bin_uop_exception (kind, bin_id, payload_code, actor, occurred_at, op, detail)
+			VALUES ('hold_dropped', NULL, $1, 'edge:sweep', now() - $2::interval, 'sweep',
+			        jsonb_build_object('node', 'ALN_011', 'qty', 24, 'reason', 'sweep', 'station', 'stn-page'))`,
+			sd.Payload.Code, age)
+		testutil.MustNoErr(t, err, "seed hold drop")
+		_, err = db.Exec(`INSERT INTO bin_uop_ledger (bin_id, before_uop, after_uop, op, source, payload_code, actor, applied_at, detail)
+			VALUES ($1, 131, 132, 'release_declared_full', 'test', $2, 'operator-7', now() - $3::interval,
+			        jsonb_build_object('node', 'ALN_011', 'counted', 131, 'declared', 132))`,
+			bin.ID, sd.Payload.Code, age)
+		testutil.MustNoErr(t, err, "seed stamp")
+	}
+
+	rec := getPlain(t, h.apiInventoryLedgerExceptions, "/api/inventory/ledger-exceptions")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		HoldDrops []map[string]any `json:"hold_drops"`
+		Stamps    []map[string]any `json:"declared_full_stamps"`
+	}
+	testutil.MustNoErr(t, json.NewDecoder(bytes.NewReader(rec.Body.Bytes())).Decode(&body), "decode")
+	for _, key := range []string{`"hold_drops"`, `"declared_full_stamps"`} {
+		if !strings.Contains(rec.Body.String(), key) {
+			t.Fatalf("no %s in the ledger-exceptions response: %s", key, rec.Body.String())
+		}
+	}
+	if len(body.HoldDrops) != 1 {
+		t.Fatalf("%d hold drops listed, want 1 (the one in the window): %+v", len(body.HoldDrops), body.HoldDrops)
+	}
+	for key, want := range map[string]any{
+		"node": "ALN_011", "payload_code": sd.Payload.Code, "qty": float64(24), "reason": "sweep",
+		"station": "stn-page", "actor": "edge:sweep",
+	} {
+		if body.HoldDrops[0][key] != want {
+			t.Errorf("hold drop %s = %v, want %v", key, body.HoldDrops[0][key], want)
+		}
+	}
+	if body.HoldDrops[0]["occurred_at"] == nil || body.HoldDrops[0]["occurred_at"] == "" {
+		t.Error("hold drop occurred_at is missing")
+	}
+	if len(body.Stamps) != 1 {
+		t.Fatalf("%d stamps listed, want 1 (the one in the window): %+v", len(body.Stamps), body.Stamps)
+	}
+	for key, want := range map[string]any{
+		"node": "ALN_011", "bin_id": float64(bin.ID), "bin_label": "BIN-STAMPED", "payload_code": sd.Payload.Code,
+		"counted": float64(131), "declared": float64(132), "actor": "operator-7",
+	} {
+		if body.Stamps[0][key] != want {
+			t.Errorf("stamp %s = %v, want %v", key, body.Stamps[0][key], want)
+		}
+	}
+	if body.Stamps[0]["applied_at"] == nil || body.Stamps[0]["applied_at"] == "" {
+		t.Error("stamp applied_at is missing")
+	}
+}
+
 // TestHandleInventory_PageShape pins the server-rendered parts of the page this
 // unit changes: the lineside buckets header and the drill modal shell.
 func TestHandleInventory_PageShape(t *testing.T) {

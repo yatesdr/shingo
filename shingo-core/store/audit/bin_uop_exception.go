@@ -1,6 +1,8 @@
 package audit
 
 import (
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -51,7 +53,157 @@ const (
 	// payload and core node name are on the row and in detail, and nothing
 	// follows — a bucket has no generation to start.
 	ExcEdgeRollback = "edge_rollback"
+	// ExcHoldDropped: an Edge dropped some or all of a produce seat's hold
+	// (pending_uop_delta) without replaying it onto a bin, and said so on
+	// protocol.SubjectHoldDropped. bin_id is NULL (a hold has no carrier, the
+	// v127 shape), payload_code the held part, actor who dropped it, op the
+	// reason (a protocol.HoldDrop* constant), occurred_at the Edge's time, and
+	// detail {node, qty, reason, station, order_id, msg_id}. One row per
+	// envelope (AppendHoldDropped). Never recovered: recovered_at stays NULL.
+	ExcHoldDropped = "hold_dropped"
 )
+
+// HoldDrop is one hold_dropped row as the /inventory list reads it.
+type HoldDrop struct {
+	ID          int64     `json:"id"`
+	Node        string    `json:"node"`
+	PayloadCode string    `json:"payload_code"`
+	Qty         int64     `json:"qty"`
+	Reason      string    `json:"reason"`
+	Station     string    `json:"station"`
+	Actor       string    `json:"actor"`
+	OrderID     string    `json:"order_id,omitempty"`
+	OccurredAt  time.Time `json:"occurred_at"`
+}
+
+// holdDropDetail is the detail JSON of a hold_dropped row. MsgID is the
+// envelope id the row is keyed on.
+type holdDropDetail struct {
+	Node    string `json:"node"`
+	Qty     int64  `json:"qty"`
+	Reason  string `json:"reason"`
+	Station string `json:"station"`
+	OrderID string `json:"order_id,omitempty"`
+	MsgID   string `json:"msg_id"`
+}
+
+// AppendHoldDropped writes one hold_dropped row, once per msgID: a second call
+// with the same msgID and occurredAt writes nothing and reports false. The
+// Edge's outbox and Kafka both redeliver a message with its envelope id
+// unchanged, and TypeData envelopes pass no inbox dedup, so the row carries
+// the id and the INSERT checks for it in the same statement. The check reads
+// idx_bin_uop_exception_open (kind, occurred_at) at one occurred_at, so it is
+// a probe, not a scan. One statement.
+func AppendHoldDropped(execer BinUOPExecer, msgID, station, node, payloadCode string, qty int64, reason, actor, orderID string, occurredAt time.Time) (bool, error) {
+	if occurredAt.IsZero() {
+		return false, fmt.Errorf("append hold_dropped %s: occurred_at is required", msgID)
+	}
+	// Postgres keeps microseconds; the key compares the stored value, so the
+	// write and the check must carry the same one.
+	at := occurredAt.UTC().Truncate(time.Microsecond)
+	det, err := json.Marshal(holdDropDetail{Node: node, Qty: qty, Reason: reason, Station: station, OrderID: orderID, MsgID: msgID})
+	if err != nil {
+		return false, fmt.Errorf("append hold_dropped %s: encode detail: %w", msgID, err)
+	}
+	res, err := execer.Exec(`INSERT INTO bin_uop_exception (kind, bin_id, payload_code, actor, occurred_at, op, detail)
+		SELECT $1, NULL, $2, $3, $4, $5, $6
+		WHERE NOT EXISTS (SELECT 1 FROM bin_uop_exception
+			WHERE kind = $1 AND recovered_at IS NULL AND occurred_at = $4 AND detail->>'msg_id' = $7)`,
+		ExcHoldDropped, payloadCode, actor, at, reason, det, msgID)
+	if err != nil {
+		return false, fmt.Errorf("append hold_dropped %s node=%s: %w", msgID, node, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("append hold_dropped %s: rows affected: %w", msgID, err)
+	}
+	return n == 1, nil
+}
+
+// ListHoldDrops returns the hold_dropped rows that occurred at or after since,
+// newest first, at most limit. One statement on idx_bin_uop_exception_open.
+func ListHoldDrops(db *sql.DB, since time.Time, limit int) ([]HoldDrop, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := db.Query(`SELECT id, payload_code, actor, occurred_at, COALESCE(detail, '{}'::jsonb)
+		FROM bin_uop_exception
+		WHERE kind = $1 AND recovered_at IS NULL AND occurred_at >= $2
+		ORDER BY occurred_at DESC, id DESC
+		LIMIT $3`, ExcHoldDropped, since.UTC(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list hold drops: %w", err)
+	}
+	defer rows.Close()
+	out := []HoldDrop{}
+	for rows.Next() {
+		var d HoldDrop
+		var raw []byte
+		if err := rows.Scan(&d.ID, &d.PayloadCode, &d.Actor, &d.OccurredAt, &raw); err != nil {
+			return nil, fmt.Errorf("list hold drops: scan: %w", err)
+		}
+		var det holdDropDetail
+		if err := json.Unmarshal(raw, &det); err != nil {
+			return nil, fmt.Errorf("list hold drops: detail of %d: %w", d.ID, err)
+		}
+		d.Node, d.Qty, d.Reason, d.Station, d.OrderID = det.Node, det.Qty, det.Reason, det.Station, det.OrderID
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// DeclaredFullStamp is one release_declared_full ledger row as the /inventory
+// list reads it.
+type DeclaredFullStamp struct {
+	ID          int64     `json:"id"`
+	BinID       int64     `json:"bin_id"`
+	BinLabel    string    `json:"bin_label"`
+	Node        string    `json:"node"`
+	PayloadCode string    `json:"payload_code"`
+	Counted     int       `json:"counted"`
+	Declared    int       `json:"declared"`
+	Actor       string    `json:"actor"`
+	OrderID     *int64    `json:"order_id,omitempty"`
+	AppliedAt   time.Time `json:"applied_at"`
+}
+
+// ListDeclaredFullStamps returns the release_declared_full rows applied at or
+// after since, newest first, at most limit. The node is the seat the bin was
+// counted at (the stamp's detail), falling back to the node the bin stood at
+// when stamped. One statement on idx_bin_uop_ledger_op_time.
+func ListDeclaredFullStamps(db *sql.DB, since time.Time, limit int) ([]DeclaredFullStamp, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := db.Query(`SELECT l.id, l.bin_id, COALESCE(b.label, ''),
+		       COALESCE(NULLIF(l.detail->>'node', ''), n.name, ''), l.payload_code,
+		       COALESCE(l.before_uop, 0), l.after_uop, l.actor, l.order_id, l.applied_at
+		FROM bin_uop_ledger l
+		LEFT JOIN bins b ON b.id = l.bin_id
+		LEFT JOIN nodes n ON n.id = l.node_id
+		WHERE l.op = $1 AND l.applied_at >= $2
+		ORDER BY l.applied_at DESC, l.id DESC
+		LIMIT $3`, OpReleaseDeclaredFull, since.UTC(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list declared-full stamps: %w", err)
+	}
+	defer rows.Close()
+	out := []DeclaredFullStamp{}
+	for rows.Next() {
+		var st DeclaredFullStamp
+		var order sql.NullInt64
+		if err := rows.Scan(&st.ID, &st.BinID, &st.BinLabel, &st.Node, &st.PayloadCode,
+			&st.Counted, &st.Declared, &st.Actor, &order, &st.AppliedAt); err != nil {
+			return nil, fmt.Errorf("list declared-full stamps: scan: %w", err)
+		}
+		if order.Valid {
+			v := order.Int64
+			st.OrderID = &v
+		}
+		out = append(out, st)
+	}
+	return out, rows.Err()
+}
 
 // AppendBinUOPException records one exception at event time, on the caller's
 // transaction — the same contract as AppendBinUOP. deepestUOP and recoveredAt

@@ -48,7 +48,7 @@ func TestS1bTail_FlushBeforeIngestDropsNothing(t *testing.T) {
 		tail.Epoch = b.DeltaEpoch
 		qty := 47
 		ingest := func() {
-			testutil.MustNoErr(t, mani.RecordProducedBinFromTemplate(bin.ID, "SYNTAIL", &qty, ""), "ingest")
+			testutil.MustNoErr(t, mani.RecordProducedBinFromTemplate(bin.ID, "SYNTAIL", &qty, "", nil), "ingest")
 		}
 		if ingestFirst {
 			ingest()

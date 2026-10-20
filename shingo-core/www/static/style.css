@@ -2268,6 +2268,23 @@ a.cs-fig { color: inherit; text-decoration: none; }
    would double it against the flex gap. */
 .ledger-row .ledger-exceptions, .ledger-row .delta-integrity { margin-bottom: 0; }
 
+/* ── Strict-pack lists (inventory): dropped holds, declared-full stamps ────
+ * Routine records, not faults: a plain border, no chip, and a quiet line
+ * rather than nothing when the window is empty. Node and time lead each row
+ * because a dropped hold and the stamp of the next bin describe the same
+ * parts, and those two columns are how a reader pairs them. */
+.ledger-routine {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.6rem 0.75rem;
+}
+.ledger-routine__head { font-size: 0.85rem; margin-bottom: 0.35rem; }
+.ledger-routine__list {
+  margin: 0; padding-left: 1.1rem;
+  font-size: 0.8rem; color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── Daily drop trend ──────────────────────────────────────────────────────
  * One bar per plant-local day WITH DROPS. Days with none are absent from the
  * data and absent here: a zero-height bar would assert a measured quiet day

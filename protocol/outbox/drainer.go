@@ -295,6 +295,9 @@ var neverDeadLetter = map[string]bool{
 	// A dead-lettered landing leaves a carrier unbound at its seat (H.6).
 	"data." + protocol.SubjectBinLanded: true,
 	protocol.TypeOrderRelease:           true,
+	// A dead-lettered hold drop is parts that left the count with no row
+	// anywhere saying so.
+	protocol.SubjectHoldDropped: true,
 }
 
 // publishOne reports whether the message was acked. False means the publish

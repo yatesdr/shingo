@@ -38,3 +38,20 @@ func (db *DB) RollupBinUOPDeltaDay(day time.Time) (int64, error) {
 func (db *DB) PurgeOldBinUOPDelta(keepDays int, now time.Time) (int64, error) {
 	return audit.PurgeOldBinUOPDelta(db.DB, keepDays, now)
 }
+
+// RecordHoldDropped writes one hold_dropped exception for an Edge's dropped
+// produce hold, once per envelope id; see audit.AppendHoldDropped.
+func (db *DB) RecordHoldDropped(msgID, station, node, payloadCode string, qty int64, reason, actor, orderID string, occurredAt time.Time) (bool, error) {
+	return audit.AppendHoldDropped(db.DB, msgID, station, node, payloadCode, qty, reason, actor, orderID, occurredAt)
+}
+
+// ListHoldDrops lists the hold_dropped exceptions since a time, newest first.
+func (db *DB) ListHoldDrops(since time.Time, limit int) ([]audit.HoldDrop, error) {
+	return audit.ListHoldDrops(db.DB, since, limit)
+}
+
+// ListDeclaredFullStamps lists the release_declared_full ledger rows since a
+// time, newest first.
+func (db *DB) ListDeclaredFullStamps(since time.Time, limit int) ([]audit.DeclaredFullStamp, error) {
+	return audit.ListDeclaredFullStamps(db.DB, since, limit)
+}

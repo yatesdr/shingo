@@ -524,7 +524,7 @@ func TestBinManifestService_RecordProducedBin_AtomicCountAndConfirm(t *testing.T
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-RPB-1", "", 0)
 
 	manifest := `{"items":[{"catid":"WIDGET","qty":50}]}`
-	testutil.MustNoErr(t, svc.RecordProducedBin(bin.ID, manifest, "WIDGET-X", 200, "2026-03-30T12:00:00Z"), "RecordProducedBin")
+	testutil.MustNoErr(t, svc.RecordProducedBin(bin.ID, manifest, "WIDGET-X", 200, "2026-03-30T12:00:00Z", nil), "RecordProducedBin")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.UOPRemaining != 200 {
@@ -557,7 +557,7 @@ func TestBinManifestService_RecordProducedBin_RollsBackOnError(t *testing.T) {
 	svc := NewBinManifestService(db, EpochAnnounce{})
 
 	const ghostBin int64 = 999999
-	if err := svc.RecordProducedBin(ghostBin, `{"items":[]}`, "WIDGET-X", 200, ""); err == nil {
+	if err := svc.RecordProducedBin(ghostBin, `{"items":[]}`, "WIDGET-X", 200, "", nil); err == nil {
 		t.Fatal("RecordProducedBin on a nonexistent bin: want error, got nil")
 	}
 	var n int
@@ -1367,5 +1367,148 @@ func TestRegression_ReleaseUnderpack_ManifestClears(t *testing.T) {
 	}
 	if got.LoadedAt != nil {
 		t.Errorf("LoadedAt = %v, want nil (cleared)", got.LoadedAt)
+	}
+}
+
+// ── the declared-full stamp (strict pack, lane P0) ─────────────────────────
+
+// ledgerTrail lists one bin's bin_uop_ledger rows in write order as
+// "op before->after actor".
+func ledgerTrail(t *testing.T, db *store.DB, binID int64) []string {
+	t.Helper()
+	rows, err := db.Query(`SELECT op, COALESCE(before_uop::text, '-'), after_uop, actor
+		FROM bin_uop_ledger WHERE bin_id=$1 ORDER BY id`, binID)
+	testutil.MustNoErr(t, err, "ledger rows")
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var op, before, actor string
+		var after int
+		testutil.MustNoErr(t, rows.Scan(&op, &before, &after, &actor), "scan ledger row")
+		out = append(out, fmt.Sprintf("%s %s->%d %s", op, before, after, actor))
+	}
+	return out
+}
+
+// TestRecordProducedBin_DeclaredFullStampsInOneTx: a station's FULL on a bin
+// counted below its pack books the count (set_for_production at 131) and then
+// the declaration (release_declared_full 131 -> 132, the declarer as actor) in
+// the one transaction that also confirms the manifest, and the bin leaves at
+// 132. The stamp is not a boundary: one set_for_production bump, one boundary
+// row. Verify-red at the base: recordProduced takes no declaration.
+func TestRecordProducedBin_DeclaredFullStampsInOneTx(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-STAMP-1", "", 0)
+
+	testutil.MustNoErr(t, svc.RecordProducedBin(bin.ID, `{"items":[]}`, sd.Payload.Code, 131, "",
+		&DeclaredFull{Pack: 132, DeclaredQty: 132, CalledBy: "operator-7", Node: "ALN_011"}), "record a stamped produce")
+
+	got, err := db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "read bin")
+	if got.UOPRemaining != 132 || !got.ManifestConfirmed {
+		t.Errorf("bin after the stamp: uop=%d confirmed=%v, want 132 true", got.UOPRemaining, got.ManifestConfirmed)
+	}
+	want := []string{
+		"set_for_production 0->131 ",
+		"release_declared_full 131->132 operator-7",
+		"manifest_confirmed 132->132 ",
+	}
+	if ops := ledgerTrail(t, db, bin.ID); strings.Join(ops, "|") != strings.Join(want, "|") {
+		t.Errorf("ledger = %q, want %q", ops, want)
+	}
+	var detail string
+	testutil.MustNoErr(t, db.QueryRow(`SELECT detail::text FROM bin_uop_ledger WHERE bin_id=$1 AND op='release_declared_full'`,
+		bin.ID).Scan(&detail), "stamp detail")
+	for _, key := range []string{`"counted": 131`, `"pack": 132`, `"declared_qty": 132`, `"node": "ALN_011"`} {
+		if !strings.Contains(detail, key) {
+			t.Errorf("stamp detail %s lacks %s", detail, key)
+		}
+	}
+	var boundaries int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM bin_uop_exception WHERE bin_id=$1 AND kind='boundary'`,
+		bin.ID).Scan(&boundaries), "boundary rows")
+	if boundaries != 1 {
+		t.Errorf("boundary rows = %d, want 1 (the set; the stamp is not a boundary)", boundaries)
+	}
+}
+
+// TestRecordProducedBin_StampFailureRollsBackTheCount: the stamp's write
+// failing (a trigger refuses the release_declared_full row) rolls back the
+// count and the confirm with it. Nothing is half-written: no count, no rows.
+func TestRecordProducedBin_StampFailureRollsBackTheCount(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-STAMP-RB", "", 0)
+	_, err := db.Exec(`
+		CREATE FUNCTION refuse_stamp() RETURNS trigger AS $$
+		BEGIN
+			IF NEW.op = 'release_declared_full' THEN RAISE EXCEPTION 'stamp refused by the test'; END IF;
+			RETURN NEW;
+		END $$ LANGUAGE plpgsql;
+		CREATE TRIGGER refuse_stamp BEFORE INSERT ON bin_uop_ledger FOR EACH ROW EXECUTE FUNCTION refuse_stamp();`)
+	testutil.MustNoErr(t, err, "install the refusing trigger")
+
+	if err := svc.RecordProducedBin(bin.ID, `{"items":[]}`, sd.Payload.Code, 131, "",
+		&DeclaredFull{Pack: 132, DeclaredQty: 132, CalledBy: "operator-7"}); err == nil {
+		t.Fatal("RecordProducedBin with a refused stamp: want an error, got nil")
+	}
+	got, err := db.GetBin(bin.ID)
+	testutil.MustNoErr(t, err, "read bin")
+	if got.UOPRemaining != 0 || got.PayloadCode != "" || got.ManifestConfirmed || got.DeltaEpoch != bin.DeltaEpoch {
+		t.Errorf("bin after a refused stamp: uop=%d payload=%q confirmed=%v epoch=%d, want it untouched (0, \"\", false, %d)",
+			got.UOPRemaining, got.PayloadCode, got.ManifestConfirmed, got.DeltaEpoch, bin.DeltaEpoch)
+	}
+	if ops := ledgerTrail(t, db, bin.ID); len(ops) != 0 {
+		t.Errorf("ledger after a refused stamp = %q, want none (the set rolled back with it)", ops)
+	}
+}
+
+// TestRecordProducedBin_DeclarationNotAboveTheCountStampsNothing: a
+// declaration at or below the booked count writes no stamp and never writes
+// the count down.
+func TestRecordProducedBin_DeclarationNotAboveTheCountStampsNothing(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
+	for i, declared := range []int{131, 100} {
+		bin := createTestBin(t, db, sd.StorageNode.ID, fmt.Sprintf("BIN-STAMP-NO-%d", i), "", 0)
+		testutil.MustNoErr(t, svc.RecordProducedBin(bin.ID, `{"items":[]}`, sd.Payload.Code, 131, "",
+			&DeclaredFull{Pack: declared, DeclaredQty: declared, CalledBy: "operator-7"}), "record")
+		got, err := db.GetBin(bin.ID)
+		testutil.MustNoErr(t, err, "read bin")
+		if got.UOPRemaining != 131 {
+			t.Errorf("declared %d over a count of 131: uop=%d, want 131", declared, got.UOPRemaining)
+		}
+		for _, op := range ledgerTrail(t, db, bin.ID) {
+			if strings.HasPrefix(op, "release_declared_full") {
+				t.Errorf("declared %d over a count of 131 wrote %q", declared, op)
+			}
+		}
+	}
+}
+
+// TestLoadAtLine_NeverStamps: the loader's LOAD shares recordProduced and must
+// never write a declared-full row, whatever it declares against the pack.
+func TestLoadAtLine_NeverStamps(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db, EpochAnnounce{})
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-LOAD-NOSTAMP", "", 0)
+	declared := int64(3)
+	if _, _, err := svc.LoadAtLine(bin.ID, `{"items":[{"part_number":"P1"}]}`, sd.Payload.Code, &declared); err != nil {
+		t.Fatalf("LoadAtLine: %v", err)
+	}
+	var n int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM bin_uop_ledger WHERE bin_id=$1 AND op='release_declared_full'`,
+		bin.ID).Scan(&n), "stamp rows")
+	if n != 0 {
+		t.Errorf("a LOAD wrote %d release_declared_full rows, want 0", n)
 	}
 }

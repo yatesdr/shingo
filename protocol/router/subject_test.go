@@ -156,3 +156,65 @@ func TestSubjectHas_ReturnsTrueForRegisteredFalseOtherwise(t *testing.T) {
 		t.Error("Has(unregistered) should be false")
 	}
 }
+
+// TestUnknownSubjectIsDroppedAndTheNextIsHandled is what an OLDER Core does
+// with a subject or an envelope type it has never heard of, end to end from
+// the raw bytes: the ingestor decodes it, the routers log "no handler
+// registered" and return, and the next message is handled. Nothing in that
+// path returns an error or blocks, so Core's read loop (messaging.Client
+// readLoop) commits the offset past it like any handled message, and the Edge
+// outbox has already acked the row on the broker's publish ack
+// (outbox.Drainer.publishOne), not on a Core reply. An unknown kind is lost,
+// not stuck. The subject is spelled as a literal so the pin holds a Core built
+// before protocol.SubjectHoldDropped existed.
+func TestUnknownSubjectIsDroppedAndTheNextIsHandled(t *testing.T) {
+	buf := captureLog(t)
+	src := protocol.Address{Role: protocol.RoleEdge, Station: "plant-a.line-1"}
+	dst := protocol.Address{Role: protocol.RoleCore}
+
+	// An older Core's tables: the subject it knows, and none of the new ones.
+	subjects := router.NewSubject()
+	var handled []string
+	router.RegisterSubject(subjects, protocol.SubjectLinesideLevelReport, func(env *protocol.Envelope, _ *protocol.LinesideLevelReport) {
+		handled = append(handled, env.ID)
+	})
+	types := router.New[string]()
+	router.Register(types, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) { subjects.Dispatch(env, p) })
+	ing := protocol.NewIngestor(nil)
+	ing.Dispatch = func(env *protocol.Envelope) { types.Dispatch(env, env.Type) }
+
+	raw := func(env *protocol.Envelope, err error) []byte {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("build envelope: %v", err)
+		}
+		b, err := json.Marshal(env)
+		if err != nil {
+			t.Fatalf("marshal envelope: %v", err)
+		}
+		return b
+	}
+	drop := raw(protocol.NewDataEnvelope("inventory.hold_dropped", src, dst,
+		map[string]any{"node": "ALN_011", "payload_code": "SYN44-PARTA.06", "qty": 3, "reason": "sweep"}))
+	unknownType := raw(protocol.NewEnvelope("order.not_yet_invented", src, dst, map[string]any{"x": 1}))
+	report := protocol.NewDataEnvelope
+	next, err := report(protocol.SubjectLinesideLevelReport, src, dst, &protocol.LinesideLevelReport{Station: "plant-a.line-1"})
+	nextRaw := raw(next, err)
+
+	ing.HandleRaw(drop)
+	ing.HandleRaw(unknownType)
+	ing.HandleRaw(nextRaw)
+
+	if len(handled) != 1 || handled[0] != next.ID {
+		t.Fatalf("handled = %v, want only the lineside report %s after the two unknown messages", handled, next.ID)
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"no handler registered for subject inventory.hold_dropped",
+		"no handler registered for key order.not_yet_invented",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log = %q, want it to contain %q (the unknown message must be dropped visibly, not silently)", got, want)
+		}
+	}
+}

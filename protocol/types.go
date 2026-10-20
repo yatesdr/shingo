@@ -370,6 +370,7 @@ func CoreInboundSubjects() []string {
 		SubjectLinesideLevelReport,
 		SubjectDemandOrigin,
 		SubjectSupplyRefusal,
+		SubjectHoldDropped,
 	}
 }
 

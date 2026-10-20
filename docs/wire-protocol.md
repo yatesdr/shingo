@@ -270,11 +270,12 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `production.tick` | Edge -> Core | `CounterSnapshot` | One PLC counter tick per envelope, from Edges before the counter_snapshots shipper; newer Edges send `production.ticks` |
 | `production.ticks` | Edge -> Core | `ProductionTicks` | Batched per-station tick feed from the counter_snapshots shipper — the successor to `production.tick` |
 | `inventory.lineside_level_report` | Edge -> Core | `LinesideLevelReport` | The Edge's own view of its lineside levels, for Core's divergence comparison |
+| `inventory.hold_dropped` | Edge -> Core | `HoldDropped` | A produce seat's hold was dropped without replaying onto a bin; Core writes one `hold_dropped` row (no bin) and lists it on /inventory |
 | `production.downtime` | Edge -> Core | `DowntimeEvent` | A persisted downtime start or end |
 
-The twelve rows with linked schemas carry full field tables below. The nineteen
-added after them do not — the Go structs in `protocol/payloads.go` and
-`protocol/lineside_level_report.go` are the reference
+The twelve rows with linked schemas carry full field tables below. The twenty
+added after them do not — the Go structs in `protocol/payloads.go`,
+`protocol/lineside_level_report.go` and `protocol/hold_dropped.go` are the reference
 for their fields. The table's membership is pinned against
 `protocol.AllSubjects()` by `protocol/docs_drift_test.go`, so a subject added
 to the code without a row here fails the protocol suite.
@@ -315,9 +316,10 @@ Data messages have a default TTL of 5 minutes, but individual subjects can overr
 | `inventory.bin_epoch_refresh` | **none** | Epoch re-anchor a dropped copy strands under a dead generation — see below |
 | `transit.bin_picked_up` | **none** | A bin's lift; a dropped copy strands the slot's clear and a supply deferred to it — see below |
 | `transit.bin_landed` | **none** | A carrier's drop; a dropped copy leaves the seat empty while a carrier stands on it — see below |
+| `inventory.hold_dropped` | **none** | The only record that a hold's parts left the count; Core keys the row on the envelope id, so a late copy writes it late and a redelivered one writes nothing. Never dead-lettered |
 | Unknown subjects | 5 minutes | Safe general default |
 
-**Seven subjects carry NO expiry at all** (`protocol.NoExpiry`, 2026-08-22; the set is
+**Eight subjects carry NO expiry at all** (`protocol.NoExpiry`, 2026-08-22; the set is
 pinned against `protocol/expiry.go` by `protocol/docs_drift_test.go`). Every other data
 subject is a snapshot whose successor carries the same truth seconds later, so discarding a late
 copy costs nothing. The bin delta is an *increment*: a dropped one is a permanently wrong count
@@ -334,7 +336,10 @@ is the only trigger for the slot's clear, a changeover supply deferred to that l
 consolidation's Order B; each branch of the Edge's handler is safe on a late copy (see
 `protocol/expiry.go` for the audit and the one residual shape). A carrier's drop (`transit.bin_landed`,
 2026-10-10) is the only door that binds a carrier Core placed; a late copy is refused by the
-seat's placement stamp (`placed_seq`), so a redelivery binds nothing twice.
+seat's placement stamp (`placed_seq`), so a redelivery binds nothing twice. A dropped produce
+hold (`inventory.hold_dropped`, 2026-10-20) is parts that left the count; its row is the only
+record of that, and Core writes it once per envelope id, so a late copy writes it late and a
+redelivery writes nothing.
 
 They are safe to arrive arbitrarily late because Core guards both ends — `ApplyBinUOPDelta`
 dedups on `SequenceID` via `inventory_delta_dedup`, and the stale-epoch guard routes a delta from
@@ -1067,6 +1072,9 @@ Bin identity resolves two ways: a non-empty `bin_label` is looked up directly (m
 | Source Node | `source_node` | string | Cond. | Where the filled bin is parked. Required when `bin_label` is blank (Core resolves identity from it). |
 | Quantity | `quantity` | integer | No | Operator-measured produced count (UOP). 0 => the payload's capacity. |
 | Manifest | `manifest` | IngestManifestItem[] | No | Explicit manifest items. If omitted, core uses the payload template. |
+| Declared Qty | `declared_qty` | integer | No | A station's RELEASE FULL on a bin counted below its pack: the count it declared. Core books `quantity` (`set_for_production`) and then stamps the bin to the pack of the part it books it under, from Core's catalog (`release_declared_full`), in one transaction, keeping this value and the declared part in the row's detail, and lists the stamp on /inventory; a pack at or below the count stamps nothing, and no pack books `quantity` with a `no_pack` row. Absent: no stamp (an older Edge, or any other release). An older Core ignores it and books `quantity`. |
+| Called By | `called_by` | string | No | Who declared the bin full, for the stamp's row. |
+| Order ID | `order_id` | string | No | The Edge UUID of the departing order (not `order_uuid`, which is per message). Core resolves it only when it stamps; an unresolvable one leaves the row's order id empty and says so in its detail. |
 
 **IngestManifestItem:**
 

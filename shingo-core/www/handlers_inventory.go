@@ -110,7 +110,10 @@ func (h *Handlers) apiInventoryMonitorTotals(w http.ResponseWriter, r *http.Requ
 //
 // ?since=<RFC3339> and ?limit= control the excursion history (default 7 days,
 // 200 rows). Excursions are the forensics; the two lists above are the
-// actionable part.
+// actionable part. The same window and limit bound hold_drops and
+// declared_full_stamps, the strict-pack lists: routine records rather than
+// faults, so the page shows them as lists with a count, and a quiet line when
+// the window holds none.
 func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.Request) {
 	openBins, err := h.engine.OpenNegativeBins()
 	if err != nil {
@@ -178,6 +181,22 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// The strict-pack lists, in the excursions' window: the produce holds the
+	// Edges dropped, and the bins a station declared full above their count.
+	// Read together: a dropped hold makes the next bin short and that bin is
+	// then stamped, so both rows can describe the same parts, which is why
+	// every row carries its node and time. Routine lists, not alarms.
+	holdDrops, err := h.engine.InventoryService().HoldDrops(since, limit)
+	if err != nil {
+		h.jsonError(w, "hold drops: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	stamps, err := h.engine.InventoryService().DeclaredFullStamps(since, limit)
+	if err != nil {
+		h.jsonError(w, "declared-full stamps: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	if openBins == nil {
 		openBins = []domain.OpenNegativeBin{}
 	}
@@ -191,14 +210,16 @@ func (h *Handlers) apiInventoryLedgerExceptions(w http.ResponseWriter, r *http.R
 		deltaDaily = []domain.DeltaDay{}
 	}
 	h.jsonOK(w, map[string]any{
-		"since":              since,
-		"open_bins":          openBins,
-		"negative_payloads":  payloads,
-		"excursions":         excursions,
-		"delta_integrity":    deltaIntegrity,
-		"delta_daily":        deltaDaily,
-		"delta_daily_since":  dailySince,
-		"report_divergences": divergences,
+		"since":                since,
+		"open_bins":            openBins,
+		"negative_payloads":    payloads,
+		"excursions":           excursions,
+		"delta_integrity":      deltaIntegrity,
+		"delta_daily":          deltaDaily,
+		"delta_daily_since":    dailySince,
+		"report_divergences":   divergences,
+		"hold_drops":           holdDrops,
+		"declared_full_stamps": stamps,
 	})
 }
 

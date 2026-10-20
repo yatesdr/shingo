@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"shingocore/store"
+	"shingocore/store/audit"
 	"shingocore/store/inventory"
 )
 
@@ -25,6 +27,11 @@ type InventoryQueryStore interface {
 	// ListOpenReportDivergences lists the open report_divergence episodes —
 	// where the Edge's lineside report and Core's replica still disagree.
 	ListOpenReportDivergences() ([]store.OpenReportDivergence, error)
+
+	// ListHoldDrops and ListDeclaredFullStamps are the strict-pack lists: the
+	// Edge's dropped produce holds and the stamps of a station's declared FULL.
+	ListHoldDrops(since time.Time, limit int) ([]audit.HoldDrop, error)
+	ListDeclaredFullStamps(since time.Time, limit int) ([]audit.DeclaredFullStamp, error)
 
 	// Raw SQL pass-through for the preflight / system-uop
 	// queries. Each one builds its own IN (...) placeholder list at

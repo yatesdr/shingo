@@ -112,9 +112,9 @@ func TestAnomalySummary_CountsCarriersTheRuleRefuses(t *testing.T) {
 	wrong := f.binOfType(t, "UC-WRONG", f.foreignID)
 	right := f.binOfType(t, "UC-RIGHT", f.fitsID)
 	sparse := f.binOfType(t, "UC-SPARSE-BIN", f.foreignID)
-	testutil.MustNoErr(t, manifest.RecordProducedBinFromTemplate(wrong, f.declared, nil, ""), "finalize wrong")
-	testutil.MustNoErr(t, manifest.RecordProducedBinFromTemplate(right, f.declared, nil, ""), "finalize right")
-	testutil.MustNoErr(t, manifest.RecordProducedBinFromTemplate(sparse, f.sparse, nil, ""), "finalize sparse")
+	testutil.MustNoErr(t, manifest.RecordProducedBinFromTemplate(wrong, f.declared, nil, "", nil), "finalize wrong")
+	testutil.MustNoErr(t, manifest.RecordProducedBinFromTemplate(right, f.declared, nil, "", nil), "finalize right")
+	testutil.MustNoErr(t, manifest.RecordProducedBinFromTemplate(sparse, f.sparse, nil, "", nil), "finalize sparse")
 
 	got, err := svc.AnomalySummary()
 	testutil.MustNoErr(t, err, "summary")
@@ -157,7 +157,7 @@ func TestProduceTickRebind_FlagsAnUndeclaredCarrier(t *testing.T) {
 	// starts unflagged — no rule to break), then rebound by a produce tick onto
 	// the declared payload, which its type is not among.
 	binID := f.binOfType(t, "UC-REBIND", f.foreignID)
-	testutil.MustNoErr(t, manifest.RecordProducedBinFromTemplate(binID, f.sparse, nil, ""), "seed load")
+	testutil.MustNoErr(t, manifest.RecordProducedBinFromTemplate(binID, f.sparse, nil, "", nil), "seed load")
 	if at := f.flaggedAt(t, binID); at != nil {
 		t.Fatalf("seed carrier is already flagged at %v — the sparse payload has no rule", *at)
 	}
@@ -191,7 +191,7 @@ func TestProduceTickRebind_ClearsAStaleFinding(t *testing.T) {
 	// Then a produce tick rebinds it onto the sparse payload, which constrains
 	// nothing — so the carrier is correct and the finding must go.
 	binID := f.binOfType(t, "UC-REBIND-HEAL", f.foreignID)
-	testutil.MustNoErr(t, manifest.RecordProducedBinFromTemplate(binID, f.declared, nil, ""), "seed load")
+	testutil.MustNoErr(t, manifest.RecordProducedBinFromTemplate(binID, f.declared, nil, "", nil), "seed load")
 	if f.flaggedAt(t, binID) == nil {
 		t.Fatal("seed load did not flag")
 	}

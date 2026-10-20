@@ -163,6 +163,8 @@ function renderAll() {
   renderLedgerExceptions();
   renderDeltaIntegrity();
   renderReportDivergence();
+  renderHoldDrops();
+  renderDeclaredStamps();
   renderHealth();
   renderMaintained();
   renderBuckets();
@@ -651,6 +653,77 @@ function renderReportDivergence() {
     + '</div>'
     + '<div class="ledger-exceptions__why">Ordering reads the Core count. Recount the carrier to correct.</div>'
     + '<ul class="ledger-exceptions__list">' + items + '</ul></div>';
+}
+
+// ── strict pack: dropped holds and declared-full stamps ───────────────────
+//
+// Two routine lists, read together. A produce seat whose bin is at its pack
+// holds the strokes past it and replays them onto the next bin; a hold that
+// cannot be replayed is dropped, and the Edge says so (hold_dropped). A station
+// that releases a bin FULL below its pack ships the count and the declaration,
+// and Core stamps the bin up to its part's pack (release_declared_full); a part
+// with no pack keeps its count, and the row says so. A dropped hold
+// makes the next bin short and that bin is then stamped, so the two rows can
+// describe the same parts: every row shows its node and its time together.
+//
+// NOT ALARMS. Both happen on a normal shift, so neither carries a red chip and
+// neither is blank on a good day: an empty window reads as one quiet line, so
+// "nothing happened" is visible as an answer rather than as a missing panel.
+// Both lists cover the same window as the excursions (ledgerExceptions.since).
+const HOLD_DROP_REASON = {
+  no_carrier: 'no carrier coming',
+  sweep: 'no carrier coming (sweep)',
+  backstop: 'over a pack at replay',
+  hold_cap: 'over a pack while the bin was full',
+  cutover: 'cleared at changeover',
+  foreign_hold: 'another part beside the bin',
+  flip_carry_overflow: 'did not fit the partner bin',
+};
+
+function renderHoldDrops() {
+  const host = document.getElementById('rh-hold-drops');
+  if (!host) return;
+  const rows = (ledgerExceptions && ledgerExceptions.hold_drops) || [];
+  const since = ledgerExceptions && ledgerExceptions.since;
+  const span = since ? ' since ' + escapeHtml(formatTime(since)) : '';
+  if (!rows.length) {
+    host.innerHTML = '<div class="ledger-routine text-muted-sm">No hold drops' + (span || ' in the window') + '.</div>';
+    return;
+  }
+  const items = rows.map((d) => '<li>'
+    + escapeHtml(d.node || '(no node)') + ' · ' + escapeHtml(formatTime(d.occurred_at))
+    + ' — <b>' + num(d.qty) + '</b> of <span class="text-muted-xs">' + escapeHtml(d.payload_code || '(no part)') + '</span>'
+    + ' dropped: ' + escapeHtml(HOLD_DROP_REASON[d.reason] || d.reason || '')
+    + (d.station ? ' <span class="text-muted-xs">' + escapeHtml(d.station) + '</span>' : '')
+    + '</li>').join('');
+  host.innerHTML = '<div class="ledger-routine">'
+    + '<div class="ledger-routine__head">' + rows.length + ' hold drop' + (rows.length === 1 ? '' : 's') + span + '</div>'
+    + '<ul class="ledger-routine__list">' + items + '</ul></div>';
+}
+
+function renderDeclaredStamps() {
+  const host = document.getElementById('rh-declared-stamps');
+  if (!host) return;
+  const rows = (ledgerExceptions && ledgerExceptions.declared_full_stamps) || [];
+  const since = ledgerExceptions && ledgerExceptions.since;
+  const span = since ? ' since ' + escapeHtml(formatTime(since)) : '';
+  if (!rows.length) {
+    host.innerHTML = '<div class="ledger-routine text-muted-sm">No bins declared full' + (span || ' in the window') + '.</div>';
+    return;
+  }
+  const items = rows.map((st) => '<li>'
+    + escapeHtml(st.node || '(no node)') + ' · ' + escapeHtml(formatTime(st.applied_at))
+    + ' — <code>' + escapeHtml(st.bin_label || ('bin ' + st.bin_id)) + '</code>'
+    + ' <span class="text-muted-xs">' + escapeHtml(st.payload_code || '') + '</span>'
+    + (st.declared === st.counted
+      ? ' counted <b>' + num(st.counted) + '</b>, kept: no pack for this part'
+      : ' counted <b>' + num(st.counted) + '</b> → its pack <b>' + num(st.declared) + '</b>')
+    + (st.actor ? ' by ' + escapeHtml(st.actor) : '')
+    + '</li>').join('');
+  host.innerHTML = '<div class="ledger-routine">'
+    + '<div class="ledger-routine__head">' + rows.length + ' bin' + (rows.length === 1 ? '' : 's')
+    + ' declared full' + span + '</div>'
+    + '<ul class="ledger-routine__list">' + items + '</ul></div>';
 }
 
 // renderDeltaDaily draws the drop trend as one bar per plant-local day.

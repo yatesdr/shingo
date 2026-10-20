@@ -61,6 +61,7 @@ func buildSubjectRouter(svc *messaging.CoreDataService) (*router.SubjectRouter, 
 	router.RegisterSubject(r, protocol.SubjectLinesideLevelReport, svc.HandleLinesideLevelReport)
 	router.RegisterSubject(r, protocol.SubjectDemandOrigin, svc.HandleDemandOrigin)
 	router.RegisterSubject(r, protocol.SubjectSupplyRefusal, svc.HandleSupplyRefusal)
+	router.RegisterSubject(r, protocol.SubjectHoldDropped, svc.HandleHoldDropped)
 
 	for _, s := range protocol.CoreInboundSubjects() {
 		if !r.Has(s) {
