@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -30,8 +31,10 @@ import (
 // THE COPY IS MEMORY ONLY. It changes with every delivery, so it has no
 // feed_copy row (its feedRow in feeds.go has keepRow false, so holdFeed and
 // OnCoreAck write none), and after a restart the Edge quotes "" and Core sends
-// it again. Display only: every engine path that decides on occupancy keeps
-// its own read of Core.
+// it again. Screens draw from it; engine paths read it for a group's members
+// (groupMembers) and for the carrier a write names (boardBinID, the tile's
+// bin). The decisions on occupancy keep their own read of Core until they
+// move onto the copy under BinsActable.
 
 // binWatchKey is the resend guard's key for the watch list.
 const binWatchKey = "bins.watch"
@@ -131,6 +134,58 @@ func (e *Engine) ApplyNodeBinsSnapshot(snap protocol.NodeBinsSnapshot) error {
 		})
 	}
 	return nil
+}
+
+// ApplyNodeBinsRows writes the rows Core answered a refused write with into
+// the held copy, before the refusal's sentence is shown, so the tile redraws
+// Core's row and not the one the write assumed. Each row replaces the row of
+// the same name; a name the copy does not hold is not added (the copy answers
+// the watch list, and the next snapshot is the list's). The copy keeps its
+// digest: it still names the snapshot Core sent, so the next heartbeat
+// compare fetches Core's current one. Fires EventNodeBinsUpdated for the
+// nodes whose row changed. With no copy held the rows are dropped: there is
+// nothing to patch. A snapshot applied meanwhile wins and the rows are dropped
+// (it is the newer). Nothing is written to SQLite.
+func (e *Engine) ApplyNodeBinsRows(rows []protocol.NodeBinsRow) {
+	if len(rows) == 0 {
+		return
+	}
+	old := e.nodeBins.Load()
+	if old == nil {
+		return
+	}
+	byName := make(map[string]protocol.NodeBinsRow, len(rows))
+	for _, r := range rows {
+		byName[r.Node] = r
+	}
+	snap := old.snap
+	snap.Rows = make([]protocol.NodeBinsRow, len(old.snap.Rows))
+	for i, r := range old.snap.Rows {
+		if nr, ok := byName[r.Node]; ok {
+			r = nr
+		}
+		snap.Rows[i] = r
+	}
+	next := indexNodeBins(snap)
+	nodes, _ := next.changedSince(old)
+	if len(nodes) == 0 || !e.nodeBins.CompareAndSwap(old, next) {
+		return
+	}
+	e.Events.Emit(Event{
+		Type:      EventNodeBinsUpdated,
+		Timestamp: clock.Now(),
+		Payload:   NodeBinsUpdatedEvent{Nodes: nodes},
+	})
+}
+
+// refused applies the rows a refusal from Core carries (a *CoreRefusal) to the
+// bins copy, then hands the error back unchanged for the caller to show.
+func (e *Engine) refused(err error) error {
+	var r *CoreRefusal
+	if errors.As(err, &r) {
+		e.ApplyNodeBinsRows(r.Rows)
+	}
+	return err
 }
 
 // NodeBinsState is the node-bins copy as this Edge holds it.
@@ -313,4 +368,19 @@ func (e *Engine) groupMembers(name string) (members []string, known bool) {
 		e.stationService.WatchedBinNodes()
 	}
 	return nil, false
+}
+
+// boardBinID is the resident bin the bins copy holds for a node: what the
+// station's tile draws while Core serves the feed (www stampStationBins), so
+// the carrier the operator saw. 0 with no copy held, no row for the node, or a
+// row with no bin: the write then names no bin, as it did before it named one.
+func (e *Engine) boardBinID(coreNode string) int64 {
+	c := e.nodeBins.Load()
+	if c == nil {
+		return 0
+	}
+	if r, ok := c.rows[coreNode]; ok && r.Occupied {
+		return r.BinID
+	}
+	return 0
 }

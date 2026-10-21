@@ -135,9 +135,15 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	// The intent is read off the order row, so it fires after an Edge restart
 	// too; the take is exactly-once, so a replayed delivery does not clear twice.
 	if _, isPullback := e.takeOrderIntent(order.ID, intentPullback); isPullback {
-		cleared, err := e.coreClient.ClearBin(node.CoreNodeName, "", false, nil)
+		// The auto-clear is for the carrier this delivery brought (0 from a Core
+		// that sent no bin id): Core refuses it if another stands there.
+		var deliveredBin int64
+		if delivered.BinID != nil {
+			deliveredBin = *delivered.BinID
+		}
+		cleared, err := e.coreClient.ClearBin(protocol.BinClearRequest{NodeName: node.CoreNodeName, BinID: deliveredBin})
 		if err != nil {
-			log.Printf("market_pullback: auto-clear bin at %s: %v", node.CoreNodeName, err)
+			log.Printf("market_pullback: auto-clear bin at %s: %v", node.CoreNodeName, e.refused(err))
 		} else {
 			log.Printf("market_pullback: auto-cleared bin at %s on delivery", node.CoreNodeName)
 			// The stamp and the identity: the auto-clear started this carrier's

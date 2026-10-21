@@ -229,6 +229,23 @@ func coreErrorText(detail, errText string, statusCode int) string {
 	return fmt.Sprintf("core returned %d", statusCode)
 }
 
+// CoreRefusal is a write Core answered and refused: its status, its sentence
+// (Error, as coreErrorText picks it), and what the refusal carries back for the
+// Edge to apply before the sentence is shown. A transport failure or an
+// undecodable body is not one: nobody answered.
+type CoreRefusal struct {
+	Status   int
+	Sentence string
+	// EpochRefresh is a count's refusal for an ended generation: the carrier's
+	// current stamp (protocol.BinCountResponse.EpochRefresh).
+	EpochRefresh *protocol.BinEpochRefresh
+	// Rows is Core's current bins rows for the nodes the write touched, for
+	// the bins copy (Engine.ApplyNodeBinsRows) before the sentence is shown.
+	Rows []protocol.NodeBinsRow
+}
+
+func (r *CoreRefusal) Error() string { return r.Sentence }
+
 // BinLoadResponse is the response after loading a bin via HTTP.
 type BinLoadResponse = protocol.BinLoadResponse
 
@@ -252,7 +269,8 @@ func (c *CoreClient) LoadBin(req *BinLoadRequest) (*BinLoadResponse, error) {
 		return nil, fmt.Errorf("decode bin-load response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK || result.Status == "error" {
-		return nil, fmt.Errorf("%s", coreErrorText(result.Detail, result.Error, resp.StatusCode))
+		return nil, &CoreRefusal{Status: resp.StatusCode, Sentence: coreErrorText(result.Detail, result.Error, resp.StatusCode),
+			Rows: result.Rows}
 	}
 	return &result, nil
 }
@@ -359,15 +377,11 @@ type BinCountResponse = protocol.BinCountResponse
 // Like the other writes here it returns a hard error rather than degrading:
 // a declaration that silently did not arrive is worse than one that failed
 // loudly, because the operator would believe they had corrected it.
-func (c *CoreClient) RecordBinCount(nodeName string, actualUOP int, actor string) (*BinCountResponse, error) {
+func (c *CoreClient) RecordBinCount(req protocol.BinCountRequest) (*BinCountResponse, error) {
 	if c.baseURL == "" {
 		return nil, fmt.Errorf("core API not configured")
 	}
-	body, err := json.Marshal(protocol.BinCountRequest{
-		NodeName:  nodeName,
-		ActualUOP: actualUOP,
-		Actor:     actor,
-	})
+	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal bin-count request: %w", err)
 	}
@@ -381,7 +395,8 @@ func (c *CoreClient) RecordBinCount(nodeName string, actualUOP int, actor string
 		return nil, fmt.Errorf("decode bin-count response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK || result.Status == "error" {
-		return nil, fmt.Errorf("%s", coreErrorText(result.Detail, result.Error, resp.StatusCode))
+		return nil, &CoreRefusal{Status: resp.StatusCode, Sentence: coreErrorText(result.Detail, result.Error, resp.StatusCode),
+			EpochRefresh: result.EpochRefresh, Rows: result.Rows}
 	}
 	return &result, nil
 }
@@ -460,18 +475,18 @@ type ContainmentRow = protocol.PayloadContainmentRow
 type HeldBinRow = protocol.HeldBinRow
 
 // ClearBin clears the manifest on the bin at a node via Core's HTTP API.
-// binTypeCode is optional: when non-empty Core re-stamps the carrier's
-// bin_type_id atomically with the manifest clear (dunnage float). unload is the
+// req.BinID names the carrier the station read there (0 when it read none).
+// BinTypeCode is optional: when non-empty Core re-stamps the carrier's
+// bin_type_id atomically with the manifest clear (dunnage float). Unload is the
 // person's second tap on a partial Core holds in its home: without it Core
-// refuses to clear one. layers is the height a person declared with the
+// refuses to clear one. Layers is the height a person declared with the
 // CLEAR, nil when none was: Core writes layers times the cart's totes per
 // layer as its tote count.
-func (c *CoreClient) ClearBin(nodeName, binTypeCode string, unload bool, layers *int) (*BinClearResponse, error) {
+func (c *CoreClient) ClearBin(req protocol.BinClearRequest) (*BinClearResponse, error) {
 	if c.baseURL == "" {
 		return nil, fmt.Errorf("core API not configured")
 	}
-	reqBody := protocol.BinClearRequest{NodeName: nodeName, BinTypeCode: binTypeCode, Unload: unload, Layers: layers}
-	body, _ := json.Marshal(reqBody)
+	body, _ := json.Marshal(req)
 	resp, err := c.http.Post(c.baseURL+"/api/telemetry/bin-clear", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("bin-clear request failed: %w", err)
@@ -482,7 +497,8 @@ func (c *CoreClient) ClearBin(nodeName, binTypeCode string, unload bool, layers 
 		return nil, fmt.Errorf("decode bin-clear response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK || result.Status == "error" {
-		return nil, fmt.Errorf("%s", coreErrorText(result.Detail, result.Error, resp.StatusCode))
+		return nil, &CoreRefusal{Status: resp.StatusCode, Sentence: coreErrorText(result.Detail, result.Error, resp.StatusCode),
+			Rows: result.Rows}
 	}
 	return &result, nil
 }

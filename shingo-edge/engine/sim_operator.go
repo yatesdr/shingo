@@ -742,7 +742,7 @@ func (op *simOperator) clearNegativeBins() {
 			// under the current one. There is no runtime row here: this sweeps
 			// supermarket slots, not a claim's window. So the stamp is dropped on
 			// purpose rather than by omission.
-			if _, err := op.e.coreClient.ClearBin(bins[i].NodeName, "", false, nil); err == nil {
+			if _, err := op.e.coreClient.ClearBin(protocol.BinClearRequest{NodeName: bins[i].NodeName, BinID: bins[i].BinID}); op.e.refused(err) == nil {
 				cleared++
 			}
 		}

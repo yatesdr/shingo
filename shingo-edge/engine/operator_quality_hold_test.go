@@ -17,8 +17,9 @@ import (
 // httptest pattern core_client_error_test.go pins) and a real SQLite store:
 //
 //	SendBinToQualityHold   — the station's hold: the bin at a produce node
-//	                       with a containment route walks into it, the hold
-//	                       marker lands, and the double-tap guard refuses a
+//	                       with a containment route walks into it by a move
+//	                       naming the bin and asking for its hold, and the
+//	                       double-tap guard refuses a
 //	                       second tap while a move is in flight.
 //	ReleaseFromContainment — Verify Good: the bin must still be standing at
 //	                       the containment node, the claim's outbound is the
@@ -139,9 +140,14 @@ func TestSendBinToQualityHold_HoldsThePresentBin(t *testing.T) {
 	if order.PayloadCode != "PART-HOLD" {
 		t.Errorf("payload = %q, want PART-HOLD carried", order.PayloadCode)
 	}
-	holds, _ := stub.holdCalls()
-	if len(holds) != 1 || holds[0] != 42 {
-		t.Errorf("hold markers = %v, want [42]", holds)
+	// The hold is one Core act: the move names bin 42 and asks for its hold,
+	// and no separate marker call is made (it was one, best-effort, before).
+	if holds, _ := stub.holdCalls(); len(holds) != 0 {
+		t.Errorf("hold marker calls = %v, want none: the move carries the hold", holds)
+	}
+	moves := emptyOutMoves(t, eng, "PLN-HOLD")
+	if len(moves) != 1 || moves[0].BinID != 42 || moves[0].QualityHoldBy != "station-3" {
+		t.Errorf("hold moves = %+v, want one naming bin 42 held by station-3", moves)
 	}
 }
 
@@ -271,5 +277,39 @@ func TestReleaseFromContainment_AmbiguityAndHappyPath(t *testing.T) {
 	}
 	if order3.DeliveryNode != "FG-2" {
 		t.Errorf("PART-OTHER release went to %s, want FG-2", order3.DeliveryNode)
+	}
+}
+
+// TestRecallContainedPayload_EachMoveNamesItsBinAndHold: the recall walks a
+// contained bin from its FG outbound into containment by a move that names the
+// bin and asks for its hold, as the station's hold does; no separate marker
+// call is made.
+func TestRecallContainedPayload_EachMoveNamesItsBinAndHold(t *testing.T) {
+	t.Parallel()
+	eng := newCoverageEngine(t)
+	stub := &holdStubCore{}
+	srv := stub.server()
+	t.Cleanup(srv.Close)
+	eng.coreClient = stubCoreClient(srv.URL)
+
+	seedHoldNode(t, eng.db, "PLN-RECALL")
+	procID, err := eng.db.CreateProcess("FG-PROC", "fg", "", "", false)
+	testutil.MustNoErr(t, err, "fg process")
+	_, err = eng.db.CreateProcessNode(processes.NodeInput{ProcessID: procID, CoreNodeName: "FG-1", Code: "FG1",
+		Name: "FG outbound", Sequence: 1, Enabled: true})
+	testutil.MustNoErr(t, err, "fg node")
+	stub.setBin(NodeBinInfo{NodeName: "FG-1", BinID: 43, PayloadCode: "PART-HOLD", Occupied: true})
+
+	created, refusals, err := eng.RecallContainedPayload("PART-HOLD", "quality-lead")
+	testutil.MustNoErr(t, err, "RecallContainedPayload")
+	if created != 1 || len(refusals) != 0 {
+		t.Fatalf("recall = %d created, refusals %v, want one", created, refusals)
+	}
+	if holds, _ := stub.holdCalls(); len(holds) != 0 {
+		t.Errorf("hold marker calls = %v, want none: the move carries the hold", holds)
+	}
+	moves := emptyOutMoves(t, eng, "FG-1")
+	if len(moves) != 1 || moves[0].BinID != 43 || moves[0].QualityHoldBy != "quality-lead" || moves[0].DeliveryNode != "CONT-1" {
+		t.Errorf("recall moves = %+v, want one to CONT-1 naming bin 43 held by quality-lead", moves)
 	}
 }

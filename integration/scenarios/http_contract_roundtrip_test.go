@@ -36,6 +36,7 @@ import (
 	"sync"
 	"testing"
 
+	"shingo/protocol"
 	"shingo/protocol/debuglog"
 	coreconfig "shingocore/config"
 	"shingocore/domain"
@@ -210,7 +211,7 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 	epochAfterLoad := loadResp.DeltaEpoch
 
 	// ── 7. bin-count: 42 declared against 42 expected — no discrepancy ──
-	countResp, err := client.RecordBinCount(sd.StorageNode.Name, 42, "rt-actor")
+	countResp, err := client.RecordBinCount(protocol.BinCountRequest{NodeName: sd.StorageNode.Name, ActualUOP: 42, Actor: "rt-actor"})
 	if err != nil {
 		t.Fatalf("RecordBinCount: %v", err)
 	}
@@ -223,7 +224,7 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 	}
 
 	// ── 8. bin-clear without a code (payload held → cleared_* filled) ──
-	clearPlain, err := client.ClearBin(sd.StorageNode.Name, "", false, nil)
+	clearPlain, err := client.ClearBin(protocol.BinClearRequest{NodeName: sd.StorageNode.Name})
 	if err != nil {
 		t.Fatalf("ClearBin plain: %v", err)
 	}
@@ -241,7 +242,7 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("LoadBin (re-load for typed clear): %v", err)
 	}
-	clearTyped, err := client.ClearBin(sd.StorageNode.Name, sd.BinType.Code, false, nil)
+	clearTyped, err := client.ClearBin(protocol.BinClearRequest{NodeName: sd.StorageNode.Name, BinTypeCode: sd.BinType.Code})
 	if err != nil {
 		t.Fatalf("ClearBin typed: %v", err)
 	}

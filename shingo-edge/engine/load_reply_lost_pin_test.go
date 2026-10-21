@@ -25,6 +25,11 @@ func TestPin_ALoadWhoseReplyWasLostFilesItsOutboundOnTheRetry(t *testing.T) {
 	if n := len(scMovesFrom(t, db, window)); n != 1 {
 		t.Errorf("outbound moves from %s = %d, want 1", window, n)
 	}
+	// Filed with no load call, the move names the carrier its read found, so
+	// Core refuses it should that carrier have left the window.
+	if moves := emptyOutMoves(t, eng, window); len(moves) != 1 || moves[0].BinID != 77 {
+		t.Errorf("outbound move requests = %+v, want one naming bin 77", moves)
+	}
 	core.mu.Lock()
 	loads := len(core.loadBinIDs)
 	core.mu.Unlock()

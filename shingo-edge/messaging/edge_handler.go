@@ -24,6 +24,11 @@ import (
 type EdgeHandler struct {
 	orderMgr *orders.Manager
 	DebugLog DebugLogFunc
+	// ApplyRows writes the bins rows an order.error carries (Core's rows for
+	// the nodes the refusal is about) into the Edge's bins copy, before the
+	// refusal reaches the order; Engine.ApplyNodeBinsRows, wired at the
+	// composition root. Nil drops them.
+	ApplyRows func([]protocol.NodeBinsRow)
 }
 
 // NewEdgeHandler creates a handler for order-channel reply messages.
@@ -186,6 +191,9 @@ func (h *EdgeHandler) HandleOrderDelivered(env *protocol.Envelope, p *protocol.O
 func (h *EdgeHandler) HandleOrderError(env *protocol.Envelope, p *protocol.OrderError) {
 	h.DebugLog.Log("order_error uuid=%s code=%s", p.OrderUUID, p.ErrorCode)
 	log.Printf("edge_handler: order error: uuid=%s code=%s detail=%s", p.OrderUUID, p.ErrorCode, p.Detail)
+	if h.ApplyRows != nil && len(p.Rows) > 0 {
+		h.ApplyRows(p.Rows)
+	}
 
 	// Recoverable error: Core couldn't sync the bin manifest at release time
 	// (claim mismatch, locked bin, transient DB issue). The bin is still in

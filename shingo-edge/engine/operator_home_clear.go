@@ -83,6 +83,9 @@ func (e *Engine) ClearLoaderHome(nodeID int64) (string, error) {
 		}
 	}
 	if status != http.StatusOK || ans.Status != "ok" {
+		// The refusal redraws the home (and the spot) from Core's rows before
+		// its sentence.
+		e.ApplyNodeBinsRows(ans.Rows)
 		switch {
 		case status == http.StatusConflict && ans.Error != "":
 			return "", &HomeClearRefused{Sentence: ans.Error}

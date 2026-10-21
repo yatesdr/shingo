@@ -276,6 +276,8 @@ var plantClaimsPub atomic.Pointer[messaging.PlantClaimsPublisher]
 func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg *config.Config, dbg *debuglog.Logger, stationID, instanceID string, db *store.DB) {
 	edgeHandler := messaging.NewEdgeHandler(eng.OrderManager())
 	edgeHandler.DebugLog = messaging.DebugLogFunc(dbg.Func("edge_handler"))
+	// A refused order redraws the nodes it was about from Core's rows first.
+	edgeHandler.ApplyRows = eng.ApplyNodeBinsRows
 	dataDbg := dbg.Func("edge_handler")
 	ingestor := protocol.NewIngestor(func(hdr *protocol.RawHeader) bool {
 		return hdr.Dst.Station == stationID || hdr.Dst.Station == protocol.StationBroadcast

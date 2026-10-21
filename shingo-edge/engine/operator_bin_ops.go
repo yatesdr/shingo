@@ -212,7 +212,13 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	// Core writes the carrier this check found empty rather than whichever one
 	// its own query returns first. Without a check (Core not configured) no id
 	// is sent, and a node holding several carriers answers 409.
-	var checkedBinID int64
+	//
+	// AND IT SAYS WHAT IT READ: the carrier's generation and that it carries no
+	// part (protocol.LoadExpectBare: a labelled carrier is answered above
+	// without a load). Core refuses the LOAD when either has changed since,
+	// rather than loading over what stands there now.
+	var checkedBinID, checkedEpoch int64
+	var expect string
 	if e.coreClient.Available() {
 		bins, reachable, ferr := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
 		if !reachable {
@@ -226,7 +232,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 		if bins[0].PayloadCode != "" {
 			return e.loadOntoLabelledCarrier(node, claim, bins[0])
 		}
-		checkedBinID = bins[0].BinID
+		checkedBinID, checkedEpoch, expect = bins[0].BinID, bins[0].DeltaEpoch, protocol.LoadExpectBare
 	}
 
 	// Validate payload code against the loader-wide loadable set (see
@@ -259,12 +265,15 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	loadResp, err := e.coreClient.LoadBin(&BinLoadRequest{
 		NodeName:    node.CoreNodeName,
 		BinID:       checkedBinID,
+		Epoch:       checkedEpoch,
+		Expect:      expect,
 		PayloadCode: payloadCode,
 		UOPCount:    uopCount,
 		Manifest:    items,
 	})
 	if err != nil {
-		return fmt.Errorf("load bin: %w", err)
+		// A refusal redraws the window from Core's rows before its sentence.
+		return fmt.Errorf("load bin: %w", e.refused(err))
 	}
 
 	// CORE'S ANSWER IS THE COUNT, and everything downstream of here uses it
@@ -292,7 +301,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 		// The L1's completion left the runtime pointer to this LOAD
 		// (applyLoaderEmptyIn): onto the L2, or off the confirmed L1 when no
 		// L2 is filed (no outbound, or one already owed).
-		if !e.fileLoadedOutbound(node, claim, payloadCode) {
+		if !e.fileLoadedOutbound(node, claim, payloadCode, 0) {
 			if err := e.db.ClearProcessNodeRuntimeOrderRefs(l1ID); err != nil {
 				log.Printf("bin_ops: clear runtime pointers to L1 %d: %v", l1ID, err)
 			}
@@ -338,7 +347,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 		deltaEpoch = loadResp.DeltaEpoch
 	}
 	e.seatManuallyLoadedBin(node, claimIDPtr, activeBinID, deltaEpoch, int(seatedUOP), payloadCode)
-	e.fileLoadedOutbound(node, claim, payloadCode)
+	e.fileLoadedOutbound(node, claim, payloadCode, 0)
 
 	e.clearRefusalOnLoad(node.CoreNodeName, payloadCode)
 	return nil
@@ -509,9 +518,13 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string, unload bool, layers 
 			log.Printf("bin_ops: confirmed U1 order %d on operator clear at node %s", u1ID, node.CoreNodeName)
 		}
 	}
-	cleared, err := e.coreClient.ClearBin(node.CoreNodeName, binTypeCode, unload, layers)
+	// The CLEAR names the carrier the operator saw on the tile (boardBinID):
+	// Core refuses it when another stands there, rather than clearing that one.
+	cleared, err := e.coreClient.ClearBin(protocol.BinClearRequest{NodeName: node.CoreNodeName,
+		BinID: e.boardBinID(node.CoreNodeName), BinTypeCode: binTypeCode, Unload: unload, Layers: layers})
 	if err != nil {
-		return fmt.Errorf("clear bin: %w", err)
+		// A refusal redraws the window from Core's rows before its sentence.
+		return fmt.Errorf("clear bin: %w", e.refused(err))
 	}
 	// What the carrier held, for the CLEAR log line only — it does NOT ride the
 	// empty-out (see createUnloaderEmptyOut for why the U2 names no part). Blank
@@ -1041,7 +1054,7 @@ func (e *Engine) loadOntoLabelledCarrier(node *processes.Node, claim *processes.
 	// carrier: file its outbound now. fileLoadedOutbound owns the owed-move
 	// guard, so a window whose outbound is already filed still refuses.
 	if slices.Contains(e.loadablePayloads(node, claim), b.PayloadCode) &&
-		e.fileLoadedOutbound(node, claim, b.PayloadCode) {
+		e.fileLoadedOutbound(node, claim, b.PayloadCode, b.BinID) {
 		log.Printf("bin_ops: LOAD at %s found %s already loaded with no outbound owed (a lost reply); outbound filed",
 			node.Name, b.PayloadCode)
 		return nil

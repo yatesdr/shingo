@@ -136,9 +136,11 @@ func (e *Engine) PullFromMarket(nodeID int64, sourceCoreName string) error {
 	payload := bins[0].PayloadCode
 
 	// NoDemand: a pullback is an operator moving stock between market and window.
-	// It serves no cell's level and belongs to no episode.
-	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1,
-		sourceCoreName, node.CoreNodeName, payload, true, ordermgr.NoDemand())
+	// It serves no cell's level and belongs to no episode. The move names the bin
+	// the read above found: Core refuses it when that bin has left the slot, and
+	// lifts it and no other.
+	order, err := e.orderMgr.CreateMoveOrderWithPayloadCodeForBin(&nodeID, 1,
+		sourceCoreName, node.CoreNodeName, payload, bins[0].BinID, true, ordermgr.NoDemand())
 	if err != nil {
 		return fmt.Errorf("pull from market: create order: %w", err)
 	}

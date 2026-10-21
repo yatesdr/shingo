@@ -94,8 +94,8 @@ func TestFileLoadedOutbound_FilesOnceForOneBin(t *testing.T) {
 	testutil.MustNoErr(t, err, "load node")
 	claim := &processes.NodeClaim{OutboundDestination: "SYN_COMP"}
 
-	e.fileLoadedOutbound(node, claim, "STUD")
-	e.fileLoadedOutbound(node, claim, "STUD")
+	e.fileLoadedOutbound(node, claim, "STUD", 0)
+	e.fileLoadedOutbound(node, claim, "STUD", 0)
 
 	moves, err := db.ListActiveOrdersByProcessNodeOrSource(nodeID, node.CoreNodeName)
 	testutil.MustNoErr(t, err, "list active")
@@ -122,7 +122,7 @@ func TestFileLoadedOutbound_NoDestinationFilesNothing(t *testing.T) {
 	node, err := db.GetProcessNode(nodeID)
 	testutil.MustNoErr(t, err, "load node")
 
-	e.fileLoadedOutbound(node, &processes.NodeClaim{}, "STUD")
+	e.fileLoadedOutbound(node, &processes.NodeClaim{}, "STUD", 0)
 	if e.outboundMoveInFlight(nodeID, node.CoreNodeName) {
 		t.Error("filed an outbound move with no destination")
 	}

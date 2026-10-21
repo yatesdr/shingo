@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"shingo/protocol"
 )
 
 // TestCoreErrorText_ReadsBothShapesCoreAnswersIn is the 115 unattributable log
@@ -54,7 +56,7 @@ func TestClearBin_SurfacesCoresReason(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	_, err := NewCoreClient(srv.URL).ClearBin("FGN_001", "", false, nil)
+	_, err := NewCoreClient(srv.URL).ClearBin(protocol.BinClearRequest{NodeName: "FGN_001"})
 	if err == nil {
 		t.Fatal("ClearBin returned no error on a 400")
 	}

@@ -421,3 +421,49 @@ func TestContainmentNodeMatches_FromTheContainmentCopy(t *testing.T) {
 		t.Error("a non-member matched")
 	}
 }
+
+// TestNodeBins_ApplyRowsPatchesTheCopyKeepsItsDigest: the rows a refused write
+// carries replace those rows in the held copy and fire the event for the nodes
+// that changed; the held digest still names the snapshot Core sent, so the
+// next heartbeat compare fetches Core's current one. A row for a name the copy
+// does not hold is not added, and with no copy held the rows are dropped.
+func TestNodeBins_ApplyRowsPatchesTheCopyKeepsItsDigest(t *testing.T) {
+	t.Parallel()
+	eng, _ := binsEngine(t, testEngineDB(t))
+	var events []NodeBinsUpdatedEvent
+	eng.Events.SubscribeTypes(func(ev Event) {
+		events = append(events, ev.Payload.(NodeBinsUpdatedEvent))
+	}, EventNodeBinsUpdated)
+
+	eng.ApplyNodeBinsRows([]protocol.NodeBinsRow{{Node: "SMN_F1", State: protocol.BinsStateEmpty}})
+	if eng.LocalNodeBins().Held || len(events) != 0 {
+		t.Fatalf("rows with no copy held: held %v, events %+v; want dropped", eng.LocalNodeBins().Held, events)
+	}
+
+	snap := binsSnapshot(t, []protocol.NodeBinsRow{
+		{Node: "SMN_F1", State: protocol.BinsStateOccupied, Occupied: true, BinID: 7, PayloadCode: "PART-A", Stocked: true},
+		{Node: "SMN_H1", State: protocol.BinsStateEmpty},
+	}, nil)
+	if err := eng.ApplyNodeBinsSnapshot(snap); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	events = nil
+	eng.ApplyNodeBinsRows([]protocol.NodeBinsRow{
+		{Node: "SMN_F1", State: protocol.BinsStateOccupied, Occupied: true, BinID: 8, PayloadCode: "PART-B", Stocked: true},
+		{Node: "SMN_H1", State: protocol.BinsStateEmpty},
+		{Node: "NOT-WATCHED", State: protocol.BinsStateEmpty},
+	})
+	st := eng.LocalNodeBins()
+	if r := st.Rows["SMN_F1"]; r.BinID != 8 || r.PayloadCode != "PART-B" {
+		t.Errorf("SMN_F1 = %+v, want Core's row (bin 8, PART-B)", r)
+	}
+	if _, added := st.Rows["NOT-WATCHED"]; added {
+		t.Error("a row for a name the copy does not hold was added")
+	}
+	if got := eng.FeedDigests()[protocol.FeedBins]; got != snap.Digest {
+		t.Errorf("heartbeat bins = %q, want the held snapshot's %q", got, snap.Digest)
+	}
+	if len(events) != 1 || !slices.Equal(events[0].Nodes, []string{"SMN_F1"}) {
+		t.Errorf("events = %+v, want one naming SMN_F1", events)
+	}
+}

@@ -99,7 +99,7 @@ func armPullback(t *testing.T) *pullbackFixture {
 	t.Helper()
 	f := &pullbackFixture{path: copyEngineDBTemplate(t)}
 	f.srv, f.clears = intentCoreServer(t,
-		[]protocol.NodeBinInfo{{NodeName: "PB-MKT-1", Occupied: true, PayloadCode: "PB-PART", UOPRemaining: 40}})
+		[]protocol.NodeBinInfo{{NodeName: "PB-MKT-1", BinID: 88, Occupied: true, PayloadCode: "PB-PART", UOPRemaining: 40}})
 
 	f.db = openIntentDB(t, f.path)
 	f.nodeID = seedIntentNode(t, f.db, "PB-PROC", "PB-WIN")
@@ -219,4 +219,16 @@ func TestArmIntentCost(t *testing.T) {
 	miss := time.Since(start)
 	t.Logf("COST arm write: %.1f µs/op; arm+take: %.1f µs/op; fire-site read with nothing armed: %.1f µs/op (n=%d)",
 		float64(arm.Microseconds())/n, float64(armTake.Microseconds())/n, float64(miss.Microseconds())/n, n)
+}
+
+// TestPullFromMarket_TheMoveNamesTheBin: the pull-back's move names the bin its
+// read of the slot found, so Core refuses it should that bin have left the
+// slot, and lifts it and no other.
+func TestPullFromMarket_TheMoveNamesTheBin(t *testing.T) {
+	t.Parallel()
+	f := armPullback(t)
+	defer f.db.Close()
+	if moves := emptyOutMoves(t, f.eng, "PB-MKT-1"); len(moves) != 1 || moves[0].BinID != 88 {
+		t.Errorf("pull-back move requests = %+v, want one naming bin 88", moves)
+	}
 }

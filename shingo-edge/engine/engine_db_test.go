@@ -432,7 +432,7 @@ func TestCoreClient_NoBaseURL_GracefulDegrade(t *testing.T) {
 	if _, err := c.LoadBin(&BinLoadRequest{NodeName: "N1"}); err == nil {
 		t.Error("LoadBin with no base-url should error")
 	}
-	if _, err := c.ClearBin("N1", "", false, nil); err == nil {
+	if _, err := c.ClearBin(protocol.BinClearRequest{NodeName: "N1"}); err == nil {
 		t.Error("ClearBin with no base-url should error")
 	}
 }
@@ -676,7 +676,7 @@ func TestCoreClient_ClearBin_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewCoreClient(srv.URL)
-	if _, err := c.ClearBin("N1", "", false, nil); err != nil {
+	if _, err := c.ClearBin(protocol.BinClearRequest{NodeName: "N1"}); err != nil {
 		t.Errorf("ClearBin: %v", err)
 	}
 }
@@ -688,7 +688,7 @@ func TestCoreClient_ClearBin_ErrorStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewCoreClient(srv.URL)
-	if _, err := c.ClearBin("N1", "", false, nil); err == nil || !strings.Contains(err.Error(), "nope") {
+	if _, err := c.ClearBin(protocol.BinClearRequest{NodeName: "N1"}); err == nil || !strings.Contains(err.Error(), "nope") {
 		t.Errorf("ClearBin err = %v", err)
 	}
 }
@@ -701,7 +701,7 @@ func TestCoreClient_ClearBin_Non200NoDetail(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewCoreClient(srv.URL)
-	_, err := c.ClearBin("N1", "", false, nil)
+	_, err := c.ClearBin(protocol.BinClearRequest{NodeName: "N1"})
 	if err == nil || !strings.Contains(err.Error(), "core returned") {
 		t.Errorf("ClearBin err = %v, want 'core returned ...'", err)
 	}
@@ -713,7 +713,7 @@ func TestCoreClient_ClearBin_NetworkError(t *testing.T) {
 	url := srv.URL
 	srv.Close()
 	c := NewCoreClient(url)
-	if _, err := c.ClearBin("N1", "", false, nil); err == nil {
+	if _, err := c.ClearBin(protocol.BinClearRequest{NodeName: "N1"}); err == nil {
 		t.Error("network error should surface")
 	}
 }

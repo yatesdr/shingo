@@ -1,10 +1,12 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"log"
 
 	"shingo/protocol"
+	"shingoedge/store/processes"
 )
 
 // RecordBinCount is the operator at the line correcting the count on the
@@ -53,7 +55,7 @@ func (e *Engine) RecordBinCount(nodeID int64, actualUOP int, actor string) error
 	if e.coreClient == nil {
 		return fmt.Errorf("core API not configured")
 	}
-	counted, err := e.coreClient.RecordBinCount(node.CoreNodeName, actualUOP, actor)
+	counted, rt, err := e.declareCount(nodeID, node.CoreNodeName, rt, actualUOP, actor)
 	if err != nil {
 		return fmt.Errorf("record count: %w", err)
 	}
@@ -94,4 +96,45 @@ func (e *Engine) RecordBinCount(nodeID int64, actualUOP int, actor string) error
 		Actor:         actor,
 	}})
 	return nil
+}
+
+// declareCount sends the count to Core and answers Core's reply, with the seat
+// as it stands after the answer.
+//
+// The count names the carrier the operator saw on the tile (boardBinID): Core
+// refuses it when another stands there, rather than recording it on that one.
+// When that carrier is the one the seat holds, the count also says the
+// generation it was taken in, the seat's (seatEpoch). Core refuses a count
+// from a generation that has ended and answers with the current stamp; the
+// stamp is adopted on the seat as a bin epoch refresh is (HandleBinEpochRefresh)
+// and the count is sent once more under it. A second refusal of the same kind
+// goes to the screen as Core's sentence: a carrier whose generation keeps
+// moving under the count is not one to count blind.
+func (e *Engine) declareCount(nodeID int64, coreNode string, rt *processes.RuntimeState, actualUOP int, actor string) (*BinCountResponse, *processes.RuntimeState, error) {
+	binID := e.boardBinID(coreNode)
+	req := protocol.BinCountRequest{NodeName: coreNode, BinID: binID, Epoch: seatEpoch(rt, binID),
+		ActualUOP: actualUOP, Actor: actor}
+	// Every refusal redraws the node from Core's rows before anything else.
+	counted, err := e.coreClient.RecordBinCount(req)
+	err = e.refused(err)
+	var refused *CoreRefusal
+	if !errors.As(err, &refused) || refused.EpochRefresh == nil {
+		return counted, rt, err
+	}
+	e.HandleBinEpochRefresh(*refused.EpochRefresh)
+	if fresh, rerr := e.db.GetProcessNodeRuntime(nodeID); rerr == nil && fresh != nil {
+		rt = fresh
+	}
+	req.Epoch = refused.EpochRefresh.Epoch
+	counted, err = e.coreClient.RecordBinCount(req)
+	return counted, rt, e.refused(err)
+}
+
+// seatEpoch is the generation the seat holds for binID: the seat's own when it
+// holds that carrier, else 0, which asserts nothing.
+func seatEpoch(rt *processes.RuntimeState, binID int64) int64 {
+	if rt == nil || binID == 0 || rt.ActiveBinID == nil || *rt.ActiveBinID != binID {
+		return 0
+	}
+	return rt.ActiveBinEpoch
 }

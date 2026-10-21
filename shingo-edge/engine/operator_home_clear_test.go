@@ -125,3 +125,29 @@ func TestClearLoaderHome_OneRequestRecordsTheZeroAndCreatesNothing(t *testing.T)
 		})
 	}
 }
+
+// TestClearLoaderHome_ARefusalRedrawsTheHomeFromCoresRow: a refused home clear
+// carries Core's row for the home, and the bins copy holds it by the time the
+// refusal's sentence returns.
+func TestClearLoaderHome_ARefusalRedrawsTheHomeFromCoresRow(t *testing.T) {
+	t.Parallel()
+	db := openIntentDB(t, copyEngineDBTemplate(t))
+	defer db.Close()
+	nodeID := seedIntentNode(t, db, "CLR-PROC", "CLR-HOME")
+	cores := protocol.NodeBinsRow{Node: "CLR-HOME", State: protocol.BinsStateOccupied, Occupied: true, BinID: 52, Epoch: 4}
+	srv, _, _, _ := homeClearCore(t, http.StatusConflict, protocol.ClearHomeResponse{Status: "error",
+		Error: "CLR-HOME is already being cleared", Rows: []protocol.NodeBinsRow{cores}})
+	eng := newIntentEngine(t, db)
+	eng.coreClient = stubCoreClient(srv.URL)
+	testutil.MustNoErr(t, eng.ApplyNodeBinsSnapshot(protocol.NodeBinsSnapshot{Digest: "d-home",
+		Rows: []protocol.NodeBinsRow{{Node: "CLR-HOME", State: protocol.BinsStateOccupied, Occupied: true, BinID: 41, Epoch: 3}}}), "hold the copy")
+
+	_, err := eng.ClearLoaderHome(nodeID)
+	var refused *HomeClearRefused
+	if !errors.As(err, &refused) {
+		t.Fatalf("ClearLoaderHome = %v, want the refusal", err)
+	}
+	if got := eng.LocalNodeBins().Rows["CLR-HOME"]; got.BinID != 52 || got.Epoch != 4 {
+		t.Errorf("the home's row = %+v, want Core's (bin 52, epoch 4)", got)
+	}
+}

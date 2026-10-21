@@ -7,16 +7,22 @@ package engine
 //	SendBinToQualityHold   — the station's "Send to Quality Hold": the bin
 //	                       standing at a produce node goes to the claim's
 //	                       containment destination, NOW, as an explicit move
-//	                       order. The move IS the containment; the Core hold
-//	                       marker (best-effort, logged on failure) is the
-//	                       audit and the re-release protection.
+//	                       order naming the bin. The move IS the containment;
+//	                       the hold marker (the audit and the re-release
+//	                       protection) is asked for with it, and Core checks
+//	                       the bin stands there, sets the marker and births
+//	                       the move as one act (OrderRequest.QualityHoldBy).
+//	                       A curtained node's hold is a complex order, which
+//	                       carries no bin: there the marker is still the
+//	                       separate best-effort call.
 //	ReleaseFromContainment — the containment screen's "Verify Good": a
 //	                       verified bin walks from the containment node to
 //	                       the claim's ordinary outbound (the FG drop). The
 //	                       hold marker clears with it.
 //	RecallContainedPayload — the containment screen's recall: bins of a
 //	                       contained payload still sitting at their claims'
-//	                       FG outbound nodes get walked into containment.
+//	                       FG outbound nodes get walked into containment, each
+//	                       move naming its bin and asking for its hold.
 //	                       Covers what landed at FG before (or during) the
 //	                       flag flipping on — in-transit bins land at FG by
 //	                       design and are picked up here.
@@ -118,18 +124,22 @@ func (e *Engine) SendBinToQualityHold(nodeID int64, actor string) (*orders.Order
 			return nil, fmt.Errorf("create containment move: %w", err)
 		}
 		e.writeCreationIntent(order.ID, firstWait, release.PurposeSwap, actor, release.Choices{})
+		// The complex order carries no bin, so Core cannot hold one with it: the
+		// marker stays the separate best-effort call. The move IS the
+		// containment, so a failed marker write logs and continues rather than
+		// telling an operator their hold failed when the robot is already coming.
+		if err := e.coreClient.SetBinQualityHold(bin.BinID, true, actor); err != nil {
+			log.Printf("quality-hold: move %d created but the Core hold marker failed for bin %d: %v", order.ID, bin.BinID, err)
+		}
 	} else {
-		order, err = e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeIDCopy, 1, node.CoreNodeName, containment, bin.PayloadCode, true,
+		// THE HOLD IS ONE CORE ACT: the move names the bin read above and asks
+		// for its hold, and Core refuses the move unless that bin stands on the
+		// node, setting the marker in the move's birth.
+		order, err = e.orderMgr.CreateHoldMoveOrder(&nodeIDCopy, node.CoreNodeName, containment, bin.PayloadCode, bin.BinID, actor,
 			ordermgr.NoDemand())
 		if err != nil {
 			return nil, fmt.Errorf("create containment move: %w", err)
 		}
-	}
-	// The marker is best-effort: the move IS the containment, so a failed
-	// marker write logs and continues rather than telling an operator their
-	// hold failed when the robot is already coming.
-	if err := e.coreClient.SetBinQualityHold(bin.BinID, true, actor); err != nil {
-		log.Printf("quality-hold: move %d created but the Core hold marker failed for bin %d: %v", order.ID, bin.BinID, err)
 	}
 	// Point the runtime at the move so the station shows it next, the way the
 	// U2 empty-out does.
@@ -327,14 +337,13 @@ func (e *Engine) RecallContainedPayload(payloadCode, actor string) (int, []strin
 				refusals = append(refusals, fmt.Sprintf("bin %d at %s: a move order (%d) is already in flight", b.BinID, claim.OutboundDestination, existing[0].ID))
 				continue
 			}
-			order, merr := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1, claim.OutboundDestination, claim.ContainmentDestination, payloadCode, true,
-				ordermgr.NoDemand())
+			// One Core act, as the station's hold: the move names the bin read
+			// above and asks for its hold (CreateHoldMoveOrder).
+			order, merr := e.orderMgr.CreateHoldMoveOrder(&nodeID, claim.OutboundDestination, claim.ContainmentDestination,
+				payloadCode, b.BinID, actor, ordermgr.NoDemand())
 			if merr != nil {
 				refusals = append(refusals, fmt.Sprintf("bin %d at %s: %v", b.BinID, claim.OutboundDestination, merr))
 				continue
-			}
-			if herr := e.coreClient.SetBinQualityHold(b.BinID, true, actor); herr != nil {
-				log.Printf("quality-hold: recall move %d created but the hold marker failed for bin %d: %v", order.ID, b.BinID, herr)
 			}
 			if uerr := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); uerr != nil {
 				log.Printf("quality-hold: update runtime orders for node %d: %v", nodeID, uerr)

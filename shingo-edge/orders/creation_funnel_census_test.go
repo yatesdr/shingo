@@ -212,21 +212,23 @@ func TestCensus_EdgeConstructorFunnel(t *testing.T) {
 		got[c] = []string{c}
 	}
 	sitesEqual(t, "the Edge's constructor funnel", got, map[string]string{
-		"CreateRetrieveOrder":               "createRetrieveOrder",
-		"CreateMoveOrder":                   "createMoveOrder",
-		"CreateMoveOrderWithPayloadCode":    "createMoveOrder",
-		"CreateMoveOrderWithUOP":            "createMoveOrder",
-		"CreateMoveOrderCarrying":           "createMoveOrder",
-		"CreateMoveOrderCarryingTo":         "createMoveOrder",
-		"CreateMoveOrderForBin":             "createMoveOrder",
-		"CreateComplexOrder":                "createComplexOrder",
-		"CreateComplexOrderWithAutoConfirm": "createComplexOrder",
-		"CreateComplexOrderWithPayload":     "createComplexOrder",
-		"CreateComplexOrderSibling":         "createComplexOrder",
-		"CreateComplexOrderPaired":          "createComplexOrder",
-		"createRetrieveOrder":               "createRetrieveOrder",
-		"createMoveOrder":                   "createMoveOrder",
-		"createComplexOrder":                "createComplexOrder",
+		"CreateRetrieveOrder":                  "createRetrieveOrder",
+		"CreateMoveOrder":                      "createMoveOrder",
+		"CreateMoveOrderWithPayloadCode":       "createMoveOrder",
+		"CreateMoveOrderWithUOP":               "createMoveOrder",
+		"CreateMoveOrderCarrying":              "createMoveOrder",
+		"CreateMoveOrderCarryingTo":            "createMoveOrder",
+		"CreateMoveOrderForBin":                "createMoveOrder",
+		"CreateHoldMoveOrder":                  "createMoveOrder",
+		"CreateMoveOrderWithPayloadCodeForBin": "createMoveOrder",
+		"CreateComplexOrder":                   "createComplexOrder",
+		"CreateComplexOrderWithAutoConfirm":    "createComplexOrder",
+		"CreateComplexOrderWithPayload":        "createComplexOrder",
+		"CreateComplexOrderSibling":            "createComplexOrder",
+		"CreateComplexOrderPaired":             "createComplexOrder",
+		"createRetrieveOrder":                  "createRetrieveOrder",
+		"createMoveOrder":                      "createMoveOrder",
+		"createComplexOrder":                   "createComplexOrder",
 	})
 }
 
@@ -284,20 +286,20 @@ var edgeCreationSites = map[string]string{
 	"engine/operator_node_changeover.go:StageNodeChangeoverMaterial":     "CreateComplexOrder,CreateRetrieveOrder",
 	"engine/wiring_status_changed.go:handleSequentialBackfill":           "CreateComplexOrder",
 	// loader and unloader side-cycles
-	"engine/loader_outbound_guard.go:fileLoadedOutbound":        "CreateMoveOrderWithPayloadCode",
+	"engine/loader_outbound_guard.go:fileLoadedOutbound":        "CreateMoveOrderWithPayloadCodeForBin",
 	"engine/operator_bin_ops.go:RequestFullBin":                 "CreateRetrieveOrder",
 	"engine/operator_bin_ops.go:createUnloaderEmptyOut":         "CreateMoveOrderForBin",
 	"engine/operator_bin_ops.go:requestEmptyAtManualSwapLoader": "CreateRetrieveOrder",
 	"engine/operator_demand_loader.go:stageOperatorEmpty":       "CreateRetrieveOrder",
 	"engine/operator_demand_unloader.go:fireUnloaderFulls":      "CreateRetrieveOrder",
-	"engine/operator_window_pullback.go:PullFromMarket":         "CreateMoveOrderWithPayloadCode",
+	"engine/operator_window_pullback.go:PullFromMarket":         "CreateMoveOrderWithPayloadCodeForBin",
 	// keep-staged spot and a cancelled changeover's parked trips (main, 2026-10-03/04)
 	"engine/keep_staged_spot.go:refillSpot":              "CreateRetrieveOrder",
 	"engine/keep_staged_spot.go:returnSpare":             "CreateMoveOrderForBin",
 	"engine/changeover_cancel_park.go:clearStrandedPark": "CreateMoveOrderCarrying",
 	"engine/changeover_cancel_park.go:finishParkedTrips": "CreateMoveOrderCarrying",
 	// quality containment (main, 2026-09-25)
-	"engine/operator_quality_hold.go:RecallContainedPayload": "CreateMoveOrderWithPayloadCode",
+	"engine/operator_quality_hold.go:RecallContainedPayload": "CreateHoldMoveOrder",
 	"engine/operator_quality_hold.go:ReleaseFromContainment": "CreateMoveOrderWithPayloadCode",
-	"engine/operator_quality_hold.go:SendBinToQualityHold":   "CreateComplexOrderWithPayload,CreateMoveOrderWithPayloadCode",
+	"engine/operator_quality_hold.go:SendBinToQualityHold":   "CreateComplexOrderWithPayload,CreateHoldMoveOrder",
 }

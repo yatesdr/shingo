@@ -49,6 +49,8 @@ type scCore struct {
 	binReads int
 	// loadBinIDs is the bin_id of every bin-load request, in order.
 	loadBinIDs []int64
+	// loads is every bin-load request, in order.
+	loads []BinLoadRequest
 	// clears counts the bin-clear requests Core accepted.
 	clears int
 	// refuseLoad, when set, is the refusal Core answers every bin-load with
@@ -105,13 +107,14 @@ func (c *scCore) serve(w http.ResponseWriter, r *http.Request) {
 				out = append(out, NodeBinInfo{NodeName: n})
 				continue
 			}
-			out = append(out, NodeBinInfo{NodeName: n, Occupied: win.occupied, PayloadCode: win.payload, BinID: 77, UOPRemaining: win.uop})
+			out = append(out, NodeBinInfo{NodeName: n, Occupied: win.occupied, PayloadCode: win.payload, BinID: 77, UOPRemaining: win.uop, DeltaEpoch: 5})
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	case "/api/telemetry/bin-load":
 		var req BinLoadRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		c.loadBinIDs = append(c.loadBinIDs, req.BinID)
+		c.loads = append(c.loads, req)
 		if c.refuseLoad != "" {
 			w.WriteHeader(http.StatusConflict)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": c.refuseLoad})

@@ -125,7 +125,12 @@ func (e *Engine) outboundMoveInFlight(processNodeID int64, coreNodeName string) 
 // it at birth; the move is unattended at the outbound end (a supermarket node),
 // so it auto-confirms, or it would stick at `delivered` with no operator to tap
 // CONFIRM there.
-func (e *Engine) fileLoadedOutbound(node *processes.Node, claim *processes.NodeClaim, payloadCode string) bool {
+//
+// binID names the carrier the move is for when the filer read it (the LOAD's
+// lost-reply arm, which files the move with no load call): Core refuses the
+// move when that carrier is not on the window, and lifts it and no other. 0
+// names none, the move after a LOAD Core answered.
+func (e *Engine) fileLoadedOutbound(node *processes.Node, claim *processes.NodeClaim, payloadCode string, binID int64) bool {
 	outbound, ok := e.outboundFor(node, claim, domain.RoleProduce)
 	if !ok {
 		return false
@@ -138,7 +143,7 @@ func (e *Engine) fileLoadedOutbound(node *processes.Node, claim *processes.NodeC
 	// NoDemand: nothing asked for this. A loaded bin owes an outbound move, and
 	// the guard above is the system deciding to file it — the definition of
 	// structurally originless.
-	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&node.ID, 1, node.CoreNodeName, outbound, payloadCode, true,
+	order, err := e.orderMgr.CreateMoveOrderWithPayloadCodeForBin(&node.ID, 1, node.CoreNodeName, outbound, payloadCode, binID, true,
 		orders.NoDemand())
 	if err != nil {
 		log.Printf("loader-outbound: create outbound move for %s → %s: %v", node.CoreNodeName, outbound, err)
