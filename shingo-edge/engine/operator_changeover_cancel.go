@@ -4,6 +4,7 @@
 package engine
 
 import (
+	"errors"
 	"log"
 	"shingo/protocol"
 
@@ -89,7 +90,7 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 		if err := e.db.ClearProcessNodeRuntimeOrders(task.ProcessNodeID); err != nil {
 			log.Printf("changeover: update runtime orders for node %d: %v", task.ProcessNodeID, err)
 		}
-		e.reconcileActiveBinAfterCancel(task.ProcessNodeID, runtime.ActiveClaimID)
+		e.reconcileActiveBinAfterCancel(task.ProcessNodeID)
 	}
 
 	if err := e.db.UpdateProcessChangeoverState(changeover.ID, domain.ChangeoverCancelled); err != nil {
@@ -133,62 +134,65 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 	return nil
 }
 
-// reconcileActiveBinAfterCancel re-binds a node's active-bin pointer to the bin
-// physically at its slot after a changeover cancel, so a stale pointer (old bin
-// evac'd/moved, or operator material swap) can't keep absorbing consume ticks.
-// The companion handler_bin_picked_up fix clears the pointer when a clean
-// pickup event names the active bin; this covers the rest — an evac whose bin
-// departed without a slot pickup event reaching Edge, and the manual-swap case
-// where physical reality diverged from Edge's cache.
+// reconcileActiveBinAfterCancel re-seats a node after a changeover cancel or a
+// plain abort, so a stale active-bin pointer (old bin evac'd/moved, or an
+// operator material swap) can't keep absorbing consume ticks. The companion
+// handler_bin_picked_up fix clears the pointer when a clean pickup event names
+// the active bin; this covers the rest — an evac whose bin departed without a
+// slot pickup event reaching Edge, and the manual-swap case where physical
+// reality diverged from Edge's cache.
 //
-// Re-resolve from Core's physical bin-at-node (BinAtLineside tri-state):
-//   - bin present    → rebind to it with Core's authoritative count + epoch so
-//     ticks land on the real bin.
-//   - confirmed empty → clear the pointer + zero the cache so ticks are held
-//     until the next delivery instead of charging a ghost.
-//   - Core unverified → retain the prior value (a transient blip must not zero
-//     a live lineside).
+// IT ASKS CORE TO RESEAT THE NODE (protocol.AskReseat, site 6 of the reads)
+// and binds nothing itself: binding happens only on a landing. The answer is
+// applied by its kind, waiter or none (askAppliersByKind), so nothing here
+// waits on Core:
+//   - a carrier at the node → Core re-announces it through the landing verb,
+//     ahead of its answer on Core's outbox, and the seat binds on the landing
+//     (HandleBinLanded): its stamp is newer than the seat's, the same carrier
+//     at an equal or newer generation keeps the seat's own count, and the
+//     identity is the landing's;
+//   - none there → the answer says so and the carrier left (carrierLeft);
+//   - Core not answering the kind, a refusal (a node Core does not know), or
+//     no answer → the seat is left as it is (a transient blip must not zero a
+//     live lineside).
 //
 // Best-effort and defensive: every error is logged, never returned — a
-// reconcile failure must not block the cancel. The claim pointer is threaded
-// through unchanged; the cancel has already reverted the process to the
-// from-style, and the active claim was never flipped (cutover never ran).
-func (e *Engine) reconcileActiveBinAfterCancel(processNodeID int64, activeClaimID *int64) {
-	if e.coreClient == nil {
-		return // no Core client wired (e.g. test contexts) — nothing to reconcile against
-	}
+// reconcile failure must not block the cancel.
+func (e *Engine) reconcileActiveBinAfterCancel(processNodeID int64) {
 	node, err := e.db.GetProcessNode(processNodeID)
 	if err != nil || node == nil {
 		return
 	}
-	bin, known, err := e.coreClient.BinAtLineside(node.CoreNodeName)
-	if err != nil || !known {
-		log.Printf("changeover cancel: active-bin reconcile skipped for node %s (core unverified): %v",
-			node.Name, err)
+	if !e.CoreAnswers(protocol.AskReseat) {
+		log.Printf("changeover cancel: active-bin reconcile skipped for node %s (Core does not answer %s)",
+			node.Name, protocol.AskReseat)
 		return
 	}
-	if bin != nil {
-		binID := bin.BinID
-		// Rebind through the verb: count + stamp from Core's physical view.
-		if e.inventoryDelta != nil {
-			if err := e.inventoryDelta.BindFromCore(processNodeID, activeClaimID, &binID, bin.DeltaEpoch, bin.UOPRemaining); err != nil {
-				log.Printf("changeover cancel: rebind active bin %d for node %s: %v", bin.BinID, node.Name, err)
-				return
-			}
-		}
-		// And the identity, through the doorway, from the same Core row. The
-		// bind writes no identity, so a rebind onto a DIFFERENT carrier (a hand
-		// swap, or an evac whose pickup never reached the Edge) used to leave
-		// the previous carrier's part on the node as a confident answer, and
-		// every reader of it — the evacuation aim, a changeover planned from
-		// what stands on the node — acted on the wrong carrier.
-		e.recordLinesideCarrier(processNodeID, node.CoreNodeName,
-			domain.KnownCarrier(domain.LinesidePayloadCode(bin.PayloadCode)), domain.CarrierFromReconcile)
+	if _, err := e.Ask(protocol.AskReseat, protocol.ReseatRequest{Node: node.CoreNodeName}, 0); err != nil &&
+		!errors.Is(err, ErrAskPending) {
+		log.Printf("changeover cancel: active-bin reconcile skipped for node %s: %v", node.Name, err)
+	}
+}
+
+// applyReseat is the reseat answer's applier: with no carrier at the node, the
+// seat's carrier left (carrierLeft: pointer, count and identity through the
+// one verb). A carrier there was bound by its landing, which reached this
+// Edge ahead of the answer, so a landed answer changes nothing; a refusal
+// leaves the seat as it is.
+func applyReseat(e *Engine, a *protocol.EdgeAnswer) {
+	r, err := askInto[protocol.ReseatAnswer](a)
+	if err != nil {
+		log.Printf("changeover cancel: reseat refused: %v — the seat is left as it is", err)
 		return
 	}
-	// Confirmed empty: the carrier left. Pointer, count and identity go
-	// through the one verb (carrier_left.go); no sink, no write.
-	if err := e.carrierLeft(processNodeID, node.CoreNodeName); err != nil {
+	if r.Landed || r.Node == "" {
+		return
+	}
+	node, err := e.db.GetProcessNodeByCoreNodeName(r.Node)
+	if err != nil || node == nil {
+		return
+	}
+	if err := e.carrierLeft(node.ID, node.CoreNodeName); err != nil {
 		log.Printf("changeover cancel: clear active bin for node %s: %v", node.Name, err)
 	}
 }

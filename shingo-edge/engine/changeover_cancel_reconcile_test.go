@@ -2,8 +2,6 @@ package engine
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"shingo/protocol"
 	"testing"
 
@@ -12,19 +10,53 @@ import (
 	"shingoedge/orders"
 )
 
-// physicalBinCoreServer returns an httptest server answering BinAtLineside
-// with a single bin at coreNode (used to assert the reconcile rebinds the
-// active-bin pointer to Core's physical truth).
-func physicalBinCoreServer(coreNode string, binID int64, uop int, epoch int64) *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode([]NodeBinInfo{{
-			NodeName:     coreNode,
-			BinID:        binID,
-			UOPRemaining: uop,
-			DeltaEpoch:   epoch,
-			Occupied:     true,
-		}})
-	}))
+// answerReseats is Core answering every reseat ask on eng's outbox, as Core's
+// BinService.Reseat does: for a node carrier answers with a carrier, its
+// landing first (the landing leaves Core's outbox ahead of the answer), then
+// the answer naming the node and whether one stands there. Each ask answered
+// is taken off the outbox. It returns how many it answered.
+func answerReseats(t *testing.T, eng *Engine, carrier func(node string) *protocol.BinLanded) int {
+	t.Helper()
+	msgs, err := eng.db.ListPendingOutbox(100)
+	testutil.MustNoErr(t, err, "list outbox")
+	n := 0
+	for _, m := range msgs {
+		if m.MsgType != protocol.SubjectEdgeAsk {
+			continue
+		}
+		var env protocol.Envelope
+		testutil.MustNoErr(t, json.Unmarshal(m.Payload, &env), "decode ask envelope")
+		var data protocol.Data
+		testutil.MustNoErr(t, json.Unmarshal(env.Payload, &data), "decode ask data")
+		var ask protocol.EdgeAsk
+		testutil.MustNoErr(t, json.Unmarshal(data.Body, &ask), "decode ask")
+		if ask.Kind != protocol.AskReseat {
+			continue
+		}
+		var req protocol.ReseatRequest
+		testutil.MustNoErr(t, json.Unmarshal(ask.Body, &req), "decode reseat")
+		l := carrier(req.Node)
+		if l != nil {
+			eng.HandleBinLanded(*l)
+		}
+		body, err := json.Marshal(protocol.ReseatAnswer{Node: req.Node, Landed: l != nil})
+		testutil.MustNoErr(t, err, "encode answer")
+		eng.HandleEdgeAnswer(answerTo(&env), &protocol.EdgeAnswer{Kind: protocol.AskReseat, Status: protocol.AnswerOK, Body: body})
+		testutil.MustNoErr(t, eng.db.AckOutbox(m.ID), "take the ask off the outbox")
+		n++
+	}
+	return n
+}
+
+// physicalLanding is the landing Core re-announces for a bin at node, with a
+// placement stamp newer than any a fixture's seat holds.
+func physicalLanding(node string, binID int64, uop int, epoch int64) func(string) *protocol.BinLanded {
+	return func(n string) *protocol.BinLanded {
+		if n != node {
+			return nil
+		}
+		return &protocol.BinLanded{BinID: binID, CoreNodeName: node, Count: uop, Epoch: epoch, PlacedSeq: 1 << 40}
+	}
 }
 
 // TestRegression_ChangeoverCancelReconcilesActiveBinFromPhysical pins the
@@ -47,20 +79,9 @@ func TestRegression_ChangeoverCancelReconcilesActiveBinFromPhysical(t *testing.T
 	const physicalBinID int64 = 555
 	const physicalUOP = 77
 	const physicalEpoch int64 = 9
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode([]NodeBinInfo{{
-			NodeName:     coreNode,
-			BinID:        physicalBinID,
-			UOPRemaining: physicalUOP,
-			DeltaEpoch:   physicalEpoch,
-			Occupied:     true,
-		}})
-	}))
-	defer srv.Close()
-
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	eng.coreClient = stubCoreClient(srv.URL)
+	eng.setAskKinds([]string{protocol.AskReseat})
 
 	_, _ = startChangeover(t, eng, db, processID, toStyleID)
 
@@ -71,6 +92,10 @@ func TestRegression_ChangeoverCancelReconcilesActiveBinFromPhysical(t *testing.T
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, rt.ActiveClaimID, &staleBin, 5), "seed stale active bin")
 
 	testutil.MustNoErr(t, eng.CancelProcessChangeover(processID), "cancel")
+	// The cancel asks Core to reseat the node; Core re-announces the bin.
+	if n := answerReseats(t, eng, physicalLanding(coreNode, physicalBinID, physicalUOP, physicalEpoch)); n == 0 {
+		t.Fatal("the cancel asked Core for no reseat")
+	}
 
 	post, _ := db.GetProcessNodeRuntime(nodeID)
 	if post.ActiveBinID == nil || *post.ActiveBinID != physicalBinID {
@@ -97,12 +122,9 @@ func TestRegression_PlainAbortReconcilesActiveBinFromPhysical(t *testing.T) {
 	const physicalBinID = int64(555)
 	const physicalUOP = 77
 	const physicalEpoch = int64(9)
-	srv := physicalBinCoreServer(node.CoreNodeName, physicalBinID, physicalUOP, physicalEpoch)
-	defer srv.Close()
-
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	eng.coreClient = stubCoreClient(srv.URL)
+	eng.setAskKinds([]string{protocol.AskReseat})
 
 	changeover, _ := startChangeover(t, eng, db, processID, toStyleID)
 	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
@@ -130,6 +152,9 @@ func TestRegression_PlainAbortReconcilesActiveBinFromPhysical(t *testing.T) {
 		OrderType:     order.OrderType,
 		ProcessNodeID: &nodeID,
 	}})
+	if n := answerReseats(t, eng, physicalLanding(node.CoreNodeName, physicalBinID, physicalUOP, physicalEpoch)); n == 0 {
+		t.Fatal("the abort asked Core for no reseat")
+	}
 
 	post, _ := db.GetProcessNodeRuntime(nodeID)
 	if post.ActiveBinID == nil || *post.ActiveBinID != physicalBinID {
@@ -158,13 +183,9 @@ func TestRegression_TerminalOrderReleasesRuntimeOrderSlot(t *testing.T) {
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 
-	node, _ := db.GetProcessNode(nodeID)
-	srv := physicalBinCoreServer(node.CoreNodeName, 555, 77, 9)
-	defer srv.Close()
-
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	eng.coreClient = stubCoreClient(srv.URL)
+	eng.setAskKinds([]string{protocol.AskReseat})
 
 	changeover, _ := startChangeover(t, eng, db, processID, toStyleID)
 	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
@@ -208,13 +229,9 @@ func TestRegression_ConfirmedCompletionDoesNotReconcile(t *testing.T) {
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenarioMode(t, db, protocol.SwapModeTwoRobot)
 
-	node, _ := db.GetProcessNode(nodeID)
-	srv := physicalBinCoreServer(node.CoreNodeName, 555, 77, 9)
-	defer srv.Close()
-
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	eng.coreClient = stubCoreClient(srv.URL)
+	eng.setAskKinds([]string{protocol.AskReseat})
 
 	changeover, _ := startChangeover(t, eng, db, processID, toStyleID)
 	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
@@ -233,6 +250,10 @@ func TestRegression_ConfirmedCompletionDoesNotReconcile(t *testing.T) {
 		OrderType:     order.OrderType,
 		ProcessNodeID: &nodeID,
 	}})
+	node, _ := db.GetProcessNode(nodeID)
+	if n := answerReseats(t, eng, physicalLanding(node.CoreNodeName, 555, 77, 9)); n != 0 {
+		t.Errorf("a confirmed completion asked Core for %d reseat(s), want none", n)
+	}
 
 	post, _ := db.GetProcessNodeRuntime(nodeID)
 	if post.ActiveBinID != nil && *post.ActiveBinID == 555 {
@@ -245,41 +266,55 @@ func TestRegression_ConfirmedCompletionDoesNotReconcile(t *testing.T) {
 
 // TestCancelReconcile_RecordsTheReboundCarriersIdentity: the reconcile rebinds
 // the slot to the carrier Core says is there, and records THAT carrier's part
-// through the doorway. The bind writes no identity, so a rebind onto a
-// different carrier used to leave the previous carrier's part standing as a
-// confident answer — and a changeover planned from what stands on the node, or
-// the evacuation aim, acted on the wrong carrier.
+// through the doorway. A rebind onto a different carrier used to leave the
+// previous carrier's part standing as a confident answer — and a changeover
+// planned from what stands on the node, or the evacuation aim, acted on the
+// wrong carrier. CHANGED (site 6 of the reads, the reseat): the rebind is
+// Core's landing, so the identity is the landing's (CarrierFromLanding), where
+// the HTTP reconcile recorded CarrierFromReconcile. And no Core answering the
+// reseat leaves the seat as it is.
 func TestCancelReconcile_RecordsTheReboundCarriersIdentity(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedPhase3SwapScenario(t, db)
 	node, err := db.GetProcessNode(nodeID)
 	testutil.MustNoErr(t, err, "process node")
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode([]NodeBinInfo{{
-			NodeName: node.CoreNodeName, BinID: 555, PayloadCode: "PART-NEW",
-			UOPRemaining: 40, DeltaEpoch: 3, Occupied: true,
-		}})
-	}))
-	defer srv.Close()
 	eng := testEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
 
 	// The previous carrier, known, as its landing recorded it.
 	eng.recordLinesideCarrier(nodeID, node.CoreNodeName, domain.KnownCarrier("PART-OLD"), domain.CarrierFromLanding)
-	rt, err := db.GetProcessNodeRuntime(nodeID)
+	before, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "runtime before")
 
-	eng.reconcileActiveBinAfterCancel(nodeID, rt.ActiveClaimID)
+	// A Core that does not answer the reseat: nothing is asked, nothing moves.
+	eng.reconcileActiveBinAfterCancel(nodeID)
+	if n := answerReseats(t, eng, func(string) *protocol.BinLanded { return nil }); n != 0 {
+		t.Fatalf("asked a Core that does not answer the reseat %d time(s)", n)
+	}
+	if rt, _ := db.GetProcessNodeRuntime(nodeID); string(rt.LinesidePayloadCode) != "PART-OLD" ||
+		!sameBin(rt.ActiveBinID, before.ActiveBinID) {
+		t.Errorf("no reseat answered, the seat moved: bin %v part %q", rt.ActiveBinID, rt.LinesidePayloadCode)
+	}
+
+	eng.setAskKinds([]string{protocol.AskReseat})
+	eng.reconcileActiveBinAfterCancel(nodeID)
+	answerReseats(t, eng, func(n string) *protocol.BinLanded {
+		return &protocol.BinLanded{BinID: 555, CoreNodeName: n, Count: 40, Epoch: 3, PlacedSeq: 1 << 40,
+			PayloadCode: "PART-NEW", PayloadKnown: true}
+	})
 
 	post, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "runtime after")
+	if post.ActiveBinID == nil || *post.ActiveBinID != 555 {
+		t.Errorf("active bin after the reseat = %v, want 555", post.ActiveBinID)
+	}
 	if !post.LinesidePayloadKnown || string(post.LinesidePayloadCode) != "PART-NEW" {
 		t.Errorf("identity after the rebind = %q (known %v), want PART-NEW — the rebound carrier's part, "+
 			"not the previous occupant's", post.LinesidePayloadCode, post.LinesidePayloadKnown)
 	}
-	if post.LinesideSource != string(domain.CarrierFromReconcile) {
-		t.Errorf("identity source = %q, want %q", post.LinesideSource, domain.CarrierFromReconcile)
+	if post.LinesideSource != string(domain.CarrierFromLanding) {
+		t.Errorf("identity source = %q, want %q", post.LinesideSource, domain.CarrierFromLanding)
 	}
 }
+
+func sameBin(a, b *int64) bool { return (a == nil && b == nil) || (a != nil && b != nil && *a == *b) }

@@ -29,14 +29,17 @@ func (op *simOperator) binNotDone(nodeID int64) string {
 	}
 	switch claim.Role {
 	case protocol.ClaimRoleConsume:
-		// The count consumeDisposition will declare from: Core's bin.
-		bins, reachable, err := op.e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
+		// The count consumeDisposition will declare from: the parts a person
+		// counts in the bin, an oracle read of the simulated floor
+		// (readSimFloorBins), as consumeDisposition reads it.
+		bins, err := readSimFloorBins(op.e.coreClient.baseURL, []string{node.CoreNodeName})
+		b := bins[node.CoreNodeName]
 		switch {
-		case err != nil || !reachable:
+		case err != nil:
 			return "the bin's count is unreadable"
-		case len(bins) == 0 || !bins[0].Occupied:
+		case !b.Occupied:
 			return ""
-		case bins[0].UOPRemaining > op.linesidePullAt(bins[0].PayloadCode, claim.UOPCapacity):
+		case b.UOPRemaining > op.linesidePullAt(b.PayloadCode, claim.UOPCapacity):
 			return "parts left in the bin"
 		}
 	case protocol.ClaimRoleProduce:

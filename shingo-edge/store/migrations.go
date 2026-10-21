@@ -274,9 +274,9 @@ func (db *DB) migrate() error {
 	//
 	// WHAT MAKES A BACKFILLED 0 NON-ZERO, since this is where somebody comes to
 	// find out: an OrderDelivered envelope, one of Core's LoadBin/clear/count
-	// replies, the BinAtLineside re-bind after a changeover cancel, or Core's
-	// BinEpochRefresh push. Not "the FetchNodeBins response path" — every
-	// FetchNodeBins call site discards the epoch.
+	// replies, Core's landing (which a changeover cancel's reseat asks Core to
+	// re-announce), or Core's BinEpochRefresh push. Not "the FetchNodeBins
+	// response path" — every FetchNodeBins call site discards the epoch.
 	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN active_bin_epoch INTEGER NOT NULL DEFAULT 0")
 
 	// What the slot last held: the bin that left it and the stamp it left

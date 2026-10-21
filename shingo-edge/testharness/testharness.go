@@ -17,6 +17,7 @@ import (
 	"shingoedge/engine"
 	"shingoedge/engine/releasefake"
 	"shingoedge/messaging"
+	"shingoedge/service"
 	"shingoedge/store"
 )
 
@@ -109,6 +110,9 @@ func NewEdgeWithCoreAPI(t *testing.T, stationID, coreAPI string) *Edge {
 	// No Core runs here (a coreAPI is a telemetry stub), so the release act's
 	// point is answered from the Edge's own rows, as Core's rule reads them.
 	eng.SetReleasePointSource(releasefake.DB{DB: db})
+	// Nor any Core to ask the changeover preflight: every payload reads
+	// stocked, as a scenario's fully stocked Core answered it over HTTP.
+	eng.SetPreflightSource(stockedPreflight{})
 	eng.Start()
 	t.Cleanup(eng.Stop)
 
@@ -174,4 +178,14 @@ func NewEdgeWithCoreAPI(t *testing.T, stationID, coreAPI string) *Edge {
 		Ingestor: ingestor,
 		DB:       db,
 	}
+}
+
+// stockedPreflight is the changeover preflight with no Core to ask: every
+// payload has a free bin, and which have none anywhere is not known.
+type stockedPreflight struct{}
+
+func (stockedPreflight) Available() bool { return true }
+
+func (stockedPreflight) PreflightInventory(string, []string) (*service.PreflightCoreResult, error) {
+	return &service.PreflightCoreResult{Missing: []string{}}, nil
 }

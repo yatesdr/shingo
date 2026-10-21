@@ -68,16 +68,19 @@ func pinOutcome(t *testing.T, bug, got, today, want string) {
 
 // ── Fake Core (HTTP) ─────────────────────────────────────────────────────
 
-// fakeCore answers the Core HTTP reads a release makes and counts them per
-// path. node-bins answers with binAt when set (binAtPress), for the reads still
-// made there; everything else is a 404, which every Core read on the release path treats as "no answer".
+// fakeCore answers the Core reads a release makes and counts them per path:
+// the release points read-ask in process (ReleasePoints, counted under its old
+// door's path), and over HTTP the sim operator's oracle (Core's node list and
+// bin read, binAt as the carrier on the press, binAtPress); every other HTTP
+// path is a 404, which every Core read on the release path treats as "no
+// answer".
 type fakeCore struct {
 	srv   *httptest.Server
 	mu    sync.Mutex
 	calls map[string]int
 	binAt *NodeBinInfo
-	// points answers releasePoints (release_fake_points_test.go); pointsDown
-	// makes Core unreachable for it (G3).
+	// points answers ReleasePoints (release_fake_points_test.go); pointsDown
+	// leaves the ask unanswered (G3).
 	points     func(protocol.ReleasePointsRequest) protocol.ReleasePointsResponse
 	pointsDown bool
 }
@@ -89,29 +92,39 @@ func newFakeCore(t *testing.T) *fakeCore {
 		fc.mu.Lock()
 		fc.calls[r.URL.Path]++
 		bin := fc.binAt
-		points, down := fc.points, fc.pointsDown
 		fc.mu.Unlock()
-		if r.URL.Path == "/api/release/points" {
-			if down || points == nil {
-				http.Error(w, "core unreachable", http.StatusServiceUnavailable)
-				return
-			}
-			var req protocol.ReleasePointsRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			_ = json.NewEncoder(w).Encode(points(req))
+		// The sim operator's oracle reads (sim_core_oracle.go): the press as
+		// Core's one node, and binAt as the carrier on it.
+		if r.URL.Path == "/api/nodes" {
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": 1, "name": fxPress}})
 			return
 		}
-		if r.URL.Path == "/api/telemetry/node-bins" && bin != nil {
-			_ = json.NewEncoder(w).Encode([]NodeBinInfo{*bin})
+		if r.URL.Path == "/api/bins/by-node" {
+			out := []map[string]any{}
+			if bin != nil && bin.Occupied && r.URL.Query().Get("id") == "1" {
+				out = append(out, map[string]any{"id": bin.BinID, "payload_code": bin.PayloadCode, "uop_remaining": bin.UOPRemaining})
+			}
+			_ = json.NewEncoder(w).Encode(out)
 			return
 		}
 		http.NotFound(w, r)
 	}))
 	t.Cleanup(fc.srv.Close)
 	return fc
+}
+
+// ReleasePoints is the release points read-ask as the fake Core answers it,
+// counted under its old door's path as one round trip: pointsDown (or no
+// points) is the ask unanswered.
+func (fc *fakeCore) ReleasePoints(station string, uuids []string) ([]protocol.ReleasePoint, error) {
+	fc.mu.Lock()
+	fc.calls["/api/release/points"]++
+	points, down := fc.points, fc.pointsDown
+	fc.mu.Unlock()
+	if down || points == nil {
+		return nil, fmt.Errorf("release points: %w", ErrAskPending)
+	}
+	return points(protocol.ReleasePointsRequest{StationID: station, OrderUUIDs: uuids}).Points, nil
 }
 
 // total is every Core HTTP round trip since the last reset.
@@ -248,7 +261,9 @@ func newRelHarness(t *testing.T) *relHarness {
 	// slowed by a loaded machine must not read as "no point from Core" (G3). A
 	// cell that wants G3 sets pointsDown, which answers 503 at once.
 	eng.coreClient = stubCoreClient(fc.srv.URL)
-	eng.points = nil // Core's points over HTTP, from the fake Core (counted)
+	// Core's points, from the fake Core, counted as a round trip each: the
+	// read-ask's answer (releasePointsAsker) in the act's place.
+	eng.points = fc
 
 	wl := &scriptedWarLink{value: curtainSafe}
 	eng.plcMgr = plc.NewManager(nil, nil, nil, wl)
@@ -562,9 +577,10 @@ func (c actCounts) String() string {
 	return fmt.Sprintf("sqlite reads=%d writes=%d warlink=%d coreHTTP=%d", c.reads, c.writes, c.warlink, c.coreHTTP)
 }
 
-// binAtPress puts the fixture's bin on the press as Core reports it: over
-// node-bins (binAt, for the reads still made there) and in the bins table, for
-// the sites that decide from it (a release's capture names the bin from it).
+// binAtPress puts the fixture's bin on the press as Core reports it: on the
+// simulated floor (binAt, the sim operator's oracle reads) and in the bins
+// table, for the sites that decide from it (a release's capture names the bin
+// from it).
 func (h *relHarness) binAtPress(count int) {
 	h.core.mu.Lock()
 	h.core.binAt = &NodeBinInfo{NodeName: fxPress, BinID: fxBin, PayloadCode: fxPart, UOPRemaining: count, Occupied: true}

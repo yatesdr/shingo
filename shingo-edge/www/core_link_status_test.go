@@ -20,6 +20,10 @@ var _ statusEngine = (*engine.Engine)(nil)
 // this the release would answer 503 on a plant with every test green.
 var _ holdMarker = (*engine.Engine)(nil)
 
+// The real engine asks Core for a part's held partials; without this the
+// finish-later picker would answer 503 on a plant with every test green.
+var _ heldPartialsAsker = (*engine.Engine)(nil)
+
 // stubCoreLink is what stubEngine's Core-link reads answer.
 type stubCoreLink struct {
 	ackLocal, ackServer time.Time

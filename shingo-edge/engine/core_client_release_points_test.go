@@ -2,43 +2,72 @@ package engine
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
+	"errors"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 )
 
-// TestCoreClient_ReleasePoints round-trips the release-points read: the
-// request names the station and the orders, the reply decodes into the
-// protocol type, and a non-200 is an error.
-func TestCoreClient_ReleasePoints(t *testing.T) {
+// TestReleasePointsAsker_TheReadAsk round-trips the release points read over
+// the ask pair (protocol.AskReleasePoints): the ask names the station and the
+// orders, the answer decodes into the protocol type, and a refusal or an
+// answer still pending past the wait is an error, never points.
+func TestReleasePointsAsker_TheReadAsk(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/release/points" || r.Method != http.MethodPost {
-			http.NotFound(w, r)
-			return
+	e, _ := binsEngine(t, testEngineDB(t))
+	e.setAskKinds([]string{protocol.AskReleasePoints})
+	r := releasePointsAsker{e}
+	ask := func(answer func(env *protocol.Envelope, req protocol.ReleasePointsRequest)) ([]protocol.ReleasePoint, error) {
+		type out struct {
+			pts []protocol.ReleasePoint
+			err error
 		}
-		var req protocol.ReleasePointsRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.StationID != "line-1" || len(req.OrderUUIDs) != 1 {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		done := make(chan out, 1)
+		go func() {
+			pts, err := r.ReleasePoints("line-1", []string{"u-r2"})
+			done <- out{pts, err}
+		}()
+		if answer != nil {
+			var env *protocol.Envelope
+			var a *protocol.EdgeAsk
+			for deadline := time.Now().Add(3 * time.Second); env == nil; {
+				if msgs, _ := e.db.ListPendingOutbox(10); len(msgs) > 0 {
+					env, a = askSent(t, e)
+					_ = e.db.AckOutbox(msgs[len(msgs)-1].ID)
+				} else if time.Now().After(deadline) {
+					t.Fatal("the ask never reached the outbox")
+				}
+			}
+			var req protocol.ReleasePointsRequest
+			testutil.MustNoErr(t, json.Unmarshal(a.Body, &req), "decode the ask")
+			if a.Kind != protocol.AskReleasePoints || req.StationID != "line-1" || len(req.OrderUUIDs) != 1 || req.OrderUUIDs[0] != "u-r2" {
+				t.Errorf("ask = %s %+v", a.Kind, req)
+			}
+			answer(env, req)
 		}
-		if err := json.NewEncoder(w).Encode(protocol.ReleasePointsResponse{Points: []protocol.ReleasePoint{{
+		o := <-done
+		return o.pts, o.err
+	}
+
+	pts, err := ask(func(env *protocol.Envelope, req protocol.ReleasePointsRequest) {
+		body, _ := json.Marshal(protocol.ReleasePointsResponse{Points: []protocol.ReleasePoint{{
 			OrderUUID: req.OrderUUIDs[0], Found: true, Enters: []string{"SYN-PRESS"},
 			AwaitsLift: []protocol.LiftDependency{{LifterUUID: "u-r1", Node: "SYN-PRESS", CoRelease: true}},
-		}}}); err != nil {
-			t.Errorf("encode: %v", err)
-		}
-	}))
-	defer srv.Close()
-	pts, err := NewCoreClient(srv.URL).ReleasePoints("line-1", []string{"u-r2"})
+		}}})
+		e.HandleEdgeAnswer(answerTo(env), &protocol.EdgeAnswer{Kind: protocol.AskReleasePoints, Status: protocol.AnswerOK, Body: body})
+	})
 	testutil.MustNoErr(t, err, "release points")
 	if len(pts) != 1 || !pts[0].Found || pts[0].AwaitsLift[0].LifterUUID != "u-r1" || !pts[0].AwaitsLift[0].CoRelease {
 		t.Errorf("points = %+v", pts)
 	}
-	if _, err := NewCoreClient(srv.URL).ReleasePoints("line-9", []string{"u-r2"}); err == nil {
-		t.Error("a 400 from Core decoded as an answer")
+	if _, err := ask(func(env *protocol.Envelope, _ protocol.ReleasePointsRequest) {
+		e.HandleEdgeAnswer(answerTo(env), &protocol.EdgeAnswer{Kind: protocol.AskReleasePoints, Status: protocol.AnswerBad, Sentence: "no"})
+	}); err == nil {
+		t.Error("a refusal from Core decoded as an answer")
+	}
+	if _, err := ask(nil); !errors.Is(err, ErrAskPending) {
+		t.Errorf("no answer within the wait: err = %v, want ErrAskPending", err)
 	}
 }

@@ -141,6 +141,8 @@ func testEngine(t *testing.T, db *store.DB) *Engine {
 		debugFn: func(string, ...any) {},
 	}
 	eng.hourlyTracker = NewHourlyTracker(db)
+	// Each ask kind's answer applied as engine.New applies it.
+	eng.askAppliers = askAppliersByKind()
 	// Core's release points, answered from the database (release_fake_points_test.go).
 	eng.points = dbPoints{db: db}
 	eng.stationService = service.NewStationService(db)

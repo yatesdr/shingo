@@ -180,7 +180,7 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 			// uses. Best-effort; never blocks the bail. The nodeTask==nil case
 			// is vacuous here, so the only guard is a process-node-linked order.
 			if ctx.order.ProcessNodeID != nil {
-				e.reconcileActiveBinAfterCancel(*ctx.order.ProcessNodeID, ctx.runtime.ActiveClaimID)
+				e.reconcileActiveBinAfterCancel(*ctx.order.ProcessNodeID)
 			}
 		}
 		// Release the node's order slot for ANY non-success terminal status.

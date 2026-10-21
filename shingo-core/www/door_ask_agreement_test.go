@@ -185,3 +185,24 @@ func TestDoorAsk_HeldPartialsAgrees(t *testing.T) {
 		snap.assertNothingWritten(t, f.db)
 	})
 }
+
+// TestDoorAsk_Reseat is the reseat's answers through the ask (it has no HTTP
+// door): a request naming no node and one Core cannot read are refused, a node
+// Core has no node for is refused not found (never answered as empty), and a
+// node with no carrier answers not landed. The landing a carrier gets is
+// service's TestReseat_ReAnnouncesTheCarrierToTheAsker.
+func TestDoorAsk_Reseat(t *testing.T) {
+	t.Parallel()
+	a := doorAsk{kind: protocol.AskReseat, door: func(d *Doors) asks.Door { return d.AskReseat }}
+	reseat := func(node string) []byte {
+		b, _ := json.Marshal(protocol.ReseatRequest{Node: node})
+		return b
+	}
+	f := newDoorFix(t)
+	assertAnswerAgrees(t, askThrough(t, f, a, "edge.rs", reseat("")), http.StatusBadRequest, doorErr("node is required"))
+	assertAnswerAgrees(t, askThrough(t, f, a, "edge.rs", []byte("{")), http.StatusBadRequest, doorErr("unexpected EOF"))
+	assertAnswerAgrees(t, askThrough(t, f, a, "edge.rs", reseat("NO-SUCH-NODE")), http.StatusNotFound,
+		doorErr("Core has no node NO-SUCH-NODE"))
+	assertAnswerAgrees(t, askThrough(t, f, a, "edge.rs", reseat(f.sd.StorageNode.Name)), http.StatusOK,
+		"{\"node\":\""+f.sd.StorageNode.Name+"\",\"landed\":false}\n")
+}

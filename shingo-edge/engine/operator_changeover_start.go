@@ -432,10 +432,12 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	// required payload has zero available bins in the supermarket — the
 	// changeover would deadlock at the first retrieve. Run BEFORE
 	// planning so planning-side side effects (DB writes, robot aborts)
-	// don't fire on a doomed start. preflightChecker is wired in tests
-	// that don't care about the gate; nil-skip there.
+	// don't fire on a doomed start. The gate is skipped with no checker (tests
+	// that don't care about it). A Core that cannot be asked — no answer yet, an
+	// older Core that does not answer the preflight ask — refuses the start, as
+	// an unreachable Core did: the gate never pretends it looked.
 	var awaitingStock []string
-	if e.preflightChecker != nil && e.coreClient != nil && e.coreClient.Available() {
+	if e.preflightChecker != nil {
 		missing, perr := e.preflightChecker.PreflightInventoryCheck(context.Background(), toStyleID)
 		if perr != nil {
 			return nil, fmt.Errorf("changeover preflight: %w", perr)

@@ -1,5 +1,5 @@
 // Edge-side preflight inventory gate. Builds the to-style's required
-// payload list from style_node_claims, calls Core's preflight endpoint,
+// payload list from style_node_claims, asks Core (the preflight read-ask),
 // and returns the missing payload list so StartProcessChangeover can
 // refuse to begin a changeover when bins are absent.
 
@@ -13,11 +13,11 @@ import (
 	"shingoedge/store/processes"
 )
 
-// PreflightCorePoster is the narrow interface PreflightChecker requires
-// from the Core HTTP client. Held as an interface (not the concrete
-// *engine.CoreClient) to break the engine→service→engine import cycle:
-// service is consumed by engine, and engine wires the concrete client
-// into PreflightChecker at construction time.
+// PreflightCorePoster is the narrow interface PreflightChecker requires to
+// ask Core. Held as an interface to break the engine→service→engine import
+// cycle: service is consumed by engine, and engine wires its adapter over the
+// preflight read-ask (engine preflightAsker) into PreflightChecker at
+// construction time. Available is whether Core answers the ask.
 type PreflightCorePoster interface {
 	Available() bool
 	PreflightInventory(station string, payloads []string) (*PreflightCoreResult, error)
@@ -74,7 +74,7 @@ func NewPreflightChecker(db *store.DB, coreClient PreflightCorePoster, station s
 // TestChangeoverPreflight_PayloadsAgreeWithStyleCheck says so.
 func (p *PreflightChecker) PreflightInventoryCheck(ctx context.Context, toStyleID int64) ([]string, error) {
 	if p.coreClient == nil || !p.coreClient.Available() {
-		return nil, fmt.Errorf("preflight: core API not configured")
+		return nil, fmt.Errorf("preflight: Core does not answer the preflight ask")
 	}
 	claims, err := p.db.ListStyleNodeClaims(toStyleID)
 	if err != nil {
@@ -122,7 +122,7 @@ func dedupPayloadCodes(codes []string) []string {
 // "unchecked"; a start refuses), the gate does not pretend it looked.
 func (p *PreflightChecker) PreflightPayloads(ctx context.Context, codes []string) ([]string, error) {
 	if p.coreClient == nil || !p.coreClient.Available() {
-		return nil, fmt.Errorf("preflight: core API not configured")
+		return nil, fmt.Errorf("preflight: Core does not answer the preflight ask")
 	}
 	payloads := dedupPayloadCodes(codes)
 	if len(payloads) == 0 {
@@ -130,7 +130,7 @@ func (p *PreflightChecker) PreflightPayloads(ctx context.Context, codes []string
 	}
 	result, err := p.coreClient.PreflightInventory(p.station, payloads)
 	if err != nil {
-		return nil, fmt.Errorf("preflight: core call: %w", err)
+		return nil, fmt.Errorf("preflight: ask Core: %w", err)
 	}
 	return result.Missing, nil
 }

@@ -14,6 +14,7 @@ import (
 	"log"
 	"net/http"
 
+	"shingo/protocol"
 	"shingoedge/engine"
 )
 
@@ -209,15 +210,23 @@ func (h *Handlers) apiHeldPartials(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "payload is required")
 		return
 	}
-	core := h.engine.CoreAPI()
-	if core == nil {
-		writeError(w, http.StatusServiceUnavailable, "core API not configured")
+	asker, ok := h.engine.(heldPartialsAsker)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "held partials cannot be asked from here")
 		return
 	}
-	list, err := core.FetchHeldPartials(payload)
+	list, err := asker.HeldPartials(payload)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	writeJSON(w, list)
+}
+
+// heldPartialsAsker is what the held partials list asks of the engine beyond
+// ServiceAccess: Core's answer to the held partials read-ask
+// (engine.HeldPartials). Asserted, as holdMarker is, so ServiceAccess does not
+// widen for it.
+type heldPartialsAsker interface {
+	HeldPartials(payloadCode string) ([]protocol.HeldPartial, error)
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -74,6 +75,21 @@ func (c *scCore) bind(t *testing.T, eng *Engine) {
 	}
 }
 
+// oracleNodesLocked is the windows as Core's node list answers them (GET
+// /api/nodes), id by name order.
+func (c *scCore) oracleNodesLocked() []map[string]any {
+	names := make([]string, 0, len(c.windows))
+	for n := range c.windows {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	out := make([]map[string]any, len(names))
+	for i, n := range names {
+		out[i] = map[string]any{"id": i + 1, "name": n}
+	}
+	return out
+}
+
 // pushLocked holds the windows as eng's bins table, each as node-bins answers
 // it (bin 77, epoch 5); nothing before bind.
 func (c *scCore) pushLocked() error {
@@ -139,6 +155,21 @@ func (c *scCore) serve(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			out = append(out, NodeBinInfo{NodeName: n, Occupied: win.occupied, PayloadCode: win.payload, BinID: 77, UOPRemaining: win.uop, DeltaEpoch: 5})
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	case "/api/nodes":
+		// The sim operator's oracle (sim_core_oracle.go): the windows as Core's
+		// nodes, each its own id in name order.
+		_ = json.NewEncoder(w).Encode(c.oracleNodesLocked())
+	case "/api/bins/by-node":
+		// And the carrier at one, as Core's bin read answers it.
+		out := []map[string]any{}
+		for _, n := range c.oracleNodesLocked() {
+			if fmt.Sprint(n["id"]) == r.URL.Query().Get("id") {
+				if win := c.windows[n["name"].(string)]; win != nil && win.occupied {
+					out = append(out, map[string]any{"id": 77, "payload_code": win.payload, "uop_remaining": win.uop})
+				}
+			}
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	case "/api/telemetry/bin-load":

@@ -11,6 +11,7 @@ import (
 	"shingo/protocol/clock"
 	"shingo/protocol/lockcheck"
 	"shingoedge/internal/lockorder"
+	"shingoedge/service"
 )
 
 // ask.go — the Edge's half of the ask pair (protocol/ask.go): a question that
@@ -261,6 +262,9 @@ func askOrDoor[T any](e *Engine, kind string, req any, door func() (*T, error)) 
 // each is idempotent (an answer may be replayed).
 func askAppliersByKind() map[string]askApplier {
 	return map[string]askApplier{
+		// The reseat: with no carrier at the node, the seat's carrier left; a
+		// carrier there was bound by its landing (applyReseat).
+		protocol.AskReseat: applyReseat,
 		// A count refused for an ended generation carries the carrier's current
 		// stamp: the seat adopts it, as from a bin epoch refresh. A waiting tap
 		// re-sends its count under it (declareCount); a late one leaves the
@@ -289,4 +293,78 @@ func askOrDoorLate[T any](e *Engine, kind string, req any, door func() (*T, erro
 		return nil, err
 	}
 	return askInto[T](a)
+}
+
+// ── The read-asks ───────────────────────────────────────────────────────────
+//
+// A read that is a computed answer at the moment of a decision rides the ask
+// pair like a write, with AskWait for its answer. An answer still pending is
+// the site's "cannot check now", as an unreachable Core was over HTTP: each
+// site fails closed on it. A Core that does not answer the kind is the same:
+// these reads have no HTTP door left on the Edge.
+
+// preflightAsker is service.PreflightCorePoster over the preflight read-ask
+// (protocol.AskPreflight): the changeover start's inventory gate and the
+// composer's confirm sheet ask Core through it.
+type preflightAsker struct{ e *Engine }
+
+// Available reports whether Core answers the preflight ask.
+func (p preflightAsker) Available() bool { return p.e.CoreAnswers(protocol.AskPreflight) }
+
+// SetPreflightSource replaces the preflight ask as the changeover preflight's
+// source: for an Edge running without a Core (the integration harness, which
+// answers from the Edge's side alone), as SetReleasePointSource does for the
+// release points. Call before Start.
+func (e *Engine) SetPreflightSource(src service.PreflightCorePoster) {
+	e.preflightChecker = service.NewPreflightChecker(e.db, src, e.cfg.StationID())
+}
+
+// PreflightInventory asks Core which of payloads has no free bin. Core reads
+// the station from the ask's envelope. An error is "not checked": a refusal,
+// a pending answer (ErrAskPending) or an ask that could not be sent.
+func (p preflightAsker) PreflightInventory(station string, payloads []string) (*service.PreflightCoreResult, error) {
+	a, err := p.e.Ask(protocol.AskPreflight, protocol.PreflightRequest{Station: station, Payloads: payloads}, AskWait)
+	if err != nil {
+		return nil, fmt.Errorf("preflight: %w", err)
+	}
+	// The wire shape, with absent a pointer so a Core too old to send it is
+	// told apart from one that has every payload somewhere.
+	wire, err := askInto[struct {
+		Missing   []string                         `json:"missing"`
+		Absent    *[]string                        `json:"absent"`
+		Available []protocol.PreflightAvailability `json:"available"`
+	}](a)
+	if err != nil {
+		return nil, fmt.Errorf("preflight: %w", err)
+	}
+	out := &service.PreflightCoreResult{Missing: wire.Missing}
+	if wire.Absent != nil {
+		out.Absent, out.AbsentKnown = *wire.Absent, true
+	}
+	out.Available = make([]service.PreflightCoreAvailability, len(wire.Available))
+	for i, av := range wire.Available {
+		out.Available[i] = service.PreflightCoreAvailability{PayloadCode: av.PayloadCode, BinCount: av.BinCount}
+	}
+	return out, nil
+}
+
+// HeldPartials is Core's list of a part's held partials, oldest held first,
+// through the held partials read-ask (protocol.AskHeldPartials, waiting
+// AskWait): the carriers a finish-later claim's REQUEST offers the operator.
+// An error — a Core that does not answer the kind, a refusal, an answer still
+// pending — is "cannot check now", and the REQUEST goes on without the picker,
+// Core choosing the oldest, as when Core could not be read.
+func (e *Engine) HeldPartials(payloadCode string) ([]protocol.HeldPartial, error) {
+	if !e.CoreAnswers(protocol.AskHeldPartials) {
+		return nil, fmt.Errorf("held partials: Core does not answer the %s ask", protocol.AskHeldPartials)
+	}
+	a, err := e.Ask(protocol.AskHeldPartials, protocol.HeldPartialsRequest{PayloadCode: payloadCode}, AskWait)
+	if err != nil {
+		return nil, fmt.Errorf("held partials: %w", err)
+	}
+	list, err := askInto[[]protocol.HeldPartial](a)
+	if err != nil {
+		return nil, fmt.Errorf("held partials: %w", err)
+	}
+	return *list, nil
 }

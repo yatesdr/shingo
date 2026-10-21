@@ -77,7 +77,7 @@ func TestSimOperator_NamesNoPlantsNodes(t *testing.T) {
 // a plant that looks busy and moves nothing.
 //
 // THE EMPTY-NODE ROWS ARE HERE BECAUSE THE FIRST LIVE RUN NEEDED THEM. This
-// predicate originally took only the UOP, and FetchNodeBins returns a row for
+// predicate originally took only the UOP, and the bins read returns a row for
 // every node it was asked about — so a loader window with nothing on it came back
 // as UOP 0 and read as an empty carrier. Four idle loaders were scheduled, each
 // failed eight times with "no bin at node — request an empty bin first", and the
@@ -110,7 +110,9 @@ func TestOperatorHasWorkAt(t *testing.T) {
 		{"unloader standing empty", false, 0, 0, false},
 	}
 	for _, c := range cases {
-		if got := operatorHasWorkAt(c.wantsEmpty, c.binID, c.uop); got != c.want {
+		// The sweep reads the bins table, whose row carries the count's crossing
+		// (Stocked: above zero), never the count: each case's count as its row.
+		if got := operatorHasWorkAt(c.wantsEmpty, c.binID, c.uop > 0); got != c.want {
 			t.Errorf("%s: operatorHasWorkAt(%v, bin=%d, %d) = %v, want %v",
 				c.name, c.wantsEmpty, c.binID, c.uop, got, c.want)
 		}

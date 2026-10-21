@@ -138,8 +138,9 @@ func buildProtocolRouter(
 }
 
 // askDoor is one kind Core answers: the door body that answers it, the HTTP
-// door whose body that is, and whether a repeat of the same ask is answered by
-// re-sending the first answer instead of acting again.
+// door whose body that is ("" for a kind answered only as an ask), and whether
+// a repeat of the same ask is answered by re-sending the first answer instead
+// of acting again.
 type askDoor struct {
 	kind   string
 	door   asks.Door
@@ -148,7 +149,8 @@ type askDoor struct {
 }
 
 // askDoors is every kind Core answers (protocol.AskKinds), each over the body
-// its HTTP door answers through (www.Doors). Only the home clear replays: it
+// its HTTP door answers through (www.Doors), or its own body for the one kind
+// with no HTTP door (the reseat). Only the home clear replays: it
 // authors orders and refuses a second clear of a live one ("already being
 // cleared", engine/clear_home.go), so a repeat must get its first answer, not
 // that refusal. Every other kind's repeat is harmless (the reads) or refused
@@ -164,6 +166,10 @@ func askDoors(d *www.Doors) []askDoor {
 		{protocol.AskPreflight, d.AskPreflight, "POST /api/inventory/preflight", false},
 		{protocol.AskReleasePoints, d.AskReleasePoints, "POST /api/release/points", false},
 		{protocol.AskHeldPartials, d.AskHeldPartials, "GET /api/telemetry/held-partials", false},
+		// No HTTP door: Core re-announces the carrier through the landing
+		// verb, and a repeat re-announces it again, which the seat's
+		// placed_seq guard and its same-carrier rule make harmless.
+		{protocol.AskReseat, d.AskReseat, "", false},
 	}
 }
 

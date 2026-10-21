@@ -1,8 +1,6 @@
 package engine
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"shingo/protocol"
@@ -91,14 +89,12 @@ func TestCarrierLeft_EveryDoorClearsTheIdentity(t *testing.T) {
 	t.Run("cancel reconcile confirmed empty", func(t *testing.T) {
 		t.Parallel()
 		db := testEngineDB(t)
-		nodeID, claimID, _ := seedCarrierAtSlot(t, db, "CL-CAN")
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte("[]")) // Core: nothing physically at the node
-		}))
-		defer srv.Close()
+		nodeID, _, _ := seedCarrierAtSlot(t, db, "CL-CAN")
 		eng := testEngine(t, db)
-		eng.coreClient = stubCoreClient(srv.URL)
-		eng.reconcileActiveBinAfterCancel(nodeID, &claimID)
+		eng.setAskKinds([]string{protocol.AskReseat})
+		eng.reconcileActiveBinAfterCancel(nodeID)
+		// Core: nothing physically at the node (the reseat answers not landed).
+		answerReseats(t, eng, func(string) *protocol.BinLanded { return nil })
 		assertCarrierLeft(t, db, nodeID, "cancel reconcile")
 	})
 

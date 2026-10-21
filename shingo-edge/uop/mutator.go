@@ -156,15 +156,15 @@ func (m *Mutator) BindActiveBin(nodeID, binID int64, deltaEpoch int64) error {
 //   - handler_uop_adjustment.go Bound arm (admin Move put this carrier here);
 //   - handler_uop_adjustment.go count arm (a count for the carrier already
 //     bound here — binID is the bound one, the count and stamp are Core's;
-//     the stamp only moves forward, see the store's epochAssignOnBind);
-//   - operator_changeover_cancel.go reconcile (Core's physical view after a
-//     cancelled changeover rebinds the slot).
+//     the stamp only moves forward, see the store's epochAssignOnBind).
+//
+// (The changeover-cancel reconcile called it too, from a node-bins read; it
+// asks Core to reseat the node now and binds on the landing, Land.)
 //
 // Same statement as ManualLoad; a different plant event, so a different name
 // at the call site. The identity is not written here; each caller records it
 // through the doorway (recordLinesideCarrier): the uop-adjustment arms record
-// UNKNOWN where a new carrier arrived (an announcement carries no payload), and
-// the cancel reconcile records the payload Core's bin row names.
+// UNKNOWN where a new carrier arrived (an announcement carries no payload).
 func (m *Mutator) BindFromCore(nodeID int64, activeClaimID *int64, binID *int64, deltaEpoch int64, uop int) error {
 	return m.rw.SetProcessNodeRuntimeWithBinAndEpoch(nodeID, activeClaimID, binID, deltaEpoch, uop)
 }

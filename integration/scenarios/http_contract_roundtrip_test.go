@@ -261,31 +261,12 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 		t.Fatalf("LoadBin (final): %v", err)
 	}
 
-	// ── 12. preflight: one stocked payload, one with no bins anywhere ──
-	preflight, err := client.PreflightInventory("RT-STATION", []string{sd.Payload.Code, "PART-NOBIN"})
-	if err != nil {
-		t.Fatalf("PreflightInventory: %v", err)
-	}
-	if len(preflight.Missing) != 1 || preflight.Missing[0] != "PART-NOBIN" ||
-		len(preflight.Absent) != 1 || preflight.Absent[0] != "PART-NOBIN" || !preflight.AbsentKnown {
-		t.Errorf("preflight missing/absent = %v/%v (known=%v), want PART-NOBIN in both", preflight.Missing, preflight.Absent, preflight.AbsentKnown)
-	}
-	if len(preflight.Available) != 2 ||
-		preflight.Available[0].PayloadCode != sd.Payload.Code || preflight.Available[0].BinCount != 1 ||
-		preflight.Available[1].PayloadCode != "PART-NOBIN" || preflight.Available[1].BinCount != 0 {
-		t.Errorf("preflight available = %+v, want PART-A:1 and PART-NOBIN:0 in request order", preflight.Available)
-	}
-
 	_ = loadFinal
 
-	// ── 13. release points: an order Core does not hold for this station ──
-	points, err := client.ReleasePoints("RT-STATION", []string{"rt-no-such-order"})
-	if err != nil {
-		t.Fatalf("ReleasePoints: %v", err)
-	}
-	if len(points) != 1 || points[0].OrderUUID != "rt-no-such-order" || points[0].Found {
-		t.Errorf("release points = %+v, want one point, not found", points)
-	}
+	// The preflight and release points reads are no longer the Edge's HTTP
+	// calls: the Edge asks them over the ask pair (protocol.AskPreflight,
+	// AskReleasePoints), and Core's ask and door answer through one body
+	// (shingo-core www door_ask_agreement_test.go).
 
 	// ── The traffic seen is exactly the calls above, in order ──
 	want := []struct{ label, method, path string }{
@@ -296,8 +277,6 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 		{"bin-load-retyped", http.MethodPost, "/api/telemetry/bin-load"},
 		{"bin-clear-typed", http.MethodPost, "/api/telemetry/bin-clear"},
 		{"bin-load-final", http.MethodPost, "/api/telemetry/bin-load"},
-		{"preflight", http.MethodPost, "/api/inventory/preflight"},
-		{"release-points", http.MethodPost, "/api/release/points"},
 	}
 	rec.mu.Lock()
 	defer rec.mu.Unlock()

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingoedge/service"
 )
 
 // askSent is the ask the engine last put on its outbox, decoded.
@@ -226,5 +227,132 @@ func TestAskOrDoorLate_TheFollowUpRunsOnALateAnswer(t *testing.T) {
 		Body: json.RawMessage(`{"bin_id":3,"delta_epoch":8,"status":"ok"}`)})
 	if runs != 1 || gotErr != nil || got == nil || got.BinID != 3 || got.DeltaEpoch != 8 {
 		t.Errorf("late follow-up: runs %d got %+v err %v", runs, got, gotErr)
+	}
+}
+
+// TestPreflightAsker_TheReadAsk: the preflight gate asks Core through the ask
+// pair (protocol.AskPreflight, a read-ask). The answer is the door's response:
+// a Core that sends absent is told apart from one too old to; a refusal and an
+// answer still pending past the wait are errors, never "all available" — the
+// gate's "cannot check now" (the changeover start refuses on it, the composer
+// shows unchecked). A Core that does not answer the kind is not available.
+func TestPreflightAsker_TheReadAsk(t *testing.T) {
+	t.Parallel()
+	e, _ := binsEngine(t, testEngineDB(t))
+	p := preflightAsker{e}
+	if p.Available() {
+		t.Fatal("a Core that does not answer preflight reads available")
+	}
+	e.setAskKinds([]string{protocol.AskPreflight})
+	if !p.Available() {
+		t.Fatal("a Core that answers preflight reads unavailable")
+	}
+	ask := func(answer func(env *protocol.Envelope)) (*service.PreflightCoreResult, error) {
+		type out struct {
+			r   *service.PreflightCoreResult
+			err error
+		}
+		done := make(chan out, 1)
+		go func() {
+			r, err := p.PreflightInventory("st", []string{"PART-A", "PART-B"})
+			done <- out{r, err}
+		}()
+		if answer != nil {
+			var env *protocol.Envelope
+			for deadline := time.Now().Add(3 * time.Second); env == nil; {
+				if msgs, _ := e.db.ListPendingOutbox(10); len(msgs) > 0 {
+					env, _ = askSent(t, e)
+					_ = e.db.AckOutbox(msgs[len(msgs)-1].ID)
+				} else if time.Now().After(deadline) {
+					t.Fatal("the ask never reached the outbox")
+				}
+			}
+			answer(env)
+		}
+		r := <-done
+		return r.r, r.err
+	}
+
+	r, err := ask(func(env *protocol.Envelope) {
+		e.HandleEdgeAnswer(answerTo(env), &protocol.EdgeAnswer{Kind: protocol.AskPreflight, Status: protocol.AnswerOK,
+			Body: json.RawMessage(`{"missing":["PART-B"],"absent":["PART-B"],"available":[{"payload_code":"PART-A","bin_count":3}]}`)})
+	})
+	if err != nil || len(r.Missing) != 1 || r.Missing[0] != "PART-B" || !r.AbsentKnown || len(r.Absent) != 1 ||
+		len(r.Available) != 1 || r.Available[0].BinCount != 3 {
+		t.Errorf("answered: %+v, %v", r, err)
+	}
+	r, err = ask(func(env *protocol.Envelope) {
+		e.HandleEdgeAnswer(answerTo(env), &protocol.EdgeAnswer{Kind: protocol.AskPreflight, Status: protocol.AnswerOK,
+			Body: json.RawMessage(`{"missing":[],"available":[]}`)})
+	})
+	if err != nil || r.AbsentKnown {
+		t.Errorf("a Core that sends no absent: %+v, %v, want absent not known", r, err)
+	}
+	if _, err := ask(func(env *protocol.Envelope) {
+		e.HandleEdgeAnswer(answerTo(env), &protocol.EdgeAnswer{Kind: protocol.AskPreflight, Status: protocol.AnswerBad, Sentence: "no"})
+	}); err == nil {
+		t.Error("a refusal read as an answer")
+	}
+	if _, err := ask(nil); !errors.Is(err, ErrAskPending) {
+		t.Errorf("no answer within the wait: err = %v, want ErrAskPending", err)
+	}
+}
+
+// TestHeldPartials_TheReadAsk: a part's held partials come over the ask pair
+// (protocol.AskHeldPartials). The answer is the door's list; a Core that does
+// not answer the kind, a refusal and an answer still pending past the wait are
+// errors — the finish-later picker's "cannot check now", the REQUEST going on
+// without it.
+func TestHeldPartials_TheReadAsk(t *testing.T) {
+	t.Parallel()
+	e, _ := binsEngine(t, testEngineDB(t))
+	if _, err := e.HeldPartials("PART-H"); err == nil {
+		t.Fatal("a Core that does not answer held_partials gave a list")
+	}
+	e.setAskKinds([]string{protocol.AskHeldPartials})
+	ask := func(answer func(env *protocol.Envelope)) ([]protocol.HeldPartial, error) {
+		type out struct {
+			list []protocol.HeldPartial
+			err  error
+		}
+		done := make(chan out, 1)
+		go func() {
+			l, err := e.HeldPartials("PART-H")
+			done <- out{l, err}
+		}()
+		if answer != nil {
+			var env *protocol.Envelope
+			for deadline := time.Now().Add(3 * time.Second); env == nil; {
+				if msgs, _ := e.db.ListPendingOutbox(10); len(msgs) > 0 {
+					var a *protocol.EdgeAsk
+					env, a = askSent(t, e)
+					_ = e.db.AckOutbox(msgs[len(msgs)-1].ID)
+					var req protocol.HeldPartialsRequest
+					if err := json.Unmarshal(a.Body, &req); err != nil || a.Kind != protocol.AskHeldPartials || req.PayloadCode != "PART-H" {
+						t.Errorf("ask = %s %s (%v)", a.Kind, a.Body, err)
+					}
+				} else if time.Now().After(deadline) {
+					t.Fatal("the ask never reached the outbox")
+				}
+			}
+			answer(env)
+		}
+		o := <-done
+		return o.list, o.err
+	}
+	list, err := ask(func(env *protocol.Envelope) {
+		e.HandleEdgeAnswer(answerTo(env), &protocol.EdgeAnswer{Kind: protocol.AskHeldPartials, Status: protocol.AnswerOK,
+			Body: json.RawMessage(`[{"bin_id":41,"bin_label":"B-41"}]`)})
+	})
+	if err != nil || len(list) != 1 || list[0].BinID != 41 {
+		t.Errorf("answered: %+v, %v", list, err)
+	}
+	if _, err := ask(func(env *protocol.Envelope) {
+		e.HandleEdgeAnswer(answerTo(env), &protocol.EdgeAnswer{Kind: protocol.AskHeldPartials, Status: protocol.AnswerBad, Sentence: "payload is required"})
+	}); err == nil {
+		t.Error("a refusal read as a list")
+	}
+	if _, err := ask(nil); !errors.Is(err, ErrAskPending) {
+		t.Errorf("no answer within the wait: err = %v, want ErrAskPending", err)
 	}
 }

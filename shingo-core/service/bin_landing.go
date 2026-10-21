@@ -2,6 +2,7 @@ package service
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 
@@ -224,4 +225,63 @@ func (s *BinService) LandingHook(orderID int64, legacyBound bool) store.OnPlaced
 // and the others were silent).
 func (s *BinService) ApplyMultiBinArrival(placedByOrder int64, instructions []orders.BinArrivalInstruction) ([]int64, error) {
 	return s.db.ApplyMultiBinArrival(placedByOrder, instructions, s.LandingHook(placedByOrder, false))
+}
+
+// ErrReseatUnknownNode is a reseat asked of a name Core has no node for: not an
+// empty node (an unknown name is never an empty), so nothing is announced and
+// the asking station keeps its seat as it is.
+var ErrReseatUnknownNode = errors.New("no node by that name")
+
+// Reseat re-announces, to station alone, the carrier standing at node through
+// the landing verb (protocol.AskReseat): a transit.bin_landed carrying the
+// carrier's count, generation and part as Core holds them, and a fresh
+// placement stamp taken from bin_placement_seq, written in one transaction
+// with the read so the announcement cannot carry a mismatched pair. landed is
+// false when no carrier stands there; then nothing is sent. node is the name
+// as the station asked it (a dot name for a group's child), and the landing
+// carries that name, the one the station binds by.
+//
+// THE BIND IS THE STATION'S, ON THE LANDING. Core binds nothing; the seat's
+// placed_seq guard takes a stamp newer than any it holds, and the same carrier
+// at an equal or newer generation keeps the seat's own count
+// (processes.BindLanding), so a repeat binds nothing new. The resident carrier
+// is the one the bins table names: the newest non-retired bin at the node.
+//
+// The asking station speaks the ask pair, a later schema than the landing's
+// (protocol.EdgeSchemaBinLanded), so it gets the landing itself, never the
+// older Bound.
+//
+// Cost: the node read, then one transaction: the bin read with the stamp, and
+// one outbox row when a carrier stands there.
+func (s *BinService) Reseat(station, node string) (landed bool, err error) {
+	n, err := s.db.GetNodeByDotName(node)
+	if err != nil || n == nil {
+		return false, fmt.Errorf("reseat %s: %w", node, ErrReseatUnknownNode)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, fmt.Errorf("reseat %s: %w", node, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	p := store.Placed{NodeName: node}
+	err = tx.QueryRow(`SELECT b.id, nextval('bin_placement_seq'), b.uop_remaining, b.delta_epoch, b.payload_code
+		FROM bins b WHERE b.node_id = $1 AND b.status != 'retired' ORDER BY b.id DESC LIMIT 1`, n.ID).
+		Scan(&p.BinID, &p.PlacedSeq, &p.Count, &p.Epoch, &p.PayloadCode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("reseat %s: read the carrier: %w", node, err)
+	}
+	if s.manifest == nil || !s.manifest.announce.Wired() {
+		return false, fmt.Errorf("reseat %s: no announce topic wired, the carrier cannot be announced", node)
+	}
+	st := plantclaims.AddressedStation{StationID: station, SchemaVersion: protocol.EdgeSchemaBinLanded}
+	if err := s.sendLanding(tx, st, p, "", false, ""); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("reseat %s: %w", node, err)
+	}
+	return true, nil
 }

@@ -199,11 +199,11 @@ func (e *Engine) loadPoints(act *releaseAct, lls []*legLoad) {
 	}
 	src := e.points
 	if src == nil {
-		if e.coreClient == nil || !e.coreClient.Available() {
-			act.actFacts.PointErr = errors.New("core API not configured")
+		if !e.CoreAnswers(protocol.AskReleasePoints) {
+			act.actFacts.PointErr = fmt.Errorf("Core does not answer the %s ask", protocol.AskReleasePoints)
 			return
 		}
-		src = e.coreClient
+		src = releasePointsAsker{e}
 	}
 	pts, err := src.ReleasePoints(e.cfg.StationID(), uuids)
 	if err != nil {
@@ -231,12 +231,31 @@ func (e *Engine) loadPoints(act *releaseAct, lls []*legLoad) {
 	}
 }
 
-// releasePointSource is Core's releasePoints read (the Core client).
+// releasePointSource is Core's release points read: the release points
+// read-ask (releasePointsAsker), or a source set in its place.
 type releasePointSource interface {
 	ReleasePoints(station string, orderUUIDs []string) ([]protocol.ReleasePoint, error)
 }
 
-// SetReleasePointSource replaces the Core client as the act's point source:
+// releasePointsAsker is releasePointSource over the release points read-ask
+// (protocol.AskReleasePoints), waiting AskWait. An answer still pending is an
+// error, as an unreachable Core was: the act holds what would go until Core
+// answers. Core reads the station from the ask's envelope.
+type releasePointsAsker struct{ e *Engine }
+
+func (r releasePointsAsker) ReleasePoints(station string, orderUUIDs []string) ([]protocol.ReleasePoint, error) {
+	a, err := r.e.Ask(protocol.AskReleasePoints, protocol.ReleasePointsRequest{StationID: station, OrderUUIDs: orderUUIDs}, AskWait)
+	if err != nil {
+		return nil, fmt.Errorf("release points: %w", err)
+	}
+	resp, err := askInto[protocol.ReleasePointsResponse](a)
+	if err != nil {
+		return nil, fmt.Errorf("release points: %w", err)
+	}
+	return resp.Points, nil
+}
+
+// SetReleasePointSource replaces the release points ask as the act's point source:
 // for an Edge running without a Core (the integration harness, which answers
 // from engine/releasefake). Call before Start.
 func (e *Engine) SetReleasePointSource(src interface {

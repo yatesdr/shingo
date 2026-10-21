@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingoedge/service"
 )
 
 // NodeBinInfo and the other Edge↔Core HTTP contract types are defined in
@@ -51,69 +50,6 @@ func (c *CoreClient) Available() bool {
 // BinLoadItem is one line of a bin-load request: part number + physical count.
 type BinLoadItem = protocol.BinLoadItem
 
-// BinAtLineside is the tri-state lookup the reconciler needs at
-// the Phase 3 authority flip. Returns:
-//
-//   - (bin, true, nil)  — Core confirms a bin is present at the node;
-//     bin.UOPRemaining is the authoritative count.
-//   - (nil, true, nil)  — Core confirms no bin at the node; the
-//     reconciler should set local runtime to 0.
-//   - (nil, false, err) — Core unreachable (network error, non-200,
-//     decode failure). The reconciler MUST retain the prior cached
-//     value rather than zeroing — otherwise a transient Core blip
-//     would zero every lineside on every retry. This is the B2 fix
-//     from plan §2.6.
-//
-// This was written as the exception: FetchNodeBins collapsed every failure
-// into (nil, nil), and this function existed so the ONE caller that could not
-// survive that — the reconciler self-heal — had something better. The note here
-// used to say the collapse was fine for everyone else, "HMI telemetry where a
-// temporary nil-vs-occupied flicker is acceptable". It was not fine. The
-// reservation seam is one of those other callers, and the flicker read as a free
-// loader window; that is the 2026-07-31 Springfield over-ordering incident.
-//
-// FetchNodeBins now carries the same three states, so this is no longer an
-// exception — it is the single-node convenience wrapper, and the two agree.
-func (c *CoreClient) BinAtLineside(nodeName string) (*NodeBinInfo, bool, error) {
-	if c.baseURL == "" {
-		return nil, false, fmt.Errorf("core API not configured")
-	}
-	if nodeName == "" {
-		return nil, false, fmt.Errorf("node name is required")
-	}
-	params := url.Values{}
-	params.Set("nodes", nodeName)
-	resp, err := c.http.Get(c.baseURL + "/api/telemetry/node-bins?" + params.Encode())
-	if err != nil {
-		return nil, false, fmt.Errorf("fetch node-bins for %q: %w", nodeName, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, false, fmt.Errorf("fetch node-bins for %q: HTTP %d", nodeName, resp.StatusCode)
-	}
-	var rows []NodeBinInfo
-	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
-		return nil, false, fmt.Errorf("decode node-bins for %q: %w", nodeName, err)
-	}
-	// Find the row for the requested node. Core returns one row per
-	// requested node even when unoccupied (Occupied=false).
-	for i := range rows {
-		if rows[i].NodeName == nodeName {
-			if !rows[i].Occupied {
-				// Confirmed empty — distinct from Core-unreachable.
-				return nil, true, nil
-			}
-			r := rows[i]
-			return &r, true, nil
-		}
-	}
-	// HTTP succeeded but the requested node didn't appear in the
-	// response. Treat as confirmed empty — Core would have included
-	// the row if the node were known. A typo in the node name lands
-	// here too; surfaces via reconciler "no bin at slot" → set to 0.
-	return nil, true, nil
-}
-
 // The ways an occupancy read can fail to produce an answer. Named so a caller
 // can tell "Core says the window is empty" from "Core did not say", and so the
 // decision log can record which of the two happened.
@@ -132,7 +68,7 @@ var (
 
 // FetchNodeBins returns bin state for the given core node names.
 //
-// Three states, mirroring BinAtLineside:
+// Three states:
 //
 //   - (bins, true, nil)   — Core answered; this list is what is there. An empty
 //     list from a non-empty request means Core knows of no bin at those nodes.
@@ -290,90 +226,6 @@ func (c *CoreClient) LoadBin(req *BinLoadRequest) (*BinLoadResponse, error) {
 	return &result, nil
 }
 
-// ReleasePoints asks Core what releasing each order would let its robot do
-// next: the nodes its pending segment enters and the lifts it waits on
-// (protocol.ReleasePoint). One round trip per act.
-// A failure is an error: a release decided on facts Core did not give is the
-// guess this read exists to replace.
-func (c *CoreClient) ReleasePoints(station string, orderUUIDs []string) ([]protocol.ReleasePoint, error) {
-	if c.baseURL == "" {
-		return nil, ErrCoreNotConfigured
-	}
-	body, err := json.Marshal(protocol.ReleasePointsRequest{StationID: station, OrderUUIDs: orderUUIDs})
-	if err != nil {
-		return nil, fmt.Errorf("marshal release points request: %w", err)
-	}
-	resp, err := c.http.Post(c.baseURL+"/api/release/points", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("release points request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("release points: core returned %d", resp.StatusCode)
-	}
-	var out protocol.ReleasePointsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("decode release points: %w", err)
-	}
-	return out.Points, nil
-}
-
-// PreflightInventory POSTs the to-style's required payload list to Core's
-// /api/inventory/preflight and returns the per-payload availability +
-// missing subset. Used by service.PreflightChecker to gate
-// StartProcessChangeover when bins are missing.
-//
-// Returns service.PreflightCoreResult so the service-package interface
-// PreflightCorePoster can be satisfied without an engine→service→engine
-// import cycle.
-//
-// Unlike the read-only telemetry calls above this returns a hard error on
-// network failure: a preflight that silently degrades to "all available"
-// would defeat the whole point of the gate.
-func (c *CoreClient) PreflightInventory(station string, payloads []string) (*service.PreflightCoreResult, error) {
-	if c.baseURL == "" {
-		return nil, fmt.Errorf("core API not configured")
-	}
-	reqBody := protocol.PreflightRequest{Station: station, Payloads: payloads}
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("marshal preflight request: %w", err)
-	}
-	resp, err := c.http.Post(c.baseURL+"/api/inventory/preflight", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("preflight request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("preflight: core returned %d", resp.StatusCode)
-	}
-	// Decode into the wire shape that matches Core's JSON. The wire-side
-	// struct is local because it carries the json tags Core sends; copy
-	// fields into the service-package result type for the return.
-	var wire struct {
-		Missing []string `json:"missing"`
-		// A pointer so an absent key (a Core too old to answer) is told apart
-		// from an empty list (a Core that has every payload somewhere).
-		Absent    *[]string `json:"absent"`
-		Available []struct {
-			PayloadCode string `json:"payload_code"`
-			BinCount    int    `json:"bin_count"`
-		} `json:"available"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
-		return nil, fmt.Errorf("decode preflight response: %w", err)
-	}
-	out := &service.PreflightCoreResult{Missing: wire.Missing}
-	if wire.Absent != nil {
-		out.Absent, out.AbsentKnown = *wire.Absent, true
-	}
-	out.Available = make([]service.PreflightCoreAvailability, len(wire.Available))
-	for i, a := range wire.Available {
-		out.Available[i] = service.PreflightCoreAvailability{PayloadCode: a.PayloadCode, BinCount: a.BinCount}
-	}
-	return out, nil
-}
-
 // BinClearResponse is the response after clearing a bin via HTTP.
 type BinClearResponse = protocol.BinClearResponse
 
@@ -489,29 +341,6 @@ func (c *CoreClient) ClearBin(req protocol.BinClearRequest) (*BinClearResponse, 
 			Rows: result.Rows}
 	}
 	return &result, nil
-}
-
-// FetchHeldPartials is Core's list of a part's held partials, oldest held
-// first: the carriers a finish-later claim's REQUEST offers the operator.
-func (c *CoreClient) FetchHeldPartials(payloadCode string) ([]protocol.HeldPartial, error) {
-	if c.baseURL == "" {
-		return nil, ErrCoreNotConfigured
-	}
-	params := url.Values{}
-	params.Set("payload", payloadCode)
-	resp, err := c.http.Get(c.baseURL + "/api/telemetry/held-partials?" + params.Encode())
-	if err != nil {
-		return nil, fmt.Errorf("%w: fetch held partials: %w", ErrCoreUnreachable, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: fetch held partials: HTTP %d", ErrCoreHTTPStatus, resp.StatusCode)
-	}
-	var out []protocol.HeldPartial
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("%w: decode held partials: %w", ErrCoreUndecodable, err)
-	}
-	return out, nil
 }
 
 // ClearHome asks Core to clear a dedicated loader's home (POST

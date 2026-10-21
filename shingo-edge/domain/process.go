@@ -222,9 +222,10 @@ type RuntimeState struct {
 	// process_node_runtime_states.
 	//
 	// FOUR WRITERS, AND "FetchNodeBins refresh" WAS NOT ONE OF THEM: the
-	// OrderDelivered envelope, Core's LoadBin/clear/count replies, the
-	// BinAtLineside re-bind after a changeover cancel, and Core's
-	// BinEpochRefresh push. Every FetchNodeBins call site discards DeltaEpoch.
+	// OrderDelivered envelope, Core's LoadBin/clear/count replies, Core's
+	// landing (transit.bin_landed, which a changeover cancel's reseat asks Core
+	// to re-announce), and Core's BinEpochRefresh push. Every FetchNodeBins
+	// call site discards DeltaEpoch.
 	// core_client.go already carries the retraction of the identical claim on
 	// its own struct field; this copy outlived it.
 	ActiveBinEpoch int64 `json:"active_bin_epoch"`

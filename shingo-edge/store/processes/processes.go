@@ -924,9 +924,11 @@ func epochArgs(activeBinID any, deltaEpoch int64) []any {
 //
 // Used where the epoch arrives OUTSIDE the delivery envelope, and there are two
 // such callers, not one: ManualLoad (the operator imprint, epoch from Core's
-// LoadBin reply) and the changeover-cancel re-bind (epoch from a BinAtLineside
-// poll). Naming only ManualLoad is how the poll-driven writer went missing from
-// every doc that lists who stamps this column.
+// LoadBin reply) and BindFromCore (Core's count adjustment for the bound bin,
+// handler_uop_adjustment.go). Naming only ManualLoad is how a second writer went
+// missing from every doc that lists who stamps this column. (The
+// changeover-cancel re-bind wrote here too, from a node-bins poll; it binds on
+// Core's landing now, the reseat, through BindLanding.)
 //
 // The epoch is subject to epochAssignOnBind; the other three columns are
 // written unconditionally.

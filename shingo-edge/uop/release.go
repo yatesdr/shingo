@@ -90,7 +90,7 @@ func (d ReleaseDisposition) typedEmpty() bool {
 //
 // resolvedBinID is the bin id the caller intends to attach to the
 // BinUOPDelta(capture_reduction) emission. 0 means the caller couldn't
-// resolve a bin (order.BinID was nil and BinAtLineside couldn't fill
+// resolve a bin (order.BinID was nil and the bins table could not fill
 // in the gap), and triggers the legacy-&0 safety net for the
 // PULL PARTS LINESIDE branch so Core's SyncOrClearForReleased(0)
 // wipes the manifest the way the pre-Item-6 dual-write did.
@@ -127,7 +127,7 @@ func ComputeReleaseRemainingUOP(disp ReleaseDisposition, runtime *processes.Runt
 		// retires the dual-write at this site.
 		//
 		// TODO(bin-as-truth): remove the resolvedBinID==0 fallback when
-		// BinAtLineside resolution is provably exhaustive — see
+		// the bins table's resolution is provably exhaustive — see
 		// lineside-buckets-investigation-2026-05-18.md.
 		if len(disp.LinesideCapture) == 0 {
 			zero := 0

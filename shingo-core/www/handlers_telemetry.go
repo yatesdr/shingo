@@ -106,9 +106,10 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 	result := make([]protocol.NodeBinInfo, 0, len(names))
 	for _, name := range names {
 		entry := protocol.NodeBinInfo{NodeName: name}
-		// A name that did not resolve is a node Core does not know, which is
-		// itself an answer: there is no bin at a place that does not exist.
-		// Edge's BinAtLineside documents reading it that way.
+		// A name that did not resolve is a node Core does not know, answered
+		// here as a row with no bin, which this door's readers cannot tell from
+		// an empty node. The bins feed answers it as state unknown, never as an
+		// empty (protocol.NodeBinsRow).
 		node, known := resolved[name]
 		if !known {
 			result = append(result, entry)

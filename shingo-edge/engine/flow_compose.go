@@ -387,7 +387,7 @@ func sortFindings(findings []domain.NodeFinding) []domain.NodeFinding {
 // the Core call with them instead of leaving it to time out.
 func (e *Engine) flowPreflight(ctx context.Context, claims []processes.NodeClaim) FlowPreflight {
 	unchecked := FlowPreflight{State: FlowPreflightUnchecked, Missing: []string{}}
-	if e.preflightChecker == nil || e.coreClient == nil || !e.coreClient.Available() {
+	if e.preflightChecker == nil {
 		return unchecked
 	}
 	missing, err := e.preflightChecker.PreflightPayloads(ctx, service.PayloadCodesOf(claims))

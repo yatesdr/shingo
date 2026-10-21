@@ -27,7 +27,7 @@ func (h *relHarness) restart() {
 	mut := uop.New(h.db, "test.station", h.db, h.db)
 	eng.SetInventoryDeltaSink(mut)
 	eng.coreClient = h.eng.coreClient
-	eng.points = nil
+	eng.points = h.core // the fake Core carries over (fakeCore.ReleasePoints)
 	eng.plcMgr = h.eng.plcMgr
 	h.eng, h.mutator = eng, mut
 	h.handler = newEdgeHandlerFor(eng)

@@ -10,7 +10,8 @@ import (
 // Core outbox → shingo.dispatch). It replaces the HTTP calls an Edge made to
 // Core: a write a person waits on (LOAD, count, CLEAR, hold, a home's clear)
 // and a read that is a computed answer at the moment of a decision (preflight,
-// release points, held partials).
+// release points, held partials, and the reseat a changeover cancel asks for,
+// which Core answers by re-announcing the carrier).
 //
 // ONE SUBJECT EACH WAY. SubjectEdgeAsk carries an EdgeAsk: a kind and the body
 // the HTTP door took (the existing protocol request type). SubjectEdgeAnswer
@@ -56,12 +57,17 @@ const (
 	AskPreflight     = "preflight"        // POST /api/inventory/preflight: PreflightRequest → PreflightResponse
 	AskReleasePoints = "release_points"   // POST /api/release/points: ReleasePointsRequest → ReleasePointsResponse
 	AskHeldPartials  = "held_partials"    // GET /api/telemetry/held-partials: HeldPartialsRequest → []HeldPartial
+	// AskReseat has no HTTP door: ReseatRequest → ReseatAnswer. Core
+	// re-announces the carrier at the node through the landing verb (a
+	// transit.bin_landed to the asking station, on Core's outbox ahead of the
+	// answer) and answers whether one stands there.
+	AskReseat = "reseat"
 )
 
 // AskKinds is every kind Core answers, in a fixed order.
 func AskKinds() []string {
 	return []string{AskBinLoad, AskBinCount, AskBinClear, AskQualityHold, AskClearHome,
-		AskPreflight, AskReleasePoints, AskHeldPartials}
+		AskPreflight, AskReleasePoints, AskHeldPartials, AskReseat}
 }
 
 // EdgeAsk is one question. Body is the kind's request, encoded.
@@ -106,4 +112,21 @@ func (a *EdgeAnswer) OK() bool { return a != nil && a.Status == AnswerOK }
 // HTTP door takes it as ?payload=).
 type HeldPartialsRequest struct {
 	PayloadCode string `json:"payload_code"`
+}
+
+// ReseatRequest is the reseat ask's body: the node, as the asking station
+// names it, whose carrier Core re-announces.
+type ReseatRequest struct {
+	Node string `json:"node"`
+}
+
+// ReseatAnswer is the reseat ask's answer body: the node asked about, and
+// whether a carrier stands there. Landed true: its landing (BinLanded, with its
+// count, epoch and a fresh placement stamp) left Core's outbox before this
+// answer. Landed false: none stands there, and the station's seat at Node is
+// left by the carrier it held. Node rides the answer so an Edge applies it with
+// no memory of the ask (an answer after a restart).
+type ReseatAnswer struct {
+	Node   string `json:"node"`
+	Landed bool   `json:"landed"`
 }

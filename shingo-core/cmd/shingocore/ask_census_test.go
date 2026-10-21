@@ -20,7 +20,7 @@ import (
 // The server is built as main builds it (buildAskServer); it answers exactly
 // protocol.AskKinds. Each kind is answered by the www.Doors body of the HTTP
 // door named beside it, and that door is routed in www/router.go to the
-// handler named, so the ask and the HTTP call answer through one body
+// handler named (the reseat, which has no HTTP door, by its own body), so the ask and the HTTP call answer through one body
 // (www/door_ask_agreement_test.go holds the answers equal arm by arm). Only the home
 // clear replays a repeat.
 //
@@ -46,6 +46,8 @@ func TestCensus_AskKinds(t *testing.T) {
 		{protocol.AskPreflight, "POST /api/inventory/preflight", "apiInventoryPreflight", d.AskPreflight, false},
 		{protocol.AskReleasePoints, "POST /api/release/points", "apiReleasePoints", d.AskReleasePoints, false},
 		{protocol.AskHeldPartials, "GET /api/telemetry/held-partials", "apiTelemetryHeldPartials", d.AskHeldPartials, false},
+		// No HTTP door: answered only as an ask, by the landing verb.
+		{protocol.AskReseat, "", "", d.AskReseat, false},
 	}
 
 	s, err := buildAskServer(nil, nil, d)
@@ -78,6 +80,9 @@ func TestCensus_AskKinds(t *testing.T) {
 		}
 		if reflect.ValueOf(r.door).Pointer() != reflect.ValueOf(c.door).Pointer() {
 			t.Errorf("%s is registered over another body than the one its HTTP door %s answers through", c.kind, c.http)
+		}
+		if c.http == "" {
+			continue // no HTTP door to route
 		}
 		method, path, _ := strings.Cut(c.http, " ")
 		verb := strings.ToUpper(method[:1]) + strings.ToLower(method[1:])

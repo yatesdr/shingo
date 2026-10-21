@@ -23,6 +23,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -30,6 +32,7 @@ import (
 
 	"shingocore/asks"
 	"shingocore/engine"
+	"shingocore/service"
 )
 
 // Doors holds the door bodies' dependencies. The router's Handlers build one
@@ -177,4 +180,29 @@ func (d *Doors) AskHeldPartials(_ string, raw json.RawMessage) asks.Result {
 	return askDoor(raw, errText, func(req protocol.HeldPartialsRequest) asks.Result {
 		return d.heldPartials(req.PayloadCode)
 	})
+}
+
+// AskReseat answers protocol.AskReseat, which has no HTTP door: Core
+// re-announces the carrier at the node to the asking station
+// (service.BinService.Reseat) and answers whether one stands there. A node
+// Core does not know is refused (AnswerNotFound), never answered as empty.
+func (d *Doors) AskReseat(station string, raw json.RawMessage) asks.Result {
+	return askDoor(raw, errText, func(req protocol.ReseatRequest) asks.Result {
+		return d.reseat(station, req)
+	})
+}
+
+// reseat is AskReseat's body.
+func (d *Doors) reseat(station string, req protocol.ReseatRequest) asks.Result {
+	if req.Node == "" {
+		return badRequest("node is required")
+	}
+	landed, err := d.engine.BinService().Reseat(station, req.Node)
+	switch {
+	case errors.Is(err, service.ErrReseatUnknownNode):
+		return refused(http.StatusNotFound, fmt.Sprintf("Core has no node %s", req.Node))
+	case err != nil:
+		return refused(http.StatusInternalServerError, err.Error())
+	}
+	return accepted(protocol.ReseatAnswer{Node: req.Node, Landed: landed})
 }

@@ -4,6 +4,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"slices"
 	"testing"
 
@@ -371,5 +372,56 @@ func TestPinD19_AnAdminMoveOntoStorageStillReachesNobody(t *testing.T) {
 	}
 	if got := boundsFor(t, db, bin.ID); len(got) != 0 {
 		t.Errorf("Bounds at a storage slot = %v, want none", got)
+	}
+}
+
+// TestReseat_ReAnnouncesTheCarrierToTheAsker — the reseat ask
+// (protocol.AskReseat): Core re-announces the carrier standing at the node to
+// the asking station alone, through the landing (count, generation, part, a
+// fresh placement stamp), and binds nothing itself; a repeat re-announces it
+// under a newer stamp. A node with no carrier answers not landed and sends
+// nothing; a name Core has no node for is refused, never answered as empty.
+func TestReseat_ReAnnouncesTheCarrierToTheAsker(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	binSvc := NewBinService(db, announcingService(db))
+	const station = "edge-reseat.line"
+
+	bin := createTestBin(t, db, sd.LineNode.ID, "BIN-RESEAT", "PART-A", 37)
+	landed, err := binSvc.Reseat(station, sd.LineNode.Name)
+	testutil.MustNoErr(t, err, "reseat")
+	if !landed {
+		t.Fatal("a carrier at the node: landed = false, want true")
+	}
+	got := landingsFor(t, db, bin.ID)
+	if len(got) != 1 {
+		t.Fatalf("landings = %d, want exactly 1", len(got))
+	}
+	l := got[0]
+	if l.Dst != station || l.L.CoreNodeName != sd.LineNode.Name || l.L.Count != 37 ||
+		l.L.PayloadCode != "PART-A" || !l.L.PayloadKnown || l.L.Epoch != binEpoch(t, db, bin.ID) || l.L.PlacedSeq <= 0 {
+		t.Errorf("landing = %+v to %q, want bin %d at %s, count 37, PART-A known, the bin's generation, a stamp, to %q",
+			l.L, l.Dst, bin.ID, sd.LineNode.Name, station)
+	}
+
+	_, err = binSvc.Reseat(station, sd.LineNode.Name)
+	testutil.MustNoErr(t, err, "reseat again")
+	if again := landingsFor(t, db, bin.ID); len(again) != 2 || again[1].L.PlacedSeq <= l.L.PlacedSeq {
+		t.Errorf("a repeat: landings %+v, want a second under a newer stamp", again)
+	}
+
+	var before int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM outbox`).Scan(&before), "count outbox")
+	landed, err = binSvc.Reseat(station, sd.StorageNode.Name)
+	testutil.MustNoErr(t, err, "reseat an empty node")
+	var after int
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM outbox`).Scan(&after), "count outbox")
+	if landed || after != before {
+		t.Errorf("an empty node: landed = %v, outbox rows %d → %d; want false and none", landed, before, after)
+	}
+
+	if _, err := binSvc.Reseat(station, "NO-SUCH-NODE"); !errors.Is(err, ErrReseatUnknownNode) {
+		t.Errorf("an unknown name: err = %v, want ErrReseatUnknownNode", err)
 	}
 }

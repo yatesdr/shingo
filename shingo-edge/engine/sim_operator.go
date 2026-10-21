@@ -595,10 +595,14 @@ func (op *simOperator) reconcile() {
 // IT READS BINS BEFORE IT SCHEDULES, rather than scheduling everything and
 // letting classify sort it out. Scheduling a node with nothing to do costs eight
 // retries at four seconds apiece, per node, per tick — noise that would bury the
-// signal this exists to produce. One FetchNodeBins call answers it for the whole
-// plant.
+// signal this exists to produce.
+//
+// AN ACTING READ: the bins the board shows, the Edge's copy of the bins feed
+// (LocalNodeBins), as a person standing at the board reads them; the doors it
+// then taps decide under the table's own rule. Nothing held, nothing swept.
 func (op *simOperator) sweepManualSwapNodes() {
-	if !op.e.coreClient.Available() {
+	held := op.e.LocalNodeBins()
+	if !held.Held {
 		return
 	}
 	nodes, err := op.e.db.ListProcessNodes()
@@ -643,17 +647,14 @@ func (op *simOperator) sweepManualSwapNodes() {
 	if len(names) == 0 {
 		return
 	}
-	bins, _, err := op.e.coreClient.FetchNodeBins(names)
-	if err != nil {
-		return
-	}
 	swept := 0
-	for i := range bins {
-		t, ok := byName[bins[i].NodeName]
+	for _, name := range names {
+		row, ok := held.Rows[name]
 		if !ok {
 			continue
 		}
-		if !operatorHasWorkAt(t.wantsEmpty, bins[i].BinID, bins[i].UOPRemaining) {
+		t := byName[name]
+		if !operatorHasWorkAt(t.wantsEmpty, row.BinID, row.Stocked) {
 			continue // nothing for the operator to do at this node right now
 		}
 		op.schedule(t.id) // deduped against anything already pending
@@ -668,9 +669,9 @@ func (op *simOperator) sweepManualSwapNodes() {
 // node need the operator, given what the node is waiting for.
 //
 // AN EMPTY SLOT IS NOT AN EMPTY CARRIER, and that distinction is the first thing
-// the first live run caught. FetchNodeBins returns a row for every node it was
+// the first live run caught. The bins read answers a row for every node it was
 // ASKED about, not only the ones holding something, so a loader window standing
-// empty comes back with BinID 0 and UOPRemaining 0 — which, on UOP alone, reads
+// empty comes back with BinID 0 and nothing stocked — which, on that alone, reads
 // as "an empty carrier waiting to be filled". Every idle loader in the plant got
 // scheduled, failed eight times with "no bin at node PLK_X1 — request an empty
 // bin first", and did it again on the next tick. The bin id is what separates
@@ -681,15 +682,16 @@ func (op *simOperator) sweepManualSwapNodes() {
 // and makes getting it backwards produce a plant that looks busy and moves
 // nothing — the operator loading full bins and clearing empty ones.
 //
-// UOP <= 0 IS EMPTY, not UOP == 0, and that boundary matters too: an
-// over-consumed carrier is negative, and a negative bin at a loader window is
-// still a carrier waiting to be filled. Treating it as "not empty" would leave
-// exactly the bins the negative sweep exists to rescue sitting where they are.
-func operatorHasWorkAt(wantsEmpty bool, binID int64, uopRemaining int) bool {
+// NOT STOCKED IS EMPTY: the row's Stocked is the count above zero, so a count
+// of 0 or below reads empty, and that boundary matters too: an over-consumed
+// carrier is negative, and a negative bin at a loader window is still a carrier
+// waiting to be filled. Treating it as "not empty" would leave exactly the bins
+// the negative sweep exists to rescue sitting where they are.
+func operatorHasWorkAt(wantsEmpty bool, binID int64, stocked bool) bool {
 	if binID == 0 {
 		return false // the node is standing empty; there is nothing to act on
 	}
-	return (uopRemaining <= 0) == wantsEmpty
+	return !stocked == wantsEmpty
 }
 
 // negBinMarket IS DELETED. It was `const negBinMarket = "SYN_MARKET"`, carrying
@@ -730,19 +732,24 @@ func (op *simOperator) clearNegativeBins() {
 	if len(op.marketSlots) == 0 {
 		return
 	}
-	bins, _, err := op.e.coreClient.FetchNodeBins(op.marketSlots)
+	// AN ORACLE READ: the negative count is the simulated floor's fact, which
+	// no Edge-facing row carries (the bins table has no count, and the market's
+	// slots are not on the watch list), so it is Core's own bin read
+	// (sim_core_oracle.go), sim builds only.
+	bins, err := readSimFloorBins(op.e.coreClient.baseURL, op.marketSlots)
 	if err != nil || len(bins) == 0 {
 		return
 	}
 	cleared := 0
-	for i := range bins {
-		if bins[i].UOPRemaining < 0 {
+	for _, slot := range op.marketSlots {
+		b, ok := bins[slot]
+		if ok && b.Occupied && b.UOPRemaining < 0 {
 			// Core hands back the new generation stamp, and the operator paths at
 			// the LINE write it to their runtime row so the station keeps counting
 			// under the current one. There is no runtime row here: this sweeps
 			// supermarket slots, not a claim's window. So the stamp is dropped on
 			// purpose rather than by omission.
-			req := protocol.BinClearRequest{NodeName: bins[i].NodeName, BinID: bins[i].BinID}
+			req := protocol.BinClearRequest{NodeName: slot, BinID: b.BinID}
 			if _, err := askOrDoor(op.e, protocol.AskBinClear, req, func() (*BinClearResponse, error) {
 				return op.e.coreClient.ClearBin(req)
 			}); op.e.refused(err) == nil {
@@ -1002,19 +1009,23 @@ func (op *simOperator) consumeDisposition(nodeID int64) (ReleaseDisposition, boo
 		return ReleaseDisposition{}, false
 	}
 	disp := ReleaseDisposition{CalledBy: "sim-operator", Mode: DispositionSendPartialBack}
-	bins, reachable, ferr := op.e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
+	// AN ORACLE READ: the parts a person counts in the bin in front of them,
+	// the simulated floor's count (Core's own bin read, sim_core_oracle.go);
+	// the bins table carries no count.
+	bins, ferr := readSimFloorBins(op.e.coreClient.baseURL, []string{node.CoreNodeName})
+	b := bins[node.CoreNodeName]
 	switch {
-	case ferr == nil && len(bins) > 0 && bins[0].Occupied && bins[0].UOPRemaining <= 0:
+	case ferr == nil && b.Occupied && b.UOPRemaining <= 0:
 		disp.Mode = DispositionReleaseUnderpack
-	case ferr == nil && len(bins) > 0 && bins[0].Occupied && bins[0].PayloadCode != "" &&
-		bins[0].UOPRemaining <= op.linesidePullAt(bins[0].PayloadCode, claim.UOPCapacity):
+	case ferr == nil && b.Occupied && b.PayloadCode != "" &&
+		b.UOPRemaining <= op.linesidePullAt(b.PayloadCode, claim.UOPCapacity):
 		// THE FLOOR'S PULL (owner, 2026-10-10): the last few parts go into the
 		// lineside bucket and the bin is released empty, so the weld runs on the
 		// bucket through the exchange. The capture door is the HMI's: the pile
 		// gains the remainder and the bin's capture_reduction takes it to 0.
 		disp.Mode = DispositionCaptureLineside
-		disp.LinesideCapture = map[string]int{bins[0].PayloadCode: bins[0].UOPRemaining}
-	case !reachable:
+		disp.LinesideCapture = map[string]int{b.PayloadCode: b.UOPRemaining}
+	case ferr != nil:
 		// A HARNESS-FIDELITY HAZARD, NOT A PRODUCTION ONE, and it is worth a line
 		// because of what it turns into. The default is SendPartialBack, which
 		// returns the carrier LABELLED — and a labelled carrier never satisfies
@@ -1022,9 +1033,9 @@ func (op *simOperator) consumeDisposition(nodeID int64) (ReleaseDisposition, boo
 		// invisible. A telemetry blip during a soak run therefore shrinks the
 		// empty pool by one, permanently, and reads afterwards exactly like the
 		// carrier famine somebody would be running the soak to diagnose.
-		op.e.debugFn("sim-operator: node %s — occupancy=%s, defaulting to send-partial-back; "+
+		op.e.debugFn("sim-operator: node %s — the floor's count unread (%v), defaulting to send-partial-back; "+
 			"the carrier returns labelled and leaves the empty pool",
-			node.CoreNodeName, OccupancyOutcome(reachable, ferr))
+			node.CoreNodeName, ferr)
 	}
 	return disp, true
 }
@@ -1202,17 +1213,17 @@ func (op *simOperator) loadBin(nodeID int64, claim *processes.NodeClaim) error {
 // A LABELLED CARRIER WITH UNITS IS NEVER CLEARED: it is stock, and it waits for
 // its outbound move as before. The read happens only after a refused load, so a
 // load that succeeds costs nothing more.
+//
+// AN ACTING READ: the board shows the carrier labelled and holding no parts
+// (its row in the Edge's copy of the bins feed: a part, not stocked), and the
+// person acts on that; the CLEAR it taps decides as any CLEAR does.
 func (op *simOperator) clearedLabelledAtZero(nodeID int64) bool {
 	node, err := op.e.db.GetProcessNode(nodeID)
-	if err != nil || node == nil || !op.e.coreClient.Available() {
+	if err != nil || node == nil {
 		return false
 	}
-	bins, _, ferr := op.e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
-	if ferr != nil || len(bins) == 0 {
-		return false
-	}
-	b := bins[0]
-	if !b.Occupied || b.PayloadCode == "" || b.UOPRemaining > 0 {
+	b, ok := op.e.LocalNodeBins().Rows[node.CoreNodeName]
+	if !ok || !b.Occupied || b.PayloadCode == "" || b.Stocked {
 		return false
 	}
 	if cerr := op.e.ClearBin(nodeID, "", false, nil); cerr != nil {
