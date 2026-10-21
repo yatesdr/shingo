@@ -24,9 +24,10 @@ import (
 // WHY NOT THE STUB. handlers_flow_test.go pins the status mapping by handing
 // the seam a sentinel error, which proves 409 and proves the handler passes
 // the seam's words through. It cannot prove the words. The sentence an
-// engineer actually reads — "<style> is running on PLN_01 — move it to PLN_03
-// after the next changeover" — is built in engine.refuseRunningPositionMove
-// out of the style's name and the two position sets, and a stub never runs it.
+// engineer actually reads — "PLN_01 holds BIN-1. Move the bin in Core first
+// (Bins → Move to PLN_03), then change the position here." — is built in
+// engine.refuseRunningPositionMove out of the bins copy and the two position
+// sets, and a stub never runs it.
 //
 // AND AT BOTH DOORS, because they are the same route. The handler decides
 // source from the session and never from the body (owner ruling R1): an admin
@@ -86,7 +87,7 @@ func TestSaveFlow_RunningPositionMoveRefusesBothDoorsByName(t *testing.T) {
 		cells = append(cells, cell)
 	}
 
-	h, router := realFlowRouter(t, db)
+	h, router, eng := realFlowRouterEngine(t, db)
 
 	// The fingerprint of the flow as stored, so the save below is refused for
 	// the move and not for being stale — the other 409 on this route.
@@ -110,12 +111,37 @@ func TestSaveFlow_RunningPositionMoveRefusesBothDoorsByName(t *testing.T) {
 		"station_id":  seeded.Stations["screen-a4"],
 	}
 
-	// THE SENTENCE, spelled here out of the same three parts the engine builds
-	// it from — not a substring of it. The point of this refusal is that the
-	// engineer is told which style, which position it is leaving and which it
-	// would arrive at; a test matching only "is running" would pass on a
-	// sentence that had lost two of the three.
-	want := style.Name + " is running on " + leaving + " — move it to " + free + " after the next changeover"
+	// THE BIN STANDS ON THE LEAVING POSITION, in the Edge's copy of Core's bins
+	// (every other node bare): the move would strand it, so it is refused. A
+	// move that leaves no bin behind saves (engine flow_running_move_test.go).
+	empty := ""
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: &empty})
+	watched := eng.StationService().WatchedBinNodes()
+	listDigest, err := protocol.BinWatchDigest(watched)
+	if err != nil {
+		t.Fatalf("watch digest: %v", err)
+	}
+	snap := protocol.NodeBinsSnapshot{ListDigest: listDigest, Groups: []protocol.NodeBinsGroup{}}
+	for _, n := range append(append([]string(nil), watched...), free) {
+		row := protocol.NodeBinsRow{Node: n, State: protocol.BinsStateEmpty}
+		if n == leaving {
+			row = protocol.NodeBinsRow{Node: n, State: protocol.BinsStateOccupied, Occupied: true, BinLabel: "BIN-1"}
+		}
+		snap.Rows = append(snap.Rows, row)
+	}
+	if snap.Digest, err = protocol.NodeBinsDigest(snap); err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	if err := eng.ApplyNodeBinsSnapshot(snap); err != nil {
+		t.Fatalf("apply the bins copy: %v", err)
+	}
+
+	// THE SENTENCE, spelled here out of the parts the engine builds it from —
+	// not a substring of it. The engineer is told which position holds which
+	// bin, where to move it in Core and in what order; a test matching only
+	// "holds" would pass on a sentence that had lost the order.
+	_ = style
+	want := leaving + " holds BIN-1. Move the bin in Core first (Bins → Move to " + free + "), then change the position here."
 
 	for _, door := range []struct {
 		name   string
@@ -182,6 +208,14 @@ func freePositionName(t *testing.T, db *store.DB, processID int64, claims []proc
 // never reach the save.
 func realFlowRouter(t *testing.T, db *store.DB) (*Handlers, *chi.Mux) {
 	t.Helper()
+	h, mux, _ := realFlowRouterEngine(t, db)
+	return h, mux
+}
+
+// realFlowRouterEngine is realFlowRouter with the engine behind it, for a test
+// that holds Core's bins copy on it.
+func realFlowRouterEngine(t *testing.T, db *store.DB) (*Handlers, *chi.Mux, *engine.Engine) {
+	t.Helper()
 	cfg := config.Defaults()
 	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf})
 	// Core's catalog has arrived (empty): the press-index changeover's gate
@@ -206,5 +240,5 @@ func realFlowRouter(t *testing.T, db *store.DB) (*Handlers, *chi.Mux) {
 	if !ok {
 		t.Fatalf("NewRouter returned %T, not a *chi.Mux", router)
 	}
-	return h, mux
+	return h, mux, eng
 }

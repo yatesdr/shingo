@@ -259,8 +259,8 @@ func validateLegKinds(in NodeClaimInput, kinds CoreNodeKinds, reported map[strin
 }
 
 // ErrRunningPositionMove refuses the one mid-run edit the runtime cannot
-// follow: a position appearing on, or leaving, the style the press is
-// RUNNING.
+// follow: the style the press is RUNNING stops naming a node a bin stands on,
+// or starts naming one another part's bin stands on.
 //
 // IN domain BECAUSE THE STORE RAISES IT AND THREE LAYERS MATCH ON IT. Every
 // runtime reader of the running flow resolves its claim by (active_style_id,
