@@ -2,6 +2,7 @@ package www
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -13,8 +14,9 @@ import (
 //
 // A maintained group is an NGRP whose EMPTY-CARRIER level Core holds: so many
 // unclaimed carriers of each declared type, at all times, near the equipment that
-// consumes them. Everything these endpoints write is INERT — no level keeper
-// reads it yet.
+// consumes them. The level keeper (engine/maintainer.go) holds the levels
+// written here; the layer wants that ride a level's save are communication,
+// read by nothing that caps or sources.
 //
 // FOUR WRITE ENDPOINTS, ONE PER THING AN OPERATOR EDITS, rather than one
 // save-everything call. The section has independent halves — the four scalars,
@@ -162,14 +164,28 @@ func (h *Handlers) apiMaintainedGroupSettingsSet(w http.ResponseWriter, r *http.
 	h.maintainedGroupOK(w, chk, g)
 }
 
-// apiMaintainedGroupLevelSet declares how many empties of one type a group holds.
+// maintainLayerWant is one wanted height on a level's save: how many carts of
+// the level's type, standing this many layers high, the group wants.
+type maintainLayerWant struct {
+	Layers int `json:"layers"`
+	Want   int `json:"want"`
+}
+
+// apiMaintainedGroupLevelSet declares how many empties of one type a group holds,
+// and, when the request carries layer_wants, replaces that type's wanted
+// heights in the same transaction.
 //
 // POST /api/nodes/maintained-group/level
+//
+// AN ABSENT layer_wants LEAVES THE STORED ONES STANDING; a list, empty
+// included, replaces them. So a caller that never loaded the heights cannot
+// clear them by saving the level. Pin: TestMaintainedGroupLevel_LayerWants.
 func (h *Handlers) apiMaintainedGroupLevelSet(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		GroupNodeID int64 `json:"group_node_id"`
-		BinTypeID   int64 `json:"bin_type_id"`
-		Want        int   `json:"want"`
+		GroupNodeID int64                `json:"group_node_id"`
+		BinTypeID   int64                `json:"bin_type_id"`
+		Want        int                  `json:"want"`
+		LayerWants  *[]maintainLayerWant `json:"layer_wants"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -182,7 +198,18 @@ func (h *Handlers) apiMaintainedGroupLevelSet(w http.ResponseWriter, r *http.Req
 	// is NOT the same as removing the line, so it is not rejected. Negative is
 	// refused by the table's CHECK and, ahead of it, by the service — which
 	// gives the operator a sentence instead of a constraint-violation string.
-	chk, err := h.engine.NodeService().SetMaintainLevel(req.GroupNodeID, req.BinTypeID, req.Want)
+	var chk service.MaintainedGroupCheck
+	var err error
+	if req.LayerWants == nil {
+		chk, err = h.engine.NodeService().SetMaintainLevel(req.GroupNodeID, req.BinTypeID, req.Want)
+	} else {
+		wants, werr := layerWantRows(*req.LayerWants)
+		if werr != nil {
+			h.jsonError(w, werr.Error(), http.StatusBadRequest)
+			return
+		}
+		chk, err = h.engine.NodeService().SetMaintainLevelAndLayerWants(req.GroupNodeID, req.BinTypeID, req.Want, wants)
+	}
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -195,7 +222,31 @@ func (h *Handlers) apiMaintainedGroupLevelSet(w http.ResponseWriter, r *http.Req
 	h.maintainedGroupOK(w, chk, service.MaintainedGroupGuard{})
 }
 
-// apiMaintainedGroupLevelRemove stops declaring a carrier type for a group.
+// layerWantRows reads a level save's wanted heights: each a height of at least
+// one layer, wanted zero or more times, no height twice. A malformed list is
+// the request's fault (400), the same as a missing id; it is not one of the
+// save-time rules, which never read layer wants.
+func layerWantRows(in []maintainLayerWant) ([]service.MaintainLayerWant, error) {
+	out := make([]service.MaintainLayerWant, 0, len(in))
+	seen := map[int]bool{}
+	for _, lw := range in {
+		if lw.Layers < 1 {
+			return nil, fmt.Errorf("a wanted height is at least 1 layer (got %d)", lw.Layers)
+		}
+		if lw.Want < 0 {
+			return nil, fmt.Errorf("the want at %d layers cannot be negative (got %d)", lw.Layers, lw.Want)
+		}
+		if seen[lw.Layers] {
+			return nil, fmt.Errorf("%d layers is listed twice", lw.Layers)
+		}
+		seen[lw.Layers] = true
+		out = append(out, service.MaintainLayerWant{Layers: lw.Layers, Want: lw.Want})
+	}
+	return out, nil
+}
+
+// apiMaintainedGroupLevelRemove stops declaring a carrier type for a group; its
+// layer wants are removed with it.
 //
 // POST /api/nodes/maintained-group/level/remove
 func (h *Handlers) apiMaintainedGroupLevelRemove(w http.ResponseWriter, r *http.Request) {

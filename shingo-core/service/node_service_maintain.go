@@ -15,8 +15,9 @@ import (
 // that consumes them. This file is the read/write surface the group settings
 // modal talks to.
 //
-// INERT. Nothing consumes any of it yet; the level keeper is a later phase. What
-// exists here is storage and its shape.
+// The level keeper (engine/maintainer.go) holds the levels saved here. The
+// layer wants saved beside them are communication: nothing caps or sources on
+// them.
 //
 // TWO STORAGE HOMES, ON PURPOSE. The sets (levels, supports) are node-keyed
 // tables; the four scalars are node_properties rows written through
@@ -39,19 +40,22 @@ const (
 )
 
 // MaintainedGroupConfig is one group's whole maintained-group configuration, as
-// the settings modal reads it: the four scalars plus both sets, in one answer.
+// the settings modal reads it: the four scalars, the levels with every level's
+// wanted heights (LayerWants, in the levels' order) and the supports, in one
+// answer.
 //
 // One read rather than six, because a half-loaded configuration screen is a
 // screen an operator can save from — and saving what a failed fetch left blank
 // is how a level silently becomes zero.
 type MaintainedGroupConfig struct {
-	GroupNodeID         int64                   `json:"group_node_id"`
-	Enabled             bool                    `json:"maintain_enabled"`
-	StrictSourcing      bool                    `json:"strict_sourcing"`
-	MaintenanceStation  string                  `json:"maintenance_station"`
-	OverflowDestination string                  `json:"overflow_destination"`
-	Levels              []store.MaintainLevel   `json:"levels"`
-	Supports            []store.MaintainSupport `json:"supports"`
+	GroupNodeID         int64                     `json:"group_node_id"`
+	Enabled             bool                      `json:"maintain_enabled"`
+	StrictSourcing      bool                      `json:"strict_sourcing"`
+	MaintenanceStation  string                    `json:"maintenance_station"`
+	OverflowDestination string                    `json:"overflow_destination"`
+	Levels              []store.MaintainLevel     `json:"levels"`
+	LayerWants          []store.MaintainLayerWant `json:"layer_wants"`
+	Supports            []store.MaintainSupport   `json:"supports"`
 }
 
 // GetMaintainedGroup returns everything the modal needs for one group.
@@ -61,6 +65,10 @@ type MaintainedGroupConfig struct {
 // looks like today and what the modal must be able to render.
 func (s *NodeService) GetMaintainedGroup(groupNodeID int64) (*MaintainedGroupConfig, error) {
 	levels, err := s.db.ListMaintainLevels(groupNodeID)
+	if err != nil {
+		return nil, err
+	}
+	layerWants, err := s.db.ListMaintainLayerWants(groupNodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -75,6 +83,7 @@ func (s *NodeService) GetMaintainedGroup(groupNodeID int64) (*MaintainedGroupCon
 		MaintenanceStation:  s.db.GetNodeProperty(groupNodeID, nodes.PropMaintenanceStation),
 		OverflowDestination: s.db.GetNodeProperty(groupNodeID, nodes.PropOverflowDestination),
 		Levels:              levels,
+		LayerWants:          layerWants,
 		Supports:            supports,
 	}, nil
 }
@@ -125,6 +134,33 @@ func MaintainedGroupPropertyWrites(s MaintainedGroupSettings) []NodePropertyWrit
 // the row on its own: most of the save-time rules are about how the parts agree,
 // and a row in isolation has nothing to disagree with.
 func (s *NodeService) SetMaintainLevel(groupNodeID, binTypeID int64, want int) (MaintainedGroupCheck, error) {
+	return s.setMaintainLevel(groupNodeID, binTypeID, want, func() error {
+		return s.db.SetMaintainLevel(store.MaintainLevel{
+			GroupNodeID: groupNodeID, BinTypeID: binTypeID, Want: want,
+		})
+	})
+}
+
+// MaintainLayerWant is one wanted height of a level (store.MaintainLayerWant),
+// named here so the www layer can build a save without the store.
+type MaintainLayerWant = store.MaintainLayerWant
+
+// SetMaintainLevelAndLayerWants is SetMaintainLevel with the type's layer
+// wants replaced by layerWants in the same transaction (an empty set clears
+// them). The same rules decide the save: layer wants are communication, not
+// part of the cap, so no rule reads them and none is added for them.
+func (s *NodeService) SetMaintainLevelAndLayerWants(groupNodeID, binTypeID int64, want int,
+	layerWants []MaintainLayerWant) (MaintainedGroupCheck, error) {
+	return s.setMaintainLevel(groupNodeID, binTypeID, want, func() error {
+		return s.db.SetMaintainLevelAndLayerWants(store.MaintainLevel{
+			GroupNodeID: groupNodeID, BinTypeID: binTypeID, Want: want,
+		}, layerWants)
+	})
+}
+
+// setMaintainLevel is the level save's rules, then write: the write runs only
+// when nothing refused.
+func (s *NodeService) setMaintainLevel(groupNodeID, binTypeID int64, want int, write func() error) (MaintainedGroupCheck, error) {
 	if want < 0 {
 		return MaintainedGroupCheck{
 			Refusals: []string{fmt.Sprintf("a maintained level cannot be negative (got %d)", want)},
@@ -168,13 +204,11 @@ func (s *NodeService) SetMaintainLevel(groupNodeID, binTypeID int64, want int) (
 	if err := s.ensureExplicitBinTypeMode(groupNodeID); err != nil {
 		return chk, err
 	}
-	return chk, s.db.SetMaintainLevel(store.MaintainLevel{
-		GroupNodeID: groupNodeID, BinTypeID: binTypeID, Want: want,
-	})
+	return chk, write()
 }
 
-// RemoveMaintainLevel stops declaring a carrier type for a group. Distinct from
-// setting want=0, which keeps the line.
+// RemoveMaintainLevel stops declaring a carrier type for a group, and its layer
+// wants go with it. Distinct from setting want=0, which keeps the line.
 func (s *NodeService) RemoveMaintainLevel(groupNodeID, binTypeID int64) (MaintainedGroupCheck, error) {
 	post, err := s.GetMaintainedGroup(groupNodeID)
 	if err != nil {

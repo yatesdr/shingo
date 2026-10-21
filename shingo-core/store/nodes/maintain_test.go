@@ -155,3 +155,48 @@ func TestMaintainSupports_ReplacesWholeSet(t *testing.T) {
 		t.Errorf("supports after clear = %+v, want none", got)
 	}
 }
+
+// TestMaintainLayerWants_OneTransactionWithTheLevel: a level's save and its
+// layer wants commit together or not at all, and the level's remove takes its
+// layer wants with it (no foreign key does: v161 declared them against nodes
+// and bin_types only).
+func TestMaintainLayerWants_OneTransactionWithTheLevel(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sdb := db.DB
+
+	grpID, err := nodes.CreateGroup(sdb, "GRP-LAYERS")
+	testutil.MustNoErr(t, err, "CreateGroup")
+	testdb.MarkGroup(t, db, grpID)
+	tote := mkBinType(t, sdb, "LW-TOTE")
+
+	testutil.MustNoErr(t, nodes.SetMaintainLevelAndLayerWants(sdb,
+		nodes.MaintainLevel{GroupNodeID: grpID, BinTypeID: tote, Want: 3},
+		[]nodes.MaintainLayerWant{{Layers: 5, Want: 1}, {Layers: 3, Want: 2}}), "save with heights")
+
+	// A height the table refuses (layers > 0) fails the whole save: the level
+	// keeps its 3 and the heights stay as they were.
+	if err := nodes.SetMaintainLevelAndLayerWants(sdb,
+		nodes.MaintainLevel{GroupNodeID: grpID, BinTypeID: tote, Want: 9},
+		[]nodes.MaintainLayerWant{{Layers: 2, Want: 1}, {Layers: 0, Want: 1}}); err == nil {
+		t.Fatal("a 0-layer height saved; the CHECK should refuse it")
+	}
+	levels, err := nodes.ListMaintainLevels(sdb, grpID)
+	testutil.MustNoErr(t, err, "ListMaintainLevels")
+	if len(levels) != 1 || levels[0].Want != 3 {
+		t.Errorf("level after a refused save = %+v, want 3: the level and its heights commit together", levels)
+	}
+	wants, err := nodes.ListMaintainLayerWants(sdb, grpID)
+	testutil.MustNoErr(t, err, "ListMaintainLayerWants")
+	if len(wants) != 2 || wants[0].Layers != 3 || wants[0].Want != 2 || wants[1].Layers != 5 ||
+		wants[0].BinTypeCode != "LW-TOTE" || wants[0].TotesPerLayer != nil {
+		t.Errorf("layer wants after a refused save = %+v, want 3 high x2 and 5 high x1, no totes per layer", wants)
+	}
+
+	testutil.MustNoErr(t, nodes.RemoveMaintainLevel(sdb, grpID, tote), "remove level")
+	wants, err = nodes.ListMaintainLayerWants(sdb, grpID)
+	testutil.MustNoErr(t, err, "ListMaintainLayerWants after remove")
+	if len(wants) != 0 {
+		t.Errorf("layer wants after the level's remove = %+v, want none", wants)
+	}
+}

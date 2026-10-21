@@ -30,7 +30,9 @@ var _mg = null;
 function blank(nodeID) {
   return {
     nodeID: nodeID,
-    // levels: [{bin_type_id, bin_type_code, want}] as edited.
+    // levels: [{bin_type_id, bin_type_code, want, layer_wants: [{layers, want}]}]
+    // as edited. layer_wants are the level's wanted heights: communication,
+    // not part of the level Core holds.
     levels: [],
     // savedLevels: what the server had, for the remove-diff on save.
     savedLevels: [],
@@ -80,7 +82,12 @@ export function renderMaintainSection(isGroupType, nodeID) {
     var opts = (res[1] && res[1].processes) || [];
     if (!_mg || _mg.nodeID !== Number(nodeID)) return; // modal moved on
     _mg.levels = (cfg.levels || []).map(function (l) {
-      return { bin_type_id: Number(l.bin_type_id), bin_type_code: l.bin_type_code, want: Number(l.want) };
+      return {
+        bin_type_id: Number(l.bin_type_id), bin_type_code: l.bin_type_code, want: Number(l.want),
+        layer_wants: (cfg.layer_wants || []).filter(function (w) {
+          return Number(w.bin_type_id) === Number(l.bin_type_id);
+        }).map(function (w) { return { layers: Number(w.layers), want: Number(w.want) }; })
+      };
     });
     _mg.savedLevels = _mg.levels.map(function (l) { return { bin_type_id: l.bin_type_id, want: l.want }; });
     _mg.processes = opts;
@@ -174,8 +181,8 @@ function fillOverflow(current) {
   sel.value = current;
 }
 
-// renderLevels draws the declared level, one row per carrier type, plus the add
-// row. Same controls and the same vocabulary as the loaders page's carrier mix —
+// renderLevels draws the declared level, one row per carrier type with its
+// wanted heights under it, plus the add row. Same controls and the same vocabulary as the loaders page's carrier mix —
 // but this section is a "maintained level", and the two are not the same
 // promise: a mix is a preference bounded by the loader's windows, a level is the
 // number Core holds.
@@ -193,7 +200,8 @@ function renderLevels() {
       + ' data-action-change="setMaintainWant" data-bin-type-id="' + l.bin_type_id + '">'
       + '<button type="button" class="btn btn-sm" title="Remove"'
       + ' data-action="removeMaintainLevel" data-bin-type-id="' + l.bin_type_id + '">&times;</button>'
-      + '</div>';
+      + '</div>'
+      + renderLayerWants(l);
   }).join('');
 
   var rest = _allBinTypes.filter(function (t) { return !declared[Number(t.id)]; });
@@ -212,6 +220,76 @@ function renderLevels() {
   host.innerHTML = (rows || '<div class="text-muted" style="font-size:0.75rem">No level declared.</div>') + add;
 }
 
+// renderLayerWants draws one level's wanted heights: how many carts of the type
+// the group wants standing so many layers high. They tell the unloader what
+// to send a cart back as; they are not added up against the level, and the
+// level stays the number Core holds.
+function renderLayerWants(l) {
+  var id = l.bin_type_id;
+  var code = escapeHtml(l.bin_type_code);
+  var rows = (l.layer_wants || []).map(function (w) {
+    return '<div class="loader-mix-line" style="margin-left:1.5rem">'
+      + '<span class="text-sm">' + Number(w.layers) + ' high</span>'
+      + '<input type="number" class="form-input loader-mix-want" min="0" value="' + Number(w.want) + '"'
+      + ' aria-label="How many ' + code + ' carts ' + Number(w.layers) + ' high"'
+      + ' data-action-change="setMaintainLayerWant" data-bin-type-id="' + id + '"'
+      + ' data-layers="' + Number(w.layers) + '">'
+      + '<button type="button" class="btn btn-sm" title="Remove this height"'
+      + ' data-action="removeMaintainLayerWant" data-bin-type-id="' + id + '"'
+      + ' data-layers="' + Number(w.layers) + '">&times;</button>'
+      + '</div>';
+  }).join('');
+  return rows
+    + '<div class="loader-mix-add" style="margin-left:1.5rem">'
+    + '<input type="number" class="form-input loader-mix-want" min="1" placeholder="Layers"'
+    + ' id="nf-maintain-add-layers-' + id + '" aria-label="' + code + ' height in layers">'
+    + '<span class="text-sm">high, want</span>'
+    + '<input type="number" class="form-input loader-mix-want" min="0" value="1"'
+    + ' id="nf-maintain-add-layer-want-' + id + '" aria-label="How many ' + code + ' carts at that height">'
+    + '<button type="button" class="btn btn-sm" data-action="addMaintainLayerWant"'
+    + ' data-bin-type-id="' + id + '">Add height</button>'
+    + '</div>';
+}
+
+function levelByID(id) {
+  return _mg && _mg.levels.find(function (l) { return l.bin_type_id === id; });
+}
+
+export function addMaintainLayerWant(el) {
+  var id = Number(el.getAttribute('data-bin-type-id'));
+  var l = levelByID(id);
+  if (!l) return;
+  var layers = Number((document.getElementById('nf-maintain-add-layers-' + id) || {}).value);
+  var n = Number((document.getElementById('nf-maintain-add-layer-want-' + id) || {}).value);
+  if (!(layers >= 1) || Math.floor(layers) !== layers) {
+    toast('A height is a whole number of layers, 1 or more.', 'error');
+    return;
+  }
+  if (!(n >= 0)) n = 0;
+  var have = l.layer_wants.find(function (w) { return w.layers === layers; });
+  if (have) have.want = n;
+  else l.layer_wants.push({ layers: layers, want: n });
+  l.layer_wants.sort(function (a, b) { return a.layers - b.layers; });
+  renderLevels();
+}
+
+export function setMaintainLayerWant(el) {
+  var l = levelByID(Number(el.getAttribute('data-bin-type-id')));
+  if (!l) return;
+  var layers = Number(el.getAttribute('data-layers'));
+  var n = Number(el.value);
+  if (!(n >= 0)) { n = 0; el.value = '0'; }
+  l.layer_wants.forEach(function (w) { if (w.layers === layers) w.want = n; });
+}
+
+export function removeMaintainLayerWant(el) {
+  var l = levelByID(Number(el.getAttribute('data-bin-type-id')));
+  if (!l) return;
+  var layers = Number(el.getAttribute('data-layers'));
+  l.layer_wants = l.layer_wants.filter(function (w) { return w.layers !== layers; });
+  renderLevels();
+}
+
 export function addMaintainLevel() {
   if (!_mg) return;
   var sel = document.getElementById('nf-maintain-add-type');
@@ -221,7 +299,7 @@ export function addMaintainLevel() {
   var n = Number(want && want.value);
   if (!(n >= 0)) n = 0;
   var t = _allBinTypes.find(function (x) { return Number(x.id) === id; });
-  _mg.levels.push({ bin_type_id: id, bin_type_code: (t && (t.code || t.label)) || String(id), want: n });
+  _mg.levels.push({ bin_type_id: id, bin_type_code: (t && (t.code || t.label)) || String(id), want: n, layer_wants: [] });
   _mg.levels.sort(function (a, b) { return a.bin_type_code.localeCompare(b.bin_type_code); });
   renderLevels();
 }
@@ -426,10 +504,15 @@ export async function saveMaintainedGroup() {
           { group_node_id: nodeID, bin_type_id: was.bin_type_id }));
       }
     }
+    // Each level carries its wanted heights. They were loaded with the level
+    // (the section stays hidden when that load fails), so the list sent is
+    // the one on screen and replaces what is stored, an empty list included.
     for (var j = 0; j < _mg.levels.length; j++) {
       var l = _mg.levels[j];
-      collect(await apiPost('/api/nodes/maintained-group/level',
-        { group_node_id: nodeID, bin_type_id: l.bin_type_id, want: l.want }));
+      collect(await apiPost('/api/nodes/maintained-group/level', {
+        group_node_id: nodeID, bin_type_id: l.bin_type_id, want: l.want,
+        layer_wants: l.layer_wants.map(function (w) { return { layers: w.layers, want: w.want }; })
+      }));
     }
 
     var nodeIDs = _mg.orphans.slice();
@@ -467,9 +550,12 @@ export async function saveMaintainedGroup() {
 }
 
 delegateActions(document.body, {
+  addMaintainLayerWant,
   addMaintainLevel,
   onMaintainToggle,
+  removeMaintainLayerWant,
   removeMaintainLevel,
+  setMaintainLayerWant,
   setMaintainWant,
   toggleMaintainSupport
 }, { events: ['click', 'change'] });

@@ -9,8 +9,9 @@ import "shingocore/store/nodes"
 // MaintainLevel and MaintainSupport are re-exported so callers outside the store
 // do not have to import the nodes aggregate for the row types alone.
 type (
-	MaintainLevel   = nodes.MaintainLevel
-	MaintainSupport = nodes.MaintainSupport
+	MaintainLevel     = nodes.MaintainLevel
+	MaintainLayerWant = nodes.MaintainLayerWant
+	MaintainSupport   = nodes.MaintainSupport
 )
 
 // SetMaintainLevel declares how many empty carriers of one type a maintained
@@ -19,9 +20,22 @@ func (db *DB) SetMaintainLevel(l MaintainLevel) error {
 	return nodes.SetMaintainLevel(db.DB, l)
 }
 
-// RemoveMaintainLevel stops declaring a carrier type for a group.
+// SetMaintainLevelAndLayerWants declares a level and replaces its type's layer
+// wants, in one transaction.
+func (db *DB) SetMaintainLevelAndLayerWants(l MaintainLevel, wants []MaintainLayerWant) error {
+	return nodes.SetMaintainLevelAndLayerWants(db.DB, l, wants)
+}
+
+// RemoveMaintainLevel stops declaring a carrier type for a group, and removes
+// its layer wants with it.
 func (db *DB) RemoveMaintainLevel(groupNodeID, binTypeID int64) error {
 	return nodes.RemoveMaintainLevel(db.DB, groupNodeID, binTypeID)
+}
+
+// ListMaintainLayerWants returns a group's layer wants, codes and each type's
+// totes per layer joined on.
+func (db *DB) ListMaintainLayerWants(groupNodeID int64) ([]MaintainLayerWant, error) {
+	return nodes.ListMaintainLayerWants(db.DB, groupNodeID)
 }
 
 // ListMaintainLevels returns a group's declared level, bin-type codes joined on.

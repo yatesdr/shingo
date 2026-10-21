@@ -26,9 +26,10 @@ import (
 // (www/handlers_nodes.go), so a scalar stored there arrives with a trail; a
 // scalar stored in a new table would arrive with none until somebody built one.
 //
-// INERT AS OF v90. Nothing reads any of this. The level keeper that will is a
-// later phase, and until it exists these tables describe an intent the system
-// does not yet act on.
+// READ BY THE LEVEL KEEPER (engine/maintainer.go), which tops each group up to
+// its levels, and by the resolver and the capacity plan, which hold a push to
+// them. The layer wants (node_maintain_layer_levels, v161) are read by neither:
+// they say which heights a group wants, and nothing caps or sources on them.
 
 // Node-property keys for the maintained-group scalars. The sets get tables; the
 // four singular answers get properties, for the audit reason above.
@@ -121,15 +122,114 @@ func SetMaintainLevel(db *sql.DB, l MaintainLevel) error {
 	return nil
 }
 
-// RemoveMaintainLevel stops declaring a type for a group entirely. Distinct from
-// setting want=0, which keeps the line and says "none right now".
+// MaintainLayerWant is how many carts of one level's type, standing a given
+// number of layers high, a maintained group wants: one row of
+// node_maintain_layer_levels.
+//
+// COMMUNICATION, NOT A CAP. The cap is the type's MaintainLevel; layer wants
+// are not summed against it, and nothing refuses a push or mints an ask on
+// them. They say which heights the group is short of, so a person at an
+// unloader can be told what to send a cart back as.
+//
+// A layer want belongs to its level: it is written with the level's save and
+// removed with the level (SetMaintainLevelAndLayerWants, RemoveMaintainLevel).
+// TotesPerLayer is the type's bin_types.totes_per_layer, joined on read; nil
+// when the type does not state one, and then no cart can be counted at a
+// height.
+type MaintainLayerWant struct {
+	GroupNodeID   int64  `json:"group_node_id"`
+	BinTypeID     int64  `json:"bin_type_id"`
+	BinTypeCode   string `json:"bin_type_code"`
+	Layers        int    `json:"layers"`
+	Want          int    `json:"want"`
+	TotesPerLayer *int   `json:"totes_per_layer,omitempty"`
+}
+
+// SetMaintainLevelAndLayerWants declares a level and replaces that type's
+// layer wants with the given set, in one transaction: a save that changes the
+// level and its heights changes both or neither. An empty set clears the
+// type's layer wants. The rows' GroupNodeID and BinTypeID are the level's;
+// only Layers and Want are read.
+func SetMaintainLevelAndLayerWants(db *sql.DB, l MaintainLevel, wants []MaintainLayerWant) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin set maintain level group=%d/bin_type=%d: %w", l.GroupNodeID, l.BinTypeID, err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	if _, err := tx.Exec(`
+		INSERT INTO node_maintain_levels (group_node_id, bin_type_id, want)
+		VALUES ($1,$2,$3)
+		ON CONFLICT (group_node_id, bin_type_id)
+		DO UPDATE SET want=EXCLUDED.want, updated_at=NOW()`,
+		l.GroupNodeID, l.BinTypeID, l.Want); err != nil {
+		return fmt.Errorf("set maintain level group=%d/bin_type=%d: %w", l.GroupNodeID, l.BinTypeID, err)
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM node_maintain_layer_levels WHERE group_node_id=$1 AND bin_type_id=$2`,
+		l.GroupNodeID, l.BinTypeID); err != nil {
+		return fmt.Errorf("clear layer wants group=%d/bin_type=%d: %w", l.GroupNodeID, l.BinTypeID, err)
+	}
+	for _, w := range wants {
+		if _, err := tx.Exec(`
+			INSERT INTO node_maintain_layer_levels (group_node_id, bin_type_id, layers, want)
+			VALUES ($1,$2,$3,$4)`,
+			l.GroupNodeID, l.BinTypeID, w.Layers, w.Want); err != nil {
+			return fmt.Errorf("set layer want group=%d/bin_type=%d/layers=%d: %w",
+				l.GroupNodeID, l.BinTypeID, w.Layers, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// RemoveMaintainLevel stops declaring a type for a group entirely, and removes
+// that type's layer wants in the same transaction: a height of a type the
+// group no longer holds says nothing. Distinct from setting want=0, which
+// keeps the line and says "none right now".
+//
+// The layer wants go here and not by a foreign key from them to the level
+// row: v161 declared them against nodes and bin_types only.
 func RemoveMaintainLevel(db *sql.DB, groupNodeID, binTypeID int64) error {
-	if _, err := db.Exec(
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin remove maintain level group=%d/bin_type=%d: %w", groupNodeID, binTypeID, err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	if _, err := tx.Exec(
+		`DELETE FROM node_maintain_layer_levels WHERE group_node_id=$1 AND bin_type_id=$2`,
+		groupNodeID, binTypeID); err != nil {
+		return fmt.Errorf("remove layer wants group=%d/bin_type=%d: %w", groupNodeID, binTypeID, err)
+	}
+	if _, err := tx.Exec(
 		`DELETE FROM node_maintain_levels WHERE group_node_id=$1 AND bin_type_id=$2`,
 		groupNodeID, binTypeID); err != nil {
 		return fmt.Errorf("remove maintain level group=%d/bin_type=%d: %w", groupNodeID, binTypeID, err)
 	}
-	return nil
+	return tx.Commit()
+}
+
+// ListMaintainLayerWants returns a group's layer wants, every type's, in the
+// levels' order (by code, as ListMaintainLevels) and then by height, with the
+// code and the type's totes per layer joined on.
+func ListMaintainLayerWants(db *sql.DB, groupNodeID int64) ([]MaintainLayerWant, error) {
+	rows, err := db.Query(`
+		SELECT w.group_node_id, w.bin_type_id, bt.code, w.layers, w.want, bt.totes_per_layer
+		FROM node_maintain_layer_levels w
+		JOIN bin_types bt ON bt.id = w.bin_type_id
+		WHERE w.group_node_id=$1
+		ORDER BY bt.code, w.layers`, groupNodeID)
+	if err != nil {
+		return nil, fmt.Errorf("list layer wants group=%d: %w", groupNodeID, err)
+	}
+	defer rows.Close()
+	var out []MaintainLayerWant
+	for rows.Next() {
+		var w MaintainLayerWant
+		if err := rows.Scan(&w.GroupNodeID, &w.BinTypeID, &w.BinTypeCode, &w.Layers, &w.Want, &w.TotesPerLayer); err != nil {
+			return nil, fmt.Errorf("scan layer want: %w", err)
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
 }
 
 // ListMaintainLevels returns a group's declared level with the bin-type CODES
