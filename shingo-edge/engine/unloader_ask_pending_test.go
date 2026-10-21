@@ -94,3 +94,22 @@ func TestReleaseU1_TheAskAddsNoWaitToTheRelease(t *testing.T) {
 		}
 	}
 }
+
+// TestUnloaderAskNote_OneAskManyParts: the note covers the ask, whatever it
+// names: one part is named, several are counted (a twenty-part ask would not
+// fit a card note), and parts out in two asks at one window count once each.
+func TestUnloaderAskNote_OneAskManyParts(t *testing.T) {
+	t.Parallel()
+	eng := testEngine(t, testEngineDB(t))
+	eng.setUnloaderAsk(unloaderAskKey{window: "W1", parts: "PART-A"}, true)
+	if got := eng.UnloaderAskNote("W1"); got != "A full of PART-A is asked of Core; no answer yet" {
+		t.Errorf("one part: %q", got)
+	}
+	eng.setUnloaderAsk(unloaderAskKey{window: "W1", parts: "PART-A,PART-B,PART-C"}, true)
+	if got := eng.UnloaderAskNote("W1"); got != "Fulls of 3 parts are asked of Core; no answer yet" {
+		t.Errorf("several parts: %q", got)
+	}
+	if got := eng.UnloaderAskNote("W2"); got != "" {
+		t.Errorf("another window: %q, want none", got)
+	}
+}

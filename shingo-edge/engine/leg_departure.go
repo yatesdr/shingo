@@ -157,7 +157,8 @@ func orderWorksTheCell(o *domain.Order) bool {
 // loader's synthesized one) has AutoPush: tracked at the window, sourced from it,
 // and lifted there. Any carrier leaving such a window frees it, so this is not
 // specific to the half loader. Edge-local reads until it fires, then one ask
-// per payload the unloader serves, not waited for (rePushOwnUnloader). Pinned by TestAutoPushCycle_SingleWindow_RefillsAtThePickup.
+// naming the parts the unloader serves, not waited for (rePushOwnUnloader).
+// Pinned by TestAutoPushCycle_SingleWindow_RefillsAtThePickup.
 func (e *Engine) rePullOnEmptyOutPickup(order *domain.Order, location string) {
 	if order == nil || order.ProcessNodeID == nil || order.OrderType != orders.TypeMove {
 		return

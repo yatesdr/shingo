@@ -34,10 +34,10 @@ import (
 // next trigger asks again.
 
 // unloaderAskKey is one pending U1 ask, by the window whose card says so and
-// the part asked for.
+// the parts it names, in order, joined.
 type unloaderAskKey struct {
-	window  string
-	payload string
+	window string
+	parts  string
 }
 
 // MaybeCreateUnloaderFullIn (U1 of the side-cycle model) is the consumer-side
@@ -77,21 +77,22 @@ func (e *Engine) MaybeCreateUnloaderFullIn(payloadCode string) {
 	e.offerUnloaderFulls(loader, []domain.PayloadCode{domain.PayloadCode(payloadCode)})
 }
 
-// offerUnloaderFulls asks Core for one full of each payload the unloader
-// serves, a release's full-in each (the side-cycle origin), and returns without
-// waiting for the answers.
+// offerUnloaderFulls asks Core, in one ask, for a full of each payload offered
+// that the unloader serves (a release's full-in: the side-cycle origin, its
+// parts in the order given), and returns without waiting for the answer.
 //
 // Callers: the unloader's own auto_push gates (rePushOwnUnloader and
 // rePushOwnUnloaderIfUncovered: CLEAR, PUSH EMPTY, the U2's pickup, the U2's
 // landing), the startup sweep (pushUnloaders), and, one payload at a time,
 // MaybeCreateUnloaderFullIn on a produce release that carries capture_lineside.
 //
-// Cost: one ask per payload offered (a SQLite outbox row each, no wait) after
-// one process-node read per window until this Edge's is found (ownWindow);
-// nothing at all for an unloader with no inbound source or none of the
-// payloads, and no ask for one with no window here.
-// Core's answer to a release's full is 16 statements at a free three-window
-// unloader and 5 for a part already coming (the Core lane's count).
+// Cost: one ask per unloader, however many payloads (a SQLite outbox row, no
+// wait), after one process-node read per window until this Edge's is found
+// (ownWindow); nothing at all for an unloader with no inbound source or none
+// of the payloads, and no ask for one with no window here. Core answers it in
+// one decision: 16 statements for a twenty-payload one-window unloader, the
+// same as for one part, where twenty one-part asks cost 225
+// (TestSideCycleParts_TwentyPartsAtOneWindowIsOneAsk).
 func (e *Engine) offerUnloaderFulls(loader *domain.Loader, payloads []domain.PayloadCode) {
 	if loader == nil {
 		return
@@ -117,9 +118,7 @@ func (e *Engine) offerUnloaderFulls(loader *domain.Loader, payloads []domain.Pay
 	if !ok {
 		return
 	}
-	for _, p := range served {
-		e.askUnloaderFull(loader, window, p)
-	}
+	e.askUnloaderFulls(loader, window, served)
 }
 
 // ownWindow is the first of the unloader's windows this Edge holds a process
@@ -150,19 +149,19 @@ func (e *Engine) ownWindow(loader *domain.Loader) (string, bool) {
 	return "", false
 }
 
-// askUnloaderFull sends one release's full-in ask for payload at the unloader,
+// askUnloaderFulls sends one release's full-in ask for parts at the unloader,
 // with the board's pending note on window until Core answers it.
-func (e *Engine) askUnloaderFull(loader *domain.Loader, window, payload string) {
-	key := unloaderAskKey{window: window, payload: payload}
+func (e *Engine) askUnloaderFulls(loader *domain.Loader, window string, parts []string) {
+	key := unloaderAskKey{window: window, parts: strings.Join(parts, ",")}
 	// The note is up before the ask is out, so an answer cannot beat it.
 	e.setUnloaderAsk(key, true)
 	if !e.CoreAnswers(protocol.AskLoaderRetrieve) {
-		e.logFn("side-cycle: unloader %s payload %s: %v — the board says it is not answered", loader.ID(), payload, doesNotAnswer(protocol.AskLoaderRetrieve))
+		e.logFn("side-cycle: unloader %s parts %v: %v — the board says it is not answered", loader.ID(), parts, doesNotAnswer(protocol.AskLoaderRetrieve))
 		return
 	}
 	req := protocol.LoaderRetrieveRequest{
 		LoaderKey: string(loader.ID()), Direction: protocol.LoaderRetrieveFull, Origin: protocol.LoaderAskSideCycle,
-		PayloadCode: payload, Count: 1,
+		Payloads: parts, Count: 1,
 		// NO_DEMAND: the U1 is EVENT-driven (a full appeared, a window freed),
 		// has no process grain (it resolves a loader by payload) and wants a
 		// fixed one; nothing's demand asked for this bin. If it were ever real
@@ -181,23 +180,30 @@ func (e *Engine) askUnloaderFull(loader *domain.Loader, window, payload string) 
 	case errors.Is(err, ErrAskPending):
 		// Out; the answer is taken when it comes (late above).
 	default:
-		e.logFn("side-cycle: unloader %s payload %s: ask not sent: %v", loader.ID(), payload, err)
+		e.logFn("side-cycle: unloader %s parts %v: ask not sent: %v", loader.ID(), parts, err)
 	}
 }
 
 // unloaderFullAnswered is Core's answer to a release's full-in ask: the
-// pending note goes, and what Core did is logged. The order itself arrives as
-// a projection, ahead of the answer.
+// pending note goes, and what Core did with each part is logged. The orders
+// themselves arrive as projections, ahead of the answer.
 func (e *Engine) unloaderFullAnswered(loader *domain.Loader, key unloaderAskKey, a *protocol.EdgeAnswer) {
 	e.setUnloaderAsk(key, false)
 	res, err := askInto[protocol.LoaderRetrieveResponse](a)
-	switch {
-	case err != nil:
-		e.logFn("side-cycle: unloader %s payload %s: Core refused the U1: %v", loader.ID(), key.payload, err)
-	case len(res.Created) > 0:
-		log.Printf("side-cycle: %d U1 order(s) by Core for unloader %s payload %s", len(res.Created), loader.ID(), key.payload)
-	default:
-		e.debugFn("side-cycle: unloader %s payload %s: no U1 — %s", loader.ID(), key.payload, heldWhy(res))
+	if err != nil {
+		e.logFn("side-cycle: unloader %s parts %s: Core refused the U1: %v", loader.ID(), key.parts, err)
+		return
+	}
+	if res.Skipped != "" {
+		e.debugFn("side-cycle: unloader %s parts %s: no U1 — %s", loader.ID(), key.parts, res.Skipped)
+	}
+	for _, p := range res.Parts {
+		if len(p.Created) > 0 {
+			log.Printf("side-cycle: %d U1 order(s) by Core for unloader %s payload %s", len(p.Created), loader.ID(), p.PayloadCode)
+			continue
+		}
+		e.debugFn("side-cycle: unloader %s payload %s: no U1 — %s", loader.ID(), p.PayloadCode,
+			heldWhy(&protocol.LoaderRetrieveResponse{Skipped: p.Skipped, HeldBy: p.HeldBy}))
 	}
 }
 
@@ -234,23 +240,33 @@ func (e *Engine) setUnloaderAsk(key unloaderAskKey, pending bool) {
 // U1 asked of Core and not answered (the station view's ask_pending), blank
 // when none is out.
 func (e *Engine) UnloaderAskNote(coreNodeName string) string {
+	seen := map[string]bool{}
 	var parts []string
 	e.unloaderAsks.Range(func(k, _ any) bool {
 		if key := k.(unloaderAskKey); key.window == coreNodeName {
-			parts = append(parts, key.payload)
+			for _, p := range strings.Split(key.parts, ",") {
+				if !seen[p] {
+					seen[p] = true
+					parts = append(parts, p)
+				}
+			}
 		}
 		return true
 	})
-	if len(parts) == 0 {
+	switch len(parts) {
+	case 0:
 		return ""
+	case 1:
+		// OWNER-WORDS
+		return fmt.Sprintf("A full of %s is asked of Core; no answer yet", parts[0])
 	}
-	slices.Sort(parts)
 	// OWNER-WORDS
-	return fmt.Sprintf("A full of %s is asked of Core; no answer yet", strings.Join(parts, ", "))
+	return fmt.Sprintf("Fulls of %d parts are asked of Core; no answer yet", len(parts))
 }
 
 // pushUnloaders is the unloaders' startup sweep: it walks every consume loader
-// in the aggregate and asks Core for a full of each allowed payload. Core's
+// in the aggregate and asks Core, once per unloader, for a full of each allowed
+// payload. Core's
 // count makes it idempotent, so it is safe as a sweep: already-covered windows
 // get nothing.
 //

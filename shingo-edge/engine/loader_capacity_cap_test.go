@@ -161,9 +161,9 @@ func multiPayloadLoaderInfo(coreNode, role, repl string, payloads []string, _ in
 // TestUnloaderCapacityCap_AutoPushBoundedByWindowSlots is the consume-side
 // analog: a 20-payload AutoPush unloader's re-pull (rePushOwnUnloader, what the
 // pickup gate calls, and the CLEAR / PUSH EMPTY / U2-landed gates when not
-// covered locally) stages one full-in (U1) at its one window. The cost: one ask
-// per payload, so 20 asks for one window; Core answers 19 with the window
-// held.
+// covered locally) stages one full-in (U1) at its one window. The cost: ONE
+// ask naming the twenty parts in the unloader's order; Core places the first
+// and answers the other nineteen held.
 func TestUnloaderCapacityCap_AutoPushBoundedByWindowSlots(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -181,13 +181,17 @@ func TestUnloaderCapacityCap_AutoPushBoundedByWindowSlots(t *testing.T) {
 	if got := inFlightFulls(t, db, []string{"UNLOADER-1"}); got != 1 {
 		t.Errorf("AutoPush unloader staged %d full-in orders, want 1 for the one-bin window", got)
 	}
-	if n := core.asks.Load(); n != 20 {
-		t.Errorf("asks = %d, want 20 (one per payload)", n)
+	if n := core.asks.Load(); n != 1 {
+		t.Errorf("asks = %d, want 1 for the unloader", n)
+	}
+	ask := core.lastAsk()
+	if ask.Origin != protocol.LoaderAskSideCycle || ask.PayloadCode != "" || len(ask.Payloads) != 20 || ask.Payloads[0] != payloads[0] || ask.Payloads[19] != payloads[19] {
+		t.Errorf("ask = %+v, want a release's full-in naming the twenty parts in order", ask)
 	}
 }
 
 // TestUnloaderCapacityCap_SweepPushBoundedByWindowSlots covers the startup
-// sweep path (SweepPushUnloaders), which offers every payload as the gates'
+// sweep path (SweepPushUnloaders), which offers every payload in one ask as the gates'
 // rePushOwnUnloader does and hits the same node cap on Core.
 func TestUnloaderCapacityCap_SweepPushBoundedByWindowSlots(t *testing.T) {
 	t.Parallel()

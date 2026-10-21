@@ -607,8 +607,8 @@ func (e *Engine) rePushOwnLoader(node *processes.Node) {
 }
 
 // rePushOwnUnloader offers the next full-in (U1) at the consume loader that owns
-// node, and only that one: one loader retrieve ask per payload it serves, not
-// waited for (offerUnloaderFulls; none when the unloader has no inbound source
+// node, and only that one: one loader retrieve ask naming the parts it serves,
+// not waited for (offerUnloaderFulls; none when the unloader has no inbound source
 // or no payloads). It is what the
 // re-pull gates call — CLEAR, PUSH EMPTY, the U2's pickup, and (behind a local
 // check) the U2's landing — each behind its own AutoPush condition.

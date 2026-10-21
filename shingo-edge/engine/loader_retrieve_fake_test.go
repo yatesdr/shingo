@@ -163,6 +163,24 @@ func fakeTargets(dl *domain.Loader, member, payload string) []string {
 // standing on a target window. A loader with no inbound source is given
 // nothing unless the ask names a source or any source.
 func (c *coreRetrieve) model(t *testing.T, eng *Engine, req protocol.LoaderRetrieveRequest) protocol.LoaderRetrieveResponse {
+	if req.Origin == protocol.LoaderAskSideCycle {
+		// A release's full-in: each part in order, each seeing the orders the
+		// parts before it projected here, one outcome each.
+		res := protocol.LoaderRetrieveResponse{Want: req.Count, Created: []string{}}
+		for _, p := range req.Payloads {
+			one := req
+			one.Payloads, one.PayloadCode = nil, p
+			r := c.modelPart(t, eng, one)
+			res.Parts = append(res.Parts, protocol.LoaderRetrievePart{PayloadCode: p, Created: r.Created, HeldBy: r.HeldBy, Skipped: r.Skipped})
+			res.Created = append(res.Created, r.Created...)
+		}
+		return res
+	}
+	return c.modelPart(t, eng, req)
+}
+
+// modelPart is the model's answer for one part.
+func (c *coreRetrieve) modelPart(t *testing.T, eng *Engine, req protocol.LoaderRetrieveRequest) protocol.LoaderRetrieveResponse {
 	var dl *domain.Loader
 	for _, role := range []domain.LoaderRole{domain.RoleProduce, domain.RoleConsume} {
 		ls, err := eng.loaders().Loaders(role)
@@ -255,7 +273,7 @@ func (c *coreRetrieve) model(t *testing.T, eng *Engine, req protocol.LoaderRetri
 		if len(res.Created) >= want {
 			continue
 		}
-		uuid := fmt.Sprintf("%s%s-%d", prefix, n, c.asks.Load()*100+int64(len(res.Created)))
+		uuid := fmt.Sprintf("%s%s-%s-%d", prefix, n, req.PayloadCode, c.asks.Load()*100+int64(len(res.Created)))
 		if _, err := eng.ApplyOrderProjection(protocol.OrderProjection{
 			OrderUUID: uuid, OrderType: protocol.OrderTypeRetrieve, Status: "pending",
 			StationID: eng.cfg.StationID(), Quantity: 1, SourceNode: source, DeliveryNode: n,
