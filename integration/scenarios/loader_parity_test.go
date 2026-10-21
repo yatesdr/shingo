@@ -10,8 +10,7 @@ import (
 // loader_parity_test.go — what is left of the loader cutover's parity harness.
 //
 // It swept a large space of loader shapes through Core's delivery targets and
-// the Edge's own (domain.Loader.ReservationTarget) and failed on any
-// disagreement. The Edge's implementation went when the last Edge decider of a
+// the Edge's own, and failed on any disagreement. The Edge's implementation went when the last Edge decider of a
 // loader's windows did (the loader retrieve ask: Core counts and places every
 // carrier a loader asks for), and the sweep with it: there is one
 // implementation left, and the vectors pin it

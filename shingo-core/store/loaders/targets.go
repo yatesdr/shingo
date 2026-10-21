@@ -9,22 +9,22 @@ import (
 // targets.go — which nodes an inbound carrier for a loader may be delivered to,
 // and how many may be inbound at once.
 //
-// This is the Core port of the Edge's domain.Loader.ReservationTarget
-// (shingo-edge/domain/loader.go). It exists so Core can originate a loader
-// replenishment without asking the Edge where to put it.
+// It began as the Core port of the Edge's own answer, so Core could originate
+// a loader replenishment without asking the Edge where to put it. The Edge's
+// copy is gone (every carrier a loader is asked for is Core's to place,
+// dispatch.ReplenishLoader), and this is the one implementation.
 //
-// PINNED TO THE EDGE, NOT TO WHAT LOOKS RIGHT. The two implementations are held
-// together by shared golden vectors, and where the Edge does something
-// surprising this reproduces the surprise rather than quietly improving on it.
-// Two subsystems disagreeing about which window a carrier goes to is worse than
-// both being consistently odd, and the divergence would only surface as a
-// carrier arriving somewhere nobody expected. Each such case is called out
-// below; a fix to any of them is a change to BOTH sides plus the vectors.
+// PINNED TO THE VECTORS, NOT TO WHAT LOOKS RIGHT. The shared golden vectors
+// (shared/loadervectors) record what the plant ran, surprises included, and
+// this reproduces them rather than quietly improving on them: a carrier
+// arriving somewhere nobody expected is how a quiet improvement would surface.
+// Each such case is called out below; a fix to any of them is a change here
+// plus the vectors.
 
 // Target is one delivery node for an inbound carrier.
 type Target struct {
-	// NodeName is the physical node an empty is delivered to. Names, not ids:
-	// the Edge keys on names, and this answer has to be comparable to the Edge's.
+	// NodeName is the physical node a carrier is delivered to. Names, not ids:
+	// the Edge keys on names, and the orders carry them.
 	NodeName string
 	// PayloadCode is the payload pinned at this node (dedicated positions only).
 	// Empty for a shared window, whose payload set belongs to the loader.
@@ -138,8 +138,8 @@ func DeliveryTargets(in DeliveryTargetsInput) (targets []Target, budget int) {
 // where plain text puts W10 before W2 and the funnel target moves without
 // anybody touching it.
 //
-// STILL ODD, deliberately, and reproduced from the Edge because parity beats
-// tidiness: BUFFER SLOTS COUNT AS WINDOWS. home_kind exists to separate a
+// STILL ODD, deliberately, because the Edge's board draws the same windows and
+// the two must agree: BUFFER SLOTS COUNT AS WINDOWS. home_kind exists to separate a
 // payload-pinned home from a kept-partial buffer, but nothing filters buffers
 // out of a shared loader's windows on either side: BuildLoaderInfos emits every
 // home as a position and the Edge turns every position into a window. So a
