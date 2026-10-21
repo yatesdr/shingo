@@ -561,15 +561,17 @@ func assignmentAt(groups []protocol.NodeBinsGroup, node string) *domain.TileAssi
 	return nil
 }
 
-// withClaimPlaces adds to the watch list the places the claims of every
+// withClaimPlaces adds to the watch list every process node, a station's or
+// not (a process with no operator station is requested through the API and
+// decided from the table like any other), and the places the claims of every
 // process with a node on it name, across every live style, that an engine
 // decision reads from the bins table (ListClaimWatchPlaces names each column
 // and its reader): the produce markets, which Core answers as a group row
-// with its members, the keep-staged spots and the staging nodes. Watch list
-// only: no board draws them, so no station's own list carries them. Static
-// between claim edits, never moved by a changeover; a claim edit that adds one
-// is picked up when a reader finds it unwatched (InvalidateBinNodes) or the
-// plant next moves.
+// with its members, the keep-staged spots, the staging nodes and the paired
+// positions. Watch list only: no board draws them, so no station's own list
+// carries them. Static between claim edits, never moved by a changeover; a
+// claim edit that adds one is picked up when a reader finds it unwatched
+// (InvalidateBinNodes) or the plant next moves.
 func withClaimPlaces(all []string, rows []processes.Node, places map[int64][]string) []string {
 	set := make(map[string]bool, len(all))
 	for _, n := range all {
@@ -579,6 +581,7 @@ func withClaimPlaces(all []string, rows []processes.Node, places map[int64][]str
 		if n.CoreNodeName == "" {
 			continue
 		}
+		set[n.CoreNodeName] = true
 		for _, m := range places[n.ProcessID] {
 			set[m] = true
 		}

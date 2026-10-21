@@ -502,3 +502,27 @@ func TestBinNodes_TheWatchCarriesTheSpotsAndTheStaging(t *testing.T) {
 		t.Errorf("station A's own list %v carries a claim's place; only the watch list should", got)
 	}
 }
+
+// TestBinNodes_TheWatchCarriesEveryProcessNode: a process with no operator
+// station is still requested (the API, the level keeper) and decided from the
+// bins table, so its nodes are on the watch list; no station's list carries
+// them.
+func TestBinNodes_TheWatchCarriesEveryProcessNode(t *testing.T) {
+	db, _ := countingDB(t)
+	svc, a, b := binsPlant(t, db)
+	pid, err := db.CreateProcess("LONE-PROC", "", "", "", false)
+	if err != nil {
+		t.Fatalf("create process: %v", err)
+	}
+	if _, err := db.CreateProcessNode(processes.NodeInput{ProcessID: pid, CoreNodeName: "LONE-1", Code: "L1",
+		Name: "LONE-1", Sequence: 1, Enabled: true}); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	svc.InvalidateBinNodes()
+	if watched := svc.WatchedBinNodes(); !slices.Contains(watched, "LONE-1") {
+		t.Errorf("watch list %v lacks the stationless process's node LONE-1", watched)
+	}
+	if slices.Contains(svc.BinNodes(a), "LONE-1") || slices.Contains(svc.BinNodes(b), "LONE-1") {
+		t.Error("a station's own list carries another process's node")
+	}
+}
