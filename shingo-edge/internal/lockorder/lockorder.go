@@ -55,6 +55,7 @@ type (
 	SceneGeometry   struct{}
 	Feeds           struct{}
 	LoaderBurst     struct{}
+	Asks            struct{}
 	IntentQueue     struct{}
 	StationScene    struct{}
 	StationCurtain  struct{}
@@ -95,6 +96,7 @@ func (SceneGraph) Rank() int      { return 112 }
 func (SceneGeometry) Rank() int   { return 113 }
 func (Feeds) Rank() int           { return 120 }
 func (LoaderBurst) Rank() int     { return 121 }
+func (Asks) Rank() int            { return 122 }
 func (IntentQueue) Rank() int     { return 122 }
 func (StationScene) Rank() int    { return 130 }
 func (StationCurtain) Rank() int  { return 131 }
@@ -137,6 +139,7 @@ func (SceneGraph) Name() string      { return "engine.sceneGraphMu" }
 func (SceneGeometry) Name() string   { return "engine.sceneGeometryMu" }
 func (Feeds) Name() string           { return "engine.feedBook.mu" }
 func (LoaderBurst) Name() string     { return "engine.loaderBurstTracker.mu" }
+func (Asks) Name() string            { return "engine.askBook.mu" }
 func (IntentQueue) Name() string     { return "engine.intentQueue.mu" }
 func (StationScene) Name() string    { return "service.sceneMu" }
 func (StationCurtain) Name() string  { return "service.curtainMu" }

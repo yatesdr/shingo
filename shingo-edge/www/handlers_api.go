@@ -2,10 +2,13 @@ package www
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+
+	"shingoedge/engine"
 )
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -83,4 +86,29 @@ func writeErrorWithExit(w http.ResponseWriter, status int, msg string, exit acti
 func parseID(r *http.Request, param string) (int64, error) {
 	s := chi.URLParam(r, param)
 	return strconv.ParseInt(s, 10, 64)
+}
+
+// askPendingNotice is what a station shows when its tap went to Core as an ask
+// and Core had not answered within the tap's wait (engine.AskWait). Never
+// "failed": the request is out and the answer, when it comes, redraws the
+// tile. The station holds that action's button while the answer is out.
+//
+// OWNER-WORDS
+const askPendingNotice = "sent — waiting for Core"
+
+// writeAskPending answers an operator action whose ask is still out (err is
+// engine.ErrAskPending): 202 with pending true and the notice, which the
+// station shows as a notice and not an error (operator-util.js postAction).
+// false, writing nothing, for any other error.
+func writeAskPending(w http.ResponseWriter, r *http.Request, err error) bool {
+	if !errors.Is(err, engine.ErrAskPending) {
+		return false
+	}
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Trigger", "refreshMaterial")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "pending", "pending": true, "notice": askPendingNotice})
+	return true
 }

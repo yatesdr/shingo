@@ -1,11 +1,17 @@
 package www
 
 import (
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
+
+	"shingoedge/engine"
 )
 
 // A RESPONSE BODY NOBODY READS IS STILL A CONTRACT.
@@ -101,5 +107,23 @@ func TestNodeOrderResultHasNoCycleMode(t *testing.T) {
 		t.Error(`cycle_mode is back on NodeOrderResult. It has no reader, and it cannot serve the ` +
 			`one it would attract: a primes-only round and a consume downgrade both report "simple". ` +
 			`Discriminate on the swap legs (see primeNoticeText), not on this.`)
+	}
+}
+
+// TestWriteAskPending_SaysSentNotFailed: an action whose ask is still out with
+// Core answers 202 with pending true and the notice, never an error; any other
+// error is left to the caller.
+func TestWriteAskPending_SaysSentNotFailed(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	if !writeAskPending(rec, httptest.NewRequest(http.MethodPost, "/x", nil), fmt.Errorf("record count: %w", engine.ErrAskPending)) {
+		t.Fatal("a wrapped ErrAskPending was not answered as pending")
+	}
+	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"pending":true`) ||
+		!strings.Contains(rec.Body.String(), askPendingNotice) {
+		t.Errorf("pending answer = %d %s", rec.Code, rec.Body.String())
+	}
+	if writeAskPending(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/x", nil), errors.New("refused")) {
+		t.Error("an ordinary error was answered as pending")
 	}
 }

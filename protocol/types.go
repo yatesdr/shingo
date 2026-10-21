@@ -423,6 +423,7 @@ func EdgeInboundSubjects() []string {
 		SubjectOrderProjected,
 		SubjectContainmentSnapshot,
 		SubjectBinsSnapshot,
+		SubjectEdgeAnswer,
 	}
 }
 

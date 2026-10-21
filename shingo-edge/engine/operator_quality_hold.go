@@ -128,7 +128,7 @@ func (e *Engine) SendBinToQualityHold(nodeID int64, actor string) (*orders.Order
 		// marker stays the separate best-effort call. The move IS the
 		// containment, so a failed marker write logs and continues rather than
 		// telling an operator their hold failed when the robot is already coming.
-		if err := e.coreClient.SetBinQualityHold(bin.BinID, true, actor); err != nil {
+		if err := e.SetBinQualityHold(bin.BinID, true, actor); err != nil {
 			log.Printf("quality-hold: move %d created but the Core hold marker failed for bin %d: %v", order.ID, bin.BinID, err)
 		}
 	} else {
@@ -280,7 +280,7 @@ func (e *Engine) ReleaseFromContainment(containmentNodeName string, binID int64,
 	if err != nil {
 		return nil, fmt.Errorf("create release move: %w", err)
 	}
-	if err := e.coreClient.SetBinQualityHold(binID, false, actor); err != nil {
+	if err := e.SetBinQualityHold(binID, false, actor); err != nil {
 		log.Printf("quality-hold: release move %d created but the hold clear failed for bin %d: %v", order.ID, binID, err)
 	}
 	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
@@ -354,4 +354,17 @@ func (e *Engine) RecallContainedPayload(payloadCode, actor string) (int, []strin
 		}
 	}
 	return created, refusals, nil
+}
+
+// SetBinQualityHold sets or clears a bin's quality-hold marker on Core: an ask
+// (bin.quality_hold) when the last ack names it, the bin-quality-hold door
+// otherwise, for one release. ErrAskPending when Core has not answered within
+// AskWait; the marker is then Core's to set when the ask arrives, and the
+// containment feed shows it.
+func (e *Engine) SetBinQualityHold(binID int64, hold bool, by string) error {
+	req := map[string]any{"bin_id": binID, "hold": hold, "by": by}
+	_, err := askOrDoor(e, protocol.AskQualityHold, req, func() (*struct{}, error) {
+		return &struct{}{}, e.coreClient.SetBinQualityHold(binID, hold, by)
+	})
+	return err
 }

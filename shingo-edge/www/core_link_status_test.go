@@ -16,6 +16,10 @@ import (
 // method would turn /status into a 503 on a plant with every test green.
 var _ statusEngine = (*engine.Engine)(nil)
 
+// The real engine clears a held bin's marker for the containment screen; without
+// this the release would answer 503 on a plant with every test green.
+var _ holdMarker = (*engine.Engine)(nil)
+
 // stubCoreLink is what stubEngine's Core-link reads answer.
 type stubCoreLink struct {
 	ackLocal, ackServer time.Time

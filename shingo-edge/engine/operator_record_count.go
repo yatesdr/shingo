@@ -115,7 +115,7 @@ func (e *Engine) declareCount(nodeID int64, coreNode string, rt *processes.Runti
 	req := protocol.BinCountRequest{NodeName: coreNode, BinID: binID, Epoch: seatEpoch(rt, binID),
 		ActualUOP: actualUOP, Actor: actor}
 	// Every refusal redraws the node from Core's rows before anything else.
-	counted, err := e.coreClient.RecordBinCount(req)
+	counted, err := e.sendCount(req)
 	err = e.refused(err)
 	var refused *CoreRefusal
 	if !errors.As(err, &refused) || refused.EpochRefresh == nil {
@@ -126,7 +126,7 @@ func (e *Engine) declareCount(nodeID int64, coreNode string, rt *processes.Runti
 		rt = fresh
 	}
 	req.Epoch = refused.EpochRefresh.Epoch
-	counted, err = e.coreClient.RecordBinCount(req)
+	counted, err = e.sendCount(req)
 	return counted, rt, e.refused(err)
 }
 
@@ -137,4 +137,17 @@ func seatEpoch(rt *processes.RuntimeState, binID int64) int64 {
 		return 0
 	}
 	return rt.ActiveBinEpoch
+}
+
+// sendCount is the count's one send: an ask (protocol.AskBinCount) when Core
+// answers it, the bin-count door otherwise (an older Core, for one release).
+// ErrAskPending when Core has not answered within AskWait: the count is out,
+// and Core's answer, when it comes, redraws the tile from its rows; the
+// corrected number reaches the seat by Core's own UOPAdjustment broadcast,
+// which the count enqueues in its transaction, so the late answer needs no
+// applier of its own.
+func (e *Engine) sendCount(req protocol.BinCountRequest) (*BinCountResponse, error) {
+	return askOrDoor(e, protocol.AskBinCount, req, func() (*BinCountResponse, error) {
+		return e.coreClient.RecordBinCount(req)
+	})
 }

@@ -420,6 +420,13 @@ func subjectFixtures() map[string]subjectFixture {
 			return w.dataEnv(protocol.SubjectBinsSnapshot, protocol.NodeBinsSnapshot{Digest: w.uniq("bins"),
 				Rows: []protocol.NodeBinsRow{{Node: "PLN_01", Occupied: true, BinID: 43, BinLabel: w.uniq("BIN"), PayloadCode: "PART-W", Stocked: true}}})
 		}},
+		// An ask's answer carries Core's rows for the nodes the act touched: they
+		// patch the held bins copy, and the station view is told.
+		"data:" + protocol.SubjectEdgeAnswer: {env: func(w *walk) *protocol.Envelope {
+			return w.dataEnv(protocol.SubjectEdgeAnswer, protocol.EdgeAnswer{Kind: protocol.AskBinCount, Status: protocol.AnswerRefused,
+				Sentence: "refused", Rows: []protocol.NodeBinsRow{{Node: "PLN_01", State: protocol.BinsStateOccupied, Occupied: true,
+					BinID: 44, BinLabel: w.uniq("BIN"), PayloadCode: "PART-W", Stocked: true}}})
+		}},
 	}
 }
 

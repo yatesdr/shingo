@@ -35,6 +35,9 @@ func (h *Handlers) apiLoadBin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.orchestration.LoadBin(id, req.PayloadCode, req.UOPCount, req.Manifest); err != nil {
+		if writeAskPending(w, r, err) {
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -99,6 +102,9 @@ func (h *Handlers) apiClearLoaderHome(w http.ResponseWriter, r *http.Request) {
 	}
 	sentence, err := h.orchestration.ClearLoaderHome(id)
 	if err != nil {
+		if writeAskPending(w, r, err) {
+			return
+		}
 		var refused *engine.HomeClearRefused
 		if errors.As(err, &refused) {
 			writeError(w, http.StatusConflict, refused.Sentence)
@@ -168,6 +174,9 @@ func (h *Handlers) apiClearBin(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if err := h.orchestration.ClearBin(id, body.BinTypeCode, body.Unload, body.Layers); err != nil {
+		if writeAskPending(w, r, err) {
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -203,6 +212,9 @@ func (h *Handlers) apiRecordCount(w http.ResponseWriter, r *http.Request) {
 		actor = "operator"
 	}
 	if err := h.orchestration.RecordBinCount(id, body.ActualUOP, actor); err != nil {
+		if writeAskPending(w, r, err) {
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

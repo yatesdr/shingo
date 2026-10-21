@@ -298,6 +298,9 @@ var neverDeadLetter = map[string]bool{
 	// A dead-lettered hold drop is parts that left the count with no row
 	// anywhere saying so.
 	protocol.SubjectHoldDropped: true,
+	// An ask's answer is a fact already true at Core; one dead-lettered leaves
+	// the asking Edge's table and seat wrong until something else heals them.
+	"data.reply." + protocol.SubjectEdgeAnswer: true,
 }
 
 // publishOne reports whether the message was acked. False means the publish

@@ -178,6 +178,16 @@ export async function fetchWithTimeout(url, opts, ms) {
 // only ends one with no answer at all. Pinned by operator-safe-taps.test.js.
 const POST_TIMEOUT_MS = 30000;
 
+// ASK_HOLD_MS is how long a station holds an action whose ask is still out
+// (a 202 pending answer): the ask's lifetime at Core (protocol.AskTTL, 25 s)
+// and the Edge's slack past it (engine askForgetSlack, 10 s). Past it Core can
+// no longer act on the ask, so the action may be sent again.
+const ASK_HOLD_MS = 35000;
+
+// pendingAsks holds, by action URL (the node and the act), the actions sent
+// and not yet answered.
+const pendingAsks = new Map();
+
 // postAction is the single POST→refresh path: it posts an operator action
 // and refreshes the view. Returns true on 2xx. Caller passes its own loadView
 // callback so this module stays free of state/view dependencies.
@@ -205,6 +215,15 @@ const POST_TIMEOUT_MS = 30000;
 // body on failure, for `error` and for the inline `exit` action. It only ever
 // threw the body away on success.
 export async function postAction(url, body, loadView, opts) {
+    // A tap whose ask is still out with Core is held: the same action on the
+    // same node is not sent again until Core can no longer act on the first
+    // (ASK_HOLD_MS). The answer redraws the tile when it lands.
+    const held = pendingAsks.get(url);
+    if (held && held.until > Date.now()) {
+        showToast(held.notice, 'info');
+        return false;
+    }
+    pendingAsks.delete(url);
     try {
         const res = await fetchWithTimeout(url, {
             method: 'POST',
@@ -251,6 +270,19 @@ export async function postAction(url, body, loadView, opts) {
             }
             showToast(msg, 'error');
             return false;
+        }
+        // 202 pending: the tap went to Core as an ask and Core had not
+        // answered within the tap's wait. Not an error and not a done: a
+        // notice, and the action held until Core can no longer act on it.
+        if (res.status === 202) {
+            let parsed = null;
+            try { parsed = await res.clone().json(); } catch { parsed = null; }
+            if (parsed && parsed.pending) {
+                pendingAsks.set(url, { notice: parsed.notice, until: Date.now() + ASK_HOLD_MS });
+                showToast(parsed.notice, 'info');
+                if (loadView) await loadView();
+                return true;
+            }
         }
         if (opts && typeof opts.onResult === 'function') {
             // Read before the refresh so a caller can compare against what it

@@ -22,6 +22,7 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 
@@ -141,10 +142,12 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 		if delivered.BinID != nil {
 			deliveredBin = *delivered.BinID
 		}
-		cleared, err := e.coreClient.ClearBin(protocol.BinClearRequest{NodeName: node.CoreNodeName, BinID: deliveredBin})
-		if err != nil {
-			log.Printf("market_pullback: auto-clear bin at %s: %v", node.CoreNodeName, e.refused(err))
-		} else {
+		req := protocol.BinClearRequest{NodeName: node.CoreNodeName, BinID: deliveredBin}
+		answered := func(cleared *BinClearResponse, err error) {
+			if err != nil {
+				log.Printf("market_pullback: auto-clear bin at %s: %v", node.CoreNodeName, e.refused(err))
+				return
+			}
 			log.Printf("market_pullback: auto-cleared bin at %s on delivery", node.CoreNodeName)
 			// The stamp and the identity: the auto-clear started this carrier's
 			// next life, and it is known-empty now — the clear is the
@@ -158,6 +161,15 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 				log.Printf("market_pullback: record the clear at %s: %v", node.CoreNodeName, err)
 			}
 		}
+		// An ask when Core answers bin.clear, the bin-clear door otherwise; an
+		// answer after the wait is taken the same way when it comes.
+		cleared, err := askOrDoorLate(e, protocol.AskBinClear, req,
+			func() (*BinClearResponse, error) { return e.coreClient.ClearBin(req) }, answered)
+		if errors.Is(err, ErrAskPending) {
+			log.Printf("market_pullback: auto-clear at %s sent to Core, not answered yet", node.CoreNodeName)
+			return
+		}
+		answered(cleared, err)
 	}
 }
 

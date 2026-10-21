@@ -164,7 +164,15 @@ let requests = [];
 // answers are a refusal (409 with an error).
 let held = false;
 let failNext = 0;
+// pendingNext: the next answers are 202 pending (an ask Core has not answered
+// within the tap's wait).
+let pendingNext = 0;
 let waiting = [];
+function pendingAnswer() {
+    const body = { status: 'pending', pending: true, notice: 'sent — waiting for Core' };
+    const res = { ok: true, status: 202, json: async () => body, text: async () => JSON.stringify(body), clone() { return res; } };
+    return res;
+}
 function answer(ok) {
     const res = {
         ok: ok, status: ok ? 200 : 409,
@@ -179,6 +187,7 @@ function fetchStub(url, opts) {
     const method = opts.method || 'GET';
     requests.push({ method: method, url: url, body: opts.body === undefined ? undefined : JSON.parse(opts.body) });
     if (method === 'GET') return Promise.resolve(answer(true));
+    if (pendingNext > 0) { pendingNext--; return Promise.resolve(pendingAnswer()); }
     const ok = failNext > 0 ? (failNext--, false) : true;
     if (!held) return Promise.resolve(answer(ok));
     return new Promise(function (resolve, reject) {
@@ -649,6 +658,23 @@ async function tap(node) { await node.click(); await flush(); }
     eq(toasts.children.map(t => t.textContent), ['No answer — check the board before trying again'],
         'and says so');
     waiting = [];
+}
+
+// ── A tap whose ask is still out ─────────────────────────────────────────────
+{
+    // Core had not answered within the tap's wait: the station says it was
+    // sent, not that it failed, and holds that action on that node until Core
+    // can no longer act on it; another action is not held.
+    resetDOM();
+    const toasts = document.getElementById('os-toast');
+    toasts.children = [];
+    pendingNext = 1;
+    const before = posts().length;
+    eq(await ctx.postAction('/api/process-nodes/1/record-count', { actual_uop: 3 }, loadView), true, 'a pending answer: true');
+    eq(await ctx.postAction('/api/process-nodes/1/record-count', { actual_uop: 3 }, loadView), false, 'the same action again: held');
+    eq(posts().length - before, 1, 'the held tap sent nothing');
+    eq(toasts.children.map(t => t.textContent), ['sent — waiting for Core', 'sent — waiting for Core'], 'both say it was sent');
+    eq(await ctx.postAction('/api/process-nodes/2/record-count', { actual_uop: 3 }, loadView), true, 'another node is not held');
 }
 
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }

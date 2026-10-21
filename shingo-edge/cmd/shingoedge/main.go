@@ -1269,6 +1269,9 @@ func buildInboundRouter(eng *engine.Engine, edgeHandler *messaging.EdgeHandler, 
 			log.Printf("edge_handler: node-bins snapshot: %v", err)
 		}
 	})
+	// Core's answer to an ask (engine/ask.go): applied by its kind, then handed
+	// to the waiting tap, if one is still waiting.
+	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeAnswer, eng.HandleEdgeAnswer)
 	// Core's whole open refusal set, sent to this Edge when its refusals digest
 	// differs from Core's. Merged per field, not copied; a failed apply is
 	// logged by the engine and the next heartbeat's digest asks again.

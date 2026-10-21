@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"slices"
@@ -262,7 +263,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	for i, m := range manifest {
 		items[i] = BinLoadItem(m)
 	}
-	loadResp, err := e.coreClient.LoadBin(&BinLoadRequest{
+	req := &BinLoadRequest{
 		NodeName:    node.CoreNodeName,
 		BinID:       checkedBinID,
 		Epoch:       checkedEpoch,
@@ -270,12 +271,35 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 		PayloadCode: payloadCode,
 		UOPCount:    uopCount,
 		Manifest:    items,
-	})
+	}
+	// The LOAD goes as an ask when Core answers it (bin.load), through the
+	// bin-load door otherwise. An answer that comes after the tap's wait runs
+	// the same follow-up then (afterLoad), in this process.
+	loadResp, err := askOrDoorLate(e, protocol.AskBinLoad, req,
+		func() (*BinLoadResponse, error) { return e.coreClient.LoadBin(req) },
+		func(late *BinLoadResponse, lerr error) {
+			if lerr != nil {
+				log.Printf("bin_ops: LOAD at node %s, answered late: %v", node.CoreNodeName, e.refused(lerr))
+				return
+			}
+			e.afterLoad(nodeID, node, claim, payloadCode, late)
+		})
+	if errors.Is(err, ErrAskPending) {
+		return fmt.Errorf("load bin: %w", err)
+	}
 	if err != nil {
 		// A refusal redraws the window from Core's rows before its sentence.
 		return fmt.Errorf("load bin: %w", e.refused(err))
 	}
+	e.afterLoad(nodeID, node, claim, payloadCode, loadResp)
+	return nil
+}
 
+// afterLoad is a LOAD's follow-up once Core has loaded the carrier: the
+// carrier's identity, the L1's confirm and the L2, the seat bound to Core's
+// count and stamp, the refusal it ends. Run when the answer comes, whether
+// inside the tap's wait or after it.
+func (e *Engine) afterLoad(nodeID int64, node *processes.Node, claim *processes.NodeClaim, payloadCode string, loadResp *BinLoadResponse) {
 	// CORE'S ANSWER IS THE COUNT, and everything downstream of here uses it
 	// rather than the argument. Core resolved the number it actually wrote to
 	// the ledger — the operator's when they declared one, the standard pack
@@ -329,7 +353,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 			e.inventoryDelta.Flush()
 		}
 		e.clearRefusalOnLoad(node.CoreNodeName, payloadCode)
-		return nil
+		return
 	}
 
 	// No delivered L1 here: the operator loaded a bin placed at the loader by
@@ -350,7 +374,6 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	e.fileLoadedOutbound(node, claim, payloadCode, 0)
 
 	e.clearRefusalOnLoad(node.CoreNodeName, payloadCode)
-	return nil
 }
 
 // clearRefusalOnLoad is CLEAR-ON-LOAD, the NORMAL end of a supply refusal. The
@@ -520,12 +543,37 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string, unload bool, layers 
 	}
 	// The CLEAR names the carrier the operator saw on the tile (boardBinID):
 	// Core refuses it when another stands there, rather than clearing that one.
-	cleared, err := e.coreClient.ClearBin(protocol.BinClearRequest{NodeName: node.CoreNodeName,
-		BinID: e.boardBinID(node.CoreNodeName), BinTypeCode: binTypeCode, Unload: unload, Layers: layers})
+	req := protocol.BinClearRequest{NodeName: node.CoreNodeName,
+		BinID: e.boardBinID(node.CoreNodeName), BinTypeCode: binTypeCode, Unload: unload, Layers: layers}
+	// The CLEAR goes as an ask when Core answers it (bin.clear), through the
+	// bin-clear door otherwise. An answer that comes after the tap's wait runs
+	// the same follow-up then (afterClear), in this process.
+	cleared, err := askOrDoorLate(e, protocol.AskBinClear, req,
+		func() (*BinClearResponse, error) { return e.coreClient.ClearBin(req) },
+		func(late *BinClearResponse, lerr error) {
+			if lerr != nil {
+				log.Printf("bin_ops: CLEAR at node %s, answered late: %v", node.CoreNodeName, e.refused(lerr))
+				return
+			}
+			if ferr := e.afterClear(nodeID, node, claim, late); ferr != nil {
+				log.Printf("bin_ops: CLEAR at node %s, answered late: %v", node.CoreNodeName, ferr)
+			}
+		})
+	if errors.Is(err, ErrAskPending) {
+		return fmt.Errorf("clear bin: %w", err)
+	}
 	if err != nil {
 		// A refusal redraws the window from Core's rows before its sentence.
 		return fmt.Errorf("clear bin: %w", e.refused(err))
 	}
+	return e.afterClear(nodeID, node, claim, cleared)
+}
+
+// afterClear is a CLEAR's follow-up once Core has cleared the carrier: the
+// empty-out at a consume window, the seat's zero under Core's new stamp, the
+// carrier's identity, the push-driven re-offers. Run when the answer comes,
+// whether inside the tap's wait or after it.
+func (e *Engine) afterClear(nodeID int64, node *processes.Node, claim *processes.NodeClaim, cleared *BinClearResponse) error {
 	// What the carrier held, for the CLEAR log line only — it does NOT ride the
 	// empty-out (see createUnloaderEmptyOut for why the U2 names no part). Blank
 	// from a Core that predates the field.

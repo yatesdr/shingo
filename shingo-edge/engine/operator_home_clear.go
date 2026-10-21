@@ -1,11 +1,13 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 
 	"shingo/protocol"
+	"shingoedge/store/processes"
 )
 
 // operator_home_clear.go — the station's clear of a dedicated loader's home.
@@ -70,11 +72,63 @@ func (e *Engine) ClearLoaderHome(nodeID int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ans, status, err := e.coreClient.ClearHome(protocol.ClearHomeRequest{
-		HomeNode: node.CoreNodeName, Station: e.cfg.StationID()})
+	req := protocol.ClearHomeRequest{HomeNode: node.CoreNodeName, Station: e.cfg.StationID()}
+	ans, status, err := e.sendHomeClear(req, func(late *protocol.ClearHomeResponse, lateStatus int) {
+		if sentence, lerr := e.afterHomeClear(nodeID, node, claim, late, lateStatus); lerr != nil {
+			log.Printf("home_clear: node %s, answered late: %v", node.Name, lerr)
+		} else {
+			log.Printf("home_clear: node %s, answered late: %s", node.Name, sentence)
+		}
+	})
 	if err != nil {
 		return "", fmt.Errorf("clear home %s: %w", node.Name, err)
 	}
+	return e.afterHomeClear(nodeID, node, claim, ans, status)
+}
+
+// sendHomeClear is the home clear's one send: an ask (clear_home, which Core
+// answers once per envelope and replays on a repeat) when the last ack names
+// it, the clear-home door otherwise, for one release. Either way the answer is
+// the door's body at its status. ErrAskPending past AskWait; late then takes
+// the answer when it comes, in this process.
+func (e *Engine) sendHomeClear(req protocol.ClearHomeRequest, late func(*protocol.ClearHomeResponse, int)) (*protocol.ClearHomeResponse, int, error) {
+	if !e.CoreAnswers(protocol.AskClearHome) {
+		return e.coreClient.ClearHome(req)
+	}
+	a, err := e.AskLate(protocol.AskClearHome, req, AskWait, func(a *protocol.EdgeAnswer) {
+		if ans, status, derr := homeClearAnswer(a); derr == nil {
+			late(ans, status)
+		} else {
+			log.Printf("home_clear: %s, answered late: %v", req.HomeNode, derr)
+		}
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return homeClearAnswer(a)
+}
+
+// homeClearAnswer is a clear_home answer as the door answered: its body (the
+// ClearHomeResponse at every status) and its status.
+func homeClearAnswer(a *protocol.EdgeAnswer) (*protocol.ClearHomeResponse, int, error) {
+	var ans protocol.ClearHomeResponse
+	if len(a.Body) > 0 {
+		if err := json.Unmarshal(a.Body, &ans); err != nil {
+			return nil, a.Status, fmt.Errorf("decode clear_home answer: %w", err)
+		}
+	} else {
+		ans.Status, ans.Error = "error", a.Sentence
+	}
+	if len(ans.Rows) == 0 {
+		ans.Rows = a.Rows
+	}
+	return &ans, a.Status, nil
+}
+
+// afterHomeClear is the home clear's follow-up on Core's answer: the zero
+// recorded on the seat whenever Core made it, a refusal's rows into the bins
+// copy before its sentence, the board's sentence for the arm Core chose.
+func (e *Engine) afterHomeClear(nodeID int64, node *processes.Node, claim *processes.NodeClaim, ans *protocol.ClearHomeResponse, status int) (string, error) {
 	// The zero stands whenever Core made it (every confirm past the fence and
 	// its checks, whatever arm): record it.
 	if ans.DeltaEpoch != 0 {

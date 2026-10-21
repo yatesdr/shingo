@@ -102,6 +102,10 @@ type Engine struct {
 	// feeds is what this Edge holds of each Core feed and what the last
 	// heartbeat ack said about Core (feeds.go).
 	feeds feedBook
+	// asks is the asks sent and not yet answered, and the kinds Core answers
+	// (ask.go); askAppliers is what each kind's answer applies beyond its rows.
+	asks        askBook
+	askAppliers map[string]askApplier
 	// containment is the held copy of Core's containment feed, for readers
 	// (LocalContainment); nil until one is received or loaded at boot.
 	containment atomic.Pointer[protocol.ContainmentSnapshot]
@@ -366,6 +370,9 @@ func New(c Config) *Engine {
 	// moves it publishes it at once (node_bins.go).
 	e.binWatchSource = e.stationService.WatchedBinNodes
 	e.stationService.SetBinNodesChangedFunc(e.binWatchChanged)
+	// What each ask kind's answer applies beyond its rows, waiter or none
+	// (ask.go).
+	e.askAppliers = askAppliersByKind()
 	e.stationService.SetNodeRetirer(e.RetireNode)
 	e.changeoverService = service.NewChangeoverService(e.db)
 	e.adminService = service.NewAdminService(e.db)

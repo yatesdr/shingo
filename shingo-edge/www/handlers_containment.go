@@ -347,7 +347,15 @@ func (h *Handlers) apiContainmentUnhold(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "bin_id is required")
 		return
 	}
-	if err := h.engine.CoreAPI().SetBinQualityHold(req.BinID, false, "containment-screen"); err != nil {
+	marker, ok := h.orchestration.(holdMarker)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "the hold marker cannot be cleared from here")
+		return
+	}
+	if err := marker.SetBinQualityHold(req.BinID, false, "containment-screen"); err != nil {
+		if writeAskPending(w, r, err) {
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -377,4 +385,12 @@ func (h *Handlers) apiContainmentRecall(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSONWithTrigger(w, r, map[string]any{"status": "ok", "created": created, "refusals": refusals}, "refreshMaterial")
+}
+
+// holdMarker is what the containment screen's release of a held bin asks of
+// the engine beyond EngineOrchestration: the marker's clear, an ask to Core
+// (engine.SetBinQualityHold). Asserted, as feedSpeaker is, so the
+// orchestration interface does not widen for it.
+type holdMarker interface {
+	SetBinQualityHold(binID int64, hold bool, by string) error
 }

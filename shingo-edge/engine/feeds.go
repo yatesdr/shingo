@@ -475,6 +475,7 @@ func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 	}
 	e.answerClaims(ack.Claims)
 	e.answerBinWatch(ack.BinWatch)
+	e.setAskKinds(ack.Asks)
 	if gap {
 		e.reconcileAfterGap(reconcile)
 	}

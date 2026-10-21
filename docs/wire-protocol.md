@@ -256,6 +256,7 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `containment.snapshot` | Core -> Edge | `ContainmentSnapshot` | Core's whole containment state (flags, held bins, what stands at each containment destination) with its digest; broadcast after a containment write, unicast when an Edge's heartbeat quotes a different `containment` digest. An Edge older than the subject logs "no handler" once per broadcast |
 | `bins.watch` | Edge -> Core | `BinWatchList` | The Core node names an edge's operator stations draw, sorted, each once, with their digest. Core keeps the latest per edge in memory, quotes its digest on every heartbeat ack (`bin_watch`) and answers each list with that edge's `bins` snapshot |
 | `bins.snapshot` | Core -> Edge | `NodeBinsSnapshot` | The bins at the nodes one edge watches (one row per watched name, a watched group's member rows after it: state unknown/group/empty/occupied, the number of bins there, the resident bin with its type, part, manifest, epoch, stocked and partial flags, tote numbers, the part's capacity, a held partial's arrival, line and count, and the live orders delivering there; no other count, no time that moves), the digest of the watch list it answers (`list_digest`) and its consume loaders' outbound-group lines, with their digest, under feed key `bins`. Sent to that edge alone on receipt of its watch list, after a change at a watched node, and when its heartbeat quotes a different `bins` digest. The edge holds it in memory only |
+| `edge.answer` | Core -> Edge | `EdgeAnswer` | Core's answer to one ask, a reply whose `cor` is the ask's envelope ID: the kind, the door's status and sentence, its response body, and Core's bins rows for the nodes the act touched. Never expires. The edge applies it by its kind (rows into its bins table, then the kind's own fact) whether or not a tap is still waiting |
 | `edge.ask` | Edge -> Core | `EdgeAsk` | A question that wants an answer: a kind (`AskKinds`) and that kind's request body, the one its HTTP door took. Rides the edge outbox and expires after `AskTTL`; Core answers it with `edge.answer` (a reply carrying the ask's envelope ID as `cor`), and answers one that arrives expired with status 408 and does nothing |
 | `supply.refusal_snapshot` | Core -> Edge | `SupplyRefusalSnapshot` | Core's whole open refusal set, sent to one Edge whose `refusals` feed digest differs from Core's; the Edge merges it per field and re-sends what it owns that Core is missing |
 | `transit.bin_picked_up` | Core -> Edge | `BinPickedUp` | The robot has the bin — the pickup half of a transit, distinct from delivery |
@@ -320,9 +321,11 @@ Data messages have a default TTL of 5 minutes, but individual subjects can overr
 | `transit.bin_picked_up` | **none** | A bin's lift; a dropped copy strands the slot's clear and a supply deferred to it — see below |
 | `transit.bin_landed` | **none** | A carrier's drop; a dropped copy leaves the seat empty while a carrier stands on it — see below |
 | `inventory.hold_dropped` | **none** | The only record that a hold's parts left the count; Core keys the row on the envelope id, so a late copy writes it late and a redelivered one writes nothing. Never dead-lettered |
+| `edge.answer` | **none** | An ask's answer: a fact already true at Core (rows, the act's outcome), applied by its kind on arrival — see below |
+| `edge.ask` | 25 seconds (`AskTTL`) | A question a person may be waiting on; Core answers one that arrives late with 408, nothing done |
 | Unknown subjects | 5 minutes | Safe general default |
 
-**Eight subjects carry NO expiry at all** (`protocol.NoExpiry`, 2026-08-22; the set is
+**Nine subjects carry NO expiry at all** (`protocol.NoExpiry`, 2026-08-22; the set is
 pinned against `protocol/expiry.go` by `protocol/docs_drift_test.go`). Every other data
 subject is a snapshot whose successor carries the same truth seconds later, so discarding a late
 copy costs nothing. The bin delta is an *increment*: a dropped one is a permanently wrong count
@@ -342,7 +345,10 @@ consolidation's Order B; each branch of the Edge's handler is safe on a late cop
 seat's placement stamp (`placed_seq`), so a redelivery binds nothing twice. A dropped produce
 hold (`inventory.hold_dropped`, 2026-10-20) is parts that left the count; its row is the only
 record of that, and Core writes it once per envelope id, so a late copy writes it late and a
-redelivery writes nothing.
+redelivery writes nothing. An ask's answer
+(`edge.answer`, 2026-10-19) carries what already happened at Core; the Edge applies it by its kind,
+so a late copy redraws rows that are at worst one snapshot old, and a repeat of an answer is
+applied twice to the same effect.
 
 They are safe to arrive arbitrarily late because Core guards both ends — `ApplyBinUOPDelta`
 dedups on `SequenceID` via `inventory_delta_dedup`, and the stale-epoch guard routes a delta from
