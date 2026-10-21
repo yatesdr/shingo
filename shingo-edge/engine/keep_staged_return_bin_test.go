@@ -40,7 +40,7 @@ func TestKeepStagedReturn_NamesTheBinItWasFor(t *testing.T) {
 		fx := seedKeepStagedChangeover(t,
 			[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
 			[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
-			map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
+			map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
 				"SPOT": {Occupied: true, PayloadCode: "PART-OLD", BinID: 88}})
 		startKSChangeover(t, fx)
 		if got := sentMoves(t, fx.db)["SPOT"]; len(got) != 1 || got[0].BinID != 88 {
@@ -52,7 +52,7 @@ func TestKeepStagedReturn_NamesTheBinItWasFor(t *testing.T) {
 	t.Run("a delivery from the spot names none", func(t *testing.T) {
 		t.Parallel()
 		eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-			map[string]NodeBinInfo{ksLine: {}, ksSpot: {Occupied: true, PayloadCode: ksPart, BinID: 99}})
+			map[string]protocol.NodeBinInfo{ksLine: {}, ksSpot: {Occupied: true, PayloadCode: ksPart, BinID: 99}})
 		_, err := eng.RequestNodeMaterial(nodeID, 1)
 		testutil.MustNoErr(t, err, "request")
 		got := sentMoves(t, db)[ksSpot]

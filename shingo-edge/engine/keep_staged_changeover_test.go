@@ -45,7 +45,7 @@ type coFixture struct {
 
 // seedKeepStagedChangeover builds a process with an active style A and a style
 // B, each claim in its list, and a Core stub answering node-bins from rows.
-func seedKeepStagedChangeover(t *testing.T, from, to []coClaim, rows map[string]NodeBinInfo) *coFixture {
+func seedKeepStagedChangeover(t *testing.T, from, to []coClaim, rows map[string]protocol.NodeBinInfo) *coFixture {
 	t.Helper()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -117,13 +117,13 @@ func seedKeepStagedChangeover(t *testing.T, from, to []coClaim, rows map[string]
 // holdRows holds what Core says now, rows, as the bins table (holdCoreRows),
 // with an empty row for every place the fixture's claims name that rows leaves
 // out; a name in omit gets no row at all (Core did not answer for it).
-func (fx *coFixture) holdRows(t *testing.T, rows map[string]NodeBinInfo, omit ...string) {
+func (fx *coFixture) holdRows(t *testing.T, rows map[string]protocol.NodeBinInfo, omit ...string) {
 	t.Helper()
 	skip := map[string]bool{}
 	for _, n := range omit {
 		skip[n] = true
 	}
-	answered := map[string]NodeBinInfo{}
+	answered := map[string]protocol.NodeBinInfo{}
 	for n, b := range rows {
 		if !skip[n] {
 			answered[n] = b
@@ -188,7 +188,7 @@ func TestKeepStagedChangeover_PartChangeSendsTheSpareBack(t *testing.T) {
 			fx := seedKeepStagedChangeover(t,
 				[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleConsume, mode, true, false}},
 				[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleConsume, mode, true, false}},
-				map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
+				map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
 					"SPOT": {Occupied: true, PayloadCode: "PART-OLD"}})
 			coID := startKSChangeover(t, fx)
 			got := readSpotTraffic(t, fx, "SPOT")
@@ -223,7 +223,7 @@ func TestKeepStagedChangeover_SameSpareStays(t *testing.T) {
 			fx := seedKeepStagedChangeover(t,
 				[]coClaim{{"L1", "SPOT", "SRC", "PART-A", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, c.evacuate}},
 				[]coClaim{{"L1", "SPOT", "SRC", "PART-A", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
-				map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-A"}, "SPOT": {Occupied: true, PayloadCode: "PART-A"}})
+				map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-A"}, "SPOT": {Occupied: true, PayloadCode: "PART-A"}})
 			startKSChangeover(t, fx)
 			got := readSpotTraffic(t, fx, "SPOT")
 			if len(got.returns) != 0 || got.refills["L1"] != c.wantRefills {
@@ -241,7 +241,7 @@ func TestKeepStagedChangeover_DroppedAndAddedLines(t *testing.T) {
 	fx := seedKeepStagedChangeover(t,
 		[]coClaim{{"L1", "SPOT-1", "SRC-1", "PART-A", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
 		[]coClaim{{"L2", "SPOT-2", "SRC-2", "PART-B", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
-		map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-A"},
+		map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-A"},
 			"SPOT-1": {Occupied: true, PayloadCode: "PART-A"}, "SPOT-2": {}})
 	startKSChangeover(t, fx)
 	dropped := readSpotTraffic(t, fx, "SPOT-1")
@@ -277,7 +277,7 @@ func TestKeepStagedChangeover_TwoLinesHandOneSpot(t *testing.T) {
 			fx := seedKeepStagedChangeover(t,
 				[]coClaim{{"L1", "SPOT", "SRC-1", "PART-A", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
 				[]coClaim{{"L2", "SPOT", "SRC-2", c.incoming, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
-				map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-A"},
+				map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-A"},
 					"SPOT": {Occupied: true, PayloadCode: "PART-A"}})
 			startKSChangeover(t, fx)
 			got := readSpotTraffic(t, fx, "SPOT")
@@ -303,7 +303,7 @@ func TestKeepStagedChangeover_CancelPutsTheSpotBack(t *testing.T) {
 		protocol.SwapModeSequential, protocol.SwapModeTwoRobotPressIndex} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
-			rows := map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
+			rows := map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
 				"SPOT": {Occupied: true, PayloadCode: "PART-OLD"}}
 			fx := seedKeepStagedChangeover(t,
 				[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleConsume, mode, true, false}},
@@ -316,7 +316,7 @@ func TestKeepStagedChangeover_CancelPutsTheSpotBack(t *testing.T) {
 			}
 			// The return went, and the keeper's refill of the incoming part landed.
 			testutil.MustNoErr(t, fx.db.UpdateOrderStatus(got.returns[0].ID, string(protocol.StatusConfirmed)), "the return went")
-			rows["SPOT"] = NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW"}
+			rows["SPOT"] = protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW"}
 			bridgeCore(t, fx.eng, ksNodeBinsStub(t, rows).URL)
 			fx.holdRows(t, rows)
 
@@ -346,7 +346,7 @@ func TestKeepStagedChangeover_CancelPutsTheSpotBack(t *testing.T) {
 // test reads that spare as the incoming style's and sends it away.
 func TestKeepStagedChangeover_CancelKeepsTheSpareThatNeverLeft(t *testing.T) {
 	t.Parallel()
-	rows := map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
+	rows := map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
 		"SPOT": {Occupied: true, PayloadCode: "PART-OLD"}}
 	fx := seedKeepStagedChangeover(t,
 		[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
@@ -427,7 +427,7 @@ func TestKeepStagedSave_LeavingTheSpotSendsTheSpareBack(t *testing.T) {
 			fx := seedKeepStagedChangeover(t,
 				[]coClaim{{"L1", "SPOT", "SRC", "PART-A", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
 				[]coClaim{{"L1", "SPOT", "SRC", "PART-A", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
-				map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-A"}, "SPOT": {Occupied: true, PayloadCode: "PART-A"}})
+				map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-A"}, "SPOT": {Occupied: true, PayloadCode: "PART-A"}})
 			styleID := fx.toStyleID // style B: not running
 			if c.running {
 				p, err := fx.db.GetProcess(fx.processID)
@@ -482,7 +482,7 @@ func TestKeepStagedSave_LeavingTheSpotReadsTheTable(t *testing.T) {
 			fx := seedKeepStagedChangeover(t,
 				[]coClaim{{"L1", "SPOT", "SRC", "PART-A", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
 				nil,
-				map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-A"}, "SPOT": {Occupied: true, PayloadCode: "PART-A"}})
+				map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-A"}, "SPOT": {Occupied: true, PayloadCode: "PART-A"}})
 			coreNeverAnswers(t, fx.eng)
 			c.prep(fx)
 			p, err := fx.db.GetProcess(fx.processID)
@@ -512,7 +512,7 @@ func TestKeepStagedSave_LeavingTheSpotReadsTheTable(t *testing.T) {
 // at the first guard instead, and the test passed without reaching that check.
 func TestKeepStagedRequest_ARequestLetInAfterAStartIsRefused(t *testing.T) {
 	t.Parallel()
-	rows := map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
+	rows := map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
 		"SPOT": {Occupied: true, PayloadCode: "PART-OLD"}}
 	fx := seedKeepStagedChangeover(t,
 		[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
@@ -612,7 +612,7 @@ func TestKeepStagedChangeover_TheStageButtonStagesNothing(t *testing.T) {
 	fx := seedKeepStagedChangeover(t,
 		[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot, true, false}},
 		[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot, true, false}},
-		map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
+		map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
 			"SPOT": {Occupied: true, PayloadCode: "PART-OLD"}})
 	startKSChangeover(t, fx)
 	before, err := fx.db.ListActiveOrders()
@@ -638,7 +638,7 @@ func TestKeepStagedChangeover_AFlyingRefillRefusesStart(t *testing.T) {
 	fx := seedKeepStagedChangeover(t,
 		[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot, true, false}},
 		[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot, true, false}},
-		map[string]NodeBinInfo{"L1": {Occupied: true}, "SPOT": {}})
+		map[string]protocol.NodeBinInfo{"L1": {Occupied: true}, "SPOT": {}})
 	queueKeeperRefill(t, fx)
 	markSpotOrdersFlown(t, fx, "SPOT", 1)
 
@@ -658,7 +658,7 @@ func TestKeepStagedChangeover_AQueuedRefillIsCancelledAtStart(t *testing.T) {
 	fx := seedKeepStagedChangeover(t,
 		[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot, true, false}},
 		[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot, true, false}},
-		map[string]NodeBinInfo{"L1": {Occupied: true}, "SPOT": {}})
+		map[string]protocol.NodeBinInfo{"L1": {Occupied: true}, "SPOT": {}})
 	queueKeeperRefill(t, fx)
 
 	startKSChangeover(t, fx)

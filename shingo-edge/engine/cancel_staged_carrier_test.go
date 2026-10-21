@@ -133,7 +133,7 @@ func TestCancelledAtItsStagingWait_LeavesAKeepStagedSpare(t *testing.T) {
 	fx := seedKeepStagedChangeover(t,
 		[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
 		[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
-		map[string]NodeBinInfo{})
+		map[string]protocol.NodeBinInfo{})
 	nodeID := fx.nodeIDs["L1"]
 	id := seedSupplyStagedThenCancelled(t, fx.db, nodeID, "L1", "SRC-OLD", "SPOT")
 	if p, ok := fx.eng.carrierLeftWaiting(OrderStatusChangedEvent{OrderID: id, OldStatus: string(protocol.StatusStaged),

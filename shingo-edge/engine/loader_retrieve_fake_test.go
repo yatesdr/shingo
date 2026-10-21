@@ -295,9 +295,9 @@ func (c *coreRetrieve) modelPart(t *testing.T, eng *Engine, req protocol.LoaderR
 // fake Core (coreRetrieve.model) reads its windows' occupancy from it.
 func holdSweep(t *testing.T, eng *Engine, resident map[string]string) {
 	t.Helper()
-	holdPlaces(t, eng, func(n string) (NodeBinInfo, bool) {
+	holdPlaces(t, eng, func(n string) (protocol.NodeBinInfo, bool) {
 		p, ok := resident[n]
-		return NodeBinInfo{NodeName: n, Occupied: ok, PayloadCode: p}, true
+		return protocol.NodeBinInfo{NodeName: n, Occupied: ok, PayloadCode: p}, true
 	})
 }
 

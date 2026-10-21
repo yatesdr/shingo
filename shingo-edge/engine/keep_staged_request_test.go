@@ -40,10 +40,10 @@ const (
 
 // ksNodeBinsStub answers node-bins from a table; a name not in it is answered
 // as an empty node Core has, which is what Core does for one it has.
-func ksNodeBinsStub(t *testing.T, rows map[string]NodeBinInfo) *httptest.Server {
+func ksNodeBinsStub(t *testing.T, rows map[string]protocol.NodeBinInfo) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		out := []NodeBinInfo{}
+		out := []protocol.NodeBinInfo{}
 		if r.URL.Path == "/api/telemetry/node-bins" {
 			for _, n := range strings.Split(r.URL.Query().Get("nodes"), ",") {
 				if n == "" {
@@ -51,7 +51,7 @@ func ksNodeBinsStub(t *testing.T, rows map[string]NodeBinInfo) *httptest.Server 
 				}
 				row, ok := rows[n]
 				if !ok {
-					row = NodeBinInfo{}
+					row = protocol.NodeBinInfo{}
 				}
 				row.NodeName = n
 				out = append(out, row)
@@ -65,13 +65,13 @@ func ksNodeBinsStub(t *testing.T, rows map[string]NodeBinInfo) *httptest.Server 
 
 // keepStagedCell seeds a keep-staged cell and an engine whose Core answers
 // node-bins from rows.
-func keepStagedCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, rows map[string]NodeBinInfo) (*Engine, *store.DB, int64, *processes.NodeClaim) {
+func keepStagedCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, rows map[string]protocol.NodeBinInfo) (*Engine, *store.DB, int64, *processes.NodeClaim) {
 	t.Helper()
 	return seedCell(t, role, mode, true, rows)
 }
 
 // seedCell is keepStagedCell with the flag chosen.
-func seedCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, keepStaged bool, rows map[string]NodeBinInfo) (*Engine, *store.DB, int64, *processes.NodeClaim) {
+func seedCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, keepStaged bool, rows map[string]protocol.NodeBinInfo) (*Engine, *store.DB, int64, *processes.NodeClaim) {
 	t.Helper()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -159,39 +159,39 @@ func readSpotOrders(t *testing.T, db *store.DB, nodeID int64) spotOrders {
 
 func TestKeepStagedRequest_AsksOnlyForTheLine(t *testing.T) {
 	t.Parallel()
-	occupiedLine := NodeBinInfo{Occupied: true, PayloadCode: ksPart}
+	occupiedLine := protocol.NodeBinInfo{Occupied: true, PayloadCode: ksPart}
 	cases := []struct {
 		name     string
 		role     protocol.ClaimRole
 		mode     protocol.SwapMode
-		spot     NodeBinInfo
+		spot     protocol.NodeBinInfo
 		wantFrom string // "spot" or "market"
 	}{
 		{"consume two_robot, spare right: the swap takes it", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-			NodeBinInfo{Occupied: true, PayloadCode: ksPart}, "spot"},
+			protocol.NodeBinInfo{Occupied: true, PayloadCode: ksPart}, "spot"},
 		{"consume two_robot, spot bare: the swap fetches from the market", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-			NodeBinInfo{}, "market"},
+			protocol.NodeBinInfo{}, "market"},
 		{"consume two_robot, spare of another part on the staging spot: the market swap, held by Core", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-			NodeBinInfo{Occupied: true, PayloadCode: "PART-OTHER"}, "market"},
+			protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-OTHER"}, "market"},
 		{"produce two_robot, empty spare: the swap takes it", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot,
-			NodeBinInfo{Occupied: true}, "spot"},
+			protocol.NodeBinInfo{Occupied: true}, "spot"},
 		{"produce two_robot, spot bare: the swap fetches an empty from the market", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot,
-			NodeBinInfo{}, "market"},
+			protocol.NodeBinInfo{}, "market"},
 		{"produce two_robot, a full on the staging spot: the market swap, held by Core", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot,
-			NodeBinInfo{Occupied: true, PayloadCode: ksPart}, "market"},
+			protocol.NodeBinInfo{Occupied: true, PayloadCode: ksPart}, "market"},
 		// A press has no staging hop: a wrong bin on its spot is in nobody's way.
 		{"consume press, spare of another part: the refill leg fetches from the market", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobotPressIndex,
-			NodeBinInfo{Occupied: true, PayloadCode: "PART-OTHER"}, "market"},
+			protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-OTHER"}, "market"},
 		{"produce press, empty spare: the refill leg takes it", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobotPressIndex,
-			NodeBinInfo{Occupied: true}, "spot"},
+			protocol.NodeBinInfo{Occupied: true}, "spot"},
 		{"produce press, spot bare: the refill leg fetches from the market", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobotPressIndex,
-			NodeBinInfo{}, "market"},
+			protocol.NodeBinInfo{}, "market"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			eng, db, nodeID, _ := keepStagedCell(t, c.role, c.mode,
-				map[string]NodeBinInfo{ksLine: occupiedLine, ksPair: occupiedLine, ksSpot: c.spot})
+				map[string]protocol.NodeBinInfo{ksLine: occupiedLine, ksPair: occupiedLine, ksSpot: c.spot})
 			var err error
 			if c.role == protocol.ClaimRoleProduce {
 				_, err = eng.RequestProduceSwap(nodeID, 0)
@@ -259,7 +259,7 @@ func TestKeepStagedRequest_ASpareOnItsWayIsWaitedFor(t *testing.T) {
 		t.Run(string(c.mode), func(t *testing.T) {
 			t.Parallel()
 			eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, c.mode,
-				map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksPair: {Occupied: true, PayloadCode: ksPart}, ksSpot: {}})
+				map[string]protocol.NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksPair: {Occupied: true, PayloadCode: ksPart}, ksSpot: {}})
 			_, err := eng.orderMgr.CreateRetrieveOrder(&nodeID, false, 1, ksSpot, ksMarket, "", "standard", ksPart, true, false,
 				orders.Attached("coming"))
 			testutil.MustNoErr(t, err, "a refill on its way")
@@ -281,7 +281,7 @@ func TestKeepStagedRequest_ASpareOnItsWayIsWaitedFor(t *testing.T) {
 func TestKeepStagedRequest_ALeavingSpareIsNotTaken(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: {Occupied: true, PayloadCode: ksPart}})
+		map[string]protocol.NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: {Occupied: true, PayloadCode: ksPart}})
 	_, err := eng.orderMgr.CreateMoveOrderForBin(&nodeID, ksSpot, ksMarket, ksPart, 0, orders.NoDemand())
 	testutil.MustNoErr(t, err, "the spare's return")
 	_, err = eng.RequestNodeMaterial(nodeID, 1)
@@ -295,7 +295,7 @@ func TestKeepStagedRequest_ALeavingSpareIsNotTaken(t *testing.T) {
 func TestKeepStagedRequest_UnknownSpotOrdersNothing(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}})
+		map[string]protocol.NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}})
 	bridgeCore(t, eng, headOccupancyStub(t, true).URL) // answers every name
 	holdPlaces(t, eng, everyAs(true))
 	eng.coreNodesMu.Lock()
@@ -314,7 +314,7 @@ func TestKeepStagedRequest_UnknownSpotOrdersNothing(t *testing.T) {
 func TestKeepStagedRequest_EmptyLineIsFedFromTheSpot(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-		map[string]NodeBinInfo{ksLine: {}, ksSpot: {Occupied: true, PayloadCode: ksPart}})
+		map[string]protocol.NodeBinInfo{ksLine: {}, ksSpot: {Occupied: true, PayloadCode: ksPart}})
 	res, err := eng.RequestNodeMaterial(nodeID, 1)
 	testutil.MustNoErr(t, err, "request")
 	if res.Order == nil || res.Order.SourceNode != ksSpot || res.Order.DeliveryNode != ksLine {

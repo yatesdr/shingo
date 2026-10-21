@@ -203,7 +203,7 @@ func TestKeepStagedKeeper_CancelPausesAndRequestResumes(t *testing.T) {
 func TestKeepStagedKeeper_NothingAheadOfALift(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: {Occupied: true, PayloadCode: ksPart}})
+		map[string]protocol.NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: {Occupied: true, PayloadCode: ksPart}})
 	holdingSwap(t, db, nodeID) // built from the keep-staged claim: it lifts the spare
 	for i := 0; i < 3; i++ {
 		eng.sweepCellLevels()
@@ -218,14 +218,14 @@ func TestKeepStagedKeeper_NothingAheadOfALift(t *testing.T) {
 // names it for a person to move.
 func TestKeepStagedKeeper_AWrongBinIsLeftStanding(t *testing.T) {
 	t.Parallel()
-	for name, wrong := range map[string]NodeBinInfo{
+	for name, wrong := range map[string]protocol.NodeBinInfo{
 		"another part": {Occupied: true, PayloadCode: "PART-OTHER"},
 		"an empty":     {Occupied: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-				map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: wrong})
+				map[string]protocol.NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: wrong})
 			for i := 0; i < 3; i++ {
 				eng.sweepCellLevels()
 			}
@@ -244,7 +244,7 @@ func TestKeepStagedKeeper_AWrongBinIsLeftStanding(t *testing.T) {
 func TestKeepStagedKeeper_ALiftAtTheSpotOrdersTheRefill(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: {}})
+		map[string]protocol.NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: {}})
 	claim := keeperClaimByID(t, db, nodeID)
 	a, _ := BuildTwoRobotSwapSteps(claim)
 	leg := mkSwapLeg(t, db, nodeID, "lift-swap", a, "")

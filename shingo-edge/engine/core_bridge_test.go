@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingoedge/internal/askbridge"
 )
 
 // core_bridge_test.go — a test's stub Core, reached the way the Edge reaches
@@ -28,13 +29,7 @@ import (
 // Core that never answered.
 
 // bridgedKinds are the kinds the stubs answer, with the path each is posted to.
-var bridgedKinds = map[string]string{
-	protocol.AskBinLoad:     "/api/telemetry/bin-load",
-	protocol.AskBinCount:    "/api/telemetry/bin-count",
-	protocol.AskBinClear:    "/api/telemetry/bin-clear",
-	protocol.AskQualityHold: "/api/telemetry/bin-quality-hold",
-	protocol.AskClearHome:   "/api/telemetry/clear-home",
-}
+var bridgedKinds = askbridge.Paths
 
 // bridgeCore makes eng's Core the stub at url for the test's life: Core has
 // been heard from (its catalog arrived, the press-index changeover's gate),

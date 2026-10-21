@@ -32,13 +32,13 @@ const ksOut = "KS-OUT"
 // countingNodeBinsStub is ksNodeBinsStub that records every node-bins call,
 // and holds the same answer as eng's bins table for every place in its store
 // (the REQUEST reads the table, site 11 of the reads).
-func countingNodeBinsStub(t *testing.T, eng *Engine, rows map[string]NodeBinInfo) (*httptest.Server, func() [][]string) {
+func countingNodeBinsStub(t *testing.T, eng *Engine, rows map[string]protocol.NodeBinInfo) (*httptest.Server, func() [][]string) {
 	t.Helper()
-	holdPlaces(t, eng, func(n string) (NodeBinInfo, bool) { return rows[n], true })
+	holdPlaces(t, eng, func(n string) (protocol.NodeBinInfo, bool) { return rows[n], true })
 	var mu sync.Mutex
 	var calls [][]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		out := []NodeBinInfo{}
+		out := []protocol.NodeBinInfo{}
 		if r.URL.Path == "/api/telemetry/node-bins" {
 			names := strings.Split(r.URL.Query().Get("nodes"), ",")
 			mu.Lock()
@@ -91,18 +91,18 @@ func TestSingleRobotRequest_MovesABinLeftOnOutboundStaging(t *testing.T) {
 	for _, c := range []struct {
 		name     string
 		role     protocol.ClaimRole
-		line     NodeBinInfo
+		line     protocol.NodeBinInfo
 		wantLegs int
 	}{
-		{"consume", protocol.ClaimRoleConsume, NodeBinInfo{Occupied: true, PayloadCode: ksPart}, 1},
-		{"produce", protocol.ClaimRoleProduce, NodeBinInfo{Occupied: true, PayloadCode: ksPart}, 1},
-		{"consume, line empty", protocol.ClaimRoleConsume, NodeBinInfo{}, 0},
-		{"produce, line empty", protocol.ClaimRoleProduce, NodeBinInfo{}, 0},
+		{"consume", protocol.ClaimRoleConsume, protocol.NodeBinInfo{Occupied: true, PayloadCode: ksPart}, 1},
+		{"produce", protocol.ClaimRoleProduce, protocol.NodeBinInfo{Occupied: true, PayloadCode: ksPart}, 1},
+		{"consume, line empty", protocol.ClaimRoleConsume, protocol.NodeBinInfo{}, 0},
+		{"produce, line empty", protocol.ClaimRoleProduce, protocol.NodeBinInfo{}, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			eng, _, nodeID, _ := seedCell(t, c.role, protocol.SwapModeSingleRobot, false, nil)
-			srv, calls := countingNodeBinsStub(t, eng, map[string]NodeBinInfo{
+			srv, calls := countingNodeBinsStub(t, eng, map[string]protocol.NodeBinInfo{
 				ksLine: c.line, ksOut: {Occupied: true, PayloadCode: "PART-PARKED"}})
 			bridgeCore(t, eng, srv.URL)
 
@@ -143,7 +143,7 @@ func TestSingleRobotRequest_MovesABinLeftOnOutboundStaging(t *testing.T) {
 func TestSingleRobotRequest_ABinAlreadyLeavingIsLeft(t *testing.T) {
 	t.Parallel()
 	eng, _, nodeID, _ := seedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot, false,
-		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksOut: {Occupied: true, PayloadCode: "PART-PARKED"}})
+		map[string]protocol.NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksOut: {Occupied: true, PayloadCode: "PART-PARKED"}})
 	_, err := eng.orderMgr.CreateMoveOrderCarrying(&nodeID, ksOut, ksDest, "PART-PARKED", orders.Attached("cancel"))
 	testutil.MustNoErr(t, err, "the cancel's move")
 	testutil.MustNoErr(t, requestFor(eng, protocol.ClaimRoleConsume, nodeID), "request")
@@ -162,7 +162,7 @@ func TestTwoRobotRequest_LeavesOutboundStagingAlone(t *testing.T) {
 			eng, db, nodeID, claim := seedCell(t, role, protocol.SwapModeTwoRobot, false, nil)
 			_, err := db.DB.Exec(`UPDATE style_node_claims SET outbound_staging=? WHERE id=?`, ksOut, claim.ID)
 			testutil.MustNoErr(t, err, "outbound staging on a two-robot claim")
-			srv, calls := countingNodeBinsStub(t, eng, map[string]NodeBinInfo{
+			srv, calls := countingNodeBinsStub(t, eng, map[string]protocol.NodeBinInfo{
 				ksLine: {Occupied: true, PayloadCode: ksPart}, ksOut: {Occupied: true, PayloadCode: "PART-PARKED"}})
 			bridgeCore(t, eng, srv.URL)
 

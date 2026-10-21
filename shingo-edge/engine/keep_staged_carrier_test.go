@@ -40,12 +40,12 @@ func ksCatalog(rides map[string]string) []protocol.PayloadBinTypeInfo {
 // the wrong empty occupies the staging spot.
 func TestKeepStagedCarrier_AWrongCarrierAtEveryDecision(t *testing.T) {
 	t.Parallel()
-	wrong := NodeBinInfo{Occupied: true, BinTypeCode: ksTypeB}
+	wrong := protocol.NodeBinInfo{Occupied: true, BinTypeCode: ksTypeB}
 
 	t.Run("request", func(t *testing.T) {
 		t.Parallel()
 		eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot,
-			map[string]NodeBinInfo{ksLine: {Occupied: true}, ksSpot: wrong})
+			map[string]protocol.NodeBinInfo{ksLine: {Occupied: true}, ksSpot: wrong})
 		eng.SetPayloadBinTypes(ksCatalog(map[string]string{ksPart: ksTypeA}))
 		_, err := eng.RequestProduceSwap(nodeID, 0)
 		testutil.MustNoErr(t, err, "request")
@@ -61,7 +61,7 @@ func TestKeepStagedCarrier_AWrongCarrierAtEveryDecision(t *testing.T) {
 	t.Run("level sweep", func(t *testing.T) {
 		t.Parallel()
 		eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot,
-			map[string]NodeBinInfo{ksLine: {Occupied: true}, ksSpot: wrong})
+			map[string]protocol.NodeBinInfo{ksLine: {Occupied: true}, ksSpot: wrong})
 		eng.SetPayloadBinTypes(ksCatalog(map[string]string{ksPart: ksTypeA}))
 		holdingSwap(t, db, nodeID)
 		eng.sweepCellLevels()
@@ -78,7 +78,7 @@ func TestKeepStagedCarrier_AWrongCarrierAtEveryDecision(t *testing.T) {
 		fx := seedKeepStagedChangeover(t,
 			[]coClaim{{"L1", "SPOT", "SRC", "PART-A", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot, true, true}},
 			[]coClaim{{"L1", "SPOT", "SRC", "PART-A", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot, true, false}},
-			map[string]NodeBinInfo{"L1": {Occupied: true}, "SPOT": wrong})
+			map[string]protocol.NodeBinInfo{"L1": {Occupied: true}, "SPOT": wrong})
 		fx.eng.SetPayloadBinTypes(ksCatalog(map[string]string{"PART-A": ksTypeA}))
 		startKSChangeover(t, fx)
 		got := readSpotTraffic(t, fx, "SPOT")
@@ -90,7 +90,7 @@ func TestKeepStagedCarrier_AWrongCarrierAtEveryDecision(t *testing.T) {
 
 	t.Run("changeover cancel", func(t *testing.T) {
 		t.Parallel()
-		rows := map[string]NodeBinInfo{"L1": {Occupied: true}, "SPOT": {Occupied: true, BinTypeCode: ksTypeA}}
+		rows := map[string]protocol.NodeBinInfo{"L1": {Occupied: true}, "SPOT": {Occupied: true, BinTypeCode: ksTypeA}}
 		fx := seedKeepStagedChangeover(t,
 			[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot, true, false}},
 			[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot, true, false}},
@@ -127,7 +127,7 @@ func TestKeepStagedCarrier_ACancelDecidesTheSameAtAnyClock(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			rows := map[string]NodeBinInfo{"L1": {Occupied: true}, "SPOT": {Occupied: true, BinTypeCode: ksTypeA}}
+			rows := map[string]protocol.NodeBinInfo{"L1": {Occupied: true}, "SPOT": {Occupied: true, BinTypeCode: ksTypeA}}
 			fx := seedKeepStagedChangeover(t,
 				[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot, true, false}},
 				[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot, true, false}},
@@ -155,7 +155,7 @@ func TestKeepStagedCarrier_ACancelDecidesTheSameAtAnyClock(t *testing.T) {
 			_, err = fx.db.DB.Exec(`UPDATE process_changeovers SET started_at=? WHERE id=?`,
 				stamp.Add(c.start).Format(time.RFC3339), coID)
 			testutil.MustNoErr(t, err, "the start's stamp")
-			rows["SPOT"] = NodeBinInfo{Occupied: true, BinTypeCode: ksTypeB}
+			rows["SPOT"] = protocol.NodeBinInfo{Occupied: true, BinTypeCode: ksTypeB}
 			bridgeCore(t, fx.eng, ksNodeBinsStub(t, rows).URL)
 			fx.holdRows(t, rows)
 
@@ -193,7 +193,7 @@ func TestKeepStagedCarrier_ASameCarrierPartChangeKeepsTheEmpty(t *testing.T) {
 			fx := seedKeepStagedChangeover(t,
 				[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleProduce, mode, true, false}},
 				[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleProduce, mode, true, false}},
-				map[string]NodeBinInfo{"L1": {Occupied: true}, "SPOT": {Occupied: true, BinTypeCode: ksTypeA}})
+				map[string]protocol.NodeBinInfo{"L1": {Occupied: true}, "SPOT": {Occupied: true, BinTypeCode: ksTypeA}})
 			fx.eng.SetPayloadBinTypes(ksCatalog(map[string]string{"PART-OLD": ksTypeA, "PART-NEW": ksTypeA}))
 			startKSChangeover(t, fx)
 			got := readSpotTraffic(t, fx, "SPOT")

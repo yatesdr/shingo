@@ -96,9 +96,9 @@ func (c *scCore) pushLocked() error {
 	if c.eng == nil {
 		return nil
 	}
-	rows := map[string]NodeBinInfo{}
+	rows := map[string]protocol.NodeBinInfo{}
 	for n, win := range c.windows {
-		rows[n] = NodeBinInfo{NodeName: n, Occupied: win.occupied, PayloadCode: win.payload, BinID: 77,
+		rows[n] = protocol.NodeBinInfo{NodeName: n, Occupied: win.occupied, PayloadCode: win.payload, BinID: 77,
 			UOPRemaining: win.uop, DeltaEpoch: 5}
 	}
 	return pushBins(c.eng, binsRowsOf(rows)...)
@@ -147,14 +147,14 @@ func (c *scCore) serve(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/api/telemetry/node-bins":
 		c.binReads++
-		var out []NodeBinInfo
+		var out []protocol.NodeBinInfo
 		for _, n := range strings.Split(r.URL.Query().Get("nodes"), ",") {
 			win := c.windows[n]
 			if win == nil {
-				out = append(out, NodeBinInfo{NodeName: n})
+				out = append(out, protocol.NodeBinInfo{NodeName: n})
 				continue
 			}
-			out = append(out, NodeBinInfo{NodeName: n, Occupied: win.occupied, PayloadCode: win.payload, BinID: 77, UOPRemaining: win.uop, DeltaEpoch: 5})
+			out = append(out, protocol.NodeBinInfo{NodeName: n, Occupied: win.occupied, PayloadCode: win.payload, BinID: 77, UOPRemaining: win.uop, DeltaEpoch: 5})
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	case "/api/nodes":

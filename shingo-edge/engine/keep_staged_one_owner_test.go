@@ -25,9 +25,9 @@ import (
 // spot, an order's end) and the cancel end to end against a Core stub.
 
 // restubSpot makes Core answer the line and the spot as given.
-func restubSpot(t *testing.T, fx *coFixture, line, spot NodeBinInfo) {
+func restubSpot(t *testing.T, fx *coFixture, line, spot protocol.NodeBinInfo) {
 	t.Helper()
-	rows := map[string]NodeBinInfo{"L1": line, pinSpot: spot}
+	rows := map[string]protocol.NodeBinInfo{"L1": line, pinSpot: spot}
 	bridgeCore(t, fx.eng, pinNodeBinsStub(t, rows, nil).URL)
 	fx.holdRows(t, rows)
 }
@@ -92,7 +92,7 @@ func TestKeepStagedOneOwner_ABareSpotIsRefilledBehindTheLeg(t *testing.T) {
 		t.Errorf("board note = %q, want it to say the leg is still bringing a bin", note)
 	}
 
-	restubSpot(t, fx, NodeBinInfo{Occupied: true}, NodeBinInfo{}) // the leg collected what it parked
+	restubSpot(t, fx, protocol.NodeBinInfo{Occupied: true}, protocol.NodeBinInfo{}) // the leg collected what it parked
 	landLegs(t, fx)
 	refills, _ := liveSpot(t, fx, pinSpot)
 	if len(refills) != 1 || refills[0].PayloadCode != "PART-NEW" || !refills[0].RetrieveEmpty {
@@ -128,7 +128,7 @@ func TestKeepStagedOneOwner_ARightSpareIsRefilledAtTheLift(t *testing.T) {
 			}
 		}
 		testutil.MustNoErr(t, fx.db.UpdateOrderStatus(lifter.ID, string(protocol.StatusInTransit)), "with the fleet")
-		restubSpot(t, fx, NodeBinInfo{Occupied: true, PayloadCode: "PART-OLD"}, NodeBinInfo{})
+		restubSpot(t, fx, protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-OLD"}, protocol.NodeBinInfo{})
 		fx.eng.HandleBinPickedUp(lifter.UUID, 7, pinSpot)
 		refills, _ := liveSpot(t, fx, pinSpot)
 		if len(refills) != 1 || refills[0].PayloadCode != "PART-NEW" || refills[0].RetrieveEmpty {
@@ -140,7 +140,7 @@ func TestKeepStagedOneOwner_ARightSpareIsRefilledAtTheLift(t *testing.T) {
 		t.Parallel()
 		fx := c.seed(t)
 		startKSChangeover(t, fx)
-		restubSpot(t, fx, NodeBinInfo{Occupied: true, PayloadCode: "PART-OLD"}, NodeBinInfo{})
+		restubSpot(t, fx, protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-OLD"}, protocol.NodeBinInfo{})
 		fx.eng.sweepCellLevels()
 		refills, _ := liveSpot(t, fx, pinSpot)
 		if len(refills) != 1 || refills[0].PayloadCode != "PART-NEW" {
@@ -157,7 +157,7 @@ func TestKeepStagedOneOwner_ARightSpareIsRefilledAtTheLift(t *testing.T) {
 // once the leg is done with the spot.
 func TestKeepStagedOneOwner_TheWrongSpareGoesBackAndTheLegNeverTakesIt(t *testing.T) {
 	t.Parallel()
-	empty := NodeBinInfo{Occupied: true, BinID: 137}
+	empty := protocol.NodeBinInfo{Occupied: true, BinID: 137}
 	c := pinCase{role: protocol.ClaimRoleConsume, mode: protocol.SwapModeTwoRobot, read: "empty-0831", staging: true, spotRow: &empty}
 	fx := c.seed(t)
 	withCascade(fx)
@@ -180,7 +180,7 @@ func TestKeepStagedOneOwner_TheWrongSpareGoesBackAndTheLegNeverTakesIt(t *testin
 		t.Fatalf("the keeper refilled while the leg still parks a carrier on the spot")
 	}
 
-	restubSpot(t, fx, NodeBinInfo{Occupied: true}, NodeBinInfo{})
+	restubSpot(t, fx, protocol.NodeBinInfo{Occupied: true}, protocol.NodeBinInfo{})
 	land(t, fx, returns[0].ID)
 	landLegs(t, fx)
 	refills, _ = liveSpot(t, fx, pinSpot)

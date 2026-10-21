@@ -22,7 +22,7 @@ import (
 func TestRequestEmptyBin_PositionStillWorkedRefuses(t *testing.T) {
 	t.Parallel()
 	eng, _, nodeID, _ := seedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeSingleRobot, false,
-		map[string]NodeBinInfo{ksLine: {}})
+		map[string]protocol.NodeBinInfo{ksLine: {}})
 	// A live order of the line that sits in no runtime slot and ends away from
 	// it, as a single-robot swap leg does: only the line's own rows see it.
 	_, err := eng.orderMgr.CreateMoveOrder(&nodeID, 1, ksMarket, ksDest, false, orders.Attached("prior"))
@@ -44,7 +44,7 @@ func TestRequestEmptyBin_PositionStillWorkedRefuses(t *testing.T) {
 func TestRequestEmptyBin_KeepStagedSpotIsRefilled(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID, _ := seedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeSingleRobot, true,
-		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: {Occupied: true}})
+		map[string]protocol.NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: {Occupied: true}})
 
 	_, err := eng.RequestEmptyBin(nodeID, ksPart)
 	testutil.MustNoErr(t, err, "empty-bin request")
@@ -63,7 +63,7 @@ func TestRequestEmptyBin_KeepStagedSpotIsRefilled(t *testing.T) {
 func TestRequestEmptyBin_MovesABinLeftOnOutboundStaging(t *testing.T) {
 	t.Parallel()
 	eng, _, nodeID, _ := seedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeSingleRobot, false, nil)
-	srv, _ := countingNodeBinsStub(t, eng, map[string]NodeBinInfo{
+	srv, _ := countingNodeBinsStub(t, eng, map[string]protocol.NodeBinInfo{
 		ksLine: {Occupied: true, PayloadCode: ksPart}, ksOut: {Occupied: true, PayloadCode: "PART-PARKED"}})
 	bridgeCore(t, eng, srv.URL)
 
@@ -102,7 +102,7 @@ func TestRequestEmptyBin_BlockedForOutgoingStyleDuringChangeover(t *testing.T) {
 func TestRequestEmptyBin_SwapModeNeedsNoPayloadCode(t *testing.T) {
 	t.Parallel()
 	eng, _, nodeID, _ := seedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeSingleRobot, false,
-		map[string]NodeBinInfo{ksLine: {}})
+		map[string]protocol.NodeBinInfo{ksLine: {}})
 
 	_, err := eng.RequestEmptyBin(nodeID, "")
 	testutil.MustNoErr(t, err, "empty-bin request with no payload code")

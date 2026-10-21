@@ -272,9 +272,20 @@ func askOrRefuse[T any](e *Engine, kind string, req any) (*T, error) {
 
 // askAppliersByKind is every kind's applier: what its answer does on this Edge
 // beyond its rows, applied on arrival whether or not the tap still waits, so
-// each is idempotent (an answer may be replayed).
+// each is idempotent (an answer may be replayed). Every kind Core answers has
+// an entry, nil where the answer's rows are all it applies and the tap that
+// waits reads the rest (TestAskKinds_EveryKindIsSentAndDeclared), so a new kind
+// is a decision here, not a silent default.
 func askAppliersByKind() map[string]askApplier {
 	return map[string]askApplier{
+		protocol.AskBinLoad:        nil,
+		protocol.AskBinClear:       nil,
+		protocol.AskQualityHold:    nil,
+		protocol.AskClearHome:      nil,
+		protocol.AskPreflight:      nil,
+		protocol.AskReleasePoints:  nil,
+		protocol.AskHeldPartials:   nil,
+		protocol.AskLoaderRetrieve: nil,
 		// The reseat: with no carrier at the node, the seat's carrier left; a
 		// carrier there was bound by its landing (applyReseat).
 		protocol.AskReseat: applyReseat,

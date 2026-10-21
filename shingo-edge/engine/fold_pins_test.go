@@ -156,9 +156,9 @@ func newClearShapeCore(t *testing.T, failBins bool, clearBody map[string]any) *c
 				http.Error(w, "boom", http.StatusInternalServerError)
 				return
 			}
-			var out []NodeBinInfo
+			var out []protocol.NodeBinInfo
 			for _, n := range strings.Split(r.URL.Query().Get("nodes"), ",") {
-				out = append(out, NodeBinInfo{NodeName: n, Occupied: true, PayloadCode: "PART-MX", BinID: 5})
+				out = append(out, protocol.NodeBinInfo{NodeName: n, Occupied: true, PayloadCode: "PART-MX", BinID: 5})
 			}
 			_ = json.NewEncoder(w).Encode(out)
 		case "/api/telemetry/bin-clear":

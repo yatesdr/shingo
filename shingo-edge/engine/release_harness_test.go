@@ -78,7 +78,7 @@ type fakeCore struct {
 	srv   *httptest.Server
 	mu    sync.Mutex
 	calls map[string]int
-	binAt *NodeBinInfo
+	binAt *protocol.NodeBinInfo
 	// points answers ReleasePoints (release_fake_points_test.go); pointsDown
 	// leaves the ask unanswered (G3).
 	points     func(protocol.ReleasePointsRequest) protocol.ReleasePointsResponse
@@ -587,7 +587,7 @@ func (c actCounts) String() string {
 // from it).
 func (h *relHarness) binAtPress(count int) {
 	h.core.mu.Lock()
-	h.core.binAt = &NodeBinInfo{NodeName: fxPress, BinID: fxBin, PayloadCode: fxPart, UOPRemaining: count, Occupied: true}
+	h.core.binAt = &protocol.NodeBinInfo{NodeName: fxPress, BinID: fxBin, PayloadCode: fxPart, UOPRemaining: count, Occupied: true}
 	h.core.mu.Unlock()
 	holdActableBins(h.t, h.eng, protocol.NodeBinsRow{Node: fxPress, BinID: fxBin, PayloadCode: fxPart, Stocked: count > 0, Occupied: true})
 }

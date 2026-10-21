@@ -50,7 +50,7 @@ func liveSpot(t *testing.T, fx *coFixture, spot string) (refills, returns []doma
 	return refills, returns
 }
 
-func seedLanding(t *testing.T, role protocol.ClaimRole, rows map[string]NodeBinInfo) *coFixture {
+func seedLanding(t *testing.T, role protocol.ClaimRole, rows map[string]protocol.NodeBinInfo) *coFixture {
 	t.Helper()
 	fx := seedKeepStagedChangeover(t,
 		[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", role, protocol.SwapModeTwoRobot, true, false}},
@@ -60,12 +60,12 @@ func seedLanding(t *testing.T, role protocol.ClaimRole, rows map[string]NodeBinI
 	return fx
 }
 
-func lineRows(role protocol.ClaimRole) map[string]NodeBinInfo {
-	line := NodeBinInfo{Occupied: true, PayloadCode: "PART-OLD"}
+func lineRows(role protocol.ClaimRole) map[string]protocol.NodeBinInfo {
+	line := protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-OLD"}
 	if role == protocol.ClaimRoleProduce {
-		line = NodeBinInfo{Occupied: true}
+		line = protocol.NodeBinInfo{Occupied: true}
 	}
-	return map[string]NodeBinInfo{"L1": line, "SPOT": {}}
+	return map[string]protocol.NodeBinInfo{"L1": line, "SPOT": {}}
 }
 
 var bothRoles = []protocol.ClaimRole{protocol.ClaimRoleConsume, protocol.ClaimRoleProduce}
@@ -167,7 +167,7 @@ func TestKeepStagedLanding_OneReturnPerBin_AndAReturnOrdersNothing(t *testing.T)
 			land(t, fx, r.ID)
 		}
 	}
-	rows["SPOT"] = NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW"}
+	rows["SPOT"] = protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW"}
 	bridgeCore(t, fx.eng, ksNodeBinsStub(t, rows).URL)
 	fx.holdRows(t, rows)
 
@@ -179,7 +179,7 @@ func TestKeepStagedLanding_OneReturnPerBin_AndAReturnOrdersNothing(t *testing.T)
 
 	before, err := fx.db.ListActiveOrdersByProcessNode(fx.nodeIDs["L1"])
 	testutil.MustNoErr(t, err, "rows")
-	rows["SPOT"] = NodeBinInfo{} // the return lifted the bin
+	rows["SPOT"] = protocol.NodeBinInfo{} // the return lifted the bin
 	bridgeCore(t, fx.eng, ksNodeBinsStub(t, rows).URL)
 	fx.holdRows(t, rows)
 	land(t, fx, returns[0].ID)
@@ -196,7 +196,7 @@ func TestKeepStagedLanding_OneReturnPerBin_AndAReturnOrdersNothing(t *testing.T)
 // orders the refill of the staying part to stand behind it.
 func TestKeepStagedChangeover_CancelCountsAReturnAlreadyFlying(t *testing.T) {
 	t.Parallel()
-	rows := map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
+	rows := map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
 		"SPOT": {Occupied: true, PayloadCode: "PART-OLD"}}
 	fx := seedLanding(t, protocol.ClaimRoleConsume, rows)
 	startKSChangeover(t, fx)
@@ -234,7 +234,7 @@ func TestKeepStagedChangeover_CancelCountsAReturnAlreadyFlying(t *testing.T) {
 func TestKeepStagedChangeover_CancelKeepsTheStayingStylesEmpty(t *testing.T) {
 	t.Parallel()
 	fx := seedLanding(t, protocol.ClaimRoleProduce,
-		map[string]NodeBinInfo{"L1": {Occupied: true}, "SPOT": {Occupied: true, BinTypeCode: "TYPE-A"}})
+		map[string]protocol.NodeBinInfo{"L1": {Occupied: true}, "SPOT": {Occupied: true, BinTypeCode: "TYPE-A"}})
 	fx.eng.SetPayloadBinTypes(ksCatalog(map[string]string{"PART-OLD": "TYPE-A", "PART-NEW": "TYPE-B"}))
 	startKSChangeover(t, fx)
 	if _, returns := liveSpot(t, fx, "SPOT"); len(returns) != 1 {

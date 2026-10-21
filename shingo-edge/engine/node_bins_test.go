@@ -642,7 +642,7 @@ func ackHeld(eng *Engine) {
 // that rows leaves out (the stubs answer any name as an empty node Core has).
 // Stocked is the count above zero, Partial above zero and below the row's
 // capacity; Epoch the delta epoch. Sorted by name.
-func binsRowsOf(rows map[string]NodeBinInfo, also ...string) []protocol.NodeBinsRow {
+func binsRowsOf(rows map[string]protocol.NodeBinInfo, also ...string) []protocol.NodeBinsRow {
 	names := map[string]bool{}
 	for n := range rows {
 		names[n] = true
@@ -682,7 +682,7 @@ func binsRowsOf(rows map[string]NodeBinInfo, also ...string) []protocol.NodeBins
 // holdCoreRows holds, as a table eng may decide from, what an HTTP stub's
 // node-bins table says (binsRowsOf): the fixtures that answered node-bins
 // over HTTP hold the same answer for the sites that read the table.
-func holdCoreRows(t *testing.T, eng *Engine, rows map[string]NodeBinInfo, also ...string) {
+func holdCoreRows(t *testing.T, eng *Engine, rows map[string]protocol.NodeBinInfo, also ...string) {
 	t.Helper()
 	holdActableBins(t, eng, binsRowsOf(rows, also...)...)
 }
@@ -696,9 +696,9 @@ func holdProcessNodes(t *testing.T, eng *Engine, occupied bool, payload string) 
 	if err != nil {
 		t.Fatalf("holdProcessNodes: %v", err)
 	}
-	rows := map[string]NodeBinInfo{}
+	rows := map[string]protocol.NodeBinInfo{}
 	for _, n := range nodes {
-		b := NodeBinInfo{NodeName: n.CoreNodeName, Occupied: occupied}
+		b := protocol.NodeBinInfo{NodeName: n.CoreNodeName, Occupied: occupied}
 		if occupied {
 			b.PayloadCode, b.BinID = payload, 77
 		}
@@ -740,9 +740,9 @@ func placesOf(t *testing.T, eng *Engine) []string {
 // holdPlaces holds, as a table eng may decide from, what a node-bins stub
 // answering by name says (answer) for every place in eng's store (placesOf):
 // a name answer leaves out (ok false) gets no row.
-func holdPlaces(t *testing.T, eng *Engine, answer func(name string) (NodeBinInfo, bool)) {
+func holdPlaces(t *testing.T, eng *Engine, answer func(name string) (protocol.NodeBinInfo, bool)) {
 	t.Helper()
-	rows := map[string]NodeBinInfo{}
+	rows := map[string]protocol.NodeBinInfo{}
 	for _, n := range placesOf(t, eng) {
 		if b, ok := answer(n); ok {
 			rows[n] = b
@@ -753,16 +753,18 @@ func holdPlaces(t *testing.T, eng *Engine, answer func(name string) (NodeBinInfo
 
 // occupiedAt is a node-bins answer occupied exactly at the names given, as
 // the census and press stubs answer.
-func occupiedAt(names ...string) func(string) (NodeBinInfo, bool) {
-	return func(n string) (NodeBinInfo, bool) {
-		return NodeBinInfo{NodeName: n, Occupied: slices.Contains(names, n)}, true
+func occupiedAt(names ...string) func(string) (protocol.NodeBinInfo, bool) {
+	return func(n string) (protocol.NodeBinInfo, bool) {
+		return protocol.NodeBinInfo{NodeName: n, Occupied: slices.Contains(names, n)}, true
 	}
 }
 
 // everyAs is a node-bins answer of one verdict for every name, as
 // headOccupancyStub answers.
-func everyAs(occupied bool) func(string) (NodeBinInfo, bool) {
-	return func(n string) (NodeBinInfo, bool) { return NodeBinInfo{NodeName: n, Occupied: occupied}, true }
+func everyAs(occupied bool) func(string) (protocol.NodeBinInfo, bool) {
+	return func(n string) (protocol.NodeBinInfo, bool) {
+		return protocol.NodeBinInfo{NodeName: n, Occupied: occupied}, true
+	}
 }
 
 // speaksBins is whether the last heartbeat ack carried BinWatch (the feed

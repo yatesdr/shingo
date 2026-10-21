@@ -12,6 +12,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/engine"
+	"shingoedge/internal/askbridge"
 )
 
 // core_bridge_test.go — a www test's stub Core, reached the way the Edge
@@ -24,13 +25,7 @@ import (
 // carries each such ask on eng's outbox to the stub, its reply handed back as
 // the answer.
 
-var bridgedPaths = map[string]string{
-	protocol.AskBinLoad:     "/api/telemetry/bin-load",
-	protocol.AskBinCount:    "/api/telemetry/bin-count",
-	protocol.AskBinClear:    "/api/telemetry/bin-clear",
-	protocol.AskQualityHold: "/api/telemetry/bin-quality-hold",
-	protocol.AskClearHome:   "/api/telemetry/clear-home",
-}
+var bridgedPaths = askbridge.Paths
 
 func bridgeAsks(t *testing.T, eng *engine.Engine, url string) {
 	t.Helper()

@@ -37,7 +37,7 @@ func newClearCaptureCore(t *testing.T) *clearCaptureCore {
 		c.paths = append(c.paths, r.URL.Path)
 		switch r.URL.Path {
 		case "/api/telemetry/node-bins":
-			_ = json.NewEncoder(w).Encode([]NodeBinInfo{{
+			_ = json.NewEncoder(w).Encode([]protocol.NodeBinInfo{{
 				NodeName: r.URL.Query().Get("nodes"), Occupied: true, PayloadCode: "PART-HL", BinID: 91,
 			}})
 		case "/api/telemetry/bin-clear":

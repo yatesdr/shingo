@@ -22,23 +22,23 @@ func TestProducePartialsPin_KeeperReadsAPartialOnTheSpot(t *testing.T) {
 	catalog := []protocol.PayloadBinTypeInfo{{PayloadCode: "PP-X", BinTypeCode: "PP-T"}, {PayloadCode: "PP-Y", BinTypeCode: "PP-T"}}
 	rows := []struct {
 		name         string
-		row          NodeBinInfo
+		row          protocol.NodeBinInfo
 		today, after bool
 	}{
 		{"an unstamped empty of a permitted carrier",
-			NodeBinInfo{Occupied: true, BinTypeCode: "PP-T", BinID: 1}, true, true},
+			protocol.NodeBinInfo{Occupied: true, BinTypeCode: "PP-T", BinID: 1}, true, true},
 		// Today the produce arm wanted payload '' and nothing else: a partial of
 		// the claim's own part read "not a spare", and the keeper asked for a
 		// hand. Ruling: a partial of the claim's own part is a right spare.
 		{"a partial of the claim's part (17 of 40)",
-			NodeBinInfo{Occupied: true, BinTypeCode: "PP-T", BinID: 2, PayloadCode: "PP-X", UOPRemaining: 17, UOPCapacity: 40}, false, true},
+			protocol.NodeBinInfo{Occupied: true, BinTypeCode: "PP-T", BinID: 2, PayloadCode: "PP-X", UOPRemaining: 17, UOPCapacity: 40}, false, true},
 		{"a partial of another part",
-			NodeBinInfo{Occupied: true, BinTypeCode: "PP-T", BinID: 3, PayloadCode: "PP-Y", UOPRemaining: 17, UOPCapacity: 40}, false, false},
+			protocol.NodeBinInfo{Occupied: true, BinTypeCode: "PP-T", BinID: 3, PayloadCode: "PP-Y", UOPRemaining: 17, UOPCapacity: 40}, false, false},
 		{"a full of the claim's part",
-			NodeBinInfo{Occupied: true, BinTypeCode: "PP-T", BinID: 4, PayloadCode: "PP-X", UOPRemaining: 40, UOPCapacity: 40}, false, false},
+			protocol.NodeBinInfo{Occupied: true, BinTypeCode: "PP-T", BinID: 4, PayloadCode: "PP-X", UOPRemaining: 40, UOPCapacity: 40}, false, false},
 	}
 	for _, r := range rows {
-		got := spareIsRight(claim, readOfBinsRow(binsRowsOf(map[string]NodeBinInfo{"SPOT": r.row})[0], catalog))
+		got := spareIsRight(claim, readOfBinsRow(binsRowsOf(map[string]protocol.NodeBinInfo{"SPOT": r.row})[0], catalog))
 		t.Logf("PIN %-45s %v", r.name, got)
 		if got != r.after {
 			t.Errorf("%s: spareIsRight = %v, want %v (today %v)", r.name, got, r.after, fmt.Sprint(r.today))

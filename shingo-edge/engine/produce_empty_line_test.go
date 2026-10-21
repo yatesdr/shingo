@@ -41,26 +41,26 @@ func TestProduceEmptyLine_SingleRobotRequestDeliversAnEmpty(t *testing.T) {
 	cases := []struct {
 		name        string
 		keepStaged  bool
-		spot        NodeBinInfo
+		spot        protocol.NodeBinInfo
 		uop         int
 		wantSource  string
 		wantType    protocol.OrderType
 		wantRefills int
 		wantReturns int
 	}{
-		{"no spot, count left over", false, NodeBinInfo{}, 30, ksMarket, orders.TypeRetrieve, 0, 0},
-		{"no spot, count zero", false, NodeBinInfo{}, 0, ksMarket, orders.TypeRetrieve, 0, 0},
+		{"no spot, count left over", false, protocol.NodeBinInfo{}, 30, ksMarket, orders.TypeRetrieve, 0, 0},
+		{"no spot, count zero", false, protocol.NodeBinInfo{}, 0, ksMarket, orders.TypeRetrieve, 0, 0},
 		// The request orders nothing for the spot: the keeper refills it, and
 		// sends a wrong bin back, on its own pass.
-		{"keep-staged, empty spare on the spot", true, NodeBinInfo{Occupied: true}, 0, ksSpot, orders.TypeMove, 0, 0},
-		{"keep-staged, spot bare", true, NodeBinInfo{}, 0, ksMarket, orders.TypeRetrieve, 0, 0},
-		{"keep-staged, a full on the spot", true, NodeBinInfo{Occupied: true, PayloadCode: ksPart}, 0, ksMarket, orders.TypeRetrieve, 0, 0},
+		{"keep-staged, empty spare on the spot", true, protocol.NodeBinInfo{Occupied: true}, 0, ksSpot, orders.TypeMove, 0, 0},
+		{"keep-staged, spot bare", true, protocol.NodeBinInfo{}, 0, ksMarket, orders.TypeRetrieve, 0, 0},
+		{"keep-staged, a full on the spot", true, protocol.NodeBinInfo{Occupied: true, PayloadCode: ksPart}, 0, ksMarket, orders.TypeRetrieve, 0, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			eng, db, nodeID, claim := seedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeSingleRobot, c.keepStaged,
-				map[string]NodeBinInfo{ksLine: {}, ksSpot: c.spot})
+				map[string]protocol.NodeBinInfo{ksLine: {}, ksSpot: c.spot})
 			testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claim.ID, c.uop), "count")
 
 			res, err := eng.RequestProduceSwap(nodeID, 0)
@@ -109,7 +109,7 @@ func TestProduceEmptyLine_SingleRobotRequestDeliversAnEmpty(t *testing.T) {
 func TestProduceEmptyLine_PositionStillWorkedRefuses(t *testing.T) {
 	t.Parallel()
 	eng, _, nodeID, _ := seedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeSingleRobot, false,
-		map[string]NodeBinInfo{ksLine: {}})
+		map[string]protocol.NodeBinInfo{ksLine: {}})
 	// A live order of the line that sits in no runtime slot and ends away from
 	// it, as a single-robot swap leg does: only the line's own rows see it.
 	_, err := eng.orderMgr.CreateRetrieveOrder(&nodeID, true, 1, ksDest, ksMarket, "", "standard", ksPart, false, false,

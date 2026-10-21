@@ -34,7 +34,7 @@ func TestRegression_LoadBin_SeedsActiveBinEpochFromCoreResponse(t *testing.T) {
 			})
 			return
 		}
-		_ = json.NewEncoder(w).Encode([]NodeBinInfo{{NodeName: "LOADER", Occupied: true, PayloadCode: ""}})
+		_ = json.NewEncoder(w).Encode([]protocol.NodeBinInfo{{NodeName: "LOADER", Occupied: true, PayloadCode: ""}})
 	}))
 	defer srv.Close()
 
@@ -193,7 +193,7 @@ func (p *loadBinWireProbe) server(t *testing.T) *httptest.Server {
 				UOPRemaining: p.resolvedUOP, DeltaEpoch: 1,
 			})
 		default:
-			_ = json.NewEncoder(w).Encode([]NodeBinInfo{{NodeName: "LOADER", Occupied: true, PayloadCode: ""}})
+			_ = json.NewEncoder(w).Encode([]protocol.NodeBinInfo{{NodeName: "LOADER", Occupied: true, PayloadCode: ""}})
 		}
 	}))
 	t.Cleanup(srv.Close)

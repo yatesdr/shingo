@@ -48,19 +48,19 @@ func TestSingleRobotCancel_FinishesTheParkedBinsTrip(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			const out = "KSCO-OUT-L1"
-			spare := NodeBinInfo{Occupied: true, PayloadCode: "PART-OLD"}
+			spare := protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-OLD"}
 			if c.role == protocol.ClaimRoleProduce {
-				spare = NodeBinInfo{Occupied: true}
+				spare = protocol.NodeBinInfo{Occupied: true}
 			}
-			rows := map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"}, "SPOT": spare}
+			rows := map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"}, "SPOT": spare}
 			fx := seedKeepStagedChangeover(t,
 				[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", c.role, protocol.SwapModeSingleRobot, c.keepStaged, false}},
 				[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", c.role, protocol.SwapModeSingleRobot, c.keepStaged, false}},
 				rows)
 			startKSChangeover(t, fx)
 			// The leg lifted the line's bin and parked it on outbound staging.
-			rows["L1"] = NodeBinInfo{}
-			rows[out] = NodeBinInfo{Occupied: true, PayloadCode: "PART-OLD"}
+			rows["L1"] = protocol.NodeBinInfo{}
+			rows[out] = protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-OLD"}
 			bridgeCore(t, fx.eng, ksNodeBinsStub(t, rows).URL)
 			fx.holdRows(t, rows)
 
@@ -93,7 +93,7 @@ func TestSingleRobotCancel_FinishesTheParkedBinsTrip(t *testing.T) {
 // line's bin, or after it took the bin off outbound staging again.
 func TestSingleRobotCancel_NothingParkedMovesNothing(t *testing.T) {
 	t.Parallel()
-	rows := map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"}}
+	rows := map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"}}
 	fx := seedKeepStagedChangeover(t,
 		[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot, false, false}},
 		[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot, false, false}},
@@ -110,7 +110,7 @@ func TestSingleRobotCancel_NothingParkedMovesNothing(t *testing.T) {
 // which a cancel must not carry on to the line.
 func TestTwoRobotCancel_MovesNothingOffStaging(t *testing.T) {
 	t.Parallel()
-	rows := map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
+	rows := map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
 		"SPOT": {Occupied: true, PayloadCode: "PART-NEW"}}
 	fx := seedKeepStagedChangeover(t,
 		[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, false, false}},
@@ -144,11 +144,11 @@ func TestSingleRobotCancel_SendsTheStagedBinBack(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			incoming := NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW"}
+			incoming := protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW"}
 			if c.role == protocol.ClaimRoleProduce {
-				incoming = NodeBinInfo{Occupied: true}
+				incoming = protocol.NodeBinInfo{Occupied: true}
 			}
-			rows := map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"}, "SPOT": incoming}
+			rows := map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"}, "SPOT": incoming}
 			fx := seedKeepStagedChangeover(t,
 				[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", c.role, protocol.SwapModeSingleRobot, false, false}},
 				[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", c.role, protocol.SwapModeSingleRobot, false, false}},
@@ -179,7 +179,7 @@ func TestSingleRobotCancel_SendsTheStagedBinBack(t *testing.T) {
 // inbound staging then is not the changeover's, and the cancel leaves it.
 func TestSingleRobotCancel_StageNotYetFlownMovesNothing(t *testing.T) {
 	t.Parallel()
-	rows := map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
+	rows := map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"},
 		"SPOT": {Occupied: true, PayloadCode: "PART-OTHER"}}
 	fx := seedKeepStagedChangeover(t,
 		[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleConsume, protocol.SwapModeSingleRobot, false, false}},

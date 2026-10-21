@@ -69,11 +69,11 @@ func censusStub(t *testing.T, calls *atomic.Int32, occupied ...string) *httptest
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		out := []NodeBinInfo{}
+		out := []protocol.NodeBinInfo{}
 		if r.URL.Path == "/api/telemetry/node-bins" {
 			for _, n := range strings.Split(r.URL.Query().Get("nodes"), ",") {
 				if n != "" {
-					out = append(out, NodeBinInfo{NodeName: n, Occupied: occ[n]})
+					out = append(out, protocol.NodeBinInfo{NodeName: n, Occupied: occ[n]})
 				}
 			}
 		}

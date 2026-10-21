@@ -75,10 +75,10 @@ func (w *buttonWorld) push() {
 	if w.eng == nil {
 		return
 	}
-	holdPlaces(w.t, w.eng, func(n string) (NodeBinInfo, bool) {
+	holdPlaces(w.t, w.eng, func(n string) (protocol.NodeBinInfo, bool) {
 		w.mu.Lock()
 		defer w.mu.Unlock()
-		return NodeBinInfo{NodeName: n, Occupied: w.occ[n]}, true
+		return protocol.NodeBinInfo{NodeName: n, Occupied: w.occ[n]}, true
 	})
 }
 
@@ -86,12 +86,12 @@ func (w *buttonWorld) push() {
 func (w *buttonWorld) serveCore() {
 	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		w.calls.Add(1)
-		out := []NodeBinInfo{}
+		out := []protocol.NodeBinInfo{}
 		if r.URL.Path == "/api/telemetry/node-bins" {
 			w.mu.Lock()
 			for _, n := range strings.Split(r.URL.Query().Get("nodes"), ",") {
 				if n != "" {
-					out = append(out, NodeBinInfo{NodeName: n, Occupied: w.occ[n]})
+					out = append(out, protocol.NodeBinInfo{NodeName: n, Occupied: w.occ[n]})
 				}
 			}
 			w.mu.Unlock()

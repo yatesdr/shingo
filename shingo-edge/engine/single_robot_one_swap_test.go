@@ -56,10 +56,10 @@ func oneSwapCell(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode, 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/telemetry/node-bins":
-			out := []NodeBinInfo{}
+			out := []protocol.NodeBinInfo{}
 			for _, n := range strings.Split(r.URL.Query().Get("nodes"), ",") {
 				if n != "" {
-					out = append(out, NodeBinInfo{NodeName: n, Occupied: n == osLine, PayloadCode: osPart})
+					out = append(out, protocol.NodeBinInfo{NodeName: n, Occupied: n == osLine, PayloadCode: osPart})
 				}
 			}
 			_ = json.NewEncoder(w).Encode(out)

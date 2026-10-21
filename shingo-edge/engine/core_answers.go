@@ -13,10 +13,6 @@ import (
 // There is no HTTP client to Core: the Edge reaches Core by the ask pair
 // (ask.go) and Core's feeds.
 
-// NodeBinInfo is the node-bins answer's row shape (protocol), which the bins
-// table's fixtures still speak.
-type NodeBinInfo = protocol.NodeBinInfo
-
 // BinLoadItem is one line of a bin-load request: part number + physical count.
 type BinLoadItem = protocol.BinLoadItem
 

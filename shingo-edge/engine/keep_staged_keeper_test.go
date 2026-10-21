@@ -44,7 +44,7 @@ func endedRefill(t *testing.T, eng *Engine, db *store.DB, nodeID int64, status p
 func keeperCell(t *testing.T) (*Engine, *store.DB, int64) {
 	t.Helper()
 	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: {}})
+		map[string]protocol.NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}, ksSpot: {}})
 	return eng, db, nodeID
 }
 
@@ -79,7 +79,7 @@ func TestKeepStagedKeeper_EndedRefillIsNotRecreated(t *testing.T) {
 func TestKeepStagedKeeper_SwapThatDropsOnTheSpotOrdersNothing(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
-		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart},
+		map[string]protocol.NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart},
 			ksSpot: {Occupied: true, PayloadCode: "SOMETHING-ELSE", BinID: 150}})
 	claim := keeperClaimByID(t, db, nodeID)
 	planned := *claim
@@ -162,7 +162,7 @@ func TestKeepStagedKeeper_StartAbortingTheCellDoesNotWaitOnItself(t *testing.T) 
 	fx := seedKeepStagedChangeover(t,
 		[]coClaim{{"L1", "SPOT", "SRC-OLD", "PART-OLD", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
 		[]coClaim{{"L1", "SPOT", "SRC-NEW", "PART-NEW", protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, true, false}},
-		map[string]NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"}, "SPOT": {}})
+		map[string]protocol.NodeBinInfo{"L1": {Occupied: true, PayloadCode: "PART-OLD"}, "SPOT": {}})
 	// The production emitter: an abort's completion cascade runs in the caller.
 	fx.eng.orderMgr = orders.NewManager(fx.db, &orderEmitter{bus: fx.eng.Events}, "test.station")
 	nodeID := fx.nodeIDs["L1"]
@@ -191,7 +191,7 @@ func TestKeepStagedKeeper_StartAbortingTheCellDoesNotWaitOnItself(t *testing.T) 
 func TestKeepStagedKeeper_ProduceRefillsUnderCoresSpelling(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID, claim := keepStagedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeTwoRobot,
-		map[string]NodeBinInfo{ksLine: {Occupied: true}, ksSpot: {}})
+		map[string]protocol.NodeBinInfo{ksLine: {Occupied: true}, ksSpot: {}})
 	holdingSwap(t, db, nodeID)
 	node, err := db.GetProcessNode(nodeID)
 	testutil.MustNoErr(t, err, "node")

@@ -59,7 +59,7 @@ type pinCase struct {
 	read      pinRead
 	staging   bool // the spot is the incoming claim's inbound staging
 	add       bool // the line is added by the incoming style (no outgoing claim)
-	spotRow   *NodeBinInfo
+	spotRow   *protocol.NodeBinInfo
 	queuedRef bool // a keeper refill is queued at the spot when START is pressed
 }
 
@@ -83,29 +83,29 @@ func (c pinCase) name() string {
 // claim's spare: a full of its part for consume, an unstamped empty for
 // produce. Wrong is a full of the outgoing part, which neither incoming role
 // takes. Unknown is Core not answering for the spot.
-func (c pinCase) spotRowFor() (NodeBinInfo, bool) {
+func (c pinCase) spotRowFor() (protocol.NodeBinInfo, bool) {
 	if c.spotRow != nil {
 		return *c.spotRow, true
 	}
 	switch c.read {
 	case readBare:
-		return NodeBinInfo{}, true
+		return protocol.NodeBinInfo{}, true
 	case readRight:
 		if c.role == protocol.ClaimRoleConsume {
-			return NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW", BinID: 7}, true
+			return protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-NEW", BinID: 7}, true
 		}
-		return NodeBinInfo{Occupied: true, BinID: 7}, true
+		return protocol.NodeBinInfo{Occupied: true, BinID: 7}, true
 	case readWrong:
-		return NodeBinInfo{Occupied: true, PayloadCode: "PART-OLD", BinID: 7}, true
+		return protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-OLD", BinID: 7}, true
 	}
-	return NodeBinInfo{}, false
+	return protocol.NodeBinInfo{}, false
 }
 
 // pinNodeBinsStub answers node-bins from rows, leaving out the names in omit.
-func pinNodeBinsStub(t *testing.T, rows map[string]NodeBinInfo, omit map[string]bool) *httptest.Server {
+func pinNodeBinsStub(t *testing.T, rows map[string]protocol.NodeBinInfo, omit map[string]bool) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		out := []NodeBinInfo{}
+		out := []protocol.NodeBinInfo{}
 		if r.URL.Path == "/api/telemetry/node-bins" {
 			for _, n := range strings.Split(r.URL.Query().Get("nodes"), ",") {
 				if n == "" || omit[n] {
@@ -129,9 +129,9 @@ func (c pinCase) seed(t *testing.T) *coFixture {
 		from = []coClaim{{"L1", pinSpot, "SRC-OLD", "PART-OLD", c.role, c.mode, true, false}}
 	}
 	to := []coClaim{{"L1", pinSpot, "SRC-NEW", "PART-NEW", c.role, c.mode, true, false}}
-	rows := map[string]NodeBinInfo{}
+	rows := map[string]protocol.NodeBinInfo{}
 	if !c.add {
-		rows["L1"] = NodeBinInfo{Occupied: true, PayloadCode: "PART-OLD"}
+		rows["L1"] = protocol.NodeBinInfo{Occupied: true, PayloadCode: "PART-OLD"}
 	}
 	omit := map[string]bool{}
 	if row, ok := c.spotRowFor(); ok {
@@ -406,7 +406,7 @@ func TestKeepStagedChangeover_EveryShapePin(t *testing.T) {
 
 // pinExtraCases are the shapes the matrix does not reach.
 func pinExtraCases() []pinCase {
-	empty := NodeBinInfo{Occupied: true, BinID: 137}
+	empty := protocol.NodeBinInfo{Occupied: true, BinID: 137}
 	out := []pinCase{
 		// SPR ALN_011, 2026-10-15 08:31: a consume incoming claim, an unstamped
 		// empty on the spot, which is the inbound staging. The spare is wrong for
