@@ -256,6 +256,11 @@ func (d *Doors) loaderRetrieve(station string, req protocol.LoaderRetrieveReques
 	if req.Count <= 0 {
 		return badRequest("ask for at least one carrier")
 	}
+	// One shape per origin: a release's full-in names its parts in payloads, a
+	// person names one in payload_code.
+	if (asker == dispatch.ReplenishBySideCycle) != (len(req.Payloads) > 0) {
+		return badRequest("a release's full-in names its parts in payloads; a person's ask names one in payload_code")
+	}
 	disp := d.engine.Dispatcher()
 	cfg, ok, err := disp.LoadReplenishConfig(id)
 	if err != nil {
@@ -273,7 +278,7 @@ func (d *Doors) loaderRetrieve(station string, req protocol.LoaderRetrieveReques
 	res, err := disp.ReplenishLoader(dispatch.ReplenishRequest{
 		Origin: asker, OrderType: pull, SourceNode: req.SourceNode, AnySource: req.AnySource,
 		SkipAutoConfirm: req.SkipAutoConfirm,
-		StationID:       station, LoaderID: id, PayloadCode: req.PayloadCode, MemberNode: req.MemberNode,
+		StationID:       station, LoaderID: id, PayloadCode: req.PayloadCode, Payloads: req.Payloads, MemberNode: req.MemberNode,
 		Want: req.Count, OriginID: req.OriginID, OriginClass: origin,
 	}, cfg)
 	out := protocol.LoaderRetrieveResponse{Want: res.Want, Created: []string{}, Skipped: res.Skipped}
@@ -282,6 +287,16 @@ func (d *Doors) loaderRetrieve(station string, req protocol.LoaderRetrieveReques
 	}
 	if len(res.HeldBy) > 0 {
 		out.HeldBy = res.HeldBy
+	}
+	for _, p := range res.Parts {
+		part := protocol.LoaderRetrievePart{PayloadCode: p.PayloadCode, Created: []string{}, Skipped: p.Skipped}
+		for _, o := range p.Created {
+			part.Created = append(part.Created, o.EdgeUUID)
+		}
+		if len(p.HeldBy) > 0 {
+			part.HeldBy = p.HeldBy
+		}
+		out.Parts = append(out.Parts, part)
 	}
 	if err != nil {
 		// What was made before the failure stands, and is said.

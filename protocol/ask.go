@@ -148,12 +148,13 @@ const (
 // own and never comes over the wire.
 const (
 	LoaderAskOperator  = "operator"   // a person: REQUEST at the loader, the manual retrieve page
-	LoaderAskSideCycle = "side_cycle" // a release offered an unloader a part (the U1)
+	LoaderAskSideCycle = "side_cycle" // a release offered an unloader its parts (the U1; Payloads)
 )
 
 // LoaderRetrieveRequest is an ask for carriers at a loader: the loader's
 // identity (LoaderInfo.LoaderKey), what each carrier is (Direction), who asks
-// (Origin), the part, the member node the asker stands at ("" for none, which
+// (Origin), the part (PayloadCode, a person's ask; a release's full-in names
+// its parts in Payloads instead), the member node the asker stands at ("" for none, which
 // a dedicated loader resolves to its first position), how many, and the demand
 // episode the asking serves ("" for none) with its class (OriginClass*; "" lets
 // Core classify by the episode: attached with one, orphan without).
@@ -174,27 +175,46 @@ const (
 // ask: Core reads none of them on an order, so the asking Edge records them on
 // its own rows for the orders Core made.
 type LoaderRetrieveRequest struct {
-	LoaderKey       string `json:"loader_key"`
-	Direction       string `json:"direction"`
-	Origin          string `json:"origin"`
-	PayloadCode     string `json:"payload_code"`
-	MemberNode      string `json:"member_node,omitempty"`
-	Count           int    `json:"count"`
-	OriginID        string `json:"origin_id,omitempty"`
-	OriginClass     string `json:"origin_class,omitempty"`
-	SourceNode      string `json:"source_node,omitempty"`
-	AnySource       bool   `json:"any_source,omitempty"`
-	SkipAutoConfirm bool   `json:"skip_auto_confirm,omitempty"`
+	LoaderKey   string `json:"loader_key"`
+	Direction   string `json:"direction"`
+	Origin      string `json:"origin"`
+	PayloadCode string `json:"payload_code,omitempty"`
+	// Payloads are the parts a release's full-in offers (the side-cycle origin,
+	// one full of each wanted), in the order the asker walks them. Core decides
+	// them in that order in one decision, each seeing what the ones before it
+	// ordered, and answers per part (LoaderRetrieveResponse.Parts). A person's
+	// ask names its one part in PayloadCode and leaves this empty.
+	Payloads        []string `json:"payloads,omitempty"`
+	MemberNode      string   `json:"member_node,omitempty"`
+	Count           int      `json:"count"`
+	OriginID        string   `json:"origin_id,omitempty"`
+	OriginClass     string   `json:"origin_class,omitempty"`
+	SourceNode      string   `json:"source_node,omitempty"`
+	AnySource       bool     `json:"any_source,omitempty"`
+	SkipAutoConfirm bool     `json:"skip_auto_confirm,omitempty"`
 }
 
 // LoaderRetrieveResponse is what Core did with the ask: how many it was asked
 // for (Want, before what is already coming is subtracted), the orders it
 // made (their Edge UUIDs; each reaches the station as a projection), the
 // windows it did not order to and why (HeldBy, by node), and why it made none
-// at all when it made none (Skipped).
+// at all when it made none (Skipped). A release's full-in answers each part it
+// named in Parts, in its order; Created is all of them together.
 type LoaderRetrieveResponse struct {
-	Want    int               `json:"want"`
-	Created []string          `json:"created"`
-	HeldBy  map[string]string `json:"held_by,omitempty"`
-	Skipped string            `json:"skipped,omitempty"`
+	Want    int                  `json:"want"`
+	Created []string             `json:"created"`
+	HeldBy  map[string]string    `json:"held_by,omitempty"`
+	Skipped string               `json:"skipped,omitempty"`
+	Parts   []LoaderRetrievePart `json:"parts,omitempty"`
+}
+
+// LoaderRetrievePart is one part's outcome in a release's full-in: the order
+// made for it (Created), or why none: Skipped (a full of it standing on a
+// target window, one already coming) or HeldBy (each target window and its
+// cause, none free).
+type LoaderRetrievePart struct {
+	PayloadCode string            `json:"payload_code"`
+	Created     []string          `json:"created"`
+	HeldBy      map[string]string `json:"held_by,omitempty"`
+	Skipped     string            `json:"skipped,omitempty"`
 }

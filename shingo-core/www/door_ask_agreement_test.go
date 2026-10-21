@@ -248,6 +248,8 @@ func TestDoorAsk_LoaderRetrieve(t *testing.T) {
 		"no direction":                {protocol.LoaderRetrieveRequest{LoaderKey: "loader:1", Origin: protocol.LoaderAskOperator, Count: 1}, http.StatusBadRequest},
 		"no origin":                   {protocol.LoaderRetrieveRequest{LoaderKey: "loader:1", Direction: protocol.LoaderRetrieveFull, Count: 1}, http.StatusBadRequest},
 		"a threshold over the wire":   {protocol.LoaderRetrieveRequest{LoaderKey: "loader:1", Direction: protocol.LoaderRetrieveEmpty, Origin: "threshold", Count: 1}, http.StatusBadRequest},
+		"a release naming one part":   {protocol.LoaderRetrieveRequest{LoaderKey: "loader:1", Direction: protocol.LoaderRetrieveFull, Origin: protocol.LoaderAskSideCycle, PayloadCode: "P", Count: 1}, http.StatusBadRequest},
+		"a person naming parts":       {protocol.LoaderRetrieveRequest{LoaderKey: "loader:1", Direction: protocol.LoaderRetrieveFull, Origin: protocol.LoaderAskOperator, Payloads: []string{"P"}, Count: 1}, http.StatusBadRequest},
 		"a loader Core does not have": {empty("loader:999999", 1), http.StatusNotFound},
 	} {
 		if res, _ := ask(c.req); res.Status != c.want {
@@ -304,7 +306,7 @@ func TestDoorAsk_LoaderRetrieve(t *testing.T) {
 	}
 	testutil.MustNoErr(t, db.UpsertLoaderPayload(loaders.Payload{LoaderID: uid, PayloadCode: sd.Payload.Code}), "unloader payload")
 	full := protocol.LoaderRetrieveRequest{LoaderKey: loaders.Key(uid), Direction: protocol.LoaderRetrieveFull,
-		Origin: protocol.LoaderAskSideCycle, PayloadCode: sd.Payload.Code, Count: 1, SourceNode: fg.Name,
+		Origin: protocol.LoaderAskSideCycle, Payloads: []string{sd.Payload.Code}, Count: 1, SourceNode: fg.Name,
 		OriginClass: protocol.OriginClassNoDemand, SkipAutoConfirm: true}
 	res, out = ask(full)
 	if res.Status != http.StatusOK || len(out.Created) != 1 {
@@ -319,9 +321,12 @@ func TestDoorAsk_LoaderRetrieve(t *testing.T) {
 	if !o.SkipAutoConfirm {
 		t.Errorf("the full asked with skip_auto_confirm: the sweep would confirm it (skip_auto_confirm false)")
 	}
+	if len(out.Parts) != 1 || out.Parts[0].PayloadCode != sd.Payload.Code || len(out.Parts[0].Created) != 1 {
+		t.Errorf("a release's full: parts %+v, want its one part with the order", out.Parts)
+	}
 	res, out = ask(full)
-	if res.Status != http.StatusOK || len(out.Created) != 0 || out.Skipped == "" {
-		t.Errorf("a second release of the part: %d %+v, want none made and why", res.Status, out)
+	if res.Status != http.StatusOK || len(out.Created) != 0 || len(out.Parts) != 1 || out.Parts[0].Skipped == "" {
+		t.Errorf("a second release of the part: %d %+v, want none made and why, on its part", res.Status, out)
 	}
 
 	// A person's full at the same unloader, fed directly, naming no source: with

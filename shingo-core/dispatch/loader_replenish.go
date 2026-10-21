@@ -2,6 +2,8 @@ package dispatch
 
 import (
 	"fmt"
+	"maps"
+	"strings"
 	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 
 	"github.com/google/uuid"
@@ -43,10 +45,11 @@ const (
 	// ReplenishByOperator: a person asked for Want carriers. Sized as asked;
 	// subtracts the asking episode's live orders.
 	ReplenishByOperator ReplenishOrigin = "operator"
-	// ReplenishBySideCycle: a release offered an unloader a part (the side
-	// cycle's full-in, U1). Sized as asked (one); it has no episode, so it
-	// subtracts the part's live orders across the loader's windows and stops for
-	// a bin of the part standing on a target window (orders.ReadPartAtLoader).
+	// ReplenishBySideCycle: a release offered an unloader its parts (the side
+	// cycle's full-in, U1; ReplenishRequest.Payloads, decided in order). Sized
+	// as asked (one each); it has no episode, so each part subtracts its own live
+	// orders across the loader's windows and stops for a bin of it standing on a
+	// target window (orders.ReadPartAtLoader).
 	// An automatic ask at a loader a person drives, so it is not refused there.
 	ReplenishBySideCycle ReplenishOrigin = "side_cycle"
 )
@@ -67,8 +70,14 @@ type ReplenishRequest struct {
 	StationID string
 	// LoaderID is the loader to replenish.
 	LoaderID int64
-	// PayloadCode is the part that ran low.
+	// PayloadCode is the part that ran low, or the part a person asks for. The
+	// side-cycle origin does not read it: it names its parts in Payloads.
 	PayloadCode string
+	// Payloads are the parts a release's full-in offers (the side-cycle origin
+	// only), in the order the asker walks them. They are decided in that order
+	// under the one loader lock, each seeing the orders the ones before it made,
+	// and each has its own outcome (ReplenishResult.Parts).
+	Payloads []string
 	// MemberNode is the specific member node the reading came from, or "". It
 	// routes a dedicated loader's carrier to the position that actually reported
 	// low rather than to whichever position sorts first.
@@ -121,6 +130,19 @@ type ReplenishResult struct {
 	// per-window: at threshold, no capacity figure, loader serves no such
 	// payload. Empty when the per-window detail in HeldBy is the whole story.
 	Skipped string
+	// Parts is a side-cycle ask's outcome per part, in the order asked; Created
+	// is every part's orders together. Nil for the other origins.
+	Parts []ReplenishPart
+}
+
+// ReplenishPart is one part's outcome in a side-cycle ask: the orders made for
+// it, or why none (Skipped: a full of the part standing on a target window,
+// one already coming; or HeldBy, each target window and its cause).
+type ReplenishPart struct {
+	PayloadCode string
+	Created     []*orders.Order
+	HeldBy      map[string]string
+	Skipped     string
 }
 
 // LoaderReplenishConfig is the loader configuration ReplenishLoader decides
@@ -239,9 +261,6 @@ func (d *Dispatcher) subtracted(req ReplenishRequest, cfg LoaderReplenishConfig,
 			return 0, "could not read what this demand already ordered; not adding to it"
 		}
 		return n, ""
-	}
-	if req.PayloadCode == "" {
-		return 0, "a release's full-in names no part"
 	}
 	windows := make([]string, 0, len(cfg.Homes))
 	for _, h := range cfg.Homes {
@@ -392,6 +411,10 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 		res.Skipped = fmt.Sprintf("the %s ask names no carriers", req.Origin)
 		return res, nil
 	}
+	if req.Origin == ReplenishBySideCycle && len(req.Payloads) == 0 {
+		res.Skipped = "a release's full-in names no part"
+		return res, nil
+	}
 	res.Want = want
 
 	// ONE DECISION AT A TIME PER LOADER. What is coming is read, the windows
@@ -408,7 +431,12 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 	// decision counts them, sourced or not).
 	mu := d.loaderLock(req.LoaderID)
 	mu.Lock()
-	err := d.replenishLocked(req, cfg, intent, want, &res)
+	var err error
+	if req.Origin == ReplenishBySideCycle {
+		err = d.replenishPartsLocked(req, cfg, intent, want, &res)
+	} else {
+		err = d.replenishLocked(req, cfg, intent, want, &res)
+	}
 	mu.Unlock()
 	for _, o := range res.Created {
 		d.acquireCoreAsk(o)
@@ -424,10 +452,9 @@ func (d *Dispatcher) loaderLock(loaderID int64) *lockcheck.Mutex[lockorder.Loade
 	return m.(*lockcheck.Mutex[lockorder.LoaderBudget])
 }
 
-// replenishLocked is ReplenishLoader's subtraction, window choice and inserts,
-// with the loader's lock held. It fills res and returns a write's error.
-func (d *Dispatcher) replenishLocked(req ReplenishRequest, cfg LoaderReplenishConfig, intent string, want int, res *ReplenishResult) error {
-	in := loaders.DeliveryTargetsInput{
+// deliveryInput is the delivery-target question for req's part at cfg's loader.
+func deliveryInput(req ReplenishRequest, cfg LoaderReplenishConfig) loaders.DeliveryTargetsInput {
+	return loaders.DeliveryTargetsInput{
 		Layout:        cfg.Layout,
 		FunnelWindows: cfg.FunnelWindows,
 		Homes:         cfg.Homes,
@@ -436,6 +463,63 @@ func (d *Dispatcher) replenishLocked(req ReplenishRequest, cfg LoaderReplenishCo
 		Member:        req.MemberNode,
 		PayloadCode:   req.PayloadCode,
 	}
+}
+
+// replenishPartsLocked is a side-cycle ask's parts, decided one after another
+// with the loader's lock held: each part is replenishLocked for that part, so
+// it subtracts its own live fulls, stops for a full of it standing, and sees
+// the windows the parts before it took. Its outcome is res.Parts.
+//
+// ONCE NO WINDOW IS FREE, NOTHING MORE IS READ. A part whose window choice
+// leaves every one of its target windows taken (held, or given an order) tells
+// every later part with the same targets its answer: held, by the same
+// causes, with no statement. At a one-window unloader offered twenty parts
+// that is one part's reads and nineteen answered from it.
+func (d *Dispatcher) replenishPartsLocked(req ReplenishRequest, cfg LoaderReplenishConfig, intent string, want int, res *ReplenishResult) error {
+	full := map[string]map[string]string{} // a target set none of which is free -> each window's cause
+	for _, p := range req.Payloads {
+		one := req
+		one.PayloadCode = p
+		targets, _ := loaders.DeliveryTargets(deliveryInput(one, cfg))
+		names := make([]string, len(targets))
+		for i, t := range targets {
+			names[i] = t.NodeName
+		}
+		key := strings.Join(names, "|")
+		if held, ok := full[key]; ok && len(names) > 0 {
+			res.Parts = append(res.Parts, ReplenishPart{PayloadCode: p, HeldBy: maps.Clone(held)})
+			continue
+		}
+		part := ReplenishResult{HeldBy: map[string]string{}}
+		err := d.replenishLocked(one, cfg, intent, want, &part)
+		res.Parts = append(res.Parts, ReplenishPart{PayloadCode: p, Created: part.Created, HeldBy: part.HeldBy, Skipped: part.Skipped})
+		res.Created = append(res.Created, part.Created...)
+		if err != nil {
+			return err
+		}
+		taken := maps.Clone(part.HeldBy)
+		for _, o := range part.Created {
+			taken[o.DeliveryNode] = "window-order-open"
+		}
+		free := false
+		for _, n := range names {
+			if _, ok := taken[n]; !ok {
+				free = true
+				break
+			}
+		}
+		if !free && part.Skipped == "" {
+			full[key] = taken
+		}
+	}
+	return nil
+}
+
+// replenishLocked is ReplenishLoader's subtraction, window choice and inserts
+// for one part, with the loader's lock held. It fills res and returns a
+// write's error.
+func (d *Dispatcher) replenishLocked(req ReplenishRequest, cfg LoaderReplenishConfig, intent string, want int, res *ReplenishResult) error {
+	in := deliveryInput(req, cfg)
 
 	// What is already coming, subtracted from what this ask is about to ask for:
 	// each origin's own question (subtracted).

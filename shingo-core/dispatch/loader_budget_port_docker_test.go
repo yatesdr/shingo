@@ -225,7 +225,13 @@ func TestPortedBudget_AResidentEmptyHoldsTheOnlyWindow(t *testing.T) {
 // sideCycleAsk is a release's U1 asked of Core: ReplenishLoader's side-cycle
 // origin, a full of the request's payload, want one.
 func sideCycleAsk(d *Dispatcher, req ReplenishRequest, cfg LoaderReplenishConfig) (ReplenishResult, error) {
+	return sideCycleParts(d, req, cfg, req.PayloadCode)
+}
+
+// sideCycleParts is one release's full-in naming several parts, in order.
+func sideCycleParts(d *Dispatcher, req ReplenishRequest, cfg LoaderReplenishConfig, parts ...string) (ReplenishResult, error) {
 	req.Origin, req.OrderType, req.Want = ReplenishBySideCycle, OrderTypeRetrieve, 1
+	req.PayloadCode, req.Payloads = "", parts
 	return d.ReplenishLoader(req, cfg)
 }
 
@@ -421,8 +427,8 @@ func TestPortedBudget_SideCycleFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a dead read is a reason, not an error: %v", err)
 	}
-	if len(res.Created) != 0 || (res.Skipped == "" && len(res.HeldBy) == 0) {
-		t.Errorf("created %d, skipped %q, held %v; want none and a reason", len(res.Created), res.Skipped, res.HeldBy)
+	if len(res.Created) != 0 || len(res.Parts) != 1 || (res.Parts[0].Skipped == "" && len(res.Parts[0].HeldBy) == 0) {
+		t.Errorf("created %d, parts %+v; want none and the part's reason", len(res.Created), res.Parts)
 	}
 }
 
