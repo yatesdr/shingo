@@ -28,9 +28,10 @@ import (
 // writes nothing on the Edge.
 //
 // THE COPY IS MEMORY ONLY. It changes with every delivery, so it has no
-// feed_copy row (holdFeed and OnCoreAck skip FeedBins: feedCopyKept), and after
-// a restart the Edge quotes "" and Core sends it again. Display only: every
-// engine path that decides on occupancy keeps its own read of Core.
+// feed_copy row (its feedRow in feeds.go has keepRow false, so holdFeed and
+// OnCoreAck write none), and after a restart the Edge quotes "" and Core sends
+// it again. Display only: every engine path that decides on occupancy keeps
+// its own read of Core.
 
 // binWatchKey is the resend guard's key for the watch list.
 const binWatchKey = "bins.watch"

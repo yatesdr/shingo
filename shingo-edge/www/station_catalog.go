@@ -36,11 +36,8 @@ func stampStationCatalog(eng any, view *domain.OperatorStationView, now time.Tim
 		}
 		return
 	}
-	current := confirmed
-	if received.After(current) {
-		current = received
-	}
-	if now.Sub(current) <= engine.FeedAsOfAfter {
+	current, old := engine.CurrentAt(received, confirmed, now)
+	if !old {
 		return
 	}
 	at := current.UTC()

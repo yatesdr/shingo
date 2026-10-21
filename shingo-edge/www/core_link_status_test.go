@@ -196,12 +196,12 @@ func TestCoreLinkSummary_BeforeAck(t *testing.T) {
 }
 
 // TestAsOfCopies_Characterised pins what each of the Edge's as-of copies says
-// for the same feed times, before they become one rule. Four take the later of
-// arrival and confirmation (binsAsOf, stampStationCatalog, containmentAsOf, and
-// the engine's crossingsLocked, pinned beside it in feed_aging_test.go);
-// coreLinkFeedNote takes the confirmation, else the arrival. They disagree in
-// one row: a copy that arrived just now on top of an old confirmation is
-// current to the station and "as of" to Diagnostics.
+// for the same feed times. All five call engine.CurrentAt (binsAsOf,
+// stampStationCatalog, containmentAsOf, coreLinkFeedNote, and the engine's
+// crossingsLocked, pinned beside it in feed_aging_test.go). Before they did,
+// coreLinkFeedNote took the confirmation, else the arrival, and the last row
+// was the fix: a copy that arrived just now on top of an old confirmation was
+// current to the station and "as of" to Diagnostics; it is current to both.
 func TestAsOfCopies_Characterised(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
@@ -217,7 +217,7 @@ func TestAsOfCopies_Characterised(t *testing.T) {
 		{"arrived recently, never confirmed", fresh, time.Time{}, false, false},
 		{"arrived long ago, never confirmed", old, time.Time{}, true, true},
 		{"old arrival, old confirmation", old, old, true, true},
-		{"arrived recently over an old confirmation", fresh, old, false, true},
+		{"arrived recently over an old confirmation", fresh, old, false, false},
 	}
 	for _, c := range cases {
 		gotBins := binsAsOf(engine.NodeBinsState{Held: true, ReceivedAt: c.received, ConfirmedAt: c.confirmed}, now) != nil
@@ -236,5 +236,33 @@ func TestAsOfCopies_Characterised(t *testing.T) {
 		if gotLink != c.linkStale {
 			t.Errorf("%s: Diagnostics as-of %v, want %v", c.name, gotLink, c.linkStale)
 		}
+	}
+}
+
+// TestCoreLink_ListsEveryFeed: /status and Diagnostics list every feed, in
+// protocol.AllFeeds order. Bins was missing until the list came from the
+// engine's feed descriptor.
+func TestCoreLink_ListsEveryFeed(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	eng := &stubEngine{statusCoreLink: stubCoreLink{
+		received: map[string]time.Time{protocol.FeedBins: now.Add(-time.Second)},
+	}}
+	s := readCoreLink(eng, now)
+	var lines []string
+	for _, key := range coreLinkFeeds {
+		lines = append(lines, key+": "+coreLinkFeedNote(eng, key, now))
+	}
+	all := protocol.AllFeeds()
+	if strings.Join(coreLinkFeeds, ",") != strings.Join(all, ",") {
+		t.Errorf("Core-link feeds = %v, want %v", coreLinkFeeds, all)
+	}
+	for _, key := range all {
+		if _, ok := s.FeedConfirmedAgeSeconds[key]; !ok {
+			t.Errorf("/status feed_confirmed_age_seconds has no %s", key)
+		}
+	}
+	if got := lines[len(lines)-1]; got != "bins: current" {
+		t.Errorf("Diagnostics' last feed line = %q, want %q", got, "bins: current")
 	}
 }

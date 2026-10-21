@@ -252,3 +252,47 @@ func TestOnCoreAck_GapReconciles(t *testing.T) {
 		t.Errorf("ack after the gap ack: reconciles = %d, want still 1", runs)
 	}
 }
+
+// feedCarriers is the Edge-inbound subject Core sends each feed on (Core's
+// sendFeeds; the Edge's handlers in cmd/shingoedge/main.go). The scene has no
+// subject of its own: its revision and geometry ride the node list.
+var feedCarriers = map[string]string{
+	protocol.FeedContainment: protocol.SubjectContainmentSnapshot,
+	protocol.FeedRefusals:    protocol.SubjectSupplyRefusalSnapshot,
+	protocol.FeedNodes:       protocol.SubjectNodeListResponse,
+	protocol.FeedScene:       protocol.SubjectNodeListResponse,
+	protocol.FeedCatalog:     protocol.SubjectCatalogPayloadsResponse,
+	protocol.FeedBins:        protocol.SubjectBinsSnapshot,
+}
+
+// TestFeedRows_CoverAllFeeds: every feed key has exactly one descriptor row and
+// no row names a key protocol does not list, so a new feed cannot take the zero
+// row's silent answers; and the subject that carries each feed to this Edge is
+// one the boot coverage assertion registers (protocol.EdgeInboundSubjects).
+func TestFeedRows_CoverAllFeeds(t *testing.T) {
+	t.Parallel()
+	rows := map[string]int{}
+	for _, f := range feedRows {
+		rows[f.key]++
+		if f.quote == nil {
+			t.Errorf("%s: row has no quote", f.key)
+		}
+	}
+	inbound := map[string]bool{}
+	for _, s := range protocol.EdgeInboundSubjects() {
+		inbound[s] = true
+	}
+	for _, key := range protocol.AllFeeds() {
+		if rows[key] != 1 {
+			t.Errorf("%s: %d descriptor rows, want 1", key, rows[key])
+		}
+		delete(rows, key)
+		carrier, ok := feedCarriers[key]
+		if !ok || !inbound[carrier] {
+			t.Errorf("%s: carrier %q is not in EdgeInboundSubjects", key, carrier)
+		}
+	}
+	for key := range rows {
+		t.Errorf("descriptor row %s is not in protocol.AllFeeds", key)
+	}
+}

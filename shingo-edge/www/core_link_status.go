@@ -14,11 +14,9 @@ import (
 // expiry, and how current each Core feed's copy is. Read through the
 // statusEngine assertion, so the page interface does not widen.
 
-// coreLinkFeeds are the Core feeds reported, in display order.
-var coreLinkFeeds = []string{
-	protocol.FeedContainment, protocol.FeedRefusals, protocol.FeedNodes,
-	protocol.FeedScene, protocol.FeedCatalog,
-}
+// coreLinkFeeds are the Core feeds reported, in display order: every row of
+// the engine's feed descriptor, bins included.
+var coreLinkFeeds = engine.FeedKeys()
 
 // coreLinkStatus is the Core-link part of GET /status. The pointer fields are
 // null until the first ack, so "never heard from Core" is not read as "0 s".
@@ -93,18 +91,16 @@ func coreLinkSummary(s coreLinkStatus) string {
 		offset, *s.SecondsSinceLastAck, drops)
 }
 
-// coreLinkFeedNote says how current one feed's copy is. Nothing is hidden for
-// being old: an old confirmation shows its time, plant-local.
+// coreLinkFeedNote says how current one feed's copy is, by the screens' rule
+// (engine.CurrentAt). Nothing is hidden for being old: an old copy shows the
+// time it was last current, plant-local.
 func coreLinkFeedNote(eng statusEngine, key string, now time.Time) string {
 	received, confirmed := eng.FeedTimes(key)
-	at := confirmed
-	if at.IsZero() {
-		at = received
-	}
+	at, old := engine.CurrentAt(received, confirmed, now)
 	switch {
 	case at.IsZero():
 		return "No data from Core yet"
-	case now.Sub(at) > engine.FeedAsOfAfter:
+	case old:
 		return "as of " + planttime.Clock(at, plantLocation)
 	default:
 		return "current"

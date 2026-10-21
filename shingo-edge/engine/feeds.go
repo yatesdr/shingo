@@ -80,43 +80,136 @@ type feedBook struct {
 	// so a test can run the Edge's clock ahead of or behind Core's — the rig
 	// cannot shift one container's wall clock.
 	now func() time.Time
-	// stale is, per agedFeeds key, whether the copy was past FeedAsOfAfter
-	// when last looked at (crossingsLocked).
+	// stale is, per aged feed (feedRow.aged), whether the copy was past
+	// FeedAsOfAfter when last looked at (crossingsLocked).
 	stale map[string]bool
 }
 
-// agedFeeds are the held feeds whose age a screen shows: the station view's
-// "Bins as of" and "Catalog as of" (www station_bins.go, station_catalog.go),
-// and the containment page's "as of" (www handlers_containment.go).
-var agedFeeds = [...]string{protocol.FeedBins, protocol.FeedCatalog, protocol.FeedContainment}
+// feedAged is who is told when a held copy's age crosses FeedAsOfAfter:
+// nobody (no screen shows its age), the boards (the station view's "Bins as
+// of", "Catalog as of": www station_bins.go, station_catalog.go), or the
+// containment page (www handlers_containment.go, which reloads on
+// EventContainmentUpdated).
+type feedAged int
+
+const (
+	notAged feedAged = iota
+	agedOnBoard
+	agedOnContainment
+)
+
+// feedRow is everything the Edge says about one Core feed, in one place. A
+// feed's facts were six lists, and two had drifted: the Core-link page left
+// bins out, and its as-of rule was not the screens'. TestFeedRows_CoverAllFeeds
+// fails when a key of protocol.AllFeeds has no row.
+type feedRow struct {
+	key string
+	// quote is the digest the heartbeat names for the feed; ok false leaves
+	// the key out of the heartbeat (FeedDigests).
+	quote func(e *Engine, key string) (digest string, ok bool)
+	// persistDigest: the digest and body are written to feed_copy, only where
+	// the data they name survives a restart too. The node list is memory-only,
+	// so a persisted nodes digest would quote a copy the Edge no longer has and
+	// Core would never resend it; the scene revision and the refusal digest are
+	// recomputed from their own stores.
+	persistDigest bool
+	// keepRow: the feed has a feed_copy row at all (its times). The node-bins
+	// copy has none: it changes with every delivery, a row would be a SQLite
+	// write per bin movement, and after a restart the Edge quotes "" and Core
+	// sends it again. Pinned by TestNodeBins_NoSQLiteWrite.
+	keepRow bool
+	// aged is who a crossing of FeedAsOfAfter is announced to.
+	aged feedAged
+}
+
+// feedRows has one row per Core feed. The row order is the Core-link order:
+// the order /status and Diagnostics list the feeds in (FeedKeys), and the
+// order FeedDigests quotes them in.
+var feedRows = [...]feedRow{
+	{key: protocol.FeedContainment, quote: quoteHeld, persistDigest: true, keepRow: true, aged: agedOnContainment},
+	{key: protocol.FeedRefusals, quote: quoteRefusals, keepRow: true},
+	{key: protocol.FeedNodes, quote: quoteHeld, keepRow: true},
+	{key: protocol.FeedScene, quote: quoteScene, keepRow: true},
+	{key: protocol.FeedCatalog, quote: quoteHeld, persistDigest: true, keepRow: true, aged: agedOnBoard},
+	// Always quoted, "" while nothing is held: Core drops an Edge's watch
+	// list when its heartbeat does not name the key (a build without the feed).
+	{key: protocol.FeedBins, quote: quoteHeld, aged: agedOnBoard},
+}
+
+// feedRowOf is the row for a feed key; the zero row (nothing persisted, no
+// feed_copy row, not aged) for a key that has none.
+func feedRowOf(key string) feedRow {
+	for _, f := range feedRows {
+		if f.key == key {
+			return f
+		}
+	}
+	return feedRow{}
+}
+
+// FeedKeys is every Core feed, in the order the Core-link page lists them.
+func FeedKeys() []string {
+	out := make([]string, len(feedRows))
+	for i, f := range feedRows {
+		out[i] = f.key
+	}
+	return out
+}
+
+// quoteHeld quotes the digest that arrived with the copy, "" when none.
+func quoteHeld(e *Engine, key string) (string, bool) { return e.heldDigest(key), true }
+
+// quoteRefusals quotes the digest of this Edge's own open refusal table
+// (refusalsDigest), left out when it could not be read or the last ack came
+// from a Core that does not answer feeds.
+func quoteRefusals(e *Engine, _ string) (string, bool) { return e.refusalsDigest() }
+
+// quoteScene quotes the scene revision, which lives with the geometry, and
+// notes it so the ack can confirm it.
+func quoteScene(e *Engine, key string) (string, bool) {
+	rev := e.SceneRevision()
+	e.noteHeld(key, rev)
+	return rev, true
+}
+
+// CurrentAt is the display rule every screen applies to a held copy: it is
+// current as of the later of its arrival and Core's last confirmation (a copy
+// that has just arrived is as fresh as a confirmed one), and old when that is
+// longer ago than FeedAsOfAfter. at is zero when neither time is set, and then
+// old is true; each caller says what "nothing held" means on its screen.
+func CurrentAt(received, confirmed, now time.Time) (at time.Time, old bool) {
+	at = confirmed
+	if received.After(at) {
+		at = received
+	}
+	return at, now.Sub(at) > FeedAsOfAfter
+}
 
 // crossingsLocked compares each aged feed's age now with what it was when last
 // looked at, and reports a crossing of FeedAsOfAfter either way: for a feed a
 // station shows (board) and for containment, whose page reloads on its own
-// event. A copy is current as of the later of its arrival and Core's last
-// confirmation, the rule every screen applies; nothing held is never stale
-// (the screens say "not known" for that, from other facts). Memory only, three
-// compares: called on every heartbeat tick (FeedDigests), confirmation
-// (OnCoreAck) and arrival (holdFeed), because the board does not poll and the
-// crossing writes nothing anyone would announce.
+// event. The age is CurrentAt's; nothing held is never stale (the screens say
+// "not known" for that, from other facts). Memory only, three compares:
+// called on every heartbeat tick (FeedDigests), confirmation (OnCoreAck) and
+// arrival (holdFeed), because the board does not poll and the crossing writes
+// nothing anyone would announce.
 func (b *feedBook) crossingsLocked(now time.Time) (board, containment bool) {
 	if b.stale == nil {
 		b.stale = map[string]bool{}
 	}
-	for _, key := range agedFeeds {
-		stale := false
-		if h := b.held[key]; h != nil && !(h.receivedAt.IsZero() && h.confirmedAt.IsZero()) {
-			current := h.confirmedAt
-			if h.receivedAt.After(current) {
-				current = h.receivedAt
-			}
-			stale = now.Sub(current) > FeedAsOfAfter
-		}
-		if b.stale[key] == stale {
+	for _, f := range feedRows {
+		if f.aged == notAged {
 			continue
 		}
-		b.stale[key] = stale
-		if key == protocol.FeedContainment {
+		stale := false
+		if h := b.held[f.key]; h != nil && !(h.receivedAt.IsZero() && h.confirmedAt.IsZero()) {
+			_, stale = CurrentAt(h.receivedAt, h.confirmedAt, now)
+		}
+		if b.stale[f.key] == stale {
+			continue
+		}
+		b.stale[f.key] = stale
+		if f.aged == agedOnContainment {
 			containment = true
 		} else {
 			board = true
@@ -224,28 +317,11 @@ func (e *Engine) LastCoreAck() (local, server time.Time) {
 	return e.feeds.lastAck, e.feeds.lastServerTS
 }
 
-// digestPersists reports whether a feed's digest may be written to feed_copy:
-// only where the data it names is kept across a restart too. The node list is
-// memory-only, so a persisted nodes digest would quote a copy the Edge no
-// longer has and Core would never resend it; the scene revision and the
-// refusal digest are recomputed from their own stores.
-func digestPersists(key string) bool {
-	return key == protocol.FeedContainment || key == protocol.FeedCatalog
-}
-
-// feedCopyKept reports whether a feed has a feed_copy row at all. The node-bins
-// copy has none: it changes with every delivery, a row would be a SQLite
-// write per bin movement, and after a restart the Edge quotes "" and Core
-// sends it again. Pinned by TestNodeBins_NoSQLiteWrite.
-func feedCopyKept(key string) bool {
-	return key != protocol.FeedBins
-}
-
 // persistedRow is the feed_copy row for a hold, with the digest and body left
 // out where they do not persist.
 func persistedRow(key string, h *feedHold) store.FeedCopy {
 	row := store.FeedCopy{Feed: key, ReceivedAt: h.receivedAt, ConfirmedAt: h.confirmedAt}
-	if digestPersists(key) {
+	if feedRowOf(key).persistDigest {
 		row.Digest, row.Body = h.digest, h.body
 	}
 	return row
@@ -276,7 +352,7 @@ func (e *Engine) loadFeedCopies() {
 	defer e.feeds.mu.Unlock()
 	for _, r := range rows {
 		h := e.feeds.holdLocked(r.Feed)
-		if digestPersists(r.Feed) {
+		if feedRowOf(r.Feed).persistDigest {
 			h.digest, h.body = r.Digest, r.Body
 		}
 		h.receivedAt, h.confirmedAt, h.persistedAt = r.ReceivedAt, r.ConfirmedAt, r.ConfirmedAt
@@ -290,20 +366,11 @@ func (e *Engine) FeedDigests() map[string]string {
 	// The heartbeat's tick is the Edge's clock for the screens' "as of".
 	e.ageFeeds()
 	out := map[string]string{}
-	out[protocol.FeedContainment] = e.heldDigest(protocol.FeedContainment)
-	if d, ok := e.refusalsDigest(); ok {
-		out[protocol.FeedRefusals] = d
+	for _, f := range feedRows {
+		if d, ok := f.quote(e, f.key); ok {
+			out[f.key] = d
+		}
 	}
-	out[protocol.FeedNodes] = e.heldDigest(protocol.FeedNodes)
-	// The scene revision lives with the geometry; note it so the ack can
-	// confirm it.
-	rev := e.SceneRevision()
-	e.noteHeld(protocol.FeedScene, rev)
-	out[protocol.FeedScene] = rev
-	out[protocol.FeedCatalog] = e.heldDigest(protocol.FeedCatalog)
-	// Always named, "" while nothing is held: Core drops an Edge's watch list
-	// when its heartbeat does not name the key (a build without the feed).
-	out[protocol.FeedBins] = e.heldDigest(protocol.FeedBins)
 	return out
 }
 
@@ -329,7 +396,7 @@ func (e *Engine) heldDigest(key string) string {
 // holdFeed records a feed Core sent, AFTER its apply returned nil. body is the
 // encoded copy for a feed whose data lives only here (containment), else "".
 // The row is written when the digest changed, for every feed that keeps one
-// (feedCopyKept); an identical re-send only moves the received time in memory.
+// (feedRow.keepRow); an identical re-send only moves the received time in memory.
 func (e *Engine) holdFeed(key, digest, body string) {
 	now := time.Now()
 	e.feeds.mu.Lock()
@@ -344,7 +411,7 @@ func (e *Engine) holdFeed(key, digest, body string) {
 	board, containment := e.feeds.crossingsLocked(e.feeds.clock())
 	e.feeds.mu.Unlock()
 	e.announceCrossings(board, containment)
-	if changed && feedCopyKept(key) {
+	if changed && feedRowOf(key).keepRow {
 		if err := e.db.SaveFeedCopy(row); err != nil {
 			e.logFn("feeds: save %s: %v", key, err)
 		}
@@ -393,7 +460,7 @@ func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 			continue
 		}
 		h.confirmedAt = now
-		if feedCopyKept(key) && now.Sub(h.persistedAt) >= feedConfirmPersistEvery {
+		if feedRowOf(key).keepRow && now.Sub(h.persistedAt) >= feedConfirmPersistEvery {
 			h.persistedAt = now
 			persist = append(persist, persistedRow(key, h))
 		}

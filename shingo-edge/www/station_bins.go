@@ -43,17 +43,13 @@ func stampStationBins(eng ServiceAccess, stationID int64, view *domain.OperatorS
 }
 
 // binsAsOf is when a held copy was last current, set only when that is longer
-// ago than engine.FeedAsOfAfter. The copy is current as of the later of its
-// arrival and Core's last confirmation.
+// ago than engine.FeedAsOfAfter (engine.CurrentAt, the screens' rule).
 func binsAsOf(held engine.NodeBinsState, now time.Time) *time.Time {
 	if !held.Held {
 		return nil
 	}
-	current := held.ConfirmedAt
-	if held.ReceivedAt.After(current) {
-		current = held.ReceivedAt
-	}
-	if now.Sub(current) <= engine.FeedAsOfAfter {
+	current, old := engine.CurrentAt(held.ReceivedAt, held.ConfirmedAt, now)
+	if !old {
 		return nil
 	}
 	at := current.UTC()

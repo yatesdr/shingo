@@ -219,14 +219,11 @@ func (h *Handlers) containmentNotice() string {
 }
 
 // containmentAsOf is the "as of" time for a held copy, or "" while it is
-// current. The copy is current as of the later of its arrival and Core's last
-// confirmation: a snapshot that has just arrived is as fresh as a confirmed one.
+// current, by the screens' rule (engine.CurrentAt): a snapshot that has just
+// arrived is as fresh as a confirmed one.
 func containmentAsOf(st *engine.ContainmentState, now time.Time) string {
-	current := st.ConfirmedAt
-	if st.ReceivedAt.After(current) {
-		current = st.ReceivedAt
-	}
-	if now.Sub(current) <= engine.FeedAsOfAfter {
+	current, old := engine.CurrentAt(st.ReceivedAt, st.ConfirmedAt, now)
+	if !old {
 		return ""
 	}
 	if current.IsZero() {
