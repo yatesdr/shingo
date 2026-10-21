@@ -15,21 +15,21 @@ import (
 //
 // A value type with constructor-enforced invariants and typed identifiers. It
 // began as an additive shape with no runtime consumer; that is long past. The
-// reservation seam counts against the cluster it describes, the resolver returns
-// *Loader through a LoaderStore, and the older (node, claim) shim it replaced is
-// gone. Anything describing this type as inert is out of date.
+// resolver returns *Loader through a LoaderStore, and the older (node, claim)
+// shim it replaced is gone. The loader's budget is not the Edge's: Core counts
+// and places every carrier a loader is asked for (dispatch.ReplenishLoader).
 //
-// Why it exists: "what loader is this node part of, and what is its budget" is
-// answered once, by a typed aggregate that owns its windows, its payload set and
-// its slot count, rather than re-derived per caller from a core_node_name and
-// scattered boolean predicates.
+// Why it exists: "what loader is this node part of" is answered once, by a
+// typed aggregate that owns its windows and its payload set, rather than
+// re-derived per caller from a core_node_name and scattered boolean predicates.
+// The station board and the asks read it.
 
 // ── Typed domain identifiers ────────────────────────────────────────
 //
 // Newtypes over string so the compiler rejects the A1 bug class — an empty count
 // keyed by the wrong node string (process_node vs core_node; see
 // [[shingo_manual_swap_core_node_scoping]]). Adopted on NEW surfaces only (this
-// type, the reservation seam, the delivery-set query). Legacy string call sites
+// type and the delivery-set query). Legacy string call sites
 // convert at the boundary; this is deliberately NOT a repo-wide rename.
 
 type (
@@ -145,7 +145,7 @@ func (p Position) IsBuffer() bool {
 //   - the slot count is DERIVED, never passed, so a slot count below the member count
 //     cannot be expressed.
 //
-// The reservation seam and the resolver hang off this type. Immutable
+// The resolver and the station board hang off this type. Immutable
 // after construction (no setters); slice accessors return copies so callers
 // cannot mutate the aggregate's state.
 type Loader struct {

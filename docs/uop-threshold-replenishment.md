@@ -73,7 +73,7 @@ The orders are created on Core; the Edge only executes them. See
 `fireSignalCached` in `engine/threshold_monitor.go` — the cutover comment
 there records the 2026-07-31 incident that ended the split.
 
-Three separate Core subscriptions funnel into one evaluation, so a single bin move commonly trips more than one; the 15-second debounce is what absorbs that. The monitor also mints and closes **demand episodes** per binding (`engine/threshold_episodes.go`), and fired orders are stamped with the episode's origin — the episode is what dedups Core-side (see the reservation seam above). See [sweeps-and-monitors.md](sweeps-and-monitors.md).
+Three separate Core subscriptions funnel into one evaluation, so a single bin move commonly trips more than one; the 15-second debounce is what absorbs that. The monitor also mints and closes **demand episodes** per binding (`engine/threshold_episodes.go`), and fired orders are stamped with the episode's origin — the episode is what dedups Core-side (see the loader decision below). See [sweeps-and-monitors.md](sweeps-and-monitors.md).
 
 ### Debounce policy
 
@@ -89,37 +89,45 @@ The strict deploy ordering is: `uop_backfill` from a reconnecting Edge must comp
 
 ---
 
-## The reservation seam
+## The loader decision
 
-One automatic path fires an L1 — the threshold monitor on Core — but it is not
-the only thing that puts a bin on a loader window. The operator's Request Empty
-and Request Full buttons, the push sweeps, the unloader's U1, and the HTTP
-order API all target the same windows, and every one of the Edge-side ones goes
-through `withLoaderBudget` (`shingo-edge/engine/operator_demand_loader.go`).
+The threshold monitor is not the only thing that puts a bin on a loader window.
+The operator's Request Empty and Request Full buttons, the push sweeps, the
+unloader's U1 and the manual retrieve at a loader window all target the same
+windows. Every one of them is decided on Core, by the same door as the
+threshold monitor: `dispatch.ReplenishLoader`
+(`shingo-core/dispatch/loader_replenish.go`). The Edge asks with
+`loader.retrieve` (`protocol/ask.go`), stating an origin — `operator` for a
+person, `side_cycle` for a release's full-in — and Core makes the orders; the
+threshold origin is Core's own and never comes over the wire. The Edge creates
+none of these orders itself, and its triggers only say when to ask. See
+[bin-loader-unloader-architecture.md](bin-loader-unloader-architecture.md) for
+the askers and the Edge's local pre-checks.
 
-The seam takes a per-loader mutex and, in one snapshot, counts in-flight
-`retrieve_empty` orders across the loader's delivery-node set — applying both the
-per-payload dedup (fire only `want − in-flight-for-payload`) and the loader-total
-capacity cap (in-flight across the cluster ≤ budget, where budget = the
-delivery-set cardinality, one bin per window or position). A multi-window loader's
-budget is the sum of its windows, not a hardcoded `1`. Because the mutex is held
-across count and create, two racing callers cannot both read `inflight = 0` and
-both fire — the second waits, recounts, and sees the first.
+`ReplenishLoader` reads what is coming, chooses the windows and inserts the
+orders under one per-loader lock (`loaderLock`), so two asks for the same loader
+cannot both read every window free and both order — the second reads the
+first's orders. What it subtracts depends on the origin: a threshold or a
+person's ask subtracts the demand episode's own outstanding orders; a release's
+full-in, which has no episode, subtracts the part's live orders across every
+window of the unloader and stops for a full of the part already standing on a
+target window. The window choice is `plan.LoaderWindows`: the loader's delivery
+targets, at most the budget (one bin per window or position, the window count
+for a spreading shared loader), each held when a carrier stands there, an order
+is on its way, another order's reservation speaks for it, or a carrier of the
+same kind is already asked for there.
 
-It also refuses to fire when it cannot verify occupancy. An unreadable occupancy
-check is not an empty window, and treating it as one is what produced the
-2026-07-31 Springfield over-ordering incident.
+It also refuses to order when it cannot verify occupancy: every read fails
+closed. An unreadable occupancy check is not an empty window, and treating it
+as one is what produced the 2026-07-31 Springfield over-ordering incident.
 
-**Do not remove or weaken the seam during refactors, and do not wrap it in a DB
-transaction** — its correctness is the mutex plus count monotonicity, not
-isolation. The seam is the count→fire atomicity point for the OPERATOR-side
-writers only (push sweeps, Request Empty/Full, the unloader's U1, the HTTP
-order API) — and even there the 2026-07-31 census found creators outside it
-(RequestEmptyBin's simple mode; the changeover paths, unestablished). Core's
-threshold replenishment does NOT pass through here: what dedups it is the
-demand episode — dispatch.ReplenishLoader subtracts the episode's own
-outstanding orders from the ask, and a per-window delivery budget bounds the
-rest. Do not describe this seam as the single dedup point for "every path that
+**Do not move any part of this decision back to the Edge, and do not split the
+read from the insert.** The 2026-07-31 incident came from Core deciding a loop
+was low while the Edge decided how much that meant, each counting different
+things. One caveat survives: an order a claim sends straight to a loader window
+(a changeover's retrieve, a cell's move) is still created on the Edge, outside
+this decision; Core holds the window against the asks once that order is there.
+Do not describe `ReplenishLoader` as the single creator of "every order that
 stocks a loader"; that claim was refuted by census and cost Springfield 241
 duplicate orders while it stood.
 
@@ -301,8 +309,9 @@ The Edge is a pile's only writer, so Core's `lineside_buckets` is a mirror fed b
 
 ### Edge
 
-- `engine/operator_demand_loader.go` — `withLoaderBudget` (count→fire atomicity
-  for the OPERATOR-side loader/unloader writers only), the push sweeps.
+- `engine/operator_demand_loader.go`, `engine/operator_demand_unloader.go`,
+  `engine/loader_retrieve_ask.go` — the push sweeps and the other askers: when
+  to send a `loader.retrieve` ask; Core decides and creates the orders.
 - `engine/wiring_counter_delta.go` — cell autoreorder evaluation.
 - `engine/replenishment_admin.go` — the one surviving wrapper,
   `UpdateCellReorder` (reorder_point / source / auto_reorder on
@@ -314,6 +323,9 @@ The Edge is a pile's only writer, so Core's `lineside_buckets` is a mirror fed b
 
 - `engine/threshold_monitor.go` — `ThresholdMonitor` (debounce, warm-up,
   startup sweep, demand episodes, order creation via `dispatch.ReplenishLoader`).
+- `dispatch/loader_replenish.go` + `dispatch/plan/loader_window_choice.go` —
+  `ReplenishLoader` (every loader's carriers, both directions, under the
+  per-loader `loaderLock`) and its window choice, `plan.LoaderWindows`.
 - `service/threshold_calculator.go` + `store/orders/lead_time_queries.go` —
   the calculator and its Postgres lead-time helpers.
 - `service/inventory_system_count.go` — `SystemUOPForPayload`.

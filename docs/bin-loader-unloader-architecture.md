@@ -119,9 +119,10 @@ What remains, per side:
 - **Produce (loader L1)**: Core's threshold monitor creates the orders directly (no wire
   signal — `LoopBelowThresholdSignal`/`HandleLoopBelowThreshold` were deleted 2026-08-02
   with the Edge's sizing half), plus the operator push. No bin-count trigger exists.
-- **Consume (unloader U1)**: `createUnloaderFullIns` routes a U1 full-in through the
-  reservation seam, fired by the unloader's own auto_push gates and the startup sweep, and
-  (one payload, through `MaybeCreateUnloaderFullIn`) by a produce release whose disposition is
+- **Consume (unloader U1)**: the Edge asks Core for a U1 full-in (`offerUnloaderFulls`, one
+  `loader.retrieve` ask naming the unloader's parts), and Core decides and creates it. The
+  ask is sent by the unloader's own auto_push gates and the startup sweep, and (one payload,
+  through `MaybeCreateUnloaderFullIn`) by a produce release whose disposition is
   `capture_lineside` — a changeover evac at count 0, the sim's auto-operator or an API client;
   a station's HMI posts a bare body on a produce node and never fires it. No bin-arrival
   trigger exists.
@@ -132,11 +133,11 @@ to demand.
 
 ### Deduplication
 
-The reservation seam (`withLoaderBudget`, below) counts in-flight orders across the loader's delivery set before firing, so a payload that already has a non-terminal order in flight creates nothing. Core's `UNIQUE(edge_uuid)` constraint catches any remaining duplicates from at-least-once delivery.
+Core's loader decision (`dispatch.ReplenishLoader`, below) subtracts what is already coming before it orders, under the loader's lock, so a payload that already has a non-terminal order in flight creates nothing. Core's `UNIQUE(edge_uuid)` constraint catches any remaining duplicates from at-least-once delivery.
 
 ### Startup Sweep
 
-On Edge startup, after registration ack, the auto-push sweeps `SweepPushLoaders` / `SweepPushUnloaders` offer every auto loader/unloader's payloads to the reservation seam, picking up demand that arrived while offline. (`SendClaimSync` is deleted — see Demand Registry above.)
+On Edge startup, after registration ack, the auto-push sweeps `SweepPushLoaders` / `SweepPushUnloaders` ask Core for every auto loader/unloader's carriers (`loader.retrieve`), picking up demand that arrived while offline; Core decides what, if anything, to order. (`SendClaimSync` is deleted — see Demand Registry above.)
 
 ---
 
@@ -159,34 +160,35 @@ This prevents dispatching while the operator is still working:
 
 HMI only shows payloads with active demand as actionable. Server-side enforcement in `LoadBin`: after the allowed-payload check, query active orders for the node and verify at least one non-terminal order exists. DB-down returns an error rather than a false rejection.
 
-### Edge SQLite Transaction Safety
+### The loader decision (the never-2N guarantee)
 
-The seam runs in NO transaction, deliberately: its correctness is the per-loader mutex plus count monotonicity, not database isolation. Wrapping it in one would manufacture the Core/Edge divergence it exists to prevent, because the create it guards enqueues to Core and emits synchronously mid-write. The reasoning is written at the seam itself.
-
-### Reservation Seam (the never-2N guarantee)
-
-Every loader empty-in (an L1 `retrieve_empty`) and every unloader full-in (a U1 retrieve of a full bin) is created through **one** chokepoint, `engine.withLoaderBudget`. It owns the count→fire decision so the threshold signal (Kafka), an operator request (HTTP), and the push sweep can never both pass the in-flight count and both fire. The invariant: **one demand of N → exactly N bins in flight across the loader's delivery cluster, never 2N** — in either direction (a `retrieveEmpty` parameter selects which direction's in-flight orders the budget counts).
+Every carrier a loader or unloader is asked to take — a loader's empty-in (an L1 `retrieve_empty`) or an unloader's full-in (a U1 retrieve of a full bin) — is decided and created on **Core**, by one door, `dispatch.ReplenishLoader` (`shingo-core/dispatch/loader_replenish.go`). Its callers are Core's threshold monitor (`fireSignalCached`) and the door that answers the Edge's `loader.retrieve` ask (`AskLoaderRetrieve` in `shingo-core/www/doors.go`). The invariant: **one demand of N → exactly N bins in flight across the loader's delivery targets, never 2N** — in either direction (`ReplenishRequest.OrderType` states the pull: `retrieve_empty` or `retrieve`).
 
 How it works:
 
-- **Per-loader mutex, keyed map, NO transaction.** `loaderResv` is a `sync.Map[loaderID]*sync.Mutex`; the reservation holds the loader's mutex across the count and the create. Two *different* loaders never block each other. There is deliberately **no surrounding DB transaction** — its atomicity is the mutex, not DB isolation.
-  - *Why no tx (monotonicity):* the only operation that *raises* a loader's in-flight empty count is the create the seam guards; every other mutation (completion, cancellation, failure) only *lowers* it. Serialising the up-writers therefore makes the count monotone-safe without isolation.
-  - *Why no tx (unsoundness):* `CreateRetrieveOrder` is not transaction-pure — it enqueues to Core and fires a synchronous `EmitOrderCreated` mid-write. A surrounding tx could roll back the DB rows while those side effects already happened, manufacturing the Core/Edge divergence it was meant to prevent.
-- **One set query.** In-flight is counted across the loader's whole delivery-node set in a single `ListActiveOrdersByDeliveryNodeSet` (one snapshot), giving both the per-payload dedup and the loader-capacity cap.
-- **The Loader owns the reservation shape.** `withLoaderBudget` takes a `*domain.Loader`; the delivery-node set and the budget come from `loader.ReservationTarget(member, payload, multiWindow)`, which encodes the per-layout semantics so the seam stays layout-agnostic: a dedicated position maps to its one independent slot (budget 1); a shared loader funnels to its anchor (budget 1) **unless** multi-window is enabled, in which case it spreads to its windows (budget = `SlotCount`). The seam keys its mutex on `loader.ID()`.
-- **Multi-window delivery (per-loader, Core-owned).** Multi-window is per-loader on the Core `bin_loaders.funnel_windows` field, and that field alone decides it (the Edge's old plant-wide `loaders_multi_window` key is gone; a config that still carries it loads and ignores it). Spreading, a shared loader's bins spread **one per free window** — the seam computes the windows with none in flight and assigns each new order to a distinct one (round-robin), so a demand of N at an N-window loader fires exactly N, one per window, never two at the same window; funnelling, the loader funnels to the first window with budget 1. The never-2N budget is per-loader (keyed on `loader.ID()`), so it is not fragmented by spreading.
-- **One physical check the seam does NOT subsume.** The seam counts in-flight *orders*, not parked *bins*. The loader side relies purely on the order count because its `want` is demand-netted by the threshold monitor; the unloader's full-in is event-driven (`want=1`), so it keeps a physical "is a full already parked at the window?" check (`unloaderHasUsableFullPresent`) ahead of the seam.
-- **Fails closed.** A count read error fires nothing; the next signal retries.
+- **A stated origin.** `ReplenishRequest.Origin` is `threshold`, `operator` or `side_cycle`, never defaulted; a request without one is refused. A threshold ask is sized from the reading (`BinsToReachThreshold`) and is refused at an operator-driven loader; a person's ask (`operator`) is sized as asked. Both subtract the demand episode's own live orders. A release's full-in (`side_cycle`) has no episode, so each part subtracts its own live orders across every window of the unloader, and stops for a full of the part already standing on a target window (`orders.ReadPartAtLoader`, one statement).
+- **One decision at a time per loader.** What is coming is read, the windows are chosen and the orders are inserted under one per-loader lock (`loaderLock`, `lockorder.LoaderBudget`), so a second ask for the same loader reads the first one's orders. Two different loaders never block each other. The acquires (which may dispatch) run after the lock is let go.
+- **The window choice is the planner's.** `plan.LoaderWindows` walks the loader's delivery targets (`loaders.DeliveryTargets`: a spreading shared loader gives every window and a budget of the window count; a funnelling shared loader and a dedicated position give one node and a budget of 1) and orders one carrier per window it chooses. It holds a window, and names why in `HeldBy`, when the capacity verdict refuses it (a carrier standing, or an order holding a bin on its way), when another order's slot reservation speaks for it (`window-reserved`), when a carrier of the ask's own kind is already asked for there (`window-order-open`), or when a read fails (`window-check-failed`).
+- **Multi-window delivery (per-loader, Core-owned).** Multi-window is per-loader on the Core `bin_loaders.funnel_windows` field, and that field alone decides it (the Edge's old plant-wide `loaders_multi_window` key is gone; a config that still carries it loads and ignores it). Spreading, a demand of N at an N-window loader orders exactly N, one per free window, never two at the same window; funnelling, the loader takes its first window only, budget 1.
+- **A release's full-in names its parts.** The side-cycle ask carries an ordered list (`LoaderRetrieveRequest.Payloads`), decided in that order in one decision under the lock (`replenishPartsLocked`): each part sees the windows the parts before it took, and the answer carries one outcome per part (`LoaderRetrieveResponse.Parts`: its order, or `Skipped`, or `HeldBy`). A person's ask names its one part in `PayloadCode`.
+- **Fails closed.** Every read that cannot be made orders nothing; the next ask or reading retries.
 
-**Re-entrancy rule (MUST be honoured by every event-bus subscriber):** `withLoaderBudget` calls its `fire` closure *while the loader's mutex is held*, and `CreateRetrieveOrder` dispatches `EmitOrderCreated` **synchronously** on the in-process bus (`eventbus.Emit` runs subscribers inline). **No `EventOrderCreated` (or any order-event) subscriber may synchronously call back into the reservation seam for the same loader** — `sync.Mutex` is non-reentrant and it would self-deadlock. A subscriber acting on a *different* loader is fine. If a subscriber ever needs to re-enter the same loader, split reserve-from-fire (end the lock after the DB insert; enqueue/emit after release). Guarded by `TestWithLoaderBudget_EmitDuringReservation_NoDeadlock`.
+An order a claim sends straight to a loader window (a changeover's retrieve, a cell's move) is still created on the Edge. Core holds the window against the asks once that order is there: the capacity verdict's in-flight arm sees it once it holds its bin, and before then only the open-ask count of its own kind does.
 
-Callers routed through the seam — **loader side:** `RequestEmptyBin` and `RequestFullBin` (operator, manual_swap), `maybeStageLoaderEmpty` (the operator push, from `rePushOwnLoader` and `SweepPushLoaders`), and `CreateRetrieveForAPI` (the HTTP order API). (`fireThresholdL1` is gone — deleted with the Edge's half of loader replenishment, 2026-08-02; the decision it carried is Core's.) **Unloader side:** `createUnloaderFullInViaSeam`, reached from a produce release carrying `capture_lineside` (`MaybeCreateUnloaderFullIn`: a changeover evac at count 0, the sim's auto-operator, an API client; never a station's produce RELEASE, whose body is bare), and `createUnloaderFullIns`, reached from the auto_push re-pull of the node's own unloader (`rePushOwnUnloader`: CLEAR, PUSH EMPTY, the U2's pickup, and the U2's landing as a fallback) and the startup sweep (`SweepPushUnloaders`).
+**What the Edge does.** The Edge says *when* to ask, from triggers only it sees, and decides nothing about a loader's windows. It sends `loader.retrieve` (`protocol/ask.go`: `LoaderRetrieveRequest`, `LoaderRetrieveResponse`) with an origin, and the orders Core makes reach it as projections. It holds no loader lock and no transaction around them, because it creates none of them. The askers (`shingo-edge/engine/loader_retrieve_ask.go`):
+
+- **Loader side:** `RequestEmptyBin` at a loader window, and the window-free push (`maybeStageLoaderEmpty` → `stageOperatorEmpty`, from `rePushOwnLoader` on a produce CLEAR or an L2's landing, and `SweepPushLoaders` at startup), both through `askLoaderEmpties`, origin `operator`. (`fireThresholdL1` is gone — deleted with the Edge's half of loader replenishment, 2026-08-02; the decision it carried is Core's.)
+- **A person's full:** `RequestFullBin` at a consume window, origin `operator`.
+- **The manual retrieve:** `CreateRetrieveForAPI` forwards a retrieve to a node a loader or unloader owns (`loaderOwning`) as a person's ask; when Core makes nothing, the caller gets Core's sentence as a 409 (`LoaderRetrieveRefused`). A destination no loader owns is created directly (`createRetrieveDirect`).
+- **The unloader's U1:** `offerUnloaderFulls` sends one ask per unloader, naming the parts it serves in order, origin `side_cycle`, and does not wait; until Core answers, the unloader's first window on this Edge carries a pending note on the board. Its triggers are a produce release carrying `capture_lineside` (`MaybeCreateUnloaderFullIn`, from the release commit), the auto_push re-pull of the node's own unloader (`rePushOwnUnloader` / `rePushOwnUnloaderIfUncovered`: CLEAR, PUSH EMPTY, the U2's pickup, and the U2's landing as a fallback), and the startup sweep (`SweepPushUnloaders`). An unloader with no inbound source, or with no window on this Edge (`ownWindow`), is not asked for.
+
+**Local pre-checks.** Three checks skip a U1 ask when the Edge's order table already shows Core would order nothing: `unloaderPullsCovered` (one SQLite read), its use at CLEAR, PUSH EMPTY and the U2's landing (`rePushOwnUnloaderIfUncovered`), and the release's local-first check in `MaybeCreateUnloaderFullIn`. They are exact in one direction only: covered means Core's answer orders nothing, because the Edge's rows are a subset of Core's; uncovered (or an unreadable order list) means Core decides. The U2's pickup asks without one: the window is free there, and only Core can see it.
 
 ---
 
 ## LoaderStore (config resolution)
 
-"Which loader serves this payload / contains this node, and what is its budget" is resolved through one consumer-defined interface, `engine.LoaderStore` (defined in the engine package, not next to the store — idiomatic Go, and it keeps the engine from importing store internals):
+"Which loader serves this payload / contains this node" is resolved through one consumer-defined interface, `engine.LoaderStore` (defined in the engine package, not next to the store — idiomatic Go, and it keeps the engine from importing store internals):
 
 ```go
 type LoaderStore interface {
@@ -208,7 +210,7 @@ One implementation, `aggregateLoaderStore` — it projects the Core-owned cache 
 
 Callers branch with `errors.Is(err, ErrLoaderNotFound)`. This closes the prior bug where `resolveCoreLoaderForPayload` returned `nil` for both a miss and a DB error and the caller fell open into payload-first-match on a transient flicker.
 
-**Consumed by the unloader paths.** The unloader full-in resolves a `*domain.Loader` through the store and passes it to the seam — `MaybeCreateUnloaderFullIn`, `rePushOwnUnloader` and `SweepPushUnloaders` resolve a consume `*domain.Loader` and route through the seam. There is no loader-side threshold resolver on the Edge any more (`HandleLoopBelowThreshold` is deleted — Core's threshold monitor creates its orders directly, so it never needs the Edge aggregate), and the legacy DemandSignal resolver and its bin-count minimum-stock read are retired too. The `manualSwapNode {node, claim}` shim is no longer the unit of resolution; every remaining path resolves a `*domain.Loader` from the aggregate.
+**Consumed by the askers.** The Edge's loader and unloader paths resolve a `*domain.Loader` through the store to know which loader to ask Core about — `MaybeCreateUnloaderFullIn`, `rePushOwnUnloader` and `SweepPushUnloaders` resolve a consume `*domain.Loader` and send its `loader.retrieve` ask (`offerUnloaderFulls`); the decision itself reads Core's own loader row, not this copy. There is no loader-side threshold resolver on the Edge any more (`HandleLoopBelowThreshold` is deleted — Core's threshold monitor creates its orders directly, so it never needs the Edge aggregate), and the legacy DemandSignal resolver and its bin-count minimum-stock read are retired too. The `manualSwapNode {node, claim}` shim is no longer the unit of resolution; every remaining path resolves a `*domain.Loader` from the aggregate.
 
 ---
 
@@ -281,6 +283,8 @@ ClaimSync / `style_node_claims.mode` / edge-checkbox authoring path is gone.
 | `store/migrations.go` | `bin_loaders` aggregate schema (v34–v40); `UNIQUE` on `orders.edge_uuid`. |
 | `www/handlers_loader.go`, `www/static/pages/loaders.js` | Core loader admin UI (create, layout, windows/positions, payload checklist + batch save, replenishment). |
 | `dispatch/` | One-robot-at-a-time + bin-occupied guards in the fulfillment scanner. |
+| `dispatch/loader_replenish.go`, `dispatch/plan/loader_window_choice.go`, `store/loaders/targets.go` | The loader decision, for both directions: `ReplenishLoader` under the per-loader `loaderLock`, the window choice `plan.LoaderWindows`, the delivery targets and budget `DeliveryTargets`. |
+| `www/doors.go` | `AskLoaderRetrieve`: the door that answers the Edge's `loader.retrieve` ask through `ReplenishLoader`. |
 
 ### Edge (consumes the Core projection)
 
@@ -288,8 +292,9 @@ ClaimSync / `style_node_claims.mode` / edge-checkbox authoring path is gone.
 |------|------|
 | `store/core_loaders.go`, `engine/loader_store.go` | `core_loaders` cache + `aggregateLoaderStore` — an immutable in-memory snapshot of the Core loader config, swapped atomically on each node-list sync. |
 | `engine/core_loaders.go` | `SetCoreLoaders` / `Refresh` — ingest `NodeListResponse.Loaders` into the cache. |
-| `engine/operator_demand_loader.go`, `operator_demand_unloader.go` | The operator push / release-triggered paths; the `withLoaderBudget` never-2N seam; `funnel_windows` on the Core loader row (multi-window is per-loader on that field alone). (DemandSignal handling deleted — see above.) |
-| `domain/loader.go` | The `Loader` type, layouts (`shared_window` / `dedicated_positions`), `SlotCount`, `ReservationTarget`. |
+| `engine/operator_demand_loader.go`, `operator_demand_unloader.go` | The operator push / release-triggered paths: when to ask Core for a loader's empties or an unloader's fulls (`stageOperatorEmpty`, `offerUnloaderFulls`); the local pre-check `unloaderPullsCovered` lives in `engine/wiring_completion.go`. (DemandSignal handling deleted — see above.) |
+| `engine/loader_retrieve_ask.go`, `engine/api_retrieve.go` | The `loader.retrieve` askers (`askLoaderEmpties`, `RequestFullBin`) and the manual retrieve's routing (`CreateRetrieveForAPI`: the ask at a loader window, `createRetrieveDirect` elsewhere). |
+| `domain/loader.go` | The `Loader` type, layouts (`shared_window` / `dedicated_positions`), `DeliveryNodes`, `ServesPayload`. |
 | `service/station_service.go` | `BuildView` resolves a node's parent loader + windows from the aggregate for the operator HMI. |
 | `messaging/edge_handler.go` | Node-list handler feeds `SetCoreLoaders`. (`onDemandSignal` callback deleted with the demand-signal route.) |
 | `www/static/operator-station/*` | Demand-queue payload board + per-window state. |
@@ -328,9 +333,9 @@ When the operator loads DEF into the bin at SMN_001, the system sets the manifes
 
 **Core restart:** Fulfillment scanner runs on startup, picks up all queued orders from before shutdown.
 
-**Edge restart:** the auto-push sweeps run after registration ack, offering every auto loader/unloader's payloads to the seam to catch demand that arrived while offline.
+**Edge restart:** the auto-push sweeps run after registration ack, asking Core for every auto loader/unloader's carriers to catch demand that arrived while offline.
 
-**Concurrent pushes:** the seam's per-loader mutex serializes count-and-fire. Core's UNIQUE(edge_uuid) catches any remaining duplicates.
+**Concurrent pushes:** Core's per-loader lock in `ReplenishLoader` serializes the read and the insert, so concurrent asks for one loader order once. Core's UNIQUE(edge_uuid) catches any remaining duplicates.
 
 **No bins ever available:** Order stays queued indefinitely. Operator sees QUEUED status, can cancel.
 

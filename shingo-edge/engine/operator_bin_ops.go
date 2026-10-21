@@ -250,8 +250,6 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount *int64, mani
 	// with no way to say "I could not reach the template": the fetch reports
 	// every failure as a nil result, so the fallback quietly produced 0 and
 	// then wrote that 0 onto the node as if somebody had counted it.
-	//
-	// Load bin via direct HTTP to Core — synchronous, immediate feedback
 	items := make([]BinLoadItem, len(manifest))
 	for i, m := range manifest {
 		items[i] = BinLoadItem(m)

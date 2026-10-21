@@ -150,9 +150,10 @@ type EngineOrchestration interface {
 	SendBinToQualityHold(nodeID int64, actor string) (*domain.Order, error)
 	ReleaseFromContainment(containmentNodeName string, binID int64, actor string) (*domain.Order, error)
 	RecallContainedPayload(payloadCode, actor string) (int, []string, error)
-	// CreateRetrieveForAPI is the HTTP order API's creation path. It routes
-	// through the reservation seam when a loader owns the destination, so the
-	// one door that never counted in-flight now does.
+	// CreateRetrieveForAPI is the HTTP order API's creation path. A
+	// destination a loader owns is asked of Core (loader.retrieve), which
+	// counts what is in flight and answers with its sentence when the windows
+	// are spoken for; any other destination is created directly.
 	CreateRetrieveForAPI(req engine.APIRetrieveRequest) ([]*domain.Order, error)
 
 	// ── Changeover orchestration ───────────────────────────────────

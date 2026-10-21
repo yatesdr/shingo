@@ -23,7 +23,7 @@ type NodeBinState struct {
 	Manifest          *string `json:"manifest,omitempty"`
 	ManifestConfirmed bool    `json:"manifest_confirmed"`
 	Occupied          bool    `json:"occupied"`
-	// UOPCapacity, HeldSince and HeldFor are Core's (protocol.NodeBinInfo):
+	// UOPCapacity, HeldSince and HeldFor are Core's (protocol.NodeBinsRow):
 	// the board labels a carrier PARTIAL from the count and the capacity, and
 	// a held one with its line and when it entered its home.
 	UOPCapacity int    `json:"uop_capacity,omitempty"`

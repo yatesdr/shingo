@@ -24,13 +24,10 @@
 
 package protocol
 
-// NodeBinInfo describes the bin state at a single core node.
-//
-// BinID carries Core's bins.id so callers can thread the authoritative
-// id into BinUOPDelta scopes — needed when the Edge order's BinID is
-// nil at release time (REP / complex orders whose OrderDelivered didn't
-// carry binID) and capture_reduction would otherwise be silently
-// dropped at the BinID==0 gate.
+// NodeBinInfo describes the bin state at a single core node: the row of the
+// node-bins answer, whose door is gone. Nothing on the wire carries it and no
+// non-test code reads it; the Edge's test fixtures still speak it, and the
+// live shape is the bins feed's row (NodeBinsRow). BinID is Core's bins.id.
 type NodeBinInfo struct {
 	NodeName    string `json:"node_name"`
 	BinID       int64  `json:"bin_id,omitempty"`
@@ -307,8 +304,9 @@ const (
 	ClearArmTrade = "trade"
 )
 
-// PreflightRequest is the payload list the Edge POSTs to Core's preflight
-// inventory check before starting a changeover.
+// PreflightRequest is the payload list the Edge's preflight read-ask
+// (AskPreflight) sends for the flow composer's draft. A changeover start does
+// not ask; it reads the sourcing feed.
 type PreflightRequest struct {
 	Payloads []string `json:"payloads"`
 }
@@ -322,7 +320,7 @@ type PreflightResponse struct {
 }
 
 // ReleasePointsRequest asks Core, for one act, what releasing each order would
-// let its robot do next (POST /api/release/points).
+// let its robot do next (the release points read-ask, AskReleasePoints).
 type ReleasePointsRequest struct {
 	OrderUUIDs []string `json:"order_uuids"`
 }
