@@ -59,7 +59,7 @@ func (h *Handlers) apiRequestEmptyBin(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = h.orchestration.RequestEmptyBin(id, req.PayloadCode)
 	if err != nil {
-		// At a loader the empty is Core's to order (loader.empties): an answer
+		// At a loader the empty is Core's to order (loader.retrieve): an answer
 		// still coming is "sent", not a refusal.
 		if writeAskPending(w, r, err) {
 			return

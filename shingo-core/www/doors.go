@@ -111,8 +111,8 @@ type AskDoor struct {
 // so a repeat must get its first answer, not that refusal. Every other kind's
 // repeat is harmless (the reads, the reseat's re-announce) or refused by the
 // assertion fields its request carries (bin_id, epoch, expect), or bounded by
-// the asking episode's outstanding orders (the empties). Pinned by
-// TestCensus_AskKinds.
+// the windows and what is already coming (the loader retrieve: ReplenishLoader
+// under its loader's lock). Pinned by TestCensus_AskKinds.
 func (d *Doors) AskDoors() []AskDoor {
 	return []AskDoor{
 		{protocol.AskBinLoad, d.AskBinLoad, false},
@@ -124,7 +124,7 @@ func (d *Doors) AskDoors() []AskDoor {
 		{protocol.AskReleasePoints, d.AskReleasePoints, false},
 		{protocol.AskHeldPartials, d.AskHeldPartials, false},
 		{protocol.AskReseat, d.AskReseat, false},
-		{protocol.AskLoaderEmpties, d.AskLoaderEmpties, false},
+		{protocol.AskLoaderRetrieve, d.AskLoaderRetrieve, false},
 	}
 }
 
@@ -212,27 +212,49 @@ func (d *Doors) reseat(station string, req protocol.ReseatRequest) asks.Result {
 	return accepted(protocol.ReseatAnswer{Node: req.Node, Landed: landed})
 }
 
-// AskLoaderEmpties answers protocol.AskLoaderEmpties: a person at a loader asks
-// for empties, and Core sizes and places them through the loader replenishment's
-// one body (dispatch.ReplenishLoader, its operator origin: Want as asked, the
-// asking episode's own outstanding orders subtracted, the windows chosen by
+// AskLoaderRetrieve answers protocol.AskLoaderRetrieve: carriers asked for at a
+// loader, empties or fulls, by a person (the operator origin) or by a release
+// (the side-cycle origin), and Core sizes and places them through the loader
+// replenishment's one body (dispatch.ReplenishLoader: Want as asked, what is
+// already coming subtracted by the origin's rule, the windows chosen by
 // plan.LoaderWindows, each order born through AdmitCoreAsk and projected to
 // the station). The answer is what was made and, per window not ordered to,
 // why. Born on the ask: there is no HTTP door.
-func (d *Doors) AskLoaderEmpties(station string, raw json.RawMessage) asks.Result {
-	return askDoor(raw, errText, func(req protocol.LoaderEmptiesRequest) asks.Result {
-		return d.loaderEmpties(station, req)
+func (d *Doors) AskLoaderRetrieve(station string, raw json.RawMessage) asks.Result {
+	return askDoor(raw, errText, func(req protocol.LoaderRetrieveRequest) asks.Result {
+		return d.loaderRetrieve(station, req)
 	})
 }
 
-func (d *Doors) loaderEmpties(station string, req protocol.LoaderEmptiesRequest) asks.Result {
+// loaderRetrieveKinds maps the ask's stated direction and origin onto
+// ReplenishLoader's. A threshold is Core's own and is not asked for.
+var (
+	loaderRetrieveDirections = map[string]protocol.OrderType{
+		protocol.LoaderRetrieveEmpty: dispatch.OrderTypeRetrieveEmpty,
+		protocol.LoaderRetrieveFull:  dispatch.OrderTypeRetrieve,
+	}
+	loaderRetrieveOrigins = map[string]dispatch.ReplenishOrigin{
+		protocol.LoaderAskOperator:  dispatch.ReplenishByOperator,
+		protocol.LoaderAskSideCycle: dispatch.ReplenishBySideCycle,
+	}
+)
+
+func (d *Doors) loaderRetrieve(station string, req protocol.LoaderRetrieveRequest) asks.Result {
 	idText, isKey := strings.CutPrefix(req.LoaderKey, "loader:")
 	id, err := strconv.ParseInt(idText, 10, 64)
 	if !isKey || err != nil || id <= 0 {
 		return badRequest(fmt.Sprintf("%q is not a loader", req.LoaderKey))
 	}
+	pull, ok := loaderRetrieveDirections[req.Direction]
+	if !ok {
+		return badRequest(fmt.Sprintf("direction %q is neither %q nor %q", req.Direction, protocol.LoaderRetrieveEmpty, protocol.LoaderRetrieveFull))
+	}
+	asker, ok := loaderRetrieveOrigins[req.Origin]
+	if !ok {
+		return badRequest(fmt.Sprintf("origin %q is neither %q nor %q", req.Origin, protocol.LoaderAskOperator, protocol.LoaderAskSideCycle))
+	}
 	if req.Count <= 0 {
-		return badRequest("ask for at least one empty")
+		return badRequest("ask for at least one carrier")
 	}
 	disp := d.engine.Dispatcher()
 	cfg, ok, err := disp.LoadReplenishConfig(id)
@@ -243,17 +265,18 @@ func (d *Doors) loaderEmpties(station string, req protocol.LoaderEmptiesRequest)
 		return refused(http.StatusNotFound, fmt.Sprintf("loader %s is not configured on Core", req.LoaderKey))
 	}
 	// The asker states the class (a window-free push serves no demand, and
-	// says so); an older asker that does not is classified by its episode.
+	// says so); an asker that does not is classified by its episode.
 	origin := req.OriginClass
 	if origin == "" && req.OriginID != "" {
 		origin = string(protocol.OriginClassAttached)
 	}
 	res, err := disp.ReplenishLoader(dispatch.ReplenishRequest{
-		Origin: dispatch.ReplenishByOperator, OrderType: dispatch.OrderTypeRetrieveEmpty,
-		StationID: station, LoaderID: id, PayloadCode: req.PayloadCode, MemberNode: req.MemberNode,
+		Origin: asker, OrderType: pull, SourceNode: req.SourceNode, AnySource: req.AnySource,
+		SkipAutoConfirm: req.SkipAutoConfirm,
+		StationID:       station, LoaderID: id, PayloadCode: req.PayloadCode, MemberNode: req.MemberNode,
 		Want: req.Count, OriginID: req.OriginID, OriginClass: origin,
 	}, cfg)
-	out := protocol.LoaderEmptiesResponse{Want: res.Want, Created: []string{}, Skipped: res.Skipped}
+	out := protocol.LoaderRetrieveResponse{Want: res.Want, Created: []string{}, Skipped: res.Skipped}
 	for _, o := range res.Created {
 		out.Created = append(out.Created, o.EdgeUUID)
 	}

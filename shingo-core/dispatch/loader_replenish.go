@@ -27,9 +27,9 @@ import (
 //
 // The callers are the threshold monitor (engine/threshold_monitor.go,
 // fireSignalCached: the threshold origin) and the loader ask's door
-// (www/doors.go: a person's ask, the operator origin). Each states its
-// origin (ReplenishOrigin). It is the third of the loader triad, alongside
-// loader_source.go and loader_place.go.
+// (www/doors.go: the loader retrieve ask, a person's or a release's). Each
+// states its origin (ReplenishOrigin). It is the third of the loader triad,
+// alongside loader_source.go and loader_place.go.
 
 // ReplenishOrigin is why a loader is being asked to take carriers, stated by the
 // caller. It decides how the ask is sized and what it subtracts.
@@ -89,6 +89,17 @@ type ReplenishRequest struct {
 	// given instead of from a reading (Threshold, CurrentUOP and PerBinCapacity
 	// are not read for those origins). The threshold origin does not read it.
 	Want int
+	// SourceNode, when set, is where this ask's carriers come from in place of
+	// the loader's inbound source: a manual request that names its source. A
+	// loader fed directly (no inbound source) takes a named source's carriers.
+	SourceNode string
+	// AnySource, read only with SourceNode "", is an ask that names no source
+	// and has Core search the plant, as an order request naming none does: the
+	// orders are made with no source, even at a loader fed directly.
+	AnySource bool
+	// SkipAutoConfirm is written on every order made (Need.SkipAutoConfirm):
+	// the stuck-delivered sweep leaves a carrier a person confirms.
+	SkipAutoConfirm bool
 }
 
 // ReplenishResult is what happened, in enough detail to explain a quiet run.
@@ -130,7 +141,8 @@ type LoaderReplenishConfig struct {
 	// InboundSource is where the carriers are retrieved FROM (a loader's empties,
 	// an unloader's fulls), and it is the only answer to that question. Blank
 	// means the loader is fed directly — by press, forklift or reach truck — and
-	// Core must not create carrier pulls for it at all.
+	// Core creates no carrier pull for it unless an ask names its own source
+	// (ReplenishRequest.SourceNode) or has Core search the plant (AnySource).
 	//
 	// WHAT A DRY SOURCE DOES FOR AN EMPTY, because this is the property a reader
 	// usually comes here for: the order is created and the finder scopes its
@@ -355,8 +367,13 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 
 	// A loader nobody retrieves for. Blank source is a real, supported
 	// configuration — the loader is fed by hand — and creating a carrier pull for
-	// it would send a robot to fetch from nowhere.
-	if cfg.InboundSource == "" {
+	// it would send a robot to fetch from nowhere. A source the ask names
+	// (SourceNode) is where its carriers come from instead, and an ask that
+	// has Core search the plant (AnySource) is made with none.
+	if req.SourceNode == "" && !req.AnySource {
+		req.SourceNode = cfg.InboundSource
+	}
+	if req.SourceNode == "" && !req.AnySource {
 		res.Skipped = "loader has no inbound source: it is fed directly, so Shingo pulls no carriers for it"
 		return res, nil
 	}
@@ -463,7 +480,7 @@ func (d *Dispatcher) replenishLocked(req ReplenishRequest, cfg LoaderReplenishCo
 			req.LoaderID, req.PayloadCode, node, err)
 	}
 	for _, t := range w.Chosen {
-		order, err := d.admitReplenishOrder(req, cfg, t, intent)
+		order, err := d.admitReplenishOrder(req, t, intent)
 		if err != nil {
 			// Stop rather than press on. A failure here is a write failure or a
 			// refused reference, and the windows after this one would fail the same
@@ -491,20 +508,21 @@ func (d *Dispatcher) replenishLocked(req ReplenishRequest, cfg LoaderReplenishCo
 // a Core-originated order gets the same reference checks, the same
 // synthetic-destination resolution, and the same insert. A second writer here is
 // exactly the drift the order-writer consolidation removed one layer down.
-func (d *Dispatcher) admitReplenishOrder(req ReplenishRequest, cfg LoaderReplenishConfig, t loaders.Target, intent string) (*orders.Order, error) {
+func (d *Dispatcher) admitReplenishOrder(req ReplenishRequest, t loaders.Target, intent string) (*orders.Order, error) {
 	prefix := "core-l1-"
 	if intent == SourceIntentFull {
 		prefix = "core-u1-"
 	}
 	order, err := d.AdmitCoreAsk(CoreAskSpec{
-		UUIDPrefix:   prefix,
-		OrderType:    req.OrderType,
-		StationID:    req.StationID,
-		SourceNode:   cfg.InboundSource,
-		DeliveryNode: t.NodeName,
-		PayloadCode:  req.PayloadCode,
-		OriginID:     req.OriginID,
-		OriginClass:  req.OriginClass,
+		UUIDPrefix:      prefix,
+		OrderType:       req.OrderType,
+		StationID:       req.StationID,
+		SourceNode:      req.SourceNode,
+		DeliveryNode:    t.NodeName,
+		PayloadCode:     req.PayloadCode,
+		OriginID:        req.OriginID,
+		OriginClass:     req.OriginClass,
+		SkipAutoConfirm: req.SkipAutoConfirm,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("admit replenishment for loader %d at %s: %w", req.LoaderID, t.NodeName, err)
@@ -550,6 +568,9 @@ type CoreAskSpec struct {
 	PayloadCode string
 	OriginID    string
 	OriginClass string
+	// SkipAutoConfirm keeps the stuck-delivered sweep off the order
+	// (Need.SkipAutoConfirm): a loader ask's carrier a person confirms.
+	SkipAutoConfirm bool
 }
 
 // AdmitCoreAsk builds and admits one Core-authored carrier pull.
@@ -603,17 +624,18 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 	// station is projected the order below, so it has a row for it.
 	if lerr := d.lifecycle.admit(order, func() error {
 		return d.lifecycle.birth(order, Need{
-			Type:         spec.OrderType,
-			Station:      order.StationID,
-			Ref:          order.EdgeUUID,
-			Quantity:     order.Quantity,
-			Desc:         order.PayloadDesc,
-			PayloadCode:  spec.PayloadCode,
-			OriginID:     order.OriginID,
-			OriginClass:  order.OriginClass,
-			StationKnows: true,
-			Source:       order.SourceNode,
-			Delivery:     order.DeliveryNode,
+			Type:            spec.OrderType,
+			Station:         order.StationID,
+			Ref:             order.EdgeUUID,
+			Quantity:        order.Quantity,
+			Desc:            order.PayloadDesc,
+			PayloadCode:     spec.PayloadCode,
+			OriginID:        order.OriginID,
+			OriginClass:     order.OriginClass,
+			SkipAutoConfirm: spec.SkipAutoConfirm,
+			StationKnows:    true,
+			Source:          order.SourceNode,
+			Delivery:        order.DeliveryNode,
 		}, plan.Plan{})
 	}); lerr != nil {
 		if lerr.Err != nil {

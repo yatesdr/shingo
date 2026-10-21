@@ -47,7 +47,7 @@ func TestCensus_AskKinds(t *testing.T) {
 		// Never had an HTTP door: answered by the landing verb.
 		{protocol.AskReseat, "", d.AskReseat, false},
 		// Born on the ask.
-		{protocol.AskLoaderEmpties, "", d.AskLoaderEmpties, false},
+		{protocol.AskLoaderRetrieve, "", d.AskLoaderRetrieve, false},
 	}
 
 	s, err := buildAskServer(nil, nil, d)

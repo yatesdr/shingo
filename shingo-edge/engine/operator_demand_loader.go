@@ -20,7 +20,7 @@ import (
 // carriers were needed and where they went; that half is gone, and Core creates
 // the orders itself. What is left here is the OPERATOR side: the opportunistic
 // window-free push (rePushOwnLoader, SweepPushLoaders) and the operator's own
-// REQUEST EMPTY, both asked of Core (loader.empties, askLoaderEmpties), which
+// REQUEST EMPTY, both asked of Core (loader.retrieve, askLoaderEmpties), which
 // counts and orders them; and the unloader path and the HTTP order API at a
 // loader window, still through the withLoaderBudget seam.
 //

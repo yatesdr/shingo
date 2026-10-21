@@ -16,7 +16,7 @@ import (
 // and the L1 push (stageOperatorEmpty on the aggregate loader) must name the SAME
 // loader for one physical loader. Pre-fix the operator path built its loader from
 // the claim (ID = node NAME) while the push used the aggregate (ID = token), and the
-// two were counted apart. The count is Core's now (the loader.empties ask), so the
+// two were counted apart. The count is Core's now (the loader.retrieve ask), so the
 // identity is the ask's loader_key: both paths must send the token.
 func TestTier1_BUG1_OperatorAndDemandShareLoaderKey(t *testing.T) {
 	t.Parallel()

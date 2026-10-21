@@ -63,16 +63,18 @@ const (
 	// transit.bin_landed to the asking station, on Core's outbox ahead of the
 	// answer) and answers whether one stands there.
 	AskReseat = "reseat"
-	// AskLoaderEmpties: a person at a loader asks for empties; Core sizes and
-	// places them (dispatch.ReplenishLoader's operator origin, plan.LoaderWindows)
-	// and authors the orders. Born on the ask: no HTTP door ever answered it.
-	AskLoaderEmpties = "loader.empties" // LoaderEmptiesRequest → LoaderEmptiesResponse
+	// AskLoaderRetrieve: carriers asked for at a loader or an unloader, empties
+	// or fulls (LoaderRetrieveRequest.Direction), by a person or by a release
+	// (Origin); Core sizes and places them (dispatch.ReplenishLoader,
+	// plan.LoaderWindows) and authors the orders. Born on the ask: no HTTP door
+	// ever answered it.
+	AskLoaderRetrieve = "loader.retrieve" // LoaderRetrieveRequest → LoaderRetrieveResponse
 )
 
 // AskKinds is every kind Core answers, in a fixed order.
 func AskKinds() []string {
 	return []string{AskBinLoad, AskBinCount, AskBinClear, AskQualityHold, AskClearHome,
-		AskPreflight, AskReleasePoints, AskHeldPartials, AskReseat, AskLoaderEmpties}
+		AskPreflight, AskReleasePoints, AskHeldPartials, AskReseat, AskLoaderRetrieve}
 }
 
 // EdgeAsk is one question. Body is the kind's request, encoded.
@@ -136,27 +138,61 @@ type ReseatAnswer struct {
 	Landed bool   `json:"landed"`
 }
 
-// LoaderEmptiesRequest is a person's ask for empties at a loader: the loader's
-// identity (LoaderInfo.LoaderKey), the part the empties are for, the member
-// node the person stands at ("" for none, which a dedicated loader resolves
-// to its first position), how many, and the demand episode the asking serves
-// ("" for none) with its class (OriginClass*; "" lets Core classify by the
-// episode: attached with one, orphan without).
-type LoaderEmptiesRequest struct {
-	LoaderKey   string `json:"loader_key"`
-	PayloadCode string `json:"payload_code"`
-	MemberNode  string `json:"member_node,omitempty"`
-	Count       int    `json:"count"`
-	OriginID    string `json:"origin_id,omitempty"`
-	OriginClass string `json:"origin_class,omitempty"`
+// The values of LoaderRetrieveRequest.Direction: what each carrier is.
+const (
+	LoaderRetrieveEmpty = "empty" // an empty carrier, to a loader's window
+	LoaderRetrieveFull  = "full"  // a full of the part, to an unloader's window
+)
+
+// The values of LoaderRetrieveRequest.Origin: who asks. A threshold is Core's
+// own and never comes over the wire.
+const (
+	LoaderAskOperator  = "operator"   // a person: REQUEST at the loader, the manual retrieve page
+	LoaderAskSideCycle = "side_cycle" // a release offered an unloader a part (the U1)
+)
+
+// LoaderRetrieveRequest is an ask for carriers at a loader: the loader's
+// identity (LoaderInfo.LoaderKey), what each carrier is (Direction), who asks
+// (Origin), the part, the member node the asker stands at ("" for none, which
+// a dedicated loader resolves to its first position), how many, and the demand
+// episode the asking serves ("" for none) with its class (OriginClass*; "" lets
+// Core classify by the episode: attached with one, orphan without).
+//
+// Where the carriers come from. SourceNode names it; "" takes the loader's
+// inbound source, and a loader with none (fed directly) is given nothing.
+// AnySource, with SourceNode "", is an asker that names no source and wants
+// Core to search the plant for the carrier, as for an order request that
+// names none: the manual retrieve page, and a person's REQUEST FULL at an
+// unloader with no inbound source.
+//
+// SkipAutoConfirm keeps Core's stuck-delivered sweep off the orders made, as
+// on an order request (OrderRequest.SkipAutoConfirm): a carrier a person
+// confirms after the physical act (a release's full-in, a person's full at a
+// consume window).
+//
+// A manual request's staging node, load type and auto-confirm do not ride the
+// ask: Core reads none of them on an order, so the asking Edge records them on
+// its own rows for the orders Core made.
+type LoaderRetrieveRequest struct {
+	LoaderKey       string `json:"loader_key"`
+	Direction       string `json:"direction"`
+	Origin          string `json:"origin"`
+	PayloadCode     string `json:"payload_code"`
+	MemberNode      string `json:"member_node,omitempty"`
+	Count           int    `json:"count"`
+	OriginID        string `json:"origin_id,omitempty"`
+	OriginClass     string `json:"origin_class,omitempty"`
+	SourceNode      string `json:"source_node,omitempty"`
+	AnySource       bool   `json:"any_source,omitempty"`
+	SkipAutoConfirm bool   `json:"skip_auto_confirm,omitempty"`
 }
 
-// LoaderEmptiesResponse is what Core did with the ask: how many it was asked
-// for (Want, after what the asking demand already has coming), the orders it
+// LoaderRetrieveResponse is what Core did with the ask: how many it was asked
+// for (Want, before what is already coming is subtracted), the orders it
 // made (their Edge UUIDs; each reaches the station as a projection), the
 // windows it did not order to and why (HeldBy, by node), and why it made none
 // at all when it made none (Skipped).
-type LoaderEmptiesResponse struct {
+type LoaderRetrieveResponse struct {
 	Want    int               `json:"want"`
 	Created []string          `json:"created"`
 	HeldBy  map[string]string `json:"held_by,omitempty"`

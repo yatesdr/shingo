@@ -12,7 +12,7 @@ import (
 )
 
 // TestLoaderEmpties_RequestEmptyAsksCore: REQUEST EMPTY at a loader asks Core
-// (loader.empties) for one empty at the loader's key, routed to the asking
+// (loader.retrieve) for one empty at the loader's key, routed to the asking
 // node, attributed to the operator's episode; the order Core made is the one
 // projected here, tracked at the asking node and its runtime's active order.
 func TestLoaderEmpties_RequestEmptyAsksCore(t *testing.T) {
@@ -28,6 +28,9 @@ func TestLoaderEmpties_RequestEmptyAsksCore(t *testing.T) {
 	ask := core.lastAsk()
 	if ask.LoaderKey != "loader:LEA-W1" || ask.MemberNode != "LEA-W1" || ask.Count != 1 || ask.PayloadCode != "PART-LE" {
 		t.Errorf("ask = %+v, want loader:LEA-W1, member LEA-W1, one, PART-LE", ask)
+	}
+	if ask.Direction != protocol.LoaderRetrieveEmpty || ask.Origin != protocol.LoaderAskOperator {
+		t.Errorf("ask direction/origin = %q/%q, want an empty asked by a person (Core refuses either unstated)", ask.Direction, ask.Origin)
 	}
 	if ask.OriginClass != protocol.OriginClassAttached || ask.OriginID == "" {
 		t.Errorf("ask origin = %q/%q, want the operator's episode attached", ask.OriginID, ask.OriginClass)
@@ -54,8 +57,8 @@ func TestLoaderEmpties_NoneMadeSaysWhy(t *testing.T) {
 	seedCoreLoader(t, eng, sharedLoaderInfo("LEN-W1", "produce", "operator", "PART-LE", 0, 0))
 
 	core.mu.Lock()
-	core.answer = func(protocol.LoaderEmptiesRequest) protocol.LoaderEmptiesResponse {
-		return protocol.LoaderEmptiesResponse{Want: 1, Created: []string{},
+	core.answer = func(protocol.LoaderRetrieveRequest) protocol.LoaderRetrieveResponse {
+		return protocol.LoaderRetrieveResponse{Want: 1, Created: []string{},
 			HeldBy: map[string]string{"LEN-W2": "window-order-open", "LEN-W1": "occupied"}}
 	}
 	core.mu.Unlock()
@@ -65,8 +68,8 @@ func TestLoaderEmpties_NoneMadeSaysWhy(t *testing.T) {
 	}
 
 	core.mu.Lock()
-	core.answer = func(protocol.LoaderEmptiesRequest) protocol.LoaderEmptiesResponse {
-		return protocol.LoaderEmptiesResponse{Created: []string{}, Skipped: "loader has no inbound source"}
+	core.answer = func(protocol.LoaderRetrieveRequest) protocol.LoaderRetrieveResponse {
+		return protocol.LoaderRetrieveResponse{Created: []string{}, Skipped: "loader has no inbound source"}
 	}
 	core.mu.Unlock()
 	_, err = eng.RequestEmptyBin(nodeID, "")
@@ -79,7 +82,7 @@ func TestLoaderEmpties_NoneMadeSaysWhy(t *testing.T) {
 }
 
 // TestLoaderEmpties_ACoreWithoutTheKindIsRefused: a Core that does not answer
-// loader.empties gets no ask and the Edge orders nothing of its own count; the
+// loader.retrieve gets no ask and the Edge orders nothing of its own count; the
 // tap is refused with the reason, and the push logs it.
 func TestLoaderEmpties_ACoreWithoutTheKindIsRefused(t *testing.T) {
 	t.Parallel()
@@ -89,7 +92,7 @@ func TestLoaderEmpties_ACoreWithoutTheKindIsRefused(t *testing.T) {
 	seedCoreLoader(t, eng, sharedLoaderInfo("LEK-W1", "produce", "operator", "PART-LE", 0, 0))
 
 	_, err := eng.RequestEmptyBin(nodeID, "")
-	if err == nil || !strings.Contains(err.Error(), "does not answer the loader.empties ask") {
+	if err == nil || !strings.Contains(err.Error(), "does not answer the loader.retrieve ask") {
 		t.Errorf("REQUEST EMPTY at a Core without the kind: %v", err)
 	}
 	dl, lerr := eng.loaders().LoaderAt("LEK-W1", domain.RoleProduce)
@@ -135,7 +138,7 @@ func TestLoaderEmpties_APendingAnswerIsSent(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	eng.setAskKinds([]string{protocol.AskLoaderEmpties})
+	eng.setAskKinds([]string{protocol.AskLoaderRetrieve})
 	nodeID := seedCapManualSwap(t, db, "LEW-PROC", "LEW-W1", protocol.ClaimRoleProduce, []string{"PART-LE"}, 0, false)
 	seedCoreLoader(t, eng, sharedLoaderInfo("LEW-W1", "produce", "operator", "PART-LE", 0, 0))
 

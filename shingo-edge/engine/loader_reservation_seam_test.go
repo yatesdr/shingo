@@ -164,7 +164,7 @@ func (s *occupancyTable) isOccupied(node string) bool {
 // Demands go through withLoaderBudget with a fire closure that orders one empty
 // per window it is handed, as its remaining empties caller (CreateRetrieveForAPI
 // at a loader window) does; an operator's empties are Core's to size now
-// (loader.empties). Occupancy
+// (loader.retrieve). Occupancy
 // flips between steps, so the run exercises bins arriving and leaving underneath
 // in-flight orders rather than a fixed world.
 func TestWithLoaderBudget_PropOccupancyLive(t *testing.T) {

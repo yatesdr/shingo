@@ -151,7 +151,7 @@ func TestCensus_RetrieveOrderCreatorSites(t *testing.T) {
 	// never behind withLoaderBudget (the line, not a loader window).
 	//
 	// 9 since an operator's empties at a loader are Core's to order (the
-	// loader.empties ask, askLoaderEmpties): stageOperatorEmpty (the window-free
+	// loader.retrieve ask, askLoaderEmpties): stageOperatorEmpty (the window-free
 	// push) and requestEmptyAtManualSwapLoader (REQUEST EMPTY at a loader) create
 	// nothing here. Behind withLoaderBudget still: CreateRetrieveForAPI at a
 	// loader window, RequestFullBin and the unloader's U1.

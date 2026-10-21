@@ -12,28 +12,28 @@ import (
 	"shingoedge/domain"
 )
 
-// coreEmpties stands in for Core's loader.empties door (shingo-core
-// www.Doors.AskLoaderEmpties) on an Edge-only harness. It is a model, not the
+// coreEmpties stands in for Core's loader.retrieve door (shingo-core
+// www.Doors.AskLoaderRetrieve) on an Edge-only harness. It is a model, not the
 // sizing: Core's own pins own that (dispatch loader_replenish, plan
 // LoaderWindows). It answers each ask as Core does in shape — one order per
 // free target window, up to what the ask still wants, the orders projected to
 // this Edge before the answer — so the Edge's flows after the empty is ordered
 // run as they do against a Core.
 type coreEmpties struct {
-	asks atomic.Int64 // loader.empties asks answered
+	asks atomic.Int64 // loader.retrieve asks answered
 	mu   sync.Mutex
-	last protocol.LoaderEmptiesRequest
+	last protocol.LoaderRetrieveRequest
 	// answer, when set, is the answer given instead of the model's.
-	answer func(protocol.LoaderEmptiesRequest) protocol.LoaderEmptiesResponse
+	answer func(protocol.LoaderRetrieveRequest) protocol.LoaderRetrieveResponse
 }
 
-func (c *coreEmpties) lastAsk() protocol.LoaderEmptiesRequest {
+func (c *coreEmpties) lastAsk() protocol.LoaderRetrieveRequest {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.last
 }
 
-// answerEmpties makes eng's Core answer loader.empties for the test's life.
+// answerEmpties makes eng's Core answer loader.retrieve for the test's life.
 func answerEmpties(t *testing.T, eng *Engine) *coreEmpties {
 	t.Helper()
 	c := &coreEmpties{}
@@ -41,7 +41,7 @@ func answerEmpties(t *testing.T, eng *Engine) *coreEmpties {
 	if eng.asks.kinds == nil {
 		eng.asks.kinds = map[string]bool{}
 	}
-	eng.asks.kinds[protocol.AskLoaderEmpties] = true
+	eng.asks.kinds[protocol.AskLoaderRetrieve] = true
 	eng.asks.mu.Unlock()
 	stop := make(chan struct{})
 	done := make(chan struct{})
@@ -62,7 +62,7 @@ func answerEmpties(t *testing.T, eng *Engine) *coreEmpties {
 	return c
 }
 
-// serve answers every loader.empties ask on the outbox and takes it off.
+// serve answers every loader.retrieve ask on the outbox and takes it off.
 func (c *coreEmpties) serve(t *testing.T, eng *Engine) {
 	msgs, err := eng.db.ListPendingOutbox(100)
 	if err != nil {
@@ -76,19 +76,19 @@ func (c *coreEmpties) serve(t *testing.T, eng *Engine) {
 		var data protocol.Data
 		var ask protocol.EdgeAsk
 		if json.Unmarshal(m.Payload, &env) != nil || json.Unmarshal(env.Payload, &data) != nil ||
-			json.Unmarshal(data.Body, &ask) != nil || ask.Kind != protocol.AskLoaderEmpties {
+			json.Unmarshal(data.Body, &ask) != nil || ask.Kind != protocol.AskLoaderRetrieve {
 			continue
 		}
-		var req protocol.LoaderEmptiesRequest
+		var req protocol.LoaderRetrieveRequest
 		if err := json.Unmarshal(ask.Body, &req); err != nil {
-			t.Errorf("decode loader.empties ask: %v", err)
+			t.Errorf("decode loader.retrieve ask: %v", err)
 			continue
 		}
 		c.mu.Lock()
 		c.last = req
 		answer := c.answer
 		c.mu.Unlock()
-		var res protocol.LoaderEmptiesResponse
+		var res protocol.LoaderRetrieveResponse
 		if answer != nil {
 			res = answer(req)
 		} else {
@@ -96,14 +96,14 @@ func (c *coreEmpties) serve(t *testing.T, eng *Engine) {
 		}
 		body, err := json.Marshal(res)
 		if err != nil {
-			t.Errorf("encode loader.empties answer: %v", err)
+			t.Errorf("encode loader.retrieve answer: %v", err)
 			continue
 		}
 		if err := eng.db.AckOutbox(m.ID); err != nil {
 			t.Errorf("take the ask off the outbox: %v", err)
 		}
 		c.asks.Add(1)
-		eng.HandleEdgeAnswer(answerTo(&env), &protocol.EdgeAnswer{Kind: protocol.AskLoaderEmpties, Status: protocol.AnswerOK, Body: body})
+		eng.HandleEdgeAnswer(answerTo(&env), &protocol.EdgeAnswer{Kind: protocol.AskLoaderRetrieve, Status: protocol.AnswerOK, Body: body})
 	}
 }
 
@@ -112,13 +112,13 @@ func (c *coreEmpties) serve(t *testing.T, eng *Engine) {
 // one the bins table shows occupied held as "occupied",
 // the rest ordered to until the ask's count (less what is already coming for
 // the part) is met, each order projected here first.
-func (c *coreEmpties) model(t *testing.T, eng *Engine, req protocol.LoaderEmptiesRequest) protocol.LoaderEmptiesResponse {
+func (c *coreEmpties) model(t *testing.T, eng *Engine, req protocol.LoaderRetrieveRequest) protocol.LoaderRetrieveResponse {
 	var dl *domain.Loader
 	for _, role := range []domain.LoaderRole{domain.RoleProduce, domain.RoleConsume} {
 		ls, err := eng.loaders().Loaders(role)
 		if err != nil {
 			t.Errorf("list loaders: %v", err)
-			return protocol.LoaderEmptiesResponse{}
+			return protocol.LoaderRetrieveResponse{}
 		}
 		for _, l := range ls {
 			if string(l.ID()) == req.LoaderKey {
@@ -127,16 +127,16 @@ func (c *coreEmpties) model(t *testing.T, eng *Engine, req protocol.LoaderEmptie
 		}
 	}
 	if dl == nil {
-		return protocol.LoaderEmptiesResponse{Skipped: "no such loader", Created: []string{}}
+		return protocol.LoaderRetrieveResponse{Skipped: "no such loader", Created: []string{}}
 	}
 	nodes, _ := dl.ReservationTarget(domain.NodeID(req.MemberNode), domain.PayloadCode(req.PayloadCode), eng.multiWindowFor(dl))
 	names := nodeIDStrings(nodes)
 	active, err := eng.db.ListActiveOrdersByDeliveryNodeSet(names)
 	if err != nil {
 		t.Errorf("list in flight: %v", err)
-		return protocol.LoaderEmptiesResponse{}
+		return protocol.LoaderRetrieveResponse{}
 	}
-	res := protocol.LoaderEmptiesResponse{Created: []string{}, HeldBy: map[string]string{}}
+	res := protocol.LoaderRetrieveResponse{Created: []string{}, HeldBy: map[string]string{}}
 	open := map[string]bool{}
 	resident := map[string]bool{}
 	if rows, err := eng.binsForDecision(names...); err == nil {

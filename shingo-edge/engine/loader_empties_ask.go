@@ -12,7 +12,7 @@ import (
 
 // loader_empties_ask.go — an operator's empties at a loader, asked of Core.
 //
-// Core sizes and places them (protocol.AskLoaderEmpties: dispatch.ReplenishLoader's
+// Core sizes and places them (protocol.AskLoaderRetrieve: dispatch.ReplenishLoader's
 // operator origin, the windows chosen by plan.LoaderWindows, each order born
 // through AdmitCoreAsk), so the count of what is in flight, the windows already
 // spoken for and the resident bins are read where they are written. The orders
@@ -24,23 +24,24 @@ import (
 // answer is what Core made and, per window it did not order to, why. A Core
 // that does not answer the kind is refused here: there is no Edge path left
 // that orders an operator's empty on its own count.
-func (e *Engine) askLoaderEmpties(dl *domain.Loader, payload domain.PayloadCode, count int, member domain.NodeID, origin orders.Origin) (*protocol.LoaderEmptiesResponse, error) {
-	if !e.CoreAnswers(protocol.AskLoaderEmpties) {
-		return nil, doesNotAnswer(protocol.AskLoaderEmpties)
+func (e *Engine) askLoaderEmpties(dl *domain.Loader, payload domain.PayloadCode, count int, member domain.NodeID, origin orders.Origin) (*protocol.LoaderRetrieveResponse, error) {
+	if !e.CoreAnswers(protocol.AskLoaderRetrieve) {
+		return nil, doesNotAnswer(protocol.AskLoaderRetrieve)
 	}
-	a, err := e.Ask(protocol.AskLoaderEmpties, protocol.LoaderEmptiesRequest{
-		LoaderKey: string(dl.ID()), PayloadCode: string(payload), MemberNode: string(member),
+	a, err := e.Ask(protocol.AskLoaderRetrieve, protocol.LoaderRetrieveRequest{
+		LoaderKey: string(dl.ID()), Direction: protocol.LoaderRetrieveEmpty, Origin: protocol.LoaderAskOperator,
+		PayloadCode: string(payload), MemberNode: string(member),
 		Count: count, OriginID: origin.ID, OriginClass: origin.Class,
 	}, AskWait)
 	if err != nil {
 		return nil, err
 	}
-	return askInto[protocol.LoaderEmptiesResponse](a)
+	return askInto[protocol.LoaderRetrieveResponse](a)
 }
 
 // noEmptiesSentence is the operator's answer when Core made none: why, from
 // Core's Skipped, or each window Core did not order to with its cause.
-func noEmptiesSentence(node string, res *protocol.LoaderEmptiesResponse) string {
+func noEmptiesSentence(node string, res *protocol.LoaderRetrieveResponse) string {
 	if res.Skipped != "" {
 		// OWNER-WORDS
 		return fmt.Sprintf("node %s: no empty ordered — %s", node, res.Skipped)

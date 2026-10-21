@@ -902,7 +902,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 // moves out instead and the caller gets headroom rather than a fresh tripwire.
 //
 // CORE ORDERS THE EMPTY. The operator asks for one (want=1) through the
-// loader.empties ask (askLoaderEmpties): Core counts what is in flight across the
+// loader.retrieve ask (askLoaderEmpties): Core counts what is in flight across the
 // loader, what stands on its windows and which are spoken for, and makes the
 // order or says why not (Skipped, or HeldBy per window). The order is Core's,
 // projected here; the node's runtime points at it when the projection is in

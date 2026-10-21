@@ -211,35 +211,48 @@ func TestDoorAsk_Reseat(t *testing.T) {
 		"{\"node\":\""+f.sd.StorageNode.Name+"\",\"landed\":false}\n")
 }
 
-// TestDoorAsk_LoaderEmpties: a person's ask for empties at a loader is answered
-// by Core's own sizing and window choice (ReplenishLoader's operator origin):
-// a key that is not a loader and a count below one are refused before any
-// read; a loader Core does not have is 404; at an operator-driven loader with
-// two windows an ask for three makes two, named by their UUIDs, and the same
-// ask again makes none and names both windows as held.
-func TestDoorAsk_LoaderEmpties(t *testing.T) {
+// TestDoorAsk_LoaderRetrieve: an ask for carriers at a loader is answered by
+// Core's own sizing and window choice (ReplenishLoader). A key that is not a
+// loader, a direction or an origin it does not name (a threshold is Core's own,
+// never asked), and a count below one are refused before any read; a loader
+// Core does not have is 404. A person's ask for three empties at an
+// operator-driven loader with two windows makes two, named by their UUIDs, and
+// the same ask again makes none and names both windows as held. A release's
+// full at an unloader comes from the source the ask names, carries its part,
+// and a second release of the part makes none.
+func TestDoorAsk_LoaderRetrieve(t *testing.T) {
 	t.Parallel()
 	h, db := testHandlers(t)
 	d := h.doors()
-	ask := func(req protocol.LoaderEmptiesRequest) (asks.Result, protocol.LoaderEmptiesResponse) {
+	ask := func(req protocol.LoaderRetrieveRequest) (asks.Result, protocol.LoaderRetrieveResponse) {
 		t.Helper()
 		raw, err := json.Marshal(req)
 		testutil.MustNoErr(t, err, "marshal")
-		res := d.AskLoaderEmpties("edge.line1", raw)
-		var out protocol.LoaderEmptiesResponse
-		if b, ok := res.Body.(protocol.LoaderEmptiesResponse); ok {
+		res := d.AskLoaderRetrieve("edge.line1", raw)
+		var out protocol.LoaderRetrieveResponse
+		if b, ok := res.Body.(protocol.LoaderRetrieveResponse); ok {
 			out = b
 		}
 		return res, out
 	}
-	if res, _ := ask(protocol.LoaderEmptiesRequest{LoaderKey: "SMN_A1", Count: 1}); res.Status != http.StatusBadRequest {
-		t.Errorf("a key that is not a loader: %d %q", res.Status, res.Sentence)
+	empty := func(key string, count int) protocol.LoaderRetrieveRequest {
+		return protocol.LoaderRetrieveRequest{LoaderKey: key, Direction: protocol.LoaderRetrieveEmpty,
+			Origin: protocol.LoaderAskOperator, Count: count}
 	}
-	if res, _ := ask(protocol.LoaderEmptiesRequest{LoaderKey: "loader:1", Count: 0}); res.Status != http.StatusBadRequest {
-		t.Errorf("a count of none: %d %q", res.Status, res.Sentence)
-	}
-	if res, _ := ask(protocol.LoaderEmptiesRequest{LoaderKey: "loader:999999", Count: 1}); res.Status != http.StatusNotFound {
-		t.Errorf("a loader Core does not have: %d %q", res.Status, res.Sentence)
+	for name, c := range map[string]struct {
+		req  protocol.LoaderRetrieveRequest
+		want int
+	}{
+		"a key that is not a loader":  {empty("SMN_A1", 1), http.StatusBadRequest},
+		"a count of none":             {empty("loader:1", 0), http.StatusBadRequest},
+		"no direction":                {protocol.LoaderRetrieveRequest{LoaderKey: "loader:1", Origin: protocol.LoaderAskOperator, Count: 1}, http.StatusBadRequest},
+		"no origin":                   {protocol.LoaderRetrieveRequest{LoaderKey: "loader:1", Direction: protocol.LoaderRetrieveFull, Count: 1}, http.StatusBadRequest},
+		"a threshold over the wire":   {protocol.LoaderRetrieveRequest{LoaderKey: "loader:1", Direction: protocol.LoaderRetrieveEmpty, Origin: "threshold", Count: 1}, http.StatusBadRequest},
+		"a loader Core does not have": {empty("loader:999999", 1), http.StatusNotFound},
+	} {
+		if res, _ := ask(c.req); res.Status != c.want {
+			t.Errorf("%s: %d %q, want %d", name, res.Status, res.Sentence, c.want)
+		}
 	}
 
 	sd := testdb.SetupStandardData(t, db)
@@ -256,8 +269,9 @@ func TestDoorAsk_LoaderEmpties(t *testing.T) {
 	testutil.MustNoErr(t, db.UpsertLoaderPayload(loaders.Payload{LoaderID: id, PayloadCode: sd.Payload.Code}), "payload")
 
 	key := loaders.Key(id)
-	res, out := ask(protocol.LoaderEmptiesRequest{LoaderKey: key, PayloadCode: sd.Payload.Code, Count: 3,
-		OriginClass: protocol.OriginClassNoDemand})
+	req := empty(key, 3)
+	req.PayloadCode, req.OriginClass = sd.Payload.Code, protocol.OriginClassNoDemand
+	res, out := ask(req)
 	if res.Status != http.StatusOK || out.Want != 3 || len(out.Created) != 2 {
 		t.Fatalf("an ask for three at two windows: %d %q %+v", res.Status, res.Sentence, out)
 	}
@@ -266,12 +280,70 @@ func TestDoorAsk_LoaderEmpties(t *testing.T) {
 	for _, uuid := range out.Created {
 		o, err := db.GetOrderByUUID(uuid)
 		testutil.MustNoErr(t, err, "read "+uuid)
-		if o.OriginClass != protocol.OriginClassNoDemand {
-			t.Errorf("order %s origin class %q, want %q", uuid, o.OriginClass, protocol.OriginClassNoDemand)
+		if o.OriginClass != protocol.OriginClassNoDemand || o.OrderType != protocol.OrderTypeRetrieveEmpty {
+			t.Errorf("order %s: %s class %q, want an empty, %q", uuid, o.OrderType, o.OriginClass, protocol.OriginClassNoDemand)
 		}
 	}
-	res, out = ask(protocol.LoaderEmptiesRequest{LoaderKey: key, PayloadCode: sd.Payload.Code, Count: 3})
+	req.OriginClass = ""
+	res, out = ask(req)
 	if res.Status != http.StatusOK || len(out.Created) != 0 || len(out.HeldBy) != 2 {
 		t.Errorf("the same ask again: %d %+v, want none made and both windows held", res.Status, out)
+	}
+
+	// An unloader fed directly, asked for a full by a release that names its
+	// source.
+	fg := &nodes.Node{Name: "LE-FG", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(fg), "FG market")
+	uid, err := db.CreateLoader(loaders.Loader{Name: "LE-ULD", Role: loaders.RoleConsume,
+		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentOperator})
+	testutil.MustNoErr(t, err, "unloader")
+	for _, name := range []string{"LE-U1", "LE-U2"} {
+		w := &nodes.Node{Name: name, Enabled: true}
+		testutil.MustNoErr(t, db.CreateNode(w), name)
+		testutil.MustNoErr(t, db.UpsertLoaderHome(loaders.Home{LoaderID: uid, PositionNodeID: w.ID}), "window "+name)
+	}
+	testutil.MustNoErr(t, db.UpsertLoaderPayload(loaders.Payload{LoaderID: uid, PayloadCode: sd.Payload.Code}), "unloader payload")
+	full := protocol.LoaderRetrieveRequest{LoaderKey: loaders.Key(uid), Direction: protocol.LoaderRetrieveFull,
+		Origin: protocol.LoaderAskSideCycle, PayloadCode: sd.Payload.Code, Count: 1, SourceNode: fg.Name,
+		OriginClass: protocol.OriginClassNoDemand, SkipAutoConfirm: true}
+	res, out = ask(full)
+	if res.Status != http.StatusOK || len(out.Created) != 1 {
+		t.Fatalf("a release's full: %d %q %+v", res.Status, res.Sentence, out)
+	}
+	o, err := db.GetOrderByUUID(out.Created[0])
+	testutil.MustNoErr(t, err, "read the full")
+	if o.OrderType != protocol.OrderTypeRetrieve || o.SourceNode != fg.Name || o.PayloadCode != sd.Payload.Code || o.DeliveryNode != "LE-U1" {
+		t.Errorf("the full: %s from %q of %q to %q, want a retrieve from %q of %q to LE-U1",
+			o.OrderType, o.SourceNode, o.PayloadCode, o.DeliveryNode, fg.Name, sd.Payload.Code)
+	}
+	if !o.SkipAutoConfirm {
+		t.Errorf("the full asked with skip_auto_confirm: the sweep would confirm it (skip_auto_confirm false)")
+	}
+	res, out = ask(full)
+	if res.Status != http.StatusOK || len(out.Created) != 0 || out.Skipped == "" {
+		t.Errorf("a second release of the part: %d %+v, want none made and why", res.Status, out)
+	}
+
+	// A person's full at the same unloader, fed directly, naming no source: with
+	// any_source Core searches the plant (the order has no source), as for an
+	// order request that names none; without it, a loader fed directly is given
+	// nothing. Neither is kept off the sweep unless it says so.
+	person := protocol.LoaderRetrieveRequest{LoaderKey: loaders.Key(uid), Direction: protocol.LoaderRetrieveFull,
+		Origin: protocol.LoaderAskOperator, PayloadCode: sd.Payload.Code, Count: 1,
+		OriginClass: protocol.OriginClassNoDemand}
+	res, out = ask(person)
+	if res.Status != http.StatusOK || len(out.Created) != 0 || out.Skipped == "" {
+		t.Errorf("a person's full at an unloader fed directly, no source: %d %+v, want none made and why", res.Status, out)
+	}
+	person.AnySource = true
+	res, out = ask(person)
+	if res.Status != http.StatusOK || len(out.Created) != 1 {
+		t.Fatalf("a person's full, any source: %d %q %+v, want one", res.Status, res.Sentence, out)
+	}
+	o, err = db.GetOrderByUUID(out.Created[0])
+	testutil.MustNoErr(t, err, "read the person's full")
+	if o.SourceNode != "" || o.DeliveryNode != "LE-U2" || o.SkipAutoConfirm {
+		t.Errorf("a person's full, any source: from %q to %q skip_auto_confirm %v, want no source, LE-U2, false",
+			o.SourceNode, o.DeliveryNode, o.SkipAutoConfirm)
 	}
 }
