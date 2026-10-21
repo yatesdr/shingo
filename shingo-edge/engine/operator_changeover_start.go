@@ -1,6 +1,6 @@
 // operator_changeover_start.go — kick off a changeover.
 //
-// StartProcessChangeover runs the preflight gate, calls planChangeover
+// StartProcessChangeover logs the stock advisory, calls planChangeover
 // (see operator_changeover_plan.go), REFUSES if a participating node still
 // has an order in flight, creates the changeover row via changeoverService,
 // and emits all robot orders with embedded waits.
@@ -8,7 +8,6 @@
 package engine
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -428,48 +427,7 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 		log.Printf("changeover: clear post-cutover flag for process %d: %v", processID, err)
 	}
 
-	// Pre-flight inventory gate: refuse to start if Core reports any
-	// required payload has zero available bins in the supermarket — the
-	// changeover would deadlock at the first retrieve. Run BEFORE
-	// planning so planning-side side effects (DB writes, robot aborts)
-	// don't fire on a doomed start. The gate is skipped with no checker (tests
-	// that don't care about it). A Core that cannot be asked — no answer yet, an
-	// older Core that does not answer the preflight ask — refuses the start, as
-	// an unreachable Core did: the gate never pretends it looked.
-	var awaitingStock []string
-	if e.preflightChecker != nil {
-		missing, perr := e.preflightChecker.PreflightInventoryCheck(context.Background(), toStyleID)
-		if perr != nil {
-			return nil, fmt.Errorf("changeover preflight: %w", perr)
-		}
-		if len(missing) > 0 {
-			// Non-blocking advisory (was a HARD REFUSAL before 2026-06-04).
-			// Core queues an unsourceable supply retrieve (5eb0a3a), so a
-			// changeover started without stock parks its supply legs as
-			// "Awaiting Stock" and self-heals once the operator loads +
-			// manifest-confirms the material. Refusing here instead dead-ended
-			// the operator with idle robots and no course of action (Springfield
-			// NF SPOT 3, 2026-06-03). Surface the missing list as advisory and
-			// let the changeover proceed.
-			//
-			// THE SECOND HALF OF THAT JUSTIFICATION NAMED A MECHANISM THAT IS
-			// GONE. It also cited commit 0d95521 — Core holding a two-robot
-			// swap's removal leg until its supply claimed a bin — and that hold
-			// is deleted. The conclusion is unchanged and the reason is now
-			// stronger: Core's pair rule parks BOTH legs together on the supply's
-			// material wait, so a stockless changeover queues its pairs rather
-			// than half-dispatching them, and the same self-heal applies.
-			//
-			// The steady-state door does NOT rely on that: guardSourceKnownDry
-			// (operator_guards.go) refuses to arm a pair into a known-dry source
-			// at all. The difference is deliberate — a changeover is a deliberate
-			// operator action that must not dead-end, and a level-keeper tick has
-			// nobody standing at it.
-			awaitingStock = missing
-			e.logFn("changeover: process %d → style %d starting with %d payload(s) not yet in stock; supply legs will queue as Awaiting Stock until loaded: %v",
-				processID, toStyleID, len(missing), missing)
-		}
-	}
+	e.changeoverStockAdvisory(processID, toStyleID)
 	plan, err := e.planChangeover(processID, toStyleID, true)
 	if err != nil {
 		return nil, err
@@ -587,10 +545,6 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	if err != nil {
 		return nil, err
 	}
-	// Transient advisory — not persisted. Lets the HMI tell the operator
-	// which bins to load; the live per-order "Awaiting Stock" status is the
-	// durable signal once orders exist.
-	final.AwaitingStock = awaitingStock
 	// Advisory, never blocking: participants with no process_nodes row. Logged
 	// as well as returned so it lands in the record even when the caller is a
 	// script that discards the response body.

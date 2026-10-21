@@ -152,7 +152,7 @@ func TestScenario_SourcingFeed_AWholePlantCacheIsHealedByTheStationsSnapshot(t *
 		t.Fatalf("after the per-station snapshot the edge caches %v, want [PRESS-NULL PRESS-OWN]: its own "+
 			"process and the unrouted one, with the other station's rows gone", got)
 	}
-	if states := edge.Engine.SourcingStateForProcess("PRESS-OWN"); len(states) != 1 {
+	if states, _ := edge.Engine.SourcingStateForProcess("PRESS-OWN"); len(states) != 1 {
 		t.Fatalf("the edge reads %d states for its own process, want 1", len(states))
 	}
 	if held := edge.Engine.FeedDigests()[protocol.FeedSourcing]; held != want {
@@ -169,7 +169,7 @@ func TestScenario_SourcingFeed_NewEdgeAppliesAnOldCoresWholePlantSnapshot(t *tes
 	if got := edgeCache(t, edge); len(got) != 3 {
 		t.Fatalf("the edge caches %v from an old Core's whole-plant snapshot, want all three processes", got)
 	}
-	if own := edge.Engine.SourcingStateForProcess("PRESS-OWN"); len(own) != 1 || own[0].Status != "green" {
+	if own, _ := edge.Engine.SourcingStateForProcess("PRESS-OWN"); len(own) != 1 || own[0].Status != "green" {
 		t.Fatalf("the edge reads %+v for its own process from an old Core's snapshot, want one green state", own)
 	}
 }

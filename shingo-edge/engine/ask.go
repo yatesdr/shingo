@@ -327,7 +327,7 @@ func (p preflightAsker) Available() bool { return p.e.CoreAnswers(protocol.AskPr
 // answers from the Edge's side alone), as SetReleasePointSource does for the
 // release points. Call before Start.
 func (e *Engine) SetPreflightSource(src service.PreflightCorePoster) {
-	e.preflightChecker = service.NewPreflightChecker(e.db, src, e.cfg.StationID())
+	e.preflightChecker = service.NewPreflightChecker(src, e.cfg.StationID())
 }
 
 // PreflightInventory asks Core which of payloads has no free bin. Core reads

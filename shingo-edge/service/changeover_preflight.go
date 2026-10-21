@@ -1,7 +1,7 @@
-// Edge-side preflight inventory gate. Builds the to-style's required
-// payload list from style_node_claims, asks Core (the preflight read-ask),
-// and returns the missing payload list so StartProcessChangeover can
-// refuse to begin a changeover when bins are absent.
+// Edge-side preflight inventory ask, for the flow composer's draft only: the
+// draft's payload list goes to Core (the preflight read-ask) and the missing
+// subset comes back for the confirm sheet. A changeover start does not ask; it
+// reads the sourcing feed's verdict (engine changeoverStockAdvisory).
 
 package service
 
@@ -9,7 +9,6 @@ import (
 	"context"
 	"fmt"
 
-	"shingoedge/store"
 	"shingoedge/store/processes"
 )
 
@@ -43,50 +42,20 @@ type PreflightCoreAvailability struct {
 	BinCount    int
 }
 
-// PreflightChecker holds the dependencies needed to gate a changeover on
-// upstream bin availability.
+// PreflightChecker holds what the composer's draft check asks Core with.
 type PreflightChecker struct {
-	db      *store.DB
 	core    PreflightCorePoster
 	station string
 }
 
 // NewPreflightChecker constructs a PreflightChecker.
-func NewPreflightChecker(db *store.DB, core PreflightCorePoster, station string) *PreflightChecker {
-	return &PreflightChecker{db: db, core: core, station: station}
-}
-
-// PreflightInventoryCheck collects the to-style's required payload codes
-// (skipping the empty-bin sentinel "__empty__") and asks Core whether each
-// has at least one available bin in the supermarket. Returns the missing
-// subset.
-//
-// nil missing slice + nil error means everything is available. A non-empty
-// missing list is the operator-visible diagnostic.
-//
-// If Core is unavailable the call returns an error rather than degrading
-// to "all available" — a preflight that silently passes when the source
-// of truth is unreachable defeats the gate.
-//
-// "Collect the style's codes, then PreflightPayloads": the Core half is on its
-// own below so a draft flow — claims that exist only in a request body — can be
-// checked without a style row. The two must agree on a saved style, and
-// TestChangeoverPreflight_PayloadsAgreeWithStyleCheck says so.
-func (p *PreflightChecker) PreflightInventoryCheck(ctx context.Context, toStyleID int64) ([]string, error) {
-	if p.core == nil || !p.core.Available() {
-		// OWNER-WORDS
-		return nil, fmt.Errorf("preflight: Core does not answer the preflight ask")
-	}
-	claims, err := p.db.ListStyleNodeClaims(toStyleID)
-	if err != nil {
-		return nil, fmt.Errorf("preflight: list claims: %w", err)
-	}
-	return p.PreflightPayloads(ctx, PayloadCodesOf(claims))
+func NewPreflightChecker(core PreflightCorePoster, station string) *PreflightChecker {
+	return &PreflightChecker{core: core, station: station}
 }
 
 // PayloadCodesOf is the payload list a set of claims needs checked: each
 // claim's PayloadCode, in claim order, without the empty-bin sentinel and
-// without repeats. Pure; the dedup lives here so both gates apply it once.
+// without repeats. Pure.
 func PayloadCodesOf(claims []processes.NodeClaim) []string {
 	codes := make([]string, 0, len(claims))
 	for _, c := range claims {
@@ -115,12 +84,11 @@ func dedupPayloadCodes(codes []string) []string {
 
 // PreflightPayloads asks Core whether each payload code has at least one
 // available bin in the supermarket, and returns the missing subset. The
-// sentinel and duplicates are skipped exactly as PreflightInventoryCheck skips
-// them, and an empty list asks Core nothing.
+// sentinel and duplicates are skipped (dedupPayloadCodes), and an empty list
+// asks Core nothing.
 //
-// Core unavailable is an ERROR, never "all available" — the caller decides
-// what an unchecked answer looks like (the composer's preview says
-// "unchecked"; a start refuses), the gate does not pretend it looked.
+// Core unavailable is an ERROR, never "all available": the composer's preview
+// says "unchecked", and the check does not pretend it looked.
 func (p *PreflightChecker) PreflightPayloads(ctx context.Context, codes []string) ([]string, error) {
 	if p.core == nil || !p.core.Available() {
 		// OWNER-WORDS

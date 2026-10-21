@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"log"
 	"slices"
 
@@ -76,13 +77,55 @@ func (e *Engine) sourcingDigest() (string, bool) {
 
 // SourcingStateForProcess returns the cached sourceability verdicts for a
 // process (keyed by its Name — the feed's process key) for the changeover
-// picker. A local SQLite read (no Core round-trip). Degrades to nil on error so
-// the picker still renders — a missing verdict just shows no annotation.
-func (e *Engine) SourcingStateForProcess(process string) []protocol.SourcingState {
+// pickers and the start, and whether the copy they come from is current:
+// CurrentAt over the feed's arrival and Core's last confirmation, the rule
+// every screen applies to a held copy. A verdict from a copy that is not
+// current says nothing about stock now ("stock not checked"). A local SQLite
+// read (no Core round-trip). Degrades to nil on error so the picker still
+// renders — a missing verdict just shows no annotation.
+func (e *Engine) SourcingStateForProcess(process string) ([]protocol.SourcingState, bool) {
+	received, confirmed := e.FeedTimes(protocol.FeedSourcing)
+	_, old := CurrentAt(received, confirmed, e.feeds.clock())
 	states, err := e.db.ListSourcingStateForProcess(process)
 	if err != nil {
 		log.Printf("sourcing_state: read for process %q: %v", process, err)
-		return nil
+		return nil, !old
 	}
-	return states
+	return states, !old
+}
+
+// changeoverStockAdvisory is the changeover start's stock gate, and it never
+// refuses (since 2026-06-04): a changeover started without stock queues its
+// supply legs as Awaiting Stock and self-heals once the bins are loaded, where
+// a refusal dead-ended the operator with idle robots (Springfield NF SPOT 3,
+// 2026-06-03). Core's pair rule parks both legs of a pair together on the
+// supply's material wait, so a stockless changeover queues its pairs rather
+// than half-dispatching them. The steady-state door is different on purpose:
+// guardSourceKnownDry (operator_guards.go) refuses to arm a pair into a
+// known-dry source, because a level-keeper tick has nobody standing at it.
+//
+// It reads the sourcing feed's verdict for the to-style, held here, with no
+// round trip; the start used to ask Core and refused when Core did not
+// answer. Missing payloads are logged as the advisory. No verdict for the
+// style, or a copy past CurrentAt, is "stock not checked", logged, and the
+// start proceeds: the pickers draw the same words, and the feed's next verdict
+// redraws them.
+func (e *Engine) changeoverStockAdvisory(processID, toStyleID int64) {
+	process, perr := e.db.GetProcess(processID)
+	style, serr := e.db.GetStyle(toStyleID)
+	if perr != nil || serr != nil {
+		e.logFn("changeover: process %d → style %d starting with stock not checked: %v",
+			processID, toStyleID, errors.Join(perr, serr))
+		return
+	}
+	states, current := e.SourcingStateForProcess(process.Name)
+	i := slices.IndexFunc(states, func(s protocol.SourcingState) bool { return s.StyleID == style.Name })
+	switch {
+	case i < 0 || !current:
+		e.logFn("changeover: process %d → style %d starting with stock not checked (verdict held %v, copy current %v)",
+			processID, toStyleID, i >= 0, current)
+	case len(states[i].Missing) > 0:
+		e.logFn("changeover: process %d → style %d starting with %d payload(s) not yet in stock; supply legs will queue as Awaiting Stock until loaded: %v",
+			processID, toStyleID, len(states[i].Missing), states[i].Missing)
+	}
 }

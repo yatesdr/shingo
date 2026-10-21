@@ -119,6 +119,7 @@ function viewWith(setup) {
         },
         sourcing_by_style: {
             'B-RUN': { code: 'red', note: 'missing PART-B' },
+            'PAIR-AB': { code: 'unchecked' },
         },
     };
 }
@@ -182,7 +183,7 @@ test('setup on: the styles lead, then the parts with Core\'s word and a CATID', 
     await open({ part_rows: ROWS, presets: [ONE] });
     const b = box();
     if (!(b.indexOf('>Styles<') < b.indexOf('Set up a part'))) throw new Error('order: ' + b.slice(0, 400));
-    for (const want of ['data-part="PART-C"', 'CATID CAT-A', 'in A-RUN', 'No bin at Core',
+    for (const want of ['data-part="PART-C"', 'CATID CAT-A', 'in A-RUN', 'No bin at Core', 'Stock not checked',
         '<span class="vd build">Not set up yet</span>']) {
         expectIn('part list', want, b);
     }

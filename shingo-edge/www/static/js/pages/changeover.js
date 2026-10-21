@@ -71,10 +71,6 @@ async function startProcessChangeover() {
             called_by: '',
             notes: ''
         });
-        if (co && co.awaiting_stock && co.awaiting_stock.length) {
-            toast('Changeover started — awaiting stock for: ' + co.awaiting_stock.join(', ') +
-                '. These supply orders will dispatch automatically once the bins are loaded and manifest-confirmed.', 'warning');
-        }
         renderUnresolvedParticipants(co && co.unresolved_participants);
         htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {

@@ -69,3 +69,30 @@ func TestStyleSourcingViewFrom_UnknownStatusIsNotSelectable(t *testing.T) {
 		t.Errorf("unknown verdict %q must block, not fall through to selectable", v.Status)
 	}
 }
+
+// TestStyleSourcingViews_AStaleCopyIsStockNotChecked: both pickers' annotation
+// of a process's styles. From a current copy each verdict is drawn as
+// styleSourcingViewFrom draws it; from a copy past CurrentAt every one reads
+// "stock not checked", not blocked whatever the verdict was, because the start
+// proceeds on it (engine changeoverStockAdvisory). The feed's next verdict
+// makes the copy current and redraws it.
+func TestStyleSourcingViews_AStaleCopyIsStockNotChecked(t *testing.T) {
+	states := []protocol.SourcingState{
+		{StyleID: "S-RED", Status: "red", Missing: []string{"BIN-B"}},
+		{StyleID: "S-GREEN", Status: "green"},
+	}
+	current := styleSourcingViews(states, true)
+	if !current["S-RED"].Blocked || current["S-RED"].Note != "missing BIN-B" || current["S-GREEN"].Code != "green" {
+		t.Errorf("from a current copy: %+v, want each verdict as styleSourcingViewFrom draws it", current)
+	}
+	stale := styleSourcingViews(states, false)
+	for _, name := range []string{"S-RED", "S-GREEN"} {
+		v, ok := stale[name]
+		if !ok || v.Status != "stock not checked" || v.Code != "unchecked" || v.Blocked || v.Note != "" {
+			t.Errorf("%s from a stale copy = %+v (held %v), want stock not checked, not blocked", name, v, ok)
+		}
+	}
+	if len(styleSourcingViews(nil, false)) != 0 {
+		t.Error("no verdicts: want no annotations, stale or not")
+	}
+}

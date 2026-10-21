@@ -59,6 +59,17 @@ func seedPreflightStyle(t *testing.T, db *store.DB) int64 {
 	return styleID
 }
 
+// checkStyle is the composer's check on a saved style: the style's claims'
+// codes (PayloadCodesOf), then PreflightPayloads.
+func checkStyle(t *testing.T, db *store.DB, checker *PreflightChecker, styleID int64) ([]string, error) {
+	t.Helper()
+	claims, err := db.ListStyleNodeClaims(styleID)
+	if err != nil {
+		t.Fatalf("list claims: %v", err)
+	}
+	return checker.PreflightPayloads(context.Background(), PayloadCodesOf(claims))
+}
+
 // TestChangeoverPreflight_BuildsPayloadListFromToStyle: when the to-style
 // has claims for several payloads (with one __empty__ sentinel), the
 // preflight call carries exactly the unique non-empty payload codes.
@@ -68,11 +79,11 @@ func TestChangeoverPreflight_BuildsPayloadListFromToStyle(t *testing.T) {
 	toStyleID := seedPreflightStyle(t, db)
 
 	core := &fakeCorePoster{available: true}
-	checker := NewPreflightChecker(db, core, "station-1")
+	checker := NewPreflightChecker(core, "station-1")
 
-	missing, err := checker.PreflightInventoryCheck(context.Background(), toStyleID)
+	missing, err := checkStyle(t, db, checker, toStyleID)
 	if err != nil {
-		t.Fatalf("PreflightInventoryCheck: %v", err)
+		t.Fatalf("check the style: %v", err)
 	}
 	if missing != nil {
 		t.Errorf("expected nil missing, got %v", missing)
@@ -108,11 +119,11 @@ func TestChangeoverPreflight_FailsWhenNoBinAvailable(t *testing.T) {
 			return &PreflightCoreResult{Missing: []string{"PART-A"}}, nil
 		},
 	}
-	checker := NewPreflightChecker(db, core, "station-1")
+	checker := NewPreflightChecker(core, "station-1")
 
-	missing, err := checker.PreflightInventoryCheck(context.Background(), toStyleID)
+	missing, err := checkStyle(t, db, checker, toStyleID)
 	if err != nil {
-		t.Fatalf("PreflightInventoryCheck: %v", err)
+		t.Fatalf("check the style: %v", err)
 	}
 	if len(missing) != 1 || missing[0] != "PART-A" {
 		t.Errorf("missing = %v, want [PART-A]", missing)
@@ -132,89 +143,43 @@ func TestChangeoverPreflight_PropagatesCoreError(t *testing.T) {
 			return nil, errors.New("core: HTTP 500")
 		},
 	}
-	checker := NewPreflightChecker(db, core, "station-1")
+	checker := NewPreflightChecker(core, "station-1")
 
-	_, err := checker.PreflightInventoryCheck(context.Background(), toStyleID)
+	_, err := checkStyle(t, db, checker, toStyleID)
 	if err == nil {
 		t.Fatal("expected error when Core returns failure, got nil")
 	}
 }
 
 // TestChangeoverPreflight_NoCoreClient: a nil-or-unavailable core client
-// surfaces as an error — refuse the changeover rather than passing
-// silently when the source of truth is offline.
+// surfaces as an error, so the composer says the parts were not checked
+// rather than passing silently when the source of truth is offline.
 func TestChangeoverPreflight_NoCoreClient(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	toStyleID := seedPreflightStyle(t, db)
 
 	core := &fakeCorePoster{available: false}
-	checker := NewPreflightChecker(db, core, "station-1")
+	checker := NewPreflightChecker(core, "station-1")
 
-	_, err := checker.PreflightInventoryCheck(context.Background(), toStyleID)
+	_, err := checkStyle(t, db, checker, toStyleID)
 	if err == nil {
 		t.Fatal("expected error when core client is unavailable")
 	}
 }
 
-// ── PreflightPayloads: the Core call without a style id ─────────────────────
+// ── PreflightPayloads on a raw code list ──────────────────────────────────────
 //
 // The flow composer previews a DRAFT whose claims exist only in memory, so its
-// payload codes have to be checkable without a style row. PreflightPayloads is
-// the Core half of PreflightInventoryCheck on its own; the style check is
-// "collect the style's codes, then PreflightPayloads", and the two must agree.
-
-// TestChangeoverPreflight_PayloadsAgreeWithStyleCheck: on the seeded style,
-// the by-style gate and the by-codes gate send Core the same list and hand
-// back the same missing set.
-func TestChangeoverPreflight_PayloadsAgreeWithStyleCheck(t *testing.T) {
-	t.Parallel()
-	db := testdb.Open(t)
-	toStyleID := seedPreflightStyle(t, db)
-
-	core := &fakeCorePoster{
-		available: true,
-		respond: func(payloads []string) (*PreflightCoreResult, error) {
-			return &PreflightCoreResult{Missing: []string{"PART-Z"}}, nil
-		},
-	}
-	checker := NewPreflightChecker(db, core, "station-1")
-
-	byStyle, err := checker.PreflightInventoryCheck(context.Background(), toStyleID)
-	if err != nil {
-		t.Fatalf("PreflightInventoryCheck: %v", err)
-	}
-	askedByStyle := append([]string(nil), core.queriedPayloads...)
-
-	claims, err := db.ListStyleNodeClaims(toStyleID)
-	if err != nil {
-		t.Fatalf("list claims: %v", err)
-	}
-	byCodes, err := checker.PreflightPayloads(context.Background(), PayloadCodesOf(claims))
-	if err != nil {
-		t.Fatalf("PreflightPayloads: %v", err)
-	}
-	askedByCodes := append([]string(nil), core.queriedPayloads...)
-
-	if !reflect.DeepEqual(askedByStyle, askedByCodes) {
-		t.Errorf("Core was asked %v by style and %v by codes; the two gates must send the same list", askedByStyle, askedByCodes)
-	}
-	if !reflect.DeepEqual(byStyle, byCodes) {
-		t.Errorf("missing by style = %v, by codes = %v; want the same answer", byStyle, byCodes)
-	}
-	if !reflect.DeepEqual(askedByCodes, []string{"PART-A", "PART-Z"}) {
-		t.Errorf("Core was asked %v, want [PART-A PART-Z] — deduped, sentinel skipped, claim order kept", askedByCodes)
-	}
-}
+// payload codes are checked without a style row.
 
 // TestChangeoverPreflight_PayloadsSkipsSentinelAndDuplicates: the same skip
 // and dedup rules as the style path, applied to a raw code list; and an empty
 // list asks Core nothing.
 func TestChangeoverPreflight_PayloadsSkipsSentinelAndDuplicates(t *testing.T) {
 	t.Parallel()
-	db := testdb.Open(t)
 	core := &fakeCorePoster{available: true}
-	checker := NewPreflightChecker(db, core, "station-1")
+	checker := NewPreflightChecker(core, "station-1")
 
 	missing, err := checker.PreflightPayloads(context.Background(), []string{"PART-A", "__empty__", "PART-A", "", "PART-B"})
 	if err != nil {
@@ -241,12 +206,11 @@ func TestChangeoverPreflight_PayloadsSkipsSentinelAndDuplicates(t *testing.T) {
 // draft looks like, the gate does not pretend.
 func TestChangeoverPreflight_PayloadsCoreUnavailableIsAnError(t *testing.T) {
 	t.Parallel()
-	db := testdb.Open(t)
-	checker := NewPreflightChecker(db, &fakeCorePoster{available: false}, "station-1")
+	checker := NewPreflightChecker(&fakeCorePoster{available: false}, "station-1")
 	if _, err := checker.PreflightPayloads(context.Background(), []string{"PART-A"}); err == nil {
 		t.Fatal("expected an error with Core unavailable, got nil")
 	}
-	unwired := NewPreflightChecker(db, nil, "station-1")
+	unwired := NewPreflightChecker(nil, "station-1")
 	if _, err := unwired.PreflightPayloads(context.Background(), []string{"PART-A"}); err == nil {
 		t.Fatal("expected an error with no Core client, got nil")
 	}

@@ -221,6 +221,8 @@ function verdict(styleName) {
         case 'red': return { cls: 'no', text: 'No bin at Core', note: src.note || '' };
         case 'yellow': return { cls: 'unv', text: 'Running low', note: src.note || '' };
         case 'not_configured': return { cls: 'unv', text: 'Not checked at Core', note: src.note || '' };
+        // OWNER-WORDS
+        case 'unchecked': return { cls: 'unv', text: 'Stock not checked' };
         default: return { cls: 'unv', text: 'Unverified' };
     }
 }

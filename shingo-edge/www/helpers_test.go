@@ -80,12 +80,15 @@ func TestMain(m *testing.M) {
 // against the ephemeral SQLite database. Tests that don't touch order
 // endpoints can ignore it.
 type stubEngine struct {
-	db       *store.DB
-	cfg      *config.Config
-	cfgPath  string
-	core     map[string]protocol.NodeInfo
-	groups   map[string][]string // group membership the stub's StationService is wired with
-	orderMgr *orders.Manager
+	// sourcingStale makes SourcingStateForProcess report the feed's copy as
+	// not current.
+	sourcingStale bool
+	db            *store.DB
+	cfg           *config.Config
+	cfgPath       string
+	core          map[string]protocol.NodeInfo
+	groups        map[string][]string // group membership the stub's StationService is wired with
+	orderMgr      *orders.Manager
 	// plcMgr is what PLCManager returns: nil unless a test puts a manager
 	// (with a seeded tag cache) here.
 	plcMgr *plc.Manager
@@ -414,9 +417,9 @@ func (s *stubEngine) DeleteProcess(processID int64) error {
 	return service.NewProcessService(s.db).Delete(processID)
 }
 
-func (s *stubEngine) SourcingStateForProcess(process string) []protocol.SourcingState {
+func (s *stubEngine) SourcingStateForProcess(process string) ([]protocol.SourcingState, bool) {
 	states, _ := s.db.ListSourcingStateForProcess(process)
-	return states
+	return states, !s.sourcingStale
 }
 
 // newTestHandlers builds *Handlers backed by the test DB, returning it along

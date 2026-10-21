@@ -291,7 +291,7 @@ func TestPreviewFlow_PreflightStates(t *testing.T) {
 
 	coreNeverAnswers(t, eng)
 	poster := &fakeFlowPoster{}
-	eng.preflightChecker = service.NewPreflightChecker(db, poster, "test.station")
+	eng.preflightChecker = service.NewPreflightChecker(poster, "test.station")
 	p, err = eng.PreviewFlow(context.Background(), processID, req)
 	testutil.MustNoErr(t, err, "core ok")
 	if p.Preflight.State != FlowPreflightOK || !reflect.DeepEqual(poster.asked, []string{"PART-NEW"}) {

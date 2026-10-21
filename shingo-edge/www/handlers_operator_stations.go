@@ -81,10 +81,7 @@ func (h *Handlers) apiGetOperatorStationView(w http.ResponseWriter, r *http.Requ
 	// let the orders queue. The field ships anyway rather than being filtered out —
 	// it is the admin policy, and hiding it here would make the two views look like
 	// they disagree about the verdict when they only differ on what to do about it.
-	sourcing := map[string]styleSourcingView{}
-	for _, s := range h.engine.SourcingStateForProcess(view.Process.Name) {
-		sourcing[s.StyleID] = styleSourcingViewFrom(s)
-	}
+	sourcing := styleSourcingViews(h.engine.SourcingStateForProcess(view.Process.Name))
 	body, err := json.Marshal(struct {
 		*domain.OperatorStationView
 		// Station shadows the view's: the station's JSON carries no clock.

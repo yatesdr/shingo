@@ -42,6 +42,30 @@ type styleSourcingView struct {
 	Note    string `json:"note"`
 }
 
+// stockNotChecked is the annotation for a verdict from a sourcing copy that is
+// not current (CurrentAt): it says nothing about stock now. Not blocked,
+// whatever the verdict was: the start proceeds on it, as on no verdict.
+var stockNotChecked = styleSourcingView{
+	// OWNER-WORDS
+	Status: "stock not checked",
+	Code:   "unchecked",
+}
+
+// styleSourcingViews is both pickers' annotation of a process's styles, keyed
+// by style name: each verdict as styleSourcingViewFrom draws it, or every one
+// "stock not checked" when the copy they come from is not current.
+func styleSourcingViews(states []protocol.SourcingState, current bool) map[string]styleSourcingView {
+	out := make(map[string]styleSourcingView, len(states))
+	for _, s := range states {
+		if !current {
+			out[s.StyleID] = stockNotChecked
+			continue
+		}
+		out[s.StyleID] = styleSourcingViewFrom(s)
+	}
+	return out
+}
+
 func styleSourcingViewFrom(s protocol.SourcingState) styleSourcingView {
 	v := styleSourcingView{Status: s.Status, Code: s.Status}
 	switch s.Status {
@@ -90,7 +114,8 @@ type changeoverViewData struct {
 	AllNodesComplete bool
 	// SourcingByStyle annotates each selectable style with its sourceability
 	// verdict (keyed by style name). Read from Edge's local cache — no Core
-	// round-trip. Empty when the feed has no verdict for a style (no annotation).
+	// round-trip. Empty when the feed has no verdict for a style (no annotation);
+	// "stock not checked" when the feed's copy is not current.
 	SourcingByStyle map[string]styleSourcingView
 	// GateBlockers is what the cutover gate is currently waiting on — the
 	// live "waiting on:" panel. Empty means the gate would pass right now.
@@ -115,10 +140,7 @@ func (h *Handlers) buildChangeoverViewData(activeProcess *domain.Process) change
 	d.Styles, _ = h.engine.StyleService().ListByProcess(activeProcess.ID)
 	// Annotate each style with its sourceability verdict from Edge's local cache
 	// (the picker shows green/yellow selectable, red shown-but-blocked).
-	d.SourcingByStyle = map[string]styleSourcingView{}
-	for _, s := range h.engine.SourcingStateForProcess(activeProcess.Name) {
-		d.SourcingByStyle[s.StyleID] = styleSourcingViewFrom(s)
-	}
+	d.SourcingByStyle = styleSourcingViews(h.engine.SourcingStateForProcess(activeProcess.Name))
 	if activeProcess.ActiveStyleID != nil {
 		if s, err := h.engine.StyleService().Get(*activeProcess.ActiveStyleID); err == nil {
 			d.CurrentStyleName = s.Name

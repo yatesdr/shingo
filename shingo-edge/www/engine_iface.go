@@ -80,8 +80,9 @@ type ServiceAccess interface {
 	CatalogService() *service.CatalogService
 	OrderService() *service.OrderService
 	// SourcingStateForProcess returns the cached sourceability verdicts for a
-	// process (by Name) so the changeover picker can annotate each style.
-	SourcingStateForProcess(process string) []protocol.SourcingState
+	// process (by Name) so the changeover picker can annotate each style, and
+	// whether the feed's copy is current (CurrentAt).
+	SourcingStateForProcess(process string) ([]protocol.SourcingState, bool)
 	// LocalContainment is the Edge's held copy of Core's containment feed
 	// with its received and confirmed times; false when nothing is held. The
 	// containment page renders from it with no call to Core. Read-only.

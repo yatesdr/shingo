@@ -97,8 +97,12 @@ func routeFixtures() map[string]routeFixture {
 		"POST /api/processes/{id}/changeover/preview": {want: 200, req: on(func(w *walk) (string, any) {
 			return pr(w) + "/changeover/preview", map[string]any{"to_style_id": w.styleA}
 		})},
+		// The running style: refused, as the walk's start always was. It was
+		// refused for stock (Core never answers the preflight ask here) until the
+		// start read the sourcing feed and stopped refusing on stock; a start that
+		// succeeds leaves its orders' work running into the doors after it.
 		"POST /api/processes/{id}/changeover/start": {want: 400, req: on(func(w *walk) (string, any) {
-			return pr(w) + "/changeover/start", map[string]any{"to_style_id": w.styleA, "called_by": "walk"}
+			return pr(w) + "/changeover/start", map[string]any{"to_style_id": w.activeStyle(), "called_by": "walk"}
 		})},
 		"POST /api/processes/{id}/flow/preview": {want: 200, req: on(func(w *walk) (string, any) { return pr(w) + "/flow/preview", map[string]any{} })},
 		"POST /api/processes/{id}/flow/save": {want: 500, req: on(func(w *walk) (string, any) {
