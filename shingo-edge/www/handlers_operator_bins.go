@@ -6,7 +6,9 @@
 package www
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -222,17 +224,34 @@ func (h *Handlers) apiNodeChildren(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, children)
 }
 
+// apiPayloadManifest answers the load modal's (and the Production page's)
+// manifest read from the Edge's copy of Core's catalog feed, with no call to
+// Core: the row's template lines and UOP capacity. A row with no lines answers
+// the payload as a one-line template of itself (ratio 1, its description),
+// which is what Core's manifest endpoint answered for it. Only a payload the
+// copy has no row for answers no lines, the one case the screens call "No
+// manifest template". How current the copy is, the feed's own "as of" says.
+// Pinned by TestAPIPayloadManifest_ServesTheCatalogCopy.
 func (h *Handlers) apiPayloadManifest(w http.ResponseWriter, r *http.Request) {
 	code := chi.URLParam(r, "code")
 	if code == "" {
 		writeJSON(w, map[string]any{"uop_capacity": 0, "items": []struct{}{}})
 		return
 	}
-	result, _ := h.engine.CoreAPI().FetchPayloadManifest(code)
-	if result == nil {
-		result = &engine.PayloadManifestResponse{Items: []engine.ManifestItem{}}
+	entry, err := h.engine.CatalogService().GetByCode(code)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, map[string]any{"uop_capacity": 0, "items": []struct{}{}})
+		return
 	}
-	writeJSON(w, result)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read catalog: "+err.Error())
+		return
+	}
+	items := entry.Manifest
+	if len(items) == 0 {
+		items = []protocol.ManifestItem{{PartNumber: entry.Code, PartsPerCycle: 1, Description: entry.Description}}
+	}
+	writeJSON(w, map[string]any{"uop_capacity": entry.UOPCapacity, "items": items})
 }
 
 // apiClearNodeOrders drops both runtime order pointers on a node.

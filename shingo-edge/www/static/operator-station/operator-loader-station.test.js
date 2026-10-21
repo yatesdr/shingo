@@ -169,18 +169,27 @@ const marketBins = [{ node_name: 'MARKET-GROUP.SMN_M1', payload_code: 'PART-A', 
 const manifests = {
     'PART-A': { uop_capacity: 24, items: [{ part_number: 'PN-A1', parts_per_cycle: 2, description: 'left' }] },
 };
+// A payload here gets a 500 from the Edge's manifest read (its catalog copy
+// could not be read).
+const manifestBroken = new Set();
 function fetchStub(url, opts) {
     opts = opts || {};
     const method = opts.method || 'GET';
     let answer = {};
+    let status = 200;
     if (method === 'GET') {
         if (/\/market-bins$/.test(url)) answer = marketBins;
         const mm = /^\/api\/payload\/([^/]+)\/manifest$/.exec(url);
-        if (mm) answer = manifests[decodeURIComponent(mm[1])] || { uop_capacity: 0, items: [] };
+        if (mm && manifestBroken.has(decodeURIComponent(mm[1]))) {
+            status = 500;
+            answer = { error: 'read catalog' };
+        } else if (mm) {
+            answer = manifests[decodeURIComponent(mm[1])] || { uop_capacity: 0, items: [] };
+        }
     }
     requests.push({ method: method, url: url, body: opts.body === undefined ? undefined : JSON.parse(opts.body) });
     const res = {
-        ok: true, status: 200,
+        ok: status >= 200 && status < 300, status: status,
         json: async () => answer,
         text: async () => JSON.stringify(answer),
         clone() { return res; },
@@ -1025,6 +1034,31 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     eq([part(head, 'os-pc-word'), head.textContent.indexOf('No partial can come home'),
         z.children.filter(n => n !== head).map(n => n.textContent)],
     ['NOW', -1, ['No partial can come home']], 'no partial can come home: a plain line under the header');
+}
+
+// ── 14. The load modal's manifest, from the Edge's catalog copy ───────────
+{
+    // The Edge answers from its copy of Core's catalog: a payload with a row
+    // shows its lines; "No manifest template for this payload" only for an
+    // answer with no lines, which the Edge gives only when its copy has no row
+    // for the payload. A failed read is not "no template".
+    const rowsText = () => document.getElementById('load-bin-rows').innerHTML.replace(/<[^>]*>/g, '');
+    ctx.openLoadBin(1, ['PART-A'], 0);
+    await flush();
+    const rowsEl = document.getElementById('load-bin-rows');
+    const shown = [rowsEl].concat(rowsEl.descendants()).map(n => n.innerHTML).join('');
+    eq([shown.indexOf('PN-A1') >= 0, shown.indexOf('No manifest template') >= 0], [true, false],
+        'load modal: a payload with a catalog row shows its template line');
+    ctx.openLoadBin(1, ['PART-NONE'], 0);
+    await flush();
+    eq(rowsText(), 'No manifest template for this payload',
+        'load modal: no row in the copy reads as no template');
+    manifestBroken.add('PART-A');
+    ctx.openLoadBin(1, ['PART-A'], 0);
+    await flush();
+    eq(rowsText(), 'Failed to load manifest — tap the payload again to retry',
+        'load modal: a failed read says so, with the retry, not "no template"');
+    manifestBroken.delete('PART-A');
 }
 
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }

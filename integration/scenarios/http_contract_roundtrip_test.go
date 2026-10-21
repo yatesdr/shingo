@@ -3,9 +3,9 @@
 //
 // Lane C1 moved the contract types into shingo/protocol; this is the proof
 // both sides still speak the same language. Every endpoint the Edge calls on
-// Core's public /api group is exercised once (three for the manifest, whose
-// arms answer in different shapes), through the same CoreClient the plant
-// runs, against the same handlers the plant runs.
+// Core's public /api group is exercised once, through the same CoreClient the
+// plant runs, against the same handlers the plant runs. (The payload manifest
+// is not called: the Edge reads the template lines from its catalog feed.)
 //
 // BYTE CAPTURE. The recorder tees every request/response pair at the HTTP
 // layer (gunzipping what the Compress middleware produced), so a run before
@@ -158,8 +158,7 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 	sd := coreharness.SetupStandardData(t, db)
 	bin := coreharness.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-RT-1")
 
-	// Manifest arm 1 (normal): PART-A with one template line and a declared
-	// carrier (payload_bin_types → bin_type_code in the answer).
+	// PART-A with one template line and a declared carrier.
 	item := &domain.PayloadManifestItem{
 		PayloadID: sd.Payload.ID, PartNumber: "RT-PART", PartsPerCycle: 2, Description: "rt",
 	}
@@ -169,12 +168,11 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 	if err := db.SetPayloadBinTypes(sd.Payload.ID, []int64{sd.BinType.ID}); err != nil {
 		t.Fatalf("payload bin types: %v", err)
 	}
-	// Manifest arm 2 (fallback): a payload with no template rows answers the
-	// single self-referential line, with bin_type_code "".
+	// A payload with no template rows.
 	if err := db.CreatePayload(&coreharness.Payload{Code: "PART-BARE", Description: "bare rt", UOPCapacity: 50}); err != nil {
 		t.Fatalf("PART-BARE: %v", err)
 	}
-	// Manifest arm 3 (unknown): a code Core has no payload for.
+	// A payload with no bins anywhere.
 	if err := db.CreatePayload(&coreharness.Payload{Code: "PART-NOBIN", Description: "no bins", UOPCapacity: 10}); err != nil {
 		t.Fatalf("PART-NOBIN: %v", err)
 	}
@@ -206,31 +204,6 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 	}
 	if rows[1].NodeName != sd.LineNode.Name || rows[1].Occupied {
 		t.Errorf("line row = %+v, want empty LINE1-IN", rows[1])
-	}
-
-	// ── 2-4. manifest: normal, fallback (no template), unknown code ──
-	normal, err := client.FetchPayloadManifest(sd.Payload.Code)
-	if err != nil || normal == nil {
-		t.Fatalf("manifest normal: %v %+v", err, normal)
-	}
-	if normal.UOPCapacity != 1000 || normal.BinTypeCode != sd.BinType.Code || len(normal.Items) != 1 ||
-		normal.Items[0].PartNumber != "RT-PART" || normal.Items[0].PartsPerCycle != 2 || normal.Items[0].Description != "rt" {
-		t.Errorf("manifest normal = %+v, want capacity 1000, type DEFAULT, one RT-PART line ratio 2", normal)
-	}
-	fallback, err := client.FetchPayloadManifest("PART-BARE")
-	if err != nil || fallback == nil {
-		t.Fatalf("manifest fallback: %v %+v", err, fallback)
-	}
-	if fallback.UOPCapacity != 50 || fallback.BinTypeCode != "" || len(fallback.Items) != 1 ||
-		fallback.Items[0].PartNumber != "PART-BARE" || fallback.Items[0].PartsPerCycle != 1 {
-		t.Errorf("manifest fallback = %+v, want the self-referential single line, no bin type", fallback)
-	}
-	unknown, err := client.FetchPayloadManifest("PART-NOSUCH")
-	if err != nil || unknown == nil {
-		t.Fatalf("manifest unknown: %v %+v", err, unknown)
-	}
-	if unknown.UOPCapacity != 0 || len(unknown.Items) != 0 {
-		t.Errorf("manifest unknown = %+v, want zero capacity and EMPTY items ([] not null)", unknown)
 	}
 
 	// ── 5. node-children: the NGRP's physical child, dot-named ──
@@ -339,9 +312,6 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 	// ── The traffic seen is exactly the calls above, in order ──
 	want := []struct{ label, method, path string }{
 		{"node-bins", http.MethodGet, "/api/telemetry/node-bins"},
-		{"manifest-normal", http.MethodGet, "/api/telemetry/payload/" + sd.Payload.Code + "/manifest"},
-		{"manifest-fallback", http.MethodGet, "/api/telemetry/payload/PART-BARE/manifest"},
-		{"manifest-unknown", http.MethodGet, "/api/telemetry/payload/PART-NOSUCH/manifest"},
 		{"node-children", http.MethodGet, "/api/telemetry/node/" + grp.Name + "/children"},
 		{"bin-load-declared", http.MethodPost, "/api/telemetry/bin-load"},
 		{"bin-count", http.MethodPost, "/api/telemetry/bin-count"},

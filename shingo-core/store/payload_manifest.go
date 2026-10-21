@@ -20,6 +20,12 @@ func (db *DB) ListPayloadManifest(payloadID int64) ([]*payloads.ManifestItem, er
 	return payloads.ListManifest(db.DB, payloadID)
 }
 
+// PayloadManifestLines returns every payload's manifest lines by payload id
+// (payloads.ManifestLinesByPayload).
+func (db *DB) PayloadManifestLines() (map[int64][]*payloads.ManifestItem, error) {
+	return payloads.ManifestLinesByPayload(db.DB)
+}
+
 func (db *DB) ReplacePayloadManifest(payloadID int64, lines []payloads.Line) error {
 	return payloads.ReplaceManifest(db.DB, payloadID, lines)
 }

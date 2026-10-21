@@ -14,10 +14,12 @@ package catalog
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	"shingo/protocol"
 	"shingoedge/store/internal/helpers"
 )
 
@@ -34,21 +36,59 @@ type CatalogEntry struct {
 	// carries no part numbers. The engine splits it into the style's
 	// part-identity set — the same comma convention as a manual
 	// expected_catid pin.
-	CATID     string    `json:"catid"`
-	UpdatedAt time.Time `json:"updated_at"`
+	CATID string `json:"catid"`
+	// Manifest is the payload's manifest template lines in Core's order, as
+	// the catalog feed carries them; nil when the payload has none. Stored as
+	// JSON in payload_catalog.manifest (Edge v28). The load modal's manifest
+	// read (www apiPayloadManifest) answers from it.
+	Manifest  []protocol.ManifestItem `json:"manifest"`
+	UpdatedAt time.Time               `json:"updated_at"`
 }
 
-const catalogSelectCols = `id, name, code, description, uop_capacity, COALESCE(catid, '') as catid, updated_at`
+const catalogSelectCols = `id, name, code, description, uop_capacity, COALESCE(catid, '') as catid, manifest, updated_at`
 
 func scanCatalogEntry(scanner interface{ Scan(...any) error }) (*CatalogEntry, error) {
 	e := &CatalogEntry{}
-	var updatedAt string
-	if err := scanner.Scan(&e.ID, &e.Name, &e.Code, &e.Description, &e.UOPCapacity, &e.CATID, &updatedAt); err != nil {
+	var updatedAt, manifest string
+	if err := scanner.Scan(&e.ID, &e.Name, &e.Code, &e.Description, &e.UOPCapacity, &e.CATID, &manifest, &updatedAt); err != nil {
 		return nil, err
+	}
+	if err := json.Unmarshal([]byte(manifest), &e.Manifest); err != nil {
+		return nil, fmt.Errorf("catalog %s manifest: %w", e.Code, err)
+	}
+	if len(e.Manifest) == 0 {
+		e.Manifest = nil
 	}
 	e.UpdatedAt = helpers.ScanTime(updatedAt)
 	return e, nil
 }
+
+// manifestColumn is the JSON a row's manifest is stored as: "[]" for none,
+// so an unchanged row with no lines compares equal in the conditional upsert.
+func manifestColumn(lines []protocol.ManifestItem) (string, error) {
+	if len(lines) == 0 {
+		return "[]", nil
+	}
+	b, err := json.Marshal(lines)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// upsertCatalogSQL is the conditional upsert both writes use: an unchanged
+// row, its lines included, is not written.
+const upsertCatalogSQL = `INSERT INTO payload_catalog (id, name, code, description, uop_capacity, catid, manifest, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		ON CONFLICT(id) DO UPDATE SET name=excluded.name, code=excluded.code,
+		description=excluded.description, uop_capacity=excluded.uop_capacity,
+		catid=excluded.catid, manifest=excluded.manifest, updated_at=datetime('now')
+		WHERE payload_catalog.name        IS NOT excluded.name
+		   OR payload_catalog.code        IS NOT excluded.code
+		   OR payload_catalog.description IS NOT excluded.description
+		   OR payload_catalog.uop_capacity IS NOT excluded.uop_capacity
+		   OR payload_catalog.catid       IS NOT excluded.catid
+		   OR payload_catalog.manifest    IS NOT excluded.manifest`
 
 // UpsertCatalog inserts or updates a payload_catalog row from a Core
 // sync payload.
@@ -58,17 +98,12 @@ func scanCatalogEntry(scanner interface{ Scan(...any) error }) (*CatalogEntry, e
 // synced" — nothing reads it as liveness (verified 2026-08-19: no JS,
 // template, or Go reader consumes the field beyond serialization).
 func UpsertCatalog(db *sql.DB, entry *CatalogEntry) error {
-	_, err := db.Exec(`INSERT INTO payload_catalog (id, name, code, description, uop_capacity, catid, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-		ON CONFLICT(id) DO UPDATE SET name=excluded.name, code=excluded.code,
-		description=excluded.description, uop_capacity=excluded.uop_capacity,
-		catid=excluded.catid, updated_at=datetime('now')
-		WHERE payload_catalog.name        IS NOT excluded.name
-		   OR payload_catalog.code        IS NOT excluded.code
-		   OR payload_catalog.description IS NOT excluded.description
-		   OR payload_catalog.uop_capacity IS NOT excluded.uop_capacity
-		   OR payload_catalog.catid       IS NOT excluded.catid`,
-		entry.ID, entry.Name, entry.Code, entry.Description, entry.UOPCapacity, entry.CATID)
+	manifest, err := manifestColumn(entry.Manifest)
+	if err != nil {
+		return fmt.Errorf("encode catalog %s manifest: %w", entry.Code, err)
+	}
+	_, err = db.Exec(upsertCatalogSQL,
+		entry.ID, entry.Name, entry.Code, entry.Description, entry.UOPCapacity, entry.CATID, manifest)
 	return err
 }
 
@@ -89,17 +124,12 @@ func SyncCatalog(db *sql.DB, entries []*CatalogEntry) error {
 
 	ids := make([]int64, 0, len(entries))
 	for _, entry := range entries {
-		if _, err := tx.Exec(`INSERT INTO payload_catalog (id, name, code, description, uop_capacity, catid, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-			ON CONFLICT(id) DO UPDATE SET name=excluded.name, code=excluded.code,
-			description=excluded.description, uop_capacity=excluded.uop_capacity,
-			catid=excluded.catid, updated_at=datetime('now')
-			WHERE payload_catalog.name        IS NOT excluded.name
-			   OR payload_catalog.code        IS NOT excluded.code
-			   OR payload_catalog.description IS NOT excluded.description
-			   OR payload_catalog.uop_capacity IS NOT excluded.uop_capacity
-			   OR payload_catalog.catid       IS NOT excluded.catid`,
-			entry.ID, entry.Name, entry.Code, entry.Description, entry.UOPCapacity, entry.CATID); err != nil {
+		manifest, err := manifestColumn(entry.Manifest)
+		if err != nil {
+			return fmt.Errorf("encode catalog %s manifest: %w", entry.Code, err)
+		}
+		if _, err := tx.Exec(upsertCatalogSQL,
+			entry.ID, entry.Name, entry.Code, entry.Description, entry.UOPCapacity, entry.CATID, manifest); err != nil {
 			return fmt.Errorf("upsert catalog entry %s: %w", entry.Name, err)
 		}
 		ids = append(ids, entry.ID)

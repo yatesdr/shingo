@@ -1296,6 +1296,14 @@ type CatalogPayloadInfo struct {
 	// multi-part payload contributes every part it carries rather than
 	// nothing. Empty when the payload's manifest carries no part numbers.
 	CATID string `json:"catid,omitempty"`
+	// Manifest is the payload's manifest TEMPLATE: its lines in Core's order
+	// (payload_manifest by id), each a part and its per-cycle ratio. Absent
+	// when the payload has no lines, so a row without a template encodes, and
+	// digests, exactly as it did before the lines rode the catalog
+	// (TestCatalogDigest_ManifestLines). The Edge's load modal reads it from
+	// its catalog copy instead of asking Core per tap. CATID is derivable from
+	// the same rows and is still sent as its own field.
+	Manifest []ManifestItem `json:"manifest,omitempty"`
 }
 
 // CatalogPayloadsResponse carries the core's payload catalog.

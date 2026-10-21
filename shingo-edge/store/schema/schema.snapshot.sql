@@ -424,6 +424,7 @@ CREATE TABLE payload_catalog (
     -- (cycle_seconds, an Edge-local cycle time with no reader, was dropped by
     -- Edge v3, 2026-09-28.)
     catid         TEXT NOT NULL DEFAULT '',
+    manifest      TEXT NOT NULL DEFAULT '[]',
     updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

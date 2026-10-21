@@ -76,9 +76,6 @@ type fakeCore struct {
 	mu    sync.Mutex
 	calls map[string]int
 	binAt *NodeBinInfo
-	// binTypes answers the payload manifest's bin_type_code per payload — what
-	// the changeover planner reads to decide a press-index fan-out.
-	binTypes map[string]string
 	// points answers releasePoints (release_fake_points_test.go); pointsDown
 	// makes Core unreachable for it (G3).
 	points     func(protocol.ReleasePointsRequest) protocol.ReleasePointsResponse
@@ -92,7 +89,6 @@ func newFakeCore(t *testing.T) *fakeCore {
 		fc.mu.Lock()
 		fc.calls[r.URL.Path]++
 		bin := fc.binAt
-		binTypes := fc.binTypes
 		points, down := fc.points, fc.pointsDown
 		fc.mu.Unlock()
 		if r.URL.Path == "/api/release/points" {
@@ -111,13 +107,6 @@ func newFakeCore(t *testing.T) *fakeCore {
 		if r.URL.Path == "/api/telemetry/node-bins" && bin != nil {
 			_ = json.NewEncoder(w).Encode([]NodeBinInfo{*bin})
 			return
-		}
-		if payload, ok := strings.CutPrefix(r.URL.Path, "/api/telemetry/payload/"); ok && binTypes != nil {
-			payload = strings.TrimSuffix(payload, "/manifest")
-			if bt := binTypes[payload]; bt != "" {
-				_ = json.NewEncoder(w).Encode(PayloadManifestResponse{UOPCapacity: 100, BinTypeCode: bt})
-				return
-			}
 		}
 		http.NotFound(w, r)
 	}))

@@ -430,18 +430,22 @@ func (e *Engine) PreviewChangeoverPlan(processID, toStyleID int64) (changeover.P
 // binTypeSnapshot pre-resolves canonical bin type codes for every
 // payload referenced by from- or to-claims in the diff. Used by the
 // press-index different-bin-type fan-out to detect bin-type changes
-// between styles. The lookup goes through the Core PayloadManifest
-// endpoint, so a single call per unique payload covers the plan.
-// Failures leave the payload out of the map; the comparator treats
-// missing entries as "unknown" and falls back to same-bin-type
-// behaviour. The Core-availability gate refuses press-index
-// changeover starts when this lookup can't resolve, so an empty map
-// here for press-index claims is impossible at this point.
+// between styles, and by the sequential reuse shortcut.
+//
+// It reads the catalog Core sends with each node list (BinTypeForPayload over
+// SetPayloadBinTypes), not Core over HTTP: planning a changeover asks Core
+// nothing. Pinned by TestBinTypeSnapshot_ReadsSyncedCatalogNotCore. The
+// catalog is ordered by payload then bin type code, so a payload with several
+// carriers resolves to its lowest code, the same pick Core's manifest
+// endpoint makes.
+//
+// Every payload of the diff is in the map; "" is unknown (no catalog row, or
+// no catalog yet). binTypesDiffer reads unknown as same-bin-type and
+// binTypesKnownSame as not-known-same. refusePressIndexWhenCoreUnavailable
+// refuses only when no Core is configured; it does not see whether the
+// catalog has arrived.
 func (e *Engine) binTypeSnapshot(diffs []ChangeoverNodeDiff) map[string]string {
 	out := make(map[string]string)
-	if e.coreClient == nil || !e.coreClient.Available() {
-		return out
-	}
 	collect := func(claim *processes.NodeClaim) {
 		if claim == nil || claim.PayloadCode == "" {
 			return
@@ -449,16 +453,7 @@ func (e *Engine) binTypeSnapshot(diffs []ChangeoverNodeDiff) map[string]string {
 		if _, seen := out[claim.PayloadCode]; seen {
 			return
 		}
-		// Mark as "looked up but unknown" so we don't retry on the
-		// fallthrough path; an empty value means "no signal".
-		out[claim.PayloadCode] = ""
-		resp, err := e.coreClient.FetchPayloadManifest(claim.PayloadCode)
-		if err != nil || resp == nil {
-			return
-		}
-		if resp.BinTypeCode != "" {
-			out[claim.PayloadCode] = resp.BinTypeCode
-		}
+		out[claim.PayloadCode] = e.BinTypeForPayload(claim.PayloadCode)
 	}
 	for i := range diffs {
 		collect(diffs[i].FromClaim)

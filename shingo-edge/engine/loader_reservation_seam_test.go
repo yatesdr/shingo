@@ -716,8 +716,7 @@ func nodeBinsBrokenStub(t *testing.T, mode string, hits *atomic.Int64) *httptest
 
 // deadCoreURL returns the URL of an httptest server that has already been shut
 // down, so a request fails at the transport layer instead of returning a
-// response — the "Core process is gone" arm. Same shape as
-// TestCoreClient_FetchPayloadManifest_NetworkError uses inline.
+// response — the "Core process is gone" arm.
 func deadCoreURL(t *testing.T) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))

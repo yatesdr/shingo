@@ -7,6 +7,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/clock"
 	"shingocore/store/nodes"
+	"shingocore/store/payloads"
 	"shingocore/store/scene"
 )
 
@@ -246,18 +247,45 @@ func (s *CoreDataService) buildCatalog(strict bool) (*protocol.CatalogPayloadsRe
 		log.Printf("core_handler: payload catids for catalog: %v", err)
 		catids = map[int64]string{}
 	}
-	infos := make([]protocol.CatalogPayloadInfo, len(payloads))
-	for i, p := range payloads {
-		infos[i] = protocol.CatalogPayloadInfo{
-			ID: p.ID, Name: p.Code, Code: p.Code,
-			Description: p.Description,
-			UOPCapacity: p.UOPCapacity,
-			CATID:       catids[p.ID],
+	lines, err := s.db.PayloadManifestLines()
+	if err != nil {
+		if strict {
+			return nil, fmt.Errorf("payload manifest lines: %w", err)
 		}
+		// Degrade as the CATIDs do: rows with no lines. The Edge's load
+		// modal then offers the payload as a one-line template of itself.
+		log.Printf("core_handler: payload manifest lines for catalog: %v", err)
+		lines = nil
 	}
+	infos := catalogRows(payloads, catids, lines)
 	digest, err := protocol.CatalogDigest(infos)
 	if err != nil {
 		return nil, fmt.Errorf("digest catalog: %w", err)
 	}
 	return &protocol.CatalogPayloadsResponse{Payloads: infos, Digest: digest}, nil
+}
+
+// catalogRows is the catalog's rows: one per payload, in the order read, with
+// its CATID and its manifest template lines (part, ratio, description; the
+// line and part ids and the part's cat id stay on Core). A payload with no
+// lines carries none, nil, so its row encodes as it did before the lines rode
+// the catalog. Pinned by TestCatalogRows_CarryManifestLines.
+func catalogRows(ps []*payloads.Payload, catids map[int64]string, lines map[int64][]*payloads.ManifestItem) []protocol.CatalogPayloadInfo {
+	infos := make([]protocol.CatalogPayloadInfo, len(ps))
+	for i, p := range ps {
+		var manifest []protocol.ManifestItem
+		for _, l := range lines[p.ID] {
+			manifest = append(manifest, protocol.ManifestItem{
+				PartNumber: l.PartNumber, PartsPerCycle: l.PartsPerCycle, Description: l.Description,
+			})
+		}
+		infos[i] = protocol.CatalogPayloadInfo{
+			ID: p.ID, Name: p.Code, Code: p.Code,
+			Description: p.Description,
+			UOPCapacity: p.UOPCapacity,
+			CATID:       catids[p.ID],
+			Manifest:    manifest,
+		}
+	}
+	return infos
 }

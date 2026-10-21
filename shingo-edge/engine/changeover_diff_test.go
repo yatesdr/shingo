@@ -1074,7 +1074,8 @@ func TestFanOutCrossMode_FrontNodeMoves_SharedBackPosition_SameBinType_NoFanOut(
 
 // An unresolved bin type is an UNKNOWN signal, not a mismatch — leave the
 // position alone rather than route a same-bin-type press through evac+refill.
-// refusePressIndexWhenCoreUnavailable is what keeps this unreachable in prod.
+// refusePressIndexWhenCoreUnavailable keeps this out of prod only when no Core
+// is configured; with one, a payload missing from the catalog reaches it.
 func TestFanOutCrossMode_FrontNodeMoves_SharedBackPosition_UnknownBinType_NoFanOut(t *testing.T) {
 	t.Parallel()
 	diffs, _, _ := hkFrontMoveDiffs("LK41", "PC3C")

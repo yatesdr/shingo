@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"reflect"
 	"testing"
 
 	"shingo/protocol"
@@ -65,6 +66,33 @@ func TestApplyCatalog_HoldsTheDigest(t *testing.T) {
 	e.ApplyCatalog(&protocol.CatalogPayloadsResponse{Payloads: entries, Digest: "c1"})
 	if got := e.heldDigest(protocol.FeedCatalog); got != "c1" {
 		t.Errorf("held catalog digest = %q, want c1", got)
+	}
+}
+
+// TestApplyCatalog_StaleDigestTakesTheManifestLines: an Edge holding an older
+// catalog (no lines, digest c1) is sent the current one, whose row carries its
+// manifest template lines (digest c2). The lines land in the Edge's catalog
+// copy, the new digest is held, and the next heartbeat quotes it, so Core
+// stops sending.
+func TestApplyCatalog_StaleDigestTakesTheManifestLines(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	e := testEngine(t, db)
+	e.ApplyCatalog(&protocol.CatalogPayloadsResponse{Digest: "c1",
+		Payloads: []protocol.CatalogPayloadInfo{{ID: 1, Name: "PART-A", Code: "PART-A", UOPCapacity: 24}}})
+	lines := []protocol.ManifestItem{{PartNumber: "PN-A1", PartsPerCycle: 2, Description: "left"}}
+	e.ApplyCatalog(&protocol.CatalogPayloadsResponse{Digest: "c2",
+		Payloads: []protocol.CatalogPayloadInfo{{ID: 1, Name: "PART-A", Code: "PART-A", UOPCapacity: 24, Manifest: lines}}})
+
+	row, err := db.GetPayloadCatalogByCode("PART-A")
+	if err != nil {
+		t.Fatalf("read PART-A: %v", err)
+	}
+	if !reflect.DeepEqual(row.Manifest, lines) {
+		t.Errorf("PART-A lines = %+v, want %+v", row.Manifest, lines)
+	}
+	if got := e.FeedDigests()[protocol.FeedCatalog]; got != "c2" {
+		t.Errorf("heartbeat quotes catalog %q, want c2", got)
 	}
 }
 

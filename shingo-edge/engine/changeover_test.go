@@ -1916,9 +1916,9 @@ func TestSequentialReuseSkip_DifferentCarrierSwapsBothSides(t *testing.T) {
 // NO CATALOG, NO SKIP — the opposite direction from binTypesDiffer's, and the
 // reason binTypesKnownSame is not its negation. Acting on unknown here means
 // SKIPPING a side; the degraded direction has to be one redundant carrier swap,
-// never a wrong one. press-index can read unknown as "same" because
-// refusePressIndexWhenCoreUnavailable refuses the changeover outright; sequential
-// has no such gate.
+// never a wrong one. press-index reads unknown as "same"
+// (refusePressIndexWhenCoreUnavailable refuses only when no Core is configured);
+// sequential has no gate at all.
 func TestSequentialReuseSkip_NoCatalogAnswerBuildsBothOrders(t *testing.T) {
 	t.Parallel()
 	for name, binTypes := range map[string]map[string]string{

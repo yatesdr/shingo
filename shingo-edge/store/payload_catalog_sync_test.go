@@ -1,8 +1,10 @@
 package store
 
 import (
+	"reflect"
 	"testing"
 
+	"shingo/protocol"
 	"shingoedge/store/catalog"
 )
 
@@ -127,6 +129,55 @@ func TestSyncPayloadCatalog_IdenticalResyncIsANoOp(t *testing.T) {
 	for i := range stamps {
 		if stamps[i] != stamps2[i] {
 			t.Errorf("row %d updated_at changed on identical re-sync: %q → %q", i, stamps[i], stamps2[i])
+		}
+	}
+}
+
+// TestSyncPayloadCatalog_KeepsManifestLines: a catalog row keeps its payload's
+// manifest template lines, in order, through the sync and back out of both
+// reads; a row with none reads as none; a change to the lines alone is a
+// change the conditional upsert writes.
+func TestSyncPayloadCatalog_KeepsManifestLines(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	lines := []protocol.ManifestItem{
+		{PartNumber: "PN-2", PartsPerCycle: 2, Description: "left"},
+		{PartNumber: "PN-1", PartsPerCycle: 1},
+	}
+	sync := func(l []protocol.ManifestItem) {
+		t.Helper()
+		if err := db.SyncPayloadCatalog([]*catalog.CatalogEntry{
+			{ID: 1, Name: "Bracket", Code: "BRK", UOPCapacity: 24, Manifest: l},
+			{ID: 2, Name: "Tote", Code: "TOT", UOPCapacity: 50},
+		}); err != nil {
+			t.Fatalf("sync: %v", err)
+		}
+	}
+	sync(lines)
+	got, err := db.GetPayloadCatalogByCode("BRK")
+	if err != nil {
+		t.Fatalf("get BRK: %v", err)
+	}
+	if !reflect.DeepEqual(got.Manifest, lines) {
+		t.Errorf("BRK lines = %+v, want %+v", got.Manifest, lines)
+	}
+	tot, err := db.GetPayloadCatalogByCode("TOT")
+	if err != nil {
+		t.Fatalf("get TOT: %v", err)
+	}
+	if len(tot.Manifest) != 0 {
+		t.Errorf("TOT lines = %+v, want none", tot.Manifest)
+	}
+
+	changed := []protocol.ManifestItem{lines[0], {PartNumber: "PN-1", PartsPerCycle: 3}}
+	sync(changed)
+	all, err := db.ListPayloadCatalog()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, e := range all {
+		if e.Code == "BRK" && !reflect.DeepEqual(e.Manifest, changed) {
+			t.Errorf("BRK lines after a lines-only change = %+v, want %+v", e.Manifest, changed)
 		}
 	}
 }

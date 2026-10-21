@@ -27,6 +27,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/service"
 	"shingoedge/store/processes"
@@ -36,17 +37,14 @@ import (
 	edgeorders "shingoedge/orders"
 )
 
-// stubCore serves the two telemetry endpoints a press-index changeover start
-// touches: the payload manifest (bin-type lookup — SAME type for every payload,
-// which is what makes this the same-bin-type scenario) and node-bins (empty:
-// FetchNodeBins callers treat missing nodes as occupied, which keeps the full
-// swap choreography rather than the empty-station downgrade).
+// stubCore serves the telemetry endpoint a press-index changeover start
+// touches: node-bins (empty: FetchNodeBins callers treat missing nodes as
+// occupied, which keeps the full swap choreography rather than the
+// empty-station downgrade). The bin types are not asked of Core over HTTP: the
+// planner reads the catalog Core sends with the node list, seeded below.
 func stubCore(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/telemetry/payload/", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"bin_type_code": "TOTE-STD"})
-	})
 	mux.HandleFunc("/api/telemetry/node-bins", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("[]"))
 	})
@@ -65,6 +63,12 @@ func TestScenario_V2_SameBinTypePressIndex_EndToEnd(t *testing.T) {
 	const stationID = "edge.test"
 	core := stubCore(t)
 	edge := edgeharness.NewEdgeWithCoreAPI(t, stationID, core.URL)
+	// SAME type for both payloads, which is what makes this the same-bin-type
+	// scenario.
+	edge.Engine.SetPayloadBinTypes([]protocol.PayloadBinTypeInfo{
+		{PayloadCode: "V2-OLD-PART", BinTypeCode: "TOTE-STD"},
+		{PayloadCode: "V2-NEW-PART", BinTypeCode: "TOTE-STD"},
+	})
 
 	// ── Seed: press (stationed) + paired position (row, NO station) + bystander ──
 	processID, err := edge.DB.CreateProcess("V2-PROC", "same-bin-type press-index", "", "", false)

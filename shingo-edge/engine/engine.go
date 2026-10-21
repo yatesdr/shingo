@@ -812,6 +812,7 @@ func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) err
 			Description: b.Description,
 			UOPCapacity: b.UOPCapacity,
 			CATID:       b.CATID,
+			Manifest:    b.Manifest,
 		})
 	}
 	if err := e.db.SyncPayloadCatalog(rows); err != nil {

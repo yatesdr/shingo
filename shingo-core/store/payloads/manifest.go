@@ -106,6 +106,29 @@ func ListManifest(db *sql.DB, payloadID int64) ([]*ManifestItem, error) {
 	return items, rows.Err()
 }
 
+// ManifestLinesByPayload returns every payload's manifest lines, keyed by
+// payload id, each payload's in ListManifest's order (by id). One statement for
+// the whole plant: the catalog feed (messaging buildCatalog) carries every
+// payload's template and must not ask once per payload. Only the columns a
+// template line is (part, ratio, description) and the keys are read.
+func ManifestLinesByPayload(db *sql.DB) (map[int64][]*ManifestItem, error) {
+	rows, err := db.Query(`SELECT id, payload_id, part_number, parts_per_cycle, description
+		FROM payload_manifest ORDER BY payload_id, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[int64][]*ManifestItem)
+	for rows.Next() {
+		item := &ManifestItem{}
+		if err := rows.Scan(&item.ID, &item.PayloadID, &item.PartNumber, &item.PartsPerCycle, &item.Description); err != nil {
+			return nil, err
+		}
+		out[item.PayloadID] = append(out[item.PayloadID], item)
+	}
+	return out, rows.Err()
+}
+
 // ReplaceManifest wipes the payload's manifest and re-inserts the given lines,
 // minting or matching each line's part on the way through.
 //

@@ -1,10 +1,8 @@
 package engine
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -30,33 +28,6 @@ import (
 // and the cutover gate blocks until every task is terminal. So the position tasks
 // have to be driveable, which is what this file pins.
 // ---------------------------------------------------------------------------
-
-// binTypeCoreServer answers Core's payload-manifest endpoint with a bin type
-// per payload code, which is the only signal binTypesDiffer reads. Available()
-// is true for any non-empty base URL, so this also satisfies the
-// Core-availability gate that guards the fan-out.
-func binTypeCoreServer(t *testing.T, binTypeByPayload map[string]string) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// /api/telemetry/payload/{code}/manifest
-		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-		code := ""
-		for i, p := range parts {
-			if p == "payload" && i+1 < len(parts) {
-				code = parts[i+1]
-			}
-		}
-		bt, ok := binTypeByPayload[code]
-		if !ok {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(PayloadManifestResponse{UOPCapacity: 100, BinTypeCode: bt})
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
 
 // seedDiffBinTypePressIndex builds a two-position press whose styles use different
 // bin types.
@@ -121,10 +92,16 @@ func startDiffBinTypeChangeover(t *testing.T, db *store.DB) (eng *Engine, proces
 	processID, frontID, backID, _, toStyleID := seedDiffBinTypePressIndex(t, db)
 	eng = testEngine(t, db)
 	eng.wireEventHandlers()
-	eng.coreClient = stubCoreClient(binTypeCoreServer(t, map[string]string{
-		"PART-OLD": "TOTE",
-		"PART-NEW": "BIN",
-	}).URL)
+	// A configured Core satisfies the Core-availability gate; it answers every
+	// read with 404. The bin types come from the catalog Core sends with the
+	// node list, which is what the planner reads.
+	srv := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(srv.Close)
+	eng.coreClient = stubCoreClient(srv.URL)
+	eng.SetPayloadBinTypes([]protocol.PayloadBinTypeInfo{
+		{PayloadCode: "PART-OLD", BinTypeCode: "TOTE"},
+		{PayloadCode: "PART-NEW", BinTypeCode: "BIN"},
+	})
 
 	_, err := eng.StartProcessChangeover(processID, toStyleID, "test", "different bin type press index")
 	testutil.MustNoErr(t, err, "start changeover")

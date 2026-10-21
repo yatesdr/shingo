@@ -79,12 +79,13 @@ func NewEdge(t *testing.T, stationID string) *Edge {
 
 // NewEdgeWithCoreAPI is NewEdge with the Core HTTP API configured. Needed by
 // scenarios that exercise paths gated on Core availability — a press-index
-// changeover START refuses outright when Core is unreachable
+// changeover START refuses outright when no Core is configured
 // (refusePressIndexWhenCoreUnavailable), so the V2 sim gate cannot run against
 // the default harness. Point coreAPI at an httptest.Server serving the
-// telemetry endpoints the scenario touches (for press-index planning that is
-// GET /api/telemetry/payload/{code}/manifest; claimOccupancy additionally hits
-// /api/telemetry/node-bins). Empty string = disabled, identical to NewEdge.
+// telemetry endpoints the scenario touches (claimOccupancy hits
+// /api/telemetry/node-bins). Press-index planning reads bin types from the
+// catalog Core sends with the node list (Engine.SetPayloadBinTypes), not over
+// HTTP. Empty string = disabled, identical to NewEdge.
 func NewEdgeWithCoreAPI(t *testing.T, stationID, coreAPI string) *Edge {
 	t.Helper()
 	db := OpenDB(t)

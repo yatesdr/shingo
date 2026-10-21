@@ -407,6 +407,8 @@ func TestFeedsPin_HandleNodeListRequest_GeometryAndDigest(t *testing.T) {
 // payloads in the order the store returns them (by code), each row's fields,
 // and the body's key set — "payloads" only. After F4: keys digest, payloads,
 // with digest = protocol.Digest of the payload list; rows and order unchanged.
+// A row carries its payload's manifest lines (PC-A's one line); a payload with
+// none carries no key (PC-B).
 func TestFeedsPin_HandleCatalogPayloadsRequest(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -443,7 +445,8 @@ func TestFeedsPin_HandleCatalogPayloadsRequest(t *testing.T) {
 		}
 	}
 	want := []protocol.CatalogPayloadInfo{
-		{ID: pa.ID, Name: "PC-A", Code: "PC-A", Description: "synthetic A", UOPCapacity: 12, CATID: "CAT-A"},
+		{ID: pa.ID, Name: "PC-A", Code: "PC-A", Description: "synthetic A", UOPCapacity: 12, CATID: "CAT-A",
+			Manifest: []protocol.ManifestItem{{PartNumber: "PN-A", PartsPerCycle: 1}}},
 		{ID: pb.ID, Name: "PC-B", Code: "PC-B", Description: "synthetic B", UOPCapacity: 24},
 	}
 	if !reflect.DeepEqual(mine, want) {

@@ -38,9 +38,6 @@ import (
 func stagedStubCore(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/telemetry/payload/", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"bin_type_code": "TOTE-STD"})
-	})
 	mux.HandleFunc("/api/telemetry/node-bins", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("[]"))
 	})
@@ -65,6 +62,12 @@ func seedStagedPress(t *testing.T, markedNodes []string, toStaging string) stage
 	t.Helper()
 	core := stagedStubCore(t)
 	edge := edgeharness.NewEdgeWithCoreAPI(t, "edge.test", core.URL)
+	// One bin type for both styles' parts, from the catalog Core sends with
+	// the node list (the planner does not ask Core over HTTP).
+	edge.Engine.SetPayloadBinTypes([]protocol.PayloadBinTypeInfo{
+		{PayloadCode: "ST-OLD", BinTypeCode: "TOTE-STD"},
+		{PayloadCode: "ST-NEW", BinTypeCode: "TOTE-STD"},
+	})
 
 	processID, err := edge.DB.CreateProcess("ST-PROC", "staged tooling", "", "", false)
 	if err != nil {

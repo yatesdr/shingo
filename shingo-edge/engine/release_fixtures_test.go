@@ -236,7 +236,12 @@ func (h *relHarness) changeover(s coSpec) int64 {
 		from.ChangeoverCarryoverDisposition = &d
 	}
 	if s.perPosition {
-		h.core.binTypes = map[string]string{fxPart: "SYN-BIN-A", fxPartNext: "SYN-BIN-B"}
+		// What the planner reads to decide a press-index fan-out: the catalog
+		// Core sends with the node list.
+		h.eng.SetPayloadBinTypes([]protocol.PayloadBinTypeInfo{
+			{PayloadCode: fxPart, BinTypeCode: "SYN-BIN-A"},
+			{PayloadCode: fxPartNext, BinTypeCode: "SYN-BIN-B"},
+		})
 	}
 	if len(s.markedOnly) > 0 {
 		positions := append([]string(nil), s.markedOnly...)

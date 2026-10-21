@@ -1900,6 +1900,37 @@ func edgeMigrations() []migrate.Migration {
 				return err
 			},
 		},
+		{
+			// payload_catalog.manifest: the payload's manifest template lines
+			// as Core's catalog feed carries them (protocol.CatalogPayloadInfo
+			// .Manifest), JSON. The load modal reads them here instead of
+			// asking Core per tap. '[]' on existing rows until the next catalog
+			// send, which the new field's digest forces for any payload with
+			// lines. Column-check guarded, like v21.
+			//
+			// RENUMBERED 23 -> 28: main's board-settings step took 23 first,
+			// and 24 through 27 were taken before this landed.
+			Version: 28,
+			Name:    "payload_catalog_manifest",
+			Fn: func(tx *sql.Tx) error {
+				var n int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('payload_catalog')
+					WHERE name = 'manifest'`).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return nil
+				}
+				_, err := tx.Exec(`ALTER TABLE payload_catalog ADD COLUMN manifest TEXT NOT NULL DEFAULT '[]'`)
+				return err
+			},
+			Verify: func(q migrate.Querier) bool {
+				var n int
+				err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('payload_catalog')
+					WHERE name = 'manifest'`).Scan(&n)
+				return err == nil && n == 1
+			},
+		},
 	}
 }
 

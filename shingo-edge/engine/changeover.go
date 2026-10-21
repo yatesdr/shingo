@@ -226,13 +226,15 @@ func pressHasBarePosition(d ChangeoverNodeDiff, state func(coreNode string) Node
 // the geometry matches, so this is the predicate that decides whether a position
 // can ride the index or must be independently evac+refilled.
 //
-// An unresolved code on either side ("" — no catalog entry, or Core didn't
-// answer) is an UNKNOWN signal, not a mismatch: press geometry rarely changes
-// between styles, so missing catalog data is far more likely than an actual
-// change. Callers treat unknown as "same" and leave the position alone. That
-// fallback is only safe because refusePressIndexWhenCoreUnavailable rejects the
-// changeover outright when Core can't answer — without that gate this silently
-// strands bins.
+// An unresolved code on either side ("" — the Edge's synced bin-type catalog
+// has no row for the payload) is an UNKNOWN signal, not a mismatch: press
+// geometry rarely changes between styles, so missing catalog data is far more
+// likely than an actual change. Callers treat unknown as "same" and leave the
+// position alone. refusePressIndexWhenCoreUnavailable refuses a press-index
+// changeover only when no Core is configured; with a Core configured, a payload
+// the catalog has no row for reads as "same", and if its carrier really changes
+// at the index the position keeps the old carrier type. That is the known
+// exposure of reading bin types from the catalog rather than asking Core.
 //
 // Both fan-out passes share this predicate; it must not be reimplemented at
 // either call site.
@@ -254,10 +256,10 @@ func binTypesDiffer(from, to *processes.NodeClaim, binTypes map[string]string) b
 //
 // ── IT IS NOT !binTypesDiffer, AND THE UNKNOWN CASE IS WHY ────────────────
 //
-// binTypesDiffer answers "same" when either code is unresolved, because its
-// caller is protected by refusePressIndexWhenCoreUnavailable — a press-index
-// changeover is refused outright when Core cannot answer, so unknown never
-// reaches it in anger, and treating unknown as "same" leaves the position alone.
+// binTypesDiffer answers "same" when either code is unresolved. Nothing refuses
+// that case once a Core is configured (refusePressIndexWhenCoreUnavailable
+// refuses only when none is), so for press-index unknown is read as "same" and
+// the position is left alone: the lesser error there.
 //
 // The sequential skip has the opposite exposure. It has no such gate, and acting
 // on unknown means SKIPPING a side — not swapping a carrier that may be wrong.

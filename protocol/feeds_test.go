@@ -96,6 +96,52 @@ func TestCatalogDigest_Golden(t *testing.T) {
 	}
 }
 
+// TestCatalogDigest_ManifestLines: the catalog row carries its payload's
+// manifest template lines. A row with none encodes as it did before the lines
+// rode it (no key), so its digest is unchanged and a plant with no templates
+// is not resent its catalog; a row with lines has its own golden, and a line's
+// part, ratio, description and order each move it.
+func TestCatalogDigest_ManifestLines(t *testing.T) {
+	t.Parallel()
+	d := digester(t)
+	p1 := CatalogPayloadInfo{ID: 1, Name: "P1", Code: "P1", UOPCapacity: 10}
+	empty := p1
+	empty.Manifest = []ManifestItem{}
+	if got := d(CatalogDigest([]CatalogPayloadInfo{empty})); got != "a3c26451e6bac0e0" {
+		t.Errorf("a row with no lines digests %s, want the pre-lines a3c26451e6bac0e0", got)
+	}
+	withLines := p1
+	withLines.Manifest = []ManifestItem{
+		{PartNumber: "PN-1", PartsPerCycle: 2, Description: "left"},
+		{PartNumber: "PN-2", PartsPerCycle: 1},
+	}
+	// [{"id":1,"name":"P1","code":"P1","description":"","uop_capacity":10,
+	//   "manifest":[{"part_number":"PN-1","parts_per_cycle":2,"description":"left"},
+	//               {"part_number":"PN-2","parts_per_cycle":1,"description":""}]}]
+	base := d(CatalogDigest([]CatalogPayloadInfo{withLines}))
+	if base != catalogLinesGolden {
+		t.Errorf("CatalogDigest with lines = %s, want %s", base, catalogLinesGolden)
+	}
+	edit := func(f func(m []ManifestItem) []ManifestItem) string {
+		c := withLines
+		c.Manifest = f(append([]ManifestItem{}, withLines.Manifest...))
+		return d(CatalogDigest([]CatalogPayloadInfo{c}))
+	}
+	for name, got := range map[string]string{
+		"part":        edit(func(m []ManifestItem) []ManifestItem { m[0].PartNumber = "PN-9"; return m }),
+		"ratio":       edit(func(m []ManifestItem) []ManifestItem { m[0].PartsPerCycle = 3; return m }),
+		"description": edit(func(m []ManifestItem) []ManifestItem { m[1].Description = "right"; return m }),
+		"order":       edit(func(m []ManifestItem) []ManifestItem { return []ManifestItem{m[1], m[0]} }),
+		"dropped":     edit(func(m []ManifestItem) []ManifestItem { return m[:1] }),
+	} {
+		if got == base {
+			t.Errorf("a %s change left the digest at %s", name, base)
+		}
+	}
+}
+
+const catalogLinesGolden = "4b3cad6e29957afc"
+
 func TestContainmentDigest_Golden(t *testing.T) {
 	t.Parallel()
 	d := digester(t)

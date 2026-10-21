@@ -48,36 +48,8 @@ func (c *CoreClient) Available() bool {
 	return c != nil && c.baseURL != ""
 }
 
-// ManifestItem is the payload-template manifest line of the manifest endpoint.
-type ManifestItem = protocol.ManifestItem
-
 // BinLoadItem is one line of a bin-load request: part number + physical count.
 type BinLoadItem = protocol.BinLoadItem
-
-// PayloadManifestResponse is the full response from the manifest endpoint.
-type PayloadManifestResponse = protocol.PayloadManifestResponse
-
-// FetchPayloadManifest returns the default manifest template and UOP capacity for a payload code.
-// Returns nil if Core is unavailable or the payload doesn't exist.
-func (c *CoreClient) FetchPayloadManifest(payloadCode string) (*PayloadManifestResponse, error) {
-	if c.baseURL == "" || payloadCode == "" {
-		return nil, nil
-	}
-	reqURL := c.baseURL + "/api/telemetry/payload/" + url.PathEscape(payloadCode) + "/manifest"
-	resp, err := c.http.Get(reqURL)
-	if err != nil {
-		return nil, nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, nil
-	}
-	var result PayloadManifestResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, nil
-	}
-	return &result, nil
-}
 
 // NodeChildInfo is one physical child of an NGRP in the children endpoint.
 type NodeChildInfo = protocol.NodeChildInfo

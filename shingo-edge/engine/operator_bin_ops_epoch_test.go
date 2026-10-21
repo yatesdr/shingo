@@ -194,9 +194,9 @@ func (p *loadBinWireProbe) server(t *testing.T) *httptest.Server {
 			})
 		case strings.HasSuffix(r.URL.Path, "/manifest"):
 			p.manifestHits++
-			_ = json.NewEncoder(w).Encode(PayloadManifestResponse{
+			_ = json.NewEncoder(w).Encode(protocol.PayloadManifestResponse{
 				UOPCapacity: 40,
-				Items:       []ManifestItem{{PartNumber: "PN-1", PartsPerCycle: 5}},
+				Items:       []protocol.ManifestItem{{PartNumber: "PN-1", PartsPerCycle: 5}},
 			})
 		default:
 			_ = json.NewEncoder(w).Encode([]NodeBinInfo{{NodeName: "LOADER", Occupied: true, PayloadCode: ""}})
@@ -221,7 +221,7 @@ func loadBinTestEngine(t *testing.T, srv *httptest.Server) (*Engine, *store.DB, 
 // field is omitted and Core answers from the payload's standard pack.
 //
 // It also pins that the Edge does NOT look the template up itself. It used to,
-// and that was the defect's first half: FetchPayloadManifest reports every
+// and that was the defect's first half: its manifest lookup reported every
 // failure as a nil result, so the lookup produced 0 whenever it did not work,
 // and 0 was the same value the wire used for "undeclared" — one number, three
 // meanings, and no way back.

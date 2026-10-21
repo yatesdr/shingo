@@ -421,9 +421,6 @@ func TestCoreClient_NoBaseURL_GracefulDegrade(t *testing.T) {
 	c := NewCoreClient("")
 
 	// All telemetry reads should return (nil,nil) — not an error.
-	if m, err := c.FetchPayloadManifest("WIDGET"); m != nil || err != nil {
-		t.Errorf("FetchPayloadManifest with no base-url = (%v,%v), want (nil,nil)", m, err)
-	}
 	if ch, err := c.FetchNodeChildren("NGRP", false); ch != nil || err != nil {
 		t.Errorf("FetchNodeChildren with no base-url = (%v,%v), want (nil,nil)", ch, err)
 	}
@@ -441,93 +438,6 @@ func TestCoreClient_NoBaseURL_GracefulDegrade(t *testing.T) {
 	}
 	if _, err := c.ClearBin("N1", "", false, nil); err == nil {
 		t.Error("ClearBin with no base-url should error")
-	}
-}
-
-func TestCoreClient_FetchPayloadManifest_EmptyCode(t *testing.T) {
-	t.Parallel()
-	// Even with a base URL, empty payload code short-circuits to (nil,nil).
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("server should not be hit: %s", r.URL.Path)
-	}))
-	defer srv.Close()
-	c := NewCoreClient(srv.URL)
-	m, err := c.FetchPayloadManifest("")
-	if m != nil || err != nil {
-		t.Errorf("empty code should short-circuit, got (%v,%v)", m, err)
-	}
-}
-
-func TestCoreClient_FetchPayloadManifest_Success(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/WIDGET/manifest") {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
-		resp := PayloadManifestResponse{
-			UOPCapacity: 100,
-			Items: []ManifestItem{
-				{PartNumber: "P1", PartsPerCycle: 10, Description: "part one"},
-			},
-		}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer srv.Close()
-
-	c := NewCoreClient(srv.URL)
-	m, err := c.FetchPayloadManifest("WIDGET")
-	if err != nil || m == nil {
-		t.Fatalf("FetchPayloadManifest: (%v,%v)", m, err)
-	}
-	if m.UOPCapacity != 100 || len(m.Items) != 1 || m.Items[0].PartNumber != "P1" {
-		t.Errorf("manifest = %+v", m)
-	}
-	// The ratio has to survive the decode, not just the part number: the key
-	// on the wire changed with Core's rename, and a struct whose tag no longer
-	// matches decodes to a silent zero rather than an error.
-	if m.Items[0].PartsPerCycle != 10 {
-		t.Errorf("parts_per_cycle = %d, want 10 — did the wire key drift?", m.Items[0].PartsPerCycle)
-	}
-}
-
-func TestCoreClient_FetchPayloadManifest_404(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	c := NewCoreClient(srv.URL)
-	m, err := c.FetchPayloadManifest("UNKNOWN")
-	// 404 must graceful-degrade: (nil,nil), NOT an error.
-	if m != nil || err != nil {
-		t.Errorf("404 should return (nil,nil), got (%v,%v)", m, err)
-	}
-}
-
-func TestCoreClient_FetchPayloadManifest_BadJSON(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte("not-json"))
-	}))
-	defer srv.Close()
-	c := NewCoreClient(srv.URL)
-	m, err := c.FetchPayloadManifest("WIDGET")
-	if m != nil || err != nil {
-		t.Errorf("bad-json should return (nil,nil), got (%v,%v)", m, err)
-	}
-}
-
-func TestCoreClient_FetchPayloadManifest_NetworkError(t *testing.T) {
-	t.Parallel()
-	// Point at a closed server → HTTP transport error → graceful (nil,nil).
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	closedURL := srv.URL
-	srv.Close()
-
-	c := NewCoreClient(closedURL)
-	m, err := c.FetchPayloadManifest("WIDGET")
-	if m != nil || err != nil {
-		t.Errorf("network error should graceful-degrade, got (%v,%v)", m, err)
 	}
 }
 
