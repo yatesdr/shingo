@@ -41,6 +41,18 @@ func SourceIntentForType(t protocol.OrderType) string {
 	}
 }
 
+// carrierPullIntent is the sourcing intent of a Core-authored carrier pull
+// (CoreAskSpec, ReplenishRequest), the one place such a pull's stated type is
+// read: an empty's or a full's intent, and ok false for any other type, which no
+// Core ask may be. Every branch after it keys on the intent.
+func carrierPullIntent(t protocol.OrderType) (string, bool) {
+	switch t {
+	case OrderTypeRetrieveEmpty, OrderTypeRetrieve:
+		return SourceIntentForType(t), true
+	}
+	return "", false
+}
+
 // classifyInboundOrigin is the intake half of the demand grain: it turns what an
 // Edge said about an order's origin into the (origin_id, origin_class) pair Core
 // stores. Called at the TWO intake sites — CreateInboundOrder and

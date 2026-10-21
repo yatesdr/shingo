@@ -446,6 +446,7 @@ func (m *Maintainer) createAsks(g *nodes.Node, lv store.MaintainLevel, station s
 		}
 		order, aerr := m.eng.dispatcher.AdmitCoreAsk(dispatch.CoreAskSpec{
 			UUIDPrefix: "core-mnt-",
+			OrderType:  dispatch.OrderTypeRetrieveEmpty,
 			StationID:  station,
 			// No source node: the ask is plant-scoped and the finder's tiers
 			// choose where the carrier comes from. Naming the group here would

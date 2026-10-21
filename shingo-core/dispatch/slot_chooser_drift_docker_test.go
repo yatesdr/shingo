@@ -236,6 +236,7 @@ var driftChoosers = []driftChooser{
 			source := &nodes.Node{Name: fx.prefix + "-EMPTIES", Enabled: true}
 			testutil.MustNoErr(t, db.CreateNode(source), "create the inbound source")
 			res, err := d.ReplenishLoader(ReplenishRequest{
+				Origin: ReplenishByThreshold, OrderType: OrderTypeRetrieveEmpty,
 				StationID: "edge.line1", LoaderID: 99, PayloadCode: fx.bp.Code,
 				Threshold: 10, CurrentUOP: 0, PerBinCapacity: 10,
 			}, LoaderReplenishConfig{

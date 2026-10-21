@@ -862,6 +862,8 @@ func (m *ThresholdMonitor) fireSignalCached(b thresholdEntry, total int, reason,
 	}
 
 	res, err := m.eng.dispatcher.ReplenishLoader(dispatch.ReplenishRequest{
+		Origin:         dispatch.ReplenishByThreshold,
+		OrderType:      dispatch.OrderTypeRetrieveEmpty,
 		StationID:      b.stationID,
 		LoaderID:       b.loaderID,
 		PayloadCode:    b.payloadCode,

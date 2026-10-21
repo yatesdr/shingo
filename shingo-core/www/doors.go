@@ -249,6 +249,7 @@ func (d *Doors) loaderEmpties(station string, req protocol.LoaderEmptiesRequest)
 		origin = string(protocol.OriginClassAttached)
 	}
 	res, err := disp.ReplenishLoader(dispatch.ReplenishRequest{
+		Origin: dispatch.ReplenishByOperator, OrderType: dispatch.OrderTypeRetrieveEmpty,
 		StationID: station, LoaderID: id, PayloadCode: req.PayloadCode, MemberNode: req.MemberNode,
 		Want: req.Count, OriginID: req.OriginID, OriginClass: origin,
 	}, cfg)

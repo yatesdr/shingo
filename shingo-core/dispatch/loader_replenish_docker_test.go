@@ -46,6 +46,8 @@ func replenishFixture(t *testing.T, db *store.DB, prefix string, count int) (Rep
 	}
 
 	req := ReplenishRequest{
+		Origin:         ReplenishByThreshold,
+		OrderType:      OrderTypeRetrieveEmpty,
 		StationID:      "edge.line1",
 		LoaderID:       99,
 		PayloadCode:    "PART-R",
@@ -828,7 +830,7 @@ func emptyCarrier(t *testing.T, db *store.DB, bt *bins.BinType, node *nodes.Node
 func replenishAskPick(t *testing.T, d *Dispatcher, db *store.DB, market, window *nodes.Node) SourceResult {
 	t.Helper()
 	order, err := d.AdmitCoreAsk(CoreAskSpec{
-		UUIDPrefix: "core-l1-", StationID: "edge.line1",
+		UUIDPrefix: "core-l1-", OrderType: OrderTypeRetrieveEmpty, StationID: "edge.line1",
 		SourceNode: market.Name, DeliveryNode: window.Name,
 	})
 	testutil.MustNoErr(t, err, "admit the replenish ask")
@@ -933,7 +935,7 @@ func TestReplenishLoader_AnOperatorAsksForAsManyAsTheyNamed(t *testing.T) {
 	req, cfg, _ := replenishFixture(t, db, "ROP", 2)
 	cfg.Replenishment = loaders.ReplenishmentOperator
 	req.Threshold, req.CurrentUOP, req.PerBinCapacity = 0, 0, 0
-	req.Want = 3
+	req.Origin, req.Want = ReplenishByOperator, 3
 
 	res, err := d.ReplenishLoader(req, cfg)
 	if err != nil {

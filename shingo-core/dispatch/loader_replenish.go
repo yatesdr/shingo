@@ -2,11 +2,14 @@ package dispatch
 
 import (
 	"fmt"
+	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 
 	"github.com/google/uuid"
 
 	"shingo/protocol"
+	"shingo/protocol/lockcheck"
 	"shingocore/dispatch/plan"
+	"shingocore/internal/lockorder"
 	"shingocore/store/loaders"
 	"shingocore/store/orders"
 )
@@ -22,14 +25,42 @@ import (
 // decided a loop was low, the Edge decided how much that meant, and the two
 // halves counted different things while only one of them could see the plant.
 //
-// The caller is engine/threshold_monitor.go, in fireSignalCached. It is the one
-// call site, which is what the build-it-unreached-then-switch-one-line approach
-// bought — but the switch has been thrown, so read this file as production.
-// It is the third of the loader triad, alongside loader_source.go and
-// loader_place.go.
+// The callers are the threshold monitor (engine/threshold_monitor.go,
+// fireSignalCached: the threshold origin) and the loader ask's door
+// (www/doors.go: a person's ask, the operator origin). Each states its
+// origin (ReplenishOrigin). It is the third of the loader triad, alongside
+// loader_source.go and loader_place.go.
 
-// ReplenishRequest names a loop that has fallen below its threshold.
+// ReplenishOrigin is why a loader is being asked to take carriers, stated by the
+// caller. It decides how the ask is sized and what it subtracts.
+type ReplenishOrigin string
+
+const (
+	// ReplenishByThreshold: a loop fell below its threshold. Sized from the
+	// reading (BinsToReachThreshold); subtracts the demand episode's live
+	// orders; refused at an operator-driven loader.
+	ReplenishByThreshold ReplenishOrigin = "threshold"
+	// ReplenishByOperator: a person asked for Want carriers. Sized as asked;
+	// subtracts the asking episode's live orders.
+	ReplenishByOperator ReplenishOrigin = "operator"
+	// ReplenishBySideCycle: a release offered an unloader a part (the side
+	// cycle's full-in, U1). Sized as asked (one); it has no episode, so it
+	// subtracts the part's live orders across the loader's windows and stops for
+	// a bin of the part standing on a target window (orders.ReadPartAtLoader).
+	// An automatic ask at a loader a person drives, so it is not refused there.
+	ReplenishBySideCycle ReplenishOrigin = "side_cycle"
+)
+
+// ReplenishRequest names a loop that has fallen below its threshold, a
+// person's ask, or a release's full-in (Origin).
 type ReplenishRequest struct {
+	// Origin is why the loader is asked; see ReplenishOrigin. Stated, never
+	// defaulted: a request without one is refused.
+	Origin ReplenishOrigin
+	// OrderType is the carrier pull each order is: OrderTypeRetrieveEmpty for a
+	// loader's empties, OrderTypeRetrieve for an unloader's fulls. Its sourcing
+	// intent (SourceIntentForType) is what the open-ask count reads.
+	OrderType protocol.OrderType
 	// StationID is the Edge station the resulting orders belong to. Not a return
 	// address — Core originates these — but every order carries a station and the
 	// Edge board filters on it.
@@ -54,13 +85,9 @@ type ReplenishRequest struct {
 	// there is no sender's claim to classify — these are used as given.
 	OriginID    string
 	OriginClass string
-	// Want, when above zero, is the OPERATOR ORIGIN: a person at the loader
-	// asked for this many empties (protocol.AskLoaderEmpties), and the ask is
-	// sized as given instead of from a reading (Threshold, CurrentUOP and
-	// PerBinCapacity are not read). It is the threshold origin's one sizing
-	// body otherwise — the same episode subtraction, the same window choice
-	// (plan.LoaderWindows), the same admission — and it is the one origin an
-	// operator-driven loader answers: a person staging it is who asks.
+	// Want is how many carriers an operator or side-cycle ask is for, sized as
+	// given instead of from a reading (Threshold, CurrentUOP and PerBinCapacity
+	// are not read for those origins). The threshold origin does not read it.
 	Want int
 }
 
@@ -97,17 +124,17 @@ type LoaderReplenishConfig struct {
 	NodeNames map[int64]string
 	Payloads  []loaders.Payload
 	// Replenishment is how this loader is meant to be fed: threshold-driven, or
-	// operator-driven. An operator-driven loader is refused here — see
-	// ReplenishLoader.
+	// operator-driven. An operator-driven loader refuses the threshold origin —
+	// see ReplenishLoader.
 	Replenishment string
-	// InboundSource is where the empty carriers are retrieved FROM, and it is
-	// the only answer to that question. Blank means the loader is fed directly —
-	// by press, forklift or reach truck — and Core must not create carrier pulls
-	// for it at all.
+	// InboundSource is where the carriers are retrieved FROM (a loader's empties,
+	// an unloader's fulls), and it is the only answer to that question. Blank
+	// means the loader is fed directly — by press, forklift or reach truck — and
+	// Core must not create carrier pulls for it at all.
 	//
-	// WHAT A DRY SOURCE DOES, because this is the property a reader usually
-	// comes here for: the order is created and the finder scopes its search to
-	// the named group; finding nothing, it PARKS under "finder-group-empty" (or
+	// WHAT A DRY SOURCE DOES FOR AN EMPTY, because this is the property a reader
+	// usually comes here for: the order is created and the finder scopes its
+	// search to the named group; finding nothing, it PARKS under "finder-group-empty" (or
 	// "finder-no-empty-of-type" when a mix names the type) and does NOT widen to
 	// anywhere else. The wait releases when a carrier lands in the group. So the
 	// order is not lost and the robot is not sent anywhere wrong — the loader
@@ -169,16 +196,87 @@ func (d *Dispatcher) episodeOutstanding(originID string) (int, error) {
 	return d.db.CountLiveOrdersByOrigin(originID)
 }
 
+// subtracted is what an ask subtracts from its want, by origin, or why it
+// orders nothing at all.
+//
+// THRESHOLD AND OPERATOR subtract the episode's live orders (episodeOutstanding).
+// An unattributed request (no episode) gets no such bound, and that is stated
+// rather than defaulted: without an episode there is no way to tell this
+// request's outstanding orders from anyone else's, and guessing would mean
+// suppressing a legitimate ask on someone else's evidence.
+//
+// SIDE CYCLE has no episode by construction (a release offered the part;
+// nobody's demand asked), so it asks the loader instead, in one statement
+// (orders.ReadPartAtLoader): the part's live orders of this intent across every
+// window of the loader are subtracted, and a bin of the part standing on a
+// target window stops the ask. Without the subtraction a shared multi-window
+// unloader takes a full per release where the Edge took one; without the stop,
+// a full the operator has not processed yet is joined by another. Both are the
+// Edge's U1 rules (unloaderPullsCovered, unloaderHasUsableFullPresent), pinned
+// by the consume vectors (TestConsumeVectors_Core).
+//
+// Every read fails CLOSED — the same posture as the capacity gate one step
+// down, and for the same reason: if what is coming cannot be read, creating
+// more is exactly the failure the read exists to prevent.
+func (d *Dispatcher) subtracted(req ReplenishRequest, cfg LoaderReplenishConfig, in loaders.DeliveryTargetsInput, intent string) (int, string) {
+	if req.Origin != ReplenishBySideCycle {
+		n, err := d.episodeOutstanding(req.OriginID)
+		if err != nil {
+			d.dbg("loader_replenish loader=%d payload=%s: read outstanding for origin %s: %v",
+				req.LoaderID, req.PayloadCode, req.OriginID, err)
+			return 0, "could not read what this demand already ordered; not adding to it"
+		}
+		return n, ""
+	}
+	if req.PayloadCode == "" {
+		return 0, "a release's full-in names no part"
+	}
+	windows := make([]string, 0, len(cfg.Homes))
+	for _, h := range cfg.Homes {
+		if name := cfg.NodeNames[h.PositionNodeID]; name != "" {
+			windows = append(windows, name)
+		}
+	}
+	targets, _ := loaders.DeliveryTargets(in)
+	names := make([]string, len(targets))
+	for i, t := range targets {
+		names[i] = t.NodeName
+	}
+	part, err := d.db.ReadPartAtLoader(windows, names, req.PayloadCode, intent)
+	if err != nil {
+		d.dbg("loader_replenish loader=%d payload=%s: read the part at the loader: %v", req.LoaderID, req.PayloadCode, err)
+		return 0, "could not read what is already coming for this part; not adding to it"
+	}
+	for _, n := range names {
+		if part.Standing[n] {
+			return 0, fmt.Sprintf("a full of %s already stands at %s; nothing more until it is cleared", req.PayloadCode, n)
+		}
+	}
+	return part.Live, ""
+}
+
+// outstandingOwner names whose live orders an origin subtracted, for the
+// sentence a person reads.
+func outstandingOwner(o ReplenishOrigin) string {
+	if o == ReplenishBySideCycle {
+		return "this part"
+	}
+	return "this demand"
+}
+
 // ReplenishLoader decides and creates a loader's replenishment orders.
 //
 // The order of the decision is deliberate and each step exists because skipping
 // it caused a real failure:
 //
-//  1. SIZE the ask from the reading. What the loop needs, rounded up to whole
-//     carriers, with a broken (negative) reading sized from zero.
-//  2. SUBTRACT WHAT THIS DEMAND ALREADY ASKED FOR. The episode's own live orders
-//     are carriers already coming; asking again for the same ones is how a dry
-//     market turned into 241 duplicate orders (see below).
+//  1. SIZE the ask. For the threshold origin, from the reading: what the loop
+//     needs, rounded up to whole carriers, with a broken (negative) reading
+//     sized from zero. For a person's ask or a release's full-in, as asked.
+//  2. SUBTRACT WHAT IS ALREADY COMING. The episode's own live orders are
+//     carriers already coming; asking again for the same ones is how a dry
+//     market turned into 241 duplicate orders (see below). A release has no
+//     episode, and subtracts its part's live orders at the loader instead
+//     (subtracted).
 //  3. RESOLVE the windows. Which nodes may take a carrier and how many may be
 //     inbound at once — the never-2N budget.
 //  4. BOUND the ask by the windows. want = min(sizing, free windows). The sizing
@@ -221,20 +319,35 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 		return res, nil
 	}
 
-	// AN OPERATOR-DRIVEN LOADER IS NOT AUTOMATICALLY REPLENISHED, and this guard
-	// is the Core half of one that already exists on the Edge — where it has been
-	// quietly doing real work.
+	// The origin and the pull are stated, never inferred: an operator-driven
+	// loader's refusal below is the threshold origin's alone, and inferring the
+	// origin from Want once let "a person asked" and "no automatic asks" read as
+	// one test.
+	switch req.Origin {
+	case ReplenishByThreshold, ReplenishByOperator, ReplenishBySideCycle:
+	default:
+		res.Skipped = fmt.Sprintf("request states no origin (%q); threshold, operator or side_cycle", req.Origin)
+		return res, nil
+	}
+	intent, ok := carrierPullIntent(req.OrderType)
+	if !ok {
+		res.Skipped = fmt.Sprintf("a loader takes empties or fulls, not %q", req.OrderType)
+		return res, nil
+	}
+
+	// AN OPERATOR-DRIVEN LOADER IS NOT REPLENISHED BY THRESHOLD.
 	//
 	// The combination that reaches here is legal and derivable: a produce loader
 	// set to operator replenishment with a leftover threshold on one of its
 	// payloads. Core's registry derivation keeps that threshold (it only zeroes
 	// the consume case), and the loader-config validation refuses only
-	// consume+threshold, so the monitor fires at such a loader today. The Edge
-	// swallows it. Without this, Core taking over ordering would turn a signal
-	// nobody acts on into robot-delivered carriers arriving at a loader whose
-	// whole configuration says a person stages it. A person asking (the operator
-	// origin, req.Want) is not automatic, and is answered.
-	if cfg.Replenishment == loaders.ReplenishmentOperator && req.Want <= 0 {
+	// consume+threshold, so the monitor fires at such a loader. Without this, a
+	// signal nobody acts on would become robot-delivered carriers arriving at a
+	// loader whose whole configuration says a person stages it. A person asking
+	// (the operator origin) is answered, and so is a release's full-in (the
+	// side-cycle origin): Core stores every unloader as operator-driven, and the
+	// U1 is an automatic ask a person's loader still takes.
+	if cfg.Replenishment == loaders.ReplenishmentOperator && req.Origin == ReplenishByThreshold {
 		res.Skipped = "loader is operator-driven: a person stages it, so no carriers are ordered automatically"
 		d.dbg("loader_replenish loader=%d payload=%s: operator-driven, not replenishing", req.LoaderID, req.PayloadCode)
 		return res, nil
@@ -249,7 +362,7 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 	}
 
 	want := req.Want
-	if want <= 0 {
+	if req.Origin == ReplenishByThreshold {
 		var outcome SizingOutcome
 		var detail string
 		want, outcome, detail = BinsToReachThreshold(req.Threshold, req.CurrentUOP, req.PerBinCapacity)
@@ -258,33 +371,69 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 			d.dbg("loader_replenish loader=%d payload=%s outcome=%s: %s", req.LoaderID, req.PayloadCode, outcome, detail)
 			return res, nil
 		}
+	} else if want <= 0 {
+		res.Skipped = fmt.Sprintf("the %s ask names no carriers", req.Origin)
+		return res, nil
 	}
 	res.Want = want
 
-	// What this demand already has coming, subtracted from what it is about to
-	// ask for.
+	// ONE DECISION AT A TIME PER LOADER. What is coming is read, the windows
+	// are chosen and the orders are inserted under the loader's lock, so a
+	// second ask for the same loader reads the first one's orders: without it,
+	// two asks at once each read every window free and each insert at every
+	// one (TestPortedBudget_OneDecisionAtATimePerLoader). The ask consumer
+	// answering one ask at a time and the threshold monitor never reaching a
+	// consume loader are not what holds it. Keyed by loader, so a slow decision
+	// at one loader never stalls another.
 	//
-	// An unattributed request (no episode) gets no such bound, and that is stated
-	// rather than defaulted: without an origin there is no way to tell this
-	// request's outstanding orders from anyone else's, and guessing would mean
-	// suppressing a legitimate ask on someone else's evidence.
-	outstanding, err := d.episodeOutstanding(req.OriginID)
-	if err != nil {
-		// Fail CLOSED — the same posture as the capacity gate one step down, and
-		// for the same reason. If the outstanding orders cannot be read, creating
-		// more is exactly the failure this read exists to prevent.
-		res.Skipped = "could not read what this demand already ordered; not adding to it"
-		d.dbg("loader_replenish loader=%d payload=%s: read outstanding for origin %s: %v",
-			req.LoaderID, req.PayloadCode, req.OriginID, err)
-		return res, nil
+	// The acquires run after the lock is let go: each takes the scan lock and
+	// may dispatch, and the decision is whole once the rows exist (the next
+	// decision counts them, sourced or not).
+	mu := d.loaderLock(req.LoaderID)
+	mu.Lock()
+	err := d.replenishLocked(req, cfg, intent, want, &res)
+	mu.Unlock()
+	for _, o := range res.Created {
+		d.acquireCoreAsk(o)
+	}
+	return res, err
+}
+
+// loaderLock is one loader's decision lock (ReplenishLoader), made on first
+// use. lockorder.LoaderBudget: the lock the Edge held around the same count
+// and create (withLoaderBudget), moved here with the decision.
+func (d *Dispatcher) loaderLock(loaderID int64) *lockcheck.Mutex[lockorder.LoaderBudget] {
+	m, _ := d.loaderLocks.LoadOrStore(loaderID, &lockcheck.Mutex[lockorder.LoaderBudget]{})
+	return m.(*lockcheck.Mutex[lockorder.LoaderBudget])
+}
+
+// replenishLocked is ReplenishLoader's subtraction, window choice and inserts,
+// with the loader's lock held. It fills res and returns a write's error.
+func (d *Dispatcher) replenishLocked(req ReplenishRequest, cfg LoaderReplenishConfig, intent string, want int, res *ReplenishResult) error {
+	in := loaders.DeliveryTargetsInput{
+		Layout:        cfg.Layout,
+		FunnelWindows: cfg.FunnelWindows,
+		Homes:         cfg.Homes,
+		NodeNames:     cfg.NodeNames,
+		Payloads:      cfg.Payloads,
+		Member:        req.MemberNode,
+		PayloadCode:   req.PayloadCode,
+	}
+
+	// What is already coming, subtracted from what this ask is about to ask for:
+	// each origin's own question (subtracted).
+	outstanding, skip := d.subtracted(req, cfg, in, intent)
+	if skip != "" {
+		res.Skipped = skip
+		return nil
 	}
 	if remaining := want - outstanding; remaining < want {
 		if remaining <= 0 {
-			res.Skipped = fmt.Sprintf("this demand already has %d carrier(s) outstanding for a need of %d; nothing more to order until they land or die",
-				outstanding, want)
+			res.Skipped = fmt.Sprintf("%s already has %d carrier(s) outstanding for a need of %d; nothing more to order until they land or die",
+				outstandingOwner(req.Origin), outstanding, want)
 			d.dbg("loader_replenish loader=%d payload=%s: want=%d already-outstanding=%d — nothing to add",
 				req.LoaderID, req.PayloadCode, want, outstanding)
-			return res, nil
+			return nil
 		}
 		want = remaining
 	}
@@ -299,22 +448,14 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 
 	// The window choice is the planner's (plan.LoaderWindows): the delivery
 	// targets, each gated at decision time by the capacity verdict and by
-	// whether a carrier is already asked for there, up to the ask. See it for
-	// why the target list is the bound and why the open ask is counted from any
-	// origin.
-	w := d.pure.LoaderWindows(loaders.DeliveryTargetsInput{
-		Layout:        cfg.Layout,
-		FunnelWindows: cfg.FunnelWindows,
-		Homes:         cfg.Homes,
-		NodeNames:     cfg.NodeNames,
-		Payloads:      cfg.Payloads,
-		Member:        req.MemberNode,
-		PayloadCode:   req.PayloadCode,
-	}, want)
+	// whether this ask's intent is already asked for there, up to the ask. See it
+	// for why the target list is the bound and why the open ask is counted from
+	// any origin.
+	w := d.pure.LoaderWindows(in, want, intent)
 	if w.Targets == 0 || w.Budget <= 0 {
 		res.Skipped = fmt.Sprintf("loader %d has no delivery target for payload %q", req.LoaderID, req.PayloadCode)
 		d.dbg("loader_replenish loader=%d payload=%s: no target", req.LoaderID, req.PayloadCode)
-		return res, nil
+		return nil
 	}
 	res.HeldBy = w.HeldBy
 	for node, err := range w.ReadErrs {
@@ -322,16 +463,15 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 			req.LoaderID, req.PayloadCode, node, err)
 	}
 	for _, t := range w.Chosen {
-		order, err := d.admitReplenishOrder(req, cfg, t)
+		order, err := d.admitReplenishOrder(req, cfg, t, intent)
 		if err != nil {
 			// Stop rather than press on. A failure here is a write failure or a
 			// refused reference, and the windows after this one would fail the same
 			// way; returning what was created keeps the caller's picture true.
 			d.dbg("loader_replenish loader=%d payload=%s window=%s: %v", req.LoaderID, req.PayloadCode, t.NodeName, err)
-			return res, err
+			return err
 		}
 		res.Created = append(res.Created, order)
-		d.acquireCoreAsk(order)
 	}
 
 	// The decision record. want= is what the loop needed, targets= how many places
@@ -341,7 +481,7 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 	// looking like a loader that under-delivered.
 	d.dbg("loader_replenish loader=%d payload=%s want=%d budget=%d targets=%d created=%d held=%d",
 		req.LoaderID, req.PayloadCode, res.Want, w.Budget, w.Targets, len(res.Created), len(res.HeldBy))
-	return res, nil
+	return nil
 }
 
 // admitReplenishOrder builds and admits one carrier pull.
@@ -351,9 +491,14 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 // a Core-originated order gets the same reference checks, the same
 // synthetic-destination resolution, and the same insert. A second writer here is
 // exactly the drift the order-writer consolidation removed one layer down.
-func (d *Dispatcher) admitReplenishOrder(req ReplenishRequest, cfg LoaderReplenishConfig, t loaders.Target) (*orders.Order, error) {
+func (d *Dispatcher) admitReplenishOrder(req ReplenishRequest, cfg LoaderReplenishConfig, t loaders.Target, intent string) (*orders.Order, error) {
+	prefix := "core-l1-"
+	if intent == SourceIntentFull {
+		prefix = "core-u1-"
+	}
 	order, err := d.AdmitCoreAsk(CoreAskSpec{
-		UUIDPrefix:   "core-l1-",
+		UUIDPrefix:   prefix,
+		OrderType:    req.OrderType,
 		StationID:    req.StationID,
 		SourceNode:   cfg.InboundSource,
 		DeliveryNode: t.NodeName,
@@ -370,27 +515,34 @@ func (d *Dispatcher) admitReplenishOrder(req ReplenishRequest, cfg LoaderRepleni
 // CoreAskSpec is one Core-authored carrier pull: everything that differs between
 // the two things Core asks for on its own initiative.
 //
-// TWO CALLERS, ONE DOOR. The loader replenishment loop and the maintained-group
-// level keeper both mint retrieve_empty orders nobody on the Edge requested. What
+// TWO CALLERS, ONE DOOR. The loader replenishment loop (a loader's empties, an
+// unloader's fulls) and the maintained-group level keeper (empties) both mint
+// carrier pulls nobody on the Edge requested. What
 // they share — the order shape, the admit, the projection, the origin-class rule
 // — is everything except the fields below, and a second copy of that body is
 // exactly the drift the order-writer consolidation removed one layer down.
 type CoreAskSpec struct {
 	// UUIDPrefix marks where the order came from, readably, without a join.
 	// Edge-authored UUIDs are bare; Core's say so at a glance and in a log line.
-	// "core-l1-" is the loader loop, "core-mnt-" the level keeper.
-	UUIDPrefix   string
+	// "core-l1-" is the loader loop's empty, "core-u1-" its full (a release's
+	// full-in), "core-mnt-" the level keeper.
+	UUIDPrefix string
+	// OrderType is the pull: OrderTypeRetrieveEmpty or OrderTypeRetrieve. The
+	// order's type, its sourcing intent, its received event and its projection
+	// derive from it. Stated: a spec without one is refused.
+	OrderType    protocol.OrderType
 	StationID    string
 	SourceNode   string
 	DeliveryNode string
 	// PayloadDesc is the human line on the Edge board card. The station's row
-	// for a Core ask is projected without a payload code (AdmitCoreAsk), which
+	// for a Core empty is projected without a payload code (AdmitCoreAsk), which
 	// leaves the card with nothing to render — this is what it renders instead
 	// ("empty 45x58x32").
 	PayloadDesc string
 	// PayloadCode is the part a loader's ask is for, written on Core's row in
-	// the birth's INSERT. The empty carrier is generic, but the order is the
-	// loader's demand for this part: the lead-time readers (AvgL1QueueSeconds)
+	// the birth's INSERT. For a full it is the part the finder looks for. The
+	// empty carrier is generic, but the order is the loader's demand for this
+	// part: the lead-time readers (AvgL1QueueSeconds)
 	// select on it, and the finder takes the carrier types the part may ride
 	// from it. In the INSERT, not a write after it: a scanner pass outside the
 	// door can read the row between the two and see a payload-less ask. Blank
@@ -407,10 +559,14 @@ type CoreAskSpec struct {
 // reference checks, the same synthetic-destination resolution, and the same
 // insert.
 func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
+	intent, ok := carrierPullIntent(spec.OrderType)
+	if !ok {
+		return nil, fmt.Errorf("a Core ask is an empty or a full pull, not %q", spec.OrderType)
+	}
 	order := &orders.Order{
 		EdgeUUID:     spec.UUIDPrefix + uuid.New().String(),
 		StationID:    spec.StationID,
-		OrderType:    OrderTypeRetrieveEmpty,
+		OrderType:    spec.OrderType,
 		Status:       StatusPending,
 		Quantity:     1,
 		SourceNode:   spec.SourceNode,
@@ -421,7 +577,7 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 		// Need below, so the INSERT writes it.
 		PayloadCode:  "",
 		PayloadDesc:  spec.PayloadDesc,
-		SourceIntent: SourceIntentForType(OrderTypeRetrieveEmpty),
+		SourceIntent: intent,
 		// Origin attaches locally. Unlike the wire path there is no sender's claim
 		// to classify: Core opened this episode and knows what it is.
 		OriginID:    spec.OriginID,
@@ -447,7 +603,7 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 	// station is projected the order below, so it has a row for it.
 	if lerr := d.lifecycle.admit(order, func() error {
 		return d.lifecycle.birth(order, Need{
-			Type:         OrderTypeRetrieveEmpty,
+			Type:         spec.OrderType,
 			Station:      order.StationID,
 			Ref:          order.EdgeUUID,
 			Quantity:     order.Quantity,
@@ -469,18 +625,21 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 	// own values: the part and the window. Without it a Core ask reached the
 	// bins feed only at dispatch, so a watched window showed nothing inbound
 	// while its ask queued. Pinned by TestPinCoreAsk_TheAskIsReceivedAtBirth.
-	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, order.StationID, OrderTypeRetrieveEmpty, spec.PayloadCode, order.DeliveryNode)
+	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, order.StationID, spec.OrderType, spec.PayloadCode, order.DeliveryNode)
 	// THE case the projection exists for. Nobody on the Edge asked for this
 	// order, so nobody there has a row for it; without the projection the
 	// operator watches a robot arrive at a window with nothing on the board to
 	// say why.
 	//
-	// PROJECTED GENERIC. The station's row for a Core ask has never carried
-	// the part (the empty is untagged until the loader fills it), so the
-	// projection leaves it off: the part is Core's bookkeeping, and the Edge's
-	// row and the bytes it receives stay as they were.
+	// AN EMPTY IS PROJECTED GENERIC. The station's row for a Core empty has
+	// never carried the part (the empty is untagged until the loader fills it),
+	// so the projection leaves it off: the part is Core's bookkeeping. A FULL
+	// carries its part, as the Edge's own full-in row always has: the carrier
+	// is the part.
 	projected := *order
-	projected.PayloadCode = ""
+	if intent == SourceIntentEmpty {
+		projected.PayloadCode = ""
+	}
 	d.lifecycle.projectOrder(&projected)
 	return order, nil
 }

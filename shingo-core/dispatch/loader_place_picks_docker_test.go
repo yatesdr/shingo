@@ -525,6 +525,7 @@ func TestSpringfieldIncident_20260805_AWaitingReturnNamingTheHomeHoldsNothing(t 
 		t.Fatalf("load replenish config for loader %d: ok=%v err=%v", loaderID, ok, err)
 	}
 	res, err := d.ReplenishLoader(ReplenishRequest{
+		Origin: ReplenishByThreshold, OrderType: OrderTypeRetrieveEmpty,
 		StationID: "test", LoaderID: loaderID, PayloadCode: "PART-X", MemberNode: home.Name,
 		Threshold: 100, CurrentUOP: 0, PerBinCapacity: 10,
 	}, cfg)

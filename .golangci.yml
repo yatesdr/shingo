@@ -735,12 +735,18 @@ linters:
       #                               s.handlers[order.OrderType] (data-driven
       #                               dispatch, the pattern we WANT) + its
       #                               unknown-type error string
+      #        loader_replenish.go  — a Core ask's stated pull (ReplenishRequest /
+      #                               CoreAskSpec.OrderType, an empty or a full):
+      #                               converted to its intent once
+      #                               (carrierPullIntent), then written verbatim
+      #                               into the row, the Need and the received
+      #                               event; every branch keys on the intent
       #      (lifecycle_service.go, compound.go, source_finder.go, complex_steps.go
       #      are already fully forbidigo-exempt via #2/#3/#7 above.)
       - linters:
           - forbidigo
         text: "OrderType is data, not a control-flow key"
-        path: "shingo-core/dispatch/(builder|dispatcher|emitter|order_provenance|planning_service)\\.go"
+        path: "shingo-core/dispatch/(builder|dispatcher|emitter|order_provenance|planning_service|loader_replenish)\\.go"
 
       # ---- Raw bin-move carveouts (forbidigo) -------------------------------
       # The sanctioned store-level delegates that service.BinService.Move

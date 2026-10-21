@@ -535,6 +535,7 @@ func (g *goldenPlant) replenish(loaderName, payload, member string, threshold, c
 	pl, err := g.db.GetPayloadByCode(payload)
 	testutil.MustNoErr(g.t, err, "payload "+payload)
 	res, err := d.ReplenishLoader(dispatch.ReplenishRequest{
+		Origin: dispatch.ReplenishByThreshold, OrderType: dispatch.OrderTypeRetrieveEmpty,
 		StationID: "edge1.line1", LoaderID: id, PayloadCode: payload, MemberNode: member,
 		Threshold: threshold, CurrentUOP: current, PerBinCapacity: pl.UOPCapacity,
 	}, cfg)

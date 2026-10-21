@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 	"shingocore/dispatch/plan"
-	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
+	"sync"
 
 	"shingo/protocol"
 	"shingo/protocol/lockcheck"
@@ -84,6 +84,11 @@ type Dispatcher struct {
 	// it and the first pass after records nothing. See SweepLaneWaiters.
 	floorSeenMu lockcheck.Mutex[lockorder.FloorSeen]
 	floorSeen   map[floorKey]bool
+
+	// loaderLocks is one decision lock per loader (loaderLock), keyed by loader
+	// id: ReplenishLoader's read-then-insert. In memory; a lock is made on
+	// first use and never removed (one per configured loader).
+	loaderLocks sync.Map
 
 	// preHandHook is a test-only seam fired just before a hand is acquired
 	// (commitToFleet → acquireHand), with the order's id. Nil in production; set

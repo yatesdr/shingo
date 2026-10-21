@@ -32,12 +32,12 @@ import (
 // unloader_sweep_characterization_test, side_cycle_pins_test,
 // loader_push_characterization_test).
 //
-// PREDICTIONS. What Core cannot do yet is written here before the source that
-// makes it true, and skips until then: a full pulled by a release (the side
-// cycle has no stated origin, and AdmitCoreAsk mints retrieve_empty only), and
-// one decision at a time per loader (no lock is taken in ReplenishLoader; the
-// ask consumer answering one ask at a time is what holds it today). The skips
-// name what lifts them.
+// PREDICTIONS. What Core could not do when these were written was written
+// before the source that makes it true, and skipped until then: a full pulled
+// by a release (lifted when ReplenishLoader took the side-cycle origin), and
+// one decision at a time per loader, with the consume set's burst case (lifted
+// when the per-loader lock moved into ReplenishLoader). With that lock taken
+// out, eight concurrent asks left four live empties at one window.
 //
 // side_cycle_pins_test's assertions are the Edge's triggers (LOAD, CLEAR, an
 // L2's landing re-pushing its own loader); the triggers stay on the Edge and
@@ -76,7 +76,7 @@ func liveIDs(t *testing.T, db *store.DB, nodes []string) []int64 {
 // operatorAsk is a person's ask for count empties of payload at the loader:
 // the operator origin.
 func operatorAsk(req ReplenishRequest, payload string, count int) ReplenishRequest {
-	req.PayloadCode, req.Want = payload, count
+	req.Origin, req.PayloadCode, req.Want = ReplenishByOperator, payload, count
 	req.Threshold, req.CurrentUOP, req.PerBinCapacity = 0, 0, 0
 	return req
 }
@@ -220,28 +220,11 @@ func TestPortedBudget_AResidentEmptyHoldsTheOnlyWindow(t *testing.T) {
 	}
 }
 
-// predictSideCycle skips a pin that needs ReplenishLoader to pull a full for a
-// release. Called on the test's own goroutine, before any ask.
-//
-// PREDICTION, lifted by the commit that generalises ReplenishLoader.
-func predictSideCycle(t *testing.T) {
-	t.Helper()
-	t.Skip("PREDICTION: Core cannot pull a full yet (no side-cycle origin; AdmitCoreAsk mints retrieve_empty only)")
-}
-
 // sideCycleAsk is a release's U1 asked of Core: ReplenishLoader's side-cycle
 // origin, a full of the request's payload, want one.
-func sideCycleAsk(_ *Dispatcher, _ ReplenishRequest, _ LoaderReplenishConfig) (ReplenishResult, error) {
-	return ReplenishResult{}, fmt.Errorf("no side-cycle origin yet")
-}
-
-// predictOneDecisionPerLoader skips a pin that needs ReplenishLoader to hold
-// the loader's lock across its read and its inserts.
-//
-// PREDICTION, lifted by the commit that moves the lock.
-func predictOneDecisionPerLoader(t *testing.T) {
-	t.Helper()
-	t.Skip("PREDICTION: ReplenishLoader takes no per-loader lock yet")
+func sideCycleAsk(d *Dispatcher, req ReplenishRequest, cfg LoaderReplenishConfig) (ReplenishResult, error) {
+	req.Origin, req.OrderType, req.Want = ReplenishBySideCycle, OrderTypeRetrieve, 1
+	return d.ReplenishLoader(req, cfg)
 }
 
 // consumeFixture builds a consume case's unloader on Core: its windows (named
@@ -295,7 +278,6 @@ func TestConsumeVectors_Core(t *testing.T) {
 	for i, c := range loadervectors.MustLoad().Consume {
 		t.Run(c.Name, func(t *testing.T) {
 			t.Parallel()
-			predictSideCycle(t)
 			db := testDB(t)
 			d, _ := newTestDispatcher(t, db, nil)
 			req, cfg, back := consumeFixture(t, db, fmt.Sprintf("CV%d", i), c)
@@ -377,7 +359,6 @@ func TestConsumeVectors_CoverTheBriefsShapes(t *testing.T) {
 // inbound source) is skipped before any statement, with a reason.
 func TestPortedBudget_SideCycleWithNoInboundReadsNothing(t *testing.T) {
 	t.Parallel()
-	predictSideCycle(t)
 	db, cfgDB := testdb.OpenWithConfig(t)
 	c := loadervectors.ConsumeCase{Payloads: []string{"PART-A"}, Windows: []loadervectors.ConsumeWindow{{Node: "W1"}, {Node: "W2"}}}
 	req, cfg, _ := consumeFixture(t, db, "SNI", c)
@@ -408,7 +389,6 @@ func TestPortedBudget_SideCycleIsNotGatedByReplenishment(t *testing.T) {
 	for _, repl := range []string{loaders.ReplenishmentOperator, loaders.ReplenishmentThreshold} {
 		t.Run(repl, func(t *testing.T) {
 			t.Parallel()
-			predictSideCycle(t)
 			db := testDB(t)
 			d, _ := newTestDispatcher(t, db, nil)
 			c := loadervectors.ConsumeCase{Payloads: []string{"PART-A"}, Windows: []loadervectors.ConsumeWindow{{Node: "W1"}}}
@@ -429,7 +409,6 @@ func TestPortedBudget_SideCycleIsNotGatedByReplenishment(t *testing.T) {
 // Core whose reads die orders nothing and says why.
 func TestPortedBudget_SideCycleFailsClosed(t *testing.T) {
 	t.Parallel()
-	predictSideCycle(t)
 	db := testDB(t)
 	d, _ := newTestDispatcher(t, db, nil)
 	c := loadervectors.ConsumeCase{Payloads: []string{"PART-A"}, Windows: []loadervectors.ConsumeWindow{{Node: "W1"}, {Node: "W2"}}}
@@ -453,7 +432,6 @@ func TestPortedBudget_SideCycleFailsClosed(t *testing.T) {
 // reads three free windows before any inserts.
 func TestPortedBudget_OneDecisionAtATimePerLoader(t *testing.T) {
 	t.Parallel()
-	predictOneDecisionPerLoader(t)
 	db := testDB(t)
 	d, _ := newTestDispatcher(t, db, nil)
 	req, cfg, windows := replenishFixture(t, db, "ODL", 3)
@@ -473,5 +451,41 @@ func TestPortedBudget_OneDecisionAtATimePerLoader(t *testing.T) {
 		if n := liveAt(t, db, w, OrderTypeRetrieveEmpty); n != 1 {
 			t.Errorf("window %s: %d live empties, want 1", w, n)
 		}
+	}
+}
+
+// TestPortedBudget_TheSideCycleReadIsOneStatement counts the read the side
+// cycle adds (orders.ReadPartAtLoader): a release's full-in at a free
+// three-window unloader costs exactly one statement more than a person's
+// unattributed ask for one carrier at the same windows, which subtracts
+// nothing and so reads nothing to subtract.
+func TestPortedBudget_TheSideCycleReadIsOneStatement(t *testing.T) {
+	t.Parallel()
+	cost := func(side bool) int64 {
+		db, cfgDB := testdb.OpenWithConfig(t)
+		c := loadervectors.ConsumeCase{Payloads: []string{"PART-A"}, Windows: []loadervectors.ConsumeWindow{{Node: "W1"}, {Node: "W2"}, {Node: "W3"}}}
+		req, cfg, _ := consumeFixture(t, db, "SOS", c)
+		cdb, counter, err := store.OpenCounting(cfgDB)
+		testutil.MustNoErr(t, err, "counting db")
+		t.Cleanup(func() { cdb.Close() })
+		d, _ := newTestDispatcher(t, cdb, nil)
+		req.PayloadCode = "PART-A"
+		counter.Reset()
+		var res ReplenishResult
+		if side {
+			res, err = sideCycleAsk(d, req, cfg)
+		} else {
+			req.Origin, req.OrderType, req.Want = ReplenishByOperator, OrderTypeRetrieve, 1
+			res, err = d.ReplenishLoader(req, cfg)
+		}
+		testutil.MustNoErr(t, err, "ReplenishLoader")
+		if len(res.Created) != 1 {
+			t.Fatalf("side=%v: created %d (skipped %q), want 1", side, len(res.Created), res.Skipped)
+		}
+		return counter.Count()
+	}
+	person, release := cost(false), cost(true)
+	if release != person+1 {
+		t.Errorf("a release's full-in cost %d statements, a person's ask %d; want exactly one more", release, person)
 	}
 }

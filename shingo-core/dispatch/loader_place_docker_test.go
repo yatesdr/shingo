@@ -730,6 +730,7 @@ func TestSpringfieldIncident_ReturnHoldsHome_ReplenishYields(t *testing.T) {
 	// asking the capacity gate about the home. Without these it skips at
 	// BinsToReachThreshold and never looks.
 	res, err := d.ReplenishLoader(ReplenishRequest{
+		Origin: ReplenishByThreshold, OrderType: OrderTypeRetrieveEmpty,
 		StationID: "test", LoaderID: loaderID, PayloadCode: "PART-X", MemberNode: home.Name,
 		Threshold: 100, CurrentUOP: 0, PerBinCapacity: 10,
 	}, cfg)

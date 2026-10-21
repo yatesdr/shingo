@@ -1882,12 +1882,19 @@ func (db *DB) ListTypedInboundToGroup(groupNodeID int64, groupNodeName, binTypeC
 	return orders.ListTypedInboundToGroup(db.DB, groupNodeID, groupNodeName, binTypeCode)
 }
 
-// CountLiveCarrierRequestsByDeliveryNode counts every non-terminal order that
-// asked for a CARRIER at a node — queued included, origin-blind, returns
-// excluded. "Has a carrier already been asked for here". See
+// CountLiveCarrierRequestsByDeliveryNode counts every non-terminal order of one
+// sourcing intent delivering to a node — queued included, origin-blind.
+// "Has what this ask asks for already been asked for here". See
 // orders.CountLiveCarrierRequestsByDeliveryNode.
-func (db *DB) CountLiveCarrierRequestsByDeliveryNode(deliveryNode string) (int, error) {
-	return orders.CountLiveCarrierRequestsByDeliveryNode(db.DB, deliveryNode)
+func (db *DB) CountLiveCarrierRequestsByDeliveryNode(deliveryNode, intent string) (int, error) {
+	return orders.CountLiveCarrierRequestsByDeliveryNode(db.DB, deliveryNode, intent)
+}
+
+// ReadPartAtLoader reads one part's live orders across a loader's windows and
+// the target windows a bin of it stands on, in one statement. See
+// orders.ReadPartAtLoader.
+func (db *DB) ReadPartAtLoader(windows, targets []string, payloadCode, intent string) (orders.PartAtLoader, error) {
+	return orders.ReadPartAtLoader(db.DB, windows, targets, payloadCode, intent)
 }
 
 func (db *DB) UpdateOrderRobotID(id int64, robotID string) error {

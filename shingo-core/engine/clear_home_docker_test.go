@@ -364,7 +364,8 @@ func TestClearHome_DemandArm_TheLoadersOwnPull(t *testing.T) {
 		t.Fatal("fixture: the loader has no replenishment config")
 	}
 	cfg.Replenishment, cfg.InboundSource = loaders.ReplenishmentThreshold, market.Name
-	res, err := r.d.ReplenishLoader(dispatch.ReplenishRequest{StationID: clearStation, LoaderID: r.loaderID,
+	res, err := r.d.ReplenishLoader(dispatch.ReplenishRequest{Origin: dispatch.ReplenishByThreshold,
+		OrderType: dispatch.OrderTypeRetrieveEmpty, StationID: clearStation, LoaderID: r.loaderID,
 		PayloadCode: part2, Threshold: 10, PerBinCapacity: 10}, cfg)
 	testutil.MustNoErr(t, err, "replenish")
 	if len(res.Created) != 1 {

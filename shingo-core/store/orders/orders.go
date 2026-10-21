@@ -2009,9 +2009,11 @@ func CountLiveByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
 }
 
 // CountLiveCarrierRequestsByDeliveryNode is CountLiveByDeliveryNode narrowed to
-// orders that ASKED FOR A CARRIER — source_intent='empty'. Same queued-included
-// rule, same origin-blindness, same "one order per window" contract; the only
-// difference is WHICH orders count as having spoken for the window.
+// orders that ASKED FOR WHAT THIS ASK ASKS FOR — the given source_intent: 'empty'
+// for a loader's empties, blank (SourceIntentFull, a retrieve's) for an
+// unloader's fulls. Same queued-included rule, same origin-blindness, same "one
+// order per window" contract; the only difference is WHICH orders count as
+// having spoken for the window.
 //
 // WHY THE NARROWING EXISTS. The contract this guard enforces is the one its
 // commit named: "a demand that already asked for a carrier must not ask again."
@@ -2036,15 +2038,80 @@ func CountLiveByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
 // this check — that arm answers the physical question ("is there room"), this
 // one answers the logical question ("have I already asked").
 //
-// source_intent is stamped once at intake by SourceIntentForType and is 'empty'
-// for exactly OrderTypeRetrieveEmpty, which is the shape every replenishment
-// carrier pull takes (loader_replenish.go admitReplenishOrder).
-func CountLiveCarrierRequestsByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
+// source_intent is stamped once at birth by SourceIntentForType and is 'empty'
+// for exactly OrderTypeRetrieveEmpty, the shape a loader's carrier pull takes.
+// FOR A FULL THE INTENT IS BLANK, and blank is the intent of every type the empties
+// and moves arms do not name: a retrieve, and a complex order's parent. So a
+// full's count reads any such order delivering to the window, an evac bringing
+// a full back included. That is the question for an unloader window: a full on
+// its way speaks for the window whoever sent it. Whether an evac at an unloader
+// window can wait on that window's full-in, the way SMN_030's waited on its
+// empty, was not established; if one can, this count is where it would hold.
+func CountLiveCarrierRequestsByDeliveryNode(db *sql.DB, deliveryNode, intent string) (int, error) {
 	var count int
 	err := db.QueryRow(fmt.Sprintf(
-		`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND source_intent = 'empty' AND status NOT IN (%s)`,
-		protocol.TerminalStatusSQLList()), deliveryNode).Scan(&count)
+		`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND source_intent = $2 AND status NOT IN (%s)`,
+		protocol.TerminalStatusSQLList()), deliveryNode, intent).Scan(&count)
 	return count, err
+}
+
+// PartAtLoader is what a no-episode ask (a release's full-in) has to subtract
+// and to stop for, about one part at one loader.
+type PartAtLoader struct {
+	// Live is the live orders of the ask's intent carrying the part to any of
+	// the loader's windows.
+	Live int
+	// Standing is the target windows with a bin of the part standing on them.
+	Standing map[string]bool
+}
+
+// ReadPartAtLoader reads a part's live orders across a loader's windows and the
+// target windows a bin of the part stands on, in ONE statement. An ask with no
+// episode has no outstanding-order count of its own, so this is its
+// subtraction: a release's full-in subtracts what is already coming for the
+// part to any window of the unloader, and stops for a full of the part already
+// standing on a target window (the Edge's unloaderHasUsableFullPresent rule).
+// Windows and targets are node names; empty lists read nothing.
+func ReadPartAtLoader(db helpers.RowsQuerier, windows, targets []string, payloadCode, intent string) (PartAtLoader, error) {
+	out := PartAtLoader{Standing: map[string]bool{}}
+	if len(windows) == 0 && len(targets) == 0 {
+		return out, nil
+	}
+	args := []any{payloadCode, intent}
+	in := func(names []string) string {
+		if len(names) == 0 {
+			return "NULL"
+		}
+		ph := make([]string, len(names))
+		for i, n := range names {
+			args = append(args, n)
+			ph[i] = fmt.Sprintf("$%d", len(args))
+		}
+		return strings.Join(ph, ",")
+	}
+	q := fmt.Sprintf(`SELECT 'live', delivery_node FROM orders
+		 WHERE delivery_node IN (%s) AND payload_code = $1 AND source_intent = $2 AND status NOT IN (%s)
+		UNION ALL
+		SELECT 'standing', n.name FROM bins b JOIN nodes n ON n.id = b.node_id
+		 WHERE n.name IN (%s) AND b.payload_code = $1 AND b.status != 'retired'`,
+		in(windows), protocol.TerminalStatusSQLList(), in(targets))
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return out, fmt.Errorf("read part %s at loader windows: %w", payloadCode, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind, node string
+		if err := rows.Scan(&kind, &node); err != nil {
+			return out, fmt.Errorf("scan part %s at loader windows: %w", payloadCode, err)
+		}
+		if kind == "live" {
+			out.Live++
+		} else {
+			out.Standing[node] = true
+		}
+	}
+	return out, rows.Err()
 }
 
 // UpdateRobotID rewrites just the robot_id field.

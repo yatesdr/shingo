@@ -13,7 +13,7 @@ import (
 type LoaderWindowsDB interface {
 	CapacityDB
 	SlotSpokenForByStranger(nodeID, ownerID int64) (bool, error)
-	CountLiveCarrierRequestsByDeliveryNode(deliveryNode string) (int, error)
+	CountLiveCarrierRequestsByDeliveryNode(deliveryNode, intent string) (int, error)
 }
 
 // LoaderWindows is a loader replenishment's window choice (B3): the windows to
@@ -35,9 +35,9 @@ type LoaderWindows struct {
 
 // LoaderWindows chooses where a loader's replenishment asks, up to want carriers:
 // the loader's delivery targets in order, each gated at decision time by the
-// capacity verdict, by another order's slot reservation, and by whether a
-// carrier is already asked for there. It reads and writes nothing (the
-// dispatcher births one order per chosen window).
+// capacity verdict, by another order's slot reservation, and by whether what
+// this ask asks for (intent: an empty or a full) is already asked for there. It
+// writes nothing (the dispatcher births one order per chosen window).
 //
 // ANOTHER ORDER'S SLOT RESERVATION, which the capacity verdict does not read: a
 // pull's claim on a storage-classed window would be refused for as long as the
@@ -51,15 +51,17 @@ type LoaderWindows struct {
 // targets caps the ask at the budget; want stops it early when the loop needs
 // fewer, and the per-window checks remove the ones that cannot take one now.
 //
-// ONE ORDER PER WINDOW, FROM ANY ASKER. The open-ask count is asked from any
-// origin on purpose: two payloads at one shared-window loader are two episodes
-// that cannot see each other, so an episode-scoped question would let both put a
-// carrier on the same window. It counts ASKS, not arrivals: a swap's evac leg
-// names a home as its delivery node but never asked for a carrier, and counting
-// it deadlocked SMN_030 for 8h57m on 2026-08-05 (see
+// ONE ORDER PER WINDOW, FROM ANY ASKER. The open-ask count, of the ask's own
+// intent, is asked from any origin on purpose: two payloads at one shared-window
+// loader are two episodes that cannot see each other, so an episode-scoped
+// question would let both put a carrier on the same window. For an empty it
+// counts ASKS, not arrivals: a swap's evac leg names a home as its delivery node
+// but never asked for a carrier, and counting it deadlocked SMN_030 for 8h57m on
+// 2026-08-05. For a full the intent is shared with a complex order's parent, so
+// an evac bringing a full does count (see
 // orders.CountLiveCarrierRequestsByDeliveryNode). Arrivals are the capacity
 // verdict's in-flight arm. Unreadable fails closed, like every occupancy question.
-func (p *Planner) LoaderWindows(in loaders.DeliveryTargetsInput, want int) LoaderWindows {
+func (p *Planner) LoaderWindows(in loaders.DeliveryTargetsInput, want int, intent string) LoaderWindows {
 	defer observe(p.db, "loader-windows")()
 	targets, budget := loaders.DeliveryTargets(in)
 	w := LoaderWindows{HeldBy: map[string]string{}, Targets: len(targets), Budget: budget}
@@ -84,7 +86,7 @@ func (p *Planner) LoaderWindows(in loaders.DeliveryTargetsInput, want int) Loade
 			}
 			continue
 		}
-		live, err := p.db.CountLiveCarrierRequestsByDeliveryNode(t.NodeName)
+		live, err := p.db.CountLiveCarrierRequestsByDeliveryNode(t.NodeName, intent)
 		if err != nil {
 			w.heldUnread(t.NodeName, err)
 			continue
