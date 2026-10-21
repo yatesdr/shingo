@@ -73,8 +73,11 @@ func TestReleaseU1_AnUnansweredAskShowsPendingAndTheAnswerHealsIt(t *testing.T) 
 // TestReleaseU1_TheAskAddsNoWaitToTheRelease measures the release call with
 // Core not answering the U1's ask, with Core answering it, and with no U1 at
 // all (the baseline): the ask is an outbox row, so neither waits on Core.
-// Five of each, the median logged for the cost table; each median pinned under
-// a quarter of AskWait.
+// Five of each, the median logged for the cost table. What the U1 ADDS to the
+// baseline is pinned under a quarter of AskWait: a release that waited on the
+// ask would add the whole of it. The bound is on the difference because the
+// release's own time is not this test's: under -race on a four-core box the
+// baseline alone is about 700 ms.
 func TestReleaseU1_TheAskAddsNoWaitToTheRelease(t *testing.T) {
 	t.Parallel()
 	median := func(arm, hold bool) time.Duration {
@@ -89,8 +92,9 @@ func TestReleaseU1_TheAskAddsNoWaitToTheRelease(t *testing.T) {
 	t.Logf("release call, median of 5: no U1 %v; U1 asked, Core not answering %v; U1 asked, Core answering %v (AskWait %v)",
 		none, held, answered, AskWait)
 	for name, d := range map[string]time.Duration{"not answering": held, "answering": answered} {
-		if d >= AskWait/4 {
-			t.Errorf("release with Core %s took %v, want under %v: the U1's ask must not be waited for", name, d, AskWait/4)
+		if added := d - none; added >= AskWait/4 {
+			t.Errorf("release with Core %s took %v, %v over the baseline %v, want under %v more: the U1's ask must not be waited for",
+				name, d, added, none, AskWait/4)
 		}
 	}
 }
