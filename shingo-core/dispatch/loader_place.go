@@ -49,8 +49,7 @@ import (
 // and a pair that parks after placing gives the claim back and is not in-flight
 // again until it next claims. If a restock got there first, this read sees it and
 // yields to buffer. A lost race requeues (scanner replay), the same contract every
-// dropoff has. Do NOT route through the Edge withLoaderBudget seam (wrong store,
-// re-introduces divergence) and do NOT add ClaimSlot here.
+// dropoff has. Do NOT add ClaimSlot here.
 //
 // The home occupancy check is split by LEG ROLE, read from the leg's own steps
 // (legReturnsToHome). It used to be split on "does the plan contain a wait step",

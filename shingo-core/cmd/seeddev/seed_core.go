@@ -624,8 +624,8 @@ func seedBinLoaders(db *store.DB, p *plantspec.Plant) error {
 	// Dedicated-positions loaders (home_of). Each home is a single-payload position;
 	// the loader's identity is the home_of label (synthetic — never a node). Same
 	// payload on two positions is legal and is the same-payload-two-position fixture
-	// (each its own demand_registry row; the pooled threshold trips, ReservationTarget
-	// routes to the named position). Sorted for a deterministic seed.
+	// (each its own demand_registry row; the pooled threshold trips,
+	// loaders.DeliveryTargets routes to the named position). Sorted for a deterministic seed.
 	var deckIDs []string
 	for id := range homesByLoader {
 		deckIDs = append(deckIDs, id)
