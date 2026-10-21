@@ -35,10 +35,8 @@ import (
 // read it for a group's members (groupMembers) and for the carrier a write
 // names (boardBinID, the tile's bin); and the decisions on occupancy read it
 // under the decision rule (BinsActable, through binsForDecision and binsRowAt),
-// each failing closed on a copy that rule refuses. One decision keeps its own
-// read of Core: the operator empties' loader budget
-// (operator_demand_loader.go readLoaderSnapshot), whose window choice moves to
-// Core with the operator empty ask.
+// each failing closed on a copy that rule refuses. A loader's carriers are
+// not decided from it: Core counts and places them (the loader retrieve ask).
 
 // binWatchKey is the resend guard's key for the watch list.
 const binWatchKey = "bins.watch"

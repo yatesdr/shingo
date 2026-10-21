@@ -570,8 +570,8 @@ func applyManualSwap(e *Engine, ctx *orderCompletionCtx) bool {
 	// Push-driven unloader: the U2 just landed. The re-pull normally already
 	// happened at its PICKUP (rePullOnEmptyOutPickup), when Core freed the window;
 	// this is the fallback for a pickup the Edge never heard of, or whose re-pull
-	// read failed. See rePushOwnUnloaderIfUncovered for the local check that keeps
-	// the normal cycle off Core here.
+	// ask was not answered. See rePushOwnUnloaderIfUncovered for the local check
+	// that keeps the normal cycle's ask off Core here.
 	claim := ctx.Claim() // cached on first access in Match
 	if claim.Role == protocol.ClaimRoleConsume && claim.AutoPush {
 		e.rePushOwnUnloaderIfUncovered(ctx.node, "")
@@ -590,8 +590,8 @@ func applyManualSwap(e *Engine, ctx *orderCompletionCtx) bool {
 }
 
 // rePushOwnLoader stages one empty at the operator-staged produce loader that
-// owns node, through maybeStageLoaderEmpty: one budget-locked count and one Core
-// occupancy read. A node that belongs to no loader, or to a threshold one, stages
+// owns node, through maybeStageLoaderEmpty: one loader retrieve ask, which Core
+// counts and places. A node that belongs to no loader, or to a threshold one, stages
 // nothing. It is the produce CLEAR's push and the L2-landed push; the startup
 // sweep is SweepPushLoaders. Pinned by TestProduceClear_RePushesOnlyItsOwnLoader
 // and TestLanding_RePushesOnlyItsOwnLoader.
@@ -607,13 +607,14 @@ func (e *Engine) rePushOwnLoader(node *processes.Node) {
 }
 
 // rePushOwnUnloader offers the next full-in (U1) at the consume loader that owns
-// node, and only that one: one budget-locked snapshot and one Core node-bins read
-// (none when the unloader has no inbound source or no payloads). It is what the
+// node, and only that one: one loader retrieve ask per payload it serves, not
+// waited for (offerUnloaderFulls; none when the unloader has no inbound source
+// or no payloads). It is what the
 // re-pull gates call — CLEAR, PUSH EMPTY, the U2's pickup, and (behind a local
 // check) the U2's landing — each behind its own AutoPush condition.
 //
 // ONE UNLOADER, NOT THE WALK. The gates used to call the all-unloader sweep, which
-// read Core once per auto-pulling consume loader on this Edge for a tap that frees
+// asked once per auto-pulling consume loader on this Edge for a tap that frees
 // exactly one window, and pulled a full into any OTHER unloader that happened to
 // have a free window. Each unloader's own taps, the lineside-release event and the
 // startup SweepPushUnloaders are its re-pull triggers; nothing depends on another
@@ -626,25 +627,25 @@ func (e *Engine) rePushOwnUnloader(node *processes.Node) {
 	if l.Role() != domain.RoleConsume {
 		return
 	}
-	e.createUnloaderFullIns(l, l.PayloadSet())
+	e.offerUnloaderFulls(l, l.PayloadSet())
 }
 
 // rePushOwnUnloaderIfUncovered is rePushOwnUnloader behind a LOCAL check: if the
-// order table already shows that the seam could fire nothing, it returns without
-// the Core read. held names a window that still holds its carrier although no
-// order says so ("" for none).
+// order table already shows that Core would order nothing, it returns without
+// asking. held names a window that still holds its carrier although no order
+// says so ("" for none).
 //
 // THREE GATES USE IT, and each knows something the order table does not:
 //
 //   - CLEAR and PUSH EMPTY (held = the tapped window): the carrier is still on the
 //     window — it leaves at the U2's pickup — and Core would count it resident.
 //     A single-window unloader is therefore always covered at the tap, so the
-//     tap costs no read here; the pickup gate pulls the next full once the carrier
+//     tap asks nothing; the pickup gate pulls the next full once the carrier
 //     leaves. A two-window unloader with a free peer is not covered, and the gate
-//     reads and fires as before (TestPinAutoPushGate_ClearIsTheOnlyTrigger…,
+//     asks Core (TestPinAutoPushGate_ClearIsTheOnlyTrigger…,
 //     TestPinAutoPushGate_PushEmptyFillsASibling…).
 //   - U2-landed (held = ""): the fallback for a pickup the Edge never heard of, or
-//     whose re-pull read failed. In the normal cycle the pickup's pull is in flight
+//     whose re-pull ask was not answered. In the normal cycle the pickup's pull is in flight
 //     and this returns locally. Without the fallback that window idles until the
 //     next restart: no full arrives, so no CLEAR comes to re-pull
 //     (TestAutoPushLanding_PullsWhenNoPickupWasReported).
@@ -661,28 +662,29 @@ func (e *Engine) rePushOwnUnloaderIfUncovered(node *processes.Node, held string)
 	}
 	payloads := l.PayloadSet()
 	if e.unloaderPullsCovered(l, payloads, held) {
-		e.debugFn("side-cycle: unloader %s — every pull the seam could make is already in flight or held; no re-pull", l.ID())
+		e.debugFn("side-cycle: unloader %s — every pull Core could make is already in flight or held; no re-pull asked", l.ID())
 		return
 	}
-	e.createUnloaderFullIns(l, payloads)
+	e.offerUnloaderFulls(l, payloads)
 }
 
 // unloaderPullsCovered reports, from the order table alone (one SQLite read, no
-// Core call), whether the seam could fire nothing for these payloads: it wants ONE
-// full-in per payload and one bin per window, so it is covered when every payload
-// already has a non-terminal full-in in the unloader's delivery set, or when those
-// full-ins — plus the held window, if no full-in already delivers to it — number
-// the windows. EXACT in that direction: covered means the seam's to_fire is 0
-// whatever Core reports (want 1 minus one in flight; headroom = budget, at most the
-// window count, minus in-flight and resident). The other direction is only a read:
-// a carrier the order table cannot see (one set down by hand) makes this answer
-// "uncovered", and the Core-backed seam then decides as it always did. An
-// unreadable order list is "uncovered" too.
+// ask), whether Core would order nothing for these payloads. A release's full-in
+// wants ONE per payload and one bin per window, so it is covered when every
+// payload already has a non-terminal full-in in the unloader's delivery set, or
+// when those full-ins — plus the held window, if no full-in already delivers to
+// it — number the windows. EXACT in that direction: covered means Core's answer
+// orders nothing (dispatch.ReplenishLoader's side-cycle origin subtracts the
+// part's live fulls across every window of the unloader, and a window with a
+// full coming or a carrier standing is held), because the rows here are a
+// subset of Core's. The other direction is only a read: a carrier the order
+// table cannot see (one set down by hand) makes this answer "uncovered", and
+// Core then decides. An unreadable order list is "uncovered" too.
 func (e *Engine) unloaderPullsCovered(l *domain.Loader, payloads []domain.PayloadCode, held string) bool {
 	windows := l.DeliveryNodes()
 	active, err := e.db.ListActiveOrdersByDeliveryNodeSet(nodeIDStrings(windows))
 	if err != nil {
-		return false // cannot tell — let the Core-backed seam decide
+		return false // cannot tell — let Core decide
 	}
 	perPayload := map[string]int{}
 	perNode := map[string]bool{}
@@ -708,7 +710,7 @@ func (e *Engine) unloaderPullsCovered(l *domain.Loader, payloads []domain.Payloa
 		return true
 	}
 	if len(payloads) == 0 {
-		return true // nothing the seam could offer
+		return true // nothing to offer
 	}
 	for _, p := range payloads {
 		if perPayload[string(p)] == 0 {

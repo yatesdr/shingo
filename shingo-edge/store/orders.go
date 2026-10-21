@@ -77,6 +77,12 @@ func (db *DB) UpdateOrderProcessNode(id int64, processNodeID *int64) error {
 	return orders.UpdateProcessNode(db.DB, id, processNodeID)
 }
 
+// AdoptAskedOrder records this Edge's own part of an order Core made for its
+// ask; see orders.AdoptAsked.
+func (db *DB) AdoptAskedOrder(id int64, processNodeID *int64, stagingNode string, autoConfirm bool) error {
+	return orders.AdoptAsked(db.DB, id, processNodeID, stagingNode, autoConfirm)
+}
+
 // UpdateOrderStatus changes the order status and bumps updated_at.
 func (db *DB) UpdateOrderStatus(id int64, newStatus string) error {
 	return orders.UpdateStatus(db.DB, id, newStatus)

@@ -12,17 +12,18 @@ import (
 	"shingo/protocol/testutil"
 )
 
-// fold_pins_test.go — Core node-bins reads in one single-window auto_push
-// stage-1 cycle. At f9a854cb it was 4, three of which pulled nothing: CLEAR's
-// hadBin pre-read, the CLEAR gate, and a produce release's seam read while the
-// next full was already in flight. Only the pickup gate pulls. The CLEAR and
-// release gates now check the order table first (unloaderPullsCovered).
+// fold_pins_test.go — what one single-window auto_push stage-1 cycle costs Core.
+// At f9a854cb it was 4 node-bins reads, three of which pulled nothing: CLEAR's
+// hadBin pre-read, the CLEAR gate, and a produce release's read while the next
+// full was already in flight. Only the pickup gate pulls. The node-bins door is
+// gone and the U1 is Core's to order, so the cost is in loader retrieve asks:
+// the CLEAR and release gates check the order table first
+// (unloaderPullsCovered) and ask nothing when it says Core would order nothing.
 
 // TestPinFold_SingleWindowCycleReads: full on N → CLEAR → U2 lifts the carrier
-// (the pickup gate pulls the next full) → an upstream produce release of the
-// same payload → the U2 lands. No Core read in the cycle: the pickup gate, the
-// one that pulls, reads the bins table. At f9a854cb: CLEAR 2, pickup 1, release
-// 1, landing 0 = 4; then pickup 1 alone, until the seam moved onto the table.
+// (the pickup gate asks for the next full) → an upstream produce release of the
+// same payload → the U2 lands. One ask in the cycle, the pickup's, and no
+// node-bins read. At f9a854cb: CLEAR 2, pickup 1, release 1, landing 0 reads = 4.
 func TestPinFold_SingleWindowCycleReads(t *testing.T) {
 	t.Parallel()
 	f := newCycleUnloader(t, "FLD")
@@ -30,18 +31,22 @@ func TestPinFold_SingleWindowCycleReads(t *testing.T) {
 	total := 0
 	step := func(name string, want int, do func()) {
 		t.Helper()
-		before := f.core.nodeBinReads()
+		before, asked := f.core.nodeBinReads(), f.asks.asks.Load()
 		do()
-		got := f.core.nodeBinReads() - before
+		awaitAsks(t, f.eng)
+		if reads := f.core.nodeBinReads() - before; reads != 0 {
+			t.Errorf("%s: node-bins reads = %d, want 0", name, reads)
+		}
+		got := int(f.asks.asks.Load() - asked)
 		total += got
 		if got != want {
-			t.Errorf("%s: node-bins reads = %d, want %d", name, got, want)
+			t.Errorf("%s: loader retrieve asks = %d, want %d", name, got, want)
 		}
 	}
 
 	step("CLEAR", 0, func() { testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false, nil), "ClearBin") })
 	u2 := f.onlyU2(t)
-	step("pickup", 0, func() { f.pickUp(t, u2) })
+	step("pickup", 1, func() { f.pickUp(t, u2) })
 	if got := f.fulls(t, f.nCore); got != 1 {
 		t.Fatalf("after the pickup: U1s = %d, want 1", got)
 	}
@@ -50,15 +55,15 @@ func TestPinFold_SingleWindowCycleReads(t *testing.T) {
 		t.Errorf("after the release: U1s = %d, want still 1 (the one in flight covers it)", got)
 	}
 	step("landing", 0, func() { scLand(t, f.eng, f.db, u2) })
-	if total != 0 {
-		t.Errorf("Core node-bins reads per cycle = %d, want 0", total)
+	if total != 1 {
+		t.Errorf("loader retrieve asks per cycle = %d, want 1", total)
 	}
 }
 
 // TestPinFold_SingleWindowPushEmptyReads: PUSH EMPTY at a single-window
 // auto_push unloader. The tap reads the window from the bins table (it must
 // refuse a full carrier; site 5 of the reads, no node-bins read since); the gate
-// counts the tapped window held, is covered, and reads nothing. At f9a854cb the
+// counts the tapped window held, is covered, and asks nothing. At f9a854cb the
 // gate read Core too and pulled nothing — the carrier is resident.
 func TestPinFold_SingleWindowPushEmptyReads(t *testing.T) {
 	t.Parallel()
@@ -72,12 +77,15 @@ func TestPinFold_SingleWindowPushEmptyReads(t *testing.T) {
 	if got := f.fulls(t, f.nCore); got != 0 {
 		t.Errorf("PUSH EMPTY: U1s = %d, want 0 (carrier resident)", got)
 	}
+	if n := f.asks.asks.Load(); n != 0 {
+		t.Errorf("PUSH EMPTY: loader retrieve asks = %d, want 0 (covered locally)", n)
+	}
 }
 
 // TestPinFold_ProduceRelease: MaybeCreateUnloaderFullIn for one payload.
-// Covered (a full-in of that payload already in flight): no Core read, nothing
-// fired (at f9a854cb it read Core and fired nothing). Uncovered: it reads Core and
-// fires, as before.
+// Covered (a full-in of that payload already in flight): no ask, nothing ordered
+// (at f9a854cb it read Core and fired nothing). Uncovered: one ask, and Core
+// orders the full.
 func TestPinFold_ProduceRelease(t *testing.T) {
 	t.Parallel()
 	t.Run("covered", func(t *testing.T) {
@@ -96,6 +104,9 @@ func TestPinFold_ProduceRelease(t *testing.T) {
 		if got := f.fulls(t, f.nCore); got != 1 {
 			t.Errorf("covered release: U1s = %d, want still 1", got)
 		}
+		if n := f.asks.asks.Load(); n != 0 {
+			t.Errorf("covered release: loader retrieve asks = %d, want 0", n)
+		}
 	})
 	t.Run("uncovered", func(t *testing.T) {
 		t.Parallel()
@@ -104,10 +115,13 @@ func TestPinFold_ProduceRelease(t *testing.T) {
 		before := f.core.nodeBinReads()
 		f.eng.MaybeCreateUnloaderFullIn("PART-AC")
 		if reads := f.core.nodeBinReads() - before; reads != 0 {
-			t.Errorf("uncovered release: node-bins reads = %d, want 0 (the seam reads the table)", reads)
+			t.Errorf("uncovered release: node-bins reads = %d, want 0 (the release asks Core)", reads)
 		}
 		if got := f.fulls(t, f.nCore); got != 1 {
 			t.Errorf("uncovered release: U1s = %d, want 1", got)
+		}
+		if n := f.asks.asks.Load(); n != 1 {
+			t.Errorf("uncovered release: loader retrieve asks = %d, want 1", n)
 		}
 	})
 }

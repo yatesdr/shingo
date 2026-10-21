@@ -752,10 +752,13 @@ function bufferPartialOf(tile) {
     return tile.buffer_partial || null;
 }
 
-// alarmOf is a tile's alarm sentence: stranded counts, or a contained payload.
+// alarmOf is a tile's alarm sentence: stranded counts, a contained payload, or
+// an unloader's full asked of Core and not answered (the server's
+// ask_pending, verbatim).
 function alarmOf(tile) {
     if (tile.stranded_alarm) return tile.stranded_alarm;
     if (tile.containment_flagged) return 'Contained: its next delivery goes to the hold spot';
+    if (tile.ask_pending) return tile.ask_pending;
     return '';
 }
 

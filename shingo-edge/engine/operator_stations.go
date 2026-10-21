@@ -128,7 +128,7 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, sp
 	// does not have.
 	rows, err := e.binsForDecision(asked...)
 	if err != nil {
-		log.Printf("[occupied-check] nodes %v: occupancy=%s (%s), assuming occupied", names, OccupancyOutcome(false, err), binsWhy(err))
+		log.Printf("[occupied-check] nodes %v: occupancy=%s (%s), assuming occupied", names, OccupancyOutcome(err), binsWhy(err))
 		for _, n := range names {
 			occ[n] = true
 		}
@@ -139,7 +139,7 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, sp
 		switch {
 		case !ok:
 			log.Printf("[occupied-check] node %s: occupancy=%s, assuming occupied", n,
-				OccupancyOutcome(false, &BinsNotCurrent{Node: n, Why: NotActableUnwatched}))
+				OccupancyOutcome(&BinsNotCurrent{Node: n, Why: NotActableUnwatched}))
 			occ[n] = true
 		case r.State != protocol.BinsStateEmpty && r.State != protocol.BinsStateOccupied:
 			log.Printf("[occupied-check] node %s: occupancy=unknown (state %q), assuming occupied", n, r.State)

@@ -494,9 +494,9 @@ func (e *Engine) seatManuallyLoadedBin(node *processes.Node, claimIDPtr, activeB
 // send it leaves the line blank and changes nothing else
 // (TestPinFold_ClearAgainstTodaysCoreResponse).
 //
-// Post-clear, if the claim has AutoPush enabled, rePushOwnUnloader offers the next pull
-// for this node's own unloader to the reservation seam — a no-inbound drain is gated
-// there too, so it's a no-op.
+// Post-clear, if the claim has AutoPush enabled, rePushOwnUnloaderIfUncovered asks
+// Core for the next pull at this node's own unloader — a no-inbound drain asks
+// nothing, so it's a no-op.
 // ClearBin clears the bin at the consume-unloader window. binTypeCode is the
 // dunnage type the operator selected at the confirm tap, sent as given; empty
 // string sends none. The Edge never fills it in. At a two-stage unloader Core
@@ -638,8 +638,8 @@ func (e *Engine) afterClear(nodeID int64, node *processes.Node, claim *processes
 		node.CoreNodeName, discarded, cleared.BinID, clearedPayload, cleared.ClearedBinTypeCode, cleared.DeltaEpoch)
 	// Push-driven unloader: offer the next pull at the unloader this window
 	// belongs to. The AutoPush gate is this condition. The carrier is still on the
-	// window (it leaves at the U2's pickup), so it is counted held and the offer
-	// goes to Core only when the order table shows a pull the seam could make —
+	// window (it leaves at the U2's pickup), so it is counted held and the ask
+	// goes to Core only when the order table shows a pull Core could make —
 	// see rePushOwnUnloaderIfUncovered.
 	if claim.Role == protocol.ClaimRoleConsume && claim.AutoPush {
 		e.rePushOwnUnloaderIfUncovered(node, node.CoreNodeName)
@@ -712,7 +712,7 @@ func (e *Engine) PushEmptyOut(nodeID int64) error {
 	if err := e.createUnloaderEmptyOut(node, claim, row.BinID); err != nil {
 		return err
 	}
-	// Re-arm the delivery seam — mirrors ClearBin's gate at its tail, with the
+	// Ask for the next pull — mirrors ClearBin's gate at its tail, with the
 	// tapped window counted held for the same reason.
 	if claim.AutoPush {
 		e.rePushOwnUnloaderIfUncovered(node, node.CoreNodeName)
@@ -816,8 +816,8 @@ func (e *Engine) createUnloaderEmptyOut(node *processes.Node, claim *processes.N
 	return nil
 }
 
-// RequestEmptyBin delivers an empty bin to a produce node. A loader window
-// issues a single retrieve order through the never-2N seam; the swap modes
+// RequestEmptyBin delivers an empty bin to a produce node. At a loader window
+// it asks Core for one (the loader retrieve ask, askLoaderEmpties); the swap modes
 // (single_robot, two_robot, two_robot_press_index, sequential) plan and apply
 // exactly what the produce request would, without its guards about the parts,
 // so the robot choreography and the checks on the line are the produce
@@ -933,34 +933,14 @@ func (e *Engine) requestEmptyAtManualSwapLoader(
 	if len(res.Created) == 0 {
 		return nil, fmt.Errorf("%s", noEmptiesSentence(node.Name, res))
 	}
-	order, gerr := e.db.GetOrderByUUID(res.Created[0])
-	if gerr != nil || order == nil {
-		// Made on Core and not yet projected here: the board shows it when the
-		// projection lands. The tap's answer is the order Core named.
-		log.Printf("bin_ops: node %s: empty %s ordered on Core, not yet projected: %v", node.Name, res.Created[0], gerr)
-		return &orders.Order{UUID: res.Created[0], ProcessNodeID: &nodeID, RetrieveEmpty: true}, nil
-	}
-	// The asker's tile tracks it. The projection guesses the window it
-	// delivers to, and on a shared loader that can be a sibling's; the order
-	// is the node that asked, as an Edge-made one was, and a later projection
-	// keeps a stored node (UpsertProjection).
-	if order.ProcessNodeID == nil || *order.ProcessNodeID != nodeID {
-		if uerr := e.db.UpdateOrderProcessNode(order.ID, &nodeID); uerr != nil {
-			log.Printf("bin_ops: track empty %s at node %d: %v", order.UUID, nodeID, uerr)
-		} else {
-			order.ProcessNodeID = &nodeID
-		}
-	}
-	if uerr := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &order.ID); uerr != nil {
-		log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, uerr)
-	}
-	return order, nil
+	// The asker's tile tracks it.
+	return e.trackAskedOrder(nodeID, node, res.Created[0], true), nil
 }
 
-// RequestFullBin requests a full bin of the given payload to be delivered to a
+// RequestFullBin asks Core for a full bin of the given payload at a
 // manual_swap consume node. Core queues the order if no full bins of that
-// payload are available. Routed through the reservation seam, so it shares the
-// unloader's never-2N budget with the automatic U1 path.
+// payload are available. It is the loader retrieve ask, as the unloader's
+// automatic U1 is, so both are counted by the one decision on Core.
 func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order, error) {
 	node, runtime, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
@@ -990,27 +970,21 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 		return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 	}
 
-	// Route through the reservation seam, mirroring the produce-side manual_swap
-	// branch of RequestEmptyBin. Before this, RequestFullBin created its order
-	// directly — no budget, no in-flight count, no occupancy — so an unloader
-	// could be sent a second full while the first was still inbound, and the
-	// never-2N invariant did not cover the path at all. The seam counts fulls
-	// (retrieveEmpty=false) across the unloader's delivery set under the loader's
-	// mutex, so this button and the automatic U1 now contend on one lock instead
-	// of racing.
+	// CORE ORDERS THE FULL (the loader retrieve ask, a person's full): Core
+	// counts the unloader's fulls in flight, what stands on its windows and
+	// which are spoken for, plant-wide and under its per-loader lock, and makes
+	// the order or says why not. This button and the automatic U1 are one
+	// decision there.
 	//
 	// member = the operator's node. A dedicated unloader routes the full to that
-	// position; a shared unloader ignores member and the seam assigns a FREE
-	// window — same rule as the produce side, and it means a full is no longer
-	// sent to a window that already holds one.
+	// position; a shared unloader ignores member and Core assigns a FREE window.
 	//
-	// Source is the unloader's inbound source (the FG supermarket it pulls from;
-	// without it Core's planTransport falls back to global FIFO and can pull from
-	// the wrong supermarket, the shape of Hopkinsville 2026-05-14). The loader
-	// answers, not the claim: at a node Core's loader set names, claimAtNode
-	// already returns the loader's own claim, and a stored claim's
-	// inbound_source, authored on another screen with no cross-check, is not
-	// read. Pinned by TestRequestFullBin_PullsFromTheUnloadersInboundSource.
+	// Source is the unloader's inbound source, Core's own copy (the ask names
+	// none): the FG supermarket it pulls from, not a stored claim's
+	// inbound_source authored on another screen (the shape of Hopkinsville
+	// 2026-05-14). An unloader with none has Core search the plant (AnySource),
+	// as the Edge's own order with no source did. Pinned by
+	// TestRequestFullBin_PullsFromTheUnloadersInboundSource.
 	dl, lerr := e.loaders().LoaderAt(domain.NodeID(node.CoreNodeName), domain.RoleConsume)
 	if lerr != nil {
 		return nil, fmt.Errorf("node %s: resolve unloader: %w", node.Name, lerr)
@@ -1018,35 +992,22 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	if dl == nil {
 		return nil, fmt.Errorf("node %s: not a configured unloader", node.Name)
 	}
-	// manual_swap unloader requires operator confirmation: U1 must not
-	// auto-confirm, or U2 fires before the operator has processed the bin.
-	const autoConfirm = false
-	var created *orders.Order
-	n, rerr := e.withLoaderBudget(dl, domain.PayloadCode(payloadCode), 1, domain.NodeID(node.CoreNodeName), false, func(deliveryNodes []string) (int, error) {
-		made := 0
-		for _, deliveryNode := range deliveryNodes {
-			order, cerr := e.orderMgr.CreateRetrieveOrder(
-				&nodeID, false, 1, deliveryNode, dl.InboundSource(), "",
-				"standard", payloadCode, autoConfirm, true, reqOrigin,
-			)
-			if cerr != nil {
-				return made, cerr
-			}
-			created = order
-			if uerr := e.db.SetProcessNodeRuntimeActiveOrder(nodeID, &order.ID); uerr != nil {
-				log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, uerr)
-			}
-			made++
-		}
-		return made, nil
+	res, err := askOrRefuse[protocol.LoaderRetrieveResponse](e, protocol.AskLoaderRetrieve, protocol.LoaderRetrieveRequest{
+		LoaderKey: string(dl.ID()), Direction: protocol.LoaderRetrieveFull, Origin: protocol.LoaderAskOperator,
+		PayloadCode: payloadCode, MemberNode: node.CoreNodeName, Count: 1,
+		OriginID: reqOrigin.ID, OriginClass: reqOrigin.Class,
+		AnySource: dl.InboundSource() == "",
+		// The operator confirms after processing the bin: Core's sweep must not
+		// confirm it on arrival.
+		SkipAutoConfirm: true,
 	})
-	if rerr != nil {
-		return nil, fmt.Errorf("node %s: request full: %w", node.Name, rerr)
+	if err != nil {
+		return nil, fmt.Errorf("node %s: request full: %w", node.Name, err)
 	}
-	if n == 0 || created == nil {
-		return nil, fmt.Errorf("node %s: a full bin is already inbound", node.Name)
+	if len(res.Created) == 0 {
+		return nil, fmt.Errorf("%s", noneOrderedSentence(node.Name, "full", res))
 	}
-	return created, nil
+	return e.trackAskedOrder(nodeID, node, res.Created[0], false), nil
 }
 
 // stationTakesLoadDirective asks the Core-owned loader a node belongs to whether

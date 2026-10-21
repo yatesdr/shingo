@@ -23,14 +23,16 @@ import (
 // loader_budget_port_docker_test.go — the Edge's never-2N seam, asserted on
 // Core.
 //
-// The Edge decides fulls to a consume loader, the unloader's U1 and the manual
+// The Edge decided fulls to a consume loader, the unloader's U1 and the manual
 // retrieve at a loader window under its own per-loader lock
-// (withLoaderBudget, createUnloaderFullIns). Before that code moves, what its
-// pins assert is restated here against ReplenishLoader, the one door it moves
+// (withLoaderBudget, createUnloaderFullIns) until those writers asked Core;
+// that code and the Edge pins below are gone. Before it moved, what its pins
+// asserted was restated here against ReplenishLoader, the one door it moved
 // to. Each test names the Edge pin it ports (shingo-edge/engine:
 // loader_reservation_seam_test, loader_budget_lock_pin_test,
 // unloader_sweep_characterization_test, side_cycle_pins_test,
-// loader_push_characterization_test).
+// loader_push_characterization_test; side_cycle_pins_test stays, its pins
+// being the Edge's triggers).
 //
 // PREDICTIONS. What Core could not do when these were written was written
 // before the source that makes it true, and skipped until then: a full pulled

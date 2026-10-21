@@ -164,6 +164,12 @@ type StationNodeView struct {
 	// Rendered as a chip on the node card, verbatim. Empty when there is
 	// nothing to say.
 	KeepStagedNote string `json:"keep_staged_note,omitempty"`
+	// AskPending is the sentence for an unloader window whose unloader has a
+	// full (U1) asked of Core and not yet answered: the ask went without
+	// waiting, from a release or the window's own taps, and Core's answer clears
+	// it. The loader board renders it as the window card's note, verbatim. Empty
+	// when no ask is out.
+	AskPending string `json:"ask_pending,omitempty"`
 	// CountWaits is the sentence for a sequential position the line has moved
 	// onto before its bin arrived: "The line is on <node>; its parts wait for
 	// <node>'s bin." The count is held (pending_uop_delta) and replays when the

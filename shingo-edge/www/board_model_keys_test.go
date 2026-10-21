@@ -96,6 +96,7 @@ func boardFixture() domain.OperatorStationView {
 			// The board's alarm sentences: a card's note.
 			StrandedAlarm:      "counts are waiting for a bin",
 			ContainmentFlagged: true,
+			AskPending:         "A full of PART-A is asked of Core; no answer yet",
 		}},
 		Serves: []domain.ServedRow{{Cell: "PRESS-1", Part: "PART-A", Role: "produce", Carrier: "TOTE-1",
 			HaveUOP: &have, CapacityUOP: 10, Incoming: true, Node: "PLN_1", ProcessID: 2, ProcessNodeID: 3,

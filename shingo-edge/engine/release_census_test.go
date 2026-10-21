@@ -132,14 +132,11 @@ var releasePlanCallers = map[string]string{
 // a release nobody can gate (the no-wait population); this is where the next
 // one shows up.
 var orderCreationSites = map[string]string{
-	"api_retrieve.go:CreateRetrieveForAPI":                        "API retrieve (external caller)",
 	"api_retrieve.go:createRetrieveDirect":                        "API retrieve, direct arm",
 	"changeover_applier.go:createComplexFromSpec":                 "changeover plan: complex legs (the planner's waits; S7 adds one before the per-position swap's pickup)",
 	"changeover_applier.go:createRetrieveFromSpec":                "changeover plan: simple retrieves (no steps)",
 	"loader_outbound_guard.go:fileLoadedOutbound":                 "loader outbound move, filed at the LOAD (no wait)",
-	"operator_bin_ops.go:RequestFullBin":                          "operator: full bin to a loader window",
 	"operator_bin_ops.go:createUnloaderEmptyOut":                  "unloader empty-out (no wait)",
-	"operator_demand_unloader.go:fireUnloaderFulls":               "unloader demand: fulls",
 	"operator_node_changeover.go:DeliverNewMaterialForChangeover": "changeover node: deliver new material (no wait: a drop finishes, S7)",
 	"operator_node_changeover.go:EvacuateNode":                    "changeover node: evacuate (a wait in front of a curtained pickup, S7) — door 4 on its fallback arm",
 	"operator_node_changeover.go:StageNodeChangeoverMaterial":     "changeover node: stage new material",
@@ -338,8 +335,6 @@ var phantomCitations = map[string]string{
 	"TestWiring_CounterDelta_ConsumeFloorsAtZero @ engine/wiring_test.go":                                          "outside the release layer: reported, not fixed here",
 	"TestWiring_IngestCompletion_ResetsProduceUOP @ engine/wiring_test.go":                                         "outside the release layer: reported, not fixed here",
 	"TestWiring_RetrieveCompletion_ConsumePartialBin_ResetsToBinUOP @ engine/wiring_test.go":                       "outside the release layer: reported, not fixed here",
-	"TestWithLoaderBudget_EmitDuringReservation @ engine/operator_demand_loader.go":                                "outside the release layer: reported, not fixed here",
-	"TestWithLoaderBudget_FiresWhenOccupancyReadFails @ engine/loader_reservation_seam_test.go":                    "outside the release layer: reported, not fixed here",
 }
 
 // TestCitedTestsExist: every Test… a comment in shingo-edge names must be a test

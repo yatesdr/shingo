@@ -24,11 +24,9 @@ import (
 // BuildLoaderInfos takes no edge argument and the node list is unfiltered — so
 // the ONLY thing assigning a loader window to an edge is a human putting that
 // node into one of that edge's processes. Creating boards automatically would
-// remove that decision without replacing it, and the never-2N budget is per-edge
-// (withLoaderBudget holds an in-process mutex over the local order table), so two
-// edges drawing one loader would each grant themselves a full window allowance.
-// The button keeps the human answering "which edge, which process" and only
-// removes the tedium of answering it across four screens.
+// remove that decision without replacing it. The button keeps the human
+// answering "which edge, which process" and only removes the tedium of
+// answering it across four screens.
 
 // LoaderBoardGap is a Core loader this edge draws NO operator board for.
 type LoaderBoardGap struct {

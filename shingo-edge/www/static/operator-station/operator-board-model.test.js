@@ -188,6 +188,7 @@ function bt(id, name, o) {
     if (o.refusals) t.supply_refusals = o.refusals;
     if (o.partialFrom) t.buffer_partial = { node: o.partialFrom };
     if (o.alarm) t.stranded_alarm = o.alarm;
+    if (o.askPending) t.ask_pending = o.askPending;
     return t;
 }
 const FULLBIN = (part, type) => ({ occupied: true, payload_code: part, stocked: true, bin_type_code: type || 'TOTE-1' });
@@ -584,6 +585,14 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     eq(zone(b, 'load').cards.map(c => [c.spot, c.note, c.act.kind]),
         [['SMN_2', 'Contained', 'load'], ['SMN_1', 'Counts are piling up', 'modal']],
         'an alarm is its card\'s note; a tile with no card of its own gets one in the first zone, opening the node modal');
+}
+
+// An unloader's full asked of Core and not answered: the server's sentence is
+// the window card's note, so the board never shows the ask as nothing at all.
+{
+    const PENDING = 'A full of PART-A is asked of Core; no answer yet';
+    const b = B({ station: {}, nodes: [bt(1, 'SMN_U1', { role: 'consume', parts: ['PART-A'], bin: NOBIN, askPending: PENDING })], serves: [] });
+    eq(zone(b, 'windows').cards.map(c => c.note), [PENDING], 'a pending U1 ask is the window card note');
 }
 
 // ── Show all: every tile in the plant's order ──

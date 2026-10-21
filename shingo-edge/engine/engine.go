@@ -226,11 +226,6 @@ type Engine struct {
 	// the list-then-create dedup gap. One sweep of each kind at a time.
 	sweepingUnloaders atomic.Bool
 	sweepingLoaders   atomic.Bool
-	// l1Burst is the per-delivery-node burst tripwire (PR-0 observability):
-	// WARNs when too many loader/unloader in-bin orders land on one node in a
-	// short window. Zero value is usable.
-	l1Burst loaderBurstTracker
-
 	// strandedAlarms holds the current parked-ticks alarm detail per core node
 	// name (map[string]string), maintained by strandedMonitor. The operator-
 	// station view reads it via StrandedAlarmDetail so the tile renders the chip
@@ -241,15 +236,11 @@ type Engine struct {
 	// on every keeper pass, so a restart loses nothing the next sweep does not
 	// say again.
 	keepStagedNotes sync.Map
-
-	// loaderResv serializes the count→fire reservation per loader so concurrent
-	// writers (an HTTP RequestEmptyBin vs the push sweep) can't both read the
-	// same in-flight count and both fire empties —
-	// the never-2N invariant. map[loaderID]*sync.Mutex, keyed from day one (no
-	// global lock). NO transaction: see withLoaderBudget and
-	// FINAL-ADJUDICATION Q1 (monotonicity + non-tx-pure CreateRetrieveOrder) —
-	// shingo-library/archive/bin-loader-multiwindow-reviews-2026-06-12/FINAL-ADJUDICATION.md.
-	loaderResv sync.Map
+	// unloaderAsks holds the U1 asks out with Core and not answered
+	// (unloaderAskKey -> struct{}): the board's pending note per unloader
+	// window (UnloaderAskNote). Memory only, as the ask's waiter is: a restart
+	// drops the note, and Core's answer still lands, its orders as projections.
+	unloaderAsks sync.Map
 
 	// primeResv serializes the count->decide->create sequence for the
 	// press-index partial-empty prime, so two concurrent requests on one cell
@@ -351,6 +342,7 @@ func New(c Config) *Engine {
 	// the live alarm map so the chip renders on load and on every refresh.
 	e.stationService.SetStrandedResolver(e.StrandedAlarmDetail)
 	e.stationService.SetKeepStagedResolver(e.KeepStagedNote)
+	e.stationService.SetUnloaderAskResolver(e.UnloaderAskNote)
 	// A served row names its part's bin type, and an unloader tile its CLEAR
 	// panels' carriers, both from the payload-to-bin-type catalog Core
 	// delivers with every node-list sync.

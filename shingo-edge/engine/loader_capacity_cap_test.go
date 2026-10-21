@@ -7,7 +7,6 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/store"
-	"shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
 
@@ -16,12 +15,13 @@ import (
 // The incident: a home-location loader configured as ONE core node carrying
 // ~20 payloads. A single kanban demand signal swept every payload at minStock=2
 // → ~40 retrieve_empty orders aimed at a one-bin window, all parked
-// "destination occupied" and cancelled. The fix is two-fold and both parts are
-// pinned here: (1) the per-node capacity cap in withLoaderBudget bounds total
-// in-flight empties at a core node to its physical window slots
-// (one per window); (2) fallback-no-sweep stops an unrelated signal,
+// "destination occupied" and cancelled. The fix was two-fold: (1) a per-node
+// capacity cap bounds total in-flight carriers at a core node to its physical
+// window slots (one per window) — Core's now, for every loader ask
+// (plan.LoaderWindows); (2) fallback-no-sweep stops an unrelated signal,
 // resolved by payload-first-match, from fanning across the resolved loader's
-// whole catalog. The unloader (consume) analog is covered too.
+// whole catalog. The unloader (consume) analog is pinned here, with what it
+// costs in asks.
 
 func capTestPayloads(n int) []string {
 	out := make([]string, n)
@@ -70,24 +70,6 @@ func seedCapManualSwap(t *testing.T, db *store.DB, proc, coreNode string, role p
 	}
 	db.EnsureProcessNodeRuntime(nodeID)
 	return nodeID
-}
-
-// capActiveOrders returns the active orders at a process node split by
-// direction: empties (retrieve_empty, the loader L1 shape) and fulls
-// (!retrieve_empty, the unloader U1 shape).
-func capActiveOrders(t *testing.T, db *store.DB, nodeID int64, wantEmpty bool) []orders.Order {
-	t.Helper()
-	ords, err := db.ListActiveOrdersByProcessNode(nodeID)
-	if err != nil {
-		t.Fatalf("ListActiveOrdersByProcessNode: %v", err)
-	}
-	var out []orders.Order
-	for _, o := range ords {
-		if o.RetrieveEmpty == wantEmpty {
-			out = append(out, o)
-		}
-	}
-	return out
 }
 
 // seedLoaderNode creates a process with one active style and a process_node at
@@ -173,17 +155,20 @@ func multiPayloadLoaderInfo(coreNode, role, repl string, payloads []string, _ in
 // NOTE: the produce bin-count cap tests (SweepBoundedByWindowSlots /
 // FallbackRefillsOnlySignaledPayload) were REMOVED with the bin-count floor: the
 // legacy produce DemandSignal sweep (retired: MaybeCreateLoaderEmptyIn / refillLoaderForPayload)
-// is retired. The never-2N cap they exercised is now enforced by the reservation seam
-// for every produce path — see loader_reservation_seam_test.go.
+// is retired. The never-2N cap they exercised is Core's for every loader ask
+// (dispatch's ported budget pins, loader_budget_port_docker_test.go).
 
 // TestUnloaderCapacityCap_AutoPushBoundedByWindowSlots is the consume-side
 // analog: a 20-payload AutoPush unloader's re-pull (rePushOwnUnloader, what the
-// CLEAR / PUSH EMPTY / U2-landed gates call) must not stage more full-in (U1)
-// orders at the window than it can physically hold.
+// pickup gate calls, and the CLEAR / PUSH EMPTY / U2-landed gates when not
+// covered locally) stages one full-in (U1) at its one window. The cost: one ask
+// per payload, so 20 asks for one window; Core answers 19 with the window
+// held.
 func TestUnloaderCapacityCap_AutoPushBoundedByWindowSlots(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
+	core := answerLoaderAsks(t, eng)
 	payloads := capTestPayloads(20)
 	nodeID := seedCapManualSwap(t, db, "UNL-PROC", "UNLOADER-1", protocol.ClaimRoleConsume, payloads, 0, true)
 	seedCoreLoader(t, eng, multiPayloadLoaderInfo("UNLOADER-1", "consume", "operator", payloads, 0))
@@ -191,26 +176,32 @@ func TestUnloaderCapacityCap_AutoPushBoundedByWindowSlots(t *testing.T) {
 	node, err := db.GetProcessNode(nodeID)
 	testutil.MustNoErr(t, err, "read unloader node")
 	eng.rePushOwnUnloader(node)
+	awaitAsks(t, eng)
 
-	if got := len(capActiveOrders(t, db, nodeID, false)); got > 1 {
-		t.Errorf("AutoPush unloader staged %d full-in orders, exceeds the one-bin window", got)
+	if got := inFlightFulls(t, db, []string{"UNLOADER-1"}); got != 1 {
+		t.Errorf("AutoPush unloader staged %d full-in orders, want 1 for the one-bin window", got)
+	}
+	if n := core.asks.Load(); n != 20 {
+		t.Errorf("asks = %d, want 20 (one per payload)", n)
 	}
 }
 
 // TestUnloaderCapacityCap_SweepPushBoundedByWindowSlots covers the startup
-// sweep path (SweepPushUnloaders), which loops the same per-payload create as
-// the gates' rePushOwnUnloader and must hit the same node cap.
+// sweep path (SweepPushUnloaders), which offers every payload as the gates'
+// rePushOwnUnloader does and hits the same node cap on Core.
 func TestUnloaderCapacityCap_SweepPushBoundedByWindowSlots(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
+	answerLoaderAsks(t, eng)
 	payloads := capTestPayloads(20)
-	nodeID := seedCapManualSwap(t, db, "UNLSWEEP-PROC", "UNLOADER-2", protocol.ClaimRoleConsume, payloads, 0, true)
+	seedCapManualSwap(t, db, "UNLSWEEP-PROC", "UNLOADER-2", protocol.ClaimRoleConsume, payloads, 0, true)
 	seedCoreLoader(t, eng, multiPayloadLoaderInfo("UNLOADER-2", "consume", "operator", payloads, 0))
 
 	eng.SweepPushUnloaders()
+	awaitAsks(t, eng)
 
-	if got := len(capActiveOrders(t, db, nodeID, false)); got > 1 {
-		t.Errorf("AutoPush unloader startup sweep staged %d full-in orders, exceeds the one-bin window", got)
+	if got := inFlightFulls(t, db, []string{"UNLOADER-2"}); got != 1 {
+		t.Errorf("AutoPush unloader startup sweep staged %d full-in orders, want 1 for the one-bin window", got)
 	}
 }

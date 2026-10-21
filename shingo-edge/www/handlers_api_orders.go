@@ -64,8 +64,8 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 	// that looped CreateRetrieveOrder directly, which is how it ended up as the
 	// only creation path with no budget behind it — ask for five empties at a
 	// window with room for one and you got five. Both arms now go through the
-	// engine, which routes to the reservation seam when a loader owns the
-	// destination and leaves everything else exactly as it was.
+	// engine, which asks Core when a loader owns the destination (Core counts
+	// and places the carriers) and leaves everything else exactly as it was.
 	made, err := h.orchestration.CreateRetrieveForAPI(engine.APIRetrieveRequest{
 		ProcessNodeID: processNodeID,
 		RetrieveEmpty: req.RetrieveEmpty,
@@ -79,18 +79,26 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 		Count:         count,
 	})
 	if err != nil {
-		if errors.Is(err, engine.ErrLoaderBudgetExhausted) {
-			// The plant is in a state that refuses the request, not a bad
-			// request. Same answer the operator's own buttons give.
-			writeError(w, http.StatusConflict, err.Error())
-			return
+		var none *engine.LoaderRetrieveRefused
+		var refusal *engine.CoreRefusal
+		switch {
+		case errors.As(err, &none):
+			// Core made none at the loader's windows: the plant is in a state
+			// that refuses the request, not a bad request, and Core's answer
+			// says why. Same answer the operator's own buttons give.
+			writeError(w, http.StatusConflict, none.Sentence)
+		case writeAskPending(w, r, err):
+			// Asked of Core and not answered within the wait: sent, not failed.
+		case errors.As(err, &refusal) && refusal.Status != 0:
+			writeError(w, refusal.Status, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, err.Error())
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	// Nothing created and no error is not a shape the engine should produce —
-	// it returns ErrLoaderBudgetExhausted for that — but the handler must not
+	// it returns LoaderRetrieveRefused for that — but the handler must not
 	// take the caller down if it ever does. An empty slice indexed at [0] is a
 	// panic, and a panic here is a 500 with a stack trace where a sentence
 	// belongs.

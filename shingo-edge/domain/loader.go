@@ -203,6 +203,8 @@ func WithUOPThreshold(m map[PayloadCode]int) LoaderOption {
 // WithFunnelWindows restricts a shared_window loader to ONE window at a time:
 // empties funnel to its first window on a budget of 1 rather than spreading one
 // bin per window (CoreLoader.FunnelWindows, owned by Core's bin_loaders row).
+// Core decides from its own row; nothing on the Edge reads this copy since
+// every carrier a loader asks for is Core's to place.
 //
 // Not passing the option leaves it false, which is SPREAD — the behaviour every
 // loader has. The whole field is stated as the restriction for exactly that
@@ -612,75 +614,11 @@ func (l *Loader) ServesPayload(p PayloadCode) bool {
 	return false
 }
 
-// ReservationTarget returns the delivery-node set and the empty-in BUDGET for a
-// demand of `payload` at this loader — the inputs the reservation seam counts
-// across and caps to. The per-layout semantics live here so the seam stays
-// layout-agnostic:
-//
-//   - shared_window, multiWindow=false: funnel to the loader's first window
-//     with a budget of 1 — behaviour-identical to the pre-multi-window resolver
-//     (FINAL-ADJUDICATION flip-trigger #3: don't fragment the budget before
-//     delivery spreads / the board renders the windows).
-//   - shared_window, multiWindow=true: spread across the loader's windows —
-//     budget = the window count, delivered round-robin to free windows. A loader with a
-//     single window (no homes configured) still resolves to one node / budget 1,
-//     so flipping the flag only changes loaders actually configured multi-window.
-//   - dedicated_positions: the payload maps to ONE independent one-bin position;
-//     budget 1, delivered there. When member names a position serving the payload,
-//     deliver to THAT position (the same-payload-two-positions fix) instead of
-//     first-match; member "" (operator request) falls back to
-//     first-match, preserving prior behaviour. Positions never share a budget.
-//
-// member is the specific loader member node the caller names — the node the
-// operator acted at (withLoaderBudget's member). It is honoured only for dedicated
-// layouts — shared windows share one budget, so the seam's free-window assignment
-// (perNode==0) picks the slot and member is ignored. "" means "no member named."
-//
-// Returns (nil, 0) when the loader does not serve the payload (no target).
-func (l *Loader) ReservationTarget(member NodeID, payload PayloadCode, multiWindow bool) (nodes []NodeID, budget int) {
-	if l.IsShared() {
-		// A blank payload is the payload-agnostic transitional stage — still a
-		// valid target; a named payload must be in the shared set.
-		if payload != "" && !l.ServesPayload(payload) {
-			return nil, 0
-		}
-		if multiWindow {
-			out := make([]NodeID, len(l.windows))
-			for i, w := range l.windows {
-				out[i] = w.Node
-			}
-			return out, l.slotCount
-		}
-		// multiWindow off: funnel to the loader's first WINDOW (a real node), budget 1 —
-		// never the identity l.id, which is the loader_key token, not a node.
-		// Members are materialised so a window always exists; guard anyway.
-		if len(l.windows) == 0 {
-			return nil, 0
-		}
-		return []NodeID{l.windows[0].Node}, 1
-	}
-	// Dedicated: honour the named member when it is a position serving the payload —
-	// route the empty to the position the signal already identified, not first-match.
-	if member != "" {
-		for _, pos := range l.positions {
-			if pos.Node == member && (payload == "" || pos.Payload == payload) {
-				return []NodeID{pos.Node}, 1
-			}
-		}
-	}
-	// No member named, or it didn't match a serving position: first-match fallback.
-	for _, pos := range l.positions {
-		if pos.Payload == payload {
-			return []NodeID{pos.Node}, 1
-		}
-	}
-	return nil, 0
-}
-
-// DeliveryNodes is the set of nodes an empty for this loader may be delivered to
-// — every window for shared_window, every position for dedicated. The
-// reservation seam counts in-flight empties across this set (for shared, the
-// whole set shares one budget; for dedicated, each position is queried alone).
+// DeliveryNodes is the set of nodes a carrier for this loader may be delivered
+// to — every window for shared_window, every position for dedicated. Core
+// chooses among them (loaders.DeliveryTargets); the Edge reads the set for
+// its own windows (the unloader's ownWindow and the order-table check,
+// unloaderPullsCovered).
 func (l *Loader) DeliveryNodes() []NodeID {
 	if l.IsShared() {
 		out := make([]NodeID, len(l.windows))

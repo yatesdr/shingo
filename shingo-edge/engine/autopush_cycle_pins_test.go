@@ -31,7 +31,7 @@ func newCycleUnloader(t *testing.T, prefix string) *ugFixture {
 	core := newSCCore(t)
 	bridgeCore(t, eng, core.srv.URL)
 	core.bind(t, eng)
-	f := &ugFixture{eng: eng, db: db, core: core, nCore: prefix + "-N"}
+	f := &ugFixture{eng: eng, db: db, core: core, asks: answerLoaderAsks(t, eng), nCore: prefix + "-N"}
 	seedCoreLoader(t, eng, protocol.LoaderInfo{
 		Name: prefix, LoaderKey: "loader:" + prefix, Role: "consume", Layout: "shared_window",
 		Replenishment: "operator", InboundSource: "FG-SUPER", OutboundDest: "EMPTY-TOTES",
@@ -100,10 +100,11 @@ func TestAutoPushCycle_SingleWindow_RefillsAtThePickup(t *testing.T) {
 }
 
 // TestAutoPushLanding_PullsWhenNoPickupWasReported: the landing is the fallback.
-// Two ways the pickup re-pull does not happen — the BinPickedUp never reaches the
-// Edge, or it does and the re-pull has no table to decide from — and in both the landing
-// finds nothing in flight and pulls. Without it the window would idle until a
-// restart: no full arrives, so no CLEAR comes.
+// Two ways the pickup re-pull does not land — the BinPickedUp never reaches the
+// Edge, or it does and Core has not answered its ask by the landing — and in both
+// the landing finds nothing in flight and asks. Without it the window would idle
+// until a restart: no full arrives, so no CLEAR comes. Two asks out for one part
+// make one full: Core's per-loader decision counts the first one's order.
 func TestAutoPushLanding_PullsWhenNoPickupWasReported(t *testing.T) {
 	t.Parallel()
 	t.Run("no_pickup_event", func(t *testing.T) {
@@ -119,25 +120,27 @@ func TestAutoPushLanding_PullsWhenNoPickupWasReported(t *testing.T) {
 			t.Errorf("landing without a pickup: U1s = %d, want 1", got)
 		}
 		if reads := f.core.nodeBinReads() - before; reads != 0 {
-			t.Errorf("landing without a pickup: node-bins reads = %d, want 0 (the seam reads the table)", reads)
+			t.Errorf("landing without a pickup: node-bins reads = %d, want 0 (the landing asks Core)", reads)
 		}
 	})
-	t.Run("pickup_read_failed", func(t *testing.T) {
+	t.Run("pickup_ask_unanswered", func(t *testing.T) {
 		t.Parallel()
 		f := newCycleUnloader(t, "ACF")
 		f.deliveredFullAt(t, f.n, f.nCore, "PART-AC")
 		testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false, nil), "ClearBin")
 		u2 := f.onlyU2(t)
-		f.eng.nodeBins.Store(nil) // no table the pickup's re-pull may decide from
-		testutil.MustNoErr(t, f.db.UpdateOrderStatus(u2.ID, string(protocol.StatusInTransit)), "in transit")
-		f.eng.HandleBinPickedUp(u2.UUID, 77, f.nCore)
-		f.core.set(f.nCore, false, "") // Core's next push
-		if got := f.fulls(t, f.nCore); got != 0 {
-			t.Fatalf("pickup with no table: U1s = %d, want 0 (the seam fails closed)", got)
+		f.asks.hold.Store(true) // Core does not answer the pickup's ask yet
+		f.pickUp(t, u2)
+		if got := f.fullsNow(t, f.nCore); got != 0 {
+			t.Fatalf("pickup, Core not answering: U1s = %d, want 0", got)
 		}
 		scLand(t, f.eng, f.db, u2)
+		f.asks.hold.Store(false)
 		if got := f.fulls(t, f.nCore); got != 1 {
-			t.Errorf("landing after a failed pickup read: U1s = %d, want 1", got)
+			t.Errorf("landing after an unanswered pickup ask: U1s = %d, want 1", got)
+		}
+		if n := f.asks.asks.Load(); n != 2 {
+			t.Errorf("asks answered = %d, want 2 (the pickup's and the landing's)", n)
 		}
 	})
 }

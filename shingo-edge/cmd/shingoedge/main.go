@@ -1138,9 +1138,9 @@ func buildInboundRouter(eng *engine.Engine, edgeHandler *messaging.EdgeHandler, 
 		// Core deciding the replenishment itself and pushing down a whole order, or by
 		// operator staging.
 		// Unloaders: catch any window that became free (or supply that
-		// arrived) while Edge was offline. The sweep offers every
-		// operator-replenished consume loader with an inbound source,
-		// AutoPush or not (pushUnloadersViaSeam reads no AutoPush); after it,
+		// arrived) while Edge was offline. The sweep asks Core for a full at every
+		// consume loader with an inbound source and a window on this Edge,
+		// AutoPush or not (pushUnloaders reads no AutoPush); after it,
 		// only an AutoPush unloader's own gates pull again. Mirrors the
 		// loader-side reasoning that demand triggers fire while we were
 		// unreachable, so a startup pass keeps the queue current.

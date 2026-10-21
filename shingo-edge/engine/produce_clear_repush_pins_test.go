@@ -22,7 +22,7 @@ func TestProduceClear_RePushesOnlyItsOwnLoader(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	asks := answerEmpties(t, eng)
+	asks := answerLoaderAsks(t, eng)
 	eng.orderMgr = orders.NewManager(db, &orderEmitter{bus: eng.Events}, "test.station")
 	eng.wireEventHandlers()
 	core := newSCCore(t)

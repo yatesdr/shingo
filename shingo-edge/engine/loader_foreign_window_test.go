@@ -15,9 +15,8 @@ import (
 // FGN_L2_01 window 520 times an hour and each resolution came back
 // sql.ErrNoRows — which the L1/U1 fire closures treated as a hard failure
 // instead of the store's documented "we do not own this destination" answer.
-// These tests pin the skip: a window with no process_node row here is another
-// Edge's window; the sweep moves on without erroring and without ordering
-// against it.
+// The U1 is Core's to order now, and an unloader with no window here is
+// another Edge's to ask for (ownWindow): this Edge asks Core nothing for it.
 
 // foreignWindowLoaderInfo builds a shared_window consume loader whose ONE window
 // has no process_node row in this Edge's DB — the shape a multi-Edge sync hands
@@ -35,24 +34,28 @@ func foreignWindowLoaderInfo(coreNode, payload string) protocol.LoaderInfo {
 	}
 }
 
-// TestUnloaderSweep_ForeignWindowSkipsNotErrors: the U1 path offered a window
-// this Edge doesn't own must create nothing and log no error — the skip is
-// quiet at log level, and the "not ours" reasoning lands in the debug line.
-// A regression to the hard-error behaviour shows up as the error log line
-// ("seam full-in ... failed"), asserted absent below.
+// TestUnloaderSweep_ForeignWindowSkipsNotErrors: the U1 path offered an
+// unloader none of whose windows this Edge owns asks Core nothing, creates
+// nothing and logs no error — the skip is quiet at log level, and the "not
+// ours" reasoning lands in the debug line.
 func TestUnloaderSweep_ForeignWindowSkipsNotErrors(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	var logs []string
 	eng.logFn = func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }
+	core := answerLoaderAsks(t, eng)
 	seedCoreLoader(t, eng, foreignWindowLoaderInfo("FGN_FOREIGN", "PART-F"))
 
 	l, err := eng.loaderStore.LoaderForPayload(domain.PayloadCode("PART-F"), domain.RoleConsume)
 	if err != nil || l == nil {
 		t.Fatalf("resolve consume loader: loader=%v err=%v", l, err)
 	}
-	eng.createUnloaderFullIns(l, []domain.PayloadCode{"PART-F"})
+	eng.offerUnloaderFulls(l, []domain.PayloadCode{"PART-F"})
+	awaitAsks(t, eng)
+	if n := core.asks.Load(); n != 0 {
+		t.Errorf("asks for another Edge's unloader = %d, want 0", n)
+	}
 
 	for _, line := range logs {
 		if strings.Contains(line, "failed") {
@@ -68,41 +71,54 @@ func TestUnloaderSweep_ForeignWindowSkipsNotErrors(t *testing.T) {
 	}
 }
 
-// TestForeignWindow_ReadsOccupiedOffTheTable: a window this Edge does not
-// watch (another Edge's, its process node there) has no row in this Edge's
-// bins table, and a name with no row reads occupied: the budget spends it and
-// no U1 targets it, so the sweep neither orders against it nor errors. Its own
-// Edge orders to it. The decision line says so (resident=1).
-func TestForeignWindow_ReadsOccupiedOffTheTable(t *testing.T) {
+// corruptProcessNodeRow stores a non-integer in process_nodes.sequence for one
+// window, so GetProcessNodeByCoreNodeName fails at Scan with an error that is
+// not sql.ErrNoRows while every other window still resolves.
+func corruptProcessNodeRow(t *testing.T, eng *Engine, coreNode string) {
+	t.Helper()
+	res, err := eng.db.Exec(`UPDATE process_nodes SET sequence='not-a-number' WHERE core_node_name=?`, coreNode)
+	if err != nil {
+		t.Fatalf("corrupt %s: %v", coreNode, err)
+	}
+	if n, rerr := res.RowsAffected(); rerr != nil || n != 1 {
+		t.Fatalf("corrupt %s: %d rows affected, want 1", coreNode, n)
+	}
+	if _, gerr := eng.db.GetProcessNodeByCoreNodeName(coreNode); gerr == nil {
+		t.Fatalf("fixture premise: GetProcessNodeByCoreNodeName(%s) succeeded on the corrupted row", coreNode)
+	}
+}
+
+// TestOfferUnloaderFulls_AProcessNodeReadErrorAsksNothing: a process-node read
+// that fails with anything but "no such row" is not taken as this Edge's
+// window: the U1 asks Core nothing and the failure is logged under
+// side-cycle:.
+func TestOfferUnloaderFulls_AProcessNodeReadErrorAsksNothing(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	var lines []string
-	eng.logFn = func(f string, a ...any) { lines = append(lines, strings.TrimSpace(fmt.Sprintf(f, a...))) }
-	seedCoreLoader(t, eng, foreignWindowLoaderInfo("FGN_TRACE", "PART-FT"))
-	holdSweep(t, eng, nil)
+	core := answerLoaderAsks(t, eng)
+	var logs []string
+	eng.logFn = func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }
+	windows := []string{"UE-W1", "UE-W2"}
+	seedWindowNodes(t, db, "UE-PROC", windows)
+	corruptProcessNodeRow(t, eng, "UE-W1")
+	info := foreignWindowLoaderInfo("UE", "PART-A")
+	info.Positions = []protocol.LoaderPosition{{CoreNodeName: "UE-W1"}, {CoreNodeName: "UE-W2"}}
+	seedCoreLoader(t, eng, info)
 
-	l, err := eng.loaderStore.LoaderForPayload(domain.PayloadCode("PART-FT"), domain.RoleConsume)
-	if err != nil || l == nil {
-		t.Fatalf("resolve consume loader: loader=%v err=%v", l, err)
+	eng.MaybeCreateUnloaderFullIn("PART-A")
+	awaitAsks(t, eng)
+	if n := core.asks.Load(); n != 0 {
+		t.Errorf("asks = %d, want none", n)
 	}
-	eng.createUnloaderFullIns(l, []domain.PayloadCode{"PART-FT"})
-
+	want := "side-cycle: unloader loader:UE window UE-W1: read its process node: "
 	found := false
-	for _, line := range lines {
-		if strings.HasPrefix(line, "loader_budget loader=loader:FGN_TRACE ") && strings.Contains(line, "resident=1") &&
-			strings.Contains(line, "occupancy=ok") && strings.Contains(line, "to_fire=0") {
+	for _, l := range logs {
+		if strings.HasPrefix(l, want) {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("decision line must read the unwatched window occupied (resident=1, occupancy=ok, to_fire=0); got %v", lines)
-	}
-	ords, oerr := db.ListActiveOrders()
-	if oerr != nil {
-		t.Fatalf("list orders: %v", oerr)
-	}
-	if len(ords) != 0 {
-		t.Errorf("orders = %d, want none against a window this Edge does not watch", len(ords))
+		t.Errorf("logs %v, want a line starting %q", logs, want)
 	}
 }

@@ -11,7 +11,6 @@
 //	ConfigSave     a config save                       config/config.go
 //	Node           a release act's process nodes, by id   engine/release_act.go
 //	Prime          a keep-staged cell, by core node     engine/operator_produce.go
-//	LoaderBudget   one loader's count-and-fire          engine/operator_demand_loader.go
 //	CATIDMonitor   the style changeover monitor         engine/plc_catid_monitor.go
 //	Count          the counter fence                    engine/engine.go
 //	UOPFlush, UOPBin, UOPBucket   the unit accumulator  uop/accumulator.go
@@ -33,7 +32,6 @@ type (
 	ConfigSave      struct{}
 	Node            struct{}
 	Prime           struct{}
-	LoaderBudget    struct{}
 	CATIDMonitor    struct{}
 	Count           struct{}
 	UOPFlush        struct{}
@@ -54,7 +52,6 @@ type (
 	SceneGraph      struct{}
 	SceneGeometry   struct{}
 	Feeds           struct{}
-	LoaderBurst     struct{}
 	Asks            struct{}
 	IntentQueue     struct{}
 	StationScene    struct{}
@@ -74,7 +71,6 @@ type (
 func (ConfigSave) Rank() int      { return 5 }
 func (Node) Rank() int            { return 10 }
 func (Prime) Rank() int           { return 20 }
-func (LoaderBudget) Rank() int    { return 21 }
 func (CATIDMonitor) Rank() int    { return 30 }
 func (Count) Rank() int           { return 35 }
 func (UOPFlush) Rank() int        { return 36 }
@@ -95,7 +91,6 @@ func (PayloadBinTypes) Rank() int { return 111 }
 func (SceneGraph) Rank() int      { return 112 }
 func (SceneGeometry) Rank() int   { return 113 }
 func (Feeds) Rank() int           { return 120 }
-func (LoaderBurst) Rank() int     { return 121 }
 func (Asks) Rank() int            { return 122 }
 func (IntentQueue) Rank() int     { return 122 }
 func (StationScene) Rank() int    { return 130 }
@@ -117,7 +112,6 @@ func (Prime) Nests() bool { return true }
 func (ConfigSave) Name() string      { return "config.Config.saveMu" }
 func (Node) Name() string            { return "engine.nodeLock(node)" }
 func (Prime) Name() string           { return "engine.primeNodeLock(cell)" }
-func (LoaderBudget) Name() string    { return "engine.loaderBudgetLock(loader)" }
 func (CATIDMonitor) Name() string    { return "engine.catidMonitor.mu" }
 func (Count) Name() string           { return "engine.countMu" }
 func (UOPFlush) Name() string        { return "uop.Accumulator.flushMu" }
@@ -138,7 +132,6 @@ func (PayloadBinTypes) Name() string { return "engine.payloadBinTypesMu" }
 func (SceneGraph) Name() string      { return "engine.sceneGraphMu" }
 func (SceneGeometry) Name() string   { return "engine.sceneGeometryMu" }
 func (Feeds) Name() string           { return "engine.feedBook.mu" }
-func (LoaderBurst) Name() string     { return "engine.loaderBurstTracker.mu" }
 func (Asks) Name() string            { return "engine.askBook.mu" }
 func (IntentQueue) Name() string     { return "engine.intentQueue.mu" }
 func (StationScene) Name() string    { return "service.sceneMu" }

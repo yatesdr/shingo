@@ -85,6 +85,11 @@ func (h *Handlers) apiRequestFullBin(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = h.orchestration.RequestFullBin(id, req.PayloadCode)
 	if err != nil {
+		// The full is Core's to order (loader.retrieve), as the empty is: an
+		// answer still coming is "sent", not a refusal.
+		if writeAskPending(w, r, err) {
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

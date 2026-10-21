@@ -524,6 +524,7 @@ const charSPUnloaderNode = "SYN-UNL"
 // bins table that shows the window free, so a U1 that fires creates its order.
 func charSPArmUnloader(h *relHarness) {
 	h.t.Helper()
+	h.loaderAsks = answerLoaderAsks(h.t, h.eng)
 	seedCoreLoader(h.t, h.eng, protocol.LoaderInfo{
 		Name: charSPUnloaderNode, LoaderKey: "loader:" + charSPUnloaderNode, Role: "consume", Layout: "shared_window",
 		Replenishment: "operator", InboundSource: "SYN-FG-SUPER", OutboundDest: "SYN-EMPTY-OUT",
@@ -542,6 +543,7 @@ func charSPArmUnloader(h *relHarness) {
 // pU1 counts the U1 full-ins (retrieve, not retrieve_empty) at the unloader
 // window, by payload.
 func pU1(h *relHarness) []string {
+	awaitAsks(h.t, h.eng)
 	active, err := h.db.ListActiveOrdersByDeliveryNodeSet([]string{charSPUnloaderNode})
 	testutil.MustNoErr(h.t, err, "list unloader orders")
 	n, pays := 0, []string{}

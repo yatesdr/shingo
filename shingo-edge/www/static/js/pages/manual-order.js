@@ -1,4 +1,5 @@
 import { api, createSSE, delegateActions, toast } from '/static/js/shingoedge.js';
+import { postAct } from '/static/js/ask-act.js';
 
 // Merge core-synced nodes with edge-local nodes for the dropdowns.
 // Core nodes take precedence; edge-local nodes fill in any extras.
@@ -145,7 +146,10 @@ async function createOrder() {
         staging_node: document.getElementById('mo-staging').value || undefined
     };
     try {
-        await api.post('/api/orders/' + t, body);
+        // At a loader's window the order is Core's to make (the loader ask): a
+        // 202 pending answer is sent to Core, not known to be done (ask-act.js).
+        var answer = await postAct('/api/orders/' + t, body);
+        if (answer && answer.pending) { toast(answer.notice, 'info'); resetForm(); return; }
         toast('Order created', 'success');
         resetForm();
     } catch (e) { toast('Error: ' + e, 'error'); }

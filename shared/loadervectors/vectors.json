@@ -330,8 +330,7 @@
    },
    "payload": "P1",
    "want_nodes": [],
-   "want_budget": 0,
-   "core_only": "the Edge constructor refuses to build a shared loader with zero windows, so this shape cannot exist there to be asked"
+   "want_budget": 0
   },
   {
    "name": "dedicated/first-match-no-member",

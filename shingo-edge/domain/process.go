@@ -496,7 +496,7 @@ type NodeClaim struct {
 	ReuseCompatibleBins bool `json:"reuse_compatible_bins"`
 	// AutoPush opts a consume manual_swap (unloader) claim into push-driven
 	// dispatch: when the unloader window frees and a full bin of an allowed
-	// payload exists in InboundSource, Edge orders a U1 full-in on its own.
+	// payload exists in InboundSource, Edge asks Core for a U1 full-in on its own.
 	// The gates that read it are the window's own taps and moves (CLEAR, PUSH
 	// EMPTY, the U2's pickup, the U2's landing), through rePushOwnUnloader and
 	// rePushOwnUnloaderIfUncovered (engine/wiring_completion.go). Useful for
@@ -512,7 +512,7 @@ type NodeClaim struct {
 	// changeover evac at count 0, the sim's auto-operator, or an API client.
 	// With AutoPush off, the unloader pulls only on those and on an operator's
 	// full request. A fork-truck-fed unloader names no inbound source, and
-	// createUnloaderFullIns skips it whatever this says. The kanban demand
+	// offerUnloaderFulls asks nothing for it whatever this says. The kanban demand
 	// signal was deleted 2026-08.
 	//
 	// For a Core-owned loader window it comes from the loader

@@ -12,18 +12,15 @@ import (
 )
 
 // TestCrossCreator_UnloaderBudget_OperatorAndAutomatic is the never-2N property
-// stated across CREATORS rather than within one. Two independent paths can order
+// stated across ASKERS rather than within one. Two independent paths can ask for
 // a full into the same unloader window — the operator's RequestFullBin button and
-// the automatic createUnloaderFullIns — and the invariant is a property of
-// the window, not of either caller. Whichever fires first, the second must find
-// the budget spent.
+// the automatic U1 (offerUnloaderFulls) — and the invariant is a property of the
+// window, decided once on Core. Whichever asks first, the second's answer finds
+// the window spoken for.
 //
-// The automatic_then_operator row is the one that was red before RequestFullBin
-// was routed through the reservation seam: it created its order directly, with no
-// in-flight count, so an operator tap while a U1 was already inbound produced two
-// fulls for a one-bin window. The reverse row already passed, because the
-// automatic path has always counted in-flight orders and would see the
-// operator's.
+// The automatic_then_operator row was red once, when RequestFullBin created its
+// order directly with no in-flight count: an operator tap while a U1 was already
+// inbound produced two fulls for a one-bin window.
 func TestCrossCreator_UnloaderBudget_OperatorAndAutomatic(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -37,6 +34,7 @@ func TestCrossCreator_UnloaderBudget_OperatorAndAutomatic(t *testing.T) {
 			t.Parallel()
 			db := testEngineDB(t)
 			eng := testEngine(t, db)
+			answerLoaderAsks(t, eng)
 			nodeID := seedCapManualSwap(t, db, "XC-"+tc.name, "XC-ULD", protocol.ClaimRoleConsume, []string{"PART-A"}, 0, false)
 			seedCoreLoader(t, eng, sharedLoaderInfo("XC-ULD", "consume", "operator", "PART-A", 0, 0))
 			holdSweep(t, eng, nil)
@@ -47,18 +45,20 @@ func TestCrossCreator_UnloaderBudget_OperatorAndAutomatic(t *testing.T) {
 			}
 
 			fire := map[string]func(){
-				"automatic": func() { eng.createUnloaderFullIns(uld, []domain.PayloadCode{"PART-A"}) },
+				"automatic": func() { eng.offerUnloaderFulls(uld, []domain.PayloadCode{"PART-A"}) },
 				"operator":  func() { _, _ = eng.RequestFullBin(nodeID, "PART-A") },
 			}
 
 			fire[tc.first]()
+			awaitAsks(t, eng)
 			if got := inFlightFulls(t, db, []string{"XC-ULD"}); got != 1 {
 				t.Fatalf("%s creator made %d fulls, want 1 — the fixture is not exercising it, so the second half proves nothing", tc.first, got)
 			}
 			fire[tc.second]()
+			awaitAsks(t, eng)
 			if got := inFlightFulls(t, db, []string{"XC-ULD"}); got != 1 {
 				t.Fatalf("%s after %s: %d in-flight fulls at a one-window unloader, want 1. "+
-					"Both creators share one never-2N budget; this is a second full ordered into a window that already has one inbound.",
+					"Both askers are one decision on Core; this is a second full ordered into a window that already has one inbound.",
 					tc.second, tc.first, got)
 			}
 		})
@@ -118,10 +118,14 @@ func retrieveCreatorSites(t *testing.T) []string {
 // through the reservation seam survived two review rounds while three paths
 // bypassed it.
 //
-// A change to this count means a retrieve-order creator was added or removed.
-// That is not a failure — it is a prompt. Re-run the census, decide whether the
-// new site belongs behind the seam, then update the expected count here and the
-// scope comment on withLoaderBudget in the same commit.
+// Every retrieve a loader or unloader ASKS for is Core's to make now (the
+// loader retrieve ask). What is left here is the retrieves the Edge still
+// makes: to a destination no loader owns, or a claim's own delivery, which can
+// name a loader window (a changeover's retrieve; the owner's ruling 1,
+// 2026-10-20) and is held against Core's asks by the window choice's arms, not
+// by a count here. A change to this count means a retrieve-order creator was
+// added or removed. That is not a failure — it is a prompt: a new site that
+// replenishes a loader belongs on the ask, not here.
 func TestCensus_RetrieveOrderCreatorSites(t *testing.T) {
 	t.Parallel()
 	// 11 since primeBarePressIndexPositions (operator_produce.go) gave REQUEST
@@ -153,9 +157,15 @@ func TestCensus_RetrieveOrderCreatorSites(t *testing.T) {
 	// 9 since an operator's empties at a loader are Core's to order (the
 	// loader.retrieve ask, askLoaderEmpties): stageOperatorEmpty (the window-free
 	// push) and requestEmptyAtManualSwapLoader (REQUEST EMPTY at a loader) create
-	// nothing here. Behind withLoaderBudget still: CreateRetrieveForAPI at a
-	// loader window, RequestFullBin and the unloader's U1.
-	const want = 9
+	// nothing here.
+	//
+	// 6 since the rest are asked of Core too: CreateRetrieveForAPI at a loader
+	// window, RequestFullBin and the unloader's U1 (fireUnloaderFulls, gone).
+	// Left: createRetrieveDirect (the API to a destination no loader owns), the
+	// changeover's two (createRetrieveFromSpec, StageNodeChangeoverMaterial),
+	// the press prime (createPrimes), the bare produce line's empty
+	// (applyProduceEmptyLine) and the keep-staged refill (refillSpot).
+	const want = 6
 	sites := retrieveCreatorSites(t)
 	if len(sites) != want {
 		t.Errorf("retrieve-order creator sites = %d, expected %d.\nA creator was added or removed. Re-run the census and update this count WITH the seam's scope comment.\nSites:\n  %s",

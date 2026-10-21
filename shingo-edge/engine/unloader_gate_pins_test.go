@@ -12,8 +12,8 @@ import (
 
 // unloader_gate_pins_test.go — the three unloader re-pull gates: CLEAR
 // (ClearBin), PUSH EMPTY (PushEmptyOut) and U2-landed (applyManualSwap). Each
-// fires only when the node's claim says AutoPush, and each asks only the unloader
-// that owns the node (rePushOwnUnloader): one Core node-bins read.
+// fires only when the node's claim says AutoPush, and each asks Core only for
+// the unloader that owns the node (rePushOwnUnloader).
 //
 // BEFORE (pinned at 1bb689bc) each gate called the all-unloader sweep, which read
 // Core once per auto-pulling consume loader and pulled a full into any OTHER
@@ -24,9 +24,11 @@ import (
 // SynthClaim; M does not.
 
 type ugFixture struct {
-	eng        *Engine
-	db         *store.DB
-	core       *scCore
+	eng  *Engine
+	db   *store.DB
+	core *scCore
+	// asks is Core's loader.retrieve door: the gates ask it for the U1.
+	asks       *coreRetrieve
 	n, n2, w3  int64
 	nCore      string
 	n2Core     string
@@ -44,7 +46,7 @@ func newUGFixture(t *testing.T, prefix string) *ugFixture {
 	bridgeCore(t, eng, core.srv.URL)
 	core.bind(t, eng)
 
-	f := &ugFixture{eng: eng, db: db, core: core,
+	f := &ugFixture{eng: eng, db: db, core: core, asks: answerLoaderAsks(t, eng),
 		nCore: prefix + "-N", n2Core: prefix + "-N2", w3Core: prefix + "-W3"}
 	unloader := func(key string, auto bool, windows ...string) protocol.LoaderInfo {
 		info := protocol.LoaderInfo{
@@ -82,8 +84,17 @@ func newUGFixture(t *testing.T, prefix string) *ugFixture {
 	return f
 }
 
-// fulls counts the non-terminal full-ins (U1s) delivering to core.
+// fulls counts the non-terminal full-ins (U1s) delivering to core, once every
+// ask a trigger sent without waiting has had Core's answer.
 func (f *ugFixture) fulls(t *testing.T, core string) int {
+	t.Helper()
+	awaitAsks(t, f.eng)
+	return f.fullsNow(t, core)
+}
+
+// fullsNow is fulls without waiting for an ask's answer: what the table holds
+// while Core has not answered.
+func (f *ugFixture) fullsNow(t *testing.T, core string) int {
 	t.Helper()
 	active, err := f.db.ListActiveOrdersByDeliveryNodeSet([]string{core})
 	testutil.MustNoErr(t, err, "list active")

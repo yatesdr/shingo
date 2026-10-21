@@ -156,6 +156,9 @@ type StationService struct {
 	// keepStaged resolves a line's keep-staged keeper sentence; nil leaves
 	// KeepStagedNote empty. The engine injects KeepStagedNote.
 	keepStaged func(coreNodeName string) string
+	// unloaderAsk resolves an unloader window's pending U1 note (the engine's
+	// UnloaderAskNote); nil leaves AskPending empty.
+	unloaderAsk func(coreNodeName string) string
 	// binTypes resolves a payload code to its bin type, for a served row's
 	// carrier. Optional: unset leaves every carrier blank, which the board reads
 	// as unknown rather than guessing one.
@@ -447,6 +450,13 @@ func (s *StationService) SetStrandedResolver(r func(coreNodeName string) string)
 // engine's KeepStagedNote) so BuildView can render its chip. Optional; unset
 // leaves KeepStagedNote empty.
 func (s *StationService) SetKeepStagedResolver(r func(coreNodeName string) string) { s.keepStaged = r }
+
+// SetUnloaderAskResolver injects the pending U1 note per unloader window (the
+// engine's UnloaderAskNote) so BuildView can put it on the window's card.
+// Optional; unset leaves AskPending empty.
+func (s *StationService) SetUnloaderAskResolver(r func(coreNodeName string) string) {
+	s.unloaderAsk = r
+}
 
 // ── Cross-aggregate orchestrations ──────────────────────────────────
 
@@ -1413,6 +1423,9 @@ func (s *StationService) buildNodeTile(
 	}
 	if s.keepStaged != nil {
 		nodeView.KeepStagedNote = s.keepStaged(node.CoreNodeName)
+	}
+	if s.unloaderAsk != nil {
+		nodeView.AskPending = s.unloaderAsk(node.CoreNodeName)
 	}
 	nodeView.CountWaits = countWaits(node.CoreNodeName, nodeView.ActiveClaim, runtime)
 	// THE CUSTOMER'S HALF. A call and the part: this node has an outstanding

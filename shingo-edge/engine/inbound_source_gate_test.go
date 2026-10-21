@@ -26,8 +26,9 @@ func blankInboundLoaderInfo(coreNode, role, payload string) protocol.LoaderInfo 
 }
 
 // TestCreateUnloaderFullIn_NoInboundSkipsAutoPull pins the press-fed-drain gate:
-// a consume loader with a blank inbound_source must NOT auto-create a U1 retrieve
-// (there is no supermarket to pull a full from — the press delivers directly).
+// a consume loader with a blank inbound_source asks Core for no U1 (there is no
+// supermarket to pull a full from — the press delivers directly; Core would
+// give it none).
 // This is the fix for the queued-forever retrieve orders at the Supermarket
 // Unloader, whose inbound ("Supermarket Area") held zero bins.
 func TestCreateUnloaderFullIn_NoInboundSkipsAutoPull(t *testing.T) {
@@ -41,7 +42,8 @@ func TestCreateUnloaderFullIn_NoInboundSkipsAutoPull(t *testing.T) {
 	if err != nil || l == nil {
 		t.Fatalf("resolve consume loader: loader=%v err=%v", l, err)
 	}
-	eng.createUnloaderFullIns(l, []domain.PayloadCode{"PART-D"})
+	eng.offerUnloaderFulls(l, []domain.PayloadCode{"PART-D"})
+	assertNoAskSent(t, eng)
 
 	ords, err := db.ListActiveOrdersByProcessNode(nodeID)
 	if err != nil {
@@ -78,11 +80,13 @@ func TestTryCreateL1_NoInboundSkips(t *testing.T) {
 
 // TestRequestFullBin_PullsFromTheUnloadersInboundSource pins where the
 // operator's REQUEST FULL at an unloader window pulls from: the unloader's own
-// inbound source, which a blank would turn into Core's global FIFO scan.
+// inbound source, Core's copy of it (the ask names none and does not ask for
+// any source), which a blank would turn into Core's global FIFO scan.
 func TestRequestFullBin_PullsFromTheUnloadersInboundSource(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
+	core := answerLoaderAsks(t, eng)
 	nodeID := coreUnloaderWindow(t, eng, "RFS-W1", protocol.LoaderInfo{
 		Name: "RFS", LoaderKey: "loader:RFS", Role: "consume", Layout: "shared_window",
 		Replenishment: protocol.LoaderReplenishmentOperator, InboundSource: "FG-SUPER",
@@ -98,5 +102,25 @@ func TestRequestFullBin_PullsFromTheUnloadersInboundSource(t *testing.T) {
 	}
 	if order.SourceNode != "FG-SUPER" {
 		t.Errorf("full ordered from %q, want the unloader's inbound source FG-SUPER", order.SourceNode)
+	}
+	ask := core.lastAsk()
+	if ask.Direction != protocol.LoaderRetrieveFull || ask.Origin != protocol.LoaderAskOperator ||
+		ask.SourceNode != "" || ask.AnySource || !ask.SkipAutoConfirm || ask.MemberNode != "RFS-W1" {
+		t.Errorf("ask = %+v, want a person's full at RFS-W1 from the unloader's own source, kept off Core's sweep", ask)
+	}
+}
+
+// assertNoAskSent fails when eng's outbox holds an ask: the Edge asked Core
+// for something it should not have.
+func assertNoAskSent(t *testing.T, eng *Engine) {
+	t.Helper()
+	msgs, err := eng.db.ListPendingOutbox(100)
+	if err != nil {
+		t.Fatalf("list outbox: %v", err)
+	}
+	for _, m := range msgs {
+		if m.MsgType == protocol.SubjectEdgeAsk {
+			t.Errorf("outbox holds an ask; want none")
+		}
 	}
 }

@@ -149,15 +149,15 @@ func orderWorksTheCell(o *domain.Order) bool {
 //
 // THE WINDOW IS FREE ON CORE BY NOW. Core's pickup block handler moves the carrier
 // to _TRANSIT before it sends BinPickedUp (shingo-core
-// TestU2Pickup_WindowReadsEmptyBeforeTheLanding), so the seam's occupancy read
-// sees the window empty. Pulling at the landing instead left the window idle for
+// TestU2Pickup_WindowReadsEmptyBeforeTheLanding), so Core's answer to the
+// re-pull's ask sees the window empty. Pulling at the landing instead left the window idle for
 // the whole U2 trip — a median of 38 s per cycle in the B5 sim.
 //
 // Fires for a move LEAVING a consume loader window whose claim (stored, else the
 // loader's synthesized one) has AutoPush: tracked at the window, sourced from it,
 // and lifted there. Any carrier leaving such a window frees it, so this is not
-// specific to the half loader. Edge-local reads until it fires, then one Core
-// read (rePushOwnUnloader). Pinned by TestAutoPushCycle_SingleWindow_RefillsAtThePickup.
+// specific to the half loader. Edge-local reads until it fires, then one ask
+// per payload the unloader serves, not waited for (rePushOwnUnloader). Pinned by TestAutoPushCycle_SingleWindow_RefillsAtThePickup.
 func (e *Engine) rePullOnEmptyOutPickup(order *domain.Order, location string) {
 	if order == nil || order.ProcessNodeID == nil || order.OrderType != orders.TypeMove {
 		return

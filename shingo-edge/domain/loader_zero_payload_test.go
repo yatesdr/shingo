@@ -10,7 +10,7 @@ import (
 //
 // A shared window's payload set is what it can be offered: the unloader sweep
 // offers PayloadSet() (so an empty set offers nothing and reads nothing —
-// engine TestUnloaderSweep_ZeroPayloads_ZeroReads), LoaderForPayload asks
+// engine TestUnloaderSweep_ZeroPayloadSharedWindow_ZeroReads), LoaderForPayload asks
 // ServesPayload, and the board lists LoadablePayloadCodesAt.
 
 // TestSharedWindowZeroPayloads_ByRole: the constructor's answer for each role.
@@ -46,9 +46,9 @@ func TestSharedWindowZeroPayloads_ByRole(t *testing.T) {
 }
 
 // TestSharedWindow_BlankPayloadReads: how a shared loader answers the blank
-// payload. ServesPayload("") is false (the set never holds ""), while
-// ReservationTarget treats "" as the payload-agnostic stage and still targets
-// the windows.
+// payload. ServesPayload("") is false (the set never holds ""); the
+// payload-agnostic stage that targets the windows anyway is Core's
+// (loaders.DeliveryTargets).
 func TestSharedWindow_BlankPayloadReads(t *testing.T) {
 	t.Parallel()
 	l, err := NewSharedWindowLoader("loader:BP", RoleConsume, ReplenishmentOperator,
@@ -59,10 +59,7 @@ func TestSharedWindow_BlankPayloadReads(t *testing.T) {
 	if l.ServesPayload("") {
 		t.Error(`ServesPayload("") = true, want false`)
 	}
-	if nodes, budget := l.ReservationTarget("", "", false); len(nodes) != 1 || budget != 1 {
-		t.Errorf(`ReservationTarget("", "") = (%v, %d), want one node, budget 1`, nodes, budget)
-	}
-	if nodes, _ := l.ReservationTarget("", "PART-Z", false); len(nodes) != 0 {
-		t.Errorf("ReservationTarget for an unserved payload = %v, want none", nodes)
+	if l.ServesPayload("PART-Z") {
+		t.Error("ServesPayload for an unserved payload = true, want false")
 	}
 }

@@ -484,6 +484,18 @@ func UpdateProcessNode(db *sql.DB, id int64, processNodeID *int64) error {
 	return err
 }
 
+// AdoptAsked writes what this Edge alone holds of an order Core made for a
+// manual retrieve it asked: the asking node (when one is named, else the
+// projection's stays), the staging node the orders page shows, and
+// auto_confirm, which the Edge's delivery handler acts on. Core reads none of
+// them, so the projection carries none, and UpsertProjection writes neither
+// staging_node nor auto_confirm, so a later projection keeps them.
+func AdoptAsked(db *sql.DB, id int64, processNodeID *int64, stagingNode string, autoConfirm bool) error {
+	_, err := db.Exec(`UPDATE orders SET process_node_id=COALESCE(?, process_node_id), staging_node=?, auto_confirm=?,
+		updated_at=datetime('now') WHERE id=?`, processNodeID, stagingNode, autoConfirm, id)
+	return err
+}
+
 // UpdateStatus changes the order status and bumps updated_at.
 //
 // A terminal status clears queue_reason and queue_code in the same statement.

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -19,7 +20,7 @@ func TestLoaderEmpties_RequestEmptyAsksCore(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	core := answerEmpties(t, eng)
+	core := answerLoaderAsks(t, eng)
 	nodeID := seedCapManualSwap(t, db, "LEA-PROC", "LEA-W1", protocol.ClaimRoleProduce, []string{"PART-LE"}, 0, false)
 	seedCoreLoader(t, eng, sharedLoaderInfo("LEA-W1", "produce", "operator", "PART-LE", 0, 0))
 
@@ -52,7 +53,7 @@ func TestLoaderEmpties_NoneMadeSaysWhy(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	core := answerEmpties(t, eng)
+	core := answerLoaderAsks(t, eng)
 	nodeID := seedCapManualSwap(t, db, "LEN-PROC", "LEN-W1", protocol.ClaimRoleProduce, []string{"PART-LE"}, 0, false)
 	seedCoreLoader(t, eng, sharedLoaderInfo("LEN-W1", "produce", "operator", "PART-LE", 0, 0))
 
@@ -118,7 +119,7 @@ func TestLoaderEmpties_ThePushServesNoDemand(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	core := answerEmpties(t, eng)
+	core := answerLoaderAsks(t, eng)
 	seedCoreLoader(t, eng, sharedLoaderInfo("LEP-W1", "produce", "operator", "PART-LE", 0, 0))
 	dl, err := eng.loaders().LoaderAt("LEP-W1", domain.RoleProduce)
 	testutil.MustNoErr(t, err, "resolve loader")
@@ -145,5 +146,50 @@ func TestLoaderEmpties_APendingAnswerIsSent(t *testing.T) {
 	_, err := eng.RequestEmptyBin(nodeID, "")
 	if !errors.Is(err, ErrAskPending) {
 		t.Errorf("unanswered REQUEST EMPTY: %v, want ErrAskPending", err)
+	}
+}
+
+// pushLoader builds an operator-replenished shared produce loader over windows,
+// pulling empties from EMPTY-SUPER.
+func pushLoader(t *testing.T, id string, windows []string, inbound string) *domain.Loader {
+	t.Helper()
+	ws := make([]domain.Window, len(windows))
+	for i, w := range windows {
+		ws[i] = domain.Window{Node: domain.NodeID(w)}
+	}
+	l, err := domain.NewSharedWindowLoader(domain.LoaderID(id), domain.RoleProduce, domain.ReplenishmentOperator,
+		ws, []domain.PayloadCode{"P1"}, domain.WithInboundSource(inbound))
+	if err != nil {
+		t.Fatalf("build loader: %v", err)
+	}
+	return l
+}
+
+// TestStageOperatorEmpty_NilLoader: a nil loader creates nothing and is not an error.
+func TestStageOperatorEmpty_NilLoader(t *testing.T) {
+	t.Parallel()
+	eng := testEngine(t, testEngineDB(t))
+	if created, err := eng.stageOperatorEmpty(nil, "P1", 1, "", orders.NoDemand()); created != 0 || err != nil {
+		t.Fatalf("nil loader: created=%d err=%v, want 0, nil", created, err)
+	}
+}
+
+// TestStageOperatorEmpty_NoInboundTracePrefix: the no-inbound skip asks Core
+// nothing, creates nothing, and says so under the loader_push: prefix.
+func TestStageOperatorEmpty_NoInboundTracePrefix(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	eng := testEngine(t, db)
+	var debug []string
+	eng.debugFn = func(f string, a ...any) { debug = append(debug, fmt.Sprintf(f, a...)) }
+	seedWindowNodes(t, db, "LN-PROC", []string{"LN-W1"})
+	l := pushLoader(t, "LN", []string{"LN-W1"}, "")
+
+	if created, err := eng.stageOperatorEmpty(l, "P1", 1, "", orders.NoDemand()); created != 0 || err != nil {
+		t.Fatalf("no-inbound loader: created=%d err=%v, want 0, nil", created, err)
+	}
+	want := "loader_push: loader=LN payload=P1 skipped — no inbound source (fed directly)"
+	if len(debug) != 1 || debug[0] != want {
+		t.Errorf("debug trace %v, want exactly [%q]", debug, want)
 	}
 }

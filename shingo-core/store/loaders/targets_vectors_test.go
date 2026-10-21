@@ -8,9 +8,11 @@ import (
 )
 
 // TestDeliveryTargets_GoldenVectors runs Core's delivery-target logic against
-// the shared vectors. The Edge runs its own implementation against the same
-// file, so a change to either side that the other does not follow shows up as a
-// failed vector rather than as a carrier arriving at the wrong window.
+// the shared vectors: which windows a loader's carrier may go to, in what
+// order, and the never-2N budget. It is the one implementation: the Edge asks
+// Core for every carrier a loader asks for (the loader retrieve ask) and keeps
+// no copy, so a change here is a change to where carriers go, and a failed
+// vector says which case moved.
 func TestDeliveryTargets_GoldenVectors(t *testing.T) {
 	t.Parallel()
 	v := loadervectors.MustLoad()
@@ -85,7 +87,7 @@ func sameOrder(got, want []string) bool {
 func TestDeliveryTargets_VectorsCoverBothLayouts(t *testing.T) {
 	t.Parallel()
 	v := loadervectors.MustLoad()
-	var shared, dedicated, funnel, coreOnly int
+	var shared, dedicated, funnel int
 	for _, c := range v.Targets {
 		switch c.Loader.Layout {
 		case loaders.LayoutSharedWindow:
@@ -98,17 +100,9 @@ func TestDeliveryTargets_VectorsCoverBothLayouts(t *testing.T) {
 		if c.Loader.FunnelWindows {
 			funnel++
 		}
-		if c.CoreOnly != "" {
-			coreOnly++
-		}
 	}
 	if shared == 0 || dedicated == 0 || funnel == 0 {
 		t.Errorf("vector coverage: shared=%d dedicated=%d funnel=%d; each must be non-zero or the file pins less than it appears to",
 			shared, dedicated, funnel)
-	}
-	// Core-only cases are legitimate but must stay rare and explained — they are
-	// the ones the Edge never checks, so they pin one side alone.
-	if coreOnly > len(v.Targets)/3 {
-		t.Errorf("%d of %d target vectors are core-only; most of the file should exercise BOTH implementations", coreOnly, len(v.Targets))
 	}
 }

@@ -700,7 +700,10 @@ async function createOrder() {
         staging_node: document.getElementById('mo-staging').value || undefined
     };
     try {
-        await api.post('/api/orders/' + t, body);
+        // At a loader's window the order is Core's to make (the loader ask): a
+        // 202 pending answer is sent to Core, not known to be done (ask-act.js).
+        var answer = await postAct('/api/orders/' + t, body);
+        if (answer && answer.pending) { toast(answer.notice, 'info'); resetOrderForm(); return; }
         toast('Order created', 'success');
         resetOrderForm();
     } catch (e) { toast('Error: ' + e, 'error'); }

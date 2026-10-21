@@ -20,16 +20,14 @@ type NodeBinInfo = protocol.NodeBinInfo
 // BinLoadItem is one line of a bin-load request: part number + physical count.
 type BinLoadItem = protocol.BinLoadItem
 
-// OccupancyOutcome names what happened to an occupancy read, for the decision
-// log. One word per outcome so an over-ordering incident can be reconstructed
-// from logs alone — "resident=0" means nothing until you know whether anyone
-// was asked. A decision from the bins table that could not be taken is
-// not_actable (BinsActable refused the table) or unwatched (the table holds no
-// row for the name).
-func OccupancyOutcome(reachable bool, err error) string {
+// OccupancyOutcome names why an occupancy read could not be decided from, for
+// the station's occupied-check log (operator_stations.go). One word per outcome
+// so an over-ordering incident can be reconstructed from logs alone: not_actable
+// (BinsActable refused the table), unwatched (the table holds no row for the
+// name), or unverifiable. The loader budget's "ok" arm went with the budget:
+// a loader's carriers are Core's to count.
+func OccupancyOutcome(err error) string {
 	switch {
-	case reachable:
-		return "ok"
 	case asBinsNotCurrent(err) != nil && asBinsNotCurrent(err).Why == NotActableUnwatched:
 		return "unwatched"
 	case asBinsNotCurrent(err) != nil:

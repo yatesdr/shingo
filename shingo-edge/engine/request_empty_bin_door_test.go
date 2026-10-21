@@ -152,7 +152,7 @@ func TestRequestEmptyBin_LoaderPullsFromItsInboundSource(t *testing.T) {
 			t.Parallel()
 			db := testEngineDB(t)
 			eng := testEngine(t, db)
-			answerEmpties(t, eng)
+			answerLoaderAsks(t, eng)
 			nodeID := seedCapManualSwap(t, db, "RES-PROC", "RES-LOADER", protocol.ClaimRoleProduce, []string{"P1"}, 0, false)
 			info := sharedLoaderInfo("RES-LOADER", "produce", "operator", "P1", 0, 0)
 			info.InboundSource = tc.inbound

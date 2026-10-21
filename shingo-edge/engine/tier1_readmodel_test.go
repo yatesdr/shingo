@@ -22,7 +22,7 @@ func TestTier1_BUG1_OperatorAndDemandShareLoaderKey(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	core := answerEmpties(t, eng)
+	core := answerLoaderAsks(t, eng)
 
 	// Single-window real-node loader: node "PLK_X1", aggregate token "loader:PLK_X1".
 	nodeID := seedCapManualSwap(t, db, "PROC-X1", "PLK_X1", protocol.ClaimRoleProduce, []string{"PART-X"}, 2, false)
@@ -124,10 +124,5 @@ func TestTier1_DedicatedLoaderKeepsLayoutViaAggregate(t *testing.T) {
 	}
 	if !l.IsDedicated() {
 		t.Errorf("layout = %v, want dedicated_positions (the shim flattened to shared_window)", l.Layout())
-	}
-	// O2 member routing: a reservation naming D2 routes to D2, not first-match D1.
-	nodes, budget := l.ReservationTarget("D2", "STUD", eng.multiWindowFor(l))
-	if len(nodes) != 1 || nodes[0] != "D2" || budget != 1 {
-		t.Errorf("ReservationTarget(member=D2) = %v/%d, want [D2]/1", nodes, budget)
 	}
 }

@@ -1,27 +1,22 @@
 // Package loadervectors holds the checked-in cases that pin Core's loader
-// replenishment decisions against the Edge's.
+// replenishment decisions: which windows an inbound carrier may go to, how many
+// carriers a loop needs, and where an unloader's full goes when a release
+// offers it a part (Consume).
 //
-// Two subsystems answer the same questions — which windows an inbound carrier
-// may go to, how many carriers a loop needs, and where an unloader's full goes
-// when a release offers it a part (Consume) — from separate code in separate
-// modules. The vectors are what stops those answers drifting: each module's
-// tests read this file and assert its own implementation against the same
-// expected results.
+// They began as the equivalence between Core and the Edge, which answered the
+// same questions from separate code; each side's tests read this file. The
+// Edge's implementation went when every carrier a loader asks for became
+// Core's to count and place (the loader retrieve ask), so the vectors pin the
+// one implementation left, against the behaviour the plant actually ran.
 //
-// THE VECTORS ARE THE PERMANENT GATE, not a migration aid. The obvious
-// alternative — a live test that runs both implementations and compares them —
-// dies in the commit it is meant to protect, because the cutover deletes the
-// Edge implementation. Vectors outlive it: after the Edge path is gone they go
-// on pinning Core against the behaviour the plant actually ran.
+// It lives in shared/ for the reason it began there: the one module both
+// shingo-core and shingo-edge import (integration's sizing check reads it
+// too). Embedding rather than reading a path keeps the tests independent of
+// where they are run from, and makes a missing file a compile error instead of
+// a skipped test.
 //
-// It lives in shared/ because it is the one module both shingo-core and
-// shingo-edge already import. Embedding rather than reading a path keeps both
-// tests independent of where they are run from, and makes a missing file a
-// compile error instead of a skipped test.
-//
-// ADDING A CASE: add it here and both sides must satisfy it. CHANGING an
-// expected result is a behaviour change to the plant and needs both
-// implementations changed with it — that is the point of the file.
+// ADDING A CASE: add it here and Core must satisfy it. CHANGING an expected
+// result is a behaviour change to the plant.
 package loadervectors
 
 import (
@@ -71,11 +66,6 @@ type TargetCase struct {
 	WantNodes []string `json:"want_nodes"`
 	// WantBudget is how many carriers may be inbound across that set at once.
 	WantBudget int `json:"want_budget"`
-	// CoreOnly marks a case the Edge cannot express, with the reason. The Edge's
-	// constructors refuse some configurations outright, so those shapes can only
-	// be asked of Core. The Edge test skips them and reports the reason rather
-	// than silently passing.
-	CoreOnly string `json:"core_only,omitempty"`
 }
 
 // SizingCase pins one "how many carriers" answer.

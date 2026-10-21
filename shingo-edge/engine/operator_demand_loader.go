@@ -1,18 +1,10 @@
 package engine
 
 import (
-	"database/sql"
-	"errors"
-	"fmt"
 	"log"
-	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 
-	"shingo/protocol"
-	"shingo/protocol/lockcheck"
 	"shingoedge/domain"
-	"shingoedge/internal/lockorder"
 	"shingoedge/orders"
-	storeorders "shingoedge/store/orders"
 )
 
 // A produce loader's automatic replenishment is now decided entirely on Core.
@@ -21,8 +13,14 @@ import (
 // the orders itself. What is left here is the OPERATOR side: the opportunistic
 // window-free push (rePushOwnLoader, SweepPushLoaders) and the operator's own
 // REQUEST EMPTY, both asked of Core (loader.retrieve, askLoaderEmpties), which
-// counts and orders them; and the unloader path and the HTTP order API at a
-// loader window, still through the withLoaderBudget seam.
+// counts and orders them. Every carrier a loader or unloader ASKS for is
+// Core's to count and order now (loader_retrieve_ask.go): the Edge's per-loader
+// budget (withLoaderBudget, its lock and its snapshot) was the last of the
+// Edge's own count, and it went when the unloader's U1, a person's full and the
+// manual retrieve at a loader window started to ask. An order a claim sends
+// straight to a window (a changeover's retrieve, a cell's move) is still the
+// Edge's, and Core holds the window against the asks once it is there
+// (plan.LoaderWindows: TestLoaderWindows_AClaimDrivenDeliveryIsSeenByItsArm).
 //
 // Two earlier retirements, kept as gravestones because their names still appear
 // in incident records: the bin-count produce DemandSignal trigger
@@ -31,7 +29,7 @@ import (
 // park/replay machinery). A third followed (2026-08): the DemandSignal wire
 // subject itself was deleted — Core no longer emits it. The unloader's U1
 // full-in now comes from the unloader's own auto_push gates and the startup
-// sweep (createUnloaderFullIns), and from MaybeCreateUnloaderFullIn on a
+// sweep (offerUnloaderFulls, asked of Core), and from MaybeCreateUnloaderFullIn on a
 // produce release carrying capture_lineside (the release commit,
 // release_commit.go), which a station's HMI never posts on a produce node.
 //
@@ -41,323 +39,6 @@ import (
 // source moved to Core only the operator push is left, so the log prefix
 // `loader_push:` is now a literal in stageOperatorEmpty.
 
-// loaderBudgetLock returns the per-loader reservation mutex, creating it on first
-// use. Keyed by loader id so two loaders never
-// block each other — a slow burst on loader X can't stall loader Y.
-func (e *Engine) loaderBudgetLock(loaderID string) *lockcheck.Mutex[lockorder.LoaderBudget] {
-	m, _ := e.loaderResv.LoadOrStore(loaderID, &lockcheck.Mutex[lockorder.LoaderBudget]{})
-	return m.(*lockcheck.Mutex[lockorder.LoaderBudget])
-}
-
-// withLoaderBudget makes count→fire atomic for a loader. Under the loader's
-// mutex it counts non-terminal retrieve orders across the delivery-node set in
-// ONE snapshot, applies the per-payload dedup and the loader-capacity cap, and
-// fires the remainder via the caller's `fire` closure — all without releasing
-// the lock, so a concurrent operator request or push sweep cannot interleave
-// between the count and the create.
-//
-// SCOPE — this is the never-2N guarantee only for the writers that route
-// through here: RequestFullBin (operator) and CreateRetrieveForAPI (the HTTP
-// order API, since Deploy 1b). An operator's empties at a loader (the push and
-// RequestEmptyBin's manual_swap branch) are Core's to count and order: they ask
-// (askLoaderEmpties) and create nothing here. The automatic U1 (createUnloaderFullIns) takes the same
-// per-loader mutex and the same count/cap/target step (decideLoaderBudget) but
-// not this function: it decides every payload of an unloader from one read.
-// Core's own threshold replenishment no longer passes through here at all: it
-// does not run here any more. It is NOT a universal chokepoint.
-// RequestEmptyBin on a line that is no loader goes through the produce
-// request, never this seam, and delivers to the line's own node, not a loader
-// window. The HTTP order API used to be
-// named here too and no longer belongs — Deploy 1b routed it through the seam
-// (api_retrieve.go). The changeover paths (changeover_applier.go,
-// operator_node_changeover.go) also create retrieves outside this seam; whether
-// either can target a loader window was NOT established and is an open question,
-// not a cleared one.
-//
-// The press-index partial-empty prime creates outside this seam DELIBERATELY,
-// from one site for both roles: createPrimes, which every request button
-// reaches on a press. Its delivery node is a press's bare paired
-// POSITION, never a loader window, so this seam's budget — one bin per delivery
-// node across a loader's window set — has nothing to say about it. It carries
-// its own count->decide->create lock for the same never-2N reason at its own
-// grain: Engine.primeResv, keyed by the cell's core node, around
-// guardLineRequest's read, so a second press of any button while a prime
-// is being decided cannot double-fire. The InboundSource it pulls FROM may well
-// be a loader group; that is Core's resolver's business, not this budget's.
-//
-// A keep-staged refill (applySpotPlan, keep_staged_spot.go) creates outside this
-// seam for the same reason: its delivery node is a line's inbound staging spot,
-// never a loader window. Its count->decide->create runs under the same
-// Engine.primeResv lock, and its count is reconcileSpot's, over the line's rows.
-//
-// The single-robot produce empty-line delivery (applyProduceEmptyLine,
-// operator_produce.go) creates outside this seam too: its delivery node is the
-// produce line, never a loader window. It runs under the same Engine.primeResv
-// lock, behind guardNoActiveSwap and the line's live rows (positionWorkedBy).
-//
-// An earlier version of this comment claimed EVERY empty-firing writer routed
-// through here. It did not, and the claim was load-bearing in two review rounds
-// before a census refuted it. TestCensus_RetrieveOrderCreatorSites now fails when
-// the creator count changes, so this list has a tripwire instead of only good
-// intentions. Re-run the census before relying on this for a system invariant.
-//
-// want is the desired TOTAL in-flight for this payload; toFire = want minus what
-// is already in flight for the payload, capped to the loader's free capacity
-// (budget = one bin per delivery node, minus all in-flight empties across the set).
-//
-// NO transaction, by design. The only operation that RAISES a loader's empty
-// count is the create inside `fire`; every other mutation (completion,
-// cancellation, failure) only lowers it, so serialising the up-writers with the
-// mutex makes the count monotone-safe without DB isolation. And
-// CreateRetrieveOrder is not transaction-pure — it enqueues to Core and fires a
-// synchronous EmitOrderCreated mid-write — so a surrounding tx could only
-// manufacture the Core/Edge divergence it was meant to prevent. See
-// FINAL-ADJUDICATION Q1 (monotonicity + unsoundness arguments) —
-// shingo-library/archive/bin-loader-multiwindow-reviews-2026-06-12/FINAL-ADJUDICATION.md.
-//
-// Fails CLOSED: a count read error fires nothing; the next signal retries.
-//
-// RE-ENTRANCY RULE (pinned, do not assume — it is enforced by a test): `fire`
-// runs while the loader's mutex is held and calls CreateRetrieveOrder, which
-// fires EmitOrderCreated SYNCHRONOUSLY on the in-process event bus. No
-// order-event subscriber may call back into the reservation seam for the SAME
-// loader — sync.Mutex is non-reentrant and would self-deadlock. If a subscriber
-// ever needs to re-enter, split reserve-from-fire (end the lock after the DB
-// insert; enqueue/emit after release). TestWithLoaderBudget_EmitDuringReservation
-// guards that the live subscribers do not re-enter.
-// It serves BOTH directions: a loader's empty-in (retrieveEmpty=true) and an
-// unloader's full-in (retrieveEmpty=false). It began as an empty-only function;
-// the body turned out to be role-agnostic apart from the in-flight filter, so the
-// consume side shares it (RequestFullBin here; the automatic U1 through
-// decideLoaderBudget) rather than re-implementing the count and cap — the
-// loader/unloader drift this codebase keeps re-growing. retrieveEmpty selects
-// which in-flight orders the budget counts; the caller's fire closure creates the
-// matching order type.
-//
-// NAMING: it was called reserveLoaderEmpties, then reserveLoaderBins. Neither
-// reserved anything. Nothing is held here — the budget is recomputed from the
-// order table on every call, and a "reservation" that survives no longer than the
-// mutex is not one. The current name says what it does: run the caller's fire
-// closure with the loader's budget enforced around it.
-func (e *Engine) withLoaderBudget(loader *domain.Loader, payload domain.PayloadCode, want int, member domain.NodeID, retrieveEmpty bool, fire func(deliveryNodes []string) (int, error)) (int, error) {
-	if loader == nil || want <= 0 {
-		return 0, nil
-	}
-	// The Loader owns the reservation shape: which nodes the count spans and the
-	// budget. multiWindowFor gates whether THIS shared loader spreads across its
-	// windows (budget = the window count) or takes one at a time (budget 1); member
-	// routes a dedicated reservation to the position the signal named —
-	// see domain.Loader.ReservationTarget.
-	nodes, budget := loader.ReservationTarget(member, payload, e.multiWindowFor(loader))
-	if len(nodes) == 0 || budget <= 0 {
-		return 0, nil // loader doesn't serve this payload — no target
-	}
-	deliveryNodes := nodeIDStrings(nodes)
-	loaderID := string(loader.ID())
-	pay := string(payload)
-
-	mu := e.loaderBudgetLock(loaderID)
-	mu.Lock()
-	defer mu.Unlock()
-
-	snap, err := e.readLoaderSnapshot(deliveryNodes)
-	if err != nil {
-		// Fail closed — never fire into the dark when the order list is unavailable.
-		return 0, fmt.Errorf("reserve loader=%s: in-flight count: %w", loaderID, err)
-	}
-	d := decideLoaderBudget(&snap, loaderID, pay, want, budget, deliveryNodes, retrieveEmpty)
-	if !snap.reachable {
-		d.logUnreachable(e, &snap)
-		return 0, nil
-	}
-	if d.toFire <= 0 {
-		d.logNoFire(e, &snap)
-		return 0, nil
-	}
-	created, ferr := fire(d.targets)
-	d.logFired(e, &snap, created, ferr)
-	return created, ferr
-}
-
-// loaderSnapshot is what one reservation reads, under the loader's mutex: the
-// active orders delivering to the read set and the bins table's rows for the
-// same set. withLoaderBudget reads it for one payload's target nodes; the
-// unloader pass (createUnloaderFullIns) reads it ONCE for the loader's whole
-// DeliveryNodes set and decides every payload from it.
-type loaderSnapshot struct {
-	orders []storeorders.Order
-	bins   []protocol.NodeBinsRow
-	// reachable is false when the bins table may not be decided from
-	// (BinsActable): the callers refuse.
-	reachable bool
-	occupancy string // OccupancyOutcome of the read
-	readErr   error  // the table's refusal, for the decision line
-}
-
-// readLoaderSnapshot reads the orders first and fails on their error without
-// reading the table; then the bins table's rows for nodes (binsForDecision).
-//
-// A bin already RESIDENT on a window occupies it just as an inbound order does.
-// The order count sees inbound retrieve/full ORDERS only; a carrier physically
-// standing on a window — an empty awaiting the operator's load, or a full not
-// yet pulled — is invisible to it. Without the occupancy read the seam re-fires
-// onto an occupied window every time the previous order terminalises: the
-// SLN_002 resident-bin blindness (live at Springfield 2026-07-23). The table's
-// row is Occupied for ANY resident bin, including a 0-UOP empty, and it is read
-// inside the loader mutex so it is part of the same count→fire snapshot as the
-// orders.
-//
-// `occupancy` records what the read did. It is the field that was missing on
-// 2026-07-31: the log said resident=0, which reads as "the windows are empty"
-// and in fact meant "nobody answered".
-//
-// A TABLE THAT MAY NOT BE DECIDED FROM FIRES NOTHING (reachable=false; the
-// callers refuse). The seam's whole job is to not put a second carrier on a
-// window that already has one, and it cannot do that job without knowing what is
-// on the windows. There is no arm that fires without it: an Edge with no Core
-// configured used to keep firing on its order count alone, and that arm went
-// with the HTTP read (the table is Core's, and an Edge without one holds none).
-//
-// A NAME THE TABLE HOLDS NO ROW FOR READS OCCUPIED: a window this Edge does not
-// watch (another Edge's, on a loader that spans two), or one Core does not have.
-// An unknown window is never an empty, so the budget spends it and no fire
-// targets it; the window's own Edge orders to it.
-func (e *Engine) readLoaderSnapshot(nodes []string) (loaderSnapshot, error) {
-	orderList, err := e.db.ListActiveOrdersByDeliveryNodeSet(nodes)
-	if err != nil {
-		return loaderSnapshot{}, err
-	}
-	snap := loaderSnapshot{orders: orderList}
-	rows, rerr := e.binsForDecision(nodes...)
-	if rerr != nil {
-		snap.occupancy, snap.readErr = OccupancyOutcome(false, rerr), rerr
-		return snap, nil
-	}
-	snap.reachable, snap.occupancy = true, OccupancyOutcome(true, nil)
-	for _, n := range nodes {
-		r, ok := rows[n]
-		if !ok || r.State == protocol.BinsStateUnknown || r.State == protocol.BinsStateGroup {
-			r = protocol.NodeBinsRow{Node: n, State: protocol.BinsStateUnknown, Occupied: true}
-		}
-		r.Node = n
-		snap.bins = append(snap.bins, r)
-	}
-	return snap, nil
-}
-
-// loaderBudgetDecision is the count→cap→target step for one payload over a
-// snapshot, and the one structured loader_budget line it writes.
-type loaderBudgetDecision struct {
-	loaderID, pay                            string
-	want, budget                             int
-	inFlightPayload, inFlightTotal, resident int
-	toFire                                   int
-	targets                                  []string
-}
-
-// decideLoaderBudget counts, over the payload's target nodes only, this
-// direction's in-flight orders and — where no order already accounts for a
-// window — its resident bins, then caps want to the free budget and picks the
-// free windows in target order.
-//
-// Restricting to the target nodes matters when the snapshot spans more: a
-// funnelled loader's target is its first window alone, so an order or bin on
-// another window must not spend its budget
-// (TestUnloaderSweep_FunnelCountsOnlyItsTargetWindow). A row that names no node
-// is still charged, as it always was; Core names every row.
-func decideLoaderBudget(snap *loaderSnapshot, loaderID, pay string, want, budget int, nodes []string, retrieveEmpty bool) loaderBudgetDecision {
-	d := loaderBudgetDecision{loaderID: loaderID, pay: pay, want: want, budget: budget}
-	inTarget := make(map[string]bool, len(nodes))
-	for _, n := range nodes {
-		inTarget[n] = true
-	}
-	perNode := make(map[string]int, len(nodes))
-	for _, o := range snap.orders {
-		if o.RetrieveEmpty != retrieveEmpty || !inTarget[o.DeliveryNode] {
-			continue // count only this direction's in-flight (empties for a loader, fulls for an unloader)
-		}
-		d.inFlightTotal++
-		perNode[o.DeliveryNode]++
-		if o.PayloadCode == pay {
-			d.inFlightPayload++
-		}
-	}
-	if !snap.reachable {
-		return d
-	}
-	// Count a resident bin toward window occupancy only where no inbound order
-	// already accounts for that window, so an order that just delivered its bin
-	// isn't double-counted.
-	for i := range snap.bins {
-		nb := snap.bins[i]
-		if !inTarget[nb.Node] {
-			continue
-		}
-		if nb.Occupied && perNode[nb.Node] == 0 {
-			d.inFlightTotal++
-			perNode[nb.Node] = 1
-			d.resident++
-		}
-	}
-	d.toFire = want - d.inFlightPayload
-	if headroom := budget - d.inFlightTotal; d.toFire > headroom {
-		d.toFire = headroom
-	}
-	if d.toFire <= 0 {
-		d.toFire = 0
-		return d
-	}
-	// Assign each new bin to a FREE window (none in flight) — one physical bin
-	// per window. budget = window count and toFire ≤ headroom = the free-window
-	// count, so there are always enough; a single-node set degrades to [that node].
-	d.targets = make([]string, 0, d.toFire)
-	for _, node := range nodes {
-		if len(d.targets) >= d.toFire {
-			break
-		}
-		if perNode[node] == 0 {
-			d.targets = append(d.targets, node)
-		}
-	}
-	return d
-}
-
-// The three loader_budget line shapes: the structured decision record, one
-// machine-parseable line per reservation so an over-ordering incident is
-// reconstructable from logs alone (the SLN_002 bar).
-
-func (d *loaderBudgetDecision) logUnreachable(e *Engine, snap *loaderSnapshot) {
-	e.logFn("loader_budget loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d resident=0 occupancy=%s budget=%d to_fire=0 created=0 err=%v",
-		d.loaderID, d.pay, d.want, d.inFlightPayload, d.inFlightTotal, snap.occupancy, d.budget, snap.readErr)
-}
-
-func (d *loaderBudgetDecision) logNoFire(e *Engine, snap *loaderSnapshot) {
-	e.logFn("loader_budget loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d resident=%d occupancy=%s budget=%d to_fire=0 created=0",
-		d.loaderID, d.pay, d.want, d.inFlightPayload, d.inFlightTotal, d.resident, snap.occupancy, d.budget)
-}
-
-func (d *loaderBudgetDecision) logFired(e *Engine, snap *loaderSnapshot, created int, ferr error) {
-	e.logFn("loader_budget loader=%s payload=%q want=%d in_flight_payload=%d in_flight_total=%d resident=%d occupancy=%s budget=%d to_fire=%d targets=%v created=%d err=%v",
-		d.loaderID, d.pay, d.want, d.inFlightPayload, d.inFlightTotal, d.resident, snap.occupancy, d.budget, d.toFire, d.targets, created, ferr)
-}
-
-// multiWindowFor reports whether THIS loader spreads its empties across its
-// windows (one bin per window, budget = window count) or takes one window at a
-// time (budget 1, all to the first window).
-//
-// Core owns the answer, on the loader's own row. It used to be one plant-wide
-// Edge config key, which could only answer for every loader at once; a plant
-// that needed the funnel for one loader imposed it on all of them.
-//
-// The plant-wide config key that once braked every loader to the funnel
-// (loaders_multi_window: false) is gone: no plant's Edge config set it, the
-// dev rigs no longer carry it, and a file that still does loads and ignores it
-// (config.TestLoad_ARetiredKeyStillLoads). Pinned by
-// TestFunnelWindows_TheLoaderDecides.
-func (e *Engine) multiWindowFor(l *domain.Loader) bool {
-	return l == nil || !l.FunnelWindows()
-}
-
 // nodeIDStrings projects typed NodeIDs to the plain strings the order-query layer
 // keys on (the boundary where typed IDs meet the legacy string columns).
 func nodeIDStrings(ns []domain.NodeID) []string {
@@ -366,32 +47,6 @@ func nodeIDStrings(ns []domain.NodeID) []string {
 		out[i] = string(n)
 	}
 	return out
-}
-
-// resolveOwnWindow is the unloader U1 fire closure's window-resolve step: it
-// maps a delivery window to this Edge's process_node id.
-//
-// One plant, several Edges: Core broadcasts the loader config to every Edge,
-// and each Edge holds process_node rows only for its own windows. A sweep on
-// this Edge routinely walks windows served by another Edge, and sql.ErrNoRows
-// is the store's ordinary "we do not own this destination" answer — so that
-// arm logs skipFmt at debug and returns ok=false with no error, and the caller
-// skips the window rather than failing the sweep. Any other read error comes
-// back wrapped in errFmt, and the caller aborts its fire loop on it
-// (TestCreateUnloaderFullIn_ResolveReadErrorAborts).
-//
-// skipFmt takes the window (%s); errFmt takes the window (%s) and the read
-// error (%w). Each caller keeps its own wording.
-func (e *Engine) resolveOwnWindow(deliveryNode, skipFmt, errFmt string) (nodeID int64, ok bool, err error) {
-	node, nerr := e.db.GetProcessNodeByCoreNodeName(deliveryNode)
-	if errors.Is(nerr, sql.ErrNoRows) {
-		e.debugFn(skipFmt, deliveryNode)
-		return 0, false, nil
-	}
-	if nerr != nil || node == nil {
-		return 0, false, fmt.Errorf(errFmt, deliveryNode, nerr)
-	}
-	return node.ID, true, nil
 }
 
 // stageOperatorEmpty asks Core for loader empties when a window frees up on an
@@ -412,7 +67,7 @@ func (e *Engine) stageOperatorEmpty(loader *domain.Loader, payload domain.Payloa
 	if loader.InboundSource() == "" {
 		// No inbound source to pull empties from — a forklift/press-fed loader is
 		// supplied directly (operator stages empties at the window). Nothing to
-		// ask for. Symmetric to the unloader's no-inbound gate in createUnloaderFullIns.
+		// ask for. Symmetric to the unloader's no-inbound gate in offerUnloaderFulls.
 		e.debugFn("loader_push: loader=%s payload=%s skipped — no inbound source (fed directly)",
 			coreNode, payload)
 		return 0, nil

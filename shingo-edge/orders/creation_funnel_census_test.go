@@ -264,10 +264,12 @@ func TestCensus_EdgeCreationSites(t *testing.T) {
 // method it calls. 25 at the base of the unification (ba7afb21), 28 on main at
 // 6a590181 (quality containment added three), 32 on main at 264147c1 (the
 // keep-staged spot, a cancelled changeover's parked trips, and the bare-line
-// prime). A new site is a new way an Edge order reaches Core; name it here.
+// prime). Three fewer since a person's full at a consume window, the
+// unloader's U1 and the manual retrieve at a loader window are asked of Core
+// (the loader retrieve ask) and made there. A new site is a new way an Edge
+// order reaches Core; name it here.
 var edgeCreationSites = map[string]string{
 	// the HTTP API and the Edge UI
-	"engine/api_retrieve.go:CreateRetrieveForAPI":      "CreateRetrieveOrder",
 	"engine/api_retrieve.go:createRetrieveDirect":      "CreateRetrieveOrder",
 	"www/handlers_api_orders.go:apiCreateComplexOrder": "CreateComplexOrder",
 	"www/handlers_api_orders.go:apiCreateMoveOrder":    "CreateMoveOrder",
@@ -286,11 +288,9 @@ var edgeCreationSites = map[string]string{
 	"engine/operator_node_changeover.go:StageNodeChangeoverMaterial":     "CreateComplexOrder,CreateRetrieveOrder",
 	"engine/wiring_status_changed.go:handleSequentialBackfill":           "CreateComplexOrder",
 	// loader and unloader side-cycles
-	"engine/loader_outbound_guard.go:fileLoadedOutbound":   "CreateMoveOrderWithPayloadCodeForBin",
-	"engine/operator_bin_ops.go:RequestFullBin":            "CreateRetrieveOrder",
-	"engine/operator_bin_ops.go:createUnloaderEmptyOut":    "CreateMoveOrderForBin",
-	"engine/operator_demand_unloader.go:fireUnloaderFulls": "CreateRetrieveOrder",
-	"engine/operator_window_pullback.go:PullFromMarket":    "CreateMoveOrderWithPayloadCodeForBin",
+	"engine/loader_outbound_guard.go:fileLoadedOutbound": "CreateMoveOrderWithPayloadCodeForBin",
+	"engine/operator_bin_ops.go:createUnloaderEmptyOut":  "CreateMoveOrderForBin",
+	"engine/operator_window_pullback.go:PullFromMarket":  "CreateMoveOrderWithPayloadCodeForBin",
 	// keep-staged spot and a cancelled changeover's parked trips (main, 2026-10-03/04)
 	"engine/keep_staged_spot.go:refillSpot":              "CreateRetrieveOrder",
 	"engine/keep_staged_spot.go:returnSpare":             "CreateMoveOrderForBin",

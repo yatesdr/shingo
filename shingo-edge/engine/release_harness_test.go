@@ -210,9 +210,12 @@ type relHarness struct {
 	eng     *Engine
 	counter *store.QueryCounter
 	core    *fakeCore
-	wl      *scriptedWarLink
-	handler *messaging.EdgeHandler
-	mutator *uop.Mutator
+	// loaderAsks, once a fixture arms an unloader, is Core's loader.retrieve
+	// door (the release's U1 is asked of it).
+	loaderAsks *coreRetrieve
+	wl         *scriptedWarLink
+	handler    *messaging.EdgeHandler
+	mutator    *uop.Mutator
 
 	processID int64
 	nodeID    int64

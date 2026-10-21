@@ -27,7 +27,7 @@ func newSynthUGFixture(t *testing.T, prefix string, lAuto bool) *ugFixture {
 	bridgeCore(t, eng, core.srv.URL)
 	core.bind(t, eng)
 
-	f := &ugFixture{eng: eng, db: db, core: core,
+	f := &ugFixture{eng: eng, db: db, core: core, asks: answerLoaderAsks(t, eng),
 		nCore: prefix + "-N", n2Core: prefix + "-N2", w3Core: prefix + "-W3"}
 	unloader := func(key string, auto bool, windows ...string) protocol.LoaderInfo {
 		info := protocol.LoaderInfo{

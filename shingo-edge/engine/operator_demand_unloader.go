@@ -1,51 +1,48 @@
 package engine
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
+	"slices"
+	"strings"
 
+	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/orders"
-	storeorders "shingoedge/store/orders"
 )
 
-// unloaderHasUsableFullPresent is the consumer-side counterpart to the
-// removed loaderHasUsableEmptyPresent: it finds the first target window on
-// which Core reports a full bin of the target payload already physically
-// standing, so the U1 full-in can be skipped. It answers from the loader's
-// snapshot, matching each row to its window by NodeName.
+// operator_demand_unloader.go — the unloader's U1 full-in, asked of Core.
 //
-// It says nothing when the snapshot cannot: the bins table may not be decided
-// from (reachable=false — the caller then refuses anyway, and says so), or no
-// payload was named. A failed read once looked like an empty floor here (the
-// HTTP read collapsed every failure into "no rows") and the U1 fired anyway:
-// the fault of the 2026-07-31 loader over-ordering incident, one file over.
-func unloaderHasUsableFullPresent(snap *loaderSnapshot, nodes []string, payloadCode string) (window string, present bool) {
-	if !snap.reachable || payloadCode == "" {
-		return "", false
-	}
-	for _, n := range nodes {
-		for i := range snap.bins {
-			b := snap.bins[i]
-			if b.Node == n && b.Occupied && b.PayloadCode == payloadCode {
-				return n, true
-			}
-		}
-	}
-	return "", false
-}
+// Core sizes and places a release's full (protocol.AskLoaderRetrieve, the
+// side-cycle origin: dispatch.ReplenishLoader subtracts the part's live fulls
+// across the unloader's windows, stops for a full of the part standing on a
+// target window, and orders to a free window under its per-loader lock). The
+// order reaches this Edge as a projection. The Edge decides nothing about the
+// unloader's windows: it says when to ask, which is a trigger it alone sees
+// (a release, CLEAR, PUSH EMPTY, the U2's pickup and landing, the startup
+// sweep).
+//
+// AN ASK THAT DOES NOT WAIT. A trigger is an act of its own (a release, a
+// CLEAR), and the U1 is its side effect at another node, so the trigger
+// sends the ask and returns (AskLate with no wait, the clear_home
+// precedent). Until Core's answer comes, the unloader's first window on this
+// Edge carries the pending note on the board (UnloaderAskNote); the answer, whenever it
+// comes, clears it. An ask Core cannot be sent (the last ack does not name
+// the kind) leaves the note too: Core has not answered either way, and the
+// next trigger asks again.
 
-// occupancyUnverifiable reports whether an occupancy outcome means the guard
-// could not see: the bins table may not be decided from, a transient the next
-// ack or push clears.
-func occupancyUnverifiable(outcome string) bool {
-	return outcome != "ok"
+// unloaderAskKey is one pending U1 ask, by the window whose card says so and
+// the part asked for.
+type unloaderAskKey struct {
+	window  string
+	payload string
 }
 
 // MaybeCreateUnloaderFullIn (U1 of the side-cycle model) is the consumer-side
-// counterpart to the loader side's L1: it pulls a full FG bin to the unloader
-// for the operator to process. Resolves the unloader as a consume *domain.Loader
-// and routes through the shared reservation seam (never-2N).
+// counterpart to the loader side's L1: it asks Core for a full FG bin at the
+// unloader serving payloadCode, for the operator to process.
 //
 // U2 (empty-out from the unloader to the supermarket) fires when the unloader
 // operator taps CLEAR — driven off the clear itself (ClearBin →
@@ -57,17 +54,16 @@ func occupancyUnverifiable(outcome string) bool {
 // mode is capture_lineside. A station's produce RELEASE never reaches it: the
 // HMI posts a bare body there (releasedFullBody in operator-release.js). What
 // does is a changeover evac at count 0, whose disposition evacDispositionForTask
-// synthesises as capture_lineside (it then pulls a full of the evac order's
+// synthesises as capture_lineside (it then asks for a full of the evac order's
 // part, the outgoing one), the sim's auto-operator (releaseAsPair), and any API
 // client that posts capture_lineside on a produce node. The consume
 // DemandSignal caller is gone (2026-08) with the kanban demand-signal route;
-// fulls landing at FG storage no longer auto-trigger a U1. The seam still
-// applies (never-2N).
+// fulls landing at FG storage no longer auto-trigger a U1.
 //
 // LOCAL FIRST. The released payload is usually already covered — in an auto_push
 // unloader the pickup gate pulled its next full before the release arrived — and
-// then the seam's Core read can only answer to_fire=0. unloaderPullsCovered answers
-// that from the order table for this payload alone, and the Core read happens only
+// then Core's answer can only be "already coming". unloaderPullsCovered answers
+// that from the order table for this payload alone, and the ask is sent only
 // when a pull is possible (TestPinFold_ProduceRelease).
 func (e *Engine) MaybeCreateUnloaderFullIn(payloadCode string) {
 	loader, err := e.loaderStore.LoaderForPayload(domain.PayloadCode(payloadCode), domain.RoleConsume)
@@ -78,217 +74,200 @@ func (e *Engine) MaybeCreateUnloaderFullIn(payloadCode string) {
 		e.debugFn("side-cycle: unloader %s — a full-in of %s is already in flight; release offers nothing", loader.ID(), payloadCode)
 		return
 	}
-	e.createUnloaderFullIns(loader, []domain.PayloadCode{domain.PayloadCode(payloadCode)})
+	e.offerUnloaderFulls(loader, []domain.PayloadCode{domain.PayloadCode(payloadCode)})
 }
 
-// unloaderOffer is one payload's reservation shape at an unloader.
-type unloaderOffer struct {
-	pay    string
-	nodes  []string
-	budget int
-}
-
-// createUnloaderFullIns is the consume-side path for the U1 full-in: one pass
-// per unloader over the payloads offered. It takes the loader's reservation
-// mutex once, reads the active orders and Core's occupancy for the loader's
-// whole DeliveryNodes set once, and then decides each payload from that
-// snapshot with the same count/cap/target step and loader_budget line as
-// withLoaderBudget (decideLoaderBudget) — one seam, no loader/unloader drift.
-// What each payload fires is added to the snapshot before the next payload is
-// decided, so the pass sees its own orders exactly as a re-read would
-// (TestUnloaderSweep_FirstFreeWindowAndSeesEarlierPayload).
+// offerUnloaderFulls asks Core for one full of each payload the unloader
+// serves, a release's full-in each (the side-cycle origin), and returns without
+// waiting for the answers.
 //
 // Callers: the unloader's own auto_push gates (rePushOwnUnloader and
 // rePushOwnUnloaderIfUncovered: CLEAR, PUSH EMPTY, the U2's pickup, the U2's
-// landing), the startup sweep (pushUnloadersViaSeam), and, one payload at a
-// time through createUnloaderFullInViaSeam, MaybeCreateUnloaderFullIn on a
-// produce release that carries capture_lineside (never a station's: see it).
+// landing), the startup sweep (pushUnloaders), and, one payload at a time,
+// MaybeCreateUnloaderFullIn on a produce release that carries capture_lineside.
 //
-// Cost: one read of the bins table per unloader that reaches it, however many
-// payloads and windows it has, and no Core round trip. It used to be one
-// node-bins GET per unloader, and before that one per window per payload for
-// the guard plus one per payload for the seam.
-//
-// One thing the order count does NOT subsume: it counts in-flight ORDERS, not
-// parked BINS. The loader could drop its physical-presence check because its
-// `want` is demand-netted; the unloader's want=1 is event-driven, so the
-// usable-full-present guard stays, per payload, before the count.
-//
-// Both early exits read nothing: an unloader with no inbound source, and an
-// offer with no payload the unloader serves
-// (TestUnloaderSweep_NoInboundSource_ZeroReads, _ZeroPayloads_ZeroReads).
-//
-// The RE-ENTRANCY RULE on withLoaderBudget applies here unchanged: the U1 is
-// created, and EmitOrderCreated fires, with the loader's mutex held.
-func (e *Engine) createUnloaderFullIns(loader *domain.Loader, payloads []domain.PayloadCode) {
+// Cost: one ask per payload offered (a SQLite outbox row each, no wait) after
+// one process-node read per window until this Edge's is found (ownWindow);
+// nothing at all for an unloader with no inbound source or none of the
+// payloads, and no ask for one with no window here.
+// Core's answer to a release's full is 16 statements at a free three-window
+// unloader and 5 for a part already coming (the Core lane's count).
+func (e *Engine) offerUnloaderFulls(loader *domain.Loader, payloads []domain.PayloadCode) {
 	if loader == nil {
 		return
 	}
-	lid := string(loader.ID())
 	if loader.InboundSource() == "" {
 		// Forklift/press-fed drain: no AMR source to pull a full from — the operator
-		// (reach truck) feeds the windows directly. Skip auto-pull (no U1 retrieve);
-		// nothing to queue. The empty-out on clear (outbound_dest) is independent and
-		// still fires. Unloaders that DO set an inbound source keep auto-pulling.
-		e.debugFn("side-cycle: unloader %s has no inbound_source — fed directly, skip U1 auto-pull", lid)
+		// (reach truck) feeds the windows directly. Core gives such an unloader no
+		// release's full, so nothing is asked. The empty-out on clear
+		// (outbound_dest) is independent and still fires.
+		e.debugFn("side-cycle: unloader %s has no inbound_source — fed directly, no U1 asked", loader.ID())
 		return
 	}
-	offers := make([]unloaderOffer, 0, len(payloads))
-	for _, pc := range payloads {
-		nodes, budget := loader.ReservationTarget("", pc, e.multiWindowFor(loader))
-		if len(nodes) == 0 || budget <= 0 {
-			continue // this unloader doesn't serve the payload
+	served := make([]string, 0, len(payloads))
+	for _, p := range payloads {
+		if p != "" && loader.ServesPayload(p) {
+			served = append(served, string(p))
 		}
-		offers = append(offers, unloaderOffer{pay: string(pc), nodes: nodeIDStrings(nodes), budget: budget})
 	}
-	if len(offers) == 0 {
+	if len(served) == 0 {
+		return // nothing the unloader serves: no read, no ask
+	}
+	window, ok := e.ownWindow(loader)
+	if !ok {
 		return
 	}
-	readSet := nodeIDStrings(loader.DeliveryNodes())
-
-	mu := e.loaderBudgetLock(lid)
-	mu.Lock()
-	defer mu.Unlock()
-
-	snap, err := e.readLoaderSnapshot(readSet)
-	if err != nil {
-		// Fail closed — never fire into the dark when the order list is unavailable.
-		for _, o := range offers {
-			e.logFn("side-cycle: unloader %s seam full-in for %s failed after 0 created: reserve loader=%s: in-flight count: %v",
-				lid, o.pay, lid, err)
-		}
-		return
-	}
-	// The guard could not see, and the decision below refuses on the same failed
-	// read for every payload. Said once per unloader, so a trace records that the
-	// guard was blind rather than implying it looked and found nothing.
-	// TestCreateUnloaderFullIn_HoldsWhenOccupancyReadFails pins the refusal.
-	if occupancyUnverifiable(snap.occupancy) {
-		e.debugFn("side-cycle: unloader %s occupancy=%s — the guard could not see; the seam refuses every payload this pass",
-			lid, snap.occupancy)
-	}
-	for _, o := range offers {
-		// Physical parked-full guard — the order count can't see a full bin parked
-		// without an in-flight order.
-		if w, present := unloaderHasUsableFullPresent(&snap, o.nodes, o.pay); present {
-			e.debugFn("side-cycle: unloader %s window %s already holds a full (%s) — skipping U1",
-				lid, w, o.pay)
-			continue
-		}
-		if !e.decideAndFireUnloaderFull(loader, &snap, readSet, o) {
-			return
-		}
+	for _, p := range served {
+		e.askUnloaderFull(loader, window, p)
 	}
 }
 
-// decideAndFireUnloaderFull runs one payload's count→cap→target step against
-// the snapshot, fires its U1, writes its loader_budget line, and folds what it
-// created back into the snapshot. It reports false when the snapshot could not
-// be brought up to date after a failed fire, and the pass must stop.
-func (e *Engine) decideAndFireUnloaderFull(loader *domain.Loader, snap *loaderSnapshot, readSet []string, o unloaderOffer) bool {
-	lid := string(loader.ID())
-	d := decideLoaderBudget(snap, lid, o.pay, 1, o.budget, o.nodes, false)
-	if !snap.reachable {
-		d.logUnreachable(e, snap)
-		return true
-	}
-	if d.toFire <= 0 {
-		d.logNoFire(e, snap)
-		return true
-	}
-	made, ferr := e.fireUnloaderFulls(loader, o.pay, d.targets)
-	d.logFired(e, snap, len(made), ferr)
-	if ferr != nil {
-		e.logFn("side-cycle: unloader %s seam full-in for %s failed after %d created: %v", lid, o.pay, len(made), ferr)
-		// A failed create may or may not have left its row; re-read the orders
-		// (local, no Core call) rather than guess, and stop if that fails too.
-		list, rerr := e.db.ListActiveOrdersByDeliveryNodeSet(readSet)
-		if rerr != nil {
-			e.logFn("side-cycle: unloader %s: re-read orders after a failed U1: %v — stopping this pass", lid, rerr)
-			return false
+// ownWindow is the first of the unloader's windows this Edge holds a process
+// node for: where its board shows the pending note. ok is false for an
+// unloader none of whose windows is this Edge's.
+//
+// ONE PLANT, SEVERAL EDGES. Core sends every loader to every Edge, and each
+// Edge holds process nodes only for its own windows, so a sweep here walks
+// other Edges' unloaders too (on the two-Edge sim stack, 2026-09-07, edge1
+// walked edge2's FGN_L2_01 520 times an hour). Such an unloader is that Edge's
+// to ask for: an ask from here would be answered with an order attributed to
+// this station at a window no operator here works. A read error is treated as
+// "not ours" too, and logged: it asks for nothing rather than for another
+// Edge's window. One process-node read per window, until one is found; no
+// Core round trip.
+func (e *Engine) ownWindow(loader *domain.Loader) (string, bool) {
+	for _, w := range loader.DeliveryNodes() {
+		node, err := e.db.GetProcessNodeByCoreNodeName(string(w))
+		switch {
+		case err == nil && node != nil:
+			return string(w), true
+		case err != nil && !errors.Is(err, sql.ErrNoRows):
+			e.logFn("side-cycle: unloader %s window %s: read its process node: %v — not asked from here", loader.ID(), w, err)
+			return "", false
 		}
-		snap.orders = list
-		return true
 	}
-	for _, n := range made {
-		snap.orders = append(snap.orders, storeorders.Order{DeliveryNode: n, PayloadCode: o.pay, RetrieveEmpty: false})
-	}
-	if len(made) > 0 {
-		log.Printf("side-cycle: %d U1 order(s) via seam for unloader %s payload %s", len(made), lid, o.pay)
-	}
-	return true
+	e.debugFn("side-cycle: unloader %s has no window on this Edge — another Edge's to ask for", loader.ID())
+	return "", false
 }
 
-// fireUnloaderFulls creates one U1 per target window and returns the windows
-// it created on.
-func (e *Engine) fireUnloaderFulls(loader *domain.Loader, payloadCode string, targets []string) ([]string, error) {
-	lid := string(loader.ID())
-	made := make([]string, 0, len(targets))
-	for _, deliveryNode := range targets {
-		nodeID, ok, rerr := e.resolveOwnWindow(deliveryNode,
-			"side-cycle: unloader window %s has no process_node here — another Edge's window; skipped",
-			"side-cycle: no process_node for unloader window %s: %w")
-		if rerr != nil {
-			return made, rerr
-		}
-		if !ok {
-			// Same shape as the loader L1: one plant, several Edges — Core
-			// broadcasts the loader config to every Edge, and this sweep
-			// routinely walks a window served by another Edge. ErrNoRows is
-			// the store's "not ours" answer — skip, don't fail. Measured 520
-			// of these an hour on edge1 of the two-Edge sim stack (2026-09-07)
-			// while edge2, which owns FGN_L2_01, logged none.
-			continue
-		}
-		// U1 = a FULL (retrieve_empty=false) pulled from the unloader's inbound FG
-		// supermarket (blank → Core global FIFO). autoConfirm MUST be false — the
-		// operator processes the bin before U2 fires (same rule as L1).
-		//
-		// NO_DEMAND, decided against the code rather than the trace. Three
-		// things say loader-family, not cell-family, and none is close:
-		//
-		//   - It is EVENT-driven, not level-driven. Its callers are "a full
-		//     arrived at FG storage" and a lineside release — it reacts to
-		//     material APPEARING, which is the opposite direction from a
-		//     place needing material. There is no threshold and no edge.
-		//   - It has no PROCESS grain. It resolves a *domain.Loader by
-		//     payload, so there is no process_id to key a cell episode on.
-		//   - want is a fixed 1, not a plan's order count.
-		//
-		// So nothing asked for this bin: a full showed up and the system
-		// pulled it in, the same shape as the loader's opportunistic push.
-		// If it were ever to become real demand that would be a column
-		// value here, not a redesign.
-		if _, cerr := e.orderMgr.CreateRetrieveOrder(
-			&nodeID, false, 1, deliveryNode, loader.InboundSource(), "",
-			"standard", payloadCode, false, true, orders.NoDemand(),
-		); cerr != nil {
-			return made, fmt.Errorf("side-cycle: create U1 loader=%s payload=%s: %w", lid, payloadCode, cerr)
-		}
-		made = append(made, deliveryNode)
-		e.recordL1Burst(deliveryNode, 1) // delivery-node-keyed, the same tripwire as L1
+// askUnloaderFull sends one release's full-in ask for payload at the unloader,
+// with the board's pending note on window until Core answers it.
+func (e *Engine) askUnloaderFull(loader *domain.Loader, window, payload string) {
+	key := unloaderAskKey{window: window, payload: payload}
+	// The note is up before the ask is out, so an answer cannot beat it.
+	e.setUnloaderAsk(key, true)
+	if !e.CoreAnswers(protocol.AskLoaderRetrieve) {
+		e.logFn("side-cycle: unloader %s payload %s: %v — the board says it is not answered", loader.ID(), payload, doesNotAnswer(protocol.AskLoaderRetrieve))
+		return
 	}
-	return made, nil
+	req := protocol.LoaderRetrieveRequest{
+		LoaderKey: string(loader.ID()), Direction: protocol.LoaderRetrieveFull, Origin: protocol.LoaderAskSideCycle,
+		PayloadCode: payload, Count: 1,
+		// NO_DEMAND: the U1 is EVENT-driven (a full appeared, a window freed),
+		// has no process grain (it resolves a loader by payload) and wants a
+		// fixed one; nothing's demand asked for this bin. If it were ever real
+		// demand that would be a value here, not a redesign.
+		OriginClass: orders.NoDemand().Class,
+		// The operator processes the bin before the U2 fires: Core's sweep must
+		// not confirm it on arrival.
+		SkipAutoConfirm: true,
+	}
+	a, err := e.AskLate(protocol.AskLoaderRetrieve, req, 0, func(a *protocol.EdgeAnswer) {
+		e.unloaderFullAnswered(loader, key, a)
+	})
+	switch {
+	case err == nil:
+		e.unloaderFullAnswered(loader, key, a)
+	case errors.Is(err, ErrAskPending):
+		// Out; the answer is taken when it comes (late above).
+	default:
+		e.logFn("side-cycle: unloader %s payload %s: ask not sent: %v", loader.ID(), payload, err)
+	}
 }
 
-// pushUnloadersViaSeam is the seam-based auto-push: it walks every consume loader
-// in the aggregate and offers all its allowed payloads to createUnloaderFullIns in
-// one pass. The never-2N budget makes it idempotent, so it is safe on any
-// window-free event or as a startup sweep — already-covered windows create nothing.
+// unloaderFullAnswered is Core's answer to a release's full-in ask: the
+// pending note goes, and what Core did is logged. The order itself arrives as
+// a projection, ahead of the answer.
+func (e *Engine) unloaderFullAnswered(loader *domain.Loader, key unloaderAskKey, a *protocol.EdgeAnswer) {
+	e.setUnloaderAsk(key, false)
+	res, err := askInto[protocol.LoaderRetrieveResponse](a)
+	switch {
+	case err != nil:
+		e.logFn("side-cycle: unloader %s payload %s: Core refused the U1: %v", loader.ID(), key.payload, err)
+	case len(res.Created) > 0:
+		log.Printf("side-cycle: %d U1 order(s) by Core for unloader %s payload %s", len(res.Created), loader.ID(), key.payload)
+	default:
+		e.debugFn("side-cycle: unloader %s payload %s: no U1 — %s", loader.ID(), key.payload, heldWhy(res))
+	}
+}
+
+// heldWhy is why Core made none: its Skipped, else each window held with its
+// cause, in name order.
+func heldWhy(res *protocol.LoaderRetrieveResponse) string {
+	if res.Skipped != "" {
+		return res.Skipped
+	}
+	held := make([]string, 0, len(res.HeldBy))
+	for window, cause := range res.HeldBy {
+		held = append(held, window+" "+cause)
+	}
+	slices.Sort(held)
+	return "every window is spoken for (" + strings.Join(held, ", ") + ")"
+}
+
+// setUnloaderAsk puts up or takes down one pending U1 note, and nudges the
+// boards when that changed what a board shows.
+func (e *Engine) setUnloaderAsk(key unloaderAskKey, pending bool) {
+	var changed bool
+	if pending {
+		_, had := e.unloaderAsks.LoadOrStore(key, struct{}{})
+		changed = !had
+	} else {
+		_, changed = e.unloaderAsks.LoadAndDelete(key)
+	}
+	if changed {
+		e.nudgeBoards()
+	}
+}
+
+// UnloaderAskNote is the board's sentence for a window whose unloader has a
+// U1 asked of Core and not answered (the station view's ask_pending), blank
+// when none is out.
+func (e *Engine) UnloaderAskNote(coreNodeName string) string {
+	var parts []string
+	e.unloaderAsks.Range(func(k, _ any) bool {
+		if key := k.(unloaderAskKey); key.window == coreNodeName {
+			parts = append(parts, key.payload)
+		}
+		return true
+	})
+	if len(parts) == 0 {
+		return ""
+	}
+	slices.Sort(parts)
+	// OWNER-WORDS
+	return fmt.Sprintf("A full of %s is asked of Core; no answer yet", strings.Join(parts, ", "))
+}
+
+// pushUnloaders is the unloaders' startup sweep: it walks every consume loader
+// in the aggregate and asks Core for a full of each allowed payload. Core's
+// count makes it idempotent, so it is safe as a sweep: already-covered windows
+// get nothing.
 //
 // A consume loader has a single mode: the window-queue DRAIN. It pulls a full
-// whenever a window frees and one is waiting — operator-paced via never-2N. Its
-// stored replenishment is not read: Core refuses threshold on a consume loader
-// (service.ErrConsumeThreshold), so every unloader is drained alike. Pinned by
-// TestUnloaderSweep_ReplenishmentDoesNotGateTheDrain.
-func (e *Engine) pushUnloadersViaSeam() {
+// whenever a window frees and one is waiting — operator-paced, one per window.
+// Its stored replenishment is not read: Core refuses threshold on a consume
+// loader (service.ErrConsumeThreshold), so every unloader is drained alike, and
+// a release's full is not gated by it on Core either
+// (TestPortedBudget_SideCycleIsNotGatedByReplenishment).
+func (e *Engine) pushUnloaders() {
 	loaders, err := e.loaderStore.Loaders(domain.RoleConsume)
 	if err != nil {
-		e.logFn("side-cycle: push-unloaders seam list: %v", err)
+		e.logFn("side-cycle: push-unloaders list: %v", err)
 		return
 	}
 	for _, l := range loaders {
-		e.createUnloaderFullIns(l, l.PayloadSet())
+		e.offerUnloaderFulls(l, l.PayloadSet())
 	}
 }
 
@@ -300,5 +279,5 @@ func (e *Engine) SweepPushUnloaders() {
 		return // a sweep is already running — a re-register storm must not stack them
 	}
 	defer e.sweepingUnloaders.Store(false)
-	e.pushUnloadersViaSeam()
+	e.pushUnloaders()
 }
