@@ -72,7 +72,7 @@ func (e *Engine) ClearLoaderHome(nodeID int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	req := protocol.ClearHomeRequest{HomeNode: node.CoreNodeName, Station: e.cfg.StationID()}
+	req := protocol.ClearHomeRequest{HomeNode: node.CoreNodeName}
 	ans, status, err := e.sendHomeClear(req, func(late *protocol.ClearHomeResponse, lateStatus int) {
 		if sentence, lerr := e.afterHomeClear(nodeID, node, claim, late, lateStatus); lerr != nil {
 			log.Printf("home_clear: node %s, answered late: %v", node.Name, lerr)

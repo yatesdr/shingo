@@ -32,7 +32,7 @@ import (
 // Door (no pull, no spot: the trade). Nothing is sent.
 func (r *clearRig) bornTrade(t *testing.T) (parent, l1, l2 *orders.Order) {
 	t.Helper()
-	job, refusal := r.eng.resolveClearJob(r.home, protocol.ClearHomeRequest{HomeNode: r.home.Name, Station: clearStation})
+	job, refusal := r.eng.resolveClearJob(r.home, clearStation, protocol.ClearHomeRequest{HomeNode: r.home.Name})
 	if refusal != nil {
 		t.Fatalf("resolve: %+v", refusal.Body)
 	}

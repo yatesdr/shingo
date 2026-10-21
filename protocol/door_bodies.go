@@ -272,9 +272,6 @@ type ClearHomeRequest struct {
 	// the first buffer spot, in the loader's order, holding a partial of the
 	// home's part — the spot the station's board names.
 	PartialNode string `json:"partial_node,omitempty"`
-	// Station is the asking Edge's station: the clear's orders are its, so it
-	// is sent their rows and their status.
-	Station string `json:"station"`
 }
 
 // ClearHomeResponse is Core's answer to a home clear. Status "ok" carries the
@@ -327,7 +324,6 @@ type PreflightResponse struct {
 // ReleasePointsRequest asks Core, for one act, what releasing each order would
 // let its robot do next (POST /api/release/points).
 type ReleasePointsRequest struct {
-	StationID  string   `json:"station_id"`
 	OrderUUIDs []string `json:"order_uuids"`
 }
 

@@ -53,10 +53,12 @@ func clearRefused(status int, format string, a ...any) ClearHomeAnswer {
 		Status: "error", Error: fmt.Sprintf(format, a...)}}
 }
 
-// ClearLoaderHome runs a home clear for an Edge station.
-func (e *Engine) ClearLoaderHome(req protocol.ClearHomeRequest) ClearHomeAnswer {
+// ClearLoaderHome runs a home clear for an Edge station: the clear's orders
+// are station's, so it is sent their rows and their status. The station is
+// the ask's envelope's (Doors.clearHome).
+func (e *Engine) ClearLoaderHome(station string, req protocol.ClearHomeRequest) ClearHomeAnswer {
 	var ans ClearHomeAnswer
-	e.door(func() { ans = e.clearLoaderHomeLocked(req) })
+	e.door(func() { ans = e.clearLoaderHomeLocked(station, req) })
 	// A refusal carries Core's current rows for the home and the spot it named,
 	// read after the door, so the station redraws them before it shows the
 	// sentence.
@@ -70,7 +72,7 @@ func (e *Engine) ClearLoaderHome(req protocol.ClearHomeRequest) ClearHomeAnswer 
 	return ans
 }
 
-func (e *Engine) clearLoaderHomeLocked(req protocol.ClearHomeRequest) ClearHomeAnswer {
+func (e *Engine) clearLoaderHomeLocked(station string, req protocol.ClearHomeRequest) ClearHomeAnswer {
 	home, err := e.db.GetNodeByDotName(req.HomeNode)
 	if err != nil || home == nil {
 		return clearRefused(http.StatusNotFound, "node %q not found", req.HomeNode)
@@ -80,7 +82,7 @@ func (e *Engine) clearLoaderHomeLocked(req protocol.ClearHomeRequest) ClearHomeA
 	} else if live {
 		return clearRefused(http.StatusConflict, "%s is already being cleared", home.Name)
 	}
-	job, refusal := e.resolveClearJob(home, req)
+	job, refusal := e.resolveClearJob(home, station, req)
 	if refusal != nil {
 		return *refusal
 	}
@@ -154,7 +156,7 @@ func (e *Engine) clearLoaderHomeLocked(req protocol.ClearHomeRequest) ClearHomeA
 // stock that nobody has claimed, and the partial — the named spot's, else the
 // first buffer spot's in the loader's order — of the home's part, held by no
 // order (clearPartialOn).
-func (e *Engine) resolveClearJob(home *nodes.Node, req protocol.ClearHomeRequest) (dispatch.ClearJob, *ClearHomeAnswer) {
+func (e *Engine) resolveClearJob(home *nodes.Node, station string, req protocol.ClearHomeRequest) (dispatch.ClearJob, *ClearHomeAnswer) {
 	refuse := func(status int, format string, a ...any) (dispatch.ClearJob, *ClearHomeAnswer) {
 		r := clearRefused(status, format, a...)
 		return dispatch.ClearJob{}, &r
@@ -212,7 +214,7 @@ func (e *Engine) resolveClearJob(home *nodes.Node, req protocol.ClearHomeRequest
 		}
 		named = true
 		if p := clearPartialOn(e, spot, h.PayloadCode); p != nil {
-			return dispatch.ClearJob{Station: req.Station, Home: home, LoaderID: h.LoaderID,
+			return dispatch.ClearJob{Station: station, Home: home, LoaderID: h.LoaderID,
 				Payload: h.PayloadCode, Empty: empty, Partial: p, PartialAt: spot}, nil
 		}
 	}

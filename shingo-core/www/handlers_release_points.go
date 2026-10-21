@@ -12,11 +12,10 @@ func releasePointsDecodeErr(err error) string { return "release points: " + err.
 
 // releasePoints is the release-points read's body, for station.
 func (d *Doors) releasePoints(station string, req protocol.ReleasePointsRequest) asks.Result {
-	req.StationID = station
-	if req.StationID == "" {
+	if station == "" {
 		return badRequest("release points: station_id is required")
 	}
 	return accepted(protocol.ReleasePointsResponse{
-		Points: d.engine.Dispatcher().ReleasePoints(req.StationID, req.OrderUUIDs),
+		Points: d.engine.Dispatcher().ReleasePoints(station, req.OrderUUIDs),
 	})
 }

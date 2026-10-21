@@ -46,7 +46,7 @@ func TestReleasePointsAsker_TheReadAsk(t *testing.T) {
 			}
 			var req protocol.ReleasePointsRequest
 			testutil.MustNoErr(t, json.Unmarshal(a.Body, &req), "decode the ask")
-			if a.Kind != protocol.AskReleasePoints || req.StationID != "line-1" || len(req.OrderUUIDs) != 1 || req.OrderUUIDs[0] != "u-r2" {
+			if a.Kind != protocol.AskReleasePoints || len(req.OrderUUIDs) != 1 || req.OrderUUIDs[0] != "u-r2" {
 				t.Errorf("ask = %s %+v", a.Kind, req)
 			}
 			answer(env, req)

@@ -244,7 +244,7 @@ type releasePointSource interface {
 type releasePointsAsker struct{ e *Engine }
 
 func (r releasePointsAsker) ReleasePoints(station string, orderUUIDs []string) ([]protocol.ReleasePoint, error) {
-	a, err := r.e.Ask(protocol.AskReleasePoints, protocol.ReleasePointsRequest{StationID: station, OrderUUIDs: orderUUIDs}, AskWait)
+	a, err := r.e.Ask(protocol.AskReleasePoints, protocol.ReleasePointsRequest{OrderUUIDs: orderUUIDs}, AskWait)
 	if err != nil {
 		return nil, fmt.Errorf("release points: %w", err)
 	}

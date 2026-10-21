@@ -121,7 +121,7 @@ func clearBin(t *testing.T, db *store.DB, part string, nodeID int64, label strin
 
 func (r *clearRig) tap(t *testing.T) ClearHomeAnswer {
 	t.Helper()
-	return r.eng.ClearLoaderHome(protocol.ClearHomeRequest{HomeNode: r.home.Name, Station: clearStation})
+	return r.eng.ClearLoaderHome(clearStation, protocol.ClearHomeRequest{HomeNode: r.home.Name})
 }
 
 // parentOf reads the live clear parent for the home, or nil.
@@ -527,7 +527,7 @@ func TestClearHome_CandidatesDecline_BirthTheTrade(t *testing.T) {
 func TestClearHome_TheExemptionClosesWhenTheJobEnds_WithNoWrite(t *testing.T) {
 	t.Parallel()
 	r := newClearRig(t, "CHZ", false)
-	job, refusal := r.eng.resolveClearJob(r.home, protocol.ClearHomeRequest{HomeNode: r.home.Name, Station: clearStation})
+	job, refusal := r.eng.resolveClearJob(r.home, clearStation, protocol.ClearHomeRequest{HomeNode: r.home.Name})
 	if refusal != nil {
 		t.Fatalf("resolve: %+v", refusal.Body)
 	}
@@ -797,7 +797,7 @@ func TestClearHome_StalledChapterSweepWaitsOnAHeldPartial(t *testing.T) {
 func TestClearHome_CrashAfterTheBirth_TheFloorChooses(t *testing.T) {
 	t.Parallel()
 	r := newClearRig(t, "CHA", true)
-	job, refusal := r.eng.resolveClearJob(r.home, protocol.ClearHomeRequest{HomeNode: r.home.Name, Station: clearStation})
+	job, refusal := r.eng.resolveClearJob(r.home, clearStation, protocol.ClearHomeRequest{HomeNode: r.home.Name})
 	if refusal != nil {
 		t.Fatalf("resolve: %+v", refusal.Body)
 	}
@@ -894,7 +894,7 @@ func TestClearHomeDoor_Refusals(t *testing.T) {
 		testutil.MustNoErr(t, r.db.SetBinManifest(b.ID, `{"items":[]}`, b.PayloadCode, uop), "manifest "+b.Label)
 	}
 	home := func(r *clearRig) protocol.ClearHomeRequest {
-		return protocol.ClearHomeRequest{HomeNode: r.home.Name, Station: clearStation}
+		return protocol.ClearHomeRequest{HomeNode: r.home.Name}
 	}
 	for _, tc := range []struct {
 		name     string
@@ -906,13 +906,13 @@ func TestClearHomeDoor_Refusals(t *testing.T) {
 	}{
 		{"an unknown home", "CRA", true,
 			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
-				return protocol.ClearHomeRequest{HomeNode: "CRA-NOPE", Station: clearStation}
+				return protocol.ClearHomeRequest{HomeNode: "CRA-NOPE"}
 			},
 			http.StatusNotFound, func(*clearRig) string { return `node "CRA-NOPE" not found` }},
 		{"a node no loader has", "CRB", true,
 			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
 				mkNode(t, r, "CRB-PLAIN")
-				return protocol.ClearHomeRequest{HomeNode: "CRB-PLAIN", Station: clearStation}
+				return protocol.ClearHomeRequest{HomeNode: "CRB-PLAIN"}
 			},
 			http.StatusBadRequest, func(*clearRig) string { return "CRB-PLAIN is not a loader position" }},
 		{"a home of a shared-window loader", "CRC", true,
@@ -923,12 +923,12 @@ func TestClearHomeDoor_Refusals(t *testing.T) {
 				testutil.MustNoErr(t, err, "shared loader")
 				testutil.MustNoErr(t, r.db.UpsertLoaderHome(loaders.Home{LoaderID: id, PositionNodeID: n.ID,
 					PayloadCode: r.part, Kind: loaders.HomeKindHome}), "its window")
-				return protocol.ClearHomeRequest{HomeNode: n.Name, Station: clearStation}
+				return protocol.ClearHomeRequest{HomeNode: n.Name}
 			},
 			http.StatusBadRequest, func(*clearRig) string { return "CRC-WIN is not a dedicated-position loader" }},
 		{"a buffer position", "CRD", true,
 			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
-				return protocol.ClearHomeRequest{HomeNode: r.s.Name, Station: clearStation}
+				return protocol.ClearHomeRequest{HomeNode: r.s.Name}
 			},
 			http.StatusBadRequest, func(*clearRig) string { return "CRD-S is a buffer position, not a home" }},
 		{"a home with no carrier", "CRE", true,
@@ -1041,7 +1041,7 @@ func TestClearHomeDoor_Refusals(t *testing.T) {
 			r.eng.SetBinsRowsFunc(rows)
 			req := tc.arrange(t, r)
 			before := r.snapDoor(t)
-			ans := r.eng.ClearLoaderHome(req)
+			ans := r.eng.ClearLoaderHome(clearStation, req)
 			// The refusal carries Core's current rows for the home and the spot it
 			// named: the rows the snapshot's own code reads now (the refusal
 			// wrote nothing), the home's first.

@@ -33,7 +33,7 @@ type DB struct{ DB *store.DB }
 
 // ReleasePoints is the engine's point-source method.
 func (p DB) ReleasePoints(station string, uuids []string) ([]protocol.ReleasePoint, error) {
-	return Points(p.DB, nil, protocol.ReleasePointsRequest{StationID: station, OrderUUIDs: uuids}).Points, nil
+	return Points(p.DB, nil, protocol.ReleasePointsRequest{OrderUUIDs: uuids}).Points, nil
 }
 
 // Points answers one releasePoints request; lifted names the nodes a lift

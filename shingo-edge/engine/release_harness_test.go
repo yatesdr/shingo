@@ -124,7 +124,7 @@ func (fc *fakeCore) ReleasePoints(station string, uuids []string) ([]protocol.Re
 	if down || points == nil {
 		return nil, fmt.Errorf("release points: %w", ErrAskPending)
 	}
-	return points(protocol.ReleasePointsRequest{StationID: station, OrderUUIDs: uuids}).Points, nil
+	return points(protocol.ReleasePointsRequest{OrderUUIDs: uuids}).Points, nil
 }
 
 // total is every Core HTTP round trip since the last reset.

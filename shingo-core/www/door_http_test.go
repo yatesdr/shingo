@@ -139,11 +139,16 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 // recorded and no job could take the carrier. The only 409 is a second clear
 // of a home whose clear is live; a request naming no clearable home is 400.
 //
-// The adapter over Doors.clearHome, for the request's station; the clear_home
-// ask answers through the same body for the asking station.
+// The adapter over Doors.clearHome, for the station the body names; the
+// clear_home ask answers through the same body for its envelope's station,
+// and its request carries none.
 func (h *Handlers) apiClearHome(w http.ResponseWriter, r *http.Request) {
-	serveDoor(w, r, errText, func(req protocol.ClearHomeRequest) asks.Result {
-		return h.doors().clearHome(req.Station, req)
+	type stationed struct {
+		protocol.ClearHomeRequest
+		Station string `json:"station"`
+	}
+	serveDoor(w, r, errText, func(req stationed) asks.Result {
+		return h.doors().clearHome(req.Station, req.ClearHomeRequest)
 	})
 }
 
@@ -172,11 +177,15 @@ func (h *Handlers) apiBinQualityHold(w http.ResponseWriter, r *http.Request) {
 // robot do next: the nodes its pending segment enters and the lifts it waits
 // on (dispatch.ReleasePoints).
 // POST /api/release/points — the adapter over Doors.releasePoints, for the
-// request's station_id; the release_points ask answers through the same body
-// for the asking station.
+// station_id the body names; the release_points ask answers through the same
+// body for its envelope's station, and its request carries none.
 func (h *Handlers) apiReleasePoints(w http.ResponseWriter, r *http.Request) {
-	serveDoor(w, r, releasePointsDecodeErr, func(req protocol.ReleasePointsRequest) asks.Result {
-		return h.doors().releasePoints(req.StationID, req)
+	type stationed struct {
+		protocol.ReleasePointsRequest
+		StationID string `json:"station_id"`
+	}
+	serveDoor(w, r, releasePointsDecodeErr, func(req stationed) asks.Result {
+		return h.doors().releasePoints(req.StationID, req.ReleasePointsRequest)
 	})
 }
 

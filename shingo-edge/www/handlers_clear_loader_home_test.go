@@ -149,8 +149,8 @@ func TestClearLoaderHome_TheDoorPerCoresArm(t *testing.T) {
 			if got, want := jsonOf(t, rig.core.take()), `{"/api/telemetry/clear-home":1}`; got != want {
 				t.Errorf("Core calls per tap = %s, want %s: the tap is one request to Core's clear door", got, want)
 			}
-			if len(rig.core.homeClears) != 1 || rig.core.homeClears[0].HomeNode != "SMN_H1" || rig.core.homeClears[0].Station != rig.eng.AppConfig().StationID() {
-				t.Errorf("Core was asked %+v, want one clear of SMN_H1 naming the station", rig.core.homeClears)
+			if len(rig.core.homeClears) != 1 || rig.core.homeClears[0].HomeNode != "SMN_H1" {
+				t.Errorf("Core was asked %+v, want one clear of SMN_H1", rig.core.homeClears)
 			}
 			after := runtimeRow(t, rig.db, home)
 			want := map[string]string{}

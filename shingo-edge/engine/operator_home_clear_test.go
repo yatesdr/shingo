@@ -101,7 +101,7 @@ func TestClearLoaderHome_OneRequestRecordsTheZeroAndCreatesNothing(t *testing.T)
 			case said != c.said:
 				t.Errorf("the board is told %q, want %q", said, c.said)
 			}
-			if clears.Load() != 1 || others.Load() != 0 || req.HomeNode != "CLH-HOME" || req.Station != eng.cfg.StationID() {
+			if clears.Load() != 1 || others.Load() != 0 || req.HomeNode != "CLH-HOME" {
 				t.Errorf("Core saw %d clears, %d other calls, request %+v; want one clear naming CLH-HOME and the station",
 					clears.Load(), others.Load(), *req)
 			}

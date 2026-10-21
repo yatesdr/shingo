@@ -184,7 +184,7 @@ type EngineOrchestration interface {
 	// ClearLoaderHome is a dedicated loader home's clear, the Edge's one request
 	// (engine/clear_home.go). Orchestration because it spans the scanner's lock,
 	// the orders it authors and the carrier's zero in one transaction.
-	ClearLoaderHome(req protocol.ClearHomeRequest) engine.ClearHomeAnswer
+	ClearLoaderHome(station string, req protocol.ClearHomeRequest) engine.ClearHomeAnswer
 
 	// ── Orders ─────────────────────────────────────────────────────
 	CreateBinMove(req engine.BinMoveRequest) (*engine.BinMoveResult, error)

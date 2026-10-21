@@ -505,12 +505,11 @@ func eMaintReport(robots []fleet.RobotStatus, now time.Time, reportID string) ma
 // refusal past the zero keeps the carrier's id and epoch beside the sentence;
 // a refusal's rows are the ones the engine put on it.
 func (d *Doors) clearHome(station string, req protocol.ClearHomeRequest) asks.Result {
-	req.Station = station
-	if req.HomeNode == "" || req.Station == "" {
+	if req.HomeNode == "" || station == "" {
 		return badRequest("home_node and station are required")
 	}
-	ans := d.orchestration.ClearLoaderHome(req)
-	log.Printf("telemetry: clear-home %s for %s: %d %s%s", req.HomeNode, req.Station, ans.Status, ans.Body.Arm, ans.Body.Error)
+	ans := d.orchestration.ClearLoaderHome(station, req)
+	log.Printf("telemetry: clear-home %s for %s: %d %s%s", req.HomeNode, station, ans.Status, ans.Body.Arm, ans.Body.Error)
 	if ans.Status == http.StatusOK && ans.Body.BinID != 0 {
 		d.hub.Broadcast("bin-update", sseJSON(map[string]any{"action": "cleared", "bin_id": ans.Body.BinID}))
 	}
