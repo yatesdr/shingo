@@ -473,7 +473,9 @@ func visibleText(html string) string {
 
 // routeText is the visible text of a row's route cell.
 func routeText(row string) string {
-	i := strings.Index(row, `<span class="order-route">`)
+	// The tag's opening only: the span carries a title (the whole route, for
+	// hover), so the exact tag would not match.
+	i := strings.Index(row, `<span class="order-route"`)
 	if i < 0 {
 		return ""
 	}
