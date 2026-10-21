@@ -148,7 +148,11 @@ func (e *Engine) ClearForReuseStampAndBookDeparture(binID, nodeID int64, binType
 		// untagged clear is invisible to CMS and that is correct); the bin is
 		// drained or bare; or the build FAILED, which buildClearDeparture has
 		// already counted and named.
-		return e.binManifest.ClearForReuseResolved(binID, resolve, protocol.DeclaredByLifecycle, layers)
+		epoch, err := e.binManifest.ClearForReuseResolved(binID, resolve, protocol.DeclaredByLifecycle, layers)
+		if err == nil {
+			e.notifyBinChanged(binID)
+		}
+		return epoch, err
 	}
 
 	tx, err := e.db.Begin()
@@ -183,6 +187,7 @@ func (e *Engine) ClearForReuseStampAndBookDeparture(binID, nodeID int64, binType
 	// posting, and a posting for rows a rollback removed would send CMS a
 	// departure that did not happen.
 	e.Events.Emit(Event{Type: EventCMSTransaction, Payload: CMSTransactionEvent{Transactions: txns}})
+	e.notifyBinChanged(binID)
 	return epoch, nil
 }
 

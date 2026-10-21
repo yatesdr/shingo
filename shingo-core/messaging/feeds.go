@@ -15,16 +15,26 @@ import (
 
 // feeds.go — Core's half of the feed digests (protocol/feeds.go has the rule).
 //
-// No goroutine and no registry. Everything happens inside HandleEdgeHeartbeat:
-// for each key the Edge named, Core takes its current digest (from a short memo),
-// answers it on the ack, and sends the feed to that station when the two differ.
-// A plain switch on the key builds and sends each feed.
+// The compare runs no goroutine of its own: it happens inside
+// HandleEdgeHeartbeat. For each key the Edge named, Core takes its current
+// digest (from a short memo), answers it on the ack, and sends the feed to that
+// station when the two differ. A plain switch on the key builds and sends each
+// feed.
+//
+// One feed keeps state per Edge beyond the memo: bins, whose scope is a watch
+// list each Edge publishes. bins_feed.go holds those lists in memory and, after
+// a known change, pushes on one timer per dirty Edge; the compare here treats
+// bins like any per-station feed.
 
 const (
 	// feedMemoPlant bounds how stale a plant-wide digest may be. A writer that
 	// calls no hook is caught by the next heartbeat after the memo expires, so
 	// this plus the heartbeat interval (60 s) is the worst-case heal (~70 s).
 	feedMemoPlant = 10 * time.Second
+	// feedMemoBins bounds one Edge's bins snapshot. Short, as feedMemoPlant is:
+	// a bin moved by a writer that calls no hook is in a snapshot ten seconds
+	// later, and the Edge's next heartbeat carries it there.
+	feedMemoBins = 10 * time.Second
 	// feedMemoStation bounds the per-station feeds (nodes, scene). Two minutes is
 	// the cadence the node list was re-asked at before feeds, and node edits
 	// still push through NodeStructureChanged, so it costs no freshness.
@@ -47,12 +57,17 @@ type feedMemoEntry struct {
 	at     time.Time
 }
 
-// feedSendRecord is the last send of one key to one station.
+// feedSendRecord is the last send of one key to one station. digest and at
+// are the heartbeat compare's send and its resend guard; pushed and pushedAt
+// are the last send made outside the compare (a bins push), kept apart so a
+// lost push does not hold back the heartbeat send that heals it.
 type feedSendRecord struct {
-	digest  string
-	at      time.Time
-	streak  int
-	flagged bool
+	digest   string
+	at       time.Time
+	streak   int
+	flagged  bool
+	pushed   string
+	pushedAt time.Time
 }
 
 // feedState is the memo, the send records and the flags. One mutex: every
@@ -76,7 +91,7 @@ func newFeedState() *feedState {
 // memoKey scopes the per-station feeds to their station.
 func memoKey(station, key string) string {
 	switch key {
-	case protocol.FeedNodes, protocol.FeedScene:
+	case protocol.FeedNodes, protocol.FeedScene, protocol.FeedBins:
 		return key + "@" + station
 	}
 	return key
@@ -86,6 +101,8 @@ func memoTTL(key string) time.Duration {
 	switch key {
 	case protocol.FeedNodes, protocol.FeedScene:
 		return feedMemoStation
+	case protocol.FeedBins:
+		return feedMemoBins
 	}
 	return feedMemoPlant
 }
@@ -96,6 +113,43 @@ func (f *feedState) drop(key string) {
 	f.mu.Lock()
 	delete(f.memo, key)
 	f.mu.Unlock()
+}
+
+// dropStation forgets one station's memo of a per-station feed.
+func (f *feedState) dropStation(station, key string) {
+	f.mu.Lock()
+	delete(f.memo, memoKey(station, key))
+	f.mu.Unlock()
+}
+
+// recordPush records a send made outside the heartbeat compare. It leaves the
+// compare's digest and time alone, so the resend guard holds back only what a
+// heartbeat sent.
+func (f *feedState) recordPush(station, key, digest string, now time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rk := [2]string{station, key}
+	rec := f.sent[rk]
+	if rec == nil {
+		rec = &feedSendRecord{}
+		f.sent[rk] = rec
+	}
+	rec.pushed, rec.pushedAt = digest, now
+}
+
+// lastSent is the digest last sent of one key to one station by either path,
+// "" when nothing has been.
+func (f *feedState) lastSent(station, key string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec := f.sent[[2]string{station, key}]
+	switch {
+	case rec == nil:
+		return ""
+	case rec.pushedAt.After(rec.at):
+		return rec.pushed
+	}
+	return rec.digest
 }
 
 func (f *feedState) lookup(station, key string, now time.Time) (feedMemoEntry, bool) {
@@ -125,7 +179,7 @@ func (f *feedState) store(station, key string, e feedMemoEntry) {
 // feed should be sent: the digests differ and the guard does not hold it back.
 // A matching digest ends any streak and clears the key's flag.
 //
-// SO DOES THE EDGE HOLDING WHAT WAS LAST SENT. Converging means the Edge took
+// SO DOES THE EDGE HOLDING WHAT WAS LAST SENT, by the compare or by a push. Converging means the Edge took
 // the copy it was sent, not that Core's value stood still: a value that moves
 // on three heartbeats in a row (a destination added, a bin in, the bin out) is
 // sent three times to an Edge that applied every one, and counting those as a
@@ -145,7 +199,7 @@ func (f *feedState) compare(station, key, current, held string, now time.Time) b
 		}
 		return false
 	}
-	if rec != nil && held == rec.digest {
+	if rec != nil && (held == rec.digest || (rec.pushed != "" && held == rec.pushed)) {
 		rec.streak = 0
 		if rec.flagged {
 			rec.flagged = false
@@ -293,6 +347,12 @@ func (s *CoreDataService) buildFeed(station, key string) (digest string, value a
 			return "", nil, true, err
 		}
 		return v.Digest, v, true, nil
+	case protocol.FeedBins:
+		v, known, err := s.buildNodeBins(station)
+		if !known || err != nil {
+			return "", nil, known, err
+		}
+		return v.Digest, v, true, nil
 	}
 	return "", nil, false, nil
 }
@@ -337,6 +397,8 @@ func (s *CoreDataService) sendFeeds(station string, due map[string]feedMemoEntry
 			}
 		case protocol.FeedCatalog:
 			s.resp.sendData(protocol.SubjectCatalogPayloadsResponse, station, due[key].value)
+		case protocol.FeedBins:
+			s.resp.sendData(protocol.SubjectBinsSnapshot, station, due[key].value)
 		default:
 			log.Printf("core_feeds: no sender for %s", key)
 		}

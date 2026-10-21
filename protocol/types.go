@@ -319,6 +319,21 @@ const (
 	// Broadcast after a known containment write; unicast to an Edge whose
 	// FeedContainment digest differs. Payload: ContainmentSnapshot.
 	SubjectContainmentSnapshot = "containment.snapshot"
+
+	// SubjectBinsWatch — Edge → Core: the Core node names this Edge's
+	// operator stations draw (BinWatchList). Core keeps the latest list per
+	// Edge in memory, quotes its digest on every heartbeat ack
+	// (EdgeHeartbeatAck.BinWatch), and answers each list with that Edge's
+	// node-bins snapshot. Sent on the direct path: a lost list is healed by the
+	// next ack, which still quotes the old digest.
+	SubjectBinsWatch = "bins.watch"
+
+	// SubjectBinsSnapshot — Core → one Edge: the bins at the nodes that Edge
+	// watches (NodeBinsSnapshot), under feed key FeedBins. Sent on receipt of
+	// a watch list, after a change at a watched node, and when the Edge's
+	// heartbeat quotes a different FeedBins digest. Never broadcast: each
+	// snapshot is one Edge's list.
+	SubjectBinsSnapshot = "bins.snapshot"
 )
 
 // AllTypes returns every envelope Type constant in this package. Used by
@@ -371,6 +386,7 @@ func CoreInboundSubjects() []string {
 		SubjectDemandOrigin,
 		SubjectSupplyRefusal,
 		SubjectHoldDropped,
+		SubjectBinsWatch,
 	}
 }
 

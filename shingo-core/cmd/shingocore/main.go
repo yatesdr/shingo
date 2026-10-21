@@ -466,6 +466,19 @@ func main() {
 	// A known containment write (a flag, a bin hold, a diverted bin stamped on
 	// arrival) pushes the containment snapshot to every Edge at once.
 	eng.SetContainmentChangedFunc(coreDataService.ContainmentChanged)
+	// A change at a node an Edge watches pushes that Edge its bins snapshot:
+	// the station doors (LOAD, count, CLEAR) through the engine's hook, bin
+	// and order events from the bus.
+	eng.SetBinChangedFunc(func(binID int64) { coreDataService.BinsChanged(binID) })
+	// A levelled group's line rides the same snapshot: the engine answers it,
+	// and a level save pushes it.
+	coreDataService.SetGroupLinesFunc(eng.UnloaderGroupLines)
+	eng.SetLevelChangedFunc(coreDataService.BinsLevelChanged)
+	wireBinsFeed(eng.Events, binsFeedHooks{
+		changed: coreDataService.BinsChanged,
+		started: coreDataService.BinsOrderStarted,
+		ended:   coreDataService.BinsOrderEnded,
+	})
 
 	subjectRouter, err := buildSubjectRouter(coreDataService)
 	if err != nil {

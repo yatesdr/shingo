@@ -254,6 +254,7 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `supply.refusal` | Edge -> Core | `SupplyRefusalState` | A loader operator says they cannot fill a call, or takes that back |
 | `supply.refusal_state` | Core -> Edge | `SupplyRefusalState` | Core broadcasts the refusal's state so the cell can answer; station-broadcast, filtered per-process on arrival |
 | `containment.snapshot` | Core -> Edge | `ContainmentSnapshot` | Core's whole containment state (flags, held bins, what stands at each containment destination) with its digest; broadcast after a containment write, unicast when an Edge's heartbeat quotes a different `containment` digest. An Edge older than the subject logs "no handler" once per broadcast |
+| `bins.watch` | Edge -> Core | `BinWatchList` | The Core node names an edge's operator stations draw, sorted, each once, with their digest. Core keeps the latest per edge in memory, quotes its digest on every heartbeat ack (`bin_watch`) and answers each list with that edge's `bins` snapshot |
 | `supply.refusal_snapshot` | Core -> Edge | `SupplyRefusalSnapshot` | Core's whole open refusal set, sent to one Edge whose `refusals` feed digest differs from Core's; the Edge merges it per field and re-sends what it owns that Core is missing |
 | `transit.bin_picked_up` | Core -> Edge | `BinPickedUp` | The robot has the bin — the pickup half of a transit, distinct from delivery |
 | `transit.bin_landed` | Core -> Edge | `BinLanded` | A carrier came to rest at a node a station binds at — the drop half of a transit; the only door that binds a carrier Core placed (Lane H) |
@@ -450,7 +451,7 @@ Sent every 60 seconds by each edge node via `data` message with subject `edge.he
 | Field | JSON Key | Type | Required | Description |
 |---|---|---|---|---|
 | Station ID | `station_id` | string | Yes | Edge station identifier (must match registration). |
-| Feeds | `feeds` | object | No | Per Core feed this edge holds (`containment`, `refusals`, `nodes`, `scene`, `catalog`), the digest it holds; `""` when it holds nothing. Always present (at least `{}`) from an edge that speaks feeds; `null` from an older edge. Core answers on the ack and sends each feed whose digest differs. See `protocol/feeds.go`. |
+| Feeds | `feeds` | object | No | Per Core feed this edge holds (`containment`, `refusals`, `nodes`, `scene`, `catalog`, and `bins` while Core quotes `bin_watch`), the digest it holds; `""` when it holds nothing. Always present (at least `{}`) from an edge that speaks feeds; `null` from an older edge. Core answers on the ack and sends each feed whose digest differs. See `protocol/feeds.go`. |
 | Tick Pending | `tick_pending` | integer | No | Production tick shipper backlog: shippable `counter_snapshots` rows past its cursor. Absent from an edge without the shipper. |
 | Tick Oldest Unsent Age | `tick_oldest_unsent_age_ms` | integer | No | Age in ms of the oldest of those rows (0 when none). Core flags the station on `/inventory` past 5 minutes. |
 
@@ -489,6 +490,24 @@ Acknowledges a heartbeat via `data` message with subject `edge.heartbeat_ack`. P
 | Server Timestamp | `server_ts` | timestamp | Yes | Core's current time as ISO 8601 / RFC 3339. Edges compare it with their own clock and show the offset on `/status` (it includes Core's outbox delay). |
 | Feeds | `feeds` | object | Yes (new Core) | Core's current digest for each key the heartbeat named that Core could read. A key Core could not read is absent, never `""`. Always at least `{}` from a Core that speaks feeds; absent/`null` from an older Core, for which the edge keeps its own re-asks. |
 | Claims | `claims` | object | No | For an edge that speaks feeds: per process Core holds a plant-claims report for from this station, the digest that came with its last report. `null` when Core could not read them; `{}` when it holds none. |
+| Bin Watch | `bin_watch` | string | No | For an edge that speaks feeds: the digest of the bins watch list Core holds for it, as it arrived; `""` when Core holds none. Absent from a Core without the bins feed, and on the ack to an edge that sends no `feeds`. The edge publishes its list when this differs from its own. |
+
+#### Node bins feed
+
+The bins at the nodes an edge's operator stations draw, held by the edge as a copy. The edge owns the watch
+list and Core quotes its digest on the ack (`bin_watch`); Core owns the snapshot, feed key `bins`, one per edge.
+Both digests are in `protocol/feeds.go` (`BinWatchDigest`, `NodeBinsDigest`).
+
+`BinWatchList` (edge -> core): `digest` (`BinWatchDigest` of the names) and `nodes`, the Core node names, sorted,
+each once.
+
+`NodeBinsSnapshot` (core -> one edge): `digest`, `rows` and `groups`. One row per watched name: `node`,
+`occupied`, `bin_id`, `bin_label`, `bin_type_code`, `bare`, `payload_code`, `manifest`, `manifest_confirmed`,
+`stocked`, `totes_on_cart`, `totes_per_layer`. A node Core does not know, or one with no bin, is `occupied: false`
+and nothing else. **No count is in a row**: `stocked` is the bin's count above zero, so a count that moves without
+crossing zero sends nothing. No time and nothing about the asker is in it. Each group line is an outbound group,
+with levels, of a consume loader with a watched window: `group`, `wants` (`bin_type`, `layers`, `want`) and
+`assignments` (`node`, `bin_type`, `layers`). A plant with no levels sends `groups: []`.
 
 #### EdgeStale
 

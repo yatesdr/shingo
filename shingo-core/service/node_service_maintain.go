@@ -204,7 +204,11 @@ func (s *NodeService) setMaintainLevel(groupNodeID, binTypeID int64, want int, w
 	if err := s.ensureExplicitBinTypeMode(groupNodeID); err != nil {
 		return chk, err
 	}
-	return chk, write()
+	if err := write(); err != nil {
+		return chk, err
+	}
+	s.notifyLevelChanged(groupNodeID)
+	return chk, nil
 }
 
 // RemoveMaintainLevel stops declaring a carrier type for a group, and its layer
@@ -225,7 +229,11 @@ func (s *NodeService) RemoveMaintainLevel(groupNodeID, binTypeID int64) (Maintai
 	if err != nil || chk.Err() != nil {
 		return chk, err
 	}
-	return chk, s.db.RemoveMaintainLevel(groupNodeID, binTypeID)
+	if err := s.db.RemoveMaintainLevel(groupNodeID, binTypeID); err != nil {
+		return chk, err
+	}
+	s.notifyLevelChanged(groupNodeID)
+	return chk, nil
 }
 
 // ListMaintainLevels returns a group's declared level.

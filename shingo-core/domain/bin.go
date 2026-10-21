@@ -98,6 +98,10 @@ type Bin struct {
 	// BinJoinQuery so the node-bins row can carry it without a read of its own.
 	// nil for a carrier that says none.
 	TotesPerLayer *int `json:"totes_per_layer,omitempty"`
+	// HeldSince is bins.held_since: when an unfinished carrier entered a
+	// partial home of its own part, nil anywhere else. Read with the bin so the
+	// node-bins answer asks for a held partial's line only where one stands.
+	HeldSince *time.Time `json:"held_since,omitempty"`
 }
 
 // ManifestEntry is a single line in a bin's manifest — one part number,

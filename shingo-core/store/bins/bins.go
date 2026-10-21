@@ -111,7 +111,7 @@ const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node
 	` + reservations.BinSpokenForByOrderSQL + ` AS pending_reserved_by,
 	COALESCE(b.quality_hold, false) AS quality_hold,
 	COALESCE(n.is_synthetic, false) AS node_synthetic,
-	b.totes_on_cart, bt.totes_per_layer
+	b.totes_on_cart, bt.totes_per_layer, b.held_since
 	` + BinFromClause
 
 // BinFromClause is the FROM/JOIN half of every bin-reading query, split out of
@@ -796,7 +796,7 @@ func ScanBin(row interface{ Scan(...any) error }) (*Bin, error) {
 		&b.LoadedAt, &b.AnomalyAt, &b.AnomalyNote, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName, &b.UOPCapacity,
 		&b.CarrierRequiredRobotGroup, &b.BinTypeBare, &b.PayloadRobotGroup,
 		&b.PayloadNearEmptyEnabled, &b.PayloadNearEmptyGroup, &b.PayloadNearEmptyPct,
-		&reservedBy, &b.QualityHold, &b.AtSyntheticNode, &b.TotesOnCart, &b.TotesPerLayer)
+		&reservedBy, &b.QualityHold, &b.AtSyntheticNode, &b.TotesOnCart, &b.TotesPerLayer, &b.HeldSince)
 	if err != nil {
 		return nil, err
 	}

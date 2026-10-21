@@ -66,6 +66,32 @@ func (e *Engine) SetContainmentChangedFunc(fn func()) {
 	e.payloadService.SetContainmentChangedFunc(fn)
 }
 
+// SetBinChangedFunc wires the push that follows a station door's write to a
+// bin (LOAD, count, CLEAR) to the messaging layer, which rebuilds the bins
+// snapshot of every Edge watching that bin. The LOAD and the count reach it
+// through the bin manifest service; the CLEAR through this engine's
+// ClearForReuseStampAndBookDeparture. Set once at the composition root.
+func (e *Engine) SetBinChangedFunc(fn func(binID int64)) {
+	e.binChanged.Store(&fn)
+	e.binManifest.SetBinChangedFunc(fn)
+}
+
+// SetLevelChangedFunc wires the push that follows a group's level save (the
+// Nodes page's level and layer-want save and remove, through the node service)
+// to the messaging layer, which rebuilds the bins snapshot of every Edge with a
+// consume loader feeding that group on its list. Set once at the composition
+// root.
+func (e *Engine) SetLevelChangedFunc(fn func(groupNodeID int64)) {
+	e.nodeService.SetLevelChangedFunc(fn)
+}
+
+// notifyBinChanged calls the bin hook, if one is wired.
+func (e *Engine) notifyBinChanged(binID int64) {
+	if fn := e.binChanged.Load(); fn != nil && *fn != nil {
+		(*fn)(binID)
+	}
+}
+
 // notifyContainmentChanged calls the hook, if one is wired.
 func (e *Engine) notifyContainmentChanged() {
 	if fn := e.containmentChanged.Load(); fn != nil && *fn != nil {

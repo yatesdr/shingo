@@ -1856,6 +1856,12 @@ func (db *DB) CountTypedInboundToGroup(groupNodeID int64, groupNodeName, binType
 	return orders.CountTypedInboundToGroup(db.DB, groupNodeID, groupNodeName, binTypeCode)
 }
 
+// ListTypedInboundToGroup is the inbound set CountTypedInboundToGroup counts,
+// as rows. See orders.ListTypedInboundToGroup.
+func (db *DB) ListTypedInboundToGroup(groupNodeID int64, groupNodeName, binTypeCode string) ([]orders.InboundCarrier, error) {
+	return orders.ListTypedInboundToGroup(db.DB, groupNodeID, groupNodeName, binTypeCode)
+}
+
 // CountLiveCarrierRequestsByDeliveryNode counts every non-terminal order that
 // asked for a CARRIER at a node — queued included, origin-blind, returns
 // excluded. "Has a carrier already been asked for here". See

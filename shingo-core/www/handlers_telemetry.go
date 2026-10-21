@@ -1,7 +1,6 @@
 package www
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,9 +22,9 @@ import (
 
 // apiTelemetryNodeBins returns bin state for requested core nodes.
 // GET /api/telemetry/node-bins?nodes=NODE-A,NODE-B
-// Returns a JSON array of protocol.NodeBinInfo, one row per node asked, in the
-// order asked: the first bin at the node (bins.ListByNode's order), and the
-// cart's tote numbers when they are known.
+// Returns a JSON array of protocol.NodeBinInfo, one row per name asked, in the
+// order asked (bytes pinned by TestNodeBins_Golden): the first bin at the node
+// by id DESC, and the cart's tote numbers when they are known.
 //
 // A FAILED READ IS NOT AN EMPTY NODE. This used to fold "the query errored"
 // together with "there are no bins here" and answer 200 with occupied=false for
@@ -64,38 +63,55 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 		h.jsonOK(w, []struct{}{})
 		return
 	}
-	names := strings.Split(nodesParam, ",")
+	var names []string
+	for _, name := range strings.Split(nodesParam, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			names = append(names, name)
+		}
+	}
 
-	nodes := h.engine.NodeService()
+	// Two reads whatever the node count (TestNodeBins_TwoReadsWhateverTheNodeCount):
+	// every name at once, then every resolved node's bins at once.
+	nodeSvc := h.engine.NodeService()
+	resolved, err := nodeSvc.GetByDotNames(names)
+	if err != nil {
+		h.jsonError(w, fmt.Sprintf("node-bins: reading nodes failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	ids := make([]int64, 0, len(resolved))
+	for _, node := range resolved {
+		ids = append(ids, node.ID)
+	}
+	atNode, err := nodeSvc.ListBinsByNodes(ids)
+	if err != nil {
+		h.jsonError(w, fmt.Sprintf("node-bins: reading bins failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	// The read is ORDER BY id DESC, so the first bin seen at a node is the one
+	// the per-node read put first.
+	firstBin := make(map[int64]*domain.Bin, len(atNode))
+	for _, bin := range atNode {
+		if bin.NodeID != nil && firstBin[*bin.NodeID] == nil {
+			firstBin[*bin.NodeID] = bin
+		}
+	}
+
 	result := make([]protocol.NodeBinInfo, 0, len(names))
 	for _, name := range names {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
 		entry := protocol.NodeBinInfo{NodeName: name}
-		node, err := nodes.GetByDotName(name)
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-			// Core does not know this node, which is itself an answer: there is
-			// no bin at a place that does not exist. Edge's BinAtLineside
-			// documents reading it that way.
-			result = append(result, entry)
-			continue
-		case err != nil:
-			h.jsonError(w, fmt.Sprintf("node-bins: reading node %q failed: %v", name, err), http.StatusInternalServerError)
-			return
-		}
-		bins, err := nodes.ListBinsByNode(node.ID)
-		if err != nil {
-			h.jsonError(w, fmt.Sprintf("node-bins: reading bins at %q failed: %v", name, err), http.StatusInternalServerError)
-			return
-		}
-		if len(bins) == 0 {
+		// A name that did not resolve is a node Core does not know, which is
+		// itself an answer: there is no bin at a place that does not exist.
+		// Edge's BinAtLineside documents reading it that way.
+		node, known := resolved[name]
+		if !known {
 			result = append(result, entry)
 			continue
 		}
-		bin := bins[0]
+		bin := firstBin[node.ID]
+		if bin == nil {
+			result = append(result, entry)
+			continue
+		}
 		entry.Occupied = true
 		entry.BinID = bin.ID
 		entry.BinLabel = bin.Label
@@ -111,12 +127,16 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 		}
 		// A held partial says so, and since when: the board shows it as held for
 		// its line rather than as a carrier to clear. A failed read costs the
-		// board its line, never the answer.
-		if since, line, held, herr := h.engine.BinService().HeldPartialInfo(bin.ID); herr != nil {
-			log.Printf("node-bins: held-partial read for bin %d: %v", bin.ID, herr)
-		} else if held {
-			entry.HeldSince = since.UTC().Format(time.RFC3339)
-			entry.HeldFor = line
+		// board its line, never the answer. Asked only of a bin whose held_since
+		// is set, the one kind HeldPartialInfo answers held for, so the answer
+		// stays two reads where no held partial stands.
+		if bin.HeldSince != nil {
+			if since, line, held, herr := h.engine.BinService().HeldPartialInfo(bin.ID); herr != nil {
+				log.Printf("node-bins: held-partial read for bin %d: %v", bin.ID, herr)
+			} else if held {
+				entry.HeldSince = since.UTC().Format(time.RFC3339)
+				entry.HeldFor = line
+			}
 		}
 		entry.TotesOnCart = bin.TotesOnCart
 		entry.TotesPerLayer = bin.TotesPerLayer

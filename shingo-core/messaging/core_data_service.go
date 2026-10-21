@@ -92,6 +92,12 @@ type CoreDataService struct {
 	// feeds is the feed-digest memo, the per-station send records and the
 	// flags they raise (feeds.go). Built by NewCoreDataService.
 	feeds *feedState
+	// bins is every Edge's bins watch list (bins_feed.go). Built by
+	// NewCoreDataService.
+	bins *binsFeed
+	// lines answers a levelled group's line for the bins snapshot
+	// (SetGroupLinesFunc). Optional; nil: no groups.
+	lines groupLinesFunc
 }
 
 // SetThresholdMonitor wires the engine's threshold-monitor for
@@ -144,6 +150,7 @@ func NewCoreDataService(db *store.DB, resp coreDataResponder, announce service.E
 		resp:               resp,
 		downtimeCh:         make(chan downtime.DowntimeEvent, 1024),
 		feeds:              newFeedState(),
+		bins:               newBinsFeed(),
 	}
 }
 
@@ -562,6 +569,7 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 	// that Core could read, and the feeds whose digests differ are sent to it.
 	// The ack always carries a map, so the Edge can tell this Core from an
 	// older one.
+	binWatch := s.binWatchFor(p)
 	feeds := map[string]string{}
 	if p.Feeds != nil {
 		feeds = s.answerFeeds(p.StationID, p.Feeds)
@@ -580,6 +588,7 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 			Timezone:  s.plantTimezone,
 			Feeds:     feeds,
 			Claims:    claims,
+			BinWatch:  binWatch,
 		})
 
 	if err == nil && !found {

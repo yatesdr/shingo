@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"shingocore/store"
@@ -29,6 +30,10 @@ type NodeService struct {
 	// names caches uid→display_name for station label rendering. One row per
 	// plant, dropped whole on rename/enroll. See station_names.go.
 	names stationNameCache
+
+	// levelChanged is called after a group's level or layer wants are saved
+	// or removed (level_changed.go).
+	levelChanged atomic.Pointer[func(groupNodeID int64)]
 }
 
 func NewNodeService(db *store.DB) *NodeService {
@@ -211,13 +216,21 @@ func (s *NodeService) GetByName(name string) (*nodes.Node, error) {
 	return s.db.GetNodeByName(name)
 }
 
-// GetByDotName resolves a dotted hierarchical name (e.g. "GROUP.LANE.SLOT")
-// into the corresponding leaf node. Absorbed from engine_db_methods.go
-// as part of the Phase 3a closeout (PR 3a.6). Internal engine and
-// dispatch flows still call *store.DB.GetNodeByDotName directly — this
-// method is the handler-layer entry point only.
+// GetByDotName resolves a node name that is dotted ("GROUP.CHILD": the child
+// named CHILD under the node named GROUP, split at the first dot only, so
+// "GROUP.LANE.SLOT" asks for a child named "LANE.SLOT") or bare. Absorbed from
+// engine_db_methods.go as part of the Phase 3a closeout (PR 3a.6). Internal
+// engine and dispatch flows still call *store.DB.GetNodeByDotName directly —
+// this method is the handler-layer entry point only.
 func (s *NodeService) GetByDotName(name string) (*nodes.Node, error) {
 	return s.db.GetNodeByDotName(name)
+}
+
+// GetByDotNames is GetByDotName over many names in one read: each name that
+// resolved, keyed as asked; an unknown name is absent. Same arms as
+// GetByDotName (pinned by TestGetByDotNames_AgreesWithGetByDotName).
+func (s *NodeService) GetByDotNames(names []string) (map[string]*nodes.Node, error) {
+	return s.db.GetNodesByDotNames(names)
 }
 
 // ListScenePointsByArea returns the scene points registered under a

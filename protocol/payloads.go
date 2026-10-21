@@ -148,6 +148,14 @@ type EdgeHeartbeatAck struct {
 	// publishes an empty report for a name it no longer has. nil means Core
 	// could not read them (or is older); {} means it holds none.
 	Claims map[string]string `json:"claims"`
+	// BinWatch is the digest of the bins watch list Core holds for this Edge,
+	// as it arrived on SubjectBinsWatch; "" when Core holds none. The Edge
+	// publishes its list when this differs from its own.
+	//
+	// A POINTER, AND ABSENT IS AN ANSWER: nil (the key left out) is a Core
+	// without the bins feed, and the Edge then reads bins as it did before and
+	// publishes nothing. An Edge that sends no Feeds is not answered either.
+	BinWatch *string `json:"bin_watch,omitempty"`
 }
 
 // --- Order payloads: Edge -> Core ---

@@ -78,8 +78,10 @@ var tenseSQLSites = []sqlSite{
 	{"7 an ask's open maintain episode", "demand_origins.go", "func (db *DB) MaintainedEpisodeForOrigin(", 1},
 	{"8 the demand browser's scope", "demand_origins.go", "func (db *DB) ListDemandEpisodes(", 2},
 	{"9 the child-outcome scope", "demand_child_outcomes.go", "func (db *DB) CountChildrenByStatus(", 2},
-	{"10 typed inbound to a group, arm 1", "orders/orders.go", "func CountTypedInboundToGroup(", 1},
-	{"11 typed inbound to a group, arm 2", "orders/orders.go", "func CountTypedInboundToGroup(", 2},
+	// 10 and 11: the statement moved from CountTypedInboundToGroup, now a count
+	// over this one read, so the keeper and an unloader's group line share it.
+	{"10 typed inbound to a group, arm 1", "orders/orders.go", "func ListTypedInboundToGroup(", 1},
+	{"11 typed inbound to a group, arm 2", "orders/orders.go", "func ListTypedInboundToGroup(", 2},
 }
 
 func checkSQLSite(t *testing.T, s sqlSite) {

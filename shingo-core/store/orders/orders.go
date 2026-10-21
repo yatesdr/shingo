@@ -1799,7 +1799,8 @@ func CountLiveRootsByOrigin(db *sql.DB, originID string) (int, error) {
 }
 
 // CountTypedInboundToGroup counts the carriers of one type ALREADY ON THEIR WAY
-// into a group that the keeper did not ask for.
+// into a group that the keeper did not ask for: ListTypedInboundToGroup's rows,
+// counted. The rules below are that one statement's.
 //
 // THE THIRD POPULATION, and the one that is neither "standing there" nor "I
 // asked for it". An unloader pushing a drained empty back, a changeover
@@ -1825,7 +1826,7 @@ func CountLiveRootsByOrigin(db *sql.DB, originID string) (int, error) {
 // where a multi-pickup complex order records "this carrier goes to that node".
 // A single-pickup complex order writes no junction row at all
 // (allocator.go:743's len(claimed) > 1 guard), so the direct arm is what covers
-// it. COUNT(DISTINCT b.id) because the two arms can name the same carrier.
+// it. DISTINCT on the carrier because the two arms can name the same one.
 //
 // THE GROUP-NAME ARM IS NOT REDUNDANT. resolveSyntheticDestination rewrites
 // delivery_node from the group to a concrete child at admit, so a settled order
@@ -1853,13 +1854,31 @@ func CountLiveRootsByOrigin(db *sql.DB, originID string) (int, error) {
 // over-asking, which is the direction the note above already declares safe.
 // The enum's drift tests hold both lists to the same source of truth.
 func CountTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binTypeCode string) (int, error) {
+	inbound, err := ListTypedInboundToGroup(db, groupNodeID, groupNodeName, binTypeCode)
+	return len(inbound), err
+}
+
+// InboundCarrier is one carrier on its way into a group: the carrier the order
+// names (orders.bin_id once sourced, else orders.named_bin_id, or a junction
+// row's bin) and the totes on it, nil when unknown.
+type InboundCarrier struct {
+	BinID       int64
+	TotesOnCart *int
+}
+
+// ListTypedInboundToGroup is the inbound set CountTypedInboundToGroup counts,
+// as rows: each carrier once, in bin id order. ONE SPELLING of "coming": the
+// level keeper counts it (engine.countLevel), and an unloader's group line
+// reads its carriers for a wanted height and for the windows whose cart is
+// already on its way (engine.UnloaderGroupLines). Every rule documented on
+// CountTypedInboundToGroup is this statement's.
+func ListTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binTypeCode string) ([]InboundCarrier, error) {
 	if binTypeCode == "" || groupNodeName == "" {
-		return 0, nil
+		return nil, nil
 	}
-	var count int
-	err := db.QueryRow(nodetree.DescendantsOf(1)+fmt.Sprintf(`
-		SELECT COUNT(DISTINCT bin_id) FROM (
-		    SELECT b.id AS bin_id
+	rows, err := db.Query(nodetree.DescendantsOf(1)+fmt.Sprintf(`
+		SELECT DISTINCT bin_id, totes_on_cart FROM (
+		    SELECT b.id AS bin_id, b.totes_on_cart
 		      FROM orders o
 		      JOIN bins b  ON b.id = COALESCE(o.bin_id, o.named_bin_id)
 		      JOIN bin_types bt ON bt.id = b.bin_type_id
@@ -1872,7 +1891,7 @@ func CountTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binT
 		           SELECT 1 FROM demand_origins d
 		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND `+helpers.DemandOpenSQL("d")+`)
 		    UNION ALL
-		    SELECT ob.bin_id AS bin_id
+		    SELECT ob.bin_id AS bin_id, b.totes_on_cart
 		      FROM order_bins ob
 		      JOIN orders o ON o.id = ob.order_id
 		      JOIN bins b  ON b.id = ob.bin_id
@@ -1885,12 +1904,22 @@ func CountTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binT
 		       AND NOT EXISTS (
 		           SELECT 1 FROM demand_origins d
 		            WHERE d.origin_id = o.origin_id AND d.kind = $4 AND `+helpers.DemandOpenSQL("d")+`)
-		) AS inbound`, protocol.NonTerminalStatusSQLList()),
-		groupNodeID, binTypeCode, groupNodeName, protocol.EpisodeKindMaintain).Scan(&count)
+		) AS inbound
+		ORDER BY bin_id`, protocol.NonTerminalStatusSQLList()),
+		groupNodeID, binTypeCode, groupNodeName, protocol.EpisodeKindMaintain)
 	if err != nil {
-		return 0, fmt.Errorf("count typed inbound to group %s (%s): %w", groupNodeName, binTypeCode, err)
+		return nil, fmt.Errorf("list typed inbound to group %s (%s): %w", groupNodeName, binTypeCode, err)
 	}
-	return count, nil
+	defer rows.Close()
+	var out []InboundCarrier
+	for rows.Next() {
+		var c InboundCarrier
+		if err := rows.Scan(&c.BinID, &c.TotesOnCart); err != nil {
+			return nil, fmt.Errorf("scan inbound carrier: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // CountLiveByDeliveryNode counts ALL non-terminal orders pointed at a delivery

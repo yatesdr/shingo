@@ -327,7 +327,71 @@ func GetByDotName(db *sql.DB, name string) (*Node, error) {
 	return ScanNode(row)
 }
 
-// List returns every node ordered by name.
+// GetByDotNames is GetByDotName over many names in one statement. The map holds
+// each name that resolved, keyed by the name as asked; a name GetByDotName
+// answers sql.ErrNoRows for is absent. Both arms are GetByDotName's: a name is
+// split at its first dot only, so "A.B.C" asks for a child named "B.C" under a
+// node named "A", and a name with no dot is matched whole. nodes.name is
+// UNIQUE, so no name can resolve to two rows. Pinned against GetByDotName by
+// TestGetByDotNames_AgreesWithGetByDotName.
+func GetByDotNames(db *sql.DB, names []string) (map[string]*Node, error) {
+	found := make(map[string]*Node, len(names))
+	if len(names) == 0 {
+		return found, nil
+	}
+	// One VALUES row per distinct name: (asked, parent, child), parent NULL for
+	// a bare name. Explicit placeholders, as bins.ListByNodes builds its list.
+	seen := make(map[string]bool, len(names))
+	var values []string
+	var args []any
+	for _, name := range names {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		var parent any
+		child := name
+		if parts := strings.SplitN(name, ".", 2); len(parts) == 2 {
+			parent, child = parts[0], parts[1]
+		}
+		i := len(args)
+		values = append(values, fmt.Sprintf("($%d::text, $%d::text, $%d::text)", i+1, i+2, i+3))
+		args = append(args, name, parent, child)
+	}
+	query := fmt.Sprintf(`SELECT q.asked, %s
+		FROM (VALUES %s) AS q(asked, parent, child)
+		JOIN nodes n ON n.name = q.child
+		LEFT JOIN node_types nt ON nt.id = n.node_type_id
+		LEFT JOIN nodes pn ON pn.id = n.parent_id
+		WHERE q.parent IS NULL OR n.parent_id IN (SELECT id FROM nodes WHERE name = q.parent)`,
+		SelectCols, strings.Join(values, ", "))
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var asked string
+		n, err := ScanNode(askedThenNode{rows, &asked})
+		if err != nil {
+			return nil, err
+		}
+		found[asked] = n
+	}
+	return found, rows.Err()
+}
+
+// askedThenNode reads GetByDotNames' first column (the name as asked) into
+// asked and hands the rest to ScanNode's destinations.
+type askedThenNode struct {
+	rows  *sql.Rows
+	asked *string
+}
+
+func (a askedThenNode) Scan(dest ...any) error {
+	return a.rows.Scan(append([]any{a.asked}, dest...)...)
+}
+
 // DeleteCarrierNodeIfEmpty removes a per-robot carrier node (`_ROBOT:<vehicle>`)
 // once nothing is on it.
 //
@@ -379,6 +443,7 @@ func RetireEmptyCarrierNodes(db *sql.DB, prefix string) (deleted, left int64, er
 	return deleted, left, err
 }
 
+// List returns every node ordered by name.
 func List(db *sql.DB) ([]*Node, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT %s %s ORDER BY n.name`, SelectCols, FromClause))
 	if err != nil {

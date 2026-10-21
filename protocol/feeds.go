@@ -40,6 +40,10 @@ const (
 	FeedScene = "scene"
 	// FeedCatalog is the payload catalog. Carrier: CatalogPayloadsResponse.
 	FeedCatalog = "catalog"
+	// FeedBins is the bins at the nodes one Edge watches, per Edge. Carrier:
+	// SubjectBinsSnapshot. Core serves it only to an Edge whose watch list it
+	// holds (SubjectBinsWatch); for any other Edge the key is unknown.
+	FeedBins = "bins"
 )
 
 // SceneRevisionNone is the scene revision of a plant with no scene an Edge can
@@ -185,6 +189,63 @@ func ClaimsDigest(r PlantClaimsReport) (string, error) {
 	r.Styles = styles
 	r.Digest = ""
 	return Digest(r)
+}
+
+// BinWatchDigest is the digest of a bins watch list: the names sorted, each
+// once. The Edge sets BinWatchList.Digest from it; Core quotes that back.
+func BinWatchDigest(nodes []string) (string, error) {
+	n := append([]string{}, nodes...)
+	sort.Strings(n)
+	out := n[:0]
+	for i, name := range n {
+		if i == 0 || name != n[i-1] {
+			out = append(out, name)
+		}
+	}
+	return Digest(out)
+}
+
+// NodeBinsDigest is the FeedBins digest over a snapshot's rows and groups:
+// rows by node, groups by name, a group's wants by (bin type, layers) and its
+// assignments by (node, bin type). The snapshot's own Digest is not part of
+// it. Nothing in a row counts what is in a bin (NodeBinsRow), so a count that
+// moves without crossing zero leaves this digest where it was.
+func NodeBinsDigest(s NodeBinsSnapshot) (string, error) {
+	rows := append([]NodeBinsRow{}, s.Rows...)
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Node != rows[j].Node {
+			return rows[i].Node < rows[j].Node
+		}
+		return rows[i].BinID < rows[j].BinID
+	})
+	groups := make([]NodeBinsGroup, len(s.Groups))
+	for i, g := range s.Groups {
+		wants := append([]NodeBinsWant{}, g.Wants...)
+		sort.Slice(wants, func(i, j int) bool {
+			if wants[i].BinType != wants[j].BinType {
+				return wants[i].BinType < wants[j].BinType
+			}
+			return layersLess(wants[i].Layers, wants[j].Layers)
+		})
+		assigned := append([]NodeBinsAssignment{}, g.Assignments...)
+		sort.Slice(assigned, func(i, j int) bool {
+			if assigned[i].Node != assigned[j].Node {
+				return assigned[i].Node < assigned[j].Node
+			}
+			return assigned[i].BinType < assigned[j].BinType
+		})
+		groups[i] = NodeBinsGroup{Group: g.Group, Wants: wants, Assignments: assigned}
+	}
+	sort.Slice(groups, func(i, j int) bool { return groups[i].Group < groups[j].Group })
+	return Digest(NodeBinsSnapshot{Rows: rows, Groups: groups})
+}
+
+// layersLess orders a want for the type (nil) before any height of it.
+func layersLess(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == nil && b != nil
+	}
+	return *a < *b
 }
 
 func utcPtr(t *time.Time) *time.Time {

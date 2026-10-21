@@ -38,6 +38,7 @@ type (
 
 	MessagingClient struct{}
 	MessagingFeeds  struct{}
+	MessagingBins   struct{}
 	RDSClient       struct{}
 	RDSPoller       struct{}
 	SeerScene       struct{}
@@ -100,6 +101,7 @@ func (Futility) Rank() int   { return 42 }
 
 func (MessagingClient) Rank() int { return 100 }
 func (MessagingFeeds) Rank() int  { return 101 }
+func (MessagingBins) Rank() int   { return 105 }
 func (RDSClient) Rank() int       { return 102 }
 func (RDSPoller) Rank() int       { return 103 }
 func (SeerScene) Rank() int       { return 104 }
@@ -161,6 +163,7 @@ func (Futility) Name() string   { return "dispatch.FutilityDetector.mu" }
 
 func (MessagingClient) Name() string { return "messaging.Client.mu" }
 func (MessagingFeeds) Name() string  { return "messaging.feeds.mu" }
+func (MessagingBins) Name() string   { return "messaging.binsFeed.mu" }
 func (RDSClient) Name() string       { return "rds.Client.mu" }
 func (RDSPoller) Name() string       { return "rds.Poller.mu" }
 func (SeerScene) Name() string       { return "seerrds.sceneMu" }

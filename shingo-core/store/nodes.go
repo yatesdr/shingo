@@ -22,6 +22,9 @@ func (db *DB) GetNodeByName(name string) (*nodes.Node, error) {
 func (db *DB) GetNodeByDotName(name string) (*nodes.Node, error) {
 	return nodes.GetByDotName(db.DB, name)
 }
+func (db *DB) GetNodesByDotNames(names []string) (map[string]*nodes.Node, error) {
+	return nodes.GetByDotNames(db.DB, names)
+}
 func (db *DB) ListNodes() ([]*nodes.Node, error) { return nodes.List(db.DB) }
 func (db *DB) ListChildNodes(parentID int64) ([]*nodes.Node, error) {
 	return nodes.ListChildren(db.DB, parentID)

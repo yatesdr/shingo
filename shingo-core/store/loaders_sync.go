@@ -467,3 +467,57 @@ func (db *DB) keepOwnedEntries(stationID string, entries []demands.RegistryEntry
 	}
 	return kept, nil
 }
+
+// ConsumeWindow is one window of a consume loader, with the loader's outbound
+// group: the group's node id (0 when no node carries its name) and whether the
+// group declares any level.
+type ConsumeWindow struct {
+	Group      string
+	GroupID    int64
+	Maintained bool
+	NodeID     int64
+	NodeName   string
+}
+
+// ConsumeWindowsAt returns every window of the active consume loaders that
+// have a window at any of nodeIDs, by group, then loader, then the plant's
+// window order (bin_loader_homes.sort_order): the groups whose fill a station
+// watching those windows is shown, and every cart the group's walk reads. One
+// statement; none for no ids. A loader whose carts the process pulls straight
+// off its windows stores no destination and is not returned.
+func (db *DB) ConsumeWindowsAt(nodeIDs []int64) ([]ConsumeWindow, error) {
+	if len(nodeIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(nodeIDs))
+	args := make([]any, 0, len(nodeIDs)+1)
+	args = append(args, loaders.RoleConsume)
+	for i, id := range nodeIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args = append(args, id)
+	}
+	rows, err := db.DB.Query(`SELECT l.outbound_dest, COALESCE(g.id, 0),
+			COALESCE(EXISTS (SELECT 1 FROM node_maintain_levels m WHERE m.group_node_id = g.id), false),
+			h.position_node_id, n.name
+		FROM bin_loaders l
+		JOIN bin_loader_homes h ON h.loader_id = l.id
+		JOIN nodes n ON n.id = h.position_node_id
+		LEFT JOIN nodes g ON g.name = l.outbound_dest
+		WHERE l.archived_at IS NULL AND l.role = $1 AND l.outbound_dest <> ''
+		  AND l.id IN (SELECT loader_id FROM bin_loader_homes WHERE position_node_id IN (`+
+		strings.Join(placeholders, ",")+`))
+		ORDER BY l.outbound_dest, l.id, h.sort_order, h.position_node_id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("consume windows: %w", err)
+	}
+	defer rows.Close()
+	var out []ConsumeWindow
+	for rows.Next() {
+		var w ConsumeWindow
+		if err := rows.Scan(&w.Group, &w.GroupID, &w.Maintained, &w.NodeID, &w.NodeName); err != nil {
+			return nil, fmt.Errorf("scan consume window: %w", err)
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}

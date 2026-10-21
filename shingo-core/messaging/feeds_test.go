@@ -1,6 +1,7 @@
 package messaging
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -152,4 +153,69 @@ func (r *captureFeedsResponder) replyData(_ *protocol.Envelope, subject string, 
 }
 func (r *captureFeedsResponder) sendData(subject, station string, _ any) {
 	r.sent = append(r.sent, "send "+subject+" -> "+station)
+}
+
+// A push (a send outside the heartbeat compare) leaves the resend guard alone:
+// the heartbeat after a lost push sends at once. The guard still holds back a
+// digest the compare itself sent inside two minutes. lastSent is whichever of
+// the two went last.
+func TestFeedState_PushLeavesTheGuardAlone(t *testing.T) {
+	t.Parallel()
+	f := newFeedState()
+	t0 := time.Date(2026, 10, 14, 9, 0, 0, 0, time.UTC)
+	const st, key = "edge.test", protocol.FeedBins
+
+	if !f.compare(st, key, "d1", "", t0) {
+		t.Fatal("first heartbeat: want a send")
+	}
+	f.recordPush(st, key, "d2", t0.Add(10*time.Second))
+	if got := f.lastSent(st, key); got != "d2" {
+		t.Errorf("lastSent after the push = %q, want d2", got)
+	}
+	if !f.compare(st, key, "d2", "d1", t0.Add(time.Minute)) {
+		t.Error("heartbeat after a lost push: want the push's digest sent at once")
+	}
+	if got := f.lastSent(st, key); got != "d2" {
+		t.Errorf("lastSent after the heartbeat's send = %q, want d2", got)
+	}
+	if f.compare(st, key, "d2", "d1", t0.Add(2*time.Minute)) {
+		t.Error("the compare's own send inside the guard: want it held back")
+	}
+	if !f.compare(st, key, "d2", "d1", t0.Add(3*time.Minute+time.Second)) {
+		t.Error("the guard elapsed: want a send")
+	}
+}
+
+// An Edge that quotes what a push sent it has converged: the streak ends, so a
+// bins feed pushed between heartbeats is not flagged.
+func TestFeedState_StreakEndsWhenThePushIsHeld(t *testing.T) {
+	t.Parallel()
+	f := newFeedState()
+	t0 := time.Date(2026, 10, 14, 9, 0, 0, 0, time.UTC)
+	const st, key = "edge.test", protocol.FeedBins
+	held := "d0"
+	for i := 0; i < 3; i++ {
+		at := t0.Add(time.Duration(i) * time.Minute)
+		cur := fmt.Sprintf("h%d", i)
+		if !f.compare(st, key, cur, held, at) {
+			t.Fatalf("heartbeat %d: %s not sent", i, cur)
+		}
+		pushed := fmt.Sprintf("p%d", i)
+		f.recordPush(st, key, pushed, at.Add(30*time.Second))
+		held = pushed // the Edge applied the push before its next heartbeat
+	}
+	if got := f.flagsFor(st); len(got) != 0 {
+		t.Errorf("flags = %v for an Edge that held every push, want none", got)
+	}
+}
+
+// A bins key is answered only for an Edge whose watch list Core holds.
+func TestAnswerFeeds_BinsWithNoListIsUnknown(t *testing.T) {
+	t.Parallel()
+	resp := &captureFeedsResponder{}
+	s := &CoreDataService{resp: resp, feeds: newFeedState(), bins: newBinsFeed()}
+	got := s.answerFeeds("edge.test", map[string]string{protocol.FeedBins: ""})
+	if len(got) != 0 || len(resp.sent) != 0 {
+		t.Errorf("answer = %v, sent %v; want neither", got, resp.sent)
+	}
 }

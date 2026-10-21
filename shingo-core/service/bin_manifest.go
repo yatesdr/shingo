@@ -8,6 +8,7 @@ import (
 	"log"
 	"sort"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"shingo/protocol"
@@ -30,6 +31,9 @@ import (
 type BinManifestService struct {
 	db       BinManifestStore
 	announce messaging.EpochAnnounce
+	// binChanged is called after a station door's write to a bin commits
+	// (bin_changed.go).
+	binChanged atomic.Pointer[func(binID int64)]
 }
 
 // EpochAnnounce is re-exported here so call sites that only import service can
@@ -1065,6 +1069,7 @@ func (s *BinManifestService) LoadAtLine(binID int64, manifestJSON, payloadCode s
 			log.Printf("bin manifest: held-since for bin %d after its load: %v", binID, err)
 		}
 	}
+	s.notifyBinChanged(binID)
 	return epoch, uop, nil
 }
 

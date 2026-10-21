@@ -533,6 +533,7 @@ func (s *BinService) RecordCount(b *bins.Bin, actualUOP int, actor string) (*Cou
 			"recorded count %d is above the payload's UOP capacity of %d — the count was accepted; check the payload's capacity setting",
 			actualUOP, pl.UOPCapacity)
 	}
+	s.manifest.notifyBinChanged(b.ID)
 	return result, nil
 }
 
