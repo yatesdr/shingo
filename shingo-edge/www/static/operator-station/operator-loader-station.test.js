@@ -580,15 +580,17 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
         'Clear partials opened by a tap: the numbered card, the home act, where the partial comes from');
 
     // The card's tap: the confirm, naming the home and the spot, then
-    // clear-loader-home with an empty body.
+    // clear-loader-home naming the spot the card names (changed: the body was
+    // empty and the engine picked the first match, which the card could only
+    // hope was the same one).
     await tap(h1);
     eq(overlayTexts()[0], 'Clear SMN_H1?', 'the clear\'s confirm names the home (changed: it named no node)');
     eq(overlayTexts()[1], 'Declares the bin at SMN_H1 empty. Shingo brings the partial from SMN_F1 to SMN_H1, and SMN_F1 ends holding the empty.',
         'the clear\'s confirm names the spot and says it ends holding an empty');
     eq(overlayButtons(), ['CONFIRM CLEAR', 'CANCEL'], 'the clear\'s confirm offers CONFIRM CLEAR');
     await tapOverlay('CONFIRM CLEAR');
-    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-loader-home', body: {} }],
-        'CLEAR: posts clear-loader-home with no body fields (the engine picks the first matching partial, the one the card names)');
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-loader-home', body: { buffer_node: 'LDR.SMN_F1' } }],
+        'CLEAR: posts clear-loader-home naming the spot the card names, by its Core name');
     await tap(zoneButton('Clear partials', 'Hide'));
 
     // LOAD from an empty home.

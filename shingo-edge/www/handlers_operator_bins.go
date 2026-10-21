@@ -87,7 +87,15 @@ func (h *Handlers) apiClearLoaderHome(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	if err := h.orchestration.ClearLoaderHome(id); err != nil {
+	// buffer_node is optional: the board's Clear partials card names the spot
+	// it shows, so the card and the engine cannot pick different partials; a
+	// body without it (the header's PULL FULL FROM HOME picker) takes the first
+	// match in the plant's order (engine.ClearLoaderHome).
+	var body struct {
+		BufferNode string `json:"buffer_node"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := h.orchestration.ClearLoaderHome(id, body.BufferNode); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

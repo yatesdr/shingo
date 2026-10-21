@@ -210,7 +210,7 @@ func TestConsolidationIntentSurvivesRestart(t *testing.T) {
 	eng.coreClient = stubCoreClient(srv.URL)
 	eng.SetCoreLoaders([]protocol.LoaderInfo{consolidationLoader()})
 
-	testutil.MustNoErr(t, eng.ClearLoaderHome(nodeID), "ClearLoaderHome")
+	testutil.MustNoErr(t, eng.ClearLoaderHome(nodeID, ""), "ClearLoaderHome")
 	var orderA *storeorders.Order
 	all, err := db.ListActiveOrdersByProcessNode(nodeID)
 	testutil.MustNoErr(t, err, "list orders")
@@ -260,7 +260,7 @@ func TestConsolidationIntentFiresOnceWithoutRestart(t *testing.T) {
 	eng.coreClient = stubCoreClient(srv.URL)
 	eng.SetCoreLoaders([]protocol.LoaderInfo{consolidationLoader()})
 
-	testutil.MustNoErr(t, eng.ClearLoaderHome(nodeID), "ClearLoaderHome")
+	testutil.MustNoErr(t, eng.ClearLoaderHome(nodeID, ""), "ClearLoaderHome")
 	all, err := db.ListActiveOrdersByProcessNode(nodeID)
 	testutil.MustNoErr(t, err, "list orders")
 	if len(all) != 1 {

@@ -667,7 +667,7 @@ function loaderCards(t, ctx) {
         ctx.partials.push(ctx.card(t, 'partial', [0], {
             spotWords: 'holds a full bin', headline: bin.payload_code,
             reason: 'Pull the full · partial from ' + from, partialSpot: from,
-            act: { kind: 'clear-home', node: t.node.id, home: spotOf(t), spot: from },
+            act: { kind: 'clear-home', node: t.node.id, home: spotOf(t), spot: from, bufferNode: bp.node },
         }));
     } else if (loadable.length === 0 && bin.occupied && bin.payload_code && !bin.stocked) {
         ctx.other('Check bin', ctx.card(t, 'check', [0], {

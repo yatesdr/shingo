@@ -102,6 +102,10 @@ type stubEngine struct {
 	// ChangeoverGateStatus canned response — the gate-status endpoint is a
 	// pure read, so the stub just replays whatever the test set.
 
+	// lastClearLoaderHomeBuffer is the buffer_node the clear-loader-home door
+	// passed on, nil until it is called.
+	lastClearLoaderHomeBuffer *string
+
 	lastAbandonNodeID     int64
 	lastAbandonAcceptHalf bool
 	abandonErr            error
@@ -237,12 +241,15 @@ func (s *stubEngine) RequestProduceSwap(int64, int64) (*engine.NodeOrderResult, 
 func (s *stubEngine) LoadBin(int64, string, *int64, []protocol.IngestManifestItem) error { return nil }
 func (s *stubEngine) ClearBin(int64, string, bool) error                                 { return nil }
 func (s *stubEngine) RecordBinCount(int64, int, string) error                            { return nil }
-func (s *stubEngine) ClearLoaderHome(int64) error                                        { return nil }
-func (s *stubEngine) FetchMarketBins(int64) ([]engine.MarketBinInfo, error)              { return nil, nil }
-func (s *stubEngine) PullFromMarket(int64, string) error                                 { return nil }
-func (s *stubEngine) PushEmptyOut(int64) error                                           { return nil }
-func (s *stubEngine) RequestEmptyBin(int64, string) (*storeorders.Order, error)          { return nil, nil }
-func (s *stubEngine) RequestFullBin(int64, string) (*storeorders.Order, error)           { return nil, nil }
+func (s *stubEngine) ClearLoaderHome(_ int64, bufferNode string) error {
+	s.lastClearLoaderHomeBuffer = &bufferNode
+	return nil
+}
+func (s *stubEngine) FetchMarketBins(int64) ([]engine.MarketBinInfo, error)     { return nil, nil }
+func (s *stubEngine) PullFromMarket(int64, string) error                        { return nil }
+func (s *stubEngine) PushEmptyOut(int64) error                                  { return nil }
+func (s *stubEngine) RequestEmptyBin(int64, string) (*storeorders.Order, error) { return nil, nil }
+func (s *stubEngine) RequestFullBin(int64, string) (*storeorders.Order, error)  { return nil, nil }
 
 // Quality containment (v100): the stub answers the happy shape with no
 // order (nil, nil); a handler test that needs the refusal path sets a

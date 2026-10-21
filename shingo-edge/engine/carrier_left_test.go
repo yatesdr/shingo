@@ -191,7 +191,7 @@ func TestClearLoaderHome_TheCarrierStaysKnownEmpty(t *testing.T) {
 	eng.coreClient = stubCoreClient(srv.URL)
 	eng.SetCoreLoaders([]protocol.LoaderInfo{consolidationLoader()})
 
-	testutil.MustNoErr(t, eng.ClearLoaderHome(nodeID), "ClearLoaderHome")
+	testutil.MustNoErr(t, eng.ClearLoaderHome(nodeID, ""), "ClearLoaderHome")
 
 	rt, err := db.GetProcessNodeRuntime(nodeID)
 	testutil.MustNoErr(t, err, "read runtime")

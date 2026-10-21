@@ -131,7 +131,7 @@ type EngineOrchestration interface {
 	LoadBin(nodeID int64, payloadCode string, uopCount *int64, manifest []protocol.IngestManifestItem) error
 	ClearBin(nodeID int64, binTypeCode string, unload bool) error
 	RecordBinCount(nodeID int64, actualUOP int, actor string) error
-	ClearLoaderHome(nodeID int64) error
+	ClearLoaderHome(nodeID int64, bufferNode string) error
 	FetchMarketBins(nodeID int64) ([]engine.MarketBinInfo, error)
 	PullFromMarket(nodeID int64, sourceCoreName string) error
 	PushEmptyOut(nodeID int64) error

@@ -19,6 +19,7 @@ package engine
 import (
 	"fmt"
 	"log"
+	"slices"
 
 	ordermgr "shingoedge/orders"
 
@@ -45,7 +46,15 @@ type homeConsolidation struct {
 //     dedicated-position loader, of either role: no role is checked.
 //   - The home must hold a tracked bin with UOP > 0.
 //   - The loader's buffer position must hold a partial with matching payload.
-func (e *Engine) ClearLoaderHome(nodeID int64) error {
+//
+// bufferNode is the buffer spot whose partial the operator chose (the board's
+// Clear partials card sends the spot it names). Given, that spot and no other:
+// a spot that is no buffer position of this loader, or holds no stocked bin of
+// the home's part, is refused before anything is cleared. Blank, the first
+// matching spot in the plant's order, which is the one the board's
+// buffer_partial names. Pinned by TestClearLoaderHome_TheNamedSpotIsTheOneCleared
+// and TestClearLoaderHome_NoSpotNamedTakesTheFirstPartialInThePlantsOrder.
+func (e *Engine) ClearLoaderHome(nodeID int64, bufferNode string) error {
 	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return err
@@ -85,6 +94,12 @@ func (e *Engine) ClearLoaderHome(nodeID int64) error {
 	if len(bufferNodes) == 0 {
 		return fmt.Errorf("loader for node %s has no buffer position", node.Name)
 	}
+	if bufferNode != "" {
+		if !slices.Contains(bufferNodes, bufferNode) {
+			return fmt.Errorf("%s is not a buffer position of the loader at %s", bufferNode, node.Name)
+		}
+		bufferNodes = []string{bufferNode}
+	}
 
 	allNodes := append([]string{node.CoreNodeName}, bufferNodes...)
 	bins, _, err := e.coreClient.FetchNodeBins(allNodes)
@@ -115,6 +130,9 @@ func (e *Engine) ClearLoaderHome(nodeID int64) error {
 			bufferCoreName = bName
 			break
 		}
+	}
+	if bufferCoreName == "" && bufferNode != "" {
+		return fmt.Errorf("%s holds no partial of %s — cannot consolidate", bufferNode, homePayload)
 	}
 	if bufferCoreName == "" {
 		return fmt.Errorf("no matching partial for payload %s in buffer — cannot consolidate", homePayload)

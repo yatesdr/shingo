@@ -241,7 +241,7 @@ const boardActs = {
         case 'unload': confirmUnloadSwap(a.node, a.carriers, a.discarding, a.leavesBare, a.lit); break;
         case 'unload-held': confirmUnloadHeld(a.node, a.heldFor, a.count); break;
         case 'push-empty': confirmPushEmpty(a.node, a.carriers, a.bare, a.lit); break;
-        case 'clear-home': confirmClearLoaderHome(a.node, a.home, a.spot); break;
+        case 'clear-home': confirmClearLoaderHome(a.node, a.home, a.spot, a.bufferNode); break;
         case 'modal': openModalRef(a.node); break;
         case 'request-empty': postFromBar(a, '/api/process-nodes/' + a.node + '/request-empty', {}); break;
         case 'request-full': postFromBar(a, '/api/process-nodes/' + a.node + '/request-full', { payload_code: a.payload }); break;
@@ -576,10 +576,11 @@ function confirmPushEmpty(nodeID, carriers, bare, lit) {
 // clear-loader-home consolidation sequence. The operator declares this home bin
 // empty; Shingo moves the carrier to the buffer, then pulls the buffer partial
 // back to the home. From the board's card it names the home and the spot the
-// partial comes from, which ends holding an empty. The post names neither: the
-// engine takes the first matching partial in the plant's order, the one the
-// card names (tile.buffer_partial).
-function confirmClearLoaderHome(nodeID, home, spot) {
+// partial comes from, which ends holding an empty, and the post names that
+// spot (buffer_node, the Core name of tile.buffer_partial), so the card and the
+// engine cannot pick different partials. The header's picker names no spot:
+// the engine then takes the first matching partial in the plant's order.
+function confirmClearLoaderHome(nodeID, home, spot, bufferNode) {
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker' });
     panel.appendChild(el('div', { className: 'os-co-picker-title',
@@ -593,7 +594,8 @@ function confirmClearLoaderHome(nodeID, home, spot) {
     const confirm = el('button', { className: 'os-co-picker-btn', textContent: 'CONFIRM CLEAR' });
     confirm.addEventListener('click', function() {
         overlay.remove();
-        postAction('/api/process-nodes/' + nodeID + '/clear-loader-home', undefined, loadViewRef);
+        postAction('/api/process-nodes/' + nodeID + '/clear-loader-home',
+            bufferNode ? { buffer_node: bufferNode } : undefined, loadViewRef);
     });
     panel.appendChild(confirm);
 
