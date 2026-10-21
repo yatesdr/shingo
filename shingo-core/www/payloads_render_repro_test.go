@@ -15,7 +15,7 @@ import (
 // template the way the router does and execute it against the same data
 // shape, so the underlying html/template error surfaces verbatim.
 func TestPayloadsTemplateRenderRepro(t *testing.T) {
-	base := template.New("").Funcs(templateFuncs(nil))
+	base := template.New("").Funcs(templateFuncs(nil, nil))
 	base = template.Must(base.ParseFS(templateFS, "templates/layout.html", "templates/partials/*.html"))
 	clone := template.Must(base.Clone())
 	clone = template.Must(clone.ParseFS(templateFS, "templates/payloads.html"))

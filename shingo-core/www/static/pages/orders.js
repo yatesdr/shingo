@@ -262,16 +262,35 @@ function binRef(bin) {
 // header used to read "UTN_013 → —" under a line saying where it was waiting.
 var NOT_ASSIGNED = '<span class="order-route-none">not assigned yet</span>';
 
-// routeHTML is From → Line → To, the line node omitted when it repeats an
-// end: the same rule as the board's order-route partial
-// (templates/partials/orders-rows.html), which the server draws. The two are
+// routeHTML draws the route the server computed (data.route,
+// domain.RouteStops), the stop the robot is at in bold. It has no rule of its
+// own: which nodes appear is the board's order-route partial's answer too,
 // held together by TestOrderRouteRuleMatchesThePopup.
-function routeHTML(o) {
-  var parts = [o.source_node ? nodeLink(o.source_node) : NOT_ASSIGNED];
-  if (o.process_node && o.process_node !== o.source_node && o.process_node !== o.delivery_node) {
-    parts.push(nodeLink(o.process_node));
+function routeHTML(stops) {
+  if (!stops || !stops.length) return NOT_ASSIGNED;
+  return stops.map(function (s) {
+    if (s.unassigned) return NOT_ASSIGNED;
+    var n = nodeLink(s.node);
+    return s.current ? '<strong class="order-route-current" title="the robot is here">' + n + '</strong>' : n;
+  }).join(' <span class="manifest-arrow">&rarr;</span> ');
+}
+
+// planHTML is the order's full chain as Core holds it, every step with its
+// waits, under the route: the route says where the order goes, this what the
+// robot does there (mission-detail.js formatRoute is the precedent). Empty for
+// an order with no steps.
+function planHTML(o) {
+  if (!o.steps_json) return '';
+  var steps;
+  try { steps = JSON.parse(o.steps_json); } catch (e) { return ''; }
+  if (!Array.isArray(steps)) return '';
+  var parts = [];
+  for (var i = 0; i < steps.length; i++) {
+    var s = steps[i] || {};
+    var where = s.node || s.group;
+    if (!where) continue;
+    parts.push(escapeHtml(s.action || '') + ' ' + escapeHtml(where));
   }
-  parts.push(o.delivery_node ? nodeLink(o.delivery_node) : NOT_ASSIGNED);
   return parts.join(' <span class="manifest-arrow">&rarr;</span> ');
 }
 
@@ -341,17 +360,20 @@ function buildManifest(data, opts) {
   var out = '<div class="manifest">';
 
   // ── HERO ──
-  // The route is what an order IS, so it leads — one readable From → Line →
-  // To line rather than labelled cells in a grid, with the status and the
-  // elapsed time beside it. Everything else is a footnote to that. An end not
-  // chosen yet reads "not assigned yet", never a bare dash.
+  // The route is what an order IS, so it leads — one readable line of its
+  // stops rather than labelled cells in a grid, with the status and the
+  // elapsed time beside it, and under it the full chain with its waits.
+  // Everything else is a footnote to that. An end not chosen yet reads "not
+  // assigned yet", never a bare dash.
   out += '<div class="manifest-head">';
   out += '<div class="manifest-hero">';
-  out += '<span class="manifest-route">' + routeHTML(o) + '</span>';
+  out += '<span class="manifest-route">' + routeHTML(data.route) + '</span>';
   out += '<span class="badge badge-' + o.status + '">' + escapeHtml(o.status) + '</span>';
   var elapsed = elapsedLabel(o);
   if (elapsed) out += '<span class="manifest-elapsed tnum">' + elapsed + '</span>';
   out += '</div>';
+  var plan = planHTML(o);
+  if (plan) out += '<div class="manifest-plan">' + plan + '</div>';
 
   // Anything wrong or blocking goes directly under the hero, full width —
   // queue_reason is the whole story on a queued order (why it is stuck) and

@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch/eta"
+	"shingocore/domain"
 	"shingocore/fleet"
 )
 
@@ -24,6 +25,10 @@ type BoardOrder struct {
 	// The map uses it as the authoritative fetch-vs-carry signal instead of inferring
 	// the leg from robot↔source geometry — which broke on multi-leg / complex orders.
 	Carrying bool `json:"carrying"`
+	// Route is the order's route, domain.RouteStops with the robot's station: the
+	// one rule the orders board and the pop-up draw too, so the task board shows
+	// every stop of a complex leg, not its first and last alone.
+	Route []domain.RouteStop `json:"route"`
 }
 
 // liftLoadedThreshold is the lift/jack height (metres) above which a robot counts as
@@ -66,6 +71,7 @@ func (e *Engine) GetActiveOrdersWithRobotLocationFiltered(stations []string) ([]
 			CreatedAt:      o.CreatedAt.Format(time.RFC3339),
 			CurrentStation: rob.CurrentStation,
 			Carrying:       rob.LiftHeight > liftLoadedThreshold,
+			Route:          domain.RouteStops(o, rob.CurrentStation),
 		}
 		if string(o.Status) == "in_transit" {
 			bo.ETA = eta.Stamp(e.etaCache, o.SourceNode, o.DeliveryNode)
@@ -98,6 +104,7 @@ func (e *Engine) GetActiveOrderWithRobotLocation(orderID int64) (*BoardOrder, er
 		bo.CurrentStation = rs.CurrentStation
 		bo.Carrying = rs.LiftHeight > liftLoadedThreshold
 	}
+	bo.Route = domain.RouteStops(o, bo.CurrentStation)
 	if string(o.Status) == "in_transit" {
 		bo.ETA = eta.Stamp(e.etaCache, o.SourceNode, o.DeliveryNode)
 	}

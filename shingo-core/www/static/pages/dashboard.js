@@ -58,12 +58,22 @@ import { escapeHtml, formatClock, formatDuration, onSSE, serverNow, setSSEReload
   // ── task-board renderer ────────────────────────────────────────────
   var seen = {}; // order_id -> true, to flash only genuinely new rows
 
+  // routeCell draws the route the server computed (o.route,
+  // domain.RouteStops), the stop the robot is at in bold. It has no rule of
+  // its own: the orders board and the pop-up draw the same stops
+  // (TestOrderRouteRuleMatchesThePopup).
+  function routeCell(stops) {
+    if (!stops || !stops.length) return '-';
+    return stops.map(function (s) {
+      if (s.unassigned) return '-';
+      return s.current ? '<strong class="r-route-current">' + escapeHtml(s.node) + '</strong>' : escapeHtml(s.node);
+    }).join(' <span class="r-route-arrow">&rarr;</span> ');
+  }
+
   function rowHTML(o) {
     return '<td class="r-robot">' + escapeHtml(o.robot_id || '-') + '</td>' +
-      '<td>' + escapeHtml(o.source_node || '-') + '</td>' +
+      '<td class="r-route">' + routeCell(o.route) + '</td>' +
       '<td class="r-payload">' + escapeHtml(o.payload_code || '-') + '</td>' +
-      '<td>' + escapeHtml(o.current_station || '-') + '</td>' +
-      '<td>' + escapeHtml(o.delivery_node || '-') + '</td>' +
       '<td class="r-status ' + statusClass(o.status) + '">' + escapeHtml(statusLabel(o.status)) + '</td>' +
       '<td class="r-eta">' + escapeHtml(formatETA(o.eta)) + '</td>';
   }

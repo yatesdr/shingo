@@ -108,6 +108,8 @@ body[data-dashboard-kind="node-report"] #dash-main { overflow: hidden; }
 .r-robot { font-weight: 700; }
 .r-payload { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; }
 .r-eta { font-variant-numeric: tabular-nums; color: var(--dash-muted); }
+.r-route { white-space: nowrap; }
+.r-route-arrow { color: var(--dash-muted); }
 
 .r-status {
   font-weight: 700;
