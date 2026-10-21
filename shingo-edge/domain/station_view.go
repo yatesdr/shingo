@@ -100,7 +100,7 @@ type StationNodeView struct {
 	// and single_robot link their legs too, and release them one at a time.
 	ReleasesAsPair bool `json:"releases_as_pair"`
 	// ReleasePurposes are the decisions this node owes, one per purpose a live
-	// leg stands at or heads to (SHAPE 3.8): the board renders one RELEASE per
+	// leg stands at or heads to: the board renders one RELEASE per
 	// purpose, enabled when Ready (a leg parked at a station wait of it).
 	// Built from the order rows the view already holds.
 	ReleasePurposes []ReleasePurpose `json:"release_purposes,omitempty"`
@@ -146,9 +146,11 @@ type StationNodeView struct {
 	// their release didn't take and can click release again to retry.
 	// Empty when no recent release error is pending.
 	LastReleaseError string `json:"last_release_error,omitempty"`
-	// StrandedAlarm is the parked-ticks alarm sentence (P2-C7/C8) for this node:
-	// consume ticks piling up in pending_uop_delta while no bin is bound. The
-	// operator UI renders it as an amber chip on the node card, verbatim —
+	// StrandedAlarm is the parked-ticks alarm sentence for this node: consume
+	// ticks piling up in pending_uop_delta while no bin is bound at the node (the
+	// carrier standing there was never bound to it). The node grid renders it as
+	// a chip on the node's tile and the loader board as its card's note,
+	// verbatim —
 	// "CARRIER-XXXX staged Nh at <node>, not bound — Record Count on the bin tab."
 	// Empty when the node has no active stranding alarm.
 	StrandedAlarm string `json:"stranded_alarm,omitempty"`

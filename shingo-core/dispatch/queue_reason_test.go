@@ -39,8 +39,8 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 		{
 			name:   "material full payload",
 			code:   protocol.QueueWaitingForMaterial,
-			params: QueueParams{Payload: "SNF2-6SA0B.06", Kind: "full"},
-			want:   "Waiting for material: SNF2-6SA0B.06",
+			params: QueueParams{Payload: "SYN-PART02B.06", Kind: "full"},
+			want:   "Waiting for material: SYN-PART02B.06",
 		},
 		{
 			name:   "material empty carrier",
@@ -64,8 +64,8 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			// shown instead of "Waiting for a slot at ALN_003".
 			name:   "material names the group it is short in",
 			code:   protocol.QueueWaitingForMaterial,
-			params: QueueParams{Payload: "767D2-6SA0A.06", Group: "AMR Supermarket"},
-			want:   "Waiting for material: 767D2-6SA0A.06 in AMR Supermarket",
+			params: QueueParams{Payload: "SYN-PART07A.06", Group: "AMR Supermarket"},
+			want:   "Waiting for material: SYN-PART07A.06 in AMR Supermarket",
 		},
 		{
 			// A FENCE IS NOT A SHORTAGE. The group holds empties and this asker
@@ -103,8 +103,8 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 		{
 			name:   "material partial set is called out",
 			code:   protocol.QueueWaitingForMaterial,
-			params: QueueParams{Payload: "SNF2-6SA0B.06", Partial: true},
-			want:   "Waiting for material: SNF2-6SA0B.06 — partial set already held",
+			params: QueueParams{Payload: "SYN-PART02B.06", Partial: true},
+			want:   "Waiting for material: SYN-PART02B.06 — partial set already held",
 		},
 		{
 			name:   "slot at destination",
@@ -230,8 +230,8 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			// step, which is why HasStep exists.
 			name:   "step index prefixes a multi-step order",
 			code:   protocol.QueueWaitingForMaterial,
-			params: QueueParams{Payload: "767D2-6SA0A.06", Group: "AMR Supermarket", Step: 0, HasStep: true},
-			want:   "Step 0: Waiting for material: 767D2-6SA0A.06 in AMR Supermarket",
+			params: QueueParams{Payload: "SYN-PART07A.06", Group: "AMR Supermarket", Step: 0, HasStep: true},
+			want:   "Step 0: Waiting for material: SYN-PART07A.06 in AMR Supermarket",
 		},
 		{
 			name: "fleet unavailable",
@@ -281,7 +281,7 @@ func TestFormatQueueSentence_NeverNamesLinesideForGroupShortage(t *testing.T) {
 
 	const lineside = "ALN_003"
 	got := FormatQueueSentence(protocol.QueueWaitingForMaterial, QueueParams{
-		Payload: "767D2-6SA0A.06",
+		Payload: "SYN-PART07A.06",
 		Group:   "AMR Supermarket",
 	})
 	if strings.Contains(got, lineside) {
@@ -299,7 +299,7 @@ func TestFormatQueueSentence_NeverNamesLinesideForGroupShortage(t *testing.T) {
 func TestQueueParamsForCapacity_LocationRule(t *testing.T) {
 	t.Parallel()
 
-	const payload, delivery = "767D2-6SA0A.06", "ALN_003"
+	const payload, delivery = "SYN-PART07A.06", "ALN_003"
 
 	t.Run("payload shortage uses the group, not the delivery node", func(t *testing.T) {
 		p := queueParamsForCapacity(

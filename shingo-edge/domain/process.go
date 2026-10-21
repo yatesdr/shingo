@@ -201,9 +201,10 @@ type NodeInput struct {
 // field, not from the order pointer.
 //
 // RemainingUOPCached is the DURABLE LOCAL COUNT for the bin at this node,
-// not a cache of a Core value — the name is residue. PLC ticks decrement it,
-// deltas ship to Core, and nothing heals back: a delta Core refuses is
-// recorded at Core (the payload_mismatch_dropped / stale_epoch_dropped ledger
+// not a cache of a Core value — the name is residue. PLC ticks move it (a
+// consume tick takes from it, a produce tick adds to it; wiring_counter_delta.go
+// handleCounterDelta), deltas ship to Core, and nothing heals back: a delta
+// Core refuses is recorded at Core (the payload_mismatch_dropped / stale_epoch_dropped ledger
 // rows), not corrected here. This said "write-through
 // cache" while contradicting itself two lines later, and
 // wiring_counter_delta.go says the opposite outright. A write-through cache is

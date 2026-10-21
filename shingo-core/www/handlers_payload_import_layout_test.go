@@ -11,7 +11,7 @@ func TestGroupImportRows_OldLayoutCarriesTheCATID(t *testing.T) {
 	t.Parallel()
 	groups := groupImportRows([][]string{
 		{"OLD-PAYLOAD", "100", "33145", "2"},
-		{"NEW-PAYLOAD", "100", "767D2-6SA0A.06", "33146", "3"},
+		{"NEW-PAYLOAD", "100", "SYN-PART06D.06", "33146", "3"},
 	}, &importReport{})
 	if len(groups) != 2 {
 		t.Fatalf("groups = %d, want 2", len(groups))
@@ -20,7 +20,7 @@ func TestGroupImportRows_OldLayoutCarriesTheCATID(t *testing.T) {
 	if old.part != "33145" || old.catid != "33145" || old.qty != "2" {
 		t.Errorf("old layout entry = part %q catid %q qty %q, want 33145 / 33145 / 2", old.part, old.catid, old.qty)
 	}
-	if cur.part != "767D2-6SA0A.06" || cur.catid != "33146" || cur.qty != "3" {
-		t.Errorf("current layout entry = part %q catid %q qty %q, want 767D2-6SA0A.06 / 33146 / 3", cur.part, cur.catid, cur.qty)
+	if cur.part != "SYN-PART06D.06" || cur.catid != "33146" || cur.qty != "3" {
+		t.Errorf("current layout entry = part %q catid %q qty %q, want SYN-PART06D.06 / 33146 / 3", cur.part, cur.catid, cur.qty)
 	}
 }

@@ -37,7 +37,7 @@ func TestBuild_MapsEveryFieldOfOneRow(t *testing.T) {
 	t.Parallel()
 	cfg := testConfig()
 	cfg.Bin = "FLOOR"
-	row := txn(7, "7332B4-6RR0A.06", "SM01", "SHG:0042", "AMR-03", 16)
+	row := txn(7, "SYN-PART33R.06", "SM01", "SHG:0042", "AMR-03", 16)
 	// The carrier label and the shingo node name both stay on the row — they
 	// are still recorded — but Bin is CMS's own code, so all three are set here
 	// and only one of them may appear.
@@ -50,7 +50,7 @@ func TestBuild_MapsEveryFieldOfOneRow(t *testing.T) {
 		// post used to send EntryNumber 1 beside TicketNumber 1 — the repeating
 		// pair nobody has confirmed the meaning of.
 		EntryNumber:     7,
-		PartNumber:      "7332B4-6RR0A.06",
+		PartNumber:      "SYN-PART33R.06",
 		StockLocation:   "SM01",
 		Bin:             "FLOOR",
 		Quantity:        16,

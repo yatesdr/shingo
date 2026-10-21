@@ -76,7 +76,7 @@ func ScanPayloads(rows *sql.Rows) ([]*Payload, error) {
 // took it as the style's identity, and the process's numeric cat id could never
 // match it, so the wrong-part guard refused every request on that process and
 // the post-cutover check flagged a mismatch on every changeover (SPR SNF3,
-// 2026-10-14, 767A4-6SA0A.95). An empty set leaves the guard inert, which is
+// 2026-10-14). An empty set leaves the guard inert, which is
 // what "no cat id configured" means.
 // lineCATID is one manifest line's cat id: the linked part's, or for an
 // unlinked line (the v108 window) the line's own part_number.

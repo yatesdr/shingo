@@ -8,7 +8,7 @@
 // SYN-PART07A.06. ShinGo knew that, continuously, for the whole window, and
 // there is no record of it. This table is that record.
 //
-// What it buys: "SNF2 went unsourceable at 09:14 missing -6SA0B.06, recovered
+// What it buys: "SNF2 went unsourceable at 09:14 missing SYN-PART02B.06, recovered
 // 09:41" — the substrate for starvation minutes, and the earliest recorded
 // precursor of the amplification class. Combined with order_history.code
 // (migration 55), starvation-by-cause becomes a GROUP BY.

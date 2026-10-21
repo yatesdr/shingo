@@ -55,12 +55,11 @@ type nodeBinding struct {
 // LoaderBoardGaps lists Core loaders with no board on this edge.
 //
 // ONLY a loader with ZERO of its windows on a station counts, and that threshold
-// is the whole design. Partial binding is NORMAL, not a gap: Springfield's
-// dedicated supermarket loader has 33 positions of which 22 are on the Bin Loader
-// board and 11 are buffer slots that no operator ever works. Reporting "unbound
-// windows" would put a permanent 11-row complaint on a correctly configured
-// loader — the same failure mode as a threshold warning that fires on every
-// loader that does not use thresholds.
+// is the whole design. Partial binding is NORMAL, not a gap: a dedicated loader
+// of 31 positions may have 22 homes on its board and 9 buffer spots that no
+// operator ever works. Reporting "unbound windows" would put a permanent 9-row
+// complaint on a correctly configured loader — the same failure mode as a
+// threshold warning that fires on every loader that does not use thresholds.
 //
 // A loader with no windows at all is skipped too. There is nothing to bind, and
 // Core's own box already says so (configGapHtml) at the place it can be fixed.

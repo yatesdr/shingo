@@ -124,7 +124,7 @@ func TestPayloadCATIDs_LinkedPartWithNoCATIDContributesNothing(t *testing.T) {
 			PayloadID: pid, PartNumber: partNumber, PartsPerCycle: 1,
 		}, catid), "create manifest item "+partNumber)
 	}
-	line(blank.ID, "767A4-6SA0A.95", "")
+	line(blank.ID, "SYN-PART95A.95", "")
 	line(mixed.ID, "CID-P-F", "70000021")
 	line(mixed.ID, "CID-P-G", "")
 

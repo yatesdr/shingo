@@ -867,7 +867,7 @@ func (m *SourceabilityMonitor) Snapshot() []sourceability.StyleState {
 // first — the persisted half of the diff this monitor computes. processID /
 // payload "" mean "all".
 //
-// "SNF2 went unsourceable at 09:14 missing -6SA0B.06, recovered 09:41" is the
+// "SNF2 went unsourceable at 09:14 missing SYN-PART02B.06, recovered 09:41" is the
 // sentence this answers, and the substrate for starvation minutes.
 func (e *Engine) SourceabilityEvents(since time.Time, processID, payload string, limit int) ([]domain.SourceabilityEvent, error) {
 	return e.db.ListSourceabilityEvents(since, processID, payload, limit)
