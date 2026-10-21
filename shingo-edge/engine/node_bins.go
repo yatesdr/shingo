@@ -201,10 +201,9 @@ func (e *Engine) binWatchChanged() {
 	}
 }
 
-// publishBinWatch sends this Edge's watch list when Core's quoted digest is
-// not its own (or force), through the resend guard.
-func (e *Engine) publishBinWatch(quoted string, force bool) {
-	var nodes []string
+// binWatchList is this Edge's watch list and its digest; ok false when the
+// digest cannot be computed (logged).
+func (e *Engine) binWatchList() (nodes []string, digest string, ok bool) {
 	if e.binWatchSource != nil {
 		nodes = e.binWatchSource()
 	}
@@ -214,6 +213,38 @@ func (e *Engine) publishBinWatch(quoted string, force bool) {
 	digest, err := protocol.BinWatchDigest(nodes)
 	if err != nil {
 		e.logFn("feeds: bins watch digest: %v", err)
+		return nil, "", false
+	}
+	return nodes, digest, true
+}
+
+// PublishBinWatchAtBoot sends the watch list in the heartbeater's boot burst,
+// beside the register and the node-list and catalog requests, so a restarted
+// Edge has its bins one round trip after it starts instead of one heartbeat
+// later (Core answers a list with its snapshot at once, HandleBinWatch). It
+// goes before any ack, so before this Edge knows whether Core serves the feed:
+// an older Core drops the subject as one it does not handle. A send that went
+// is recorded under the resend guard, so the first ack's own publish of the
+// same list is held back while this one is in flight; a failed send records
+// nothing, and the first ack asks as it always has. Pinned by
+// TestBinWatch_PublishedAtBoot.
+func (e *Engine) PublishBinWatchAtBoot(publish func(*protocol.BinWatchList) error) {
+	nodes, digest, ok := e.binWatchList()
+	if !ok || publish == nil {
+		return
+	}
+	if err := publish(&protocol.BinWatchList{Digest: digest, Nodes: nodes}); err != nil {
+		e.logFn("feeds: publish bins watch at boot (%d nodes): %v — the first ack asks again", len(nodes), err)
+		return
+	}
+	e.sendDue(binWatchKey, digest, "")
+}
+
+// publishBinWatch sends this Edge's watch list when Core's quoted digest is
+// not its own (or force), through the resend guard.
+func (e *Engine) publishBinWatch(quoted string, force bool) {
+	nodes, digest, ok := e.binWatchList()
+	if !ok {
 		return
 	}
 	if quoted == digest && !force {

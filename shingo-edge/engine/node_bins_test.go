@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -283,4 +284,35 @@ func processOfStation(t *testing.T, db *store.DB, sid int64) int64 {
 		t.Fatalf("process of station %d: %v", sid, err)
 	}
 	return id
+}
+
+// TestBinWatch_PublishedAtBoot: the boot burst carries the watch list before
+// any ack, and the first ack's own publish of the same list (a restarted Edge
+// with nothing held asks) is held back while the boot send is in flight. A
+// boot send that failed records nothing, so the first ack still asks.
+func TestBinWatch_PublishedAtBoot(t *testing.T) {
+	t.Parallel()
+	own := []string{"SMN_F1", "SMN_H1"}
+	ownDigest, err := protocol.BinWatchDigest(own)
+	if err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+
+	eng, sent := binsEngine(t, testEngineDB(t))
+	var boot []*protocol.BinWatchList
+	eng.PublishBinWatchAtBoot(func(l *protocol.BinWatchList) error { boot = append(boot, l); return nil })
+	if len(boot) != 1 || !slices.Equal(boot[0].Nodes, own) || boot[0].Digest != ownDigest {
+		t.Fatalf("boot burst: %+v, want one list %v", boot, own)
+	}
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: quote(ownDigest)})
+	if n := len(watchLists(t, *sent)); n != 0 {
+		t.Errorf("first ack after a boot send: published %d more, want 0 (the boot send is in flight)", n)
+	}
+
+	eng, sent = binsEngine(t, testEngineDB(t))
+	eng.PublishBinWatchAtBoot(func(*protocol.BinWatchList) error { return errors.New("broker down") })
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: quote("")})
+	if n := len(watchLists(t, *sent)); n != 1 {
+		t.Errorf("first ack after a failed boot send: published %d, want 1", n)
+	}
 }

@@ -337,6 +337,9 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// answers on the ack and sends whichever differ.
 	hb.FeedsFn = eng.FeedDigests
 	hb.CoreSpeaksFeedsFn = eng.CoreSpeaksFeeds
+	// The bins watch list rides the boot burst, so a restarted Edge has its
+	// bins one round trip after it starts.
+	hb.BinWatchFn = eng.PublishBinWatchAtBoot
 
 	protoRouter := buildInboundRouter(eng, edgeHandler, hb, dataDbg)
 	protoRouter.LogRegistration(log.Printf)
@@ -364,10 +367,11 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		if err := msgClient.Reconnect(); err != nil {
 			return err
 		}
-		log.Printf("kafka reconnect: re-firing heartbeater startup sends (register, node list, catalog)")
+		log.Printf("kafka reconnect: re-firing heartbeater startup sends (register, node list, catalog, bins watch)")
 		hb.SendRegister()
 		hb.RequestNodeSync()
 		hb.RequestCatalogSync()
+		hb.SendBinWatch()
 		return nil
 	})
 

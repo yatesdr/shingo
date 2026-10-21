@@ -1,6 +1,10 @@
 package messaging
 
-import "testing"
+import (
+	"testing"
+
+	"shingo/protocol"
+)
 
 // TestHeartbeater_NodeListRequestQuotesTheCachedSceneRevision pins the Edge
 // half of the geometry short-circuit: every node-list request names the scene
@@ -75,5 +79,20 @@ func TestHeartbeater_FeedsAndTheReAsk(t *testing.T) {
 	speaks = true
 	if !h.coreSpeaksFeeds() {
 		t.Error("Core answers feeds: re-ask kept, want it skipped")
+	}
+}
+
+// TestHeartbeater_BinWatchRidesTheBootBurst: SendBinWatch (called by Start and
+// by a Kafka reconnect) hands BinWatchFn a publish; with none wired it does
+// nothing.
+func TestHeartbeater_BinWatchRidesTheBootBurst(t *testing.T) {
+	t.Parallel()
+	h := NewHeartbeater(nil, "edge.test", "v-test", "inst-1", "shingo.orders")
+	h.SendBinWatch() // unwired: no panic, nothing sent
+	called := 0
+	h.BinWatchFn = func(publish func(*protocol.BinWatchList) error) { called++ }
+	h.SendBinWatch()
+	if called != 1 {
+		t.Errorf("BinWatchFn called %d times, want 1", called)
 	}
 }

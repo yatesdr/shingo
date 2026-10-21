@@ -67,6 +67,10 @@ type Heartbeater struct {
 	// arrive as feeds and the two-minute re-ask is not sent. Nil keeps the
 	// re-ask, as for an older Core.
 	CoreSpeaksFeedsFn func() bool
+	// BinWatchFn, when set, is handed a publish for the bins watch list at
+	// Start (and on a Kafka reconnect, with the other one-shots), so the list
+	// rides the boot burst. Nil sends none: the first ack asks instead.
+	BinWatchFn func(publish func(*protocol.BinWatchList) error)
 
 	DebugLog DebugLogFunc
 }
@@ -93,6 +97,7 @@ func (h *Heartbeater) Start() {
 	h.sendRegister()
 	h.sendNodeListRequest()
 	h.sendCatalogRequest()
+	h.SendBinWatch()
 	go h.loop()
 }
 
@@ -300,4 +305,25 @@ func (h *Heartbeater) loop() {
 			// deadman trips.
 		}
 	}
+}
+
+// SendBinWatch hands BinWatchFn the publish for the bins watch list: one
+// bins.watch envelope on the heartbeater's sender, the path the register
+// rides.
+func (h *Heartbeater) SendBinWatch() {
+	if h.BinWatchFn == nil {
+		return
+	}
+	h.BinWatchFn(func(list *protocol.BinWatchList) error {
+		env, err := protocol.NewDataEnvelope(
+			protocol.SubjectBinsWatch,
+			protocol.Address{Role: protocol.RoleEdge, Station: h.stationID},
+			protocol.Address{Role: protocol.RoleCore},
+			list,
+		)
+		if err != nil {
+			return err
+		}
+		return h.sender.PublishEnvelope(env, "bins watch")
+	})
 }
