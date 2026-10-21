@@ -38,7 +38,7 @@ func TestProducePartialsPin_KeeperReadsAPartialOnTheSpot(t *testing.T) {
 			NodeBinInfo{Occupied: true, BinTypeCode: "PP-T", BinID: 4, PayloadCode: "PP-X", UOPRemaining: 40, UOPCapacity: 40}, false, false},
 	}
 	for _, r := range rows {
-		got := spareIsRight(claim, readOfRow(r.row, catalog))
+		got := spareIsRight(claim, readOfBinsRow(binsRowsOf(map[string]NodeBinInfo{"SPOT": r.row})[0], catalog))
 		t.Logf("PIN %-45s %v", r.name, got)
 		if got != r.after {
 			t.Errorf("%s: spareIsRight = %v, want %v (today %v)", r.name, got, r.after, fmt.Sprint(r.today))

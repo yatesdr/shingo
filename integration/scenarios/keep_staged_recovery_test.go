@@ -520,6 +520,7 @@ func newKsrCell(t *testing.T, o ksrOpts) *ksrCell {
 		harness.EdgeSide{EdgeStore: edge.DB, EdgeIngestor: edge.Ingestor},
 		harness.CoreSide{CoreStore: coreDB, CoreIngestor: coreIngestor},
 	)
+	c.bus.SetBinsPush(harness.StartBinsPush(t, coreDB, edge.Engine, 20*time.Millisecond))
 	c.registerEdge()
 	if o.buriedB || o.mirror {
 		mustNil(t, edgemessaging.NewPlantClaimsPublisher(edge.DB, "edge.test", 0).PublishChanged(c.processID),

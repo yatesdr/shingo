@@ -20,8 +20,9 @@ import (
 // loaders Core sent and the group membership the node list carried, so the
 // list is held and rebuilt only when one of the three has moved: one statement
 // on the first build after a change, none on the next. The station view reads
-// every name in one node-bins call (www stampStationBins), pinned by
-// TestStationView_OneNodeBinsReadPerBuild (www).
+// every name's row from the Edge's copy of the bins feed (www
+// stampStationBins), with no call to Core, pinned by
+// TestStationView_NoCoreReadPerBuild (www).
 
 // binNodes is every station's bin list as of one plant state.
 type binNodes struct {
@@ -198,31 +199,11 @@ func sortedNames(set map[string]bool) []string {
 	return out
 }
 
-// BoardBin is one node's bin as the board reads it: Core's node-bins row, from
-// the Edge's copy of the feed or over HTTP. The board asks whether a bin holds
-// parts (Stocked), never how many.
+// BoardBin is one node's bin as the board reads it: its row in the Edge's copy
+// of Core's node-bins feed. The board asks whether a bin holds parts
+// (Stocked), never how many: the row carries no count.
 type BoardBin struct {
 	protocol.NodeBinsRow
-	// UOPRemaining is the bin's count when read over HTTP; nil from the
-	// copy, which carries Stocked and no count.
-	UOPRemaining *int
-}
-
-// BoardBinsFromHTTP is a node-bins answer as board bins, by node name: Stocked
-// is the count above zero, and the count is kept for the tile's bin.
-func BoardBinsFromHTTP(infos []protocol.NodeBinInfo) map[string]BoardBin {
-	out := make(map[string]BoardBin, len(infos))
-	for _, b := range infos {
-		uop := b.UOPRemaining
-		out[b.NodeName] = BoardBin{NodeBinsRow: protocol.NodeBinsRow{
-			Node: b.NodeName, Occupied: b.Occupied, BinID: b.BinID, BinLabel: b.BinLabel,
-			BinTypeCode: b.BinTypeCode, Bare: b.Bare, PayloadCode: b.PayloadCode, Manifest: b.Manifest,
-			ManifestConfirmed: b.ManifestConfirmed, Stocked: uop > 0,
-			TotesOnCart: b.TotesOnCart, TotesPerLayer: b.TotesPerLayer,
-			UOPCapacity: b.UOPCapacity, HeldSince: b.HeldSince, HeldFor: b.HeldFor,
-		}, UOPRemaining: &uop}
-	}
-	return out
 }
 
 // BoardBinsFromCopy is the Edge's copy of the node-bins feed as board bins.
@@ -244,7 +225,7 @@ func BoardBinsFromCopy(rows map[string]protocol.NodeBinsRow) map[string]BoardBin
 //     clear would bring home (buffer_partial);
 //   - the board's empties, from its consume loader's outbound group;
 //   - each cart's tote numbers, from its row;
-//   - from the group lines of the Edge's copy (groups; nil over HTTP and from
+//   - from the group lines of the Edge's copy (groups; nil from
 //     a Core that sends none): each window's assignment, and the empties'
 //     wants, per type and per wanted height.
 //
@@ -259,10 +240,8 @@ func (s *StationService) StampBins(view *domain.OperatorStationView, rows map[st
 		name := tile.Node.CoreNodeName
 		if row, ok := rows[name]; ok && name != "" {
 			tile.BinState = nodeBinState(row)
-			if row.UOPRemaining == nil {
-				stocked := row.Stocked
-				tile.BinStocked = &stocked
-			}
+			stocked := row.Stocked
+			tile.BinStocked = &stocked
 			if row.TotesOnCart != nil || row.TotesPerLayer != nil {
 				tile.BinTotes = &domain.BinTotes{TotesOnCart: row.TotesOnCart, TotesPerLayer: row.TotesPerLayer}
 			}
@@ -288,8 +267,9 @@ func (s *StationService) StampBins(view *domain.OperatorStationView, rows map[st
 	}
 }
 
-// nodeBinState is a board bin as a tile's bin; the count is 0 when the read
-// carried none (the tile's BinStocked says then). A bare cart's type is the
+// nodeBinState is a board bin as a tile's bin; the count is 0 but for a held
+// partial's declared count, the one the row carries (the tile's BinStocked
+// says whether it holds parts). A bare cart's type is the
 // marker Core stamps between the stages of a two-stage unloader, bookkeeping
 // and never an operator's word, so only the bare flag reaches the tile (the
 // rule enrichViewBinState applies on the Production page;
@@ -300,9 +280,7 @@ func nodeBinState(row BoardBin) *domain.NodeBinState {
 		binTypeCode = ""
 	}
 	var uop int
-	if row.UOPRemaining != nil {
-		uop = *row.UOPRemaining
-	} else if row.HeldSince != "" {
+	if row.HeldSince != "" {
 		uop = row.HeldUOP // a held partial's count, which the copy carries
 	}
 	return &domain.NodeBinState{

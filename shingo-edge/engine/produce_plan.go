@@ -73,7 +73,7 @@ func (p *ProducePlan) OrderCount() int {
 // fleet, or order-manager calls.
 //
 // occupancy maps core node names to their telemetry-reported occupied state
-// (from engine.claimOccupancy / FetchNodeBins), same source and same
+// (from engine.claimOccupancy, the bins table), same source and same
 // missing-entry-means-occupied reading as the consume side. inbound marks
 // paired positions that already have a bin on its way, so a second request
 // while the first prime is still travelling adds nothing.

@@ -416,13 +416,15 @@ func subjectFixtures() map[string]subjectFixture {
 			return w.dataEnv(protocol.SubjectContainmentSnapshot, protocol.ContainmentSnapshot{Digest: w.uniq("cont"),
 				Flags: []protocol.PayloadContainmentRow{{PayloadCode: "PART-W", Active: true, Reason: "walk", ActivatedAt: &now}}})
 		}},
-		"data:" + protocol.SubjectBinsSnapshot: {env: func(w *walk) *protocol.Envelope {
+		// The station view draws its bins from the copy whatever Core speaks, so
+		// a snapshot moves it (it read HTTP while no ack carried BinWatch).
+		"data:" + protocol.SubjectBinsSnapshot: {moves: true, env: func(w *walk) *protocol.Envelope {
 			return w.dataEnv(protocol.SubjectBinsSnapshot, protocol.NodeBinsSnapshot{Digest: w.uniq("bins"),
 				Rows: []protocol.NodeBinsRow{{Node: "PLN_01", Occupied: true, BinID: 43, BinLabel: w.uniq("BIN"), PayloadCode: "PART-W", Stocked: true}}})
 		}},
 		// An ask's answer carries Core's rows for the nodes the act touched: they
-		// patch the held bins copy, and the station view is told.
-		"data:" + protocol.SubjectEdgeAnswer: {env: func(w *walk) *protocol.Envelope {
+		// patch the held bins copy, which the station view draws, and it is told.
+		"data:" + protocol.SubjectEdgeAnswer: {moves: true, env: func(w *walk) *protocol.Envelope {
 			return w.dataEnv(protocol.SubjectEdgeAnswer, protocol.EdgeAnswer{Kind: protocol.AskBinCount, Status: protocol.AnswerRefused,
 				Sentence: "refused", Rows: []protocol.NodeBinsRow{{Node: "PLN_01", State: protocol.BinsStateOccupied, Occupied: true,
 					BinID: 44, BinLabel: w.uniq("BIN"), PayloadCode: "PART-W", Stocked: true}}})

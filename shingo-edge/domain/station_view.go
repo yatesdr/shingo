@@ -193,7 +193,7 @@ type StationNodeView struct {
 	// first such spot in the plant's order. The board draws its Clear partials
 	// card from it, naming that spot. Stamped by
 	// StationService.StampBins; pinned by
-	// TestStationView_BinsStampedFromTheOneRead (www).
+	// TestStationView_BinsStampedFromTheCopy (www).
 	BufferPartial *BufferPartial `json:"buffer_partial,omitempty"`
 	// SupplyRefusals maps a payload code to the loader operator's standing
 	// statement that they cannot fill the call on that card, keyed the same way

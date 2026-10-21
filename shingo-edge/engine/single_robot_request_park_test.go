@@ -29,9 +29,12 @@ import (
 
 const ksOut = "KS-OUT"
 
-// countingNodeBinsStub is ksNodeBinsStub that records every node-bins call.
-func countingNodeBinsStub(t *testing.T, rows map[string]NodeBinInfo) (*httptest.Server, func() [][]string) {
+// countingNodeBinsStub is ksNodeBinsStub that records every node-bins call,
+// and holds the same answer as eng's bins table for every place in its store
+// (the REQUEST reads the table, site 11 of the reads).
+func countingNodeBinsStub(t *testing.T, eng *Engine, rows map[string]NodeBinInfo) (*httptest.Server, func() [][]string) {
 	t.Helper()
+	holdPlaces(t, eng, func(n string) (NodeBinInfo, bool) { return rows[n], true })
 	var mu sync.Mutex
 	var calls [][]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +102,7 @@ func TestSingleRobotRequest_MovesABinLeftOnOutboundStaging(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			eng, _, nodeID, _ := seedCell(t, c.role, protocol.SwapModeSingleRobot, false, nil)
-			srv, calls := countingNodeBinsStub(t, map[string]NodeBinInfo{
+			srv, calls := countingNodeBinsStub(t, eng, map[string]NodeBinInfo{
 				ksLine: c.line, ksOut: {Occupied: true, PayloadCode: "PART-PARKED"}})
 			eng.coreClient = stubCoreClient(srv.URL)
 
@@ -125,10 +128,11 @@ func TestSingleRobotRequest_MovesABinLeftOnOutboundStaging(t *testing.T) {
 					t.Errorf("the move %d sits in the line's runtime slots", m.ID)
 				}
 			}
-			// One read, the one the request already makes, with outbound staging in it.
-			got := calls()
-			if len(got) != 1 || !containsName(got[0], ksOut) {
-				t.Errorf("node-bins calls = %v, want one that asks about %s", got, ksOut)
+			// No read of its own: outbound staging's row is in the bins table
+			// the request already reads (CHANGED: it rode the request's one
+			// node-bins call).
+			if got := calls(); len(got) != 0 {
+				t.Errorf("node-bins calls = %v, want none: the request reads the bins table", got)
 			}
 		})
 	}
@@ -158,7 +162,7 @@ func TestTwoRobotRequest_LeavesOutboundStagingAlone(t *testing.T) {
 			eng, db, nodeID, claim := seedCell(t, role, protocol.SwapModeTwoRobot, false, nil)
 			_, err := db.DB.Exec(`UPDATE style_node_claims SET outbound_staging=? WHERE id=?`, ksOut, claim.ID)
 			testutil.MustNoErr(t, err, "outbound staging on a two-robot claim")
-			srv, calls := countingNodeBinsStub(t, map[string]NodeBinInfo{
+			srv, calls := countingNodeBinsStub(t, eng, map[string]NodeBinInfo{
 				ksLine: {Occupied: true, PayloadCode: ksPart}, ksOut: {Occupied: true, PayloadCode: "PART-PARKED"}})
 			eng.coreClient = stubCoreClient(srv.URL)
 

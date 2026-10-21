@@ -1203,7 +1203,11 @@ func (s servedScanner) Scan(dest ...any) error {
 //   - inbound_staging and outbound_staging: where a cancelled changeover leg
 //     or a cancelled order leaves a carrier standing, read by the cancel's
 //     park (readSpotsAnd, finishParkedTrips) and a cancelled order's carrier
-//     sent back (sendCarrierBack).
+//     sent back (sendCarrierBack); and the REQUEST's park (claimOccupancy);
+//   - paired_core_node and second_paired_core_node: a press's extension
+//     positions, read by the REQUEST (claimOccupancy) for its downgrade and
+//     primes. Each is a process node on any plant built today; named here
+//     so a position that is not one still reads from a row, not as unwatched.
 //
 // One statement.
 func ListClaimWatchPlaces(db DBTX) (map[int64][]string, error) {
@@ -1230,7 +1234,19 @@ func ListClaimWatchPlaces(db DBTX) (map[int64][]string, error) {
 		FROM style_node_claims c
 		JOIN styles s ON s.id = c.style_id
 		WHERE s.deleted_at IS NULL AND` + liveClaims + `
-		AND c.outbound_staging <> '')
+		AND c.outbound_staging <> ''
+		UNION ALL
+		SELECT s.process_id, c.paired_core_node
+		FROM style_node_claims c
+		JOIN styles s ON s.id = c.style_id
+		WHERE s.deleted_at IS NULL AND` + liveClaims + `
+		AND c.paired_core_node <> ''
+		UNION ALL
+		SELECT s.process_id, c.second_paired_core_node
+		FROM style_node_claims c
+		JOIN styles s ON s.id = c.style_id
+		WHERE s.deleted_at IS NULL AND` + liveClaims + `
+		AND c.second_paired_core_node <> '')
 		ORDER BY process_id, place`)
 	if err != nil {
 		return nil, err

@@ -195,8 +195,8 @@ func TestBinWatch_WhenTheListIsPublished(t *testing.T) {
 
 	// A Core with feeds and no bins feed: nothing published, bins by HTTP.
 	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}})
-	if count() != 0 || eng.CoreSpeaksBins() {
-		t.Fatalf("a Core without BinWatch: %d published, speaks %v", count(), eng.CoreSpeaksBins())
+	if count() != 0 || speaksBins(eng) {
+		t.Fatalf("a Core without BinWatch: %d published, speaks %v", count(), speaksBins(eng))
 	}
 
 	// A restarted Edge on a Core that still holds its list: the first ack
@@ -237,8 +237,8 @@ func TestBinWatch_WhenTheListIsPublished(t *testing.T) {
 		t.Fatalf("create node: %v", err)
 	}
 	eng.stationService.WatchedBinNodes()
-	if count() != 2 || eng.CoreSpeaksBins() {
-		t.Errorf("after Core rolled back: %d published, speaks %v", count(), eng.CoreSpeaksBins())
+	if count() != 2 || speaksBins(eng) {
+		t.Errorf("after Core rolled back: %d published, speaks %v", count(), speaksBins(eng))
 	}
 }
 
@@ -648,4 +648,71 @@ func holdProcessNodes(t *testing.T, eng *Engine, occupied bool, payload string) 
 		rows[n.CoreNodeName] = b
 	}
 	holdCoreRows(t, eng, rows)
+}
+
+// placesOf is every place a REQUEST or a keeper may read in eng's store: each
+// process node, and each place a claim names (its line, paired positions,
+// staging and keep-staged spot). Sorted, each once.
+func placesOf(t *testing.T, eng *Engine) []string {
+	t.Helper()
+	rows, err := eng.db.DB.Query(`SELECT core_node_name FROM process_nodes
+		UNION SELECT core_node_name FROM style_node_claims
+		UNION SELECT paired_core_node FROM style_node_claims
+		UNION SELECT second_paired_core_node FROM style_node_claims
+		UNION SELECT inbound_staging FROM style_node_claims
+		UNION SELECT outbound_staging FROM style_node_claims
+		UNION SELECT keep_staged_node FROM style_node_claims`)
+	if err != nil {
+		t.Fatalf("placesOf: %v", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatalf("placesOf: %v", err)
+		}
+		if n != "" {
+			out = append(out, n)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// holdPlaces holds, as a table eng may decide from, what a node-bins stub
+// answering by name says (answer) for every place in eng's store (placesOf):
+// a name answer leaves out (ok false) gets no row.
+func holdPlaces(t *testing.T, eng *Engine, answer func(name string) (NodeBinInfo, bool)) {
+	t.Helper()
+	rows := map[string]NodeBinInfo{}
+	for _, n := range placesOf(t, eng) {
+		if b, ok := answer(n); ok {
+			rows[n] = b
+		}
+	}
+	holdCoreRows(t, eng, rows)
+}
+
+// occupiedAt is a node-bins answer occupied exactly at the names given, as
+// the census and press stubs answer.
+func occupiedAt(names ...string) func(string) (NodeBinInfo, bool) {
+	return func(n string) (NodeBinInfo, bool) {
+		return NodeBinInfo{NodeName: n, Occupied: slices.Contains(names, n)}, true
+	}
+}
+
+// everyAs is a node-bins answer of one verdict for every name, as
+// headOccupancyStub answers.
+func everyAs(occupied bool) func(string) (NodeBinInfo, bool) {
+	return func(n string) (NodeBinInfo, bool) { return NodeBinInfo{NodeName: n, Occupied: occupied}, true }
+}
+
+// speaksBins is whether the last heartbeat ack carried BinWatch (the feed
+// book's binWatchCarried): false before the first ack and after an ack from a
+// Core without the feed.
+func speaksBins(e *Engine) bool {
+	e.feeds.mu.Lock()
+	defer e.feeds.mu.Unlock()
+	return e.feeds.binWatchCarried
 }

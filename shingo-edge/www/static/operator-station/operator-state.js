@@ -79,7 +79,8 @@ export function isReplenishing(entry) {
 // order-update with no process node, material-refresh, containment, Core's
 // refusal snapshot, a sourcing snapshot naming no process. A board
 // that draws view.empties takes every bins event: the group's members are not
-// on the view. Pinned by operator-refresh.test.js.
+// on the view; and so does a board that does not know its bins yet. Pinned by
+// operator-refresh.test.js.
 export function eventConcerns(view, type, data) {
     if (!view) return true;
     data = data || {};
@@ -119,6 +120,9 @@ export function eventConcerns(view, type, data) {
     case 'uop-stranded-alarm':
         return ownNode(data.core_node_name);
     case 'bins':
+        // A board that does not know its bins (no copy held) takes every bins
+        // event: the first snapshot is what it waits for, whatever it names.
+        if (view.bins && view.bins.known === false) return true;
         // A group's wants are drawn only on a board that draws its empties.
         return !!view.empties || (data.nodes || []).some(ownNode);
     case 'supply-refusal':

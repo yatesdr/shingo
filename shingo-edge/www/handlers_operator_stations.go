@@ -50,7 +50,7 @@ func (h *Handlers) apiGetOperatorStationView(w http.ResponseWriter, r *http.Requ
 			return nil, err
 		}
 		// The bins first: the containment stamp reads each tile's bin.
-		stampStationBins(h.engine, id, v)
+		stampStationBins(h.engine, v)
 		stampStationCatalog(h.engine, v, time.Now())
 		views := []domain.OperatorStationView{*v}
 		if !enrichViewContainmentTargets(h.engine, views) {

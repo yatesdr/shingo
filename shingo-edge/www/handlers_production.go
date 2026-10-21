@@ -139,17 +139,15 @@ func curtainPointReleased(cache curtainTagCache, p domain.CurtainPoint) bool {
 // config problem — the release verb refuses the same shape independently.
 //
 // WHERE CORE'S HALF COMES FROM. A destination's group children and the active
-// flags are Core's. From a Core that speaks feeds they are read from the
-// Edge's copy of the containment feed, with no call to Core, for the station
-// view and the Production page alike; with no copy held yet nothing is read
-// instead (no chip, and a tile under a group destination has no target until
-// the copy arrives). From a Core with no feeds nothing is ever held, so the
-// two direct reads stand: the flags, and one children read per destination.
-// Pinned by TestContainmentStamp_ReadsTheHeldCopyWhenCoreSpeaksFeeds.
+// flags are Core's, read from the Edge's copy of the containment feed with no
+// call to Core, for the station view and the Production page alike; with no
+// copy held nothing is read instead (no chip, and a tile under a group
+// destination has no target until the copy arrives). Pinned by
+// TestContainmentStamp_ReadsTheHeldCopyOnly.
 //
 // It reports whether Core's half was known: false only when the Edge has
-// containment claims, Core speaks feeds and no copy is held, which the
-// station view says (domain.ContainmentKnown) and the Production page ignores.
+// containment claims and no copy is held, which the station view says
+// (domain.ContainmentKnown) and the Production page ignores.
 func enrichViewContainmentTargets(eng ServiceAccess, views []domain.OperatorStationView) (known bool) {
 	claims, err := eng.StyleService().ListContainmentClaims()
 	if err != nil {
@@ -204,44 +202,25 @@ func enrichViewContainmentTargets(eng ServiceAccess, views []domain.OperatorStat
 	return known || len(coverage) == 0
 }
 
-// feedSpeaker is what the containment stamp asks of the engine beyond
-// ServiceAccess: whether the last heartbeat ack came from a Core that sends
-// feeds. Asserted, as the containment page asserts containmentFeedEngine, so
-// no interface widens for it; a stub without it reads as a Core with none.
-type feedSpeaker interface {
-	CoreSpeaksFeeds() bool
-}
-
 // containmentFromCore is Core's half of the containment stamp: the children of
 // each covered destination that is a group, and the payloads Core holds
-// contained. See enrichViewContainmentTargets for where each comes from.
+// contained, from the Edge's copy of the containment feed and nothing else. No
+// copy held is not known (a Core without the feed never sends one): no chip,
+// and a tile under a group destination has no target. The HTTP read a Core
+// without feeds was asked went with that door.
 func containmentFromCore(eng ServiceAccess, coverage map[string]map[string]string) (kids map[string][]string, flagged map[string]bool, known bool) {
 	kids = make(map[string][]string, len(coverage))
 	flagged = make(map[string]bool)
-	if fs, ok := eng.(feedSpeaker); ok && fs.CoreSpeaksFeeds() {
-		state, held := eng.LocalContainment()
-		if !held {
-			return kids, flagged, false
+	state, held := eng.LocalContainment()
+	if !held {
+		return kids, flagged, false
+	}
+	for _, d := range state.Destinations {
+		if _, covered := coverage[d.Node]; covered && len(d.Children) > 0 {
+			kids[d.Node] = d.Children
 		}
-		for _, d := range state.Destinations {
-			if _, covered := coverage[d.Node]; covered && len(d.Children) > 0 {
-				kids[d.Node] = d.Children
-			}
-		}
-		markFlagged(flagged, state.Containment)
-		return kids, flagged, true
 	}
-	// A Core with no feeds, or no Core configured (CoreAPI nil: a test stub, a
-	// dev edge): the group half degrades and only the exact-match half works.
-	// A group's children come from the containment feed alone; the per-group
-	// children read this arm made went with that read's Core door.
-	coreAPI := eng.CoreAPI()
-	if coreAPI == nil {
-		return kids, flagged, true
-	}
-	if state, err := coreAPI.GetContainment(); err == nil && state != nil {
-		markFlagged(flagged, state.Containment)
-	}
+	markFlagged(flagged, state.Containment)
 	return kids, flagged, true
 }
 

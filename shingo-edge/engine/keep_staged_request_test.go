@@ -297,6 +297,7 @@ func TestKeepStagedRequest_UnknownSpotOrdersNothing(t *testing.T) {
 	eng, db, nodeID, _ := keepStagedCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot,
 		map[string]NodeBinInfo{ksLine: {Occupied: true, PayloadCode: ksPart}})
 	eng.coreClient = stubCoreClient(headOccupancyStub(t, true).URL) // answers every name
+	holdPlaces(t, eng, everyAs(true))
 	eng.coreNodesMu.Lock()
 	eng.coreNodes = map[string]protocol.NodeInfo{ksLine: {Name: ksLine}}
 	eng.coreNodesMu.Unlock()

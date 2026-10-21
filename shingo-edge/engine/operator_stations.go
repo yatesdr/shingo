@@ -73,16 +73,16 @@ func (e *Engine) requestNodeMaterialFor(nodeID int64, quantity int64, trigger st
 	return e.requestNodeFromClaim(node, runtime, claim, quantity, trigger)
 }
 
-// claimOccupancy resolves Core-telemetry occupancy for the head node plus
-// any paired positions on the claim. Returns a map keyed by core node
-// name. Missing entries (Core unreachable or node not returned) are
-// treated as occupied by isOccupied — safe default that suppresses both
-// the downgrade and any paired-prime emission so a Core blip can't
-// dispatch phantom deliveries.
-func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, spotRead, NodeBinInfo) {
+// claimOccupancy reads, from the bins table, occupancy for the head node plus
+// any paired positions on the claim, and the claim's spot and park. Returns a
+// map keyed by core node name, every requested name in it; a name the table
+// cannot answer for reads occupied — the safe default that suppresses both the
+// downgrade and any paired-prime emission, so a table that is not current
+// cannot dispatch phantom deliveries.
+func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, spotRead, protocol.NodeBinsRow) {
 	occ := map[string]bool{}
 	if claim == nil {
-		return occ, spotRead{}, NodeBinInfo{}
+		return occ, spotRead{}, protocol.NodeBinsRow{}
 	}
 	// The head node unconditionally, EVEN IF BLANK: the map is keyed by the
 	// names asked about and isOccupied treats a missing key as occupied, so
@@ -94,72 +94,69 @@ func (e *Engine) claimOccupancy(claim *processes.NodeClaim) (map[string]bool, sp
 	if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex {
 		names = append(names, claim.ExtensionPositions()...)
 	}
-	// A KEEP-STAGED CLAIM ASKS ABOUT ITS SPOT IN THE SAME CALL: one more name, no
-	// more round trips. The spot's row is kept whole (whether a bin stands there
-	// and what it carries) and stays out of the map, which answers only for the
-	// line's own positions.
+	// A KEEP-STAGED CLAIM ASKS ABOUT ITS SPOT IN THE SAME READ: one more name.
+	// The spot's row is kept whole (whether a bin stands there and what it
+	// carries) and stays out of the map, which answers only for the line's own
+	// positions.
 	asked := names
 	spot := spotNode(claim)
 	if spot != "" {
 		asked = append(append([]string(nil), names...), spot)
 	}
-	// A SINGLE-ROBOT CLAIM ASKS ABOUT ITS OUTBOUND STAGING TOO, in the same call,
+	// A SINGLE-ROBOT CLAIM ASKS ABOUT ITS OUTBOUND STAGING TOO, in the same read,
 	// for a bin a cancelled changeover's leg left parked there (parkAsked). Its
 	// row stays out of the map as well.
 	if parkAsked(claim) {
 		asked = append(append([]string(nil), asked...), claim.OutboundStaging)
 	}
-	if !e.coreClient.Available() {
-		log.Printf("[occupied-check] core API not configured, assuming occupied for %v", names)
+	// THE MAP IS FILLED FROM THE REQUESTED NAMES, and every name the bins table
+	// does not answer as a place that is empty or occupied reads `occupied` —
+	// the suppressing answer (site 11 of the reads). Downstream,
+	// BuildConsumePlan only downgrades a swap mode or emits a paired prime when
+	// a node reads NOT occupied, so an all-occupied map suppresses both: a
+	// stale "empty" would downgrade a swap to a simple move that then waits
+	// behind the resident bin it was meant to remove. So:
+	//   - a table that may not be decided from (BinsActable): every name
+	//     occupied, the spot unread, no park;
+	//   - a name with no row (not on the watch list): occupied;
+	//   - a name Core has no node for, or a group: occupied (an unknown name
+	//     is never an empty; over HTTP Core answered it as an empty node).
+	//
+	// Which it was is logged in the OccupancyOutcome vocabulary, an
+	// over-ordering incident being reconstructable from logs: not_actable for
+	// the table's rule, unwatched for a missing row, unknown for a name Core
+	// does not have.
+	rows, err := e.binsForDecision(asked...)
+	if err != nil {
+		log.Printf("[occupied-check] nodes %v: occupancy=%s (%s), assuming occupied", names, OccupancyOutcome(false, err), binsWhy(err))
 		for _, n := range names {
 			occ[n] = true
 		}
-		return occ, spotRead{}, NodeBinInfo{}
-	}
-	// THE DECISION HERE IS ALREADY RIGHT AND IS NOT CHANGING. The map is filled
-	// from the REQUESTED names rather than the returned rows, so a name Core
-	// never answered about gets an explicit value, and that value is `occupied`
-	// — the suppressing answer. Downstream, BuildConsumePlan only downgrades a
-	// swap mode or emits a paired prime when a node reads NOT occupied, so an
-	// all-occupied map suppresses both. This is the site the others should copy.
-	//
-	// What it did not do was say which it was. The flag is read for the log line
-	// only: "no data from core" covers a node Core answered nothing about and a
-	// read that never left the building, and an over-ordering incident has to be
-	// reconstructable from logs. It also pins the invariant here rather than
-	// inheriting it from FetchNodeBins returning nil on every failure — if that
-	// ever returned partial rows alongside an error, this site would silently
-	// start trusting a partial read.
-	bins, reachable, ferr := e.coreClient.FetchNodeBins(asked)
-	var park NodeBinInfo
-	for _, b := range bins {
-		if b.NodeName == spot && b.NodeName != claim.CoreNodeName {
-			continue // the spot: read below, not a line position
-		}
-		if parkAsked(claim) && b.NodeName == claim.OutboundStaging && b.NodeName != claim.CoreNodeName {
-			park = b
-			continue
-		}
-		occ[b.NodeName] = b.Occupied
+		return occ, spotRead{}, protocol.NodeBinsRow{}
 	}
 	for _, n := range names {
-		if _, ok := occ[n]; !ok {
-			log.Printf("[occupied-check] node %s: occupancy=%s, assuming occupied",
-				n, OccupancyOutcome(reachable, ferr))
+		r, ok := rows[n]
+		switch {
+		case !ok:
+			log.Printf("[occupied-check] node %s: occupancy=%s, assuming occupied", n,
+				OccupancyOutcome(false, &BinsNotCurrent{Node: n, Why: NotActableUnwatched}))
 			occ[n] = true
+		case r.State != protocol.BinsStateEmpty && r.State != protocol.BinsStateOccupied:
+			log.Printf("[occupied-check] node %s: occupancy=unknown (state %q), assuming occupied", n, r.State)
+			occ[n] = true
+		default:
+			occ[n] = r.Occupied
 		}
 	}
-	return occ, spotOf(claim, bins, e.spotNodeKnown, e.PayloadBinTypes()), park
-}
-
-// spotNodeKnown reports whether Core has a keep-staged spot's node. Core answers
-// an unknown node as present and empty, which would read a typo'd spot as bare
-// on every request and send a refill each time. An empty node list is Core not
-// heard from yet, not evidence of a typo, so it skips the check, as
-// occupancyKnownNodesOnly does for the same reason.
-func (e *Engine) spotNodeKnown(name string) bool {
-	known := e.CoreNodes()
-	return len(known) == 0 || coreNodeKnown(known, name)
+	var park protocol.NodeBinsRow
+	if parkAsked(claim) && claim.OutboundStaging != claim.CoreNodeName {
+		park = rows[claim.OutboundStaging]
+	}
+	var read spotRead
+	if r, ok := rows[spot]; ok && spot != "" {
+		read = readOfBinsRow(r, e.PayloadBinTypes())
+	}
+	return occ, read, park
 }
 
 // requestNodeFromClaim constructs orders using style_node_claims routing.

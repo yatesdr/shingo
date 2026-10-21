@@ -44,12 +44,17 @@ const (
 )
 
 // censusResult is what one request left behind.
+// requestTrips is the Core round trips one request makes: none. CHANGED (site
+// 11 of the reads): the request reads its line, paired positions, spot and
+// park from the bins table, where it made one node-bins call.
+const requestTrips = 0
+
 type censusResult struct {
 	legs     int    // swap legs (complex orders)
 	toHead   int    // plain orders bound for the line's own position
 	toDeck   int    // plain orders bound for the press's paired position
 	toDeck2  int    // plain orders bound for a three-position press's back position
-	trips    int    // Core round trips the request made
+	trips    int    // Core round trips the request made (requestTrips)
 	expected int    // the demand episode's expected orders; 0 when none opened
 	refused  string // the refusal, "" when the request went through
 }
@@ -143,6 +148,7 @@ func runCensusPress(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMod
 	eng, db, nodeID := seedCensusPress(t, role, mode, uop, threePos)
 	var calls atomic.Int32
 	eng.coreClient = stubCoreClient(censusStub(t, &calls, occupied...).URL)
+	holdPlaces(t, eng, occupiedAt(occupied...))
 
 	var err error
 	switch door {
@@ -207,42 +213,42 @@ func TestRequestCensus(t *testing.T) {
 	}{
 		// The material request: one plain full to a bare line in every mode,
 		// and a full for each bare position of a press.
-		{consume, sr, doorMaterial, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}},
-		{consume, sr, doorMaterial, lineOccupied, 30, censusResult{legs: 1, trips: 1, expected: 1}},
-		{consume, tr, doorMaterial, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}},
-		{consume, tr, doorMaterial, lineOccupied, 30, censusResult{legs: 2, trips: 1, expected: 2}},
-		{consume, seq, doorMaterial, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}},
-		{consume, seq, doorMaterial, lineOccupied, 30, censusResult{legs: 1, trips: 1, expected: 1}},
-		{consume, pi, doorMaterial, lineBare, 30, censusResult{toHead: 1, toDeck: 1, trips: 1, expected: 2}},
-		{consume, pi, doorMaterial, lineOccupied, 30, censusResult{legs: 2, trips: 1, expected: 2}},
-		{consume, pi, doorMaterial, lineDeckBare, 30, censusResult{toDeck: 1, trips: 1, expected: 1}},
+		{consume, sr, doorMaterial, lineBare, 30, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
+		{consume, sr, doorMaterial, lineOccupied, 30, censusResult{legs: 1, trips: requestTrips, expected: 1}},
+		{consume, tr, doorMaterial, lineBare, 30, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
+		{consume, tr, doorMaterial, lineOccupied, 30, censusResult{legs: 2, trips: requestTrips, expected: 2}},
+		{consume, seq, doorMaterial, lineBare, 30, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
+		{consume, seq, doorMaterial, lineOccupied, 30, censusResult{legs: 1, trips: requestTrips, expected: 1}},
+		{consume, pi, doorMaterial, lineBare, 30, censusResult{toHead: 1, toDeck: 1, trips: requestTrips, expected: 2}},
+		{consume, pi, doorMaterial, lineOccupied, 30, censusResult{legs: 2, trips: requestTrips, expected: 2}},
+		{consume, pi, doorMaterial, lineDeckBare, 30, censusResult{toDeck: 1, trips: requestTrips, expected: 1}},
 
 		// The produce request.
-		{produce, sr, doorProduce, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}},
-		{produce, sr, doorProduce, lineBare, 0, censusResult{toHead: 1, trips: 1, expected: 1}},
-		{produce, sr, doorProduce, lineOccupied, 30, censusResult{legs: 1, trips: 1, expected: 1}},
-		{produce, sr, doorProduce, lineOccupied, 0, censusResult{trips: 1, refused: noParts}},
-		{produce, tr, doorProduce, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}},
-		{produce, tr, doorProduce, lineBare, 0, censusResult{toHead: 1, trips: 1, expected: 1}},
-		{produce, tr, doorProduce, lineOccupied, 30, censusResult{legs: 2, trips: 1, expected: 2}},
-		{produce, seq, doorProduce, lineBare, 30, censusResult{toHead: 1, trips: 1, expected: 1}},
-		{produce, seq, doorProduce, lineBare, 0, censusResult{toHead: 1, trips: 1, expected: 1}},
-		{produce, seq, doorProduce, lineOccupied, 30, censusResult{legs: 1, trips: 1, expected: 1}},
-		{produce, pi, doorProduce, lineBare, 30, censusResult{toHead: 1, toDeck: 1, trips: 1, expected: 2}},
-		{produce, pi, doorProduce, lineBare, 0, censusResult{toHead: 1, toDeck: 1, trips: 1, expected: 2}},
-		{produce, pi, doorProduce, lineOccupied, 30, censusResult{legs: 2, trips: 1, expected: 2}},
-		{produce, pi, doorProduce, lineDeckBare, 0, censusResult{toDeck: 1, trips: 1, expected: 1}},
+		{produce, sr, doorProduce, lineBare, 30, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
+		{produce, sr, doorProduce, lineBare, 0, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
+		{produce, sr, doorProduce, lineOccupied, 30, censusResult{legs: 1, trips: requestTrips, expected: 1}},
+		{produce, sr, doorProduce, lineOccupied, 0, censusResult{trips: requestTrips, refused: noParts}},
+		{produce, tr, doorProduce, lineBare, 30, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
+		{produce, tr, doorProduce, lineBare, 0, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
+		{produce, tr, doorProduce, lineOccupied, 30, censusResult{legs: 2, trips: requestTrips, expected: 2}},
+		{produce, seq, doorProduce, lineBare, 30, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
+		{produce, seq, doorProduce, lineBare, 0, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
+		{produce, seq, doorProduce, lineOccupied, 30, censusResult{legs: 1, trips: requestTrips, expected: 1}},
+		{produce, pi, doorProduce, lineBare, 30, censusResult{toHead: 1, toDeck: 1, trips: requestTrips, expected: 2}},
+		{produce, pi, doorProduce, lineBare, 0, censusResult{toHead: 1, toDeck: 1, trips: requestTrips, expected: 2}},
+		{produce, pi, doorProduce, lineOccupied, 30, censusResult{legs: 2, trips: requestTrips, expected: 2}},
+		{produce, pi, doorProduce, lineDeckBare, 0, censusResult{toDeck: 1, trips: requestTrips, expected: 1}},
 
 		// The empty-bin request, pressed at a count of 0 as the station offers it.
-		{produce, sr, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, trips: 1, expected: 1}},
-		{produce, sr, doorEmptyBin, lineOccupied, 0, censusResult{legs: 1, trips: 1, expected: 1}},
-		{produce, tr, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, trips: 1, expected: 1}},
-		{produce, tr, doorEmptyBin, lineOccupied, 0, censusResult{legs: 2, trips: 1, expected: 2}},
-		{produce, seq, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, trips: 1, expected: 1}},
-		{produce, seq, doorEmptyBin, lineOccupied, 0, censusResult{legs: 1, trips: 1, expected: 1}},
-		{produce, pi, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, toDeck: 1, trips: 1, expected: 2}},
-		{produce, pi, doorEmptyBin, lineOccupied, 0, censusResult{legs: 2, trips: 1, expected: 2}},
-		{produce, pi, doorEmptyBin, lineDeckBare, 0, censusResult{toDeck: 1, trips: 1, expected: 1}},
+		{produce, sr, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
+		{produce, sr, doorEmptyBin, lineOccupied, 0, censusResult{legs: 1, trips: requestTrips, expected: 1}},
+		{produce, tr, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
+		{produce, tr, doorEmptyBin, lineOccupied, 0, censusResult{legs: 2, trips: requestTrips, expected: 2}},
+		{produce, seq, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, trips: requestTrips, expected: 1}},
+		{produce, seq, doorEmptyBin, lineOccupied, 0, censusResult{legs: 1, trips: requestTrips, expected: 1}},
+		{produce, pi, doorEmptyBin, lineBare, 0, censusResult{toHead: 1, toDeck: 1, trips: requestTrips, expected: 2}},
+		{produce, pi, doorEmptyBin, lineOccupied, 0, censusResult{legs: 2, trips: requestTrips, expected: 2}},
+		{produce, pi, doorEmptyBin, lineDeckBare, 0, censusResult{toDeck: 1, trips: requestTrips, expected: 1}},
 	}
 	for _, r := range rows {
 		name := strings.Join([]string{string(r.role), string(r.mode), r.door, r.line}, "/")
@@ -318,9 +324,9 @@ func TestRequestCensus_BareLineIsTheSameForBothRoles(t *testing.T) {
 				var want censusResult
 				switch {
 				case len(bare) == 0:
-					want = censusResult{legs: 2, trips: 1, expected: 2}
+					want = censusResult{legs: 2, trips: requestTrips, expected: 2}
 				default:
-					want = censusResult{trips: 1, expected: len(bare)}
+					want = censusResult{trips: requestTrips, expected: len(bare)}
 					for _, pos := range bare {
 						switch pos {
 						case ksLine:
@@ -348,6 +354,7 @@ func TestRequestCensus_ConsumeHeadCoreDoesNotKnowReadsOccupied(t *testing.T) {
 	eng, db, nodeID := seedCensusCell(t, protocol.ClaimRoleConsume, protocol.SwapModeTwoRobot, 30)
 	var calls atomic.Int32
 	eng.coreClient = stubCoreClient(censusStub(t, &calls).URL) // every node reads empty
+	holdPlaces(t, eng, occupiedAt())
 	eng.SetCoreNodes([]protocol.NodeInfo{{Name: ksMarket}, {Name: ksSpot}, {Name: ksDest}})
 
 	_, err := eng.RequestNodeMaterial(nodeID, 1)

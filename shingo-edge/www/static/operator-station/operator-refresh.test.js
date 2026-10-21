@@ -467,6 +467,19 @@ eq(['order-update', 'bins', 'supply-refusal', 'sourcing', 'containment', 'materi
         fire(c[0], c[1]);
         eq(await getsOver(600), c[2], c[0] + ', ' + c[3] + ': view fetches');
     }
+    // A board that does not know its bins (no copy held yet) takes every bins
+    // event, naming its nodes or not: the first snapshot is what it waits for.
+    served.bins = { known: false };
+    await settle();
+    fire('material-refresh', { action: 'nudge' });
+    eq(await getsOver(600), 1, 'the nudge fetches the view whose bins are not known');
+    await settle();
+    fire('bins', { nodes: ['OTHER'], groups: [] });
+    eq(await getsOver(600), 1, 'bins elsewhere, on a board that does not know its bins: view fetches');
+    served.bins = { known: true };
+    await settle();
+    fire('material-refresh', { action: 'nudge' });
+    eq(await getsOver(600), 1, 'the nudge fetches the view whose bins are known again');
     // The toasts follow the same rule.
     await settle();
     fire('order-failed', { order_id: 9, reason: 'no robot' });

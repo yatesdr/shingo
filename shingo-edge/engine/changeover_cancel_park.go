@@ -301,7 +301,7 @@ func parkAsked(claim *processes.NodeClaim) bool {
 // already takes it off (the cancel's own, or an earlier request's). The line's
 // rows are read only when Core reports a bin there. The move names no demand:
 // it is the cell's own clean-up, not what the request asked for.
-func (e *Engine) clearStrandedPark(node *processes.Node, claim *processes.NodeClaim, park NodeBinInfo) {
+func (e *Engine) clearStrandedPark(node *processes.Node, claim *processes.NodeClaim, park protocol.NodeBinsRow) {
 	if !park.Occupied || !parkAsked(claim) || claim.OutboundDestination == "" {
 		return
 	}

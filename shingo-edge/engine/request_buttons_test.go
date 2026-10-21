@@ -52,18 +52,34 @@ type buttonAnswer struct {
 
 func (w *buttonWorld) occupied(names ...string) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	for _, n := range names {
 		w.occ[n] = true
 	}
+	w.mu.Unlock()
+	w.push()
 }
 
 func (w *buttonWorld) bare(names ...string) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	for _, n := range names {
 		w.occ[n] = false
 	}
+	w.mu.Unlock()
+	w.push()
+}
+
+// push holds occ as the engine's bins table, as Core's bins push would after
+// the change: the REQUEST reads it there (site 11 of the reads).
+func (w *buttonWorld) push() {
+	w.t.Helper()
+	if w.eng == nil {
+		return
+	}
+	holdPlaces(w.t, w.eng, func(n string) (NodeBinInfo, bool) {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		return NodeBinInfo{NodeName: n, Occupied: w.occ[n]}, true
+	})
 }
 
 // serveCore points the engine at a Core stub that answers node-bins from occ.
@@ -84,6 +100,7 @@ func (w *buttonWorld) serveCore() {
 	}))
 	w.t.Cleanup(srv.Close)
 	w.eng.coreClient = stubCoreClient(srv.URL)
+	w.push()
 }
 
 // newButtonWorld is a census line of the role and mode, its line and a press's
@@ -279,11 +296,11 @@ func lineStates() []lineState {
 			return w
 		}
 	}
-	swap := buttonAnswer{legs: -1, trips: 1}
+	swap := buttonAnswer{legs: -1, trips: requestTrips}
 	return []lineState{
 		{"the line holds a bin, nothing on its way", all, cell(func(*buttonWorld) {}), swap},
 		{"the line is bare, nothing on its way", all, cell(func(w *buttonWorld) { w.bare(ksLine) }),
-			buttonAnswer{toLine: 1, trips: 1}},
+			buttonAnswer{toLine: 1, trips: requestTrips}},
 
 		// A changeover armed on the process.
 		{"changeover armed, the line's own changeover leg in flight", tr,
@@ -298,12 +315,12 @@ func lineStates() []lineState {
 				w.node = y
 				w.finishOrdersOf(y)
 				w.occupied("EX-Y")
-			}), buttonAnswer{legs: 2, trips: 1}},
+			}), buttonAnswer{legs: 2, trips: requestTrips}},
 		{"changeover armed, the style flipped by hand, the line's changeover legs done", tr,
 			changeover(func(w *buttonWorld, x, _, proc, to int64) {
 				w.finishOrdersOf(x)
 				testutil.MustNoErr(w.t, w.db.SetActiveStyle(proc, &to), "style flip")
-			}), buttonAnswer{legs: 2, trips: 1}},
+			}), buttonAnswer{legs: 2, trips: requestTrips}},
 		{"a process node with no claim", all, func(t *testing.T, role protocol.ClaimRole, mode protocol.SwapMode) *buttonWorld {
 			w := newButtonWorld(t, role, mode)
 			procID, err := w.db.CreateProcess("BARE-PROC", "", "", "", false)

@@ -389,7 +389,7 @@ func (h *Handlers) apiContainmentRecall(w http.ResponseWriter, r *http.Request) 
 
 // holdMarker is what the containment screen's release of a held bin asks of
 // the engine beyond EngineOrchestration: the marker's clear, an ask to Core
-// (engine.SetBinQualityHold). Asserted, as feedSpeaker is, so the
+// (engine.SetBinQualityHold). Asserted, as the catalog stamp's clock is, so the
 // orchestration interface does not widen for it.
 type holdMarker interface {
 	SetBinQualityHold(binID int64, hold bool, by string) error

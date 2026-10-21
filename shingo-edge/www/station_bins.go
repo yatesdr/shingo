@@ -11,36 +11,26 @@ import (
 // stampStationBins stamps a station view's bins (StationService.StampBins)
 // and says whether they are known (view.bins).
 //
-// FROM THE EDGE'S COPY WHILE CORE SERVES THE FEED, AND NOTHING ELSE. While the
-// last heartbeat ack carried BinWatch the bins come from the copy of Core's
-// node-bins feed this Edge holds (LocalNodeBins), with no call to Core and no
-// fallback read: with nothing held yet the bins are not known. A copy Core
-// has not confirmed for longer than engine.FeedAsOfAfter is drawn all the
-// same, with the time it was last current; nothing is blanked for age.
-// Pinned by TestStationView_BinsFromTheCopyWhileCoreServesTheFeed.
-//
-// OVER HTTP OTHERWISE: a Core without the feed, or no ack yet. One node-bins
-// call for the station's whole list (StationService.BinNodes), pinned by
-// TestStationView_OneNodeBinsReadPerBuild. This is the mixed-version path.
+// FROM THE EDGE'S COPY, AND NOTHING ELSE. The bins come from the copy of
+// Core's node-bins feed this Edge holds (LocalNodeBins), with no call to Core
+// and no fallback read: with nothing held the bins are not known — before the
+// first snapshot, and always against a Core without the feed (the HTTP read
+// that served one went with this door). A copy Core has not confirmed for
+// longer than engine.FeedAsOfAfter is drawn all the same, with the time it was
+// last current; nothing is blanked for age. Pinned by
+// TestStationView_BinsFromTheCopyOnly.
 //
 // The Production page does not come here: it reads the same copy by the same
 // display rule (enrichViewBinState) and, having no "as of" to show, draws no
 // bin from a copy that rule calls old.
-func stampStationBins(eng ServiceAccess, stationID int64, view *domain.OperatorStationView) {
-	svc := eng.StationService()
+func stampStationBins(eng ServiceAccess, view *domain.OperatorStationView) {
 	held := eng.LocalNodeBins()
-	if held.CoreSpeaksBins {
-		var rows map[string]service.BoardBin
-		if held.Held {
-			rows = service.BoardBinsFromCopy(held.Rows)
-		}
-		svc.StampBins(view, rows, held.Held, held.Groups)
-		view.Bins = &domain.BinsKnown{Known: held.Held, AsOf: binsAsOf(held, time.Now())}
-		return
+	var rows map[string]service.BoardBin
+	if held.Held {
+		rows = service.BoardBinsFromCopy(held.Rows)
 	}
-	rows, read := readNodeBins(eng.CoreAPI(), svc.BinNodes(stationID))
-	svc.StampBins(view, rows, read, nil)
-	view.Bins = &domain.BinsKnown{Known: read}
+	eng.StationService().StampBins(view, rows, held.Held, held.Groups)
+	view.Bins = &domain.BinsKnown{Known: held.Held, AsOf: binsAsOf(held, time.Now())}
 }
 
 // binsAsOf is when a held copy was last current, set only when that is longer
@@ -55,17 +45,4 @@ func binsAsOf(held engine.NodeBinsState, now time.Time) *time.Time {
 	}
 	at := current.UTC()
 	return &at
-}
-
-// readNodeBins is one node-bins call, the rows by node name; false when
-// nobody answered (no Core configured, or the call failed).
-func readNodeBins(core *engine.CoreClient, names []string) (map[string]service.BoardBin, bool) {
-	if core == nil || !core.Available() {
-		return nil, false
-	}
-	bins, reachable, err := core.FetchNodeBins(names)
-	if err != nil || !reachable {
-		return nil, false
-	}
-	return service.BoardBinsFromHTTP(bins), true
 }

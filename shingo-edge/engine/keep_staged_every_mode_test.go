@@ -148,7 +148,7 @@ func TestKeepStagedNode_SequentialAndPressFetchFromTheSpot(t *testing.T) {
 }
 
 // THE SPOT COSTS NO ROUND TRIP, IN ANY MODE. A request reads its spot in the
-// one node-bins call it already makes for the line (claimOccupancy), so a line
+// one bins-table read it already makes for the line (claimOccupancy), so a line
 // that names a keep-staged node takes exactly the Core round trips the same
 // line takes without one: on a line holding a bin and on a bare line, every
 // swap mode, both roles. What the spot adds is its own orders.

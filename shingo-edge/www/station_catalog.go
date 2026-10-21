@@ -10,7 +10,7 @@ import (
 
 // catalogFeedClock is what the catalog stamp asks of the engine: the feed
 // book's times for the catalog copy and whether Core speaks feeds. Asked by
-// assertion, as containment's stamp asks feedSpeaker, so a handler test's stub
+// assertion, as the containment release asks holdMarker, so a handler test's stub
 // engine stamps nothing.
 type catalogFeedClock interface {
 	FeedTimes(key string) (receivedAt, confirmedAt time.Time)

@@ -177,6 +177,7 @@ func TestRequest_ColdPressWithFullCell(t *testing.T) {
 		eng := testEngine(t, db)
 		nodeID := seedPressIndexProduce(t, db)
 		eng.coreClient = stubCoreClient(pressIndexBinsStub(t, "PRESS-HEAD", "PRESS-DECK").URL)
+		holdPlaces(t, eng, occupiedAt("PRESS-HEAD", "PRESS-DECK"))
 		_, err := eng.RequestProduceSwap(nodeID, 0)
 		if err == nil || !strings.Contains(err.Error(), "has no parts to finalize") {
 			t.Fatalf("produce request = %v, want the no-parts refusal", err)
@@ -191,6 +192,7 @@ func TestRequest_ColdPressWithFullCell(t *testing.T) {
 		eng := testEngine(t, db)
 		nodeID := seedPressIndexProduce(t, db)
 		eng.coreClient = stubCoreClient(pressIndexBinsStub(t, "PRESS-HEAD", "PRESS-DECK").URL)
+		holdPlaces(t, eng, occupiedAt("PRESS-HEAD", "PRESS-DECK"))
 		if _, err := eng.RequestEmptyBin(nodeID, "WIDGET-A"); err != nil {
 			t.Fatalf("empty-bin request: %v", err)
 		}
@@ -395,6 +397,7 @@ func TestRequestProduceSwap_PrimesOnceThenHolds(t *testing.T) {
 	// Core reports the head occupied and INDEX-B bare — the incident's shape.
 	srv := nodeBinsStub(t, "PRESS")
 	eng.coreClient = stubCoreClient(srv.URL)
+	holdPlaces(t, eng, occupiedAt("PRESS"))
 	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}})
 
 	res, err := eng.RequestProduceSwap(nodeID, 0)
@@ -451,6 +454,7 @@ func TestRequestProduceSwap_UnknownPairedNodeIsNotPrimed(t *testing.T) {
 	eng := testEngine(t, db)
 	srv := nodeBinsStub(t, "PRESS")
 	eng.coreClient = stubCoreClient(srv.URL)
+	holdPlaces(t, eng, occupiedAt("PRESS"))
 	// A non-empty node set that does NOT contain INDEX-B: that is evidence.
 	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "MARKET-EMPTIES"}})
 	// Parts on the press, so the cold-press guard cannot be what stops the
@@ -483,6 +487,7 @@ func TestRequestProduceSwap_EmptyCoreNodeSetStillPrimes(t *testing.T) {
 	eng := testEngine(t, db)
 	srv := nodeBinsStub(t, "PRESS")
 	eng.coreClient = stubCoreClient(srv.URL)
+	holdPlaces(t, eng, occupiedAt("PRESS"))
 	// No SetCoreNodes call at all — Core has not been heard from.
 
 	res, err := eng.RequestProduceSwap(nodeID, 0)

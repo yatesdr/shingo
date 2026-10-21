@@ -63,7 +63,7 @@ func TestRequestEmptyBin_KeepStagedSpotIsRefilled(t *testing.T) {
 func TestRequestEmptyBin_MovesABinLeftOnOutboundStaging(t *testing.T) {
 	t.Parallel()
 	eng, _, nodeID, _ := seedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeSingleRobot, false, nil)
-	srv, _ := countingNodeBinsStub(t, map[string]NodeBinInfo{
+	srv, _ := countingNodeBinsStub(t, eng, map[string]NodeBinInfo{
 		ksLine: {Occupied: true, PayloadCode: ksPart}, ksOut: {Occupied: true, PayloadCode: "PART-PARKED"}})
 	eng.coreClient = stubCoreClient(srv.URL)
 

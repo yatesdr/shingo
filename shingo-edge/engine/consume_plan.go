@@ -103,7 +103,7 @@ func (p *ConsumePlan) OrderCount() int {
 // DB, fleet, or order-manager calls.
 //
 // occupancy maps core node names to their telemetry-reported occupied
-// state (from engine.claimOccupancy / FetchNodeBins). When the head
+// state (from engine.claimOccupancy, the bins table). When the head
 // node (claim.CoreNodeName) is reported empty, the planner downgrades
 // any non-simple swap mode to a SimpleMove — matching the existing
 // operator_stations.go behavior — so a manually removed bin doesn't

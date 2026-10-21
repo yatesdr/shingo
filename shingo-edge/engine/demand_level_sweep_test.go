@@ -62,6 +62,7 @@ func keeperFixture(t *testing.T) (*Engine, *store.DB, int64, int64) {
 	testutil.MustNoErr(t, err, "ensure runtime")
 
 	eng.coreClient = stubCoreClient(headOccupancyStub(t, false).URL)
+	holdPlaces(t, eng, everyAs(false))
 	return eng, db, nodeID, claimID
 }
 

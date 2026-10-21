@@ -114,6 +114,7 @@ func (c *ksrCell) runningCell(label string) {
 		}
 	}
 	if c.mode != protocol.SwapModeTwoRobotPressIndex {
+		c.bus.PushBins() // the spot cleared, in the Edge's table
 		return
 	}
 	deck, err := coreDB.GetNodeByName(ksrDeck)
@@ -122,6 +123,7 @@ func (c *ksrCell) runningCell(label string) {
 	mustNil(c.t, coreDB.CreateBin(b), label+": the deck's bin")
 	mustNil(c.t, coreDB.SetBinManifest(b.ID, `{"items":[]}`, ksrPartA, 40), "deck manifest")
 	mustNil(c.t, coreDB.ConfirmBinManifest(b.ID, ""), "deck confirm")
+	c.bus.PushBins() // the deck's bin reaches the Edge's table, as Core's push would
 }
 
 // runChangeover is the operator running a started changeover to its end at

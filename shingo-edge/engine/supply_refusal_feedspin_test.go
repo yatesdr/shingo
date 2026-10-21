@@ -3,9 +3,6 @@ package engine
 import (
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -361,56 +358,6 @@ func TestSupplyRefusal_LostAckNeverReachesLoaderEdge_FeedsPin(t *testing.T) {
 		if c.got != c.want {
 			t.Errorf("%s = %q, want %q (after: %s, %s)", c.name, c.got, c.want, c.after, c.label)
 		}
-	}
-}
-
-// TestGetContainment_Non200_FeedsPin pins CoreClient.GetContainment on each
-// status. At the base it never read the status, so a non-200 whose body
-// decoded was returned as state with no error, and only an undecodable body
-// errored. X3 flipped it: any non-200 is an error naming the status. `base` is
-// the value before X3.
-func TestGetContainment_Non200_FeedsPin(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name      string
-		status    int
-		body      string
-		wantErr   bool
-		wantFlags int
-		base      string
-		label     string
-	}{
-		{"200 with state", http.StatusOK, `{"containment":[{"payload_code":"FP-PART","active":true}],"held_bins":[]}`, false, 1, "same", "X3"},
-		{"500 with a jsonError body", http.StatusInternalServerError, `{"error":"database unavailable"}`, true, 0, "no error, 0 flags", "X3"},                             // X3
-		{"503 with a state-shaped body", http.StatusServiceUnavailable, `{"containment":[{"payload_code":"FP-STALE","active":true}]}`, true, 0, "no error, 1 flag", "X3"}, // X3
-		{"404 with a text body", http.StatusNotFound, "404 page not found\n", true, 0, "error (a decode error, not naming the status)", "X3"},                             // X3
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/api/containment" {
-					http.NotFound(w, r)
-					return
-				}
-				w.WriteHeader(tc.status)
-				if _, err := w.Write([]byte(tc.body)); err != nil {
-					t.Errorf("stub Core: write body: %v", err)
-				}
-			}))
-			t.Cleanup(srv.Close)
-
-			st, err := stubCoreClient(srv.URL).GetContainment()
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("err = %v, want error %v (base: %s, %s)", err, tc.wantErr, tc.base, tc.label)
-			}
-			if err != nil && !strings.Contains(err.Error(), strconv.Itoa(tc.status)) {
-				t.Errorf("err = %v, want it to name status %d (base: %s, %s)", err, tc.status, tc.base, tc.label)
-			}
-			if err == nil && len(st.Containment) != tc.wantFlags {
-				t.Errorf("flags = %d, want %d (base: %s, %s)", len(st.Containment), tc.wantFlags, tc.base, tc.label)
-			}
-		})
 	}
 }
 

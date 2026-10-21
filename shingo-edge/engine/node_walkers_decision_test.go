@@ -272,6 +272,7 @@ func TestLevelSweep_DecisionLadder(t *testing.T) {
 	f := seedWalkerProcess(t, db, "LADDER", levelSweepLadder("LADDER"))
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(headOccupancyStub(t, false).URL)
+	holdPlaces(t, eng, everyAs(false))
 
 	proc, err := db.GetProcess(f.ProcessID)
 	testutil.MustNoErr(t, err, "get process")
@@ -311,6 +312,7 @@ func TestLevelSweep_ParkedSideIsNotSkipped(t *testing.T) {
 	})
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(headOccupancyStub(t, false).URL)
+	holdPlaces(t, eng, everyAs(false))
 
 	proc, err := db.GetProcess(f.ProcessID)
 	testutil.MustNoErr(t, err, "get process")

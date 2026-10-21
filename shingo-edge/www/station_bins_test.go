@@ -22,14 +22,14 @@ import (
 	"shingoedge/store/stations"
 )
 
-// station_bins_test.go — the station view's bins: one node-bins read per
-// build for the board's whole list (its tiles, its dedicated loaders' buffer
+// station_bins_test.go — the station view's bins: the Edge's copy of the bins
+// feed for the board's whole list (its tiles, its dedicated loaders' buffer
 // spots, its consume loaders' outbound-group members), stamped onto the
 // tiles' bin_state, a home's buffer_partial, a dedicated loader's buffer strip
-// and the board's empties; and the Core calls a build makes, counted on a
-// Core stub.
+// and the board's empties; and the Core calls a build makes (none), counted
+// on a Core stub.
 
-// coreStub answers the three Core reads a station view can make and counts
+// coreStub answers the Core calls the station tests make and counts
 // every request it sees, by path.
 type coreStub struct {
 	mu   sync.Mutex
@@ -195,6 +195,36 @@ func newBinsRig(t *testing.T) *binsRig {
 	return rig
 }
 
+// holdStubBins applies, as the Edge's copy of the bins feed, what the stub's
+// rows say for every name on the Edge's watch list (a name with no row is an
+// empty node), as Core's snapshot answering the list would.
+func (r *binsRig) holdStubBins(t *testing.T) {
+	t.Helper()
+	r.core.mu.Lock()
+	snap := protocol.NodeBinsSnapshot{Groups: []protocol.NodeBinsGroup{}}
+	for _, n := range r.eng.StationService().WatchedBinNodes() {
+		b := r.core.rows[n]
+		row := protocol.NodeBinsRow{Node: n, State: protocol.BinsStateEmpty, Occupied: b.Occupied, BinID: b.BinID,
+			BinLabel: b.BinLabel, BinTypeCode: b.BinTypeCode, Bare: b.Bare, PayloadCode: b.PayloadCode,
+			Manifest: b.Manifest, ManifestConfirmed: b.ManifestConfirmed, Stocked: b.UOPRemaining > 0,
+			Partial: b.UOPRemaining > 0 && b.UOPRemaining < b.UOPCapacity, TotesOnCart: b.TotesOnCart,
+			TotesPerLayer: b.TotesPerLayer, UOPCapacity: b.UOPCapacity}
+		if b.Occupied {
+			row.State = protocol.BinsStateOccupied
+		}
+		snap.Rows = append(snap.Rows, row)
+	}
+	r.core.mu.Unlock()
+	d, err := protocol.NodeBinsDigest(snap)
+	if err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	snap.Digest = d
+	if err := r.eng.ApplyNodeBinsSnapshot(snap); err != nil {
+		t.Fatalf("apply the bins copy: %v", err)
+	}
+}
+
 // station seeds a process with one station holding the named nodes.
 func (r *binsRig) station(t *testing.T, code string, nodes ...string) {
 	t.Helper()
@@ -249,50 +279,32 @@ func jsonOf(t *testing.T, v any) string {
 	return string(b)
 }
 
-// TestStationView_OneNodeBinsReadPerBuild: a station view build reads the bins
-// of its whole list in one node-bins call, the dedicated board included (two
-// before: its tiles, then its buffer spots), and against a Core that speaks
-// feeds that is the only call it makes to Core.
-func TestStationView_OneNodeBinsReadPerBuild(t *testing.T) {
+// TestStationView_NoCoreReadPerBuild: a station view build makes no call to
+// Core, whatever Core speaks: its bins are the copy's and its containment the
+// containment copy's. CHANGED: a build made one node-bins call for its whole
+// list against a Core that did not serve the bins feed.
+func TestStationView_NoCoreReadPerBuild(t *testing.T) {
 	rig := newBinsRig(t)
-
-	// A Core with nil Feeds: the containment read stands (no claim names a
-	// containment destination here, so no children read).
-	for _, code := range []string{"LDR", "UNL"} {
-		rig.core.take()
-		rig.view(t, code)
-		got := rig.core.take()
-		want := map[string]int{"/api/telemetry/node-bins": 1, "/api/containment": 1}
-		if jsonOf(t, got) != jsonOf(t, want) {
-			t.Errorf("%s: Core calls per build against a Core without feeds = %v, want %v", code, got, want)
-		}
-	}
-
-	// A Core that speaks feeds, its containment copy held: one call.
-	rig.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}})
-	if err := rig.eng.ApplyContainmentSnapshot(protocol.ContainmentSnapshot{Digest: "c1",
-		Flags: []protocol.PayloadContainmentRow{}, HeldBins: []protocol.HeldBinRow{},
-		Destinations: []protocol.ContainmentDestination{}}); err != nil {
-		t.Fatalf("apply containment: %v", err)
-	}
-	for _, code := range []string{"LDR", "UNL"} {
-		rig.core.take()
-		rig.view(t, code)
-		got := rig.core.take()
-		want := map[string]int{"/api/telemetry/node-bins": 1}
-		if jsonOf(t, got) != jsonOf(t, want) {
-			t.Errorf("%s: Core calls per build against a Core with feeds = %v, want %v", code, got, want)
+	for _, ack := range []*protocol.EdgeHeartbeatAck{{}, {Feeds: map[string]string{}}} {
+		rig.eng.OnCoreAck(ack)
+		for _, code := range []string{"LDR", "UNL"} {
+			rig.core.take()
+			rig.view(t, code)
+			if got := rig.core.take(); len(got) != 0 {
+				t.Errorf("%s (feeds %v): Core calls per build = %v, want none", code, ack.Feeds != nil, got)
+			}
 		}
 	}
 }
 
-// TestStationView_BinsStampedFromTheOneRead: what the one read stamps. The
+// TestStationView_BinsStampedFromTheCopy: what the copy stamps. The
 // home holding a stocked PART-A bin names the buffer spot holding a stocked
 // PART-A partial; the dedicated loader's first home carries its buffer strip,
 // in the plant's order, and no other tile does; the unloader's board carries
 // its outbound group's empties.
-func TestStationView_BinsStampedFromTheOneRead(t *testing.T) {
+func TestStationView_BinsStampedFromTheCopy(t *testing.T) {
 	rig := newBinsRig(t)
+	rig.holdStubBins(t)
 
 	ldr := rig.view(t, "LDR")
 	h1, h2 := tileByNode(t, ldr, "SMN_H1"), tileByNode(t, ldr, "SMN_H2")
@@ -352,18 +364,20 @@ func containmentRig(t *testing.T) *binsRig {
 	}); err != nil {
 		t.Fatalf("upsert claim: %v", err)
 	}
+	// The bins copy: the containment stamp reads the tile's bin's part.
+	rig.holdStubBins(t)
 	return rig
 }
 
-// TestContainmentStamp_ReadsTheHeldCopyWhenCoreSpeaksFeeds: against a Core
-// that speaks feeds the station view and the Production page stamp the
-// release target and the CONTAINED chip from the Edge's copy, a group
-// destination's children included, and make no containment or children read.
-// With nothing held there is no fallback read: the chip is not drawn and a
-// tile under a group destination has no target. Against a Core with nil Feeds
-// the containment read stands and a group destination's children are not
-// read (its tile has no group target): that read's Core door is gone.
-func TestContainmentStamp_ReadsTheHeldCopyWhenCoreSpeaksFeeds(t *testing.T) {
+// TestContainmentStamp_ReadsTheHeldCopyOnly: the station view and the
+// Production page stamp the release target and the CONTAINED chip from the
+// Edge's copy of the containment feed, a group destination's children
+// included, and make no containment or children read. With nothing held there
+// is no fallback read: the chip is not drawn and a tile under a group
+// destination has no target. CHANGED: against a Core with nil Feeds, which
+// never sends a copy, there is no containment read either (it went with
+// GetContainment); that Core's flags are not drawn.
+func TestContainmentStamp_ReadsTheHeldCopyOnly(t *testing.T) {
 	rig := containmentRig(t)
 	stamp := func() (string, bool, map[string]int) {
 		rig.core.take()
@@ -373,20 +387,23 @@ func TestContainmentStamp_ReadsTheHeldCopyWhenCoreSpeaksFeeds(t *testing.T) {
 		return target, flagged, rig.core.take()
 	}
 
-	// A Core with nil Feeds: the containment read, and no children read.
-	_, _, calls := stamp()
-	if want := `{"/api/containment":1,"/api/telemetry/node-bins":1}`; jsonOf(t, calls) != want {
-		t.Errorf("Core calls against a Core without feeds = %s, want %s", jsonOf(t, calls), want)
+	// A Core with nil Feeds: no containment read, nothing drawn.
+	target, flagged, calls := stamp()
+	if target != "" || flagged {
+		t.Errorf("a Core without feeds: target %q flagged %v, want neither", target, flagged)
+	}
+	if len(calls) != 0 {
+		t.Errorf("Core calls against a Core without feeds = %s, want none", jsonOf(t, calls))
 	}
 
 	// Feeds, nothing held: no read, no chip, no group target.
 	rig.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}})
-	target, flagged, calls := stamp()
+	target, flagged, calls = stamp()
 	if target != "" || flagged {
 		t.Errorf("nothing held: target %q flagged %v, want neither", target, flagged)
 	}
-	if want := `{"/api/telemetry/node-bins":1}`; jsonOf(t, calls) != want {
-		t.Errorf("Core calls with nothing held = %s, want %s", jsonOf(t, calls), want)
+	if len(calls) != 0 {
+		t.Errorf("Core calls with nothing held = %s, want none", jsonOf(t, calls))
 	}
 
 	// Feeds, the copy held: the group's child is matched and the flag drawn.
@@ -402,8 +419,8 @@ func TestContainmentStamp_ReadsTheHeldCopyWhenCoreSpeaksFeeds(t *testing.T) {
 	if target != "ULN-X" || !flagged {
 		t.Errorf("copy held: target %q flagged %v, want ULN-X and flagged", target, flagged)
 	}
-	if want := `{"/api/telemetry/node-bins":1}`; jsonOf(t, calls) != want {
-		t.Errorf("Core calls with the copy held = %s, want %s", jsonOf(t, calls), want)
+	if len(calls) != 0 {
+		t.Errorf("Core calls with the copy held = %s, want none", jsonOf(t, calls))
 	}
 
 	// The Production page's enrichment reads the same copy.
@@ -442,18 +459,18 @@ func TestSSE_NodeBinsEventIsSentAsBins(t *testing.T) {
 	}
 }
 
-// TestStationView_BinsFromTheCopyWhileCoreServesTheFeed walks one Edge
-// through the mixed versions of the node-bins feed:
+// TestStationView_BinsFromTheCopyOnly walks one Edge through the mixed
+// versions of the node-bins feed. The bins are the copy's and nothing else's,
+// so no build calls Core:
 //
-//   - a Core with no feeds: bins and containment by HTTP, nothing published;
-//   - a Core with feeds and no BinWatch: bins by HTTP, nothing published;
+//   - a Core with no feeds, or feeds and no BinWatch: nothing published, the
+//     bins not known (CHANGED: they were read over HTTP);
 //   - a Core serving the feed: the first ack publishes the watch list, and
-//     until the snapshot arrives the bins are not known, with no fallback
-//     read; once applied (one round trip after the first ack) the view is
-//     stamped from the copy with no call to Core;
-//   - Core rolled back under the running Edge: the next ack lacks the field
-//     and the next build reads HTTP.
-func TestStationView_BinsFromTheCopyWhileCoreServesTheFeed(t *testing.T) {
+//     until the snapshot arrives the bins are not known; once applied (one
+//     round trip after the first ack) the view is stamped from the copy;
+//   - Core rolled back under the running Edge: the next ack lacks the field,
+//     and the copy held is drawn still (CHANGED: the build read HTTP).
+func TestStationView_BinsFromTheCopyOnly(t *testing.T) {
 	rig := newBinsRig(t)
 	var published []*protocol.Envelope
 	rig.eng.SetSendFunc(func(env *protocol.Envelope) error {
@@ -465,22 +482,16 @@ func TestStationView_BinsFromTheCopyWhileCoreServesTheFeed(t *testing.T) {
 		v := rig.view(t, "LDR")
 		return v, rig.core.take()
 	}
-	httpCalls := func(withContainment bool) string {
-		if withContainment {
-			return `{"/api/containment":1,"/api/telemetry/node-bins":1}`
-		}
-		return `{"/api/telemetry/node-bins":1}`
-	}
 
 	rig.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{})
 	v, calls := build()
-	if jsonOf(t, calls) != httpCalls(true) || jsonOf(t, v["bins"]) != `{"known":true}` || len(published) != 0 {
+	if len(calls) != 0 || jsonOf(t, v["bins"]) != `{"known":false}` || len(published) != 0 {
 		t.Errorf("no feeds: calls %s bins %s published %d", jsonOf(t, calls), jsonOf(t, v["bins"]), len(published))
 	}
 
 	rig.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}})
 	v, calls = build()
-	if jsonOf(t, calls) != httpCalls(false) || jsonOf(t, v["bins"]) != `{"known":true}` || len(published) != 0 {
+	if len(calls) != 0 || jsonOf(t, v["bins"]) != `{"known":false}` || len(published) != 0 {
 		t.Errorf("feeds, no BinWatch: calls %s bins %s published %d", jsonOf(t, calls), jsonOf(t, v["bins"]), len(published))
 	}
 
@@ -529,8 +540,8 @@ func TestStationView_BinsFromTheCopyWhileCoreServesTheFeed(t *testing.T) {
 
 	rig.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{protocol.FeedBins: d}})
 	v, calls = build()
-	if jsonOf(t, calls) != httpCalls(false) || jsonOf(t, v["bins"]) != `{"known":true}` {
-		t.Errorf("Core rolled back: calls %s bins %s, want the HTTP read", jsonOf(t, calls), jsonOf(t, v["bins"]))
+	if len(calls) != 0 || jsonOf(t, v["bins"]) != `{"known":true}` || tileByNode(t, v, "SMN_H1")["bin_state"] == nil {
+		t.Errorf("Core rolled back: calls %s bins %s, want the held copy drawn, no call", jsonOf(t, calls), jsonOf(t, v["bins"]))
 	}
 	if len(published) != 1 {
 		t.Errorf("published %d envelopes in all, want the one watch list", len(published))
@@ -562,14 +573,15 @@ func TestBinsAsOf(t *testing.T) {
 	}
 }
 
-// TestStationView_SaysWhenContainmentIsNotKnown: against a Core that speaks
-// feeds, with nothing held, the view says containment is not known
-// (view.containment.known false), so the station's sign can say so; with the
-// copy held, or against a Core with no feeds, the key is absent.
+// TestStationView_SaysWhenContainmentIsNotKnown: with nothing held the view
+// says containment is not known (view.containment.known false), so the
+// station's sign can say so; with the copy held the key is absent. CHANGED:
+// against a Core with no feeds, which never sends a copy, it is not known
+// either, where the HTTP containment read answered the flags.
 func TestStationView_SaysWhenContainmentIsNotKnown(t *testing.T) {
 	rig := containmentRig(t)
-	if _, ok := rig.view(t, "QA")["containment"]; ok {
-		t.Error("a Core with no feeds: the view carries containment; want it absent")
+	if got := jsonOf(t, rig.view(t, "QA")["containment"]); got != `{"known":false}` {
+		t.Errorf("a Core with no feeds: containment = %s, want {\"known\":false}", got)
 	}
 	rig.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}})
 	if got := jsonOf(t, rig.view(t, "QA")["containment"]); got != `{"known":false}` {
@@ -624,21 +636,18 @@ func TestSSE_RefusalAndSourcingEventsAreSent(t *testing.T) {
 // TestStationView_AssignmentsAndHeightsFromTheCopy: from the Edge's copy of a
 // Core that serves the feed, an unloader's view carries each window's
 // assignment, each cart's tote numbers on its bin, and the empties' wants per
-// type and per wanted height; over HTTP (a Core that sends no group lines)
-// it carries the tote numbers and nothing else of it.
+// type and per wanted height; with no copy held, none of it.
 func TestStationView_AssignmentsAndHeightsFromTheCopy(t *testing.T) {
 	rig := newBinsRig(t)
 	rig.eng.SetSendFunc(func(*protocol.Envelope) error { return nil })
 	n := func(v int) *int { return &v }
-	rig.core.rows["ULN_1"] = protocol.NodeBinInfo{NodeName: "ULN_1", BinID: 4, BinLabel: "CART-4", BinTypeCode: "TOTE-1",
-		PayloadCode: "PART-C", UOPRemaining: 40, Occupied: true, TotesOnCart: n(16), TotesPerLayer: n(8)}
 
 	v := rig.view(t, "UNL")
-	if got := jsonOf(t, tileByNode(t, v, "ULN_1")["bin_state"].(map[string]any)["totes_on_cart"]); got != "16" {
-		t.Errorf("over HTTP: ULN_1 totes_on_cart %s, want 16", got)
+	if bs, ok := tileByNode(t, v, "ULN_1")["bin_state"]; ok {
+		t.Errorf("no copy: ULN_1 bin_state %s", jsonOf(t, bs))
 	}
 	if a, ok := tileByNode(t, v, "ULN_1")["assignment"]; ok {
-		t.Errorf("over HTTP: an assignment %s", jsonOf(t, a))
+		t.Errorf("no copy: an assignment %s", jsonOf(t, a))
 	}
 
 	empty := ""

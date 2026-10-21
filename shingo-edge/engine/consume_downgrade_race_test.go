@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
@@ -83,6 +84,7 @@ func spokenForFixture(t *testing.T, occupied bool) (*Engine, *store.DB, int64) {
 	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bin, 13), "seed runtime")
 
 	eng.coreClient = stubCoreClient(headOccupancyStub(t, occupied).URL)
+	holdPlaces(t, eng, everyAs(occupied))
 	return eng, db, nodeID
 }
 
@@ -220,6 +222,43 @@ func TestConsumeDowngrade_StillDowngradesWhenTheNodeIsTrulyBare(t *testing.T) {
 	if res.Order.SourceNode != "SYN_MARKET" || res.Order.DeliveryNode != "ALN_004" {
 		t.Errorf("downgrade endpoints = %q→%q, want SYN_MARKET→ALN_004",
 			res.Order.SourceNode, res.Order.DeliveryNode)
+	}
+}
+
+// TestConsumeDowngrade_OnlyOnAnActableEmptyRow: the REQUEST reads its line
+// from the bins table (site 11 of the reads), and only a row that may be
+// decided from and says the line is empty downgrades the swap. A table that
+// may not be decided from, a line the table holds no row for, and a name Core
+// has no node for all read occupied — the suppressing answer — so the request
+// builds the swap, as it did when Core could not be read.
+func TestConsumeDowngrade_OnlyOnAnActableEmptyRow(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name string
+		hold func(eng *Engine)
+	}{
+		{"the table may not be decided from", func(eng *Engine) {
+			eng.feeds.now = func() time.Time { return time.Now().Add(ActableAckWithin + time.Second) }
+		}},
+		{"the table holds no row for the line", func(eng *Engine) {
+			holdActableBins(t, eng, protocol.NodeBinsRow{Node: "SLN_005"}, protocol.NodeBinsRow{Node: "SLN_006"})
+		}},
+		{"Core has no node by the line's name", func(eng *Engine) {
+			holdActableBins(t, eng, protocol.NodeBinsRow{Node: "ALN_004", State: protocol.BinsStateUnknown},
+				protocol.NodeBinsRow{Node: "SLN_005"}, protocol.NodeBinsRow{Node: "SLN_006"})
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			eng, _, nodeID := spokenForFixture(t, false)
+			eng.coreClient = stubCoreClient(testCoreURL)
+			c.hold(eng)
+			res, err := eng.requestNodeMaterialFor(nodeID, 1, protocol.EpisodeTriggerOperator)
+			testutil.MustNoErr(t, err, "request")
+			if res == nil || res.Order == nil || res.Order.OrderType == orders.TypeMove {
+				t.Errorf("result %+v: want the swap, not the downgrade to a plain move", res)
+			}
+		})
 	}
 }
 

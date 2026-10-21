@@ -177,7 +177,9 @@ func (c *CoreClient) FetchNodeBins(nodeNames []string) ([]NodeBinInfo, bool, err
 // OccupancyOutcome names what happened to an occupancy read, for the decision
 // log. One word per outcome so an over-ordering incident can be reconstructed
 // from logs alone — "resident=0" means nothing until you know whether anyone
-// was asked.
+// was asked. A decision from the bins table that could not be taken is
+// not_actable (BinsActable refused the table) or unwatched (the table holds no
+// row for the name).
 func OccupancyOutcome(reachable bool, err error) string {
 	switch {
 	case reachable:
@@ -190,9 +192,22 @@ func OccupancyOutcome(reachable bool, err error) string {
 		return "http_error"
 	case errors.Is(err, ErrCoreUndecodable):
 		return "decode_err"
+	case asBinsNotCurrent(err) != nil && asBinsNotCurrent(err).Why == NotActableUnwatched:
+		return "unwatched"
+	case asBinsNotCurrent(err) != nil:
+		return "not_actable"
 	default:
 		return "unverifiable"
 	}
+}
+
+// asBinsNotCurrent is err's *BinsNotCurrent, nil when it carries none.
+func asBinsNotCurrent(err error) *BinsNotCurrent {
+	var nc *BinsNotCurrent
+	if errors.As(err, &nc) {
+		return nc
+	}
+	return nil
 }
 
 // BinLoadRequest is the request body for loading a bin via HTTP.
@@ -421,33 +436,6 @@ func (c *CoreClient) SetBinQualityHold(binID int64, hold bool, by string) error 
 		return fmt.Errorf("bin-quality-hold returned %d: %s", resp.StatusCode, coreErrorText(string(raw), "", resp.StatusCode))
 	}
 	return nil
-}
-
-// GetContainment reads Core's quality-containment state (public read — the
-// containment screens render state; they hold no Core credentials).
-//
-// A non-200 is an error naming the status. Core answers its failures with a
-// JSON error body, which used to decode as a state with nothing in it — so a
-// Core whose database was down read as "nothing is contained".
-func (c *CoreClient) GetContainment() (*ContainmentState, error) {
-	if c.baseURL == "" {
-		return nil, fmt.Errorf("core API not configured")
-	}
-	resp, err := c.http.Get(c.baseURL + "/api/containment")
-	if err != nil {
-		return nil, fmt.Errorf("containment read failed: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("containment read returned %d: %s", resp.StatusCode,
-			coreErrorText(strings.TrimSpace(string(raw)), "", resp.StatusCode))
-	}
-	var state ContainmentState
-	if err := json.NewDecoder(resp.Body).Decode(&state); err != nil {
-		return nil, fmt.Errorf("decode containment: %w", err)
-	}
-	return &state, nil
 }
 
 // ContainmentState is Core's containment state as the Edge reads it: Core's

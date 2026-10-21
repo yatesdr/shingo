@@ -40,6 +40,9 @@ type Bus struct {
 	// delivery) and corePub.target = edge ingestor (the reverse).
 	edgePub *memPublisher
 	corePub *memPublisher
+
+	// bins, when set, pushes Core's bins to the Edge after every pump.
+	bins *BinsPush
 }
 
 // EdgeSide collects the Edge-process objects the Bus needs to route
@@ -123,7 +126,23 @@ func NewBus(t *testing.T, edge EdgeSide, core CoreSide) *Bus {
 // "let everything settle" assertions, prefer PumpAll.
 func (b *Bus) PumpEdgeOutbox() int {
 	b.t.Helper()
-	return pump(b.edgeOut, b.edgePub, "edge→core")
+	n := pump(b.edgeOut, b.edgePub, "edge→core")
+	b.pushBins()
+	return n
+}
+
+// SetBinsPush makes every pump end with p's push of Core's bins to the Edge,
+// as Core's bins push follows the change that moved a bin (BinsPush).
+func (b *Bus) SetBinsPush(p *BinsPush) { b.bins = p }
+
+// PushBins pushes Core's bins to the Edge now: for a scenario that changed
+// Core's bins directly (a fixture write), as Core's push would follow it.
+func (b *Bus) PushBins() { b.pushBins() }
+
+func (b *Bus) pushBins() {
+	if b.bins != nil {
+		b.bins.Push()
+	}
 }
 
 // PumpAll drains both directions until both outboxes are empty in the
@@ -133,7 +152,9 @@ func (b *Bus) PumpEdgeOutbox() int {
 // guard is 100 iterations).
 func (b *Bus) PumpAll() int {
 	b.t.Helper()
-	return pumpAll(b.edgeOut, b.edgePub, b.coreOut, b.corePub, 100)
+	n := pumpAll(b.edgeOut, b.edgePub, b.coreOut, b.corePub, 100)
+	b.pushBins()
+	return n
 }
 
 // EdgeFailNext arms the Edge → Core publisher to fail its next

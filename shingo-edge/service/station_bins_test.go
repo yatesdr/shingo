@@ -299,13 +299,30 @@ func TestStampBins_Empties(t *testing.T) {
 	}
 }
 
-// httpBins is a node-bins answer as the board reads it over HTTP.
+// httpBins is a table written as node-bins answers, as the board reads it
+// from the Edge's copy: what each row of the bins feed carries for it —
+// Stocked the count above zero, Partial above zero and below its capacity, a
+// held partial's declared count, and no count otherwise.
 func httpBins(rows map[string]protocol.NodeBinInfo) map[string]BoardBin {
-	infos := make([]protocol.NodeBinInfo, 0, len(rows))
-	for _, r := range rows {
-		infos = append(infos, r)
+	out := make(map[string]protocol.NodeBinsRow, len(rows))
+	for name, b := range rows {
+		if b.NodeName == "" {
+			b.NodeName = name
+		}
+		r := protocol.NodeBinsRow{Node: b.NodeName, State: protocol.BinsStateEmpty, Occupied: b.Occupied,
+			BinID: b.BinID, BinLabel: b.BinLabel, BinTypeCode: b.BinTypeCode, Bare: b.Bare, PayloadCode: b.PayloadCode,
+			Manifest: b.Manifest, ManifestConfirmed: b.ManifestConfirmed, Stocked: b.UOPRemaining > 0,
+			Partial: b.UOPRemaining > 0 && b.UOPRemaining < b.UOPCapacity, TotesOnCart: b.TotesOnCart,
+			TotesPerLayer: b.TotesPerLayer, UOPCapacity: b.UOPCapacity, HeldSince: b.HeldSince, HeldFor: b.HeldFor}
+		if b.Occupied {
+			r.State = protocol.BinsStateOccupied
+		}
+		if b.HeldSince != "" {
+			r.HeldUOP = b.UOPRemaining
+		}
+		out[b.NodeName] = r
 	}
-	return BoardBinsFromHTTP(infos)
+	return BoardBinsFromCopy(out)
 }
 
 // TestStampBins_EmptiesWantsAndHeights: with the group's line from the Edge's
@@ -443,8 +460,8 @@ func TestBinNodes_TheWatchCarriesTheProduceMarkets(t *testing.T) {
 }
 
 // TestBinNodes_TheWatchCarriesTheSpotsAndTheStaging: the watch list carries the
-// keep-staged spot and the inbound and outbound staging of every live claim of
-// a process on it, across every style (a static superset), for the engine's
+// keep-staged spot, the inbound and outbound staging and the paired positions
+// of every live claim of a process on it, across every style (a static superset), for the engine's
 // decisions there (ListClaimWatchPlaces names each reader); no station's own
 // list carries them.
 func TestBinNodes_TheWatchCarriesTheSpotsAndTheStaging(t *testing.T) {
@@ -488,12 +505,12 @@ func TestBinNodes_TheWatchCarriesTheSpotsAndTheStaging(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim H2: %v", err)
 	}
-	if _, err := db.DB.Exec(`UPDATE style_node_claims SET outbound_staging='OUT-STG' WHERE id=?`, id2); err != nil {
+	if _, err := db.DB.Exec(`UPDATE style_node_claims SET outbound_staging='OUT-STG', paired_core_node='PAIR-1' WHERE id=?`, id2); err != nil {
 		t.Fatalf("outbound staging: %v", err)
 	}
 	svc.InvalidateBinNodes()
 	watched := svc.WatchedBinNodes()
-	for _, n := range []string{"SPOT-1", "IN-STG", "OUT-STG"} {
+	for _, n := range []string{"SPOT-1", "IN-STG", "OUT-STG", "PAIR-1"} {
 		if !slices.Contains(watched, n) {
 			t.Errorf("watch list %v lacks %s", watched, n)
 		}

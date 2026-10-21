@@ -20,7 +20,7 @@ import (
 // heldBins is a bins table held now, confirmed now, holding rows.
 func heldBins(rows ...protocol.NodeBinsRow) engine.NodeBinsState {
 	st := engine.NodeBinsState{Rows: map[string]protocol.NodeBinsRow{}, Held: true,
-		ReceivedAt: time.Now(), ConfirmedAt: time.Now(), CoreSpeaksBins: true}
+		ReceivedAt: time.Now(), ConfirmedAt: time.Now()}
 	for _, r := range rows {
 		st.Rows[r.Node] = r
 	}

@@ -57,10 +57,11 @@ func spareCarries(c *processes.NodeClaim) string {
 	return c.PayloadCode
 }
 
-// spotRead is Core's answer for a keep-staged claim's spot.
+// spotRead is Core's answer for a keep-staged claim's spot: its row in the
+// bins table (readOfBinsRow).
 type spotRead struct {
-	// known is false when Core did not answer for the spot, or answered for a
-	// node it does not have. Nothing is decided on an unknown: ordering on one is
+	// known is false when the table did not answer for the spot, or answers a
+	// node Core does not have. Nothing is decided on an unknown: ordering on one is
 	// how a spot gets two spares.
 	known    bool
 	occupied bool
@@ -83,24 +84,14 @@ type spotRead struct {
 	// inbound is the orders Core counts as on their way to the spot in the
 	// same read (the row's Inbound, by Edge order UUID): an order the line's
 	// rows show ended is still coming while the read predates its landing
-	// (spotComing). Nil over HTTP.
+	// (spotComing).
 	inbound map[string]bool
-}
-
-// readOfRow is a spot's read from its row in a node-bins answer, with the
-// catalog an empty is judged against: the REQUEST's read until it moves onto
-// the bins table. partial is the count above zero and below the row's
-// capacity, the crossing the table's Partial carries.
-func readOfRow(b NodeBinInfo, catalog []protocol.PayloadBinTypeInfo) spotRead {
-	return spotRead{known: true, occupied: b.Occupied, payload: b.PayloadCode, bare: b.Bare,
-		binType: b.BinTypeCode, binID: b.BinID, catalog: catalog,
-		partial: b.UOPRemaining > 0 && b.UOPRemaining < b.UOPCapacity}
 }
 
 // readOfBinsRow is a spot's read from its row in the bins table, with the
 // catalog an empty is judged against. known is the row's state: a name Core
 // has no node for (unknown) is not a bare spot, and a group is no spot at all
-// (this is the check spotNodeKnown made of Core's node list).
+// (the check the deleted spotNodeKnown made of Core's node list).
 func readOfBinsRow(r protocol.NodeBinsRow, catalog []protocol.PayloadBinTypeInfo) spotRead {
 	known := r.State == protocol.BinsStateEmpty || r.State == protocol.BinsStateOccupied
 	var inbound map[string]bool
@@ -460,19 +451,4 @@ func (e *Engine) refillSpot(node *processes.Node, c *processes.NodeClaim, n int,
 			e.logFn("keep-staged: node %s: refill %d/%d for %s: %v", node.Name, i+1, n, spotNode(c), err)
 		}
 	}
-}
-
-// spotOf reads the spot's row out of a node-bins answer, with the catalog its
-// empty is judged against.
-func spotOf(c *processes.NodeClaim, rows []NodeBinInfo, nodeKnown func(string) bool, catalog []protocol.PayloadBinTypeInfo) spotRead {
-	spot := spotNode(c)
-	if spot == "" || !nodeKnown(spot) {
-		return spotRead{}
-	}
-	for _, b := range rows {
-		if b.NodeName == spot {
-			return readOfRow(b, catalog)
-		}
-	}
-	return spotRead{}
 }
