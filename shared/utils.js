@@ -1219,7 +1219,8 @@ export function createStore(initial) {
 // over ONE EventSource per tab regardless of how many sections subscribe.
 //
 // The connection is topic-filtered: it requests /events?topics=<subscribed
-// types> so the server (AddClientFiltered) never streams event types nobody
+// types> so the server (Core's AddClientFiltered; the Edge's HandleSSE
+// parseTopics) never streams event types nobody
 // on this tab asked for — keeping a /missions tab off the per-pulse
 // cell-heartbeat firehose and a kiosk off admin-only events. Subscribing a
 // new type after connect transparently reopens with the widened topic set
@@ -1230,6 +1231,18 @@ export function createStore(initial) {
 // sections can re-fetch their snapshot and close the gap of events missed
 // while disconnected (§13). Build-id mismatch shows the shared refresh
 // banner. handler receives (parsedJSON, rawEvent).
+//
+// A LOST FRAME IS NOT SILENT on a server that numbers its frames (the Edge's
+// /events: each frame's SSE id is the hub's sequence number, and the connected
+// frame and every heartbeat carry `seq`, the number of the last frame queued
+// for this stream). The bus keeps the highest id it has seen; a heartbeat
+// whose seq is ahead of it means a frame never arrived, and the bus dispatches
+// the synthetic 'stream-gap' so a section refetches. A server that sends no
+// seq (Core) is never checked.
+//
+// A WATCHDOG, when a page asks for one (setSSEWatchdog): no frame at all for
+// that long and the stream is treated as dead — closed, 'disconnected'
+// dispatched, reopened — rather than shown live because no error fired.
 const _busHandlers = new Map(); // type -> Set<fn>
 let _busES = null;
 let _busTopics = null;          // topics the live ES was opened with
@@ -1237,16 +1250,54 @@ let _busSeenBuild = null;
 let _busReconnectDelay = 1000;
 let _busClosed = false;
 let _busSyncScheduled = false;
+let _busQuery = '';             // extra query parameters (setSSEQuery)
+let _busLastSeq = 0;            // highest frame id seen on the live stream
+let _busWatchdogMs = 0;         // 0: no watchdog (setSSEWatchdog)
+let _busWatchdog = null;
+
+// Frames the stream itself makes, or the bus makes locally: never requested
+// as a topic, never listened to as a server type.
+const _busStreamTypes = { connected: true, disconnected: true, heartbeat: true, 'stream-gap': true };
 
 function _busDesiredTopics() {
-    // 'connected'/'disconnected' are synthetic (connected is the server's
-    // on-connect frame; disconnected is emitted locally on error) — never
-    // requested as a topic filter.
     const out = [];
     _busHandlers.forEach((_set, type) => {
-        if (type !== 'connected' && type !== 'disconnected') out.push(type);
+        if (!_busStreamTypes[type]) out.push(type);
     });
     return out.sort().join(',');
+}
+
+// setSSEQuery adds parameters to the stream's URL (the station board names its
+// station, so the Edge marks its screen online on connect and heartbeat). Call
+// before the first subscribe.
+export function setSSEQuery(params) {
+    _busQuery = Object.keys(params || {}).sort().map(k => encodeURIComponent(k) + '=' + encodeURIComponent(params[k])).join('&');
+}
+
+// setSSEWatchdog arms the no-frame watchdog: ms with no frame of any kind and
+// the stream is treated as dead. Pick a few heartbeats' worth. 0 disarms.
+export function setSSEWatchdog(ms) { _busWatchdogMs = ms > 0 ? ms : 0; }
+
+function _busFeedWatchdog(es) {
+    if (!_busWatchdogMs) return;
+    if (_busWatchdog !== null) clearTimeout(_busWatchdog);
+    _busWatchdog = setTimeout(() => {
+        _busWatchdog = null;
+        if (_busES === es) _busDrop(es);
+    }, _busWatchdogMs);
+}
+
+// _busNoteSeq keeps the highest frame id seen.
+function _busNoteSeq(ev) {
+    const id = ev && ev.lastEventId ? Number(ev.lastEventId) : NaN;
+    if (isFinite(id) && id > _busLastSeq) _busLastSeq = id;
+}
+
+function _busFrameSeq(ev) {
+    try {
+        const seq = (JSON.parse(ev.data) || {}).seq;
+        return typeof seq === 'number' && isFinite(seq) ? seq : null;
+    } catch (_) { return null; }
 }
 
 function _busDispatch(type, ev) {
@@ -1288,30 +1339,53 @@ function _busCheckBuild(e) {
 function _busConnect() {
     const topics = _busDesiredTopics();
     _busTopics = topics;
-    const url = topics ? ('/events?topics=' + encodeURIComponent(topics)) : '/events';
+    const params = [];
+    if (topics) params.push('topics=' + encodeURIComponent(topics));
+    if (_busQuery) params.push(_busQuery);
+    const url = params.length ? ('/events?' + params.join('&')) : '/events';
     const es = new EventSource(url);
     _busES = es;
+    _busFeedWatchdog(es);
     es.addEventListener('connected', (e) => {
         _busReconnectDelay = 1000;
+        _busFeedWatchdog(es);
+        const seq = _busFrameSeq(e);
+        _busLastSeq = seq === null ? 0 : seq;
         _busCheckBuild(e);
         _busDispatch('connected', e);
     });
-    es.addEventListener('heartbeat', _busCheckBuild);
-    _busHandlers.forEach((_set, type) => {
-        if (type === 'connected') return;
-        es.addEventListener(type, (ev) => _busDispatch(type, ev));
+    es.addEventListener('heartbeat', (e) => {
+        _busFeedWatchdog(es);
+        _busCheckBuild(e);
+        const seq = _busFrameSeq(e);
+        if (seq !== null && seq > _busLastSeq) {
+            _busLastSeq = seq;
+            _busDispatch('stream-gap', null);
+        }
+        _busDispatch('heartbeat', e);
     });
-    es.onerror = () => {
-        if (_busClosed) return;
-        es.close();
-        if (_busES === es) _busES = null;
-        // Synthetic 'disconnected' so subscribers can show an offline state
-        // (the bus auto-reconnects below; a later 'connected' re-fires).
-        _busDispatch('disconnected', null);
-        const delay = _busReconnectDelay;
-        _busReconnectDelay = Math.min(_busReconnectDelay * 2, 10000);
-        setTimeout(() => { if (!_busClosed && !_busES) _busConnect(); }, delay);
-    };
+    _busHandlers.forEach((_set, type) => {
+        if (_busStreamTypes[type]) return;
+        es.addEventListener(type, (ev) => {
+            _busFeedWatchdog(es);
+            _busNoteSeq(ev);
+            _busDispatch(type, ev);
+        });
+    });
+    es.onerror = () => { if (!_busClosed) _busDrop(es); };
+}
+
+// _busDrop closes a dead stream, says so, and reopens after the backoff.
+function _busDrop(es) {
+    es.close();
+    if (_busES === es) _busES = null;
+    if (_busWatchdog !== null) { clearTimeout(_busWatchdog); _busWatchdog = null; }
+    // Synthetic 'disconnected' so subscribers can show an offline state
+    // (the bus auto-reconnects below; a later 'connected' re-fires).
+    _busDispatch('disconnected', null);
+    const delay = _busReconnectDelay;
+    _busReconnectDelay = Math.min(_busReconnectDelay * 2, 10000);
+    setTimeout(() => { if (!_busClosed && !_busES) _busConnect(); }, delay);
 }
 
 function _busSync() {
@@ -1346,6 +1420,7 @@ export function onSSE(type, handler) {
 // closeSSEBus — tear down the shared EventSource (page unload / tests).
 export function closeSSEBus() {
     _busClosed = true;
+    if (_busWatchdog !== null) { clearTimeout(_busWatchdog); _busWatchdog = null; }
     if (_busES) { _busES.close(); _busES = null; }
 }
 if (typeof window !== 'undefined') {

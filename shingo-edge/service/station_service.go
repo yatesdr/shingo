@@ -224,8 +224,8 @@ type touchState struct {
 	at     time.Time
 }
 
-// touchThrottle is how stale last_seen_at is allowed to get while a board keeps
-// polling. Well under any human's sense of "is that screen alive", and the
+// touchThrottle is how stale last_seen_at is allowed to get while a board's
+// stream keeps touching. Well under any human's sense of "is that screen alive", and the
 // column has no behavioural consumer — nothing reaps or alarms on it, it is
 // surfaced for display only.
 const touchThrottle = 15 * time.Second
@@ -970,15 +970,15 @@ func (s *StationService) Delete(id int64) error {
 
 // Touch updates last_seen_at and health_status.
 //
-// Throttled, because it is called on EVERY operator-station view request —
-// including every request that merely joined an already-running build — and it is
-// a WRITE on the single connection store.Open allows, so it queues ahead of the
-// reads the boards are waiting on. Five boards polling produced a write per poll
-// for a column nothing behaves on.
+// Called on every connect and heartbeat of a station's event stream
+// (www EventHub.HandleSSE, ?station=); it used to be called on every view
+// request, when the boards polled. Throttled because it is a WRITE on the
+// single connection store.Open allows, so it queues ahead of the reads the
+// boards are waiting on, for a column nothing behaves on.
 //
 // A status CHANGE always writes through immediately; only the repeated
-// same-status refresh is collapsed. Worst case last_seen_at trails reality by
-// touchThrottle while a board is polling steadily.
+// same-status refresh is collapsed. With a 30 s heartbeat every touch is past
+// the throttle, so a connected screen writes once per heartbeat.
 func (s *StationService) Touch(id int64, healthStatus string) error {
 	s.touchMu.Lock()
 	if s.touched == nil {

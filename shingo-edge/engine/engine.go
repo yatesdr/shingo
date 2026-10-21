@@ -825,6 +825,10 @@ func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) err
 	// permanent human intent: it IS the style's set when present, it always
 	// wins, and only a person removes it.
 	e.logFn("engine: updated payload catalog (%d entries)", len(entries))
+	// A claim's UOP capacity is read from this catalog by the station view,
+	// and nothing else says it moved (the door walk found it:
+	// cmd/shingoedge door_walk_test.go).
+	e.nudgeBoards()
 	return nil
 }
 

@@ -6,7 +6,10 @@ import (
 	"log"
 	"net/http"
 	"runtime/debug"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"shingo/protocol/lockcheck"
@@ -18,20 +21,36 @@ import (
 type SSEEvent struct {
 	Type string `json:"type"`
 	Data any    `json:"data"`
+	// seq is the hub's number for this frame, assigned at fan-out and written
+	// as the frame's SSE id. Zero until the hub fans it out.
+	seq int64
 }
 
 // serverInstance is a per-process identifier emitted on every SSE
 // connect. The HMI compares it across reconnects: if it changes, the
 // edge has been restarted (likely with a new JS bundle) and the tab
 // hard-reloads. Without this, a long-lived operator-station tab keeps
-// the previously-cached ES module graph forever — the cacheBust query
-// param only affects fresh HTML loads.
+// the previously-cached ES module graph forever: the static files' ETags
+// change with a restart (serverInstanceETag), but only a fresh page load
+// asks for them again.
 var serverInstance = fmt.Sprintf("%x", time.Now().UnixNano())
 
-// sseKeepaliveInterval is the heartbeat tick. Variable rather than
-// const so tests can compress the interval and exercise the heartbeat
-// path without a 30-second wait.
-var sseKeepaliveInterval = 30 * time.Second
+// sseKeepaliveInterval is the shipped heartbeat tick. NewEventHub copies it
+// into EventHub.keepalive; a test that wants a short tick sets that field on
+// its own hub before serving, rather than writing a package var other tests
+// read.
+const sseKeepaliveInterval = 30 * time.Second
+
+// sseNudgeTopic is the frame EventHub.Nudge sends: "something a board draws
+// may have changed; refetch if you care". Every station takes it
+// (operator-state.js eventConcerns). It is material-refresh, the type the
+// boards already took for "every station", rather than a second name for the
+// same instruction.
+const sseNudgeTopic = "material-refresh"
+
+// sseNudgeWindow is how long a nudge waits for the rest of its burst: a
+// preset applied to forty parts is forty saves, and one nudge for all of them.
+const sseNudgeWindow = 250 * time.Millisecond
 
 // lossySSETopics names the high-rate diagnostic feeds. They are delivered
 // best-effort on a separate queue so a burst of them can never consume the
@@ -40,9 +59,9 @@ var sseKeepaliveInterval = 30 * time.Second
 // Before the split every topic shared one 64-slot queue and the fan-out
 // dropped whatever arrived once it was full. These two are the bulk of the
 // traffic, so what they evicted was everything else — including order-update,
-// which the operator board is edge-triggered on and never polls as a backstop.
-// Losing a frame here costs a gap in a diagnostic view; losing one there
-// leaves the board silently stale.
+// which the operator board rebuilds on at once. The board does not poll: a
+// durable frame a client cannot take evicts the client (fanOut), and its
+// reconnect refetches. Losing one of these costs a gap in a diagnostic view.
 //
 // Both are safe to shed because neither is authoritative:
 //   - counter-read is the raw PLC poll reading. The count the HMI acts on
@@ -75,21 +94,44 @@ type sseClient struct {
 	// purpose: a client this far behind on diagnostics gains nothing from a
 	// deeper backlog of them.
 	lossy chan SSEEvent
-	drops int // consecutive DURABLE drops; eviction trigger.
 	// debug is set when the client asked for sseDebugTopic (?debug=1).
 	debug bool
+	// topics is what the client asked for (?topics=a,b); nil is every topic.
+	topics map[string]bool
+	// queued is the seq of the last durable frame queued on events for this
+	// client. Stored only after the send succeeded, so every frame up to it
+	// is already in the channel; the heartbeat carries it, and a client that
+	// saw a lower id knows it lost one.
+	queued atomic.Int64
+}
+
+// wants reports whether the client takes frames of this type.
+func (c *sseClient) wants(typ string) bool {
+	if typ == sseDebugTopic && !c.debug {
+		return false
+	}
+	return c.topics == nil || c.topics[typ]
+}
+
+// parseTopics reads ?topics=a,b into a set, nil when absent or blank: the
+// shared bus (shared/utils.js onSSE) asks for exactly the types it listens to.
+func parseTopics(raw string) map[string]bool {
+	var out map[string]bool
+	for _, t := range strings.Split(raw, ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			if out == nil {
+				out = map[string]bool{}
+			}
+			out[t] = true
+		}
+	}
+	return out
 }
 
 // MaxSSEClients caps concurrent SSE connections to prevent a
 // misbehaving browser / scraper from growing the clients map
 // unboundedly.
 const MaxSSEClients = 256
-
-// MaxConsecutiveDrops is the threshold past which a stuck client is
-// evicted from the EventHub. The slow-client policy at run() drops
-// events; without this cap a truly stuck client would stay in the
-// map forever.
-const MaxConsecutiveDrops = 10
 
 // EventHub manages SSE client connections and broadcasts.
 type EventHub struct {
@@ -98,20 +140,94 @@ type EventHub struct {
 	broadcast chan SSEEvent
 	stopChan  chan struct{}
 	stopOnce  sync.Once
+
+	// seq numbers every frame the hub fans out. Taken under mu's read lock in
+	// fanOut and read under the write lock in register, so a client registered
+	// between two frames starts exactly between their numbers.
+	seq atomic.Int64
+	// overflow is rung by Broadcast when the buffer could not take a durable
+	// frame; run evicts every client, whose reconnects refetch.
+	overflow chan struct{}
+	// nudge is nudgeLoop's doorbell (Nudge).
+	nudge chan struct{}
+
+	// keepalive and nudgeWindow are set by NewEventHub; a test may shorten
+	// them on its own hub before Start.
+	keepalive   time.Duration
+	nudgeWindow time.Duration
+	// toucher marks a station's screen online (StationService.Touch). Set
+	// once, before serving (SetStationToucher).
+	toucher func(stationID int64)
 }
 
 // NewEventHub creates a new EventHub.
 func NewEventHub() *EventHub {
 	return &EventHub{
-		clients:   make(map[*sseClient]struct{}),
-		broadcast: make(chan SSEEvent, 256),
-		stopChan:  make(chan struct{}),
+		clients:     make(map[*sseClient]struct{}),
+		broadcast:   make(chan SSEEvent, 256),
+		stopChan:    make(chan struct{}),
+		overflow:    make(chan struct{}, 1),
+		nudge:       make(chan struct{}, 1),
+		keepalive:   sseKeepaliveInterval,
+		nudgeWindow: sseNudgeWindow,
 	}
 }
 
-// Start begins the event fan-out loop.
+// SetStationToucher wires the station "screen online" write. A stream that
+// names its station (?station=<id>) touches it on connect and on every
+// heartbeat: with no view poll, the stream is what says a screen is alive.
+// Call before serving.
+func (h *EventHub) SetStationToucher(fn func(stationID int64)) { h.toucher = fn }
+
+// Start begins the event fan-out loop and the nudge coalescer.
 func (h *EventHub) Start() {
 	go h.run()
+	go h.nudgeLoop()
+}
+
+// Nudge asks for one sseNudgeTopic frame. Non-blocking and coalesced: every
+// nudge that lands before the pending one is sent rides it. The frame is
+// broadcast after the call, so it always follows the write that asked.
+func (h *EventHub) Nudge() {
+	select {
+	case h.nudge <- struct{}{}:
+	default:
+	}
+}
+
+// nudgeLoop waits out each burst of nudges and broadcasts one frame for it.
+func (h *EventHub) nudgeLoop() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC sse-nudgeLoop: %v\n%s", r, debug.Stack())
+		}
+	}()
+	for {
+		select {
+		case <-h.stopChan:
+			return
+		case <-h.nudge:
+			if !h.waitOutNudgeBurst() {
+				return
+			}
+			h.Broadcast(SSEEvent{Type: sseNudgeTopic, Data: map[string]string{"action": "nudge"}})
+		}
+	}
+}
+
+// waitOutNudgeBurst absorbs nudges for the window. False when the hub stopped.
+func (h *EventHub) waitOutNudgeBurst() bool {
+	timer := time.NewTimer(h.nudgeWindow)
+	defer timer.Stop()
+	for {
+		select {
+		case <-h.stopChan:
+			return false
+		case <-h.nudge:
+		case <-timer.C:
+			return true
+		}
+	}
 }
 
 // Stop shuts down the event hub. Idempotent: the check-then-act this
@@ -124,18 +240,36 @@ func (h *EventHub) Stop() {
 }
 
 // Broadcast sends an event to all connected clients.
+//
+// A DURABLE FRAME THE BUFFER CANNOT TAKE IS NOT DROPPED SILENTLY. It used to
+// be, with a log line: lost for every client, and no client could know. Now
+// every client is evicted (run, on overflow) and each reconnect refetches. A
+// lossy topic's overflow is still the best-effort drop it always was.
 func (h *EventHub) Broadcast(evt SSEEvent) {
 	select {
 	case h.broadcast <- evt:
 	default:
-		log.Printf("sse: broadcast buffer full, dropped %s event", evt.Type)
+		if lossySSETopics[evt.Type] {
+			return
+		}
+		log.Printf("sse: broadcast buffer full, lost %s event: evicting every client", evt.Type)
+		select {
+		case h.overflow <- struct{}{}:
+		default:
+		}
 	}
 }
 
-func (h *EventHub) register(c *sseClient) {
+// register adds a client and returns the seq it starts at: every frame
+// numbered above it is queued for the client, every frame at or below it
+// went out before it registered.
+func (h *EventHub) register(c *sseClient) int64 {
 	h.mu.Lock()
+	defer h.mu.Unlock()
+	start := h.seq.Load()
+	c.queued.Store(start)
 	h.clients[c] = struct{}{}
-	h.mu.Unlock()
+	return start
 }
 
 func (h *EventHub) unregister(c *sseClient) {
@@ -169,45 +303,66 @@ func (h *EventHub) run() {
 		case <-h.stopChan:
 			return
 		case evt := <-h.broadcast:
-			// Track per-client drop counts and evict the stuck ones
-			// after MaxConsecutiveDrops. Collect targets under
-			// RLock, evict under Lock outside the loop (avoid
-			// upgrade-during-iterate races on h.clients).
-			h.mu.RLock()
-			var stuck []*sseClient
-			lossy := lossySSETopics[evt.Type]
-			for c := range h.clients {
-				if lossy {
-					if evt.Type == sseDebugTopic && !c.debug {
-						continue
-					}
-					// Best-effort, and deliberately not logged: these are the
-					// bulk of the traffic, so a line per drop is itself noise.
-					// They also do not count toward eviction — falling behind
-					// on diagnostics is not the same as being stuck.
-					select {
-					case c.lossy <- evt:
-					default:
-					}
-					continue
-				}
-				select {
-				case c.events <- evt:
-					c.drops = 0
-				default:
-					c.drops++
-					log.Printf("sse: dropped %s event for slow client (drops=%d)", evt.Type, c.drops)
-					if c.drops > MaxConsecutiveDrops {
-						stuck = append(stuck, c)
-					}
-				}
-			}
-			h.mu.RUnlock()
-			for _, c := range stuck {
-				log.Printf("WARNING sse: evicting stuck client after %d consecutive drops", c.drops)
-				h.unregister(c)
-			}
+			h.fanOut(evt)
+		case <-h.overflow:
+			h.evictAll()
 		}
+	}
+}
+
+// fanOut numbers one frame and queues it for every client that wants it.
+//
+// A CLIENT WHOSE QUEUE IS FULL IS EVICTED ON ITS FIRST DURABLE DROP. It used to
+// stay connected through ten dropped frames, each a silent loss to a board
+// that rebuilds only on events. Evicted, its stream ends, the bus reconnects
+// and the board refetches on the connect. Targets are collected under RLock
+// and evicted under Lock outside the loop (no upgrade-during-iterate on
+// h.clients).
+func (h *EventHub) fanOut(evt SSEEvent) {
+	h.mu.RLock()
+	evt.seq = h.seq.Add(1)
+	var stuck []*sseClient
+	lossy := lossySSETopics[evt.Type]
+	for c := range h.clients {
+		if !c.wants(evt.Type) {
+			continue
+		}
+		if lossy {
+			// Best-effort, and deliberately not logged: these are the bulk
+			// of the traffic, so a line per drop is itself noise. They do not
+			// evict either (falling behind on diagnostics is not being
+			// stuck), and they do not move queued, so the heartbeat never
+			// reports one as lost.
+			select {
+			case c.lossy <- evt:
+			default:
+			}
+			continue
+		}
+		select {
+		case c.events <- evt:
+			c.queued.Store(evt.seq)
+		default:
+			stuck = append(stuck, c)
+		}
+	}
+	h.mu.RUnlock()
+	for _, c := range stuck {
+		log.Printf("WARNING sse: evicting a client that could not take %s (frame %d): its reconnect refetches", evt.Type, evt.seq)
+		h.unregister(c)
+	}
+}
+
+// evictAll ends every stream, after the hub's own buffer lost a durable frame.
+func (h *EventHub) evictAll() {
+	h.mu.RLock()
+	all := make([]*sseClient, 0, len(h.clients))
+	for c := range h.clients {
+		all = append(all, c)
+	}
+	h.mu.RUnlock()
+	for _, c := range all {
+		h.unregister(c)
 	}
 }
 
@@ -234,20 +389,25 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
+	q := r.URL.Query()
 	client := &sseClient{
 		events: make(chan SSEEvent, 64),
 		lossy:  make(chan SSEEvent, 16),
-		debug:  r.URL.Query().Get("debug") == "1",
+		debug:  q.Get("debug") == "1",
+		topics: parseTopics(q.Get("topics")),
 	}
-	h.register(client)
+	start := h.register(client)
 	defer h.unregister(client)
+	station, _ := strconv.ParseInt(q.Get("station"), 10, 64)
+	h.touch(station)
 
 	// Send connected event with the per-process build id so reconnects
-	// after an edge restart trigger a hard-reload on the client.
-	fmt.Fprintf(w, "event: connected\ndata: {\"build\":\"%s\"}\n\n", serverInstance)
+	// after an edge restart trigger a hard-reload on the client, and the seq
+	// the client starts at.
+	fmt.Fprintf(w, "event: connected\ndata: {\"build\":\"%s\",\"seq\":%d}\n\n", serverInstance, start)
 	flusher.Flush()
 
-	keepalive := time.NewTicker(sseKeepaliveInterval)
+	keepalive := time.NewTicker(h.keepalive)
 	defer keepalive.Stop()
 
 	for {
@@ -260,11 +420,7 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			data, err := json.Marshal(evt.Data)
-			if err != nil {
-				continue
-			}
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt.Type, data)
+			writeSSEFrame(w, evt)
 			flusher.Flush()
 		case evt, ok := <-client.lossy:
 			// Diagnostics. Ordering against the durable stream is not
@@ -274,19 +430,59 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			data, err := json.Marshal(evt.Data)
-			if err != nil {
-				continue
-			}
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt.Type, data)
+			writeSSEFrame(w, evt)
 			flusher.Flush()
 		case <-keepalive.C:
 			// Named heartbeat event carries the build id on the existing
 			// connection — mid-stream version comparison without reconnect.
 			// The bare `: keepalive` comment was stripped by EventSource and
 			// never reached the JS client, so it could not carry the build id.
-			fmt.Fprintf(w, "event: heartbeat\ndata: {\"build\":\"%s\"}\n\n", serverInstance)
+			//
+			// It carries the seq of the last durable frame queued for this
+			// client, read BEFORE the queue is drained: every frame up to it
+			// is in the queue by then (fanOut stores it after the send), so
+			// draining first means the heartbeat never runs ahead of a frame
+			// that is merely waiting to be written. A client whose last id is
+			// lower lost a frame and refetches (shared/utils.js).
+			seq := client.queued.Load()
+			if !drainSSEFrames(w, client.events) {
+				return
+			}
+			fmt.Fprintf(w, "event: heartbeat\ndata: {\"build\":\"%s\",\"seq\":%d}\n\n", serverInstance, seq)
 			flusher.Flush()
+			h.touch(station)
+		}
+	}
+}
+
+// touch marks a station's screen online, when the stream named one.
+func (h *EventHub) touch(station int64) {
+	if station > 0 && h.toucher != nil {
+		h.toucher(station)
+	}
+}
+
+// writeSSEFrame writes one frame with the hub's seq as its id.
+func writeSSEFrame(w http.ResponseWriter, evt SSEEvent) {
+	data, err := json.Marshal(evt.Data)
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(w, "event: %s\nid: %d\ndata: %s\n\n", evt.Type, evt.seq, data)
+}
+
+// drainSSEFrames writes every frame already queued, without waiting for more.
+// False when the queue was closed (the client was evicted).
+func drainSSEFrames(w http.ResponseWriter, events chan SSEEvent) bool {
+	for {
+		select {
+		case evt, ok := <-events:
+			if !ok {
+				return false
+			}
+			writeSSEFrame(w, evt)
+		default:
+			return true
 		}
 	}
 }
@@ -411,6 +607,31 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			if p, ok := evt.Payload.(engine.NodeBinsUpdatedEvent); ok {
 				sseEvt = SSEEvent{Type: "bins", Data: p}
 			}
+		case engine.EventSupplyRefusalChanged:
+			// The refusal table changed at a card (blank names: Core's snapshot was
+			// applied). A station drawing that loader window, or a cell waiting on
+			// that part, rebuilds. A state change: durable.
+			if p, ok := evt.Payload.(engine.SupplyRefusalChangedEvent); ok {
+				sseEvt = SSEEvent{Type: "supply-refusal", Data: p}
+			}
+		case engine.EventSourcingStateChanged:
+			// A sourcing report was stored, naming its processes. A station of a
+			// named process, or serving one, rebuilds (its picker's verdicts and
+			// its served cells' waiting). A state change: durable.
+			if p, ok := evt.Payload.(engine.SourcingStateChangedEvent); ok {
+				sseEvt = SSEEvent{Type: "sourcing", Data: p}
+			}
+		case engine.EventBoardNudge:
+			// A station view's input changed with no scoped event of its own.
+			// About one order: an order-update naming it, which only the boards
+			// drawing that order or its node rebuild on (eventConcerns). Else
+			// plant-wide: the coalesced nudge every station takes.
+			if p, ok := evt.Payload.(engine.BoardNudgeEvent); ok {
+				sseEvt = SSEEvent{Type: "order-update", Data: p}
+				break
+			}
+			h.Nudge()
+			return
 		default:
 			return
 		}

@@ -10,6 +10,9 @@ func (e *Engine) SetPayloadBinTypes(entries []protocol.PayloadBinTypeInfo) {
 	e.payloadBinTypesMu.Lock()
 	e.payloadBinTypes = entries
 	e.payloadBinTypesMu.Unlock()
+	// The carriers a tile offers are read from this catalog, and nothing else
+	// says it moved.
+	e.nudgeBoards()
 }
 
 // PayloadBinTypes returns the cached payload→dunnage mapping. Used by the

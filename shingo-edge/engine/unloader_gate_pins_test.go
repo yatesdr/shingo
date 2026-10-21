@@ -117,7 +117,7 @@ func TestPinUnloaderGate_Clear(t *testing.T) {
 	f := newUGFixture(t, "UGC")
 	f.core.set(f.nCore, true, "PART-UG")
 	before := f.core.nodeBinReads()
-	testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false), "ClearBin")
+	testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false, nil), "ClearBin")
 	f.checkGate(t, "CLEAR", f.core.nodeBinReads()-before, 1, 1, 0) // the gate's read; the clear answers hadBin
 }
 
@@ -171,7 +171,7 @@ func TestPinUnloaderGate_OffAtALoaderWithoutAutoPush(t *testing.T) {
 	f.core.set(f.w3Core, true, "PART-UG")
 	f.core.set(f.nCore, false, "")
 	before := f.core.nodeBinReads()
-	testutil.MustNoErr(t, f.eng.ClearBin(f.w3, "", false), "ClearBin at W3 (M, auto_push off)")
+	testutil.MustNoErr(t, f.eng.ClearBin(f.w3, "", false, nil), "ClearBin at W3 (M, auto_push off)")
 	if got := f.fulls(t, f.nCore) + f.fulls(t, f.n2Core) + f.fulls(t, f.w3Core); got != 0 {
 		t.Errorf("U1s after CLEAR at a loader without auto_push = %d, want 0", got)
 	}

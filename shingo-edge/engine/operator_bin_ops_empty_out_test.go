@@ -37,7 +37,7 @@ func TestEmptyOut_EnvelopeNamesNoPart(t *testing.T) {
 	info.OutboundDest = "EMPTY-TOTES"
 	seedCoreLoader(t, eng, info)
 
-	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false), "ClearBin")
+	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false, nil), "ClearBin")
 
 	var moves []protocol.OrderRequest
 	for _, m := range findOutboxByType(t, db, protocol.TypeOrderRequest) {

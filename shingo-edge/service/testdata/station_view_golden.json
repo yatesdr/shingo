@@ -77,45 +77,25 @@
         "node_name": "Press G1"
       },
       "can_skip": false,
+      "swap_ready": false,
+      "releases_as_pair": false,
+      "last_release_error": "Manifest sync failed at Core: bin 42 is claimed by another order",
       "orders": [
         {
           "id": 1,
-          "uuid": "gold-order-1",
           "order_type": "retrieve",
           "status": "pending",
-          "process_node_id": 1,
-          "retrieve_empty": false,
-          "quantity": 1,
-          "delivery_node": "PLN_G1",
-          "staging_node": "",
+          "payload_code": "PAY-1",
           "source_node": "SMN_01",
-          "load_type": "standard",
-          "waybill_id": null,
-          "external_ref": null,
-          "final_count": null,
-          "count_confirmed": false,
+          "delivery_node": "PLN_G1",
           "eta": null,
           "auto_confirm": false,
-          "payload_code": "PAY-1",
-          "payload_desc": "",
           "queue_reason": "",
-          "queue_code": "",
-          "authored_by": "edge",
-          "origin_id": "",
-          "origin_class": "",
           "lane_held": false,
-          "release_held": "Manifest sync failed at Core: bin 42 is claimed by another order",
           "departed": false,
-          "created_at": "<ts>",
-          "updated_at": "<ts>",
-          "process_name": "GOLD-PROC",
-          "process_node_name": "Press G1",
-          "station_name": "Golden Station"
+          "created_at": "<ts>"
         }
-      ],
-      "swap_ready": false,
-      "releases_as_pair": false,
-      "last_release_error": "Manifest sync failed at Core: bin 42 is claimed by another order"
+      ]
     },
     {
       "node": {
@@ -144,9 +124,9 @@
         "updated_at": "<ts>"
       },
       "can_skip": false,
-      "orders": null,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -174,10 +154,10 @@
         "updated_at": "<ts>"
       },
       "can_skip": false,
-      "orders": null,
       "swap_ready": false,
       "releases_as_pair": false,
-      "child_of_node": "Press G1"
+      "child_of_node": "Press G1",
+      "orders": null
     }
   ],
   "cell_version": "<version>",

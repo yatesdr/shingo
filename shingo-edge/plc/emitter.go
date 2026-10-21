@@ -12,4 +12,7 @@ type EventEmitter interface {
 	EmitCounterReadError(rpID int64, plcName, tagName, errMsg string)
 	EmitWarLinkConnected()
 	EmitWarLinkDisconnected(err error)
+	// EmitCurtainChanged says a curtain tag a station view reads changed its
+	// reading in the cache (Manager.WatchCurtainTag).
+	EmitCurtainChanged()
 }

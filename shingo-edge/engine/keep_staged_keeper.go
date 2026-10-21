@@ -230,13 +230,18 @@ func liftingOrigin(rows []domain.Order, c *processes.NodeClaim) ordermgr.Origin 
 }
 
 // setKeepStagedNote records the sentence the board shows for a keep-staged
-// line, blank to clear it.
+// line, blank to clear it, and nudges the boards when the sentence changed
+// (the keeper sets it on every sweep; only a change is news to a board).
 func (e *Engine) setKeepStagedNote(line, note string) {
+	var prev any
 	if note == "" {
-		e.keepStagedNotes.Delete(line)
-		return
+		prev, _ = e.keepStagedNotes.LoadAndDelete(line)
+	} else {
+		prev, _ = e.keepStagedNotes.Swap(line, note)
 	}
-	e.keepStagedNotes.Store(line, note)
+	if was, _ := prev.(string); was != note {
+		e.nudgeBoards()
+	}
 }
 
 // KeepStagedNote is the board's sentence for a keep-staged line (the station

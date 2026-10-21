@@ -350,3 +350,4 @@ func TestIngestEnvelope_CarriesTheDeclaration(t *testing.T) {
 	}
 	t.Logf("bytes: plain %d, stamped %d (+%d)", len(plain), len(stamped), len(stamped)-len(plain))
 }
+func (testEmitter) EmitOrderTouched(int64, string, *int64) {}

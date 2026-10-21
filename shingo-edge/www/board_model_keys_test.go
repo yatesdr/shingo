@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"shingoedge/domain"
 )
@@ -23,9 +24,7 @@ import (
 
 // keysLandingLater are reads the model makes ahead of the key: absent until
 // the item that sends it, and read as absent until then.
-var keysLandingLater = map[string]string{
-	"tile.assignment": "Core's window assignment, not yet sent",
-}
+var keysLandingLater = map[string]string{}
 
 // readsIn returns the distinct `<prefix>.<key>` reads in a JS source for each
 // receiver name, as "<prefix>.<key>".
@@ -83,11 +82,15 @@ func boardFixture() domain.OperatorStationView {
 				LeavesBare: true, PulledDirectly: true,
 				Buffer: []domain.BufferSpot{{Node: "SMN_F1", State: domain.SpotPartial}},
 			},
-			Orders: []domain.Order{},
+			// An order with every field set: the station's JSON carries the keys the
+			// glass reads and no other.
+			Orders: []domain.Order{fullOrder()},
 			BinState: &domain.NodeBinState{BinID: 3, BinLabel: "BIN-3", BinTypeCode: "TOTE-1", Bare: true,
 				PayloadCode: "PART-A", UOPRemaining: 7, Manifest: &manifest, ManifestConfirmed: true, Occupied: true,
 				// A held partial: its line, its arrival and its count (held_uop).
 				UOPCapacity: 10, HeldSince: "2026-10-18T10:00:00Z", HeldFor: "PRESS-1"},
+			BinTotes:       &domain.BinTotes{TotesOnCart: &have, TotesPerLayer: &have},
+			Assignment:     &domain.TileAssignment{BinType: "TOTE-1", Layers: &have},
 			BufferPartial:  &domain.BufferPartial{Node: "SMN_F1"},
 			SupplyRefusals: map[string]domain.SupplyRefusal{"PART-A": {}},
 			// The board's alarm sentences: a card's note.
@@ -97,8 +100,10 @@ func boardFixture() domain.OperatorStationView {
 		Serves: []domain.ServedRow{{Cell: "PRESS-1", Part: "PART-A", Role: "produce", Carrier: "TOTE-1",
 			HaveUOP: &have, CapacityUOP: 10, Incoming: true, Node: "PLN_1", ProcessID: 2, ProcessNodeID: 3,
 			ReorderUOP: 5, Waiting: true}},
-		Empties: &domain.Empties{Group: "EMPTY-SUPER", Rows: []domain.EmptiesRow{{BinType: "TOTE-1", Have: 1, Spots: 2}}},
-		Bins:    &domain.BinsKnown{Known: true},
+		Empties:     &domain.Empties{Group: "EMPTY-SUPER", Rows: []domain.EmptiesRow{{BinType: "TOTE-1", Have: 1, Spots: 2}}},
+		Bins:        &domain.BinsKnown{Known: true},
+		Containment: &domain.ContainmentKnown{Known: false},
+		Catalog:     &domain.CatalogKnown{Known: false},
 	}
 }
 
@@ -201,5 +206,74 @@ func TestGlass_ReadsNoBinCount(t *testing.T) {
 	}
 	if checked < 5 {
 		t.Errorf("checked %d modules; the glob has stopped seeing the board", checked)
+	}
+}
+
+// fullOrder is an order row with every field the Go struct carries set.
+func fullOrder() domain.Order {
+	s, n, at := "x", int64(1), time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	wait := 1
+	return domain.Order{ID: 1, UUID: "u-1", OrderType: "retrieve", Status: "in_transit", ProcessNodeID: &n,
+		RetrieveEmpty: true, Quantity: 1, DeliveryNode: "D", StagingNode: "S", SourceNode: "O", LoadType: "standard",
+		WaybillID: &s, ExternalRef: &s, FinalCount: &n, CountConfirmed: true, ETA: &s, AutoConfirm: true,
+		StagedExpireAt: &at, BinID: &n, PayloadCode: "PART-A", PayloadDesc: "d", SiblingOrderID: &n,
+		QueueReason: "r", QueueCode: "c", FaultSince: &at, FaultDeadline: &at, FaultNoticeAfterS: 1,
+		AuthoredBy: "a", OriginID: "o", OriginClass: "c", LaneHeld: true, StationWait: &wait, WaitKind: "k",
+		ReleaseHeld: "h", DepartedAt: &at, Departed: true, CreatedAt: at, UpdatedAt: at,
+		ProcessName: "p", ProcessNodeName: "pn", StationName: "sn"}
+}
+
+// stationOrderKeys are the keys of a tile's order row on the station's JSON:
+// the ones the glass reads (operator-modal.js, operator-window-state.js,
+// operator-render.js, operator-board-model.js, operator-state.js,
+// operator-util.js). The rest of domain.Order stays on the Go tile for the
+// engine and the Production page's template.
+var stationOrderKeys = []string{
+	"auto_confirm", "created_at", "delivery_node", "departed", "eta", "id", "lane_held", "order_type",
+	"payload_code", "queue_reason", "sibling_order_id", "source_node", "status",
+}
+
+// TestStationView_OrderRowsCarryTheKeysTheGlassReads: a tile's order on the
+// station's JSON carries exactly stationOrderKeys, and every read the glass
+// makes of an order is one of them.
+func TestStationView_OrderRowsCarryTheKeysTheGlassReads(t *testing.T) {
+	raw, err := json.Marshal(boardFixture())
+	if err != nil {
+		t.Fatalf("marshal view: %v", err)
+	}
+	var view struct {
+		Nodes []struct {
+			Orders []map[string]json.RawMessage `json:"orders"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(raw, &view); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	got := make([]string, 0)
+	for k := range view.Nodes[0].Orders[0] {
+		got = append(got, k)
+	}
+	sort.Strings(got)
+	if strings.Join(got, ",") != strings.Join(stationOrderKeys, ",") {
+		t.Errorf("a tile's order carries %v\nwant %v", got, stationOrderKeys)
+	}
+	want := map[string]bool{}
+	for _, k := range stationOrderKeys {
+		want[k] = true
+	}
+	re := `\b(?:o|order|inFlight|blocker|anchor|sibling|delivered|leftover)\.([a-z_]+)\b(?:[^(a-zA-Z_]|$)`
+	reads := 0
+	for _, name := range []string{"operator-modal.js", "operator-window-state.js", "operator-render.js",
+		"operator-board-model.js", "operator-util.js", "operator-release.js"} {
+		for _, r := range readsIn(readJS(t, name), map[string]string{re: "order"}) {
+			reads++
+			_, key, _ := strings.Cut(r, ".")
+			if !want[key] {
+				t.Errorf("%s reads order.%s, which a tile's order on the station's JSON does not carry", name, key)
+			}
+		}
+	}
+	if reads < 8 {
+		t.Fatalf("found %d order reads; the extraction has stopped seeing them", reads)
 	}
 }

@@ -135,9 +135,8 @@ func TestSpecChangeCoalescer_UnwiredHandlersAreInert(t *testing.T) {
 // The loop used to wake on the first doorbell and publish immediately, so the
 // pending set only absorbed edits that OVERLAPPED — and an apply is not
 // overlapping work, it is forty saves one after the other. Each one published
-// its own report and broadcast its own material-refresh, which put every board
-// on the plant into its 500 ms burst cadence for the duration; the polls that
-// provoked cost the box about twice what the apply itself did.
+// its own report. (The boards' refresh for the same burst is the /api write's
+// nudge, coalesced by EventHub.Nudge: TestSSE_NudgeIsCoalesced.)
 //
 // The window is what turns the burst into one drain. This Handlers is built
 // here, so the window is set on it rather than on a package var the running
@@ -145,12 +144,9 @@ func TestSpecChangeCoalescer_UnwiredHandlersAreInert(t *testing.T) {
 func TestSpecChangeCoalescer_ASequentialBurstIsOnePublish(t *testing.T) {
 	var mu sync.Mutex
 	var calls []int64
-	// The hub is NOT started: Broadcast only enqueues, so the buffered
-	// channel is the count. No production seam added for a test.
 	h := &Handlers{
 		specChangeCh:     make(chan struct{}, 1),
 		specChangeStop:   make(chan struct{}),
-		eventHub:         NewEventHub(),
 		specChangeWindow: 60 * time.Millisecond,
 	}
 	h.SetPlantSpecChangeHook(func(processID int64) {
@@ -171,35 +167,17 @@ func TestSpecChangeCoalescer_ASequentialBurstIsOnePublish(t *testing.T) {
 	// which a plain loop already is; what the loop under test coalesces is
 	// doorbells, not delays.
 	for i := 0; i < 40; i++ {
-		h.requestSpecChangePublishAndRefresh(4)
+		h.requestSpecChangePublish(4)
 	}
 	time.Sleep(h.specChangeWindow * 4)
 
 	mu.Lock()
 	gotCalls := append([]int64(nil), calls...)
 	mu.Unlock()
-	gotRefreshes := 0
-	for draining := true; draining; {
-		select {
-		case e := <-h.eventHub.broadcast:
-			if e.Type == "material-refresh" {
-				gotRefreshes++
-			}
-		default:
-			draining = false
-		}
-	}
 	if len(gotCalls) > 2 {
 		t.Errorf("forty sequential edits published %d reports (%v); the burst should collapse", len(gotCalls), gotCalls)
 	}
 	if len(gotCalls) == 0 {
 		t.Error("forty edits published nothing")
-	}
-	if gotRefreshes > 2 {
-		t.Errorf("forty sequential edits broadcast %d board refreshes; every board re-polls the "+
-			"full view on each one", gotRefreshes)
-	}
-	if gotRefreshes == 0 {
-		t.Error("the boards were never told the flow changed")
 	}
 }

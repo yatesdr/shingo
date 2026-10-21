@@ -62,8 +62,10 @@ func TestSSE_LossyFloodDoesNotEvictStateChanges(t *testing.T) {
 }
 
 // TestSSE_LossyDropsDoNotEvictClient pins the eviction rule. A client behind on
-// diagnostics is not stuck, so shedding those frames must not count toward
-// MaxConsecutiveDrops — otherwise a debug-log burst disconnects a healthy tab.
+// diagnostics is not stuck, so shedding those frames must not evict it (a
+// durable drop does, at once) — otherwise a debug-log burst disconnects a
+// healthy tab. The client asked for debug (?debug=1), so the frames reach its
+// lossy queue and overflow it rather than being filtered out before.
 func TestSSE_LossyDropsDoNotEvictClient(t *testing.T) {
 	h := NewEventHub()
 	h.Start()
@@ -72,26 +74,22 @@ func TestSSE_LossyDropsDoNotEvictClient(t *testing.T) {
 	c := &sseClient{
 		events: make(chan SSEEvent, 64),
 		lossy:  make(chan SSEEvent, 1),
+		debug:  true,
 	}
 	h.register(c)
 	defer h.unregister(c)
 
-	for i := range MaxConsecutiveDrops * 10 {
+	for i := range 100 {
 		h.Broadcast(SSEEvent{Type: "debug-log", Data: i})
 	}
 	time.Sleep(100 * time.Millisecond)
 
-	h.mu.RLock()
-	_, stillRegistered := h.clients[c]
-	drops := c.drops
-	h.mu.RUnlock()
-
-	if !stillRegistered {
+	if !registered(h, c) {
 		t.Fatal("client was evicted by a diagnostic flood — lossy drops must " +
-			"not count toward the stuck-client threshold")
+			"not evict; only a durable drop says a client lost state")
 	}
-	if drops != 0 {
-		t.Fatalf("drops = %d, want 0 — only durable drops indicate a stuck client", drops)
+	if c.queued.Load() != 0 {
+		t.Fatalf("queued = %d, want 0 — a lossy frame must not move the seq the heartbeat reports", c.queued.Load())
 	}
 }
 

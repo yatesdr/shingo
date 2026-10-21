@@ -129,7 +129,7 @@ type EngineOrchestration interface {
 	ReleaseChangeoverWaitFor(processID, processNodeID int64, purpose release.Purpose, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
 	RequestProduceSwap(nodeID int64, pick int64) (*engine.NodeOrderResult, error)
 	LoadBin(nodeID int64, payloadCode string, uopCount *int64, manifest []protocol.IngestManifestItem) error
-	ClearBin(nodeID int64, binTypeCode string, unload bool) error
+	ClearBin(nodeID int64, binTypeCode string, unload bool, layers *int) error
 	RecordBinCount(nodeID int64, actualUOP int, actor string) error
 	ClearLoaderHome(nodeID int64, bufferNode string) error
 	FetchMarketBins(nodeID int64) ([]engine.MarketBinInfo, error)

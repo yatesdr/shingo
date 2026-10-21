@@ -113,6 +113,21 @@ func (m *Manager) TransitionOrder(orderID int64, newStatus protocol.Status, deta
 	return m.lifecycle.Transition(orderID, newStatus, detail)
 }
 
+// AnnounceOrder tells the boards that draw an order to refetch: a handler
+// wrote order fields no scoped event announces (the queue reason, the fault
+// clock). Called once, after the handler's last write (messaging
+// HandleOrderUpdate). It names the order and its process node, read here (one
+// indexed read), so a board that draws neither does not rebuild: a global
+// nudge here rebuilt every board on every order update. An order this Edge
+// does not hold had nothing written, and is announced to nobody.
+func (m *Manager) AnnounceOrder(uuid string) {
+	o, err := m.db.GetOrderByUUID(uuid)
+	if err != nil || o == nil {
+		return
+	}
+	m.emitter.EmitOrderTouched(o.ID, o.UUID, o.ProcessNodeID)
+}
+
 // SetOrderQueueReason persists Core's blocking reason and its structured code
 // for a queued order. Called from the edge handler when an OrderUpdate (or boot
 // snapshot) carries QueueReason + QueueCode fields.

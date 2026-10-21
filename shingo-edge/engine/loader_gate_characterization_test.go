@@ -108,7 +108,7 @@ func loaderOnlyOps(e *Engine) []struct {
 		call func(nodeID int64) error
 	}{
 		{"LoadBin", func(id int64) error { return e.LoadBin(id, "PART-X", nil, nil) }},
-		{"ClearBin", func(id int64) error { return e.ClearBin(id, "", false) }},
+		{"ClearBin", func(id int64) error { return e.ClearBin(id, "", false, nil) }},
 		{"PushEmptyOut", func(id int64) error { return e.PushEmptyOut(id) }},
 		{"RequestFullBin", func(id int64) error { _, err := e.RequestFullBin(id, "PART-X"); return err }},
 	}

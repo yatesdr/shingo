@@ -89,6 +89,9 @@ type curtainTagCache interface {
 // a value that is not a BOOL, or a node whose polarity was never chosen. The
 // gate refuses every one of those fail-closed, so a button that stayed
 // enabled would promise a click the gate will refuse.
+//
+// EVERY TAG READ HERE IS WATCHED (plc.Manager WatchCurtainTag): the board does
+// not poll, so a change of the tag's reading nudges the boards to refetch.
 func stampViewCurtainState(mgr *plc.Manager, nodes []domain.StationNodeView) {
 	var cache curtainTagCache
 	if mgr != nil {
@@ -98,6 +101,13 @@ func stampViewCurtainState(mgr *plc.Manager, nodes []domain.StationNodeView) {
 		points := nodes[i].CurtainPoints
 		if len(points) == 0 {
 			continue
+		}
+		if mgr != nil {
+			for _, p := range points {
+				if p.PLCName != "" && p.TagName != "" {
+					mgr.WatchCurtainTag(p.PLCName, p.TagName)
+				}
+			}
 		}
 		ok := cache != nil
 		for _, p := range points {
@@ -141,16 +151,20 @@ func curtainPointReleased(cache curtainTagCache, p domain.CurtainPoint) bool {
 // the copy arrives). From a Core with no feeds nothing is ever held, so the
 // two direct reads stand: the flags, and one children read per destination.
 // Pinned by TestContainmentStamp_ReadsTheHeldCopyWhenCoreSpeaksFeeds.
-func enrichViewContainmentTargets(eng ServiceAccess, views []domain.OperatorStationView) {
+//
+// It reports whether Core's half was known: false only when the Edge has
+// containment claims, Core speaks feeds and no copy is held, which the
+// station view says (domain.ContainmentKnown) and the Production page ignores.
+func enrichViewContainmentTargets(eng ServiceAccess, views []domain.OperatorStationView) (known bool) {
 	claims, err := eng.StyleService().ListContainmentClaims()
 	if err != nil {
-		return
+		return true
 	}
 	coverage := containmentCoverage(claims)
 	// GROUP-AWARE MATCHING: a destination may be a node GROUP, whose bins sit
 	// on the group's children (Core mints their names group-prefixed, so the
 	// suffix matches too).
-	kids, flagged := containmentFromCore(eng, coverage)
+	kids, flagged, known := containmentFromCore(eng, coverage)
 	match := func(dest, nodeName string) bool {
 		if dest == nodeName {
 			return true
@@ -192,6 +206,7 @@ func enrichViewContainmentTargets(eng ServiceAccess, views []domain.OperatorStat
 			}
 		}
 	}
+	return known || len(coverage) == 0
 }
 
 // feedSpeaker is what the containment stamp asks of the engine beyond
@@ -205,13 +220,13 @@ type feedSpeaker interface {
 // containmentFromCore is Core's half of the containment stamp: the children of
 // each covered destination that is a group, and the payloads Core holds
 // contained. See enrichViewContainmentTargets for where each comes from.
-func containmentFromCore(eng ServiceAccess, coverage map[string]map[string]string) (kids map[string][]string, flagged map[string]bool) {
+func containmentFromCore(eng ServiceAccess, coverage map[string]map[string]string) (kids map[string][]string, flagged map[string]bool, known bool) {
 	kids = make(map[string][]string, len(coverage))
 	flagged = make(map[string]bool)
 	if fs, ok := eng.(feedSpeaker); ok && fs.CoreSpeaksFeeds() {
 		state, held := eng.LocalContainment()
 		if !held {
-			return kids, flagged
+			return kids, flagged, false
 		}
 		for _, d := range state.Destinations {
 			if _, covered := coverage[d.Node]; covered && len(d.Children) > 0 {
@@ -219,14 +234,14 @@ func containmentFromCore(eng ServiceAccess, coverage map[string]map[string]strin
 			}
 		}
 		markFlagged(flagged, state.Containment)
-		return kids, flagged
+		return kids, flagged, true
 	}
 	// A Core with no feeds. CoreAPI may be nil (a test stub, or a dev edge
 	// with no Core configured): the group half just degrades, the exact-match
 	// half still works.
 	coreAPI := eng.CoreAPI()
 	if coreAPI == nil {
-		return kids, flagged
+		return kids, flagged, true
 	}
 	for dest := range coverage {
 		children, cerr := coreAPI.FetchNodeChildren(dest, false)
@@ -242,7 +257,7 @@ func containmentFromCore(eng ServiceAccess, coverage map[string]map[string]strin
 	if state, err := coreAPI.GetContainment(); err == nil && state != nil {
 		markFlagged(flagged, state.Containment)
 	}
-	return kids, flagged
+	return kids, flagged, true
 }
 
 // markFlagged adds the payloads whose containment flag is active. A tile whose

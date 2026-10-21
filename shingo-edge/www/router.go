@@ -80,9 +80,6 @@ type Handlers struct {
 	specChangeMu      lockcheck.Mutex[lockorder.SpecChange]
 	specChangePending map[int64]struct{}
 	specChangeAll     bool
-	// specChangeRefresh asks the loop to broadcast one material-refresh for
-	// the burst it is draining. See specChangeLoop.
-	specChangeRefresh bool
 	specChangeCh      chan struct{}
 	specChangeStop    chan struct{}
 	// specChangeOnce guards the close of specChangeStop in the cleanup
@@ -147,6 +144,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 	funcMap := templateFuncs()
 	h.tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(templatesFS, "templates/*.html", "templates/partials/*.html"))
 
+	// A station's screen is online while its stream is: touched on connect
+	// and on every heartbeat (EventHub.HandleSSE), not by view requests, which
+	// an idle board no longer makes.
+	h.eventHub.SetStationToucher(func(id int64) { _ = eng.StationService().Touch(id, "online") })
 	h.eventHub.Start()
 	// Phase 6.0c: SSE wiring uses the local *engine.Engine parameter
 	// directly; no need for the field on *Handlers since no handler
@@ -272,6 +273,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 
 		// ── API routes ──────────────────────────────────────────
 		r.Route("/api", func(r chi.Router) {
+			// Every write below, public or admin, today's and any added
+			// later, nudges the boards when it answers 2xx.
+			r.Use(h.nudgeAfterWrite)
 
 			// ── Public API (shop floor actions, no auth) ────────
 
@@ -587,24 +591,16 @@ func (h *Handlers) specChangeLoop() {
 			// edits — a preset applied to 40 parts is 40 saves, one after the
 			// other — collapsed into nothing at all: the set only absorbed
 			// edits that overlapped. One short wait turns the burst into one
-			// publish and one board refresh.
+			// publish. (The boards' refresh is the /api write's nudge,
+			// coalesced the same way by EventHub.Nudge.)
 			//
 			// It delays a single edit by the window, which is the trade. The
-			// consumers are Core's claims mirror and a board re-poll; neither
-			// is a control loop, and both were already behind an HTTP round
-			// trip.
+			// consumer is Core's claims mirror; it is not a control loop, and
+			// it was already behind an HTTP round trip.
 			if !h.waitOutSpecChangeBurst() {
 				return
 			}
-			all, ids, refresh := h.takeSpecChangePending()
-			// ONE BROADCAST PER BURST, NOT PER SAVE. Every board re-polls the
-			// full view on this event, at 500 ms, on a Pi with one SQLite
-			// connection — so a 40-part apply firing it per save held every
-			// station on the burst cadence for the whole apply, and the polls
-			// it provoked cost the box about twice what the apply itself did.
-			if refresh {
-				h.eventHub.Broadcast(SSEEvent{Type: "material-refresh", Data: map[string]string{"action": "flow-saved"}})
-			}
+			all, ids := h.takeSpecChangePending()
 			if all {
 				h.fireSpecChangeHook(func() {
 					if h.onPlantSpecChangeAll != nil {
@@ -649,15 +645,12 @@ func (h *Handlers) waitOutSpecChangeBurst() bool {
 
 // takeSpecChangePending empties the pending set under the mutex and returns
 // what it held: the whole-plant flag, otherwise the process ids in sorted
-// order so a burst publishes deterministically, and whether the boards were
-// asked to refresh.
-func (h *Handlers) takeSpecChangePending() (all bool, ids []int64, refresh bool) {
+// order so a burst publishes deterministically.
+func (h *Handlers) takeSpecChangePending() (all bool, ids []int64) {
 	h.specChangeMu.Lock()
 	defer h.specChangeMu.Unlock()
 	all = h.specChangeAll
 	h.specChangeAll = false
-	refresh = h.specChangeRefresh
-	h.specChangeRefresh = false
 	if !all {
 		ids = make([]int64, 0, len(h.specChangePending))
 		for id := range h.specChangePending {
@@ -666,21 +659,7 @@ func (h *Handlers) takeSpecChangePending() (all bool, ids []int64, refresh bool)
 		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	}
 	clear(h.specChangePending)
-	return all, ids, refresh
-}
-
-// requestSpecChangePublishAndRefresh is requestSpecChangePublish plus the
-// board refresh, coalesced together. A flow save is the one write that needs
-// both, and it is the write an apply repeats forty times.
-func (h *Handlers) requestSpecChangePublishAndRefresh(processID int64) {
-	h.specChangeMu.Lock()
-	if h.specChangePending == nil {
-		h.specChangePending = map[int64]struct{}{}
-	}
-	h.specChangePending[processID] = struct{}{}
-	h.specChangeRefresh = true
-	h.specChangeMu.Unlock()
-	h.ringSpecChangeDoorbell()
+	return all, ids
 }
 
 // fireSpecChangeHook runs one publish inside the per-call recover, so a panic
@@ -739,8 +718,8 @@ func (h *Handlers) ringSpecChangeDoorbell() {
 // so the default http.ServeContent ETag (name+size+0) doesn't change across
 // rebuilds. Browsers happily 304 against the stale ETag and reuse the cache,
 // which is what made the operator-station ES modules stick on old code after
-// restarts despite the cacheBust query string on the parent <script> tag
-// (ES module imports inherit no version query). Tying ETag to serverInstance
+// restarts (ES module imports carry no version query, and no template
+// stamps one: TestTemplates_NoCacheBustQuery). Tying ETag to serverInstance
 // makes the busting unconditional.
 func serverInstanceETag(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -752,6 +731,31 @@ func serverInstanceETag(next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// nudgeAfterWrite sends the boards one nudge (EventHub.Nudge, coalesced per
+// burst) after a write that answered 2xx. The station board does not poll: an
+// input of its view that changed with no event would stay stale on the glass
+// until something else happened to move it. This is the door for every /api
+// write at once, rather than a broadcast each handler must remember (eleven
+// did not: STOPS-tote-stacks §4). A refused or failed write changed nothing
+// to draw. The nudge is sent after the handler returned, so after its write.
+// Hot paths keep their scoped events; a board that already refetched on one
+// answers the nudge with a 304.
+func (h *Handlers) nudgeAfterWrite(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		next.ServeHTTP(ww, r)
+		// 0: the handler wrote nothing, which net/http answers 200.
+		if s := ww.Status(); s == 0 || (s >= 200 && s < 300) {
+			h.eventHub.Nudge()
+		}
 	})
 }
 

@@ -3,6 +3,8 @@ package domain
 import (
 	"encoding/json"
 	"time"
+
+	"shingo/protocol"
 )
 
 // NodeBinState is the bin information fetched from Core via telemetry
@@ -75,6 +77,17 @@ type StationNodeView struct {
 	// bin was read over HTTP and stocked is its count above zero. Not
 	// serialised: the station's JSON carries it as bin_state.stocked.
 	BinStocked *bool `json:"-"`
+	// BinTotes are the cart's tote numbers from its node-bins row (the copy or
+	// the HTTP answer): nil when the row carried neither. Not serialised: the
+	// station's JSON carries them on bin_state, and NodeBinState, which the
+	// Production page marshals whole, carries none.
+	BinTotes *BinTotes `json:"-"`
+	// Assignment is what the cart at this window is asked to go back as, from
+	// the group line of the Edge's copy of Core's node-bins feed: a bin type,
+	// and for a type with layer wants a height of it. Nil on every other tile,
+	// and on a Core that sends no group lines. Stamped by
+	// StationService.StampBins.
+	Assignment *TileAssignment `json:"assignment,omitempty"`
 	// SwapReady is true when both tracked orders for a two-robot swap are
 	// in "staged" status — i.e. both robots are holding at their wait
 	// points and a single coordinated release can move both forward.
@@ -297,6 +310,48 @@ type OperatorStationView struct {
 	// engine.FeedAsOfAfter; the copy is drawn all the same. Absent where the
 	// view was built with no bins stamp. Stamped by www stampStationBins.
 	Bins *BinsKnown `json:"bins,omitempty"`
+	// Containment is set, known false, only while containment is not known: the
+	// Edge has containment claims, Core speaks feeds and no copy of its
+	// containment feed is held yet, so no tile's chip or release target could
+	// be stamped. Absent otherwise. The station's sign says it. Stamped by www
+	// apiGetOperatorStationView; pinned by
+	// TestStationView_SaysWhenContainmentIsNotKnown.
+	Containment *ContainmentKnown `json:"containment,omitempty"`
+	// Catalog says when the Edge's copy of Core's payload catalog (each
+	// part's capacity and manifest lines; the load modal reads them) is old:
+	// set with AsOf when the held copy has not been current for longer than
+	// engine.FeedAsOfAfter, known false only while Core speaks feeds and no
+	// copy is held at all. Absent otherwise. The station's sign says it.
+	// Stamped by www stampStationCatalog; pinned by
+	// TestStationCatalog_SaysAsOfAndNotKnown.
+	Catalog *CatalogKnown `json:"catalog,omitempty"`
+}
+
+// CatalogKnown is whether a view's payload catalog is known, and when it was
+// last current when that is long enough ago to say.
+type CatalogKnown struct {
+	Known bool       `json:"known"`
+	AsOf  *time.Time `json:"as_of,omitempty"`
+}
+
+// ContainmentKnown is whether a view's containment is known.
+type ContainmentKnown struct {
+	Known bool `json:"known"`
+}
+
+// BinTotes are a cart's tote numbers: the totes standing on it and the totes
+// a layer of its type holds. Nil is unknown; 0 totes is a base.
+type BinTotes struct {
+	TotesOnCart   *int
+	TotesPerLayer *int
+}
+
+// TileAssignment is what a window's cart is asked to go back as: a bin type,
+// and a height in layers for a type with layer wants (nil: the type, any
+// height).
+type TileAssignment struct {
+	BinType string `json:"bin_type"`
+	Layers  *int   `json:"layers,omitempty"`
 }
 
 // BinsKnown is whether a view's bins are known, and as of when.
@@ -345,8 +400,16 @@ type Empties struct {
 // group, and the group's open spots (one count for the group, on every row).
 type EmptiesRow struct {
 	BinType string `json:"bin_type"`
-	Have    int    `json:"have"`
-	Spots   int    `json:"spots"`
+	// Layers is set on a height's row: the empties of the type standing at
+	// exactly that many layers (totes_on_cart = layers x totes_per_layer).
+	// Nil on the type's row.
+	Layers *int `json:"layers,omitempty"`
+	Have   int  `json:"have"`
+	// Want is the group's want of the type, or of the height on a height's
+	// row, from the group line of the Edge's copy of Core's node-bins feed.
+	// Nil where the group wants none, and on a Core that sends no group lines.
+	Want  *int `json:"want,omitempty"`
+	Spots int  `json:"spots"`
 }
 
 // TileLoader is a loader tile's facts as the board reads them: the Core
@@ -428,9 +491,9 @@ type ServedRow struct {
 }
 
 // stationBinState is a tile's bin as the station's JSON carries it:
-// NodeBinState with Stocked in place of the count. The board asks only
-// whether a bin holds parts, never how many; the Production page marshals
-// NodeBinState itself and prints the count. Pinned by
+// NodeBinState with Stocked in place of the count, and the cart's tote
+// numbers. The board asks only whether a bin holds parts, never how many; the
+// Production page marshals NodeBinState itself and prints the count. Pinned by
 // TestStationNodeView_JSONShape.
 type stationBinState struct {
 	BinID             int64   `json:"bin_id,omitempty"`
@@ -453,14 +516,56 @@ type stationBinState struct {
 	// a carrier waiting in its partial home is drawn from by nothing, so its
 	// count does not tick. 0 for every carrier that is not held.
 	HeldUOP int `json:"held_uop,omitempty"`
+	// TotesOnCart and TotesPerLayer are the cart's tote numbers
+	// (StationNodeView.BinTotes), absent when unknown.
+	TotesOnCart   *int `json:"totes_on_cart,omitempty"`
+	TotesPerLayer *int `json:"totes_per_layer,omitempty"`
+}
+
+// stationOrder is a tile's order as the station's JSON carries it: the keys
+// the glass reads and no other (domain.Order has some forty; the board polls
+// every tile's orders). The Go tile keeps the whole Order for the engine and
+// the Production page's template. Pinned by
+// TestStationView_OrderRowsCarryTheKeysTheGlassReads (www).
+type stationOrder struct {
+	ID             int64              `json:"id"`
+	OrderType      protocol.OrderType `json:"order_type"`
+	Status         protocol.Status    `json:"status"`
+	PayloadCode    string             `json:"payload_code"`
+	SourceNode     string             `json:"source_node"`
+	DeliveryNode   string             `json:"delivery_node"`
+	ETA            *string            `json:"eta"`
+	AutoConfirm    bool               `json:"auto_confirm"`
+	QueueReason    string             `json:"queue_reason"`
+	SiblingOrderID *int64             `json:"sibling_order_id,omitempty"`
+	LaneHeld       bool               `json:"lane_held"`
+	Departed       bool               `json:"departed"`
+	CreatedAt      time.Time          `json:"created_at"`
+}
+
+func stationOrders(orders []Order) []stationOrder {
+	if orders == nil {
+		return nil
+	}
+	out := make([]stationOrder, len(orders))
+	for i, o := range orders {
+		out[i] = stationOrder{
+			ID: o.ID, OrderType: o.OrderType, Status: o.Status, PayloadCode: o.PayloadCode,
+			SourceNode: o.SourceNode, DeliveryNode: o.DeliveryNode, ETA: o.ETA, AutoConfirm: o.AutoConfirm,
+			QueueReason: o.QueueReason, SiblingOrderID: o.SiblingOrderID, LaneHeld: o.LaneHeld,
+			Departed: o.Departed, CreatedAt: o.CreatedAt,
+		}
+	}
+	return out
 }
 
 // MarshalJSON is the station's JSON for a tile: a loader tile carries no
-// active_claim (the board reads Loader), and the bin carries Stocked rather
-// than its count (stationBinState; BinStocked when the bin came from the
-// Edge's copy of the feed, which has no count). The Go tile keeps both for the engine and
-// the Production page's template, which reads neither through JSON but the
-// bin, which it marshals as a NodeBinState. Pinned by
+// active_claim (the board reads Loader), the bin carries Stocked rather than
+// its count (stationBinState; BinStocked when the bin came from the Edge's
+// copy of the feed, which has no count), and an order carries the keys the
+// glass reads (stationOrder). The Go tile keeps all three whole for the engine
+// and the Production page's template, which reads them through Go fields and
+// marshals only the bin, as a NodeBinState. Pinned by
 // TestStationNodeView_JSONShape.
 func (v StationNodeView) MarshalJSON() ([]byte, error) {
 	type plain StationNodeView
@@ -483,12 +588,18 @@ func (v StationNodeView) MarshalJSON() ([]byte, error) {
 		if b.HeldSince != "" {
 			bin.HeldUOP = b.UOPRemaining
 		}
+		if t := p.BinTotes; t != nil {
+			bin.TotesOnCart, bin.TotesPerLayer = t.TotesOnCart, t.TotesPerLayer
+		}
 		p.BinState = nil
 	}
+	orders := stationOrders(p.Orders)
+	p.Orders = nil
 	return json.Marshal(struct {
 		plain
+		Orders   []stationOrder   `json:"orders"`
 		BinState *stationBinState `json:"bin_state,omitempty"`
-	}{p, bin})
+	}{p, orders, bin})
 }
 
 // ReleasePurpose is one decision a node owes: "ready", "tooling_done" or

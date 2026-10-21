@@ -36,3 +36,6 @@ func (NoOpOrderEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderTy
 }
 
 func (NoOpOrderEmitter) EmitOrderFaulted(orderID int64, orderUUID, reason string) {}
+
+// EmitOrderTouched implements orders.EventEmitter.
+func (NoOpOrderEmitter) EmitOrderTouched(int64, string, *int64) {}

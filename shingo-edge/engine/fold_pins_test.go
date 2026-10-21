@@ -40,7 +40,7 @@ func TestPinFold_SingleWindowCycleReads(t *testing.T) {
 		}
 	}
 
-	step("CLEAR", 0, func() { testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false), "ClearBin") })
+	step("CLEAR", 0, func() { testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false, nil), "ClearBin") })
 	u2 := f.onlyU2(t)
 	step("pickup", 1, func() { f.pickUp(t, u2) })
 	if got := f.fulls(t, f.nCore); got != 1 {
@@ -168,7 +168,7 @@ func TestPinFold_ClearAgainstTodaysCoreResponse(t *testing.T) {
 	c := newClearShapeCore(t, false, map[string]any{"status": "ok", "bin_id": 5, "bin_label": "B5", "delta_epoch": 2})
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(c.srv.URL)
-	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false), "ClearBin")
+	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false, nil), "ClearBin")
 	if n, _ := countMovesTo(t, db, nodeID, "EMPTY-TOTES"); n != 1 {
 		t.Errorf("U2s after a CLEAR against today's Core answer = %d, want 1", n)
 	}
@@ -188,7 +188,7 @@ func TestPinFold_ClearWhenThePreReadFails(t *testing.T) {
 	c := newClearShapeCore(t, true, map[string]any{"status": "ok", "bin_id": 5, "bin_label": "B5", "delta_epoch": 2})
 	eng := testEngine(t, db)
 	eng.coreClient = stubCoreClient(c.srv.URL)
-	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false), "ClearBin")
+	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false, nil), "ClearBin")
 	if n, _ := countMovesTo(t, db, nodeID, "EMPTY-TOTES"); n != 1 {
 		t.Errorf("U2s after a CLEAR with node-bins failing = %d, want 1", n)
 	}

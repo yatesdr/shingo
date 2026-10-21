@@ -46,11 +46,8 @@ func (f *flushRecorder) snapshot() string {
 // the build id.
 func TestSSE_HeartbeatCarriesBuildID(t *testing.T) {
 	t.Parallel()
-	prevInterval := sseKeepaliveInterval
-	sseKeepaliveInterval = 25 * time.Millisecond
-	t.Cleanup(func() { sseKeepaliveInterval = prevInterval })
-
 	hub := NewEventHub()
+	hub.keepalive = 25 * time.Millisecond
 	hub.Start()
 	t.Cleanup(hub.Stop)
 

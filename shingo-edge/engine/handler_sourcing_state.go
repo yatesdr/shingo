@@ -2,8 +2,10 @@ package engine
 
 import (
 	"log"
+	"slices"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 )
 
 // HandleSourcingState persists Core's sourceability feed (SubjectSourcingState)
@@ -27,7 +29,23 @@ func (e *Engine) HandleSourcingState(report protocol.SourcingStateReport) {
 	if err != nil {
 		log.Printf("sourcing_state: persist (snapshot=%v, %d states): %v",
 			report.Snapshot, len(report.States), err)
+		return
 	}
+	// Every stored report is announced, the periodic full one included: a
+	// station rebuilds when it draws a named process (its own, or a served
+	// cell's). Nothing is read to tell whether a verdict moved. Pinned by
+	// TestSourcingStateChanged_EveryReport.
+	var named []string
+	for _, s := range report.States {
+		if !slices.Contains(named, s.ProcessID) {
+			named = append(named, s.ProcessID)
+		}
+	}
+	e.Events.Emit(Event{
+		Type:      EventSourcingStateChanged,
+		Timestamp: clock.Now(),
+		Payload:   SourcingStateChangedEvent{Processes: named},
+	})
 }
 
 // SourcingStateForProcess returns the cached sourceability verdicts for a

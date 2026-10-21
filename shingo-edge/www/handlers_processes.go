@@ -254,7 +254,6 @@ func (h *Handlers) apiSetActiveStyle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.requestBackup("active-style-updated")
-	h.eventHub.Broadcast(SSEEvent{Type: "material-refresh", Data: map[string]string{"action": "active-style-changed"}})
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 

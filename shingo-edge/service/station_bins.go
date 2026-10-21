@@ -235,12 +235,16 @@ func BoardBinsFromCopy(rows map[string]protocol.NodeBinsRow) map[string]BoardBin
 //     that is a tile of this board (stripTile);
 //   - on a home holding a stocked bin of its part, the spot whose partial its
 //     clear would bring home (buffer_partial);
-//   - the board's empties, from its consume loader's outbound group.
+//   - the board's empties, from its consume loader's outbound group;
+//   - each cart's tote numbers, from its row;
+//   - from the group lines of the Edge's copy (groups; nil over HTTP and from
+//     a Core that sends none): each window's assignment, and the empties'
+//     wants, per type and per wanted height.
 //
 // read is false when the bins are not known (the read failed, or no copy is
 // held): no tile gets a bin, the strip's spots are unknown, and nothing else
 // is stamped.
-func (s *StationService) StampBins(view *domain.OperatorStationView, rows map[string]BoardBin, read bool) {
+func (s *StationService) StampBins(view *domain.OperatorStationView, rows map[string]BoardBin, read bool, groups []protocol.NodeBinsGroup) {
 	held := s.heldBinNodes()
 	stripped := map[domain.LoaderID]bool{}
 	for i := range view.Nodes {
@@ -252,6 +256,12 @@ func (s *StationService) StampBins(view *domain.OperatorStationView, rows map[st
 				stocked := row.Stocked
 				tile.BinStocked = &stocked
 			}
+			if row.TotesOnCart != nil || row.TotesPerLayer != nil {
+				tile.BinTotes = &domain.BinTotes{TotesOnCart: row.TotesOnCart, TotesPerLayer: row.TotesPerLayer}
+			}
+		}
+		if a := assignmentAt(groups, name); a != nil && read {
+			tile.Assignment = a
 		}
 		if tile.Loader == nil || s.loaders == nil {
 			continue
@@ -267,7 +277,7 @@ func (s *StationService) StampBins(view *domain.OperatorStationView, rows map[st
 		tile.BufferPartial = bufferPartialFor(l, name, rows)
 	}
 	if read {
-		view.Empties = s.boardEmpties(view, held.outbound, rows)
+		view.Empties = s.boardEmpties(view, held.outbound, rows, groups)
 	}
 }
 
@@ -424,7 +434,14 @@ func bufferPartialFor(l *domain.Loader, node string, rows map[string]BoardBin) *
 // there; and the group's open spots. Nil when the board has no such loader.
 // An empty is an occupied bin with no part that is not stocked; a bare cart is
 // not one.
-func (s *StationService) boardEmpties(view *domain.OperatorStationView, outbound map[string][]string, rows map[string]BoardBin) *domain.Empties {
+//
+// With the group's line from the Edge's copy (groups), a type's row carries
+// the group's want of it, and each wanted height has a row of its own: the
+// empties of the type standing at exactly that height (heightOf), and the
+// want. With no line, nothing more. Pinned by TestStampBins_Empties and
+// TestStampBins_EmptiesWantsAndHeights.
+func (s *StationService) boardEmpties(view *domain.OperatorStationView, outbound map[string][]string,
+	rows map[string]BoardBin, groups []protocol.NodeBinsGroup) *domain.Empties {
 	group := ""
 	for _, tile := range view.Nodes {
 		if tile.Loader == nil || tile.Loader.Role != string(domain.RoleConsume) || tile.Loader.LeavesBare {
@@ -444,6 +461,17 @@ func (s *StationService) boardEmpties(view *domain.OperatorStationView, outbound
 			have[row.Carrier] += 0
 		}
 	}
+	var line *protocol.NodeBinsGroup
+	for i := range groups {
+		if groups[i].Group == group {
+			line = &groups[i]
+		}
+	}
+	type height struct {
+		binType string
+		layers  int
+	}
+	atHeight := map[height]int{}
 	open := 0
 	for _, member := range outbound[group] {
 		row, ok := rows[member]
@@ -453,12 +481,75 @@ func (s *StationService) boardEmpties(view *domain.OperatorStationView, outbound
 			open++
 		case row.PayloadCode == "" && !row.Stocked && !row.Bare && row.BinTypeCode != "":
 			have[row.BinTypeCode]++
+			if layers, ok := heightOf(row.NodeBinsRow); ok {
+				atHeight[height{row.BinTypeCode, layers}]++
+			}
 		}
 	}
-	out := &domain.Empties{Group: group, Rows: make([]domain.EmptiesRow, 0, len(have))}
-	for binType, n := range have {
-		out.Rows = append(out.Rows, domain.EmptiesRow{BinType: binType, Have: n, Spots: open})
+	wants := map[string]*int{}
+	var heights []domain.EmptiesRow
+	if line != nil {
+		for _, w := range line.Wants {
+			want := w.Want
+			if w.Layers == nil {
+				wants[w.BinType] = &want
+				have[w.BinType] += 0
+				continue
+			}
+			layers := *w.Layers
+			heights = append(heights, domain.EmptiesRow{BinType: w.BinType, Layers: &layers,
+				Have: atHeight[height{w.BinType, layers}], Want: &want, Spots: open})
+			have[w.BinType] += 0
+		}
 	}
-	sort.Slice(out.Rows, func(i, j int) bool { return out.Rows[i].BinType < out.Rows[j].BinType })
+	out := &domain.Empties{Group: group, Rows: make([]domain.EmptiesRow, 0, len(have)+len(heights))}
+	for binType, n := range have {
+		out.Rows = append(out.Rows, domain.EmptiesRow{BinType: binType, Have: n, Want: wants[binType], Spots: open})
+	}
+	out.Rows = append(out.Rows, heights...)
+	sort.SliceStable(out.Rows, func(i, j int) bool {
+		a, b := out.Rows[i], out.Rows[j]
+		if a.BinType != b.BinType {
+			return a.BinType < b.BinType
+		}
+		if (a.Layers == nil) != (b.Layers == nil) {
+			return a.Layers == nil
+		}
+		return a.Layers != nil && *a.Layers < *b.Layers
+	})
 	return out
+}
+
+// heightOf is the height in layers a cart stands at: its totes are an exact
+// multiple of its type's totes per layer. A remainder, or a number not known,
+// is no height (the cart counts toward its type and toward no height, as the
+// keeper counts it).
+func heightOf(row protocol.NodeBinsRow) (int, bool) {
+	if row.TotesOnCart == nil || row.TotesPerLayer == nil || *row.TotesPerLayer <= 0 {
+		return 0, false
+	}
+	if *row.TotesOnCart%*row.TotesPerLayer != 0 {
+		return 0, false
+	}
+	return *row.TotesOnCart / *row.TotesPerLayer, true
+}
+
+// assignmentAt is the group lines' assignment for the window at node, or nil.
+func assignmentAt(groups []protocol.NodeBinsGroup, node string) *domain.TileAssignment {
+	if node == "" {
+		return nil
+	}
+	for _, g := range groups {
+		for _, a := range g.Assignments {
+			if a.Node == node {
+				out := &domain.TileAssignment{BinType: a.BinType}
+				if a.Layers != nil {
+					layers := *a.Layers
+					out.Layers = &layers
+				}
+				return out
+			}
+		}
+	}
+	return nil
 }

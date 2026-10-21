@@ -8,9 +8,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"hash/fnv"
 	"net/http"
+	"time"
 
-	"shingo/protocol"
 	"shingoedge/domain"
 )
 
@@ -25,7 +27,6 @@ func (h *Handlers) handleOperatorStationDisplay(w http.ResponseWriter, r *http.R
 		http.Error(w, "station not found", http.StatusNotFound)
 		return
 	}
-	_ = h.engine.StationService().Touch(id, "online")
 	data := map[string]any{
 		"Page":    "operator-display",
 		"Station": station,
@@ -50,8 +51,11 @@ func (h *Handlers) apiGetOperatorStationView(w http.ResponseWriter, r *http.Requ
 		}
 		// The bins first: the containment stamp reads each tile's bin.
 		stampStationBins(h.engine, id, v)
+		stampStationCatalog(h.engine, v, time.Now())
 		views := []domain.OperatorStationView{*v}
-		enrichViewContainmentTargets(h.engine, views)
+		if !enrichViewContainmentTargets(h.engine, views) {
+			v.Containment = &domain.ContainmentKnown{Known: false}
+		}
 		stampViewCurtainState(h.engine.PLCManager(), views[0].Nodes)
 		v.Nodes = views[0].Nodes
 		return v, nil
@@ -66,7 +70,6 @@ func (h *Handlers) apiGetOperatorStationView(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusNotFound, "station not found")
 		return
 	}
-	_ = h.engine.StationService().Touch(id, "online")
 	// Per-style sourceability for the operator's changeover picker, from the SAME
 	// mapping the admin changeover page uses (styleSourcingViewFrom) so the two
 	// screens can't disagree about whether a style is sourceable. Read from Edge's
@@ -82,15 +85,68 @@ func (h *Handlers) apiGetOperatorStationView(w http.ResponseWriter, r *http.Requ
 	for _, s := range h.engine.SourcingStateForProcess(view.Process.Name) {
 		sourcing[s.StyleID] = styleSourcingViewFrom(s)
 	}
-	writeJSON(w, struct {
+	body, err := json.Marshal(struct {
 		*domain.OperatorStationView
-		PayloadBinTypes []protocol.PayloadBinTypeInfo `json:"payload_bin_types,omitempty"`
-		SourcingByStyle map[string]styleSourcingView  `json:"sourcing_by_style,omitempty"`
+		// Station shadows the view's: the station's JSON carries no clock.
+		Station         viewStation                  `json:"station"`
+		SourcingByStyle map[string]styleSourcingView `json:"sourcing_by_style,omitempty"`
 	}{
 		OperatorStationView: view,
-		PayloadBinTypes:     h.engine.PayloadBinTypes(),
+		Station:             viewStationOf(view.Station),
 		SourcingByStyle:     sourcing,
 	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeConditional(w, r, body)
+}
+
+// viewStation is the station as its own board's JSON carries it: domain.Station
+// without its clocks. last_seen_at and updated_at moved on every throttled
+// Touch (15 s) and nothing on the glass draws them, so an idle board's view
+// changed four times a minute for nothing; created_at is drawn nowhere either.
+// The Processes and Production pages keep domain.Station whole. Pinned by
+// TestStationView_CarriesNoStationClock.
+type viewStation struct {
+	ID               int64  `json:"id"`
+	ProcessID        int64  `json:"process_id"`
+	Code             string `json:"code"`
+	Name             string `json:"name"`
+	Note             string `json:"note"`
+	AreaLabel        string `json:"area_label"`
+	Sequence         int    `json:"sequence"`
+	ControllerNodeID string `json:"controller_node_id"`
+	Enabled          bool   `json:"enabled"`
+	HealthStatus     string `json:"health_status"`
+	ProcessName      string `json:"process_name"`
+}
+
+func viewStationOf(s domain.Station) viewStation {
+	return viewStation{
+		ID: s.ID, ProcessID: s.ProcessID, Code: s.Code, Name: s.Name, Note: s.Note, AreaLabel: s.AreaLabel,
+		Sequence: s.Sequence, ControllerNodeID: s.ControllerNodeID, Enabled: s.Enabled,
+		HealthStatus: s.HealthStatus, ProcessName: s.ProcessName,
+	}
+}
+
+// writeConditional writes a JSON body with a weak ETag of its bytes, and
+// answers 304 with no body when the request quotes that ETag: an unchanged
+// view costs the board no bytes, no parse and no render. The build still runs;
+// the body is what tells. no-cache makes the browser ask every time. Pinned by
+// TestStationView_AnswersAConditionalGet.
+func writeConditional(w http.ResponseWriter, r *http.Request, body []byte) {
+	sum := fnv.New64a()
+	_, _ = sum.Write(body)
+	etag := fmt.Sprintf(`W/"%016x"`, sum.Sum64())
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "no-cache")
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
 }
 
 func (h *Handlers) apiGetActiveOrders(w http.ResponseWriter, r *http.Request) {

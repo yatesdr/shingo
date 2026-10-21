@@ -36,6 +36,10 @@ func (e *Engine) SetCoreLoaders(loaders []protocol.LoaderInfo) error {
 	// moves must be resolvable through the aggregate on the very next read, and
 	// the aggregate is only current once Refresh has run.
 	e.reconcileLoaderClaims(loaders)
+	// A tile's loader block is read from this cache, and nothing else says it
+	// moved. ApplyNodeList calls this only for a node list whose digest
+	// differs from the one held.
+	e.nudgeBoards()
 	return nil
 }
 

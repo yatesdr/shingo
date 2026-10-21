@@ -23,14 +23,15 @@
          drift test to hold the copy to the original — a whole mechanism whose
          cause was one missing link. It goes FIRST so operator.css's own
          station tokens are defined over it. -->
-    <link rel="stylesheet" href="/static/shared/tokens.css?v={{cacheBust}}">
-    <link rel="stylesheet" href="/static/operator-station/operator.css?v={{cacheBust}}">
-    <link rel="stylesheet" href="/static/operator-station/flow-picture.css?v={{cacheBust}}">
-    <link rel="stylesheet" href="/static/operator-station/composer-glyphs.css?v={{cacheBust}}">
+    <link rel="stylesheet" href="/static/shared/tokens.css">
+    <link rel="stylesheet" href="/static/operator-station/operator.css">
+    <link rel="stylesheet" href="/static/operator-station/flow-picture.css">
+    <link rel="stylesheet" href="/static/operator-station/composer-glyphs.css">
     <!-- composer.css is NOT here. It is 20 kB for a screen two taps away, and
-         composer-boot.js injects it on the first open, versioned by the same
-         token. flow-picture.css and composer-glyphs.css stay: the board's own
-         style-chip panel and changeover card draw with them. -->
+         composer-boot.js injects it on the first open. No asset here carries a
+         version query: a restart changes every static ETag (router.go
+         serverInstanceETag). flow-picture.css and composer-glyphs.css stay: the
+         board's own style-chip panel and changeover card draw with them. -->
 </head>
 <body data-station-id="{{.Station.ID}}">
 
@@ -41,6 +42,10 @@
         </div>
         <div class="os-header-right" id="os-header-actions"></div>
     </header>
+
+    <!-- The part-change alerts and the post-cutover flag (operator.js showAlert),
+         in the page's flow under the header. Empty, it takes no height. -->
+    <div id="os-alerts" class="os-alerts"></div>
 
     <main id="os-grid"></main>
 
@@ -111,8 +116,9 @@
 
     {{/* BOOT WATCHDOG — deliberately a classic inline script, not a module.
 
-         createSSE already reloads a long-lived board when the build id
-         changes, and that is the right mechanism. Its flaw is location: it
+         The station's event bus (shared/utils.js onSSE, with
+         setSSEReloadOnBuild) already reloads a long-lived board when the
+         build id changes, and that is the right mechanism. Its flaw is location: it
          lives INSIDE the module graph it protects, so it is reachable only
          if operator.js links. A syntax error anywhere in that graph disables
          the graph AND its own recovery, and the board sits on the
@@ -166,18 +172,17 @@
     })();
     </script>
 
-    <script type="module" src="/static/js/shingoedge.js?v={{cacheBust}}"></script>
     <!-- The composer's model and its glyphs are CLASSIC scripts on purpose.
          composer-model.js is loaded as CommonJS by its Node characterization
          test, and composer-glyphs.js ships verbatim from the locked glyph set
          (brief R6); a classic tag puts both on window without either file
          needing an ESM-only line the other loader would choke on. -->
-    <script src="/static/operator-station/composer-model.js?v={{cacheBust}}"></script>
-    <script src="/static/operator-station/composer-glyphs.js?v={{cacheBust}}"></script>
+    <script src="/static/operator-station/composer-model.js"></script>
+    <script src="/static/operator-station/composer-glyphs.js"></script>
     <!-- flowspec-data.js and composer-render.js are NOT here either — about
          78 kB more. composer-boot.js loads all three on the first composer
          open and holds them; see the note at the top of that file for what
          stays at boot and why. -->
-    <script type="module" src="/static/operator-station/operator.js?v={{cacheBust}}"></script>
+    <script type="module" src="/static/operator-station/operator.js"></script>
 </body>
 </html>

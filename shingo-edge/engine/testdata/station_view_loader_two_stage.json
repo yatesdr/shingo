@@ -64,11 +64,13 @@
           }
         ],
         "leaves_bare": true,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -107,11 +109,13 @@
           }
         ],
         "leaves_bare": true,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -150,11 +154,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": true
+        "pulled_directly": true,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     }
   ],
   "cell_version": "<version>",

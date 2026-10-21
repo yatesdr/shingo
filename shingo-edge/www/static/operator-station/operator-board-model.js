@@ -209,22 +209,99 @@ export function coverage(view) {
 
 // ── the CLEAR panel's highlight ──────────────────────────────────────────────
 
-// clearHighlight is the bin type an unloader's CLEAR panel lights for the cart
-// at a window: the window's assignment from Core (tile.assignment, absent until
-// Core assigns windows); else a waiting row's bin type; else like for like, the
-// cart's own type (for a tote cart its height from its row, once heights
-// exist). Nothing when nothing grounds a choice.
+// clearHighlight is the choice an unloader's CLEAR panel lights for the cart at
+// a window, {bin_type, layers?}: the window's assignment from Core
+// (tile.assignment, from the group line of the Edge's copy; absent from a Core
+// that sends none); else a waiting row's bin type; else like for like, the
+// cart's own type, and for a tote cart the height it stands at (heightOf).
+// Nothing when nothing grounds a choice. A choice with no button on the panel
+// lights nothing (clearChoices, isLit).
 export function clearHighlight(tile, serves) {
     const assignment = tile && tile.assignment;
-    if (assignment && assignment.bin_type) return assignment.bin_type;
+    if (assignment && assignment.bin_type) {
+        return typeof assignment.layers === 'number'
+            ? { bin_type: assignment.bin_type, layers: assignment.layers } : { bin_type: assignment.bin_type };
+    }
     const role = servedRole(tile);
     const waiting = (serves || []).find(function (row) {
         return row.waiting && row.role === role && !!row.carrier;
     });
-    if (waiting) return waiting.carrier;
+    if (waiting) return { bin_type: waiting.carrier };
     const bin = tile && tile.bin_state;
-    if (bin && bin.occupied && bin.bin_type_code) return bin.bin_type_code;
+    if (bin && bin.occupied && bin.bin_type_code) {
+        const h = heightOf(bin);
+        return h && h.extra === 0 ? { bin_type: bin.bin_type_code, layers: h.layers } : { bin_type: bin.bin_type_code };
+    }
     return null;
+}
+
+// ── a cart's height ──────────────────────────────────────────────────────────
+
+// heightOf is the height a cart stands at, from its tote numbers
+// (bin_state.totes_on_cart, totes_per_layer): {layers, extra}, extra the totes
+// over a whole layer; null when either number is not known.
+export function heightOf(bin) {
+    if (!bin || typeof bin.totes_on_cart !== 'number' || typeof bin.totes_per_layer !== 'number' || bin.totes_per_layer <= 0) {
+        return null;
+    }
+    return { layers: Math.floor(bin.totes_on_cart / bin.totes_per_layer), extra: bin.totes_on_cart % bin.totes_per_layer };
+}
+
+// heightLabel is a cart's height as its spot line says it: "3 high" on an
+// exact multiple, "3 high + 2" with two totes over, the bin's name alone at 0
+// (a base), "Unknown" with no number, and nothing for a type with no totes per
+// layer.
+export function heightLabel(bin) {
+    if (!bin || typeof bin.totes_per_layer !== 'number') return '';
+    if (typeof bin.totes_on_cart !== 'number') return 'Unknown';
+    if (bin.totes_on_cart === 0) return bin.bin_type_code || '';
+    const h = heightOf(bin);
+    return h.layers + ' high' + (h.extra > 0 ? ' + ' + h.extra : '');
+}
+
+// choiceLabel is a CLEAR choice's words: the bin's name, with its height
+// ("TOTE-1 · 3 high"); the bin's name alone at 0 layers, a base, and no
+// "Base" (a "-BARE" type and that word are one at twenty feet).
+export function choiceLabel(choice) {
+    if (!choice) return '';
+    return choice.bin_type + (choice.layers > 0 ? ' · ' + choice.layers + ' high' : '');
+}
+
+// wantedHeights is the heights the board's empties group wants of a bin type,
+// lowest first: the height rows of view.empties (layers set). None on a group
+// with no layer wants, or from a Core that sends no group lines.
+export function wantedHeights(view, binType) {
+    const rows = (view && view.empties && view.empties.rows) || [];
+    const out = [];
+    rows.forEach(function (r) {
+        if (r.bin_type === binType && typeof r.layers === 'number' && out.indexOf(r.layers) === -1) out.push(r.layers);
+    });
+    return out.sort(function (a, b) { return a - b; });
+}
+
+// clearChoices is what the CLEAR panels offer for a window's bin types: one
+// choice per type, {bin_type}; for a type the group wants heights of, in place
+// of its one choice, the bin's name (layers 0, a base) and the bin's name with
+// each wanted height, {bin_type, layers}. A choice with layers posts them with
+// the CLEAR; one without posts none.
+export function clearChoices(view, carriers) {
+    const out = [];
+    (carriers || []).forEach(function (t) {
+        const heights = wantedHeights(view, t);
+        if (heights.length === 0) { out.push({ bin_type: t }); return; }
+        if (heights.indexOf(0) === -1) heights.unshift(0);
+        heights.forEach(function (h) { out.push({ bin_type: t, layers: h }); });
+    });
+    return out;
+}
+
+// isLit reports whether a panel's choice is the lit one: the same type, and
+// the same height where either names one.
+export function isLit(choice, lit) {
+    if (!choice || !lit || choice.bin_type !== lit.bin_type) return false;
+    const a = typeof choice.layers === 'number' ? choice.layers : null;
+    const b = typeof lit.layers === 'number' ? lit.layers : null;
+    return a === b;
 }
 
 // ── a window's words on the node grid ────────────────────────────────────────
@@ -249,6 +326,49 @@ export function windowWords(tile, awaiting, hasActiveOrder) {
     if (bin && bin.occupied) return 'EMPTY';
     if (!bin) return 'COULD NOT LOOK';
     return 'NO BIN';
+}
+
+// ── what the screen knows: the stale sign ────────────────────────────────────
+
+// binsKnown reports whether the view's bins are known: false while the Edge
+// holds no copy of Core's node bins from a Core that serves them, or when the
+// read over HTTP failed (view.bins.known). A view with no bins key is an
+// older Edge's and reads as known, as before. While bins are not known an
+// absent bin_state means nothing: no act whose offer reads it is offered, and
+// a tile says "could not look".
+export function binsKnown(view) {
+    return !(view && view.bins && view.bins.known === false);
+}
+
+// staleSign is the station's sign, in the top line of every station: its
+// words and the header dot. link is {answering, dataAt} (operator-state.js
+// getLink); clock(iso) prints a time.
+//
+//   "Not answering · data from <time>"   a failed view fetch, or the stream down
+//   "Bins as of <time>"                  the held copy is not current
+//   "Bins not known yet"                 view.bins.known false
+//   "Containment not known yet"          view.containment.known false
+//   "Catalog as of <time>"               the held payload catalog is not current
+//   "Catalog not known yet"              view.catalog.known false
+//   "Live"                               none of these
+//
+// The dot: offline while not answering, stale while anything else is said,
+// online when live. Pinned by operator-refresh.test.js.
+export function staleSign(view, link, clock) {
+    const words = [];
+    const answering = !link || link.answering !== false;
+    if (!answering) words.push('Not answering' + (link.dataAt ? ' · data from ' + clock(link.dataAt) : ''));
+    if (view) {
+        if (!binsKnown(view)) words.push('Bins not known yet');
+        else if (view.bins && view.bins.as_of) words.push('Bins as of ' + clock(view.bins.as_of));
+        if (view.containment && view.containment.known === false) words.push('Containment not known yet');
+        if (view.catalog && view.catalog.known === false) words.push('Catalog not known yet');
+        else if (view.catalog && view.catalog.as_of) words.push('Catalog as of ' + clock(view.catalog.as_of));
+    }
+    let dot = 'online';
+    if (!answering) dot = 'offline';
+    else if (words.length > 0) dot = 'stale';
+    return { live: words.length === 0, words: words.length > 0 ? words : ['Live'], dot: dot };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -442,10 +562,15 @@ function emptiesOf(view, tiles) {
     return e;
 }
 
+// typeRow is a bin type's own row of the empties (a height's row carries
+// layers), or null.
+function typeRow(e, binType) {
+    return e.rows.find(function (r) { return r.bin_type === binType && typeof r.layers !== 'number'; }) || null;
+}
+
 function emptiesHave(e, binType) {
-    let have = 0;
-    e.rows.forEach(function (r) { if (r.bin_type === binType) have += r.have || 0; });
-    return have;
+    const r = typeRow(e, binType);
+    return r ? r.have || 0 : 0;
 }
 
 // pressesRow is the unloader's status row: one tile per running produce row,
@@ -454,8 +579,9 @@ function emptiesHave(e, binType) {
 // a count the Edge cannot see last; past six tiles the ready ones fold. Then
 // the Empties tile, in words: a line per bin type a served press uses, each
 // once (a type the group holds that no served press uses gets none), "N ready"
-// or "none" ("N of M" where the group wants M); the
-// group's open spots once (every row carries the group's count); its name.
+// or "none" ("N of M" where the group wants M), and under it, small, a line
+// per height the group wants of it ("TOTE-1 · 3 high  1 of 2"); the group's
+// open spots once (every row carries the group's count); its name.
 export function pressesRow(view, tiles) {
     const e = emptiesOf(view, tiles);
     const rows = (view.serves || []).filter(function (r) { return r.role === 'produce' && !r.incoming; });
@@ -484,12 +610,20 @@ export function pressesRow(view, tiles) {
         e.rows.forEach(function (r) { open = Math.max(open, r.spots || 0); });
         empties = {
             group: e.group || '', open: open,
-            lines: types.map(function (t) {
-                const have = emptiesHave(e, t);
-                const want = e.rows.find(function (r) { return r.bin_type === t && typeof r.want === 'number'; });
-                return { bin: t, words: want ? have + ' of ' + want.want : (have > 0 ? have + ' ready' : 'none') };
-            }),
+            lines: [],
         };
+        types.forEach(function (t) {
+            const have = emptiesHave(e, t);
+            const typed = typeRow(e, t);
+            const want = typed && typeof typed.want === 'number' ? typed.want : null;
+            empties.lines.push({ bin: t, words: want !== null ? have + ' of ' + want : (have > 0 ? have + ' ready' : 'none') });
+            // Per height, small, where the plant set layer wants.
+            e.rows.forEach(function (r) {
+                if (r.bin_type !== t || typeof r.layers !== 'number') return;
+                empties.lines.push({ bin: choiceLabel({ bin_type: t, layers: r.layers }), small: true,
+                    words: (r.have || 0) + (typeof r.want === 'number' ? ' of ' + r.want : ' ready') });
+            });
+        });
     }
     return { all: presses, empties: empties };
 }
@@ -549,14 +683,6 @@ export function partialsState(spots) {
 }
 
 // ── the acts ─────────────────────────────────────────────────────────────────
-
-// waitingBinType is the bin type a waiting produce row wants: the second rung
-// of clearHighlight, and the only one the board has until Core assigns windows
-// and carts carry heights.
-function waitingBinType(serves) {
-    const w = (serves || []).find(function (row) { return row.waiting && row.role === 'produce' && !!row.carrier; });
-    return w ? w.carrier : '';
-}
 
 // partAct is the old boards' act for a part on a loader tile (cardModel):
 // 'load', 'unload' or '' for none.
@@ -645,7 +771,7 @@ function loaderCards(t, ctx) {
             }));
             return;
         }
-        if (!inFlight && partAct(t, code) === 'load') loadable.push(code);
+        if (!inFlight && ctx.known && partAct(t, code) === 'load') loadable.push(code);
     });
     if (loadable.length > 0) {
         const lit = loadable.map(function (code, i) { return { code: code, r: loadReason(view, ctx.cov, code), order: i }; });
@@ -662,6 +788,7 @@ function loaderCards(t, ctx) {
     }
     const bp = bufferPartialOf(t);
     const bin = t.bin_state || {};
+    if (!ctx.known) return;
     if (bp && bp.node && !inFlight && bin.occupied && bin.payload_code) {
         const from = shortNode(bp.node);
         ctx.partials.push(ctx.card(t, 'partial', [0], {
@@ -681,13 +808,19 @@ function loaderCards(t, ctx) {
 
 // windowCards is the unloader's one list: one card per cart at a window, the
 // bin's name the headline, what to send back the note. The note is "Change to
-// <bin>" on any cart whose send-back type is not its own; "Send back <bin>" on
+// <bin>" on any cart whose send-back type is not its own, or whose send-back
+// height is not the one it stands at; "Send back <bin>" on
 // a full of its own type and "Send it" on an empty of its own type, these two
-// only on a station that handles more than one bin type. The send-back type is
-// a waiting press's bin type (clearHighlight's second rung) or the cart's own.
-// A delivered order with no cart yet is the old boards' Unload card.
+// only on a station that handles more than one bin type. What to send back is
+// clearHighlight's: the window's assignment, else a waiting press's bin type,
+// else the cart's own; the note names it with its height where it has one
+// ("Change to TOTE-1 · 3 high"). The cart's own height rides the spot line
+// (heightLabel). A delivered order with no cart yet is the old boards' Unload
+// card.
 function windowCards(consumers, ctx) {
-    const target = waitingBinType(ctx.view.serves);
+    // While the bins are not known no cart is drawn: what stands at a window is
+    // what each card and its act read.
+    if (!ctx.known) return;
     const types = {};
     consumers.forEach(function (t) { carriersOf(t).forEach(function (c) { types[c] = true; }); });
     const multi = Object.keys(types).length > 1;
@@ -699,28 +832,34 @@ function windowCards(consumers, ctx) {
             const code = partCodes(t).find(function (c) { return partAct(t, c) === 'unload'; });
             if (code) {
                 ctx.other('Unload', ctx.card(t, 'unload', [0], {
-                    spotWords: 'no bin', headline: code, act: unloadAct(t, ''),
+                    spotWords: 'no bin', headline: code, act: unloadAct(t, null),
                 }));
             }
             return;
         }
         const full = !!bin.payload_code;
         const own = bin.bin_type_code || '';
-        const back = loader.leaves_bare ? '' : (target || own);
+        const lit = loader.leaves_bare ? null : clearHighlight(t, ctx.view.serves);
+        const back = lit ? lit.bin_type : '';
+        // A change is another type, or a height the cart does not stand at.
+        const at = heightOf(bin);
+        const atLayers = at && at.extra === 0 ? at.layers : null;
+        const changes = !!back && !!own && (back !== own || (typeof lit.layers === 'number' && lit.layers !== atLayers));
         let note = '';
         if (full && bin.held_since) {
             const since = ctx.when(bin.held_since);
             note = 'Partial · held for ' + (bin.held_for || 'its line') + (since ? ' · since ' + since : '');
         } else if (loader.pulled_directly && !full) note = 'The cart waits here for the line';
-        else if (back && own && back !== own) note = 'Change to ' + back;
-        else if (back && multi) note = full ? 'Send back ' + own : 'Send it';
+        else if (changes) note = 'Change to ' + choiceLabel(lit);
+        else if (back && multi) note = full ? 'Send back ' + choiceLabel(lit) : 'Send it';
         ctx.windows.push(ctx.card(t, 'cart', [1], {
             spotWords: full ? 'holds a full bin' : (bin.bare ? 'no bin' : 'holds an empty bin'),
             spotPart: full ? bin.payload_code : '',
             spotCount: full ? fmtCount((t.runtime && t.runtime.remaining_uop_cached) || 0) : '',
+            spotHeight: bin.bare ? '' : heightLabel(bin),
             headline: own || bin.bin_label || 'Unknown bin', reason: note,
             back: back, own: own, full: full,
-            act: windowAct(t, ctx.kind, loader.leaves_bare ? '' : target),
+            act: windowAct(t, ctx.kind, lit),
         }));
     });
 }
@@ -755,6 +894,7 @@ function lightStoppedPresses(presses, windows) {
 //                  cell is out or full and the buffer's state while it is red
 //                  or amber
 //   tileCount      Show all's N
+//   sign           the station's stale sign (staleSign), from ui
 //   bar            the board bar (boardBar), or null
 //   cells          the loader's status row (cellsRow), or null
 //   presses        the unloader's status row and its Empties tile, or null
@@ -766,7 +906,14 @@ function lightStoppedPresses(presses, windows) {
 //                  with no card gets a plain one opening the node modal
 //
 // ui: {partialsOpen: the partials opened by a tap, when(iso): the time a
-// refusal was said}.
+// refusal was said, sign: the station's stale sign}.
+//
+// WHILE THE BINS ARE NOT KNOWN (binsKnown) the board claims nothing about what
+// stands at a spot: no Load card, no cart at a window, no partial or Check bin
+// card (each card and its act read bin_state); Load, At the windows and an
+// opened Clear partials say "Could not look" in place of their empty
+// sentence, and neither their titles nor the top line give a count. Waiting on the plant, the
+// cells row and the strip ("?") stay. Pinned by operator-board-model.test.js.
 export function boardModel(view, ui) {
     ui = ui || {};
     const tiles = (view.nodes || []).filter(function (t) { return !!loaderOf(t); });
@@ -774,7 +921,7 @@ export function boardModel(view, ui) {
     const consumers = tiles.filter(function (t) { return tileRole(t) === 'consume'; });
     const otherCards = {}, otherOrder = [];
     const ctx = {
-        view: view, cov: coverage(view), kind: boardLayout(tiles).kind,
+        view: view, cov: coverage(view), kind: boardLayout(tiles).kind, known: binsKnown(view),
         when: ui.when || function () { return ''; },
         load: [], refused: [], partials: [], windows: [],
         other: function (label, card) {
@@ -840,7 +987,7 @@ export function boardModel(view, ui) {
             reason: st.tone === 'red' ? 'Buffer full · clear one' : (st.tone === 'amber' ? 'No empty' : ''),
             cards: opened ? ctx.partials : [], folded: !opened, openedByBoard: st.tone !== 'plain',
             strip: spots, stripWords: st.words,
-            empty: opened && ctx.partials.length === 0 ? 'No partial can come home' : '',
+            empty: opened && ctx.partials.length === 0 ? (ctx.known ? 'No partial can come home' : 'Could not look') : '',
         };
         if (st.tone === 'red') words.push('Buffer full');
         else if (st.tone === 'amber') words.push('Buffer: no empty');
@@ -848,15 +995,15 @@ export function boardModel(view, ui) {
 
     const zones = [];
     if (producers.length > 0) {
-        zones.push({ key: 'load', title: 'Load', count: ctx.load.length, tone: 'plain', cards: ctx.load,
-            empty: ctx.load.length === 0 ? 'Nothing to load right now.' : '' });
+        zones.push({ key: 'load', title: 'Load', count: ctx.known ? ctx.load.length : '', tone: 'plain', cards: ctx.load,
+            empty: ctx.load.length === 0 ? (ctx.known ? 'Nothing to load right now.' : 'Could not look') : '' });
         if (ctx.refused.length > 0) {
             zones.push({ key: 'refused', title: 'Waiting on the plant', count: ctx.refused.length, tone: 'plain', cards: ctx.refused });
         }
     }
     if (consumers.length > 0) {
-        zones.push({ key: 'windows', title: 'At the windows', count: ctx.windows.length, tone: 'plain', cards: ctx.windows,
-            empty: ctx.windows.length === 0 ? 'No cart at any window.' : '' });
+        zones.push({ key: 'windows', title: 'At the windows', count: ctx.known ? ctx.windows.length : '', tone: 'plain', cards: ctx.windows,
+            empty: ctx.windows.length === 0 ? (ctx.known ? 'No cart at any window.' : 'Could not look') : '' });
     }
     otherOrder.forEach(function (l) {
         zones.push({ key: 'other:' + l, title: l, count: otherCards[l].length, tone: 'plain', cards: otherCards[l] });
@@ -880,10 +1027,10 @@ export function boardModel(view, ui) {
 
     const counts = [];
     if (producers.length > 0) {
-        counts.push(ctx.load.length + ' to load');
+        if (ctx.known) counts.push(ctx.load.length + ' to load');
         if (ctx.refused.length > 0) counts.push(ctx.refused.length + ' waiting on the plant');
     }
-    if (consumers.length > 0) counts.push(ctx.windows.length > 0 ? ctx.windows.length + ' at the windows' : 'nothing at the windows');
+    if (consumers.length > 0 && ctx.known) counts.push(ctx.windows.length > 0 ? ctx.windows.length + ' at the windows' : 'nothing at the windows');
     otherOrder.forEach(function (l) { counts.push(otherCards[l].length + ' ' + l.toLowerCase()); });
     if (spots) {
         const p = spots.filter(function (s) { return s.state === 'partial'; }).length;
@@ -906,7 +1053,8 @@ export function boardModel(view, ui) {
         title: (view.station && view.station.name) || '',
         words: counts.concat(words),
         tileCount: tiles.length,
-        bar: boardBar(tiles, ctx.kind, view.serves),
+        bar: boardBar(tiles, ctx.kind, view),
+        sign: ui.sign || null,
         cells: cells,
         presses: presses,
         zones: zones,
@@ -920,21 +1068,26 @@ export function boardModel(view, ui) {
 // offered while a window of the loader's role holds no bin and nothing is
 // coming to it, and posting for the first window (the server stages at the
 // free one); PULL FROM MARKET on a loader with an outbound destination. The
-// same doors and guards as that board, in sentence case.
-function boardBar(tiles, kind, serves) {
+// same doors and guards as that board, in sentence case. While the bins are not
+// known its request is not offered ("could not look"): whether a window holds a
+// bin is what it asks (a bug fixed: an unread window offered the request).
+function boardBar(tiles, kind, view) {
     if (kind !== 'payload') return null;
     const entry = tiles[0];
     const role = tileRole(entry);
     const isProduce = role === 'produce';
     const windows = tiles.filter(function (t) { return tileRole(t) === role; });
     const holdsBin = function (t) { return !!(t.bin_state && t.bin_state.occupied); };
-    const canRequest = windows.some(function (t) { return !holdsBin(t) && liveOrders(t).length === 0; });
-    const payload = isProduce ? '' : (cardParts(entry, serves)[0] || '');
+    const known = binsKnown(view);
+    const canRequest = known && windows.some(function (t) { return !holdsBin(t) && liveOrders(t).length === 0; });
+    const payload = isProduce ? '' : (cardParts(entry, view.serves)[0] || '');
     if (!isProduce && !payload) return null;
     const label = isProduce ? 'Request empty' : 'Request full';
+    let why = windows.every(holdsBin) ? 'bin at node' : 'bin already inbound';
+    if (!known) why = 'could not look';
     const buttons = [{
         key: 'request', enabled: canRequest,
-        label: canRequest ? label : label + ' — ' + (windows.every(holdsBin) ? 'bin at node' : 'bin already inbound'),
+        label: canRequest ? label : label + ' — ' + why,
         act: isProduce ? { kind: 'request-empty', node: entry.node.id } : { kind: 'request-full', node: entry.node.id, payload: payload },
     }];
     if (isProduce && loaderOf(entry).outbound_dest) {
@@ -1023,14 +1176,14 @@ export function cardInnerWidth(width, cols, numbered) {
 
 // cardFits reports whether a card's part number or bin code and its spot
 // line's names fit unclipped at a step: the headline whole, and on the spot
-// line the spot, the bin code and an unloader's part and count whole (the
-// words between them give way, never a code); and its note, which wraps and
-// is never cut, in two lines or fewer.
+// line the spot, the bin code and an unloader's part, count and height whole
+// (the words between them give way, never a code); and its note, which wraps
+// and is never cut, in two lines or fewer.
 export function cardFits(card, step, inner) {
     const s = STEPS[step];
     if (textWidth(card.headline, s.headline) > inner) return false;
     if (noteLines(card, step, inner) > 2) return false;
-    const fixed = [card.spot, card.spotCode, card.spotPart, card.spotCount].filter(Boolean).join(' · ');
+    const fixed = [card.spot, card.spotCode, card.spotPart, card.spotCount, card.spotHeight].filter(Boolean).join(' · ');
     return textWidth(fixed + ' · ', s.spot) <= inner;
 }
 

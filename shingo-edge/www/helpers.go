@@ -2,7 +2,6 @@ package www
 
 import (
 	"encoding/json"
-	"fmt"
 	"html/template"
 	"net/http"
 	"strconv"
@@ -76,8 +75,7 @@ func templateFuncs() template.FuncMap {
 			}
 			return ""
 		},
-		"buildVer":  func() string { return buildVer },
-		"cacheBust": func() string { return fmt.Sprintf("%x", time.Now().UnixNano()) },
+		"buildVer": func() string { return buildVer },
 		// formatTime/formatTimePtr render plant-local via shared/planttime —
 		// the ONE implementation both binaries share, so a core board and an
 		// edge station cannot show the same event on different clocks. First

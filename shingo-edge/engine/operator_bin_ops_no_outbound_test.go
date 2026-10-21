@@ -32,7 +32,7 @@ func TestClearBin_NoOutboundTellsTheOperator(t *testing.T) {
 	info.OutboundDest = ""
 	nodeID := coreUnloaderWindow(t, eng, "NOB-W1", info)
 
-	err := eng.ClearBin(nodeID, "", false)
+	err := eng.ClearBin(nodeID, "", false, nil)
 
 	clears, _ := core.snapshot()
 	if len(clears) != 1 {
@@ -72,7 +72,7 @@ func TestClearBin_CoreRefusalReachesTheOperator(t *testing.T) {
 	info.OutboundDest = "EMPTY-TOTES"
 	nodeID := coreUnloaderWindow(t, eng, "NOB-R1", info)
 
-	err := eng.ClearBin(nodeID, "", false)
+	err := eng.ClearBin(nodeID, "", false, nil)
 	if err == nil || !strings.Contains(err.Error(), refusal) {
 		t.Fatalf("ClearBin error = %v, want Core's refusal %q", err, refusal)
 	}

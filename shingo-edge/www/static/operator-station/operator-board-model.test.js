@@ -129,10 +129,10 @@ eq(M.coverage({}), [], 'no serves: no coverage');
 // ── clearHighlight ──
 const cart = tile('consume', { bin: { occupied: true, payload_code: 'PART-A', bin_type_code: 'TOTE-1' } });
 eq(M.clearHighlight(Object.assign({ assignment: { bin_type: 'KD-1' } }, cart), [row('PART-A', 0, { role: 'produce', waiting: true, carrier: 'TOTE-2' })]),
-    'KD-1', 'clearHighlight: the window\'s assignment first');
-eq(M.clearHighlight(cart, [row('PART-A', 0, { role: 'produce', waiting: true, carrier: 'TOTE-2' })]), 'TOTE-2',
+    { bin_type: 'KD-1' }, 'clearHighlight: the window\'s assignment first');
+eq(M.clearHighlight(cart, [row('PART-A', 0, { role: 'produce', waiting: true, carrier: 'TOTE-2' })]), { bin_type: 'TOTE-2' },
     'clearHighlight: else a waiting row\'s bin type');
-eq(M.clearHighlight(cart, [row('PART-A', 0, { role: 'produce', carrier: 'TOTE-2' })]), 'TOTE-1',
+eq(M.clearHighlight(cart, [row('PART-A', 0, { role: 'produce', carrier: 'TOTE-2' })]), { bin_type: 'TOTE-1' },
     'clearHighlight: else like for like, the cart\'s own type');
 eq(M.clearHighlight(tile('consume', { bin: { occupied: false } }), []), null, 'clearHighlight: nothing grounds a choice');
 
@@ -391,7 +391,7 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     eq(b.words, ['3 at the windows', 'PRESS-1 full'], 'top line: the carts, and the press that is full');
     eq(w.cards.map(c => c.act.kind), ['push-empty', 'unload', 'unload'],
         'unloader windows (the old slot grid): an empty opens the empty-cart panel, a full the CLEAR');
-    eq(w.cards[1].act, { kind: 'unload', node: 1, carriers: ['TOTE-2', 'KD-1'], discarding: 180, leavesBare: false, lit: 'TOTE-2' },
+    eq(w.cards[1].act, { kind: 'unload', node: 1, carriers: ['TOTE-2', 'KD-1'], discarding: 180, leavesBare: false, lit: { bin_type: 'TOTE-2' } },
         'a full\'s CLEAR: its carriers and its count, the waiting press\'s bin lit');
     // One bin type at the station: no "Send back" / "Send it".
     const one = B({ station: {}, nodes: [windows[1], windows[2]], serves: [serves[2]], empties: empties });
@@ -416,6 +416,90 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     const none = B({ station: {}, nodes: [windows[3]], serves: [] });
     eq([zone(none, 'windows').count, zone(none, 'windows').empty, none.words], [0, 'No cart at any window.', ['nothing at the windows']],
         'no cart at any window: one quiet line');
+}
+
+// ── tote heights: the assignment, the spot line, the panels' choices ──
+{
+    const T = (on, per) => ({ occupied: true, payload_code: '', stocked: false, bin_type_code: 'TOTE-1',
+        totes_on_cart: on, totes_per_layer: per });
+    eq([T(24, 8), T(26, 8), T(0, 8), T(null, 8), { occupied: true, bin_type_code: 'KD-1' }].map(M.heightLabel),
+        ['3 high', '3 high + 2', 'TOTE-1', 'Unknown', ''],
+        'the spot line\'s height: "3 high" on an exact multiple, "3 high + 2" over, the bin\'s name alone at 0, ' +
+        '"Unknown" with no number, nothing for a type with no totes per layer');
+    // clearHighlight's rungs with heights.
+    const cart = b => bt(1, 'SMN_C1', { role: 'consume', bin: b });
+    eq(M.clearHighlight(Object.assign({ assignment: { bin_type: 'TOTE-1', layers: 3 } }, cart(T(16, 8))), []),
+        { bin_type: 'TOTE-1', layers: 3 }, 'clearHighlight: the assignment, its height with it');
+    eq(M.clearHighlight(cart(T(24, 8)), []), { bin_type: 'TOTE-1', layers: 3 },
+        'clearHighlight: like for like, a tote cart at its own height');
+    eq(M.clearHighlight(cart(T(26, 8)), []), { bin_type: 'TOTE-1' },
+        'clearHighlight: like for like, a cart over a whole layer names no height');
+    // The panels' choices: a type the group wants heights of shows its name (a
+    // base) and each wanted height; any other type its one choice.
+    const view = { empties: { group: 'G', rows: [{ bin_type: 'TOTE-1', have: 1, spots: 0 },
+        { bin_type: 'TOTE-1', layers: 3, have: 1, want: 2, spots: 0 }, { bin_type: 'TOTE-1', layers: 5, have: 0, want: 1, spots: 0 },
+        { bin_type: 'KD-1', have: 0, spots: 0 }] } };
+    const choices = M.clearChoices(view, ['TOTE-1', 'KD-1']);
+    eq(choices.map(M.choiceLabel), ['TOTE-1', 'TOTE-1 · 3 high', 'TOTE-1 · 5 high', 'KD-1'],
+        'the CLEAR choices: the bin\'s name and each wanted height, no "Base"; a type with no heights keeps its one');
+    eq(choices.map(c => c.layers), [0, 3, 5, undefined], 'the bin\'s name alone is a base, layers 0; KD-1 posts none');
+    eq(choices.map(c => M.isLit(c, { bin_type: 'TOTE-1', layers: 3 })), [false, true, false, false], 'the assignment lights its height');
+    eq(choices.map(c => M.isLit(c, { bin_type: 'TOTE-1' })), [false, false, false, false],
+        'a type with no height named lights nothing where the type has height buttons');
+    eq(choices.map(c => M.isLit(c, { bin_type: 'KD-1' })), [false, false, false, true], 'a type with one button lights it');
+    eq(M.clearChoices({}, ['TOTE-1']), [{ bin_type: 'TOTE-1' }], 'no group line (a Core that sends none): today\'s one choice');
+
+    // The board: the assignment is the window's send-back note, the cart's
+    // height rides its spot line, and the Empties tile says each height small.
+    const win = Object.assign(bt(1, 'SMN_C1', { role: 'consume', parts: ['PART-K'], bin: Object.assign(T(16, 8),
+        { payload_code: 'PART-K', stocked: true, bin_type_code: 'KD-1', totes_on_cart: null, totes_per_layer: null }),
+    uop: 40, carriers: ['TOTE-1', 'KD-1'] }), { assignment: { bin_type: 'TOTE-1', layers: 3 } });
+    const empty = bt(2, 'SMN_C2', { role: 'consume', parts: ['PART-K'], bin: T(26, 8), carriers: ['TOTE-1', 'KD-1'] });
+    const serves = [row('PART-K', 10, { cell: 'PRESS-1', node: 'PLN_1', role: 'produce', carrier: 'TOTE-1', capacity_uop: 100 })];
+    const b = B({ station: {}, nodes: [win, empty], serves: serves, empties: view.empties });
+    const w = zone(b, 'windows');
+    const byspot = {};
+    w.cards.forEach(c => { byspot[c.spot] = [c.spotHeight, c.reason, c.act.lit]; });
+    eq(byspot.SMN_C1, ['', 'Change to TOTE-1 · 3 high', { bin_type: 'TOTE-1', layers: 3 }],
+        'a KD cart assigned TOTE-1 at 3 high: the note says so and its CLEAR lights it');
+    eq(byspot.SMN_C2, ['3 high + 2', 'Send it', { bin_type: 'TOTE-1' }],
+        'an empty tote cart over a layer: its height on the spot line; like for like names no height');
+    const tall = Object.assign(bt(3, 'SMN_C3', { role: 'consume', parts: ['PART-K'], bin: Object.assign(T(16, 8),
+        { payload_code: 'PART-K', stocked: true }), uop: 30, carriers: ['TOTE-1', 'KD-1'] }), { assignment: { bin_type: 'TOTE-1', layers: 5 } });
+    const c3 = zone(B({ station: {}, nodes: [tall], serves: serves, empties: view.empties }), 'windows').cards[0];
+    eq([c3.spotHeight, c3.reason], ['2 high', 'Change to TOTE-1 · 5 high'],
+        'a tote cart at 2 high assigned 5 high: a change, said with its height');
+    eq(b.presses.empties.lines.map(l => [l.bin, l.words, !!l.small]),
+        [['TOTE-1', '1 ready', false], ['TOTE-1 · 3 high', '1 of 2', true], ['TOTE-1 · 5 high', '0 of 1', true]],
+        'Empties: per height, small, where the plant set layer wants');
+}
+
+// ── bins not known: the board claims nothing about what stands at a spot ──
+{
+    const homes = [
+        bt(1, 'SMN_H1', { parts: ['PART-A'], dedicated: true, operator: true,
+            buffer: [{ node: 'LDR.SMN_F1', state: 'unknown' }] }),
+        bt(2, 'SMN_H2', { parts: ['PART-B'], dedicated: true, operator: true }),
+    ];
+    homes[1].supply_refusals = { 'PART-B': { refused_at: '2026-10-17T10:00:00Z' } };
+    homes[0].orders = [ord(7, 'delivered', { payload_code: 'PART-A', delivery_node: 'SMN_H1' })];
+    const serves = [row('PART-A', 0, { cell: 'CELL-1' }), row('PART-B', 40, { cell: 'CELL-1' })];
+    const b = B({ station: { name: 'L' }, nodes: homes, serves: serves, bins: { known: false } }, { partialsOpen: true });
+    eq([zone(b, 'load').cards.length, zone(b, 'load').count, zone(b, 'load').empty], [0, '', 'Could not look'],
+        'bins not known: no Load card (a delivered order would offer one today), and "Could not look", not "Nothing to load"');
+    eq(zone(b, 'refused').cards.length, 1, 'bins not known: Waiting on the plant stays (a refusal reads no bin)');
+    eq([zone(b, 'partials').cards.length, zone(b, 'partials').empty], [0, 'Could not look'],
+        'bins not known: an opened Clear partials says "Could not look"');
+    eq(b.words.some(w => / to load$/.test(w)), false, 'bins not known: the top line counts no Load cards');
+    eq(b.cells.failed, false, 'bins not known: the cells row stays');
+    const known = B({ station: { name: 'L' }, nodes: homes, serves: serves, bins: { known: true } });
+    eq([zone(known, 'load').cards.length, zone(known, 'load').empty], [1, ''], 'bins known: the Load card as before');
+
+    const carts = [bt(1, 'SMN_C1', { role: 'consume', bin: undefined, carriers: ['TOTE-1'] })];
+    const u = B({ station: {}, nodes: carts, serves: [], bins: { known: false } });
+    eq([zone(u, 'windows').cards.length, zone(u, 'windows').count, zone(u, 'windows').empty], [0, '', 'Could not look'],
+        'bins not known: no cart at the windows, "Could not look", not "No cart at any window"');
+    eq(u.words.some(w => /at the windows$/.test(w)), false, 'bins not known: the top line says nothing at the windows');
 }
 
 // ── the board bar, where the old payload board drew it ──

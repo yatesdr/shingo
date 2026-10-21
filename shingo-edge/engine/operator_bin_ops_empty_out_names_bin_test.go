@@ -88,7 +88,7 @@ func TestEmptyOut_ClearNamesTheBinItCleared(t *testing.T) {
 	t.Parallel()
 	const window = "EON-W1"
 	eng, nodeID := emptyOutWindow(t, window)
-	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false), "ClearBin")
+	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false, nil), "ClearBin")
 
 	moves := emptyOutMoves(t, eng, window)
 	if len(moves) != 1 {

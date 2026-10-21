@@ -160,19 +160,27 @@ func goldenLoaderJSON(t *testing.T, view *domain.OperatorStationView) []byte {
 }
 
 // handlerBytes is the station JSON as apiGetOperatorStationView writes it: the
-// view inside the same wrapper, through json.Encoder, gzipped at the router's
-// level (middleware.Compress(5)). The two wrapper fields are empty here, as
-// they are on an Edge with no catalog and no sourcing state; the Core
+// view inside the same wrapper, its station without the clocks (www
+// viewStation), gzipped at the router's level (middleware.Compress(5)). The
+// wrapper's sourcing field is empty here, as on an Edge with no sourcing
+// state; the Core
 // enrichments (bin_state, containment, curtain) are not stamped, as nothing
 // answers for Core in this harness.
 func handlerBytes(t *testing.T, view *domain.OperatorStationView) (raw, gz int) {
 	t.Helper()
+	station := map[string]any{}
+	if b, err := json.Marshal(view.Station); err != nil || json.Unmarshal(b, &station) != nil {
+		t.Fatalf("station: %v", err)
+	}
+	for _, clock := range []string{"last_seen_at", "created_at", "updated_at"} {
+		delete(station, clock)
+	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(struct {
 		*domain.OperatorStationView
-		PayloadBinTypes []protocol.PayloadBinTypeInfo `json:"payload_bin_types,omitempty"`
-		SourcingByStyle map[string]any                `json:"sourcing_by_style,omitempty"`
-	}{OperatorStationView: view}); err != nil {
+		Station         map[string]any `json:"station"`
+		SourcingByStyle map[string]any `json:"sourcing_by_style,omitempty"`
+	}{OperatorStationView: view, Station: station}); err != nil {
 		t.Fatalf("encode: %v", err)
 	}
 	var zipped bytes.Buffer

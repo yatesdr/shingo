@@ -19,7 +19,7 @@ func TestClearBin_PulledDirectlyLeavesTheCartQuietly(t *testing.T) {
 	info.PulledDirectly = true
 	nodeID := coreUnloaderWindow(t, eng, "PD-W1", info)
 
-	err := eng.ClearBin(nodeID, "", false)
+	err := eng.ClearBin(nodeID, "", false, nil)
 
 	if clears, _ := core.snapshot(); len(clears) != 1 {
 		t.Fatalf("bin-clear POSTs = %d, want 1 (the clear itself happens)", len(clears))

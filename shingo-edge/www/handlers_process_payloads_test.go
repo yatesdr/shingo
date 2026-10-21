@@ -17,12 +17,8 @@ import (
 // SQLite connection, each of them a separate transaction that could half-land.
 // One body per list is one refusal per list.
 //
-// AND NEITHER BROADCASTS material-refresh. Every board on the plant is
-// subscribed to that event and answers it with a view build (operator.js,
-// onMaterialRefresh → scheduleRefresh). A part set and a routing set are
-// ENGINEERING facts — no board's tiles change when one is written — so a
-// broadcast here would be N view builds on one connection for a screen change
-// nobody made.
+// Neither broadcasts anything of its own: the boards' nudge after every /api
+// write is router.go's nudgeAfterWrite.
 
 func payloadProcess(t *testing.T, name string) int64 {
 	t.Helper()

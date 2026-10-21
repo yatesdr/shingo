@@ -525,3 +525,118 @@ func TestBinsAsOf(t *testing.T) {
 		}
 	}
 }
+
+// TestStationView_SaysWhenContainmentIsNotKnown: against a Core that speaks
+// feeds, with nothing held, the view says containment is not known
+// (view.containment.known false), so the station's sign can say so; with the
+// copy held, or against a Core with no feeds, the key is absent.
+func TestStationView_SaysWhenContainmentIsNotKnown(t *testing.T) {
+	rig := containmentRig(t)
+	if _, ok := rig.view(t, "QA")["containment"]; ok {
+		t.Error("a Core with no feeds: the view carries containment; want it absent")
+	}
+	rig.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}})
+	if got := jsonOf(t, rig.view(t, "QA")["containment"]); got != `{"known":false}` {
+		t.Errorf("feeds, nothing held: containment = %s, want {\"known\":false}", got)
+	}
+	if err := rig.eng.ApplyContainmentSnapshot(protocol.ContainmentSnapshot{Digest: "c1",
+		Flags: []protocol.PayloadContainmentRow{}, HeldBins: []protocol.HeldBinRow{},
+		Destinations: []protocol.ContainmentDestination{}}); err != nil {
+		t.Fatalf("apply containment: %v", err)
+	}
+	if _, ok := rig.view(t, "QA")["containment"]; ok {
+		t.Error("feeds, copy held: the view carries containment; want it absent")
+	}
+}
+
+// The refusal table and sourcing events reach the stations as supply-refusal
+// and sourcing, naming what changed, on the durable queue.
+func TestSSE_RefusalAndSourcingEventsAreSent(t *testing.T) {
+	t.Parallel()
+	for _, topic := range []string{"supply-refusal", "sourcing"} {
+		if lossySSETopics[topic] {
+			t.Errorf("%s is classified lossy", topic)
+		}
+	}
+	hub := NewEventHub()
+	eng := &engine.Engine{Events: engine.NewEventBus()}
+	hub.SetupEngineListeners(eng)
+	for _, tc := range []struct {
+		evt  engine.Event
+		typ  string
+		data string
+	}{
+		{engine.Event{Type: engine.EventSupplyRefusalChanged,
+			Payload: engine.SupplyRefusalChangedEvent{LoaderNode: "SMN_A1", PayloadCode: "PART-A"}},
+			"supply-refusal", `{"loader_node":"SMN_A1","payload_code":"PART-A"}`},
+		{engine.Event{Type: engine.EventSourcingStateChanged,
+			Payload: engine.SourcingStateChangedEvent{Processes: []string{"PRESS-1"}}},
+			"sourcing", `{"processes":["PRESS-1"]}`},
+	} {
+		eng.Events.Emit(tc.evt)
+		select {
+		case evt := <-hub.broadcast:
+			if got := jsonOf(t, evt.Data); evt.Type != tc.typ || got != tc.data {
+				t.Errorf("broadcast %q %s, want %s %s", evt.Type, got, tc.typ, tc.data)
+			}
+		default:
+			t.Errorf("no SSE event for %s", tc.typ)
+		}
+	}
+}
+
+// TestStationView_AssignmentsAndHeightsFromTheCopy: from the Edge's copy of a
+// Core that serves the feed, an unloader's view carries each window's
+// assignment, each cart's tote numbers on its bin, and the empties' wants per
+// type and per wanted height; over HTTP (a Core that sends no group lines)
+// it carries the tote numbers and nothing else of it.
+func TestStationView_AssignmentsAndHeightsFromTheCopy(t *testing.T) {
+	rig := newBinsRig(t)
+	rig.eng.SetSendFunc(func(*protocol.Envelope) error { return nil })
+	n := func(v int) *int { return &v }
+	rig.core.rows["ULN_1"] = protocol.NodeBinInfo{NodeName: "ULN_1", BinID: 4, BinLabel: "CART-4", BinTypeCode: "TOTE-1",
+		PayloadCode: "PART-C", UOPRemaining: 40, Occupied: true, TotesOnCart: n(16), TotesPerLayer: n(8)}
+
+	v := rig.view(t, "UNL")
+	if got := jsonOf(t, tileByNode(t, v, "ULN_1")["bin_state"].(map[string]any)["totes_on_cart"]); got != "16" {
+		t.Errorf("over HTTP: ULN_1 totes_on_cart %s, want 16", got)
+	}
+	if a, ok := tileByNode(t, v, "ULN_1")["assignment"]; ok {
+		t.Errorf("over HTTP: an assignment %s", jsonOf(t, a))
+	}
+
+	empty := ""
+	rig.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: &empty})
+	snap := protocol.NodeBinsSnapshot{Rows: []protocol.NodeBinsRow{
+		{Node: "E1", Occupied: true, BinID: 5, BinTypeCode: "TOTE-1", TotesOnCart: n(24), TotesPerLayer: n(8)},
+		{Node: "E2"},
+		{Node: "E3"},
+		{Node: "ULN_1", Occupied: true, BinID: 4, BinLabel: "CART-4", BinTypeCode: "TOTE-1", PayloadCode: "PART-C",
+			Stocked: true, TotesOnCart: n(16), TotesPerLayer: n(8)},
+		{Node: "ULN_2"},
+	}, Groups: []protocol.NodeBinsGroup{{Group: "EMPTY-GRP",
+		Wants:       []protocol.NodeBinsWant{{BinType: "TOTE-1", Want: 2}, {BinType: "TOTE-1", Layers: n(3), Want: 1}},
+		Assignments: []protocol.NodeBinsAssignment{{Node: "ULN_1", BinType: "TOTE-1", Layers: n(3)}},
+	}}}
+	d, err := protocol.NodeBinsDigest(snap)
+	if err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	snap.Digest = d
+	if err := rig.eng.ApplyNodeBinsSnapshot(snap); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	v = rig.view(t, "UNL")
+	u1 := tileByNode(t, v, "ULN_1")
+	if got := jsonOf(t, u1["assignment"]); got != `{"bin_type":"TOTE-1","layers":3}` {
+		t.Errorf("copy: ULN_1 assignment %s", got)
+	}
+	if got := jsonOf(t, u1["bin_state"].(map[string]any)["totes_per_layer"]); got != "8" {
+		t.Errorf("copy: ULN_1 totes_per_layer %s, want 8", got)
+	}
+	want := `{"group":"EMPTY-GRP","rows":[{"bin_type":"TOTE-1","have":1,"spots":2,"want":2},` +
+		`{"bin_type":"TOTE-1","have":1,"layers":3,"spots":2,"want":1}]}`
+	if got := jsonOf(t, v["empties"]); got != want {
+		t.Errorf("copy: empties %s\nwant %s", got, want)
+	}
+}

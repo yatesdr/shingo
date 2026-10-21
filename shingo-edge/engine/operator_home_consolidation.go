@@ -140,7 +140,7 @@ func (e *Engine) ClearLoaderHome(nodeID int64, bufferNode string) error {
 
 	// Zero the home bin's UOP via Core (declare it empty; robot will move the
 	// carrier out via Order A).
-	cleared, err := e.coreClient.ClearBin(node.CoreNodeName, "", false)
+	cleared, err := e.coreClient.ClearBin(node.CoreNodeName, "", false, nil)
 	if err != nil {
 		return fmt.Errorf("clear loader home: zero bin UOP: %w", err)
 	}

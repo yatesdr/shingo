@@ -35,4 +35,8 @@ type EventEmitter interface {
 	EmitOrderDeliveredFallback(binID int64, binUOP *int, binPayloadCode *string, binEpoch int64, deliveryNode string, landingSent bool)
 	EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string)
 	EmitOrderFaulted(orderID int64, orderUUID, reason string)
+	// EmitOrderTouched says an order's fields were written and no scoped event
+	// announced them (Manager.AnnounceOrder): the boards that draw the order
+	// or its process node refetch.
+	EmitOrderTouched(orderID int64, orderUUID string, processNodeID *int64)
 }

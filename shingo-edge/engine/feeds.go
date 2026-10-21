@@ -78,6 +78,70 @@ type feedBook struct {
 	// so a test can run the Edge's clock ahead of or behind Core's — the rig
 	// cannot shift one container's wall clock.
 	now func() time.Time
+	// stale is, per agedFeeds key, whether the copy was past FeedAsOfAfter
+	// when last looked at (crossingsLocked).
+	stale map[string]bool
+}
+
+// agedFeeds are the held feeds whose age a screen shows: the station view's
+// "Bins as of" and "Catalog as of" (www station_bins.go, station_catalog.go),
+// and the containment page's "as of" (www handlers_containment.go).
+var agedFeeds = [...]string{protocol.FeedBins, protocol.FeedCatalog, protocol.FeedContainment}
+
+// crossingsLocked compares each aged feed's age now with what it was when last
+// looked at, and reports a crossing of FeedAsOfAfter either way: for a feed a
+// station shows (board) and for containment, whose page reloads on its own
+// event. A copy is current as of the later of its arrival and Core's last
+// confirmation, the rule every screen applies; nothing held is never stale
+// (the screens say "not known" for that, from other facts). Memory only, three
+// compares: called on every heartbeat tick (FeedDigests), confirmation
+// (OnCoreAck) and arrival (holdFeed), because the board does not poll and the
+// crossing writes nothing anyone would announce.
+func (b *feedBook) crossingsLocked(now time.Time) (board, containment bool) {
+	if b.stale == nil {
+		b.stale = map[string]bool{}
+	}
+	for _, key := range agedFeeds {
+		stale := false
+		if h := b.held[key]; h != nil && !(h.receivedAt.IsZero() && h.confirmedAt.IsZero()) {
+			current := h.confirmedAt
+			if h.receivedAt.After(current) {
+				current = h.receivedAt
+			}
+			stale = now.Sub(current) > FeedAsOfAfter
+		}
+		if b.stale[key] == stale {
+			continue
+		}
+		b.stale[key] = stale
+		if key == protocol.FeedContainment {
+			containment = true
+		} else {
+			board = true
+		}
+	}
+	return board, containment
+}
+
+// announceCrossings says what crossingsLocked found, outside the lock: one
+// board nudge for the station feeds, and the containment event (whose page
+// reloads on it; every station takes it too).
+func (e *Engine) announceCrossings(board, containment bool) {
+	if board {
+		e.nudgeBoards()
+	}
+	if containment {
+		e.Events.Emit(Event{Type: EventContainmentUpdated, Timestamp: time.Now(),
+			Payload: ContainmentUpdatedEvent{Digest: e.heldDigest(protocol.FeedContainment)}})
+	}
+}
+
+// ageFeeds is the heartbeat tick's look at the aged feeds.
+func (e *Engine) ageFeeds() {
+	e.feeds.mu.Lock()
+	board, containment := e.feeds.crossingsLocked(e.feeds.clock())
+	e.feeds.mu.Unlock()
+	e.announceCrossings(board, containment)
 }
 
 // clock is the time an ack is stamped with on this Edge.
@@ -236,6 +300,8 @@ func (e *Engine) loadFeedCopies() {
 // Edge holds ("" when it holds nothing yet). Never nil, so Core can tell this
 // Edge from one that predates feeds.
 func (e *Engine) FeedDigests() map[string]string {
+	// The heartbeat's tick is the Edge's clock for the screens' "as of".
+	e.ageFeeds()
 	out := map[string]string{}
 	out[protocol.FeedContainment] = e.heldDigest(protocol.FeedContainment)
 	if d, ok := e.refusalsDigest(); ok {
@@ -288,7 +354,9 @@ func (e *Engine) holdFeed(key, digest, body string) {
 		h.persistedAt = now
 		row = persistedRow(key, h)
 	}
+	board, containment := e.feeds.crossingsLocked(e.feeds.clock())
 	e.feeds.mu.Unlock()
+	e.announceCrossings(board, containment)
 	if changed && feedCopyKept(key) {
 		if err := e.db.SaveFeedCopy(row); err != nil {
 			e.logFn("feeds: save %s: %v", key, err)
@@ -343,7 +411,9 @@ func (e *Engine) OnCoreAck(ack *protocol.EdgeHeartbeatAck) {
 			persist = append(persist, persistedRow(key, h))
 		}
 	}
+	board, containment := e.feeds.crossingsLocked(now)
 	e.feeds.mu.Unlock()
+	e.announceCrossings(board, containment)
 	for _, row := range persist {
 		if err := e.db.SaveFeedCopy(row); err != nil {
 			e.logFn("feeds: save %s confirmation: %v", row.Feed, err)

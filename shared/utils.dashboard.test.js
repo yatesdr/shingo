@@ -78,8 +78,8 @@ function ESStub(url) {
         (this.listeners[type] = this.listeners[type] || []).push(fn);
     };
     this.close = () => { this.closed = true; };
-    this.fire = (type, dataObj) => {
-        (this.listeners[type] || []).forEach((fn) => fn({ data: JSON.stringify(dataObj) }));
+    this.fire = (type, dataObj, id) => {
+        (this.listeners[type] || []).forEach((fn) => fn({ data: JSON.stringify(dataObj), lastEventId: id || '' }));
     };
     lastES = this;
 }
@@ -110,6 +110,8 @@ function loadUtils() {
         '; this.reconcileList = reconcileList;' +
         '  this.createStore = createStore;' +
         '  this.onSSE = onSSE;' +
+        '  this.setSSEQuery = typeof setSSEQuery === "function" ? setSSEQuery : function () {};' +
+        '  this.setSSEWatchdog = typeof setSSEWatchdog === "function" ? setSSEWatchdog : function () {};' +
         '  this.closeSSEBus = closeSSEBus;',
         ctx);
     return ctx;
@@ -219,7 +221,45 @@ function loadUtils() {
     assert(connects >= 1, 'onSSE: dispatches synthetic connected for snapshot re-fetch');
 
     ctx.closeSSEBus();
-})().then(() => {
+})().then(async () => {
+    // ─── the numbered stream: query, stream frames, the gap, the watchdog ───
+    const ctx = loadUtils();
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    ctx.setSSEQuery({ station: 7 });
+    ctx.setSSEWatchdog(60);
+    let gaps = 0, beats = 0, drops = 0;
+    ctx.onSSE('bins', () => {});
+    ctx.onSSE('stream-gap', () => { gaps++; });
+    ctx.onSSE('heartbeat', () => { beats++; });
+    ctx.onSSE('disconnected', () => { drops++; });
+    await flush();
+    const es = lastES;
+    assert(es.url === '/events?topics=bins&station=7',
+        'onSSE: the stream frames are no topic, and the query rides the URL (' + es.url + ')');
+
+    es.fire('connected', { build: 'b1', seq: 10 });
+    es.fire('bins', { nodes: [] }, '11');
+    es.fire('heartbeat', { build: 'b1', seq: 11 });
+    assert(gaps === 0 && beats === 1, 'onSSE: a heartbeat at the last id seen is no gap, and reaches subscribers');
+    es.fire('heartbeat', { build: 'b1', seq: 13 });
+    assert(gaps === 1, 'onSSE: a heartbeat ahead of the last id seen dispatches stream-gap');
+    es.fire('heartbeat', { build: 'b1', seq: 13 });
+    assert(gaps === 1, 'onSSE: the gap is reported once');
+    es.fire('heartbeat', { build: 'b1' });
+    assert(gaps === 1, 'onSSE: a heartbeat with no seq (Core) is never a gap');
+
+    await sleep(30);
+    es.fire('heartbeat', { build: 'b1', seq: 13 });
+    await sleep(40);
+    assert(drops === 0 && !es.closed, 'onSSE: a frame inside the watchdog keeps the stream');
+    await sleep(60);
+    assert(drops === 1 && es.closed, 'onSSE: no frame for the watchdog\'s time: closed and disconnected dispatched');
+    ctx.setSSEWatchdog(0); // the reopened stream gets no frames here; keep it
+    await sleep(1050);
+    assert(lastES !== es && !lastES.closed, 'onSSE: the watchdog\'s drop reconnects after the backoff');
+    ctx.closeSSEBus();
+}).then(() => {
     console.log('dashboard primitives: ' + passed + ' passed, ' + failed + ' failed');
     process.exit(failed ? 1 : 0);
 }).catch((e) => {

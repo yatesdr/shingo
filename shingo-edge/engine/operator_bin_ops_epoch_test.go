@@ -99,7 +99,7 @@ func TestClearBin_TakesTheEpochCoreReturns(t *testing.T) {
 		t.Fatalf("bind the carrier at its current stamp: %v", err)
 	}
 
-	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false), "ClearBin")
+	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false, nil), "ClearBin")
 
 	rt, err = db.GetProcessNodeRuntime(nodeID)
 	if err != nil || rt == nil {
@@ -152,7 +152,7 @@ func TestClearBin_IgnoresTheEpochWhenADifferentCarrierIsBound(t *testing.T) {
 		t.Fatalf("bind a different carrier: %v", err)
 	}
 
-	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false), "ClearBin")
+	testutil.MustNoErr(t, eng.ClearBin(nodeID, "", false, nil), "ClearBin")
 
 	rt, err = db.GetProcessNodeRuntime(nodeID)
 	if err != nil || rt == nil {

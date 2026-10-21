@@ -67,43 +67,10 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": [
-        {
-          "id": 1,
-          "uuid": "one-l1",
-          "order_type": "retrieve",
-          "status": "queued",
-          "process_node_id": 1,
-          "retrieve_empty": false,
-          "quantity": 1,
-          "delivery_node": "SMN_A1",
-          "staging_node": "",
-          "source_node": "",
-          "load_type": "standard",
-          "waybill_id": null,
-          "external_ref": null,
-          "final_count": null,
-          "count_confirmed": false,
-          "eta": null,
-          "auto_confirm": false,
-          "payload_code": "PART-A",
-          "payload_desc": "",
-          "queue_reason": "",
-          "queue_code": "",
-          "authored_by": "edge",
-          "origin_id": "",
-          "origin_class": "",
-          "lane_held": false,
-          "departed": false,
-          "created_at": "<ts>",
-          "updated_at": "<ts>",
-          "process_name": "LDR-ONE",
-          "process_node_name": "SMN_A1",
-          "station_name": "LDR-ONE Station"
-        }
-      ],
+      "can_skip": false,
       "swap_ready": false,
       "releases_as_pair": false,
       "supply_refusals": {
@@ -112,7 +79,23 @@
           "refused_by": "Loader one",
           "answered": false
         }
-      }
+      },
+      "orders": [
+        {
+          "id": 1,
+          "order_type": "retrieve",
+          "status": "queued",
+          "payload_code": "PART-A",
+          "source_node": "",
+          "delivery_node": "SMN_A1",
+          "eta": null,
+          "auto_confirm": false,
+          "queue_reason": "",
+          "lane_held": false,
+          "departed": false,
+          "created_at": "<ts>"
+        }
+      ]
     }
   ],
   "cell_version": "<version>",

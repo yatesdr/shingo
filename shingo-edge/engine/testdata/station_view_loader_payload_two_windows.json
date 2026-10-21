@@ -64,11 +64,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -107,45 +109,28 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
+      "can_skip": false,
+      "swap_ready": false,
+      "releases_as_pair": false,
       "orders": [
         {
           "id": 1,
-          "uuid": "two-l1",
           "order_type": "retrieve",
           "status": "delivered",
-          "process_node_id": 2,
-          "retrieve_empty": true,
-          "quantity": 1,
-          "delivery_node": "SMN_B2",
-          "staging_node": "",
+          "payload_code": "",
           "source_node": "",
-          "load_type": "standard",
-          "waybill_id": null,
-          "external_ref": null,
-          "final_count": null,
-          "count_confirmed": false,
+          "delivery_node": "SMN_B2",
           "eta": null,
           "auto_confirm": false,
-          "payload_code": "",
-          "payload_desc": "",
           "queue_reason": "",
-          "queue_code": "",
-          "authored_by": "edge",
-          "origin_id": "",
-          "origin_class": "",
           "lane_held": false,
           "departed": false,
-          "created_at": "<ts>",
-          "updated_at": "<ts>",
-          "process_name": "LDR-TWO",
-          "process_node_name": "SMN_B2",
-          "station_name": "LDR-TWO Station"
+          "created_at": "<ts>"
         }
-      ],
-      "swap_ready": false,
-      "releases_as_pair": false
+      ]
     }
   ],
   "cell_version": "<version>",

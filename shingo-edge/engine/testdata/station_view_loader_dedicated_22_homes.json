@@ -64,11 +64,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -107,11 +109,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -150,45 +154,28 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
+      "can_skip": false,
+      "swap_ready": false,
+      "releases_as_pair": false,
       "orders": [
         {
           "id": 1,
-          "uuid": "homes22-order-a",
           "order_type": "move",
           "status": "queued",
-          "process_node_id": 3,
-          "retrieve_empty": false,
-          "quantity": 1,
-          "delivery_node": "SMN_F2",
-          "staging_node": "",
+          "payload_code": "",
           "source_node": "SMN_H03",
-          "load_type": "standard",
-          "waybill_id": null,
-          "external_ref": null,
-          "final_count": null,
-          "count_confirmed": false,
+          "delivery_node": "SMN_F2",
           "eta": null,
           "auto_confirm": false,
-          "payload_code": "",
-          "payload_desc": "",
           "queue_reason": "",
-          "queue_code": "",
-          "authored_by": "edge",
-          "origin_id": "",
-          "origin_class": "",
           "lane_held": false,
           "departed": false,
-          "created_at": "<ts>",
-          "updated_at": "<ts>",
-          "process_name": "LDR-22",
-          "process_node_name": "SMN_H03",
-          "station_name": "LDR-22 Station"
+          "created_at": "<ts>"
         }
-      ],
-      "swap_ready": false,
-      "releases_as_pair": false
+      ]
     },
     {
       "node": {
@@ -227,11 +214,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -270,11 +259,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -313,11 +304,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -356,11 +349,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -399,11 +394,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -442,11 +439,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -485,11 +484,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -528,11 +529,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -571,11 +574,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -614,11 +619,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -657,11 +664,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -700,11 +709,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -743,11 +754,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -786,11 +799,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -829,11 +844,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -872,11 +889,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -915,11 +934,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -958,11 +979,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     },
     {
       "node": {
@@ -1001,11 +1024,13 @@
           }
         ],
         "leaves_bare": false,
-        "pulled_directly": false
+        "pulled_directly": false,
+        "board_shows_all_parts": false
       },
-      "orders": null,
+      "can_skip": false,
       "swap_ready": false,
-      "releases_as_pair": false
+      "releases_as_pair": false,
+      "orders": null
     }
   ],
   "cell_version": "<version>",

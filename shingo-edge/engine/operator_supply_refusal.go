@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -46,6 +47,7 @@ func (e *Engine) RefuseSupply(processNodeID int64, payloadCode, refusedBy string
 		return err
 	}
 	e.logFn("supply_refusal: %s cannot supply %s (by %s)", node.CoreNodeName, payloadCode, refusedBy)
+	e.announceRefusal(node.CoreNodeName, payloadCode)
 	// LOCAL FIRST, THEN CORE. The write above already turned the card dormant;
 	// this only tells the rest of the plant. A Core that is down must never stop
 	// an operator recording what they found on the floor.
@@ -81,6 +83,7 @@ func (e *Engine) UndoSupplyRefusal(processNodeID int64, payloadCode string) erro
 		return nil
 	}
 	e.logFn("supply_refusal: %s withdrew the refusal for %s", node.CoreNodeName, payloadCode)
+	e.announceRefusal(node.CoreNodeName, payloadCode)
 	e.emitSupplyRefusal(protocol.SupplyRefusalState{
 		Action: protocol.SupplyRefusalClosed, LoaderNode: node.CoreNodeName, PayloadCode: payloadCode,
 	})
@@ -124,6 +127,7 @@ func (e *Engine) AckSupplyRefusal(processNodeID int64, loaderNode, payloadCode, 
 		return nil
 	}
 	e.logFn("supply_refusal: %s answered %s/%s with %q", processName, loaderNode, payloadCode, choice)
+	e.announceRefusal(loaderNode, payloadCode)
 	now := time.Now().UTC()
 	e.emitSupplyRefusal(protocol.SupplyRefusalState{
 		Action: protocol.SupplyRefusalAcked, LoaderNode: loaderNode, PayloadCode: payloadCode,
@@ -216,7 +220,9 @@ func (e *Engine) HandleSupplyRefusalState(st protocol.SupplyRefusalState) {
 	}
 	if err != nil {
 		e.logFn("supply_refusal: apply %s for %s/%s: %v", st.Action, st.LoaderNode, st.PayloadCode, err)
+		return
 	}
+	e.announceRefusal(st.LoaderNode, st.PayloadCode)
 }
 
 // ownsRefusalWindow reports whether loaderNode is one of this Edge's loader
@@ -270,6 +276,7 @@ func (e *Engine) ApplySupplyRefusalSnapshot(snap protocol.SupplyRefusalSnapshot)
 	for _, m := range heals {
 		e.logFn("supply_refusal: snapshot: Core is missing %s for %s/%s — re-sent", m.Action, m.LoaderNode, m.PayloadCode)
 	}
+	e.announceRefusal("", "")
 	return nil
 }
 
@@ -346,3 +353,15 @@ func loaderCardClaim(node *processes.Node, claim *processes.NodeClaim) error {
 // wondering where the authorization went should find this rather than conclude
 // it was forgotten. What remains is loaderCardNode, which still establishes that
 // the target is a real loader window rendering a real card.
+
+// announceRefusal tells the station boards the refusal table changed at a
+// card (EventSupplyRefusalChanged); blank names for Core's snapshot, which may
+// have changed any card. After the write, never before it. Pinned by
+// TestSupplyRefusalChanged_EveryDoorThatWritesTheTable.
+func (e *Engine) announceRefusal(loaderNode, payloadCode string) {
+	e.Events.Emit(Event{
+		Type:      EventSupplyRefusalChanged,
+		Timestamp: clock.Now(),
+		Payload:   SupplyRefusalChangedEvent{LoaderNode: loaderNode, PayloadCode: payloadCode},
+	})
+}

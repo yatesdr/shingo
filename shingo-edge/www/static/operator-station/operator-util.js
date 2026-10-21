@@ -78,6 +78,20 @@ export function friendlyOrderError(detail) {
 
 const toastContainer = document.getElementById('os-toast');
 
+// makeRoomForToast keeps the container to three toasts by dropping the oldest
+// plain one. A sticky toast is an alert someone has to see and close: no later
+// toast evicts it (a bug fixed: about 9 s of failed polls cleared an
+// order-failed alert). Pinned by operator-refresh.test.js.
+function makeRoomForToast() {
+    while (toastContainer.children.length >= 3) {
+        const plain = Array.prototype.find.call(toastContainer.children, function (t) {
+            return !t.classList.contains('sticky');
+        });
+        if (!plain) return;
+        plain.remove();
+    }
+}
+
 export function showToast(msg, type, opts) {
     opts = opts || {};
     const classes = ['os-toast-msg'];
@@ -85,9 +99,7 @@ export function showToast(msg, type, opts) {
     if (opts.sticky) classes.push('sticky');
 
     const toast = el('div', { className: classes.join(' ') });
-    while (toastContainer.children.length >= 3) {
-        toastContainer.firstChild.remove();
-    }
+    makeRoomForToast();
 
     if (opts.sticky) {
         const text = el('span', { textContent: msg });
@@ -116,9 +128,7 @@ export function showToast(msg, type, opts) {
 // × lets the operator ignore the exit and leave the refusal on screen.
 export function showExitToast(msg, actionLabel, onAction) {
     const toast = el('div', { className: 'os-toast-msg error sticky' });
-    while (toastContainer.children.length >= 3) {
-        toastContainer.firstChild.remove();
-    }
+    makeRoomForToast();
     const text = el('span', { textContent: msg });
     const action = el('button', {
         className: 'os-toast-action',

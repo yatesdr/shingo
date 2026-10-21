@@ -14,7 +14,7 @@ import { openKeypad } from './operator-keypad.js';
 import { openReleasePrompt, closeReleasePrompt } from './operator-release.js';
 import { isActive, isPreDispatch } from './order-status.js';
 import { isOwnEmptyOut } from './operator-window-state.js';
-import { loaderOf, partCodes, carriersOf } from './operator-board-model.js';
+import { loaderOf, partCodes, carriersOf, binsKnown, clearHighlight } from './operator-board-model.js';
 import { confirmUnloadSwap } from './operator-render.js';
 
 const nodeModal = document.getElementById('node-modal');
@@ -450,7 +450,10 @@ export function renderModal(entry) {
                 // code and should be deleted instead of being left as a
                 // permanent escape hatch.
                 var idleNoDemand = !hasBin && !payloadOrders.length && !hasDemand;
-                var canRequest = idleNoDemand;
+                // NOT WHILE THE BINS ARE NOT KNOWN: "no bin" is then nobody's
+                // finding, and a request would be made for a window that may
+                // hold one (a bug fixed; operator-refresh.test.js).
+                var canRequest = idleNoDemand && binsKnown(getView());
                 var clickable = !!payloadDelivered || parkedEmptyAtLoader || canRequest;
                 var requestUrl = '';
                 if (canRequest) {
@@ -1193,9 +1196,12 @@ const ACTION_HANDLERS = {
         const entry = sid !== null ? findNodeByID(sid) : null;
         if (!entry) return;
         const loader = loaderOf(entry) || {};
+        const view = getView() || {};
         closeModal();
+        // Lit as the board's card lights it (clearHighlight).
         confirmUnloadSwap(entry.node.id, carriersOf(entry),
-            entry.runtime && entry.runtime.remaining_uop_cached, !!loader.leaves_bare);
+            entry.runtime && entry.runtime.remaining_uop_cached, !!loader.leaves_bare,
+            loader.leaves_bare ? null : clearHighlight(entry, view.serves));
     },
 
     'keypad': (arg) => {

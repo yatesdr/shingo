@@ -338,224 +338,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	hb.FeedsFn = eng.FeedDigests
 	hb.CoreSpeaksFeedsFn = eng.CoreSpeaksFeeds
 
-	// ── Subject router (Data sub-dispatch) ─────────────────────────────
-	// Every protocol.Subject* constant is registered against the closure that
-	// drives the corresponding Edge subsystem (engine method, heartbeater
-	// resync trigger, node structure changes, etc). Pre-router this was done
-	// via nine EdgeHandler.Set*Handler setters (since removed); the router is now the
-	// registration surface and EdgeHandler holds only order-channel
-	// state.
-	subjectRouter := router.NewSubject()
-
-	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeRegistered, func(_ *protocol.Envelope, reg *protocol.EdgeRegistered) {
-		log.Printf("edge_handler: registration acknowledged: station=%s msg=%s", reg.StationID, reg.Message)
-		// Republish the full claim set on every registration, not just at boot.
-		// This is the path that covers CORE restarting: Core sends
-		// EdgeRegisterRequest to an edge it does not recognise, the edge
-		// re-registers, and the ack lands here. Without it, a restarted Core
-		// waits out the (now hourly) safety snapshot with an empty mirror.
-		if pub := plantClaimsPub.Load(); pub != nil {
-			goSafe("plant-claims-on-register", func() {
-				if err := pub.PublishAll(); err != nil {
-					log.Printf("plant_claims: publish on register: %v", err)
-				}
-			})
-		}
-		if eng.Uptime() > 30 {
-			hb.RequestNodeSync()
-			hb.RequestCatalogSync()
-		}
-		// Sync manual_swap claims to Core's demand registry. Pre-side-cycle
-		// this also called StartupSweepManualSwap to seed empty-in orders
-		// at every loader — unnecessary now that empty-ins are driven by
-		// Core deciding the replenishment itself and pushing down a whole order, or by
-		// operator staging.
-		// Unloaders: catch any window that became free (or supply that
-		// arrived) while Edge was offline. The sweep offers every
-		// operator-replenished consume loader with an inbound source,
-		// AutoPush or not (pushUnloadersViaSeam reads no AutoPush); after it,
-		// only an AutoPush unloader's own gates pull again. Mirrors the
-		// loader-side reasoning that demand triggers fire while we were
-		// unreachable, so a startup pass keeps the queue current.
-		goSafe("engine-SweepPushUnloaders", func() { eng.SweepPushUnloaders() })
-		goSafe("engine-SweepPushLoaders", func() { eng.SweepPushLoaders() })
-	})
-	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeHeartbeatAck, func(_ *protocol.Envelope, ack *protocol.EdgeHeartbeatAck) {
-		log.Printf("edge_handler: heartbeat ack: station=%s server_ts=%s", ack.StationID, ack.ServerTS)
-		adoptPlantTimezone(eng.AppConfig(), eng.ConfigPath(), ack.Timezone)
-		eng.OnCoreAck(ack)
-	})
-	router.RegisterSubject(subjectRouter, protocol.SubjectNodeListResponse, func(_ *protocol.Envelope, resp *protocol.NodeListResponse) {
-		log.Printf("edge_handler: received node list (%d nodes, %d loaders, %d payload-bin-types, %d scene points, %d scene edges)",
-			len(resp.Nodes), len(resp.Loaders), len(resp.PayloadBinTypes), len(resp.ScenePoints), len(resp.SceneEdges))
-		eng.ApplyNodeList(resp)
-	})
-	router.RegisterSubject(subjectRouter, protocol.SubjectCatalogPayloadsResponse, func(_ *protocol.Envelope, resp *protocol.CatalogPayloadsResponse) {
-		log.Printf("edge_handler: received payload catalog (%d entries)", len(resp.Payloads))
-		eng.ApplyCatalog(resp)
-	})
-	router.RegisterSubject(subjectRouter, protocol.SubjectOrderStatusResponse, func(_ *protocol.Envelope, resp *protocol.OrderStatusResponse) {
-		eng.HandleOrderStatusSnapshots(resp.Orders)
-		// The healing half: orders Core holds for this station that we did not
-		// ask about, because we have no row for them. A dropped projection is
-		// repaired here and nowhere else.
-		eng.HandleUnlistedOrders(resp.Unlisted)
-	})
-	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeRegisterRequest, func(_ *protocol.Envelope, req *protocol.EdgeRegisterRequest) {
-		log.Printf("edge_handler: core requested re-registration: %s", req.Reason)
-		hb.SendRegister()
-		if err := eng.StartupReconcile(); err != nil {
-			log.Printf("startup reconcile after register request: %v", err)
-		}
-	})
-	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeStale, func(_ *protocol.Envelope, stale *protocol.EdgeStale) {
-		log.Printf("edge_handler: WARNING: core marked this edge as stale: %s — re-registering", stale.Message)
-		hb.SendRegister()
-		if err := eng.StartupReconcile(); err != nil {
-			log.Printf("startup reconcile after stale notification: %v", err)
-		}
-	})
-	router.RegisterSubject(subjectRouter, protocol.SubjectNodeStructureChanged, func(_ *protocol.Envelope, changed *protocol.NodeStructureChanged) {
-		log.Printf("edge_handler: node structure changed: node=%s action=%s — refreshing node cache",
-			changed.NodeName, changed.Action)
-		hb.RequestNodeSync()
-	})
-	// Item 11: SEND PARTIAL BACK pickup notification. Fires when Core's
-	// rds.Poller observes the robot finished the pickup block — Edge
-	// flushes the released bin's accumulator and clears the runtime's
-	// active order so subsequent ticks attribute cleanly.
-	router.RegisterSubject(subjectRouter, protocol.SubjectBinPickedUp, func(_ *protocol.Envelope, bp *protocol.BinPickedUp) {
-		log.Printf("edge_handler: bin_picked_up: order=%s bin=%d at=%s",
-			bp.OrderUUID, bp.BinID, bp.Location)
-		eng.HandleBinPickedUpMessage(*bp)
-	})
-	// The landing (Lane H, H.1): Core set a carrier down at a node, written in
-	// the transaction that moved it and addressed to this station. The one
-	// door that binds a carrier Core placed; order.delivered binds nothing
-	// (H.5). Registered here in the same place the subject joins
-	// EdgeInboundSubjects, so the boot coverage assertion holds.
-	router.RegisterSubject(subjectRouter, protocol.SubjectBinLanded, func(_ *protocol.Envelope, bl *protocol.BinLanded) {
-		log.Printf("edge_handler: bin_landed: bin=%d at=%s epoch=%d seq=%d order=%s",
-			bl.BinID, bl.CoreNodeName, bl.Epoch, bl.PlacedSeq, bl.OrderUUID)
-		eng.HandleBinLanded(*bl)
-	})
-	// What became of the bin a cancelled order left on a robot's deck.
-	// Notice only: stored for display, no order status or count moves.
-	router.RegisterSubject(subjectRouter, protocol.SubjectBinReturn, func(_ *protocol.Envelope, br *protocol.BinReturn) {
-		log.Printf("edge_handler: bin_return: order=%s bin=%s state=%s dest=%s",
-			br.OrderUUID, br.BinLabel, br.State, br.Destination)
-		eng.HandleBinReturn(*br)
-	})
-	// UOP adjustment from Core Bins record-count action. Admin sets
-	// the absolute UOP value; Edge writes it directly to the runtime
-	// cache and emits EventUOPAdjusted for SSE operator screen refresh.
-	router.RegisterSubject(subjectRouter, protocol.SubjectUOPAdjustment, func(_ *protocol.Envelope, adj *protocol.UOPAdjustment) {
-		log.Printf("edge_handler: uop_adjustment: node=%s bin=%d new=%d actor=%s",
-			adj.CoreNodeName, adj.BinID, adj.NewRemaining, adj.Actor)
-		eng.HandleUOPAdjustment(*adj)
-	})
-	// The version-stamp repair from Core: a count this node reported was
-	// discarded for carrying a generation that had ended, so Core is telling it
-	// the current one. Epoch only — no count rides this message; see
-	// protocol.BinEpochRefresh for why that is not negotiable. Registered here
-	// in the same place the subject joins EdgeInboundSubjects, so the boot
-	// coverage assertion holds.
-	router.RegisterSubject(subjectRouter, protocol.SubjectBinEpochRefresh, func(_ *protocol.Envelope, r *protocol.BinEpochRefresh) {
-		log.Printf("edge_handler: bin_epoch_refresh: node=%s bin=%d epoch=%d",
-			r.CoreNodeName, r.BinID, r.Epoch)
-		eng.HandleBinEpochRefresh(*r)
-	})
-	// Sourceability feed from Core: the verdict per (process, style) — what each
-	// process can change over to. Edge persists it to SQLite so the changeover
-	// picker reads it with no Core round-trip. Registered here in the same place
-	// the subject joins EdgeInboundSubjects, so the boot coverage assertion holds.
-	router.RegisterSubject(subjectRouter, protocol.SubjectSourcingState, func(_ *protocol.Envelope, r *protocol.SourcingStateReport) {
-		eng.HandleSourcingState(*r)
-	})
-	// Supply refusals, broadcast by Core to every edge. Registered here in the
-	// same place the subject joins EdgeInboundSubjects, so the boot coverage
-	// assertion holds. Each edge stores the whole set and filters locally — a
-	// loader card shows its own, a cell shows the ones it has an outstanding
-	// call for.
-	router.RegisterSubject(subjectRouter, protocol.SubjectSupplyRefusalState, func(_ *protocol.Envelope, st *protocol.SupplyRefusalState) {
-		eng.HandleSupplyRefusalState(*st)
-	})
-	// Core's containment state, broadcast after a containment write and sent
-	// to this Edge alone when its held digest differs. The containment page
-	// reads the copy held here instead of calling Core. Registered here in the
-	// same place the subject joins EdgeInboundSubjects.
-	router.RegisterSubject(subjectRouter, protocol.SubjectContainmentSnapshot, func(_ *protocol.Envelope, snap *protocol.ContainmentSnapshot) {
-		if err := eng.ApplyContainmentSnapshot(*snap); err != nil {
-			log.Printf("edge_handler: containment snapshot: %v", err)
-		}
-	})
-	// Core's node-bins feed: the bins at the nodes this Edge's stations draw,
-	// sent to this Edge alone after it publishes its watch list, after a change
-	// at a watched node, and when its held digest differs. The station view
-	// reads the copy held here. Registered here in the same place the subject
-	// joins EdgeInboundSubjects.
-	router.RegisterSubject(subjectRouter, protocol.SubjectBinsSnapshot, func(_ *protocol.Envelope, snap *protocol.NodeBinsSnapshot) {
-		if err := eng.ApplyNodeBinsSnapshot(*snap); err != nil {
-			log.Printf("edge_handler: node-bins snapshot: %v", err)
-		}
-	})
-	// Core's whole open refusal set, sent to this Edge when its refusals digest
-	// differs from Core's. Merged per field, not copied; a failed apply is
-	// logged by the engine and the next heartbeat's digest asks again.
-	router.RegisterSubject(subjectRouter, protocol.SubjectSupplyRefusalSnapshot, func(_ *protocol.Envelope, snap *protocol.SupplyRefusalSnapshot) {
-		_ = eng.ApplySupplyRefusalSnapshot(*snap)
-	})
-	// A whole order row pushed down by Core, for an order this Edge did not
-	// create. Without it a Core-authored order is invisible here: nothing on the
-	// board, and the delivery handler falls back to binding the bin alone.
-	// Registered here in the same place the subject joins EdgeInboundSubjects, so
-	// the boot coverage assertion holds.
-	router.RegisterSubject(subjectRouter, protocol.SubjectOrderProjected, func(_ *protocol.Envelope, p *protocol.OrderProjection) {
-		if _, err := eng.ApplyOrderProjection(*p); err != nil {
-			log.Printf("edge_handler: order projection %s: %v", p.OrderUUID, err)
-		}
-	})
-	for _, s := range protocol.EdgeInboundSubjects() {
-		if !subjectRouter.Has(s) {
-			log.Fatalf("shingoedge: subject router missing handler for %s — composition root is incomplete", s)
-		}
-	}
-
-	// ── Protocol router (envelope Type dispatch) ───────────────────────
-	// Every envelope Type is registered against either the EdgeHandler
-	// order-channel method or, for TypeData, a closure that delegates to
-	// the SubjectRouter built above.
-	protoRouter := router.New[string]()
-	router.Register(protoRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) {
-		dataDbg("data subject=%s from=%s", p.Subject, env.Src.Station)
-		subjectRouter.Dispatch(env, p)
-	})
-	// Edge sends these order-channel types to Core but never receives
-	// them. Register as inline no-ops so the Phase 3.5 startup assertion
-	// (every type in protocol.AllTypes() has a handler) is satisfied
-	// without a junk MessageHandler implementation. The "no handler
-	// registered" router log makes accidental inbound order-channel
-	// traffic visible if it ever shows up.
-	router.Register(protoRouter, protocol.TypeOrderRequest, func(*protocol.Envelope, *protocol.OrderRequest) {})
-	router.Register(protoRouter, protocol.TypeOrderCancel, func(*protocol.Envelope, *protocol.OrderCancel) {})
-	router.Register(protoRouter, protocol.TypeOrderReceipt, func(*protocol.Envelope, *protocol.OrderReceipt) {})
-	router.Register(protoRouter, protocol.TypeOrderRedirect, func(*protocol.Envelope, *protocol.OrderRedirect) {})
-	router.Register(protoRouter, protocol.TypeComplexOrderRequest, func(*protocol.Envelope, *protocol.ComplexOrderRequest) {})
-	router.Register(protoRouter, protocol.TypeOrderRelease, func(*protocol.Envelope, *protocol.OrderRelease) {})
-	router.Register(protoRouter, protocol.TypeOrderIngest, func(*protocol.Envelope, *protocol.OrderIngestRequest) {})
-	router.Register(protoRouter, protocol.TypeOrderAck, edgeHandler.HandleOrderAck)
-	router.Register(protoRouter, protocol.TypeOrderWaybill, edgeHandler.HandleOrderWaybill)
-	router.Register(protoRouter, protocol.TypeOrderUpdate, edgeHandler.HandleOrderUpdate)
-	router.Register(protoRouter, protocol.TypeOrderDelivered, edgeHandler.HandleOrderDelivered)
-	router.Register(protoRouter, protocol.TypeOrderError, edgeHandler.HandleOrderError)
-	router.Register(protoRouter, protocol.TypeOrderCancelled, edgeHandler.HandleOrderCancelled)
-	router.Register(protoRouter, protocol.TypeOrderStaged, edgeHandler.HandleOrderStaged)
-	router.Register(protoRouter, protocol.TypeOrderSkipped, edgeHandler.HandleOrderSkipped)
-	for _, t := range protocol.AllTypes() {
-		if !protoRouter.Has(t) {
-			log.Fatalf("shingoedge: protocol router missing handler for envelope type %s — composition root is incomplete", t)
-		}
-	}
+	protoRouter := buildInboundRouter(eng, edgeHandler, hb, dataDbg)
 	protoRouter.LogRegistration(log.Printf)
 	ingestor.Dispatch = func(env *protocol.Envelope) {
 		protoRouter.Dispatch(env, env.Type)
@@ -1303,4 +1086,239 @@ func adoptPlantTimezone(cfg *config.Config, configPath, offered string) {
 	}
 	log.Printf("edge_handler: plant timezone %s adopted from Core and written to config — "+
 		"RESTART shingoedge for display to pick it up", loc)
+}
+
+// inboundHeartbeater is what the inbound handlers ask of the Heartbeater: a
+// re-registration and the two resyncs. *messaging.Heartbeater is the one in
+// production; the door walk (door_walk_test.go) passes one that does nothing.
+type inboundHeartbeater interface {
+	SendRegister()
+	RequestNodeSync()
+	RequestCatalogSync()
+}
+
+// buildInboundRouter is the Edge's inbound dispatch table: every envelope type
+// and every Data subject Core sends, each against the handler that applies it.
+// One table, built here for setupKafkaSubscribers and for the door walk, which
+// drives every entry of it against a recording stream.
+func buildInboundRouter(eng *engine.Engine, edgeHandler *messaging.EdgeHandler, hb inboundHeartbeater, dataDbg func(string, ...any)) *router.Router[string] {
+	// ── Subject router (Data sub-dispatch) ─────────────────────────────
+	// Every protocol.Subject* constant is registered against the closure that
+	// drives the corresponding Edge subsystem (engine method, heartbeater
+	// resync trigger, node structure changes, etc). Pre-router this was done
+	// via nine EdgeHandler.Set*Handler setters (since removed); the router is now the
+	// registration surface and EdgeHandler holds only order-channel
+	// state.
+	subjectRouter := router.NewSubject()
+
+	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeRegistered, func(_ *protocol.Envelope, reg *protocol.EdgeRegistered) {
+		log.Printf("edge_handler: registration acknowledged: station=%s msg=%s", reg.StationID, reg.Message)
+		// Republish the full claim set on every registration, not just at boot.
+		// This is the path that covers CORE restarting: Core sends
+		// EdgeRegisterRequest to an edge it does not recognise, the edge
+		// re-registers, and the ack lands here. Without it, a restarted Core
+		// waits out the (now hourly) safety snapshot with an empty mirror.
+		if pub := plantClaimsPub.Load(); pub != nil {
+			goSafe("plant-claims-on-register", func() {
+				if err := pub.PublishAll(); err != nil {
+					log.Printf("plant_claims: publish on register: %v", err)
+				}
+			})
+		}
+		if eng.Uptime() > 30 {
+			hb.RequestNodeSync()
+			hb.RequestCatalogSync()
+		}
+		// Sync manual_swap claims to Core's demand registry. Pre-side-cycle
+		// this also called StartupSweepManualSwap to seed empty-in orders
+		// at every loader — unnecessary now that empty-ins are driven by
+		// Core deciding the replenishment itself and pushing down a whole order, or by
+		// operator staging.
+		// Unloaders: catch any window that became free (or supply that
+		// arrived) while Edge was offline. The sweep offers every
+		// operator-replenished consume loader with an inbound source,
+		// AutoPush or not (pushUnloadersViaSeam reads no AutoPush); after it,
+		// only an AutoPush unloader's own gates pull again. Mirrors the
+		// loader-side reasoning that demand triggers fire while we were
+		// unreachable, so a startup pass keeps the queue current.
+		goSafe("engine-SweepPushUnloaders", func() { eng.SweepPushUnloaders() })
+		goSafe("engine-SweepPushLoaders", func() { eng.SweepPushLoaders() })
+	})
+	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeHeartbeatAck, func(_ *protocol.Envelope, ack *protocol.EdgeHeartbeatAck) {
+		log.Printf("edge_handler: heartbeat ack: station=%s server_ts=%s", ack.StationID, ack.ServerTS)
+		adoptPlantTimezone(eng.AppConfig(), eng.ConfigPath(), ack.Timezone)
+		eng.OnCoreAck(ack)
+	})
+	router.RegisterSubject(subjectRouter, protocol.SubjectNodeListResponse, func(_ *protocol.Envelope, resp *protocol.NodeListResponse) {
+		log.Printf("edge_handler: received node list (%d nodes, %d loaders, %d payload-bin-types, %d scene points, %d scene edges)",
+			len(resp.Nodes), len(resp.Loaders), len(resp.PayloadBinTypes), len(resp.ScenePoints), len(resp.SceneEdges))
+		eng.ApplyNodeList(resp)
+	})
+	router.RegisterSubject(subjectRouter, protocol.SubjectCatalogPayloadsResponse, func(_ *protocol.Envelope, resp *protocol.CatalogPayloadsResponse) {
+		log.Printf("edge_handler: received payload catalog (%d entries)", len(resp.Payloads))
+		eng.ApplyCatalog(resp)
+	})
+	router.RegisterSubject(subjectRouter, protocol.SubjectOrderStatusResponse, func(_ *protocol.Envelope, resp *protocol.OrderStatusResponse) {
+		eng.HandleOrderStatusSnapshots(resp.Orders)
+		// The healing half: orders Core holds for this station that we did not
+		// ask about, because we have no row for them. A dropped projection is
+		// repaired here and nowhere else.
+		eng.HandleUnlistedOrders(resp.Unlisted)
+	})
+	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeRegisterRequest, func(_ *protocol.Envelope, req *protocol.EdgeRegisterRequest) {
+		log.Printf("edge_handler: core requested re-registration: %s", req.Reason)
+		hb.SendRegister()
+		if err := eng.StartupReconcile(); err != nil {
+			log.Printf("startup reconcile after register request: %v", err)
+		}
+	})
+	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeStale, func(_ *protocol.Envelope, stale *protocol.EdgeStale) {
+		log.Printf("edge_handler: WARNING: core marked this edge as stale: %s — re-registering", stale.Message)
+		hb.SendRegister()
+		if err := eng.StartupReconcile(); err != nil {
+			log.Printf("startup reconcile after stale notification: %v", err)
+		}
+	})
+	router.RegisterSubject(subjectRouter, protocol.SubjectNodeStructureChanged, func(_ *protocol.Envelope, changed *protocol.NodeStructureChanged) {
+		log.Printf("edge_handler: node structure changed: node=%s action=%s — refreshing node cache",
+			changed.NodeName, changed.Action)
+		hb.RequestNodeSync()
+	})
+	// Item 11: SEND PARTIAL BACK pickup notification. Fires when Core's
+	// rds.Poller observes the robot finished the pickup block — Edge
+	// flushes the released bin's accumulator and clears the runtime's
+	// active order so subsequent ticks attribute cleanly.
+	router.RegisterSubject(subjectRouter, protocol.SubjectBinPickedUp, func(_ *protocol.Envelope, bp *protocol.BinPickedUp) {
+		log.Printf("edge_handler: bin_picked_up: order=%s bin=%d at=%s",
+			bp.OrderUUID, bp.BinID, bp.Location)
+		eng.HandleBinPickedUpMessage(*bp)
+	})
+	// The landing (Lane H, H.1): Core set a carrier down at a node, written in
+	// the transaction that moved it and addressed to this station. The one
+	// door that binds a carrier Core placed; order.delivered binds nothing
+	// (H.5). Registered here in the same place the subject joins
+	// EdgeInboundSubjects, so the boot coverage assertion holds.
+	router.RegisterSubject(subjectRouter, protocol.SubjectBinLanded, func(_ *protocol.Envelope, bl *protocol.BinLanded) {
+		log.Printf("edge_handler: bin_landed: bin=%d at=%s epoch=%d seq=%d order=%s",
+			bl.BinID, bl.CoreNodeName, bl.Epoch, bl.PlacedSeq, bl.OrderUUID)
+		eng.HandleBinLanded(*bl)
+	})
+	// What became of the bin a cancelled order left on a robot's deck.
+	// Notice only: stored for display, no order status or count moves.
+	router.RegisterSubject(subjectRouter, protocol.SubjectBinReturn, func(_ *protocol.Envelope, br *protocol.BinReturn) {
+		log.Printf("edge_handler: bin_return: order=%s bin=%s state=%s dest=%s",
+			br.OrderUUID, br.BinLabel, br.State, br.Destination)
+		eng.HandleBinReturn(*br)
+	})
+	// UOP adjustment from Core Bins record-count action. Admin sets
+	// the absolute UOP value; Edge writes it directly to the runtime
+	// cache and emits EventUOPAdjusted for SSE operator screen refresh.
+	router.RegisterSubject(subjectRouter, protocol.SubjectUOPAdjustment, func(_ *protocol.Envelope, adj *protocol.UOPAdjustment) {
+		log.Printf("edge_handler: uop_adjustment: node=%s bin=%d new=%d actor=%s",
+			adj.CoreNodeName, adj.BinID, adj.NewRemaining, adj.Actor)
+		eng.HandleUOPAdjustment(*adj)
+	})
+	// The version-stamp repair from Core: a count this node reported was
+	// discarded for carrying a generation that had ended, so Core is telling it
+	// the current one. Epoch only — no count rides this message; see
+	// protocol.BinEpochRefresh for why that is not negotiable. Registered here
+	// in the same place the subject joins EdgeInboundSubjects, so the boot
+	// coverage assertion holds.
+	router.RegisterSubject(subjectRouter, protocol.SubjectBinEpochRefresh, func(_ *protocol.Envelope, r *protocol.BinEpochRefresh) {
+		log.Printf("edge_handler: bin_epoch_refresh: node=%s bin=%d epoch=%d",
+			r.CoreNodeName, r.BinID, r.Epoch)
+		eng.HandleBinEpochRefresh(*r)
+	})
+	// Sourceability feed from Core: the verdict per (process, style) — what each
+	// process can change over to. Edge persists it to SQLite so the changeover
+	// picker reads it with no Core round-trip. Registered here in the same place
+	// the subject joins EdgeInboundSubjects, so the boot coverage assertion holds.
+	router.RegisterSubject(subjectRouter, protocol.SubjectSourcingState, func(_ *protocol.Envelope, r *protocol.SourcingStateReport) {
+		eng.HandleSourcingState(*r)
+	})
+	// Supply refusals, broadcast by Core to every edge. Registered here in the
+	// same place the subject joins EdgeInboundSubjects, so the boot coverage
+	// assertion holds. Each edge stores the whole set and filters locally — a
+	// loader card shows its own, a cell shows the ones it has an outstanding
+	// call for.
+	router.RegisterSubject(subjectRouter, protocol.SubjectSupplyRefusalState, func(_ *protocol.Envelope, st *protocol.SupplyRefusalState) {
+		eng.HandleSupplyRefusalState(*st)
+	})
+	// Core's containment state, broadcast after a containment write and sent
+	// to this Edge alone when its held digest differs. The containment page
+	// reads the copy held here instead of calling Core. Registered here in the
+	// same place the subject joins EdgeInboundSubjects.
+	router.RegisterSubject(subjectRouter, protocol.SubjectContainmentSnapshot, func(_ *protocol.Envelope, snap *protocol.ContainmentSnapshot) {
+		if err := eng.ApplyContainmentSnapshot(*snap); err != nil {
+			log.Printf("edge_handler: containment snapshot: %v", err)
+		}
+	})
+	// Core's node-bins feed: the bins at the nodes this Edge's stations draw,
+	// sent to this Edge alone after it publishes its watch list, after a change
+	// at a watched node, and when its held digest differs. The station view
+	// reads the copy held here. Registered here in the same place the subject
+	// joins EdgeInboundSubjects.
+	router.RegisterSubject(subjectRouter, protocol.SubjectBinsSnapshot, func(_ *protocol.Envelope, snap *protocol.NodeBinsSnapshot) {
+		if err := eng.ApplyNodeBinsSnapshot(*snap); err != nil {
+			log.Printf("edge_handler: node-bins snapshot: %v", err)
+		}
+	})
+	// Core's whole open refusal set, sent to this Edge when its refusals digest
+	// differs from Core's. Merged per field, not copied; a failed apply is
+	// logged by the engine and the next heartbeat's digest asks again.
+	router.RegisterSubject(subjectRouter, protocol.SubjectSupplyRefusalSnapshot, func(_ *protocol.Envelope, snap *protocol.SupplyRefusalSnapshot) {
+		_ = eng.ApplySupplyRefusalSnapshot(*snap)
+	})
+	// A whole order row pushed down by Core, for an order this Edge did not
+	// create. Without it a Core-authored order is invisible here: nothing on the
+	// board, and the delivery handler falls back to binding the bin alone.
+	// Registered here in the same place the subject joins EdgeInboundSubjects, so
+	// the boot coverage assertion holds.
+	router.RegisterSubject(subjectRouter, protocol.SubjectOrderProjected, func(_ *protocol.Envelope, p *protocol.OrderProjection) {
+		if _, err := eng.ApplyOrderProjection(*p); err != nil {
+			log.Printf("edge_handler: order projection %s: %v", p.OrderUUID, err)
+		}
+	})
+	for _, s := range protocol.EdgeInboundSubjects() {
+		if !subjectRouter.Has(s) {
+			log.Fatalf("shingoedge: subject router missing handler for %s — composition root is incomplete", s)
+		}
+	}
+
+	// ── Protocol router (envelope Type dispatch) ───────────────────────
+	// Every envelope Type is registered against either the EdgeHandler
+	// order-channel method or, for TypeData, a closure that delegates to
+	// the SubjectRouter built above.
+	protoRouter := router.New[string]()
+	router.Register(protoRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) {
+		dataDbg("data subject=%s from=%s", p.Subject, env.Src.Station)
+		subjectRouter.Dispatch(env, p)
+	})
+	// Edge sends these order-channel types to Core but never receives
+	// them. Register as inline no-ops so the Phase 3.5 startup assertion
+	// (every type in protocol.AllTypes() has a handler) is satisfied
+	// without a junk MessageHandler implementation. The "no handler
+	// registered" router log makes accidental inbound order-channel
+	// traffic visible if it ever shows up.
+	router.Register(protoRouter, protocol.TypeOrderRequest, func(*protocol.Envelope, *protocol.OrderRequest) {})
+	router.Register(protoRouter, protocol.TypeOrderCancel, func(*protocol.Envelope, *protocol.OrderCancel) {})
+	router.Register(protoRouter, protocol.TypeOrderReceipt, func(*protocol.Envelope, *protocol.OrderReceipt) {})
+	router.Register(protoRouter, protocol.TypeOrderRedirect, func(*protocol.Envelope, *protocol.OrderRedirect) {})
+	router.Register(protoRouter, protocol.TypeComplexOrderRequest, func(*protocol.Envelope, *protocol.ComplexOrderRequest) {})
+	router.Register(protoRouter, protocol.TypeOrderRelease, func(*protocol.Envelope, *protocol.OrderRelease) {})
+	router.Register(protoRouter, protocol.TypeOrderIngest, func(*protocol.Envelope, *protocol.OrderIngestRequest) {})
+	router.Register(protoRouter, protocol.TypeOrderAck, edgeHandler.HandleOrderAck)
+	router.Register(protoRouter, protocol.TypeOrderWaybill, edgeHandler.HandleOrderWaybill)
+	router.Register(protoRouter, protocol.TypeOrderUpdate, edgeHandler.HandleOrderUpdate)
+	router.Register(protoRouter, protocol.TypeOrderDelivered, edgeHandler.HandleOrderDelivered)
+	router.Register(protoRouter, protocol.TypeOrderError, edgeHandler.HandleOrderError)
+	router.Register(protoRouter, protocol.TypeOrderCancelled, edgeHandler.HandleOrderCancelled)
+	router.Register(protoRouter, protocol.TypeOrderStaged, edgeHandler.HandleOrderStaged)
+	router.Register(protoRouter, protocol.TypeOrderSkipped, edgeHandler.HandleOrderSkipped)
+	for _, t := range protocol.AllTypes() {
+		if !protoRouter.Has(t) {
+			log.Fatalf("shingoedge: protocol router missing handler for envelope type %s — composition root is incomplete", t)
+		}
+	}
+	return protoRouter
 }

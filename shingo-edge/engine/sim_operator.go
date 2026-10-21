@@ -742,7 +742,7 @@ func (op *simOperator) clearNegativeBins() {
 			// under the current one. There is no runtime row here: this sweeps
 			// supermarket slots, not a claim's window. So the stamp is dropped on
 			// purpose rather than by omission.
-			if _, err := op.e.coreClient.ClearBin(bins[i].NodeName, "", false); err == nil {
+			if _, err := op.e.coreClient.ClearBin(bins[i].NodeName, "", false, nil); err == nil {
 				cleared++
 			}
 		}
@@ -1127,7 +1127,7 @@ func (op *simOperator) classifyFromClaim(nodeID int64) (time.Duration, string, f
 		c := claim
 		return op.loaderDelay(), "load", func() error { return op.loadBin(nodeID, c) }, true
 	case protocol.ClaimRoleConsume: // unloader: full bin arrived → CLEAR it
-		return op.unloaderDelay(), "clear", func() error { return op.e.ClearBin(nodeID, "", false) }, true
+		return op.unloaderDelay(), "clear", func() error { return op.e.ClearBin(nodeID, "", false, nil) }, true
 	}
 	return 0, "", nil, false
 }
@@ -1201,7 +1201,7 @@ func (op *simOperator) clearedLabelledAtZero(nodeID int64) bool {
 	if !b.Occupied || b.PayloadCode == "" || b.UOPRemaining > 0 {
 		return false
 	}
-	if cerr := op.e.ClearBin(nodeID, "", false); cerr != nil {
+	if cerr := op.e.ClearBin(nodeID, "", false, nil); cerr != nil {
 		op.e.debugFn("[sim] operator: clear labelled carrier at 0 on %s: %v", node.CoreNodeName, cerr)
 		return false
 	}

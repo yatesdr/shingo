@@ -1,9 +1,10 @@
 import { el, fillColor, postAction, showToast, fetchWithTimeout, formatETA } from './operator-util.js';
 import { formatClock } from '/static/shared/utils.js';
-import { getView, claimedNodes, isReplenishing } from './operator-state.js';
+import { getView, claimedNodes, isReplenishing, getLink } from './operator-state.js';
 import { isActive } from './order-status.js';
 import { ROLE_WORDS } from './operator-window-state.js';
-import { loaderOf, carriersOf, isDedicated, isUnloaderWindow, boardLayout, isBoard } from './operator-board-model.js';
+import { loaderOf, carriersOf, isDedicated, isUnloaderWindow, boardLayout, isBoard, staleSign } from './operator-board-model.js';
+import { clearChoices, choiceLabel, isLit, clearHighlight } from './operator-board-model.js';
 import { windowWords } from './operator-board-model.js';
 import { renderBoard, resetBoard } from './operator-board.js';
 import { mountFlowPanel, openFlowPanel, syncFlowPanel } from './operator-flow.js';
@@ -63,10 +64,12 @@ export function renderHeader() {
     // no cell buttons, and its acts are its cards and its board bar.
     if (isBoard(claimedNodes())) return;
 
-    const badge = el('span', {
-        className: 'os-health-badge ' + (view.station.health_status === 'online' ? 'online' : 'offline')
-    });
-    headerActions.appendChild(badge);
+    // The stale sign and the dot derived from it (staleSign): the dot read
+    // health_status, which only the station's own stream writes, so it was
+    // "online" by construction (a bug fixed).
+    const sign = stationSign();
+    headerActions.appendChild(el('span', { className: 'os-health-badge ' + sign.dot }));
+    headerActions.appendChild(el('span', { className: 'os-stale-sign os-stale-sign--' + sign.dot, textContent: sign.words.join(' · ') }));
 
     // Active style chip — sits next to the changeover button so the operator
     // can see which style is running. During changeover shows "current → target".
@@ -138,10 +141,12 @@ export function renderHeader() {
 // them and every tap after that is synchronous (composer-boot.js). A load
 // that failed says so and the next tap tries again — a Pi that lost one
 // request is not left without a changeover until it is rebooted.
-async function openComposerPicker() {
-    const ui = await ensureComposer();
-    if (ui) ui.openPicker(getView());
-    else showToast('The changeover screen did not load — tap CHANGEOVER again', 'error');
+// Exported for the part-change prompt's Start changeover (operator.js).
+export function openComposerPicker() {
+    return ensureComposer().then(function (ui) {
+        if (ui) ui.openPicker(getView());
+        else showToast('The changeover screen did not load — tap CHANGEOVER again', 'error');
+    });
 }
 
 
@@ -279,7 +284,7 @@ export function renderGrid() {
         renderBoard(grid, getView(), {
             width: window.innerWidth || 1024,
             height: window.innerHeight || 768,
-        }, boardActs, shortTime);
+        }, boardActs, shortTime, stationSign());
         return;
     }
     document.body.classList.remove('os-pc-active');
@@ -396,8 +401,14 @@ function confirmUnloadHeld(nodeID, line, count) {
 // and posts a blank code; Core stamps the cart from its own type. The panel
 // names no type: the marker Core stamps is bookkeeping, never an operator's word.
 //
-// lit is the bin type the board's card says to send back (its note): that
-// button is lit, every button still tappable, and what each posts unchanged.
+// lit is the choice the board's card says to send back, {bin_type, layers?}
+// (clearHighlight): that button is lit, every button still tappable.
+//
+// HEIGHTS (clearChoices): a type the empties group wants heights of shows, in
+// place of its one button, the bin's name (a base, layers 0) and the bin's
+// name with each wanted height ("TOTE-1 · 3 high"); each posts the CLEAR with
+// its type and layers. A type with no wanted heights keeps its one button and
+// posts no layers, as before. Pinned by operator-render-clear-panels.test.js.
 //
 // Exported for the node modal's CLEAR BIN on an unloader, which goes through
 // this panel (operator-modal.js).
@@ -406,7 +417,7 @@ export function confirmUnloadSwap(nodeID, carriers, discarding, leavesBare, lit)
         confirmFullOff(nodeID, discarding);
         return;
     }
-    var binTypeCodes = carriers || [];
+    const choices = clearChoices(getView(), carriers);
 
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker' });
@@ -418,21 +429,20 @@ export function confirmUnloadSwap(nodeID, carriers, discarding, leavesBare, lit)
             textContent: 'This slot still counts ' + discarding + '. Confirming writes it to zero.' }));
     }
 
-    const binTypes = binTypeCodes.length > 0 ? binTypeCodes : null;
-    // Single-type stations auto-fill: skip the picker and send the code
-    // directly on CONFIRM SWAP so the dunnage is still recorded without
-    // forcing the operator to tap a one-item menu.
-    const autoCode = binTypes && binTypes.length === 1 ? binTypes[0] : null;
-    if (binTypes && !autoCode) {
-        // Two or more types: show the picker so the operator selects one.
+    // Single-type stations with no heights auto-fill: skip the picker and send
+    // the code directly on CONFIRM SWAP so the dunnage is still recorded
+    // without forcing the operator to tap a one-item menu.
+    const autoCode = choices.length === 1 && typeof choices[0].layers !== 'number' ? choices[0].bin_type : null;
+    if (choices.length > 0 && !autoCode) {
+        // Two or more choices: show the picker so the operator selects one.
         panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
             textContent: 'Select dunnage type for this carrier:' }));
-        binTypes.forEach(function(code) {
-            const btn = el('button', { className: 'os-co-picker-btn' + (code === lit ? ' os-co-picker-btn--lit' : ''), textContent: code });
+        choices.forEach(function(choice) {
+            const btn = el('button', { className: 'os-co-picker-btn' + (isLit(choice, lit) ? ' os-co-picker-btn--lit' : ''),
+                textContent: choiceLabel(choice) });
             btn.addEventListener('click', function() {
                 overlay.remove();
-                postAction('/api/process-nodes/' + nodeID + '/clear-bin',
-                    { bin_type_code: code }, loadViewRef);
+                postAction('/api/process-nodes/' + nodeID + '/clear-bin', clearBody(choice), loadViewRef);
             });
             panel.appendChild(btn);
         });
@@ -456,21 +466,46 @@ export function confirmUnloadSwap(nodeID, carriers, discarding, leavesBare, lit)
     showOverlay(overlay);
 }
 
+// clearBody is the clear-bin body a CLEAR choice posts: its type, and its
+// layers where it names a height.
+function clearBody(choice) {
+    const body = { bin_type_code: choice.bin_type };
+    if (typeof choice.layers === 'number') body.layers = choice.layers;
+    return body;
+}
+
 // oneTapPanel is the two-stage unloader's panel: a title, what to do, one
 // button that posts clear-bin with a blank code, the line saying what happens
 // next, and CANCEL. No type appears on it anywhere — Core stamps the cart from
 // its own type, so there is nothing for the operator to pick or read.
-function oneTapPanel(nodeID, title, subtitles, label, after) {
+//
+// heights, when given, are the choices that replace the one button (stage 2's
+// Send on for a type the group wants heights of): the button's label alone (a
+// base) and with each height ("Send on · 3 high"), each posting the CLEAR with
+// its layers and still no type, so no type is named on the panel.
+function oneTapPanel(nodeID, title, subtitles, label, after, heights, lit) {
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker os-co-picker--one-tap' });
     panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: title }));
     subtitles.forEach(function(s) { panel.appendChild(s); });
-    const go = el('button', { className: 'os-co-picker-btn', textContent: label });
-    go.addEventListener('click', function() {
-        overlay.remove();
-        postAction('/api/process-nodes/' + nodeID + '/clear-bin', undefined, loadViewRef);
-    });
-    panel.appendChild(go);
+    if (heights && heights.length > 0) {
+        heights.forEach(function(choice) {
+            const btn = el('button', { className: 'os-co-picker-btn' + (isLit(choice, lit) ? ' os-co-picker-btn--lit' : ''),
+                textContent: label + (choice.layers > 0 ? ' · ' + choice.layers + ' high' : '') });
+            btn.addEventListener('click', function() {
+                overlay.remove();
+                postAction('/api/process-nodes/' + nodeID + '/clear-bin', { layers: choice.layers }, loadViewRef);
+            });
+            panel.appendChild(btn);
+        });
+    } else {
+        const go = el('button', { className: 'os-co-picker-btn', textContent: label });
+        go.addEventListener('click', function() {
+            overlay.remove();
+            postAction('/api/process-nodes/' + nodeID + '/clear-bin', undefined, loadViewRef);
+        });
+        panel.appendChild(go);
+    }
     panel.appendChild(el('div', { className: 'os-co-picker-subtitle', textContent: after }));
     const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
     cancel.addEventListener('click', () => overlay.remove());
@@ -482,6 +517,7 @@ function oneTapPanel(nodeID, title, subtitles, label, after) {
 
 // confirmFullOff is stage 1 of a two-stage unloader: the full comes off the
 // cart and the cart goes on to stage 2 bare. The discard count is still stated.
+// It leaves the cart bare, so it offers no height and posts no layers.
 function confirmFullOff(nodeID, discarding) {
     const subs = [];
     if (discarding > 0) {
@@ -495,11 +531,13 @@ function confirmFullOff(nodeID, discarding) {
 // confirmSendOn is stage 2 with a bare cart in the window (bin_state.bare):
 // the operator puts an empty bin on it and sends it on. Plain PUSH EMPTY would
 // send the cart on still bare, and a PUSH AS picker asks a question the cart
-// already answers, so it is one tap.
-function confirmSendOn(nodeID) {
+// already answers, so it is one tap — or, where the group wants heights of the
+// window's type, one tap per height (the type stays Core's).
+function confirmSendOn(nodeID, carriers, lit) {
+    const heights = clearChoices(getView(), carriers).filter(function (c) { return typeof c.layers === 'number'; });
     oneTapPanel(nodeID, 'Cart, no bin',
         [el('div', { className: 'os-co-picker-subtitle', textContent: 'Put an empty bin on it, then send it on.' })],
-        'Send on', 'Goes to the empties supermarket. No type to pick — it\'s the cart it came in as.');
+        'Send on', 'Goes to the empties supermarket. No type to pick — it\'s the cart it came in as.', heights, lit);
 }
 
 // confirmPushEmpty shows a confirmation panel for an empty carrier sitting in an
@@ -507,11 +545,11 @@ function confirmSendOn(nodeID) {
 // sent to the supermarket and the node can request a fresh full bin.
 //
 // bare is the carrier's bin_state.bare: a stage-2 cart with no bin on it gets
-// the one-tap Send on panel instead (confirmSendOn). lit is the type the
+// the one-tap Send on panel instead (confirmSendOn). lit is the choice the
 // board's card says to send it back as: its PUSH AS is lit.
 function confirmPushEmpty(nodeID, carriers, bare, lit) {
     if (bare) {
-        confirmSendOn(nodeID);
+        confirmSendOn(nodeID, carriers, lit);
         return;
     }
     const overlay = el('div', { className: 'os-co-picker-overlay' });
@@ -520,6 +558,7 @@ function confirmPushEmpty(nodeID, carriers, bare, lit) {
     panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
         textContent: 'Send the empty carrier to the supermarket so a full bin can be requested.' }));
 
+    // PUSH EMPTY declares nothing: the cart keeps its tote number.
     const push = el('button', { className: 'os-co-picker-btn', textContent: 'PUSH EMPTY' });
     push.addEventListener('click', function() {
         overlay.remove();
@@ -538,9 +577,10 @@ function confirmPushEmpty(nodeID, carriers, bare, lit) {
     //
     // It posts the CLEAR endpoint, not push-empty, and that is the whole
     // mechanism: a clear on an already-empty carrier discards nothing (Core
-    // records "discarded 0 parts"), writes the declared bin type, and fires the
-    // same empty-out move push-empty would have. Re-clearing IS pushing empty,
-    // plus the one fact this panel was missing.
+    // records "discarded 0 parts"), writes the declared bin type (and, for a
+    // wanted height, the height), and fires the same empty-out move push-empty
+    // would have. Re-clearing IS pushing empty, plus the one fact this panel was
+    // missing.
     //
     // THE OPERATOR IS ASSERTING, NOT GUESSING. This is the same reading
     // RecoverTransitAnomaly takes — a person looking at the thing is believed —
@@ -548,16 +588,16 @@ function confirmPushEmpty(nodeID, carriers, bare, lit) {
     // a carrier's real type is a correction; retyping a carrier so a refused
     // order will go through would be a lie about a physical object, and this
     // panel only ever offers the types the node's payloads actually use.
-    const dunnage = carriers || [];
-    if (dunnage.length > 0) {
+    const choices = clearChoices(getView(), carriers);
+    if (choices.length > 0) {
         panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
             textContent: 'Or push it out and correct the carrier type:' }));
-        dunnage.forEach(function(code) {
-            const btn = el('button', { className: 'os-co-picker-btn' + (code === lit ? ' os-co-picker-btn--lit' : ''), textContent: 'PUSH AS ' + code });
+        choices.forEach(function(choice) {
+            const btn = el('button', { className: 'os-co-picker-btn' + (isLit(choice, lit) ? ' os-co-picker-btn--lit' : ''),
+                textContent: 'PUSH AS ' + choiceLabel(choice) });
             btn.addEventListener('click', function() {
                 overlay.remove();
-                postAction('/api/process-nodes/' + nodeID + '/clear-bin',
-                    { bin_type_code: code }, loadViewRef);
+                postAction('/api/process-nodes/' + nodeID + '/clear-bin', clearBody(choice), loadViewRef);
             });
             panel.appendChild(btn);
         });
@@ -951,9 +991,11 @@ function createNodeButton(entry) {
             const fullPresent = bs && bs.occupied && bs.payload_code;
             const emptyPresent = bs && bs.occupied && !bs.payload_code;
             if (bs && bs.held_since) { confirmUnloadHeld(entry.node.id, bs.held_for, bs.held_uop); return; }
+            // The panel lights what the window should go back as (clearHighlight).
+            const lit = loader.leaves_bare ? null : clearHighlight(entry, getView().serves);
             if (fullPresent) confirmUnloadSwap(entry.node.id, carriersOf(entry),
-                entry.runtime && entry.runtime.remaining_uop_cached, !!loader.leaves_bare);
-            else if (emptyPresent) confirmPushEmpty(entry.node.id, carriersOf(entry), !!bs.bare);
+                entry.runtime && entry.runtime.remaining_uop_cached, !!loader.leaves_bare, lit);
+            else if (emptyPresent) confirmPushEmpty(entry.node.id, carriersOf(entry), !!bs.bare, lit);
         });
     } else {
         btn.addEventListener('click', () => openModalRef(entry.node.id));
@@ -1173,4 +1215,10 @@ function shortTime(iso) {
     } catch (err) {
         return '';
     }
+}
+
+// stationSign is the station's stale sign for the top line (staleSign): the
+// view on screen and whether its server is answering.
+export function stationSign() {
+    return staleSign(getView(), getLink(), shortTime);
 }

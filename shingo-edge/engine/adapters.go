@@ -100,6 +100,21 @@ func (e *orderEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderTyp
 	}})
 }
 
+// EmitOrderTouched: the order handler's last write landed (orders.Manager
+// AnnounceOrder); the nudge names the order, so only its boards rebuild.
+func (e *orderEmitter) EmitOrderTouched(orderID int64, orderUUID string, processNodeID *int64) {
+	e.bus.Emit(Event{Type: EventBoardNudge, Payload: BoardNudgeEvent{
+		OrderID: orderID, OrderUUID: orderUUID, ProcessNodeID: processNodeID,
+	}})
+}
+
+// EmitCurtainChanged: a curtain tag a station view reads changed its reading
+// in the PLC cache (plc.Manager WatchCurtainTag).
+func (e *plcEmitter) EmitCurtainChanged() { e.bus.Emit(Event{Type: EventBoardNudge}) }
+
+// nudgeBoards says a station view's input changed with no scoped event.
+func (e *Engine) nudgeBoards() { e.Events.Emit(Event{Type: EventBoardNudge}) }
+
 func (e *orderEmitter) EmitOrderFaulted(orderID int64, orderUUID, reason string) {
 	e.bus.Emit(Event{Type: EventOrderFaulted, Payload: OrderFaultedEvent{
 		OrderID: orderID, OrderUUID: orderUUID, Reason: reason,

@@ -301,17 +301,15 @@ func TestOperatorStations_GetOperatorStationView_Success(t *testing.T) {
 		t.Errorf("view process id: got %d, want %d", view.Process.ID, pid)
 	}
 
-	// Verify TouchOperatorStation DB side effect
+	// A view request writes nothing: the screen's "online" is its stream's
+	// (EventHub touches on connect and heartbeat), since an idle board makes
+	// no view request.
 	station, err := testDB.GetOperatorStation(sid)
 	if err != nil {
 		t.Fatalf("GetOperatorStation after view: %v", err)
 	}
-	if station.HealthStatus != "online" {
-		t.Errorf("station health_status after view: got %q, want %q",
-			station.HealthStatus, "online")
-	}
-	if station.LastSeenAt == nil {
-		t.Error("expected last_seen_at to be set after view")
+	if station.LastSeenAt != nil {
+		t.Errorf("last_seen_at set by a view request (%v): the stream touches, not the view", station.LastSeenAt)
 	}
 }
 
@@ -1078,5 +1076,33 @@ func TestOperatorStations_PreviewChangeover_ActionsCarryCoreNodeName(t *testing.
 	}
 	if got := body.Actions[0]["node_name"]; got != "Press front" {
 		t.Errorf("node_name = %v, want the display name kept", got)
+	}
+}
+
+// TestClearBin_PassesTheDeclaredLayers: the clear-bin door hands the engine
+// the height the panel's button posted, and none when the body carries none.
+func TestClearBin_PassesTheDeclaredLayers(t *testing.T) {
+	h, router := newTestHandlers(t)
+	router.Post("/api/process-nodes/{id}/clear-bin", h.apiClearBin)
+	stub := h.orchestration.(*stubEngine)
+	for _, tc := range []struct {
+		body any
+		want string
+	}{
+		{map[string]any{"bin_type_code": "TOTE-1", "layers": 3}, "3"},
+		{map[string]any{"bin_type_code": "TOTE-1", "layers": 0}, "0"},
+		{map[string]any{"bin_type_code": "TOTE-1"}, "none"},
+		{nil, "none"},
+	} {
+		stub.lastClearBinLayers = nil
+		resp := doRequest(t, router, "POST", "/api/process-nodes/1/clear-bin", tc.body, nil)
+		assertStatus(t, resp, http.StatusOK)
+		got := "none"
+		if stub.lastClearBinLayers != nil {
+			got = itoa(int64(*stub.lastClearBinLayers))
+		}
+		if got != tc.want {
+			t.Errorf("body %v: the engine got layers %s, want %s", tc.body, got, tc.want)
+		}
 	}
 }

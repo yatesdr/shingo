@@ -113,7 +113,9 @@ cd "$(dirname "$0")/.."
 # 1400 → 1397: the remaining-count fix rewrote its planning tests to build
 # the envelope production sends: five discarded marshals went with the old
 # hand-built bodies, two came with the new one.
-FROZEN=1391
+# 1391 → 1387: the station view's 304 rewrote four tests whose discarded
+# reads became checked ones.
+FROZEN=1387
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"

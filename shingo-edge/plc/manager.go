@@ -125,6 +125,11 @@ type Manager struct {
 	// at least one shippable snapshot row. Set once at the composition root
 	// (SetProductionTickNotifier), read by the poll goroutine.
 	tickNotify atomic.Pointer[func()]
+
+	// curtainWatch is the set of curtain tags a station view reads, keyed by
+	// curtainKey; a change of reading at one of them emits EmitCurtainChanged.
+	// Copy-on-write (curtain_watch.go).
+	curtainWatch atomic.Pointer[map[string]bool]
 }
 
 // SetProductionTickNotifier installs the ring the poll pass sends the
@@ -182,9 +187,15 @@ func (m *Manager) SetTagValueForTest(plcName, tagName string, value any) {
 	}
 	m.mu.Unlock()
 	mp.mu.Lock()
-	defer mp.mu.Unlock()
 	mp.Status = "Connected"
-	mp.Values[tagName] = TagValue{Name: tagName, Value: value}
+	before, present := mp.Values[tagName]
+	after := TagValue{Name: tagName, Value: value}
+	mp.Values[tagName] = after
+	moved := m.curtainTagMoved(plcName, tagName, before, present, after)
+	mp.mu.Unlock()
+	if moved {
+		m.curtainChanged()
+	}
 }
 
 // NewManager creates a PLC manager. If wl is nil the default WarLink HTTP
@@ -414,9 +425,6 @@ func (m *Manager) applyTags(plcName string, tags map[string]WarlinkTag) {
 		return
 	}
 
-	mp.mu.Lock()
-	defer mp.mu.Unlock()
-
 	// Build fresh values map, stripping PLCName. prefix from keys
 	prefix := plcName + "."
 	newValues := make(map[string]TagValue, len(tags))
@@ -429,7 +437,13 @@ func (m *Manager) applyTags(plcName string, tags map[string]WarlinkTag) {
 			Error:   tag.Error,
 		}
 	}
+	mp.mu.Lock()
+	moved := m.curtainMoved(plcName, mp.Values, newValues)
 	mp.Values = newValues
+	mp.mu.Unlock()
+	if moved {
+		m.curtainChanged()
+	}
 }
 
 // IsWarLinkConnected returns whether we can reach WarLink.

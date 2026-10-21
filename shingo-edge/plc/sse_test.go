@@ -62,6 +62,12 @@ func (e *mockEmitter) EmitWarLinkDisconnected(err error) {
 	e.mu.Unlock()
 }
 
+func (e *mockEmitter) EmitCurtainChanged() {
+	e.mu.Lock()
+	e.events = append(e.events, "curtain_changed")
+	e.mu.Unlock()
+}
+
 func (e *mockEmitter) getEvents() []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()

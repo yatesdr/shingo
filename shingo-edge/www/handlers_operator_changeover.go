@@ -120,7 +120,7 @@ func (h *Handlers) apiCancelProcessChangeover(w http.ResponseWriter, r *http.Req
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "redirected"}})
+		h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: changeoverAction("redirected", processID)})
 		writeJSONWithTrigger(w, r, map[string]string{"status": "ok", "action": "redirected"}, "refreshChangeover")
 		return
 	}
@@ -129,7 +129,7 @@ func (h *Handlers) apiCancelProcessChangeover(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "cancelled"}})
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: changeoverAction("cancelled", processID)})
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
@@ -208,7 +208,7 @@ func (h *Handlers) apiReleaseChangeoverProcess(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "release"}})
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: changeoverAction("release", processID)})
 	writeJSONWithTrigger(w, r, res, "refreshChangeover")
 }
 
@@ -273,7 +273,7 @@ func (h *Handlers) apiCompleteProcessProductionCutover(w http.ResponseWriter, r 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "cutover-complete"}})
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: changeoverAction("cutover-complete", processID)})
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
@@ -293,7 +293,7 @@ func (h *Handlers) apiStageNodeChangeoverMaterial(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "stage-material"}})
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: changeoverAction("stage-material", processID)})
 	writeActionOK(w, r, "refreshChangeover")
 }
 
@@ -317,7 +317,7 @@ func (h *Handlers) apiEvacuateNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "evacuate-node"}})
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: changeoverAction("evacuate-node", processID)})
 	writeActionOK(w, r, "refreshChangeover")
 }
 
@@ -337,7 +337,7 @@ func (h *Handlers) apiDeliverNewMaterialForChangeover(w http.ResponseWriter, r *
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "deliver-new-material"}})
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: changeoverAction("deliver-new-material", processID)})
 	writeActionOK(w, r, "refreshChangeover")
 }
 
@@ -356,7 +356,7 @@ func (h *Handlers) apiSwitchNodeToTarget(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "switch-to-target"}})
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: changeoverAction("switch-to-target", processID)})
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
@@ -388,7 +388,7 @@ func (h *Handlers) apiAbandonChangeoverNode(w http.ResponseWriter, r *http.Reque
 		writeError(w, status, err.Error())
 		return
 	}
-	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "supply-abandoned"}})
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: changeoverAction("supply-abandoned", processID)})
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
@@ -407,6 +407,14 @@ func (h *Handlers) apiSwitchOperatorStationToTarget(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "switch-station-to-target"}})
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: changeoverAction("switch-station-to-target", processID)})
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
+}
+
+// changeoverAction is a changeover-update's payload: what happened, and the
+// process it happened on, so a station refetches only when it draws that
+// process (operator.js eventConcerns). The start's payload is the changeover
+// itself, which carries process_id too.
+func changeoverAction(action string, processID int64) map[string]any {
+	return map[string]any{"action": action, "process_id": processID}
 }

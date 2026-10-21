@@ -135,7 +135,7 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	// The intent is read off the order row, so it fires after an Edge restart
 	// too; the take is exactly-once, so a replayed delivery does not clear twice.
 	if _, isPullback := e.takeOrderIntent(order.ID, intentPullback); isPullback {
-		cleared, err := e.coreClient.ClearBin(node.CoreNodeName, "", false)
+		cleared, err := e.coreClient.ClearBin(node.CoreNodeName, "", false, nil)
 		if err != nil {
 			log.Printf("market_pullback: auto-clear bin at %s: %v", node.CoreNodeName, err)
 		} else {

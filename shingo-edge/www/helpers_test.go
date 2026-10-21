@@ -105,6 +105,8 @@ type stubEngine struct {
 	// lastClearLoaderHomeBuffer is the buffer_node the clear-loader-home door
 	// passed on, nil until it is called.
 	lastClearLoaderHomeBuffer *string
+	// lastClearBinLayers is the layers the clear-bin door passed on.
+	lastClearBinLayers *int
 
 	lastAbandonNodeID     int64
 	lastAbandonAcceptHalf bool
@@ -239,8 +241,11 @@ func (s *stubEngine) RequestProduceSwap(int64, int64) (*engine.NodeOrderResult, 
 	return nil, s.requestProduceSwapErr
 }
 func (s *stubEngine) LoadBin(int64, string, *int64, []protocol.IngestManifestItem) error { return nil }
-func (s *stubEngine) ClearBin(int64, string, bool) error                                 { return nil }
-func (s *stubEngine) RecordBinCount(int64, int, string) error                            { return nil }
+func (s *stubEngine) ClearBin(_ int64, _ string, _ bool, layers *int) error {
+	s.lastClearBinLayers = layers
+	return nil
+}
+func (s *stubEngine) RecordBinCount(int64, int, string) error { return nil }
 func (s *stubEngine) ClearLoaderHome(_ int64, bufferNode string) error {
 	s.lastClearLoaderHomeBuffer = &bufferNode
 	return nil

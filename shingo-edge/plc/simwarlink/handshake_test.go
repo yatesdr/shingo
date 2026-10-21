@@ -25,6 +25,7 @@ func (nopEmitter) EmitPLCHealthRecover(string)                                {}
 func (nopEmitter) EmitCounterReadError(int64, string, string, string)         {}
 func (nopEmitter) EmitWarLinkConnected()                                      {}
 func (nopEmitter) EmitWarLinkDisconnected(error)                              {}
+func (nopEmitter) EmitCurtainChanged()                                        {}
 
 // Gate 3 handshake: the fake satisfies the discovery handshake against the REAL
 // plc.Manager — poll loop → ListPLCs/ListTags → cache → IsConnected. This is the

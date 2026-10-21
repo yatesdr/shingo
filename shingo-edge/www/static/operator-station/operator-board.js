@@ -71,7 +71,7 @@ function buildCard(card, acts) {
     const spot = el('span', { className: 'os-pc-spot' });
     spot.appendChild(el('span', { className: 'os-pc-spot-name', textContent: card.spot }));
     if (card.spotWords) spot.appendChild(el('span', { className: 'os-pc-spot-words', textContent: ' · ' + card.spotWords }));
-    [card.spotCode, card.spotPart, card.spotCount].forEach(function (code, i) {
+    [card.spotCode, card.spotPart, card.spotCount, card.spotHeight].forEach(function (code, i) {
         if (!code) return;
         spot.appendChild(el('span', { className: 'os-pc-spot-code', textContent: (i === 0 ? ' ' : ' · ') + code }));
     });
@@ -102,6 +102,10 @@ function buildTop(m, acts) {
     left.appendChild(el('span', { className: 'os-pc-title', textContent: m.title }));
     left.appendChild(el('span', { className: 'os-pc-words', textContent: m.words.join(' · ') }));
     top.appendChild(left);
+    // The stale sign: what the screen knows, in words (staleSign).
+    if (m.sign) {
+        top.appendChild(el('span', { className: 'os-pc-sign os-pc-sign--' + m.sign.dot, textContent: m.sign.words.join(' · ') }));
+    }
     const btn = el('button', { type: 'button', className: 'os-pc-btn os-pc-showall',
         textContent: showAll ? 'Show work' : 'Show all ' + m.tileCount });
     btn.addEventListener('click', function () { showAll = !showAll; acts.rerender(); });
@@ -188,7 +192,8 @@ function buildPresses(p, layout) {
         const tile = el('div', { className: 'os-pc-tile os-pc-empties' });
         tile.appendChild(el('div', { className: 'os-pc-tile-name', textContent: 'Empties ready' }));
         p.empties.lines.forEach(function (l) {
-            const line = el('div', { className: 'os-pc-empties-line' + (l.words === 'none' ? ' os-pc-empties-line--none' : '') });
+            const line = el('div', { className: 'os-pc-empties-line' + (l.words === 'none' ? ' os-pc-empties-line--none' : '') +
+                (l.small ? ' os-pc-empties-line--height' : '') });
             line.appendChild(el('span', { className: 'os-pc-row-part', textContent: l.bin }));
             line.appendChild(el('span', { className: 'os-pc-row-count', textContent: l.words }));
             tile.appendChild(line);
@@ -254,9 +259,9 @@ function buildZone(z, shown, cols, acts) {
 // renderBoard draws the board into grid. viewport is {width, height}; acts is
 // {act(act), busy(act), rerender()}, the caller's door to each panel and
 // whether a bar request is in flight; when(iso) the clock a refusal's time is
-// printed in.
-export function renderBoard(grid, view, viewport, acts, when) {
-    const m = boardModel(view, { partialsOpen: partialsOpen, when: when });
+// printed in; sign the station's stale sign (staleSign), drawn in the top line.
+export function renderBoard(grid, view, viewport, acts, when, sign) {
+    const m = boardModel(view, { partialsOpen: partialsOpen, when: when, sign: sign });
     const status = m.cells || m.presses;
     const statusAt = function (rows) { return statusRowLayout(status, viewport.width, rows).height; };
     let zones = m.zones;
@@ -272,7 +277,7 @@ export function renderBoard(grid, view, viewport, acts, when) {
     grid.classList.add('os-pc-step-' + fit.step);
     if (showAll) grid.classList.add('os-pc-showall'); else grid.classList.remove('os-pc-showall');
 
-    const bands = [{ key: 'top', inputs: [m.title, m.words, m.tileCount, showAll], build: function () { return buildTop(m, acts); } }];
+    const bands = [{ key: 'top', inputs: [m.title, m.words, m.tileCount, showAll, m.sign], build: function () { return buildTop(m, acts); } }];
     if (m.bar) {
         bands.push({ key: 'bar', inputs: [m.bar, m.bar.buttons.map(function (b) { return acts.busy(b.act); })],
             build: function () { return buildBar(m.bar, acts); } });

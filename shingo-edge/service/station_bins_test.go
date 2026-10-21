@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -210,7 +211,7 @@ func TestStampBins_BufferStrip(t *testing.T) {
 				rows = nil
 			}
 			v := homesView(tc.orders...)
-			svc.StampBins(v, httpBins(rows), tc.read)
+			svc.StampBins(v, httpBins(rows), tc.read, nil)
 			if got := stampJSON(t, v.Nodes[0].Loader.Buffer); got != tc.wantStrip {
 				t.Errorf("H1 strip = %s, want %s", got, tc.wantStrip)
 			}
@@ -243,13 +244,13 @@ func TestStampBins_OneTileOfALoaderCarriesItsStrip(t *testing.T) {
 		return out
 	}
 	v := homesView()
-	svc.StampBins(v, nil, false)
+	svc.StampBins(v, nil, false, nil)
 	if got := carriers(v); !slices.Equal(got, []string{"H1"}) {
 		t.Errorf("tiles carrying the strip = %v, want only H1", got)
 	}
 	v = homesView()
 	v.Nodes = v.Nodes[1:]
-	svc.StampBins(v, nil, false)
+	svc.StampBins(v, nil, false, nil)
 	if got := carriers(v); !slices.Equal(got, []string{"H2"}) {
 		t.Errorf("with H1 off the board, tiles carrying the strip = %v, want only H2", got)
 	}
@@ -275,7 +276,7 @@ func TestStampBins_Empties(t *testing.T) {
 		}
 	}
 	v := view()
-	svc.StampBins(v, httpBins(rows), true)
+	svc.StampBins(v, httpBins(rows), true, nil)
 	want := `{"group":"GRP","rows":[{"bin_type":"KD-1","have":0,"spots":1},{"bin_type":"TOTE-1","have":1,"spots":1}]}`
 	if got := stampJSON(t, v.Empties); got != want {
 		t.Errorf("empties = %s, want %s", got, want)
@@ -284,14 +285,14 @@ func TestStampBins_Empties(t *testing.T) {
 	rows["M1"] = protocol.NodeBinInfo{NodeName: "M1", Occupied: true, BinTypeCode: "TOTE-1", Bare: true}
 	rows["M2"] = protocol.NodeBinInfo{NodeName: "M2", Occupied: true, BinTypeCode: "TOTE-1", PayloadCode: "PART-C", UOPRemaining: 5}
 	v = view()
-	svc.StampBins(v, httpBins(rows), true)
+	svc.StampBins(v, httpBins(rows), true, nil)
 	want = `{"group":"GRP","rows":[{"bin_type":"KD-1","have":0,"spots":0}]}`
 	if got := stampJSON(t, v.Empties); got != want {
 		t.Errorf("a bare cart and a full = %s, want %s", got, want)
 	}
 
 	v = view()
-	svc.StampBins(v, nil, false)
+	svc.StampBins(v, nil, false, nil)
 	if v.Empties != nil {
 		t.Errorf("not read, yet empties = %s", stampJSON(t, v.Empties))
 	}
@@ -304,6 +305,62 @@ func httpBins(rows map[string]protocol.NodeBinInfo) map[string]BoardBin {
 		infos = append(infos, r)
 	}
 	return BoardBinsFromHTTP(infos)
+}
+
+// TestStampBins_EmptiesWantsAndHeights: with the group's line from the Edge's
+// copy, the empties carry the group's wants, a row per wanted height counting
+// the empties standing at exactly that height (a remainder counts toward the
+// type and no height), each window its assignment, and each cart its tote
+// numbers on the station's bin. With no line nothing of it is stamped.
+func TestStampBins_EmptiesWantsAndHeights(t *testing.T) {
+	db, _ := countingDB(t)
+	svc, _, _ := binsPlant(t, db)
+	n := func(v int) *int { return &v }
+	rows := map[string]protocol.NodeBinInfo{
+		"U1": {NodeName: "U1", Occupied: true, PayloadCode: "PART-C", UOPRemaining: 40, BinTypeCode: "TOTE-1",
+			TotesOnCart: n(16), TotesPerLayer: n(8)},
+		"M1": {NodeName: "M1", Occupied: true, BinTypeCode: "TOTE-1", TotesOnCart: n(24), TotesPerLayer: n(8)},
+		"M2": {NodeName: "M2", Occupied: true, BinTypeCode: "TOTE-1", TotesOnCart: n(19), TotesPerLayer: n(8)},
+	}
+	groups := []protocol.NodeBinsGroup{{Group: "GRP",
+		Wants: []protocol.NodeBinsWant{{BinType: "TOTE-1", Want: 4}, {BinType: "TOTE-1", Layers: n(3), Want: 2},
+			{BinType: "TOTE-1", Layers: n(0), Want: 1}},
+		Assignments: []protocol.NodeBinsAssignment{{Node: "U1", BinType: "TOTE-1", Layers: n(3)}},
+	}}
+	view := func() *domain.OperatorStationView {
+		return &domain.OperatorStationView{
+			Nodes: []domain.StationNodeView{{Node: domain.Node{CoreNodeName: "U1"},
+				Loader: &domain.TileLoader{Role: "consume", Layout: "shared_window", OutboundDest: "GRP"}}},
+			Serves: []domain.ServedRow{{Cell: "PRESS-1", Part: "PART-C", Role: "produce", Carrier: "KD-1"}},
+		}
+	}
+	v := view()
+	svc.StampBins(v, httpBins(rows), true, groups)
+	want := `{"group":"GRP","rows":[{"bin_type":"KD-1","have":0,"spots":0},` +
+		`{"bin_type":"TOTE-1","have":2,"want":4,"spots":0},` +
+		`{"bin_type":"TOTE-1","layers":0,"have":0,"want":1,"spots":0},` +
+		`{"bin_type":"TOTE-1","layers":3,"have":1,"want":2,"spots":0}]}`
+	if got := stampJSON(t, v.Empties); got != want {
+		t.Errorf("empties = %s\nwant %s", got, want)
+	}
+	tile := stampJSON(t, v.Nodes[0])
+	for _, frag := range []string{`"assignment":{"bin_type":"TOTE-1","layers":3}`, `"totes_on_cart":16`, `"totes_per_layer":8`} {
+		if !strings.Contains(tile, frag) {
+			t.Errorf("the window's tile lacks %s: %s", frag, tile)
+		}
+	}
+
+	// No line (HTTP, or a Core that sends none): no want, no height, no
+	// assignment; the tote numbers still ride the bin.
+	v = view()
+	svc.StampBins(v, httpBins(rows), true, nil)
+	want = `{"group":"GRP","rows":[{"bin_type":"KD-1","have":0,"spots":0},{"bin_type":"TOTE-1","have":2,"spots":0}]}`
+	if got := stampJSON(t, v.Empties); got != want {
+		t.Errorf("no line: empties = %s\nwant %s", got, want)
+	}
+	if v.Nodes[0].Assignment != nil {
+		t.Errorf("no line, yet an assignment %+v", v.Nodes[0].Assignment)
+	}
 }
 
 // TestNodeBinState_HeldPartialFromEitherSource: a held partial reaches the

@@ -365,6 +365,7 @@ func (e *Engine) clearRefusalOnLoad(loaderNode, payloadCode string) {
 		return
 	}
 	if cleared {
+		e.announceRefusal(loaderNode, payloadCode)
 		e.emitSupplyRefusal(protocol.SupplyRefusalState{Action: protocol.SupplyRefusalClosed, LoaderNode: loaderNode, PayloadCode: payloadCode})
 	}
 }
@@ -479,7 +480,9 @@ func (e *Engine) seatManuallyLoadedBin(node *processes.Node, claimIDPtr, activeB
 // stamps the cart itself from the cart's own type — the stage-1 marker on a
 // Full off, the carrier back on a stage-2 Send on — so the board posts a blank
 // code there and the Edge passes it through
-// (TestClearBin_BinTypeCodeAtACoreOwnedUnloader).
+// (TestClearBin_BinTypeCodeAtACoreOwnedUnloader). layers is the height the
+// operator declared with the CLEAR (the panel's height button), passed to Core
+// as given; nil declares none (TestClearBin_DeclaredLayersReachCore).
 //
 // When the clear commits but the unloader has nowhere to send the carrier
 // (createUnloaderEmptyOut finds no outbound), the bookkeeping below still runs
@@ -490,7 +493,7 @@ func (e *Engine) seatManuallyLoadedBin(node *processes.Node, claimIDPtr, activeB
 // unload is the person's second tap on a carrier Core holds as an unfinished
 // partial in its home: it is cleared anyway, booked as any clear. Without it
 // Core refuses to clear one.
-func (e *Engine) ClearBin(nodeID int64, binTypeCode string, unload bool) error {
+func (e *Engine) ClearBin(nodeID int64, binTypeCode string, unload bool, layers *int) error {
 	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return err
@@ -506,7 +509,7 @@ func (e *Engine) ClearBin(nodeID int64, binTypeCode string, unload bool) error {
 			log.Printf("bin_ops: confirmed U1 order %d on operator clear at node %s", u1ID, node.CoreNodeName)
 		}
 	}
-	cleared, err := e.coreClient.ClearBin(node.CoreNodeName, binTypeCode, unload)
+	cleared, err := e.coreClient.ClearBin(node.CoreNodeName, binTypeCode, unload, layers)
 	if err != nil {
 		return fmt.Errorf("clear bin: %w", err)
 	}

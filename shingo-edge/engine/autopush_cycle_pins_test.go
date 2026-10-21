@@ -74,7 +74,7 @@ func TestAutoPushCycle_SingleWindow_RefillsAtThePickup(t *testing.T) {
 	f.deliveredFullAt(t, f.n, f.nCore, "PART-AC")
 
 	before := f.core.nodeBinReads()
-	testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false), "ClearBin")
+	testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false, nil), "ClearBin")
 	if reads := f.core.nodeBinReads() - before; reads != 0 {
 		t.Errorf("CLEAR: node-bins reads = %d, want 0 (the clear answers hadBin; the gate is covered locally)", reads)
 	}
@@ -109,7 +109,7 @@ func TestAutoPushLanding_PullsWhenNoPickupWasReported(t *testing.T) {
 		t.Parallel()
 		f := newCycleUnloader(t, "ACN")
 		f.deliveredFullAt(t, f.n, f.nCore, "PART-AC")
-		testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false), "ClearBin")
+		testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false, nil), "ClearBin")
 		u2 := f.onlyU2(t)
 		f.core.set(f.nCore, false, "") // Core freed the window; the Edge was not told
 		before := f.core.nodeBinReads()
@@ -125,7 +125,7 @@ func TestAutoPushLanding_PullsWhenNoPickupWasReported(t *testing.T) {
 		t.Parallel()
 		f := newCycleUnloader(t, "ACF")
 		f.deliveredFullAt(t, f.n, f.nCore, "PART-AC")
-		testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false), "ClearBin")
+		testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false, nil), "ClearBin")
 		u2 := f.onlyU2(t)
 		live := f.eng.coreClient
 		f.eng.coreClient = stubCoreClient(testCoreURL) // Core unreachable for the pickup's read
@@ -180,7 +180,7 @@ func TestPinAutoPushGate_ClearIsTheOnlyTriggerWhileAPeerFullIsUnconfirmed(t *tes
 	}
 
 	before := f.core.nodeBinReads()
-	testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false), "ClearBin at N")
+	testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false, nil), "ClearBin at N")
 	if reads := f.core.nodeBinReads() - before; reads != 1 {
 		t.Errorf("CLEAR at N: node-bins reads = %d, want 1 (the gate)", reads)
 	}
@@ -227,7 +227,7 @@ func TestAutoPushLanding_MultiPayloadWindowCountCovers(t *testing.T) {
 		Payloads:  []protocol.LoaderPayloadInfo{{PayloadCode: "PART-AC"}, {PayloadCode: "PART-AD"}}, AutoPush: true,
 	})
 	f.deliveredFullAt(t, f.n, f.nCore, "PART-AC")
-	testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false), "ClearBin")
+	testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false, nil), "ClearBin")
 	u2 := f.onlyU2(t)
 	f.pickUp(t, u2)
 	if got := f.fulls(t, f.nCore); got != 1 {

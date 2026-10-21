@@ -152,6 +152,12 @@ func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.Orde
 	} else if err := h.orderMgr.SetOrderFaultClock(p.OrderUUID, nil, nil, 0, ""); err != nil {
 		log.Printf("edge_handler: clear fault clock for %s: %v", p.OrderUUID, err)
 	}
+
+	// After the last write. Only the status write above emits (and only when
+	// the status moved); the ETA, the reason and the clock do not, and the
+	// board does not poll. Named by order, so only its boards rebuild. Pinned
+	// by TestHandleOrderUpdate_AnnouncesTheOrderAfterItsLastWrite.
+	h.orderMgr.AnnounceOrder(p.OrderUUID)
 }
 
 // encodeFaultRef renders the fleet's reason as the JSON the Edge column stores,

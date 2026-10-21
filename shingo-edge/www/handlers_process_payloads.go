@@ -7,12 +7,9 @@
 // six routing names was six round trips on a Pi with one SQLite connection,
 // each its own transaction, each able to half-land. These take the list.
 //
-// NEITHER BROADCASTS material-refresh. Every board on the plant answers that
-// event with a view build (operator.js's onMaterialRefresh → scheduleRefresh),
-// and a part set and a routing set are engineering facts: no tile on any board
-// changes when one is written. The writes that DO broadcast are the ones that
-// move material or change what a screen owns — a claim, an active style, a
-// station's node list.
+// NEITHER BROADCASTS ANYTHING OF ITS OWN. Like every /api write, a 2xx here is
+// followed by the boards' one coalesced nudge (router.go nudgeAfterWrite); a
+// board whose view did not change answers it with a 304.
 
 package www
 

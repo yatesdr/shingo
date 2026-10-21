@@ -234,13 +234,12 @@ func (h *Handlers) apiSaveFlow(w http.ResponseWriter, r *http.Request) {
 	// flow: a backup, the boards, and ONE per-process publish so Core's
 	// mirror carries the new rows.
 	//
-	// THE BOARDS AND THE PUBLISH GO ON THE SAME DOORBELL. A preset applied to
-	// forty parts is forty saves, one after the other, and broadcasting per
-	// save held every station at its 500 ms burst cadence for the whole apply
-	// — the polls it provoked cost the box about twice what the apply did.
-	// Coalesced, the burst is one broadcast and one publish.
+	// BOTH ARE COALESCED. A preset applied to forty parts is forty saves, one
+	// after the other: the publish rides the spec-change doorbell, and the
+	// boards' refresh is the /api write's nudge (nudgeAfterWrite), one per
+	// burst (EventHub.Nudge).
 	h.requestBackup("flow-saved")
-	h.requestSpecChangePublishAndRefresh(processID)
+	h.requestSpecChangePublish(processID)
 	writeJSON(w, result)
 }
 
@@ -316,11 +315,12 @@ func (h *Handlers) apiMintFlow(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	// A minted style is a new flow: the same backup, boards and one publish a
-	// save fires. A resolved one changed nothing, so nothing is announced.
+	// A minted style is a new flow: the same backup and one publish a save
+	// fires (the boards' refresh is the /api write's nudge, as a save's is).
+	// A resolved one changed nothing, so nothing is announced.
 	if result.Minted {
 		h.requestBackup("flow-minted")
-		h.requestSpecChangePublishAndRefresh(processID)
+		h.requestSpecChangePublish(processID)
 	}
 	writeJSON(w, result)
 }

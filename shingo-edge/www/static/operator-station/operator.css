@@ -109,7 +109,8 @@ html, body {
 
 body {
     display: grid;
-    grid-template-rows: var(--os-header-h) 1fr var(--os-footer-h);
+    /* header, the alerts (no height while there are none), the grid, footer */
+    grid-template-rows: var(--os-header-h) auto 1fr var(--os-footer-h);
     height: 100vh;
 }
 
@@ -162,6 +163,11 @@ body {
 }
 .os-health-badge.online { background: var(--os-green-bright); }
 .os-health-badge.offline { background: var(--os-orange); }
+.os-health-badge.stale { background: var(--status-faulted-ink); }
+/* The stale sign (operator-board-model.js staleSign): what the screen knows. */
+.os-stale-sign { font-size: 14px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+.os-stale-sign--offline { color: var(--status-failed-ink); }
+.os-stale-sign--stale { color: var(--status-faulted-ink); }
 
 .os-header-btn {
     border: none;
@@ -1178,6 +1184,7 @@ body {
 
 body.os-pc-active { grid-template-rows: 1fr; background: var(--elev-base); }
 body.os-pc-active #os-header,
+body.os-pc-active #os-alerts,
 body.os-pc-active #os-footer { display: none; }
 
 #os-grid.os-pc-board {
@@ -1220,6 +1227,8 @@ body.os-pc-active #os-footer { display: none; }
 .os-pc-top-left { display: flex; align-items: baseline; gap: 14px; min-width: 0; white-space: nowrap; }
 .os-pc-title { font-size: 20px; font-weight: 600; }
 .os-pc-words { font-size: 15px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; }
+/* The stale sign, in words and no colour: it is not an act for the driver. */
+.os-pc-sign { flex: none; margin-left: auto; font-size: 15px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
 
 .os-pc-btn {
     flex: none;
@@ -1320,6 +1329,10 @@ body.os-pc-active #os-footer { display: none; }
 .os-pc-press.os-pc-tile--red .os-pc-fill { background: var(--status-failed-ink); }
 .os-pc-empties-line { display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; }
 .os-pc-empties-line--none .os-pc-row-count { color: var(--text-muted); }
+/* A height the group wants of the type above, small (pressesRow). */
+.os-pc-empties-line--height { padding-left: 12px; }
+.os-pc-empties-line--height .os-pc-row-part,
+.os-pc-empties-line--height .os-pc-row-count { font-size: 13px; font-weight: 500; }
 .os-pc-empties-open { font-size: 13px; color: var(--text-muted); }
 
 /* The zones */
@@ -1459,3 +1472,48 @@ body.os-pc-active #os-footer { display: none; }
 
 /* A panel's lit choice: what the card says to send back. Outline, no fill. */
 .os-co-picker-btn.os-co-picker-btn--lit { box-shadow: inset 0 0 0 3px var(--text-strong); }
+
+/* ===== Alerts (operator.js showAlert) =====
+   The post-cutover part-id flag and the part-change alerts, under the header of
+   a press's screen until dismissed there: in the page's flow, so the header
+   (its buttons and its stale sign) and the tiles' names stay in sight. Red is
+   a problem on the press; plain is news. A board of loader tiles draws none. */
+.os-alerts {
+    display: flex;
+    flex-direction: column;
+}
+.os-alert {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 18px;
+    background: var(--elev-raised);
+    color: var(--text-strong);
+    border-bottom: 1px solid var(--sub-2);
+}
+.os-alert--red {
+    background: var(--status-failed-bg);
+    color: var(--status-failed-ink);
+    border-bottom: 3px solid var(--status-failed-border);
+}
+.os-alert-text { font-size: 17px; font-weight: 600; }
+.os-alert-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.os-alert-btn {
+    min-height: 48px;
+    padding: 0 18px;
+    border: 1px solid var(--sub-2);
+    border-radius: 10px;
+    background: var(--elev-base);
+    color: var(--text-strong);
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+.os-alert-btn:disabled { color: var(--text-muted); cursor: default; }
+.os-alert-btn--primary:not(:disabled) {
+    background: var(--accent-solid);
+    border-color: var(--accent-solid);
+    color: var(--on-accent-solid);
+}

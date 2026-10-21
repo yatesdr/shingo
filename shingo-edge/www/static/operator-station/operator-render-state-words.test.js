@@ -57,6 +57,8 @@ const ctx = vm.createContext({
     },
     el: function (tag, props) { return fakeEl(props); },
     getView: function () { return view; },
+    // The station's link for the stale sign: answering.
+    getLink: function () { return { answering: true, dataAt: '' }; },
     claimedNodes: function () {
         return (view && view.nodes || []).filter(n => n.loader || n.active_claim || n.changeover_task);
     },

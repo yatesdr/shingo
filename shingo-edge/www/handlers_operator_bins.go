@@ -145,13 +145,16 @@ func (h *Handlers) apiClearBin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
+	// layers is optional: the height the operator declared on the CLEAR panel
+	// ("<type> · N high"); absent, no height is declared.
 	var body struct {
 		BinTypeCode string `json:"bin_type_code"`
 		// Unload is the second tap on a partial Core holds in its home.
 		Unload bool `json:"unload"`
+		Layers *int `json:"layers"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	if err := h.orchestration.ClearBin(id, body.BinTypeCode, body.Unload); err != nil {
+	if err := h.orchestration.ClearBin(id, body.BinTypeCode, body.Unload, body.Layers); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

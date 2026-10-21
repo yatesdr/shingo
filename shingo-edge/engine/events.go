@@ -120,14 +120,39 @@ const (
 
 	// EventContainmentUpdated fires when the Edge's held copy of Core's
 	// containment feed changes digest — a snapshot applied that differs from
-	// the one held. The containment page reloads on it; an identical re-send
-	// does not fire it.
+	// the one held — and when the copy crosses FeedAsOfAfter either way
+	// (feeds.go crossingsLocked), since the page shows its "as of". The
+	// containment page reloads on it; an identical re-send does not fire it.
 	EventContainmentUpdated
 
 	// EventNodeBinsUpdated fires when a node-bins snapshot from Core changed
 	// the Edge's copy: it names the nodes whose row or assignment changed and
 	// the groups whose wants changed. An identical re-send does not fire it.
 	EventNodeBinsUpdated
+
+	// EventSupplyRefusalChanged fires when this Edge's supply refusal table
+	// changed: a refusal, an undo, an answer, the clear a LOAD makes, a refusal
+	// broadcast from another Edge applied, or Core's snapshot applied (which
+	// names no card). A station board draws refusals at its loader windows and
+	// on the cells waiting on the part, and rebuilds on it.
+	EventSupplyRefusalChanged
+
+	// EventSourcingStateChanged fires on every sourcing report from Core once
+	// it is stored, the periodic full one included, naming the processes it
+	// carries. Nothing is read to tell whether a verdict moved.
+	EventSourcingStateChanged
+
+	// EventBoardNudge fires when something a station view reads changed and
+	// no scoped event says so. Plant-wide inputs (Core's loader list and
+	// payload catalog applied, a watched curtain tag's reading moved, a
+	// keep-staged sentence changed, a feed crossing its as-of age) carry no
+	// payload: the SSE hub turns them into its one coalesced nudge (www
+	// EventHub.Nudge), which every station takes. An order's writes (an order
+	// update's last write, a projected order) carry a BoardNudgeEvent naming
+	// the order and its process node: the hub sends it as an order-update,
+	// which only a board drawing that node or that order rebuilds on
+	// (operator-state.js eventConcerns), the answer every order-update gets.
+	EventBoardNudge
 )
 
 // Event is the envelope emitted by the Engine's EventBus.
@@ -219,6 +244,16 @@ type WarLinkEvent struct {
 	Error     string `json:"error,omitempty"`
 }
 
+// BoardNudgeEvent is an EventBoardNudge about one order: the order and the
+// process node it is at (nil when it is at none, which every board takes).
+// Its JSON is an order-update's keys, so the board judges it as one.
+type BoardNudgeEvent struct {
+	eventbus.PayloadBase
+	OrderID       int64  `json:"order_id,omitempty"`
+	OrderUUID     string `json:"order_uuid"`
+	ProcessNodeID *int64 `json:"process_node_id,omitempty"`
+}
+
 // ContainmentUpdatedEvent names the digest of the containment copy just held.
 type ContainmentUpdatedEvent struct {
 	eventbus.PayloadBase
@@ -232,6 +267,23 @@ type NodeBinsUpdatedEvent struct {
 	eventbus.PayloadBase
 	Nodes  []string `json:"nodes"`
 	Groups []string `json:"groups"`
+}
+
+// SupplyRefusalChangedEvent names the card whose refusal changed: the loader
+// window and the part. Both blank when Core's snapshot was applied, which may
+// have changed any card.
+type SupplyRefusalChangedEvent struct {
+	eventbus.PayloadBase
+	LoaderNode  string `json:"loader_node"`
+	PayloadCode string `json:"payload_code"`
+}
+
+// SourcingStateChangedEvent names the processes a stored sourcing report
+// carried (their names, the feed's process key), each once; none for a
+// snapshot that carried no state.
+type SourcingStateChangedEvent struct {
+	eventbus.PayloadBase
+	Processes []string `json:"processes"`
 }
 
 // CoreNodesUpdatedEvent is emitted when the core node list is received.

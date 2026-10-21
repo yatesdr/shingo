@@ -423,10 +423,11 @@ func (e *Engine) guardCatidMismatch(node *processes.Node, claim *processes.NodeC
 }
 
 // catidResolutionHint tells the operator where the fix for a CATID mismatch is
-// coming from, keyed to the process's auto-arm mode: on `auto` the monitor arms
-// a changeover itself once the new part settles and maps to a style; on
-// `prompt` the operator gets a changeover prompt on the station; otherwise
-// (`off`) they start one. Read-only and fail-soft — an unknown/blank mode reads
+// coming from, keyed to the process's auto-arm mode: on `auto` the monitor
+// presses CUTOVER on a changeover already started once the new part settles,
+// and starts none; on `prompt` the operator gets a changeover prompt on the
+// station; otherwise (`off`) they start one. Pinned by
+// TestCatidResolutionHint_SaysWhatEachModeDoes. Read-only and fail-soft — an unknown/blank mode reads
 // as the default (auto), so the refusal always points somewhere.
 func (e *Engine) catidResolutionHint(processID int64) string {
 	mode := domain.ChangeoverAutoArmAuto
@@ -439,7 +440,7 @@ func (e *Engine) catidResolutionHint(processID int64) string {
 	case domain.ChangeoverAutoArmOff:
 		return "start a changeover to the matching style"
 	default:
-		return "the automatic changeover arm will start it once the part settles, or start a changeover to the matching style"
+		return "start a changeover to the matching style; the automatic arm presses CUTOVER on a changeover already started once the part settles"
 	}
 }
 

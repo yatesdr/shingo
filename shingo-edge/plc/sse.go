@@ -309,13 +309,19 @@ func (m *Manager) handleSSEValueChange(data string) {
 	}
 	m.mu.Unlock()
 
-	mp.mu.Lock()
-	mp.Values[change.Tag] = TagValue{
+	after := TagValue{
 		Name:    change.Tag,
 		TypeStr: change.Type,
 		Value:   change.Value,
 	}
+	mp.mu.Lock()
+	before, present := mp.Values[change.Tag]
+	mp.Values[change.Tag] = after
+	moved := m.curtainTagMoved(change.PLC, change.Tag, before, present, after)
 	mp.mu.Unlock()
+	if moved {
+		m.curtainChanged()
+	}
 }
 
 func (m *Manager) handleSSEStatusChange(data string) {

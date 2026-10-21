@@ -53,6 +53,10 @@ const ctx = vm.createContext({
     postAction: function (url, body) { posts.push({ url: url, body: body }); return Promise.resolve(true); },
     isActive: function () { return false; },
 });
+// The board model the panels read their choices and their lit one from
+// (operator-board-model.js clearChoices, isLit): pure, so it runs as it ships.
+vm.runInContext(fs.readFileSync(path.join(__dirname, 'operator-board-model.js'), 'utf8')
+    .replace(/^import\s[^;]*;/gm, '').replace(/^export\s+/gm, ''), ctx);
 vm.runInContext(src + '\nthis.confirmUnloadSwap = confirmUnloadSwap; this.confirmPushEmpty = confirmPushEmpty;', ctx);
 
 function walk(n, out) {
@@ -178,5 +182,52 @@ eq(p.buttons[0], 'PUSH EMPTY', 'stage 2: a carrier that is not bare keeps PUSH E
 p = open(function () { ctx.confirmPushEmpty(24, []); });
 eq(p.buttons, ['PUSH EMPTY', 'CANCEL'], 'empty: no carriers (no catalog from Core) -> PUSH EMPTY only');
 
+
+// ── heights: a type the empties group wants heights of ──
+// In place of its one button, the bin's name (a base, layers 0) and the bin's
+// name with each wanted height, each posting the CLEAR with its layers; the
+// lit one from clearHighlight; a type with no wanted heights unchanged.
+view = { empties: { group: 'G', rows: [{ bin_type: 'TOTE-S', have: 0, spots: 1 },
+    { bin_type: 'TOTE-S', layers: 3, have: 0, want: 2, spots: 1 }, { bin_type: 'RACK-C', have: 0, spots: 1 }] } };
+p = open(function () { ctx.confirmUnloadSwap(31, ['TOTE-S', 'RACK-C'], 0, false, { bin_type: 'TOTE-S', layers: 3 }); });
+eq(p.buttons, ['TOTE-S', 'TOTE-S · 3 high', 'RACK-C', 'CANCEL'], 'heights: the CLEAR offers the bin\'s name and each wanted height');
+const litOf = function (pp) {
+    return walk(mounted[0], []).filter(n => n.tag === 'button' && String(n.className).indexOf('--lit') !== -1).map(n => n.textContent);
+};
+eq(litOf(p), ['TOTE-S · 3 high'], 'heights: the assignment\'s height is lit');
+eq(p.click('TOTE-S · 3 high'), [{ url: '/api/process-nodes/31/clear-bin', body: { bin_type_code: 'TOTE-S', layers: 3 } }],
+    'heights: a height posts the CLEAR with its type and layers');
+p = open(function () { ctx.confirmUnloadSwap(31, ['TOTE-S', 'RACK-C'], 0, false, null); });
+eq(p.click('TOTE-S'), [{ url: '/api/process-nodes/31/clear-bin', body: { bin_type_code: 'TOTE-S', layers: 0 } }],
+    'heights: the bin\'s name alone declares a base, layers 0');
+p = open(function () { ctx.confirmUnloadSwap(31, ['TOTE-S', 'RACK-C'], 0, false, null); });
+eq(p.click('RACK-C'), [{ url: '/api/process-nodes/31/clear-bin', body: { bin_type_code: 'RACK-C' } }],
+    'heights: a type with none wanted posts no layers');
+// One type with heights: its buttons in place of CONFIRM SWAP.
+p = open(function () { ctx.confirmUnloadSwap(32, ['TOTE-S'], 0, false, null); });
+eq(p.buttons, ['TOTE-S', 'TOTE-S · 3 high', 'CANCEL'], 'heights: one type\'s heights replace CONFIRM SWAP');
+// Stage 1 leaves the cart bare: no heights, no layers.
+p = open(function () { ctx.confirmUnloadSwap(33, ['TOTE-S'], 0, true, null); });
+eq(p.buttons, ['Full off', 'CANCEL'], 'heights: stage 1 offers no height');
+eq(p.click('Full off'), [{ url: '/api/process-nodes/33/clear-bin', body: undefined }], 'heights: Full off posts no layers');
+// The empty-cart panel: PUSH EMPTY unchanged, PUSH AS by height.
+p = open(function () { ctx.confirmPushEmpty(34, ['TOTE-S', 'RACK-C'], false, { bin_type: 'TOTE-S', layers: 3 }); });
+eq(p.buttons, ['PUSH EMPTY', 'PUSH AS TOTE-S', 'PUSH AS TOTE-S · 3 high', 'PUSH AS RACK-C', 'CANCEL'],
+    'heights: the re-declare offers each height');
+eq(p.click('PUSH EMPTY'), [{ url: '/api/process-nodes/34/push-empty', body: undefined }], 'heights: PUSH EMPTY unchanged');
+p = open(function () { ctx.confirmPushEmpty(34, ['TOTE-S', 'RACK-C'], false, null); });
+eq(p.click('PUSH AS TOTE-S · 3 high'), [{ url: '/api/process-nodes/34/clear-bin', body: { bin_type_code: 'TOTE-S', layers: 3 } }],
+    'heights: PUSH AS a height posts its type and layers');
+// Stage 2's Send on: a tap per height, posting layers and still no type.
+p = open(function () { ctx.confirmPushEmpty(35, ['TOTE-S'], true, null); });
+eq(p.buttons, ['Send on', 'Send on · 3 high', 'CANCEL'], 'heights: stage 2 Send on, one tap per height, naming no type');
+noTypeOnPanel(p, 'stage 2 with heights');
+eq(p.click('Send on · 3 high'), [{ url: '/api/process-nodes/35/clear-bin', body: { layers: 3 } }],
+    'heights: Send on at a height posts its layers and no type (the cart\'s type is Core\'s)');
+// A Core that sends no group lines: today's panels.
+view = { empties: { group: 'G', rows: [{ bin_type: 'TOTE-S', have: 0, spots: 1 }] } };
+p = open(function () { ctx.confirmUnloadSwap(36, ['TOTE-S'], 0, false, { bin_type: 'TOTE-S' }); });
+eq(p.buttons, ['CONFIRM SWAP', 'CANCEL'], 'no heights wanted: today\'s CONFIRM SWAP');
+view = null;
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }
 console.log('operator-render clear panels: ' + passed + ' passed');

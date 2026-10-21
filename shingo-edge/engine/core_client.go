@@ -521,12 +521,14 @@ type HeldBinRow = protocol.HeldBinRow
 // binTypeCode is optional: when non-empty Core re-stamps the carrier's
 // bin_type_id atomically with the manifest clear (dunnage float). unload is the
 // person's second tap on a partial Core holds in its home: without it Core
-// refuses to clear one.
-func (c *CoreClient) ClearBin(nodeName, binTypeCode string, unload bool) (*BinClearResponse, error) {
+// refuses to clear one. layers is the height a person declared with the
+// CLEAR, nil when none was: Core writes layers times the cart's totes per
+// layer as its tote count.
+func (c *CoreClient) ClearBin(nodeName, binTypeCode string, unload bool, layers *int) (*BinClearResponse, error) {
 	if c.baseURL == "" {
 		return nil, fmt.Errorf("core API not configured")
 	}
-	reqBody := protocol.BinClearRequest{NodeName: nodeName, BinTypeCode: binTypeCode, Unload: unload}
+	reqBody := protocol.BinClearRequest{NodeName: nodeName, BinTypeCode: binTypeCode, Unload: unload, Layers: layers}
 	body, _ := json.Marshal(reqBody)
 	resp, err := c.http.Post(c.baseURL+"/api/telemetry/bin-clear", "application/json", bytes.NewReader(body))
 	if err != nil {

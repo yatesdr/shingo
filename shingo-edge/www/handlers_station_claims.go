@@ -40,7 +40,6 @@ func (h *Handlers) apiCreateLoaderBoard(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.eventHub.Broadcast(SSEEvent{Type: "material-refresh", Data: map[string]string{"action": "station-nodes-updated"}})
 	writeJSON(w, map[string]any{"status": "ok", "station_id": id})
 }
 
@@ -83,7 +82,6 @@ func (h *Handlers) apiSetStationClaimedNodes(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.eventHub.Broadcast(SSEEvent{Type: "material-refresh", Data: map[string]string{"action": "station-nodes-updated"}})
 	// kept: removed positions that stayed, disabled, because an order is still
 	// running at them. Always present so the page need not tell "none" from
 	// "not reported".

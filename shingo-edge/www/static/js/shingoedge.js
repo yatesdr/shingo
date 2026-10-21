@@ -16,7 +16,7 @@
 // dropped in SPRINT 4. Helpers are now top-level `export function` /
 // `export const` declarations; the trailing `window.ShingoEdge = { … }`
 // block exists only for the one remaining non-module consumer:
-//   - operator-station/operator.js reads window.ShingoEdge.createSSE
+//   - templates/diagnostics.html calls window.ShingoEdge.toast
 // Migrate it to module imports and the window-bridge can go.
 
 import {
@@ -52,9 +52,8 @@ export function createSSE(url, handlers) {
     // Build id seen on the first 'connected' event after page load.
     // If a later reconnect reports a different id the edge has been
     // restarted; force-reload so the tab picks up the new JS bundle
-    // (cacheBust on the HTML only fires on fresh page loads, so a
-    // long-lived operator-station tab would otherwise keep its
-    // stale module graph indefinitely).
+    // (a long-lived tab would otherwise keep its stale module graph
+    // indefinitely: a new build's assets reach it only on a reload).
     var seenBuild = null;
 
     function connect() {
@@ -512,7 +511,7 @@ export { delegateActions } from '/static/shared/utils.js';
 // --- window.ShingoEdge for non-module consumers ---
 // One remaining non-module consumer still reaches for these as bare
 // globals on the window:
-//   - operator-station/operator.js: uses window.ShingoEdge.createSSE
+//   - templates/diagnostics.html: uses window.ShingoEdge.toast
 // When it is migrated to module imports, this block (and the
 // IIFE-era comment block at the top) can be deleted outright.
 window.ShingoEdge = {

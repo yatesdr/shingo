@@ -61,6 +61,12 @@ func (e *Engine) ApplyOrderProjection(p protocol.OrderProjection) (created bool,
 	}
 	e.debugFn.Log("order projection applied: uuid=%s type=%s status=%s delivery=%s created=%v",
 		p.OrderUUID, p.OrderType, p.Status, p.DeliveryNode, created)
+	// The row is on a station's tiles and nothing above emits (the door walk
+	// found it: cmd/shingoedge door_walk_test.go). Named by its node, so only
+	// the boards drawing it rebuild.
+	e.Events.Emit(Event{Type: EventBoardNudge, Payload: BoardNudgeEvent{
+		OrderUUID: p.OrderUUID, ProcessNodeID: row.ProcessNodeID,
+	}})
 	return created, nil
 }
 

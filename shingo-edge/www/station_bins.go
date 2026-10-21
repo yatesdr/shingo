@@ -33,12 +33,12 @@ func stampStationBins(eng ServiceAccess, stationID int64, view *domain.OperatorS
 		if held.Held {
 			rows = service.BoardBinsFromCopy(held.Rows)
 		}
-		svc.StampBins(view, rows, held.Held)
+		svc.StampBins(view, rows, held.Held, held.Groups)
 		view.Bins = &domain.BinsKnown{Known: held.Held, AsOf: binsAsOf(held, time.Now())}
 		return
 	}
 	rows, read := readNodeBins(eng.CoreAPI(), svc.BinNodes(stationID))
-	svc.StampBins(view, rows, read)
+	svc.StampBins(view, rows, read, nil)
 	view.Bins = &domain.BinsKnown{Known: read}
 }
 
