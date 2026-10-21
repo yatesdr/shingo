@@ -208,7 +208,23 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 			want:   "Waiting for partner order 2ad889a7 to dig out its bin — the two legs go together",
 		},
 		{
-			name: "partner without a sibling falls back",
+			// A leg parked at a station wait (MarkStationWaitIfOwned) names no
+			// sibling: it waits for the station's RELEASE, not for a partner.
+			// Springfield Press 6, 2026-10-21: all four legs read "Waiting for
+			// partner robot" while parked for RELEASE.
+			name:   "parked at a station wait names the node and the station",
+			code:   protocol.QueueWaitingForPartner,
+			params: QueueParams{Destination: "PLN_012"},
+			want:   "Parked at PLN_012 — the station must release it.",
+		},
+		{
+			name:   "a sibling keeps the pair sentence, a node or not",
+			code:   protocol.QueueWaitingForPartner,
+			params: QueueParams{Sibling: "2ad889a7-1be2-4ece-9bc4-8a4a616f8147", SiblingStatus: "staged", Destination: "PLN_012"},
+			want:   "Waiting for partner order 2ad889a7 — the two legs go together",
+		},
+		{
+			name: "partner without a sibling or a node falls back",
 			code: protocol.QueueWaitingForPartner,
 			want: "Waiting for partner robot",
 		},

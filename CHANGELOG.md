@@ -3,6 +3,16 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-21 — An order's whole route, and the words for a parked leg
+
+Core only (web pages and the parked sentence); no migration. Not deployed.
+
+- The orders board, the Dashboard card, the order pop-up and the task board show every stop of a complex leg
+- The stop the robot is at is in bold; the pop-up lists the full chain with its waits under the route
+- An order with no steps reads From → Line → To as before
+- A leg parked for the station's RELEASE reads "Parked at <node> — the station must release it."
+- The orders page's summary chip for that code reads "Waiting for partner or release"
+
 ## 2026-10-21 — A new counter starts counting from its first read
 
 Edge only; no migration. Not deployed.
