@@ -277,13 +277,13 @@ func TestBinClear_WithoutLayersIsTodaysClear(t *testing.T) {
 	}
 }
 
-// TestNodeBins_ToteNumbers: the node-bins row carries the cart's count of
+// TestNodeBins_ToteNumbers: the bins feed's row carries the cart's count of
 // totes and its type's totes per layer when they are known, 0 included, and
-// leaves both keys out when not (TestNodeBins_Golden holds those bytes). From
-// the bin read the answer already makes: no statement is added.
+// leaves both keys out when not. From the bin read the row already makes: no
+// statement is added.
 func TestNodeBins_ToteNumbers(t *testing.T) {
 	t.Parallel()
-	h, db := testHandlers(t)
+	_, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	eight := 8
 	tote := toteType(t, db, "TN-TOTE", &eight)
@@ -307,7 +307,7 @@ func TestNodeBins_ToteNumbers(t *testing.T) {
 		{"TN-N-0", float64(0), true, float64(8), true},
 		{"TN-N-UNKNOWN", nil, false, float64(8), true},
 	} {
-		row := nodeBinsRow(t, h, tc.node)
+		row := nodeBinsRow(t, db, tc.node)
 		got, ok := row["totes_on_cart"]
 		if ok != tc.hasTotes || got != tc.totes {
 			t.Errorf("%s totes_on_cart = %v (present %v), want %v (present %v)", tc.node, got, ok, tc.totes, tc.hasTotes)

@@ -37,17 +37,14 @@ import (
 	edgeorders "shingoedge/orders"
 )
 
-// stubCore serves the telemetry endpoint a press-index changeover start
-// touches: node-bins (empty: FetchNodeBins callers treat missing nodes as
-// occupied, which keeps the full swap choreography rather than the
-// empty-station downgrade). The bin types are not asked of Core over HTTP: the
-// planner reads the catalog Core sends with the node list, seeded below.
+// stubCore serves the endpoint a press-index changeover start touches. The
+// occupancy is not asked of Core over HTTP (the Edge decides from its bins
+// table; none held reads every node occupied, which keeps the full swap
+// choreography rather than the empty-station downgrade), nor are the bin types:
+// the planner reads the catalog Core sends with the node list, seeded below.
 func stubCore(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/telemetry/node-bins", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("[]"))
-	})
 	// Changeover-start preflight: fully stocked ("missing" empty). The start
 	// path HARD-fails on a preflight transport error (unlike the advisory it
 	// returns on missing stock), so the endpoint must exist.

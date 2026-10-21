@@ -20,10 +20,9 @@ import (
 
 // TestPinFold_SingleWindowCycleReads: full on N → CLEAR → U2 lifts the carrier
 // (the pickup gate pulls the next full) → an upstream produce release of the
-// same payload → the U2 lands. CLEAR 0 (the clear answers hadBin; the gate is
-// covered locally), pickup 1, release 0 (covered locally), landing 0 — ONE Core
-// read per cycle, the one that pulls. At f9a854cb: CLEAR 2, pickup 1, release 1,
-// landing 0 = 4.
+// same payload → the U2 lands. No Core read in the cycle: the pickup gate, the
+// one that pulls, reads the bins table. At f9a854cb: CLEAR 2, pickup 1, release
+// 1, landing 0 = 4; then pickup 1 alone, until the seam moved onto the table.
 func TestPinFold_SingleWindowCycleReads(t *testing.T) {
 	t.Parallel()
 	f := newCycleUnloader(t, "FLD")
@@ -42,7 +41,7 @@ func TestPinFold_SingleWindowCycleReads(t *testing.T) {
 
 	step("CLEAR", 0, func() { testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false, nil), "ClearBin") })
 	u2 := f.onlyU2(t)
-	step("pickup", 1, func() { f.pickUp(t, u2) })
+	step("pickup", 0, func() { f.pickUp(t, u2) })
 	if got := f.fulls(t, f.nCore); got != 1 {
 		t.Fatalf("after the pickup: U1s = %d, want 1", got)
 	}
@@ -51,8 +50,8 @@ func TestPinFold_SingleWindowCycleReads(t *testing.T) {
 		t.Errorf("after the release: U1s = %d, want still 1 (the one in flight covers it)", got)
 	}
 	step("landing", 0, func() { scLand(t, f.eng, f.db, u2) })
-	if total != 1 {
-		t.Errorf("Core node-bins reads per cycle = %d, want 1", total)
+	if total != 0 {
+		t.Errorf("Core node-bins reads per cycle = %d, want 0", total)
 	}
 }
 
@@ -104,8 +103,8 @@ func TestPinFold_ProduceRelease(t *testing.T) {
 		f.core.set(f.nCore, false, "")
 		before := f.core.nodeBinReads()
 		f.eng.MaybeCreateUnloaderFullIn("PART-AC")
-		if reads := f.core.nodeBinReads() - before; reads != 1 {
-			t.Errorf("uncovered release: node-bins reads = %d, want 1", reads)
+		if reads := f.core.nodeBinReads() - before; reads != 0 {
+			t.Errorf("uncovered release: node-bins reads = %d, want 0 (the seam reads the table)", reads)
 		}
 		if got := f.fulls(t, f.nCore); got != 1 {
 			t.Errorf("uncovered release: U1s = %d, want 1", got)

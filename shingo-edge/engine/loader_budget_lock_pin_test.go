@@ -18,6 +18,8 @@ func TestWithLoaderBudget_ASecondLoaderLockUnderOneIsRefused(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
+	// A table the seam may decide from, so the first reservation fires.
+	holdCoreRows(t, eng, map[string]NodeBinInfo{}, "DLK-A", "DLK-B")
 	var report string
 	_, _ = eng.withLoaderBudget(mustSharedLoader(t, "DLK-A", "P1"), "P1", 1, "", true, func([]string) (int, error) {
 		report = lockcheck.Catch(func() {

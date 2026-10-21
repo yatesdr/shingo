@@ -68,16 +68,19 @@ func TestUnloaderSweep_ForeignWindowSkipsNotErrors(t *testing.T) {
 	}
 }
 
-// TestForeignWindow_DebugLineNamesTheWindow: the skip must be traceable — a
-// trace of the 520/hr spam on the sim stack should resolve to "another Edge's
-// window", not silence.
-func TestForeignWindow_DebugLineNamesTheWindow(t *testing.T) {
+// TestForeignWindow_ReadsOccupiedOffTheTable: a window this Edge does not
+// watch (another Edge's, its process node there) has no row in this Edge's
+// bins table, and a name with no row reads occupied: the budget spends it and
+// no U1 targets it, so the sweep neither orders against it nor errors. Its own
+// Edge orders to it. The decision line says so (resident=1).
+func TestForeignWindow_ReadsOccupiedOffTheTable(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	var debugLines []string
-	eng.debugFn = func(f string, a ...any) { debugLines = append(debugLines, strings.TrimSpace(fmt.Sprintf(f, a...))) }
+	var lines []string
+	eng.logFn = func(f string, a ...any) { lines = append(lines, strings.TrimSpace(fmt.Sprintf(f, a...))) }
 	seedCoreLoader(t, eng, foreignWindowLoaderInfo("FGN_TRACE", "PART-FT"))
+	holdSweep(t, eng, nil)
 
 	l, err := eng.loaderStore.LoaderForPayload(domain.PayloadCode("PART-FT"), domain.RoleConsume)
 	if err != nil || l == nil {
@@ -86,12 +89,20 @@ func TestForeignWindow_DebugLineNamesTheWindow(t *testing.T) {
 	eng.createUnloaderFullIns(l, []domain.PayloadCode{"PART-FT"})
 
 	found := false
-	for _, line := range debugLines {
-		if strings.Contains(line, "FGN_TRACE") && strings.Contains(line, "another Edge's window") {
+	for _, line := range lines {
+		if strings.HasPrefix(line, "loader_budget loader=loader:FGN_TRACE ") && strings.Contains(line, "resident=1") &&
+			strings.Contains(line, "occupancy=ok") && strings.Contains(line, "to_fire=0") {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("debug trace must name the skipped window and say why; got %v", debugLines)
+		t.Errorf("decision line must read the unwatched window occupied (resident=1, occupancy=ok, to_fire=0); got %v", lines)
+	}
+	ords, oerr := db.ListActiveOrders()
+	if oerr != nil {
+		t.Fatalf("list orders: %v", oerr)
+	}
+	if len(ords) != 0 {
+		t.Errorf("orders = %d, want none against a window this Edge does not watch", len(ords))
 	}
 }

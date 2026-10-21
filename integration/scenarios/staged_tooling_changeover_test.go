@@ -38,9 +38,6 @@ import (
 func stagedStubCore(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/telemetry/node-bins", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("[]"))
-	})
 	mux.HandleFunc("/api/inventory/preflight", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"missing": []string{}})
 	})

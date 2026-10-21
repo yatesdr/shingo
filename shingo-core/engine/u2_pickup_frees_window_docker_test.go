@@ -17,8 +17,8 @@ import (
 //
 // The Edge can re-pull the window's next full the moment the U2 lifts the
 // carrier only if Core stops counting the carrier resident then. The reader is
-// www apiTelemetryNodeBins, which answers occupied from NodeService
-// GetByDotName + ListBinsByNode — the same two calls asserted here.
+// the bins feed's row (messaging NodeBinsRows), occupied from the bins at the
+// node — what the two NodeService calls asserted here read.
 //
 // Core's pickup block handler (handlePickupBlockCompleted) moves the claimed bin
 // to the synthetic _TRANSIT node BEFORE it sends BinPickedUp to the Edge, so by

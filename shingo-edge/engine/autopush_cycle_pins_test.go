@@ -101,7 +101,7 @@ func TestAutoPushCycle_SingleWindow_RefillsAtThePickup(t *testing.T) {
 
 // TestAutoPushLanding_PullsWhenNoPickupWasReported: the landing is the fallback.
 // Two ways the pickup re-pull does not happen — the BinPickedUp never reaches the
-// Edge, or it does and the re-pull's Core read fails — and in both the landing
+// Edge, or it does and the re-pull has no table to decide from — and in both the landing
 // finds nothing in flight and pulls. Without it the window would idle until a
 // restart: no full arrives, so no CLEAR comes.
 func TestAutoPushLanding_PullsWhenNoPickupWasReported(t *testing.T) {
@@ -118,8 +118,8 @@ func TestAutoPushLanding_PullsWhenNoPickupWasReported(t *testing.T) {
 		if got := f.fulls(t, f.nCore); got != 1 {
 			t.Errorf("landing without a pickup: U1s = %d, want 1", got)
 		}
-		if reads := f.core.nodeBinReads() - before; reads != 1 {
-			t.Errorf("landing without a pickup: node-bins reads = %d, want 1", reads)
+		if reads := f.core.nodeBinReads() - before; reads != 0 {
+			t.Errorf("landing without a pickup: node-bins reads = %d, want 0 (the seam reads the table)", reads)
 		}
 	})
 	t.Run("pickup_read_failed", func(t *testing.T) {
@@ -128,12 +128,12 @@ func TestAutoPushLanding_PullsWhenNoPickupWasReported(t *testing.T) {
 		f.deliveredFullAt(t, f.n, f.nCore, "PART-AC")
 		testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false, nil), "ClearBin")
 		u2 := f.onlyU2(t)
-		live := f.eng.coreClient
-		f.eng.coreClient = stubCoreClient(testCoreURL) // Core unreachable for the pickup's read
-		f.pickUp(t, u2)
-		f.eng.coreClient = live
+		f.eng.nodeBins.Store(nil) // no table the pickup's re-pull may decide from
+		testutil.MustNoErr(t, f.db.UpdateOrderStatus(u2.ID, string(protocol.StatusInTransit)), "in transit")
+		f.eng.HandleBinPickedUp(u2.UUID, 77, f.nCore)
+		f.core.set(f.nCore, false, "") // Core's next push
 		if got := f.fulls(t, f.nCore); got != 0 {
-			t.Fatalf("pickup with Core unreachable: U1s = %d, want 0 (the seam fails closed)", got)
+			t.Fatalf("pickup with no table: U1s = %d, want 0 (the seam fails closed)", got)
 		}
 		scLand(t, f.eng, f.db, u2)
 		if got := f.fulls(t, f.nCore); got != 1 {
@@ -182,8 +182,8 @@ func TestPinAutoPushGate_ClearIsTheOnlyTriggerWhileAPeerFullIsUnconfirmed(t *tes
 
 	before := f.core.nodeBinReads()
 	testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false, nil), "ClearBin at N")
-	if reads := f.core.nodeBinReads() - before; reads != 1 {
-		t.Errorf("CLEAR at N: node-bins reads = %d, want 1 (the gate)", reads)
+	if reads := f.core.nodeBinReads() - before; reads != 0 {
+		t.Errorf("CLEAR at N: node-bins reads = %d, want 0 (the gate reads the bins table)", reads)
 	}
 	if got := f.fulls(t, f.n2Core); got != 1 {
 		t.Errorf("CLEAR at N: U1s to N2 = %d, want 1 — the confirm frees the payload's budget and the gate fires", got)
@@ -206,8 +206,8 @@ func TestPinAutoPushGate_PushEmptyFillsASiblingNothingElseTriggered(t *testing.T
 
 	before := f.core.nodeBinReads()
 	testutil.MustNoErr(t, f.eng.PushEmptyOut(f.n), "PushEmptyOut at N")
-	if reads := f.core.nodeBinReads() - before; reads != 1 {
-		t.Errorf("PUSH EMPTY at N: node-bins reads = %d, want 1 (the gate; the tap reads the table)", reads)
+	if reads := f.core.nodeBinReads() - before; reads != 0 {
+		t.Errorf("PUSH EMPTY at N: node-bins reads = %d, want 0 (the gate and the tap read the table)", reads)
 	}
 	if got := f.fulls(t, f.n2Core); got != 1 {
 		t.Errorf("PUSH EMPTY at N: U1s to N2 = %d, want 1", got)

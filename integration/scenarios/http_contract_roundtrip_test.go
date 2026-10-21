@@ -177,21 +177,8 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 	if err := db.CreatePayload(&coreharness.Payload{Code: "PART-NOBIN", Description: "no bins", UOPCapacity: 10}); err != nil {
 		t.Fatalf("PART-NOBIN: %v", err)
 	}
-	// ── 1. node-bins: one occupied storage window, one empty line node ──
-	rows, ok, err := client.FetchNodeBins([]string{sd.StorageNode.Name, sd.LineNode.Name})
-	if err != nil || !ok {
-		t.Fatalf("FetchNodeBins: ok=%v err=%v", ok, err)
-	}
-	if len(rows) != 2 {
-		t.Fatalf("node-bins rows: got %d, want 2 (%+v)", len(rows), rows)
-	}
-	if rows[0].NodeName != sd.StorageNode.Name || !rows[0].Occupied ||
-		rows[0].BinID != bin.ID || rows[0].PayloadCode != sd.Payload.Code || rows[0].UOPRemaining != 100 {
-		t.Errorf("storage row = %+v, want occupied BIN-RT-1 holding PART-A at 100 UOP", rows[0])
-	}
-	if rows[1].NodeName != sd.LineNode.Name || rows[1].Occupied {
-		t.Errorf("line row = %+v, want empty LINE1-IN", rows[1])
-	}
+	// The node-bins read is no longer an HTTP call: the Edge holds Core's bins
+	// feed (protocol.FeedBins) and decides from its table.
 
 	// ── 6. bin-load: declare 42, with a manifest line ──
 	fortyTwo := int64(42)
@@ -270,7 +257,6 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 
 	// ── The traffic seen is exactly the calls above, in order ──
 	want := []struct{ label, method, path string }{
-		{"node-bins", http.MethodGet, "/api/telemetry/node-bins"},
 		{"bin-load-declared", http.MethodPost, "/api/telemetry/bin-load"},
 		{"bin-count", http.MethodPost, "/api/telemetry/bin-count"},
 		{"bin-clear-plain", http.MethodPost, "/api/telemetry/bin-clear"},

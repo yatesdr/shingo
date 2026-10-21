@@ -89,6 +89,7 @@ func TestCreateUnloaderFullIn_ResolveReadErrorAborts(t *testing.T) {
 	seedWindowNodes(t, db, "UE-PROC", windows)
 	corruptProcessNodeRow(t, eng, "UE-W1")
 	seedCoreLoader(t, eng, unloaderInfo("UE", windows, []string{"PART-A"}))
+	holdCoreRows(t, eng, map[string]NodeBinInfo{}, windows...)
 
 	eng.MaybeCreateUnloaderFullIn("PART-A")
 

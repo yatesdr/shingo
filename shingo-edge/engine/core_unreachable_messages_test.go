@@ -30,8 +30,7 @@ import (
 // action ("request an empty bin first") that the request path then refuses too,
 // for the same underlying reason, with a different sentence.
 
-// unreachableCore points the engine at a server that refuses every request, so
-// FetchNodeBins returns reachable=false with ErrCoreHTTPStatus.
+// unreachableCore points the engine at a server that refuses every request.
 func unreachableCore(t *testing.T, eng *Engine) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -7,6 +7,7 @@ import (
 	"log"
 	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 
+	"shingo/protocol"
 	"shingo/protocol/lockcheck"
 	"shingoedge/domain"
 	"shingoedge/internal/lockorder"
@@ -179,63 +180,67 @@ func (e *Engine) withLoaderBudget(loader *domain.Loader, payload domain.PayloadC
 }
 
 // loaderSnapshot is what one reservation reads, under the loader's mutex: the
-// active orders delivering to the read set and, when Core is configured, the
-// occupancy of the same set. withLoaderBudget reads it for one payload's target
-// nodes; the unloader pass (createUnloaderFullIns) reads it ONCE for the
-// loader's whole DeliveryNodes set and decides every payload from it.
+// active orders delivering to the read set and the bins table's rows for the
+// same set. withLoaderBudget reads it for one payload's target nodes; the
+// unloader pass (createUnloaderFullIns) reads it ONCE for the loader's whole
+// DeliveryNodes set and decides every payload from it.
 type loaderSnapshot struct {
 	orders []storeorders.Order
-	bins   []NodeBinInfo
-	// reachable is false only when Core is configured and the occupancy read
-	// failed. With no Core configured it is true and bins is empty.
+	bins   []protocol.NodeBinsRow
+	// reachable is false when the bins table may not be decided from
+	// (BinsActable): the callers refuse.
 	reachable bool
-	occupancy string // OccupancyOutcome of the read, or "not_configured"
-	readErr   error  // the occupancy read's error, for the decision line
+	occupancy string // OccupancyOutcome of the read
+	readErr   error  // the table's refusal, for the decision line
 }
 
 // readLoaderSnapshot reads the orders first and fails on their error without
-// asking Core; then the occupancy, if Core is configured.
+// reading the table; then the bins table's rows for nodes (binsForDecision).
 //
 // A bin already RESIDENT on a window occupies it just as an inbound order does.
 // The order count sees inbound retrieve/full ORDERS only; a carrier physically
 // standing on a window — an empty awaiting the operator's load, or a full not
 // yet pulled — is invisible to it. Without the occupancy read the seam re-fires
-// an empty onto an occupied window every time the previous order terminalises:
-// the SLN_002 resident-bin blindness (live at Springfield 2026-07-23 — SMN_014
-// held a 0-UOP empty, system UOP read 0 < threshold, and the monitor re-issued a
-// retrieve_empty each cycle; the empty is already there for the loader operator
-// to LOAD, another carrier does nothing).
+// onto an occupied window every time the previous order terminalises: the
+// SLN_002 resident-bin blindness (live at Springfield 2026-07-23). The table's
+// row is Occupied for ANY resident bin, including a 0-UOP empty, and it is read
+// inside the loader mutex so it is part of the same count→fire snapshot as the
+// orders.
 //
-// Occupancy is Core-authoritative (FetchNodeBins), which marks a window Occupied
-// for ANY resident bin, including a 0-UOP empty. It is read inside the loader
-// mutex so it is part of the same atomic count→fire snapshot as the orders.
+// `occupancy` records what the read did. It is the field that was missing on
+// 2026-07-31: the log said resident=0, which reads as "the windows are empty"
+// and in fact meant "nobody answered".
 //
-// `occupancy` records what the read actually did. It is the field that was
-// missing on 2026-07-31: the log said resident=0, which reads as "the windows
-// are empty" and in fact meant "nobody answered".
+// A TABLE THAT MAY NOT BE DECIDED FROM FIRES NOTHING (reachable=false; the
+// callers refuse). The seam's whole job is to not put a second carrier on a
+// window that already has one, and it cannot do that job without knowing what is
+// on the windows. There is no arm that fires without it: an Edge with no Core
+// configured used to keep firing on its order count alone, and that arm went
+// with the HTTP read (the table is Core's, and an Edge without one holds none).
 //
-// AND IF NOBODY ANSWERED, NOTHING FIRES (reachable=false; the callers refuse).
-// The seam's whole job is to not put a second carrier on a window that already
-// has one, and it cannot do that job without knowing what is on the windows.
-// Firing anyway was never a decision — it was the old read being unable to say
-// it had failed. Core re-signals within about a minute, so the cost of waiting
-// is one cycle; the cost of guessing is a robot delivering an empty to an
-// occupied window, which is what happened.
-//
-// A loader with no Core configured is the exception and keeps firing: there is
-// nothing to be out of touch WITH, the deployment simply has no Core telemetry,
-// and refusing there would take the seam permanently offline rather than pause
-// it. That arm has its own characterization test.
+// A NAME THE TABLE HOLDS NO ROW FOR READS OCCUPIED: a window this Edge does not
+// watch (another Edge's, on a loader that spans two), or one Core does not have.
+// An unknown window is never an empty, so the budget spends it and no fire
+// targets it; the window's own Edge orders to it.
 func (e *Engine) readLoaderSnapshot(nodes []string) (loaderSnapshot, error) {
 	orderList, err := e.db.ListActiveOrdersByDeliveryNodeSet(nodes)
 	if err != nil {
 		return loaderSnapshot{}, err
 	}
-	snap := loaderSnapshot{orders: orderList, reachable: true, occupancy: "not_configured"}
-	if e.coreClient.Available() {
-		bins, reachable, rerr := e.coreClient.FetchNodeBins(nodes)
-		snap.bins, snap.reachable, snap.readErr = bins, reachable, rerr
-		snap.occupancy = OccupancyOutcome(reachable, rerr)
+	snap := loaderSnapshot{orders: orderList}
+	rows, rerr := e.binsForDecision(nodes...)
+	if rerr != nil {
+		snap.occupancy, snap.readErr = OccupancyOutcome(false, rerr), rerr
+		return snap, nil
+	}
+	snap.reachable, snap.occupancy = true, OccupancyOutcome(true, nil)
+	for _, n := range nodes {
+		r, ok := rows[n]
+		if !ok || r.State == protocol.BinsStateUnknown || r.State == protocol.BinsStateGroup {
+			r = protocol.NodeBinsRow{Node: n, State: protocol.BinsStateUnknown, Occupied: true}
+		}
+		r.Node = n
+		snap.bins = append(snap.bins, r)
 	}
 	return snap, nil
 }
@@ -285,12 +290,12 @@ func decideLoaderBudget(snap *loaderSnapshot, loaderID, pay string, want, budget
 	// isn't double-counted.
 	for i := range snap.bins {
 		nb := snap.bins[i]
-		if nb.NodeName != "" && !inTarget[nb.NodeName] {
+		if !inTarget[nb.Node] {
 			continue
 		}
-		if nb.Occupied && perNode[nb.NodeName] == 0 {
+		if nb.Occupied && perNode[nb.Node] == 0 {
 			d.inFlightTotal++
-			perNode[nb.NodeName] = 1
+			perNode[nb.Node] = 1
 			d.resident++
 		}
 	}

@@ -520,8 +520,8 @@ func releaseMatrixCells() []relCell {
 const charSPUnloaderNode = "SYN-UNL"
 
 // charSPArmUnloader configures a consume unloader serving fxPart with an AMR
-// inbound source, gives its window a process node on this Edge, and has the
-// fake Core report the window free, so a U1 that fires creates its order.
+// inbound source, gives its window a process node on this Edge, and holds a
+// bins table that shows the window free, so a U1 that fires creates its order.
 func charSPArmUnloader(h *relHarness) {
 	h.t.Helper()
 	seedCoreLoader(h.t, h.eng, protocol.LoaderInfo{
@@ -536,9 +536,7 @@ func charSPArmUnloader(h *relHarness) {
 		ProcessID: pid, CoreNodeName: charSPUnloaderNode, Code: charSPUnloaderNode, Name: charSPUnloaderNode, Sequence: 1, Enabled: true,
 	})
 	testutil.MustNoErr(h.t, err, "create unloader window node")
-	h.core.mu.Lock()
-	h.core.binAt = &NodeBinInfo{NodeName: charSPUnloaderNode, Occupied: false}
-	h.core.mu.Unlock()
+	holdActableBins(h.t, h.eng, protocol.NodeBinsRow{Node: charSPUnloaderNode})
 }
 
 // pU1 counts the U1 full-ins (retrieve, not retrieve_empty) at the unloader

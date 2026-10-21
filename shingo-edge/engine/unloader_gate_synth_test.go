@@ -77,7 +77,7 @@ func TestUnloaderGate_SynthClaimAutoPush_ClearAndPushEmpty(t *testing.T) {
 		f.core.set(f.nCore, true, "PART-UG")
 		before := f.core.nodeBinReads()
 		testutil.MustNoErr(t, f.eng.ClearBin(f.n, "", false, nil), "ClearBin")
-		f.checkGate(t, "CLEAR", f.core.nodeBinReads()-before, 1, 1, 0) // the gate's read; the clear answers hadBin
+		f.checkGate(t, "CLEAR", f.core.nodeBinReads()-before, 0, 1, 0) // the gate reads the table; the clear answers hadBin
 	})
 	t.Run("push_empty", func(t *testing.T) {
 		t.Parallel()
@@ -85,7 +85,7 @@ func TestUnloaderGate_SynthClaimAutoPush_ClearAndPushEmpty(t *testing.T) {
 		f.core.set(f.nCore, true, "")
 		before := f.core.nodeBinReads()
 		testutil.MustNoErr(t, f.eng.PushEmptyOut(f.n), "PushEmptyOut")
-		f.checkGate(t, "PUSH EMPTY", f.core.nodeBinReads()-before, 1, 1, 0) // the gate; the tap reads the table
+		f.checkGate(t, "PUSH EMPTY", f.core.nodeBinReads()-before, 0, 1, 0) // the gate; the tap reads the table
 	})
 }
 
@@ -114,8 +114,8 @@ func TestUnloaderGate_SynthClaimAutoPush_U2Landed(t *testing.T) {
 	if got := f.fulls(t, f.w3Core); got != 0 {
 		t.Errorf("U2-landed: U1s to the other unloader = %d, want 0", got)
 	}
-	if reads := f.core.nodeBinReads() - before; reads != 1 {
-		t.Errorf("U2-landed: node-bins reads = %d, want 1", reads)
+	if reads := f.core.nodeBinReads() - before; reads != 0 {
+		t.Errorf("U2-landed: node-bins reads = %d, want 0 (the gate reads the table)", reads)
 	}
 }
 

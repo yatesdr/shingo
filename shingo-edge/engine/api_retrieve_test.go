@@ -42,6 +42,7 @@ func TestCreateRetrieveForAPI_BatchIsCappedByTheLoaderBudget(t *testing.T) {
 	windows := []string{"API-W1", "API-W2"}
 	seedWindowNodes(t, db, "API-PROC", windows)
 	apiLoaderFixture(t, eng, "API-LOADER", windows, "PART-A")
+	holdSweep(t, eng, nil)
 
 	made, err := eng.CreateRetrieveForAPI(APIRetrieveRequest{
 		RetrieveEmpty: true,

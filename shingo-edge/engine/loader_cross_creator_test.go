@@ -39,6 +39,7 @@ func TestCrossCreator_UnloaderBudget_OperatorAndAutomatic(t *testing.T) {
 			eng := testEngine(t, db)
 			nodeID := seedCapManualSwap(t, db, "XC-"+tc.name, "XC-ULD", protocol.ClaimRoleConsume, []string{"PART-A"}, 0, false)
 			seedCoreLoader(t, eng, sharedLoaderInfo("XC-ULD", "consume", "operator", "PART-A", 0, 0))
+			holdSweep(t, eng, nil)
 
 			uld, err := eng.loaders().LoaderAt(domain.NodeID("XC-ULD"), domain.RoleConsume)
 			if err != nil || uld == nil {

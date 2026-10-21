@@ -395,8 +395,6 @@ func TestRequestProduceSwap_PrimesOnceThenHolds(t *testing.T) {
 
 	eng := testEngine(t, db)
 	// Core reports the head occupied and INDEX-B bare — the incident's shape.
-	srv := nodeBinsStub(t, "PRESS")
-	eng.coreClient = stubCoreClient(srv.URL)
 	holdPlaces(t, eng, occupiedAt("PRESS"))
 	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "INDEX-B"}, {Name: "MARKET-EMPTIES"}})
 
@@ -452,8 +450,6 @@ func TestRequestProduceSwap_UnknownPairedNodeIsNotPrimed(t *testing.T) {
 	testutil.MustNoErr(t, err, "ensure runtime")
 
 	eng := testEngine(t, db)
-	srv := nodeBinsStub(t, "PRESS")
-	eng.coreClient = stubCoreClient(srv.URL)
 	holdPlaces(t, eng, occupiedAt("PRESS"))
 	// A non-empty node set that does NOT contain INDEX-B: that is evidence.
 	eng.SetCoreNodes([]protocol.NodeInfo{{Name: "PRESS"}, {Name: "MARKET-EMPTIES"}})
@@ -485,8 +481,6 @@ func TestRequestProduceSwap_EmptyCoreNodeSetStillPrimes(t *testing.T) {
 	testutil.MustNoErr(t, err, "ensure runtime")
 
 	eng := testEngine(t, db)
-	srv := nodeBinsStub(t, "PRESS")
-	eng.coreClient = stubCoreClient(srv.URL)
 	holdPlaces(t, eng, occupiedAt("PRESS"))
 	// No SetCoreNodes call at all — Core has not been heard from.
 

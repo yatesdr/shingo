@@ -28,15 +28,11 @@ func TestUnloaderSweep_ZeroPayloadSharedWindow_ZeroReads(t *testing.T) {
 	if err != nil || len(ls) != 1 || len(ls[0].PayloadSet()) != 0 {
 		t.Fatalf("fixture: want one zero-payload consume loader, got %d (err %v)", len(ls), err)
 	}
-	stub := newSweepBinsStub(t, nil, "", false)
-	eng.coreClient = stubCoreClient(stub.srv.URL)
+	holdSweep(t, eng, nil)
 
 	counter.Reset()
 	eng.pushUnloadersViaSeam()
 	eng.MaybeCreateUnloaderFullIn("PART-A")
-	if got := stub.hits.Load(); got != 0 {
-		t.Errorf("node-bins calls = %d, want 0", got)
-	}
 	if got := counter.Count(); got != 0 {
 		t.Errorf("DB statements = %d, want 0", got)
 	}

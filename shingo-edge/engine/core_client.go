@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -50,66 +49,6 @@ func (c *CoreClient) Available() bool {
 // BinLoadItem is one line of a bin-load request: part number + physical count.
 type BinLoadItem = protocol.BinLoadItem
 
-// The ways an occupancy read can fail to produce an answer. Named so a caller
-// can tell "Core says the window is empty" from "Core did not say", and so the
-// decision log can record which of the two happened.
-var (
-	// ErrCoreNotConfigured — no Core API address. Not a failure; there is
-	// simply nobody to ask.
-	ErrCoreNotConfigured = errors.New("core API not configured")
-	// ErrCoreUnreachable — the request never got an answer (transport error).
-	ErrCoreUnreachable = errors.New("core unreachable")
-	// ErrCoreHTTPStatus — Core answered, but not with 200.
-	ErrCoreHTTPStatus = errors.New("core returned a non-200")
-	// ErrCoreUndecodable — 200 with a body that would not parse: a truncated
-	// or corrupted write.
-	ErrCoreUndecodable = errors.New("core response could not be decoded")
-)
-
-// FetchNodeBins returns bin state for the given core node names.
-//
-// Three states:
-//
-//   - (bins, true, nil)   — Core answered; this list is what is there. An empty
-//     list from a non-empty request means Core knows of no bin at those nodes.
-//   - (nil, false, err)   — nobody answered. Core is not configured, or the
-//     request errored, or the status was not 200, or the body would not decode.
-//     `err` says which; the sentinels above match with errors.Is.
-//
-// It used to return (nil, nil) for all four failures, so "Core could not
-// answer" was indistinguishable from "no bin is present" at every call site.
-// That collapse is what produced the 2026-07-31 Springfield over-ordering
-// incident: the reservation seam read an unanswerable occupancy check as an
-// empty window and fired an empty into a window that already held one. A
-// caller can now tell, and a caller that acts on absence is choosing to.
-//
-// Asking about zero nodes returns (nil, true, nil) — a complete answer to an
-// empty question, not a failed read.
-func (c *CoreClient) FetchNodeBins(nodeNames []string) ([]NodeBinInfo, bool, error) {
-	if len(nodeNames) == 0 {
-		return nil, true, nil
-	}
-	if c.baseURL == "" {
-		return nil, false, ErrCoreNotConfigured
-	}
-	params := url.Values{}
-	params.Set("nodes", strings.Join(nodeNames, ","))
-	reqURL := c.baseURL + "/api/telemetry/node-bins?" + params.Encode()
-	resp, err := c.http.Get(reqURL)
-	if err != nil {
-		return nil, false, fmt.Errorf("%w: fetch node-bins: %w", ErrCoreUnreachable, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, false, fmt.Errorf("%w: fetch node-bins: HTTP %d", ErrCoreHTTPStatus, resp.StatusCode)
-	}
-	var result []NodeBinInfo
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, false, fmt.Errorf("%w: decode node-bins: %w", ErrCoreUndecodable, err)
-	}
-	return result, true, nil
-}
-
 // OccupancyOutcome names what happened to an occupancy read, for the decision
 // log. One word per outcome so an over-ordering incident can be reconstructed
 // from logs alone — "resident=0" means nothing until you know whether anyone
@@ -120,14 +59,6 @@ func OccupancyOutcome(reachable bool, err error) string {
 	switch {
 	case reachable:
 		return "ok"
-	case errors.Is(err, ErrCoreNotConfigured):
-		return "not_configured"
-	case errors.Is(err, ErrCoreUnreachable):
-		return "unreachable"
-	case errors.Is(err, ErrCoreHTTPStatus):
-		return "http_error"
-	case errors.Is(err, ErrCoreUndecodable):
-		return "decode_err"
 	case asBinsNotCurrent(err) != nil && asBinsNotCurrent(err).Why == NotActableUnwatched:
 		return "unwatched"
 	case asBinsNotCurrent(err) != nil:

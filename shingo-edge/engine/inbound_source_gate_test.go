@@ -90,8 +90,7 @@ func TestRequestFullBin_PullsFromTheUnloadersInboundSource(t *testing.T) {
 		Positions:    []protocol.LoaderPosition{{CoreNodeName: "RFS-W1"}},
 		Payloads:     []protocol.LoaderPayloadInfo{{PayloadCode: "PART-A"}},
 	})
-	stub := newSweepBinsStub(t, nil, "", false)
-	eng.coreClient = stubCoreClient(stub.srv.URL)
+	holdSweep(t, eng, nil)
 
 	order, err := eng.RequestFullBin(nodeID, "PART-A")
 	if err != nil || order == nil {

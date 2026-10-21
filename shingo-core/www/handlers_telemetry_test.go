@@ -41,56 +41,6 @@ func chiReq(method, target string, params map[string]string) *http.Request {
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 }
 
-// --- apiTelemetryNodeBins ---------------------------------------------------
-
-func TestApiTelemetryNodeBins_EmptyParam(t *testing.T) {
-	t.Parallel()
-	h, _ := testHandlers(t)
-
-	rec := getPlain(t, h.apiTelemetryNodeBins, "/api/telemetry/node-bins")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
-	}
-	// Empty nodes param → empty JSON array.
-	body := strings.TrimSpace(rec.Body.String())
-	if body != "[]" {
-		t.Errorf("body: got %q, want '[]'", body)
-	}
-}
-
-func TestApiTelemetryNodeBins_HappyPath(t *testing.T) {
-	t.Parallel()
-	h, db := testHandlers(t)
-	sd := testdb.SetupStandardData(t, db)
-	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-TELEM-1")
-
-	rec := getPlain(t, h.apiTelemetryNodeBins,
-		"/api/telemetry/node-bins?nodes="+sd.StorageNode.Name+","+sd.LineNode.Name)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
-	}
-
-	var entries []map[string]any
-	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&entries), "decode")
-	if len(entries) != 2 {
-		t.Fatalf("entries: got %d, want 2: %+v", len(entries), entries)
-	}
-	// First entry should be for the storage node and be occupied.
-	if entries[0]["node_name"] != sd.StorageNode.Name {
-		t.Errorf("entries[0] node_name: got %v", entries[0]["node_name"])
-	}
-	if entries[0]["occupied"] != true {
-		t.Errorf("storage node should be occupied: %+v", entries[0])
-	}
-	if entries[0]["bin_label"] != bin.Label {
-		t.Errorf("bin_label: got %v, want %q", entries[0]["bin_label"], bin.Label)
-	}
-	// Line node should NOT be occupied.
-	if entries[1]["occupied"] != false {
-		t.Errorf("line node should not be occupied: %+v", entries[1])
-	}
-}
-
 // --- apiTelemetryPayloadManifest --------------------------------------------
 
 func TestApiTelemetryPayloadManifest_EmptyCode(t *testing.T) {

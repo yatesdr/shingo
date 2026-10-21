@@ -1,14 +1,10 @@
 package engine
 
 import (
-	"encoding/json"
 	"math/rand"
-	"net/http"
-	"net/http/httptest"
 	"shingoedge/orders"
-	"strings"
+	"slices"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -120,49 +116,29 @@ func TestWithLoaderBudget_PropNeverExceedsBudget(t *testing.T) {
 	}
 }
 
-// occupancyStub is a MUTABLE /api/telemetry/node-bins stub: the test flips which
-// windows hold a bin between steps and the seam reads current state on each
-// reserve. nodeBinsStub is fixed at construction and cannot model a bin arriving
-// mid-run, which is the situation the resident-bin gate exists for.
-type occupancyStub struct {
+// occupancyTable is the bins table as a MUTABLE fixture: the test flips which
+// windows hold a bin between steps and pushes the table on each flip, and the
+// seam reads the current table on each reserve.
+type occupancyTable struct {
 	mu       sync.Mutex
 	occupied map[string]bool
-	hits     atomic.Int64
-	srv      *httptest.Server
 }
 
-func newOccupancyStub(t *testing.T) *occupancyStub {
+func (s *occupancyTable) set(t *testing.T, eng *Engine, windows []string, node string, occupied bool) {
 	t.Helper()
-	s := &occupancyStub{occupied: map[string]bool{}}
-	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/telemetry/node-bins" {
-			_ = json.NewEncoder(w).Encode([]map[string]any{})
-			return
-		}
-		s.hits.Add(1)
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		rows := []map[string]any{}
-		for n := range strings.SplitSeq(r.URL.Query().Get("nodes"), ",") {
-			row := map[string]any{"node_name": n, "occupied": s.occupied[n]}
-			if s.occupied[n] {
-				row["uop_remaining"] = 0 // an EMPTY carrier still occupies the window
-			}
-			rows = append(rows, row)
-		}
-		_ = json.NewEncoder(w).Encode(rows)
-	}))
-	t.Cleanup(s.srv.Close)
-	return s
-}
-
-func (s *occupancyStub) set(node string, occupied bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.occupied[node] = occupied
+	rows := map[string]NodeBinInfo{}
+	for _, w := range windows {
+		if s.occupied[w] {
+			rows[w] = NodeBinInfo{Occupied: true, BinID: 77} // an EMPTY carrier still occupies the window
+		}
+	}
+	holdCoreRows(t, eng, rows, windows...)
 }
 
-func (s *occupancyStub) isOccupied(node string) bool {
+func (s *occupancyTable) isOccupied(node string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.occupied[node]
@@ -171,9 +147,8 @@ func (s *occupancyStub) isOccupied(node string) bool {
 // TestWithLoaderBudget_PropOccupancyLive is the never-2N property run with the
 // resident-bin gate LIVE, across a multi-window loader at budget > 1.
 //
-// The existing PropNeverExceedsBudget covers neither: it installs no coreClient,
-// so Available() is false and the whole occupancy block is skipped, and it pins
-// budget=1 on a single node. The property it proves is therefore the order-only
+// The existing PropNeverExceedsBudget covers neither: it holds no bins table, so
+// it pins the seam refusing (budget=1 on a single node, the order-only count). The property it proves is therefore the order-only
 // budget — the one thing the 2026-07-31 incident did NOT violate. This test
 // covers the gap.
 //
@@ -200,8 +175,8 @@ func TestWithLoaderBudget_PropOccupancyLive(t *testing.T) {
 	seedWindowNodes(t, db, "OCC-PROC", windows)
 	loader := mustMultiWindowLoader(t, "OCC-LDR", windows, "P1", "P2")
 
-	stub := newOccupancyStub(t)
-	eng.coreClient = stubCoreClient(stub.srv.URL)
+	stub := &occupancyTable{occupied: map[string]bool{}}
+	stub.set(t, eng, windows, windows[0], false)
 
 	// Fixture guard: this test earns its keep only at budget > 1. If the loader
 	// shape or the multi-window default changes so it funnels to one anchor, the
@@ -214,12 +189,16 @@ func TestWithLoaderBudget_PropOccupancyLive(t *testing.T) {
 	payloads := []string{"P1", "P2"}
 	rng := rand.New(rand.NewSource(20260801))
 
+	fired, occupiedSteps := 0, 0
 	for step := range 300 {
 		switch rng.Intn(4) {
 		case 0, 1: // a demand for a random payload
 			payload := payloads[rng.Intn(len(payloads))]
 			_, before := windowCounts(t, db, windows)
-			if _, err := eng.withLoaderBudget(loader, domain.PayloadCode(payload), rng.Intn(len(windows)+1), "", true, func(deliveryNodes []string) (int, error) {
+			if slices.ContainsFunc(windows, stub.isOccupied) {
+				occupiedSteps++
+			}
+			if n, err := eng.withLoaderBudget(loader, domain.PayloadCode(payload), rng.Intn(len(windows)+1), "", true, func(deliveryNodes []string) (int, error) {
 				made := 0
 				for _, dn := range deliveryNodes {
 					if _, cerr := eng.orderMgr.CreateRetrieveOrder(nil, true, 1, dn, "EMPTY-SUPER", "", "standard", payload, false, true, orders.NoDemand()); cerr != nil {
@@ -230,16 +209,18 @@ func TestWithLoaderBudget_PropOccupancyLive(t *testing.T) {
 				return made, nil
 			}); err != nil {
 				t.Fatalf("step %d: withLoaderBudget: %v", step, err)
+			} else {
+				fired += n
 			}
 			_, after := windowCounts(t, db, windows)
 			for _, w := range windows { // property B
 				if after[w] > before[w] && stub.isOccupied(w) {
-					t.Errorf("step %d: window %q gained an empty (%d→%d) for %s while Core reported it OCCUPIED",
+					t.Errorf("step %d: window %q gained an empty (%d→%d) for %s while the table held it OCCUPIED",
 						step, w, before[w], after[w], payload)
 				}
 			}
 		case 2: // a bin arrives at, or is taken from, a window
-			stub.set(windows[rng.Intn(len(windows))], rng.Intn(2) == 0)
+			stub.set(t, eng, windows, windows[rng.Intn(len(windows))], rng.Intn(2) == 0)
 		case 3: // terminalize a random in-flight empty, freeing budget
 			list, err := db.ListActiveOrdersByDeliveryNodeSet(windows)
 			if err != nil {
@@ -257,12 +238,10 @@ func TestWithLoaderBudget_PropOccupancyLive(t *testing.T) {
 		}
 	}
 
-	// Without this the test can pass while proving nothing: a stub that is never
-	// reached leaves the occupancy block skipped and both properties trivially
-	// true. This is precisely how the existing property test came to look like
-	// coverage of a path it never executed.
-	if stub.hits.Load() == 0 {
-		t.Fatal("occupancy stub was never called — the resident-bin gate did not run, so this is the order-only property under a new name")
+	// Without this the test can pass while proving nothing: a run in which no
+	// window was ever occupied leaves property B trivially true.
+	if fired == 0 || occupiedSteps == 0 {
+		t.Fatalf("run exercised nothing: %d fires, %d demands with a window occupied", fired, occupiedSteps)
 	}
 }
 
@@ -281,32 +260,6 @@ func inFlightFulls(t *testing.T, db *store.DB, nodes []string) int {
 		}
 	}
 	return n
-}
-
-// nodeBinsPayloadStub serves per-node occupancy WITH payload codes. Neither
-// existing stub can do this: nodeBinsStub reports node_name but no payload, and
-// fakeCoreBinServer reports a payload but no node_name. The unloader guard needs
-// both at once. Nodes absent from `resident` report unoccupied.
-func nodeBinsPayloadStub(t *testing.T, resident map[string]string) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/telemetry/node-bins" {
-			_ = json.NewEncoder(w).Encode([]map[string]any{})
-			return
-		}
-		rows := []map[string]any{}
-		for n := range strings.SplitSeq(r.URL.Query().Get("nodes"), ",") {
-			row := map[string]any{"node_name": n, "occupied": false}
-			if p, ok := resident[n]; ok {
-				row["occupied"] = true
-				row["payload_code"] = p
-			}
-			rows = append(rows, row)
-		}
-		_ = json.NewEncoder(w).Encode(rows)
-	}))
-	t.Cleanup(srv.Close)
-	return srv
 }
 
 // TestCreateUnloaderFullIn_PayloadSpecificGuard pins what the consume side
@@ -363,8 +316,8 @@ func TestCreateUnloaderFullIn_PayloadSpecificGuard(t *testing.T) {
 			eng := testEngine(t, db)
 			seedWindowNodes(t, db, "ULD-PROC", tc.windows)
 
-			// Core reports a resident FULL of PART-A on the first window only.
-			eng.coreClient = stubCoreClient(nodeBinsPayloadStub(t, map[string]string{"ULD-W1": "PART-A"}).URL)
+			// Core's table holds a resident FULL of PART-A on the first window only.
+			holdCoreRows(t, eng, map[string]NodeBinInfo{"ULD-W1": {Occupied: true, PayloadCode: "PART-A", BinID: 77}}, tc.windows...)
 
 			ws := make([]domain.Window, len(tc.windows))
 			for i, w := range tc.windows {
@@ -389,98 +342,40 @@ func TestCreateUnloaderFullIn_PayloadSpecificGuard(t *testing.T) {
 // TestCreateUnloaderFullIn_HoldsWhenOccupancyReadFails pins that the consume
 // side inherits the fail-closed rule rather than needing its own copy of it.
 //
-// The U1 makes one occupancy read per unloader. The parked-full guard reads it
+// The U1 reads the bins table once per unloader. The parked-full guard reads it
 // and does not refuse; decideLoaderBudget's caller, sharing withLoaderBudget's
 // rule, refuses on it. This test is what says the refusal lives there: the U1
-// holds with the guard NOT refusing.
+// holds with the guard NOT refusing, on a table it may not decide from (none
+// held — before the first push, or past the ack age).
 //
 // It is also the guard against the shortcut. If someone later routes a U1 around
 // that refusal for speed, this goes red, and the missing refusal has to be put
 // back where the shortcut is.
-//
-// The not-configured arm is deliberately excluded and covered separately: an
-// Edge with no Core telemetry has nobody to be out of touch with, permanently,
-// and refusing there would take the path offline rather than pause it.
 func TestCreateUnloaderFullIn_HoldsWhenOccupancyReadFails(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name  string
-		setup func(*testing.T) *CoreClient
-		why   string
-	}{
-		{
-			name:  "transport_error",
-			setup: func(t *testing.T) *CoreClient { return stubCoreClient(deadCoreURL(t)) },
-			why:   "Core process gone",
-		},
-		{
-			name: "non_200",
-			setup: func(t *testing.T) *CoreClient {
-				var hits atomic.Int64
-				return stubCoreClient(nodeBinsBrokenStub(t, "status", &hits).URL)
-			},
-			why: "Core up but erroring",
-		},
-		{
-			name: "undecodable_body",
-			setup: func(t *testing.T) *CoreClient {
-				var hits atomic.Int64
-				return stubCoreClient(nodeBinsBrokenStub(t, "garbage", &hits).URL)
-			},
-			why: "200 with a truncated body",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			db := testEngineDB(t)
-			eng := testEngine(t, db)
-			windows := []string{"ULD-RF-W1", "ULD-RF-W2"}
-			seedWindowNodes(t, db, "ULD-RF-PROC", windows)
-			eng.coreClient = tc.setup(t)
-
-			ws := make([]domain.Window, len(windows))
-			for i, w := range windows {
-				ws[i] = domain.Window{Node: domain.NodeID(w)}
-			}
-			unloader, err := domain.NewSharedWindowLoader("ULD-RF", domain.RoleConsume, domain.ReplenishmentOperator,
-				ws, []domain.PayloadCode{"PART-A"}, domain.WithInboundSource("FG-SUPER"))
-			if err != nil {
-				t.Fatalf("build unloader: %v", err)
-			}
-
-			eng.createUnloaderFullIns(unloader, []domain.PayloadCode{"PART-A"})
-
-			if got := inFlightFulls(t, db, windows); got != 0 {
-				t.Fatalf("occupancy read failed (%s): U1 created %d fulls, want 0 — "+
-					"nothing had checked whether a full was already parked on those windows",
-					tc.why, got)
-			}
-		})
-	}
-}
-
-// TestCreateUnloaderFullIn_FiresWhenCoreNotConfigured is the exception the rule
-// above needs: with no Core configured there is nothing to be out of touch
-// with, and holding would mean holding forever.
-func TestCreateUnloaderFullIn_FiresWhenCoreNotConfigured(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	windows := []string{"ULD-NC-W1"}
-	seedWindowNodes(t, db, "ULD-NC-PROC", windows)
-	eng.coreClient = stubCoreClient("")
+	windows := []string{"ULD-RF-W1", "ULD-RF-W2"}
+	seedWindowNodes(t, db, "ULD-RF-PROC", windows)
 
-	unloader, err := domain.NewSharedWindowLoader("ULD-NC", domain.RoleConsume, domain.ReplenishmentOperator,
-		[]domain.Window{{Node: domain.NodeID("ULD-NC-W1")}}, []domain.PayloadCode{"PART-A"},
-		domain.WithInboundSource("FG-SUPER"))
+	ws := make([]domain.Window, len(windows))
+	for i, w := range windows {
+		ws[i] = domain.Window{Node: domain.NodeID(w)}
+	}
+	unloader, err := domain.NewSharedWindowLoader("ULD-RF", domain.RoleConsume, domain.ReplenishmentOperator,
+		ws, []domain.PayloadCode{"PART-A"}, domain.WithInboundSource("FG-SUPER"))
 	if err != nil {
 		t.Fatalf("build unloader: %v", err)
+	}
+	if ok, _ := eng.BinsActable(); ok {
+		t.Fatal("fixture: the table is actable; this case needs one the Edge may not decide from")
 	}
 
 	eng.createUnloaderFullIns(unloader, []domain.PayloadCode{"PART-A"})
 
-	if got := inFlightFulls(t, db, windows); got != 1 {
-		t.Fatalf("no Core configured: U1 created %d fulls, want 1 — an Edge with no Core telemetry must keep running, not stall", got)
+	if got := inFlightFulls(t, db, windows); got != 0 {
+		t.Fatalf("table not actable: U1 created %d fulls, want 0 — "+
+			"nothing had checked whether a full was already parked on those windows", got)
 	}
 }
 
@@ -501,6 +396,7 @@ func TestWithLoaderBudget_EmitDuringReservation_NoDeadlock(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 
+	holdCoreRows(t, eng, map[string]NodeBinInfo{}, "DLK-A")
 	var ran bool
 	eng.Events.Subscribe(func(evt Event) {
 		if evt.Type == EventOrderCreated {
@@ -531,33 +427,6 @@ func TestWithLoaderBudget_EmitDuringReservation_NoDeadlock(t *testing.T) {
 	}
 }
 
-// nodeBinsStub serves Core's /api/telemetry/node-bins, reporting the given
-// occupancy for occupiedNode and Occupied=false for every other requested node —
-// the minimal Core telemetry the seam's resident-empty gate reads. A resident
-// empty is modelled as occupied with uop_remaining=0 (Core marks a window Occupied
-// for ANY resident bin, empty included).
-func nodeBinsStub(t *testing.T, occupiedNode string) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/telemetry/node-bins" {
-			_ = json.NewEncoder(w).Encode([]map[string]any{})
-			return
-		}
-		rows := []map[string]any{}
-		for n := range strings.SplitSeq(r.URL.Query().Get("nodes"), ",") {
-			row := map[string]any{"node_name": n, "occupied": false}
-			if n == occupiedNode {
-				row["occupied"] = true
-				row["uop_remaining"] = 0 // an EMPTY carrier still occupies the window
-			}
-			rows = append(rows, row)
-		}
-		_ = json.NewEncoder(w).Encode(rows)
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
-
 // fireOneEmptyPerWindow is the reserve `fire` closure the resident-gate tests share:
 // it creates one retrieve_empty per delivery window and reports how many it made.
 func fireOneEmptyPerWindow(eng *Engine, nodeID int64) func([]string) (int, error) {
@@ -585,7 +454,7 @@ func TestWithLoaderBudget_SuppressesWhenWindowHasResidentEmpty(t *testing.T) {
 	eng := testEngine(t, db)
 	nodeID := seedCapManualSwap(t, db, "RESIDENT", "LOADER-1", protocol.ClaimRoleProduce, []string{"P1"}, 0, false)
 	loader := mustSharedLoader(t, "LOADER-1", "P1")
-	eng.coreClient = stubCoreClient(nodeBinsStub(t, "LOADER-1").URL)
+	holdCoreRows(t, eng, map[string]NodeBinInfo{"LOADER-1": {Occupied: true, BinID: 77}}) // an EMPTY carrier still occupies the window
 
 	created, err := eng.withLoaderBudget(loader, "P1", 1, "", true, fireOneEmptyPerWindow(eng, nodeID))
 	if err != nil {
@@ -607,7 +476,7 @@ func TestWithLoaderBudget_FiresWhenWindowEmpty(t *testing.T) {
 	eng := testEngine(t, db)
 	nodeID := seedCapManualSwap(t, db, "EMPTYWIN", "LOADER-1", protocol.ClaimRoleProduce, []string{"P1"}, 0, false)
 	loader := mustSharedLoader(t, "LOADER-1", "P1")
-	eng.coreClient = stubCoreClient(nodeBinsStub(t, "OTHER-NODE").URL) // LOADER-1 reported empty
+	holdCoreRows(t, eng, map[string]NodeBinInfo{}, "LOADER-1") // LOADER-1 reported empty
 
 	created, err := eng.withLoaderBudget(loader, "P1", 1, "", true, fireOneEmptyPerWindow(eng, nodeID))
 	if err != nil {
@@ -618,170 +487,38 @@ func TestWithLoaderBudget_FiresWhenWindowEmpty(t *testing.T) {
 	}
 }
 
-// TestWithLoaderBudget_FiresWhenCoreNotConfigured covers the arm where no Core
-// base URL is set at all: Available() is false, the seam skips the occupancy gate
-// and falls back to the order-only count. This is the one arm where firing is
-// defensible — an unconfigured Core is a deployment state, not a failed read, so
-// no question went unanswered. Core's plan-time dropoff gate still queues rather
-// than dispatches a redundant empty.
+// TestWithLoaderBudget_HoldsWhenOccupancyReadFails covers the shape of the
+// 2026-07-31 Springfield over-ordering incident: the seam asks whether the
+// window is occupied and cannot know. On the table that is a copy the Edge may
+// not decide from (none held, here; past the ack age, or answering another
+// watch list, the same).
 //
-// Renamed from _FiresWhenCoreUnreachable, which claimed coverage of an
-// unreachable Core that it never exercised: a nil base URL never reaches the
-// network. The genuinely unreachable arms are pinned by
-// TestWithLoaderBudget_FiresWhenOccupancyReadFails below.
-func TestWithLoaderBudget_FiresWhenCoreNotConfigured(t *testing.T) {
+// The seam's whole job is to not put a second carrier on a window that already
+// holds one, and it cannot do that job without knowing what is on the windows.
+// Firing regardless was never a decision; it was the HTTP read being unable to
+// report that it had failed. The next push or ack makes the table actable, so
+// holding costs one cycle.
+//
+// There is no arm that fires without the table: an Edge with no Core configured
+// once kept firing on its order count alone, and that arm is gone with the HTTP
+// read.
+func TestWithLoaderBudget_HoldsWhenOccupancyReadFails(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	nodeID := seedCapManualSwap(t, db, "NOCORE", "LOADER-1", protocol.ClaimRoleProduce, []string{"P1"}, 0, false)
+	nodeID := seedCapManualSwap(t, db, "READFAIL", "LOADER-1", protocol.ClaimRoleProduce, []string{"P1"}, 0, false)
 	loader := mustSharedLoader(t, "LOADER-1", "P1")
-	eng.coreClient = stubCoreClient("") // Core telemetry unavailable
+	if ok, _ := eng.BinsActable(); ok {
+		t.Fatal("fixture: the table is actable; this case needs one the Edge may not decide from")
+	}
 
 	created, err := eng.withLoaderBudget(loader, "P1", 1, "", true, fireOneEmptyPerWindow(eng, nodeID))
 	if err != nil {
 		t.Fatalf("withLoaderBudget: %v", err)
 	}
-	if created != 1 {
-		t.Fatalf("Core not configured: gate must skip and fire from the order-only count; fired %d, want 1", created)
-	}
-}
-
-// nodeBinsBrokenStub serves Core's /api/telemetry/node-bins in a chosen failure
-// mode, counting hits in `hits`. Both modes are arms of FetchNodeBins that
-// collapse to (nil, nil), which the seam reads as "no bin is resident":
-//
-//	"status"  — HTTP 500: Core is up but erroring.
-//	"garbage" — HTTP 200 with a truncated body: a partial or corrupted write.
-//
-// The hit counter is load-bearing, not decoration. These stubs back tests whose
-// pass condition is that the seam fires anyway, so EVERY defect in the stub —
-// wrong path, wrong URL, server never started — produces the same passing
-// result as the behavior under test. Counting hits is what separates "the read
-// failed as designed" from "the test never asked."
-func nodeBinsBrokenStub(t *testing.T, mode string, hits *atomic.Int64) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/telemetry/node-bins" {
-			t.Errorf("nodeBinsBrokenStub: unexpected path %q", r.URL.Path)
-			return
-		}
-		hits.Add(1)
-		switch mode {
-		case "status":
-			w.WriteHeader(http.StatusInternalServerError)
-		case "garbage":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte("{"))
-		default:
-			t.Errorf("nodeBinsBrokenStub: unknown mode %q", mode)
-		}
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
-
-// deadCoreURL returns the URL of an httptest server that has already been shut
-// down, so a request fails at the transport layer instead of returning a
-// response — the "Core process is gone" arm.
-func deadCoreURL(t *testing.T) string {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	u := srv.URL
-	srv.Close()
-	return u
-}
-
-// TestWithLoaderBudget_HoldsWhenOccupancyReadFails covers the three arms that
-// produced the 2026-07-31 Springfield over-ordering incident: Core is
-// configured, the seam asks whether the window is occupied, and the read fails.
-//
-// It shipped asserting the opposite — that the seam fired anyway — written that
-// way on purpose so the fail-closed change would be seen flipping it rather than
-// merely claimed. It has now flipped, and this is the regression guard.
-//
-// The seam's whole job is to not put a second carrier on a window that already
-// holds one, and it cannot do that job without knowing what is on the windows.
-// Firing regardless was never a decision; it was FetchNodeBins being unable to
-// report that it had failed. Core re-signals within about a minute, so holding
-// costs one cycle.
-//
-// What was and was not covered before: resident-occupied and window-empty have
-// had coverage since SMN_014, and the not-configured arm is covered above — it
-// still fires, deliberately, since a deployment with no Core telemetry has
-// nobody to be out of touch with.
-func TestWithLoaderBudget_HoldsWhenOccupancyReadFails(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		// setup returns the client to install and a check that the seam really
-		// reached the failure being modelled — see nodeBinsBrokenStub on why a
-		// bare pass assertion is not enough here.
-		setup func(*testing.T) (*CoreClient, func(*testing.T))
-		why   string
-	}{
-		{
-			name: "transport_error",
-			setup: func(t *testing.T) (*CoreClient, func(*testing.T)) {
-				c := stubCoreClient(deadCoreURL(t))
-				// The server is gone, so hits cannot be counted. Assert instead
-				// that the client is configured — that is what distinguishes
-				// this from the not-configured arm, where the seam never dials.
-				return c, func(t *testing.T) {
-					if !c.Available() {
-						t.Fatal("client reports unavailable; this case must exercise a CONFIGURED Core that fails to answer, not the not-configured arm")
-					}
-				}
-			},
-			why: "Core process gone: http.Get errors and FetchNodeBins swallows it",
-		},
-		{
-			name: "non_200",
-			setup: func(t *testing.T) (*CoreClient, func(*testing.T)) {
-				var hits atomic.Int64
-				c := stubCoreClient(nodeBinsBrokenStub(t, "status", &hits).URL)
-				return c, func(t *testing.T) {
-					if hits.Load() == 0 {
-						t.Fatal("stub was never called; the seam did not ask Core, so this test proves nothing about a failed read")
-					}
-				}
-			},
-			why: "Core up but erroring: status != 200 returns nil without saying why",
-		},
-		{
-			name: "undecodable_body",
-			setup: func(t *testing.T) (*CoreClient, func(*testing.T)) {
-				var hits atomic.Int64
-				c := stubCoreClient(nodeBinsBrokenStub(t, "garbage", &hits).URL)
-				return c, func(t *testing.T) {
-					if hits.Load() == 0 {
-						t.Fatal("stub was never called; the seam did not ask Core, so this test proves nothing about a failed read")
-					}
-				}
-			},
-			why: "200 with a truncated body: the decode error is discarded",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			db := testEngineDB(t)
-			eng := testEngine(t, db)
-			nodeID := seedCapManualSwap(t, db, "READFAIL", "LOADER-1", protocol.ClaimRoleProduce, []string{"P1"}, 0, false)
-			loader := mustSharedLoader(t, "LOADER-1", "P1")
-			client, verifyAsked := tc.setup(t)
-			eng.coreClient = client
-
-			created, err := eng.withLoaderBudget(loader, "P1", 1, "", true, fireOneEmptyPerWindow(eng, nodeID))
-			if err != nil {
-				t.Fatalf("withLoaderBudget: %v", err)
-			}
-			verifyAsked(t)
-			if created != 0 {
-				t.Fatalf("occupancy read failed (%s): seam created %d empties, want 0.\n"+
-					"The seam fired without knowing what is on the windows — this is the "+
-					"2026-07-31 over-ordering incident's exact shape.",
-					tc.why, created)
-			}
-		})
+	if created != 0 {
+		t.Fatalf("table not actable: seam created %d empties, want 0.\n"+
+			"The seam fired without knowing what is on the windows — this is the "+
+			"2026-07-31 over-ordering incident's exact shape.", created)
 	}
 }

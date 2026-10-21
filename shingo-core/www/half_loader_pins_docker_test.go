@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"testing"
 
 	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
+	"shingocore/messaging"
+	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
@@ -66,19 +67,20 @@ func mintBareType(t *testing.T, db *store.DB, code string) *bins.BinType {
 	return bt
 }
 
-// nodeBinsRow reads the node-bins row for one node, as the Edge does.
-func nodeBinsRow(t *testing.T, h *Handlers, node string) map[string]any {
+// nodeBinsRow reads the bins feed's row for one node, as the Edge holds it
+// (messaging.CoreDataService.NodeBinsRows), as its JSON keys.
+func nodeBinsRow(t *testing.T, db *store.DB, node string) map[string]any {
 	t.Helper()
-	rec := getPlain(t, h.apiTelemetryNodeBins, "/api/telemetry/node-bins?nodes="+url.QueryEscape(node))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("node-bins status %d; body=%s", rec.Code, rec.Body.String())
-	}
-	var rows []map[string]any
-	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&rows), "decode node-bins")
+	rows, err := messaging.NewCoreDataService(db, nil, service.EpochAnnounce{}).NodeBinsRows([]string{node})
+	testutil.MustNoErr(t, err, "read the bins row of "+node)
 	if len(rows) != 1 {
-		t.Fatalf("node-bins rows = %d, want 1", len(rows))
+		t.Fatalf("bins rows = %d, want 1", len(rows))
 	}
-	return rows[0]
+	b, err := json.Marshal(rows[0])
+	testutil.MustNoErr(t, err, "encode the row")
+	var row map[string]any
+	testutil.MustNoErr(t, json.Unmarshal(b, &row), "decode the row")
+	return row
 }
 
 // TestPinBinClear_DeclaredTypeOnAFullBinAtAConsumeLoaderWindow_StampsIt is the
@@ -107,7 +109,7 @@ func TestPinBinClear_DeclaredTypeOnAFullBinAtAConsumeLoaderWindow_StampsIt(t *te
 		t.Errorf("payload %q uop %d, want the clear to empty it", after.PayloadCode, after.UOPRemaining)
 	}
 	// The row the Edge reads now says the carrier is bare, from the bt join.
-	if row := nodeBinsRow(t, h, win.Name); row["bare"] != true || row["bin_type_code"] != stage1.Code {
+	if row := nodeBinsRow(t, db, win.Name); row["bare"] != true || row["bin_type_code"] != stage1.Code {
 		t.Errorf("node-bins row = %v, want bare=true and type %s", row, stage1.Code)
 	}
 }
@@ -150,43 +152,8 @@ func TestPinBinClear_ReClearOfAnEmptyCarrier_RestampsItsType(t *testing.T) {
 			before.DeltaEpoch, after.DeltaEpoch, resp.DeltaEpoch)
 	}
 	// Re-stamped to a real type, the row carries no `bare`.
-	if row := nodeBinsRow(t, h, win.Name); row["bare"] != nil {
+	if row := nodeBinsRow(t, db, win.Name); row["bare"] != nil {
 		t.Errorf("node-bins row = %v, want no bare key once PUSH AS re-stamped a real type", row)
-	}
-}
-
-// TestPinNodeBins_RowKeys pins the node-bins row's key set for an ordinary
-// carrier. The row gains `bare`, omitempty, so an ordinary carrier's row must
-// stay byte-identical.
-func TestPinNodeBins_RowKeys(t *testing.T) {
-	t.Parallel()
-	h, db := testHandlers(t)
-	sd := testdb.SetupStandardData(t, db)
-	testdb.CreateBinAtNode(t, db, "", sd.StorageNode.ID, "BIN-HLPIN-KEYS")
-
-	rec := getPlain(t, h.apiTelemetryNodeBins, "/api/telemetry/node-bins?nodes="+url.QueryEscape(sd.StorageNode.Name))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: got %d; body=%s", rec.Code, rec.Body.String())
-	}
-	var rows []map[string]any
-	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&rows), "decode")
-	if len(rows) != 1 {
-		t.Fatalf("rows = %d, want 1", len(rows))
-	}
-	keys := make([]string, 0, len(rows[0]))
-	for k := range rows[0] {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	want := []string{"bin_id", "bin_label", "bin_type_code", "delta_epoch", "manifest", "manifest_confirmed",
-		"node_name", "occupied", "uop_remaining"}
-	if len(keys) != len(want) {
-		t.Fatalf("row keys = %v, want %v", keys, want)
-	}
-	for i := range want {
-		if keys[i] != want[i] {
-			t.Fatalf("row keys = %v, want %v", keys, want)
-		}
 	}
 }
 

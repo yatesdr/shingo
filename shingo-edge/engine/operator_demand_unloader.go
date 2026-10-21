@@ -15,25 +15,19 @@ import (
 // standing, so the U1 full-in can be skipped. It answers from the loader's
 // snapshot, matching each row to its window by NodeName.
 //
-// It says nothing when the snapshot cannot: the occupancy read failed
-// (reachable=false — the caller then refuses anyway, and says so), or there is
-// nobody to ask ("not_configured"), or no payload was named. Those used to be
-// indistinguishable from "Core says it is not there": FetchNodeBins collapsed
-// transport error, non-200 and decode failure into "no rows", so a failed read
-// looked like an empty floor and the U1 fired anyway. That is the same fault
-// that produced the 2026-07-31 loader over-ordering incident, one file over.
-//
-// "not_configured" is deliberately not a failure: an Edge with no Core
-// telemetry has nobody to ask, permanently, and a caller that refused on it
-// would be off forever rather than waiting a cycle.
+// It says nothing when the snapshot cannot: the bins table may not be decided
+// from (reachable=false — the caller then refuses anyway, and says so), or no
+// payload was named. A failed read once looked like an empty floor here (the
+// HTTP read collapsed every failure into "no rows") and the U1 fired anyway:
+// the fault of the 2026-07-31 loader over-ordering incident, one file over.
 func unloaderHasUsableFullPresent(snap *loaderSnapshot, nodes []string, payloadCode string) (window string, present bool) {
-	if !snap.reachable || snap.occupancy == "not_configured" || payloadCode == "" {
+	if !snap.reachable || payloadCode == "" {
 		return "", false
 	}
 	for _, n := range nodes {
 		for i := range snap.bins {
 			b := snap.bins[i]
-			if b.NodeName == n && b.Occupied && b.PayloadCode == payloadCode {
+			if b.Node == n && b.Occupied && b.PayloadCode == payloadCode {
 				return n, true
 			}
 		}
@@ -41,16 +35,11 @@ func unloaderHasUsableFullPresent(snap *loaderSnapshot, nodes []string, payloadC
 	return "", false
 }
 
-// occupancyUnverifiable reports whether an occupancy outcome means the read was
-// attempted and failed — as opposed to answering, or to there being nobody to
-// ask. Only the first is a reason to hold off: it is a transient the next event
-// will clear, where "not_configured" is a standing deployment fact.
+// occupancyUnverifiable reports whether an occupancy outcome means the guard
+// could not see: the bins table may not be decided from, a transient the next
+// ack or push clears.
 func occupancyUnverifiable(outcome string) bool {
-	switch outcome {
-	case "unreachable", "http_error", "decode_err", "unverifiable":
-		return true
-	}
-	return false
+	return outcome != "ok"
 }
 
 // MaybeCreateUnloaderFullIn (U1 of the side-cycle model) is the consumer-side
@@ -115,9 +104,10 @@ type unloaderOffer struct {
 // time through createUnloaderFullInViaSeam, MaybeCreateUnloaderFullIn on a
 // produce release that carries capture_lineside (never a station's: see it).
 //
-// Cost: one Core node-bins GET per unloader that reaches the read, however many
-// payloads and windows it has (TestUnloaderSweep_NodeBinsCallCount). It used to
-// be one per window per payload for the guard plus one per payload for the seam.
+// Cost: one read of the bins table per unloader that reaches it, however many
+// payloads and windows it has, and no Core round trip. It used to be one
+// node-bins GET per unloader, and before that one per window per payload for
+// the guard plus one per payload for the seam.
 //
 // One thing the order count does NOT subsume: it counts in-flight ORDERS, not
 // parked BINS. The loader could drop its physical-presence check because its
