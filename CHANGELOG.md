@@ -3,6 +3,15 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-21 — A recipe suggests the spots the cell last ran it on
+
+Edge only; no migration. Not deployed.
+
+- A recipe's pick step is pre-filled with where the last style built from it on this cell has its spots
+- A recipe never used on the cell suggests its own stored nodes, as before
+- The HMI's Spots screen and the desktop's Use a recipe both take the suggestion; the step is never skipped
+- A suggested node the screen does not draw is left out
+
 ## 2026-10-21 — An order's whole route, and the words for a parked leg
 
 Core only (web pages and the parked sentence); no migration. Not deployed.

@@ -387,7 +387,7 @@ function picksLabel() {
 function toRecipe() {
     const f = fits();
     if (!f.length) { screen = 'none'; drawNone(); return; }
-    if (f.length === 1) { recipe = f[0]; toPositions(); return; }
+    if (f.length === 1) { chooseRecipe(f[0]); return; }
     screen = 'which';
     drawWhich(f);
 }
@@ -395,6 +395,18 @@ function toRecipe() {
 // Setting up always passes the Positions screen: the operator sees where the
 // recipe puts the parts and may move a spot before anything is saved.
 function toPositions() { screen = 'positions'; selected = ''; drawPositions(); }
+
+// chooseRecipe takes a recipe to the Positions screen, its spots pre-filled
+// where the last style that used it on this cell has them (the card's
+// last_moves), each kept only when it is a position or lane of this station's
+// picture. A suggestion the operator sees and may change; never skipped.
+function chooseRecipe(r) {
+    recipe = r;
+    const here = new Set((cell().positions || []).map(p => p.core_node_name)
+        .concat((cell().staging || []).map(s => s.core_node_name)));
+    moves = M().suggestedMoves(r, here);
+    toPositions();
+}
 
 function drawNone() {
     show().innerHTML =
@@ -792,8 +804,8 @@ function onClick(e) {
         case 'split': split = true; afterParts(); break;
         case 'setupnew': fresh = true; toRecipe(); break;
         case 'recipe': {
-            recipe = presets().find(p => String(p.id) === btn.dataset.preset) || null;
-            if (recipe) toPositions();
+            const r = presets().find(p => String(p.id) === btn.dataset.preset) || null;
+            if (r) chooseRecipe(r);
             break;
         }
         case 'unmove': delete moves[btn.dataset.node]; drawPositions(); break;

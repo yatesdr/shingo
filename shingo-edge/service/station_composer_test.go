@@ -361,3 +361,54 @@ func TestComposerPresets_OnlyTheLatestVersionOfANameIsACardAndItCarriesSlots(t *
 		t.Errorf("slots = %+v, want two produce slots (one per press-index pair)", data.Presets[0].Slots)
 	}
 }
+
+// TestComposerPresets_TheCardSuggestsWhereTheCellLastRanTheRecipe is W2's
+// pre-fill (SPR Press 6, 2026-10-21): the recipe still names PLN_01, but the
+// last style built from it has since moved that position to PLN_03. The card
+// carries the move, so the pick step suggests PLN_03; the recipe itself is
+// unchanged. The read is the claims the builder already holds.
+func TestComposerPresets_TheCardSuggestsWhereTheCellLastRanTheRecipe(t *testing.T) {
+	t.Parallel()
+	fx := scenefixtures.A()
+	db := testdb.Open(t)
+	seeded := testdb.SeedPlant(t, db, fx, "Press A1")
+	testdb.SeedRoutingSet(t, db, seeded.ProcessID, "test")
+	presets := NewProcessService(db)
+	view, err := presets.PresetsFor(seeded.ProcessID)
+	if err != nil {
+		t.Fatalf("PresetsFor: %v", err)
+	}
+	cand := view.Candidates[0]
+	if _, err := presets.CreateFromCandidate(seeded.ProcessID, "Press index, two positions", cand.ShapeKey, "s.brown"); err != nil {
+		t.Fatalf("CreateFromCandidate: %v", err)
+	}
+	svc := NewStationService(db)
+	before, err := svc.ComposerForProcess(seeded.ProcessID)
+	if err != nil {
+		t.Fatalf("ComposerForProcess: %v", err)
+	}
+	if len(before.Presets) != 1 || before.Presets[0].LastMoves != nil {
+		t.Fatalf("cards before any move = %+v, want one with no pre-fill: every member runs the recipe's own spots", before.Presets)
+	}
+	if _, ok := before.Presets[0].Cells["PLN_01"]; !ok {
+		t.Fatalf("the recipe does not name PLN_01: %v", before.Presets[0].Cells)
+	}
+
+	// The member style moves PLN_01 to PLN_03 (as SPR's claims were moved, in
+	// place), and is the newest write.
+	member := cand.Members[0]
+	if _, err := db.Exec(`UPDATE style_node_claims SET core_node_name = 'PLN_03', updated_at = datetime('now', '+1 hour')
+		WHERE style_id = ? AND core_node_name = 'PLN_01'`, member); err != nil {
+		t.Fatalf("move the member's position: %v", err)
+	}
+	after, err := svc.ComposerForProcess(seeded.ProcessID)
+	if err != nil {
+		t.Fatalf("ComposerForProcess: %v", err)
+	}
+	if got := after.Presets[0].LastMoves; len(got) != 1 || got["PLN_01"] != "PLN_03" {
+		t.Errorf("last_moves = %v, want PLN_01 → PLN_03: where the cell last ran the recipe", got)
+	}
+	if _, ok := after.Presets[0].Cells["PLN_01"]; !ok {
+		t.Error("the recipe's own cells changed; the pre-fill is a suggestion beside them")
+	}
+}

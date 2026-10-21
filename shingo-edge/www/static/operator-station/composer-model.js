@@ -1868,6 +1868,42 @@ function presetCells(preset) {
     return out;
 }
 
+// suggestedMoves is the pick step's pre-fill for a recipe, the same on the HMI
+// and the desktop: the card's last_moves (recipe node → where the last style
+// that used this recipe on this cell has it, domain.RecipeLastUsedMoves), each
+// kept only when its node is one the screen draws (`here`, a Set of node
+// names). Empty when the recipe was never used here; the step then suggests
+// the recipe's own nodes. A suggestion only — the step is always shown.
+function suggestedMoves(preset, here) {
+    const out = {};
+    const lm = (preset && preset.last_moves) || {};
+    for (const from of Object.keys(lm)) {
+        if (here && here.has(lm[from])) out[from] = lm[from];
+    }
+    return out;
+}
+
+// presetMoved is the preset with its cells' nodes renamed by moves (recipe
+// node → node): the shape the pick step suggests, in the composer block's
+// cells map, for applyPreset and shapeDiff to read like any preset.
+function presetMoved(preset, moves) {
+    if (!preset || !moves || !Object.keys(moves).length) return preset;
+    const r = n => (n && moves[n]) || n;
+    const cells = {};
+    const src = preset.cells || preset.shape || [];
+    const rows = Array.isArray(src) ? src : Object.keys(src).map(n => Object.assign({ core_node_name: n }, src[n]));
+    for (const row of rows) {
+        const c = Object.assign({}, row);
+        const n = r(c.core_node_name || c.node || '');
+        c.core_node_name = n;
+        for (const k of ['paired_core_node', 'second_paired_core_node', 'inbound_staging', 'outbound_staging']) {
+            if (c[k]) c[k] = r(c[k]);
+        }
+        cells[n] = c;
+    }
+    return Object.assign({}, preset, { cells: cells, shape: undefined });
+}
+
 // shapeDiff says what applying a shape would change, in the words D1 heads its
 // columns with: `[{node, label, from, to}]`, in position order then field order.
 //
@@ -2116,7 +2152,7 @@ function savedBody(styleId, stationId) {
         modeLabels, rowColumns, fieldRequired, fieldLabel, shortPart, robotWords,
         partOffers, styleFacts,
         routingNote, routingRoleOf, stagingFieldUsed,
-        presetCells, shapeDiff, orderSentences, orderTrip, viaWaypoints,
+        presetCells, presetMoved, suggestedMoves, shapeDiff, orderSentences, orderTrip, viaWaypoints,
         advancedFor, advancedShows, advancedSet,
         flowSaveBody, mintBody, savedBody,
     };
