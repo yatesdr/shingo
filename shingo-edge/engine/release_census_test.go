@@ -142,8 +142,6 @@ var orderCreationSites = map[string]string{
 	"operator_bin_ops.go:requestEmptyAtManualSwapLoader":          "operator: empty to a manual-swap loader",
 	"operator_demand_loader.go:stageOperatorEmpty":                "loader demand: stage an empty",
 	"operator_demand_unloader.go:fireUnloaderFulls":               "unloader demand: fulls",
-	"operator_home_consolidation.go:ClearLoaderHome":              "loader home consolidation, order A",
-	"operator_home_consolidation.go:dispatchBufferConsolidation":  "loader home consolidation, order B",
 	"operator_node_changeover.go:DeliverNewMaterialForChangeover": "changeover node: deliver new material (no wait: a drop finishes, S7)",
 	"operator_node_changeover.go:EvacuateNode":                    "changeover node: evacuate (a wait in front of a curtained pickup, S7) — door 4 on its fallback arm",
 	"operator_node_changeover.go:StageNodeChangeoverMaterial":     "changeover node: stage new material",

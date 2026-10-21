@@ -338,11 +338,12 @@ func stripTile(l *domain.Loader, tiles []domain.StationNodeView) string {
 // order Positions keeps), each with what stands there; nil for a loader with
 // no buffer spot.
 //
-// A SPOT WHOSE CLEAR IS IN FLIGHT COUNTS AS AN EMPTY. ClearLoaderHome sends
-// the home's emptied carrier to the spot (Order A, a move with no part, on the
-// home's orders) and only then brings the partial home, so the spot is about
-// to hold an empty: the buffer is not "full with no empties" while that clear
-// runs.
+// A SPOT WHOSE CLEAR IS IN FLIGHT COUNTS AS AN EMPTY. A live move with no
+// part from a board home to the spot, on the home's orders, is carrying the
+// home's emptied carrier there, so the spot is about to hold an empty: the
+// buffer is not "full with no empties" while it runs. Core's home clear files
+// such a move on its spot arm (the empty's move, pushed to the station as a
+// plain row; Core's dispatch/clear_home.go).
 func bufferStrip(l *domain.Loader, tiles []domain.StationNodeView, rows map[string]BoardBin, read bool) []domain.BufferSpot {
 	clearing := map[string]bool{}
 	for _, tile := range tiles {
@@ -388,7 +389,7 @@ func bufferStrip(l *domain.Loader, tiles []domain.StationNodeView, rows map[stri
 //
 // The wire carries these four states only. A spot a home's clear is in flight
 // to is stamped empty (bufferStrip); the glass draws it as coming from the
-// home's orders, where the clear's Order A stands. Pinned by
+// home's orders, where that move stands. Pinned by
 // TestStampBins_BufferStrip.
 func spotState(row BoardBin) string {
 	switch {
@@ -405,9 +406,8 @@ func spotState(row BoardBin) string {
 
 // bufferPartialFor is the spot whose partial a clear of the home at node would
 // bring home: the home holds a stocked bin of its own part, and the first
-// buffer spot in the plant's order holds a stocked bin of the same part. The
-// test ClearLoaderHome makes, on the same rows, so the board and the act pick
-// the same spot. Nil when node is not a home or no spot qualifies.
+// buffer spot in the plant's order holds a stocked bin of the same part. Nil
+// when node is not a home or no spot qualifies.
 func bufferPartialFor(l *domain.Loader, node string, rows map[string]BoardBin) *domain.BufferPartial {
 	if _, pinned := l.PayloadAt(domain.NodeID(node)); !pinned {
 		return nil

@@ -240,14 +240,6 @@ func (e *Engine) HandleBinPickedUpMessage(bp protocol.BinPickedUp) {
 
 	e.logFn("bin_picked_up: flushed deltas + cleared active bin for order=%s bin=%d (status=%s)",
 		orderUUID, binID, order.Status)
-
-	// Home consolidation: if this was Order A of a ClearLoaderHome sequence,
-	// the robot just cleared the home position. Fire Order B (buffer partial → home).
-	// The intent is on Order A's row, so it fires after an Edge restart too; the
-	// take is exactly-once, so a replayed pickup does not fire a second Order B.
-	if it, ok := e.takeOrderIntent(order.ID, intentConsolidation); ok {
-		e.dispatchBufferConsolidation(it.consolidation())
-	}
 }
 
 // takeTicksAfterLift is the Edge half of the late-lift rule (Lane H R4,

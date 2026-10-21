@@ -18,8 +18,10 @@ type StaticPoint struct {
 	AtWait  bool    // staged at it
 	Driving bool    // in_transit, heading to it
 	HasWait bool    // there is such a wait
-	// AtLane: staged at a lane wait, which is Core's to release (G2).
-	AtLane bool
+	// CoreHeld: staged at a wait Core releases (G2) — a lane wait, a vacate
+	// hold Core took the station's release into, or a kind this Edge does not
+	// know (protocol.IsCoreWaitKind; a newer Core's, never offered as RELEASE).
+	CoreHeld bool
 	// NoWaits: the leg's plan has no station wait at all (a plain order, or
 	// one authored before waits): an act covers it as the doors always did.
 	NoWaits bool
@@ -44,14 +46,14 @@ func PointOf(status protocol.Status, stationWait *int, waitKind string, intent *
 	case status == protocol.StatusStaged && waitKind == protocol.WaitKindStation && stationWait != nil:
 		p.Ordinal, p.AtWait = *stationWait, true
 	case status == protocol.StatusStaged:
-		// At a lane wait, or staged by a Core that does not number waits: the
-		// next station wait is the one after the last released.
+		// At a wait Core releases, or staged by a Core that does not number
+		// waits: the next station wait is the one after the last released.
 		p.Ordinal = released()
 		if intent != nil && !intent.Sent() {
 			p.Ordinal = intent.StationWait
 		}
-		p.AtLane = waitKind == protocol.WaitKindLane
-		p.AtWait = !p.AtLane
+		p.CoreHeld = protocol.IsCoreWaitKind(waitKind)
+		p.AtWait = !p.CoreHeld
 	case status == protocol.StatusInTransit:
 		p.Ordinal, p.Driving = released(), true
 	default:
@@ -233,12 +235,13 @@ func PlanAct(a Act, f ActFacts, legs []ActLeg) ActPlan {
 	decisions := make([]Decision, len(legs))
 	for i, l := range legs {
 		d := Decision{OrderID: l.Leg.OrderID, Index: i, Point: l.Point}
-		if l.Leg.ReadErr == nil && l.Point.AtLane {
+		if l.Leg.ReadErr == nil && l.Point.CoreHeld {
 			// The per-order click names this one order, so it answers in
 			// Core's words rather than reporting a release that sent nothing.
 			if !a.passesOverUnreleasable() && !a.Reevaluation {
 				return ActPlan{Purpose: purpose, NeedLeg: -1, Gate: G2, Refusal: fmt.Errorf(
-					"order %d is waiting on a lane, not on the station: Core releases it when the lane is safe", l.Leg.OrderID)}
+					"order %d is waiting on Core, not on the station: Core releases it when its lane is safe or "+
+						"the bin on its drop has been lifted", l.Leg.OrderID)}
 			}
 			d.Verdict, d.Gate = Out, G2
 			decisions[i] = d

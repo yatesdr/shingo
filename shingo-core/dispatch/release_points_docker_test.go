@@ -14,8 +14,8 @@ import (
 )
 
 // release_points_docker_test.go — releasePoints (S3): per order, the nodes its
-// pending segment enters, the lifts it waits on (SHAPE §3.4, with co_release),
-// and the lineside bin it departs with.
+// pending segment enters and the lifts it waits on (SHAPE §3.4, with
+// co_release).
 
 // rpNode creates a plain node and, when full, a bin on it.
 func rpNode(t *testing.T, r releaseRig, payload, name string, full bool) *nodes.Node {
@@ -34,12 +34,8 @@ func rpPoint(p protocol.ReleasePoint) string {
 	for _, d := range p.AwaitsLift {
 		deps = append(deps, fmt.Sprintf("%s@%s co=%v", d.LifterUUID, d.Node, d.CoRelease))
 	}
-	bin := "-"
-	if p.LinesideBin != nil {
-		bin = fmt.Sprintf("%s/%v", p.LinesideBin.NodeName, p.LinesideBin.Occupied)
-	}
-	return fmt.Sprintf("found=%v enters=[%s] awaits=[%s] lineside=%s",
-		p.Found, strings.Join(p.Enters, ","), strings.Join(deps, "; "), bin)
+	return fmt.Sprintf("found=%v enters=[%s] awaits=[%s]",
+		p.Found, strings.Join(p.Enters, ","), strings.Join(deps, "; "))
 }
 
 func TestReleasePoints(t *testing.T) {
@@ -60,23 +56,23 @@ func TestReleasePoints(t *testing.T) {
 		want               string // R1's point; R2's point
 	}{
 		{"press-index unflipped, both staged: both co-release", StatusStaged, StatusStaged, r1Steps(), r2Steps(), true, true,
-			"found=true enters=[RP-PRESS,RP-B,RP-OUT] awaits=[rp-r2@RP-B co=true] lineside=RP-PRESS/true; " +
-				"found=true enters=[RP-B,RP-PRESS] awaits=[rp-r1@RP-PRESS co=true] lineside=-"},
+			"found=true enters=[RP-PRESS,RP-B,RP-OUT] awaits=[rp-r2@RP-B co=true]; " +
+				"found=true enters=[RP-B,RP-PRESS] awaits=[rp-r1@RP-PRESS co=true]"},
 		// N-b's shape: R2 staged, R1 still driving to its wait. R2's lifter is
 		// not parked, so no co-release.
 		{"press-index unflipped, R1 still driving: R2 waits on R1's lift", StatusInTransit, StatusStaged, r1Steps(), r2Steps(), true, true,
-			"found=true enters=[RP-PRESS,RP-B,RP-OUT] awaits=[rp-r2@RP-B co=true] lineside=RP-PRESS/true; " +
-				"found=true enters=[RP-B,RP-PRESS] awaits=[rp-r1@RP-PRESS co=false] lineside=-"},
+			"found=true enters=[RP-PRESS,RP-B,RP-OUT] awaits=[rp-r2@RP-B co=true]; " +
+				"found=true enters=[RP-B,RP-PRESS] awaits=[rp-r1@RP-PRESS co=false]"},
 		// The press already empty: (a), no dependency.
 		{"the drop node holds no bin: no dependency", StatusStaged, StatusStaged, r1Steps(), r2Steps(), false, true,
-			"found=true enters=[RP-PRESS,RP-B,RP-OUT] awaits=[rp-r2@RP-B co=true] lineside=RP-PRESS/false; " +
-				"found=true enters=[RP-B,RP-PRESS] awaits=[] lineside=-"},
+			"found=true enters=[RP-PRESS,RP-B,RP-OUT] awaits=[rp-r2@RP-B co=true]; " +
+				"found=true enters=[RP-B,RP-PRESS] awaits=[]"},
 		// A placer holding its bin at staging (holdInbound): its segment places
 		// with nothing picked up first, so it never co-releases.
 		{"a placer holding its bin never co-releases", StatusStaged, StatusStaged, r1Steps(),
 			[]resolvedStep{vsPick("RP-STAGE"), rlWait("RP-STAGE", WaitKindStation), vsDrop("RP-PRESS")}, true, true,
-			"found=true enters=[RP-PRESS,RP-B,RP-OUT] awaits=[] lineside=RP-PRESS/true; " +
-				"found=true enters=[RP-PRESS] awaits=[rp-r1@RP-PRESS co=false] lineside=-"},
+			"found=true enters=[RP-PRESS,RP-B,RP-OUT] awaits=[]; " +
+				"found=true enters=[RP-PRESS] awaits=[rp-r1@RP-PRESS co=false]"},
 	} {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
@@ -111,7 +107,7 @@ func TestReleasePoints(t *testing.T) {
 		t.Parallel()
 		r := newReleaseRig(t)
 		rlLeg(t, r.db, "rp-other", StatusStaged, 0, string(mustJSON(t, r1Steps())))
-		if got := rpPoint(r.d.ReleasePoints("line-2", []string{"rp-other"})[0]); got != "found=false enters=[] awaits=[] lineside=-" {
+		if got := rpPoint(r.d.ReleasePoints("line-2", []string{"rp-other"})[0]); got != "found=false enters=[] awaits=[]" {
 			t.Errorf("got %s", got)
 		}
 	})

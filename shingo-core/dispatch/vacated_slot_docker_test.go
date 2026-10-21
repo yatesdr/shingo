@@ -685,8 +685,9 @@ func TestVacatedSlot_P24_RepointedStampsDoNotCount(t *testing.T) {
 			o.EdgeUUID, o.StationID, o.OrderType, o.Status = "vs24-redirected", "line-1", OrderTypeComplex, StatusStaged
 			o.DeliveryNode, o.StepsJSON = "VS24-ELSEWHERE", string(j)
 		})
-		if _, refusal := d.vacateReleaseRefusal(o); refusal != "" {
-			t.Fatalf("a redirected drop was fenced on a stamp it no longer carries: %s", refusal)
+		steps, _ = decodeSteps(o.StepsJSON)
+		if holds := d.vacateHoldsAtRelease(o, steps); len(holds) != 0 {
+			t.Fatalf("a redirected drop was held on a stamp it no longer carries: %+v", holds)
 		}
 	})
 }
@@ -748,22 +749,28 @@ func swapAtVacatedBuffer(t *testing.T, r releaseRig, prefix string, yStatus prot
 	return z, y, b1, carrier, partial.ID
 }
 
-// P9 — the stamped drop is refused while its bin stands there, then goes once
-// it has been lifted. DEFECT PIN: at 6a590181 there is no stamp and no fence;
-// the release appends and the robot drives at an occupied slot.
+// P9 — the stamped drop is held while its bin stands there, and goes once it
+// has been lifted. DEFECT PIN: at 6a590181 there is no stamp and no fence; the
+// release appends and the robot drives at an occupied slot.
+//
+// RULED 2026-10-18 (the vacate kind): the release used to be REFUSED and pressed
+// again once the bin was lifted. It is now taken and held, and Core appends it
+// on the lift with no second press (vacate_hold.go).
 func TestVacatedSlot_P9_ReleaseFenceHoldsUntilTheLift(t *testing.T) {
 	t.Parallel()
 	r := newReleaseRig(t)
-	z, _, _, carrier, partial := swapAtVacatedBuffer(t, r, "VS9", StatusDispatched)
+	z, _, _, _, partial := swapAtVacatedBuffer(t, r, "VS9", StatusDispatched)
 	if r.released(t, z) {
 		t.Fatal("the return was released onto a slot its partner has not emptied")
 	}
 	if fresh := prReload(t, r.db, z.ID); fresh.WaitIndex != 0 || fresh.Status != StatusStaged {
-		t.Errorf("a refused release moved the order: wait_index %d status %s", fresh.WaitIndex, fresh.Status)
+		t.Errorf("a held release moved the order: wait_index %d status %s", fresh.WaitIndex, fresh.Status)
 	}
-	mustExecDispatch(t, r.db, `UPDATE bins SET node_id=$1 WHERE id=$2`, carrier.ID, partial) // the supply lifts it
-	if !r.released(t, prReload(t, r.db, z.ID)) {
-		t.Fatal("the slot is empty now; the release must go")
+	before := len(r.backend.ReleaseCalls())
+	vhLift(t, r.db, partial) // the supply lifts it
+	r.d.RedriveVacateWaits(partial)
+	if got := len(r.backend.ReleaseCalls()) - before; got != 1 {
+		t.Fatalf("the slot is empty now; Core must append the held release on the lift: %d appends", got)
 	}
 }
 
@@ -787,6 +794,8 @@ func TestVacatedSlot_P9b_OrdinaryHomeSwapReleasesAsToday(t *testing.T) {
 // P18 / P19 — Y must not go while Z is held: deferred and refired when it stages
 // (P18), or already in transit before its wait (P19). DEFECT PINS against v3:
 // Y's release appends and it drops a fresh bin onto a line still holding Z's.
+// Since the vacate kind (2026-10-18) Z and Y are held rather than refused; the
+// assertion — nothing appended — is the same.
 func TestVacatedSlot_P18_P19_PartnerHeldWithTheStampedLeg(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -850,16 +859,22 @@ func TestVacatedSlot_P20_PressIndexReleasesAsToday(t *testing.T) {
 func TestVacatedSlot_P21_InvertedReleaseRefusesYThenBothGo(t *testing.T) {
 	t.Parallel()
 	r := newReleaseRig(t)
-	z, y, _, carrier, partial := swapAtVacatedBuffer(t, r, "VS21", StatusStaged)
+	z, y, _, _, partial := swapAtVacatedBuffer(t, r, "VS21", StatusStaged)
 	if r.released(t, y) {
 		t.Fatal("Y went first while Z is staged and stamped on a bin still standing")
 	}
-	mustExecDispatch(t, r.db, `UPDATE bins SET node_id=$1 WHERE id=$2`, carrier.ID, partial)
+	vhLift(t, r.db, partial)
 	if !r.released(t, prReload(t, r.db, z.ID)) {
 		t.Fatal("next click: Z must go once its slot is empty")
 	}
-	if !r.released(t, prReload(t, r.db, y.ID)) {
-		t.Fatal("next click: Y must go once Z has")
+	// RULED 2026-10-18: Y is no longer refused and pressed again; it was taken
+	// and held on Z's bin on the line, and goes when Z lifts it.
+	resident := binOnNode(t, r.db, "VS21-LINE")
+	before := len(r.backend.ReleaseCalls())
+	vhLift(t, r.db, resident)
+	r.d.RedriveVacateWaits(resident)
+	if got := len(r.backend.ReleaseCalls()) - before; got != 1 || prReload(t, r.db, y.ID).WaitIndex != 1 {
+		t.Fatalf("Y must go once Z has lifted its bin off the line: %d appends", got)
 	}
 }
 

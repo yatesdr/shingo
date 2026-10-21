@@ -298,7 +298,7 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     eq([z.folded, z.cards.map(cardSay), z.cards[0].number, z.cards[0].spotWords],
         [false, [['SMN_H1', 'PART-A', 'plain', '', 'Pull the full · partial from SMN_B1']], 1, 'holds a full bin'],
         'partials opened by a tap: the numbered card, the home\'s spot line, the part, where the partial comes from');
-    eq(z.cards[0].act, { kind: 'clear-home', node: 1, home: 'SMN_H1', spot: 'SMN_B1', bufferNode: 'LDR.SMN_B1' },
+    eq(z.cards[0].act, { kind: 'clear-home', node: 1, home: 'SMN_H1', spot: 'SMN_B1' },
         'a partial\'s tap is the home\'s clear, naming the home and the spot, and the spot by its Core name for the post');
     z = P(spots(['open', 'partial', 'open']), 'SMN_B2');
     eq([z.tone, z.word, z.reason, z.folded, z.openedByBoard, z.cards.map(c => c.tone)],

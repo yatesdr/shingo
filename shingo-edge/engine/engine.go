@@ -276,9 +276,9 @@ type Engine struct {
 	// /status. Injected for the same reason.
 	productionTickLagFn func() (pending, oldestAgeMS int64, err error)
 
-	// The pending home-consolidation and market-pullback intents are NOT here:
-	// they live on the order row (orders.pending_intent, order_intent.go) so an
-	// Edge restart between arming and firing does not lose them.
+	// The pending market-pullback intent is NOT here: it lives on the order
+	// row (orders.pending_intent, order_intent.go) so an Edge restart between
+	// arming and firing does not lose it.
 
 	// intents is the release intent worker's queue, and relLocks the one lock
 	// per node the click doors and the worker share (release_act.go).

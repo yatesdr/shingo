@@ -492,6 +492,18 @@ var EmptyCarrierWhere = emptyCarrierWhere("NULL", "NULL")
 // So the exemption is narrow: a BUFFER of the loader that owns the destination.
 // Another loader's homes and buffers stay off-limits, and so do the requesting
 // loader's own other homes — an empty on a home is waiting to be loaded there.
+//
+// ── EXCEPT A HOME WHOSE CLEAR IS RUNNING ──────────────────────────────────────
+//
+// A home's clear (dispatch/clear_home.go) declares the carrier on the home
+// empty because the partial is coming to take its place: that empty is NOT
+// waiting to be loaded there, and any empty pull may take it. Keyed on the
+// clear's parent row (helpers.LiveClearOnNodeSQL), never on payload; one EXISTS
+// per loader position, on idx_orders_delivery_node. It is closed by state, not
+// by a flag: the clear holds the empty itself when it moves it (a soft hold the
+// unheld clause above refuses), a pull that takes it holds it, and an ended
+// clear has no live parent. Only while nobody holds it — the state the clear's
+// re-run is keyed on — is it open outside the clear's own door.
 func EmptyCarrierWhereFor(destParam int) string {
 	return emptyCarrierWhere(fmt.Sprintf("$%d", destParam), "NULL")
 }
@@ -542,7 +554,8 @@ func emptyCarrierWhere(destExpr, groupExpr string) string {
 	                          AND NOT (h.home_kind = 'buffer' AND h.loader_id IN (
 	                            SELECT d.loader_id FROM bin_loader_homes d WHERE d.position_node_id = ` + destExpr + `))
 	                          AND NOT (l.pulled_directly AND h.position_node_id IN (
-	                            SELECT g.id FROM nodes g WHERE g.parent_id = ` + groupExpr + `)))
+	                            SELECT g.id FROM nodes g WHERE g.parent_id = ` + groupExpr + `))
+	                          AND NOT ` + helpers.LiveClearOnNodeSQL(`(SELECT cn.name FROM nodes cn WHERE cn.id = h.position_node_id)`) + `)
 	  AND NOT bt.bare
 	  AND NOT COALESCE(b.quality_hold, false)`
 }
@@ -568,15 +581,39 @@ func OfTypesArm(typesParam int) string {
 	  AND bt.code = ANY($%d)`, typesParam)
 }
 
-// InGroupArm narrows to carriers standing inside a group's subtree.
+// InGroupArm narrows to carriers standing inside a group's subtree, or on a
+// home of the destination's own loader (the node id in parameter destParam)
+// whose clear is running.
 //
 // Assumes a `descendants(id)` CTE is in scope — compose nodetree.DescendantsOf
 // for it, which is SELF-EXCLUDED: a group node is synthetic and holds no
 // carriers, so its own id in the set changes nothing today and would mean
 // something different the day one does.
-func InGroupArm() string {
-	return `
-	  AND b.node_id IN (SELECT id FROM descendants)`
+//
+// ── A CLEARED HOME IS ITS OWN LOADER'S, WHEREVER IT STANDS ───────────────────
+//
+// A home's clear (dispatch/clear_home.go) declares the carrier on the home
+// empty and offers it to the loader's waiting pulls first. The loader's own
+// pulls — the replenishment loop's ask for another home, an operator's
+// request there — source from the loader's inbound group, and a plant may keep
+// the homes outside that group's subtree (the market holds the empties, the
+// homes stand at the loader). The subtree alone then hides the one carrier
+// the clear exists to hand them. So the arm admits, beside the subtree, the
+// homes of the loader that owns the destination on which a clear is live
+// (helpers.LiveClearOnNodeSQL, the key the loader arm's exemption uses). No
+// other loader's homes, no buffer outside the group, and nothing at all when
+// no clear runs; a destination that is no loader position (the count passes
+// 0) adds nothing. The rest of the WHERE still judges the carrier (unheld,
+// empty, the type), so the clear's own soft hold on its empty's move, or a
+// pull that took it, closes it as it does the exemption.
+func InGroupArm(destParam int) string {
+	return fmt.Sprintf(`
+	  AND (b.node_id IN (SELECT id FROM descendants)
+	       OR b.node_id IN (SELECT h.position_node_id FROM bin_loader_homes h
+	                        JOIN bin_loaders l ON l.id = h.loader_id AND l.archived_at IS NULL
+	                        JOIN nodes cn ON cn.id = h.position_node_id
+	                        WHERE h.loader_id IN (SELECT d.loader_id FROM bin_loader_homes d WHERE d.position_node_id = $%d)
+	                          AND `, destParam) + helpers.LiveClearOnNodeSQL("cn.name") + `))`
 }
 
 // InZoneArm narrows to one zone. See the note on FindEmptyOfType for why a zone
@@ -647,12 +684,13 @@ func ExcludeNodeArm(nodeParam int) string {
 // would be a SECOND SPELLING of "of this type" — precisely the thing this
 // fragment exists to prevent.
 //
-// The loader arm reads the same $3 as the exclude arm: the finder passes its
-// destination, so a dedicated home sees its own loader's buffers
-// (EmptyCarrierWhereFor); the count passes 0 and so counts no loader's buffers
-// as group stock, which is the level a keeper should fill against.
+// The loader arm and the group arm read the same $3 as the exclude arm: the
+// finder passes its destination, so a dedicated home sees its own loader's
+// buffers (EmptyCarrierWhereFor) and a cleared home of its loader
+// (InGroupArm); the count passes 0 and so counts neither as group stock,
+// which is the level a keeper should fill against.
 var EmptyOfTypeInGroupWhere = EmptyCarrierWhereInGroup(3, 2) +
-	OfTypeArm(1) + InGroupArm() + ExcludeNodeArm(3)
+	OfTypeArm(1) + InGroupArm(3) + ExcludeNodeArm(3)
 
 // SourceableStatusSQL is the SQL twin of domain.BinStatus.Sourceable: the set of
 // statuses a bin may be picked up from. One rule in two languages —
@@ -1445,7 +1483,7 @@ func FindEmptyOfTypesInGroup(db *sql.DB, binTypeCodes []string, groupNodeID, exc
 	}
 	a := &emptyQueryArgs{vals: []any{binTypeCodes, groupNodeID, excludeNodeID}}
 	q := nodetree.DescendantsOf(2) + " " + BinJoinQuery +
-		EmptyCarrierWhereInGroup(3, 2) + OfTypesArm(1) + InGroupArm() + ExcludeNodeArm(3) +
+		EmptyCarrierWhereInGroup(3, 2) + OfTypesArm(1) + InGroupArm(3) + ExcludeNodeArm(3) +
 		NotForeignDugArm(a.add(string(reservations.ModeDig)),
 			a.add(asker.OrderID), a.add(asker.LaneOwner)) + preferredEmptyOrder(a, wantLayers)
 	return ScanBin(db.QueryRow(q, a.vals...))
@@ -1493,7 +1531,7 @@ func CountEmptyOfTypeInGroupExcludingNode(db *sql.DB, binTypeCode string, groupN
 	var n int
 	err := db.QueryRow(
 		nodetree.DescendantsOf(2)+" SELECT COUNT(*) "+BinFromClause+
-			EmptyCarrierWhereInGroup(4, 2)+OfTypeArm(1)+InGroupArm()+ExcludeNodeArm(3),
+			EmptyCarrierWhereInGroup(4, 2)+OfTypeArm(1)+InGroupArm(4)+ExcludeNodeArm(3),
 		binTypeCode, groupNodeID, excludeNodeID, 0).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count empty %s in group %d excluding node %d: %w", binTypeCode, groupNodeID, excludeNodeID, err)
@@ -1608,7 +1646,7 @@ func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, exc
 
 	a := &emptyQueryArgs{vals: []any{payloadCode, groupNodeID, excludeNodeID}}
 	q := nodetree.DescendantsOf(2) + BinJoinQuery +
-		EmptyCarrierWhereInGroup(3, 2) + InGroupArm() + ExcludeNodeArm(3) +
+		EmptyCarrierWhereInGroup(3, 2) + InGroupArm(3) + ExcludeNodeArm(3) +
 		NotForeignDugArm(a.add(string(reservations.ModeDig)),
 			a.add(asker.OrderID), a.add(asker.LaneOwner)) +
 		PayloadBinTypeRuleArm("$1") + preferredEmptyOrder(a, wantLayers)
@@ -1760,6 +1798,11 @@ type Lift struct {
 //
 // Idempotent like MoveToTransit: a bin already at the transit node is left
 // alone (Moved false). The anomaly note goes, as MoveToTransit's comment says.
+//
+// EVERY lift, streamed or not, stamps last_lift_at=now in the same statement
+// (+0): the one writer of the vacate fact's floor (LeftSince). A retry that
+// moves nothing writes nothing, so a replayed pickup of a bin already at
+// _TRANSIT never re-stamps it.
 func LiftToTransitTx(tx *sql.Tx, binID, transitNodeID int64, station string, now time.Time) (Lift, error) {
 	const streamed = `(NOT ` + helpers.NodeNotASeatSQL + `
 		OR EXISTS (SELECT 1 FROM inventory_delta_dedup dd
@@ -1771,7 +1814,8 @@ func LiftToTransitTx(tx *sql.Tx, binID, transitNodeID int64, station string, now
 	)
 	err := tx.QueryRow(`UPDATE bins SET node_id=$1, anomaly_note='', updated_at=$3::timestamptz,
 			delta_epoch = delta_epoch + CASE WHEN `+streamed+` THEN 1 ELSE 0 END,
-			lifted_at = CASE WHEN `+streamed+` THEN $3::timestamptz ELSE NULL END
+			lifted_at = CASE WHEN `+streamed+` THEN $3::timestamptz ELSE NULL END,
+			last_lift_at = $3::timestamptz
 		WHERE id=$2 AND (node_id IS NULL OR node_id != $1)
 		RETURNING delta_epoch, lifted_at, uop_remaining, payload_code`,
 		transitNodeID, binID, now, station).Scan(&l.Epoch, &liftedAt, &l.Count, &l.PayloadCode)
@@ -1786,6 +1830,56 @@ func LiftToTransitTx(tx *sql.Tx, binID, transitNodeID int64, station string, now
 		l.Bumped, l.LiftedAt = true, liftedAt.Time.UTC()
 	}
 	return l, nil
+}
+
+// LeftQuery is one vacate fact to read: has Bin been lifted since Since, and
+// does it no longer stand on the node named Node.
+type LeftQuery struct {
+	Bin   int64
+	Node  string
+	Since time.Time
+}
+
+// LeftSince reads the vacate fact for each query, in one statement however many
+// (the floor's batch): true when the bin's last_lift_at is after Since AND the
+// bin is not on Node. The first half is the lift — a ghost eviction moves a bin
+// to _TRANSIT without it, so it never answers true; the second is that the bin
+// has not come back — a lift then a return to the node answers false. A bin or
+// node that no longer resolves answers false: an absent fact holds nothing.
+// Answers align with qs.
+func LeftSince(db *sql.DB, qs []LeftQuery) ([]bool, error) {
+	if len(qs) == 0 {
+		return nil, nil
+	}
+	ids := make([]int64, len(qs))
+	names := make([]string, len(qs))
+	since := make([]time.Time, len(qs))
+	for i, q := range qs {
+		ids[i], names[i], since[i] = q.Bin, q.Node, q.Since.UTC()
+	}
+	rows, err := db.Query(`SELECT q.i,
+			COALESCE(b.last_lift_at > q.since AND n.id IS NOT NULL AND b.node_id IS DISTINCT FROM n.id, false)
+		FROM unnest($1::bigint[], $2::text[], $3::timestamptz[]) WITH ORDINALITY AS q(bin, node, since, i)
+		LEFT JOIN bins b ON b.id = q.bin
+		LEFT JOIN nodes n ON n.name = q.node`, ids, names, since)
+	if err != nil {
+		return nil, fmt.Errorf("read vacate facts: %w", err)
+	}
+	defer rows.Close()
+	out := make([]bool, len(qs))
+	for rows.Next() {
+		var (
+			i    int64
+			left bool
+		)
+		if err := rows.Scan(&i, &left); err != nil {
+			return nil, fmt.Errorf("read vacate facts: %w", err)
+		}
+		if i >= 1 && int(i) <= len(out) {
+			out[i-1] = left
+		}
+	}
+	return out, rows.Err()
 }
 
 // LiftedAt reads bins.lifted_at: when the bin's last generation ended at a

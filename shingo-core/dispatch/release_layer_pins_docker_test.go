@@ -348,27 +348,39 @@ func TestReleaseLayer_PairDeathRule(t *testing.T) {
 	}
 }
 
-// ── U5's refusal names its arm, and says when it could not read ─────────────
+// ── A held release names the bin it waits on, and holds when it cannot read ─
 
-// TestReleaseLayer_VacatedRefusalArms: the vacated-slot fence reports which arm
-// refused, Z (the stamped leg) or Y (its partner held with it), so a shift's
-// refusals can be counted per arm; and a stamped bin that cannot be read is
-// refused as "could not read", not as a bin still standing there.
-func TestReleaseLayer_VacatedRefusalArms(t *testing.T) {
+// TestReleaseLayer_VacateHoldNamesItsBin replaces the U5 refusal-arms pin with
+// the hold that replaced the arms (vacate_hold.go). The stamped leg (was arm Z)
+// and its partner (was arm Y) are both TAKEN and held — no error, nothing
+// appended — and each row says which bin must leave which node. A stamp whose
+// node no longer resolves is held, not released: an absent fact holds nothing.
+func TestReleaseLayer_VacateHoldNamesItsBin(t *testing.T) {
 	t.Parallel()
 	r := newReleaseRig(t)
-	z, y, b1, _, _ := swapAtVacatedBuffer(t, r, "RLVS", StatusStaged)
-	if arm, detail := r.d.vacateReleaseRefusal(prReload(t, r.db, z.ID)); arm != "Z" || !strings.Contains(detail, "is still there") {
-		t.Errorf("stamped leg: arm %q detail %q, want Z and the bin still there", arm, detail)
+	z, y, _, _, _ := swapAtVacatedBuffer(t, r, "RLVS", StatusStaged)
+	for _, c := range []struct {
+		uuid       string
+		id         int64
+		wantReason string
+	}{
+		{z.EdgeUUID, z.ID, "Waiting for RLVS-PARTIAL to leave RLVS-B1"},
+		{y.EdgeUUID, y.ID, "Waiting for RLVS-RESIDENT to leave RLVS-LINE"},
+	} {
+		if got := r.outcome(t, c.uuid); got != "appends=0 wait_index=0 status=staged errors=[]" {
+			t.Errorf("%s: %s, want the release taken and held", c.uuid, got)
+		}
+		o := prReload(t, r.db, c.id)
+		if QueueCause(o.QueueCause) != CauseVacateWaitingLift || !strings.HasPrefix(o.QueueReason, c.wantReason) {
+			t.Errorf("%s: cause %q reason %q, want %q and %q", c.uuid, o.QueueCause, o.QueueReason,
+				CauseVacateWaitingLift, c.wantReason)
+		}
 	}
-	if arm, _ := r.d.vacateReleaseRefusal(prReload(t, r.db, y.ID)); arm != "Y" {
-		t.Errorf("partner: arm %q, want Y", arm)
-	}
-	// The drop node no longer resolves by name, so where the bin stands cannot
-	// be compared with it.
-	mustExecDispatch(t, r.db, `UPDATE nodes SET name=$1 WHERE id=$2`, "RLVS-B1-RENAMED", b1.ID)
-	arm, detail := r.d.vacateReleaseRefusal(prReload(t, r.db, z.ID))
-	if arm != "Z" || !strings.Contains(detail, "could not read") || strings.Contains(detail, "is still there") {
-		t.Errorf("unreadable bin: arm %q detail %q, want Z and \"could not read\"", arm, detail)
+
+	r2 := newReleaseRig(t)
+	z2, _, b1, _, _ := swapAtVacatedBuffer(t, r2, "RLVR", StatusDispatched)
+	mustExecDispatch(t, r2.db, `UPDATE nodes SET name=$1 WHERE id=$2`, "RLVR-B1-RENAMED", b1.ID)
+	if got := r2.outcome(t, z2.EdgeUUID); got != "appends=0 wait_index=0 status=staged errors=[]" {
+		t.Errorf("a stamp whose node no longer resolves: %s, want held", got)
 	}
 }

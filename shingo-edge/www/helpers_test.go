@@ -102,9 +102,10 @@ type stubEngine struct {
 	// ChangeoverGateStatus canned response — the gate-status endpoint is a
 	// pure read, so the stub just replays whatever the test set.
 
-	// lastClearLoaderHomeBuffer is the buffer_node the clear-loader-home door
-	// passed on, nil until it is called.
-	lastClearLoaderHomeBuffer *string
+	// clearLoaderHomeCalls counts the clear-loader-home door's calls through;
+	// clearLoaderHomeErr is what they answer.
+	clearLoaderHomeCalls int
+	clearLoaderHomeErr   error
 	// lastClearBinLayers is the layers the clear-bin door passed on.
 	lastClearBinLayers *int
 
@@ -246,9 +247,9 @@ func (s *stubEngine) ClearBin(_ int64, _ string, _ bool, layers *int) error {
 	return nil
 }
 func (s *stubEngine) RecordBinCount(int64, int, string) error { return nil }
-func (s *stubEngine) ClearLoaderHome(_ int64, bufferNode string) error {
-	s.lastClearLoaderHomeBuffer = &bufferNode
-	return nil
+func (s *stubEngine) ClearLoaderHome(int64) (string, error) {
+	s.clearLoaderHomeCalls++
+	return engine.HomeClearStays, s.clearLoaderHomeErr
 }
 func (s *stubEngine) FetchMarketBins(int64) ([]engine.MarketBinInfo, error)     { return nil, nil }
 func (s *stubEngine) PullFromMarket(int64, string) error                        { return nil }

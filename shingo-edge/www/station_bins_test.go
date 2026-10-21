@@ -37,7 +37,17 @@ type coreStub struct {
 	// rows are the node-bins rows by node name; an asked name with no row is
 	// answered unoccupied, as Core answers a node it does not know.
 	rows map[string]protocol.NodeBinInfo
+	// cleared is every node a bin-clear named, in order. A clear answers with
+	// the node's row's bin and clearEpoch as the carrier's new stamp.
+	cleared []string
+	// homeClear answers Core's clear-home door when set (404 when nil), and
+	// homeClears is every request it saw.
+	homeClear  func(protocol.ClearHomeRequest) (int, protocol.ClearHomeResponse)
+	homeClears []protocol.ClearHomeRequest
 }
+
+// clearEpoch is the stamp the stub's bin-clear hands back.
+const clearEpoch = int64(4)
 
 func newCoreStub(t *testing.T, rows map[string]protocol.NodeBinInfo) (*coreStub, *httptest.Server) {
 	t.Helper()
@@ -61,6 +71,32 @@ func newCoreStub(t *testing.T, rows map[string]protocol.NodeBinInfo) (*coreStub,
 				out = append(out, row)
 			}
 			_ = json.NewEncoder(w).Encode(out)
+		case r.URL.Path == "/api/telemetry/bin-clear":
+			var req protocol.BinClearRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			s.mu.Lock()
+			s.cleared = append(s.cleared, req.NodeName)
+			row := s.rows[req.NodeName]
+			s.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(protocol.BinClearResponse{Status: "ok", BinID: row.BinID,
+				ClearedPayloadCode: row.PayloadCode, DeltaEpoch: clearEpoch})
+		case r.URL.Path == "/api/telemetry/clear-home" && s.homeClear != nil:
+			var req protocol.ClearHomeRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			s.mu.Lock()
+			s.homeClears = append(s.homeClears, req)
+			answer := s.homeClear
+			s.mu.Unlock()
+			status, body := answer(req)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(body)
 		case r.URL.Path == "/api/containment":
 			_ = json.NewEncoder(w).Encode(map[string]any{"containment": []any{}, "held_bins": []any{}})
 		case key == "children":

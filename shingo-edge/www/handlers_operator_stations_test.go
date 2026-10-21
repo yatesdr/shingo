@@ -868,30 +868,6 @@ func TestOperatorStations_ClearBin_Success(t *testing.T) {
 	assertJSONPath(t, resp, "status", "ok")
 }
 
-// TestClearLoaderHome_PassesTheNamedSpot: the door hands the engine the
-// buffer_node the board's card sent, and blank when the body names none (the
-// header's picker sends {}; the engine then takes the first match).
-func TestClearLoaderHome_PassesTheNamedSpot(t *testing.T) {
-	h, router := newTestHandlers(t)
-	router.Post("/api/process-nodes/{id}/clear-loader-home", h.apiClearLoaderHome)
-	stub := h.orchestration.(*stubEngine)
-	for _, tc := range []struct {
-		body any
-		want string
-	}{
-		{map[string]string{"buffer_node": "LDR.SMN_F2"}, "LDR.SMN_F2"},
-		{map[string]string{}, ""},
-		{nil, ""},
-	} {
-		stub.lastClearLoaderHomeBuffer = nil
-		resp := doRequest(t, router, "POST", "/api/process-nodes/1/clear-loader-home", tc.body, nil)
-		assertStatus(t, resp, http.StatusOK)
-		if stub.lastClearLoaderHomeBuffer == nil || *stub.lastClearLoaderHomeBuffer != tc.want {
-			t.Errorf("body %v: the engine got buffer node %v, want %q", tc.body, stub.lastClearLoaderHomeBuffer, tc.want)
-		}
-	}
-}
-
 // ═══════════════════════════════════════════════════════════════════════
 // Engine passthrough — changeover lifecycle
 // ═══════════════════════════════════════════════════════════════════════

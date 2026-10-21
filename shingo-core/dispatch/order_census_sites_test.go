@@ -199,6 +199,7 @@ func TestCensus_DropoffCapacityGateSites(t *testing.T) {
 		"dispatch/preview.go:PreviewDropoffCapacity":                  "the read-only preview the UI shows",
 		"dispatch/vacated_slot.go:noOtherInFlight":                    "the vacated-slot rule's in-flight half: another order delivering to the node, the asker excluded",
 		"engine/cancel_return.go:storeIntoLoader":                     "cancel-return: whether a loader home has room for the carried bin's type",
+		"dispatch/clear_home.go:ClearSpot":                            "home clear: whether a buffer spot is open for the home's carrier (the spot arm)",
 		"fulfillment/scanner.go:fulfill":                              "the scanner's re-run before every dispatch (a pass's order, or AcquireOne's)",
 		"store/orders.go:CountInFlightOrdersByDeliveryNodeExcluding":  "the store wrapper",
 		"store/orders/orders.go:CountInFlightByDeliveryNode":          "the count",

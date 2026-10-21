@@ -222,8 +222,11 @@ func resolveBinUOPContext(tx *sql.Tx, binID int64, detail json.RawMessage) (audi
 const emptiedCarrierSET = `payload_code='', manifest=NULL, uop_remaining=0,
 	manifest_confirmed=false, loaded_at=NULL, undeclared_carrier_at=NULL, totes_on_cart=NULL`
 
-// ClearForReuse empties a bin's manifest. The bin becomes visible
-// to FindEmptyCompatibleBin after this call. Owns its transaction.
+// ClearForReuse empties a bin's manifest. Owns its transaction. The bin
+// becomes an empty to the empty finders — except on a live loader's
+// position, which their loader arm excludes (bins.emptyCarrierWhere), save a
+// buffer of the asking destination's own loader and a home whose clear is
+// running (engine/clear_home.go).
 // ClearForReuse begins its own transaction and delegates to
 // ClearForReuseTx. Returns the new delta_epoch so callers that ship
 // the bin's state to Edge (e.g. handlers that return JSON containing

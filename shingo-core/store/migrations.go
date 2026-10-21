@@ -4484,7 +4484,28 @@ func migrationList() []migration {
 					schema.ColumnExists(q, "bins", "totes_on_cart") &&
 					schema.TableExists(q, "node_maintain_layer_levels")
 			}},
+		{162, "bins.last_lift_at — when a robot last lifted the bin, every lift, never cleared: the vacate fact's floor",
+			v162BinLastLiftAt,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "bins", "last_lift_at") }},
 	}
+}
+
+// v162BinLastLiftAt adds bins.last_lift_at (held step, STOP 2 ruled
+// 2026-10-18). The lift writes it for every bin in the UPDATE it already runs
+// (bins.LiftToTransitTx, +0 statements), and nothing else writes it: placement
+// and ghost eviction never touch it, so it survives the bin landing elsewhere,
+// which is what lets the 60 s floor see a lift the event missed. The vacate
+// hold releases on last_lift_at > the stamp's stamped_at AND node_id <> the
+// stamp's node (bins.LeftSince). lifted_at keeps its own meaning (a streamed
+// generation ended at a lift, cleared at arrival) and its two readers. NULL on
+// every existing row: a bin lifted before this migration answers "not lifted"
+// until its next lift. The baseline DDL declares the same column. Renumbered
+// 157 -> 162: v156 through v160 landed on main while this was on its branch.
+func v162BinLastLiftAt(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE bins ADD COLUMN IF NOT EXISTS last_lift_at TIMESTAMPTZ`); err != nil {
+		return fmt.Errorf("v162 bins.last_lift_at: %w", err)
+	}
+	return nil
 }
 
 // v152ProcessPositions creates the positions mirror (Lane 0 item 6; C2c

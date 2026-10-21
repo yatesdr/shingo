@@ -430,10 +430,11 @@ function liveOrders(tile) {
     return (tile.orders || []).filter(function (o) { return isActiveStatus(o.status); });
 }
 
-// clearMoves is a home's own clear while it runs: Order A, the move of the
-// home's carrier to the partial's spot, live on the home's orders. The home
-// draws no Load card until it ends, and the spot it goes to is drawn as
-// coming.
+// clearMoves is a home's own clear while it runs: the move of the home's
+// emptied carrier off the home (Core's clear, on its spot arm, to an open
+// buffer spot; pushed to the station as a plain row), live on the home's
+// orders. The home draws no Load card until it ends, and the spot it goes to
+// is drawn as coming.
 function clearMoves(tile) {
     const home = (tile.node && tile.node.core_node_name) || '';
     if (!home || tileRole(tile) !== 'produce') return [];
@@ -794,7 +795,7 @@ function loaderCards(t, ctx) {
         ctx.partials.push(ctx.card(t, 'partial', [0], {
             spotWords: 'holds a full bin', headline: bin.payload_code,
             reason: 'Pull the full · partial from ' + from, partialSpot: from,
-            act: { kind: 'clear-home', node: t.node.id, home: spotOf(t), spot: from, bufferNode: bp.node },
+            act: { kind: 'clear-home', node: t.node.id, home: spotOf(t), spot: from },
         }));
     } else if (loadable.length === 0 && bin.occupied && bin.payload_code && !bin.stocked) {
         ctx.other('Check bin', ctx.card(t, 'check', [0], {

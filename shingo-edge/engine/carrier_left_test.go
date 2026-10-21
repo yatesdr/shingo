@@ -170,33 +170,25 @@ func TestCarrierBound_ByAdjustmentIsUnknown(t *testing.T) {
 	})
 }
 
-// TestClearLoaderHome_TheCarrierStaysKnownEmpty pins the clear-in-place
-// identity: ClearLoaderHome zeroes the home carrier through Core and the
-// carrier stays at the slot until Order A lifts it, so it is not a
-// departure — it is known-empty, said by the operator whose clear it was
-// (the same answer operator_bin_ops.go's CLEAR records).
-func TestClearLoaderHome_TheCarrierStaysKnownEmpty(t *testing.T) {
+// TestPullbackAutoClear_TheCarrierStaysKnownEmpty pins the clear-in-place
+// identity: the market pullback's auto-clear zeroes the delivered carrier
+// through Core and the carrier stays at the window, so it is not a departure
+// — it is known-empty, said by the operator whose clear it was (the same
+// answer operator_bin_ops.go's CLEAR records).
+func TestPullbackAutoClear_TheCarrierStaysKnownEmpty(t *testing.T) {
 	t.Parallel()
-	srv, _ := intentCoreServer(t, []protocol.NodeBinInfo{
-		{NodeName: "CLH-HOME", Occupied: true, PayloadCode: "CLH-PART", UOPRemaining: 5, BinID: 11},
-		{NodeName: "CLH-BUF", Occupied: true, PayloadCode: "CLH-PART", UOPRemaining: 3, BinID: 12},
-	}, nil)
-	db := testEngineDB(t)
-	nodeID := seedIntentNode(t, db, "CLH-ID-PROC", "CLH-HOME")
-	_, err := db.EnsureProcessNodeRuntime(nodeID)
-	testutil.MustNoErr(t, err, "ensure runtime")
-	testutil.MustNoErr(t, db.SetProcessNodeRuntimeLinesidePayload(nodeID, "CLH-PART", true, "delivery"),
-		"resident identity")
-	eng := newIntentEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
-	eng.SetCoreLoaders([]protocol.LoaderInfo{consolidationLoader()})
+	f := armPullback(t)
+	defer f.db.Close()
 
-	testutil.MustNoErr(t, eng.ClearLoaderHome(nodeID, ""), "ClearLoaderHome")
+	deliverTo(f.eng, f.order, f.nodeID)
 
-	rt, err := db.GetProcessNodeRuntime(nodeID)
+	if got := f.clears.Load(); got != 1 {
+		t.Fatalf("bin-clear calls after the pullback delivered = %d, want 1", got)
+	}
+	rt, err := f.db.GetProcessNodeRuntime(f.nodeID)
 	testutil.MustNoErr(t, err, "read runtime")
 	if rt.LinesidePayloadCode != "" || !rt.LinesidePayloadKnown || rt.LinesideSource != "operator" {
-		t.Errorf("identity after ClearLoaderHome code=%q known=%v source=%q, want '' / true / operator — "+
+		t.Errorf("identity after the auto-clear code=%q known=%v source=%q, want '' / true / operator — "+
 			"the carrier is still here and the clear says it is empty",
 			rt.LinesidePayloadCode, rt.LinesidePayloadKnown, rt.LinesideSource)
 	}

@@ -2062,3 +2062,34 @@ func ActiveByBinID(db *sql.DB, binID int64) ([]*Order, error) {
 	defer rows.Close()
 	return ScanOrders(rows)
 }
+
+// VacateWaitCandidates answers "who waits on this bin": the orders a vacate
+// hold can stand on. Two shapes, one population (PopVacateHeld):
+//
+//   - committed (a vendor order), staged or in transit, whose plan carries a
+//     held vacate stamp or a stored vacate wait. The plan decides whether the
+//     order is parked at that wait now (dispatch.coreOwnsWait);
+//   - a compound child not yet handed to the fleet whose drop carries a vacate
+//     stamp: a home clear's partial move, held before dispatch until the stamp's
+//     bin leaves (dispatch/clear_home.go, clearDropHeld).
+//
+// binID, when not 0, narrows to the rows with a stamp naming that bin — the
+// lift's read, which returns no row when nothing waits on the lifted bin. 0
+// returns them all (an order's end, the floor). One statement either way: the
+// redriver, the floor and the clear's re-run all ask it.
+func VacateWaitCandidates(db *sql.DB, binID int64) ([]*Order, error) {
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders
+		WHERE ((status IN ($1, $2) AND vendor_order_id <> ''
+		         AND (steps_json LIKE '%%"held_at":%%' OR steps_json LIKE '%%"wait_kind":"vacate"%%'))
+		    OR (parent_order_id IS NOT NULL AND %s AND steps_json LIKE '%%"vacate":%%'))
+		  AND ($3 = 0 OR CASE WHEN steps_json LIKE '[%%' THEN EXISTS (
+		        SELECT 1 FROM jsonb_array_elements(steps_json::jsonb) st
+		         WHERE (st->'vacate'->>'bin')::bigint = $3) ELSE false END)
+		ORDER BY id`, SelectCols, AwaitingFleetSQL("")),
+		string(protocol.StatusStaged), string(protocol.StatusInTransit), binID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return ScanOrders(rows)
+}

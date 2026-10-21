@@ -27,7 +27,8 @@ import (
 // What changes is the move's own: where the carrier is (node_id, and the
 // arrival's status and staged_at), and what the lift writes
 // (bins.LiftToTransitTx: the anomaly note cleared, the generation bumped, one
-// ledger row "lifted"). Its type, payload, manifest, count and findings are not
+// ledger row "lifted", and last_lift_at — every lift's stamp, the vacate
+// fact's floor). Its type, payload, manifest, count and findings are not
 // written, and none of the three statements that empty a carrier runs on it
 // (no clear_for_reuse, clear_and_claim or released_empty row). The changed set
 // is pinned by name, so a write that starts to ride the move (a stamp, a count, a
@@ -92,7 +93,7 @@ func TestPushEmpty_CoreWritesNothingTheCarrierCarries(t *testing.T) {
 		}
 	}
 	sort.Strings(changed)
-	want := []string{"anomaly_note", "delta_epoch", "node_id", "staged_at", "status", "updated_at"}
+	want := []string{"anomaly_note", "delta_epoch", "last_lift_at", "node_id", "staged_at", "status", "updated_at"}
 	if !reflect.DeepEqual(changed, want) {
 		t.Errorf("the push changed %v on the carrier, want only %v. Before %v, after %v",
 			changed, want, before, after)

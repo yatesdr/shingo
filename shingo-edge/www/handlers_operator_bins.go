@@ -83,25 +83,36 @@ func (h *Handlers) apiRequestFullBin(w http.ResponseWriter, r *http.Request) {
 	writeActionOK(w, r, "refreshMaterial")
 }
 
+// apiClearLoaderHome clears a dedicated loader's home: the driver has pulled
+// the full, then tapped. It is one request to Core (Engine.ClearLoaderHome),
+// which makes the checks, records the zero and authors whatever moves the
+// partial home. Recorded, the answer is 200 with the board's one sentence for
+// what Core did (engine.HomeClearStays when nothing moves yet), the board's
+// success toast. Core's one-live-clear refusal is 409 with its sentence, shown
+// in place of the confirm's buttons; a node Core cannot clear is 400; any
+// other failure reaching Core is 502. It reads no body.
 func (h *Handlers) apiClearLoaderHome(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	// buffer_node is optional: the board's Clear partials card names the spot
-	// it shows, so the card and the engine cannot pick different partials; a
-	// body without it (the header's PULL FULL FROM HOME picker) takes the first
-	// match in the plant's order (engine.ClearLoaderHome).
-	var body struct {
-		BufferNode string `json:"buffer_node"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	if err := h.orchestration.ClearLoaderHome(id, body.BufferNode); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	sentence, err := h.orchestration.ClearLoaderHome(id)
+	if err != nil {
+		var refused *engine.HomeClearRefused
+		if errors.As(err, &refused) {
+			writeError(w, http.StatusConflict, refused.Sentence)
+			return
+		}
+		var invalid *engine.HomeClearInvalid
+		if errors.As(err, &invalid) {
+			writeError(w, http.StatusBadRequest, invalid.Sentence)
+			return
+		}
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok", "message": sentence}, "refreshMaterial")
 }
 
 func (h *Handlers) apiGetMarketBins(w http.ResponseWriter, r *http.Request) {

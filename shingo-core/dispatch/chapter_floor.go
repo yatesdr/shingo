@@ -91,6 +91,7 @@ const (
 	chapterReplannable chapterVerdict = iota // no vehicle committed — dissolve
 	chapterWaiting                           // a mission is live — visible wait
 	chapterResidue                           // the fleet finished and Core never heard
+	chapterVacateHeld                        // a home clear's move Core holds on the vacate fact
 )
 
 // ChapterSweepResult counts one pass. Every field is zero on a healthy plant.
@@ -149,6 +150,11 @@ func (d *Dispatcher) SweepStalledChapters() ChapterSweepResult {
 		case chapterResidue:
 			d.recordChapterResidue(parentID, leg)
 			out.Residue++
+		case chapterVacateHeld:
+			// A WAIT WITH ITS OWN OWNER: PopVacateHeld re-drives and floors it, and the
+			// clear's re-run is keyed on its state. Nothing is written here; dissolving
+			// would cancel the partial's move the clear is waiting to send.
+			out.Waiting++
 		}
 	}
 	return out
@@ -169,6 +175,12 @@ func classifyStalledChapter(legs []*orders.Order) (chapterVerdict, *orders.Order
 			continue
 		}
 		if leg.VendorOrderID == "" {
+			// A HOME CLEAR'S PARTIAL MOVE held on the vacate fact is not a stale
+			// plan: it waits for the home's carrier to be lifted, which can take as
+			// long as the pull that took it (clear_home.go, clearDropHeld).
+			if c := QueueCause(leg.QueueCause); c == CauseVacateWaitingLift || c == CauseVacateLifterGone {
+				return chapterVacateHeld, leg
+			}
 			continue // never handed to the fleet: no robot to disturb
 		}
 		if leg.VendorState != "" && isTerminalVendorState(leg.VendorState) {

@@ -110,9 +110,9 @@ export function renderHeader() {
     // START side and the operator always owns the FINISH.
     const header = boardLayout(claimedNodes()).header;
     if (header === 'pull-full-from-home') {
-        // A dedicated home loader beside a press: the header's act is
-        // consolidating homes, not a changeover. (On the board its cards say
-        // it, in Clear partials.)
+        // A dedicated home loader beside a press: the header's act is a home's
+        // clear (the full pulled, the partial brought home), not a changeover.
+        // (On the board its cards say it, in Clear partials.)
         headerActions.appendChild(headerBtn('PULL FULL FROM HOME', 'pull-full-home', openPullFullFromHomePicker));
     } else if (header === 'changeover') {
         if (view.active_changeover) {
@@ -246,7 +246,7 @@ const boardActs = {
         case 'unload': confirmUnloadSwap(a.node, a.carriers, a.discarding, a.leavesBare, a.lit); break;
         case 'unload-held': confirmUnloadHeld(a.node, a.heldFor, a.count); break;
         case 'push-empty': confirmPushEmpty(a.node, a.carriers, a.bare, a.lit); break;
-        case 'clear-home': confirmClearLoaderHome(a.node, a.home, a.spot, a.bufferNode); break;
+        case 'clear-home': confirmClearLoaderHome(a.node, a.home, a.spot); break;
         case 'modal': openModalRef(a.node); break;
         case 'request-empty': postFromBar(a, '/api/process-nodes/' + a.node + '/request-empty', {}); break;
         case 'request-full': postFromBar(a, '/api/process-nodes/' + a.node + '/request-full', { payload_code: a.payload }); break;
@@ -612,30 +612,42 @@ function confirmPushEmpty(nodeID, carriers, bare, lit) {
     showOverlay(overlay);
 }
 
-// confirmClearLoaderHome shows a confirmation overlay before firing the
-// clear-loader-home consolidation sequence. The operator declares this home bin
-// empty; Shingo moves the carrier to the buffer, then pulls the buffer partial
-// back to the home. From the board's card it names the home and the spot the
-// partial comes from, which ends holding an empty, and the post names that
-// spot (buffer_node, the Core name of tile.buffer_partial), so the card and the
-// engine cannot pick different partials. The header's picker names no spot:
-// the engine then takes the first matching partial in the plant's order.
-function confirmClearLoaderHome(nodeID, home, spot, bufferNode) {
+// confirmClearLoaderHome shows the confirm for a home's clear. The driver
+// pulls the full first, then taps: one request, and Core records the zero and
+// decides what brings the partial home (a waiting pull, an open buffer spot, or
+// not yet); the server answers with one sentence saying which
+// (handlers_operator_bins.go). From the
+// board's card the confirm names the home and the spot the partial stands on
+// (tile.buffer_partial); the header's picker names no spot. The buttons go at
+// the tap, so the tap sends one request. Recorded, the confirm closes and the
+// sentence is the board's success toast; refused, the confirm stays and shows
+// the refusal in place of its buttons.
+function confirmClearLoaderHome(nodeID, home, spot) {
     const overlay = el('div', { className: 'os-co-picker-overlay' });
     const panel = el('div', { className: 'os-co-picker' });
     panel.appendChild(el('div', { className: 'os-co-picker-title',
         textContent: home ? 'Clear ' + home + '?' : 'Clear this home bin?' }));
     panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
         textContent: home && spot
-            ? 'Declares the bin at ' + home + ' empty. Shingo brings the partial from ' + spot + ' to ' + home +
-              ', and ' + spot + ' ends holding the empty.'
-            : 'Declares this bin empty. Shingo will move the empty carrier to the buffer, then pull the buffer partial to this home.' }));
+            ? 'Pull the full from ' + home + ' first. CONFIRM records it; Shingo brings the partial on ' + spot + ' home when it can.'
+            : 'Pull the full from this home first. CONFIRM records it.' }));
 
     const confirm = el('button', { className: 'os-co-picker-btn', textContent: 'CONFIRM CLEAR' });
-    confirm.addEventListener('click', function() {
+    confirm.addEventListener('click', async function() {
+        confirm.remove();
+        cancel.remove();
+        let refused = false;
+        let said = '';
+        const ok = await postAction('/api/process-nodes/' + nodeID + '/clear-loader-home', undefined, loadViewRef, {
+            onRefused: function(msg) {
+                refused = true;
+                panel.appendChild(el('div', { className: 'os-co-picker-subtitle', textContent: msg }));
+            },
+            onResult: function(result) { said = (result && result.message) || ''; },
+        });
+        if (refused) return;
         overlay.remove();
-        postAction('/api/process-nodes/' + nodeID + '/clear-loader-home',
-            bufferNode ? { buffer_node: bufferNode } : undefined, loadViewRef);
+        if (ok && said) showToast(said, 'success');
     });
     panel.appendChild(confirm);
 
@@ -648,11 +660,10 @@ function confirmClearLoaderHome(nodeID, home, spot, bufferNode) {
     showOverlay(overlay);
 }
 
-// openPullFullFromHomePicker is the header entry point to the buffer chain. It
-// lists ONLY the homes that can actually run it — a loaded home ("full") whose
-// loader buffer holds a matching partial to backfill (the same gate as the
-// per-card CLEAR BIN). Showing only eligible homes means every option is
-// actionable; tapping one runs the clear-loader-home consolidation. It is
+// openPullFullFromHomePicker is the header entry point to a home's clear. It
+// lists ONLY the homes the board offers the clear on — a loaded home ("full")
+// whose loader buffer holds a matching partial (the same gate as the Clear
+// partials card). Tapping one opens the clear's confirm. It is
 // offered on a dedicated loader beside a press (the node grid); the
 // board says the same in its Clear partials cards.
 function openPullFullFromHomePicker() {
@@ -665,7 +676,7 @@ function openPullFullFromHomePicker() {
     var panel = el('div', { className: 'os-co-picker' });
     panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Pull full from home' }));
     panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
-        textContent: 'Pick a full home. Shingo sends its empty carrier to the buffer, then pulls the matching buffer partial into the home.' }));
+        textContent: 'Pick the home whose full you pulled. Shingo records it and brings the partial home when it can.' }));
 
     if (eligible.length === 0) {
         panel.appendChild(el('div', { className: 'os-co-picker-subtitle',

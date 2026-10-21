@@ -26,7 +26,16 @@ func (d *Dispatcher) reResolveComplexStepsFor(order *orders.Order, steps []resol
 		return newSteps, changed, err
 	}
 	for i := range newSteps {
-		if st := newSteps[i].Vacate; st != nil && (steps[i].Vacate == nil || *steps[i].Vacate != *st) {
+		st := newSteps[i].Vacate
+		if st == nil {
+			continue
+		}
+		var prev *vacateStamp
+		if i < len(steps) {
+			prev = steps[i].Vacate
+		}
+		stampTime(st, prev)
+		if !plan.SameGrant(prev, st) {
 			logVacated(order, st, "group re-resolve")
 		}
 	}
@@ -201,6 +210,14 @@ func splitSegment(steps []resolvedStep, waitIndex int) (segment []resolvedStep, 
 // the shared append helper advances wait_index only after the fleet accepted
 // the segment, so an order that has consumed its final wait indexes past the
 // end. That is the same condition splitSegment reports as a nil segment.
+// widenStopsAt reports whether supply widening stops at this step: any wait but
+// a lane wait — a station wait or a vacate wait, both of which separate two
+// states of the world (widenSupplyPickups says why). Pinned by
+// TestWidenStopsAtAStationOrVacateWait.
+func widenStopsAt(step resolvedStep) bool {
+	return step.Action == protocol.ActionWait && step.WaitKind != WaitKindLane
+}
+
 func waitAt(steps []resolvedStep, waitIndex int) (resolvedStep, bool) {
 	if waitIndex < 0 {
 		return resolvedStep{}, false
@@ -392,7 +409,7 @@ func (d *Dispatcher) widenSupplyPickups(order *orders.Order, steps []resolvedSte
 	changed := false
 	for i := range out {
 		step := out[i]
-		if step.Action == protocol.ActionWait && step.WaitKind != WaitKindLane {
+		if widenStopsAt(step) {
 			// Widening stops at the first OPERATOR wait. Post-wait steps execute
 			// after an Edge release, against a FUTURE world state — the classic
 			// single-order swap's post-wait line pickup removes a bin that
@@ -418,6 +435,10 @@ func (d *Dispatcher) widenSupplyPickups(order *orders.Order, steps []resolvedSte
 			// autoreorder re-fires the pair every ~50s. The splice inserts lane
 			// waits into plans that previously had none, so without this line
 			// the fix would have quietly stopped covering them.
+			//
+			// A VACATE WAIT IS SUCH A BOUNDARY, like a station wait: what comes
+			// after it runs once a named bin has left a named node, a state of the
+			// world that has not happened yet.
 			break
 		}
 		if step.Action != protocol.ActionPickup || step.Empty || isRemovalPickup(step, order.ProcessNode) {

@@ -230,13 +230,43 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild, lanes *CompoundLa
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
+	displaced, stolen, err := CreateCompoundChildrenTx(tx, children, lanes)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	// AFTER THE COMMIT, and only after it. A displaced order is a consequence of
+	// a steal that HAPPENED; reporting one out of a transaction that then rolls
+	// back would have the caller terminate a person's order over a dig that
+	// never took anything. The LOG is the same fact and now keeps the same rule:
+	// a steal reported from inside the transaction is a theft that a later
+	// child's refusal can un-do, and soakstat counts those lines.
+	LogSteals(stolen)
+	return displaced, nil
+}
+
+// Steals is what a birth took from foreign soft holders, for LogSteals once
+// the birth has committed.
+type Steals []stolenBin
+
+// LogSteals logs a committed birth's steals (see CreateCompoundChildren).
+func LogSteals(s Steals) { logSteals(s) }
+
+// CreateCompoundChildrenTx is CreateCompoundChildren on the caller's
+// transaction, for a door that commits the children with other work — the home
+// clear commits its parent, the partial's soft hold and the empty's zero with
+// them. The caller commits, then reports displaced and calls LogSteals, the
+// order CreateCompoundChildren keeps.
+func CreateCompoundChildrenTx(tx *sql.Tx, children []CompoundChild, lanes *CompoundLanes) ([]DisplacedByHand, Steals, error) {
 	// THE LANES' ADVISORY LOCKS COME FIRST, then the parent's row: the order every
 	// transaction that takes a lane and an order row keeps (the hand,
 	// HandOffLaneToPicker; reservations.OwnerLiveSQL's comment). The parent's
 	// FOR UPDATE below stays the first ROW lock.
 	if lanes != nil {
 		if err := reservations.LockLanesTx(tx, lanes.LaneIDs...); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	// THE PARENT IS READ UNDER LOCK, FIRST. A cancel's status write takes this
@@ -250,19 +280,19 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild, lanes *CompoundLa
 	if parentID := compoundParentID(children); parentID != 0 {
 		var status protocol.Status
 		if err := tx.QueryRow(`SELECT status FROM orders WHERE id=$1 FOR UPDATE`, parentID).Scan(&status); err != nil {
-			return nil, fmt.Errorf("read compound parent %d: %w", parentID, err)
+			return nil, nil, fmt.Errorf("read compound parent %d: %w", parentID, err)
 		}
 		if protocol.IsTerminal(status) {
-			return nil, &ParentGoneError{ParentID: parentID, Status: status}
+			return nil, nil, &ParentGoneError{ParentID: parentID, Status: status}
 		}
 	}
 	if lanes != nil {
 		if err := lanes.Admit(tx); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	var displaced []DisplacedByHand
-	var stolen []stolenBin
+	var stolen Steals
 
 	for _, c := range children {
 		o := c.Order
@@ -272,7 +302,7 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild, lanes *CompoundLa
 		// from them. It also owns the clock.Now() timestamps and the o.ID
 		// write-back that the code below depends on.
 		if err := orders.Create(tx, o); err != nil {
-			return nil, fmt.Errorf("create child order (seq %d): %w", o.Sequence, err)
+			return nil, nil, fmt.Errorf("create child order (seq %d): %w", o.Sequence, err)
 		}
 
 		// THE STEAL HAPPENS AT BIRTH; THE CLAIM AT THE HANDOVER. A blocker is
@@ -294,7 +324,7 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild, lanes *CompoundLa
 			}
 			byHand, took, err := stealSoftHolds(tx, *o.BinID, o.ID, parentID, o.DeliveryNode)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			displaced = append(displaced, byHand...)
 			stolen = append(stolen, took...)
@@ -306,22 +336,12 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild, lanes *CompoundLa
 		// from booking one slot; the loser's birth rolls back whole.
 		if c.Park != 0 {
 			if err := pencilParkingTx(tx, o.ID, c); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	// AFTER THE COMMIT, and only after it. A displaced order is a consequence of
-	// a steal that HAPPENED; reporting one out of a transaction that then rolls
-	// back would have the caller terminate a person's order over a dig that
-	// never took anything. The LOG is the same fact and now keeps the same rule:
-	// a steal reported from inside the transaction is a theft that a later
-	// child's refusal can un-do, and soakstat counts those lines.
-	logSteals(stolen)
-	return displaced, nil
+	return displaced, stolen, nil
 }
 
 // compoundParentID is the parent the children are written under, 0 if none
@@ -1882,4 +1902,19 @@ func (db *DB) ActiveOrderIDsByRobot() (map[string]int64, error) {
 // truncation flag. See orders.ListByOrigin.
 func (db *DB) ListOrdersByOrigin(originID string, limit int) ([]*orders.Order, bool, error) {
 	return orders.ListByOrigin(db.DB, originID, limit)
+}
+
+// VacateWaitCandidates: see orders.VacateWaitCandidates.
+func (db *DB) VacateWaitCandidates(binID int64) ([]*orders.Order, error) {
+	return orders.VacateWaitCandidates(db.DB, binID)
+}
+
+// LiveClearForHome: see orders.LiveClearForHome.
+func (db *DB) LiveClearForHome(homeName string) (bool, error) {
+	return orders.LiveClearForHome(db.DB, homeName)
+}
+
+// ClearPullCandidates: see orders.ClearPullCandidates.
+func (db *DB) ClearPullCandidates(homeID int64, homeName string, loaderPositions []string) ([]int64, error) {
+	return orders.ClearPullCandidates(db.DB, homeID, homeName, loaderPositions)
 }

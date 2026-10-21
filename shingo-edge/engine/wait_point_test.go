@@ -36,6 +36,9 @@ func TestOrderStaged_RecordsTheWaitPoint(t *testing.T) {
 			`staged station_wait=1 wait_kind="station"`},
 		{"a lane wait", protocol.OrderStaged{OrderUUID: uuid, WaitKind: protocol.WaitKindLane},
 			`staged station_wait=nil wait_kind="lane"`},
+		{"a vacate hold: Core took the release and holds the leg",
+			protocol.OrderStaged{OrderUUID: uuid, WaitKind: protocol.WaitKindVacate},
+			`staged station_wait=nil wait_kind="vacate"`},
 	} {
 		msg := c.msg
 		h.handler.HandleOrderStaged(&protocol.Envelope{}, &msg)

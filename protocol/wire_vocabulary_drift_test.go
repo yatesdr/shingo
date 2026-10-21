@@ -48,6 +48,8 @@ var vocabularyNames = map[string]bool{
 	// name, not value). protocol.WaitKindStation is its home.
 	"WaitKindStation": true,
 	"waitKindStation": true,
+	// The vacate kind, guarded by name for the same reason.
+	"WaitKindVacate": true,
 }
 
 // pendingPromotionHomes are the definition sites of vocabulary that has not

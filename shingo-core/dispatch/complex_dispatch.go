@@ -1031,7 +1031,7 @@ func (d *Dispatcher) reserveComplexDestination(order *orders.Order, resolvedStep
 				if plan.StampHonoured(resolvedSteps[f]) != nil || !fungible {
 					if st := d.vacatedFor(order, resolvedSteps, f, order.DeliveryNode, pc); st != nil &&
 						d.noOtherInFlight(order.DeliveryNode, order) {
-						if prev := resolvedSteps[f].Vacate; prev == nil || *prev != *st {
+						if prev := resolvedSteps[f].Vacate; !plan.SameGrant(prev, st) {
 							d.admitVacated(order, resolvedSteps, f, st, "final-drop gate")
 						}
 						blocked = false

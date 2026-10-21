@@ -297,6 +297,25 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 		//  3. What origin_class? `attached`, stated at the call site rather than
 		//     defaulted. The keeper opened the episode itself and knows what it is.
 		{"maintained-group level keeper", "engine/maintainer.go", "nobody — a maintained group holds fewer empty carriers than its declared level and the maintainer's timer tops it up"},
+		// THE HOME CLEAR (dispatch/clear_home.go). A station clears a dedicated
+		// loader's home; Core authors the job: a compound parent (the clear's
+		// row, delivering to the home) and plain-move children — the partial's
+		// move at confirm, the empty's move on the spot arm — written through
+		// Build(tx, ...) and CreateCompoundChildrenTx in the door's transaction.
+		//
+		// The three questions:
+		//  1. Projects to the Edge? YES, pushed by the door itself: the parent
+		//     and every child (projectClear), because none goes through
+		//     admission and the station asked for the job, so its board must
+		//     show the moves it caused. The projection census lists the door.
+		//  2. Needs the dropoff-capacity gate? Not at birth. The partial's move
+		//     is held before dispatch on the vacate fact (the home's carrier
+		//     lifted off it), and the spot is chosen free to the plain gate
+		//     (ClearSpot); from birth each child's drop counts inbound to its
+		//     node (the dig-leg arm), which keeps other orders off both.
+		//  3. What origin_class? no_demand, stated at birth: the station asked
+		//     for housekeeping, and no place is asking for material.
+		{"home clear", "dispatch/clear_home.go", "an Edge station clearing a dedicated loader's home — Core declares the carrier empty and brings a buffer partial home"},
 		// THE LANE SELF-HEAL DOOR IS DELETED (§R.104), and it is not merely moved:
 		// nothing takes its place, because the order it used to create does not
 		// exist. Its entry read "nobody — the lane gate finds a robot dwelling

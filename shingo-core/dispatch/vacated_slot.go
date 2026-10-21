@@ -2,11 +2,11 @@ package dispatch
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"sort"
 
 	"shingo/protocol"
+	"shingo/protocol/clock"
 	"shingocore/dispatch/plan"
 	"shingocore/store/orders"
 )
@@ -18,8 +18,9 @@ import (
 // the slot book (plan.BinsAtStep) and decided once. This file keeps what is not
 // a decision: the pair's pass and the leg it hands the planner (pairPass), the
 // stage-1 order, the in-flight half each asker asks of its own predicate, the
-// stamp written onto the persisted plan, the INFO line the deploy check counts,
-// and the release fence (U5).
+// stamp written onto the persisted plan with the time it was written, and the
+// INFO line the deploy check counts. The release fence (U5, arms Z and Y) is
+// gone: Core holds a release on the stamp until the bin lifts (vacate_hold.go).
 
 // vacateStamp is the planner's grant record (plan.Vacate).
 type vacateStamp = plan.Vacate
@@ -90,6 +91,23 @@ func lastDropIndex(steps []resolvedStep) int {
 	return -1
 }
 
+// stampTime gives a partner stamp its StampedAt: the time the same grant was
+// first written (prev, when it records the same grant), else now on Core's
+// clock — the clock the lift stamps bins.last_lift_at with. The vacate fact is
+// a lift after it, so a re-ask on a later pass must not move it forward. An
+// own-lift (a) grant is never held and carries none.
+func stampTime(st, prev *vacateStamp) {
+	if st == nil || st.Partner == 0 || st.StampedAt != nil {
+		return
+	}
+	if plan.SameGrant(prev, st) && prev.StampedAt != nil {
+		st.StampedAt = prev.StampedAt
+		return
+	}
+	now := clock.Now().UTC()
+	st.StampedAt = &now
+}
+
 // persistStepStamp writes a stamp (and, when non-empty, an anchor) onto step i of
 // the order's PERSISTED plan. Not a marshal of the caller's slice: loader
 // placement patches steps_json without touching the in-memory plan, and writing
@@ -105,6 +123,7 @@ func (d *Dispatcher) persistStepStamp(order *orders.Order, i int, st *vacateStam
 		log.Printf("dispatch: vacated stamp order %d: step %d does not drop at %s — not stamped", order.ID, i, st.Node)
 		return
 	}
+	stampTime(st, steps[i].Vacate)
 	steps[i].Vacate = st
 	if anchor != "" {
 		steps[i].Anchor = anchor
@@ -139,93 +158,6 @@ func logVacated(order *orders.Order, st *vacateStamp, asker string) {
 		order.ID, st.Node, st.Bin, asker)
 }
 
-// ── THE RELEASE FENCE (U5) ──────────────────────────────────────────────────
-
-// vacateReleaseRefusal is the fence HandleOrderRelease consults before it
-// appends a segment. It returns the arm that refused ("Z" or "Y") and the
-// refusal detail, or "" for both when the release may go.
-//
-// Z — THIS LEG DROPS ON A SLOT ITS PARTNER HAS NOT VACATED YET. A (b) grant
-// promised the partner lifts first; the release is what would break that
-// promise, so while the stamped bin still stands on the node the release is
-// refused and the Edge rolls the leg back to staged.
-//
-// Y — THIS LEG'S PARTNER IS BEING HELD BY Z. Refusing Z alone lets its partner
-// place onto a line that still holds Z's bin: by the Edge's deferral re-firing
-// when it stages, or because it was already in transit and its release went
-// straight away. So a leg is refused while its sibling is staged with a stamped
-// pending segment and this leg drops onto a node holding a bin that sibling has
-// claimed. The stamp condition is load-bearing: without it every press-index
-// click is refused, because R1 drops on the on-deck position R2 has claimed and
-// R2 is still staged when R1's release is processed.
-//
-// Both read the segment as it will be sent — after patchRedirectSegments, which
-// can rewrite the final drop at release.
-func (d *Dispatcher) vacateReleaseRefusal(order *orders.Order) (arm, detail string) {
-	seg, ok := d.pendingSegment(order)
-	if !ok {
-		return "", ""
-	}
-	for _, s := range seg {
-		st := partnerStamp(s)
-		if st == nil {
-			continue
-		}
-		on, err := d.binOn(st.Bin, s.Node)
-		if err != nil {
-			return "Z", fmt.Sprintf("order %d would drop on %s, which its partner order %d must empty first, "+
-				"and Core could not read where bin %d is (%v) — release again",
-				order.ID, s.Node, st.Partner, st.Bin, err)
-		}
-		if on {
-			return "Z", fmt.Sprintf("order %d would drop on %s, which its partner order %d has not yet emptied "+
-				"(bin %d is still there) — release again once that robot has lifted it", order.ID, s.Node, st.Partner, st.Bin)
-		}
-	}
-	if order.SiblingOrderUUID == "" {
-		return "", ""
-	}
-	z, err := d.db.GetOrderByUUID(order.SiblingOrderUUID)
-	if err != nil || z == nil || z.Status != StatusStaged {
-		return "", ""
-	}
-	zSeg, ok := d.pendingSegment(z)
-	if !ok {
-		return "", ""
-	}
-	var held *vacateStamp
-	for _, s := range zSeg {
-		if st := partnerStamp(s); st != nil {
-			held = st
-			break
-		}
-	}
-	if held == nil {
-		return "", ""
-	}
-	for _, s := range seg {
-		if s.Action != protocol.ActionDropoff || s.Node == "" {
-			continue
-		}
-		n, err := d.db.GetNodeByDotName(s.Node)
-		if err != nil || n == nil {
-			continue
-		}
-		onNode, err := d.db.ListBinsByNode(n.ID)
-		if err != nil {
-			continue
-		}
-		for _, b := range onNode {
-			if b.ClaimedBy != nil && *b.ClaimedBy == z.ID {
-				return "Y", fmt.Sprintf("order %d would drop on %s, which still holds bin %d of its partner order %d — "+
-					"and order %d is held until order %d empties %s. Release again once it has",
-					order.ID, s.Node, b.ID, z.ID, z.ID, held.Partner, held.Node)
-			}
-		}
-	}
-	return "", ""
-}
-
 // pendingSegment is the segment a release of this order would append, exactly as
 // HandleOrderRelease builds it, from a private decode so the real path is not
 // touched.
@@ -240,26 +172,4 @@ func (d *Dispatcher) pendingSegment(o *orders.Order) ([]resolvedStep, bool) {
 	}
 	d.patchRedirectSegments(seg, o, more)
 	return seg, true
-}
-
-// binOn reports whether a bin still stands on the named node. An answer that
-// could not be read is an error: the fence still refuses on it (a refused
-// release is a click repeated), but says it could not read, rather than
-// claiming the bin is there.
-func (d *Dispatcher) binOn(binID int64, node string) (bool, error) {
-	b, err := d.db.GetBin(binID)
-	if err != nil {
-		return false, fmt.Errorf("read bin %d: %w", binID, err)
-	}
-	if b == nil || b.NodeID == nil {
-		return false, nil
-	}
-	n, err := d.db.GetNodeByDotName(node)
-	if err != nil {
-		return false, fmt.Errorf("read node %s: %w", node, err)
-	}
-	if n == nil {
-		return false, fmt.Errorf("node %s not found", node)
-	}
-	return *b.NodeID == n.ID, nil
 }

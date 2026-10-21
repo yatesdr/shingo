@@ -608,6 +608,58 @@ func TestGateStagedNotSwept(t *testing.T) {
 	}
 }
 
+// TestAbandonSweep_ExemptsVacateWait: a robot parked at a wait Core releases on
+// the vacate fact is Core's decision, exactly as a lane wait is, and the sweep
+// must not cancel it. Two shapes, both through dispatch.CoreOwnsWaitAt: a stored
+// vacate wait (a plan Core authors) and a station wait whose next drop carries
+// a held vacate stamp (the station released it while the bin still stood).
+// Control: the same station wait with the stamp NOT held is the station's, and
+// is swept.
+func TestAbandonSweep_ExemptsVacateWait(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	setupTestData(t, db)
+	svc := newReconService(t, db)
+
+	mk := func(uuid, steps string) *orders.Order {
+		o := &orders.Order{EdgeUUID: uuid, StationID: "line-1", OrderType: "complex", Status: "staged",
+			SourceNode: "ALN_003", DeliveryNode: "SMN_001", StepsJSON: steps}
+		testutil.MustNoErr(t, db.CreateOrder(o), "create "+uuid)
+		testutil.MustNoErr(t, db.UpdateOrderVendor(o.ID, "sg-"+uuid, "WAITING", ""), "vendor")
+		if _, err := db.Exec(`UPDATE orders SET updated_at = NOW() - INTERVAL '10 hours' WHERE id = $1`, o.ID); err != nil {
+			t.Fatalf("backdate %d: %v", o.ID, err)
+		}
+		return o
+	}
+	stored := mk("vacate-stored", `[{"action":"pickup","node":"ALN_003"},`+
+		`{"action":"wait","wait_kind":"vacate"},{"action":"dropoff","node":"SMN_001"}]`)
+	held := mk("vacate-held", `[{"action":"wait","node":"ALN_003","wait_kind":"station"},{"action":"pickup","node":"ALN_003"},`+
+		`{"action":"dropoff","node":"SMN_001","vacate":{"node":"SMN_001","bin":7,"partner":9,"held_at":"2026-10-18T10:00:00Z"}}]`)
+	notHeld := mk("vacate-not-held", `[{"action":"wait","node":"ALN_003","wait_kind":"station"},{"action":"pickup","node":"ALN_003"},`+
+		`{"action":"dropoff","node":"SMN_001","vacate":{"node":"SMN_001","bin":7,"partner":9}}]`)
+
+	var abandoned []int64
+	svc.abandonOrder = func(o *orders.Order, reason string) error {
+		abandoned = append(abandoned, o.ID)
+		return nil
+	}
+	_, err := svc.AbandonStuckOrders(time.Hour, 4*time.Hour)
+	testutil.MustNoErr(t, err, "AbandonStuckOrders")
+	got := map[int64]bool{}
+	for _, id := range abandoned {
+		got[id] = true
+	}
+	if got[stored.ID] {
+		t.Error("an order parked at a stored vacate wait was abandoned — a committed robot Core owes a decision")
+	}
+	if got[held.ID] {
+		t.Error("an order Core holds on a vacate stamp was abandoned — the station already released it; Core owes the rest")
+	}
+	if !got[notHeld.ID] {
+		t.Error("a station wait whose stamp is NOT held was exempted — until the station releases it, it is the station's")
+	}
+}
+
 // ── Summary — critical by dead letter ───────────────────────────────
 
 func TestReconciliationService_Summary_DeadLetterCritical(t *testing.T) {

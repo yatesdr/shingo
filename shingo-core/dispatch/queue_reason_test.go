@@ -24,6 +24,19 @@ func TestFormatQueueSentence_Snapshot(t *testing.T) {
 		want   string
 	}{
 		{
+			// A VACATE HOLD names the bin whose leaving is the whole wait.
+			name:   "slot held on a vacate stamp",
+			code:   protocol.QueueWaitingForSlot,
+			params: QueueParams{Destination: "LX-B1", VacateBin: "BIN-0042"},
+			want:   "Waiting for BIN-0042 to leave LX-B1",
+		},
+		{
+			name:   "slot held on a vacate stamp whose lifter ended",
+			code:   protocol.QueueWaitingForSlot,
+			params: QueueParams{Destination: "LX-B1", VacateBin: "BIN-0042", VacateLifterGone: true},
+			want:   "Waiting for BIN-0042 to leave LX-B1 — the order that was to lift it has ended",
+		},
+		{
 			name:   "material full payload",
 			code:   protocol.QueueWaitingForMaterial,
 			params: QueueParams{Payload: "SNF2-6SA0B.06", Kind: "full"},

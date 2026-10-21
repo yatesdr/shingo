@@ -350,8 +350,9 @@ func buildPayloadTwoWindowBoard(t *testing.T, db *store.DB, eng *Engine) int64 {
 }
 
 // A produce dedicated-positions loader: two homes on the station, two buffer
-// spots that are not on it. The first home has a clear in flight: Order A, the
-// blank-payload move of its emptied carrier to a buffer spot (ClearLoaderHome).
+// spots that are not on it. The first home has a blank-payload move of its
+// emptied carrier to a buffer spot in flight, the shape the board reads as a
+// clear in flight (service bufferStrip).
 func buildDedicatedHomesBoard(t *testing.T, db *store.DB, eng *Engine) int64 {
 	sid, ids := loaderStation(t, db, "LDR-HOMES", "SMN_H1", "SMN_H2")
 	servedCell(t, db, "CELL-3", "WLN_3", []string{"PART-A"}, 12)

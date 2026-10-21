@@ -229,7 +229,8 @@ var statusWaitClasses = map[protocol.Status]struct {
 	protocol.StatusStaged: {classCoreWait, PopGateStaged,
 		"a robot parked at a wait point. A LANE wait is Core's and is floored here; an OPERATOR " +
 			"wait on the same status is human-owned and bounded by AbandonStuckOrders' longer timeout. " +
-			"The status cannot tell them apart — the wait step can (WaitKind), which is why the " +
+			"A VACATE hold (PopVacateHeld) is Core's too and floored on the same tick. The status cannot tell " +
+			"them apart — the wait step and its next drop can (coreOwnsWait), which is why the " +
 			"population is derived from the step and not from this column"},
 	protocol.StatusReshuffling: {classCoreWait, PopCompoundParent,
 		"a compound parent waiting on its children; AdvanceStuckReshuffleParents is its floor"},

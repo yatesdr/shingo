@@ -641,11 +641,11 @@ type ComplexOrderStep struct {
 	// three-strike retry cap and guessed wrong; a human at an HMI has strictly
 	// less to go on.
 	//
-	// Values are dispatch.WaitKindLane ("lane", Core-owned) and
-	// dispatch.WaitKindStation ("station", station-owned). They are declared in
-	// Core because Core is where the fence that reads them lives.
+	// Values are WaitKindStation ("station", station-owned) and, on a plan Core
+	// authors, WaitKindLane ("lane") and WaitKindVacate ("vacate"), both
+	// Core-owned. They are declared once, in waitkind.go.
 	//
-	// EMPTY IS NOT A THIRD KIND. It means "authored before this field", and it
+	// EMPTY IS NOT A FOURTH KIND. It means "authored before this field", and it
 	// is read as station-owned for exactly as long as pre-ruling orders are
 	// draining — the historical default, so nothing needs migrating. After the
 	// drain window an untagged wait is a defect, and the drift tests on both
@@ -912,7 +912,9 @@ type OrderStaged struct {
 	// Core splices lane waits into a plan and the Edge's copy has none. Absent
 	// at a lane wait, and from a Core that predates it.
 	StationWait *int `json:"station_wait,omitempty"`
-	// WaitKind is the wait's owner: WaitKindStation or WaitKindLane.
+	// WaitKind is the wait's owner: WaitKindStation, or a Core kind —
+	// WaitKindLane, or WaitKindVacate when the station has released and Core
+	// holds the leg until a bin leaves the node it drops on (IsCoreWaitKind).
 	WaitKind string `json:"wait_kind,omitempty"`
 }
 

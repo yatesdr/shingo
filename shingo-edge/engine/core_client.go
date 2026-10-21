@@ -288,8 +288,8 @@ func (c *CoreClient) LoadBin(req *BinLoadRequest) (*BinLoadResponse, error) {
 }
 
 // ReleasePoints asks Core what releasing each order would let its robot do
-// next: the nodes its pending segment enters, the lifts it waits on, and the
-// lineside bin it departs with (protocol.ReleasePoint). One round trip per act.
+// next: the nodes its pending segment enters and the lifts it waits on
+// (protocol.ReleasePoint). One round trip per act.
 // A failure is an error: a release decided on facts Core did not give is the
 // guess this read exists to replace.
 func (c *CoreClient) ReleasePoints(station string, orderUUIDs []string) ([]protocol.ReleasePoint, error) {
@@ -538,4 +538,29 @@ func (c *CoreClient) FetchHeldPartials(payloadCode string) ([]protocol.HeldParti
 		return nil, fmt.Errorf("%w: decode held partials: %w", ErrCoreUndecodable, err)
 	}
 	return out, nil
+}
+
+// ClearHome asks Core to clear a dedicated loader's home (POST
+// /api/telemetry/clear-home): one request, one answer. Core makes the checks,
+// authors the orders and zeroes the home's carrier. A refusal comes back as
+// the answer with its status and nil error: the caller reads Error, and BinID
+// and DeltaEpoch when Core zeroed the carrier before it refused.
+func (c *CoreClient) ClearHome(req protocol.ClearHomeRequest) (*protocol.ClearHomeResponse, int, error) {
+	if c.baseURL == "" {
+		return nil, 0, fmt.Errorf("core API not configured")
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	resp, err := c.http.Post(c.baseURL+"/api/telemetry/clear-home", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, 0, fmt.Errorf("clear-home request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	var out protocol.ClearHomeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("decode clear-home response: %w", err)
+	}
+	return &out, resp.StatusCode, nil
 }

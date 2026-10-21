@@ -2,7 +2,6 @@ package engine
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,25 +11,22 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
-	"shingoedge/orders"
 	"shingoedge/store"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
 
-// order_intent_restart_test.go — the pull-from-market and clear-loader-home
-// intents survive an Edge restart.
+// order_intent_restart_test.go — the pull-from-market intent survives an Edge
+// restart.
 //
-// Both features arm a FUTURE action when they dispatch their first order: a
-// pullback auto-clears the bin when its order delivers to the loader window; a
-// home consolidation fires Order B (buffer partial -> home) when Order A's robot
-// lifts the empty off the home. The arming used to live only in two maps on the
-// Engine, so an Edge restart between arming and firing lost it: the pulled-back
-// bin arrived uncleared, and the home was emptied with no partial ever brought
-// in. "Restart" here is the real thing: the DB file is closed and reopened and a
-// new Engine is built over it, so nothing in memory carries across.
+// A pullback arms a FUTURE action when it dispatches its order: it auto-clears
+// the bin when the order delivers to the loader window. The arming used to
+// live only in a map on the Engine, so an Edge restart between arming and
+// firing lost it: the pulled-back bin arrived uncleared. "Restart" here is the
+// real thing: the DB file is closed and reopened and a new Engine is built
+// over it, so nothing in memory carries across.
 
-// intentCoreServer fakes the Core telemetry endpoints both features call and
+// intentCoreServer fakes the Core telemetry endpoints the pullback calls and
 // counts bin-clear requests.
 func intentCoreServer(t *testing.T, bins []protocol.NodeBinInfo, children []protocol.NodeChildInfo) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
@@ -168,117 +164,15 @@ func TestPullbackIntentSurvivesRestart(t *testing.T) {
 	}
 }
 
-func consolidationLoader() protocol.LoaderInfo {
-	return protocol.LoaderInfo{
-		Name: "LDR-CLH", LoaderKey: "loader:clh", Role: string(protocol.ClaimRoleProduce),
-		Layout: "dedicated_positions", Replenishment: "operator",
-		Positions: []protocol.LoaderPosition{
-			{CoreNodeName: "CLH-HOME", PayloadCode: "CLH-PART", HomeKind: "home"},
-			{CoreNodeName: "CLH-BUF", HomeKind: "buffer"},
-		},
-		Payloads: []protocol.LoaderPayloadInfo{{PayloadCode: "CLH-PART"}},
-	}
-}
-
-// countMovesFrom counts active move orders at nodeID with the given source.
-func countMovesFrom(t *testing.T, db *store.DB, nodeID int64, source, dest string) int {
-	t.Helper()
-	all, err := db.ListActiveOrdersByProcessNode(nodeID)
-	testutil.MustNoErr(t, err, "list orders")
-	n := 0
-	for _, o := range all {
-		if o.OrderType == orders.TypeMove && o.SourceNode == source && o.DeliveryNode == dest {
-			n++
-		}
-	}
-	return n
-}
-
-// The lane's reason, consolidation half: arm (ClearLoaderHome creates Order A),
-// restart, Order A's carrier is picked up at the home -> Order B fires.
-func TestConsolidationIntentSurvivesRestart(t *testing.T) {
-	t.Parallel()
-	path := copyEngineDBTemplate(t)
-	srv, _ := intentCoreServer(t, []protocol.NodeBinInfo{
-		{NodeName: "CLH-HOME", Occupied: true, PayloadCode: "CLH-PART", UOPRemaining: 5, BinID: 11},
-		{NodeName: "CLH-BUF", Occupied: true, PayloadCode: "CLH-PART", UOPRemaining: 3, BinID: 12},
-	}, nil)
-
-	db := openIntentDB(t, path)
-	nodeID := seedIntentNode(t, db, "CLH-PROC", "CLH-HOME")
-	eng := newIntentEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
-	eng.SetCoreLoaders([]protocol.LoaderInfo{consolidationLoader()})
-
-	testutil.MustNoErr(t, eng.ClearLoaderHome(nodeID, ""), "ClearLoaderHome")
-	var orderA *storeorders.Order
-	all, err := db.ListActiveOrdersByProcessNode(nodeID)
-	testutil.MustNoErr(t, err, "list orders")
-	for i := range all {
-		if all[i].SourceNode == "CLH-HOME" && all[i].DeliveryNode == "CLH-BUF" {
-			orderA = &all[i]
-		}
-	}
-	if orderA == nil || len(all) != 1 {
-		t.Fatalf("fixture: want exactly Order A (home->buffer), got %d orders", len(all))
-	}
-	db.Close()
-
-	// Restart.
-	db2 := openIntentDB(t, path)
-	defer db2.Close()
-	eng2 := newIntentEngine(t, db2)
-	eng2.coreClient = stubCoreClient(srv.URL)
-	eng2.SetCoreLoaders([]protocol.LoaderInfo{consolidationLoader()})
-
-	eng2.HandleBinPickedUp(orderA.UUID, 11, "CLH-HOME")
-	if n := countMovesFrom(t, db2, nodeID, "CLH-BUF", "CLH-HOME"); n != 1 {
-		t.Fatalf("Order B (buffer->home) after the restarted Edge saw Order A's pickup = %d, want 1: "+
-			"the consolidation intent did not survive the restart, so the home was emptied and "+
-			"the partial never brought in", n)
-	}
-	// A replayed pickup (Core re-fires FINISHED blocks) must not fire a second Order B.
-	eng2.HandleBinPickedUp(orderA.UUID, 11, "CLH-HOME")
-	if n := countMovesFrom(t, db2, nodeID, "CLH-BUF", "CLH-HOME"); n != 1 {
-		t.Fatalf("Order B count after a replayed pickup = %d, want still 1", n)
-	}
-}
-
-// Control for the consolidation pin: on ONE Engine, Order A's pickup fires
-// Order B once, and a replayed pickup does not fire a second. Proves the
-// restart pin's fixture reaches the firing site, so its red is the restart.
-func TestConsolidationIntentFiresOnceWithoutRestart(t *testing.T) {
-	t.Parallel()
-	srv, _ := intentCoreServer(t, []protocol.NodeBinInfo{
-		{NodeName: "CLH-HOME", Occupied: true, PayloadCode: "CLH-PART", UOPRemaining: 5, BinID: 11},
-		{NodeName: "CLH-BUF", Occupied: true, PayloadCode: "CLH-PART", UOPRemaining: 3, BinID: 12},
-	}, nil)
-	db := openIntentDB(t, copyEngineDBTemplate(t))
-	defer db.Close()
-	nodeID := seedIntentNode(t, db, "CLH-PROC", "CLH-HOME")
-	eng := newIntentEngine(t, db)
-	eng.coreClient = stubCoreClient(srv.URL)
-	eng.SetCoreLoaders([]protocol.LoaderInfo{consolidationLoader()})
-
-	testutil.MustNoErr(t, eng.ClearLoaderHome(nodeID, ""), "ClearLoaderHome")
-	all, err := db.ListActiveOrdersByProcessNode(nodeID)
-	testutil.MustNoErr(t, err, "list orders")
-	if len(all) != 1 {
-		t.Fatalf("fixture: want exactly Order A, got %d orders", len(all))
-	}
-	eng.HandleBinPickedUp(all[0].UUID, 11, "CLH-HOME")
-	eng.HandleBinPickedUp(all[0].UUID, 11, "CLH-HOME")
-	if n := countMovesFrom(t, db, nodeID, "CLH-BUF", "CLH-HOME"); n != 1 {
-		t.Fatalf("Order B after Order A's pickup (twice, same Engine) = %d, want exactly 1", n)
-	}
-}
-
 // Unknown-kind decode: a row carrying a kind this build does not know (or a
 // malformed envelope) is logged and dropped at the firing site, and the
-// delivery path around it still runs — the bin still binds to the node.
+// delivery path around it still runs — the bin still binds to the node. The
+// retired "consolidation" kind, which an older build armed on a loader home's
+// clear, is one of them.
 func TestTakeIntent_UnknownKindDropsWithoutBreakingDelivery(t *testing.T) {
 	t.Parallel()
-	for _, raw := range []string{`{"kind":"horseshoe"}`, `not json`} {
+	for _, raw := range []string{`{"kind":"horseshoe"}`, `not json`,
+		`{"kind":"consolidation","buffer_core_name":"BUF","home_core_name":"HOME","home_process_node_id":9,"payload":"P"}`} {
 		f := armPullback(t)
 		testutil.MustNoErr(t, f.db.SetOrderPendingIntent(f.order.ID, raw), "plant intent")
 
@@ -299,43 +193,30 @@ func TestTakeIntent_UnknownKindDropsWithoutBreakingDelivery(t *testing.T) {
 	}
 }
 
-// A take at the other kind's site leaves the intent for its own site.
-func TestTakeIntent_OtherKindIsLeftInPlace(t *testing.T) {
-	t.Parallel()
-	f := armPullback(t)
-	defer f.db.Close()
-	if _, ok := f.eng.takeOrderIntent(f.order.ID, intentConsolidation); ok {
-		t.Fatal("a consolidation take consumed a pullback intent")
-	}
-	if it, ok := f.eng.takeOrderIntent(f.order.ID, intentPullback); !ok || it.NodeID != f.nodeID {
-		t.Fatalf("pullback take after the wrong-kind take = (%+v, %v), want the armed intent", it, ok)
-	}
-}
-
 // Cost record (not a budget assertion): microseconds per arming write, and per
 // fire-site read+take, on the engine test DB. Run with -v to read the numbers.
 func TestArmIntentCost(t *testing.T) {
 	f := armPullback(t)
 	defer f.db.Close()
 	const n = 500
-	it := orderIntent{Kind: intentConsolidation, BufferCoreName: "BUF", HomeCoreName: "HOME", HomeProcessNodeID: 9, Payload: "P"}
+	it := orderIntent{Kind: intentPullback}
 	start := time.Now()
 	for i := range n {
-		// Alternate the payload so every write changes the row: rewriting the
+		// Alternate the node so every write changes the row: rewriting the
 		// same bytes dirties no page and would under-report the commit.
-		it.Payload = fmt.Sprintf("P%d", i%2)
+		it.NodeID = int64(i%2 + 1)
 		f.eng.armOrderIntent(f.order.ID, it)
 	}
 	arm := time.Since(start)
 	start = time.Now()
 	for range n {
 		f.eng.armOrderIntent(f.order.ID, it)
-		f.eng.takeOrderIntent(f.order.ID, intentConsolidation)
+		f.eng.takeOrderIntent(f.order.ID, intentPullback)
 	}
 	armTake := time.Since(start)
 	start = time.Now()
 	for range n {
-		f.eng.takeOrderIntent(f.order.ID, intentConsolidation) // nothing armed: the per-event read
+		f.eng.takeOrderIntent(f.order.ID, intentPullback) // nothing armed: the per-event read
 	}
 	miss := time.Since(start)
 	t.Logf("COST arm write: %.1f µs/op; arm+take: %.1f µs/op; fire-site read with nothing armed: %.1f µs/op (n=%d)",

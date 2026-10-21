@@ -40,7 +40,6 @@ func (d *Dispatcher) ReleasePoints(stationID string, orderUUIDs []string) []prot
 				LifterUUID: dep.lifter.EdgeUUID, Node: dep.node, CoRelease: dep.coRelease,
 			})
 		}
-		pt.LinesideBin = d.departingLinesideBin(o, seg)
 		out = append(out, pt)
 	}
 	return out
@@ -62,8 +61,9 @@ type liftDep struct {
 // picks something up before it sets a bin down there (p is not carrying the
 // bin it will place). A leg never depends on itself.
 //
-// U5 (vacateReleaseRefusal) stays the stamp-scoped backstop it is by ruling;
-// both read the segment as it will be sent (pendingSegment) and the same
+// U5 stays the stamp-scoped backstop it is by ruling: the vacate hold
+// (vacateHoldsAtRelease, vacate_hold.go), which replaced the refusal
+// vacateReleaseRefusal; both read the segment as it will be sent and the same
 // sibling link.
 func (d *Dispatcher) liftDependencies(p *orders.Order, seg []resolvedStep) []liftDep {
 	if p.SiblingOrderUUID == "" {
@@ -171,27 +171,4 @@ func (d *Dispatcher) nodeHoldsABin(name string) bool {
 		return true
 	}
 	return len(onNode) > 0
-}
-
-// departingLinesideBin is the bin a release would lift off the order's line
-// node, when its segment picks up there: the departing leg's lineside bin,
-// which the Edge used to fetch separately (BinAtLineside).
-func (d *Dispatcher) departingLinesideBin(o *orders.Order, seg []resolvedStep) *protocol.NodeBinInfo {
-	if o.ProcessNode == "" || !segmentLifts(seg, o.ProcessNode) {
-		return nil
-	}
-	n, err := d.db.GetNodeByDotName(o.ProcessNode)
-	if err != nil || n == nil {
-		return nil
-	}
-	onNode, err := d.db.ListBinsByNode(n.ID)
-	if err != nil || len(onNode) == 0 {
-		return &protocol.NodeBinInfo{NodeName: o.ProcessNode}
-	}
-	b := onNode[0]
-	return &protocol.NodeBinInfo{
-		NodeName: o.ProcessNode, BinID: b.ID, BinLabel: b.Label, BinTypeCode: b.BinTypeCode, Bare: b.BinTypeBare,
-		PayloadCode: b.PayloadCode, UOPRemaining: b.UOPRemaining, DeltaEpoch: b.DeltaEpoch,
-		Manifest: b.Manifest, ManifestConfirmed: b.ManifestConfirmed, Occupied: true,
-	}
 }

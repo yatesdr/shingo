@@ -95,8 +95,11 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Edge's wide surface at 75 methods -
-// ServiceAccess's 22 embedded, plus 53 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Edge's wide surface at 76 methods -
+// ServiceAccess's 22 embedded, plus 54 orchestration verbs of its own.
+// (2026-10-17: 75 -> 76, ClearLoaderHome back for the home clear's tap,
+// POST /process-nodes/{id}/clear-loader-home; this header said 75 until
+// 2026-10-18.)
 // (2026-10-14: 74 -> 75 with ServiceAccess's LocalNodeBins, embedded.)
 // (2026-10-09: 74 -> 75 with ServiceAccess's LocalContainment, embedded.)
 //

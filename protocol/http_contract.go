@@ -258,6 +258,53 @@ type BinClearResponse struct {
 	Status     string `json:"status"`
 }
 
+// ClearHomeRequest asks Core to clear a dedicated loader's home: declare the
+// carrier standing on it empty and bring a buffer partial of the home's part
+// to it. Core decides how (ClearHomeResponse.Arm) and authors the orders; the
+// Edge sends this one request and nothing else.
+type ClearHomeRequest struct {
+	// HomeNode is the home's Core node name.
+	HomeNode string `json:"home_node"`
+	// PartialNode names the buffer spot whose partial comes home. Blank takes
+	// the first buffer spot, in the loader's order, holding a partial of the
+	// home's part — the spot the station's board names.
+	PartialNode string `json:"partial_node,omitempty"`
+	// Station is the asking Edge's station: the clear's orders are its, so it
+	// is sent their rows and their status.
+	Station string `json:"station"`
+}
+
+// ClearHomeResponse is Core's answer to a home clear. Status "ok" carries the
+// arm Core chose — ClearArmNone, with the sentence in Detail, when no job could
+// take the carrier — and a refusal (the one-live-clear fence, or a request
+// naming no clearable home) carries the sentence in Error. BinID and
+// DeltaEpoch name the home's carrier and its new generation stamp whenever
+// Core zeroed it — the Edge's carrierClearedInPlace takes them — and are 0 when
+// nothing was zeroed.
+type ClearHomeResponse struct {
+	// Field order alphabetical, as the other replies here.
+	Arm        string `json:"arm,omitempty"`
+	BinID      int64  `json:"bin_id,omitempty"`
+	DeltaEpoch int64  `json:"delta_epoch,omitempty"`
+	Detail     string `json:"detail,omitempty"`
+	Error      string `json:"error,omitempty"`
+	ParentUUID string `json:"parent_uuid,omitempty"`
+	Status     string `json:"status"`
+}
+
+// The arms a home clear takes (ClearHomeResponse.Arm).
+const (
+	// ClearArmDemand: a queued empty pull took the home's carrier; the partial
+	// comes home when that pull lifts it.
+	ClearArmDemand = "demand"
+	// ClearArmSpot: Core moves the home's carrier to an open buffer spot, then
+	// brings the partial home.
+	ClearArmSpot = "spot"
+	// ClearArmNone: no pull and no open spot. The zero is recorded and no job is
+	// born; the partial stays on its spot (the two-robot trade, the pair brief).
+	ClearArmNone = "none"
+)
+
 // PreflightRequest is the payload list the Edge POSTs to Core's preflight
 // inventory check before starting a changeover.
 type PreflightRequest struct {
@@ -306,9 +353,6 @@ type ReleasePoint struct {
 	Enters []string `json:"enters"`
 	// AwaitsLift is each drop node another leg must lift a bin from first.
 	AwaitsLift []LiftDependency `json:"awaits_lift"`
-	// LinesideBin is the bin a release lifts off the order's line node, when
-	// its segment picks up there; nil otherwise.
-	LinesideBin *NodeBinInfo `json:"lineside_bin,omitempty"`
 }
 
 // LiftDependency: the order's next segment sets a bin down on Node, which

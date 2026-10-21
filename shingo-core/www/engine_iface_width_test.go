@@ -112,12 +112,13 @@ func TestServiceAccessWidth(t *testing.T) {
 	assertInterfaceWidth(t, "ServiceAccess", reflect.TypeOf(&iface).Elem(), want)
 }
 
-// TestEngineOrchestrationWidth pins Core's wide surface at 65 methods —
-// ServiceAccess's 50 embedded, plus 15 orchestration verbs of its own.
+// TestEngineOrchestrationWidth pins Core's wide surface at 66 methods —
+// ServiceAccess's 50 embedded, plus 16 orchestration verbs of its own.
 // (CleanNow and SaveCleaningSetup joined at v158: one sends a pinned vendor
 // order, the other checks the cleaning points against the scene and the lanes
 // before saving. The cleaning opt-out did not: it is a one-row write and went
-// on NodeService, so ServiceAccess stayed at 50.)
+// on NodeService, so ServiceAccess stayed at 50. ClearLoaderHome joined with
+// the loader home's clear as a parent order.)
 // (PrepareDatabase left it in R27: Core's database settings apply after a
 // restart, so the save door only pings the draft, through HealthService.)
 //
@@ -134,6 +135,10 @@ func TestServiceAccessWidth(t *testing.T) {
 // Reached through BinManifest() it could only be one or the other. (Renamed
 // from ClearForReuseAndBookDeparture when it took the two-stage stamp; the
 // width is unchanged.)
+//
+// ClearLoaderHome is the home clear (engine/clear_home.go): it births the
+// clear's orders and zeroes the home's carrier in one transaction, under the
+// scanner's lock — no service owns all three.
 func TestEngineOrchestrationWidth(t *testing.T) {
 	t.Parallel()
 	want := []string{
@@ -148,6 +153,7 @@ func TestEngineOrchestrationWidth(t *testing.T) {
 		"CarrierBindings",
 		"CleanNow",
 		"ClearForReuseStampAndBookDeparture",
+		"ClearLoaderHome",
 		"ConfigPath",
 		"CreateBinMove",
 		"DashboardService",

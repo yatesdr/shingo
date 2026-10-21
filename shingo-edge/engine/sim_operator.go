@@ -848,12 +848,14 @@ func (op *simOperator) release(orderID int64, whenDone bool) {
 	if !op.hasStore() {
 		return
 	}
-	// A leg parked at a lane wait is Core's to release (G2), and Core says so
-	// in OrderStaged's wait_kind. It used to be invisible from here, which is
+	// A leg parked at a wait Core releases — a lane wait, a vacate hold Core
+	// took this station's release into, or a kind this Edge does not know — is
+	// Core's (G2, protocol.IsCoreWaitKind), and Core says so in
+	// OrderStaged's wait_kind. It used to be invisible from here, which is
 	// what the retired release cap stood in for (240 refusals in five minutes
 	// on the 2026-08-10 lane-stress rig); Core's next OrderStaged, at the
 	// station wait, schedules this again.
-	if o, err := op.e.db.GetOrder(orderID); err == nil && o.WaitKind == protocol.WaitKindLane {
+	if o, err := op.e.db.GetOrder(orderID); err == nil && protocol.IsCoreWaitKind(o.WaitKind) {
 		return
 	}
 	// A LaneHeld leg (staged with no Edge-authored step plan: a Core-created

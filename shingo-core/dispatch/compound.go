@@ -919,6 +919,16 @@ func (d *Dispatcher) advanceCompound(parentOrderID int64, dispatched *bool) erro
 		destName = destNode.Name
 	}
 
+	// A HOME CLEAR'S PARTIAL MOVE WAITS FOR THE HOME TO EMPTY (clear_home.go).
+	// Its drop carries the vacate stamp (the home's carrier, the home); until
+	// that carrier has been lifted off the home the move is held here, before
+	// any robot is sent, with the cause on its row. PopVacateHeld re-drives it
+	// (RedriveVacateWaits) on the lift and on its floor. A child with no stamp
+	// (every dig leg) decodes nothing and asks nothing.
+	if d.clearDropHeld(next) {
+		return nil
+	}
+
 	// MAY THIS MOVE HAPPEN NOW. One decision, asked in one place — this used to
 	// ask only "is anyone inside the lane" (laneOccupiedForChild, now deleted),
 	// which is a strict subset of the question and was never the whole of it.
@@ -1254,6 +1264,12 @@ func (d *Dispatcher) advanceCompoundChapterEnd(parentOrderID int64) error {
 	// gone, and the dwellers behind it are never woken. One read here covers all
 	// three arms; see unlockLaneForCompound.
 	heldLanes := d.digLanesHeld(parentOrderID)
+
+	// A HOME CLEAR'S PARENT DECIDES ITS OWN END (clear_home.go): it has no lane,
+	// and a lost leg must never Restart it into the scanner's population.
+	if parent != nil && IsClearParent(parent) {
+		return d.clearChapterEnd(parent, children)
+	}
 
 	// THE PARENT HAS ALREADY LEFT. Every disposition below writes a transition
 	// out of `reshuffling` — Fail, CompleteCompound, ResumeCompound all assume
@@ -2155,6 +2171,14 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 	parent, err := d.db.GetOrder(parentOrderID)
 	if err != nil {
 		log.Printf("dispatch: load parent for failed compound %d: %v", parentOrderID, err)
+		return
+	}
+
+	// A HOME CLEAR IS NOT A DIG: a lost empty's move is its re-run's, a lost
+	// partial's move ends the job (clearLegFailed). The sibling cancel below
+	// would take the partial's move down with a failed empty's move.
+	if IsClearParent(parent) {
+		d.clearLegFailed(parent, childOrderID)
 		return
 	}
 

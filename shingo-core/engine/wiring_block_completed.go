@@ -239,7 +239,8 @@ func (e *Engine) deriveTotesAtLift(bin *bins.Bin, order *orders.Order, orderID i
 //     whose bin's NodeID still equals the source node — others have
 //     already transitioned).
 //  2. The order's own claimed bin AT this location — see below.
-//  3. Single-bin order fallback: order.BinID.
+//  3. Single-bin order fallback: order.BinID, only when its record stands
+//     on the block's node (or the location names no node).
 //
 // ── WHY (2) EXISTS: A PLAN'S RE-PICKUPS HAVE NO JUNCTION ROWS ──────────────
 //
@@ -279,9 +280,10 @@ func (e *Engine) deriveTotesAtLift(bin *bins.Bin, order *orders.Order, orderID i
 // is the one bin it has claimed AT L. No junction, no step index, no agreement
 // with anything.
 //
-// FAILS CLOSED, and closed here means "today's behaviour". Zero claimed bins at
-// the location or more than one leaves (3) to answer exactly as it does now;
-// nothing that resolves today stops resolving.
+// Zero claimed bins at the location or more than one leaves (3) to answer.
+// (3) no longer answers with a bin recorded on another node: a lift releases a
+// vacate hold, so a false one is load-bearing (see the check in
+// resolvePickupBinRow).
 func (e *Engine) resolvePickupBin(orderID int64, location string) (binID int64, stepIndex int, fromNodeID int64, ok bool) {
 	bin, stepIndex, fromNodeID, ok := e.resolvePickupBinRow(orderID, location)
 	if !ok {
@@ -353,6 +355,25 @@ func (e *Engine) resolvePickupBinRow(orderID int64, location string) (bin *bins.
 	}
 	bin, err = e.db.GetBin(*order.BinID)
 	if err != nil || bin == nil {
+		return nil, 0, 0, false
+	}
+	// THE BIN'S RECORD MUST STAND ON THE BLOCK'S NODE. A lift writes
+	// last_lift_at, and that is the fact a vacate hold releases on
+	// (bins.LeftSince), so naming a bin that stands elsewhere — a replayed
+	// pickup after a restart, a re-pickup whose carrier is parked at another
+	// staging node — releases a hold for a lift that never happened. When the
+	// location names a node and the bin is not recorded on it, nothing
+	// resolves: no lift, no transit event. A location that names no node
+	// keeps the answer it always had. Pinned by
+	// TestPickupBlock_FallbackDoesNotLiftABinRecordedElsewhere.
+	if at, nerr := e.db.GetNodeByDotName(locationTrimmed); nerr == nil && at != nil &&
+		(bin.NodeID == nil || *bin.NodeID != at.ID) {
+		recorded := bin.NodeName
+		if bin.NodeID == nil {
+			recorded = "no node"
+		}
+		e.logFn("transit: order %d pickup @ %s — its bin %s is recorded on %s, not here; not lifting it",
+			orderID, at.Name, bin.Label, recorded)
 		return nil, 0, 0, false
 	}
 	from := int64(0)

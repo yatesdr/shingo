@@ -42,6 +42,15 @@ package dispatch
 //
 // Keep the count right. It is the number a reader uses to decide whether the
 // findings are worth reading.
+//
+// IT WAS WRONG AGAIN, and is corrected here (2026-10-18): eight rows carried a
+// finding while this said two — CauseLaneLocked, CauseHeldBinMissing,
+// CauseNGRPAtLevel, CauseGroupHoldsEmptiesOnly, CauseFinderGroupFenced,
+// CauseFinderSourceMissing, CauseFleetRefusedCreate and
+// CauseFinderCarrierRefused. CauseVacateLifterGone carried a ninth until the
+// home clear's re-run became its releaser; eight again.
+// The paragraph above describes the first two it names; the rest say what they
+// are in their own rows.
 
 // WaitPopulation names a set of orders that wait together because one mechanism
 // re-drives all of them. It is the unit the wiring and the floors are built on —
@@ -94,6 +103,14 @@ const (
 	// that nobody knows it is their turn. That surface is item 7's, and the
 	// Core-side hard release (W3) is the escape hatch until it exists.
 	PopStationWait WaitPopulation = "station-wait"
+	// PopVacateHeld is an order parked at a wait Core releases on the vacate
+	// fact (coreOwnsWait): a station wait whose release Core took and holds on a
+	// stamp until a named bin leaves a named node, or a stored vacate wait on a
+	// plan Core authors (a robot is committed), or a home clear's partial move
+	// Core holds before dispatch on the same fact (clear_home.go, clearDropHeld:
+	// no robot is sent until the home's carrier is lifted). Core observes the
+	// fact (the lift), so it re-drives it and floors it (vacate_hold.go).
+	PopVacateHeld WaitPopulation = "vacate-held"
 	// PopNone is the honest answer for a declared cause nothing produces. It is
 	// not a population; it is the absence of one, named so the totality test can
 	// tell "no orders wait under this" from "nobody wrote the row".
@@ -145,9 +162,12 @@ var waitPopulations = []populationReleaser{
 		population: PopAcquiring,
 		owner:      OwnerCore,
 		redriver:   "fulfillment.Scanner.RunOnce",
+		// EventBinEnteredTransit was subscribed (engine/wiring.go) and missing
+		// here: a lift frees the slot a queued order waits on.
 		events: []string{
 			"EventBinUpdated", "EventOrderCompleted", "EventOrderCancelled",
 			"EventOrderFailed", "EventOrderSkipped", "EventBlockCompleted",
+			"EventBinEnteredTransit",
 		},
 		floor: "fulfillment.Scanner.StartPeriodicSweep (60s)",
 	},
@@ -196,6 +216,22 @@ var waitPopulations = []populationReleaser{
 		},
 		floor: "ReconciliationService.AdvanceStuckReshuffleParents (all children terminal, reconcile " +
 			"interval) + Dispatcher.SweepStalledChapters (a leg still open, 60s)",
+	},
+	{
+		// The lift is the event (Core's one emitter of EventBinEnteredTransit,
+		// engine/wiring_block_completed.go), narrowed to the holds that name the
+		// bin; the order-terminal events re-ask every hold, because a lifter's
+		// moot end releases one and its cancel or failure is written on the row.
+		// The floor re-reads the lift itself (bins.last_lift_at), which an event
+		// missed during a Core restart cannot take away.
+		population: PopVacateHeld,
+		owner:      OwnerCore,
+		redriver:   "Dispatcher.RedriveVacateWaits",
+		events: []string{
+			"EventBinEnteredTransit", "EventOrderCompleted", "EventOrderCancelled",
+			"EventOrderFailed", "EventOrderSkipped",
+		},
+		floor: "Dispatcher.SweepLaneWaiters (60s)",
 	},
 	{
 		// THE FOURTH POPULATION, AND THE ONE THAT MUST NOT BE FLOORED.
@@ -717,6 +753,22 @@ var causeReleasers = []causeReleaser{
 			"actually sits — the wait is about the PLANT, not about a failed read",
 	},
 	{
+		cause:       CauseVacateWaitingLift,
+		populations: []WaitPopulation{PopVacateHeld},
+		what: "the stamped bin is lifted off the node — the lifter's pickup block (EventBinEnteredTransit), " +
+			"read back from bins.last_lift_at — or the lifter ends moot (skipped, the death rule's moot), " +
+			"or the Core hard release",
+	},
+	{
+		cause:       CauseVacateLifterGone,
+		populations: []WaitPopulation{PopVacateHeld},
+		what: "for a swap pair, the death rule cancels this leg (HandleSwapPeerTerminal), or the Core hard " +
+			"release; for a home clear's partial move, the clear's re-run (Dispatcher.RerunClears: on an " +
+			"order's end and on the vacate floor's tick, keyed on the empty standing on the home held by " +
+			"nobody) chooses again — a pull takes the empty or a buffer spot does, and the move waits on " +
+			"that lift — or ends the job",
+	},
+	{
 		cause:       CauseStationWait,
 		populations: []WaitPopulation{PopStationWait},
 		what: "the STATION releases it — the line clears, the tooling finishes, an operator presses " +
@@ -730,10 +782,10 @@ var causeReleasers = []causeReleaser{
 		populations: []WaitPopulation{PopStationWait},
 		what: "the STATION releases it, exactly as for station-wait — but unlike an ordinary station " +
 			"wait, nothing further is COMING: this leg's swap partner already ran its half and " +
-			"confirmed, so no second robot will arrive and no line will clear. The Edge's " +
-			"swap-survivor arm releases this population without a click when it sees the partner " +
-			"terminal-succeed; when that cannot fire, a person acts and Core's hard release is the " +
-			"escape hatch. Core does not advance it and must not — a station wait is unfloored by " +
+			"confirmed, so no second robot will arrive and no line will clear. A release the " +
+			"operator already pressed is kept on the row as the Edge's release intent and goes when the " +
+			"partner's end re-plans it (S5; the swap-survivor arm that released this without a click is " +
+			"deleted); otherwise a person presses, and Core's hard release is the escape hatch. Core does not advance it and must not — a station wait is unfloored by " +
 			"ruling, and a partner that finished does not change whose fact the precondition is. A " +
 			"row standing under THIS cause is a dwell to surface immediately rather than a wait to " +
 			"wonder about",

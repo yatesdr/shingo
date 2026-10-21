@@ -250,6 +250,7 @@ CREATE TABLE public.bins (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     lifted_at timestamp with time zone,
     totes_on_cart integer,
+    last_lift_at timestamp with time zone,
     anomaly_note text DEFAULT ''::text NOT NULL,
     undeclared_carrier_at timestamp with time zone,
     held_since timestamp with time zone,

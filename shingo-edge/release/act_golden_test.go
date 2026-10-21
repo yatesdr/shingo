@@ -32,6 +32,10 @@ func writeActGolden(b *strings.Builder) {
 		{"staged at station wait 0", protocol.StatusStaged, iptr(0), protocol.WaitKindStation, nil, coWaits},
 		{"staged at station wait 1", protocol.StatusStaged, iptr(1), protocol.WaitKindStation, nil, coWaits},
 		{"staged at a lane wait, nothing released", protocol.StatusStaged, nil, protocol.WaitKindLane, nil, coWaits},
+		{"staged, released at 0 and held by Core at a vacate wait", protocol.StatusStaged, nil, protocol.WaitKindVacate, sent, coWaits},
+		// A kind this Edge does not know is Core's (protocol.IsCoreWaitKind): a newer
+		// Core's hold must never read as a station wait the operator can release.
+		{"staged, released at 0, at a wait kind this Edge does not know", protocol.StatusStaged, nil, "supervisor", sent, coWaits},
 		{"staged, Core numbers no waits, intent held for 1", protocol.StatusStaged, nil, "", held, coWaits},
 		{"driving, released at 0", protocol.StatusInTransit, iptr(0), protocol.WaitKindStation, sent, coWaits},
 		{"driving past its last wait", protocol.StatusInTransit, iptr(1), protocol.WaitKindStation, nil, coWaits},
@@ -39,8 +43,8 @@ func writeActGolden(b *strings.Builder) {
 		{"a plan with no station waits", protocol.StatusStaged, nil, "", nil, nil},
 	} {
 		p := PointOf(c.status, c.wait, c.kind, c.intent, c.purposes)
-		fmt.Fprintf(b, "%s\n  ordinal=%d purpose=%q at-wait=%v driving=%v has-wait=%v lane=%v no-waits=%v\n",
-			c.name, p.Ordinal, p.Purpose, p.AtWait, p.Driving, p.HasWait, p.AtLane, p.NoWaits)
+		fmt.Fprintf(b, "%s\n  ordinal=%d purpose=%q at-wait=%v driving=%v has-wait=%v core-held=%v no-waits=%v\n",
+			c.name, p.Ordinal, p.Purpose, p.AtWait, p.Driving, p.HasWait, p.CoreHeld, p.NoWaits)
 	}
 
 	b.WriteString("\n## PlanAct — an act over its legs\n")
@@ -105,9 +109,9 @@ func actCases() []actCase {
 			[]ActLeg{leg(11, "evac", protocol.StatusQueued, notMoving, nil)}},
 		{"pair: the evac at a lane wait (G2)", pair,
 			points(map[int64]Point{12: found}),
-			[]ActLeg{evac(StaticPoint{AtLane: true, HasWait: true, Purpose: PurposeSwap}, nil), supply(swap, nil)}},
+			[]ActLeg{evac(StaticPoint{CoreHeld: true, HasWait: true, Purpose: PurposeSwap}, nil), supply(swap, nil)}},
 		{"per-order click on a leg at a lane wait (G2)", station, ActFacts{},
-			[]ActLeg{evac(StaticPoint{AtLane: true, HasWait: true, Purpose: PurposeSwap}, nil)}},
+			[]ActLeg{evac(StaticPoint{CoreHeld: true, HasWait: true, Purpose: PurposeSwap}, nil)}},
 		{"pair: Core unreachable (G3)", pair, ActFacts{Loaded: NeedPoint, PointErr: errors.New("core API not configured")},
 			[]ActLeg{evac(swap, nil), supply(swap, nil)}},
 		{"pair: a curtained node on the point (G6)", pair, points(map[int64]Point{11: found, 12: found}),

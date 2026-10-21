@@ -141,4 +141,35 @@ func (e *Engine) wireLaneGateHandlers() {
 	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderSkippedEvent]) {
 		terminal(evt.Payload.OrderID)
 	}, EventOrderSkipped)
+
+	// VACATE HOLDS (PopVacateHeld, dispatch/vacate_hold.go). The lift is the
+	// event, narrowed to the holds that name the lifted bin; the order-terminal
+	// events re-ask every hold, because a lifter's moot end releases its
+	// sibling's and a cancel or failure is written on the row. Each re-asks the
+	// fact from the lift's own column, so a replayed pickup that moves nothing
+	// releases nothing, and the CAS under the append refuses a second release.
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinEnteredTransitEvent]) {
+		e.dispatcher.RedriveVacateWaits(evt.Payload.BinID)
+	}, EventBinEnteredTransit)
+	// A home clear's re-run rides the same events and the same one read: an
+	// order ending is how a pull that held the clear's empty lets it go. The
+	// re-run takes the scanner's lock, so it runs on the after-queue, never on
+	// this goroutine, and only for the partial moves the read found still held.
+	vacateTerminal := func() {
+		if _, stranded := e.dispatcher.RedriveVacate(0); len(stranded) > 0 {
+			e.after.later(func() { e.dispatcher.RerunClearsFor(stranded) })
+		}
+	}
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
+		vacateTerminal()
+	}, EventOrderCompleted)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCancelledEvent]) {
+		vacateTerminal()
+	}, EventOrderCancelled)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFailedEvent]) {
+		vacateTerminal()
+	}, EventOrderFailed)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderSkippedEvent]) {
+		vacateTerminal()
+	}, EventOrderSkipped)
 }

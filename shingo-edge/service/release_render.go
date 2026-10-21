@@ -44,7 +44,7 @@ func releasePurposes(legs []orders.Order) []domain.ReleasePurpose {
 			byPurpose[pt.Purpose] = st
 		}
 		st.present = true
-		if pt.AtWait && !pt.AtLane {
+		if pt.AtWait && !pt.CoreHeld {
 			st.ready = true
 		}
 	}

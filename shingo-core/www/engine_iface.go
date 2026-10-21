@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/config"
 	"shingocore/dispatch"
 	"shingocore/domain"
@@ -180,6 +181,10 @@ type EngineOrchestration interface {
 	// height the CLEAR declared, nil when none: written after the clear and the
 	// stamp, in the same transaction.
 	ClearForReuseStampAndBookDeparture(binID, nodeID int64, binTypeID *int64, stamp domain.BareStamp, layers *int) (int64, error)
+	// ClearLoaderHome is a dedicated loader home's clear, the Edge's one request
+	// (engine/clear_home.go). Orchestration because it spans the scanner's lock,
+	// the orders it authors and the carrier's zero in one transaction.
+	ClearLoaderHome(req protocol.ClearHomeRequest) engine.ClearHomeAnswer
 
 	// ── Orders ─────────────────────────────────────────────────────
 	CreateBinMove(req engine.BinMoveRequest) (*engine.BinMoveResult, error)

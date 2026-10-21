@@ -381,9 +381,10 @@ CREATE TABLE orders (
     -- leg has not left the cell's nodes.
     cell_left_at    TEXT,
     -- pending_intent (Edge v4): the future action this order armed when it was
-    -- dispatched, as a JSON envelope (engine/order_intent.go) — a
-    -- pull-from-market's auto-clear on delivery, or a clear-loader-home's Order B
-    -- on pickup. '' = nothing armed. Taken exactly once by the firing site.
+    -- dispatched, as a JSON envelope (engine/order_intent.go) — today only a
+    -- pull-from-market's auto-clear on delivery (a row an older build armed for
+    -- a clear-loader-home is read as an unknown kind and dropped at its take).
+    -- '' = nothing armed. Taken exactly once by the firing site.
     pending_intent  TEXT NOT NULL DEFAULT '',
     -- station_wait / wait_kind (Edge v7): where Core last staged this order —
     -- the station wait's ordinal among the plan's station waits (NULL at a

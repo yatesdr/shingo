@@ -227,7 +227,7 @@ func (op *simOperator) changeoverReleasePurpose(node *processes.Node) release.Pu
 		}
 		intent, _ := release.DecodeIntent(o.ReleaseIntent)
 		pt := release.PointOf(o.Status, o.StationWait, o.WaitKind, intent, facts.Purposes)
-		if pt.HasWait && pt.AtWait && !pt.AtLane {
+		if pt.HasWait && pt.AtWait && !pt.CoreHeld {
 			ready[pt.Purpose] = true
 		}
 	}

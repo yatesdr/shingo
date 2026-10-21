@@ -119,6 +119,10 @@ func (d *Dispatcher) SweepLaneWaiters() int {
 	// and outside the freed count. See sweepStrandedHandoffs.
 	d.sweepStrandedHandoffs()
 
+	// PopVacateHeld's floor rides this tick too (vacate_hold.go). It is not a
+	// lane wait and not in the accounting below; it records its own releases.
+	d.sweepVacateWaiters()
+
 	before, err := d.laneWaiters()
 	if err != nil {
 		log.Printf("lane floor: could not read the waiting set: %v (skipping this pass; the next one retries)", err)
@@ -378,9 +382,14 @@ func (d *Dispatcher) MarkStationWaitIfOwned(orderID int64) (stationWait *int, wa
 }
 
 // stationPoint numbers the wait at waitIndex for the wire: its ordinal among
-// the plan's station waits (nil when it is a lane wait) and its kind, a
-// station wait's untagged drain-window form reported as WaitKindStation. ok
-// is false when waitIndex names no wait.
+// the plan's station waits (nil when Core owns it) and its kind, a station
+// wait's untagged drain-window form reported as WaitKindStation. ok is false
+// when waitIndex names no wait.
+//
+// The owner is coreOwnsWait's answer, so a station wait Core holds on a vacate
+// stamp reports nil and WaitKindVacate: the station has released it and must
+// not be offered it again. The ordinal still counts stored station waits,
+// which is how the Edge numbers its own copy of the plan.
 func stationPoint(steps []resolvedStep, waitIndex int) (stationWait *int, waitKind string, ok bool) {
 	seen, station := 0, 0
 	for _, s := range steps {
@@ -389,8 +398,10 @@ func stationPoint(steps []resolvedStep, waitIndex int) (stationWait *int, waitKi
 		}
 		isStation := protocol.IsStationWaitKind(s.WaitKind)
 		if seen == waitIndex {
-			if !isStation {
-				return nil, protocol.WaitKindLane, true
+			// An unrecognised kind is Core's (protocol.IsCoreWaitKind): refused
+			// at splice, and reported as written.
+			if coreOwnsWait(steps, waitIndex) {
+				return nil, coreWaitKind(s), true
 			}
 			n := station
 			return &n, protocol.WaitKindStation, true

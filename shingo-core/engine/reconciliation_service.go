@@ -607,7 +607,21 @@ func (s *ReconciliationService) AbandonStuckOrders(timeout, operatorGatedTimeout
 		// its own watchdog: a staged-too-long queue code and an operator surface,
 		// so the wait is visible and owned rather than silent. Exemption alone
 		// trades a destructive failure for an invisible one.
-		if dispatch.IsGateStaged(order) {
+		//
+		// A VACATE wait answers that TODO in its own way: it is exempt here and
+		// bounded by its lifter, not by a clock. Its row carries
+		// CauseVacateWaitingLift ("waiting for <bin> to leave <node>"); the lift
+		// releases it (event, or the 60 s floor); the lifter's moot end releases
+		// it; the lifter's cancel or failure ends it through the swap death rule,
+		// with CauseVacateLifterGone on the row until it does; the Core hard
+		// release is the hatch (dispatch/vacate_hold.go).
+		//
+		// The OWNER is dispatch.CoreOwnsWaitAt's answer (lane or vacate), the one
+		// function every owner guard asks. The vendor-order term stays beside it
+		// and is not an owner question: it is the witness that a robot is
+		// committed, which is what makes the exemption worth having
+		// (IsGateStaged's own note).
+		if order.VendorOrderID != "" && dispatch.CoreOwnsWaitAt(order.StepsJSON, order.WaitIndex) {
 			continue
 		}
 		// Which clock applies to THIS order. Operator-gated staging — a

@@ -376,6 +376,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/telemetry/node/{name}/children", h.apiTelemetryNodeChildren)
 			r.Post("/telemetry/bin-load", h.apiBinLoad)
 			r.Post("/telemetry/bin-clear", h.apiBinClear)
+			// A dedicated loader home's clear: the Edge's one request, Core authors
+			// the orders (engine/clear_home.go).
+			r.Post("/telemetry/clear-home", h.apiClearHome)
 			r.Post("/telemetry/bin-count", h.apiBinCount)
 			// Quality containment: the per-bin hold marker, set by the Edge's
 			// station action when its operator sends a bin to containment.

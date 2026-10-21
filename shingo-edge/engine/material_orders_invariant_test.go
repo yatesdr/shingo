@@ -115,6 +115,11 @@ func TestSwapBuilders_EveryLegEndsOnADropoff(t *testing.T) {
 // So the stamp is now made, not inferred, and this walks every builder to keep
 // it that way. A twenty-third wait added as a raw literal fails here rather than
 // reaching a plant as an unowned step.
+//
+// It also keeps the Core kinds out: a lane or vacate wait is Core's to author
+// and release (protocol.IsCoreWaitKind), and a station builder that wrote one
+// would hand Core a wait whose fact Core never stamped. The want below is
+// station, exactly, so either fails here.
 func TestEveryEdgeAuthoredWaitIsStamped(t *testing.T) {
 	t.Parallel()
 

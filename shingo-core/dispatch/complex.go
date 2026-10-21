@@ -19,17 +19,14 @@ type resolvedStep = plan.Step
 const (
 	WaitKindLane    = plan.WaitKindLane
 	WaitKindStation = plan.WaitKindStation
+	WaitKindVacate  = plan.WaitKindVacate
 )
 
 // CoreOwnsWaitAt reports whether the wait an order is parked at is CORE's to
-// advance — the read behind the hard-release affordance and anything else that
-// must distinguish the two owners from outside this package.
-//
-// It is the exact complement of protocol.IsStationWaitKind over a real plan, so the drain
-// window's default (untagged = the station's) is honoured in one place rather
-// than re-decided by each caller. An unreadable plan, or an order parked at no
-// wait, answers FALSE: nothing should offer a Core override for a wait it cannot
-// identify.
+// advance: coreOwnsWait over a stored plan, for callers outside this package
+// (the hard-release button, www/helpers.go) and the abandon sweep. An
+// unreadable plan, or an order parked at no wait, answers FALSE: nothing should
+// offer a Core override for a wait it cannot identify.
 func CoreOwnsWaitAt(stepsJSON string, waitIndex int) bool {
 	if stepsJSON == "" {
 		return false
@@ -38,11 +35,68 @@ func CoreOwnsWaitAt(stepsJSON string, waitIndex int) bool {
 	if err := json.Unmarshal([]byte(stepsJSON), &steps); err != nil {
 		return false
 	}
+	return coreOwnsWait(steps, waitIndex)
+}
+
+// coreOwnsWait is THE answer to "whose turn is it at this wait". Every guard
+// that keys on the owner asks it and nothing else: the station release refusal
+// (HandleOrderRelease), the abandon sweep's exemption (through CoreOwnsWaitAt),
+// the hard-release button and HardReleaseStagedOrder's own refusal, and the
+// owner stationPoint reports to the station.
+//
+// Two questions, answered by two different things (ruled 2026-10-18):
+//   - WHO RELEASES is the wait's stored kind, read by protocol.IsCoreWaitKind:
+//     lane and vacate are Core's, station and untagged the station's.
+//   - WHAT MUST HOLD FIRST is a held vacate stamp on the wait's next drop: the
+//     station released this wait while the bin that drop needs gone still
+//     stood on the node, so the station's part is done and the rest is Core's.
+//
+// So: a Core kind, or the next drop carries a held vacate stamp. An untagged
+// wait is the station's (protocol.IsStationWaitKind's drain window). An
+// unrecognised kind is Core's, as it is on the Edge (protocol.IsCoreWaitKind):
+// assertEveryWaitDeclaresAnOwner refuses one before it is persisted, so none
+// should reach here, and one that did is held for Core's hard release rather
+// than released from a station. Pinned by TestCoreOwnsWait; that nothing
+// else reads the held stamp to decide ownership, by
+// TestOnlyCoreOwnsWaitReadsTheHeldStamp.
+func coreOwnsWait(steps []resolvedStep, waitIndex int) bool {
 	w, ok := waitAt(steps, waitIndex)
 	if !ok {
 		return false
 	}
-	return !protocol.IsStationWaitKind(w.WaitKind)
+	if protocol.IsCoreWaitKind(w.WaitKind) {
+		return true
+	}
+	return heldVacateAfter(steps, waitIndex) != nil
+}
+
+// heldVacateAfter is the held vacate stamp on the first drop after wait
+// waitIndex, or nil. Read off the plan as stored: a release-time redirect
+// (patchRedirectSegments) is not an owner, and a stamp honours only the node it
+// names (plan.StampHonoured).
+func heldVacateAfter(steps []resolvedStep, waitIndex int) *plan.Vacate {
+	seg, _, _ := splitSegment(steps, waitIndex)
+	for _, s := range seg {
+		if s.Action != protocol.ActionDropoff {
+			continue
+		}
+		if st := plan.StampHonoured(s); st != nil && st.HeldAt != nil {
+			return st
+		}
+		return nil
+	}
+	return nil
+}
+
+// coreWaitKind is the kind Core reports for a wait coreOwnsWait answered true
+// for: the stored kind when it is a Core kind (lane, vacate, or one this build
+// does not know, reported as written), and vacate for a station wait Core
+// holds on a vacate stamp.
+func coreWaitKind(w resolvedStep) string {
+	if protocol.IsCoreWaitKind(w.WaitKind) {
+		return w.WaitKind
+	}
+	return WaitKindVacate
 }
 
 // claimedBin records which bin was claimed at which pickup step.

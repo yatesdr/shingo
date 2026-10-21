@@ -164,6 +164,14 @@ type QueueParams struct {
 	// this wait is a carrier leaving OR the level being raised, and neither is
 	// findable from a sentence about slots.
 	AtLevel bool
+	// VacateBin names the bin a vacate hold is waiting to see leave Destination
+	// (CauseVacateWaitingLift, CauseVacateLifterGone): the station has released
+	// the leg and Core appends it once that bin is lifted off the node. Its label
+	// when Core could read it, else "bin <id>".
+	VacateBin string
+	// VacateLifterGone marks a vacate hold whose lifter has ended without
+	// lifting the bin (CauseVacateLifterGone): nothing scheduled will move it.
+	VacateLifterGone bool
 }
 
 // withHolder returns p with the holder named. A fluent setter rather than a
@@ -280,6 +288,14 @@ func materialSentence(p QueueParams) string {
 // carrying them here is what makes "go clear it" and "wait, one is coming"
 // distinguishable without reading queue_cause (which no surface renders).
 func slotSentence(p QueueParams) string {
+	// A VACATE HOLD names the bin, because that bin leaving is the whole wait.
+	if p.VacateBin != "" {
+		s := fmt.Sprintf("Waiting for %s to leave %s", p.VacateBin, p.Destination)
+		if p.VacateLifterGone {
+			s += " — the order that was to lift it has ended"
+		}
+		return s
+	}
 	if p.DestUnresolved {
 		if p.Destination == "" {
 			return "Waiting on a destination that cannot be resolved right now"

@@ -173,6 +173,11 @@ func (db *DB) LiftBinToTransitTx(tx *sql.Tx, binID, transitNodeID int64, station
 	return bins.LiftToTransitTx(tx, binID, transitNodeID, station, now)
 }
 
+// BinsLeftSince reads vacate facts in one statement: see bins.LeftSince.
+func (db *DB) BinsLeftSince(qs []bins.LeftQuery) ([]bool, error) {
+	return bins.LeftSince(db.DB, qs)
+}
+
 // BinLiftedAt: see bins.LiftedAt.
 func (db *DB) BinLiftedAt(binID int64) (*time.Time, error) {
 	return bins.LiftedAt(db.DB, binID)
@@ -270,4 +275,9 @@ func (db *DB) NegativeLedgerExcursions(since time.Time, releaseWindow time.Durat
 // the standard warehouse accuracy read, previously unmeasured here.
 func (db *DB) InventoryRecordAccuracy(since time.Time, staleAfter time.Duration) (*bins.RecordAccuracy, error) {
 	return bins.GetRecordAccuracy(db.DB, since, staleAfter)
+}
+
+// BinStandsUnheld: see bins.StandsUnheld.
+func (db *DB) BinStandsUnheld(binID int64, nodeName string) (bool, error) {
+	return bins.StandsUnheld(db.DB, binID, nodeName)
 }

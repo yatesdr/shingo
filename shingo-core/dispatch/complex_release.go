@@ -93,29 +93,6 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
-	// ── THE VACATED-SLOT FENCE (vacated_slot.go) ──────────────────────────
-	//
-	// A drop the vacated-slot rule admitted is sound only once its partner has
-	// lifted the bin standing there, and the release is the moment that promise
-	// is kept or broken. Refused while it cannot be kept, and the partner with
-	// it. Only a stamped drop, or the partner of a staged stamped one, is ever
-	// refused here; every other release reads one sibling row at most and goes.
-	//
-	// AHEAD OF THE MANIFEST SYNC, unlike the gate fence below: a refused release
-	// must write nothing of Core's, and the sync writes the operator's count.
-	// That is Core's half only. The Edge has already done its release paperwork
-	// (the lineside capture, the count finalize, the changeover task) before it
-	// sent this envelope, and a refusal undoes none of it. invalid_state is the
-	// code Edge rolls back to staged non-terminally (edge_handler.go).
-	//
-	// The log line names the arm, Z (this leg's stamped drop) or Y (the partner
-	// held with it), so a shift's refusals can be counted per arm.
-	if arm, refusal := d.vacateReleaseRefusal(order); refusal != "" {
-		log.Printf("dispatch: release refused (vacated slot, %s): %s", arm, refusal)
-		d.sendError(env, p.OrderUUID, "invalid_state", refusal)
-		return
-	}
-
 	// ── The fence: one decider for every append ───────────────────────────
 	// The station's contribution — the whole OrderRelease payload (RemainingUOP,
 	// Disposition, CalledBy) — is read inside syncManifestForRelease and nowhere
@@ -142,11 +119,14 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 	// purpose (edge_handler.go, the ALN_003 divergence — a release rejection must
 	// never kill the Edge mirror). Any other code would terminalize the Edge row
 	// while Core's order lived on.
-	if IsGateStaged(order) {
-		d.dbg("release refused: order %d is parked on a gate wait — only the lane evaluator advances one",
-			order.ID)
-		d.sendError(env, p.OrderUUID, "invalid_state",
-			"this order is waiting on a lane, not on the station; Core releases it when the lane is safe")
+	//
+	// A VACATE wait is the same refusal for the same reason: its precondition —
+	// a named bin has left a named node — is Core's to observe, and a station
+	// release would append a segment that drops on a node still holding it. The
+	// owner is coreOwnsWait's answer, never a re-derivation here.
+	if CoreOwnsWaitAt(order.StepsJSON, order.WaitIndex) {
+		d.dbg("release refused: order %d is parked on a wait Core releases", order.ID)
+		d.sendError(env, p.OrderUUID, "invalid_state", coreHeldRefusal(order))
 		return
 	}
 
@@ -177,6 +157,20 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		}
 		d.sendError(env, p.OrderUUID, "invalid_state",
 			fmt.Sprintf("wait_index %d exceeds number of waits in order", order.WaitIndex))
+		return
+	}
+
+	// ── A DROP THAT NEEDS A BIN GONE FIRST: TAKE THE RELEASE, HOLD THE APPEND ──
+	//
+	// A drop the vacated-slot rule admitted on a partner's lift (a grant (b)
+	// stamp), or a drop onto a bin this leg's staged, stamped sibling has
+	// claimed, is sound only once that bin has been lifted off the node. This
+	// release is the station's, and it is taken: the manifest sync is written
+	// and Core holds the segment, appending it when the bin lifts
+	// (vacate_hold.go). It used to be refused (arms Z and Y) and pressed again.
+	// Every other release reads at most one sibling row here, and goes.
+	if holds := d.vacateHoldsAtRelease(order, steps); len(holds) > 0 {
+		d.holdRelease(env, order, p, steps, holds)
 		return
 	}
 
@@ -236,9 +230,27 @@ func describePoint(at *int, kind string) string {
 		return fmt.Sprintf("station wait %d", *at)
 	case kind == protocol.WaitKindLane:
 		return "a lane wait"
+	case kind == protocol.WaitKindVacate:
+		return "a vacate wait (Core holds it until a bin leaves the node it drops on)"
 	default:
 		return "no wait"
 	}
+}
+
+// coreHeldRefusal is the sentence the station gets when it releases a wait Core
+// owns (coreOwnsWait): a lane's, or a vacate hold, naming the bin and node.
+func coreHeldRefusal(order *orders.Order) string {
+	steps, ok := decodeSteps(order.StepsJSON)
+	if ok {
+		if w, at := waitAt(steps, order.WaitIndex); at && coreWaitKind(w) == WaitKindVacate {
+			if st := heldVacateAfter(steps, order.WaitIndex); st != nil {
+				return fmt.Sprintf("this order is held by Core until bin %d leaves %s; Core releases it then",
+					st.Bin, st.Node)
+			}
+			return "this order is held by Core until a bin leaves the node it drops on; Core releases it then"
+		}
+	}
+	return "this order is waiting on a lane, not on the station; Core releases it when the lane is safe"
 }
 
 // releasedPastStationWait reports whether an order is in_transit because the
@@ -440,17 +452,19 @@ func (d *Dispatcher) HardReleaseStagedOrder(orderID int64, actor string) error {
 	// to clear it.
 	//
 	// An untagged wait (pre-ruling plan, still draining) reads as the station's
-	// and is refused, which is the conservative direction.
+	// and is refused, which is the conservative direction. The owner is
+	// coreOwnsWait's, so a station wait Core holds on a vacate stamp (the
+	// station already released it) is Core's to override.
 	w, ok := waitAt(steps, order.WaitIndex)
 	if !ok {
 		return fmt.Errorf("hard release: order %d is not parked at a wait", orderID)
 	}
-	if protocol.IsStationWaitKind(w.WaitKind) {
+	if !coreOwnsWait(steps, order.WaitIndex) {
 		return fmt.Errorf("hard release: order %d is parked at a STATION-owned wait at %q — release "+
 			"it from the station's board, where the operator can see whether the cell is clear. "+
 			"Core's hard release is for waits Core is responsible for advancing", orderID, w.Node)
 	}
-	owner := w.WaitKind
+	owner := coreWaitKind(w)
 
 	// ── WHAT IT IS OVERRIDING, MEASURED AND RECORDED — NOT ASSUMED SAFE ───
 	//
@@ -473,15 +487,13 @@ func (d *Dispatcher) HardReleaseStagedOrder(orderID int64, actor string) error {
 		physical = "clear"
 	}
 
-	// The vacated-slot fence is bypassed here the same way the gate fence is, and
-	// said out loud when it would have refused. It never sees a leg held at a
-	// station wait: the station-wait refusal above returns first, and a stamped
-	// leg and its partner are held at their station waits. It can fire only for
-	// a leg parked at a LANE wait whose pending segment carries a stamp, or drops
-	// onto a bin its staged, stamped sibling has claimed.
-	if arm, refusal := d.vacateReleaseRefusal(order); refusal != "" {
-		physical += "; VACATED-SLOT FENCE BYPASSED: " + refusal
-		log.Printf("HARD RELEASE: order %d bypasses the vacated-slot fence (%s): %s", orderID, arm, refusal)
+	// A vacate hold is overridden the same way, and said out loud: the bins its
+	// segment needs gone that have not been lifted off their nodes yet.
+	if holds := d.vacateHoldsAtRelease(order, steps); len(holds) > 0 {
+		for _, h := range holds {
+			physical += fmt.Sprintf("; VACATE HOLD BYPASSED: bin %d has not been lifted off %s", h.st.Bin, h.st.Node)
+		}
+		log.Printf("HARD RELEASE: order %d bypasses a vacate hold (%s)", orderID, physical)
 	}
 
 	d.db.AppendAudit("order", orderID, "hard_release", "",

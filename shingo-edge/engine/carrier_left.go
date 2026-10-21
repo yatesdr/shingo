@@ -72,8 +72,9 @@ func (e *Engine) carrierLeftAtPickup(nodeID int64, nodeName string, pickupEpoch 
 // a slot that the carrier does NOT leave: the count and the new generation
 // stamp land (uop.SetClaimCountAndEpoch), and the carrier is known-empty, said
 // by the operator whose clear it was — the shape operator_bin_ops.go's CLEAR
-// records. Used by ClearLoaderHome and the market-pullback auto-clear. Not a
-// departure: the pointer stays, and the identity is an answer, not an absence.
+// records. Used by the market-pullback auto-clear and a dedicated loader's
+// home clear (ClearLoaderHome). Not a departure: the pointer stays, and the
+// identity is an answer, not an absence.
 func (e *Engine) carrierClearedInPlace(nodeID int64, nodeName string, claimID *int64, binID, deltaEpoch int64) error {
 	if e.inventoryDelta == nil {
 		return nil

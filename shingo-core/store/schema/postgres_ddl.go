@@ -131,7 +131,10 @@ CREATE TABLE IF NOT EXISTS bins (
     lifted_at          TIMESTAMPTZ,
     -- v161: the totes standing on the cart, filled or empty. NULL is unknown;
     -- 0 is a base. Every statement that empties a carrier writes NULL.
-    totes_on_cart      INTEGER CHECK (totes_on_cart >= 0)
+    totes_on_cart      INTEGER CHECK (totes_on_cart >= 0),
+    -- v162: when a robot last lifted the bin. Every lift writes it, in the
+    -- lift's own UPDATE; nothing clears it. The vacate hold's floor.
+    last_lift_at       TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_bins_type ON bins(bin_type_id);
 CREATE INDEX IF NOT EXISTS idx_bins_node ON bins(node_id);

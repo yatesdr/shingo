@@ -232,11 +232,10 @@ func (m *Mutator) SetClaim(nodeID int64, activeClaimID *int64) error {
 // its own view of the node, and a reply naming one the Edge is not holding
 // is about a carrier that is not here.
 //
-// Callers: the three routes that clear a carrier through Core —
-// operator_bin_ops.go (the operator's CLEAR on a manual-swap window),
-// operator_home_consolidation.go (zeroing a loader home before the
-// consolidation move), and wiring_delivered.go (the market-pullback
-// auto-clear on delivery). Each then records the carrier as known-empty,
+// Callers: the two routes that clear a carrier through Core —
+// operator_bin_ops.go (the operator's CLEAR on a manual-swap window) and
+// wiring_delivered.go (the market-pullback auto-clear on delivery). Each
+// then records the carrier as known-empty,
 // said by the operator, through the engine's lineside doorway — the carrier
 // stays, so this is not a departure.
 func (m *Mutator) SetClaimCountAndEpoch(nodeID int64, activeClaimID *int64, uop int, binID, deltaEpoch int64) error {

@@ -188,6 +188,9 @@ const POST_TIMEOUT_MS = 30000;
 //
 // opts is ADDITIVE and every existing 3-argument caller is unchanged:
 //   opts.onResult(parsedBody)  — called with the decoded success body.
+//   opts.onRefused(msg)        — called with a refusal's words in place of
+//                                the error toast, for a caller that shows
+//                                them where the operator tapped.
 //
 // WHY THE RESPONSE AND NOT AN EVENT. The station is event-driven: an action
 // returns, the client re-renders from the orders list, and the structured
@@ -240,6 +243,10 @@ export async function postAction(url, body, loadView, opts) {
             if (parsed && parsed.notice) {
                 showToast(msg, 'info');
                 if (loadView) await loadView();
+                return false;
+            }
+            if (opts && typeof opts.onRefused === 'function') {
+                opts.onRefused(msg);
                 return false;
             }
             showToast(msg, 'error');

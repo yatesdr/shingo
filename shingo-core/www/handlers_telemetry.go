@@ -725,3 +725,32 @@ func eMaintReport(robots []fleet.RobotStatus, now time.Time, reportID string) ma
 		"robots":       entries,
 	}
 }
+
+// apiClearHome clears a dedicated loader's home: Core declares the carrier on
+// it empty and brings a buffer partial of the home's part to it, choosing how
+// (engine.ClearLoaderHome).
+// POST /api/telemetry/clear-home
+//
+// 200 carries the arm, the clear's parent uuid, and the carrier's id and new
+// delta epoch — the arm "none", with the sentence in detail, when the zero is
+// recorded and no job could take the carrier. The only 409 is a second clear
+// of a home whose clear is live; a request naming no clearable home is 400.
+func (h *Handlers) apiClearHome(w http.ResponseWriter, r *http.Request) {
+	var req protocol.ClearHomeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.HomeNode == "" || req.Station == "" {
+		h.jsonError(w, "home_node and station are required", http.StatusBadRequest)
+		return
+	}
+	ans := h.orchestration.ClearLoaderHome(req)
+	log.Printf("telemetry: clear-home %s for %s: %d %s%s", req.HomeNode, req.Station, ans.Status, ans.Body.Arm, ans.Body.Error)
+	if ans.Status == http.StatusOK && ans.Body.BinID != 0 {
+		h.eventHub.Broadcast("bin-update", sseJSON(map[string]any{"action": "cleared", "bin_id": ans.Body.BinID}))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(ans.Status)
+	_ = json.NewEncoder(w).Encode(ans.Body)
+}

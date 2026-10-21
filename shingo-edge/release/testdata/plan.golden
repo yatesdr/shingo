@@ -149,21 +149,25 @@ go
 
 ## PointOf — where a leg stands
 staged at station wait 0
-  ordinal=0 purpose="ready" at-wait=true driving=false has-wait=true lane=false no-waits=false
+  ordinal=0 purpose="ready" at-wait=true driving=false has-wait=true core-held=false no-waits=false
 staged at station wait 1
-  ordinal=1 purpose="tooling_done" at-wait=true driving=false has-wait=true lane=false no-waits=false
+  ordinal=1 purpose="tooling_done" at-wait=true driving=false has-wait=true core-held=false no-waits=false
 staged at a lane wait, nothing released
-  ordinal=0 purpose="ready" at-wait=false driving=false has-wait=true lane=true no-waits=false
+  ordinal=0 purpose="ready" at-wait=false driving=false has-wait=true core-held=true no-waits=false
+staged, released at 0 and held by Core at a vacate wait
+  ordinal=1 purpose="tooling_done" at-wait=false driving=false has-wait=true core-held=true no-waits=false
+staged, released at 0, at a wait kind this Edge does not know
+  ordinal=1 purpose="tooling_done" at-wait=false driving=false has-wait=true core-held=true no-waits=false
 staged, Core numbers no waits, intent held for 1
-  ordinal=1 purpose="tooling_done" at-wait=true driving=false has-wait=true lane=false no-waits=false
+  ordinal=1 purpose="tooling_done" at-wait=true driving=false has-wait=true core-held=false no-waits=false
 driving, released at 0
-  ordinal=1 purpose="tooling_done" at-wait=false driving=true has-wait=true lane=false no-waits=false
+  ordinal=1 purpose="tooling_done" at-wait=false driving=true has-wait=true core-held=false no-waits=false
 driving past its last wait
-  ordinal=2 purpose="" at-wait=false driving=true has-wait=false lane=false no-waits=false
+  ordinal=2 purpose="" at-wait=false driving=true has-wait=false core-held=false no-waits=false
 dispatched, not yet at a wait
-  ordinal=0 purpose="ready" at-wait=false driving=false has-wait=true lane=false no-waits=false
+  ordinal=0 purpose="ready" at-wait=false driving=false has-wait=true core-held=false no-waits=false
 a plan with no station waits
-  ordinal=0 purpose="" at-wait=true driving=false has-wait=false lane=false no-waits=true
+  ordinal=0 purpose="" at-wait=true driving=false has-wait=false core-held=false no-waits=true
 
 ## PlanAct — an act over its legs
 pair: both at their swap wait, nothing to wait on
@@ -201,7 +205,7 @@ pair: the evac at a lane wait (G2)
   order 12: go lineside flip=false finalize=false suppress=true u1=false
 per-order click on a leg at a lane wait (G2)
   purpose="swap"
-  refuse G2: order 11 is waiting on a lane, not on the station: Core releases it when the lane is safe
+  refuse G2: order 11 is waiting on Core, not on the station: Core releases it when its lane is safe or the bin on its drop has been lifted
 pair: Core unreachable (G3)
   purpose="swap"
   order 11: hold G3 wake=core: waiting for Core

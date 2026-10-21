@@ -57,7 +57,9 @@ func routeFixtures() map[string]routeFixture {
 		"POST /api/process-nodes/{id}/record-count": {want: 400, req: on(func(w *walk) (string, any) {
 			return pn(w) + "/record-count", map[string]any{"actual_uop": 3, "actor": "walk"}
 		})},
-		"POST /api/process-nodes/{id}/clear-loader-home": {want: 400, req: on(func(w *walk) (string, any) {
+		// The home clear is one request to Core and nothing else on the Edge; the
+		// walk has no Core, so the door answers 502 having changed nothing.
+		"POST /api/process-nodes/{id}/clear-loader-home": {want: 502, req: on(func(w *walk) (string, any) {
 			return "/api/process-nodes/" + id(w.loaderNode) + "/clear-loader-home", map[string]any{}
 		})},
 		"POST /api/process-nodes/{id}/pull-from-market": {want: 400, req: on(func(w *walk) (string, any) {

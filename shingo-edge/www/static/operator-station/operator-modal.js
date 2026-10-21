@@ -200,7 +200,9 @@ export function renderModal(entry) {
         }
     }
 
-    if (isReplenishing(entry)) {
+    // A live order on the tile counts as well as the runtime pointer: a loader
+    // home's clear is Core's and sets no pointer (operator-modal-clear-running.test.js).
+    if (isReplenishing(entry) || (entry.orders || []).some(o => isActive(o.status))) {
         const activeOrders = (entry.orders || []).filter(o => isActive(o.status));
         // EVERY non-terminal order is listed, departed ones included — the
         // control goes, the information stays. orderStatusChip renders a

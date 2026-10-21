@@ -68,6 +68,14 @@ var projectionDoors = []projectionDoor{
 		whyThatAnswer: "ListActiveOrdersByStation filters on station_id and status only; a child inherits its " +
 			"parent's station_id and the Edge never names a row it has never had",
 	},
+	{
+		site:         "dispatch/clear_home.go",
+		name:         "the home clear's push — the clear's parent and each child, to the station that asked",
+		carriesChild: true,
+		whyThatAnswer: "the clear's children are its moves and the station's board draws them (the partial coming " +
+			"home, the empty going to its spot); nothing admits a child, so the door pushes each row itself " +
+			"(projectClear). A pushed child is a plain row to the Edge: the wire carries no parent marker",
+	},
 }
 
 // projectionSites returns every production line that builds a projection, as

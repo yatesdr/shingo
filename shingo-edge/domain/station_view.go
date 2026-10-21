@@ -183,8 +183,8 @@ type StationNodeView struct {
 	// BufferPartial names the buffer spot a clear of this home would bring
 	// home: set on a dedicated home holding a stocked bin of its part when a
 	// spot of its loader's buffer holds a stocked bin of the same part, the
-	// first such spot in the plant's order, which is the one ClearLoaderHome
-	// takes. The HMI offers CLEAR BIN on it. Stamped by
+	// first such spot in the plant's order. The board draws its Clear partials
+	// card from it, naming that spot. Stamped by
 	// StationService.StampBins; pinned by
 	// TestStationView_BinsStampedFromTheOneRead (www).
 	BufferPartial *BufferPartial `json:"buffer_partial,omitempty"`
@@ -374,7 +374,7 @@ const (
 	// SpotEmpty: an emptied bin stands there (occupied, no part, not
 	// stocked), or a home's clear is in flight to the spot: its emptied
 	// carrier is on the way, and the glass draws the spot as coming from the
-	// home's orders, where the clear's Order A stands.
+	// home's orders, where the clear's move of the empty stands.
 	SpotEmpty = "empty"
 	// SpotOpen: nothing stands there.
 	SpotOpen = "open"

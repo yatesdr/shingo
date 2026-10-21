@@ -73,6 +73,8 @@ vm.runInContext(modelSrc, ctx);
 vm.runInContext('var PRESS_MAX_MS = 2000; var pressInFlight = false; var pressStartedAt = 0; var pendingEntry = null;', ctx);
 vm.runInContext(extractFn(modalSrc, 'pressIsStale'), ctx);
 vm.runInContext(extractFn(modalSrc, 'actionBtn'), ctx);
+vm.runInContext("var TO_MARKET_LABEL = 'TO MARKET'; function withQueueCause(s) { return s; }", ctx);
+vm.runInContext(extractFn(modalSrc, 'orderStatusChip'), ctx);
 vm.runInContext(extractFn(windowSrc, 'isOwnEmptyOut'), ctx);
 vm.runInContext(extractFn(modalSrc, 'loaderOffersClear'), ctx);
 vm.runInContext(extractFn(modalSrc, 'renderModal') + '\nthis.renderModal = renderModal;', ctx);

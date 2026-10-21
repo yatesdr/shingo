@@ -153,10 +153,11 @@ type Order struct {
 	// StationWait is Core's number for the station wait this order was last
 	// staged at (protocol.OrderStaged.StationWait): its ordinal among the
 	// plan's station waits, which Core and the Edge count alike. Nil until a
-	// Core that reports it has staged the order, and at a lane wait.
+	// Core that reports it has staged the order, and at a wait Core releases.
 	StationWait *int `json:"station_wait,omitempty"`
-	// WaitKind is the kind of that wait (protocol.WaitKindStation or
-	// WaitKindLane); "" until a Core that reports it has staged the order.
+	// WaitKind is the kind of that wait (protocol.WaitKindStation, or a Core
+	// kind: WaitKindLane, WaitKindVacate — protocol.IsCoreWaitKind); "" until a
+	// Core that reports it has staged the order.
 	WaitKind string `json:"wait_kind,omitempty"`
 	// ReleaseFacts is the leg's static release facts as stored
 	// (orders.release_facts, release.Facts JSON): computed from its steps when

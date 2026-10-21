@@ -8,8 +8,8 @@ import (
 )
 
 // apiReleasePoints answers what releasing each named order would let its
-// robot do next: the nodes its pending segment enters, the lifts it waits on,
-// and the lineside bin it departs with (dispatch.ReleasePoints).
+// robot do next: the nodes its pending segment enters and the lifts it waits
+// on (dispatch.ReleasePoints).
 // POST /api/release/points
 func (h *Handlers) apiReleasePoints(w http.ResponseWriter, r *http.Request) {
 	var req protocol.ReleasePointsRequest

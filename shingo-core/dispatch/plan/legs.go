@@ -124,6 +124,12 @@ const WaitKindLane = protocol.WaitKindLane
 // the zero value is reserved for pre-ruling plans still in flight.
 const WaitKindStation = protocol.WaitKindStation
 
+// WaitKindVacate marks a wait Core releases once a named bin has left a named
+// node (protocol.WaitKindVacate). Stored only on a plan Core authors; a station
+// wait becomes Core's the same way when its next drop carries a held vacate
+// stamp (dispatch.coreOwnsWait).
+const WaitKindVacate = protocol.WaitKindVacate
+
 // TransportLegs expresses a single-bin transport — retrieve, retrieve_empty, or
 // move — as the canonical two-step plan: pick the (already-resolved) source bin
 // up, drop it at the (already-resolved) delivery node. stepsToBlocks yields

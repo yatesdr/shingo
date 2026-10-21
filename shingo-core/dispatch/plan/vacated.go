@@ -41,8 +41,9 @@ import (
 // always wins and every ordinary drop is byte-unchanged.
 //
 // MUTUAL GRANTS ARE IMPOSSIBLE BY CONSTRUCTION. Only the leg that runs second
-// in stage 1 is handed partner facts (Need.Pair), so two legs can never each
-// be cleared by the other's lift.
+// in stage 1 is handed partner facts (Need.Pair, the dispatcher's one-way
+// pairPass), so two legs can never each be cleared by the other's lift. Core
+// owning the vacate release did not change that hand-off.
 //
 // ── WHERE THE FACTS COME FROM ────────────────────────────────────────────────
 //
@@ -54,29 +55,50 @@ import (
 // read, through the Reader: BinsAtStep, the first read of the slot book.
 //
 // The planner decides and writes nothing. The dispatcher stamps the persisted
-// plan, logs the grant, asks its own in-flight question, and keeps the release
-// fence.
+// plan, logs the grant and asks its own in-flight question; Core holds the
+// release the stamp needs (dispatch/vacate_hold.go).
 //
 // ── THE STAMP, AND WHY IT VALIDATES ITSELF ──────────────────────────────────
 //
 // A (b) grant is a promise about ORDER: the partner lifts before L drops. The
 // fleet does not keep it — release gates on L being staged, not on the partner
-// having lifted — so the release fence in HandleOrderRelease keeps it, and the
-// stamp is what tells the fence which drops need keeping. Only a drop the rule
-// admitted is stamped; nothing today's code already dispatches ever is.
+// having lifted — so CORE keeps it, and the stamp is what says which drops need
+// keeping. A station release whose segment drops on a stamped node whose bin
+// has not left is taken and HELD (HeldAt): from then the wait is Core's
+// (dispatch.CoreOwnsWaitAt), and Core appends the same segment once the bin is
+// lifted off the node — bins.last_lift_at after StampedAt, and the bin no
+// longer on the node (bins.LeftSince; dispatch/vacate_hold.go). The Z/Y release
+// fence that refused the station instead is gone. The partner ending moot
+// (skipped, finding nothing to lift) releases the hold; its cancel or failure
+// does not (the swap death rule ends the leg). Only a drop the rule admitted is
+// stamped; nothing today's code already dispatches ever is.
+//
+// Two stamps are not grants. The sibling stamp (VacateKindSibling) is written
+// at a release only where arm Y used to refuse — the leg's sibling staged with
+// a grant pending, this leg dropping on a bin that sibling claimed — and no slot
+// claim credits it (PartnerStamp). A home clear's partial move carries a stamp
+// with Partner 0 on its drop (dispatch/clear_home.go): the compound advance
+// holds that move before dispatch until the home's carrier has left.
 //
 // It names its node, and is honoured only while the step still drops there. Five
 // writers can re-point a drop, one of them at release; each clears the stamp as
 // housekeeping, but the self-check is the guarantee, because the next writer
 // someone adds can forget to.
 
-// Vacate records what the vacated-slot rule counted when it admitted a drop.
-// Partner is 0 for an own-lift (a) grant, which needs no release fence: one
-// robot lifts before it drops.
-type Vacate struct {
-	Node    string `json:"node"`
-	Bin     int64  `json:"bin"`
-	Partner int64  `json:"partner,omitempty"`
+// Vacate is the vacate stamp on a dropoff, declared once in protocol with the
+// wait kinds (protocol.VacateStamp, which carries its field notes).
+type Vacate = protocol.VacateStamp
+
+// VacateKindSibling marks the stamp on a grant's sibling (protocol.VacateKindSibling).
+const VacateKindSibling = protocol.VacateKindSibling
+
+// SameGrant reports whether two stamps record the same grant — node, bin,
+// partner and kind — whenever they were written.
+func SameGrant(a, b *Vacate) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Node == b.Node && a.Bin == b.Bin && a.Partner == b.Partner && a.Kind == b.Kind
 }
 
 // PairLeg is the partner's leg as the pass that formed the pair has it: the
@@ -104,9 +126,19 @@ func StampHonoured(s Step) *Vacate {
 	return s.Vacate
 }
 
-// PartnerStamp is StampHonoured narrowed to a (b) grant — the only kind the
-// release fence and the slot claim's partner arm read.
+// PartnerStamp is StampHonoured narrowed to a (b) grant — the stamp the slot
+// claim's partner arm credits. A sibling stamp is not a grant and is never
+// returned.
 func PartnerStamp(s Step) *Vacate {
+	if st := StampHonoured(s); st != nil && st.Partner != 0 && st.Kind == "" {
+		return st
+	}
+	return nil
+}
+
+// FenceStamp is StampHonoured narrowed to a stamp a release must keep: another
+// order's lift empties the node (a (b) grant or a sibling stamp).
+func FenceStamp(s Step) *Vacate {
 	if st := StampHonoured(s); st != nil && st.Partner != 0 {
 		return st
 	}

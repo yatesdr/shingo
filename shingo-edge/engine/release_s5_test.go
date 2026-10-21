@@ -186,7 +186,7 @@ func TestReleaseS5Pins(t *testing.T) {
 		// Core's words instead of reporting a release that sent nothing.
 		{name: "S5/per-order click on a leg at a lane wait: refused",
 			gate:  "G2",
-			want:  "err:order 2 is waiting on a lane, not on the station | evac=staged supply=staged | rel=- | ingest=0 capred=0 | intent:evac=- | intent:supply=-",
+			want:  "err:order 2 is waiting on Core, not on the station:  | evac=staged supply=staged | rel=- | ingest=0 capred=0 | intent:evac=- | intent:supply=-",
 			build: pairAt(twoRobot, "evac", S, "supply", S),
 			act:   seq(stagesAtLane("evac"), orderClick("evac", dispEmpty)),
 			probe: pIntents},

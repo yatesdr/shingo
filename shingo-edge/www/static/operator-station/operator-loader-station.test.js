@@ -172,6 +172,9 @@ const manifests = {
 // A payload here gets a 500 from the Edge's manifest read (its catalog copy
 // could not be read).
 const manifestBroken = new Set();
+const CLEAR_DONE = 'Full recorded · the partial stays on its spot for now';
+// clearRefusal, set, is the error the next home clear is refused with.
+let clearRefusal = null;
 function fetchStub(url, opts) {
     opts = opts || {};
     const method = opts.method || 'GET';
@@ -188,6 +191,13 @@ function fetchStub(url, opts) {
         }
     }
     requests.push({ method: method, url: url, body: opts.body === undefined ? undefined : JSON.parse(opts.body) });
+    // The home's clear, as handlers_operator_bins.go answers it: 200 and one
+    // sentence (here the none arm's), or Core's fence refusal (409).
+    if (method === 'POST' && /\/clear-loader-home$/.test(url)) {
+        answer = clearRefusal ? { error: clearRefusal } : { status: 'ok', message: CLEAR_DONE };
+        if (clearRefusal) status = 409;
+        clearRefusal = null;
+    }
     const res = {
         ok: status >= 200 && status < 300, status: status,
         json: async () => answer,
@@ -589,17 +599,36 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
         'Clear partials opened by a tap: the numbered card, the home act, where the partial comes from');
 
     // The card's tap: the confirm, naming the home and the spot, then
-    // clear-loader-home naming the spot the card names (changed: the body was
-    // empty and the engine picked the first match, which the card could only
-    // hope was the same one).
+    // clear-loader-home with an empty body. Core records the zero and says, in
+    // the server's one sentence, what brings the partial home (here: not yet,
+    // the none arm), and the confirm
+    // closes as a done act does: the server's one sentence as the board's
+    // success toast, the view refreshed.
+    const toasts = () => document.getElementById('os-toast').children.filter(n => !n.removed).map(n => n.textContent);
     await tap(h1);
     eq(overlayTexts()[0], 'Clear SMN_H1?', 'the clear\'s confirm names the home (changed: it named no node)');
-    eq(overlayTexts()[1], 'Declares the bin at SMN_H1 empty. Shingo brings the partial from SMN_F1 to SMN_H1, and SMN_F1 ends holding the empty.',
-        'the clear\'s confirm names the spot and says it ends holding an empty');
+    eq(overlayTexts()[1], 'Pull the full from SMN_H1 first. CONFIRM records it; Shingo brings the partial on SMN_F1 home when it can.',
+        'the clear\'s confirm says the full is pulled first and Shingo brings the partial when it can');
     eq(overlayButtons(), ['CONFIRM CLEAR', 'CANCEL'], 'the clear\'s confirm offers CONFIRM CLEAR');
+    let confirmBox = overlay();
+    const loadsBefore = viewLoads;
     await tapOverlay('CONFIRM CLEAR');
-    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-loader-home', body: { buffer_node: 'LDR.SMN_F1' } }],
-        'CLEAR: posts clear-loader-home naming the spot the card names, by its Core name');
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-loader-home', body: {} }],
+        'CLEAR: posts clear-loader-home for the card\'s home');
+    eq([confirmBox.removed, toasts().slice(-1), viewLoads - loadsBefore], [true, [CLEAR_DONE], 1],
+        'CLEAR recorded: the confirm closes, the board says the server\'s one sentence, the view refreshes');
+    requests = [];
+
+    // A refused clear (Core's one live clear per home, 409) keeps the confirm up
+    // with the refusal in place of its buttons, one request per tap.
+    clearRefusal = 'SMN_H1 is already being cleared';
+    await tap(h1);
+    await tapOverlay('CONFIRM CLEAR');
+    eq(posts().length, 1, 'CLEAR refused: one request');
+    eq([overlayButtons(), overlayTexts().slice(-1)], [[], ['SMN_H1 is already being cleared']],
+        'CLEAR refused: the confirm stays and shows the refusal in place of its buttons');
+    requests = [];
+    overlay().remove();
     await tap(zoneButton('Clear partials', 'Hide'));
 
     // LOAD from an empty home.
@@ -618,17 +647,23 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     await tap(headerButton('PULL FULL FROM HOME'));
     eq(overlayButtons(), ['SMN_H1PART-A', 'CANCEL'], 'PULL FULL FROM HOME: only the home with a buffer partial is listed');
     await tapOverlay('SMN_H1PART-A');
+    eq(overlayTexts()[1], 'Pull the full from this home first. CONFIRM records it.',
+        'PULL FULL FROM HOME: the confirm names no spot');
+    confirmBox = overlay();
     await tapOverlay('CONFIRM CLEAR');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-loader-home', body: {} }],
         'PULL FULL FROM HOME: posts clear-loader-home for the picked home');
+    eq([confirmBox.removed, toasts().slice(-1)], [true, [CLEAR_DONE]],
+        'PULL FULL FROM HOME recorded: the confirm closes on the same sentence');
 }
 
 // ── 4. A home while its clear is in flight (Order A on the home's orders) ──
 {
-    // ClearLoaderHome zeroes the home's bin on Core (its payload goes blank)
-    // and files Order A: a blank-payload move of the carrier, from the home to
-    // the buffer spot. isOwnEmptyOut counts only a CONSUME node's own move, so
-    // on a produce home Order A is general (untagged) demand over an empty bin.
+    // A home emptied on Core (its payload blank) with a blank-payload move of
+    // its carrier to the buffer spot in flight: what the clear once filed as
+    // its Order A, and what the board still reads as a clear in flight.
+    // isOwnEmptyOut counts only a CONSUME node's own move, so on a produce
+    // home Order A is general (untagged) demand over an empty bin.
     const orderA = order(301, 'queued', { order_type: 'move', source_node: 'SMN_H1', delivery_node: 'SMN_F1' });
     const cleared = loaderTile(1, 'SMN_H1', { parts: ['PART-A'], bin: EMPTY, dedicated: true,
         operator: false, orders: [orderA], buffer: [{ node: 'SMN_F1', state: 'partial' }] });

@@ -365,9 +365,22 @@ const (
 	//
 	// CORE STILL DOES NOT RELEASE IT. PopStationWait is deliberately unfloored
 	// (see waitPopulations) and this changes nothing about that: the releaser is
-	// the station — the Edge's own swap-survivor arm, or a person. This cause is
-	// board truth, not a new mechanism.
+	// the station — a release the operator already pressed, kept as the Edge's
+	// release intent and re-planned on the partner's end (S5 replaced the Edge's
+	// swap-survivor arm), or a person. This cause is board truth, not a new
+	// mechanism.
 	CauseSwapPartnerFinished QueueCause = "swap-partner-finished"
+	// CauseVacateWaitingLift — the station released this leg, and Core holds it
+	// because a drop in the segment needs a bin gone from its node first: the
+	// leg's own vacate stamp (a grant (b) promise, or the sibling stamp). Core
+	// appends the segment when that bin is lifted off the node
+	// (dispatch/vacate_hold.go). "Waiting for <bin> to leave <node>".
+	CauseVacateWaitingLift QueueCause = "vacate-waiting-lift"
+	// CauseVacateLifterGone — a vacate hold whose lifter has ended without
+	// lifting the bin (cancelled or failed; a skipped/moot end releases the
+	// hold instead). State-keyed: the bin still stands on the node and the order
+	// that was to lift it is terminal.
+	CauseVacateLifterGone QueueCause = "vacate-lifter-gone"
 	// CauseGateReleaseFailed — the classifier ADMITTED this dweller and the release
 	// itself then failed: the re-bind found no slot, the segment could not be
 	// built, the append errored below the retry threshold. The order stays a
