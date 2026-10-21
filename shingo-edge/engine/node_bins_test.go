@@ -355,3 +355,69 @@ func TestBinsActable_FromTheBook(t *testing.T) {
 		t.Errorf("a Core that restarted (quotes another digest): %v %q", ok, why)
 	}
 }
+
+// holdGroupRow gives eng a bins copy holding one group row: the group's
+// members as Core answers a watched group (row v2).
+func holdGroupRow(t *testing.T, eng *Engine, group string, members ...string) {
+	t.Helper()
+	snap := protocol.NodeBinsSnapshot{Rows: []protocol.NodeBinsRow{{Node: group, State: protocol.BinsStateGroup, Members: members}}}
+	for _, m := range members {
+		snap.Rows = append(snap.Rows, protocol.NodeBinsRow{Node: m, State: protocol.BinsStateEmpty})
+	}
+	var err error
+	if snap.Digest, err = protocol.NodeBinsDigest(snap); err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	if err := eng.ApplyNodeBinsSnapshot(snap); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+}
+
+// TestGroupMembers_FromTheGroupRow: a group's members come from its group row
+// on the bins copy; a name with no group row there is not known, and the miss
+// rebuilds the station lists so an unwatched group is watched from then on.
+func TestGroupMembers_FromTheGroupRow(t *testing.T) {
+	t.Parallel()
+	eng, _ := binsEngine(t, testEngineDB(t))
+	if _, known := eng.groupMembers("MKT"); known {
+		t.Error("nothing held: a group read as known")
+	}
+	holdGroupRow(t, eng, "MKT", "MKT.S1", "MKT.S2")
+	if got, known := eng.groupMembers("MKT"); !known || !slices.Equal(got, []string{"MKT.S1", "MKT.S2"}) {
+		t.Errorf("members = %v (known %v), want [MKT.S1 MKT.S2]", got, known)
+	}
+	if _, known := eng.groupMembers("MKT.S1"); known {
+		t.Error("a member row (not a group) read as a group")
+	}
+}
+
+// TestContainmentNodeMatches_FromTheContainmentCopy: a group containment
+// destination's members are the containment copy's children; no copy held is
+// no match.
+func TestContainmentNodeMatches_FromTheContainmentCopy(t *testing.T) {
+	t.Parallel()
+	eng, _ := binsEngine(t, testEngineDB(t))
+	if eng.containmentNodeMatches("QC-GRP", "A") {
+		t.Error("no containment copy held: matched a member")
+	}
+	if !eng.containmentNodeMatches("QC-1", "QC-1") {
+		t.Error("a concrete destination did not match itself")
+	}
+	snap := protocol.ContainmentSnapshot{Destinations: []protocol.ContainmentDestination{
+		{Node: "QC-GRP", Children: []string{"QC-GRP.A", "QC-GRP.B"}, Bins: []protocol.ContainmentBin{}}}}
+	var err error
+	if snap.Digest, err = protocol.ContainmentDigest(snap); err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	if err := eng.ApplyContainmentSnapshot(snap); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	for _, n := range []string{"QC-GRP.A", "B"} {
+		if !eng.containmentNodeMatches("QC-GRP", n) {
+			t.Errorf("%s did not match the group's member", n)
+		}
+	}
+	if eng.containmentNodeMatches("QC-GRP", "C") {
+		t.Error("a non-member matched")
+	}
+}

@@ -380,7 +380,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Get("/orders/active", h.apiGetActiveOrders)
 
 			// Lookups
-			r.Get("/node/{name}/children", h.apiNodeChildren)
 			r.Get("/payload/{code}/manifest", h.apiPayloadManifest)
 			r.Get("/hourly-counts", h.apiGetHourlyCounts)
 			r.Get("/core-nodes", h.apiGetCoreNodes)

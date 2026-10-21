@@ -294,3 +294,23 @@ func (e *Engine) BinsActable() (ok bool, why string) {
 	}
 	return Actable(c != nil, copyList, ownList, received, confirmed, lastAck, now)
 }
+
+// groupMembers is a group's members as Core answers them on the bins copy: the
+// group row's members (non-synthetic children, qualified group.child, Core's
+// own membership; protocol NodeBinsRow). known is false when the copy holds no
+// group row for name: nothing held yet, a Core that sends no group rows, or a
+// group this Edge does not watch. For the last, the station lists are dropped
+// and rebuilt now, so a group a claim edit added is watched from here on and
+// the next ask finds it (the lists are keyed on no claim generation).
+func (e *Engine) groupMembers(name string) (members []string, known bool) {
+	if c := e.nodeBins.Load(); c != nil {
+		if r, ok := c.rows[name]; ok && r.State == protocol.BinsStateGroup {
+			return r.Members, true
+		}
+	}
+	if e.stationService != nil {
+		e.stationService.InvalidateBinNodes()
+		e.stationService.WatchedBinNodes()
+	}
+	return nil, false
+}

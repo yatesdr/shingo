@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,15 +27,13 @@ import (
 
 // intentCoreServer fakes the Core telemetry endpoints the pullback calls and
 // counts bin-clear requests.
-func intentCoreServer(t *testing.T, bins []protocol.NodeBinInfo, children []protocol.NodeChildInfo) (*httptest.Server, *atomic.Int32) {
+func intentCoreServer(t *testing.T, bins []protocol.NodeBinInfo) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var clears atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/telemetry/node-bins":
 			json.NewEncoder(w).Encode(bins)
-		case strings.HasSuffix(r.URL.Path, "/children"):
-			json.NewEncoder(w).Encode(children)
 		case r.URL.Path == "/api/telemetry/bin-clear":
 			clears.Add(1)
 			json.NewEncoder(w).Encode(protocol.BinClearResponse{BinID: 77, Status: "ok"})
@@ -102,14 +99,15 @@ func armPullback(t *testing.T) *pullbackFixture {
 	t.Helper()
 	f := &pullbackFixture{path: copyEngineDBTemplate(t)}
 	f.srv, f.clears = intentCoreServer(t,
-		[]protocol.NodeBinInfo{{NodeName: "PB-MKT-1", Occupied: true, PayloadCode: "PB-PART", UOPRemaining: 40}},
-		[]protocol.NodeChildInfo{{Name: "PB-MKT-1"}})
+		[]protocol.NodeBinInfo{{NodeName: "PB-MKT-1", Occupied: true, PayloadCode: "PB-PART", UOPRemaining: 40}})
 
 	f.db = openIntentDB(t, f.path)
 	f.nodeID = seedIntentNode(t, f.db, "PB-PROC", "PB-WIN")
 	f.eng = newIntentEngine(t, f.db)
 	f.eng.coreClient = stubCoreClient(f.srv.URL)
 	f.eng.SetCoreLoaders([]protocol.LoaderInfo{pullbackLoader("PB-WIN")})
+	// The market's members, as Core answers a watched group on the bins feed.
+	holdGroupRow(t, f.eng, "PB-MARKET", "PB-MKT-1")
 
 	testutil.MustNoErr(t, f.eng.PullFromMarket(f.nodeID, "PB-MKT-1"), "PullFromMarket")
 	all, err := f.db.ListActiveOrdersByProcessNode(f.nodeID)

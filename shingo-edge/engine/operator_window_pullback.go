@@ -36,8 +36,8 @@ type MarketBinInfo struct {
 //
 // Steps:
 //  1. Resolve the loader's outbound_destination from the active claim.
-//  2. Fetch the direct children of that node from Core.
-//  3. Fetch bin states for those children.
+//  2. Its members: the market's group row on the bins copy (groupMembers).
+//  3. Fetch bin states for those members.
 //  4. Return occupied children that hold a bin with a payload.
 func (e *Engine) FetchMarketBins(nodeID int64) ([]MarketBinInfo, error) {
 	node, _, claim, err := e.loadActiveNode(nodeID)
@@ -54,14 +54,9 @@ func (e *Engine) FetchMarketBins(nodeID int64) ([]MarketBinInfo, error) {
 		return nil, fmt.Errorf("node %s has no outbound_destination configured", node.Name)
 	}
 
-	children, err := e.coreClient.FetchNodeChildren(claim.OutboundDestination, false)
-	if err != nil || len(children) == 0 {
+	childNames, known := e.groupMembers(claim.OutboundDestination)
+	if !known || len(childNames) == 0 {
 		return nil, nil
-	}
-
-	childNames := make([]string, len(children))
-	for i, c := range children {
-		childNames[i] = c.Name
 	}
 
 	bins, _, err := e.coreClient.FetchNodeBins(childNames)
@@ -69,9 +64,9 @@ func (e *Engine) FetchMarketBins(nodeID int64) ([]MarketBinInfo, error) {
 		return nil, fmt.Errorf("fetch market bins: %w", err)
 	}
 
-	labelByName := make(map[string]string, len(children))
-	for _, c := range children {
-		labelByName[c.Name] = c.Name
+	labelByName := make(map[string]string, len(childNames))
+	for _, c := range childNames {
+		labelByName[c] = c
 	}
 
 	var result []MarketBinInfo
@@ -111,13 +106,13 @@ func (e *Engine) PullFromMarket(nodeID int64, sourceCoreName string) error {
 	}
 
 	// Verify the source is a child of this loader's outbound destination.
-	children, err := e.coreClient.FetchNodeChildren(claim.OutboundDestination, false)
-	if err != nil {
-		return fmt.Errorf("pull from market: fetch market children: %w", err)
+	children, known := e.groupMembers(claim.OutboundDestination)
+	if !known {
+		return fmt.Errorf("pull from market: the slots of %s are not known yet", claim.OutboundDestination)
 	}
 	var validSource bool
 	for _, c := range children {
-		if c.Name == sourceCoreName {
+		if c == sourceCoreName {
 			validSource = true
 			break
 		}

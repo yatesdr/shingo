@@ -145,8 +145,11 @@ func (e *Engine) SendBinToQualityHold(nodeID int64, actor string) (*orders.Order
 // node a bin sits at: directly (a concrete hold spot), or as a MEMBER of the
 // destination's node group (a group destination — the bins sit on the group's
 // children, and a child's name may be the group-prefixed form Core mints, so
-// the suffix matches too). A read error answers false, which routes to the
-// caller's "no claim covers this" refusal — visible, not guessed.
+// the suffix matches too). The members are the containment copy's: Core sends
+// every containment destination with its group children on the containment
+// feed (store ListContainmentDestinations). No copy held, or a destination the
+// copy does not name, answers false, which routes to the caller's "no claim
+// covers this" refusal — visible, not guessed.
 func (e *Engine) containmentNodeMatches(dest, nodeName string) bool {
 	if dest == "" || nodeName == "" {
 		return false
@@ -154,12 +157,18 @@ func (e *Engine) containmentNodeMatches(dest, nodeName string) bool {
 	if dest == nodeName {
 		return true
 	}
-	children, err := e.coreClient.FetchNodeChildren(dest, false)
-	if err != nil {
+	st, held := e.LocalContainment()
+	if !held {
 		return false
 	}
+	var children []string
+	for _, d := range st.Destinations {
+		if d.Node == dest {
+			children = d.Children
+		}
+	}
 	for _, ch := range children {
-		if ch.Name == nodeName || strings.HasSuffix(ch.Name, "."+nodeName) {
+		if ch == nodeName || strings.HasSuffix(ch, "."+nodeName) {
 			return true
 		}
 	}

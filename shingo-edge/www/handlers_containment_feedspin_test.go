@@ -29,23 +29,21 @@ import (
 // containmentCoreStub answers the three Core reads the page used to make and
 // counts them per kind, so a pin can say how many calls a render costs.
 type containmentCoreStub struct {
-	mu       sync.Mutex
-	calls    map[string]int
-	srv      *httptest.Server
-	stateMu  sync.Mutex
-	status   int    // /api/containment status
-	body     string // /api/containment body
-	children map[string][]protocol.NodeChildInfo
-	bins     map[string][]map[string]any
+	mu      sync.Mutex
+	calls   map[string]int
+	srv     *httptest.Server
+	stateMu sync.Mutex
+	status  int    // /api/containment status
+	body    string // /api/containment body
+	bins    map[string][]map[string]any
 }
 
 func newContainmentCoreStub(t *testing.T) *containmentCoreStub {
 	t.Helper()
 	s := &containmentCoreStub{
-		calls:    map[string]int{},
-		status:   http.StatusOK,
-		children: map[string][]protocol.NodeChildInfo{},
-		bins:     map[string][]map[string]any{},
+		calls:  map[string]int{},
+		status: http.StatusOK,
+		bins:   map[string][]map[string]any{},
 	}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -58,10 +56,6 @@ func newContainmentCoreStub(t *testing.T) *containmentCoreStub {
 			if _, err := w.Write([]byte(body)); err != nil {
 				t.Errorf("stub Core: write /api/containment body: %v", err)
 			}
-		case strings.HasPrefix(r.URL.Path, "/api/telemetry/node/") && strings.HasSuffix(r.URL.Path, "/children"):
-			s.count("children")
-			name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/telemetry/node/"), "/children")
-			_ = json.NewEncoder(w).Encode(s.children[name])
 		case r.URL.Path == "/api/telemetry/node-bins":
 			s.count("node-bins")
 			out := []map[string]any{}
@@ -178,11 +172,6 @@ func newContainmentPinHandlers(t *testing.T) (*Handlers, *containmentCoreStub) {
 	}
 	core := newContainmentCoreStub(t)
 	core.body = containmentPinStateBody
-	core.children["FP-GRP"] = []protocol.NodeChildInfo{
-		{Name: "FP-GRP.A", NodeType: "STG"},
-		{Name: "FP-GRP.SUB", NodeType: "NGRP"}, // a nested group is skipped
-		{Name: "FP-GRP.B", NodeType: "STG"},
-	}
 	core.bins["FP-GRP.A"] = []map[string]any{{"node_name": "FP-GRP.A", "bin_id": 11, "bin_label": "FP-BIN-11", "payload_code": "FP-PART", "uop_remaining": 7, "occupied": true}}
 	core.bins["FP-GRP.B"] = []map[string]any{{"node_name": "FP-GRP.B", "bin_id": 13, "bin_label": "FP-BIN-13", "occupied": false}}
 	core.bins["FP-PLAIN"] = []map[string]any{{"node_name": "FP-PLAIN", "bin_id": 12, "bin_label": "FP-BIN-12", "payload_code": "FP-PART", "uop_remaining": 3, "occupied": true}}

@@ -95,7 +95,14 @@ func (s *StationService) heldBinNodes() binNodes {
 		log.Printf("station view: read process nodes for the bin lists: %v", err)
 		return binNodes{}
 	}
+	markets, err := s.db.ListProduceOutboundDestinations()
+	if err != nil {
+		s.binsMu.Unlock()
+		log.Printf("station view: read produce outbound destinations for the bin lists: %v", err)
+		return binNodes{}
+	}
 	built := s.buildBinNodes(rows)
+	built.all = withMarkets(built.all, rows, markets)
 	built.key, built.loaded = key, true
 	changed := !slices.Equal(built.all, s.bins.all) || !s.bins.loaded
 	s.bins = built
@@ -552,4 +559,38 @@ func assignmentAt(groups []protocol.NodeBinsGroup, node string) *domain.TileAssi
 		}
 	}
 	return nil
+}
+
+// withMarkets adds to the watch list the outbound destinations of the produce
+// claims of every process with a node on it (ListProduceOutboundDestinations,
+// across every live style): the markets a produce loader's pull-back lists
+// and checks against (engine operator_window_pullback.go), which Core answers
+// as a group row with its members. Watch list only: no board draws a market,
+// so no station's own list carries it. Static between claim edits, never moved
+// by a changeover; a claim edit that adds one is picked up when a reader finds
+// its group unwatched (InvalidateBinNodes) or the plant next moves.
+func withMarkets(all []string, rows []processes.Node, markets map[int64][]string) []string {
+	set := make(map[string]bool, len(all))
+	for _, n := range all {
+		set[n] = true
+	}
+	for _, n := range rows {
+		if n.CoreNodeName == "" {
+			continue
+		}
+		for _, m := range markets[n.ProcessID] {
+			set[m] = true
+		}
+	}
+	return sortedNames(set)
+}
+
+// InvalidateBinNodes drops the held lists, so the next read rebuilds them (and,
+// when the watched names moved, the engine publishes its list at once). For a
+// reader that found a name it needs unwatched: a claim edit moves no
+// generation the lists are keyed on.
+func (s *StationService) InvalidateBinNodes() {
+	s.binsMu.Lock()
+	s.bins.loaded = false
+	s.binsMu.Unlock()
 }

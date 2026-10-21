@@ -128,12 +128,6 @@ type PayloadManifestResponse struct {
 	UOPCapacity int            `json:"uop_capacity"`
 }
 
-// NodeChildInfo describes a physical child node of an NGRP.
-type NodeChildInfo struct {
-	Name     string `json:"name"`
-	NodeType string `json:"node_type"`
-}
-
 // BinLoadRequest is the request body for loading a bin via HTTP.
 type BinLoadRequest struct {
 	NodeName string `json:"node_name"`

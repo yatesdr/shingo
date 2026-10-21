@@ -698,7 +698,7 @@ func operatorHasWorkAt(wantsEmpty bool, binID int64, uopRemaining int) bool {
 // session."
 //
 // The lane-stress plant does not have a SYN_MARKET. It has SYN_STAMP and
-// SYN_COMP, so FetchNodeChildren("SYN_MARKET") returned nothing, marketSlots was
+// SYN_COMP, so the children read of "SYN_MARKET" returned nothing, marketSlots was
 // empty, and the sweep returned at its length check on every single tick. Over a
 // two-and-a-half-hour soak it cleared ZERO bins and logged nothing, because it
 // only logs when it clears something — a sweep that cannot find its own subject
@@ -753,8 +753,9 @@ func (op *simOperator) clearNegativeBins() {
 }
 
 // collectMarketSlots enumerates the leaf storage-slot node names under the combined
-// market group. FetchNodeChildren(market) returns the lanes (and any direct slots);
-// each lane's children are its slots. A child with no children of its own is treated
+// market group, read from Core's node list (sim_core_oracle.go): a market's
+// children are its lanes (and any direct slots); each lane's children are its
+// slots. A child with no children of its own is treated
 // as a direct slot, so this is robust without depending on the node-type string.
 // It DERIVES the markets from the plant rather than being told their names.
 //
@@ -795,20 +796,28 @@ func (op *simOperator) collectMarketSlots() []string {
 			slots = append(slots, name)
 		}
 	}
+	// One read of Core's node list for the whole walk (sim_core_oracle.go); a
+	// failed read leaves every market a single slot, as an unanswered children
+	// read did.
+	tree, err := readSimNodeTree(op.e.coreClient.baseURL)
+	if err != nil {
+		op.e.debugFn("[sim] market slots: read Core's nodes: %v", err)
+		tree = &simNodeTree{}
+	}
 	for market := range markets {
-		lanes, _ := op.e.coreClient.FetchNodeChildren(market, true)
+		lanes := tree.childNames(market, true)
 		if len(lanes) == 0 {
 			add(market) // not a group — a node named directly
 			continue
 		}
 		for _, lane := range lanes {
-			laneSlots, _ := op.e.coreClient.FetchNodeChildren(lane.Name, false)
+			laneSlots := tree.childNames(lane, false)
 			if len(laneSlots) == 0 {
-				add(lane.Name) // direct slot child of the group
+				add(lane) // direct slot child of the group
 				continue
 			}
 			for _, s := range laneSlots {
-				add(s.Name)
+				add(s)
 			}
 		}
 	}

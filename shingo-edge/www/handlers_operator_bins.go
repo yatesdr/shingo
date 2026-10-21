@@ -222,19 +222,6 @@ func (h *Handlers) apiPushEmptyOut(w http.ResponseWriter, r *http.Request) {
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
 }
 
-func (h *Handlers) apiNodeChildren(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	if name == "" {
-		writeJSON(w, []struct{}{})
-		return
-	}
-	children, _ := h.engine.CoreAPI().FetchNodeChildren(name, false)
-	if children == nil {
-		children = []engine.NodeChildInfo{}
-	}
-	writeJSON(w, children)
-}
-
 // apiPayloadManifest answers the load modal's (and the Production page's)
 // manifest read from the Edge's copy of Core's catalog feed, with no call to
 // Core: the row's template lines and UOP capacity. A row with no lines answers

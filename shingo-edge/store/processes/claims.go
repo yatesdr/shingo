@@ -1189,3 +1189,31 @@ type servedScanner struct {
 func (s servedScanner) Scan(dest ...any) error {
 	return s.rows.Scan(append(dest, &s.sc.ProcessID, &s.sc.ProcessName, &s.sc.StyleName, &s.sc.Incoming)...)
 }
+
+// ListProduceOutboundDestinations returns, per process id, the distinct
+// outbound destinations its live produce claims name across every live style,
+// sorted: the markets a produce loader's pull-back picks from. Every style, not
+// the running one, so the bins watch list built from it does not move with a
+// changeover (a static superset; StationService.buildBinNodes).
+func ListProduceOutboundDestinations(db DBTX) (map[int64][]string, error) {
+	rows, err := db.Query(`SELECT DISTINCT s.process_id, c.outbound_destination
+		FROM style_node_claims c
+		JOIN styles s ON s.id = c.style_id
+		WHERE s.deleted_at IS NULL AND` + liveClaims + `
+		AND c.role = 'produce' AND c.outbound_destination <> ''
+		ORDER BY s.process_id, c.outbound_destination`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]string{}
+	for rows.Next() {
+		var processID int64
+		var dest string
+		if err := rows.Scan(&processID, &dest); err != nil {
+			return nil, err
+		}
+		out[processID] = append(out[processID], dest)
+	}
+	return out, rows.Err()
+}

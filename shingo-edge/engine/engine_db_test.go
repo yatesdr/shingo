@@ -420,11 +420,7 @@ func TestCoreClient_NoBaseURL_GracefulDegrade(t *testing.T) {
 	t.Parallel()
 	c := NewCoreClient("")
 
-	// All telemetry reads should return (nil,nil) — not an error.
-	if ch, err := c.FetchNodeChildren("NGRP", false); ch != nil || err != nil {
-		t.Errorf("FetchNodeChildren with no base-url = (%v,%v), want (nil,nil)", ch, err)
-	}
-	// FetchNodeBins is the exception, deliberately: it says whether anyone
+	// FetchNodeBins says whether anyone
 	// answered. With no Core to ask, the answer is "we do not know", which is a
 	// different fact from "there is no bin there" and the whole point of the
 	// three-state contract.
@@ -438,59 +434,6 @@ func TestCoreClient_NoBaseURL_GracefulDegrade(t *testing.T) {
 	}
 	if _, err := c.ClearBin("N1", "", false, nil); err == nil {
 		t.Error("ClearBin with no base-url should error")
-	}
-}
-
-func TestCoreClient_FetchNodeChildren(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/NGRP/children") {
-			t.Errorf("unexpected path %s", r.URL.Path)
-		}
-		json.NewEncoder(w).Encode([]NodeChildInfo{
-			{Name: "child-1", NodeType: "cell"},
-			{Name: "child-2", NodeType: "cell"},
-		})
-	}))
-	defer srv.Close()
-	c := NewCoreClient(srv.URL)
-	got, err := c.FetchNodeChildren("NGRP", false)
-	if err != nil {
-		t.Fatalf("FetchNodeChildren: %v", err)
-	}
-	if len(got) != 2 || got[0].Name != "child-1" {
-		t.Errorf("children = %+v", got)
-	}
-
-	// Empty node name short-circuits.
-	if got, err := c.FetchNodeChildren("", false); got != nil || err != nil {
-		t.Errorf("empty name should short-circuit, got (%v,%v)", got, err)
-	}
-}
-
-func TestCoreClient_FetchNodeChildren_Non200(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "nope", http.StatusNotFound)
-	}))
-	defer srv.Close()
-	c := NewCoreClient(srv.URL)
-	got, err := c.FetchNodeChildren("NGRP", false)
-	if got != nil || err != nil {
-		t.Errorf("Non-200 should return (nil,nil), got (%v,%v)", got, err)
-	}
-}
-
-func TestCoreClient_FetchNodeChildren_BadJSON(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte("{not:json"))
-	}))
-	defer srv.Close()
-	c := NewCoreClient(srv.URL)
-	got, err := c.FetchNodeChildren("NGRP", false)
-	if got != nil || err != nil {
-		t.Errorf("bad-json should return (nil,nil), got (%v,%v)", got, err)
 	}
 }
 

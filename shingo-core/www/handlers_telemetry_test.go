@@ -201,41 +201,6 @@ func TestApiTelemetryPayloadManifest_KnownNoManifest_FallbackEntry(t *testing.T)
 	}
 }
 
-// --- apiTelemetryNodeChildren -----------------------------------------------
-
-func TestApiTelemetryNodeChildren_EmptyName(t *testing.T) {
-	t.Parallel()
-	h, _ := testHandlers(t)
-	req := chiReq(http.MethodGet, "/api/telemetry/node//children", map[string]string{"name": ""})
-	rec := httptest.NewRecorder()
-	h.apiTelemetryNodeChildren(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
-	}
-	body := strings.TrimSpace(rec.Body.String())
-	if body != "[]" {
-		t.Errorf("body: got %q, want '[]'", body)
-	}
-}
-
-func TestApiTelemetryNodeChildren_UnknownName(t *testing.T) {
-	t.Parallel()
-	h, _ := testHandlers(t)
-	req := chiReq(http.MethodGet, "/api/telemetry/node/NO-SUCH/children",
-		map[string]string{"name": "NO-SUCH"})
-	rec := httptest.NewRecorder()
-	h.apiTelemetryNodeChildren(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
-	}
-	body := strings.TrimSpace(rec.Body.String())
-	if body != "[]" {
-		t.Errorf("body: got %q, want '[]'", body)
-	}
-}
-
 // --- apiBinLoad -------------------------------------------------------------
 
 func TestApiBinLoad_MissingNodeName(t *testing.T) {

@@ -361,7 +361,8 @@ func containmentRig(t *testing.T) *binsRig {
 // destination's children included, and make no containment or children read.
 // With nothing held there is no fallback read: the chip is not drawn and a
 // tile under a group destination has no target. Against a Core with nil Feeds
-// today's two reads stand.
+// the containment read stands and a group destination's children are not
+// read (its tile has no group target): that read's Core door is gone.
 func TestContainmentStamp_ReadsTheHeldCopyWhenCoreSpeaksFeeds(t *testing.T) {
 	rig := containmentRig(t)
 	stamp := func() (string, bool, map[string]int) {
@@ -372,10 +373,9 @@ func TestContainmentStamp_ReadsTheHeldCopyWhenCoreSpeaksFeeds(t *testing.T) {
 		return target, flagged, rig.core.take()
 	}
 
-	// A Core with nil Feeds: the containment read and one children read per
-	// destination, as today (the stub's group has no children to give).
+	// A Core with nil Feeds: the containment read, and no children read.
 	_, _, calls := stamp()
-	if want := `{"/api/containment":1,"/api/telemetry/node-bins":1,"children":1}`; jsonOf(t, calls) != want {
+	if want := `{"/api/containment":1,"/api/telemetry/node-bins":1}`; jsonOf(t, calls) != want {
 		t.Errorf("Core calls against a Core without feeds = %s, want %s", jsonOf(t, calls), want)
 	}
 

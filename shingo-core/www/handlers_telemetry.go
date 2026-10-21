@@ -209,43 +209,6 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// apiTelemetryNodeChildren returns the direct physical (non-synthetic) children of an NGRP node.
-// When ?include_synthetic=true, synthetic children (LANE nodes) are included — used by
-// Edge's sim operator to enumerate all storage slots under a market group.
-// GET /api/telemetry/node/{name}/children
-func (h *Handlers) apiTelemetryNodeChildren(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	if name == "" {
-		h.jsonOK(w, []struct{}{})
-		return
-	}
-	includeSynthetic := r.URL.Query().Get("include_synthetic") == "true"
-	nodes := h.engine.NodeService()
-	node, err := nodes.GetByDotName(name)
-	if err != nil {
-		h.jsonOK(w, []struct{}{})
-		return
-	}
-	children, err := nodes.ListChildNodes(node.ID)
-	if err != nil {
-		h.jsonOK(w, []struct{}{})
-		return
-	}
-	var result []protocol.NodeChildInfo
-	for _, c := range children {
-		if includeSynthetic || !c.IsSynthetic {
-			result = append(result, protocol.NodeChildInfo{
-				Name:     node.Name + "." + c.Name,
-				NodeType: c.NodeTypeCode,
-			})
-		}
-	}
-	if result == nil {
-		result = []protocol.NodeChildInfo{}
-	}
-	h.jsonOK(w, result)
-}
-
 // apiBinLoad sets the manifest on the bin at a node. Direct HTTP replacement
 // for bin loading — synchronous, returns updated bin state.
 // POST /api/telemetry/bin-load

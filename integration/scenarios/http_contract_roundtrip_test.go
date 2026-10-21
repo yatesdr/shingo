@@ -176,20 +176,6 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 	if err := db.CreatePayload(&coreharness.Payload{Code: "PART-NOBIN", Description: "no bins", UOPCapacity: 10}); err != nil {
 		t.Fatalf("PART-NOBIN: %v", err)
 	}
-	// node-children: an NGRP with one physical child.
-	grpType, err := db.GetNodeTypeByCode("NGRP")
-	if err != nil {
-		t.Fatalf("NGRP type: %v", err)
-	}
-	grp := &coreharness.Node{Name: "RT-GRP", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
-	if err := db.CreateNode(grp); err != nil {
-		t.Fatalf("RT-GRP: %v", err)
-	}
-	child := &coreharness.Node{Name: "RT-CHILD", Enabled: true, ParentID: &grp.ID}
-	if err := db.CreateNode(child); err != nil {
-		t.Fatalf("RT-CHILD: %v", err)
-	}
-
 	// ── 1. node-bins: one occupied storage window, one empty line node ──
 	rows, ok, err := client.FetchNodeBins([]string{sd.StorageNode.Name, sd.LineNode.Name})
 	if err != nil || !ok {
@@ -204,15 +190,6 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 	}
 	if rows[1].NodeName != sd.LineNode.Name || rows[1].Occupied {
 		t.Errorf("line row = %+v, want empty LINE1-IN", rows[1])
-	}
-
-	// ── 5. node-children: the NGRP's physical child, dot-named ──
-	children, err := client.FetchNodeChildren(grp.Name, false)
-	if err != nil {
-		t.Fatalf("FetchNodeChildren: %v", err)
-	}
-	if len(children) != 1 || children[0].Name != "RT-GRP.RT-CHILD" {
-		t.Errorf("children = %+v, want exactly RT-GRP.RT-CHILD", children)
 	}
 
 	// ── 6. bin-load: declare 42, with a manifest line ──
@@ -312,7 +289,6 @@ func TestHTTPContractRoundTrip(t *testing.T) {
 	// ── The traffic seen is exactly the calls above, in order ──
 	want := []struct{ label, method, path string }{
 		{"node-bins", http.MethodGet, "/api/telemetry/node-bins"},
-		{"node-children", http.MethodGet, "/api/telemetry/node/" + grp.Name + "/children"},
 		{"bin-load-declared", http.MethodPost, "/api/telemetry/bin-load"},
 		{"bin-count", http.MethodPost, "/api/telemetry/bin-count"},
 		{"bin-clear-plain", http.MethodPost, "/api/telemetry/bin-clear"},

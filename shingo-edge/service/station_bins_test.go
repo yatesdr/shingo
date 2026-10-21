@@ -102,9 +102,10 @@ func TestBinNodes_TheBoardsWholeList(t *testing.T) {
 	}
 }
 
-// TestBinNodes_ReadWhenThePlantMovesNotPerBuild: the list costs one statement
-// the first time and none after, until process_nodes is written, the node
-// list replaces the groups, or the loaders are replaced.
+// TestBinNodes_ReadWhenThePlantMovesNotPerBuild: the list costs two statements
+// the first time (the process nodes, and the produce claims' outbound
+// destinations the watch list carries) and none after, until process_nodes is
+// written, the node list replaces the groups, or the loaders are replaced.
 func TestBinNodes_ReadWhenThePlantMovesNotPerBuild(t *testing.T) {
 	db, counter := countingDB(t)
 	svc, a, _ := binsPlant(t, db)
@@ -116,23 +117,23 @@ func TestBinNodes_ReadWhenThePlantMovesNotPerBuild(t *testing.T) {
 		svc.BinNodes(a)
 		return counter.Count()
 	}
-	if n := cost(); n != 1 {
-		t.Errorf("first read = %d statements, want 1", n)
+	if n := cost(); n != 2 {
+		t.Errorf("first read = %d statements, want 2", n)
 	}
 	if n := cost(); n != 0 {
 		t.Errorf("steady read = %d statements, want 0", n)
 	}
 	plant++
-	if n := cost(); n != 1 {
-		t.Errorf("after the node list moved = %d statements, want 1", n)
+	if n := cost(); n != 2 {
+		t.Errorf("after the node list moved = %d statements, want 2", n)
 	}
 	loaders++
-	if n := cost(); n != 1 {
-		t.Errorf("after the loaders moved = %d statements, want 1", n)
+	if n := cost(); n != 2 {
+		t.Errorf("after the loaders moved = %d statements, want 2", n)
 	}
 	processes.BumpNodeGeneration()
-	if n := cost(); n != 1 {
-		t.Errorf("after process_nodes moved = %d statements, want 1", n)
+	if n := cost(); n != 2 {
+		t.Errorf("after process_nodes moved = %d statements, want 2", n)
 	}
 }
 
@@ -387,5 +388,56 @@ func TestNodeBinState_HeldPartialFromEitherSource(t *testing.T) {
 	if notHeld.UOPRemaining != 0 || notHeld.HeldSince != "" || notHeld.UOPCapacity != 100 {
 		t.Errorf("not held, from the copy: count %d, held since %q, capacity %d; want 0, none, 100",
 			notHeld.UOPRemaining, notHeld.HeldSince, notHeld.UOPCapacity)
+	}
+}
+
+// TestBinNodes_TheWatchCarriesTheProduceMarkets: the watch list carries the
+// outbound destination of every live produce claim of a process on it, across
+// every style (not only the running one), so Core answers the market as a
+// group row; no station's own list carries it, and an invalidation rebuilds
+// the lists so a claim edit is picked up.
+func TestBinNodes_TheWatchCarriesTheProduceMarkets(t *testing.T) {
+	db, _ := countingDB(t)
+	svc, a, _ := binsPlant(t, db)
+	all, err := db.ListProcessNodes()
+	if err != nil {
+		t.Fatalf("list nodes: %v", err)
+	}
+	var node *processes.Node
+	for i := range all {
+		if all[i].CoreNodeName == "H1" {
+			node = &all[i]
+		}
+	}
+	if node == nil {
+		t.Fatal("no H1")
+	}
+	for i, market := range []string{"MKT-RUN", "MKT-OTHER"} {
+		styleID, err := db.CreateStyle("STYLE-"+market, "", node.ProcessID)
+		if err != nil {
+			t.Fatalf("create style: %v", err)
+		}
+		if i == 0 {
+			if err := db.SetActiveStyle(node.ProcessID, &styleID); err != nil {
+				t.Fatalf("set active style: %v", err)
+			}
+		}
+		if _, err := db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, processes.NodeClaimInput{
+			StyleID: styleID, CoreNodeName: "H1", Role: protocol.ClaimRoleProduce,
+			SwapMode: protocol.SwapModeTwoRobotPressIndex, PayloadCode: "PART-A", UOPCapacity: 10,
+			PairedCoreNode: "H2", InboundSource: "SMN_IN", OutboundDestination: market,
+		}); err != nil {
+			t.Fatalf("claim: %v", err)
+		}
+	}
+	svc.InvalidateBinNodes()
+	watched := svc.WatchedBinNodes()
+	for _, m := range []string{"MKT-RUN", "MKT-OTHER"} {
+		if !slices.Contains(watched, m) {
+			t.Errorf("watch list %v lacks the produce market %s", watched, m)
+		}
+	}
+	if got := svc.BinNodes(a); slices.Contains(got, "MKT-RUN") {
+		t.Errorf("station A's own list %v carries the market; only the watch list should", got)
 	}
 }

@@ -87,3 +87,9 @@ func (db *DB) ListAllContainmentClaims() ([]processes.NodeClaim, error) {
 func (db *DB) ListProduceContainmentDestinations() (map[int64]string, error) {
 	return processes.ListProduceContainmentDestinations(db.DB)
 }
+
+// ListProduceOutboundDestinations returns, per process id, the outbound
+// destinations its live produce claims name across every live style.
+func (db *DB) ListProduceOutboundDestinations() (map[int64][]string, error) {
+	return processes.ListProduceOutboundDestinations(db.DB)
+}

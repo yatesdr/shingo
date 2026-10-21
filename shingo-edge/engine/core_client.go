@@ -51,36 +51,6 @@ func (c *CoreClient) Available() bool {
 // BinLoadItem is one line of a bin-load request: part number + physical count.
 type BinLoadItem = protocol.BinLoadItem
 
-// NodeChildInfo is one physical child of an NGRP in the children endpoint.
-type NodeChildInfo = protocol.NodeChildInfo
-
-// FetchNodeChildren returns the direct children of an NGRP node.
-// When includeSynthetic is true, synthetic children (e.g. LANE nodes) are included;
-// otherwise only physical non-synthetic children are returned (the existing default).
-// Returns nil if Core is unavailable or the node has no matching children.
-func (c *CoreClient) FetchNodeChildren(nodeName string, includeSynthetic bool) ([]NodeChildInfo, error) {
-	if c.baseURL == "" || nodeName == "" {
-		return nil, nil
-	}
-	reqURL := c.baseURL + "/api/telemetry/node/" + url.PathEscape(nodeName) + "/children"
-	if includeSynthetic {
-		reqURL += "?include_synthetic=true"
-	}
-	resp, err := c.http.Get(reqURL)
-	if err != nil {
-		return nil, nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, nil
-	}
-	var result []NodeChildInfo
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, nil
-	}
-	return result, nil
-}
-
 // BinAtLineside is the tri-state lookup the reconciler needs at
 // the Phase 3 authority flip. Returns:
 //

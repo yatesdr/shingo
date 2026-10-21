@@ -236,23 +236,13 @@ func containmentFromCore(eng ServiceAccess, coverage map[string]map[string]strin
 		markFlagged(flagged, state.Containment)
 		return kids, flagged, true
 	}
-	// A Core with no feeds. CoreAPI may be nil (a test stub, or a dev edge
-	// with no Core configured): the group half just degrades, the exact-match
-	// half still works.
+	// A Core with no feeds, or no Core configured (CoreAPI nil: a test stub, a
+	// dev edge): the group half degrades and only the exact-match half works.
+	// A group's children come from the containment feed alone; the per-group
+	// children read this arm made went with that read's Core door.
 	coreAPI := eng.CoreAPI()
 	if coreAPI == nil {
 		return kids, flagged, true
-	}
-	for dest := range coverage {
-		children, cerr := coreAPI.FetchNodeChildren(dest, false)
-		if cerr != nil {
-			continue
-		}
-		for _, ch := range children {
-			if ch.NodeType != "NGRP" {
-				kids[dest] = append(kids[dest], ch.Name)
-			}
-		}
 	}
 	if state, err := coreAPI.GetContainment(); err == nil && state != nil {
 		markFlagged(flagged, state.Containment)
