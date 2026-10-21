@@ -316,3 +316,42 @@ func TestBinWatch_PublishedAtBoot(t *testing.T) {
 		t.Errorf("first ack after a failed boot send: published %d, want 1", n)
 	}
 }
+
+// TestBinsActable_FromTheBook: the engine's own reading of the rule, through
+// a snapshot applied and the acks that follow it.
+func TestBinsActable_FromTheBook(t *testing.T) {
+	t.Parallel()
+	eng, _ := binsEngine(t, testEngineDB(t))
+	clock := time.Now()
+	eng.feeds.now = func() time.Time { return clock }
+	own, err := protocol.BinWatchDigest([]string{"SMN_F1", "SMN_H1"})
+	if err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	if ok, why := eng.BinsActable(); ok || why != NotActableNothingHeld {
+		t.Fatalf("before any snapshot: %v %q", ok, why)
+	}
+	snap := binsSnapshot(t, []protocol.NodeBinsRow{{Node: "SMN_F1"}, {Node: "SMN_H1"}}, nil)
+	snap.ListDigest = own
+	if snap.Digest, err = protocol.NodeBinsDigest(snap); err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	if err := eng.ApplyNodeBinsSnapshot(snap); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if ok, why := eng.BinsActable(); ok || why != NotActableNoAck {
+		t.Errorf("held, no ack yet: %v %q", ok, why)
+	}
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{protocol.FeedBins: snap.Digest}, BinWatch: quote(own)})
+	if ok, why := eng.BinsActable(); !ok {
+		t.Errorf("confirmed by the last ack: not actable (%q)", why)
+	}
+	clock = clock.Add(ActableAckWithin + time.Second)
+	if ok, why := eng.BinsActable(); ok || why != NotActableAckOld {
+		t.Errorf("no ack for %v: %v %q", ActableAckWithin, ok, why)
+	}
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{protocol.FeedBins: "a-different-digest"}, BinWatch: quote(own)})
+	if ok, why := eng.BinsActable(); ok || why != NotActableNotConfirmed {
+		t.Errorf("a Core that restarted (quotes another digest): %v %q", ok, why)
+	}
+}

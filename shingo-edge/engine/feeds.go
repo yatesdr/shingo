@@ -492,3 +492,46 @@ func (e *Engine) reconcileAfterGap(reconcile func() error) {
 		e.logFn("feeds: reconcile after an ack gap: %v", err)
 	}
 }
+
+// ActableAckWithin is how recent the last heartbeat ack must be for a held copy
+// to be decided from: one heartbeat (messaging.Heartbeater's 60 s) plus slack.
+const ActableAckWithin = 75 * time.Second
+
+// Why a held copy is not actable (Actable's reason). Each is a state the
+// copy's reader can name; none of them is a guess at what Core holds.
+const (
+	NotActableNothingHeld  = "nothing held"           // no snapshot since this Edge started
+	NotActableOtherList    = "built for another list" // the snapshot answers a watch list this Edge no longer has
+	NotActableNoAck        = "no ack from Core"       // no heartbeat ack since this Edge started
+	NotActableAckOld       = "Core has not answered"  // the last ack is older than ActableAckWithin
+	NotActableNotConfirmed = "not confirmed by Core"  // the last ack quoted a different digest
+)
+
+// Actable is the decision rule, beside CurrentAt's display rule: a held copy
+// may be decided from only when all of these hold —
+//   - a snapshot is held;
+//   - it answers the list this Edge watches now (its list digest is ours);
+//   - the last heartbeat ack confirmed this copy's digest, or arrived before
+//     the copy did (the copy is newer than anything Core said about it);
+//   - that ack is younger than ActableAckWithin.
+//
+// One positive test, so a Core restart (the ack stops confirming), an Edge
+// restart (nothing held) and Core unreachable (the ack ages out) all read not
+// actable, and no absence reads as an answer. confirmed is the copy's last
+// confirmation and lastAck the last ack's time, both on the feed book's clock:
+// the copy was confirmed by the last ack exactly when the two are equal.
+func Actable(held bool, copyList, ownList string, received, confirmed, lastAck, now time.Time) (ok bool, why string) {
+	switch {
+	case !held:
+		return false, NotActableNothingHeld
+	case copyList != ownList:
+		return false, NotActableOtherList
+	case lastAck.IsZero():
+		return false, NotActableNoAck
+	case now.Sub(lastAck) > ActableAckWithin:
+		return false, NotActableAckOld
+	case !confirmed.Equal(lastAck) && !received.After(lastAck):
+		return false, NotActableNotConfirmed
+	}
+	return true, ""
+}

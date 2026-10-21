@@ -271,3 +271,26 @@ func (e *Engine) publishBinWatch(quoted string, force bool) {
 		e.logFn("feeds: publish bins watch (%d nodes): %v — the next ack asks again", len(nodes), err)
 	}
 }
+
+// BinsActable is Actable for this Edge's bins copy: whether a decision may be
+// taken from it now, and why not. Used by nothing yet; the decision sites that
+// move onto the copy read it first and refuse with its reason.
+func (e *Engine) BinsActable() (ok bool, why string) {
+	c := e.nodeBins.Load()
+	_, ownList, listOK := e.binWatchList()
+	if !listOK {
+		return false, NotActableOtherList
+	}
+	e.feeds.mu.Lock()
+	var received, confirmed time.Time
+	if h := e.feeds.held[protocol.FeedBins]; h != nil {
+		received, confirmed = h.receivedAt, h.confirmedAt
+	}
+	lastAck, now := e.feeds.lastAck, e.feeds.clock()
+	e.feeds.mu.Unlock()
+	copyList := ""
+	if c != nil {
+		copyList = c.snap.ListDigest
+	}
+	return Actable(c != nil, copyList, ownList, received, confirmed, lastAck, now)
+}

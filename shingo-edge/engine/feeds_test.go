@@ -296,3 +296,34 @@ func TestFeedRows_CoverAllFeeds(t *testing.T) {
 		t.Errorf("descriptor row %s is not in protocol.AllFeeds", key)
 	}
 }
+
+// TestActable_TheDecisionRule: every way a held copy fails the decision rule,
+// one at a time, against the one way it passes.
+func TestActable_TheDecisionRule(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	ack := now.Add(-30 * time.Second)
+	cases := []struct {
+		name                    string
+		held                    bool
+		copyList                string
+		received, confirmed, at time.Time
+		ok                      bool
+		why                     string
+	}{
+		{"confirmed by the last ack", true, "L", ack.Add(-time.Minute), ack, ack, true, ""},
+		{"arrived after the last ack", true, "L", ack.Add(time.Second), time.Time{}, ack, true, ""},
+		{"nothing held", false, "", time.Time{}, time.Time{}, ack, false, NotActableNothingHeld},
+		{"built for another list", true, "OLD", ack.Add(-time.Minute), ack, ack, false, NotActableOtherList},
+		{"no ack yet", true, "L", now.Add(-time.Second), time.Time{}, time.Time{}, false, NotActableNoAck},
+		{"the ack is old", true, "L", ack.Add(-time.Minute), now.Add(-ActableAckWithin - time.Second), now.Add(-ActableAckWithin - time.Second), false, NotActableAckOld},
+		{"at the ack limit", true, "L", ack.Add(-time.Minute), now.Add(-ActableAckWithin), now.Add(-ActableAckWithin), true, ""},
+		{"the last ack quoted another digest", true, "L", ack.Add(-time.Minute), ack.Add(-time.Minute), ack, false, NotActableNotConfirmed},
+	}
+	for _, c := range cases {
+		ok, why := Actable(c.held, c.copyList, "L", c.received, c.confirmed, c.at, now)
+		if ok != c.ok || why != c.why {
+			t.Errorf("%s: Actable = %v %q, want %v %q", c.name, ok, why, c.ok, c.why)
+		}
+	}
+}
