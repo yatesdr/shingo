@@ -268,7 +268,7 @@ func realRouterFor(t *testing.T, h *Handlers) http.Handler {
 	if err != nil {
 		t.Fatalf("debuglog: %v", err)
 	}
-	router, stop, err := NewRouter(eng, dbg)
+	router, stop, err := NewRouter(eng, NewDoors(eng), dbg)
 	if err != nil {
 		t.Fatalf("NewRouter: %v", err)
 	}

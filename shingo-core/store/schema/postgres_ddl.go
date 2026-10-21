@@ -358,7 +358,8 @@ CREATE TABLE IF NOT EXISTS inbox (
     msg_id       TEXT PRIMARY KEY,
     msg_type     TEXT NOT NULL DEFAULT '',
     station_id   TEXT NOT NULL DEFAULT '',
-    processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    reply_outbox_id BIGINT
 );
 CREATE INDEX IF NOT EXISTS idx_inbox_processed_at ON inbox(processed_at);
 

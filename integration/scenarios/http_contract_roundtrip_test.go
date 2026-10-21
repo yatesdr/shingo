@@ -139,7 +139,7 @@ func startCoreStack(t *testing.T) (*store.DB, *edgeengine.CoreClient, *callRecor
 	if err != nil {
 		t.Fatalf("debuglog: %v", err)
 	}
-	router, stopRouter, err := www.NewRouter(eng, dbg)
+	router, stopRouter, err := www.NewRouter(eng, www.NewDoors(eng), dbg)
 	if err != nil {
 		t.Fatalf("core router: %v", err)
 	}

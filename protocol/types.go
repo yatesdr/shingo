@@ -387,6 +387,7 @@ func CoreInboundSubjects() []string {
 		SubjectSupplyRefusal,
 		SubjectHoldDropped,
 		SubjectBinsWatch,
+		SubjectEdgeAsk,
 	}
 }
 

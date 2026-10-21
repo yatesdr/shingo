@@ -15,10 +15,33 @@ import (
 
 	"shingo/protocol"
 
+	"shingocore/asks"
 	"shingocore/domain"
 	"shingocore/fleet"
 	"shingocore/service"
 )
+
+// apiTelemetryHeldPartials lists the held partials of one part, oldest held
+// first: a finish-later claim's REQUEST shows them for the operator to pick.
+// GET /api/telemetry/held-partials?payload=CODE — the adapter over
+// Doors.heldPartials, which the held_partials ask answers through too.
+func (h *Handlers) apiTelemetryHeldPartials(w http.ResponseWriter, r *http.Request) {
+	writeResult(w, h.doors().heldPartials(r.URL.Query().Get("payload")))
+}
+
+// heldPartials is the held-partials read's body: 400 with no payload, 500 on
+// a failed read, else the list.
+func (d *Doors) heldPartials(payload string) asks.Result {
+	payload = strings.TrimSpace(payload)
+	if payload == "" {
+		return badRequest("payload is required")
+	}
+	list, err := d.engine.BinService().ListHeldPartials(payload)
+	if err != nil {
+		return refused(http.StatusInternalServerError, fmt.Sprintf("held partials of %s: %v", payload, err))
+	}
+	return accepted(list)
+}
 
 // apiTelemetryNodeBins returns bin state for requested core nodes.
 // GET /api/telemetry/node-bins?nodes=NODE-A,NODE-B
@@ -41,22 +64,6 @@ import (
 // The whole request fails rather than the one node, deliberately: a caller
 // asking about five windows and getting four honest rows plus one invented one
 // has no way to know which is which.
-// apiTelemetryHeldPartials lists the held partials of one part, oldest held
-// first: a finish-later claim's REQUEST shows them for the operator to pick.
-func (h *Handlers) apiTelemetryHeldPartials(w http.ResponseWriter, r *http.Request) {
-	payload := strings.TrimSpace(r.URL.Query().Get("payload"))
-	if payload == "" {
-		h.jsonError(w, "payload is required", http.StatusBadRequest)
-		return
-	}
-	list, err := h.engine.BinService().ListHeldPartials(payload)
-	if err != nil {
-		h.jsonError(w, fmt.Sprintf("held partials of %s: %v", payload, err), http.StatusInternalServerError)
-		return
-	}
-	h.jsonOK(w, list)
-}
-
 func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) {
 	nodesParam := r.URL.Query().Get("nodes")
 	if nodesParam == "" {
@@ -211,28 +218,26 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 
 // apiBinLoad sets the manifest on the bin at a node. Direct HTTP replacement
 // for bin loading — synchronous, returns updated bin state.
-// POST /api/telemetry/bin-load
+// POST /api/telemetry/bin-load — the adapter over Doors.binLoad, which the
+// bin.load ask answers through too.
 func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
-	var req protocol.BinLoadRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+	serveDoor(w, r, errText, h.doors().binLoad)
+}
+
+// binLoad is the LOAD's body.
+func (d *Doors) binLoad(req protocol.BinLoadRequest) asks.Result {
 	if req.NodeName == "" {
-		h.jsonError(w, "node_name is required", http.StatusBadRequest)
-		return
+		return badRequest("node_name is required")
 	}
 
-	nodes := h.engine.NodeService()
+	nodes := d.engine.NodeService()
 	node, err := nodes.GetByDotName(req.NodeName)
 	if err != nil {
-		h.refuseAt(w, req.NodeName, http.StatusNotFound, fmt.Sprintf("node %q not found", req.NodeName))
-		return
+		return d.refuseAt(req.NodeName, http.StatusNotFound, fmt.Sprintf("node %q not found", req.NodeName))
 	}
 	binList, err := nodes.ListBinsByNode(node.ID)
 	if err != nil || len(binList) == 0 {
-		h.refuseAt(w, req.NodeName, http.StatusBadRequest, fmt.Sprintf("no bin at node %s", req.NodeName))
-		return
+		return d.refuseAt(req.NodeName, http.StatusBadRequest, fmt.Sprintf("no bin at node %s", req.NodeName))
 	}
 	// Same resolution rule as bin-count and bin-clear: one carrier is
 	// unambiguous, more than one and the caller has to name which. This took
@@ -248,20 +253,17 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if bin == nil {
-			h.refuseAt(w, req.NodeName, http.StatusConflict, fmt.Sprintf("bin %d is not at node %s", req.BinID, req.NodeName))
-			return
+			return d.refuseAt(req.NodeName, http.StatusConflict, fmt.Sprintf("bin %d is not at node %s", req.BinID, req.NodeName))
 		}
 	case len(binList) > 1:
-		h.refuseAt(w, req.NodeName, http.StatusConflict, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(binList)))
-		return
+		return d.refuseAt(req.NodeName, http.StatusConflict, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(binList)))
 	}
 	// THE CARRIER IS STILL WHAT THE SENDER READ, or nothing is loaded: its
 	// generation (epoch) and what it is in the door's terms (expect), each
 	// asked only when the sender asserted it. Read with the bins above, outside
 	// the load's transaction, as the bin_id check is.
 	if status, refusal := loadAssertionRefusal(req, bin); refusal != "" {
-		h.refuseAt(w, req.NodeName, status, refusal)
-		return
+		return d.refuseAt(req.NodeName, status, refusal)
 	}
 
 	// The manifest stores WHICH parts. The per-line counts Edge sends are not
@@ -278,36 +280,35 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 	// payload is refused rather than loaded at 0 — a 0 there is a ledger entry
 	// that reads as a measured empty bin. Both rules, and the one transaction
 	// the set and the confirm now share, are BinManifestService.LoadAtLine's.
-	newEpoch, written, err := h.engine.BinManifest().LoadAtLine(bin.ID, string(manifestJSON), req.PayloadCode, req.UOPCount)
+	newEpoch, written, err := d.engine.BinManifest().LoadAtLine(bin.ID, string(manifestJSON), req.PayloadCode, req.UOPCount)
 	if err != nil {
-		var refused *service.CarrierRefusedError
+		var carrier *service.CarrierRefusedError
 		var held *service.HeldCarrierError
 		switch {
 		case errors.As(err, &held):
 			// A live order holds the carrier (owner, 2026-10-18: "Refuse a
 			// held bin"). The Edge shows this sentence as the LOAD's refusal.
-			h.refuseAt(w, req.NodeName, http.StatusConflict, held.Error())
-		case errors.As(err, &refused):
+			return d.refuseAt(req.NodeName, http.StatusConflict, held.Error())
+		case errors.As(err, &carrier):
 			// A conflict between the part and the carrier standing at the
 			// window, answered with what the operator does about it. The Edge
 			// shows this sentence as the LOAD's refusal.
-			h.refuseAt(w, req.NodeName, http.StatusConflict, loaderCarrierRefusal(refused))
+			return d.refuseAt(req.NodeName, http.StatusConflict, loaderCarrierRefusal(carrier))
 		case errors.Is(err, service.ErrCountRequired):
-			h.refuseAt(w, req.NodeName, http.StatusConflict, err.Error()+" — enter the count on the LOAD")
+			return d.refuseAt(req.NodeName, http.StatusConflict, err.Error()+" — enter the count on the LOAD")
 		case errors.Is(err, service.ErrUnknownPayload):
-			h.refuseAt(w, req.NodeName, http.StatusBadRequest, err.Error())
+			return d.refuseAt(req.NodeName, http.StatusBadRequest, err.Error())
 		default:
-			h.refuseAt(w, req.NodeName, http.StatusInternalServerError, err.Error())
+			return d.refuseAt(req.NodeName, http.StatusInternalServerError, err.Error())
 		}
-		return
 	}
 	uop := int64(written)
 
 	log.Printf("telemetry: bin-load bin=%d at node=%s payload=%s uop=%d epoch=%d", bin.ID, req.NodeName, req.PayloadCode, uop, newEpoch)
-	h.eventHub.Broadcast("bin-update", sseJSON(map[string]any{
+	d.hub.Broadcast("bin-update", sseJSON(map[string]any{
 		"node_id": node.ID, "action": "loaded", "bin_id": bin.ID,
 	}))
-	h.jsonOK(w, protocol.BinLoadResponse{
+	return accepted(protocol.BinLoadResponse{
 		Status:       "ok",
 		BinID:        bin.ID,
 		BinLabel:     bin.Label,
@@ -390,26 +391,25 @@ func loaderCarrierRefusal(r *service.CarrierRefusedError) string {
 // consumed while the request was out.
 //
 // Not an epoch bump; see store/bins.RecordCount for why.
+//
+// The adapter over Doors.binCount, which the bin.count ask answers through too.
 func (h *Handlers) apiBinCount(w http.ResponseWriter, r *http.Request) {
-	var req protocol.BinCountRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+	serveDoor(w, r, errText, h.doors().binCount)
+}
+
+// binCount is the count's body.
+func (d *Doors) binCount(req protocol.BinCountRequest) asks.Result {
 	if req.NodeName == "" {
-		h.jsonError(w, "node_name is required", http.StatusBadRequest)
-		return
+		return badRequest("node_name is required")
 	}
-	nodes := h.engine.NodeService()
+	nodes := d.engine.NodeService()
 	node, err := nodes.GetByDotName(req.NodeName)
 	if err != nil {
-		h.refuseAt(w, req.NodeName, http.StatusNotFound, fmt.Sprintf("node %q not found", req.NodeName))
-		return
+		return d.refuseAt(req.NodeName, http.StatusNotFound, fmt.Sprintf("node %q not found", req.NodeName))
 	}
 	binList, err := nodes.ListBinsByNode(node.ID)
 	if err != nil || len(binList) == 0 {
-		h.refuseAt(w, req.NodeName, http.StatusBadRequest, fmt.Sprintf("no bin at node %s", req.NodeName))
-		return
+		return d.refuseAt(req.NodeName, http.StatusBadRequest, fmt.Sprintf("no bin at node %s", req.NodeName))
 	}
 	// Same resolution rule as bin-clear: one carrier is unambiguous, more than
 	// one and the caller has to name which, rather than an arbitrary first.
@@ -424,44 +424,45 @@ func (h *Handlers) apiBinCount(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if bin == nil {
-			h.refuseAt(w, req.NodeName, http.StatusConflict, fmt.Sprintf("bin %d is not at node %s", req.BinID, req.NodeName))
-			return
+			return d.refuseAt(req.NodeName, http.StatusConflict, fmt.Sprintf("bin %d is not at node %s", req.BinID, req.NodeName))
 		}
 	case len(binList) > 1:
-		h.refuseAt(w, req.NodeName, http.StatusConflict, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(binList)))
-		return
+		return d.refuseAt(req.NodeName, http.StatusConflict, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(binList)))
 	}
 	// A COUNT BELONGS TO ONE GENERATION of the carrier. One taken under any
 	// other (req.Epoch, when the sender asserts it) is not recorded: the answer
 	// is the carrier's current stamp, the body a bin epoch refresh carries, for
-	// the sender to adopt and count again under.
+	// the sender to adopt and count again under. The whole refusal is the
+	// body, the refresh beside the sentence and the rows.
 	if req.Epoch != 0 && req.Epoch != bin.DeltaEpoch {
-		h.writeRefusal(w, http.StatusConflict, doorRefusal{
-			Rows:         h.engine.NodeService().BinsRows(req.NodeName),
-			EpochRefresh: &protocol.BinEpochRefresh{BinID: bin.ID, CoreNodeName: req.NodeName, Epoch: bin.DeltaEpoch},
+		res := asks.Result{Status: http.StatusConflict,
 			// OWNER-WORDS
-			Error: fmt.Sprintf("bin %s changed since that count was taken — nothing was recorded", bin.Label),
-		})
-		return
+			Sentence: fmt.Sprintf("bin %s changed since that count was taken — nothing was recorded", bin.Label),
+			Rows:     d.engine.NodeService().BinsRows(req.NodeName)}
+		res.Body = doorRefusal{
+			Rows:         res.Rows,
+			EpochRefresh: &protocol.BinEpochRefresh{BinID: bin.ID, CoreNodeName: req.NodeName, Epoch: bin.DeltaEpoch},
+			Error:        res.Sentence,
+		}
+		return res
 	}
 
 	actor := req.Actor
 	if actor == "" {
 		actor = "edge-operator"
 	}
-	res, err := h.engine.BinService().RecordCount(bin, req.ActualUOP, actor)
+	res, err := d.engine.BinService().RecordCount(bin, req.ActualUOP, actor)
 	if err != nil {
-		h.refuseAt(w, req.NodeName, http.StatusBadRequest, err.Error())
-		return
+		return d.refuseAt(req.NodeName, http.StatusBadRequest, err.Error())
 	}
-	h.engine.AuditService().Append("bin", bin.ID, "counted",
+	d.engine.AuditService().Append("bin", bin.ID, "counted",
 		strconv.Itoa(res.Expected), strconv.Itoa(res.Actual), actor)
 	log.Printf("telemetry: bin-count bin=%d at node=%s expected=%d actual=%d actor=%s",
 		bin.ID, req.NodeName, res.Expected, res.Actual, actor)
-	h.eventHub.Broadcast("bin-update", sseJSON(map[string]any{
+	d.hub.Broadcast("bin-update", sseJSON(map[string]any{
 		"node_id": node.ID, "action": "counted", "bin_id": bin.ID,
 	}))
-	h.jsonOK(w, protocol.BinCountResponse{
+	return accepted(protocol.BinCountResponse{
 		Status:       "ok",
 		BinID:        bin.ID,
 		BinLabel:     bin.Label,
@@ -485,19 +486,6 @@ type doorRefusal struct {
 	EpochRefresh *protocol.BinEpochRefresh `json:"epoch_refresh,omitempty"`
 	Error        string                    `json:"error"`
 	Rows         []protocol.NodeBinsRow    `json:"rows,omitempty"`
-}
-
-// refuseAt is a write door's refusal of a request that named node: the
-// sentence with Core's current rows for the node (NodeService.BinsRows; one
-// read snapshot). An unknown name answers its unknown row.
-func (h *Handlers) refuseAt(w http.ResponseWriter, node string, code int, msg string) {
-	h.writeRefusal(w, code, doorRefusal{Error: msg, Rows: h.engine.NodeService().BinsRows(node)})
-}
-
-func (h *Handlers) writeRefusal(w http.ResponseWriter, code int, body doorRefusal) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(body)
 }
 
 // apiBinClear clears the manifest on the bin at a node, resetting it to empty.
@@ -530,34 +518,32 @@ func (h *Handlers) writeRefusal(w http.ResponseWriter, code int, body doorRefusa
 //
 // cleared_bin_type_code in the answer is the cart's type as an operator knows
 // it — the carrier, never a marker.
+//
+// The adapter over Doors.binClear, which the bin.clear ask answers through too.
 func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
-	var req protocol.BinClearRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+	serveDoor(w, r, errText, h.doors().binClear)
+}
+
+// binClear is the CLEAR's body.
+func (d *Doors) binClear(req protocol.BinClearRequest) asks.Result {
 	if req.NodeName == "" {
-		h.jsonError(w, "node_name is required", http.StatusBadRequest)
-		return
+		return badRequest("node_name is required")
 	}
 	if req.Layers != nil && *req.Layers < 0 {
-		h.jsonError(w, fmt.Sprintf("layers %d is not a height", *req.Layers), http.StatusBadRequest)
-		return
+		return badRequest(fmt.Sprintf("layers %d is not a height", *req.Layers))
 	}
-	nodes := h.engine.NodeService()
+	nodes := d.engine.NodeService()
 	node, err := nodes.GetByDotName(req.NodeName)
 	if err != nil {
-		h.refuseAt(w, req.NodeName, http.StatusNotFound, fmt.Sprintf("node %q not found", req.NodeName))
-		return
+		return d.refuseAt(req.NodeName, http.StatusNotFound, fmt.Sprintf("node %q not found", req.NodeName))
 	}
 	bins, err := nodes.ListBinsByNode(node.ID)
 	if err != nil || len(bins) == 0 {
-		h.refuseAt(w, req.NodeName, http.StatusBadRequest, fmt.Sprintf("no bin at node %s", req.NodeName))
-		return
+		return d.refuseAt(req.NodeName, http.StatusBadRequest, fmt.Sprintf("no bin at node %s", req.NodeName))
 	}
-	bin, ok := h.binToClear(w, req, bins)
-	if !ok {
-		return
+	bin, refusal := d.binToClear(req, bins)
+	if refusal != nil {
+		return *refusal
 	}
 
 	// A HELD PARTIAL IS NOT CLEARED ON ONE TAP. An unfinished carrier standing in
@@ -566,31 +552,28 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 	// The person's second tap (unload) clears it, booked as any clear. A carrier
 	// that is full, empty, or not in a home of its part clears as it always did.
 	if !req.Unload {
-		held, herr := h.engine.BinService().IsHeldPartial(bin.ID)
+		held, herr := d.engine.BinService().IsHeldPartial(bin.ID)
 		if herr != nil {
-			h.refuseAt(w, req.NodeName, http.StatusInternalServerError, fmt.Sprintf("could not read whether bin %s is a held partial: %v", bin.Label, herr))
-			return
+			return d.refuseAt(req.NodeName, http.StatusInternalServerError, fmt.Sprintf("could not read whether bin %s is a held partial: %v", bin.Label, herr))
 		}
 		if held {
-			h.refuseAt(w, req.NodeName, http.StatusConflict, fmt.Sprintf("bin %s holds %d of %s, unfinished and held here to be called back to its line; "+
+			return d.refuseAt(req.NodeName, http.StatusConflict, fmt.Sprintf("bin %s holds %d of %s, unfinished and held here to be called back to its line; "+
 				"UNLOAD to clear it anyway", bin.Label, bin.UOPRemaining, bin.PayloadCode))
-			return
 		}
 	}
 
-	stamp, ok := h.binClearStamp(w, node.ID, req.NodeName, bin.BinTypeBare)
-	if !ok {
-		return
+	stamp, refusal := d.binClearStamp(node.ID, req.NodeName, bin.BinTypeBare)
+	if refusal != nil {
+		return *refusal
 	}
 
 	// Resolve optional dunnage re-type. Existence check keeps the blast radius
 	// of a mis-pick to "starves out, repair via re-type" (R3 severity).
 	var binTypeID *int64
 	if req.BinTypeCode != "" && stamp == domain.StampNone {
-		bt, err := h.engine.BinService().GetBinTypeByCode(req.BinTypeCode)
+		bt, err := d.engine.BinService().GetBinTypeByCode(req.BinTypeCode)
 		if err != nil {
-			h.refuseAt(w, req.NodeName, http.StatusBadRequest, fmt.Sprintf("unknown bin type code %q", req.BinTypeCode))
-			return
+			return d.refuseAt(req.NodeName, http.StatusBadRequest, fmt.Sprintf("unknown bin type code %q", req.BinTypeCode))
 		}
 		id := bt.ID
 		binTypeID = &id
@@ -607,26 +590,25 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 	// cannot be written the clear is refused with them, and the unloader presses
 	// the button again; the alternative is a clear that destroys the count with
 	// nothing recording that material left.
-	newEpoch, err := h.orchestration.ClearForReuseStampAndBookDeparture(bin.ID, node.ID, binTypeID, stamp, req.Layers)
+	newEpoch, err := d.orchestration.ClearForReuseStampAndBookDeparture(bin.ID, node.ID, binTypeID, stamp, req.Layers)
 	if err != nil {
-		h.refuseAt(w, req.NodeName, http.StatusInternalServerError, err.Error())
-		return
+		return d.refuseAt(req.NodeName, http.StatusInternalServerError, err.Error())
 	}
 	// Read after the commit: the stamp is decided inside the transaction. A
 	// failed read costs the board its line, never the clear.
-	clearedType, err := h.engine.BinService().RealTypeCode(bin.ID)
+	clearedType, err := d.engine.BinService().RealTypeCode(bin.ID)
 	if err != nil {
 		log.Printf("telemetry: bin-clear bin=%d: read its cart type: %v", bin.ID, err)
 	}
 	log.Printf("telemetry: bin-clear bin=%d at node=%s bin_type=%s epoch=%d", bin.ID, req.NodeName, req.BinTypeCode, newEpoch)
-	h.eventHub.Broadcast("bin-update", sseJSON(map[string]any{
+	d.hub.Broadcast("bin-update", sseJSON(map[string]any{
 		"node_id": node.ID, "action": "cleared", "bin_id": bin.ID,
 	}))
 	// cleared_payload_code is what the carrier held before this clear — `bin` was
 	// read above, before ClearForReuseAndBookDeparture. The Edge logs it with the
 	// CLEAR; it no longer reads node-bins first to learn it, and a successful
 	// answer here is what tells it a carrier was there (the no-bin refusal above).
-	h.jsonOK(w, protocol.BinClearResponse{
+	return accepted(protocol.BinClearResponse{
 		Status:             "ok",
 		BinID:              bin.ID,
 		BinLabel:           bin.Label,
@@ -643,44 +625,46 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 // than one → the caller must name a bin_id, otherwise we'd silently clear an
 // arbitrary one. No count/occupancy refusal: the unloader clears full finished
 // bins by design, so a non-empty bin is not itself a reason to refuse. A
-// refusal is written to w and ok is false.
-func (h *Handlers) binToClear(w http.ResponseWriter, req protocol.BinClearRequest, atNode []*domain.Bin) (*domain.Bin, bool) {
+// refusal is returned in place of the bin.
+func (d *Doors) binToClear(req protocol.BinClearRequest, atNode []*domain.Bin) (*domain.Bin, *asks.Result) {
+	var refusal asks.Result
 	switch {
 	case req.BinID != 0:
 		for _, b := range atNode {
 			if b.ID == req.BinID {
-				return b, true
+				return b, nil
 			}
 		}
-		h.refuseAt(w, req.NodeName, http.StatusConflict, fmt.Sprintf("bin %d is not at node %s", req.BinID, req.NodeName))
-		return nil, false
+		refusal = d.refuseAt(req.NodeName, http.StatusConflict, fmt.Sprintf("bin %d is not at node %s", req.BinID, req.NodeName))
 	case len(atNode) > 1:
-		h.refuseAt(w, req.NodeName, http.StatusConflict, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(atNode)))
-		return nil, false
+		refusal = d.refuseAt(req.NodeName, http.StatusConflict, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(atNode)))
+	default:
+		return atNode[0], nil
 	}
-	return atNode[0], true
+	return nil, &refusal
 }
 
 // binClearStamp decides the two-stage stamp for a clear at nodeID, before
 // anything is written: a stage-1 window stamps the cart's marker (and refuses
 // with 409 when the stage 1 has nowhere to send the cart); a bare cart
-// elsewhere gets its carrier back; anything else stamps what it was told. ok
-// false means the answer has been written.
-func (h *Handlers) binClearStamp(w http.ResponseWriter, nodeID int64, nodeName string, bare bool) (domain.BareStamp, bool) {
-	stageOne, sendsTo, err := h.engine.LoaderService().StageOneAt(nodeID)
+// elsewhere gets its carrier back; anything else stamps what it was told. A
+// refusal is returned in place of the stamp.
+func (d *Doors) binClearStamp(nodeID int64, nodeName string, bare bool) (domain.BareStamp, *asks.Result) {
+	stageOne, sendsTo, err := d.engine.LoaderService().StageOneAt(nodeID)
+	var refusal asks.Result
 	switch {
 	case err != nil:
-		h.refuseAt(w, nodeName, http.StatusInternalServerError, fmt.Sprintf("read the loader at %s: %v", nodeName, err))
-		return domain.StampNone, false
+		refusal = d.refuseAt(nodeName, http.StatusInternalServerError, fmt.Sprintf("read the loader at %s: %v", nodeName, err))
 	case stageOne && sendsTo == "":
-		h.refuseAt(w, nodeName, http.StatusConflict, fmt.Sprintf("this station has nowhere to send the cart: set where %s's carts go before clearing", nodeName))
-		return domain.StampNone, false
+		refusal = d.refuseAt(nodeName, http.StatusConflict, fmt.Sprintf("this station has nowhere to send the cart: set where %s's carts go before clearing", nodeName))
 	case stageOne:
-		return domain.StampMarker, true
+		return domain.StampMarker, nil
 	case bare:
-		return domain.StampCarrier, true
+		return domain.StampCarrier, nil
+	default:
+		return domain.StampNone, nil
 	}
-	return domain.StampNone, true
+	return domain.StampNone, &refusal
 }
 
 // ── E-Maint Robot Telemetry ──────────────────────────────────
@@ -783,22 +767,32 @@ func eMaintReport(robots []fleet.RobotStatus, now time.Time, reportID string) ma
 // delta epoch — the arm "none", with the sentence in detail, when the zero is
 // recorded and no job could take the carrier. The only 409 is a second clear
 // of a home whose clear is live; a request naming no clearable home is 400.
+//
+// The adapter over Doors.clearHome, for the request's station; the clear_home
+// ask answers through the same body for the asking station.
 func (h *Handlers) apiClearHome(w http.ResponseWriter, r *http.Request) {
-	var req protocol.ClearHomeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+	serveDoor(w, r, errText, func(req protocol.ClearHomeRequest) asks.Result {
+		return h.doors().clearHome(req.Station, req)
+	})
+}
+
+// clearHome is a home clear's body, for station. The engine's answer is the
+// door's: its status and its ClearHomeResponse whatever the status, so a
+// refusal past the zero keeps the carrier's id and epoch beside the sentence;
+// a refusal's rows are the ones the engine put on it.
+func (d *Doors) clearHome(station string, req protocol.ClearHomeRequest) asks.Result {
+	req.Station = station
 	if req.HomeNode == "" || req.Station == "" {
-		h.jsonError(w, "home_node and station are required", http.StatusBadRequest)
-		return
+		return badRequest("home_node and station are required")
 	}
-	ans := h.orchestration.ClearLoaderHome(req)
+	ans := d.orchestration.ClearLoaderHome(req)
 	log.Printf("telemetry: clear-home %s for %s: %d %s%s", req.HomeNode, req.Station, ans.Status, ans.Body.Arm, ans.Body.Error)
 	if ans.Status == http.StatusOK && ans.Body.BinID != 0 {
-		h.eventHub.Broadcast("bin-update", sseJSON(map[string]any{"action": "cleared", "bin_id": ans.Body.BinID}))
+		d.hub.Broadcast("bin-update", sseJSON(map[string]any{"action": "cleared", "bin_id": ans.Body.BinID}))
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(ans.Status)
-	_ = json.NewEncoder(w).Encode(ans.Body)
+	res := asks.Result{Status: ans.Status, Body: ans.Body, Rows: ans.Body.Rows}
+	if ans.Status != http.StatusOK {
+		res.Sentence = ans.Body.Error
+	}
+	return res
 }

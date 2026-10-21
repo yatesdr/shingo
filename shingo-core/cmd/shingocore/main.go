@@ -483,7 +483,21 @@ func main() {
 		ended:   coreDataService.BinsOrderEnded,
 	})
 
-	subjectRouter, err := buildSubjectRouter(coreDataService)
+	// The ask pair (protocol/ask.go): Core answers an Edge's asks through the
+	// outbox as replies, advertises the kinds it answers on every heartbeat
+	// ack, and answers an ask that arrives expired instead of dropping it.
+	// Each kind is answered by the body its HTTP door answers through
+	// (www.Doors; the kinds and their replay in routers.go, askDoors). The
+	// same Doors goes to the router below, whose event hub it carries.
+	doors := www.NewDoors(eng)
+	askServer, err := buildAskServer(db, coreHandler.ReplyAnswer, doors)
+	if err != nil {
+		// Second line of defence: TestCensus_AskKinds fails the build first.
+		log.Fatalf("shingocore: %v — composition root is incomplete", err)
+	}
+	coreDataService.SetAskKinds(askServer.Kinds)
+
+	subjectRouter, err := buildSubjectRouter(coreDataService, askServer)
 	if err != nil {
 		// Second line of defence: TestSubjectRouter_CoversEveryInboundSubject
 		// fails the build first. Reaching this means a binary was shipped
@@ -506,6 +520,7 @@ func main() {
 
 	ingestor := protocol.NewIngestor(func(_ *protocol.RawHeader) bool { return true })
 	ingestor.DebugLog = dbg.Func("protocol")
+	ingestor.OnExpired = askServer.AnswerExpired
 	if cfg.Messaging.SigningKey != "" {
 		ingestor.SigningKey = []byte(cfg.Messaging.SigningKey)
 		log.Printf("shingocore: envelope signing enabled")
@@ -692,7 +707,7 @@ func main() {
 	}
 
 	// ── Web server ─────────────────────────────────────────────────────
-	handler, stopWeb, err := www.NewRouter(eng, dbg)
+	handler, stopWeb, err := www.NewRouter(eng, doors, dbg)
 	if err != nil {
 		log.Fatalf("shingocore: build router: %v", err)
 	}

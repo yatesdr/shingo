@@ -5,6 +5,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/router"
+	"shingocore/asks"
 	"shingocore/messaging"
 	"shingocore/service"
 )
@@ -25,7 +26,7 @@ import (
 
 func testSubjectRouter(t *testing.T) *router.SubjectRouter {
 	t.Helper()
-	r, err := buildSubjectRouter(messaging.NewCoreDataService(nil, nil, service.EpochAnnounce{}))
+	r, err := buildSubjectRouter(messaging.NewCoreDataService(nil, nil, service.EpochAnnounce{}), asks.New(nil, nil))
 	if err != nil {
 		t.Fatalf("buildSubjectRouter: %v", err)
 	}

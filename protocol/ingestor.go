@@ -28,6 +28,13 @@ type Ingestor struct {
 	// dispatch call. Field (rather than a router interface) avoids an
 	// import cycle between protocol and protocol/router.
 	Dispatch func(env *Envelope)
+
+	// OnExpired, when set, is handed every envelope that arrived past its
+	// ExpiresAt and passes the filter, fully decoded, after the drop is counted
+	// and logged: it is never dispatched. Core sets it to answer an expired
+	// ask ("expired — nothing was done", ask.go), so the tile waiting on it
+	// ends; nil keeps the plain drop.
+	OnExpired func(env *Envelope)
 }
 
 // NewIngestor creates an ingestor with the given filter. Wire
@@ -77,6 +84,12 @@ func (ing *Ingestor) HandleRaw(data []byte) {
 		expiredDrops.Add(1)
 		log.Printf("protocol: dropping expired message %s (type=%s subject=%s expired %s ago)",
 			hdr.ID, hdr.Type, subjectOf(data), clock.Now().UTC().Sub(hdr.ExpiresAt).Round(time.Second))
+		if ing.OnExpired != nil && (ing.filter == nil || ing.filter(&hdr)) {
+			var env Envelope
+			if err := json.Unmarshal(data, &env); err == nil {
+				ing.OnExpired(&env)
+			}
+		}
 		return
 	}
 

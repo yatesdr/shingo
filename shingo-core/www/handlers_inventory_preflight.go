@@ -6,28 +6,35 @@
 package www
 
 import (
-	"encoding/json"
+	"context"
 	"net/http"
 
 	"shingo/protocol"
+
+	"shingocore/asks"
 )
 
 // apiInventoryPreflight wraps InventoryService.PreflightAvailability for the
-// HTTP boundary.
+// HTTP boundary: the adapter over Doors.preflight, for the request's station,
+// which the preflight ask answers through too for the asking station.
 //
 // Request:  protocol.PreflightRequest
 // Response: protocol.PreflightResponse (missing, absent, available)
-
 func (h *Handlers) apiInventoryPreflight(w http.ResponseWriter, r *http.Request) {
-	var req protocol.PreflightRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, "decode request: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	result, err := h.engine.InventoryService().PreflightAvailability(r.Context(), req.Station, req.Payloads)
+	serveDoor(w, r, preflightDecodeErr, func(req protocol.PreflightRequest) asks.Result {
+		return h.doors().preflight(r.Context(), req.Station, req)
+	})
+}
+
+// preflightDecodeErr is the preflight's sentence for a body that does not
+// decode.
+func preflightDecodeErr(err error) string { return "decode request: " + err.Error() }
+
+// preflight is the preflight read's body, for station.
+func (d *Doors) preflight(ctx context.Context, station string, req protocol.PreflightRequest) asks.Result {
+	result, err := d.engine.InventoryService().PreflightAvailability(ctx, station, req.Payloads)
 	if err != nil {
-		h.jsonError(w, "preflight: "+err.Error(), http.StatusInternalServerError)
-		return
+		return refused(http.StatusInternalServerError, "preflight: "+err.Error())
 	}
 	resp := protocol.PreflightResponse{Missing: result.Missing, Absent: result.Absent}
 	for _, a := range result.Available {
@@ -36,5 +43,5 @@ func (h *Handlers) apiInventoryPreflight(w http.ResponseWriter, r *http.Request)
 			BinCount:    a.BinCount,
 		})
 	}
-	h.jsonOK(w, resp)
+	return accepted(resp)
 }

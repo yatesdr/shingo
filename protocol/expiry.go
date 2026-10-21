@@ -135,6 +135,13 @@ var subjectTTLs = map[string]time.Duration{
 	SubjectNodeListResponse:    5 * time.Minute,
 	SubjectOrderStatusRequest:  5 * time.Minute,
 	SubjectOrderStatusResponse: 5 * time.Minute,
+
+	// The ask pair (ask.go): an ask stays answerable for AskTTL, and Core
+	// answers one that arrives late instead of the ingestor dropping it
+	// (Ingestor.OnExpired); an answer is a fact already true at Core and never
+	// expires.
+	SubjectEdgeAsk:    AskTTL,
+	SubjectEdgeAnswer: NoExpiry,
 }
 
 // FallbackTTL is used when no specific TTL is configured.

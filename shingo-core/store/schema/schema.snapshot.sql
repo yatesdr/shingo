@@ -551,7 +551,8 @@ CREATE TABLE public.inbox (
     msg_id text NOT NULL,
     msg_type text DEFAULT ''::text NOT NULL,
     station_id text DEFAULT ''::text NOT NULL,
-    processed_at timestamp with time zone DEFAULT now() NOT NULL
+    processed_at timestamp with time zone DEFAULT now() NOT NULL,
+    reply_outbox_id bigint
 );
 
 CREATE TABLE public.inventory_delta_dedup (

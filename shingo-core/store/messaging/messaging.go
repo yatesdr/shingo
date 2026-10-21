@@ -10,6 +10,7 @@ package messaging
 
 import (
 	"database/sql"
+	"errors"
 	"sync/atomic"
 	"time"
 
@@ -50,8 +51,8 @@ func EnqueueOutbox(ex Execer, topic string, payload []byte, eventType, stationID
 
 // enqueueNotifier is the drainer's doorbell, set once at wiring time.
 //
-// It lives here rather than on DB because this is the only INSERT into outbox,
-// and it is reached two ways: through DB.EnqueueOutbox for an ordinary send,
+// It lives here rather than on DB because both INSERTs into outbox are here
+// (EnqueueOutbox, EnqueueOutboxReturningID), and it is reached two ways: through DB.EnqueueOutbox for an ordinary send,
 // and directly with a transaction for a message that must live or die with the
 // work that caused it. A hook on DB would miss the second.
 var enqueueNotifier atomic.Pointer[func()]
@@ -232,4 +233,60 @@ func PurgeOldInbox(db *sql.DB, olderThan time.Duration) (int64, error) {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// EnqueueOutboxReturningID is EnqueueOutbox for a send whose row id a caller
+// keeps: the answer to an ask whose repeat must be answered by re-sending it
+// (RecordInboundReply, ReplayOutbox). The same row, the same doorbell; the
+// second INSERT into outbox, and the only other one.
+func EnqueueOutboxReturningID(db *sql.DB, topic string, payload []byte, eventType, stationID string) (int64, error) {
+	var id int64
+	if err := db.QueryRow(`INSERT INTO outbox (topic, payload, msg_type, station_id) VALUES ($1, $2, $3, $4) RETURNING id`,
+		topic, payload, eventType, stationID).Scan(&id); err != nil {
+		return 0, err
+	}
+	notifyEnqueued()
+	return id, nil
+}
+
+// ReplayOutbox puts a row back in the drain, sent or not: its bytes go out
+// again, the same envelope with the same ID. For an ask's answer only, whose
+// ask arrived twice (an Edge outbox resend after a lost publish ack): the
+// repeat is answered with the first answer, not acted on again. false when the
+// row is gone (purged after its retention).
+func ReplayOutbox(db *sql.DB, id int64) (bool, error) {
+	res, err := db.Exec(`UPDATE outbox SET sent_at = NULL, retries = 0 WHERE id = $1`, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n == 1 {
+		notifyEnqueued()
+	}
+	return n == 1, nil
+}
+
+// RecordInboundReply records, on a processed inbound message's inbox row, the
+// outbox row that answered it.
+func RecordInboundReply(db *sql.DB, msgID string, outboxID int64) error {
+	_, err := db.Exec(`UPDATE inbox SET reply_outbox_id = $2 WHERE msg_id = $1`, msgID, outboxID)
+	return err
+}
+
+// InboundReply is the outbox row that answered a processed inbound message;
+// ok false when none is recorded (not yet answered, or answered before the
+// column existed).
+func InboundReply(db *sql.DB, msgID string) (outboxID int64, ok bool, err error) {
+	var id sql.NullInt64
+	err = db.QueryRow(`SELECT reply_outbox_id FROM inbox WHERE msg_id = $1`, msgID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return id.Int64, id.Valid, nil
 }

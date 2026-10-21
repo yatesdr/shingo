@@ -70,3 +70,57 @@ func TestPurgeOldInbox_PreservesEverythingInsideTheWindow(t *testing.T) {
 		t.Errorf("purged %d rows, want 0 (the retention window covers it)", n)
 	}
 }
+
+// TestAskReplay_TheInboxRecordsItsAnswer pins the store half of an ask's
+// replay: an answer enqueued with its row id rings the drainer like any send;
+// the ask's inbox row records that id and reads it back; a sent answer is put
+// back in the drain by ReplayOutbox (sent_at cleared, retries reset); a row
+// that is gone answers false; a message with no recorded answer reads not ok.
+func TestAskReplay_TheInboxRecordsItsAnswer(t *testing.T) {
+	db := testdb.Open(t)
+	rings := 0
+	messaging.SetEnqueueNotifier(func() { rings++ })
+	t.Cleanup(func() { messaging.SetEnqueueNotifier(nil) })
+
+	id, err := db.EnqueueOutboxReturningID("shingo.dispatch", []byte("answer"), "data.reply.edge.answer", "line-1")
+	if err != nil || id == 0 {
+		t.Fatalf("enqueue: id %d err %v", id, err)
+	}
+	if rings != 1 {
+		t.Errorf("rings after the answer's enqueue = %d, want 1", rings)
+	}
+	if err := db.AckOutbox(id); err != nil {
+		t.Fatalf("ack: %v", err)
+	}
+
+	if inserted, err := db.RecordInboundMessage("ask-1", "edge.ask", "line-1"); err != nil || !inserted {
+		t.Fatalf("record ask: inserted %v err %v", inserted, err)
+	}
+	if _, ok, err := db.InboundReply("ask-1"); err != nil || ok {
+		t.Errorf("before its answer is recorded: ok %v err %v, want not ok", ok, err)
+	}
+	if err := db.RecordInboundReply("ask-1", id); err != nil {
+		t.Fatalf("record reply: %v", err)
+	}
+	if got, ok, err := db.InboundReply("ask-1"); err != nil || !ok || got != id {
+		t.Fatalf("recorded answer = %d ok %v err %v, want %d", got, ok, err, id)
+	}
+	if _, ok, err := db.InboundReply("never-seen"); err != nil || ok {
+		t.Errorf("an unseen message: ok %v err %v, want not ok", ok, err)
+	}
+
+	sent, err := db.ReplayOutbox(id)
+	if err != nil || !sent {
+		t.Fatalf("replay: sent %v err %v", sent, err)
+	}
+	var pending bool
+	if err := db.QueryRow(`SELECT sent_at IS NULL AND retries = 0 FROM outbox WHERE id = $1`, id).Scan(&pending); err != nil || !pending {
+		t.Errorf("after the replay the row is pending %v (err %v), want pending", pending, err)
+	}
+	if rings != 2 {
+		t.Errorf("rings after the replay = %d, want 2", rings)
+	}
+	if sent, err := db.ReplayOutbox(id + 1000); err != nil || sent {
+		t.Errorf("replay of a row that is gone: sent %v err %v, want false", sent, err)
+	}
+}

@@ -206,7 +206,7 @@ func startKsrCoreOnDeck(t *testing.T, fl *deckFleet) kscCore {
 	t.Cleanup(eng.Stop)
 	dbg, err := debuglog.New(64, nil)
 	mustNil(t, err, "debuglog")
-	r, stop, err := www.NewRouter(eng, dbg)
+	r, stop, err := www.NewRouter(eng, www.NewDoors(eng), dbg)
 	mustNil(t, err, "core router")
 	t.Cleanup(stop)
 	srv := httptest.NewServer(r)

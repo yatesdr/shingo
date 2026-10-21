@@ -25,3 +25,14 @@ func (db *DB) RecordInboundMessage(msgID, msgType, stationID string) (bool, erro
 func (db *DB) PurgeOldInbox(olderThan time.Duration) (int64, error) {
 	return messaging.PurgeOldInbox(db.DB, olderThan)
 }
+
+// RecordInboundReply records the outbox row that answered a processed inbound
+// message (an ask whose repeat is answered by replay).
+func (db *DB) RecordInboundReply(msgID string, outboxID int64) error {
+	return messaging.RecordInboundReply(db.DB, msgID, outboxID)
+}
+
+// InboundReply is the outbox row that answered a processed inbound message.
+func (db *DB) InboundReply(msgID string) (int64, bool, error) {
+	return messaging.InboundReply(db.DB, msgID)
+}

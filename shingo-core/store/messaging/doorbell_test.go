@@ -15,9 +15,10 @@ import (
 //
 // The drainer wakes on Notify and otherwise waits out its interval (5 s by
 // default). Core has seven enqueue sites; none of them rings the drainer
-// itself. They all reach EnqueueOutbox, which rings on a written row, so the
-// seven are pinned here as two facts: the one INSERT rings, and there is only
-// the one INSERT.
+// itself. They all reach EnqueueOutbox, which rings on a written row, or its
+// twin EnqueueOutboxReturningID (an ask's answer, whose row id is kept for a
+// replay), which rings the same way; so the sites are pinned here as two
+// facts: both INSERTs ring, and there are only those two, in this file.
 
 type fakeExecer struct{ err error }
 
@@ -53,8 +54,9 @@ func TestDoorbell_EnqueueRingsOncePerRow(t *testing.T) {
 var outboxInsert = regexp.MustCompile(`(?i)insert\s+into\s+outbox\b`)
 
 // TestDoorbell_OneInsertIntoOutbox pins that no Core path writes an outbox row
-// except through EnqueueOutbox. A second INSERT would be a site the doorbell
-// does not cover: its messages would wait out the drain interval.
+// except through EnqueueOutbox and EnqueueOutboxReturningID. A third INSERT
+// would be a site the doorbell does not cover: its messages would wait out the
+// drain interval.
 func TestDoorbell_OneInsertIntoOutbox(t *testing.T) {
 	root := filepath.Join("..", "..")
 	var found []string
@@ -80,7 +82,7 @@ func TestDoorbell_OneInsertIntoOutbox(t *testing.T) {
 		t.Fatalf("walk: %v", err)
 	}
 	want := "../../store/messaging/messaging.go"
-	if len(found) != 1 || found[0] != want {
-		t.Fatalf("INSERT INTO outbox found at %v, want exactly once in %s: any other writer skips the doorbell", found, want)
+	if len(found) != 2 || found[0] != want || found[1] != want {
+		t.Fatalf("INSERT INTO outbox found at %v, want exactly twice in %s (EnqueueOutbox, EnqueueOutboxReturningID): any other writer skips the doorbell", found, want)
 	}
 }

@@ -413,7 +413,8 @@ type doorArm struct {
 	after   func(t *testing.T, f *doorFix)
 }
 
-// runDoorArms drives each arm through the door on a world of its own.
+// runDoorArms drives each arm through the door on a world of its own, and
+// again through the ask the door answers for (doorAsks).
 func runDoorArms(t *testing.T, door func(*Handlers) http.HandlerFunc, path string, arms []doorArm) {
 	t.Helper()
 	for _, arm := range arms {
@@ -440,6 +441,14 @@ func runDoorArms(t *testing.T, door func(*Handlers) http.HandlerFunc, path strin
 			cols, added := arm.wrote(f)
 			snap.assertWrote(t, f.db, cols, added)
 		})
+		// The same arm through the ask the door answers for, on a world of its
+		// own (door_ask_agreement_test.go).
+		if a, ok := doorAsks[path]; ok {
+			t.Run(arm.name+", through the ask", func(t *testing.T) {
+				t.Parallel()
+				runAskArm(t, a, arm)
+			})
+		}
 	}
 }
 

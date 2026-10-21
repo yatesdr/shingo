@@ -78,6 +78,8 @@ type CoreDataService struct {
 	// which is the same as an unconfigured Core — so forgetting the call fails
 	// safe rather than shipping a wrong clock to the fleet.
 	plantTimezone string
+	// askKinds is the ask kinds this Core answers, for the ack (SetAskKinds).
+	askKinds func() []string
 	// cellTickEmitter, if set, fires once per tick row actually inserted, so
 	// the composition root can fan it out — the SSE cell-heartbeat broadcast
 	// (Phase E). Optional; nil in tests and headless runs. Set once at the
@@ -158,6 +160,23 @@ func NewCoreDataService(db *store.DB, resp coreDataResponder, announce service.E
 // heartbeat ack. Pass the RAW config value, not a resolved location: empty must
 // stay empty so an unconfigured Core propagates nothing.
 func (s *CoreDataService) SetPlantTimezone(tz string) { s.plantTimezone = tz }
+
+// SetAskKinds injects the ask kinds this Core answers (the ask server's
+// registered kinds), which every heartbeat ack advertises. Set once at the
+// composition root; unset advertises none, and an Edge then asks nothing.
+func (s *CoreDataService) SetAskKinds(fn func() []string) { s.askKinds = fn }
+
+// asksFor is the ack's Asks: nil for an Edge that sends no Feeds (an older
+// binary, which would not read it) or when none are registered.
+func (s *CoreDataService) asksFor(p *protocol.EdgeHeartbeat) []string {
+	if p.Feeds == nil || s.askKinds == nil {
+		return nil
+	}
+	if kinds := s.askKinds(); len(kinds) > 0 {
+		return kinds
+	}
+	return nil
+}
 
 // StartHeartbeatMaintenance creates the cell_part_events partitions for this
 // month and next, then launches the daily pass: partitions ahead, the 90-day
@@ -589,6 +608,7 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 			Feeds:     feeds,
 			Claims:    claims,
 			BinWatch:  binWatch,
+			Asks:      s.asksFor(p),
 		})
 
 	if err == nil && !found {

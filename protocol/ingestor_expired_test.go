@@ -122,3 +122,30 @@ func TestIngestor_ExpiredDropLogsSubject(t *testing.T) {
 		t.Errorf("drop line does not report how late the message was: %q", line)
 	}
 }
+
+// TestIngestor_OnExpiredHearsTheLateMessage: an expired envelope still never
+// reaches Dispatch, and OnExpired (Core's answer to a late ask) is handed it,
+// decoded, after the drop is counted; a filter that refuses the envelope keeps
+// it from OnExpired too.
+func TestIngestor_OnExpiredHearsTheLateMessage(t *testing.T) {
+	ing := NewIngestor(nil)
+	dispatched := false
+	ing.Dispatch = func(*Envelope) { dispatched = true }
+	var heard []*Envelope
+	ing.OnExpired = func(env *Envelope) { heard = append(heard, env) }
+
+	ing.HandleRaw(expiredRawEnvelope(t, SubjectEdgeAsk, time.Minute))
+	if dispatched {
+		t.Fatal("an expired ask reached Dispatch")
+	}
+	if len(heard) != 1 || heard[0].ID != "test-envelope-id" || heard[0].Src.Station != "plant-a.line-1" {
+		t.Fatalf("OnExpired heard %+v, want the one late envelope, decoded", heard)
+	}
+
+	refusing := NewIngestor(func(*RawHeader) bool { return false })
+	refusing.OnExpired = func(env *Envelope) { heard = append(heard, env) }
+	refusing.HandleRaw(expiredRawEnvelope(t, SubjectEdgeAsk, time.Minute))
+	if len(heard) != 1 {
+		t.Errorf("an envelope the filter refuses reached OnExpired (%d heard)", len(heard))
+	}
+}

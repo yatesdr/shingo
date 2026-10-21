@@ -156,6 +156,11 @@ type EdgeHeartbeatAck struct {
 	// without the bins feed, and the Edge then reads bins as it did before and
 	// publishes nothing. An Edge that sends no Feeds is not answered either.
 	BinWatch *string `json:"bin_watch,omitempty"`
+	// Asks is every ask kind this Core answers (protocol.AskKinds, as
+	// registered), sorted. The Edge sends an ask of a kind only while the last
+	// ack named it, and takes its HTTP door otherwise: nil (absent) is a Core
+	// without the ask pair. Not sent to an Edge that sends no Feeds.
+	Asks []string `json:"asks,omitempty"`
 }
 
 // --- Order payloads: Edge -> Core ---

@@ -257,3 +257,20 @@ func (h *CoreHandler) sendStaleNotification(stationID string) {
 	h.sendData(protocol.SubjectEdgeStale, stationID,
 		&protocol.EdgeStale{StationID: stationID, Message: "heartbeat timeout — marked stale by core"})
 }
+
+// ReplyAnswer sends the answer to an ask (protocol.SubjectEdgeAnswer) as a
+// reply to the ask's envelope, on the outbox, and returns the outbox row's id:
+// the ask server (shingo-core asks) records it for a kind whose repeat is
+// answered by replaying the first answer.
+func (h *CoreHandler) ReplyAnswer(env *protocol.Envelope, answer *protocol.EdgeAnswer) (int64, error) {
+	dst := protocol.Address{Role: protocol.RoleEdge, Station: env.Src.Station}
+	reply, err := protocol.NewDataReply(protocol.SubjectEdgeAnswer, h.coreAddr(), dst, env.ID, answer)
+	if err != nil {
+		return 0, err
+	}
+	data, err := reply.Encode()
+	if err != nil {
+		return 0, err
+	}
+	return h.db.EnqueueOutboxReturningID(h.dispatchTopic, data, "data.reply."+protocol.SubjectEdgeAnswer, env.Src.Station)
+}

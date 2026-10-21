@@ -43,3 +43,11 @@ func (db *DB) RequeueOutbox(id int64) error { return messaging.RequeueOutbox(db.
 func (db *DB) PurgeOldOutbox(delivered, deadLetter time.Duration) (int64, error) {
 	return messaging.PurgeOldOutbox(db.DB, delivered, deadLetter)
 }
+
+// EnqueueOutboxReturningID enqueues and returns the row's id.
+func (db *DB) EnqueueOutboxReturningID(topic string, payload []byte, eventType, stationID string) (int64, error) {
+	return messaging.EnqueueOutboxReturningID(db.DB, topic, payload, eventType, stationID)
+}
+
+// ReplayOutbox puts a row, sent or not, back in the drain.
+func (db *DB) ReplayOutbox(id int64) (bool, error) { return messaging.ReplayOutbox(db.DB, id) }

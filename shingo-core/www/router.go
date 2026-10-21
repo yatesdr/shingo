@@ -84,8 +84,12 @@ type Handlers struct {
 // /telemetry — beside POST reads that compute an answer (/release/points,
 // /inventory/preflight). Everything after requireAuth needs a login.
 // Handlers live in handlers_*.go files grouped by domain (bins, nodes, payloads, etc.).
-func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), error) {
-	hub := NewEventHub()
+//
+// doors is the door bodies the ask server answers through (NewDoors over the
+// same engine): its event hub is the router's, so a write that came by an ask
+// redraws Core's own pages as one that came by HTTP does.
+func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Handler, func(), error) {
+	hub := doors.hub
 	hub.Start()
 	hub.SetupEngineListeners(eng)
 

@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"strings"
 
+	"shingocore/asks"
 	"shingocore/domain"
 )
 
@@ -98,26 +99,42 @@ func (h *Handlers) handlePayloadContainment(w http.ResponseWriter, r *http.Reque
 	http.Redirect(w, r, "/payloads", http.StatusSeeOther)
 }
 
+// qualityHoldRequest is the hold door's body: the bin, set or clear, and who.
+type qualityHoldRequest struct {
+	BinID int64  `json:"bin_id"`
+	Hold  bool   `json:"hold"`
+	By    string `json:"by"`
+}
+
 // apiBinQualityHold is the machine path (telemetry group) the Edge's station
 // action calls: set or clear one bin's hold marker. Keyed by bin_id — the
 // Edge reads the bin off the node and carries Core's authoritative id, the
-// same id its containment move order binds.
+// same id its containment move order binds. The adapter over
+// Doors.binQualityHold, which the bin.quality_hold ask answers through too.
 func (h *Handlers) apiBinQualityHold(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		BinID int64  `json:"bin_id"`
-		Hold  bool   `json:"hold"`
-		By    string `json:"by"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, err.Error(), http.StatusBadRequest)
+	var req qualityHoldRequest
+	if err := decodeDoor(r.Body, &req); err != nil {
+		writeResult(w, badRequest(errText(err)))
 		return
 	}
+	res := h.doors().binQualityHold(req)
+	if res.Status == http.StatusOK {
+		// The accept is a bare encode with no Content-Type of its own, as it
+		// always was (TestBinQualityHoldDoor_AcceptHasNoContentType).
+		_ = json.NewEncoder(w).Encode(res.Body)
+		return
+	}
+	writeResult(w, res)
+}
+
+// binQualityHold is the hold's body: the marker set or cleared, {"ok": true};
+// a write the store refuses is 400 with its error.
+func (d *Doors) binQualityHold(req qualityHoldRequest) asks.Result {
 	if req.By == "" {
 		req.By = "unknown"
 	}
-	if err := h.engine.PayloadService().SetBinHold(req.BinID, req.Hold, req.By); err != nil {
-		h.jsonError(w, err.Error(), http.StatusBadRequest)
-		return
+	if err := d.engine.PayloadService().SetBinHold(req.BinID, req.Hold, req.By); err != nil {
+		return badRequest(err.Error())
 	}
-	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	return accepted(map[string]bool{"ok": true})
 }

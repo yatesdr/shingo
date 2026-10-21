@@ -311,3 +311,26 @@ func TestFeedScopes_CoverAllFeeds(t *testing.T) {
 		}
 	}
 }
+
+// TestAsksFor_TheAckAdvertisesTheKinds: an Edge that speaks feeds is told the
+// ask kinds this Core answers; an older Edge (no Feeds) and a Core with none
+// registered advertise nothing, which an Edge reads as "use the HTTP doors".
+func TestAsksFor_TheAckAdvertisesTheKinds(t *testing.T) {
+	t.Parallel()
+	s := &CoreDataService{}
+	feeds := &protocol.EdgeHeartbeat{Feeds: map[string]string{}}
+	if got := s.asksFor(feeds); got != nil {
+		t.Errorf("no kinds injected: asks = %v, want nil", got)
+	}
+	s.SetAskKinds(func() []string { return nil })
+	if got := s.asksFor(feeds); got != nil {
+		t.Errorf("none registered: asks = %v, want nil", got)
+	}
+	s.SetAskKinds(func() []string { return []string{protocol.AskBinClear, protocol.AskBinCount} })
+	if got := s.asksFor(feeds); !reflect.DeepEqual(got, []string{protocol.AskBinClear, protocol.AskBinCount}) {
+		t.Errorf("asks = %v", got)
+	}
+	if got := s.asksFor(&protocol.EdgeHeartbeat{}); got != nil {
+		t.Errorf("an Edge without feeds: asks = %v, want nil", got)
+	}
+}

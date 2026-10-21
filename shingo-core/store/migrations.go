@@ -4487,7 +4487,24 @@ func migrationList() []migration {
 		{162, "bins.last_lift_at — when a robot last lifted the bin, every lift, never cleared: the vacate fact's floor",
 			v162BinLastLiftAt,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "bins", "last_lift_at") }},
+		{163, "inbox.reply_outbox_id — the outbox row that answered a processed ask, so a repeat of the ask is answered by re-sending it",
+			v163InboxReplyOutboxID,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "inbox", "reply_outbox_id") }},
 	}
+}
+
+// v163InboxReplyOutboxID adds inbox.reply_outbox_id (one-transport, Phase 3):
+// for an ask whose repeat must not act twice (a home's clear authors orders),
+// Core records on the ask's inbox row the outbox row of its answer, and a
+// repeat of the ask re-sends that row (store/messaging ReplayOutbox) instead
+// of acting again. NULL on every existing row and on every message that is
+// not such an ask. No index: it is read by the inbox's primary key. The
+// baseline DDL declares the same column.
+func v163InboxReplyOutboxID(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE inbox ADD COLUMN IF NOT EXISTS reply_outbox_id BIGINT`); err != nil {
+		return fmt.Errorf("v163 inbox.reply_outbox_id: %w", err)
+	}
+	return nil
 }
 
 // v162BinLastLiftAt adds bins.last_lift_at (held step, STOP 2 ruled
