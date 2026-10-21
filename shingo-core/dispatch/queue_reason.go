@@ -27,7 +27,8 @@ import (
 //   - QueueWaitingForSlot:     Destination + BlockingBins/InboundOrders +
 //     DestUnresolved (+ Step)
 //   - QueueStorageRearranging: Lane + Payload + DigOrderID + HolderOrderID + StoppedOrderID (+ Step)
-//   - QueueWaitingForPartner:  Sibling
+//   - QueueWaitingForPartner:  Sibling (+ SiblingStatus), or Destination for a
+//     leg parked at a station wait (no sibling)
 //   - QueueFleetUnavailable:   none
 type QueueParams struct {
 	// Payload is the part code the order is waiting on material for. Empty for
@@ -41,7 +42,8 @@ type QueueParams struct {
 	// "3 of 5" reserve). Rendered, because "waiting holding nothing" and
 	// "waiting holding half the set" are different operator situations.
 	Partial bool
-	// Destination is the delivery node the order is waiting on a slot at.
+	// Destination is the delivery node the order is waiting on a slot at, or,
+	// for a leg parked at a station wait, the node it is parked at.
 	Destination string
 	// Lane is the storage lane being rearranged (burial / reshuffle).
 	Lane string
@@ -423,6 +425,11 @@ func digClause(p QueueParams) string {
 func partnerSentence(p QueueParams) string {
 	ref := shortRef(p.Sibling)
 	switch {
+	case p.Sibling == "" && p.Destination != "":
+		// A leg parked at a station wait: MarkStationWaitIfOwned, the one
+		// producer of this code with no sibling, names the wait's node. It is
+		// waiting for the station's RELEASE, not for a partner.
+		return fmt.Sprintf("Parked at %s — the station must release it.", p.Destination)
 	case p.Sibling == "":
 		return "Waiting for partner robot"
 	case p.SiblingStatus == "":

@@ -487,7 +487,7 @@ func queueCodeLabels() map[string]string {
 		string(protocol.QueueWaitingForMaterial): "Waiting for material",
 		string(protocol.QueueWaitingForSlot):     "Waiting for a slot",
 		string(protocol.QueueStorageRearranging): "Rearranging storage",
-		string(protocol.QueueWaitingForPartner):  "Waiting for partner robot",
+		string(protocol.QueueWaitingForPartner):  "Waiting for partner or release",
 		string(protocol.QueueFleetUnavailable):   "Robot system not responding",
 	}
 }
