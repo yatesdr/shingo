@@ -2,7 +2,7 @@ import { el, fillColor, postAction, showToast, fetchWithTimeout, formatETA } fro
 import { formatClock } from '/static/shared/utils.js';
 import { getView, claimedNodes, isReplenishing, getLink } from './operator-state.js';
 import { isActive } from './order-status.js';
-import { ROLE_WORDS } from './operator-window-state.js';
+import { ROLE_WORDS, clearRunning, CLEAR_RUNNING } from './operator-window-state.js';
 import { loaderOf, carriersOf, isDedicated, isUnloaderWindow, boardLayout, isBoard, staleSign } from './operator-board-model.js';
 import { clearChoices, choiceLabel, isLit, clearHighlight } from './operator-board-model.js';
 import { windowWords } from './operator-board-model.js';
@@ -960,6 +960,11 @@ function createNodeButton(entry) {
         btn.appendChild(el('span', { className: 'os-node-remaining', textContent: statusText }));
         const partialHere = partialLine(binState, false, remaining);
         if (partialHere) btn.appendChild(el('span', { className: 'os-node-partial', textContent: partialHere }));
+        // A home whose clear runs with its empty still on it says the job where
+        // a partial's line goes (an empty has none); the board's card says the same.
+        else if (loader.role === 'produce' && clearRunning(entry)) {
+            btn.appendChild(el('span', { className: 'os-node-partial', textContent: CLEAR_RUNNING }));
+        }
         if (binLabel) {
             const labelEl = el('span', { className: 'os-node-payload', textContent: binLabel });
             labelEl.style.cssText = 'font-size:14px;font-weight:600;color:#fff';

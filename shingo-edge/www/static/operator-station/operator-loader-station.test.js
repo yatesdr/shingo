@@ -668,8 +668,8 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     const cleared = loaderTile(1, 'SMN_H1', { parts: ['PART-A'], bin: EMPTY, dedicated: true,
         operator: false, orders: [orderA], buffer: [{ node: 'SMN_F1', state: 'partial' }] });
     let m = ctx.cardModel(cleared, 'PART-A');
-    eq([m.statusText, m.action, m.loadNow, m.detail], ['LOAD', 'load', true, 'Empty bin at node — tap to load'],
-        'clear in flight: cardModel reads the emptied home as LOAD while Order A waits (the agnostic-demand branch)');
+    eq([m.statusText, m.action, m.loadNow, m.detail], ['HELD', '', false, 'Held for an order — load after it leaves'],
+        'clear in flight: cardModel offers no LOAD on the empty Order A holds (changed: LOAD, the agnostic-demand branch)');
     eq(ctx.isOwnEmptyOut(cleared, orderA), false, 'clear in flight: Order A is not the produce home\'s own empty-out');
     eq(m.queueCount, 0, 'clear in flight: no queue badge (Order A carries no part)');
     setView([cleared]);
@@ -678,14 +678,40 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     eq(pcCards().length, 0, 'clear in flight: the home draws no Load card (changed: it drew LOAD)');
     eq([...zoneEl('Clear partials').descendants().filter(n => n.classList.contains('os-pc-spot-box'))].map(n => n.className),
         ['os-pc-spot-box os-pc-spot-box--coming'], 'clear in flight: its spot is drawn as coming');
-    // The node modal still says TAP TO LOAD on the same home (not the board's).
+    // Changed: the node modal no longer offers TAP TO LOAD on the empty Order A
+    // holds (Core refuses that LOAD, owner 2026-10-18); once Order A has
+    // delivered it gives the carrier up and the load returns.
+    resetDOM();
+    ctx.openModal(1);
+    eq(modalActions().map(a => a.dataset.action).filter(a => a.indexOf('demand-card') === 0), [],
+        'clear in flight: the node modal offers no load on the held empty (changed: TAP TO LOAD)');
+    setView([Object.assign({}, cleared, { orders: [Object.assign({}, orderA, { status: 'delivered' })] })]);
     resetDOM();
     ctx.openModal(1);
     eq(modalActions().map(a => a.dataset.action).filter(a => a.indexOf('demand-card') === 0), ['demand-card:PART-A'],
-        'clear in flight, today: the node modal offers the load (TAP TO LOAD)');
+        'Order A delivered: the node modal offers the load again (TAP TO LOAD)');
+
+    // With the clear's own rows as Core pushes them (its parent, home to home,
+    // and the partial's move, spot to home) the home's card reads the job and
+    // opens the node modal, not the load modal.
+    const parent = order(300, 'reshuffling', { order_type: 'move', source_node: 'SMN_H1', delivery_node: 'SMN_H1', payload_code: 'PART-A' });
+    const partialMove = order(302, 'queued', { order_type: 'move', source_node: 'SMN_F1', delivery_node: 'SMN_H1', payload_code: 'PART-A' });
+    setView([Object.assign({}, cleared, { orders: [parent, partialMove, orderA] })]);
+    resetDOM();
+    render();
+    eq(pcCards().map(cardText), [['SMN_H1', ' · holds an empty', ' TOTE-1', 'PART-A', 'Robot on its way for the empty · partial follows']],
+        'clear running: the home card reads the job (changed: no card)');
+    eq(topLine()[1].indexOf('0 to load') === 0, true, 'clear running: the job is not counted as a load');
+    loadOpens.length = 0;
+    await tap(pcCards()[0]);
+    eq([loadOpens, document.getElementById('node-modal').classList.contains('active')], [[], true],
+        'clear running: the card opens the node modal, never the load modal');
+    eq(modalActions().map(a => a.dataset.action).filter(a => a.indexOf('demand-card') === 0), [],
+        'clear running: the node modal offers no load');
+    eq(posts(), [], 'clear running: opening the card posts nothing');
 
     m = ctx.cardModel(Object.assign({}, cleared, { orders: [Object.assign({}, orderA, { status: 'acknowledged' })] }), 'PART-A');
-    eq(m.statusText, 'LOAD', 'clear in flight, Order A acknowledged: still LOAD');
+    eq([m.statusText, m.action], ['HELD', ''], 'clear in flight, Order A acknowledged: still held, no LOAD (changed: LOAD)');
     m = ctx.cardModel(Object.assign({}, cleared, { bin_state: FULL('PART-A', 12) }), 'PART-A');
     eq([m.statusText, m.action], ['NO DEMAND', ''], 'clear in flight, bin still labelled: NO DEMAND');
     m = ctx.cardModel(Object.assign({}, cleared, { bin_state: NONE,
@@ -865,6 +891,53 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     await tap(headerButton('CANCEL'));
     await tapOverlay('CANCEL CHANGEOVER');
     eq(posts(), [{ method: 'POST', url: '/api/processes/1/changeover/cancel', body: {} }], 'CANCEL posts changeover/cancel');
+}
+{
+    // A loader home beside a press (the node grid, not the board) follows the
+    // board's rule: while its clear runs with the empty still on it the tile
+    // says CLEARING and the job, cardModel offers no LOAD, and the node modal
+    // offers none; once the carrier's order has delivered, LOAD is back.
+    const CLEAR_RUNNING_WORDS = 'Robot on its way for the empty · partial follows';
+    const press = { node: { id: 9, process_id: 1, core_node_name: 'PLN_X1', name: 'PLN_X1' },
+        runtime: { remaining_uop_cached: 10, active_bin_id: 1 }, orders: [],
+        active_claim: { id: 4, core_node_name: 'PLN_X1', role: 'produce', swap_mode: 'single_robot',
+            payload_code: 'PART-A', uop_capacity: 20 } };
+    const parent = order(300, 'reshuffling', { order_type: 'move', source_node: 'SMN_A1', delivery_node: 'SMN_A1', payload_code: 'PART-A' });
+    const partialMove = order(302, 'queued', { order_type: 'move', source_node: 'LDR.SMN_B1', delivery_node: 'SMN_A1', payload_code: 'PART-A' });
+    const home = loaderTile(1, 'SMN_A1', { parts: ['PART-A'], bin: EMPTY, orders: [parent, partialMove] });
+    const tileWords = (name) => slotTile(name).children.filter(k => k.classList.contains('os-node-remaining') ||
+        k.classList.contains('os-node-partial')).map(k => k.textContent);
+    setView([press, home]);
+    render();
+    eq(slotTiles().length, 2, 'clear on a home beside a press: the node grid');
+    eq(tileWords('SMN_A1'), ['CLEARING', CLEAR_RUNNING_WORDS],
+        'clear on a home beside a press: the tile says the job (changed: AWAITING BIN)');
+    let m = ctx.cardModel(home, 'PART-A');
+    eq([m.statusText, m.action, m.loadNow, m.detail], ['CLEARING', '', false, CLEAR_RUNNING_WORDS],
+        'clear on a home beside a press: cardModel offers no LOAD and says the job (changed: LOAD)');
+    resetDOM();
+    ctx.openModal(1);
+    eq(modalActions().map(a => a.dataset.action).filter(a => a.indexOf('demand-card') === 0), [],
+        'clear on a home beside a press: the node modal offers no load on the held empty');
+
+    // The empty lifted: nothing held, so no job words (the clear's rows still
+    // run, so the tile awaits a bin as before).
+    setView([press, Object.assign({}, home, { bin_state: NONE })]);
+    render();
+    eq(tileWords('SMN_A1'), ['AWAITING BIN'], 'clear on a home beside a press, empty lifted: AWAITING BIN, as before');
+
+    // A delivered empty pull's carrier: no hold, LOAD is back.
+    const l1 = order(310, 'delivered', { order_type: 'retrieve_empty', source_node: 'LDR.SUPER', delivery_node: 'SMN_A1', payload_code: 'PART-A' });
+    const delivered = loaderTile(1, 'SMN_A1', { parts: ['PART-A'], bin: EMPTY, orders: [l1] });
+    m = ctx.cardModel(delivered, 'PART-A');
+    eq([m.statusText, m.action], ['DELIVERED', 'load'], 'a delivered pull beside a press: LOAD is back');
+    setView([press, delivered]);
+    render();
+    eq(tileWords('SMN_A1'), ['AWAITING BIN'], 'a delivered pull beside a press: no job words');
+    resetDOM();
+    ctx.openModal(1);
+    eq(modalActions().map(a => a.dataset.action).filter(a => a.indexOf('demand-card') === 0), ['demand-card:PART-A'],
+        'a delivered pull beside a press: the node modal offers the load');
 }
 {
     // Produce window, idle: the demand card asks for an empty with the part.

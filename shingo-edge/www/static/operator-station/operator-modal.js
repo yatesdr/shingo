@@ -13,7 +13,7 @@ import { openLoadBin } from './operator-load-bin.js';
 import { openKeypad } from './operator-keypad.js';
 import { openReleasePrompt, closeReleasePrompt } from './operator-release.js';
 import { isActive, isPreDispatch } from './order-status.js';
-import { isOwnEmptyOut } from './operator-window-state.js';
+import { emptyCarrierHeld, isOwnEmptyOut } from './operator-window-state.js';
 import { loaderOf, partCodes, carriersOf, binsKnown, clearHighlight } from './operator-board-model.js';
 import { confirmUnloadSwap } from './operator-render.js';
 
@@ -333,8 +333,11 @@ export function renderModal(entry) {
             // L2 move-out directly, so any allowed payload is a valid pick.
             // Treat each card as if it were delivered for the purpose of
             // click-handling.
+            //
+            // Not while an unfinished order holds that empty (a home's clear):
+            // Core would refuse the LOAD (emptyCarrierHeld).
             const parkedEmptyAtLoader = loader.role === 'produce' &&
-                hasBin && binState && !binState.payload_code;
+                hasBin && binState && !binState.payload_code && !emptyCarrierHeld(entry);
 
             // Symmetric unloader case: full bin parked at unloader, U1 was
             // skipped (unloaderHasUsableFullPresent). No operator click action

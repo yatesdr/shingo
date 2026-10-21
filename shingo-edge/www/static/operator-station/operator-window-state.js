@@ -94,6 +94,43 @@ export function isOwnEmptyOut(entry, o) {
         o.order_type === 'move' && o.source_node === coreNode;
 }
 
+// emptyCarrierHeld reports whether the empty carrier standing on this node is
+// promised to an order that has not delivered yet: a live row on the node that
+// leaves FROM it (a home's clear, its parent and the move of the emptied
+// carrier, are pushed here by Core) at any status short of delivered. Core
+// refuses a LOAD onto such a carrier with one sentence (the held-carrier check,
+// refuseHeldCarrierTx), so no surface offers LOAD on it; the check stays the
+// backstop for a direct post. Only an empty carrier asks: a LOAD of a labelled
+// one never reaches Core (the Edge's loadOntoLabelledCarrier). A delivered row
+// has given its hold up (Core's arrival), so LOAD returns with it.
+export function emptyCarrierHeld(entry) {
+    const bs = entry.bin_state || {};
+    const coreNode = (entry.node && entry.node.core_node_name) || '';
+    if (!bs.occupied || bs.payload_code || coreNode === '') return false;
+    const short = function (n) { return String(n || '').replace(/^.*\./, ''); };
+    return (entry.orders || []).some(function (o) {
+        return isActiveStatus(o.status) && o.status !== 'delivered' && short(o.source_node) === short(coreNode);
+    });
+}
+
+// CLEAR_RUNNING is a loader home's words while its clear runs and the emptied
+// carrier still stands on it: the job, in place of a LOAD the carrier's order
+// would have refused. The board's card and the node grid's tile both say it.
+export const CLEAR_RUNNING = 'Robot on its way for the empty · partial follows';
+
+// clearRunning reports whether a home's clear is running with its empty still
+// on it: the empty is held (emptyCarrierHeld) and a live move delivers TO the
+// node (Core pushes the clear's parent, home to home, and the partial's move,
+// spot to home). A loader's own moves leave a home and never deliver to it.
+export function clearRunning(entry) {
+    if (!emptyCarrierHeld(entry)) return false;
+    const coreNode = (entry.node && entry.node.core_node_name) || '';
+    const short = function (n) { return String(n || '').replace(/^.*\./, ''); };
+    return (entry.orders || []).some(function (o) {
+        return o.order_type === 'move' && isActiveStatus(o.status) && short(o.delivery_node) === short(coreNode);
+    });
+}
+
 // cardModel computes the rendered state of one (window × payload) card: the status
 // tag, its CSS class, the detail line, the click action, and the load-now flag.
 // Replaces cardState + the per-card derivation in buildLoaderCard. The precedence is
@@ -162,7 +199,18 @@ export function cardModel(entry, code) {
     // directly — the tap IS the receipt confirmation — so it must not also require
     // bin_state to already reflect the bin (that telemetry lags the order); this
     // mirrors the unloader, which already acts on a delivered order alone.
-    const canLoad = role === 'produce' && (payloadDelivered || (f.binEmpty && payloadActive) || f.canLoadEmpty);
+    // An empty an unfinished order holds is not loadable: Core refuses the LOAD
+    // (emptyCarrierHeld). The card says the job while a clear runs, else that
+    // the empty is held, and offers no act; a delivered row ends the hold.
+    const held = role === 'produce' && emptyCarrierHeld(entry);
+    if (held) {
+        const running = clearRunning(entry);
+        cls = 'os-board-transit'; statusClass = 'os-board-tag-transit';
+        statusText = running ? 'CLEARING' : 'HELD';
+        detail = running ? CLEAR_RUNNING : 'Held for an order — load after it leaves';
+        waitingOnRobot = false;
+    }
+    const canLoad = !held && role === 'produce' && (payloadDelivered || (f.binEmpty && payloadActive) || f.canLoadEmpty);
     const canUnload = canClearThisPayload || f.canSwapEmpty || (payloadDelivered && role === 'consume');
     const action = canLoad ? 'load' : (canUnload ? 'unload' : '');
 
@@ -192,7 +240,7 @@ export function cardModel(entry, code) {
     }
 
     return {
-        cls: cls, statusText: statusText, statusClass: statusClass, detail: detail, action: action, loadNow: loadNow,
+        cls: cls, statusText: statusText, statusClass: statusClass, detail: detail, action: action, loadNow: loadNow && !held,
         // Queue-position badge facts (rendered by operator-render): only REAL per-payload
         // orders count — the agnostic blank-payload empty must not stamp a number on every card.
         queueCount: payloadOrders.length, delivered: payloadDelivered, inTransit: payloadInTransit,

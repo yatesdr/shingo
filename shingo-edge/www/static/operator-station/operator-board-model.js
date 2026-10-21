@@ -18,7 +18,7 @@
 
 'use strict';
 
-import { cardModel, isActiveStatus } from './operator-window-state.js';
+import { cardModel, emptyCarrierHeld, clearRunning, CLEAR_RUNNING, isActiveStatus } from './operator-window-state.js';
 
 // loaderOf is a tile's loader, or null on every tile that is not a Core
 // loader's window or position.
@@ -310,6 +310,8 @@ export function isLit(choice, lit) {
 //
 //   an unloader window holding a full: the part (a next full on its way does
 //   not hide the one to clear);
+//   a loader home whose clear runs with its empty still on it: CLEARING (the
+//   tile adds the job, CLEAR_RUNNING, below; clearRunning);
 //   a live order: AWAITING and what it waits for (awaiting, by role);
 //   a bin with a part: the part; counted parts with no bin read: LOADED;
 //   an empty: EMPTY; nothing there: NO BIN;
@@ -320,6 +322,7 @@ export function windowWords(tile, awaiting, hasActiveOrder) {
     const binPayload = bin && bin.payload_code ? bin.payload_code : '';
     const remaining = tile.runtime && tile.runtime.remaining_uop_cached != null ? tile.runtime.remaining_uop_cached : 0;
     if (isUnloaderWindow(tile) && bin && bin.occupied && binPayload) return binPayload;
+    if (tileRole(tile) === 'produce' && clearRunning(tile)) return 'CLEARING';
     if (hasActiveOrder) return 'AWAITING ' + awaiting;
     if (binPayload) return binPayload;
     if (remaining > 0) return 'LOADED';
@@ -441,6 +444,22 @@ function clearMoves(tile) {
     return liveOrders(tile).filter(function (o) {
         return o.order_type === 'move' && shortNode(o.source_node) === shortNode(home);
     });
+}
+
+// CLEAR_RUNNING (the job a home's card says while its clear runs) and
+// clearRunning are declared beside cardModel, so the node grid's tile says the
+// same words from the same rule.
+
+// clearRow is the home's clear while it runs: a live move that delivers TO the
+// home (Core's clear pushes its parent, home to home, and the partial's move,
+// spot to home, to the station), or null. A loader's own moves leave a home
+// and never deliver to it, so nothing else reads as a clear.
+function clearRow(tile) {
+    const home = (tile.node && tile.node.core_node_name) || '';
+    if (!home || tileRole(tile) !== 'produce') return null;
+    return liveOrders(tile).find(function (o) {
+        return o.order_type === 'move' && shortNode(o.delivery_node) === shortNode(home);
+    }) || null;
 }
 
 // ── what a part is at the served cells ───────────────────────────────────────
@@ -758,6 +777,9 @@ function loaderCards(t, ctx) {
     const spot = spotWords(t);
     const refusals = refusalsOf(t);
     const inFlight = clearMoves(t).length > 0;
+    // The empty on the home is an unfinished order's: nothing here offers LOAD
+    // on it (emptyCarrierHeld), and a running clear's card says the job.
+    const held = emptyCarrierHeld(t);
     const loadable = [];
     cardParts(t, view.serves).forEach(function (code) {
         if (refusals[code]) {
@@ -768,12 +790,19 @@ function loaderCards(t, ctx) {
             if (exposes) reason += ' · ' + c.row.cell + ' has ' + (c.left > 0 ? fmtCount(c.left) : 'none') + ' left';
             ctx.refused.push(ctx.card(t, 'refused:' + code, [exposes ? 0 : 1], {
                 spotWords: spot.words, spotCode: spot.code, headline: code, reason: reason,
-                act: { kind: 'load', node: t.node.id, codes: [code] },
+                act: held ? { kind: 'modal', node: t.node.id } : { kind: 'load', node: t.node.id, codes: [code] },
             }));
             return;
         }
-        if (!inFlight && ctx.known && partAct(t, code) === 'load') loadable.push(code);
+        if (!inFlight && !held && ctx.known && partAct(t, code) === 'load') loadable.push(code);
     });
+    const clearing = held && ctx.known ? clearRow(t) : null;
+    if (clearing) {
+        ctx.load.push(ctx.card(t, 'clearing', [1], {
+            spotWords: spot.words, spotCode: spot.code, headline: clearing.payload_code || cardParts(t, view.serves)[0] || '',
+            reason: CLEAR_RUNNING, job: true, act: { kind: 'modal', node: t.node.id },
+        }));
+    }
     if (loadable.length > 0) {
         const lit = loadable.map(function (code, i) { return { code: code, r: loadReason(view, ctx.cov, code), order: i }; });
         lit.sort(function (a, b) { return byRank(a.r, b.r) || a.order - b.order; });
@@ -994,9 +1023,11 @@ export function boardModel(view, ui) {
         else if (st.tone === 'amber') words.push('Buffer: no empty');
     }
 
+    // A running clear's card is the home's job, not a load to do.
+    const toLoad = ctx.load.filter(function (c) { return !c.job; }).length;
     const zones = [];
     if (producers.length > 0) {
-        zones.push({ key: 'load', title: 'Load', count: ctx.known ? ctx.load.length : '', tone: 'plain', cards: ctx.load,
+        zones.push({ key: 'load', title: 'Load', count: ctx.known ? toLoad : '', tone: 'plain', cards: ctx.load,
             empty: ctx.load.length === 0 ? (ctx.known ? 'Nothing to load right now.' : 'Could not look') : '' });
         if (ctx.refused.length > 0) {
             zones.push({ key: 'refused', title: 'Waiting on the plant', count: ctx.refused.length, tone: 'plain', cards: ctx.refused });
@@ -1028,7 +1059,7 @@ export function boardModel(view, ui) {
 
     const counts = [];
     if (producers.length > 0) {
-        if (ctx.known) counts.push(ctx.load.length + ' to load');
+        if (ctx.known) counts.push(toLoad + ' to load');
         if (ctx.refused.length > 0) counts.push(ctx.refused.length + ' waiting on the plant');
     }
     if (consumers.length > 0 && ctx.known) counts.push(ctx.windows.length > 0 ? ctx.windows.length + ' at the windows' : 'nothing at the windows');

@@ -145,6 +145,16 @@ eq(W(tile('produce', { runtime: { remaining_uop_cached: 4 } })), 'LOADED', 'coun
 eq(W(tile('produce', { bin: { occupied: true, payload_code: '' } })), 'EMPTY', 'an empty: EMPTY');
 eq(W(tile('produce', { bin: { occupied: false } })), 'NO BIN', 'nothing there: NO BIN');
 eq(W(tile('produce')), 'COULD NOT LOOK', 'no bin read at all: COULD NOT LOOK (fixed: it said NO BIN)');
+{
+    // A home whose clear runs with its empty still on it: CLEARING, not AWAITING
+    // (the node grid's tile; the board's card says the same job).
+    const home = Object.assign(tile('produce', { bin: { occupied: true, payload_code: '' } }), {
+        orders: [{ status: 'reshuffling', order_type: 'move', source_node: 'W1', delivery_node: 'W1', payload_code: 'PART-A' }] });
+    home.node.core_node_name = 'W1';
+    eq(W(home, true), 'CLEARING', 'a home whose clear runs with its empty on it: CLEARING (changed: AWAITING)');
+    eq(W(Object.assign({}, home, { bin_state: { occupied: false } }), true), 'AWAITING FULL', 'the empty lifted: AWAITING, as before');
+    eq(vm.runInContext('CLEAR_RUNNING', ctx), 'Robot on its way for the empty · partial follows', 'the job words, one spelling for board and grid');
+}
 
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -263,6 +273,46 @@ eq([NOBIN, FULLBIN('PART-A'), EMPTYBIN('KD-1'), EMPTYBIN(''), { occupied: true, 
     eq(zone(b, 'load').cards, [], 'clear in flight: the home draws no Load card (changed: it drew LOAD)');
     eq(M.bufferOf(homes).map(s => s.state), ['partial', 'coming', 'open'], 'clear in flight: its spot is drawn as coming');
     eq(zone(b, 'partials').tone, 'plain', 'clear in flight: the coming spot counts as an empty, so no amber');
+}
+
+// ── a home whose empty an unfinished order holds offers no LOAD ──
+// Core refuses a LOAD onto a carrier an order holds before delivery (owner,
+// 2026-10-18); the board does not offer it.
+{
+    // The owner's words for the job, written out so a change to them fails here.
+    const CLEAR_RUNNING_WORDS = 'Robot on its way for the empty · partial follows';
+    const parent = ord(300, 'reshuffling', { order_type: 'move', source_node: 'SMN_H1', delivery_node: 'SMN_H1', payload_code: 'PART-A' });
+    const partialMove = ord(302, 'queued', { order_type: 'move', source_node: 'LDR.SMN_B1', delivery_node: 'SMN_H1', payload_code: 'PART-A' });
+    const clearing = bt(1, 'SMN_H1', { dedicated: true, bin: EMPTYBIN('KD-1'), orders: [parent, partialMove],
+        refusals: { 'PART-A': { refused_at: 'T1' } } });
+    const b = B({ station: {}, nodes: [clearing], serves: [row('PART-A', 3)] });
+    eq(zone(b, 'load').cards.map(c => [c.headline, c.reason, c.act]),
+        [['PART-A', CLEAR_RUNNING_WORDS, { kind: 'modal', node: 1 }]],
+        'clear running: the home card reads the job and opens the node modal (changed: a LOAD card)');
+    eq([zone(b, 'load').count, b.words[0]], [0, '0 to load'], 'clear running: the job is not a load to do');
+    eq(zone(b, 'refused').cards.map(c => c.act), [{ kind: 'modal', node: 1 }],
+        'clear running: a standing refusal opens the node modal, not the load modal (changed: the load modal)');
+
+    // The demand arm: the pull that lifts the empty is another station's, so
+    // only the clear's own rows are here; they are enough.
+    const demand = bt(1, 'SMN_H1', { dedicated: true, bin: EMPTYBIN('KD-1'), orders: [parent, partialMove] });
+    eq(zone(B({ station: {}, nodes: [demand], serves: [row('PART-A', 3)] }), 'load').cards.map(c => c.reason),
+        [CLEAR_RUNNING_WORDS], 'clear running, demand arm: the same card');
+
+    // The empty gone: nothing to load and nothing to say (as before).
+    const lifted = bt(1, 'SMN_H1', { dedicated: true, bin: NOBIN, orders: [parent, partialMove] });
+    eq(zone(B({ station: {}, nodes: [lifted], serves: [row('PART-A', 3)] }), 'load').cards, [],
+        'clear running, empty lifted: no card');
+
+    // Unchanged: a delivered empty pull's carrier loads (the load confirms the
+    // order), and a loaded carrier leaving on its outbound move draws no card.
+    const l1 = ord(310, 'delivered', { order_type: 'retrieve_empty', source_node: 'LDR.SUPER', delivery_node: 'SMN_H1', payload_code: 'PART-A' });
+    const pull = B({ station: {}, nodes: [bt(1, 'SMN_H1', { dedicated: true, bin: EMPTYBIN('KD-1'), orders: [l1] })], serves: [row('PART-A', 3)] });
+    eq(zone(pull, 'load').cards.map(c => c.act), [{ kind: 'load', node: 1, codes: ['PART-A'] }],
+        'a delivered pull empty: LOAD, as before');
+    const l2 = ord(311, 'dispatched', { order_type: 'move', source_node: 'SMN_H1', delivery_node: 'LDR.OUT', payload_code: 'PART-A' });
+    const out = B({ station: {}, nodes: [bt(1, 'SMN_H1', { dedicated: true, bin: FULLBIN('PART-A'), orders: [l2] })], serves: [row('PART-A', 3)] });
+    eq(zone(out, 'load').cards, [], 'a loaded carrier leaving: no card, as before');
 }
 
 // ── Waiting on the plant ──
