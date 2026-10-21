@@ -180,8 +180,10 @@ func TestNodeBins_NoSQLiteWrite(t *testing.T) {
 // TestBinWatch_WhenTheListIsPublished: the list goes to a Core whose ack
 // carries BinWatch and quotes a different digest, at once when the list
 // changes, and on the first such ack while nothing is held whatever was
-// quoted (a restarted Edge asks). Never to a Core whose last ack lacked the
-// field (an old Core, or one rolled back), and the guard holds a repeat back.
+// quoted (a restarted Edge asks), and on the first ack of a Core that held it
+// and quotes otherwise (a restarted Core). Never to a Core whose last ack
+// lacked the field (an old Core, or one rolled back), and the guard holds a
+// repeat of a send in flight back.
 func TestBinWatch_WhenTheListIsPublished(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -210,11 +212,16 @@ func TestBinWatch_WhenTheListIsPublished(t *testing.T) {
 	if count() != 1 {
 		t.Errorf("an ack quoting the Edge's own list published again (%d)", count())
 	}
-	// A Core that lost the list quotes "": the same list went under two
-	// minutes ago, so the resend guard holds it back (Core's compare heals).
+	// A Core that restarted quotes "": it held the list and lost it, so the
+	// same list goes at once, inside the guard, on that first ack. A second
+	// "" while that copy is in flight is held back.
 	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: quote("")})
-	if count() != 1 {
-		t.Errorf("the guard did not hold a repeat of the same list inside its window (%d)", count())
+	if lists := watchLists(t, *sent); len(lists) != 2 || lists[1].Digest != ownDigest {
+		t.Fatalf("first ack after a Core restart: published %+v, want the list again at once", lists)
+	}
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: quote("")})
+	if count() != 2 {
+		t.Errorf("the guard did not hold a repeat while the re-send is in flight (%d)", count())
 	}
 
 	// The list changes (a node joins the station): published at once, on the
@@ -225,7 +232,7 @@ func TestBinWatch_WhenTheListIsPublished(t *testing.T) {
 		t.Fatalf("create node: %v", err)
 	}
 	eng.stationService.WatchedBinNodes()
-	if lists := watchLists(t, *sent); len(lists) != 2 || !slices.Equal(lists[1].Nodes, []string{"SMN_F1", "SMN_H1", "SMN_H2"}) {
+	if lists := watchLists(t, *sent); len(lists) != 3 || !slices.Equal(lists[2].Nodes, []string{"SMN_F1", "SMN_H1", "SMN_H2"}) {
 		t.Fatalf("after the list changed: %+v", lists)
 	}
 
@@ -237,7 +244,7 @@ func TestBinWatch_WhenTheListIsPublished(t *testing.T) {
 		t.Fatalf("create node: %v", err)
 	}
 	eng.stationService.WatchedBinNodes()
-	if count() != 2 || speaksBins(eng) {
+	if count() != 3 || speaksBins(eng) {
 		t.Errorf("after Core rolled back: %d published, speaks %v", count(), speaksBins(eng))
 	}
 }
@@ -315,6 +322,49 @@ func TestBinWatch_PublishedAtBoot(t *testing.T) {
 	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: quote("")})
 	if n := len(watchLists(t, *sent)); n != 1 {
 		t.Errorf("first ack after a failed boot send: published %d, want 1", n)
+	}
+}
+
+// TestBinWatch_ASnapshotNamingTheListIsCoreHoldingIt: Core's bins snapshot
+// names the watch list it answers. When that is the list last sent, Core holds
+// it, as an ack quoting it would say, so a Core that restarts before any ack
+// quoted the list gets it again on its first ack, inside the guard (the sim
+// shape: a list sent, its snapshot back, Core restarted 30 s later). A
+// snapshot naming an older list is not the last send held: the guard still
+// holds the repeat while the newer list is in flight.
+func TestBinWatch_ASnapshotNamingTheListIsCoreHoldingIt(t *testing.T) {
+	t.Parallel()
+	own, err := protocol.BinWatchDigest([]string{"SMN_F1", "SMN_H1"})
+	if err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	snapNaming := func(list string) protocol.NodeBinsSnapshot {
+		snap := binsSnapshot(t, []protocol.NodeBinsRow{{Node: "SMN_F1"}, {Node: "SMN_H1"}}, nil)
+		snap.ListDigest = list
+		if snap.Digest, err = protocol.NodeBinsDigest(snap); err != nil {
+			t.Fatalf("digest: %v", err)
+		}
+		return snap
+	}
+
+	eng, sent := binsEngine(t, testEngineDB(t))
+	eng.PublishBinWatchAtBoot(func(*protocol.BinWatchList) error { return nil })
+	if err := eng.ApplyNodeBinsSnapshot(snapNaming(own)); err != nil {
+		t.Fatalf("apply the list's snapshot: %v", err)
+	}
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: quote("")})
+	if lists := watchLists(t, *sent); len(lists) != 1 || lists[0].Digest != own {
+		t.Fatalf("Core restarted after the list's snapshot: published %+v, want the list again at once", lists)
+	}
+
+	eng, sent = binsEngine(t, testEngineDB(t))
+	eng.PublishBinWatchAtBoot(func(*protocol.BinWatchList) error { return nil })
+	if err := eng.ApplyNodeBinsSnapshot(snapNaming("an-older-list")); err != nil {
+		t.Fatalf("apply an older list's snapshot: %v", err)
+	}
+	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: quote("")})
+	if n := len(watchLists(t, *sent)); n != 0 {
+		t.Errorf("a snapshot of an older list: published %d, want the in-flight send held", n)
 	}
 }
 

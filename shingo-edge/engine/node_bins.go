@@ -120,7 +120,8 @@ func nameSet[V any](m map[string]V) map[string]bool {
 // readers see is replaced, then the digest is held — only after the apply, so
 // a snapshot that could not be applied leaves the old digest quoted and Core
 // sends again. A snapshot that changed something fires EventNodeBinsUpdated
-// naming what; an identical re-send only moves the received time. Nothing is
+// naming what; an identical re-send only moves the received time. The list
+// digest it answers is Core holding that watch list (heldByCore). Nothing is
 // written to SQLite (pinned by TestNodeBins_NoSQLiteWrite).
 func (e *Engine) ApplyNodeBinsSnapshot(snap protocol.NodeBinsSnapshot) error {
 	if snap.Digest == "" {
@@ -130,6 +131,9 @@ func (e *Engine) ApplyNodeBinsSnapshot(snap protocol.NodeBinsSnapshot) error {
 	nodes, groups := next.changedSince(e.nodeBins.Load())
 	e.nodeBins.Store(next)
 	e.holdFeed(protocol.FeedBins, snap.Digest, "")
+	if snap.ListDigest != "" {
+		e.heldByCore(binWatchKey, snap.ListDigest)
+	}
 	if len(nodes) > 0 || len(groups) > 0 {
 		e.Events.Emit(Event{
 			Type:      EventNodeBinsUpdated,

@@ -31,23 +31,31 @@ type Record struct {
 	digest string
 	at     time.Time
 	streak int
+	// held: the receiver has quoted a send back since the last one.
+	held bool
 }
 
 // IsLast reports whether d is the digest last sent: a receiver quoting it
 // holds that send, so the key has converged even if the value has moved on.
 func (r *Record) IsLast(d string) bool { return d == r.digest }
 
-// Converged ends the streak.
-func (r *Record) Converged() { r.streak = 0 }
+// Converged records that the receiver holds what it was sent: the streak ends,
+// and a later quote of anything else is the receiver having lost it.
+func (r *Record) Converged() { r.streak, r.held = 0, true }
 
 // Send reports whether digest is due at now and, when it is, records the send
-// and counts it in the streak. The same digest inside Guard is held back and
-// changes nothing.
-func (r *Record) Send(digest string, now time.Time) bool {
-	if r.digest == digest && now.Sub(r.at) < Guard {
+// and counts it in the streak. quoted is the digest the receiver holds for the
+// key ("" for none, or not asked). The same digest inside Guard is held back
+// and changes nothing: that copy is in flight. Not so when the receiver held
+// the last send and now quotes something else: it lost it (it restarted), so
+// nothing is in flight and the same digest goes at once. A restarted receiver
+// is healed by its first heartbeat, not two minutes later.
+func (r *Record) Send(digest, quoted string, now time.Time) bool {
+	forgotten := r.held && quoted != r.digest
+	if r.digest == digest && !forgotten && now.Sub(r.at) < Guard {
 		return false
 	}
-	r.digest, r.at = digest, now
+	r.digest, r.at, r.held = digest, now, false
 	r.streak++
 	return true
 }

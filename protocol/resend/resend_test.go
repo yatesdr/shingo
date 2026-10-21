@@ -26,7 +26,7 @@ func TestRecord_GuardStreakAndConverge(t *testing.T) {
 		{"a new digest is not held back", Guard + time.Second, "d2", true, 3},
 	}
 	for _, s := range steps {
-		if got := r.Send(s.digest, t0.Add(s.at)); got != s.wantSend {
+		if got := r.Send(s.digest, "", t0.Add(s.at)); got != s.wantSend {
 			t.Errorf("%s: send %v, want %v", s.name, got, s.wantSend)
 		}
 		if r.Streak() != s.streak {
@@ -45,5 +45,47 @@ func TestRecord_GuardStreakAndConverge(t *testing.T) {
 	r.Converged()
 	if r.Streak() != 0 || r.NotConverging() {
 		t.Errorf("after Converged: streak %d", r.Streak())
+	}
+}
+
+// A receiver that held the last send and now quotes something else lost it
+// (it restarted): the same digest goes at once, inside the guard, as the first
+// send of a new streak, and a repeat of THAT send is held while it is in
+// flight. A receiver still quoting the send it holds (a sender re-asking for
+// its own reasons) is not one that forgot, and the guard holds the repeat. A
+// receiver that never quoted a send back is waiting on a copy in flight: held,
+// and three sends never quoted back still flag the key.
+func TestRecord_AForgottenSendGoesAtOnce(t *testing.T) {
+	t.Parallel()
+	t0 := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+
+	var r Record
+	if !r.Send("d1", "", t0) {
+		t.Fatal("never sent: want due")
+	}
+	r.Converged() // the receiver quoted d1 back
+	if r.Send("d1", "d1", t0.Add(20*time.Second)) {
+		t.Error("the receiver still quotes d1: want the guard to hold a repeat")
+	}
+	if !r.Send("d1", "", t0.Add(30*time.Second)) {
+		t.Error("held, then quoted as nothing inside the guard: want the same digest sent at once")
+	}
+	if r.Streak() != 1 || r.NotConverging() {
+		t.Errorf("after the forgotten send: streak %d, want 1", r.Streak())
+	}
+	if r.Send("d1", "", t0.Add(40*time.Second)) {
+		t.Error("that send not yet quoted back: want the guard to hold a repeat")
+	}
+
+	var s Record
+	s.Send("d1", "", t0)
+	if s.Send("d1", "", t0.Add(30*time.Second)) {
+		t.Error("never converged: want the same digest held inside the guard")
+	}
+	for i := 1; i <= 2; i++ {
+		s.Send("d1", "", t0.Add(time.Duration(i)*Guard))
+	}
+	if !s.NotConverging() {
+		t.Errorf("three sends never quoted back: streak %d, want the not-converging flag", s.Streak())
 	}
 }

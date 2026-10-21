@@ -185,7 +185,9 @@ func (f *feedState) store(station, key string, e feedMemoEntry) {
 
 // compare records one heartbeat's answer for one key and reports whether the
 // feed should be sent: the digests differ and the guard does not hold it back.
-// A matching digest ends any streak and clears the key's flag.
+// The guard does not hold back a key the Edge held and now quotes otherwise:
+// a restarted Edge gets it on its first heartbeat. A matching digest ends any
+// streak and clears the key's flag.
 //
 // SO DOES THE EDGE HOLDING WHAT WAS LAST SENT, by the compare or by a push. Converging means the Edge took
 // the copy it was sent, not that Core's value stood still: a value that moves
@@ -212,7 +214,7 @@ func (f *feedState) compare(station, key, current, held string, now time.Time) b
 		rec = &feedSendRecord{}
 		f.sent[rk] = rec
 	}
-	if !rec.Send(current, now) {
+	if !rec.Send(current, held, now) {
 		return false
 	}
 	if rec.NotConverging() && !rec.flagged {

@@ -79,6 +79,39 @@ func TestFeedState_StreakEndsWhenTheLastSendIsHeld(t *testing.T) {
 	}
 }
 
+// An Edge that held a feed and restarts quotes "" on its first heartbeat:
+// Core sends the same digest at once, inside the guard, instead of two minutes
+// later. A heartbeat that predates that copy's arrival is held back. An Edge
+// that never quoted the first send is waiting on it: held, as ever.
+func TestFeedState_ARestartedEdgeGetsTheFeedOnItsFirstHeartbeat(t *testing.T) {
+	t.Parallel()
+	t0 := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	const st, key = "edge.test", protocol.FeedCatalog
+
+	f := newFeedState()
+	if !f.compare(st, key, "d1", "", t0) {
+		t.Fatal("differs: want a send")
+	}
+	if f.compare(st, key, "d1", "d1", t0.Add(20*time.Second)) {
+		t.Fatal("quoted back: want no send")
+	}
+	if !f.compare(st, key, "d1", "", t0.Add(40*time.Second)) {
+		t.Error("restarted Edge quotes \"\" inside the guard: want the feed at once")
+	}
+	if f.compare(st, key, "d1", "", t0.Add(50*time.Second)) {
+		t.Error("that copy in flight: want the next heartbeat held back")
+	}
+	if got := f.flagsFor(st); len(got) != 0 {
+		t.Errorf("flags = %v, want none", got)
+	}
+
+	g := newFeedState()
+	g.compare(st, key, "d1", "", t0)
+	if g.compare(st, key, "d1", "", t0.Add(40*time.Second)) {
+		t.Error("never quoted back: want the guard to hold the same digest")
+	}
+}
+
 // The guard is per station: the same digest going to a second station is not
 // held back by the first station's send.
 func TestFeedState_GuardIsPerStation(t *testing.T) {

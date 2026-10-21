@@ -252,9 +252,11 @@ func (b *feedBook) clock() time.Time {
 // should be sent now, and records the send, under the resend guard Core applies
 // to its feeds (protocol/resend) and on the book's clock, as Core's compare
 // reads its own. The same digest inside the guard is in flight and is held
-// back; a third send in a row raises a flag. quoted is the digest Core holds
-// for the key: when it is the one sent last, that send converged and the
-// streak starts over: a key whose value moves on every heartbeat is not stuck.
+// back, unless Core held it and now quotes otherwise (a restarted Core): then
+// it goes at once. A third send in a row raises a flag. quoted is the digest
+// Core holds for the key: when it is the one sent last, that send converged
+// and the streak starts over: a key whose value moves on every heartbeat is
+// not stuck.
 func (e *Engine) sendDue(key, digest, quoted string) bool {
 	now := e.feeds.clock()
 	e.feeds.mu.Lock()
@@ -271,7 +273,7 @@ func (e *Engine) sendDue(key, digest, quoted string) bool {
 		rec = &resend.Record{}
 		e.feeds.sent[key] = rec
 	}
-	if !rec.Send(digest, now) {
+	if !rec.Send(digest, quoted, now) {
 		return false
 	}
 	if rec.NotConverging() {
@@ -295,6 +297,20 @@ func (e *Engine) converged(key string) {
 		rec.Converged()
 	}
 	delete(e.feeds.flags, key)
+}
+
+// heldByCore records that Core holds digest for an Edge-owned key, learned
+// from something other than an ack's quote: the bins snapshot names the watch
+// list it answers. When it is the digest last sent, that send converged, as if
+// an ack had quoted it, so a Core that restarts before its next ack is healed
+// on its first one (resend.Record: a held send quoted otherwise was lost).
+func (e *Engine) heldByCore(key, digest string) {
+	e.feeds.mu.Lock()
+	defer e.feeds.mu.Unlock()
+	if rec := e.feeds.sent[key]; rec != nil && rec.IsLast(digest) {
+		rec.Converged()
+		delete(e.feeds.flags, key)
+	}
 }
 
 // FeedFlags lists the Edge-owned keys flagged as not converging, for /status.
