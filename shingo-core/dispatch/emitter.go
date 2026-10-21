@@ -23,6 +23,10 @@ type Emitter interface {
 	EmitOrderWaitChanged(orderID int64, edgeUUID, stationID string)
 	EmitOrderFaulted(orderID int64, edgeUUID, stationID, reason string)
 	EmitOrderFaultedRecovered(orderID int64, edgeUUID, stationID, robotID string)
+	// EmitBinHeld: an order's birth set a bin's quality-hold marker (a
+	// station's containment move), so the containment snapshot is pushed, as
+	// the hold door's write pushes it.
+	EmitBinHeld(binID int64)
 
 	// ProjectOrder pushes a whole order row down to the station that owns it, so
 	// an order Core authored appears on that Edge's board. Unlike the Emit

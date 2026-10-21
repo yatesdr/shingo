@@ -33,14 +33,7 @@ func (e *Engine) Start() {
 
 	// Create dispatcher with synthetic node resolver
 	resolver := &dispatch.DefaultResolver{DB: e.db, DebugLog: e.debugLog}
-	e.dispatcher = dispatch.NewDispatcher(
-		e.db,
-		e.fleet,
-		de,
-		e.cfg.Messaging.StationID,
-		e.cfg.Messaging.DispatchTopic,
-		resolver,
-	)
+	e.dispatcher = e.newDispatcher(de, resolver)
 
 	// Initialize tracker if backend supports it
 	if tb, ok := e.fleet.(fleet.TrackingBackend); ok {
@@ -464,4 +457,20 @@ func (e *Engine) loadActiveOrders() {
 		return
 	}
 	e.logFn("engine: loaded %d active vendor orders into tracker", len(ids))
+}
+
+// newDispatcher builds the dispatcher Start runs. A refusal at intake carries
+// the touched nodes' bins rows; the read is the node service's, wired later
+// (SetBinsRowsFunc) and asked at call time.
+func (e *Engine) newDispatcher(emitter dispatch.Emitter, resolver *dispatch.DefaultResolver) *dispatch.Dispatcher {
+	d := dispatch.NewDispatcher(
+		e.db,
+		e.fleet,
+		emitter,
+		e.cfg.Messaging.StationID,
+		e.cfg.Messaging.DispatchTopic,
+		resolver,
+	)
+	d.SetBinsRowsFunc(e.nodeService.BinsRows)
+	return d
 }

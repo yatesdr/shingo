@@ -34,6 +34,10 @@ type NodeService struct {
 	// levelChanged is called after a group's level or layer wants are saved
 	// or removed (level_changed.go).
 	levelChanged atomic.Pointer[func(groupNodeID int64)]
+
+	// binsRows reads the bins rows a write door's refusal carries
+	// (bins_rows.go).
+	binsRows binsRowsHook
 }
 
 func NewNodeService(db *store.DB) *NodeService {

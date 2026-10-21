@@ -57,6 +57,16 @@ func clearRefused(status int, format string, a ...any) ClearHomeAnswer {
 func (e *Engine) ClearLoaderHome(req protocol.ClearHomeRequest) ClearHomeAnswer {
 	var ans ClearHomeAnswer
 	e.door(func() { ans = e.clearLoaderHomeLocked(req) })
+	// A refusal carries Core's current rows for the home and the spot it named,
+	// read after the door, so the station redraws them before it shows the
+	// sentence.
+	if ans.Status != http.StatusOK {
+		touched := []string{req.HomeNode}
+		if req.PartialNode != "" {
+			touched = append(touched, req.PartialNode)
+		}
+		ans.Body.Rows = e.nodeService.BinsRows(touched...)
+	}
 	return ans
 }
 

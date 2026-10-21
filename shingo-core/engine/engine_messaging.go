@@ -76,6 +76,16 @@ func (e *Engine) SetBinChangedFunc(fn func(binID int64)) {
 	e.binManifest.SetBinChangedFunc(fn)
 }
 
+// SetBinsRowsFunc wires the read of Core's current bins rows for node names
+// (the messaging layer's CoreDataService.NodeBinsRows) that a write door's
+// refusal carries, so the Edge redraws the nodes from Core's rows before it
+// shows the sentence: the HTTP doors read it through the node service, the
+// home clear and the wire intake through this engine. Set once at the
+// composition root.
+func (e *Engine) SetBinsRowsFunc(fn func(names []string) ([]protocol.NodeBinsRow, error)) {
+	e.nodeService.SetBinsRowsFunc(fn)
+}
+
 // SetLevelChangedFunc wires the push that follows a group's level save (the
 // Nodes page's level and layer-want save and remove, through the node service)
 // to the messaging layer, which rebuilds the bins snapshot of every Edge with a

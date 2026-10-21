@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -17,12 +18,15 @@ import (
 	"shingocore/fleet"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
+	"shingocore/messaging"
+	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/payloads"
+	"shingocore/store/plantclaims"
 	"shingocore/store/reservations"
 )
 
@@ -841,5 +845,222 @@ func TestClearPin_RerunNeverTouchesACommittedPartial(t *testing.T) {
 	}
 	if got := r.reload(t, partial.ID); got.VendorOrderID != "sg-committed-partial" || protocol.IsTerminal(got.Status) {
 		t.Errorf("the partial's move: vendor=%q status=%s, want it left as it was", got.VendorOrderID, got.Status)
+	}
+}
+
+// clearDoorSnap is what a home clear can write, read before the tap: the
+// rig's bins whole, and the row counts of the tables a clear writes to.
+type clearDoorSnap struct {
+	bins   map[int64]string
+	counts map[string]int
+}
+
+func (r *clearRig) snapDoor(t *testing.T) clearDoorSnap {
+	t.Helper()
+	s := clearDoorSnap{bins: map[int64]string{}, counts: map[string]int{}}
+	ids := []int64{r.e.ID, r.p.ID}
+	if r.xBin != nil {
+		ids = append(ids, r.xBin.ID)
+	}
+	for _, id := range ids {
+		var row string
+		testutil.MustNoErr(t, r.db.DB.QueryRow(`SELECT to_jsonb(b)::text FROM bins b WHERE id=$1`, id).Scan(&row), "bin row")
+		s.bins[id] = row
+	}
+	for _, tbl := range []string{"orders", "reservations", "bin_uop_ledger", "audit_log", "outbox", "cms_transactions"} {
+		var n int
+		testutil.MustNoErr(t, r.db.DB.QueryRow(`SELECT COUNT(*) FROM `+tbl).Scan(&n), "count "+tbl)
+		s.counts[tbl] = n
+	}
+	return s
+}
+
+// TestClearHomeDoor_Refusals pins every refusal of the home clear's door
+// (Engine.ClearLoaderHome, resolveClearJob, dispatch.ClearTradeRefusal): the
+// status, the whole answer — status "error", the sentence, Core's current rows
+// for the home and any spot named, and no arm, parent, bin or epoch — and that nothing was written: no bin row moved, no order,
+// hold, ledger, audit, outbox or CMS row added. The second tap's refusal is
+// TestClearHome_SecondTapRefused; the promised partial's is
+// TestClearHome_PromisedPartial_RefusedBeforeAnyWrite.
+func TestClearHomeDoor_Refusals(t *testing.T) {
+	t.Parallel()
+	mkNode := func(t *testing.T, r *clearRig, name string) *nodes.Node {
+		n := &nodes.Node{Name: name, Enabled: true}
+		testutil.MustNoErr(t, r.db.CreateNode(n), "node "+name)
+		return n
+	}
+	setUOP := func(t *testing.T, r *clearRig, b *bins.Bin, uop int) {
+		testutil.MustNoErr(t, r.db.SetBinManifest(b.ID, `{"items":[]}`, b.PayloadCode, uop), "manifest "+b.Label)
+	}
+	home := func(r *clearRig) protocol.ClearHomeRequest {
+		return protocol.ClearHomeRequest{HomeNode: r.home.Name, Station: clearStation}
+	}
+	for _, tc := range []struct {
+		name     string
+		prefix   string
+		openSpot bool
+		arrange  func(t *testing.T, r *clearRig) protocol.ClearHomeRequest
+		status   int
+		sentence func(r *clearRig) string
+	}{
+		{"an unknown home", "CRA", true,
+			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
+				return protocol.ClearHomeRequest{HomeNode: "CRA-NOPE", Station: clearStation}
+			},
+			http.StatusNotFound, func(*clearRig) string { return `node "CRA-NOPE" not found` }},
+		{"a node no loader has", "CRB", true,
+			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
+				mkNode(t, r, "CRB-PLAIN")
+				return protocol.ClearHomeRequest{HomeNode: "CRB-PLAIN", Station: clearStation}
+			},
+			http.StatusBadRequest, func(*clearRig) string { return "CRB-PLAIN is not a loader position" }},
+		{"a home of a shared-window loader", "CRC", true,
+			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
+				n := mkNode(t, r, "CRC-WIN")
+				id, err := r.db.CreateLoader(loaders.Loader{Name: "CRC-SHARED", Role: "produce",
+					Layout: protocol.LoaderLayoutSharedWindow, Replenishment: "operator"})
+				testutil.MustNoErr(t, err, "shared loader")
+				testutil.MustNoErr(t, r.db.UpsertLoaderHome(loaders.Home{LoaderID: id, PositionNodeID: n.ID,
+					PayloadCode: r.part, Kind: loaders.HomeKindHome}), "its window")
+				return protocol.ClearHomeRequest{HomeNode: n.Name, Station: clearStation}
+			},
+			http.StatusBadRequest, func(*clearRig) string { return "CRC-WIN is not a dedicated-position loader" }},
+		{"a buffer position", "CRD", true,
+			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
+				return protocol.ClearHomeRequest{HomeNode: r.s.Name, Station: clearStation}
+			},
+			http.StatusBadRequest, func(*clearRig) string { return "CRD-S is a buffer position, not a home" }},
+		{"a home with no carrier", "CRE", true,
+			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
+				away := mkNode(t, r, "CRE-AWAY")
+				_, err := r.db.DB.Exec(`UPDATE bins SET node_id=$1 WHERE id=$2`, away.ID, r.e.ID)
+				testutil.MustNoErr(t, err, "the carrier leaves")
+				return home(r)
+			},
+			http.StatusBadRequest, func(*clearRig) string { return "CRE-H has no bin with parts to clear" }},
+		{"a home whose carrier holds no parts", "CRF", true,
+			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
+				setUOP(t, r, r.e, 0)
+				return home(r)
+			},
+			http.StatusBadRequest, func(*clearRig) string { return "CRF-H has no bin with parts to clear" }},
+		{"a home holding two carriers", "CRG", true,
+			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
+				clearBin(t, r.db, r.part, r.home.ID, "CRG-E2", 10)
+				return home(r)
+			},
+			http.StatusBadRequest, func(*clearRig) string { return "CRG-H has no bin with parts to clear" }},
+		{"a carrier an order has claimed", "CRH", true,
+			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
+				o := testdb.CreateOrder(t, r.db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+				testdb.ClaimBinForTest(t, r.db, r.e.ID, o.ID)
+				return home(r)
+			},
+			http.StatusBadRequest, func(*clearRig) string { return "CRH-E is already being moved" }},
+		{"a held partial on the home", "CRI", true,
+			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
+				testutil.MustNoErr(t, r.db.ReplacePlantClaims("CRI-PROC",
+					[]plantclaims.StyleRow{{ProcessID: "CRI-PROC", StyleID: "CRI-STY", ConfigGen: 1, IsActive: true}},
+					[]plantclaims.ClaimRow{{ProcessID: "CRI-PROC", StyleID: "CRI-STY", CoreNodeName: "CRI-LINE",
+						Role: protocol.ClaimRoleProduce, SwapMode: protocol.SwapModeTwoRobot, PayloadCode: r.part,
+						PartialDestination: r.home.Name}}, 0), "the home keeps the part's partials")
+				setUOP(t, r, r.e, 4)
+				return home(r)
+			},
+			http.StatusConflict, func(*clearRig) string {
+				return "CRI-E holds 4 of CRI-PART, unfinished and held here to be called back to its line"
+			}},
+		{"a named spot that is not the loader's", "CRJ", true,
+			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
+				req := home(r)
+				req.PartialNode = "CRJ-ELSEWHERE"
+				return req
+			},
+			http.StatusBadRequest, func(*clearRig) string { return "CRJ-ELSEWHERE is not a buffer position of the loader at CRJ-H" }},
+		{"a named spot holding no partial", "CRK", true,
+			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
+				req := home(r)
+				req.PartialNode = r.x.Name
+				return req
+			},
+			http.StatusBadRequest, func(*clearRig) string { return "CRK-X holds no partial of CRK-PART" }},
+		{"no spot holding a partial", "CRL", true,
+			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
+				setUOP(t, r, r.p, 0)
+				return home(r)
+			},
+			http.StatusBadRequest, func(*clearRig) string { return "no buffer spot holds a partial of CRL-PART" }},
+		{"a trade whose spot does not take the carrier", "CRM", false,
+			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
+				other := &bins.BinType{Code: "CRM-OTHER"}
+				testutil.MustNoErr(t, r.db.CreateBinType(other), "another carrier type")
+				testutil.MustNoErr(t, r.db.SetLoaderHomeBinTypes(r.loaderID, r.s.ID, []int64{other.ID}), "S takes the other type only")
+				return home(r)
+			},
+			http.StatusBadRequest, func(*clearRig) string {
+				return "no buffer spot is open and CRM-S does not take CRM-E's carrier type DEFAULT"
+			}},
+		{"a trade whose home does not take the partial", "CRN", false,
+			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
+				other := &bins.BinType{Code: "CRN-OTHER"}
+				testutil.MustNoErr(t, r.db.CreateBinType(other), "another carrier type")
+				testutil.MustNoErr(t, r.db.SetLoaderHomeBinTypes(r.loaderID, r.home.ID, []int64{other.ID}), "H takes the other type only")
+				return home(r)
+			},
+			http.StatusBadRequest, func(*clearRig) string {
+				return "no buffer spot is open and CRN-H does not take CRN-P's carrier type DEFAULT"
+			}},
+		{"a trade inside a lane", "CRO", false,
+			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
+				_, lanes, _ := laneGroup(t, r.db, "CRO", 1, 1)
+				_, err := r.db.DB.Exec(`UPDATE nodes SET parent_id=$1, depth=2 WHERE id=$2`, lanes[0].ID, r.s.ID)
+				testutil.MustNoErr(t, err, "S is a slot of the lane")
+				return home(r)
+			},
+			http.StatusBadRequest, func(*clearRig) string {
+				return "no buffer spot is open and CRO-S is a slot of lane CRO-L0, and two robots cannot trade inside a lane"
+			}},
+		{"a birth the database refuses", "CRP", true,
+			func(t *testing.T, r *clearRig) protocol.ClearHomeRequest {
+				_, err := r.db.DB.Exec(fmt.Sprintf(`
+					CREATE FUNCTION crp_refuse() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'door fault'; END $$ LANGUAGE plpgsql;
+					CREATE TRIGGER crp_refuse BEFORE UPDATE OF payload_code ON bins FOR EACH ROW
+					  WHEN (OLD.id = %d) EXECUTE FUNCTION crp_refuse();`, r.e.ID))
+				testutil.MustNoErr(t, err, "the fault")
+				return home(r)
+			},
+			http.StatusInternalServerError, func(r *clearRig) string {
+				return fmt.Sprintf("could not start the clear: clear manifest bin %d: ERROR: door fault (SQLSTATE P0001)", r.e.ID)
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newClearRig(t, tc.prefix, tc.openSpot)
+			rows := messaging.NewCoreDataService(r.db, nil, service.EpochAnnounce{}).NodeBinsRows
+			r.eng.SetBinsRowsFunc(rows)
+			req := tc.arrange(t, r)
+			before := r.snapDoor(t)
+			ans := r.eng.ClearLoaderHome(req)
+			// The refusal carries Core's current rows for the home and the spot it
+			// named: the rows the snapshot's own code reads now (the refusal
+			// wrote nothing), the home's first.
+			touched := []string{req.HomeNode}
+			if req.PartialNode != "" {
+				touched = append(touched, req.PartialNode)
+			}
+			now, err := rows(touched)
+			testutil.MustNoErr(t, err, "the rows now")
+			if len(now) == 0 || now[0].Node != req.HomeNode {
+				t.Fatalf("rows now = %+v, want the home's first", now)
+			}
+			want := ClearHomeAnswer{Status: tc.status, Body: protocol.ClearHomeResponse{Status: "error", Error: tc.sentence(r), Rows: now}}
+			if !reflect.DeepEqual(ans, want) {
+				t.Errorf("answer:\n got %d %+v\nwant %d %+v", ans.Status, ans.Body, want.Status, want.Body)
+			}
+			if after := r.snapDoor(t); !reflect.DeepEqual(after, before) {
+				t.Errorf("a refusal wrote:\n before %+v\n  after %+v", before, after)
+			}
+			testdb.AssertNoHoldsAtRest(t, r.db, "after the refusal")
+		})
 	}
 }

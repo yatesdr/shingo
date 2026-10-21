@@ -95,6 +95,11 @@ type Dispatcher struct {
 	// production; set via SetPostBirthHook.
 	postBirthHook func(orderID int64)
 
+	// binsRows reads Core's current bins rows for node names, for a refusal
+	// to carry (protocol.OrderError.Rows); wired by the engine
+	// (SetBinsRowsFunc). Nil reads nothing.
+	binsRows func(names ...string) []protocol.NodeBinsRow
+
 	// acquirer is the fulfillment scanner, wired by the engine (SetAcquirer):
 	// the lock a door holds and the one acquire it asks for (door.go).
 	acquirer Acquirer
@@ -178,7 +183,14 @@ func (d *Dispatcher) handleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 		if lifecycleErr.Err != nil {
 			d.dbg("create inbound order %s: %v", p.OrderUUID, lifecycleErr.Err)
 		}
-		d.replies.SendError(env, p.OrderUUID, lifecycleErr.Code, lifecycleErr.Detail)
+		// The rows go with the sentence, so the Edge redraws the source from
+		// Core's row before it shows the refusal.
+		var rows []protocol.NodeBinsRow
+		if d.binsRows != nil && len(lifecycleErr.Touched) > 0 {
+			rows = d.binsRows(lifecycleErr.Touched...)
+		}
+		d.replies.SendRefusal(env, protocol.OrderError{OrderUUID: p.OrderUUID, ErrorCode: lifecycleErr.Code,
+			Detail: lifecycleErr.Detail, Rows: rows})
 		return
 	}
 	if d.postBirthHook != nil {
@@ -1400,4 +1412,11 @@ func (d *Dispatcher) InstallFutilityDetector(cfg FutilityConfig, logFn func(stri
 	det := NewFutilityDetector(cfg, logFn, d.db)
 	d.lifecycle.futility = det
 	return det
+}
+
+// SetBinsRowsFunc wires the read of Core's current bins rows a refusal carries
+// (protocol.OrderError.Rows). Set once, by the engine, when the dispatcher is
+// built.
+func (d *Dispatcher) SetBinsRowsFunc(fn func(names ...string) []protocol.NodeBinsRow) {
+	d.binsRows = fn
 }

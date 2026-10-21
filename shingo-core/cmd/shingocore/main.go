@@ -470,6 +470,9 @@ func main() {
 	// the station doors (LOAD, count, CLEAR) through the engine's hook, bin
 	// and order events from the bus.
 	eng.SetBinChangedFunc(func(binID int64) { coreDataService.BinsChanged(binID) })
+	// A write door's refusal carries Core's current rows for the nodes it
+	// touched, read by the snapshot's own row code.
+	eng.SetBinsRowsFunc(coreDataService.NodeBinsRows)
 	// A levelled group's line rides the same snapshot: the engine answers it,
 	// and a level save pushes it.
 	coreDataService.SetGroupLinesFunc(eng.UnloaderGroupLines)

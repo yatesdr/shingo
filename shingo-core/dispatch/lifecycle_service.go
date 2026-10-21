@@ -23,6 +23,10 @@ type lifecycleError struct {
 	Code   string
 	Detail string
 	Err    error
+	// Touched names the nodes a refusal is about, whose current bins rows ride
+	// the order.error (protocol.OrderError.Rows): a named bin not at its source
+	// names the source. Nil for every other refusal.
+	Touched []string
 }
 
 func (e *lifecycleError) Error() string {
@@ -146,11 +150,20 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 	}
 	// A move may name the one bin it is for. Kept on the row and asked inside
 	// the statements that hold and claim a bin (reservations.NamedBinSQL), so
-	// the move lifts that bin or ends skipped. Any other type naming a bin is
+	// the move lifts that bin or ends skipped; a bin not on the source at all is
+	// refused at birth (birthNamedMove). Any other type naming a bin is
 	// not a shape a station sends; the field is ignored there.
 	if orderType == OrderTypeMove && p.BinID > 0 {
 		binID := p.BinID
 		order.NamedBinID = &binID
+	}
+	// A station sending the bin to containment asks for its hold with the move
+	// (protocol.OrderRequest.QualityHoldBy): the marker is set in the birth's
+	// transaction, beside the check that the bin stands on the source
+	// (birthNamedMove). Without a named bin there is nothing to hold.
+	holdBy := ""
+	if order.NamedBinID != nil {
+		holdBy = p.QualityHoldBy
 	}
 	// Born through the builder. The need is what the station stated, with the
 	// delivery as admission resolved it; the plan is the pick, when the decision
@@ -175,6 +188,7 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 			Delivery:        order.DeliveryNode,
 			SkipAutoConfirm: order.SkipAutoConfirm,
 			NamedBin:        order.NamedBinID,
+			QualityHoldBy:   holdBy,
 		}, pl)
 	}); lerr != nil {
 		return nil, "", lerr
@@ -187,6 +201,11 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 	// inside the shared body: AdmitCoreAsk emits its own with Core's values, and
 	// TestCensus_OrderReceivedAtBirth says, door by door, which others do.
 	s.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, p.OrderType, payloadCode, p.DeliveryNode)
+	// The hold the birth set pushes the containment snapshot, as the hold door's
+	// write does (PayloadService.SetBinHold).
+	if holdBy != "" {
+		s.emitter.EmitBinHeld(*order.NamedBinID)
+	}
 	// The Edge that sent this request already has a row for it — it created the
 	// row before sending. Projecting it back would be Core telling a station
 	// about its own order.
@@ -245,6 +264,14 @@ func (s *LifecycleService) admit(order *orders.Order, birth func() error) *lifec
 		return lerr
 	}
 	if err := birth(); err != nil {
+		// A move whose named bin is not on its source is refused here, before
+		// anything exists (birthNamedMove), with the sentence the station shows.
+		var away *NotAtSourceError
+		if errors.As(err, &away) {
+			lerr := lifecycleErr(string(protocol.TermNoSourceBin), away.Error(), nil)
+			lerr.Touched = []string{away.Source}
+			return lerr
+		}
 		return lifecycleErr("internal_error", err.Error(), err)
 	}
 	// THE SELECTOR'S OWN CLOCK READING, WRITTEN AFTER THE ROW EXISTS. There is no
@@ -271,9 +298,16 @@ func (s *LifecycleService) admit(order *orders.Order, birth func() error) *lifec
 }
 
 // birth writes the order through the builder in its own transaction
-// (birthOwnTx) and leaves order as written.
+// (birthOwnTx; birthNamedMove for a move that names its bin)
+// and leaves order as written.
 func (s *LifecycleService) birth(order *orders.Order, need Need, p plan.Plan) error {
-	built, err := birthOwnTx(s.db, need, p)
+	var built *orders.Order
+	var err error
+	if need.NamedBin != nil {
+		built, err = birthNamedMove(s.db, need, p)
+	} else {
+		built, err = birthOwnTx(s.db, need, p)
+	}
 	if err != nil {
 		return err
 	}

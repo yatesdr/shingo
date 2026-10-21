@@ -258,3 +258,4 @@ func TestCoreHandlerDeduplicatesReceiptAcrossHandlerRestart(t *testing.T) {
 }
 func (noopEmitter) EmitOrderFaulted(orderID int64, edgeUUID, stationID, reason string)           {}
 func (noopEmitter) EmitOrderFaultedRecovered(orderID int64, edgeUUID, stationID, robotID string) {}
+func (noopEmitter) EmitBinHeld(int64)                                                            {}

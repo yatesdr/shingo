@@ -391,7 +391,7 @@ func TestCensus_OrderCreationDoors(t *testing.T) {
 	// file-counting version could not make, and the reason it counted eight.
 	delegates := map[string]string{
 		"store/orders.go":     "the writer itself; every door reaches the orders table through this file, which is why there is one INSERT and not several",
-		"dispatch/builder.go": "the one builder (B2): Build over the single INSERT, and BirthMove's transaction; the bin move, the wire door and the two Core asks reach it now, and B3 moves the other doors to it",
+		"dispatch/builder.go": "the one builder (B2): Build over the single INSERT, and the transactions of BirthMove and of a move naming its bin (birthNamedMove); the bin move, the wire door and the two Core asks reach it now, and B3 moves the other doors to it",
 	}
 
 	// And no site may start writing orders without being named as a door. This

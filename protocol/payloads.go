@@ -193,8 +193,10 @@ type OrderRequest struct {
 	OriginClass string `json:"origin_class,omitempty"`
 	// BinID names the one bin a move is for: Core's bin id, as the Edge read it
 	// on the move's source node. Core lifts that bin and no other, and only
-	// while it still stands on the source node; once it has left, the move ends
-	// skipped instead of carrying whatever lands there next. 0 means no bin is
+	// while it still stands on the source node: a bin not on the source when the
+	// move arrives is refused at intake (order.error, "not at that source"), and
+	// once it has left a born move ends skipped instead of carrying whatever
+	// lands there next. 0 means no bin is
 	// named, and Core takes whatever stands on the source, as it always has.
 	//
 	// Sent only on a move. The Edge sends it on the return of a keep-staged
@@ -202,6 +204,15 @@ type OrderRequest struct {
 	// older Core ignores it and lifts whatever stands there, which is what it
 	// did before; an older Edge never sends it.
 	BinID int64 `json:"bin_id,omitempty"`
+	// QualityHoldBy asks Core to put the named bin (BinID) on quality hold,
+	// attributed to this: a station sending the bin to containment. The check
+	// that the bin stands on the source, the hold marker and the move's birth
+	// are one transaction, so the move is never born without its hold, and no
+	// hold is set on a bin the move does not find. Ignored without BinID, and
+	// on any type but a move. Additive and omitempty: an older Core ignores it
+	// and sets no marker (the move still takes the bin to containment); an
+	// older Edge never sends it and keeps its own hold call.
+	QualityHoldBy string `json:"quality_hold_by,omitempty"`
 }
 
 // Order origin classes. THREE VALUES, AND AGING DOES NOT ADD A FOURTH.
@@ -554,6 +565,11 @@ type OrderError struct {
 	OrderUUID string `json:"order_uuid"`
 	ErrorCode string `json:"error_code"`
 	Detail    string `json:"detail"`
+	// Rows is Core's current bins rows for the nodes the refusal is about (a
+	// move's source, when its named bin is not there), for the Edge to write
+	// into its bins copy before it shows Detail. Absent on every other error;
+	// an older Edge ignores it.
+	Rows []NodeBinsRow `json:"rows,omitempty"`
 }
 
 // OrderSkipped signals an order reached a terminal "skipped" state — the

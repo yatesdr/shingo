@@ -135,7 +135,16 @@ type BinLoadRequest struct {
 	// one bin", the same shape as BinCountRequest and BinClearRequest. Absent
 	// on the wire when 0, so a sender that never sets it sends the bytes it
 	// always did.
-	BinID       int64  `json:"bin_id,omitempty"`
+	BinID int64 `json:"bin_id,omitempty"`
+	// Epoch is the resident carrier's generation (bins.delta_epoch) as the
+	// sender read it; 0 asserts nothing. Core refuses the LOAD when the
+	// carrier's generation has moved since.
+	Epoch int64 `json:"epoch,omitempty"`
+	// Expect is what the sender read the carrier to be, in the door's own
+	// terms: LoadExpectBare or LoadExpectPartial; "" asserts nothing. Never
+	// "empty": a node with no carrier has nothing to load. Core refuses the
+	// LOAD when the carrier is no longer what the sender read.
+	Expect      string `json:"expect,omitempty"`
 	PayloadCode string `json:"payload_code"`
 	// UOPCount is absent-or-value: a count is a count, absence is the
 	// question. nil means nobody declared one and Core answers from the
@@ -147,18 +156,32 @@ type BinLoadRequest struct {
 	Manifest []BinLoadItem `json:"manifest"`
 }
 
+// The values of BinLoadRequest.Expect.
+const (
+	// LoadExpectBare: the carrier holds no part (no payload code), the
+	// carrier a LOAD normally fills; a bare cart is one of them.
+	LoadExpectBare = "bare"
+	// LoadExpectPartial: the carrier holds the part being loaded, more than
+	// none and fewer than its capacity.
+	LoadExpectPartial = "partial"
+)
+
 // BinLoadResponse is Core's response after loading a bin.
 type BinLoadResponse struct {
 	// Field order alphabetical: this replaces a map reply, which encodes
 	// keys alphabetically, and the byte stream keeps the old key order.
-	BinID        int64  `json:"bin_id"`
-	BinLabel     string `json:"bin_label"`
-	DeltaEpoch   int64  `json:"delta_epoch"`
-	Detail       string `json:"detail,omitempty"`
-	Error        string `json:"error,omitempty"`
-	PayloadCode  string `json:"payload_code"`
-	Status       string `json:"status"`
-	UOPRemaining int    `json:"uop_remaining"`
+	BinID       int64  `json:"bin_id"`
+	BinLabel    string `json:"bin_label"`
+	DeltaEpoch  int64  `json:"delta_epoch"`
+	Detail      string `json:"detail,omitempty"`
+	Error       string `json:"error,omitempty"`
+	PayloadCode string `json:"payload_code"`
+	// Rows is set on a refusal: Core's current bins rows for the node the LOAD
+	// named (NodeBinsRow), for the Edge to write into its bins copy before it
+	// shows the sentence. Absent on an accept.
+	Rows         []NodeBinsRow `json:"rows,omitempty"`
+	Status       string        `json:"status"`
+	UOPRemaining int           `json:"uop_remaining"`
 }
 
 // BinCountRequest declares a count an operator made at the line against the
@@ -167,7 +190,12 @@ type BinCountRequest struct {
 	NodeName string `json:"node_name"`
 	// BinID disambiguates when a node holds more than one bin; 0 means "the
 	// one bin", matching the conditional map key the Edge used to send.
-	BinID     int64 `json:"bin_id,omitempty"`
+	BinID int64 `json:"bin_id,omitempty"`
+	// Epoch is the carrier's generation (bins.delta_epoch) the count was
+	// taken in, as the sender holds it; 0 asserts nothing. A count from a
+	// generation that has ended is refused with the current one
+	// (BinCountResponse.EpochRefresh), never recorded.
+	Epoch     int64 `json:"epoch,omitempty"`
 	ActualUOP int   `json:"actual_uop"`
 	// Actor has no omitempty: the old map wrote the key even for "".
 	Actor string `json:"actor"`
@@ -178,20 +206,27 @@ type BinCountResponse struct {
 	// Field order alphabetical: this replaces a map reply, which encodes
 	// keys alphabetically, and the byte stream keeps the old key order.
 	// Every old map key was written unconditionally, so no field here has
-	// omitempty except the error envelope.
-	AsOfNet      *int64 `json:"as_of_net"`
-	AsOfSeq      *int64 `json:"as_of_seq"`
-	AsOfStation  string `json:"as_of_station"`
-	BinID        int64  `json:"bin_id"`
-	BinLabel     string `json:"bin_label"`
-	DeltaEpoch   int64  `json:"delta_epoch"`
-	Detail       string `json:"detail,omitempty"`
-	Discrepancy  bool   `json:"discrepancy"`
-	Error        string `json:"error,omitempty"`
-	Expected     int    `json:"expected"`
-	Status       string `json:"status"`
-	UOPRemaining int    `json:"uop_remaining"`
-	Warning      string `json:"warning"`
+	// omitempty except the error envelope and a refusal's EpochRefresh and Rows.
+	AsOfNet     *int64 `json:"as_of_net"`
+	AsOfSeq     *int64 `json:"as_of_seq"`
+	AsOfStation string `json:"as_of_station"`
+	BinID       int64  `json:"bin_id"`
+	BinLabel    string `json:"bin_label"`
+	DeltaEpoch  int64  `json:"delta_epoch"`
+	Detail      string `json:"detail,omitempty"`
+	Discrepancy bool   `json:"discrepancy"`
+	// EpochRefresh is set on the refusal of a count whose Epoch has ended:
+	// the carrier and its current generation, the body a
+	// SubjectBinEpochRefresh message carries. The sender adopts the stamp and
+	// sends the count again under it. Absent on every other answer.
+	EpochRefresh *BinEpochRefresh `json:"epoch_refresh,omitempty"`
+	Error        string           `json:"error,omitempty"`
+	Expected     int              `json:"expected"`
+	// Rows is set on a refusal, as BinLoadResponse.Rows.
+	Rows         []NodeBinsRow `json:"rows,omitempty"`
+	Status       string        `json:"status"`
+	UOPRemaining int           `json:"uop_remaining"`
+	Warning      string        `json:"warning"`
 }
 
 // BinClearRequest clears the manifest on the bin at a node, optionally
@@ -233,7 +268,7 @@ type BinClearResponse struct {
 	// Field order alphabetical: this replaces a map reply, which encodes
 	// keys alphabetically, and the byte stream keeps the old key order.
 	// Every old map key was written unconditionally, so no field here has
-	// omitempty except the error envelope.
+	// omitempty except the error envelope and a refusal's Rows.
 	BinID    int64  `json:"bin_id"`
 	BinLabel string `json:"bin_label"`
 	// ClearedBinTypeCode is the carrier's cart type as an operator knows it —
@@ -249,7 +284,9 @@ type BinClearResponse struct {
 	DeltaEpoch int64  `json:"delta_epoch"`
 	Detail     string `json:"detail,omitempty"`
 	Error      string `json:"error,omitempty"`
-	Status     string `json:"status"`
+	// Rows is set on a refusal, as BinLoadResponse.Rows.
+	Rows   []NodeBinsRow `json:"rows,omitempty"`
+	Status string        `json:"status"`
 }
 
 // ClearHomeRequest asks Core to clear a dedicated loader's home: declare the
@@ -281,7 +318,10 @@ type ClearHomeResponse struct {
 	DeltaEpoch int64  `json:"delta_epoch,omitempty"`
 	Error      string `json:"error,omitempty"`
 	ParentUUID string `json:"parent_uuid,omitempty"`
-	Status     string `json:"status"`
+	// Rows is set on a refusal: Core's current bins rows for the home (and
+	// the named spot), as BinLoadResponse.Rows. Absent on an accept.
+	Rows   []NodeBinsRow `json:"rows,omitempty"`
+	Status string        `json:"status"`
 }
 
 // The arms a home clear takes (ClearHomeResponse.Arm).

@@ -13,8 +13,10 @@ package store
 //	                              off, which RELEASES NOTHING — held bins are
 //	                              individually verified).
 //	bins.quality_hold           — the station's "Send to Quality Hold" sets
-//	                              it (via the Core API) at the same moment
-//	                              the containment move order is created; the
+//	                              it in the containment move's birth
+//	                              transaction (OrderRequest.QualityHoldBy,
+//	                              HoldBinTx), or through the Core API's hold
+//	                              door for an Edge that predates that; the
 //	                              source finder refuses held bins so a held
 //	                              bin cannot be quietly sourced back into
 //	                              the ordinary flow while it waits.
@@ -121,6 +123,21 @@ func (db *DB) ListPayloadContainment() ([]PayloadContainmentRow, error) {
 	return out, rows.Err()
 }
 
+// holdBinSQL is the hold marker's write, one spelling for both writers.
+const holdBinSQL = `UPDATE bins SET quality_hold = TRUE, hold_by = $2, hold_at = NOW(), updated_at = NOW()
+			WHERE id = $1`
+
+// HoldBinTx sets a bin's hold marker inside the caller's transaction: the
+// station's containment move, whose birth carries the hold. by is required, as
+// SetBinQualityHold requires it.
+func HoldBinTx(tx *sql.Tx, binID int64, by string) error {
+	if by == "" {
+		return fmt.Errorf("quality hold requires an attribution (station)")
+	}
+	_, err := tx.Exec(holdBinSQL, binID, by)
+	return err
+}
+
 // SetBinQualityHold sets or clears a bin's hold marker. `by` is station-level
 // attribution (the same convention every operator action keeps). Clearing
 // wipes the attribution with it — an unheld bin carries no stale hold history.
@@ -129,8 +146,7 @@ func (db *DB) SetBinQualityHold(binID int64, hold bool, by string) error {
 		return fmt.Errorf("quality hold requires an attribution (station)")
 	}
 	if hold {
-		_, err := db.DB.Exec(`UPDATE bins SET quality_hold = TRUE, hold_by = $2, hold_at = NOW(), updated_at = NOW()
-			WHERE id = $1`, binID, by)
+		_, err := db.DB.Exec(holdBinSQL, binID, by)
 		return err
 	}
 	_, err := db.DB.Exec(`UPDATE bins SET quality_hold = FALSE, hold_by = '', hold_at = NULL, updated_at = NOW()

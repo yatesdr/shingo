@@ -696,3 +696,26 @@ func TestBuildNodeBins_InboundOrders(t *testing.T) {
 		t.Errorf("an order to SMN_A2 started: %d sends to edge.b, want 1", got)
 	}
 }
+
+// A write door's refusal reads its rows through the snapshot's own row code:
+// the rows for the names asked, exactly as a snapshot of the same list carries
+// them, in one read snapshot of five statements.
+func TestNodeBinsRows_TheSnapshotRowsInFiveStatements(t *testing.T) {
+	t.Parallel()
+	db, cfg := testdb.OpenWithConfig(t)
+	f := newBinsFixture(t, db)
+	cdb, counter, err := store.OpenCounting(cfg)
+	testutil.MustNoErr(t, err, "open counting db")
+	t.Cleanup(func() { cdb.Close() })
+	svc := NewCoreDataService(cdb, &feedsPinResponder{}, service.EpochAnnounce{})
+
+	counter.Reset()
+	rows, err := svc.NodeBinsRows(binsFixtureNames)
+	testutil.MustNoErr(t, err, "rows")
+	if stmts := counter.Statements(); len(stmts) != 5 {
+		t.Errorf("one rows read = %d statements, want 5:\n%v", len(stmts), stmts)
+	}
+	if !reflect.DeepEqual(rows, f.wantRows()) {
+		t.Errorf("rows =\n %+v\nwant\n %+v", rows, f.wantRows())
+	}
+}

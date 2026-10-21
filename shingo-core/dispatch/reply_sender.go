@@ -78,17 +78,19 @@ func (s *ReplySender) SendUpdate(env *protocol.Envelope, orderUUID, status, deta
 }
 
 func (s *ReplySender) SendError(env *protocol.Envelope, orderUUID, errorCode, detail string) {
-	s.noteError(env, protocol.OrderError{OrderUUID: orderUUID, ErrorCode: errorCode, Detail: detail})
-	if err := s.SendReply(protocol.TypeOrderError, "order.error", env.Src.Station, env.ID, &protocol.OrderError{
-		OrderUUID: orderUUID,
-		ErrorCode: errorCode,
-		Detail:    detail,
-	}); err != nil {
-		log.Printf("dispatch: error reply for %s: %v", orderUUID, err)
+	s.SendRefusal(env, protocol.OrderError{OrderUUID: orderUUID, ErrorCode: errorCode, Detail: detail})
+}
+
+// SendRefusal sends an order.error as given: SendError's body, with the bins
+// rows for the nodes the refusal is about when it carries them.
+func (s *ReplySender) SendRefusal(env *protocol.Envelope, e protocol.OrderError) {
+	s.noteError(env, e)
+	if err := s.SendReply(protocol.TypeOrderError, "order.error", env.Src.Station, env.ID, &e); err != nil {
+		log.Printf("dispatch: error reply for %s: %v", e.OrderUUID, err)
 		return
 	}
 	if s.debug != nil {
-		s.debug("sendError: uuid=%s code=%s detail=%s", orderUUID, errorCode, detail)
+		s.debug("sendError: uuid=%s code=%s detail=%s", e.OrderUUID, e.ErrorCode, e.Detail)
 	}
 }
 

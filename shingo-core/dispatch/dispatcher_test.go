@@ -100,6 +100,7 @@ func (m *mockEmitter) EmitOrderFaulted(orderID int64, _, _, reason string) {
 func (m *mockEmitter) EmitOrderFaultedRecovered(orderID int64, _, _, robotID string) {
 	m.faultedRecovered = append(m.faultedRecovered, emitFaultedRecovered{orderID, robotID})
 }
+func (m *mockEmitter) EmitBinHeld(int64) {}
 func (m *mockEmitter) ProjectOrder(stationID string, p protocol.OrderProjection) {
 	m.projected = append(m.projected, emitProjected{stationID, p})
 }

@@ -317,16 +317,11 @@ func (s *CoreDataService) buildNodeBins(station string) (snap *protocol.NodeBins
 		return nil, false, nil
 	}
 	groups := s.levelledGroups(station, listDigest)
-	var read watchRead
-	if err := store.ReadSnapshot(s.db.DB, func(tx *sql.Tx) error {
-		var rerr error
-		read, rerr = readWatch(tx, names, groups)
-		return rerr
-	}); err != nil {
+	read, rows, err := s.rowsFor(names, groups)
+	if err != nil {
 		return nil, true, err
 	}
-	snap = &protocol.NodeBinsSnapshot{ListDigest: listDigest, Rows: read.rows(names)}
-	s.markHeldLines(snap.Rows)
+	snap = &protocol.NodeBinsSnapshot{ListDigest: listDigest, Rows: rows}
 	if snap.Groups, err = s.groupLines(station, listDigest, groups, names, read.resolved, read.first()); err != nil {
 		return nil, true, err
 	}
@@ -335,6 +330,36 @@ func (s *CoreDataService) buildNodeBins(station string) (snap *protocol.NodeBins
 	}
 	s.bins.indexBuild(station, listDigest, read.places(names), snap.Rows)
 	return snap, true, nil
+}
+
+// rowsFor is the rows for names (and the levelled groups' windows read with
+// them), Core's current: readWatch in one read snapshot, then per held partial
+// its line (markHeldLines). The snapshot build and a write door's refusal
+// (NodeBinsRows) read them through this one body.
+func (s *CoreDataService) rowsFor(names []string, groups []watchGroup) (watchRead, []protocol.NodeBinsRow, error) {
+	var read watchRead
+	if err := store.ReadSnapshot(s.db.DB, func(tx *sql.Tx) error {
+		var rerr error
+		read, rerr = readWatch(tx, names, groups)
+		return rerr
+	}); err != nil {
+		return read, nil, err
+	}
+	rows := read.rows(names)
+	s.markHeldLines(rows)
+	return read, rows, nil
+}
+
+// NodeBinsRows is Core's current rows for names, as a bins snapshot carries
+// them (one per name in the given order, a group's members after it), for a
+// write door to answer its refusal with: the Edge writes them into its copy
+// before it shows the sentence. Five statements for names with no group among
+// them (BEGIN, the names, the orders inbound, the bins, COMMIT), a sixth when
+// one is a group, and one per held partial. Pinned by
+// TestNodeBinsRows_TheSnapshotRowsInFiveStatements.
+func (s *CoreDataService) NodeBinsRows(names []string) ([]protocol.NodeBinsRow, error) {
+	_, rows, err := s.rowsFor(names, nil)
+	return rows, err
 }
 
 // watchRead is what one build read inside its snapshot.

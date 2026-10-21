@@ -128,6 +128,9 @@ func (e *dispatchEmitter) EmitOrderFaultedRecovered(orderID int64, edgeUUID, sta
 	}})
 }
 
+// EmitBinHeld pushes the containment snapshot after a birth set a hold marker.
+func (e *dispatchEmitter) EmitBinHeld(int64) { e.engine.notifyContainmentChanged() }
+
 // pollerEmitter bridges the fleet tracker's status change events to the EventBus.
 type pollerEmitter struct {
 	bus *EventBus

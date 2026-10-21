@@ -7,16 +7,21 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 
 	"shingocore/internal/testdb"
+	"shingocore/messaging"
+	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/audit"
 	"shingocore/store/bins"
 	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 // bin_load_door_test.go — the bin-load telemetry door answers like its
@@ -375,4 +380,344 @@ func TestBinDetail_LoadRefusalAgreesWithTheLoadDoors(t *testing.T) {
 			assertHeldAnswer(t, db, tc, rec, http.StatusBadRequest, bin, holder, sd.Payload.Code)
 		})
 	}
+}
+
+// doorFix is one door call's world: the handlers over a fresh database and the
+// standard data (STORAGE-A1, LINE1-IN, PART-A of capacity 1000).
+type doorFix struct {
+	h  *Handlers
+	db *store.DB
+	sd *testdb.StandardData
+}
+
+func newDoorFix(t *testing.T) *doorFix {
+	t.Helper()
+	h, db := testHandlers(t)
+	// The write doors' refusals carry Core's rows, read as the composition
+	// root wires them (cmd/shingocore: SetBinsRowsFunc).
+	h.engine.NodeService().SetBinsRowsFunc(messaging.NewCoreDataService(db, nil, service.EpochAnnounce{}).NodeBinsRows)
+	return &doorFix{h: h, db: db, sd: testdb.SetupStandardData(t, db)}
+}
+
+// doorArm is one arm of a door: arrange shapes the world and returns the
+// request (a string is sent raw) and the bins whose rows are watched; answer is
+// the status and body wanted, read after the call (an accept's body carries
+// the epoch it wrote). wrote is nil for a refusal, which must write nothing;
+// otherwise it is the bin columns and table rows the call must write. after,
+// when set, checks the values written.
+type doorArm struct {
+	name    string
+	arrange func(t *testing.T, f *doorFix) (body any, watch []int64)
+	answer  func(t *testing.T, f *doorFix) (int, string)
+	wrote   func(f *doorFix) (map[int64][]string, map[string]int)
+	after   func(t *testing.T, f *doorFix)
+}
+
+// runDoorArms drives each arm through the door on a world of its own.
+func runDoorArms(t *testing.T, door func(*Handlers) http.HandlerFunc, path string, arms []doorArm) {
+	t.Helper()
+	for _, arm := range arms {
+		t.Run(arm.name, func(t *testing.T) {
+			t.Parallel()
+			f := newDoorFix(t)
+			body, watch := arm.arrange(t, f)
+			snap := snapDoor(t, f.db, watch...)
+			var rec *httptest.ResponseRecorder
+			if raw, ok := body.(string); ok {
+				rec = postRaw(t, door(f.h), path, []byte(raw))
+			} else {
+				rec = postJSON(t, door(f.h), path, body)
+			}
+			code, want := arm.answer(t, f)
+			assertDoor(t, rec, code, want)
+			if arm.after != nil {
+				arm.after(t, f)
+			}
+			if arm.wrote == nil {
+				snap.assertNothingWritten(t, f.db)
+				return
+			}
+			cols, added := arm.wrote(f)
+			snap.assertWrote(t, f.db, cols, added)
+		})
+	}
+}
+
+// refusedWith is an answer that does not depend on what the call wrote.
+func refusedWith(code int, msg string) func(*testing.T, *doorFix) (int, string) {
+	return func(*testing.T, *doorFix) (int, string) { return code, doorErr(msg) }
+}
+
+// binByLabel re-reads a fixture bin by its label.
+func binByLabel(t *testing.T, db *store.DB, label string) *bins.Bin {
+	t.Helper()
+	var id int64
+	testutil.MustNoErr(t, db.QueryRow(`SELECT id FROM bins WHERE label=$1`, label).Scan(&id), "find bin "+label)
+	b, err := db.GetBin(id)
+	testutil.MustNoErr(t, err, "read bin "+label)
+	return b
+}
+
+// binIDOf is a fixture bin's id by its label, for an arm's write set.
+func binIDOf(f *doorFix, label string) int64 {
+	var id int64
+	_ = f.db.QueryRow(`SELECT id FROM bins WHERE label=$1`, label).Scan(&id)
+	return id
+}
+
+// failBinWrites makes every UPDATE of the bin's column fail inside its
+// transaction, as a database fault would: a door's server-failure arm.
+func failBinWrites(t *testing.T, db *store.DB, binID int64, column string) {
+	t.Helper()
+	_, err := db.DB.Exec(fmt.Sprintf(`
+		CREATE FUNCTION door_fault() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'door fault'; END $$ LANGUAGE plpgsql;
+		CREATE TRIGGER door_fault BEFORE UPDATE OF %s ON bins FOR EACH ROW
+		  WHEN (OLD.id = %d) EXECUTE FUNCTION door_fault();`, column, binID))
+	testutil.MustNoErr(t, err, "the fault")
+}
+
+// loadBody is a LOAD of PART-A at STORAGE-A1 with one manifest line, and the
+// fields given.
+func loadBody(f *doorFix, fields map[string]any) map[string]any {
+	b := map[string]any{"node_name": f.sd.StorageNode.Name, "payload_code": f.sd.Payload.Code,
+		"manifest": []map[string]any{{"part_number": "P1", "quantity": 4}}}
+	for k, v := range fields {
+		b[k] = v
+	}
+	return b
+}
+
+// TestBinLoadDoor_Arms pins every arm of POST /api/telemetry/bin-load
+// (apiBinLoad over BinManifestService.LoadAtLine): the status, the body byte
+// for byte, and what was written — nothing at all on a refusal. Every hold the
+// held-carrier arm refuses is TestApiBinLoad_AHeldCarrierIsRefused; it is
+// asked once here for the write set.
+func TestBinLoadDoor_Arms(t *testing.T) {
+	t.Parallel()
+	storage := func(f *doorFix) string { return f.sd.StorageNode.Name }
+	// onStorage is an empty carrier at STORAGE-A1, its manifest unconfirmed as a
+	// clear leaves it, so a LOAD's confirm shows in what it writes.
+	onStorage := func(t *testing.T, f *doorFix, label string) *bins.Bin {
+		b := testdb.CreateBinAtNode(t, f.db, "", f.sd.StorageNode.ID, label)
+		_, err := f.db.DB.Exec(`UPDATE bins SET manifest_confirmed=false WHERE id=$1`, b.ID)
+		testutil.MustNoErr(t, err, "unconfirm "+label)
+		return b
+	}
+	// rides makes PART-A ride LD-FITS only.
+	rides := func(t *testing.T, f *doorFix) {
+		fits := &bins.BinType{Code: "LD-FITS"}
+		testutil.MustNoErr(t, f.db.CreateBinType(fits), "LD-FITS")
+		testutil.MustNoErr(t, f.db.SetPayloadBinTypes(f.sd.Payload.ID, []int64{fits.ID}), "PART-A rides LD-FITS only")
+	}
+	// bare makes b a bare cart of its own type.
+	bare := func(t *testing.T, f *doorFix, b *bins.Bin) {
+		marker, err := f.db.EnsureBareMarker(b.BinTypeID)
+		testutil.MustNoErr(t, err, "bare marker")
+		_, err = f.db.DB.Exec(`UPDATE bins SET bin_type_id=$1, payload_code='', manifest=NULL, uop_remaining=0 WHERE id=$2`, marker, b.ID)
+		testutil.MustNoErr(t, err, "a bare cart")
+	}
+	loaded := func(label, payload string, uop int) func(*testing.T, *doorFix) (int, string) {
+		return func(t *testing.T, f *doorFix) (int, string) {
+			b := binByLabel(t, f.db, label)
+			return http.StatusOK, doorJSON(t, protocol.BinLoadResponse{Status: "ok", BinID: b.ID, BinLabel: label,
+				PayloadCode: payload, UOPRemaining: uop, DeltaEpoch: b.DeltaEpoch})
+		}
+	}
+	wroteLoad := func(label string, extra ...string) func(*doorFix) (map[int64][]string, map[string]int) {
+		return func(f *doorFix) (map[int64][]string, map[string]int) {
+			cols := append([]string{"delta_epoch", "loaded_at", "manifest", "manifest_confirmed", "payload_code",
+				"uop_remaining", "updated_at"}, extra...)
+			sort.Strings(cols)
+			return map[int64][]string{binIDOf(f, label): cols}, map[string]int{"bin_uop_ledger": 2}
+		}
+	}
+	const foreign = "PART-A may not ride a DEFAULT carrier (allowed: LD-FITS). Nothing was loaded."
+	var holder int64
+	runDoorArms(t, func(h *Handlers) http.HandlerFunc { return h.apiBinLoad }, "/api/telemetry/bin-load", []doorArm{
+		{name: "an undecodable body is refused",
+			arrange: func(*testing.T, *doorFix) (any, []int64) { return "not-json", nil },
+			answer:  refusedWith(http.StatusBadRequest, "invalid character 'o' in literal null (expecting 'u')")},
+		{name: "no node_name is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "LD-A-NONAME")
+				return loadBody(f, map[string]any{"node_name": ""}), []int64{b.ID}
+			},
+			answer: refusedWith(http.StatusBadRequest, "node_name is required")},
+		{name: "an unknown node is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				return loadBody(f, map[string]any{"node_name": "LD-NO-SUCH-NODE"}), nil
+			},
+			answer: refusedAt(atNode("LD-NO-SUCH-NODE"), http.StatusNotFound, `node "LD-NO-SUCH-NODE" not found`)},
+		{name: "a node holding no bin is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				return loadBody(f, map[string]any{"node_name": f.sd.LineNode.Name}), nil
+			},
+			answer: func(t *testing.T, f *doorFix) (int, string) {
+				return refusalAt(t, f, f.sd.LineNode.Name, http.StatusBadRequest, "no bin at node "+f.sd.LineNode.Name)
+			}},
+		{name: "a bin_id not at the node is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "LD-A-FOREIGNID")
+				return loadBody(f, map[string]any{"bin_id": 987654321}), []int64{b.ID}
+			},
+			answer: func(t *testing.T, f *doorFix) (int, string) {
+				return refusalAt(t, f, storage(f), http.StatusConflict, "bin 987654321 is not at node "+storage(f))
+			}},
+		{name: "two bins and no bin_id is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				a, b := onStorage(t, f, "LD-A-AMB-1"), onStorage(t, f, "LD-A-AMB-2")
+				return loadBody(f, nil), []int64{a.ID, b.ID}
+			},
+			answer: func(t *testing.T, f *doorFix) (int, string) {
+				return refusalAt(t, f, storage(f), http.StatusConflict, "node "+storage(f)+" holds 2 bins; specify bin_id to disambiguate")
+			}},
+		{name: "a carrier a live order holds is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "LD-A-HELD")
+				o := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
+				testdb.ClaimBinForTest(t, f.db, b.ID, o.ID)
+				holder = o.ID
+				return loadBody(f, map[string]any{"uop_count": 30}), []int64{b.ID}
+			},
+			answer: func(t *testing.T, f *doorFix) (int, string) {
+				return refusalAt(t, f, storage(f), http.StatusConflict, heldRefusalSentence(holder))
+			}},
+		{name: "a carrier the part may not ride is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				rides(t, f)
+				b := onStorage(t, f, "LD-A-FOREIGN")
+				return loadBody(f, map[string]any{"uop_count": 12}), []int64{b.ID}
+			},
+			answer: refusedAt(storage, http.StatusConflict, foreign)},
+		{name: "a bare cart the part may not ride is refused and keeps its marker",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				rides(t, f)
+				b := onStorage(t, f, "LD-A-BARE-FOREIGN")
+				bare(t, f, b)
+				return loadBody(f, map[string]any{"uop_count": 12}), []int64{b.ID}
+			},
+			answer: refusedAt(storage, http.StatusConflict, foreign),
+			// The carrier is stamped before the judgement and put back after
+			// it, two statements outside the load's transaction: the type ends
+			// where it began, and the row's updated_at has moved.
+			wrote: func(f *doorFix) (map[int64][]string, map[string]int) {
+				return map[int64][]string{binIDOf(f, "LD-A-BARE-FOREIGN"): {"updated_at"}}, map[string]int{}
+			}},
+		{name: "no count at a partial home of the part is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				ppHome(t, f.db, f.sd.StorageNode, "LD-PPH")
+				b := onStorage(t, f, "LD-A-PPH")
+				return loadBody(f, map[string]any{"payload_code": "LD-PPH"}), []int64{b.ID}
+			},
+			answer: func(t *testing.T, f *doorFix) (int, string) {
+				return refusalAt(t, f, storage(f), http.StatusConflict, "a load here must say how many it holds: "+storage(f)+
+					" is a partial home for LD-PPH — enter the count on the LOAD")
+			}},
+		{name: "an unknown payload is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "LD-A-UNKNOWN")
+				return loadBody(f, map[string]any{"payload_code": "LD-NEVER-SEEN", "uop_count": 5}), []int64{b.ID}
+			},
+			answer: refusedAt(storage, http.StatusBadRequest, `unknown payload: payload template "LD-NEVER-SEEN" not found`)},
+		{name: "a write the database refuses is a server failure",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "LD-A-FAULT")
+				failBinWrites(t, f.db, b.ID, "payload_code")
+				return loadBody(f, map[string]any{"uop_count": 5}), []int64{b.ID}
+			},
+			answer: func(t *testing.T, f *doorFix) (int, string) {
+				return refusalAt(t, f, storage(f), http.StatusInternalServerError, fmt.Sprintf("set manifest bin %d: ERROR: door fault (SQLSTATE P0001)",
+					binIDOf(f, "LD-A-FAULT")))
+			}},
+		{name: "a declared count loads the one bin",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "LD-A-OK")
+				return loadBody(f, map[string]any{"uop_count": 12}), []int64{b.ID}
+			},
+			answer: loaded("LD-A-OK", "PART-A", 12),
+			wrote:  wroteLoad("LD-A-OK")},
+		{name: "no count loads the standard pack",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "LD-A-STD")
+				return loadBody(f, nil), []int64{b.ID}
+			},
+			answer: loaded("LD-A-STD", "PART-A", 1000),
+			wrote:  wroteLoad("LD-A-STD")},
+		{name: "a bin_id names one of two bins",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				a, b := onStorage(t, f, "LD-A-TWO-1"), onStorage(t, f, "LD-A-TWO-2")
+				return loadBody(f, map[string]any{"bin_id": b.ID, "uop_count": 7}), []int64{a.ID, b.ID}
+			},
+			answer: loaded("LD-A-TWO-2", "PART-A", 7),
+			wrote:  wroteLoad("LD-A-TWO-2")},
+		{name: "a bare cart loads onto its carrier",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "LD-A-BARE")
+				bare(t, f, b)
+				return loadBody(f, map[string]any{"uop_count": 9}), []int64{b.ID}
+			},
+			answer: loaded("LD-A-BARE", "PART-A", 9),
+			wrote:  wroteLoad("LD-A-BARE", "bin_type_id")},
+		{name: "a declared count at a partial home loads and holds the carrier",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				ppHome(t, f.db, f.sd.StorageNode, "LD-PPH")
+				b := onStorage(t, f, "LD-A-PPH-OK")
+				return loadBody(f, map[string]any{"payload_code": "LD-PPH", "uop_count": 6}), []int64{b.ID}
+			},
+			answer: loaded("LD-A-PPH-OK", "LD-PPH", 6),
+			wrote:  wroteLoad("LD-A-PPH-OK", "held_since")},
+		// What the sender read (epoch, expect): a fact that no longer holds is
+		// refused with what the carrier now holds, and nothing is written.
+		{name: "a carrier whose generation moved is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "LD-A-EPOCH")
+				return loadBody(f, map[string]any{"uop_count": 5, "epoch": b.DeltaEpoch + 1, "expect": "bare"}), []int64{b.ID}
+			},
+			answer: refusedAt(storage, http.StatusConflict, "the carrier changed since you looked — it now holds LD-A-EPOCH (bare)")},
+		{name: "a carrier read bare that holds a part is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := testdb.CreateBinAtNode(t, f.db, f.sd.Payload.Code, f.sd.StorageNode.ID, "LD-A-NOTBARE")
+				return loadBody(f, map[string]any{"uop_count": 5, "epoch": b.DeltaEpoch, "expect": "bare"}), []int64{b.ID}
+			},
+			answer: refusedAt(storage, http.StatusConflict, "the carrier changed since you looked — it now holds LD-A-NOTBARE (PART-A)")},
+		{name: "a carrier read partial that is bare is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "LD-A-NOTPART")
+				return loadBody(f, map[string]any{"uop_count": 5, "expect": "partial"}), []int64{b.ID}
+			},
+			answer: refusedAt(storage, http.StatusConflict, "the carrier changed since you looked — it now holds LD-A-NOTPART (bare)")},
+		{name: "a carrier read partial that holds another part is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				testutil.MustNoErr(t, f.db.CreatePayload(&payloads.Payload{Code: "LD-OTHER", UOPCapacity: 50}), "another part")
+				b := testdb.CreateBinAtNode(t, f.db, "LD-OTHER", f.sd.StorageNode.ID, "LD-A-OTHERPART")
+				return loadBody(f, map[string]any{"uop_count": 5, "expect": "partial"}), []int64{b.ID}
+			},
+			answer: refusedAt(storage, http.StatusConflict, "the carrier changed since you looked — it now holds LD-A-OTHERPART (LD-OTHER)")},
+		{name: "an expect the door has no term for is refused",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "LD-A-EMPTY")
+				return loadBody(f, map[string]any{"uop_count": 5, "expect": "empty"}), []int64{b.ID}
+			},
+			answer: refusedAt(storage, http.StatusBadRequest, `expect "empty" is not a carrier the door knows: say bare or partial`)},
+		{name: "the generation and a bare carrier as read load",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := onStorage(t, f, "LD-A-ASREAD")
+				return loadBody(f, map[string]any{"uop_count": 12, "epoch": b.DeltaEpoch, "expect": "bare"}), []int64{b.ID}
+			},
+			answer: loaded("LD-A-ASREAD", "PART-A", 12),
+			wrote:  wroteLoad("LD-A-ASREAD")},
+		{name: "a partial of the part as read loads",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := testdb.CreateBinAtNode(t, f.db, f.sd.Payload.Code, f.sd.StorageNode.ID, "LD-A-PARTIAL")
+				_, err := f.db.DB.Exec(`UPDATE bins SET manifest_confirmed=false WHERE id=$1`, b.ID)
+				testutil.MustNoErr(t, err, "unconfirm LD-A-PARTIAL")
+				return loadBody(f, map[string]any{"uop_count": 40, "epoch": b.DeltaEpoch, "expect": "partial"}), []int64{b.ID}
+			},
+			answer: loaded("LD-A-PARTIAL", "PART-A", 40),
+			// The part was already PART-A, so payload_code does not move.
+			wrote: func(f *doorFix) (map[int64][]string, map[string]int) {
+				return map[int64][]string{binIDOf(f, "LD-A-PARTIAL"): {"delta_epoch", "loaded_at", "manifest",
+					"manifest_confirmed", "uop_remaining", "updated_at"}}, map[string]int{"bin_uop_ledger": 2}
+			}},
+	})
 }

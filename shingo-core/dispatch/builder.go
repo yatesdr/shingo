@@ -76,6 +76,11 @@ type Need struct {
 	// Written once, at birth (orders.named_bin_id); the hold and claim
 	// statements take that bin and no other (reservations.NamedBinSQL).
 	NamedBin *int64
+	// QualityHoldBy puts NamedBin on quality hold, attributed to this, in the
+	// birth's transaction (protocol.OrderRequest.QualityHoldBy): a station's
+	// containment move. Build does not write it; birthNamedMove does. "" for
+	// every other order.
+	QualityHoldBy string
 	// SourceIntent is the sourcing intent when the type does not decide it: a
 	// carried-bin recovery's on_deck. Blank takes the type's (SourceIntentForType).
 	SourceIntent string
@@ -160,6 +165,56 @@ func birthOwnTx(db *store.DB, need Need, p plan.Plan) (*orders.Order, error) {
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	o, err := Build(tx, need, p)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return o, nil
+}
+
+// NotAtSourceError is a move refused at its birth because the bin it names is
+// not on its source. Error is the sentence the station shows.
+type NotAtSourceError struct {
+	BinID  int64
+	Label  string // "" when no bin has the id
+	Source string
+}
+
+func (e *NotAtSourceError) Error() string {
+	bin := e.Label
+	if bin == "" {
+		bin = fmt.Sprintf("%d", e.BinID)
+	}
+	// OWNER-WORDS
+	return fmt.Sprintf("bin %s is not at that source (%s)", bin, e.Source)
+}
+
+// birthNamedMove is the birth of a move that names its bin, in one
+// transaction: the bin stands on the source (reservations.NamedBinAtSourceTx,
+// under its row lock), the hold marker when the station asked for one
+// (need.QualityHoldBy), and the row (Build). A bin not on the source is a *NotAtSourceError and nothing
+// is written.
+func birthNamedMove(db *store.DB, need Need, p plan.Plan) (*orders.Order, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck // committed below; rollback is the error close
+	label, _, at, err := reservations.NamedBinAtSourceTx(tx, *need.NamedBin, need.Source)
+	if err != nil {
+		return nil, err
+	}
+	if !at {
+		return nil, &NotAtSourceError{BinID: *need.NamedBin, Label: label, Source: need.Source}
+	}
+	if need.QualityHoldBy != "" {
+		if err := store.HoldBinTx(tx, *need.NamedBin, need.QualityHoldBy); err != nil {
+			return nil, fmt.Errorf("hold bin %d: %w", *need.NamedBin, err)
+		}
+	}
 	o, err := Build(tx, need, p)
 	if err != nil {
 		return nil, err

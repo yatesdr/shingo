@@ -289,6 +289,7 @@ func (noopEmitter) EmitOrderResumed(_ int64, _, _ string)                   {}
 func (noopEmitter) EmitOrderWaitChanged(_ int64, _, _ string)               {}
 func (noopEmitter) EmitOrderFaulted(_ int64, _, _, _ string)                {}
 func (noopEmitter) EmitOrderFaultedRecovered(_ int64, _, _, _ string)       {}
+func (noopEmitter) EmitBinHeld(int64)                                       {}
 
 // ProjectOrder is a no-op here for the same reason as the rest: these scenarios
 // assert on database state, not on what went out to an Edge.

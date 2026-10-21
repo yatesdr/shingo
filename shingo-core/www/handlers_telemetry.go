@@ -226,12 +226,12 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 	nodes := h.engine.NodeService()
 	node, err := nodes.GetByDotName(req.NodeName)
 	if err != nil {
-		h.jsonError(w, fmt.Sprintf("node %q not found", req.NodeName), http.StatusNotFound)
+		h.refuseAt(w, req.NodeName, http.StatusNotFound, fmt.Sprintf("node %q not found", req.NodeName))
 		return
 	}
 	binList, err := nodes.ListBinsByNode(node.ID)
 	if err != nil || len(binList) == 0 {
-		h.jsonError(w, fmt.Sprintf("no bin at node %s", req.NodeName), http.StatusBadRequest)
+		h.refuseAt(w, req.NodeName, http.StatusBadRequest, fmt.Sprintf("no bin at node %s", req.NodeName))
 		return
 	}
 	// Same resolution rule as bin-count and bin-clear: one carrier is
@@ -248,11 +248,19 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if bin == nil {
-			h.jsonError(w, fmt.Sprintf("bin %d is not at node %s", req.BinID, req.NodeName), http.StatusConflict)
+			h.refuseAt(w, req.NodeName, http.StatusConflict, fmt.Sprintf("bin %d is not at node %s", req.BinID, req.NodeName))
 			return
 		}
 	case len(binList) > 1:
-		h.jsonError(w, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(binList)), http.StatusConflict)
+		h.refuseAt(w, req.NodeName, http.StatusConflict, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(binList)))
+		return
+	}
+	// THE CARRIER IS STILL WHAT THE SENDER READ, or nothing is loaded: its
+	// generation (epoch) and what it is in the door's terms (expect), each
+	// asked only when the sender asserted it. Read with the bins above, outside
+	// the load's transaction, as the bin_id check is.
+	if status, refusal := loadAssertionRefusal(req, bin); refusal != "" {
+		h.refuseAt(w, req.NodeName, status, refusal)
 		return
 	}
 
@@ -278,18 +286,18 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 		case errors.As(err, &held):
 			// A live order holds the carrier (owner, 2026-10-18: "Refuse a
 			// held bin"). The Edge shows this sentence as the LOAD's refusal.
-			h.jsonError(w, held.Error(), http.StatusConflict)
+			h.refuseAt(w, req.NodeName, http.StatusConflict, held.Error())
 		case errors.As(err, &refused):
 			// A conflict between the part and the carrier standing at the
 			// window, answered with what the operator does about it. The Edge
 			// shows this sentence as the LOAD's refusal.
-			h.jsonError(w, loaderCarrierRefusal(refused), http.StatusConflict)
+			h.refuseAt(w, req.NodeName, http.StatusConflict, loaderCarrierRefusal(refused))
 		case errors.Is(err, service.ErrCountRequired):
-			h.jsonError(w, err.Error()+" — enter the count on the LOAD", http.StatusConflict)
+			h.refuseAt(w, req.NodeName, http.StatusConflict, err.Error()+" — enter the count on the LOAD")
 		case errors.Is(err, service.ErrUnknownPayload):
-			h.jsonError(w, err.Error(), http.StatusBadRequest)
+			h.refuseAt(w, req.NodeName, http.StatusBadRequest, err.Error())
 		default:
-			h.jsonError(w, err.Error(), http.StatusInternalServerError)
+			h.refuseAt(w, req.NodeName, http.StatusInternalServerError, err.Error())
 		}
 		return
 	}
@@ -307,6 +315,41 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 		UOPRemaining: int(uop),
 		DeltaEpoch:   newEpoch,
 	})
+}
+
+// loadAssertionRefusal is the LOAD's refusal of a carrier that is no longer
+// what the sender read: 409 when its generation moved (req.Epoch) or it is not
+// the carrier asserted (req.Expect: bare, no part on it; partial, more than
+// none and fewer than capacity of the part being loaded), 400 for an expect the
+// door has no term for. "" when every asserted fact holds; nothing asserted
+// passes. Pinned by TestBinLoadDoor_Arms.
+func loadAssertionRefusal(req protocol.BinLoadRequest, b *domain.Bin) (int, string) {
+	changed := req.Epoch != 0 && b.DeltaEpoch != req.Epoch
+	switch req.Expect {
+	case "":
+	case protocol.LoadExpectBare:
+		changed = changed || b.PayloadCode != ""
+	case protocol.LoadExpectPartial:
+		changed = changed || b.PayloadCode != req.PayloadCode || b.UOPRemaining <= 0 || b.UOPRemaining >= b.UOPCapacity
+	default:
+		// OWNER-WORDS
+		return http.StatusBadRequest, fmt.Sprintf("expect %q is not a carrier the door knows: say %s or %s",
+			req.Expect, protocol.LoadExpectBare, protocol.LoadExpectPartial)
+	}
+	if !changed {
+		return 0, ""
+	}
+	// OWNER-WORDS
+	return http.StatusConflict, "the carrier changed since you looked — it now holds " + carrierSummary(b)
+}
+
+// carrierSummary is a carrier as its bins row shows it: the label, and the
+// part it carries or that it is bare. No count: the row carries none.
+func carrierSummary(b *domain.Bin) string {
+	if b.PayloadCode == "" {
+		return b.Label + " (bare)"
+	}
+	return b.Label + " (" + b.PayloadCode + ")"
 }
 
 // loaderCarrierRefusal is the sentence an operator reads when the carrier rule
@@ -360,12 +403,12 @@ func (h *Handlers) apiBinCount(w http.ResponseWriter, r *http.Request) {
 	nodes := h.engine.NodeService()
 	node, err := nodes.GetByDotName(req.NodeName)
 	if err != nil {
-		h.jsonError(w, fmt.Sprintf("node %q not found", req.NodeName), http.StatusNotFound)
+		h.refuseAt(w, req.NodeName, http.StatusNotFound, fmt.Sprintf("node %q not found", req.NodeName))
 		return
 	}
 	binList, err := nodes.ListBinsByNode(node.ID)
 	if err != nil || len(binList) == 0 {
-		h.jsonError(w, fmt.Sprintf("no bin at node %s", req.NodeName), http.StatusBadRequest)
+		h.refuseAt(w, req.NodeName, http.StatusBadRequest, fmt.Sprintf("no bin at node %s", req.NodeName))
 		return
 	}
 	// Same resolution rule as bin-clear: one carrier is unambiguous, more than
@@ -381,11 +424,24 @@ func (h *Handlers) apiBinCount(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if bin == nil {
-			h.jsonError(w, fmt.Sprintf("bin %d is not at node %s", req.BinID, req.NodeName), http.StatusConflict)
+			h.refuseAt(w, req.NodeName, http.StatusConflict, fmt.Sprintf("bin %d is not at node %s", req.BinID, req.NodeName))
 			return
 		}
 	case len(binList) > 1:
-		h.jsonError(w, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(binList)), http.StatusConflict)
+		h.refuseAt(w, req.NodeName, http.StatusConflict, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(binList)))
+		return
+	}
+	// A COUNT BELONGS TO ONE GENERATION of the carrier. One taken under any
+	// other (req.Epoch, when the sender asserts it) is not recorded: the answer
+	// is the carrier's current stamp, the body a bin epoch refresh carries, for
+	// the sender to adopt and count again under.
+	if req.Epoch != 0 && req.Epoch != bin.DeltaEpoch {
+		h.writeRefusal(w, http.StatusConflict, doorRefusal{
+			Rows:         h.engine.NodeService().BinsRows(req.NodeName),
+			EpochRefresh: &protocol.BinEpochRefresh{BinID: bin.ID, CoreNodeName: req.NodeName, Epoch: bin.DeltaEpoch},
+			// OWNER-WORDS
+			Error: fmt.Sprintf("bin %s changed since that count was taken — nothing was recorded", bin.Label),
+		})
 		return
 	}
 
@@ -395,7 +451,7 @@ func (h *Handlers) apiBinCount(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.engine.BinService().RecordCount(bin, req.ActualUOP, actor)
 	if err != nil {
-		h.jsonError(w, err.Error(), http.StatusBadRequest)
+		h.refuseAt(w, req.NodeName, http.StatusBadRequest, err.Error())
 		return
 	}
 	h.engine.AuditService().Append("bin", bin.ID, "counted",
@@ -418,6 +474,30 @@ func (h *Handlers) apiBinCount(w http.ResponseWriter, r *http.Request) {
 		AsOfSeq:      res.AsOfSeq,
 		AsOfStation:  res.AsOfStation,
 	})
+}
+
+// doorRefusal is a write door's refusal body: the sentence, Core's current
+// bins rows for the node the request named (Rows, for the Edge to write into
+// its copy before it shows the sentence), and on a count from an ended
+// generation the carrier's current one. Keys alphabetical, as the replies'
+// are; with nothing beyond the sentence it is the bytes jsonError writes.
+type doorRefusal struct {
+	EpochRefresh *protocol.BinEpochRefresh `json:"epoch_refresh,omitempty"`
+	Error        string                    `json:"error"`
+	Rows         []protocol.NodeBinsRow    `json:"rows,omitempty"`
+}
+
+// refuseAt is a write door's refusal of a request that named node: the
+// sentence with Core's current rows for the node (NodeService.BinsRows; one
+// read snapshot). An unknown name answers its unknown row.
+func (h *Handlers) refuseAt(w http.ResponseWriter, node string, code int, msg string) {
+	h.writeRefusal(w, code, doorRefusal{Error: msg, Rows: h.engine.NodeService().BinsRows(node)})
+}
+
+func (h *Handlers) writeRefusal(w http.ResponseWriter, code int, body doorRefusal) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 // apiBinClear clears the manifest on the bin at a node, resetting it to empty.
@@ -467,12 +547,12 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 	nodes := h.engine.NodeService()
 	node, err := nodes.GetByDotName(req.NodeName)
 	if err != nil {
-		h.jsonError(w, fmt.Sprintf("node %q not found", req.NodeName), http.StatusNotFound)
+		h.refuseAt(w, req.NodeName, http.StatusNotFound, fmt.Sprintf("node %q not found", req.NodeName))
 		return
 	}
 	bins, err := nodes.ListBinsByNode(node.ID)
 	if err != nil || len(bins) == 0 {
-		h.jsonError(w, fmt.Sprintf("no bin at node %s", req.NodeName), http.StatusBadRequest)
+		h.refuseAt(w, req.NodeName, http.StatusBadRequest, fmt.Sprintf("no bin at node %s", req.NodeName))
 		return
 	}
 	bin, ok := h.binToClear(w, req, bins)
@@ -488,12 +568,12 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 	if !req.Unload {
 		held, herr := h.engine.BinService().IsHeldPartial(bin.ID)
 		if herr != nil {
-			h.jsonError(w, fmt.Sprintf("could not read whether bin %s is a held partial: %v", bin.Label, herr), http.StatusInternalServerError)
+			h.refuseAt(w, req.NodeName, http.StatusInternalServerError, fmt.Sprintf("could not read whether bin %s is a held partial: %v", bin.Label, herr))
 			return
 		}
 		if held {
-			h.jsonError(w, fmt.Sprintf("bin %s holds %d of %s, unfinished and held here to be called back to its line; "+
-				"UNLOAD to clear it anyway", bin.Label, bin.UOPRemaining, bin.PayloadCode), http.StatusConflict)
+			h.refuseAt(w, req.NodeName, http.StatusConflict, fmt.Sprintf("bin %s holds %d of %s, unfinished and held here to be called back to its line; "+
+				"UNLOAD to clear it anyway", bin.Label, bin.UOPRemaining, bin.PayloadCode))
 			return
 		}
 	}
@@ -509,7 +589,7 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 	if req.BinTypeCode != "" && stamp == domain.StampNone {
 		bt, err := h.engine.BinService().GetBinTypeByCode(req.BinTypeCode)
 		if err != nil {
-			h.jsonError(w, fmt.Sprintf("unknown bin type code %q", req.BinTypeCode), http.StatusBadRequest)
+			h.refuseAt(w, req.NodeName, http.StatusBadRequest, fmt.Sprintf("unknown bin type code %q", req.BinTypeCode))
 			return
 		}
 		id := bt.ID
@@ -529,7 +609,7 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 	// nothing recording that material left.
 	newEpoch, err := h.orchestration.ClearForReuseStampAndBookDeparture(bin.ID, node.ID, binTypeID, stamp, req.Layers)
 	if err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		h.refuseAt(w, req.NodeName, http.StatusInternalServerError, err.Error())
 		return
 	}
 	// Read after the commit: the stamp is decided inside the transaction. A
@@ -559,11 +639,6 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// binClearStamp decides the two-stage stamp for a clear at nodeID, before
-// anything is written: a stage-1 window stamps the cart's marker (and refuses
-// with 409 when the stage 1 has nowhere to send the cart); a bare cart
-// elsewhere gets its carrier back; anything else stamps what it was told. ok
-// false means the answer has been written.
 // binToClear resolves which bin a clear names. One bin → unambiguous. More
 // than one → the caller must name a bin_id, otherwise we'd silently clear an
 // arbitrary one. No count/occupancy refusal: the unloader clears full finished
@@ -577,23 +652,28 @@ func (h *Handlers) binToClear(w http.ResponseWriter, req protocol.BinClearReques
 				return b, true
 			}
 		}
-		h.jsonError(w, fmt.Sprintf("bin %d is not at node %s", req.BinID, req.NodeName), http.StatusConflict)
+		h.refuseAt(w, req.NodeName, http.StatusConflict, fmt.Sprintf("bin %d is not at node %s", req.BinID, req.NodeName))
 		return nil, false
 	case len(atNode) > 1:
-		h.jsonError(w, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(atNode)), http.StatusConflict)
+		h.refuseAt(w, req.NodeName, http.StatusConflict, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(atNode)))
 		return nil, false
 	}
 	return atNode[0], true
 }
 
+// binClearStamp decides the two-stage stamp for a clear at nodeID, before
+// anything is written: a stage-1 window stamps the cart's marker (and refuses
+// with 409 when the stage 1 has nowhere to send the cart); a bare cart
+// elsewhere gets its carrier back; anything else stamps what it was told. ok
+// false means the answer has been written.
 func (h *Handlers) binClearStamp(w http.ResponseWriter, nodeID int64, nodeName string, bare bool) (domain.BareStamp, bool) {
 	stageOne, sendsTo, err := h.engine.LoaderService().StageOneAt(nodeID)
 	switch {
 	case err != nil:
-		h.jsonError(w, fmt.Sprintf("read the loader at %s: %v", nodeName, err), http.StatusInternalServerError)
+		h.refuseAt(w, nodeName, http.StatusInternalServerError, fmt.Sprintf("read the loader at %s: %v", nodeName, err))
 		return domain.StampNone, false
 	case stageOne && sendsTo == "":
-		h.jsonError(w, fmt.Sprintf("this station has nowhere to send the cart: set where %s's carts go before clearing", nodeName), http.StatusConflict)
+		h.refuseAt(w, nodeName, http.StatusConflict, fmt.Sprintf("this station has nowhere to send the cart: set where %s's carts go before clearing", nodeName))
 		return domain.StampNone, false
 	case stageOne:
 		return domain.StampMarker, true
