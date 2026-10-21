@@ -71,6 +71,10 @@ if [ -z "${TEAMS_WEBHOOK_URL:-}" ]; then
     exit 0
 fi
 PLANT_ID="${PLANT_ID:-$(hostname -s)}"
+# Hostname rides beside PLANT_ID in every title: PLANT_ID is hand-set in
+# alert.env, and a cloned box inherits the donor's value, so it alone can
+# misattribute an alert. The hostname is the ground truth.
+HOST_ID=$(hostname -s)
 
 # --- Suppression ---
 
@@ -125,10 +129,10 @@ fi
 # alert path is trusted in production, consider removing this branch and
 # only alerting on RESULT != "success".
 if [ "$RESULT" = "success" ]; then
-    title="STOPPED (manual): $UNIT on $PLANT_ID"
+    title="STOPPED (manual): $UNIT on $PLANT_ID (host $HOST_ID)"
     msg="$UNIT was stopped cleanly on $PLANT_ID. No install in progress and the box is not shutting down — likely a manual systemctl stop or restart. If this wasn't intentional, investigate."
 else
-    title="CRASH (alert #$((backoff_level + 1))): $UNIT on $PLANT_ID"
+    title="CRASH (alert #$((backoff_level + 1))): $UNIT on $PLANT_ID (host $HOST_ID)"
     msg="$UNIT crashed on $PLANT_ID. result=$RESULT exit=$EXIT_CODE/$EXIT_STATUS. systemd will auto-restart."
 fi
 
