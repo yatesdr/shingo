@@ -65,6 +65,13 @@ type QueryRower interface {
 	QueryRow(query string, args ...any) *sql.Row
 }
 
+// RowsQuerier is the read a many-row primitive takes, satisfied by *sql.DB and
+// *sql.Tx, so the same read runs standalone or inside a caller's read
+// transaction (store.ReadSnapshot).
+type RowsQuerier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
 // InsertID executes an INSERT ... RETURNING id query and returns the new row ID.
 func InsertID(db QueryRower, query string, args ...any) (int64, error) {
 	var id int64

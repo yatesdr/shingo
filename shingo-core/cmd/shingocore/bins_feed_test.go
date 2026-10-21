@@ -23,6 +23,7 @@ func TestWireBinsFeed_EventsReachTheHooks(t *testing.T) {
 	})
 	for _, ev := range []engine.Event{
 		{Type: engine.EventBinUpdated, Payload: engine.BinUpdatedEvent{BinID: 7, NodeID: 3, FromNodeID: 2, ToNodeID: 3}},
+		{Type: engine.EventBinEnteredTransit, Payload: engine.BinEnteredTransitEvent{BinID: 9, OrderID: 40, FromNodeID: 5}},
 		{Type: engine.EventOrderReceived, Payload: engine.OrderReceivedEvent{OrderID: 41, DeliveryNode: "KD-1"}},
 		{Type: engine.EventOrderDispatched, Payload: engine.OrderDispatchedEvent{OrderID: 41, SourceNode: "SMN_A1", DestNode: "KD-1"}},
 		{Type: engine.EventOrderCompleted, Payload: engine.OrderCompletedEvent{OrderID: 41}},
@@ -35,6 +36,7 @@ func TestWireBinsFeed_EventsReachTheHooks(t *testing.T) {
 	}
 	want := []string{
 		"changed 7 [3 2 3]",
+		"changed 9 [5]",
 		"started 41 [KD-1]",
 		"started 41 [SMN_A1 KD-1]",
 		"ended 41", "ended 42", "ended 43", "ended 44",

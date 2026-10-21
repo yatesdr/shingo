@@ -74,11 +74,15 @@ type Handlers struct {
 //
 //	/events                — SSE stream (outside compression middleware)
 //	/                      — Public pages (dashboard, login, nodes, orders, robots, etc.)
-//	/api/* (public)        — Read-only JSON API (nodes, orders, bins, payloads, telemetry)
+//	/api/* (public)        — JSON reads (nodes, orders, bins, payloads, telemetry) and the Edge's machine doors
 //	/api/* (protected)     — Write API (test orders, payloads, bins, nodegroups, fleet, recovery)
 //	/* (protected)         — Admin pages (test-orders, config, diagnostics, CRUD forms)
 //
-// Auth boundary: h.requireAuth middleware. Public = shop floor read access.
+// Auth boundary: h.requireAuth middleware. The public /api group is not
+// read-only: it holds the Edge's unauthenticated machine doors, writes among
+// them — bin-load, bin-clear, clear-home, bin-count and bin-quality-hold under
+// /telemetry — beside POST reads that compute an answer (/release/points,
+// /inventory/preflight). Everything after requireAuth needs a login.
 // Handlers live in handlers_*.go files grouped by domain (bins, nodes, payloads, etc.).
 func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), error) {
 	hub := NewEventHub()

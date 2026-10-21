@@ -1745,6 +1745,56 @@ func CountInFlightByDeliveryNodeExcluding(db *sql.DB, deliveryNode string, exclu
 	return count, err
 }
 
+// DropoffInbound is one order the dropoff gate counts as on its way to a node:
+// the order (its id and Edge UUID), the delivery node as the order names it,
+// where it comes from, its payload, and the bin type of the carrier it names
+// (orders.bin_id once sourced, else orders.named_bin_id; "" when it names none).
+type DropoffInbound struct {
+	OrderID      int64
+	EdgeUUID     string
+	DeliveryNode string
+	SourceNode   string
+	PayloadCode  string
+	BinTypeCode  string
+}
+
+// ListInFlightByDeliveryNodes is the set CountInFlightByDeliveryNodeExcluding
+// counts (excludeID 0), as rows, for many delivery names in one statement:
+// the same WHERE (delivery_node named, InFlightForDropoffSQL), in order id
+// order. Pinned against the count by TestListInFlightByDeliveryNodes_IsTheGatesSet.
+func ListInFlightByDeliveryNodes(db helpers.RowsQuerier, deliveryNodes []string) ([]DropoffInbound, error) {
+	if len(deliveryNodes) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(deliveryNodes))
+	args := make([]any, len(deliveryNodes))
+	for i, n := range deliveryNodes {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = n
+	}
+	rows, err := db.Query(fmt.Sprintf(`SELECT orders.id, orders.edge_uuid, orders.delivery_node, orders.source_node,
+		       orders.payload_code, COALESCE(cbt.code, '')
+		  FROM orders
+		  LEFT JOIN bins cb ON cb.id = COALESCE(orders.bin_id, orders.named_bin_id)
+		  LEFT JOIN bin_types cbt ON cbt.id = cb.bin_type_id
+		 WHERE orders.delivery_node IN (%s) AND %s
+		 ORDER BY orders.id`, strings.Join(placeholders, ","), InFlightForDropoffSQL()), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DropoffInbound
+	for rows.Next() {
+		var in DropoffInbound
+		if err := rows.Scan(&in.OrderID, &in.EdgeUUID, &in.DeliveryNode, &in.SourceNode,
+			&in.PayloadCode, &in.BinTypeCode); err != nil {
+			return nil, err
+		}
+		out = append(out, in)
+	}
+	return out, rows.Err()
+}
+
 // CountLiveByOrigin returns a demand episode's OWN non-terminal order count — a
 // bare total, not a per-window breakdown. It returns zero when the episode has
 // nothing outstanding.

@@ -215,11 +215,14 @@ func BinWatchDigest(nodes []string) (string, error) {
 	return Digest(out)
 }
 
-// NodeBinsDigest is the FeedBins digest over a snapshot's rows and groups:
-// rows by node, groups by name, a group's wants by (bin type, layers) and its
-// assignments by (node, bin type). The snapshot's own Digest is not part of
-// it. Nothing in a row counts what is in a bin (NodeBinsRow), so a count that
-// moves without crossing zero leaves this digest where it was.
+// NodeBinsDigest is the FeedBins digest over a snapshot's list digest, rows
+// and groups: rows by node, groups by name, a group's wants by (bin type,
+// layers) and its assignments by (node, bin type); a row's members and inbound
+// orders as the row carries them. The snapshot's own Digest is not part of it.
+// ListDigest is, so a snapshot built for an older watch list never matches one
+// built for the current list. Nothing in a row counts what is in a bin
+// (NodeBinsRow), so a count that moves without crossing zero or the part's
+// capacity leaves this digest where it was.
 func NodeBinsDigest(s NodeBinsSnapshot) (string, error) {
 	rows := append([]NodeBinsRow{}, s.Rows...)
 	sort.Slice(rows, func(i, j int) bool {
@@ -247,7 +250,7 @@ func NodeBinsDigest(s NodeBinsSnapshot) (string, error) {
 		groups[i] = NodeBinsGroup{Group: g.Group, Wants: wants, Assignments: assigned}
 	}
 	sort.Slice(groups, func(i, j int) bool { return groups[i].Group < groups[j].Group })
-	return Digest(NodeBinsSnapshot{Rows: rows, Groups: groups})
+	return Digest(NodeBinsSnapshot{ListDigest: s.ListDigest, Rows: rows, Groups: groups})
 }
 
 // layersLess orders a want for the type (nil) before any height of it.

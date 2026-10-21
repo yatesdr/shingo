@@ -69,17 +69,18 @@ func TestBinsFeed_ReferenceCaseLineInTheSnapshot(t *testing.T) {
 	perLayer := map[string]string{"TOTE-L": `,"totes_per_layer":8`} // the type's, on every cart of it
 	row := func(node string, full bool, bt string) string {
 		if full {
-			return fmt.Sprintf(`{"node":%q,"occupied":true,"bin_id":%d,"bin_label":"CART-%s","bin_type_code":%q,`+
-				`"payload_code":"PART-A","manifest":"{\"items\": []}","manifest_confirmed":false,"stocked":true%s}`,
+			return fmt.Sprintf(`{"node":%q,"state":"occupied","occupied":true,"bins":1,"bin_id":%d,"bin_label":"CART-%s",`+
+				`"bin_type_code":%q,"payload_code":"PART-A","manifest":"{\"items\": []}","manifest_confirmed":false,`+
+				`"epoch":1,"stocked":true,"partial":false%s}`,
 				node, carts[node], node, bt, perLayer[bt])
 		}
-		return fmt.Sprintf(`{"node":%q,"occupied":true,"bin_id":%d,"bin_label":"CART-%s","bin_type_code":%q,`+
-			`"manifest_confirmed":false,"stocked":false}`, node, carts[node], node, bt)
+		return fmt.Sprintf(`{"node":%q,"state":"occupied","occupied":true,"bins":1,"bin_id":%d,"bin_label":"CART-%s",`+
+			`"bin_type_code":%q,"manifest_confirmed":false,"epoch":1,"stocked":false,"partial":false}`, node, carts[node], node, bt)
 	}
-	want := fmt.Sprintf(`{"digest":%q,"rows":[%s,%s,%s],"groups":[{"group":"LINES-FEED",`+
+	want := fmt.Sprintf(`{"digest":%q,"list_digest":%q,"rows":[%s,%s,%s],"groups":[{"group":"LINES-FEED",`+
 		`"wants":[{"bin_type":"KD-L","want":3},{"bin_type":"TOTE-L","want":3}],`+
 		`"assignments":[{"node":"W1","bin_type":"TOTE-L"},{"node":"W2","bin_type":"TOTE-L"},{"node":"W3","bin_type":"KD-L"}]}]}`,
-		snap.Digest, row("W1", true, "TOTE-L"), row("W2", true, "KD-L"), row("W3", false, "KD-L"))
+		snap.Digest, digest, row("W1", true, "TOTE-L"), row("W2", true, "KD-L"), row("W3", false, "KD-L"))
 	if string(first) != want {
 		t.Errorf("snapshot =\n  %s\nwant\n  %s", first, want)
 	}

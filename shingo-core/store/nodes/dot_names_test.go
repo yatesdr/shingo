@@ -115,3 +115,62 @@ func TestGetByDotNames_AgreesWithGetByDotName(t *testing.T) {
 		t.Errorf("GetByDotNames(nil) = %v, want empty", empty)
 	}
 }
+
+// TestListPhysicalChildren_AgreesWithListChildren pins the batched children
+// read to the children door's own (ListChildren, synthetic children dropped):
+// for every parent asked, the same nodes in the same name order, and a parent
+// with no physical child absent. The fixture names children out of insertion
+// order, mixes a synthetic lane in, and asks a parent that has only a
+// synthetic child and one that has none.
+func TestListPhysicalChildren_AgreesWithListChildren(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	sdb := db.DB
+	mk := func(name string, parent *nodes.Node, synthetic bool) *nodes.Node {
+		t.Helper()
+		n := &nodes.Node{Name: name, Enabled: true, IsSynthetic: synthetic}
+		if parent != nil {
+			n.ParentID = &parent.ID
+		}
+		testutil.MustNoErr(t, nodes.Create(sdb, n), "create "+name)
+		return n
+	}
+	grp := mk("LPC-GRP", nil, true)
+	mk("LPC-Z", grp, false)
+	lane := mk("LPC-LANE", grp, true)
+	mk("LPC-A", grp, false)
+	mk("LPC-S1", lane, false)
+	other := mk("LPC-OTHER", nil, false)
+	mk("LPC-O1", other, false)
+	onlySynthetic := mk("LPC-SYN", nil, true)
+	mk("LPC-SYN-LANE", onlySynthetic, true)
+	childless := mk("LPC-NONE", nil, false)
+
+	parents := []int64{grp.ID, lane.ID, other.ID, onlySynthetic.ID, childless.ID}
+	batch, err := nodes.ListPhysicalChildren(sdb, parents)
+	testutil.MustNoErr(t, err, "ListPhysicalChildren")
+	for _, p := range parents {
+		all, err := nodes.ListChildren(sdb, p)
+		testutil.MustNoErr(t, err, "ListChildren")
+		var want []*nodes.Node
+		for _, c := range all {
+			if !c.IsSynthetic {
+				want = append(want, c)
+			}
+		}
+		if got, present := batch[p]; !reflect.DeepEqual(got, want) || present != (len(want) > 0) {
+			t.Errorf("parent %d: batched %+v (present %v), the door reads %+v", p, got, present, want)
+		}
+	}
+	if names := func() (out []string) {
+		for _, c := range batch[grp.ID] {
+			out = append(out, c.Name)
+		}
+		return out
+	}(); !reflect.DeepEqual(names, []string{"LPC-A", "LPC-Z"}) {
+		t.Errorf("the group's physical children = %v, want [LPC-A LPC-Z]", names)
+	}
+	if empty, err := nodes.ListPhysicalChildren(sdb, nil); err != nil || len(empty) != 0 {
+		t.Errorf("no parents: %v, %v; want empty", empty, err)
+	}
+}

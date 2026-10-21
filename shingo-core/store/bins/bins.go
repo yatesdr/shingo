@@ -1059,7 +1059,7 @@ func ListByNode(db *sql.DB, nodeID int64) ([]*Bin, error) {
 // instead of N per-member reads on the hot retrieve path). Same retired-bin
 // exclusion + id-desc order. (pgx stdlib has no native []int64 array param, so the
 // IN-list is built with explicit placeholders, as elsewhere in this file.)
-func ListByNodes(db *sql.DB, nodeIDs []int64) ([]*Bin, error) {
+func ListByNodes(db helpers.RowsQuerier, nodeIDs []int64) ([]*Bin, error) {
 	if len(nodeIDs) == 0 {
 		return nil, nil
 	}

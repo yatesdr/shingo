@@ -20,3 +20,8 @@ func (s *BinManifestService) notifyBinChanged(binID int64) {
 		(*fn)(binID)
 	}
 }
+
+// NotifyBinChanged is the hook for a writer outside this service that bumped a
+// bin's generation inside its own transaction (the UOP-delta applier's clear
+// at zero and its rollback rebase): called after that transaction commits.
+func (s *BinManifestService) NotifyBinChanged(binID int64) { s.notifyBinChanged(binID) }

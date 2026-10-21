@@ -893,7 +893,11 @@ func (s *BinManifestService) RecordProducedBin(binID int64, manifestJSON, payloa
 	// lands after a robot has already lifted what it names, so it must never
 	// invite a bind.
 	_, err := s.recordProduced(binID, manifestJSON, payloadCode, uop, producedAt, flagUndeclared, producedInPlace, full)
-	return err
+	if err != nil {
+		return err
+	}
+	s.notifyBinChanged(binID)
+	return nil
 }
 
 // DeclaredFull is a station's RELEASE FULL on a produce bin it counted below
@@ -1853,6 +1857,9 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("commit clear-for-released bin %d%s: %w", binID, errSuffix, err)
 		}
+		if !fenced {
+			s.notifyBinChanged(binID)
+		}
 		s.db.AppendAudit("bin", binID, legacyTag+tagSuffix,
 			"", fmt.Sprintf("order=%d%s", orderID, finalMsgSuffix), actor)
 		return nil
@@ -1956,6 +1963,9 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit sync-for-released bin %d%s: %w", binID, errSuffix, err)
+	}
+	if !fenced {
+		s.notifyBinChanged(binID)
 	}
 	s.db.AppendAudit("bin", binID, "released_partial"+tagSuffix,
 		"", fmt.Sprintf("uop=%d order=%d%s", *remainingUOP, orderID, finalMsgSuffix), actor)

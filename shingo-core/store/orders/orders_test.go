@@ -682,6 +682,80 @@ func TestCountByDeliveryNode(t *testing.T) {
 	}
 }
 
+// TestListInFlightByDeliveryNodes_IsTheGatesSet pins the bins row's inbound
+// list to the dropoff gate's count: for every delivery name, the rows listed
+// are exactly as many as CountInFlightByDeliveryNodeExcluding(name, 0) counts,
+// in order id order, each with the order's Edge UUID, source, payload and the
+// bin type of the carrier it names (bin_id, else named_bin_id, else none).
+func TestListInFlightByDeliveryNodes_IsTheGatesSet(t *testing.T) {
+	t.Parallel()
+	d := testdb.Open(t)
+	db := d.DB
+
+	mk := func(uuid, status, dest string) int64 {
+		o := newPendingOrder(uuid)
+		o.Status = protocol.Status(status)
+		o.DeliveryNode = dest
+		o.PayloadCode = "PART-" + uuid
+		testutil.MustNoErr(t, orders.Create(db, o), "create "+uuid)
+		return o.ID
+	}
+	ids := map[string]int64{}
+	for _, o := range []struct{ uuid, status, dest string }{
+		{"q", "queued", "LINE1-IN"}, {"d", "dispatched", "LINE1-IN"}, {"t", "in_transit", "LINE1-IN"},
+		{"x", "cancelled", "LINE1-IN"}, {"n", "dispatched", "GRP.LINE1-IN"}, {"other", "dispatched", "LINE2-IN"},
+	} {
+		ids[o.uuid] = mk(o.uuid, o.status, o.dest)
+	}
+	for _, uuid := range []string{"d", "t", "n", "other"} {
+		claimABinFor(t, db, uuid)
+	}
+	var kd int64
+	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bin_types (code, description) VALUES ('KD', 'synthetic') RETURNING id`).Scan(&kd), "kd type")
+	var named int64
+	testutil.MustNoErr(t, db.QueryRow(`INSERT INTO bins (bin_type_id, label, status) VALUES ($1, 'NAMED-1', 'available') RETURNING id`,
+		kd).Scan(&named), "named bin")
+	_, err := db.Exec(`UPDATE orders SET named_bin_id = $1 WHERE id = $2`, named, ids["t"])
+	testutil.MustNoErr(t, err, "name a carrier")
+	_, err = db.Exec(`UPDATE orders SET bin_id = (SELECT id FROM bins WHERE claimed_by = $1) WHERE id = $1`, ids["d"])
+	testutil.MustNoErr(t, err, "source a carrier")
+
+	names := []string{"LINE1-IN", "GRP.LINE1-IN", "LINE2-IN", "NOWHERE"}
+	got, err := orders.ListInFlightByDeliveryNodes(db, names)
+	testutil.MustNoErr(t, err, "list")
+	byNode := map[string]int{}
+	for i, in := range got {
+		byNode[in.DeliveryNode]++
+		if i > 0 && got[i-1].OrderID >= in.OrderID {
+			t.Errorf("rows not in order id order: %d after %d", in.OrderID, got[i-1].OrderID)
+		}
+	}
+	for _, name := range names {
+		n, err := orders.CountInFlightByDeliveryNodeExcluding(db, name, 0)
+		testutil.MustNoErr(t, err, "count "+name)
+		if byNode[name] != n {
+			t.Errorf("%s: %d rows listed, the gate counts %d", name, byNode[name], n)
+		}
+	}
+	want := []orders.DropoffInbound{
+		{OrderID: ids["d"], EdgeUUID: "d", DeliveryNode: "LINE1-IN", SourceNode: "STORAGE-A1", PayloadCode: "PART-d", BinTypeCode: "DEFAULT"},
+		{OrderID: ids["t"], EdgeUUID: "t", DeliveryNode: "LINE1-IN", SourceNode: "STORAGE-A1", PayloadCode: "PART-t", BinTypeCode: "KD"},
+		{OrderID: ids["n"], EdgeUUID: "n", DeliveryNode: "GRP.LINE1-IN", SourceNode: "STORAGE-A1", PayloadCode: "PART-n"},
+		{OrderID: ids["other"], EdgeUUID: "other", DeliveryNode: "LINE2-IN", SourceNode: "STORAGE-A1", PayloadCode: "PART-other"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("listed %+v\nwant %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("row %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	if none, err := orders.ListInFlightByDeliveryNodes(db, nil); err != nil || none != nil {
+		t.Errorf("no names: %v, %v; want nothing and no statement", none, err)
+	}
+}
+
 // TestCountLiveByOrigin pins the sizing half of the replenishment bound: a
 // demand episode's OWN live orders, counted by origin. It shares the
 // queued-inclusion contract with CountLiveByDeliveryNode and adds the origin

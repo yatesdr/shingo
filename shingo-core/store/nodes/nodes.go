@@ -334,7 +334,7 @@ func GetByDotName(db *sql.DB, name string) (*Node, error) {
 // node named "A", and a name with no dot is matched whole. nodes.name is
 // UNIQUE, so no name can resolve to two rows. Pinned against GetByDotName by
 // TestGetByDotNames_AgreesWithGetByDotName.
-func GetByDotNames(db *sql.DB, names []string) (map[string]*Node, error) {
+func GetByDotNames(db helpers.RowsQuerier, names []string) (map[string]*Node, error) {
 	found := make(map[string]*Node, len(names))
 	if len(names) == 0 {
 		return found, nil
@@ -461,6 +461,39 @@ func ListChildren(db *sql.DB, parentID int64) ([]*Node, error) {
 	}
 	defer rows.Close()
 	return ScanNodes(rows)
+}
+
+// ListPhysicalChildren is the direct non-synthetic children of many parents in
+// one statement, each parent's in name order: what GET
+// /api/telemetry/node/{name}/children reads for include_synthetic=false
+// (ListChildren, synthetic children dropped), batched. A parent with no such
+// child is absent. Pinned against that read by
+// TestListPhysicalChildren_AgreesWithListChildren.
+func ListPhysicalChildren(db helpers.RowsQuerier, parentIDs []int64) (map[int64][]*Node, error) {
+	out := make(map[int64][]*Node, len(parentIDs))
+	if len(parentIDs) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, len(parentIDs))
+	args := make([]any, len(parentIDs))
+	for i, id := range parentIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s %s WHERE n.parent_id IN (%s) AND NOT n.is_synthetic ORDER BY n.parent_id, n.name`,
+		SelectCols, FromClause, strings.Join(placeholders, ",")), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	children, err := ScanNodes(rows)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range children {
+		out[*c.ParentID] = append(out[*c.ParentID], c)
+	}
+	return out, nil
 }
 
 // SetParent assigns a node to a parent.

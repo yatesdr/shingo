@@ -87,6 +87,10 @@ type ManifestClearer interface {
 	// when the station counting it went backward (see atOrBelowHighWater).
 	// The bump announces Core's number, which the station adopts.
 	RebaseAfterEdgeRollbackTx(tx *sql.Tx, binID int64, payloadCode, station string) (int64, error)
+
+	// NotifyBinChanged tells the Edges watching the bin, after the transaction
+	// that bumped its generation committed (the bins feed's push).
+	NotifyBinChanged(binID int64)
 }
 
 // InventoryDeltaService applies BinUOPDelta envelopes against the
@@ -669,7 +673,9 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 	// parts; cycle counts to zero are admin corrections; admin clears
 	// go through ClearForReuse directly. Idempotent because the
 	// high-water check at the top already turned away a redelivery.
+	clearedAtZero := false
 	if d.Reason == protocol.ReasonCaptureReduction && newValue <= 0 && s.binManifest != nil {
+		clearedAtZero = true
 		// The new generation is returned and discarded here because the
 		// clear announces it itself, from inside the bump, in this same
 		// transaction (service.BinManifestService.bumpEpoch).
@@ -696,6 +702,9 @@ func (s *InventoryDeltaService) ApplyBinUOPDelta(station string, d *protocol.Bin
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit BinUOPDelta bin=%d: %w", d.BinID, err)
+	}
+	if clearedAtZero {
+		s.binManifest.NotifyBinChanged(d.BinID)
 	}
 	return nil
 }
@@ -1203,6 +1212,7 @@ func (s *InventoryDeltaService) recordEdgeRollback(tx *sql.Tx, station string, d
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit edge rollback bin=%d: %w", d.BinID, err)
 	}
+	s.binManifest.NotifyBinChanged(d.BinID)
 	log.Printf("BinUOPDelta EDGE ROLLBACK bin=%d station=%s seq=%d last_seq=%d window_end=%s applied_window_end=%s — "+
 		"the station's counter went backward; generation %d -> %d, count %d stands",
 		d.BinID, station, d.SequenceID, cur.lastSeq, d.WindowEnd.Format(time.RFC3339Nano),

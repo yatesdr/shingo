@@ -185,14 +185,13 @@ func groupNames(groups []watchGroup) []string {
 	return out
 }
 
-// binsReadIDs is every node the build reads bins at: the watched names that
-// resolved and the levelled groups' windows, each once, sorted.
-func binsReadIDs(names []string, resolved map[string]*nodes.Node, groups []watchGroup) []int64 {
+// binsReadIDs is every node the build reads bins at: every place a row answers
+// (watched names that resolved, watched groups' members) and the levelled
+// groups' windows, each once, sorted.
+func binsReadIDs(places map[int64]*nodes.Node, groups []watchGroup) []int64 {
 	seen := map[int64]bool{}
-	for _, name := range names {
-		if n := resolved[name]; n != nil {
-			seen[n.ID] = true
-		}
+	for id := range places {
+		seen[id] = true
 	}
 	for _, g := range groups {
 		for _, win := range g.windows {

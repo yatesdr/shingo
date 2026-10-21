@@ -1,9 +1,11 @@
 package messaging
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	_ "sync" // the plain lock inlines only where sync is imported (protocol/lockcheck)
 	"time"
 
@@ -11,8 +13,10 @@ import (
 	"shingo/protocol/clock"
 	"shingo/protocol/lockcheck"
 	"shingocore/internal/lockorder"
+	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 // bins_feed.go — the node-bins feed (protocol.FeedBins): the bins at the nodes
@@ -24,9 +28,10 @@ import (
 // Core keeps, per Edge, in memory: the list as it arrived, its digest (quoted
 // back on every heartbeat ack as EdgeHeartbeatAck.BinWatch, as Claims are),
 // and what the list was last found to point at — the node ids and bin ids of
-// its last snapshot and the outbound groups of the consume loaders with a
-// window on it, with their windows (bins_feed_groups.go). Nothing is written: after a Core restart the ack quotes "" and
-// the Edge publishes again.
+// its last snapshot (a watched group's members included) and the outbound
+// groups of the consume loaders with a window on it, with their windows
+// (bins_feed_groups.go). Nothing is written: after a Core restart the ack
+// quotes "" and the Edge publishes again.
 //
 // An Edge that never published a list is never sent a snapshot: buildFeed
 // answers the key unknown for it, so nothing is logged, answered or sent.
@@ -37,8 +42,13 @@ import (
 // (BinsLevelChanged) mark the Edges watching it dirty; each dirty
 // Edge gets one time.AfterFunc, binsPushDelay later, so a burst of changes is
 // one rebuild. The push sends only a digest that differs from the last one
-// sent to that Edge, so a count that stays above zero sends nothing. Every
-// other writer is healed by the next heartbeat's compare.
+// sent to that Edge, so a count that stays above zero sends nothing. A row
+// carries its inbound orders, so an order starting or ending at a watched
+// place now moves the digest and its push goes out where it used to be
+// suppressed: those sends are bounded by order events, coalesced by the
+// delay. Every other writer is healed by the next heartbeat's compare (the
+// generation bumps that reach no push are named in
+// TestBumpEpoch_EverySiteReachesABinsPushOrIsNamed).
 
 // binsPushDelay coalesces the changes one Edge sees in a burst (a delivery
 // emits several bin events) into one rebuild and at most one send.
@@ -52,7 +62,8 @@ type binWatch struct {
 	nodeIDs map[int64]bool
 	binIDs  map[int64]bool
 	// nodeNames holds every name an order may carry for a watched place: the
-	// names as sent, the resolved nodes' own names, and the outbound groups.
+	// names as sent, a watched group's members as their rows name them, the
+	// resolved nodes' own names, and the outbound groups.
 	nodeNames map[string]bool
 	// groups are the outbound groups of the consume loaders with a window on
 	// the list, read when the list arrived (bins_feed_groups.go).
@@ -218,11 +229,12 @@ func (b *binsFeed) digestFor(station string) string {
 }
 
 // indexBuild records what a snapshot built for the list with this digest found:
-// the nodes the names resolved to and the bins standing there. A build for a
-// list since replaced records nothing.
-func (b *binsFeed) indexBuild(station, digest string, resolved map[string]*nodes.Node, rows []protocol.NodeBinsRow) {
-	nodeIDs := make(map[int64]bool, len(resolved))
-	for _, n := range resolved {
+// the nodes its names resolved to (places: the watched names, a watched
+// group's members by their row names, the levelled groups) and the bins
+// standing there. A build for a list since replaced records nothing.
+func (b *binsFeed) indexBuild(station, digest string, places map[string]*nodes.Node, rows []protocol.NodeBinsRow) {
+	nodeIDs := make(map[int64]bool, len(places))
+	for _, n := range places {
 		nodeIDs[n.ID] = true
 	}
 	binIDs := make(map[int64]bool, len(rows))
@@ -238,7 +250,8 @@ func (b *binsFeed) indexBuild(station, digest string, resolved map[string]*nodes
 		return
 	}
 	w.nodeIDs, w.binIDs = nodeIDs, binIDs
-	for _, n := range resolved {
+	for name, n := range places {
+		w.nodeNames[name] = true
 		w.nodeNames[n.Name] = true
 	}
 }
@@ -288,72 +301,240 @@ func (s *CoreDataService) HandleBinWatch(env *protocol.Envelope, list *protocol.
 }
 
 // buildNodeBins is the FeedBins build for one Edge: known is false when Core
-// holds no list for it. Two statements whatever the list's length (the names
-// and the levelled groups' names, then the bins at every resolved node and
-// every levelled group's windows), the reads GET /api/telemetry/node-bins
-// makes; then, per levelled group, its levels and its line (groupLines).
-// Pinned by TestBuildNodeBins_TwoStatementsWhateverTheListLength and
-// TestBuildNodeBins_ALevelledGroupsLine.
+// holds no list for it. The reads are one read snapshot (store.ReadSnapshot),
+// so the orders and the bins agree: a torn read can show a carrier inbound and
+// already occupied, never neither. Five statements whatever the list's length
+// — BEGIN, the names and the levelled groups' names, the orders inbound to
+// every place, the bins at every place and levelled group window, COMMIT —
+// and a sixth, the members of every watched group in one, when a group is
+// watched. Then, outside it, per held partial its line (markHeldLines) and per
+// levelled group its levels and its line (groupLines). Pinned by
+// TestBuildNodeBins_FiveStatementsWhateverTheListLength,
+// TestBuildNodeBins_AWatchedGroupsMembers and TestBuildNodeBins_ALevelledGroupsLine.
 func (s *CoreDataService) buildNodeBins(station string) (snap *protocol.NodeBinsSnapshot, known bool, err error) {
 	names, listDigest, ok := s.bins.list(station)
 	if !ok {
 		return nil, false, nil
 	}
 	groups := s.levelledGroups(station, listDigest)
-	resolved, err := s.db.GetNodesByDotNames(append(append([]string{}, names...), groupNames(groups)...))
-	if err != nil {
-		return nil, true, fmt.Errorf("bins: resolve watched names: %w", err)
+	var read watchRead
+	if err := store.ReadSnapshot(s.db.DB, func(tx *sql.Tx) error {
+		var rerr error
+		read, rerr = readWatch(tx, names, groups)
+		return rerr
+	}); err != nil {
+		return nil, true, err
 	}
-	atNodes, err := s.db.ListBinsByNodes(binsReadIDs(names, resolved, groups))
-	if err != nil {
-		return nil, true, fmt.Errorf("bins: read bins at watched nodes: %w", err)
-	}
-	first := firstBins(atNodes)
-	snap = &protocol.NodeBinsSnapshot{Rows: nodeBinsRows(names, resolved, first)}
+	snap = &protocol.NodeBinsSnapshot{ListDigest: listDigest, Rows: read.rows(names)}
 	s.markHeldLines(snap.Rows)
-	if snap.Groups, err = s.groupLines(station, listDigest, groups, names, resolved, first); err != nil {
+	if snap.Groups, err = s.groupLines(station, listDigest, groups, names, read.resolved, read.first()); err != nil {
 		return nil, true, err
 	}
 	if snap.Digest, err = protocol.NodeBinsDigest(*snap); err != nil {
 		return nil, true, fmt.Errorf("bins digest: %w", err)
 	}
-	s.bins.indexBuild(station, listDigest, resolved, snap.Rows)
+	s.bins.indexBuild(station, listDigest, read.places(names), snap.Rows)
 	return snap, true, nil
 }
 
-// firstBins is the bin at each node: the first the read returns there (ORDER
-// BY id DESC), as the HTTP answer takes it.
-func firstBins(atNodes []*bins.Bin) map[int64]*bins.Bin {
-	first := make(map[int64]*bins.Bin, len(atNodes))
+// watchRead is what one build read inside its snapshot.
+type watchRead struct {
+	// resolved is the watched names and the levelled groups' names that name a
+	// node, keyed as asked.
+	resolved map[string]*nodes.Node
+	// members is each watched group's non-synthetic children, by name.
+	members map[int64][]*nodes.Node
+	// atNode is the bins at each node read, highest id first.
+	atNode map[int64][]*bins.Bin
+	// inbound is the orders the dropoff gate counts as on their way to each
+	// place, in order id order.
+	inbound map[int64][]protocol.NodeBinsInbound
+}
+
+// readWatch is the build's reads, orders before bins, through q (the build's
+// read snapshot).
+func readWatch(q interface {
+	Query(string, ...any) (*sql.Rows, error)
+}, names []string, groups []watchGroup) (watchRead, error) {
+	r := watchRead{atNode: map[int64][]*bins.Bin{}, inbound: map[int64][]protocol.NodeBinsInbound{}}
+	var err error
+	if r.resolved, err = nodes.GetByDotNames(q, append(append([]string{}, names...), groupNames(groups)...)); err != nil {
+		return r, fmt.Errorf("bins: resolve watched names: %w", err)
+	}
+	if r.members, err = nodes.ListPhysicalChildren(q, watchedGroupIDs(names, r.resolved)); err != nil {
+		return r, fmt.Errorf("bins: read watched groups' members: %w", err)
+	}
+	places := r.placeNodes(names)
+	byName := deliveryNames(places)
+	inbound, err := orders.ListInFlightByDeliveryNodes(q, sortedNames(byName))
+	if err != nil {
+		return r, fmt.Errorf("bins: read orders inbound to watched places: %w", err)
+	}
+	for _, in := range inbound {
+		id := byName[in.DeliveryNode]
+		r.inbound[id] = append(r.inbound[id], protocol.NodeBinsInbound{
+			OrderUUID: in.EdgeUUID, BinType: in.BinTypeCode, Payload: in.PayloadCode, From: in.SourceNode})
+	}
+	atNodes, err := bins.ListByNodes(q, binsReadIDs(places, groups))
+	if err != nil {
+		return r, fmt.Errorf("bins: read bins at watched nodes: %w", err)
+	}
 	for _, b := range atNodes {
-		if b.NodeID != nil && first[*b.NodeID] == nil {
-			first[*b.NodeID] = b
+		if b.NodeID != nil {
+			r.atNode[*b.NodeID] = append(r.atNode[*b.NodeID], b)
 		}
+	}
+	return r, nil
+}
+
+// isNodeGroup is what makes a node a group for the bins row: its type, NGRP,
+// the node class the dropoff gate and the resolvers treat as a group.
+func isNodeGroup(n *nodes.Node) bool { return n.NodeTypeCode == protocol.NodeClassNGRP }
+
+// watchedGroupIDs is the watched names that are groups, each once, sorted.
+func watchedGroupIDs(names []string, resolved map[string]*nodes.Node) []int64 {
+	seen := map[int64]bool{}
+	var ids []int64
+	for _, name := range names {
+		if n := resolved[name]; n != nil && isNodeGroup(n) && !seen[n.ID] {
+			seen[n.ID] = true
+			ids = append(ids, n.ID)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
+
+// placeNodes is the node of every row the build answers: each watched name
+// that resolved and each watched group's members.
+func (r watchRead) placeNodes(names []string) map[int64]*nodes.Node {
+	out := map[int64]*nodes.Node{}
+	for _, name := range names {
+		if n := r.resolved[name]; n != nil {
+			out[n.ID] = n
+			for _, m := range r.members[n.ID] {
+				out[m.ID] = m
+			}
+		}
+	}
+	return out
+}
+
+// deliveryNames is every name an order's delivery_node may carry that resolves
+// to one of these nodes (as nodes.GetByDotName resolves it): the node's own
+// name, when it holds no dot, and "parent.name", when its parent's holds none.
+func deliveryNames(places map[int64]*nodes.Node) map[string]int64 {
+	out := make(map[string]int64, 2*len(places))
+	for id, n := range places {
+		if !strings.Contains(n.Name, ".") {
+			out[n.Name] = id
+		}
+		if n.ParentName != "" && !strings.Contains(n.ParentName, ".") {
+			out[n.ParentName+"."+n.Name] = id
+		}
+	}
+	return out
+}
+
+func sortedNames(m map[string]int64) []string {
+	out := make([]string, 0, len(m))
+	for name := range m {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// first is the resident bin at each node read: the highest id there, as the
+// HTTP answer takes it.
+func (r watchRead) first() map[int64]*bins.Bin {
+	first := make(map[int64]*bins.Bin, len(r.atNode))
+	for id, at := range r.atNode {
+		first[id] = at[0]
 	}
 	return first
 }
 
-// nodeBinsRows is one row per name, in the names' order. A name that did not
-// resolve, or a node with no bin, is a row with only its name.
-func nodeBinsRows(names []string, resolved map[string]*nodes.Node, first map[int64]*bins.Bin) []protocol.NodeBinsRow {
+// places is the row names the build answered, each with its node: the
+// watched names that resolved, the members by their row names, and the
+// levelled groups' names.
+func (r watchRead) places(names []string) map[string]*nodes.Node {
+	out := make(map[string]*nodes.Node, len(r.resolved))
+	for name, n := range r.resolved {
+		out[name] = n
+	}
+	for _, name := range names {
+		if n := r.resolved[name]; n != nil {
+			for _, m := range r.members[n.ID] {
+				out[n.Name+"."+m.Name] = m
+			}
+		}
+	}
+	return out
+}
+
+// rows is one row per watched name in the names' order, each watched group's
+// member rows directly after it, no name twice: a member already watched, or
+// already answered under another name for the same group, keeps the one row.
+func (r watchRead) rows(names []string) []protocol.NodeBinsRow {
+	watched := make(map[string]bool, len(names))
+	for _, name := range names {
+		watched[name] = true
+	}
+	answered := map[string]bool{}
 	rows := make([]protocol.NodeBinsRow, 0, len(names))
 	for _, name := range names {
-		var b *bins.Bin
-		if n := resolved[name]; n != nil {
-			b = first[n.ID]
+		n := r.resolved[name]
+		row := r.row(name, n)
+		if n == nil || !isNodeGroup(n) {
+			rows = append(rows, row)
+			continue
 		}
-		rows = append(rows, binRow(name, b))
+		members := r.members[n.ID]
+		for _, m := range members {
+			row.Members = append(row.Members, n.Name+"."+m.Name)
+		}
+		rows = append(rows, row)
+		for i, q := range row.Members {
+			if !watched[q] && !answered[q] {
+				answered[q] = true
+				rows = append(rows, r.row(q, members[i]))
+			}
+		}
 	}
 	return rows
 }
 
-// binRow is the row for bin b standing at a node called name; nil b is a row
-// with only the name.
+// row is the row for node n under name: unknown for no node, a group row for a
+// group (its bins counted, its resident left out), else the resident bin's.
+// Members are the caller's: only a watched group is expanded.
+func (r watchRead) row(name string, n *nodes.Node) protocol.NodeBinsRow {
+	if n == nil {
+		return protocol.NodeBinsRow{Node: name, State: protocol.BinsStateUnknown}
+	}
+	at := r.atNode[n.ID]
+	var row protocol.NodeBinsRow
+	switch {
+	case isNodeGroup(n):
+		row = protocol.NodeBinsRow{Node: name, State: protocol.BinsStateGroup}
+	case len(at) > 0:
+		row = binRow(name, at[0])
+	default:
+		row = binRow(name, nil)
+	}
+	row.Bins = len(at)
+	row.Inbound = r.inbound[n.ID]
+	return row
+}
+
+// binRow is the row for bin b standing at a node called name; nil b is an
+// empty row.
 func binRow(name string, b *bins.Bin) protocol.NodeBinsRow {
-	row := protocol.NodeBinsRow{Node: name}
+	row := protocol.NodeBinsRow{Node: name, State: protocol.BinsStateEmpty}
 	if b == nil {
 		return row
 	}
+	row.State = protocol.BinsStateOccupied
 	row.Occupied = true
 	row.BinID = b.ID
 	row.BinLabel = b.Label
@@ -362,12 +543,14 @@ func binRow(name string, b *bins.Bin) protocol.NodeBinsRow {
 	row.PayloadCode = b.PayloadCode
 	row.Manifest = b.Manifest
 	row.ManifestConfirmed = b.ManifestConfirmed
+	row.Epoch = b.DeltaEpoch
 	row.Stocked = b.UOPRemaining > 0
 	row.TotesOnCart = b.TotesOnCart
 	row.TotesPerLayer = b.TotesPerLayer
 	if b.PayloadCode != "" {
 		row.UOPCapacity = b.UOPCapacity
 	}
+	row.Partial = row.Stocked && b.UOPRemaining < row.UOPCapacity
 	if b.HeldSince != nil {
 		row.HeldSince = b.HeldSince.UTC().Format(time.RFC3339)
 		row.HeldUOP = b.UOPRemaining

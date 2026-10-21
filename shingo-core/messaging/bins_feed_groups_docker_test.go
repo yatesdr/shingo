@@ -83,8 +83,8 @@ func newGroupsFixture(t *testing.T, levelled bool) *groupsFixture {
 // the snapshot. The line function is handed the group, its levels and every
 // window of the loader in the plant's order: a watched window named as the
 // Edge watches it, one it does not watch by the node's own name, each with the
-// bin standing there. The build is B8's two reads plus the group's levels; the
-// windows' bins ride the one bins read.
+// bin standing there. The build is its read snapshot's five statements plus the
+// group's levels; the windows' bins ride the one bins read.
 func TestBuildNodeBins_ALevelledGroupsLine(t *testing.T) {
 	t.Parallel()
 	f := newGroupsFixture(t, true)
@@ -94,13 +94,17 @@ func TestBuildNodeBins_ALevelledGroupsLine(t *testing.T) {
 	f.counter.Reset()
 	snap, _, err := f.svc.buildNodeBins("edge.a")
 	testutil.MustNoErr(t, err, "build")
-	if got := f.counter.Count(); got != 3 {
-		t.Errorf("one build with one levelled group = %d statements (the line function's own excluded), want 3:\n%v",
+	if got := f.counter.Count(); got != 6 {
+		t.Errorf("one build with one levelled group = %d statements (the line function's own excluded), want 6:\n%v",
 			got, f.counter.Statements())
 	}
 	rows := f.wantRows()
-	wantWindows := []protocol.NodeBinsRow{rows[3], rows[2],
-		{Node: "UNWATCHED-W", Occupied: true, BinID: f.unwatched, BinLabel: "TOTE-3", BinTypeCode: "TOTE"}}
+	// A window row is the bin's row alone: the count of bins at the node and the
+	// inbound orders are the snapshot row's, not the line's.
+	window := func(r protocol.NodeBinsRow) protocol.NodeBinsRow { r.Bins = 0; return r }
+	wantWindows := []protocol.NodeBinsRow{window(rows[3]), window(rows[2]),
+		{Node: "UNWATCHED-W", State: protocol.BinsStateOccupied, Occupied: true, BinID: f.unwatched, BinLabel: "TOTE-3",
+			BinTypeCode: "TOTE", Epoch: 1}}
 	if len(f.calls) != 1 || f.calls[0].group != "KD-1" || f.calls[0].levels != 1 ||
 		!reflect.DeepEqual(f.calls[0].windows, wantWindows) {
 		t.Errorf("line function called with %+v\nwant KD-1, 1 level, windows\n %+v", f.calls, wantWindows)
@@ -134,10 +138,10 @@ func mustBin(t *testing.T, db *store.DB, id int64) *bins.Bin {
 	return b
 }
 
-// A group with no levels has no line and costs no statement: the build is B8's
-// two reads and the line function is never called. A level saved on the group
-// afterwards (BinsLevelChanged, the level save's hook) brings its line in on
-// the next build, at one more statement.
+// A group with no levels has no line and costs no statement: the build is its
+// read snapshot's five statements and the line function is never called. A
+// level saved on the group afterwards (BinsLevelChanged, the level save's hook)
+// brings its line in on the next build, at one more statement.
 func TestBuildNodeBins_NoLevelsNoGroupNoStatement(t *testing.T) {
 	t.Parallel()
 	f := newGroupsFixture(t, false)
@@ -146,8 +150,8 @@ func TestBuildNodeBins_NoLevelsNoGroupNoStatement(t *testing.T) {
 	f.counter.Reset()
 	snap, _, err := f.svc.buildNodeBins("edge.a")
 	testutil.MustNoErr(t, err, "build")
-	if got := f.counter.Count(); got != 2 {
-		t.Errorf("one build with no levels = %d statements, want 2:\n%v", got, f.counter.Statements())
+	if got := f.counter.Count(); got != 5 {
+		t.Errorf("one build with no levels = %d statements, want 5:\n%v", got, f.counter.Statements())
 	}
 	if len(snap.Groups) != 0 || len(f.calls) != 0 {
 		t.Errorf("no levels: groups %+v, line calls %+v; want neither", snap.Groups, f.calls)
@@ -167,15 +171,15 @@ func TestBuildNodeBins_NoLevelsNoGroupNoStatement(t *testing.T) {
 	if len(snap.Groups) != 1 || len(f.calls) != 1 {
 		t.Errorf("after a level save: groups %+v, line calls %d; want the line", snap.Groups, len(f.calls))
 	}
-	if got := f.counter.Count(); got != 3 {
-		t.Errorf("after a level save: %d statements, want 3", got)
+	if got := f.counter.Count(); got != 6 {
+		t.Errorf("after a level save: %d statements, want 6", got)
 	}
 
 	// Its levels removed, the group is read once more, found empty, and not
 	// read again.
 	_, err = f.db.DB.Exec(`DELETE FROM node_maintain_levels WHERE group_node_id = $1`, f.group.ID)
 	testutil.MustNoErr(t, err, "remove level")
-	for i, want := range []int64{3, 2} {
+	for i, want := range []int64{6, 5} {
 		f.counter.Reset()
 		snap, _, err = f.svc.buildNodeBins("edge.a")
 		testutil.MustNoErr(t, err, "build")

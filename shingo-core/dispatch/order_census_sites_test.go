@@ -204,6 +204,7 @@ func TestCensus_DropoffCapacityGateSites(t *testing.T) {
 		"store/orders.go:CountInFlightOrdersByDeliveryNodeExcluding":  "the store wrapper",
 		"store/orders/orders.go:CountInFlightByDeliveryNode":          "the count",
 		"store/orders/orders.go:CountInFlightByDeliveryNodeExcluding": "the count, excluding the asker",
+		"store/orders/orders.go:ListInFlightByDeliveryNodes":          "the bins row's inbound orders: the same set as rows, read only (it gates nothing; its answer is the row's inbound and moves exactly when the gate's count does)",
 	}, "A new reader of the dropoff gate is a new site whose answer moves when holds move. "+
 		"Name it here, and say in the phase's PREDICTIONS.md whether its answer changes.")
 }

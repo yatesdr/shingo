@@ -8,18 +8,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 // binsFixture is three watched places and one unknown name: SMN_A1 holds a
@@ -72,23 +75,25 @@ func binsWatchList(t *testing.T, names ...string) *protocol.BinWatchList {
 	return &protocol.BinWatchList{Digest: d, Nodes: names}
 }
 
-// wantRows is the fixture's snapshot rows, as the HTTP node-bins answer reads
-// the same places: one row per name, sorted, nothing but the name for a node
-// with no bin and for a name Core does not know.
+// wantRows is the fixture's snapshot rows: one row per name, sorted; the name
+// Core does not know is unknown, the node with no bin empty, and each bin's
+// row carries the bins at its node (one) and its generation (a new bin's, 1).
 func (f binsFixture) wantRows() []protocol.NodeBinsRow {
 	return []protocol.NodeBinsRow{
-		{Node: "GHOST"},
-		{Node: "LANE-1.SLOT-1"},
-		{Node: "SMN_A1", Occupied: true, BinID: f.full, BinLabel: "TOTE-1", BinTypeCode: "TOTE",
-			PayloadCode: "PART-A", Manifest: &f.manifest, ManifestConfirmed: true, Stocked: true},
-		{Node: "SMN_A2", Occupied: true, BinID: f.base, BinLabel: "TOTE-2", BinTypeCode: "TOTE-BARE", Bare: true},
+		{Node: "GHOST", State: protocol.BinsStateUnknown},
+		{Node: "LANE-1.SLOT-1", State: protocol.BinsStateEmpty},
+		{Node: "SMN_A1", State: protocol.BinsStateOccupied, Occupied: true, Bins: 1, BinID: f.full, BinLabel: "TOTE-1",
+			BinTypeCode: "TOTE", PayloadCode: "PART-A", Manifest: &f.manifest, ManifestConfirmed: true, Epoch: 1, Stocked: true},
+		{Node: "SMN_A2", State: protocol.BinsStateOccupied, Occupied: true, Bins: 1, BinID: f.base, BinLabel: "TOTE-2",
+			BinTypeCode: "TOTE-BARE", Bare: true, Epoch: 1},
 	}
 }
 
-// One build is the two reads B8 gave the HTTP answer — every name at once,
-// then the bins at every resolved node — and its value is the golden: the rows,
-// no groups, and the digest of exactly what is sent.
-func TestBuildNodeBins_TwoStatementsWhateverTheListLength(t *testing.T) {
+// One build is one read snapshot of five statements — BEGIN (read only,
+// repeatable read), every name at once, the orders inbound to every place,
+// the bins at every place, COMMIT — and its value is the golden: the rows, no
+// groups, the list it answers and the digest of exactly what is sent.
+func TestBuildNodeBins_FiveStatementsWhateverTheListLength(t *testing.T) {
 	t.Parallel()
 	db, cfg := testdb.OpenWithConfig(t)
 	f := newBinsFixture(t, db)
@@ -96,7 +101,8 @@ func TestBuildNodeBins_TwoStatementsWhateverTheListLength(t *testing.T) {
 	testutil.MustNoErr(t, err, "open counting db")
 	t.Cleanup(func() { cdb.Close() })
 	svc := NewCoreDataService(cdb, &feedsPinResponder{}, service.EpochAnnounce{})
-	svc.bins.replace("edge.a", binsWatchList(t, binsFixtureNames...))
+	list := binsWatchList(t, binsFixtureNames...)
+	svc.bins.replace("edge.a", list)
 
 	counter.Reset()
 	snap, known, err := svc.buildNodeBins("edge.a")
@@ -104,8 +110,19 @@ func TestBuildNodeBins_TwoStatementsWhateverTheListLength(t *testing.T) {
 	if !known {
 		t.Fatal("known = false for an Edge whose list Core holds")
 	}
-	if got := counter.Count(); got != 2 {
-		t.Errorf("one build = %d statements, want 2", got)
+	stmts := counter.Statements()
+	if len(stmts) != 5 {
+		t.Errorf("one build = %d statements, want 5:\n%v", len(stmts), stmts)
+	}
+	if len(stmts) == 5 {
+		begin, orders, binsRead, commit := strings.ToLower(stmts[0]), stmts[2], stmts[3], strings.ToLower(stmts[4])
+		if !strings.Contains(begin, "begin") || !strings.Contains(begin, "repeatable read") || !strings.Contains(begin, "read only") ||
+			!strings.Contains(orders, "FROM orders") || !strings.Contains(binsRead, "FROM bins") || commit != "commit" {
+			t.Errorf("the build is not one read-only snapshot reading orders then bins:\n%v", stmts)
+		}
+	}
+	if snap.ListDigest != list.Digest {
+		t.Errorf("list_digest = %q, want the list's %q", snap.ListDigest, list.Digest)
 	}
 	if !reflect.DeepEqual(snap.Rows, f.wantRows()) {
 		t.Errorf("rows =\n %+v\nwant\n %+v", snap.Rows, f.wantRows())
@@ -115,19 +132,20 @@ func TestBuildNodeBins_TwoStatementsWhateverTheListLength(t *testing.T) {
 	if snap.Digest != d {
 		t.Errorf("snapshot digest %q, NodeBinsDigest of the value sent %q", snap.Digest, d)
 	}
-	want := fmt.Sprintf(`{"digest":%q,"rows":[`+
-		`{"node":"GHOST","occupied":false,"manifest_confirmed":false,"stocked":false},`+
-		`{"node":"LANE-1.SLOT-1","occupied":false,"manifest_confirmed":false,"stocked":false},`+
-		`{"node":"SMN_A1","occupied":true,"bin_id":%d,"bin_label":"TOTE-1","bin_type_code":"TOTE",`+
+	want := fmt.Sprintf(`{"digest":%q,"list_digest":%q,"rows":[`+
+		`{"node":"GHOST","state":"unknown","occupied":false,"manifest_confirmed":false,"stocked":false,"partial":false},`+
+		`{"node":"LANE-1.SLOT-1","state":"empty","occupied":false,"manifest_confirmed":false,"stocked":false,"partial":false},`+
+		`{"node":"SMN_A1","state":"occupied","occupied":true,"bins":1,"bin_id":%d,"bin_label":"TOTE-1","bin_type_code":"TOTE",`+
 		`"payload_code":"PART-A","manifest":"{\"items\": [{\"part_number\": \"PART-A\"}]}",`+
-		`"manifest_confirmed":true,"stocked":true},`+
-		`{"node":"SMN_A2","occupied":true,"bin_id":%d,"bin_label":"TOTE-2","bin_type_code":"TOTE-BARE",`+
-		`"bare":true,"manifest_confirmed":false,"stocked":false}],"groups":[]}`, d, f.full, f.base)
+		`"manifest_confirmed":true,"epoch":1,"stocked":true,"partial":false},`+
+		`{"node":"SMN_A2","state":"occupied","occupied":true,"bins":1,"bin_id":%d,"bin_label":"TOTE-2","bin_type_code":"TOTE-BARE",`+
+		`"bare":true,"manifest_confirmed":false,"epoch":1,"stocked":false,"partial":false}],"groups":[]}`,
+		d, list.Digest, f.full, f.base)
 	if got := renderTwiceCore(t, snap); got != want {
 		t.Errorf("snapshot =\n  %s\nwant\n  %s", got, want)
 	}
 
-	// The same two statements for a long list, and the bytes it costs.
+	// The same five statements for a long list, and the bytes it costs.
 	var tote int64
 	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT id FROM bin_types WHERE code = 'TOTE'`).Scan(&tote), "tote type")
 	for _, n := range []int{22, 40} {
@@ -146,8 +164,8 @@ func TestBuildNodeBins_TwoStatementsWhateverTheListLength(t *testing.T) {
 		counter.Reset()
 		big, _, err := svc.buildNodeBins(station)
 		testutil.MustNoErr(t, err, "build")
-		if got := counter.Count(); got != 2 {
-			t.Errorf("%d names: one build = %d statements, want 2", n, got)
+		if got := counter.Count(); got != 5 {
+			t.Errorf("%d names: one build = %d statements, want 5", n, got)
 		}
 		raw, zipped := wireBytes(t, big)
 		t.Logf("%d watched nodes, half occupied: %d bytes raw, %d gzipped", n, raw, zipped)
@@ -183,9 +201,10 @@ func wireBytes(t *testing.T, v any) (raw, zipped int) {
 	return len(b), z.Len()
 }
 
-// What moves the digest is what a station draws. A count that ticks, an
-// adjustment that stays above zero and an epoch reset do not; a count reaching
-// zero or going below it reads not stocked.
+// What moves the digest is what a station draws. A count that ticks and an
+// adjustment that stays above zero do not; a count reaching zero or going
+// below it reads not stocked; an epoch reset moves it, because the generation
+// is on the row (a boundary the Edge is told of, which never ticks).
 func TestBuildNodeBins_CountsDoNotMoveTheDigest(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -218,7 +237,8 @@ func TestBuildNodeBins_CountsDoNotMoveTheDigest(t *testing.T) {
 	}{
 		{"a count tick", `UPDATE bins SET uop_remaining = uop_remaining - 1 WHERE id = $1`, f.full, true, true},
 		{"an adjustment staying above zero", `UPDATE bins SET uop_remaining = 7 WHERE id = $1`, f.full, true, true},
-		{"an epoch reset", `UPDATE bins SET delta_epoch = delta_epoch + 1 WHERE id = $1`, f.full, true, true},
+		// The generation is on the row: a reset is a boundary the Edge is told of.
+		{"an epoch reset", `UPDATE bins SET delta_epoch = delta_epoch + 1 WHERE id = $1`, f.full, false, true},
 		{"the count reaches zero", `UPDATE bins SET uop_remaining = 0 WHERE id = $1`, f.full, false, false},
 		{"the count goes below zero", `UPDATE bins SET uop_remaining = -2 WHERE id = $1`, f.full, false, false},
 	} {
@@ -451,8 +471,8 @@ func TestBinsPush_AfterAChangeAtAWatchedBin(t *testing.T) {
 		svc.BinsChanged(f.full, f.a1)
 	}
 	settle(t, svc)
-	if got := counter.Count(); got != 2 {
-		t.Errorf("five changes for one Edge: %d statements, want one build's 2", got)
+	if got := counter.Count(); got != 5 {
+		t.Errorf("five changes for one Edge: %d statements, want one build's 5", got)
 	}
 	if a, b := resp.count("edge.a"), resp.count("edge.b"); a != 2 || b != 1 {
 		t.Errorf("a burst at a watched bin: sends a=%d b=%d, want one more to a only", a, b)
@@ -547,5 +567,132 @@ func TestBuildNodeBins_CarriesTheToteNumbers(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("tote numbers by node = %v, want %v", got, want)
+	}
+}
+
+// A watched group (an NGRP node) answers a group row naming its members —
+// what the children door answers for include_synthetic=false: the
+// non-synthetic children, "group.child", by name — and a row per member
+// directly after it. A member that is itself a group gets a group row and is
+// not expanded; a member the Edge also watches keeps its own row at its own
+// place, and no name appears twice. The members are read in one statement,
+// the build's sixth, and the members are indexed for pushes like any place.
+func TestBuildNodeBins_AWatchedGroupsMembers(t *testing.T) {
+	t.Parallel()
+	db, cfg := testdb.OpenWithConfig(t)
+	f := newBinsFixture(t, db)
+	grpID, err := nodes.CreateGroup(db.DB, "G-1")
+	testutil.MustNoErr(t, err, "group")
+	ngrp, err := nodes.GetTypeByCode(db.DB, protocol.NodeClassNGRP)
+	testutil.MustNoErr(t, err, "NGRP type")
+	child := func(name string, synthetic bool, typeID *int64) *nodes.Node {
+		n := &nodes.Node{Name: name, Enabled: true, IsSynthetic: synthetic, ParentID: &grpID, NodeTypeID: typeID}
+		testutil.MustNoErr(t, db.CreateNode(n), "member "+name)
+		return n
+	}
+	child("G-B", false, nil)
+	gA := child("G-A", false, nil)
+	child("G-LANE", true, nil)
+	child("G-SUB", false, &ngrp.ID)
+	var tote int64
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT id FROM bin_types WHERE code = 'TOTE'`).Scan(&tote), "tote type")
+	cart := &bins.Bin{BinTypeID: tote, Label: "TOTE-G", NodeID: &gA.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(cart), "cart at G-A")
+
+	cdb, counter, err := store.OpenCounting(cfg)
+	testutil.MustNoErr(t, err, "open counting db")
+	t.Cleanup(func() { cdb.Close() })
+	svc := NewCoreDataService(cdb, &feedsPinResponder{}, service.EpochAnnounce{})
+	svc.bins.replace("edge.a", binsWatchList(t, "G-1", "G-1.G-B", "SMN_A1"))
+	counter.Reset()
+	snap, _, err := svc.buildNodeBins("edge.a")
+	testutil.MustNoErr(t, err, "build")
+	if got := counter.Count(); got != 6 {
+		t.Errorf("one build with a watched group = %d statements, want 6:\n%v", got, counter.Statements())
+	}
+	want := []protocol.NodeBinsRow{
+		{Node: "G-1", State: protocol.BinsStateGroup, Members: []string{"G-1.G-A", "G-1.G-B", "G-1.G-SUB"}},
+		{Node: "G-1.G-A", State: protocol.BinsStateOccupied, Occupied: true, Bins: 1, BinID: cart.ID, BinLabel: "TOTE-G",
+			BinTypeCode: "TOTE", Epoch: 1},
+		{Node: "G-1.G-SUB", State: protocol.BinsStateGroup},
+		{Node: "G-1.G-B", State: protocol.BinsStateEmpty},
+		f.wantRows()[2],
+	}
+	if !reflect.DeepEqual(snap.Rows, want) {
+		t.Errorf("rows =\n %+v\nwant\n %+v", snap.Rows, want)
+	}
+	if got := svc.bins.watchingBin(0, []int64{gA.ID}); !reflect.DeepEqual(got, []string{"edge.a"}) {
+		t.Errorf("a bin event at a member marks %v, want [edge.a]", got)
+	}
+	if got := svc.bins.watchingNames([]string{"G-1.G-A"}); !reflect.DeepEqual(got, []string{"edge.a"}) {
+		t.Errorf("an order to a member by its row name marks %v, want [edge.a]", got)
+	}
+}
+
+// A row carries the live orders the dropoff gate counts as on their way to its
+// node, whichever name the order gives it (bare or "parent.child"), in order
+// id order; an order holding no claimed bin is not on its way. Such an order
+// starting moves the digest, so its push goes out (before the row carried
+// orders the digest stayed and the push was suppressed).
+func TestBuildNodeBins_InboundOrders(t *testing.T) {
+	t.Parallel()
+	svc, resp, _, _ := pushFixture(t)
+	db := svc.db
+	var tote int64
+	testutil.MustNoErr(t, db.DB.QueryRow(`SELECT id FROM bin_types WHERE code = 'TOTE'`).Scan(&tote), "tote type")
+	src := &nodes.Node{Name: "STORE-1", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(src), "source")
+	order := func(uuid, dest string, claimed bool) int64 {
+		t.Helper()
+		o := &domain.Order{EdgeUUID: uuid, StationID: "edge.a", OrderType: "retrieve", Status: "dispatched",
+			Quantity: 1, SourceNode: "STORE-1", DeliveryNode: dest, PayloadCode: "PART-A"}
+		testutil.MustNoErr(t, orders.Create(db.DB, o), "order "+uuid)
+		if claimed {
+			b := &bins.Bin{BinTypeID: tote, Label: "CARRIED-" + uuid, NodeID: &src.ID, Status: "available"}
+			testutil.MustNoErr(t, db.CreateBin(b), "carrier "+uuid)
+			_, err := db.DB.Exec(`UPDATE bins SET claimed_by = $1 WHERE id = $2`, o.ID, b.ID)
+			testutil.MustNoErr(t, err, "claim")
+			_, err = db.DB.Exec(`UPDATE orders SET bin_id = $1 WHERE id = $2`, b.ID, o.ID)
+			testutil.MustNoErr(t, err, "source")
+		}
+		return o.ID
+	}
+	before, _, err := svc.buildNodeBins("edge.b")
+	testutil.MustNoErr(t, err, "build before")
+
+	toA2 := order("ord-a2", "SMN_A2", true)
+	order("ord-bare", "SLOT-1", true)
+	order("ord-dotted", "LANE-1.SLOT-1", true)
+	order("ord-unclaimed", "SMN_A2", false)
+
+	snap, _, err := svc.buildNodeBins("edge.a")
+	testutil.MustNoErr(t, err, "build")
+	got := map[string][]protocol.NodeBinsInbound{}
+	for _, r := range snap.Rows {
+		if len(r.Inbound) > 0 {
+			got[r.Node] = r.Inbound
+		}
+	}
+	in := func(uuid string) protocol.NodeBinsInbound {
+		return protocol.NodeBinsInbound{OrderUUID: uuid, BinType: "TOTE", Payload: "PART-A", From: "STORE-1"}
+	}
+	want := map[string][]protocol.NodeBinsInbound{
+		"SMN_A2":        {in("ord-a2")},
+		"LANE-1.SLOT-1": {in("ord-bare"), in("ord-dotted")},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("inbound by row = %+v\nwant %+v", got, want)
+	}
+
+	after, _, err := svc.buildNodeBins("edge.b")
+	testutil.MustNoErr(t, err, "build after")
+	if after.Digest == before.Digest {
+		t.Error("an order on its way to a watched node left the digest where it was")
+	}
+	sent := resp.count("edge.b")
+	svc.BinsOrderStarted(toA2, "STORE-1", "SMN_A2")
+	settle(t, svc)
+	if got := resp.count("edge.b") - sent; got != 1 {
+		t.Errorf("an order to SMN_A2 started: %d sends to edge.b, want 1", got)
 	}
 }

@@ -19,34 +19,61 @@ func TestNodeBinsSnapshot_Golden(t *testing.T) {
 	}{
 		{
 			name: "a row at a node with no bin",
-			v:    NodeBinsRow{Node: "SMN_A1"},
-			want: `{"node":"SMN_A1","occupied":false,"manifest_confirmed":false,"stocked":false}`,
+			v:    NodeBinsRow{Node: "SMN_A1", State: BinsStateEmpty},
+			want: `{"node":"SMN_A1","state":"empty","occupied":false,"manifest_confirmed":false,"stocked":false,"partial":false}`,
+		},
+		{
+			name: "a name Core does not know",
+			v:    NodeBinsRow{Node: "GHOST", State: BinsStateUnknown},
+			want: `{"node":"GHOST","state":"unknown","occupied":false,"manifest_confirmed":false,"stocked":false,"partial":false}`,
+		},
+		{
+			name: "a watched group with two members and an order on its way to it",
+			v: NodeBinsRow{Node: "KD-1", State: BinsStateGroup, Members: []string{"KD-1.SLOT-A", "KD-1.SLOT-B"},
+				Inbound: []NodeBinsInbound{{OrderUUID: "ord-1", Payload: "PART-A", From: "SMN_A1"}}},
+			want: `{"node":"KD-1","state":"group","members":["KD-1.SLOT-A","KD-1.SLOT-B"],"occupied":false,` +
+				`"manifest_confirmed":false,"stocked":false,"partial":false,` +
+				`"inbound":[{"order_uuid":"ord-1","payload":"PART-A","from":"SMN_A1"}]}`,
 		},
 		{
 			name: "a stocked tote cart",
 			v: NodeBinsRow{
-				Node: "SMN_A1", Occupied: true, BinID: 27, BinLabel: "TOTE-1", BinTypeCode: "TOTE",
-				PayloadCode: "PART-A", Manifest: &manifest, ManifestConfirmed: true, Stocked: true,
-				TotesOnCart: intPtr(16), TotesPerLayer: intPtr(8),
+				Node: "SMN_A1", State: BinsStateOccupied, Occupied: true, Bins: 1, BinID: 27, BinLabel: "TOTE-1",
+				BinTypeCode: "TOTE", PayloadCode: "PART-A", Manifest: &manifest, ManifestConfirmed: true, Epoch: 3,
+				Stocked: true, TotesOnCart: intPtr(16), TotesPerLayer: intPtr(8),
 			},
-			want: `{"node":"SMN_A1","occupied":true,"bin_id":27,"bin_label":"TOTE-1","bin_type_code":"TOTE",` +
-				`"payload_code":"PART-A","manifest":"{\"items\":[{\"part_number\":\"PART-A\"}]}",` +
-				`"manifest_confirmed":true,"stocked":true,"totes_on_cart":16,"totes_per_layer":8}`,
+			want: `{"node":"SMN_A1","state":"occupied","occupied":true,"bins":1,"bin_id":27,"bin_label":"TOTE-1",` +
+				`"bin_type_code":"TOTE","payload_code":"PART-A","manifest":"{\"items\":[{\"part_number\":\"PART-A\"}]}",` +
+				`"manifest_confirmed":true,"epoch":3,"stocked":true,"partial":false,"totes_on_cart":16,"totes_per_layer":8}`,
+		},
+		{
+			name: "a partial with a carrier on its way",
+			v: NodeBinsRow{
+				Node: "SMN_A3", State: BinsStateOccupied, Occupied: true, Bins: 2, BinID: 29, BinLabel: "KD-9",
+				BinTypeCode: "KD", PayloadCode: "PART-A", Epoch: 7, Stocked: true, Partial: true, UOPCapacity: 40,
+				Inbound: []NodeBinsInbound{{OrderUUID: "ord-2", BinType: "KD", Payload: "PART-A", From: "SM-1.L1"}},
+			},
+			want: `{"node":"SMN_A3","state":"occupied","occupied":true,"bins":2,"bin_id":29,"bin_label":"KD-9",` +
+				`"bin_type_code":"KD","payload_code":"PART-A","manifest_confirmed":false,"epoch":7,"stocked":true,` +
+				`"partial":true,"uop_capacity":40,` +
+				`"inbound":[{"order_uuid":"ord-2","bin_type":"KD","payload":"PART-A","from":"SM-1.L1"}]}`,
 		},
 		{
 			name: "a base: a bare cart with no totes on it",
 			v: NodeBinsRow{
-				Node: "SMN_A2", Occupied: true, BinID: 28, BinLabel: "TOTE-2", BinTypeCode: "TOTE-BARE",
-				Bare: true, TotesOnCart: intPtr(0),
+				Node: "SMN_A2", State: BinsStateOccupied, Occupied: true, Bins: 1, BinID: 28, BinLabel: "TOTE-2",
+				BinTypeCode: "TOTE-BARE", Bare: true, Epoch: 1, TotesOnCart: intPtr(0),
 			},
-			want: `{"node":"SMN_A2","occupied":true,"bin_id":28,"bin_label":"TOTE-2","bin_type_code":"TOTE-BARE",` +
-				`"bare":true,"manifest_confirmed":false,"stocked":false,"totes_on_cart":0}`,
+			want: `{"node":"SMN_A2","state":"occupied","occupied":true,"bins":1,"bin_id":28,"bin_label":"TOTE-2",` +
+				`"bin_type_code":"TOTE-BARE","bare":true,"manifest_confirmed":false,"epoch":1,"stocked":false,` +
+				`"partial":false,"totes_on_cart":0}`,
 		},
 		{
 			name: "a snapshot with no groups",
-			v:    NodeBinsSnapshot{Digest: "0123456789abcdef", Rows: []NodeBinsRow{{Node: "SMN_A1"}}, Groups: []NodeBinsGroup{}},
-			want: `{"digest":"0123456789abcdef","rows":[{"node":"SMN_A1","occupied":false,` +
-				`"manifest_confirmed":false,"stocked":false}],"groups":[]}`,
+			v: NodeBinsSnapshot{Digest: "0123456789abcdef", ListDigest: "fedcba9876543210",
+				Rows: []NodeBinsRow{{Node: "SMN_A1", State: BinsStateEmpty}}, Groups: []NodeBinsGroup{}},
+			want: `{"digest":"0123456789abcdef","list_digest":"fedcba9876543210","rows":[{"node":"SMN_A1",` +
+				`"state":"empty","occupied":false,"manifest_confirmed":false,"stocked":false,"partial":false}],"groups":[]}`,
 		},
 		{
 			name: "a group's wants and assignments",
@@ -139,23 +166,26 @@ func TestBinWatchDigest_Golden(t *testing.T) {
 func TestNodeBinsDigest_Golden(t *testing.T) {
 	t.Parallel()
 	d := digester(t)
-	row1 := NodeBinsRow{Node: "SMN_A1", Occupied: true, BinID: 27, BinLabel: "TOTE-1", BinTypeCode: "TOTE",
-		PayloadCode: "PART-A", Stocked: true}
-	row2 := NodeBinsRow{Node: "SMN_A2"}
-	snap := NodeBinsSnapshot{Rows: []NodeBinsRow{row1, row2}}
-	// {"rows":[{"node":"SMN_A1","occupied":true,"bin_id":27,"bin_label":"TOTE-1","bin_type_code":"TOTE",
-	//   "payload_code":"PART-A","manifest_confirmed":false,"stocked":true},
-	//  {"node":"SMN_A2","occupied":false,"manifest_confirmed":false,"stocked":false}],"groups":[]}
+	row1 := NodeBinsRow{Node: "SMN_A1", State: BinsStateOccupied, Occupied: true, Bins: 1, BinID: 27, BinLabel: "TOTE-1",
+		BinTypeCode: "TOTE", PayloadCode: "PART-A", Epoch: 2, Stocked: true}
+	row2 := NodeBinsRow{Node: "SMN_A2", State: BinsStateEmpty}
+	const list = "49a5c6a5e2c14030" // BinWatchDigest of the two names
+	snap := NodeBinsSnapshot{ListDigest: list, Rows: []NodeBinsRow{row1, row2}}
+	// {"list_digest":"49a5c6a5e2c14030","rows":[{"node":"SMN_A1","state":"occupied","occupied":true,"bins":1,
+	//   "bin_id":27,"bin_label":"TOTE-1","bin_type_code":"TOTE","payload_code":"PART-A","manifest_confirmed":false,
+	//   "epoch":2,"stocked":true,"partial":false},
+	//  {"node":"SMN_A2","state":"empty","occupied":false,"manifest_confirmed":false,"stocked":false,"partial":false}],
+	//  "groups":[]}
 	base := digestTwice(t, func() (string, error) { return NodeBinsDigest(snap) })
-	if base != "80fc38516b73a20c" {
-		t.Errorf("NodeBinsDigest = %s, want 80fc38516b73a20c", base)
+	if base != "fdcec8d0565e9248" {
+		t.Errorf("NodeBinsDigest = %s, want fdcec8d0565e9248", base)
 	}
 
 	same := map[string]NodeBinsSnapshot{
-		"its own Digest":  {Digest: base, Rows: snap.Rows},
-		"reordered rows":  {Rows: []NodeBinsRow{row2, row1}},
-		"empty groups":    {Rows: snap.Rows, Groups: []NodeBinsGroup{}},
-		"rows not shared": {Rows: append([]NodeBinsRow{}, row1, row2)},
+		"its own Digest":  {Digest: base, ListDigest: list, Rows: snap.Rows},
+		"reordered rows":  {ListDigest: list, Rows: []NodeBinsRow{row2, row1}},
+		"empty groups":    {ListDigest: list, Rows: snap.Rows, Groups: []NodeBinsGroup{}},
+		"rows not shared": {ListDigest: list, Rows: append([]NodeBinsRow{}, row1, row2)},
 	}
 	for name, s := range same {
 		if got := d(NodeBinsDigest(s)); got != base {
@@ -185,7 +215,7 @@ func TestNodeBinsDigest_Golden(t *testing.T) {
 	changed := func(f func(*NodeBinsRow)) NodeBinsSnapshot {
 		r := row1
 		f(&r)
-		return NodeBinsSnapshot{Rows: []NodeBinsRow{r, row2}}
+		return NodeBinsSnapshot{ListDigest: list, Rows: []NodeBinsRow{r, row2}}
 	}
 	manifest := `{"items":[]}`
 	for name, s := range map[string]NodeBinsSnapshot{
@@ -198,7 +228,17 @@ func TestNodeBinsDigest_Golden(t *testing.T) {
 		"manifest confirmed":  changed(func(r *NodeBinsRow) { r.ManifestConfirmed = true }),
 		"totes on cart known": changed(func(r *NodeBinsRow) { r.TotesOnCart = intPtr(0) }),
 		"totes per layer":     changed(func(r *NodeBinsRow) { r.TotesPerLayer = intPtr(8) }),
-		"a group added":       {Rows: snap.Rows, Groups: []NodeBinsGroup{{Group: "KD-1"}}},
+		"a group added":       {ListDigest: list, Rows: snap.Rows, Groups: []NodeBinsGroup{{Group: "KD-1"}}},
+		"state":               changed(func(r *NodeBinsRow) { r.State = BinsStateGroup }),
+		"bins at the node":    changed(func(r *NodeBinsRow) { r.Bins = 2 }),
+		"epoch":               changed(func(r *NodeBinsRow) { r.Epoch = 3 }),
+		"partial":             changed(func(r *NodeBinsRow) { r.Partial = true }),
+		"members":             changed(func(r *NodeBinsRow) { r.Members = []string{"SMN_A1.X"} }),
+		"an order inbound": changed(func(r *NodeBinsRow) {
+			r.Inbound = []NodeBinsInbound{{OrderUUID: "ord-1", Payload: "PART-A", From: "SM-1"}}
+		}),
+		"another list": {ListDigest: "4f53cda18c2baa0c", Rows: snap.Rows},
+		"no list":      {Rows: snap.Rows},
 	} {
 		if got := d(NodeBinsDigest(s)); got == base {
 			t.Errorf("%s left the digest at %s", name, base)
