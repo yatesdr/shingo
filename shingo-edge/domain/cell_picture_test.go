@@ -316,3 +316,36 @@ func TestCellPicture_NoGeometryIsTheSchematicNeverBlank(t *testing.T) {
 // TestCellPicture_BinWordComesFromTheBinType: a press-index claim on a KD bin
 // says bins, a two-robot claim on a tote says totes, "" is unknown and not
 // tote — was right about a question nothing asks any more.
+
+// TestCellPicture_EveryPositionSaysItsStation: a position bound to a station
+// carries that station's id, a stationless one carries none. It is what lets
+// the desktop, which draws every station of the process, offer a row only its
+// own station's positions (composer-model positionChoices): Springfield Press
+// 6's desktop offered its Unloader station's ULN_002/ULN_005.
+func TestCellPicture_EveryPositionSaysItsStation(t *testing.T) {
+	t.Parallel()
+	fx := scenefixtures.A()
+	nodes := nodesOf(fx, 1)
+	pic := BuildCellPicture(CellPictureInput{StationID: 0, Nodes: nodes, Claims: claimsOf(fx, 7)})
+	byName := map[string]Node{}
+	for _, n := range nodes {
+		byName[n.CoreNodeName] = n
+	}
+	bound := 0
+	for _, p := range pic.Positions {
+		n := byName[p.CoreNodeName]
+		if p.StationID != 0 {
+			bound++
+		}
+		var want int64
+		if n.OperatorStationID != nil {
+			want = *n.OperatorStationID
+		}
+		if p.StationID != want {
+			t.Errorf("%s: station_id %d, want %d (the node's operator station)", p.CoreNodeName, p.StationID, want)
+		}
+	}
+	if bound == 0 {
+		t.Fatal("no position of the fixture is bound to a station; the pin proves nothing")
+	}
+}

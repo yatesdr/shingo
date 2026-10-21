@@ -1,7 +1,9 @@
 package www
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -24,9 +26,10 @@ import (
 // WHY NOT THE STUB. handlers_flow_test.go pins the status mapping by handing
 // the seam a sentinel error, which proves 409 and proves the handler passes
 // the seam's words through. It cannot prove the words. The sentence an
-// engineer actually reads — "<style> is running on PLN_01 — move it to PLN_03
-// after the next changeover" — is built in engine.refuseRunningPositionMove
-// out of the style's name and the two position sets, and a stub never runs it.
+// engineer actually reads — "PLN_01 holds BIN-1. Move the bin in Core first
+// (Bins → Move to PLN_03), then change the position here." — is built in
+// engine.refuseRunningPositionMove out of Core's node-bins answer and the two
+// position sets, and a stub never runs it.
 //
 // AND AT BOTH DOORS, because they are the same route. The handler decides
 // source from the session and never from the body (owner ruling R1): an admin
@@ -86,7 +89,25 @@ func TestSaveFlow_RunningPositionMoveRefusesBothDoorsByName(t *testing.T) {
 		cells = append(cells, cell)
 	}
 
-	h, router := realFlowRouter(t, db)
+	// THE BIN STANDS ON THE LEAVING POSITION, in Core's node-bins answer (every
+	// other node bare): the move would strand it, so it is refused. A move that
+	// leaves no bin behind saves (engine flow_running_move_test.go).
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		out := []protocol.NodeBinInfo{}
+		for _, n := range strings.Split(r.URL.Query().Get("nodes"), ",") {
+			if n == "" {
+				continue
+			}
+			row := protocol.NodeBinInfo{NodeName: n}
+			if n == leaving {
+				row.Occupied, row.BinLabel = true, "BIN-1"
+			}
+			out = append(out, row)
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	}))
+	t.Cleanup(core.Close)
+	h, router := realFlowRouterWithCore(t, db, core.URL)
 
 	// The fingerprint of the flow as stored, so the save below is refused for
 	// the move and not for being stale — the other 409 on this route.
@@ -110,12 +131,12 @@ func TestSaveFlow_RunningPositionMoveRefusesBothDoorsByName(t *testing.T) {
 		"station_id":  seeded.Stations["screen-a4"],
 	}
 
-	// THE SENTENCE, spelled here out of the same three parts the engine builds
-	// it from — not a substring of it. The point of this refusal is that the
-	// engineer is told which style, which position it is leaving and which it
-	// would arrive at; a test matching only "is running" would pass on a
-	// sentence that had lost two of the three.
-	want := style.Name + " is running on " + leaving + " — move it to " + free + " after the next changeover"
+	// THE SENTENCE, spelled here out of the parts the engine builds it from —
+	// not a substring of it. The engineer is told which position holds which
+	// bin, where to move it in Core and in what order; a test matching only
+	// "holds" would pass on a sentence that had lost the order.
+	_ = style
+	want := leaving + " holds BIN-1. Move the bin in Core first (Bins → Move to " + free + "), then change the position here."
 
 	for _, door := range []struct {
 		name   string
@@ -182,8 +203,15 @@ func freePositionName(t *testing.T, db *store.DB, processID int64, claims []proc
 // and this test would never reach the save.
 func realFlowRouter(t *testing.T, db *store.DB) (*Handlers, *chi.Mux) {
 	t.Helper()
+	return realFlowRouterWithCore(t, db, "http://core.invalid")
+}
+
+// realFlowRouterWithCore is realFlowRouter with Core at coreAPI: a test that
+// answers Core's node-bins door from a stub points the engine at it.
+func realFlowRouterWithCore(t *testing.T, db *store.DB, coreAPI string) (*Handlers, *chi.Mux) {
+	t.Helper()
 	cfg := config.Defaults()
-	cfg.CoreAPI = "http://core.invalid"
+	cfg.CoreAPI = coreAPI
 	eng := engine.New(engine.Config{AppConfig: cfg, DB: db, LogFunc: t.Logf})
 	eng.Start()
 	t.Cleanup(eng.Stop)

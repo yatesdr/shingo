@@ -446,13 +446,15 @@ func TestSaveFlow_RunningStyleSavesAndStartsNothing(t *testing.T) {
 // half, and the reason it has one. Sources, destinations and routes save
 // freely mid-run; MOVING the running style off a position while its bin is on
 // it is refused by name, because every runtime reader keys on the node name —
-// see refuseRunningPositionMove for the list and what each one does.
+// see refuseRunningPositionMove for the list and what each one does. A move
+// that leaves no bin behind saves (flow_running_move_test.go).
 func TestSaveFlow_RunningStyleRefusesAPositionMove(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	processID, fromStyleID, _ := seedFlowScenario(t, db)
 	eng := testEngine(t, db)
 	enableComposer(t, db, processID)
+	holdActableBins(t, eng, binRow("FLOW-GONE", "BIN-7", "PART-GONE"), bareRow("FLOW-ADD"))
 	before := snapshotFlowState(t, db, fromStyleID)
 	fp, err := eng.FlowFingerprint(processID, fromStyleID)
 	testutil.MustNoErr(t, err, "fingerprint")
@@ -472,7 +474,7 @@ func TestSaveFlow_RunningStyleRefusesAPositionMove(t *testing.T) {
 	}
 	// BY NAME, both ends: which position is being left and which is being
 	// taken, so the screen can say which is which.
-	for _, want := range []string{"FLOW-FROM", "FLOW-GONE", "FLOW-ADD"} {
+	for _, want := range []string{"FLOW-GONE", "BIN-7", "FLOW-ADD"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %s: %v", want, err)
 		}

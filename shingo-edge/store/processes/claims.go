@@ -1025,8 +1025,9 @@ func deleteClaim(db DBTX, id int64) (*KeptSpot, error) {
 	// positions is what every seeder, the sim and 500-odd tests do.
 	//
 	// The composer's own guard stays and stays STRICTER — it sees the whole
-	// flow, so it can refuse the move before anything is written and say
-	// "PLN_01 is running, move it to PLN_03 after the next changeover". This
+	// flow, so it can refuse the move before anything is written and name the
+	// bin and the node to move it to: "PLN_01 holds BIN-7. Move the bin in Core
+	// first (Bins → Move to PLN_03), then change the position here." This
 	// one sees a row, and it is the half that cannot be bypassed.
 	if err := refuseStrandingARunningBin(db, id); err != nil {
 		return nil, err
@@ -1074,7 +1075,7 @@ func refuseStrandingARunningBin(db DBTX, id int64) error {
 	case err != nil:
 		return fmt.Errorf("claim %d: running-bin check: %w", id, err)
 	}
-	return fmt.Errorf("%w: %s is on the style this process is running and has a bin on it — take it off the flow after the next changeover",
+	return fmt.Errorf("%w: %s holds a bin on the style this process is running. Move the bin in Core first (Bins → Move), then change the position here.",
 		domain.ErrRunningPositionMove, node)
 }
 

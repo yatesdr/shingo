@@ -151,6 +151,59 @@ type FlowSaveRequest struct {
 	// (containment route, curtain) that no other style lends it.
 	moved bool
 	stamp func(*domain.NodeClaimInput)
+	// occupancy is SaveFlow's own: Core's node-bins answer for a save to the
+	// running style, BEFORE the transaction (runningMoveOccupancy).
+	occupancy runningOccupancy
+}
+
+// runningOccupancy is what Core's node-bins door said, before a save's
+// transaction, about every node the running style names or the draft would
+// name. The read is an HTTP call to Core, so it is taken outside the
+// transaction: the store is pinned to one connection, and every board's poll
+// would queue behind a transaction waiting on the network.
+type runningOccupancy struct {
+	rows map[string]NodeBinInfo
+	err  error
+}
+
+// runningMoveOccupancy asks Core's node-bins door about every node the running
+// style's stored claims and the request's cells name: one claims read and one
+// node-bins call, the read a REQUEST makes (claimOccupancy). Only a save to the
+// running style asks.
+func (e *Engine) runningMoveOccupancy(req FlowSaveRequest) runningOccupancy {
+	stored, err := e.db.ListStyleNodeClaims(req.ToStyleID)
+	if err != nil {
+		return runningOccupancy{err: err}
+	}
+	names := claimPlaces(stored)
+	for _, c := range req.Cells {
+		in := domain.Expand(c, nil, "", "")
+		for _, n := range append(in.Positions(), in.InboundStaging, in.OutboundStaging) {
+			if n != "" {
+				names[n] = processes.NodeClaim{}
+			}
+		}
+	}
+	list := make([]string, 0, len(names))
+	for n := range names {
+		list = append(list, n)
+	}
+	sort.Strings(list)
+	// The node-bins door a REQUEST already asks on this tree (claimOccupancy):
+	// any node, staging included, with its part. A name Core does not answer
+	// for has no row and reads as unknown.
+	if !e.coreClient.Available() {
+		return runningOccupancy{err: fmt.Errorf("no answer from Core (occupancy=%s) — try again in a moment: %w", OccupancyOutcome(false, ErrCoreNotConfigured), ErrCoreNotConfigured)}
+	}
+	bins, reachable, err := e.coreClient.FetchNodeBins(list)
+	if !reachable {
+		return runningOccupancy{err: fmt.Errorf("no answer from Core (occupancy=%s) — try again in a moment: %w", OccupancyOutcome(reachable, err), err)}
+	}
+	rows := make(map[string]NodeBinInfo, len(bins))
+	for _, b := range bins {
+		rows[b.NodeName] = b
+	}
+	return runningOccupancy{rows: rows}
 }
 
 // FlowSaveResult is what a save returns: the NEW fingerprint (post-save),
@@ -622,25 +675,59 @@ var ErrRunningPositionMove = domain.ErrRunningPositionMove
 //     PLN_01 it is a SituationAdd, and new material is delivered onto a
 //     position that still has the old part's bin on it.
 //
-// So the move is refused BY NAME, and only the move: this gate fires on the
-// set of positions, never on what is written to one.
-func refuseRunningPositionMove(styleName string, stored []processes.NodeClaim, draft flowDraft) error {
-	was := map[string]bool{}
-	for _, c := range stored {
-		was[c.CoreNodeName] = true
-	}
-	now := map[string]bool{}
-	for _, c := range draft.cells {
-		now[c.cell.CoreNodeName] = true
-	}
+// SO A POSITION MAY CHANGE ONLY WHEN NO BIN IS LEFT BEHIND. Every hazard above
+// is a bin on a node the running style stops naming. With no bin there, the
+// move strands nothing, and refusing it anyway was the gap Springfield Press 6
+// fell into on 2026-10-21: its running style had to move from PLN_006/007 to
+// PLN_010/012, the screens could not do it, and the claims were moved by hand.
+//
+// THE WHOLE CLAIM, NOT ITS HEAD. A claim occupies its head, its paired and
+// second paired positions, and its two staging nodes (claimPlaces). A move, a
+// delete, a changed partner or a changed staging node that stops naming one of
+// them leaves whatever stands there with no claim, and nothing ever drains it
+// (the orphaned pair: IsPairedOnDeckNode stops protecting it, and no claim
+// reads the node again). So the diff is over every node every claim names, and
+// a node that stops being named while it holds a bin is refused. That is the
+// answer to the orphaned pair too: refused here, nothing needs to clear it.
+//
+// A NODE THAT STARTS BEING NAMED MAY HOLD A BIN, AND USUALLY WILL: the bin
+// moved there in Core first, which is the order the refusal asks for. It is
+// refused only when the bin is another part's, which this position would then
+// count, finalize and evacuate as its own.
+//
+// WHY CORE FIRST IS THE SAFE ORDER (verified 2026-10-21):
+//
+//   - Core's bin move by hand (service.BinService.MoveByHand) releases the old
+//     node on the Edge and writes a landing for the new one;
+//   - with no claim on the new node, the landing still reaches the Edge (Core's
+//     last arm, shingo-core/service/bin_landing.go landingStations);
+//   - the Edge binds a landed bin by process node, claim or not
+//     (handler_bin_landed.go), so after the Core move the old position is empty
+//     here and the bin is bound, with its count, at the new one;
+//   - this save then finds the leaving position bare and the new one holding
+//     the position's own bin, and saves.
+//
+// Claims first is the unsafe order: the old node keeps a bin with no claim (no
+// refill, no PLC count, no evacuation at changeover).
+//
+// THE OCCUPANCY IS READ BEFORE THE TRANSACTION (runningMoveOccupancy, for a
+// save to the running style: one claims read and one call to Core's node-bins
+// door, the read a REQUEST makes) and handed in, so this stays pure. A read
+// Core did not answer, or a node it gave no row for, is refused with a retry:
+// a wrong "go" strands a bin, a wrong "wait" costs one more press of Save. The
+// store's floor (refuseStrandingARunningBin, on DeleteClaim) still refuses
+// deleting a running head the Edge has a bin bound to.
+func refuseRunningPositionMove(stored []processes.NodeClaim, draft flowDraft, occ runningOccupancy) error {
+	was := claimPlaces(stored)
+	now := claimPlaces(draft.claims())
 	var leaving, arriving []string
 	for n := range was {
-		if !now[n] {
+		if _, ok := now[n]; !ok {
 			leaving = append(leaving, n)
 		}
 	}
 	for n := range now {
-		if !was[n] {
+		if _, ok := was[n]; !ok {
 			arriving = append(arriving, n)
 		}
 	}
@@ -649,17 +736,63 @@ func refuseRunningPositionMove(styleName string, stored []processes.NodeClaim, d
 	}
 	sort.Strings(leaving)
 	sort.Strings(arriving)
-	switch {
-	case len(leaving) > 0 && len(arriving) > 0:
-		return fmt.Errorf("%w: %s is running on %s — move it to %s after the next changeover",
-			ErrRunningPositionMove, styleName, strings.Join(leaving, ", "), strings.Join(arriving, ", "))
-	case len(leaving) > 0:
-		return fmt.Errorf("%w: %s is running on %s — take that position off the flow after the next changeover",
-			ErrRunningPositionMove, styleName, strings.Join(leaving, ", "))
-	default:
-		return fmt.Errorf("%w: %s is running — add %s to the flow after the next changeover",
-			ErrRunningPositionMove, styleName, strings.Join(arriving, ", "))
+	rows, err := occ.rows, occ.err
+	if err != nil {
+		return fmt.Errorf("%w: cannot tell whether %s hold a bin: %v",
+			ErrRunningPositionMove, strings.Join(append(append([]string(nil), leaving...), arriving...), ", "), err)
 	}
+	var problems []string
+	for _, n := range leaving {
+		r, ok := rows[n]
+		switch {
+		case !ok:
+			problems = append(problems, fmt.Sprintf("cannot tell whether %s holds a bin — try again in a moment.", n))
+		case r.Occupied:
+			move := "Move the bin in Core first (Bins → Move)"
+			if len(arriving) == 1 {
+				move = "Move the bin in Core first (Bins → Move to " + arriving[0] + ")"
+			}
+			problems = append(problems, fmt.Sprintf("%s holds %s. %s, then change the position here.", n, binName(r), move))
+		}
+	}
+	for _, n := range arriving {
+		r, ok := rows[n]
+		switch {
+		case !ok:
+			problems = append(problems, fmt.Sprintf("cannot tell whether %s holds a bin — try again in a moment.", n))
+		case r.Occupied && r.PayloadCode != "" && r.PayloadCode != now[n].PayloadCode:
+			problems = append(problems, fmt.Sprintf("%s holds %s of %s, which the position moving there does not run. Move it off in Core first (Bins → Move), then change the position here.",
+				n, binName(r), r.PayloadCode))
+		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrRunningPositionMove, strings.Join(problems, " "))
+}
+
+// claimPlaces is every node a set of claims names — head, paired, second
+// paired, inbound and outbound staging — each with the claim that names it
+// (the first, when two do).
+func claimPlaces(claims []processes.NodeClaim) map[string]processes.NodeClaim {
+	out := map[string]processes.NodeClaim{}
+	for _, c := range claims {
+		for _, n := range append(c.Positions(), c.InboundStaging, c.OutboundStaging) {
+			if _, taken := out[n]; n != "" && !taken {
+				out[n] = c
+			}
+		}
+	}
+	return out
+}
+
+// binName is the bin the refusal names: its label, or "a bin" when the copy
+// carries none.
+func binName(r NodeBinInfo) string {
+	if r.BinLabel != "" {
+		return r.BinLabel
+	}
+	return "a bin"
 }
 
 // gateRefusal is the HMI setup gate.
@@ -735,6 +868,11 @@ func (e *Engine) SaveFlow(processID int64, req FlowSaveRequest) (*FlowSaveResult
 	if err != nil {
 		return nil, err
 	}
+	// The running style's position guard asks Core's node-bins door, and asks
+	// here for the same reason (runningOccupancy).
+	if process.ActiveStyleID != nil && *process.ActiveStyleID == req.ToStyleID {
+		req.occupancy = e.runningMoveOccupancy(req)
+	}
 
 	// WHAT THE TRANSACTION HOLDS, AND WHY ONLY THIS. The store is pinned to
 	// ONE connection, so every board's poll queues behind whatever this holds.
@@ -796,7 +934,7 @@ func (e *Engine) saveFlowTx(tx *sql.Tx, process *processes.Process, style proces
 		}
 	}
 	if running := process.ActiveStyleID != nil && *process.ActiveStyleID == req.ToStyleID; running {
-		if err := refuseRunningPositionMove(style.Name, stored, draft); err != nil {
+		if err := refuseRunningPositionMove(stored, draft, req.occupancy); err != nil {
 			return nil, nil, err
 		}
 	}

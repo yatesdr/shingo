@@ -122,6 +122,13 @@ type CellPosition struct {
 	Claim        *CellClaim `json:"claim,omitempty"`
 	PartnerOf    string     `json:"partner_of,omitempty"`
 	PartnerKind  string     `json:"partner_kind,omitempty"`
+	// StationID is the operator station the node is bound to, 0 for a node
+	// bound to none (a back or staging slot the press shares). It is what
+	// marks a position as this station's: a row may move only to its own
+	// station's positions or a stationless one (composer-model positionChoices),
+	// so the desktop, which draws every station of the process, offers what
+	// the station's HMI offers and never an unloader's window.
+	StationID int64 `json:"station_id,omitempty"`
 }
 
 // CellClaim is the slice of a NodeClaim the picture reads: the choreography,
@@ -348,6 +355,9 @@ func BuildCellPicture(in CellPictureInput) *CellPicture {
 		}
 		seen[n.CoreNodeName] = true
 		pos := CellPosition{CoreNodeName: n.CoreNodeName, Sequence: n.Sequence}
+		if n.OperatorStationID != nil {
+			pos.StationID = *n.OperatorStationID
+		}
 		if x, y, ok := LocateCellPosition(in.Geometry, n.CoreNodeName); ok {
 			pos.X, pos.Y = &x, &y
 			placed++

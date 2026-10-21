@@ -28,8 +28,9 @@ import (
 // the process, set its active style, then edit its positions.
 //
 // The composer's own guard stays and stays STRICTER: it sees the whole flow,
-// so it refuses the move before anything is written and can say "PLN_01 is
-// running — move it to PLN_03 after the next changeover". This is the half
+// so it refuses the move before anything is written and can say "PLN_01 holds
+// BIN-7. Move the bin in Core first (Bins → Move to PLN_03), then change the
+// position here." This is the half
 // that cannot be bypassed.
 
 // seedRunningCell builds a process running one style on PLN_01, with a
