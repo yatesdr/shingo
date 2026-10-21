@@ -37,7 +37,11 @@ import (
 // Core. A Core older than this Edge answers no kind; Core deploys first.
 
 // ErrAskPending is an ask whose answer did not arrive within the wait. It was
-// sent; the answer will be applied when it comes.
+// sent; the answer will be applied when it comes. A write door shows
+// askPendingNotice in its place (www writeAskPending); a read-ask's refusal
+// carries this text to the operator (a changeover start's preflight).
+//
+// OWNER-WORDS
 var ErrAskPending = errors.New("sent; Core has not answered yet")
 
 // ErrCoreDoesNotAnswer is an act refused before anything was sent: the last

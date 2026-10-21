@@ -74,6 +74,7 @@ func NewPreflightChecker(db *store.DB, core PreflightCorePoster, station string)
 // TestChangeoverPreflight_PayloadsAgreeWithStyleCheck says so.
 func (p *PreflightChecker) PreflightInventoryCheck(ctx context.Context, toStyleID int64) ([]string, error) {
 	if p.core == nil || !p.core.Available() {
+		// OWNER-WORDS
 		return nil, fmt.Errorf("preflight: Core does not answer the preflight ask")
 	}
 	claims, err := p.db.ListStyleNodeClaims(toStyleID)
@@ -122,6 +123,7 @@ func dedupPayloadCodes(codes []string) []string {
 // "unchecked"; a start refuses), the gate does not pretend it looked.
 func (p *PreflightChecker) PreflightPayloads(ctx context.Context, codes []string) ([]string, error) {
 	if p.core == nil || !p.core.Available() {
+		// OWNER-WORDS
 		return nil, fmt.Errorf("preflight: Core does not answer the preflight ask")
 	}
 	payloads := dedupPayloadCodes(codes)
