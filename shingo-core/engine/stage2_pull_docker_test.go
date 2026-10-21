@@ -378,7 +378,7 @@ func TestStage2Pull_CycleTwoWindowsThreeCarts(t *testing.T) {
 	landed, err := db.GetBin(binOf(moves[0]))
 	testutil.MustNoErr(t, err, "landed cart")
 	win := landed.NodeID
-	_, err = eng.ClearForReuseStampAndBookDeparture(landed.ID, *win, nil, bins.StampCarrier)
+	_, err = eng.ClearForReuseStampAndBookDeparture(landed.ID, *win, nil, bins.StampCarrier, nil)
 	testutil.MustNoErr(t, err, "SEND ON")
 	back, err := db.GetBin(landed.ID)
 	testutil.MustNoErr(t, err, "cart after SEND ON")

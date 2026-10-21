@@ -59,38 +59,38 @@ func TestNoneFound_IsAlwaysErrNoRows(t *testing.T) {
 		find func() (*bins.Bin, error)
 	}{
 		{"typed, group-scoped", func() (*bins.Bin, error) {
-			return bins.FindEmptyOfTypeInGroup(sdb, "NF-45x58", grpID, 0, reservations.Anyone)
+			return bins.FindEmptyOfTypeInGroup(sdb, "NF-45x58", grpID, 0, reservations.Anyone, nil)
 		}},
 		{"typed, group-scoped, blank code", func() (*bins.Bin, error) {
 			// The blank-code guard returns before querying. It must still speak
 			// the family's language, or a caller cannot handle one guard
 			// differently from the query behind it without knowing which is which.
-			return bins.FindEmptyOfTypeInGroup(sdb, "", grpID, 0, reservations.Anyone)
+			return bins.FindEmptyOfTypeInGroup(sdb, "", grpID, 0, reservations.Anyone, nil)
 		}},
 		{"untyped, group-scoped", func() (*bins.Bin, error) {
-			return bins.FindEmptyCompatibleInGroup(sdb, "NF-NO-SUCH-PAYLOAD", grpID, 0, reservations.Anyone)
+			return bins.FindEmptyCompatibleInGroup(sdb, "NF-NO-SUCH-PAYLOAD", grpID, 0, reservations.Anyone, nil)
 		}},
 		{"typed, plant-wide", func() (*bins.Bin, error) {
-			return bins.FindEmptyOfType(sdb, "NF-45x58", "", 0, bins.EmptyFence{}, reservations.Anyone)
+			return bins.FindEmptyOfType(sdb, "NF-45x58", "", 0, bins.EmptyFence{}, reservations.Anyone, nil)
 		}},
 		{"typed, plant-wide, with a zone preference", func() (*bins.Bin, error) {
 			// The zone arm is a SECOND query with its own result handling, so it
 			// gets its own case: a zone-preferring call that matches nothing must
 			// arrive at the same sentinel as one without a preference.
-			return bins.FindEmptyOfType(sdb, "NF-45x58", "NF-NO-SUCH-ZONE", 0, bins.EmptyFence{}, reservations.Anyone)
+			return bins.FindEmptyOfType(sdb, "NF-45x58", "NF-NO-SUCH-ZONE", 0, bins.EmptyFence{}, reservations.Anyone, nil)
 		}},
 		{"typed, plant-wide, FENCED", func() (*bins.Bin, error) {
 			// A non-zero fence renders a whole extra CTE and arm, so it is a
 			// materially different query and gets its own case.
 			return bins.FindEmptyOfType(sdb, "NF-45x58", "", 0,
-				bins.EmptyFence{ProcessNode: "NF-NO-SUCH-PROCESS", OriginGroup: "NF-EMPTY-GRP"}, reservations.Anyone)
+				bins.EmptyFence{ProcessNode: "NF-NO-SUCH-PROCESS", OriginGroup: "NF-EMPTY-GRP"}, reservations.Anyone, nil)
 		}},
 		{"untyped, plant-wide, FENCED", func() (*bins.Bin, error) {
 			return bins.FindEmptyCompatible(sdb, "NF-NO-SUCH-PAYLOAD", "", 0,
-				bins.EmptyFence{ProcessNode: "NF-NO-SUCH-PROCESS", OriginGroup: "NF-EMPTY-GRP"}, reservations.Anyone)
+				bins.EmptyFence{ProcessNode: "NF-NO-SUCH-PROCESS", OriginGroup: "NF-EMPTY-GRP"}, reservations.Anyone, nil)
 		}},
 		{"untyped, plant-wide", func() (*bins.Bin, error) {
-			return bins.FindEmptyCompatible(sdb, "NF-NO-SUCH-PAYLOAD", "", 0, bins.EmptyFence{}, reservations.Anyone)
+			return bins.FindEmptyCompatible(sdb, "NF-NO-SUCH-PAYLOAD", "", 0, bins.EmptyFence{}, reservations.Anyone, nil)
 		}},
 		{"full-carrier FIFO", func() (*bins.Bin, error) {
 			return bins.FindSourceFIFO(sdb, "NF-NO-SUCH-PAYLOAD", 0)
@@ -137,7 +137,7 @@ func TestRealFailure_IsNotMistakenForNoneFound(t *testing.T) {
 		_, _ = sdb.Exec(`ALTER TABLE bin_types_moved_by_test RENAME TO bin_types`)
 	})
 
-	got, ferr := bins.FindEmptyOfType(sdb, "ANY", "", 0, bins.EmptyFence{}, reservations.Anyone)
+	got, ferr := bins.FindEmptyOfType(sdb, "ANY", "", 0, bins.EmptyFence{}, reservations.Anyone, nil)
 	if got != nil {
 		t.Fatalf("returned a bin from a query that cannot run: %d", got.ID)
 	}

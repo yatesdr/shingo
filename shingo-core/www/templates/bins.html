@@ -42,6 +42,7 @@
                 data-width="{{.WidthIn}}"
                 data-height="{{.HeightIn}}"
                 data-length="{{.LengthIn}}"
+                data-totes-per-layer="{{with .TotesPerLayer}}{{.}}{{end}}"
                 data-robot-group="{{.RequiredRobotGroup}}">Edit</button>
               <form method="POST" action="/bin-types/delete" style="display:inline" data-action-submit="confirmDeleteForm" data-confirm-msg="Delete bin type {{.Code}}? All bins of this type must be removed first.">
                 <input type="hidden" name="id" value="{{.ID}}">
@@ -222,6 +223,10 @@
         </div>
       </div>
       <div class="form-group">
+        <label>Totes per layer <span class="tooltip-trigger" title="How many totes one layer of this carrier holds. Blank if it carries no totes, or if nobody has said.">?</span></label>
+        <input type="number" name="totes_per_layer" min="1" step="1" placeholder="(not a tote carrier)">
+      </div>
+      <div class="form-group">
         <label>Empty carrier robots <span class="tooltip-trigger" title="Robots for this carrier when empty. Loaded bins use the payload's Robot Group.">?</span></label>
         <div class="tag-list" id="bt-create-robot-group" data-current=""></div>
       </div>
@@ -257,6 +262,10 @@
           <input type="number" name="height_in" id="bt-edit-h" placeholder="H" step="0.1" style="flex:1">
           <input type="number" name="length_in" id="bt-edit-l" placeholder="L" step="0.1" style="flex:1">
         </div>
+      </div>
+      <div class="form-group">
+        <label>Totes per layer <span class="tooltip-trigger" title="How many totes one layer of this carrier holds. Blank if it carries no totes, or if nobody has said.">?</span></label>
+        <input type="number" name="totes_per_layer" id="bt-edit-totes-per-layer" min="1" step="1" placeholder="(not a tote carrier)">
       </div>
       <div class="form-group">
         <label>Empty carrier robots <span class="tooltip-trigger" title="Robots for this carrier when empty. Loaded bins use the payload's Robot Group.">?</span></label>

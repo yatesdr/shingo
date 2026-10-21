@@ -174,9 +174,24 @@ const (
 
 	// OpBinRetyped tags the admin bin edit that changed a carrier's type
 	// (store.UpdateBin). before_uop == after_uop: a re-type changes no count
-	// and is no binding boundary. metadata carries {dunnage_from, dunnage_to},
+	// and is no binding boundary. detail carries {dunnage_from, dunnage_to},
 	// the codes the CLEAR records when it re-stamps a type.
 	OpBinRetyped = "bin_retyped"
+
+	// OpTotesDeclared tags a height a person declared with the CLEAR
+	// (service.BinManifestService.DeclareTotesTx): bins.totes_on_cart written
+	// as layers × the carrier's totes per layer, in the clear's transaction,
+	// after the clear. before_uop == after_uop: it changes no count and is no
+	// binding boundary. detail carries {layers, totes_per_layer,
+	// totes_on_cart}.
+	OpTotesDeclared = "totes_declared"
+
+	// OpTotesEdited tags the admin bin edit that changed a cart's count of
+	// totes without changing its type (store.UpdateBin). before_uop ==
+	// after_uop; no binding boundary. detail carries {totes_from, totes_to},
+	// null for unknown. A re-type blanks the count and records it on its own
+	// OpBinRetyped row instead.
+	OpTotesEdited = "totes_edited"
 )
 
 // ReleaseFamilyOps is the canonical set of ops that retire a bin's manifest —

@@ -506,6 +506,11 @@ async function renderActions(data) {
     html += '<option value="' + bt.id + '"' + sel + '>' + esc(bt.code) + '</option>';
   });
   html += '</select></div>';
+  // The count of totes standing on the cart, filled or empty: blank is
+  // unknown, 0 is a base. A change of bin type blanks it on the server.
+  var totes = (b.totes_on_cart === undefined || b.totes_on_cart === null) ? '' : String(b.totes_on_cart);
+  html += '<div class="form-group"><label title="Totes standing on the cart, filled or empty. Blank is unknown; 0 is a base. Changing the bin type blanks it.">Totes on cart</label>' +
+    '<input type="number" id="bd-edit-totes" min="0" step="1" placeholder="unknown" value="' + esc(totes) + '" style="width:90px"></div>';
   html += '<button class="btn btn-sm" data-action="updateBinProps">Save</button>';
   html += '</div></div>';
 
@@ -694,9 +699,13 @@ function updateBinProps() {
   var label = document.getElementById('bd-edit-label').value.trim();
   var desc = document.getElementById('bd-edit-desc').value.trim();
   var binTypeID = parseInt(document.getElementById('bd-edit-bin-type').value, 10);
-  var params = { label: label, description: desc };
+  // Sent every time, as the box stands: blank is unknown (null). The box opens
+  // on the stored count, so a save of the other fields sends it back as it was
+  // and the server writes nothing for it.
+  var totesText = document.getElementById('bd-edit-totes').value.trim();
+  var params = { label: label, description: desc, totes_on_cart: totesText === '' ? null : parseInt(totesText, 10) };
   if (binTypeID) params.bin_type_id = binTypeID;
-  runBinAction('update', params, ['bd-edit-label', 'bd-edit-desc', 'bd-edit-bin-type']);
+  runBinAction('update', params, ['bd-edit-label', 'bd-edit-desc', 'bd-edit-bin-type', 'bd-edit-totes']);
 }
 
 function addNote() {
@@ -1145,6 +1154,9 @@ function openEditBTModal(btn) {
   document.getElementById('bt-edit-w').value = d.width && d.width !== '0' ? d.width : '';
   document.getElementById('bt-edit-h').value = d.height && d.height !== '0' ? d.height : '';
   document.getElementById('bt-edit-l').value = d.length && d.length !== '0' ? d.length : '';
+  // Blank is unknown, and a save of a blank box writes unknown: the box must
+  // open on the stored value or a save of anything else on the form erases it.
+  document.getElementById('bt-edit-totes-per-layer').value = d.totesPerLayer || '';
   renderRobotGroupChoices(document.getElementById('bt-edit-robot-group'), d.robotGroup || '');
   showModal('bt-edit-modal');
 }

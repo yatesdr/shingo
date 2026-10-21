@@ -40,7 +40,10 @@ CREATE TABLE IF NOT EXISTS bin_types (
     length_in   DOUBLE PRECISION NOT NULL DEFAULT 0,
     required_robot_group TEXT NOT NULL DEFAULT '',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- v161: how many totes one layer of this carrier holds. NULL: not a tote
+    -- carrier, or not said.
+    totes_per_layer INTEGER CHECK (totes_per_layer > 0)
 );
 
 CREATE TABLE IF NOT EXISTS payloads (
@@ -54,7 +57,11 @@ CREATE TABLE IF NOT EXISTS payloads (
     near_empty_robot_group   TEXT    NOT NULL DEFAULT '',
     near_empty_threshold_pct INTEGER NOT NULL DEFAULT 0,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- v161: the layers of totes a full cart stands, and the cycles (UOP) that
+    -- fill one tote. NULL is unknown.
+    tote_layers             INTEGER CHECK (tote_layers > 0),
+    uop_per_tote            INTEGER CHECK (uop_per_tote > 0)
 );
 
 -- payload_containment: the per-payload quality containment flag. A quality
@@ -121,7 +128,10 @@ CREATE TABLE IF NOT EXISTS bins (
     -- generation ended at a lift, set with the bump in the lift's UPDATE and
     -- cleared at the arrival. A late window starting at or after it is not
     -- the lifted carrier's (refused as after_lift).
-    lifted_at          TIMESTAMPTZ
+    lifted_at          TIMESTAMPTZ,
+    -- v161: the totes standing on the cart, filled or empty. NULL is unknown;
+    -- 0 is a base. Every statement that empties a carrier writes NULL.
+    totes_on_cart      INTEGER CHECK (totes_on_cart >= 0)
 );
 CREATE INDEX IF NOT EXISTS idx_bins_type ON bins(bin_type_id);
 CREATE INDEX IF NOT EXISTS idx_bins_node ON bins(node_id);

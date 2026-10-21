@@ -89,6 +89,15 @@ type Bin struct {
 	// source finder skips held candidates; occupancy and inventory reads see
 	// it normally — the bin physically occupies its spot either way.
 	QualityHold bool `json:"quality_hold,omitempty"`
+	// TotesOnCart is bins.totes_on_cart: the totes standing on the cart,
+	// filled or empty. nil is unknown; 0 is a base. Every statement that
+	// empties a carrier writes nil (service/bin_manifest.go emptiedCarrierSET);
+	// a person declares it with the CLEAR or the admin bin edit.
+	TotesOnCart *int `json:"totes_on_cart,omitempty"`
+	// TotesPerLayer is the carrier type's bin_types.totes_per_layer, joined by
+	// BinJoinQuery so the node-bins row can carry it without a read of its own.
+	// nil for a carrier that says none.
+	TotesPerLayer *int `json:"totes_per_layer,omitempty"`
 }
 
 // ManifestEntry is a single line in a bin's manifest — one part number,
@@ -177,3 +186,8 @@ func (b *Bin) ParseManifest() (*Manifest, error) {
 	}
 	return &m, nil
 }
+
+// TotesEdit is the admin bin edit's count of totes on the cart
+// (bins.totes_on_cart). A nil *TotesEdit leaves the column alone; To nil
+// writes unknown; 0 is a base.
+type TotesEdit struct{ To *int }

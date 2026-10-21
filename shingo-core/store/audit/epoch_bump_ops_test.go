@@ -168,6 +168,7 @@ func TestEpochBumpOpsIsASupersetOfTheReleaseFamily(t *testing.T) {
 		OpCycleCount, OpManifestConfirmed, OpManifestUnconfirmed, OpStaleEpochDropped, OpPayloadMismatchDropped,
 		OpPayloadBoundFirstDelta, OpPayloadReboundWithInventory,
 		OpOperatorOverrideReleasePartial, OpOperatorOverridePullParts, OpAfterLift, OpReleaseDeclaredFull,
+		OpTotesDeclared, OpTotesEdited,
 	} {
 		if bump[op] {
 			t.Errorf("%q is in EpochBumpOps and does not bump the epoch. A non-boundary op "+

@@ -208,6 +208,22 @@ Control whether a robot accepts new dispatch orders.
 
 One cycle of the manufacturing process supported by the bin's parts. A bin with UOP capacity 24 contains enough parts for 24 production cycles. UOP remaining drives reorder decisions.
 
+### Totes on Cart
+
+How many totes stand on a tote cart, filled or empty: `bins.totes_on_cart`. **NULL is unknown** (a cart nobody has declared, or one emptied since); **0 is a base**, a cart with no totes on it. A base is a count, not a bin type: there is no base type. Every statement that empties a carrier writes it NULL; a person declares a height with the CLEAR (layers × the cart's own type's totes per layer); the admin bin edit sets it; an admin re-type blanks it; Core derives it at a tote press when the cart outside the press is lifted (what the press's build drew from it). "Bare" keeps its own two meanings and never means a base.
+
+### Totes per Layer
+
+How many totes make one layer on a cart of a bin type: `bin_types.totes_per_layer`, NULL when the type is not a tote cart. A count of totes is a height only on an exact multiple of it.
+
+### Tote Layers
+
+How many layers of totes a payload's full stack stands: `payloads.tote_layers`, NULL when the part states none. It is the height an empty is wanted at when it is set down anywhere but the press of a cell fed from behind (there, 0: a base). An empty is ranked by it and never refused for it.
+
+### UOP per Tote
+
+The cycles (UOP) that fill one tote of a payload: `payloads.uop_per_tote`, NULL when the part states none. With it, Core turns a press's count into the totes it filled. Without it, no tote count is derived.
+
 ### Supermarket
 
 An automated storage area consisting of lanes and a shuffle row, represented as a node group (`NGRP`).

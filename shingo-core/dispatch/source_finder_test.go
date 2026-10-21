@@ -65,6 +65,10 @@ type fakeFinderDB struct {
 	// this was the ZERO value on the simple path; MG3-1b makes it real, so the
 	// record is what the inverted pin asserts against.
 	lastAsker reservations.DigAsker
+	// lastWant records the height (in layers) the empty finders were handed;
+	// wantAt is the height GetSetDownNode answers for a node name.
+	lastWant *int
+	wantAt   map[string]int
 	// fencedGroups are the group node ids that turn every asker away, and
 	// fencedGroupErr makes the fence read FAIL. Both stand for a strict
 	// maintained group the need is not supported at.
@@ -180,6 +184,17 @@ func (f *fakeFinderDB) GetNodeByDotName(name string) (*nodes.Node, error) {
 	return nil, sql.ErrNoRows
 }
 
+func (f *fakeFinderDB) GetSetDownNode(name, _ string) (*nodes.Node, *int, error) {
+	n, err := f.GetNodeByDotName(name)
+	if err != nil {
+		return nil, nil, err
+	}
+	if layers, ok := f.wantAt[name]; ok {
+		return n, &layers, nil
+	}
+	return n, nil, nil
+}
+
 func (f *fakeFinderDB) GetNode(id int64) (*nodes.Node, error) {
 	if err, ok := f.nodeErr[id]; ok {
 		return nil, err
@@ -217,7 +232,8 @@ func (f *fakeFinderDB) ListLoaderHomeBinTypes(loaderID int64) (map[int64][]strin
 // behaviour under test on this path, so a fake that dropped the argument would
 // let it be removed with every test still green — the same reason its
 // predecessor recorded the subtree it was told to exclude.
-func (f *fakeFinderDB) FindEmptyBinOfType(binTypeCode, _ string, _ int64, fence bins.EmptyFence, asker reservations.DigAsker) (*bins.Bin, error) {
+func (f *fakeFinderDB) FindEmptyBinOfType(binTypeCode, _ string, _ int64, fence bins.EmptyFence, asker reservations.DigAsker, want *int) (*bins.Bin, error) {
+	f.lastWant = want
 	f.typedGlobalCalls++
 	f.lastFence = fence
 	f.lastAsker = asker
@@ -290,7 +306,8 @@ func (f *fakeFinderDB) MaintainedEpisodeForOrigin(originID string) (string, stri
 	return f.maintainedGroup[originID], f.maintainedType[originID], nil
 }
 
-func (f *fakeFinderDB) FindEmptyBinOfTypeInGroup(binTypeCode string, _, _ int64, asker reservations.DigAsker) (*bins.Bin, error) {
+func (f *fakeFinderDB) FindEmptyBinOfTypeInGroup(binTypeCode string, _, _ int64, asker reservations.DigAsker, want *int) (*bins.Bin, error) {
+	f.lastWant = want
 	f.typedGroupCalls++
 	f.lastAsker = asker
 	if f.searchErr != nil {
@@ -313,7 +330,8 @@ func (f *fakeFinderDB) FindSourceBinFIFO(_ string, _ int64) (*bins.Bin, error) {
 	return f.fifoBin, nil
 }
 
-func (f *fakeFinderDB) FindEmptyCompatibleBin(_, _ string, _ int64, fence bins.EmptyFence, asker reservations.DigAsker) (*bins.Bin, error) {
+func (f *fakeFinderDB) FindEmptyCompatibleBin(_, _ string, _ int64, fence bins.EmptyFence, asker reservations.DigAsker, want *int) (*bins.Bin, error) {
+	f.lastWant = want
 	f.globalEmptyCalls++
 	f.lastFence = fence
 	f.lastAsker = asker
@@ -337,7 +355,8 @@ func (f *fakeFinderDB) FindPartialToFinish(string, []string, int64, reservations
 	return nil, sql.ErrNoRows
 }
 
-func (f *fakeFinderDB) FindEmptyCompatibleBinInGroup(_ string, _, _ int64, asker reservations.DigAsker) (*bins.Bin, error) {
+func (f *fakeFinderDB) FindEmptyCompatibleBinInGroup(_ string, _, _ int64, asker reservations.DigAsker, want *int) (*bins.Bin, error) {
+	f.lastWant = want
 	f.groupEmptyCalls++
 	f.lastAsker = asker
 	if f.searchErr != nil {
@@ -959,7 +978,8 @@ func (f *fakeFinderDB) GetLoaderHomeCarriers(posID int64) (*loaders.Home, []stri
 
 // The set finders answer from typedEmpty like their single-type twins, taking
 // the first of the codes that has a carrier; the calls count as typed.
-func (f *fakeFinderDB) FindEmptyBinOfTypes(codes []string, _ string, _ int64, fence bins.EmptyFence, asker reservations.DigAsker) (*bins.Bin, error) {
+func (f *fakeFinderDB) FindEmptyBinOfTypes(codes []string, _ string, _ int64, fence bins.EmptyFence, asker reservations.DigAsker, want *int) (*bins.Bin, error) {
+	f.lastWant = want
 	f.typedGlobalCalls++
 	f.lastFence = fence
 	f.lastAsker = asker
@@ -974,7 +994,8 @@ func (f *fakeFinderDB) FindEmptyBinOfTypes(codes []string, _ string, _ int64, fe
 	return nil, sql.ErrNoRows
 }
 
-func (f *fakeFinderDB) FindEmptyBinOfTypesInGroup(codes []string, _, _ int64, asker reservations.DigAsker) (*bins.Bin, error) {
+func (f *fakeFinderDB) FindEmptyBinOfTypesInGroup(codes []string, _, _ int64, asker reservations.DigAsker, want *int) (*bins.Bin, error) {
+	f.lastWant = want
 	f.typedGroupCalls++
 	f.lastAsker = asker
 	if f.searchErr != nil {

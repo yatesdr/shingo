@@ -110,7 +110,8 @@ const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node
 	COALESCE(p.near_empty_threshold_pct, 0),
 	` + reservations.BinSpokenForByOrderSQL + ` AS pending_reserved_by,
 	COALESCE(b.quality_hold, false) AS quality_hold,
-	COALESCE(n.is_synthetic, false) AS node_synthetic
+	COALESCE(n.is_synthetic, false) AS node_synthetic,
+	b.totes_on_cart, bt.totes_per_layer
 	` + BinFromClause
 
 // BinFromClause is the FROM/JOIN half of every bin-reading query, split out of
@@ -341,7 +342,8 @@ func NotFencedArm() string {
 // caller cannot put anything into the SQL but a positional placeholder. That is
 // nodetree's rule, for nodetree's reason.
 //
-// WHAT IS NOT HERE, DELIBERATELY: the ordering. AccessibleEmptyOrder stays a
+// WHAT IS NOT HERE, DELIBERATELY: the ordering. preferredEmptyOrder (today's
+// AccessibleEmptyOrder when no height is wanted) stays a
 // separate trailing fragment each finder appends for itself, because it is a
 // different kind of thing — the WHERE says which carriers are eligible, the
 // ORDER BY says which eligible one costs least to grab. Consolidating them
@@ -560,7 +562,7 @@ func OfTypeArm(typeParam int) string {
 // OfTypesArm narrows to a SET of carrier types, matched on code as OfTypeArm
 // is; the parameter is a text array. Its reader is a loader that declared no
 // carrier mix and whose payloads may ride more than one type
-// (plan.Finder.wantedBinTypes).
+// (plan.Finder.wantedEmpty).
 func OfTypesArm(typesParam int) string {
 	return fmt.Sprintf(`
 	  AND bt.code = ANY($%d)`, typesParam)
@@ -737,13 +739,49 @@ func BinSourceableSQLFor(payloadExpr, ownerExpr string) string {
 // but this is the only spelling that carried them in SQL rather than in Go, and
 // deleting them here would make a reader hunt for where the null cases went.
 //
-// A var rather than a const now, since it is composed at init. Every caller
-// interpolates it with fmt.Sprintf, so nothing needed a constant.
+// A var rather than a const, since it is composed at init. The finders reach it
+// through preferredEmptyOrder, which returns it unchanged when no height is
+// wanted. Its text is pinned by TestAccessibleEmptyOrder_TextUnchanged.
 var AccessibleEmptyOrder = `
-	ORDER BY (n.parent_id IS NULL OR n.depth IS NULL OR ` + helpers.ReachableSQL("n") + `) DESC,
-	         COALESCE(n.depth, 0) ASC,
-	         b.id ASC
+	ORDER BY ` + accessibleEmptyTerms + `
 	LIMIT 1`
+
+// accessibleEmptyTerms are AccessibleEmptyOrder's sort keys, which
+// preferredEmptyOrder ranks behind a height.
+var accessibleEmptyTerms = `(n.parent_id IS NULL OR n.depth IS NULL OR ` + helpers.ReachableSQL("n") + `) DESC,
+	         COALESCE(n.depth, 0) ASC,
+	         b.id ASC`
+
+// preferredEmptyOrder is the ORDER BY every empty finder appends. wantLayers is
+// the height wanted, in layers of totes; it is compared in totes against each
+// candidate's own type (wantLayers × bt.totes_per_layer).
+//
+// The ladder, ahead of today's terms:
+//  1. a known count before an unknown one: a cart with no count, or whose type
+//     says no totes per layer, cannot be compared and goes last;
+//  2. at least the want before fewer;
+//  3. nearest first: the exact height, then the shortest taller, then the
+//     tallest shorter.
+//
+// It ranks and never filters: a finder that would find a cart finds one at any
+// height, and a count over the same WHERE agrees with it. Inside a zone pass the
+// height ranks; the passes are the finder's own and do not move. With no want
+// (nil) it is AccessibleEmptyOrder, byte for byte, and binds no argument.
+// Pins: TestPreferredEmptyOrder_NoWantIsToday, TestEmptyFinders_HeightLadder,
+// TestEmptyFinders_OnlyShorterOrUnknownStillFound,
+// TestEmptyFinders_CountAndFindAgreeWithAWant.
+func preferredEmptyOrder(a *emptyQueryArgs, wantLayers *int) string {
+	if wantLayers == nil {
+		return AccessibleEmptyOrder
+	}
+	want := fmt.Sprintf("($%d::int * bt.totes_per_layer)", a.add(*wantLayers))
+	return `
+	ORDER BY (b.totes_on_cart IS NULL OR bt.totes_per_layer IS NULL) ASC,
+	         (b.totes_on_cart < ` + want + `) ASC,
+	         abs(b.totes_on_cart - ` + want + `) ASC,
+	         ` + accessibleEmptyTerms + `
+	LIMIT 1`
+}
 
 // ScanBin reads a single bin row (including joined bin_type code + node name).
 // Exported for cross-aggregate readers at the outer store/ level.
@@ -758,7 +796,7 @@ func ScanBin(row interface{ Scan(...any) error }) (*Bin, error) {
 		&b.LoadedAt, &b.AnomalyAt, &b.AnomalyNote, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName, &b.UOPCapacity,
 		&b.CarrierRequiredRobotGroup, &b.BinTypeBare, &b.PayloadRobotGroup,
 		&b.PayloadNearEmptyEnabled, &b.PayloadNearEmptyGroup, &b.PayloadNearEmptyPct,
-		&reservedBy, &b.QualityHold, &b.AtSyntheticNode)
+		&reservedBy, &b.QualityHold, &b.AtSyntheticNode, &b.TotesOnCart, &b.TotesPerLayer)
 	if err != nil {
 		return nil, err
 	}
@@ -801,20 +839,30 @@ func Create(db *sql.DB, b *Bin) error {
 	return nil
 }
 
-// Retype is what a bin edit that changed the bin's type leaves for the
-// ledger: the from and to type codes, as the CLEAR records a re-stamp, and the
-// bin's count, payload and node as they stand.
-type Retype struct {
+// TotesEdit is the bin edit's count of totes on the cart; the struct lives in
+// shingocore/domain so the www door can name it.
+type TotesEdit = domain.TotesEdit
+
+// Edited is what a bin edit leaves for the ledger: the bin's count, payload
+// and node as they stand; the from and to type codes when the edit changed the
+// type (as the CLEAR records a re-stamp); and the count of totes before and
+// after when the edit changed it (nil is unknown).
+type Edited struct {
+	UOP         int
+	PayloadCode string
+	NodeID      *int64
+
+	Retyped          bool
 	FromCode, ToCode string
-	UOP              int
-	PayloadCode      string
-	NodeID           *int64
+
+	TotesChanged       bool
+	TotesFrom, TotesTo *int
 }
 
 // Update is the bin edit, on the caller's transaction: it writes the fields
-// the edit names and nothing else. A nil pointer leaves its column alone. It
-// returns a Retype when the edit changed the bin's type, nil otherwise; the
-// caller writes the ledger row from it in the same transaction (store.UpdateBin).
+// the edit names and nothing else. A nil pointer leaves its column alone. The
+// caller writes the ledger rows from the Edited it returns, in the same
+// transaction (store.UpdateBin).
 //
 // NOT node_id AND NOT status. This wrote both from a *Bin the caller had read at
 // some earlier moment, so a door-write that landed between that read and this
@@ -829,18 +877,37 @@ type Retype struct {
 // edit). Judged against the NEW type; COALESCE keeps the first stamp, and a
 // carrier with no payload holds nothing to judge. Pin:
 // TestBinEdit_ReTypeOfALoadedBinRecomputesUndeclaredCarrier.
-func Update(tx *sql.Tx, binID int64, label, description *string, binTypeID *int64) (*Retype, error) {
-	var fromID int64
-	var fromCode string
-	if binTypeID != nil {
-		if err := tx.QueryRow(`SELECT b.bin_type_id, COALESCE(bt.code, '')
+//
+// A RE-TYPE BLANKS THE COUNT OF TOTES, whatever the same edit sends: the count
+// is read against the type's totes per layer, and the new type's is another
+// number. Otherwise totes sets it. Pin: TestBinEdit_TotesOnCart.
+//
+// The row is read and locked first when the edit names a type or a count, for
+// the from values the ledger records; the Bins page's edit always names the
+// type, so that read is the one it always paid.
+func Update(tx *sql.Tx, binID int64, label, description *string, binTypeID *int64, totes *TotesEdit) (Edited, error) {
+	var (
+		fromID    int64
+		fromCode  string
+		fromTotes *int
+	)
+	if binTypeID != nil || totes != nil {
+		if err := tx.QueryRow(`SELECT b.bin_type_id, COALESCE(bt.code, ''), b.totes_on_cart
 			FROM bins b LEFT JOIN bin_types bt ON bt.id = b.bin_type_id
-			WHERE b.id=$1 FOR UPDATE OF b`, binID).Scan(&fromID, &fromCode); err != nil {
-			return nil, fmt.Errorf("read bin %d type: %w", binID, err)
+			WHERE b.id=$1 FOR UPDATE OF b`, binID).Scan(&fromID, &fromCode, &fromTotes); err != nil {
+			return Edited{}, fmt.Errorf("read bin %d type: %w", binID, err)
 		}
 	}
-	var r Retype
+	retyped := binTypeID != nil && *binTypeID != fromID
+	writeTotes := retyped || totes != nil
+	var toTotes *int
+	if !retyped && totes != nil {
+		toTotes = totes.To
+	}
+
+	var e Edited
 	var nodeID sql.NullInt64
+	var toCode string
 	err := tx.QueryRow(`UPDATE bins SET
 		label=COALESCE($2, label),
 		description=COALESCE($3, description),
@@ -850,22 +917,35 @@ func Update(tx *sql.Tx, binID int64, label, description *string, binTypeID *int6
 		    WHEN payload_code <> '' AND `+helpers.UndeclaredCarrierRuleSQL("payload_code", "$4::bigint")+`
 		    THEN COALESCE(undeclared_carrier_at, NOW())
 		    ELSE NULL END,
+		totes_on_cart = CASE WHEN $6::boolean THEN $7::integer ELSE totes_on_cart END,
 		updated_at=$5
 		WHERE id=$1
 		RETURNING uop_remaining, payload_code, node_id,
 		    COALESCE((SELECT code FROM bin_types WHERE id = bins.bin_type_id), '')`,
-		binID, label, description, binTypeID, clock.Now().UTC()).Scan(&r.UOP, &r.PayloadCode, &nodeID, &r.ToCode)
+		binID, label, description, binTypeID, clock.Now().UTC(), writeTotes, toTotes).Scan(&e.UOP, &e.PayloadCode, &nodeID, &toCode)
 	if err != nil {
-		return nil, fmt.Errorf("update bin %d: %w", binID, err)
+		return Edited{}, fmt.Errorf("update bin %d: %w", binID, err)
 	}
-	if binTypeID == nil || *binTypeID == fromID {
-		return nil, nil
-	}
-	r.FromCode = fromCode
 	if nodeID.Valid {
-		r.NodeID = &nodeID.Int64
+		e.NodeID = &nodeID.Int64
 	}
-	return &r, nil
+	if retyped {
+		e.Retyped = true
+		e.FromCode, e.ToCode = fromCode, toCode
+	}
+	if writeTotes && !sameCount(fromTotes, toTotes) {
+		e.TotesChanged = true
+		e.TotesFrom, e.TotesTo = fromTotes, toTotes
+	}
+	return e, nil
+}
+
+// sameCount reports whether two nullable counts are equal, unknown included.
+func sameCount(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 // Delete removes a bin row outright. Operational flows go through
@@ -1330,8 +1410,11 @@ func claimBin(db binExecer, binID, orderID int64) error {
 // needs it decided should get the ruling rather than quietly change one side.
 //
 // FindEmptyCompatibleInGroup below carries the same property for the same reason.
+//
+// wantLayers is the height wanted (preferredEmptyOrder); nil wants none. Every
+// empty finder below takes it the same way.
 func FindEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID, excludeNodeID int64,
-	asker reservations.DigAsker) (*Bin, error) {
+	asker reservations.DigAsker, wantLayers *int) (*Bin, error) {
 
 	if binTypeCode == "" {
 		return nil, sql.ErrNoRows
@@ -1344,7 +1427,7 @@ func FindEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID, exclude
 	a := &emptyQueryArgs{vals: []any{binTypeCode, groupNodeID, excludeNodeID}}
 	q := nodetree.DescendantsOf(2) + " " + BinJoinQuery + EmptyOfTypeInGroupWhere +
 		NotForeignDugArm(a.add(string(reservations.ModeDig)),
-			a.add(asker.OrderID), a.add(asker.LaneOwner)) + AccessibleEmptyOrder
+			a.add(asker.OrderID), a.add(asker.LaneOwner)) + preferredEmptyOrder(a, wantLayers)
 	return ScanBin(db.QueryRow(q, a.vals...))
 }
 
@@ -1355,7 +1438,7 @@ func FindEmptyOfTypeInGroup(db *sql.DB, binTypeCode string, groupNodeID, exclude
 // code does. Not counted by the level keeper, so it does not share
 // EmptyOfTypeInGroupWhere; it is that WHERE with OfTypesArm in OfTypeArm's place.
 func FindEmptyOfTypesInGroup(db *sql.DB, binTypeCodes []string, groupNodeID, excludeNodeID int64,
-	asker reservations.DigAsker) (*Bin, error) {
+	asker reservations.DigAsker, wantLayers *int) (*Bin, error) {
 
 	if len(binTypeCodes) == 0 {
 		return nil, sql.ErrNoRows
@@ -1364,7 +1447,7 @@ func FindEmptyOfTypesInGroup(db *sql.DB, binTypeCodes []string, groupNodeID, exc
 	q := nodetree.DescendantsOf(2) + " " + BinJoinQuery +
 		EmptyCarrierWhereInGroup(3, 2) + OfTypesArm(1) + InGroupArm() + ExcludeNodeArm(3) +
 		NotForeignDugArm(a.add(string(reservations.ModeDig)),
-			a.add(asker.OrderID), a.add(asker.LaneOwner)) + AccessibleEmptyOrder
+			a.add(asker.OrderID), a.add(asker.LaneOwner)) + preferredEmptyOrder(a, wantLayers)
 	return ScanBin(db.QueryRow(q, a.vals...))
 }
 
@@ -1448,31 +1531,31 @@ func CountEmptyOfTypeInGroupExcludingNode(db *sql.DB, binTypeCode string, groupN
 // so preferZone ranked its own carriers FIRST — which is now rule (ii)'s job to
 // prevent rather than a reason to distrust the preference.
 func FindEmptyOfType(db *sql.DB, binTypeCode, preferZone string, excludeNodeID int64,
-	fence EmptyFence, asker reservations.DigAsker) (*Bin, error) {
+	fence EmptyFence, asker reservations.DigAsker, wantLayers *int) (*Bin, error) {
 
 	if binTypeCode == "" {
 		return nil, sql.ErrNoRows
 	}
-	return findEmptyTyped(db, OfTypeArm, binTypeCode, preferZone, excludeNodeID, fence, asker)
+	return findEmptyTyped(db, OfTypeArm, binTypeCode, preferZone, excludeNodeID, fence, asker, wantLayers)
 }
 
 // FindEmptyOfTypes is FindEmptyOfType for a SET of types (OfTypesArm): the same
 // zone preference, fence and dig exclusion, one statement per zone pass. An
 // empty set finds nothing, as a blank code does. Its reader is a no-mix loader
-// whose payloads may ride several types (plan.Finder.wantedBinTypes).
+// whose payloads may ride several types (plan.Finder.wantedEmpty).
 func FindEmptyOfTypes(db *sql.DB, binTypeCodes []string, preferZone string, excludeNodeID int64,
-	fence EmptyFence, asker reservations.DigAsker) (*Bin, error) {
+	fence EmptyFence, asker reservations.DigAsker, wantLayers *int) (*Bin, error) {
 
 	if len(binTypeCodes) == 0 {
 		return nil, sql.ErrNoRows
 	}
-	return findEmptyTyped(db, OfTypesArm, binTypeCodes, preferZone, excludeNodeID, fence, asker)
+	return findEmptyTyped(db, OfTypesArm, binTypeCodes, preferZone, excludeNodeID, fence, asker, wantLayers)
 }
 
 // findEmptyTyped is the body FindEmptyOfType and FindEmptyOfTypes share: typeArm
 // renders the type narrowing against the parameter that carries typeVal.
 func findEmptyTyped(db *sql.DB, typeArm func(int) string, typeVal any, preferZone string, excludeNodeID int64,
-	fence EmptyFence, asker reservations.DigAsker) (*Bin, error) {
+	fence EmptyFence, asker reservations.DigAsker, wantLayers *int) (*Bin, error) {
 
 	// TWO PARAMETERS, NOT ONE STRUCT. The fence is POLICY — config-born, changes
 	// at save time, keyed on supports and origin. The dig exclusion is PHYSICAL
@@ -1496,7 +1579,7 @@ func findEmptyTyped(db *sql.DB, typeArm func(int) string, typeVal any, preferZon
 		}
 		where += NotForeignDugArm(a.add(string(reservations.ModeDig)),
 			a.add(asker.OrderID), a.add(asker.LaneOwner))
-		return cte + BinJoinQuery + where + AccessibleEmptyOrder, a.vals
+		return cte + BinJoinQuery + where + preferredEmptyOrder(a, wantLayers), a.vals
 	}
 
 	if preferZone != "" {
@@ -1521,19 +1604,19 @@ func findEmptyTyped(db *sql.DB, typeArm func(int) string, typeVal any, preferZon
 }
 
 func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, excludeNodeID int64,
-	asker reservations.DigAsker) (*Bin, error) {
+	asker reservations.DigAsker, wantLayers *int) (*Bin, error) {
 
 	a := &emptyQueryArgs{vals: []any{payloadCode, groupNodeID, excludeNodeID}}
 	q := nodetree.DescendantsOf(2) + BinJoinQuery +
 		EmptyCarrierWhereInGroup(3, 2) + InGroupArm() + ExcludeNodeArm(3) +
 		NotForeignDugArm(a.add(string(reservations.ModeDig)),
 			a.add(asker.OrderID), a.add(asker.LaneOwner)) +
-		PayloadBinTypeRuleArm("$1") + AccessibleEmptyOrder
+		PayloadBinTypeRuleArm("$1") + preferredEmptyOrder(a, wantLayers)
 	return ScanBin(db.QueryRow(q, a.vals...))
 }
 
 func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNodeID int64,
-	fence EmptyFence, asker reservations.DigAsker) (*Bin, error) {
+	fence EmptyFence, asker reservations.DigAsker, wantLayers *int) (*Bin, error) {
 
 	build := func(withZone bool) (string, []any) {
 		a := &emptyQueryArgs{}
@@ -1554,7 +1637,7 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 		where += NotForeignDugArm(a.add(string(reservations.ModeDig)),
 			a.add(asker.OrderID), a.add(asker.LaneOwner))
 		return cte + BinJoinQuery + where +
-			PayloadBinTypeRuleArm(fmt.Sprintf("$%d", payloadP)) + AccessibleEmptyOrder, a.vals
+			PayloadBinTypeRuleArm(fmt.Sprintf("$%d", payloadP)) + preferredEmptyOrder(a, wantLayers), a.vals
 	}
 
 	if preferZone != "" {

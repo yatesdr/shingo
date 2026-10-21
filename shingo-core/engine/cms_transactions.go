@@ -120,7 +120,7 @@ func (e *Engine) RecordMovementTransactions(ev BinUpdatedEvent) {
 // reaches for to REPAIR a wrong record, and booking a repair as an inventory
 // movement writes fiction into a ledger. It stays silent, deliberately.
 func (e *Engine) ClearForReuseAndBookDeparture(binID, nodeID int64, binTypeID *int64) (int64, error) {
-	return e.ClearForReuseStampAndBookDeparture(binID, nodeID, binTypeID, bins.StampNone)
+	return e.ClearForReuseStampAndBookDeparture(binID, nodeID, binTypeID, bins.StampNone, nil)
 }
 
 // ClearForReuseStampAndBookDeparture is ClearForReuseAndBookDeparture with the
@@ -128,7 +128,12 @@ func (e *Engine) ClearForReuseAndBookDeparture(binID, nodeID int64, binTypeID *i
 // resolved inside the clear's own transaction (bins.ResolveBareStampTx) and
 // binTypeID is ignored; under StampNone it is the explicit binTypeID, exactly
 // as before.
-func (e *Engine) ClearForReuseStampAndBookDeparture(binID, nodeID int64, binTypeID *int64, stamp bins.BareStamp) (int64, error) {
+//
+// layers is the height a person declared with the CLEAR (BinClearRequest
+// .Layers), nil when none was. It is written after the clear and the stamp, in
+// the same transaction, as layers × the cart's own totes per layer
+// (BinManifestService.DeclareTotesTx). nil adds no statement.
+func (e *Engine) ClearForReuseStampAndBookDeparture(binID, nodeID int64, binTypeID *int64, stamp bins.BareStamp, layers *int) (int64, error) {
 	resolve := func(tx *sql.Tx) (*int64, error) {
 		if stamp == bins.StampNone {
 			return binTypeID, nil
@@ -143,7 +148,7 @@ func (e *Engine) ClearForReuseStampAndBookDeparture(binID, nodeID int64, binType
 		// untagged clear is invisible to CMS and that is correct); the bin is
 		// drained or bare; or the build FAILED, which buildClearDeparture has
 		// already counted and named.
-		return e.binManifest.ClearForReuseResolved(binID, resolve, protocol.DeclaredByLifecycle)
+		return e.binManifest.ClearForReuseResolved(binID, resolve, protocol.DeclaredByLifecycle, layers)
 	}
 
 	tx, err := e.db.Begin()
@@ -163,6 +168,12 @@ func (e *Engine) ClearForReuseStampAndBookDeparture(binID, nodeID int64, binType
 		"engine/cms_transactions.go:ClearForReuseAndBookDeparture", protocol.DeclaredByLifecycle)
 	if err != nil {
 		return 0, err
+	}
+	if layers != nil {
+		if err := e.binManifest.DeclareTotesTx(tx, binID, *layers,
+			"engine/cms_transactions.go:ClearForReuseAndBookDeparture"); err != nil {
+			return 0, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit clear-and-book for bin %d: %w", binID, err)

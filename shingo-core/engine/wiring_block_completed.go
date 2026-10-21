@@ -21,8 +21,9 @@
 //     notification), so we deliberately do not race it here.
 //   - waits, scripts, navigation-only: no-op.
 //
-// Idempotence: BinService.MoveToTransit is a no-op when the bin is
-// already at _TRANSIT, so duplicate or replayed events are safe.
+// Idempotence: BinService.Lift moves nothing (Lift.Moved false) when the bin is
+// already at _TRANSIT, so duplicate or replayed events are safe; the tote hook
+// runs only on a lift that moved the bin.
 //
 // Failure mode: if order_bins lookup misses for the block's location
 // (concrete bin couldn't be claimed at order-creation time, or the
@@ -42,6 +43,7 @@ import (
 	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/service"
+	"shingocore/store/bins"
 	"shingocore/store/orders"
 	"shingocore/store/telemetry"
 )
@@ -160,7 +162,7 @@ func (e *Engine) recordBlockLeg(ev BlockCompletedEvent) {
 // the synthetic _TRANSIT node so the source slot frees immediately — the
 // slot-vacancy signal queued orders need to unblock.
 func (e *Engine) handlePickupBlockCompleted(ev BlockCompletedEvent) {
-	binID, stepIndex, fromNodeID, ok := e.resolvePickupBin(ev.OrderID, ev.Location)
+	bin, stepIndex, fromNodeID, ok := e.resolvePickupBinRow(ev.OrderID, ev.Location)
 	if !ok {
 		e.logFn("transit: order %d block %s @ %s — no claimed bin matched; bin will move to dest at delivery (pre-Phase-2 behavior)",
 			ev.OrderID, ev.BlockID, ev.Location)
@@ -184,9 +186,14 @@ func (e *Engine) handlePickupBlockCompleted(ev BlockCompletedEvent) {
 		notice.Station, _ = materialStation(order)
 		notice.OrderUUID = order.EdgeUUID
 	}
-	if _, err := e.binService.Lift(binID, notice); err != nil {
+	binID := bin.ID
+	lift, err := e.binService.Lift(binID, notice)
+	if err != nil {
 		e.logFn("transit: lift bin %d for order %d: %v", binID, ev.OrderID, err)
 		return
+	}
+	if lift.Moved {
+		e.deriveTotesAtLift(bin, order, ev.OrderID)
 	}
 
 	e.dbg("transit: bin %d entered _TRANSIT (order %d, block %s @ %s, step %d)",
@@ -198,6 +205,26 @@ func (e *Engine) handlePickupBlockCompleted(ev BlockCompletedEvent) {
 		FromNodeID: fromNodeID,
 		StepIndex:  stepIndex,
 	}})
+}
+
+// deriveTotesAtLift writes what a tote press build drew from the cart outside
+// it, when that cart has just been lifted (store.DB.DeriveTotesAtLift). It acts
+// only on a cart with no part and a count of totes, judged on the row the lift
+// already read, so any other lift (every lift at a plant that sets no tote
+// numbers) costs no statement. It runs after the lift has committed, in its
+// own transaction: a failure is logged and never fails the lift, its notice or
+// the transit event. Pins: TestToteLift_* (tote_lift_docker_test.go).
+func (e *Engine) deriveTotesAtLift(bin *bins.Bin, order *orders.Order, orderID int64) {
+	if bin.PayloadCode != "" || bin.TotesOnCart == nil || bin.NodeName == "" {
+		return
+	}
+	sibling := ""
+	if order != nil {
+		sibling = order.SiblingOrderUUID
+	}
+	if err := e.db.DeriveTotesAtLift(bin.ID, orderID, bin.NodeName, *bin.TotesOnCart, sibling); err != nil {
+		e.logFn("totes: derive at the lift of bin %d off %s for order %d: %v", bin.ID, bin.NodeName, orderID, err)
+	}
 }
 
 // resolvePickupBin finds the bin claimed at the given pickup-block
@@ -256,6 +283,16 @@ func (e *Engine) handlePickupBlockCompleted(ev BlockCompletedEvent) {
 // the location or more than one leaves (3) to answer exactly as it does now;
 // nothing that resolves today stops resolving.
 func (e *Engine) resolvePickupBin(orderID int64, location string) (binID int64, stepIndex int, fromNodeID int64, ok bool) {
+	bin, stepIndex, fromNodeID, ok := e.resolvePickupBinRow(orderID, location)
+	if !ok {
+		return 0, 0, 0, false
+	}
+	return bin.ID, stepIndex, fromNodeID, true
+}
+
+// resolvePickupBinRow is resolvePickupBin answering with the bin row it read,
+// as it stood before the lift: the lift's tote hook judges the cart on it.
+func (e *Engine) resolvePickupBinRow(orderID int64, location string) (bin *bins.Bin, stepIndex int, fromNodeID int64, ok bool) {
 	// LOAD-BEARING (same contract as shingo-edge/engine/handler_bin_picked_up.go):
 	// `location` arrives from BlockCompletedEvent.Location, originally
 	// an un-normalized RDS vendor string. `ob.NodeName` comes from
@@ -292,15 +329,15 @@ func (e *Engine) resolvePickupBin(orderID int64, location string) (binID int64, 
 			if bin.NodeID == nil || *bin.NodeID != srcNode.ID {
 				continue
 			}
-			return ob.BinID, ob.StepIndex, srcNode.ID, true
+			return bin, ob.StepIndex, srcNode.ID, true
 		}
 	}
 
 	// The order's own claimed bin AT this location. See the header: a plan's
 	// intermediate re-pickups carry no junction row, and the fallback below
 	// answers with order.BinID wherever that bin happens to be.
-	if binID, from, ok := e.claimedBinAt(orderID, locationTrimmed); ok {
-		return binID, 0, from, true
+	if held, from, ok := e.claimedBinAt(orderID, locationTrimmed); ok {
+		return held, 0, from, true
 	}
 
 	// Single-bin fallback.
@@ -312,20 +349,21 @@ func (e *Engine) resolvePickupBin(orderID int64, location string) (binID int64, 
 			owns, oerr := e.db.OrderOwnsNoCargo(order.ID)
 			service.NoteFolderShadow(service.FolderSiteBlockCompleted, order.ID, owns, oerr)
 		}
-		return 0, 0, 0, false
+		return nil, 0, 0, false
 	}
-	bin, err := e.db.GetBin(*order.BinID)
+	bin, err = e.db.GetBin(*order.BinID)
 	if err != nil || bin == nil {
-		return 0, 0, 0, false
+		return nil, 0, 0, false
 	}
 	from := int64(0)
 	if bin.NodeID != nil {
 		from = *bin.NodeID
 	}
-	return *order.BinID, 0, from, true
+	return bin, 0, from, true
 }
 
-// claimedBinAt returns the single bin this order has claimed at `location`, and
+// claimedBinAt returns the single bin this order has claimed at `location` (its
+// row, as ListBinsByClaim read it), and
 // the node it is leaving. The pickup dual of resolveDropoffBin's transit rule:
 // one robot lifts one bin, so if exactly one of the order's own bins is sitting
 // at the node the block completed at, that is the bin.
@@ -336,22 +374,22 @@ func (e *Engine) resolvePickupBin(orderID int64, location string) (binID int64, 
 // two of its bins share the node, which one robot cannot lift. Either way the
 // caller falls through to the behaviour that predates this, rather than guessing
 // — and a wrong bin identity here writes a wrong count onto a line position.
-func (e *Engine) claimedBinAt(orderID int64, location string) (binID int64, fromNodeID int64, ok bool) {
+func (e *Engine) claimedBinAt(orderID int64, location string) (bin *bins.Bin, fromNodeID int64, ok bool) {
 	if location == "" {
-		return 0, 0, false
+		return nil, 0, false
 	}
 	node, err := e.db.GetNodeByDotName(location)
 	if err != nil || node == nil {
-		return 0, 0, false
+		return nil, 0, false
 	}
 	held, err := e.db.ListBinsByClaim(orderID)
 	if err != nil {
-		return 0, 0, false
+		return nil, 0, false
 	}
-	var found []int64
+	var found []*bins.Bin
 	for _, b := range held {
 		if b.NodeID != nil && *b.NodeID == node.ID {
-			found = append(found, b.ID)
+			found = append(found, b)
 		}
 	}
 	if len(found) != 1 {
@@ -359,7 +397,7 @@ func (e *Engine) claimedBinAt(orderID int64, location string) (binID int64, from
 			e.logFn("transit: order %d pickup @ %s — %d of its own bins are at this node, want exactly 1; "+
 				"falling back to the order's bin_id", orderID, location, len(found))
 		}
-		return 0, 0, false
+		return nil, 0, false
 	}
 	return found[0], node.ID, true
 }

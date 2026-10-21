@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -28,6 +29,11 @@ import (
 // delta_epoch is in every set: it is the epoch bump each function makes in the
 // same transaction (bumpEpoch), not the UPDATE's SET list, and it is listed so
 // the set is the whole of what the row sees.
+//
+// totes_on_cart joined the set with the tote numbers: an emptied carrier's
+// count of totes is unknown (NULL) until a person declares it, so the fixture
+// stands 3 totes on the cart and every one of the three must blank them. They
+// share one SET fragment (emptiedCarrierSET in bin_manifest.go).
 
 // binRowJSON is the bin's row, whole.
 func binRowJSON(t *testing.T, db *store.DB, id int64) map[string]any {
@@ -66,7 +72,7 @@ func loadedBinOffDefaults(t *testing.T, db *store.DB, nodeID int64, label string
 		undeclared_carrier_at='2020-01-02T00:00:00Z', last_counted_at='2020-01-03T00:00:00Z',
 		last_counted_by='counter', anomaly_at='2020-01-04T00:00:00Z', anomaly_note='note',
 		staged_at='2020-01-05T00:00:00Z', staged_expires_at='2020-01-06T00:00:00Z',
-		lifted_at='2020-01-07T00:00:00Z', updated_at='2020-01-08T00:00:00Z'
+		lifted_at='2020-01-07T00:00:00Z', updated_at='2020-01-08T00:00:00Z', totes_on_cart=3
 		WHERE id=$1`, bin.ID)
 	testutil.MustNoErr(t, err, "move the bin's columns off their defaults")
 	return bin
@@ -74,7 +80,7 @@ func loadedBinOffDefaults(t *testing.T, db *store.DB, nodeID int64, label string
 
 var emptiedColumns = []string{
 	"delta_epoch", "loaded_at", "manifest", "manifest_confirmed", "payload_code",
-	"undeclared_carrier_at", "uop_remaining", "updated_at",
+	"totes_on_cart", "undeclared_carrier_at", "uop_remaining", "updated_at",
 }
 
 func withColumns(base []string, more ...string) []string {
@@ -152,4 +158,52 @@ func TestEmptyingStatements_ColumnLists(t *testing.T) {
 			t.Errorf("columns written = %v, want %v", got, emptiedColumns)
 		}
 	})
+}
+
+// TestEmptyingStatements_AFullBuiltOnABaseReadsUnknownOnceEmptied: a base is a
+// cart at 0 totes, and a full built on it carries the totes it was built with;
+// what stands on it once it is emptied nobody has said, so it reads unknown,
+// not 0. Through each of the three emptying statements.
+func TestEmptyingStatements_AFullBuiltOnABaseReadsUnknownOnceEmptied(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		empty func(t *testing.T, db *store.DB, svc *BinManifestService, sd *testdb.StandardData, binID int64)
+	}{
+		{"the clear", func(t *testing.T, _ *store.DB, svc *BinManifestService, _ *testdb.StandardData, binID int64) {
+			_, err := svc.ClearForReuse(binID, nil, protocol.DeclaredByLifecycle)
+			testutil.MustNoErr(t, err, "ClearForReuse")
+		}},
+		{"the claim that empties", func(t *testing.T, db *store.DB, svc *BinManifestService, sd *testdb.StandardData, binID int64) {
+			order := createTestOrder(t, db, sd.LineNode.ID)
+			testdb.ReserveBin(t, db, order.ID, binID)
+			testutil.MustNoErr(t, svc.ClearAndClaim(binID, order.ID), "ClearAndClaim")
+		}},
+		{"a release with nothing left", func(t *testing.T, db *store.DB, svc *BinManifestService, sd *testdb.StandardData, binID int64) {
+			order := createTestOrder(t, db, sd.LineNode.ID)
+			claimBinForTest(t, db, binID, order.ID)
+			zero := 0
+			testutil.MustNoErr(t, svc.SyncOrClearForReleased(binID, order.ID, &zero, "", ""), "release empty")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db := testDB(t)
+			sd := testdb.SetupStandardData(t, db)
+			svc := NewBinManifestService(db, EpochAnnounce{})
+			bin := createTestBin(t, db, sd.StorageNode.ID, "BASE-"+strings.ReplaceAll(tc.name, " ", "-"), "", 0)
+			_, err := db.Exec(`UPDATE bins SET totes_on_cart=0 WHERE id=$1`, bin.ID)
+			testutil.MustNoErr(t, err, "stand the cart as a base")
+			_, err = svc.SetForProduction(bin.ID, `{"items":[]}`, "PART-A", 100, protocol.DeclaredByLifecycle)
+			testutil.MustNoErr(t, err, "build a full on the base")
+			if got := binRowJSON(t, db, bin.ID)["totes_on_cart"]; got != float64(0) {
+				t.Fatalf("the full built on a base reads totes_on_cart %v, want 0 (the load leaves the count as it stands)", got)
+			}
+
+			tc.empty(t, db, svc, sd, bin.ID)
+			if got, ok := binRowJSON(t, db, bin.ID)["totes_on_cart"]; !ok || got != nil {
+				t.Errorf("once emptied the cart reads totes_on_cart %v, want unknown (null)", got)
+			}
+		})
+	}
 }

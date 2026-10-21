@@ -342,11 +342,21 @@ func (h *Handlers) binUpdate(b *domain.Bin, params json.RawMessage) error {
 		Label       *string `json:"label"`
 		Description *string `json:"description"`
 		BinTypeID   *int64  `json:"bin_type_id"`
+		// TotesOnCart: absent leaves the count standing, null is unknown, 0 is
+		// a base. A re-type blanks it whatever is sent (bins.Update).
+		TotesOnCart optionalCount `json:"totes_on_cart"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
 		return fmt.Errorf("invalid params: %w", err)
 	}
-	if err := h.engine.BinService().Update(b, p.Label, p.Description, p.BinTypeID); err != nil {
+	var totes *domain.TotesEdit
+	if p.TotesOnCart.Set {
+		if err := countAtLeast("totes_on_cart", p.TotesOnCart.Value, 0); err != nil {
+			return err
+		}
+		totes = &domain.TotesEdit{To: p.TotesOnCart.Value}
+	}
+	if err := h.engine.BinService().Update(b, p.Label, p.Description, p.BinTypeID, totes); err != nil {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "updated", "", "", protocol.AuditActorUI)

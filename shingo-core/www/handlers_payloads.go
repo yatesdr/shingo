@@ -69,10 +69,43 @@ func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
 		"BinTypes":          binTypes,
 		"CompatNodes":       compatNodes,
 		"PayloadBinTypes":   payloadBinTypes,
+		"FullCartTotes":     fullCartTotes(payloads, binTypes, payloadBinTypes),
 		"ContainmentState":  containmentState,
 		"UnroutedProducers": unroutedProducers,
 	}
 	h.render(w, r, "payloads.html", data)
+}
+
+// fullCartTotes is, per payload, what a full cart holds in UOP by its tote
+// numbers on each of its carriers that say how many totes a layer holds:
+// "TOTE-1: 10 × 8 × 5 = 400" (UOP per tote × totes per layer × layers). The
+// Payloads table prints it beside the capacity. A display, not a check: a
+// product that differs from the capacity is shown, never refused. A payload
+// without both its numbers, or a carrier without totes per layer, gets no line.
+// From the three reads the page already makes, so it costs no statement.
+func fullCartTotes(payloads []*domain.Payload, binTypes []*domain.BinType, codesByPayload map[int64][]string) map[int64][]string {
+	perLayer := make(map[string]int, len(binTypes))
+	for _, bt := range binTypes {
+		if bt.TotesPerLayer != nil {
+			perLayer[bt.Code] = *bt.TotesPerLayer
+		}
+	}
+	out := map[int64][]string{}
+	for _, p := range payloads {
+		if p.ToteLayers == nil || p.UOPPerTote == nil {
+			continue
+		}
+		for _, code := range codesByPayload[p.ID] {
+			n, ok := perLayer[code]
+			if !ok {
+				continue
+			}
+			uopPerTote, layers := *p.UOPPerTote, *p.ToteLayers
+			out[p.ID] = append(out[p.ID], fmt.Sprintf("%s: %d × %d × %d = %d",
+				code, uopPerTote, n, layers, uopPerTote*n*layers))
+		}
+	}
+	return out
 }
 
 func (h *Handlers) apiListPayloads(w http.ResponseWriter, r *http.Request) {

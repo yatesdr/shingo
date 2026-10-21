@@ -176,8 +176,10 @@ type EngineOrchestration interface {
 	// storeroom.
 	//
 	// stamp is the two-stage cart stamp (domain.BareStamp), resolved inside the
-	// same transaction; StampNone writes binTypeID as given.
-	ClearForReuseStampAndBookDeparture(binID, nodeID int64, binTypeID *int64, stamp domain.BareStamp) (int64, error)
+	// same transaction; StampNone writes binTypeID as given. layers is the
+	// height the CLEAR declared, nil when none: written after the clear and the
+	// stamp, in the same transaction.
+	ClearForReuseStampAndBookDeparture(binID, nodeID int64, binTypeID *int64, stamp domain.BareStamp, layers *int) (int64, error)
 
 	// ── Orders ─────────────────────────────────────────────────────
 	CreateBinMove(req engine.BinMoveRequest) (*engine.BinMoveResult, error)

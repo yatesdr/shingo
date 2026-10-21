@@ -13,9 +13,9 @@ import (
 // WantedBinType decides WHICH carrier type an empty going to a loader window
 // should be, from the loader's declared carrier mix. A loader that has declared
 // no mix — every loader today — is "first come, first served" among the carriers
-// its own payloads may ride (see the no-mix arm in wantedBinTypes): this returns
+// its own payloads may ride (see the no-mix arm in wantedEmpty): this returns
 // that type when there is exactly one, and "" when there are several or the rule
-// admits any carrier. The finder itself searches by the set (wantedBinTypes);
+// admits any carrier. The finder itself searches by the set (wantedEmpty);
 // this single-code form is what the mix tests read.
 //
 // The rule composes two facts that answer different questions:
@@ -37,7 +37,7 @@ import (
 // inconvenient makes declaring it pointless. A loader that wants any-type
 // behaviour says so by declaring no mix.
 func (f *Finder) WantedBinType(need Need) string {
-	if types := f.wantedBinTypes(need); len(types) == 1 {
+	if types, _ := f.wantedEmpty(need); len(types) == 1 {
 		return types[0]
 	}
 	return ""
@@ -51,12 +51,22 @@ func oneType(code string) []string {
 	return []string{code}
 }
 
-// wantedBinTypes is WantedBinType's answer as a set, which is what the finder
-// searches by: nil is any carrier, one code is that type, several are any of
-// them. Only the no-mix loader arm below ever answers with more than one.
-func (f *Finder) wantedBinTypes(need Need) []string {
+// wantedEmpty is what an empty should be. types is WantedBinType's answer as a
+// set, which is what the finder searches by: nil is any carrier, one code is
+// that type, several are any of them. Only the no-mix loader arm below ever
+// answers with more than one.
+//
+// layers is the height, in layers of totes, the empty is wanted at where it is
+// set down (store.DB.GetSetDownNode): 0 at a fed press cell's core node, else the
+// payload's tote layers, nil when the payload states none or nothing names
+// where the carrier goes. The finders rank by it and never filter. It rides the
+// destination read this function already made, so it costs no statement; a
+// keeper ask (the origin arm) reads no destination and wants no height.
+// Pins: TestToteWant_TheShape, TestToteWant_ReachesTheFinder,
+// TestToteWant_NoNumbersAddNoStatement.
+func (f *Finder) wantedEmpty(need Need) (types []string, layers *int) {
 	if need.Intent != IntentEmpty {
-		return nil
+		return nil, nil
 	}
 
 	// ── FIRST ARM: THE TYPE IS PINNED, NOT DERIVED ──────────────────────────
@@ -86,7 +96,7 @@ func (f *Finder) wantedBinTypes(need Need) []string {
 	// versus a wrong-typed carrier delivered as though it were right.
 	if need.OriginID != "" {
 		if _, code, err := f.db.MaintainedEpisodeForOrigin(need.OriginID); err == nil && code != "" {
-			return []string{code}
+			return []string{code}, nil
 		} else if err != nil {
 			f.debug("WantedBinType: maintained episode for origin %s: %v", need.OriginID, err)
 		}
@@ -94,22 +104,30 @@ func (f *Finder) wantedBinTypes(need Need) []string {
 
 	// ── The loader derivation. Needs a destination WINDOW to derive from. ────
 	if need.DeliveryNode == "" {
-		return oneType(f.typeFromDestinationPosition(need, nil))
+		code, layers := f.typeFromDestinationPosition(need, nil)
+		return oneType(code), layers
 	}
-	dest, err := f.db.GetNodeByDotName(need.DeliveryNode)
+	dest, destLayers, err := f.db.GetSetDownNode(need.DeliveryNode, need.PayloadCode)
 	if err != nil || dest == nil {
-		return oneType(f.typeFromDestinationPosition(need, nil))
+		code, layers := f.typeFromDestinationPosition(need, nil)
+		return oneType(code), layers
+	}
+	// The want is the set-down node's; a delivery node that is not where the
+	// carrier is set down says nothing about its height.
+	if need.SetDownNode == need.DeliveryNode {
+		layers = destLayers
 	}
 	// The home and, in the same read, the carrier types the window's payloads
 	// may ride — so the no-mix arm below costs no statement the quota read did
 	// not already pay for.
 	home, carriers, err := f.db.GetLoaderHomeCarriers(dest.ID)
 	if err != nil || home == nil {
-		return oneType(f.typeFromDestinationPosition(need, dest))
+		code, layers := f.typeFromDestinationPosition(need, &setDown{dest, destLayers})
+		return oneType(code), layers
 	}
 	quotas, err := f.db.ListLoaderQuotas(home.LoaderID)
 	if err != nil {
-		return nil
+		return nil, layers
 	}
 	if len(quotas) == 0 {
 		// ── NO DECLARED MIX: THE CARRIERS THE LOADER'S PARTS MAY RIDE ───────
@@ -133,11 +151,11 @@ func (f *Finder) wantedBinTypes(need Need) []string {
 		// nothing, so any carrier is one the loader can fill. Otherwise the
 		// union of its payloads' types, and a group with none of them WAITS
 		// under the typed cause rather than taking another.
-		return carriers
+		return carriers, layers
 	}
 	homes, err := f.db.ListLoaderHomes(home.LoaderID)
 	if err != nil {
-		return nil
+		return nil, layers
 	}
 	nodeIDs := make([]int64, 0, len(homes))
 	for _, h := range homes {
@@ -145,7 +163,7 @@ func (f *Finder) wantedBinTypes(need Need) []string {
 	}
 	resident, err := f.db.ListBinsByNodes(nodeIDs)
 	if err != nil {
-		return nil
+		return nil, layers
 	}
 	have := map[string]int{}
 	for _, b := range resident {
@@ -154,7 +172,7 @@ func (f *Finder) wantedBinTypes(need Need) []string {
 	// What this window can physically take. Absent = anything.
 	caps, err := f.db.ListLoaderHomeBinTypes(home.LoaderID)
 	if err != nil {
-		return nil
+		return nil, layers
 	}
 	allowed := caps[dest.ID]
 	fits := func(code string) bool {
@@ -194,7 +212,7 @@ func (f *Finder) wantedBinTypes(need Need) []string {
 			best, bestGap, bestWant = q.BinTypeCode, gap, q.Want
 		}
 	}
-	return oneType(best)
+	return oneType(best), layers
 }
 
 // emptyFenceFor builds the maintained-group fence for one need.
@@ -264,23 +282,32 @@ func (f *Finder) emptyFenceFor(need Need) bins.EmptyFence {
 // TestPlainRetrieveEmpty_TypedByItsDestinationsOneAdmittedType,
 // TestOutflowTyping_TheAskerIsNotTheDestination.
 //
-// delivery is the need's delivery node when the caller has already read it, so
-// a simple order's destination costs no second lookup; nil otherwise.
-func (f *Finder) typeFromDestinationPosition(need Need, delivery *nodes.Node) string {
+// delivery is the need's delivery node, with its wanted height, when the caller
+// has already read it, so a simple order's destination costs no second lookup;
+// nil otherwise. It also answers the height an empty is wanted at on the
+// set-down node (wantedEmpty), from the same read.
+func (f *Finder) typeFromDestinationPosition(need Need, delivery *setDown) (string, *int) {
 	if need.SetDownNode == "" {
-		return ""
+		return "", nil
 	}
-	node := delivery
-	if node == nil || need.SetDownNode != need.DeliveryNode {
-		n, err := f.db.GetNodeByDotName(need.SetDownNode)
+	at := delivery
+	if at == nil || need.SetDownNode != need.DeliveryNode {
+		n, layers, err := f.db.GetSetDownNode(need.SetDownNode, need.PayloadCode)
 		if err != nil || n == nil {
-			return ""
+			return "", nil
 		}
-		node = n
+		at = &setDown{n, layers}
 	}
-	types, err := f.db.GetEffectiveBinTypes(node.ID)
+	types, err := f.db.GetEffectiveBinTypes(at.node.ID)
 	if err != nil || len(types) != 1 {
-		return ""
+		return "", at.layers
 	}
-	return types[0].Code
+	return types[0].Code, at.layers
+}
+
+// setDown is a destination read: the node, and the height (layers) an empty is
+// wanted at there, nil for none.
+type setDown struct {
+	node   *nodes.Node
+	layers *int
 }

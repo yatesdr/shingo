@@ -4474,6 +4474,16 @@ func migrationList() []migration {
 		{160, "bins.held_since - when an unfinished carrier entered a partial home of its own part (an arrival there, or a count declared there); the order a refill calls partials back in. NULL anywhere else",
 			v160BinsHeldSince,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "bins", "held_since") }},
+
+		{161, "tote numbers — payloads.tote_layers and uop_per_tote, bin_types.totes_per_layer, bins.totes_on_cart, and node_maintain_layer_levels",
+			v161ToteNumbers,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "payloads", "tote_layers") &&
+					schema.ColumnExists(q, "payloads", "uop_per_tote") &&
+					schema.ColumnExists(q, "bin_types", "totes_per_layer") &&
+					schema.ColumnExists(q, "bins", "totes_on_cart") &&
+					schema.TableExists(q, "node_maintain_layer_levels")
+			}},
 	}
 }
 
@@ -4556,6 +4566,58 @@ func v155DemandForecastPlan(tx *sql.Tx) error {
 	} {
 		if _, err := tx.Exec(s); err != nil {
 			return fmt.Errorf("v155 demand_origins forecast plan: %w", err)
+		}
+	}
+	return nil
+}
+
+// v161ToteNumbers adds the tote numbers. All four columns are nullable and
+// NULL is unknown: a plant that sets none of them reads, writes and sends
+// exactly what it did before.
+//
+// Renumbered 156 -> 161: v156 through v160 landed on main while this was on
+// its branch.
+//
+//   - payloads.tote_layers: how many layers of totes a full cart of this
+//     payload stands.
+//   - payloads.uop_per_tote: the production cycles that fill one tote, in UOP,
+//     the unit uop_capacity and the count already speak.
+//   - bin_types.totes_per_layer: how many totes one layer of this carrier
+//     holds.
+//   - bins.totes_on_cart: the totes standing on this cart, filled or empty. 0
+//     is a base, a real count; every statement that empties a carrier writes
+//     NULL (service/bin_manifest.go).
+//
+// The CHECKs refuse what no cart can be: a layer, a tote or a layer's totes
+// that hold nothing, or a negative count.
+//
+// The three columns on existing tables follow the schema-constant rule (v151,
+// v154): the baseline CREATE TABLE declares the same column for a fresh
+// database, and this ALTER gives it to an aged one. None is indexed, so none
+// is in migrateAddBaselineColumns.
+//
+// node_maintain_layer_levels is a new table and is declared HERE ONLY, not in
+// the baseline (root AGENTS.md, "a new table gets exactly one home";
+// migrationOnlyTables names it). One row per (group, carrier type, layers):
+// how many carts of that type standing that many layers high the group wants.
+// It is communication, not a cap: the cap stays node_maintain_levels, and the
+// wants are not summed against it.
+func v161ToteNumbers(tx *sql.Tx) error {
+	for _, s := range []string{
+		`ALTER TABLE payloads ADD COLUMN IF NOT EXISTS tote_layers INTEGER CHECK (tote_layers > 0)`,
+		`ALTER TABLE payloads ADD COLUMN IF NOT EXISTS uop_per_tote INTEGER CHECK (uop_per_tote > 0)`,
+		`ALTER TABLE bin_types ADD COLUMN IF NOT EXISTS totes_per_layer INTEGER CHECK (totes_per_layer > 0)`,
+		`ALTER TABLE bins ADD COLUMN IF NOT EXISTS totes_on_cart INTEGER CHECK (totes_on_cart >= 0)`,
+		`CREATE TABLE IF NOT EXISTS node_maintain_layer_levels (
+			group_node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+			bin_type_id   BIGINT NOT NULL REFERENCES bin_types(id) ON DELETE CASCADE,
+			layers        INTEGER NOT NULL CHECK (layers > 0),
+			want          INTEGER NOT NULL CHECK (want >= 0),
+			PRIMARY KEY (group_node_id, bin_type_id, layers)
+		)`,
+	} {
+		if _, err := tx.Exec(s); err != nil {
+			return fmt.Errorf("v161 tote numbers: %w", err)
 		}
 	}
 	return nil
@@ -8004,9 +8066,10 @@ func v90MaintainedGroups(tx *sql.Tx) error {
 		)`,
 		// Which process NODES the group serves. The editor speaks "process"
 		// because that is what a person points at; what is stored is the resolved
-		// node set, because claims are Edge-local and structurally unreachable
-		// from Core (swap_peer.go) — a Core-side rule that had to resolve a claim
-		// at read time could not.
+		// node set. When this was written claims were Edge-local and Core could
+		// not read one; Core has since mirrored the style claims
+		// (store/plantclaims, the plant.claims feed), but the group still
+		// stores the nodes it serves, not the claims that name them.
 		`CREATE TABLE IF NOT EXISTS node_maintain_supports (
 			group_node_id   BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
 			process_node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,

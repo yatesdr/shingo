@@ -23,7 +23,9 @@ import (
 
 // apiTelemetryNodeBins returns bin state for requested core nodes.
 // GET /api/telemetry/node-bins?nodes=NODE-A,NODE-B
-// Returns a JSON array of {node_name, bin_label, payload_code, uop_remaining, occupied}.
+// Returns a JSON array of protocol.NodeBinInfo, one row per node asked, in the
+// order asked: the first bin at the node (bins.ListByNode's order), and the
+// cart's tote numbers when they are known.
 //
 // A FAILED READ IS NOT AN EMPTY NODE. This used to fold "the query errored"
 // together with "there are no bins here" and answer 200 with occupied=false for
@@ -116,6 +118,8 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 			entry.HeldSince = since.UTC().Format(time.RFC3339)
 			entry.HeldFor = line
 		}
+		entry.TotesOnCart = bin.TotesOnCart
+		entry.TotesPerLayer = bin.TotesPerLayer
 		result = append(result, entry)
 	}
 	h.jsonOK(w, result)
@@ -433,8 +437,16 @@ func (h *Handlers) apiBinCount(w http.ResponseWriter, r *http.Request) {
 //
 // Optional bin_type_code: when present the carrier's bin_type_id is updated
 // atomically with the manifest clear (dunnage floating — operator declared
-// which dunnage type they just loaded). Unknown or node-disallowed codes
-// return 400. Absent → bin_type_id is unchanged (existing behaviour).
+// which dunnage type they just loaded). An unknown code returns 400; the code
+// is not checked against the types the node admits. Absent → bin_type_id is
+// unchanged (existing behaviour).
+//
+// Optional layers: the height the person declared, in layers of totes. The
+// cart's count of totes is written as layers × its own type's totes per layer
+// after the clear and any stamp, in the clear's transaction, with a ledger
+// row; a type that says no totes per layer gets no write. A negative height is
+// refused with 400 before anything is written. Absent → nothing is declared
+// and the clear is the statements it always was.
 //
 // TWO CARTS IGNORE THE CODE, and are stamped inside the clear's transaction
 // instead (bins.ResolveBareStampTx):
@@ -460,6 +472,10 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "node_name is required", http.StatusBadRequest)
 		return
 	}
+	if req.Layers != nil && *req.Layers < 0 {
+		h.jsonError(w, fmt.Sprintf("layers %d is not a height", *req.Layers), http.StatusBadRequest)
+		return
+	}
 	nodes := h.engine.NodeService()
 	node, err := nodes.GetByDotName(req.NodeName)
 	if err != nil {
@@ -471,26 +487,8 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, fmt.Sprintf("no bin at node %s", req.NodeName), http.StatusBadRequest)
 		return
 	}
-	// Resolve which bin to clear. One bin → unambiguous. More than one → the
-	// caller must name a bin_id, otherwise we'd silently clear an arbitrary
-	// bins[0]. No count/occupancy refusal: the unloader clears full finished
-	// bins by design, so a non-empty bin is not itself a reason to refuse.
-	bin := bins[0]
-	switch {
-	case req.BinID != 0:
-		bin = nil
-		for _, b := range bins {
-			if b.ID == req.BinID {
-				bin = b
-				break
-			}
-		}
-		if bin == nil {
-			h.jsonError(w, fmt.Sprintf("bin %d is not at node %s", req.BinID, req.NodeName), http.StatusConflict)
-			return
-		}
-	case len(bins) > 1:
-		h.jsonError(w, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(bins)), http.StatusConflict)
+	bin, ok := h.binToClear(w, req, bins)
+	if !ok {
 		return
 	}
 
@@ -541,7 +539,7 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 	// cannot be written the clear is refused with them, and the unloader presses
 	// the button again; the alternative is a clear that destroys the count with
 	// nothing recording that material left.
-	newEpoch, err := h.orchestration.ClearForReuseStampAndBookDeparture(bin.ID, node.ID, binTypeID, stamp)
+	newEpoch, err := h.orchestration.ClearForReuseStampAndBookDeparture(bin.ID, node.ID, binTypeID, stamp, req.Layers)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -578,6 +576,28 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 // with 409 when the stage 1 has nowhere to send the cart); a bare cart
 // elsewhere gets its carrier back; anything else stamps what it was told. ok
 // false means the answer has been written.
+// binToClear resolves which bin a clear names. One bin → unambiguous. More
+// than one → the caller must name a bin_id, otherwise we'd silently clear an
+// arbitrary one. No count/occupancy refusal: the unloader clears full finished
+// bins by design, so a non-empty bin is not itself a reason to refuse. A
+// refusal is written to w and ok is false.
+func (h *Handlers) binToClear(w http.ResponseWriter, req protocol.BinClearRequest, atNode []*domain.Bin) (*domain.Bin, bool) {
+	switch {
+	case req.BinID != 0:
+		for _, b := range atNode {
+			if b.ID == req.BinID {
+				return b, true
+			}
+		}
+		h.jsonError(w, fmt.Sprintf("bin %d is not at node %s", req.BinID, req.NodeName), http.StatusConflict)
+		return nil, false
+	case len(atNode) > 1:
+		h.jsonError(w, fmt.Sprintf("node %s holds %d bins; specify bin_id to disambiguate", req.NodeName, len(atNode)), http.StatusConflict)
+		return nil, false
+	}
+	return atNode[0], true
+}
+
 func (h *Handlers) binClearStamp(w http.ResponseWriter, nodeID int64, nodeName string, bare bool) (domain.BareStamp, bool) {
 	stageOne, sendsTo, err := h.engine.LoaderService().StageOneAt(nodeID)
 	switch {

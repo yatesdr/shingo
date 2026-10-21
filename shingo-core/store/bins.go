@@ -74,16 +74,16 @@ func (db *DB) ClaimBin(binID, orderID int64) error { return bins.Claim(db.DB, bi
 // the given payload code, preferring the given zone. excludeNodeID > 0
 // skips bins at that node (pass destination to avoid same-node retrieve).
 func (db *DB) FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNodeID int64,
-	fence bins.EmptyFence, asker reservations.DigAsker) (*bins.Bin, error) {
-	return bins.FindEmptyCompatible(db.DB, payloadCode, preferZone, excludeNodeID, fence, asker)
+	fence bins.EmptyFence, asker reservations.DigAsker, wantLayers *int) (*bins.Bin, error) {
+	return bins.FindEmptyCompatible(db.DB, payloadCode, preferZone, excludeNodeID, fence, asker, wantLayers)
 }
 
 // FindEmptyCompatibleBinInGroup is FindEmptyCompatibleBin scoped to descendants
 // of a synthetic group node. See bins.FindEmptyCompatibleInGroup for the full
 // rationale. Used by the source finder's group-scoped empty tier.
 func (db *DB) FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, excludeNodeID int64,
-	asker reservations.DigAsker) (*bins.Bin, error) {
-	return bins.FindEmptyCompatibleInGroup(db.DB, payloadCode, groupNodeID, excludeNodeID, asker)
+	asker reservations.DigAsker, wantLayers *int) (*bins.Bin, error) {
+	return bins.FindEmptyCompatibleInGroup(db.DB, payloadCode, groupNodeID, excludeNodeID, asker, wantLayers)
 }
 
 // FindPartialToFinish is bins.FindPartialToFinish on this store (sql.ErrNoRows
@@ -109,32 +109,49 @@ func (db *DB) ReleaseStagedBin(binID int64) (released bool, err error) {
 	return bins.ReleaseStaged(db.DB, binID)
 }
 
-// UpdateBin is the bin edit: label, description and bin type, each only when
-// non-nil. It never writes node_id or status (see bins.Update).
+// UpdateBin is the bin edit: label, description, bin type and the count of
+// totes on the cart, each only when non-nil. It never writes node_id or status
+// (see bins.Update).
 //
-// One transaction: the edit, the finding it re-derives on a re-type, and the
-// re-type's ledger row with its from and to type codes (audit.OpBinRetyped).
-// The transaction is opened here because store/bins may not import
-// store/audit (depguard's store-sub-pkg-isolation).
-func (db *DB) UpdateBin(binID int64, label, description *string, binTypeID *int64) error {
+// One transaction: the edit, the finding it re-derives on a re-type, and its
+// ledger row. A re-type writes audit.OpBinRetyped with its from and to type
+// codes, and the count of totes it blanked as totes_from when there was one;
+// an edit that changed the count and not the type writes audit.OpTotesEdited
+// with totes_from and totes_to (null is unknown). The transaction is opened
+// here because store/bins may not import store/audit (depguard's
+// store-sub-pkg-isolation).
+func (db *DB) UpdateBin(binID int64, label, description *string, binTypeID *int64, totes *bins.TotesEdit) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	r, err := bins.Update(tx, binID, label, description, binTypeID)
+	e, err := bins.Update(tx, binID, label, description, binTypeID, totes)
 	if err != nil {
 		return err
 	}
-	if r != nil {
-		detail, err := json.Marshal(map[string]string{"dunnage_from": r.FromCode, "dunnage_to": r.ToCode})
-		if err != nil {
-			return err
+	var op string
+	detail := map[string]any{}
+	switch {
+	case e.Retyped:
+		op = audit.OpBinRetyped
+		detail["dunnage_from"], detail["dunnage_to"] = e.FromCode, e.ToCode
+		if e.TotesChanged {
+			detail["totes_from"] = e.TotesFrom
 		}
-		if err := audit.AppendBinUOP(tx, binID, &r.UOP, r.UOP, audit.OpBinRetyped, "store/bins.go:UpdateBin",
-			nil, r.PayloadCode, "", audit.BinUOPContext{NodeID: r.NodeID, Detail: detail}); err != nil {
-			return err
-		}
+	case e.TotesChanged:
+		op = audit.OpTotesEdited
+		detail["totes_from"], detail["totes_to"] = e.TotesFrom, e.TotesTo
+	default:
+		return tx.Commit()
+	}
+	raw, err := json.Marshal(detail)
+	if err != nil {
+		return err
+	}
+	if err := audit.AppendBinUOP(tx, binID, &e.UOP, e.UOP, op, "store/bins.go:UpdateBin",
+		nil, e.PayloadCode, "", audit.BinUOPContext{NodeID: e.NodeID, Detail: raw}); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

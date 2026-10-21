@@ -18,7 +18,7 @@ type BinType = domain.BinType
 
 // BinTypeSelectCols is exported so cross-aggregate readers (e.g. GetEffectiveBinTypes
 // at the outer store/ level, which JOINs node ancestors) can reuse the column list.
-const BinTypeSelectCols = `id, code, description, width_in, height_in, length_in, required_robot_group, bare, bare_of, created_at, updated_at`
+const BinTypeSelectCols = `id, code, description, width_in, height_in, length_in, required_robot_group, bare, bare_of, totes_per_layer, created_at, updated_at`
 
 // ScanBinType reads a single bin_types row. Exported so cross-aggregate readers
 // at the outer store/ level can use it.
@@ -26,7 +26,7 @@ func ScanBinType(row interface{ Scan(...any) error }) (*BinType, error) {
 	var bt BinType
 	var bareOf sql.NullInt64
 	err := row.Scan(&bt.ID, &bt.Code, &bt.Description, &bt.WidthIn, &bt.HeightIn, &bt.LengthIn,
-		&bt.RequiredRobotGroup, &bt.Bare, &bareOf, &bt.CreatedAt, &bt.UpdatedAt)
+		&bt.RequiredRobotGroup, &bt.Bare, &bareOf, &bt.TotesPerLayer, &bt.CreatedAt, &bt.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -53,9 +53,9 @@ func ScanBinTypes(rows *sql.Rows) ([]*BinType, error) {
 // are not written: bare is generated from bare_of, and bare_of has one writer,
 // EnsureBareMarkerTx.
 func CreateType(db *sql.DB, bt *BinType) error {
-	id, err := helpers.InsertID(db, `INSERT INTO bin_types (code, description, width_in, height_in, length_in, required_robot_group)
-		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-		bt.Code, bt.Description, bt.WidthIn, bt.HeightIn, bt.LengthIn, bt.RequiredRobotGroup)
+	id, err := helpers.InsertID(db, `INSERT INTO bin_types (code, description, width_in, height_in, length_in, required_robot_group, totes_per_layer)
+		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+		bt.Code, bt.Description, bt.WidthIn, bt.HeightIn, bt.LengthIn, bt.RequiredRobotGroup, bt.TotesPerLayer)
 	if err != nil {
 		return fmt.Errorf("create bin type: %w", err)
 	}
@@ -63,12 +63,13 @@ func CreateType(db *sql.DB, bt *BinType) error {
 	return nil
 }
 
-// UpdateType writes the mutable columns on a bin type. Bare and BareOf are not
-// among them (see CreateType).
+// UpdateType writes the mutable columns on a bin type, totes_per_layer among
+// them: every caller reads the type and lays its edit over it. Bare and BareOf
+// are not among them (see CreateType).
 func UpdateType(db *sql.DB, bt *BinType) error {
 	_, err := db.Exec(`UPDATE bin_types SET code=$1, description=$2, width_in=$3, height_in=$4, length_in=$5,
-		required_robot_group=$6, updated_at=NOW() WHERE id=$7`,
-		bt.Code, bt.Description, bt.WidthIn, bt.HeightIn, bt.LengthIn, bt.RequiredRobotGroup, bt.ID)
+		required_robot_group=$6, totes_per_layer=$7, updated_at=NOW() WHERE id=$8`,
+		bt.Code, bt.Description, bt.WidthIn, bt.HeightIn, bt.LengthIn, bt.RequiredRobotGroup, bt.TotesPerLayer, bt.ID)
 	return err
 }
 

@@ -484,9 +484,9 @@ func (f *Finder) Pick(need Need) Plan {
 	// has to be searched FOR: asking for any empty and rejecting the wrong type
 	// would let one wrong-typed carrier mask every right one behind it.
 	// A loader with no declared mix gets the carriers its payloads may ride
-	// (wantedBinTypes), searched FOR in the same way and waiting under the same
+	// (wantedEmpty), searched FOR in the same way and waiting under the same
 	// typed cause. nil is any carrier; several are searched as one set.
-	wantTypes := f.wantedBinTypes(need)
+	wantTypes, wantLayers := f.wantedEmpty(need)
 
 	// ── Tier 2b: a partial to finish (empty intent naming a part) ─────────
 	// A carrier to fill can be one already part-filled with the same part:
@@ -548,11 +548,11 @@ func (f *Finder) Pick(need Need) Plan {
 		var gerr error
 		switch len(wantTypes) {
 		case 0:
-			groupBin, gerr = f.db.FindEmptyCompatibleBinInGroup(payloadCode, srcNode.ID, excludeID, need.Asker)
+			groupBin, gerr = f.db.FindEmptyCompatibleBinInGroup(payloadCode, srcNode.ID, excludeID, need.Asker, wantLayers)
 		case 1:
-			groupBin, gerr = f.db.FindEmptyBinOfTypeInGroup(wantTypes[0], srcNode.ID, excludeID, need.Asker)
+			groupBin, gerr = f.db.FindEmptyBinOfTypeInGroup(wantTypes[0], srcNode.ID, excludeID, need.Asker, wantLayers)
 		default:
-			groupBin, gerr = f.db.FindEmptyBinOfTypesInGroup(wantTypes, srcNode.ID, excludeID, need.Asker)
+			groupBin, gerr = f.db.FindEmptyBinOfTypesInGroup(wantTypes, srcNode.ID, excludeID, need.Asker, wantLayers)
 		}
 		if sourceSearchFailed(gerr) {
 			// THE SEARCH DID NOT RUN. Nothing below this line is known about the
@@ -764,12 +764,12 @@ func (f *Finder) Pick(need Need) Plan {
 			fence := f.emptyFenceFor(need)
 			switch len(wantTypes) {
 			case 0:
-				b, err = f.db.FindEmptyCompatibleBin(payloadCode, preferZone, excludeID, fence, need.Asker)
+				b, err = f.db.FindEmptyCompatibleBin(payloadCode, preferZone, excludeID, fence, need.Asker, wantLayers)
 			case 1:
-				b, err = f.db.FindEmptyBinOfType(wantTypes[0], preferZone, excludeID, fence, need.Asker)
+				b, err = f.db.FindEmptyBinOfType(wantTypes[0], preferZone, excludeID, fence, need.Asker, wantLayers)
 				cause = CauseFinderNoEmptyOfType
 			default:
-				b, err = f.db.FindEmptyBinOfTypes(wantTypes, preferZone, excludeID, fence, need.Asker)
+				b, err = f.db.FindEmptyBinOfTypes(wantTypes, preferZone, excludeID, fence, need.Asker, wantLayers)
 				cause = CauseFinderNoEmptyOfType
 			}
 			if sourceSearchFailed(err) {

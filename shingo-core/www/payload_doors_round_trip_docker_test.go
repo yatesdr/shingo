@@ -27,6 +27,11 @@ import (
 // The doors: the payloads page's form (handlePayloadUpdate), the template API
 // (apiUpdatePayloadTemplate) and the importer (importPayloadGroups), which only
 // creates and skips a code that exists.
+//
+// THE TOTE NUMBERS (tote_layers, uop_per_tote) are seeded away from NULL, so a
+// door that does not carry them is seen leaving them standing; the doors that
+// carry them are run setting one and blanking the other. A save that does not
+// send a tote field leaves it standing; a blank box or a null is unknown.
 
 func payloadRowJSON(t *testing.T, db *store.DB, id int64) map[string]any {
 	t.Helper()
@@ -104,6 +109,7 @@ func seedDoorPayload(t *testing.T, h *Handlers, db *store.DB, code string) (id i
 	rec := postJSON(t, h.apiCreatePayloadTemplate, "/api/payloads/templates/create", map[string]any{
 		"code": code, "description": "seeded", "uop_capacity": 40, "robot_group": "RG-1",
 		"near_empty_enabled": true, "near_empty_robot_group": "RG-NE", "near_empty_threshold_pct": 20,
+		"tote_layers": 5, "uop_per_tote": 10,
 		"bin_type_ids": []int64{a, b},
 		"manifest": []map[string]any{
 			{"part_number": code + "-P1", "catid": "70000001", "parts_per_cycle": 2},
@@ -115,6 +121,9 @@ func seedDoorPayload(t *testing.T, h *Handlers, db *store.DB, code string) (id i
 	}
 	p, err := db.GetPayloadByCode(code)
 	testutil.MustNoErr(t, err, "read seeded payload")
+	if p.ToteLayers == nil || *p.ToteLayers != 5 || p.UOPPerTote == nil || *p.UOPPerTote != 10 {
+		t.Fatalf("seed %s: tote numbers %v / %v, want 5 / 10", code, p.ToteLayers, p.UOPPerTote)
+	}
 	return p.ID, a, b, c
 }
 
@@ -149,6 +158,67 @@ func TestPayloadDoors_UpdateRoundTrip(t *testing.T) {
 		}))
 		requireSame(t, "carriers after the form", payloadBinTypeIDs(t, db, id), []int64{a, b})
 		requireSame(t, "lines after the form (ids included)", payloadManifestJSON(t, db, id, true), lines)
+	})
+
+	t.Run("the form writes the tote numbers it carries: a number, and a blank as unknown", func(t *testing.T) {
+		t.Parallel()
+		h, db := testHandlers(t)
+		id, a, b, _ := seedDoorPayload(t, h, db, "PLD-FTOTE")
+		before := payloadRowJSON(t, db, id)
+
+		f := url.Values{}
+		f.Set("id", fmt.Sprint(id))
+		f.Set("code", "PLD-FTOTE")
+		f.Set("description", "seeded")
+		f.Set("uop_capacity", "40")
+		f.Set("robot_group", "RG-1")
+		f.Set("near_empty_enabled", "1")
+		f.Set("near_empty_robot_group", "RG-NE")
+		f.Set("near_empty_threshold_pct", "20")
+		f.Set("tote_layers", "6")
+		f.Set("uop_per_tote", "")
+		rec := postFormPL(t, h.handlePayloadUpdate, "/payloads/update", f)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("form update: status %d; body=%s", rec.Code, rec.Body.String())
+		}
+		requireSame(t, "row after the form", payloadRowJSON(t, db, id), overlay(before, map[string]any{
+			"tote_layers": float64(6), "uop_per_tote": nil,
+		}))
+		requireSame(t, "carriers after the form", payloadBinTypeIDs(t, db, id), []int64{a, b})
+
+		f.Set("tote_layers", "0")
+		rec = postFormPL(t, h.handlePayloadUpdate, "/payloads/update", f)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("a layer count of 0: status %d, want 400", rec.Code)
+		}
+	})
+
+	t.Run("the template API writes the tote numbers it carries: a number, and null as unknown", func(t *testing.T) {
+		t.Parallel()
+		h, db := testHandlers(t)
+		id, a, _, _ := seedDoorPayload(t, h, db, "PLD-ATOTE")
+		before := payloadRowJSON(t, db, id)
+
+		body := map[string]any{
+			"id": id, "code": "PLD-ATOTE", "description": "seeded", "uop_capacity": 40, "robot_group": "RG-1",
+			"near_empty_enabled": true, "near_empty_robot_group": "RG-NE", "near_empty_threshold_pct": 20,
+			"tote_layers": nil, "uop_per_tote": 12,
+			"bin_type_ids": []int64{a},
+			"manifest":     []map[string]any{{"part_number": "PLD-ATOTE-P1", "catid": "70000001", "parts_per_cycle": 2}},
+		}
+		rec := postJSON(t, h.apiUpdatePayloadTemplate, "/api/payloads/templates/update", body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("api update: status %d; body=%s", rec.Code, rec.Body.String())
+		}
+		requireSame(t, "row after the API", payloadRowJSON(t, db, id), overlay(before, map[string]any{
+			"tote_layers": nil, "uop_per_tote": float64(12),
+		}))
+
+		body["uop_per_tote"] = -1
+		rec = postJSON(t, h.apiUpdatePayloadTemplate, "/api/payloads/templates/update", body)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("a UOP per tote of -1: status %d, want 400", rec.Code)
+		}
 	})
 
 	t.Run("the template API writes its fields, its carriers and its lines", func(t *testing.T) {
@@ -234,6 +304,7 @@ func TestPayloadDoors_UpdateRoundTrip(t *testing.T) {
 				"id": nil, "created_at": nil, "code": "PLD-IMP-NEW", "description": "", "uop_capacity": float64(25),
 				"robot_group": "", "advanced_load_sequence": "", "near_empty_enabled": false,
 				"near_empty_robot_group": "", "near_empty_threshold_pct": float64(0),
+				"tote_layers": nil, "uop_per_tote": nil,
 			})
 		requireSame(t, "imported carriers", payloadBinTypeIDs(t, db, created.ID), []int64{})
 		if n := len(payloadManifestJSON(t, db, created.ID, false)); n != 1 {

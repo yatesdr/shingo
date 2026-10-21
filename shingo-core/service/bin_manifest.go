@@ -201,6 +201,23 @@ func resolveBinUOPContext(tx *sql.Tx, binID int64, detail json.RawMessage) (audi
 	return ctx, nil
 }
 
+// emptiedCarrierSET is what emptying a carrier writes, shared by the three
+// statements that do it: ClearForReuseTx, clearAndClaimTx and the zero arm of
+// syncOrClearForReleased. Their column lists are pinned by
+// TestEmptyingStatements_ColumnLists.
+//
+// undeclared_carrier_at GOES WITH THE PAYLOAD: the finding is a statement
+// about a payload standing in a carrier that may not hold it, and an empty
+// carrier holds nothing.
+//
+// totes_on_cart GOES TO UNKNOWN, not to 0. It counts the totes standing on the
+// cart, filled or empty, and what stands on a cart once its contents are gone
+// nobody has said: a full built on a base (0) is not a base again once
+// emptied. A person declares the number with the CLEAR (DeclareTotesTx), after
+// this statement. Pin: TestEmptyingStatements_AFullBuiltOnABaseReadsUnknownOnceEmptied.
+const emptiedCarrierSET = `payload_code='', manifest=NULL, uop_remaining=0,
+	manifest_confirmed=false, loaded_at=NULL, undeclared_carrier_at=NULL, totes_on_cart=NULL`
+
 // ClearForReuse empties a bin's manifest. The bin becomes visible
 // to FindEmptyCompatibleBin after this call. Owns its transaction.
 // ClearForReuse begins its own transaction and delegates to
@@ -215,7 +232,7 @@ func resolveBinUOPContext(tx *sql.Tx, binID int64, detail json.RawMessage) (audi
 // empty state. Callers that don't set dunnage (UOP-applier auto-clear,
 // admin clear) pass nil.
 func (s *BinManifestService) ClearForReuse(binID int64, binTypeID *int64, by protocol.Declarer) (int64, error) {
-	return s.ClearForReuseResolved(binID, func(*sql.Tx) (*int64, error) { return binTypeID, nil }, by)
+	return s.ClearForReuseResolved(binID, func(*sql.Tx) (*int64, error) { return binTypeID, nil }, by, nil)
 }
 
 // ClearForReuseResolved is ClearForReuse with the type to stamp decided INSIDE
@@ -223,7 +240,11 @@ func (s *BinManifestService) ClearForReuse(binID int64, binTypeID *int64, by pro
 // moment. The two-stage stamp needs it: the marker a stage-1 CLEAR stamps is
 // derived from the cart's current type and may be created by the same
 // transaction (bins.ResolveBareStampTx).
-func (s *BinManifestService) ClearForReuseResolved(binID int64, resolve func(*sql.Tx) (*int64, error), by protocol.Declarer) (int64, error) {
+//
+// layers is the height a person declared with the CLEAR, nil when none was:
+// written after the clear and the stamp, in the same transaction
+// (DeclareTotesTx). nil adds no statement.
+func (s *BinManifestService) ClearForReuseResolved(binID int64, resolve func(*sql.Tx) (*int64, error), by protocol.Declarer, layers *int) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("begin tx: %w", err)
@@ -237,6 +258,11 @@ func (s *BinManifestService) ClearForReuseResolved(binID int64, resolve func(*sq
 	epoch, err := s.ClearForReuseTx(tx, binID, binTypeID, audit.OpClearForReuse, "service/bin_manifest.go:ClearForReuse", by)
 	if err != nil {
 		return 0, err
+	}
+	if layers != nil {
+		if err := s.DeclareTotesTx(tx, binID, *layers, "service/bin_manifest.go:ClearForReuse"); err != nil {
+			return 0, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
@@ -286,12 +312,10 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID 
 	// left unchanged; when non-nil the dunnage type is re-stamped
 	// atomically with the manifest clear + epoch bump.
 	//
-	// undeclared_carrier_at GOES WITH THE PAYLOAD. The finding is a statement
-	// about a payload standing in a carrier that may not hold it; an empty
-	// carrier holds nothing, so the finding has no subject left. Clearing it in
-	// the same statement is how the flag stays true without a sweeper.
-	if _, err := tx.Exec(`UPDATE bins SET payload_code='', manifest=NULL, uop_remaining=0,
-		manifest_confirmed=false, loaded_at=NULL, undeclared_carrier_at=NULL,
+	// The emptying columns are emptiedCarrierSET's: undeclared_carrier_at goes
+	// with the payload in the same statement, which is how the flag stays true
+	// without a sweeper, and totes_on_cart goes to unknown.
+	if _, err := tx.Exec(`UPDATE bins SET `+emptiedCarrierSET+`,
 		bin_type_id=COALESCE($2, bin_type_id), updated_at=NOW()
 		WHERE id=$1`, binID, binTypeID); err != nil {
 		return 0, fmt.Errorf("clear manifest bin %d: %w", binID, err)
@@ -318,6 +342,48 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, binTypeID 
 		return 0, err
 	}
 	return newEpoch, nil
+}
+
+// DeclareTotesTx writes the height a person declared with the CLEAR: the
+// cart's count of totes becomes layers × its carrier type's totes per layer,
+// read from the type the cart has NOW, so a call after a stamp reads the
+// stamped type (stage 2's SEND ON: the carrier's number, not the bare
+// marker's). A type that says no totes per layer gets no write and no ledger
+// row. layers 0 declares a base.
+//
+// Called after the clear, in its transaction: the clear has just written the
+// count to unknown (emptiedCarrierSET), so a ledger row's "from" is always
+// unknown and is not recorded. One statement, and a ledger row when it wrote.
+// Pins: TestBinClear_DeclaresTheHeight.
+func (s *BinManifestService) DeclareTotesTx(tx *sql.Tx, binID int64, layers int, source string) error {
+	if layers < 0 {
+		return fmt.Errorf("declare totes on bin %d: %d layers is not a height", binID, layers)
+	}
+	var (
+		totes, perLayer, uop int
+		payloadCode          string
+		nodeID               sql.NullInt64
+	)
+	err := tx.QueryRow(`UPDATE bins b SET totes_on_cart = $2 * bt.totes_per_layer, updated_at = NOW()
+		FROM bin_types bt
+		WHERE b.id = $1 AND bt.id = b.bin_type_id AND bt.totes_per_layer IS NOT NULL
+		RETURNING b.totes_on_cart, bt.totes_per_layer, b.uop_remaining, b.payload_code, b.node_id`,
+		binID, layers).Scan(&totes, &perLayer, &uop, &payloadCode, &nodeID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("declare totes on bin %d: %w", binID, err)
+	}
+	detail, err := json.Marshal(map[string]int{"layers": layers, "totes_per_layer": perLayer, "totes_on_cart": totes})
+	if err != nil {
+		return err
+	}
+	ctx := audit.BinUOPContext{Detail: detail}
+	if nodeID.Valid {
+		ctx.NodeID = &nodeID.Int64
+	}
+	return audit.AppendBinUOP(tx, binID, &uop, uop, audit.OpTotesDeclared, source, nil, payloadCode, "", ctx)
 }
 
 // RebaseAfterEdgeRollbackTx starts the carrier's next count generation because
@@ -580,8 +646,10 @@ func (s *BinManifestService) writeProductionTx(tx *sql.Tx, binID int64, manifest
 //
 // ── WHY IT IS HERE AND NOT AT THE DOORS ───────────────────────────────────
 //
-// setForProductionTx is the one statement that writes payload_code onto a bin,
-// and every door that loads a bin reaches it: the operator's Load Payload
+// setForProductionTx is the one production statement that writes a payload_code
+// onto a bin (bins.SetManifest writes one too, and only the dev seeder and test
+// fixtures call it; the emptying statements blank it), and every door that
+// loads a bin reaches it: the operator's Load Payload
 // (BinService.LoadPayload -> SetFromTemplate), the loader's LOAD (the telemetry
 // bin-load, LoadAtLine, a person's declaration) and produce finalize
 // (RecordProducedBin, and RecordProducedBinFromTemplate through it). Only the operator door checked
@@ -1111,9 +1179,7 @@ func (s *BinManifestService) clearAndClaimTx(tx *sql.Tx, binID, orderID int64) e
 	err = tx.QueryRow(`WITH live AS (SELECT `+reservations.OwnerLiveSQL(1)+` AS ok),
 		named AS (SELECT `+reservations.NamedBinSQL(1, 2)+` AS ok),
 		upd AS (
-		  UPDATE bins SET
-			payload_code='', manifest=NULL, uop_remaining=0,
-			manifest_confirmed=false, loaded_at=NULL, undeclared_carrier_at=NULL,
+		  UPDATE bins SET `+emptiedCarrierSET+`,
 			claimed_by=$1, updated_at=NOW()
 		  WHERE id=$2 AND locked=false AND (claimed_by IS NULL OR claimed_by=$1)
 		    AND `+reservations.HeldByOwnerSQL(reservations.KindBin, 1, 2)+`
@@ -1591,9 +1657,7 @@ func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remain
 		// Clear manifest, preserve claim (if applicable). The claimed_by guard
 		// is added only for the owner variant.
 		clearSQL := `
-			UPDATE bins SET
-				payload_code='', manifest=NULL, uop_remaining=0,
-				manifest_confirmed=false, loaded_at=NULL, undeclared_carrier_at=NULL,
+			UPDATE bins SET ` + emptiedCarrierSET + `,
 				updated_at=NOW()
 			WHERE id=$1 AND locked=false`
 		var res sql.Result

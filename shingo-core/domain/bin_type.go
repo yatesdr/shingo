@@ -43,9 +43,13 @@ type BinType struct {
 	// BareOf is the carrier a bare marker stands for: the same physical cart
 	// with no bin on it. nil on every real type. Written only by
 	// bins.EnsureBareMarkerTx; a marker is admitted wherever its carrier is.
-	BareOf    *int64    `json:"bare_of,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	BareOf *int64 `json:"bare_of,omitempty"`
+	// TotesPerLayer is how many totes one layer of this carrier holds. nil
+	// (NULL): not a tote carrier, or not said; 1 or more when set. A declared
+	// height on this carrier is layers × TotesPerLayer totes.
+	TotesPerLayer *int      `json:"totes_per_layer,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // BareStamp is what a CLEAR does to a cart's type in a two-stage unloader,

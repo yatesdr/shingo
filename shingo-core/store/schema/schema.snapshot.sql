@@ -136,9 +136,11 @@ CREATE TABLE public.bin_types (
     required_robot_group text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    totes_per_layer integer,
     bare_of bigint,
     bare boolean GENERATED ALWAYS AS ((bare_of IS NOT NULL)) STORED NOT NULL,
-    CONSTRAINT bin_types_bare_of_not_self CHECK ((bare_of <> id))
+    CONSTRAINT bin_types_bare_of_not_self CHECK ((bare_of <> id)),
+    CONSTRAINT bin_types_totes_per_layer_check CHECK ((totes_per_layer > 0))
 );
 
 CREATE SEQUENCE public.bin_types_id_seq
@@ -247,9 +249,11 @@ CREATE TABLE public.bins (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     lifted_at timestamp with time zone,
+    totes_on_cart integer,
     anomaly_note text DEFAULT ''::text NOT NULL,
     undeclared_carrier_at timestamp with time zone,
-    held_since timestamp with time zone
+    held_since timestamp with time zone,
+    CONSTRAINT bins_totes_on_cart_check CHECK ((totes_on_cart >= 0))
 );
 
 CREATE SEQUENCE public.bins_id_seq
@@ -715,6 +719,15 @@ CREATE TABLE public.node_bin_types (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+CREATE TABLE public.node_maintain_layer_levels (
+    group_node_id bigint NOT NULL,
+    bin_type_id bigint NOT NULL,
+    layers integer NOT NULL,
+    want integer NOT NULL,
+    CONSTRAINT node_maintain_layer_levels_layers_check CHECK ((layers > 0)),
+    CONSTRAINT node_maintain_layer_levels_want_check CHECK ((want >= 0))
+);
+
 CREATE TABLE public.node_maintain_levels (
     group_node_id bigint NOT NULL,
     bin_type_id bigint NOT NULL,
@@ -992,7 +1005,11 @@ CREATE TABLE public.payloads (
     near_empty_robot_group text DEFAULT ''::text NOT NULL,
     near_empty_threshold_pct integer DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    tote_layers integer,
+    uop_per_tote integer,
+    CONSTRAINT payloads_tote_layers_check CHECK ((tote_layers > 0)),
+    CONSTRAINT payloads_uop_per_tote_check CHECK ((uop_per_tote > 0))
 );
 
 CREATE SEQUENCE public.payloads_id_seq
@@ -1706,6 +1723,9 @@ ALTER TABLE ONLY public.mission_telemetry
 ALTER TABLE ONLY public.node_bin_types
     ADD CONSTRAINT node_bin_types_pkey PRIMARY KEY (node_id, bin_type_id);
 
+ALTER TABLE ONLY public.node_maintain_layer_levels
+    ADD CONSTRAINT node_maintain_layer_levels_pkey PRIMARY KEY (group_node_id, bin_type_id, layers);
+
 ALTER TABLE ONLY public.node_maintain_levels
     ADD CONSTRAINT node_maintain_levels_pkey PRIMARY KEY (group_node_id, bin_type_id);
 
@@ -2084,6 +2104,12 @@ ALTER TABLE ONLY public.node_bin_types
 
 ALTER TABLE ONLY public.node_bin_types
     ADD CONSTRAINT node_bin_types_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.node_maintain_layer_levels
+    ADD CONSTRAINT node_maintain_layer_levels_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.node_maintain_layer_levels
+    ADD CONSTRAINT node_maintain_layer_levels_group_node_id_fkey FOREIGN KEY (group_node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.node_maintain_levels
     ADD CONSTRAINT node_maintain_levels_bin_type_id_fkey FOREIGN KEY (bin_type_id) REFERENCES public.bin_types(id) ON DELETE CASCADE;

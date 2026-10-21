@@ -622,13 +622,20 @@ func (s *BinService) AddNote(binID int64, noteType, message, actor string) error
 // --- Update ---------------------------------------------------------------
 
 // Update applies partial field updates to a bin. Nil pointers mean "leave
-// this field alone". Fields supported: Label, Description, BinTypeID — and only
-// those reach the database; node_id and status are never written from b, which
-// the caller read at some earlier moment (see bins.Update). b is updated in
-// place to match what was written.
-func (s *BinService) Update(b *bins.Bin, label, description *string, binTypeID *int64) error {
-	if err := s.db.UpdateBin(b.ID, label, description, binTypeID); err != nil {
+// this field alone". Fields supported: Label, Description, BinTypeID and the
+// count of totes on the cart — and only those reach the database; node_id and
+// status are never written from b, which the caller read at some earlier
+// moment (see bins.Update). A re-type blanks the count of totes. b is updated
+// in place to match what was written.
+func (s *BinService) Update(b *bins.Bin, label, description *string, binTypeID *int64, totes *bins.TotesEdit) error {
+	if err := s.db.UpdateBin(b.ID, label, description, binTypeID, totes); err != nil {
 		return err
+	}
+	switch {
+	case binTypeID != nil && *binTypeID != b.BinTypeID:
+		b.TotesOnCart = nil
+	case totes != nil:
+		b.TotesOnCart = totes.To
 	}
 	if label != nil {
 		b.Label = *label

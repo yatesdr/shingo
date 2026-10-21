@@ -86,7 +86,7 @@ func TestEmptyScan_NeverOffersABareCarrier(t *testing.T) {
 
 	// Plant-wide, any type: drain it and see which carriers it offers.
 	offered := drainEmpties(t, db, func() (*bins.Bin, error) {
-		return db.FindEmptyCompatibleBin("", "", 0, bins.EmptyFence{}, reservations.DigAsker{})
+		return db.FindEmptyCompatibleBin("", "", 0, bins.EmptyFence{}, reservations.DigAsker{}, nil)
 	})
 	if offered[f.bankBare.ID] || offered[f.slotBare.ID] {
 		t.Errorf("FindEmptyCompatible offered %v, which includes a bare carrier (bank %d, slot %d)",
@@ -100,15 +100,15 @@ func TestEmptyScan_NeverOffersABareCarrier(t *testing.T) {
 		t.Fatalf("unlock: %v", err)
 	}
 
-	b, err := db.FindEmptyBinOfType("HLPIN-BARE", "", 0, bins.EmptyFence{}, reservations.DigAsker{})
+	b, err := db.FindEmptyBinOfType("HLPIN-BARE", "", 0, bins.EmptyFence{}, reservations.DigAsker{}, nil)
 	if got := foundBin(t, b, err); got != 0 {
 		t.Errorf("FindEmptyOfType(HLPIN-BARE) = bin %d, want none", got)
 	}
-	b, err = db.FindEmptyCompatibleBinInGroup("", f.grpID, 0, reservations.DigAsker{})
+	b, err = db.FindEmptyCompatibleBinInGroup("", f.grpID, 0, reservations.DigAsker{}, nil)
 	if got := foundBin(t, b, err); got != 0 {
 		t.Errorf("FindEmptyCompatibleInGroup = bin %d, want none (its only carrier is bare)", got)
 	}
-	b, err = db.FindEmptyBinOfTypeInGroup("HLPIN-BARE", f.grpID, 0, reservations.DigAsker{})
+	b, err = db.FindEmptyBinOfTypeInGroup("HLPIN-BARE", f.grpID, 0, reservations.DigAsker{}, nil)
 	if got := foundBin(t, b, err); got != 0 {
 		t.Errorf("FindEmptyOfTypeInGroup(HLPIN-BARE) = bin %d, want none", got)
 	}

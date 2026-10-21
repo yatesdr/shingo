@@ -141,6 +141,38 @@ function refreshFullBinCells(containerId) {
   });
 }
 
+/* --- Tote numbers ---
+ *
+ * A payload that travels in totes states its layers and its UoP per tote; a
+ * carrier states its totes per layer (Bins page, Bin Types). Their product is
+ * what a full cart holds, in the capacity's own unit, and the hint shows it
+ * per checked carrier that says how many totes a layer holds. A display, not a
+ * check: a product that differs from the capacity is shown, never refused.
+ * A blank box is unknown and is sent as null.
+ */
+function toteCount(id) {
+  var input = document.getElementById(id);
+  var v = input ? input.value.trim() : '';
+  return v === '' ? null : parseInt(v, 10);
+}
+
+function refreshToteHint(prefix) {
+  var hint = document.getElementById(prefix + '-tote-hint');
+  if (!hint) return;
+  var layers = toteCount(prefix + '-tote-layers');
+  var perTote = toteCount(prefix + '-uop-per-tote');
+  var lines = [];
+  if (layers && perTote) {
+    document.querySelectorAll('#' + prefix + '-bin-types input[type=checkbox]:checked').forEach(function(cb) {
+      var perLayer = parseInt(cb.dataset.totesPerLayer, 10);
+      if (!perLayer) return;
+      lines.push(cb.dataset.code + ': ' + perTote + ' × ' + perLayer + ' × ' + layers +
+        ' = ' + (perTote * perLayer * layers) + ' UoP a full cart');
+    });
+  }
+  hint.textContent = lines.join(' · ');
+}
+
 /* --- "use part number as payload code" ---
  *
  * FOR A BIN OF ONE PART THE TWO ARE THE SAME THING, and CMS books against the
@@ -390,7 +422,10 @@ function openCreatePayloadModal() {
   document.getElementById('plc-robot-group').value = '';
   document.getElementById('plc-manifest-rows').innerHTML = '';
   document.getElementById('plc-code-from-part').checked = false;
+  document.getElementById('plc-tote-layers').value = '';
+  document.getElementById('plc-uop-per-tote').value = '';
   setSelectedBinTypes('plc-bin-types', []);
+  refreshToteHint('plc');
   loadRobotGroups();
   loadLoadSequences('plc-load-sequence', '');
   // Open on one blank line. A payload with no parts cannot be counted, so the
@@ -416,6 +451,8 @@ function submitPLCreate(el, evt) {
     near_empty_robot_group: document.getElementById('plc-near-empty-group').value.trim(),
     near_empty_threshold_pct: parseInt(document.getElementById('plc-near-empty-pct').value) || 0,
     advanced_load_sequence: document.getElementById('plc-load-sequence').value,
+    tote_layers: toteCount('plc-tote-layers'),
+    uop_per_tote: toteCount('plc-uop-per-tote'),
     bin_type_ids: getSelectedBinTypes('plc-bin-types'),
     manifest: manifest.items
   };
@@ -447,6 +484,10 @@ function openEditPayloadModal(btn) {
   document.getElementById('ple-near-empty-on').checked = d.nearEmptyOn === '1';
   document.getElementById('ple-near-empty-group').value = d.nearEmptyGroup || '';
   document.getElementById('ple-near-empty-pct').value = d.nearEmptyPct || '0';
+  // The stored values, or blank for unknown: a save sends what the boxes hold,
+  // so a box that opened blank would erase a stored number.
+  document.getElementById('ple-tote-layers').value = d.toteLayers || '';
+  document.getElementById('ple-uop-per-tote').value = d.uopPerTote || '';
   refreshNearEmptyHint('ple');
   loadLoadSequences('pl-edit-load-sequence', d.loadSequence || '');
   document.getElementById('ple-manifest-rows').innerHTML = '<span class="text-muted" style="font-size:0.8rem">Loading...</span>';
@@ -455,6 +496,7 @@ function openEditPayloadModal(btn) {
   // real selection, and a fetch failure then leaves it cleared rather than a
   // bogus option[0]. Fixes "bin type resets to 0 on edit".
   setSelectedBinTypes('ple-bin-types', []);
+  refreshToteHint('ple');
   loadRobotGroups();
   showModal('pl-edit-modal');
 
@@ -487,6 +529,7 @@ function openEditPayloadModal(btn) {
     .then(function(resp) {
       var ids = (resp && resp.data) || resp || [];
       setSelectedBinTypes('ple-bin-types', ids);
+      refreshToteHint('ple');
     })
     .catch(function(err) {
       console.error('Bin types load failed:', err);
@@ -510,6 +553,8 @@ function submitPLEdit(el, evt) {
     near_empty_robot_group: document.getElementById('ple-near-empty-group').value.trim(),
     near_empty_threshold_pct: parseInt(document.getElementById('ple-near-empty-pct').value) || 0,
     advanced_load_sequence: document.getElementById('pl-edit-load-sequence').value,
+    tote_layers: toteCount('ple-tote-layers'),
+    uop_per_tote: toteCount('ple-uop-per-tote'),
     bin_type_ids: getSelectedBinTypes('ple-bin-types'),
     manifest: manifest.items
   };
@@ -671,6 +716,7 @@ delegateActions(document.body, {
     openPayloadImport,
     refreshFullBinCells,
     refreshNearEmptyHint,
+    refreshToteHint,
     removeParentElement,
     syncCodeFromPart,
     submitPLCreate,

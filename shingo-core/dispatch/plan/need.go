@@ -59,7 +59,7 @@ type Need struct {
 	NodeLocal    bool
 
 	// Asker is the order this need belongs to, for the dig-lock question — on
-	// the NGRP tier AND, as of MG3-1b, on all four empty finders.
+	// the NGRP tier AND, as of MG3-1b, on every empty finder.
 	//
 	// The zero value is domain.Anyone, which every dig excludes. That is
 	// the owner-blind reading, and it is the SAFE direction for a need with no
@@ -82,7 +82,7 @@ type Need struct {
 	//
 	// IT IS HOW A TYPE TRAVELS FROM A DECISION TO A SOURCE. The maintained-group
 	// level keeper decides it is short of one carrier TYPE, records that in the
-	// episode key, and stamps the episode on the ask; wantedBinTypes' first arm
+	// episode key, and stamps the episode on the ask; wantedEmpty's first arm
 	// reads it back. Nothing else in the plant needs it — every other need
 	// derives its type, or has none.
 	//
@@ -208,11 +208,15 @@ type Given struct {
 type FinderDB interface {
 	GetNodeByDotName(name string) (*nodes.Node, error)
 	GetNode(id int64) (*nodes.Node, error)
+	// GetSetDownNode is the empty type decider's destination read: the node,
+	// and in the same statement the height (layers) an empty of the payload is
+	// wanted at there, nil for none (store.DB.GetSetDownNode).
+	GetSetDownNode(name, payloadCode string) (*nodes.Node, *int, error)
 	ListBinsByNode(nodeID int64) ([]*bins.Bin, error)
 	ListBinsByNodes(nodeIDs []int64) ([]*bins.Bin, error)
 	FindSourceBinFIFO(payloadCode string, excludeNodeID int64) (*bins.Bin, error)
-	FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNodeID int64, fence bins.EmptyFence, asker domain.DigAsker) (*bins.Bin, error)
-	FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, excludeNodeID int64, asker domain.DigAsker) (*bins.Bin, error)
+	FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNodeID int64, fence bins.EmptyFence, asker domain.DigAsker, wantLayers *int) (*bins.Bin, error)
+	FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, excludeNodeID int64, asker domain.DigAsker, wantLayers *int) (*bins.Bin, error)
 	// A partial to finish: the homes of a part's partials, and the oldest-held
 	// partial of the part standing in any of the places named (tier 2b).
 	PartialHomesForPayload(payloadCode string) ([]string, error)
@@ -223,12 +227,12 @@ type FinderDB interface {
 	// goes to wherever that bin stands.
 	GetBin(id int64) (*bins.Bin, error)
 	FindPartialToFinish(payloadCode string, places []string, excludeNodeID int64, asker domain.DigAsker) (*bins.Bin, error)
-	FindEmptyBinOfType(binTypeCode, preferZone string, excludeNodeID int64, fence bins.EmptyFence, asker domain.DigAsker) (*bins.Bin, error)
-	FindEmptyBinOfTypeInGroup(binTypeCode string, groupNodeID, excludeNodeID int64, asker domain.DigAsker) (*bins.Bin, error)
+	FindEmptyBinOfType(binTypeCode, preferZone string, excludeNodeID int64, fence bins.EmptyFence, asker domain.DigAsker, wantLayers *int) (*bins.Bin, error)
+	FindEmptyBinOfTypeInGroup(binTypeCode string, groupNodeID, excludeNodeID int64, asker domain.DigAsker, wantLayers *int) (*bins.Bin, error)
 	// The typed finders for a SET of types: a no-mix loader whose payloads may
-	// ride more than one carrier type (Finder.wantedBinTypes).
-	FindEmptyBinOfTypes(binTypeCodes []string, preferZone string, excludeNodeID int64, fence bins.EmptyFence, asker domain.DigAsker) (*bins.Bin, error)
-	FindEmptyBinOfTypesInGroup(binTypeCodes []string, groupNodeID, excludeNodeID int64, asker domain.DigAsker) (*bins.Bin, error)
+	// ride more than one carrier type (Finder.wantedEmpty).
+	FindEmptyBinOfTypes(binTypeCodes []string, preferZone string, excludeNodeID int64, fence bins.EmptyFence, asker domain.DigAsker, wantLayers *int) (*bins.Bin, error)
+	FindEmptyBinOfTypesInGroup(binTypeCodes []string, groupNodeID, excludeNodeID int64, asker domain.DigAsker, wantLayers *int) (*bins.Bin, error)
 	// MaintainedEpisodeForOrigin is the same read with BOTH halves of the pair:
 	// the group the episode belongs to as well as its carrier type. The group is
 	// what keeps a top-off ask from sourcing out of the group it is filling.

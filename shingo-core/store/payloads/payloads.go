@@ -23,7 +23,7 @@ type Payload = domain.Payload
 
 // SelectCols is exported so cross-aggregate readers (e.g. ListPayloadsForNode
 // at the outer store/ level) can reuse the column list.
-const SelectCols = `id, code, description, uop_capacity, robot_group, advanced_load_sequence, near_empty_enabled, near_empty_robot_group, near_empty_threshold_pct, created_at, updated_at`
+const SelectCols = `id, code, description, uop_capacity, robot_group, advanced_load_sequence, near_empty_enabled, near_empty_robot_group, near_empty_threshold_pct, tote_layers, uop_per_tote, created_at, updated_at`
 
 // ScanPayload reads a single payloads row. Exported for cross-aggregate
 // readers at the outer store/ level.
@@ -32,7 +32,7 @@ func ScanPayload(row interface{ Scan(...any) error }) (*Payload, error) {
 	err := row.Scan(&p.ID, &p.Code, &p.Description,
 		&p.UOPCapacity, &p.RobotGroup, &p.AdvancedLoadSequence,
 		&p.NearEmptyEnabled, &p.NearEmptyRobotGroup, &p.NearEmptyThresholdPct,
-		&p.CreatedAt, &p.UpdatedAt)
+		&p.ToteLayers, &p.UOPPerTote, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -128,10 +128,10 @@ func DescriptionsByCode(db *sql.DB) (map[string]string, error) {
 // Create inserts a new payload template and sets p.ID on success.
 func Create(db *sql.DB, p *Payload) error {
 	id, err := helpers.InsertID(db, `INSERT INTO payloads (code, description, uop_capacity, robot_group, advanced_load_sequence,
-		near_empty_enabled, near_empty_robot_group, near_empty_threshold_pct)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+		near_empty_enabled, near_empty_robot_group, near_empty_threshold_pct, tote_layers, uop_per_tote)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
 		p.Code, p.Description, p.UOPCapacity, p.RobotGroup, p.AdvancedLoadSequence,
-		p.NearEmptyEnabled, p.NearEmptyRobotGroup, p.NearEmptyThresholdPct)
+		p.NearEmptyEnabled, p.NearEmptyRobotGroup, p.NearEmptyThresholdPct, p.ToteLayers, p.UOPPerTote)
 	if err != nil {
 		return fmt.Errorf("create payload: %w", err)
 	}
@@ -139,13 +139,16 @@ func Create(db *sql.DB, p *Payload) error {
 	return nil
 }
 
-// Update writes all payload columns by primary key.
+// Update writes all payload columns by primary key, the tote numbers among
+// them: every caller reads the row (Get) and lays its edit over it, so a door
+// that does not edit a column writes back what it read. Pin:
+// TestPayloadDoors_UpdateRoundTrip.
 func Update(db *sql.DB, p *Payload) error {
 	_, err := db.Exec(`UPDATE payloads SET code=$1, description=$2, uop_capacity=$3, robot_group=$4,
 		advanced_load_sequence=$5, near_empty_enabled=$6, near_empty_robot_group=$7,
-		near_empty_threshold_pct=$8, updated_at=NOW() WHERE id=$9`,
+		near_empty_threshold_pct=$8, tote_layers=$9, uop_per_tote=$10, updated_at=NOW() WHERE id=$11`,
 		p.Code, p.Description, p.UOPCapacity, p.RobotGroup, p.AdvancedLoadSequence,
-		p.NearEmptyEnabled, p.NearEmptyRobotGroup, p.NearEmptyThresholdPct, p.ID)
+		p.NearEmptyEnabled, p.NearEmptyRobotGroup, p.NearEmptyThresholdPct, p.ToteLayers, p.UOPPerTote, p.ID)
 	return err
 }
 

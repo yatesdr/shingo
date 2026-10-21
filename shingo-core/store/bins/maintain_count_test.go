@@ -61,7 +61,7 @@ func TestEmptyOfTypeInGroup_CountAndFindAgree(t *testing.T) {
 
 	agree := func(t *testing.T, stage string) int {
 		t.Helper()
-		found, ferr := bins.FindEmptyOfTypeInGroup(sdb, "AGREE-45x58", grpID, 0, reservations.Anyone)
+		found, ferr := bins.FindEmptyOfTypeInGroup(sdb, "AGREE-45x58", grpID, 0, reservations.Anyone, nil)
 		n, cerr := bins.CountEmptyOfTypeInGroup(sdb, "AGREE-45x58", grpID)
 		testutil.MustNoErr(t, cerr, stage+": count")
 		hasFound := ferr == nil && found != nil
@@ -186,7 +186,7 @@ func TestEmptyOfTypeInGroup_TheyPartOnlyUnderAForeignDig(t *testing.T) {
 
 	// Before any dig: they agree, which is the ordinary state and the thing the
 	// exception is an exception TO.
-	found, ferr := bins.FindEmptyOfTypeInGroup(sdb, "PART-45x58", grpID, 0, reservations.Anyone)
+	found, ferr := bins.FindEmptyOfTypeInGroup(sdb, "PART-45x58", grpID, 0, reservations.Anyone, nil)
 	testutil.MustNoErr(t, ferr, "find before")
 	n, cerr := bins.CountEmptyOfTypeInGroup(sdb, "PART-45x58", grpID)
 	testutil.MustNoErr(t, cerr, "count before")
@@ -205,7 +205,7 @@ func TestEmptyOfTypeInGroup_TheyPartOnlyUnderAForeignDig(t *testing.T) {
 		 VALUES ('mouth', $1, $2, 'confirmed', 'dig')`, lane.ID, digOrder)
 	testutil.MustNoErr(t, err, "dig hold")
 
-	found, ferr = bins.FindEmptyOfTypeInGroup(sdb, "PART-45x58", grpID, 0, reservations.Anyone)
+	found, ferr = bins.FindEmptyOfTypeInGroup(sdb, "PART-45x58", grpID, 0, reservations.Anyone, nil)
 	n, cerr = bins.CountEmptyOfTypeInGroup(sdb, "PART-45x58", grpID)
 	testutil.MustNoErr(t, cerr, "count after")
 

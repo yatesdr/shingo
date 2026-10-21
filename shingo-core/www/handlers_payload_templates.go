@@ -73,6 +73,9 @@ func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 	p.NearEmptyRobotGroup = r.FormValue("near_empty_robot_group")
 	nePct, _ := strconv.Atoi(r.FormValue("near_empty_threshold_pct"))
 	p.NearEmptyThresholdPct = clampPct(nePct)
+	if !formToteNumbers(w, r, p) {
+		return
+	}
 
 	if err := service.ValidatePayloadCapacity(p); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -121,6 +124,9 @@ func (h *Handlers) handlePayloadUpdate(w http.ResponseWriter, r *http.Request) {
 	neUpd, _ := strconv.Atoi(r.FormValue("near_empty_threshold_pct"))
 	p.NearEmptyThresholdPct = clampPct(neUpd)
 	p.AdvancedLoadSequence = r.FormValue("advanced_load_sequence")
+	if !formToteNumbers(w, r, p) {
+		return
+	}
 
 	if _, err := h.engine.ValidateAdvancedLoadSequence(p.ID, p.AdvancedLoadSequence); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -150,6 +156,47 @@ func (h *Handlers) handlePayloadDelete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/payloads", http.StatusSeeOther)
 }
 
+// formToteNumbers lays the form's tote layers and UOP per tote over p. A field
+// the form did not carry leaves p's value standing; a blank box is unknown.
+// false means the refusal has been written.
+func formToteNumbers(w http.ResponseWriter, r *http.Request, p *domain.Payload) bool {
+	for _, f := range []struct {
+		name string
+		dst  **int
+	}{{"tote_layers", &p.ToteLayers}, {"uop_per_tote", &p.UOPPerTote}} {
+		v, set, err := formCount(r, f.name, 1)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return false
+		}
+		if set {
+			*f.dst = v
+		}
+	}
+	return true
+}
+
+// apiToteNumbers lays a template API request's tote layers and UOP per tote
+// over p: an absent key leaves p's value standing, null is unknown. false
+// means the refusal has been written.
+func (h *Handlers) apiToteNumbers(w http.ResponseWriter, p *domain.Payload, layers, uopPerTote optionalCount) bool {
+	for _, f := range []struct {
+		name string
+		in   optionalCount
+		dst  **int
+	}{{"tote_layers", layers, &p.ToteLayers}, {"uop_per_tote", uopPerTote, &p.UOPPerTote}} {
+		if !f.in.Set {
+			continue
+		}
+		if err := countAtLeast(f.name, f.in.Value, 1); err != nil {
+			h.jsonError(w, err.Error(), http.StatusBadRequest)
+			return false
+		}
+		*f.dst = f.in.Value
+	}
+	return true
+}
+
 // clampPct holds a configured percentage inside 0-100.
 //
 // Config-save validation rather than a CHECK constraint, which is the house
@@ -169,15 +216,17 @@ func clampPct(v int) int {
 
 func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Code                 string  `json:"code"`
-		Description          string  `json:"description"`
-		UOPCapacity          int     `json:"uop_capacity"`
-		RobotGroup           string  `json:"robot_group"`
-		NearEmptyEnabled     bool    `json:"near_empty_enabled"`
-		NearEmptyRobotGroup  string  `json:"near_empty_robot_group"`
-		NearEmptyThreshold   int     `json:"near_empty_threshold_pct"`
-		AdvancedLoadSequence string  `json:"advanced_load_sequence"`
-		BinTypeIDs           []int64 `json:"bin_type_ids"`
+		Code                 string        `json:"code"`
+		Description          string        `json:"description"`
+		UOPCapacity          int           `json:"uop_capacity"`
+		RobotGroup           string        `json:"robot_group"`
+		NearEmptyEnabled     bool          `json:"near_empty_enabled"`
+		NearEmptyRobotGroup  string        `json:"near_empty_robot_group"`
+		NearEmptyThreshold   int           `json:"near_empty_threshold_pct"`
+		AdvancedLoadSequence string        `json:"advanced_load_sequence"`
+		ToteLayers           optionalCount `json:"tote_layers"`
+		UOPPerTote           optionalCount `json:"uop_per_tote"`
+		BinTypeIDs           []int64       `json:"bin_type_ids"`
 		Manifest             []struct {
 			PartNumber    string `json:"part_number"`
 			CATID         string `json:"catid"`
@@ -213,6 +262,9 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		NearEmptyEnabled:      req.NearEmptyEnabled,
 		NearEmptyRobotGroup:   req.NearEmptyRobotGroup,
 		NearEmptyThresholdPct: clampPct(req.NearEmptyThreshold),
+	}
+	if !h.apiToteNumbers(w, p, req.ToteLayers, req.UOPPerTote) {
+		return
 	}
 	// Config-time validation (fail loud on a real missing key, warn-and-save when
 	// unverifiable). A new payload has no assigned nodes yet, so this rejects only
@@ -255,16 +307,18 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 
 func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID                   int64   `json:"id"`
-		Code                 string  `json:"code"`
-		Description          string  `json:"description"`
-		UOPCapacity          int     `json:"uop_capacity"`
-		RobotGroup           string  `json:"robot_group"`
-		NearEmptyEnabled     bool    `json:"near_empty_enabled"`
-		NearEmptyRobotGroup  string  `json:"near_empty_robot_group"`
-		NearEmptyThreshold   int     `json:"near_empty_threshold_pct"`
-		AdvancedLoadSequence string  `json:"advanced_load_sequence"`
-		BinTypeIDs           []int64 `json:"bin_type_ids"`
+		ID                   int64         `json:"id"`
+		Code                 string        `json:"code"`
+		Description          string        `json:"description"`
+		UOPCapacity          int           `json:"uop_capacity"`
+		RobotGroup           string        `json:"robot_group"`
+		NearEmptyEnabled     bool          `json:"near_empty_enabled"`
+		NearEmptyRobotGroup  string        `json:"near_empty_robot_group"`
+		NearEmptyThreshold   int           `json:"near_empty_threshold_pct"`
+		AdvancedLoadSequence string        `json:"advanced_load_sequence"`
+		ToteLayers           optionalCount `json:"tote_layers"`
+		UOPPerTote           optionalCount `json:"uop_per_tote"`
+		BinTypeIDs           []int64       `json:"bin_type_ids"`
 		Manifest             []struct {
 			PartNumber    string `json:"part_number"`
 			CATID         string `json:"catid"`
@@ -296,6 +350,9 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 	p.NearEmptyRobotGroup = req.NearEmptyRobotGroup
 	p.NearEmptyThresholdPct = clampPct(req.NearEmptyThreshold)
 	p.AdvancedLoadSequence = req.AdvancedLoadSequence
+	if !h.apiToteNumbers(w, p, req.ToteLayers, req.UOPPerTote) {
+		return
+	}
 
 	// Validate the (possibly new) sequence against this payload's assigned node
 	// locations BEFORE persisting: a real missing key rejects the save; an

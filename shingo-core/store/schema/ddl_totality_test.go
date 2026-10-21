@@ -39,6 +39,7 @@ var migrationOnlyTables = map[string]string{
 	"cms_postings":                "added by v102 — one row per POST to the CMS middleware. Separate from cms_transactions because a transaction is a local fact (a bin crossed a boundary) and a posting is a claim about a remote system (whether it knows). Their lifecycles do not line up: one posting carries many transactions, and a posting can be retried while the transactions it carries never change",
 	"demand_origins":              "added by a numbered migration after the baseline was frozen",
 	"node_maintain_levels":        "added by v90 — how many empty carriers of each type a maintained node group is to hold. Separate from bin_loader_quotas on purpose: a quota is a preference bounded by never-2N, a maintained level is the number Core keeps",
+	"node_maintain_layer_levels":  "added by v161 — per maintained group, carrier type and height in layers, how many carts the group wants standing that high. Communication only: the cap stays node_maintain_levels, and the wants are not summed against it",
 	"node_maintain_supports":      "added by v90 — which process nodes a maintained group serves; the resolved node set, because a claim is Edge-local and Core cannot read one",
 	"edge_cells":                  "added by a numbered migration after the baseline was frozen",
 	"edge_lineside_reports":       "added by a numbered migration after the baseline was frozen",

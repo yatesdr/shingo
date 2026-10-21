@@ -46,8 +46,9 @@ type NodeBinInfo struct {
 	BinID       int64  `json:"bin_id,omitempty"`
 	BinLabel    string `json:"bin_label,omitempty"`
 	BinTypeCode string `json:"bin_type_code,omitempty"`
-	// Bare is Core's bin_types.bare for the carrier: it holds no container,
-	// so the only way out of the window is PUSH AS a real type.
+	// Bare is Core's bin_types.bare for the carrier: it holds no container.
+	// A CLEAR anywhere but a stage-1 window gives it its carrier back (stage
+	// 2's SEND ON), whatever type the CLEAR names (Core's apiBinClear).
 	Bare         bool   `json:"bare,omitempty"`
 	PayloadCode  string `json:"payload_code,omitempty"`
 	UOPRemaining int    `json:"uop_remaining"`
@@ -74,6 +75,14 @@ type NodeBinInfo struct {
 	// carrier is partial (its part set, its count above 0 and below this)
 	// wherever it stands. 0 when no part is set or the part has none.
 	UOPCapacity int `json:"uop_capacity,omitempty"`
+	// TotesOnCart is Core's bins.totes_on_cart: the totes standing on the
+	// cart, filled or empty. 0 is a base, a real count, and is sent; nil is
+	// unknown and the key is absent. TotesPerLayer is the carrier's
+	// bin_types.totes_per_layer, absent for a carrier that says none. Both
+	// omitempty pointers, so a plant that sets no tote numbers sends exactly
+	// the bytes it did before (TestNodeBinInfo_Golden).
+	TotesOnCart   *int `json:"totes_on_cart,omitempty"`
+	TotesPerLayer *int `json:"totes_per_layer,omitempty"`
 }
 
 // ManifestItem describes a single line in a payload manifest TEMPLATE.
@@ -206,6 +215,13 @@ type BinClearRequest struct {
 	// unfinished partial waiting in its home: clear it anyway (the clear is
 	// booked as ever). Without it Core refuses to clear a held partial.
 	Unload bool `json:"unload,omitempty"`
+	// Layers is the height a person declares with the CLEAR, in layers of
+	// totes. Core writes layers × the cart's own totes per layer to the
+	// cart's count of totes, after the clear and any stamp, in the clear's
+	// transaction; a carrier type that says no totes per layer gets no write.
+	// 0 declares a base. nil declares nothing and the key is absent
+	// (TestBinClearRequest_Golden).
+	Layers *int `json:"layers,omitempty"`
 }
 
 // BinClearResponse is Core's reply to a bin clear.

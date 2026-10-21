@@ -28,6 +28,12 @@ func (h *Handlers) handleBinTypeCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid length_in", http.StatusBadRequest)
 		return
 	}
+	// Blank is unknown: not a tote carrier, or not said.
+	totesPerLayer, _, err := formCount(r, "totes_per_layer", 1)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	bt := &domain.BinType{
 		Code:        r.FormValue("code"),
@@ -39,6 +45,7 @@ func (h *Handlers) handleBinTypeCreate(w http.ResponseWriter, r *http.Request) {
 		// configurable while RDS is down, and the datalist on the form is the
 		// typo guard. Same treatment payloads.robot_group already gets.
 		RequiredRobotGroup: r.FormValue("required_robot_group"),
+		TotesPerLayer:      totesPerLayer,
 	}
 
 	if err := h.engine.BinService().CreateBinType(bt); err != nil {
@@ -80,6 +87,16 @@ func (h *Handlers) handleBinTypeUpdate(w http.ResponseWriter, r *http.Request) {
 		bt.LengthIn = l
 	}
 	bt.RequiredRobotGroup = r.FormValue("required_robot_group")
+	// A form that does not carry the field leaves the stored value standing;
+	// the Edit button fills it from data-totes-per-layer (templates/bins.html).
+	totesPerLayer, set, err := formCount(r, "totes_per_layer", 1)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if set {
+		bt.TotesPerLayer = totesPerLayer
+	}
 
 	if err := svc.UpdateBinType(bt); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

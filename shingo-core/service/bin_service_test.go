@@ -916,7 +916,7 @@ func TestBinService_Update_AppliesPartialChanges(t *testing.T) {
 
 	newLabel := "BS-UPD-1-RENAMED"
 	newDesc := "renamed"
-	testutil.MustNoErr(t, svc.Update(bin, &newLabel, &newDesc, &bt2.ID), "Update")
+	testutil.MustNoErr(t, svc.Update(bin, &newLabel, &newDesc, &bt2.ID, nil), "Update")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.Label != "BS-UPD-1-RENAMED" {
@@ -949,7 +949,7 @@ func TestBinService_Update_WritesOnlyWhatItEdits(t *testing.T) {
 	testutil.MustNoErr(t, db.MoveBinClearingStaging(bin.ID, sd.LineNode.ID, false), "move")
 
 	newLabel := "BS-UPD-STALE-2"
-	testutil.MustNoErr(t, svc.Update(stale, &newLabel, nil, nil), "Update")
+	testutil.MustNoErr(t, svc.Update(stale, &newLabel, nil, nil, nil), "Update")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.Label != newLabel {
@@ -973,7 +973,7 @@ func TestBinService_Update_NilPointersLeaveFieldsAlone(t *testing.T) {
 	originalLabel := bin.Label
 	originalBT := bin.BinTypeID
 
-	testutil.MustNoErr(t, svc.Update(bin, nil, nil, nil), "Update with all nils")
+	testutil.MustNoErr(t, svc.Update(bin, nil, nil, nil, nil), "Update with all nils")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.Label != originalLabel {
