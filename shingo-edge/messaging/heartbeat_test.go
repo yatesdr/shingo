@@ -1,6 +1,8 @@
 package messaging
 
 import (
+	"os"
+	"regexp"
 	"testing"
 
 	"shingo/protocol"
@@ -94,5 +96,33 @@ func TestHeartbeater_BinWatchRidesTheBootBurst(t *testing.T) {
 	h.SendBinWatch()
 	if called != 1 {
 		t.Errorf("BinWatchFn called %d times, want 1", called)
+	}
+}
+
+// TestHeartbeater_TheBootBurstEndsWithAHeartbeat is a source-shape pin (the
+// sender has no seam, as TestFeedsPin_HeartbeatLoopReasksEverySecondTick): the
+// burst Start and a Kafka reconnect send is the register, the node list and
+// catalog requests, the bins watch, and then one heartbeat, so the first ack
+// is one round trip away instead of the loop's first tick. Start sends the
+// burst before the loop begins.
+func TestHeartbeater_TheBootBurstEndsWithAHeartbeat(t *testing.T) {
+	t.Parallel()
+	src, err := os.ReadFile("heartbeat.go")
+	if err != nil {
+		t.Fatalf("read heartbeat.go: %v", err)
+	}
+	for _, c := range []struct {
+		name string
+		re   *regexp.Regexp
+	}{
+		{"the burst, in order, ending with a heartbeat", regexp.MustCompile(
+			`func \(h \*Heartbeater\) SendBootBurst\(\) \{\s*h\.sendRegister\(\)\s*h\.sendNodeListRequest\(\)\s*` +
+				`h\.sendCatalogRequest\(\)\s*h\.SendBinWatch\(\)\s*h\.sendHeartbeat\(\)\s*\}`)},
+		{"Start sends the burst, then the loop", regexp.MustCompile(
+			`func \(h \*Heartbeater\) Start\(\) \{\s*h\.SendBootBurst\(\)\s*go h\.loop\(\)\s*\}`)},
+	} {
+		if !c.re.Match(src) {
+			t.Errorf("%s: heartbeat.go does not match", c.name)
+		}
 	}
 }

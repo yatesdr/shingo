@@ -92,13 +92,25 @@ func NewHeartbeater(client *Client, stationID, version, instance string, ordersT
 	}
 }
 
-// Start sends an initial registration, requests the core node list, and begins the heartbeat loop.
+// Start sends the boot burst and begins the heartbeat loop.
 func (h *Heartbeater) Start() {
+	h.SendBootBurst()
+	go h.loop()
+}
+
+// SendBootBurst sends the one-shots a starting Edge owes Core: the
+// registration, the node list and catalog requests, the bins watch list, and
+// then one heartbeat. The heartbeat is what makes the first ack come one round
+// trip after the burst rather than at the loop's first tick 60 s later, and no
+// decision is actable before a first ack (engine Actable, NotActableNoAck).
+// It goes last so its feed digests are read after the watch list is out. A
+// Kafka reconnect re-fires the whole burst.
+func (h *Heartbeater) SendBootBurst() {
 	h.sendRegister()
 	h.sendNodeListRequest()
 	h.sendCatalogRequest()
 	h.SendBinWatch()
-	go h.loop()
+	h.sendHeartbeat()
 }
 
 // Stop halts the heartbeat loop. Deliberately NOT called on any shutdown path:

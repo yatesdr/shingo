@@ -357,9 +357,9 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	}
 
 	// Wrap msgClient.Reconnect so a UI-triggered reconnect (operator saves
-	// Messaging config) also re-fires the Heartbeater's startup-only sends.
-	// Heartbeater.Start() does register / node.list_request / catalog
-	// request exactly once at process start; if Kafka was unreachable then
+	// Messaging config) also re-fires the Heartbeater's boot burst.
+	// Heartbeater.Start() sends it (register, node list and catalog requests,
+	// bins watch, one heartbeat) once at process start; if Kafka was unreachable then
 	// (or the client got wedged during a long outage), those one-shots
 	// failed and the periodic loop only re-sends node_list+catalog every
 	// 2 min — never register — leaving Edge silently unregistered until
@@ -369,11 +369,8 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		if err := msgClient.Reconnect(); err != nil {
 			return err
 		}
-		log.Printf("kafka reconnect: re-firing heartbeater startup sends (register, node list, catalog, bins watch)")
-		hb.SendRegister()
-		hb.RequestNodeSync()
-		hb.RequestCatalogSync()
-		hb.SendBinWatch()
+		log.Printf("kafka reconnect: re-firing the heartbeater's boot burst (register, node list, catalog, bins watch, heartbeat)")
+		hb.SendBootBurst()
 		return nil
 	})
 
