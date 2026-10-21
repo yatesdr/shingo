@@ -331,6 +331,11 @@ type ComposerPreset struct {
 	// order: the station's "two off?" question reads how many make parts, and
 	// its fit rule reads how many there are (pick-a-part U3, O-12).
 	Slots []Slot `json:"slots,omitempty"`
+	// LastMoves is the pick step's pre-fill (RecipeLastUsedMoves): recipe
+	// node → the node the last style that used this recipe on this cell has
+	// it at. Absent when no style used it, and the step suggests Cells' own
+	// nodes. A suggestion only: the step is always shown.
+	LastMoves map[string]string `json:"last_moves,omitempty"`
 }
 
 // ComposerScene is the travel graph, reduced to what a waypoint search needs.

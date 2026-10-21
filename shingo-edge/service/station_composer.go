@@ -639,6 +639,15 @@ func (s *StationService) composerPresets(processID int64, claims map[int64][]pro
 		at[n] = i
 	}
 	members := presetMemberCounts(claims)
+	// Every version of a name is the recipe: a style built from v1 still used
+	// it once v2 is the card. The rows carry every live version.
+	versions := map[string]map[int64]bool{}
+	for _, p := range rows {
+		if versions[p.Name] == nil {
+			versions[p.Name] = map[int64]bool{}
+		}
+		versions[p.Name][p.ID] = true
+	}
 	var out []domain.ComposerPreset
 	// THE LATEST VERSION OF EACH NAME, AND ONLY IT (pick-a-part O-4): an
 	// enabled recipe is the newest non-archived version of its name. The
@@ -669,6 +678,8 @@ func (s *StationService) composerPresets(processID int64, claims map[int64][]pro
 		card.Mode = oneMode(cells)
 		card.Where = domain.PresetShapeNodeWord(cells, pressOrder)
 		card.Use = presetUse(members[p.ID])
+		// The pick step's pre-fill, off the claims already read: no statement.
+		card.LastMoves = domain.RecipeLastUsedMoves(cells, versions[p.Name], claims)
 		card.Slots = domain.PayloadSlots(cells)
 		sort.SliceStable(card.Slots, func(i, j int) bool { return slotAt(at, card.Slots[i]) < slotAt(at, card.Slots[j]) })
 		out = append(out, card)

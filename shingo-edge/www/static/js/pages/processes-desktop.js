@@ -5547,16 +5547,25 @@ function openUsePreset(btn) {
 // is what makes this a CALLER rather than a second apply: the write path is
 // unchanged. It stamps NO provenance — saveFlow sends no source_preset_id;
 // only the apply modal's rows do (desktop-bodies flowPresetApplySave).
+//
+// THE SPOTS ARE PRE-FILLED where the last style that used this recipe on this
+// cell has them (the card's last_moves, composer-model suggestedMoves), each
+// kept only when it is a position this table draws; the recipe's own nodes
+// otherwise. The positions table it lands on is the pick step: every spot is
+// a picker, and nothing is written until Save flow.
 function usePreset(id) {
-    const p = (S.composer.presets || []).find(x => String(x.id) === String(id));
-    if (!p || !S.model) return;
+    const card = (S.composer.presets || []).find(x => String(x.id) === String(id));
+    if (!card || !S.model) return;
+    const moves = M().suggestedMoves(card, new Set(S.model.positions.map(x => x.core_node_name)));
+    const p = M().presetMoved(card, moves);
     const diff = M().shapeDiff(S.model, p);
     const lines = diff.length
         ? diff.map(d => '<div class="pd-diffrow"><b>' + esc(d.node) + '</b> · ' + esc(d.label) +
             (d.whole ? '' : ': ' + esc(d.from) + ' → ' + esc(d.to)) + '</div>').join('')
         : '<p class="pd-note">This flow already has that shape — applying it changes nothing.</p>';
     openSheet('Use “' + p.name + '” on this style?',
-        'the spots only — a recipe carries no parts, and the parts you have placed stay where they are.',
+        'the spots only — a recipe carries no parts, and the parts you have placed stay where they are.' +
+            (Object.keys(moves).length ? ' Its spots are where this cell last ran it; change any in the table before you save.' : ''),
         lines, 'Apply to the draft', () => {
             apply({ type: 'applyPreset', preset: p });
             closeSheet();
