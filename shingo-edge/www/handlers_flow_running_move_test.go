@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -114,27 +115,7 @@ func TestSaveFlow_RunningPositionMoveRefusesBothDoorsByName(t *testing.T) {
 	// THE BIN STANDS ON THE LEAVING POSITION, in the Edge's copy of Core's bins
 	// (every other node bare): the move would strand it, so it is refused. A
 	// move that leaves no bin behind saves (engine flow_running_move_test.go).
-	empty := ""
-	eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: &empty})
-	watched := eng.StationService().WatchedBinNodes()
-	listDigest, err := protocol.BinWatchDigest(watched)
-	if err != nil {
-		t.Fatalf("watch digest: %v", err)
-	}
-	snap := protocol.NodeBinsSnapshot{ListDigest: listDigest, Groups: []protocol.NodeBinsGroup{}}
-	for _, n := range append(append([]string(nil), watched...), free) {
-		row := protocol.NodeBinsRow{Node: n, State: protocol.BinsStateEmpty}
-		if n == leaving {
-			row = protocol.NodeBinsRow{Node: n, State: protocol.BinsStateOccupied, Occupied: true, BinLabel: "BIN-1"}
-		}
-		snap.Rows = append(snap.Rows, row)
-	}
-	if snap.Digest, err = protocol.NodeBinsDigest(snap); err != nil {
-		t.Fatalf("digest: %v", err)
-	}
-	if err := eng.ApplyNodeBinsSnapshot(snap); err != nil {
-		t.Fatalf("apply the bins copy: %v", err)
-	}
+	holdRunningMoveBins(t, eng, leaving, free)
 
 	// THE SENTENCE, spelled here out of the parts the engine builds it from —
 	// not a substring of it. The engineer is told which position holds which
@@ -241,4 +222,45 @@ func realFlowRouterEngine(t *testing.T, db *store.DB) (*Handlers, *chi.Mux, *eng
 		t.Fatalf("NewRouter returned %T, not a *chi.Mux", router)
 	}
 	return h, mux, eng
+}
+
+// holdRunningMoveBins holds, as the engine's bins copy, every node of its
+// watch list (and extra) bare except leaving, which holds BIN-1, and returns
+// once the copy may be decided from. The engine is started, so its watch list
+// can be rebuilt between the read of the list and the apply; a copy answering
+// a list that moved is not actable, so the hold is taken again until it is.
+func holdRunningMoveBins(t *testing.T, eng *engine.Engine, leaving string, extra ...string) {
+	t.Helper()
+	var why string
+	for i := 0; i < 50; i++ {
+		watched := eng.StationService().WatchedBinNodes()
+		listDigest, err := protocol.BinWatchDigest(watched)
+		if err != nil {
+			t.Fatalf("watch digest: %v", err)
+		}
+		snap := protocol.NodeBinsSnapshot{ListDigest: listDigest, Groups: []protocol.NodeBinsGroup{}}
+		for _, n := range append(append([]string(nil), watched...), extra...) {
+			row := protocol.NodeBinsRow{Node: n, State: protocol.BinsStateEmpty}
+			if n == leaving {
+				row = protocol.NodeBinsRow{Node: n, State: protocol.BinsStateOccupied, Occupied: true, BinLabel: "BIN-1"}
+			}
+			snap.Rows = append(snap.Rows, row)
+		}
+		if snap.Digest, err = protocol.NodeBinsDigest(snap); err != nil {
+			t.Fatalf("digest: %v", err)
+		}
+		if err := eng.ApplyNodeBinsSnapshot(snap); err != nil {
+			t.Fatalf("apply the bins copy: %v", err)
+		}
+		// The ack quotes the copy's digest, as Core's does once it holds the
+		// same snapshot: that confirms the copy at the ack, whatever the clock's
+		// resolution (Actable).
+		eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{protocol.FeedBins: snap.Digest}, BinWatch: &listDigest})
+		var ok bool
+		if ok, why = eng.BinsActable(); ok {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("the bins copy never became actable: %s", why)
 }
