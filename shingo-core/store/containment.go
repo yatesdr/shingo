@@ -141,17 +141,33 @@ func HoldBinTx(tx *sql.Tx, binID int64, by string) error {
 // SetBinQualityHold sets or clears a bin's hold marker. `by` is station-level
 // attribution (the same convention every operator action keeps). Clearing
 // wipes the attribution with it — an unheld bin carries no stale hold history.
+//
+// An id no bin has wraps sql.ErrNoRows: the UPDATE matched nothing, so nothing
+// was held or cleared, and a caller must not report that as done. Read off the
+// write's own row count, so the check costs no statement.
 func (db *DB) SetBinQualityHold(binID int64, hold bool, by string) error {
 	if hold && by == "" {
 		return fmt.Errorf("quality hold requires an attribution (station)")
 	}
+	var res sql.Result
+	var err error
 	if hold {
-		_, err := db.DB.Exec(holdBinSQL, binID, by)
+		res, err = db.DB.Exec(holdBinSQL, binID, by)
+	} else {
+		res, err = db.DB.Exec(`UPDATE bins SET quality_hold = FALSE, hold_by = '', hold_at = NULL, updated_at = NOW()
+		WHERE id = $1`, binID)
+	}
+	if err != nil {
 		return err
 	}
-	_, err := db.DB.Exec(`UPDATE bins SET quality_hold = FALSE, hold_by = '', hold_at = NULL, updated_at = NOW()
-		WHERE id = $1`, binID)
-	return err
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("bin %d: %w", binID, sql.ErrNoRows)
+	}
+	return nil
 }
 
 // HoldBinForCarrierRule sets the hold marker on a full that is going into

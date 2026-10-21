@@ -30,8 +30,13 @@ func holdOf(t *testing.T, f *doorFix, label string) (bool, string, bool) {
 
 // TestBinQualityHoldDoor_Arms pins every arm of the hold door: the status, the
 // body byte for byte, and what was written. The door takes a bin id and
-// nothing else: it does not ask where the bin stands, writes no audit row, and
-// answers ok for an id no bin has.
+// nothing else: it does not ask where the bin stands and writes no audit row.
+// An id no bin has is refused with a sentence, never answered ok over a write
+// that did nothing; it names no node, so the refusal carries no rows. A write
+// the database refuses is a fault, 500, not a bad request.
+//
+// CHANGED (RULINGS D2): an unknown id was answered ok and wrote nothing, no
+// bin_id likewise, and a database fault was 400.
 func TestBinQualityHoldDoor_Arms(t *testing.T) {
 	t.Parallel()
 	onStorage := func(t *testing.T, f *doorFix, label string) *bins.Bin {
@@ -100,25 +105,32 @@ func TestBinQualityHoldDoor_Arms(t *testing.T) {
 			answer: ok,
 			wrote:  wroteCols("QH-NOOP", "updated_at"),
 			after:  wantHold("QH-NOOP", false, "", false)},
-		{name: "an id no bin has is answered ok and writes nothing",
+		{name: "a hold of an id no bin has is refused and writes nothing",
 			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
 				b := onStorage(t, f, "QH-BYSTANDER")
 				return map[string]any{"bin_id": 987654321, "hold": true, "by": "edge.qh"}, []int64{b.ID}
 			},
-			answer: ok},
-		{name: "no bin_id is answered ok and writes nothing",
+			answer: refusedWith(http.StatusNotFound, "bin 987654321 is not known to Core — nothing was done")},
+		{name: "a release of an id no bin has is refused and writes nothing",
+			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
+				b := held(t, f, "QH-BYSTANDER-R", "edge.qh")
+				return map[string]any{"bin_id": 987654321, "hold": false, "by": "edge.qh"}, []int64{b.ID}
+			},
+			answer: refusedWith(http.StatusNotFound, "bin 987654321 is not known to Core — nothing was done"),
+			after:  wantHold("QH-BYSTANDER-R", true, "edge.qh", true)},
+		{name: "no bin_id is refused and writes nothing",
 			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
 				b := onStorage(t, f, "QH-NOID")
 				return map[string]any{"hold": true, "by": "edge.qh"}, []int64{b.ID}
 			},
-			answer: ok},
-		{name: "a write the database refuses is answered 400",
+			answer: refusedWith(http.StatusBadRequest, "bin_id is required")},
+		{name: "a write the database refuses is a fault, answered 500",
 			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
 				b := onStorage(t, f, "QH-FAULT")
 				failBinWrites(t, f.db, b.ID, "quality_hold")
 				return map[string]any{"bin_id": b.ID, "hold": true, "by": "edge.qh"}, []int64{b.ID}
 			},
-			answer: refusedWith(http.StatusBadRequest, "ERROR: door fault (SQLSTATE P0001)")},
+			answer: refusedWith(http.StatusInternalServerError, "ERROR: door fault (SQLSTATE P0001)")},
 	})
 }
 

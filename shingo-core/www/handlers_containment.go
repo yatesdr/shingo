@@ -2,9 +2,8 @@ package www
 
 // handlers_containment.go — the quality-containment API. The payload flag is
 // Core-owned state (the divert in dispatch reads it), so its write lives
-// here, session-gated like every other Core write; the read is public so the
-// Edge's containment screens can render the state without holding Core
-// credentials (Core has no machine-auth path — see auth.go).
+// here, session-gated like every other Core write. The Edge's containment
+// screens render the containment feed's copy, not a read of this API.
 //
 // The per-bin hold has its own write: binQualityHold below, the
 // bin.quality_hold ask's body (Doors.AskQualityHold), which the Edge's release
@@ -13,7 +12,10 @@ package www
 // provenance is the audit.
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -82,14 +84,26 @@ type qualityHoldRequest struct {
 	By    string `json:"by"`
 }
 
-// binQualityHold is the hold's body: the marker set or cleared, {"ok": true};
-// a write the store refuses is 400 with its error.
+// binQualityHold is the hold's body: the marker set or cleared, {"ok": true}.
+// No bin_id is a bad request. An id no bin has is refused with its sentence:
+// nothing was held or cleared, and an ok over a write that matched nothing is
+// an answer that is not one. The request names no node, so the refusal carries
+// no rows. A write the database refuses is a fault, 500, with its error.
 func (d *Doors) binQualityHold(req qualityHoldRequest) asks.Result {
+	if req.BinID == 0 {
+		return badRequest("bin_id is required")
+	}
 	if req.By == "" {
 		req.By = "unknown"
 	}
-	if err := d.engine.PayloadService().SetBinHold(req.BinID, req.Hold, req.By); err != nil {
-		return badRequest(err.Error())
+	err := d.engine.PayloadService().SetBinHold(req.BinID, req.Hold, req.By)
+	switch {
+	case err == nil:
+		return accepted(map[string]bool{"ok": true})
+	case errors.Is(err, sql.ErrNoRows):
+		// OWNER-WORDS
+		return refused(http.StatusNotFound, fmt.Sprintf("bin %d is not known to Core — nothing was done", req.BinID))
+	default:
+		return refused(http.StatusInternalServerError, err.Error())
 	}
-	return accepted(map[string]bool{"ok": true})
 }
