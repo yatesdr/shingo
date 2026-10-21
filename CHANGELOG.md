@@ -3,6 +3,17 @@
 One line per change. If a change needs a paragraph to explain, the paragraph
 belongs in the commit message or in `docs/` — this file is the index.
 
+## 2026-10-21 — A position changes from the desktop
+
+Edge only; no migration. Not deployed.
+
+- The desktop's Position cell is a picker: a position moves whole, its Advanced settings with it
+- The desktop's positions table has a delete control on each row
+- The picker offers only the row's own station's free positions, never an unloader's window
+- The running style may change a position when no bin is left behind on it
+- A change that would leave a bin on a node the style stops naming (head, pair, third, staging) is refused, naming the bin and the Core move to make first
+- A move onto a node holding another part's bin is refused the same way
+
 ## 2026-10-21 — A recipe suggests the spots the cell last ran it on
 
 Edge only; no migration. Not deployed.
