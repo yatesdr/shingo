@@ -279,21 +279,44 @@ func jsonOf(t *testing.T, v any) string {
 	return string(b)
 }
 
-// TestStationView_NoCoreReadPerBuild: a station view build makes no call to
-// Core, whatever Core speaks: its bins are the copy's and its containment the
-// containment copy's. CHANGED: a build made one node-bins call for its whole
-// list against a Core that did not serve the bins feed.
+// asksSent counts the asks this Edge has ever written to its outbox, of any
+// kind: the one way it reaches Core. Rows stay after the send is acked, so a
+// difference across a call is the asks that call made, answered or not.
+func asksSent(t *testing.T, eng *engine.Engine) int {
+	t.Helper()
+	var n int
+	if err := eng.DB().QueryRow(`SELECT COUNT(*) FROM outbox WHERE msg_type = ?`, protocol.SubjectEdgeAsk).Scan(&n); err != nil {
+		t.Fatalf("count asks: %v", err)
+	}
+	return n
+}
+
+// TestStationView_NoCoreReadPerBuild: a station view build asks Core nothing,
+// whatever Core speaks: its bins are the copy's and its containment the
+// containment copy's. Counted as the asks the build writes, of any kind, with
+// Core answering every kind, so an ask a build made could not be refused
+// unseen. CHANGED: a build made one node-bins call for its whole list against
+// a Core that did not serve the bins feed; and the count was the bridge's
+// calls, which saw only the kinds it bridges and none while the ack named no
+// kind.
 func TestStationView_NoCoreReadPerBuild(t *testing.T) {
 	rig := newBinsRig(t)
-	for _, ack := range []*protocol.EdgeHeartbeatAck{{}, {Feeds: map[string]string{}}} {
+	for _, ack := range []*protocol.EdgeHeartbeatAck{{Asks: protocol.AskKinds()},
+		{Feeds: map[string]string{}, Asks: protocol.AskKinds()}} {
 		rig.eng.OnCoreAck(ack)
 		for _, code := range []string{"LDR", "UNL"} {
-			rig.core.take()
+			before := asksSent(t, rig.eng)
 			rig.view(t, code)
-			if got := rig.core.take(); len(got) != 0 {
-				t.Errorf("%s (feeds %v): Core calls per build = %v, want none", code, ack.Feeds != nil, got)
+			if got := asksSent(t, rig.eng) - before; got != 0 {
+				t.Errorf("%s (feeds %v): asks per build = %d, want none", code, ack.Feeds != nil, got)
 			}
 		}
+	}
+	// The control: an act that does ask Core moves the count by one.
+	before := asksSent(t, rig.eng)
+	_, _ = rig.eng.HeldPartials("PART-A")
+	if got := asksSent(t, rig.eng) - before; got != 1 {
+		t.Errorf("a held-partials read counted %d asks, want 1: the count does not see an ask", got)
 	}
 }
 
@@ -376,34 +399,36 @@ func containmentRig(t *testing.T) *binsRig {
 // is no fallback read: the chip is not drawn and a tile under a group
 // destination has no target. CHANGED: against a Core with nil Feeds, which
 // never sends a copy, there is no containment read either (it went with
-// GetContainment); that Core's flags are not drawn.
+// GetContainment); that Core's flags are not drawn. A read is counted as the
+// asks a stamp writes, of any kind (asksSent), with Core answering every kind.
 func TestContainmentStamp_ReadsTheHeldCopyOnly(t *testing.T) {
 	rig := containmentRig(t)
-	stamp := func() (string, bool, map[string]int) {
-		rig.core.take()
+	rig.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Asks: protocol.AskKinds()})
+	stamp := func() (string, bool, int) {
+		before := asksSent(t, rig.eng)
 		tile := tileByNode(t, rig.view(t, "QA"), "H1")
 		target, _ := tile["containment_release_target"].(string)
 		flagged, _ := tile["containment_flagged"].(bool)
-		return target, flagged, rig.core.take()
+		return target, flagged, asksSent(t, rig.eng) - before
 	}
 
 	// A Core with nil Feeds: no containment read, nothing drawn.
-	target, flagged, calls := stamp()
+	target, flagged, asked := stamp()
 	if target != "" || flagged {
 		t.Errorf("a Core without feeds: target %q flagged %v, want neither", target, flagged)
 	}
-	if len(calls) != 0 {
-		t.Errorf("Core calls against a Core without feeds = %s, want none", jsonOf(t, calls))
+	if asked != 0 {
+		t.Errorf("asks against a Core without feeds = %d, want none", asked)
 	}
 
 	// Feeds, nothing held: no read, no chip, no group target.
-	rig.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}})
-	target, flagged, calls = stamp()
+	rig.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Asks: protocol.AskKinds()})
+	target, flagged, asked = stamp()
 	if target != "" || flagged {
 		t.Errorf("nothing held: target %q flagged %v, want neither", target, flagged)
 	}
-	if len(calls) != 0 {
-		t.Errorf("Core calls with nothing held = %s, want none", jsonOf(t, calls))
+	if asked != 0 {
+		t.Errorf("asks with nothing held = %d, want none", asked)
 	}
 
 	// Feeds, the copy held: the group's child is matched and the flag drawn.
@@ -415,25 +440,25 @@ func TestContainmentStamp_ReadsTheHeldCopyOnly(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("apply containment: %v", err)
 	}
-	target, flagged, calls = stamp()
+	target, flagged, asked = stamp()
 	if target != "ULN-X" || !flagged {
 		t.Errorf("copy held: target %q flagged %v, want ULN-X and flagged", target, flagged)
 	}
-	if len(calls) != 0 {
-		t.Errorf("Core calls with the copy held = %s, want none", jsonOf(t, calls))
+	if asked != 0 {
+		t.Errorf("asks with the copy held = %d, want none", asked)
 	}
 
 	// The Production page's enrichment reads the same copy.
 	views := []domain.OperatorStationView{{Nodes: []domain.StationNodeView{
 		{Node: domain.Node{CoreNodeName: "H1"}, BinState: &domain.NodeBinState{Occupied: true, PayloadCode: "PART-S"}},
 	}}}
-	rig.core.take()
+	before := asksSent(t, rig.eng)
 	enrichViewContainmentTargets(rig.eng, views)
 	if n := views[0].Nodes[0]; n.ContainmentReleaseTarget != "ULN-X" || !n.ContainmentFlagged {
 		t.Errorf("Production stamp = %q flagged %v, want ULN-X and flagged", n.ContainmentReleaseTarget, n.ContainmentFlagged)
 	}
-	if calls := rig.core.take(); len(calls) != 0 {
-		t.Errorf("Production stamp called Core: %v", calls)
+	if asked := asksSent(t, rig.eng) - before; asked != 0 {
+		t.Errorf("Production stamp asked Core %d times", asked)
 	}
 }
 
