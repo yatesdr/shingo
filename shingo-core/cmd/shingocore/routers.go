@@ -170,6 +170,10 @@ func askDoors(d *www.Doors) []askDoor {
 		// verb, and a repeat re-announces it again, which the seat's
 		// placed_seq guard and its same-carrier rule make harmless.
 		{protocol.AskReseat, d.AskReseat, "", false},
+		// Born on the ask: no HTTP door. Not a replay kind — a repeat is
+		// bounded by the asking episode's own outstanding orders and by the
+		// windows already spoken for (ReplenishLoader).
+		{protocol.AskLoaderEmpties, d.AskLoaderEmpties, "", false},
 	}
 }
 

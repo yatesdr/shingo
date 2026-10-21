@@ -64,7 +64,11 @@ func TestAsk_AnsweredInTime(t *testing.T) {
 	var env *protocol.Envelope
 	var ask *protocol.EdgeAsk
 	for deadline := time.Now().Add(3 * time.Second); env == nil; {
-		if msgs, _ := e.db.ListPendingOutbox(10); len(msgs) > 0 {
+		msgs, lerr := e.db.ListPendingOutbox(10)
+		if lerr != nil {
+			t.Fatalf("list outbox: %v", lerr)
+		}
+		if len(msgs) > 0 {
 			env, ask = askSent(t, e)
 		} else if time.Now().After(deadline) {
 			t.Fatal("the ask never reached the outbox")
@@ -191,7 +195,11 @@ func TestAskOrDoor_TheDoorForACoreWithoutTheKind(t *testing.T) {
 	if err != nil || called != 1 || got.BinID != 1 {
 		t.Errorf("door: called %d, got %+v, %v", called, got, err)
 	}
-	if msgs, _ := e.db.ListPendingOutbox(10); len(msgs) != 0 {
+	msgs, lerr := e.db.ListPendingOutbox(10)
+	if lerr != nil {
+		t.Fatalf("list outbox: %v", lerr)
+	}
+	if len(msgs) != 0 {
 		t.Errorf("an ask went out to a Core that does not answer it: %d rows", len(msgs))
 	}
 }
@@ -260,7 +268,11 @@ func TestPreflightAsker_TheReadAsk(t *testing.T) {
 		if answer != nil {
 			var env *protocol.Envelope
 			for deadline := time.Now().Add(3 * time.Second); env == nil; {
-				if msgs, _ := e.db.ListPendingOutbox(10); len(msgs) > 0 {
+				msgs, lerr := e.db.ListPendingOutbox(10)
+				if lerr != nil {
+					t.Fatalf("list outbox: %v", lerr)
+				}
+				if len(msgs) > 0 {
 					env, _ = askSent(t, e)
 					_ = e.db.AckOutbox(msgs[len(msgs)-1].ID)
 				} else if time.Now().After(deadline) {
@@ -323,7 +335,11 @@ func TestHeldPartials_TheReadAsk(t *testing.T) {
 		if answer != nil {
 			var env *protocol.Envelope
 			for deadline := time.Now().Add(3 * time.Second); env == nil; {
-				if msgs, _ := e.db.ListPendingOutbox(10); len(msgs) > 0 {
+				msgs, lerr := e.db.ListPendingOutbox(10)
+				if lerr != nil {
+					t.Fatalf("list outbox: %v", lerr)
+				}
+				if len(msgs) > 0 {
 					var a *protocol.EdgeAsk
 					env, a = askSent(t, e)
 					_ = e.db.AckOutbox(msgs[len(msgs)-1].ID)

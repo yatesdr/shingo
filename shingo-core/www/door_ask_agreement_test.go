@@ -16,6 +16,8 @@ import (
 
 	"shingocore/asks"
 	"shingocore/internal/testdb"
+	"shingocore/store/loaders"
+	"shingocore/store/nodes"
 )
 
 // door_ask_agreement_test.go — the ask and the HTTP call answer through one
@@ -149,7 +151,8 @@ func TestDoorAsk_HeldPartialsAgrees(t *testing.T) {
 	t.Parallel()
 	a := doorAsk{kind: protocol.AskHeldPartials, door: func(d *Doors) asks.Door { return d.AskHeldPartials }}
 	held := func(code string) []byte {
-		b, _ := json.Marshal(protocol.HeldPartialsRequest{PayloadCode: code})
+		b, err := json.Marshal(protocol.HeldPartialsRequest{PayloadCode: code})
+		testutil.MustNoErr(t, err, "marshal held-partials request")
 		return b
 	}
 	t.Run("no payload is refused", func(t *testing.T) {
@@ -195,7 +198,8 @@ func TestDoorAsk_Reseat(t *testing.T) {
 	t.Parallel()
 	a := doorAsk{kind: protocol.AskReseat, door: func(d *Doors) asks.Door { return d.AskReseat }}
 	reseat := func(node string) []byte {
-		b, _ := json.Marshal(protocol.ReseatRequest{Node: node})
+		b, err := json.Marshal(protocol.ReseatRequest{Node: node})
+		testutil.MustNoErr(t, err, "marshal reseat request")
 		return b
 	}
 	f := newDoorFix(t)
@@ -205,4 +209,69 @@ func TestDoorAsk_Reseat(t *testing.T) {
 		doorErr("Core has no node NO-SUCH-NODE"))
 	assertAnswerAgrees(t, askThrough(t, f, a, "edge.rs", reseat(f.sd.StorageNode.Name)), http.StatusOK,
 		"{\"node\":\""+f.sd.StorageNode.Name+"\",\"landed\":false}\n")
+}
+
+// TestDoorAsk_LoaderEmpties: a person's ask for empties at a loader is answered
+// by Core's own sizing and window choice (ReplenishLoader's operator origin):
+// a key that is not a loader and a count below one are refused before any
+// read; a loader Core does not have is 404; at an operator-driven loader with
+// two windows an ask for three makes two, named by their UUIDs, and the same
+// ask again makes none and names both windows as held.
+func TestDoorAsk_LoaderEmpties(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	d := h.doors()
+	ask := func(req protocol.LoaderEmptiesRequest) (asks.Result, protocol.LoaderEmptiesResponse) {
+		t.Helper()
+		raw, err := json.Marshal(req)
+		testutil.MustNoErr(t, err, "marshal")
+		res := d.AskLoaderEmpties("edge.line1", raw)
+		var out protocol.LoaderEmptiesResponse
+		if b, ok := res.Body.(protocol.LoaderEmptiesResponse); ok {
+			out = b
+		}
+		return res, out
+	}
+	if res, _ := ask(protocol.LoaderEmptiesRequest{LoaderKey: "SMN_A1", Count: 1}); res.Status != http.StatusBadRequest {
+		t.Errorf("a key that is not a loader: %d %q", res.Status, res.Sentence)
+	}
+	if res, _ := ask(protocol.LoaderEmptiesRequest{LoaderKey: "loader:1", Count: 0}); res.Status != http.StatusBadRequest {
+		t.Errorf("a count of none: %d %q", res.Status, res.Sentence)
+	}
+	if res, _ := ask(protocol.LoaderEmptiesRequest{LoaderKey: "loader:999999", Count: 1}); res.Status != http.StatusNotFound {
+		t.Errorf("a loader Core does not have: %d %q", res.Status, res.Sentence)
+	}
+
+	sd := testdb.SetupStandardData(t, db)
+	market := &nodes.Node{Name: "LE-MARKET", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(market), "market")
+	id, err := db.CreateLoader(loaders.Loader{Name: "LE-LDR", Role: loaders.RoleProduce,
+		Layout: loaders.LayoutSharedWindow, Replenishment: loaders.ReplenishmentOperator, InboundSource: market.Name})
+	testutil.MustNoErr(t, err, "loader")
+	for _, name := range []string{"LE-W1", "LE-W2"} {
+		w := &nodes.Node{Name: name, Enabled: true}
+		testutil.MustNoErr(t, db.CreateNode(w), name)
+		testutil.MustNoErr(t, db.UpsertLoaderHome(loaders.Home{LoaderID: id, PositionNodeID: w.ID}), "window "+name)
+	}
+	testutil.MustNoErr(t, db.UpsertLoaderPayload(loaders.Payload{LoaderID: id, PayloadCode: sd.Payload.Code}), "payload")
+
+	key := loaders.Key(id)
+	res, out := ask(protocol.LoaderEmptiesRequest{LoaderKey: key, PayloadCode: sd.Payload.Code, Count: 3,
+		OriginClass: protocol.OriginClassNoDemand})
+	if res.Status != http.StatusOK || out.Want != 3 || len(out.Created) != 2 {
+		t.Fatalf("an ask for three at two windows: %d %q %+v", res.Status, res.Sentence, out)
+	}
+	// The class the asker stated is the orders' own: a push that serves no
+	// demand is no_demand, not an orphan.
+	for _, uuid := range out.Created {
+		o, err := db.GetOrderByUUID(uuid)
+		testutil.MustNoErr(t, err, "read "+uuid)
+		if o.OriginClass != protocol.OriginClassNoDemand {
+			t.Errorf("order %s origin class %q, want %q", uuid, o.OriginClass, protocol.OriginClassNoDemand)
+		}
+	}
+	res, out = ask(protocol.LoaderEmptiesRequest{LoaderKey: key, PayloadCode: sd.Payload.Code, Count: 3})
+	if res.Status != http.StatusOK || len(out.Created) != 0 || len(out.HeldBy) != 2 {
+		t.Errorf("the same ask again: %d %+v, want none made and both windows held", res.Status, out)
+	}
 }

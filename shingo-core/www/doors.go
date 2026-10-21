@@ -27,10 +27,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"shingo/protocol"
 
 	"shingocore/asks"
+	"shingocore/dispatch"
 	"shingocore/engine"
 	"shingocore/service"
 )
@@ -205,4 +208,58 @@ func (d *Doors) reseat(station string, req protocol.ReseatRequest) asks.Result {
 		return refused(http.StatusInternalServerError, err.Error())
 	}
 	return accepted(protocol.ReseatAnswer{Node: req.Node, Landed: landed})
+}
+
+// AskLoaderEmpties answers protocol.AskLoaderEmpties: a person at a loader asks
+// for empties, and Core sizes and places them through the loader replenishment's
+// one body (dispatch.ReplenishLoader, its operator origin: Want as asked, the
+// asking episode's own outstanding orders subtracted, the windows chosen by
+// plan.LoaderWindows, each order born through AdmitCoreAsk and projected to
+// the station). The answer is what was made and, per window not ordered to,
+// why. Born on the ask: there is no HTTP door.
+func (d *Doors) AskLoaderEmpties(station string, raw json.RawMessage) asks.Result {
+	return askDoor(raw, errText, func(req protocol.LoaderEmptiesRequest) asks.Result {
+		return d.loaderEmpties(station, req)
+	})
+}
+
+func (d *Doors) loaderEmpties(station string, req protocol.LoaderEmptiesRequest) asks.Result {
+	idText, isKey := strings.CutPrefix(req.LoaderKey, "loader:")
+	id, err := strconv.ParseInt(idText, 10, 64)
+	if !isKey || err != nil || id <= 0 {
+		return badRequest(fmt.Sprintf("%q is not a loader", req.LoaderKey))
+	}
+	if req.Count <= 0 {
+		return badRequest("ask for at least one empty")
+	}
+	disp := d.engine.Dispatcher()
+	cfg, ok, err := disp.LoadReplenishConfig(id)
+	if err != nil {
+		return refused(http.StatusInternalServerError, err.Error())
+	}
+	if !ok {
+		return refused(http.StatusNotFound, fmt.Sprintf("loader %s is not configured on Core", req.LoaderKey))
+	}
+	// The asker states the class (a window-free push serves no demand, and
+	// says so); an older asker that does not is classified by its episode.
+	origin := req.OriginClass
+	if origin == "" && req.OriginID != "" {
+		origin = string(protocol.OriginClassAttached)
+	}
+	res, err := disp.ReplenishLoader(dispatch.ReplenishRequest{
+		StationID: station, LoaderID: id, PayloadCode: req.PayloadCode, MemberNode: req.MemberNode,
+		Want: req.Count, OriginID: req.OriginID, OriginClass: origin,
+	}, cfg)
+	out := protocol.LoaderEmptiesResponse{Want: res.Want, Created: []string{}, Skipped: res.Skipped}
+	for _, o := range res.Created {
+		out.Created = append(out.Created, o.EdgeUUID)
+	}
+	if len(res.HeldBy) > 0 {
+		out.HeldBy = res.HeldBy
+	}
+	if err != nil {
+		// What was made before the failure stands, and is said.
+		return asks.Result{Status: http.StatusInternalServerError, Sentence: err.Error(), Body: out}
+	}
+	return accepted(out)
 }

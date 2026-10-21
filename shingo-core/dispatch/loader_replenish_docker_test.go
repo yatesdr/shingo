@@ -921,3 +921,33 @@ func TestReplenishAsk_NoMixCarrierSetIsTheUnionAndAnyAbsorbs(t *testing.T) {
 		t.Errorf("carriers = %v (%v), want nil — a part with no rows constrains nothing, so any carrier", carriers, err)
 	}
 }
+
+// TestReplenishLoader_AnOperatorAsksForAsManyAsTheyNamed: the operator origin
+// (Want set) is sized as asked — no threshold arithmetic — at a loader a person
+// stages (operator-driven), bounded by the windows like every ask: three asked at
+// two windows makes two, and a window that cannot take one is held by name.
+func TestReplenishLoader_AnOperatorAsksForAsManyAsTheyNamed(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	d, _ := newTestDispatcher(t, db, nil)
+	req, cfg, _ := replenishFixture(t, db, "ROP", 2)
+	cfg.Replenishment = loaders.ReplenishmentOperator
+	req.Threshold, req.CurrentUOP, req.PerBinCapacity = 0, 0, 0
+	req.Want = 3
+
+	res, err := d.ReplenishLoader(req, cfg)
+	if err != nil {
+		t.Fatalf("ReplenishLoader: %v", err)
+	}
+	if res.Want != 3 || len(res.Created) != 2 {
+		t.Errorf("operator ask of 3 at 2 windows: want %d created %d (skipped %q), want 3 and 2", res.Want, len(res.Created), res.Skipped)
+	}
+
+	again, err := d.ReplenishLoader(req, cfg)
+	if err != nil {
+		t.Fatalf("ReplenishLoader again: %v", err)
+	}
+	if len(again.Created) != 0 || len(again.HeldBy) != 2 {
+		t.Errorf("the same ask with both windows taken: created %d held %v, want 0 and both windows named", len(again.Created), again.HeldBy)
+	}
+}

@@ -62,12 +62,16 @@ const (
 	// transit.bin_landed to the asking station, on Core's outbox ahead of the
 	// answer) and answers whether one stands there.
 	AskReseat = "reseat"
+	// AskLoaderEmpties: a person at a loader asks for empties; Core sizes and
+	// places them (dispatch.ReplenishLoader's operator origin, plan.LoaderWindows)
+	// and authors the orders. Born on the ask: no HTTP door ever answered it.
+	AskLoaderEmpties = "loader.empties" // LoaderEmptiesRequest → LoaderEmptiesResponse
 )
 
 // AskKinds is every kind Core answers, in a fixed order.
 func AskKinds() []string {
 	return []string{AskBinLoad, AskBinCount, AskBinClear, AskQualityHold, AskClearHome,
-		AskPreflight, AskReleasePoints, AskHeldPartials, AskReseat}
+		AskPreflight, AskReleasePoints, AskHeldPartials, AskReseat, AskLoaderEmpties}
 }
 
 // EdgeAsk is one question. Body is the kind's request, encoded.
@@ -129,4 +133,31 @@ type ReseatRequest struct {
 type ReseatAnswer struct {
 	Node   string `json:"node"`
 	Landed bool   `json:"landed"`
+}
+
+// LoaderEmptiesRequest is a person's ask for empties at a loader: the loader's
+// identity (LoaderInfo.LoaderKey), the part the empties are for, the member
+// node the person stands at ("" for none, which a dedicated loader resolves
+// to its first position), how many, and the demand episode the asking serves
+// ("" for none) with its class (OriginClass*; "" lets Core classify by the
+// episode: attached with one, orphan without).
+type LoaderEmptiesRequest struct {
+	LoaderKey   string `json:"loader_key"`
+	PayloadCode string `json:"payload_code"`
+	MemberNode  string `json:"member_node,omitempty"`
+	Count       int    `json:"count"`
+	OriginID    string `json:"origin_id,omitempty"`
+	OriginClass string `json:"origin_class,omitempty"`
+}
+
+// LoaderEmptiesResponse is what Core did with the ask: how many it was asked
+// for (Want, after what the asking demand already has coming), the orders it
+// made (their Edge UUIDs; each reaches the station as a projection), the
+// windows it did not order to and why (HeldBy, by node), and why it made none
+// at all when it made none (Skipped).
+type LoaderEmptiesResponse struct {
+	Want    int               `json:"want"`
+	Created []string          `json:"created"`
+	HeldBy  map[string]string `json:"held_by,omitempty"`
+	Skipped string            `json:"skipped,omitempty"`
 }

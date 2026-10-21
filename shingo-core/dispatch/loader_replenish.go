@@ -54,6 +54,14 @@ type ReplenishRequest struct {
 	// there is no sender's claim to classify — these are used as given.
 	OriginID    string
 	OriginClass string
+	// Want, when above zero, is the OPERATOR ORIGIN: a person at the loader
+	// asked for this many empties (protocol.AskLoaderEmpties), and the ask is
+	// sized as given instead of from a reading (Threshold, CurrentUOP and
+	// PerBinCapacity are not read). It is the threshold origin's one sizing
+	// body otherwise — the same episode subtraction, the same window choice
+	// (plan.LoaderWindows), the same admission — and it is the one origin an
+	// operator-driven loader answers: a person staging it is who asks.
+	Want int
 }
 
 // ReplenishResult is what happened, in enough detail to explain a quiet run.
@@ -224,8 +232,9 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 	// consume+threshold, so the monitor fires at such a loader today. The Edge
 	// swallows it. Without this, Core taking over ordering would turn a signal
 	// nobody acts on into robot-delivered carriers arriving at a loader whose
-	// whole configuration says a person stages it.
-	if cfg.Replenishment == loaders.ReplenishmentOperator {
+	// whole configuration says a person stages it. A person asking (the operator
+	// origin, req.Want) is not automatic, and is answered.
+	if cfg.Replenishment == loaders.ReplenishmentOperator && req.Want <= 0 {
 		res.Skipped = "loader is operator-driven: a person stages it, so no carriers are ordered automatically"
 		d.dbg("loader_replenish loader=%d payload=%s: operator-driven, not replenishing", req.LoaderID, req.PayloadCode)
 		return res, nil
@@ -239,11 +248,16 @@ func (d *Dispatcher) ReplenishLoader(req ReplenishRequest, cfg LoaderReplenishCo
 		return res, nil
 	}
 
-	want, outcome, detail := BinsToReachThreshold(req.Threshold, req.CurrentUOP, req.PerBinCapacity)
-	if outcome != SizingOK {
-		res.Skipped = detail
-		d.dbg("loader_replenish loader=%d payload=%s outcome=%s: %s", req.LoaderID, req.PayloadCode, outcome, detail)
-		return res, nil
+	want := req.Want
+	if want <= 0 {
+		var outcome SizingOutcome
+		var detail string
+		want, outcome, detail = BinsToReachThreshold(req.Threshold, req.CurrentUOP, req.PerBinCapacity)
+		if outcome != SizingOK {
+			res.Skipped = detail
+			d.dbg("loader_replenish loader=%d payload=%s outcome=%s: %s", req.LoaderID, req.PayloadCode, outcome, detail)
+			return res, nil
+		}
 	}
 	res.Want = want
 

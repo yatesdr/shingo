@@ -48,6 +48,8 @@ func TestCensus_AskKinds(t *testing.T) {
 		{protocol.AskHeldPartials, "GET /api/telemetry/held-partials", "apiTelemetryHeldPartials", d.AskHeldPartials, false},
 		// No HTTP door: answered only as an ask, by the landing verb.
 		{protocol.AskReseat, "", "", d.AskReseat, false},
+		// Born on the ask: no HTTP door to agree with.
+		{protocol.AskLoaderEmpties, "", "", d.AskLoaderEmpties, false},
 	}
 
 	s, err := buildAskServer(nil, nil, d)

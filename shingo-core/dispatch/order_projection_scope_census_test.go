@@ -182,7 +182,7 @@ func TestCompoundChildren_AreNeverPushed(t *testing.T) {
 	t.Parallel()
 	want := []string{
 		"dispatch/lifecycle_service.go:220", // the Edge wire intake's own echo
-		"dispatch/loader_replenish.go:470",  // AdmitCoreAsk: both Core timer doors
+		"dispatch/loader_replenish.go:484",  // AdmitCoreAsk: both Core timer doors
 	}
 	got := projectOrderSites(scanCoreSources(t))
 	if !slices.Equal(got, want) {

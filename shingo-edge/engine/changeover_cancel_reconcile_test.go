@@ -250,7 +250,10 @@ func TestRegression_ConfirmedCompletionDoesNotReconcile(t *testing.T) {
 		OrderType:     order.OrderType,
 		ProcessNodeID: &nodeID,
 	}})
-	node, _ := db.GetProcessNode(nodeID)
+	node, err := db.GetProcessNode(nodeID)
+	if err != nil {
+		t.Fatalf("read node: %v", err)
+	}
 	if n := answerReseats(t, eng, physicalLanding(node.CoreNodeName, 555, 77, 9)); n != 0 {
 		t.Errorf("a confirmed completion asked Core for %d reseat(s), want none", n)
 	}
@@ -291,7 +294,11 @@ func TestCancelReconcile_RecordsTheReboundCarriersIdentity(t *testing.T) {
 	if n := answerReseats(t, eng, func(string) *protocol.BinLanded { return nil }); n != 0 {
 		t.Fatalf("asked a Core that does not answer the reseat %d time(s)", n)
 	}
-	if rt, _ := db.GetProcessNodeRuntime(nodeID); string(rt.LinesidePayloadCode) != "PART-OLD" ||
+	rt, rerr := db.GetProcessNodeRuntime(nodeID)
+	if rerr != nil {
+		t.Fatalf("read runtime: %v", rerr)
+	}
+	if string(rt.LinesidePayloadCode) != "PART-OLD" ||
 		!sameBin(rt.ActiveBinID, before.ActiveBinID) {
 		t.Errorf("no reseat answered, the seat moved: bin %v part %q", rt.ActiveBinID, rt.LinesidePayloadCode)
 	}

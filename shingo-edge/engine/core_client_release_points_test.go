@@ -33,7 +33,11 @@ func TestReleasePointsAsker_TheReadAsk(t *testing.T) {
 			var env *protocol.Envelope
 			var a *protocol.EdgeAsk
 			for deadline := time.Now().Add(3 * time.Second); env == nil; {
-				if msgs, _ := e.db.ListPendingOutbox(10); len(msgs) > 0 {
+				msgs, lerr := e.db.ListPendingOutbox(10)
+				if lerr != nil {
+					t.Fatalf("list outbox: %v", lerr)
+				}
+				if len(msgs) > 0 {
 					env, a = askSent(t, e)
 					_ = e.db.AckOutbox(msgs[len(msgs)-1].ID)
 				} else if time.Now().After(deadline) {
@@ -52,10 +56,13 @@ func TestReleasePointsAsker_TheReadAsk(t *testing.T) {
 	}
 
 	pts, err := ask(func(env *protocol.Envelope, req protocol.ReleasePointsRequest) {
-		body, _ := json.Marshal(protocol.ReleasePointsResponse{Points: []protocol.ReleasePoint{{
+		body, err := json.Marshal(protocol.ReleasePointsResponse{Points: []protocol.ReleasePoint{{
 			OrderUUID: req.OrderUUIDs[0], Found: true, Enters: []string{"SYN-PRESS"},
 			AwaitsLift: []protocol.LiftDependency{{LifterUUID: "u-r1", Node: "SYN-PRESS", CoRelease: true}},
 		}}})
+		if err != nil {
+			t.Fatalf("marshal release points: %v", err)
+		}
 		e.HandleEdgeAnswer(answerTo(env), &protocol.EdgeAnswer{Kind: protocol.AskReleasePoints, Status: protocol.AnswerOK, Body: body})
 	})
 	testutil.MustNoErr(t, err, "release points")
