@@ -6,8 +6,9 @@ import (
 	"testing"
 )
 
-// TestOperatorChangeoverLoadCard renders the loader board's changeover
-// directive banner.
+// TestOperatorChangeoverLoadCard renders the card a loader draws when a served
+// cell changes over to a part it has none of (the red Load card; the changeover
+// banner it replaced is gone).
 //
 // Tested by rendering because the deliverable is a sentence an operator reads
 // off a board while standing at a loader. Round 1's changeover banner and

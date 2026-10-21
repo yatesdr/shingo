@@ -1,19 +1,38 @@
-import { esc, postAction } from './operator-util.js';
+// esc is the one escape for markup built by concatenation, quotes included:
+// the prompt puts payload codes inside attributes.
+import { esc } from '/static/shared/esc.js';
+import { postAction } from './operator-util.js';
 import { getView, getSelectedNodeID, findNodeByID } from './operator-state.js';
 import { openKeypad } from './operator-keypad.js';
 
 const nodeModal = document.getElementById('node-modal');
 const nodeModalContent = document.getElementById('node-modal-content');
 
+// releasePromptState is the prompt on screen, or null. It stays set while its
+// release is in flight (posting), so the board does not repaint the modal under
+// it and a refusal leaves it live; it is cleared when the answer is a yes, and
+// when the modal closes (closeModal calls closeReleasePrompt). Pinned by
+// operator-safe-taps.test.js.
 let releasePromptState = null;
 let renderModalRef = null;
-let closeModalRef = null;
+let modalOpeningRef = null;
+let closeModalFromRef = null;
 let loadViewRef = null;
 
+// refs: renderModal; modalOpening and closeModalFrom, so a release closes only
+// the modal it came from (operator-modal.js); loadView.
 export function setReleaseRefs(refs) {
     renderModalRef = refs.renderModal;
-    closeModalRef = refs.closeModal;
+    modalOpeningRef = refs.modalOpening;
+    closeModalFromRef = refs.closeModalFrom;
     loadViewRef = refs.loadView;
+}
+
+function modalOpening() {
+    return modalOpeningRef ? modalOpeningRef() : 0;
+}
+function closeModalFrom(opening) {
+    if (closeModalFromRef) closeModalFromRef(opening);
 }
 
 export function isReleasePromptOpen() {
@@ -134,8 +153,9 @@ export async function openReleasePrompt(url, entry) {
     // opens and isReleasePromptOpen() stays false for the SSE re-render guard.
     const direct = singleOutcomeReleaseBody(entry, payloads);
     if (direct) {
+        const opening = modalOpening();
         const ok = await postAction(url, direct, loadViewRef);
-        if (ok && closeModalRef) closeModalRef();
+        if (ok) closeModalFrom(opening);
         return;
     }
 
@@ -183,6 +203,8 @@ export async function openReleasePrompt(url, entry) {
         url, entry, payloads, selected, suggested,
         partialCount: partialCountSuggested,
         partialCountSuggested,
+        screen: renderReleasePromptStep1,
+        posting: false,
     };
     renderReleasePromptStep1();
 }
@@ -203,6 +225,7 @@ function isProduceRelease(state) {
 function renderReleasePromptStep1() {
     const state = releasePromptState;
     if (!state) return;
+    state.screen = renderReleasePromptStep1;
 
     if (isProduceRelease(state)) {
         renderReleasePromptProduce();
@@ -326,6 +349,7 @@ function renderReleasePromptProduce() {
 function renderReleasePromptUnderpackConfirm() {
     const state = releasePromptState;
     if (!state) return;
+    state.screen = renderReleasePromptUnderpackConfirm;
     const rt = state.entry && state.entry.runtime;
     const remainingUOP = rt && rt.remaining_uop_cached != null ? rt.remaining_uop_cached : 0;
 
@@ -397,7 +421,7 @@ function renderReleasePromptStep2(code) {
 async function handleReleasePromptAction(evt) {
     const action = evt.currentTarget.dataset.action;
     const state = releasePromptState;
-    if (!action || !state) return;
+    if (!action || !state || state.posting) return;
 
     if (action === 'release-cancel') {
         closeReleasePrompt();
@@ -489,10 +513,7 @@ async function handleReleasePromptAction(evt) {
         // a produce entry whose active_claim has not loaded yet renders the
         // prompt, and this submits it.
         const body = releasedFullBody(calledByFromView());
-        closeReleasePrompt();
-        evt.currentTarget.disabled = true;
-        const ok = await postAction(state.url, body, loadViewRef);
-        if (ok && closeModalRef) closeModalRef();
+        await submitRelease(state, state.url, body);
         return;
     }
 
@@ -549,15 +570,33 @@ async function handleReleasePromptAction(evt) {
                 called_by: calledBy,
             };
         }
-        closeReleasePrompt();
-        evt.currentTarget.disabled = true;
-        const ok = await postAction(url, body, loadViewRef);
-        if (ok && closeModalRef) closeModalRef();
+        await submitRelease(state, url, body);
         return;
     }
 }
 
-function closeReleasePrompt() {
+// submitRelease posts the prompt's release with every button of the prompt
+// disabled. A yes closes the prompt and the modal it came from, and only that
+// one: an answer that lands after the modal closed or another opened closes
+// nothing. A refusal leaves the prompt on screen, live, as it was.
+async function submitRelease(state, url, body) {
+    const opening = modalOpening();
+    state.posting = true;
+    nodeModalContent.querySelectorAll('[data-action]').forEach(function(btn) { btn.disabled = true; });
+    const ok = await postAction(url, body, loadViewRef);
+    state.posting = false;
+    if (releasePromptState !== state) return;
+    if (ok) {
+        closeReleasePrompt();
+        closeModalFrom(opening);
+        return;
+    }
+    state.screen();
+}
+
+// closeReleasePrompt drops the prompt; the modal's close calls it, so a
+// prompt closed by its backdrop does not hold the board's repaints.
+export function closeReleasePrompt() {
     releasePromptState = null;
 }
 

@@ -44,17 +44,6 @@ export function el(tag, props, children) {
     return e;
 }
 
-// TEXT ONLY, like shared/utils.js's escapeHtml: DOM-based, so `"` comes
-// through unescaped. A caller building an attribute by concatenation wants
-// shared/esc.js. Left as it is for the same reason — its callers are escaping
-// text between tags.
-export function esc(s) {
-    if (!s) return '';
-    const d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
-}
-
 export function fillColor(pct, remaining) {
     if (remaining <= 0) return 'var(--os-red)';
     if (pct < 0.33) return 'var(--os-red)';
@@ -174,10 +163,18 @@ export async function fetchWithTimeout(url, opts, ms) {
     }
 }
 
-// postAction is the single POST→refresh path. Returns true on 2xx.
-// Caller passes its own loadView callback so this module stays free of
-// state/view dependencies.
-// postAction posts an operator action and refreshes the view.
+// POST_TIMEOUT_MS bounds a station action as the view fetch is bounded
+// (operator.js, 30 s): set well above the slowest legitimate request, so it
+// only ends one with no answer at all. Pinned by operator-safe-taps.test.js.
+const POST_TIMEOUT_MS = 30000;
+
+// postAction is the single POST→refresh path: it posts an operator action
+// and refreshes the view. Returns true on 2xx. Caller passes its own loadView
+// callback so this module stays free of state/view dependencies.
+//
+// A request with no answer by POST_TIMEOUT_MS is given up (false): the modal
+// that sent it comes back live, and the toast says to look at the board,
+// because the action may have landed.
 //
 // opts is ADDITIVE and every existing 3-argument caller is unchanged:
 //   opts.onResult(parsedBody)  — called with the decoded success body.
@@ -196,11 +193,11 @@ export async function fetchWithTimeout(url, opts, ms) {
 // threw the body away on success.
 export async function postAction(url, body, loadView, opts) {
     try {
-        const res = await fetch(url, {
+        const res = await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body || {})
-        });
+        }, POST_TIMEOUT_MS);
         if (!res.ok) {
             const text = await res.text();
             let parsed = null;
@@ -251,27 +248,11 @@ export async function postAction(url, body, loadView, opts) {
         return true;
     } catch (err) {
         console.error('postAction', url, err);
-        showToast('Network error', 'error');
+        showToast(err && err.name === 'AbortError' ? 'No answer — check the board before trying again' : 'Network error', 'error');
         return false;
     }
 }
 
-// formatETA renders an order's ETA as an operator-facing phrase.
-//
-// Bucket boundaries match the user-approved display rules:
-//   < 45s   → "Arriving"
-//   45–90s  → "ETA: ~1 min"
-//   ≥ 90s   → "ETA: ~N min" rounded to nearest whole minute
-//   overdue by > 60s → "Running late" + amber pill
-// No sub-minute precision past the first bucket — fake precision was the
-// thing Uber's UX research dropped. If the order has no ETA yet (Core
-// hasn't stamped one, e.g. mid-transition or backfill pending) we return
-// empty:true and the caller shows nothing rather than a placeholder.
-//
-// Lives here rather than in operator-render.js because both the tile pill
-// and the modal's waiting label need it, and a pure formatter is exactly
-// what this module is for — the alternative was the modal importing the
-// tile renderer for one function.
 // primeNoticeText turns a primes-only NodeOrderResult into the sentence the
 // operator needs, or '' when the result is an ordinary swap.
 //
@@ -335,6 +316,22 @@ export function distinctQueueCauses(orders) {
     return out;
 }
 
+// formatETA renders an order's ETA as an operator-facing phrase.
+//
+// Bucket boundaries match the user-approved display rules:
+//   < 45s   → "Arriving"
+//   45–90s  → "ETA: ~1 min"
+//   ≥ 90s   → "ETA: ~N min" rounded to nearest whole minute
+//   overdue by > 60s → "Running late" + amber pill
+// No sub-minute precision past the first bucket — fake precision was the
+// thing Uber's UX research dropped. If the order has no ETA yet (Core
+// hasn't stamped one, e.g. mid-transition or backfill pending) we return
+// empty:true and the caller shows nothing rather than a placeholder.
+//
+// Lives here rather than in operator-render.js because the node grid's pill
+// and the modal's waiting label both need it, and a pure formatter is exactly
+// what this module is for — the alternative was the modal importing the
+// tile renderer for one function.
 export function formatETA(etaStr) {
     if (!etaStr) return { text: '', overdue: false, empty: true };
     const etaMs = Date.parse(etaStr);

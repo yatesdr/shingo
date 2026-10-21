@@ -44,6 +44,8 @@ const src = fs.readFileSync(path.join(__dirname, 'operator-render.js'), 'utf8')
 const ctx = vm.createContext({
     document: {
         getElementById: () => null,
+        // No overlay is open when a panel opens here (showOverlay replaces one).
+        querySelectorAll: () => [],
         body: { appendChild: function (n) { mounted.push(n); return n; } },
     },
     el: el,

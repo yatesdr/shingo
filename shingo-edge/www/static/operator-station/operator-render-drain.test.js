@@ -24,7 +24,7 @@ function eq(got, want, label) {
 }
 
 const model = fs.readFileSync(path.join(__dirname, 'operator-board-model.js'), 'utf8')
-    .replace(/^export\s+/gm, '');
+    .replace(/^import\s[^;]*;/gm, '').replace(/^export\s+/gm, '');
 const src = fs.readFileSync(path.join(__dirname, 'operator-render.js'), 'utf8')
     .replace(/^import\s.*$/gm, '')                  // drop ES import lines
     .replace(/export\s+function\s+/g, 'function ')

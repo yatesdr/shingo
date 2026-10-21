@@ -50,7 +50,7 @@ function extractFn(src, name) {
 const modalSrc = fs.readFileSync(path.join(__dirname, 'operator-modal.js'), 'utf8');
 const windowSrc = fs.readFileSync(path.join(__dirname, 'operator-window-state.js'), 'utf8');
 const modelSrc = fs.readFileSync(path.join(__dirname, 'operator-board-model.js'), 'utf8')
-    .replace(/^export\s+/gm, '');
+    .replace(/^import\s[^;]*;/gm, '').replace(/^export\s+/gm, '');
 const statusSrc = fs.readFileSync(path.join(__dirname, 'order-status.js'), 'utf8')
     .replace(/^export\s+/gm, '');
 

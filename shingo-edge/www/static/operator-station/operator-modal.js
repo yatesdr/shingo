@@ -1,4 +1,7 @@
-import { esc, fillColor, postAction, formatETA, withQueueCause, distinctQueueCauses, primeNoticeText, showToast, stationID } from './operator-util.js';
+// esc is the one escape for markup built by concatenation, quotes included:
+// this modal puts payload codes and node names inside attributes.
+import { esc } from '/static/shared/esc.js';
+import { fillColor, postAction, formatETA, withQueueCause, distinctQueueCauses, primeNoticeText, showToast, stationID } from './operator-util.js';
 import {
     confirmRefuseSupply, confirmUndoSupplyRefusal, confirmSkipChangeoverStep, REFUSE_LABEL, UNDO_LABEL,
 } from './operator-supply-refusal.js';
@@ -8,7 +11,7 @@ import {
 } from './operator-state.js';
 import { openLoadBin } from './operator-load-bin.js';
 import { openKeypad } from './operator-keypad.js';
-import { openReleasePrompt } from './operator-release.js';
+import { openReleasePrompt, closeReleasePrompt } from './operator-release.js';
 import { isActive, isPreDispatch } from './order-status.js';
 import { isOwnEmptyOut } from './operator-window-state.js';
 import { loaderOf, partCodes, carriersOf } from './operator-board-model.js';
@@ -87,20 +90,42 @@ for (const evt of ['pointerup', 'pointercancel']) {
     });
 }
 
+// opening numbers each time the modal opens; 0 while it is closed. A request
+// sent from the modal remembers the opening it came from and closes only that
+// one when it answers (closeModalFrom): the modal can be closed mid-request,
+// and another node's opened. Pinned by operator-safe-taps.test.js.
+let openings = 0;
+let opening = 0;
+
 export function openModal(nodeID) {
     const entry = findNodeByID(nodeID);
     if (!entry) return;
     setSelectedNodeID(nodeID);
+    opening = ++openings;
     renderModal(entry);
     nodeModal.classList.add('active');
 }
 
+// closeModal closes the modal and any release prompt in it.
 export function closeModal() {
     setSelectedNodeID(null);
     nodeModal.classList.remove('active');
+    opening = 0;
+    closeReleasePrompt();
     // Drop any repaint that was waiting on a press: the modal it targeted is
     // gone, and applying it after a reopen would paint the previous node.
     pendingEntry = null;
+}
+
+// modalOpening is the opening on screen, 0 when the modal is closed.
+export function modalOpening() {
+    return opening;
+}
+
+// closeModalFrom closes the modal if it is still the opening a request came
+// from.
+export function closeModalFrom(from) {
+    if (from && from === opening) closeModal();
 }
 
 export function renderModal(entry) {
@@ -354,22 +379,41 @@ export function renderModal(entry) {
                 });
             }
 
-            var queuePos = 1;
-            allowed.forEach(function(code) {
-                // The node's own empty-out (U2) names no part, so it is matched by
-                // source_node (isOwnEmptyOut) — but only where the node has ONE
-                // row. With several rows a blank U2 belongs to none of them in
-                // particular, and lighting all of them would be a false IN TRANSIT
-                // on every part (operator-modal-home-transit.test.js).
-                var payloadOrders = activeOrders.filter(function(o) {
+            // The node's own empty-out (U2) names no part, so it is matched by
+            // source_node (isOwnEmptyOut) — but only where the node has ONE
+            // row. With several rows a blank U2 belongs to none of them in
+            // particular, and lighting all of them would be a false IN TRANSIT
+            // on every part (operator-modal-home-transit.test.js).
+            //
+            // A card is active with a live order of its part; with none, on
+            // the empty-bin-parked manual-request phase only (an empty bin and
+            // demand, and no active order naming a part).
+            var nodeBinIsEmpty = !!(binState && binState.occupied && !binState.payload_code);
+            var cards = allowed.map(function(code) {
+                var orders = activeOrders.filter(function(o) {
                     return o.payload_code === code || (allowed.length === 1 && isOwnEmptyOut(entry, o));
                 });
-                // Mirror operator-render.js: the no-payload-code fallback is
-                // for the empty-bin-parked manual-request phase only. After
-                // load (bin has payload_code) or once any active order has a
-                // payload_code, fall back to the strict per-payload match.
-                var nodeBinIsEmpty = !!(binState && binState.occupied && !binState.payload_code);
-                var isActive = payloadOrders.length > 0 || (nodeBinIsEmpty && hasDemand && activeOrders.every(function(o) { return !o.payload_code; }));
+                var active = orders.length > 0 || (nodeBinIsEmpty && hasDemand && activeOrders.every(function(o) { return !o.payload_code; }));
+                var since = Infinity;
+                orders.forEach(function(o) {
+                    var t = Date.parse(o.created_at);
+                    if (!isNaN(t) && t < since) since = t;
+                });
+                return { code: code, orders: orders, active: active, since: since };
+            });
+            // The badge is a card's place in the queue by age: its oldest live
+            // order first, a card with no order last, ties in the list's order
+            // (a bug fixed: it counted the cards in the list's order).
+            // Pinned by operator-safe-taps.test.js.
+            var place = {};
+            cards.filter(function(c) { return c.active; })
+                .map(function(c, i) { return { c: c, i: i }; })
+                .sort(function(a, b) { return (a.c.since - b.c.since) || (a.i - b.i); })
+                .forEach(function(x, n) { place[x.c.code] = n + 1; });
+            cards.forEach(function(card) {
+                var code = card.code;
+                var payloadOrders = card.orders;
+                var isActive = card.active;
                 var payloadDelivered = payloadOrders.find(function(o) { return o.status === 'delivered'; });
                 // Keep acknowledged separate from in_transit: the card renders a
                 // real transit order as IN TRANSIT and an acknowledged order as
@@ -445,8 +489,7 @@ export function renderModal(entry) {
 
                 html += '<div style="display:flex;align-items:center;gap:12px">';
                 if (isActive) {
-                    html += '<span style="background:' + (payloadDelivered ? '#2a5a2a' : payloadInTransit ? '#5a5a2a' : '#3a5a8a') + ';color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px">' + queuePos + '</span>';
-                    queuePos++;
+                    html += '<span style="background:' + (payloadDelivered ? '#2a5a2a' : payloadInTransit ? '#5a5a2a' : '#3a5a8a') + ';color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px">' + place[code] + '</span>';
                 } else {
                     html += '<span style="width:28px"></span>';
                 }
@@ -544,7 +587,7 @@ export function renderModal(entry) {
             html += '<div style="font-size:12px;color:#999;margin-bottom:8px">Contained bin — releases to <strong style="color:#ccc">' +
                 esc(entry.containment_release_target) + '</strong></div>';
             html += actionBtn('VERIFY GOOD — RELEASE TO FG', 'request', true,
-                'release-containment:' + esc(entry.node.core_node_name) + '|' + binState.bin_id);
+                'release-containment:' + entry.node.core_node_name + '|' + binState.bin_id);
         } else {
             html += '<div style="padding:12px 16px;border-radius:8px;background:#1a1a1a;border:1px solid #444;color:#aab;font-size:14px;line-height:1.5">' +
                 'Quality containment position. No bin here — contained bins arrive by the quality divert or a Recall.</div>';
@@ -1078,7 +1121,10 @@ function orderStatusChip(o) {
     return esc(withQueueCause(o.order_type + ': ' + o.status, o));
 }
 
+// actionBtn is one modal button. A button whose request is in flight is drawn
+// disabled, so a repaint mid-request cannot put it back (posting).
 function actionBtn(label, cls, enabled, action, title) {
+    enabled = enabled && !posting.has(action);
     return '<button type="button" class="os-action-btn ' + cls + '"' +
         (!enabled ? ' disabled' : '') +
         (title && !enabled ? ' title="' + esc(title) + '"' : '') +
@@ -1122,12 +1168,13 @@ const ACTION_HANDLERS = {
         const nodeName = parts[0];
         const binID = parseInt(parts[1], 10);
         if (!nodeName || !binID) return;
+        const from = opening;
         const ok = await postAction('/api/containment/release', {
             node_name: nodeName,
             bin_id: binID,
             actor: 'station-' + stationID,
         }, loadViewRef);
-        if (ok) closeModal();
+        if (ok) closeModalFrom(from);
     },
 
     'demand-card': (code) => {
@@ -1159,10 +1206,12 @@ const ACTION_HANDLERS = {
         openKeypad(nodeID, remaining);
     },
 
+    // Returned, so the action stays in flight (posting) while a release with
+    // one outcome posts at once.
     'release-prompt': (url) => {
         const sid = getSelectedNodeID();
         const entry = sid !== null ? findNodeByID(sid) : null;
-        openReleasePrompt(url, entry);
+        return openReleasePrompt(url, entry);
     },
 
     // Both refusal verbs close the modal and reload the board on success: the
@@ -1173,7 +1222,8 @@ const ACTION_HANDLERS = {
         const sid = getSelectedNodeID();
         const entry = sid !== null ? findNodeByID(sid) : null;
         if (!entry) return;
-        confirmRefuseSupply(entry.node.id, code, () => { closeModal(); if (loadViewRef) loadViewRef(); });
+        const from = opening;
+        confirmRefuseSupply(entry.node.id, code, () => { closeModalFrom(from); if (loadViewRef) loadViewRef(); });
     },
 
     'skip-step': () => {
@@ -1188,13 +1238,29 @@ const ACTION_HANDLERS = {
         const sid = getSelectedNodeID();
         const entry = sid !== null ? findNodeByID(sid) : null;
         if (!entry) return;
-        confirmUndoSupplyRefusal(entry.node.id, code, () => { closeModal(); if (loadViewRef) loadViewRef(); });
+        const from = opening;
+        confirmUndoSupplyRefusal(entry.node.id, code, () => { closeModalFrom(from); if (loadViewRef) loadViewRef(); });
     },
 };
 
+// posting holds the modal's actions whose request is in flight: one tap, one
+// request. A second tap on the same action does nothing until the first is
+// answered, and actionBtn draws its button disabled across any repaint.
+// Pinned by operator-safe-taps.test.js.
+const posting = new Set();
+
 export async function handleModalAction(evt) {
     const action = evt.currentTarget.dataset.action;
-    if (!action) return;
+    if (!action || posting.has(action)) return;
+    posting.add(action);
+    try {
+        await runModalAction(evt, action);
+    } finally {
+        posting.delete(action);
+    }
+}
+
+async function runModalAction(evt, action) {
 
     // Split on first colon — arg may itself contain colons (URLs do).
     const colon = action.indexOf(':');
@@ -1220,13 +1286,14 @@ export async function handleModalAction(evt) {
     // onResult is where a primes-only round becomes visible. Every station
     // action funnels through this branch, so the produce swap and the consume
     // downgrade are both covered by one hook rather than one per verb.
+    const from = opening;
     const ok = await postAction(url, body, loadViewRef, {
         onResult: (result) => {
             const notice = primeNoticeText(result);
             if (notice) showToast(notice, 'info');
         },
     });
-    if (ok) closeModal();
+    if (ok) closeModalFrom(from);
 }
 
 nodeModal.addEventListener('click', evt => {

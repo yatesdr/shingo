@@ -13,7 +13,7 @@ import {
     renderHeader, renderGrid, renderFooter, setRenderRefs,
 } from './operator-render.js';
 import {
-    openModal, closeModal, renderModal, setModalLoadView,
+    openModal, closeModal, renderModal, setModalLoadView, modalOpening, closeModalFrom,
 } from './operator-modal.js';
 import { openLoadBin, setLoadView } from './operator-load-bin.js';
 import { setReleaseRefs, isReleasePromptOpen } from './operator-release.js';
@@ -375,7 +375,7 @@ function renderPostCutoverFlag(pid, flag) {
 setRenderRefs({ openModal, openLoadBin, loadView });
 setModalLoadView(loadView);
 setLoadView(loadView);
-setReleaseRefs({ renderModal, closeModal, loadView });
+setReleaseRefs({ renderModal, modalOpening, closeModalFrom, loadView });
 
 // ─── SSE ───
 //

@@ -186,18 +186,6 @@ body {
    as a loader/logistics action, distinct from CHANGEOVER (orange) / CUTOVER (green). */
 .os-header-btn.pull-full-home { background: #1f6b5a; color: #fff; }
 
-/* A loaded home whose loader buffer holds a matching partial is ready to
-   consolidate. Pulse a green ring (not opacity — keep the tile legible) so the
-   operator can spot which homes the "PULL FULL FROM HOME" picker will offer. */
-.os-board-cards .os-board-card--ready {
-    animation: os-ready-glow 1.6s ease-in-out infinite;
-    border-radius: 10px;
-}
-@keyframes os-ready-glow {
-    0%, 100% { box-shadow: 0 0 0 2px var(--os-green-bright), 0 0 6px 1px rgba(64, 220, 120, 0.35); }
-    50%      { box-shadow: 0 0 0 3px var(--os-green-bright), 0 0 16px 4px rgba(64, 220, 120, 0.70); }
-}
-
 /* Active-style chip — display-only, sits in the action bar next to the
    changeover button so the operator can see what's running at a glance. */
 .os-header-style {
@@ -297,11 +285,6 @@ body {
     gap: var(--os-grid-gap);
     padding: var(--os-grid-gap);
     overflow: hidden;
-}
-
-#os-grid.os-board-mode {
-    display: flex;
-    flex-direction: column;
 }
 
 #os-grid-empty {
@@ -466,7 +449,8 @@ body {
 
 /* Drain (consume unloader) slot palette — the loader-board card colors, not the
    saturated fills. Empty/idle is neutral dark (NOT a fault), inbound full is amber,
-   parked full is green. Matches os-board-transit / os-board-delivered. */
+   parked full is green. Drawn where an unloader window sits beside a press;
+   a station of loader tiles is the board (.os-pc-*). */
 .os-node-btn.os-drain-idle     { background: var(--os-surface); border-color: var(--os-border); }
 .os-node-btn.os-drain-awaiting { background: #2a2a1a; border-color: #5a5a2a; }
 .os-node-btn.os-drain-ready    { background: #1a3a1a; border-color: #2a5a2a; }
@@ -1070,223 +1054,6 @@ body {
     .os-release-qty-display { font-size: 32px; padding: 14px; border-radius: 10px; }
 }
 
-/* ===== Payload Board (single manual_swap node) ===== */
-
-.os-board-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 24px 28px;
-    background: var(--os-header-bg);
-    border-bottom: 1px solid var(--os-border);
-    border-radius: var(--os-btn-radius);
-    margin-bottom: 16px;
-}
-
-/* Manual request / jumpstart bar — one big button across the top of the loader
-   board (above the cards), sized as a forklift-seat tap target. Violet = manual
-   operator action (NOT amber/orange, which mean stranded / changeover). When the
-   request is blocked (bin parked or one already inbound) it greys out and states
-   why rather than disappearing — the anti-spam state stays visible. */
-.os-board-reqbar {
-    margin-bottom: 16px;
-}
-.os-board-request-btn {
-    width: 100%;
-    font-size: 24px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    padding: 18px 0;
-    border-radius: 8px;
-    border: 1px solid #c98fe6;
-    background: #9b4dca;
-    color: #fff;
-    cursor: pointer;
-}
-.os-board-request-btn.disabled {
-    background: #23262f;
-    border-color: #3a3f4a;
-    color: #777;
-    cursor: not-allowed;
-    letter-spacing: 0.5px;
-}
-
-.os-board-cards {
-    display: grid;
-    /* Cap each column so a board with only 1–2 cards (e.g. a single-payload
-       unloader) renders normal-sized tiles instead of stretching one card
-       across the whole screen. minmax(0, …) lets the tracks shrink below the
-       cap on narrow 7"/10" kiosks so the row never overflows; justify-content:
-       start anchors the capped row to the left so cards fall left-to-right (like
-       the produce loader), instead of a lone card floating dead-center. Multi-card
-       loaders are unchanged on a wide display (tracks hit the cap and pack) and
-       still fit narrow ones (tracks shrink). (plant 2026-06-02 — lone unloader
-       card filled screen; 2026-06-03 — left-anchor for all loaders.) */
-    grid-template-columns: repeat(var(--os-board-cols, 3), minmax(0, 480px));
-    justify-content: start;
-    gap: 16px;
-    flex: 1;
-    /* Pack rows at the top and size them to content so a single row of cards
-       doesn't balloon to the full flex:1 height (#8). */
-    align-content: start;
-    /* Touch-scroll when cards overflow one page (#11). min-height:0 is
-       essential — a grid/flex child defaults to min-height:auto and won't
-       shrink to allow its own scrollbar, so the ancestor overflow:hidden would
-       just clip the overflowing rows. */
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    min-height: 0;
-}
-
-.os-board-card {
-    position: relative;
-    border-radius: 14px;
-    padding: 32px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    min-height: 220px;
-    transition: background 0.15s, border-color 0.15s;
-    cursor: default;
-}
-
-.os-board-delivered {
-    background: #1a3a1a;
-    border: 2px solid #2a5a2a;
-}
-.os-board-delivered:hover {
-    background: #1f4a1f;
-    border-color: #3a7a3a;
-}
-.os-board-transit {
-    background: #2a2a1a;
-    border: 2px solid #5a5a2a;
-}
-.os-board-queued {
-    background: #1a2a4a;
-    border: 2px solid #3a5a8a;
-}
-.os-board-nodemand {
-    background: var(--os-surface);
-    border: 2px solid var(--os-border);
-    opacity: 0.65;
-}
-.os-board-requestable {
-    background: var(--os-surface);
-    border: 2px dashed #4a5a72;
-    opacity: 0.95;
-}
-
-.os-board-code {
-    font-size: 38px;
-    font-weight: 700;
-    color: #fff;
-}
-/* Home-location board: the physical position + bin-state label atop each card. */
-.os-board-home {
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 0.4px;
-    color: #8fb3da;
-    margin-bottom: 4px;
-    text-transform: uppercase;
-}
-.os-board-nodemand .os-board-code {
-    color: #99a;
-}
-.os-board-requestable .os-board-code {
-    color: #cdd;
-}
-
-.os-board-tag {
-    display: inline-block;
-    font-size: 22px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 6px 16px;
-    border-radius: 8px;
-    align-self: flex-start;
-}
-.os-board-tag-delivered { background: #1a5a1a; color: #6f6; }
-.os-board-tag-transit { background: #5a5a1a; color: #ff6; }
-.os-board-tag-queued { background: #2a3a6a; color: #8af; }
-.os-board-tag-request { background: #2a3a4a; color: #9ac; }
-.os-board-tag-nodemand { background: #2a2f3a; color: #889; }
-/* Transitional idle-card tags: ACTIVE shows lineside UoP (blue, info), PRELOAD
-   shows a stage hint (violet) — match the coverage badge/tint hues. */
-.os-board-tag-lineside { background: #1a2540; color: #cfe0ff; }
-.os-board-tag-preload { background: #241f33; color: #d8cdf0; }
-
-/* Lineside UoP line on transitional ACTIVE cards — the replenishment cue. */
-.os-board-lineside {
-    font-size: 20px;
-    font-weight: 600;
-    color: #9fb6d8;
-    margin-top: 2px;
-}
-
-/* Starvation danger (task 2): active-style lineside dropped below the preload
-   floor — red the card so the operator restocks before the line runs dry. */
-.os-board-card--starved {
-    border: 2px solid #e0484d;
-    background: #2a1518;
-    box-shadow: 0 0 0 2px rgba(224, 72, 77, 0.55);
-    animation: os-starved-pulse 1.6s ease-in-out infinite;
-}
-
-.os-board-lineside--starved {
-    color: #ff6b70;
-    font-weight: 800;
-}
-
-@keyframes os-starved-pulse {
-    0%, 100% { box-shadow: 0 0 0 2px rgba(224, 72, 77, 0.30); }
-    50%      { box-shadow: 0 0 0 4px rgba(224, 72, 77, 0.70); }
-}
-
-/* Queued with nothing coming → RED (cardModel.waitingOnRobot). Deliberately the SAME
-   red as starvation above, and re-using its pulse: both mean "this card is why the line
-   is about to stop", and inventing a second alarm colour would make the operator learn a
-   palette instead of reading a board. What distinguishes them is the text — a starved
-   card says its lineside UoP, a queued card says QUEUED plus Core's reason.
-
-   border-color needs !important for the same reason os-board-load-now does: the card
-   also carries its state class (.os-board-queued) and that sets the border shorthand. */
-.os-board-card--waiting {
-    background: #2a1518;
-    border-color: #e0484d !important;
-    box-shadow: 0 0 0 2px rgba(224, 72, 77, 0.55);
-    animation: os-starved-pulse 1.6s ease-in-out infinite;
-}
-.os-board-card--waiting .os-board-detail { color: #e0a0a3; }
-
-/* REFUSED — the loader operator has said they cannot fill this call.
-   "Red pulsing → red dormant", in the owner's words.
-
-   THIS RULE SETS EXACTLY ONE PROPERTY, and that is the whole design. The card
-   keeps .os-board-card--waiting, so the hue, the border and the background come
-   from there and CANNOT diverge — not "should not", cannot. A future palette
-   edit moves both states together or neither, so REFUSED can never drift into
-   looking less severe than QUEUED. The line is still down; only the question of
-   whether anyone has dealt with it has changed.
-
-   Why motion rather than a colour: the style guide records the status palette as
-   at capacity — "13 statuses at one calm weight is at capacity. The next status
-   added cannot be given a hue; it will have to be given a weight, or something
-   has to leave." The pulse already means "nobody has dealt with this", so
-   removing it means "answered", on a channel the palette does not use. It is
-   colourblind-safe by construction, and it degrades honestly: miss the
-   difference and both still read "this card is a problem", which is true.
-
-   Amber was considered and rejected — it is the step BELOW red in the warm ramp,
-   so it would say refused is less severe than queued. It is not. */
-.os-board-card--refused { animation: none; }
-
-/* The supplier's control. Sized for a gloved tap from a forklift seat, and
-   deliberately NOT given a colour of its own: it only ever appears on a card
-   that is already red, and a second alarm hue inside that card would compete
-   with the state it sits in. Borrows the picker button's neutral treatment. */
 /* The supply-refusal control. It lives in the two modals a card can open, never
    on the card itself — the board states what IS, and the modal is where the
    operator says something. Full width and a generous touch target because it is
@@ -1321,135 +1088,6 @@ body {
 }
 .os-board-refusal-btn:active { opacity: 0.8; }
 
-/* The queued line — how long the call has gone unanswered, plus Core's own queue reason
-   verbatim. Sits under the detail line (which carries margin-top:auto, so this lands at
-   the card's bottom edge). Wraps: a queue reason is a sentence, not a tag. */
-.os-board-downtime {
-    font-size: 18px;
-    font-weight: 700;
-    line-height: 1.25;
-    color: #ff9a9e;
-}
-
-.os-board-detail {
-    font-size: 22px;
-    color: #999;
-    margin-top: auto;
-}
-.os-board-delivered .os-board-detail { color: #9d9; }
-.os-board-transit .os-board-detail { color: #cc9; }
-.os-board-queued .os-board-detail { color: #9ac; }
-.os-board-requestable .os-board-detail { color: #aac; }
-
-/* Transitional-board coverage badge. Hue per the Signal theme (calm weight):
-   ACTIVE = live/primary blue (a running style needs this payload now); PRELOAD
-   = transitional violet (covered only by an inactive style — pre-stock). In the
-   normal flex flow as the card's first child — its own line above the big
-   payload code, so it can't overlap the code or the queue-position circle. */
-.os-board-cov {
-    align-self: flex-start;
-    font-size: 13px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    padding: 4px 12px;
-    border-radius: 999px;
-    color: #fff;
-}
-.os-board-cov-active { background: var(--os-blue); }
-.os-board-cov-preload { background: var(--os-purple); }
-
-/* On a transitional board the operator pre-stocks proactively, so an idle
-   card (no current demand → nodemand state) is still loadable. Replace the
-   dimmed "disabled" look with a coverage-hued, full-opacity surface that reads
-   as actionable. Combining both classes (.os-board-nodemand.os-board-cov-on-*)
-   means a card that DOES carry order state (delivered/transit/queued) keeps
-   that state color — only the idle ones pick up the coverage tint. The tinted
-   surfaces follow this file's existing state-tint pattern (hardcoded dark
-   surface + token border). */
-.os-board-nodemand.os-board-cov-on-active {
-    opacity: 1;
-    background: #1a2540;
-    border-color: var(--os-blue);
-}
-.os-board-nodemand.os-board-cov-on-active .os-board-code { color: #cfe0ff; }
-.os-board-nodemand.os-board-cov-on-preload {
-    opacity: 1;
-    background: #241f33;
-    border-color: var(--os-purple);
-}
-.os-board-nodemand.os-board-cov-on-preload .os-board-code { color: #d8cdf0; }
-
-.os-board-pos {
-    /* Pinned to the card's top-right corner (out of the flex flow) so it can't
-       be pushed past the card edge by the detail line + request button stacking
-       at the bottom — the overflow the plant saw on load-now cards. */
-    position: absolute;
-    top: 16px;
-    right: 16px;
-    width: 50px;
-    height: 50px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 700;
-    font-size: 22px;
-    color: #fff;
-}
-/* Home-location board: the badge carries the SOURCE node the carrier is being
-   pulled from (e.g. SMN_005) instead of a queue ordinal, so it widens from a
-   circle to a pill. min-width matches the circle so a short node name still
-   reads as the same element, and the corner pinning above is inherited. */
-.os-board-pos--node {
-    width: auto;
-    min-width: 50px;
-    padding: 0 14px;
-    border-radius: 25px;
-    font-size: 18px;
-    letter-spacing: 0.5px;
-    white-space: nowrap;
-}
-
-.os-board-pos-delivered { background: #2a5a2a; }
-.os-board-pos-transit { background: #5a5a2a; }
-.os-board-pos-queued { background: #3a5a8a; }
-
-/* Load-now cue — an empty bin is parked at the loader and this payload has
-   outstanding demand: the action moment. Calm STATIC treatment (plant feedback
-   2026-06-01: the pulsing animation + bright green glow were annoying). A clean
-   solid neutral-bright ring reads as "load this now" without the alarm look and
-   without clashing with the blue/violet coverage palette. No animation. */
-.os-board-load-now {
-    border-color: #cfd8e6 !important;
-    box-shadow: 0 0 0 3px rgba(207, 216, 230, 0.45);
-}
-
-/* Bin-loader board mode runs on a 22"+ HMI for a forklift driver. Scale
-   the shared header / footer chrome up so it's legible from the seat. */
-body.os-board-mode-active {
-    --os-header-h: 96px;
-    --os-footer-h: 48px;
-}
-body.os-board-mode-active .os-header-station { font-size: 32px; }
-body.os-board-mode-active .os-header-info { font-size: 22px; }
-body.os-board-mode-active .os-header-btn {
-    padding: 16px 28px;
-    font-size: 22px;
-    min-height: 60px;
-    border-radius: 12px;
-}
-body.os-board-mode-active .os-header-style {
-    padding: 10px 22px;
-    min-height: 60px;
-    max-width: 480px;
-    border-radius: 12px;
-}
-body.os-board-mode-active .os-header-style-label { font-size: 14px; }
-body.os-board-mode-active .os-header-style-value { font-size: 24px; }
-body.os-board-mode-active .os-health-badge { width: 22px; height: 22px; }
-body.os-board-mode-active #os-footer { font-size: 22px; }
-
 /* ===== Responsive: very small screens (≤800px wide, e.g. 800x480) ===== */
 @media (max-width: 800px) {
     :root {
@@ -1474,40 +1112,6 @@ body.os-board-mode-active #os-footer { font-size: 22px; }
     .os-keypad-actions button { padding: 10px 0; font-size: 15px; }
     .os-release-qty-display { font-size: 26px; padding: 10px; }
     .os-release-part-btn { font-size: 13px; padding: 8px; min-height: 38px; }
-}
-
-/* ── Changeover loading directive ─────────────────────────────────────────
- * The loader board's banner during a changeover: LOAD THIS BIN TYPE.
- * Sized like an instruction rather than a status, because it is the one
- * thing on the board the operator is meant to act on while it is showing. */
-.os-changeover-load-directive {
-  background: #1a2a4a;
-  border: 2px solid #3a5a8a;
-  border-radius: 8px;
-  padding: 16px 20px;
-  margin-bottom: 12px;
-}
-.os-cld-label {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 2px;
-  color: #8af;
-}
-.os-cld-bintype {
-  font-size: 44px;
-  font-weight: 700;
-  color: #fff;
-  margin-top: 4px;
-}
-.os-cld-why {
-  font-size: 20px;
-  color: #aab;
-  margin-top: 6px;
-}
-.os-cld-who {
-  font-size: 18px;
-  color: #889;
-  margin-top: 2px;
 }
 
 /* ===== Cell picture (the read-only flow panel, U4) =====
@@ -1563,3 +1167,295 @@ body.os-board-mode-active #os-footer { font-size: 22px; }
 .os-header-style.os-header-style--tap { cursor: pointer; touch-action: manipulation; }
 .os-header-style.os-header-style--tap:active { opacity: .8; }
 
+/* ===== The loader and unloader board (operator-board.js) =====
+   A station whose every tile is a loader's. Built on shared/tokens.css and the
+   composer's card: no colour of its own. Colour is an instruction: red (act
+   now) is --status-failed-*, amber (act soon) --status-faulted-*, everything
+   else the neutral surface. No card is filled: red and amber are a card's
+   outline (red 3 px, amber 2 px, plain 1 px), its mark and its reason line.
+   Nothing animates. The fit's numbers (operator-board-model.js STEPS, GEOM)
+   are the sizes here: change one, change both. */
+
+body.os-pc-active { grid-template-rows: 1fr; background: var(--elev-base); }
+body.os-pc-active #os-header,
+body.os-pc-active #os-footer { display: none; }
+
+#os-grid.os-pc-board {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px 20px 16px;
+    overflow: hidden;
+    background: var(--elev-base);
+    color: var(--text-strong);
+    --os-pc-card: 120px;
+    --os-pc-headline: 32px;
+    --os-pc-title: 24px;
+    --os-pc-header: 34px;
+    --os-pc-spot: 15px;
+    --os-pc-note: 15px;
+}
+#os-grid.os-pc-board.os-pc-step-1 {
+    --os-pc-card: 98px; --os-pc-headline: 26px; --os-pc-title: 20px; --os-pc-header: 30px; --os-pc-spot: 14px;
+    --os-pc-note: 14px;
+}
+#os-grid.os-pc-board.os-pc-step-2 {
+    --os-pc-card: 74px; --os-pc-headline: 20px; --os-pc-title: 18px; --os-pc-header: 28px; --os-pc-spot: 13px;
+    --os-pc-note: 13px;
+}
+/* Show all is the one view that may scroll. */
+#os-grid.os-pc-board.os-pc-showall { overflow-y: auto; }
+
+.os-pc-board button { font-family: inherit; color: inherit; touch-action: manipulation; }
+
+/* The top line */
+.os-pc-top {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    height: 40px;
+}
+.os-pc-top-left { display: flex; align-items: baseline; gap: 14px; min-width: 0; white-space: nowrap; }
+.os-pc-title { font-size: 20px; font-weight: 600; }
+.os-pc-words { font-size: 15px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; }
+
+.os-pc-btn {
+    flex: none;
+    min-height: 48px;
+    padding: 0 18px;
+    border: 1px solid var(--sub-2);
+    border-radius: 10px;
+    background: var(--elev-raised);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+}
+/* The line is 40 px; its button keeps a 48 px target by reaching 4 px into
+   the padding above and the gap below. */
+.os-pc-top .os-pc-btn { min-height: 48px; height: 48px; margin: -4px 0; }
+.os-pc-btn:disabled { color: var(--text-muted); cursor: default; }
+.os-pc-btn--primary:not(:disabled) {
+    background: var(--accent-solid);
+    border-color: var(--accent-solid);
+    color: var(--on-accent-solid);
+}
+
+/* The board bar */
+.os-pc-bar { flex: none; display: flex; gap: 10px; }
+.os-pc-bar .os-pc-btn { min-height: 56px; font-size: 17px; }
+
+/* The status row */
+.os-pc-status { flex: none; display: flex; flex-direction: column; gap: 8px; }
+.os-pc-status-label { font-size: 14px; font-weight: 600; color: var(--text-muted); }
+.os-pc-tiles {
+    display: grid;
+    grid-template-columns: repeat(var(--os-pc-tile-cols, 4), minmax(0, 1fr));
+    gap: 10px;
+    align-items: stretch;
+}
+.os-pc-tile {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    padding: 10px 12px 12px;
+    background: var(--elev-surface);
+    border: 1px solid var(--sub-2);
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+}
+.os-pc-tile--quiet { color: var(--text-muted); }
+.os-pc-tile--more { justify-content: center; align-items: center; }
+.os-pc-tile--red { border: 3px solid var(--status-failed-ink); padding: 8px 10px 10px; }
+.os-pc-tile-name { white-space: nowrap; }
+.os-pc-tile--red > .os-pc-tile-name { color: var(--status-failed-ink); }
+.os-pc-tile-more { font-size: 13px; color: var(--text-muted); }
+.os-pc-row { display: flex; flex-direction: column; gap: 4px; }
+.os-pc-row-words {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    white-space: nowrap;
+}
+.os-pc-tiles--under .os-pc-row-words { flex-direction: column; align-items: flex-start; gap: 2px; }
+.os-pc-row-count { font-size: 13px; }
+.os-pc-row--unknown .os-pc-row-words { color: var(--text-muted); }
+.os-pc-row--red .os-pc-row-words { color: var(--status-failed-ink); }
+
+.os-pc-track {
+    position: relative;
+    display: block;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--elev-base);
+    box-shadow: inset 0 0 0 1px var(--sub-1);
+}
+.os-pc-track--unknown { background: none; box-shadow: none; border: 1px dashed var(--sub-2); }
+.os-pc-row--red .os-pc-track { box-shadow: inset 0 0 0 1.5px var(--status-failed-ink); }
+.os-pc-fill { display: block; height: 8px; border-radius: 4px; background: var(--station); }
+.os-pc-row--covered .os-pc-fill,
+.os-pc-tile--quiet .os-pc-fill { background: var(--sub-4); }
+.os-pc-track--unknown .os-pc-fill { display: none; }
+.os-pc-tick {
+    position: absolute;
+    top: -3px;
+    width: 2px;
+    height: 14px;
+    background: var(--text-strong);
+}
+
+.os-pc-press-top { display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; color: var(--text-muted); }
+.os-pc-press-top .os-pc-row-count { color: var(--text-strong); }
+.os-pc-press-bin { font-size: 22px; font-weight: 600; white-space: nowrap; }
+.os-pc-press-part { font-size: 12px; font-weight: 500; color: var(--text-muted); white-space: nowrap; }
+/* A red press: full, and a red cart fixes it. A red cell tile reds only its
+   out row (.os-pc-row--red); its other rows keep their own colours. */
+.os-pc-press.os-pc-tile--red .os-pc-press-bin,
+.os-pc-press.os-pc-tile--red .os-pc-press-part,
+.os-pc-press.os-pc-tile--red .os-pc-row-count { color: var(--status-failed-ink); }
+.os-pc-press.os-pc-tile--red .os-pc-fill { background: var(--status-failed-ink); }
+.os-pc-empties-line { display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; }
+.os-pc-empties-line--none .os-pc-row-count { color: var(--text-muted); }
+.os-pc-empties-open { font-size: 13px; color: var(--text-muted); }
+
+/* The zones */
+.os-pc-zone {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 12px 12px;
+    background: var(--elev-surface);
+    border: 1px solid var(--sub-3);
+    border-radius: 18px;
+}
+.os-pc-zone--amber { border: 2px solid var(--status-faulted-ink); padding: 9px 11px 11px; }
+.os-pc-zone--red { border: 3px solid var(--status-failed-ink); padding: 8px 10px 10px; }
+.os-pc-zone--folded { min-height: 64px; justify-content: center; }
+.os-pc-zone-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: var(--os-pc-header);
+    white-space: nowrap;
+}
+.os-pc-rail { flex: none; width: 6px; height: 26px; border-radius: 3px; background: var(--sub-5); }
+.os-pc-zone--amber .os-pc-rail { background: var(--status-faulted-ink); }
+.os-pc-zone--red .os-pc-rail { background: var(--status-failed-ink); }
+.os-pc-zone-title { font-size: var(--os-pc-title); font-weight: 600; letter-spacing: -.01em; }
+.os-pc-zone--amber .os-pc-zone-title,
+.os-pc-zone--amber .os-pc-zone-reason { color: var(--status-faulted-ink); }
+.os-pc-zone--red .os-pc-zone-title,
+.os-pc-zone--red .os-pc-zone-reason { color: var(--status-failed-ink); }
+.os-pc-zone-count { font-size: 19px; font-weight: 600; color: var(--text-muted); }
+.os-pc-zone-empty { font-size: 17px; color: var(--text-muted); }
+.os-pc-zone-reason { display: inline-flex; align-items: center; gap: 8px; font-size: 19px; font-weight: 600; }
+.os-pc-zone-reason .os-pc-word { font-size: var(--os-pc-title); }
+
+/* The buffer strip: a box per spot, in the plant's order. */
+.os-pc-strip-words { font-size: 15px; font-weight: 600; color: var(--text-muted); }
+.os-pc-strip { display: inline-flex; gap: 6px; margin-left: auto; }
+.os-pc-spot-box {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    font-size: 18px;
+    font-weight: 600;
+}
+.os-pc-spot-box--partial { border: 2px solid var(--text-strong); }
+.os-pc-zone--amber .os-pc-spot-box--partial { border-color: var(--status-faulted-ink); color: var(--status-faulted-ink); }
+.os-pc-zone--red .os-pc-spot-box--partial { border-color: var(--status-failed-ink); color: var(--status-failed-ink); }
+.os-pc-spot-box--empty { background: var(--sub-3); }
+.os-pc-spot-box--coming { background: var(--sub-3); border: 2px solid var(--text-strong); }
+.os-pc-spot-box--open { border: 2px dashed var(--sub-2); }
+.os-pc-spot-box--unknown { border: 2px solid var(--sub-2); color: var(--text-muted); }
+.os-pc-toggle { margin-left: 8px; background: none; border-color: transparent; color: var(--text-muted); }
+
+/* The cards: one size a step, the card is the button. */
+.os-pc-cards {
+    display: grid;
+    grid-template-columns: repeat(var(--os-pc-cols, 3), minmax(0, 1fr));
+    gap: 10px;
+}
+.os-pc-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    /* The step's height at least: a card whose note wraps grows (fitBoard
+       counts it, cardHeight). */
+    min-height: var(--os-pc-card);
+    padding: 2px 14px;
+    text-align: left;
+    background: var(--elev-surface);
+    border: 1px solid var(--sub-2);
+    border-radius: 16px;
+    cursor: pointer;
+}
+.os-pc-card--amber { border: 2px solid var(--status-faulted-ink); }
+.os-pc-card--red { border: 3px solid var(--status-failed-ink); }
+.os-pc-card:active { background: var(--elev-raised); }
+.os-pc-card-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+    overflow: hidden;
+}
+.os-pc-step-2 .os-pc-card-body { gap: 1px; }
+.os-pc-spot { display: flex; min-width: 0; font-size: var(--os-pc-spot); white-space: nowrap; line-height: 1.2; }
+.os-pc-spot-name,
+.os-pc-spot-code { flex: none; font-weight: 600; white-space: pre; }
+.os-pc-spot-words { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; color: var(--text-muted); }
+.os-pc-spot-code { color: var(--text-muted); }
+.os-pc-headline {
+    font-size: var(--os-pc-headline);
+    font-weight: 600;
+    letter-spacing: -.01em;
+    line-height: 1.05;
+    white-space: nowrap;
+}
+.os-pc-also { font-size: 14px; line-height: 1.2; font-weight: 600; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.os-pc-reason { display: flex; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; line-height: 1.2; }
+.os-pc-why { font-size: 17px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.os-pc-card--plain .os-pc-why { color: var(--text-muted); }
+.os-pc-word { font-size: 20px; font-weight: 700; letter-spacing: .05em; }
+.os-pc-card--red .os-pc-reason,
+.os-pc-card--red .os-pc-chevron { color: var(--status-failed-ink); }
+.os-pc-card--amber .os-pc-reason,
+.os-pc-card--amber .os-pc-chevron { color: var(--status-faulted-ink); }
+/* An alarm note is an instruction: it wraps and is never cut. */
+.os-pc-note { font-size: var(--os-pc-note); line-height: 1.2; color: var(--text-muted); white-space: normal; overflow-wrap: anywhere; }
+.os-pc-chevron { flex: none; display: inline-flex; color: var(--text-muted); }
+.os-pc-mark { flex: none; display: inline-flex; }
+.os-pc-mark-ink { stroke: var(--elev-base); }
+.os-pc-mark-dot { fill: var(--elev-base); }
+.os-pc-num {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: 2px solid var(--text-strong);
+    border-radius: 10px;
+    font-size: 18px;
+    font-weight: 600;
+}
+.os-pc-more {
+    justify-content: center;
+    border-style: dashed;
+    font-size: 19px;
+    font-weight: 600;
+}
+
+/* A panel's lit choice: what the card says to send back. Outline, no fill. */
+.os-co-picker-btn.os-co-picker-btn--lit { box-shadow: inset 0 0 0 3px var(--text-strong); }

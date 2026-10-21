@@ -9,7 +9,7 @@ import (
 // TestOperatorBoardModelJS runs the Node unit tests for the loader and
 // unloader board's model (static/operator-station/operator-board-model.js):
 // the layout from the tiles, the parts a loader tile draws, coverage, the
-// changeover instruction, the CLEAR panel's highlight and a window's words.
+// CLEAR panel's highlight, a window's words, the board and its fit.
 // Skipped if `node` is not on PATH (matches the other JS test wrappers).
 func TestOperatorBoardModelJS(t *testing.T) {
 	nodePath, err := exec.LookPath("node")

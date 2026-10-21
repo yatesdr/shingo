@@ -1,7 +1,8 @@
 // operator-board-model.js — the loader and unloader board's model: the layout
 // a station's tiles make, the parts each loader tile draws and which of them a
-// running style uses, each served cell's coverage, the changeover instruction,
-// and the CLEAR panel's highlight.
+// running style uses, each served cell's coverage, the CLEAR panel's
+// highlight, and the board a station of loader tiles draws (boardModel) with
+// its fit (fitBoard).
 //
 // Every read of a loader tile is here, off tile.loader and view.serves, the
 // keys BuildView ships for the board (domain.TileLoader, domain.ServedRow);
@@ -12,9 +13,12 @@
 // station's JSON: a key renamed in Go cannot leave the board drawing blanks.
 //
 // Pure: no DOM and no fetch. The board reads the model; the model reads only
-// its arguments.
+// its arguments (and operator-window-state.js, pure as well, for the acts the
+// old boards offered a part).
 
 'use strict';
+
+import { cardModel, isActiveStatus } from './operator-window-state.js';
 
 // loaderOf is a tile's loader, or null on every tile that is not a Core
 // loader's window or position.
@@ -64,8 +68,8 @@ export function isDedicated(tile) {
     return !!loader && loader.layout === 'dedicated_positions';
 }
 
-// isUnloaderWindow: a window of a shared unloader, which the board draws as a
-// slot of the node grid (a tap on a full is the CLEAR panel).
+// isUnloaderWindow: a window of a shared unloader (a tap on a full is the
+// CLEAR panel, on an empty the empty-cart panel).
 export function isUnloaderWindow(tile) {
     const loader = loaderOf(tile);
     return !!loader && loader.role === 'consume' && !isDedicated(tile);
@@ -73,22 +77,21 @@ export function isUnloaderWindow(tile) {
 
 // ── the layout ───────────────────────────────────────────────────────────────
 
-// boardLayout is how the board draws a station's claimed tiles:
+// boardLayout is the layout the old boards gave a station's claimed tiles. A
+// station whose every tile is a loader's now draws the board (isBoard), which
+// keeps kind to give each tap the act the old board gave it (windowAct,
+// boardBar); header is read only where loader and press tiles mix, on the node
+// grid's header (renderHeader).
 //
-//   kind   'empty'    nothing to draw;
-//          'homes'    every tile a loader's and one of them dedicated: a card per
-//                     home and part;
+//   kind   'empty'    no tiles;
+//          'homes'    every tile a loader's and one of them dedicated;
 //          'payload'  every tile a loader's, none dedicated, not every one an
-//                     unloader: a card per window and part;
-//          'grid'     the node grid, every other station (unloader windows as
-//                     slots, a loader beside a press).
+//                     unloader (the old payload board, with the board bar);
+//          'grid'     every other station: a shared unloader's windows (the
+//                     old slot grid), or a loader beside a press.
 //   header 'pull-full-from-home' on a station with a dedicated loader;
 //          'none' on a payload board, and on a station of one loader tile;
 //          'changeover' (CHANGEOVER, or CUTOVER and CANCEL) otherwise.
-//
-// A payload board of two windows gets no cell buttons in its header: its acts
-// are the loader's (a bug fixed, the header kept the cell's buttons when the
-// board had more than one window).
 export function boardLayout(tiles) {
     const loaders = tiles.filter(function (t) { return !!loaderOf(t); });
     const homes = loaders.some(isDedicated);
@@ -137,35 +140,6 @@ export function cardParts(tile, serves) {
         if (ra !== rb) return ra - rb;
         return a < b ? -1 : (a > b ? 1 : 0);
     });
-}
-
-// partState is what a card says of its part beyond its order state:
-//
-//   active     a running style of a served cell uses it;
-//   inScope    a queued call for it is downtime: it is active, or the board
-//              could not look (no serves) and so cannot rule it out. A part no
-//              running style uses is not (a bug fixed: "no part running"
-//              arrived as no data and every queued call escalated);
-//   lineside   the served cells' count of it, the sum of its running rows;
-//   short      the part is out, waiting or exposed at a served cell and no
-//              tile of this board holds it ready (coverage). Core's reorder
-//              threshold is not the danger level: it sits at or above a bin,
-//              so every running part reads below it.
-export function partState(tile, code, view) {
-    const serves = view && view.serves;
-    const active = activeParts(tile, serves);
-    const isActive = !!active && active.indexOf(code) !== -1;
-    let lineside = 0;
-    let short = false;
-    if (isActive) {
-        const role = servedRole(tile);
-        coverage(view).forEach(function (c) {
-            if (c.row.incoming || c.row.role !== role || c.row.part !== code) return;
-            if (typeof c.row.have_uop === 'number') lineside += c.row.have_uop;
-            if (c.state === 'out' || c.state === 'waiting' || c.state === 'exposed') short = true;
-        });
-    }
-    return { active: isActive, inScope: active === null || isActive, lineside: lineside, short: short };
 }
 
 // ── coverage ─────────────────────────────────────────────────────────────────
@@ -233,36 +207,6 @@ export function coverage(view) {
     return out;
 }
 
-// ── the changeover instruction ───────────────────────────────────────────────
-
-// changeoverInstruction is what the board tells a loader while a served cell
-// waits on what it makes: the bin types of the waiting
-// rows (what the operator fetches), their parts and the cells' positions, each
-// once and sorted. Null when the station's directive setting is off or no
-// waiting row names a bin type.
-//
-// One rule for every served cell, the station's own process included; and it
-// reads the rows of the board's role, so a loader is told what its cells use.
-export function changeoverInstruction(tile, view) {
-    const loader = loaderOf(tile);
-    if (!loader || !loader.directive) return null;
-    const role = servedRole(tile);
-    const bins = {}, parts = {}, cells = {};
-    ((view && view.serves) || []).forEach(function (row) {
-        if (!row.waiting || row.role !== role || !row.carrier) return;
-        bins[row.carrier] = true;
-        parts[row.part] = true;
-        cells[row.node] = true;
-    });
-    const binTypes = Object.keys(bins).sort();
-    if (binTypes.length === 0) return null;
-    return {
-        bin_type_codes: binTypes,
-        payload_codes: Object.keys(parts).sort(),
-        for_nodes: Object.keys(cells).sort(),
-    };
-}
-
 // ── the CLEAR panel's highlight ──────────────────────────────────────────────
 
 // clearHighlight is the bin type an unloader's CLEAR panel lights for the cart
@@ -305,4 +249,1000 @@ export function windowWords(tile, awaiting, hasActiveOrder) {
     if (bin && bin.occupied) return 'EMPTY';
     if (!bin) return 'COULD NOT LOOK';
     return 'NO BIN';
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// The board: a station whose every tile is a loader's
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// What the board draws, decided here and drawn by operator-board.js. Colour is
+// an instruction on one ladder: 'red' (act now, the word NOW), 'amber' (act
+// soon, SOON) and 'plain' (no word). The reason beside a word is three words
+// or fewer.
+//
+// The card is the button, and it opens what that tile's primary act opened on
+// the old boards: an act is {kind, node, ...} and operator-board.js maps each
+// kind onto the same panel, so a tap posts what it posted
+// (operator-loader-station.test.js pins every post).
+//
+//   load              the load modal for the parts (openLoadBin)
+//   unload            the CLEAR panel (confirmUnloadSwap; Full off at stage 1)
+//   push-empty        the empty-cart panel (confirmPushEmpty; Send on when bare)
+//   clear-home        the home's clear (confirmClearLoaderHome)
+//   modal             the node modal
+//   request-empty, request-full, pull-from-market    the board bar's three
+
+// isBoard reports whether a station's tiles draw as the board: every tile
+// carries tile.loader. A shared unloader's windows are a board too; a station
+// that mixes loader and press tiles keeps the node grid.
+export function isBoard(tiles) {
+    return tiles.length > 0 && tiles.every(function (t) { return !!loaderOf(t); });
+}
+
+// fmtCount writes a count the way the board prints it: "1,027".
+export function fmtCount(n) {
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function spotOf(tile) {
+    return (tile.node && (tile.node.name || tile.node.core_node_name)) || '';
+}
+
+// shortNode drops a group prefix: "GROUP.SMN_A1" is the spot SMN_A1.
+function shortNode(name) {
+    return String(name || '').replace(/^.*\./, '');
+}
+
+// spotWords is what a spot holds, from a closed set: "holds a full bin",
+// "holds an empty <bin>" (words "holds an empty", code the bin), "holds an
+// empty bin", "no bin" (a cart with no bin on it too), "count unknown" (a bin
+// with a part and a count of 0 or below) and "could not look" (no bin read).
+export function spotWords(tile) {
+    const bin = tile.bin_state;
+    if (!bin) return { words: 'could not look', code: '' };
+    if (!bin.occupied || bin.bare) return { words: 'no bin', code: '' };
+    if (bin.payload_code) return { words: bin.stocked ? 'holds a full bin' : 'count unknown', code: '' };
+    if (bin.bin_type_code) return { words: 'holds an empty', code: bin.bin_type_code };
+    return { words: 'holds an empty bin', code: '' };
+}
+
+function liveOrders(tile) {
+    return (tile.orders || []).filter(function (o) { return isActiveStatus(o.status); });
+}
+
+// clearMoves is a home's own clear while it runs: Order A, the move of the
+// home's carrier to the partial's spot, live on the home's orders. The home
+// draws no Load card until it ends, and the spot it goes to is drawn as
+// coming.
+function clearMoves(tile) {
+    const home = (tile.node && tile.node.core_node_name) || '';
+    if (!home || tileRole(tile) !== 'produce') return [];
+    return liveOrders(tile).filter(function (o) {
+        return o.order_type === 'move' && shortNode(o.source_node) === shortNode(home);
+    });
+}
+
+// ── what a part is at the served cells ───────────────────────────────────────
+
+// worstRow is the most urgent drawn row of a part among the served rows of one
+// role (coverage's order), or null when no cell runs it.
+function worstRow(cov, part, role) {
+    for (let i = 0; i < cov.length; i++) {
+        if (cov[i].row.role === role && cov[i].row.part === part) return cov[i];
+    }
+    return null;
+}
+
+// loadReason is a Load card's colour and reason, from the cell its part
+// serves. The colour follows the cell's state, never the kind of demand: none
+// of the part (an active row that is out, or an incoming row waiting with
+// none) is red; a cell that has asked with some left is amber; the rest is
+// plain. rank orders the cards: out, waiting, the count the card prints
+// (fewest first), unknown, could not look, a part no cell runs.
+function loadReason(view, cov, part) {
+    if (!Array.isArray(view.serves)) return { tone: 'plain', reason: 'Cells could not look', rank: [4, 0] };
+    const c = worstRow(cov, part, 'consume');
+    if (!c) return { tone: 'plain', reason: 'No cell runs this part', rank: [5, 0] };
+    const cell = c.row.cell;
+    if (c.state === 'out') return { tone: 'red', word: 'NOW', reason: cell + ' out', rank: [0, 0], fixes: cell + '|' + part };
+    if (c.state === 'waiting') return { tone: 'amber', word: 'SOON', reason: cell + ' waiting', rank: [1, c.left] };
+    if (c.state === 'unknown') return { tone: 'plain', reason: cell + ' count unknown', rank: [3, 0] };
+    return { tone: 'plain', reason: cell + ' has ' + fmtCount(c.left) + ' left', rank: [2, c.left] };
+}
+
+function byRank(a, b) {
+    for (let i = 0; i < Math.max(a.rank.length, b.rank.length); i++) {
+        const x = a.rank[i] || 0, y = b.rank[i] || 0;
+        if (x !== y) return x - y;
+    }
+    return a.order - b.order;
+}
+
+// ── the cells row (a loader) ─────────────────────────────────────────────────
+
+const MAX_STATUS_TILES = 6;
+export const MAX_TILE_ROWS = 4;
+
+// cellsRow is the loader's status row: one tile per served cell, a row per
+// drawn consume row (coverage: an incoming row only while it waits). A covered
+// row is a bar with no words; exposed and waiting say "N left", out "none
+// left", unknown "count unknown". A tile is red only when a red card on this
+// board fixes it (fixes holds "cell|part"). Rows: out and exposed first, at
+// most four, then "+N". Cells: by the worst drawn row's count, covered rows
+// left out, unknown last; past six, the covered cells fold into "+N more
+// cells". failed when the served read failed.
+export function cellsRow(view, fixes) {
+    if (!Array.isArray(view.serves)) return { failed: true, tiles: [], more: 0 };
+    fixes = fixes || {};
+    const cells = [];
+    const byCell = {};
+    coverage(view).forEach(function (c) {
+        if (c.row.role !== 'consume') return;
+        let cell = byCell[c.row.cell];
+        if (!cell) {
+            cell = { cell: c.row.cell, rows: [], first: c.i };
+            byCell[c.row.cell] = cell;
+            cells.push(cell);
+        }
+        cell.first = Math.min(cell.first, c.i);
+        let words = fmtCount(c.left) + ' left';
+        if (c.state === 'out') words = 'none left';
+        else if (c.state === 'unknown') words = 'count unknown';
+        else if (c.state === 'covered') words = '';
+        cell.rows.push({
+            part: c.row.part, state: c.state, words: words,
+            left: c.left, capacity: c.row.capacity_uop,
+            tick: c.row.reorder_uop > 0 ? c.row.reorder_uop : 0,
+            red: c.state === 'out' && !!fixes[c.row.cell + '|' + c.row.part],
+        });
+    });
+    cells.forEach(function (cell) {
+        let worst = Infinity;
+        let unknown = false;
+        cell.rows.forEach(function (r) {
+            if (r.state === 'unknown') unknown = true;
+            else if (r.state !== 'covered') worst = Math.min(worst, r.left);
+        });
+        cell.group = worst !== Infinity ? 0 : (unknown ? 2 : 1);
+        cell.worst = worst === Infinity ? 0 : worst;
+        cell.red = cell.rows.some(function (r) { return r.red; });
+        cell.covered = cell.rows.every(function (r) { return r.state === 'covered'; });
+        cell.hidden = Math.max(0, cell.rows.length - MAX_TILE_ROWS);
+        cell.rows = cell.rows.slice(0, MAX_TILE_ROWS);
+    });
+    cells.sort(function (a, b) {
+        if (a.group !== b.group) return a.group - b.group;
+        if (a.worst !== b.worst) return a.worst - b.worst;
+        return a.first - b.first;
+    });
+    let tiles = cells;
+    let more = 0;
+    if (cells.length > MAX_STATUS_TILES) {
+        tiles = cells.filter(function (c) { return !c.covered; });
+        more = cells.length - tiles.length;
+    }
+    return {
+        failed: false, more: more,
+        tiles: tiles.map(function (c) {
+            return { cell: c.cell, rows: c.rows, hidden: c.hidden, red: c.red, covered: c.covered };
+        }),
+    };
+}
+
+// ── the presses row and the empties (an unloader) ────────────────────────────
+
+// emptiesOf is the board's empties group, view.empties {group, rows:
+// [{bin_type, have, spots, want?}]}: null when there is none to draw (no group
+// read, or a stage-1 unloader, whose outbound group is stage 2's windows and
+// not an empties source).
+function emptiesOf(view, tiles) {
+    const e = view.empties;
+    if (!e || !Array.isArray(e.rows)) return null;
+    if (tiles.some(function (t) { return !!loaderOf(t).leaves_bare; })) return null;
+    return e;
+}
+
+function emptiesHave(e, binType) {
+    let have = 0;
+    e.rows.forEach(function (r) { if (r.bin_type === binType) have += r.have || 0; });
+    return have;
+}
+
+// pressesRow is the unloader's status row: one tile per running produce row,
+// "N of M" or "full", its bin type the headline, its part; not ready ("no
+// empty ready") when the empties hold none of its type. Closest to full first,
+// a count the Edge cannot see last; past six tiles the ready ones fold. Then
+// the Empties tile, in words: a line per bin type a served press uses, each
+// once (a type the group holds that no served press uses gets none), "N ready"
+// or "none" ("N of M" where the group wants M); the
+// group's open spots once (every row carries the group's count); its name.
+export function pressesRow(view, tiles) {
+    const e = emptiesOf(view, tiles);
+    const rows = (view.serves || []).filter(function (r) { return r.role === 'produce' && !r.incoming; });
+    const presses = rows.map(function (r, i) {
+        const known = typeof r.have_uop === 'number' && r.have_uop >= 0;
+        const full = known && r.capacity_uop > 0 && r.have_uop >= r.capacity_uop;
+        let words = 'count unknown';
+        if (known) words = full ? 'full' : fmtCount(r.have_uop) + ' of ' + fmtCount(r.capacity_uop);
+        return {
+            cell: r.cell, node: shortNode(r.node), bin: r.carrier, part: r.part,
+            have: known ? r.have_uop : null, capacity: r.capacity_uop, words: words,
+            full: full, ready: !!e && emptiesHave(e, r.carrier) > 0, red: false,
+            room: known ? r.capacity_uop - r.have_uop : Infinity, i: i,
+        };
+    });
+    presses.sort(function (a, b) {
+        if (a.full !== b.full) return a.full ? -1 : 1;
+        if (a.room !== b.room) return a.room - b.room;
+        return a.i - b.i;
+    });
+    let empties = null;
+    if (e) {
+        const types = [];
+        rows.forEach(function (r) { if (r.carrier && types.indexOf(r.carrier) === -1) types.push(r.carrier); });
+        let open = 0;
+        e.rows.forEach(function (r) { open = Math.max(open, r.spots || 0); });
+        empties = {
+            group: e.group || '', open: open,
+            lines: types.map(function (t) {
+                const have = emptiesHave(e, t);
+                const want = e.rows.find(function (r) { return r.bin_type === t && typeof r.want === 'number'; });
+                return { bin: t, words: want ? have + ' of ' + want.want : (have > 0 ? have + ' ready' : 'none') };
+            }),
+        };
+    }
+    return { all: presses, empties: empties };
+}
+
+// foldPresses keeps the status row to six tiles: past six, the ready presses
+// that are not full fold into "+N more".
+function foldPresses(presses) {
+    if (presses.length <= MAX_STATUS_TILES) return { tiles: presses, more: 0 };
+    const tiles = presses.filter(function (p) { return p.full || !p.ready; });
+    return { tiles: tiles, more: presses.length - tiles.length };
+}
+
+// ── the buffer (a dedicated loader's partial spots) ──────────────────────────
+
+// bufferOf is the loader's buffer spots, tile.loader.buffer [{node, state}] in
+// the plant's order (state partial | empty | open | unknown; unknown is a spot
+// the board cannot place: a count of 0 or below, no payload, or not read), or
+// null when the loader has none. A spot a clear is moving a home's carrier to
+// is 'coming': it ends holding an empty. Partials are numbered in order.
+export function bufferOf(tiles) {
+    let spots = null;
+    tiles.forEach(function (t) {
+        const loader = loaderOf(t);
+        if (!spots && loader && Array.isArray(loader.buffer) && loader.buffer.length > 0) spots = loader.buffer;
+    });
+    if (!spots) return null;
+    const coming = {};
+    tiles.forEach(function (t) {
+        clearMoves(t).forEach(function (o) { coming[shortNode(o.delivery_node)] = true; });
+    });
+    let n = 0;
+    return spots.map(function (s) {
+        const node = shortNode(s.node);
+        const state = coming[node] ? 'coming' : s.state;
+        return { node: node, state: state, number: state === 'partial' ? ++n : 0 };
+    });
+}
+
+// partialsState grades the buffer on what a clear makes, an empty: red when it
+// holds a partial and no spot is empty or open ("NOW · Buffer full · clear
+// one"); amber when it holds a partial and no empty ("SOON · No empty");
+// plain, and folded, otherwise. An unknown spot is neither open nor empty; a
+// coming one counts as an empty.
+export function partialsState(spots) {
+    const n = { partial: 0, empty: 0, open: 0, unknown: 0 };
+    spots.forEach(function (s) {
+        if (s.state === 'partial') n.partial++;
+        else if (s.state === 'empty' || s.state === 'coming') n.empty++;
+        else if (s.state === 'open') n.open++;
+        else n.unknown++;
+    });
+    let tone = 'plain';
+    if (n.partial > 0 && n.empty === 0) tone = n.open === 0 ? 'red' : 'amber';
+    const words = [n.partial + (n.partial === 1 ? ' partial' : ' partials'), n.empty + ' empty', n.open + ' open'];
+    if (n.unknown > 0) words.push(n.unknown + ' ?');
+    return { tone: tone, counts: n, words: words.join(' · ') };
+}
+
+// ── the acts ─────────────────────────────────────────────────────────────────
+
+// waitingBinType is the bin type a waiting produce row wants: the second rung
+// of clearHighlight, and the only one the board has until Core assigns windows
+// and carts carry heights.
+function waitingBinType(serves) {
+    const w = (serves || []).find(function (row) { return row.waiting && row.role === 'produce' && !!row.carrier; });
+    return w ? w.carrier : '';
+}
+
+// partAct is the old boards' act for a part on a loader tile (cardModel):
+// 'load', 'unload' or '' for none.
+function partAct(tile, code) {
+    return cardModel(tile, code).action;
+}
+
+function unloadAct(tile, lit) {
+    const bin = tile.bin_state || {};
+    // A HELD partial, waiting in its partial home for its line, is not cleared
+    // on one tap: the count is what makes it worth calling back. Its tap is
+    // UNLOAD and COUNT (operator-render.js confirmUnloadHeld), with Core's count
+    // of it (bin.held_uop, which does not tick while it waits).
+    if (bin.held_since) {
+        return { kind: 'unload-held', node: tile.node.id, heldFor: bin.held_for || '', count: bin.held_uop || 0 };
+    }
+    return {
+        kind: 'unload', node: tile.node.id, carriers: carriersOf(tile),
+        discarding: (tile.runtime && tile.runtime.remaining_uop_cached) || 0,
+        leavesBare: !!loaderOf(tile).leaves_bare, lit: lit,
+    };
+}
+
+// windowAct is what a tap on a cart at an unloader window opened before:
+// where every window was a shared unloader's (the old node grid), a full the
+// CLEAR and an empty the empty-cart panel; on a payload or home board the
+// card's act (cardModel), the CLEAR for either.
+function windowAct(tile, kind, lit) {
+    const bin = tile.bin_state || {};
+    if (kind === 'grid') {
+        if (bin.payload_code) return unloadAct(tile, lit);
+        return { kind: 'push-empty', node: tile.node.id, carriers: carriersOf(tile), bare: !!bin.bare, lit: lit };
+    }
+    const codes = bin.payload_code ? [bin.payload_code] : partCodes(tile);
+    if (codes.some(function (c) { return partAct(tile, c) === 'unload'; })) return unloadAct(tile, lit);
+    return { kind: 'modal', node: tile.node.id };
+}
+
+// refusalsOf is a loader tile's standing refusals, by part.
+function refusalsOf(tile) {
+    return tile.supply_refusals || {};
+}
+
+// bufferPartialOf is the buffer spot holding a partial this home can pull back
+// (tile.buffer_partial {node}), or null.
+function bufferPartialOf(tile) {
+    return tile.buffer_partial || null;
+}
+
+// alarmOf is a tile's alarm sentence: stranded counts, or a contained payload.
+function alarmOf(tile) {
+    if (tile.stranded_alarm) return tile.stranded_alarm;
+    if (tile.containment_flagged) return 'Contained: its next delivery goes to the hold spot';
+    return '';
+}
+
+function headlineOf(tile) {
+    const bin = tile.bin_state || {};
+    if (tileRole(tile) === 'consume') return bin.bin_type_code || partCodes(tile)[0] || '';
+    return bin.payload_code || partCodes(tile)[0] || '';
+}
+
+// ── the loader's cards ───────────────────────────────────────────────────────
+
+// loaderCards sorts a loader tile's work into its zones: Load (one card per
+// home and part, or per shared window listing the parts called for, the first
+// by coverage lit), Waiting on the plant (a standing refusal; its tap opens the
+// load modal, where Undo and LOAD are), Clear partials (tile.buffer_partial)
+// and Check bin (a bin with a part and a count of 0 or below).
+function loaderCards(t, ctx) {
+    const view = ctx.view;
+    const spot = spotWords(t);
+    const refusals = refusalsOf(t);
+    const inFlight = clearMoves(t).length > 0;
+    const loadable = [];
+    cardParts(t, view.serves).forEach(function (code) {
+        if (refusals[code]) {
+            const c = worstRow(ctx.cov, code, 'consume');
+            const exposes = !!c && (c.state === 'out' || c.state === 'waiting' || c.state === 'exposed');
+            const when = ctx.when(refusals[code].refused_at);
+            let reason = 'Said no parts' + (when ? ' · ' + when : '');
+            if (exposes) reason += ' · ' + c.row.cell + ' has ' + (c.left > 0 ? fmtCount(c.left) : 'none') + ' left';
+            ctx.refused.push(ctx.card(t, 'refused:' + code, [exposes ? 0 : 1], {
+                spotWords: spot.words, spotCode: spot.code, headline: code, reason: reason,
+                act: { kind: 'load', node: t.node.id, codes: [code] },
+            }));
+            return;
+        }
+        if (!inFlight && partAct(t, code) === 'load') loadable.push(code);
+    });
+    if (loadable.length > 0) {
+        const lit = loadable.map(function (code, i) { return { code: code, r: loadReason(view, ctx.cov, code), order: i }; });
+        lit.sort(function (a, b) { return byRank(a.r, b.r) || a.order - b.order; });
+        const first = lit[0].r;
+        const card = ctx.card(t, 'load', first.rank, {
+            tone: first.tone, word: first.word || '', reason: first.reason,
+            spotWords: spot.words, spotCode: spot.code, headline: lit[0].code,
+            act: { kind: 'load', node: t.node.id, codes: lit.map(function (x) { return x.code; }) },
+        });
+        if (lit.length > 1) card.also = lit.slice(1).map(function (x) { return x.code; });
+        if (first.fixes) card.fixes = first.fixes;
+        ctx.load.push(card);
+    }
+    const bp = bufferPartialOf(t);
+    const bin = t.bin_state || {};
+    if (bp && bp.node && !inFlight && bin.occupied && bin.payload_code) {
+        const from = shortNode(bp.node);
+        ctx.partials.push(ctx.card(t, 'partial', [0], {
+            spotWords: 'holds a full bin', headline: bin.payload_code,
+            reason: 'Pull the full · partial from ' + from, partialSpot: from,
+            act: { kind: 'clear-home', node: t.node.id, home: spotOf(t), spot: from },
+        }));
+    } else if (loadable.length === 0 && bin.occupied && bin.payload_code && !bin.stocked) {
+        ctx.other('Check bin', ctx.card(t, 'check', [0], {
+            spotWords: 'count unknown', headline: bin.payload_code, reason: 'Count unknown · check bin',
+            act: { kind: 'modal', node: t.node.id },
+        }));
+    }
+}
+
+// ── the unloader's cards ─────────────────────────────────────────────────────
+
+// windowCards is the unloader's one list: one card per cart at a window, the
+// bin's name the headline, what to send back the note. The note is "Change to
+// <bin>" on any cart whose send-back type is not its own; "Send back <bin>" on
+// a full of its own type and "Send it" on an empty of its own type, these two
+// only on a station that handles more than one bin type. The send-back type is
+// a waiting press's bin type (clearHighlight's second rung) or the cart's own.
+// A delivered order with no cart yet is the old boards' Unload card.
+function windowCards(consumers, ctx) {
+    const target = waitingBinType(ctx.view.serves);
+    const types = {};
+    consumers.forEach(function (t) { carriersOf(t).forEach(function (c) { types[c] = true; }); });
+    const multi = Object.keys(types).length > 1;
+    consumers.forEach(function (t) {
+        const bin = t.bin_state;
+        const loader = loaderOf(t);
+        if (!bin || !bin.occupied) {
+            if (ctx.kind === 'grid') return;
+            const code = partCodes(t).find(function (c) { return partAct(t, c) === 'unload'; });
+            if (code) {
+                ctx.other('Unload', ctx.card(t, 'unload', [0], {
+                    spotWords: 'no bin', headline: code, act: unloadAct(t, ''),
+                }));
+            }
+            return;
+        }
+        const full = !!bin.payload_code;
+        const own = bin.bin_type_code || '';
+        const back = loader.leaves_bare ? '' : (target || own);
+        let note = '';
+        if (full && bin.held_since) {
+            const since = ctx.when(bin.held_since);
+            note = 'Partial · held for ' + (bin.held_for || 'its line') + (since ? ' · since ' + since : '');
+        } else if (loader.pulled_directly && !full) note = 'The cart waits here for the line';
+        else if (back && own && back !== own) note = 'Change to ' + back;
+        else if (back && multi) note = full ? 'Send back ' + own : 'Send it';
+        ctx.windows.push(ctx.card(t, 'cart', [1], {
+            spotWords: full ? 'holds a full bin' : (bin.bare ? 'no bin' : 'holds an empty bin'),
+            spotPart: full ? bin.payload_code : '',
+            spotCount: full ? fmtCount((t.runtime && t.runtime.remaining_uop_cached) || 0) : '',
+            headline: own || bin.bin_label || 'Unknown bin', reason: note,
+            back: back, own: own, full: full,
+            act: windowAct(t, ctx.kind, loader.leaves_bare ? '' : target),
+        }));
+    });
+}
+
+// lightStoppedPresses gives each stopped press one red: a full press with no
+// empty of its bin ready lights the first cart, carts holding an empty first
+// and then fulls, each in the plant's order, whose send-back bin is the one
+// it needs ("NOW · Change to <bin>" or "NOW · Send back <bin>"). The press's
+// tile is red with it; every other cart stays plain.
+function lightStoppedPresses(presses, windows) {
+    const walk = windows.slice().sort(function (a, b) {
+        if (a.full !== b.full) return a.full ? 1 : -1;
+        return a.order - b.order;
+    });
+    presses.forEach(function (p) {
+        if (!p.full || p.ready || !p.bin) return;
+        const cart = walk.find(function (c) { return c.tone === 'plain' && c.back === p.bin; });
+        if (!cart) return;
+        cart.tone = 'red';
+        cart.word = 'NOW';
+        cart.reason = (cart.own && cart.own !== p.bin ? 'Change to ' : 'Send back ') + p.bin;
+        cart.rank = [0];
+        p.red = true;
+    });
+}
+
+// ── the board ────────────────────────────────────────────────────────────────
+
+// boardModel is everything the board draws, from the view:
+//
+//   title, words   the top line: the station, its counts by zone, then which
+//                  cell is out or full and the buffer's state while it is red
+//                  or amber
+//   tileCount      Show all's N
+//   bar            the board bar (boardBar), or null
+//   cells          the loader's status row (cellsRow), or null
+//   presses        the unloader's status row and its Empties tile, or null
+//   zones          [{key, title, count, tone, word, reason, cards, empty,
+//                  folded, openedByBoard, strip, stripWords}] in order: Load,
+//                  Waiting on the plant, At the windows, the catch-all zones
+//                  (each titled by its act), Clear partials
+//   all            every tile's cards in the plant's order (Show all); a tile
+//                  with no card gets a plain one opening the node modal
+//
+// ui: {partialsOpen: the partials opened by a tap, when(iso): the time a
+// refusal was said}.
+export function boardModel(view, ui) {
+    ui = ui || {};
+    const tiles = (view.nodes || []).filter(function (t) { return !!loaderOf(t); });
+    const producers = tiles.filter(function (t) { return tileRole(t) === 'produce'; });
+    const consumers = tiles.filter(function (t) { return tileRole(t) === 'consume'; });
+    const otherCards = {}, otherOrder = [];
+    const ctx = {
+        view: view, cov: coverage(view), kind: boardLayout(tiles).kind,
+        when: ui.when || function () { return ''; },
+        load: [], refused: [], partials: [], windows: [],
+        other: function (label, card) {
+            if (!otherCards[label]) { otherCards[label] = []; otherOrder.push(label); }
+            otherCards[label].push(card);
+        },
+        card: function (t, key, rank, o) {
+            const i = tiles.indexOf(t);
+            return Object.assign({
+                key: key + ':' + t.node.id, tile: i, order: i, rank: rank, tone: 'plain', word: '', reason: '',
+                spot: spotOf(t), spotWords: '', spotCode: '',
+            }, o);
+        },
+    };
+    producers.forEach(function (t) { loaderCards(t, ctx); });
+    ctx.load.sort(byRank);
+    ctx.refused.sort(byRank);
+
+    const words = [];
+    let presses = null;
+    if (consumers.length > 0) {
+        windowCards(consumers, ctx);
+        const pr = pressesRow(view, tiles);
+        lightStoppedPresses(pr.all, ctx.windows);
+        ctx.windows.sort(byRank);
+        pr.all.forEach(function (p) { if (p.full) words.push(p.cell + ' full'); });
+        const fold = foldPresses(pr.all);
+        presses = { tiles: fold.tiles, more: fold.more, empties: pr.empties };
+    }
+
+    // Alarms: the sentence is its card's note; a tile with no card of its own
+    // gets one in the board's first zone, which opens the node modal.
+    const cards = ctx.load.concat(ctx.refused, ctx.partials, ctx.windows);
+    otherOrder.forEach(function (l) { cards.push.apply(cards, otherCards[l]); });
+    tiles.forEach(function (t, i) {
+        const alarm = alarmOf(t);
+        if (!alarm) return;
+        const mine = cards.filter(function (c) { return c.tile === i; });
+        if (mine.length > 0) { mine.forEach(function (c) { c.note = alarm; }); return; }
+        const spot = spotWords(t);
+        const card = ctx.card(t, 'alarm', [9], {
+            spotWords: spot.words, spotCode: spot.code, headline: headlineOf(t), note: alarm,
+            act: { kind: 'modal', node: t.node.id },
+        });
+        (producers.length > 0 ? ctx.load : ctx.windows).push(card);
+        cards.push(card);
+    });
+
+    // The buffer.
+    const spots = bufferOf(tiles);
+    let partials = null;
+    if (spots) {
+        const st = partialsState(spots);
+        ctx.partials.forEach(function (c) {
+            const s = spots.find(function (x) { return x.node === c.partialSpot; });
+            c.number = s ? s.number : 0;
+        });
+        ctx.partials.sort(function (a, b) { return (a.number || 99) - (b.number || 99) || a.order - b.order; });
+        const opened = st.tone !== 'plain' || !!ui.partialsOpen;
+        partials = {
+            key: 'partials', title: 'Clear partials', count: ctx.partials.length, tone: st.tone,
+            word: st.tone === 'red' ? 'NOW' : (st.tone === 'amber' ? 'SOON' : ''),
+            reason: st.tone === 'red' ? 'Buffer full · clear one' : (st.tone === 'amber' ? 'No empty' : ''),
+            cards: opened ? ctx.partials : [], folded: !opened, openedByBoard: st.tone !== 'plain',
+            strip: spots, stripWords: st.words,
+            empty: opened && ctx.partials.length === 0 ? 'No partial can come home' : '',
+        };
+        if (st.tone === 'red') words.push('Buffer full');
+        else if (st.tone === 'amber') words.push('Buffer: no empty');
+    }
+
+    const zones = [];
+    if (producers.length > 0) {
+        zones.push({ key: 'load', title: 'Load', count: ctx.load.length, tone: 'plain', cards: ctx.load,
+            empty: ctx.load.length === 0 ? 'Nothing to load right now.' : '' });
+        if (ctx.refused.length > 0) {
+            zones.push({ key: 'refused', title: 'Waiting on the plant', count: ctx.refused.length, tone: 'plain', cards: ctx.refused });
+        }
+    }
+    if (consumers.length > 0) {
+        zones.push({ key: 'windows', title: 'At the windows', count: ctx.windows.length, tone: 'plain', cards: ctx.windows,
+            empty: ctx.windows.length === 0 ? 'No cart at any window.' : '' });
+    }
+    otherOrder.forEach(function (l) {
+        zones.push({ key: 'other:' + l, title: l, count: otherCards[l].length, tone: 'plain', cards: otherCards[l] });
+    });
+    if (partials) zones.push(partials);
+
+    // The cells row: red on a cell only where a red card fixes it; the top
+    // line names every cell that is out, card or none.
+    let cells = null;
+    if (producers.length > 0) {
+        const fixes = {};
+        ctx.load.forEach(function (c) { if (c.tone === 'red' && c.fixes) fixes[c.fixes] = true; });
+        cells = cellsRow(view, fixes);
+        const out = [];
+        ctx.cov.forEach(function (c) {
+            if (c.row.role === 'consume' && c.state === 'out' && out.indexOf(c.row.cell) === -1) out.push(c.row.cell);
+        });
+        out.reverse().forEach(function (cell) { words.unshift(cell + ' out'); });
+        if (cells.failed) words.push('Cells: could not look');
+    }
+
+    const counts = [];
+    if (producers.length > 0) {
+        counts.push(ctx.load.length + ' to load');
+        if (ctx.refused.length > 0) counts.push(ctx.refused.length + ' waiting on the plant');
+    }
+    if (consumers.length > 0) counts.push(ctx.windows.length > 0 ? ctx.windows.length + ' at the windows' : 'nothing at the windows');
+    otherOrder.forEach(function (l) { counts.push(otherCards[l].length + ' ' + l.toLowerCase()); });
+    if (spots) {
+        const p = spots.filter(function (s) { return s.state === 'partial'; }).length;
+        counts.push(p + (p === 1 ? ' partial' : ' partials'));
+    }
+
+    const byTile = tiles.map(function () { return []; });
+    cards.forEach(function (c) { byTile[c.tile].push(c); });
+    const all = [];
+    tiles.forEach(function (t, i) {
+        if (byTile[i].length > 0) { all.push.apply(all, byTile[i]); return; }
+        const spot = spotWords(t);
+        all.push(ctx.card(t, 'tile', [0], {
+            spotWords: spot.words, spotCode: spot.code, headline: headlineOf(t),
+            act: { kind: 'modal', node: t.node.id },
+        }));
+    });
+
+    return {
+        title: (view.station && view.station.name) || '',
+        words: counts.concat(words),
+        tileCount: tiles.length,
+        bar: boardBar(tiles, ctx.kind, view.serves),
+        cells: cells,
+        presses: presses,
+        zones: zones,
+        all: all,
+    };
+}
+
+// boardBar is the old payload board's bar, wherever that board was drawn (a
+// board of shared windows, not every one an unloader's): REQUEST EMPTY on a
+// loader, REQUEST FULL with the first part the board lists on an unloader,
+// offered while a window of the loader's role holds no bin and nothing is
+// coming to it, and posting for the first window (the server stages at the
+// free one); PULL FROM MARKET on a loader with an outbound destination. The
+// same doors and guards as that board, in sentence case.
+function boardBar(tiles, kind, serves) {
+    if (kind !== 'payload') return null;
+    const entry = tiles[0];
+    const role = tileRole(entry);
+    const isProduce = role === 'produce';
+    const windows = tiles.filter(function (t) { return tileRole(t) === role; });
+    const holdsBin = function (t) { return !!(t.bin_state && t.bin_state.occupied); };
+    const canRequest = windows.some(function (t) { return !holdsBin(t) && liveOrders(t).length === 0; });
+    const payload = isProduce ? '' : (cardParts(entry, serves)[0] || '');
+    if (!isProduce && !payload) return null;
+    const label = isProduce ? 'Request empty' : 'Request full';
+    const buttons = [{
+        key: 'request', enabled: canRequest,
+        label: canRequest ? label : label + ' — ' + (windows.every(holdsBin) ? 'bin at node' : 'bin already inbound'),
+        act: isProduce ? { kind: 'request-empty', node: entry.node.id } : { kind: 'request-full', node: entry.node.id, payload: payload },
+    }];
+    if (isProduce && loaderOf(entry).outbound_dest) {
+        buttons.push({ key: 'market', enabled: true, label: 'Pull from market', act: { kind: 'pull-from-market', node: entry.node.id } });
+    }
+    return { buttons: buttons };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Fit: one step for the whole board, columns from the width
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// The board does not scroll (Show all is the one view that may). fitBoard picks
+// the largest step at which every zone fits; where none does, the last zone
+// gives way first to a "+N more" card, then the one before it. Pinned, with
+// the clip proofs, by operator-board-model.test.js ("fit").
+
+// STEPS are the board's three sizes: a card's height (its least: a card with
+// more lines than that holds grows, cardHeight) and headline, a section title
+// and its header row, the spot line, the note, and the gap between a card's
+// lines. On a card the word (NOW, SOON) is 20 px and its reason 17 px at every
+// step; the reason's line is 24 px and the "Also" line 17 px.
+export const STEPS = [
+    { card: 120, headline: 32, title: 24, header: 34, spot: 15, note: 15, lineGap: 5 },
+    { card: 98, headline: 26, title: 20, header: 30, spot: 14, note: 14, lineGap: 5 },
+    { card: 74, headline: 20, title: 18, header: 28, spot: 13, note: 13, lineGap: 1 },
+];
+
+// GEOM is the board's fixed geometry in px, shared with operator.css's
+// .os-pc-* rules: the page's padding, the top line, the gap between bands, the
+// board bar, a section's padding and widest outline, the gap under its header
+// and between cards, a card's padding, widest outline, chevron and the
+// numbered badge of a partial, a folded section (its Show button is 48 px),
+// the partials header's strip box and Show button, the partials section's line
+// under its header when no partial can come home, and the status row's label
+// with the gap under it, a tile's padding, its head (outline, padding, name)
+// and each line under it with the gap above it (a row with its words beside
+// the bar or under it, a covered row's bare bar, the "+N"), the press tile and
+// an Empties line. Measured on the glass in headless Chrome at each step.
+export const GEOM = {
+    padX: 20, padTop: 14, padBottom: 16, topLine: 40, gap: 12, bar: 56,
+    sectionPadX: 12, sectionPadY: 22, sectionBorder: 3, headerGap: 10, cardGap: 10,
+    cardPadX: 14, cardPadY: 2, cardBorder: 3, chevron: 26, badge: 48, folded: 72, stripBox: 36, toggle: 48, zoneLine: 21,
+    reasonLine: 24, alsoLine: 17,
+    statusLabel: 27, tilePad: 27, tileGap: 10, tileHead: 43, rowLine: 37, rowUnder: 56, rowBar: 14, rowMore: 23,
+    pressTile: 132, emptiesLine: 25, emptiesFoot: 46,
+};
+
+// columnsFor is the card columns at a width: 2 under 1100 px, 3 from 1100, 4
+// from 1700.
+export function columnsFor(width) {
+    if (width >= 1700) return 4;
+    if (width >= 1100) return 3;
+    return 2;
+}
+
+// textWidth is a string's width in px at a font size, weight 600, measured
+// high on purpose: per class of character, between the station sans's mean
+// and its widest (headless Chrome, 600 weight: capitals 0.62 em mean and 0.77
+// widest, digits 0.58), so a fit that passes here does not clip on the glass.
+export function textWidth(s, px) {
+    let em = 0;
+    String(s || '').split('').forEach(function (ch) {
+        if ('MWmw@%'.indexOf(ch) !== -1) em += 0.97;
+        else if ("ijlI.,:;|!`'".indexOf(ch) !== -1) em += 0.31;
+        else if (ch === ' ') em += 0.28;
+        else if (ch === '·') em += 0.25;
+        else if (ch === '-' || ch === '_') em += 0.42;
+        else if (ch >= '0' && ch <= '9') em += 0.58;
+        else if (ch >= 'A' && ch <= 'Z') em += 0.68;
+        else if (ch >= 'a' && ch <= 'z') em += 0.56;
+        else em += 0.68;
+    });
+    return Math.ceil(em * px);
+}
+
+// cardInnerWidth is the width a card's text column has at a viewport width and
+// column count: the section's width shared by the columns, less the card's
+// padding, outline and chevron, and the badge on a numbered card.
+export function cardInnerWidth(width, cols, numbered) {
+    const g = GEOM;
+    const section = width - 2 * g.padX - 2 * (g.sectionPadX + g.sectionBorder);
+    const card = (section - (cols - 1) * g.cardGap) / cols;
+    return Math.floor(card - 2 * g.cardPadX - 2 * g.cardBorder - g.chevron - (numbered ? g.badge : 0));
+}
+
+// cardFits reports whether a card's part number or bin code and its spot
+// line's names fit unclipped at a step: the headline whole, and on the spot
+// line the spot, the bin code and an unloader's part and count whole (the
+// words between them give way, never a code); and its note, which wraps and
+// is never cut, in two lines or fewer.
+export function cardFits(card, step, inner) {
+    const s = STEPS[step];
+    if (textWidth(card.headline, s.headline) > inner) return false;
+    if (noteLines(card, step, inner) > 2) return false;
+    const fixed = [card.spot, card.spotCode, card.spotPart, card.spotCount].filter(Boolean).join(' · ');
+    return textWidth(fixed + ' · ', s.spot) <= inner;
+}
+
+// noteLines is the lines a card's note wraps to at a step, measured high (a
+// wrap breaks at a word, so a line holds nine tenths of the column).
+export function noteLines(card, step, inner) {
+    if (!card.note) return 0;
+    return Math.max(1, Math.ceil(textWidth(card.note, STEPS[step].note) / (inner * 0.9)));
+}
+
+// cardHeight is a card's height at a step: the step's, or its lines' where
+// they need more (a long note at the smallest step). The lines are the spot
+// line, the headline, the reason, the "Also" line and the note's lines, with
+// the step's gap between them (operator.css's line-heights: 1.2, the headline
+// 1.05).
+export function cardHeight(card, step, inner) {
+    const g = GEOM;
+    const s = STEPS[step];
+    let h = Math.ceil(s.spot * 1.2) + s.lineGap + Math.ceil(s.headline * 1.05);
+    if (card.word || card.reason) h += s.lineGap + g.reasonLine;
+    if (card.also && card.also.length) h += s.lineGap + g.alsoLine;
+    if (card.note) h += s.lineGap + noteLines(card, step, inner) * Math.ceil(s.note * 1.2);
+    return Math.max(s.card, h + 2 * (g.cardPadY + g.cardBorder));
+}
+
+function zoneRows(n, cut, cols) {
+    const slots = n + (cut > 0 ? 1 : 0);
+    return Math.ceil(slots / cols);
+}
+
+// cardRowsHeight is the height of a zone's drawn cards: each row as tall as
+// its tallest card (cardHeight; a "+N more" card is the step's), the gaps
+// between rows.
+function cardRowsHeight(cards, shown, cut, step, cols, width) {
+    const slots = cards.slice(0, shown).map(function (c) {
+        return cardHeight(c, step, cardInnerWidth(width, cols, !!c.number));
+    });
+    if (cut > 0) slots.push(STEPS[step].card);
+    let h = 0;
+    let rows = 0;
+    for (let i = 0; i < slots.length; i += cols) {
+        h += Math.max.apply(null, slots.slice(i, i + cols));
+        rows++;
+    }
+    return h + (rows - 1) * GEOM.cardGap;
+}
+
+// zoneHeight is a section's height with shown of its cards drawn. A zone cut
+// to no card still draws its "+N more" card, one row. The partials header
+// holds the strip's boxes, and its Show / Hide button unless the board opened
+// it; with no card, its empty sentence is a line under the header.
+function zoneHeight(z, shown, step, cols, width) {
+    const g = GEOM;
+    const s = STEPS[step];
+    if (z.folded) return g.folded;
+    let header = s.header;
+    if (z.strip) header = Math.max(header, z.openedByBoard ? g.stripBox : g.toggle);
+    // The outline by tone: red 3 px, amber 2, plain 1 (operator.css); a zone
+    // that names no tone is counted at the widest.
+    const border = { plain: 1, amber: 2, red: 3 }[z.tone] || g.sectionBorder;
+    const base = 2 * border + g.sectionPadY + header;
+    const cut = z.cards.length - shown;
+    if (shown === 0 && cut === 0) return base + (z.strip && z.empty ? g.headerGap + g.zoneLine : 0);
+    return base + g.headerGap + cardRowsHeight(z.cards, shown, cut, step, cols, width);
+}
+
+function boardHeight(zones, shown, step, cols, fixedTop, width) {
+    let h = fixedTop;
+    zones.forEach(function (z, i) { h += zoneHeight(z, shown[i], step, cols, width) + (i > 0 ? GEOM.gap : 0); });
+    return h + GEOM.padBottom;
+}
+
+// fitBoard is the board's fit: (viewport {width, height}, the status row's
+// height, the zones with their cards, whether the board bar is drawn) to
+// {step, columns, shown (cards drawn per zone; the rest behind "+N more"),
+// rowsPerTile}. statusHeight is a number, or a function of the rows a cell
+// tile shows (statusRowLayout's height at that count) where those may give way.
+//
+//   - the largest step at which every card's codes fit unclipped (cardFits) and
+//     every zone fits the height;
+//   - where no step fits the height, the smallest step whose codes fit, and the
+//     zones give way from the last: cards are cut from the end of a zone, plain
+//     ones only (a red or amber card is never cut; they sort first), and a
+//     "+N more" card takes one slot, in a zone cut to no card too;
+//   - a folded Clear partials is one row and never cut; opened by the board
+//     (amber or red) it keeps its first card and gives way only after every
+//     other zone has;
+//   - where the zones can give no more, a cell tile shows fewer rows (the rest
+//     behind its "+N"), down to one.
+export function fitBoard(viewport, statusHeight, zones, hasBar) {
+    const g = GEOM;
+    const cols = columnsFor(viewport.width);
+    const statusAt = typeof statusHeight === 'function' ? statusHeight : function () { return statusHeight; };
+    const topAt = function (rows) {
+        const h = statusAt(rows);
+        return g.padTop + g.topLine + g.gap + (hasBar ? g.bar + g.gap : 0) + (h > 0 ? h + g.gap : 0);
+    };
+    let fixedTop = topAt(MAX_TILE_ROWS);
+    const full = zones.map(function (z) { return z.folded ? 0 : z.cards.length; });
+    const fits = function (step) {
+        return zones.every(function (z) {
+            return z.cards.every(function (c) { return cardFits(c, step, cardInnerWidth(viewport.width, cols, !!c.number)); });
+        });
+    };
+    for (let step = 0; step < STEPS.length; step++) {
+        if (!fits(step)) continue;
+        if (boardHeight(zones, full, step, cols, fixedTop, viewport.width) <= viewport.height) {
+            return { step: step, columns: cols, shown: full, rowsPerTile: MAX_TILE_ROWS };
+        }
+    }
+    const step = STEPS.length - 1;
+    const shown = full.slice();
+    const keep = zones.map(function (z) {
+        if (z.folded) return 0;
+        const coloured = z.cards.filter(function (c) { return c.tone !== 'plain'; }).length;
+        return z.openedByBoard ? Math.max(1, coloured) : coloured;
+    });
+    const giveWay = function (i) {
+        const z = zones[i];
+        while (boardHeight(zones, shown, step, cols, fixedTop, viewport.width) > viewport.height && shown[i] > keep[i]) {
+            const rows = zoneRows(shown[i], z.cards.length - shown[i], cols);
+            // One row fewer, with a slot for "+N more".
+            shown[i] = Math.max(keep[i], Math.min(shown[i] - 1, (rows - 1) * cols - 1));
+        }
+    };
+    for (let i = zones.length - 1; i >= 0; i--) {
+        if (zones[i].folded || zones[i].openedByBoard) continue;
+        giveWay(i);
+    }
+    zones.forEach(function (z, i) { if (z.openedByBoard) giveWay(i); });
+    let rows = MAX_TILE_ROWS;
+    while (rows > 1 && boardHeight(zones, shown, step, cols, fixedTop, viewport.width) > viewport.height) {
+        rows--;
+        fixedTop = topAt(rows);
+    }
+    // Give back what fits: a cut that saved no height (a zone of one row cut to
+    // its "+N more"), or room a later cut freed, draws its cards again, the
+    // first zone first. Pinned by operator-board-model.test.js ("draws every
+    // card row that fits").
+    zones.forEach(function (z, i) {
+        while (shown[i] < full[i]) {
+            shown[i]++;
+            if (boardHeight(zones, shown, step, cols, fixedTop, viewport.width) > viewport.height) { shown[i]--; break; }
+        }
+    });
+    return { step: step, columns: cols, shown: shown, rowsPerTile: rows };
+}
+
+// statusRowLayout lays the status row (cellsRow's or pressesRow's) out at a
+// width: its tiles per line, each wide enough for its longest part and count
+// side by side (or with the count moved under the bar where that cannot fit),
+// the lines it takes and its height, the input fitBoard takes. A cell tile
+// shows at most rowsPerTile of its rows (MAX_TILE_ROWS when not given), the
+// rest behind its "+N"; the "+N more" and Empties tiles sit beside the tiles.
+export function statusRowLayout(status, width, rowsPerTile) {
+    const most = rowsPerTile || MAX_TILE_ROWS;
+    const g = GEOM;
+    if (!status) return { columns: 0, lines: 0, height: 0, countUnder: false };
+    const avail = width - 2 * g.padX;
+    const n = status.tiles.length + (status.more > 0 ? 1 : 0) + (status.empties ? 1 : 0) + (status.failed ? 1 : 0);
+    if (n === 0) return { columns: 0, lines: 0, height: 0, countUnder: false };
+    let side = 0, under = 0;
+    status.tiles.forEach(function (t) {
+        if (t.rows) {
+            t.rows.forEach(function (r) {
+                const part = textWidth(r.part, 14);
+                const words = textWidth(r.words, 13);
+                side = Math.max(side, part + (r.words ? 8 + words : 0));
+                under = Math.max(under, part, words);
+            });
+            side = Math.max(side, textWidth(t.cell, 14));
+            under = Math.max(under, textWidth(t.cell, 14));
+        } else {
+            const top = textWidth(t.cell + ' · ' + t.node, 14) + 8 + textWidth(t.words, 13);
+            const need = Math.max(top, textWidth(t.bin, 24), textWidth(t.part + ' · no empty ready', 12));
+            side = Math.max(side, need);
+            under = Math.max(under, need);
+        }
+    });
+    if (status.empties) {
+        status.empties.lines.forEach(function (l) {
+            const w = textWidth(l.bin, 14) + 8 + textWidth(l.words, 14);
+            side = Math.max(side, w);
+            under = Math.max(under, w);
+        });
+    }
+    const perLine = function (need) {
+        return Math.max(1, Math.floor((avail + g.tileGap) / (need + g.tilePad + g.tileGap)));
+    };
+    let countUnder = false;
+    let per = perLine(side);
+    if (per < Math.min(n, MAX_STATUS_TILES + 1) && perLine(under) > per) {
+        countUnder = true;
+        per = perLine(under);
+    }
+    const columns = Math.min(per, Math.max(n, 4));
+    const lines = Math.ceil(n / Math.min(per, n));
+    // A cell tile's height: its head, each drawn row (a covered row is its
+    // bar alone), and the "+N" when rows are hidden; the row is the tallest.
+    let tileH = g.pressTile;
+    if (status.tiles.length > 0 && status.tiles[0].rows) {
+        tileH = 0;
+        status.tiles.forEach(function (t) {
+            const drawn = t.rows.slice(0, most);
+            let h = g.tileHead + (t.hidden > 0 || t.rows.length > drawn.length ? g.rowMore : 0);
+            drawn.forEach(function (r) { h += r.words ? (countUnder ? g.rowUnder : g.rowLine) : g.rowBar; });
+            tileH = Math.max(tileH, h);
+        });
+    }
+    if (status.empties) tileH = Math.max(tileH, g.tileHead + status.empties.lines.length * g.emptiesLine + g.emptiesFoot);
+    return {
+        columns: columns, lines: lines, countUnder: countUnder,
+        height: g.statusLabel + lines * tileH + (lines - 1) * g.tileGap,
+    };
 }

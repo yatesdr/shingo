@@ -1,4 +1,5 @@
-import { esc, postAction, showToast, fetchWithTimeout } from './operator-util.js';
+import { esc } from '/static/shared/esc.js';
+import { postAction, showToast, fetchWithTimeout } from './operator-util.js';
 import { openKeypad } from './operator-keypad.js';
 import { findNodeByID } from './operator-state.js';
 import {

@@ -3,11 +3,12 @@
 // unloader tile, the state that offers it, and exactly what its tap posts.
 //
 // WHY THE WHOLE PATH AND NOT cardModel. cardModel says load, unload or
-// nothing; the acts themselves are chosen in the render layer (renderGrid,
-// renderHeader, renderPayloadBoard, renderDedicatedPositionsBoard, buildLoaderCard,
-// createNodeButton), in the node modal (renderModal, handleModalAction) and in
-// the load modal (openLoadBin). So this loads the SHIPPING modules whole —
-// operator-render, operator-modal, operator-load-bin, operator-supply-refusal,
+// nothing; the acts themselves are chosen in the board's model (boardModel,
+// operator-board-model.js) and opened by the render layer (renderGrid's
+// boardActs, renderHeader, createNodeButton on the node grid), in the node
+// modal (renderModal, handleModalAction) and in the load modal (openLoadBin).
+// So this loads the SHIPPING modules whole — operator-render, operator-board,
+// operator-modal, operator-load-bin, operator-supply-refusal,
 // operator-board-model, operator-window-state, operator-state, operator-util,
 // order-status — into
 // one vm with a small fake DOM, renders a view, taps what the glass offers and
@@ -211,7 +212,7 @@ const ctx = vm.createContext({
     mountFlowPanel() {}, openFlowPanel() {}, syncFlowPanel() {},
     ensureComposer: async () => null,
     openKeypad() {},
-    openReleasePrompt() {},
+    openReleasePrompt() {}, closeReleasePrompt() {},
 });
 ctx.globalThis = ctx;
 
@@ -237,8 +238,9 @@ function loadModule(name) {
     Object.assign(ctx, out.exported);
     mods[name] = out.fns;
 }
-['order-status.js', 'operator-util.js', 'operator-state.js', 'operator-window-state.js',
-    'operator-board-model.js', 'operator-supply-refusal.js', 'operator-load-bin.js', 'operator-modal.js', 'operator-render.js',
+['../../../../shared/esc.js', 'order-status.js', 'operator-util.js', 'operator-state.js', 'operator-window-state.js',
+    'operator-board-model.js', 'operator-board.js', 'operator-supply-refusal.js', 'operator-load-bin.js', 'operator-modal.js',
+    'operator-render.js',
 ].forEach(loadModule);
 
 const R = mods['operator-render.js'];
@@ -265,10 +267,11 @@ function carriersFor(parts) {
 
 // loaderTile builds one loader tile the way BuildView ships it: the loader as
 // the board reads it (tile.loader) and no claim. Options: role, parts, operator
-// (Core's replenishment `operator`), hides_idle and all_parts (the board
-// settings, defaulted from operator as Core's backfill set them), dedicated
+// (Core's replenishment `operator`), all_parts (the board setting, defaulted
+// from operator as Core's backfill set it), dedicated
 // (dedicated_positions), outbound, directive, leaves_bare, pulled_directly, bin,
-// uop, orders, buffer_partial, supply_refusals.
+// uop, orders, buffer_partial, supply_refusals and buffer (tile.loader.buffer,
+// which rides on a loader's first home only).
 function loaderTile(id, core, o) {
     o = o || {};
     const role = o.role || 'produce';
@@ -282,9 +285,8 @@ function loaderTile(id, core, o) {
             outbound_dest: o.outbound === undefined ? 'FG-MARKET' : o.outbound,
             parts: parts.map(c => ({ code: c })),
             directive: !!o.directive, leaves_bare: !!o.leaves_bare, pulled_directly: !!o.pulled_directly,
-            // The board settings as Core's v157 backfilled them: a threshold
-            // station hides idle cards, an operator station lists every part.
-            board_hides_idle: o.hides_idle === undefined ? !o.operator : !!o.hides_idle,
+            // The setting as Core's v157 backfilled it: an operator station
+            // lists every part.
             board_shows_all_parts: o.all_parts === undefined ? !!o.operator : !!o.all_parts,
         },
         orders: o.orders || [],
@@ -292,6 +294,7 @@ function loaderTile(id, core, o) {
         releases_as_pair: false,
     };
     if (role === 'consume') t.loader.carriers = carriersFor(parts);
+    if (o.buffer) t.loader.buffer = o.buffer;
     if (o.bin !== undefined) t.bin_state = o.bin;
     ['buffer_partial', 'supply_refusals'].forEach(k => { if (o[k] !== undefined) t[k] = o[k]; });
     return t;
@@ -311,8 +314,8 @@ function order(id, status, o) {
         source_node: '', delivery_node: '', created_at: new Date(Date.now() - 5 * 60000).toISOString() }, o);
 }
 
-const FULL = (part, uop) => ({ occupied: true, payload_code: part, stocked: (uop == null ? 12 : uop) > 0, bin_label: 'BIN-' + part });
-const EMPTY = { occupied: true, payload_code: '', stocked: false, bin_label: 'BIN-E' };
+const FULL = (part, uop) => ({ occupied: true, payload_code: part, stocked: (uop == null ? 12 : uop) > 0, bin_label: 'BIN-' + part, bin_type_code: 'TOTE-1' });
+const EMPTY = { occupied: true, payload_code: '', stocked: false, bin_label: 'BIN-E', bin_type_code: 'TOTE-1' };
 const NONE = { occupied: false };
 
 function setView(nodes, extra) {
@@ -349,14 +352,6 @@ function headerButton(label) {
     if (!b) throw new Error('no header button ' + label);
     return b;
 }
-function cards() { return grid.descendants().filter(n => n.classList.contains('os-board-card')); }
-function cardFor(code, home) {
-    return cards().find(c => {
-        const codeEl = c.children.find(k => k.classList.contains('os-board-code'));
-        const homeEl = c.children.find(k => k.classList.contains('os-board-home'));
-        return codeEl && codeEl.textContent === code && (!home || (homeEl && homeEl.textContent.indexOf(home) === 0));
-    }) || null;
-}
 function part(card, cls) {
     const n = card.descendants().find(k => k.classList.contains(cls));
     return n ? n.textContent : null;
@@ -365,8 +360,30 @@ function slotTiles() { return grid.children.filter(n => n.classList.contains('os
 function slotTile(name) {
     return slotTiles().find(t => t.children.some(k => k.classList.contains('os-node-name') && k.textContent === name)) || null;
 }
-function reqBarButtons() {
-    const bar = grid.descendants().find(n => n.classList.contains('os-board-reqbar'));
+// The board (operator-board.js): its cards, its zones, its top line and bar.
+function pcCards() { return grid.descendants().filter(n => n.classList.contains('os-pc-card') && !n.classList.contains('os-pc-more')); }
+const LEAVES = ['os-pc-spot-name', 'os-pc-spot-words', 'os-pc-spot-code', 'os-pc-headline', 'os-pc-also', 'os-pc-word', 'os-pc-why', 'os-pc-note'];
+function cardText(card) {
+    return card.descendants().filter(n => LEAVES.some(c => n.classList.contains(c))).map(n => n.textContent);
+}
+function pcCard(headline, spot) {
+    return pcCards().find(c => part(c, 'os-pc-headline') === headline && (!spot || part(c, 'os-pc-spot-name') === spot)) || null;
+}
+function zoneEls() { return grid.descendants().filter(n => n.classList.contains('os-pc-zone')); }
+function zoneTitles() { return zoneEls().map(z => part(z, 'os-pc-zone-title')); }
+function zoneEl(title) { return zoneEls().find(z => part(z, 'os-pc-zone-title') === title) || null; }
+function zoneButton(title, label) {
+    const b = zoneEl(title).descendants().find(n => n.tagName === 'BUTTON' && n.textContent === label);
+    if (!b) throw new Error('no ' + label + ' in ' + title);
+    return b;
+}
+function topLine() {
+    const top = grid.descendants().find(n => n.classList.contains('os-pc-top'));
+    return top ? [part(top, 'os-pc-title'), part(top, 'os-pc-words'), part(top, 'os-pc-showall')] : [];
+}
+function showAllButton() { return grid.descendants().find(n => n.classList.contains('os-pc-showall')); }
+function barButtons() {
+    const bar = grid.descendants().find(n => n.classList.contains('os-pc-bar'));
     return bar ? bar.children.filter(n => n.tagName === 'BUTTON') : [];
 }
 function overlay() {
@@ -426,22 +443,27 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
 // ═════════════════════════════════════════════════════════════════════════════
 (async function main() {
 
-// ── 1. The payload board, one window (produce, shared window) ──────────────
+// ── 1. A loader of one shared window (the old payload board) ───────────────
 {
-    // An empty delivered and nothing parked: LOAD on the card, REQUEST EMPTY
-    // greyed because an order is live.
+    // An empty delivered and nothing parked: the Load card, the board bar's
+    // Request empty greyed because an order is live.
     setView([loaderTile(1, 'SMN_A1', {
         parts: ['PART-A', 'PART-B'], bin: NONE,
         orders: [order(101, 'delivered', { payload_code: 'PART-A', delivery_node: 'SMN_A1' })],
     })], { serves: [row('CELL-1', 'PART-A', 30)] });
     render();
-    eq(headerButtons(), ['REFRESH'], 'payload board, one window: the header carries REFRESH only (board mode)');
-    eq(reqBarButtons().map(b => b.textContent), ['REQUEST EMPTY — bin already inbound', 'PULL FROM MARKET'],
-        'payload board: REQUEST EMPTY greyed while an order is live; PULL FROM MARKET beside it');
-    eq(reqBarButtons()[0].disabled, true, 'payload board: the greyed REQUEST EMPTY is disabled');
-    const c = cardFor('PART-A');
-    eq(part(c, 'os-board-tag'), 'DELIVERED', 'payload board: a delivered empty for PART-A reads DELIVERED');
-    eq(cardFor('PART-B'), null, 'payload board: an idle card on a normal (threshold) loader is hidden');
+    // Changed: the board draws its own top line; the station header carries
+    // no REFRESH and no cell buttons (a forklift's screen; the loader's acts
+    // are its cards and its bar).
+    eq(headerButtons(), [], 'board: the header carries no buttons (it was REFRESH)');
+    eq(topLine(), ['Loader station', '1 to load', 'Show all 1'], 'board: the top line, its counts and Show all');
+    eq(barButtons().map(b => b.textContent), ['Request empty — bin already inbound', 'Pull from market'],
+        'board bar: Request empty greyed while an order is live; Pull from market beside it (sentence case)');
+    eq(barButtons()[0].disabled, true, 'board bar: the greyed Request empty is disabled');
+    const c = pcCard('PART-A');
+    eq(cardText(c), ['SMN_A1', ' · no bin', 'PART-A', '· CELL-1 has 30 left'.slice(2)],
+        'Load card: the spot, the part, the cell it serves');
+    eq(pcCard('PART-B'), null, 'a part no running style uses on a threshold loader draws no card');
     await tap(c);
     eq(loadOpens, [{ node: 1, codes: ['PART-A'], cap: 0 }], 'LOAD: the card opens the load modal for that part, capacity 0 (the synthesised claim has none)');
     await confirmLoad();
@@ -449,18 +471,18 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
         'LOAD: CONFIRM LOAD posts load-bin with the part, the UoP count and the manifest scaled to it');
 }
 {
-    // Nothing parked, nothing live: REQUEST EMPTY is offered and posts an empty body.
+    // Nothing parked, nothing live: Request empty is offered and posts an empty body.
     setView([loaderTile(1, 'SMN_A1', { parts: ['PART-A'], bin: NONE })], { serves: [row('CELL-1', 'PART-A', 30)] });
     render();
-    const req = reqBarButtons()[0];
-    eq(req.textContent, 'REQUEST EMPTY', 'REQUEST EMPTY: offered with no bin and no live order');
+    const req = barButtons()[0];
+    eq(req.textContent, 'Request empty', 'REQUEST EMPTY: offered with no bin and no live order');
     await tap(req);
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/request-empty', body: {} }],
         'REQUEST EMPTY: posts request-empty with no payload code');
 
     // PULL FROM MARKET: a picker filled from market-bins; a bin's tap posts its node.
     render();
-    await tap(reqBarButtons()[1]);
+    await tap(barButtons()[1]);
     eq(requests.map(r => r.method + ' ' + r.url), ['GET /api/process-nodes/1/market-bins'],
         'PULL FROM MARKET: the picker reads the market');
     await tapOverlay('SMN_M1PART-AUoP: 40');
@@ -471,32 +493,40 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     // No outbound destination on the claim: no PULL FROM MARKET.
     setView([loaderTile(1, 'SMN_A1', { parts: ['PART-A'], bin: NONE, outbound: '' })]);
     render();
-    eq(reqBarButtons().map(b => b.textContent), ['REQUEST EMPTY'], 'PULL FROM MARKET: absent without an outbound destination');
+    eq(barButtons().map(b => b.textContent), ['Request empty'], 'PULL FROM MARKET: absent without an outbound destination');
 
-    // A bin parked: REQUEST EMPTY greyed for that reason.
+    // A bin parked: Request empty greyed for that reason.
     setView([loaderTile(1, 'SMN_A1', { parts: ['PART-A'], bin: EMPTY })]);
     render();
-    eq(reqBarButtons()[0].textContent, 'REQUEST EMPTY — bin at node', 'REQUEST EMPTY: greyed with a bin parked');
+    eq(barButtons()[0].textContent, 'Request empty — bin at node', 'REQUEST EMPTY: greyed with a bin parked');
 }
 {
-    // An empty parked with no order: LOAD now, on every allowed part.
+    // An empty parked with no order: LOAD on every allowed part, one card for
+    // the window listing them (changed: a card per part).
     setView([loaderTile(1, 'SMN_A1', { parts: ['PART-A', 'PART-B'], bin: EMPTY })]);
     render();
-    eq([part(cardFor('PART-A'), 'os-board-tag'), part(cardFor('PART-B'), 'os-board-tag')], ['LOAD', 'LOAD'],
-        'payload board: an empty parked with no order reads LOAD on every part');
-    // A card with nothing to do opens the node modal.
+    const c = pcCard('PART-A');
+    eq([pcCards().length, part(c, 'os-pc-also')], [1, 'Also PART-B'],
+        'a shared window: one card listing the parts called for (changed: a card per part)');
+    await tap(c);
+    eq(loadOpens, [{ node: 1, codes: ['PART-A', 'PART-B'], cap: 0 }],
+        'a shared window\'s card opens the load modal with the parts called for; the pick posts as before');
+    // A window with nothing to do draws no card; Show all draws it, and its
+    // tap opens the node modal.
     setView([loaderTile(1, 'SMN_A1', { parts: ['PART-A'], bin: NONE, operator: true,
         orders: [order(102, 'in_transit', { payload_code: 'PART-A' })] })]);
     render();
-    const c = cardFor('PART-A');
-    eq(part(c, 'os-board-tag'), 'IN TRANSIT', 'payload board: an empty on its way reads IN TRANSIT');
-    await tap(c);
+    eq(pcCards().length, 0, 'a window with no act draws no card (changed: IN TRANSIT card)');
+    await tap(showAllButton());
+    eq(pcCards().length, 1, 'Show all: every tile drawn');
+    await tap(pcCards()[0]);
     eq(document.getElementById('node-modal').classList.contains('active'), true,
-        'a card with no load or unload act opens the node modal');
+        'Show all: a tile with no act opens the node modal');
     eq(posts(), [], 'opening the node modal posts nothing');
+    await tap(showAllButton());
 }
 
-// ── 2. The payload board, two windows ──────────────────────────────────────
+// ── 2. A loader of two shared windows ──────────────────────────────────────
 {
     const two = [
         loaderTile(1, 'SMN_B1', { parts: ['PART-A'], bin: NONE, operator: true }),
@@ -506,97 +536,80 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     const serves = { serves: [row('CELL-2', 'PART-A', 10)] };
     setView(two, serves);
     render();
-    // Fixed. It was: the header kept the cell's CHANGEOVER (isBoardMode asked
-    // for exactly one node), only the first window's cards were drawn, the
-    // delivered empty at the second never showed LOAD, and REQUEST EMPTY read
-    // the first window alone.
-    eq(headerButtons(), ['REFRESH'], 'two windows, fixed: the header carries the loader\'s acts, not the cell\'s CHANGEOVER');
-    eq(cards().length, 2, 'two windows, fixed: every window\'s cards are drawn');
-    eq(cards().map(c => part(c, 'os-board-home')), ['SMN_B1 · AWAITING', 'SMN_B2 · EMPTY'],
-        'two windows: each card names its window and what stands there');
-    eq(part(cardFor('PART-A', 'SMN_B1'), 'os-board-tag'), 'ACTIVE', 'two windows: the first window idle reads ACTIVE');
-    eq(part(cardFor('PART-A', 'SMN_B2'), 'os-board-tag'), 'LOAD', 'two windows, fixed: the delivered empty at the second reads LOAD');
-    await tap(cardFor('PART-A', 'SMN_B2'));
-    eq(loadOpens, [{ node: 2, codes: ['PART-A'], cap: 0 }], 'two windows, fixed: the second window\'s LOAD opens its load modal');
+    eq(headerButtons(), [], 'two windows: no header buttons');
+    eq(pcCards().map(c => cardText(c).slice(0, 2)), [['SMN_B2', ' · holds an empty']],
+        'two windows: the window with an act draws its card, naming the window and what stands there');
+    await tap(pcCard('PART-A', 'SMN_B2'));
+    eq(loadOpens, [{ node: 2, codes: ['PART-A'], cap: 0 }], 'two windows: the second window\'s LOAD opens its load modal');
     render();
-    eq(reqBarButtons()[0].textContent, 'REQUEST EMPTY',
-        'two windows: REQUEST EMPTY offered while a window of the loader is free');
-    await tap(reqBarButtons()[0]);
+    eq(barButtons()[0].textContent, 'Request empty', 'two windows: Request empty offered while a window of the loader is free');
+    await tap(barButtons()[0]);
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/request-empty', body: {} }],
         'two windows: REQUEST EMPTY posts for the first window (the server stages at a free one)');
-    // Both windows taken: greyed, and for the reason that holds for both.
     setView([loaderTile(1, 'SMN_B1', { parts: ['PART-A'], bin: EMPTY, operator: true }), two[1]], serves);
     render();
-    eq(reqBarButtons()[0].textContent, 'REQUEST EMPTY — bin at node', 'two windows, fixed: greyed only when no window is free');
+    eq(barButtons()[0].textContent, 'Request empty — bin at node', 'two windows: greyed only when no window is free');
     setView([loaderTile(1, 'SMN_B1', { parts: ['PART-A'], bin: NONE, operator: true,
         orders: [order(202, 'in_transit', { delivery_node: 'SMN_B1' })] }), two[1]], serves);
     render();
-    eq(reqBarButtons()[0].textContent, 'REQUEST EMPTY — bin already inbound', 'two windows: greyed with an empty on its way to the free one');
+    eq(barButtons()[0].textContent, 'Request empty — bin already inbound', 'two windows: greyed with an empty on its way to the free one');
 }
 
 // ── 3. Dedicated homes (produce) ───────────────────────────────────────────
 {
+    const buffer = [{ node: 'LDR.SMN_F1', state: 'partial' }, { node: 'LDR.SMN_F2', state: 'empty' }, { node: 'LDR.SMN_F3', state: 'open' }];
     const homes = [
         loaderTile(1, 'SMN_H1', { parts: ['PART-A'], bin: FULL('PART-A', 12), dedicated: true,
-            operator: true, buffer_partial: { node: 'SMN_F1' } }),
+            operator: true, buffer: buffer, buffer_partial: { node: 'LDR.SMN_F1' } }),
         loaderTile(2, 'SMN_H2', { parts: ['PART-B'], bin: EMPTY, dedicated: true, operator: true }),
         loaderTile(3, 'SMN_H3', { parts: ['PART-A'], bin: FULL('PART-A', 5), dedicated: true, operator: true }),
     ];
-    const homeServes = { serves: [row('CELL-H', 'PART-A', 12)] };
+    const homeServes = { serves: [row('CELL-H', 'PART-A', 12), row('CELL-H', 'PART-B', 4)] };
     setView(homes, homeServes);
     render();
-    eq(headerButtons(), ['PULL FULL FROM HOME', 'REFRESH'], 'homes: the header offers PULL FULL FROM HOME in place of CHANGEOVER');
-    eq(cards().length, 3, 'homes, an operator loader: every home is drawn');
-    const h1 = cardFor('PART-A', 'SMN_H1');
-    eq(part(h1, 'os-board-home'), 'SMN_H1 · LOADED', 'homes: the home line');
-    // Changed: the mark was Core's reorder threshold (12 below it read
-    // "— PRELOAD" and red), which sits at or above a bin and so reads every
-    // running part as low; the board now grades a part by its coverage, and a
-    // home holding a stocked bin of it covers it.
-    eq(part(h1, 'os-board-lineside'), 'Lineside 12 UoP', 'homes: an active part says its lineside; covered, it carries no mark');
-    eq(h1.classList.contains('os-board-card--starved'), false, 'homes: a covered part is not marked short');
-    // Exposed: no stocked bin of the part on the board, the cell still has some.
-    setView([homes[1]].concat([loaderTile(4, 'SMN_H4', { parts: ['PART-A'], bin: NONE, dedicated: true, operator: true })]),
-        homeServes);
-    render();
-    const h4 = cardFor('PART-A', 'SMN_H4');
-    eq([part(h4, 'os-board-lineside'), h4.classList.contains('os-board-card--starved')], ['Lineside 12 UoP — PRELOAD', true],
-        'homes: a part exposed at a served cell is marked short');
-    setView(homes, homeServes);
-    render();
-    eq(h1.descendants().filter(n => n.tagName === 'BUTTON').map(b => b.textContent), ['CLEAR BIN'],
-        'homes: CLEAR BIN on a loaded home whose buffer holds a partial of its part');
-    eq(cardFor('PART-A', 'SMN_H3').descendants().filter(n => n.tagName === 'BUTTON').length, 0,
-        'homes: no CLEAR BIN without a buffer partial');
-    eq(part(cardFor('PART-B', 'SMN_H2'), 'os-board-tag'), 'LOAD', 'homes: an empty home reads LOAD');
+    // Changed: the Clear partials cards replace PULL FULL FROM HOME.
+    eq(headerButtons(), [], 'homes: no PULL FULL FROM HOME (the Clear partials cards replace it)');
+    eq(pcCards().map(c => cardText(c)), [['SMN_H2', ' · holds an empty', ' TOTE-1', 'PART-B', 'CELL-H has 4 left']],
+        'homes: the empty home\'s Load card; stocked homes are hidden');
+    eq(zoneTitles(), ['Load', 'Clear partials'], 'homes: the zones, Clear partials folded at the bottom');
+    eq(part(zoneEl('Clear partials'), 'os-pc-strip-words'), '1 partial · 1 empty · 1 open',
+        'Clear partials, a normal day: folded to its strip and words');
+    await tap(zoneButton('Clear partials', 'Show'));
+    const h1 = pcCard('PART-A', 'SMN_H1');
+    eq([cardText(h1), part(h1, 'os-pc-num')], [['SMN_H1', ' · holds a full bin', 'PART-A', 'Pull the full · partial from SMN_F1'], '1'],
+        'Clear partials opened by a tap: the numbered card, the home act, where the partial comes from');
 
-    // CLEAR BIN on the card: the confirm, then clear-loader-home with an empty body.
-    await tap(h1.descendants().find(n => n.tagName === 'BUTTON'));
-    eq(overlayTexts()[0], 'Clear this home bin?', 'CLEAR BIN: the confirm names no node (today)');
-    eq(overlayButtons(), ['CONFIRM CLEAR', 'CANCEL'], 'CLEAR BIN: the confirm offers CONFIRM CLEAR');
+    // The card's tap: the confirm, naming the home and the spot, then
+    // clear-loader-home with an empty body.
+    await tap(h1);
+    eq(overlayTexts()[0], 'Clear SMN_H1?', 'the clear\'s confirm names the home (changed: it named no node)');
+    eq(overlayTexts()[1], 'Declares the bin at SMN_H1 empty. Shingo brings the partial from SMN_F1 to SMN_H1, and SMN_F1 ends holding the empty.',
+        'the clear\'s confirm names the spot and says it ends holding an empty');
+    eq(overlayButtons(), ['CONFIRM CLEAR', 'CANCEL'], 'the clear\'s confirm offers CONFIRM CLEAR');
     await tapOverlay('CONFIRM CLEAR');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-loader-home', body: {} }],
-        'CLEAR BIN: posts clear-loader-home with no body fields (the engine picks the first matching partial)');
+        'CLEAR: posts clear-loader-home with no body fields (the engine picks the first matching partial, the one the card names)');
+    await tap(zoneButton('Clear partials', 'Hide'));
 
-    // PULL FULL FROM HOME lists the eligible homes only, and ends in the same post.
+    // LOAD from an empty home.
     render();
+    await tap(pcCard('PART-B', 'SMN_H2'));
+    eq(loadOpens, [{ node: 2, codes: ['PART-B'], cap: 0 }], 'homes: LOAD on an empty home opens the load modal for its part');
+
+    // PULL FULL FROM HOME stays on a station that mixes a home with a press
+    // (the node grid keeps its header), and ends in the same post.
+    const pressTile = { node: { id: 9, process_id: 1, core_node_name: 'PLN_X1', name: 'PLN_X1' },
+        runtime: { remaining_uop_cached: 10, active_bin_id: 1 }, orders: [],
+        active_claim: { id: 4, core_node_name: 'PLN_X1', role: 'produce', swap_mode: 'single_robot', payload_code: 'PART-A', uop_capacity: 20 } };
+    setView([pressTile].concat(homes), homeServes);
+    render();
+    eq(headerButtons(), ['PULL FULL FROM HOME', 'REFRESH'], 'a home beside a press: the node grid keeps PULL FULL FROM HOME');
     await tap(headerButton('PULL FULL FROM HOME'));
     eq(overlayButtons(), ['SMN_H1PART-A', 'CANCEL'], 'PULL FULL FROM HOME: only the home with a buffer partial is listed');
     await tapOverlay('SMN_H1PART-A');
     await tapOverlay('CONFIRM CLEAR');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-loader-home', body: {} }],
         'PULL FULL FROM HOME: posts clear-loader-home for the picked home');
-
-    // LOAD from an empty home.
-    render();
-    await tap(cardFor('PART-B', 'SMN_H2'));
-    eq(loadOpens, [{ node: 2, codes: ['PART-B'], cap: 0 }], 'homes: LOAD on an empty home opens the load modal for its part');
-
-    // A home board set to hide idle cards (a threshold station's backfill) hides its idle homes.
-    setView(homes.map(h => Object.assign({}, h, { loader: Object.assign({}, h.loader,
-        { replenishment: 'threshold', board_hides_idle: true, board_shows_all_parts: false }) })), homeServes);
-    render();
-    eq(cards().length, 1, 'homes, on a threshold: idle homes are hidden (only the empty home\'s LOAD is drawn)');
 }
 
 // ── 4. A home while its clear is in flight (Order A on the home's orders) ──
@@ -607,36 +620,34 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     // on a produce home Order A is general (untagged) demand over an empty bin.
     const orderA = order(301, 'queued', { order_type: 'move', source_node: 'SMN_H1', delivery_node: 'SMN_F1' });
     const cleared = loaderTile(1, 'SMN_H1', { parts: ['PART-A'], bin: EMPTY, dedicated: true,
-        operator: false, orders: [orderA] });
+        operator: false, orders: [orderA], buffer: [{ node: 'SMN_F1', state: 'partial' }] });
     let m = ctx.cardModel(cleared, 'PART-A');
     eq([m.statusText, m.action, m.loadNow, m.detail], ['LOAD', 'load', true, 'Empty bin at node — tap to load'],
-        'clear in flight, today: the emptied home reads LOAD while Order A waits (the agnostic-demand branch)');
+        'clear in flight: cardModel reads the emptied home as LOAD while Order A waits (the agnostic-demand branch)');
     eq(ctx.isOwnEmptyOut(cleared, orderA), false, 'clear in flight: Order A is not the produce home\'s own empty-out');
     eq(m.queueCount, 0, 'clear in flight: no queue badge (Order A carries no part)');
     setView([cleared]);
     render();
-    eq(part(cardFor('PART-A', 'SMN_H1'), 'os-board-tag'), 'LOAD', 'clear in flight, today: the home card draws LOAD');
-    await tap(cardFor('PART-A', 'SMN_H1'));
-    eq(loadOpens, [{ node: 1, codes: ['PART-A'], cap: 0 }], 'clear in flight, today: the LOAD card opens the load modal');
-    // The node modal says TAP TO LOAD on the same home.
+    // Changed: a home whose own move is pending draws no Load card.
+    eq(pcCards().length, 0, 'clear in flight: the home draws no Load card (changed: it drew LOAD)');
+    eq([...zoneEl('Clear partials').descendants().filter(n => n.classList.contains('os-pc-spot-box'))].map(n => n.className),
+        ['os-pc-spot-box os-pc-spot-box--coming'], 'clear in flight: its spot is drawn as coming');
+    // The node modal still says TAP TO LOAD on the same home (not the board's).
     resetDOM();
     ctx.openModal(1);
     eq(modalActions().map(a => a.dataset.action).filter(a => a.indexOf('demand-card') === 0), ['demand-card:PART-A'],
         'clear in flight, today: the node modal offers the load (TAP TO LOAD)');
 
-    // The same moment, with the acked status: still LOAD (the order carries no part).
     m = ctx.cardModel(Object.assign({}, cleared, { orders: [Object.assign({}, orderA, { status: 'acknowledged' })] }), 'PART-A');
     eq(m.statusText, 'LOAD', 'clear in flight, Order A acknowledged: still LOAD');
-    // Before Core's zero is read back (the bin still shows its part): no demand.
     m = ctx.cardModel(Object.assign({}, cleared, { bin_state: FULL('PART-A', 12) }), 'PART-A');
     eq([m.statusText, m.action], ['NO DEMAND', ''], 'clear in flight, bin still labelled: NO DEMAND');
-    // Once the carrier is lifted (no bin, Order A in transit): no demand.
     m = ctx.cardModel(Object.assign({}, cleared, { bin_state: NONE,
         orders: [Object.assign({}, orderA, { status: 'in_transit' })] }), 'PART-A');
     eq([m.statusText, m.action], ['NO DEMAND', ''], 'clear in flight, carrier lifted: NO DEMAND');
 }
 
-// ── 5. The slot grid (consume, shared window) ──────────────────────────────
+// ── 5. A shared unloader (the old slot grid) ───────────────────────────────
 {
     const slots = [
         loaderTile(1, 'ULN_A1', { role: 'consume', parts: ['PART-A', 'PART-B'], bin: FULL('PART-A', 7), uop: 7,
@@ -646,80 +657,72 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     ];
     setView(slots);
     render();
-    eq(slotTiles().length, 3, 'slot grid: a consume shared-window loader renders the node grid, one tile per window');
-    eq(cards().length, 0, 'slot grid: no payload cards');
-    eq(headerButtons(), ['CHANGEOVER', 'REFRESH'], 'slot grid: the header keeps CHANGEOVER (more than one node)');
-    // CHANGEOVER on that header: the picker (the composer is not loaded here)
-    // and a style's tap posts changeover/start.
-    await tap(headerButton('CHANGEOVER'));
-    await tapOverlay('STYLE-1');
-    eq(posts(), [{ method: 'POST', url: '/api/processes/1/changeover/start',
-        body: { to_style_id: 11, called_by: 'Loader station', notes: '' } }],
-    'slot grid: CHANGEOVER\'s picker posts changeover/start');
-    // During a changeover the same header offers CUTOVER and CANCEL.
-    setView(slots, { active_changeover: { id: 5, to_style_name: 'STYLE-2', from_style_name: 'STYLE-1' },
-        process: { id: 1, name: 'LDR', active_style_id: 11, target_style_id: 12 } });
-    render();
-    eq(headerButtons(), ['CUTOVER', 'CANCEL', 'REFRESH'], 'slot grid during a changeover: CUTOVER and CANCEL');
-    await tap(headerButton('CUTOVER'));
-    await tapOverlay('CONFIRM CUTOVER');
-    eq(posts(), [{ method: 'POST', url: '/api/processes/1/changeover/cutover', body: {} }], 'CUTOVER posts changeover/cutover');
-    render();
-    await tap(headerButton('CANCEL'));
-    await tapOverlay('CANCEL CHANGEOVER');
-    eq(posts(), [{ method: 'POST', url: '/api/processes/1/changeover/cancel', body: {} }], 'CANCEL posts changeover/cancel');
-    setView(slots);
-    render();
-    const words = n => slotTile(n).children.find(k => k.classList.contains('os-node-remaining')).textContent;
-    eq([words('ULN_A1'), words('ULN_A2'), words('ULN_A3')], ['PART-A', 'EMPTY', 'NO BIN'], 'slot grid: the slot words');
+    // Changed: a shared unloader is a board, one list of carts; its header
+    // carries no CHANGEOVER.
+    eq(slotTiles().length, 0, 'a shared unloader is a board, not the node grid (changed)');
+    eq(headerButtons(), [], 'a shared unloader: no CHANGEOVER (changed: the header kept it)');
+    eq(zoneTitles(), ['At the windows'], 'a shared unloader: one list');
+    eq(pcCards().map(c => cardText(c)), [
+        ['ULN_A1', ' · holds a full bin', ' · PART-A', ' · 7', 'TOTE-1', 'Send back TOTE-1'],
+        ['ULN_A2', ' · holds an empty bin', 'TOTE-1', 'Send it'],
+    ], 'At the windows: one card a cart, the bin the headline; a station of two bin types says what to send back');
 
     // A full: the CLEAR panel. Two types for the window's parts: a picker.
-    await tap(slotTile('ULN_A1'));
-    eq(overlayTexts()[0], 'Full pulled, empty filled?', 'slot full: the CLEAR panel');
-    eq(overlayButtons(), ['TOTE-1', 'TOTE-2', 'CANCEL'], 'slot full: a type per part');
-    eq(overlayTexts().indexOf('This slot still counts 7. Confirming writes it to zero.') >= 0, true, 'slot full: the discard count');
+    await tap(pcCard('TOTE-1', 'ULN_A1'));
+    eq(overlayTexts()[0], 'Full pulled, empty filled?', 'cart full: the CLEAR panel');
+    eq(overlayButtons(), ['TOTE-1', 'TOTE-2', 'CANCEL'], 'cart full: a type per part');
+    eq(overlayTexts().indexOf('This slot still counts 7. Confirming writes it to zero.') >= 0, true, 'cart full: the discard count');
     await tapOverlay('TOTE-2');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-bin', body: { bin_type_code: 'TOTE-2' } }],
-        'slot full: a type\'s tap posts clear-bin with it');
+        'cart full: a type\'s tap posts clear-bin with it');
 
     // An empty: PUSH EMPTY and PUSH AS.
     render();
-    await tap(slotTile('ULN_A2'));
-    eq(overlayButtons(), ['PUSH EMPTY', 'PUSH AS TOTE-1', 'PUSH AS TOTE-2', 'CANCEL'], 'slot empty: PUSH EMPTY and PUSH AS');
+    await tap(pcCard('TOTE-1', 'ULN_A2'));
+    eq(overlayButtons(), ['PUSH EMPTY', 'PUSH AS TOTE-1', 'PUSH AS TOTE-2', 'CANCEL'], 'cart empty: PUSH EMPTY and PUSH AS');
     await tapOverlay('PUSH EMPTY');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/2/push-empty', body: {} }], 'PUSH EMPTY posts push-empty');
     render();
-    await tap(slotTile('ULN_A2'));
+    await tap(pcCard('TOTE-1', 'ULN_A2'));
     await tapOverlay('PUSH AS TOTE-1');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/2/clear-bin', body: { bin_type_code: 'TOTE-1' } }],
         'PUSH AS posts clear-bin with the type');
 
-    // No bin: the tap does nothing.
+    // No bin: no card; Show all draws it and opens the node modal (changed:
+    // the slot's tap did nothing).
     render();
-    await tap(slotTile('ULN_A3'));
-    eq([overlay(), posts(), document.getElementById('node-modal').classList.contains('active')], [null, [], false],
-        'slot with no bin: the tap does nothing');
+    eq(pcCard('PART-A', 'ULN_A3'), null, 'a window with no cart: no card');
 
     // One type for the parts: auto-filled, one button.
     setView([loaderTile(1, 'ULN_A1', { role: 'consume', parts: ['PART-A'], bin: FULL('PART-A', 0), operator: true })]);
     render();
-    await tap(slotTile('ULN_A1'));
-    eq(overlayButtons(), ['CONFIRM SWAP', 'CANCEL'], 'slot full, one type: CONFIRM SWAP');
+    await tap(pcCards()[0]);
+    eq(overlayButtons(), ['CONFIRM SWAP', 'CANCEL'], 'cart full, one type: CONFIRM SWAP');
     await tapOverlay('CONFIRM SWAP');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-bin', body: { bin_type_code: 'TOTE-1' } }],
         'CONFIRM SWAP posts the one type');
+
+    // A press waiting on another bin type: the note says change, the panel
+    // lights it, every button still there.
+    setView(slots, { serves: [row('P1', 'PART-A', 40, { role: 'produce', carrier: 'TOTE-2', capacity_uop: 40, waiting: true })] });
+    render();
+    const red = pcCards()[0];
+    eq([cardText(red), red.className], [['ULN_A2', ' · holds an empty bin', 'TOTE-1', 'NOW', '· Change to TOTE-2'], 'os-pc-card os-pc-card--red'],
+        'a full press with no empty ready: the first cart that can fix it is red, "Change to"');
+    await tap(pcCard('TOTE-1', 'ULN_A1'));
+    eq(body.children.filter(n => !n.removed).slice(-1)[0].descendants().filter(n => n.classList.contains('os-co-picker-btn--lit')).map(n => n.textContent),
+        ['TOTE-2'], 'the CLEAR panel lights the card\'s send-back type');
 }
 {
-    // Core unreachable: the handler stamps no bin_state. Fixed: the slot said
-    // NO BIN, a fact nobody had established; it says it could not look. The tap
-    // does nothing, as before.
+    // Core unreachable: the handler stamps no bin_state. The windows hold no
+    // cart the board can see: no card; the top line says nothing at the windows.
     setView([loaderTile(1, 'ULN_A1', { role: 'consume', parts: ['PART-A'], operator: true }),
         loaderTile(2, 'ULN_A2', { role: 'consume', parts: ['PART-A'], operator: true })]);
     render();
-    eq(slotTile('ULN_A1').children.find(k => k.classList.contains('os-node-remaining')).textContent, 'COULD NOT LOOK',
-        'Core unreachable, fixed: the slot says it could not look');
-    await tap(slotTile('ULN_A1'));
-    eq([overlay(), posts()], [null, []], 'Core unreachable: the tap does nothing');
+    eq([pcCards().length, topLine()[1]], [0, 'nothing at the windows'], 'Core unreachable: no card, nothing to tap');
+    await tap(showAllButton());
+    eq(cardText(pcCards()[0]).slice(0, 2), ['ULN_A1', ' · could not look'], 'Core unreachable: Show all says it could not look');
+    await tap(showAllButton());
 }
 
 // ── 6. The two-stage unloader ──────────────────────────────────────────────
@@ -730,32 +733,34 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
         loaderTile(3, 'ST2_A2', { role: 'consume', parts: ['PART-A'], bin: EMPTY, pulled_directly: true, operator: true }),
     ]);
     render();
-    eq(slotTiles().length, 3, 'two-stage: the node grid');
-    await tap(slotTile('ST1_A1'));
+    eq(pcCards().length, 3, 'two-stage: a card per cart');
+    eq(part(pcCard('TOTE-1', 'ST2_A2'), 'os-pc-why'), 'The cart waits here for the line',
+        'stage 2 pulled directly: the empty cart waits for the line');
+    await tap(pcCard('TOTE-1', 'ST1_A1'));
     eq(overlayButtons(), ['Full off', 'CANCEL'], 'stage 1 full: one tap, Full off');
     await tapOverlay('Full off');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-bin', body: {} }], 'Full off posts clear-bin with no type');
     render();
-    await tap(slotTile('ST2_A1'));
+    await tap(pcCards().find(c => cardText(c)[0] === 'ST2_A1'));
     eq(overlayButtons(), ['Send on', 'CANCEL'], 'stage 2 bare cart: one tap, Send on');
     await tapOverlay('Send on');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/2/clear-bin', body: {} }], 'Send on posts clear-bin with no type');
     render();
-    await tap(slotTile('ST2_A2'));
+    await tap(pcCard('TOTE-1', 'ST2_A2'));
     eq(overlayButtons(), ['PUSH EMPTY', 'PUSH AS TOTE-1', 'CANCEL'], 'stage 2 empty that is not bare: PUSH EMPTY');
 }
 
-// ── 7. The consume payload board (a station mixing roles, consume first) ───
+// ── 7. A station mixing roles, consume first (the old consume payload board) ─
 {
     setView([
         loaderTile(1, 'ULN_M1', { role: 'consume', parts: ['PART-B', 'PART-A'], bin: NONE, operator: true }),
         loaderTile(2, 'SMN_M2', { role: 'produce', parts: ['PART-A'], bin: NONE, operator: true }),
     ]);
     render();
-    eq(slotTiles().length, 0, 'mixed roles: not the slot grid (the slot grid needs every window an unloader\'s)');
-    eq(headerButtons(), ['REFRESH'], 'mixed roles, fixed with the two windows: a payload board\'s header carries no cell buttons');
-    eq(reqBarButtons().map(b => b.textContent), ['REQUEST FULL'], 'mixed roles: the first window\'s board, an unloader: REQUEST FULL');
-    await tap(reqBarButtons()[0]);
+    eq(slotTiles().length, 0, 'mixed roles: the board');
+    eq(headerButtons(), [], 'mixed roles: no header buttons');
+    eq(barButtons().map(b => b.textContent), ['Request full'], 'mixed roles: the first window\'s bar, an unloader: Request full');
+    await tap(barButtons()[0]);
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/request-full', body: { payload_code: 'PART-A' } }],
         'REQUEST FULL posts request-full with the first part the board lists (sorted on an operator-driven board)');
     // A delivered full on that board: the card's tap is the CLEAR panel.
@@ -764,12 +769,18 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
         loaderTile(2, 'SMN_M2', { role: 'produce', parts: ['PART-A'], bin: NONE, operator: true }),
     ]);
     render();
-    const c = cardFor('PART-A');
-    eq(part(c, 'os-board-tag'), 'SWAP', 'consume card with its full parked: SWAP');
-    await tap(c);
+    await tap(pcCard('TOTE-1', 'ULN_M1'));
     await tapOverlay('CONFIRM SWAP');
     eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-bin', body: { bin_type_code: 'TOTE-1' } }],
         'consume card: the unload tap posts clear-bin through the panel');
+    // An empty parked there: the old board's card opened the CLEAR, and still does.
+    setView([
+        loaderTile(1, 'ULN_M1', { role: 'consume', parts: ['PART-A'], bin: EMPTY, operator: true }),
+        loaderTile(2, 'SMN_M2', { role: 'produce', parts: ['PART-A'], bin: NONE, operator: true }),
+    ]);
+    render();
+    await tap(pcCard('TOTE-1', 'ULN_M1'));
+    eq(overlayButtons(), ['CONFIRM SWAP', 'CANCEL'], 'consume empty on a mixed board: the CLEAR panel, as the old card opened');
 }
 
 // ── 8. The node modal on a loader tile ─────────────────────────────────────
@@ -786,6 +797,28 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
     await tap(slotTile('SMN_A1'));
     eq([document.getElementById('node-modal').classList.contains('active'), posts()], [true, []],
         'loader beside a press: the loader tile opens the node modal');
+    // That station's header keeps CHANGEOVER (the board's does not). The
+    // composer is not loaded here, so its tap opens nothing and posts
+    // nothing: the screen says it did not load.
+    eq(headerButtons(), ['CHANGEOVER', 'REFRESH'], 'loader beside a press: the header keeps CHANGEOVER');
+    render();
+    await tap(headerButton('CHANGEOVER'));
+    const toasts = document.getElementById('os-toast').children.filter(n => !n.removed).map(n => n.textContent);
+    eq([posts(), overlayButtons(), toasts.slice(-1)],
+        [[], [], ['The changeover screen did not load — tap CHANGEOVER again']],
+        'CHANGEOVER with no composer: no picker, nothing posted');
+    setView([press, loaderTile(1, 'SMN_A1', { parts: ['PART-A'], bin: NONE })],
+        { active_changeover: { id: 5, to_style_name: 'STYLE-2', from_style_name: 'STYLE-1' },
+            process: { id: 1, name: 'LDR', active_style_id: 11, target_style_id: 12 } });
+    render();
+    eq(headerButtons(), ['CUTOVER', 'CANCEL', 'REFRESH'], 'during a changeover: CUTOVER and CANCEL');
+    await tap(headerButton('CUTOVER'));
+    await tapOverlay('CONFIRM CUTOVER');
+    eq(posts(), [{ method: 'POST', url: '/api/processes/1/changeover/cutover', body: {} }], 'CUTOVER posts changeover/cutover');
+    render();
+    await tap(headerButton('CANCEL'));
+    await tapOverlay('CANCEL CHANGEOVER');
+    eq(posts(), [{ method: 'POST', url: '/api/processes/1/changeover/cancel', body: {} }], 'CANCEL posts changeover/cancel');
 }
 {
     // Produce window, idle: the demand card asks for an empty with the part.
@@ -871,92 +904,125 @@ const loadBody = { payload_code: 'PART-A', uop_count: 24,
 
 // ── 9. The dedicated unloader and "no part running" ──────────────────────
 {
-    // A dedicated-position unloader with nothing making its parts. Fixed: every
-    // home read ACTIVE and "Lineside 0 UoP" whatever ran; a home is ACTIVE when a
-    // running cell makes its part (a produce row of view.serves).
+    // A dedicated-position unloader with no cart at any home: the one list
+    // says so in one quiet line. (Changed: the ACTIVE / PRELOAD cards are gone;
+    // the board draws work only.)
     const unloaderHomes = [
         loaderTile(1, 'SMN_U1', { role: 'consume', parts: ['PART-A'], bin: NONE, dedicated: true, operator: true }),
         loaderTile(2, 'SMN_U2', { role: 'consume', parts: ['PART-B'], bin: NONE, dedicated: true, operator: true }),
     ];
-    setView(unloaderHomes, { serves: [] });
-    render();
-    eq(cards().map(c => [part(c, 'os-board-cov'), part(c, 'os-board-tag'), part(c, 'os-board-lineside')]),
-        [['PRELOAD', 'PRELOAD', null], ['PRELOAD', 'PRELOAD', null]],
-        'dedicated unloader, fixed: nothing makes its parts, no home reads ACTIVE');
     setView(unloaderHomes, { serves: [row('PRESS-1', 'PART-B', 40, { role: 'produce' })] });
     render();
-    eq(part(cardFor('PART-B', 'SMN_U2'), 'os-board-cov'), 'ACTIVE', 'dedicated unloader: a home whose part a running press makes reads ACTIVE');
-    eq(headerButtons(), ['PULL FULL FROM HOME', 'REFRESH'], 'dedicated unloader: the header offers PULL FULL FROM HOME');
+    eq([pcCards().length, part(zoneEl('At the windows'), 'os-pc-zone-empty'), headerButtons()],
+        [0, 'No cart at any window.', []], 'dedicated unloader: no cart, one quiet line, no header buttons');
+    // A full delivered to a home with no cart read yet: the old card's Unload,
+    // in its own zone.
+    setView([loaderTile(1, 'SMN_U1', { role: 'consume', parts: ['PART-A'], bin: NONE, dedicated: true, operator: true,
+        orders: [order(502, 'delivered', { payload_code: 'PART-A' })] })], { serves: [] });
+    render();
+    eq(zoneTitles(), ['At the windows', 'Unload'], 'a delivered full with no cart read: the catch-all zone, titled by its act');
+    await tap(pcCard('PART-A'));
+    await tapOverlay('CONFIRM SWAP');
+    eq(posts(), [{ method: 'POST', url: '/api/process-nodes/1/clear-bin', body: { bin_type_code: 'TOTE-1' } }],
+        'the catch-all Unload card opens the CLEAR panel, as the old card did');
 
-    // No part running: serves is [] (read, nothing runs), and a queued call is
-    // not downtime. Fixed: no part running arrived as no data and the call
-    // escalated. A board that could not look (no serves) still escalates.
+    // A queued call with nothing coming draws no card (changed: the QUEUED
+    // downtime card; the board draws a tile's act, and a queued call has none).
     const queued = [order(501, 'queued', { payload_code: 'PART-A', queue_reason: 'no empty in the market' })];
     setView([loaderTile(1, 'SMN_N1', { parts: ['PART-A'], bin: NONE, orders: queued })], { serves: [] });
     render();
-    let c = cardFor('PART-A');
-    eq([c.classList.contains('os-board-card--waiting'), part(c, 'os-board-downtime')], [false, null],
-        'no part running, fixed: the queued call is not downtime');
-    setView([loaderTile(1, 'SMN_N1', { parts: ['PART-A'], bin: NONE, orders: queued })]);
-    render();
-    c = cardFor('PART-A');
-    eq([c.classList.contains('os-board-card--waiting'), part(c, 'os-board-downtime')],
-        [true, 'QUEUED 5m — no empty in the market'],
-        'could not look (no serves): the queued call escalates as downtime');
-    // On a normal loader the cards come from the active list, so a part no
-    // running style uses has no card at all.
-    setView([loaderTile(1, 'SMN_N1', { parts: ['PART-A', 'PART-B'], bin: NONE, orders: queued })],
-        { serves: [row('CELL-N', 'PART-B', 20)] });
-    render();
-    eq(cardFor('PART-A'), null, 'normal loader: a queued part no running style uses draws no card');
-    // An operator loader's board draws every part; a list naming another part
-    // keeps the queued call out of scope.
-    setView([loaderTile(1, 'SMN_N1', { parts: ['PART-A', 'PART-B'], bin: NONE, orders: queued, operator: true })],
-        { serves: [row('CELL-N', 'PART-B', 20)] });
-    render();
-    c = cardFor('PART-A');
-    eq([c.classList.contains('os-board-card--waiting'), part(c, 'os-board-downtime')], [false, null],
-        'a running style that does not use the part: no escalation');
+    eq(pcCards().length, 0, 'a queued call with nothing to load draws no card');
 }
 
-// ── 10. The changeover banner ──────────────────────────────────────────────
+// ── 10. The changeover banner is gone ──────────────────────────────────────
 {
-    // Changed: the banner is drawn from the served rows that wait on what this
-    // loader makes (view.serves, waiting), one rule for every served cell; it was
-    // the station's own process's incoming produce claims, whatever was short.
-    // The directive setting still gates it.
-    const waiting = { serves: [row('CELL-C', 'PART-A', 0, { incoming: true, waiting: true, carrier: 'TOTE-1', node: 'WLN_C1' }),
-        row('CELL-C', 'PART-B', 0, { incoming: true, carrier: 'TOTE-2', node: 'WLN_C1' })] };
+    // Changed: the directive setting gated the banner, which the board retires; a
+    // cell changing over to a part it has none of is a red card where a tile
+    // can fill it, and the top line names the cell either way.
+    const waiting = { serves: [row('CELL-C', 'PART-A', 0, { incoming: true, waiting: true, carrier: 'TOTE-1', node: 'WLN_C1' })] };
     setView([loaderTile(1, 'SMN_C1', { parts: ['PART-A', 'PART-B'], bin: NONE, directive: true })], waiting);
     render();
-    const banner = grid.children.find(n => n.classList.contains('os-changeover-load-directive'));
-    eq(banner && banner.innerHTML, '<div class="os-cld-label">CHANGEOVER — LOAD</div><div class="os-cld-bintype">TOTE-1</div>' +
-        '<div class="os-cld-why">for PART-A</div><div class="os-cld-who">waiting: WLN_C1</div>',
-    'banner: the payload board draws what the waiting rows wait for, the bin type first (a row not waiting is not named)');
-    eq(grid.children.indexOf(banner), 1, 'banner: under the board header, above the request bar');
-    setView([loaderTile(1, 'SMN_C1', { parts: ['PART-A'], bin: NONE })], waiting);
+    eq(grid.descendants().some(n => n.classList.contains('os-changeover-load-directive')), false, 'no banner on the board');
+    eq(topLine()[1], '0 to load · CELL-C out', 'the cell changing over with none of the part is named in the top line');
+    setView([loaderTile(1, 'SMN_C1', { parts: ['PART-A', 'PART-B'], bin: EMPTY, directive: true })], waiting);
     render();
-    eq(grid.descendants().some(n => n.classList.contains('os-changeover-load-directive')), false,
-        'banner: the directive setting off draws nothing');
-    setView([loaderTile(1, 'SMN_C1', { parts: ['PART-A'], bin: NONE, directive: true })],
-        { serves: [row('CELL-C', 'PART-A', 0, { incoming: true, carrier: 'TOTE-1' })] });
+    const c = pcCard('PART-A');
+    eq([c.className, cardText(c).slice(-2)], ['os-pc-card os-pc-card--red', ['NOW', '· CELL-C out']],
+        'an empty home that can fill it: the red card, NOW, no word "changeover"');
+}
+
+// ── 11. A board that overflows the screen ─────────────────────────────────
+{
+    // 40 homes to load, four refusals (two rows), at 1280 x 768: the zones give
+    // way from the last. A cut zone draws the cards that fit and a "+N more"
+    // for exactly the rest (a bug fixed: a zone cut to no card drew its title
+    // and nothing to tap), and "+N more" opens Show all.
+    const homes = [], serves = [];
+    for (let i = 0; i < 40; i++) {
+        const p = 'PART-' + (100 + i);
+        homes.push(loaderTile(i + 1, 'SMN_' + (100 + i), { parts: [p], bin: EMPTY, dedicated: true }));
+        serves.push(row('CELL-' + (i % 5), p, i === 0 ? 0 : 50 + i * 10));
+    }
+    for (let i = 0; i < 4; i++) {
+        const p = 'PART-R' + i;
+        homes.push(loaderTile(20 + i, 'SMN_R' + i, { parts: [p], bin: NONE, dedicated: true,
+            supply_refusals: { [p]: { refused_at: new Date().toISOString() } } }));
+        serves.push(row('CELL-R', p, 500));
+    }
+    setView(homes, { serves: serves });
     render();
-    eq(grid.descendants().some(n => n.classList.contains('os-changeover-load-directive')), false,
-        'banner: nothing waiting draws nothing');
-    setView([loaderTile(1, 'SMN_H1', { parts: ['PART-A'], bin: NONE, dedicated: true, operator: true, directive: true })], waiting);
+    const more = z => zoneEl(z).descendants().filter(n => n.classList.contains('os-pc-more')).map(n => n.textContent);
+    const drawn = zoneEl('Waiting on the plant').descendants().filter(n => n.classList.contains('os-pc-card')
+        && !n.classList.contains('os-pc-more')).length;
+    eq([drawn < 4, more('Waiting on the plant')], [true, ['+' + (4 - drawn) + ' more']],
+        'overflow: a cut zone draws what fits and "+N more" for the rest');
+    await tap(zoneEl('Waiting on the plant').descendants().find(n => n.classList.contains('os-pc-more')));
+    eq(topLine()[2], 'Show work', '"+N more" opens Show all');
+    await tap(showAllButton());
+}
+
+// ── 12. A band is replaced only when what it draws changed ────────────────
+{
+    // The board is drawn in bands (the top line, the status row, a section a
+    // zone). A poll that moves one band rebuilds that band and keeps every
+    // other one, its nodes and listeners; an unchanged view replaces nothing
+    // (a bug fixed: every render rebuilt every card).
+    const homes = [
+        loaderTile(1, 'SMN_K1', { parts: ['PART-A'], bin: EMPTY, dedicated: true }),
+        loaderTile(2, 'SMN_K2', { parts: ['PART-B'], bin: FULL('PART-B'), dedicated: true }),
+    ];
+    const serves = b => [row('CELL-K', 'PART-A', 40), row('CELL-K', 'PART-B', b)];
+    setView(homes, { serves: serves(70) });
     render();
-    eq(grid.descendants().some(n => n.classList.contains('os-changeover-load-directive')), false,
-        'banner: the home board does not draw it');
-    setView([loaderTile(1, 'ULN_C1', { role: 'consume', parts: ['PART-A'], bin: NONE, directive: true }),
-        loaderTile(2, 'ULN_C2', { role: 'consume', parts: ['PART-A'], bin: NONE })], waiting);
+    const before = grid.children.slice();
+    eq(before.map(n => n.className.split(' ')[0]), ['os-pc-top', 'os-pc-status', 'os-pc-zone'],
+        'bands: the top line, the cells row, the Load section');
+    setView(homes, { serves: serves(70) });
+    ctx.renderGrid();
+    eq(grid.children.map((n, i) => n === before[i]), [true, true, true], 'an unchanged view replaces no band');
+    // PART-B is covered (its home holds a stocked bin): its count moves its bar
+    // in the cells row and nothing else.
+    setView(homes, { serves: serves(55) });
+    ctx.renderGrid();
+    eq(grid.children.map((n, i) => n === before[i]), [true, false, true], 'a moved count replaces the cells row only');
+    await tap(pcCard('PART-A', 'SMN_K1'));
+    eq(loadOpens, [{ node: 1, codes: ['PART-A'], cap: 0 }], 'a kept card still opens its act');
+}
+
+// ── 13. A buffer full of partials no home can take ────────────────────────
+{
+    // The section's header says NOW and why; "No partial can come home" is one
+    // plain line under it, not in the header (a bug fixed: in the header it
+    // pushed the strip off a 1024 px screen).
+    const red = [1, 2, 3].map(i => ({ node: 'LDR.SMN_P' + i, state: 'partial' }));
+    setView([loaderTile(1, 'SMN_H1', { parts: ['PART-A'], bin: FULL('PART-B'), dedicated: true, buffer: red })],
+        { serves: [row('CELL-H', 'PART-A', 40)] });
     render();
-    eq(grid.descendants().some(n => n.classList.contains('os-changeover-load-directive')), false,
-        'banner: the slot grid does not draw it');
-    setView([loaderTile(1, 'SMN_C1', { parts: ['PART-A'], bin: NONE, directive: true })],
-        { serves: [row('CELL-C', 'PART-A', 0, { incoming: true, waiting: true, carrier: '' })] });
-    render();
-    eq(grid.descendants().some(n => n.classList.contains('os-changeover-load-directive')), false,
-        'banner: a waiting row with no bin type draws nothing');
+    const z = zoneEl('Clear partials');
+    const head = z.children.find(n => n.classList.contains('os-pc-zone-head'));
+    eq([part(head, 'os-pc-word'), head.textContent.indexOf('No partial can come home'),
+        z.children.filter(n => n !== head).map(n => n.textContent)],
+    ['NOW', -1, ['No partial can come home']], 'no partial can come home: a plain line under the header');
 }
 
 if (failed) { console.error(passed + ' passed, ' + failed + ' FAILED'); process.exit(1); }

@@ -1,12 +1,20 @@
-// Rendering test for the changeover loading directive banner.
+// Rendering test for the card a loader draws when a served cell changes over
+// to a part it has none of.
 //
 // The deliverable is a sentence an operator reads off a board while standing
 // at a loader, so it is asserted by RENDERING it. Round 1's changeover banner
 // ("1 participant node HAVE no process node configured") and round 2's modal
 // geometry both survived review and died the moment they were rendered.
 //
-// Runs under plain Node (no npm). Exit 0 = pass, 1 = any failure. Run via the
-// Go wrapper operator_changeover_load_card_test.go.
+// The banner is gone: the board draws a Load card, and its colour follows the
+// cell's state, never the kind of demand. A cell changing over to a part it has
+// none of is red, the same card as a cell that ran out, and no card says
+// "changeover".
+//
+// Runs under plain Node (no npm): the model (operator-board-model.js), the
+// window model it reads and the board's renderer (operator-board.js), as they
+// ship, in one vm with a minimal element. Exit 0 = pass, 1 = any failure. Run
+// via the Go wrapper operator_changeover_load_card_test.go.
 
 'use strict';
 
@@ -15,100 +23,90 @@ const path = require('path');
 const vm = require('vm');
 
 let passed = 0, failed = 0;
-function fail(what, expected, actual) {
+function ok(cond, what, expected, actual) {
+    if (cond) { passed++; return; }
     failed++;
     console.error('FAIL: ' + what + '\n   expected: ' + expected + '\n   actual:   ' + actual);
 }
-function ok(cond, what, expected, actual) {
-    if (cond) { passed++; return; }
-    fail(what, expected, actual);
-}
 
-// Extract a top-level function by brace matching, so the test exercises the
-// SHIPPING source rather than a copy that can drift. operator-render.js cannot
-// be loaded wholesale — it imports and touches the DOM at module scope — but
-// this builder is pure apart from el() and esc().
-function extractFn(src, name) {
-    const start = src.indexOf('function ' + name + '(');
-    if (start < 0) throw new Error('function ' + name + ' not found');
-    const open = src.indexOf('{', start);
-    let depth = 0;
-    for (let j = open; j < src.length; j++) {
-        if (src[j] === '{') depth++;
-        else if (src[j] === '}') {
-            depth--;
-            if (depth === 0) return src.slice(start, j + 1);
-        }
-    }
-    throw new Error('unbalanced braces in ' + name);
-}
-
-const renderSrc = fs.readFileSync(path.join(__dirname, 'operator-render.js'), 'utf8');
-const ctx = vm.createContext({
-    console,
-    esc: (s) => String(s == null ? '' : s)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
-    el: (tag, props) => Object.assign({ tagName: tag, innerHTML: '' }, props || {}),
-});
-vm.runInContext(
-    extractFn(renderSrc, 'buildChangeoverLoadDirective') +
-    '\nthis.build = buildChangeoverLoadDirective;', ctx);
-const build = ctx.build;
-
-// ── the ordinary case ────────────────────────────────────────────────────
-{
-    const html = build({
-        bin_type_codes: ['TOTE-L'],
-        payload_codes: ['SYN-PART13E.06'],
-        for_nodes: ['PLN_002', 'PLN_004'],
-        changeover_id: 12,
-    }).innerHTML;
-
-    ok(/TOTE-L/.test(html), 'the bin type is on the card', 'TOTE-L', html);
-    ok(/CHANGEOVER/i.test(html), 'the card says why it is there', 'mentions CHANGEOVER', html);
-    ok(/LOAD/i.test(html), 'the card states the action', 'mentions LOAD', html);
-    ok(/SYN-PART13E\.06/.test(html), 'the payload gives the "for what"', 'the payload code', html);
-    ok(/PLN_002/.test(html) && /PLN_004/.test(html),
-        'both waiting cells are named', 'PLN_002 and PLN_004', html);
-
-    // THE BIN TYPE IS THE INSTRUCTION and must be the biggest thing on the
-    // banner — it is what the operator walks off to fetch. A directive whose
-    // part number outweighs its carrier sends them to the wrong rack.
-    const sizeOf = (cls) => {
-        const m = html.match(new RegExp('class="' + cls + '"'));
-        return m ? cls : '';
+// A minimal element: enough to build a card and read its text back.
+function fakeEl(tag) {
+    const e = {
+        tagName: tag, children: [], className: '', _text: '', listeners: {},
+        style: { setProperty() {} },
+        classList: { add(c) { e.className += ' ' + c; }, remove() {} },
+        appendChild(c) { e.children.push(c); return c; },
+        addEventListener(k, f) { e.listeners[k] = f; },
+        set textContent(v) { e._text = String(v); },
+        get textContent() { return e._text + e.children.map(c => c.textContent).join(''); },
+        set innerHTML(v) { e._html = v; },
     };
-    ok(sizeOf('os-cld-bintype') === 'os-cld-bintype',
-        'the bin type has its own emphasis class', 'os-cld-bintype present', html);
+    return e;
+}
+const ctx = vm.createContext({
+    el: function (tag, props) { return Object.assign(fakeEl(tag), props || {}); },
+});
+['operator-window-state.js', 'operator-board-model.js', 'operator-board.js'].forEach(function (f) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, f), 'utf8')
+        .replace(/^import\s[^;]*;/gm, '').replace(/^export\s+/gm, ''), ctx);
+});
+
+function tile(id, name, part) {
+    return {
+        node: { id: id, name: name, core_node_name: name }, orders: [],
+        loader: { role: 'produce', layout: 'dedicated_positions', replenishment: 'threshold', outbound_dest: '',
+            parts: [{ code: part }], directive: false, leaves_bare: false, pulled_directly: false },
+        bin_state: { occupied: true, payload_code: '', stocked: false, bin_type_code: 'TOTE-L' },
+    };
+}
+function row(cell, part, have, o) {
+    return Object.assign({ cell: cell, part: part, role: 'consume', carrier: 'TOTE-L', have_uop: have, capacity_uop: 100,
+        incoming: false, node: 'PLN_A2', process_id: 2, process_node_id: 2, reorder_uop: 0, waiting: false }, o || {});
+}
+function card(view) {
+    const m = ctx.boardModel(view);
+    const c = m.zones.find(z => z.key === 'load').cards[0];
+    return { card: c, text: c ? ctx.buildCard(c, { act() {} }).textContent : '' };
 }
 
-// ── two presses onto different dunnage ───────────────────────────────────
+// ── a cell changing over to a part it has none of ──────────────────────────
 {
-    const html = build({
-        bin_type_codes: ['TOTE-L', 'TOTE-S'],
-        payload_codes: ['PART-A', 'PART-B'],
-        for_nodes: ['PLN_002', 'PLN_004'],
-    }).innerHTML;
-    ok(/TOTE-L/.test(html) && /TOTE-S/.test(html),
-        'both carrier types are named', 'TOTE-L and TOTE-S', html);
-    ok(/TOTE-L\s*\+\s*TOTE-S/.test(html),
-        'two types read as two things to fetch, not one hyphenated name',
-        'joined with +', html);
+    const r = card({ station: {}, nodes: [tile(1, 'SMN_A21', 'PART-NEW')],
+        serves: [row('PRESS-3', 'PART-OLD', 40), row('PRESS-3', 'PART-NEW', 0, { incoming: true, waiting: true })] });
+    ok(r.card && r.card.tone === 'red', 'the card is red', 'red', r.card && r.card.tone);
+    ok(/NOW/.test(r.text), 'the card carries NOW', 'NOW', r.text);
+    ok(/PRESS-3 out/.test(r.text), 'the reason names the cell', 'PRESS-3 out', r.text);
+    ok(/PART-NEW/.test(r.text), 'the part is the headline', 'PART-NEW', r.text);
+    ok(/SMN_A21/.test(r.text) && /TOTE-L/.test(r.text), 'the spot and what it holds', 'SMN_A21 holds an empty TOTE-L', r.text);
+    ok(!/changeover/i.test(r.text), 'no card says changeover', 'no "changeover"', r.text);
 }
 
-// ── partial data must not render half a sentence ─────────────────────────
+// ── the same cell out of a running part: the same red card ─────────────────
 {
-    const html = build({ bin_type_codes: ['TOTE-L'] }).innerHTML;
-    ok(/TOTE-L/.test(html), 'the instruction survives with no context', 'TOTE-L', html);
-    ok(!/for\s*<\/div>/.test(html) && !/waiting:\s*<\/div>/.test(html),
-        'no dangling "for" or "waiting:" with nothing after it',
-        'context lines omitted entirely', html);
+    const r = card({ station: {}, nodes: [tile(1, 'SMN_A21', 'PART-RUN')], serves: [row('PRESS-3', 'PART-RUN', 0)] });
+    ok(r.card && r.card.tone === 'red' && /PRESS-3 out/.test(r.text), 'a running part out reads the same', 'red, PRESS-3 out', r.text);
 }
 
-// ── escaping ─────────────────────────────────────────────────────────────
+// ── changing over with some left: waiting, amber ───────────────────────────
 {
-    const html = build({ bin_type_codes: ['<img src=x onerror=alert(1)>'] }).innerHTML;
-    ok(!/<img/.test(html), 'values are escaped, not injected', 'no raw <img', html);
+    const r = card({ station: {}, nodes: [tile(1, 'SMN_A21', 'PART-NEW')],
+        serves: [row('PRESS-3', 'PART-NEW', 30, { incoming: true, waiting: true })] });
+    ok(r.card && r.card.tone === 'amber' && /SOON/.test(r.text) && /PRESS-3 waiting/.test(r.text),
+        'changing over with some left reads waiting', 'amber, SOON, PRESS-3 waiting', r.text);
+}
+
+// ── an incoming part nobody is waiting on: plain ───────────────────────────
+{
+    const r = card({ station: {}, nodes: [tile(1, 'SMN_A21', 'PART-NEW')],
+        serves: [row('PRESS-3', 'PART-NEW', 0, { incoming: true })] });
+    ok(r.card && r.card.tone === 'plain' && !/NOW|SOON/.test(r.text),
+        'an incoming row not waiting colours nothing', 'plain', r.text);
+}
+
+// ── text goes in as text ────────────────────────────────────────────────────
+{
+    const r = card({ station: {}, nodes: [tile(1, 'SMN_A', 'PART-<img>&')], serves: [row('PRESS-3', 'PART-<img>&', 0)] });
+    ok(/PART-<img>&/.test(r.text), 'a part is set as text, once, never escaped twice', 'PART-<img>&', r.text);
 }
 
 if (failed > 0) {

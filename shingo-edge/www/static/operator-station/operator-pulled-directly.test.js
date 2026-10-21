@@ -1,9 +1,9 @@
-// Unit tests for pulledDirectlyNote (operator-render.js): the loader card's
+// Unit tests for the board's note (operator-board-model.js boardModel): the card's
 // sentence at a window of a two-stage unloader's stage 2 pulled directly by the
 // process. Its finished cart is not sent anywhere; it waits on the window for
 // the line, and the card says so, so a cart standing there reads as done.
 //
-// Runs under plain Node (no npm): extracts the shipping function in a vm.
+// Runs under plain Node (no npm): the shipping modules in a vm.
 // Exit 0 = pass, 1 = any failure. Run via operator_pulled_directly_test.go.
 
 'use strict';
@@ -19,28 +19,22 @@ function eq(got, want, label) {
     console.error('FAIL: ' + label + '\n   got:  ' + JSON.stringify(got) + '\n   want: ' + JSON.stringify(want));
 }
 
-function extractFn(src, name) {
-    const start = src.indexOf('function ' + name + '(');
-    if (start < 0) throw new Error('function ' + name + ' not found');
-    const open = src.indexOf('{', start);
-    let depth = 0;
-    for (let j = open; j < src.length; j++) {
-        if (src[j] === '{') depth++;
-        else if (src[j] === '}') {
-            depth--;
-            if (depth === 0) return src.slice(start, j + 1);
-        }
-    }
-    throw new Error('unbalanced braces in ' + name);
-}
+// The sentence is the window card's note on the board (operator-board-model.js
+// boardModel): both modules are pure and run here as they ship.
+const ctx = vm.createContext({});
+['operator-window-state.js', 'operator-board-model.js'].forEach(function (f) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, f), 'utf8')
+        .replace(/^import\s[^;]*;/gm, '').replace(/^export\s+/gm, ''), ctx);
+});
 
-const src = fs.readFileSync(path.join(__dirname, 'operator-render.js'), 'utf8');
-const ctx = {};
-vm.createContext(ctx);
-// The tile's loader is read through the board model (operator-board-model.js).
-vm.runInContext(extractFn(fs.readFileSync(path.join(__dirname, 'operator-board-model.js'), 'utf8'), 'loaderOf'), ctx);
-vm.runInContext(extractFn(src, 'pulledDirectlyNote'), ctx);
-const note = ctx.pulledDirectlyNote;
+// note is the note on the card the board draws for a window, or '' with no card.
+function note(tile) {
+    const t = Object.assign({ node: { id: 1, name: 'ST2_A1', core_node_name: 'ST2_A1' }, orders: [] }, tile);
+    t.loader = Object.assign({ role: 'consume', layout: 'shared_window', parts: [{ code: 'PART-X' }] }, tile.loader);
+    const m = ctx.boardModel({ station: {}, nodes: [t], serves: [] });
+    const cards = m.zones.find(z => z.key === 'windows').cards;
+    return cards.length ? cards[0].reason : '';
+}
 
 const cart = { occupied: true, payload_code: '' };
 eq(note({ loader: { pulled_directly: true }, bin_state: cart }), 'The cart waits here for the line',

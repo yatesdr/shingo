@@ -376,13 +376,11 @@ type TileLoader struct {
 	// PulledDirectly marks a stage-2 window whose finished carts the process
 	// pulls straight off it.
 	PulledDirectly bool `json:"pulled_directly"`
-	// BoardHidesIdle and BoardShowsAllParts are how the station's board draws,
-	// Core-owned settings on the loader (Loader.BoardHidesIdle,
-	// Loader.BoardShowsAllParts). Both used to be read off the replenishment,
-	// so an operator-ordered station could never hide a loaded home. An
-	// operator loader still keeps an empty spot on screen when idle cards are
-	// hidden, because that is where the operator orders the next empty.
-	BoardHidesIdle     bool `json:"board_hides_idle"`
+	// BoardShowsAllParts is the Core-owned setting (Loader.BoardShowsAllParts):
+	// the board lists every part the loader takes, not only what a running
+	// style needs. It used to be read off the replenishment. Its sibling,
+	// board_hides_idle, has no reader here: the board draws a card only for
+	// work (boardModel), so there is no idle card to hide.
 	BoardShowsAllParts bool `json:"board_shows_all_parts"`
 	// Buffer is a dedicated loader's buffer spots in the plant's order (Core's
 	// bin_loader_homes sort order), each with what stands there. Carried ONCE

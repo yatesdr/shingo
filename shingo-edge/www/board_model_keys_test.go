@@ -85,9 +85,14 @@ func boardFixture() domain.OperatorStationView {
 			},
 			Orders: []domain.Order{},
 			BinState: &domain.NodeBinState{BinID: 3, BinLabel: "BIN-3", BinTypeCode: "TOTE-1", Bare: true,
-				PayloadCode: "PART-A", UOPRemaining: 7, Manifest: &manifest, ManifestConfirmed: true, Occupied: true},
+				PayloadCode: "PART-A", UOPRemaining: 7, Manifest: &manifest, ManifestConfirmed: true, Occupied: true,
+				// A held partial: its line, its arrival and its count (held_uop).
+				UOPCapacity: 10, HeldSince: "2026-10-18T10:00:00Z", HeldFor: "PRESS-1"},
 			BufferPartial:  &domain.BufferPartial{Node: "SMN_F1"},
 			SupplyRefusals: map[string]domain.SupplyRefusal{"PART-A": {}},
+			// The board's alarm sentences: a card's note.
+			StrandedAlarm:      "counts are waiting for a bin",
+			ContainmentFlagged: true,
 		}},
 		Serves: []domain.ServedRow{{Cell: "PRESS-1", Part: "PART-A", Role: "produce", Carrier: "TOTE-1",
 			HaveUOP: &have, CapacityUOP: 10, Incoming: true, Node: "PLN_1", ProcessID: 2, ProcessNodeID: 3,

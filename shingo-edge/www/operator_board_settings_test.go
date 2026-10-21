@@ -7,7 +7,7 @@ import (
 )
 
 // TestOperatorBoardSettingsJS runs the Node-based unit tests for the loader
-// board's station settings, hiding idle cards and listing every part
+// board's station setting, listing every part
 // (static/operator-station/operator-board-settings.test.js). Skipped if `node`
 // is not on PATH (matches the other JS test wrappers).
 func TestOperatorBoardSettingsJS(t *testing.T) {

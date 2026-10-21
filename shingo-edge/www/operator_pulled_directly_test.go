@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// TestOperatorPulledDirectlyJS runs the Node-based unit tests for the loader
-// card's sentence at a pulled-directly stage-2 window
+// TestOperatorPulledDirectlyJS runs the Node-based unit tests for the board
+// card's note at a pulled-directly stage-2 window
 // (static/operator-station/operator-pulled-directly.test.js). Skipped if
 // `node` is not on PATH (matches the other JS test wrappers).
 func TestOperatorPulledDirectlyJS(t *testing.T) {

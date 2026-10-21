@@ -1481,7 +1481,6 @@ func (s *StationService) tileLoader(l *domain.Loader, coreNode string) *domain.T
 		Parts:              parts,
 		LeavesBare:         l.LeavesBare(),
 		PulledDirectly:     l.PulledDirectly(),
-		BoardHidesIdle:     l.BoardHidesIdle(),
 		BoardShowsAllParts: l.BoardShowsAllParts(),
 	}
 	if l.Role() == domain.RoleConsume && s.carrierCatalog != nil {
