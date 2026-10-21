@@ -249,7 +249,7 @@ func (s *stubEngine) ClearBin(_ int64, _ string, _ bool, layers *int) error {
 func (s *stubEngine) RecordBinCount(int64, int, string) error { return nil }
 func (s *stubEngine) ClearLoaderHome(int64) (string, error) {
 	s.clearLoaderHomeCalls++
-	return engine.HomeClearStays, s.clearLoaderHomeErr
+	return engine.HomeClearTrade, s.clearLoaderHomeErr
 }
 func (s *stubEngine) FetchMarketBins(int64) ([]engine.MarketBinInfo, error)     { return nil, nil }
 func (s *stubEngine) PullFromMarket(int64, string) error                        { return nil }

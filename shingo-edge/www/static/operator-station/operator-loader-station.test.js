@@ -172,7 +172,7 @@ const manifests = {
 // A payload here gets a 500 from the Edge's manifest read (its catalog copy
 // could not be read).
 const manifestBroken = new Set();
-const CLEAR_DONE = 'Full recorded · the partial stays on its spot for now';
+const CLEAR_DONE = 'Full recorded · two robots trade the empty and the partial';
 // clearRefusal, set, is the error the next home clear is refused with.
 let clearRefusal = null;
 function fetchStub(url, opts) {

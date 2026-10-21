@@ -9,7 +9,6 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
-	"shingoedge/engine"
 	"shingoedge/store"
 	"shingoedge/uop"
 )
@@ -86,13 +85,8 @@ type clearAnswer func(protocol.ClearHomeRequest) (int, protocol.ClearHomeRespons
 
 func clearChosen(arm string) clearAnswer {
 	return func(protocol.ClearHomeRequest) (int, protocol.ClearHomeResponse) {
-		r := protocol.ClearHomeResponse{Status: "ok", Arm: arm, BinID: binsRigRows["SMN_H1"].BinID, DeltaEpoch: clearEpoch}
-		if arm == protocol.ClearArmNone {
-			r.Detail = "the partial stays on its spot for now"
-		} else {
-			r.ParentUUID = "core-clear-1"
-		}
-		return http.StatusOK, r
+		return http.StatusOK, protocol.ClearHomeResponse{Status: "ok", Arm: arm, ParentUUID: "core-clear-1",
+			BinID: binsRigRows["SMN_H1"].BinID, DeltaEpoch: clearEpoch}
 	}
 }
 
@@ -106,9 +100,8 @@ func clearRefusedBy(status int, sentence string) clearAnswer {
 // clear door, naming the home and the station, and nothing on the Edge
 // creates or arms anything. Per Core's answer:
 //
-//   - spot, demand, none: 200 with the board's one sentence for what Core is
-//     doing (the none arm's is the tote-stacks tap's, engine.HomeClearStays),
-//     and the zero recorded as a CLEAR records it — count 0, Core's new stamp
+//   - spot, demand, trade: 200 with the board's one sentence for what Core is
+//     doing, and the zero recorded as a CLEAR records it — count 0, Core's new stamp
 //     on the bound carrier, known-empty by the operator — and nothing else on
 //     the runtime row; the board's view moves;
 //   - Core's one-live-clear fence: 409 with Core's sentence (the confirm shows
@@ -127,7 +120,8 @@ func TestClearLoaderHome_TheDoorPerCoresArm(t *testing.T) {
 			"Full recorded · Shingo takes the empty to a buffer spot and brings the partial home"},
 		{"demand", clearChosen(protocol.ClearArmDemand), http.StatusOK, "message",
 			"Full recorded · a waiting empty pull takes the bin and Shingo brings the partial home"},
-		{"none", clearChosen(protocol.ClearArmNone), http.StatusOK, "message", engine.HomeClearStays},
+		{"trade", clearChosen(protocol.ClearArmTrade), http.StatusOK, "message",
+			"Full recorded · two robots trade the empty and the partial"},
 		{"fence", clearRefusedBy(http.StatusConflict, "SMN_H1 is already being cleared"), http.StatusConflict,
 			"error", "SMN_H1 is already being cleared"},
 		{"not a home", clearRefusedBy(http.StatusBadRequest, "SMN_H1 has no bin with parts to clear"),

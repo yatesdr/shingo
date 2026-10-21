@@ -87,8 +87,8 @@ func (h *Handlers) apiRequestFullBin(w http.ResponseWriter, r *http.Request) {
 // the full, then tapped. It is one request to Core (Engine.ClearLoaderHome),
 // which makes the checks, records the zero and authors whatever moves the
 // partial home. Recorded, the answer is 200 with the board's one sentence for
-// what Core did (engine.HomeClearStays when nothing moves yet), the board's
-// success toast. Core's one-live-clear refusal is 409 with its sentence, shown
+// what Core did (engine.HomeClearTrade when two robots trade the bins), the
+// board's success toast. Core's one-live-clear refusal is 409 with its sentence, shown
 // in place of the confirm's buttons; a node Core cannot clear is 400; any
 // other failure reaching Core is 502. It reads no body.
 func (h *Handlers) apiClearLoaderHome(w http.ResponseWriter, r *http.Request) {

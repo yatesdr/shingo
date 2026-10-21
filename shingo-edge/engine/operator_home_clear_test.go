@@ -43,7 +43,7 @@ func homeClearCore(t *testing.T, status int, body protocol.ClearHomeResponse) (*
 // Core answers with (count 0 under the carrier's new stamp, known-empty), and
 // creates no order and writes no runtime order pointer: Core authored the
 // orders. Every arm records the zero and says what Core is doing in one
-// sentence; the arm "none" is the tote-stacks tap's sentence (HomeClearStays).
+// sentence; an arm this Edge does not know is told the opening alone.
 // The one-live-clear fence is HomeClearRefused and a node Core cannot clear
 // is HomeClearInvalid, each carrying Core's sentence, with nothing recorded.
 func TestClearLoaderHome_OneRequestRecordsTheZeroAndCreatesNothing(t *testing.T) {
@@ -61,8 +61,10 @@ func TestClearLoaderHome_OneRequestRecordsTheZeroAndCreatesNothing(t *testing.T)
 			ParentUUID: "core-clear-x", BinID: 41, DeltaEpoch: 7}, homeClearSpot, "", "", true},
 		{"demand", http.StatusOK, protocol.ClearHomeResponse{Status: "ok", Arm: protocol.ClearArmDemand,
 			ParentUUID: "core-clear-y", BinID: 41, DeltaEpoch: 7}, homeClearDemand, "", "", true},
-		{"none", http.StatusOK, protocol.ClearHomeResponse{Status: "ok", Arm: protocol.ClearArmNone,
-			Detail: "the partial stays on its spot for now", BinID: 41, DeltaEpoch: 7}, HomeClearStays, "", "", true},
+		{"trade", http.StatusOK, protocol.ClearHomeResponse{Status: "ok", Arm: protocol.ClearArmTrade,
+			ParentUUID: "core-clear-z", BinID: 41, DeltaEpoch: 7}, "Full recorded · two robots trade the empty and the partial", "", "", true},
+		{"an arm this Edge does not know", http.StatusOK, protocol.ClearHomeResponse{Status: "ok", Arm: "later",
+			ParentUUID: "core-clear-w", BinID: 41, DeltaEpoch: 7}, "Full recorded", "", "", true},
 		{"fence", http.StatusConflict, protocol.ClearHomeResponse{Status: "error",
 			Error: "CLH-HOME is already being cleared"}, "", "CLH-HOME is already being cleared", "", false},
 		{"not a home", http.StatusBadRequest, protocol.ClearHomeResponse{Status: "error",

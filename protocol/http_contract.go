@@ -285,7 +285,6 @@ type ClearHomeResponse struct {
 	Arm        string `json:"arm,omitempty"`
 	BinID      int64  `json:"bin_id,omitempty"`
 	DeltaEpoch int64  `json:"delta_epoch,omitempty"`
-	Detail     string `json:"detail,omitempty"`
 	Error      string `json:"error,omitempty"`
 	ParentUUID string `json:"parent_uuid,omitempty"`
 	Status     string `json:"status"`
@@ -303,9 +302,6 @@ const (
 	// set it where the other lifted: the empty goes to the partial's spot and
 	// the partial comes home.
 	ClearArmTrade = "trade"
-	// ClearArmNone: no longer answered by Core (the trade replaced it); the Edge
-	// still reads it until its own sentence for the trade lands.
-	ClearArmNone = "none"
 )
 
 // PreflightRequest is the payload list the Edge POSTs to Core's preflight

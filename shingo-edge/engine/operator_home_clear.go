@@ -30,20 +30,24 @@ func (r *HomeClearRefused) Error() string { return r.Sentence }
 
 // HomeClearInvalid is Core's answer that the node is no home it can clear
 // (400): not a dedicated loader's pinned home, no carrier with parts, no
-// partial of its part. Core is the one validator; the Edge does not pre-check.
+// partial of its part that no other order holds, or no open spot and windows
+// that cannot take the trade. Core is the one validator; the Edge does not
+// pre-check.
 type HomeClearInvalid struct{ Sentence string }
 
 func (r *HomeClearInvalid) Error() string { return r.Sentence }
 
 // The board's sentences for a recorded clear, one per arm Core answers. They
-// share their opening, and HomeClearStays is the tote-stacks tap's sentence
-// (A.3) — the arm "none", the two-robot trade's gap: the zero is recorded and
-// the partial stays.
+// share their opening; an arm this Edge does not know is told the opening
+// alone, which is true whatever Core is doing (the zero is recorded).
 const (
-	homeClearRecorded = "Full recorded · "
-	HomeClearStays    = homeClearRecorded + "the partial stays on its spot for now"
+	homeClearSaid     = "Full recorded"
+	homeClearRecorded = homeClearSaid + " · "
 	homeClearSpot     = homeClearRecorded + "Shingo takes the empty to a buffer spot and brings the partial home"
 	homeClearDemand   = homeClearRecorded + "a waiting empty pull takes the bin and Shingo brings the partial home"
+	// HomeClearTrade is the trade's: no pull and no open spot, so two robots
+	// each lift one bin and set it where the other lifted.
+	HomeClearTrade = homeClearRecorded + "two robots trade the empty and the partial"
 )
 
 // homeClearSentence is the board's sentence for the arm Core chose.
@@ -53,8 +57,10 @@ func homeClearSentence(arm string) string {
 		return homeClearSpot
 	case protocol.ClearArmDemand:
 		return homeClearDemand
+	case protocol.ClearArmTrade:
+		return HomeClearTrade
 	}
-	return HomeClearStays
+	return homeClearSaid
 }
 
 // ClearLoaderHome asks Core to clear the home at nodeID and returns the
