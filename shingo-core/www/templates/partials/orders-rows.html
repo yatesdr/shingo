@@ -1,10 +1,11 @@
-{{define "order-route"}}{{/* From → Line → To, from source_node, process_node and
-     delivery_node. The line node is omitted when it repeats either end (a
-     retrieve delivering to the line names it once). An end not chosen yet is
-     no data, not an empty string: a muted dash whose title says so. One
-     partial for the orders board and the Dashboard, so the two cannot spell a
-     route two ways; the order pop-up's routeHTML (orders.js) draws the
-     same rule, held to this by TestOrderRouteRuleMatchesThePopup. */}}<span class="order-route">{{if .SourceNode}}{{.SourceNode}}{{else}}<span class="order-route-none" title="not assigned yet">—</span>{{end}}{{if and .ProcessNode (ne .ProcessNode .SourceNode) (ne .ProcessNode .DeliveryNode)}} <span class="order-route-arrow">→</span> {{.ProcessNode}}{{end}} <span class="order-route-arrow">→</span> {{if .DeliveryNode}}{{.DeliveryNode}}{{else}}<span class="order-route-none" title="not assigned yet">—</span>{{end}}</span>{{end}}
+{{define "order-route"}}{{/* The order's route: domain.RouteStops, the one rule
+     every route surface draws (the orders board and the Dashboard here, the
+     order pop-up's routeHTML and the task board's rowHTML from the route the
+     server sends them), held together by TestOrderRouteRuleMatchesThePopup.
+     A complex leg reads every stop of its steps; an order with no steps reads
+     From → Line → To. An end not chosen yet is no data, not an empty string: a
+     muted dash whose title says so. The stop the robot is at is marked. One
+     line: the cell does not wrap, and its title carries the whole route. */}}<span class="order-route" title="{{range $i, $s := routeStops .}}{{if $i}} → {{end}}{{if $s.Unassigned}}not assigned yet{{else}}{{$s.Node}}{{end}}{{end}}">{{range $i, $s := routeStops .}}{{if $i}} <span class="order-route-arrow">→</span> {{end}}{{if $s.Unassigned}}<span class="order-route-none" title="not assigned yet">—</span>{{else if $s.Current}}<strong class="order-route-current" title="the robot is here">{{$s.Node}}</strong>{{else}}{{$s.Node}}{{end}}{{end}}</span>{{end}}
 
 {{define "order-payload"}}{{/* The payload, printed once. payload_desc is almost
      always the payload's own catalog description ("SHIM" / "SHIM (dev)"), so

@@ -106,7 +106,7 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 
 	// Parse layout + partials as a base template set. Each page is cloned separately
 	// to avoid the "last define wins" problem with {{define "content"}}.
-	base := template.New("").Funcs(templateFuncs(eng.NodeService()))
+	base := template.New("").Funcs(templateFuncs(eng.NodeService(), eng))
 	base = template.Must(base.ParseFS(templateFS, "templates/layout.html", "templates/partials/*.html"))
 
 	// Discover page templates via fs.Glob — new templates are picked up

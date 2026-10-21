@@ -169,14 +169,37 @@ type stationNamer interface {
 	StationName(station string) string
 }
 
+// robotStations is the fleet cache the route reads a robot's station from.
+type robotStations interface {
+	GetCachedRobotStatus(vehicleID string) (fleet.RobotStatus, bool)
+}
+
+// robotStationOf is the station the order's robot last reported, "" with no
+// robot, no cache, or no report. Every route surface reads it this way.
+func robotStationOf(robots robotStations, o *domain.Order) string {
+	if robots == nil || o == nil || o.RobotID == "" {
+		return ""
+	}
+	if r, ok := robots.GetCachedRobotStatus(o.RobotID); ok {
+		return r.CurrentStation
+	}
+	return ""
+}
+
 // templateFuncs builds the shared FuncMap.
 //
 // namer may be nil — that is the no-database case (tests, template parse
 // checks) and it renders raw station ids, which is exactly what the fallback
 // does when a station has no registry row. There is deliberately no separate
 // "no namer" rendering path to keep in sync with the real one.
-func templateFuncs(namer stationNamer) template.FuncMap {
+func templateFuncs(namer stationNamer, robots robotStations) template.FuncMap {
 	return template.FuncMap{
+		// routeStops is an order's route for the order-route partial: the one
+		// rule (domain.RouteStops), with the robot's last reported station to
+		// mark the stop it is at. A nil lookup marks only a parked order's stop.
+		"routeStops": func(o *domain.Order) []domain.RouteStop {
+			return domain.RouteStops(o, robotStationOf(robots, o))
+		},
 		"simMode":    simModeEnabled, // dev speed top-strip gate; false in prod builds
 		"iconSprite": func() template.HTML { return iconSpriteHTML },
 		"canCancel":  canCancelStatus,

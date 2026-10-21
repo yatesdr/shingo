@@ -162,7 +162,7 @@ func configShotsServer(t *testing.T) *httptest.Server {
 		tmpls:    map[string]*template.Template{},
 		boot:     takeBootSnapshot(cfg),
 	}
-	base := template.Must(template.New("").Funcs(templateFuncs(nil)).ParseFS(templateFS, "templates/layout.html", "templates/partials/*.html"))
+	base := template.Must(template.New("").Funcs(templateFuncs(nil, nil)).ParseFS(templateFS, "templates/layout.html", "templates/partials/*.html"))
 	h.tmpls["config.html"] = template.Must(template.Must(base.Clone()).ParseFS(templateFS, "templates/config.html"))
 
 	r := chi.NewRouter()
