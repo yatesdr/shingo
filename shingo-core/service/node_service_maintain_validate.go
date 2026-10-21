@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"shingocore/store/loaders"
 	"shingocore/store/nodes"
 )
 
@@ -12,7 +13,8 @@ import (
 // ONE FUNCTION, EVALUATED AGAINST THE WHOLE POST-STATE, called by every endpoint
 // that changes any part of the configuration. Not per-field checks at each
 // endpoint: most of these rules are about how the parts AGREE — a level whose
-// carrier type no child accepts, a Σwant that leaves no room for a return — and
+// carrier type no child accepts, a Σwant past the positions, a level on an
+// unloader's outbound with nowhere to spill — and
 // a per-field check has no view of the other fields to compare against. Every
 // mutating path therefore builds the configuration its write WOULD leave behind
 // and asks this.
@@ -143,15 +145,28 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 		}
 	}
 
-	// ── Room for a return ────────────────────────────────────────────────────
-	// A warning, not a refusal: the group can be reconfigured, positions added,
-	// or children re-enabled, and the runtime guard is the resolver refusing a
-	// push at level — not this arithmetic. What it catches is the operator who
-	// filled every position with declared level and left the unloader nowhere to
-	// put the next carrier it drains.
-	if cfg.Enabled && enabledChildren > 0 && total >= enabledChildren {
+	// ── More than it can hold, or no room for a return ───────────────────────
+	// Past the enabled positions is a REFUSAL: a maintained group cannot stand
+	// more carriers than it has positions, so its level could never be met and
+	// the keeper would stay short of it for good. Exactly at them is a WARNING:
+	// the level can be held, but it leaves the unloader nowhere to put the next
+	// carrier it drains, and the group can gain positions or re-enable children.
+	// Maintenance off asks neither: nothing keeps the level. Pin:
+	// TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound.
+	switch {
+	case cfg.Enabled && total > enabledChildren:
+		refuse("%s declares %d carriers across %d enabled position%s — more than it can hold, so its level could never be met",
+			groupName, total, enabledChildren, plural(enabledChildren, "", "s"))
+	case cfg.Enabled && enabledChildren > 0 && total == enabledChildren:
 		warn("%s declares %d carriers across %d position%s — nothing is left free for a carrier coming back in",
 			groupName, total, enabledChildren, plural(enabledChildren, "", "s"))
+	}
+
+	// ── An unloader's outbound needs somewhere to spill ──────────────────────
+	if msg, err := s.outboundWithoutOverflow(cfg, groupName); err != nil {
+		return chk, err
+	} else if msg != "" {
+		refuse("%s", msg)
 	}
 
 	// ── Untyped supported positions ──────────────────────────────────────────
@@ -177,6 +192,36 @@ func (s *NodeService) ValidateMaintainedGroup(cfg MaintainedGroupConfig) (Mainta
 	}
 
 	return chk, nil
+}
+
+// outboundWithoutOverflow is the refusal for levels on a live unloader's
+// outbound with no overflow destination, or blank.
+//
+// A declared level is a cap whether or not maintenance is on (the store
+// resolver refuses a push past it). A live unloader that sends its empties to
+// the group has its empty-out parked once the group is at level, and the cart
+// stays on its window, unless an overflow destination takes the push. Pin:
+// TestMaintainedGroupSave_LevelsAndTheUnloaderOutbound.
+func (s *NodeService) outboundWithoutOverflow(cfg MaintainedGroupConfig, groupName string) (string, error) {
+	if len(cfg.Levels) == 0 || strings.TrimSpace(cfg.OverflowDestination) != "" {
+		return "", nil
+	}
+	all, err := s.db.ListLoaders()
+	if err != nil {
+		return "", fmt.Errorf("read loaders sending to %s: %w", groupName, err)
+	}
+	var feeding []string
+	for _, l := range all {
+		if l.Role == loaders.RoleConsume && l.OutboundDest == groupName {
+			feeding = append(feeding, l.Name)
+		}
+	}
+	if len(feeding) == 0 {
+		return "", nil
+	}
+	return fmt.Sprintf("%s sends its empties to %s, which declares a level and has no overflow destination — "+
+		"once the group is at level the empties wait on the unloader's windows; set an overflow destination",
+		strings.Join(feeding, ", "), groupName), nil
 }
 
 func plural(n int, one, many string) string {

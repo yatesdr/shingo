@@ -183,9 +183,10 @@ func queueParamsOf(p plan.Params) QueueParams {
 }
 
 // ForecastPick is the pick a door would make for need, made for a place with
-// no order (the forecaster, D2): the same finder, Asker domain.Anyone (the
-// zero value, which every dig excludes), nothing held. The planner writes
-// nothing; the zero-write test covers it.
+// no order (the forecaster, D2; the level keeper before it mints an ask,
+// Maintainer.nothingToSource): the same finder, Asker domain.Anyone (the zero
+// value, which every dig excludes), nothing held. The planner writes nothing;
+// the zero-write test covers it.
 func (d *Dispatcher) ForecastPick(need SourceNeed) SourceResult {
 	return d.finder.FindSourceForNeed(need)
 }

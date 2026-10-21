@@ -302,7 +302,18 @@ func (m *Maintainer) tickOne(g *nodes.Node, lv store.MaintainLevel, station, key
 			m.eng.logFn("maintainer: DEMAND OPENED origin=%s group=%s type=%s want=%d resident=%d",
 				origin.OriginID, g.Name, lv.BinTypeCode, lv.Want, resident)
 		}
-		st.Created, st.HeldBy = m.createAsks(g, lv, station, episode, gap)
+		// NOTHING TO SOURCE, NOTHING ASKED. An ask is pre-resolved to a free
+		// position and holds it while it waits for a carrier, so asking for a
+		// type no empty outside the group can supply speaks for positions an
+		// unloader's empty-out needs, for carriers that do not exist. The
+		// episode stays open (the group is short, and says so) and HeldBy says
+		// why nothing was asked. Pin:
+		// TestMaintainer_MintsNoAskForATypeNothingOutsideCanSource.
+		if why := m.nothingToSource(episode, lv); why != "" {
+			st.HeldBy = why
+		} else {
+			st.Created, st.HeldBy = m.createAsks(g, lv, station, episode, gap)
+		}
 
 	case resident >= lv.Want && asked == 0:
 		// ── THE SETTLE EDGE, NOT THE RISING EDGE ──────────────────────────
@@ -340,6 +351,26 @@ func (m *Maintainer) tickOne(g *nodes.Node, lv store.MaintainLevel, station, key
 		g.Name, lv.BinTypeCode, lv.Want, resident, asked, coming, gap, st.Created, st.HeldBy)
 
 	return st
+}
+
+// nothingToSource asks the finder, before any ask is minted, the question the
+// ask itself would put to it: the need createAsks' orders carry (no source
+// node, the episode's origin, so the episode's type and the fence that keeps a
+// top-off out of the group it fills), with no order and nothing held
+// (Dispatcher.ForecastPick). A carrier found, or one found buried that a dig
+// would reach, is something to source: blank. Anything else is the reason
+// nothing is asked, for HeldBy; a read the finder could not make answers the
+// same way, and the next tick asks again.
+func (m *Maintainer) nothingToSource(episode store.DemandOrigin, lv store.MaintainLevel) string {
+	res := m.eng.dispatcher.ForecastPick(dispatch.SourceNeed{
+		Intent:   dispatch.IntentEmpty,
+		OriginID: episode.OriginID,
+	})
+	switch dispatch.MapFinderOutcome(res) {
+	case dispatch.OutcomeFound, dispatch.OutcomeReshuffle:
+		return ""
+	}
+	return "no empty " + lv.BinTypeCode + " outside the group"
 }
 
 // createAsks runs the pre-resolve loop: one ask per free typed slot, bounded by

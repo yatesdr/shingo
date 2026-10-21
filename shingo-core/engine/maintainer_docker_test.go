@@ -44,6 +44,17 @@ func mntFixture(t *testing.T, db *store.DB, group string, slots int, typeCode st
 	return grpID, btID
 }
 
+// mntOutsideEmpty stands one empty of a level's type on a plain node outside
+// every group, so the keeper has a carrier it could source and asks. A type no
+// empty outside the group can supply gets no ask
+// (TestMaintainer_MintsNoAskForATypeNothingOutsideCanSource).
+func mntOutsideEmpty(t *testing.T, db *store.DB, btID int64, node string) int64 {
+	t.Helper()
+	n := &nodes.Node{Name: node, Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(n), "create "+node)
+	return landAt(t, db, btID, n.ID, node+"-EMPTY")
+}
+
 func mntState(t *testing.T, m *Maintainer, group, typeCode string) MaintainerGroupState {
 	t.Helper()
 	for _, s := range m.Snapshot() {
@@ -65,7 +76,8 @@ func TestMaintainer_SubtractsWhatItAlreadyAsked(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
-	mntFixture(t, db, "MNT-STEADY", 4, "MNT-45x58", 2)
+	_, btID := mntFixture(t, db, "MNT-STEADY", 4, "MNT-45x58", 2)
+	mntOutsideEmpty(t, db, btID, "MNT-STEADY-MARKET")
 
 	m := eng.Maintainer()
 	m.Tick()
@@ -108,6 +120,7 @@ func TestMaintainer_ClosesOnTheSettleEdgeNotTheRisingEdge(t *testing.T) {
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
 	grpID, btID := mntFixture(t, db, "MNT-SETTLE", 4, "MNT-SET", 1)
+	mntOutsideEmpty(t, db, btID, "MNT-SETTLE-MARKET")
 
 	m := eng.Maintainer()
 	m.Tick()
@@ -249,7 +262,8 @@ func TestMaintainer_RestartMintsNoDuplicate(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
-	mntFixture(t, db, "MNT-RESTART", 3, "MNT-RS", 2)
+	_, btID := mntFixture(t, db, "MNT-RESTART", 3, "MNT-RS", 2)
+	mntOutsideEmpty(t, db, btID, "MNT-RESTART-MARKET")
 
 	first := eng.Maintainer()
 	first.Tick()
@@ -289,7 +303,8 @@ func TestMaintainer_OldestAskSaysWhyInWords(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
-	mntFixture(t, db, "MNT-WHY", 2, "MNT-WHY-T", 1)
+	_, btID := mntFixture(t, db, "MNT-WHY", 2, "MNT-WHY-T", 1)
+	mntOutsideEmpty(t, db, btID, "MNT-WHY-MARKET")
 
 	m := eng.Maintainer()
 	m.Tick()

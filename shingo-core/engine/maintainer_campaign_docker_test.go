@@ -143,6 +143,7 @@ func TestCampaign_S1_SteadyRefill(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 	grpID, types := campaignGroup(t, db, "CMP-S1", 6, map[string]int{"S1-STD": 4})
 	bt := types["S1-STD"]
+	mntOutsideEmpty(t, db, bt, "CMP-S1-MARKET")
 
 	children, err := db.ListChildNodes(grpID)
 	testutil.MustNoErr(t, err, "positions")
@@ -197,12 +198,14 @@ func TestCampaign_S1_SteadyRefill(t *testing.T) {
 	}
 }
 
-// ── S2 · dry market: park, then unpark ──────────────────────────────────────
+// ── S2 · dry market: hold, then ask ─────────────────────────────────────────
 //
-// Nothing to source. The ask is made anyway and PARKS — queue-on-full and
-// queue-on-dry are the same contract, and nothing anywhere cancels. The property
-// under test is that a parked episode does not accumulate duplicates while it
-// waits, which is the failure mode a level keeper invites.
+// Nothing to source. The episode opens (the group is short and says so) and no
+// ask is made: an ask would hold a position for a carrier that does not exist
+// (TestMaintainer_MintsNoAskForATypeNothingOutsideCanSource). The property under
+// test is that a dry episode does not accumulate asks while it waits, which is
+// the failure mode a level keeper invites, and that it asks once the market has
+// a carrier.
 func TestCampaign_S2_DryMarketParksThenUnparks(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -218,6 +221,10 @@ func TestCampaign_S2_DryMarketParksThenUnparks(t *testing.T) {
 		t.Fatal("no episode opened against an empty group")
 	}
 	firstCreated := st.Created
+	if firstCreated != 0 || st.HeldBy == "" {
+		t.Errorf("dry first tick created=%d held_by=%q, want 0 asks and the reason none was made",
+			firstCreated, st.HeldBy)
+	}
 
 	// Ten ticks with nothing to source. THE COUNT MUST NOT MOVE.
 	for i := 0; i < 10; i++ {
@@ -240,7 +247,18 @@ func TestCampaign_S2_DryMarketParksThenUnparks(t *testing.T) {
 	}
 	t.Logf("S2 evidence: %d ask(s) still, after 11 ticks against a dry market", len(live))
 
-	// The market fills. The episode settles without a second round of asks.
+	// The market has a carrier. The next tick asks, on the same episode.
+	market := &nodes.Node{Name: "CMP-S2-MARKET", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(market), "market slot")
+	landCarrier(t, db, bt, market.ID, "S2-MARKET-BIN")
+	m.Tick()
+	st = evidence(t, m, "market has a carrier", "CMP-S2", "S2-STD")
+	if st.Created != 2 || st.OriginID != origin {
+		t.Errorf("once the market had a carrier: created=%d origin=%s, want 2 asks on %s",
+			st.Created, shortOrigin(st.OriginID), shortOrigin(origin))
+	}
+
+	// The group fills. The episode settles without a second round of asks.
 	landCarrier(t, db, bt, freePosition(t, db, grpID), "S2-BIN-1")
 	landCarrier(t, db, bt, freePosition(t, db, grpID), "S2-BIN-2")
 	terminaliseAsks(t, db, origin)
@@ -260,7 +278,8 @@ func TestCampaign_S3_LastSlotBoundsTheAskCount(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
-	grpID, _ := campaignGroup(t, db, "CMP-S3", 4, map[string]int{"S3-STD": 4})
+	grpID, types := campaignGroup(t, db, "CMP-S3", 4, map[string]int{"S3-STD": 4})
+	mntOutsideEmpty(t, db, types["S3-STD"], "CMP-S3-MARKET")
 
 	// Three of four positions occupied by a DIFFERENT type, so `resident` for the
 	// declared type is zero (gap 4) while only one position is free.
@@ -295,7 +314,8 @@ func TestCampaign_S4_DigChildDoesNotInflateAsked(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
-	_, _ = campaignGroup(t, db, "CMP-S4", 4, map[string]int{"S4-STD": 2})
+	_, types := campaignGroup(t, db, "CMP-S4", 4, map[string]int{"S4-STD": 2})
+	mntOutsideEmpty(t, db, types["S4-STD"], "CMP-S4-MARKET")
 
 	m := eng.Maintainer()
 	m.Tick()
@@ -342,7 +362,8 @@ func TestCampaign_S5_RestartInBothWindows(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
-	_, _ = campaignGroup(t, db, "CMP-S5", 4, map[string]int{"S5-STD": 2})
+	_, types := campaignGroup(t, db, "CMP-S5", 4, map[string]int{"S5-STD": 2})
+	mntOutsideEmpty(t, db, types["S5-STD"], "CMP-S5-MARKET")
 
 	// ── Window A: mint + asks, then restart.
 	first := eng.Maintainer()
@@ -362,14 +383,23 @@ func TestCampaign_S5_RestartInBothWindows(t *testing.T) {
 	// ── Window B: an episode open with NO asks against it — the keeper died
 	// between the INSERT and the pre-resolve loop. The restarted keeper must
 	// finish the job rather than mint a second episode.
-	// order_history has an FK onto orders, so the audit rows go first. Erasing
-	// the history is right for this fixture rather than a workaround: the window
-	// being staged is one where the asks were never created, and an order that
-	// was never created has no history either.
-	_, err := db.Exec(`DELETE FROM order_history WHERE order_id IN
-		(SELECT id FROM orders WHERE origin_id = $1)`, a.OriginID)
-	testutil.MustNoErr(t, err, "erase the ask history")
-	_, err = db.Exec(`DELETE FROM orders WHERE origin_id = $1`, a.OriginID)
+	// order_history has an FK onto orders, so the audit rows go first, and so
+	// does what the asks took when they sourced the outside empty (its hold and
+	// the claims on it and on the slot). Erasing them is right for this fixture
+	// rather than a workaround: the window being staged is one where the asks
+	// were never created, and an order that was never created has no history
+	// and holds nothing.
+	for _, q := range []string{
+		`DELETE FROM order_history WHERE order_id IN (SELECT id FROM orders WHERE origin_id = $1)`,
+		`DELETE FROM reservations WHERE order_id IN (SELECT id FROM orders WHERE origin_id = $1)`,
+		`DELETE FROM order_bins WHERE order_id IN (SELECT id FROM orders WHERE origin_id = $1)`,
+		`UPDATE bins SET claimed_by = NULL WHERE claimed_by IN (SELECT id FROM orders WHERE origin_id = $1)`,
+		`UPDATE nodes SET claimed_by = NULL WHERE claimed_by IN (SELECT id FROM orders WHERE origin_id = $1)`,
+	} {
+		_, err := db.Exec(q, a.OriginID)
+		testutil.MustNoErr(t, err, "erase what the asks wrote: "+q)
+	}
+	_, err := db.Exec(`DELETE FROM orders WHERE origin_id = $1`, a.OriginID)
 	testutil.MustNoErr(t, err, "erase the asks, keep the episode")
 
 	restartedB := NewMaintainer(eng, func() time.Time { return time.Now().UTC() })
@@ -455,7 +485,8 @@ func TestCampaign_S7_WrongTypePressureBaseline(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
-	grpID, _ := campaignGroup(t, db, "CMP-S7", 6, map[string]int{"S7-WANTED": 3})
+	grpID, types := campaignGroup(t, db, "CMP-S7", 6, map[string]int{"S7-WANTED": 3})
+	mntOutsideEmpty(t, db, types["S7-WANTED"], "CMP-S7-MARKET")
 
 	var wrongBT int64
 	testutil.MustNoErr(t, db.QueryRow(
@@ -500,6 +531,12 @@ func TestCampaign_S8_MixChurnCost(t *testing.T) {
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
 	grpID, types := campaignGroup(t, db, "CMP-S8", 8, map[string]int{"S8-A": 3, "S8-B": 3})
+	// A market deep enough for the largest want, so what is counted is the
+	// churn's asks and never a dry market's refusal to ask.
+	for i := 1; i <= 5; i++ {
+		mntOutsideEmpty(t, db, types["S8-A"], fmt.Sprintf("CMP-S8-MARKET-A%d", i))
+		mntOutsideEmpty(t, db, types["S8-B"], fmt.Sprintf("CMP-S8-MARKET-B%d", i))
+	}
 
 	m := eng.Maintainer()
 	asksByType := map[string]int{}

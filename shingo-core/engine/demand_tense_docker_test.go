@@ -119,8 +119,10 @@ func TestMaintainer_AForecastIsNotItsEpisode(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	eng := newTestEngine(t, db, simulator.New())
-	mntFixture(t, db, "MNT-FCA", 2, "MNT-FCA-T", 1)
-	mntFixture(t, db, "MNT-FCB", 2, "MNT-FCB-T", 1)
+	_, btA := mntFixture(t, db, "MNT-FCA", 2, "MNT-FCA-T", 1)
+	_, btB := mntFixture(t, db, "MNT-FCB", 2, "MNT-FCB-T", 1)
+	mntOutsideEmpty(t, db, btA, "MNT-FCA-MARKET")
+	mntOutsideEmpty(t, db, btB, "MNT-FCB-MARKET")
 	insertForecastRow(t, db, protocol.MaintainEpisodeKey("MNT-FCA", "MNT-FCA-T"),
 		protocol.EpisodeKindMaintain, "test-core", "MNT-FCA", "")
 
@@ -172,7 +174,8 @@ func TestOpenCoreEpisode_PromotesTheForecastAtItsKey(t *testing.T) {
 		t.Parallel()
 		db := testdb.Open(t)
 		eng := newTestEngine(t, db, simulator.New())
-		mntFixture(t, db, "MNT-FCP", 2, "MNT-FCP-T", 1)
+		_, btID := mntFixture(t, db, "MNT-FCP", 2, "MNT-FCP-T", 1)
+		mntOutsideEmpty(t, db, btID, "MNT-FCP-MARKET")
 		fc := insertForecastRow(t, db, protocol.MaintainEpisodeKey("MNT-FCP", "MNT-FCP-T"),
 			protocol.EpisodeKindMaintain, "test-core", "MNT-FCP", "")
 
