@@ -183,8 +183,9 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 	// wire values: p.OrderType rather than the promoted orderType, and
 	// p.DeliveryNode rather than the possibly-resolved order.DeliveryNode. Those
 	// are what the sender said, and this event reports receipt of a request. A
-	// Core-originated order has no sender and emits its own event with its own
-	// values, which is why this does not belong inside the shared body.
+	// Core-originated order has no sender, which is why this does not belong
+	// inside the shared body: AdmitCoreAsk emits its own with Core's values, and
+	// TestCensus_OrderReceivedAtBirth says, door by door, which others do.
 	s.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, p.OrderType, payloadCode, p.DeliveryNode)
 	// The Edge that sent this request already has a row for it — it created the
 	// row before sending. Projecting it back would be Core telling a station

@@ -70,3 +70,37 @@ func TestPinCoreAsk_TheLoaderAskIsBornWithItsPart(t *testing.T) {
 		}
 	}
 }
+
+// TestPinCoreAsk_TheAskIsReceivedAtBirth — a Core ask reports its receipt the
+// moment it is born, as an Edge request does, so everything that hears an order
+// arrive (the bins feed's push of the window it delivers to, the audit row,
+// Core's own pages) hears this one at creation rather than at dispatch. The
+// event carries the ask's part and its window.
+func TestPinCoreAsk_TheAskIsReceivedAtBirth(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	em := &mockEmitter{}
+	d := NewDispatcher(db, nil, em, "core", "shingo.dispatch", nil)
+	d.DebugLog = testDebugLog(t)
+	req, cfg, _ := replenishFixture(t, db, "RPR", 2)
+
+	res, err := d.ReplenishLoader(req, cfg)
+	testutil.MustNoErr(t, err, "ReplenishLoader")
+	if len(res.Created) != 2 {
+		t.Fatalf("created %d asks, want 2", len(res.Created))
+	}
+	got := map[int64]string{}
+	for _, r := range em.received {
+		got[r.orderID] = r.payloadCode
+	}
+	for _, o := range res.Created {
+		payload, seen := got[o.ID]
+		if !seen {
+			t.Errorf("ask %d (%s) was born without a received event", o.ID, o.EdgeUUID)
+			continue
+		}
+		if payload != req.PayloadCode {
+			t.Errorf("ask %d received with payload %q, want %q", o.ID, payload, req.PayloadCode)
+		}
+	}
+}

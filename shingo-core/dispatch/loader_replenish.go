@@ -451,6 +451,11 @@ func (d *Dispatcher) AdmitCoreAsk(spec CoreAskSpec) (*orders.Order, error) {
 		}
 		return nil, fmt.Errorf("%s: %s", lerr.Code, lerr.Detail)
 	}
+	// Received at birth, as an Edge request is (CreateInboundOrder), with Core's
+	// own values: the part and the window. Without it a Core ask reached the
+	// bins feed only at dispatch, so a watched window showed nothing inbound
+	// while its ask queued. Pinned by TestPinCoreAsk_TheAskIsReceivedAtBirth.
+	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, order.StationID, OrderTypeRetrieveEmpty, spec.PayloadCode, order.DeliveryNode)
 	// THE case the projection exists for. Nobody on the Edge asked for this
 	// order, so nobody there has a row for it; without the projection the
 	// operator watches a robot arrive at a window with nothing on the board to

@@ -475,3 +475,47 @@ func TestCensus_CompletenessArmIgnoresNonWriters(t *testing.T) {
 		t.Errorf("unnamedWriters flagged non-writers: %v", got)
 	}
 }
+
+// TestCensus_OrderReceivedAtBirth asks every order-creation door one more
+// question: does the order report its receipt (EmitOrderReceived) when it is
+// born? Everything that hears an order arrive hangs off that event — the bins
+// feed's push of the node it delivers to (cmd/shingocore/bins_feed.go), the
+// audit row, Core's own pages — so a door that does not emit is seen by them at
+// dispatch, not at birth. The comment that said "a Core-originated order emits
+// its own event" was false for every Core door until AdmitCoreAsk emitted
+// (TestPinCoreAsk_TheAskIsReceivedAtBirth). The answer per door is stated here;
+// a new door must give one.
+func TestCensus_OrderReceivedAtBirth(t *testing.T) {
+	t.Parallel()
+	// site -> the file whose source must (emitsIn != "") or must not (emitsIn
+	// == "") carry the emit, and why.
+	answers := map[string]struct{ emitsIn, why string }{
+		"dispatch/lifecycle_service.go":  {"dispatch/lifecycle_service.go", "the Edge wire intake: receipt of a request, with the sender's values"},
+		"dispatch/complex_intake.go":     {"dispatch/complex_intake.go", "a multi-leg Edge request: the same receipt"},
+		"dispatch/loader_replenish.go":   {"dispatch/loader_replenish.go", "AdmitCoreAsk, the loader replenishment's ask: Core's part and window"},
+		"engine/maintainer.go":           {"dispatch/loader_replenish.go", "the maintained-group keeper reaches the orders table through AdmitCoreAsk"},
+		"dispatch/compound.go":           {"", "a dig's children: internal moves under a parent already received; seen at dispatch"},
+		"engine/bin_move.go":             {"", "a person moving one bin from Core's pages; no Edge asked; seen at dispatch"},
+		"engine/carried_bin_recovery.go": {"", "Core putting a carried bin down; no Edge asked; seen at dispatch"},
+		"dispatch/clear_home.go":         {"", "the home clear: the door's own bin push (engine/clear_home.go notifyBinChanged) rebuilds the home's watchers at birth"},
+	}
+	sources := scanCoreSources(t)
+	named := map[string]bool{"store/orders.go": true, "dispatch/builder.go": true}
+	for site, a := range answers {
+		named[site] = true
+		if _, ok := sources[site]; !ok {
+			t.Errorf("%s no longer exists; say where its door went", site)
+			continue
+		}
+		emits := strings.Contains(sources[a.emitsIn], "EmitOrderReceived(")
+		switch {
+		case a.emitsIn != "" && !emits:
+			t.Errorf("%s: %s no longer emits EmitOrderReceived (%s)", site, a.emitsIn, a.why)
+		case a.emitsIn == "" && strings.Contains(sources[site], "EmitOrderReceived("):
+			t.Errorf("%s now emits EmitOrderReceived; move it to the emitting answers (was: %s)", site, a.why)
+		}
+	}
+	if unnamed := unnamedWriters(sources, named); len(unnamed) > 0 {
+		t.Errorf("these create orders and do not say whether they are received at birth: %s", strings.Join(unnamed, ", "))
+	}
+}
