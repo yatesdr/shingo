@@ -181,13 +181,13 @@ func (h *Handlers) apiReleasePoints(w http.ResponseWriter, r *http.Request) {
 }
 
 // apiInventoryPreflight wraps InventoryService.PreflightAvailability for the
-// HTTP boundary: the adapter over Doors.preflight, for the request's station,
-// which the preflight ask answers through too for the asking station.
+// HTTP boundary: the adapter over Doors.preflight, which the preflight ask
+// answers through too.
 //
 // Request:  protocol.PreflightRequest
-// Response: protocol.PreflightResponse (missing, absent, available)
+// Response: protocol.PreflightResponse (missing, absent)
 func (h *Handlers) apiInventoryPreflight(w http.ResponseWriter, r *http.Request) {
 	serveDoor(w, r, preflightDecodeErr, func(req protocol.PreflightRequest) asks.Result {
-		return h.doors().preflight(r.Context(), req.Station, req)
+		return h.doors().preflight(r.Context(), req)
 	})
 }

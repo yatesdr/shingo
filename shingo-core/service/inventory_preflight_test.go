@@ -13,7 +13,7 @@ import (
 
 // TestInventoryPreflight_ReturnsMissingPayloads seeds bins for one payload,
 // queries for two payloads, and asserts that the unseeded payload appears
-// in Missing while the seeded one shows BinCount > 0 in Available.
+// in Missing and the seeded one does not.
 func TestInventoryPreflight_ReturnsMissingPayloads(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -24,7 +24,7 @@ func TestInventoryPreflight_ReturnsMissingPayloads(t *testing.T) {
 	testdb.CreateBinAtNode(t, db, std.Payload.Code, std.StorageNode.ID, "BIN-PRE-2")
 
 	svc := NewInventoryService(db)
-	result, err := svc.PreflightAvailability(context.Background(), "station-x", []string{std.Payload.Code, "MISSING-PAYLOAD"})
+	result, err := svc.PreflightAvailability(context.Background(), []string{std.Payload.Code, "MISSING-PAYLOAD"})
 	if err != nil {
 		t.Fatalf("PreflightAvailability: %v", err)
 	}
@@ -32,22 +32,8 @@ func TestInventoryPreflight_ReturnsMissingPayloads(t *testing.T) {
 	if len(result.Missing) != 1 || result.Missing[0] != "MISSING-PAYLOAD" {
 		t.Errorf("Missing = %v, want [MISSING-PAYLOAD]", result.Missing)
 	}
-	if len(result.Available) != 2 {
-		t.Fatalf("Available count = %d, want 2", len(result.Available))
-	}
-	for _, a := range result.Available {
-		switch a.PayloadCode {
-		case std.Payload.Code:
-			if a.BinCount != 2 {
-				t.Errorf("BinCount(%s) = %d, want 2", a.PayloadCode, a.BinCount)
-			}
-		case "MISSING-PAYLOAD":
-			if a.BinCount != 0 {
-				t.Errorf("BinCount(MISSING) = %d, want 0", a.BinCount)
-			}
-		default:
-			t.Errorf("unexpected payload in Available: %q", a.PayloadCode)
-		}
+	if len(result.Absent) != 1 || result.Absent[0] != "MISSING-PAYLOAD" {
+		t.Errorf("Absent = %v, want [MISSING-PAYLOAD]", result.Absent)
 	}
 }
 
@@ -61,15 +47,15 @@ func TestInventoryPreflight_AllAvailable(t *testing.T) {
 	testdb.CreateBinAtNode(t, db, std.Payload.Code, std.StorageNode.ID, "BIN-AVAIL-1")
 
 	svc := NewInventoryService(db)
-	result, err := svc.PreflightAvailability(context.Background(), "", []string{std.Payload.Code})
+	result, err := svc.PreflightAvailability(context.Background(), []string{std.Payload.Code})
 	if err != nil {
 		t.Fatalf("PreflightAvailability: %v", err)
 	}
 	if len(result.Missing) != 0 {
 		t.Errorf("Missing = %v, want empty", result.Missing)
 	}
-	if len(result.Available) != 1 || result.Available[0].BinCount < 1 {
-		t.Errorf("Available = %v, want one entry with BinCount >= 1", result.Available)
+	if len(result.Absent) != 0 {
+		t.Errorf("Absent = %v, want empty", result.Absent)
 	}
 }
 
@@ -88,7 +74,7 @@ func TestInventoryPreflight_AbsentIsNoBinAtAll(t *testing.T) {
 	testdb.ClaimBinForTest(t, db, busy.ID, holder.ID)
 
 	svc := NewInventoryService(db)
-	result, err := svc.PreflightAvailability(context.Background(), "", []string{std.Payload.Code, "NO-SUCH-PAYLOAD"})
+	result, err := svc.PreflightAvailability(context.Background(), []string{std.Payload.Code, "NO-SUCH-PAYLOAD"})
 	if err != nil {
 		t.Fatalf("PreflightAvailability: %v", err)
 	}
@@ -117,7 +103,7 @@ func TestInventoryPreflight_EmptyPayloadCodeRejected(t *testing.T) {
 	testdb.SetupStandardData(t, db)
 
 	svc := NewInventoryService(db)
-	_, err := svc.PreflightAvailability(context.Background(), "", []string{""})
+	_, err := svc.PreflightAvailability(context.Background(), []string{""})
 	if err == nil {
 		t.Fatal("expected error for empty payload code in request")
 	}

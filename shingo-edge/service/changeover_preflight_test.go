@@ -17,14 +17,12 @@ import (
 // into PreflightChecker.
 type fakeCorePoster struct {
 	available       bool
-	queriedStation  string
 	queriedPayloads []string
 	respond         func(payloads []string) (*PreflightCoreResult, error)
 }
 
 func (f *fakeCorePoster) Available() bool { return f.available }
-func (f *fakeCorePoster) PreflightInventory(station string, payloads []string) (*PreflightCoreResult, error) {
-	f.queriedStation = station
+func (f *fakeCorePoster) PreflightInventory(payloads []string) (*PreflightCoreResult, error) {
 	f.queriedPayloads = append([]string(nil), payloads...)
 	if f.respond != nil {
 		return f.respond(payloads)
@@ -67,7 +65,8 @@ func checkStyle(t *testing.T, db *store.DB, checker *PreflightChecker, styleID i
 	if err != nil {
 		t.Fatalf("list claims: %v", err)
 	}
-	return checker.PreflightPayloads(context.Background(), PayloadCodesOf(claims))
+	got, err := checker.PreflightPayloads(context.Background(), PayloadCodesOf(claims))
+	return got.Missing, err
 }
 
 // TestChangeoverPreflight_BuildsPayloadListFromToStyle: when the to-style
@@ -79,7 +78,7 @@ func TestChangeoverPreflight_BuildsPayloadListFromToStyle(t *testing.T) {
 	toStyleID := seedPreflightStyle(t, db)
 
 	core := &fakeCorePoster{available: true}
-	checker := NewPreflightChecker(core, "station-1")
+	checker := NewPreflightChecker(core)
 
 	missing, err := checkStyle(t, db, checker, toStyleID)
 	if err != nil {
@@ -87,9 +86,6 @@ func TestChangeoverPreflight_BuildsPayloadListFromToStyle(t *testing.T) {
 	}
 	if missing != nil {
 		t.Errorf("expected nil missing, got %v", missing)
-	}
-	if core.queriedStation != "station-1" {
-		t.Errorf("queriedStation = %q, want station-1", core.queriedStation)
 	}
 	gotSet := map[string]bool{}
 	for _, p := range core.queriedPayloads {
@@ -119,7 +115,7 @@ func TestChangeoverPreflight_FailsWhenNoBinAvailable(t *testing.T) {
 			return &PreflightCoreResult{Missing: []string{"PART-A"}}, nil
 		},
 	}
-	checker := NewPreflightChecker(core, "station-1")
+	checker := NewPreflightChecker(core)
 
 	missing, err := checkStyle(t, db, checker, toStyleID)
 	if err != nil {
@@ -143,7 +139,7 @@ func TestChangeoverPreflight_PropagatesCoreError(t *testing.T) {
 			return nil, errors.New("core: HTTP 500")
 		},
 	}
-	checker := NewPreflightChecker(core, "station-1")
+	checker := NewPreflightChecker(core)
 
 	_, err := checkStyle(t, db, checker, toStyleID)
 	if err == nil {
@@ -160,7 +156,7 @@ func TestChangeoverPreflight_NoCoreClient(t *testing.T) {
 	toStyleID := seedPreflightStyle(t, db)
 
 	core := &fakeCorePoster{available: false}
-	checker := NewPreflightChecker(core, "station-1")
+	checker := NewPreflightChecker(core)
 
 	_, err := checkStyle(t, db, checker, toStyleID)
 	if err == nil {
@@ -179,14 +175,14 @@ func TestChangeoverPreflight_NoCoreClient(t *testing.T) {
 func TestChangeoverPreflight_PayloadsSkipsSentinelAndDuplicates(t *testing.T) {
 	t.Parallel()
 	core := &fakeCorePoster{available: true}
-	checker := NewPreflightChecker(core, "station-1")
+	checker := NewPreflightChecker(core)
 
-	missing, err := checker.PreflightPayloads(context.Background(), []string{"PART-A", "__empty__", "PART-A", "", "PART-B"})
+	got, err := checker.PreflightPayloads(context.Background(), []string{"PART-A", "__empty__", "PART-A", "", "PART-B"})
 	if err != nil {
 		t.Fatalf("PreflightPayloads: %v", err)
 	}
-	if missing != nil {
-		t.Errorf("missing = %v, want nil", missing)
+	if got.Missing != nil {
+		t.Errorf("missing = %v, want nil", got.Missing)
 	}
 	if !reflect.DeepEqual(core.queriedPayloads, []string{"PART-A", "PART-B"}) {
 		t.Errorf("Core was asked %v, want [PART-A PART-B]", core.queriedPayloads)
@@ -206,11 +202,11 @@ func TestChangeoverPreflight_PayloadsSkipsSentinelAndDuplicates(t *testing.T) {
 // draft looks like, the gate does not pretend.
 func TestChangeoverPreflight_PayloadsCoreUnavailableIsAnError(t *testing.T) {
 	t.Parallel()
-	checker := NewPreflightChecker(&fakeCorePoster{available: false}, "station-1")
+	checker := NewPreflightChecker(&fakeCorePoster{available: false})
 	if _, err := checker.PreflightPayloads(context.Background(), []string{"PART-A"}); err == nil {
 		t.Fatal("expected an error with Core unavailable, got nil")
 	}
-	unwired := NewPreflightChecker(nil, "station-1")
+	unwired := NewPreflightChecker(nil)
 	if _, err := unwired.PreflightPayloads(context.Background(), []string{"PART-A"}); err == nil {
 		t.Fatal("expected an error with no Core client, got nil")
 	}

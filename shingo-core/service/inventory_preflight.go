@@ -1,8 +1,6 @@
-// Pre-flight inventory check.
-//
-// Edge calls this before a changeover starts to verify that bins for
-// every required payload exist in the AMR supermarket. The same code
-// path is intended to serve a planning-mode preview UI later.
+// Pre-flight inventory check: the flow composer's draft asks it, through the
+// preflight read-ask, whether each part has a bin free and whether it has one
+// at all. A changeover start does not ask; it reads the sourcing feed.
 
 package service
 
@@ -13,16 +11,8 @@ import (
 	"shingocore/store/bins"
 )
 
-// PayloadAvailability is the per-payload count returned by PreflightAvailability.
-type PayloadAvailability struct {
-	PayloadCode string `json:"payload_code"`
-	BinCount    int    `json:"bin_count"`
-}
-
-// PreflightResult is the rolled-up result for a multi-payload preflight call.
-// Missing is the subset of requested payloads with zero available bins —
-// it's the "is the changeover safe to start?" signal. Available carries the
-// per-payload counts (zero for missing payloads, included for completeness).
+// PreflightResult is the result of a multi-payload preflight call, each list
+// in request order.
 //
 // ── MISSING AND ABSENT ARE TWO QUESTIONS ─────────────────────────────────────
 //
@@ -35,36 +25,28 @@ type PayloadAvailability struct {
 // dry-source guard may refuse a REQUEST on, because it is the only one with
 // nothing to wait for. A payload in Absent is always in Missing.
 type PreflightResult struct {
-	Missing   []string              `json:"missing"`
-	Absent    []string              `json:"absent"`
-	Available []PayloadAvailability `json:"available"`
+	Missing []string `json:"missing"`
+	Absent  []string `json:"absent"`
 }
 
-// PreflightAvailability counts the bins per payload that dispatch could source
-// right now. It composes bins.BinSourceableSQL — the one sourcing predicate —
-// so what this promises an operator at changeover is what FindSourceFIFO will
-// actually pick, minus the FIFO ordering and limit. The station argument is
-// reserved for future per-station scoping (e.g. zone-restricted supermarkets);
-// currently it is plant-wide.
-func (s *InventoryService) PreflightAvailability(ctx context.Context, station string, payloads []string) (PreflightResult, error) {
-	_ = station // reserved for future per-station scoping
+// PreflightAvailability reads, plant-wide, which payloads dispatch could source
+// a bin of right now. It composes bins.BinSourceableSQL — the one sourcing
+// predicate — so what this promises an operator at changeover is what
+// FindSourceFIFO will actually pick, minus the FIFO ordering and limit. Two
+// statements: the sourceable payloads and the present ones (presentPayloads).
+func (s *InventoryService) PreflightAvailability(ctx context.Context, payloads []string) (PreflightResult, error) {
 	result := PreflightResult{
-		Missing:   []string{},
-		Absent:    []string{},
-		Available: make([]PayloadAvailability, 0, len(payloads)),
+		Missing: []string{},
+		Absent:  []string{},
 	}
 	if len(payloads) == 0 {
 		return result, nil
 	}
 
-	// Seed the count map so payloads with zero bins still report 0
-	// rather than vanishing entirely.
-	counts := make(map[string]int, len(payloads))
 	for _, p := range payloads {
 		if p == "" {
 			return result, fmt.Errorf("preflight: empty payload code in request")
 		}
-		counts[p] = 0
 	}
 
 	// Build a parameterized IN (...) clause. Postgres needs explicit
@@ -81,57 +63,54 @@ func (s *InventoryService) PreflightAvailability(ctx context.Context, station st
 		args = append(args, p)
 	}
 
-	query := `SELECT b.payload_code, COUNT(*) AS n
-		FROM bins b
-		JOIN nodes n ON n.id = b.node_id
-		WHERE b.payload_code IN (` + string(placeholders) + `)
-		  AND ` + bins.BinSourceableSQL("b.payload_code") + `
-		GROUP BY b.payload_code`
-
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	sourceable, err := s.payloadsWhere(ctx, string(placeholders), args, bins.BinSourceableSQL("b.payload_code"))
 	if err != nil {
-		return result, fmt.Errorf("preflight: query: %w", err)
+		return result, fmt.Errorf("preflight: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var code string
-		var n int
-		if err := rows.Scan(&code, &n); err != nil {
-			return result, fmt.Errorf("preflight: scan: %w", err)
-		}
-		counts[code] = n
-	}
-	if err := rows.Err(); err != nil {
-		return result, fmt.Errorf("preflight: rows: %w", err)
-	}
-
-	present, err := s.presentCounts(ctx, string(placeholders), args)
+	present, err := s.presentPayloads(ctx, string(placeholders), args)
 	if err != nil {
 		return result, err
 	}
 
-	// Preserve the request order in Available; collect Missing and Absent in
-	// the same order so the operator UI sees a stable list.
+	// Missing and Absent in request order, so the operator UI sees a stable list.
 	for _, p := range payloads {
-		n := counts[p]
-		result.Available = append(result.Available, PayloadAvailability{
-			PayloadCode: p,
-			BinCount:    n,
-		})
-		if n == 0 {
+		if !sourceable[p] {
 			result.Missing = append(result.Missing, p)
 		}
-		if present[p] == 0 {
+		if !present[p] {
 			result.Absent = append(result.Absent, p)
 		}
 	}
 	return result, nil
 }
 
-// presentCounts counts the bins of each payload that exist as stock at all —
-// free, reserved, claimed, locked or staged, and wherever they stand, a robot
-// included. Only bins out of service and bins on disabled nodes are left out.
-// Zero here is Absent.
+// payloadsWhere is the set of the requested payloads with at least one bin
+// matching cond, one statement.
+func (s *InventoryService) payloadsWhere(ctx context.Context, placeholders string, args []any, cond string) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT b.payload_code
+		FROM bins b
+		JOIN nodes n ON n.id = b.node_id
+		WHERE b.payload_code IN (`+placeholders+`)
+		  AND `+cond, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]bool)
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		out[code] = true
+	}
+	return out, rows.Err()
+}
+
+// presentPayloads is the set of the requested payloads with a bin that exists
+// as stock at all — free, reserved, claimed, locked or staged, and wherever it
+// stands, a robot included. Only bins out of service and bins on disabled
+// nodes are left out. Not in it is Absent.
 //
 // NOT a sourcing reader, and it must not become one: it deliberately keeps the
 // claimed, locked, reserved and staged bins the sourcing predicate refuses,
@@ -143,25 +122,10 @@ func (s *InventoryService) PreflightAvailability(ctx context.Context, station st
 // synthetic-node one with them: a claimed bin riding to its destination stands
 // on a synthetic carrier node, and that bin is exactly the stock a REQUEST should
 // wait for rather than be refused over.
-func (s *InventoryService) presentCounts(ctx context.Context, placeholders string, args []any) (map[string]int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT b.payload_code, COUNT(*) AS n
-		FROM bins b
-		JOIN nodes n ON n.id = b.node_id
-		WHERE b.payload_code IN (`+placeholders+`)
-		  AND `+bins.BinPresentSQL+`
-		GROUP BY b.payload_code`, args...)
+func (s *InventoryService) presentPayloads(ctx context.Context, placeholders string, args []any) (map[string]bool, error) {
+	present, err := s.payloadsWhere(ctx, placeholders, args, bins.BinPresentSQL)
 	if err != nil {
-		return nil, fmt.Errorf("preflight: presence query: %w", err)
+		return nil, fmt.Errorf("preflight: presence %w", err)
 	}
-	defer rows.Close()
-	present := make(map[string]int)
-	for rows.Next() {
-		var code string
-		var n int
-		if err := rows.Scan(&code, &n); err != nil {
-			return nil, fmt.Errorf("preflight: presence scan: %w", err)
-		}
-		present[code] = n
-	}
-	return present, rows.Err()
+	return present, nil
 }

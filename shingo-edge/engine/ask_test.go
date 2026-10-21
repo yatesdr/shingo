@@ -239,11 +239,10 @@ func TestAskLateOrRefuse_TheFollowUpRunsOnALateAnswer(t *testing.T) {
 }
 
 // TestPreflightAsker_TheReadAsk: the preflight gate asks Core through the ask
-// pair (protocol.AskPreflight, a read-ask). The answer is the door's response:
-// a Core that sends absent is told apart from one too old to; a refusal and an
-// answer still pending past the wait are errors, never "all available" — the
-// gate's "cannot check now" (the changeover start refuses on it, the composer
-// shows unchecked). A Core that does not answer the kind is not available.
+// pair (protocol.AskPreflight, a read-ask). The answer is the door's response,
+// missing and absent; a refusal and an answer still pending past the wait are
+// errors, never "all available" — the composer's "unchecked". A Core that does
+// not answer the kind is not available.
 func TestPreflightAsker_TheReadAsk(t *testing.T) {
 	t.Parallel()
 	e, _ := binsEngine(t, testEngineDB(t))
@@ -262,7 +261,7 @@ func TestPreflightAsker_TheReadAsk(t *testing.T) {
 		}
 		done := make(chan out, 1)
 		go func() {
-			r, err := p.PreflightInventory("st", []string{"PART-A", "PART-B"})
+			r, err := p.PreflightInventory([]string{"PART-A", "PART-B"})
 			done <- out{r, err}
 		}()
 		if answer != nil {
@@ -287,18 +286,10 @@ func TestPreflightAsker_TheReadAsk(t *testing.T) {
 
 	r, err := ask(func(env *protocol.Envelope) {
 		e.HandleEdgeAnswer(answerTo(env), &protocol.EdgeAnswer{Kind: protocol.AskPreflight, Status: protocol.AnswerOK,
-			Body: json.RawMessage(`{"missing":["PART-B"],"absent":["PART-B"],"available":[{"payload_code":"PART-A","bin_count":3}]}`)})
+			Body: json.RawMessage(`{"missing":["PART-B"],"absent":["PART-B"]}`)})
 	})
-	if err != nil || len(r.Missing) != 1 || r.Missing[0] != "PART-B" || !r.AbsentKnown || len(r.Absent) != 1 ||
-		len(r.Available) != 1 || r.Available[0].BinCount != 3 {
+	if err != nil || len(r.Missing) != 1 || r.Missing[0] != "PART-B" || len(r.Absent) != 1 || r.Absent[0] != "PART-B" {
 		t.Errorf("answered: %+v, %v", r, err)
-	}
-	r, err = ask(func(env *protocol.Envelope) {
-		e.HandleEdgeAnswer(answerTo(env), &protocol.EdgeAnswer{Kind: protocol.AskPreflight, Status: protocol.AnswerOK,
-			Body: json.RawMessage(`{"missing":[],"available":[]}`)})
-	})
-	if err != nil || r.AbsentKnown {
-		t.Errorf("a Core that sends no absent: %+v, %v, want absent not known", r, err)
 	}
 	if _, err := ask(func(env *protocol.Envelope) {
 		e.HandleEdgeAnswer(answerTo(env), &protocol.EdgeAnswer{Kind: protocol.AskPreflight, Status: protocol.AnswerBad, Sentence: "no"})

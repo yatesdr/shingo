@@ -19,38 +19,29 @@ import (
 // construction time. Available is whether Core answers the ask.
 type PreflightCorePoster interface {
 	Available() bool
-	PreflightInventory(station string, payloads []string) (*PreflightCoreResult, error)
+	PreflightInventory(payloads []string) (*PreflightCoreResult, error)
 }
 
-// PreflightCoreResult mirrors the wire shape of engine.PreflightResult.
-// Defined here so the interface above doesn't drag the engine package
-// back into service.
+// PreflightCoreResult is Core's answer (protocol.PreflightResponse). Defined
+// here so the interface above doesn't drag the engine package back into
+// service.
 type PreflightCoreResult struct {
+	// Missing is the payloads with no bin free right now: congestion, the bins
+	// exist and will come free.
 	Missing []string
-	// Absent is the payloads Core has no bin of at all — not free, not reserved,
-	// not claimed. Missing ("none free right now") is congestion; Absent is the
-	// only answer with nothing to wait for. AbsentKnown is false when the Core is
-	// too old to send it, and a caller must read that as "not known".
-	Absent      []string
-	AbsentKnown bool
-	Available   []PreflightCoreAvailability
-}
-
-// PreflightCoreAvailability mirrors engine.PreflightAvailability.
-type PreflightCoreAvailability struct {
-	PayloadCode string
-	BinCount    int
+	// Absent is the subset with no bin at all — not free, not reserved, not
+	// claimed: the only answer with nothing to wait for.
+	Absent []string
 }
 
 // PreflightChecker holds what the composer's draft check asks Core with.
 type PreflightChecker struct {
-	core    PreflightCorePoster
-	station string
+	core PreflightCorePoster
 }
 
 // NewPreflightChecker constructs a PreflightChecker.
-func NewPreflightChecker(core PreflightCorePoster, station string) *PreflightChecker {
-	return &PreflightChecker{core: core, station: station}
+func NewPreflightChecker(core PreflightCorePoster) *PreflightChecker {
+	return &PreflightChecker{core: core}
 }
 
 // PayloadCodesOf is the payload list a set of claims needs checked: each
@@ -83,24 +74,24 @@ func dedupPayloadCodes(codes []string) []string {
 }
 
 // PreflightPayloads asks Core whether each payload code has at least one
-// available bin in the supermarket, and returns the missing subset. The
-// sentinel and duplicates are skipped (dedupPayloadCodes), and an empty list
-// asks Core nothing.
+// available bin in the supermarket, and returns Core's answer: the missing
+// subset and the absent one. The sentinel and duplicates are skipped
+// (dedupPayloadCodes), and an empty list asks Core nothing (an empty answer).
 //
 // Core unavailable is an ERROR, never "all available": the composer's preview
 // says "unchecked", and the check does not pretend it looked.
-func (p *PreflightChecker) PreflightPayloads(ctx context.Context, codes []string) ([]string, error) {
+func (p *PreflightChecker) PreflightPayloads(ctx context.Context, codes []string) (PreflightCoreResult, error) {
 	if p.core == nil || !p.core.Available() {
 		// OWNER-WORDS
-		return nil, fmt.Errorf("preflight: Core does not answer the preflight ask")
+		return PreflightCoreResult{}, fmt.Errorf("preflight: Core does not answer the preflight ask")
 	}
 	payloads := dedupPayloadCodes(codes)
 	if len(payloads) == 0 {
-		return nil, nil
+		return PreflightCoreResult{}, nil
 	}
-	result, err := p.core.PreflightInventory(p.station, payloads)
+	result, err := p.core.PreflightInventory(payloads)
 	if err != nil {
-		return nil, fmt.Errorf("preflight: ask Core: %w", err)
+		return PreflightCoreResult{}, fmt.Errorf("preflight: ask Core: %w", err)
 	}
-	return result.Missing, nil
+	return *result, nil
 }

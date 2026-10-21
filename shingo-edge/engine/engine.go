@@ -376,7 +376,7 @@ func New(c Config) *Engine {
 	e.counterService = service.NewCounterService(e.db, ReportingLocation(e.cfg.Timezone))
 	e.catalogService = service.NewCatalogService(e.db)
 	e.orderService = service.NewOrderService(e.db)
-	e.preflightChecker = service.NewPreflightChecker(preflightAsker{e}, e.cfg.StationID())
+	e.preflightChecker = service.NewPreflightChecker(preflightAsker{e})
 	e.loaderStore = newLoaderStore(e)
 	return e
 }

@@ -313,26 +313,15 @@ const (
 // PreflightRequest is the payload list the Edge POSTs to Core's preflight
 // inventory check before starting a changeover.
 type PreflightRequest struct {
-	Station  string   `json:"station"`
 	Payloads []string `json:"payloads"`
 }
 
-// PreflightAvailability is the per-payload count in a preflight response.
-type PreflightAvailability struct {
-	PayloadCode string `json:"payload_code"`
-	BinCount    int    `json:"bin_count"`
-}
-
-// PreflightResponse is the rolled-up preflight answer: the missing subset and
-// the per-payload counts.
-//
-// Field order matches Core's service.PreflightResult (missing, absent,
-// available) — this struct replaces a STRUCT reply, not a map, so it keeps
-// the original order.
+// PreflightResponse is the preflight answer: Missing, the payloads with no bin
+// free right now, and Absent, the subset with no bin at all (Core's
+// service.PreflightResult). The composer's confirm sheet says the two apart.
 type PreflightResponse struct {
-	Missing   []string                `json:"missing"`
-	Absent    []string                `json:"absent"`
-	Available []PreflightAvailability `json:"available"`
+	Missing []string `json:"missing"`
+	Absent  []string `json:"absent"`
 }
 
 // ReleasePointsRequest asks Core, for one act, what releasing each order would

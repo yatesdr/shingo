@@ -27,17 +27,18 @@ import (
 // fakeFlowPoster is the Core preflight endpoint, in memory.
 type fakeFlowPoster struct {
 	missing []string
+	absent  []string
 	err     error
 	asked   []string
 }
 
 func (f *fakeFlowPoster) Available() bool { return true }
-func (f *fakeFlowPoster) PreflightInventory(_ string, payloads []string) (*service.PreflightCoreResult, error) {
+func (f *fakeFlowPoster) PreflightInventory(payloads []string) (*service.PreflightCoreResult, error) {
 	f.asked = append([]string(nil), payloads...)
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &service.PreflightCoreResult{Missing: f.missing}, nil
+	return &service.PreflightCoreResult{Missing: f.missing, Absent: f.absent}, nil
 }
 
 // flowState is everything a preview must leave alone and a refused save
@@ -291,7 +292,7 @@ func TestPreviewFlow_PreflightStates(t *testing.T) {
 
 	coreNeverAnswers(t, eng)
 	poster := &fakeFlowPoster{}
-	eng.preflightChecker = service.NewPreflightChecker(poster, "test.station")
+	eng.preflightChecker = service.NewPreflightChecker(poster)
 	p, err = eng.PreviewFlow(context.Background(), processID, req)
 	testutil.MustNoErr(t, err, "core ok")
 	if p.Preflight.State != FlowPreflightOK || !reflect.DeepEqual(poster.asked, []string{"PART-NEW"}) {
@@ -301,8 +302,15 @@ func TestPreviewFlow_PreflightStates(t *testing.T) {
 	poster.missing = []string{"PART-NEW"}
 	p, err = eng.PreviewFlow(context.Background(), processID, req)
 	testutil.MustNoErr(t, err, "core missing")
-	if p.Preflight.State != FlowPreflightMissing || !reflect.DeepEqual(p.Preflight.Missing, []string{"PART-NEW"}) {
-		t.Errorf("missing stock: %+v", p.Preflight)
+	if p.Preflight.State != FlowPreflightMissing || !reflect.DeepEqual(p.Preflight.Missing, []string{"PART-NEW"}) ||
+		len(p.Preflight.Absent) != 0 {
+		t.Errorf("missing stock, all of it spoken for: %+v", p.Preflight)
+	}
+	poster.absent = []string{"PART-NEW"}
+	p, err = eng.PreviewFlow(context.Background(), processID, req)
+	testutil.MustNoErr(t, err, "core absent")
+	if p.Preflight.State != FlowPreflightMissing || !reflect.DeepEqual(p.Preflight.Absent, []string{"PART-NEW"}) {
+		t.Errorf("no bin at all: %+v, want the part in Absent", p.Preflight)
 	}
 
 	poster.err = errors.New("core: HTTP 500")
@@ -314,7 +322,7 @@ func TestPreviewFlow_PreflightStates(t *testing.T) {
 
 	// THE EDIT LOOP DOES NOT ASK. Same engine, same Core, same cells, one
 	// field different — and no call is made.
-	poster.err, poster.missing, poster.asked = nil, nil, nil
+	poster.err, poster.missing, poster.absent, poster.asked = nil, nil, nil, nil
 	quiet := FlowPreviewRequest{ToStyleID: toStyleID, Cells: cellsOf(t, db, toStyleID)}
 	p, err = eng.PreviewFlow(context.Background(), processID, quiet)
 	testutil.MustNoErr(t, err, "preview without preflight")

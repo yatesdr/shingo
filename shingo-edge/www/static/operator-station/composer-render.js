@@ -622,10 +622,19 @@ function goSentences(pv) {
     if (orders.length) out.push('Each robot waits at the press until you press Release.');
     else if (pv.order_count === 0) out.push('No robot has to move.');
     if (pv.preflight) {
-        out.push(pv.preflight.state === 'unchecked' ? 'Core could not be asked whether the parts are there.'
-            : pv.preflight.state === 'missing' ? 'Core has no bin for ' + andList(pv.preflight.missing || []) +
-                ' yet: that delivery waits until it has one.'
-                : 'Core has a bin for every part.');
+        const pf = pv.preflight;
+        if (pf.state === 'unchecked') out.push('Core could not be asked whether the parts are there.');
+        else if (pf.state !== 'missing') out.push('Core has a bin for every part.');
+        else {
+            // "No bin" only for a part Core has none of at all (Absent); a part
+            // whose bins are all spoken for is "none free right now".
+            const absent = pf.absent || [];
+            const busy = (pf.missing || []).filter(p => absent.indexOf(p) < 0);
+            // OWNER-WORDS
+            if (absent.length) out.push('Core has no bin for ' + andList(absent) + ': that delivery waits until it has one.');
+            // OWNER-WORDS
+            if (busy.length) out.push('Core has none free for ' + andList(busy) + ' right now: that delivery waits until one is free.');
+        }
     }
     return out;
 }

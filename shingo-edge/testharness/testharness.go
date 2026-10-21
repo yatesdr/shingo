@@ -175,6 +175,6 @@ type stockedPreflight struct{}
 
 func (stockedPreflight) Available() bool { return true }
 
-func (stockedPreflight) PreflightInventory(string, []string) (*service.PreflightCoreResult, error) {
+func (stockedPreflight) PreflightInventory([]string) (*service.PreflightCoreResult, error) {
 	return &service.PreflightCoreResult{Missing: []string{}}, nil
 }

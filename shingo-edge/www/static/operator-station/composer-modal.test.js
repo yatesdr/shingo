@@ -314,7 +314,7 @@ test('Go says what comes off, what comes on, and Core\'s word, and draws the pre
             { core_node_name: 'PLN_07', evac_order: { from: 'PLN_07', to: 'ULN_003' } },
             { core_node_name: 'PLN_09', supply_order: { from: 'SMN_BUF_100', to: 'PLN_09', payload_code: 'PART-B' } },
         ],
-        preflight: { state: 'missing', missing: ['PART-B'] },
+        preflight: { state: 'missing', missing: ['PART-B', 'PART-A'], absent: ['PART-B'] },
         mint: { style_id: 2, style_name: 'B-RUN', cells: [{ core_node_name: 'PLN_09', role: 'produce',
             swap_mode: 'two_robot_press_index', payload_code: 'PART-B' }] },
     };
@@ -323,7 +323,8 @@ test('Go says what comes off, what comes on, and Core\'s word, and draws the pre
     for (const want of ['Change over to B-RUN?',
         'Takes the bins off PLN_06 and PLN_07 to ULN_002 and ULN_003.',
         'Brings PART-B to PLN_09 from SMN_BUF_100.',
-        'Core has no bin for PART-B yet',
+        'Core has no bin for PART-B: that delivery waits until it has one.',
+        'Core has none free for PART-A right now: that delivery waits until one is free.',
         'class="picture"', 'os-comp-trips', 'Start changeover']) {
         expectIn('go', want);
     }

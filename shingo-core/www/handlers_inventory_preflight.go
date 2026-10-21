@@ -1,7 +1,6 @@
-// HTTP boundary for the pre-flight inventory check. Edge POSTs the
-// to-style required payload list; Core responds with the per-payload
-// availability and the missing subset so the operator UI can refuse
-// the changeover with a specific diagnostic.
+// The preflight read-ask's body: the flow composer's draft parts, answered with
+// the ones that have no bin free (Missing) and no bin at all (Absent), which
+// the confirm sheet says apart.
 
 package www
 
@@ -18,18 +17,12 @@ import (
 // decode.
 func preflightDecodeErr(err error) string { return "decode request: " + err.Error() }
 
-// preflight is the preflight read's body, for station.
-func (d *Doors) preflight(ctx context.Context, station string, req protocol.PreflightRequest) asks.Result {
-	result, err := d.engine.InventoryService().PreflightAvailability(ctx, station, req.Payloads)
+// preflight is the preflight read's body. Plant-wide: the asking station
+// scopes nothing.
+func (d *Doors) preflight(ctx context.Context, req protocol.PreflightRequest) asks.Result {
+	result, err := d.engine.InventoryService().PreflightAvailability(ctx, req.Payloads)
 	if err != nil {
 		return refused(http.StatusInternalServerError, "preflight: "+err.Error())
 	}
-	resp := protocol.PreflightResponse{Missing: result.Missing, Absent: result.Absent}
-	for _, a := range result.Available {
-		resp.Available = append(resp.Available, protocol.PreflightAvailability{
-			PayloadCode: a.PayloadCode,
-			BinCount:    a.BinCount,
-		})
-	}
-	return accepted(resp)
+	return accepted(protocol.PreflightResponse{Missing: result.Missing, Absent: result.Absent})
 }

@@ -59,8 +59,11 @@ type FlowPreviewRequest struct {
 type FlowPreflight struct {
 	// State is "ok", "missing" or "unchecked". Unchecked means Core could not
 	// be asked — never an error for a preview, the picture stays live.
-	State   string   `json:"state"`
+	State string `json:"state"`
+	// Missing is the parts with no bin free right now; Absent is the subset
+	// with no bin at all. The confirm sheet says "no bin" only of Absent.
 	Missing []string `json:"missing"`
+	Absent  []string `json:"absent"`
 }
 
 const (
@@ -386,20 +389,22 @@ func sortFindings(findings []domain.NodeFinding) []domain.NodeFinding {
 // The context is the REQUEST's, so an operator who leaves the screen takes
 // the Core call with them instead of leaving it to time out.
 func (e *Engine) flowPreflight(ctx context.Context, claims []processes.NodeClaim) FlowPreflight {
-	unchecked := FlowPreflight{State: FlowPreflightUnchecked, Missing: []string{}}
+	unchecked := FlowPreflight{State: FlowPreflightUnchecked, Missing: []string{}, Absent: []string{}}
 	if e.preflightChecker == nil {
 		return unchecked
 	}
-	missing, err := e.preflightChecker.PreflightPayloads(ctx, service.PayloadCodesOf(claims))
+	got, err := e.preflightChecker.PreflightPayloads(ctx, service.PayloadCodesOf(claims))
 	if err != nil {
 		e.logFn("flow preview: inventory not checked: %v", err)
 		return unchecked
 	}
-	if len(missing) == 0 {
-		return FlowPreflight{State: FlowPreflightOK, Missing: []string{}}
+	if len(got.Missing) == 0 {
+		return FlowPreflight{State: FlowPreflightOK, Missing: []string{}, Absent: []string{}}
 	}
-	sort.Strings(missing)
-	return FlowPreflight{State: FlowPreflightMissing, Missing: missing}
+	absent := append([]string{}, got.Absent...)
+	sort.Strings(got.Missing)
+	sort.Strings(absent)
+	return FlowPreflight{State: FlowPreflightMissing, Missing: got.Missing, Absent: absent}
 }
 
 // PreviewFlow plans a draft flow for the target style exactly as a start

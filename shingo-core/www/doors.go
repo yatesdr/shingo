@@ -164,10 +164,10 @@ func (d *Doors) AskClearHome(station string, raw json.RawMessage) asks.Result {
 }
 
 // AskPreflight answers protocol.AskPreflight: the preflight read's body
-// (preflight), for the asking station.
-func (d *Doors) AskPreflight(station string, raw json.RawMessage) asks.Result {
+// (preflight).
+func (d *Doors) AskPreflight(_ string, raw json.RawMessage) asks.Result {
 	return askDoor(raw, preflightDecodeErr, func(req protocol.PreflightRequest) asks.Result {
-		return d.preflight(context.Background(), station, req)
+		return d.preflight(context.Background(), req)
 	})
 }
 

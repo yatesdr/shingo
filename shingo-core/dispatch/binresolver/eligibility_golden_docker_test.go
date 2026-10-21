@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -115,7 +116,7 @@ type eligSQLRow struct {
 	// service.InventoryService.PreflightAvailability — the changeover preflight.
 	InventoryPreflight string `json:"inventory_preflight"`
 
-	// presentCounts, the same call's Absent signal. Not a sourcing reader — it
+	// presentPayloads, the same call's Absent signal. Not a sourcing reader — it
 	// counts stock that EXISTS anywhere, claimed and staged and riding a robot
 	// included — but it spelled the status rule a fourth way, so the arm the
 	// 2026-09-14 ruling replaces is watched here.
@@ -395,20 +396,14 @@ func eligSQLVerdicts(ctx context.Context, t *testing.T, db *store.DB,
 	}
 	row.PoolBreakdownFree = eligVerdict(breakdown[f.FlatAsk].Free > 0)
 
-	pre, err := inv.PreflightAvailability(ctx, "", []string{f.FlatAsk})
+	pre, err := inv.PreflightAvailability(ctx, []string{f.FlatAsk})
 	if err != nil {
 		t.Fatalf("%s: PreflightAvailability: %v", f.Name, err)
 	}
-	preTaken := false
-	for _, a := range pre.Available {
-		if a.PayloadCode == f.FlatAsk && a.BinCount > 0 {
-			preTaken = true
-		}
-	}
-	row.InventoryPreflight = eligVerdict(preTaken)
+	row.InventoryPreflight = eligVerdict(!slices.Contains(pre.Missing, f.FlatAsk))
 
-	// Absent is the complement of presentCounts: a payload lands there exactly
-	// when that query counted nothing.
+	// Absent is the complement of presentPayloads: a payload lands there
+	// exactly when that query found no bin.
 	present := true
 	for _, a := range pre.Absent {
 		if a == f.FlatAsk {

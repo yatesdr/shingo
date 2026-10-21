@@ -327,36 +327,22 @@ func (p preflightAsker) Available() bool { return p.e.CoreAnswers(protocol.AskPr
 // answers from the Edge's side alone), as SetReleasePointSource does for the
 // release points. Call before Start.
 func (e *Engine) SetPreflightSource(src service.PreflightCorePoster) {
-	e.preflightChecker = service.NewPreflightChecker(src, e.cfg.StationID())
+	e.preflightChecker = service.NewPreflightChecker(src)
 }
 
-// PreflightInventory asks Core which of payloads has no free bin. Core reads
-// the station from the ask's envelope. An error is "not checked": a refusal,
-// a pending answer (ErrAskPending) or an ask that could not be sent.
-func (p preflightAsker) PreflightInventory(station string, payloads []string) (*service.PreflightCoreResult, error) {
-	a, err := p.e.Ask(protocol.AskPreflight, protocol.PreflightRequest{Station: station, Payloads: payloads}, AskWait)
+// PreflightInventory asks Core which of payloads has no free bin and which has
+// none at all. An error is "not checked": a refusal, a pending answer
+// (ErrAskPending) or an ask that could not be sent.
+func (p preflightAsker) PreflightInventory(payloads []string) (*service.PreflightCoreResult, error) {
+	a, err := p.e.Ask(protocol.AskPreflight, protocol.PreflightRequest{Payloads: payloads}, AskWait)
 	if err != nil {
 		return nil, fmt.Errorf("preflight: %w", err)
 	}
-	// The wire shape, with absent a pointer so a Core too old to send it is
-	// told apart from one that has every payload somewhere.
-	wire, err := askInto[struct {
-		Missing   []string                         `json:"missing"`
-		Absent    *[]string                        `json:"absent"`
-		Available []protocol.PreflightAvailability `json:"available"`
-	}](a)
+	wire, err := askInto[protocol.PreflightResponse](a)
 	if err != nil {
 		return nil, fmt.Errorf("preflight: %w", err)
 	}
-	out := &service.PreflightCoreResult{Missing: wire.Missing}
-	if wire.Absent != nil {
-		out.Absent, out.AbsentKnown = *wire.Absent, true
-	}
-	out.Available = make([]service.PreflightCoreAvailability, len(wire.Available))
-	for i, av := range wire.Available {
-		out.Available[i] = service.PreflightCoreAvailability{PayloadCode: av.PayloadCode, BinCount: av.BinCount}
-	}
-	return out, nil
+	return &service.PreflightCoreResult{Missing: wire.Missing, Absent: wire.Absent}, nil
 }
 
 // HeldPartials is Core's list of a part's held partials, oldest held first,

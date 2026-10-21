@@ -15,7 +15,7 @@ import (
 
 // handlers_inventory_preflight_test.go — POST /api/inventory/preflight
 // (apiInventoryPreflight over InventoryService.PreflightAvailability), the read
-// the Edge asks before a changeover and before a REQUEST, pinned at the door:
+// the flow composer's draft asks, pinned at the door:
 // its two refusals, the empty answer and a mixed one. Which bins count as free
 // and which as present is service's TestInventoryPreflight_*. A read writes
 // nothing.
@@ -27,13 +27,13 @@ func TestPreflightDoor_Arms(t *testing.T) {
 			answer:  refusedWith(http.StatusBadRequest, "decode request: unexpected EOF")},
 		{name: "an empty payload code is a server failure",
 			arrange: func(*testing.T, *doorFix) (any, []int64) {
-				return map[string]any{"station": "edge.pf", "payloads": []string{"PART-A", ""}}, nil
+				return map[string]any{"payloads": []string{"PART-A", ""}}, nil
 			},
 			answer: refusedWith(http.StatusInternalServerError, "preflight: preflight: empty payload code in request")},
-		{name: "no payloads asked answers empty lists and a null available",
-			arrange: func(*testing.T, *doorFix) (any, []int64) { return map[string]any{"station": "edge.pf"}, nil },
+		{name: "no payloads asked answers empty lists",
+			arrange: func(*testing.T, *doorFix) (any, []int64) { return map[string]any{}, nil },
 			answer: func(*testing.T, *doorFix) (int, string) {
-				return http.StatusOK, "{\"missing\":[],\"absent\":[],\"available\":null}\n"
+				return http.StatusOK, "{\"missing\":[],\"absent\":[]}\n"
 			}},
 		{name: "free, held and absent payloads, in the order asked",
 			arrange: func(t *testing.T, f *doorFix) (any, []int64) {
@@ -42,13 +42,11 @@ func TestPreflightDoor_Arms(t *testing.T) {
 				held := testdb.CreateBinAtNode(t, f.db, "PF-HELD", f.sd.StorageNode.ID, "PF-HELD-BIN")
 				o := testdb.CreateOrder(t, f.db, func(o *orders.Order) { o.Status = protocol.StatusDispatched })
 				testdb.ClaimBinForTest(t, f.db, held.ID, o.ID)
-				return map[string]any{"station": "edge.pf", "payloads": []string{"PF-ABSENT", "PF-HELD", "PART-A"}},
+				return map[string]any{"payloads": []string{"PF-ABSENT", "PF-HELD", "PART-A"}},
 					[]int64{free.ID, held.ID}
 			},
 			answer: func(*testing.T, *doorFix) (int, string) {
-				return http.StatusOK, `{"missing":["PF-ABSENT","PF-HELD"],"absent":["PF-ABSENT"],"available":[` +
-					`{"payload_code":"PF-ABSENT","bin_count":0},{"payload_code":"PF-HELD","bin_count":0},` +
-					`{"payload_code":"PART-A","bin_count":1}]}` + "\n"
+				return http.StatusOK, `{"missing":["PF-ABSENT","PF-HELD"],"absent":["PF-ABSENT"]}` + "\n"
 			}},
 	})
 }
