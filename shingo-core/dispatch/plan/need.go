@@ -82,7 +82,7 @@ type Need struct {
 	//
 	// IT IS HOW A TYPE TRAVELS FROM A DECISION TO A SOURCE. The maintained-group
 	// level keeper decides it is short of one carrier TYPE, records that in the
-	// episode key, and stamps the episode on the ask; wantedBinType's first arm
+	// episode key, and stamps the episode on the ask; wantedBinTypes' first arm
 	// reads it back. Nothing else in the plant needs it — every other need
 	// derives its type, or has none.
 	//
@@ -92,20 +92,29 @@ type Need struct {
 	// Blank for every non-keeper order, which is nearly all of them.
 	OriginID string
 
-	// ProcessNode is the equipment position this need is being sourced FOR.
+	// ProcessNode is the equipment position this need is being sourced FOR: the
+	// asker, the order's own process node, never where the carrier goes.
 	//
-	// Unused by the cascade today and carried now because strict sourcing is
-	// what consumes it: "may this asker take an empty out of that maintained
-	// group" is a question about the PROCESS, and by the time the plant-wide
-	// scan runs there is nothing left to derive it from. Filled from the order
-	// alongside OriginID, for the same reason and in the same place — one
-	// change, both fields, no per-step reads.
+	// Strict sourcing reads it: "may this asker take an empty out of that
+	// maintained group" is a question about the PROCESS (emptyFenceFor,
+	// GroupFencesAsker), and so does the outside-its-group audit. Filled from
+	// the order alongside OriginID, with no per-step reads.
 	//
-	// BLANK MEANS OUTSIDER once the fence exists, which is the correct default
-	// for everyone except the keeper — and the keeper is exempted on its ORIGIN
-	// rather than on this field, precisely because its own needs carry no
-	// process (SYNTH round 2 §2).
+	// BLANK MEANS OUTSIDER, which is the correct default for everyone except
+	// the keeper — and the keeper is exempted on its ORIGIN rather than on this
+	// field, precisely because its own needs carry no process (SYNTH round 2 §2).
+	//
+	// A complex leg's next dropoff is not its asker: an index refill sets its
+	// empty down on the paired node, for the press. Pin:
+	// TestStrictGroup_ComplexLegToThePairedNodeIsNotFencedForItsSupportedPress.
 	ProcessNode string
+
+	// SetDownNode is where the carrier is set down next: a simple order's
+	// delivery node, a complex leg's next dropoff (NextDropoffNode). The empty
+	// type decider reads what fits there (typeFromDestinationPosition). Blank
+	// is no destination fact. Pin:
+	// TestPlainRetrieveEmpty_TypedByItsDestinationsOneAdmittedType.
+	SetDownNode string
 
 	// Order is the order this need is planned FOR, when there is one and the
 	// plan's own earlier steps count: the vacated-slot rule's case (a) asks what

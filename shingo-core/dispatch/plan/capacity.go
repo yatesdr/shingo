@@ -270,6 +270,20 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 
 	params := Params{Destination: ngrpName}
 
+	// The carrier's type, derived here exactly as the resolver derives it
+	// (settleBinType), and only when the caller did not already know.
+	// excludeOrderID is the asking order — the same id the resolver sees in its
+	// dig asker — so the two reach the same answer or both reach "could not
+	// tell". Before the level question, which is per type when the type is
+	// known: an order judged against the group's total while the resolver
+	// judges its own type parks for a level its carrier is short of. Pin:
+	// TestUnloaderEmptyOut_NamedBinIsNotParkedByAnotherTypeOverLevel.
+	if binTypeID == nil && excludeOrderID != 0 {
+		if id, err := db.BinTypeForOrder(excludeOrderID); err == nil {
+			binTypeID = id
+		}
+	}
+
 	// ── THE LEVEL, BEFORE THE PHYSICS ───────────────────────────────────────
 	//
 	// A maintained group at its declared level is FULL in the sense that matters,
@@ -303,15 +317,6 @@ func checkNGRPCapacity(db CapacityDB, ngrp *nodes.Node, ngrpName string, exclude
 		// A genuinely empty group — pass through so the resolver's own failure
 		// surfaces rather than being masked as a queue. Unchanged.
 		return false, CapacityVerdict{}
-	}
-	// Derived here exactly as the resolver derives it, and only when the caller
-	// did not already know. excludeOrderID is the asking order — the same id the
-	// resolver sees in its dig asker — so the two reach the same answer or both
-	// reach "could not tell".
-	if binTypeID == nil && excludeOrderID != 0 {
-		if id, err := db.BinTypeForOrder(excludeOrderID); err == nil {
-			binTypeID = id
-		}
 	}
 	// ENABLED AND ADMISSIBLE ARE COUNTED SEPARATELY, and the difference decides
 	// between two dispositions that look alike and are not:

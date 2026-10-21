@@ -18,18 +18,21 @@ package store
 // every store resolution — simple move, retrieve, complex step, lane-gate
 // widening, dug-lane redirect — is typed by construction.
 //
-// ── THREE SOURCES, IN DESCENDING CERTAINTY ──────────────────────────────────
+// ── FOUR SOURCES, IN DESCENDING CERTAINTY ───────────────────────────────────
 //
-// The same question is asked at three different moments in an order's life, and
-// only the last of them has a carrier in hand:
+// The same question is asked at different moments in an order's life:
 //
 //  1. orders.bin_id — the bin type is chosen and recorded. Every simple move and
 //     retrieve that has reached dispatch is here. This is the physical thing the
 //     robot is holding, so it outranks anything inferred.
-//  2. the order's BIN reservations — a complex order's legs hold their carriers
+//  2. orders.named_bin_id — the station named the carrier when it asked (an
+//     unloader's empty-out names the cart at its window), so the type is known
+//     before dispatch claims it. Pin:
+//     TestUnloaderEmptyOut_NamedBinIsNotParkedByAnotherTypeOverLevel.
+//  3. the order's BIN reservations — a complex order's legs hold their carriers
 //     before bin_id means anything, so a dropoff step resolving into a group
 //     reads the hold its paired pickup took.
-//  3. nothing — the caller's own parameter covers the pre-carrier case (a level
+//  4. nothing — the caller's own parameter covers the pre-carrier case (a level
 //     keeper ask names a type before any bin exists) and stays an override.
 //
 // ── EVERY DOUBT RETURNS NIL, WHICH MEANS "DO NOT NARROW" ────────────────────
@@ -60,8 +63,11 @@ func (db *DB) BinTypeForOrder(orderID int64) (*int64, error) {
 		return nil, nil
 	}
 
-	if order.BinID != nil {
-		bin, err := db.GetBin(*order.BinID)
+	for _, carrier := range []*int64{order.BinID, order.NamedBinID} {
+		if carrier == nil {
+			continue
+		}
+		bin, err := db.GetBin(*carrier)
 		if err != nil {
 			return nil, err
 		}

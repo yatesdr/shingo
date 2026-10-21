@@ -1,16 +1,14 @@
 package plan
 
-import "shingocore/store/bins"
+import (
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+)
 
-// source_finder_want.go — which carrier TYPE an empty should be.
-//
-// MOVED OUT OF source_finder.go UNCHANGED. One function, in its own file, because
-// it is about to grow: the maintained-group work adds a first arm here (an ask
-// whose origin names an open maintain episode returns that episode's type and
-// never re-derives), and that edit reads better against 100 lines than against
-// 900. Its sibling requiresFullCarrier stays in source_finder.go — it answers
-// full-vs-partial, not which type, and moving it would be a judgement rather than
-// a move.
+// finder_want.go — which carrier TYPE an empty should be: the maintained-group
+// episode's type, else the loader window's derivation, else what fits where the
+// carrier is set down. Its sibling requiresFullCarrier (finder.go) answers
+// full-vs-partial, not which type.
 
 // WantedBinType decides WHICH carrier type an empty going to a loader window
 // should be, from the loader's declared carrier mix. A loader that has declared
@@ -96,18 +94,18 @@ func (f *Finder) wantedBinTypes(need Need) []string {
 
 	// ── The loader derivation. Needs a destination WINDOW to derive from. ────
 	if need.DeliveryNode == "" {
-		return oneType(f.typeFromDestinationPosition(need))
+		return oneType(f.typeFromDestinationPosition(need, nil))
 	}
 	dest, err := f.db.GetNodeByDotName(need.DeliveryNode)
 	if err != nil || dest == nil {
-		return oneType(f.typeFromDestinationPosition(need))
+		return oneType(f.typeFromDestinationPosition(need, nil))
 	}
 	// The home and, in the same read, the carrier types the window's payloads
 	// may ride — so the no-mix arm below costs no statement the quota read did
 	// not already pay for.
 	home, carriers, err := f.db.GetLoaderHomeCarriers(dest.ID)
 	if err != nil || home == nil {
-		return oneType(f.typeFromDestinationPosition(need))
+		return oneType(f.typeFromDestinationPosition(need, dest))
 	}
 	quotas, err := f.db.ListLoaderQuotas(home.LoaderID)
 	if err != nil {
@@ -258,13 +256,27 @@ func (f *Finder) emptyFenceFor(need Need) bins.EmptyFence {
 // every call, which is what it got before MG3-4 existed. That is why the wire
 // lands regardless of how many positions are typed today: the config is not
 // worth populating until something reads it.
-func (f *Finder) typeFromDestinationPosition(need Need) string {
-	if need.ProcessNode == "" {
+//
+// THE DESTINATION, NOT THE ASKER. It reads need.SetDownNode, where the carrier
+// is put down next; need.ProcessNode is who asks, which the strict fence reads.
+// A plain retrieve carries no process node at all, and a complex leg's asker is
+// its press while its empty goes to the paired node. Pins:
+// TestPlainRetrieveEmpty_TypedByItsDestinationsOneAdmittedType,
+// TestOutflowTyping_TheAskerIsNotTheDestination.
+//
+// delivery is the need's delivery node when the caller has already read it, so
+// a simple order's destination costs no second lookup; nil otherwise.
+func (f *Finder) typeFromDestinationPosition(need Need, delivery *nodes.Node) string {
+	if need.SetDownNode == "" {
 		return ""
 	}
-	node, err := f.db.GetNodeByDotName(need.ProcessNode)
-	if err != nil || node == nil {
-		return ""
+	node := delivery
+	if node == nil || need.SetDownNode != need.DeliveryNode {
+		n, err := f.db.GetNodeByDotName(need.SetDownNode)
+		if err != nil || n == nil {
+			return ""
+		}
+		node = n
 	}
 	types, err := f.db.GetEffectiveBinTypes(node.ID)
 	if err != nil || len(types) != 1 {

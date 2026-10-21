@@ -14,9 +14,10 @@ import (
 )
 
 // empty_order_pins_test.go — MG3-0, pin 7. The ORDERING every empty finder
-// rests on, asserted across ALL FOUR of them.
+// rests on, asserted across all of them: the four this was written for and the
+// two set finders added since (six exported finders, five statements).
 //
-// WHY ALL FOUR AND NOT ONE. `AccessibleEmptyOrder` is appended by each finder
+// WHY ALL OF THEM AND NOT ONE. `AccessibleEmptyOrder` is appended by each finder
 // separately. Phase 3 consolidates their WHERE bodies into a shared fragment
 // family, and the ordering is the part of each query NOT being consolidated —
 // so it is exactly the part that can silently stop being applied to one of
@@ -101,6 +102,14 @@ func TestPin_EveryEmptyFinderPrefersTheMouth(t *testing.T) {
 		}},
 		{"untyped, plant-wide", func() (*bins.Bin, error) {
 			return bins.FindEmptyCompatible(db.DB, "", "", 0, bins.EmptyFence{}, reservations.Anyone)
+		}},
+		// The set finders (a no-mix loader's) append the same ordering through
+		// their own statements.
+		{"type set, group-scoped", func() (*bins.Bin, error) {
+			return bins.FindEmptyOfTypesInGroup(db.DB, []string{"ORD-45x58"}, grpID, 0, reservations.Anyone)
+		}},
+		{"type set, plant-wide", func() (*bins.Bin, error) {
+			return bins.FindEmptyOfTypes(db.DB, []string{"ORD-45x58"}, "", 0, bins.EmptyFence{}, reservations.Anyone)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

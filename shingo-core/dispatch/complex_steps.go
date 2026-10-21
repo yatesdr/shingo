@@ -21,7 +21,7 @@ import (
 func (d *Dispatcher) reResolveComplexStepsFor(order *orders.Order, steps []resolvedStep, asker reservations.DigAsker,
 	pc *pairPass) (newSteps []resolvedStep, changed bool, err error) {
 	newSteps, changed, err = d.pure.ReComplexSteps(steps, plan.Need{PayloadCode: order.PayloadCode, Asker: asker,
-		Order: order.ID, Pair: pc.leg()})
+		ProcessNode: order.ProcessNode, Order: order.ID, Pair: pc.leg()})
 	if err != nil {
 		return newSteps, changed, err
 	}
@@ -52,6 +52,12 @@ func stepsAsResolved(steps []protocol.ComplexOrderStep) []resolvedStep {
 // (plan.ResolvedStepPayload).
 func resolvedStepPayload(step resolvedStep, orderPayload string) string {
 	return plan.ResolvedStepPayload(step, orderPayload)
+}
+
+// nextDropoffResolved is plan.NextDropoffStep, for callers whose own variable
+// named plan hides the package.
+func nextDropoffResolved(steps []resolvedStep, from int) string {
+	return plan.NextDropoffStep(steps, from)
 }
 
 // extractEndpoints returns the pickup (first actionable) and delivery (last

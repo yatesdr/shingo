@@ -9,6 +9,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"shingocore/store/reservations"
 	"time"
 
@@ -110,8 +111,32 @@ func (db *DB) ReleaseStagedBin(binID int64) (released bool, err error) {
 
 // UpdateBin is the bin edit: label, description and bin type, each only when
 // non-nil. It never writes node_id or status (see bins.Update).
+//
+// One transaction: the edit, the finding it re-derives on a re-type, and the
+// re-type's ledger row with its from and to type codes (audit.OpBinRetyped).
+// The transaction is opened here because store/bins may not import
+// store/audit (depguard's store-sub-pkg-isolation).
 func (db *DB) UpdateBin(binID int64, label, description *string, binTypeID *int64) error {
-	return bins.Update(db.DB, binID, label, description, binTypeID)
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	r, err := bins.Update(tx, binID, label, description, binTypeID)
+	if err != nil {
+		return err
+	}
+	if r != nil {
+		detail, err := json.Marshal(map[string]string{"dunnage_from": r.FromCode, "dunnage_to": r.ToCode})
+		if err != nil {
+			return err
+		}
+		if err := audit.AppendBinUOP(tx, binID, &r.UOP, r.UOP, audit.OpBinRetyped, "store/bins.go:UpdateBin",
+			nil, r.PayloadCode, "", audit.BinUOPContext{NodeID: r.NodeID, Detail: detail}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // LockBin prevents automated claiming/movement of a bin.

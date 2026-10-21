@@ -63,7 +63,7 @@ func TestOutflowTyping_OneEffectiveTypeIsTheWant(t *testing.T) {
 	db.effectiveBinTypes[500] = []*bins.BinType{{ID: 1, Code: "OT-45x58"}}
 
 	got := NewSourceFinder(db, nil, nil).picker.WantedBinType(SourceNeed{
-		Intent: IntentEmpty, ProcessNode: "OT-PRESS-POS",
+		Intent: IntentEmpty, SetDownNode: "OT-PRESS-POS",
 	})
 	if got != "OT-45x58" {
 		t.Errorf("wantedBinType = %q, want OT-45x58. One effective type at the destination "+
@@ -102,7 +102,7 @@ func TestOutflowTyping_ZeroOrManyChangesNothing(t *testing.T) {
 			db.effectiveBinTypes[510] = tc.types
 
 			got := NewSourceFinder(db, nil, nil).picker.WantedBinType(SourceNeed{
-				Intent: IntentEmpty, ProcessNode: "OT-POS",
+				Intent: IntentEmpty, SetDownNode: "OT-POS",
 			})
 			if got != "" {
 				t.Errorf("wantedBinType = %q, want blank", got)
@@ -122,7 +122,7 @@ func TestOutflowTyping_MaintainOriginStillWins(t *testing.T) {
 	db.maintainedType["11111111-2222-3333-4444-555555555555"] = "OT-EPISODE-SAYS"
 
 	got := NewSourceFinder(db, nil, nil).picker.WantedBinType(SourceNeed{
-		Intent: IntentEmpty, ProcessNode: "OT-POS-2",
+		Intent: IntentEmpty, SetDownNode: "OT-POS-2",
 		OriginID: "11111111-2222-3333-4444-555555555555",
 	})
 	if got != "OT-EPISODE-SAYS" {
@@ -132,12 +132,31 @@ func TestOutflowTyping_MaintainOriginStillWins(t *testing.T) {
 	}
 }
 
-// INERT WHEN NO DESTINATION IS KNOWN, which is every need that carries no
-// process node — the state of every complex leg before MG3-4 threaded one.
+// INERT WHEN NO DESTINATION IS KNOWN: a need that carries no set-down node.
 func TestOutflowTyping_NoDestinationIsNoOpinion(t *testing.T) {
 	t.Parallel()
 	db := newFakeFinderDB()
 	if got := NewSourceFinder(db, nil, nil).picker.WantedBinType(SourceNeed{Intent: IntentEmpty}); got != "" {
 		t.Errorf("wantedBinType = %q, want blank", got)
+	}
+}
+
+// THE ASKER IS NOT THE DESTINATION. ProcessNode is who the need is for, which
+// the strict fence reads; what fits is read where the carrier is set down. A
+// press whose own position admits one type says nothing about the paired node
+// its refill goes to.
+func TestOutflowTyping_TheAskerIsNotTheDestination(t *testing.T) {
+	t.Parallel()
+	db := newFakeFinderDB()
+	db.addNode(pinNode(530, "OT-ASKER"))
+	db.effectiveBinTypes[530] = []*bins.BinType{{ID: 3, Code: "OT-ASKER-FITS"}}
+	db.addNode(pinNode(531, "OT-SET-DOWN"))
+
+	got := NewSourceFinder(db, nil, nil).picker.WantedBinType(SourceNeed{
+		Intent: IntentEmpty, ProcessNode: "OT-ASKER", SetDownNode: "OT-SET-DOWN",
+	})
+	if got != "" {
+		t.Errorf("wantedBinType = %q, want blank: the set-down node says nothing, and the "+
+			"asker's own position is not where this carrier goes", got)
 	}
 }

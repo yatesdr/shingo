@@ -462,17 +462,11 @@ func (a *Allocator) reanchorBareEmpty(order *orders.Order, plan *ComplexPlan, st
 		return nil
 	}
 	step := plan.ResolvedSteps[stepIndex]
-	nextDrop := ""
-	for _, s := range plan.ResolvedSteps[stepIndex+1:] {
-		if s.Action == protocol.ActionDropoff {
-			nextDrop = s.Node
-			break
-		}
-	}
 	res := a.finder.FindSourceForNeed(SourceNeed{
 		SourceNode:  src,
 		PayloadCode: resolvedStepPayload(step, order.PayloadCode),
-		ProcessNode: nextDrop,
+		ProcessNode: order.ProcessNode,
+		SetDownNode: nextDropoffResolved(plan.ResolvedSteps, stepIndex+1),
 		Intent:      IntentEmpty,
 		Asker:       digAskerFor(order),
 	})

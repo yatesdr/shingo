@@ -192,7 +192,8 @@ func forecastPlaces(in sourceability.Inputs, stations map[string]string, binding
 				// A produce cell's supply is an empty carrier, needed when the
 				// bin at the line fills to the level (F6 a: the produce rate).
 				p.need = dispatch.SourceNeed{SourceNode: c.InboundSource, PayloadCode: c.PayloadCode,
-					DeliveryNode: c.CoreNodeName, ProcessNode: c.CoreNodeName, Intent: dispatch.IntentEmpty}
+					DeliveryNode: c.CoreNodeName, ProcessNode: c.CoreNodeName, SetDownNode: c.CoreNodeName,
+					Intent: dispatch.IntentEmpty}
 				p.birth.NeedAt = cellFillAt(c, level, in, now)
 			} else {
 				p.need = dispatch.SourceNeed{SourceNode: c.InboundSource, PayloadCode: c.PayloadCode,
@@ -219,7 +220,8 @@ func forecastPlaces(in sourceability.Inputs, stations map[string]string, binding
 				NeedAt: projectNeedAt(totals[b.PayloadCode], b.ReplenishUOPThreshold, in.RatePerSec[b.PayloadCode], now),
 			},
 			need: dispatch.SourceNeed{SourceNode: b.InboundSource, PayloadCode: b.PayloadCode,
-				DeliveryNode: b.CoreNodeName, ProcessNode: b.CoreNodeName, Intent: dispatch.IntentEmpty},
+				DeliveryNode: b.CoreNodeName, ProcessNode: b.CoreNodeName, SetDownNode: b.CoreNodeName,
+				Intent: dispatch.IntentEmpty},
 		})
 	}
 	return out

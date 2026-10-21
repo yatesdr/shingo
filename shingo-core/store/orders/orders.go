@@ -1809,14 +1809,18 @@ func CountLiveRootsByOrigin(db *sql.DB, originID string) (int, error) {
 // direction.
 //
 // TYPED BY THE CARRIER ALREADY CHOSEN, not by a requested type, because these
-// orders have no requested type — nothing in the plant carries one. An order
-// that has not yet sourced a bin is therefore INVISIBLE here, deliberately and
-// statedly: crediting an unsourced inbound would let the keeper subtract a
-// carrier that may never arrive. Over-asking is the safe direction — it is
-// bounded by want, and the loser of a race re-queues, which is a normal outcome.
+// orders have no requested type — nothing in the plant carries one. The carrier
+// is orders.bin_id once sourced, else orders.named_bin_id: an unloader's
+// empty-out names the cart standing at its window, and that cart is coming
+// before dispatch claims it. Pin:
+// TestUnloaderEmptyOut_NamedBinCountsAsComingBeforeItIsSourced. An order with
+// neither is INVISIBLE here, deliberately and statedly: crediting an inbound
+// with no carrier would let the keeper subtract one that may never arrive.
+// Over-asking is the safe direction — it is bounded by want, and the loser of a
+// race re-queues, which is a normal outcome.
 //
 // TWO ARMS, because a complex order records its carriers in two places. The
-// direct arm reads orders.bin_id against the order's own delivery_node; the
+// direct arm reads the order's carrier against the order's own delivery_node; the
 // junction arm reads order_bins.bin_id against that row's dest_node, which is
 // where a multi-pickup complex order records "this carrier goes to that node".
 // A single-pickup complex order writes no junction row at all
@@ -1855,13 +1859,12 @@ func CountTypedInboundToGroup(db *sql.DB, groupNodeID int64, groupNodeName, binT
 	var count int
 	err := db.QueryRow(nodetree.DescendantsOf(1)+fmt.Sprintf(`
 		SELECT COUNT(DISTINCT bin_id) FROM (
-		    SELECT o.bin_id AS bin_id
+		    SELECT b.id AS bin_id
 		      FROM orders o
-		      JOIN bins b  ON b.id = o.bin_id
+		      JOIN bins b  ON b.id = COALESCE(o.bin_id, o.named_bin_id)
 		      JOIN bin_types bt ON bt.id = b.bin_type_id
 		      LEFT JOIN nodes dn ON dn.name = o.delivery_node
 		     WHERE o.status IN (%[1]s)
-		       AND o.bin_id IS NOT NULL
 		       AND bt.code = $2
 		       AND COALESCE(b.payload_code, '') = ''
 		       AND (o.delivery_node = $3 OR dn.id IN (SELECT id FROM descendants))

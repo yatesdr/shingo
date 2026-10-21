@@ -67,7 +67,11 @@ func TestCreateBin_CRUD(t *testing.T) {
 
 	t.Run("Update_persists_changes", func(t *testing.T) {
 		label, desc := "BIN-CRUD-1B", "renamed"
-		testutil.MustNoErr(t, bins.Update(db.DB, bin.ID, &label, &desc, nil), "bins.Update")
+		tx, err := db.Begin()
+		testutil.MustNoErr(t, err, "begin")
+		_, err = bins.Update(tx, bin.ID, &label, &desc, nil)
+		testutil.MustNoErr(t, err, "bins.Update")
+		testutil.MustNoErr(t, tx.Commit(), "commit")
 		got, err := bins.Get(db.DB, bin.ID)
 		if err != nil {
 			t.Fatalf("bins.Get after update: %v", err)

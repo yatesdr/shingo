@@ -58,7 +58,8 @@ func (d *Dispatcher) handleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	// it, which is correct — a lane somebody else is excavating is no place to
 	// resolve a brand-new order into. The asker starts mattering on replay
 	// (complex_dispatch.go), where the parent may own a lock.
-	resolvedSteps, err := d.pure.ComplexSteps(p.Steps, payloadCode, reservations.Anyone)
+	resolvedSteps, err := d.pure.ComplexSteps(p.Steps,
+		SourceNeed{PayloadCode: payloadCode, Asker: reservations.Anyone, ProcessNode: p.ProcessNode})
 	var (
 		queueParams QueueParams
 		queueCode   protocol.QueueCode

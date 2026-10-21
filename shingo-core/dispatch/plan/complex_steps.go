@@ -5,7 +5,6 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch/binresolver"
-	"shingocore/domain"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
@@ -53,8 +52,12 @@ func (p *Planner) debug(format string, args ...any) {
 // don't need to re-format. The wrapped reason from resolveStepNode
 // preserves the original resolver substring so
 // classifyResolutionError's ResolutionCapacity branch can match.
-func (p *Planner) ComplexSteps(steps []protocol.ComplexOrderStep, payloadCode string, asker domain.DigAsker) ([]Step, error) {
+//
+// need carries the order's PayloadCode, its Asker and its ProcessNode (who
+// asks, which the strict fence reads); each step's SetDownNode is derived here.
+func (p *Planner) ComplexSteps(steps []protocol.ComplexOrderStep, need Need) ([]Step, error) {
 	defer observe(p.db, "complex-steps")()
+	payloadCode, asker := need.PayloadCode, need.Asker
 	var resolved []Step
 	// The carrier the most recently resolved pickup is holding, which is the one
 	// the next dropoff puts down. See the storeType comment in resolveStepNode
@@ -80,7 +83,8 @@ func (p *Planner) ComplexSteps(steps []protocol.ComplexOrderStep, payloadCode st
 					func(j int) bool { return steps[j].Action == protocol.ActionPickup },
 					func(j int) bool { return steps[j].Empty })
 			}
-			nodeName, group, err := p.StepNode(step, stepOrderPayload, asker, nextDrop, carrier)
+			nodeName, group, err := p.StepNode(step, stepOrderPayload,
+				Need{Asker: asker, ProcessNode: need.ProcessNode, SetDownNode: nextDrop}, carrier)
 			if err != nil {
 				return nil, fmt.Errorf("step %d: %w", i, err)
 			}
@@ -109,7 +113,8 @@ func (p *Planner) ComplexSteps(steps []protocol.ComplexOrderStep, payloadCode st
 			if step.Node != "" {
 				// nil carrier: a wait puts nothing down, so there is nothing for the
 				// bin-type fence to narrow on.
-				nodeName, group, err := p.StepNode(step, payloadCode, asker, nextDrop, nil)
+				nodeName, group, err := p.StepNode(step, payloadCode,
+					Need{Asker: asker, ProcessNode: need.ProcessNode, SetDownNode: nextDrop}, nil)
 				if err != nil {
 					return nil, fmt.Errorf("step %d: %w", i, err)
 				}
@@ -201,7 +206,8 @@ func (p *Planner) ReComplexSteps(steps []Step, need Need) (newSteps []Step, chan
 				func(j int) bool { return steps[j].Action == protocol.ActionPickup },
 				func(j int) bool { return steps[j].Empty })
 		}
-		newName, group, resolveErr := p.StepNode(ps, stepOrderPayload, asker, "",
+		newName, group, resolveErr := p.StepNode(ps, stepOrderPayload,
+			Need{Asker: asker, ProcessNode: need.ProcessNode, SetDownNode: NextDropoffStep(steps, i)},
 			p.BinTypeBeforeStep(steps, i))
 		// A GROUP DROP NEVER WALLS THIS PLAN'S OWN LATER PICKUP (Q1), on replay as
 		// at intake, asked once every step has its slot (unwallOwnPickups).
@@ -371,9 +377,14 @@ func BinTypeAtNode(db stepReader, nodeName string) *int64 {
 // (exclusions rule #7, complex_steps.go arm) is deleted with them. The
 // Reshuffle→blind-dispatch mappings below preserve pre-fold behaviour
 // byte-for-byte; surfacing the burial is a C(ii) decision.
+//
+// leg is who asks and where this step's carrier goes: the order's Asker and
+// ProcessNode, and the step's SetDownNode (its next dropoff). No other field of
+// it is read.
 func (p *Planner) StepNode(step protocol.ComplexOrderStep, orderPayload string,
-	asker domain.DigAsker, nextDropoff string, carrierTypeID *int64) (string, string, error) {
+	leg Need, carrierTypeID *int64) (string, string, error) {
 	defer observe(p.db, "step-node")()
+	asker := leg.Asker
 	payloadCode := StepPayload(step, orderPayload)
 	// A pickup that names its bin goes to wherever that bin stands: the
 	// operator chose it (a held partial to finish), so no other is sought.
@@ -406,7 +417,8 @@ func (p *Planner) StepNode(step protocol.ComplexOrderStep, orderPayload string,
 				res := p.finder.Pick(Need{
 					SourceNode:  step.Node,
 					PayloadCode: payloadCode,
-					ProcessNode: nextDropoff,
+					ProcessNode: leg.ProcessNode,
+					SetDownNode: leg.SetDownNode,
 					Intent:      IntentEmpty,
 					Asker:       asker,
 				})
@@ -503,7 +515,8 @@ func (p *Planner) StepNode(step protocol.ComplexOrderStep, orderPayload string,
 				PayloadCode: payloadCode,
 				Intent:      intent,
 				Asker:       asker,
-				ProcessNode: nextDropoff,
+				ProcessNode: leg.ProcessNode,
+				SetDownNode: leg.SetDownNode,
 			})
 			switch res.Outcome {
 			case OutcomeFound:
@@ -538,10 +551,12 @@ func (p *Planner) StepNode(step protocol.ComplexOrderStep, orderPayload string,
 // many leaves today's behaviour untouched, because "this slot fits anything" and
 // "nobody has said" are both answered correctly by not narrowing.
 //
-// IT IS ALSO THE FENCE'S INPUT. A supported press reaches its own maintained
-// group through the supports list, keyed on this same node. Before MG3-4 a
-// complex leg carried no process identity at all, so every press-index swap was
-// an outsider at every group — including the one built to serve it.
+// IT IS NOT THE FENCE'S INPUT. The strict fence asks who the leg is FOR, the
+// order's process node (Need.ProcessNode); this node is only where the carrier
+// is set down (Need.SetDownNode). An index refill sets its empty down on the
+// paired node for the press, and a fence keyed on the paired node shut the
+// press out of the group built to serve it. Pin:
+// TestStrictGroup_ComplexLegToThePairedNodeIsNotFencedForItsSupportedPress.
 //
 // INERT ON EMPTY CONFIG, deliberately. A plant with no per-position bin types
 // and no maintained groups threads a node name that changes no decision. That is
@@ -552,6 +567,17 @@ func (p *Planner) StepNode(step protocol.ComplexOrderStep, orderPayload string,
 // at several places, and the one that matters for a pickup is where that
 // carrier is set down next.
 func NextDropoffNode(steps []protocol.ComplexOrderStep, from int) string {
+	for i := from; i < len(steps); i++ {
+		if steps[i].Action == protocol.ActionDropoff && steps[i].Node != "" {
+			return steps[i].Node
+		}
+	}
+	return ""
+}
+
+// NextDropoffStep is NextDropoffNode over a resolved step list: where a
+// pickup's carrier is set down next, for the replay and the allocator.
+func NextDropoffStep(steps []Step, from int) string {
 	for i := from; i < len(steps); i++ {
 		if steps[i].Action == protocol.ActionDropoff && steps[i].Node != "" {
 			return steps[i].Node

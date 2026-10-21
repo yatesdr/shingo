@@ -148,6 +148,8 @@ func (f *SourceFinder) FindSource(order *orders.Order, intent Intent) SourceResu
 		// the tier cascade for something the caller was already holding.
 		OriginID:    order.OriginID,
 		ProcessNode: order.ProcessNode,
+		// Where the carrier is set down: what the empty type decider reads.
+		SetDownNode: order.DeliveryNode,
 		// THE ASKER, ACTUALLY FILLED. Need.Asker's doc has claimed
 		// "FindSource fills it" since the field existed and this line is the
 		// first time it was true. Until the empty tiers read it the omission

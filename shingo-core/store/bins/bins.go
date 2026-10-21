@@ -801,8 +801,20 @@ func Create(db *sql.DB, b *Bin) error {
 	return nil
 }
 
-// Update is the bin edit: it writes the fields the edit names and nothing else.
-// A nil pointer leaves its column alone.
+// Retype is what a bin edit that changed the bin's type leaves for the
+// ledger: the from and to type codes, as the CLEAR records a re-stamp, and the
+// bin's count, payload and node as they stand.
+type Retype struct {
+	FromCode, ToCode string
+	UOP              int
+	PayloadCode      string
+	NodeID           *int64
+}
+
+// Update is the bin edit, on the caller's transaction: it writes the fields
+// the edit names and nothing else. A nil pointer leaves its column alone. It
+// returns a Retype when the edit changed the bin's type, nil otherwise; the
+// caller writes the ledger row from it in the same transaction (store.UpdateBin).
 //
 // NOT node_id AND NOT status. This wrote both from a *Bin the caller had read at
 // some earlier moment, so a door-write that landed between that read and this
@@ -810,15 +822,50 @@ func Create(db *sql.DB, b *Bin) error {
 // stale values. Where a bin is has one writer (PlaceBinTx and the move doors);
 // its status has its doors (UpdateStatus, Stage, ReleaseStaged, Retire). An
 // edit of a label is not one of them.
-func Update(db *sql.DB, binID int64, label, description *string, binTypeID *int64) error {
-	_, err := db.Exec(`UPDATE bins SET
+//
+// A RE-TYPE RE-DERIVES THE FINDING. undeclared_carrier_at is a statement about
+// the pair (payload, carrier type), and every other writer of either half keeps
+// it true in its own statement (the produce door, the clear, the payload rule's
+// edit). Judged against the NEW type; COALESCE keeps the first stamp, and a
+// carrier with no payload holds nothing to judge. Pin:
+// TestBinEdit_ReTypeOfALoadedBinRecomputesUndeclaredCarrier.
+func Update(tx *sql.Tx, binID int64, label, description *string, binTypeID *int64) (*Retype, error) {
+	var fromID int64
+	var fromCode string
+	if binTypeID != nil {
+		if err := tx.QueryRow(`SELECT b.bin_type_id, COALESCE(bt.code, '')
+			FROM bins b LEFT JOIN bin_types bt ON bt.id = b.bin_type_id
+			WHERE b.id=$1 FOR UPDATE OF b`, binID).Scan(&fromID, &fromCode); err != nil {
+			return nil, fmt.Errorf("read bin %d type: %w", binID, err)
+		}
+	}
+	var r Retype
+	var nodeID sql.NullInt64
+	err := tx.QueryRow(`UPDATE bins SET
 		label=COALESCE($2, label),
 		description=COALESCE($3, description),
-		bin_type_id=COALESCE($4, bin_type_id),
+		bin_type_id=COALESCE($4::bigint, bin_type_id),
+		undeclared_carrier_at = CASE
+		    WHEN $4::bigint IS NULL THEN undeclared_carrier_at
+		    WHEN payload_code <> '' AND `+helpers.UndeclaredCarrierRuleSQL("payload_code", "$4::bigint")+`
+		    THEN COALESCE(undeclared_carrier_at, NOW())
+		    ELSE NULL END,
 		updated_at=$5
-		WHERE id=$1`,
-		binID, label, description, binTypeID, clock.Now().UTC())
-	return err
+		WHERE id=$1
+		RETURNING uop_remaining, payload_code, node_id,
+		    COALESCE((SELECT code FROM bin_types WHERE id = bins.bin_type_id), '')`,
+		binID, label, description, binTypeID, clock.Now().UTC()).Scan(&r.UOP, &r.PayloadCode, &nodeID, &r.ToCode)
+	if err != nil {
+		return nil, fmt.Errorf("update bin %d: %w", binID, err)
+	}
+	if binTypeID == nil || *binTypeID == fromID {
+		return nil, nil
+	}
+	r.FromCode = fromCode
+	if nodeID.Valid {
+		r.NodeID = &nodeID.Int64
+	}
+	return &r, nil
 }
 
 // Delete removes a bin row outright. Operational flows go through

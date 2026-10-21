@@ -171,6 +171,12 @@ const (
 	// the set started, and the carrier leaves full
 	// (TestReleaseDeclaredFullIsNeitherBumpNorUnload).
 	OpReleaseDeclaredFull = "release_declared_full"
+
+	// OpBinRetyped tags the admin bin edit that changed a carrier's type
+	// (store.UpdateBin). before_uop == after_uop: a re-type changes no count
+	// and is no binding boundary. metadata carries {dunnage_from, dunnage_to},
+	// the codes the CLEAR records when it re-stamps a type.
+	OpBinRetyped = "bin_retyped"
 )
 
 // ReleaseFamilyOps is the canonical set of ops that retire a bin's manifest —
