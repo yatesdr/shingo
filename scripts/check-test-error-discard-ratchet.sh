@@ -120,7 +120,7 @@ cd "$(dirname "$0")/.."
 # they make (the outbox poll, the encodes, the node and runtime reads): seven
 # discards the stream's own tests carried were converted, four of them added
 # after the count was last set.
-FROZEN=1384
+FROZEN=1375
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"

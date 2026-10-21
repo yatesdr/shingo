@@ -79,7 +79,7 @@ func (e *Engine) SetBinChangedFunc(fn func(binID int64)) {
 // SetBinsRowsFunc wires the read of Core's current bins rows for node names
 // (the messaging layer's CoreDataService.NodeBinsRows) that a write door's
 // refusal carries, so the Edge redraws the nodes from Core's rows before it
-// shows the sentence: the HTTP doors read it through the node service, the
+// shows the sentence: the door bodies read it through the node service, the
 // home clear and the wire intake through this engine. Set once at the
 // composition root.
 func (e *Engine) SetBinsRowsFunc(fn func(names []string) ([]protocol.NodeBinsRow, error)) {

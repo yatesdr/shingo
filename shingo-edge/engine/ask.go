@@ -83,8 +83,7 @@ type askBook struct {
 }
 
 // askAppliers is what each kind's answer does on this Edge beyond its rows,
-// waiter or none. Registered by the doors as they move onto the ask (one
-// release of the HTTP arm beside it); a kind with none applies its rows only.
+// waiter or none; a kind with none applies its rows only.
 type askApplier func(e *Engine, answer *protocol.EdgeAnswer)
 
 // setAskKinds takes the kinds the last heartbeat ack advertised. nil (an ack

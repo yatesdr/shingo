@@ -46,14 +46,14 @@ type PreflightCoreAvailability struct {
 // PreflightChecker holds the dependencies needed to gate a changeover on
 // upstream bin availability.
 type PreflightChecker struct {
-	db         *store.DB
-	coreClient PreflightCorePoster
-	station    string
+	db      *store.DB
+	core    PreflightCorePoster
+	station string
 }
 
 // NewPreflightChecker constructs a PreflightChecker.
-func NewPreflightChecker(db *store.DB, coreClient PreflightCorePoster, station string) *PreflightChecker {
-	return &PreflightChecker{db: db, coreClient: coreClient, station: station}
+func NewPreflightChecker(db *store.DB, core PreflightCorePoster, station string) *PreflightChecker {
+	return &PreflightChecker{db: db, core: core, station: station}
 }
 
 // PreflightInventoryCheck collects the to-style's required payload codes
@@ -73,7 +73,7 @@ func NewPreflightChecker(db *store.DB, coreClient PreflightCorePoster, station s
 // checked without a style row. The two must agree on a saved style, and
 // TestChangeoverPreflight_PayloadsAgreeWithStyleCheck says so.
 func (p *PreflightChecker) PreflightInventoryCheck(ctx context.Context, toStyleID int64) ([]string, error) {
-	if p.coreClient == nil || !p.coreClient.Available() {
+	if p.core == nil || !p.core.Available() {
 		return nil, fmt.Errorf("preflight: Core does not answer the preflight ask")
 	}
 	claims, err := p.db.ListStyleNodeClaims(toStyleID)
@@ -121,14 +121,14 @@ func dedupPayloadCodes(codes []string) []string {
 // what an unchecked answer looks like (the composer's preview says
 // "unchecked"; a start refuses), the gate does not pretend it looked.
 func (p *PreflightChecker) PreflightPayloads(ctx context.Context, codes []string) ([]string, error) {
-	if p.coreClient == nil || !p.coreClient.Available() {
+	if p.core == nil || !p.core.Available() {
 		return nil, fmt.Errorf("preflight: Core does not answer the preflight ask")
 	}
 	payloads := dedupPayloadCodes(codes)
 	if len(payloads) == 0 {
 		return nil, nil
 	}
-	result, err := p.coreClient.PreflightInventory(p.station, payloads)
+	result, err := p.core.PreflightInventory(p.station, payloads)
 	if err != nil {
 		return nil, fmt.Errorf("preflight: ask Core: %w", err)
 	}

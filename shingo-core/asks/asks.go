@@ -2,9 +2,8 @@
 // Edge's edge.ask, routes it by kind to the door body that answers it, and
 // sends the answer back on Core's outbox as a reply to the ask.
 //
-// The door bodies are the HTTP doors' own, extracted wire-free, so a door
-// answers an ask and an HTTP call with one body; this package knows nothing
-// of any door. The composition root registers each kind's body
+// The door bodies are the retired HTTP doors' own, extracted wire-free
+// (www.Doors); this package knows nothing of any door. The composition root registers each kind's body
 // (cmd/shingocore), and a census there fences the list against
 // protocol.AskKinds.
 //

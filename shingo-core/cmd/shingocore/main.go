@@ -486,9 +486,9 @@ func main() {
 	// The ask pair (protocol/ask.go): Core answers an Edge's asks through the
 	// outbox as replies, advertises the kinds it answers on every heartbeat
 	// ack, and answers an ask that arrives expired instead of dropping it.
-	// Each kind is answered by the body its HTTP door answers through
-	// (www.Doors; the kinds and their replay in routers.go, askDoors). The
-	// same Doors goes to the router below, whose event hub it carries.
+	// Each kind is answered by its door body (www.Doors.AskDoors, the kinds
+	// and their replay). The same Doors goes to the router below, whose event
+	// hub it carries.
 	doors := www.NewDoors(eng)
 	askServer, err := buildAskServer(db, coreHandler.ReplyAnswer, doors)
 	if err != nil {

@@ -13,8 +13,8 @@ import (
 // release points, held partials, and the reseat a changeover cancel asks for,
 // which Core answers by re-announcing the carrier).
 //
-// ONE SUBJECT EACH WAY. SubjectEdgeAsk carries an EdgeAsk: a kind and the body
-// the HTTP door took (the existing protocol request type). SubjectEdgeAnswer
+// ONE SUBJECT EACH WAY. SubjectEdgeAsk carries an EdgeAsk: a kind and its
+// request body (protocol/door_bodies.go). SubjectEdgeAnswer
 // carries an EdgeAnswer: the same kind, the door's status and sentence, the
 // door's response body, and Core's current bins rows for the nodes the act
 // touched. The answer is a reply (NewDataReply): its CorID is the ask
@@ -46,8 +46,9 @@ const (
 // tapped is still there.
 const AskTTL = 25 * time.Second
 
-// The ask kinds Core answers. Each names the HTTP door it replaces; its body
-// is that door's request type and its answer body that door's response type.
+// The ask kinds Core answers. Each names the HTTP door it replaced (the routes
+// are gone; Core answers the kinds as asks only); its body is that door's
+// request type and its answer body that door's response type.
 const (
 	AskBinLoad       = "bin.load"         // POST /api/telemetry/bin-load: BinLoadRequest → BinLoadResponse
 	AskBinCount      = "bin.count"        // POST /api/telemetry/bin-count: BinCountRequest → BinCountResponse
@@ -113,7 +114,7 @@ type EdgeAnswer struct {
 func (a *EdgeAnswer) OK() bool { return a != nil && a.Status == AnswerOK }
 
 // HeldPartialsRequest is the held-partials read's one parameter, as a body (the
-// HTTP door takes it as ?payload=).
+// retired HTTP door took it as ?payload=).
 type HeldPartialsRequest struct {
 	PayloadCode string `json:"payload_code"`
 }
