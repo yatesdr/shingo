@@ -2,12 +2,13 @@
 // ways, through the real wire (Core outbox → Bus → Edge ingestor, which drops a
 // message addressed to another station exactly as production does).
 //
-//   - OLD EDGE + NEW CORE. The per-station feed changes Core and not the Edge's
-//     handler: HandleSourcingState still replaces the whole cache on a snapshot
-//     and upserts on a delta. So an Edge that has only ever been sent the whole
-//     plant must end up, after the new Core's first per-station snapshot, with
-//     exactly its own processes and the unrouted ones — the other station's rows
-//     gone, its own readable.
+//   - AN EDGE THAT HOLDS THE WHOLE PLANT, as every Edge did under an older Core.
+//     Its cache's digest (FeedSourcing) is not the one Core builds for its
+//     station, so Core's heartbeat compare sends it the station's snapshot
+//     (StationReport; the compare itself is pinned in Core's messaging tests).
+//     Over the real wire, with the other station's snapshot on it too, the Edge
+//     must end up with exactly its own processes and the unrouted ones, quoting
+//     Core's digest.
 //
 //   - NEW EDGE + OLD CORE. An older Core sends the whole plant to every station
 //     on every full pass. The Edge from this phase must still apply that and
@@ -107,7 +108,7 @@ func oldCoreSnapshot(t *testing.T, eng *coreengine.Engine) {
 	}
 }
 
-func TestScenario_SourcingFeed_OldEdgeAppliesTheNewCoresPerStationSnapshot(t *testing.T) {
+func TestScenario_SourcingFeed_AWholePlantCacheIsHealedByTheStationsSnapshot(t *testing.T) {
 	eng, bus, edge := mixedCore(t)
 
 	// The Edge has been fed the whole plant, as every Edge was before.
@@ -117,11 +118,33 @@ func TestScenario_SourcingFeed_OldEdgeAppliesTheNewCoresPerStationSnapshot(t *te
 		t.Fatalf("fixture: after the whole-plant snapshot the edge caches %v, want all three processes", got)
 	}
 
-	// The new Core's first pass: a snapshot per station. The one for the other
-	// station is on the wire too, and the Edge must not apply it.
+	// The Core's first pass readies each station's snapshot and sends none.
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	eng.SourceabilityMonitor().Run(ctx)
+	m := eng.SourceabilityMonitor()
+	m.Run(ctx)
+	own, ok := m.StationReport(mixedOwnStation)
+	other, okOther := m.StationReport(mixedOtherStation)
+	if !ok || !okOther {
+		t.Fatal("the station snapshots are not ready after the first pass")
+	}
+	want, err := protocol.SourcingDigest(own.States)
+	if err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	if held := edge.Engine.FeedDigests()[protocol.FeedSourcing]; held == want {
+		t.Fatalf("a whole-plant cache quotes the station's digest %q: the compare would never send the snapshot", held)
+	}
+
+	// What the compare sends this station, and another station's on the wire.
+	for _, r := range []struct {
+		station string
+		report  protocol.SourcingStateReport
+	}{{mixedOtherStation, other}, {mixedOwnStation, own}} {
+		if err := eng.SendDataToEdge(protocol.SubjectSourcingState, r.station, r.report); err != nil {
+			t.Fatalf("send %s's snapshot: %v", r.station, err)
+		}
+	}
 	bus.PumpAll()
 
 	got := edgeCache(t, edge)
@@ -129,8 +152,11 @@ func TestScenario_SourcingFeed_OldEdgeAppliesTheNewCoresPerStationSnapshot(t *te
 		t.Fatalf("after the per-station snapshot the edge caches %v, want [PRESS-NULL PRESS-OWN]: its own "+
 			"process and the unrouted one, with the other station's rows gone", got)
 	}
-	if own := edge.Engine.SourcingStateForProcess("PRESS-OWN"); len(own) != 1 {
-		t.Fatalf("the edge reads %d states for its own process, want 1", len(own))
+	if states := edge.Engine.SourcingStateForProcess("PRESS-OWN"); len(states) != 1 {
+		t.Fatalf("the edge reads %d states for its own process, want 1", len(states))
+	}
+	if held := edge.Engine.FeedDigests()[protocol.FeedSourcing]; held != want {
+		t.Errorf("after the snapshot the edge quotes %q, want Core's digest for the station %q", held, want)
 	}
 }
 

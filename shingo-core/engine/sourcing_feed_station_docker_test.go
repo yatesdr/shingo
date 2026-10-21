@@ -4,7 +4,6 @@ package engine
 
 import (
 	"encoding/json"
-	"errors"
 	"sort"
 	"strings"
 	"testing"
@@ -109,10 +108,13 @@ func feedString(feed []feedRow) string {
 // reads them. Ruling, brief A2 item 1:
 //   - a station's snapshot is its own processes plus every process with no
 //     recorded station (so its full replace stays complete for what it reads);
-//   - snapshots go out on the first pass, on the 30-minute backstop, on
-//     (re)registration, and to a station whose style disappeared;
-//   - between backstops a full pass sends only what changed, per station, and a
-//     station with no change is sent nothing;
+//   - the snapshot is what the heartbeat compare sends (StationReport, the
+//     FeedSourcing row) when the Edge's digest differs, and the monitor
+//     itself pushes one only to a station whose style disappeared. The first
+//     pass's snapshot to every station, the 30-minute backstop and the
+//     registration snapshot went with the feed's descriptor row;
+//   - a full pass sends only what changed, per station, and a station with no
+//     change is sent nothing;
 //   - an unrouted process's delta goes to every station, as before.
 func TestSourcingFeed_EachStationGetsItsOwnProcesses(t *testing.T) {
 	t.Parallel()
@@ -121,27 +123,35 @@ func TestSourcingFeed_EachStationGetsItsOwnProcesses(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New()) // Start runs the first full pass
 	m := eng.SourceabilityMonitor()
 
-	want := "edge-a snapshot PRESS-A,PRESS-C | edge-b snapshot PRESS-B,PRESS-C"
-	if got := feedString(sourcingFeed(t, db, 0)); got != want {
-		t.Fatalf("the first pass sent [%s], want [%s]: each station its own processes plus the unrouted one, "+
-			"and no whole-plant broadcast", got, want)
+	if got := sourcingFeed(t, db, 0); len(got) != 0 {
+		t.Fatalf("the first pass sent [%s], want nothing: each Edge's cache is the heartbeat compare's", feedString(got))
+	}
+	report := func(station string) string {
+		t.Helper()
+		r, ok := m.StationReport(station)
+		if !ok {
+			t.Fatalf("StationReport(%s) not ready after the first pass", station)
+		}
+		seen := map[string]bool{}
+		var procs []string
+		for _, st := range r.States {
+			if !seen[st.ProcessID] {
+				seen[st.ProcessID] = true
+				procs = append(procs, st.ProcessID)
+			}
+		}
+		sort.Strings(procs)
+		return station + " snapshot " + strings.Join(procs, ",")
+	}
+	if got := report("edge-a") + " | " + report("edge-b"); got != "edge-a snapshot PRESS-A,PRESS-C | edge-b snapshot PRESS-B,PRESS-C" {
+		t.Fatalf("the stations' snapshots are [%s], want each its own processes plus the unrouted one", got)
 	}
 
-	// A second full pass inside the backstop, nothing changed: nothing is sent.
+	// A second full pass, nothing changed: nothing is sent.
 	since := outboxMax(t, db)
 	m.recomputeAll()
 	if got := sourcingFeed(t, db, since); len(got) != 0 {
-		t.Fatalf("a quiet full pass inside the backstop sent [%s], want nothing", feedString(got))
-	}
-
-	// The backstop falls due: every station gets its snapshot again.
-	m.mu.Lock()
-	m.lastSnapshot = m.lastSnapshot.Add(-sourceabilitySnapshotInterval)
-	m.mu.Unlock()
-	since = outboxMax(t, db)
-	m.recomputeAll()
-	if got := feedString(sourcingFeed(t, db, since)); got != want {
-		t.Fatalf("the backstop sent [%s], want [%s]", got, want)
+		t.Fatalf("a quiet full pass sent [%s], want nothing", feedString(got))
 	}
 
 	// A change moves all three verdicts: each goes to its own station, the
@@ -157,13 +167,6 @@ func TestSourcingFeed_EachStationGetsItsOwnProcesses(t *testing.T) {
 		t.Fatalf("the change sent [%s], want each delta to its own station and the unrouted one to every station", s)
 	}
 
-	// An Edge re-registers: it gets its own snapshot at once.
-	since = outboxMax(t, db)
-	m.SnapshotStation("edge-a")
-	if s := feedString(sourcingFeed(t, db, since)); s != "edge-a snapshot PRESS-A,PRESS-C" {
-		t.Fatalf("the registration snapshot was [%s], want edge-a's own", s)
-	}
-
 	// PRESS-B's style disappears: a delta cannot say so, so edge-b gets a
 	// snapshot now, without it.
 	_, err = plantclaims.ReplaceProcessFromStation(db.DB, "PRESS-B", "edge-b", nil, nil, nil, 0)
@@ -172,23 +175,6 @@ func TestSourcingFeed_EachStationGetsItsOwnProcesses(t *testing.T) {
 	m.recomputeAll()
 	if s := feedString(sourcingFeed(t, db, since)); s != "edge-b snapshot PRESS-C" {
 		t.Fatalf("after PRESS-B's style went, the feed was [%s], want edge-b's snapshot without it", s)
-	}
-}
-
-// TestSourcingFeed_UnreadableStationsFallBackToTheWholePlant: if the stations
-// cannot be listed, the snapshot goes to every station with the whole plant —
-// today's snapshot, which every Edge applies correctly — rather than to nobody.
-func TestSourcingFeed_UnreadableStationsFallBackToTheWholePlant(t *testing.T) {
-	t.Parallel()
-	db := testDB(t)
-	seedStationPlant(t, db)
-	eng := newUnstartedEngine(t, db, simulator.New())
-	m := eng.SourceabilityMonitor()
-	m.stationsFn = func() ([]string, error) { return nil, errors.New("registry unreadable") }
-	since := outboxMax(t, db)
-	m.recomputeAll()
-	if s := feedString(sourcingFeed(t, db, since)); s != "* snapshot PRESS-A,PRESS-B,PRESS-C" {
-		t.Fatalf("with the stations unreadable the snapshot was [%s], want the whole plant to every station", s)
 	}
 }
 

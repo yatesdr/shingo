@@ -332,3 +332,73 @@ func TestAllFeeds_NamesEveryFeedConst(t *testing.T) {
 		t.Errorf("feeds.go declares %d Feed* constants, AllFeeds lists %d", consts, len(AllFeeds()))
 	}
 }
+
+// TestSourcingDigest_WhatADeltaWouldChange: the sourcing digest moves with
+// what a delta carries (status, the lists, an at-risk line, the sentence) and
+// not with ComputedAt or a line's time to empty; it does not depend on the
+// order of the states, nor on nil against empty lists (the Edge's SQLite round
+// trip stores [] for none).
+func TestSourcingDigest_WhatADeltaWouldChange(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	base := []SourcingState{
+		{ProcessID: "P1", StyleID: "A", Status: "green", Reason: "Can change over.", ComputedAt: at},
+		{ProcessID: "P1", StyleID: "B", Status: "red", Missing: []string{"SYN-X"}, Absent: []string{"SYN-X"},
+			Reason: "Cannot change over — missing SYN-X.", ComputedAt: at},
+		{ProcessID: "P2", StyleID: "A", Status: "yellow", Reason: "Can change over, but SYN-Y running low — refill first.",
+			AtRisk: []SourcingAtRisk{{PayloadCode: "SYN-Y", Node: "LINE-1", TimeToEmptySeconds: 600}}, ComputedAt: at},
+	}
+	clone := func() []SourcingState {
+		out := make([]SourcingState, len(base))
+		for i, s := range base {
+			s.Missing = append([]string(nil), s.Missing...)
+			s.Absent = append([]string(nil), s.Absent...)
+			s.AtRisk = append([]SourcingAtRisk(nil), s.AtRisk...)
+			out[i] = s
+		}
+		return out
+	}
+	digest := func(states []SourcingState) string {
+		t.Helper()
+		d, err := SourcingDigest(states)
+		if err != nil {
+			t.Fatalf("digest: %v", err)
+		}
+		return d
+	}
+	want := digest(base)
+
+	same := map[string]func([]SourcingState){
+		"ComputedAt moves":       func(s []SourcingState) { s[0].ComputedAt = at.Add(time.Hour) },
+		"a time to empty drifts": func(s []SourcingState) { s[2].AtRisk[0].TimeToEmptySeconds = 480 },
+		"the states reordered":   func(s []SourcingState) { s[0], s[2] = s[2], s[0] },
+		"empty lists, not nil": func(s []SourcingState) {
+			s[0].Missing, s[0].Absent, s[0].AtRisk = []string{}, []string{}, []SourcingAtRisk{}
+		},
+	}
+	for name, mutate := range same {
+		s := clone()
+		mutate(s)
+		if got := digest(s); got != want {
+			t.Errorf("%s: digest moved (%s, want %s)", name, got, want)
+		}
+	}
+	moved := map[string]func([]SourcingState){
+		"a status":         func(s []SourcingState) { s[0].Status = "red" },
+		"the missing list": func(s []SourcingState) { s[1].Missing = []string{"SYN-X", "SYN-Z"} },
+		"the absent list":  func(s []SourcingState) { s[1].Absent = nil },
+		"an at-risk line":  func(s []SourcingState) { s[2].AtRisk[0].Node = "LINE-2" },
+		"the sentence":     func(s []SourcingState) { s[1].Reason += " 2 bins of SYN-X in undeclared carriers." },
+		"a style dropped":  func(s []SourcingState) {},
+	}
+	for name, mutate := range moved {
+		s := clone()
+		mutate(s)
+		if name == "a style dropped" {
+			s = s[:2]
+		}
+		if got := digest(s); got == want {
+			t.Errorf("%s changed and the digest did not", name)
+		}
+	}
+}

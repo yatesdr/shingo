@@ -82,10 +82,13 @@ func newFeedState() *feedState {
 }
 
 // feedScope is how one feed's build is memoised: for each station apart or
-// once for the plant, and for how long.
+// once for the plant, and for how long, or (noMemo) not at all.
 type feedScope struct {
 	perStation bool
 	ttl        time.Duration
+	// noMemo: every heartbeat builds the feed afresh. For a build that reads
+	// nothing, where a memo could only answer with a digest older than a push.
+	noMemo bool
 }
 
 // feedScopes has one row per feed Core serves and NO DEFAULT: a key without a
@@ -100,6 +103,10 @@ var feedScopes = map[string]feedScope{
 	protocol.FeedScene:       {perStation: true, ttl: feedMemoStation},
 	protocol.FeedCatalog:     {ttl: feedMemoPlant},
 	protocol.FeedBins:        {perStation: true, ttl: feedMemoBins},
+	// Built from the monitor's in-memory verdicts with no read, so a memo
+	// would save nothing and could answer a delta the monitor just pushed with
+	// the digest from before it.
+	protocol.FeedSourcing: {perStation: true, noMemo: true},
 }
 
 // memoKey scopes the per-station feeds to their station.
@@ -175,6 +182,9 @@ func (f *feedState) lookup(station, key string, now time.Time) (feedMemoEntry, b
 // build the write's push made, or the memo would hold the old digest and the
 // next heartbeats would resend the old value to Edges that have the new one.
 func (f *feedState) store(station, key string, e feedMemoEntry) {
+	if feedScopes[key].noMemo {
+		return
+	}
 	f.mu.Lock()
 	k := memoKey(station, key)
 	if cur, ok := f.memo[k]; !ok || !cur.at.After(e.at) {
@@ -359,6 +369,16 @@ func (s *CoreDataService) buildFeed(station, key string) (digest string, value a
 			return "", nil, known, err
 		}
 		return v.Digest, v, true, nil
+	case protocol.FeedSourcing:
+		if s.sourcingReport == nil {
+			return "", nil, false, nil
+		}
+		r, ok := s.sourcingReport(station)
+		if !ok {
+			return "", nil, false, nil
+		}
+		d, err := protocol.SourcingDigest(r.States)
+		return d, r, true, err
 	}
 	return "", nil, false, nil
 }
@@ -405,6 +425,8 @@ func (s *CoreDataService) sendFeeds(station string, due map[string]feedMemoEntry
 			s.resp.sendData(protocol.SubjectCatalogPayloadsResponse, station, due[key].value)
 		case protocol.FeedBins:
 			s.resp.sendData(protocol.SubjectBinsSnapshot, station, due[key].value)
+		case protocol.FeedSourcing:
+			s.resp.sendData(protocol.SubjectSourcingState, station, due[key].value)
 		default:
 			log.Printf("core_feeds: no sender for %s", key)
 		}

@@ -39,14 +39,11 @@ const (
 	// sourceabilityDebounceWindow coalesces a burst of change events into one
 	// recompute. Design range 250–500 ms.
 	sourceabilityDebounceWindow = 300 * time.Millisecond
-	// sourceabilityFullInterval is the safety-net full recompute cadence.
+	// sourceabilityFullInterval is the safety-net full recompute cadence. The
+	// pass takes the samples and publishes what changed; a station whose style
+	// disappeared gets its snapshot at once (a delta cannot say "gone"). Every
+	// other snapshot is the heartbeat compare's (FeedSourcing, StationReport).
 	sourceabilityFullInterval = 2 * time.Minute
-	// sourceabilitySnapshotInterval is the backstop for the full per-station
-	// snapshot. The 2-minute pass still computes (it takes the samples) and
-	// publishes what changed; a full replace of each Edge's cache goes out on the
-	// first pass, on this cadence, on an Edge's (re)registration, and when a
-	// style disappears — a delta cannot say "gone".
-	sourceabilitySnapshotInterval = 30 * time.Minute
 )
 
 // SourceabilityMonitor recomputes per-(process, style) sourceability on change,
@@ -68,11 +65,6 @@ type SourceabilityMonitor struct {
 	// change-only publish logic can be tested with a capturing stub; production
 	// wiring points it at SubjectSourcingState on the outbox.
 	publishFn func(station string, r protocol.SourcingStateReport)
-	// stationsFn lists the stations to send a full snapshot to: every enrolled
-	// Edge's routing id. A field so tests can name their stations.
-	stationsFn func() ([]string, error)
-	// snapshotEvery is the full-snapshot backstop (sourceabilitySnapshotInterval).
-	snapshotEvery time.Duration
 
 	mu lockcheck.Mutex[lockorder.SourceabilityMonitor]
 	// dirty is the set of (process, style) awaiting recompute; drained per window.
@@ -86,8 +78,9 @@ type SourceabilityMonitor struct {
 	// station_id), refreshed on every full pass. A process absent from it has no
 	// recorded station and goes to every station.
 	stations map[string]string
-	// lastSnapshot is when the full per-station snapshot last went out.
-	lastSnapshot time.Time
+	// computed is set once the first full pass has run: before it there is no
+	// verdict to report (StationReport) and nothing to publish.
+	computed bool
 	// timer arms the debounced flush; nil when idle.
 	timer *time.Timer
 	// recomputes counts recompute passes (full + dirty) for the batching test.
@@ -110,36 +103,19 @@ func NewSourceabilityMonitor(e *Engine) *SourceabilityMonitor {
 	}
 	m.recomputeFn = m.recomputeKeys
 	m.publishFn = m.broadcast
-	m.stationsFn = m.enrolledStations
-	m.snapshotEvery = sourceabilitySnapshotInterval
 	return m
 }
 
 // broadcast ships a sourcing-state report to one station — or to every station,
 // protocol.StationBroadcast — on SubjectSourcingState. Best-effort: a send
-// failure is logged, not fatal — the next change or snapshot re-sends, and each
-// edge's persisted cache carries it over a Core partition.
+// failure is logged, not fatal — the Edge's digest then differs from Core's and
+// the next heartbeat compare sends the snapshot, and each edge's persisted
+// cache carries it over a Core partition.
 func (m *SourceabilityMonitor) broadcast(station string, report protocol.SourcingStateReport) {
 	if err := m.eng.SendDataToEdge(protocol.SubjectSourcingState, station, report); err != nil {
 		m.eng.logFn("sourceability: publish to %s (snapshot=%v, %d states): %v",
 			station, report.Snapshot, len(report.States), err)
 	}
-}
-
-// enrolledStations is every enrolled Edge's routing id (protocol.Address.
-// Station), the stations a full snapshot goes to.
-func (m *SourceabilityMonitor) enrolledStations() ([]string, error) {
-	edges, err := m.eng.db.ListEdges()
-	if err != nil {
-		return nil, err
-	}
-	var out []string
-	for _, e := range edges {
-		if e.StationID != "" {
-			out = append(out, e.StationID)
-		}
-	}
-	return out, nil
 }
 
 // ── WHERE A VERDICT GOES ──────────────────────────────────────────────────
@@ -186,37 +162,12 @@ func (m *SourceabilityMonitor) publishDeltas(changed []sourceability.StyleState)
 	}
 }
 
-// publishSnapshots sends each named station a full snapshot of its own
-// processes plus every unrouted one. only == nil means every station: the
-// enrolled Edges and every station a process is recorded against.
-//
-// If the enrolled stations cannot be read, it falls back to the whole plant to
-// every station — today's snapshot, which every Edge applies correctly — rather
-// than send nothing.
-func (m *SourceabilityMonitor) publishSnapshots(states []sourceability.StyleState, only map[string]bool) {
+// publishSnapshots sends each station in targets a full snapshot of its own
+// processes plus every unrouted one: the stations a disappeared style was
+// being sent to.
+func (m *SourceabilityMonitor) publishSnapshots(states []sourceability.StyleState, targets map[string]bool) {
 	if m.publishFn == nil {
 		return
-	}
-	targets := map[string]bool{}
-	if only != nil {
-		for st := range only {
-			targets[st] = true
-		}
-	} else {
-		enrolled, err := m.stationsFn()
-		if err != nil {
-			m.eng.logFn("sourceability: list stations for the snapshot: %v — sending the whole plant to every station", err)
-			m.publishFn(protocol.StationBroadcast, toReport(states, true))
-			return
-		}
-		for _, st := range enrolled {
-			targets[st] = true
-		}
-		m.mu.Lock()
-		for _, st := range m.stations {
-			targets[st] = true
-		}
-		m.mu.Unlock()
 	}
 	if targets[protocol.StationBroadcast] {
 		// A snapshot "to every station" is the whole plant — the fallback, and
@@ -248,17 +199,17 @@ func (m *SourceabilityMonitor) snapshotFor(station string, states []sourceabilit
 	return out
 }
 
-// SnapshotStation sends one station its full snapshot now — on an Edge's
-// (re)registration, so a Pi that reconnects is current at once rather than at
-// the next backstop. Nothing is sent before the monitor's first pass has run.
-func (m *SourceabilityMonitor) SnapshotStation(station string) {
-	if station == "" || m.publishFn == nil {
-		return
-	}
+// StationReport is one station's full snapshot, for the heartbeat compare
+// (FeedSourcing): its own processes' verdicts and every unrouted process's,
+// sorted by (process, style), with no read. ok is false before the monitor's
+// first pass has run, so the key is left out of the ack and nothing is sent or
+// confirmed. A Pi that reconnects is current one heartbeat later, the first
+// one in its boot burst.
+func (m *SourceabilityMonitor) StationReport(station string) (protocol.SourcingStateReport, bool) {
 	m.mu.Lock()
-	if m.lastSnapshot.IsZero() {
+	if !m.computed {
 		m.mu.Unlock()
-		return
+		return protocol.SourcingStateReport{}, false
 	}
 	states := make([]sourceability.StyleState, 0, len(m.state))
 	for _, s := range m.state {
@@ -271,7 +222,7 @@ func (m *SourceabilityMonitor) SnapshotStation(station string) {
 		}
 		return states[i].StyleID < states[j].StyleID
 	})
-	m.publishFn(station, toReport(m.snapshotFor(station, states), true))
+	return toReport(m.snapshotFor(station, states), true), true
 }
 
 // Run does a startup full recompute, then runs the periodic full recompute until
@@ -589,12 +540,9 @@ func (m *SourceabilityMonitor) recomputeAll() {
 	newIndex := buildPayloadIndex(in.Claims)
 
 	m.mu.Lock()
-	prevCount := len(m.state)
-	// Diff BEFORE replacing. The full recompute publishes a wire snapshot every
-	// periodic cycle whether or not anything moved (a late-joining edge needs
-	// it), but the SSE event must not follow that cadence: an idle plant would
-	// refresh the page on a timer forever. Count real verdict movement instead,
-	// including styles that disappeared from the mirror.
+	// Diff BEFORE replacing. The SSE event follows real verdict movement, not
+	// the two-minute cadence: an idle plant would refresh the page on a timer
+	// forever. Count it, including styles that disappeared from the mirror.
 	changed := 0
 	// persist collects the changes to write down. Built under the lock,
 	// written outside it — a DB round trip must not hold the monitor's mutex,
@@ -631,15 +579,12 @@ func (m *SourceabilityMonitor) recomputeAll() {
 		m.stations = stations
 	}
 	m.recomputes++
-	now := time.Now()
-	due := m.lastSnapshot.IsZero() || now.Sub(m.lastSnapshot) >= m.snapshotEvery
-	if due {
-		m.lastSnapshot = now
-	}
+	first := !m.computed
+	m.computed = true
 	m.mu.Unlock()
 
-	if len(states) > 0 || prevCount > 0 {
-		m.publishFullPass(states, moved, gone, due)
+	if !first {
+		m.publishFullPass(states, moved, gone)
 	}
 
 	m.persistChanges(persist)
@@ -647,24 +592,15 @@ func (m *SourceabilityMonitor) recomputeAll() {
 	m.emitSourcingUpdated(changed)
 }
 
-// publishFullPass is what the full pass publishes. It used to publish a
-// whole-plant snapshot to every Edge every two minutes. Now:
-//   - the first pass, and every sourceabilitySnapshotInterval after it, sends
-//     each station its own snapshot (publishSnapshots) — the backstop that
-//     also refreshes the at-risk time-to-empty values deltas leave alone;
-//   - between backstops, what changed goes out as per-station deltas, and a
-//     station whose style disappeared gets its snapshot at once;
-//   - an Edge that (re)registers gets its snapshot then (SnapshotStation), so
-//     a reconnecting Pi does not wait for the backstop.
-//
-// The caller skips it entirely when there is nothing and never was: a plant
-// (or a just-booted Core) with no styles has nothing to send, so it does not
-// spam every edge — or every test engine's outbox — on start.
-func (m *SourceabilityMonitor) publishFullPass(states, moved []sourceability.StyleState, gone map[string]bool, due bool) {
-	if due {
-		m.publishSnapshots(states, nil)
-		return
-	}
+// publishFullPass is what a full pass after the first publishes: what changed,
+// as per-station deltas, and a fresh snapshot to each station whose style
+// disappeared. The first pass publishes nothing: every style is new to it, and
+// each Edge's cache is set right by the heartbeat compare, which sends a
+// station its snapshot only when the Edge's digest differs (FeedSourcing). That
+// compare is also what heals a lost delta and what a reconnecting Pi gets,
+// which retires the 30-minute snapshot to every station and the snapshot on
+// every (re)registration.
+func (m *SourceabilityMonitor) publishFullPass(states, moved []sourceability.StyleState, gone map[string]bool) {
 	m.publishDeltas(moved)
 	if gone != nil {
 		m.publishSnapshots(states, gone)
@@ -674,7 +610,9 @@ func (m *SourceabilityMonitor) publishFullPass(states, moved []sourceability.Sty
 // wireChanged reports whether the operator-visible verdict changed between two
 // computes: status, the missing list, or which lines are at risk. It ignores
 // time-to-empty magnitude and ComputedAt, so steady-state TTE drift does not
-// spam the feed — the periodic snapshot refreshes those.
+// spam the feed. Nothing refreshes those on the Edge any more, and nothing
+// there reads them; protocol.SourcingDigest leaves them out for the same
+// reason.
 func wireChanged(a, b sourceability.StyleState) bool {
 	if a.Status != b.Status {
 		return true
@@ -691,7 +629,9 @@ func wireChanged(a, b sourceability.StyleState) bool {
 	// stock in an undeclared carrier changes the operator's ACTION, so it is an
 	// operator-visible change. How MANY such bins there are is magnitude — the
 	// same class as time-to-empty drift, which this function deliberately
-	// ignores — and the periodic snapshot carries the current number.
+	// ignores. The number rides the sentence (Reason), which the feed's digest
+	// covers, so a changed count reaches the Edge by the heartbeat compare's
+	// snapshot, not by a delta.
 	if !equalStrings(undeclaredPayloads(a), undeclaredPayloads(b)) {
 		return true
 	}

@@ -44,6 +44,13 @@ const (
 	// SubjectBinsSnapshot. Core serves it only to an Edge whose watch list it
 	// holds (SubjectBinsWatch); for any other Edge the key is unknown.
 	FeedBins = "bins"
+	// FeedSourcing is one station's sourceability verdicts: its own processes'
+	// and every unrouted process's (Core's SourceabilityMonitor.snapshotFor).
+	// Carrier: SubjectSourcingState with Snapshot set. Between snapshots Core
+	// pushes deltas; the Edge digests its own cache with SourcingDigest, so a
+	// delta it missed shows as a different digest and the next heartbeat heals
+	// it with a snapshot.
+	FeedSourcing = "sourcing"
 )
 
 // AllFeeds is every feed key, in the order the Edge's Core-link page lists
@@ -53,7 +60,7 @@ const (
 // TestAllFeeds_NamesEveryFeedConst keeps this list and the constants above
 // one set.
 func AllFeeds() []string {
-	return []string{FeedContainment, FeedRefusals, FeedNodes, FeedScene, FeedCatalog, FeedBins}
+	return []string{FeedContainment, FeedRefusals, FeedNodes, FeedScene, FeedCatalog, FeedBins, FeedSourcing}
 }
 
 // SceneRevisionNone is the scene revision of a plant with no scene an Edge can
@@ -176,6 +183,54 @@ func RefusalsDigest(open []SupplyRefusalState) (string, error) {
 			return rows[i].LoaderNode < rows[j].LoaderNode
 		}
 		return rows[i].PayloadCode < rows[j].PayloadCode
+	})
+	return Digest(rows)
+}
+
+// sourcingDigestRow is one verdict as SourcingDigest hashes it: what a delta
+// would change. ComputedAt and the at-risk lines' time to empty are left out:
+// they move on every recompute, no Edge screen reads them, and hashing them
+// would send every station its snapshot on every heartbeat. Empty lists are
+// nil, so a verdict hashes the same before and after the Edge's SQLite round
+// trip (which stores [] for none).
+type sourcingDigestRow struct {
+	ProcessID string           `json:"process_id"`
+	StyleID   string           `json:"style_id"`
+	Status    string           `json:"status"`
+	Missing   []string         `json:"missing"`
+	Absent    []string         `json:"absent"`
+	AtRisk    []sourcingAtRisk `json:"at_risk"`
+	Reason    string           `json:"reason"`
+}
+
+type sourcingAtRisk struct {
+	PayloadCode string `json:"payload_code"`
+	Node        string `json:"node"`
+}
+
+// SourcingDigest is the FeedSourcing digest over one station's verdicts,
+// sorted by (process, style). Core digests snapshotFor(station); the Edge
+// digests its own cache with the same function.
+func SourcingDigest(states []SourcingState) (string, error) {
+	rows := make([]sourcingDigestRow, len(states))
+	for i, s := range states {
+		r := sourcingDigestRow{ProcessID: s.ProcessID, StyleID: s.StyleID, Status: s.Status, Reason: s.Reason}
+		if len(s.Missing) > 0 {
+			r.Missing = s.Missing
+		}
+		if len(s.Absent) > 0 {
+			r.Absent = s.Absent
+		}
+		for _, a := range s.AtRisk {
+			r.AtRisk = append(r.AtRisk, sourcingAtRisk{PayloadCode: a.PayloadCode, Node: a.Node})
+		}
+		rows[i] = r
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].ProcessID != rows[j].ProcessID {
+			return rows[i].ProcessID < rows[j].ProcessID
+		}
+		return rows[i].StyleID < rows[j].StyleID
 	})
 	return Digest(rows)
 }

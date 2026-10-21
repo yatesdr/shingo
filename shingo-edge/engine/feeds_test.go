@@ -263,6 +263,7 @@ var feedCarriers = map[string]string{
 	protocol.FeedScene:       protocol.SubjectNodeListResponse,
 	protocol.FeedCatalog:     protocol.SubjectCatalogPayloadsResponse,
 	protocol.FeedBins:        protocol.SubjectBinsSnapshot,
+	protocol.FeedSourcing:    protocol.SubjectSourcingState,
 }
 
 // TestFeedRows_CoverAllFeeds: every feed key has exactly one descriptor row and

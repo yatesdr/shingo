@@ -326,8 +326,8 @@ func TestFeedScopes_CoverAllFeeds(t *testing.T) {
 	listed := map[string]bool{}
 	for _, key := range protocol.AllFeeds() {
 		listed[key] = true
-		if sc, ok := feedScopes[key]; !ok || sc.ttl <= 0 {
-			t.Errorf("%s: scope row %+v (present %v), want a row with a lifetime", key, sc, ok)
+		if sc, ok := feedScopes[key]; !ok || (sc.ttl <= 0) == !sc.noMemo {
+			t.Errorf("%s: scope row %+v (present %v), want a row with a lifetime or noMemo, not both", key, sc, ok)
 		}
 		if ask, ok := coreFeedAsks[key]; ok && !inbound[ask] {
 			t.Errorf("%s: ask subject %s is not in CoreInboundSubjects", key, ask)

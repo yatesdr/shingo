@@ -63,8 +63,9 @@ type CoreDataService struct {
 	linesideDivergence *service.LinesideDivergenceService
 	resp               coreDataResponder
 	thresholdMonitor   ThresholdMonitor
-	// sourcingSnapshot sends one station its sourcing snapshot on registration.
-	sourcingSnapshot func(station string)
+	// sourcingReport builds one station's sourcing snapshot for the heartbeat
+	// compare (FeedSourcing); ok false before the monitor's first pass.
+	sourcingReport func(station string) (protocol.SourcingStateReport, bool)
 	// downtimeCh buffers downtime event projections for the async worker
 	// started by StartDowntimeProjection (G9).
 	downtimeCh chan downtime.DowntimeEvent
@@ -110,11 +111,11 @@ func (s *CoreDataService) SetThresholdMonitor(tm ThresholdMonitor) {
 	s.thresholdMonitor = tm
 }
 
-// SetSourcingSnapshotter installs what an Edge's (re)registration calls to send
-// that station its full sourcing snapshot (engine.SourceabilityMonitor.
-// SnapshotStation). nil = no registration snapshot.
-func (s *CoreDataService) SetSourcingSnapshotter(fn func(station string)) {
-	s.sourcingSnapshot = fn
+// SetSourcingReport installs the build of one station's sourcing snapshot the
+// FeedSourcing compare sends (engine.SourceabilityMonitor.StationReport). nil
+// leaves the key unknown: out of the ack, never sent.
+func (s *CoreDataService) SetSourcingReport(fn func(station string) (protocol.SourcingStateReport, bool)) {
+	s.sourcingReport = fn
 }
 
 // SetFaultWindow wires the two config durations the boot reconcile needs to
@@ -540,13 +541,6 @@ func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol
 	// bindings. Without it a seeded UOP threshold never fires until Core restarts.
 	if s.thresholdMonitor != nil {
 		s.thresholdMonitor.Resync(p.StationID)
-	}
-
-	// The station's own sourcing verdicts, now: the feed sends each Edge only
-	// its own processes, and full snapshots only on a 30-minute backstop, so a
-	// Pi that reconnects is brought current here rather than waiting for it.
-	if s.sourcingSnapshot != nil {
-		s.sourcingSnapshot(p.StationID)
 	}
 }
 

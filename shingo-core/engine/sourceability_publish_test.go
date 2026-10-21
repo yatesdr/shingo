@@ -5,7 +5,6 @@ package engine
 import (
 	"sync"
 	"testing"
-	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/eventbus"
@@ -15,9 +14,10 @@ import (
 )
 
 // TestSourceabilityMonitor_PublishOnChangeOnly drives the real monitor against a
-// real DB and asserts the outbound feed's contract: a full recompute publishes a
-// snapshot, a recompute with nothing changed publishes NOTHING (no steady-state
-// chatter), and a real change publishes a delta with the moved style.
+// real DB and asserts the outbound feed's contract: the station's snapshot is
+// what the heartbeat compare builds (StationReport), a full recompute with
+// nothing changed publishes NOTHING (no steady-state chatter, and no backstop
+// snapshot), and a real change publishes a delta with the moved style.
 func TestSourceabilityMonitor_PublishOnChangeOnly(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -31,10 +31,6 @@ func TestSourceabilityMonitor_PublishOnChangeOnly(t *testing.T) {
 
 	eng := newTestEngine(t, db, simulator.New())
 	m := eng.SourceabilityMonitor()
-	// The snapshot goes to each station, and this plant has one Edge. (It went
-	// to every station, whole-plant, on every full pass until the per-station
-	// feed — Stage A2, a ruling; see TestSourcingFeed_EachStationGetsItsOwnProcesses.)
-	m.stationsFn = func() ([]string, error) { return []string{"edge-1"}, nil }
 
 	var (
 		mu      sync.Mutex
@@ -55,20 +51,19 @@ func TestSourceabilityMonitor_PublishOnChangeOnly(t *testing.T) {
 
 	styleKey := []plantclaims.ProcessKey{{ProcessID: "SNF2", StyleID: "A"}}
 
-	// A full recompute with the snapshot due (the engine's own first pass took
-	// the first one; make the backstop due again) → a snapshot carrying the
-	// green style + its reason.
-	m.mu.Lock()
-	m.lastSnapshot = time.Time{}
-	m.mu.Unlock()
-	m.recomputeAll()
-	snap := drain()
-	if len(snap) != 1 || !snap[0].Snapshot {
-		t.Fatalf("full recompute published %+v, want one snapshot", snap)
+	// The engine's own first pass published nothing and readied the station's
+	// snapshot: SNF2 has no recorded station, so it is in every station's.
+	snap, ok := m.StationReport("edge-1")
+	if !ok || !snap.Snapshot {
+		t.Fatalf("StationReport = %+v (ok %v), want a snapshot after the first pass", snap, ok)
 	}
-	s, ok := findWireState(snap[0].States, "SNF2", "A")
+	s, ok := findWireState(snap.States, "SNF2", "A")
 	if !ok || s.Status != "green" {
-		t.Fatalf("snapshot state = %+v, want SNF2/A green", snap[0].States)
+		t.Fatalf("snapshot state = %+v, want SNF2/A green", snap.States)
+	}
+	m.recomputeAll()
+	if got := drain(); len(got) != 0 {
+		t.Fatalf("a quiet full pass published %+v, want nothing", got)
 	}
 	if s.Reason == "" {
 		t.Errorf("green state has no reason sentence")
@@ -114,10 +109,9 @@ func findWireState(states []protocol.SourcingState, process, style string) (prot
 // idle plant. Field-observed at Springfield.
 //
 // The contract now: EventSourcingUpdated fires when a verdict MOVES and at no
-// other time. Critically, a steady-state full recompute must stay silent even
-// though it still publishes a wire snapshot every cycle for late-joining edges —
-// following that cadence would refresh the page on a timer, which is the same
-// bug wearing a different hat.
+// other time. Critically, a steady-state full recompute must stay silent:
+// following the two-minute cadence would refresh the page on a timer, which is
+// the same bug wearing a different hat.
 func TestSourceabilityMonitor_SSEOnVerdictChangeOnly(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

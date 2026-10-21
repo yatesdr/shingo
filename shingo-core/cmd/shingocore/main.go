@@ -446,7 +446,7 @@ func main() {
 	// and kicked its startup-sweep goroutine.
 	coreDataService.SetThresholdMonitor(eng.ThresholdMonitor())
 	if sm := eng.SourceabilityMonitor(); sm != nil {
-		coreDataService.SetSourcingSnapshotter(sm.SnapshotStation)
+		coreDataService.SetSourcingReport(sm.StationReport)
 	}
 	// The plant clock, configured once here and inherited by every edge at this
 	// site rather than typed into each box's yaml. The zone Core was explicitly

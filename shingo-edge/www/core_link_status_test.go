@@ -3,6 +3,7 @@ package www
 import (
 	"bytes"
 	"html/template"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -270,7 +271,7 @@ func TestCoreLink_ListsEveryFeed(t *testing.T) {
 			t.Errorf("/status feed_confirmed_age_seconds has no %s", key)
 		}
 	}
-	if got := lines[len(lines)-1]; got != "bins: current" {
-		t.Errorf("Diagnostics' last feed line = %q, want %q", got, "bins: current")
+	if !slices.Contains(lines, "bins: current") {
+		t.Errorf("Diagnostics' feed lines = %q, want one %q", lines, "bins: current")
 	}
 }

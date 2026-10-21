@@ -19,9 +19,9 @@ import (
 
 // ReplaceSourcingState makes the cache equal a full snapshot atomically: rows
 // whose verdict differs are upserted, rows Core no longer reports are deleted,
-// and rows whose verdict is unchanged are not written at all. Core sends the
-// whole snapshot every two minutes, so a full rewrite cost every row each time
-// for no visible change. computed_at and synced_at are left out of the compare
+// and rows whose verdict is unchanged are not written at all: a snapshot that
+// heals one lost delta rewrites that row, not the cache. computed_at and
+// synced_at are left out of the compare
 // (they move on every snapshot), which makes the stored computed_at "when this
 // verdict last changed"; nothing on the Edge displays it. On any error the tx
 // rolls back and the last-known-good cache survives.

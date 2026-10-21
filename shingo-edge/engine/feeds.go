@@ -134,6 +134,9 @@ var feedRows = [...]feedRow{
 	// Always quoted, "" while nothing is held: Core drops an Edge's watch
 	// list when its heartbeat does not name the key (a build without the feed).
 	{key: protocol.FeedBins, quote: quoteHeld, aged: agedOnBoard},
+	// Quoted from the cache itself (quoteSourcing), so its digest needs no
+	// persisting and a delta that never arrived shows as a different digest.
+	{key: protocol.FeedSourcing, quote: quoteSourcing, keepRow: true},
 }
 
 // feedRowOf is the row for a feed key; the zero row (nothing persisted, no
@@ -163,6 +166,9 @@ func quoteHeld(e *Engine, key string) (string, bool) { return e.heldDigest(key),
 // (refusalsDigest), left out when it could not be read or the last ack came
 // from a Core that does not answer feeds.
 func quoteRefusals(e *Engine, _ string) (string, bool) { return e.refusalsDigest() }
+
+// quoteSourcing quotes the digest of this Edge's sourcing cache (sourcingDigest).
+func quoteSourcing(e *Engine, _ string) (string, bool) { return e.sourcingDigest() }
 
 // quoteScene quotes the scene revision, which lives with the geometry, and
 // notes it so the ack can confirm it.

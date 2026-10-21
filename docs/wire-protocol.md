@@ -736,8 +736,14 @@ Core publishes:
 
 - a **change delta** (`snapshot: false`) carrying only the styles whose verdict
   moved — on status / missing-list / at-risk-membership changes, and
-- a **full snapshot** (`snapshot: true`) on the startup and periodic recomputes,
-  so a late-joining or restarted Edge reads it and is current.
+- a **full snapshot** (`snapshot: true`) of that edge's slice (its own
+  processes and every process with no recorded station) under feed key
+  `sourcing`: sent when the edge's heartbeat quotes a different digest
+  (`protocol.SourcingDigest`, which leaves out `computed_at` and the time to
+  empty), and at once to an edge whose style disappeared. The edge digests its
+  own cache with the same function, so a late-joining or restarted edge, or one
+  that missed a delta, is sent the snapshot on its next heartbeat. There is no
+  periodic snapshot and none on registration.
 
 Edge persists the feed to SQLite, so the changeover picker reads the last-known
 verdict with no Core round-trip at click time and it survives an HMI reload or an
