@@ -502,8 +502,11 @@ func TestPinBins_DetailKeysAndFullAudit(t *testing.T) {
 	// ClaimBin's liveness/reservation guards are not what this pins.
 	_, err = db.Exec(`UPDATE bins SET claimed_by = $1 WHERE id = $2`, o.ID, b.ID)
 	testutil.MustNoErr(t, err, "claim")
+	// The claimant is live (queued), so a LOAD would be refused and the answer
+	// carries the sentence the page shows in place of Load Payload
+	// (load_refusal, service.LoadRefusalFor).
 	got = pinBinDetail(t, h, b.ID)
-	if k := pinKeys(got); k != "audit,bin,current_order,manifest,recent_orders,template" {
+	if k := pinKeys(got); k != "audit,bin,current_order,load_refusal,manifest,recent_orders,template" {
 		t.Errorf("detail keys (claimed) = %s", k)
 	}
 	// Undo the hand-written claim: the cleanup wedge sweep (testdb.go) rightly

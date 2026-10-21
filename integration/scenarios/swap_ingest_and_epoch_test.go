@@ -348,6 +348,14 @@ func TestScenario_StaleEpochDeltaDroppedAndRecordedAfterRelease(t *testing.T) {
 			"rode UOPAdjustment, which would zero the station's count", got, adjustmentsBeforeStale)
 	}
 
+	// ── The release order leaves: its hold ends, so the carrier may be loaded. ──
+	// A LOAD onto a carrier a live order still holds is refused (the held-carrier
+	// check every LOAD door runs), so the reload waits for the release order to
+	// end, as it does on the floor.
+	if _, err := coreDB.Exec(`UPDATE orders SET status='confirmed' WHERE id=$1`, releaseOrder.ID); err != nil {
+		t.Fatalf("end the release order: %v", err)
+	}
+
 	// ── Reload and consume on the new epoch: applies again. ──
 	reloadEpoch, err := manifest.SetForProduction(bin.ID, `{"items":[{"catid":"`+sd.Payload.Code+`","qty":100}]}`, sd.Payload.Code, 100, protocol.DeclaredByLifecycle)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 
 	"shingocore/domain"
 	"shingocore/engine"
+	"shingocore/service"
 )
 
 // --- Page handler ---
@@ -334,6 +335,11 @@ type binDetailResponse struct {
 	Audit            []*domain.AuditEntry          `json:"audit"`
 	CurrentOrder     *domain.Order                 `json:"current_order,omitempty"`
 	RecentOrders     []*domain.Order               `json:"recent_orders"`
+	// LoadRefusal is the sentence a LOAD of this bin would be refused with
+	// (service.LoadRefusalFor), absent when a LOAD would land. The page
+	// disables Load Payload and shows it. Read from the bin row and
+	// CurrentOrder, both read already.
+	LoadRefusal string `json:"load_refusal,omitempty"`
 }
 
 // binView is binDetailResponse without the history: what the bin pop-up and
@@ -346,6 +352,7 @@ type binView struct {
 	TemplateManifest []*domain.PayloadManifestItem `json:"template_manifest,omitempty"`
 	CurrentOrder     *domain.Order                 `json:"current_order,omitempty"`
 	RecentOrders     []*domain.Order               `json:"recent_orders"`
+	LoadRefusal      string                        `json:"load_refusal,omitempty"`
 }
 
 // binDetailView reads everything the detail answer carries except the audit.
@@ -373,6 +380,8 @@ func (h *Handlers) binDetailView(b *domain.Bin) binView {
 	if b.ClaimedBy != nil {
 		v.CurrentOrder, _ = h.engine.OrderService().GetOrder(*b.ClaimedBy)
 	}
+	// Whether a LOAD would be refused, from the two reads above.
+	v.LoadRefusal = service.LoadRefusalFor(b, v.CurrentOrder)
 
 	// Recent orders
 	v.RecentOrders, _ = h.engine.OrderService().ListByBin(b.ID, 20)
@@ -412,6 +421,7 @@ func (h *Handlers) apiBinDetail(w http.ResponseWriter, r *http.Request) {
 		TemplateManifest: v.TemplateManifest,
 		CurrentOrder:     v.CurrentOrder,
 		RecentOrders:     v.RecentOrders,
+		LoadRefusal:      v.LoadRefusal,
 	}
 
 	// Audit log

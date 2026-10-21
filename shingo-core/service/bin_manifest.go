@@ -562,17 +562,44 @@ func carrierNoFor(by protocol.Declarer) carrierNo {
 // setForProductionTx is SetForProduction's body against a caller-provided tx, so
 // the manifest write can commit in the SAME transaction as the confirm (see
 // RecordProducedBin). Writes the OpSetForProduction audit row and bumps the
-// delta_epoch; returns the new epoch. The carrier verdict follows `by`.
+// delta_epoch; returns the new epoch. The carrier verdict follows `by`. Its one
+// door is the admin Load Payload (SetFromTemplate), a LOAD, so a carrier a live
+// order holds is refused.
 func (s *BinManifestService) setForProductionTx(tx *sql.Tx, binID int64, manifestJSON, payloadCode string, uop int, by protocol.Declarer) (int64, error) {
-	return s.writeProductionTx(tx, binID, manifestJSON, payloadCode, uop, by, carrierNoFor(by))
+	return s.writeProductionTx(tx, binID, manifestJSON, payloadCode, uop, by, carrierNoFor(by), refuseHeld)
 }
+
+// heldRule is what a contents write does about a carrier a live order holds.
+// Every caller of writeProductionTx names one, so a new door cannot reach the
+// write without saying which it is.
+type heldRule uint8
+
+const (
+	// refuseHeld: a LOAD. A carrier a live order holds is refused
+	// (refuseHeldCarrierTx) and nothing is written. Every LOAD door.
+	refuseHeld heldRule = iota
+	// producedInPlace: the record of parts a press already put in the carrier
+	// (RecordProducedBin). It routinely lands after the removal order has
+	// claimed and lifted the carrier; refusing would write down that a fill
+	// which happened did not. Its only user is RecordProducedBin, pinned by
+	// TestBinContentsWriters_EveryLoadDoorRunsTheHeldCheck.
+	producedInPlace
+)
 
 // writeProductionTx is the write itself, with the announcement's declarer and
 // the carrier verdict's consequence asked separately. They agree at every door
 // but one: the loader's LOAD (LoadAtLine) is a person's declaration for the
 // carrier rule and a lifecycle announcement on the wire, because the Edge
 // applied that act from the LOAD's own reply (see LoadAtLine).
-func (s *BinManifestService) writeProductionTx(tx *sql.Tx, binID int64, manifestJSON, payloadCode string, uop int, by protocol.Declarer, no carrierNo) (int64, error) {
+//
+// `held` is the held-carrier rule (heldRule): a LOAD door passes refuseHeld and
+// the check runs here, in the write's transaction, before anything is written.
+func (s *BinManifestService) writeProductionTx(tx *sql.Tx, binID int64, manifestJSON, payloadCode string, uop int, by protocol.Declarer, no carrierNo, held heldRule) (int64, error) {
+	if held == refuseHeld {
+		if err := refuseHeldCarrierTx(tx, binID); err != nil {
+			return 0, err
+		}
+	}
 	undeclared, err := judgeBinTypeCarriesPayload(tx, binID, payloadCode, no)
 	if err != nil {
 		return 0, err
@@ -849,7 +876,7 @@ func (s *BinManifestService) RecordProducedBin(binID int64, manifestJSON, payloa
 	// A press finishing a carrier. This announcement is the one that routinely
 	// lands after a robot has already lifted what it names, so it must never
 	// invite a bind.
-	_, err := s.recordProduced(binID, manifestJSON, payloadCode, uop, producedAt, flagUndeclared, full)
+	_, err := s.recordProduced(binID, manifestJSON, payloadCode, uop, producedAt, flagUndeclared, producedInPlace, full)
 	return err
 }
 
@@ -889,15 +916,16 @@ const DeclaredFullNoPack = "no_pack"
 // delta_epoch for the caller that has to hand it back to the Edge. Its
 // announcement is always lifecycle; `no` is what the carrier rule does with a
 // "no" (see judgeBinTypeCarriesPayload): the press door flags, the loader's
-// LOAD refuses. full is the produce ingest's declared-full stamp; the LOAD
-// passes nil and never writes one.
-func (s *BinManifestService) recordProduced(binID int64, manifestJSON, payloadCode string, uop int, producedAt string, no carrierNo, full *DeclaredFull) (int64, error) {
+// LOAD refuses. `held` likewise: the press door records in place, the LOAD
+// refuses a held carrier (heldRule). full is the produce ingest's
+// declared-full stamp; the LOAD passes nil and never writes one.
+func (s *BinManifestService) recordProduced(binID int64, manifestJSON, payloadCode string, uop int, producedAt string, no carrierNo, held heldRule, full *DeclaredFull) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
-	epoch, err := s.writeProductionTx(tx, binID, manifestJSON, payloadCode, uop, protocol.DeclaredByLifecycle, no)
+	epoch, err := s.writeProductionTx(tx, binID, manifestJSON, payloadCode, uop, protocol.DeclaredByLifecycle, no, held)
 	if err != nil {
 		return 0, err
 	}
@@ -1021,10 +1049,14 @@ var ErrCountRequired = errors.New("a load here must say how many it holds")
 //     SetFromTemplate applies to a nil override. A declared count, zero
 //     included, is written as given.
 //
-// The set and the confirm commit together (recordProduced). They were two
-// transactions with the confirm's failure logged and dropped, which left a
-// set-but-unconfirmed bin — invisible to kanban — reported to the Edge as ok.
-// Returns the new epoch and the count written.
+// A CARRIER A LIVE ORDER HOLDS IS REFUSED (refuseHeldCarrierTx) with a
+// *HeldCarrierError, and nothing is written.
+//
+// The hold check, the set and the confirm commit together (recordProduced).
+// The set and the confirm were two transactions with the confirm's failure
+// logged and dropped, which left a set-but-unconfirmed bin — invisible to
+// kanban — reported to the Edge as ok. Returns the new epoch and the count
+// written.
 func (s *BinManifestService) LoadAtLine(binID int64, manifestJSON, payloadCode string, declared *int64) (int64, int, error) {
 	p, err := s.db.GetPayloadByCode(payloadCode)
 	if err != nil || p == nil {
@@ -1058,7 +1090,7 @@ func (s *BinManifestService) LoadAtLine(binID int64, manifestJSON, payloadCode s
 		return 0, 0, err
 	}
 	uop := standardPackUOP(p.UOPCapacity, d)
-	epoch, err := s.recordProduced(binID, manifestJSON, payloadCode, uop, "", refuseUndeclared, nil)
+	epoch, err := s.recordProduced(binID, manifestJSON, payloadCode, uop, "", refuseUndeclared, refuseHeld, nil)
 	if err != nil {
 		if marker != nil {
 			if rErr := s.db.RestoreBinType(binID, *marker); rErr != nil {
@@ -1074,6 +1106,90 @@ func (s *BinManifestService) LoadAtLine(binID int64, manifestJSON, payloadCode s
 	}
 	s.notifyBinChanged(binID)
 	return epoch, uop, nil
+}
+
+// HeldCarrierError is a LOAD's refusal of a carrier a live order holds, naming
+// the order. Typed so a door answers it as a conflict rather than as a server
+// failure. Error() is the one sentence every LOAD door shows (owner,
+// 2026-10-18): the holding order and the way through, with no admin bypass;
+// cancelling the order is the audited override.
+type HeldCarrierError struct {
+	OrderID int64
+}
+
+// heldCarrierRefusal is that sentence, the one spelling of it.
+const heldCarrierRefusal = "Order %d holds this bin (robot on its way) — cancel it first, or load after it leaves."
+
+func (e *HeldCarrierError) Error() string {
+	return fmt.Sprintf(heldCarrierRefusal, e.OrderID)
+}
+
+// refuseHeldCarrierTx refuses the LOAD of a carrier that a live order holds by
+// hard claim (bins.claimed_by) or by soft hold (a pending reservation), owner
+// 2026-10-18: "Refuse a held bin". The held-step clear's sim found why: Core's
+// clear zeroed a home's carrier, a queued empty pull claimed it, and a LOAD half
+// a second later set it back to 30 parts, so the pull carried a full away. One
+// rule keyed on the bin's existing hold covers that and every other carrier in
+// flight. Pinned at both LOAD doors by www.TestApiBinLoad_AHeldCarrierIsRefused
+// and www.TestExecuteBinAction_LoadPayload_AHeldCarrierIsRefused.
+//
+// THE HOLD IS THE SOURCING READERS' OWN, ASKED WITH WHO. The soft half is
+// reservations.BinSpokenForByOrderSQL, the same row set as the BinSpokenForSQL
+// every finder negates. The hard half is the claim column, counted only while
+// its holder is live: a claim a terminal order left behind is not a hold, the
+// reading the stale-ghost eviction gives it (helpers.EvictStaleGhostBinsTx).
+// The operator lock (bins.locked) is not in it: a locked bin is a sourcing lock,
+// not an order's hold, and a LOAD accepts it (owner, 2026-10-18).
+//
+// EVERY LOAD DOOR ASKS IT, through writeProductionTx's heldRule: the loader's
+// LOAD (LoadAtLine) and the admin Load Payload (SetFromTemplate). Produce
+// finalize (RecordProducedBin) is the named exemption (producedInPlace).
+// TestBinContentsWriters_EveryLoadDoorRunsTheHeldCheck holds every other
+// statement that writes a bin's contents to a reason.
+//
+// One statement, FOR UPDATE on the bin so a claim cannot land between this read
+// and the write that follows it in the same transaction.
+func refuseHeldCarrierTx(tx *sql.Tx, binID int64) error {
+	var claimant, spoken sql.NullInt64
+	err := tx.QueryRow(`
+		SELECT (SELECT o.id FROM orders o WHERE o.id = b.claimed_by
+		           AND o.status NOT IN (`+protocol.TerminalStatusSQLList()+`)),
+		       `+reservations.BinSpokenForByOrderSQL+`
+		FROM bins b WHERE b.id = $1
+		FOR UPDATE OF b`, binID).Scan(&claimant, &spoken)
+	if err != nil {
+		return fmt.Errorf("read the holds on bin %d: %w", binID, err)
+	}
+	switch {
+	case claimant.Valid:
+		return &HeldCarrierError{OrderID: claimant.Int64}
+	case spoken.Valid:
+		return &HeldCarrierError{OrderID: spoken.Int64}
+	}
+	return nil
+}
+
+// LoadRefusalFor is the sentence a LOAD of b would be refused with, or "" when
+// it would be accepted: refuseHeldCarrierTx's rule asked over what a bin read
+// already carries, so a page can withhold a load the write would refuse
+// without a read of its own. claimant is the order b.ClaimedBy names (nil when
+// it names none). The claimant holds while it is live; one that could not be
+// read counts as live, so a page never offers a load the write may refuse.
+// Else the holder of the pending reservation holds (PendingReservedBy, the
+// projector's BinSpokenForByOrderSQL, the same row set the write asks). The
+// bins page shows it in place of Load Payload. Agreement with the write is
+// pinned by www.TestBinDetail_LoadRefusalAgreesWithTheLoadDoors.
+func LoadRefusalFor(b *domain.Bin, claimant *domain.Order) string {
+	if b == nil {
+		return ""
+	}
+	if b.ClaimedBy != nil && (claimant == nil || !protocol.IsTerminal(claimant.Status)) {
+		return (&HeldCarrierError{OrderID: *b.ClaimedBy}).Error()
+	}
+	if b.PendingReservedBy != nil {
+		return (&HeldCarrierError{OrderID: *b.PendingReservedBy}).Error()
+	}
+	return ""
 }
 
 // standardPackUOP is the one statement of the standard-pack rule: absence of a

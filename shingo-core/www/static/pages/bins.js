@@ -407,17 +407,25 @@ function renderContents(data) {
     // Load Payload — filter to payloads whose bin-type allow-list is empty
     // (unrestricted) or includes this bin's type. Mirrors backend advisory
     // enforcement in BinService.LoadPayload.
+    //
+    // Withheld while an order holds the bin before delivery: Core would refuse
+    // the load (refuseHeldCarrierTx), and data.load_refusal is its sentence,
+    // naming the order. Absent from delivered on, when the load lands.
+    var held = data.load_refusal || '';
+    var off = held ? ' disabled' : '';
     html += '<div class="action-group"><h4>Load Payload</h4>';
+    if (held) html += '<p class="text-muted mb-1" id="bd-load-held">' + esc(held) + '</p>';
     html += '<div class="inline-form">';
-    html += '<div class="form-group"><label>Payload</label><select id="bd-load-payload" style="width:200px"><option value="">-- Select --</option>';
+    html += '<div class="form-group"><label>Payload</label><select id="bd-load-payload" style="width:200px"' + off + '><option value="">-- Select --</option>';
     (PAGE_PAYLOADS || []).forEach(function(p) {
       var allowed = (PAGE_PAYLOAD_BIN_TYPES || {})[p.code];
       if (allowed && allowed.length > 0 && allowed.indexOf(b.bin_type_id) === -1) return;
       html += '<option value="' + esc(p.code) + '">' + esc(p.code) + '</option>';
     });
     html += '</select></div>';
-    html += '<div class="form-group"><label>Count (blank = full)</label><input type="number" id="bd-load-uop" min="0" style="width:110px" placeholder="full pack"></div>';
-    html += '<button class="btn btn-primary btn-sm" data-action="loadPayload">Load</button>';
+    html += '<div class="form-group"><label>Count (blank = full)</label><input type="number" id="bd-load-uop" min="0" style="width:110px" placeholder="full pack"' + off + '></div>';
+    html += held ? '<button class="btn btn-primary btn-sm" disabled>Load</button>'
+      : '<button class="btn btn-primary btn-sm" data-action="loadPayload">Load</button>';
     html += '</div></div>';
 
     // Clear / Confirm

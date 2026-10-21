@@ -310,7 +310,12 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 	newEpoch, written, err := h.engine.BinManifest().LoadAtLine(bin.ID, string(manifestJSON), req.PayloadCode, req.UOPCount)
 	if err != nil {
 		var refused *service.CarrierRefusedError
+		var held *service.HeldCarrierError
 		switch {
+		case errors.As(err, &held):
+			// A live order holds the carrier (owner, 2026-10-18: "Refuse a
+			// held bin"). The Edge shows this sentence as the LOAD's refusal.
+			h.jsonError(w, held.Error(), http.StatusConflict)
 		case errors.As(err, &refused):
 			// A conflict between the part and the carrier standing at the
 			// window, answered with what the operator does about it. The Edge
