@@ -141,7 +141,7 @@ func TestEnqueueSnapshot_RefusesNonSnapshotSubjects(t *testing.T) {
 	for _, subject := range []string{
 		protocol.SubjectBinUOPDelta,
 		protocol.SubjectLinesideBucketLevel,
-		protocol.SubjectProductionTick,
+		protocol.SubjectProductionTicks,
 		protocol.SubjectDemandOrigin,
 		protocol.TypeComplexOrderRequest,
 		protocol.TypeOrderCancel,

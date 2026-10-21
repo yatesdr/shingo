@@ -1549,48 +1549,6 @@ type BinUOPDelta struct {
 	Net *int64 `json:"net,omitempty"`
 }
 
-// CounterSnapshot is the production.tick payload (plan §12): one PLC counter
-// tick per envelope, as sent through the outbox by an Edge from before the
-// counter_snapshots shipper. Current Edges send ProductionTicks instead. Core
-// projects both through one INSERT keyed on
-// (cell_id = Envelope.Src.Station, EdgeSnapshotID, RecordedAt) — never bare
-// EdgeSnapshotID, since Edge-local SQLite autoincrements collide across
-// stations (§8 #22, Round-3 Obs 8), and never without RecordedAt, since a
-// restored Edge reuses ids.
-//
-// RecordedAt is stamped in Go (ms precision and finer) when the tick is
-// ENQUEUED, after the snapshot INSERT and the reporting-point UPDATE — not at
-// the INSERT, and not read back from the row, whose recorded_at column is
-// SQLite's second-granularity datetime('now') default on these Edges.
-//
-// Anomaly carries "" or "jump" from an old Edge (the old subject never carried
-// a reset). A jump is parts, as for ProductionTickEvent.
-//
-// THE PAYLOAD COPY OF THE STATION IS GONE (identity change). Every one of
-// these envelopes carried the station twice — once in Envelope.Src.Station,
-// where the transport put it, and once in the body, where the Edge put it —
-// and every handler resolved the disagreement with
-// `if station == "" { station = env.Src.Station }`. That is a rule with two
-// possible answers, and the only reason it never produced a wrong one is that
-// a plant has exactly one station, so the two copies could not differ. Distinct
-// per-edge identity is precisely the change that makes them able to. Deleting
-// the body copy leaves ONE source of the station, and it is the one the
-// transport authenticated rather than the one the sender asserted.
-//
-// It is also the safe direction across the deploy skew: a NEW edge omits the
-// field, an OLD core reads "" and takes env.Src.Station — the fallback this
-// change deletes is what makes deleting it survivable.
-type CounterSnapshot struct {
-	ReportingPointID int64     `json:"reporting_point_id"` // Edge-local; Core drops it
-	EdgeSnapshotID   int64     `json:"edge_snapshot_id"`   // counter_snapshots.id — part of Core's key with station and RecordedAt
-	ProcessID        int64     `json:"process_id"`         // enriched at emit time from rp.ProcessID
-	StyleID          int64     `json:"style_id"`           // enriched at emit time from rp.StyleID
-	CountValue       int64     `json:"count_value"`        // absolute counter value; projected, read by no computation
-	Delta            int64     `json:"delta"`              // count change (typically 1)
-	Anomaly          string    `json:"anomaly"`            // "" or "jump" (see above)
-	RecordedAt       time.Time `json:"recorded_at"`        // Go clock at enqueue, after the snapshot INSERT (see above)
-}
-
 // ProductionTickEvent is one counter_snapshots row on the production.ticks
 // feed: a shippable tick (delta > 0, a real style) projected to the fields
 // Core stores. ReportingPointID stays off the wire; Core never used it.
@@ -1633,7 +1591,9 @@ type ProductionTicks struct {
 // The end event carries duration_ms for convenience; the start event
 // sets duration_ms = 0 and ended_at to the zero value.
 // Core deduplicates on (station, edge_event_id), taking the station from the
-// envelope — see CounterSnapshot for why the payload copy was deleted.
+// envelope: the one the transport carried, not a copy the sender asserted in
+// its own body, which could disagree with it once each Edge has its own
+// identity.
 type DowntimeEvent struct {
 	PLCName     string    `json:"plc_name"`      // the machine that went down
 	Reason      string    `json:"reason"`        // "breakdown" (sim); extensible for real plant

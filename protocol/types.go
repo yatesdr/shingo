@@ -85,15 +85,6 @@ const (
 	SubjectBinUOPDelta         = "inventory.bin_uop_delta"
 	SubjectLinesideBucketLevel = "inventory.lineside_bucket_level"
 
-	// ProductionTick — Edge → Core, one PLC counter tick per envelope, carried
-	// as protocol.CounterSnapshot. The feed an Edge from before the
-	// counter_snapshots shipper sends, through its outbox. Core keeps it
-	// registered for those mixed-version Edges and projects it through the same
-	// INSERT as production.ticks, so the dedup key covers both. New Edges send
-	// production.ticks instead; removing this subject waits until no plant runs
-	// an Edge that sends it.
-	SubjectProductionTick = "production.tick"
-
 	// ProductionTicks — Edge → Core per-PLC-counter-tick heartbeat for the
 	// production-cell dashboards (plan §12), batched: one envelope per station
 	// per poll pass, carrying protocol.ProductionTicks. A new SUBJECT on the
@@ -126,11 +117,11 @@ const (
 	// the most valuable row on the surface, so attaching episodes to their first
 	// order would hide exactly the ones that matter.
 	//
-	// Rides the existing shingo.orders topic as a new SUBJECT (the
-	// SubjectProductionTick precedent), on the durable outbox, so an episode
-	// survives a Core that is down when it changes. Old-Core safety is the same
-	// as production.tick's: an unregistered subject logs and returns, and the
-	// Edge outbox acks on publish rather than on Core handling.
+	// Rides the existing shingo.orders topic as a new SUBJECT (the production
+	// ticks precedent), on the durable outbox, so an episode survives a Core
+	// that is down when it changes. Old-Core safety: an unregistered subject
+	// logs and returns, and the Edge outbox acks on publish rather than on Core
+	// handling.
 	//
 	// THE SEND IS NOT ATOMIC WITH THE ROW DELETE, AND MUST NOT BE MADE SO.
 	// Edge closes an episode by enqueuing the closing state and then deleting
@@ -187,8 +178,8 @@ const (
 
 	// SubjectPlantClaims — Edge → Core: the plant-spec claim set the
 	// sourceability computation reads (a new SUBJECT on the existing
-	// shingo.orders topic, NOT a new topic — follows the
-	// SubjectProductionTick precedent). Edge publishes the full claim set
+	// shingo.orders topic, NOT a new topic — follows the production ticks
+	// precedent). Edge publishes the full claim set
 	// for one process keyed on the message, on every plant-spec change
 	// (style/claim edit), plus a periodic full snapshot and a full publish
 	// on boot/reconnect so a late-joining Core rebuilds its mirror. Carries
@@ -378,7 +369,6 @@ func CoreInboundSubjects() []string {
 		SubjectOrderStatusRequest,
 		SubjectBinUOPDelta,
 		SubjectLinesideBucketLevel,
-		SubjectProductionTick,
 		SubjectProductionTicks,
 		SubjectDowntimeEvent,
 		SubjectPlantClaims,

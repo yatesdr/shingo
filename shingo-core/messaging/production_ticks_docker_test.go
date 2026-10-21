@@ -89,11 +89,6 @@ func TestProductionTicks_OneStatementPerMessage(t *testing.T) {
 			t.Errorf("%s: %d statements, want 1", delivery, got)
 		}
 	}
-	counter.Reset()
-	svc.HandleProductionTick(ticksEnv("stn-count"), &protocol.CounterSnapshot{EdgeSnapshotID: 4, Delta: 1, StyleID: 3, RecordedAt: t0.Add(3 * time.Second)})
-	if got := counter.Count(); got != 1 {
-		t.Errorf("legacy production.tick: %d statements, want 1 (same INSERT path)", got)
-	}
 }
 
 // TestEdgeHeartbeat_RecordsTickLag: the Edge's periodic heartbeat carries the

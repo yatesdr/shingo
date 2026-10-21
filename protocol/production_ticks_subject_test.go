@@ -16,9 +16,6 @@ func TestProductionTicks_SubjectIsCoreInboundAndNoExpiry(t *testing.T) {
 	if !slices.Contains(CoreInboundSubjects(), SubjectProductionTicks) {
 		t.Error("production.ticks is not in CoreInboundSubjects")
 	}
-	if !slices.Contains(CoreInboundSubjects(), SubjectProductionTick) {
-		t.Error("production.tick left CoreInboundSubjects; mixed-version Edges still send it")
-	}
 	if ttl := DataTTLFor(SubjectProductionTicks); ttl != NoExpiry {
 		t.Errorf("production.ticks TTL = %v, want NoExpiry", ttl)
 	}

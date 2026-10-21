@@ -47,7 +47,7 @@ func TestProductionTick_NoOutboxRow(t *testing.T) {
 		t.Fatalf("list outbox: %v", err)
 	}
 	for _, m := range msgs {
-		if m.MsgType == protocol.SubjectProductionTick {
+		if m.MsgType == protocol.SubjectProductionTicks {
 			t.Errorf("outbox row %d carries %s — the tick feed must not write the outbox", m.ID, m.MsgType)
 		}
 	}

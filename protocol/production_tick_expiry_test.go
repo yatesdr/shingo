@@ -46,21 +46,14 @@ func dispatchedAfter(t *testing.T, subject string, age time.Duration) bool {
 // default, so the tick died at the header after the Edge had marked it sent and
 // the gap became a fake stop in MTBF and Lost. The feed is now
 // production.ticks, a NoExpiry subject: the late copy is dispatched, and Core's
-// (cell_id, edge_snapshot_id, recorded_at) key makes a duplicate harmless.
-// production.tick keeps the default: an old Edge stamps its own expiry, so
-// nothing changes for it. The subject is spelled out rather than taken from the
-// constant so the inversion runs red at the base that lacked it.
+// (cell_id, edge_snapshot_id, recorded_at) key makes a duplicate harmless. The
+// subject is spelled out rather than taken from the constant so the inversion
+// runs red at the base that lacked it. production.tick itself is gone.
 func TestProductionTickFeed_LateDelivery(t *testing.T) {
 	// Not parallel: a drop bumps the process-wide ExpiredDrops counter that
 	// TestIngestor_ExpiredDropIsCounted measures by difference.
 	const late = 6 * time.Minute
 
-	if dispatchedAfter(t, SubjectProductionTick, late) {
-		t.Errorf("production.tick %s late was dispatched; want dropped at the header (5 min default)", late)
-	}
-	if !dispatchedAfter(t, SubjectProductionTick, time.Minute) {
-		t.Errorf("production.tick 1m late was dropped; the control arm must pass")
-	}
 	if !dispatchedAfter(t, "production.ticks", late) {
 		t.Errorf(`production.ticks %s late was dropped; the feed is NoExpiry`, late)
 	}

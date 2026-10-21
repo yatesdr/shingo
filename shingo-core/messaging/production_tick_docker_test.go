@@ -53,10 +53,10 @@ func (h *tickHarness) emitted() []tickEmit {
 	return append([]tickEmit(nil), h.emits...)
 }
 
-// tick delivers one legacy production.tick from station.
-func (h *tickHarness) tick(station string, snap protocol.CounterSnapshot) {
+// tick delivers a production.ticks batch of one tick from station.
+func (h *tickHarness) tick(station string, ev protocol.ProductionTickEvent) {
 	env := &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: station}}
-	h.svc.HandleProductionTick(env, &snap)
+	h.svc.HandleProductionTicks(env, &protocol.ProductionTicks{Ticks: []protocol.ProductionTickEvent{ev}})
 }
 
 // rows counts cell_part_events rows for (cell, edge_snapshot_id).
@@ -109,8 +109,8 @@ func TestProductionTick_ProjectsEveryColumn(t *testing.T) {
 	t.Parallel()
 	h := newTickHarness(t)
 	at := msTime(10, 123)
-	h.tick("stn-a", protocol.CounterSnapshot{
-		ReportingPointID: 99, EdgeSnapshotID: 41, ProcessID: 7, StyleID: 3,
+	h.tick("stn-a", protocol.ProductionTickEvent{
+		EdgeSnapshotID: 41, ProcessID: 7, StyleID: 3,
 		CountValue: 1234, Delta: 2, Anomaly: "jump", RecordedAt: at,
 	})
 	h.waitRow("stn-a", 41)
@@ -147,10 +147,10 @@ func TestProductionTick_ProjectsEveryColumn(t *testing.T) {
 func TestProductionTick_SameTickTwiceIsOneRow(t *testing.T) {
 	t.Parallel()
 	h := newTickHarness(t)
-	snap := protocol.CounterSnapshot{EdgeSnapshotID: 5, ProcessID: 7, StyleID: 3, CountValue: 10, Delta: 1, RecordedAt: msTime(20, 5)}
+	snap := protocol.ProductionTickEvent{EdgeSnapshotID: 5, ProcessID: 7, StyleID: 3, CountValue: 10, Delta: 1, RecordedAt: msTime(20, 5)}
 	h.tick("stn-a", snap)
 	h.tick("stn-a", snap)
-	h.tick("stn-a", protocol.CounterSnapshot{EdgeSnapshotID: 6, ProcessID: 7, StyleID: 3, CountValue: 11, Delta: 1, RecordedAt: msTime(21, 5)})
+	h.tick("stn-a", protocol.ProductionTickEvent{EdgeSnapshotID: 6, ProcessID: 7, StyleID: 3, CountValue: 11, Delta: 1, RecordedAt: msTime(21, 5)})
 	h.waitRow("stn-a", 6) // barrier
 
 	if n := h.rows("stn-a", 5); n != 1 {
@@ -168,8 +168,8 @@ func TestProductionTick_SameIDTwoStationsIsTwoRows(t *testing.T) {
 	t.Parallel()
 	h := newTickHarness(t)
 	at := msTime(30, 0)
-	h.tick("stn-a", protocol.CounterSnapshot{EdgeSnapshotID: 7, ProcessID: 1, StyleID: 1, Delta: 1, RecordedAt: at})
-	h.tick("stn-b", protocol.CounterSnapshot{EdgeSnapshotID: 7, ProcessID: 2, StyleID: 2, Delta: 1, RecordedAt: at})
+	h.tick("stn-a", protocol.ProductionTickEvent{EdgeSnapshotID: 7, ProcessID: 1, StyleID: 1, Delta: 1, RecordedAt: at})
+	h.tick("stn-b", protocol.ProductionTickEvent{EdgeSnapshotID: 7, ProcessID: 2, StyleID: 2, Delta: 1, RecordedAt: at})
 	h.waitRow("stn-a", 7)
 	h.waitRow("stn-b", 7)
 	if a, b := h.rows("stn-a", 7), h.rows("stn-b", 7); a != 1 || b != 1 {
@@ -191,11 +191,11 @@ func TestProductionTick_SameIDTwoStationsIsTwoRows(t *testing.T) {
 func TestProductionTick_ReusedIDAfterRestore(t *testing.T) {
 	t.Parallel()
 	h := newTickHarness(t)
-	h.tick("stn-a", protocol.CounterSnapshot{EdgeSnapshotID: 5, ProcessID: 7, StyleID: 3, Delta: 1, RecordedAt: msTime(40, 0)})
+	h.tick("stn-a", protocol.ProductionTickEvent{EdgeSnapshotID: 5, ProcessID: 7, StyleID: 3, Delta: 1, RecordedAt: msTime(40, 0)})
 	h.waitRow("stn-a", 5)
 	// After the restore: same id, later stamp.
-	h.tick("stn-a", protocol.CounterSnapshot{EdgeSnapshotID: 5, ProcessID: 7, StyleID: 3, Delta: 1, RecordedAt: msTime(900, 0)})
-	h.tick("stn-a", protocol.CounterSnapshot{EdgeSnapshotID: 6, ProcessID: 7, StyleID: 3, Delta: 1, RecordedAt: msTime(901, 0)})
+	h.tick("stn-a", protocol.ProductionTickEvent{EdgeSnapshotID: 5, ProcessID: 7, StyleID: 3, Delta: 1, RecordedAt: msTime(900, 0)})
+	h.tick("stn-a", protocol.ProductionTickEvent{EdgeSnapshotID: 6, ProcessID: 7, StyleID: 3, Delta: 1, RecordedAt: msTime(901, 0)})
 	h.waitRow("stn-a", 6) // barrier
 
 	if n := h.rows("stn-a", 5); n != 2 {

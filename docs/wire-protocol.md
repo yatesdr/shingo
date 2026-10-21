@@ -271,8 +271,7 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `demand.origin` | Edge -> Core | `DemandOrigin` | The demand episodes the Edge owns |
 | `inventory.bin_uop_delta` | Edge -> Core | `BinUOPDelta` | A bin's UoP moved |
 | `inventory.lineside_bucket_level` | Edge -> Core | `LinesideBucketLevel` | A lineside pile row's level after a change (the Edge is its only writer; Core mirrors it) |
-| `production.tick` | Edge -> Core | `CounterSnapshot` | One PLC counter tick per envelope, from Edges before the counter_snapshots shipper; newer Edges send `production.ticks` |
-| `production.ticks` | Edge -> Core | `ProductionTicks` | Batched per-station tick feed from the counter_snapshots shipper — the successor to `production.tick` |
+| `production.ticks` | Edge -> Core | `ProductionTicks` | Batched per-station tick feed from the counter_snapshots shipper (it replaced the per-tick `production.tick`, removed 2026-10-20) |
 | `inventory.lineside_level_report` | Edge -> Core | `LinesideLevelReport` | The Edge's own view of its lineside levels, for Core's divergence comparison |
 | `inventory.hold_dropped` | Edge -> Core | `HoldDropped` | A produce seat's hold was dropped without replaying onto a bin; Core writes one `hold_dropped` row (no bin) and lists it on /inventory |
 | `production.downtime` | Edge -> Core | `DowntimeEvent` | A persisted downtime start or end |
@@ -436,8 +435,7 @@ override, so it was always `["line-1"]`, and its only consumer composed
 `station + "." + line` into a dashboard scope no order row could match. The
 column is dropped from `edge_registry` too.
 
-**Payload copies of the station are gone** from `production.tick`
-(`CounterSnapshot`), `production.downtime` (`DowntimeEvent`),
+**Payload copies of the station are gone** from `production.downtime` (`DowntimeEvent`),
 the retired `lineside_bucket_delta` (which carried it twice in one
 envelope) and `bin_uop_delta` (`BinUOPDelta`). Every handler now reads
 `Envelope.Src.Station`. The old `if station == "" { station = env.Src.Station }`

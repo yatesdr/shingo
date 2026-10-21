@@ -246,7 +246,11 @@ func (s *CoreDataService) StartHeartbeatMaintenance() {
 // station, edge_snapshot_id and recorded_at, and counted on the station's
 // edge_registry.tick_rejected, which the Inventory page shows.
 //
-// THE STATION COMES FROM THE ENVELOPE, FULL STOP — see HandleProductionTick.
+// THE STATION COMES FROM THE ENVELOPE, FULL STOP. It used to come from the
+// payload with the envelope as a fallback, which is a rule with two possible
+// answers that only ever produced one because a plant had exactly one station.
+// Per-edge identity is the change that makes them able to disagree, so the
+// payload copy is gone and this reads the source the transport carried.
 func (s *CoreDataService) HandleProductionTicks(env *protocol.Envelope, p *protocol.ProductionTicks) {
 	station := env.Src.Station
 	events := make([]heartbeat.PartEvent, len(p.Ticks))
@@ -263,30 +267,6 @@ func (s *CoreDataService) HandleProductionTicks(env *protocol.Envelope, p *proto
 		}
 	}
 	s.projectTicks(station, events)
-}
-
-// HandleProductionTick projects one production.tick — the per-tick subject an
-// Edge from before the counter_snapshots shipper still sends through its
-// outbox — through the same INSERT as HandleProductionTicks, so one key
-// dedups both. ReportingPointID is dropped: nothing on Core reads it.
-//
-// THE STATION COMES FROM THE ENVELOPE, FULL STOP. It used to come from the
-// payload with the envelope as a fallback, which is a rule with two possible
-// answers that only ever produced one because a plant had exactly one station.
-// Per-edge identity is the change that makes them able to disagree, so the
-// payload copy is gone and this reads the source the transport carried.
-func (s *CoreDataService) HandleProductionTick(env *protocol.Envelope, snap *protocol.CounterSnapshot) {
-	station := env.Src.Station
-	s.projectTicks(station, []heartbeat.PartEvent{{
-		CellID:         station,
-		RecordedAt:     snap.RecordedAt,
-		EdgeSnapshotID: snap.EdgeSnapshotID,
-		CountValue:     snap.CountValue,
-		Delta:          snap.Delta,
-		Anomaly:        snap.Anomaly,
-		ProcessID:      snap.ProcessID,
-		StyleID:        snap.StyleID,
-	}})
 }
 
 // projectTicks inserts and emits for the rows that were new.
@@ -334,7 +314,7 @@ func (s *CoreDataService) projectTicks(station string, events []heartbeat.PartEv
 func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.BinUOPDelta) {
 	// The station is the ENVELOPE's, which is the one the transport carried
 	// rather than the one the sender asserted in its own body. See
-	// HandleProductionTick.
+	// HandleProductionTicks.
 	station := env.Src.Station
 	if err := s.inventoryDelta.ApplyBinUOPDelta(station, d); err != nil {
 		if errors.Is(err, service.ErrInventoryDeltaSkipped) {
