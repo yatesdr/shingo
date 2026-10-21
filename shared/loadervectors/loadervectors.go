@@ -1,11 +1,12 @@
 // Package loadervectors holds the checked-in cases that pin Core's loader
 // replenishment decisions against the Edge's.
 //
-// Two subsystems now answer the same two questions — which windows an inbound
-// carrier may go to, and how many carriers a loop needs — and they answer them
-// from separate code in separate modules. The vectors are what stops those two
-// answers drifting: each module's tests read this file and assert its own
-// implementation against the same expected results.
+// Two subsystems answer the same questions — which windows an inbound carrier
+// may go to, how many carriers a loop needs, and where an unloader's full goes
+// when a release offers it a part (Consume) — from separate code in separate
+// modules. The vectors are what stops those answers drifting: each module's
+// tests read this file and assert its own implementation against the same
+// expected results.
 //
 // THE VECTORS ARE THE PERMANENT GATE, not a migration aid. The obvious
 // alternative — a live test that runs both implementations and compares them —
@@ -89,10 +90,45 @@ type SizingCase struct {
 	WantOutcome string `json:"want_outcome"`
 }
 
+// ConsumeWindow is one window of an unloader as it stands before a consume
+// case's releases arrive: what stands on it, and what is already on its way.
+type ConsumeWindow struct {
+	Node string `json:"node"`
+	// StandingFull is the part of a full standing on the window, "" for none.
+	StandingFull string `json:"standing_full,omitempty"`
+	// StandingEmpty is an empty carrier standing on the window.
+	StandingEmpty bool `json:"standing_empty,omitempty"`
+	// InboundFull is the part of a live full-in already delivering to the
+	// window, "" for none.
+	InboundFull string `json:"inbound_full,omitempty"`
+}
+
+// ConsumeCase pins where an unloader's fulls go when releases offer it parts:
+// the side cycle's full-in (U1), on a shared_window consume loader.
+type ConsumeCase struct {
+	Name string `json:"name"`
+	// Why this case exists. Read it before changing an expectation.
+	Why           string `json:"why"`
+	FunnelWindows bool   `json:"funnel_windows,omitempty"`
+	// Payloads is the unloader's payload set.
+	Payloads []string `json:"payloads"`
+	// Windows are the unloader's windows, in the loader's order, as they stand.
+	Windows []ConsumeWindow `json:"windows"`
+	// Events is the part each release offers, in order.
+	Events []string `json:"events"`
+	// Burst: the events arrive at once, each on its own goroutine, rather than
+	// one after another. A burst case's answer must not depend on which wins.
+	Burst bool `json:"burst,omitempty"`
+	// WantNew is every full the events ordered: window -> part. Windows the
+	// events ordered nothing to are absent.
+	WantNew map[string]string `json:"want_new"`
+}
+
 // Vectors is the whole file.
 type Vectors struct {
-	Targets []TargetCase `json:"targets"`
-	Sizing  []SizingCase `json:"sizing"`
+	Targets []TargetCase  `json:"targets"`
+	Sizing  []SizingCase  `json:"sizing"`
+	Consume []ConsumeCase `json:"consume"`
 }
 
 // Load decodes the embedded vectors. It returns an error rather than panicking
@@ -102,9 +138,9 @@ func Load() (Vectors, error) {
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return Vectors{}, fmt.Errorf("decode loader golden vectors: %w", err)
 	}
-	if len(v.Targets) == 0 || len(v.Sizing) == 0 {
-		return Vectors{}, fmt.Errorf("loader golden vectors: got %d target and %d sizing cases; an empty set would pass every test",
-			len(v.Targets), len(v.Sizing))
+	if len(v.Targets) == 0 || len(v.Sizing) == 0 || len(v.Consume) == 0 {
+		return Vectors{}, fmt.Errorf("loader golden vectors: got %d target, %d sizing and %d consume cases; an empty set would pass every test",
+			len(v.Targets), len(v.Sizing), len(v.Consume))
 	}
 	return v, nil
 }

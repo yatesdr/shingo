@@ -595,5 +595,107 @@
    "want_bins": 0,
    "want_outcome": "at_threshold"
   }
+ ],
+ "consume": [
+  {
+   "name": "consume/a-release-pulls-a-full-to-the-first-free-window",
+   "why": "The ordinary U1: a release offers the unloader a part, no window holds or awaits anything, and one full comes to the first window in the loader's order. One release, one full, never one per window.",
+   "payloads": ["PART-A"],
+   "windows": [{"node": "U-W1"}, {"node": "U-W2"}, {"node": "U-W3"}],
+   "events": ["PART-A"],
+   "want_new": {"U-W1": "PART-A"}
+  },
+  {
+   "name": "consume/a-window-holding-a-carrier-is-passed-over",
+   "why": "An empty carrier still stands on the first window (the operator has not cleared it). A window holds one carrier, so the full goes to the next window, not on top of the empty.",
+   "payloads": ["PART-A"],
+   "windows": [{"node": "U-W1", "standing_empty": true}, {"node": "U-W2"}],
+   "events": ["PART-A"],
+   "want_new": {"U-W2": "PART-A"}
+  },
+  {
+   "name": "consume/a-parked-usable-full-skips-the-pull",
+   "why": "A full of the released part already stands on a window: the operator has one to process, and a second is useless until that one is cleared. The order count cannot see it (no order brought it), so the parked-full rule is what holds the pull, even with a free window beside it.",
+   "payloads": ["PART-A"],
+   "windows": [{"node": "U-W1", "standing_full": "PART-A"}, {"node": "U-W2"}],
+   "events": ["PART-A"],
+   "want_new": {}
+  },
+  {
+   "name": "consume/a-parked-full-of-another-part-routes-past-it",
+   "why": "The parked-full rule is per part. A full of PART-A on the first window does not hold a PART-B release, which takes the free second window.",
+   "payloads": ["PART-A", "PART-B"],
+   "windows": [{"node": "U-W1", "standing_full": "PART-A"}, {"node": "U-W2"}],
+   "events": ["PART-B"],
+   "want_new": {"U-W2": "PART-B"}
+  },
+  {
+   "name": "consume/a-single-window-held-by-another-part-pulls-nothing",
+   "why": "The per-part rule passes PART-B, but the unloader's only window is occupied, so there is nowhere to put it. On one window the effective rule is any-occupancy.",
+   "payloads": ["PART-A", "PART-B"],
+   "windows": [{"node": "U-W1", "standing_full": "PART-A"}],
+   "events": ["PART-B"],
+   "want_new": {}
+  },
+  {
+   "name": "consume/a-full-already-coming-for-the-part-is-enough",
+   "why": "A full of the part is already on its way to one window. The release's want is one, and one is coming, so nothing more is ordered at the free window: the subtraction is of this part's live orders across the whole delivery set, not of one window's.",
+   "payloads": ["PART-A"],
+   "windows": [{"node": "U-W1", "inbound_full": "PART-A"}, {"node": "U-W2"}],
+   "events": ["PART-A"],
+   "want_new": {}
+  },
+  {
+   "name": "consume/a-full-coming-for-another-part-holds-only-its-window",
+   "why": "A PART-B full is on its way to the first window. It speaks for that window and says nothing about PART-A, which takes the second.",
+   "payloads": ["PART-A", "PART-B"],
+   "windows": [{"node": "U-W1", "inbound_full": "PART-B"}, {"node": "U-W2"}],
+   "events": ["PART-A"],
+   "want_new": {"U-W2": "PART-A"}
+  },
+  {
+   "name": "consume/two-releases-in-one-burst-order-one-full",
+   "why": "A shared multi-window unloader, two releases of the same part arriving at once. Each alone would order one; together they must still order one, because the second must see the first's order. Without one decision at a time per loader, both read three free windows and both order: two fulls for one part's want of one.",
+   "payloads": ["PART-A"],
+   "windows": [{"node": "U-W1"}, {"node": "U-W2"}, {"node": "U-W3"}],
+   "events": ["PART-A", "PART-A"],
+   "burst": true,
+   "want_new": {"U-W1": "PART-A"}
+  },
+  {
+   "name": "consume/two-parts-one-after-another-each-take-a-window",
+   "why": "Two releases of different parts, one after the other. The first takes the first window; the second sees that order on it and takes the next. Neither part's want is spent by the other's.",
+   "payloads": ["PART-A", "PART-B"],
+   "windows": [{"node": "U-W1"}, {"node": "U-W2"}],
+   "events": ["PART-A", "PART-B"],
+   "want_new": {"U-W1": "PART-A", "U-W2": "PART-B"}
+  },
+  {
+   "name": "consume/funnel-a-full-coming-to-any-window-is-enough",
+   "why": "A funnelled unloader takes one window at a time, the first. A full of the part on its way to its second window is outside that target, but it is still this part's full coming to this unloader: the release's want of one is met, so nothing is ordered. The part's live orders are counted across every window of the loader, not the target alone (the release path's rule, unloaderPullsCovered).",
+   "funnel_windows": true,
+   "payloads": ["PART-A"],
+   "windows": [{"node": "U-W1"}, {"node": "U-W2", "inbound_full": "PART-A"}],
+   "events": ["PART-A"],
+   "want_new": {}
+  },
+  {
+   "name": "consume/funnel-reads-its-target-for-a-parked-full",
+   "why": "The parked-full rule reads the target windows only. On a funnelled unloader a full of the part standing on the second window is outside the target, so the release still pulls one to the first. Pinned as the plant runs it, beside the case above, so the two reads' scopes are both stated.",
+   "funnel_windows": true,
+   "payloads": ["PART-A"],
+   "windows": [{"node": "U-W1"}, {"node": "U-W2", "standing_full": "PART-A"}],
+   "events": ["PART-A"],
+   "want_new": {"U-W1": "PART-A"}
+  },
+  {
+   "name": "consume/funnel-with-its-window-taken-pulls-nothing",
+   "why": "The funnel's one window holds another part's full; the free second window is not a target, so nothing is ordered.",
+   "funnel_windows": true,
+   "payloads": ["PART-A", "PART-B"],
+   "windows": [{"node": "U-W1", "standing_full": "PART-B"}, {"node": "U-W2"}],
+   "events": ["PART-A"],
+   "want_new": {}
+  }
  ]
 }

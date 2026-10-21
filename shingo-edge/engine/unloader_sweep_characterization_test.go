@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/shared/loadervectors"
 	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
@@ -445,6 +446,85 @@ func TestUnloaderSweep_ReplenishmentDoesNotGateTheDrain(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConsumeVectors_Edge runs the Edge's U1 against shared/loadervectors'
+// consume cases, through the release commit's entry
+// (MaybeCreateUnloaderFullIn), with the bins table holding each case's
+// standing carriers and each inbound full a live U1 row. Core runs the same
+// cases through ReplenishLoader's side-cycle origin; this half pins what the
+// plant ran before the U1 moved there.
+func TestConsumeVectors_Edge(t *testing.T) {
+	t.Parallel()
+	for _, c := range loadervectors.MustLoad().Consume {
+		t.Run(c.Name, func(t *testing.T) {
+			t.Parallel()
+			db := testEngineDB(t)
+			eng := testEngine(t, db)
+			windows := make([]string, len(c.Windows))
+			for i, w := range c.Windows {
+				windows[i] = w.Node
+			}
+			seedWindowNodes(t, db, "CV-PROC", windows)
+			info := unloaderInfo("CV", windows, c.Payloads)
+			info.FunnelWindows = c.FunnelWindows
+			seedCoreLoader(t, eng, info)
+			rows := map[string]NodeBinInfo{}
+			for i, w := range c.Windows {
+				switch {
+				case w.StandingFull != "":
+					rows[w.Node] = NodeBinInfo{Occupied: true, PayloadCode: w.StandingFull, BinID: int64(100 + i)}
+				case w.StandingEmpty:
+					rows[w.Node] = NodeBinInfo{Occupied: true, BinID: int64(100 + i)}
+				}
+				if w.InboundFull != "" {
+					id := mustProcessNode(t, eng, w.Node).ID
+					if _, err := eng.orderMgr.CreateRetrieveOrder(&id, false, 1, w.Node, "FG-SUPER", "",
+						"standard", w.InboundFull, false, true, orders.NoDemand()); err != nil {
+						t.Fatalf("seed the full inbound to %s: %v", w.Node, err)
+					}
+				}
+			}
+			holdCoreRows(t, eng, rows, windows...)
+			before := fullsByWindow(t, eng, windows)
+
+			if c.Burst {
+				var wg sync.WaitGroup
+				for _, p := range c.Events {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						eng.MaybeCreateUnloaderFullIn(p)
+					}()
+				}
+				wg.Wait()
+			} else {
+				for _, p := range c.Events {
+					eng.MaybeCreateUnloaderFullIn(p)
+				}
+			}
+
+			got := newFullsByWindow(before, fullsByWindow(t, eng, windows))
+			want := map[string][]string{}
+			for w, p := range c.WantNew {
+				want[w] = []string{p}
+			}
+			if fmt.Sprint(got) != fmt.Sprint(want) {
+				t.Fatalf("new fulls by window = %v, want %v\nwhy this case exists: %s", got, want, c.Why)
+			}
+		})
+	}
+}
+
+// newFullsByWindow is what after holds beyond before, per window.
+func newFullsByWindow(before, after map[string][]string) map[string][]string {
+	out := map[string][]string{}
+	for w, ps := range after {
+		if extra := ps[min(len(before[w]), len(ps)):]; len(extra) > 0 {
+			out[w] = extra
+		}
+	}
+	return out
 }
 
 // mustProcessNode reads the process node at a core node name.
